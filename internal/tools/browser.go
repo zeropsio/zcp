@@ -20,7 +20,7 @@ type BrowserInput struct {
 	URL            string     `json:"url"                      jsonschema:"The page URL to open. Required."`
 	Commands       [][]string `json:"commands,omitempty"       jsonschema:"Inner agent-browser commands run between the auto-prepended [open url] and the auto-appended [screenshot?]/[errors]/[console]/[network requests]/[close]. Each element is one command as a string array."`
 	TimeoutSeconds int        `json:"timeoutSeconds,omitempty" jsonschema:"Bounds the whole batch. Default 120, max 300."`
-	ForceReset     FlexBool   `json:"forceReset,omitempty"     jsonschema:"Run a full daemon + Chrome reset BEFORE the batch. Use after a prior call returned forkRecoveryAttempted=true and the retry still wedges."`
+	ForceReset     FlexBool   `json:"forceReset,omitempty"     jsonschema:"Compatibility option: every managed browser batch starts clean."`
 	Screenshot     bool       `json:"screenshot,omitempty"     jsonschema:"Capture a screenshot after your commands run, before errors/console/network requests. Returned as an image content block alongside the text result."`
 }
 
@@ -47,20 +47,12 @@ func RegisterBrowser(srv *mcp.Server, stateDir string) {
 			"[open url] + your commands + [screenshot? if requested] + [errors] + [console] + " +
 			"[network requests] + [close]. Use this for recipe close-step " +
 			"browser verification — one call per subdomain (appstage, then appdev). " +
-			"Before calling: stop background dev processes on every dev container (pkill -f 'nest start' etc) " +
-			"— they compete for the fork budget and crash Chrome. " +
-			"On fork exhaustion, context timeout, daemon crash, OR a CDP-wedge signal in per-step errors " +
-			"(\"CDP command timed out\", \"Target closed\", \"Protocol error\") the tool auto-runs a full reset: " +
-			"pidfile-based process-group SIGKILL reaps Chrome + helpers, then pkill --exact fallback against " +
-			"chrome/chromium/chromium-browser/google-chrome/headless_shell reaps any escapees. " +
-			"forkRecoveryAttempted=true is set and the message names the triggering signal. " +
-			"Each step's errorKind classifies the failure (selector-not-found, not-editable, timeout, " +
-			"wedge, other) so you can decide retry vs. adjust selector vs. give up. " +
-			"If a prior call returned forkRecoveryAttempted=true and the immediate retry still wedges, " +
-			"pass forceReset=true on the NEXT call to fully reset the daemon + Chrome state BEFORE the batch starts. " +
-			"NEVER run raw `pkill -f chrome` from Bash — that pattern matches code-server's --no-chrome CLI arg " +
-			"and has killed the user's editor in past runs (v27 incident). The tool's --exact fallback is safe; " +
-			"raw `pkill -f` is not. " +
+			"Each batch owns its daemon and Chrome in a bounded systemd service. " +
+			"Success, error, deadline and cancellation stop the whole owned process tree. " +
+			"Concurrent managed callers fail admission while another batch owns it. " +
+			"Cleanup never kills unrelated browsers by process name; raw browser sessions are outside this tool's ownership. " +
+			"forceReset is retained for compatibility; every managed batch starts clean. " +
+			"Each step's errorKind classifies selector-not-found, not-editable, timeout, wedge or other failures. " +
 			"Inner command vocabulary (inside commands[]): [\"snapshot\",\"-i\",\"-c\"], [\"click\",\"@e1\"], " +
 			"[\"fill\",\"@e2\",\"text\"], [\"find\",\"role\",\"button\",\"Submit\",\"click\"], [\"get\",\"text\",\"<sel>\"], " +
 			"[\"get\",\"count\",\"<sel>\"], [\"is\",\"visible\",\"<sel>\"], [\"wait\",\"500\"], " +

@@ -8,7 +8,7 @@
 //   - stdin is valid JSON of the fully-built batch, fed to
 //     `agent-browser batch --json`.
 //   - Fork-exhaustion signatures in stderr (only) trigger auto-recovery
-//     (pkill) and surface a clear message instead of a raw error.
+//     (owned cleanup) and surface a clear message instead of a raw error.
 //   - Context-deadline timeout also triggers recovery.
 //   - Any other non-zero exit with no parseable output also triggers
 //     recovery — daemon crashes must reap leaked Chrome helpers.
@@ -26,9 +26,6 @@
 // underlying browserMu serializes all calls — running tests in parallel
 // would either race the override or one test would acquire the mutex and
 // starve others. Both problems vanish by keeping the suite sequential.
-//
-// All tests drop postRecoveryGrace to zero via TestMain so the recovery
-// paths don't pay the 2-second kernel-reap sleep on each assertion.
 package ops
 
 import (
@@ -44,21 +41,9 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"testing"
 	"time"
 )
-
-// TestMain shaves the 2-second post-recovery grace down to zero so
-// recovery-triggering tests don't serialize the suite through multiple
-// kernel-reap sleeps. Each test still exercises the real recovery path;
-// we just don't pay for a sleep we can't observe.
-func TestMain(m *testing.M) {
-	restore := OverridePostRecoveryGraceForTest(0)
-	code := m.Run()
-	restore()
-	os.Exit(code)
-}
 
 // fakeBrowserRunner captures calls and returns scripted results.
 type fakeBrowserRunner struct {
@@ -891,7 +876,7 @@ func TestBrowserBatch_PthreadCreateAlsoTriggersRecovery(t *testing.T) {
 // TestBrowserBatch_ForkSignatureOnlyInStdoutNoRecovery guards the stderr-only
 // detection policy: agent-browser's own JSON stdout may legitimately contain
 // text like "resource temporarily unavailable" (page title, console log from
-// the browsed site) and MUST NOT spuriously trigger pkill recovery.
+// the browsed site) and MUST NOT spuriously trigger owned cleanup.
 func TestBrowserBatch_ForkSignatureOnlyInStdoutNoRecovery(t *testing.T) {
 	// A tiny valid JSON array with a result containing the matching text.
 	stdoutWithMatch := `[{"command":["open","https://example.com"],"success":true,"result":{"title":"Resource temporarily unavailable - my-app"}},{"command":["errors"],"success":true,"result":{"errors":[]}},{"command":["console"],"success":true,"result":{"logs":[]}},{"command":["close"],"success":true,"result":{}}]`
@@ -1166,135 +1151,9 @@ func (s *serializationRunner) Run(_ context.Context, _ string, _ time.Duration) 
 
 func (*serializationRunner) RecoverFork(_ context.Context) {}
 
-// TestRecoverFork_ReadsPidfileAndKillsProcessGroup is the Cx-BROWSER-
-// RECOVERY-COMPLETE RED→GREEN guard for the pidfile path. Port from the
-// v27 archive: RecoverFork must read the daemon pidfile, issue a
-// process-group SIGKILL (negative pid) to reap Chrome + every helper
-// the daemon forked, kill the daemon itself, then remove the stale
-// pidfile + socket files so the next CLI invocation spawns a fresh
-// daemon instead of attaching to a zombie.
-func TestRecoverFork_ReadsPidfileAndKillsProcessGroup(t *testing.T) {
-	dir := t.TempDir()
-	pidfile := dir + "/default.pid"
-	if err := os.WriteFile(pidfile, []byte("12345\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	// Stage an empty socket file so removeFile has something to remove.
-	socketPath := dir + "/default.sock"
-	if err := os.WriteFile(socketPath, []byte{}, 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	var killArgs []struct {
-		pid int
-		sig syscall.Signal
-	}
-	var removedPaths []string
-	var pkillCalls [][]string
-
-	restore := OverrideBrowserRecoveryOpsForTest(browserRecoveryOps{
-		pidfilePath: func() (string, string, string, error) {
-			return pidfile, dir, "default", nil
-		},
-		readFile:   os.ReadFile,
-		removeFile: func(p string) error { removedPaths = append(removedPaths, p); return os.Remove(p) },
-		kill: func(pid int, sig syscall.Signal) error {
-			killArgs = append(killArgs, struct {
-				pid int
-				sig syscall.Signal
-			}{pid, sig})
-			return nil
-		},
-		pkillRun: func(_ context.Context, args ...string) error {
-			pkillCalls = append(pkillCalls, append([]string(nil), args...))
-			return nil
-		},
-	})
-	defer restore()
-
-	execBrowserRunner{}.RecoverFork(context.Background())
-
-	// Process-group kill (negative PID) + daemon kill, both SIGKILL.
-	if len(killArgs) != 2 {
-		t.Fatalf("expected 2 kill calls (group + daemon), got %d: %+v", len(killArgs), killArgs)
-	}
-	if killArgs[0].pid != -12345 || killArgs[0].sig != killSignal {
-		t.Errorf("first kill must be process-group SIGKILL for -12345, got pid=%d sig=%v", killArgs[0].pid, killArgs[0].sig)
-	}
-	if killArgs[1].pid != 12345 || killArgs[1].sig != killSignal {
-		t.Errorf("second kill must be daemon SIGKILL for 12345, got pid=%d sig=%v", killArgs[1].pid, killArgs[1].sig)
-	}
-
-	// Pidfile + both socket candidates must be removed.
-	want := []string{pidfile, dir + "/default.sock", dir + "/agent-browser.default.sock"}
-	for _, w := range want {
-		if !slices.Contains(removedPaths, w) {
-			t.Errorf("expected removeFile to be called for %q; got %v", w, removedPaths)
-		}
-	}
-}
-
-// TestRecoverFork_PkillExactFallback pins attempt 2 of the recovery
-// path: the legacy `pkill -9 -f agent-browser-` invocation stays AND
-// five new `pkill -9 --exact <name>` invocations fire for Chrome binary
-// variants. `--exact` is critical — matching argv[0] only means
-// code-server's `--no-chrome` CLI flag can never be matched (v27
-// incident), and every real Chrome process is reaped regardless of its
-// absolute path.
-func TestRecoverFork_PkillExactFallback(t *testing.T) {
-	var pkillCalls [][]string
-	restore := OverrideBrowserRecoveryOpsForTest(browserRecoveryOps{
-		pidfilePath: func() (string, string, string, error) {
-			// Signal "no pidfile" by returning an error — forces attempt 2 only.
-			return "", "", "", errors.New("no home")
-		},
-		readFile:   os.ReadFile,
-		removeFile: os.Remove,
-		kill: func(_ int, _ syscall.Signal) error {
-			t.Error("kill must not fire when pidfilePath errors")
-			return nil
-		},
-		pkillRun: func(_ context.Context, args ...string) error {
-			pkillCalls = append(pkillCalls, append([]string(nil), args...))
-			return nil
-		},
-	})
-	defer restore()
-
-	execBrowserRunner{}.RecoverFork(context.Background())
-
-	// 1 legacy -f call + 5 --exact calls (one per Chrome variant).
-	if len(pkillCalls) != 6 {
-		t.Fatalf("expected 6 pkill invocations (1 -f + 5 --exact), got %d: %+v", len(pkillCalls), pkillCalls)
-	}
-	// First call is the legacy pattern.
-	if got := pkillCalls[0]; len(got) != 3 || got[0] != "-9" || got[1] != "-f" || got[2] != "agent-browser-" {
-		t.Errorf("pkill[0] must be [-9 -f agent-browser-], got %v", got)
-	}
-	// Remaining 5 calls are --exact against each Chrome name.
-	wantNames := map[string]bool{
-		"chrome": true, "chromium": true, "chromium-browser": true,
-		"google-chrome": true, "headless_shell": true,
-	}
-	for i, call := range pkillCalls[1:] {
-		if len(call) != 3 || call[0] != "-9" || call[1] != "--exact" {
-			t.Errorf("pkill[%d] must be [-9 --exact <name>], got %v", i+1, call)
-			continue
-		}
-		if !wantNames[call[2]] {
-			t.Errorf("pkill[%d] name %q not in expected set", i+1, call[2])
-		}
-		delete(wantNames, call[2])
-	}
-	for leftover := range wantNames {
-		t.Errorf("expected pkill --exact call for %q was missing", leftover)
-	}
-}
-
 // TestBrowserBatch_ForceResetRunsRecoveryBeforeBatch verifies the
 // ForceReset input flag triggers RecoverFork BEFORE the batch starts,
-// giving the kernel postRecoveryGrace (overridden to 0 in TestMain) to
-// reap SIGKILL'd processes. The call order is asserted via a hook that
+// retaining the compatibility call ordering. The call order is asserted via a hook that
 // records what ran when.
 func TestBrowserBatch_ForceResetRunsRecoveryBeforeBatch(t *testing.T) {
 	var order []string

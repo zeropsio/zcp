@@ -632,6 +632,26 @@ reconciled away rather than left looping. A zcp release that predates mate has n
 leave the loop running (`unknown service "mate"`), which is one more reason a container should not sit
 between the two for long.
 
+### 2.6b Managed browser batches
+
+`zerops_browser` owns a Linux transient systemd service for each batch. One
+nonblocking container-wide file lock admits one managed batch across zcp processes;
+a competing caller fails without stopping the owner. The service's cgroup includes
+the detached daemon and Chrome's separate process groups. Success, error, deadline
+and cancellation all stop it with a cleanup context independent of the caller.
+A task cap of 10% of systemd's available task ceiling bounds this one managed
+service; unrelated workloads and raw browser scripts are outside that cap.
+
+On the next managed start, acquiring the lock proves the previous owner ended.
+Only the owned service is stopped, and its private temporary profile/socket
+folder is removed only after its cgroup is empty or absent. Browser installation
+caches, explicit persistent profiles and unmanaged sessions are preserved. A
+managed stream symlink preserves Mate's existing endpoint when no other owner
+has published one; cleanup removes only that exact owned link. Cleanup failure
+retains residue and reports an error. `forceReset` remains a compatibility option;
+every managed batch starts clean. No process-name sweep or stale PID file has
+kill authority. Raw browser tools and provider lifetimes remain unchanged.
+
 ### 2.7 Base path on the mate side
 
 nginx strips the prefix (§2.4); the server learns its **public** prefix from `T3CODE_BASE_PATH`
