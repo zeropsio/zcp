@@ -149,3 +149,55 @@ func TestAutomaticUpdate_CompatibilityFloor_Result(t *testing.T) {
 		})
 	}
 }
+
+func TestRecoverStoppedUpdate_CrashPhase_Result(t *testing.T) {
+	for _, tc := range []struct {
+		phase                  string
+		incompatible, verified bool
+		want                   string
+		restarts               int
+	}{
+		{"draining", false, false, "0.14.2", 0},
+		{"switching", false, false, "0.14.0", 1},
+		{"switching", true, false, "0.14.2", 0},
+		{"switching", false, true, "0.14.2", 0},
+	} {
+		t.Run(tc.phase+tc.want, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			seedInstalledVersion(t, "0.14.2")
+			writeFakePackage(t, mate.VersionDir("0.14.0"), "0.14.0")
+			good := "0.14.0"
+			if tc.verified {
+				good = "0.14.2"
+			}
+			if err := os.Symlink("versions/"+good, mate.LastGoodLink()); err != nil {
+				t.Fatal(err)
+			}
+			if err := mate.WriteUpdateState(mate.UpdateState{Phase: tc.phase, Previous: "0.14.0", Candidate: "0.14.2", PreventRollback: tc.incompatible}); err != nil {
+				t.Fatal(err)
+			}
+			restarts := 0
+			err := mate.RecoverStoppedUpdate(mate.SwitchHooks{Restart: func() error { restarts++; return nil }, Ready: func(v, _ string) error {
+				if v != good {
+					return errors.New("wrong readiness version")
+				}
+				return nil
+			}, Commit: func() error { return nil }, Cancel: func() error { return nil }})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, _ := mate.InstalledVersion()
+			if got != tc.want || restarts != tc.restarts {
+				t.Fatalf("current=%s restarts=%d want=%s/%d", got, restarts, tc.want, tc.restarts)
+			}
+			_, err = mate.PrepareUpdateBoot()
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, _ = mate.InstalledVersion()
+			if tc.incompatible && got != "0.14.2" {
+				t.Fatalf("incompatible boot rollback=%s", got)
+			}
+		})
+	}
+}
