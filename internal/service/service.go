@@ -439,13 +439,10 @@ const defaultMateLockWait = 4 * time.Minute
 
 var mateLockWait = defaultMateLockWait
 
-// mateInstallBeforeStart brings the bundle to the release before the server
-// starts, under the install lock `zcp init` shares (mate.LockInstall). The
-// unit starts at boot on its own, before `zcp init` updates the bundle; it
-// served the old release and `zcp init` restarted it onto the new one — two
-// starts, each ~10 s down. Now whichever runs first installs and the other
-// finds nothing to do. Nothing here ever keeps the server down: a lock held
-// past the wait, or an install that fails, starts what is installed.
+// mateInstallBeforeStart recovers an interrupted switch or preserves the
+// installed release before launch. An ordinary supervisor restart cannot
+// bypass drain, organization hold, or incompatible-release confirmation.
+// A missing bundle still uses the existing release resolver for first install.
 func mateInstallBeforeStart() {
 	release, err := mate.LockInstall(mateLockWait)
 	if err != nil {
@@ -453,7 +450,7 @@ func mateInstallBeforeStart() {
 		return
 	}
 	defer release()
-	result, err := mateEnsure(mate.EnsureOptions{Refresh: true})
+	result, err := mateEnsure(mate.EnsureOptions{KeepInstalled: true, Refresh: true})
 	switch {
 	case err != nil:
 		fmt.Fprintf(os.Stderr, "[zcp] service mate: bring the bundle to the release: %v — starting what is installed\n", err)

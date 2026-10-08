@@ -530,6 +530,12 @@ func EnsureInstalled(opts EnsureOptions) (Result, error) {
 		return Result{Action: ActionNone, From: installed, To: installed}, nil
 	}
 
+	if opts.KeepInstalled {
+		if installed, err := InstalledVersion(); err == nil {
+			return Result{Action: ActionNone, From: installed, To: installed}, nil
+		}
+	}
+
 	desired, manifestErr := resolveDesiredRelease(opts)
 	installed, instErr := InstalledVersion()
 
