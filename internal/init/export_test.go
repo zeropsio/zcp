@@ -20,6 +20,9 @@ func ResetVSCodeWorkDir()         { vsCodeWorkDir = defaultVSCodeWorkDir }
 
 // Nginx config overrides.
 
+// RunNginxWithRotationPath keeps tests away from the real distribution policy.
+func RunNginxWithRotationPath(path string) error { return runNginx(path) }
+
 func SetNginxOutputPath(path string) { nginxOutputPath = path }
 func ResetNginxOutputPath()          { nginxOutputPath = defaultNginxOutputPath }
 

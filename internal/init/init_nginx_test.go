@@ -26,7 +26,7 @@ func TestRunNginx_WithPassword(t *testing.T) {
 	t.Setenv("VSCODE_PASSWORD", password)
 	t.Setenv("ZCP_MATE_ENABLED", "1")
 
-	err := zcpinit.RunNginx()
+	err := zcpinit.RunNginxWithRotationPath(filepath.Join(tmpDir, "logrotate-nginx"))
 	if err != nil {
 		t.Fatalf("RunNginx() error: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestRunNginx_AuthCookiePartitioned(t *testing.T) {
 	const password = "alnum123token"
 	t.Setenv("VSCODE_PASSWORD", password)
 
-	if err := zcpinit.RunNginx(); err != nil {
+	if err := zcpinit.RunNginxWithRotationPath(filepath.Join(tmpDir, "logrotate-nginx")); err != nil {
 		t.Fatalf("RunNginx() error: %v", err)
 	}
 
@@ -137,7 +137,7 @@ func TestRunNginx_WithoutPassword(t *testing.T) {
 	// VSCODE_PASSWORD not set.
 	t.Setenv("ZCP_MATE_ENABLED", "1")
 
-	err := zcpinit.RunNginx()
+	err := zcpinit.RunNginxWithRotationPath(filepath.Join(tmpDir, "logrotate-nginx"))
 	if err != nil {
 		t.Fatalf("RunNginx() error: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestRunNginx_CreatesDirectories(t *testing.T) {
 	zcpinit.SetNginxOutputPath(filepath.Join(tmpDir, "nginx.conf"))
 	t.Cleanup(func() { zcpinit.ResetNginxOutputPath() })
 
-	err := zcpinit.RunNginx()
+	err := zcpinit.RunNginxWithRotationPath(filepath.Join(tmpDir, "logrotate-nginx"))
 	if err != nil {
 		t.Fatalf("RunNginx() error: %v", err)
 	}
@@ -246,7 +246,7 @@ func TestRunNginx_PreExistingLogFilesGet0644(t *testing.T) {
 	zcpinit.SetNginxOwner(os.Geteuid(), os.Getegid())
 	t.Cleanup(func() { zcpinit.ResetNginxOwner() })
 
-	if err := zcpinit.RunNginx(); err != nil {
+	if err := zcpinit.RunNginxWithRotationPath(filepath.Join(tmpDir, "logrotate-nginx")); err != nil {
 		t.Fatalf("RunNginx() error: %v", err)
 	}
 
@@ -273,12 +273,12 @@ func TestRunNginx_Idempotent(t *testing.T) {
 	t.Cleanup(func() { zcpinit.ResetNginxOwner() })
 	t.Setenv("VSCODE_PASSWORD", "idempotent-test")
 
-	if err := zcpinit.RunNginx(); err != nil {
+	if err := zcpinit.RunNginxWithRotationPath(filepath.Join(tmpDir, "logrotate-nginx")); err != nil {
 		t.Fatalf("first RunNginx() error: %v", err)
 	}
 	first, _ := os.ReadFile(outputPath)
 
-	if err := zcpinit.RunNginx(); err != nil {
+	if err := zcpinit.RunNginxWithRotationPath(filepath.Join(tmpDir, "logrotate-nginx")); err != nil {
 		t.Fatalf("second RunNginx() error: %v", err)
 	}
 	second, _ := os.ReadFile(outputPath)
@@ -302,7 +302,7 @@ func TestRunNginx_NoFakeServerBlock(t *testing.T) {
 	t.Cleanup(func() { zcpinit.ResetNginxOwner() })
 	t.Setenv("VSCODE_PASSWORD", "test")
 
-	if err := zcpinit.RunNginx(); err != nil {
+	if err := zcpinit.RunNginxWithRotationPath(filepath.Join(tmpDir, "logrotate-nginx")); err != nil {
 		t.Fatalf("RunNginx() error: %v", err)
 	}
 
@@ -315,5 +315,84 @@ func TestRunNginx_NoFakeServerBlock(t *testing.T) {
 	}
 	if strings.Contains(content, "listen 8081") {
 		t.Error("should NOT have the fake server block on port 8081")
+	}
+}
+
+// Not parallel: nginx paths and ownership are package-level test overrides.
+func TestRunNginx_FileRotationRetired(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		policy     string
+		blocked    bool
+		badConfig  bool
+		wantError  string
+		wantPolicy bool
+	}{
+		{name: "existing policy", policy: "create 0640 www-data adm\n"},
+		{name: "absent policy"},
+		{name: "removal failure", blocked: true, wantError: "nginx log rotation", wantPolicy: true},
+		{name: "render failure preserves policy", policy: "create 0640 www-data adm\n", badConfig: true, wantError: "nginx config", wantPolicy: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			policy := filepath.Join(tmpDir, "nginx")
+			if tt.blocked {
+				if err := os.Mkdir(policy, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(policy, "child"), []byte("keep"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			} else if tt.policy != "" {
+				if err := os.WriteFile(policy, []byte(tt.policy), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			unrelated := filepath.Join(tmpDir, "other-service")
+			if err := os.WriteFile(unrelated, []byte("unrelated policy\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			output := filepath.Join(tmpDir, "nginx.conf")
+			if tt.badConfig {
+				output = filepath.Join(tmpDir, "missing", "nginx.conf")
+			}
+			zcpinit.SetNginxOutputPath(output)
+			t.Cleanup(zcpinit.ResetNginxOutputPath)
+			zcpinit.SetNginxDirs([]string{filepath.Join(tmpDir, "cache")})
+			t.Cleanup(zcpinit.ResetNginxDirs)
+			zcpinit.SetNginxLogFiles(nil)
+			t.Cleanup(zcpinit.ResetNginxLogFiles)
+			zcpinit.SetNginxOwner(os.Geteuid(), os.Getegid())
+			t.Cleanup(zcpinit.ResetNginxOwner)
+			err := zcpinit.RunNginxWithRotationPath(policy)
+			if tt.wantError == "" {
+				if err != nil {
+					t.Fatalf("RunNginx: %v", err)
+				}
+				if err := zcpinit.RunNginxWithRotationPath(policy); err != nil {
+					t.Fatalf("repeat RunNginx: %v", err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Errorf("RunNginx error = %v, want %q", err, tt.wantError)
+			}
+			_, err = os.Stat(policy)
+			if tt.wantPolicy {
+				if err != nil {
+					t.Errorf("policy must remain: %v", err)
+				}
+			} else if !os.IsNotExist(err) {
+				t.Errorf("obsolete policy must be absent, stat = %v", err)
+			}
+			data, err := os.ReadFile(unrelated)
+			if err != nil || string(data) != "unrelated policy\n" {
+				t.Errorf("unrelated policy changed: %q, %v", data, err)
+			}
+			if tt.badConfig {
+				data, err := os.ReadFile(policy)
+				if err != nil || string(data) != tt.policy {
+					t.Errorf("failed render changed policy: %q, %v", data, err)
+				}
+			}
+		})
 	}
 }

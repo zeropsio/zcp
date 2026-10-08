@@ -39,7 +39,7 @@ func renderNginx(t *testing.T, password string, mateEnabled bool) string {
 		t.Setenv("ZCP_MATE_ENABLED", "1")
 	}
 
-	if err := zcpinit.RunNginx(); err != nil {
+	if err := zcpinit.RunNginxWithRotationPath(filepath.Join(tmpDir, "logrotate-nginx")); err != nil {
 		t.Fatalf("RunNginx(): %v", err)
 	}
 	data, err := os.ReadFile(outputPath)
