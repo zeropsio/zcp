@@ -126,11 +126,10 @@ func enableMate(rt runtime.Info) error {
 	// starts while this installs waits, then starts the new release once — so
 	// a restart here only ever stops a server on the old release, or a start
 	// still waiting on the lock. A lock held past the wait never fails the
-	// container start: the step goes on without it.
+	// container start: the step degrades without changing the installer's files.
 	release, lockErr := mate.LockInstall(mateLockWait)
 	if lockErr != nil {
-		fmt.Fprintf(os.Stderr, "    ! %v — installing without it\n", lockErr)
-		release = func() {}
+		return fmt.Errorf("mate install postponed: %w", lockErr)
 	}
 	defer release()
 

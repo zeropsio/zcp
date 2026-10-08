@@ -84,12 +84,21 @@ type mateStatusResult struct {
 	CheckedAt       string                  `json:"checkedAt"`
 	Error           string                  `json:"error,omitempty"`
 	SignIns         *mate.SignInsSeedStatus `json:"signIns,omitempty"`
+	Updater         *mateUpdaterStatus      `json:"updater,omitempty"`
 }
 
 // runMateStatus answers what zcp knows about the installed and latest mate
 // release. It never installs anything, and it always exits 0 — even when
 // the manifest is unreachable, in which case Error names why and
 // UpdateAvailable is false.
+type mateUpdaterStatus struct {
+	Protocol           int    `json:"protocol"`
+	RollbackCompatible bool   `json:"rollbackCompatible"`
+	Phase              string `json:"phase"`
+	RunningVersion     string `json:"runningVersion"`
+	FailedVersion      string `json:"failedVersion,omitempty"`
+}
+
 func runMateStatus(args []string) int {
 	asJSON := slices.Contains(args, "--json")
 	refresh := slices.Contains(args, "--refresh")
@@ -110,7 +119,28 @@ func runMateStatus(args []string) int {
 
 	ctx, cancel := context.WithTimeout(context.Background(), statusManifestTimeout)
 	defer cancel()
-	desired, err := mate.DesiredRelease(ctx, http.DefaultClient, mate.ManifestOptions{Refresh: refresh})
+	var desired mate.Manifest
+	var err error
+	if slices.Contains(args, "--local") {
+		desired, _ = mate.CachedRelease()
+	} else {
+		desired, err = mate.DesiredRelease(ctx, http.DefaultClient, mate.ManifestOptions{Refresh: refresh})
+	}
+	state, stateErr := mate.ReadOptionalUpdateState()
+	if slices.Contains(args, "--local") && runtime.DetectFrom(mate.LiveLookup(mate.LiveEnvStorePath)).MateEnabled {
+		state, _ = mate.ObserveUpdateState()
+	}
+	result.Updater = &mateUpdaterStatus{Protocol: 1, RollbackCompatible: mate.RollbackAllowed(result.Installed, desired), Phase: "idle", RunningVersion: result.Installed, FailedVersion: state.FailedVersion}
+	if state.Phase != "" {
+		result.Updater.Phase = state.Phase
+		result.Updater.RunningVersion = state.RunningVersion
+	}
+	if stateErr != nil {
+		result.Error = stateErr.Error()
+		result.Updater.RollbackCompatible = false
+		result.Updater.Phase = mate.RuntimesFailed
+		result.Updater.RunningVersion = ""
+	}
 	if err != nil {
 		result.Error = err.Error()
 	} else {
@@ -163,6 +193,7 @@ type mateUpdateResult struct {
 	To        string `json:"to,omitempty"`
 	Restarted bool   `json:"restarted"`
 	Error     string `json:"error,omitempty"`
+	Started   bool   `json:"started,omitempty"`
 }
 
 // runMateUpdate refreshes the release manifest, runs the same EnsureInstalled
@@ -172,6 +203,9 @@ type mateUpdateResult struct {
 // container restart. Container-only: it refuses on a local machine and when
 // ZCP_MATE_ENABLED is off, since there is nothing to update either way.
 func runMateUpdate(args []string) int {
+	if slices.Contains(args, "--worker") {
+		return runMateUpdateWorker(args)
+	}
 	force := slices.Contains(args, "--force")
 	asJSON := slices.Contains(args, "--json")
 
@@ -183,15 +217,21 @@ func runMateUpdate(args []string) int {
 		return failMateUpdate(asJSON, "ZCP_MATE_ENABLED is off — mate is not managed on this container")
 	}
 
+	if slices.Contains(args, "--automatic") || mateUpdateProbe() {
+		if err := launchMateUpdateWorker(args); err != nil {
+			return failMateUpdate(asJSON, err.Error())
+		}
+		installed, _ := mate.InstalledVersion()
+		printMateUpdateResult(mateUpdateResult{Action: "none", From: installed, Started: true}, asJSON)
+		return 0
+	}
+
 	// The install and the restart run under the install lock the unit's own
 	// start takes (mate.LockInstall): the start this restart causes waits,
-	// then finds nothing to install. A lock held past the wait still updates.
+	// then finds nothing to install. A held lock postpones another update.
 	release, lockErr := mate.LockInstall(mateUpdateLockWait)
 	if lockErr != nil {
-		if !asJSON {
-			fmt.Fprintf(os.Stderr, "%v — updating without it\n", lockErr)
-		}
-		release = func() {}
+		return failMateUpdate(asJSON, lockErr.Error())
 	}
 	defer release()
 

@@ -518,6 +518,14 @@ func defaultResolveDesiredRelease(opts EnsureOptions) (Manifest, error) {
 // mate init step, and `zcp mate update`) turns a returned error into a degraded
 // step or a non-zero exit, never a torn install.
 func EnsureInstalled(opts EnsureOptions) (Result, error) {
+	if skip, err := PrepareUpdateBoot(); skip || err != nil {
+		installed, _ := InstalledVersion()
+		if err != nil {
+			return Result{}, err
+		}
+		return Result{Action: ActionNone, From: installed, To: installed}, nil
+	}
+
 	desired, manifestErr := resolveDesiredRelease(opts)
 	installed, instErr := InstalledVersion()
 
@@ -537,6 +545,10 @@ func EnsureInstalled(opts EnsureOptions) (Result, error) {
 		return Result{}, fmt.Errorf("resolve desired mate release: %w", manifestErr)
 	}
 
+	state, _ := ReadUpdateState()
+	if !opts.Force && state.FailedVersion == desired.Version && instErr == nil {
+		return Result{Action: ActionNone, From: installed, To: installed, Warning: "keeping last-good; this release failed readiness"}, nil
+	}
 	if instErr == nil && installed == desired.Version {
 		return Result{Action: ActionNone, From: installed, To: installed}, nil
 	}
@@ -562,7 +574,33 @@ func EnsureInstalled(opts EnsureOptions) (Result, error) {
 // it, then activates it. A failure at any point removes the half-built
 // version directory and returns before CurrentLink() is touched.
 func stageAndActivate(desired Manifest) error {
+	if err := StageRelease(desired); err != nil {
+		return err
+	}
+	return activate(VersionDir(desired.Version))
+}
+
+// StageRelease downloads, installs and smokes a candidate without moving current.
+func StageRelease(desired Manifest) error {
 	versionDir := VersionDir(desired.Version)
+	if current, err := linkedVersionDir(CurrentLink()); err == nil && filepath.Clean(current) == filepath.Clean(versionDir) {
+		return fmt.Errorf("cannot stage over the live Mate directory")
+	}
+	if good, err := linkedVersionDir(LastGoodLink()); err == nil && filepath.Clean(good) == filepath.Clean(versionDir) {
+		version, err := installedVersionIn(good)
+		if err != nil {
+			return fmt.Errorf("last-good install: %w", err)
+		}
+		if version != desired.Version {
+			return fmt.Errorf("last-good package version mismatch")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), smokeTimeout)
+		defer cancel()
+		if err := smokeTestInstall(ctx, good); err != nil {
+			return fmt.Errorf("last-good smoke: %w", err)
+		}
+		return nil
+	}
 	if err := os.RemoveAll(versionDir); err != nil {
 		return fmt.Errorf("clear partial %s: %w", versionDir, err)
 	}
@@ -581,7 +619,7 @@ func stageAndActivate(desired Manifest) error {
 		return fmt.Errorf("smoke test %s: %w", versionDir, err)
 	}
 
-	return activate(versionDir)
+	return nil
 }
 
 // activate atomically repoints CurrentLink() at versionDir: build a
@@ -592,23 +630,7 @@ func stageAndActivate(desired Manifest) error {
 // link. A relative target keeps the layout portable if Prefix() itself ever
 // moves.
 func activate(versionDir string) error {
-	target, err := filepath.Rel(Prefix(), versionDir)
-	if err != nil {
-		return fmt.Errorf("relative path from %s to %s: %w", Prefix(), versionDir, err)
-	}
-
-	tmp := CurrentLink() + ".tmp"
-	// Best-effort: a stale tmp left by a prior crashed activation must not
-	// block this one.
-	_ = os.Remove(tmp)
-	if err := os.Symlink(target, tmp); err != nil {
-		return fmt.Errorf("create symlink %s -> %s: %w", tmp, target, err)
-	}
-	if err := os.Rename(tmp, CurrentLink()); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("activate %s: %w", versionDir, err)
-	}
-	return nil
+	return replaceLink(CurrentLink(), versionDir)
 }
 
 // versionEntry names one VersionsDir() entry for pruneOldVersions' sort.
@@ -642,6 +664,9 @@ func pruneOldVersions(liveVersion string) {
 	sort.Slice(versions, func(i, j int) bool { return versions[i].modTime.After(versions[j].modTime) })
 
 	keep := map[string]bool{liveVersion: true}
+	if lastGood, err := os.Readlink(LastGoodLink()); err == nil {
+		keep[filepath.Base(lastGood)] = true
+	}
 	for _, v := range versions {
 		if len(keep) >= 2 {
 			break
@@ -696,6 +721,7 @@ const EnvHQEnrollment = "T3CODE_ZEROPS_HQ_ENROLLMENT"
 func LaunchEnvLines() []string {
 	return []string{
 		EnvBasePath + "=" + BasePath,
+		"ZCP_MATE_UPDATE_STATE_FILE=" + UpdateStatePath(),
 		EnvStatusFile + "=" + DefaultStatusFilePath(),
 		EnvHQEnrollment + "=" + hq.EnrollmentPath(),
 	}

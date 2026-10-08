@@ -350,7 +350,8 @@ to do. So an update starts the server once, on the new release: the unit at boot
 and its restart stops only that waiting start (before the lock, an update started the server on
 the old release and restarted it onto the new one — two starts, ~10 s down each). Nothing keeps
 the server down: a lock is waited for at most four minutes, longer than an install's own bounds,
-and then the start goes on with what is installed; an install that fails starts what is
+and then the start goes on with what is installed; init degrades and another update postpones
+without the lock; an install that fails starts what is
 installed; the kernel drops the lock with its holder, so a file left on disk never blocks. The one
 case left with two starts is a boot that also updates zcp itself while the release requires the
 new zcp: the unit's start, still on the old zcp, keeps the installed release.
@@ -382,7 +383,7 @@ tracks zcp itself (`install.sh` → `releases/latest`), and refuses only what it
 ```json
 { "version": "0.8.1", "asset": "zerops-mate-0.8.1.tgz",
   "url": "https://github.com/zeropsio/mate/releases/download/v0.8.1/zerops-mate-0.8.1.tgz",
-  "sha256": "<64 hex>", "size": 21690443, "contract": 1, "publishedAt": "2026-09-09T07:23:00Z" }
+  "sha256": "<64 hex>", "size": 21690443, "contract": 1, "rollbackCompatible": true, "compatibleFrom": "0.8.0", "publishedAt": "2026-09-09T07:23:00Z" }
 ```
 
 `DesiredRelease()` reads `https://github.com/zeropsio/mate/releases/latest/download/stable.json`
@@ -415,9 +416,57 @@ the workflow can sign with that key.
 where it changes: the fork's CI asserts that `mate serve --help` advertises every flag of contract 1
 (the list in §2.8), and a flag added on either side goes through a contract bump, not a pin move.
 
-**Release order** is no longer a rule. A mate release is complete when its tag's workflow has
-published the tarball and `stable.json`; every container picks it up at its next `zcp init` or
-`zcp mate update`. A zcp release never waits for mate.
+**Release order is fork first for a new capability.** Publish the Mate artifact and
+manifest before releasing zcp support. An older zcp ignores additive manifest metadata;
+no new `serve` flag is passed. Auto-update protocol 1 is probed before it is used.
+
+### 2.1d Automatic updates — protocol 1
+
+The stable manifest optionally declares `rollbackCompatible: true` and `compatibleFrom`.
+The installed version must be at least that proved compatibility floor and below the candidate.
+Missing, invalid or unmet compatibility metadata means manual confirmation is required.
+`zcp mate status --json` exposes `updater` with `protocol: 1`,
+`rollbackCompatible`, `phase`, `runningVersion` and optional `failedVersion`. The existing
+manifest resolver remains the only version reader. `status --local --json` reads only its
+cache and local coordinator state, so startup need not wait on a network request.
+
+`zcp mate update --automatic --json` acknowledges an independent systemd transient worker
+with `started: true`. The worker runs outside `zerops@mate`'s cgroup, takes the install lock,
+refreshes the manifest, and refuses a dev build, same/older version, incompatible release or
+version at or below the remembered failure. It stages and smokes the candidate without changing
+`current`, then POSTs loopback `/api/mate/update/drain` with `{version, deadlineMs:600000,
+automatic:true}`. Mate rechecks org policy and proves its engine idle behind an admission
+barrier. A deadline or refusal postpones the update and cancels that barrier; no work is stopped.
+An already-running terminal process is work. Native provider resume bindings must survive.
+The worker's exact process identity is recorded from staging onward. A pending local status
+observation can mark staging/draining postponed only once that identity is provably gone,
+under the install lock. The transient unit's `ExecStopPost` also cancels an abandoned drain;
+for an interrupted compatible switch it restores, restarts, verifies and commits last-good.
+Neither path guesses from elapsed time. No worker retry loop is added.
+
+The switch writes `last-good` and minimal `update.json` state (phase, candidate, previous,
+worker process identity, last proved running version and remembered failure), syncs them, and
+atomically moves `current`. Only then is the lock released and a nonblocking unit restart
+requested. The new launch receives the additive `ZCP_MATE_UPDATE_STATE_FILE` path and keeps
+admission fenced. Within 15 seconds of the restart request, readiness must prove protocol 1,
+the exact version, a different nonempty boot id, engine/database readiness, and C-4. POST
+`/api/mate/update/commit` opens admission; only a proved candidate becomes `last-good`.
+
+A compatible candidate failing readiness returns `current` to the explicit `last-good`,
+remembers the failed version before restarting, proves that version ready, and commits it.
+The resolver is never consulted to choose a rollback. Pruning preserves `last-good`.
+At boot, an unfinished switch whose recorded worker is gone returns to `last-good` before
+any install; a live worker owns the switch and boot skips the installer. A failed version
+is not automatically retried until a strictly newer release exists; `--force` is attended.
+There is no separate update journal or quarantine.
+
+Confirmed manual updates on protocol-capable Mates use the same drain and switch. A
+non-rollback-compatible manual release failing readiness stays on its candidate and reports
+that attended recovery is required; neither its worker nor boot launches an incompatible
+previous schema. Older Mates have no drain capability: while idle, perform one attended
+full container restart using the normal operator restart. `install.sh` updates zcp and
+`zcp init` installs Mate. Verify `status --json` reports `updater.protocol:1` and Mate's
+loopback readiness advertises protocol 1 before leaving future updates unattended.
 
 ### 2.2 The supervised process
 
@@ -535,7 +584,7 @@ design removes. A client must also read a `404` on `{BasePath}/healthz` as its o
 | container id | unchanged | changes | unchanged |
 
 A restart is also an upgrade — `install.sh` re-runs and replaces `/usr/local/bin/zcp` (measured,
-see the ledger), and the new binary's pin is what the next `zcp init` reconciles toward (§2.1a).
+see the ledger), and the release manifest is what the next `zcp init` reconciles toward (§2.1a).
 Thread history is one redeploy away from gone; a client surfaces that first. A **redeploy** losing
 the bundle is not a regression under the versioned layout — it loses the whole container — and a
 **disable** keeping it is what makes re-enabling free.
