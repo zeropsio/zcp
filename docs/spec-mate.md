@@ -551,6 +551,20 @@ password — verified by rendering both templates side by side, and pinned by
 `TestRunNginx_MateDisabled_RendersNoMateSurface`, which asserts the absence of `/mate`, `3773`, `healthz`
 and the marker path *and* the presence of every non-mate structure.
 
+Nginx sends both access and error logs to the container's system journal through the
+`/dev/log` Unix syslog socket (`local1`, tag `nginx`, access severity `info` and error severity
+`error`). Journal retention is bounded by the platform's journald configuration. Nginx does
+not open `/var/log/nginx` files, so rotating a legacy log into a different owner cannot stop
+it from starting, reopening logs or serving Mate. This logging contract also applies with
+Mate disabled.
+
+After successfully rendering the configuration, `zcp init nginx` removes the obsolete
+`/etc/logrotate.d/nginx` policy. A missing policy is already converged; any other removal
+failure is reported. A failed configuration render leaves the policy in place. Init owns
+nginx's cache and temporary directories, and leaves legacy log contents and permissions
+and unrelated rotation policies untouched. `TestRunNginx_LogsUseSystemJournal`,
+`TestRunNginx_FileRotationRetired`, `TestRunNginx_LegacyLogFilesPreserved`.
+
 Live edits do not survive — every boot re-renders `internal/content/templates/nginx.conf.tmpl`.
 
 ### 2.5 Readiness — two probes, no process
