@@ -77,8 +77,8 @@ const mateVerbStatus = "status"
 // from the same resolver DesiredRelease() and the manifest cache — never a
 // fresh install.
 type mateStatusResult struct {
-	Installed       string                  `json:"installed,omitempty"`
-	Latest          string                  `json:"latest,omitempty"`
+	Installed       string                  `json:"installed"`
+	Latest          string                  `json:"latest"`
 	Contract        int                     `json:"contract"`
 	UpdateAvailable bool                    `json:"updateAvailable"`
 	CheckedAt       string                  `json:"checkedAt"`
