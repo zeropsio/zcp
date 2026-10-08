@@ -174,3 +174,47 @@ func TestMateUpdate_ManualUnknownCapabilityCannotReplaceRunningMate(t *testing.T
 		})
 	}
 }
+
+type startupReadinessTransport struct {
+	stallAlways bool
+	calls       atomic.Int32
+}
+
+func (p *startupReadinessTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.URL.Path == "/api/mate/update/readiness" && (p.calls.Add(1) == 1 || p.stallAlways) {
+		<-req.Context().Done()
+		return nil, req.Context().Err()
+	}
+	body := `{"protocol":1,"version":"0.14.2","bootId":"new","ready":true}`
+	if req.URL.Path == "/.well-known/t3/environment" {
+		body = `{"basePath":"/mate"}`
+	}
+	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
+}
+
+func TestMateUpdate_ReadinessDuringStartup(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		stallAlways bool
+		budget      time.Duration
+		wantReady   bool
+	}{
+		{"stalled old connection does not hide a healthy new boot", false, 2 * time.Second, true},
+		{"unavailable readiness cannot extend the explicit budget", true, 100 * time.Millisecond, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			transport := &startupReadinessTransport{stallAlways: tc.stallAlways}
+			original := http.DefaultTransport
+			http.DefaultTransport = transport
+			t.Cleanup(func() { http.DefaultTransport = original })
+			start := time.Now()
+			err := mateUpdateWaitReady("0.14.2", "old", start.Add(tc.budget))
+			if (err == nil) != tc.wantReady {
+				t.Fatalf("ready=%v, error=%v", err == nil, err)
+			}
+			if elapsed := time.Since(start); elapsed > tc.budget+time.Second {
+				t.Fatalf("readiness exceeded its explicit budget: %s", elapsed)
+			}
+		})
+	}
+}
