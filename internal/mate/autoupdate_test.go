@@ -24,7 +24,7 @@ func TestAutomaticUpdate_CandidateDecision_Result(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := mate.AutomaticUpdateAllowed(tc.installed, tc.failed, mate.Manifest{Version: tc.candidate, RollbackCompatible: tc.compatible})
+			got := mate.AutomaticUpdateAllowed(tc.installed, tc.failed, mate.Manifest{Version: tc.candidate, RollbackCompatible: tc.compatible, CompatibleFrom: "0.14.0"})
 			if got != tc.allowed {
 				t.Fatalf("allowed=%v, want %v", got, tc.allowed)
 			}
@@ -133,5 +133,19 @@ func TestSwitchUpdate_IncompatibleConfirmedFailure_NoRollback(t *testing.T) {
 	current, _ = mate.InstalledVersion()
 	if current != "0.14.2" {
 		t.Fatalf("boot rolled back incompatible release: %s", current)
+	}
+}
+
+func TestAutomaticUpdate_CompatibilityFloor_Result(t *testing.T) {
+	for _, tc := range []struct {
+		floor   string
+		allowed bool
+	}{{"", false}, {"garbled", false}, {"0.14.1", false}, {"0.14.0", true}, {"0.13.0", true}} {
+		t.Run(tc.floor, func(t *testing.T) {
+			got := mate.AutomaticUpdateAllowed("0.14.0", "", mate.Manifest{Version: "0.14.2", RollbackCompatible: true, CompatibleFrom: tc.floor})
+			if got != tc.allowed {
+				t.Fatalf("allowed=%v, want=%v", got, tc.allowed)
+			}
+		})
 	}
 }
