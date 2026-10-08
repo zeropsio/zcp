@@ -134,11 +134,11 @@ func seedInstalledBundle(t *testing.T, home, version string) {
 
 // writeFakeInstallTools puts a fake npm and node on PATH so a real
 // EnsureInstalled pass (download real, over loopback; npm install and the
-// native-addon smoke probe fake) can stage and activate toVersion without a
+// native-addon smoke probe fake) can stage and activate manifestVersion without a
 // real npm registry or Node runtime. npm writes exactly what
 // mate.InstalledVersion()/BinPath() expect to find; node exits 0
 // unconditionally, satisfying the native-addon probe.
-func writeFakeInstallTools(t *testing.T, toVersion string) {
+func writeFakeInstallTools(t *testing.T) {
 	t.Helper()
 	binDir := t.TempDir()
 	// npm's fake script below shells out to mkdir/chmod; keep the system
@@ -158,7 +158,7 @@ mkdir -p "$prefix/node_modules/.bin"
 printf '{"name":"%s","version":"%s"}' > "$prefix/node_modules/%s/package.json"
 printf '#!/bin/sh\necho mate %s\n' > "$prefix/node_modules/.bin/%s"
 chmod +x "$prefix/node_modules/.bin/%s"
-`, mate.PackageName, mate.PackageName, toVersion, mate.PackageName, toVersion, mate.BinName, mate.BinName))
+`, mate.PackageName, mate.PackageName, manifestVersion, mate.PackageName, manifestVersion, mate.BinName, mate.BinName))
 	writeFakeBin(t, filepath.Join(binDir, "node"), "#!/bin/sh\nexit 0\n")
 }
 
@@ -169,6 +169,10 @@ func containerEnv(t *testing.T) {
 	t.Setenv("serviceId", "gt7tJZjDSk2zyH5XvNeAQQ")
 	t.Setenv("projectId", "nTV3oMB2SS634ImDJnQckg")
 	t.Setenv("ZCP_MATE_ENABLED", "1")
+	// This legacy CLI fixture explicitly answers that the updater endpoint is absent.
+	old := http.DefaultTransport
+	http.DefaultTransport = capabilityTransport{status: http.StatusNotFound, body: "not found", fallback: old}
+	t.Cleanup(func() { http.DefaultTransport = old })
 }
 
 func TestRunMateCmd_UnknownSubcommand_Fails(t *testing.T) {
@@ -382,7 +386,7 @@ func TestRunMateUpdate_InstallsAndRestartsWhenUnitPresent(t *testing.T) {
 	t.Setenv("HOME", home)
 	containerEnv(t)
 	manifestAndTarballServer(t)
-	writeFakeInstallTools(t, manifestVersion)
+	writeFakeInstallTools(t)
 	// ZCP_MATE_MANIFEST_URL and PATH are both set via t.Setenv above; the
 	// container env vars must survive the PATH overwrite, which they do
 	// since containerEnv used t.Setenv itself (independent keys).
@@ -446,7 +450,7 @@ func TestRunMateUpdate_NoUnitFile_SkipsRestart(t *testing.T) {
 	t.Setenv("HOME", home)
 	containerEnv(t)
 	manifestAndTarballServer(t)
-	writeFakeInstallTools(t, manifestVersion)
+	writeFakeInstallTools(t)
 
 	origUnitPath := mateUnitFilePath
 	mateUnitFilePath = filepath.Join(t.TempDir(), "no-such-unit.service")
@@ -470,7 +474,7 @@ func TestRunMateUpdate_RestartFailure_ReturnsNonZero(t *testing.T) {
 	t.Setenv("HOME", home)
 	containerEnv(t)
 	manifestAndTarballServer(t)
-	writeFakeInstallTools(t, manifestVersion)
+	writeFakeInstallTools(t)
 
 	unitPath := filepath.Join(t.TempDir(), "zerops@mate.service")
 	if err := os.WriteFile(unitPath, []byte("[Unit]\n"), 0o644); err != nil {

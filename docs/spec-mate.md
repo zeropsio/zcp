@@ -351,7 +351,11 @@ The explicitly attended full-container `zcp init` operation retains its existing
 convergence, including the one full restart that brings an older Mate onto this updater. It must
 be performed while idle. The unit and init share the install lock; a busy lock postpones updates,
 and startup can still serve the installed version after its bounded lock wait. Normal subsequent
-updates use the separate worker described below.
+updates use the separate worker described below. The manual CLI chooses that worker only after
+an exact protocol-1 capability response. An explicit HTTP 404 proves an older endpoint absent
+and retains the attended legacy path; transport failure, another status, invalid JSON, or an
+unknown protocol postpones without changing the installation. An inactive or unreachable Mate
+needs attended recovery, never a guessed legacy capability.
 
 **`zcp mate update [--force] [--json]`** runs the identical pass from the CLI and then restarts
 `zerops@mate` when the unit is registered, so an update needs no container restart. It is what the

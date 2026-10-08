@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -46,7 +47,7 @@ func updateRequest(ctx context.Context, path string, body []byte, out *updateRea
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("update %s: HTTP %d", path, resp.StatusCode)
+		return &mateUpdateHTTPError{path: path, status: resp.StatusCode}
 	}
 	if out == nil {
 		_, err := io.Copy(io.Discard, resp.Body)
@@ -57,11 +58,30 @@ func updateRequest(ctx context.Context, path string, body []byte, out *updateRea
 	}
 	return nil
 }
-func mateUpdateProbe() bool {
+
+type mateUpdateHTTPError struct {
+	path   string
+	status int
+}
+
+func (e *mateUpdateHTTPError) Error() string {
+	return fmt.Sprintf("update %s: HTTP %d", e.path, e.status)
+}
+func mateUpdateProbe() (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	var r updateReadiness
-	return updateRequest(ctx, "readiness", nil, &r) == nil && r.Protocol == 1
+	if err := updateRequest(ctx, "readiness", nil, &r); err != nil {
+		var status *mateUpdateHTTPError
+		if errors.As(err, &status) && status.status == http.StatusNotFound {
+			return false, nil
+		}
+		return false, fmt.Errorf("cannot prove Mate update capability; update postponed: %w", err)
+	}
+	if r.Protocol != 1 {
+		return false, fmt.Errorf("unknown Mate updater protocol %d; update postponed", r.Protocol)
+	}
+	return true, nil
 }
 func launchMateUpdateWorker(args []string) error {
 	binary, err := os.Executable()

@@ -146,7 +146,7 @@ func TestMateUpdate_ManualUnknownCapabilityCannotReplaceRunningMate(t *testing.T
 			containerEnv(t)
 			seedInstalledBundle(t, home, "0.14.0")
 			manifestAndTarballServer(t)
-			writeFakeInstallTools(t, manifestVersion)
+			writeFakeInstallTools(t)
 			bin := t.TempDir()
 			writeFakeBin(t, filepath.Join(bin, "sudo"), "#!/bin/sh\nexit 0\n")
 			t.Setenv("PATH", bin+":"+os.Getenv("PATH"))

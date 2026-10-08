@@ -217,7 +217,15 @@ func runMateUpdate(args []string) int {
 		return failMateUpdate(asJSON, "ZCP_MATE_ENABLED is off — mate is not managed on this container")
 	}
 
-	if slices.Contains(args, "--automatic") || mateUpdateProbe() {
+	supported := slices.Contains(args, "--automatic")
+	if !supported {
+		var probeErr error
+		supported, probeErr = mateUpdateProbe()
+		if probeErr != nil {
+			return failMateUpdate(asJSON, probeErr.Error())
+		}
+	}
+	if supported {
 		if err := launchMateUpdateWorker(args); err != nil {
 			return failMateUpdate(asJSON, err.Error())
 		}
