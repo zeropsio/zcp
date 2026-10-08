@@ -41,7 +41,16 @@ func TestStart_UnknownService(t *testing.T) {
 }
 
 func TestStart_KnownService_ArgsCorrect(t *testing.T) {
-	// Not parallel — mutates runFunc + tuneFunc.
+	// Not parallel — mutates runFunc + tuneFunc and PATH.
+	// LookPath needs executable files, but the captured runner never executes
+	// them. Keep the launch contract covered even without nginx in CI.
+	binDir := t.TempDir()
+	for _, name := range []string{"nginx", "code-server"} {
+		if err := os.WriteFile(filepath.Join(binDir, name), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatalf("seed %s executable: %v", name, err)
+		}
+	}
+	t.Setenv("PATH", binDir)
 	type captured struct {
 		binary string
 		args   []string
@@ -66,7 +75,7 @@ func TestStart_KnownService_ArgsCorrect(t *testing.T) {
 		{
 			"nginx",
 			"nginx",
-			[]string{"nginx", "-g", "daemon off;"},
+			[]string{"nginx", "-e", "stderr", "-g", "daemon off;"},
 		},
 		{
 			"vscode",
@@ -78,11 +87,7 @@ func TestStart_KnownService_ArgsCorrect(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got = captured{}
 			err := service.Start(tt.svc)
-			// LookPath may fail if binary not installed — that's OK in CI.
 			if err != nil {
-				if strings.Contains(err.Error(), "find") {
-					t.Skipf("binary not found (expected in CI): %v", err)
-				}
 				t.Fatalf("Start(%q) error: %v", tt.svc, err)
 			}
 			if len(got.args) != len(tt.wantArgs) {

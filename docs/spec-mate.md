@@ -553,7 +553,10 @@ and the marker path *and* the presence of every non-mate structure.
 
 Nginx sends both access and error logs to the container's system journal through the
 `/dev/log` Unix syslog socket (`local1`, tag `nginx`, access severity `info` and error severity
-`error`). Journal retention is bounded by the platform's journald configuration. Nginx does
+`error`). The supervised launch also passes `-e stderr`: nginx opens its compiled-in
+error-log destination before parsing this configuration, so its bootstrap diagnostics must
+use the inherited journal stream too. `TestStart_KnownService_ArgsCorrect` pins that launch.
+Journal retention is bounded by the platform's journald configuration. Nginx does
 not open `/var/log/nginx` files, so rotating a legacy log into a different owner cannot stop
 it from starting, reopening logs or serving Mate. This logging contract also applies with
 Mate disabled.
