@@ -62,7 +62,10 @@ func services() map[string]execConfig {
 	return map[string]execConfig{
 		"nginx": {
 			binary: "nginx",
-			args:   []string{"nginx", "-g", "daemon off;"},
+			// nginx opens its compiled-in error log before reading nginx.conf.
+			// Override that bootstrap destination too, so stale rotated files
+			// cannot prevent a journal-logging nginx from starting.
+			args: []string{"nginx", "-e", "stderr", "-g", "daemon off;"},
 		},
 		"vscode": {
 			binary: "code-server",
