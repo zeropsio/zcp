@@ -170,6 +170,14 @@ func runMateUpdateWorker(args []string) int {
 		}
 		return postpone(err)
 	}
+	current, currentErr := mate.InstalledVersion()
+	if currentErr != nil || current != installed || (automatic && !mate.AutomaticUpdateAllowed(current, state.FailedVersion, desired)) {
+		_ = mateUpdatePost("cancel")
+		if currentErr == nil {
+			currentErr = fmt.Errorf("installed version or compatibility changed while draining")
+		}
+		return postpone(currentErr)
+	}
 	// The durable switch record excludes installers during restart. The lock
 	// must be released: the new unit takes the same lock before its launch.
 
