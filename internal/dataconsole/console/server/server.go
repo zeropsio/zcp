@@ -26,6 +26,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/dataconsole/console"
 	"github.com/zeropsio/zcp/internal/dataconsole/console/provider"
@@ -66,7 +67,7 @@ func New(engine *console.Engine, token string, webui fs.FS) *Server {
 	return NewWithDiagnostics(engine, token, webui, os.Stderr)
 }
 
-// NewWithDiagnostics builds the server with an injectable raw-cause diagnostic
+// NewWithDiagnostics builds the server with an injectable error-category diagnostic
 // sink. Production defaults to stderr through New; tests pass a buffer.
 func NewWithDiagnostics(engine *console.Engine, token string, webui fs.FS, diagnostics io.Writer) *Server {
 	if diagnostics == nil {
@@ -88,6 +89,7 @@ func (s *Server) routes() {
 
 func (s *Server) apiRoutes() []route {
 	return []route{
+		{pattern: "/api/summary", methods: []string{http.MethodGet}, handler: s.handleSummary},
 		{pattern: "/api/services", methods: []string{http.MethodGet}, handler: s.handleServices},
 		{pattern: "/api/refresh", methods: []string{http.MethodPost}, handler: s.handleRefresh},
 		{pattern: "/api/tree", methods: []string{http.MethodGet}, handler: s.handleTree},
@@ -137,6 +139,11 @@ func (s *Server) routeGroup(routes []route) http.HandlerFunc {
 			w.Header().Set("Allow", allow)
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
+		}
+		if !rt.mutating {
+			ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+			defer cancel()
+			r = r.WithContext(ctx)
 		}
 		r = s.withRouteContext(r, rt)
 		if rt.mutating {
@@ -274,6 +281,17 @@ func (s *Server) confirmed(r *http.Request) bool {
 }
 
 // ---- handlers ----
+
+func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	summary, err := s.engine.Summary(ctx, r.URL.Query().Get("service"))
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	writeJSON(w, summary)
+}
 
 func (s *Server) handleServices(w http.ResponseWriter, r *http.Request) {
 	proj, err := s.engine.Project(r.Context())
@@ -505,6 +523,7 @@ func (s *Server) handleTable(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, err)
 		return
 	}
+	boundTableCells(&tp)
 	writeJSON(w, tp)
 }
 
@@ -1057,6 +1076,9 @@ func parsePage(r *http.Request) provider.Page {
 	if column != "" || direction != "" {
 		pg.Sort = &provider.Sort{Column: column, Direction: direction}
 	}
+	if pg.Limit <= 0 || pg.Limit > 100 {
+		pg.Limit = 100
+	}
 	return pg
 }
 
@@ -1247,7 +1269,7 @@ func logErr(r *http.Request, meta requestContext, status int, code string, err e
 		meta.action,
 		status,
 		code,
-		err.Error(),
+		provider.ErrorCode(err),
 	)
 }
 

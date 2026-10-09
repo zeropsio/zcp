@@ -27,6 +27,7 @@ var serviceProfiles = []ServiceProfile{
 	{BaseType: "mysql", Family: FamilyTabular, Support: SupportFull, ProvenBy: "mariadb"},
 	{BaseType: "clickhouse", Family: FamilyTabular, Support: SupportViewOnly},
 	{BaseType: "valkey", Family: FamilyKV, Support: SupportFull},
+	{BaseType: "redis", Family: FamilyKV, Support: SupportFull},
 	{BaseType: "keydb", Family: FamilyKV, Support: SupportNotYet}, // classified even though removed from the platform
 	{BaseType: "object-storage", Family: FamilyObject, Support: SupportFull},
 	{BaseType: "elasticsearch", Family: FamilyDocument, Support: SupportFull},

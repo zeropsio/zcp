@@ -182,14 +182,12 @@ func (p *Provider) leaf(ctx context.Context, parent provider.Path, name, fullKey
 		node.Kind = provider.KindTabular
 	}
 	node.Meta = &provider.NodeMeta{EntryType: t}
+	_ = p.readExpiry(ctx, fullKey, node.Meta)
 	return node
 }
 
-// Stat reports a key's type + TTL. ttlSeconds is nil for a key with no
-// expiry — Redis TTL replies -1 "exists, no expiry" / -2 "missing" (the
-// latter can't happen here: typeNone already returned ErrNotFound above), and
-// either must never surface as the literal 0, which the SPA reads as "expires
-// in 0s" instead of "no expiry" (KV-AUD-02).
+// Stat reports type and explicit expiry state. A key may disappear between
+// TYPE and TTL; readExpiry returns ErrNotFound for that race.
 func (p *Provider) Stat(ctx context.Context, path provider.Path) (provider.Node, error) {
 	ctx, cancel := context.WithTimeout(ctx, opTimeout)
 	defer cancel()
@@ -201,17 +199,35 @@ func (p *Provider) Stat(ctx context.Context, path provider.Path) (provider.Node,
 	if t == typeNone {
 		return provider.Node{}, provider.ErrNotFound
 	}
-	ttl, _ := p.cli.TTL(ctx, key).Result()
 	kind := provider.KindBlob
 	if t != typeString {
 		kind = provider.KindTabular
 	}
 	meta := &provider.NodeMeta{EntryType: t}
-	if ttl > 0 {
-		ttlSeconds := int64(ttl.Seconds())
-		meta.TTLSeconds = &ttlSeconds
+	if err := p.readExpiry(ctx, key, meta); err != nil {
+		return provider.Node{}, err
 	}
 	return provider.Node{Name: lastSeg(path), Kind: kind, Path: path, Meta: meta}, nil
+}
+
+// readExpiry keeps unknown, persistent, expiring and disappeared keys distinct.
+func (p *Provider) readExpiry(ctx context.Context, key string, meta *provider.NodeMeta) error {
+	meta.TTLState = "unknown"
+	ttl, err := p.cli.TTL(ctx, key).Result()
+	// Only a successful expiry read can replace the explicit unknown state.
+	if err == nil {
+		switch {
+		case ttl == -2:
+			return provider.ErrNotFound
+		case ttl == -1:
+			meta.TTLState = "persistent"
+		case ttl >= 0:
+			meta.TTLState = "expires"
+			seconds := int64(ttl.Seconds())
+			meta.TTLSeconds = &seconds
+		}
+	}
+	return nil
 }
 
 // ReadBlob returns a string value, head-sliced over the guard, with TTL.

@@ -14,6 +14,11 @@ module.exports = Object.freeze({
   "routes": [
     {
       "method": "GET",
+      "path": "/api/summary",
+      "mutating": false
+    },
+    {
+      "method": "GET",
       "path": "/api/services",
       "mutating": false
     },

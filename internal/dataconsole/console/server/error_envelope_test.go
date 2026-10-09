@@ -64,7 +64,7 @@ func TestServer_ErrorEnvelope_SentinelErrors(t *testing.T) {
 				t.Fatalf("envelope = %+v, want code=%q status=%d message=%q", env, tc.code, tc.status, tc.message)
 			}
 			logText := logs.String()
-			for _, want := range []string{env.RequestID, "GET", "/api/blob", "service=svc", "family=object", "action=readBlob", "provider read"} {
+			for _, want := range []string{env.RequestID, "GET", "/api/blob", "service=svc", "family=object", "action=readBlob", "code=" + tc.code} {
 				if !strings.Contains(logText, want) {
 					t.Fatalf("diagnostic log %q missing %q", logText, want)
 				}
@@ -139,7 +139,7 @@ func TestServer_ErrorEnvelope_PublicDetail_WorksAcrossSentinels(t *testing.T) {
 	}
 }
 
-func TestServer_ErrorEnvelope_InternalSanitizesAndLogsRawCause(t *testing.T) {
+func TestServer_ErrorEnvelope_SecretsNeverReachLogs(t *testing.T) {
 	t.Parallel()
 	const rawCause = "driver leaked password=secret cause"
 	ts, tok, logs := newEnvelopeServer(t, errors.New(rawCause))
@@ -159,7 +159,10 @@ func TestServer_ErrorEnvelope_InternalSanitizesAndLogsRawCause(t *testing.T) {
 		t.Fatalf("envelope = %+v, want internal/500/generic", env)
 	}
 	logText := logs.String()
-	for _, want := range []string{env.RequestID, rawCause, "GET", "/api/blob", "service=svc", "family=object", "action=readBlob"} {
+	if strings.Contains(logText, rawCause) {
+		t.Fatal("raw connection cause leaked into diagnostics")
+	}
+	for _, want := range []string{env.RequestID, "GET", "/api/blob", "service=svc", "family=object", "action=readBlob"} {
 		if !strings.Contains(logText, want) {
 			t.Fatalf("diagnostic log %q missing %q", logText, want)
 		}

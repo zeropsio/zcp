@@ -274,7 +274,7 @@ into the affordance profile. Pinned by `TestClassify`, `TestSupportFor`,
 |---|---|---|---|
 | tabular | postgresql, mariadb, mysql | full | browse, arbitrary read-only SQL, cell/row edit |
 | tabular | clickhouse | view-only | async mutations — browse/query only |
-| kv | valkey (Redis protocol; keydb classified but removed from the platform) | full | string values + hash/list/set/zset entries via typed-command allowlist; TTL shown read-only, set/clear gated |
+| kv | valkey, redis (Redis protocol; keydb classified but removed from the platform) | full | string values + hash/list/set/zset entries via typed-command allowlist; TTL shown read-only, set/clear gated |
 | object | object-storage (S3) | full | browse, read, edit, upload, rename, delete |
 | document | elasticsearch, meilisearch, typesense | full | documents as JSON blobs by id (REST over stdlib `net/http`) |
 | document | qdrant | view-only | vectors are not human-editable |
@@ -427,9 +427,22 @@ Pinned by `TestEditCell_BigintJSONNumber_BindsExactText`,
 
 ### 7.4 Presentation contract (server-declared, SPA-rendered)
 
+The read-only Mate panel also consumes `GET /api/summary?service=<hostname>`.
+The engine builds `maskedConnection` from its connection descriptor, with credentials masked;
+object storage also returns its configured `bucket`. Object URLs omit userinfo, query signatures
+and fragments. No environment map or raw descriptor crosses this boundary. Unsupported descriptor
+families return unsupported rather than guessing a connection string.
+
+Read routes have a ten-second cancellation deadline and default/maximum page size of 100.
+Table responses bound individual cells to 4 KiB (less for wide pages), mark truncation, and retain
+small exact numeric values. Mate additionally enforces a 1 MiB JSON response budget and streams
+only 256 KiB of a blob. KV list/stat metadata uses `ttlState`: `expires` with `ttlSeconds`,
+`persistent`, or `unknown`. A key disappearing between TYPE and TTL returns not-found from stat.
+Redis is independently registered and conformance-tested alongside Valkey.
+
 The server DECLARES presentation metadata; the SPA renders it — it never guesses.
 `Node.Meta` is a typed, discriminated `NodeMeta` (`size`/`modified`/`contentType`/
-`etag`/`entryType`/`count`/`ttlSeconds`, each populated only where a provider knows
+`etag`/`entryType`/`count`/`ttlSeconds`/`ttlState`, each populated only where a provider knows
 it); a KV key's `entryType` drives a per-redis-type tree glyph so a hash/list/set/
 zset/string is visually distinct. `Column` carries per-column `editable`+`reason`
 (a PK column is `editable:false reason:"primary key"`; a view-only tier's columns
@@ -543,7 +556,7 @@ has since navigated away from.
   global relation sort + optional exact-count numbered pagination per §7.4;
   PK and ClickHouse aggregate-state columns non-editable; a missing table →
   `ErrNotFound`. Query-result pagination and SQL text stay caller-owned.
-- **kv** (valkey full) — SCAN `:`-tree with per-type glyphs; string values +
+- **kv** (valkey/redis full) — SCAN `:`-tree with per-type glyphs; string values +
   hash/list/set/zset entries via a typed-command allowlist; collection-create
   (collision-refusing); `WriteBlob` never clobbers a collection (`ErrWrongType`);
   no-TTL is the nil sentinel.
@@ -626,7 +639,7 @@ Beyond the write boundary (§5), the console layers:
   posted by another window holding a handle to it.
 - **Sanitized provider errors** — responses carry public sentinel messages, plus
   an opt-in pre-sanitized detail where a provider attaches one (§7.2); the raw
-  cause goes to the stderr diagnostic sink, never the client.
+  cause is discarded; diagnostics retain only the error category, never credentials.
 - **Broker guards** (embed) — fixed loopback destination + method/path allowlist
   mirroring the server routes (§4.1).
 - **Browser-download handoff** (embed) — the temporary listener binds exactly

@@ -172,8 +172,8 @@ func TestHandleDownload_FirstReadFailure_ReturnsEnvelope(t *testing.T) {
 	if !strings.Contains(string(body), `"code":"upstream"`) || strings.Contains(string(body), "secret-driver-cause") {
 		t.Fatalf("error envelope = %s, want sanitized upstream code without raw cause", body)
 	}
-	if !strings.Contains(diagnostics.String(), "secret-driver-cause") {
-		t.Fatalf("diagnostics = %q, want raw cause", diagnostics.String())
+	if strings.Contains(diagnostics.String(), "secret-driver-cause") {
+		t.Fatal("raw cause leaked into diagnostics")
 	}
 	if !reader.closed {
 		t.Fatal("download reader was not closed after first-read failure")

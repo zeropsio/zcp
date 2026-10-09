@@ -82,8 +82,7 @@ type Node struct {
 //   - Count: container child count, ONLY where a provider already knows it
 //     for free (no family populates this yet — every current container
 //     listing would need an extra, non-cheap round trip to count children).
-//   - TTLSeconds: kv key TTL: nil means "no expiry", NEVER the literal 0
-//     (kv Stat; the S28 sentinel, KV-AUD-02).
+//   - TTLState distinguishes expiry, persistent and unknown; TTLSeconds is present only for expiry.
 type NodeMeta struct {
 	Size        *int64     `json:"size,omitempty"`
 	Modified    *time.Time `json:"modified,omitempty"`
@@ -91,6 +90,7 @@ type NodeMeta struct {
 	ETag        string     `json:"etag,omitempty"`
 	EntryType   string     `json:"entryType,omitempty"`
 	Count       *int64     `json:"count,omitempty"`
+	TTLState    string     `json:"ttlState,omitempty"`
 	TTLSeconds  *int64     `json:"ttlSeconds,omitempty"`
 }
 

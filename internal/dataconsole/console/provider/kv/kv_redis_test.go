@@ -2,6 +2,7 @@ package kv
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/zeropsio/zcp/internal/dataconsole/console/provider"
 )
@@ -767,5 +769,117 @@ func TestSetEntry_SetMemberRename_Affected_ReflectsSourceExistence(t *testing.T)
 	members, _ := mr.SMembers("s")
 	if !slices.Contains(members, "fresh") {
 		t.Fatalf("set members = %v, want fresh present (SADD still applies)", members)
+	}
+}
+
+func TestKeyExpiryStates(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, want string
+		ttl        time.Duration
+	}{{"persistent", "persistent", 0}, {"expiring", "expires", 60 * time.Second}} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p, mr := newTestProvider(t, true)
+			if err := mr.Set("key", "value"); err != nil {
+				t.Fatal(err)
+			}
+
+			if tc.ttl > 0 {
+				mr.SetTTL("key", tc.ttl)
+			}
+			node, err := p.Stat(context.Background(), provider.Path{Segments: []string{"key"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, err := json.Marshal(node)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var wire struct {
+				Meta struct {
+					State string `json:"ttlState"`
+				} `json:"meta"`
+			}
+			if err := json.Unmarshal(body, &wire); err != nil {
+				t.Fatal(err)
+			}
+			if wire.Meta.State != tc.want {
+				t.Fatalf("TTL state = %q, want %q", wire.Meta.State, tc.want)
+			}
+		})
+	}
+}
+
+func TestRedisReadConformance(t *testing.T) {
+	t.Parallel()
+	if provider.Classify("redis@7") != provider.FamilyKV || provider.SupportFor("redis@7") != provider.SupportFull {
+		t.Fatal("Redis is not registered for the KV provider")
+	}
+	p, mr := newTestProvider(t, true)
+	if err := mr.Set("session:demo", "hello"); err != nil {
+		t.Fatal(err)
+	}
+	mr.HSet("jobs:demo", "state", "ready")
+	nodes, _, err := p.List(context.Background(), provider.Path{}, provider.Page{Limit: 100})
+	if err != nil || len(nodes) != 2 {
+		t.Fatalf("SCAN inventory: %d, %v", len(nodes), err)
+	}
+	path := provider.Path{Segments: []string{"session", "demo"}}
+	node, err := p.Stat(context.Background(), path)
+	if err != nil || node.Meta.EntryType != "string" || node.Meta.TTLState != "persistent" {
+		t.Fatalf("stat: %+v, %v", node, err)
+	}
+	body, _, err := p.ReadBlob(context.Background(), path)
+	if err != nil || string(body) != "hello" {
+		t.Fatalf("GET: %q, %v", body, err)
+	}
+	page, err := p.ReadTable(context.Background(), provider.Path{Segments: []string{"jobs", "demo"}}, provider.Page{Limit: 100})
+	if err != nil || len(page.Rows) != 1 {
+		t.Fatalf("collection: %+v, %v", page, err)
+	}
+}
+
+type expiryHook struct {
+	afterType func()
+	failTTL   bool
+}
+
+func (h expiryHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+func (h expiryHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+func (h expiryHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		if cmd.Name() == "ttl" && h.failTTL {
+			return errors.New("TTL unavailable")
+		}
+		err := next(ctx, cmd)
+		if cmd.Name() == "type" && h.afterType != nil {
+			h.afterType()
+		}
+		return err
+	}
+}
+func TestKeyExpiryUnknownAndDisappearance(t *testing.T) {
+	t.Parallel()
+	for _, vanished := range []bool{false, true} {
+		p, mr := newTestProvider(t, true)
+		if err := mr.Set("key", "value"); err != nil {
+			t.Fatal(err)
+		}
+		hook := expiryHook{failTTL: !vanished}
+		if vanished {
+			hook.afterType = func() { mr.Del("key") }
+		}
+		p.cli.AddHook(hook)
+		node, err := p.Stat(context.Background(), provider.Path{Segments: []string{"key"}})
+		if vanished {
+			if !errors.Is(err, provider.ErrNotFound) {
+				t.Fatalf("missing key = %v", err)
+			}
+		} else if err != nil || node.Meta.TTLState != "unknown" {
+			t.Fatalf("unknown TTL = %+v, %v", node, err)
+		}
 	}
 }

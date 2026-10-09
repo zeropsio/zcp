@@ -94,7 +94,7 @@ func testConnectionInfo(typ string) console.ConnectionInfo {
 	var desc provider.ConnectionDescriptor
 	switch family {
 	case provider.FamilyObject:
-		desc = provider.ObjectConn{}
+		desc = provider.ObjectConn{Endpoint: "https://store.example", Bucket: "assets", AccessKey: "secret-access", SecretKey: "secret-key"}
 	case provider.FamilyTabular:
 		desc = provider.SQLConn{Driver: "pgx", Dialect: provider.BaseType(typ)}
 	case provider.FamilyKV:
@@ -287,4 +287,22 @@ func (unsupportedHost) ManagedServices(context.Context) ([]console.ManagedServic
 }
 func (unsupportedHost) ConnectionInfo(context.Context, string) (console.ConnectionInfo, error) {
 	return testConnectionInfo("qdrant"), nil
+}
+
+func TestSummaryRead(t *testing.T) {
+	t.Parallel()
+	ts, token := newTestServer(t, false)
+	req := httptest.NewRequest(http.MethodGet, "/api/summary?service=store", nil)
+	resp := doReq(t, ts, req, token, false)
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("summary status = %d, want 200", resp.StatusCode)
+	}
+	if !strings.Contains(string(body), "maskedConnection") {
+		t.Fatalf("summary lacks masked connection: %s", body)
+	}
 }

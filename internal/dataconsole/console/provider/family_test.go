@@ -82,6 +82,7 @@ func TestServiceProfiles_DeriveClassifyAndSupport(t *testing.T) {
 		"mysql":          {FamilyTabular, SupportFull},
 		"clickhouse":     {FamilyTabular, SupportViewOnly},
 		"valkey":         {FamilyKV, SupportFull},
+		"redis":          {FamilyKV, SupportFull},
 		"keydb":          {FamilyKV, SupportNotYet},
 		"object-storage": {FamilyObject, SupportFull},
 		"elasticsearch":  {FamilyDocument, SupportFull},
