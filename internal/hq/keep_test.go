@@ -90,7 +90,7 @@ func TestKeep_SaysWhyHQWasNotToldTheKeysID(t *testing.T) {
 
 	select {
 	case line := <-said:
-		if want := "enrolled with https://hq.example; HQ was not told its key's id: hq refused: 409 key_not_its_own"; line != want {
+		if want := "enrolled with https://hq.example; HQ keeps no key id for it: hq refused: 409 key_not_its_own"; line != want {
 			t.Errorf("said %q, want %q", line, want)
 		}
 	case <-time.After(5 * time.Second):

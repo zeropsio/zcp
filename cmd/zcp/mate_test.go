@@ -492,3 +492,29 @@ func TestRunMateUpdate_RestartFailure_ReturnsNonZero(t *testing.T) {
 		t.Errorf("runMateCmd(update) = %d, want 1 when the restart fails", got)
 	}
 }
+
+// Milo, 2026-10-09: after a manual update the descriptor still described the
+// automatic updater's postponement on a version two releases back.
+func TestRunMateStatus_AfterAManualUpdate_ReportsNoOlderAttempt(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	seedInstalledBundle(t, home, manifestVersion)
+	manifestAndTarballServer(t)
+	if err := mate.WriteUpdateState(mate.UpdateState{Phase: "postponed", Candidate: "0.13.9", RunningVersion: "0.13.8", FailedVersion: "0.13.1"}); err != nil {
+		t.Fatal(err)
+	}
+	stdout := captureStdout(t, func() {
+		if runMateCmd([]string{"status", "--json"}) != 0 {
+			t.Fatal("status failed")
+		}
+	})
+	var got struct {
+		Updater mateUpdaterStatus `json:"updater"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Updater.Phase != "idle" || got.Updater.RunningVersion != manifestVersion || got.Updater.FailedVersion != "" {
+		t.Fatalf("updater=%+v, want idle on %s with no failed version", got.Updater, manifestVersion)
+	}
+}

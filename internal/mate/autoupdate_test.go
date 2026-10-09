@@ -240,3 +240,111 @@ func TestEnsureInstalled_FailedVersionThreshold_Result(t *testing.T) {
 		})
 	}
 }
+
+// The updater record describes what runs now: a record written while another
+// version ran, or a postponement of a release that is no longer the target, is
+// an older attempt and reads as idle.
+func TestCurrentUpdateState_DescribesOnlyTheRunningVersion(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name, installed, target string
+		record, want            mate.UpdateState
+	}{
+		{
+			name:      "manual update past a postponed automatic attempt",
+			installed: "0.15.11", target: "0.15.11",
+			record: mate.UpdateState{Phase: "postponed", Candidate: "0.14.93", RunningVersion: "0.14.92", FailedVersion: "0.14.71"},
+			want:   mate.UpdateState{},
+		},
+		{
+			name:      "updated record of an older version",
+			installed: "0.15.18", target: "0.15.18",
+			record: mate.UpdateState{Phase: "updated", Candidate: "0.15.11", RunningVersion: "0.15.11", FailedVersion: "0.14.71"},
+			want:   mate.UpdateState{},
+		},
+		{
+			name:      "postponed release no longer the target",
+			installed: "0.15.11", target: "0.15.13",
+			record: mate.UpdateState{Phase: "postponed", Candidate: "0.15.12", RunningVersion: "0.15.11"},
+			want:   mate.UpdateState{},
+		},
+		{
+			name:      "postponement of the current target stands",
+			installed: "0.15.11", target: "0.15.12",
+			record: mate.UpdateState{Phase: "postponed", Candidate: "0.15.12", RunningVersion: "0.15.11", FailedVersion: "0.15.12"},
+			want:   mate.UpdateState{Phase: "postponed", Candidate: "0.15.12", RunningVersion: "0.15.11", FailedVersion: "0.15.12"},
+		},
+		{
+			name:      "postponement stands while the target is unknown",
+			installed: "0.15.11", target: "",
+			record: mate.UpdateState{Phase: "postponed", Candidate: "0.15.12", RunningVersion: "0.15.11"},
+			want:   mate.UpdateState{Phase: "postponed", Candidate: "0.15.12", RunningVersion: "0.15.11"},
+		},
+		{
+			name:      "a failed release below the running one is history",
+			installed: "0.15.18", target: "0.15.18",
+			record: mate.UpdateState{Phase: "updated", Candidate: "0.15.18", RunningVersion: "0.15.18", FailedVersion: "0.14.71"},
+			want:   mate.UpdateState{Phase: "updated", Candidate: "0.15.18", RunningVersion: "0.15.18"},
+		},
+		{
+			name:      "a failed release above the running one still holds updates back",
+			installed: "0.15.11", target: "0.15.12",
+			record: mate.UpdateState{Phase: "postponed", Candidate: "0.15.9", RunningVersion: "0.15.8", FailedVersion: "0.15.12"},
+			want:   mate.UpdateState{FailedVersion: "0.15.12"},
+		},
+		{
+			name:      "a switch in progress is left alone",
+			installed: "0.15.12", target: "0.15.12",
+			record: mate.UpdateState{Phase: "switching", Candidate: "0.15.12", Previous: "0.15.11", RunningVersion: "0.15.11"},
+			want:   mate.UpdateState{Phase: "switching", Candidate: "0.15.12", Previous: "0.15.11", RunningVersion: "0.15.11"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := mate.CurrentUpdateState(tc.record, tc.installed, tc.target); got != tc.want {
+				t.Fatalf("got %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestEnsureInstalled_SuccessfulInstall_ReplacesTheAutomaticRecord(t *testing.T) {
+	newEnsureRig(t)
+	seedInstalledVersion(t, "0.14.0")
+	if err := mate.WriteUpdateState(mate.UpdateState{Phase: "postponed", Candidate: "0.14.1", RunningVersion: "0.13.9", FailedVersion: "0.13.5"}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := mate.EnsureInstalled(mate.EnsureOptions{})
+	if err != nil || result.Action != mate.ActionUpdated {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	state, err := mate.ReadUpdateState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := mate.UpdateState{Protocol: 1, Phase: "updated", RunningVersion: desiredVersion}
+	if state != want {
+		t.Fatalf("record after install=%+v, want %+v", state, want)
+	}
+}
+
+func TestSwitchUpdate_VerifiedCandidate_DropsAnOlderFailedVersion(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	seedInstalledVersion(t, "0.14.0")
+	writeFakePackage(t, mate.VersionDir("0.14.2"), "0.14.2")
+	if err := mate.WriteUpdateState(mate.UpdateState{Phase: "postponed", RunningVersion: "0.14.0", FailedVersion: "0.14.1"}); err != nil {
+		t.Fatal(err)
+	}
+	ok := func() error { return nil }
+	if err := mate.SwitchUpdate("0.14.2", "old", mate.SwitchHooks{Restart: ok, Ready: func(string, string) error { return nil }, Commit: ok, Cancel: ok}); err != nil {
+		t.Fatal(err)
+	}
+	state, err := mate.ReadUpdateState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Phase != "updated" || state.RunningVersion != "0.14.2" || state.FailedVersion != "" {
+		t.Fatalf("record after verified switch=%+v", state)
+	}
+}

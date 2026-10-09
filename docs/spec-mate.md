@@ -427,7 +427,11 @@ The stable manifest optionally declares `rollbackCompatible: true` and `compatib
 The installed version must be at least that proved compatibility floor and below the candidate.
 Missing, invalid or unmet compatibility metadata means manual confirmation is required.
 `zcp mate status --json` exposes `updater` with `protocol: 1`,
-`rollbackCompatible`, `phase`, `runningVersion` and optional `failedVersion`. The existing
+`rollbackCompatible`, `phase`, `runningVersion` and optional `failedVersion`. It describes
+only the installed version: a settled record from another running version, or a postponement
+of a release that is no longer the target, reads as `idle`, and a failure at or below the
+installed version is dropped. Any successful install outside the worker (`zcp mate update`
+without the worker, `zcp init`) replaces the record. The existing
 manifest resolver remains the only version reader. `status --local --json` reads only its
 cache and local coordinator state, so startup need not wait on a network request.
 

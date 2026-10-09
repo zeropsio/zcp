@@ -78,6 +78,41 @@ func WriteUpdateState(s UpdateState) error {
 	return syncPrefix()
 }
 
+// CurrentUpdateState is the record as it holds for the version installed now
+// and the release targeted now (empty when unknown). A settled record written
+// while another version ran, or a postponement of a release that is no longer
+// the target, describes an older attempt and reads as idle; a failed release
+// at or below the installed one is history. An unfinished phase is left alone.
+func CurrentUpdateState(s UpdateState, installed, target string) UpdateState {
+	if installed == "" || (s.Phase != "" && s.Phase != updatePostponed && s.Phase != updateUpdated) {
+		return s
+	}
+	olderAttempt := s.Phase != "" && s.RunningVersion != installed
+	retargeted := s.Phase == updatePostponed && target != "" && s.Candidate != "" && s.Candidate != target
+	if olderAttempt || retargeted {
+		s = UpdateState{FailedVersion: s.FailedVersion}
+	}
+	if !VersionOlder(installed, s.FailedVersion) {
+		s.FailedVersion = ""
+	}
+	return s
+}
+
+// settleInstalled replaces an existing record after version was installed and
+// activated outside the automatic worker, so the record never describes an
+// older attempt. A failed release newer than version still holds updates back.
+func settleInstalled(version string) error {
+	s, err := ReadUpdateState()
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	failed := ""
+	if err == nil && VersionOlder(version, s.FailedVersion) {
+		failed = s.FailedVersion
+	}
+	return WriteUpdateState(UpdateState{Phase: updateUpdated, RunningVersion: version, FailedVersion: failed})
+}
+
 func AutomaticUpdateAllowed(installed, failed string, candidate Manifest) bool {
 	return RollbackAllowed(installed, candidate) && !IsDevVersion(installed) && VersionOlder(installed, candidate.Version) && (failed == "" || VersionOlder(failed, candidate.Version))
 }
@@ -143,6 +178,9 @@ func SwitchUpdate(candidate, oldBoot string, h SwitchHooks) error {
 			}
 			s.Phase = updateUpdated
 			s.RunningVersion = candidate
+			if !VersionOlder(candidate, s.FailedVersion) {
+				s.FailedVersion = ""
+			}
 			s.WorkerPID = 0
 			s.WorkerStart = ""
 			if err := WriteUpdateState(s); err != nil {
