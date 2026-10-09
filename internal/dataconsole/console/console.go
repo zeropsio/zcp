@@ -76,20 +76,37 @@ type Engine struct {
 	policy    *safety.Policy
 	factories map[provider.Family]Factory
 
+	// insideProject: the console runs in the project's own container.
+	insideProject bool
+
 	mu       sync.Mutex
 	services []ServiceView
 	built    map[string]provider.Provider // hostname -> provider
 }
 
+// EngineOption adjusts an Engine at NewEngine.
+type EngineOption func(*Engine)
+
+// InsideProject says whether the console runs in the project's own container,
+// on its private network: such a console never offers a VPN hint. Without it
+// the console is taken to run on a person's own machine.
+func InsideProject(inside bool) EngineOption {
+	return func(e *Engine) { e.insideProject = inside }
+}
+
 // NewEngine wires the engine; factories registers one builder per family the
 // running binary supports (S1 registers object; S3/S4 add tabular/kv).
-func NewEngine(host Host, policy *safety.Policy, factories map[provider.Family]Factory) *Engine {
-	return &Engine{
+func NewEngine(host Host, policy *safety.Policy, factories map[provider.Family]Factory, opts ...EngineOption) *Engine {
+	e := &Engine{
 		host:      host,
 		policy:    policy,
 		factories: factories,
 		built:     map[string]provider.Provider{},
 	}
+	for _, opt := range opts {
+		opt(e)
+	}
+	return e
 }
 
 // Project returns the host's project identity.
@@ -115,7 +132,7 @@ func (e *Engine) Refresh(ctx context.Context) error {
 		}
 		views = append(views, ServiceView{
 			Hostname: r.Hostname, Type: r.Type, Family: fam,
-			Support: sup, Actions: provider.ServiceActions(fam, sup, e.policy.ArmingPermitted()),
+			Support: sup, Actions: provider.ServiceActions(fam, sup, e.policy.ArmingPermitted(), e.insideProject),
 			Status: r.Status, ID: r.ID,
 		})
 	}

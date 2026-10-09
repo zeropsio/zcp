@@ -5,7 +5,33 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/runtime"
 )
+
+// The console is inside the project it serves only in that project's own
+// container; a person's machine, or a container of another project, is not.
+func TestConsoleInsideProject(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		rt      runtime.Info
+		project string
+		want    bool
+	}{
+		{"the project's own container", runtime.Info{InContainer: true, ProjectID: "p1"}, "p1", true},
+		{"a person's machine", runtime.Info{}, "p1", false},
+		{"a container of another project", runtime.Info{InContainer: true, ProjectID: "p2"}, "p1", false},
+		{"a container that knows no project", runtime.Info{InContainer: true}, "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := consoleInsideProject(tc.rt, tc.project); got != tc.want {
+				t.Fatalf("inside = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
 
 func TestEmitReady_TokenNeverInStderr(t *testing.T) {
 	tests := []struct {

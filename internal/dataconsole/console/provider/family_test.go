@@ -201,11 +201,12 @@ func TestDerivedCaps_PostureAndClassificationGateTogether(t *testing.T) {
 func TestServiceActions_FamilyPostureMatrix_Result(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name        string
-		family      Family
-		support     Support
-		allowWrites bool
-		wantEnabled []ActionID
+		name          string
+		family        Family
+		support       Support
+		allowWrites   bool
+		insideProject bool
+		wantEnabled   []ActionID
 	}{
 		{
 			name:        "object/read-only",
@@ -281,6 +282,36 @@ func TestServiceActions_FamilyPostureMatrix_Result(t *testing.T) {
 			wantEnabled: []ActionID{ActionReadBlob, ActionShowVPNGate},
 		},
 		{
+			// A console inside the project reaches its private network
+			// without a VPN: no VPN hint for any family.
+			name:          "tabular/inside-project",
+			family:        FamilyTabular,
+			support:       SupportFull,
+			insideProject: true,
+			wantEnabled:   []ActionID{ActionQuerySQL, ActionReadTable},
+		},
+		{
+			name:          "kv/inside-project",
+			family:        FamilyKV,
+			support:       SupportFull,
+			insideProject: true,
+			wantEnabled:   []ActionID{ActionReadBlob, ActionReadTable},
+		},
+		{
+			name:          "document/inside-project",
+			family:        FamilyDocument,
+			support:       SupportViewOnly,
+			insideProject: true,
+			wantEnabled:   []ActionID{ActionReadBlob, ActionSearchDocs},
+		},
+		{
+			name:          "stream/inside-project",
+			family:        FamilyStream,
+			support:       SupportViewOnly,
+			insideProject: true,
+			wantEnabled:   []ActionID{ActionReadBlob},
+		},
+		{
 			name:        "file/not-yet-writes",
 			family:      FamilyFile,
 			support:     SupportNotYet,
@@ -299,7 +330,7 @@ func TestServiceActions_FamilyPostureMatrix_Result(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := ServiceActions(tc.family, tc.support, tc.allowWrites)
+			got := ServiceActions(tc.family, tc.support, tc.allowWrites, tc.insideProject)
 			assertEnabledActions(t, got, tc.wantEnabled)
 			for _, a := range got {
 				if !a.Enabled && a.Reason == "" {
@@ -318,7 +349,7 @@ func TestServiceActions_ConformsToSupportAndPosture(t *testing.T) {
 	for _, fam := range families {
 		for _, sup := range supports {
 			for _, allowWrites := range postures {
-				actions := ServiceActions(fam, sup, allowWrites)
+				actions := ServiceActions(fam, sup, allowWrites, false)
 				enabled := enabledSet(actions)
 				caps := DerivedCaps(fam, sup, allowWrites)
 				for _, id := range MutatingActionIDs() {

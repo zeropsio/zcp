@@ -58,11 +58,13 @@ func AllActionIDs() []ActionID {
 }
 
 // ServiceActions is the connection-free single owner of service-level
-// affordances. It derives only from classifier family/support and the immutable
-// launch posture; live provider Caps() can still refine a specific opened table
-// or blob, but the SPA policy for service operations comes from this descriptor
-// list and nowhere else.
-func ServiceActions(fam Family, sup Support, allowWrites bool) []Action {
+// affordances. It derives only from classifier family/support, the immutable
+// launch posture and where the console runs; live provider Caps() can still
+// refine a specific opened table or blob, but the SPA policy for service
+// operations comes from this descriptor list and nowhere else. insideProject is
+// a console running in the project's own container: it reaches the private
+// network as it is, so it carries no VPN hint.
+func ServiceActions(fam Family, sup Support, allowWrites, insideProject bool) []Action {
 	reads := actionSet(familyReadActionIDs(fam))
 	mutations := actionSet(familyMutatingActionIDs(fam))
 	out := make([]Action, 0, len(reads)+len(mutations)+1)
@@ -72,7 +74,7 @@ func ServiceActions(fam Family, sup Support, allowWrites bool) []Action {
 			out = append(out, readAction(id, sup))
 		case mutations[id]:
 			out = append(out, mutatingAction(id, sup, allowWrites))
-		case id == ActionShowVPNGate && vpnGateFamily(fam) && sup != SupportNotYet:
+		case id == ActionShowVPNGate && !insideProject && vpnGateFamily(fam) && sup != SupportNotYet:
 			out = append(out, Action{ID: id, Enabled: true, ReadOnly: true, Reason: vpnGateReason})
 		}
 	}

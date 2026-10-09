@@ -79,7 +79,7 @@ func servicesContractFixture() servicesContract {
 			Type:     "postgresql:single@18",
 			Family:   provider.FamilyTabular,
 			Support:  provider.SupportFull,
-			Actions:  provider.ServiceActions(provider.FamilyTabular, provider.SupportFull, true),
+			Actions:  provider.ServiceActions(provider.FamilyTabular, provider.SupportFull, true, false),
 			Status:   "ACTIVE",
 		}},
 		AllowWrites: true,

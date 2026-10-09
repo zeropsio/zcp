@@ -345,7 +345,9 @@ contract — a family maps its conditions onto these, never a flat catch-all:
 oracle) · `ErrNotFound` (404) · `ErrNeedsConfirm`/`ErrConflict`/`ErrWrongType`
 (409) · `ErrTooLarge` (413) · `ErrUnsupported` (422) · `ErrUpstream` (502, a
 sanitized real outage) · `ErrUnreachable` (503, the VPN gate) · `ErrTimeout` (504,
-accepted-not-confirmed).
+accepted-not-confirmed). The VPN gate (`showVPNGate`) is offered only to a console on a
+person's own machine: one running in the project's own container (a Mate's) is on the private
+network and carries no VPN hint (`TestEngine_VPNHint_OnlyOutsideTheProject`).
 
 A sentinel's client-facing `message` is normally the flat generic string for its
 code (`"invalid request"`, `"upstream error"`, …) — never raw driver/engine text.

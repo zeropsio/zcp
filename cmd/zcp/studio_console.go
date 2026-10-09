@@ -19,6 +19,8 @@ import (
 	"github.com/zeropsio/zcp/internal/dataconsole/console/server"
 	"github.com/zeropsio/zcp/internal/dataconsole/console/webui"
 	"github.com/zeropsio/zcp/internal/dataconsole/zcpadapter"
+	"github.com/zeropsio/zcp/internal/mate"
+	"github.com/zeropsio/zcp/internal/runtime"
 )
 
 // runStudioConsole boots the Data Console — a long-lived LOCAL HTTP server that
@@ -67,7 +69,10 @@ func runStudioConsole(args []string) {
 		provider.FamilyDocument: documentFactory, // elasticsearch/meilisearch/typesense/qdrant
 		provider.FamilyStream:   streamFactory,   // kafka/nats (read-only inspector)
 	}
-	engine := console.NewEngine(adapter, policy, factories)
+	// The live store, not this process's env: a console Mate spawns runs under
+	// its unit, whose own environment may not carry the container's ids.
+	inside := consoleInsideProject(runtime.DetectFrom(mate.LiveLookup(mate.LiveEnvStorePath)), authInfo.ProjectID)
+	engine := console.NewEngine(adapter, policy, factories, console.InsideProject(inside))
 	if err := engine.Refresh(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "discover: %v\n", err)
 		os.Exit(1)
@@ -110,6 +115,12 @@ func runStudioConsole(args []string) {
 		fmt.Fprintf(os.Stderr, "serve: %v\n", serr)
 		os.Exit(1)
 	}
+}
+
+// consoleInsideProject is whether the console runs in the very project it
+// serves (a Mate's or zcp's own container), on that project's private network.
+func consoleInsideProject(rt runtime.Info, projectID string) bool {
+	return rt.InContainer && projectID != "" && rt.ProjectID == projectID
 }
 
 func emitReady(stdout, stderr io.Writer, url, token, writeToken string, pid int, allowWrites bool) error {
