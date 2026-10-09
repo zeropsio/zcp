@@ -84,7 +84,7 @@ func Keep(ctx context.Context, enroll, recheck func(context.Context) (Result, er
 		}
 		wait, line := opts.Recheck, "enrolled with "+res.HQ
 		if res.KeyUnnamed != "" {
-			line += "; HQ was not told its key's id: " + res.KeyUnnamed
+			line += "; HQ keeps no key id for it: " + res.KeyUnnamed
 		}
 		var unavailable *UnavailableError
 		switch {

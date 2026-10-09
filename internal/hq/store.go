@@ -23,6 +23,11 @@ type Enrollment struct {
 	// credential (PUT /api/mate/key); empty until then, and after each new
 	// enrollment.
 	KeyTokenID string `json:"keyTokenId,omitempty"`
+	// KeyRefusedID is the id of this container's key HQ answered
+	// key_not_its_own for under the credential: not the Mate's own key (it
+	// reaches past its project, or is no Mate's key). It is not offered again;
+	// a key with another id is.
+	KeyRefusedID string `json:"keyRefusedId,omitempty"`
 }
 
 // EnrollmentPath is where the enrollment lives: beside mate.env under the

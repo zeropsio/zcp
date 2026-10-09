@@ -40,6 +40,8 @@ type zeropsStub struct {
 	env     []envVar
 	written []envVar
 	nextID  int
+	// keyID is the id /user/info gives this container's key; empty is u-zcp.
+	keyID string
 }
 
 func (s *zeropsStub) handler(w http.ResponseWriter, r *http.Request) {
@@ -57,7 +59,11 @@ func (s *zeropsStub) handler(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, map[string]any{"clientUserList": rows})
 	case r.Method == http.MethodGet && r.URL.Path == "/api/rest/public/user/info":
-		_, _ = w.Write([]byte(`{"id":"u-zcp","clientUserList":[{"id":"cu-zcp","clientId":"` + orgID + `"}]}`))
+		keyID := s.keyID
+		if keyID == "" {
+			keyID = "u-zcp"
+		}
+		_, _ = w.Write([]byte(`{"id":"` + keyID + `","clientUserList":[{"id":"cu-zcp","clientId":"` + orgID + `"}]}`))
 	case r.Method == http.MethodPost && r.URL.Path == "/api/rest/public/project/search":
 		list := make([]map[string]any, 0, len(s.env))
 		for _, e := range s.env {
@@ -295,7 +301,7 @@ func TestEnroll_FreshEnrollment_NamesTheKeysOwnID(t *testing.T) {
 	}
 }
 
-func TestEnroll_Known_TellsHQTheKeysIDUntilItTookIt(t *testing.T) {
+func TestEnroll_Known_TellsHQTheKeysIDUntilItAnswered(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -304,11 +310,15 @@ func TestEnroll_Known_TellsHQTheKeysIDUntilItTookIt(t *testing.T) {
 		refuseKey    string
 		wantPuts     int
 		wantRecorded string
-		wantUnnamed  bool
+		// wantUnnamed is, per pass, whether the pass says HQ was not told.
+		wantUnnamed [2]bool
 	}{
-		{"HQ takes it, and is not asked again", true, "", 1, "u-zcp", false},
-		{"an older HQ, without the call", false, "", 2, "", false},
-		{"HQ refuses it", true, "key_not_its_own", 2, "", true},
+		{"HQ takes it, and is not asked again", true, "", 1, "u-zcp", [2]bool{false, false}},
+		{"an older HQ, without the call", false, "", 2, "", [2]bool{false, false}},
+		// HQ's no for this key is an answer, not an outage: said once, and the
+		// same key is never offered again — Milo logged it on every boot.
+		{"HQ refuses it, said once and not asked again", true, "key_not_its_own", 1, "", [2]bool{true, false}},
+		{"HQ failing on it, asked again", true, "internal", 2, "", [2]bool{true, true}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -323,17 +333,11 @@ func TestEnroll_Known_TellsHQTheKeysIDUntilItTookIt(t *testing.T) {
 				if err != nil || got.Changed {
 					t.Fatalf("pass %d: Enroll = %+v, %v; want the enrollment kept", pass, got, err)
 				}
-				if (got.KeyUnnamed != "") != tt.wantUnnamed {
-					t.Errorf("pass %d: KeyUnnamed = %q, want unnamed %v", pass, got.KeyUnnamed, tt.wantUnnamed)
+				if (got.KeyUnnamed != "") != tt.wantUnnamed[pass-1] {
+					t.Errorf("pass %d: KeyUnnamed = %q, want unnamed %v", pass, got.KeyUnnamed, tt.wantUnnamed[pass-1])
 				}
 			}
-			puts := 0
-			for _, call := range r.hq.calls {
-				if call == "PUT /api/mate/key" {
-					puts++
-				}
-			}
-			if puts != tt.wantPuts {
+			if puts := keyPuts(r); puts != tt.wantPuts {
 				t.Errorf("PUT /api/mate/key %d times, want %d (calls %v)", puts, tt.wantPuts, r.hq.calls)
 			}
 			saved, _, _ := LoadEnrollment(r.path)
@@ -345,6 +349,39 @@ func TestEnroll_Known_TellsHQTheKeysIDUntilItTookIt(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEnroll_Known_AKeyHQRefusedIsOfferedAgainOnceItChanges(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.hq.keyCall, r.hq.refuseKey = true, "key_not_its_own"
+	mustEnroll(t, r)
+	r.hq.calls = nil
+
+	if got, err := r.enroller.Enroll(context.Background()); err != nil || got.KeyUnnamed == "" {
+		t.Fatalf("Enroll = %+v, %v; want HQ's no said", got, err)
+	}
+	r.hq.refuseKey = ""
+	r.zerops.mu.Lock()
+	r.zerops.keyID = "u-zcp-new"
+	r.zerops.mu.Unlock()
+	if got, err := r.enroller.Enroll(context.Background()); err != nil || got.KeyUnnamed != "" {
+		t.Fatalf("Enroll = %+v, %v; want the new key taken", got, err)
+	}
+	saved, _, _ := LoadEnrollment(r.path)
+	if saved.KeyTokenID != "u-zcp-new" || keyPuts(r) != 2 {
+		t.Fatalf("recorded %q after %d PUTs, want u-zcp-new after 2", saved.KeyTokenID, keyPuts(r))
+	}
+}
+
+func keyPuts(r *rig) int {
+	puts := 0
+	for _, call := range r.hq.calls {
+		if call == "PUT /api/mate/key" {
+			puts++
+		}
+	}
+	return puts
 }
 
 // One Mate per project (spec-mate §6.6): the container names its own zcp

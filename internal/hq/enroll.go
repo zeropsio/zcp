@@ -65,8 +65,9 @@ type Enroller struct {
 type Result struct {
 	HQ      string `json:"hq"`
 	Changed bool   `json:"changed"`
-	// KeyUnnamed is why HQ was not told the id of this container's key: empty
-	// once HQ took it, and with an HQ older than the call.
+	// KeyUnnamed is why HQ keeps no id of this container's key: empty once HQ
+	// took it, once its refusal of this key was said, and with an HQ older
+	// than the call.
 	KeyUnnamed string `json:"keyUnnamed,omitempty"`
 }
 
@@ -173,22 +174,34 @@ func (e Enroller) known(ctx context.Context, hq hqClient) (Enrollment, bool, err
 	return kept, err == nil && projectID == e.ProjectID, err
 }
 
+// KeyNotItsOwn is HQ's answer that the key named is not the Mate's own: it
+// reaches past the Mate's project, or is no Mate's key at all.
+const KeyNotItsOwn = "key_not_its_own"
+
 // nameKey tells HQ the id of this container's key under the kept credential,
-// and records it once HQ took it. An HQ older than the call answers 404:
-// nothing to tell it. Whatever else stops it is the reason it returns, never
-// the enrollment's failure.
+// and records HQ's answer: the id once HQ took it, and the id HQ refused as not
+// the Mate's own, which is not offered again — only a key with another id is.
+// An HQ older than the call answers 404: nothing to tell it. Whatever else
+// stops it is the reason it returns, never the enrollment's failure.
 func (e Enroller) nameKey(ctx context.Context, hq hqClient, kept Enrollment) string {
 	key, err := e.keyTokenID(ctx)
 	if err != nil {
 		return err.Error()
 	}
-	if key == kept.KeyTokenID {
+	if key == kept.KeyTokenID || key == kept.KeyRefusedID {
 		return ""
 	}
 	err = hq.keepKey(ctx, kept.Credential, key)
 	var refused *RefusedError
 	if errors.As(err, &refused) && refused.Status == http.StatusNotFound {
 		return ""
+	}
+	if refusedAs(err, KeyNotItsOwn) {
+		kept.KeyRefusedID = key
+		if err := SaveEnrollment(e.Path, kept); err != nil {
+			return err.Error()
+		}
+		return "this container's key is not the Mate's own (it reaches past this project, or is no Mate's key); not offered again until the key changes"
 	}
 	if err != nil {
 		return err.Error()
