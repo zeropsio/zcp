@@ -13,7 +13,7 @@ import (
 	"github.com/zeropsio/zcp/internal/dataconsole/console/provider"
 )
 
-// TestKV_Smoke is the read-only smoke case for the kv family (valkey):
+// TestKV_Smoke is the read-only smoke case for the kv family (valkey, redis):
 // Health (via setupService), seeds its own namespaced fixture (console/seed
 // — S10b), then List the keyspace + ReadBlob (string value) or ReadTable
 // (hash/list/set/zset) on the first leaf found, up to two keyspace levels
@@ -117,7 +117,7 @@ func firstNonContainer(nodes []provider.Node) *provider.Node {
 }
 
 // TestKV_WriteRoundtrip is the write-path conformance case for the kv
-// family's one full-tier engine (valkey). It self-seeds two dedicated probe
+// family's full-tier engines (valkey, redis). It self-seeds two dedicated probe
 // keys under a "_conformance_<ts>" prefix (independent of the seed
 // package's namespaced fixture — no existing fixture carries an unset-TTL
 // string value or a collection this test can safely collide-test against),

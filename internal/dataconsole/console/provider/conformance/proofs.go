@@ -135,7 +135,7 @@ var baseRequiredProofs = map[familySupport][]ProofID{
 	{provider.FamilyTabular, provider.SupportViewOnly}: {
 		ProofBrowseTree, ProofReadValue, ProofMutationRefusal, ProofQueryReadOnly,
 	},
-	// kv full (valkey) — §7.5 kv: SCAN tree, typed-command entries,
+	// kv full (valkey, redis) — §7.5 kv: SCAN tree, typed-command entries,
 	// collision-refusing collection-create, WriteBlob never clobbers a
 	// collection, no-TTL is the nil sentinel.
 	{provider.FamilyKV, provider.SupportFull}: {
@@ -224,15 +224,15 @@ var ConformanceCases = []CaseDecl{
 	{TestName: "TestTabular_MutationRefusal_ClickHouse", Proof: ProofMutationRefusal, BaseTypes: []string{"clickhouse"}},
 
 	// ---- kv ----
-	{TestName: "TestKV_Smoke", Proof: ProofBrowseTree, BaseTypes: []string{"valkey"}},
-	{TestName: "TestKV_Smoke", Proof: ProofReadValue, BaseTypes: []string{"valkey"}},
-	{TestName: "TestKV_WriteRoundtrip", Proof: ProofDownloadContent, BaseTypes: []string{"valkey"}},
-	{TestName: "TestKV_WriteRoundtrip", Proof: ProofWriteRoundtrip, BaseTypes: []string{"valkey"}},
-	{TestName: "TestKV_WriteRoundtrip", Proof: ProofDelete, BaseTypes: []string{"valkey"}},
-	{TestName: "TestKV_WriteRoundtrip", Proof: ProofTTL, BaseTypes: []string{"valkey"}},
-	{TestName: "TestKV_WriteRoundtrip", Proof: ProofCreateCollision, BaseTypes: []string{"valkey"}},
-	{TestName: "TestKV_WriteRoundtrip", Proof: ProofWrongTypeGuard, BaseTypes: []string{"valkey"}},
-	{TestName: "TestKV_WriteRoundtrip", Proof: ProofValueFidelity, BaseTypes: []string{"valkey"}},
+	{TestName: "TestKV_Smoke", Proof: ProofBrowseTree, BaseTypes: []string{"valkey", "redis"}},
+	{TestName: "TestKV_Smoke", Proof: ProofReadValue, BaseTypes: []string{"valkey", "redis"}},
+	{TestName: "TestKV_WriteRoundtrip", Proof: ProofDownloadContent, BaseTypes: []string{"valkey", "redis"}},
+	{TestName: "TestKV_WriteRoundtrip", Proof: ProofWriteRoundtrip, BaseTypes: []string{"valkey", "redis"}},
+	{TestName: "TestKV_WriteRoundtrip", Proof: ProofDelete, BaseTypes: []string{"valkey", "redis"}},
+	{TestName: "TestKV_WriteRoundtrip", Proof: ProofTTL, BaseTypes: []string{"valkey", "redis"}},
+	{TestName: "TestKV_WriteRoundtrip", Proof: ProofCreateCollision, BaseTypes: []string{"valkey", "redis"}},
+	{TestName: "TestKV_WriteRoundtrip", Proof: ProofWrongTypeGuard, BaseTypes: []string{"valkey", "redis"}},
+	{TestName: "TestKV_WriteRoundtrip", Proof: ProofValueFidelity, BaseTypes: []string{"valkey", "redis"}},
 
 	// ---- object ----
 	{TestName: "TestObject_Conversions", Proof: ProofBrowseTree, BaseTypes: []string{"object-storage"}},
