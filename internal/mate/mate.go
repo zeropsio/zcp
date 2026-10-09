@@ -569,6 +569,11 @@ func EnsureInstalled(opts EnsureOptions) (Result, error) {
 	if err := stageAndActivate(desired); err != nil {
 		return Result{}, err
 	}
+	// The bundle is live either way; a record left stale is reported, not fatal.
+	warning := ""
+	if err := settleInstalled(desired.Version); err != nil {
+		warning = fmt.Sprintf("installed %s, but the updater record still describes an older attempt: %v", desired.Version, err)
+	}
 	pruneOldVersions(desired.Version)
 
 	action := ActionUpdated
@@ -577,7 +582,7 @@ func EnsureInstalled(opts EnsureOptions) (Result, error) {
 		action = ActionInstalled
 		from = ""
 	}
-	return Result{Action: action, From: from, To: desired.Version}, nil
+	return Result{Action: action, From: from, To: desired.Version, Warning: warning}, nil
 }
 
 // stageAndActivate installs desired into its own VersionDir(), smoke-tests

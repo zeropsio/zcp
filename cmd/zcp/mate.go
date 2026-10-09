@@ -130,6 +130,7 @@ func runMateStatus(args []string) int {
 	if slices.Contains(args, "--local") && runtime.DetectFrom(mate.LiveLookup(mate.LiveEnvStorePath)).MateEnabled {
 		state, _ = mate.ObserveUpdateState()
 	}
+	state = mate.CurrentUpdateState(state, result.Installed, desired.Version)
 	result.Updater = &mateUpdaterStatus{Protocol: 1, RollbackCompatible: mate.RollbackAllowed(result.Installed, desired), Phase: "idle", RunningVersion: result.Installed, FailedVersion: state.FailedVersion}
 	if state.Phase != "" {
 		result.Updater.Phase = state.Phase
