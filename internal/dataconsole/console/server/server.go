@@ -568,11 +568,15 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, fmt.Errorf("query: %w", provider.ErrUnsupported))
 		return
 	}
+	if body.Page.Limit <= 0 || body.Page.Limit > 100 {
+		body.Page.Limit = 100
+	}
 	tp, err := q.Query(ctx, body.Stmt, body.Page)
 	if err != nil {
 		writeErr(w, r, err)
 		return
 	}
+	boundTableCells(&tp)
 	writeJSON(w, tp)
 }
 

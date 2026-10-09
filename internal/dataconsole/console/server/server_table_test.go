@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -86,5 +87,40 @@ func TestHandleTableAndCount_RoundTripIndependentWireContracts(t *testing.T) {
 	}
 	if fake.readPath.Service != "svc" || fake.countPath.Service != "svc" || len(fake.countPath.Segments) != 2 {
 		t.Fatalf("paths: read=%+v count=%+v, want same service/relation", fake.readPath, fake.countPath)
+	}
+}
+
+func (p *tableWireProvider) Query(_ context.Context, _ string, page provider.Page) (provider.TablePage, error) {
+	p.page = page
+	return provider.TablePage{Columns: []provider.Column{{Name: "payload"}}, Rows: [][]any{{strings.Repeat("x", 20000)}}, NextCursor: "100"}, nil
+}
+
+func TestHandleQuery_BoundsPagesAndCells(t *testing.T) {
+	fake := &tableWireProvider{}
+	eng := console.NewEngine(&recHost{svcType: "postgresql:single@18"}, writePolicy(false), map[provider.Family]console.Factory{
+		provider.FamilyTabular: func(console.ConnectionInfo, *safety.Policy) (provider.Provider, error) { return fake, nil },
+	})
+	if err := eng.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	ts := &testServer{handler: New(eng, "secret", fstest.MapFS{"index.html": {Data: []byte("ok")}}).Handler()}
+	for _, limit := range []string{"0", "1000", "-1"} {
+		resp := doReq(t, ts, newRequest(t, http.MethodPost, "/api/query", strings.NewReader(`{"service":"svc","stmt":"SELECT payload FROM events","page":{"limit":`+limit+`}}`)), "secret", false)
+		var page provider.TablePage
+		err := json.NewDecoder(resp.Body).Decode(&page)
+		_ = resp.Body.Close()
+		if err != nil || resp.StatusCode != http.StatusOK {
+			t.Fatalf("query response: status=%d error=%v", resp.StatusCode, err)
+		}
+		if fake.page.Limit != 100 {
+			t.Fatalf("query page limit = %d, want 100", fake.page.Limit)
+		}
+		cell, ok := page.Rows[0][0].(string)
+		if !ok || len(cell) > 4130 || !strings.HasSuffix(cell, "… [truncated]") {
+			t.Fatal("query cell is not bounded and marked")
+		}
+		if page.NextCursor != "100" {
+			t.Fatalf("cursor=%q, want 100", page.NextCursor)
+		}
 	}
 }
