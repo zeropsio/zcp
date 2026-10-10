@@ -1734,6 +1734,15 @@ the values those entries reference.
   naming each key, its scope, plain or sensitive, and what it needs (restart a reader, reference it
   and deploy, or the literal a removal leaves). Never a value. The composer shows a chip per change;
   × leaves it untold; the chips alone send.
+- **The Mate asks for a value only the person has** (2026-10-10). `zerops_env action=request`
+  takes the key, a one-line `reason` (required), the vault (`project=true` for Shared, else
+  `serviceHostname`) and `sensitive`. It writes nothing and answers at once: `requested` (key,
+  reason, scope, sensitive) or `alreadySet`. Mate's engine records a `vault` request on that call,
+  open after the turn ends, and the conversation reads as waiting on the person until it is
+  answered. The person's client writes the value to the vault as them; the engine is told only
+  saved or declined, records who and when, and the agent hears `saved to <vault>/<KEY>` or
+  `declined` in a run of its own, a wake joining the run that asked. The value never enters the
+  engine's records, a log, the agent's context or HQ.
 
 ### 5.9 Pages — the agent shows a page in the conversation (2026-10-10)
 
@@ -1801,6 +1810,7 @@ Additive both ways: an older mate shows the call as any zcp call, and an older z
 | MF-15 | A value's readers are the deployed run entries that reference it by the platform's precedence; `KEY: ${KEY}` and a name nothing has read nothing and are flagged. `vaultReferences.test.ts`, `vault.test.ts` |
 | MF-16 | A vault write is done when its process finished and the vault shows it; a lost answer resolves from the vault's rows, never by another's process. `vaultWrite.test.ts` |
 | MF-17 | A change is told to the Mate once: since it last spoke, plus the person's own writes from here until a message carries them; set aside or sent, it is not told again, and a value added and removed untold is no news. `vaultTurnNotes.logic.test.ts` |
+| MF-18 | A secret the person gives never reaches the Mate's records or its agent: the engine takes saved or declined, never a value, and words the agent's line itself. Mate `EngineWire.test.ts`, zcp `TestEnvRequest_Refuses` |
 | MF-18 | A page the agent publishes is self-contained or refused: its local pictures and fonts are inlined only when they are regular files in the project that are what they are named as — a picture of at most 40 million pixels that decodes whole, re-encoded from its pixels; a font by its magic bytes; script, comment and CSS comment text is never read; a format zcp cannot decode, a reference that names no file and a remote resource are named as ones that will not load; a missing file is named; the page inlined stays within 8 MiB; the result names the kept file the Mate server takes. `TestPublishPage_RealImages_InlinedAsDataURIs`, `TestPublishPage_BytesBehindAPicture_NeverRideAlong`, `TestPublishPage_Refusals`, `TestPublishPage_AFifo_RefusedWithoutWaiting`, `TestPublishPage_ScriptsAndTemplates_Publish`, `TestPublishPage_PicturesAndFonts_ByFormat`, `TestPublishPage_FontsAndHugePictures_Refused`, `TestPublishPage_AnimatedGIF_PixelsCountedAcrossFrames`, `TestPublishPage_LinkedDirectories_ResolvedBeforeTheProjectCheck`, `TestPublishPage_RemoteAndDataReferences_LeftAndNamed`, `TestPublishPageResult_NamesTheFileTheMateTakes`, `TestServer_PublishPageToolGating`. |
 
 ---
