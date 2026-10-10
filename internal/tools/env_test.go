@@ -821,17 +821,17 @@ func TestEnvTool_Request(t *testing.T) {
 			name:      "shared secret is requested",
 			args:      map[string]any{"action": "request", "key": "STRIPE_SECRET_KEY", "project": true, "reason": "Stripe charges cards — Dashboard › Developers › API keys."},
 			wantField: "requested",
-			wantText:  []string{`"key":"STRIPE_SECRET_KEY"`, `"scope":"shared"`, `"sensitive":true`, "never through the chat", "zerops-update note", "Do not ask for the value in the chat"},
+			wantText:  []string{`"key":"STRIPE_SECRET_KEY"`, `"scope":"shared"`, `"sensitive":true`, "waiting on the person", "private card", "never through the chat", "saved to Shared/STRIPE_SECRET_KEY, or declined", "Do not ask for the value in the chat", `"reason":"Stripe charges cards`},
 		},
 		{
 			name:      "service plain value is requested",
-			args:      map[string]any{"action": "request", "key": "SUPPORT_EMAIL", "serviceHostname": "api"},
+			args:      map[string]any{"action": "request", "key": "SUPPORT_EMAIL", "serviceHostname": "api", "reason": "Where support replies come from."},
 			wantField: "requested",
-			wantText:  []string{`"scope":"service"`, `"serviceHostname":"api"`, `"sensitive":false`},
+			wantText:  []string{`"scope":"service"`, `"serviceHostname":"api"`, `"sensitive":false`, "saved to api/SUPPORT_EMAIL"},
 		},
 		{
 			name:      "a key already in the vault is not asked for",
-			args:      map[string]any{"action": "request", "key": "OPENAI_API_KEY", "project": true},
+			args:      map[string]any{"action": "request", "key": "OPENAI_API_KEY", "project": true, "reason": "The chat answers with OpenAI."},
 			wantField: "alreadySet",
 			wantText:  []string{"already in", "${OPENAI_API_KEY}", "never read"},
 		},
@@ -872,14 +872,30 @@ func TestEnvTool_Request(t *testing.T) {
 	}
 }
 
-// TestEnvTool_Request_BadKey surfaces the key rule as a tool error.
-func TestEnvTool_Request_BadKey(t *testing.T) {
+// TestEnvTool_Request_Refused surfaces the key, purpose and vault rules as
+// tool errors: nobody is asked.
+func TestEnvTool_Request_Refused(t *testing.T) {
 	t.Parallel()
-	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterEnv(srv, platform.NewMock(), "proj-1", "")
 
-	result := callTool(t, srv, "zerops_env", map[string]any{"action": "request", "key": "API_KEY=abc", "project": true})
-	if !result.IsError {
-		t.Fatalf("want an error for KEY=value, got: %s", getTextContent(t, result))
+	tests := []struct {
+		name string
+		args map[string]any
+	}{
+		{name: "a key with its value", args: map[string]any{"action": "request", "key": "API_KEY=abc", "project": true, "reason": "Payments."}},
+		{name: "no purpose", args: map[string]any{"action": "request", "key": "API_KEY", "project": true}},
+		{name: "no vault", args: map[string]any{"action": "request", "key": "API_KEY", "reason": "Payments."}},
+		{name: "a service not in the project", args: map[string]any{"action": "request", "key": "API_KEY", "serviceHostname": "nope", "reason": "Payments."}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterEnv(srv, platform.NewMock(), "proj-1", "")
+
+			result := callTool(t, srv, "zerops_env", tt.args)
+			if !result.IsError {
+				t.Fatalf("want a refusal, got: %s", getTextContent(t, result))
+			}
+		})
 	}
 }
