@@ -765,3 +765,49 @@ func TestServer_ObserveToolGating(t *testing.T) {
 		})
 	}
 }
+
+func TestServer_PublishPageToolGating(t *testing.T) {
+	// Non-parallel: t.Chdir rebases the state dir server.New derives.
+	t.Chdir(t.TempDir())
+	tests := []struct {
+		name string
+		rt   runtime.Info
+		want bool
+	}{
+		{name: "a Mate's container", rt: runtime.Info{InContainer: true, ServiceID: "s1", MateEnabled: true}, want: true},
+		{name: "a container without the flag", rt: runtime.Info{InContainer: true, ServiceID: "s1"}},
+		{name: "local, flag set", rt: runtime.Info{MateEnabled: true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := platform.NewMock().WithProject(&platform.Project{ID: "p1", Name: "test"}).WithServices(nil)
+			store, err := knowledge.GetEmbeddedStore()
+			if err != nil {
+				t.Fatalf("knowledge store: %v", err)
+			}
+			srv := New(context.Background(), mock, &auth.Info{ProjectID: "p1", Token: "test", APIHost: "localhost"},
+				store, platform.NewMockLogFetcher(), nopStandupSSH{}, nil, tt.rt, nil)
+			ctx := context.Background()
+			st, ct := mcp.NewInMemoryTransports()
+			if _, err := srv.MCPServer().Connect(ctx, st, nil); err != nil {
+				t.Fatalf("server connect: %v", err)
+			}
+			session, err := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0.1"}, nil).Connect(ctx, ct, nil)
+			if err != nil {
+				t.Fatalf("client connect: %v", err)
+			}
+			defer session.Close()
+			result, err := session.ListTools(ctx, &mcp.ListToolsParams{})
+			if err != nil {
+				t.Fatalf("list tools: %v", err)
+			}
+			found := false
+			for _, tool := range result.Tools {
+				found = found || tool.Name == "zerops_publish_page"
+			}
+			if found != tt.want {
+				t.Errorf("zerops_publish_page registered = %v, want %v", found, tt.want)
+			}
+		})
+	}
+}

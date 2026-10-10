@@ -1735,6 +1735,51 @@ the values those entries reference.
   and deploy, or the literal a removal leaves). Never a value. The composer shows a chip per change;
   × leaves it untold; the chips alone send.
 
+### 5.9 Pages — the agent shows a page in the conversation (2026-10-10)
+
+A Mate's agent shows a chart, a comparison, a plan or a gallery as a self-contained HTML page the
+person sees inline, above its final reply. The page crosses the seam as a file, never as tool text:
+a page with its pictures inlined runs to megabytes, and a tool result reaches the model.
+
+- **zcp.** `zerops_publish_page` (Mate-gated, §2.0) takes a `title` and the page as `html` or as a
+  `path` in the project. Every local picture an `<img src>` in the markup or a CSS `url()` in a
+  `<style>` element or `style` attribute names is inlined as a `data:` URI, and every local font an
+  `@font-face` names (WOFF2, WOFF, TTF, OTF, by its magic bytes); a script's, a comment's or a CSS
+  comment's text is never read, since a bundle's `url(` or a template's `<img src="${x}">` is code.
+  A file must be a regular file in the project — its directories' links resolved, never a link
+  itself, a FIFO or a file outside it. A picture must be at most 40 million pixels
+  (`ops.PageMaxPixels`, checked before it is decoded; a GIF's frames counted together) and decode whole as PNG, JPEG, GIF, WebP or
+  BMP — inlined re-encoded from its pixels (WebP and BMP as PNG), so nothing but the picture rides
+  along — or parse whole as SVG, entities a DOCTYPE declares passed over, never expanded; a file
+  that is no picture is refused, so a secret renamed `.png` never rides along, and a path that is
+  not there is named. A picture in a format nothing in zcp decodes (AVIF, ICO), a reference that
+  names no file (`{{ logo }}`) and every remote resource are listed back as ones that will not load
+  (`page.wontLoad`). The page, inlined, is at most 8 MiB (`ops.PageMaxBytes`), every file read
+  counted against it as it is read. It is kept as `<stateDir>/pages/page-<digest>.html` for a week
+  (`ops.PageKeepFor`); the result names the file (`page.file`, with `id`, `title`, `bytes`) and how
+  to look at the page first.
+- **mate.** Recording the call on its engine, the server reads `page.file` once into its own asset
+  store — opened without following links, only a regular file named `page-*.html` in the session's
+  own `.zcp/state/pages`, at most 8 MiB — so the page outlives zcp's copy. The page is kept apart
+  from the store's pictures, in an index an older mate never reads. The call's record carries it by
+  reference with its title, size and height, the same live and after a reload. A V1 thread records
+  the call as any `zerops_*` call.
+- **client.** The page is drawn two frames deep. The conversation's `<iframe sandbox="allow-scripts">`
+  (never `allow-same-origin`) holds a fixed wrapper document whose policy is `default-src 'none';
+  frame-src 'none'`; the page is the wrapper's own `srcdoc` frame, sandboxed the same, behind a
+  policy that lets it request nothing — no fetch, script, style, picture, font, media or form
+  submission from anywhere. Both run in opaque origins, so the page reaches neither the Mate server
+  nor the person's session. An `about:srcdoc` load fetches nothing, so the page loads; any later
+  navigation of its frame — to http(s), `data:` or `blob:`, by script, refresh, link, named target —
+  is a request the wrapper's `frame-src` refuses before it leaves, and navigating the wrapper or the
+  conversation, popups and forms are the sandbox's to refuse (measured in Chromium 148, and in
+  Playwright's WebKit and Firefox builds). The wrapper also takes the frame down on any load after
+  the page's own, a second layer. WebRTC and DNS prefetch are governed by no policy; they carry only
+  what the page itself holds. A link opens in a new tab on a real click only. The frame stands at the
+  shared item cap until the page says its height, then eases to it, and runs only near the view.
+
+Additive both ways: an older mate shows the call as any zcp call, and an older zcp has no tool.
+
 ### Invariants
 
 | ID | Invariant |
@@ -1756,6 +1801,7 @@ the values those entries reference.
 | MF-15 | A value's readers are the deployed run entries that reference it by the platform's precedence; `KEY: ${KEY}` and a name nothing has read nothing and are flagged. `vaultReferences.test.ts`, `vault.test.ts` |
 | MF-16 | A vault write is done when its process finished and the vault shows it; a lost answer resolves from the vault's rows, never by another's process. `vaultWrite.test.ts` |
 | MF-17 | A change is told to the Mate once: since it last spoke, plus the person's own writes from here until a message carries them; set aside or sent, it is not told again, and a value added and removed untold is no news. `vaultTurnNotes.logic.test.ts` |
+| MF-18 | A page the agent publishes is self-contained or refused: its local pictures and fonts are inlined only when they are regular files in the project that are what they are named as — a picture of at most 40 million pixels that decodes whole, re-encoded from its pixels; a font by its magic bytes; script, comment and CSS comment text is never read; a format zcp cannot decode, a reference that names no file and a remote resource are named as ones that will not load; a missing file is named; the page inlined stays within 8 MiB; the result names the kept file the Mate server takes. `TestPublishPage_RealImages_InlinedAsDataURIs`, `TestPublishPage_BytesBehindAPicture_NeverRideAlong`, `TestPublishPage_Refusals`, `TestPublishPage_AFifo_RefusedWithoutWaiting`, `TestPublishPage_ScriptsAndTemplates_Publish`, `TestPublishPage_PicturesAndFonts_ByFormat`, `TestPublishPage_FontsAndHugePictures_Refused`, `TestPublishPage_AnimatedGIF_PixelsCountedAcrossFrames`, `TestPublishPage_LinkedDirectories_ResolvedBeforeTheProjectCheck`, `TestPublishPage_RemoteAndDataReferences_LeftAndNamed`, `TestPublishPageResult_NamesTheFileTheMateTakes`, `TestServer_PublishPageToolGating`. |
 
 ---
 

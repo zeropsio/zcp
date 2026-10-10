@@ -23,6 +23,7 @@ require (
 	github.com/segmentio/kafka-go v0.4.51
 	github.com/zeropsio/zParser/v2 v2.1.2
 	github.com/zeropsio/zerops-go v1.0.20
+	golang.org/x/image v0.40.0
 	golang.org/x/sys v0.46.0
 	golang.org/x/text v0.38.0
 	gopkg.in/yaml.v3 v3.0.1
