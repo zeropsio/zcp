@@ -819,19 +819,19 @@ func TestEnvTool_Request(t *testing.T) {
 	}{
 		{
 			name:      "shared secret is requested",
-			args:      map[string]any{"action": "request", "key": "STRIPE_SECRET_KEY", "project": true, "reason": "Stripe charges cards — Dashboard › Developers › API keys."},
+			args:      map[string]any{"action": "request", "key": "STRIPE_SECRET_KEY", "project": true, "label": "Stripe secret key", "why": "for checkout"},
 			wantField: "requested",
-			wantText:  []string{`"key":"STRIPE_SECRET_KEY"`, `"scope":"shared"`, `"sensitive":true`, "waiting on the person", "private card", "never through the chat", "saved to Shared/STRIPE_SECRET_KEY, or declined", "Do not ask for the value in the chat", `"reason":"Stripe charges cards`},
+			wantText:  []string{`"key":"STRIPE_SECRET_KEY"`, `"scope":"shared"`, `"sensitive":true`, "waiting on the person for the Stripe secret key", "in one sentence why you need it", "nothing about how they give it", "Never ask for the value in the chat", "saved to Shared/STRIPE_SECRET_KEY, or declined", `"label":"Stripe secret key"`, `"why":"for checkout"`},
 		},
 		{
 			name:      "service plain value is requested",
-			args:      map[string]any{"action": "request", "key": "SUPPORT_EMAIL", "serviceHostname": "api", "reason": "Where support replies come from."},
+			args:      map[string]any{"action": "request", "key": "SUPPORT_EMAIL", "serviceHostname": "api", "label": "Support email", "why": "where replies come from"},
 			wantField: "requested",
 			wantText:  []string{`"scope":"service"`, `"serviceHostname":"api"`, `"sensitive":false`, "saved to api/SUPPORT_EMAIL"},
 		},
 		{
 			name:      "a key already in the vault is not asked for",
-			args:      map[string]any{"action": "request", "key": "OPENAI_API_KEY", "project": true, "reason": "The chat answers with OpenAI."},
+			args:      map[string]any{"action": "request", "key": "OPENAI_API_KEY", "project": true, "label": "OpenAI key", "why": "for the chat"},
 			wantField: "alreadySet",
 			wantText:  []string{"already in", "${OPENAI_API_KEY}", "never read"},
 		},
@@ -881,10 +881,11 @@ func TestEnvTool_Request_Refused(t *testing.T) {
 		name string
 		args map[string]any
 	}{
-		{name: "a key with its value", args: map[string]any{"action": "request", "key": "API_KEY=abc", "project": true, "reason": "Payments."}},
-		{name: "no purpose", args: map[string]any{"action": "request", "key": "API_KEY", "project": true}},
-		{name: "no vault", args: map[string]any{"action": "request", "key": "API_KEY", "reason": "Payments."}},
-		{name: "a service not in the project", args: map[string]any{"action": "request", "key": "API_KEY", "serviceHostname": "nope", "reason": "Payments."}},
+		{name: "a key with its value", args: map[string]any{"action": "request", "key": "API_KEY=abc", "project": true, "label": "API key", "why": "for payments"}},
+		{name: "no purpose", args: map[string]any{"action": "request", "key": "API_KEY", "project": true, "label": "API key"}},
+		{name: "no label", args: map[string]any{"action": "request", "key": "API_KEY", "project": true, "why": "for payments"}},
+		{name: "no vault", args: map[string]any{"action": "request", "key": "API_KEY", "label": "API key", "why": "for payments"}},
+		{name: "a service not in the project", args: map[string]any{"action": "request", "key": "API_KEY", "serviceHostname": "nope", "label": "API key", "why": "for payments"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

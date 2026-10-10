@@ -1735,9 +1735,10 @@ the values those entries reference.
   and deploy, or the literal a removal leaves). Never a value. The composer shows a chip per change;
   × leaves it untold; the chips alone send.
 - **The Mate asks for a value only the person has** (2026-10-10). `zerops_env action=request`
-  takes the key, a one-line `reason` (required), the vault (`project=true` for Shared, else
-  `serviceHostname`) and `sensitive`. It writes nothing and answers at once: `requested` (key,
-  reason, scope, sensitive) or `alreadySet`. Mate's engine records a `vault` request on that call,
+  takes the key, a `label` (what the value is, in people's words) and a one-line `why` (both
+  required), the vault (`project=true` for Shared, else `serviceHostname`) and `sensitive`. It
+  writes nothing and answers at once: `requested` (key, label, why, scope, sensitive) or
+  `alreadySet`, telling the agent to say only why, in one sentence. Mate's engine records a `vault` request on that call,
   open after the turn ends, and the conversation reads as waiting on the person until it is
   answered. The person's client writes the value to the vault as them; the engine is told only
   saved or declined, records who and when, and the agent hears `saved to <vault>/<KEY>` or

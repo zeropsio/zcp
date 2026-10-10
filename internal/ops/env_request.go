@@ -25,9 +25,11 @@ const (
 // it to the vault directly, so it never crosses the conversation.
 type EnvRequestResult struct {
 	Key string `json:"key"`
-	// Reason is the one sentence the person reads: what the value is for and
-	// where to find it. Mate's card shows it beside the field.
-	Reason          string          `json:"reason"`
+	// Label is what the value is, in people's words ("Stripe secret key"),
+	// and Why the one line of what it is for ("for checkout"): Mate asks
+	// "Milo needs your Stripe secret key, for checkout".
+	Label           string          `json:"label"`
+	Why             string          `json:"why"`
 	Scope           EnvRequestScope `json:"scope"`
 	ServiceHostname string          `json:"serviceHostname,omitempty"`
 	// Sensitive is the flag the value is asked with (the caller's, else the
@@ -60,27 +62,37 @@ func ValidateEnvKey(key string) error {
 	return nil
 }
 
-// requestReasonMax bounds the purpose to a sentence a card shows whole.
-const requestReasonMax = 240
+// requestLabelMax bounds the label to a name; requestWhyMax the why to a
+// short line Mate shows whole after it.
+const (
+	requestLabelMax = 60
+	requestWhyMax   = 160
+)
 
-// ValidateRequestReason refuses a purpose the person could not read in one
-// line: none, more than one line, or longer than a sentence. A second line is
-// where a value pasted by mistake would hide.
-func ValidateRequestReason(reason string) error {
-	trimmed := strings.TrimSpace(reason)
+// ValidateRequestWords refuses a label or a why the person could not read in
+// one line: none, more than one line, or longer than a name or a short line.
+// A second line is where a value pasted by mistake would hide.
+func ValidateRequestWords(label, why string) error {
+	if err := validateRequestLine("label", label, requestLabelMax,
+		"label: what the value is, in people's words (Stripe secret key)."); err != nil {
+		return err
+	}
+	return validateRequestLine("why", why, requestWhyMax,
+		"why: what it is for, one short line (for checkout). Never a value.")
+}
+
+func validateRequestLine(field, text string, limit int, hint string) error {
+	trimmed := strings.TrimSpace(text)
 	switch {
 	case trimmed == "":
 		return platform.NewPlatformError(platform.ErrInvalidParameter,
-			"A request needs its reason",
-			"reason: one sentence for the person — what the value is for and where to find it.")
+			"A request needs its "+field, hint)
 	case strings.ContainsAny(trimmed, "\r\n"):
 		return platform.NewPlatformError(platform.ErrInvalidParameter,
-			"The reason is one line",
-			"reason: one sentence, no line breaks — and never a value.")
-	case utf8.RuneCountInString(trimmed) > requestReasonMax:
+			"The "+field+" is one line", hint)
+	case utf8.RuneCountInString(trimmed) > limit:
 		return platform.NewPlatformError(platform.ErrInvalidParameter,
-			fmt.Sprintf("The reason is longer than %d characters", requestReasonMax),
-			"reason: one short sentence the card shows whole.")
+			fmt.Sprintf("The %s is longer than %d characters", field, limit), hint)
 	}
 	return nil
 }
@@ -96,13 +108,14 @@ func EnvRequest(
 	hostname string,
 	isProject bool,
 	key string,
-	reason string,
+	label string,
+	why string,
 	sensitive *bool,
 ) (*EnvRequestResult, error) {
 	if err := ValidateEnvKey(key); err != nil {
 		return nil, err
 	}
-	if err := ValidateRequestReason(reason); err != nil {
+	if err := ValidateRequestWords(label, why); err != nil {
 		return nil, err
 	}
 	if hostname == "" && !isProject {
@@ -111,7 +124,7 @@ func EnvRequest(
 			"project=true asks for a Shared value; serviceHostname for one service's own.")
 	}
 
-	result := &EnvRequestResult{Key: key, Reason: strings.TrimSpace(reason), Sensitive: resolveSensitive(key, "", sensitive)}
+	result := &EnvRequestResult{Key: key, Label: strings.TrimSpace(label), Why: strings.TrimSpace(why), Sensitive: resolveSensitive(key, "", sensitive)}
 	if isProject {
 		result.Scope = EnvRequestScopeShared
 		envs, err := client.GetProjectEnv(ctx, projectID)
