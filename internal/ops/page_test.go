@@ -8,6 +8,7 @@ import (
 	"hash/crc32"
 	"image"
 	"image/color"
+	"image/gif"
 	"image/png"
 	"os"
 	"path/filepath"
@@ -392,5 +393,43 @@ func TestPublishPage_LinkedDirectories_ResolvedBeforeTheProjectCheck(t *testing.
 	_, err := PublishPage(filepath.Join(cwd, ".zcp", "state"), cwd, PageInput{Title: "x", HTML: `<img src="elsewhere/secret.png">`})
 	if err == nil || !strings.Contains(err.Error(), "outside the project") {
 		t.Errorf("err = %v, want a directory that links out refused", err)
+	}
+}
+
+// manyFrameGIF is a GIF of frames frames, each width×height, whose image data
+// is a stub: its frames' pixels are counted from their descriptors, before a
+// byte of it is decoded.
+func manyFrameGIF(frames, width, height int) []byte {
+	var out bytes.Buffer
+	out.WriteString("GIF89a")
+	_ = binary.Write(&out, binary.LittleEndian, [2]uint16{uint16(width), uint16(height)})
+	out.Write([]byte{0, 0, 0})
+	for range frames {
+		out.WriteByte(0x2C)
+		_ = binary.Write(&out, binary.LittleEndian, [4]uint16{0, 0, uint16(width), uint16(height)})
+		out.Write([]byte{0x80, 0, 0, 0, 255, 255, 255}) // a two-colour local table
+		out.Write([]byte{2, 1, 0x44, 0})                // LZW minimum code size, one sub-block, end
+	}
+	out.WriteByte(0x3B)
+	return out.Bytes()
+}
+
+func TestPublishPage_AnimatedGIF_PixelsCountedAcrossFrames(t *testing.T) {
+	t.Parallel()
+	cwd := t.TempDir()
+	frame := image.NewPaletted(image.Rect(0, 0, 4, 4), color.Palette{color.Black, color.White})
+	var animated bytes.Buffer
+	if err := gif.EncodeAll(&animated, &gif.GIF{Image: []*image.Paletted{frame, frame}, Delay: []int{10, 10}}); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(cwd, "spinner.gif"), animated.Bytes())
+	writeFile(t, filepath.Join(cwd, "bomb.gif"), manyFrameGIF(41, 1000, 1000))
+
+	if _, written := publish(t, cwd, PageInput{Title: "x", HTML: `<img src="spinner.gif">`}); !strings.Contains(written, "data:image/gif;base64,") {
+		t.Error("an ordinary animated GIF was not inlined")
+	}
+	_, err := PublishPage(filepath.Join(cwd, ".zcp", "state"), cwd, PageInput{Title: "x", HTML: `<img src="bomb.gif">`})
+	if err == nil || !strings.Contains(err.Error(), "over 40 million pixels across its frames") {
+		t.Errorf("err = %v, want 41 frames of a million pixels refused before they are decoded", err)
 	}
 }

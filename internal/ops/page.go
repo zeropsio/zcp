@@ -436,6 +436,14 @@ func pictureOf(data []byte) (string, []byte, error) {
 	}
 	var out bytes.Buffer
 	if format == "gif" {
+		// DecodeAll keeps every frame: count them all against the budget first.
+		pixels, err := gifPixels(data)
+		if err != nil {
+			return "", nil, fmt.Errorf("it does not read whole: %w", err)
+		}
+		if pixels > PageMaxPixels {
+			return "", nil, fmt.Errorf("it is over %d million pixels across its frames", PageMaxPixels/1_000_000)
+		}
 		all, err := gif.DecodeAll(bytes.NewReader(data))
 		if err != nil {
 			return "", nil, fmt.Errorf("it does not decode whole: %w", err)
@@ -463,6 +471,65 @@ func pictureOf(data []byte) (string, []byte, error) {
 		return "", nil, fmt.Errorf("encode: %w", err)
 	}
 	return format, out.Bytes(), nil
+}
+
+// gifPixels is the pixels every frame of a GIF holds, read from the frames'
+// descriptors alone, its image data skipped, never decoded.
+func gifPixels(data []byte) (int64, error) {
+	errShort := errors.New("it ends early")
+	if len(data) < 13 {
+		return 0, errShort
+	}
+	at := 13
+	if flags := data[10]; flags&0x80 != 0 {
+		at += 3 << ((flags & 7) + 1)
+	}
+	skipBlocks := func() error {
+		for {
+			if at >= len(data) {
+				return errShort
+			}
+			size := int(data[at])
+			at += 1 + size
+			if size == 0 {
+				return nil
+			}
+		}
+	}
+	var pixels int64
+	for at < len(data) {
+		switch data[at] {
+		case 0x3B:
+			return pixels, nil
+		case 0x21:
+			at += 2
+			if err := skipBlocks(); err != nil {
+				return 0, err
+			}
+		case 0x2C:
+			if at+10 > len(data) {
+				return 0, errShort
+			}
+			width := int64(data[at+5]) | int64(data[at+6])<<8
+			height := int64(data[at+7]) | int64(data[at+8])<<8
+			pixels += width * height
+			if pixels > PageMaxPixels {
+				return pixels, nil
+			}
+			flags := data[at+9]
+			at += 10
+			if flags&0x80 != 0 {
+				at += 3 << ((flags & 7) + 1)
+			}
+			at++ // LZW minimum code size
+			if err := skipBlocks(); err != nil {
+				return 0, err
+			}
+		default:
+			return 0, fmt.Errorf("an unknown block 0x%02x", data[at])
+		}
+	}
+	return pixels, nil
 }
 
 // noDecoder is a picture in a format nothing here decodes: AVIF or ICO.
