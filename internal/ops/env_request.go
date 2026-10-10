@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -69,6 +70,41 @@ const (
 	requestWhyMax   = 160
 )
 
+// The names Mate's vault never lists: the keys Mate and zcp keep for
+// themselves (zcp's admin token, Mate's git and setup keys). A value asked for
+// under one would land where the person can neither see nor remove it. This
+// list must agree with isMateOwned in mate's
+// packages/client-runtime/src/data/projections/vault.ts (case-sensitive
+// prefixes, one exact name).
+var (
+	vaultHiddenPrefixes = []string{"ZCP_", "MATE_", "GITEA_"}
+	vaultHiddenNames    = []string{"GIT_TOKEN"}
+)
+
+// isVaultHidden reports whether Mate's vault keeps key out of every list.
+func isVaultHidden(key string) bool {
+	for _, prefix := range vaultHiddenPrefixes {
+		if strings.HasPrefix(key, prefix) {
+			return true
+		}
+	}
+	return slices.Contains(vaultHiddenNames, key)
+}
+
+// validateRequestKey refuses a key the person could not be asked for: one the
+// vault cannot store, or one Mate's vault never lists.
+func validateRequestKey(key string) error {
+	if err := ValidateEnvKey(key); err != nil {
+		return err
+	}
+	if isVaultHidden(key) {
+		return platform.NewPlatformError(platform.ErrInvalidParameter,
+			fmt.Sprintf("%q is a name Mate and zcp keep for themselves: the vault never lists it, so the person could neither see nor remove the value", key),
+			"Ask for it under another name, without the ZCP_, MATE_ or GITEA_ prefix and not GIT_TOKEN, and reference that name in zerops.yaml.")
+	}
+	return nil
+}
+
 // ValidateRequestWords refuses a label or a why the person could not read in
 // one line: none, more than one line, or longer than a name or a short line.
 // A second line is where a value pasted by mistake would hide.
@@ -112,7 +148,7 @@ func EnvRequest(
 	why string,
 	sensitive *bool,
 ) (*EnvRequestResult, error) {
-	if err := ValidateEnvKey(key); err != nil {
+	if err := validateRequestKey(key); err != nil {
 		return nil, err
 	}
 	if err := ValidateRequestWords(label, why); err != nil {
