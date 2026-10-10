@@ -2,11 +2,9 @@ package ops
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -23,6 +21,8 @@ import (
 	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	_ "golang.org/x/image/bmp"  // registers BMP with image.Decode
+	_ "golang.org/x/image/webp" // registers WebP with image.Decode
 )
 
 // A Mate's pages: a self-contained HTML document the agent publishes for the
@@ -38,9 +38,11 @@ import (
 // anywhere — so everything it shows must be inside it: every local picture an
 // <img> or a CSS url() names is inlined as a data: URI, re-encoded from its
 // decoded pixels so nothing but a picture rides along (a secret renamed .png
-// is refused), and every remote resource it would load is named back to the
-// agent as one that will not load. Scripts and comments are never read for
-// pictures: a bundle's `url(` or a template's `<img src="${x}">` is code.
+// is refused), as is every local font an @font-face names; every remote
+// resource it would load, and every picture in a format nothing here decodes,
+// is named back to the agent as one that will not load. Scripts and comments
+// are never read for pictures: a bundle's `url(` or a template's
+// `<img src="${x}">` is code.
 
 // PageMaxBytes caps a page, its pictures inlined.
 const PageMaxBytes = 8 << 20
@@ -49,19 +51,14 @@ const PageMaxBytes = 8 << 20
 // copy as it records the call.
 const PageKeepFor = 7 * 24 * time.Hour
 
-// PageMeasureWidth is the width a page is measured at: the Mate's
-// conversation column, about.
-const PageMeasureWidth = 760
+// PageMaxPixels caps a picture's size: a larger one is refused before it is
+// decoded, so a small file that decodes to gigabytes never does.
+const PageMaxPixels = 40_000_000
 
 // pageTitleMax caps a page's title, in characters.
 const pageTitleMax = 120
 
 const pagesDir = "pages"
-
-// pagePolicy is the conversation's policy for a page (the client's
-// PAGE_POLICY): a page is measured as it will be drawn, loading nothing.
-const pagePolicy = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; " +
-	"img-src data: blob:; font-src data:; media-src data: blob:; form-action 'none'; base-uri 'none'"
 
 // PageInput is what the agent publishes: a title and the page, given whole
 // (HTML) or as a file (Path, in the project).
@@ -78,37 +75,31 @@ type Page struct {
 	// File is where the page is kept until the Mate server takes it.
 	File  string `json:"file"`
 	Bytes int    `json:"bytes"`
-	// Height is the page's height in CSS pixels at PageMeasureWidth, as a
-	// browser laid it out; absent when no browser measured it.
-	Height int `json:"height,omitempty"`
-	// Images is how many local pictures were inlined.
+	// Images is how many local pictures were inlined, Fonts how many fonts.
 	Images int `json:"images"`
+	Fonts  int `json:"fonts,omitempty"`
 	// WontLoad is every resource the page would load that the conversation
-	// will not: a remote one, or a reference that names no file.
+	// will not: a remote one, a reference that names no file, a picture in a
+	// format nothing here decodes.
 	WontLoad []string `json:"wontLoad,omitempty"`
 }
-
-// PageMeasurer lays out the page in file and answers its height; 0 when it
-// cannot.
-type PageMeasurer func(ctx context.Context, file string) int
 
 type pageLimits struct {
 	maxBytes int
 }
 
-// PublishPage validates in, inlines its local pictures, keeps it as a page
-// under stateDir, and measures it with measure when one is given. Every file
-// it reads is in the project, cwd.
-func PublishPage(ctx context.Context, stateDir, cwd string, in PageInput, measure PageMeasurer) (*Page, error) {
-	return publishPage(ctx, stateDir, cwd, in, measure, pageLimits{maxBytes: PageMaxBytes}, time.Now())
+// PublishPage validates in, inlines its local pictures and fonts, and keeps
+// it as a page under stateDir. Every file it reads is in the project, cwd.
+func PublishPage(stateDir, cwd string, in PageInput) (*Page, error) {
+	return publishPage(stateDir, cwd, in, pageLimits{maxBytes: PageMaxBytes}, time.Now())
 }
 
 func pageRefusal(format string, args ...any) error {
 	return platform.NewPlatformError(platform.ErrInvalidParameter, fmt.Sprintf(format, args...),
-		"Publish a self-contained page: its pictures as PNG, JPEG, GIF or SVG files in the project, its scripts and styles inline.")
+		"Publish a self-contained page: its pictures (PNG, JPEG, GIF, WebP, BMP, SVG) and fonts as files in the project, its scripts and styles inline.")
 }
 
-func publishPage(ctx context.Context, stateDir, cwd string, in PageInput, measure PageMeasurer, limits pageLimits, now time.Time) (*Page, error) {
+func publishPage(stateDir, cwd string, in PageInput, limits pageLimits, now time.Time) (*Page, error) {
 	title := strings.TrimSpace(in.Title)
 	if title == "" {
 		return nil, pageRefusal("A page needs a title")
@@ -136,7 +127,7 @@ func publishPage(ctx context.Context, stateDir, cwd string, in PageInput, measur
 		return nil, pageRefusal("The page is %d bytes, over the %d byte cap", len(html), limits.maxBytes)
 	}
 
-	inlined, images, unnamed, err := inlinePictures(html, base, reader)
+	inlined, counts, unnamed, err := inlinePictures(html, base, reader)
 	if err != nil {
 		return nil, err
 	}
@@ -160,58 +151,11 @@ func publishPage(ctx context.Context, stateDir, cwd string, in PageInput, measur
 		Title:    title,
 		File:     file,
 		Bytes:    len(inlined),
-		Images:   images,
+		Images:   counts.images,
+		Fonts:    counts.fonts,
 		WontLoad: limitRefs(append(unnamed, remoteLoads(inlined)...)),
 	}
-	if measure != nil {
-		page.Height = measurePage(ctx, dir, id, inlined, measure)
-	}
 	return page, nil
-}
-
-// measurePage lays the page out behind the conversation's policy, from a
-// file of its own that it removes after.
-func measurePage(ctx context.Context, dir, id, html string, measure PageMeasurer) int {
-	file := filepath.Join(dir, ".measure-"+id+".html")
-	doc := `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="` + pagePolicy + `">` +
-		`<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">` +
-		`<style>body{margin:0;font-family:system-ui,sans-serif}</style>` + html
-	if err := writeAtomically(file, []byte(doc)); err != nil {
-		return 0
-	}
-	defer os.Remove(file)
-	if height := measure(ctx, file); height > 0 {
-		return height
-	}
-	return 0
-}
-
-// MeasurePageInBrowser measures a page file with the container's browser at
-// PageMeasureWidth: the height of its document. 0 when the browser is not
-// there, busy or failing — a page is published unmeasured rather than not.
-func MeasurePageInBrowser(ctx context.Context, file string) int {
-	result, err := BrowserBatch(ctx, BrowserBatchInput{
-		URL: "file://" + file,
-		Commands: [][]string{
-			{"set", "viewport", fmt.Sprint(PageMeasureWidth), "200"},
-			{"get", "box", "html"},
-		},
-		TimeoutSeconds: 30,
-	})
-	if err != nil || result == nil {
-		return 0
-	}
-	for _, step := range result.Steps {
-		if len(step.Command) >= 2 && step.Command[0] == "get" && step.Command[1] == "box" && step.Success {
-			var box struct {
-				Height float64 `json:"height"`
-			}
-			if json.Unmarshal(step.Result, &box) == nil && box.Height > 0 {
-				return int(box.Height + 0.999)
-			}
-		}
-	}
-	return 0
 }
 
 // The places a page names a picture: an <img>'s src (any quoting) in its
@@ -266,16 +210,31 @@ func eachSegment(html string, markup, css func(string) string) string {
 	return out.String()
 }
 
-// inlinePictures replaces every local picture html names with a data: URI;
-// relative names resolve in base. It refuses a file that is not a picture or
-// is outside the project, lists every one it cannot find, and answers the
-// references that name no file.
-func inlinePictures(html, base string, reader *projectReader) (string, int, []string, error) {
+// inlined counts what a page carries inline.
+type inlined struct {
+	images, fonts int
+}
+
+// errNoDecoder is a picture in a format nothing here decodes (AVIF, ICO):
+// named back as one that will not load, never refused.
+var errNoDecoder = errors.New("no decoder for its format")
+
+// cssComment is a CSS comment: never read for a url().
+var cssComment = regexp.MustCompile(`(?s)/\*.*?\*/`)
+
+// fontFace is an @font-face rule: the url()s in it are fonts.
+var fontFace = regexp.MustCompile(`(?is)@font-face\s*\{[^}]*\}`)
+
+// inlinePictures replaces every local picture and font html names with a
+// data: URI; relative names resolve in base. It refuses a file that is not
+// what it is named as or is outside the project, lists every one it cannot
+// find, and answers the references that will not load.
+func inlinePictures(html, base string, reader *projectReader) (string, inlined, []string, error) {
 	var missing, unnamed []string
 	var refused error
-	count := 0
+	var counts inlined
 	cache := map[string]string{}
-	replace := func(ref string) (string, bool) {
+	replace := func(ref string, font bool) (string, bool) {
 		if ref == "" || notLocal.MatchString(ref) {
 			return "", false
 		}
@@ -287,8 +246,15 @@ func inlinePictures(html, base string, reader *projectReader) (string, int, []st
 		if !filepath.IsAbs(file) {
 			file = filepath.Join(base, file)
 		}
+		count := func() {
+			if font {
+				counts.fonts++
+			} else {
+				counts.images++
+			}
+		}
 		if uri, ok := cache[file]; ok {
-			count++
+			count()
 			return uri, true
 		}
 		data, err := reader.read(ref, file)
@@ -301,33 +267,61 @@ func inlinePictures(html, base string, reader *projectReader) (string, int, []st
 			}
 			return "", false
 		}
-		mime, picture, err := pictureOf(data)
-		if err != nil {
-			if refused == nil {
-				refused = pageRefusal("%s is not a picture: %v", ref, err)
+		var mime string
+		var carried []byte
+		if font {
+			if mime = fontMime(data); mime == "" {
+				if refused == nil {
+					refused = pageRefusal("%s is not a font: its bytes are no WOFF2, WOFF, TTF or OTF", ref)
+				}
+				return "", false
 			}
-			return "", false
+			carried = data
+		} else {
+			mime, carried, err = pictureOf(data)
+			if errors.Is(err, errNoDecoder) {
+				unnamed = append(unnamed, ref)
+				return "", false
+			}
+			if err != nil {
+				if refused == nil {
+					refused = pageRefusal("%s is not a picture: %v", ref, err)
+				}
+				return "", false
+			}
 		}
-		uri := "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(picture)
+		uri := "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(carried)
 		cache[file] = uri
-		count++
+		count()
 		return uri, true
 	}
-	inCSS := func(css string) string {
+	urls := func(css string, font bool) string {
 		return cssURL.ReplaceAllStringFunc(css, func(match string) string {
 			parts := cssURL.FindStringSubmatch(match)
 			ref, quote := unquote(parts[2])
-			if uri, ok := replace(strings.TrimSpace(ref)); ok {
+			if uri, ok := replace(strings.TrimSpace(ref), font); ok {
 				return parts[1] + quote + uri + quote + parts[3]
 			}
 			return match
 		})
 	}
+	inCSS := func(css string) string {
+		css = cssComment.ReplaceAllString(css, "")
+		var out strings.Builder
+		at := 0
+		for _, m := range fontFace.FindAllStringIndex(css, -1) {
+			out.WriteString(urls(css[at:m[0]], false))
+			out.WriteString(urls(css[m[0]:m[1]], true))
+			at = m[1]
+		}
+		out.WriteString(urls(css[at:], false))
+		return out.String()
+	}
 	inMarkup := func(markup string) string {
 		markup = imgSrc.ReplaceAllStringFunc(markup, func(match string) string {
 			parts := imgSrc.FindStringSubmatch(match)
 			ref, quote := unquote(parts[2])
-			if uri, ok := replace(strings.TrimSpace(ref)); ok {
+			if uri, ok := replace(strings.TrimSpace(ref), false); ok {
 				return parts[1] + quote + uri + quote
 			}
 			return match
@@ -340,14 +334,14 @@ func inlinePictures(html, base string, reader *projectReader) (string, int, []st
 	}
 	out := eachSegment(html, inMarkup, inCSS)
 	if refused != nil {
-		return "", 0, nil, refused
+		return "", inlined{}, nil, refused
 	}
 	if len(missing) > 0 {
-		return "", 0, nil, platform.NewPlatformError(platform.ErrFileNotFound,
-			"These pictures are not there: "+strings.Join(missing, ", "),
-			"Name each picture by its path in the project, or drop it.")
+		return "", inlined{}, nil, platform.NewPlatformError(platform.ErrFileNotFound,
+			"These files are not there: "+strings.Join(missing, ", "),
+			"Name each picture or font by its path in the project, or drop it.")
 	}
-	return out, count, unnamed, nil
+	return out, counts, unnamed, nil
 }
 
 // pageLoads are the places a page's markup would load something from: a
@@ -404,9 +398,25 @@ func limitRefs(refs []string) []string {
 	return out
 }
 
+// fontMime is the font format data's bytes are in, or "" when they are none.
+func fontMime(data []byte) string {
+	switch {
+	case bytes.HasPrefix(data, []byte("wOF2")):
+		return "font/woff2"
+	case bytes.HasPrefix(data, []byte("wOFF")):
+		return "font/woff"
+	case bytes.HasPrefix(data, []byte("OTTO")):
+		return "font/otf"
+	case bytes.HasPrefix(data, []byte{0, 1, 0, 0}), bytes.HasPrefix(data, []byte("true")):
+		return "font/ttf"
+	}
+	return ""
+}
+
 // pictureOf is the picture data holds, as the page carries it: a raster
-// picture decoded whole and encoded again from its pixels, so nothing but
-// the picture rides along; an SVG parsed whole as XML with an <svg> root.
+// picture of at most PageMaxPixels decoded whole and encoded again from its
+// pixels, so nothing but the picture rides along (WebP and BMP as PNG); an
+// SVG parsed whole as XML. A format nothing here decodes is errNoDecoder.
 func pictureOf(data []byte) (string, []byte, error) {
 	if isSVG(data) {
 		if err := wholeSVG(data); err != nil {
@@ -414,13 +424,18 @@ func pictureOf(data []byte) (string, []byte, error) {
 		}
 		return "image/svg+xml", data, nil
 	}
-	_, format, err := image.DecodeConfig(bytes.NewReader(data))
+	config, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
-		return "", nil, errors.New("its bytes are no PNG, JPEG, GIF or SVG")
+		if noDecoder(data) {
+			return "", nil, errNoDecoder
+		}
+		return "", nil, errors.New("its bytes are no PNG, JPEG, GIF, WebP, BMP or SVG")
+	}
+	if pixels := int64(config.Width) * int64(config.Height); pixels > PageMaxPixels {
+		return "", nil, fmt.Errorf("it is %d×%d, over %d million pixels", config.Width, config.Height, PageMaxPixels/1_000_000)
 	}
 	var out bytes.Buffer
-	switch format {
-	case "gif":
+	if format == "gif" {
 		all, err := gif.DecodeAll(bytes.NewReader(data))
 		if err != nil {
 			return "", nil, fmt.Errorf("it does not decode whole: %w", err)
@@ -429,22 +444,32 @@ func pictureOf(data []byte) (string, []byte, error) {
 			return "", nil, fmt.Errorf("encode: %w", err)
 		}
 		return "image/gif", out.Bytes(), nil
-	case "png", "jpeg":
-		img, _, err := image.Decode(bytes.NewReader(data))
-		if err != nil {
-			return "", nil, fmt.Errorf("it does not decode whole: %w", err)
-		}
-		if format == "png" {
-			err = png.Encode(&out, img)
-		} else {
-			err = jpeg.Encode(&out, img, &jpeg.Options{Quality: 90})
-		}
-		if err != nil {
-			return "", nil, fmt.Errorf("encode: %w", err)
-		}
-		return "image/" + format, out.Bytes(), nil
 	}
-	return "", nil, errors.New("its bytes are no PNG, JPEG, GIF or SVG")
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return "", nil, fmt.Errorf("it does not decode whole: %w", err)
+	}
+	switch format {
+	case "jpeg":
+		err = jpeg.Encode(&out, img, &jpeg.Options{Quality: 90})
+		format = "image/jpeg"
+	case "png", "webp", "bmp":
+		err = png.Encode(&out, img)
+		format = "image/png"
+	default:
+		return "", nil, errNoDecoder
+	}
+	if err != nil {
+		return "", nil, fmt.Errorf("encode: %w", err)
+	}
+	return format, out.Bytes(), nil
+}
+
+// noDecoder is a picture in a format nothing here decodes: AVIF or ICO.
+func noDecoder(data []byte) bool {
+	avif := len(data) >= 12 && string(data[4:8]) == "ftyp" &&
+		(string(data[8:12]) == "avif" || string(data[8:12]) == "avis")
+	return avif || bytes.HasPrefix(data, []byte{0, 0, 1, 0})
 }
 
 // svgPrologue is what may stand ahead of an SVG's root: an XML declaration,
@@ -455,10 +480,11 @@ func isSVG(data []byte) bool {
 	return svgPrologue.Match(bytes.TrimPrefix(data, []byte("\xef\xbb\xbf")))
 }
 
-// wholeSVG parses data to its end as one XML document.
+// wholeSVG parses data to its end as one XML document with an <svg> root.
+// Entities a DOCTYPE declares are passed over, never expanded.
 func wholeSVG(data []byte) error {
 	decoder := xml.NewDecoder(bytes.NewReader(data))
-	decoder.Strict = true
+	decoder.Strict = false
 	depth, roots := 0, 0
 	for {
 		token, err := decoder.Token()
@@ -491,8 +517,9 @@ func wholeSVG(data []byte) error {
 	return nil
 }
 
-// projectReader reads the files a page names: regular files in the project,
-// never a link, a FIFO or a device, within one running byte budget.
+// projectReader reads the files a page names: regular files in the project
+// (its real path, links in its directories resolved), never a link, a FIFO
+// or a device, within one running byte budget.
 type projectReader struct {
 	root      string
 	maxBytes  int
@@ -500,7 +527,7 @@ type projectReader struct {
 }
 
 func (r *projectReader) read(name, file string) ([]byte, error) {
-	root, err := filepath.Abs(r.root)
+	root, err := filepath.EvalSymlinks(r.root)
 	if err != nil {
 		return nil, fmt.Errorf("project root: %w", err)
 	}
@@ -508,10 +535,18 @@ func (r *projectReader) read(name, file string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve %s: %w", name, err)
 	}
-	if rel, err := filepath.Rel(root, abs); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	dir, err := filepath.EvalSymlinks(filepath.Dir(abs))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, platform.NewPlatformError(platform.ErrFileNotFound, name+" is not there", "Name a file in the project.")
+		}
+		return nil, fmt.Errorf("resolve %s: %w", name, err)
+	}
+	resolved := filepath.Join(dir, filepath.Base(abs))
+	if rel, err := filepath.Rel(root, resolved); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return nil, pageRefusal("%s is outside the project", name)
 	}
-	info, err := os.Lstat(abs)
+	info, err := os.Lstat(resolved)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, platform.NewPlatformError(platform.ErrFileNotFound, name+" is not there", "Name a file in the project.")
@@ -522,7 +557,7 @@ func (r *projectReader) read(name, file string) ([]byte, error) {
 		return nil, pageRefusal("%s is not a file", name)
 	}
 	// Non-blocking, so a FIFO swapped in after the Lstat never holds the read.
-	f, err := os.OpenFile(abs, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	f, err := os.OpenFile(resolved, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", name, err)
 	}
