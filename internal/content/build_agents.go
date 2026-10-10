@@ -79,6 +79,7 @@ func BuildAgentsMD(rt runtime.Info, guided bool) (string, error) {
 			{rt.MateEnabled, "agents_application.md"},
 			{rt.MateEnabled, "agents_git_host.md"},
 			{rt.MateEnabled, "agents_pages.md"},
+			{rt.MateEnabled, "agents_live_facts.md"},
 		} {
 			if !block.include {
 				continue

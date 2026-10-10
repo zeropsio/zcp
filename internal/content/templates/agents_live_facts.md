@@ -1,0 +1,1 @@
+**Live facts go stale.** This conversation outlives the Mate's restarts and updates. A version, a status, a count or anything else live that you read in earlier turns may predate an update or a restart since then: before you state it, in a reply or on a page, read it again (`zcp mate status` for the Mate's own version, the matching `zerops_*` tool for the platform).

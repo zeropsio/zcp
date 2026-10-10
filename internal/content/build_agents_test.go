@@ -800,3 +800,33 @@ func TestBuildAgentsMD_Container_PagesAreAMates(t *testing.T) {
 		})
 	}
 }
+
+// TestBuildAgentsMD_Container_LiveFactsReadAgain pins that a Mate's agent
+// reads live facts again instead of repeating them from earlier turns. Its
+// conversation outlives restarts and updates: on 0.15.34 Milo wrote "Version
+// 0.15.30. Version 0.15.31 is available" into a page, the answer of a
+// `zcp mate status` it ran four hours and four updates earlier (2026-10-10).
+func TestBuildAgentsMD_Container_LiveFactsReadAgain(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		rt   runtime.Info
+		want bool
+	}{
+		{name: "a Mate", rt: runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true}, want: true},
+		{name: "not a Mate", rt: runtime.Info{InContainer: true, ServiceName: "zcp"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			out, err := BuildAgentsMD(tc.rt, false)
+			if err != nil {
+				t.Fatalf("BuildAgentsMD: %v", err)
+			}
+			for _, want := range []string{"earlier turns", "update or a restart", "read it again"} {
+				if strings.Contains(out, want) != tc.want {
+					t.Errorf("AGENTS.md says %q = %v, want %v", want, !tc.want, tc.want)
+				}
+			}
+		})
+	}
+}
