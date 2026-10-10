@@ -94,7 +94,7 @@ func TestEnvRequest_Refuses(t *testing.T) {
 	}{
 		{name: "no key", project: true, key: "", wantCode: platform.ErrInvalidParameter},
 		{name: "no purpose", project: true, key: "API_KEY", reason: " ", wantCode: platform.ErrInvalidParameter},
-		{name: "a purpose of more than one line", project: true, key: "API_KEY", reason: "Stripe.\nPaste sk_live_here", wantCode: platform.ErrInvalidParameter},
+		{name: "a purpose of more than one line", project: true, key: "API_KEY", reason: "Stripe.\nPaste the key here", wantCode: platform.ErrInvalidParameter},
 		{name: "a purpose longer than a sentence", project: true, key: "API_KEY", reason: strings.Repeat("why ", 80), wantCode: platform.ErrInvalidParameter},
 		{name: "key with a value", project: true, key: "API_KEY=abc", wantCode: platform.ErrInvalidParameter},
 		{name: "key with a dash", project: true, key: "API-KEY", wantCode: platform.ErrInvalidParameter},
