@@ -51,7 +51,7 @@ func envInputSchema() *jsonschema.Schema {
 		"action": {
 			Type:        "string",
 			Enum:        []any{"get", "set", "delete", "request", "generate-dotenv"},
-			Description: "get: keys + ${host_var} refs — reference a value as $VAR by name, never paste it. set: upsert KEY=VALUE pairs. delete: remove keys. request: ask the person for a value only they have (key, reason); it goes to the vault, never the chat. generate-dotenv: writes a resolved .env from a local zerops.yaml.",
+			Description: "get: keys + ${host_var} refs — reference a value as $VAR by name, never paste it. set: upsert KEY=VALUE pairs. delete: remove keys. request: ask the person for a value only they have (key, reason) on a private card; it goes to the vault, never the chat. generate-dotenv: writes a resolved .env from a local zerops.yaml.",
 		},
 		"serviceHostname": {
 			Type:        "string",
@@ -63,7 +63,7 @@ func envInputSchema() *jsonschema.Schema {
 		},
 		"reason": {
 			Type:        "string",
-			Description: "request: one sentence for the person — what it is for, where to find it. Never a value.",
+			Description: "request (required): one line for the person: what it is for, where to find it. Never a value.",
 		},
 		"setup": {
 			Type:        "string",
@@ -307,7 +307,7 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 			// A request writes nothing: Mate draws a field for the person,
 			// whose value goes straight to the vault — it never enters the
 			// conversation, this result, or any log.
-			req, err := ops.EnvRequest(ctx, client, projectID, input.ServiceHostname, input.Project.Bool(), input.Key, input.Sensitive.Ptr())
+			req, err := ops.EnvRequest(ctx, client, projectID, input.ServiceHostname, input.Project.Bool(), input.Key, input.Reason, input.Sensitive.Ptr())
 			if err != nil {
 				return convertError(err), nil, nil
 			}
@@ -369,10 +369,14 @@ func envRequestAnswer(req *ops.EnvRequestResult) envRequestResult {
 				req.Key, where, req.Key),
 		}
 	}
+	vault := "Shared"
+	if req.Scope == ops.EnvRequestScopeService {
+		vault = req.ServiceHostname
+	}
 	return envRequestResult{
 		Requested: req,
-		NextActions: fmt.Sprintf("The person was asked for %s in Mate; it goes straight to the vault, never through the chat. You will hear in a zerops-update note when it is set. Do not ask for the value in the chat; continue with what does not need it, or end your turn.",
-			req.Key),
+		NextActions: fmt.Sprintf("Now waiting on the person: Mate shows them a private card for %[1]s. The value goes straight to the vault, never through the chat, this result or your context. A message of its own tells you how it ended: saved to %[2]s/%[1]s, or declined. Do not ask for the value in the chat; continue with what does not need it, or end your turn.",
+			req.Key, vault),
 	}
 }
 

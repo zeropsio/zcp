@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/zeropsio/zcp/internal/platform"
 )
@@ -23,7 +24,10 @@ const (
 // has. It never carries a value: the person types it into Mate, which writes
 // it to the vault directly, so it never crosses the conversation.
 type EnvRequestResult struct {
-	Key             string          `json:"key"`
+	Key string `json:"key"`
+	// Reason is the one sentence the person reads: what the value is for and
+	// where to find it. Mate's card shows it beside the field.
+	Reason          string          `json:"reason"`
 	Scope           EnvRequestScope `json:"scope"`
 	ServiceHostname string          `json:"serviceHostname,omitempty"`
 	// Sensitive is the flag the value is asked with (the caller's, else the
@@ -56,6 +60,31 @@ func ValidateEnvKey(key string) error {
 	return nil
 }
 
+// requestReasonMax bounds the purpose to a sentence a card shows whole.
+const requestReasonMax = 240
+
+// ValidateRequestReason refuses a purpose the person could not read in one
+// line: none, more than one line, or longer than a sentence. A second line is
+// where a value pasted by mistake would hide.
+func ValidateRequestReason(reason string) error {
+	trimmed := strings.TrimSpace(reason)
+	switch {
+	case trimmed == "":
+		return platform.NewPlatformError(platform.ErrInvalidParameter,
+			"A request needs its reason",
+			"reason: one sentence for the person — what the value is for and where to find it.")
+	case strings.ContainsAny(trimmed, "\r\n"):
+		return platform.NewPlatformError(platform.ErrInvalidParameter,
+			"The reason is one line",
+			"reason: one sentence, no line breaks — and never a value.")
+	case utf8.RuneCountInString(trimmed) > requestReasonMax:
+		return platform.NewPlatformError(platform.ErrInvalidParameter,
+			fmt.Sprintf("The reason is longer than %d characters", requestReasonMax),
+			"reason: one short sentence the card shows whole.")
+	}
+	return nil
+}
+
 // EnvRequest checks a request for a vault value and writes nothing: it
 // validates the key, resolves the scope (project wins over a hostname, as in
 // set/delete) and reports whether the key is already in that vault, by
@@ -67,9 +96,13 @@ func EnvRequest(
 	hostname string,
 	isProject bool,
 	key string,
+	reason string,
 	sensitive *bool,
 ) (*EnvRequestResult, error) {
 	if err := ValidateEnvKey(key); err != nil {
+		return nil, err
+	}
+	if err := ValidateRequestReason(reason); err != nil {
 		return nil, err
 	}
 	if hostname == "" && !isProject {
@@ -78,7 +111,7 @@ func EnvRequest(
 			"project=true asks for a Shared value; serviceHostname for one service's own.")
 	}
 
-	result := &EnvRequestResult{Key: key, Sensitive: resolveSensitive(key, "", sensitive)}
+	result := &EnvRequestResult{Key: key, Reason: strings.TrimSpace(reason), Sensitive: resolveSensitive(key, "", sensitive)}
 	if isProject {
 		result.Scope = EnvRequestScopeShared
 		envs, err := client.GetProjectEnv(ctx, projectID)
