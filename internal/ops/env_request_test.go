@@ -124,3 +124,43 @@ func TestEnvRequest_Refuses(t *testing.T) {
 		})
 	}
 }
+
+// TestEnvRequest_VaultHiddenNames refuses, up front, a request under a name
+// Mate's vault never lists — the person could neither see nor remove the value
+// — and asks the agent for another name. Names Mate lists are asked as usual.
+func TestEnvRequest_VaultHiddenNames(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		key     string
+		refused bool
+	}{
+		{key: "MATE_PROBE_TOKEN", refused: true},
+		{key: "ZCP_API_KEY", refused: true},
+		{key: "GITEA_URL", refused: true},
+		{key: "GIT_TOKEN", refused: true},
+		{key: "GIT_TOKEN_DEPLOY", refused: false},
+		{key: "MY_MATE_TOKEN", refused: false},
+		{key: "mate_probe", refused: false},
+		{key: "STRIPE_SECRET_KEY", refused: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.key, func(t *testing.T) {
+			t.Parallel()
+			_, err := EnvRequest(context.Background(), platform.NewMock(), "proj-1", "", true, tt.key, purpose, nil)
+			if !tt.refused {
+				if err != nil {
+					t.Fatalf("want %s asked, got %v", tt.key, err)
+				}
+				return
+			}
+			var pe *platform.PlatformError
+			if !errors.As(err, &pe) || pe.Code != platform.ErrInvalidParameter {
+				t.Fatalf("want an invalid-parameter refusal for %s, got %v", tt.key, err)
+			}
+			if !strings.Contains(pe.Suggestion, "another name") {
+				t.Errorf("the refusal does not ask for another name: %+v", pe)
+			}
+		})
+	}
+}
