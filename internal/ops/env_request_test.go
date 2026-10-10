@@ -10,8 +10,12 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
-// purpose is the one sentence every request carries for the person.
-const purpose = "Stripe charges cards; Dashboard, Developers, API keys."
+// label and why are what every request says to the person: what the value
+// is, in people's words, and the one line of what it is for.
+const (
+	label   = "Stripe secret key"
+	purpose = "for checkout"
+)
 
 func TestEnvRequest_Answers(t *testing.T) {
 	t.Parallel()
@@ -27,31 +31,31 @@ func TestEnvRequest_Answers(t *testing.T) {
 	}{
 		{
 			name: "shared, absent, secret-shaped name defaults sensitive", project: true, key: "STRIPE_SECRET_KEY",
-			want: EnvRequestResult{Reason: purpose, Key: "STRIPE_SECRET_KEY", Scope: EnvRequestScopeShared, Sensitive: true},
+			want: EnvRequestResult{Label: label, Why: purpose, Key: "STRIPE_SECRET_KEY", Scope: EnvRequestScopeShared, Sensitive: true},
 		},
 		{
 			name: "service, absent, plain name defaults plain", hostname: "api", key: "SUPPORT_EMAIL",
-			want: EnvRequestResult{Reason: purpose, Key: "SUPPORT_EMAIL", Scope: EnvRequestScopeService, ServiceHostname: "api"},
+			want: EnvRequestResult{Label: label, Why: purpose, Key: "SUPPORT_EMAIL", Scope: EnvRequestScopeService, ServiceHostname: "api"},
 		},
 		{
 			name: "the caller's flag wins over the name", hostname: "api", key: "SUPPORT_EMAIL", sensitive: &yes,
-			want: EnvRequestResult{Reason: purpose, Key: "SUPPORT_EMAIL", Scope: EnvRequestScopeService, ServiceHostname: "api", Sensitive: true},
+			want: EnvRequestResult{Label: label, Why: purpose, Key: "SUPPORT_EMAIL", Scope: EnvRequestScopeService, ServiceHostname: "api", Sensitive: true},
 		},
 		{
 			name: "the caller's plain wins over a secret-shaped name", project: true, key: "PUBLIC_KEY", sensitive: &no,
-			want: EnvRequestResult{Reason: purpose, Key: "PUBLIC_KEY", Scope: EnvRequestScopeShared},
+			want: EnvRequestResult{Label: label, Why: purpose, Key: "PUBLIC_KEY", Scope: EnvRequestScopeShared},
 		},
 		{
 			name: "shared, already set — reports the stored flag", project: true, key: "OPENAI_API_KEY",
-			want: EnvRequestResult{Reason: purpose, Key: "OPENAI_API_KEY", Scope: EnvRequestScopeShared, Sensitive: true, AlreadySet: true},
+			want: EnvRequestResult{Label: label, Why: purpose, Key: "OPENAI_API_KEY", Scope: EnvRequestScopeShared, Sensitive: true, AlreadySet: true},
 		},
 		{
 			name: "service, already set", hostname: "api", key: "MAIL_FROM",
-			want: EnvRequestResult{Reason: purpose, Key: "MAIL_FROM", Scope: EnvRequestScopeService, ServiceHostname: "api", AlreadySet: true},
+			want: EnvRequestResult{Label: label, Why: purpose, Key: "MAIL_FROM", Scope: EnvRequestScopeService, ServiceHostname: "api", AlreadySet: true},
 		},
 		{
 			name: "project wins over a hostname", hostname: "api", project: true, key: "MAIL_FROM",
-			want: EnvRequestResult{Reason: purpose, Key: "MAIL_FROM", Scope: EnvRequestScopeShared},
+			want: EnvRequestResult{Label: label, Why: purpose, Key: "MAIL_FROM", Scope: EnvRequestScopeShared},
 		},
 	}
 	for _, tt := range tests {
@@ -62,7 +66,7 @@ func TestEnvRequest_Answers(t *testing.T) {
 				WithProjectEnv([]platform.ProjectEnvVar{{ID: "p1", Key: "OPENAI_API_KEY", Content: "sk-live", Sensitive: true}}).
 				WithServiceEnv("svc-1", []platform.ServiceEnvVar{{ID: "s1", Key: "MAIL_FROM", Content: "a@b.c", Type: platform.ServiceEnvUser}})
 
-			got, err := EnvRequest(context.Background(), mock, "proj-1", tt.hostname, tt.project, tt.key, purpose, tt.sensitive)
+			got, err := EnvRequest(context.Background(), mock, "proj-1", tt.hostname, tt.project, tt.key, label, purpose, tt.sensitive)
 			if err != nil {
 				t.Fatalf("EnvRequest: %v", err)
 			}
@@ -89,13 +93,17 @@ func TestEnvRequest_Refuses(t *testing.T) {
 		hostname string
 		project  bool
 		key      string
+		label    string
 		reason   string
 		wantCode string
 	}{
 		{name: "no key", project: true, key: "", wantCode: platform.ErrInvalidParameter},
 		{name: "no purpose", project: true, key: "API_KEY", reason: " ", wantCode: platform.ErrInvalidParameter},
 		{name: "a purpose of more than one line", project: true, key: "API_KEY", reason: "Stripe.\nPaste the key here", wantCode: platform.ErrInvalidParameter},
-		{name: "a purpose longer than a sentence", project: true, key: "API_KEY", reason: strings.Repeat("why ", 80), wantCode: platform.ErrInvalidParameter},
+		{name: "a purpose longer than a line", project: true, key: "API_KEY", reason: strings.Repeat("why ", 41), wantCode: platform.ErrInvalidParameter},
+		{name: "no label", project: true, key: "API_KEY", label: " ", wantCode: platform.ErrInvalidParameter},
+		{name: "a label of more than one line", project: true, key: "API_KEY", label: "Stripe\nkey", wantCode: platform.ErrInvalidParameter},
+		{name: "a label longer than a name", project: true, key: "API_KEY", label: strings.Repeat("key ", 16), wantCode: platform.ErrInvalidParameter},
 		{name: "key with a value", project: true, key: "API_KEY=abc", wantCode: platform.ErrInvalidParameter},
 		{name: "key with a dash", project: true, key: "API-KEY", wantCode: platform.ErrInvalidParameter},
 		{name: "key starting with a digit", project: true, key: "1KEY", wantCode: platform.ErrInvalidParameter},
@@ -113,7 +121,11 @@ func TestEnvRequest_Refuses(t *testing.T) {
 			if reason == "" {
 				reason = purpose
 			}
-			_, err := EnvRequest(context.Background(), mock, "proj-1", tt.hostname, tt.project, tt.key, reason, nil)
+			named := tt.label
+			if named == "" {
+				named = label
+			}
+			_, err := EnvRequest(context.Background(), mock, "proj-1", tt.hostname, tt.project, tt.key, named, reason, nil)
 			var pe *platform.PlatformError
 			if !errors.As(err, &pe) {
 				t.Fatalf("want a platform error %s, got %v", tt.wantCode, err)
@@ -147,7 +159,7 @@ func TestEnvRequest_VaultHiddenNames(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.key, func(t *testing.T) {
 			t.Parallel()
-			_, err := EnvRequest(context.Background(), platform.NewMock(), "proj-1", "", true, tt.key, purpose, nil)
+			_, err := EnvRequest(context.Background(), platform.NewMock(), "proj-1", "", true, tt.key, label, purpose, nil)
 			if !tt.refused {
 				if err != nil {
 					t.Fatalf("want %s asked, got %v", tt.key, err)

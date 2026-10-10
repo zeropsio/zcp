@@ -31,10 +31,12 @@ type EnvInput struct {
 	SkipRestart     FlexBool `json:"skipRestart,omitempty"`
 	// Sensitive is optional: nil lets the set pick per key by name.
 	Sensitive *FlexBool `json:"sensitive,omitempty"`
-	// Key and Reason are request's: the name asked for and one sentence for
-	// the person. Never a value — the person types that into Mate.
-	Key    string `json:"key,omitempty"`
-	Reason string `json:"reason,omitempty"`
+	// Key, Label and Why are request's: the name asked for, what it is in
+	// people's words, and one line of what it is for. Never a value — the
+	// person types that into Mate.
+	Key   string `json:"key,omitempty"`
+	Label string `json:"label,omitempty"`
+	Why   string `json:"why,omitempty"`
 }
 
 // envInputSchema is the explicit InputSchema for zerops_env. It
@@ -51,7 +53,7 @@ func envInputSchema() *jsonschema.Schema {
 		"action": {
 			Type:        "string",
 			Enum:        []any{"get", "set", "delete", "request", "generate-dotenv"},
-			Description: "get: keys + ${host_var} refs — reference a value as $VAR by name, never paste it. set: upsert KEY=VALUE pairs. delete: remove keys. request: ask the person for a value only they have (key, reason) on a private card; it goes to the vault, never the chat. generate-dotenv: writes a resolved .env from a local zerops.yaml.",
+			Description: "get: keys + ${host_var} refs — reference a value as $VAR by name, never paste it. set: upsert KEY=VALUE pairs. delete: remove keys. request: ask the person for a value only they have; it goes to the vault, never the chat. generate-dotenv: writes a resolved .env from a local zerops.yaml.",
 		},
 		"serviceHostname": {
 			Type:        "string",
@@ -59,11 +61,15 @@ func envInputSchema() *jsonschema.Schema {
 		},
 		"key": {
 			Type:        "string",
-			Description: "request: the env key asked for (name only).",
+			Description: "request: the key's name.",
 		},
-		"reason": {
+		"label": {
 			Type:        "string",
-			Description: "request (required): one line for the person: what it is for, where to find it. Never a value.",
+			Description: "request: what it is, for people (Stripe secret key).",
+		},
+		"why": {
+			Type:        "string",
+			Description: "request: what for, a few words. Never a value.",
 		},
 		"setup": {
 			Type:        "string",
@@ -307,7 +313,7 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 			// A request writes nothing: Mate draws a field for the person,
 			// whose value goes straight to the vault — it never enters the
 			// conversation, this result, or any log.
-			req, err := ops.EnvRequest(ctx, client, projectID, input.ServiceHostname, input.Project.Bool(), input.Key, input.Reason, input.Sensitive.Ptr())
+			req, err := ops.EnvRequest(ctx, client, projectID, input.ServiceHostname, input.Project.Bool(), input.Key, input.Label, input.Why, input.Sensitive.Ptr())
 			if err != nil {
 				return convertError(err), nil, nil
 			}
@@ -375,8 +381,8 @@ func envRequestAnswer(req *ops.EnvRequestResult) envRequestResult {
 	}
 	return envRequestResult{
 		Requested: req,
-		NextActions: fmt.Sprintf("Now waiting on the person: Mate shows them a private card for %[1]s. The value goes straight to the vault, never through the chat, this result or your context. A message of its own tells you how it ended: saved to %[2]s/%[1]s, or declined. Do not ask for the value in the chat; continue with what does not need it, or end your turn.",
-			req.Key, vault),
+		NextActions: fmt.Sprintf("Now waiting on the person for the %[3]s (%[1]s). Tell them in one sentence why you need it, and nothing about how they give it. Never ask for the value in the chat. A message of its own tells you how it ended: saved to %[2]s/%[1]s, or declined. Continue with what does not need it, or end your turn.",
+			req.Key, vault, req.Label),
 	}
 }
 
