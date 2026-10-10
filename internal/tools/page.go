@@ -28,14 +28,15 @@ const publishedPageMessage = "Published: the person sees the page above your fin
 
 // RegisterPublishPage registers zerops_publish_page. Mate-gated by the
 // server: only a Mate's conversation draws a page. Pages are kept under
-// stateDir; a relative path resolves in cwd. canCheck says zerops_browser is
-// there to look at a page before the person does.
+// stateDir; a relative path resolves in cwd, and every file read is in it.
+// canCheck says the container's browser is there: it measures each page's
+// height, and the agent can look at a page before the person does.
 func RegisterPublishPage(srv *mcp.Server, stateDir, cwd string, canCheck bool) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "zerops_publish_page",
 		Description: "Show the person a self-contained HTML page — a chart, comparison, plan or gallery — inline " +
 			"in the conversation, above your final reply. Pass title and html, or path to an .html file. Local " +
-			"pictures are inlined; the page cannot load anything from the network, so inline scripts and styles. " +
+			"pictures are inlined; the page loads nothing from the network, so inline scripts and styles. " +
 			"Call it before your final reply.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Publish a page to the conversation",
@@ -43,8 +44,14 @@ func RegisterPublishPage(srv *mcp.Server, stateDir, cwd string, canCheck bool) {
 			DestructiveHint: boolPtr(false),
 			OpenWorldHint:   boolPtr(false),
 		},
-	}, func(_ context.Context, _ *mcp.CallToolRequest, in PublishPageInput) (*mcp.CallToolResult, any, error) {
-		page, err := ops.PublishPage(stateDir, cwd, ops.PageInput{Title: in.Title, HTML: in.HTML, Path: in.Path})
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in PublishPageInput) (*mcp.CallToolResult, any, error) {
+		// With a browser, the page is measured as the conversation will draw it, so its frame
+		// stands at its height from its first paint.
+		var measure ops.PageMeasurer
+		if canCheck {
+			measure = ops.MeasurePageInBrowser
+		}
+		page, err := ops.PublishPage(ctx, stateDir, cwd, ops.PageInput{Title: in.Title, HTML: in.HTML, Path: in.Path}, measure)
 		if err != nil {
 			return convertError(err), nil, nil
 		}
