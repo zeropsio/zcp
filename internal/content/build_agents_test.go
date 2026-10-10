@@ -772,3 +772,31 @@ func TestBuildAgentsMD_Container_GitHostSaysWhereTheCodeLives(t *testing.T) {
 		})
 	}
 }
+
+// A Mate's conversation draws a page its agent publishes above its reply, so
+// a Mate's instructions say when to publish one; a container that is no Mate
+// has no such tool, and its instructions never name it.
+func TestBuildAgentsMD_Container_PagesAreAMates(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		rt   runtime.Info
+		want bool
+	}{
+		{name: "a Mate", rt: runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true}, want: true},
+		{name: "not a Mate", rt: runtime.Info{InContainer: true, ServiceName: "zcp"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			out, err := BuildAgentsMD(tc.rt, false)
+			if err != nil {
+				t.Fatalf("BuildAgentsMD: %v", err)
+			}
+			for _, want := range []string{"`zerops_publish_page`", "above your final reply", "chart"} {
+				if strings.Contains(out, want) != tc.want {
+					t.Errorf("AGENTS.md says %q = %v, want %v", want, !tc.want, tc.want)
+				}
+			}
+		})
+	}
+}

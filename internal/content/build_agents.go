@@ -68,7 +68,8 @@ func BuildAgentsMD(rt runtime.Info, guided bool) (string, error) {
 		//
 		// The stand-up and git-host blocks are a Mate's too: only there is
 		// zerops_standup a tool (docs/spec-mate.md D32), and only a Mate
-		// delivers its code to HQ.
+		// delivers its code to HQ. Only a Mate's conversation draws a page
+		// its agent publishes (zerops_publish_page, docs/spec-mate.md §5.9).
 		for _, block := range []struct {
 			include bool
 			name    string
@@ -77,6 +78,7 @@ func BuildAgentsMD(rt runtime.Info, guided bool) (string, error) {
 			{!rt.MateEnabled, "agents_group.md"},
 			{rt.MateEnabled, "agents_application.md"},
 			{rt.MateEnabled, "agents_git_host.md"},
+			{rt.MateEnabled, "agents_pages.md"},
 		} {
 			if !block.include {
 				continue
