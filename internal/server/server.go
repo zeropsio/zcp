@@ -309,8 +309,15 @@ func (s *Server) registerTools() {
 	// open→work→close lifecycle. agent-browser is pre-installed in the ZCP
 	// container but absent from local dev machines, so the tool is gated on
 	// both container detection AND binary presence on PATH.
-	if s.rtInfo.InContainer && ops.AgentBrowserAvailable() {
+	canBrowse := s.rtInfo.InContainer && ops.AgentBrowserAvailable()
+	if canBrowse {
 		tools.RegisterBrowser(s.server, stateDir)
+	}
+	// A page the agent publishes is drawn in a Mate's conversation, read by
+	// the Mate server from the state dir (docs/spec-mate.md §5.9): Mate-gated
+	// like every mate-shaped effect (§2.0).
+	if s.rtInfo.InContainer && s.rtInfo.MateEnabled && stateDir != "" {
+		tools.RegisterPublishPage(s.server, stateDir, filepath.Dir(filepath.Dir(stateDir)), canBrowse)
 	}
 }
 

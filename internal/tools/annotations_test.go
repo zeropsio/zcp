@@ -669,3 +669,22 @@ func TestAnnotations_ObserveTool(t *testing.T) {
 		t.Fatal("description exceeds 60 words")
 	}
 }
+
+func TestAnnotations_PublishPageTool(t *testing.T) {
+	t.Chdir(t.TempDir())
+	tool := listAllTools(t, runtime.Info{InContainer: true, MateEnabled: true})["zerops_publish_page"]
+	if tool == nil {
+		t.Fatal("zerops_publish_page should be registered in a Mate")
+	}
+	ann := tool.Annotations
+	if ann == nil || ann.Title != "Publish a page to the conversation" || ann.ReadOnlyHint || !ann.IdempotentHint ||
+		ann.DestructiveHint == nil || *ann.DestructiveHint || ann.OpenWorldHint == nil || *ann.OpenWorldHint {
+		t.Fatalf("annotations = %+v", ann)
+	}
+	if words := len(strings.Fields(tool.Description)); words > 60 {
+		t.Fatalf("description has %d words (max 60)", words)
+	}
+	if !strings.Contains(tool.Description, "above your final reply") {
+		t.Error("the description says where the person sees the page")
+	}
+}
