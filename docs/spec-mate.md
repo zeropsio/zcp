@@ -1742,21 +1742,35 @@ person sees inline, above its final reply. The page crosses the seam as a file, 
 a page with its pictures inlined runs to megabytes, and a tool result reaches the model.
 
 - **zcp.** `zerops_publish_page` (Mate-gated, §2.0) takes a `title` and the page as `html` or as a
-  `path` in the project. Every local picture an `<img src>` or a CSS `url()` names is inlined as a
-  `data:` URI, its format sniffed from its bytes (PNG, JPEG, GIF, WebP, BMP, ICO, AVIF, SVG): a
-  file that is no picture is refused, so a secret renamed `.png` never rides along, and a picture
-  that is not there is named. The page, inlined, is at most 8 MiB (`ops.PageMaxBytes`). It is kept
-  as `<stateDir>/pages/page-<digest>.html` for a week (`ops.PageKeepFor`), and the result names it
-  (`page.file`, with `id`, `title`, `bytes`), the remote resources it would load and will not
-  (`page.wontLoad`), and — where `zerops_browser` is there — how to look at it first.
+  `path` in the project. Every local picture an `<img src>` in the markup or a CSS `url()` in a
+  `<style>` element or `style` attribute names is inlined as a `data:` URI; a script's or a
+  comment's text is never read for pictures, since a bundle's `url(` or a template's
+  `<img src="${x}">` is code. A picture must be a regular file in the project — never a link, a
+  FIFO or a file outside it — and decode whole as PNG, JPEG or GIF (inlined re-encoded from its
+  pixels, so nothing but the picture rides along) or parse whole as SVG; a file that is no
+  picture is refused, so a secret renamed `.png` never rides along, and a path that is not there
+  is named. A reference that names no file (`{{ logo }}`) and every remote resource are listed
+  back as ones that will not load (`page.wontLoad`). The page, inlined, is at most 8 MiB
+  (`ops.PageMaxBytes`), the pictures read counted against it as they are read. It is kept as
+  `<stateDir>/pages/page-<digest>.html` for a week (`ops.PageKeepFor`); where the container's
+  browser is there, it is laid out behind the conversation's policy at 760 px
+  (`ops.PageMeasureWidth`) and its height recorded (`page.height`). The result names the file
+  (`page.file`, with `id`, `title`, `bytes`, `height`) and how to look at the page first.
 - **mate.** Recording the call on its engine, the server reads `page.file` once into its own asset
-  store — only a regular file named `page-*.html` in a `.zcp/state/pages` directory, at most 8 MiB —
-  so the page outlives zcp's copy; the call's record carries it by reference with its title and
-  size, the same live and after a reload. A V1 thread records the call as any `zerops_*` call.
+  store — opened without following links, only a regular file named `page-*.html` in the session's
+  own `.zcp/state/pages`, at most 8 MiB — so the page outlives zcp's copy. The page is kept apart
+  from the store's pictures, in an index an older mate never reads. The call's record carries it by
+  reference with its title, size and height, the same live and after a reload. A V1 thread records
+  the call as any `zerops_*` call.
 - **client.** The page is drawn in an `<iframe sandbox="allow-scripts">` (never
-  `allow-same-origin`) from `srcdoc`, behind a Content-Security-Policy that allows no network at
-  all, so it needs no proxy and no origin of its own: it cannot reach the network, the Mate server
-  or the person's session. A link opens in a new tab on a real click only.
+  `allow-same-origin`) from `srcdoc`, behind a Content-Security-Policy that lets it request
+  nothing — no fetch, script, style, picture, font, media or form submission from anywhere — and
+  the opaque origin keeps it from the Mate server and the person's session, so it needs no proxy
+  and no origin of its own. A policy governs no navigation: a page that navigates its own frame
+  is taken down at once, never shown, and what it says from there is ignored. WebRTC and DNS
+  prefetch stay open to a page; they carry only what the page itself holds. A link opens in a new
+  tab on a real click only. The frame stands at the recorded height from its first paint, at most
+  the shared item cap, and is mounted only near the view.
 
 Additive both ways: an older mate shows the call as any zcp call, and an older zcp has no tool.
 
@@ -1781,7 +1795,7 @@ Additive both ways: an older mate shows the call as any zcp call, and an older z
 | MF-15 | A value's readers are the deployed run entries that reference it by the platform's precedence; `KEY: ${KEY}` and a name nothing has read nothing and are flagged. `vaultReferences.test.ts`, `vault.test.ts` |
 | MF-16 | A vault write is done when its process finished and the vault shows it; a lost answer resolves from the vault's rows, never by another's process. `vaultWrite.test.ts` |
 | MF-17 | A change is told to the Mate once: since it last spoke, plus the person's own writes from here until a message carries them; set aside or sent, it is not told again, and a value added and removed untold is no news. `vaultTurnNotes.logic.test.ts` |
-| MF-18 | A page the agent publishes is self-contained or refused: its local pictures are inlined only when their bytes are a picture, a missing one is named, and the page inlined stays within 8 MiB; the result names the kept file the Mate server takes. `TestPublishPage_RealImages_InlinedAsDataURIs`, `TestPublishPage_Refusals`, `TestPublishPage_RemoteAndDataReferences_LeftAndNamed`, `TestPublishPageResult_NamesTheFileTheMateTakes`, `TestServer_PublishPageToolGating`. |
+| MF-18 | A page the agent publishes is self-contained or refused: its local pictures are inlined only when they are regular files in the project that decode whole as a picture, re-encoded from their pixels; script and comment text is never read for pictures; a missing one is named; the page inlined stays within 8 MiB; the result names the kept file the Mate server takes and, with a browser, the page's measured height. `TestPublishPage_RealImages_InlinedAsDataURIs`, `TestPublishPage_BytesBehindAPicture_NeverRideAlong`, `TestPublishPage_Refusals`, `TestPublishPage_AFifo_RefusedWithoutWaiting`, `TestPublishPage_ScriptsAndTemplates_Publish`, `TestPublishPage_RemoteAndDataReferences_LeftAndNamed`, `TestPublishPage_Height_MeasuredAsTheConversationDrawsIt`, `TestPublishPageResult_NamesTheFileTheMateTakes`, `TestServer_PublishPageToolGating`. |
 
 ---
 
