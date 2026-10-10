@@ -1735,6 +1735,31 @@ the values those entries reference.
   and deploy, or the literal a removal leaves). Never a value. The composer shows a chip per change;
   × leaves it untold; the chips alone send.
 
+### 5.9 Pages — the agent shows a page in the conversation (2026-10-10)
+
+A Mate's agent shows a chart, a comparison, a plan or a gallery as a self-contained HTML page the
+person sees inline, above its final reply. The page crosses the seam as a file, never as tool text:
+a page with its pictures inlined runs to megabytes, and a tool result reaches the model.
+
+- **zcp.** `zerops_publish_page` (Mate-gated, §2.0) takes a `title` and the page as `html` or as a
+  `path` in the project. Every local picture an `<img src>` or a CSS `url()` names is inlined as a
+  `data:` URI, its format sniffed from its bytes (PNG, JPEG, GIF, WebP, BMP, ICO, AVIF, SVG): a
+  file that is no picture is refused, so a secret renamed `.png` never rides along, and a picture
+  that is not there is named. The page, inlined, is at most 8 MiB (`ops.PageMaxBytes`). It is kept
+  as `<stateDir>/pages/page-<digest>.html` for a week (`ops.PageKeepFor`), and the result names it
+  (`page.file`, with `id`, `title`, `bytes`), the remote resources it would load and will not
+  (`page.wontLoad`), and — where `zerops_browser` is there — how to look at it first.
+- **mate.** Recording the call on its engine, the server reads `page.file` once into its own asset
+  store — only a regular file named `page-*.html` in a `.zcp/state/pages` directory, at most 8 MiB —
+  so the page outlives zcp's copy; the call's record carries it by reference with its title and
+  size, the same live and after a reload. A V1 thread records the call as any `zerops_*` call.
+- **client.** The page is drawn in an `<iframe sandbox="allow-scripts">` (never
+  `allow-same-origin`) from `srcdoc`, behind a Content-Security-Policy that allows no network at
+  all, so it needs no proxy and no origin of its own: it cannot reach the network, the Mate server
+  or the person's session. A link opens in a new tab on a real click only.
+
+Additive both ways: an older mate shows the call as any zcp call, and an older zcp has no tool.
+
 ### Invariants
 
 | ID | Invariant |
@@ -1756,6 +1781,7 @@ the values those entries reference.
 | MF-15 | A value's readers are the deployed run entries that reference it by the platform's precedence; `KEY: ${KEY}` and a name nothing has read nothing and are flagged. `vaultReferences.test.ts`, `vault.test.ts` |
 | MF-16 | A vault write is done when its process finished and the vault shows it; a lost answer resolves from the vault's rows, never by another's process. `vaultWrite.test.ts` |
 | MF-17 | A change is told to the Mate once: since it last spoke, plus the person's own writes from here until a message carries them; set aside or sent, it is not told again, and a value added and removed untold is no news. `vaultTurnNotes.logic.test.ts` |
+| MF-18 | A page the agent publishes is self-contained or refused: its local pictures are inlined only when their bytes are a picture, a missing one is named, and the page inlined stays within 8 MiB; the result names the kept file the Mate server takes. `TestPublishPage_RealImages_InlinedAsDataURIs`, `TestPublishPage_Refusals`, `TestPublishPage_RemoteAndDataReferences_LeftAndNamed`, `TestPublishPageResult_NamesTheFileTheMateTakes`, `TestServer_PublishPageToolGating`. |
 
 ---
 
