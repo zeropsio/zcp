@@ -101,7 +101,6 @@ func TestEnvRequest_Refuses(t *testing.T) {
 		{name: "no purpose", project: true, key: "API_KEY", reason: " ", wantCode: platform.ErrInvalidParameter},
 		{name: "a purpose of more than one line", project: true, key: "API_KEY", reason: "Stripe.\nPaste the key here", wantCode: platform.ErrInvalidParameter},
 		{name: "a purpose longer than a line", project: true, key: "API_KEY", reason: strings.Repeat("why ", 41), wantCode: platform.ErrInvalidParameter},
-		{name: "no label", project: true, key: "API_KEY", label: " ", wantCode: platform.ErrInvalidParameter},
 		{name: "a label of more than one line", project: true, key: "API_KEY", label: "Stripe\nkey", wantCode: platform.ErrInvalidParameter},
 		{name: "a label longer than a name", project: true, key: "API_KEY", label: strings.Repeat("key ", 16), wantCode: platform.ErrInvalidParameter},
 		{name: "key with a value", project: true, key: "API_KEY=abc", wantCode: platform.ErrInvalidParameter},
@@ -172,6 +171,35 @@ func TestEnvRequest_VaultHiddenNames(t *testing.T) {
 			}
 			if !strings.Contains(pe.Suggestion, "another name") {
 				t.Errorf("the refusal does not ask for another name: %+v", pe)
+			}
+		})
+	}
+}
+
+// TestEnvRequest_LabelFromKey names a value the agent gave no label for by its
+// key, in words a person reads: the request still says what it asks for.
+func TestEnvRequest_LabelFromKey(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		key  string
+		want string
+	}{
+		{key: "STRIPE_SECRET_KEY", want: "Stripe secret key"},
+		{key: "OPENAI_API_KEY", want: "Openai API key"},
+		{key: "SMTP_PASSWORD", want: "SMTP password"},
+		{key: "DATABASE_URL", want: "Database URL"},
+		{key: "token", want: "Token"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.key, func(t *testing.T) {
+			t.Parallel()
+			got, err := EnvRequest(context.Background(), platform.NewMock(), "proj-1", "", true, tt.key, " ", purpose, nil)
+			if err != nil {
+				t.Fatalf("EnvRequest: %v", err)
+			}
+			if got.Label != tt.want {
+				t.Errorf("label = %q, want %q", got.Label, tt.want)
 			}
 		})
 	}

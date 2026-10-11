@@ -883,7 +883,6 @@ func TestEnvTool_Request_Refused(t *testing.T) {
 	}{
 		{name: "a key with its value", args: map[string]any{"action": "request", "key": "API_KEY=abc", "project": true, "label": "API key", "why": "for payments"}},
 		{name: "no purpose", args: map[string]any{"action": "request", "key": "API_KEY", "project": true, "label": "API key"}},
-		{name: "no label", args: map[string]any{"action": "request", "key": "API_KEY", "project": true, "why": "for payments"}},
 		{name: "no vault", args: map[string]any{"action": "request", "key": "API_KEY", "label": "API key", "why": "for payments"}},
 		{name: "a service not in the project", args: map[string]any{"action": "request", "key": "API_KEY", "serviceHostname": "nope", "label": "API key", "why": "for payments"}},
 	}
@@ -898,5 +897,25 @@ func TestEnvTool_Request_Refused(t *testing.T) {
 				t.Fatalf("want a refusal, got: %s", getTextContent(t, result))
 			}
 		})
+	}
+}
+
+// TestEnvTool_Request_StaleSchema asks on the first try for an agent whose
+// session still holds the request's old schema: reason is its why, and with no
+// label the value is named from its key.
+func TestEnvTool_Request_StaleSchema(t *testing.T) {
+	t.Parallel()
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterEnv(srv, platform.NewMock(), "proj-1", "")
+
+	result := callTool(t, srv, "zerops_env", map[string]any{"action": "request", "key": "STRIPE_SECRET_KEY", "project": true, "reason": "for checkout"})
+	text := getTextContent(t, result)
+	if result.IsError {
+		t.Fatalf("a stale-schema request failed: %s", text)
+	}
+	for _, want := range []string{`"label":"Stripe secret key"`, `"why":"for checkout"`} {
+		if !strings.Contains(text, want) {
+			t.Errorf("answer lacks %q: %s", want, text)
+		}
 	}
 }
