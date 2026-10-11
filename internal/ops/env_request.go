@@ -63,6 +63,30 @@ func ValidateEnvKey(key string) error {
 	return nil
 }
 
+// keyAcronyms are the words a key's name holds that people write in capitals.
+var keyAcronyms = map[string]bool{
+	"API": true, "AWS": true, "CI": true, "DB": true, "DSN": true, "ID": true, "IP": true,
+	"JWT": true, "S3": true, "SMTP": true, "SSH": true, "SSO": true, "URL": true,
+}
+
+// LabelOfKey names a value by its key, in words a person reads, for a
+// request that gave no label: STRIPE_SECRET_KEY is "Stripe secret key".
+func LabelOfKey(key string) string {
+	parts := strings.FieldsFunc(key, func(r rune) bool { return r == '_' })
+	for i, part := range parts {
+		upper := strings.ToUpper(part)
+		switch {
+		case keyAcronyms[upper]:
+			parts[i] = upper
+		case i == 0:
+			parts[i] = upper[:1] + strings.ToLower(part[1:])
+		default:
+			parts[i] = strings.ToLower(part)
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
 // requestLabelMax bounds the label to a name; requestWhyMax the why to a
 // short line Mate shows whole after it.
 const (
@@ -150,6 +174,9 @@ func EnvRequest(
 ) (*EnvRequestResult, error) {
 	if err := validateRequestKey(key); err != nil {
 		return nil, err
+	}
+	if strings.TrimSpace(label) == "" {
+		label = LabelOfKey(key)
 	}
 	if err := ValidateRequestWords(label, why); err != nil {
 		return nil, err

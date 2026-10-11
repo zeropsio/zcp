@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"strings"
@@ -37,6 +38,9 @@ type EnvInput struct {
 	Key   string `json:"key,omitempty"`
 	Label string `json:"label,omitempty"`
 	Why   string `json:"why,omitempty"`
+	// Reason is why's name before it: a session that still holds the old
+	// schema asks on its first try.
+	Reason string `json:"reason,omitempty"`
 }
 
 // envInputSchema is the explicit InputSchema for zerops_env. It
@@ -65,11 +69,12 @@ func envInputSchema() *jsonschema.Schema {
 		},
 		"label": {
 			Type:        "string",
-			Description: "request: what it is, for people (Stripe secret key).",
+			Description: "request: its name for people (Stripe key).",
 		},
+		"reason": {Type: "string"},
 		"why": {
 			Type:        "string",
-			Description: "request: what for, a few words. Never a value.",
+			Description: "request: what for. Never a value.",
 		},
 		"setup": {
 			Type:        "string",
@@ -313,7 +318,7 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 			// A request writes nothing: Mate draws a field for the person,
 			// whose value goes straight to the vault — it never enters the
 			// conversation, this result, or any log.
-			req, err := ops.EnvRequest(ctx, client, projectID, input.ServiceHostname, input.Project.Bool(), input.Key, input.Label, input.Why, input.Sensitive.Ptr())
+			req, err := ops.EnvRequest(ctx, client, projectID, input.ServiceHostname, input.Project.Bool(), input.Key, input.Label, cmp.Or(input.Why, input.Reason), input.Sensitive.Ptr())
 			if err != nil {
 				return convertError(err), nil, nil
 			}
