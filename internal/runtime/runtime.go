@@ -34,6 +34,15 @@ type Info struct {
 	// step (internal/init) and the nginx renderer cannot drift.
 	// Spec: docs/spec-mate.md §2.
 	MateEnabled bool
+
+	// Mastermate is the ZCP_MASTERMATE gate: zcp runs in org mode — the
+	// person's Mate for the whole organization, acting through the org's
+	// read-only token (ZCP_ORG_TOKEN) instead of this project's. Org mode
+	// registers the org tool set in place of the single-project surface and
+	// renders the Mastermate's AGENTS.md section; one read here keeps the
+	// tool registration (internal/server) and the agent context
+	// (internal/content) from drifting. Spec: docs/spec-mate.md §2.11.
+	Mastermate bool
 }
 
 // Detect reads Zerops container env vars and returns runtime info.
@@ -49,9 +58,10 @@ func Detect() Info { return DetectFrom(os.Getenv) }
 func DetectFrom(getenv func(string) string) Info {
 	authoring := getenv("ZCP_AUTHORING") == "1"
 	mateEnabled := EnvEnabled(getenv("ZCP_MATE_ENABLED"))
+	mastermate := EnvEnabled(getenv("ZCP_MASTERMATE"))
 	serviceID := getenv("serviceId")
 	if serviceID == "" {
-		return Info{Authoring: authoring, MateEnabled: mateEnabled}
+		return Info{Authoring: authoring, MateEnabled: mateEnabled, Mastermate: mastermate}
 	}
 	return Info{
 		InContainer: true,
@@ -60,6 +70,7 @@ func DetectFrom(getenv func(string) string) Info {
 		ProjectID:   getenv("projectId"),
 		Authoring:   authoring,
 		MateEnabled: mateEnabled,
+		Mastermate:  mastermate,
 	}
 }
 

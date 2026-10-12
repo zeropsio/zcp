@@ -191,3 +191,27 @@ func TestDetectFrom_ReadsOnlyTheGivenEnvironment(t *testing.T) {
 		})
 	}
 }
+
+// TestDetectFrom_Mastermate pins the ZCP_MASTERMATE gate: org mode is a
+// service env an operator types, read with the same forgiving on/off as
+// ZCP_MATE_ENABLED, in a container and out of one (the local org-mode check).
+func TestDetectFrom_Mastermate(t *testing.T) {
+	tests := []struct {
+		name string
+		env  map[string]string
+		want bool
+	}{
+		{name: "1 in a container", env: map[string]string{"serviceId": "s", "ZCP_MASTERMATE": "1"}, want: true},
+		{name: "true outside a container", env: map[string]string{"ZCP_MASTERMATE": "true"}, want: true},
+		{name: "unset is off", env: map[string]string{"serviceId": "s"}, want: false},
+		{name: "0 is off", env: map[string]string{"serviceId": "s", "ZCP_MASTERMATE": "0"}, want: false},
+		{name: "a token alone is not org mode", env: map[string]string{"serviceId": "s", "ZCP_ORG_TOKEN": "x"}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := DetectFrom(func(key string) string { return tt.env[key] }).Mastermate; got != tt.want {
+				t.Errorf("Mastermate = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
