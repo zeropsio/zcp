@@ -775,6 +775,42 @@ else about "is there a newer Mate" is answered by zcp and merely displayed:
 | MU-2 | `zerops.mate.update` is offered only inside a Zerops project with `zcp` on PATH and requires `exec:operate`; a failing `zcp mate update` is a successful RPC carrying its JSON, never a transport error. `ZeropsMateUpdate.test.ts`. |
 | MU-3 | The descriptor's `update` field is absent, never fabricated, when `zcp` cannot be run; the card then shows the installed version alone. `ServerEnvironment.test.ts`. |
 
+### 2.10 A paired Mac — Mate's mechanism, zcp's guidance
+
+A Mate can pair the user's Mac to build, run and drive macOS and iOS apps on it over the project VPN.
+**Mate owns the mechanism**: the `mac` command on the agents' PATH (`~/.local/bin/mac`), the script a
+Mac runs to pair, and what `mac status --json` prints. **zcp owns the guidance**: `zerops_workflow
+action="mac-pair"` runs `mac status --json` on every call (bounded, 90 s — it reaches the Mac over ssh
+and asks macOS for permissions) and answers with the one next step for the user, keeping no state.
+
+`mac status --json` exits 0 with one object whenever it could tell the state:
+
+```json
+{
+  "stage": "not-paired | unreachable | needs-permissions | ready",
+  "pairCommands": ["zcli vpn up <projectId>", "ssh zcp mac host | sh"],
+  "removeCommand": "ssh zcp mac host --remove | sh",
+  "mac": null | {"name", "user", "address", "port", "macos"?, "agentDevice"?, "node"?},
+  "missing": [] | ["Accessibility", "Screen Recording"]
+}
+```
+
+`not-paired` carries no `mac`; `unreachable` is a paired Mac that does not answer over ssh;
+`needs-permissions` is a Mac that answers while macOS has not given the agent-device daemon (`node`)
+the permissions in `missing`; `ready` is everything working. zcp repeats `pairCommands` and
+`removeCommand` verbatim and never composes one — the project and the host in them are Mate's.
+A non-zero exit, output that is not this object, or an unknown stage is `mac` failing, reported with
+its stderr and never guessed into a stage.
+
+Presence of `mac` on PATH is the capability: a Mate that ships it answers `--json`, and a Mate without
+it predates Mac pairing (zcp says it arrives with a Mate update). It is a capability probe, not a fact
+of contract 1 (§2.8) — no contract bump either way. The action is a Mate's: with `ZCP_MATE_ENABLED`
+off it refuses and never runs `mac` (§2.0).
+
+| ID | Invariant |
+|---|---|
+| MC-1 | mac-pair's answer is derived from `mac status --json` alone, per stage, with the Mate's commands repeated verbatim; a failing, unreadable or hanging `mac` is an error naming it, a missing `mac` is "arrives with a Mate update", and outside a Mate `mac` never runs. `TestMacPair_GuidesEachStage_FromMateStatus`, `TestWorkflowTool_MacPairReachesItsHandler`. |
+
 ## Current account contract — Mate 0.11.0
 
 Mate 0.11.0 supersedes the historical S1/S4 pairing and account behavior below. Every product client

@@ -98,7 +98,9 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// Raised +246 (18662→18908) for `title`, action="describe-change"'s
 		// one new input: each repository's change gets its own title, and
 		// `description` says that describing is what asks for the review.
-		"zerops_workflow":    18908,
+		// Raised +55 (18908→18963) for action="mac-pair" in the action list:
+		// a Mate's guidance for pairing the user's Mac, no new field.
+		"zerops_workflow":    18963,
 		"zerops_record_fact": 3299,
 		"zerops_dev_server":  3220,
 		// Raised +28 (2945→2973) for the OS-axis migration: the runtime/services
