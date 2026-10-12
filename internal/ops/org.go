@@ -629,7 +629,7 @@ func OrgEnv(ctx context.Context, src OrgSource, projectRef, serviceRef string, r
 		sensitive  bool
 	}
 	var vars []kv
-	result := &OrgEnvResult{Project: p.ref(), Scope: "project", Note: orgEnvNote}
+	result := &OrgEnvResult{Project: p.ref(), Scope: OrgScopeProject, Note: orgEnvNote}
 	if strings.TrimSpace(serviceRef) != "" {
 		s, err := p.service(serviceRef)
 		if err != nil {
@@ -642,7 +642,7 @@ func OrgEnv(ctx context.Context, src OrgSource, projectRef, serviceRef string, r
 		for _, e := range envs {
 			vars = append(vars, kv{e.Key, e.Content, e.Sensitive})
 		}
-		result.Scope, result.Service = "service", s.Name
+		result.Scope, result.Service = OrgScopeService, s.Name
 	} else {
 		envs, err := src.GetProjectEnv(ctx, p.ID)
 		if err != nil {
