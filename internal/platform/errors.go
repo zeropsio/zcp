@@ -142,6 +142,14 @@ const (
 	// so the replacement container would start without that code. GF-12,
 	// docs/spec-workflows.md §8 DM.
 	ErrGitSubmodulesUnsupported = "GIT_SUBMODULES_UNSUPPORTED"
+	// Org mode (docs/spec-mate.md §2.11). ErrOrgNotReachable: ZCP_ORG_TOKEN
+	// reaches no organization, or not the one ZCP_ORG_ID names.
+	// ErrOrgAmbiguous: it reaches several and ZCP_ORG_ID names none.
+	// ErrOrgWriteRefused: the org reader's transport stopped a request that
+	// was not a read — org mode never writes.
+	ErrOrgNotReachable = "ORG_NOT_REACHABLE"
+	ErrOrgAmbiguous    = "ORG_AMBIGUOUS"
+	ErrOrgWriteRefused = "ORG_WRITE_REFUSED"
 )
 
 // Error subcodes narrow a specific top-level code into a stable, more
