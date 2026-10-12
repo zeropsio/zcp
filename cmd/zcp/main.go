@@ -334,9 +334,9 @@ func runServe() int {
 func runServer(mcpStdout io.Writer, tel telemetry.Emitter) (*server.Server, error) {
 	// Org mode (docs/spec-mate.md §2.11) reads its gate and credentials
 	// through the container's live env store, so an agent whose MCP launcher
-	// strips the environment still gets the Mastermate; outside a container
+	// strips the environment still gets the Chief; outside a container
 	// the lookup falls back to this process's environment.
-	if getenv := mate.LiveLookup(mate.LiveEnvStorePath); runtime.DetectFrom(getenv).Mastermate {
+	if getenv := mate.LiveLookup(mate.LiveEnvStorePath); runtime.DetectFrom(getenv).Chief {
 		return runOrgServer(mcpStdout, tel, getenv)
 	}
 

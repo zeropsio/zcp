@@ -119,7 +119,7 @@ func ResolveOrgCredentials(getenv func(string) string) (*OrgCredentials, error) 
 	if token == "" {
 		return nil, platform.NewPlatformError(
 			platform.ErrAuthRequired,
-			"Org mode (ZCP_MASTERMATE) needs ZCP_ORG_TOKEN",
+			"Org mode (ZCP_CHIEF) needs ZCP_ORG_TOKEN",
 			"Set ZCP_ORG_TOKEN on the zcp service to the organization's read-only token",
 		)
 	}

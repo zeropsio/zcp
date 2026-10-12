@@ -92,7 +92,7 @@ func testOrg() *fakeOrg {
 	return &fakeOrg{
 		orgID: "org1",
 		projects: []platform.Project{
-			{ID: "pMM", Name: "Mastermate - Mastermate", Status: "ACTIVE", Tags: []string{"mate", "mastermate"}},
+			{ID: "pMM", Name: "Chief - Chief", Status: "ACTIVE", Tags: []string{"mate", "chief"}},
 			{ID: "pRossy", Name: "Northwind Shop - Rossy", Status: "ACTIVE", Tags: []string{"mate"}},
 			{ID: "pBorn", Name: "Contoso - Unborn", Status: "ACTIVE", Tags: []string{"mate"}},
 			{ID: "pHQ", Name: "Headquarters", Status: "ACTIVE"},
@@ -124,7 +124,7 @@ func TestClassifyOrgProject(t *testing.T) {
 		wantApp  string
 		wantMate string
 	}{
-		{project: "pMM", wantKind: OrgKindMastermate},
+		{project: "pMM", wantKind: OrgKindChief},
 		{project: "pRossy", wantKind: OrgKindMate, wantApp: "Northwind Shop", wantMate: "Rossy"},
 		// Tagged mate but no zcp service: not a Mate org mode can talk to.
 		{project: "pBorn", wantKind: OrgKindOther},
@@ -164,7 +164,7 @@ func TestOrgOverview_GroupsEveryProjectByKind(t *testing.T) {
 	for _, g := range got.Groups {
 		count[g.Kind] = len(g.Projects)
 	}
-	want := map[OrgProjectKind]int{OrgKindMastermate: 1, OrgKindMate: 1, OrgKindHQ: 1, OrgKindProduction: 1, OrgKindStage: 1, OrgKindOther: 2}
+	want := map[OrgProjectKind]int{OrgKindChief: 1, OrgKindMate: 1, OrgKindHQ: 1, OrgKindProduction: 1, OrgKindStage: 1, OrgKindOther: 2}
 	for k, n := range want {
 		if count[k] != n {
 			t.Errorf("group %s has %d projects, want %d", k, count[k], n)

@@ -73,7 +73,7 @@ func fakeOrgAPI(t *testing.T) (*httptest.Server, func() []string) {
 	}
 }
 
-// TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite runs the Mastermate's
+// TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite runs the Chief's
 // tools the way the model calls them: it sees the organization, proposes a
 // restart and a message to a Mate, and the Zerops API receives reads only.
 func TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite(t *testing.T) {
@@ -90,7 +90,7 @@ func TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("knowledge store: %v", err)
 	}
-	srv := server.NewOrg(ctx, org, api.URL, store, platform.NewMockLogFetcher(), runtime.Info{Mastermate: true}, nil)
+	srv := server.NewOrg(ctx, org, api.URL, store, platform.NewMockLogFetcher(), runtime.Info{Chief: true}, nil)
 	st, ct := mcp.NewInMemoryTransports()
 	if _, err := srv.MCPServer().Connect(ctx, st, nil); err != nil {
 		t.Fatal(err)

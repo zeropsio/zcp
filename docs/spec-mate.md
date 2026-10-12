@@ -811,17 +811,17 @@ off it refuses and never runs `mac` (§2.0).
 |---|---|
 | MC-1 | mac-pair's answer is derived from `mac status --json` alone, per stage, with the Mate's commands repeated verbatim; a failing, unreadable or hanging `mac` is an error naming it, a missing `mac` is "arrives with a Mate update", and outside a Mate `mac` never runs. `TestMacPair_GuidesEachStage_FromMateStatus`, `TestWorkflowTool_MacPairReachesItsHandler`. |
 
-### 2.11 Org mode — the Mastermate
+### 2.11 Org mode — the Chief
 
-A **Mastermate** is a person's Mate for the whole organization, one per person (it spends that
+A **Chief** is a person's Mate for the whole organization, one per person (it spends that
 person's agent subscription). It lives in its own otherwise empty project, which the client
-recognises by the project tag `mastermate`. zcp serves it in **org mode**.
+recognises by the project tag `chief`. zcp serves it in **org mode**.
 
 **Switching it on.** Service variables of that project's `zcp` service:
 
 | Key | Meaning |
 |---|---|
-| `ZCP_MASTERMATE` | `1`/`true` turns org mode on (`runtime.Info.Mastermate`, read like `ZCP_MATE_ENABLED`) |
+| `ZCP_CHIEF` | `1`/`true` turns org mode on (`runtime.Info.Chief`, read like `ZCP_MATE_ENABLED`) |
 | `ZCP_ORG_TOKEN` | secret — the organization's token, meant to be read only (as HQ's own). Never the project's `ZCP_API_KEY` |
 | `ZCP_ORG_ID` | the organization to read; may be left out when the token reaches exactly one. A token reaching several with none named, or not reaching the named one, refuses to start |
 
@@ -836,13 +836,13 @@ write-capable client exists in org mode. Every change is the person's: their cli
 their own Zerops token after their click.
 
 **Tool surface.** Look: `zerops_org_overview` (every project, grouped as `mate`, `hq`,
-`production`, `stage`, `other`, `mastermate`), `zerops_org_services`, `zerops_org_logs` (runtime,
+`production`, `stage`, `other`, `chief`), `zerops_org_services`, `zerops_org_logs` (runtime,
 or the newest build's), `zerops_org_failures` (spent build containers and system services left
 out), `zerops_org_env` (values masked unless a key is named in `reveal`; the result lists what was
 revealed), `zerops_org_processes`. Act: `zerops_org_propose_service` (`restart` | `start` |
 `stop`), `zerops_org_propose_env`, `zerops_org_propose_message`. Also `zerops_knowledge`, and in a
 Mate's container `zerops_publish_page` (§5.9). The single-project surface acts on the empty own
-project and is not registered. A project's kind: tag `mastermate`; a Mate is tagged `mate` and runs
+project and is not registered. A project's kind: tag `chief`; a Mate is tagged `mate` and runs
 a `zcp@*` service, its name the part of the project name after the last `" - "`; HQ runs a service
 named `hq`; production and stage are named `"<application> - production"` / `"- stage"`. Org results
 carry no envelope (§1.4): they describe the organization, not this project's lifecycle.
@@ -871,11 +871,11 @@ draws it as a card the person approves or declines, and executes an approved one
 `{"to": {"projectId", "mateName"}, "words", "attachment"?: {"title", "text"}}`, where the top-level
 project is the addressed Mate's. Every field is validated against what the organization holds (the
 project, its own non-system service, a state the action fits, a valid key, a real Mate other than
-the Mastermate) and refused with a plain error otherwise. There is no delete, no token and no
+the Chief) and refused with a plain error otherwise. There is no delete, no token and no
 scaling kind.
 
-**Agent context.** In org mode the managed `AGENTS.md` section is the Mastermate's
-(`agents_mastermate.md`) in place of the single-project doctrine: who it is, the organization, its
+**Agent context.** In org mode the managed `AGENTS.md` section is the Chief's
+(`agents_chief.md`) in place of the single-project doctrine: who it is, the organization, its
 tools, that acting is proposing and the person decides, that project work goes to that project's
 Mate as a `mate.message` proposal, and to answer short.
 
@@ -883,7 +883,7 @@ Mate as a `mate.message` proposal, and to answer short.
 |---|---|
 | OM-1 | Org mode makes no write call to the Zerops API: `OrgReader` exposes reads only and its transport refuses writes. `TestOrgReader_ExposesNoWriteMethod`, `TestReadOnlyTransport_RefusesWrites`, `TestOrgReader_EveryCallReadsInsideTheOrg`. |
 | OM-2 | An act tool returns a proposal of the shape above, validated against the organization, and changes nothing. `TestProposeOrgAction_Shape`, `TestProposeOrgAction_ValidatesAgainstTheOrg`. |
-| OM-3 | Org mode registers the org surface only, and its `AGENTS.md` section is the Mastermate's. `TestNewOrg_RegistersTheOrgSurfaceOnly`, `TestBuildAgentsMD_Mastermate`. |
+| OM-3 | Org mode registers the org surface only, and its `AGENTS.md` section is the Chief's. `TestNewOrg_RegistersTheOrgSurfaceOnly`, `TestBuildAgentsMD_Chief`. |
 
 ## Current account contract — Mate 0.11.0
 

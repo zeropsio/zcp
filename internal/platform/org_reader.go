@@ -13,7 +13,7 @@ import (
 )
 
 // OrgReader is org mode's only door to the Zerops API (docs/spec-mate.md
-// §2.11): the Mastermate reads the whole organization through the org's
+// §2.11): the Chief reads the whole organization through the org's
 // token and never writes to it. Two things hold that in code rather than in
 // prose:
 //
@@ -79,7 +79,7 @@ func resolveOrgID(reach []string, named string) (string, error) {
 	default:
 		return "", NewPlatformError(ErrOrgAmbiguous,
 			fmt.Sprintf("ZCP_ORG_TOKEN reaches %d organizations and ZCP_ORG_ID names none", len(reach)),
-			"Set ZCP_ORG_ID to the organization this Mastermate is for")
+			"Set ZCP_ORG_ID to the organization this Chief is for")
 	}
 }
 

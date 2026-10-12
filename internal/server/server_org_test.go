@@ -79,7 +79,7 @@ func listOrgServerTools(t *testing.T, rt runtime.Info) []string {
 	return names
 }
 
-// TestNewOrg_RegistersTheOrgSurfaceOnly: in org mode the Mastermate gets the
+// TestNewOrg_RegistersTheOrgSurfaceOnly: in org mode the Chief gets the
 // org tools and platform knowledge. The single-project surface — workflows,
 // deploys, discover, env, manage, import, delete… — acts on its own empty
 // project and is not registered.
@@ -93,12 +93,12 @@ func TestNewOrg_RegistersTheOrgSurfaceOnly(t *testing.T) {
 	}{
 		{
 			name: "local",
-			rt:   runtime.Info{Mastermate: true},
+			rt:   runtime.Info{Chief: true},
 			want: append(slices.Clone(orgTools), "zerops_knowledge"),
 		},
 		{
 			name: "a Mate's container draws pages",
-			rt:   runtime.Info{Mastermate: true, InContainer: true, ServiceID: "s1", MateEnabled: true},
+			rt:   runtime.Info{Chief: true, InContainer: true, ServiceID: "s1", MateEnabled: true},
 			want: append(slices.Clone(orgTools), "zerops_knowledge", "zerops_publish_page"),
 		},
 	}
@@ -118,21 +118,21 @@ func TestNewOrg_RegistersTheOrgSurfaceOnly(t *testing.T) {
 	}
 }
 
-// TestNewOrg_RefreshesTheMastermateSection: org mode keeps AGENTS.md's
-// managed section on the Mastermate's guidance.
-func TestNewOrg_RefreshesTheMastermateSection(t *testing.T) {
+// TestNewOrg_RefreshesTheChiefSection: org mode keeps AGENTS.md's
+// managed section on the Chief's guidance.
+func TestNewOrg_RefreshesTheChiefSection(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	agents := filepath.Join(dir, "AGENTS.md")
 	if err := os.WriteFile(agents, []byte("<!-- ZCP:BEGIN -->\nold\n<!-- ZCP:END -->\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	listOrgServerTools(t, runtime.Info{Mastermate: true})
+	listOrgServerTools(t, runtime.Info{Chief: true})
 	body, err := os.ReadFile(agents)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(body), "zerops_org_overview") || strings.Contains(string(body), "\nold\n") {
-		t.Errorf("AGENTS.md not refreshed to the Mastermate section:\n%s", body)
+		t.Errorf("AGENTS.md not refreshed to the Chief section:\n%s", body)
 	}
 }

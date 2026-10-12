@@ -103,7 +103,7 @@ func TestProposeOrgAction_ValidatesAgainstTheOrg(t *testing.T) {
 		{name: "env.set with an unknown scope", in: OrgActionInput{Kind: ProposalEnvSet, Project: "pProd", Scope: "org", Key: "K", Value: "v", Reason: "r"}, wantErr: "scope"},
 		{name: "mate.message to no Mate", in: OrgActionInput{Kind: ProposalMateMessage, To: "Nobody", Words: "hi", Reason: "r"}, wantErr: "Nobody"},
 		{name: "mate.message to a project that is not a Mate", in: OrgActionInput{Kind: ProposalMateMessage, To: "pProd", Words: "hi", Reason: "r"}, wantErr: "not a Mate"},
-		{name: "mate.message to the Mastermate itself", in: OrgActionInput{Kind: ProposalMateMessage, To: "pMM", Words: "hi", Reason: "r"}, wantErr: "not a Mate"},
+		{name: "mate.message to the Chief itself", in: OrgActionInput{Kind: ProposalMateMessage, To: "pMM", Words: "hi", Reason: "r"}, wantErr: "is the Chief"},
 		{name: "mate.message without words", in: OrgActionInput{Kind: ProposalMateMessage, To: "Rossy", Words: "  ", Reason: "r"}, wantErr: "words"},
 		{name: "mate.message with an empty attachment", in: OrgActionInput{Kind: ProposalMateMessage, To: "Rossy", Words: "hi", AttachmentTitle: "logs", Reason: "r"}, wantErr: "attachment"},
 		{name: "mate.message with an oversized attachment", in: OrgActionInput{Kind: ProposalMateMessage, To: "Rossy", Words: "hi", AttachmentText: strings.Repeat("x", orgAttachmentMax+1), Reason: "r"}, wantErr: "attachment"},

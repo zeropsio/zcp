@@ -10,7 +10,7 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
-// Org mode's tools (docs/spec-mate.md §2.11): the Mastermate looks across the
+// Org mode's tools (docs/spec-mate.md §2.11): the Chief looks across the
 // whole organization through the org's read-only token, and acts only by
 // proposing — a proposal runs nothing; the person approves or declines it on
 // a card and their own client makes the change.

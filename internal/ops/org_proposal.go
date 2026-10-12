@@ -174,6 +174,9 @@ func ProposeOrgAction(ctx context.Context, src OrgSource, newID func() string, i
 		if p, err = snap.resolve(in.To); err != nil {
 			return nil, err
 		}
+		if p.Class.Kind == OrgKindChief {
+			return nil, invalid(fmt.Sprintf("%s is the Chief: you, not a Mate to hand work to", p.Name), "zerops_org_overview lists the Mates")
+		}
 		if p.Class.Kind != OrgKindMate {
 			return nil, invalid(fmt.Sprintf("%s is not a Mate", p.Name), "zerops_org_overview lists the Mates")
 		}
