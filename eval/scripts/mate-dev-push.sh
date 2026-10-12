@@ -25,8 +25,10 @@
 #                     $MATE_PREFIX/current/node_modules/.bin/mate)
 #   MATE_UNIT           systemd unit `zcp init mate` creates (default: zerops@mate)
 #   MATE_SKIP_WEB=1     reuse apps/web/dist instead of rebuilding the web client
-#   MATE_BASE_PATH      public path prefix baked into the web bundle (e.g. /mate);
-#                     empty = root-served (upstream default)
+#   MATE_BASE_PATH      public path prefix baked into the web bundle (default: /mate,
+#                     what a release bakes in per spec-mate C-6; empty = root-served)
+#   MATE_NODE_PTY_PREBUILD  directory holding a linux-x64 pty.node to bundle (default:
+#                     taken from an install on the container, else built in Docker)
 #   MATE_HOSTED_APP_CHANNEL  REMOVED — the container bundle no longer claims to be the hosted app
 
 set -euo pipefail
@@ -42,6 +44,40 @@ WHAT="${1:-zcp}"
 # Container host keys rotate on every recreate — same policy as build-deploy.sh.
 SSH_OPTS=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR)
 remote() { ssh "${SSH_OPTS[@]}" "$REMOTE_HOST" "$@"; }
+
+# node-pty ships no Linux prebuild and a container has no compiler, so a release
+# tarball carries its own pty.node (the fork's bundleNodePty.ts); a dev tarball
+# must too, or `npm install` dies in node-gyp. Prints the directory holding it.
+node_pty_prebuild() {
+  if [ -n "${MATE_NODE_PTY_PREBUILD:-}" ]; then echo "$MATE_NODE_PTY_PREBUILD"; return; fi
+  local version cache found
+  version="$(node -p "require('$MATE_REPO/apps/server/node_modules/node-pty/package.json').version")"
+  cache="$MATE_REPO/builds/node-pty-linux-x64/$version"
+  if [ -f "$cache/pty.node" ]; then echo "$cache"; return; fi
+  mkdir -p "$cache"
+  # Any release installed on the container bundles one; take it when the version matches.
+  found="$(remote "for d in '$MATE_PREFIX'/versions/*/node_modules/zerops-mate/node_modules/node-pty; do
+      [ -f \"\$d/prebuilds/linux-x64/pty.node\" ] && grep -q '\"version\": \"$version\"' \"\$d/package.json\" &&
+        { echo \"\$d/prebuilds/linux-x64/pty.node\"; break; }
+    done" || true)"
+  if [ -n "$found" ]; then
+    echo "==> node-pty $version linux-x64 prebuild from $REMOTE_HOST:$found" >&2
+    scp "${SSH_OPTS[@]}" "$REMOTE_HOST:$found" "$cache/pty.node" >&2
+  elif command -v docker >/dev/null 2>&1; then
+    # The release workflow's recipe; amd64 even on an arm Mac, the container's platform.
+    echo "==> Building node-pty $version for linux-x64 in Docker..." >&2
+    docker run --rm --platform linux/amd64 -v "$cache:/out" -e "NODE_PTY_VERSION=$version" node:22-bullseye bash -ec '
+      mkdir /w && cd /w && npm init -y >/dev/null
+      npm install --no-audit --no-fund "node-pty@${NODE_PTY_VERSION}" >/dev/null
+      cp node_modules/node-pty/build/Release/pty.node /out/pty.node
+    ' >&2
+  else
+    echo "No linux-x64 pty.node for node-pty $version: no install on $REMOTE_HOST bundles it and Docker is missing." >&2
+    echo "Set MATE_NODE_PTY_PREBUILD to a directory holding one." >&2
+    exit 1
+  fi
+  echo "$cache"
+}
 
 restart_mate_unit() {
   # The unit exists only once `zcp init mate` (stream S2) has created it.
@@ -86,21 +122,22 @@ push_mate() {
     # reinstall fails the web build on an unresolved import. Fast when current.
     echo "==> Syncing dependencies (vp install --frozen-lockfile)..."
     vp install --frozen-lockfile
+    prebuild="$(node_pty_prebuild)"
     if [ "${MATE_SKIP_WEB:-0}" != "1" ]; then
-      echo "==> Building web client (base path: ${MATE_BASE_PATH:-/})..."
+      echo "==> Building web client (base path: ${MATE_BASE_PATH-/mate})..."
       # No VITE_HOSTED_APP_CHANNEL: the container bundle is NOT the hosted app. It used to claim it
       # was, because otherwise the client booted in local-server mode and /mate/ redirected to /pair
       # (S7-3, 2026-08-29) — the lie also mislabelled the stage "Latest" and emptied the connection
       # source. W4-F6-DOOR removed the need: a requires-auth gate advertising zerops-identity is a
       # Zerops door, so /mate/ renders the Zerops sign-in, and the honest hosted-static answer (false)
       # is what lets the container register its own primary environment.
-      VITE_BASE_PATH="${MATE_BASE_PATH:-}" vp run --filter @t3tools/web build
+      VITE_BASE_PATH="${MATE_BASE_PATH-/mate}" vp run --filter @t3tools/web build
     fi
     echo "==> Building server bundle + client copy..."
     node apps/server/scripts/cli.ts build
     echo "==> Packing zerops-mate@$version..."
     rm -rf builds/mate && mkdir -p builds/mate
-    node apps/server/scripts/cli.ts pack --out builds/mate --app-version "$version"
+    node apps/server/scripts/cli.ts pack --out builds/mate --app-version "$version" --node-pty-prebuild "$prebuild"
   )
   tarball="$(ls "$MATE_REPO"/builds/mate/*.tgz | head -n 1)"
   echo "==> Tarball: $tarball ($(du -h "$tarball" | cut -f1))"
