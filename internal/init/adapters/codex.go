@@ -177,6 +177,7 @@ func codexMCPServerEntry() map[string]any {
 			// container zcp serve also reads them from the live env store.
 			"ZCP_ORG_TOKEN",
 			"ZCP_ORG_ID",
+			"ZCP_ORG_API",
 			// Process basics for subprocess execution.
 			"PATH",
 			"HOME",

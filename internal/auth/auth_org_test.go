@@ -38,6 +38,13 @@ func TestResolveOrgCredentials(t *testing.T) {
 			want: OrgCredentials{Token: "org-tok", APIHost: "api.example"},
 		},
 		{
+			// HQ's Chief proxy: the org API is read as given, trimmed; the
+			// org it needs is OpenOrgReader's to refuse when missing.
+			name: "an org API",
+			env:  map[string]string{"ZCP_ORG_TOKEN": "chief-cred", "ZCP_ORG_API": " https://hq.example/api/chief/zerops ", "ZCP_ORG_ID": "org1"},
+			want: OrgCredentials{Token: "chief-cred", APIHost: "api.app-prg1.zerops.io", OrgAPI: "https://hq.example/api/chief/zerops", OrgID: "org1"},
+		},
+		{
 			// The project's own token is never borrowed for the org.
 			name:     "no org token",
 			env:      map[string]string{"ZCP_API_KEY": "project-tok"},

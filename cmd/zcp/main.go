@@ -413,7 +413,8 @@ func runServer(mcpStdout io.Writer, tel telemetry.Emitter) (*server.Server, erro
 
 // runOrgServer serves org mode: the organization read through the org's
 // read-only token (ZCP_ORG_TOKEN), scoped to ZCP_ORG_ID or the one org the
-// token reaches. It refuses to start rather than guess the organization, and
+// token reaches — or, with ZCP_ORG_API, through HQ's Chief proxy, scoped to
+// ZCP_ORG_ID. It refuses to start rather than guess the organization, and
 // never builds a client that could write.
 func runOrgServer(mcpStdout io.Writer, tel telemetry.Emitter, getenv func(string) string) (*server.Server, error) {
 	creds, err := auth.ResolveOrgCredentials(getenv)
@@ -423,7 +424,9 @@ func runOrgServer(mcpStdout io.Writer, tel telemetry.Emitter, getenv func(string
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	org, err := platform.OpenOrgReader(ctx, creds.Token, creds.APIHost, creds.OrgID)
+	org, err := platform.OpenOrgReader(ctx, platform.OrgAccess{
+		Token: creds.Token, APIHost: creds.APIHost, OrgAPI: creds.OrgAPI, OrgID: creds.OrgID,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("org mode: %w", err)
 	}
