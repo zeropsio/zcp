@@ -184,17 +184,11 @@ func ProposeOrgAction(ctx context.Context, src OrgSource, newID func() string, i
 		if words == "" {
 			return nil, invalid("mate.message needs words", "Say what the Mate should do")
 		}
-		msg := OrgMateMessageParams{To: OrgMateAddress{ProjectID: p.ID, MateName: p.Class.MateName}, Words: words}
-		title, text := strings.TrimSpace(in.AttachmentTitle), strings.TrimSpace(in.AttachmentText)
-		if title != "" || text != "" {
-			if text == "" {
-				return nil, invalid("the attachment has no text", "Pass attachmentText, or no attachment")
-			}
-			if utf8.RuneCountInString(text) > orgAttachmentMax {
-				return nil, invalid(fmt.Sprintf("the attachment is over %d characters", orgAttachmentMax), "Hand an excerpt: the lines that matter")
-			}
-			msg.Attachment = &OrgAttachment{Title: title, Text: text}
+		attachment, err := orgAttachment(in.AttachmentTitle, in.AttachmentText)
+		if err != nil {
+			return nil, err
 		}
+		msg := OrgMateMessageParams{To: OrgMateAddress{ProjectID: p.ID, MateName: p.Class.MateName}, Words: words, Attachment: attachment}
 		summary = fmt.Sprintf("Message %s in %s", p.Class.MateName, p.Name)
 		params = msg
 	}
@@ -208,6 +202,22 @@ func ProposeOrgAction(ctx context.Context, src OrgSource, newID func() string, i
 		proposal.ServiceID, proposal.ServiceName = s.ID, s.Name
 	}
 	return &OrgProposalResult{Proposal: proposal, Note: ProposalNote}, nil
+}
+
+// orgAttachment is a message's excerpt: complete (it has text) or absent,
+// and an excerpt rather than a whole log.
+func orgAttachment(title, text string) (*OrgAttachment, error) {
+	title, text = strings.TrimSpace(title), strings.TrimSpace(text)
+	if title == "" && text == "" {
+		return nil, nil //nolint:nilnil // no attachment is a valid answer
+	}
+	if text == "" {
+		return nil, invalid("the attachment has no text", "Pass attachmentText, or no attachment")
+	}
+	if utf8.RuneCountInString(text) > orgAttachmentMax {
+		return nil, invalid(fmt.Sprintf("the attachment is over %d characters", orgAttachmentMax), "Hand an excerpt: the lines that matter")
+	}
+	return &OrgAttachment{Title: title, Text: text}, nil
 }
 
 // ownService is one of the project's own services — never a system service
