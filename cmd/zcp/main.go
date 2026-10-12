@@ -19,6 +19,7 @@ import (
 	"github.com/zeropsio/zcp/internal/hq"
 	zcpinit "github.com/zeropsio/zcp/internal/init"
 	"github.com/zeropsio/zcp/internal/knowledge"
+	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -331,6 +332,14 @@ func runServe() int {
 }
 
 func runServer(mcpStdout io.Writer, tel telemetry.Emitter) (*server.Server, error) {
+	// Org mode (docs/spec-mate.md §2.11) reads its gate and credentials
+	// through the container's live env store, so an agent whose MCP launcher
+	// strips the environment still gets the Mastermate; outside a container
+	// the lookup falls back to this process's environment.
+	if getenv := mate.LiveLookup(mate.LiveEnvStorePath); runtime.DetectFrom(getenv).Mastermate {
+		return runOrgServer(mcpStdout, tel, getenv)
+	}
+
 	// Bootstrap: resolve credentials (env var or zcli) to create platform client.
 	creds, err := auth.ResolveCredentials()
 	if err != nil {
@@ -395,6 +404,42 @@ func runServer(mcpStdout io.Writer, tel telemetry.Emitter) (*server.Server, erro
 		go update.Once(ctx, server.Version, os.Stderr)
 	}
 
+	err = srv.Run(ctx, mcpStdout)
+	if err != nil && !errors.Is(err, context.Canceled) {
+		return srv, fmt.Errorf("server: %w", err)
+	}
+	return srv, err
+}
+
+// runOrgServer serves org mode: the organization read through the org's
+// read-only token (ZCP_ORG_TOKEN), scoped to ZCP_ORG_ID or the one org the
+// token reaches. It refuses to start rather than guess the organization, and
+// never builds a client that could write.
+func runOrgServer(mcpStdout io.Writer, tel telemetry.Emitter, getenv func(string) string) (*server.Server, error) {
+	creds, err := auth.ResolveOrgCredentials(getenv)
+	if err != nil {
+		return nil, fmt.Errorf("org mode: %w", err)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	org, err := platform.OpenOrgReader(ctx, creds.Token, creds.APIHost, creds.OrgID)
+	if err != nil {
+		return nil, fmt.Errorf("org mode: %w", err)
+	}
+	store, err := knowledge.GetEmbeddedStore()
+	if err != nil {
+		return nil, fmt.Errorf("knowledge store: %w", err)
+	}
+	if cwd, cwdErr := os.Getwd(); cwdErr == nil {
+		zcpinit.WarnMissingAgentContext(cwd, os.Stderr)
+	}
+	fmt.Fprintf(os.Stderr, "zcp: org mode for organization %s\n", org.OrgID())
+
+	srv := server.NewOrg(ctx, org, creds.APIHost, store, platform.NewLogFetcher(), runtime.DetectFrom(getenv), tel)
+	if os.Getenv("ZCP_AUTO_UPDATE") != "0" {
+		go update.Once(ctx, server.Version, os.Stderr)
+	}
 	err = srv.Run(ctx, mcpStdout)
 	if err != nil && !errors.Is(err, context.Canceled) {
 		return srv, fmt.Errorf("server: %w", err)
