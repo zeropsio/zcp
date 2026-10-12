@@ -156,7 +156,7 @@ confirmed by reading it).
 
 ## 6. Write the report
 
-`plans/farm-triage-<YYYY-MM-DD>.md` (UTC date). Per problem: title, cause,
+`.farm-triage/farm-triage-<YYYY-MM-DD>.md` (UTC date, gitignored). Per problem: title, cause,
 severity, status (new/first-seen/recurring/gone/unconfirmed), surface +
 anchor, runs affected (link each as
 `<$ZCP_FARM_CONSOLE_URL>/r/<runId>#f<n>`), what happened (≤3 sentences),

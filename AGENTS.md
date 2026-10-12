@@ -5,11 +5,12 @@ Read private tooling/access policy in `CLAUDE.local.md` when present; worktrees 
 
 ## Where knowledge lives
 
-Map only. Authority: tests → code → specs → transient plans → this map. Homes:
+Map only. Authority: tests → code → specs → this map. Homes:
 
 - Behavior → test + spec; mechanism → code/doc-comment; design → `docs/spec-*.md`, promoted before citing.
 - Platform facts → `../zerops-docs/` or live, never training data; recipe gotchas → `internal/knowledge/recipes/<slug>.md`; universal mechanics → `internal/content/atoms/`.
-- Disciplines → `AGENTS.md`; dev-loop ops → `CLAUDE.local.md`; roadmap/journal → `plans/`, never authoritative.
+- Disciplines → `AGENTS.md`; dev-loop ops → `CLAUDE.local.md`.
+- `plans/` is a local, untracked scratch directory for whoever uses it, never authoritative.
 
 Read the home before changes:
 
@@ -54,8 +55,6 @@ Checks: platform/ops type/interface → unit/tool/integration/e2e; handler → t
 
 ## How to work
 
-Non-trivial work follows `.claude/skills/flow/` gates; small safe fixes use LITE. Without `/flow`, read `.claude/skills/flow/dna.md` and relevant `.claude/skills/flow/phases/*.md`; run the phase manually with its gates, including Codex plan review.
-
 - Resolve agent-facing service hostnames to IDs internally; shell/SQL composition uses POSIX single-quoting via `shellQuote()`, never `fmt.Sprintf`.
 - Errors: `fmt.Errorf("op: %w", err)`, never bare `return err`. Split by cohesion; English code/comments/docs/commits; atomic commits, no Co-Authored-By or amend; verify each refactor phase.
 - Renames: search calls/types/strings/tests separately, no AST assumptions.
@@ -99,6 +98,6 @@ Read the home before new call sites:
 
 ## Maintenance
 
-Keep only traps an agent can violate before checks, or knowledge routes. One line per route/trap, cite its spec/test; traps ≤~30 lines. No cached values/summaries, dates, hashes, quotes or journals. Delete stale/redundant content; history is git. Promote or delete archived-plan citations.
+Keep only traps an agent can violate before checks, or knowledge routes. One line per route/trap, cite its spec/test; traps ≤~30 lines. No cached values/summaries, dates, hashes, quotes or journals. Delete stale/redundant content; history is git.
 
-Completed plans → `git mv plans/X.md plans/archive/X.md`. Error codes → `internal/platform/errors.go`. Global state: `// non-parallel: <reason>` in the package seed test.
+Error codes → `internal/platform/errors.go`. Global state: `// non-parallel: <reason>` in the package seed test.

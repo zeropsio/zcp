@@ -97,3 +97,6 @@ e2e/.zcp/
 
 # Local scratch plans — private process stays off git
 /plans/
+
+# Local farm triage reports
+/.farm-triage/
