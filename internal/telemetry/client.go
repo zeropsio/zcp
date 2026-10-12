@@ -31,16 +31,6 @@ const (
 	backoffBase = 5 * time.Second
 	backoffMax  = 5 * time.Minute
 
-	// shutdownGraceMargin is reserved off the END of a caller-supplied
-	// Shutdown ctx for the worker's bounded I/O (shutdownFlush +
-	// tryDrainSpool), so the worker reliably finishes and closes doneCh
-	// BEFORE the caller's own ctx expires — without this, a fault that
-	// legitimately consumes the full budget (e.g. a hung endpoint) makes
-	// doneCh close at nearly the same instant ctx.Done() fires, and
-	// Shutdown's outer select can pick either at random, non-deterministically
-	// surfacing ctx.Err() even though the worker behaved correctly.
-	shutdownGraceMargin = 100 * time.Millisecond
-
 	rfc3339Milli = "2006-01-02T15:04:05.000Z07:00"
 
 	// maxResponseBodyBytes bounds how much of the ingest's response body the
@@ -236,7 +226,8 @@ func (c *Client) DroppedCount() int64 {
 
 // Shutdown signals the worker to stop, drains whatever is currently queued,
 // attempts exactly ONE send within ctx, and spools any leftovers on failure
-// (spec §5.5). Safe to call more than once; safe on a nil/disabled client.
+// (spec §5.5). Expiring the optional wait budget is not a host error.
+// Safe to call more than once; safe on a nil/disabled client.
 func (c *Client) Shutdown(ctx context.Context) error {
 	if c == nil || !c.cfg.Enabled {
 		return nil
@@ -248,7 +239,7 @@ func (c *Client) Shutdown(ctx context.Context) error {
 	case <-c.doneCh:
 		return nil
 	case <-ctx.Done():
-		return ctx.Err()
+		return nil
 	}
 }
 
@@ -317,21 +308,15 @@ func (c *Client) runWorker() {
 				return
 			}
 			batch = append(batch, remaining...)
-			// innerCtx reserves shutdownGraceMargin so the worker finishes
-			// (and Shutdown observes doneCh) before shutdownCtx itself
-			// expires, even when the send attempt below legitimately uses
-			// its entire allotment.
-			innerCtx, innerCancel := trimmedDeadline(shutdownCtx, shutdownGraceMargin)
-			c.shutdownFlush(innerCtx, batch)
+			c.shutdownFlush(shutdownCtx, batch)
 			// G7: a short-lived CLI one-shot process never lives long
 			// enough for the periodic 5s ticker (tryDrainSpool's only
 			// other call site) to fire even once — without an attempt
 			// here too, its spool backlog would never get a chance to
 			// drain and would just age out at the 7-day bound instead
-			// (spec §5.5). Bounded by the same trimmed budget as the
+			// (spec §5.5). Bounded by the same caller budget as the
 			// flush above — best-effort, never blocks process exit.
-			c.tryDrainSpool(innerCtx)
-			innerCancel()
+			c.tryDrainSpool(shutdownCtx)
 			return
 		}
 	}
@@ -574,23 +559,4 @@ func drainNonBlocking(queue chan wire.Event) []wire.Event {
 			return out
 		}
 	}
-}
-
-// trimmedDeadline derives a context whose deadline is margin earlier than
-// parent's (when parent has a deadline at all), reserving headroom so
-// bounded work done against the returned context finishes — and any
-// completion signal derived from it fires — before parent itself expires.
-// If margin would consume the entire remaining budget (or parent has no
-// deadline), it falls back to parent's own bound unchanged rather than
-// manufacturing an already-expired context.
-func trimmedDeadline(parent context.Context, margin time.Duration) (context.Context, context.CancelFunc) {
-	deadline, ok := parent.Deadline()
-	if !ok {
-		return context.WithCancel(parent)
-	}
-	trimmed := deadline.Add(-margin)
-	if !trimmed.After(time.Now()) {
-		return context.WithCancel(parent)
-	}
-	return context.WithDeadline(parent, trimmed)
 }

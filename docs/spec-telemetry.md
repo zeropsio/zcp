@@ -364,7 +364,9 @@ Drained oldest-first before fresh flushes without starving the live queue.
 Serve mode: `session_start` after consent resolve; `session_end` at shutdown
 (existing `logShutdown` hook: uptime, shutdown-reason enum). Shutdown flush:
 fresh **750 ms** context — drain, one send attempt, spool leftovers, THEN one
-best-effort spool-segment drain attempt (same context/budget). The second
+best-effort spool-segment drain attempt (same context/budget). The caller stops
+waiting when its budget expires; expiration is not a host error. The worker
+finishes its bounded send and spools leftovers. The second
 step exists because the periodic 5 s ticker is the ONLY other
 `tryDrainSpool` call site: a short-lived CLI one-shot process routinely exits
 before that ticker ever fires, so without a Shutdown-time attempt too, its

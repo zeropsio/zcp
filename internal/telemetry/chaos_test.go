@@ -97,6 +97,48 @@ func TestClient_Chaos_NeverHarmsHost(t *testing.T) {
 	}
 }
 
+// An expired wait budget is not a host error, even when a prior Shutdown's
+// send is still stalled. Repeated Shutdown is part of the client's contract.
+func TestClient_Shutdown_ExpiredBudgetNeverHarmsHost(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		close(started)
+		<-release
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	var stderr bytes.Buffer
+	c := newClient(testConfig(srv.URL), &stderr, t.TempDir())
+	t.Cleanup(func() {
+		close(release)
+		srv.Close()
+		select {
+		case <-c.doneCh:
+		case <-time.After(chaosShutdownCeiling):
+			t.Error("telemetry worker did not finish after the endpoint was released")
+		}
+	})
+	c.Emit(wire.Event{EventType: wire.EventCLICommand, Command: "status"})
+	firstShutdown := make(chan error, 1)
+	go func() { firstShutdown <- c.Shutdown(context.Background()) }()
+	select {
+	case <-started:
+	case <-time.After(chaosShutdownCeiling):
+		t.Fatal("shutdown send did not reach the stalled endpoint")
+	}
+
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	if err := c.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown returned %v while the endpoint stalled — an expired telemetry budget must not harm the caller", err)
+	}
+	select {
+	case err := <-firstShutdown:
+		t.Fatalf("the endpoint was not still stalled: first Shutdown returned %v", err)
+	default:
+	}
+}
+
 // chaosOKServer is a local httptest server that always accepts (202) — used
 // by scenarios whose fault is elsewhere (filesystem, endpoint) so the send
 // path itself stays uninteresting.
