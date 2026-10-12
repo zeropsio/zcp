@@ -830,3 +830,47 @@ func TestBuildAgentsMD_Container_LiveFactsReadAgain(t *testing.T) {
 		})
 	}
 }
+
+// TestBuildAgentsMD_Mastermate pins org mode's managed section: the
+// Mastermate's guidance in place of the single-project develop and bootstrap
+// doctrine, which acts on its own empty project and only confuses it.
+func TestBuildAgentsMD_Mastermate(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		rt        runtime.Info
+		guided    bool
+		wantPages bool
+	}{
+		{name: "local", rt: runtime.Info{Mastermate: true}},
+		{name: "guided is a single-project preference", rt: runtime.Info{Mastermate: true}, guided: true},
+		{name: "a Mate's container", rt: runtime.Info{Mastermate: true, InContainer: true, ServiceName: "zcp", MateEnabled: true}, wantPages: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			out, err := BuildAgentsMD(tc.rt, tc.guided)
+			if err != nil {
+				t.Fatalf("BuildAgentsMD: %v", err)
+			}
+			for _, want := range []string{
+				"Mastermate", "whole organization", "HQ",
+				"`zerops_org_overview`", "`zerops_org_services`", "`zerops_org_logs`", "`zerops_org_failures`",
+				"`zerops_org_env`", "`zerops_org_processes`",
+				"`zerops_org_propose_service`", "`zerops_org_propose_env`", "`zerops_org_propose_message`",
+				"the person decides", "that project's Mate", "Answer short",
+			} {
+				if !strings.Contains(out, want) {
+					t.Errorf("Mastermate section lacks %q", want)
+				}
+			}
+			for _, leak := range []string{"zerops_workflow", "workflow=\"develop\"", "workflow=\"bootstrap\"", "zerops_deploy", "zerops_standup", "zerops_discover", "zcli"} {
+				if strings.Contains(out, leak) {
+					t.Errorf("Mastermate section carries single-project doctrine %q", leak)
+				}
+			}
+			if got := strings.Contains(out, "`zerops_publish_page`"); got != tc.wantPages {
+				t.Errorf("pages block = %v, want %v", got, tc.wantPages)
+			}
+		})
+	}
+}
