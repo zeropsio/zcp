@@ -226,8 +226,10 @@ func TestOrgServices_StatusTypePortsDomains(t *testing.T) {
 	org.services[5].SubdomainAccess = true
 	org.services[5].Ports = []platform.Port{{Port: 9000, Protocol: "tcp", Scheme: "http"}}
 	org.serviceEnv = map[string][]platform.ServiceEnvVar{"sMedusa": {{Key: "zeropsSubdomain", Content: "https://medusa-1df2-9000.prg1.zerops.app"}}}
+	// The platform lists the subdomain among the routing's domains too; it
+	// is one domain, named once.
 	org.routings = map[string][]platform.PublicHTTPRouting{"pProd": {{
-		Domains:   []platform.PublicHTTPDomain{{Name: "shop.example.com"}},
+		Domains:   []platform.PublicHTTPDomain{{Name: "medusa-1df2-9000.prg1.zerops.app"}, {Name: "shop.example.com"}},
 		Locations: []platform.PublicHTTPLocation{{Path: "/", Port: 9000, ServiceID: "sMedusa"}},
 	}}}
 	got, err := OrgServices(context.Background(), org, "Contoso - production")

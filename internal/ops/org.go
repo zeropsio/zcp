@@ -341,7 +341,11 @@ func OrgServices(ctx context.Context, src OrgSource, projectRef string) (*OrgSer
 				}
 			}
 		}
-		out.Domains = append(out.Domains, custom[s.ID]...)
+		for _, d := range custom[s.ID] {
+			if !slices.ContainsFunc(out.Domains, func(u string) bool { return strings.TrimPrefix(u, "https://") == d }) {
+				out.Domains = append(out.Domains, d)
+			}
+		}
 		result.Services = append(result.Services, out)
 	}
 	sort.SliceStable(result.Services, func(i, j int) bool { return result.Services[i].Hostname < result.Services[j].Hostname })
