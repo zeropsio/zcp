@@ -353,6 +353,11 @@ func (s *Server) registerTools() {
 	}
 	if s.rtInfo.InContainer && s.rtInfo.MateEnabled {
 		tools.RegisterObserve(s.server, httpClient, projectID)
+		// A Mate asks its person's Chief for what lies outside its project
+		// (docs/spec-mate.md §2.11); the card it proposes is drawn by a
+		// Mate's client, so the tool is Mate-gated like every mate-shaped
+		// effect (§2.0). Org mode is the Chief and never registers it.
+		tools.RegisterAskChief(s.server, projectID, s.authInfo.ProjectName, uuid.NewString)
 	}
 	tools.RegisterExport(s.server, s.client, projectID)
 	tools.RegisterManage(s.server, s.client, projectID)
