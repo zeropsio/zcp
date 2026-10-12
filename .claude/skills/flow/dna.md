@@ -1,8 +1,8 @@
 # Flow DNA — epistemics only
 
 Project rules (architecture, TDD, tiers, conventions) are NOT restated here —
-every subagent gets CLAUDE.md automatically. This is what CLAUDE.md doesn't
-cover: how a flow run reasons and when it stops.
+Claude subagents load AGENTS.md through the CLAUDE.md include. This file
+covers how a flow run reasons and when it stops.
 
 - **Evidence grades**: tag every material claim **VERIFIED** (repo evidence,
   cite `[SELF-VERIFIED:file:line]`) · **LOGICAL** (derived from a VERIFIED

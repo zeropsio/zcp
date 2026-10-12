@@ -12,7 +12,7 @@ approved, spec-shaped contracts already promoted to `docs/spec-*.md`). Read
 - Assert on public seams only (`ops.*` / tool output) — never an internal
   `platform`/`workflow` helper.
 - Table-driven, `Test{Op}_{Scenario}_{Result}` naming; one layer-matrix pass
-  line per CLAUDE.md-touched layer.
+  line per AGENTS.md-touched layer.
 - `make lint-fast` clean before the slice reports done.
 
 ## Wave algorithm

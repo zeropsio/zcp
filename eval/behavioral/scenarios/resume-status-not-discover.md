@@ -3,7 +3,7 @@
 id: resume-status-not-discover
 description: |
   Third S5 signal: lifecycle recovery on an already-bootstrapped, seeded
-  project is `zerops_workflow{action="status"}` (CLAUDE.md P4: the
+  project is `zerops_workflow{action="status"}` (AGENTS.md lifecycle recovery trap: the
   envelope is the recovery primitive), never a fresh `zerops_discover` +
   re-bootstrap. Same pre-state as `resume-after-compaction` (a project
   with services already adopted/bootstrapped and an open work session) —
@@ -40,7 +40,7 @@ verification:
 notableFriction:
   - id: status-not-rebootstrap
     description: |
-      CLAUDE.md P4: lifecycle recovery is `action="status"` (envelope =
+      AGENTS.md lifecycle recovery trap: lifecycle recovery is `action="status"` (envelope =
       recovery primitive), never a fresh `zerops_discover` + re-bootstrap
       of an adopted project. Surfaces whether the routing-table hint
       ("Wake up / not sure where you are → status") is followed

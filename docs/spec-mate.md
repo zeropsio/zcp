@@ -2074,7 +2074,7 @@ Zerops Mate is a **hard fork** of T3 Code (MIT), frozen at `upstream/main` `f94a
 taken in two ways, and everything else is owned. The rules, the measurements behind them and the
 freeze checklist live in the fork — `../z3/docs/internals/zerops/fork.md` (rules), `spi.md` (the
 adapter contract), `intake.md` (last-reviewed upstream SHA + decisions), `compat.md` (ported SHA ×
-CLI versions) — and the fork's `CLAUDE.md` is the map. This section records the decision and the
+CLI versions) — and the fork's `AGENTS.md` is the map. This section records the decision and the
 invariants zcp relies on.
 
 ### 7.1 Zones

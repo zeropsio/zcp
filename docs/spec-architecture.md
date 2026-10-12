@@ -9,8 +9,8 @@ The dependency rule is pinned by:
   forbidden import.
 - `.golangci.yaml::depguard` — surfaces violations during `make lint-local`.
 
-CLAUDE.md `## Architecture` carries the high-level diagram. This file
-fleshes it out.
+AGENTS.md `## Architecture` routes contributors here for the layer diagram
+and dependency rules.
 
 ---
 

@@ -1349,7 +1349,7 @@ Provenance (origin plan, now archived): `plans/archive/export-buildfromgit-2026-
 
 ### 9.1 Multi-call narrowing
 
-Stateless three-call narrowing per CLAUDE.md "Stateless STDIO tools" invariant — `WorkflowInput.{TargetService, Variant, EnvClassifications}` are per-request inputs the agent threads across calls. The handler returns one of seven structured response shapes:
+Stateless three-call narrowing uses the per-request `WorkflowInput.{TargetService, Variant, EnvClassifications}` inputs threaded across calls. The handler returns one of seven structured response shapes:
 
 | Status | When | Contents |
 |---|---|---|

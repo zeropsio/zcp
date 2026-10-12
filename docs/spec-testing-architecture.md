@@ -2,7 +2,7 @@
 
 > **Scope**: The governing MAP for EVERY verification surface — which tier proves
 > which behavior, and the rule that decides where a new test lands. The
-> test-surface analog of CLAUDE.md's "one home per knowledge": one behavior, one
+> test-surface analog of AGENTS.md's "one home per knowledge": one behavior, one
 > verification home, chosen by a TIER RULE, not by convenience.
 >
 > **Status**: DESIGN — defines the target the consolidation

@@ -31,7 +31,7 @@ Columns: `ID | Title | Depends | Files | Layers | Gate | State`.
   **Overlapping write-sets must not share a wave**: BUILD groups a wave by
   landed `Depends` + disjoint `Files` alone — give any two Files-overlapping
   slices a `Depends` edge, or BUILD has no ordering and the wave is ambiguous.
-- `Layers` — TEST layers exercised (`unit/tool/integration/e2e`, CLAUDE.md's
+- `Layers` — TEST layers exercised (`unit/tool/integration/e2e`, AGENTS.md's
   change-impact rule), not architecture layers; feeds §5 and each brief.
 - `Gate` ∈ `autonomous` (default) / `review` (real risk — security,
   credential, destructive, public contract, but not taste) / `owner` (taste
@@ -44,7 +44,7 @@ One brief per slice from `templates/slice-brief.md` — self-contained (a
 fresh BUILD subagent gets ONLY its brief + the plan pointer). Embed
 `dna.md`'s core plus the BUILD addendum from `phases/4-build.md`. Cite spec
 `§`s for load-bearing rules, never the plan (plans aren't a source,
-CLAUDE.md) — specs aren't promoted yet, so cite the section each brief WILL
+AGENTS.md) — specs aren't promoted yet, so cite the section each brief WILL
 land in and flag it pending GATE 1.
 
 ## 5. Write Verify Trace, draft Promotion
@@ -55,7 +55,7 @@ drive step, no "verify it works" placeholders.
 
 Draft `## Promotion` now (destinations only, not yet executed): which
 contract lands in which `docs/spec-<name>.md §<n>`, which invariant becomes
-a permanent `Test<Op>_<Scenario>_<Result>`, at most one CLAUDE.md trap line
+a permanent `Test<Op>_<Scenario>_<Result>`, at most one AGENTS.md trap line
 (or "none"). GATE 1 executes the spec writes; LAND executes the archive.
 
 ## 6. Judge gate

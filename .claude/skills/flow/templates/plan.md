@@ -41,5 +41,5 @@ Gate ∈ autonomous\|review\|owner · State ∈ pending\|building\|landed\|block
 ## Promotion
 - Contracts → `docs/spec-<name>.md` §<n>
 - Invariants → test `Test<Op>_<Scenario>_<Result>` + spec §<n>
-- CLAUDE.md trap line (≤1): <line, or "none">
+- AGENTS.md trap line (≤1): <line, or "none">
 - This plan → `plans/archive/` on LAND close

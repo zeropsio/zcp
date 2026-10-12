@@ -27,7 +27,7 @@ slice implements>
 - RED output + exit code (proves the test failed pre-implementation)
 - GREEN output + exit code
 - Files touched (exact list)
-- Layer-matrix pass lines (one per CLAUDE.md change-impact layer this hits)
+- Layer-matrix pass lines (one per AGENTS.md change-impact layer this hits)
 - Independent-oracle note: expected values came from spec/known-good
   literals, never recomputed the implementation's own way
 

@@ -20,7 +20,7 @@ under `## Promotion`). Fix whichever side is wrong:
   implementation landed → amend the spec section, not a workaround comment.
 
 Never leave a delta unresolved: LAND is the last checkpoint before the plan
-archives and the spec becomes the only surviving source (CLAUDE.md — plans
+archives and the spec becomes the only surviving source (AGENTS.md — plans
 are never cited as a source).
 
 ## 3. Promote PROVE probes to permanent tests
@@ -35,7 +35,7 @@ don't archive around it.
 - [ ] Contracts → `docs/spec-*.md` §s (true since GATE 1 — confirm step 2
       found no drift)
 - [ ] Every behavior invariant → a permanent test + spec §, both cited
-- [ ] CLAUDE.md trap line: **at most 1**, and only if a genuinely new
+- [ ] AGENTS.md trap line: **at most 1**, and only if a genuinely new
       cross-cutting trap emerged (one an agent could violate at a new call
       site before a test catches it) — respect the ~30-line trap budget and
       its pruning rules; default to "none"
@@ -44,7 +44,7 @@ don't archive around it.
 
 ## 5. Commit and archive
 
-Commit discipline per CLAUDE.md: atomic, each commit compiles/runs/makes
+Commit discipline per AGENTS.md: atomic, each commit compiles/runs/makes
 sense alone, no `Co-Authored-By`, no amend. Set `## Run State` `phase:
 archived` first (the archived copy is the permanent record), then `git mv
 plans/<slug>-<date>.md plans/archive/` and the same for any `.retest.md` /

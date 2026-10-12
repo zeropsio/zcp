@@ -544,7 +544,7 @@ worktree/fresh clone has none. `farm push --candidate <file>` counts
 exits nonzero without uploading anything, naming the marker count and
 `--allow-empty-corpus` as the opt-out. This guards only the candidate; the
 evaluator upload is not corpus-checked. CI and release workflows run `zcp
-sync pull` before building (CLAUDE.md "Knowledge sync"), so they are
+sync pull` before building (AGENTS.md "Commands"), so they are
 unaffected.
 
 **FM-67.** A scenario's `requiredEnvVars` may name `ZCP_E2E_GITHUB_PAT`

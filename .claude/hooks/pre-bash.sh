@@ -93,13 +93,13 @@ cd "$MODULE_ROOT" || exit 0
 STAGED=$(git diff --cached --name-only 2>/dev/null)
 [ -z "$STAGED" ] && exit 0
 
-# Check if CLAUDE.md should be staged
+# Check if AGENTS.md should be staged
 KEY_PATTERNS='internal/.*/[a-z]+\.go$|go\.mod$|cmd/'
 KEY_STAGED=$(echo "$STAGED" | grep -E "$KEY_PATTERNS" | head -5)
-CLAUDE_MD_STAGED=$(echo "$STAGED" | grep -E 'CLAUDE\.md$')
+AGENTS_MD_STAGED=$(echo "$STAGED" | grep -E 'AGENTS\.md$')
 
-if [ -n "$KEY_STAGED" ] && [ -z "$CLAUDE_MD_STAGED" ]; then
-    echo "CLAUDE.md CHECK: Key files staged but CLAUDE.md not included. Consider: git add CLAUDE.md"
+if [ -n "$KEY_STAGED" ] && [ -z "$AGENTS_MD_STAGED" ]; then
+    echo "AGENTS.md CHECK: Key files staged. Check knowledge routes/traps; update AGENTS.md only if needed (architecture: docs/spec-architecture.md)."
 fi
 
 # Lint gate — exit 2 to actually block the commit

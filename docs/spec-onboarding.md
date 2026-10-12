@@ -159,7 +159,7 @@ additions:
   URL is, the dev/stage pattern (stage serves), what ZCP is, and the consent boundary —
   destructive/irreversible acts and user-held credentials require an explicit yes; it
   must NOT claim every deployment needs approval (a corrective `zerops_deploy` is
-  routine and ungated — CLAUDE.md trap).
+  routine and ungated — AGENTS.md trap).
 
 ## 6. Guided + authoring interplay (O6)
 

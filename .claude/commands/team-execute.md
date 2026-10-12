@@ -13,7 +13,7 @@
    b. `<dir>/<basename>.analysis-*.md` — analysis reports (from `/team-analyze`).
    c. `<dir>/<basename>.review-*.md` — review reports (legacy).
    Read all that exist. Later files take precedence on conflicting decisions.
-4. Read `/Users/macbook/Documents/Zerops-MCP/zcp/CLAUDE.md`.
+4. Read `/Users/macbook/Documents/Zerops-MCP/zcp/AGENTS.md`.
 
 ## Team DNA — Include verbatim in EVERY agent prompt
 
@@ -43,7 +43,7 @@ You are working on the ZCP project (Zerops Control Plane — Go binary, MCP prot
 ### 4. Logical Consistency End-to-End
 - If X is true, what else MUST be true? Follow the chain.
 - Internal consistency: no contradictions between sections.
-- External consistency: matches codebase, CLAUDE.md, test patterns.
+- External consistency: matches codebase, AGENTS.md, test patterns.
 
 ### 5. Deep Reading, Not Scanning
 - Read ENTIRE document/code. Understand logic, not just structure.
@@ -157,8 +157,8 @@ This context contains:
 - **Open Questions**: unresolved items — flag if you encounter them during implementation.
 - **Confidence Map**: areas marked LOW confidence need extra care and testing.
 
-### CLAUDE.md Conventions
-{relevant conventions from CLAUDE.md}
+### AGENTS.md Conventions
+{relevant conventions from AGENTS.md}
 
 ### Your Scope
 - **Files**: {list of files this agent owns}

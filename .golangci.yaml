@@ -74,7 +74,7 @@ linters:
     - whitespace
   settings:
     depguard:
-      # Pins the 4-layer architecture documented in CLAUDE.md and
+      # Pins the 4-layer architecture documented in AGENTS.md and
       # docs/spec-architecture.md. Each rule scopes a layer's outgoing
       # imports to what the layer is allowed to depend on.
       rules:

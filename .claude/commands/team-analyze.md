@@ -39,7 +39,7 @@ Parse `$ARGUMENTS` to extract **reference files** and **task description**.
 ## Setup
 
 1. **Read all reference files**. If a reference is a directory, Glob for `**/*.go` and `**/*.md` within it.
-2. Read `/Users/macbook/Documents/Zerops-MCP/zcp/CLAUDE.md`.
+2. Read `/Users/macbook/Documents/Zerops-MCP/zcp/AGENTS.md`.
 3. **If no primary document exists** — create a synthesis document:
    ```markdown
    # Analysis: {descriptive title from task description}
@@ -120,7 +120,7 @@ You are working on the ZCP project (Zerops Control Plane — Go binary, MCP prot
 ### 4. Logical Consistency End-to-End
 - If X is true, what else MUST be true? Follow the chain.
 - Internal consistency: no contradictions between sections.
-- External consistency: matches codebase, CLAUDE.md, test patterns.
+- External consistency: matches codebase, AGENTS.md, test patterns.
 
 ### 5. Evidence Over Opinion
 - Every claim must have a basis: code reference, doc citation, test result, or API response.
@@ -230,9 +230,9 @@ CITE these facts. Do not contradict without independent verification.
 ### Platform Verification Results
 {output from verifier}
 
-## CLAUDE.md Summary
+## AGENTS.md Summary
 
-{key conventions from CLAUDE.md}
+{key conventions from AGENTS.md}
 
 {IF task description exists:}
 ## Task Description — PRIMARY DIRECTIVE

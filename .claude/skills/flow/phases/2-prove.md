@@ -25,7 +25,7 @@ does not decide the split itself.
    adopted `zcp-eval-clean` project. Seconds, live REST truth. ES-lag
    caveat: a search/list read right after ANY mutation (yours or a prior
    probe's) is not ground truth — absence can mean lag, not absence.
-   Freshen with a by-id GET before concluding REFUTED (CLAUDE.md's
+   Freshen with a by-id GET before concluding REFUTED (AGENTS.md's
    ES-search-lag trap; `ListServices`/`SearchProcesses`/`SearchAppVersions`
    are the lagging ones, by-id `GetService`/`GetProcess` are not).
 3. **`verifier`** — the `platform-verifier` subagent, for a mutating or
@@ -41,7 +41,7 @@ does not decide the split itself.
 4. **`spike`** — only when 1-3 can't settle it. Write a throwaway
    `<pkg>/zzz_probe_test.go` (`//go:build e2e`) directly in the target
    package, run `go test -tags e2e -run <TestName> ./<pkg>/...`, read the
-   result, then delete the file regardless of verdict (CLAUDE.md: delete,
+   result, then delete the file regardless of verdict (AGENTS.md: delete,
    don't disable — it never survives as a skipped/commented test). Its
    assertion shape goes into the ledger's `promote:` field for a BUILD slice
    to write permanently.
