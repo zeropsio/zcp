@@ -549,7 +549,7 @@ func TestBuildAgentsMD_Container_GroupAndGitHost(t *testing.T) {
 			name:      "not a Mate",
 			rt:        runtime.Info{InContainer: true, ServiceName: "zcp"},
 			want:      []string{"zcli project list", "what it may do there is the token's"},
-			wantNever: []string{"zerops_observe", "zcp hq git-credential", "HQ", "Your group", "403"},
+			wantNever: []string{"zerops_observe", "zcp hq git-credential", "HQ", "Your group", "403", "zerops_propose_ask_chief", "Chief"},
 		},
 		{
 			name: "a Mate",
@@ -557,6 +557,7 @@ func TestBuildAgentsMD_Container_GroupAndGitHost(t *testing.T) {
 			want: []string{
 				"`zerops_observe`", `action="environments"`, `action="status" projectId=`, `action="logs"`,
 				"reaches none of them", "other Mates", "zcp hq git-credential",
+				"`zerops_propose_ask_chief`", "another project's logs", "the person decides",
 			},
 			wantNever: []string{"zcli project list", "READ them", "403", "grants"},
 		},
@@ -858,12 +859,13 @@ func TestBuildAgentsMD_Chief(t *testing.T) {
 				"`zerops_org_env`", "`zerops_org_processes`",
 				"`zerops_org_propose_service`", "`zerops_org_propose_env`", "`zerops_org_propose_message`",
 				"the person decides", "that project's Mate", "Answer short",
+				"From <Mate> in <project>:", "proposing a `mate.message` back",
 			} {
 				if !strings.Contains(out, want) {
 					t.Errorf("Chief section lacks %q", want)
 				}
 			}
-			for _, leak := range []string{"zerops_workflow", "workflow=\"develop\"", "workflow=\"bootstrap\"", "zerops_deploy", "zerops_standup", "zerops_discover", "zcli"} {
+			for _, leak := range []string{"zerops_workflow", "workflow=\"develop\"", "workflow=\"bootstrap\"", "zerops_deploy", "zerops_standup", "zerops_discover", "zcli", "zerops_propose_ask_chief"} {
 				if strings.Contains(out, leak) {
 					t.Errorf("Chief section carries single-project doctrine %q", leak)
 				}
