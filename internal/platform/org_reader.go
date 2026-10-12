@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 
@@ -35,14 +36,45 @@ type OrgReader struct {
 // orgSearchPage bounds one search request; ListServices pages past it.
 const orgSearchPage = 1000
 
-// OpenOrgReader builds the read-only client for token and resolves the org it
-// reads: named when set (the token must reach it), otherwise the one org the
-// token reaches. A token reaching several orgs with none named is refused —
-// org mode never guesses which organization it speaks for.
-func OpenOrgReader(ctx context.Context, token, apiHost, namedOrgID string) (*OrgReader, error) {
-	endpoint := resolveEndpoint(apiHost)
+// OrgAccess is what org mode opens its reader with (docs/spec-mate.md §2.11).
+type OrgAccess struct {
+	// Token is ZCP_ORG_TOKEN, sent as the bearer on every read.
+	Token string
+	// APIHost is the region's API, read when OrgAPI is empty.
+	APIHost string
+	// OrgAPI is ZCP_ORG_API: a base URL mirroring the public API root
+	// (HQ's Chief proxy) that every read goes to instead of APIHost.
+	OrgAPI string
+	// OrgID is ZCP_ORG_ID: the organization to read. Required with OrgAPI.
+	OrgID string
+}
+
+// OpenOrgReader builds the read-only client and resolves the org it reads.
+//
+// Through the region's API the org is the one named, which the token must
+// reach, or else the one org the token reaches — a token reaching several
+// with none named is refused: org mode never guesses which organization it
+// speaks for. Through OrgAPI nothing resolves the token (the proxy serves
+// only OrgReads, not /user/info), so the org must be named; the proxy
+// answers only for the organization its credential was issued for.
+func OpenOrgReader(ctx context.Context, access OrgAccess) (*OrgReader, error) {
+	named := strings.TrimSpace(access.OrgID)
+	if access.OrgAPI != "" {
+		base, err := parseOrgAPI(access.OrgAPI)
+		if err != nil {
+			return nil, err
+		}
+		if named == "" {
+			return nil, NewPlatformError(ErrOrgAmbiguous,
+				"ZCP_ORG_API is set and ZCP_ORG_ID names no organization",
+				"Set ZCP_ORG_ID to the organization this Chief is for")
+		}
+		transport := orgAPITransport{base: base, next: readOnlyTransport{base: http.DefaultTransport}}
+		httpClient := &http.Client{Timeout: DefaultAPITimeout, Transport: transport}
+		return &OrgReader{z: newZeropsClientOn(access.Token, base.Scheme+"://"+base.Host+"/", httpClient), orgID: named}, nil
+	}
 	httpClient := &http.Client{Timeout: DefaultAPITimeout, Transport: readOnlyTransport{base: http.DefaultTransport}}
-	z := newZeropsClientOn(token, endpoint, httpClient)
+	z := newZeropsClientOn(access.Token, resolveEndpoint(access.APIHost), httpClient)
 	memberships, err := z.ListClientMemberships(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("org mode: read the token's organizations: %w", err)
@@ -51,11 +83,79 @@ func OpenOrgReader(ctx context.Context, token, apiHost, namedOrgID string) (*Org
 	for _, m := range memberships {
 		reach = append(reach, m.ClientID)
 	}
-	orgID, err := resolveOrgID(reach, strings.TrimSpace(namedOrgID))
+	orgID, err := resolveOrgID(reach, named)
 	if err != nil {
 		return nil, err
 	}
 	return &OrgReader{z: z, orgID: orgID}, nil
+}
+
+// OrgRead is one Zerops API read org mode makes: an HTTP method and a path
+// under the public API root (/api/rest/public), {id} standing for one id.
+type OrgRead struct {
+	Method string
+	Path   string
+}
+
+// OrgReads is every Zerops API read org mode makes through OrgReader —
+// exactly these, pinned by TestOrgReads_AreExactlyWhatOrgModeReads. It is
+// the allowlist HQ's Chief proxy (ZCP_ORG_API) forwards; a read added to
+// org mode is added here and to the proxy together. Every search carries the
+// org's clientId, except the service-type catalogue, which is the platform's
+// and no organization's. Resolving the token's organization (GET /user/info)
+// happens only through the region's API and is not one of them.
+func OrgReads() []OrgRead {
+	return []OrgRead{
+		{Method: http.MethodPost, Path: "/project/search"},
+		{Method: http.MethodPost, Path: "/service-stack/search"},
+		{Method: http.MethodPost, Path: "/process/search"},
+		{Method: http.MethodPost, Path: "/app-version/search"},
+		{Method: http.MethodPost, Path: "/service-stack-type/search"},
+		{Method: http.MethodGet, Path: "/service-stack/{id}/env"},
+		{Method: http.MethodGet, Path: "/project/{id}/log"},
+		{Method: http.MethodGet, Path: "/project/{id}/public-http-routing"},
+	}
+}
+
+// publicAPIRoot is where the SDK roots every Zerops API path.
+const publicAPIRoot = "/api/rest/public"
+
+// parseOrgAPI reads ZCP_ORG_API: an absolute http(s) URL.
+func parseOrgAPI(raw string) (*url.URL, error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		return nil, NewPlatformError(ErrInvalidParameter,
+			fmt.Sprintf("ZCP_ORG_API %q is not an http(s) URL", raw),
+			"Set ZCP_ORG_API to HQ's Chief API, e.g. https://hq.example/api/chief/zerops")
+	}
+	return u, nil
+}
+
+// orgAPITransport sends a Zerops API request to ZCP_ORG_API instead: the
+// path under the public API root lands under the base URL's path, the query
+// and the bearer travel unchanged. A request outside the root is refused.
+type orgAPITransport struct {
+	base *url.URL
+	next http.RoundTripper
+}
+
+func (t orgAPITransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	rest, ok := strings.CutPrefix(r.URL.Path, publicAPIRoot+"/")
+	if !ok {
+		if r.Body != nil {
+			_ = r.Body.Close()
+		}
+		return nil, NewPlatformError(ErrOrgWriteRefused,
+			fmt.Sprintf("org mode refused %s %s: not a Zerops API read", r.Method, r.URL.Path), "")
+	}
+	out := r.Clone(r.Context())
+	u := *t.base
+	u.Path = strings.TrimSuffix(t.base.Path, "/") + "/" + rest
+	u.RawPath = ""
+	u.RawQuery = r.URL.RawQuery
+	out.URL = &u
+	out.Host = u.Host
+	return t.next.RoundTrip(out)
 }
 
 // resolveOrgID picks the organization org mode reads from those the token

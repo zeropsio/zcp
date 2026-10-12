@@ -7,10 +7,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"reflect"
 	"strings"
-	"sync"
 	"testing"
 )
 
@@ -144,70 +142,31 @@ func TestResolveOrgID(t *testing.T) {
 // never reads them through org mode.
 func TestOrgReader_EveryCallReadsInsideTheOrg(t *testing.T) {
 	t.Parallel()
-	var (
-		mu   sync.Mutex
-		seen []string
-	)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		mu.Lock()
-		seen = append(seen, r.Method+" "+r.URL.Path+" "+string(body))
-		mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case strings.HasSuffix(r.URL.Path, "/user/info"):
-			_, _ = w.Write([]byte(`{"id":"u1","clientUserList":[{"id":"cu1","clientId":"org1"},{"id":"cu2","clientId":"org2"}]}`))
-		case strings.HasSuffix(r.URL.Path, "/log"):
-			_, _ = w.Write([]byte(`{"url":"GET logs.example/x"}`))
-		case strings.HasSuffix(r.URL.Path, "/search"):
-			_, _ = w.Write([]byte(`{"items":[],"totalHits":0}`))
-		default:
-			_, _ = w.Write([]byte(`{"items":[],"envs":[],"list":[],"userDataList":[]}`))
-		}
-	}))
-	t.Cleanup(srv.Close)
-
+	srv, seen := recordingAPI(t)
 	ctx := context.Background()
-	r, err := OpenOrgReader(ctx, "tok", srv.URL, "org2")
+	r, err := OpenOrgReader(ctx, OrgAccess{Token: "tok", APIHost: srv.URL, OrgID: "org2"})
 	if err != nil {
 		t.Fatalf("OpenOrgReader: %v", err)
 	}
 	if r.OrgID() != "org2" {
 		t.Fatalf("OrgID = %q, want org2", r.OrgID())
 	}
-	calls := []func() error{
-		func() error { _, err := r.ListProjects(ctx); return err },
-		func() error { _, err := r.ListServices(ctx, ""); return err },
-		func() error { _, err := r.ListServices(ctx, "p1"); return err },
-		func() error { _, err := r.GetProjectEnv(ctx, "p1"); return err },
-		func() error { _, err := r.GetServiceEnv(ctx, "s1"); return err },
-		func() error { _, err := r.GetProjectLog(ctx, "p1"); return err },
-		func() error { _, err := r.SearchProcesses(ctx, "", 10); return err },
-		func() error { _, err := r.SearchAppVersions(ctx, "p1", 10); return err },
-		func() error { _, err := r.ListPublicHTTPRoutings(ctx, "p1"); return err },
-		func() error { _, err := r.ListActiveServiceTypeVersions(ctx); return err },
+	driveOrgReader(t, r)
+	if _, err := r.ListServices(ctx, ""); err != nil {
+		t.Fatalf("ListServices across the org: %v", err)
 	}
-	for i, call := range calls {
-		if err := call(); err != nil {
-			t.Fatalf("call %d: %v", i, err)
-		}
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	for _, req := range seen {
-		method, rest, _ := strings.Cut(req, " ")
-		path, body, _ := strings.Cut(rest, " ")
+	for _, req := range seen() {
 		switch {
-		case method == http.MethodGet:
-		case method == http.MethodPost && strings.HasSuffix(path, "/search"):
-			if strings.Contains(path, "service-stack-type") {
+		case req.Method == http.MethodGet:
+		case req.Method == http.MethodPost && strings.HasSuffix(req.Path, "/search"):
+			if strings.Contains(req.Path, "service-stack-type") {
 				continue
 			}
-			if !strings.Contains(body, `"clientId"`) || !strings.Contains(body, `"org2"`) || strings.Contains(body, `"org1"`) {
-				t.Errorf("search %s not scoped to org2: %s", path, body)
+			if !strings.Contains(req.Body, `"clientId"`) || !strings.Contains(req.Body, `"org2"`) || strings.Contains(req.Body, `"org1"`) {
+				t.Errorf("search %s not scoped to org2: %s", req.Path, req.Body)
 			}
 		default:
-			t.Errorf("org mode sent a write: %s %s", method, path)
+			t.Errorf("org mode sent a write: %s %s", req.Method, req.Path)
 		}
 	}
 }
