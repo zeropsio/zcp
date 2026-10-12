@@ -1,1 +1,0 @@
-# Post-F0-DEAD-1-sidecar-fix run (2026-04-26): 0 errored envelopes (was 10 pre-fix).

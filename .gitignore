@@ -94,3 +94,6 @@ e2e/.zcp/
 
 # zcp eval farm run --detach log (eval/farm/README.md)
 /farm-*.log
+
+# Local scratch plans — private process stays off git
+/plans/
