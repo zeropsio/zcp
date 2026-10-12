@@ -832,6 +832,37 @@ func TestBuildAgentsMD_Container_LiveFactsReadAgain(t *testing.T) {
 	}
 }
 
+// TestBuildAgentsMD_Container_MacIsReachedThroughMac pins that a Mate's agent
+// reaches the person's paired Mac through `mac`, starting from its status. On
+// 2026-10-12 the owner paired a MacBook with Milo and asked "can you create a
+// macos app real quick? mac is connected"; the agent searched for computer-use
+// tools, loaded a computer-use skill and answered that it could not reach the
+// Mac, without running `mac`.
+func TestBuildAgentsMD_Container_MacIsReachedThroughMac(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		rt   runtime.Info
+		want bool
+	}{
+		{name: "a Mate", rt: runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true}, want: true},
+		{name: "not a Mate", rt: runtime.Info{InContainer: true, ServiceName: "zcp"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			out, err := BuildAgentsMD(tc.rt, false)
+			if err != nil {
+				t.Fatalf("BuildAgentsMD: %v", err)
+			}
+			for _, want := range []string{"`mac status --json`", "not computer use", `zerops_workflow action="mac-pair"`, "`mac help`"} {
+				if strings.Contains(out, want) != tc.want {
+					t.Errorf("AGENTS.md says %q = %v, want %v", want, !tc.want, tc.want)
+				}
+			}
+		})
+	}
+}
+
 // TestBuildAgentsMD_Chief pins org mode's managed section: the
 // Chief's guidance in place of the single-project develop and bootstrap
 // doctrine, which acts on its own empty project and only confuses it.
