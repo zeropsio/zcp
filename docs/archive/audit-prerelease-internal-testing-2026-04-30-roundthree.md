@@ -257,7 +257,6 @@ All 8 are SMALL or TRIVIAL fixes. Total estimated change: ~20 lines across ~8 fi
 | Aggregate-atom `{hostname}` outside `{services-list:…}` (M4 backlog risk) | Greps across all 14 aggregate atoms found no leak. M4 lint still useful as defense-in-depth but no live issue. |
 | F5 NEW `develop-close-mode-git-push-needs-setup.md` covers GitPushState gap | Atom exists with `gitPushStates: [unconfigured, broken, unknown]`; sister atom has `gitPushStates: [configured]`. Together they cover all 4 GitPushState values. ✓ |
 | Spec post-KT-9 dangling refs to deleted §2.5/§2.6 | `grep '§2\.5.*Generate|§2\.6.*Deploy|Step 3.*Generate'` returns zero hits in atoms + docs (excluding archive). ✓ |
-| `develop-flow-enhancements.md` plan archive | Moved to `plans/archive/develop-flow-enhancements-2026-04-20.md`. ✓ |
 | Eval `instruction_variants.go` legacy vocab | All `Close-mode: action="close-mode"` usage; no `action="strategy"` survives. ✓ |
 | `repo_drift_test.go::TestNoRetiredVocabAcrossRepo` actually catches drift | Properly excludes audit/archive/lint files; correctly catches code-side drift. F4's missed `"push-dev"` is in a lint-allowlisted file (`deploy_failure_signals.go` is NOT in the exclusion list, so this is a true gap not yet swept — F4 is the gap, not the lint). |
 
@@ -454,7 +453,7 @@ Codex pass 1 flagged `spec-workflows.md` lines 402, 587, 963 as dangling `§2.6`
 
 **Round 3B — structural follow-up (separate plan)**:
 
-12. **F1 (FULL)** — build-ID correlation in `record-deploy` gate. Either explicit `buildId` arg or push-timestamp filter. New backlog plan: `plans/backlog/record-deploy-build-id-correlation.md`.
+12. **F1 (FULL)** — build-ID correlation in `record-deploy` gate. Either explicit `buildId` arg or push-timestamp filter.
 
 **Round 3C — promote backlog**:
 
@@ -476,7 +475,7 @@ Round-3's "What remains genuinely OPEN" section flagged C3 (failureClassificatio
 
 The atom `develop-build-observe.md:25` references `failureClass` + `failureCause` — those are CORRECT field references, not phantom fields. Round-2's claim "superseded by Round-2 implementation" was accurate, and round-3's hedge was wrong.
 
-**C3 status: ✅ FIXED** (close the backlog plan `plans/backlog/c3-failure-classification-async-events.md`).
+**C3 status: ✅ FIXED**.
 
 ### Strong Codex re-verification — verbatim summary
 
@@ -519,7 +518,7 @@ The `Action` field's jsonschema description lists 17 valid actions: `start, comp
 - 2 LOW (F13, F15)
 - F14 REFUTED (spec §2.6 references already correct)
 
-PLUS 1 correction: C3 is actually CLOSED, not deferred. Update `plans/backlog/c3-failure-classification-async-events.md` accordingly (likely delete).
+PLUS 1 correction: C3 is actually CLOSED, not deferred.
 
 ### F6 expanded fix
 

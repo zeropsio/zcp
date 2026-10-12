@@ -1,8 +1,6 @@
 # spec-telemetry — ZCP Anonymous Usage Telemetry
 
-Status: DESIGN CONTRACT (implementation in progress; plan:
-`plans/telemetry-implementation-plan-2026-07-02.md`, PRD:
-`plans/prd-telemetry-2026-07-02.md`). This spec is the single authority for
+Status: DESIGN CONTRACT (implementation in progress). This spec is the single authority for
 telemetry behavior; implementation and tests pin against it.
 
 ## §1 Purpose & hard boundaries
@@ -255,11 +253,10 @@ never the raw wire values.
 ### §4.5 Field review ledger (R3/R4, S4)
 
 Every field this pipeline logs, reviewed for purpose — "every logged value
-must earn its place" (R4). Dashboard names marked "(planned, S6)" refer to
-the boards named in `plans/telemetry-production-readiness-2026-07-02.md`
-S6, not yet built at the time this ledger was written; every dashboard's
-default filter is `usage_channel = 'external'` (§7) regardless of the
-per-row Dashboard(s) column below.
+must earn its place" (R4). Every dashboard's default filter is
+`usage_channel = 'external'` (§7), regardless of the per-row Dashboard(s)
+column below. Dashboard names marked "(planned, S6)" describe intended
+consumers, not evidence that those dashboards have been built.
 
 #### Per-event fields (`wire.Event`, client-emitted)
 
@@ -283,7 +280,7 @@ per-row Dashboard(s) column below.
 | `duration_ms` | operation latency — p50/p95/p99 per tool/action (`mv_tool_daily` `quantilesTiming`) | `1842` | Pipeline health latency, Version board | kept |
 | `success` | did the call error — failure-rate aggregation (`mv_tool_daily` `failures`) | `false` | every error-rate panel | kept |
 | `error_code` | stable ZCP error code on failure — error pareto | `"DIAGNOSIS_REQUIRED"` | Pipeline health error pareto, Session Explorer | kept |
-| `error_subcode` | narrows `error_code` for the worst conflations + carries the platform's own error-code class for `API_ERROR` — distinguishes root causes a bare `error_code` can't (§4.2, plans/telemetry-analysis-2026-07-02.md §3) | `"AMBIGUOUS_SCOPE"` | error pareto drill-down (planned, S6), Session Explorer | **kept (added S4)** |
+| `error_subcode` | narrows `error_code` for the worst conflations + carries the platform's own error-code class for `API_ERROR` — distinguishes root causes a bare `error_code` can't (§4.2) | `"AMBIGUOUS_SCOPE"` | error pareto drill-down (planned, S6), Session Explorer | **kept (added S4)** |
 | `workflow_route` / `workflow_step` | which bootstrap route + step was active — S4 widens this from "only on the `zerops_workflow` call itself" to "stamped onto every tool_call this process", so a deploy/import failure is attributable to its workflow phase (R4) | `"adopt"` / `"discover"` | `workflow_daily` aggregate, Session Explorer | **kept, widened S4** |
 | `close_mode` | dev-session auto-close mode (`auto`\|`manual`\|legacy `git-push` fold) | `"auto"` | `workflow_daily` aggregate, Session Explorer | kept |
 | `dims` | open-shape narrow map (v1: `shutdown_reason` only) — the schema's designed-for-growth surface (§8 "new dims = wire allowlist edit") | `{"shutdown_reason":"signal"}` | Pipeline health (`dims_dropped_total`), session_end detail | kept |

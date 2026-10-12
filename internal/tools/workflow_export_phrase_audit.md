@@ -1,6 +1,6 @@
 # Audit — phrase classification for handleExport → atom-synthesis migration
 
-**Step**: Phase 0b.0 of `plans/atom-corpus-verification-2026-05-02.md`.
+**Step**: Phase 0b.0 of `docs/atom-corpus-verification.md`.
 **Date**: 2026-05-02.
 **Pause point**: classification is collaborative (human approval required
 before 0b.1 proceeds). Codex may be invoked for mechanical contradiction-

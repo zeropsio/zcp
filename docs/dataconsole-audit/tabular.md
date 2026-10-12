@@ -351,8 +351,8 @@ operator-facing error is maximally uninformative for the single most common real
   `ORDER BY id` satisfies `is_in_primary_key`). No PK-less table exists anywhere in this
   environment to exercise the "RowKeyCols empty ⇒ view-only" code path live.
 - **UI/embedded-path mutation verification — out of scope for this pass.** This audit is
-  API-only per its brief (plans/dataconsole-audit/tabular.md is the API half of S11); the
-  embedded-path screenshot walk is a separate workstream (see `plans/dataconsole-audit/ui-walk.md`).
+  API-only per its brief (docs/dataconsole-audit/tabular.md is the API half of S11); the
+  embedded-path screenshot walk is a separate workstream (see `docs/dataconsole-audit/ui-walk.md`).
 - **Everything else in the protocol (tree walk, ReadTable, pagination exhaustion on all
   three engines, Query read-only enforcement incl. data-modifying-CTE and write-token-present
   variants, editCell/insertRow/deleteRow on every available typed column, error paths,

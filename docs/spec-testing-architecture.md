@@ -5,9 +5,7 @@
 > test-surface analog of AGENTS.md's "one home per knowledge": one behavior, one
 > verification home, chosen by a TIER RULE, not by convenience.
 >
-> **Status**: DESIGN — defines the target the consolidation
-> (`plans/test-eval-consolidation-impl-2026-06-16.md`, executing the audit
-> `plans/e2e-eval-surface-consolidation-2026-06-16.md`) lands against.
+> **Status**: DESIGN — defines the target for test-surface consolidation.
 >
 > This is a map: pointers + disciplines. It caches no test values and no
 > per-file dispositions — those live in the tests + the audit. To answer "is
@@ -35,7 +33,7 @@ property of the behavior (what it needs to be proved), not the editing context.
 ## 2. The tiers — and the rule that assigns them
 
 There are now **two real-platform build tags** (down from four — `probe` deleted,
-`live` folded into `api`; `plans/e2e-eval-surface-consolidation-2026-06-16.md`).
+`live` folded into `api`).
 Tiers in increasing cost/coupling:
 
 | Tier | Build tag | What it proves | Cost |

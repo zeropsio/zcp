@@ -269,8 +269,14 @@ spec references the atom by path; it does not copy the body inline. The
 atom prescribes the canonical primitive `zerops_dev_server action=start`
 for the container env; the matching local-env atom prescribes the
 harness background task primitive (e.g. `Bash run_in_background=true` in
-Claude Code). See `plans/dev-server-canonical-primitive.md` for the
-canonicalization rationale.
+Claude Code).
+
+**DS-01 — post-deploy message honesty:** `DeployResult.Message` and
+`NextActions` must not claim process liveness or branch on `NeedsManualStart`
+or `IsImplicitWebServerType` to construct such claims. Next-tool pointers may
+select a route using `topology.IsDeferredStart`; the route is not evidence
+that a server is running or stopped. `TestDeployPostMessageHonesty` pins
+this boundary; `internal/tools/next_actions.go` owns the next-tool pointer.
 
 ### 4.2 Frontmatter fields
 
@@ -770,9 +776,6 @@ tool, with no spawned sub-agent.)
 
 ### 11.6 Content-quality axis N — UNIVERSAL-ATOM PER-ENV LEAK
 
-(Authored 2026-04-27 cycle 3; corpus-scan ledger lives in
-`plans/audit-composition-v3/axis-n-candidates.md`.)
-
 **Definition**: an atom WITHOUT `environments:` axis restriction
 (or with both env values implicitly) carries env-specific edit-
 location, runtime-shell, or storage-layer detail. The per-env
@@ -896,7 +899,7 @@ Phase 4 follow-up adds the `axisRViolations` lint (`internal/content/atoms_lint_
 
 **Marker convention.** Like axes K, M, N, O, axis R honors inline `<!-- axis-r-keep: <reason> -->` markers on the same line, the prior non-blank line, or the next non-blank line. Reserved for narrow recovery-chain cases where the agent will navigate to a different workflow that fires the target atom and naming the destination atom-id materially helps. Most cases should be **inlined** (write the actual instruction the referenced atom would have given) or **dropped** (action-instruction is the better hint than an atom-id pointer).
 
-**Why not link/anchor/render-references-atoms.** Since Fix #18 / A3 (`Synthesize`, plans/multi-runtime-audit-followup.md §5 A3) each atom's render is anchored by a visible `=== <atom-id> ===\n` header, so the agent CAN see the canonical ID of every atom that fired — but that only names what's already IN the render. It is not a navigation mechanism to an atom outside the current envelope: a backticked atom-id in body prose still risks a dead end (the referenced atom may not co-fire) or redundancy (it does, and the header already names it). The fix stays the same — write the prose so atom-id navigation isn't needed — actions, observable response fields, and procedural inspection do the work.
+**Why not link/anchor/render-references-atoms.** In `Synthesize`, each atom's render is anchored by a visible `=== <atom-id> ===\n` header, so the agent CAN see the canonical ID of every atom that fired — but that only names what's already IN the render. It is not a navigation mechanism to an atom outside the current envelope: a backticked atom-id in body prose still risks a dead end (the referenced atom may not co-fire) or redundancy (it does, and the header already names it). The fix stays the same — write the prose so atom-id navigation isn't needed — actions, observable response fields, and procedural inspection do the work.
 
 ### 11.7 Marker convention (axes K, M, N, O, R)
 

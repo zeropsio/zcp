@@ -121,7 +121,7 @@ func regenerateCoverageMap(t *testing.T, scenarios []goldenScenario, corpus []Kn
 	sb.WriteString("the corpus and which canonical scenarios render it.\n\n")
 	sb.WriteString("Atoms with zero scenarios are flagged `TODO: explicit ")
 	sb.WriteString("decision required` — Phase 4 coverage gate test (plan ")
-	sb.WriteString("`plans/atom-corpus-verification-2026-05-02.md` §4.5) ")
+	sb.WriteString("`docs/atom-corpus-verification.md` §4.5) ")
 	sb.WriteString("will fail until each one either gains scenario coverage ")
 	sb.WriteString("OR carries a `coverageExempt:` frontmatter entry with ")
 	sb.WriteString("rationale.\n\n")

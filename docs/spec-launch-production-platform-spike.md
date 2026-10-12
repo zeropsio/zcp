@@ -386,7 +386,7 @@ independent.
 
 The Phase B e2e suite shipped in `internal/platform/project_admin_api_test.go`, gated on
 `ZCP_E2E_PROD_LAUNCH=1`, and was run live against a real production project (the run closed
-4 product defects — see `plans/archive/launch-production-source-of-truth-2026-05-20.md`). The shipped
+4 product defects). The shipped
 tests (names as on disk):
 
 1. **TestProjectAdminClient_CreateAndImport_Live** — real `PostClientProjectImport`, asserts the `*ImportResult` shape.
@@ -464,7 +464,7 @@ the `minContainers` axis).
 
 ### Custom domain surface (Phase 5, deferred to v2 per user principle)
 
-Even though `PostProjectPublicHttpRouting` is RESTful-safe (not L7 read-modify-write), v1 stays at guidance + DNS verify. v2 may revisit. Backlog: `plans/backlog/launch-prod-custom-domain-attach.md`.
+Even though `PostProjectPublicHttpRouting` is RESTful-safe (not L7 read-modify-write), v1 stays at guidance + DNS verify. v2 may revisit.
 
 ---
 
@@ -504,8 +504,7 @@ separate `clientUser` with their own GitHub OAuth grant linked.
 
 **Implication for Part 2 design:** PUT integration requires the calling
 clientUser to have GitHub OAuth grant. Pure close-loop with launch-window
-machine token is BLOCKED. Path A backlogged at
-`plans/backlog/launch-pipeline-close-loop-oauth.md`.
+machine token is BLOCKED.
 
 ## B.1 — `GetServiceStackExternalRepositoryIntegrationStatus` on fresh service
 

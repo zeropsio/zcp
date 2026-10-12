@@ -498,10 +498,10 @@ No external `/tmp/*.md` references. No conversation-history dependencies. Self-c
 
 ## How to launch in a fresh session
 
-In a new Claude Code session at `/Users/macbook/Documents/Zerops-MCP/zcp`, paste this as the first user message:
+In a new Claude Code session at the repository root, paste this as the first user message:
 
 ```
-Execute the plan at plans/atom-corpus-verification-2026-05-02.md.
+Execute the plan at docs/atom-corpus-verification.md.
 
 Read CLAUDE.md, CLAUDE.local.md, and the plan first. Pay special attention
 to the "How an LLM implementer should approach this plan" section near

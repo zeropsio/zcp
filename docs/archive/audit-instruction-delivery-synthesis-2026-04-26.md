@@ -99,7 +99,7 @@ each `(Phase, Environment)` pair the production code emits. **What it does not
 pin** is the *shape* of the matched set — i.e., which atom IDs fire for a given
 envelope. With the new `MatchedRender.AtomID` (post-C2), tests can assert atom
 sets, but the migration of `scenarios_test.go` from `SynthesizeBodies` →
-`MatchedRender` (Phase 4.2b of `plans/test-suite-fixes-2026-04-25.md`) hasn't
+`MatchedRender` hasn't
 happened yet — substring matching on joined bodies is still the primary
 assertion shape there.
 
@@ -597,10 +597,7 @@ Findings still open after this pass:
   the allowlist). Codex's final-pass review correctly flagged that the
   underlying LIVE failure mode (the runtime status path can still
   return truncated or oversized payloads for those exact envelope
-  shapes) is preserved until a corpus-trim plan lands. The decision
-  to ship the gate-with-allowlist follows `plans/test-suite-fixes-2026-04-25.md`
-  §2.2's documented pattern: enforce forward, defer the substantive
-  per-atom content work to its own plan rather than block this sweep.
+  shapes) is preserved until a corpus-trim plan lands.
 
 ---
 

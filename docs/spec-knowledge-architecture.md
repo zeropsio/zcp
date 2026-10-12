@@ -155,7 +155,6 @@ These are distinct concerns, not duplication to consolidate:
 ## 7. Relationship to other specs
 
 - `spec-knowledge-distribution.md` (atom model) — the PUSH tier's authoring contract; a subsystem under this spec. Gains the `delivery=inline|pointer` attribute + the §3.3 reference rule.
-- `plans/guide-llm-optimality-2026-06-02.md` — the internal de-dup of the PULL tier (themes/guides), which independently reached the same "themes own facts; don't promote to atoms" conclusion. It is **Phase 4 of this program's PULL-tier slice**; this spec is its umbrella.
 
 ---
 

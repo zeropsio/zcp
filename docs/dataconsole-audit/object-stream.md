@@ -1,6 +1,5 @@
 # S11 live audit — object (storage) + stream (events/queue)
 
-Program: `plans/dataconsole-excellence-program-2026-07-16.md` §4 S11.
 Scope: `provider/object` (object-storage/S3, full support) + `provider/stream` (kafka:single@3.9
 "events", nats:single@2.12 "queue", both view-only). Live console, writes armed
 (`allowWrites:true`, correct write token presented). All findings below are **live-verified**
@@ -294,7 +293,7 @@ before touching state, so there was nothing to clean up there).
 - Embedded-path (webview/broker) mutation UX for object — this agent drove the raw HTTP API
   directly with the write token, not through a broker or the VS Code webview; the *mechanism*
   (caller-bound `X-Write-Token`) is verified, but the embedded UI's actual click-through flow
-  is the `explore-spa`/UI-walk agent's territory (see `plans/dataconsole-audit/ui-walk.md`).
+  is the `explore-spa`/UI-walk agent's territory (see `docs/dataconsole-audit/ui-walk.md`).
 - VPN-down / unreachable-engine behavior for kafka/nats (`ErrUnreachable` / `showVPNGate`) —
   both engines were reachable throughout this session; the gate itself was not forced.
 - `maxWriteBody` (64 MiB) boundary and any object above it — only tested the 16 MiB

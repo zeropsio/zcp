@@ -1,6 +1,6 @@
 # Audit — `Synthesize` cache layer impact of new `ExportStatus` envelope field
 
-**Step**: Phase 0a.0.5 of `plans/atom-corpus-verification-2026-05-02.md`.
+**Step**: Phase 0a.0.5 of `docs/atom-corpus-verification.md`.
 **Date**: 2026-05-02.
 **Question**: Does any cache layer key on `StateEnvelope` such that adding
 `ExportStatus string` to the envelope shape would require updating cache

@@ -7,9 +7,6 @@
 > sink is local-mode `.env`; same primitive serves container-mode review,
 > CI export, env-promotion diffs.
 > **Date**: 2026-05-07 — initial revision.
-> **Predecessor**: prior local-mode env handling lived implicitly in
-> `internal/ops/env_generate.go` as flat resolve + write; design pass
-> documented in `plans/local-flow-recipes-env-sync-2026-05-07.md`.
 
 ---
 

@@ -1,7 +1,6 @@
 # Authoring Boundary — internal/authoring/
 
-Status: SHIPPED 2026-06-11 (plan: `plans/archive/authoring-boundary-2026-06-11.md`;
-analysis: `plans/archive/recipator-oss-extraction-2026-06-11.md`).
+Status: SHIPPED 2026-06-11.
 
 `internal/authoring/` is the **maintainer-only authoring domain**: tooling
 that produces and publishes content FOR the Zerops platform (recipes for the

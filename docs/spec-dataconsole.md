@@ -289,7 +289,7 @@ view-only or not-yet family is read-only regardless of posture.
 ## 7. Excellence contracts
 
 A live audit of every family against real engines (2026-07-16, distilled findings
-in `plans/dataconsole-audit/`) found the dominant defect class was not UX
+in `docs/dataconsole-audit/`) found the dominant defect class was not UX
 unevenness but **operations that reported success while destroying, losing, or
 never applying data**. The excellence contracts fix what "excellent" means per
 family, as four cross-family invariants + a shared error/state vocabulary; each
@@ -584,9 +584,8 @@ messages. Collections do not advertise a blob download. Object data streams
 from the backend; KV/document/stream may materialize one engine value, but the
 server-to-browser leg remains streaming and never base64-duplicates it.
 
-The design decisions behind these (DD-1…DD-9, the recipe-first substrate, the
-substrate/conformance split) are recorded in `plans/archive/dataconsole-excellence-
-program-2026-07-16.md` and its contracts draft; this section is their durable home.
+This section is the durable home for these design decisions (DD-1…DD-9,
+the recipe-first substrate, and the substrate/conformance split).
 
 ## 8. Install
 

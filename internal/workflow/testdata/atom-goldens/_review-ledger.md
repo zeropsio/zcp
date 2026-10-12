@@ -1,7 +1,7 @@
 # Master defect ledger — Phase 2 Step 4
 
 **Status**: Cycle-3 follow-ups landed 2026-05-03 (A1-2 + Tier-3 redundancy + cosmetic sweep). All Cycle 1/2/3 items in this ledger that the user approved are now closed; remaining bullets are accepted-as-documented and tracked here for archival.
-**Plan**: `plans/atom-corpus-verification-2026-05-02.md` §2.
+**Plan**: `docs/atom-corpus-verification.md` §2.
 **Method**: 6 parallel review sub-agents (A1-A6) covering all 30 canonical scenarios at full body depth, plus initial single-conversation pass that produced the L1-C1 baseline. Each agent prefixed defects with their ID (A1-, A2-, …, A6-). This ledger consolidates findings.
 
 ---

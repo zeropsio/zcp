@@ -196,7 +196,7 @@ Discovery annotates collisions (`route.go:153`) but the agent can still pick rec
 
 ## Drift findings — second pass (post-C1 sweep, more bugs of the same family)
 
-After confirming C1 with the user, did a targeted hunt for OTHER places where recent refactors didn't propagate. Used: recent commits (`deploy-strategy-decomposition`, `dev-server-canonical-primitive`, `develop-flow-enhancements`, `plan-pipeline-repair`), the R1-R21 root-problem list from `plans/archive/deploy-strategy-decomposition-2026-04-28.md`, plus a Codex adversarial pass.
+After confirming C1 with the user, did a targeted hunt for OTHER places where recent refactors didn't propagate. Used: recent commits (`deploy-strategy-decomposition`, `dev-server-canonical-primitive`, `develop-flow-enhancements`, `plan-pipeline-repair`), plus a Codex adversarial pass.
 
 ### HIGH
 
@@ -291,17 +291,15 @@ The first half (`strategy=git-push` as `zerops_deploy` argument) is correct. The
 
 #### C7 — Phase 3 of `develop-flow-enhancements.md` was actively reverted; plan still describes it as a goal
 
-**Source**: `internal/tools/workflow_close_test.go:9-13` documents that the close-without-deploy guard was implemented and then REMOVED ("created friction on legitimate pivots, the agent worked around it via direct tools"). But `plans/develop-flow-enhancements.md:41` still has Phase 3 *Goal*: "`action=close workflow=develop` refuses when no successful deploy unless `force=true` given. Auto-close path untouched." — describing as an aspirational goal what was actively dismantled.
+**Source**: `internal/tools/workflow_close_test.go:9-13` documents that the close-without-deploy guard was implemented and then REMOVED ("created friction on legitimate pivots, the agent worked around it via direct tools").
 
 The `Force` field on `WorkflowInput` exists but was repurposed for `action="start" workflow="develop"` (discard-and-replace) — completely different semantics from what Phase 3 specified.
 
 **Failure mode**: someone (human or LLM) reading the plan thinks the close guard is on the roadmap, tries to implement it, breaks `workflow_close_test.go`. Or reads the plan as authoritative spec and is confused why behavior differs.
 
-**Fix size**: small — `git mv plans/develop-flow-enhancements.md plans/archive/develop-flow-enhancements.md` with a header note "Phase 3 reverted — see workflow_close_test.go for rationale". Phase 4 (mode expansion) IS implemented.
 
 #### C8 — Plan body uses retired field names (`DeployStrategy`, `StrategyConfirmed`)
 
-**Source**: `plans/develop-flow-enhancements.md` Phase 4 mechanism describes meta merge as: *"Keep `BootstrappedAt`, `DeployStrategy`, `StrategyConfirmed`, `BootstrapSession`."* These field names were retired in deploy-strategy decomposition; current names are `CloseDeployMode`, `CloseDeployModeConfirmed`. Plan-archive sweep would catch this when archiving (see C7).
 
 Same drift exists in 3 test-file comments: `internal/tools/workflow_phase5_test.go:249`, `internal/workflow/bootstrap_outputs_test.go:424,1083`, plus `internal/workflow/router_test.go:226` mentions deleted `migrateOldMeta`.
 
@@ -330,7 +328,6 @@ A live-agent test session completed in parallel with this audit. The user shippe
 | **F1** — git-push-setup walkthrough order misleading ("first deploy then confirm" — reality: deploy refuses with PREREQUISITE_MISSING until configured stamped) | `setup-git-push-{container,local}.md` reordered: GIT_TOKEN → action="git-push-setup" stamps state → commit + zerops_deploy. New atoms have ZERO retired-vocab leak (verified). | `setup-git-push-container.md` step 2 lead: *"Stamp git-push capability BEFORE the first push"*; explicit `PREREQUISITE_MISSING` mention |
 | **F2** — Templating bug: *"set up from X instead of X"* on standalone ModeDev | `topology.PushSourceResult` enum (4 variants: OK / IsStageHalf / ModeUnsupported / UnknownHost) replaces boolean `IsPushSourceFor`; reason-specific remediation. | `predicates.go::PushSourceResult` + test `TestHandleGitPushSetup_StandaloneModeDevSurfacesModeUnsupported` (PASS) |
 | **F4** — `build-integration=actions` only stamped flag, didn't deliver workflow YAML or secret guidance | `actionsConfirmResponse` returns full workflow YAML, prefilled `gh secret set` commands (env-aware: container reads `$ZCP_API_KEY`, local extracts via `jq` from `.mcp.json`), explicit `ZEROPS_TOKEN=ZCP_API_KEY` reuse hint, per-repo fine-grained PAT recommendation. | `workflow_build_integration.go::actionsConfirmResponse` + `actionsWorkflowYAML` + `ghSecretSetCommand` + tests (PASS) |
-| Bonus: backlog management | New `plans/backlog/` folder + README documenting the deferred-ideas workflow. First entry `auto-wire-github-actions-secret.md` parks the GitHub-API zero-touch secret-creation Codex recommended. | `plans/backlog/README.md` |
 
 All new atoms (`setup-git-push-{container,local}.md`, `setup-build-integration-actions.md`) have ZERO retired-vocab leak — confirmed via `grep -E 'action="strategy"|push-dev|push-git|StrategyConfirmed|DeployStrategy'` returning empty. Matrix simulator passes after lint sweep on `lifecycle_matrix_test.go`.
 
@@ -447,7 +444,7 @@ Per the user's "verify before claim" memory, every finding above was re-read aga
 | C4 | **VERIFIED** | `develop-record-external-deploy.md:7` `deployStates: [deployed]`; body line 9-11 says service "stays at deployState=never-deployed" without this. Atom can't fire when most needed. |
 | C5 | **VERIFIED** | `develop-first-deploy-asset-pipeline-container.md:38` literal `'cd /var/www && nohup npm run dev > /tmp/vite.log 2>&1 &'` — instructive, not callout. 3 sibling atoms (`develop-platform-rules-container.md:21`, `develop-dynamic-runtime-start-container.md:37`, `develop-dev-server-reason-codes.md:20`) explicitly call this pattern an anti-pattern; this atom does it. |
 | C6 | **VERIFIED** | `develop-platform-rules-local.md:31` mixes `strategy=git-push` (current valid `zerops_deploy` arg) and `strategy=push-dev` (retired vocab) in one row; line 32 says "Default push-dev needs no git state". |
-| C7 | **VERIFIED** | `internal/tools/workflow_close_test.go:1-13` header doc says guard was added then removed ("created friction on legitimate pivots"). `plans/develop-flow-enhancements.md` still in active dir with Phase 3 listed as ToDo. `handleWorkSessionClose` (`workflow.go:873-892`) has zero `HasSuccessfulDeploy` / `Force` reads — guard truly absent in current code. |
+| C7 | **VERIFIED** | `internal/tools/workflow_close_test.go:1-13` header doc says guard was added then removed ("created friction on legitimate pivots"). `handleWorkSessionClose` (`workflow.go:873-892`) has zero `HasSuccessfulDeploy` / `Force` reads — guard truly absent in current code. |
 | C8 | **VERIFIED** | `bootstrap_outputs_test.go:1083` literal: "BootstrappedAt, DeployStrategy, StrategyConfirmed, FirstDeployedAt — must survive". Plus `workflow_phase5_test.go:249`, `bootstrap_outputs_test.go:424`, `router_test.go:226` referencing deleted `migrateOldMeta`. |
 | C9 | **VERIFIED** | `grep -rn 'git-push\|GitPushState\|setup-git-push\|configureGit' internal/recipe/` returns zero hits in non-test code. R12 deferred from deploy-strategy-decomposition; still empty. |
 | C10 | **VERIFIED** | Spec D2b text confirmed in `docs/spec-workflows.md`. `tools/deploy_git_push.go` only checks `meta.IsPushSourceFor(targetService)` (line 68) — pair-key validation, not first-deploy gate. `deploy_strategy_gate.go` validates strategy parameter values only. No `FirstDeployedAt` read in either git-push handler file. |
@@ -515,7 +512,6 @@ Group by "blocks first-day testing" vs "shows up in week 1" vs "queue".
 5. **C4** — fix `record-deploy` atom axes (catch-22).
 6. **C5** — rewrite asset-pipeline atom Vite-start block to use `zerops_dev_server`.
 7. **C6** — fix `develop-platform-rules-local` mixed vocab.
-8. **C7** — `git mv plans/develop-flow-enhancements.md plans/archive/` + status note. Triggers `make lint-local` plan-archival check if any.
 
 ### Round 3 — structural fixes (queue after first test session)
 9. **H1** — `planDevelopActive` cross-deploy plan (need to thread `sourceService` through `deployActionFor`).
@@ -535,7 +531,7 @@ After Round 1+2 land, the user can start internal testing with confidence the ag
 
 ## Resolution status (2026-04-30)
 
-Closed by branch `cleanup-pre-internal-testing` (`plans/archive/pre-internal-testing-fixes-2026-04-30.md` Phase 1-7).
+Closed by branch `cleanup-pre-internal-testing`.
 
 | Finding | Status | Resolution |
 |---|---|---|
@@ -545,24 +541,19 @@ Closed by branch `cleanup-pre-internal-testing` (`plans/archive/pre-internal-tes
 | C4 | RESOLVED | Phase 4 commit `0ad55b35` — `develop-record-external-deploy` axis flipped from `[deployed]` to `[never-deployed]`. |
 | C5 | RESOLVED | Phase 6 commit `7aacce24` — asset-pipeline atom rewritten to use `zerops_dev_server action=start`; class-prevention `axis-hot-shell` lint added. |
 | C6 | RESOLVED | Phase 1 commit `9e31c19b` — `develop-platform-rules-local` retired-vocab swept inside the C1 atomic sweep. |
-| C7 | RESOLVED | Phase 1 commit `9e31c19b` — `plans/develop-flow-enhancements.md` archived to `plans/archive/develop-flow-enhancements-2026-04-20.md` with header note documenting Phase 3 reverted + Phase 4 shipped. |
+| C7 | RESOLVED | Phase 1 commit `9e31c19b` — header note documented Phase 3 reverted + Phase 4 shipped. |
 | C8 | RESOLVED | Phase 1 commit `9e31c19b` — test-comment field-name sweep folded into the C1 atomic sweep. |
-| C9 | DEFERRED | `plans/backlog/c9-recipe-git-push-scaffolding.md` (linked to existing `plans/backlog/auto-wire-github-actions-secret.md`). |
 | C10 | RESOLVED | Phase 3 commit `cfbd0793` — spec D2b row rewritten to describe the actual committed-code-at-workingDir guard at `internal/tools/deploy_git_push.go:233-240`; pin tests already exist (no new pin needed). |
 | C11 | RESOLVED | Phase 1 commit `9e31c19b` — `case "push-dev"` retired alias removed from `deploy_strategy_gate.go::validateDeployStrategyParam`. |
 | H1 | RESOLVED | Phase 3 commit `cfbd0793` — `deployActionFor` extended to take `env.Services` + emit cross-deploy args for stage halves. TODO names DeployIntent as the structural target. |
 | H2 | RESOLVED | Phase 3 commit `cfbd0793` — `develop-first-deploy-promote-stage.md` adds `setup="prod"`. |
 | H3 / F9 | RESOLVED | Phase 5 commits `7dcb1b46` (Lever A — 14 atoms aggregate-mode) + `c4140954` (Lever B — Synthesize work-session scope filter). 4-service scope=1 case drops to 24KB (under 25KB cap). |
-| M1 | DEFERRED | `plans/backlog/m1-glc-safety-net-identity-reset.md`. |
-| M2 | DEFERRED | `plans/backlog/m2-stage-timing-validation-gate.md`. |
 | M3 | RESOLVED | Phase 6 commit `5d1eee18` — `local-stage` / `local-only` added to 3 atom mode axes. |
-| M4 | DEFERRED | `plans/backlog/m4-aggregate-atom-placeholder-lint.md` — class-prevention lint for future aggregate atoms. |
 | F3 | RESOLVED | Phase 6 commit `8ed3c365` — `internal/ops/EnrichSetupNotFound` helper + integration in `ValidatePreDeployContent`. Local preflight sites left as-is (different surface — StepCheck.Detail strings, already enrich locally). |
 | F5 | RESOLVED | Phase 6 commits `d7486bb9` + `34d3403b` — structured `WorkSessionState` (status: open/auto-closed/none) replaces old `WorkSessionNote` + `AutoCloseProgress` field pair across all 4 deploy paths and both verify response wrappers. |
 | F6, F7 | RESOLVED PRE-PHASE-1 | `## Gotchas` section landed in `internal/knowledge/recipes/dotnet-hello-world.md` per per-recipe knowledge convention (CLAUDE.md). |
 | F8 | RESOLVED | Phase 2 commit `287c821a` — `serviceEligibleForSubdomain` unified predicate consults HTTP signal (mode + ports[].HTTPSupport), eliminates dev+dynamic+zsc-noop spurious enable + warning. |
 | L1, L2, L3 | OPEN | Low-priority UX atom edits; not in scope for the pre-internal-testing fix bundle. Re-evaluate if internal testing surfaces specific friction. |
-| DeployIntent resolver | DEFERRED | `plans/backlog/deploy-intent-resolver.md` — structural follow-up the H1 TODO points at. |
 
 ### Matrix simulator anomaly delta (P0 → P7)
 

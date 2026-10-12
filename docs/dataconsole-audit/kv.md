@@ -1,6 +1,6 @@
 # S11 live audit — KV family (Valkey)
 
-Program: `plans/dataconsole-excellence-program-2026-07-16.md` §4 S11. Live console,
+Live console,
 writes armed, engine `cache` = `valkey:single@7.2` (full support), project
 `zcp-eval-clean`. Method: direct HTTP against the running console
 (`http://127.0.0.1:54020`) with curl, cited against the wire contract in
@@ -274,7 +274,7 @@ anyway, see KV-AUD-05). The SPA's only "no expiry" check is
 `app.js:759`: `(ttl == null || ttl < 0) ? "no expiry" : ttl + "s"` — since the
 server never sends a negative value, this branch **never fires** for a
 persisted key. **Independently confirmed visually**: the sibling UI-walk audit
-(`plans/dataconsole-audit/ui-walk.md:21`) observed "`kv hash (user:2) ...
+(`docs/dataconsole-audit/ui-walk.md:21`) observed "`kv hash (user:2) ...
 TTL: 0s bar below`" on `user:2`, which has no TTL — the exact misdisplay this
 finding predicts, caught by a completely different method (screenshot vs API
 trace). **Every KV key without a TTL — the common case — shows a misleading
@@ -344,7 +344,7 @@ four into one kind) and never populates `Node.Meta`. So `hash`/`list`/`set`/
 `"kind":"tabular"` with no distinguishing field) — until the client opens the
 node (`ReadTable`) or issues a separate `Stat` call, which *does* carry
 `type` (`kv.go:186-189`). **Independently confirmed visually**: sibling
-UI-walk audit `UI-AUD-04` (`plans/dataconsole-audit/ui-walk.md:44-47`):
+UI-walk audit `UI-AUD-04` (`docs/dataconsole-audit/ui-walk.md:44-47`):
 "Inside a KV service you cannot tell a hash from a list from a zset from a
 string before clicking" — same root cause, found by screenshot rather than by
 reading `List()`.

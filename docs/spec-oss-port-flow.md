@@ -7,8 +7,6 @@ publishing the result.
 - **This doc** = the runtime/architecture reference: what the flow *is* and how it behaves.
 - Boundary: `docs/spec-authoring-boundary.md` (the flow lives in `internal/authoring/port/`,
   gated behind `ZCP_AUTHORING`).
-- Design history: `plans/archive/oss-recipe-port-flow-2026-06-09.md` (+ the software-shape and
-  verification companions) — the PR #5 draft this shipped from.
 - Related: `internal/ops/deploy_failure*.go` (the failure classifier this flow reads),
   `docs/spec-content-surfaces.md` (recipe content).
 

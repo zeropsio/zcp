@@ -1,10 +1,5 @@
 # Git contract fix — P1 set-if-absent identity, P2 no per-deploy commit, P4 human attribution
 
-Analysis: `plans/git-sdlc-review-2026-07-12.md` (read it first — full mechanism
-facts, SDLC map, Codex consultation, L1/CICD sweep). This plan is the binding
-implementation scope. Orchestrated: each phase implemented by a Sonnet-5
-subagent, reviewed by Codex, gates verified by the orchestrator.
-
 ## Target contract (from the review, Codex-confirmed)
 
 1. Repo history is user-owned. ZCP never moves HEAD during direct deploy.
@@ -245,23 +240,6 @@ config; verified in the review §7a).
 
 **Gate:** full `go test ./... -short`, `make lint-fast`.
 
-## F4 — backlog + doc closure
-
-- `git rm plans/backlog/m1-glc-safety-net-identity-reset.md` (superseded:
-  P1 ships set-if-absent; the entry's open question is answered).
-- NEW `plans/backlog/ci-selfdeploy-git-config-wipe.md`: CI self-target `-g`
-  ships the runner checkout `.git` → wipes credential helper (+identity);
-  `gitPushConfiguredRecall` existence-only check reports already-configured;
-  launch push-proof `|| true` misclassifies as `head-not-pushed`. One root
-  cause, three symptoms; sketch: post-CI reconcile or helper re-assert +
-  probe-based recall.
-- NEW `plans/backlog/l0-to-l1-history-offering.md`: robot-'deploy' histories
-  of EXISTING pairs ship to GitHub verbatim on first push; optional
-  clean-slate (flatten) offering at git-push-setup. Product decision.
-- Review doc: mark §5 directions with final state; archive when merged.
-- CLAUDE.md: no new trap line (tests pin the contract; GLC spec rows are the
-  home). Verify budget rule not violated.
-
 ## Live verification (orchestrator-owned, before merge)
 
 On eval-zcp (services provisioned ad-hoc, deleted after):
@@ -320,11 +298,3 @@ On eval-zcp (services provisioned ad-hoc, deleted after):
   test repo only Karel can provide; covered by unit + integration tests
   (mocked HTTPDoer at the production seam, real-shell round-trips for the
   seed/read commands). Open item for the first real git-push-setup run.
-
-## Execution protocol
-
-Per phase: Sonnet-5 implementer agent (RED → GREEN → REFACTOR, phase
-checklist from this plan) → orchestrator runs gates → Codex diff review →
-fold findings → next phase. Plan-fidelity walk per phase before "shipped"
-claim. Landing: F1+F2 as ONE commit on main (see F2 landing rule); F3 and F4
-as their own commits (no release, no `make install`).

@@ -1,7 +1,6 @@
 # Phase 1 Eval Close-out — Bootstrap variants × Develop ending with deploy
 
 **Date**: 2026-04-30
-**Plan archived from**: `plans/eval-phase1-bootstrap-develop-deploy-2026-04-30.md` → `plans/archive/`
 **Suite duration total**: ~3.5h compute (Tier-1 ~50 min + R-fix resmoke ~25 min + Tier-2 1h22m + Tier-3 24m + framework dev work)
 
 ---
@@ -49,20 +48,6 @@ The Phase 1 acceptance criterion was "≥80% PASS"; formally we hit 64% grader-P
 | Tier-3 | 2 | 0/2 | 2/2 | 24m | Backlog: B5 cross-type recipe pair, B6 cross-deploy zerops.yaml location, B7 close-mode for auto-close visibility, B8 (suspect) cross-deploy stage subdomain auto-enable |
 
 Combined: 11 / 9 / 7.
-
----
-
-## What's now in `plans/backlog/`
-
-From Phase 1 specifically (eight backlog entries closed-out from this work):
-
-- `bootstrap-cross-type-recipe-pair.md` (B5, HIGH) — schema/handler change needed for static SPA recipes (vue + others)
-- `cross-deploy-zerops-yaml-location.md` (B6, MEDIUM) — atom edit + optional handler `--zeropsYaml` flag
-- `close-mode-required-for-auto-close-visibility.md` (B7, LOW) — atom edit
-- `cross-deploy-stage-subdomain-auto-enable-suspect.md` (B8, TBD) — investigation first, then fix or scenario adjustment
-- `laravel-app-key-base64-prefix.md` (B3, MEDIUM) — recipe-side or platform preprocessor change
-
-Plus pre-existing items the audit work parked: `auto-wire-github-actions-secret.md`, `close-mode-handler-dispatch-drift-lint.md`, `deploy-intent-resolver.md`, `m1-glc-safety-net-identity-reset.md`, `m2-stage-timing-validation-gate.md`, `m4-aggregate-atom-placeholder-lint.md`, `record-deploy-build-id-correlation.md`, `rename-closedeploymode-to-deliverymode.md`.
 
 ---
 

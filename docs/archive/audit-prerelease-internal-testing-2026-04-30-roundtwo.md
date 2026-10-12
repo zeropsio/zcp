@@ -25,20 +25,10 @@
 | `6a246201` fix(subdomain) | unify auto-enable predicate | (new) |
 | `53ebc002` + `d7ecf63c` close + archive | plan archived as `pre-internal-testing-fixes-2026-04-30.md` | C7 |
 
-Deferred to backlog (named plans created):
-
-- `plans/backlog/c3-failure-classification-async-events.md` (C3) — **superseded by Round-2 implementation; classifier wired into `ops.Events`**
-- `plans/backlog/m1-glc-safety-net-identity-reset.md` (M1)
-- `plans/backlog/m2-stage-timing-validation-gate.md` (M2)
-- `plans/backlog/m4-aggregate-atom-placeholder-lint.md` (M4)
-- `plans/backlog/deploy-intent-resolver.md` (NEW — H1 structural follow-up)
-- `plans/backlog/auto-wire-github-actions-secret.md` (NEW — build-integration=actions UX)
-
 Dismissed (NOT a backlog item):
 
 - **~~C9 — recipes have no git-push scaffolding~~** — re-examined as a scope question, not a gap. Recipes are stack templates (services + initial code structure); close-mode + git-push capability are develop-flow concerns per spec invariants B7 ("bootstrap does NOT set deploy strategy"), E2 ("bootstrap leaves CloseDeployMode + GitPushState + BuildIntegration empty"), and S2 ("close-mode never auto-assigned"). The post-bootstrap path is already complete: `bootstrap-recipe-close.md:14` states "close-mode is not chosen at bootstrap; develop picks it on first use" and points at `action="close-mode"` + `action="git-push-setup"`; `develop-strategy-review.md` (priority 2, fires on `deployStates: [deployed]` + `closeDeployModes: [unset]`) presents all three modes including git-push and chains to `git-push-setup`; `setup-git-push-{container,local}.md` (strategy-setup phase) walks the configuration. Recipe authoring atoms (`internal/content/workflows/recipe/...`) correctly contain ZERO references to git-push because deploy strategy is out of recipe scope. R12's original framing assumed recipes should pre-stage git-push — that violates separation of concerns (recipes = stack templates, develop = deploy mechanism) and is now formally rejected. Backlog plan deleted.
 
-Backlog discipline (`plans/backlog/README.md`) requires Surfaced + Why-deferred + Trigger-to-promote on every entry. Confirmed all entries comply.
 
 ---
 
@@ -102,21 +92,19 @@ Matrix simulator: **23 anomalies → 2** (after refining detector to honor state
 |---|---|---|---|
 | **C1** | CRITICAL | ✅ FIXED | `a70e6073` swept 40 files; grep for `action="strategy"` returns zero outside the deploy-decomp archived plan |
 | **C2** | HIGH | ✅ FIXED | `internal/tools/deploy_git_push.go:354-360` documents the old auto-stamp bug; new flow requires explicit `record-deploy` |
-| **C3** | HIGH | 🅱️ DEFERRED | `plans/backlog/c3-failure-classification-async-events.md`. Trigger: live-agent feedback on async build failure diagnosis. |
+| **C3** | HIGH | 🅱️ DEFERRED | Trigger: live-agent feedback on async build failure diagnosis. |
 | **C4** | MEDIUM | ✅ FIXED | `develop-record-external-deploy.md:1-7` now `deployStates: [never-deployed]` + `buildIntegrations: [webhook, actions]` |
 | **C5** | MEDIUM | ✅ FIXED + new lint | Vite block uses `zerops_dev_server`; `axis-hot-shell` lint at `atoms_lint_axes.go:280` prevents regression |
 | **C6** | MEDIUM | ✅ FIXED | Folded into the C1 sweep |
-| **C7** | LOW | ✅ FIXED | `plans/develop-flow-enhancements.md` archived as `develop-flow-enhancements-2026-04-20.md` |
+| **C7** | LOW | ✅ FIXED | Phase 3 reverted + Phase 4 shipped |
 | **C8** | LOW | ✅ FIXED | Test comments swept |
 | **C9** | LOW | ❌ DISMISSED | Out-of-scope concern: recipes = stack templates, close-mode + git-push = develop-flow. Lifecycle path complete via `bootstrap-recipe-close` → `develop-strategy-review` → `setup-git-push-{container,local}`. Backlog plan deleted (see "Dismissed" section below). |
 | **C10** | HIGH | ✅ FIXED | Shared `gitPushMetaPreflight` at `deploy_git_push.go:48-66`, called for both container + local at `:217` |
-| **H1** | HIGH | ✅ FIXED (symptom) + 🅱️ structural deferred | `build_plan.go::deployActionFor` consults `services` to find dev half + emit `setup="prod"` cross-deploy. Structural target: `plans/backlog/deploy-intent-resolver.md` |
+| **H1** | HIGH | ✅ FIXED (symptom) | `build_plan.go::deployActionFor` consults `services` to find dev half + emit `setup="prod"` cross-deploy. |
 | **H2** | HIGH | ✅ FIXED | `develop-first-deploy-promote-stage.md:20` emits `setup="prod"` |
 | **H3** | HIGH | 🟡 PARTIAL | P5 levers shrunk multi-service briefing 32.8 → 29.2 KB. Still over my 25KB heuristic but under real 28KB cap. No status-side overflow envelope yet. Decide: ship as-is or extend dispatch-brief overflow to status. |
-| **M1** | MEDIUM | 🅱️ DEFERRED | `plans/backlog/m1-glc-safety-net-identity-reset.md` |
-| **M2** | MEDIUM | 🅱️ DEFERRED | `plans/backlog/m2-stage-timing-validation-gate.md` |
 | **M3** | MEDIUM | ✅ FIXED | `9e019a70` added `local-stage` / `local-only` axes to the three excluding atoms |
-| **M4** | MEDIUM | 🅱️ DEFERRED | `plans/backlog/m4-aggregate-atom-placeholder-lint.md`. Caught one slip in P5-Lever-A by hand; lint not yet automated. |
+| **M4** | MEDIUM | 🅱️ DEFERRED | Caught one slip in P5-Lever-A by hand; lint not yet automated. |
 | **L1** | LOW | ✅ FIXED | `bootstrap-route-options.md:29` row for recipe explains slug + collisions inline |
 | **L2** | LOW | OPEN (cosmetic) | Plan rationale doesn't mention "first deploy ignores close-mode" — atom `develop-first-deploy-intro.md:24` covers it |
 | **L3** | LOW | 🅱️ DEFERRED via discovery surfacing | `route.go:90` carries `Collisions[]` on the discovery response; the agent already sees it pre-commit |

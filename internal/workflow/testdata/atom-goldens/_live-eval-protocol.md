@@ -1,6 +1,6 @@
 # Live-eval protocol — atom corpus goldens
 
-**Plan**: `plans/atom-corpus-verification-2026-05-02.md` §5.5.
+**Plan**: `docs/atom-corpus-verification.md` §5.5.
 **Owner**: `@krls2020` (initial assignment; transferable on agreement
 between current and incoming owner). Named in `_live-eval-runs.md`
 header. CODEOWNERS entry at `.github/CODEOWNERS` enforces review

@@ -1,7 +1,6 @@
 # S11 rebaseline — Data Console live audit synthesis
 
-Date: 2026-07-16 · Gate: **Karel approves before P2 scope fixes** · Program:
-`plans/dataconsole-excellence-program-2026-07-16.md`
+Date: 2026-07-16 · Gate: **Karel approves before P2 scope fixes**
 
 Synthesis of four live family audits driven against the real console over VPN
 (`zcp-eval-clean`, writes armed): `tabular.md` (db/mariadb/ch), `kv.md` (valkey),

@@ -1,6 +1,6 @@
 # Audit — service-context decision for `BuildExportEnvelope`
 
-**Step**: Phase 0a.0 of `plans/atom-corpus-verification-2026-05-02.md`.
+**Step**: Phase 0a.0 of `docs/atom-corpus-verification.md`.
 **Date**: 2026-05-02.
 **Question**: Does `BuildExportEnvelope` need to populate ALL project
 services in `env.Services` (with an `ExportTarget` discriminator) so atoms

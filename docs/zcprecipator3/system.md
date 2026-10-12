@@ -612,7 +612,6 @@ nowhere (deleted as out-of-scope).
 
 ## 7. What this doc deliberately does NOT cover
 
-- Per-run gap lists (those live in `plans/run-N-readiness.md`)
 - Engineering delivery phases (those live in `plan.md` §9)
 - v2 archaeology (the zcprecipator2 design corpus was removed 2026-06-13; recoverable from git history)
 - Atom-corpus authoring contract (lives in

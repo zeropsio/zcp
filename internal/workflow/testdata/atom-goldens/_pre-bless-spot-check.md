@@ -1,7 +1,7 @@
 # Pre-bless spot-check — Phase 2 Step 0
 
 **Status**: Awaiting human approval (Phase 2 Step 1 PAUSE POINT).
-**Plan**: `plans/atom-corpus-verification-2026-05-02.md` §2.
+**Plan**: `docs/atom-corpus-verification.md` §2.
 
 ## Mandate
 
