@@ -41,7 +41,7 @@ L1 `platform/` → L2 `topology/` → L3 peers `workflow/` + `ops/` → L4 `cmd/
 
 ## TDD — Mandatory
 
-RED → GREEN → REFACTOR; pure refactors skip RED, keep affected layers green. Table-driven `Test{Op}_{Scenario}_{Result}`; `t.Parallel()` only with safe global state (document why not); long tests honor `testing.Short()`.
+RED → GREEN → REFACTOR, with the failing test run before the implementation exists; pure refactors skip RED, keep affected layers green. Table-driven `Test{Op}_{Scenario}_{Result}`; `t.Parallel()` only with safe global state (document why not); long tests honor `testing.Short()`.
 
 Checks: platform/ops type/interface → unit/tool/integration/e2e; handler → tool/integration/e2e; new tool → also `annotations_test.go`. Layers: `./internal/...`, `./internal/tools/...`, mock `./integration/`, live `./e2e/ -tags e2e`.
 
@@ -59,7 +59,7 @@ Non-trivial work follows `.claude/skills/flow/` gates; small safe fixes use LITE
 - Resolve agent-facing service hostnames to IDs internally; shell/SQL composition uses POSIX single-quoting via `shellQuote()`, never `fmt.Sprintf`.
 - Errors: `fmt.Errorf("op: %w", err)`, never bare `return err`. Split by cohesion; English code/comments/docs/commits; atomic commits, no Co-Authored-By or amend; verify each refactor phase.
 - Renames: search calls/types/strings/tests separately, no AST assumptions.
-- No global mutable state except `sync.Once` init, or `go.mod` replace directives; use concrete known types and return errors. Never add parallel tests to global-state packages without thread safety; copy under mutex, release before I/O.
+- No global mutable state (except `sync.Once` init); no `go.mod` replace directives; no `panic()` — return errors; use concrete known types. Never add parallel tests to global-state packages without thread safety; copy under mutex, release before I/O.
 - Atoms: single-owner platform mechanics, no spec IDs/handler verbs/invisible fields/plan paths/env-only title qualifiers. Extend `internal/content/atoms_lint{,_axes}.go`, never per-topic atom tests (`TestAtomAuthoringLint`, `docs/spec-knowledge-distribution.md` §11).
 - Recipe-specific findings → `internal/knowledge/recipes/<slug>.md`; `zcp sync push recipes <slug>`, never atoms/audits (`docs/spec-content-surfaces.md`).
 

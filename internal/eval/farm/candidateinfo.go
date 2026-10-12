@@ -9,7 +9,7 @@ import (
 // (docs/spec-eval-farm.md FM-66): a candidate binary embedding fewer than
 // this many `guiSlug: "` recipe markers was built from a tree whose recipe
 // corpus was never pulled (internal/knowledge/recipes/*.md is gitignored —
-// CLAUDE.md "Knowledge sync"), not from a real local build (47 markers as
+// AGENTS.md "Commands", knowledge sync), not from a real local build (47 markers as
 // of 2026-09-13).
 const MinCorpusMarkers = 20
 

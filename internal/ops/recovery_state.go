@@ -28,7 +28,7 @@ type RecoveryState struct {
 	// for healthy.
 	Next *topology.Recovery
 	// LiveProcess is the processId of a live build/deploy process
-	// referencing the service (busy truth — CLAUDE.md trap), or "" when
+	// referencing the service (busy truth — AGENTS.md trap), or "" when
 	// none. A live process means Shape is never a failed-* shape: busy is
 	// not failure.
 	LiveProcess string
@@ -100,8 +100,8 @@ func logsRecovery(hostname string) *topology.Recovery {
 // never fail open on unknown state.
 //
 // Order of evaluation: a LIVE build/deploy process is checked FIRST and
-// wins over any classified failure — busy is not failure (CLAUDE.md trap:
-// "Service busy = a LIVE process ... the SOLE busy-truth"). Only once no
+// wins over any classified failure — busy is not failure (AGENTS.md trap;
+// spec-workflows.md "the SOLE busy-truth"). Only once no
 // live process is found does status/history classification run.
 func ComputeRecoveryState(
 	ctx context.Context,

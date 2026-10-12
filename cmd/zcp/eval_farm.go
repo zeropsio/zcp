@@ -59,7 +59,7 @@ const (
 	bundleMissing  = "missing"
 )
 
-// No init() registration (CLAUDE.md forbids global mutable state): this is a
+// No init() registration (AGENTS.md forbids global mutable state): this is a
 // plain switch. Later slices add their verb file and replace one
 // notImplemented case each — run/status/report/coverage/gc land after S2.
 func runEvalFarm(args []string) int {
@@ -309,8 +309,8 @@ func runFarmPush(args []string, envr *farm.EnvResolver) int {
 // farm.MinCorpusMarkers recipe markers (docs/spec-eval-farm.md FM-66): the
 // recipe corpus is embedded from disk at build time
 // (internal/knowledge/documents.go's `//go:embed`), and
-// internal/knowledge/recipes/*.md is gitignored (CLAUDE.md "Knowledge
-// sync"), so a worktree or fresh clone that never ran `zcp sync pull
+// internal/knowledge/recipes/*.md is gitignored (AGENTS.md "Commands",
+// knowledge sync), so a worktree or fresh clone that never ran `zcp sync pull
 // recipes` builds a candidate with none. --allow-empty-corpus (the caller's
 // allowEmptyCorpus check, before this is called) opts out.
 func checkCandidateCorpus(path string) error {

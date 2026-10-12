@@ -41,8 +41,7 @@ does not decide the split itself.
 4. **`spike`** — only when 1-3 can't settle it. Write a throwaway
    `<pkg>/zzz_probe_test.go` (`//go:build e2e`) directly in the target
    package, run `go test -tags e2e -run <TestName> ./<pkg>/...`, read the
-   result, then delete the file regardless of verdict (AGENTS.md: delete,
-   don't disable — it never survives as a skipped/commented test). Its
+   result, then delete the file regardless of verdict (it never survives as a skipped/commented test). Its
    assertion shape goes into the ledger's `promote:` field for a BUILD slice
    to write permanently.
 

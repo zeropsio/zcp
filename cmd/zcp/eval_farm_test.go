@@ -283,7 +283,7 @@ func TestFarmPush_CandidateInfo_NoneWithoutVCSStamping(t *testing.T) {
 // binary carrying fewer than farm.MinCorpusMarkers `guiSlug: "` markers —
 // the corpus is embedded from disk at build time
 // (internal/knowledge/documents.go), and a worktree/fresh clone has none
-// (CLAUDE.md "Knowledge sync"). --allow-empty-corpus opts out; a candidate
+// (AGENTS.md "Commands", knowledge sync). --allow-empty-corpus opts out; a candidate
 // carrying the full local-build marker count (47) proceeds either way.
 func TestFarmPush_CandidateWithoutCorpus_Refused(t *testing.T) {
 	writeCandidate := func(t *testing.T, markers int) string {

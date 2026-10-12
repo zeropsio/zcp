@@ -217,7 +217,7 @@ func TestMarkAgentOAuth_SensitiveRedacted_Migrates(t *testing.T) {
 }
 
 // TestMarkAgentOAuth_AlreadyTrue_NoMutation pins the check-before-mutate
-// discipline (CLAUDE.md trap / spec-workflows.md §8 O3): when the flag is
+// discipline (spec-workflows.md §8 O3): when the flag is
 // already "true", MarkAgentOAuth must not call CreateServiceEnvVar or
 // DeleteUserData at all. Proven by injecting a hard failure on both mutating
 // methods — if MarkAgentOAuth called either, the test would fail via the
