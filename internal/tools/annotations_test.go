@@ -246,7 +246,7 @@ func TestAnnotations_DescriptionKeywords(t *testing.T) {
 		{name: "zerops_export", keywords: []string{"export", "yaml", "service"}},
 		// E2E F15: an agent asked to carry a scale into the group recipe read
 		// group-recipe as tiers-only and called the change blocked.
-		{name: "zerops_workflow", keywords: []string{`action="group-recipe" scaling=`}},
+		{name: "zerops_workflow", keywords: []string{`action="group-recipe" scaling=`, `action="mac-pair"`}},
 	}
 
 	for _, tt := range tests {
