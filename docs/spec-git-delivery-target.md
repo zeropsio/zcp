@@ -217,8 +217,6 @@ every other push. Shape (action name vs `strategy` extension) = open decision #3
   deprecation note for one release window.
 - Existing `.netrc`-era containers: helper asserted lazily by the next git-push-setup / deploy
   safety-net / reconstruction; stray `~/.netrc` deleted by the same single owner when asserting.
-- Atoms: develop-close-mode-git-push folds into the L1 delivery atoms; axis values for
-  closeDeployModes shrink; ~15 .netrc/restart tell-sites sweep (inventory in the mining map).
 - Specs: spec-workflows §4.3/§GLC/§10 + spec-work-session evidence section rewritten; CLAUDE.md
   three-dimensions bullet updated (the S5 cell supersession named explicitly).
 - Public docs (zerops-docs): tokens-and-project-access.mdx + delivery-handoff.mdx are stale on two
