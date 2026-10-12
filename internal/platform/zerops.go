@@ -45,15 +45,17 @@ type ZeropsClient struct {
 // becomes the literal "https://" (no host), and every subsequent request fails
 // with `http: no Host in request URL`.
 func NewZeropsClient(token, apiHost string) (*ZeropsClient, error) {
-	endpoint := resolveEndpoint(apiHost)
+	return newZeropsClientOn(token, resolveEndpoint(apiHost), &http.Client{Timeout: DefaultAPITimeout}), nil
+}
 
-	httpClient := &http.Client{Timeout: DefaultAPITimeout}
+// newZeropsClientOn builds the client on a given HTTP client — the org
+// reader hands it one whose transport only reads (OpenOrgReader).
+func newZeropsClientOn(token, endpoint string, httpClient *http.Client) *ZeropsClient {
 	config := sdkBase.DefaultConfig(sdkBase.WithCustomEndpoint(endpoint))
 	handler := sdk.New(config, httpClient)
 	handler = sdk.AuthorizeSdk(handler, token)
 	env := sdkBase.NewEnvironment(config, httpClient).Authorize(token)
-
-	return &ZeropsClient{handler: handler, env: env}, nil
+	return &ZeropsClient{handler: handler, env: env}
 }
 
 // resolveEndpoint normalizes the apiHost argument into the SDK endpoint

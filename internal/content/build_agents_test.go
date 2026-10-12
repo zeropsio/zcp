@@ -549,7 +549,7 @@ func TestBuildAgentsMD_Container_GroupAndGitHost(t *testing.T) {
 			name:      "not a Mate",
 			rt:        runtime.Info{InContainer: true, ServiceName: "zcp"},
 			want:      []string{"zcli project list", "what it may do there is the token's"},
-			wantNever: []string{"zerops_observe", "zcp hq git-credential", "HQ", "Your group", "403"},
+			wantNever: []string{"zerops_observe", "zcp hq git-credential", "HQ", "Your group", "403", "zerops_propose_ask_chief", "Chief"},
 		},
 		{
 			name: "a Mate",
@@ -557,6 +557,7 @@ func TestBuildAgentsMD_Container_GroupAndGitHost(t *testing.T) {
 			want: []string{
 				"`zerops_observe`", `action="environments"`, `action="status" projectId=`, `action="logs"`,
 				"reaches none of them", "other Mates", "zcp hq git-credential",
+				"`zerops_propose_ask_chief`", "another project's logs", "the person decides",
 			},
 			wantNever: []string{"zcli project list", "READ them", "403", "grants"},
 		},
@@ -826,6 +827,51 @@ func TestBuildAgentsMD_Container_LiveFactsReadAgain(t *testing.T) {
 				if strings.Contains(out, want) != tc.want {
 					t.Errorf("AGENTS.md says %q = %v, want %v", want, !tc.want, tc.want)
 				}
+			}
+		})
+	}
+}
+
+// TestBuildAgentsMD_Chief pins org mode's managed section: the
+// Chief's guidance in place of the single-project develop and bootstrap
+// doctrine, which acts on its own empty project and only confuses it.
+func TestBuildAgentsMD_Chief(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		rt        runtime.Info
+		guided    bool
+		wantPages bool
+	}{
+		{name: "local", rt: runtime.Info{Chief: true}},
+		{name: "guided is a single-project preference", rt: runtime.Info{Chief: true}, guided: true},
+		{name: "a Mate's container", rt: runtime.Info{Chief: true, InContainer: true, ServiceName: "zcp", MateEnabled: true}, wantPages: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			out, err := BuildAgentsMD(tc.rt, tc.guided)
+			if err != nil {
+				t.Fatalf("BuildAgentsMD: %v", err)
+			}
+			for _, want := range []string{
+				"You are the **Chief**", "whole organization", "HQ",
+				"`zerops_org_overview`", "`zerops_org_services`", "`zerops_org_logs`", "`zerops_org_failures`",
+				"`zerops_org_env`", "`zerops_org_processes`",
+				"`zerops_org_propose_service`", "`zerops_org_propose_env`", "`zerops_org_propose_message`",
+				"the person decides", "that project's Mate", "Answer short",
+				"From <Mate> in <project>:", "proposing a `mate.message` back",
+			} {
+				if !strings.Contains(out, want) {
+					t.Errorf("Chief section lacks %q", want)
+				}
+			}
+			for _, leak := range []string{"zerops_workflow", "workflow=\"develop\"", "workflow=\"bootstrap\"", "zerops_deploy", "zerops_standup", "zerops_discover", "zcli", "zerops_propose_ask_chief"} {
+				if strings.Contains(out, leak) {
+					t.Errorf("Chief section carries single-project doctrine %q", leak)
+				}
+			}
+			if got := strings.Contains(out, "`zerops_publish_page`"); got != tc.wantPages {
+				t.Errorf("pages block = %v, want %v", got, tc.wantPages)
 			}
 		})
 	}

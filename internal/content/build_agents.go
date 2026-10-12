@@ -44,6 +44,9 @@ import (
 // field, which is env/container detection only. Mutually exclusive with
 // authoring: the block is appended only on `guided && !rt.Authoring`.
 func BuildAgentsMD(rt runtime.Info, guided bool) (string, error) {
+	if rt.Chief {
+		return buildChiefMD(rt)
+	}
 	shared, err := GetTemplate("agents_shared.md")
 	if err != nil {
 		return "", fmt.Errorf("read agents_shared.md: %w", err)
@@ -133,6 +136,29 @@ func BuildAgentsMD(rt runtime.Info, guided bool) (string, error) {
 	}
 
 	return body, nil
+}
+
+// buildChiefMD is org mode's managed section (docs/spec-mate.md §2.11):
+// the Chief's guidance — who it is, what the organization is, its
+// tools, that acting is proposing and project work is that project's Mate's —
+// in place of the single-project preamble, onboarding, routing, develop and
+// bootstrap doctrine, all of which act on its own empty project. Guided and
+// authoring are single-project modes and do not apply. In a Mate's container
+// the conversation draws pages and outlives updates, so those blocks stay.
+func buildChiefMD(rt runtime.Info) (string, error) {
+	names := []string{"agents_chief.md"}
+	if rt.InContainer && rt.MateEnabled {
+		names = append(names, "agents_pages.md", "agents_live_facts.md")
+	}
+	parts := make([]string, 0, len(names))
+	for _, name := range names {
+		tmpl, err := GetTemplate(name)
+		if err != nil {
+			return "", fmt.Errorf("read %s: %w", name, err)
+		}
+		parts = append(parts, strings.TrimSpace(tmpl))
+	}
+	return "# Zerops\n\n" + strings.Join(parts, "\n\n") + "\n", nil
 }
 
 // BuildClaudeWrapper returns the body content of CLAUDE.md's

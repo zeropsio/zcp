@@ -811,6 +811,119 @@ off it refuses and never runs `mac` (§2.0).
 |---|---|
 | MC-1 | mac-pair's answer is derived from `mac status --json` alone, per stage, with the Mate's commands repeated verbatim; a failing, unreadable or hanging `mac` is an error naming it, a missing `mac` is "arrives with a Mate update", and outside a Mate `mac` never runs. `TestMacPair_GuidesEachStage_FromMateStatus`, `TestWorkflowTool_MacPairReachesItsHandler`. |
 
+### 2.11 Org mode — the Chief
+
+A **Chief** is a person's Mate for the whole organization, one per person (it spends that
+person's agent subscription). It lives in its own otherwise empty project, which the client
+recognises by the project tag `chief`. zcp serves it in **org mode**.
+
+**Switching it on.** Service variables of that project's `zcp` service:
+
+| Key | Meaning |
+|---|---|
+| `ZCP_CHIEF` | `1`/`true` turns org mode on (`runtime.Info.Chief`, read like `ZCP_MATE_ENABLED`) |
+| `ZCP_ORG_TOKEN` | secret — the bearer of every read: the organization's token, meant to be read only (as HQ's own), or with `ZCP_ORG_API` the Chief credential HQ issued. Never the project's `ZCP_API_KEY` |
+| `ZCP_ORG_ID` | the organization to read; may be left out when the token reaches exactly one. A token reaching several with none named, or not reaching the named one, refuses to start. Required with `ZCP_ORG_API` |
+| `ZCP_ORG_API` | optional — a base URL org mode reads from instead of the region's API: HQ's Chief proxy, `<HQ origin>/api/chief/zerops`, which mirrors `https://api.<region>.zerops.io/api/rest/public` and answers only what the Chief's person may see. Set, nothing resolves the token's organization (the proxy serves no `/user/info`), so `ZCP_ORG_ID` must name it or zcp refuses to start; every search still pins its `clientId` |
+
+`zcp serve` reads the four through the live env store (§2.3's source, `mate.LiveLookup`), so a
+driver whose MCP launcher strips the environment still gets org mode; outside a container the
+process environment.
+
+**No write, ever.** Org mode's only door to the Zerops API is `platform.OrgReader`: reads only, its
+method set pinned name by name, every request through a transport that refuses anything but a GET
+or a search POST before the network, every search filtered by the org's `clientId`. No
+write-capable client exists in org mode. `platform.OrgReads()` is the exact set of reads it makes
+— the allowlist HQ's proxy forwards, paths under the public API root:
+
+- `POST /project/search`, `POST /service-stack/search`, `POST /process/search`,
+  `POST /app-version/search` — each filtered by the org's `clientId`;
+- `POST /service-stack-type/search` — the platform's service-type catalogue, no organization's;
+- `GET /service-stack/{id}/env`, `GET /project/{id}/log`, `GET /project/{id}/public-http-routing`.
+
+Through the region's API it also reads `GET /user/info` once at start, to resolve the token's
+organization; through `ZCP_ORG_API` it does not. Every change is the person's: their client makes it with
+their own Zerops token after their click.
+
+**Tool surface.** Look: `zerops_org_overview` (every project, grouped as `mate`, `hq`,
+`production`, `stage`, `other`, `chief`), `zerops_org_services`, `zerops_org_logs` (runtime,
+or the newest build's), `zerops_org_failures` (spent build containers and system services left
+out), `zerops_org_env` (values masked unless a key is named in `reveal`; the result lists what was
+revealed), `zerops_org_processes`. Act: `zerops_org_propose_service` (`restart` | `start` |
+`stop`), `zerops_org_propose_env`, `zerops_org_propose_message`. Also `zerops_knowledge`, and in a
+Mate's container `zerops_publish_page` (§5.9). The single-project surface acts on the empty own
+project and is not registered. A project's kind: tag `chief`; a Mate is tagged `mate` and runs
+a `zcp@*` service, its name the part of the project name after the last `" - "`; HQ runs a service
+named `hq`; production and stage are named `"<application> - production"` / `"- stage"`. Org results
+carry no envelope (§1.4): they describe the organization, not this project's lifecycle.
+
+**The proposal contract.** An act tool runs nothing. Its result is one JSON document; the client
+draws it as a card the person approves or declines, and executes an approved one itself:
+
+```json
+{
+  "proposal": {
+    "id": "<uuid>",
+    "kind": "service.restart | service.start | service.stop | env.set | mate.message",
+    "summary": "Restart medusa in Contoso - production",
+    "reason": "<the agent's why>",
+    "projectId": "…", "projectName": "…",
+    "serviceId": "…", "serviceName": "…",
+    "params": {}
+  },
+  "note": "Nothing has run. The person approves or declines it on the card."
+}
+```
+
+`serviceId`/`serviceName` are present for the service kinds and a service-scoped `env.set`.
+`params` per kind: `{}` for the service kinds; `env.set` →
+`{"scope": "project" | "service", "key", "value", "secret": bool}`; `mate.message` →
+`{"to": {"projectId", "mateName"}, "words", "attachment"?: {"title", "text"}}`, where the top-level
+project is the addressed Mate's. Every field is validated against what the organization holds (the
+project, its own non-system service, a state the action fits, a valid key, a real Mate other than
+the Chief) and refused with a plain error otherwise. There is no delete, no token and no
+scaling kind.
+
+**The reverse direction — a Mate asks the person's Chief.** In project mode, in a Mate's container
+(`ZCP_MATE_ENABLED`), `zerops_propose_ask_chief {words, attachmentTitle?, attachmentText?, reason}`
+proposes the one kind a project makes outside itself, `chief.message`. It sends nothing; org mode
+never registers it (the Chief does not ask itself). Its result has the same shape, from this
+project:
+
+```json
+{
+  "proposal": {
+    "id": "<uuid>",
+    "kind": "chief.message",
+    "summary": "Ask your Chief: <the words on one line, cut at 60 characters>",
+    "reason": "…",
+    "projectId": "<this project's id>", "projectName": "<this project's name>",
+    "params": {"words": "…", "attachment": {"title": "…", "text": "…"}}
+  },
+  "note": "Nothing has been sent. The person approves or declines it on the card."
+}
+```
+
+`attachment` is absent or complete (it has text); words and reason are non-empty; an attachment
+holds at most 64 Ki characters — the same checks as `mate.message`. On approval the client hands it
+to the person's Chief, where it arrives as "From <Mate> in <project>: …"; the Chief answers by
+proposing a `mate.message` back.
+
+**Agent context.** In org mode the managed `AGENTS.md` section is the Chief's
+(`agents_chief.md`) in place of the single-project doctrine: who it is, the organization, its
+tools, that acting is proposing and the person decides, that project work goes to that project's
+Mate as a `mate.message` proposal, that a Mate's message arrives as "From <Mate> in <project>: …"
+and is answered the same way, and to answer short. A Mate's own section (`agents_application.md`)
+names `zerops_propose_ask_chief` for what neither its project nor `zerops_observe` shows.
+
+| ID | Invariant |
+|---|---|
+| OM-1 | Org mode makes no write call to the Zerops API: `OrgReader` exposes reads only and its transport refuses writes. `TestOrgReader_ExposesNoWriteMethod`, `TestReadOnlyTransport_RefusesWrites`, `TestOrgReader_EveryCallReadsInsideTheOrg`. |
+| OM-2 | An act tool returns a proposal of the shape above, validated against the organization, and changes nothing. `TestProposeOrgAction_Shape`, `TestProposeOrgAction_ValidatesAgainstTheOrg`. |
+| OM-3 | Org mode registers the org surface only, and its `AGENTS.md` section is the Chief's. `TestNewOrg_RegistersTheOrgSurfaceOnly`, `TestBuildAgentsMD_Chief`. |
+| OM-4 | `OrgReads()` is exactly what org mode reads; with `ZCP_ORG_API` every read goes there with the credential as the bearer, `/user/info` is never read and `ZCP_ORG_ID` is required. `TestOrgReads_AreExactlyWhatOrgModeReads`, `TestOpenOrgReader_ThroughOrgAPI`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
+| OM-5 | A Mate's `zerops_propose_ask_chief` returns a `chief.message` proposal of the shape above from its own project and sends nothing; only a Mate's project mode registers it. `TestProposeAskChief_Shape`, `TestProposeAskChief_Validates`, `TestServer_AskChiefToolGating`, `TestAskChief_OverMCP_ProposesFromThisProjectAndSendsNothing`. |
+
 ## Current account contract — Mate 0.11.0
 
 Mate 0.11.0 supersedes the historical S1/S4 pairing and account behavior below. Every product client
