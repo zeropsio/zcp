@@ -1,4 +1,4 @@
-import puppeteer from "/Users/macbook/Documents/Zerops-MCP/zcp/tools/welcome-bridge-harness/node_modules/puppeteer-core/lib/esm/puppeteer/puppeteer-core.js";
+import puppeteer from "../welcome-bridge-harness/node_modules/puppeteer-core/lib/esm/puppeteer/puppeteer-core.js";
 const EMAIL=process.env.ZE_EMAIL, PASS=process.env.ZE_PASS, PROJECT="gRLfpBNrSziMKj0VEfk6vw";
 const AGENT=process.env.AGENT||"codex";
 const DO_LAUNCH=process.env.DO_LAUNCH==="1";

@@ -63,7 +63,7 @@ wizard/dialog state change.
 | `H2_RETEST` | `1` | `0` disables the 60 s retry-without-reload test |
 | `PROBE` | `0` | `1` runs commands in a connected terminal |
 | `PROBE_CMDS_FILE` / `PROBE_CMDS` | *(defaults)* | JSON array of shell commands for `PROBE`; prefer the file, shells mangle nested quotes |
-| `EVIDENCE_DIR` | `plans/tatami-onboarding-auth-2026-08-03/evidence` | output directory |
+| `EVIDENCE_DIR` | `tools/tatami-onboard-driver/evidence/` | output directory |
 | `TATAMI_BASE` | `https://tatami.devel.zerops.dev` | cluster base URL |
 | `SLOWMO` | `0` | Playwright `slowMo` ms |
 
@@ -170,7 +170,7 @@ registration form exposes no per-control ids: use `input[name="email"]`,
 - **Never print full tokens.** Truncate to `first6…last6` in anything logged or
   written. Decoded JWT claims are fine, but note the `file-browsing-access`
   token is a 22-character opaque base64url handle, not a JWT. Raw capture files
-  under `plans/…/evidence/` do contain full tokens and are not committed.
+  under `tools/tatami-onboard-driver/evidence/` do contain full tokens and are not committed.
 - **Zerops search endpoints are ES-backed and lag writes.** A `client-user`
   search issued right after a pool claim can return the *pre-claim* row. That is
   not noise to work around — it is the bug this driver was built to catch, and

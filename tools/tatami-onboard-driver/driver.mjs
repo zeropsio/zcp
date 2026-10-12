@@ -13,11 +13,12 @@
 import { chromium } from 'playwright';
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const BASE = process.env.TATAMI_BASE || 'https://tatami.devel.zerops.dev';
 const EVIDENCE =
   process.env.EVIDENCE_DIR ||
-  '/Users/macbook/Documents/Zerops-MCP/zcp/plans/tatami-onboarding-auth-2026-08-03/evidence';
+  fileURLToPath(new URL('./evidence/', import.meta.url));
 const HEADLESS = process.env.HEADLESS !== '0';
 const RUN = process.env.RUN || 'both'; // fresh | control | both
 const AGENT = process.env.AGENT || 'Claude Code';

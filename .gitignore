@@ -100,3 +100,6 @@ e2e/.zcp/
 
 # Local farm triage reports
 /.farm-triage/
+
+# Tatami onboarding driver captures (may contain credentials)
+/tools/tatami-onboard-driver/evidence/

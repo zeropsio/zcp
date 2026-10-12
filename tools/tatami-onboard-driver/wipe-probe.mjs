@@ -13,12 +13,13 @@
 import { chromium } from 'playwright';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { installIdentityHooks, devtoolsAlive } from './identity-hooks.mjs';
 
 const BASE = process.env.TATAMI_BASE || 'https://tatami.devel.zerops.dev';
 const EVIDENCE =
   process.env.EVIDENCE_DIR ||
-  '/Users/macbook/Documents/Zerops-MCP/zcp/plans/tatami-onboarding-auth-2026-08-03/evidence';
+  fileURLToPath(new URL('./evidence/', import.meta.url));
 const HEADLESS = process.env.HEADLESS !== '0';
 const SMOKE = process.env.SMOKE === '1';
 const WATCH_MS = Number(process.env.WATCH_MS || 45000);

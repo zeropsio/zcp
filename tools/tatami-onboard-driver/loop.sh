@@ -6,8 +6,8 @@
 #   ./loop.sh 5
 set -u
 N="${1:-5}"
-EV_ROOT="${EVIDENCE_ROOT:-/Users/macbook/Documents/Zerops-MCP/zcp/plans/tatami-onboarding-auth-2026-08-03/evidence}"
 cd "$(dirname "$0")"
+EV_ROOT="${EVIDENCE_ROOT:-$PWD/evidence}"
 
 for i in $(seq 1 "$N"); do
   DIR="$EV_ROOT/loop-$(date +%H%M%S)-$i"
