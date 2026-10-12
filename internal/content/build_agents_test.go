@@ -837,7 +837,9 @@ func TestBuildAgentsMD_Container_LiveFactsReadAgain(t *testing.T) {
 // 2026-10-12 the owner paired a MacBook with Milo and asked "can you create a
 // macos app real quick? mac is connected"; the agent searched for computer-use
 // tools, loaded a computer-use skill and answered that it could not reach the
-// Mac, without running `mac`.
+// Mac, without running `mac`. Its next try launched the app through `mac run`:
+// the window took the owner's screen and the Mac tab showed nothing; `mac open`
+// launches it behind their windows and into the tab.
 func TestBuildAgentsMD_Container_MacIsReachedThroughMac(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -854,7 +856,7 @@ func TestBuildAgentsMD_Container_MacIsReachedThroughMac(t *testing.T) {
 			if err != nil {
 				t.Fatalf("BuildAgentsMD: %v", err)
 			}
-			for _, want := range []string{"`mac status --json`", "not computer use", `zerops_workflow action="mac-pair"`, "`mac help`"} {
+			for _, want := range []string{"`mac status --json`", "not computer use", `zerops_workflow action="mac-pair"`, "`mac help`", "`mac open <the .app>`", "never through `mac run`"} {
 				if strings.Contains(out, want) != tc.want {
 					t.Errorf("AGENTS.md says %q = %v, want %v", want, !tc.want, tc.want)
 				}
