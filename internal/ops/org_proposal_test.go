@@ -196,6 +196,7 @@ func TestProposeOrgAction_DomainAdd_RefusesWhatCannotGoLive(t *testing.T) {
 		{name: "a project outside the org", in: domain("pElsewhere", "medusa", 9000, "contoso.com"), wantErr: "no project"},
 		{name: "a service the project does not have", in: domain("pProd", "ghost", 9000, "contoso.com"), wantErr: "ghost"},
 		{name: "a system service", in: domain("pProd", "core", 9000, "contoso.com"), wantErr: "core"},
+		{name: "a Mate's own zcp container", in: domain("pMM", "zcp", 80, "contoso.com"), wantErr: "Mate's own"},
 		{name: "no port", in: domain("pProd", "medusa", 0, "contoso.com"), wantErr: "port"},
 		{name: "a port the service does not have", in: domain("pProd", "medusa", 3000, "contoso.com"), wantErr: "9000"},
 		{name: "a port that does not serve the web", in: domain("pProd", "medusa", 9100, "contoso.com"), wantErr: "9100"},

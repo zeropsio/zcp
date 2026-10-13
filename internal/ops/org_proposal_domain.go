@@ -21,7 +21,7 @@ const domainMaxLength = 253
 
 // webPorts are the service's ports a domain may point at: the ones the
 // platform routes HTTP to, or that declare an HTTP scheme (set at deploy,
-// before any routing exists).
+// before any routing exists). Mate's addresses sheet offers the same ports.
 func webPorts(s *platform.ServiceStack) []int {
 	var ports []int
 	for _, p := range s.Ports {
@@ -32,8 +32,13 @@ func webPorts(s *platform.ServiceStack) []int {
 	return ports
 }
 
-// domainPortFits refuses a port no domain can point at on s.
+// domainPortFits refuses a port no domain can point at on s, and any port of
+// a Mate's own container: it serves the Mate, never the person's site.
 func domainPortFits(s *platform.ServiceStack, project string, port int) error {
+	if strings.HasPrefix(s.ServiceStackTypeInfo.ServiceStackTypeVersionName, zcpTypePrefix) {
+		return invalid(fmt.Sprintf("%s in %s is a Mate's own container, which no domain points at", s.Name, project),
+			"Point the domain at the service that serves the web (zerops_org_services lists their ports)")
+	}
 	ports := webPorts(s)
 	if len(ports) == 0 {
 		return invalid(fmt.Sprintf("%s in %s has no web port a domain can point at", s.Name, project),
