@@ -37,7 +37,7 @@ var observationID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 func registerObserve(srv *mcp.Server, httpClient hq.Doer, path, projectID string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_observe",
-		Description: "Observe this project's stage and production through HQ. action=environments lists permitted environment project IDs; status reads service IDs, status and active versions; logs reads up to 100 entries for one service. Read only: no sibling Zerops grants or secrets. A failure ends the call; call again manually after fixing it.",
+		Description: "Observe this project's stage and production through HQ. A stage or production that Mate delivers to a Git repository is not listed here. environments lists project IDs; status reads service IDs, status and active versions; logs reads up to 100 service entries. Read only: no sibling Zerops grants or secrets. Failures end the call; retry manually after fixing them.",
 		Annotations: &mcp.ToolAnnotations{Title: "Observe stage and production", ReadOnlyHint: true, IdempotentHint: true, DestructiveHint: boolPtr(false)},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in ObserveInput) (*mcp.CallToolResult, any, error) {
 		failure := func(message string) *mcp.CallToolResult {

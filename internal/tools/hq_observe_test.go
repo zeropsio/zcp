@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,30 @@ import (
 
 func TestObserve_HQEnrollment_ReadsAndFailures(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+	registerObserve(srv, nil, filepath.Join(t.TempDir(), "missing.json"), "P_MATE")
+	st, ct := mcp.NewInMemoryTransports()
+	ss, err := srv.Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ss.Close() })
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1"}, nil)
+	session, err := client.Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+	listed, err := session.ListTools(ctx, &mcp.ListToolsParams{})
+	if err != nil || len(listed.Tools) != 1 {
+		t.Fatalf("list observe tool: result=%+v err=%v", listed, err)
+	}
+	tool := listed.Tools[0]
+	wantDescription := "Observe this project's stage and production through HQ. A stage or production that Mate delivers to a Git repository is not listed here. environments lists project IDs; status reads service IDs, status and active versions; logs reads up to 100 service entries. Read only: no sibling Zerops grants or secrets. Failures end the call; retry manually after fixing them."
+	if tool == nil || tool.Description != wantDescription {
+		t.Fatalf("observe tool = %+v, want description %q", tool, wantDescription)
+	}
 	for _, tt := range []struct {
 		name, action, project, service, path, body string
 		status                                     int

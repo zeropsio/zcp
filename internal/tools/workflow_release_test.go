@@ -292,10 +292,13 @@ func TestHandleRelease_HQExplainsProductionWithoutLegacyPipelineAdvice(t *testin
 			if err := json.Unmarshal([]byte(text), &body); err != nil {
 				t.Fatal(err)
 			}
-			for _, want := range []string{"HQ Core", "approved releases", "has not checked"} {
-				if !strings.Contains(body["pipeline"], want) {
-					t.Errorf("pipeline missing %q: %s", want, body["pipeline"])
-				}
+			wantPipeline := "HQ Core delivers each approved release to the application's production. Production setup and release readiness are read in Mate; this tool has not checked them."
+			if body["pipeline"] != wantPipeline {
+				t.Errorf("pipeline = %q, want %q", body["pipeline"], wantPipeline)
+			}
+			wantNextStep := "Tell the person: open this Mate's application on Mate's projects page. Mate shows whether the application has a production. If it offers Add production, choose it. For any changes you want included that are still open, review them and press Merge. Then choose Review release, review what it carries, and press Release with the version shown. If the review is blocked, Mate names what needs doing first. Nothing has been released by this tool."
+			if body["nextStep"] != wantNextStep {
+				t.Errorf("nextStep = %q, want %q", body["nextStep"], wantNextStep)
 			}
 			for _, want := range []string{"Add production", "Merge", "Review release", "Release"} {
 				if !strings.Contains(body["nextStep"], want) {

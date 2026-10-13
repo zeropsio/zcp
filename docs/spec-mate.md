@@ -3427,7 +3427,8 @@ live in the Vault (§5.8).
 ### 10.11 Environments, the Git tab, release
 
 HQ's environment records replace `environments.yaml`: each keeps its name, tier (`stage`,
-`production`), project, sources (branches, or `release`) and order. _Add stage_ and _Add production_
+`production`), delivery target, sources (branches, or `release`) and order. A target can be a
+Zerops project or a Git repository branch. For a Zerops target, _Add stage_ and _Add production_
 create the project from the recipe's tier converted to import-ready form — `buildFromGit` +
 `zeropsSetup` becomes `startWithoutCode` with the source map kept — attach it to the application,
 then give HQ an environment-specific token with `BASIC_USER` on that project. HQ deploys it;
@@ -3441,6 +3442,14 @@ absent. A recipe proposal landing revalidates the read. Projects carry only the 
 the Zerops GUI; HQ records own placement, source and press progress. A press interrupted before
 attachment leaves a half-made environment that offers _Finish setup_ for its tier, never a Mate.
 An authoritative refusal ends the attempt until changed input or explicit retry.
+
+HQ Core delivers each approved release to the application's production. Mate shows whether the
+application has a production; an agent cannot infer its absence from `zerops_observe`. That tool
+lists only environments with a Zerops project and keeps the required `projectId` observation wire.
+A stage or production that Mate delivers to a Git repository is not listed there. The release
+handoff directs the person to Mate to review and release; the agent never asks for a repository URL
+or token. Mate's refusals of standalone `git-push-setup`, `build-integration`, `launch-production`
+and source release remain unchanged (§2.8 keeps the launch and credential contracts).
 
 The **Git tab** — a right-panel kind `git` beside `diff`, `browser` and `data` — is the Mate's
 own leg of the project's flow and nothing else (D26): per codebase — the dev half of each pair, or
@@ -3490,7 +3499,7 @@ rights and the shown head/entries at the press. Acceptance, reflected records an
 completion are separate. Lost answers resolve from the original handle/effect, never a blind resend.
 Outages retain stale last-known facts; refusals/unknown reads explain unavailable actions.
 
-**Release** (`apps/hq/src/releases.ts`, client `zerops/release.ts`): the dialog compares each
+**Release to Zerops** (`apps/hq/src/releases.ts`, client `zerops/release.ts`): the dialog compares each
 production runtime's repository `main` against what production runs and marks its stage standing.
 HQ creates an annotated `v{semver}` tag on the recipe/group repo's shown `main`, listing service
 names and full SHAs only. It checks production release rights, unchanged recipe head, declared

@@ -54,7 +54,8 @@ func hqPairPlanError(plan []workflow.BootstrapTarget, mate bool) *platform.Platf
 // Mate, enrolled with its HQ or not yet: launch-production creates and
 // imports its OWN production project on a user-owned remote
 // (workflow_launch_production.go) — it has no case for an application's
-// production, which the person adds from the projects page. mate is
+// production, which can be a Zerops project or a Git repository branch
+// the person adds from the projects page. mate is
 // runtime.Info.MateEnabled. nil outside a Mate, so the classic route is
 // untouched.
 func hqLaunchProductionRefusal(ctx context.Context, httpClient ops.HTTPDoer, stateDir string, mate bool) *mcp.CallToolResult {
@@ -62,7 +63,7 @@ func hqLaunchProductionRefusal(ctx context.Context, httpClient ops.HTTPDoer, sta
 		return nil
 	}
 	return launchFailedResponse(nil, topology.BlockerCategoryOther, "wired_mate_production_is_the_groups",
-		"This Mate delivers through its HQ, where an application's production is a project the person adds "+
+		"This Mate delivers through its HQ, where an application's production can be a Zerops project or a Git repository branch the person adds "+
 			"from the projects page — launch-production creates its own production project outside the "+
 			"application and has no case for that. "+hqLaunchProductionNextStep(ctx, httpClient, stateDir))
 }

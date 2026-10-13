@@ -52,6 +52,12 @@ func TestAWiredPairWithoutItsEnrollmentSaysNothingWasDelivered(t *testing.T) {
 			}
 			enrollAs(t, tt.enrollment)
 
+			refusal := resultText(t, hqLaunchProductionRefusal(context.Background(), nil, lab.stateDir, true))
+			wantProduction := "This Mate delivers through its HQ, where an application's production can be a Zerops project or a Git repository branch the person adds from the projects page"
+			if !strings.Contains(refusal, wantProduction) {
+				t.Errorf("production refusal missing %q: %s", wantProduction, refusal)
+			}
+
 			d := lab.deliver()
 			if d == nil || !d.failed || d.Change != nil {
 				t.Fatalf("want a delivery that says it did not reach HQ, got %+v", d)
