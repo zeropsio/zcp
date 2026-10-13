@@ -891,6 +891,7 @@ func TestBuildAgentsMD_Chief(t *testing.T) {
 				"`zerops_org_overview`", "`zerops_org_services`", "`zerops_org_logs`", "`zerops_org_failures`",
 				"`zerops_org_env`", "`zerops_org_processes`",
 				"`zerops_org_propose_service`", "`zerops_org_propose_env`", "`zerops_org_propose_message`",
+				"`zerops_org_propose_domain`", "DNS records",
 				"the person decides", "that project's Mate", "Answer short",
 				"From <Mate> in <project>:", "proposing a `mate.message` back",
 			} {

@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/platform"
 )
 
 func fixedID() string { return "11111111-2222-3333-4444-555555555555" }
@@ -112,6 +114,105 @@ func TestProposeOrgAction_ValidatesAgainstTheOrg(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			_, err := ProposeOrgAction(context.Background(), testOrg(), fixedID, tt.in)
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("err = %v, want it to mention %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// domainOrg is testOrg with medusa serving the web on 9000 beside a metrics
+// port, and production already answering at shop.example.com.
+func domainOrg() *fakeOrg {
+	org := testOrg()
+	org.services[5].Ports = []platform.Port{
+		{Port: 9000, Protocol: "tcp", Scheme: "http"},
+		{Port: 9100, Protocol: "tcp", Scheme: "tcp"},
+		{Port: 8080, Protocol: "tcp", HTTPSupport: true},
+	}
+	org.routings = map[string][]platform.PublicHTTPRouting{"pProd": {{
+		Domains:   []platform.PublicHTTPDomain{{Name: "shop.example.com"}},
+		Locations: []platform.PublicHTTPLocation{{Path: "/", Port: 9000, ServiceID: "sMedusa"}},
+	}}}
+	return org
+}
+
+// TestProposeOrgAction_DomainAdd_Shape pins the domain.add document the
+// client draws its card from and carries out on approval.
+func TestProposeOrgAction_DomainAdd_Shape(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		in   OrgActionInput
+		want string
+	}{
+		{
+			name: "a domain and its www, on the service's web port",
+			in:   OrgActionInput{Kind: ProposalDomainAdd, Project: "Contoso - production", Service: "medusa", Domains: []string{"contoso.com", "www.contoso.com"}, Port: 9000, Reason: "the shop is ready for its own name"},
+			want: `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"domain.add","summary":"Put Contoso - production on contoso.com and www.contoso.com","reason":"the shop is ready for its own name","projectId":"pProd","projectName":"Contoso - production","serviceId":"sMedusa","serviceName":"medusa","params":{"domains":["contoso.com","www.contoso.com"],"port":9000}},"note":"Nothing has run. The person approves or declines it on the card."}`,
+		},
+		{
+			name: "a domain written as people write it, on a port the platform routes",
+			in:   OrgActionInput{Kind: ProposalDomainAdd, Project: "pProd", Service: "medusa", Domains: []string{" API.Contoso.com. "}, Port: 8080, Reason: "an API name"},
+			want: `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"domain.add","summary":"Put Contoso - production on api.contoso.com","reason":"an API name","projectId":"pProd","projectName":"Contoso - production","serviceId":"sMedusa","serviceName":"medusa","params":{"domains":["api.contoso.com"],"port":8080}},"note":"Nothing has run. The person approves or declines it on the card."}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := ProposeOrgAction(context.Background(), domainOrg(), fixedID, tt.in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, err := json.Marshal(got)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var gotDoc, wantDoc any
+			_ = json.Unmarshal(raw, &gotDoc)
+			if err := json.Unmarshal([]byte(tt.want), &wantDoc); err != nil {
+				t.Fatalf("bad want: %v", err)
+			}
+			if !reflect.DeepEqual(gotDoc, wantDoc) {
+				t.Errorf("proposal\n got %s\nwant %s", raw, tt.want)
+			}
+		})
+	}
+}
+
+// TestProposeOrgAction_DomainAdd_RefusesWhatCannotGoLive: a domain is
+// proposed only for the organization's project, onto one of its services'
+// web ports, as a domain name the project does not answer at yet.
+func TestProposeOrgAction_DomainAdd_RefusesWhatCannotGoLive(t *testing.T) {
+	t.Parallel()
+	domain := func(project, service string, port int, domains ...string) OrgActionInput {
+		return OrgActionInput{Kind: ProposalDomainAdd, Project: project, Service: service, Port: port, Domains: domains, Reason: "r"}
+	}
+	tests := []struct {
+		name    string
+		in      OrgActionInput
+		wantErr string
+	}{
+		{name: "a project outside the org", in: domain("pElsewhere", "medusa", 9000, "contoso.com"), wantErr: "no project"},
+		{name: "a service the project does not have", in: domain("pProd", "ghost", 9000, "contoso.com"), wantErr: "ghost"},
+		{name: "a system service", in: domain("pProd", "core", 9000, "contoso.com"), wantErr: "core"},
+		{name: "no port", in: domain("pProd", "medusa", 0, "contoso.com"), wantErr: "port"},
+		{name: "a port the service does not have", in: domain("pProd", "medusa", 3000, "contoso.com"), wantErr: "9000"},
+		{name: "a port that does not serve the web", in: domain("pProd", "medusa", 9100, "contoso.com"), wantErr: "9100"},
+		{name: "a service with no web port", in: domain("pProd", "db", 5432, "contoso.com"), wantErr: "no web port"},
+		{name: "no domain", in: domain("pProd", "medusa", 9000), wantErr: "domain"},
+		{name: "a domain with its scheme", in: domain("pProd", "medusa", 9000, "https://contoso.com"), wantErr: "https://contoso.com"},
+		{name: "a domain with a path", in: domain("pProd", "medusa", 9000, "contoso.com/shop"), wantErr: "contoso.com/shop"},
+		{name: "a bare word", in: domain("pProd", "medusa", 9000, "contoso"), wantErr: "contoso"},
+		{name: "a label starting with a hyphen", in: domain("pProd", "medusa", 9000, "-shop.contoso.com"), wantErr: "-shop.contoso.com"},
+		{name: "the same domain twice", in: domain("pProd", "medusa", 9000, "contoso.com", "Contoso.com"), wantErr: "twice"},
+		{name: "a domain the project already answers at", in: domain("pProd", "medusa", 9000, "shop.example.com"), wantErr: "already"},
+		{name: "no reason", in: OrgActionInput{Kind: ProposalDomainAdd, Project: "pProd", Service: "medusa", Port: 9000, Domains: []string{"contoso.com"}}, wantErr: "reason"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := ProposeOrgAction(context.Background(), domainOrg(), fixedID, tt.in)
 			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 				t.Fatalf("err = %v, want it to mention %q", err, tt.wantErr)
 			}

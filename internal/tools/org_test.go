@@ -26,7 +26,7 @@ func (orgFake) ListProjects(context.Context) ([]platform.Project, error) {
 }
 func (orgFake) ListServices(_ context.Context, projectID string) ([]platform.ServiceStack, error) {
 	all := []platform.ServiceStack{
-		{ID: "sMedusa", ProjectID: "pProd", Name: "medusa", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}},
+		{ID: "sMedusa", ProjectID: "pProd", Name: "medusa", Status: "ACTIVE", Ports: []platform.Port{{Port: 9000, Protocol: "tcp", Scheme: "http"}}, ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}},
 		{ID: "sZcp", ProjectID: "pRossy", Name: "zcp", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "zcp@1", ServiceStackTypeCategoryName: "USER"}},
 	}
 	var out []platform.ServiceStack
@@ -86,6 +86,7 @@ func TestOrgTools_EachAnswersWithItsDocument(t *testing.T) {
 		{tool: "zerops_org_propose_service", args: map[string]any{"action": "restart", "project": "pProd", "service": "medusa", "reason": "stuck"}, wantKey: "proposal", wantIn: `"kind":"service.restart"`},
 		{tool: "zerops_org_propose_env", args: map[string]any{"project": "pProd", "scope": "project", "key": "APP_URL", "value": "https://x", "reason": "domain"}, wantKey: "proposal", wantIn: `"kind":"env.set"`},
 		{tool: "zerops_org_propose_message", args: map[string]any{"to": "Rossy", "words": "debug this", "reason": "Rossy's code"}, wantKey: "proposal", wantIn: `"mateName":"Rossy"`},
+		{tool: "zerops_org_propose_domain", args: map[string]any{"project": "pProd", "service": "medusa", "domains": []string{"contoso.com", "www.contoso.com"}, "port": 9000, "reason": "the shop's own name"}, wantKey: "proposal", wantIn: `"params":{"domains":["contoso.com","www.contoso.com"],"port":9000}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.tool, func(t *testing.T) {
@@ -157,6 +158,7 @@ func TestOrgTools_Annotations(t *testing.T) {
 		"zerops_org_overview": true, "zerops_org_services": true, "zerops_org_logs": true,
 		"zerops_org_failures": true, "zerops_org_env": true, "zerops_org_processes": true,
 		"zerops_org_propose_service": false, "zerops_org_propose_env": false, "zerops_org_propose_message": false,
+		"zerops_org_propose_domain": false,
 	}
 	if len(listed.Tools) != len(want) {
 		t.Errorf("registered %d tools, want %d", len(listed.Tools), len(want))
