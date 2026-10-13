@@ -886,7 +886,13 @@ scaling kind.
 
 **The reverse direction — a Mate asks the person's Chief.** In project mode, in a Mate's container
 (`ZCP_MATE_ENABLED`), `zerops_propose_ask_chief {words, attachmentTitle?, attachmentText?, reason}`
-proposes the one kind a project makes outside itself, `chief.message`. It sends nothing; org mode
+proposes the one kind a project makes outside itself, `chief.message`, only when HQ identifies
+a current Chief for the source Mate's person. Enrollment authenticates `GET /api/mate/chief`;
+an unavailable or refused identity read offers no tool. `POST /api/mate/chief/proposals` rechecks
+that identity and returns the offer id, binding the source project, person and Chief at HQ.
+The client reads the same identity from HQ navigation; only that person sees decision controls.
+HQ rechecks the binding when accepting a decision, including after ownership or Chief changes.
+The reader's own Chief grants no authority over another person's offer. It sends nothing; org mode
 never registers it (the Chief does not ask itself). Its result has the same shape, from this
 project:
 

@@ -6,6 +6,8 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -820,10 +823,12 @@ func TestServer_AskChiefToolGating(t *testing.T) {
 	// Non-parallel: t.Chdir rebases the state dir server.New derives.
 	t.Chdir(t.TempDir())
 	tests := []struct {
-		name string
-		rt   runtime.Info
-		want bool
+		name    string
+		rt      runtime.Info
+		want    bool
+		noChief bool
 	}{
+		{name: "a Mate whose person has no Chief never offers to ask one", rt: runtime.Info{InContainer: true, ServiceID: "s1", MateEnabled: true}, noChief: true},
 		{name: "a Mate's container", rt: runtime.Info{InContainer: true, ServiceID: "s1", MateEnabled: true}, want: true},
 		{name: "a container without the flag", rt: runtime.Info{InContainer: true, ServiceID: "s1"}},
 		{name: "local, flag set", rt: runtime.Info{MateEnabled: true}},
@@ -831,6 +836,27 @@ func TestServer_AskChiefToolGating(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			chiefHQ := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/api/mate/chief":
+					if tt.noChief {
+						_, _ = w.Write([]byte(`{"chief":null}`))
+					} else {
+						_, _ = w.Write([]byte(`{"chief":{"ownerUserId":"owner","projectId":"chief"}}`))
+					}
+				case "/api/mate/chief/proposals":
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte(`{"id":"hq-chief-offer"}`))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(chiefHQ.Close)
+			if err := hq.SaveEnrollment(hq.EnrollmentPath(), hq.Enrollment{HQ: chiefHQ.URL, ProjectID: "p1", Credential: "fixture"}); err != nil {
+				t.Fatal(err)
+			}
 			mock := platform.NewMock().WithProject(&platform.Project{ID: "p1", Name: "test"}).WithServices(nil)
 			store, err := knowledge.GetEmbeddedStore()
 			if err != nil {

@@ -4,12 +4,15 @@ package tools_test
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -693,6 +696,24 @@ func TestAnnotations_PublishPageTool(t *testing.T) {
 // platform, so it reads as read-only; each call is a new card, so it is not
 // idempotent.
 func TestAnnotations_AskChiefTool(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	chiefHQ := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/mate/chief":
+			_, _ = w.Write([]byte(`{"chief":{"ownerUserId":"owner","projectId":"chief"}}`))
+		case "/api/mate/chief/proposals":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":"hq-chief-offer"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(chiefHQ.Close)
+	if err := hq.SaveEnrollment(hq.EnrollmentPath(), hq.Enrollment{HQ: chiefHQ.URL, ProjectID: "p1", Credential: "fixture"}); err != nil {
+		t.Fatal(err)
+	}
+
 	t.Chdir(t.TempDir())
 	tool := listAllTools(t, runtime.Info{InContainer: true, MateEnabled: true})["zerops_propose_ask_chief"]
 	if tool == nil {

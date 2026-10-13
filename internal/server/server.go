@@ -128,6 +128,9 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 
 	srv.AddReceivingMiddleware(s.observe())
 	s.registerTools() //nolint:contextcheck // registerTools wires a lazy background schema provider (schemaCache.Get(context.Background())); no request context applies at startup wiring time
+	if rtInfo.InContainer && rtInfo.MateEnabled {
+		tools.RegisterAskChief(ctx, s.server, nil, authInfo.ProjectID, authInfo.ProjectName)
+	}
 
 	// A dev server kept on this project needs its keeper running, and a
 	// redeploy of this container drops the keeper's unit (tools/
@@ -357,7 +360,6 @@ func (s *Server) registerTools() {
 		// (docs/spec-mate.md §2.11); the card it proposes is drawn by a
 		// Mate's client, so the tool is Mate-gated like every mate-shaped
 		// effect (§2.0). Org mode is the Chief and never registers it.
-		tools.RegisterAskChief(s.server, projectID, s.authInfo.ProjectName, uuid.NewString)
 	}
 	tools.RegisterExport(s.server, s.client, projectID)
 	tools.RegisterManage(s.server, s.client, projectID)

@@ -7,10 +7,14 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -19,6 +23,30 @@ import (
 )
 
 func TestAskChief_OverMCP_ProposesFromThisProjectAndSendsNothing(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	chiefAvailable := true
+	chiefHQ := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/mate/chief":
+			_, _ = w.Write([]byte(`{"chief":{"ownerUserId":"owner","projectId":"chief"}}`))
+		case "/api/mate/chief/proposals":
+			if !chiefAvailable {
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = w.Write([]byte(`{"code":"forbidden","reason":"no_chief"}`))
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":"hq-chief-offer"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(chiefHQ.Close)
+	if err := hq.SaveEnrollment(hq.EnrollmentPath(), hq.Enrollment{HQ: chiefHQ.URL, ProjectID: "proj-1", Credential: "fixture"}); err != nil {
+		t.Fatal(err)
+	}
+
 	// Non-parallel: t.Chdir rebases the state dir server.New derives.
 	t.Chdir(t.TempDir())
 	mock := platform.NewMock().
@@ -66,7 +94,7 @@ func TestAskChief_OverMCP_ProposesFromThisProjectAndSendsNothing(t *testing.T) {
 		t.Fatalf("params: %v", err)
 	}
 	p := got.Proposal
-	if p.ID == "" || p.Kind != "chief.message" || p.ProjectID != "proj-1" || p.ProjectName != "Contoso - Rossy" ||
+	if p.ID != "hq-chief-offer" || p.Kind != "chief.message" || p.ProjectID != "proj-1" || p.ProjectName != "Contoso - Rossy" ||
 		p.Summary != "Ask your Chief: Is production's medusa failing too?" || p.Reason != "production is outside this project" ||
 		params.Words != "Is production's medusa failing too?" || params.Attachment == nil || params.Attachment.Text != "GET /cart 502" {
 		t.Errorf("proposal = %+v, params = %+v", p, params)
@@ -76,6 +104,14 @@ func TestAskChief_OverMCP_ProposesFromThisProjectAndSendsNothing(t *testing.T) {
 	}
 	if after := mockCalls(mock); after != before {
 		t.Errorf("asking the Chief called the platform: %d calls before, %d after", before, after)
+	}
+	// A tool retained in an existing provider session cannot offer an obsolete Chief.
+	chiefAvailable = false
+	refused, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "zerops_propose_ask_chief", Arguments: map[string]any{
+		"words": "Is production still failing?", "reason": "outside this project",
+	}})
+	if err != nil || !refused.IsError || strings.Contains(getTextContent(t, refused), `"proposal"`) {
+		t.Fatalf("removed Chief still offered a proposal: result=%v, error=%v", refused, err)
 	}
 }
 
