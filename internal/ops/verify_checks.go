@@ -500,23 +500,7 @@ func ResolveSubdomainURL(ctx context.Context, client platform.Client, projectID 
 	if !ok {
 		return ""
 	}
-	return subdomainURLForPort(ctx, client, proj.SubdomainHost, svc, port.Port)
-}
-
-// subdomainURLForPort builds the subdomain URL for one specific port, using the
-// direct builder with a bare-prefix env fallback.
-func subdomainURLForPort(ctx context.Context, client platform.Client, subdomainHost string, svc *platform.ServiceStack, port int) string {
-	if url := BuildSubdomainURL(svc.Name, subdomainHost, port); url != "" {
-		return url
-	}
-	domain := ExtractDomainFromEnv(ctx, client, svc.ID)
-	if domain == "" {
-		return ""
-	}
-	if port == 80 {
-		return fmt.Sprintf("https://%s-%s.%s", svc.Name, subdomainHost, domain)
-	}
-	return fmt.Sprintf("https://%s-%s-%d.%s", svc.Name, subdomainHost, port, domain)
+	return subdomainURLForPort(ctx, client, proj.SubdomainHost, svc, port.Port, nil)
 }
 
 // aggregateStatus computes overall status from checks.

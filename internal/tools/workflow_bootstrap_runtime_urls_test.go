@@ -154,3 +154,36 @@ func safeGuide(resp *workflow.BootstrapResponse) string {
 	}
 	return resp.Current.DetailedGuide
 }
+
+// The response collection and its public-access payload must carry the selected
+// endpoint, never the newline-separated platform URL list.
+func TestBuildRuntimeURLs_TwoHTTPPorts_ProjectsSelectedURI(t *testing.T) {
+	t.Parallel()
+	const first = "https://portprobe-31e1-5733.prg1.zerops.app"
+	const second = "https://portprobe-31e1-5734.prg1.zerops.app"
+	for _, tc := range []struct {
+		name  string
+		ports []platform.Port
+		want  string
+	}{
+		{"5733", []platform.Port{{Port: 5733, Scheme: "http"}, {Port: 5734, Scheme: "http"}}, first},
+		{"5734", []platform.Port{{Port: 5734, Scheme: "http"}, {Port: 5733, Scheme: "http"}}, second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			svc := platform.ServiceStack{ID: "svc-1", Name: "portprobe", SubdomainAccess: true, Ports: tc.ports}
+			mock := platform.NewMock().WithProject(&platform.Project{ID: "proj-1", SubdomainHost: "31e1"}).
+				WithServiceEnv(svc.ID, []platform.ServiceEnvVar{{Key: "zeropsSubdomain", Content: second + "\n" + first}})
+			got := buildRuntimeURLs(context.Background(), mock, "proj-1", []platform.ServiceStack{svc}, &workflow.ServicePlan{})
+			if len(got) != 1 {
+				t.Fatalf("runtime URLs = %+v, want one service entry", got)
+			}
+			if got[0].URL != tc.want {
+				t.Errorf("ASSERTION: runtime URI = %q, want %q", got[0].URL, tc.want)
+			}
+			if got[0].PublicAccess == nil || got[0].PublicAccess.URL != tc.want {
+				t.Errorf("ASSERTION: runtime public access = %+v, want URI %q", got[0].PublicAccess, tc.want)
+			}
+		})
+	}
+}

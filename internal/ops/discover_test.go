@@ -1453,7 +1453,7 @@ func TestExtractSubdomainURL_RawEnvsHit(t *testing.T) {
 	rawEnvs := []platform.ServiceEnvVar{
 		{Key: "zeropsSubdomain", Content: "https://app-1df2-3000.prg1.zerops.app"},
 	}
-	got := ExtractSubdomainURL(context.Background(), mock, "svc-1", rawEnvs)
+	got := ExtractSubdomainURL(context.Background(), mock, &platform.ServiceStack{ID: "svc-1"}, rawEnvs)
 	if got != "https://app-1df2-3000.prg1.zerops.app" {
 		t.Errorf("got %q, want URL from rawEnvs", got)
 	}
@@ -1472,7 +1472,7 @@ func TestExtractSubdomainURL_RawEnvsMiss_FetchFallback(t *testing.T) {
 			{Key: "zeropsSubdomain", Content: "https://app-late.prg1.zerops.app"},
 		})
 	rawEnvs := []platform.ServiceEnvVar{{Key: "OTHER_VAR", Content: "x"}}
-	got := ExtractSubdomainURL(context.Background(), mock, "svc-1", rawEnvs)
+	got := ExtractSubdomainURL(context.Background(), mock, &platform.ServiceStack{ID: "svc-1"}, rawEnvs)
 	if got != "https://app-late.prg1.zerops.app" {
 		t.Errorf("got %q, want URL from fetch fallback", got)
 	}
@@ -1486,7 +1486,7 @@ func TestExtractSubdomainURL_NilEnvs_FetchFallback(t *testing.T) {
 		WithServiceEnv("svc-1", []platform.ServiceEnvVar{
 			{Key: "zeropsSubdomain", Content: "https://app-fetched.prg1.zerops.app"},
 		})
-	got := ExtractSubdomainURL(context.Background(), mock, "svc-1", nil)
+	got := ExtractSubdomainURL(context.Background(), mock, &platform.ServiceStack{ID: "svc-1"}, nil)
 	if got != "https://app-fetched.prg1.zerops.app" {
 		t.Errorf("got %q, want URL from fetch fallback", got)
 	}
@@ -1498,7 +1498,7 @@ func TestExtractSubdomainURL_FetchError(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().
 		WithError("GetServiceEnv", fmt.Errorf("transient API error"))
-	got := ExtractSubdomainURL(context.Background(), mock, "svc-1", nil)
+	got := ExtractSubdomainURL(context.Background(), mock, &platform.ServiceStack{ID: "svc-1"}, nil)
 	if got != "" {
 		t.Errorf("got %q, want empty on fetch error", got)
 	}

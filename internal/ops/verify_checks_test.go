@@ -30,8 +30,8 @@ func TestResolveSubdomainURL_DirectBuild(t *testing.T) {
 
 // TestResolveSubdomainURL_BarePrefixFallback — when the project's
 // SubdomainHost is just a prefix without a dot (so BuildSubdomainURL
-// returns ""), the helper falls back to ExtractDomainFromEnv, parses
-// the domain off the service's zeropsSubdomain env, and stitches a URL.
+// returns ""), the shared projection falls back to the service's
+// zeropsSubdomain env and selects its advertised HTTP-port URL.
 // This branch (verify_checks.go:166-174) had no direct test before.
 func TestResolveSubdomainURL_BarePrefixFallback(t *testing.T) {
 	t.Parallel()

@@ -122,6 +122,9 @@ type ServiceInfo struct {
 	MountPath        string `json:"mountPath,omitempty"`
 	SubdomainEnabled bool   `json:"subdomainEnabled,omitempty"`
 	SubdomainURL     string `json:"subdomainUrl,omitempty"`
+	// Retain the selected port from the typed service snapshot for cockpit links.
+	// Summary responses omit Ports; resolving later must not refetch the service.
+	subdomainPort int
 	// PublicAccess is the PA-5 structured summary (docs/spec-workflows.md
 	// §8 O3): {intent, subdomain, url, domains[]}, populated for every
 	// HTTP-class runtime (dynamic/implicit/static — never managed deps,
@@ -222,7 +225,7 @@ func Discover(
 			rawEnvs = attachEnvs(ctx, client, &info, *detail, result, includeEnvValues)
 		}
 		if detail.SubdomainAccess {
-			info.SubdomainURL = ExtractSubdomainURL(ctx, client, detail.ID, rawEnvs)
+			info.SubdomainURL = ExtractSubdomainURL(ctx, client, detail, rawEnvs)
 		}
 		if isHTTPClassService(detail) {
 			if obs, obsErr := ObservePublicAccess(ctx, client, projectID, detail); obsErr == nil {
@@ -331,6 +334,9 @@ func buildSummaryServiceInfo(svc *platform.ServiceStack) ServiceInfo {
 		Mode:             mode,
 		IsInfrastructure: topology.IsManagedService(typeVersion),
 		SubdomainEnabled: svc.SubdomainAccess,
+	}
+	if port, ok := PreferredHTTPPort(svc.Ports); ok {
+		info.subdomainPort = port.Port
 	}
 	if !info.IsInfrastructure && typeVersion != zcpSelfType {
 		deployed := svc.HasDeployedCode()
@@ -537,39 +543,18 @@ func FillSubdomainURLs(ctx context.Context, client platform.Client, result *Disc
 		if !s.SubdomainEnabled || s.SubdomainURL != "" || s.ServiceID == "" {
 			continue
 		}
-		s.SubdomainURL = ExtractSubdomainURL(ctx, client, s.ServiceID, nil)
+		s.SubdomainURL = ExtractSubdomainURL(ctx, client, &platform.ServiceStack{
+			ID: s.ServiceID, Name: s.Hostname, Ports: []platform.Port{{Port: s.subdomainPort}},
+		}, nil)
 	}
 }
 
-// ExtractSubdomainURL returns the subdomain URL from the service's
-// zeropsSubdomain env var, or empty string when the key is absent. Pass
-// rawEnvs when the caller already has the env list (avoids a second API
-// round-trip on the happy path — discover iterates envs anyway); pass
-// nil to fetch via client.GetServiceEnv.
-//
-// When rawEnvs is non-nil but doesn't contain the key the helper still
-// falls back to a fetch — the platform injects zeropsSubdomain
-// asynchronously after enable, so a service can have SubdomainAccess=true
-// while the env hasn't propagated yet. The earlier "non-nil rawEnvs
-// without the key means subdomain isn't enabled" shortcut surfaced empty
-// URLs in discover responses during that propagation window. The extra
-// API call only fires on the rare miss; the cached path is unchanged.
-func ExtractSubdomainURL(ctx context.Context, client platform.Client, serviceID string, rawEnvs []platform.ServiceEnvVar) string {
-	for _, env := range rawEnvs {
-		if env.Key == envKeyZeropsSubdomain {
-			return env.Content
-		}
-	}
-	envs, err := client.GetServiceEnv(ctx, serviceID)
-	if err != nil {
-		return ""
-	}
-	for _, env := range envs {
-		if env.Key == envKeyZeropsSubdomain {
-			return env.Content
-		}
-	}
-	return ""
+// ExtractSubdomainURL resolves the preferred HTTP port to one URL from the
+// platform's zeropsSubdomain list. Cached envs avoid a fetch when the key is
+// present; a missing key is refetched to preserve asynchronous propagation.
+func ExtractSubdomainURL(ctx context.Context, client platform.Client, svc *platform.ServiceStack, rawEnvs []platform.ServiceEnvVar) string {
+	port, _ := PreferredHTTPPort(svc.Ports)
+	return subdomainURLForPort(ctx, client, "", svc, port.Port, rawEnvs)
 }
 
 // addEnvRefNotes appends an explanatory note if any service env contains cross-service references.

@@ -3,7 +3,6 @@ package ops
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -243,17 +242,25 @@ func attachSubdomainUrlsToResult(ctx context.Context, client platform.Client, re
 
 	// If all URLs are empty, SubdomainHost was a bare prefix — fall back to env var.
 	if AllEmpty(urls) {
-		domain := ExtractDomainFromEnv(ctx, client, serviceID)
-		if domain == "" {
+		envs, envErr := client.GetServiceEnv(ctx, serviceID)
+		if envErr != nil {
 			return
 		}
-		urls = urls[:0]
-		for _, p := range httpPorts {
-			if p.Port == 80 {
-				urls = append(urls, fmt.Sprintf("https://%s-%s.%s", result.Hostname, proj.SubdomainHost, domain))
-			} else {
-				urls = append(urls, fmt.Sprintf("https://%s-%s-%d.%s", result.Hostname, proj.SubdomainHost, p.Port, domain))
+		for _, env := range envs {
+			if env.Key != envKeyZeropsSubdomain {
+				continue
 			}
+			urls = urls[:0]
+			for _, p := range httpPorts {
+				u := projectSubdomainURL(detail.Name, proj.SubdomainHost, p.Port, env.Content)
+				if u != "" {
+					urls = append(urls, u)
+				}
+			}
+			break
+		}
+		if AllEmpty(urls) {
+			return
 		}
 	}
 
@@ -276,48 +283,24 @@ func subdomainHTTPPorts(ports []platform.Port) []platform.Port {
 	return http
 }
 
-// ExtractDomainFromEnv reads the zeropsSubdomain env var and extracts the domain suffix.
-func ExtractDomainFromEnv(ctx context.Context, client platform.Client, serviceID string) string {
-	envs, err := client.GetServiceEnv(ctx, serviceID)
-	if err != nil {
-		return ""
-	}
-	for _, env := range envs {
-		if env.Key == envKeyZeropsSubdomain {
-			return ParseSubdomainDomain(env.Content)
+// ParseSubdomainDomain extracts the domain suffix from the first valid
+// zerops subdomain URL, including when zeropsSubdomain lists multiple URLs.
+// E.g. "https://app-1df2-3000.prg1.zerops.app" → "prg1.zerops.app".
+func ParseSubdomainDomain(content string) string {
+	for _, u := range parseSubdomainURLs(content) {
+		_, domain, found := strings.Cut(u.Hostname(), ".")
+		if found && domain != "" {
+			return domain
 		}
 	}
 	return ""
-}
-
-// ParseSubdomainDomain extracts the domain suffix from a zerops subdomain URL.
-// E.g. "https://app-1df2-3000.prg1.zerops.app" → "prg1.zerops.app".
-func ParseSubdomainDomain(url string) string {
-	if url == "" {
-		return ""
-	}
-	// Strip scheme.
-	host := url
-	if idx := strings.Index(host, "://"); idx >= 0 {
-		host = host[idx+3:]
-	}
-	// Strip path.
-	if idx := strings.IndexByte(host, '/'); idx >= 0 {
-		host = host[:idx]
-	}
-	// Domain is everything after the first dot.
-	_, domain, found := strings.Cut(host, ".")
-	if !found || domain == "" {
-		return ""
-	}
-	return domain
 }
 
 // SubdomainDomainFromAPIHost derives the zerops.app subdomain domain from the
 // API host, WITHOUT reading any service env (the P-LP-5-respecting path for the
 // production project, where ZCP must never read env values). The deploy path for
 // dev/stage gets this domain from the service's zeropsSubdomain env
-// (ExtractDomainFromEnv); for prod that's forbidden, but the region is already
+// (ParseSubdomainDomain); for prod that's forbidden, but the region is already
 // encoded in the API host:
 //
 //	"api.app-prg1.zerops.io" → "prg1.zerops.app"
