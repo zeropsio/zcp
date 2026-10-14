@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
@@ -47,6 +48,20 @@ type OrgEnvInput struct {
 type OrgProcessesInput struct {
 	Project string `json:"project,omitempty" jsonschema:"One project (id, name or Mate's name); omit for the whole organization."`
 	Limit   int    `json:"limit,omitempty"   jsonschema:"Newest processes to return (default 30, max 200)."`
+}
+
+// OrgCostsInput is zerops_org_costs's input.
+type OrgCostsInput struct {
+	Project string `json:"project,omitempty" jsonschema:"One project (id, name or Mate's name) for its services' costs; omit for every project's."`
+	From    string `json:"from,omitempty"    jsonschema:"A range's first day (2026-10-01, UTC), for its total, what it is made of and each day's; omit for today, this and last month, this and last year."`
+	Till    string `json:"till,omitempty"    jsonschema:"The range's last day, inclusive (default today). At most 31 days from from."`
+}
+
+// OrgUsageInput is zerops_org_usage's input.
+type OrgUsageInput struct {
+	Project string `json:"project"           jsonschema:"The project: its id, its full name, or its Mate's name."`
+	Service string `json:"service,omitempty" jsonschema:"One service's hostname, for its use step by step; omit for every service's."`
+	Since   string `json:"since,omitempty"   jsonschema:"How far back: 6h, 24h (default), 7d; at most 31d. Hourly up to 48h, daily (whole UTC days) past that."`
 }
 
 // OrgProposeServiceInput is zerops_org_propose_service's input.
@@ -114,7 +129,7 @@ func orgAnswer[T any](result T, err error) (*mcp.CallToolResult, any, error) {
 func RegisterOrg(srv *mcp.Server, src ops.OrgSource, logs platform.LogFetcher, newID func() string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_org_overview",
-		Description: "Every project of the organization, grouped: Mates (with each Mate's name), HQ, production and stage environments by application, others, and you. Status, service count, and services stopped or failing. Start here.",
+		Description: "Who you act for (their name, organization role and finance rights), then every project of the organization, grouped: Mates (with each Mate's name), HQ, production and stage environments by application, others, and you. Status, service count, and services stopped or failing. Start here.",
 		Annotations: orgLook("Organization overview"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
 		return orgAnswer(ops.OrgOverview(ctx, src))
@@ -122,7 +137,7 @@ func RegisterOrg(srv *mcp.Server, src ops.OrgSource, logs platform.LogFetcher, n
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_org_services",
-		Description: "A project's services: hostname, type, status, ports and domains (subdomain and custom).",
+		Description: "A project's services: hostname, type, status, ports, domains (subdomain and custom), and public ports on the project's own IP with their firewall.",
 		Annotations: orgLook("Project services"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in OrgProjectInput) (*mcp.CallToolResult, any, error) {
 		return orgAnswer(ops.OrgServices(ctx, src, in.Project))
@@ -161,6 +176,22 @@ func RegisterOrg(srv *mcp.Server, src ops.OrgSource, logs platform.LogFetcher, n
 		Annotations: orgLook("Platform processes"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in OrgProcessesInput) (*mcp.CallToolResult, any, error) {
 		return orgAnswer(ops.OrgProcesses(ctx, src, in.Project, in.Limit))
+	})
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "zerops_org_costs",
+		Description: "The organization's costs in its billing currency: totals for today, yesterday, 7 and 30 days, this and last month and year, and each project's; or one project's services'. With from, a range day by day per project, or per service of one project with its parts (CPU, RAM, disk, backups, builds, egress). Outside the org's finances, only the person's projects.",
+		Annotations: orgLook("Costs"),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in OrgCostsInput) (*mcp.CallToolResult, any, error) {
+		return orgAnswer(ops.OrgCosts(ctx, src, ops.OrgCostsInput{Project: in.Project, From: in.From, Till: in.Till, Now: time.Now()}))
+	})
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "zerops_org_usage",
+		Description: "A project's services' resource use against their limits: containers, dedicated CPU cores or shared vCPUs, RAM and disk in GB — in the last step, at peak and on average since a time. One service's step by step. For a slow or crashing service, or a cost that grew.",
+		Annotations: orgLook("Resource use"),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in OrgUsageInput) (*mcp.CallToolResult, any, error) {
+		return orgAnswer(ops.OrgUsage(ctx, src, ops.OrgUsageInput{Project: in.Project, Service: in.Service, Since: in.Since, Now: time.Now()}))
 	})
 
 	mcp.AddTool(srv, &mcp.Tool{

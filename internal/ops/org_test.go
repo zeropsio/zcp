@@ -23,6 +23,13 @@ type fakeOrg struct {
 	routings    map[string][]platform.PublicHTTPRouting
 	processes   []platform.ProcessEvent
 	appVersions []platform.AppVersionEvent
+	person      *platform.OrgPerson
+	ports       map[string][]platform.OrgPortRouting
+	costs       *platform.OrgCosts
+	costLines   []platform.OrgCostLine
+	use         []platform.OrgResourceUse
+	// asked records the reads that take a range, as their arguments.
+	asked []any
 }
 
 func (f *fakeOrg) OrgID() string { return f.orgID }
@@ -64,6 +71,45 @@ func (f *fakeOrg) SearchAppVersions(_ context.Context, projectID string, limit i
 	for _, a := range f.appVersions {
 		if (projectID == "" || a.ProjectID == projectID) && len(out) < limit {
 			out = append(out, a)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeOrg) GetPerson(context.Context) (platform.OrgPerson, error) {
+	if f.person == nil {
+		return platform.OrgPerson{}, errors.New("chief/person: not a read this HQ forwards")
+	}
+	return *f.person, nil
+}
+func (f *fakeOrg) ListPortRoutings(_ context.Context, projectID string) ([]platform.OrgPortRouting, error) {
+	if f.ports == nil {
+		return nil, errors.New("public-port-routing/search: not a read this HQ forwards")
+	}
+	return f.ports[projectID], nil
+}
+func (f *fakeOrg) SearchCosts(context.Context) (*platform.OrgCosts, error) {
+	if f.costs == nil {
+		return &platform.OrgCosts{}, nil
+	}
+	return f.costs, nil
+}
+func (f *fakeOrg) SearchCostBreakdown(_ context.Context, q platform.OrgCostQuery) ([]platform.OrgCostLine, error) {
+	f.asked = append(f.asked, q)
+	var out []platform.OrgCostLine
+	for _, l := range f.costLines {
+		if (q.ProjectID != "") == (l.ServiceID != "") && (q.ProjectID == "" || l.ProjectID == q.ProjectID) {
+			out = append(out, l)
+		}
+	}
+	return out, nil
+}
+func (f *fakeOrg) SearchResourceUse(_ context.Context, projectID string, from, till time.Time, step string) ([]platform.OrgResourceUse, error) {
+	f.asked = append(f.asked, []any{projectID, from, till, step})
+	var out []platform.OrgResourceUse
+	for _, u := range f.use {
+		if u.ProjectID == projectID {
+			out = append(out, u)
 		}
 	}
 	return out, nil

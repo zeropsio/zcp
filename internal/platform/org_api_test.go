@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // recordedRequest is one request a fake API received.
@@ -41,7 +42,11 @@ func recordingAPI(t *testing.T) (*httptest.Server, func() []recordedRequest) {
 			_, _ = w.Write([]byte(`{"id":"u1","clientUserList":[{"id":"cu1","clientId":"org1"},{"id":"cu2","clientId":"org2"}]}`))
 		case strings.HasSuffix(r.URL.Path, "/log"):
 			_, _ = w.Write([]byte(`{"url":"GET logs.example/x"}`))
-		case strings.HasSuffix(r.URL.Path, "/search"):
+		case strings.HasSuffix(r.URL.Path, "/chief/person"):
+			_, _ = w.Write([]byte(`{"name":"Dana","roleCode":"ADMIN","canViewFinances":false,"canEditFinances":false,"canCreateProjects":true}`))
+		case strings.HasSuffix(r.URL.Path, "/cost-search"):
+			_, _ = w.Write([]byte(`{"client":{"id":"org2","periodCost":{}},"project":[],"stack":[]}`))
+		case isSearchPath(r.URL.Path):
 			_, _ = w.Write([]byte(`{"items":[],"totalHits":0}`))
 		default:
 			_, _ = w.Write([]byte(`{"items":[],"envs":[],"list":[],"userDataList":[]}`))
@@ -79,6 +84,19 @@ func orgReaderCalls(r *OrgReader) map[string]func(context.Context) error {
 		},
 		"ListActiveServiceTypeVersions": func(ctx context.Context) error {
 			_, err := r.ListActiveServiceTypeVersions(ctx)
+			return err
+		},
+		"GetPerson":        func(ctx context.Context) error { _, err := r.GetPerson(ctx); return err },
+		"SearchCosts":      func(ctx context.Context) error { _, err := r.SearchCosts(ctx); return err },
+		"ListPortRoutings": func(ctx context.Context) error { _, err := r.ListPortRoutings(ctx, "p1"); return err },
+		"SearchCostBreakdown": func(ctx context.Context) error {
+			till := time.Date(2026, 10, 14, 0, 0, 0, 0, time.UTC)
+			_, err := r.SearchCostBreakdown(ctx, OrgCostQuery{From: till.AddDate(0, 0, -7), Till: till, Step: OrgStepDay})
+			return err
+		},
+		"SearchResourceUse": func(ctx context.Context) error {
+			till := time.Date(2026, 10, 14, 15, 0, 0, 0, time.UTC)
+			_, err := r.SearchResourceUse(ctx, "p1", till.Add(-24*time.Hour), till, OrgStepHour)
 			return err
 		},
 	}

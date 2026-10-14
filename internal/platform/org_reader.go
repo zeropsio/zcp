@@ -31,6 +31,9 @@ import (
 type OrgReader struct {
 	z     *ZeropsClient
 	orgID string
+	// viaOrgAPI is set when every read goes to ZCP_ORG_API (HQ's Chief
+	// proxy), which answers who the Chief's person is itself.
+	viaOrgAPI bool
 }
 
 // orgSearchPage bounds one search request; ListServices pages past it.
@@ -71,7 +74,7 @@ func OpenOrgReader(ctx context.Context, access OrgAccess) (*OrgReader, error) {
 		}
 		transport := orgAPITransport{base: base, next: readOnlyTransport{base: http.DefaultTransport}}
 		httpClient := &http.Client{Timeout: DefaultAPITimeout, Transport: transport}
-		return &OrgReader{z: newZeropsClientOn(access.Token, base.Scheme+"://"+base.Host+"/", httpClient), orgID: named}, nil
+		return &OrgReader{z: newZeropsClientOn(access.Token, base.Scheme+"://"+base.Host+"/", httpClient), orgID: named, viaOrgAPI: true}, nil
 	}
 	httpClient := &http.Client{Timeout: DefaultAPITimeout, Transport: readOnlyTransport{base: http.DefaultTransport}}
 	z := newZeropsClientOn(access.Token, resolveEndpoint(access.APIHost), httpClient)
@@ -97,13 +100,14 @@ type OrgRead struct {
 	Path   string
 }
 
-// OrgReads is every Zerops API read org mode makes through OrgReader —
-// exactly these, pinned by TestOrgReads_AreExactlyWhatOrgModeReads. It is
-// the allowlist HQ's Chief proxy (ZCP_ORG_API) forwards; a read added to
-// org mode is added here and to the proxy together. Every search carries the
-// org's clientId, except the service-type catalogue, which is the platform's
-// and no organization's. Resolving the token's organization (GET /user/info)
-// happens only through the region's API and is not one of them.
+// OrgReads is every read org mode makes through ZCP_ORG_API — exactly
+// these, pinned by TestOrgReads_AreExactlyWhatOrgModeReads. It is the
+// allowlist HQ's Chief proxy forwards; a read added to org mode is added here
+// and to the proxy together. Every search carries the org's clientId, except
+// the service-type catalogue, which is the platform's and no organization's.
+// GET /chief/person is HQ's own answer, no Zerops read. Through the region's
+// API the token's organization and its person are read from GET /user/info,
+// which is not one of them.
 func OrgReads() []OrgRead {
 	return []OrgRead{
 		{Method: http.MethodPost, Path: "/project/search"},
@@ -111,6 +115,11 @@ func OrgReads() []OrgRead {
 		{Method: http.MethodPost, Path: "/process/search"},
 		{Method: http.MethodPost, Path: "/app-version/search"},
 		{Method: http.MethodPost, Path: "/service-stack-type/search"},
+		{Method: http.MethodPost, Path: "/public-port-routing/search"},
+		{Method: http.MethodPost, Path: "/transaction-debit/cost-search"},
+		{Method: http.MethodPost, Path: "/transaction-debit/group-by-search"},
+		{Method: http.MethodPost, Path: "/stats-history/group-by-search"},
+		{Method: http.MethodGet, Path: "/chief/person"},
 		{Method: http.MethodGet, Path: "/service-stack/{id}/env"},
 		{Method: http.MethodGet, Path: "/project/{id}/log"},
 		{Method: http.MethodGet, Path: "/project/{id}/public-http-routing"},
@@ -184,14 +193,15 @@ func resolveOrgID(reach []string, named string) (string, error) {
 }
 
 // readOnlyTransport lets through what reads: a GET, or a POST to a search
-// endpoint (the API's searches are POSTs). Anything else is refused here, so
-// it never reaches the network.
+// endpoint (the API's searches are POSTs: …/search, …/cost-search,
+// …/group-by-search). Anything else is refused here, so it never reaches the
+// network.
 type readOnlyTransport struct{ base http.RoundTripper }
 
 func (t readOnlyTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	switch {
 	case r.Method == http.MethodGet, r.Method == http.MethodHead:
-	case r.Method == http.MethodPost && strings.HasSuffix(strings.TrimSuffix(r.URL.Path, "/"), "/search"):
+	case r.Method == http.MethodPost && isSearchPath(r.URL.Path):
 	default:
 		if r.Body != nil {
 			_ = r.Body.Close()
@@ -201,6 +211,14 @@ func (t readOnlyTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 			"Propose the change; the person approves it and their client makes it")
 	}
 	return t.base.RoundTrip(r)
+}
+
+// isSearchPath reports a path whose last segment is a search: search, or a
+// name ending in -search.
+func isSearchPath(path string) bool {
+	path = strings.TrimSuffix(path, "/")
+	last := path[strings.LastIndex(path, "/")+1:]
+	return last == "search" || (strings.HasSuffix(last, "-search") && last != "-search")
 }
 
 // OrgID is the organization this reader is scoped to.
