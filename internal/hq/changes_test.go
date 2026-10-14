@@ -118,6 +118,12 @@ func TestClient_EditChange_SendsOnlyWhatChanges(t *testing.T) {
 		{"its words", ChangeEdit{Body: &body}, `{"body":"Adds a list."}`},
 		{"its title", ChangeEdit{Title: &title}, `{"title":"Add a todo list"}`},
 		{"both", ChangeEdit{Title: &title, Body: &body}, `{"title":"Add a todo list","body":"Adds a list."}`},
+		{"its parts' receipt", ChangeEdit{Receipt: &ChangeReceipt{At: "2026-10-14T21:10:00Z", Parts: []ChangeReceiptPart{
+			{Setup: "web", PreviewHostname: "webstage", Deploy: "ok", DeployedAt: "2026-10-14T21:06:00Z", WorkspaceClean: true, DeployedCommit: "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678", Verified: true},
+			{Setup: "worker", PreviewHostname: "workerstage", Deploy: "none"},
+		}}}, `{"receipt":{"at":"2026-10-14T21:10:00Z","parts":[` +
+			`{"setup":"web","previewHostname":"webstage","deploy":"ok","deployedAt":"2026-10-14T21:06:00Z","workspaceClean":true,"deployedCommit":"a1b2c3d4e5f60718293a4b5c6d7e8f9012345678","verified":true},` +
+			`{"setup":"worker","previewHostname":"workerstage","deploy":"none","workspaceClean":false,"verified":false}]}}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

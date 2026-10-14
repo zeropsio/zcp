@@ -218,13 +218,45 @@ func (c Client) OpenChange(ctx context.Context, repo, title string, tree ...stri
 }
 
 // ChangeEdit is what an edit of an open change sets: its title, its
-// description (markdown), or both; a nil field stays as it is.
+// description (markdown), its parts' receipt, or any of them; a nil field
+// stays as it is.
 type ChangeEdit struct {
-	Title *string `json:"title,omitempty"`
-	Body  *string `json:"body,omitempty"`
+	Title   *string        `json:"title,omitempty"`
+	Body    *string        `json:"body,omitempty"`
+	Receipt *ChangeReceipt `json:"receipt,omitempty"`
 }
 
-// EditChange retitles or describes the Mate's open change number in repo.
+// ChangeReceipt is what zcp says of each part's preview after a push of a
+// change's branch, only for a pair of more than one stage (spec-mate
+// §2.8a.6, hqChanges.ts ChangeReceipt). HQ keeps the last one whole.
+type ChangeReceipt struct {
+	At    string              `json:"at"`
+	Parts []ChangeReceiptPart `json:"parts"`
+}
+
+// ChangeReceiptPart is one part's preview: its last deploy in the work
+// session (ok, failed, or none), and whether a verify passed after it.
+// DeployedCommit is the dev HEAD, only for an ok deploy from a clean
+// workspace; DeployedAt is absent for a preview never deployed.
+type ChangeReceiptPart struct {
+	Setup           string `json:"setup"`
+	PreviewHostname string `json:"previewHostname"`
+	Deploy          string `json:"deploy"`
+	DeployedAt      string `json:"deployedAt,omitempty"`
+	WorkspaceClean  bool   `json:"workspaceClean"`
+	DeployedCommit  string `json:"deployedCommit,omitempty"`
+	Verified        bool   `json:"verified"`
+}
+
+// The deploy a receipt says of a part's preview.
+const (
+	ReceiptDeployOK     = "ok"
+	ReceiptDeployFailed = "failed"
+	ReceiptDeployNone   = "none"
+)
+
+// EditChange retitles, describes or writes the receipt of the Mate's open
+// change number in repo.
 func (c Client) EditChange(ctx context.Context, repo string, number int, edit ChangeEdit) (Change, error) {
 	var change Change
 	err := c.call.json(ctx, http.MethodPatch, changePath(repo, number), c.authorization(), edit, &change)

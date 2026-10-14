@@ -254,6 +254,7 @@ func shipChange(
 	// The push landed — whatever the landing needed (an absorb, or nothing),
 	// this delivery is done with it.
 	clearLanding(stateDir, m)
+	putChangeReceipt(ctx, hqc, stateDir, m, change.Number)
 	unchanged := strings.Contains(string(output), "Everything up-to-date")
 	moved := opened.Created || !unchanged
 	described, note, stale := putKeptChangeDescription(ctx, hqc, stateDir, m, change.Number, moved)

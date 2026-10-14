@@ -1027,6 +1027,7 @@ on it and never blocks.
 - `parts` follows `Stages[]`; `deploy` is `ok|failed|none` (zcp's last deploy of that preview in the
   work session); `verified` is a passing verify after that deploy; `deployedCommit` is the dev HEAD
   and is present **only** for `deploy: ok` with `--workspace-state clean` (SHAPES C14).
+  `deployedAt` is that deploy's time (its success for `ok`), absent for `deploy: none`.
 - No "changed / unchanged" (REVIEW 6). "Preview older than the change" is the reader comparing
   `deployedCommit` with the change's `head`, which HQ already holds (REVIEW N11).
 - Order: HQ accepts the key first; zcp writes it after.
