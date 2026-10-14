@@ -69,6 +69,10 @@ type RunDescriptor struct {
 	// broader-scoped PAT a `gitRepoCreate` scenario's in-run create/delete
 	// needs).
 	GitHubAdminPAT string
+	// DevsupURL, when non-empty, is the farm host's ZCP_DEVSUP_URL — a dev
+	// build of zcp-devsup the candidate's dev setups install while no
+	// published zcp release ships one (docs/spec-mate.md §2.8a.2).
+	DevsupURL string
 	// RunToken is the project-scoped ZCP_API_KEY the controller mints
 	// (platform.MintProjectScopedToken) after the project shell exists —
 	// required at ServiceImportYAML time only, since the project-creation
@@ -209,6 +213,9 @@ func ServiceImportYAML(d RunDescriptor) ([]byte, error) {
 	}
 	if d.GitHubAdminPAT != "" {
 		vault = append(vault, envKV{"ZCP_E2E_GITHUB_PAT_ADMIN", d.GitHubAdminPAT, true})
+	}
+	if d.DevsupURL != "" {
+		vault = append(vault, envKV{"ZCP_DEVSUP_URL", d.DevsupURL, false})
 	}
 
 	data := serviceTemplateData{

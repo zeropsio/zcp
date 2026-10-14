@@ -21,6 +21,7 @@ the operator credential file; `ZCP_FARM_PROJECT_ID` is new and non-secret:
 | `ZCP_FARM_PROJECT_ID` | non-secret; the current farm project — `swY2yczpQlqVLlcz0fCyFA` |
 | `ZCP_E2E_GITHUB_PAT` | credential file — optional; only needed for a scenario declaring `gitRepoReset` (setup-then-actions) |
 | `ZCP_E2E_GITHUB_PAT_ADMIN` | credential file — optional; only needed for a scenario declaring `gitRepoCreate` (setup-empty-remote) and `farm gc`'s repo-cleanup pass |
+| `ZCP_DEVSUP_URL` | operator env — optional; a dev build of `zcp-devsup` every run's zcp service gets, for a candidate whose dev servers need the supervisor before a zcp release ships it |
 
 With `ZCP_FARM_PROJECT_ID` set, any `ZCP_FARM_*` key a verb needs and the
 environment doesn't already have — `ZCP_FARM_S3_URL/BUCKET/KEY/SECRET`,

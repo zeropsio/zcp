@@ -246,6 +246,9 @@ type RunOptions struct {
 	// injected only for a run whose scenario requires it, blocks the run
 	// in createRun before a project is created when absent).
 	GitHubAdminPAT string
+	// DevsupURL is the controller's own ZCP_DEVSUP_URL, passed to every run
+	// project's zcp service when set (RunDescriptor.DevsupURL).
+	DevsupURL string
 	// Observer is `farm run`'s --observer choice ("<model>" or "off"),
 	// recorded verbatim in the manifest (§1.4, §3.3, §7.7); RunBatch never
 	// reads it beyond that — it never reaches a run project.
@@ -391,6 +394,7 @@ func createRun(ctx context.Context, client PlatformClient, opts RunOptions, r sc
 		LaunchKey:       launchKeyValue,
 		GitHubPAT:       githubPAT,
 		GitHubAdminPAT:  githubAdminPAT,
+		DevsupURL:       opts.DevsupURL,
 	}
 
 	// §2.1 step 1: create the empty project shell. The REST import route

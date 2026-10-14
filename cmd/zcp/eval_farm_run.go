@@ -157,6 +157,7 @@ func runFarmRun(args []string, envr *farm.EnvResolver) int {
 		// resolved from the farm service env the way ZCP_FARM_* keys are.
 		GitHubPAT:      os.Getenv(eval.GitHubPATEnvVar),
 		GitHubAdminPAT: os.Getenv(eval.GitHubAdminPATEnvVar),
+		DevsupURL:      os.Getenv("ZCP_DEVSUP_URL"),
 	}
 	results, err := farm.RunBatch(ctx, client, sink, opts)
 	if err != nil {

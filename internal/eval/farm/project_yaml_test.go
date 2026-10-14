@@ -49,6 +49,13 @@ func githubAdminPATDescriptor() RunDescriptor {
 	return d
 }
 
+func devsupURLDescriptor() RunDescriptor {
+	d := oauthDescriptor()
+	d.RunID = "run-devsup678"
+	d.DevsupURL = "https://storage-prg1.zerops.io/devbins/zcp/abc-1234/zcp-devsup-linux-amd64"
+	return d
+}
+
 // TestImportYAML_SplitProjectAndService_CarriesRunToken pins the byte-stable
 // render of both halves against hand-written goldens (never dumped from the
 // generator's own first run — spec-eval-farm.md §2.1's verified two-step
@@ -67,6 +74,7 @@ func TestImportYAML_SplitProjectAndService_CarriesRunToken(t *testing.T) {
 		{"launch-key", launchDescriptor(), "testdata/project_yaml/launch_key.project.golden.yaml", "testdata/project_yaml/launch_key.service.golden.yaml"},
 		{"github-pat", githubPATDescriptor(), "testdata/project_yaml/github_pat.project.golden.yaml", "testdata/project_yaml/github_pat.service.golden.yaml"},
 		{"github-pat-admin", githubAdminPATDescriptor(), "testdata/project_yaml/github_pat_admin.project.golden.yaml", "testdata/project_yaml/github_pat_admin.service.golden.yaml"},
+		{"devsup-url", devsupURLDescriptor(), "testdata/project_yaml/devsup_url.project.golden.yaml", "testdata/project_yaml/devsup_url.service.golden.yaml"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
