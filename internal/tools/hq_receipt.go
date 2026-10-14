@@ -38,8 +38,8 @@ func changeReceipt(stages []topology.StageRef, ws *workflow.WorkSession, at time
 	return receipt
 }
 
-// receiptPart is one preview: none until a deploy of it is recorded; then
-// the last attempt, failed or ok. A commit is named only for an ok deploy
+// receiptPart is one preview: none until a deploy of it is recorded and
+// finished; then the last attempt, failed or ok. A commit is named only for an ok deploy
 // from a clean workspace; verified only by a verify that passed after it.
 func receiptPart(stage topology.StageRef, ws *workflow.WorkSession) hq.ChangeReceiptPart {
 	part := hq.ChangeReceiptPart{Setup: stage.SetupName, PreviewHostname: stage.Hostname, Deploy: hq.ReceiptDeployNone}
@@ -48,6 +48,9 @@ func receiptPart(stage topology.StageRef, ws *workflow.WorkSession) hq.ChangeRec
 	}
 	attempts := ws.Deploys[stage.Hostname]
 	last := attempts[len(attempts)-1]
+	if last.InFlight() {
+		return part // not finished: neither ok nor failed, so no verdict yet
+	}
 	part.WorkspaceClean = !last.Dirty
 	if last.SucceededAt == "" {
 		part.Deploy, part.DeployedAt = hq.ReceiptDeployFailed, last.AttemptedAt

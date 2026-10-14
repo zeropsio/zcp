@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"os"
 	"reflect"
 	"testing"
 	"time"
@@ -204,6 +205,49 @@ func TestAReceiptNamesACommitOnlyForADeployMadeWithACleanWorkspace(t *testing.T)
 			web := receipt.Parts[0]
 			if web.Deploy != tt.wantDeploy || web.DeployedCommit != tt.wantCommit {
 				t.Errorf("webstage's row = deploy %q, commit %q; want deploy %q, commit %q (%+v)", web.Deploy, web.DeployedCommit, tt.wantDeploy, tt.wantCommit, web)
+			}
+		})
+	}
+}
+
+func TestChangeReceipt_APreviewStillBuildingWhenThePollTimesOutKeepsItsCommitOnceItFinishes(t *testing.T) {
+	t.Parallel()
+	const commit = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
+	stages := []topology.StageRef{{Hostname: "webstage", SetupName: "web"}, {Hostname: "apistage", SetupName: "api"}}
+	rows := []struct {
+		name   string
+		settle bool
+		dirty  bool
+		want   hq.ChangeReceiptPart
+	}{
+		{name: "while it builds", want: hq.ChangeReceiptPart{Setup: "web", PreviewHostname: "webstage", Deploy: "none"}},
+		{name: "once it finishes from a clean tree", settle: true, want: hq.ChangeReceiptPart{Setup: "web", PreviewHostname: "webstage", Deploy: "ok", DeployedAt: "2026-10-15T01:05:00Z", WorkspaceClean: true, DeployedCommit: commit}},
+		{name: "once it finishes from a dirty tree", settle: true, dirty: true, want: hq.ChangeReceiptPart{Setup: "web", PreviewHostname: "webstage", Deploy: "ok", DeployedAt: "2026-10-15T01:05:00Z"}},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if err := workflow.SaveWorkSession(dir, workflow.NewWorkSession(labMate, string(workflow.EnvContainer), "Split the app into parts", []string{"webstage"})); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = workflow.DeleteWorkSession(dir, os.Getpid()) })
+			inFlight := workflow.DeployAttempt{AttemptedAt: "2026-10-15T01:00:00Z", Error: workflow.DeployBuildInFlightError, SHA: commit, Dirty: row.dirty}
+			if err := workflow.RecordDeployAttempt(dir, "webstage", inFlight); err != nil {
+				t.Fatal(err)
+			}
+			if row.settle {
+				if err := workflow.RecordDeployAttempt(dir, "webstage", workflow.DeployAttempt{AttemptedAt: "2026-10-15T01:05:00Z", SucceededAt: "2026-10-15T01:05:00Z", Strategy: "record-deploy"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ws, err := workflow.CurrentWorkSession(dir)
+			if err != nil || ws == nil {
+				t.Fatalf("session: %v %v", ws, err)
+			}
+			got := changeReceipt(stages, ws, time.Now()).Parts[0]
+			if got != row.want {
+				t.Errorf("part =\n%+v\nwant\n%+v", got, row.want)
 			}
 		})
 	}

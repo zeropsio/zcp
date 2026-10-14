@@ -73,7 +73,7 @@ const deployStrategyZCLILabel = "zcli"
 // deployBuildInFlightMsg is the DeployAttempt.Error recorded when the build
 // is still running at poll timeout (not failed) — shared by the ssh, local,
 // and batch deploy paths so the agent gets the same in-flight guidance.
-const deployBuildInFlightMsg = "deploy build still running at poll timeout — check zerops_events, then record-deploy"
+const deployBuildInFlightMsg = workflow.DeployBuildInFlightError
 
 // deployStrategyAppVersionLabel is the DeployAttempt.Strategy label for the
 // R2 in-place appVersion-redeploy recovery path (docs/spec-workflows.md §8

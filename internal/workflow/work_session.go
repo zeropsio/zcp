@@ -93,6 +93,15 @@ type DeployAttempt struct {
 	Dirty bool `json:"dirty,omitempty"`
 }
 
+// DeployBuildInFlightError is the Error of an attempt whose build was still
+// running when the poll timed out: not finished, neither ok nor failed.
+const DeployBuildInFlightError = "deploy build still running at poll timeout — check zerops_events, then record-deploy"
+
+// InFlight reports an attempt that has not finished: its poll timed out.
+func (a DeployAttempt) InFlight() bool {
+	return a.SucceededAt == "" && a.Error == DeployBuildInFlightError
+}
+
 // VerifyAttempt is one zerops_verify invocation for a hostname.
 //
 // FailureClass is populated when Passed=false and the failing check
@@ -310,6 +319,12 @@ func RecordDeployAttempt(stateDir, hostname string, attempt DeployAttempt) error
 	}
 	if ws.Deploys == nil {
 		ws.Deploys = map[string][]DeployAttempt{}
+	}
+	// The in-flight attempt is the one source of what the build ships: the
+	// record that later settles it carries over its commit and dirty flag.
+	if prior := ws.Deploys[hostname]; attempt.SucceededAt != "" && attempt.SHA == "" && len(prior) > 0 && prior[len(prior)-1].InFlight() {
+		last := prior[len(prior)-1]
+		attempt.SHA, attempt.AppVersionID, attempt.Dirty = last.SHA, last.AppVersionID, last.Dirty
 	}
 	ws.Deploys[hostname] = append(ws.Deploys[hostname], attempt)
 	if len(ws.Deploys[hostname]) > workSessionMaxHist {
