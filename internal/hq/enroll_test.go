@@ -135,6 +135,8 @@ type hqStub struct {
 	// other's enrollment (one Mate per project). serviceIDs is every one named.
 	mateService string
 	serviceIDs  []string
+	// issued counts the credentials HQ issued: a revoked one is never issued again.
+	issued int
 }
 
 func newHQStub(z *zeropsStub) *hqStub {
@@ -193,7 +195,8 @@ func (h *hqStub) handler(w http.ResponseWriter, r *http.Request) {
 		if body.KeyTokenID != "" {
 			h.keyIDs = append(h.keyIDs, body.KeyTokenID)
 		}
-		credential := fmt.Sprintf("credential-%d", len(h.credential)+1)
+		h.issued++
+		credential := fmt.Sprintf("credential-%d", h.issued)
 		for c, p := range h.credential {
 			if p == body.ProjectID {
 				delete(h.credential, c)

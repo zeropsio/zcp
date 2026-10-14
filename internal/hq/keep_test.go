@@ -3,6 +3,7 @@ package hq
 import (
 	"context"
 	"errors"
+	"net/http"
 	"slices"
 	"sync"
 	"testing"
@@ -240,6 +241,118 @@ func TestKeep_EnrollsAnewOnlyOnHQsRefusalOrAnotherOfficialHQ(t *testing.T) {
 				t.Errorf("attempts = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// keepLog is what a Keep run recorded and said, as it goes.
+type keepLog struct {
+	mu       sync.Mutex
+	outcomes []Outcome
+	said     []string
+}
+
+func (l *keepLog) record(err error) {
+	if o, recorded := OutcomeOf(err, time.Now()); recorded {
+		l.mu.Lock()
+		l.outcomes = append(l.outcomes, o)
+		l.mu.Unlock()
+	}
+}
+
+func (l *keepLog) say(line string) {
+	l.mu.Lock()
+	l.said = append(l.said, line)
+	l.mu.Unlock()
+}
+
+// await waits until the outcomes recorded so far hold, at most 5 s.
+func (l *keepLog) await(t *testing.T, what string, holds func([]Outcome) bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		l.mu.Lock()
+		ok := holds(l.outcomes)
+		l.mu.Unlock()
+		if ok {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("Keep never recorded %s", what)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// A credential HQ revoked — the Mate's project access lost — is no
+// enrollment: Keep drops it at once, so every reader of the enrollment says
+// the Mate is not enrolled (the server with HQ's code from the outcome), and
+// enrolls anew on the bounded backoff while HQ refuses, recording each
+// refusal and saying it once. Once HQ takes the Mate again it is enrolled
+// with a new credential, without zcp starting anew.
+func TestKeep_RevokedCredential_DroppedReEnrolledOnTheBackoffUntilHQTakesItAgain(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	mustEnroll(t, r)
+	r.hq.mu.Lock()
+	r.hq.credential = map[string]string{}
+	r.hq.refuse = "not_a_mate"
+	r.hq.mu.Unlock()
+
+	log := &keepLog{}
+	go Keep(t.Context(), r.enroller.Enroll, r.enroller.Recheck, r.enroller.Moved, KeepOptions{
+		Retry: 2 * time.Millisecond, RetryMax: 8 * time.Millisecond, Recheck: time.Hour,
+		Log: log.say, Record: log.record,
+	})
+	refusals := func(outcomes []Outcome) int {
+		n := 0
+		for _, o := range outcomes {
+			if o.State == OutcomeRefused && o.Code == "not_a_mate" {
+				n++
+			}
+		}
+		return n
+	}
+	log.await(t, "five refused enrollments", func(o []Outcome) bool { return refusals(o) >= 5 })
+
+	if _, found, err := LoadEnrollment(r.path); err != nil || found {
+		t.Errorf("the revoked enrollment is still kept (found %v, err %v): its readers would take it for one HQ holds", found, err)
+	}
+	if _, err := Open(http.DefaultClient, r.path); !errors.Is(err, ErrNotEnrolled) {
+		t.Errorf("Open = %v, want ErrNotEnrolled while HQ refuses the Mate", err)
+	}
+	log.mu.Lock()
+	first := log.outcomes[0]
+	gaps := []time.Duration{}
+	for i := 1; i < len(log.outcomes); i++ {
+		gaps = append(gaps, log.outcomes[i].At.Sub(log.outcomes[i-1].At))
+	}
+	saidRefused := 0
+	for _, line := range log.said {
+		if line == "not enrolled yet: HQ holds no record of this Mate yet" {
+			saidRefused++
+		}
+	}
+	log.mu.Unlock()
+	if first.State != OutcomeRefused || first.Code != "mate_credential_required" {
+		t.Errorf("first outcome = %+v, want HQ's refusal of the kept credential", first)
+	}
+	if last := gaps[len(gaps)-1]; last < 8*time.Millisecond {
+		t.Errorf("the last retry came after %s, want the backoff grown to its 8ms cap", last)
+	}
+	if saidRefused != 1 {
+		t.Errorf("said the refusal %d times, want once however often it is retried", saidRefused)
+	}
+
+	r.hq.mu.Lock()
+	r.hq.refuse = ""
+	r.hq.mu.Unlock()
+	log.await(t, "the Mate enrolled again", func(o []Outcome) bool { return o[len(o)-1].State == OutcomeEnrolled })
+	kept, found, err := LoadEnrollment(r.path)
+	if err != nil || !found || kept.Credential != "credential-2" {
+		t.Fatalf("kept %+v (found %v, err %v), want the new credential-2", kept, found, err)
+	}
+	if _, err := r.enroller.Recheck(context.Background()); err != nil {
+		t.Errorf("HQ does not know the new credential: %v", err)
 	}
 }
 

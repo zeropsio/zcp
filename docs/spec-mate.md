@@ -691,7 +691,7 @@ environment instead, never a probed flag (§2.2).
 | C-4 | Liveness is `GET {basePath}/.well-known/t3/environment` → `200 application/json` carrying `basePath` (§2.5) | fork's environment descriptor |
 | C-5 | The server binds loopback only and never claims a declared platform port (§2.4) | zcp's `ServeArgv`, fork's `--host` |
 | C-6 | **`/mate` is baked into the released artifact, not chosen by zcp.** The release workflow builds the bundled web client with `VITE_BASE_PATH=/mate`, and `pack` refuses a tarball without `dist/client/index.html`. `mate.BasePath` must equal it; moving the prefix is a coordinated two-repo change | fork's release workflow + `mate.BasePath` |
-| C-7 | `~/.zcp/hq/outcome.json`, beside the HQ enrollment, is zcp's last word on enrolling: `{state: enrolled\|no_hq\|refused, code?, at}`, written by its keep loop in a single rename after every attempt that says something about this Mate (HQ or Zerops not answering leaves it as it was). The server reads it from the directory `T3CODE_ZEROPS_HQ_ENROLLMENT` names, only to say why a new Mate's stand-up waits (`/setup.json`: `no_hq`, `not_enrolled` with HQ's `code`); a missing, unreadable or unknown document is plain `not_enrolled`. Additive: an older zcp writes none | zcp's `hq.SaveOutcome`, fork's `ZeropsHqLink` |
+| C-7 | `~/.zcp/hq/outcome.json`, beside the HQ enrollment, is zcp's last word on enrolling: `{state: enrolled\|no_hq\|refused, code?, at}`, written by its keep loop in a single rename after every attempt that says something about this Mate (HQ or Zerops not answering leaves it as it was). The enrollment is there only while zcp holds a credential HQ has not refused: when HQ answers the kept one `401 mate_credential_required` (revoked) or names another project for it, zcp removes the enrollment with that answer and enrolls anew, so a server re-reading the enrollment reads a Mate not enrolled until a new one is written — never a revoked credential. The server reads the outcome from the directory `T3CODE_ZEROPS_HQ_ENROLLMENT` names, only to say why a new Mate's stand-up waits (`/setup.json`: `no_hq`, `not_enrolled` with HQ's `code`); a missing, unreadable or unknown document is plain `not_enrolled`. Additive: an older zcp writes none | zcp's `hq.SaveOutcome`, fork's `ZeropsHqLink` |
 
 The fork's release workflow triggers only on stable `v<major>.<minor>.<patch>` tags, so GitHub's
 "latest release" *is* the stable channel — nightlies never produce one.
@@ -2163,13 +2163,17 @@ mate` keeps it enrolled (`hq.Keep`, C-7), and zcp opens the enrollment at each u
 re-enrollment's credential is the one it uses. Kept enrolled is the kept HQ asked alone every 10 min
 whether it still knows the credential (`Enroller.Recheck`). It enrolls anew only with no
 enrollment kept, when HQ refuses the credential (`401 mate_credential_required`, or names another
-project for it), or when the org's member list names an official HQ other than the kept one
+project for it) — removing the refused enrollment at once, so zcp, the Mate server and git all say
+the Mate is not enrolled while HQ refuses it, and HQ revoking a Mate's credential when its project's
+access is lost needs nothing from zcp but this recheck — or when the org's member list names an official HQ other than the kept one
 (`Enroller.Moved`). That list is read while the kept HQ does not answer, on the retry's backoff
 (5 s doubling to 5 min): an HQ that lost the anchor answers `503 not_active` for good, a deploy's
 handover for seconds, and only the anchor tells the two apart — never how long the silence lasted
 (R6). While the anchor still names the kept HQ, the kept HQ is asked again on that backoff however
 long its outage, and its credential is never re-issued; an enrollment the HQ the anchor names cannot
-serve yet is tried again on the same backoff. A new Mate's, with nothing kept, is tried again on the
+serve yet, or refuses (`not_a_mate`, `project_gone`, `project_not_in_org`), is tried again on the
+same backoff, each refusal recorded as the outcome (C-7) and said once, and a Mate HQ takes again is
+enrolled with a new credential without zcp starting anew. A new Mate's, with nothing kept, is tried again on the
 backoff capped at 60 s, so a Mate born in an outage enrolls within a minute of HQ answering.
 Everything zcp does with HQ goes through it — a pair's work delivered as a change (§10.10, *Delivery to HQ*), the recipe proposed and its AI Agent
 tier read for the stand-up, a repository the tier names checked before HQ is asked for it — over

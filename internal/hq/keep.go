@@ -133,7 +133,10 @@ func needsEnrollment(err error) bool {
 // Recheck asks the HQ the kept enrollment names — and only it, never the
 // member list — whether it still knows the credential as this project's, and
 // tells it the id of this container's key where that changed (nameKey).
-// ErrNotEnrolled with no enrollment kept for this project.
+// ErrNotEnrolled with no enrollment kept for this project. An enrollment HQ
+// says no longer holds — the credential revoked, or held for another
+// project — is removed with the answer: every reader of the enrollment then
+// says this Mate is not enrolled until it is enrolled anew.
 func (e Enroller) Recheck(ctx context.Context) (Result, error) {
 	kept, found, err := LoadEnrollment(e.Path)
 	if err != nil {
@@ -144,11 +147,16 @@ func (e Enroller) Recheck(ctx context.Context) (Result, error) {
 	}
 	hq := hqClient{http: e.HTTP, address: kept.HQ}
 	projectID, err := hq.whoami(ctx, kept.Credential)
+	if err == nil && projectID != e.ProjectID {
+		err = ErrOtherProject
+	}
+	if needsEnrollment(err) {
+		if removeErr := RemoveEnrollment(e.Path); removeErr != nil {
+			err = errors.Join(err, removeErr)
+		}
+	}
 	if err != nil {
 		return Result{}, fmt.Errorf("ask %s: %w", kept.HQ, err)
-	}
-	if projectID != e.ProjectID {
-		return Result{}, ErrOtherProject
 	}
 	return Result{HQ: kept.HQ, KeyUnnamed: e.nameKey(ctx, hq, kept)}, nil
 }

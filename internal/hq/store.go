@@ -47,6 +47,14 @@ func SaveEnrollment(path string, e Enrollment) error {
 	return nil
 }
 
+// RemoveEnrollment removes the enrollment at path; none there is no error.
+func RemoveEnrollment(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("hq enrollment: %w", err)
+	}
+	return nil
+}
+
 // saveOwnerOnly writes v as JSON to path in a directory only its owner may
 // enter, replacing any earlier file in a single rename: a reader sees the old
 // document or the new one, never a torn one.
