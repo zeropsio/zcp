@@ -1444,9 +1444,22 @@ func TestVerify_DevPorts_EachDeclaredPort(t *testing.T) {
 		port         int
 	}
 	got := map[key]string{}
+	gotURL := map[key]string{}
 	for _, c := range result.Checks {
 		if c.Name == "http_internal" || c.Name == "http_public" {
 			got[key{c.Name, c.Server, c.Port}] = c.Status
+			gotURL[key{c.Name, c.Server, c.Port}] = c.URL
+		}
+	}
+	wantURL := map[key]string{
+		{"http_internal", "web", 3000}: "http://appdev:3000/",
+		{"http_internal", "api", 8080}: "http://appdev:8080/",
+		{"http_public", "web", 3000}:   "https://appdev-1df2-3000.prg1.zerops.app/",
+		{"http_public", "api", 8080}:   "https://appdev-1df2-8080.prg1.zerops.app/",
+	}
+	for k := range got {
+		if gotURL[k] != wantURL[k] {
+			t.Errorf("%v url = %q, want %q", k, gotURL[k], wantURL[k])
 		}
 	}
 	want := map[key]string{

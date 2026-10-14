@@ -165,6 +165,9 @@ type CheckResult struct {
 	// when a dev service declares several (PublicAccessInput.DevPorts).
 	Server string `json:"server,omitempty"`
 	Port   int    `json:"port,omitempty"`
+	// URL is the address a per-port check probed (absent when the server
+	// was not probed).
+	URL string `json:"url,omitempty"`
 }
 
 // isManagedCategory returns true if the API category represents a managed service.

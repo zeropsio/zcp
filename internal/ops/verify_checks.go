@@ -263,7 +263,9 @@ func devPortInternalChecks(ctx context.Context, probe httpProbe, svc *platform.S
 		var check CheckResult
 		switch d.Status {
 		case devsup.StatusRunning, devsup.StatusStarting:
-			check = probe.probe(ctx, "http://"+net.JoinHostPort(svc.Name, strconv.Itoa(d.Port))+"/", checkNameHTTPInternal)
+			url := "http://" + net.JoinHostPort(svc.Name, strconv.Itoa(d.Port)) + "/"
+			check = probe.probe(ctx, url, checkNameHTTPInternal)
+			check.URL = url
 		case devsup.StatusCrashed:
 			check = CheckResult{Name: checkNameHTTPInternal, Status: CheckFail,
 				Detail: fmt.Sprintf("dev server %s crashed — read zerops_dev_server action=logs name=%s, fix it, start it again", d.Name, d.Name)}
@@ -299,6 +301,7 @@ func devPortPublicChecks(ctx context.Context, client platform.Client, probe http
 		check := CheckResult{Name: checkNameHTTPRoot, Status: CheckSkip, Detail: "cannot resolve subdomain URL"}
 		if url := subdomainURLForPort(ctx, client, proj.SubdomainHost, svc, d.Port, nil); url != "" {
 			check = probe.probe(ctx, url+"/", checkNameHTTPRoot)
+			check.URL = url + "/"
 		}
 		check.Server, check.Port = d.Name, d.Port
 		checks = append(checks, check)
