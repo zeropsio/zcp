@@ -1,10 +1,10 @@
 diff --git a/internal/tools/dev_server.go b/internal/tools/dev_server.go
 --- a/internal/tools/dev_server.go
 +++ b/internal/tools/dev_server.go
-@@ -158,7 +158,7 @@
- 		// start/restart with a passing health probe just proved a live
- 		// listener exists, so force listener=true regardless of the
- 		// runtime's static deferred-start classification.
+@@ -156,7 +156,7 @@ func RegisterDevServer(srv *mcp.Server, d DevServerDeps) {
+ 		// status is running only once the port accepts connections — so force
+ 		// listener=true regardless of the runtime's static deferred-start
+ 		// classification.
 -		if result.Running && isDevServerStartAction(input.Action) {
 +		if false && result.Running && isDevServerStartAction(input.Action) {
  			scratch := &ops.DeployResult{}
