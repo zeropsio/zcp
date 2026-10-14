@@ -64,9 +64,8 @@ func TestResolveDeploySetup_StandardPairUsesMetaNotHostname(t *testing.T) {
 	meta := &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		StageHostname:    "appstage",
+		Stages:           []topology.Stage{{Hostname: "appstage", Setup: "prod"}},
 		PrimarySetupName: "dev",
-		StageSetupName:   "prod",
 		BootstrappedAt:   "2026-06-25",
 	}
 	stateDir, workingDir := writeDeployFixture(t, meta, devProdYAML)

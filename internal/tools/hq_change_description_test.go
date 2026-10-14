@@ -291,7 +291,7 @@ func TestDescribeChange_Refusals(t *testing.T) {
 			stateDir := t.TempDir()
 			for _, dev := range tt.pairs {
 				if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
-					Hostname: dev, Mode: topology.PlanModeStandard, StageHostname: strings.TrimSuffix(dev, "dev") + "stage",
+					Hostname: dev, Mode: topology.PlanModeStandard, Stages: []topology.Stage{{Hostname: strings.TrimSuffix(dev, "dev") + "stage"}},
 					BootstrapSession: "test", BootstrappedAt: "2026-10-02", GitPushState: topology.GitPushConfigured,
 					HQ: &workflow.HQRepoRef{AppID: labApp, Repo: dev, Branch: "mate/" + labMate, Change: 1},
 				}); err != nil {
@@ -300,7 +300,7 @@ func TestDescribeChange_Refusals(t *testing.T) {
 			}
 			if tt.plainPair != "" {
 				if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
-					Hostname: tt.plainPair, Mode: topology.PlanModeStandard, StageHostname: "webstage",
+					Hostname: tt.plainPair, Mode: topology.PlanModeStandard, Stages: []topology.Stage{{Hostname: "webstage"}},
 					BootstrapSession: "test", BootstrappedAt: "2026-10-02",
 				}); err != nil {
 					t.Fatal(err)

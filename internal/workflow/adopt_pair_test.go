@@ -67,10 +67,11 @@ func TestAdoptPair_RecordsWhatTheAdoptRouteRecords(t *testing.T) {
 	if err != nil || got == nil {
 		t.Fatalf("AdoptPair wrote no meta: %v", err)
 	}
-	if got.PrimarySetupName != "medusadev" || got.StageSetupName != "medusaprod" {
-		t.Errorf("setups = %q/%q, want the recipe's medusadev/medusaprod", got.PrimarySetupName, got.StageSetupName)
+	if got.PrimarySetupName != "medusadev" || got.FirstStage().Setup != "medusaprod" {
+		t.Errorf("setups = %q/%q, want the recipe's medusadev/medusaprod", got.PrimarySetupName, got.FirstStage().Setup)
 	}
-	got.PrimarySetupName, got.StageSetupName = "", ""
+	got.PrimarySetupName = ""
+	got.SetStageSetup(got.FirstStage().Hostname, "")
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("stand-up meta = %+v\nadopt route meta = %+v", got, want)
 	}
@@ -89,7 +90,7 @@ func TestAdoptPair_KeepsWhatAnEarlierPassRecorded(t *testing.T) {
 	earlier := &ServiceMeta{
 		Hostname:         "medusadev",
 		Mode:             topology.PlanModeStandard,
-		StageHostname:    "medusastage",
+		Stages:           []topology.Stage{{Hostname: "medusastage"}},
 		CloseDeployMode:  topology.CloseModeUnset,
 		GitPushState:     topology.GitPushConfigured,
 		RemoteURL:        "https://hq.acme.example/git/a1/medusadev.git",
@@ -107,7 +108,7 @@ func TestAdoptPair_KeepsWhatAnEarlierPassRecorded(t *testing.T) {
 	}
 	got, _ := ReadServiceMeta(stateDir, "medusadev")
 	if got.BootstrappedAt != "2026-09-30" || got.FirstDeployedAt == "" || got.GitPushState != topology.GitPushConfigured ||
-		got.RemoteURL == "" || got.HQ == nil || got.PrimarySetupName != "chosen" || got.StageSetupName != "medusaprod" {
+		got.RemoteURL == "" || got.HQ == nil || got.PrimarySetupName != "chosen" || got.FirstStage().Setup != "medusaprod" {
 		t.Errorf("a second adoption lost what the pair earned: %+v", got)
 	}
 }

@@ -184,6 +184,12 @@ type RuntimeTarget struct {
 	// plans. Derive-only; flows to ServiceMeta.{Primary,Stage}SetupName. (R3-P4)
 	PrimarySetupName string `json:"primarySetupName,omitempty"`
 	StageSetupName   string `json:"stageSetupName,omitempty"`
+	// Stages lists a standard pair's stages when it has more than one — one
+	// per part of an app whose parts share the dev half's repository, each
+	// with its zerops.yml setup. A one-stage pair spells its stage with
+	// stageHostname (+ stageSetupName) as before; a plan uses one spelling or
+	// the other, never both. Read through StageRefs.
+	Stages []topology.Stage `json:"stages,omitempty"`
 	// PublicAccess is the plan's public-access intent for this runtime
 	// (§8 O3 PA-6): "" | "auto" | "subdomain" | "none". Empty means auto —
 	// the default one-time subdomain auto-enable. "domain" is DERIVE-ONLY
@@ -241,17 +247,34 @@ func (r RuntimeTarget) EffectiveMode() topology.Mode {
 	return r.BootstrapMode
 }
 
-// StageHostname returns the stage hostname for standard mode. ExplicitStage
-// is the only source: service names are arbitrary strings, so the old
-// `{base}dev → {base}stage` derivation silently misclassified repos with
-// non-conforming hostnames. Returns empty for dev/simple modes OR when
-// standard mode was requested without ExplicitStage; the latter is a
-// caller bug — ValidateBootstrapTargets catches it with a hard error.
-func (r RuntimeTarget) StageHostname() string {
+// StageRefs returns the stages of a standard pair: Stages when the plan lists
+// them, else the one stage spelled by stageHostname/stageSetupName. The plan
+// names every stage explicitly: service names are arbitrary strings, so the
+// old `{base}dev → {base}stage` derivation silently misclassified repos with
+// non-conforming hostnames. Returns nil for dev/simple modes OR when standard
+// mode was requested without a stage; the latter is a caller bug —
+// ValidateBootstrapTargets catches it with a hard error.
+func (r RuntimeTarget) StageRefs() []topology.Stage {
 	if r.EffectiveMode() != topology.PlanModeStandard {
-		return ""
+		return nil
 	}
-	return r.ExplicitStage
+	if len(r.Stages) > 0 {
+		return r.Stages
+	}
+	if r.ExplicitStage == "" {
+		return nil
+	}
+	return []topology.Stage{{Hostname: r.ExplicitStage, Setup: r.StageSetupName}}
+}
+
+// StageHostnames returns the hostname of every stage StageRefs names.
+func (r RuntimeTarget) StageHostnames() []string {
+	refs := r.StageRefs()
+	out := make([]string, 0, len(refs))
+	for _, s := range refs {
+		out = append(out, s.Hostname)
+	}
+	return out
 }
 
 // Dependency describes a service dependency for a bootstrap target.
@@ -410,6 +433,7 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, schemas *schema.Schemas
 
 	var errs []string
 	var defaulted []string
+	planned := make(map[string]bool, len(targets)*2)
 
 	for _, target := range targets {
 		rt := target.Runtime
@@ -448,22 +472,17 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, schemas *schema.Schemas
 			continue
 		}
 
-		// Standard-mode targets must carry an explicit stageHostname.
-		// Hostnames are arbitrary strings; ZCP refuses to guess a stage
-		// pair from dev-hostname structure. The error hints at the dev-mode
-		// alternative since "I want a single dev container" is the most
-		// common reason an agent omits stage and hits this check.
-		var stageHostname string
-		if rt.EffectiveMode() == topology.PlanModeStandard {
-			stageHostname = rt.StageHostname()
-			if stageHostname == "" {
-				errs = append(errs, fmt.Sprintf(`target %q: standard mode requires explicit stageHostname; for a single mutable dev container use bootstrapMode="dev"`, rt.DevHostname))
-				continue
-			}
-			if err := ValidatePlanHostname(stageHostname); err != nil {
-				errs = append(errs, fmt.Sprintf("target %q: stageHostname %q: %v", rt.DevHostname, stageHostname, err))
-				continue
-			}
+		// Standard-mode targets must carry explicit stages. Hostnames are
+		// arbitrary strings; ZCP refuses to guess a stage pair from
+		// dev-hostname structure. Extracted (like catalogTypeErrors) to keep
+		// this loop under the maintainability-index lint threshold.
+		if err := pairStagesError(rt); err != "" {
+			errs = append(errs, err)
+			continue
+		}
+		if err := plannedTwiceError(rt, planned); err != "" {
+			errs = append(errs, err)
+			continue
 		}
 
 		// Runtime hostname collision check — symmetric with the dependency
@@ -471,7 +490,7 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, schemas *schema.Schemas
 		// (dev + stage) × two-direction (classic/adopt) matrix pushes the
 		// enclosing function over the maintainability-index lint threshold.
 		if liveServices != nil {
-			if collisionErr := runtimeCollisionError(rt, stageHostname, liveServiceNames); collisionErr != "" {
+			if collisionErr := runtimeCollisionError(rt, liveServiceNames); collisionErr != "" {
 				errs = append(errs, collisionErr)
 				continue
 			}
@@ -594,21 +613,61 @@ func validateTargetDependencies(devHostname string, deps []Dependency, schemas *
 // intentionally NOT suggested here: it is destructive (replaces the running
 // stack, deployed code, env vars, filesystem state) and reserved for
 // explicit user requests, not a default conflict-recovery path.
-func runtimeCollisionError(rt RuntimeTarget, stageHostname string, liveServiceNames map[string]bool) string {
+func runtimeCollisionError(rt RuntimeTarget, liveServiceNames map[string]bool) string {
 	if liveServiceNames[rt.DevHostname] && !rt.IsExisting {
 		return fmt.Sprintf("target %q: runtime already exists in project — pick a non-colliding devHostname to create a parallel service (existing one stays running), or set isExisting=true to adopt (attach ZCP tracking to the running service, no infra change). Recipe route: ZCP rewrites the import YAML using your plan's hostnames.", rt.DevHostname)
 	}
 	if !liveServiceNames[rt.DevHostname] && rt.IsExisting {
 		return fmt.Sprintf("target %q: isExisting=true but runtime not found in project", rt.DevHostname)
 	}
-	if stageHostname == "" {
+	for _, stageHostname := range rt.StageHostnames() {
+		if liveServiceNames[stageHostname] && !rt.IsExisting {
+			return fmt.Sprintf("target %q: stage runtime %q already exists — pick a non-colliding stageHostname to create a parallel pair (existing one stays running), or set isExisting=true to adopt (attach ZCP tracking to the running pair). Recipe route: ZCP rewrites the import YAML using your plan's hostnames.", rt.DevHostname, stageHostname)
+		}
+		if !liveServiceNames[stageHostname] && rt.IsExisting {
+			return fmt.Sprintf("target %q: isExisting=true but stage runtime %q not found in project", rt.DevHostname, stageHostname)
+		}
+	}
+	return ""
+}
+
+// pairStagesError validates a standard pair's stages: at least one, spelled
+// one way (stageHostname or stages), each a valid hostname, none repeating
+// another stage or the dev half. Returns "" when valid; non-standard targets
+// carry no stages to check.
+func pairStagesError(rt RuntimeTarget) string {
+	if rt.EffectiveMode() != topology.PlanModeStandard {
 		return ""
 	}
-	if liveServiceNames[stageHostname] && !rt.IsExisting {
-		return fmt.Sprintf("target %q: stage runtime %q already exists — pick a non-colliding stageHostname to create a parallel pair (existing one stays running), or set isExisting=true to adopt (attach ZCP tracking to the running pair). Recipe route: ZCP rewrites the import YAML using your plan's hostnames.", rt.DevHostname, stageHostname)
+	if rt.ExplicitStage != "" && len(rt.Stages) > 0 {
+		return fmt.Sprintf("target %q: name the pair's stages with either stageHostname or stages, not both", rt.DevHostname)
 	}
-	if !liveServiceNames[stageHostname] && rt.IsExisting {
-		return fmt.Sprintf("target %q: isExisting=true but stage runtime %q not found in project", rt.DevHostname, stageHostname)
+	stages := rt.StageRefs()
+	if len(stages) == 0 {
+		return fmt.Sprintf(`target %q: standard mode requires explicit stageHostname; for a single mutable dev container use bootstrapMode="dev"`, rt.DevHostname)
+	}
+	seen := map[string]bool{rt.DevHostname: true}
+	for _, s := range stages {
+		if err := ValidatePlanHostname(s.Hostname); err != nil {
+			return fmt.Sprintf("target %q: stageHostname %q: %v", rt.DevHostname, s.Hostname, err)
+		}
+		if seen[s.Hostname] {
+			return fmt.Sprintf("target %q: duplicate stage hostname %q — every stage of a pair needs its own hostname", rt.DevHostname, s.Hostname)
+		}
+		seen[s.Hostname] = true
+	}
+	return ""
+}
+
+// plannedTwiceError refuses a runtime hostname an earlier target already
+// plans, recording the target's hostnames into planned. Returns "" when
+// every hostname is new.
+func plannedTwiceError(rt RuntimeTarget, planned map[string]bool) string {
+	for _, h := range append([]string{rt.DevHostname}, rt.StageHostnames()...) {
+		if planned[h] {
+			return fmt.Sprintf("target %q: runtime hostname %q is planned twice — every runtime in a plan needs its own hostname", rt.DevHostname, h)
+		}
+		planned[h] = true
 	}
 	return ""
 }

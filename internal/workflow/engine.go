@@ -805,12 +805,9 @@ func (e *Engine) checkHostnameLocks(targets []BootstrapTarget) error {
 	}
 
 	for _, target := range targets {
-		hostnames := []string{target.Runtime.DevHostname}
-		if stage := target.Runtime.StageHostname(); stage != "" {
-			hostnames = append(hostnames, stage)
-		}
+		hostnames := append([]string{target.Runtime.DevHostname}, target.Runtime.StageHostnames()...)
 		for _, hostname := range hostnames {
-			// Pair-aware (E8): FindServiceMeta matches Hostname OR StageHostname,
+			// Pair-aware (E8): FindServiceMeta matches Hostname OR a stage hostname,
 			// so a planned hostname colliding with an existing pair's STAGE half
 			// (which has no own file) is detected as locked. ReadServiceMeta —
 			// the bare services/{hostname}.json read — returned nil for stage

@@ -13,8 +13,7 @@ func seedEvidenceMeta(t *testing.T, stateDir string) {
 	if err := WriteServiceMeta(stateDir, &ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		StageHostname:    "appstage",
-		StageSetupName:   "prod",
+		Stages:           []topology.Stage{{Hostname: "appstage", Setup: "prod"}},
 		PrimarySetupName: "appdev",
 		BootstrapSession: "t",
 		BootstrappedAt:   "2026-06-10",

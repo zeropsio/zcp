@@ -51,7 +51,7 @@ func writeFirstTimeConfigMeta(t *testing.T, stateDir string) {
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		StageHostname:    "appstage",
+		Stages:           []topology.Stage{{Hostname: "appstage"}},
 		BootstrapSession: "test",
 		BootstrappedAt:   "2026-05-23",
 	}); err != nil {
@@ -511,7 +511,7 @@ func TestGitPushSetupContainer_ReconstructUsesDerivedIdentity(t *testing.T) {
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		StageHostname:    "appstage",
+		Stages:           []topology.Stage{{Hostname: "appstage"}},
 		GitPushState:     topology.GitPushConfigured,
 		RemoteURL:        "https://github.com/example/app.git",
 		BootstrapSession: "test",
@@ -574,7 +574,7 @@ func TestGitPushSetupContainer_RecallNote_StillRobot(t *testing.T) {
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		StageHostname:    "appstage",
+		Stages:           []topology.Stage{{Hostname: "appstage"}},
 		GitPushState:     topology.GitPushConfigured,
 		RemoteURL:        "https://github.com/example/app.git",
 		BootstrapSession: "test",
@@ -621,7 +621,7 @@ func TestGitPushSetupContainer_RecallNote_AlreadyHuman(t *testing.T) {
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		StageHostname:    "appstage",
+		Stages:           []topology.Stage{{Hostname: "appstage"}},
 		GitPushState:     topology.GitPushConfigured,
 		RemoteURL:        "https://github.com/example/app.git",
 		BootstrapSession: "test",
@@ -666,7 +666,7 @@ func TestGitPushSetupContainer_RecallNote_NonGitHubHost(t *testing.T) {
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		StageHostname:    "appstage",
+		Stages:           []topology.Stage{{Hostname: "appstage"}},
 		GitPushState:     topology.GitPushConfigured,
 		RemoteURL:        "https://gitlab.com/example/app.git",
 		BootstrapSession: "test",

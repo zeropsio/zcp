@@ -64,7 +64,7 @@ func TestComputeEnvelope_ServicesBootstrapped(t *testing.T) {
 	meta := &ServiceMeta{
 		Hostname:                 "appdev",
 		Mode:                     topology.PlanModeStandard,
-		StageHostname:            "appstage",
+		Stages:                   []topology.Stage{{Hostname: "appstage"}},
 		CloseDeployMode:          topology.CloseModeAuto,
 		CloseDeployModeConfirmed: true,
 		BootstrappedAt:           fixedTime.Format(time.RFC3339),
@@ -249,7 +249,7 @@ func TestComputeEnvelope_ServiceDeployedFlag(t *testing.T) {
 			meta: &ServiceMeta{
 				Hostname:         "appdev",
 				Mode:             topology.PlanModeStandard,
-				StageHostname:    "appstage",
+				Stages:           []topology.Stage{{Hostname: "appstage"}},
 				BootstrappedAt:   fixedTime.Format(time.RFC3339),
 				BootstrapSession: "",
 			},
@@ -476,7 +476,7 @@ func TestBuildServiceSnapshots_ContainerStandard_NoSynthetic(t *testing.T) {
 		{
 			Hostname:       "appdev",
 			Mode:           topology.PlanModeStandard,
-			StageHostname:  "appstage",
+			Stages:         []topology.Stage{{Hostname: "appstage"}},
 			BootstrappedAt: fixedTime.Format(time.RFC3339),
 		},
 	}
@@ -853,7 +853,7 @@ func TestTOPO1_SnapshotHealsEmptyDeployDims(t *testing.T) {
 	// Legacy on-disk local-stage meta with empty deploy dimensions.
 	meta := &ServiceMeta{
 		Hostname:       "myproject",
-		StageHostname:  "appstage",
+		Stages:         []topology.Stage{{Hostname: "appstage"}},
 		Mode:           topology.PlanModeLocalStage,
 		BootstrappedAt: "2026-01-01T00:00:00Z",
 	}

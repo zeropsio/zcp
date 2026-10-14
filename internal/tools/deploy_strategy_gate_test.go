@@ -107,7 +107,7 @@ func TestCheckLocalOnlyGate(t *testing.T) {
 		{
 			name: "local-stage + default → accept",
 			meta: &workflow.ServiceMeta{
-				Hostname: "myproject", StageHostname: "apistage", Mode: topology.PlanModeLocalStage, BootstrappedAt: "2026-04-01",
+				Hostname: "myproject", Stages: []topology.Stage{{Hostname: "apistage"}}, Mode: topology.PlanModeLocalStage, BootstrappedAt: "2026-04-01",
 			},
 			strategy: "",
 			wantErr:  false,

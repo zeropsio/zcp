@@ -570,12 +570,12 @@ func TestStandup_StandsUpEveryPairFromTheRecipe(t *testing.T) {
 	}
 	for _, pair := range [][3]string{{"medusadev", "medusastage", "medusaprod"}, {"nextstoredev", "nextstorestage", "nextstoreprod"}} {
 		meta, _ := workflow.ReadServiceMeta(f.stateDir, pair[0])
-		if meta == nil || !meta.IsAdopted() || meta.StageHostname != pair[1] || meta.Mode != topology.PlanModeStandard {
+		if meta == nil || !meta.IsAdopted() || meta.FirstStage().Hostname != pair[1] || meta.Mode != topology.PlanModeStandard {
 			t.Errorf("%s not adopted as a standard pair: %+v", pair[0], meta)
 			continue
 		}
-		if meta.PrimarySetupName != pair[0] || meta.StageSetupName != pair[2] {
-			t.Errorf("%s setups = %q/%q", pair[0], meta.PrimarySetupName, meta.StageSetupName)
+		if meta.PrimarySetupName != pair[0] || meta.FirstStage().Setup != pair[2] {
+			t.Errorf("%s setups = %q/%q", pair[0], meta.PrimarySetupName, meta.FirstStage().Setup)
 		}
 		if meta.HQ == nil || meta.HQ.Repo != pair[0] || meta.HQ.Branch != "mate/p1" || meta.GitPushState != topology.GitPushConfigured {
 			t.Errorf("%s not wired: hq=%+v gitPush=%s", pair[0], meta.HQ, meta.GitPushState)

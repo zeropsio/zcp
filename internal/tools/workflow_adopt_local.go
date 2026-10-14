@@ -71,7 +71,7 @@ func handleAdoptLocal(ctx context.Context, client platform.Client, projectID, st
 	if local.Mode == topology.PlanModeLocalStage {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
-			fmt.Sprintf("Stage already linked: project %q → %s", local.Hostname, local.StageHostname),
+			fmt.Sprintf("Stage already linked: project %q → %s", local.Hostname, local.FirstStage().Hostname),
 			"To re-link, edit .zcp/state/services/ manually or delete the local meta and restart ZCP"), WithRecoveryStatus()), nil, nil
 	}
 
@@ -114,7 +114,7 @@ func handleAdoptLocal(ctx context.Context, client platform.Client, projectID, st
 	// concurrent orthogonal-field update on this meta can't be lost (XCUT-1).
 	if err := workflow.UpdateServiceMeta(stateDir, local.Hostname, func(m *workflow.ServiceMeta) error {
 		m.Mode = topology.PlanModeLocalStage
-		m.StageHostname = target.Name
+		m.Stages = []topology.Stage{{Hostname: target.Name}}
 		// Newly-linked stage means develop-strategy-review will prompt the
 		// agent post-deploy. Already unset coming in (per Phase-9 parity)
 		// but write defensively in case an upgrade path leaves it stale.

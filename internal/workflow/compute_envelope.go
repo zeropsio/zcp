@@ -4,6 +4,7 @@ import (
 	"context"
 	"maps"
 	"os"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -275,17 +276,17 @@ func buildOneSnapshot(svc platform.ServiceStack, meta *ServiceMeta, ws *WorkSess
 		snap.RemoteURL = meta.RemoteURL
 		snap.TrackedRef = meta.TrackedRef
 		snap.FeedsProduction = prodLaunchRefsRender(meta.ProdLaunches)
-		if meta.StageHostname != "" && svc.Name == meta.Hostname {
-			snap.StageHostname = meta.StageHostname
-		}
 		// Setup-name projection from meta (canonical store on disk).
 		// SetupName via SetupNameFor picks the right field for this
-		// hostname (Primary for Hostname, Stage for StageHostname).
-		// StageSetupName projects the paired half's value when this
-		// snapshot represents the dev/primary side of a pair.
+		// hostname (Primary for Hostname, the stage's own for a stage).
+		// The dev/primary side of a pair carries its stages; the wire
+		// fields StageHostname/StageSetupName name the first one.
 		snap.SetupName = meta.SetupNameFor(svc.Name)
-		if meta.StageHostname != "" && svc.Name == meta.Hostname {
-			snap.StageSetupName = meta.StageSetupName
+		if meta.HasStage() && svc.Name == meta.Hostname {
+			first := meta.FirstStage()
+			snap.StageHostname = first.Hostname
+			snap.StageSetupName = first.Setup
+			snap.Stages = slices.Clone(meta.Stages)
 		}
 	}
 	// Incomplete meta with BootstrapSession tag = resumable. Fires even when

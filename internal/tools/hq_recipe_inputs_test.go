@@ -208,7 +208,7 @@ func writeHQWiredPairMeta(t *testing.T, stateDir string) {
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		StageHostname:    "appstage",
+		Stages:           []topology.Stage{{Hostname: "appstage", Setup: "prod"}},
 		BootstrapSession: "test",
 		BootstrappedAt:   "2026-09-16",
 		GitPushState:     topology.GitPushConfigured,
@@ -216,8 +216,7 @@ func writeHQWiredPairMeta(t *testing.T, stateDir string) {
 		PrimarySetupName: "api",
 		// Both halves deployed: the group tiers build the stage half's setup,
 		// and a stage setup nothing records is withheld rather than guessed.
-		StageSetupName: "prod",
-		HQ:             &workflow.HQRepoRef{AppID: labApp, Repo: "appdev", Branch: "mate/" + labMate},
+		HQ: &workflow.HQRepoRef{AppID: labApp, Repo: "appdev", Branch: "mate/" + labMate},
 	}); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
@@ -239,7 +238,7 @@ func TestComposeGroupRecipeInputs_WaitsOnlyForWhatALaterPassBrings(t *testing.T)
 	}
 	workers := []platform.ServiceStack{public("workerdev"), public("workerstage")}
 	workerPair := func(bootstrapped, remote string) *workflow.ServiceMeta {
-		m := &workflow.ServiceMeta{Hostname: "workerdev", StageHostname: "workerstage", Mode: topology.PlanModeStandard,
+		m := &workflow.ServiceMeta{Hostname: "workerdev", Stages: []topology.Stage{{Hostname: "workerstage"}}, Mode: topology.PlanModeStandard,
 			BootstrapSession: "test", BootstrappedAt: bootstrapped, RemoteURL: remote}
 		if remote != "" {
 			m.GitPushState = topology.GitPushConfigured
@@ -265,7 +264,7 @@ func TestComposeGroupRecipeInputs_WaitsOnlyForWhatALaterPassBrings(t *testing.T)
 			m.HQ = &workflow.HQRepoRef{AppID: "app-0", Repo: "workerdev", Branch: "mate/" + labMate}
 			return m
 		}(), extra: workers, wantWait: []string{`"workerdev"`, "another application"}},
-		{name: "a pair named after the recipe repository is left out", meta: &workflow.ServiceMeta{Hostname: "group", StageHostname: "groupstage",
+		{name: "a pair named after the recipe repository is left out", meta: &workflow.ServiceMeta{Hostname: "group", Stages: []topology.Stage{{Hostname: "groupstage"}},
 			Mode: topology.PlanModeStandard, BootstrapSession: "test", BootstrappedAt: "2026-09-30"},
 			extra:       []platform.ServiceStack{public("group"), public("groupstage")},
 			wantLeftOut: []string{`"group"`, "Rename the service"}, wantUtilities: []string{"mailpit"}},
@@ -346,7 +345,7 @@ func TestGroupRecipe_WaitsForAnUnwiredPair(t *testing.T) {
 	)
 	lab.ssh.mock = lab.mock
 	lab.wire()
-	if err := workflow.WriteServiceMeta(lab.stateDir, &workflow.ServiceMeta{Hostname: "workerdev", StageHostname: "workerstage",
+	if err := workflow.WriteServiceMeta(lab.stateDir, &workflow.ServiceMeta{Hostname: "workerdev", Stages: []topology.Stage{{Hostname: "workerstage"}},
 		Mode: topology.PlanModeStandard, BootstrapSession: "test", BootstrappedAt: "2026-09-30"}); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
@@ -397,7 +396,8 @@ func TestGroupRecipe_ProposesTheLiveProject(t *testing.T) {
 	lab.ssh.mock = lab.mock
 	lab.wire()
 	if err := workflow.UpdateServiceMeta(lab.stateDir, "appdev", func(m *workflow.ServiceMeta) error {
-		m.PrimarySetupName, m.StageSetupName = "api", "prod"
+		m.PrimarySetupName = "api"
+		m.SetStageSetup(m.FirstStage().Hostname, "prod")
 		return nil
 	}); err != nil {
 		t.Fatal(err)

@@ -79,7 +79,7 @@ func TestHandleAdoptLocal_AlreadyLinked_Refused(t *testing.T) {
 	dir := t.TempDir()
 	// local-stage already — can't re-link via adopt-local.
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
-		Hostname: "myproject", StageHostname: "existing", Mode: topology.PlanModeLocalStage,
+		Hostname: "myproject", Stages: []topology.Stage{{Hostname: "existing"}}, Mode: topology.PlanModeLocalStage,
 		BootstrappedAt: "2026-04-01",
 	}); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
@@ -190,8 +190,8 @@ func TestHandleAdoptLocal_LinksRuntime_UpgradesMode(t *testing.T) {
 	if got.Mode != topology.PlanModeLocalStage {
 		t.Errorf("Mode = %q, want local-stage", got.Mode)
 	}
-	if got.StageHostname != "apistage" {
-		t.Errorf("StageHostname = %q, want apistage", got.StageHostname)
+	if got.FirstStage().Hostname != "apistage" {
+		t.Errorf("StageHostname = %q, want apistage", got.FirstStage().Hostname)
 	}
 	// Previous forced-manual close-mode reset because linkage expands options;
 	// cleared to unset so the develop-strategy-review atom prompts on the
@@ -240,8 +240,8 @@ func TestHandleAdoptLocal_StageStartedWithoutCode_NoStamp(t *testing.T) {
 		t.Fatalf("expected success; got: %s", getTextContent(t, result))
 	}
 	got, _ := workflow.ReadServiceMeta(dir, "myproject")
-	if got.StageHostname != "apistage" {
-		t.Errorf("StageHostname = %q, want apistage", got.StageHostname)
+	if got.FirstStage().Hostname != "apistage" {
+		t.Errorf("StageHostname = %q, want apistage", got.FirstStage().Hostname)
 	}
 	if got.FirstDeployedAt != "" {
 		t.Errorf("FirstDeployedAt stamped for a stage holding only its placeholder; got %q", got.FirstDeployedAt)

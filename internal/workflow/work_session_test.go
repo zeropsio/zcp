@@ -336,7 +336,7 @@ func TestRecordDeployAttempt_StampsViaStageHostname(t *testing.T) {
 	dir := t.TempDir()
 	meta := &ServiceMeta{
 		Hostname:         "appdev",
-		StageHostname:    "appstage",
+		Stages:           []topology.Stage{{Hostname: "appstage"}},
 		Mode:             topology.PlanModeStandard,
 		BootstrappedAt:   "2026-04-18T10:00:00Z",
 		BootstrapSession: "sess-1",
@@ -844,7 +844,7 @@ func TestEvaluateAutoClose_GitPushStandardPair(t *testing.T) {
 			meta := &ServiceMeta{
 				Hostname:                 "appdev",
 				Mode:                     topology.PlanModeStandard,
-				StageHostname:            "appstage",
+				Stages:                   []topology.Stage{{Hostname: "appstage"}},
 				CloseDeployMode:          tc.closeMode,
 				CloseDeployModeConfirmed: true,
 				GitPushState:             tc.gitPushState,
@@ -902,7 +902,7 @@ func TestResolvedDeployTargets_StandardPair(t *testing.T) {
 			meta := &ServiceMeta{
 				Hostname:         "appdev",
 				Mode:             topology.PlanModeStandard,
-				StageHostname:    "appstage",
+				Stages:           []topology.Stage{{Hostname: "appstage"}},
 				CloseDeployMode:  tc.closeMode,
 				GitPushState:     tc.gitPush,
 				BootstrapSession: "test",

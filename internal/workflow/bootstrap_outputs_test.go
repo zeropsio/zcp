@@ -1098,8 +1098,8 @@ func TestWriteBootstrapOutputs_LocalMode_KeyedByDevHostname(t *testing.T) {
 	if meta.Hostname != "appdev" {
 		t.Errorf("hostname = %s, want appdev", meta.Hostname)
 	}
-	if meta.StageHostname != "appstage" {
-		t.Errorf("stageHostname = %s, want appstage", meta.StageHostname)
+	if meta.FirstStage().Hostname != "appstage" {
+		t.Errorf("stageHostname = %s, want appstage", meta.FirstStage().Hostname)
 	}
 	if meta.Mode != topology.PlanModeStandard {
 		t.Errorf("mode = %s, want standard", meta.Mode)
@@ -1301,8 +1301,8 @@ func TestWriteBootstrapOutputs_ExpansionPreservesExistingFields(t *testing.T) {
 	if got.Mode != topology.PlanModeStandard {
 		t.Errorf("Mode: got %q, want %q (upgrade)", got.Mode, topology.PlanModeStandard)
 	}
-	if got.StageHostname != "appstage" {
-		t.Errorf("StageHostname: got %q, want appstage (upgrade)", got.StageHostname)
+	if got.FirstStage().Hostname != "appstage" {
+		t.Errorf("StageHostname: got %q, want appstage (upgrade)", got.FirstStage().Hostname)
 	}
 
 	// Preserved fields:
@@ -1387,8 +1387,8 @@ func TestWriteProvisionMetas_ExpansionPreservesExistingFields(t *testing.T) {
 	if got.Mode != topology.PlanModeStandard {
 		t.Errorf("Mode: got %q, want %q at provision", got.Mode, topology.PlanModeStandard)
 	}
-	if got.StageHostname != "appstage" {
-		t.Errorf("StageHostname: got %q, want appstage at provision", got.StageHostname)
+	if got.FirstStage().Hostname != "appstage" {
+		t.Errorf("StageHostname: got %q, want appstage at provision", got.FirstStage().Hostname)
 	}
 	// User-authored fields preserved across provision write too.
 	if got.CloseDeployMode != topology.CloseModeAuto {
@@ -1416,9 +1416,9 @@ func TestMergeExistingMeta(t *testing.T) {
 	t.Parallel()
 
 	meta := &ServiceMeta{
-		Hostname:      "appdev",
-		Mode:          topology.PlanModeStandard, // upgrade
-		StageHostname: "appstage",                // upgrade
+		Hostname: "appdev",
+		Mode:     topology.PlanModeStandard,                // upgrade
+		Stages:   []topology.Stage{{Hostname: "appstage"}}, // upgrade
 		// Defaults written by writeBootstrapOutputs / writeProvisionMetas
 		// for fresh bootstrap targets — the merge must overwrite these
 		// with the existing values.
@@ -1443,8 +1443,8 @@ func TestMergeExistingMeta(t *testing.T) {
 	if meta.Mode != topology.PlanModeStandard {
 		t.Errorf("Mode must stay upgrade value, got %q", meta.Mode)
 	}
-	if meta.StageHostname != "appstage" {
-		t.Errorf("StageHostname must stay upgrade value, got %q", meta.StageHostname)
+	if meta.FirstStage().Hostname != "appstage" {
+		t.Errorf("StageHostname must stay upgrade value, got %q", meta.FirstStage().Hostname)
 	}
 	if meta.BootstrappedAt != "2026-01-15" {
 		t.Errorf("BootstrappedAt not preserved: got %q", meta.BootstrappedAt)
@@ -1527,7 +1527,7 @@ func TestMergeExistingMetaKeepsThePairsRepositoryRecords(t *testing.T) {
 		RemoteURL:    "https://hq.acme.example/git/a1/todoapp.git",
 		HQ:           &HQRepoRef{AppID: "a1", Repo: "todoapp", Branch: "mate/p1", Change: 1},
 	}
-	meta := &ServiceMeta{Hostname: "todoapp", StageHostname: "todoappstage", Mode: topology.PlanModeStandard}
+	meta := &ServiceMeta{Hostname: "todoapp", Stages: []topology.Stage{{Hostname: "todoappstage"}}, Mode: topology.PlanModeStandard}
 	mergeExistingMeta(meta, existing)
 	if meta.HQ == nil || meta.HQ.Repo != "todoapp" || meta.HQ.Change != 1 {
 		t.Fatalf("an expansion keeps the pair's HQ record, got %+v", meta.HQ)

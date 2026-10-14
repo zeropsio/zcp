@@ -232,7 +232,7 @@ func TestDeployPreFlight_GateB_AdoptedStandardPair_BothHalvesWriteBackOnFirstDep
 	meta := &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		StageHostname:    "appstage",
+		Stages:           []topology.Stage{{Hostname: "appstage"}},
 		BootstrapSession: "", // adopted
 		BootstrappedAt:   "2026-05-27",
 	}
@@ -261,9 +261,9 @@ func TestDeployPreFlight_GateB_AdoptedStandardPair_BothHalvesWriteBackOnFirstDep
 	if cached.PrimarySetupName != "dev" {
 		t.Errorf("after appstage deploy: PrimarySetupName changed to %q, want dev preserved", cached.PrimarySetupName)
 	}
-	if cached.StageSetupName != "prod" {
+	if cached.FirstStage().Setup != "prod" {
 		t.Errorf("after appstage deploy: StageSetupName = %q, want prod (cross-deploy write-back to pair-keyed StageSetupName field)",
-			cached.StageSetupName)
+			cached.FirstStage().Setup)
 	}
 }
 

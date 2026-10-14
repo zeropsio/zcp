@@ -63,7 +63,7 @@ func TestDiscoverClassifierParity(t *testing.T) {
 				{ID: "rt-2", Name: "appstage", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}},
 			},
 			metas: []*workflow.ServiceMeta{
-				{Hostname: "appdev", StageHostname: "appstage", Mode: topology.PlanModeStandard, BootstrappedAt: "2026-05-27", BootstrapSession: "old-sess"},
+				{Hostname: "appdev", Stages: []topology.Stage{{Hostname: "appstage"}}, Mode: topology.PlanModeStandard, BootstrappedAt: "2026-05-27", BootstrapSession: "old-sess"},
 			},
 			wantAdopt: nil,
 		},

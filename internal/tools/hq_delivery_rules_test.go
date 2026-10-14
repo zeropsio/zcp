@@ -230,7 +230,7 @@ func TestSessionAnnotations_HandoffOnlyAfterADelivery(t *testing.T) {
 			dir := t.TempDir()
 			now := time.Now().UTC().Format(time.RFC3339)
 			if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
-				Hostname: "appdev", StageHostname: "appstage", Mode: topology.PlanModeStandard,
+				Hostname: "appdev", Stages: []topology.Stage{{Hostname: "appstage"}}, Mode: topology.PlanModeStandard,
 				CloseDeployMode: topology.CloseModeAuto, BootstrappedAt: now,
 				HQ: &workflow.HQRepoRef{AppID: labApp, Repo: "appdev", Change: tt.change},
 			}); err != nil {

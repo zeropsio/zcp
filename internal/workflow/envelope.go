@@ -131,12 +131,17 @@ type ServiceSnapshot struct {
 	// say "this stage feeds production X".
 	FeedsProduction []string `json:"feedsProduction,omitempty"`
 
-	StageHostname string `json:"stageHostname,omitempty"`
+	// StageHostname names the pair's first stage on the dev half's snapshot —
+	// the one stage the envelope wire carries per pair. Stages holds every
+	// stage of the pair, off the wire until the envelope contract names
+	// them; read both through PairStageHostnames.
+	StageHostname string           `json:"stageHostname,omitempty"`
+	Stages        []topology.Stage `json:"-"`
 
 	// Setup-name projection from ServiceMeta (canonical store on disk).
-	// SetupName mirrors meta.PrimarySetupName for Hostname's half;
-	// StageSetupName mirrors meta.StageSetupName for the paired stage
-	// half (empty when no pair). Populated by ComputeEnvelope from the
+	// SetupName mirrors meta.SetupNameFor(Hostname) for this half;
+	// StageSetupName mirrors the first stage's setup on the dev half's
+	// snapshot (empty when no pair). Populated by ComputeEnvelope from the
 	// loaded meta; downstream consumers (DeployIntent.Resolve, launch
 	// composer, build-integration generator) read from snapshot so they
 	// stay pure and don't re-touch disk per call. Empty fields signal
@@ -164,6 +169,23 @@ type ServiceSnapshot struct {
 	// tools layer via ApplyRollbackInfo, never persisted — a fresh read
 	// every envelope computation.
 	Rollback *RollbackInfo `json:"rollback,omitempty"`
+}
+
+// PairStageHostnames returns the stage hostnames of the pair whose dev half
+// this snapshot is: every stage when Stages is populated, else the one
+// StageHostname names, else none.
+func (s ServiceSnapshot) PairStageHostnames() []string {
+	if len(s.Stages) > 0 {
+		out := make([]string, 0, len(s.Stages))
+		for _, st := range s.Stages {
+			out = append(out, st.Hostname)
+		}
+		return out
+	}
+	if s.StageHostname != "" {
+		return []string{s.StageHostname}
+	}
+	return nil
 }
 
 // RollbackInfo is the per-service rollback-candidate id summary (docs/

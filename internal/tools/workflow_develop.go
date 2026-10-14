@@ -152,7 +152,7 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 		if !m.IsComplete() {
 			continue
 		}
-		if m.Mode == "" && m.StageHostname == "" {
+		if m.Mode == "" && !m.HasStage() {
 			continue
 		}
 		runtimeMetas[h] = m
@@ -288,7 +288,7 @@ func mateStandUpStages(ctx context.Context, client platform.Client, projectID st
 	var candidates []*workflow.ServiceMeta
 	for _, h := range scope {
 		m := runtimeMetas[h]
-		if m == nil || m.Mode != topology.PlanModeStandard || m.Hostname != h || m.StageHostname == "" {
+		if m == nil || m.Mode != topology.PlanModeStandard || m.Hostname != h || !m.HasStage() {
 			continue
 		}
 		if !m.IsAdopted() || m.IsDeployed() {
@@ -312,7 +312,7 @@ func mateStandUpStages(ctx context.Context, client platform.Client, projectID st
 		if workflow.DeriveDeployed(m.Hostname, live[m.Hostname], m, nil) {
 			continue
 		}
-		stages = append(stages, m.StageHostname)
+		stages = append(stages, m.StageHostnames()...)
 	}
 	return stages
 }
@@ -487,28 +487,26 @@ func validateDevelopScope(requested []string, runtimeMetas map[string]*workflow.
 	if len(scope) == 0 {
 		return nil, fmt.Errorf("scope is empty after deduplication — name at least one runtime service")
 	}
-	// Auto-include the paired stage hostname for any standard-mode dev
-	// half present in scope. runtimeMetas is pair-keyed (ManagedRuntimeIndex)
-	// so both halves resolve to the same meta; we only expand when the
+	// Auto-include every stage of the pair for any standard-mode dev half
+	// present in scope. runtimeMetas is pair-keyed (ManagedRuntimeIndex)
+	// so every half resolves to the same meta; we only expand when the
 	// scoped hostname IS the dev half (m.Hostname == h), never when the
-	// agent already named the stage half directly.
+	// agent already named a stage directly.
 	for _, h := range append([]string(nil), scope...) {
 		m := runtimeMetas[h]
-		if m == nil || m.Mode != topology.PlanModeStandard {
+		if m == nil || m.Mode != topology.PlanModeStandard || h != m.Hostname {
 			continue
 		}
-		stage := m.StageHostname
-		if stage == "" || h != m.Hostname {
-			continue
+		for _, stage := range m.StageHostnames() {
+			if liveHostnames != nil && !liveHostnames[stage] {
+				return nil, fmt.Errorf("%w: dev half %q meta names stage %q, but %q is not in the project's live service list", errStandardPairStageMissing, h, stage, stage)
+			}
+			if seen[stage] {
+				continue
+			}
+			seen[stage] = true
+			scope = append(scope, stage)
 		}
-		if liveHostnames != nil && !liveHostnames[stage] {
-			return nil, fmt.Errorf("%w: dev half %q meta names stage %q, but %q is not in the project's live service list", errStandardPairStageMissing, h, stage, stage)
-		}
-		if seen[stage] {
-			continue
-		}
-		seen[stage] = true
-		scope = append(scope, stage)
 	}
 	sort.Strings(scope)
 	return scope, nil

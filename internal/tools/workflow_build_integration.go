@@ -96,16 +96,7 @@ func handleBuildIntegration(
 	// dashboard step) and webhook as the fallback for GitLab / policy-
 	// constrained setups.
 	if input.Integration == "" {
-		snap := workflow.ServiceSnapshot{
-			Hostname:         input.Service,
-			Mode:             meta.Mode,
-			StageHostname:    meta.StageHostname,
-			Bootstrapped:     true,
-			CloseDeployMode:  topology.CloseModeAuto,
-			GitPushState:     meta.GitPushState,
-			BuildIntegration: meta.BuildIntegration,
-		}
-		guidance, err := workflow.SynthesizeStrategySetup(rt, []workflow.ServiceSnapshot{snap})
+		guidance, err := workflow.SynthesizeStrategySetup(rt, []workflow.ServiceSnapshot{buildIntegrationSnapshot(meta, input.Service)})
 		if err != nil {
 			return convertError(platform.NewPlatformError(
 				platform.ErrNotImplemented,
@@ -506,6 +497,22 @@ func addTopologyFields(body map[string]any, meta *workflow.ServiceMeta, buildHos
 	)
 }
 
+// buildIntegrationSnapshot is the snapshot the build-integration walkthrough
+// synthesizes its options atom from: the service as the meta records it,
+// with close-mode auto.
+func buildIntegrationSnapshot(meta *workflow.ServiceMeta, service string) workflow.ServiceSnapshot {
+	return workflow.ServiceSnapshot{
+		Hostname:         service,
+		Mode:             meta.Mode,
+		StageHostname:    meta.FirstStage().Hostname,
+		Stages:           meta.Stages,
+		Bootstrapped:     true,
+		CloseDeployMode:  topology.CloseModeAuto,
+		GitPushState:     meta.GitPushState,
+		BuildIntegration: meta.BuildIntegration,
+	}
+}
+
 // anticipatedBuildTarget returns (BuildTarget, BuildSetup) for the service
 // receiving builds triggered by the CI integration the user is about to
 // wire. Synthesizes a "post-integration" ServiceSnapshot (closeMode=git-push,
@@ -513,7 +520,7 @@ func addTopologyFields(body map[string]any, meta *workflow.ServiceMeta, buildHos
 // integration always sends builds to the same destination once it fires,
 // and the user typically wires the integration BEFORE switching close-mode.
 //
-// For standard / local-stage pairs: BuildTarget = StageHostname, BuildSetup
+// For standard / local-stage pairs: BuildTarget = the first stage, BuildSetup
 // = "prod" (matches recipe convention). For simple/dev/single-runtime modes:
 // BuildTarget = self, BuildSetup = "" (caller defaults to hostname). For
 // local-only modes: BuildTarget = "" (caller's responsibility to refuse).
@@ -531,7 +538,8 @@ func anticipatedBuildTarget(meta *workflow.ServiceMeta) (string, string) {
 		Mode:            meta.ModeFor(meta.Hostname),
 		CloseDeployMode: topology.CloseModeAuto,
 		GitPushState:    topology.GitPushConfigured,
-		StageHostname:   meta.StageHostname,
+		StageHostname:   meta.FirstStage().Hostname,
+		Stages:          meta.Stages,
 		Deployed:        true,
 	}
 	snaps := workflow.SnapshotsFromMetas([]*workflow.ServiceMeta{meta})
@@ -558,7 +566,7 @@ func resolveBuildTarget(meta *workflow.ServiceMeta, requestedService, override s
 	if meta == nil {
 		return conventionHost, conventionSetup, nil
 	}
-	if ov := strings.TrimSpace(override); ov != "" && (ov == meta.Hostname || ov == meta.StageHostname) {
+	if ov := strings.TrimSpace(override); ov != "" && (ov == meta.Hostname || isStageOf(meta, ov)) {
 		s := meta.SetupNameFor(ov)
 		if s == "" {
 			s = conventionSetup
@@ -566,7 +574,7 @@ func resolveBuildTarget(meta *workflow.ServiceMeta, requestedService, override s
 		return ov, s, nil
 	}
 	if requestedService != "" && requestedService == meta.Hostname &&
-		meta.StageHostname != "" && conventionHost == meta.StageHostname && conventionHost != meta.Hostname {
+		isStageOf(meta, conventionHost) && conventionHost != meta.Hostname {
 		decision = map[string]any{
 			"requested": requestedService,
 			"resolved":  conventionHost,

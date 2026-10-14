@@ -82,6 +82,11 @@ func PickSetupNameFromNames(names []string, targetHostname string, mode topology
 // SetupCandidatesFor produces the ordered list of setup names to try for
 // a given hostname + source mode. Most specific first.
 //
+// It is the last-step fallback only: a pair's recorded setup answers first
+// (ServiceMeta.SetupNameFor — PrimarySetupName for the dev half, the stage's
+// own Setup from Stages for a stage), so the hostname-suffix guess runs only
+// for a half whose setup nothing has recorded yet, and its pick is recorded.
+//
 // Worked examples:
 //
 //	"appdev"    ModeStandard     → [appdev, app, dev]

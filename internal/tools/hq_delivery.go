@@ -28,6 +28,12 @@ import (
 //   - a push to HQ is watched for no build and offers no integration, and a
 //     wired pair's direct deploys are never redirected.
 
+// isStageOf reports whether hostname is one of m's stages; false for a nil meta.
+func isStageOf(m *workflow.ServiceMeta, hostname string) bool {
+	_, ok := m.StageFor(hostname)
+	return ok
+}
+
 // hqPairPlanError refuses a classic-route plan that gives a Mate a runtime
 // with no stage half — enrolled with its HQ or not yet: the pairs it plans now
 // are the pairs it delivers through. mate is runtime.Info.MateEnabled. Nil
@@ -38,7 +44,7 @@ func hqPairPlanError(plan []workflow.BootstrapTarget, mate bool) *platform.Platf
 	}
 	for _, target := range plan {
 		rt := target.Runtime
-		if rt.EffectiveMode() == topology.PlanModeStandard && rt.StageHostname() != "" {
+		if rt.EffectiveMode() == topology.PlanModeStandard && len(rt.StageRefs()) > 0 {
 			continue
 		}
 		return platform.NewPlatformError(
@@ -207,7 +213,7 @@ func deliverHeldHQPair(
 		return nil
 	}
 	delivers := func(m *workflow.ServiceMeta) bool {
-		return hqPairOnItsBranch(m) && m.StageHostname != "" && target == m.StageHostname
+		return hqPairOnItsBranch(m) && isStageOf(m, target)
 	}
 	meta, _ := workflow.FindServiceMeta(stateDir, target)
 	if !delivers(meta) {

@@ -102,7 +102,7 @@ func TestComposeGroupRecipeInputs_SetupName(t *testing.T) {
 			if err := workflow.UpdateServiceMeta(stateDir, "appdev", func(m *workflow.ServiceMeta) error {
 				// A pair that has never deployed has neither half's setup.
 				m.PrimarySetupName = tt.recordedSetup
-				m.StageSetupName = ""
+				m.SetStageSetup(m.FirstStage().Hostname, "")
 				return nil
 			}); err != nil {
 				t.Fatalf("UpdateServiceMeta: %v", err)
@@ -170,7 +170,7 @@ func TestComposeGroupRecipeInputs_JoinerWithoutStageSetup_BuildsTheYAMLsOtherSet
 			writeHQWiredPairMeta(t, stateDir)
 			if err := workflow.UpdateServiceMeta(stateDir, "appdev", func(m *workflow.ServiceMeta) error {
 				m.PrimarySetupName = tt.recordedDev
-				m.StageSetupName = ""
+				m.SetStageSetup(m.FirstStage().Hostname, "")
 				return nil
 			}); err != nil {
 				t.Fatalf("UpdateServiceMeta: %v", err)

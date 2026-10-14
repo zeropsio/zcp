@@ -17,10 +17,11 @@ import (
 // staleMetaSetup blockers (meta drift vs live yaml).
 //
 // Pair-keyed write: input.Setup writes PrimarySetupName; optional
-// input.StageSetup writes StageSetupName when the meta carries a
-// StageHostname. Singleton metas (PlanModeDev / PlanModeSimple)
-// silently ignore StageSetup so an agent that always passes both
-// fields doesn't trip on shape-specific schemas.
+// input.StageSetup writes the setup of the stage targetService names, or of
+// the pair's only stage when targetService names the dev half. A pair with
+// several stages needs the stage named as targetService. Singleton metas
+// (PlanModeDev / PlanModeSimple) silently ignore StageSetup so an agent that
+// always passes both fields doesn't trip on shape-specific schemas.
 //
 // Validation: when a zerops.yaml is reachable via per-service mount
 // (container) or workingDir (local) AND its parse yields a non-empty
@@ -63,6 +64,11 @@ func handleSetDefaultSetup(_ context.Context, _ platform.Client, _ string, input
 			""), WithRecoveryStatus()), nil, nil
 	}
 
+	stageHost, stageErr := stageSetupTarget(meta, input.TargetService, stage)
+	if stageErr != nil {
+		return convertError(stageErr, WithRecoveryStatus()), nil, nil
+	}
+
 	// Validate against any reachable yaml. Best-effort: missing yaml
 	// is not a hard error — the cache write itself stands as the
 	// canonical record, and the next deploy preflight catches drift.
@@ -94,8 +100,8 @@ func handleSetDefaultSetup(_ context.Context, _ platform.Client, _ string, input
 	// the setup-name fields on the fresh meta (XCUT-1).
 	if err := workflow.UpdateServiceMeta(stateDir, input.TargetService, func(m *workflow.ServiceMeta) error {
 		m.PrimarySetupName = primary
-		if stage != "" && m.StageHostname != "" {
-			m.StageSetupName = stage
+		if stageHost != "" {
+			m.SetStageSetup(stageHost, stage)
 		}
 		return nil
 	}); err != nil {
@@ -106,16 +112,41 @@ func handleSetDefaultSetup(_ context.Context, _ platform.Client, _ string, input
 	}
 	// Mirror onto the local copy for the echo-back response below.
 	meta.PrimarySetupName = primary
-	if stage != "" && meta.StageHostname != "" {
-		meta.StageSetupName = stage
+	if stageHost != "" {
+		meta.SetStageSetup(stageHost, stage)
+	}
+	written, _ := meta.StageFor(stageHost)
+	if stageHost == "" {
+		written = meta.FirstStage()
 	}
 
 	return jsonResult(setDefaultSetupResponse{
 		Status:           "written",
 		Service:          input.TargetService,
 		PrimarySetupName: meta.PrimarySetupName,
-		StageSetupName:   meta.StageSetupName,
+		StageSetupName:   written.Setup,
 	}), nil, nil
+}
+
+// stageSetupTarget is the stage a set-default-setup stageSetup writes: the
+// stage targetService names, else the pair's only stage. "" when stageSetup
+// is empty or the meta has no stage (singletons ignore it). A pair with
+// several stages and targetService naming its dev half is refused: which
+// stage was meant is the agent's to say.
+func stageSetupTarget(meta *workflow.ServiceMeta, targetService, stageSetup string) (string, *platform.PlatformError) {
+	if stageSetup == "" || !meta.HasStage() {
+		return "", nil
+	}
+	if s, ok := meta.StageFor(targetService); ok {
+		return s.Hostname, nil
+	}
+	if len(meta.Stages) == 1 {
+		return meta.Stages[0].Hostname, nil
+	}
+	return "", platform.NewPlatformError(
+		platform.ErrInvalidParameter,
+		fmt.Sprintf("%q has stages %s — stageSetup needs the stage it belongs to", targetService, strings.Join(meta.StageHostnames(), ", ")),
+		fmt.Sprintf("Pass targetService=<stage hostname> (one of %s) with stageSetup=%q.", strings.Join(meta.StageHostnames(), ", "), stageSetup))
 }
 
 // setDefaultSetupResponse is the success-path wire shape — echoes back

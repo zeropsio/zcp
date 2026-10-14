@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/topology"
@@ -32,9 +33,9 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 	for _, target := range plan.Targets {
 		mode := target.Runtime.EffectiveMode()
 		metaHostname := target.Runtime.DevHostname
-		stageHostname := target.Runtime.StageHostname()
+		stages := target.Runtime.StageRefs()
+		stageHostname := firstStageHostname(stages)
 		primarySetup := target.Runtime.PrimarySetupName
-		stageSetup := target.Runtime.StageSetupName
 
 		// Local-mode projection: the dev runtime is the user's CWD, never
 		// provisioned on Zerops (LocalizeRecipeImportYAML drops
@@ -50,7 +51,7 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 				}
 				if mode == topology.PlanModeStandard && stageHostname != "" {
 					// Key the meta on the DEV hostname (the local/CWD identity,
-					// not a Zerops service) with StageHostname = the deployed
+					// not a Zerops service) with Stages = the deployed
 					// stage — matching adopt-local's local-stage shape. ModeFor
 					// then projects the dev side to "" and the stage to
 					// local-stage. (Keying on the stage would collide
@@ -65,7 +66,7 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 			}
 		}
 
-		meta := targetMeta(target, metaHostname, mode, stageHostname, state.SessionID, now)
+		meta := targetMeta(target, metaHostname, mode, stages, state.SessionID, now)
 
 		// Gate R — recipe-bootstrap setup names come from the recipe shape's
 		// LITERAL zeropsSetup (carried on the target by DeriveRecipePlan): a
@@ -74,7 +75,7 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 		// Fresh (!IsExisting) recipe targets only; adopted services run Gate A.
 		if state.Bootstrap.Route == BootstrapRouteRecipe && !target.Runtime.IsExisting {
 			meta.PrimarySetupName = primarySetup
-			meta.StageSetupName = stageSetup
+			meta.Stages = slices.Clone(stages)
 			// B4/F11: a buildFromGit recipe runtime is deployed by the platform
 			// at import — mark it so DeriveDeployed reads deployed=true at ACTIVE.
 			meta.ProvisionedFromGit = target.Runtime.BuildFromGit != ""
@@ -116,10 +117,10 @@ func (e *Engine) writeProvisionMetas(state *WorkflowState) {
 
 	for _, target := range state.Bootstrap.Plan.Targets {
 		metaHostname := target.Runtime.DevHostname
-		stageHostname := target.Runtime.StageHostname()
+		stages := target.Runtime.StageRefs()
+		stageHostname := firstStageHostname(stages)
 		mode := target.Runtime.EffectiveMode()
 		primarySetup := target.Runtime.PrimarySetupName
-		stageSetup := target.Runtime.StageSetupName
 
 		// Local-mode projection — see writeBootstrapOutputs for the rationale.
 		if e.environment == EnvLocal {
@@ -140,14 +141,14 @@ func (e *Engine) writeProvisionMetas(state *WorkflowState) {
 
 		// Partial: no BootstrappedAt, so the meta reads as provisioned, not
 		// bootstrapped, until writeBootstrapOutputs completes it.
-		meta := targetMeta(target, metaHostname, mode, stageHostname, state.SessionID, "")
+		meta := targetMeta(target, metaHostname, mode, stages, state.SessionID, "")
 
 		// Gate R — partial-write counterpart of writeBootstrapOutputs (setup
 		// names from the target's literal zeropsSetup). So a crash between
 		// provision and close leaves the canonical setup names already recorded.
 		if state.Bootstrap.Route == BootstrapRouteRecipe && !target.Runtime.IsExisting {
 			meta.PrimarySetupName = primarySetup
-			meta.StageSetupName = stageSetup
+			meta.Stages = slices.Clone(stages)
 			meta.ProvisionedFromGit = target.Runtime.BuildFromGit != ""
 		}
 
@@ -158,11 +159,13 @@ func (e *Engine) writeProvisionMetas(state *WorkflowState) {
 }
 
 // targetMeta is the meta a plan target is recorded as: the three deploy
-// dimensions at their zero values, the plan's public-access intent on both
-// halves, and — for a service adopted rather than created (IsExisting) — no
-// bootstrap session, which is what makes it read as adopted (IsAdopted).
-// bootstrappedAt is empty for provision's partial write.
-func targetMeta(target BootstrapTarget, hostname string, mode topology.Mode, stageHostname, sessionID, bootstrappedAt string) *ServiceMeta {
+// dimensions at their zero values, the plan's stages by hostname (their setups
+// are recorded only where the plan's setup is authoritative — Gate R), the
+// plan's public-access intent on every half, and — for a service adopted
+// rather than created (IsExisting) — no bootstrap session, which is what makes
+// it read as adopted (IsAdopted). bootstrappedAt is empty for provision's
+// partial write.
+func targetMeta(target BootstrapTarget, hostname string, mode topology.Mode, stages []topology.Stage, sessionID, bootstrappedAt string) *ServiceMeta {
 	bootstrapSession := sessionID
 	if target.Runtime.IsExisting {
 		bootstrapSession = ""
@@ -170,7 +173,7 @@ func targetMeta(target BootstrapTarget, hostname string, mode topology.Mode, sta
 	meta := &ServiceMeta{
 		Hostname:         hostname,
 		Mode:             mode,
-		StageHostname:    stageHostname,
+		Stages:           stagesByHostname(stages),
 		ServesHTTP:       target.Runtime.ServesHTTP,
 		CloseDeployMode:  topology.CloseModeUnset,
 		GitPushState:     topology.GitPushUnconfigured,
@@ -178,8 +181,30 @@ func targetMeta(target BootstrapTarget, hostname string, mode topology.Mode, sta
 		BootstrapSession: bootstrapSession,
 		BootstrappedAt:   bootstrappedAt,
 	}
-	setPlanPublicAccess(meta, target.Runtime.PublicAccess, hostname, stageHostname)
+	setPlanPublicAccess(meta, target.Runtime.PublicAccess, hostname, meta.StageHostnames())
 	return meta
+}
+
+// stagesByHostname is stages with only their hostnames — nil when there are
+// none, so a stageless meta reads back unchanged.
+func stagesByHostname(stages []topology.Stage) []topology.Stage {
+	if len(stages) == 0 {
+		return nil
+	}
+	out := make([]topology.Stage, 0, len(stages))
+	for _, s := range stages {
+		out = append(out, topology.Stage{Hostname: s.Hostname})
+	}
+	return out
+}
+
+// firstStageHostname is the hostname of a plan target's first stage, "" when
+// it has none — what the local-mode projection keys on.
+func firstStageHostname(stages []topology.Stage) string {
+	if len(stages) == 0 {
+		return ""
+	}
+	return stages[0].Hostname
 }
 
 // writeTargetMeta is the constructive write of a target's meta, atomic under
@@ -199,10 +224,10 @@ func writeTargetMeta(stateDir string, target BootstrapTarget, meta *ServiceMeta)
 
 // mergeExistingMeta preserves user-authored fields on meta during a
 // mode-expansion write so a dev→standard upgrade doesn't silently clear
-// the user's deploy choices or reset deploy history. Mode and
-// StageHostname come from the plan and are left untouched.
+// the user's deploy choices or reset deploy history. Mode and the stage
+// hostnames come from the plan and are left untouched.
 //
-// PrimarySetupName / StageSetupName follow migrate-forward-empty
+// PrimarySetupName and each stage's Setup follow migrate-forward-empty
 // semantics: a non-empty existing value wins (a previously-discovered
 // setup name is the canonical record); an empty existing value lets the
 // fresh meta's value through unchanged (covers the dev→standard
@@ -228,8 +253,10 @@ func mergeExistingMeta(meta, existing *ServiceMeta) {
 	if existing.PrimarySetupName != "" {
 		meta.PrimarySetupName = existing.PrimarySetupName
 	}
-	if existing.StageSetupName != "" {
-		meta.StageSetupName = existing.StageSetupName
+	for _, s := range existing.Stages {
+		if s.Setup != "" {
+			meta.SetStageSetup(s.Hostname, s.Setup)
+		}
 	}
 	// Sticky once set either side: the recipe-buildFromGit provenance can't
 	// regress on a later partial write or pair-expansion merge (B4).
@@ -245,19 +272,19 @@ func mergeExistingMeta(meta, existing *ServiceMeta) {
 	}
 }
 
-// setPlanPublicAccess stamps meta.PublicAccess for both halves of a target
+// setPlanPublicAccess stamps meta.PublicAccess for every half of a target
 // from the plan's RuntimeTarget.PublicAccess (§8 O3 PA-6). Empty/invalid
 // defaults to auto at this I/O boundary — PublicAccessIntent.IsValid()
 // deliberately rejects "" so this default lives at the single call site,
-// not duplicated across every reader. stageHostname empty is a no-op (dev/
+// not duplicated across every reader. No stage hostnames is a no-op (dev/
 // simple/local-only targets have no stage half to stamp).
-func setPlanPublicAccess(meta *ServiceMeta, planned, hostname, stageHostname string) {
+func setPlanPublicAccess(meta *ServiceMeta, planned, hostname string, stageHostnames []string) {
 	intent, ok := topology.ParsePublicAccessIntent(planned)
 	if !ok {
 		intent = topology.PublicAccessAuto
 	}
 	meta.SetPublicAccess(hostname, topology.PublicAccessRecord{Intent: intent})
-	if stageHostname != "" {
+	for _, stageHostname := range stageHostnames {
 		meta.SetPublicAccess(stageHostname, topology.PublicAccessRecord{Intent: intent})
 	}
 }

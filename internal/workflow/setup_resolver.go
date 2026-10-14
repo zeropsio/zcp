@@ -71,7 +71,7 @@ type ArchiveFetcher func(ctx context.Context, url string) (yamlBody string, err 
 // platform write of any kind — see plan §Architectural decision).
 //
 // Cascade — first hit wins:
-//  1. Local cache (ServiceMeta.PrimarySetupName / StageSetupName via
+//  1. Local cache (ServiceMeta.PrimarySetupName / the stage's Setup via
 //     SetupNameFor)
 //  2. ServiceStack.GithubIntegration.ZeropsYamlSetup
 //  3. ServiceStack.ActiveAppVersion.GithubIntegration.ZeropsYamlSetup
@@ -181,9 +181,9 @@ func ResolveCanonicalSetup(ctx context.Context, client platform.Client, in Resol
 // Best-effort: a missing meta or filesystem hiccup is silently swallowed
 // so cascade callers don't fail on a benign cache write.
 //
-// Pair-keyed: targetHostname == StageHostname writes StageSetupName;
-// targetHostname == Hostname writes PrimarySetupName. Out-of-scope
-// hostnames are no-ops (no field to update).
+// Pair-keyed: a stage hostname writes that stage's Setup; targetHostname ==
+// Hostname writes PrimarySetupName. Out-of-scope hostnames are no-ops (no
+// field to update).
 func writeBackCache(stateDir, targetHostname, value string) error {
 	if stateDir == "" || targetHostname == "" || value == "" {
 		return nil
@@ -196,20 +196,16 @@ func writeBackCache(stateDir, targetHostname, value string) error {
 	// meta so a concurrent orthogonal-field update on this pair isn't lost
 	// (XCUT-1). ErrSkipWrite covers the no-change and out-of-scope no-ops.
 	return UpdateServiceMeta(stateDir, targetHostname, func(m *ServiceMeta) error {
-		switch {
-		case m.StageHostname != "" && targetHostname == m.StageHostname:
-			if m.StageSetupName == value {
+		if _, ok := m.StageFor(targetHostname); ok {
+			if !m.SetStageSetup(targetHostname, value) {
 				return ErrSkipWrite
 			}
-			m.StageSetupName = value
-		case targetHostname == m.Hostname:
-			if m.PrimarySetupName == value {
-				return ErrSkipWrite
-			}
-			m.PrimarySetupName = value
-		default:
-			return ErrSkipWrite // out-of-scope; nothing to write
+			return nil
 		}
+		if targetHostname != m.Hostname || m.PrimarySetupName == value {
+			return ErrSkipWrite // out-of-scope or no change; nothing to write
+		}
+		m.PrimarySetupName = value
 		return nil
 	})
 }

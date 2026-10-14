@@ -154,7 +154,7 @@ func InFlightBootstrapHostnames(stateDir string) map[string]bool {
 			if h := t.Runtime.DevHostname; h != "" {
 				out[h] = true
 			}
-			if h := t.Runtime.StageHostname(); h != "" {
+			for _, h := range t.Runtime.StageHostnames() {
 				out[h] = true
 			}
 		}

@@ -105,7 +105,7 @@ func TestResolveDeployTargetTopology(t *testing.T) {
 
 	standardPair := &workflow.ServiceMeta{
 		Hostname:       "appdev",
-		StageHostname:  "appstage",
+		Stages:         []topology.Stage{{Hostname: "appstage"}},
 		Mode:           topology.PlanModeStandard,
 		BootstrappedAt: time.Now().UTC().Format(time.RFC3339),
 	}
@@ -121,7 +121,7 @@ func TestResolveDeployTargetTopology(t *testing.T) {
 	}
 	localStage := &workflow.ServiceMeta{
 		Hostname:       "myproject",
-		StageHostname:  "apistage",
+		Stages:         []topology.Stage{{Hostname: "apistage"}},
 		Mode:           topology.PlanModeLocalStage,
 		BootstrappedAt: time.Now().UTC().Format(time.RFC3339),
 	}

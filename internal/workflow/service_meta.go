@@ -31,9 +31,15 @@ import (
 // sufficient signal and verify-only stamping was masking legitimate
 // Deployed=true cases for services that bypassed ZCP verify.
 type ServiceMeta struct {
-	Hostname      string        `json:"hostname"`
-	Mode          topology.Mode `json:"mode,omitempty"`
-	StageHostname string        `json:"stageHostname,omitempty"`
+	Hostname string        `json:"hostname"`
+	Mode     topology.Mode `json:"mode,omitempty"`
+	// Stages is the pair's only stage list: every stage runtime built from
+	// the dev half's repository, each with its zerops.yml setup (Setup empty
+	// until known). A single-part pair has one entry; dev/simple/local-only
+	// metas have none. Metas written before Stages carried one
+	// stageHostname/stageSetupName; parseMeta folds those into Stages[0] and
+	// nothing reads or writes them anywhere else.
+	Stages []topology.Stage `json:"stages,omitempty"`
 
 	// Per-pair deploy dimensions (deploy-strategy decomposition; see
 	// plans/archive/deploy-strategy-decomposition-2026-04-28.md §3.1 for
@@ -85,13 +91,11 @@ type ServiceMeta struct {
 	// miss the caller emits a requiresSetupInput structured blocker.
 	// Updated by set-default-setup action or cascade write-back.
 	//
-	// PrimarySetupName applies to deploys targeting Hostname's half.
-	// StageSetupName applies to cross-deploys targeting StageHostname
-	// (pair shapes only; empty for non-pair modes).
+	// PrimarySetupName applies to deploys targeting Hostname's half; each
+	// stage's setup is its Stages entry's Setup.
 	//
 	// Plan: plans/setup-name-local-canonical-2026-05-27.md §F3.
 	PrimarySetupName string `json:"primarySetupName,omitempty"`
-	StageSetupName   string `json:"stageSetupName,omitempty"`
 	// ProdSetupName records WHICH zerops.yaml setup block production was
 	// launched with — stamped by the launch finalize alongside the
 	// post-launch back-reference. The launch setup cascade reads it
@@ -265,9 +269,9 @@ type ProdLaunchRef struct {
 }
 
 // SetupNameFor returns the canonical zerops.yaml setup-block name for a
-// target hostname. Pair-keyed: targetHostname == StageHostname returns
-// StageSetupName; targetHostname == Hostname returns PrimarySetupName;
-// any other hostname returns "" (caller must load that hostname's meta).
+// target hostname. Pair-keyed: a stage hostname returns that stage's Setup;
+// targetHostname == Hostname returns PrimarySetupName; any other hostname
+// returns "" (caller must load that hostname's meta).
 //
 // Empty result on an in-scope hostname means "cache miss — run cascade."
 // Callers that need a guaranteed value must invoke ResolveCanonicalSetup
@@ -277,13 +281,73 @@ func (m *ServiceMeta) SetupNameFor(targetHostname string) string {
 	if m == nil {
 		return ""
 	}
-	if m.StageHostname != "" && targetHostname == m.StageHostname {
-		return m.StageSetupName
+	if stage, ok := m.StageFor(targetHostname); ok {
+		return stage.Setup
 	}
 	if targetHostname == m.Hostname {
 		return m.PrimarySetupName
 	}
 	return ""
+}
+
+// HasStage reports whether the meta is a pair: it records at least one stage.
+func (m *ServiceMeta) HasStage() bool {
+	return m != nil && len(m.Stages) > 0
+}
+
+// StageFor returns the stage named hostname, and whether the pair has one.
+func (m *ServiceMeta) StageFor(hostname string) (topology.Stage, bool) {
+	if m == nil || hostname == "" {
+		return topology.Stage{}, false
+	}
+	for _, s := range m.Stages {
+		if s.Hostname == hostname {
+			return s, true
+		}
+	}
+	return topology.Stage{}, false
+}
+
+// StageHostnames returns the hostname of every stage, in Stages order.
+func (m *ServiceMeta) StageHostnames() []string {
+	if m == nil {
+		return nil
+	}
+	out := make([]string, 0, len(m.Stages))
+	for _, s := range m.Stages {
+		out = append(out, s.Hostname)
+	}
+	return out
+}
+
+// FirstStage is the pair's first stage, or the zero Stage when it has none.
+// It serves the surfaces that still name one stage per pair — the envelope's
+// stageHostname/stageSetupName, the build-integration target and the tier
+// composer's input — which on a single-part pair is the pair's only stage.
+func (m *ServiceMeta) FirstStage() topology.Stage {
+	if !m.HasStage() {
+		return topology.Stage{}
+	}
+	return m.Stages[0]
+}
+
+// SetStageSetup records setup as the zerops.yml setup of the stage named
+// hostname. Reports whether the meta changed: false when the pair has no
+// such stage or it already records that setup.
+func (m *ServiceMeta) SetStageSetup(hostname, setup string) bool {
+	if m == nil {
+		return false
+	}
+	for i := range m.Stages {
+		if m.Stages[i].Hostname == hostname {
+			if m.Stages[i].Setup == setup {
+				return false
+			}
+			m.Stages[i].Setup = setup
+			return true
+		}
+	}
+	return false
 }
 
 // IsComplete returns true if bootstrap finished for this service.
@@ -365,13 +429,10 @@ func (m *ServiceMeta) IsAdopted() bool {
 // breaks scope validation, auto-close, and strategy resolution for stage
 // hostnames.
 //
-// For container+standard and local+standard that's [Hostname, StageHostname];
-// for everything else just [Hostname].
+// For container+standard and local+standard that's Hostname followed by every
+// stage hostname; for everything else just [Hostname].
 func (m *ServiceMeta) Hostnames() []string {
-	if m.StageHostname != "" {
-		return []string{m.Hostname, m.StageHostname}
-	}
-	return []string{m.Hostname}
+	return append([]string{m.Hostname}, m.StageHostnames()...)
 }
 
 // ManagedRuntimeIndex builds a hostname → meta map honoring the pair-keyed
@@ -404,7 +465,7 @@ func ManagedRuntimeIndex(metas []*ServiceMeta) map[string]*ServiceMeta {
 // PrimaryRole returns the deploy role of m.Hostname.
 // Encapsulates the mode→role lookup so callers don't re-derive it.
 // Local topologies (local-stage / local-only) are project-keyed — they
-// have no per-service deploy role; callers should use StageHostname
+// have no per-service deploy role; callers should use the stage hostname
 // directly for deploys on local-stage.
 func (m *ServiceMeta) PrimaryRole() topology.Mode {
 	mode := m.Mode
@@ -430,7 +491,7 @@ func (m *ServiceMeta) RoleFor(hostname string) topology.Mode {
 	if hostname == "" {
 		return ""
 	}
-	if m.StageHostname != "" && hostname == m.StageHostname {
+	if _, ok := m.StageFor(hostname); ok {
 		return topology.DeployRoleStage
 	}
 	if hostname == m.Hostname {
@@ -535,15 +596,16 @@ func (m *ServiceMeta) PushSourceCheckFor(hostname string) topology.PushSourceRes
 	}
 	// Local-stage carve-out: the dev half is the user's CWD (m.Hostname is
 	// the project name, not a Zerops service). The Zerops-side stage
-	// runtime named in m.StageHostname IS a legitimate deploy target —
+	// runtime named in m.Stages IS a legitimate deploy target —
 	// treating it as "stage half, push from dev half" misleads the agent
 	// into pushing from a non-existent Zerops service. The container
 	// standard pair stays IsStageHalf for stage-hostname matches because
 	// its dev half is a real Zerops service the agent can target.
-	if m.Mode == topology.PlanModeLocalStage && hostname == m.StageHostname {
+	_, isStage := m.StageFor(hostname)
+	if m.Mode == topology.PlanModeLocalStage && isStage {
 		return topology.PushSourceOK
 	}
-	if m.StageHostname != "" && hostname == m.StageHostname {
+	if isStage {
 		return topology.PushSourceIsStageHalf
 	}
 	if hostname != m.Hostname {
@@ -562,7 +624,7 @@ func (m *ServiceMeta) PushSourceCheckFor(hostname string) topology.PushSourceRes
 // disk — an empty dimension silently suppressed the git-push-setup +
 // build-integration atom chain because the matcher's slices.Contains over
 // the axis allowlists never matches "" (TOPO-1/WF-2/DELIV-2). Callers set
-// the remaining fields (StageHostname, BootstrappedAt, …) on the result.
+// the remaining fields (Stages, BootstrappedAt, …) on the result.
 func NewServiceMeta(hostname string, mode topology.Mode) *ServiceMeta {
 	return &ServiceMeta{
 		Hostname:         hostname,
@@ -679,8 +741,33 @@ func parseMeta(data []byte) (*ServiceMeta, error) {
 	if err := json.Unmarshal(data, &meta); err != nil {
 		return nil, err
 	}
+	if err := foldLegacyStage(data, &meta); err != nil {
+		return nil, err
+	}
 	foldLegacyCloseMode(&meta)
 	return &meta, nil
+}
+
+// foldLegacyStage is the one-way lazy migration of a meta written before
+// Stages: its single stageHostname/stageSetupName become Stages[0]. Applied
+// at the single deserialization path only — a meta that already records
+// Stages keeps them, and the next write persists the folded list without the
+// old keys.
+func foldLegacyStage(data []byte, meta *ServiceMeta) error {
+	if len(meta.Stages) > 0 {
+		return nil
+	}
+	var legacy struct {
+		StageHostname  string `json:"stageHostname"`
+		StageSetupName string `json:"stageSetupName"`
+	}
+	if err := json.Unmarshal(data, &legacy); err != nil {
+		return err
+	}
+	if legacy.StageHostname != "" {
+		meta.Stages = []topology.Stage{{Hostname: legacy.StageHostname, Setup: legacy.StageSetupName}}
+	}
+	return nil
 }
 
 // foldLegacyCloseMode is the one-way lazy migration of the retired
@@ -759,8 +846,8 @@ func serviceMetaFiles(baseDir string) (string, []string, error) {
 }
 
 // PruneServiceMetas removes service meta files that don't match any live
-// hostname. A container-mode meta is kept if its Hostname OR StageHostname
-// exists in liveHostnames.
+// hostname. A container-mode meta is kept if its Hostname OR any stage
+// hostname exists in liveHostnames.
 //
 // Local-mode metas (Mode = local-only / local-stage) are skipped entirely —
 // they're project-keyed (Hostname = project.Name set by LocalAutoAdopt), not
@@ -811,7 +898,7 @@ func PruneServiceMetas(baseDir string, liveHostnames map[string]bool) []string {
 }
 
 // IsKnownService checks if a hostname is tracked by any ServiceMeta.
-// A hostname is known if it matches any meta's Hostname or StageHostname.
+// A hostname is known if it matches any meta's Hostname or stage hostname.
 // Returns false when stateDir is empty or no metas exist (permissive on error).
 func IsKnownService(stateDir, hostname string) bool {
 	if stateDir == "" || hostname == "" {
@@ -849,12 +936,12 @@ func cleanIncompleteMetasForSession(stateDir, sessionID string) {
 	}
 }
 
-// FindServiceMeta returns the meta whose Hostname OR StageHostname matches
+// FindServiceMeta returns the meta whose Hostname OR a stage hostname matches
 // — the disk-backed counterpart to ManagedRuntimeIndex. Honors the pair-keyed
 // invariant (spec-workflows.md §8 E8): container+standard and local+standard
 // store exactly one file per pair; a direct read by the non-primary hostname
 // would miss. Fast path hits the direct file; slow path scans metas for a
-// StageHostname match. Returns (nil, nil) when no meta tracks hostname.
+// stage match. Returns (nil, nil) when no meta tracks hostname.
 //
 // Use this from tool-layer handlers when you have a hostname but not a
 // pre-loaded meta slice. For slice→map construction, use ManagedRuntimeIndex.
@@ -867,7 +954,7 @@ func FindServiceMeta(stateDir, hostname string) (*ServiceMeta, error) {
 		return nil, err
 	}
 	for _, m := range metas {
-		if m.StageHostname == hostname {
+		if _, ok := m.StageFor(hostname); ok {
 			return m, nil
 		}
 	}

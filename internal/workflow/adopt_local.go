@@ -123,7 +123,7 @@ func LocalAutoAdopt(ctx context.Context, client platform.Client, projectID, stat
 		// disk so the git-push-setup + build-integration atoms never fired
 		// for the local-stage mode they target.
 		meta := NewServiceMeta(project.Name, topology.PlanModeLocalStage)
-		meta.StageHostname = rt.Name
+		meta.Stages = []topology.Stage{{Hostname: rt.Name}}
 		meta.BootstrappedAt = now
 		if rt.Status == StatusActive && rt.HasDeployedCode() {
 			meta.FirstDeployedAt = time.Now().UTC().Format(time.RFC3339)
@@ -226,7 +226,7 @@ func FormatLocalStateNote(metas []*ServiceMeta, services []platform.ServiceStack
 
 	switch {
 	case local.Mode == topology.PlanModeLocalStage:
-		base := fmt.Sprintf("Adopted project %q as local-stage (linked to %s).", projectName, local.StageHostname)
+		base := fmt.Sprintf("Adopted project %q as local-stage (linked to %s).", projectName, local.FirstStage().Hostname)
 		if managedLine != "" {
 			return base + " " + managedLine
 		}

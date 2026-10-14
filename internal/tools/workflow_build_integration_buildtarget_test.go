@@ -18,7 +18,7 @@ import (
 func TestResolveBuildTarget(t *testing.T) {
 	t.Parallel()
 	pair := func() *workflow.ServiceMeta {
-		return &workflow.ServiceMeta{Hostname: "app", StageHostname: "appstage", Mode: topology.ModeStandard}
+		return &workflow.ServiceMeta{Hostname: "app", Stages: []topology.Stage{{Hostname: "appstage"}}, Mode: topology.ModeStandard}
 	}
 
 	tests := []struct {

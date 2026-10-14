@@ -16,10 +16,10 @@ func recordResolvedDeploySetupMeta(stateDir, targetHostname, setupName string, s
 	serves := servesHTTP
 	err := workflow.UpdateServiceMeta(stateDir, targetHostname, func(m *workflow.ServiceMeta) error {
 		changed := false
+		_, isStage := m.StageFor(targetHostname)
 		switch {
-		case m.StageHostname != "" && targetHostname == m.StageHostname:
-			if setupName != "" && m.StageSetupName != setupName {
-				m.StageSetupName = setupName
+		case isStage:
+			if setupName != "" && m.SetStageSetup(targetHostname, setupName) {
 				changed = true
 			}
 		case targetHostname == m.Hostname:

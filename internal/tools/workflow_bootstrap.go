@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -378,14 +379,14 @@ func buildRuntimeURLs(ctx context.Context, client platform.Client, projectID str
 
 // runtimeRoleForHostname classifies hostname against the bootstrap plan:
 // RuntimeURLRoleDev for a target's DevHostname, RuntimeURLRoleStage for a
-// target's StageHostname(), RuntimeURLRoleOther for anything else
+// target's stage, RuntimeURLRoleOther for anything else
 // (a managed dependency exposing HTTP, or a service outside the plan).
 func runtimeRoleForHostname(plan *workflow.ServicePlan, hostname string) string {
 	for _, t := range plan.Targets {
 		if t.Runtime.DevHostname == hostname {
 			return workflow.RuntimeURLRoleDev
 		}
-		if t.Runtime.StageHostname() == hostname {
+		if slices.Contains(t.Runtime.StageHostnames(), hostname) {
 			return workflow.RuntimeURLRoleStage
 		}
 	}

@@ -655,7 +655,7 @@ func TestAWiredPairDeploysDirectlyAndIsNeverSentToPush(t *testing.T) {
 	t.Parallel()
 	stateDir := t.TempDir()
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
-		Hostname: "appdev", Mode: topology.PlanModeStandard, StageHostname: "appstage",
+		Hostname: "appdev", Mode: topology.PlanModeStandard, Stages: []topology.Stage{{Hostname: "appstage"}},
 		BootstrapSession: "test", BootstrappedAt: "2026-10-02", FirstDeployedAt: "2026-10-02T09:00:00Z",
 		GitPushState: topology.GitPushConfigured, RemoteURL: "https://hq.example/git/a1/appdev.git",
 		BuildIntegration: topology.BuildIntegrationActions,

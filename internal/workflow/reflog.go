@@ -38,7 +38,7 @@ func AppendReflogEntry(agentsMDPath string, intent string, targets []BootstrapTa
 		mode := target.Runtime.EffectiveMode()
 		b.WriteString(fmt.Sprintf("- **Runtime:** %s (%s, %s)\n", target.Runtime.DevHostname, target.Runtime.Type, mode))
 		if mode == topology.PlanModeStandard {
-			b.WriteString(fmt.Sprintf("- **Stage:** %s\n", target.Runtime.StageHostname()))
+			b.WriteString(fmt.Sprintf("- **Stage:** %s\n", strings.Join(target.Runtime.StageHostnames(), ", ")))
 		}
 		if len(target.Dependencies) > 0 {
 			deps := make([]string, 0, len(target.Dependencies))

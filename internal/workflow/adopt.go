@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -320,21 +321,23 @@ func adoptPairingChoice(devHost, stageHost, devType, stageType string, deps []De
 // metas for one runtime, which the pair-keyed invariant forbids (E8).
 func AdoptPair(stateDir string, target BootstrapTarget, date string) error {
 	rt := target.Runtime
-	stage := rt.StageHostname()
-	if rt.DevHostname == "" || stage == "" {
+	stages := rt.StageRefs()
+	if rt.DevHostname == "" || len(stages) == 0 {
 		return fmt.Errorf("adopt pair: %q is not a dev/stage pair (bootstrapMode %q, stage %q)", rt.DevHostname, rt.EffectiveMode(), rt.ExplicitStage)
 	}
-	own, err := ReadServiceMeta(stateDir, stage)
-	if err != nil {
-		return fmt.Errorf("adopt pair %s: %w", rt.DevHostname, err)
-	}
-	if own != nil {
-		return fmt.Errorf("adopt pair %s: its stage half %s is already recorded as a service of its own", rt.DevHostname, stage)
+	for _, stage := range stages {
+		own, err := ReadServiceMeta(stateDir, stage.Hostname)
+		if err != nil {
+			return fmt.Errorf("adopt pair %s: %w", rt.DevHostname, err)
+		}
+		if own != nil {
+			return fmt.Errorf("adopt pair %s: its stage half %s is already recorded as a service of its own", rt.DevHostname, stage.Hostname)
+		}
 	}
 	target.Runtime.IsExisting = true
-	meta := targetMeta(target, rt.DevHostname, topology.PlanModeStandard, stage, "", date)
+	meta := targetMeta(target, rt.DevHostname, topology.PlanModeStandard, stages, "", date)
 	meta.PrimarySetupName = rt.PrimarySetupName
-	meta.StageSetupName = rt.StageSetupName
+	meta.Stages = slices.Clone(stages)
 	if err := writeTargetMeta(stateDir, target, meta); err != nil {
 		return fmt.Errorf("adopt pair %s: %w", rt.DevHostname, err)
 	}

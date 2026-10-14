@@ -88,10 +88,9 @@ func withMetaMode(mode topology.Mode) seedMetaOption {
 	return func(m *workflow.ServiceMeta) { m.Mode = mode }
 }
 
-// withMetaStageHostname sets StageHostname on the seeded meta (pair
-// shape).
+// withMetaStageHostname sets the seeded meta's one stage (pair shape).
 func withMetaStageHostname(stageHost string) seedMetaOption {
-	return func(m *workflow.ServiceMeta) { m.StageHostname = stageHost }
+	return func(m *workflow.ServiceMeta) { m.Stages = []topology.Stage{{Hostname: stageHost}} }
 }
 
 // withMetaGitPushUnconfigured sets GitPushState=unconfigured to exercise

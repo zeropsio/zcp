@@ -85,8 +85,12 @@ func composeGroupRecipeInputs(
 		if err != nil {
 			return bundle.GroupRecipeInputs{}, nil, err
 		}
+		// The composer takes one stage per pair (bundle.GroupRuntime): the
+		// pair's first. Composing a runtime per stage is the composer's own
+		// change; every stage is on m.Stages for it.
+		firstStage := m.FirstStage()
 		var stageEnvs []bundle.ProjectEnvVar
-		if stage, ok := live[m.StageHostname]; ok && m.StageHostname != "" {
+		if stage, ok := live[firstStage.Hostname]; ok && firstStage.Hostname != "" {
 			if stageEnvs, err = groupRecipeServiceEnvs(ctx, client, stage); err != nil {
 				return bundle.GroupRecipeInputs{}, nil, err
 			}
@@ -101,11 +105,11 @@ func composeGroupRecipeInputs(
 		yamlBody, _ := readLocalZeropsYAML(filepath.Join(mountRoot, m.Hostname))
 		inputs.Runtimes = append(inputs.Runtimes, bundle.GroupRuntime{
 			DevHostname:      m.Hostname,
-			StageHostname:    m.StageHostname,
+			StageHostname:    firstStage.Hostname,
 			ServiceType:      svc.Type,
 			RepoURL:          hq.RepoURLAt(address, appID, m.HQ.Repo),
-			SetupName:        firstNonEmptySetup(m.PrimarySetupName, m.StageSetupName, m.Hostname),
-			StageSetupName:   m.StageSetupName,
+			SetupName:        firstNonEmptySetup(m.PrimarySetupName, firstStage.Setup, m.Hostname),
+			StageSetupName:   firstStage.Setup,
 			ZeropsYAMLBody:   yamlBody,
 			SubdomainEnabled: svc.SubdomainEnabled,
 			Scaling:          shape.Scaling,

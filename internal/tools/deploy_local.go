@@ -361,7 +361,7 @@ func sessionHandsOverAChange(stateDir string, ws *workflow.WorkSession) bool {
 			continue
 		}
 		meta, err := workflow.FindServiceMeta(stateDir, host)
-		if err == nil && meta != nil && meta.StageHostname == host && hqPairWired(meta) && meta.HQ.Change != 0 {
+		if err == nil && meta != nil && isStageOf(meta, host) && hqPairWired(meta) && meta.HQ.Change != 0 {
 			return true
 		}
 	}

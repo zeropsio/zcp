@@ -135,6 +135,27 @@ func checkRepoInitAt(ctx context.Context, ssh ops.SSHDeployer, rt runtime.Info, 
 	return checks
 }
 
+// checkStagesProvisioned checks every stage of a plan target exists in any
+// alive status — newly imported (NEW/READY_TO_DEPLOY) or already running
+// (RUNNING/ACTIVE); mixed cases (existing dev + new stage) are valid for
+// adoption. When the dev runtime was skipped (local-recipe) or is absent
+// (typeCheck), a stage MUST carry the type-check responsibility.
+// StageEffectiveType handles cross-type pairs (nodejs dev → static stage);
+// the plan carries one stage type, so stages of a pair with several are
+// type-checked only when they share a StageType.
+func checkStagesProvisioned(ctx context.Context, client platform.Client, fetcher platform.LogFetcher, projectID string, svcMap map[string]platform.ServiceStack, rt workflow.RuntimeTarget, typeCheck bool) []workflow.StepCheck {
+	stages := rt.StageHostnames()
+	typeKnown := len(stages) == 1 || rt.StageType != ""
+	var checks []workflow.StepCheck
+	for _, stage := range stages {
+		checks = append(checks, checkServiceStatusAny(ctx, client, fetcher, projectID, svcMap, stage, serviceStatusNew, serviceStatusReadyToDeploy, serviceStatusRunning, serviceStatusActive)...)
+		if typeKnown && typeCheck {
+			checks = append(checks, checkServiceType(svcMap, stage, rt.StageEffectiveType())...)
+		}
+	}
+	return checks
+}
+
 func checkProvision(client platform.Client, fetcher platform.LogFetcher, projectID string, engine *workflow.Engine) workflow.StepChecker {
 	return func(ctx context.Context, plan *workflow.ServicePlan, bs *workflow.BootstrapState) (*workflow.StepCheckResult, error) {
 		if plan == nil || len(plan.Targets) == 0 {
@@ -183,16 +204,8 @@ func checkProvision(client platform.Client, fetcher platform.LogFetcher, project
 			// Check stage runtime exists in any alive status.
 			// Stage may be newly imported (NEW/READY_TO_DEPLOY) or already running (RUNNING/ACTIVE).
 			// Mixed cases (existing dev + new stage) are valid for adoption scenarios.
-			if stage := target.Runtime.StageHostname(); stage != "" {
-				checks = append(checks, checkServiceStatusAny(ctx, client, fetcher, projectID, svcMap, stage, serviceStatusNew, serviceStatusReadyToDeploy, serviceStatusRunning, serviceStatusActive)...)
-				// When the dev runtime was skipped (local-recipe) or is
-				// absent, stage MUST carry the type-check responsibility.
-				// StageEffectiveType handles cross-type pairs (the stage half
-				// may differ from the dev Type, e.g. nodejs dev → static stage).
-				if skipDevCheck || target.Runtime.DevHostname == "" {
-					checks = append(checks, checkServiceType(svcMap, stage, target.Runtime.StageEffectiveType())...)
-				}
-			}
+			typeCheckStages := skipDevCheck || target.Runtime.DevHostname == ""
+			checks = append(checks, checkStagesProvisioned(ctx, client, fetcher, projectID, svcMap, target.Runtime, typeCheckStages)...)
 
 			// Check dependencies.
 			for _, dep := range target.Dependencies {

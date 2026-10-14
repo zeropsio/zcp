@@ -141,7 +141,7 @@ func inResolvedScope(stateDir string, ws *WorkSession, hostname string) bool {
 	if err != nil || meta == nil {
 		return false
 	}
-	return inScope(ws, meta.Hostname) || (meta.StageHostname != "" && inScope(ws, meta.StageHostname))
+	return slices.ContainsFunc(meta.Hostnames(), func(h string) bool { return inScope(ws, h) })
 }
 
 // Session-scoped service roles (RC-B). The role refines what a *declared*

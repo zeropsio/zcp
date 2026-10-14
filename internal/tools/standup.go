@@ -586,7 +586,7 @@ func (d standupDeps) adopt(sp *standupPair, deps []workflow.Dependency) (workflo
 		target.Runtime.StageType = p.Stage.Type
 	}
 	existing, _ := workflow.ReadServiceMeta(d.batch.stateDir, p.Dev.Hostname)
-	already := existing != nil && existing.IsComplete() && existing.StageHostname == p.Stage.Hostname
+	already := existing != nil && existing.IsComplete() && isStageOf(existing, p.Stage.Hostname)
 	if err := workflow.AdoptPair(d.batch.stateDir, target, time.Now().UTC().Format("2006-01-02")); err != nil {
 		sp.fail(fmt.Sprintf("adopting %s→%s failed: %v", p.Dev.Hostname, p.Stage.Hostname, err),
 			"Adopt the pair by hand with zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"adopt\" and an explicit standard plan for it.")

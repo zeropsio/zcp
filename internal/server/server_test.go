@@ -450,8 +450,8 @@ func TestServer_New_LocalAutoAdopt(t *testing.T) {
 				if meta.Mode != tt.wantMode {
 					t.Errorf("Mode = %q, want %q", meta.Mode, tt.wantMode)
 				}
-				if meta.StageHostname != tt.wantStage {
-					t.Errorf("StageHostname = %q, want %q", meta.StageHostname, tt.wantStage)
+				if meta.FirstStage().Hostname != tt.wantStage {
+					t.Errorf("StageHostname = %q, want %q", meta.FirstStage().Hostname, tt.wantStage)
 				}
 				if meta.BootstrapSession != "" {
 					t.Errorf("BootstrapSession = %q, want empty (adopted, not bootstrapped)", meta.BootstrapSession)

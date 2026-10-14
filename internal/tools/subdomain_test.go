@@ -676,7 +676,7 @@ func TestSubdomainTool_Enable_StandardPairStageHalf_StillProbes(t *testing.T) {
 	// Pair-keyed meta: dev-keyed entry covers both halves (per E8 invariant).
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
-		StageHostname:    "appstage",
+		Stages:           []topology.Stage{{Hostname: "appstage"}},
 		Mode:             topology.PlanModeStandard,
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-04-22",

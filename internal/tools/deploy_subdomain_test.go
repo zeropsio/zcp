@@ -554,7 +554,7 @@ func TestEnsurePublicAccess_StageCrossDeploy_EnablesForStage(t *testing.T) {
 	// Pair meta keyed by dev, StageHostname set.
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
-		StageHostname:    "appstage",
+		Stages:           []topology.Stage{{Hostname: "appstage"}},
 		Mode:             topology.PlanModeStandard,
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-04-22",
@@ -673,8 +673,8 @@ func TestEnsurePublicAccess_StageDynamic_StillProbes(t *testing.T) {
 
 	dir := t.TempDir()
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
-		Hostname:         "appdev",               // dev half (pair primary key)
-		StageHostname:    autoEnableTestHostname, // stage half — the deploy target below
+		Hostname:         "appdev",                                             // dev half (pair primary key)
+		Stages:           []topology.Stage{{Hostname: autoEnableTestHostname}}, // stage half — the deploy target below
 		Mode:             topology.PlanModeStandard,
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-04-22",

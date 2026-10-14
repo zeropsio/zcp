@@ -664,7 +664,7 @@ func TestHandleExport_StageHalf_ResolvesModeStage(t *testing.T) {
 	dir := t.TempDir()
 	meta := &workflow.ServiceMeta{
 		Hostname:                 "appdev",
-		StageHostname:            "appstage",
+		Stages:                   []topology.Stage{{Hostname: "appstage"}},
 		Mode:                     topology.ModeStandard,
 		BootstrapSession:         "test-session",
 		BootstrappedAt:           time.Now().UTC().Format(time.RFC3339),

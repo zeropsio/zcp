@@ -1170,7 +1170,7 @@ func setupAdoptedService(t *testing.T, stateDir, hostname, stageHostname string)
 	meta := &workflow.ServiceMeta{
 		Hostname:         hostname,
 		Mode:             mode,
-		StageHostname:    stageHostname,
+		Stages:           []topology.Stage{{Hostname: stageHostname}},
 		BootstrapSession: "test-session",
 		BootstrappedAt:   "2026-03-04T12:00:00Z",
 	}

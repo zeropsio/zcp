@@ -49,18 +49,24 @@ func TestValidatePlanHostname(t *testing.T) {
 	}
 }
 
+// stageHostnameOf is the plan target's stage hostnames joined — the one
+// stage hostname for a single-stage pair, empty when it has none.
+func stageHostnameOf(rt RuntimeTarget) string {
+	return strings.Join(rt.StageHostnames(), ",")
+}
+
 func TestStageHostname_Standard(t *testing.T) {
 	t.Parallel()
 	// ExplicitStage is the only source of a stage hostname. Standard
 	// mode without ExplicitStage returns empty (caught by
 	// ValidateBootstrapTargets as a hard error).
 	rt := RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "appstage"}
-	if got := rt.StageHostname(); got != "appstage" {
+	if got := stageHostnameOf(rt); got != "appstage" {
 		t.Errorf("StageHostname with ExplicitStage: want %q, got %q", "appstage", got)
 	}
 
 	rtMissing := RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard"}
-	if got := rtMissing.StageHostname(); got != "" {
+	if got := stageHostnameOf(rtMissing); got != "" {
 		t.Errorf("StageHostname without ExplicitStage: want empty (no heuristic), got %q", got)
 	}
 }
@@ -68,7 +74,7 @@ func TestStageHostname_Standard(t *testing.T) {
 func TestStageHostname_Simple(t *testing.T) {
 	t.Parallel()
 	rt := RuntimeTarget{DevHostname: "myapp", Type: "nodejs@22", BootstrapMode: "simple"}
-	got := rt.StageHostname()
+	got := stageHostnameOf(rt)
 	if got != "" {
 		t.Errorf("StageHostname for simple mode: want empty, got %q", got)
 	}
@@ -77,7 +83,7 @@ func TestStageHostname_Simple(t *testing.T) {
 func TestStageHostname_Dev(t *testing.T) {
 	t.Parallel()
 	rt := RuntimeTarget{DevHostname: "myappdev", Type: "nodejs@22", BootstrapMode: "dev"}
-	got := rt.StageHostname()
+	got := stageHostnameOf(rt)
 	if got != "" {
 		t.Errorf("StageHostname for dev mode: want empty, got %q", got)
 	}
@@ -155,7 +161,7 @@ func TestStageHostname_NoExplicit(t *testing.T) {
 	// Standard mode without ExplicitStage returns empty — no suffix
 	// heuristic.
 	rt := RuntimeTarget{DevHostname: "myapp", Type: "nodejs@22", BootstrapMode: "standard"}
-	got := rt.StageHostname()
+	got := stageHostnameOf(rt)
 	if got != "" {
 		t.Errorf("StageHostname without ExplicitStage: want empty, got %q", got)
 	}
@@ -164,7 +170,7 @@ func TestStageHostname_NoExplicit(t *testing.T) {
 func TestStageHostname_ExplicitOverride(t *testing.T) {
 	t.Parallel()
 	rt := RuntimeTarget{DevHostname: "zmon", Type: "go@1", BootstrapMode: "standard", ExplicitStage: "zmonstage"}
-	got := rt.StageHostname()
+	got := stageHostnameOf(rt)
 	if got != "zmonstage" {
 		t.Errorf("StageHostname with explicit override: want %q, got %q", "zmonstage", got)
 	}
@@ -174,7 +180,7 @@ func TestStageHostname_ExplicitUsedVerbatim(t *testing.T) {
 	t.Parallel()
 	// ExplicitStage is used as-is; no suffix heuristic interferes.
 	rt := RuntimeTarget{DevHostname: "apidev", Type: "go@1", BootstrapMode: "standard", ExplicitStage: "apipreview"}
-	got := rt.StageHostname()
+	got := stageHostnameOf(rt)
 	if got != "apipreview" {
 		t.Errorf("ExplicitStage: want %q, got %q", "apipreview", got)
 	}
@@ -183,7 +189,7 @@ func TestStageHostname_ExplicitUsedVerbatim(t *testing.T) {
 func TestStageHostname_ExplicitIgnoredForNonStandard(t *testing.T) {
 	t.Parallel()
 	rt := RuntimeTarget{DevHostname: "app", Type: "go@1", BootstrapMode: "simple", ExplicitStage: "appstage"}
-	got := rt.StageHostname()
+	got := stageHostnameOf(rt)
 	if got != "" {
 		t.Errorf("explicit stage should be ignored for simple mode: want empty, got %q", got)
 	}

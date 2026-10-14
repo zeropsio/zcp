@@ -73,7 +73,7 @@ func TestHandleLocalGitPush_HappyPath(t *testing.T) {
 	stateDir := t.TempDir()
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname: "myproject", Mode: topology.PlanModeLocalStage,
-		StageHostname: "apistage", BootstrappedAt: "2026-04-01",
+		Stages: []topology.Stage{{Hostname: "apistage"}}, BootstrappedAt: "2026-04-01",
 		// Phase 4 R-state: tests target downstream failure modes; the meta
 		// represents a service that has gone through git-push-setup so the
 		// pre-flight gate passes.
@@ -123,7 +123,7 @@ func TestHandleLocalGitPush_DirtyTree_Warns(t *testing.T) {
 	stateDir := t.TempDir()
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname: "myproject", Mode: topology.PlanModeLocalStage,
-		StageHostname: "apistage", BootstrappedAt: "2026-04-01",
+		Stages: []topology.Stage{{Hostname: "apistage"}}, BootstrappedAt: "2026-04-01",
 		CloseDeployMode: topology.CloseModeGitPush,
 		GitPushState:    topology.GitPushConfigured,
 	}); err != nil {
@@ -166,7 +166,7 @@ func TestHandleLocalGitPush_DoesNotStampDeployed(t *testing.T) {
 	stateDir := t.TempDir()
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname: "myproject", Mode: topology.PlanModeLocalStage,
-		StageHostname: "apistage", BootstrappedAt: "2026-04-01",
+		Stages: []topology.Stage{{Hostname: "apistage"}}, BootstrappedAt: "2026-04-01",
 		CloseDeployMode: topology.CloseModeGitPush,
 		GitPushState:    topology.GitPushConfigured,
 	}); err != nil {
@@ -245,7 +245,7 @@ func TestHandleLocalGitPush_NoFutureBuild_NeverRecordsDanglingAttempt(t *testing
 	stateDir := t.TempDir()
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname: "myproject", Mode: topology.PlanModeLocalStage,
-		StageHostname:   "apistage",
+		Stages:          []topology.Stage{{Hostname: "apistage"}},
 		BootstrappedAt:  "2026-04-01",
 		CloseDeployMode: topology.CloseModeGitPush,
 		GitPushState:    topology.GitPushConfigured,
@@ -295,7 +295,7 @@ func TestHandleLocalGitPush_NoFutureBuild_FailureRecordsNoDanglingAttemptEither(
 	stateDir := t.TempDir()
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname: "myproject", Mode: topology.PlanModeLocalStage,
-		StageHostname:   "apistage",
+		Stages:          []topology.Stage{{Hostname: "apistage"}},
 		BootstrappedAt:  "2026-04-01",
 		CloseDeployMode: topology.CloseModeGitPush,
 		GitPushState:    topology.GitPushConfigured,
@@ -376,7 +376,7 @@ func TestHandleLocalGitPush_NothingToPush_DetectedFromStderr(t *testing.T) {
 	stateDir := t.TempDir()
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname: "myproject", Mode: topology.PlanModeLocalStage,
-		StageHostname:    "apistage",
+		Stages:           []topology.Stage{{Hostname: "apistage"}},
 		BootstrappedAt:   "2026-04-01",
 		CloseDeployMode:  topology.CloseModeGitPush,
 		GitPushState:     topology.GitPushConfigured,
@@ -431,7 +431,7 @@ func TestHandleLocalGitPush_WebhookIntegration_StillRecordsInFlightAttempt(t *te
 	stateDir := t.TempDir()
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname: "myproject", Mode: topology.PlanModeLocalStage,
-		StageHostname:    "apistage",
+		Stages:           []topology.Stage{{Hostname: "apistage"}},
 		BootstrappedAt:   "2026-04-01",
 		CloseDeployMode:  topology.CloseModeGitPush,
 		GitPushState:     topology.GitPushConfigured,
@@ -637,7 +637,7 @@ func TestHandleLocalGitPush_RemoteURLMismatch_Refuses(t *testing.T) {
 	stateDir := t.TempDir()
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname: "myproject", Mode: topology.PlanModeLocalStage,
-		StageHostname: "apistage", BootstrappedAt: "2026-04-01",
+		Stages: []topology.Stage{{Hostname: "apistage"}}, BootstrappedAt: "2026-04-01",
 		// Phase 4 R-state: tests target downstream failure modes; the meta
 		// represents a service that has gone through git-push-setup so the
 		// pre-flight gate passes.
@@ -681,7 +681,7 @@ func TestHandleLocalGitPush_RemoteURLDotGitOnlyDiffers_NoMismatch(t *testing.T) 
 	stateDir := t.TempDir()
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname: "myproject", Mode: topology.PlanModeLocalStage,
-		StageHostname: "apistage", BootstrappedAt: "2026-04-01",
+		Stages: []topology.Stage{{Hostname: "apistage"}}, BootstrappedAt: "2026-04-01",
 		CloseDeployMode: topology.CloseModeGitPush,
 		GitPushState:    topology.GitPushConfigured,
 	}); err != nil {

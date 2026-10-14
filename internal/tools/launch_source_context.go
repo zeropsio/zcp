@@ -169,7 +169,7 @@ func gatherLaunchSourceContext(ctx context.Context, client platform.Client, sour
 			// independently as the promotion headline with devHostname
 			// disclosed. Singletons (dev/simple/local-only) fall through
 			// to the append below.
-			if meta != nil && meta.Hostname == s.Name && meta.StageHostname != "" {
+			if meta != nil && meta.Hostname == s.Name && meta.HasStage() {
 				continue
 			}
 			out.AvailableRuntimes = append(out.AvailableRuntimes, runtimeChoice{
@@ -237,10 +237,7 @@ func metaModeString(meta *workflow.ServiceMeta) string {
 // represent a pair OR when this hostname IS the dev-half (in which
 // case the entry already names the only hostname).
 func pairDevHostname(meta *workflow.ServiceMeta, hostname string) string {
-	if meta == nil || meta.StageHostname == "" {
-		return ""
-	}
-	if meta.StageHostname == hostname {
+	if isStageOf(meta, hostname) {
 		return meta.Hostname
 	}
 	return ""
@@ -267,7 +264,7 @@ func normalizeTargetServiceForLaunch(stateDir, targetService string) string {
 	if err != nil || meta == nil {
 		return targetService
 	}
-	if meta.StageHostname == targetService {
+	if isStageOf(meta, targetService) {
 		return meta.Hostname
 	}
 	return targetService

@@ -560,8 +560,8 @@ func forgetChangeDescription(stateDir string, m *workflow.ServiceMeta, text stri
 // nextDeliveryOf names when a pair's next change opens: its next stage
 // deploy, which delivers.
 func nextDeliveryOf(m *workflow.ServiceMeta) string {
-	if m.StageHostname != "" {
-		return fmt.Sprintf("%s's next delivery (a deploy of %s)", m.Hostname, m.StageHostname)
+	if m.HasStage() {
+		return fmt.Sprintf("%s's next delivery (a deploy of %s)", m.Hostname, strings.Join(m.StageHostnames(), " or "))
 	}
 	return m.Hostname + "'s next delivery"
 }

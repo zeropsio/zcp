@@ -216,9 +216,11 @@ func planTargetSnapshots(t BootstrapTarget, statuses, deployHistories map[string
 		Status:        devStatus,
 		DeployHistory: deployHistoryFor(devStatus, deployHistories[t.Runtime.DevHostname]),
 	}}
-	if mode == topology.ModeStandard {
-		if stage := t.Runtime.StageHostname(); stage != "" {
-			snaps[0].StageHostname = stage
+	if stages := t.Runtime.StageRefs(); mode == topology.ModeStandard && len(stages) > 0 {
+		snaps[0].StageHostname = stages[0].Hostname
+		snaps[0].Stages = stages
+		for _, ref := range stages {
+			stage := ref.Hostname
 			// Cross-type pair: the stage half may differ from the dev Type
 			// (nodejs dev → static stage), so the stage snapshot carries the
 			// stage's own type + class — not the dev runtimeClass computed above.
@@ -645,10 +647,12 @@ func writeServiceList(sb *strings.Builder, plan *ServicePlan) {
 			// Render the stage type when it differs (cross-type pair, e.g.
 			// nodejs dev → static stage) so the summary doesn't imply the dev
 			// type for a stage that is actually something else.
-			if t.Runtime.StageType != "" {
-				fmt.Fprintf(sb, "  Stage: **%s** (%s)\n", t.Runtime.StageHostname(), t.Runtime.StageType)
-			} else {
-				fmt.Fprintf(sb, "  Stage: **%s**\n", t.Runtime.StageHostname())
+			for _, stage := range t.Runtime.StageHostnames() {
+				if t.Runtime.StageType != "" {
+					fmt.Fprintf(sb, "  Stage: **%s** (%s)\n", stage, t.Runtime.StageType)
+				} else {
+					fmt.Fprintf(sb, "  Stage: **%s**\n", stage)
+				}
 			}
 		}
 		for _, d := range t.Dependencies {

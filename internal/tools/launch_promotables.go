@@ -25,7 +25,7 @@ type resolvedLaunchRuntime struct {
 	ProdHostname string
 	// SetupName is the zerops.yaml setup block this runtime resolves
 	// in production. Resolved per the resolveLaunchSetupName cascade
-	// (overrides → meta.ProdSetupName → meta.StageSetupName →
+	// (overrides → meta.ProdSetupName → the stage's setup →
 	// meta.PrimarySetupName → legacy "prod" default).
 	SetupName string
 	// SetupProvenance names which cascade source produced SetupName
@@ -118,7 +118,7 @@ func resolveLaunchRuntimes(stateDir string, input WorkflowInput) []resolvedLaunc
 		var meta *workflow.ServiceMeta
 		if loaded, err := workflow.FindServiceMeta(stateDir, p.Hostname); err == nil && loaded != nil {
 			meta = loaded
-			if meta.StageHostname == p.Hostname && meta.Hostname != "" {
+			if isStageOf(meta, p.Hostname) && meta.Hostname != "" {
 				pushHost = meta.Hostname
 			}
 		}
@@ -149,7 +149,7 @@ func resolveLaunchRuntimes(stateDir string, input WorkflowInput) []resolvedLaunc
 const (
 	setupProvenanceOverride     = "override"           // explicit user input (per-promotable or workflow-level)
 	setupProvenanceRecordedProd = "recorded-prod"      // meta.ProdSetupName from a prior launch finalize
-	setupProvenanceStageSetup   = "stage-setup"        // meta.StageSetupName — the validated stage basis
+	setupProvenanceStageSetup   = "stage-setup"        // the stage's recorded setup — the validated stage basis
 	setupProvenanceDevPromoted  = "dev-setup-promoted" // meta.PrimarySetupName — the dev iteration setup
 	setupProvenanceDefault      = "default-prod"       // legacy "prod" fallback, nothing recorded
 )
@@ -160,7 +160,7 @@ const (
 //	per-promotable ProdSetupNameOverride →
 //	workflow-level ProdSetupNameOverride →
 //	source meta.ProdSetupName (recorded at a prior launch finalize) →
-//	source meta.StageSetupName →
+//	source meta's stage setup (the promoted stage's, else the first stage's) →
 //	source meta.PrimarySetupName →
 //	"prod" legacy default (deferred from full P5; see
 //	  ops/bundle/launch.go BuildLaunch for the same fallback rationale)
@@ -179,8 +179,12 @@ func resolveLaunchSetupName(p LaunchPromotableInput, workflowOverride string, me
 		if meta.ProdSetupName != "" {
 			return meta.ProdSetupName, setupProvenanceRecordedProd
 		}
-		if meta.StageSetupName != "" {
-			return meta.StageSetupName, setupProvenanceStageSetup
+		stage, ok := meta.StageFor(p.Hostname)
+		if !ok {
+			stage = meta.FirstStage()
+		}
+		if stage.Setup != "" {
+			return stage.Setup, setupProvenanceStageSetup
 		}
 		if meta.PrimarySetupName != "" {
 			return meta.PrimarySetupName, setupProvenanceDevPromoted

@@ -121,9 +121,9 @@ func TestInferServicePairing(t *testing.T) {
 					t.Errorf("%s: want PlanModeDev, got %s",
 						target.Runtime.DevHostname, target.Runtime.EffectiveMode())
 				}
-				if target.Runtime.StageHostname() != "" {
+				if stageHostnameOf(target.Runtime) != "" {
 					t.Errorf("%s: dev-mode target must not synthesize a stage hostname, got %q",
-						target.Runtime.DevHostname, target.Runtime.StageHostname())
+						target.Runtime.DevHostname, stageHostnameOf(target.Runtime))
 				}
 				if !target.Runtime.IsExisting {
 					t.Errorf("%s: IsExisting should be true", target.Runtime.DevHostname)

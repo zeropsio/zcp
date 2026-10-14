@@ -38,7 +38,8 @@ func resolveBuildTargetForHost(stateDir, host string) (string, string) {
 		Mode:            meta.ModeFor(host),
 		CloseDeployMode: meta.CloseDeployMode,
 		GitPushState:    meta.GitPushState,
-		StageHostname:   meta.StageHostname,
+		StageHostname:   meta.FirstStage().Hostname,
+		Stages:          meta.Stages,
 		Deployed:        true,
 	}
 	snaps := workflow.SnapshotsFromMetas([]*workflow.ServiceMeta{meta})

@@ -249,17 +249,22 @@ func (s RecipeImportShape) RuntimeCount() int { return len(s.Runtimes) }
 // runtime's role (recipeRoleKind), the same read DeriveRecipePlan pairs by,
 // so the shape a recipe is said to have is the plan it derives.
 //
-//	standard — one dev + one stage
+//	standard — one dev + one stage, or one dev + several stages of its repo
 //	simple   — single stage
 //	dev      — single dev
 //	""       — managed-only, unknown pattern
 func (s RecipeImportShape) Mode() topology.Mode {
 	var roles []RecipeRuntimeRoleKind
+	repos := map[string]bool{}
 	for _, r := range s.Runtimes {
 		if r.IsWorker {
 			continue
 		}
 		roles = append(roles, r.RoleKind)
+		repos[r.BuildFromGit] = true
+	}
+	if len(roles) > 2 && !repos[""] && len(repos) == 1 && countRole(roles, RecipeRuntimeRoleDev) == 1 {
+		return topology.PlanModeStandard // one pair whose further stages joined it
 	}
 	switch len(roles) {
 	case 1:
@@ -277,6 +282,17 @@ func (s RecipeImportShape) Mode() topology.Mode {
 	default:
 		return ""
 	}
+}
+
+// countRole counts the roles equal to kind.
+func countRole(roles []RecipeRuntimeRoleKind, kind RecipeRuntimeRoleKind) int {
+	n := 0
+	for _, r := range roles {
+		if r == kind {
+			n++
+		}
+	}
+	return n
 }
 
 // InferRecipeShape inspects a recipe's project-import YAML and returns the
@@ -520,9 +536,10 @@ func describeDerivedShape(derived []BootstrapTarget) string {
 //
 // Runtimes are grouped by buildFromGit repo — one repo is one app codebase, and
 // its dev/stage halves are one deployable. Per group:
-//   - dev + stage (non-worker) → ONE standard target; StageType is set when the
-//     stage half is a different type (cross-type pair). dev-only → dev mode;
-//     stage-only → simple mode.
+//   - dev + stage(s) (non-worker) → ONE standard target; every further stage
+//     of the same repo joins the pair as another stage (one per part of the
+//     app). StageType is set when the stages share a type different from the
+//     dev half (cross-type pair). dev-only → dev mode; stage-only → simple mode.
 //   - each zeropsSetup:worker → a standalone simple target (its own ServiceMeta;
 //     ServesHTTP=false is stamped at provision from the shape).
 //
@@ -550,7 +567,7 @@ func DeriveRecipePlan(shape RecipeImportShape, overrides RecipeShapeOverrides) (
 	// first-seen order, splitting them into the dev/stage app pair + workers.
 	type repoGroup struct {
 		dev     *RecipeRuntimeShape
-		stage   *RecipeRuntimeShape
+		stages  []RecipeRuntimeShape
 		workers []RecipeRuntimeShape
 	}
 	var order []string
@@ -572,11 +589,11 @@ func DeriveRecipePlan(shape RecipeImportShape, overrides RecipeShapeOverrides) (
 			g.workers = append(g.workers, *r)
 		case r.RoleKind == RecipeRuntimeRoleDev && g.dev == nil:
 			g.dev = r
-		case r.RoleKind == RecipeRuntimeRoleStage && g.stage == nil:
-			g.stage = r
+		case r.RoleKind == RecipeRuntimeRoleStage:
+			g.stages = append(g.stages, *r)
 		default:
-			// Extra dev/stage beyond the first pair in one repo (not present in
-			// any current recipe). Treat as a standalone runtime rather than
+			// Extra dev beyond the first in one repo (not present in any
+			// current recipe). Treat as a standalone runtime rather than
 			// silently drop it — completeness is the invariant R3 protects.
 			g.workers = append(g.workers, *r)
 		}
@@ -612,19 +629,25 @@ func DeriveRecipePlan(shape RecipeImportShape, overrides RecipeShapeOverrides) (
 			continue
 		}
 		switch {
-		case g.dev != nil && g.stage != nil:
+		case g.dev != nil && len(g.stages) > 0:
 			rt := RuntimeTarget{
 				DevHostname:      hostOf(g.dev.Hostname),
-				ExplicitStage:    hostOf(g.stage.Hostname),
 				Type:             g.dev.Type,
 				BootstrapMode:    topology.PlanModeStandard,
 				BuildFromGit:     g.dev.BuildFromGit,
 				ServesHTTP:       servesHTTPPtr(*g.dev),
 				PrimarySetupName: g.dev.ZeropsSetup,
-				StageSetupName:   g.stage.ZeropsSetup,
+				StageType:        sharedStageType(g.dev.Type, g.stages),
 			}
-			if !topology.TypesAreEquivalent(g.dev.Type, g.stage.Type) {
-				rt.StageType = g.stage.Type
+			// A one-stage pair keeps today's stageHostname/stageSetupName
+			// spelling; a pair with more stages lists them all.
+			if len(g.stages) == 1 {
+				rt.ExplicitStage = hostOf(g.stages[0].Hostname)
+				rt.StageSetupName = g.stages[0].ZeropsSetup
+			} else {
+				for _, st := range g.stages {
+					rt.Stages = append(rt.Stages, topology.Stage{Hostname: hostOf(st.Hostname), Setup: st.ZeropsSetup})
+				}
 			}
 			t := BootstrapTarget{Runtime: rt}
 			if !depsAssigned {
@@ -639,13 +662,16 @@ func DeriveRecipePlan(shape RecipeImportShape, overrides RecipeShapeOverrides) (
 				depsAssigned = true
 			}
 			targets = append(targets, t)
-		case g.stage != nil:
-			t := BootstrapTarget{Runtime: RuntimeTarget{DevHostname: hostOf(g.stage.Hostname), Type: g.stage.Type, BootstrapMode: topology.PlanModeSimple, BuildFromGit: g.stage.BuildFromGit, ServesHTTP: servesHTTPPtr(*g.stage), PrimarySetupName: g.stage.ZeropsSetup}}
-			if !depsAssigned {
-				t.Dependencies = deps
-				depsAssigned = true
+		case len(g.stages) > 0:
+			// No dev half to pair with: every stage is a simple runtime.
+			for _, st := range g.stages {
+				t := BootstrapTarget{Runtime: RuntimeTarget{DevHostname: hostOf(st.Hostname), Type: st.Type, BootstrapMode: topology.PlanModeSimple, BuildFromGit: st.BuildFromGit, ServesHTTP: servesHTTPPtr(st), PrimarySetupName: st.ZeropsSetup}}
+				if !depsAssigned {
+					t.Dependencies = deps
+					depsAssigned = true
+				}
+				targets = append(targets, t)
 			}
-			targets = append(targets, t)
 		}
 		for _, w := range g.workers {
 			targets = append(targets, BootstrapTarget{
@@ -659,6 +685,21 @@ func DeriveRecipePlan(shape RecipeImportShape, overrides RecipeShapeOverrides) (
 	}
 
 	return targets, nil
+}
+
+// sharedStageType is the pair's StageType: the type every stage shares when
+// it differs from the dev half's (a cross-type pair), else empty.
+func sharedStageType(devType string, stages []RecipeRuntimeShape) string {
+	stageType := stages[0].Type
+	for _, st := range stages[1:] {
+		if !topology.TypesAreEquivalent(st.Type, stageType) {
+			return ""
+		}
+	}
+	if topology.TypesAreEquivalent(devType, stageType) {
+		return ""
+	}
+	return stageType
 }
 
 // servesHTTPPtr returns the ServesHTTP hint for a derived runtime target.

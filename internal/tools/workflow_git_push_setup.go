@@ -236,7 +236,8 @@ func handleGitPushSetup(
 		snap := workflow.ServiceSnapshot{
 			Hostname:        input.Service,
 			Mode:            meta.Mode,
-			StageHostname:   meta.StageHostname,
+			StageHostname:   meta.FirstStage().Hostname,
+			Stages:          meta.Stages,
 			Bootstrapped:    true,
 			CloseDeployMode: topology.CloseModeAuto,
 			GitPushState:    gitPushState,
@@ -1303,7 +1304,7 @@ func deliveryDecisionForMeta(meta *workflow.ServiceMeta) topology.DeliveryDecisi
 		GitPushState:     meta.GitPushState,
 		BuildIntegration: meta.BuildIntegration,
 		Verified:         meta.BuildIntegrationVerifiedAt != "",
-		HasStage:         meta.StageHostname != "",
+		HasStage:         meta.HasStage(),
 		RemoteURL:        meta.RemoteURL,
 	})
 }

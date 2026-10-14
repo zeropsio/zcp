@@ -120,7 +120,7 @@ func TestAttachRepoStatus_PairedStage_DoesNotInheritDevAdoption(t *testing.T) {
 	stateDir := t.TempDir()
 	meta := workflow.NewServiceMeta("proj", topology.PlanModeStandard)
 	meta.Hostname = "appdev"
-	meta.StageHostname = "appstage"
+	meta.Stages = []topology.Stage{{Hostname: "appstage"}}
 	meta.SetRepoBaseline("av-dev", topology.RepoProvenanceExisting)
 	if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
 		t.Fatal(err)

@@ -65,9 +65,9 @@ func TestHandleSetDefaultSetup_PairWritesBothFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
-		Hostname:      "appdev",
-		Mode:          topology.PlanModeStandard,
-		StageHostname: "appstage",
+		Hostname: "appdev",
+		Mode:     topology.PlanModeStandard,
+		Stages:   []topology.Stage{{Hostname: "appstage"}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -88,8 +88,8 @@ func TestHandleSetDefaultSetup_PairWritesBothFields(t *testing.T) {
 	if meta.PrimarySetupName != "dev" {
 		t.Errorf("PrimarySetupName: got %q", meta.PrimarySetupName)
 	}
-	if meta.StageSetupName != "prod" {
-		t.Errorf("StageSetupName: got %q", meta.StageSetupName)
+	if meta.FirstStage().Setup != "prod" {
+		t.Errorf("StageSetupName: got %q", meta.FirstStage().Setup)
 	}
 }
 
@@ -117,8 +117,8 @@ func TestHandleSetDefaultSetup_SingletonIgnoresStageSetup(t *testing.T) {
 		t.Fatalf("expected success; got: %s", getTextContent(t, result))
 	}
 	meta, _ := workflow.ReadServiceMeta(stateDir, "appdev")
-	if meta.StageSetupName != "" {
-		t.Errorf("StageSetupName must stay empty for singleton; got %q", meta.StageSetupName)
+	if meta.FirstStage().Setup != "" {
+		t.Errorf("StageSetupName must stay empty for singleton; got %q", meta.FirstStage().Setup)
 	}
 }
 

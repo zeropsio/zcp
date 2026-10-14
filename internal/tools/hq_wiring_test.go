@@ -387,7 +387,7 @@ func TestWireHQPair_TheRecipeRepositoryIsNoServicesRepository(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			lab := newHQLab(t)
 			if err := workflow.WriteServiceMeta(lab.stateDir, &workflow.ServiceMeta{
-				Hostname: tt.hostname, Mode: topology.PlanModeStandard, StageHostname: tt.hostname + "stage",
+				Hostname: tt.hostname, Mode: topology.PlanModeStandard, Stages: []topology.Stage{{Hostname: tt.hostname + "stage"}},
 				BootstrapSession: "test", BootstrappedAt: "2026-10-02",
 			}); err != nil {
 				t.Fatal(err)

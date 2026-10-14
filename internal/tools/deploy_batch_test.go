@@ -12,6 +12,7 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -118,9 +119,9 @@ func TestDeployBatch_CrossDeploy_PreflightReadsSourceMounts(t *testing.T) {
 
 	// Standard pair metas — one ServiceMeta per pair (spec-workflows.md §8 E8).
 	for _, m := range []*workflow.ServiceMeta{
-		{Hostname: "apidev", StageHostname: "apistage", Mode: "standard", BootstrapSession: "s1", BootstrappedAt: "2026-04-01T00:00:00Z"},
-		{Hostname: "appdev", StageHostname: "appstage", Mode: "standard", BootstrapSession: "s1", BootstrappedAt: "2026-04-01T00:00:00Z"},
-		{Hostname: "workerdev", StageHostname: "workerstage", Mode: "standard", BootstrapSession: "s1", BootstrappedAt: "2026-04-01T00:00:00Z"},
+		{Hostname: "apidev", Stages: []topology.Stage{{Hostname: "apistage"}}, Mode: "standard", BootstrapSession: "s1", BootstrappedAt: "2026-04-01T00:00:00Z"},
+		{Hostname: "appdev", Stages: []topology.Stage{{Hostname: "appstage"}}, Mode: "standard", BootstrapSession: "s1", BootstrappedAt: "2026-04-01T00:00:00Z"},
+		{Hostname: "workerdev", Stages: []topology.Stage{{Hostname: "workerstage"}}, Mode: "standard", BootstrapSession: "s1", BootstrappedAt: "2026-04-01T00:00:00Z"},
 	} {
 		if err := workflow.WriteServiceMeta(stateDir, m); err != nil {
 			t.Fatalf("write meta %s: %v", m.Hostname, err)

@@ -1,6 +1,10 @@
 package workflow
 
-import "github.com/zeropsio/zcp/internal/topology"
+import (
+	"slices"
+
+	"github.com/zeropsio/zcp/internal/topology"
+)
 
 // BuildPlan is the single entry point for producing the typed Plan from an
 // envelope. Pure — no I/O, no state, deterministic given the input JSON.
@@ -307,14 +311,13 @@ func snapshotByHostname(services []ServiceSnapshot, host string) ServiceSnapshot
 }
 
 // findDevHalfForStage returns the dev hostname of the standard pair when
-// host is the stage half of one. Empty when host is not a stage half. The
-// dev half is the snapshot whose StageHostname == host. ServiceSnapshot
-// for a stage half does NOT carry the paired dev hostname directly — only
-// the dev half has StageHostname populated — so the lookup is a forward
-// scan over services.
+// host is a stage of one. Empty when host is not a stage. The dev half is
+// the snapshot whose pair stages include host. ServiceSnapshot for a stage
+// does NOT carry the paired dev hostname directly — only the dev half
+// lists its stages — so the lookup is a forward scan over services.
 func findDevHalfForStage(host string, services []ServiceSnapshot) string {
 	for _, svc := range services {
-		if svc.StageHostname == host && svc.Mode == topology.ModeStandard {
+		if svc.Mode == topology.ModeStandard && slices.Contains(svc.PairStageHostnames(), host) {
 			return svc.Hostname
 		}
 	}

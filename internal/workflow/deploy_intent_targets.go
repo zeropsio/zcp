@@ -1,13 +1,17 @@
 package workflow
 
-import "github.com/zeropsio/zcp/internal/topology"
+import (
+	"slices"
+
+	"github.com/zeropsio/zcp/internal/topology"
+)
 
 // SnapshotsFromMetas builds minimal ServiceSnapshots from ServiceMeta for
 // resolver consumption in non-envelope contexts — the auto-close gate in
 // work_session.go evaluates without live API state, so it can't reuse the
 // envelope's `buildServiceSnapshots`. For standard pairs, this helper emits
-// both the dev-half snapshot (with StageHostname populated) AND a synthetic
-// stage-half snapshot (Mode=ModeStage) so DeployIntent.Resolve can answer
+// both the dev-half snapshot (with its stages populated) AND a synthetic
+// snapshot per stage (Mode=ModeStage) so DeployIntent.Resolve can answer
 // findDevHalfForStage and produce a paired BuildTarget.
 //
 // Status / Deployed / Resumable / TypeVersion / RuntimeClass stay zero —
@@ -31,13 +35,17 @@ func SnapshotsFromMetas(metas []*ServiceMeta) []ServiceSnapshot {
 			BuildIntegration: m.BuildIntegration,
 			RemoteURL:        m.RemoteURL,
 			TrackedRef:       m.TrackedRef,
-			StageHostname:    m.StageHostname,
+			StageHostname:    m.FirstStage().Hostname,
+			Stages:           slices.Clone(m.Stages),
 			Bootstrapped:     true,
 			Deployed:         deployed,
 		})
-		if m.Mode == topology.ModeStandard && m.StageHostname != "" {
+		if m.Mode != topology.ModeStandard {
+			continue
+		}
+		for _, stage := range m.Stages {
 			out = append(out, ServiceSnapshot{
-				Hostname:         m.StageHostname,
+				Hostname:         stage.Hostname,
 				Mode:             topology.ModeStage,
 				CloseDeployMode:  m.CloseDeployMode,
 				GitPushState:     m.GitPushState,

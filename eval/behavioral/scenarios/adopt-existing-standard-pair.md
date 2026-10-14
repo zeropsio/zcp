@@ -51,7 +51,7 @@ verification:
   unchanged: [appdev, appstage]
   meta:
     - {hostname: appdev, field: mode, expect: "standard"}
-    - {hostname: appdev, field: stageHostname, expect: "appstage"}
+    - {hostname: appdev, field: stages.0.hostname, expect: "appstage"}
   never: ["zerops_import{override=true}", "zerops_delete"]
 userPersona: |
   Jsi vývojář a v Zerops dashboardu už máš standard pair postavený

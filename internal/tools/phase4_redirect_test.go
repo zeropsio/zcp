@@ -21,7 +21,7 @@ func TestResolveBuildTargetForHost_StandardPair_GitPush(t *testing.T) {
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		StageHostname:    "appstage",
+		Stages:           []topology.Stage{{Hostname: "appstage"}},
 		CloseDeployMode:  topology.CloseModeGitPush,
 		GitPushState:     topology.GitPushConfigured,
 		BootstrapSession: "test",
@@ -61,7 +61,7 @@ func TestResolveBuildTargetForHost_StandardPair_AutoNoRedirect(t *testing.T) {
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		StageHostname:    "appstage",
+		Stages:           []topology.Stage{{Hostname: "appstage"}},
 		CloseDeployMode:  topology.CloseModeAuto,
 		BootstrapSession: "test",
 		BootstrappedAt:   "2026-05-19",
@@ -89,7 +89,7 @@ func TestResolveBuildTargetForHost_StandardPair_GitPushUnconfigured(t *testing.T
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		StageHostname:    "appstage",
+		Stages:           []topology.Stage{{Hostname: "appstage"}},
 		CloseDeployMode:  topology.CloseModeGitPush,
 		GitPushState:     topology.GitPushUnconfigured,
 		BootstrapSession: "test",
@@ -148,7 +148,7 @@ func TestHandleRecordDeploy_RedirectsDevToStage(t *testing.T) {
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		StageHostname:    "appstage",
+		Stages:           []topology.Stage{{Hostname: "appstage"}},
 		CloseDeployMode:  topology.CloseModeGitPush,
 		GitPushState:     topology.GitPushConfigured,
 		BootstrapSession: "test",

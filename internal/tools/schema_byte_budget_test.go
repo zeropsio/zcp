@@ -100,7 +100,10 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// `description` says that describing is what asks for the review.
 		// Raised +55 (18908→18963) for action="mac-pair" in the action list:
 		// a Mate's guidance for pairing the user's Mac, no new field.
-		"zerops_workflow":    18963,
+		// Raised +184 (18963→19147) for the plan runtime's `stages`: a pair
+		// with one dev service and several stages, each {hostname, setup};
+		// no description — the bootstrap atoms carry its use.
+		"zerops_workflow":    19147,
 		"zerops_record_fact": 3299,
 		"zerops_dev_server":  3220,
 		// Raised +28 (2945→2973) for the OS-axis migration: the runtime/services

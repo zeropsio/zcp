@@ -71,7 +71,7 @@ func TestResolveLaunchSetupName_CascadePrecedence(t *testing.T) {
 			name:             "per-promotable override wins over all",
 			promotable:       LaunchPromotableInput{Hostname: "app", ProdSetupNameOverride: "custom"},
 			workflowOverride: "workflow-level",
-			meta:             &workflow.ServiceMeta{StageSetupName: "stage-name", PrimarySetupName: "primary-name"},
+			meta:             &workflow.ServiceMeta{Stages: []topology.Stage{{Setup: "stage-name"}}, PrimarySetupName: "primary-name"},
 			want:             "custom",
 			wantProvenance:   setupProvenanceOverride,
 		},
@@ -79,21 +79,21 @@ func TestResolveLaunchSetupName_CascadePrecedence(t *testing.T) {
 			name:             "workflow-level override beats meta",
 			promotable:       LaunchPromotableInput{Hostname: "app"},
 			workflowOverride: "workflow-level",
-			meta:             &workflow.ServiceMeta{StageSetupName: "stage-name"},
+			meta:             &workflow.ServiceMeta{Stages: []topology.Stage{{Setup: "stage-name"}}},
 			want:             "workflow-level",
 			wantProvenance:   setupProvenanceOverride,
 		},
 		{
 			name:           "meta.StageSetupName beats meta.PrimarySetupName",
 			promotable:     LaunchPromotableInput{Hostname: "app"},
-			meta:           &workflow.ServiceMeta{StageSetupName: "stage-name", PrimarySetupName: "primary-name"},
+			meta:           &workflow.ServiceMeta{Stages: []topology.Stage{{Setup: "stage-name"}}, PrimarySetupName: "primary-name"},
 			want:           "stage-name",
 			wantProvenance: setupProvenanceStageSetup,
 		},
 		{
 			name:           "meta.ProdSetupName is the recorded-prod source",
 			promotable:     LaunchPromotableInput{Hostname: "app"},
-			meta:           &workflow.ServiceMeta{ProdSetupName: "prod", StageSetupName: "stage-name"},
+			meta:           &workflow.ServiceMeta{ProdSetupName: "prod", Stages: []topology.Stage{{Setup: "stage-name"}}},
 			want:           "prod",
 			wantProvenance: setupProvenanceRecordedProd,
 		},
@@ -146,8 +146,7 @@ func TestLaunchTargetSetupName_CascadePrecedence(t *testing.T) {
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         "apidev",
 		Mode:             topology.PlanModeStandard,
-		StageHostname:    "apistage",
-		StageSetupName:   "stage-from-meta",
+		Stages:           []topology.Stage{{Hostname: "apistage", Setup: "stage-from-meta"}},
 		PrimarySetupName: "primary-from-meta",
 	}); err != nil {
 		t.Fatal(err)

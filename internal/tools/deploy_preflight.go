@@ -101,9 +101,11 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 	// Gate B write-back), use it directly. Skips the role+hostname
 	// fallback entirely so a setup-name the user explicitly chose
 	// (set-default-setup, P6) survives recipe-template drift.
+	recorded := ""
 	if setup == "" {
 		if cached := meta.SetupNameFor(targetHostname); cached != "" {
 			setup = cached
+			recorded = cached
 		}
 	}
 
@@ -133,11 +135,17 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 		// recovery in the wire shape.
 		availableSetups := doc.SetupNames()
 		if len(availableSetups) > 1 {
+			reason := "no setup matched hostname / suffix conventions and yaml has multiple blocks"
+			if recorded != "" {
+				// The pair records this half's setup (a stage's in Stages):
+				// it must exist in zerops.yaml, and no convention replaces it.
+				reason = fmt.Sprintf("%s records setup %q, which zerops.yaml does not declare — choose from availableSetups", targetHostname, recorded)
+			}
 			return setup, nil, &workflow.ErrRequiresSetupInput{
 				Service:         targetHostname,
 				TargetHostname:  targetHostname,
 				AvailableSetups: availableSetups,
-				Reason:          "no setup matched hostname / suffix conventions and yaml has multiple blocks",
+				Reason:          reason,
 			}
 		}
 		tried := targetHostname

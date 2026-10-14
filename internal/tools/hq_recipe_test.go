@@ -43,7 +43,8 @@ func newRecipeLab(t *testing.T) *hqLab {
 	lab.ssh.mock = lab.mock
 	lab.wire()
 	if err := workflow.UpdateServiceMeta(lab.stateDir, "appdev", func(m *workflow.ServiceMeta) error {
-		m.PrimarySetupName, m.StageSetupName = "api", "prod"
+		m.PrimarySetupName = "api"
+		m.SetStageSetup(m.FirstStage().Hostname, "prod")
 		return nil
 	}); err != nil {
 		t.Fatal(err)

@@ -59,8 +59,8 @@ func TestLocalAutoAdopt_NoRuntimes_LocalOnly(t *testing.T) {
 	if result.Meta.Hostname != "myproject" {
 		t.Errorf("Hostname = %q, want project name", result.Meta.Hostname)
 	}
-	if result.Meta.StageHostname != "" {
-		t.Errorf("StageHostname = %q, want empty (no runtime)", result.Meta.StageHostname)
+	if result.Meta.FirstStage().Hostname != "" {
+		t.Errorf("StageHostname = %q, want empty (no runtime)", result.Meta.FirstStage().Hostname)
 	}
 	// Phase 9 parity: zero-runtime adoption no longer pre-picks a close-mode.
 	// Container bootstrap leaves CloseDeployMode=unset until strategy-review
@@ -103,8 +103,8 @@ func TestLocalAutoAdopt_OneRuntime_LocalStageLinked(t *testing.T) {
 	if result.Meta.Mode != topology.PlanModeLocalStage {
 		t.Errorf("Mode = %q, want local-stage", result.Meta.Mode)
 	}
-	if result.Meta.StageHostname != "apistage" {
-		t.Errorf("StageHostname = %q, want apistage", result.Meta.StageHostname)
+	if result.Meta.FirstStage().Hostname != "apistage" {
+		t.Errorf("StageHostname = %q, want apistage", result.Meta.FirstStage().Hostname)
 	}
 	if !result.StageAutoLinked {
 		t.Error("StageAutoLinked = false, want true")
@@ -203,8 +203,8 @@ func TestLocalAutoAdopt_OneRuntime_StartedWithoutCode_NoStamp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LocalAutoAdopt: %v", err)
 	}
-	if result.Meta.StageHostname != "apistage" {
-		t.Errorf("StageHostname = %q, want apistage", result.Meta.StageHostname)
+	if result.Meta.FirstStage().Hostname != "apistage" {
+		t.Errorf("StageHostname = %q, want apistage", result.Meta.FirstStage().Hostname)
 	}
 	if result.Meta.FirstDeployedAt != "" {
 		t.Errorf("FirstDeployedAt stamped for a stage holding only its startWithoutCode placeholder; got %q", result.Meta.FirstDeployedAt)
@@ -247,8 +247,8 @@ func TestLocalAutoAdopt_MultipleRuntimes_LocalOnlyWithEnumeration(t *testing.T) 
 	if result.Meta.Mode != topology.PlanModeLocalOnly {
 		t.Errorf("Mode = %q, want local-only (ambiguous → no auto-link)", result.Meta.Mode)
 	}
-	if result.Meta.StageHostname != "" {
-		t.Errorf("StageHostname = %q, want empty (refused to guess)", result.Meta.StageHostname)
+	if result.Meta.FirstStage().Hostname != "" {
+		t.Errorf("StageHostname = %q, want empty (refused to guess)", result.Meta.FirstStage().Hostname)
 	}
 	if result.StageAutoLinked {
 		t.Error("StageAutoLinked = true, want false")
@@ -298,7 +298,7 @@ func TestFormatLocalStateNote_Shapes(t *testing.T) {
 		{
 			name: "local-stage linked",
 			metas: []*ServiceMeta{
-				{Hostname: "myproject", StageHostname: "apistage", Mode: topology.PlanModeLocalStage},
+				{Hostname: "myproject", Stages: []topology.Stage{{Hostname: "apistage"}}, Mode: topology.PlanModeLocalStage},
 			},
 			services: []platform.ServiceStack{
 				{Name: "apistage", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
