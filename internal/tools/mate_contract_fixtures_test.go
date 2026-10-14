@@ -6,11 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/devsup"
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -312,32 +312,18 @@ func TestMateContractFixtures_DevServerResults_RunningIsTheReportedServersStatus
 
 func TestMateContractFixtures_Declaration_FollowsTheRules(t *testing.T) {
 	t.Parallel()
-	var decl contractDeclaration
-	readContractFixture(t, "dev-servers.declaration.json", &decl)
+	// The shape is strict here; the rules are the supervisor's own parser.
+	raw := readContractFixture(t, "dev-servers.declaration.json", &contractDeclaration{})
+	decl, err := devsup.ParseDeclaration(raw)
+	if err != nil {
+		t.Fatalf("the supervisor refuses the declaration: %v", err)
+	}
 	if decl.Version != 1 {
 		t.Errorf("version = %d, want 1", decl.Version)
 	}
-	nameRe := regexp.MustCompile(`^[a-z][a-z0-9-]{0,39}$`)
-	names, ports := map[string]bool{}, map[int]bool{}
 	got := make([]string, 0, len(decl.Servers))
 	for _, s := range decl.Servers {
 		got = append(got, s.Name)
-		if !nameRe.MatchString(s.Name) || names[s.Name] {
-			t.Errorf("name %q must match %s and be unique", s.Name, nameRe)
-		}
-		names[s.Name] = true
-		if s.Port != 0 {
-			if ports[s.Port] || s.Port > 65535 {
-				t.Errorf("port %d must be unique and valid", s.Port)
-			}
-			ports[s.Port] = true
-		}
-		if s.Command == "" {
-			t.Errorf("%s: command is required", s.Name)
-		}
-		if clean := filepath.Clean(s.Cwd); filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, "../") {
-			t.Errorf("%s: cwd %q leaves the repo", s.Name, s.Cwd)
-		}
 	}
 	if want := []string{"web", "api", "worker", "admin"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("servers = %v, want %v", got, want)
