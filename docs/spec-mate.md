@@ -806,7 +806,12 @@ run:
 
 The binary lands in the image, never in `$HOME` or `~/bin` (both are lost on redeploy, P2 S4).
 `run --root <dir>` overrides the repo root (variant B); in variant B the supervisor runs only the
-entries whose `service` is its own `hostname` (`--service` overrides it). The download line falls
+entries whose `service` is its own `hostname` (`--service` overrides it). For a variant-B dev
+service zcp writes `start: zcp-devsup run --root <mountPath>` — the code volume's mount
+(`ServiceMeta.WorkingDirFor`), where the shared declaration lives — and edits that dev setup in the
+folder its deploy runs from; variant A keeps `zcp-devsup run`
+(`TestDevServer_FirstStartOnAVariantBDevService_RunsTheSupervisorOnTheCodeVolume`,
+`TestDeploy_NewVariantBDevSetup_RunsTheSupervisorOnTheCodeVolume`). The download line falls
 back to `wget` because Alpine bases lack `curl`; it runs on both kinds of base (bun on Alpine,
 go on Ubuntu).
 
@@ -1044,15 +1049,25 @@ CodeVolume *CodeVolume `json:"codeVolume,omitempty"`
   folder below the source's mount. In a project holding a local-storage service a `workingDir`
   under `/var/www` is a container path unless its first folder is a service's hostname, which stays
   refused as a local mount path (`TestDeployTool_FromVariantBDevService_RunsWithWorkingDirOnTheVolume`).
-- Stand-up of a pair recorded with `codeVolume`: the dev half deploys from the checkout in
-  `/var/www`, then every further dev service deploys its own dev setup from the same checkout; then
-  the volume is filled once from that checkout (left as it is when it already holds `.git`) and
-  `zcp-devsup ctl reload` runs on every dev service; the pair's stage builds from the volume after
-  the fill. A tier pair whose dev half is a further dev service folds into the variant-B pair; its
-  stage is reported as a further stage the stand-up does not build
-  (`TestStandup_VariantB_FillsTheVolumeOnceAndEveryDevServiceDeploysItsOwnDevSetup`).
-- Not built: recognising variant B from a fresh tier (the stand-up reads it from the record only),
-  and building more than one stage per pair in the stand-up (variant A or B).
+- Stand-up recognises the pair from the tier as it recognises every pair: per repository, one
+  runtime that is no stage is the dev half of every stage the repository builds (variant A, a stage
+  per part); several such runtimes beside the tier's only local-storage service are one variant-B
+  pair — the first in the tier's order the dev half, the rest further dev services — and without
+  exactly one local-storage service each stage pairs with the runtime named like it, as before.
+  The pair's stages put the one named like the dev half first, then the tier's order
+  (`TestParseMateTier_OneDevHalfTakesEveryStageOfItsRepository`,
+  `TestParseMateTier_VariantB_SeveralDevServicesOfOneRepositoryAndACodeVolumeAreOnePair`).
+- Stand-up of a variant-B pair: it is adopted with `codeVolume`, and once the repository is checked
+  out its `mountPath` is read from `run.volume` of every dev setup of the pair in `zerops.yml` — one
+  that does not mount the volume, mounts it elsewhere than the others or outside `/var/www` stops
+  the pair. The dev half deploys from the checkout in `/var/www`, then every further dev service
+  deploys its own dev setup from the same checkout; then the volume is filled once from that
+  checkout (left as it is when it already holds `.git`) and `zcp-devsup ctl reload` runs on every
+  dev service; the pair's stages build from the volume after the fill
+  (`TestStandup_VariantBFromAFreshTier_StandsUpAsOnePair`,
+  `TestStandup_VariantB_FillsTheVolumeOnceAndEveryDevServiceDeploysItsOwnDevSetup`).
+- Stand-up builds every stage of a pair, variant A or B, each cross-deployed from the dev half with
+  its own setup (`TestStandup_DeploysEveryStageOfAPair`).
 
 #### 2.8a.5 Tier: hostname → `zeropsSetup`
 
