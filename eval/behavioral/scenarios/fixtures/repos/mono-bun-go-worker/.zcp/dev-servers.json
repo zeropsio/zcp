@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "servers": [
+    { "name": "web", "port": 3000, "command": "bun --watch index.ts", "cwd": "apps/web", "service": "webdev" },
+    { "name": "api", "port": 8080, "command": "go build -o app . && exec ./app", "cwd": "apps/api", "service": "apidev",
+      "watch": { "paths": ["apps/api"], "ignore": ["apps/api/app"] } },
+    { "name": "worker", "command": "bun --watch index.ts", "cwd": "apps/worker", "service": "webdev" }
+  ]
+}

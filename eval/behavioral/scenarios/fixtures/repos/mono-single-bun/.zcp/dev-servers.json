@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "servers": [
+    { "name": "appdev", "port": 3000, "command": "bun --watch index.ts" }
+  ]
+}

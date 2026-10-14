@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "servers": [
+    { "name": "web", "port": 3000, "command": "pnpm dev", "cwd": "apps/web" },
+    { "name": "api", "port": 8080, "command": "pnpm dev", "cwd": "apps/api" }
+  ]
+}
