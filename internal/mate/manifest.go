@@ -25,14 +25,16 @@ const (
 	// release. 0.14.0 is the first release that judges a stand-up by its
 	// zcp process (PID + start) instead of the heartbeat this zcp no longer
 	// writes; it also keeps a link to HQ (EnvHQEnrollment), so zcp treats a
-	// Mate as HQ's whatever its enrollment.
-	MinimumMateVersion = "0.14.0"
+	// Mate as HQ's whatever its enrollment. 0.15.109 is the first release
+	// that accepts the envelope's stages[] and devServers[] (field-order
+	// step 2, PartsMateVersion).
+	MinimumMateVersion = "0.15.109"
 
 	// PartsMateVersion is the first mate release that accepts the envelope's
 	// stages[] and devServers[] (docs/spec-mate.md §2.8a.3, field-order
-	// step 1); empty while no release does. zcp sends them only once
-	// MinimumMateVersion reaches it (step 2) — EnvelopeCarriesParts.
-	PartsMateVersion = ""
+	// step 1). zcp sends them only once MinimumMateVersion reaches it
+	// (step 2) — EnvelopeCarriesParts.
+	PartsMateVersion = "0.15.109"
 
 	// defaultManifestURL is GitHub's own "latest release" redirect for the
 	// fork's stable release asset. The fork's release workflow triggers only

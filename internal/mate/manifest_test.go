@@ -26,9 +26,9 @@ import (
 func validManifestJSON(t *testing.T, overrides map[string]any) []byte {
 	t.Helper()
 	body := map[string]any{
-		"version":     "0.14.2",
-		"asset":       "zerops-mate-0.14.2.tgz",
-		"url":         "https://github.com/zeropsio/mate/releases/download/v0.14.2/zerops-mate-0.14.2.tgz",
+		"version":     "0.15.110",
+		"asset":       "zerops-mate-0.15.110.tgz",
+		"url":         "https://github.com/zeropsio/mate/releases/download/v0.15.110/zerops-mate-0.15.110.tgz",
 		"sha256":      strings.Repeat("a", 64),
 		"size":        21690443,
 		"contract":    mate.SupportedContract,
@@ -64,8 +64,8 @@ func TestDesiredRelease_FetchesValidManifest_AndCaches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DesiredRelease(): %v", err)
 	}
-	if got.Version != "0.14.2" || got.Contract != mate.SupportedContract {
-		t.Errorf("DesiredRelease() = %+v, want version 0.14.2 contract %d", got, mate.SupportedContract)
+	if got.Version != "0.15.110" || got.Contract != mate.SupportedContract {
+		t.Errorf("DesiredRelease() = %+v, want version 0.15.110 contract %d", got, mate.SupportedContract)
 	}
 	if requests != 1 {
 		t.Fatalf("expected exactly one fetch, got %d", requests)
@@ -181,7 +181,7 @@ func TestDesiredRelease_RefusesInvalidManifest(t *testing.T) {
 		},
 		{
 			name:      "url is not https",
-			overrides: map[string]any{"url": "http://github.com/zeropsio/mate/releases/download/v0.14.2/zerops-mate-0.14.2.tgz"},
+			overrides: map[string]any{"url": "http://github.com/zeropsio/mate/releases/download/v0.15.110/zerops-mate-0.15.110.tgz"},
 			wantIn:    "https",
 		},
 	}
@@ -243,8 +243,8 @@ func TestDesiredRelease_CacheBelowTheMinimumIsNotTrusted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DesiredRelease(): %v", err)
 	}
-	if got.Version != "0.14.2" || requests != 2 {
-		t.Errorf("DesiredRelease() = %s after %d requests, want the fetched 0.14.2, never the cached 0.12.3", got.Version, requests)
+	if got.Version != "0.15.110" || requests != 2 {
+		t.Errorf("DesiredRelease() = %s after %d requests, want the fetched 0.15.110, never the cached 0.12.3", got.Version, requests)
 	}
 }
 

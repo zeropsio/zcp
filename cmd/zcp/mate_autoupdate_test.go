@@ -55,22 +55,22 @@ func (p *updateProofTransport) RoundTrip(req *http.Request) (*http.Response, err
 	if err := req.Context().Err(); err != nil {
 		return nil, err
 	}
-	body := `{"protocol":1,"version":"0.14.2","bootId":"new","ready":true}`
+	body := `{"protocol":1,"version":"0.15.111","bootId":"new","ready":true}`
 	contentType := "application/json; charset=utf-8"
 	if req.URL.Path == "/api/mate/update/readiness" {
 		p.readinessCalls++
 		if p.readinessCalls == 1 {
 			switch p.invalid {
 			case "protocol":
-				body = `{"protocol":0,"version":"0.14.2","bootId":"new","ready":true}`
+				body = `{"protocol":0,"version":"0.15.111","bootId":"new","ready":true}`
 			case "version":
 				body = `{"protocol":1,"version":"0.14.0","bootId":"new","ready":true}`
 			case "old boot":
-				body = `{"protocol":1,"version":"0.14.2","bootId":"old","ready":true}`
+				body = `{"protocol":1,"version":"0.15.111","bootId":"old","ready":true}`
 			case "empty boot":
-				body = `{"protocol":1,"version":"0.14.2","bootId":"","ready":true}`
+				body = `{"protocol":1,"version":"0.15.111","bootId":"","ready":true}`
 			case "engine not ready":
-				body = `{"protocol":1,"version":"0.14.2","bootId":"new","ready":false}`
+				body = `{"protocol":1,"version":"0.15.111","bootId":"new","ready":false}`
 			}
 		}
 	} else {
@@ -96,7 +96,7 @@ func TestMateUpdate_ReadinessProof_Result(t *testing.T) {
 			original := http.DefaultTransport
 			http.DefaultTransport = transport
 			t.Cleanup(func() { http.DefaultTransport = original })
-			if err := mateUpdateWaitReady("0.14.2", "old", time.Now().Add(time.Second)); err != nil {
+			if err := mateUpdateWaitReady("0.15.111", "old", time.Now().Add(time.Second)); err != nil {
 				t.Fatal(err)
 			}
 			if transport.readinessCalls != 2 {
@@ -185,7 +185,7 @@ func (p *startupReadinessTransport) RoundTrip(req *http.Request) (*http.Response
 		<-req.Context().Done()
 		return nil, req.Context().Err()
 	}
-	body := `{"protocol":1,"version":"0.14.2","bootId":"new","ready":true}`
+	body := `{"protocol":1,"version":"0.15.111","bootId":"new","ready":true}`
 	if req.URL.Path == "/.well-known/t3/environment" {
 		body = `{"basePath":"/mate"}`
 	}
@@ -208,7 +208,7 @@ func TestMateUpdate_ReadinessDuringStartup(t *testing.T) {
 			http.DefaultTransport = transport
 			t.Cleanup(func() { http.DefaultTransport = original })
 			start := time.Now()
-			err := mateUpdateWaitReady("0.14.2", "old", start.Add(tc.budget))
+			err := mateUpdateWaitReady("0.15.111", "old", start.Add(tc.budget))
 			if (err == nil) != tc.wantReady {
 				t.Fatalf("ready=%v, error=%v", err == nil, err)
 			}
