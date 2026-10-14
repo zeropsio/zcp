@@ -350,6 +350,36 @@ func TestDevServer_UndeclaredStart_DeclaredOnce(t *testing.T) {
 	}
 }
 
+// TestDevServer_WorkDirOfACrewCopy_NeverRewritesTheDeclaredCwd (orchestrator
+// decision D, review hole 2): a start or restart of a declared server with
+// workDir naming another directory (a crew copy) leaves the repo's
+// declaration as written and runs nothing — a copy runs as a supervisor
+// runtime entry (docs/spec-mate.md §2.8a.2). The declared directory itself
+// is accepted.
+func TestDevServer_WorkDirOfACrewCopy_NeverRewritesTheDeclaredCwd(t *testing.T) {
+	t.Parallel()
+	for _, action := range []string{"start", "restart"} {
+		c := devservertest.NewSupervised(twoServers)
+		_, err := ExecuteDevServer(context.Background(), c, mockClientWithServices("appdev"), "p1",
+			DevServerParams{Action: action, Hostname: "appdev", Name: "web", WorkDir: "/var/www/.crew/ada"})
+		var pe *platform.PlatformError
+		if !errors.As(err, &pe) || !strings.Contains(pe.Message, "apps/web") || !strings.Contains(pe.Suggestion, "zcp-devsup ctl run") {
+			t.Fatalf("%s with a crew copy's workDir: err = %v, want a refusal naming the declared cwd and the runtime entry", action, err)
+		}
+		if c.Declaration != twoServers || sentWith(c, "dev-servers.json.tmp") != 0 {
+			t.Errorf("%s with a crew copy's workDir rewrote the declaration: %s", action, c.Declaration)
+		}
+		if sentWith(c, "zcp-devsup ctl '"+action+"'") != 0 {
+			t.Errorf("%s with a crew copy's workDir still asked the supervisor to %s: %q", action, action, c.Sent())
+		}
+	}
+	c := devservertest.NewSupervised(twoServers)
+	runDevServer(t, c, DevServerParams{Action: "restart", Hostname: "appdev", Name: "web", WorkDir: "/var/www/apps/web"})
+	if c.Declaration != twoServers {
+		t.Errorf("a restart naming the declared directory rewrote the declaration: %s", c.Declaration)
+	}
+}
+
 // TestDevServer_InvalidDeclaration_NeverOverwritten: zcp never overwrites a
 // declaration it cannot read (docs/spec-mate.md §2.8a.1).
 func TestDevServer_InvalidDeclaration_NeverOverwritten(t *testing.T) {

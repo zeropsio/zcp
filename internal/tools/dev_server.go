@@ -75,7 +75,7 @@ func devServerInputSchema() *jsonschema.Schema {
 		},
 		"workDir": {
 			Type:        "string",
-			Description: "Absolute working directory inside the repo at /var/www (e.g. /var/www/apps/web). Defaults to /var/www. The dev-server command runs there.",
+			Description: "Absolute working directory inside the repo at /var/www (e.g. /var/www/apps/web). Defaults to /var/www. The dev-server command runs there. Set once, when the server is first declared; a declared server keeps the directory its declaration names.",
 		},
 		"noHttpProbe": flexBoolSchema("Skip the HTTP health probe. Set true for worker services that have no HTTP port — NATS/Kafka consumers, disk-queue runners, cron-style processes. With noHttpProbe=true, 'port' becomes optional and the tool decides 'running' from the supervisor's status after a 3-second settle. This tool CANNOT verify a worker is actually consuming messages in no-probe mode — always follow up with zerops_logs to confirm the subscription loop is alive."),
 	}, "action", "hostname")

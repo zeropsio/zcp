@@ -459,6 +459,13 @@ func wantedServer(p DevServerParams, name string, declared devsup.Server, isDecl
 		if err != nil {
 			return devsup.Server{}, err
 		}
+		// The declaration is the repo's: another directory (a crew copy)
+		// never rewrites a declared server's cwd (orchestrator decision D).
+		if isDeclared && cwd != path.Clean(declared.Cwd) {
+			return devsup.Server{}, platform.NewPlatformError(platform.ErrInvalidParameter,
+				fmt.Sprintf("Dev server %s is declared in %s to run in %s, not %s", name, devsup.DeclarationPath, declared.Cwd, p.WorkDir),
+				"To move it, edit its cwd in "+devsup.DeclarationPath+" and restart it. A copy of the repo runs as a supervisor runtime entry beside it: zcp-devsup ctl run --name <name> --cwd <dir> --port <port> -- <command> over SSH, and zcp-devsup ctl rm <name> ends it.")
+		}
 		want.Cwd = cwd
 	}
 	switch {
