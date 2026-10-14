@@ -131,11 +131,15 @@ type GitPushResult struct {
 	// Build-watch fields (spec-git-delivery-target §6.1): in L1 the push
 	// IS the deploy, so the handler follows the integration-triggered
 	// build to terminal instead of returning at the push receipt.
-	BuildTarget   string `json:"buildTarget,omitempty"`   // hostname the integration rebuilds
-	BuildStatus   string `json:"buildStatus,omitempty"`   // last observed appVersion status
-	BuildObserved bool   `json:"buildObserved,omitempty"` // an integration build appeared
-	AutoRecorded  bool   `json:"autoRecorded,omitempty"`  // ACTIVE build auto-recorded (record-deploy bridge not needed)
-	VerifyTarget  string `json:"verifyTarget,omitempty"`  // hostname to verify after a landed build
+	BuildTarget string `json:"buildTarget,omitempty"` // hostname the integration rebuilds
+	// BuildTargets is every hostname the push rebuilds, only when it is
+	// more than one: every stage of a pair (spec-mate §2.8a). BuildTarget is
+	// the first.
+	BuildTargets  []string `json:"buildTargets,omitempty"`
+	BuildStatus   string   `json:"buildStatus,omitempty"`   // last observed appVersion status
+	BuildObserved bool     `json:"buildObserved,omitempty"` // an integration build appeared
+	AutoRecorded  bool     `json:"autoRecorded,omitempty"`  // ACTIVE build auto-recorded (record-deploy bridge not needed)
+	VerifyTarget  string   `json:"verifyTarget,omitempty"`  // hostname to verify after a landed build
 
 	// Failure depth on a FAILED integration build — same agents-read-first
 	// contract as DeployResult.

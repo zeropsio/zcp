@@ -67,7 +67,8 @@ func TestResolveBuildTarget(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			host, _, decision := resolveBuildTarget(tt.meta, tt.requested, tt.override)
+			builds, decision := resolveBuildTarget(tt.meta, tt.requested, tt.override)
+			host, _ := firstBuild(builds)
 			if host != tt.wantHost {
 				t.Errorf("host = %q, want %q", host, tt.wantHost)
 			}

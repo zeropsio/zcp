@@ -837,19 +837,25 @@ func finishGitPushWithBuildWatch(
 		result.NextActions = manualBridge
 		return
 	}
-	buildHost, _ := anticipatedBuildTarget(meta)
-	if buildHost == "" {
-		buildHost = meta.Hostname
+	builds := anticipatedBuilds(meta)
+	if len(builds) == 0 {
+		builds = []topology.StageRef{{Hostname: meta.Hostname}}
 	}
+	buildHost := builds[0].Hostname
 	result.BuildTarget = buildHost
+	if len(builds) > 1 {
+		for _, b := range builds {
+			result.BuildTargets = append(result.BuildTargets, b.Hostname)
+		}
+	}
 
 	// No integration declared → nothing will fire. Surface the standing
 	// three-way choice (spec-git-delivery-target §2, L1-incomplete) —
 	// never a silent PUSHED.
 	if meta.BuildIntegration == "" || meta.BuildIntegration == topology.BuildIntegrationNone {
 		result.NextActions = fmt.Sprintf(
-			"Push landed, but NO build integration is wired — nothing rebuilds %q from the repo. Choose: (1) wire it (recommended): zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook\"; (2) one-time sync deploy: zerops_deploy targetService=%q breakGlass=true; (3) leave the service on its current version. %s",
-			buildHost, meta.Hostname, meta.Hostname, manualBridge,
+			"Push landed, but NO build integration is wired — nothing rebuilds %s from the repo. Choose: (1) wire it (recommended): zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook\"; (2) one-time sync deploy: zerops_deploy targetService=%q breakGlass=true; (3) leave the service on its current version. %s",
+			quotedHostList(builds), meta.Hostname, meta.Hostname, manualBridge,
 		)
 		return
 	}
@@ -858,6 +864,72 @@ func finishGitPushWithBuildWatch(
 		result.NextActions = manualBridge
 		return
 	}
+	if len(builds) == 1 {
+		watchIntegrationBuildOn(ctx, client, projectID, logFetcher, onProgress, input, stateDir, pushedAt, meta, buildHost, manualBridge, result)
+		return
+	}
+	// One commit, all parts (spec-mate §2.8a): every stage builds from the
+	// push. Each is watched and recorded on its own; the first that did not
+	// land decides what the agent does next.
+	var landed []topology.StageRef
+	var pending *ops.GitPushResult
+	for _, b := range builds {
+		one := &ops.GitPushResult{}
+		watchIntegrationBuildOn(ctx, client, projectID, logFetcher, onProgress, input, stateDir, pushedAt, meta, b.Hostname, manualBridge, one)
+		result.Warnings = append(result.Warnings, one.Warnings...)
+		if one.Status == gitPushStatusDelivered {
+			landed = append(landed, b)
+		} else if pending == nil {
+			pending = one
+		}
+	}
+	if pending == nil {
+		result.Status = gitPushStatusDelivered
+		result.BuildObserved = true
+		result.BuildStatus = appVersionActive
+		result.AutoRecorded = true
+		result.VerifyTarget = buildHost
+		result.Message = fmt.Sprintf(
+			"Code pushed from %s and the integration builds landed on %s (ACTIVE). Deploys auto-recorded — no record-deploy ack needed.",
+			input.TargetService, hostList(builds),
+		)
+		result.NextActions = fmt.Sprintf("Run zerops_verify on each of %s for runtime state.", hostList(builds))
+		return
+	}
+	result.BuildObserved = pending.BuildObserved
+	result.BuildStatus = pending.BuildStatus
+	result.BuildLogs = pending.BuildLogs
+	result.FailureClassification = pending.FailureClassification
+	result.NextActions = pending.NextActions
+	if len(landed) > 0 {
+		result.NextActions = fmt.Sprintf("Landed and recorded on %s (ACTIVE). ", hostList(landed)) + result.NextActions
+	}
+}
+
+// gitPushStatusDelivered is a push whose integration build landed ACTIVE;
+// appVersionActive is the app version status of a build that landed.
+const (
+	gitPushStatusDelivered = "DELIVERED"
+	appVersionActive       = "ACTIVE"
+)
+
+// watchIntegrationBuildOn watches the integration build the push triggered on
+// buildHost to terminal and writes what became of it into result:
+// DELIVERED + auto-record on ACTIVE; build logs + classification on FAILED;
+// honest push-landed-build-not-observed otherwise.
+func watchIntegrationBuildOn(
+	ctx context.Context,
+	client platform.Client,
+	projectID string,
+	logFetcher platform.LogFetcher,
+	onProgress ops.ProgressCallback,
+	input DeploySSHInput,
+	stateDir string,
+	pushedAt time.Time,
+	meta *workflow.ServiceMeta,
+	buildHost, manualBridge string,
+	result *ops.GitPushResult,
+) {
 	svc, lookupErr := ops.LookupService(ctx, client, projectID, buildHost)
 	if lookupErr != nil || svc == nil {
 		result.NextActions = manualBridge
@@ -886,8 +958,8 @@ func finishGitPushWithBuildWatch(
 			"Integration build observed on %q (status %s) but did not finish within the watch window. %s",
 			buildHost, watch.Event.Status, manualBridge,
 		)
-	case watch.Event.Status == "ACTIVE":
-		result.Status = "DELIVERED"
+	case watch.Event.Status == appVersionActive:
+		result.Status = gitPushStatusDelivered
 		result.BuildObserved = true
 		result.BuildStatus = watch.Event.Status
 		result.AutoRecorded = true

@@ -215,7 +215,7 @@ func launchConfirmLiveness(ctx context.Context, admin platform.ProjectAdminClien
 			status = "MISSING"
 		}
 		rows = append(rows, map[string]any{"hostname": rt.ProdHostname, "status": status})
-		if status != "ACTIVE" {
+		if status != appVersionActive {
 			warnings = append(warnings, fmt.Sprintf("prod runtime %q is %s (expected ACTIVE) — confirm with the user before closing", rt.ProdHostname, status))
 		}
 	}

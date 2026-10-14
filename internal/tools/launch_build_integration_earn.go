@@ -104,22 +104,29 @@ func earnWebhookIntegrationStatus(ctx context.Context, deps earnProbeDeps, meta 
 	if deps.client == nil || deps.projectID == "" {
 		return false, "integration-status check unavailable (no platform client)"
 	}
-	buildHost, _ := anticipatedBuildTarget(meta)
-	if buildHost == "" {
-		buildHost = meta.Hostname
+	builds := anticipatedBuilds(meta)
+	if len(builds) == 0 {
+		builds = []topology.StageRef{{Hostname: meta.Hostname}}
 	}
-	svc, err := ops.LookupService(ctx, deps.client, deps.projectID, buildHost)
-	if err != nil {
-		return false, fmt.Sprintf("integration-status check failed (lookup %s: %v)", buildHost, err)
+	// Every stage holds its own webhook: the integration is earned only
+	// when each of them reports one (one commit, all parts).
+	configured := make([]string, 0, len(builds))
+	for _, b := range builds {
+		buildHost := b.Hostname
+		svc, err := ops.LookupService(ctx, deps.client, deps.projectID, buildHost)
+		if err != nil {
+			return false, fmt.Sprintf("integration-status check failed (lookup %s: %v)", buildHost, err)
+		}
+		status, err := deps.client.GetServiceStackIntegrationStatus(ctx, svc.ID)
+		if err != nil {
+			return false, fmt.Sprintf("integration-status check failed (%v)", err)
+		}
+		if status.State != platform.IntegrationConfigured {
+			return false, "platform reports no repository integration on " + buildHost + " — the dashboard OAuth step has not completed"
+		}
+		configured = append(configured, fmt.Sprintf("a configured %s integration on %s", status.Provider, buildHost))
 	}
-	status, err := deps.client.GetServiceStackIntegrationStatus(ctx, svc.ID)
-	if err != nil {
-		return false, fmt.Sprintf("integration-status check failed (%v)", err)
-	}
-	if status.State == platform.IntegrationConfigured {
-		return true, fmt.Sprintf("platform reports a configured %s integration on %s", status.Provider, buildHost)
-	}
-	return false, "platform reports no repository integration on " + buildHost + " — the dashboard OAuth step has not completed"
+	return true, "platform reports " + strings.Join(configured, ", ")
 }
 
 // buildIntegrationVerificationNote renders the agent-facing verified-state

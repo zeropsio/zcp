@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -105,7 +106,8 @@ func handleBuildIntegration(
 		}
 		decision := deliveryDecisionForMeta(meta)
 		recommended := string(decision.Recommended)
-		buildHost, buildSetup, btDecision := resolveBuildTarget(meta, input.Service, input.BuildTarget)
+		builds, btDecision := resolveBuildTarget(meta, input.Service, input.BuildTarget)
+		buildHost, buildSetup := firstBuild(builds)
 		body := map[string]any{
 			"status":                    "walkthrough",
 			"service":                   input.Service,
@@ -138,6 +140,7 @@ func handleBuildIntegration(
 			"nextStep":   fmt.Sprintf("Pick an integration and re-call: zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\".", input.Service),
 		}
 		addTopologyFields(body, meta, buildHost, buildSetup, "Walkthrough")
+		addBuildTargets(body, builds, false)
 		if btDecision != nil {
 			body["buildTargetDecision"] = btDecision
 		}
@@ -199,7 +202,8 @@ func handleBuildIntegration(
 		case topology.BuildIntegrationWebhook:
 			return webhookConfirmResponse(ctx, client, projectID, input.Service, input.BuildTarget, meta, stateDir), nil, nil
 		case topology.BuildIntegrationNone: // nothing to re-hand-off
-			buildHost, buildSetup, btDecision := resolveBuildTarget(meta, input.Service, input.BuildTarget)
+			builds, btDecision := resolveBuildTarget(meta, input.Service, input.BuildTarget)
+			buildHost, buildSetup := firstBuild(builds)
 			body := map[string]any{
 				"status":           "noop",
 				"service":          input.Service,
@@ -208,6 +212,7 @@ func handleBuildIntegration(
 				"buildSetup":       buildSetup,
 			}
 			addTopologyFields(body, meta, buildHost, buildSetup, "Re-call")
+			addBuildTargets(body, builds, false)
 			if btDecision != nil {
 				body["buildTargetDecision"] = btDecision
 			}
@@ -279,7 +284,8 @@ func actionsConfirmResponse(
 	stateDir string,
 	repoDriftWarning string,
 ) *mcp.CallToolResult {
-	buildHost, buildSetup, btDecision := resolveBuildTarget(meta, hostname, buildTargetOverride)
+	builds, btDecision := resolveBuildTarget(meta, hostname, buildTargetOverride)
+	buildHost, buildSetup := firstBuild(builds)
 	if buildHost == "" {
 		buildHost = hostname // defensive fallback
 	}
@@ -287,6 +293,16 @@ func actionsConfirmResponse(
 		buildSetup = buildHost
 	}
 	serviceID := actionsLookupServiceID(ctx, client, projectID, buildHost)
+	// Every further stage gets its own push in the workflow, from its own
+	// service-id secret (one commit, all parts — spec-mate §2.8a).
+	further := make([]actionsPush, 0, len(builds))
+	for _, b := range builds[min(1, len(builds)):] {
+		further = append(further, actionsPush{
+			Secret:    actionsServiceIDSecret(b.Hostname),
+			Setup:     b.SetupName,
+			ServiceID: actionsLookupServiceID(ctx, client, projectID, b.Hostname),
+		})
+	}
 	owner, repo, repoOK := ops.ParseGitRemoteOwnerRepo(meta.RemoteURL)
 	ownerRepo := ownerRepoPlaceholder
 	if repoOK {
@@ -319,7 +335,7 @@ func actionsConfirmResponse(
 			"variant":     "setup-aware-zcli",
 			"setup":       buildSetup,
 			"description": workflowDescription,
-			"content":     actionsWorkflowYAML(buildSetup, selfTarget, trackedRef),
+			"content":     actionsWorkflowYAML(buildSetup, selfTarget, trackedRef, further...),
 		},
 		"secrets": []map[string]any{
 			{
@@ -346,9 +362,20 @@ func actionsConfirmResponse(
 		"ghPatRecommendation": "Default to " + ghPATScopeRecommendation(ownerRepo, true) + " Set a calendar reminder to regenerate + re-run `gh secret set` before it lapses.",
 		"nextStep":            "1) Write workflowFile.content at .github/workflows/zerops.yml. 2) Run the two `gh secret set` commands above — each conveys GH_TOKEN per invocation (no login step, no stored gh credential; a stale gh session can never act in place of the current PAT). 3) Push the workflow file. From then on every push to main triggers the GitHub Actions deploy. Keep the default setup-aware zcli workflow unless you are certain the repository has only one setup.",
 	}
-	if !selfTarget {
+	secrets, _ := body["secrets"].([]map[string]any)
+	for _, push := range further {
+		secrets = append(secrets, map[string]any{
+			"name":    push.Secret,
+			"value":   push.ServiceID,
+			"command": ghSecretSetCommand(rt, meta.Hostname, push.Secret, quoteShellLiteral(push.ServiceID), ownerRepo),
+		})
+	}
+	body["secrets"] = secrets
+	addBuildTargets(body, builds, true)
+	if !selfTarget && len(further) == 0 {
 		// The compact wrapper-action variant cannot express -g, so it is
-		// only offered when the build target is NOT the push source.
+		// only offered when the build target is NOT the push source — and
+		// it pushes one service, so never for a pair with several stages.
 		body["alternateWorkflowFiles"] = []map[string]any{
 			{
 				"path":        ".github/workflows/zerops.yml",
@@ -402,7 +429,8 @@ func webhookConfirmResponse(
 	meta *workflow.ServiceMeta,
 	stateDir string,
 ) *mcp.CallToolResult {
-	buildHost, buildSetup, btDecision := resolveBuildTarget(meta, hostname, buildTargetOverride)
+	builds, btDecision := resolveBuildTarget(meta, hostname, buildTargetOverride)
+	buildHost, buildSetup := firstBuild(builds)
 	if buildHost == "" {
 		buildHost = hostname
 	}
@@ -431,6 +459,23 @@ func webhookConfirmResponse(
 		"nextStep":            "The webhook choice is recorded; the integration EXISTS only after the dashboard OAuth completes. Once the pipeline trigger is activated, every push to the chosen branch triggers a build of " + buildHost + " using setup=" + buildSetup + ". Tick \"Trigger once after the activation?\" to also run an immediate build of the current branch state. ZCP verifies the integration against the platform at launch time (or on a re-call of this action).",
 	}
 	addTopologyFields(body, meta, buildHost, buildSetup, "Webhook")
+	if len(builds) > 1 {
+		// Each stage holds its own webhook: the same dashboard steps on
+		// every further stage's page (one commit, all parts).
+		steps := webhookDashboardSteps(dashboardURL, buildHost, buildSetup, setupMandatory)
+		for _, b := range builds[1:] {
+			id := actionsLookupServiceID(ctx, client, projectID, b.Hostname)
+			url := "https://app.zerops.io/dashboard/projects"
+			if id != "" {
+				url = fmt.Sprintf("https://app.zerops.io/service-stack/%s/deploy", id)
+			}
+			mandatory := b.SetupName != "" && b.SetupName != b.Hostname
+			steps = append(steps, webhookDashboardSteps(url, b.Hostname, b.SetupName, mandatory)...)
+		}
+		body["dashboardSteps"] = steps
+		body["nextStep"] = "The webhook choice is recorded; the integration EXISTS only after the dashboard OAuth completes on every stage: " + hostList(builds) + ". Once each pipeline trigger is activated, every push to the chosen branch builds each of them with its own setup. ZCP verifies the integrations against the platform at launch time (or on a re-call of this action)."
+	}
+	addBuildTargets(body, builds, false)
 	if projectID == "" || serviceID == "" {
 		body["dashboardLookupWarning"] = "Could not deep-link to the runtime page (missing serviceId). Open the Zerops dashboard, navigate to the project, then to the runtime service for " + buildHost + ", and switch to the Deploy tab."
 	}
@@ -520,13 +565,13 @@ func buildIntegrationSnapshot(meta *workflow.ServiceMeta, service string) workfl
 // integration always sends builds to the same destination once it fires,
 // and the user typically wires the integration BEFORE switching close-mode.
 //
-// For standard / local-stage pairs: BuildTarget = the first stage, BuildSetup
-// = "prod" (matches recipe convention). For simple/dev/single-runtime modes:
-// BuildTarget = self, BuildSetup = "" (caller defaults to hostname). For
-// local-only modes: BuildTarget = "" (caller's responsibility to refuse).
-func anticipatedBuildTarget(meta *workflow.ServiceMeta) (string, string) {
+// For standard / local-stage pairs: every stage, each with its setup ("prod"
+// by recipe convention when a one-stage pair records none). For simple/dev/
+// single-runtime modes: self, setup "" (caller defaults to hostname). For
+// local-only modes: none (caller's responsibility to refuse).
+func anticipatedBuilds(meta *workflow.ServiceMeta) []topology.StageRef {
 	if meta == nil {
-		return "", ""
+		return nil
 	}
 	// Deployed=true forces past-first-deploy semantics: the integration the
 	// agent is wiring will fire on subsequent pushes, never on the initial
@@ -543,8 +588,15 @@ func anticipatedBuildTarget(meta *workflow.ServiceMeta) (string, string) {
 		Deployed:        true,
 	}
 	snaps := workflow.SnapshotsFromMetas([]*workflow.ServiceMeta{meta})
-	intent := workflow.Resolve(snap, snaps)
-	return intent.BuildTarget, intent.BuildSetup
+	return workflow.Resolve(snap, snaps).Builds()
+}
+
+// firstBuild is the first runtime of builds and its setup; "" for none.
+func firstBuild(builds []topology.StageRef) (string, string) {
+	if len(builds) == 0 {
+		return "", ""
+	}
+	return builds[0].Hostname, builds[0].SetupName
 }
 
 // resolveBuildTarget is the SINGLE owner of the CI build-target decision: it
@@ -561,17 +613,22 @@ func anticipatedBuildTarget(meta *workflow.ServiceMeta) (string, string) {
 // user's settled choice (no decision) — closing the seam the convention used to
 // have none of. The common flows stay zero-friction: user names the stage half,
 // or a simple/single-runtime service → silent convention, no decision.
-func resolveBuildTarget(meta *workflow.ServiceMeta, requestedService, override string) (host, setup string, decision map[string]any) {
-	conventionHost, conventionSetup := anticipatedBuildTarget(meta)
+//
+// builds is every runtime the CI builds, the first being the one the
+// single-target fields name: every stage of a pair, or the one service an
+// override names.
+func resolveBuildTarget(meta *workflow.ServiceMeta, requestedService, override string) (builds []topology.StageRef, decision map[string]any) {
+	builds = anticipatedBuilds(meta)
+	conventionHost, conventionSetup := firstBuild(builds)
 	if meta == nil {
-		return conventionHost, conventionSetup, nil
+		return builds, nil
 	}
 	if ov := strings.TrimSpace(override); ov != "" && (ov == meta.Hostname || isStageOf(meta, ov)) {
 		s := meta.SetupNameFor(ov)
 		if s == "" {
 			s = conventionSetup
 		}
-		return ov, s, nil
+		return []topology.StageRef{{Hostname: ov, SetupName: s}}, nil
 	}
 	if requestedService != "" && requestedService == meta.Hostname &&
 		isStageOf(meta, conventionHost) && conventionHost != meta.Hostname {
@@ -582,7 +639,7 @@ func resolveBuildTarget(meta *workflow.ServiceMeta, requestedService, override s
 			"confirm":   fmt.Sprintf("You named %q (the dev half). Confirm with the user that CI should build→deploy to the stage half %q (convention), OR re-call with buildTarget=%q to wire CI directly on %q instead.", requestedService, conventionHost, requestedService, requestedService),
 		}
 	}
-	return conventionHost, conventionSetup, decision
+	return builds, decision
 }
 
 // actionsWorkflowYAML returns the default .github/workflows/zerops.yml body.
@@ -600,7 +657,10 @@ func resolveBuildTarget(meta *workflow.ServiceMeta, requestedService, override s
 // checkout must not persist its job-scoped GitHub credential into the
 // .git/config that -g ships into the runtime. Pair topologies (CI builds
 // the stage half) stay git-less, mirroring ZCP's cross-deploy semantics.
-func actionsWorkflowYAML(setupName string, selfTarget bool, trackedRef string) string {
+//
+// further are the pushes of a pair's further stages (spec-mate §2.8a), one
+// zcli push each after the first; a self target never has any.
+func actionsWorkflowYAML(setupName string, selfTarget bool, trackedRef string, further ...actionsPush) string {
 	if selfTarget {
 		return fmt.Sprintf(`name: Zerops deploy
 on:
@@ -652,9 +712,75 @@ jobs:
           # --version-name records the built commit (GF-10), "main 7e2d4c1":
           # the pushed branch and the commit's short sha (bash's ${v::7}).
           zcli push --service-id "${{ secrets.ZEROPS_SERVICE_ID }}" --setup %s --version-name "${GITHUB_REF_NAME} ${GITHUB_SHA::7}"
-        env:
+%s        env:
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
-`, trackedRef, quoteShellLiteral(setupName))
+`, trackedRef, quoteShellLiteral(setupName), actionsFurtherPushes(further))
+}
+
+// actionsPush is one further stage's push in the Actions workflow: the
+// repository secret holding its service id, its setup, and the id itself.
+type actionsPush struct {
+	Secret, Setup, ServiceID string
+}
+
+// actionsServiceIDSecret is the repository secret holding a further stage's
+// service id: ZEROPS_SERVICE_ID_<HOSTNAME>. The first build target keeps
+// ZEROPS_SERVICE_ID, so a pair that gains a part keeps its secret.
+func actionsServiceIDSecret(hostname string) string {
+	return "ZEROPS_SERVICE_ID_" + strings.ToUpper(hostname)
+}
+
+// actionsFurtherPushes are the zcli push lines of further, "" for none.
+func actionsFurtherPushes(further []actionsPush) string {
+	var b strings.Builder
+	for _, p := range further {
+		fmt.Fprintf(&b, "          zcli push --service-id \"${{ secrets.%s }}\" --setup %s --version-name \"${GITHUB_REF_NAME} ${GITHUB_SHA::7}\"\n", p.Secret, quoteShellLiteral(p.Setup))
+	}
+	return b.String()
+}
+
+// addBuildTargets names every runtime the CI builds on body, only when it
+// is more than one: each with its setup, and with withSecrets the Actions
+// secret holding its service id. A single build target is the buildTarget
+// field alone.
+func addBuildTargets(body map[string]any, builds []topology.StageRef, withSecrets bool) {
+	if len(builds) < 2 {
+		return
+	}
+	targets := make([]map[string]any, 0, len(builds))
+	for i, b := range builds {
+		target := map[string]any{"hostname": b.Hostname, "setup": b.SetupName}
+		if withSecrets {
+			target["serviceIdSecret"] = "ZEROPS_SERVICE_ID"
+			if i > 0 {
+				target["serviceIdSecret"] = actionsServiceIDSecret(b.Hostname)
+			}
+		}
+		targets = append(targets, target)
+	}
+	body["buildTargets"] = targets
+}
+
+// hostList names the hostnames of builds for a sentence: "a", "a and b",
+// "a, b and c".
+func hostList(builds []topology.StageRef) string {
+	return joinHosts(builds, func(h string) string { return h })
+}
+
+// quotedHostList is hostList with each hostname quoted: `"a"`, `"a" and "b"`.
+func quotedHostList(builds []topology.StageRef) string {
+	return joinHosts(builds, strconv.Quote)
+}
+
+func joinHosts(builds []topology.StageRef, name func(string) string) string {
+	hosts := make([]string, 0, len(builds))
+	for _, b := range builds {
+		hosts = append(hosts, name(b.Hostname))
+	}
+	if len(hosts) < 2 {
+		return strings.Join(hosts, "")
+	}
+	return strings.Join(hosts[:len(hosts)-1], ", ") + " and " + hosts[len(hosts)-1]
 }
 
 // actionsSingleSetupWorkflowYAML returns the compact wrapper-action variant.

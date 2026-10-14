@@ -63,12 +63,13 @@ func repoDeliveryRedirect(stateDir, targetService, strategy string, breakGlass b
 		return nil // nothing consumes the push — the direct deploy is the delivery
 	}
 
-	buildHost, buildSetup := anticipatedBuildTarget(meta)
+	builds := anticipatedBuilds(meta)
+	buildHost, buildSetup := firstBuild(builds)
 	pushArgs := map[string]string{
 		"targetService": meta.Hostname,
 		"strategy":      "git-push",
 	}
-	return jsonResult(map[string]any{
+	body := map[string]any{
 		"status":        "push-delivery-required",
 		"deliveryState": string(topology.DeriveDeliveryState(meta.GitPushState, len(meta.ProdLaunches) > 0)),
 		"service":       targetService,
@@ -76,7 +77,7 @@ func repoDeliveryRedirect(stateDir, targetService, strategy string, breakGlass b
 		"buildTarget":   buildHost,
 		"buildSetup":    buildSetup,
 		"message": "This pair delivers via git push (git-push is configured — the repo is the source of truth and push is the terminal act of development). A direct deploy would put code on the container that the repo never sees. Commit your changes, then push: the integration rebuilds " +
-			buildHost + " from the repo and ZCP watches the build to completion.",
+			hostList(builds) + " from the repo and ZCP watches the build to completion.",
 		"recommended": map[string]any{
 			"tool": "zerops_deploy",
 			"args": pushArgs,
@@ -85,7 +86,9 @@ func repoDeliveryRedirect(stateDir, targetService, strategy string, breakGlass b
 			"how":  "Re-call this exact deploy with breakGlass=true — reserved for a FUNDAMENTAL reason (git host outage, recovery) per the delivery spec.",
 			"note": "Break-glass self-deploy preserves everything (the artifact ships the full tree incl. .git) and the response will flag that the container is now ahead of the repo — push to reconcile as soon as the reason passes.",
 		},
-	})
+	}
+	addBuildTargets(body, builds, false)
+	return jsonResult(body)
 }
 
 // batchRepoDeliveryRedirect applies the same terminal-act rule to
