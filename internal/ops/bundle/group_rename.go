@@ -97,14 +97,25 @@ func promoteReferences(value string, halves []string, renames map[string]string)
 }
 
 // pairRenames maps every pair half's hostname that a group environment
-// renames to the pair's promoted hostname.
-func pairRenames(runtimes []GroupRuntime) map[string]string {
+// renames to the runtime that runs its part there: a stage to its own part's,
+// the dev half to the first part's. A part the group environments leave out
+// renames nothing.
+func pairRenames(runtimes []GroupRuntime, parts map[string][]groupPart) map[string]string {
 	renames := map[string]string{}
 	for _, r := range runtimes {
-		promoted := GroupPromotedHostname(r.DevHostname)
-		for _, half := range []string{r.DevHostname, r.StageHostname} {
-			if half != "" && half != promoted {
-				renames[half] = promoted
+		list := parts[r.DevHostname]
+		if len(list) == 0 {
+			continue
+		}
+		halves := map[string]string{r.DevHostname: list[0].hostname}
+		for _, part := range list {
+			if part.stage != "" {
+				halves[part.stage] = part.hostname
+			}
+		}
+		for half, runtime := range halves {
+			if runtime != "" && half != runtime {
+				renames[half] = runtime
 			}
 		}
 	}

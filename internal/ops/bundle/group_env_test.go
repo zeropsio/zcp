@@ -281,7 +281,7 @@ func TestBuildGroupRecipe_FailsClosed(t *testing.T) {
 			in := groupInputsFixture()
 			in.ProjectEnvs = []ProjectEnvVar{env}
 			in.Runtimes[0].ServiceEnvs = []ProjectEnvVar{env}
-			in.Runtimes[0].StageServiceEnvs = []ProjectEnvVar{env}
+			in.Runtimes[0].Stages[0].ServiceEnvs = []ProjectEnvVar{env}
 			layout, _, err := BuildGroupRecipe(in)
 			if err != nil {
 				t.Fatalf("BuildGroupRecipe: %v", err)
@@ -528,7 +528,7 @@ func TestBuildGroupRecipe_ServiceVariables(t *testing.T) {
 		{Key: "NODE_ENV", Value: "development"},
 		{Key: "SESSION_SECRET", Value: "REDACTED", Sensitive: true},
 	}
-	in.Runtimes[0].StageServiceEnvs = []ProjectEnvVar{
+	in.Runtimes[0].Stages[0].ServiceEnvs = []ProjectEnvVar{
 		{Key: "NODE_ENV", Value: "production"},
 		{Key: "SENDGRID_API_KEY", Value: fakeSendGridKey},
 	}
@@ -592,7 +592,7 @@ func TestBuildGroupRecipe_ASecretNeverReachesTheRepo(t *testing.T) {
 	for key, value := range liveSecrets {
 		in.ProjectEnvs = append(in.ProjectEnvs, ProjectEnvVar{Key: key, Value: value, Sensitive: key == "FLAGGED"})
 		in.Runtimes[0].ServiceEnvs = append(in.Runtimes[0].ServiceEnvs, ProjectEnvVar{Key: key, Value: value, Sensitive: key == "FLAGGED"})
-		in.Runtimes[0].StageServiceEnvs = append(in.Runtimes[0].StageServiceEnvs, ProjectEnvVar{Key: key, Value: value, Sensitive: key == "FLAGGED"})
+		in.Runtimes[0].Stages[0].ServiceEnvs = append(in.Runtimes[0].Stages[0].ServiceEnvs, ProjectEnvVar{Key: key, Value: value, Sensitive: key == "FLAGGED"})
 	}
 	layout, _, err := BuildGroupRecipe(in)
 	if err != nil {

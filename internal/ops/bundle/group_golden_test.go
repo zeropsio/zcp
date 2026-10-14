@@ -103,29 +103,35 @@ func medusaInputs() GroupRecipeInputs {
 		},
 		Runtimes: []GroupRuntime{
 			{
-				DevHostname: "medusadev", StageHostname: "medusastage", ServiceType: "nodejs@22",
+				DevHostname: "medusadev", ServiceType: "nodejs@22",
 				RepoURL:   "https://hq.example.com/git/app-1/medusadev.git",
-				SetupName: "medusadev", StageSetupName: "medusaprod", ZeropsYAMLBody: medusaYAML,
+				SetupName: "medusadev", ZeropsYAMLBody: medusaYAML,
 				SubdomainEnabled: true,
 				Scaling:          &Scaling{MinContainers: 1, MaxContainers: 1, CPUMode: "SHARED", MinCPU: 1, MaxCPU: 5, MinRAM: 1, MaxRAM: 8, MinDisk: 1, MaxDisk: 20},
 				ServiceEnvs: []ProjectEnvVar{
 					{Key: "MEDUSA_WORKER_MODE", Value: "shared"},
 				},
-				StageServiceEnvs: []ProjectEnvVar{
-					{Key: "MEDUSA_WORKER_MODE", Value: "server"},
-					{Key: "ADMIN_CORS", Value: "https://medusastage-${zeropsSubdomainHost}-9000.prg1.zerops.app"},
-					{Key: "MEDUSA_ADMIN_TOKEN", Value: s["MEDUSA_ADMIN_TOKEN"], Sensitive: true},
-				},
+				Stages: []GroupStage{{
+					Hostname: "medusastage", SetupName: "medusaprod",
+					ServiceEnvs: []ProjectEnvVar{
+						{Key: "MEDUSA_WORKER_MODE", Value: "server"},
+						{Key: "ADMIN_CORS", Value: "https://medusastage-${zeropsSubdomainHost}-9000.prg1.zerops.app"},
+						{Key: "MEDUSA_ADMIN_TOKEN", Value: s["MEDUSA_ADMIN_TOKEN"], Sensitive: true},
+					},
+				}},
 			},
 			{
-				DevHostname: "nextstoredev", StageHostname: "nextstorestage", ServiceType: "nodejs@22",
+				DevHostname: "nextstoredev", ServiceType: "nodejs@22",
 				RepoURL:   "https://hq.example.com/git/app-1/nextstoredev",
 				SetupName: "nextstoredev", ZeropsYAMLBody: nextstoreYAML,
 				SubdomainEnabled: true,
 				Scaling:          &Scaling{MinContainers: 1, MaxContainers: 1, CPUMode: "SHARED", MinCPU: 1, MaxCPU: 5, MinRAM: 1, MaxRAM: 4, MinDisk: 1, MaxDisk: 10},
-				StageServiceEnvs: []ProjectEnvVar{
-					{Key: "OPENAI_API_KEY", Value: "REDACTED", Sensitive: true},
-				},
+				Stages: []GroupStage{{
+					Hostname: "nextstorestage",
+					ServiceEnvs: []ProjectEnvVar{
+						{Key: "OPENAI_API_KEY", Value: "REDACTED", Sensitive: true},
+					},
+				}},
 			},
 		},
 		Utilities: []GroupUtility{{

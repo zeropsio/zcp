@@ -131,9 +131,9 @@ func TestBuildGroupRecipe_PriorityFollowsReferences(t *testing.T) {
 	in := GroupRecipeInputs{
 		Name: "acme", MateProjectName: "acme-mate-1",
 		Runtimes: []GroupRuntime{
-			{DevHostname: "medusadev", StageHostname: "medusastage", ServiceType: "nodejs@22", RepoURL: "https://git.example.com/acme/medusadev", SetupName: "medusadev", ZeropsYAMLBody: backendYAML},
-			{DevHostname: "nextstoredev", StageHostname: "nextstorestage", ServiceType: "nodejs@22", RepoURL: "https://git.example.com/acme/nextstoredev", SetupName: "nextstoredev", ZeropsYAMLBody: storefrontYAML},
-			{DevHostname: "workerdev", StageHostname: "workerstage", ServiceType: "nodejs@22", RepoURL: "https://git.example.com/acme/workerdev", SetupName: "workerdev",
+			{DevHostname: "medusadev", Stages: []GroupStage{{Hostname: "medusastage"}}, ServiceType: "nodejs@22", RepoURL: "https://git.example.com/acme/medusadev", SetupName: "medusadev", ZeropsYAMLBody: backendYAML},
+			{DevHostname: "nextstoredev", Stages: []GroupStage{{Hostname: "nextstorestage"}}, ServiceType: "nodejs@22", RepoURL: "https://git.example.com/acme/nextstoredev", SetupName: "nextstoredev", ZeropsYAMLBody: storefrontYAML},
+			{DevHostname: "workerdev", Stages: []GroupStage{{Hostname: "workerstage"}}, ServiceType: "nodejs@22", RepoURL: "https://git.example.com/acme/workerdev", SetupName: "workerdev",
 				ZeropsYAMLBody: "zerops:\n  - setup: workerdev\n    run:\n      start: zsc noop\n  - setup: workerprod\n    run:\n      start: node worker.js\n"},
 		},
 		ManagedServices: []ManagedServiceEntry{{Hostname: "db", Type: "postgresql@16"}},
@@ -183,7 +183,7 @@ func TestBuildGroupRecipe_PriorityFollowsBuildReads(t *testing.T) {
 	t.Parallel()
 	pair := func(name, prodYAML string) GroupRuntime {
 		return GroupRuntime{
-			DevHostname: name + "dev", StageHostname: name + "stage", ServiceType: "nodejs@22",
+			DevHostname: name + "dev", Stages: []GroupStage{{Hostname: name + "stage"}}, ServiceType: "nodejs@22",
 			RepoURL: "https://git.example.com/acme/" + name + "dev", SetupName: name + "dev",
 			ZeropsYAMLBody: "zerops:\n  - setup: " + name + "dev\n    run:\n      start: zsc noop\n  - setup: " + name + "prod\n" + prodYAML,
 		}

@@ -121,7 +121,7 @@ func TestComposeGroupRecipeInputs_ReadsTheLiveProject(t *testing.T) {
 	if got := envMap(pair.ServiceEnvs); !maps.Equal(got, map[string]string{"NODE_ENV": "development"}) {
 		t.Errorf("dev half's variables = %v", got)
 	}
-	if got := envMap(pair.StageServiceEnvs); !maps.Equal(got, map[string]string{"NODE_ENV": "production", "STRIPE_API_KEY": "REDACTED (sensitive)"}) {
+	if got := envMap(pair.Stages[0].ServiceEnvs); !maps.Equal(got, map[string]string{"NODE_ENV": "production", "STRIPE_API_KEY": "REDACTED (sensitive)"}) {
 		t.Errorf("stage half's variables = %v — GIT_TOKEN must stay out", got)
 	}
 	if pair.Scaling == nil || pair.Scaling.MinRAM != 0.5 {

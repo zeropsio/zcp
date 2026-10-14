@@ -56,7 +56,7 @@ func TestBuildGroupRecipe_GroupEnvironmentsNameTheirOwnRuntimes(t *testing.T) {
 		{Key: "API_PUBLIC_KEY", Value: "${apistage_PUBLIC_KEY}"},
 		{Key: "DB_HOST", Value: "${db_hostname}"},
 	}
-	in.Runtimes[0].StageServiceEnvs = []ProjectEnvVar{{Key: "SELF_URL", Value: "https://apistage-${zeropsSubdomainHost}-3000.prg1.zerops.app"}}
+	in.Runtimes[0].Stages[0].ServiceEnvs = []ProjectEnvVar{{Key: "SELF_URL", Value: "https://apistage-${zeropsSubdomainHost}-3000.prg1.zerops.app"}}
 	layout, _, err := BuildGroupRecipe(in)
 	if err != nil {
 		t.Fatalf("BuildGroupRecipe: %v", err)

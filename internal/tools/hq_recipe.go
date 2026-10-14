@@ -125,6 +125,7 @@ func groupRecipeOutcome(
 	if !ok {
 		return early
 	}
+	defer comp.close()
 	outcome := recipeOutcome{Warnings: comp.warnings}
 	open := openRecipeChange(comp.state)
 	if open != nil {
@@ -132,7 +133,7 @@ func groupRecipeOutcome(
 		outcome.ChangeURL = comp.hqc.ChangeURL(comp.appID, hq.RecipeRepo, open.Number)
 	}
 	var missing []recipe.File
-	written, err := writeRecipeChange(ctx, comp.hqc, comp.appID, open, hq.RecipeProposalTitle,
+	written, err := writeRecipeChange(ctx, comp, open, hq.RecipeProposalTitle,
 		"recipe: the tiers "+hq.RecipeRepo+" lacks, from "+comp.inputs.MateProjectName,
 		func(_ context.Context, _ *hq.Scratch, _ string, paths []string) (map[string]string, error) {
 			missing = recipe.Missing(comp.files, paths)
@@ -177,17 +178,64 @@ func groupRecipeOutcome(
 	return outcome
 }
 
-// groupRecipeComposition is what the additive reconcile and a scaling
-// proposal both know before they touch the recipe repository: HQ, the
-// application, the Mate's state there, and the recipe composed from this
-// Mate's project.
+// groupRecipeComposition is what the additive reconcile and a targeted
+// proposal both know before they write to the recipe repository: HQ, the
+// application, the Mate's state there, main of the recipe repository as a
+// scratch fetched it, and the recipe composed from this Mate's project with
+// the hostnames main's tiers hold. close releases the scratch.
 type groupRecipeComposition struct {
 	hqc      hq.Client
 	appID    string
 	state    hq.MateState
+	scratch  *hq.Scratch
+	main     string
+	paths    []string
 	inputs   bundle.GroupRecipeInputs
 	files    []recipe.File
 	warnings []string
+}
+
+func (c groupRecipeComposition) close() { c.scratch.Close() }
+
+// openRecipeMain fetches main of the recipe repository into a scratch: its
+// head and the paths it holds. An error reads as a line's cause.
+func openRecipeMain(ctx context.Context, hqc hq.Client, appID string) (*hq.Scratch, string, []string, error) {
+	scratch, err := hqc.OpenScratch(ctx, appID, hq.RecipeRepo)
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("could not prepare the recipe's scratch repository (%w)", err)
+	}
+	main, found, err := scratch.Fetch(ctx, hqBase)
+	switch {
+	case err != nil:
+		scratch.Close()
+		return nil, "", nil, fmt.Errorf("could not read %q of the recipe repository %q (%w)", hqBase, hq.RecipeRepo, err)
+	case !found:
+		scratch.Close()
+		return nil, "", nil, fmt.Errorf("the recipe repository %q has no %q yet, so there is nothing to propose the recipe to", hq.RecipeRepo, hqBase)
+	}
+	paths, err := scratch.Paths(ctx, main)
+	if err != nil {
+		scratch.Close()
+		return nil, "", nil, fmt.Errorf("could not read %q of the recipe repository %q (%w)", hqBase, hq.RecipeRepo, err)
+	}
+	return scratch, main, paths, nil
+}
+
+// recipeHeld is what the group tiers on main hold of the app's parts: the
+// hostname each gave a part when it entered it (spec-mate §2.8a.5), which the
+// composer reads back rather than derives again.
+func recipeHeld(ctx context.Context, scratch *hq.Scratch, main string) ([]bundle.HeldRuntime, error) {
+	var held []bundle.HeldRuntime
+	for _, tier := range []string{hq.RecipeTierStage, hq.RecipeTierProduction} {
+		body, found, err := scratch.File(ctx, main, hq.RecipeTierPaths[tier])
+		if err != nil {
+			return nil, fmt.Errorf("could not read %q of the recipe repository %q (%w)", hq.RecipeTierPaths[tier], hq.RecipeRepo, err)
+		}
+		if found {
+			held = append(held, bundle.HeldRuntimes(body)...)
+		}
+	}
+	return held, nil
 }
 
 // composeGroupRecipe composes the application's recipe from this Mate's live
@@ -244,21 +292,35 @@ func composeGroupRecipe(
 		outcome.Line = fmt.Sprintf("the group recipe is not proposed yet (%v) — retrying on the next pass.", err)
 		return groupRecipeComposition{}, outcome, false
 	}
+	scratch, main, paths, err := openRecipeMain(ctx, hqc, repo.AppID)
+	if err != nil {
+		outcome.Line = err.Error() + " — retrying on the next pass."
+		return groupRecipeComposition{}, outcome, false
+	}
+	comp := groupRecipeComposition{hqc: hqc, appID: repo.AppID, state: state, scratch: scratch, main: main, paths: paths}
+	if inputs.Held, err = recipeHeld(ctx, scratch, main); err != nil {
+		comp.close()
+		outcome.Line = err.Error() + " — retrying on the next pass."
+		return groupRecipeComposition{}, outcome, false
+	}
 	// This composes unattended, with nobody to classify a variable the way the
 	// export and launch flows ask the agent to, so the composer decides each
 	// one itself: config as written, a secret as a generator — never its value.
 	layout, warnings, err := bundle.BuildGroupRecipe(inputs)
 	if err != nil {
+		comp.close()
 		outcome.Line = fmt.Sprintf("the group recipe does not compose yet (%v).", err)
 		return groupRecipeComposition{}, outcome, false
 	}
 	outcome.Warnings = append(outcome.Warnings, warnings...)
 	files, err := recipe.Build(layout)
 	if err != nil {
+		comp.close()
 		outcome.Line = fmt.Sprintf("the group recipe does not compose yet (%v).", err)
 		return groupRecipeComposition{}, outcome, false
 	}
-	return groupRecipeComposition{hqc: hqc, appID: repo.AppID, state: state, inputs: inputs, files: files, warnings: outcome.Warnings}, outcome, true
+	comp.inputs, comp.files, comp.warnings = inputs, files, outcome.Warnings
+	return comp, outcome, true
 }
 
 // openRecipeChange is the Mate's open change in the recipe repository, nil
@@ -303,24 +365,9 @@ type recipeFiles func(ctx context.Context, scratch *hq.Scratch, main string, pat
 // written as main has it, the change adds nothing. A Mate's open change
 // there under another title is another proposal of its own, and it is left
 // as it is (recipeWrite.other). An error reads as the line's cause.
-func writeRecipeChange(ctx context.Context, hqc hq.Client, appID string, open *hq.MateChange, title, message string, files recipeFiles) (recipeWrite, error) {
-	scratch, err := hqc.OpenScratch(ctx, appID, hq.RecipeRepo)
-	if err != nil {
-		return recipeWrite{}, fmt.Errorf("could not prepare the recipe's scratch repository (%w)", err)
-	}
-	defer scratch.Close()
-	main, found, err := scratch.Fetch(ctx, hqBase)
-	switch {
-	case err != nil:
-		return recipeWrite{}, fmt.Errorf("could not read %q of the recipe repository %q (%w)", hqBase, hq.RecipeRepo, err)
-	case !found:
-		return recipeWrite{}, fmt.Errorf("the recipe repository %q has no %q yet, so there is nothing to propose the recipe to", hq.RecipeRepo, hqBase)
-	}
-	paths, err := scratch.Paths(ctx, main)
-	if err != nil {
-		return recipeWrite{}, fmt.Errorf("could not read %q of the recipe repository %q (%w)", hqBase, hq.RecipeRepo, err)
-	}
-	written, err := files(ctx, scratch, main, paths)
+func writeRecipeChange(ctx context.Context, comp groupRecipeComposition, open *hq.MateChange, title, message string, files recipeFiles) (recipeWrite, error) {
+	hqc, scratch, main := comp.hqc, comp.scratch, comp.main
+	written, err := files(ctx, scratch, main, comp.paths)
 	if err != nil {
 		return recipeWrite{}, err
 	}

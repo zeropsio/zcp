@@ -118,16 +118,8 @@ func groupRecipeScalingSteer(
 	if !ok {
 		return ""
 	}
-	scratch, err := comp.hqc.OpenScratch(ctx, comp.appID, hq.RecipeRepo)
-	if err != nil {
-		return ""
-	}
-	defer scratch.Close()
-	main, found, err := scratch.Fetch(ctx, hqBase)
-	if err != nil || !found {
-		return ""
-	}
-	tiers, err := planRecipeScaling(ctx, scratch, main, comp.files, host)
+	defer comp.close()
+	tiers, err := planRecipeScaling(ctx, comp.scratch, comp.main, comp.files, host)
 	parts := changedTiers(tiers)
 	if err != nil || len(parts) == 0 {
 		return ""
@@ -182,8 +174,9 @@ func handleGroupRecipeScaling(
 			"The scaling proposal was not made: "+reason,
 			"Retry once this Mate is enrolled with its HQ and a pair has its repository there."), WithRecoveryStatus()), nil, nil
 	}
+	defer comp.close()
 	var tiers []recipeScalingTier
-	written, err := writeRecipeChange(ctx, comp.hqc, comp.appID, openRecipeChange(comp.state), recipeScalingTitle(host),
+	written, err := writeRecipeChange(ctx, comp, openRecipeChange(comp.state), recipeScalingTitle(host),
 		"recipe: "+host+"'s scale, from "+comp.inputs.MateProjectName,
 		func(ctx context.Context, scratch *hq.Scratch, main string, _ []string) (map[string]string, error) {
 			planned, err := planRecipeScaling(ctx, scratch, main, comp.files, host)

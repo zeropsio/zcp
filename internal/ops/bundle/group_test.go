@@ -44,7 +44,7 @@ func groupInputsFixture() GroupRecipeInputs {
 		MateProjectName: "acme-mate-1",
 		Runtimes: []GroupRuntime{{
 			DevHostname:      "apidev",
-			StageHostname:    "apistage",
+			Stages:           []GroupStage{{Hostname: "apistage"}},
 			ServiceType:      "nodejs@22",
 			RepoURL:          "https://git.example.com/acme/apidev.git",
 			SetupName:        "api",
@@ -202,7 +202,7 @@ func TestBuildGroupRecipe_GroupEnvironmentsBuildTheStageHalfsSetup(t *testing.T)
 	t.Parallel()
 	in := groupInputsFixture()
 	in.Runtimes[0].SetupName = "dev"
-	in.Runtimes[0].StageSetupName = "prod"
+	in.Runtimes[0].Stages[0].SetupName = "prod"
 	in.Runtimes[0].ZeropsYAMLBody = "zerops:\n  - setup: dev\n    run:\n      base: nodejs@22\n  - setup: prod\n    run:\n      base: nodejs@22\n"
 	layout, _, err := BuildGroupRecipe(in)
 	if err != nil {
@@ -291,10 +291,10 @@ func TestBuildGroupRecipe_StageSetup_ResolvedOrWithheld(t *testing.T) {
 			t.Parallel()
 			in := groupInputsFixture()
 			in.Runtimes[0].SetupName = tt.setup
-			in.Runtimes[0].StageSetupName = tt.recordedStage
+			in.Runtimes[0].Stages[0].SetupName = tt.recordedStage
 			in.Runtimes[0].ZeropsYAMLBody = tt.yaml
 			if tt.noStageHalf {
-				in.Runtimes[0].StageHostname = ""
+				in.Runtimes[0].Stages = nil
 			}
 			layout, warnings, err := BuildGroupRecipe(in)
 			if tt.wantErr != "" {
@@ -400,7 +400,7 @@ func TestBuildGroupRecipe_Deterministic(t *testing.T) {
 	t.Parallel()
 	in := groupInputsFixture()
 	in.Runtimes = append(in.Runtimes, GroupRuntime{
-		DevHostname: "workerdev", StageHostname: "workerstage", ServiceType: "nodejs@22",
+		DevHostname: "workerdev", Stages: []GroupStage{{Hostname: "workerstage"}}, ServiceType: "nodejs@22",
 		RepoURL: "https://git.example.com/acme/workerdev.git", SetupName: "api",
 		ZeropsYAMLBody: groupZeropsYAML,
 	})

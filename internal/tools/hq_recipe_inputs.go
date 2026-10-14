@@ -85,15 +85,17 @@ func composeGroupRecipeInputs(
 		if err != nil {
 			return bundle.GroupRecipeInputs{}, nil, err
 		}
-		// The composer takes one stage per pair (bundle.GroupRuntime): the
-		// pair's first. Composing a runtime per stage is the composer's own
-		// change; every stage is on m.Stages for it.
-		firstStage := m.FirstStage()
-		var stageEnvs []bundle.ProjectEnvVar
-		if stage, ok := live[firstStage.Hostname]; ok && firstStage.Hostname != "" {
-			if stageEnvs, err = groupRecipeServiceEnvs(ctx, client, stage); err != nil {
-				return bundle.GroupRecipeInputs{}, nil, err
+		// Every stage is a part of the app: the composer runs each as a
+		// runtime of its own in the group environments.
+		stages := make([]bundle.GroupStage, 0, len(m.Stages))
+		for _, stage := range m.Stages {
+			var stageEnvs []bundle.ProjectEnvVar
+			if svc, ok := live[stage.Hostname]; ok && stage.Hostname != "" {
+				if stageEnvs, err = groupRecipeServiceEnvs(ctx, client, svc); err != nil {
+					return bundle.GroupRecipeInputs{}, nil, err
+				}
 			}
+			stages = append(stages, bundle.GroupStage{Hostname: stage.Hostname, SetupName: stage.SetupName, ServiceEnvs: stageEnvs})
 		}
 		// A pair that has never deployed has no setup recorded — the classic
 		// bootstrap route's ordinary state — and refusing there made the whole
@@ -105,16 +107,14 @@ func composeGroupRecipeInputs(
 		yamlBody, _ := readLocalZeropsYAML(filepath.Join(mountRoot, m.Hostname))
 		inputs.Runtimes = append(inputs.Runtimes, bundle.GroupRuntime{
 			DevHostname:      m.Hostname,
-			StageHostname:    firstStage.Hostname,
+			Stages:           stages,
 			ServiceType:      svc.Type,
 			RepoURL:          hq.RepoURLAt(address, appID, m.HQ.Repo),
-			SetupName:        firstNonEmptySetup(m.PrimarySetupName, firstStage.SetupName, m.Hostname),
-			StageSetupName:   firstStage.SetupName,
+			SetupName:        firstNonEmptySetup(m.PrimarySetupName, m.FirstStage().SetupName, m.Hostname),
 			ZeropsYAMLBody:   yamlBody,
 			SubdomainEnabled: svc.SubdomainEnabled,
 			Scaling:          shape.Scaling,
 			ServiceEnvs:      devEnvs,
-			StageServiceEnvs: stageEnvs,
 		})
 	}
 	if len(inputs.Runtimes) == 0 {

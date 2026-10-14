@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/recipe"
 	"github.com/zeropsio/zcp/internal/topology"
 )
@@ -45,15 +46,17 @@ import (
 // as a generator every environment the tier creates expands for itself.
 
 // GroupRuntime is one runtime of the group's app as the Mate's project holds
-// it: a dev/stage pair built from one service repository.
+// it: a pair built from one service repository — one dev service and its
+// stages, each stage a part of the app (spec-mate §2.8a.4).
 type GroupRuntime struct {
 	// DevHostname is the pair's dev half — the hostname the AI Agent tier
-	// keeps and the one the stage/production rename strips a suffix from.
+	// keeps and the one a group environment's first part is named after.
 	DevHostname string
-	// StageHostname is the pair's stage half, empty for a mode that has none.
-	// It exists only on the AI Agent tier: the group's own stage is a
-	// different project entirely (D12/D16).
-	StageHostname string
+	// Stages are the pair's stages in ServiceMeta.Stages order, none for a
+	// mode that has no stage. They exist under their own hostnames only on
+	// the AI Agent tier: the group's own stage is a different project
+	// entirely (D12/D16), where each is one runtime of its part.
+	Stages []GroupStage
 	// ServiceType is the platform type tag, e.g. "nodejs@22".
 	ServiceType string
 	// RepoURL is the pair's repository in HQ, the address its buildFromGit
@@ -61,20 +64,12 @@ type GroupRuntime struct {
 	RepoURL string
 	// SetupName is the `setup:` block the dev half resolves at build time.
 	SetupName string
-	// StageSetupName is the stage half's block, as a deploy of the stage half
-	// recorded it. Empty is resolved from ZeropsYAMLBody (groupStageSetup) —
-	// never taken from SetupName on a guess.
-	StageSetupName string
 	// ZeropsYAMLBody is the pair's zerops.yaml: it verifies the named setups
-	// and names the stage half's when no deploy recorded it.
+	// and names a lone stage's when no deploy recorded it.
 	ZeropsYAMLBody string
 	// ServiceEnvs is the dev half's user-set service variables, written as
 	// its `vault:` — config as written, secrets generated (recipeSecret).
 	ServiceEnvs []ProjectEnvVar
-	// StageServiceEnvs is the stage half's. The AI Agent tier's stage half
-	// carries them, and so does every group environment, which runs what the
-	// stage half runs; a pair with no stage half gives its dev half's.
-	StageServiceEnvs []ProjectEnvVar
 	// Scaling is the live autoscaling shape. The AI Agent tier reproduces it
 	// verbatim; the two transformed tiers reflect it and then apply their
 	// policy floors.
@@ -83,6 +78,32 @@ type GroupRuntime struct {
 	// is unreachable is not a recipe, so it is carried on every tier rather
 	// than stripped the way launch-production strips it.
 	SubdomainEnabled bool
+}
+
+// GroupStage is one stage of a pair: a part of the app, which a group
+// environment runs as one runtime building the stage's setup.
+type GroupStage struct {
+	Hostname string
+	// SetupName is the setup the stage builds, as zcp recorded it. Empty on a
+	// pair's only stage is resolved from ZeropsYAMLBody (groupStageSetup) —
+	// never taken from the dev half's on a guess; empty on one of several
+	// stages withholds the tiers that need it.
+	SetupName string
+	// ServiceEnvs is the stage's user-set service variables. The AI Agent
+	// tier's stage carries them, and so does its part's runtime in every
+	// group environment, which runs what the stage runs; a pair with no stage
+	// gives its dev half's.
+	ServiceEnvs []ProjectEnvVar
+}
+
+// HeldRuntime is a runtime a group tier on main already carries: the part it
+// builds — its repository and setup — under the hostname the tier gave it
+// when the part first entered it. The tier holds that name; the composer
+// reads it back and never derives it again.
+type HeldRuntime struct {
+	Hostname  string
+	RepoURL   string
+	SetupName string
 }
 
 // GroupRecipeInputs is the whole group's app in one value.
@@ -112,6 +133,9 @@ type GroupRecipeInputs struct {
 	// HAIncapable names the managed services whose type the platform ships no
 	// `:ha` variant of: the tier that promotes the rest keeps them single-node.
 	HAIncapable []string
+	// Held is what the group tiers on main already carry (HeldRuntimes): a
+	// part a tier holds keeps the hostname the tier gave it.
+	Held []HeldRuntime
 }
 
 // GroupUtility is a runtime the project builds from a public repository and
@@ -224,23 +248,25 @@ func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error)
 
 	managed := dedupeManagedByHostname(inputs.ManagedServices)
 	sort.SliceStable(managed, func(i, j int) bool { return managed[i].Hostname < managed[j].Hostname })
-	utilities, mateOnly, utilityWarnings := groupUtilities(inputs.Utilities, runtimes)
 
-	stageSetups := make(map[string]string, len(runtimes))
+	parts := make(map[string][]groupPart, len(runtimes))
 	unresolved := map[string]string{}
 	for _, r := range runtimes {
-		setup, why := groupStageSetup(r)
+		setups, why := groupPartSetups(r)
 		if why != "" {
 			unresolved[r.DevHostname] = why
 			continue
 		}
-		stageSetups[r.DevHostname] = setup
+		parts[r.DevHostname] = groupPartsOf(r, setups)
 	}
+	nameWarnings := nameGroupParts(runtimes, parts, inputs.Held, managed)
+	utilities, mateOnly, utilityWarnings := groupUtilities(inputs.Utilities, runtimes, parts)
 
 	warnings := append([]string(nil), utilityWarnings...)
 	warnings = append(warnings, groupStoragePolicyWarnings(managed)...)
-	warnings = append(warnings, groupSetupWarnings(runtimes, stageSetups)...)
-	priorities, priorityWarnings := groupPriorities(groupApps(runtimes, utilities), inputs.ProjectEnvs)
+	warnings = append(warnings, groupSetupWarnings(runtimes, parts)...)
+	warnings = append(warnings, nameWarnings...)
+	priorities, priorityWarnings := groupPriorities(groupApps(runtimes, parts, utilities), inputs.ProjectEnvs)
 	warnings = append(warnings, priorityWarnings...)
 	haIncapable := make(map[string]bool, len(inputs.HAIncapable))
 	for _, host := range inputs.HAIncapable {
@@ -248,8 +274,8 @@ func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error)
 	}
 	plan := groupPlan{
 		inputs: inputs, runtimes: runtimes, utilities: utilities, mateOnly: mateOnly,
-		managed: managed, haIncapable: haIncapable, stageSetups: stageSetups, priorities: priorities,
-		promoter: newPairPromoter(pairRenames(runtimes)),
+		managed: managed, haIncapable: haIncapable, parts: parts, priorities: priorities,
+		promoter: newPairPromoter(pairRenames(runtimes, parts)),
 	}
 
 	layout := recipe.Layout{
@@ -293,8 +319,115 @@ func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error)
 	return layout, append(warnings, reasons...), nil
 }
 
-// groupStageSetup names the setup a runtime's stage-shaped entries build —
-// the AI Agent tier's stage half and the one runtime of every group
+// groupPart is one part of a pair: the stage that runs it in the Mate's
+// project ("" for a pair with none), the setup it builds, the variables its
+// runtime carries, and the hostname a group environment runs it under — ""
+// while it has none it can use (nameGroupParts).
+type groupPart struct {
+	stage, setup, hostname string
+	envs                   []ProjectEnvVar
+}
+
+// groupPartSetups names the setup of each of a runtime's parts, in Stages
+// order: a pair with one stage or none has one part, whose setup
+// groupStageSetup names; a pair of several takes each stage's recorded
+// setup, since a zerops.yaml declaring several tells no stage which is its.
+// why is non-empty when one is not named without a guess.
+func groupPartSetups(r GroupRuntime) ([]string, string) {
+	if len(r.Stages) <= 1 {
+		setup, why := groupStageSetup(r)
+		if why != "" {
+			return nil, why
+		}
+		return []string{setup}, ""
+	}
+	setups := make([]string, 0, len(r.Stages))
+	for _, stage := range r.Stages {
+		if strings.TrimSpace(stage.SetupName) == "" {
+			return nil, fmt.Sprintf("its stage %q is one of %d, which no zerops.yaml tells apart", stage.Hostname, len(r.Stages))
+		}
+		setups = append(setups, stage.SetupName)
+	}
+	return setups, ""
+}
+
+// groupPartsOf is a resolved runtime's parts: one per stage with its own
+// variables, or the dev half's one part, with its variables, for a pair
+// with no stage.
+func groupPartsOf(r GroupRuntime, setups []string) []groupPart {
+	if len(r.Stages) == 0 {
+		return []groupPart{{setup: setups[0], envs: r.ServiceEnvs}}
+	}
+	parts := make([]groupPart, 0, len(r.Stages))
+	for i, stage := range r.Stages {
+		parts = append(parts, groupPart{stage: stage.Hostname, setup: setups[i], envs: stage.ServiceEnvs})
+	}
+	return parts
+}
+
+// nameGroupParts gives each part the hostname a group environment runs it
+// under. A part a group tier on main holds keeps the tier's name, read back
+// and never derived again; a part no tier holds yet is named once, by the
+// rule a tier then keeps: the pair's stem (GroupPromotedHostname) for its
+// first part, the part's own name — its setup — for every other. A new name
+// that is no hostname, or that another service of the group environments
+// already has, is not changed on a guess: the part is left out of them and
+// said.
+func nameGroupParts(runtimes []GroupRuntime, parts map[string][]groupPart, held []HeldRuntime, managed []ManagedServiceEntry) []string {
+	type partKey struct{ repo, setup string }
+	heldBy := map[partKey]string{}
+	for _, h := range held {
+		if repo, private := publicRepoURL(h.RepoURL); !private && h.SetupName != "" && h.Hostname != "" {
+			heldBy[partKey{repo, h.SetupName}] = h.Hostname
+		}
+	}
+	taken := map[string]bool{}
+	for _, m := range managed {
+		taken[m.Hostname] = true
+	}
+	var fresh []*groupPart
+	freshOwner := map[*groupPart]string{}
+	for _, r := range runtimes {
+		repo, private := publicRepoURL(r.RepoURL)
+		list := parts[r.DevHostname]
+		for i := range list {
+			part := &list[i]
+			if host, ok := heldBy[partKey{repo, part.setup}]; ok && !private {
+				part.hostname = host
+				taken[host] = true
+				continue
+			}
+			part.hostname = part.setup
+			if i == 0 {
+				part.hostname = GroupPromotedHostname(r.DevHostname)
+			}
+			fresh = append(fresh, part)
+			freshOwner[part] = r.DevHostname
+		}
+	}
+	var warnings []string
+	for _, part := range fresh {
+		name := part.hostname
+		switch {
+		case platform.ValidateHostname(name) != nil:
+			warnings = append(warnings, fmt.Sprintf(
+				"part %q of %q is left out of the group environments: its name is no hostname (lowercase letters and digits, starting with a letter) — rename its setup, or add it to the tiers by hand",
+				part.setup, freshOwner[part]))
+			part.hostname = ""
+		case taken[name]:
+			warnings = append(warnings, fmt.Sprintf(
+				"part %q of %q is left out of the group environments: another of their services is already named %q — add it to the tiers by hand under a name of its own",
+				part.setup, freshOwner[part], name))
+			part.hostname = ""
+		default:
+			taken[name] = true
+		}
+	}
+	return warnings
+}
+
+// groupStageSetup names the setup a lone-stage runtime's stage-shaped entries
+// build — the AI Agent tier's stage half and the one runtime of every group
 // environment. why is non-empty when nothing names it without a guess.
 //
 // A stage setup is recorded only by a deploy of the stage half, and a Mate
@@ -304,8 +437,8 @@ func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error)
 // the one setup it declares beside the dev one, or its only setup, which
 // then serves both halves.
 func groupStageSetup(r GroupRuntime) (setup, why string) {
-	if recorded := strings.TrimSpace(r.StageSetupName); recorded != "" {
-		return recorded, ""
+	if len(r.Stages) == 1 && strings.TrimSpace(r.Stages[0].SetupName) != "" {
+		return strings.TrimSpace(r.Stages[0].SetupName), ""
 	}
 	if strings.TrimSpace(r.ZeropsYAMLBody) == "" {
 		return "", "no zerops.yaml was read"
@@ -343,7 +476,7 @@ func groupTierBlockers(runtimes []GroupRuntime, policy groupTierPolicy, unresolv
 		if _, missing := unresolved[r.DevHostname]; !missing {
 			continue
 		}
-		if policy.pairs && r.StageHostname == "" {
+		if policy.pairs && len(r.Stages) == 0 {
 			continue
 		}
 		blockers = append(blockers, r.DevHostname)
@@ -374,15 +507,16 @@ type groupPlan struct {
 	mateOnly    map[string]bool
 	managed     []ManagedServiceEntry
 	haIncapable map[string]bool
-	stageSetups map[string]string
-	priorities  map[string]int
+	// parts are each resolved runtime's parts, by dev hostname.
+	parts      map[string][]groupPart
+	priorities map[string]int
 	// promoter names a group environment's own runtimes in a value.
 	promoter *pairPromoter
 }
 
 // composeGroupTierYAML renders one tier's whole-project import.yaml.
 func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (string, []string, error) {
-	inputs, runtimes, stageSetups, priorities := plan.inputs, plan.runtimes, plan.stageSetups, plan.priorities
+	inputs, runtimes, priorities := plan.inputs, plan.runtimes, plan.priorities
 	warnings := make([]string, 0, len(runtimes))
 	source := firstNonBlank(inputs.MateProjectName, inputs.Name)
 	// The AI Agent tier re-creates the Mate's pairs and keeps every value as
@@ -408,13 +542,20 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (string, []str
 		var halves []half
 		if policy.pairs {
 			halves = append(halves, half{r.DevHostname, r.SetupName, r.ServiceEnvs})
-			if r.StageHostname != "" {
-				halves = append(halves, half{r.StageHostname, stageSetups[r.DevHostname], r.StageServiceEnvs})
+			for _, part := range plan.parts[r.DevHostname] {
+				if part.stage != "" {
+					halves = append(halves, half{part.stage, part.setup, part.envs})
+				}
 			}
 		} else {
-			// A group environment runs what the pair's stage half runs: the
-			// dev half's setup is the dev loop's, never a stage's.
-			halves = append(halves, half{GroupPromotedHostname(r.DevHostname), stageSetups[r.DevHostname], stageHalfEnvs(r)})
+			// A group environment runs what the pair's stages run, a runtime
+			// per part: the dev half's setup is the dev loop's, never a
+			// stage's.
+			for _, part := range plan.parts[r.DevHostname] {
+				if part.hostname != "" {
+					halves = append(halves, half{part.hostname, part.setup, part.envs})
+				}
+			}
 		}
 		for _, half := range halves {
 			entry, entryWarnings := groupRuntimeEntry(r, half.hostname, half.setup, policy)
@@ -481,13 +622,18 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (string, []str
 // the tier is, that zcp wrote it and from which Mate, and that it is the
 // group's to change — zcp adds only a whole tier the group repo's main lacks
 // (D30), and into one main carries proposes nothing but a service's scale
-// (D34), as a change a person reviews, so a person's edit is never written
-// over.
+// (D34) and, for an app of several parts, a part's service added or removed
+// (spec-mate §2.8a.5), as a change a person reviews, so a person's edit is
+// never written over. An app of one part reads as it always did.
 func groupTierHeader(inputs GroupRecipeInputs, policy groupTierPolicy) []string {
+	proposes := "only a service's scale (group-recipe scaling=<hostname>)"
+	if slices.ContainsFunc(inputs.Runtimes, func(r GroupRuntime) bool { return len(r.Stages) > 1 }) {
+		proposes = "only a service's scale (group-recipe scaling=<hostname>) or a part's service added or removed (group-recipe service=<hostname>)"
+	}
 	return []string{
 		"The " + policy.title + " tier. " + policy.summary,
-		fmt.Sprintf("zcp wrote this file from the Mate %q. It is the group's now: a person may edit it. zcp adds only a whole tier the group repo lacks; into a tier it already carries, zcp proposes only a service's scale (group-recipe scaling=<hostname>), as a change a person reviews.",
-			firstNonBlank(inputs.MateProjectName, inputs.Name)),
+		fmt.Sprintf("zcp wrote this file from the Mate %q. It is the group's now: a person may edit it. zcp adds only a whole tier the group repo lacks; into a tier it already carries, zcp proposes %s, as a change a person reviews.",
+			firstNonBlank(inputs.MateProjectName, inputs.Name), proposes),
 		"Priority is the order services are created in, each wave deployed before the next starts: the managed services first, then every runtime before the runtimes whose build reads it.",
 	}
 }
@@ -497,22 +643,28 @@ func groupTierHeader(inputs GroupRecipeInputs, policy groupTierPolicy) []string 
 // variables and the runtime variables they lift, its own service variables
 // among them — and every utility, whose build is the platform's from a
 // public repository and reads nothing of the project's.
-func groupApps(runtimes []GroupRuntime, utilities []GroupUtility) []groupApp {
+func groupApps(runtimes []GroupRuntime, parts map[string][]groupPart, utilities []GroupUtility) []groupApp {
 	apps := make([]groupApp, 0, len(runtimes)+len(utilities))
 	for _, u := range utilities {
 		apps = append(apps, groupApp{key: u.Hostname, hostnames: []string{u.Hostname}})
 	}
 	for _, r := range runtimes {
 		serviceEnvs := map[string]string{}
-		for _, env := range append(append([]ProjectEnvVar(nil), r.ServiceEnvs...), r.StageServiceEnvs...) {
+		envs := append([]ProjectEnvVar(nil), r.ServiceEnvs...)
+		hostnames := make([]string, 0, 1+len(r.Stages)+len(parts[r.DevHostname]))
+		hostnames = append(hostnames, r.DevHostname)
+		for _, stage := range r.Stages {
+			envs = append(envs, stage.ServiceEnvs...)
+			hostnames = append(hostnames, stage.Hostname)
+		}
+		for _, env := range envs {
 			serviceEnvs[env.Key] = env.Value
 		}
+		for _, part := range parts[r.DevHostname] {
+			hostnames = append(hostnames, part.hostname)
+		}
 		sources := BuildReadValues(r.ZeropsYAMLBody, "", serviceEnvs)
-		apps = append(apps, groupApp{
-			key:       r.DevHostname,
-			hostnames: []string{r.DevHostname, r.StageHostname, GroupPromotedHostname(r.DevHostname)},
-			sources:   sources,
-		})
+		apps = append(apps, groupApp{key: r.DevHostname, hostnames: hostnames, sources: sources})
 	}
 	return apps
 }
@@ -520,10 +672,14 @@ func groupApps(runtimes []GroupRuntime, utilities []GroupUtility) []groupApp {
 // groupUtilities is the utilities every tier writes, sorted, and those a
 // group environment cannot carry because its runtime takes their hostname.
 // A utility the reader did not describe whole is left out and said.
-func groupUtilities(in []GroupUtility, runtimes []GroupRuntime) ([]GroupUtility, map[string]bool, []string) {
+func groupUtilities(in []GroupUtility, runtimes []GroupRuntime, parts map[string][]groupPart) ([]GroupUtility, map[string]bool, []string) {
 	promoted := make(map[string]string, len(runtimes))
 	for _, r := range runtimes {
-		promoted[GroupPromotedHostname(r.DevHostname)] = r.DevHostname
+		for _, part := range parts[r.DevHostname] {
+			if part.hostname != "" {
+				promoted[part.hostname] = r.DevHostname
+			}
+		}
 	}
 	var utilities []GroupUtility
 	var warnings []string
@@ -690,15 +846,6 @@ func scalingNumber(v any) float64 {
 	return 0
 }
 
-// stageHalfEnvs is what a group environment's runtime carries of the pair's
-// own variables: the stage half's, or the dev half's when it has no stage.
-func stageHalfEnvs(r GroupRuntime) []ProjectEnvVar {
-	if r.StageHostname == "" {
-		return r.ServiceEnvs
-	}
-	return r.StageServiceEnvs
-}
-
 // groupRuntimeEntry composes one runtime's services[] entry under a policy.
 func groupRuntimeEntry(
 	r GroupRuntime,
@@ -756,10 +903,10 @@ func groupRuntimeEntry(
 
 // groupSetupWarnings reports every runtime naming a setup its zerops.yaml does
 // not declare. A warning rather than an error: this composes in a reconcile,
-// and a recipe missing one setup name is still worth proposing. stageSetups
-// is groupStageSetup's answer per dev hostname; one read from the yaml is
-// declared by construction, a recorded one is checked like the dev half's.
-func groupSetupWarnings(runtimes []GroupRuntime, stageSetups map[string]string) []string {
+// and a recipe missing one setup name is still worth proposing. parts holds
+// each part's setup per dev hostname; one read from the yaml is declared by
+// construction, a recorded one is checked like the dev half's.
+func groupSetupWarnings(runtimes []GroupRuntime, parts map[string][]groupPart) []string {
 	var warnings []string
 	for _, r := range runtimes {
 		if strings.TrimSpace(r.ZeropsYAMLBody) == "" {
@@ -772,7 +919,12 @@ func groupSetupWarnings(runtimes []GroupRuntime, stageSetups map[string]string) 
 			warnings = append(warnings, fmt.Sprintf("runtime %q: zerops.yaml does not parse (%v) — its setup is unverified", r.DevHostname, err))
 			continue
 		}
-		for _, wanted := range dedupeStrings([]string{r.SetupName, stageSetups[r.DevHostname]}) {
+		wants := make([]string, 0, 1+len(parts[r.DevHostname]))
+		wants = append(wants, r.SetupName)
+		for _, part := range parts[r.DevHostname] {
+			wants = append(wants, part.setup)
+		}
+		for _, wanted := range dedupeStrings(wants) {
 			if !slices.Contains(declared, wanted) {
 				warnings = append(warnings, fmt.Sprintf(
 					"runtime %q: setup %q is not declared in its zerops.yaml (declared: %s) — the tier names it anyway; fix the yaml or the recorded setup",
