@@ -154,10 +154,11 @@ func RegisterDevServer(srv *mcp.Server, d DevServerDeps) {
 			resp.Message = migration.sentence() + " " + resp.Message
 			resp.Warnings = append(resp.Warnings, migration.warnings...)
 		}
-		// PA-1's second hook (docs/spec-workflows.md §8 O3): a successful
-		// start/restart with a passing health probe just proved a live
-		// listener exists, so force listener=true regardless of the
-		// runtime's static deferred-start classification.
+		// PA-1's second hook (docs/spec-workflows.md §8 O3): a start/restart
+		// the supervisor reports running just proved a live listener — its
+		// status is running only once the port accepts connections — so force
+		// listener=true regardless of the runtime's static deferred-start
+		// classification.
 		if result.Running && isDevServerStartAction(input.Action) {
 			scratch := &ops.DeployResult{}
 			ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, input.Hostname, scratch, true)

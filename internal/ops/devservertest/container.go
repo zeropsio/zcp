@@ -36,7 +36,8 @@ type Container struct {
 	YAMLFile, YAML string
 	// Servers is the supervisor's state.
 	Servers map[string]*devsup.ServerState
-	// HTTP is the code a running server's port answers (200 when unset);
+	// HTTP is the code a running server's port answers (200 when unset; 0
+	// refuses the connection, so the supervisor reports the server starting);
 	// Foreign is a listener outside the supervisor: it answers its port while
 	// no running server holds it, and a server started on it finds the port
 	// busy. Any other port refuses the connection.
@@ -213,7 +214,11 @@ func (c *Container) state(only string) devsup.State {
 	}
 	for n, s := range c.Servers {
 		if only == "" || n == only {
-			st.Servers[n] = *s
+			server := *s
+			if code, ok := c.HTTP[c.declaredPort(n)]; ok && code == 0 && server.Status == devsup.StatusRunning && c.declaredPort(n) != 0 {
+				server.Status = devsup.StatusStarting
+			}
+			st.Servers[n] = server
 		}
 	}
 	return st

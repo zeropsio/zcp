@@ -16,6 +16,7 @@ import (
 	"github.com/zeropsio/zcp/internal/devsup"
 	"github.com/zeropsio/zcp/internal/ops/devservertest"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // disableNoProbeSettleForTest zeroes the no-probe settle interval so
@@ -723,6 +724,80 @@ func TestDevServersAfterDeploy(t *testing.T) {
 			}
 			if !tt.wantRunning && sentWith(c, "for i in $(seq") != 0 {
 				t.Error("probed a server the supervisor does not run")
+			}
+		})
+	}
+}
+
+// TestDevServer_Running_IsTheSupervisorsStatus (docs/spec-mate.md §2.8a.3,
+// "One source"): a result's running is the supervisor's status of the server
+// it reports; the HTTP probe is a health fact beside it (healthStatus, reason,
+// the envelope entry's verify) and never decides running. An api with no root
+// route runs and answers 404.
+func TestDevServer_Running_IsTheSupervisorsStatus(t *testing.T) {
+	t.Parallel()
+	probeOK, probeFailed := true, false
+	tests := []struct {
+		name       string
+		http       map[int]int
+		crash      bool
+		p          DevServerParams
+		running    bool
+		healthCode int
+		reason     string
+		verify     *bool
+	}{
+		{name: "status, answers 200", p: DevServerParams{Action: "status", Name: "api"},
+			running: true, healthCode: 200, verify: &probeOK},
+		{name: "status, no root route answers 404", http: map[int]int{8080: 404}, p: DevServerParams{Action: "status", Name: "api"},
+			running: true, healthCode: 404, reason: "http_404", verify: &probeFailed},
+		{name: "status, port not open yet", http: map[int]int{8080: 0}, p: DevServerParams{Action: "status", Name: "api"},
+			running: false, reason: "connection_refused", verify: &probeFailed},
+		{name: "status, crashed", crash: true, p: DevServerParams{Action: "status", Name: "api"},
+			running: false, reason: reasonCrashed},
+		{name: "start, no root route answers 404", http: map[int]int{8080: 404}, p: DevServerParams{Action: "start", Name: "api", WaitSeconds: 1},
+			running: true, healthCode: 404, reason: "health_probe_http_404", verify: &probeFailed},
+		{name: "start, answers 200", p: DevServerParams{Action: "start", Name: "api"},
+			running: true, healthCode: 200, verify: &probeOK},
+		{name: "logs of a running server", p: DevServerParams{Action: "logs", Name: "api"},
+			running: true},
+		{name: "stop", p: DevServerParams{Action: "stop", Name: "api"},
+			running: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			c := devservertest.NewSupervised(twoServers)
+			c.HTTP = tt.http
+			c.Logs = map[string][]string{"api": {"listening on :8080"}}
+			if tt.crash {
+				c.Crash = map[string]bool{"api": true}
+				runDevServer(t, c, DevServerParams{Action: "restart", Hostname: "appdev", Name: "api"})
+			}
+			tt.p.Hostname = "appdev"
+			result := runDevServer(t, c, tt.p)
+			if result.Running != tt.running || result.HealthStatus != tt.healthCode || result.Reason != tt.reason {
+				t.Errorf("running/healthStatus/reason = %v/%d/%q, want %v/%d/%q (%s)",
+					result.Running, result.HealthStatus, result.Reason, tt.running, tt.healthCode, tt.reason, result.Message)
+			}
+			var api *topology.DevServerState
+			states := DevServerStates(context.Background(), mockClientWithServices("appdev"), "p1", result)
+			for i := range states {
+				if states[i].Name == "api" {
+					api = &states[i]
+				}
+			}
+			if api == nil {
+				t.Fatalf("no api entry in %+v", states)
+			}
+			if running := api.Status == string(devsup.StatusRunning); running != result.Running {
+				t.Errorf("running = %v, but the entry's status is %q", result.Running, api.Status)
+			}
+			switch {
+			case tt.verify == nil && api.Verify != nil:
+				t.Errorf("verify = %+v, want none (no probe in this call)", api.Verify)
+			case tt.verify != nil && (api.Verify == nil || api.Verify.OK != *tt.verify):
+				t.Errorf("verify = %+v, want ok=%v", api.Verify, *tt.verify)
 			}
 		})
 	}

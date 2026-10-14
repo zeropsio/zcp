@@ -289,7 +289,7 @@ func TestMateContractFixtures_DevServerResults_KeepTodaysFieldsAndAddTheEnvelope
 
 func TestMateContractFixtures_DevServerResults_RunningIsTheReportedServersStatus(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"dev-server.one-server.json", "dev-server.three-servers-one-crashed.json"} {
+	for _, name := range []string{"dev-server.one-server.json", "dev-server.three-servers-one-crashed.json", "dev-server.running-http-404.json"} {
 		var res contractDevServerResult
 		readContractFixture(t, name, &res)
 		if res.Envelope == nil {
@@ -300,9 +300,10 @@ func TestMateContractFixtures_DevServerResults_RunningIsTheReportedServersStatus
 			reported = res.Hostname
 		}
 		var entry *contractDevServer
-		for i, d := range res.Envelope.Services[0].DevServers {
+		dev := contractService(t, res.Envelope, res.Hostname)
+		for i, d := range dev.DevServers {
 			if d.Name == reported {
-				entry = &res.Envelope.Services[0].DevServers[i]
+				entry = &dev.DevServers[i]
 			}
 		}
 		if entry == nil {
@@ -410,6 +411,16 @@ func TestMateContractFixtures_DevServerResults_RenderedByTheHandler(t *testing.T
 				c.Servers["worker"].Pid = 0
 				c.Servers["worker"].Exit = &devsup.Exit{Code: 1, At: crashedAt}
 				c.Logs = map[string][]string{"worker": {"Error: QUEUE_URL is not set"}}
+			},
+		},
+		{
+			fixture: "dev-server.running-http-404.json",
+			decl: `{"version":1,"servers":[{"name":"web","port":3000,"command":"bun --hot index.ts","cwd":"apps/web"},` +
+				`{"name":"api","port":8080,"command":"go run .","cwd":"apps/api"}]}`,
+			stages: []topology.StageRef{{Hostname: "webstage", SetupName: "web"}, {Hostname: "apistage", SetupName: "api"}},
+			args:   map[string]any{"action": "status", "hostname": "appdev", "name": "api"},
+			setup: func(c *devservertest.Container) {
+				c.HTTP = map[int]int{8080: 404}
 			},
 		},
 	}

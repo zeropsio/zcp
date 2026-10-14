@@ -1,0 +1,95 @@
+{
+  "action": "status",
+  "hostname": "appdev",
+  "running": true,
+  "port": 8080,
+  "healthPath": "/",
+  "healthStatus": 404,
+  "logFile": "/home/zerops/.zcp/devsup/logs/api.log",
+  "pid": 900,
+  "message": "Dev server api on appdev is running; its health probe got HTTP 404 on :8080/.",
+  "reason": "http_404",
+  "name": "api",
+  "envelope": {
+    "phase": "idle",
+    "environment": "container",
+    "idleScenario": "bootstrapped",
+    "selfService": {
+      "hostname": "zcp"
+    },
+    "project": {
+      "id": "proj-weather",
+      "name": "weather"
+    },
+    "services": [
+      {
+        "hostname": "apistage",
+        "typeVersion": "bun@1.3",
+        "runtimeClass": "dynamic",
+        "status": "RUNNING",
+        "bootstrapped": true,
+        "mode": "stage",
+        "closeDeployMode": "unset",
+        "gitPushState": "unconfigured",
+        "buildIntegration": "none",
+        "setupName": "api"
+      },
+      {
+        "hostname": "appdev",
+        "typeVersion": "bun@1.3",
+        "runtimeClass": "dynamic",
+        "status": "RUNNING",
+        "bootstrapped": true,
+        "mode": "standard",
+        "closeDeployMode": "unset",
+        "gitPushState": "unconfigured",
+        "buildIntegration": "none",
+        "setupName": "dev",
+        "stages": [
+          {
+            "hostname": "webstage",
+            "setup": "web"
+          },
+          {
+            "hostname": "apistage",
+            "setup": "api"
+          }
+        ],
+        "devServers": [
+          {
+            "name": "web",
+            "port": 3000,
+            "url": "https://appdev-1df2-3000.prg1.zerops.app",
+            "status": "running",
+            "readAt": "2026-10-14T21:04:00Z"
+          },
+          {
+            "name": "api",
+            "port": 8080,
+            "url": "https://appdev-1df2-8080.prg1.zerops.app",
+            "status": "running",
+            "readAt": "2026-10-14T21:04:00Z",
+            "verify": {
+              "ok": false,
+              "httpStatus": 404,
+              "at": "2026-10-14T21:04:00Z"
+            }
+          }
+        ]
+      },
+      {
+        "hostname": "webstage",
+        "typeVersion": "bun@1.3",
+        "runtimeClass": "dynamic",
+        "status": "RUNNING",
+        "bootstrapped": true,
+        "mode": "stage",
+        "closeDeployMode": "unset",
+        "gitPushState": "unconfigured",
+        "buildIntegration": "none",
+        "setupName": "web"
+      }
+    ],
+    "generated": "2026-10-14T23:09:30.224947Z"
+  }
+}

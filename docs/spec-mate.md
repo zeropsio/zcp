@@ -950,7 +950,9 @@ A dev service with one dev server shows today's card, without a server name.
 
 **One source in the `zerops_dev_server` result.** Its top-level `running` is exactly
 `status == "running"` of the `devServers[]` entry it reports (the entry named `name`, else the one
-named `hostname`) — never a second probe. From field-order step (3) Mate's card reads that entry's
+named `hostname`) — never a second probe. The HTTP probe is a health fact beside it — `healthStatus`,
+`reason` and that entry's `verify` (2xx/3xx passes) — and never decides `running`: an api with no
+root route runs and answers 404 (`TestDevServer_Running_IsTheSupervisorsStatus`). From field-order step (3) Mate's card reads that entry's
 `status` and `url`; at step (4) zcp stops emitting the top-level `running` and `url`.
 
 **Field order** (MODEL §9/1g): (1) a Mate release accepts `stages` and `devServers` beside the old
@@ -1093,6 +1095,7 @@ on it and never blocks.
 | `envelope.three-parts.json` | `appdev` + `webstage`/`apistage`/`workerstage`, three dev servers, one crashed |
 | `dev-server.one-server.json` | a `zerops_dev_server` result for one server, with its `envelope` key; top-level `running` ≡ the reported entry's `status == "running"` (§2.8a.3) |
 | `dev-server.three-servers-one-crashed.json` | the same for three servers |
+| `dev-server.running-http-404.json` | a running api with no root route: `running` true from the supervisor, its probe's 404 only in `healthStatus`, `reason` and the entry's `verify` |
 | `dev-servers.declaration.json` | the §2.8a.1 example, `admin` with `autostart: false` |
 | `hq-change.receipt.json` | an HQ change record carrying the §2.8a.6 receipt |
 

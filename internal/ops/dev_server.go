@@ -22,7 +22,11 @@ import (
 type DevServerResult struct {
 	Action   string `json:"action"`
 	Hostname string `json:"hostname"`
-	Running  bool   `json:"running"`
+	// Running is the supervisor's status of the reported server: exactly
+	// status == "running" (docs/spec-mate.md §2.8a.3, "One source"), set
+	// once from the call's last read (settle). The health probe never
+	// decides it.
+	Running bool `json:"running"`
 	// Port is the health-check port the tool probed or would probe. Zero
 	// when the action does not involve a port (stop, logs).
 	Port int `json:"port,omitempty"`
@@ -30,8 +34,11 @@ type DevServerResult struct {
 	// when no probe was run.
 	HealthPath string `json:"healthPath,omitempty"`
 	// HealthStatus is the HTTP status code returned by the health probe,
-	// or 0 when no probe was run or it never completed.
+	// or 0 when no probe was run or nothing answered HTTP.
 	HealthStatus int `json:"healthStatus,omitempty"`
+	// HealthOK is the health fact of this call's probe: the server answered
+	// HTTP 2xx/3xx on healthPath. The envelope entry's verify carries it.
+	HealthOK bool `json:"-"`
 	// StartMillis is the time between asking the supervisor to start the
 	// server and the health probe returning 2xx (start, restart). Zero on failure.
 	StartMillis int64 `json:"startMillis,omitempty"`
@@ -56,8 +63,8 @@ type DevServerResult struct {
 	URL string `json:"url,omitempty"`
 	// Message is a one-line human summary of what happened.
 	Message string `json:"message"`
-	// Reason is set when Running=false — concrete failure classification the
-	// agent can dispatch on. Known values:
+	// Reason classifies why the server does not run or why its health probe
+	// failed — the agent can dispatch on it. Known values:
 	//   crashed                   — the supervisor reports the server ended
 	//                               on its own; it stays down until started
 	//   port_in_use               — the supervisor could not start it: its
@@ -70,7 +77,7 @@ type DevServerResult struct {
 	//   health_probe_http_<code>  — server returned non-ready status
 	//   health_probe_unknown: <…> — unclassified; includes raw probe line
 	//   connection_refused        — status-action: no HTTP response
-	//   http_<code>               — status-action: non-ready HTTP code
+	//   http_<code>               — status-action: a code other than 2xx/3xx
 	Reason string `json:"reason,omitempty"`
 	// Name is the dev server's name in the declaration — set only when it
 	// differs from Hostname (docs/spec-mate.md §2.8a.3): a single-part app's
@@ -212,8 +219,26 @@ func ExecuteDevServer(
 	if err != nil {
 		return nil, err
 	}
-	result.Read = ds
+	result.settle(ds)
 	return result, nil
+}
+
+// settle ends a result on the call's read of the dev servers: running is the
+// supervisor's last status of the reported server — the one derivation of
+// running (docs/spec-mate.md §2.8a.3).
+func (r *DevServerResult) settle(ds *DevServers) {
+	r.Read = ds
+	name := r.Name
+	if name == "" {
+		name = r.Hostname
+	}
+	r.Running = ds.State.Servers[name].Status == devsup.StatusRunning
+}
+
+// healthyHTTP is the health probe's pass: a 2xx or 3xx answer (the start
+// probe's shell loop checks the same range).
+func healthyHTTP(code int) bool {
+	return code >= 200 && code < 400
 }
 
 func validateDevServerParams(p DevServerParams) error {
@@ -510,7 +535,6 @@ func settleNoProbe(ctx context.Context, ssh SSHDeployer, ds *DevServers, result 
 		applyCrash(ctx, ssh, result, name, server)
 		return result, nil
 	}
-	result.Running = true
 	result.LogTail = supervisorLogTail(ctx, ssh, result.Hostname, name, defaultLogTailLines)
 	result.Message = fmt.Sprintf(
 		"Dev server %s started under the supervisor in no-probe mode (no HTTP surface); after %s it is %s. "+
@@ -553,14 +577,13 @@ func probeStarted(ctx context.Context, ssh SSHDeployer, ds *DevServers, result *
 		applyProbeSuccess(result, probeLine, time.Since(begun).Milliseconds(), name)
 		return result, nil
 	}
-	applyProbeFailure(result, probeLine, probeDeadline, name, healthPath, wait)
+	applyProbeFailure(result, probeLine, probeDeadline, name, healthPath, wait, server.Status)
 	return result, nil
 }
 
 // applyCrash reports a server the supervisor holds as crashed, with its exit
 // and log tail.
 func applyCrash(ctx context.Context, ssh SSHDeployer, result *DevServerResult, name string, server devsup.ServerState) {
-	result.Running = false
 	result.LogTail = supervisorLogTail(ctx, ssh, result.Hostname, name, defaultLogTailLines)
 	label := serverLabel(result.Hostname, name)
 	if server.Exit != nil && server.Exit.Signal == devsup.ExitPortBusy {
@@ -652,7 +675,6 @@ func statusDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds
 		port = declared.Port
 	}
 	if port == 0 {
-		result.Running = true
 		result.Message = fmt.Sprintf("Dev server %s is %s (no HTTP port).", label, server.Status)
 		return result, nil
 	}
@@ -672,10 +694,10 @@ func statusDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds
 	var httpCode int
 	_, _ = fmt.Sscanf(code, "%d", &httpCode)
 	result.HealthStatus = httpCode
-	result.Running = httpCode >= 200 && httpCode < 500
-	if !result.Running {
+	result.HealthOK = healthyHTTP(httpCode)
+	if !result.HealthOK {
 		result.Reason = fmt.Sprintf("http_%d", httpCode)
-		result.Message = fmt.Sprintf("Dev server %s returned HTTP %d on :%d%s.", label, httpCode, port, healthPath)
+		result.Message = fmt.Sprintf("Dev server %s is %s; its health probe got HTTP %d on :%d%s.", label, server.Status, httpCode, port, healthPath)
 		return result, nil
 	}
 	result.URL = devServerURL(p.Hostname, port, healthPath)
@@ -769,7 +791,7 @@ func applyProbeSuccess(result *DevServerResult, probeLine string, elapsedMs int6
 		// A malformed probe response is self-reported via the result shape.
 		_, _ = fmt.Sscanf(fields[1], "%d", &httpCode)
 	}
-	result.Running = true
+	result.HealthOK = true
 	result.HealthStatus = httpCode
 	// The probe measures its own wait inside the container; the caller's
 	// clock (elapsedMs) also counts SSH round trips.
@@ -785,8 +807,7 @@ func applyProbeSuccess(result *DevServerResult, probeLine string, elapsedMs int6
 }
 
 // applyProbeFailure classifies probe failure into a Reason code.
-func applyProbeFailure(result *DevServerResult, probeLine string, deadlineHit bool, name, healthPath string, wait int) {
-	result.Running = false
+func applyProbeFailure(result *DevServerResult, probeLine string, deadlineHit bool, name, healthPath string, wait int, status devsup.Status) {
 	switch {
 	case deadlineHit:
 		result.Reason = ReasonHealthProbeTimeout
@@ -796,6 +817,7 @@ func applyProbeFailure(result *DevServerResult, probeLine string, deadlineHit bo
 		fields := strings.Fields(probeLine)
 		if len(fields) >= 2 && fields[1] != "" && fields[1] != "000" {
 			result.Reason = "health_probe_http_" + fields[1]
+			_, _ = fmt.Sscanf(fields[1], "%d", &result.HealthStatus)
 		} else {
 			result.Reason = "health_probe_connection_refused"
 		}
@@ -803,8 +825,8 @@ func applyProbeFailure(result *DevServerResult, probeLine string, deadlineHit bo
 		result.Reason = "health_probe_unknown: " + probeLine
 	}
 	result.Message = fmt.Sprintf(
-		"Dev server %s did not pass the health probe (localhost:%d%s, probed from inside the container) within %ds (%s); the supervisor keeps it as started. See logTail for the failing startup — if it references a missing dependency, install it over SSH first; if the server is still compiling, check again with action=status.",
-		serverLabel(result.Hostname, name), result.Port, healthPath, wait, result.Reason,
+		"Dev server %s did not pass the health probe (localhost:%d%s, probed from inside the container) within %ds (%s); the supervisor reports it %s. See logTail for the failing startup — if it references a missing dependency, install it over SSH first; if the server is still compiling, check again with action=status.",
+		serverLabel(result.Hostname, name), result.Port, healthPath, wait, result.Reason, status,
 	)
 }
 

@@ -58,7 +58,7 @@ func DevServerStates(ctx context.Context, client platform.Client, projectID stri
 			ReadAt: ds.ReadAt.UTC(),
 		}
 		if name == reported && result.HealthPath != "" {
-			entry.Verify = &topology.DevServerProbe{OK: result.Running, HTTPStatus: result.HealthStatus, At: ds.ReadAt.UTC()}
+			entry.Verify = &topology.DevServerProbe{OK: result.HealthOK, HTTPStatus: result.HealthStatus, At: ds.ReadAt.UTC()}
 		}
 		if e := st.Exit; e != nil {
 			exit := &topology.DevServerExit{Signal: e.Signal, At: e.At.UTC()}

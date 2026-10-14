@@ -272,20 +272,17 @@ func DevServersAfterDeploy(ctx context.Context, ssh SSHDeployer, hostname string
 	switch {
 	case st.Status == devsup.StatusCrashed:
 		applyCrash(ctx, ssh, result, server.Name, st)
-		return ds, result, nil
 	case st.Status == devsup.StatusStopped || st.Status == "":
 		// Declared with autostart false, or not run by this supervisor.
 		result.Reason = reasonStopped
 		result.Message = fmt.Sprintf("Dev server %s is declared but not running; start it with zerops_dev_server action=start hostname=%s.", serverLabel(hostname, server.Name), hostname)
-		return ds, result, nil
 	case server.Port == 0:
-		result.Running = true
 		result.Message = fmt.Sprintf("Dev server %s is %s under the supervisor.", serverLabel(hostname, server.Name), st.Status)
-		return ds, result, nil
+	default:
+		if result, err = probeStarted(ctx, ssh, ds, result, DevServerParams{Hostname: hostname}, server.Name, server.Port, ds.ReadAt); err != nil {
+			return nil, nil, err
+		}
 	}
-	result, err = probeStarted(ctx, ssh, ds, result, DevServerParams{Hostname: hostname}, server.Name, server.Port, ds.ReadAt)
-	if err != nil {
-		return nil, nil, err
-	}
+	result.settle(ds)
 	return ds, result, nil
 }
