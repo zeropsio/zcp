@@ -1,0 +1,110 @@
+//go:build linux || darwin
+
+package devsup
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"os"
+	"os/exec"
+	"os/signal"
+	"strconv"
+	"strings"
+	"syscall"
+	"testing"
+	"time"
+)
+
+// The test binary doubles as the dev server the tests supervise: with
+// SUPERVISOR_TEST_HELPER set, TestMain runs the helper instead of the tests.
+//
+//	listen       accept on $PORT and fork a grandchild (`sleep`) into the same group
+//	ignore-term  the same, but ignore SIGTERM so only SIGKILL ends it
+//	exit         print "line 1".."line 30" and exit with $CODE
+func TestMain(m *testing.M) {
+	switch os.Getenv("SUPERVISOR_TEST_HELPER") {
+	case "":
+		os.Exit(m.Run())
+	case "listen":
+		os.Exit(helperListen(false))
+	case "ignore-term":
+		os.Exit(helperListen(true))
+	case "exit":
+		for i := 1; i <= 30; i++ {
+			fmt.Printf("line %d\n", i)
+		}
+		code, _ := strconv.Atoi(os.Getenv("CODE"))
+		os.Exit(code)
+	}
+	os.Exit(2)
+}
+
+func helperListen(ignoreTerm bool) int {
+	if ignoreTerm {
+		signal.Ignore(syscall.SIGTERM)
+	}
+	var lc net.ListenConfig
+	l, err := lc.Listen(context.Background(), "tcp", ":"+os.Getenv("PORT"))
+	if err != nil {
+		fmt.Println("listen:", err)
+		return 3
+	}
+	defer l.Close()
+	grandchild := exec.CommandContext(context.Background(), "sleep", "300")
+	if err := grandchild.Start(); err != nil {
+		return 4
+	}
+	fmt.Printf("listening pid=%d grandchild=%d\n", os.Getpid(), grandchild.Process.Pid)
+	for {
+		c, err := l.Accept()
+		if err != nil {
+			return 0
+		}
+		_ = c.Close()
+	}
+}
+
+// helperCmd is the shell command that runs this test binary as a helper.
+func helperCmd(t *testing.T, mode string, env ...string) string {
+	t.Helper()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return "SUPERVISOR_TEST_HELPER=" + mode + " " + strings.Join(env, " ") + " exec " + shellQuote(exe)
+}
+
+// freePort returns a port nothing listens on.
+func freePort(t *testing.T) int {
+	t.Helper()
+	var lc net.ListenConfig
+	l, err := lc.Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	_ = l.Close()
+	return port
+}
+
+// eventually polls cond until it holds or 10 s pass.
+func eventually(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func listening(port int) bool {
+	return portAccepts(port)
+}
+
+// processAlive reports whether pid exists and is not a zombie we already reaped.
+func processAlive(pid int) bool {
+	return syscall.Kill(pid, 0) == nil
+}

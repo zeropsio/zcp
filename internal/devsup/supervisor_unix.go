@@ -1,0 +1,715 @@
+//go:build linux || darwin
+
+package devsup
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"sync"
+	"syscall"
+	"time"
+)
+
+// Config is how one supervisor runs.
+type Config struct {
+	// Root is the repo root: the declaration is Root/.zcp/dev-servers.json
+	// and a server's cwd is relative to it.
+	Root string
+	// StateDir holds state.json, the control socket and the logs; it is
+	// $HOME/.zcp/devsup, so it survives a container restart and a redeploy
+	// starts from nothing.
+	StateDir string
+	// Service is this dev service's hostname: an entry naming another
+	// service is not run here (variant B).
+	Service string
+	// Env is the environment every server starts with (the service's).
+	Env []string
+	// Grace is how long a stopped group gets between SIGTERM and SIGKILL.
+	Grace time.Duration
+	// PortWait bounds the wait for a server's port to be free before it starts.
+	PortWait time.Duration
+	// Version is the release reported in the state.
+	Version string
+	// Log receives the supervisor's own lines (the service's runtime log).
+	Log io.Writer
+}
+
+// Defaults for Config (docs/spec-mate.md §2.8a.2).
+const (
+	DefaultGrace    = 10 * time.Second
+	DefaultPortWait = 10 * time.Second
+)
+
+// logRotateSize is the size above which a server's log moves to .log.1 when
+// the server starts.
+const logRotateSize = 10 << 20
+
+// listenWait bounds how long the supervisor looks for a started server's port
+// to accept, to record starting → running.
+const listenWait = 10 * time.Minute
+
+type server struct {
+	name     string
+	spec     Server
+	source   Source
+	desired  Desired
+	g        *group
+	starting bool
+	// startedAt, starts and exit carry over from state.json.
+	startedAt *time.Time
+	starts    int
+	exit      *Exit
+	// left is the group a previous instance recorded, reaped on boot.
+	leftPgid        int
+	leftLeaderStart int64
+	watch           *watcher
+}
+
+// Supervisor holds the dev servers of one repo.
+type Supervisor struct {
+	cfg       Config
+	startedAt time.Time
+	// op serialises everything that starts or stops servers.
+	op sync.Mutex
+	// mu guards servers and decl; never held across a start or a stop.
+	mu      sync.Mutex
+	servers map[string]*server
+	decl    DeclarationInfo
+	// persistMu orders state.json writes so the newest snapshot lands last.
+	persistMu sync.Mutex
+}
+
+// New prepares a supervisor and loads the state an earlier instance left in
+// cfg.StateDir.
+func New(cfg Config) (*Supervisor, error) {
+	if cfg.Root == "" || cfg.StateDir == "" {
+		return nil, errors.New("devsup: root and state dir are required")
+	}
+	if cfg.Grace <= 0 {
+		cfg.Grace = DefaultGrace
+	}
+	if cfg.PortWait <= 0 {
+		cfg.PortWait = DefaultPortWait
+	}
+	if cfg.Log == nil {
+		cfg.Log = io.Discard
+	}
+	if err := os.MkdirAll(filepath.Join(cfg.StateDir, logsDir), 0o700); err != nil {
+		return nil, fmt.Errorf("devsup state dir: %w", err)
+	}
+	s := &Supervisor{cfg: cfg, startedAt: time.Now().UTC(), servers: map[string]*server{}}
+	if prev, err := ReadState(cfg.StateDir); err == nil {
+		for name, p := range prev.Servers {
+			sv := &server{
+				name: name, source: p.Source, desired: p.Desired, exit: p.Exit, startedAt: p.StartedAt,
+				leftPgid: p.Pgid, leftLeaderStart: p.LeaderStart,
+			}
+			if p.StartedAt != nil {
+				sv.starts = p.Restarts + 1
+			}
+			if p.Source == SourceRuntime {
+				sv.spec = Server{Name: name, Command: p.Command, Cwd: p.Cwd, Port: p.Port}
+			}
+			s.servers[name] = sv
+		}
+	}
+	return s, nil
+}
+
+func (s *Supervisor) logf(format string, a ...any) {
+	fmt.Fprintf(s.cfg.Log, "%s zcp-devsup: %s\n", time.Now().UTC().Format(time.RFC3339), fmt.Sprintf(format, a...))
+}
+
+// Run starts every server the declaration and the kept state ask for, serves
+// the control socket, reloads on SIGHUP and stops every server when ctx ends.
+// ctx only ends the loop: a boot, reload, control call or shutdown under way
+// runs to completion, so no server is left half started or half stopped.
+//
+//nolint:contextcheck // see above
+func (s *Supervisor) Run(ctx context.Context) error {
+	ln, err := listenControl(s.cfg.StateDir)
+	if err != nil {
+		return err
+	}
+	defer ln.Close()
+	s.logf("up pid=%d version=%s root=%s state=%s service=%s", os.Getpid(), s.cfg.Version, s.cfg.Root, s.cfg.StateDir, s.cfg.Service)
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
+	defer signal.Stop(hup)
+	s.Boot()
+	go s.serveControl(ln)
+	for {
+		select {
+		case <-hup:
+			s.logf("SIGHUP: reload")
+			s.Reload()
+		case <-ctx.Done():
+			s.Shutdown()
+			return nil
+		}
+	}
+}
+
+// Boot is the first reconcile of this instance: it reaps the groups an earlier
+// instance left running, then starts every server whose desired state is
+// running, crashed ones included.
+func (s *Supervisor) Boot() {
+	s.op.Lock()
+	defer s.op.Unlock()
+	s.reapLeft()
+	s.reconcile(true)
+}
+
+// Reload re-reads the declaration: an added server starts, a removed one stops
+// and is dropped, a changed one restarts; the rest is untouched.
+func (s *Supervisor) Reload() {
+	s.op.Lock()
+	defer s.op.Unlock()
+	s.reconcile(false)
+}
+
+// reapLeft stops the groups state.json recorded, when they are still the ones
+// that instance started.
+func (s *Supervisor) reapLeft() {
+	s.mu.Lock()
+	type left struct {
+		name        string
+		pgid        int
+		leaderStart int64
+	}
+	var all []left
+	for name, sv := range s.servers {
+		if sv.leftPgid > 1 {
+			all = append(all, left{name, sv.leftPgid, sv.leftLeaderStart})
+		}
+		sv.leftPgid, sv.leftLeaderStart = 0, 0
+	}
+	s.mu.Unlock()
+	var wg sync.WaitGroup
+	for _, l := range all {
+		if !ownsGroup(l.pgid, l.leaderStart) {
+			continue
+		}
+		wg.Go(func() {
+			s.logf("reap %s: group %d an earlier supervisor left running", l.name, l.pgid)
+			if err := stopGroup(l.pgid, s.cfg.Grace); err != nil {
+				s.logf("reap %s: %v", l.name, err)
+			}
+		})
+	}
+	wg.Wait()
+}
+
+// reconcile brings the servers to the declaration and the kept state.
+func (s *Supervisor) reconcile(boot bool) {
+	decl, err := LoadDeclaration(s.cfg.Root)
+
+	s.mu.Lock()
+	want := map[string]wanted{}
+	for name, sv := range s.servers {
+		// Runtime entries, and every known server while the declaration
+		// cannot be read: nothing changes until it reads again.
+		if sv.spec.Command != "" && (sv.source == SourceRuntime || err != nil) {
+			want[name] = wanted{server: sv.spec, desired: sv.desired}
+		}
+	}
+	declared := map[string]bool{}
+	if err != nil {
+		s.decl.Error = err.Error()
+		s.logf("declaration: %v", err)
+	} else {
+		s.decl = DeclarationInfo{Version: decl.Version}
+		for _, spec := range decl.ForService(s.cfg.Service) {
+			declared[spec.Name] = true
+			desired := DesiredRunning
+			if sv, ok := s.servers[spec.Name]; ok && sv.desired != "" {
+				desired = sv.desired
+			}
+			want[spec.Name] = wanted{server: spec, desired: desired}
+		}
+	}
+	have := map[string]held{}
+	for name, sv := range s.servers {
+		if sv.spec.Command != "" {
+			have[name] = held{server: sv.spec, live: sv.g != nil, exited: sv.exit != nil}
+		}
+	}
+	acts := plan(want, have, boot)
+	for name, w := range want {
+		sv, ok := s.servers[name]
+		if !ok {
+			sv = &server{name: name}
+			s.servers[name] = sv
+		}
+		if declared[name] {
+			sv.source = SourceDeclared
+		} else if sv.source == "" {
+			sv.source = SourceRuntime
+		}
+		sv.desired = w.desired
+		if acts[name] != actRestart {
+			sv.spec = w.server
+		}
+	}
+	for name, sv := range s.servers {
+		// A kept entry the declaration no longer holds and nothing runs.
+		if _, ok := want[name]; !ok && sv.g == nil && acts[name] != actRemove {
+			if err == nil {
+				delete(s.servers, name)
+			}
+		}
+	}
+	s.mu.Unlock()
+
+	var stop, start []string
+	for name, a := range acts {
+		switch a {
+		case actStop, actRemove:
+			stop = append(stop, name)
+		case actRestart:
+			stop = append(stop, name)
+			start = append(start, name)
+		case actStart:
+			start = append(start, name)
+		case actNone:
+		}
+	}
+	s.stopAll(stop)
+	s.mu.Lock()
+	for name, a := range acts {
+		switch a {
+		case actRemove:
+			if sv := s.servers[name]; sv != nil && sv.watch != nil {
+				sv.watch.close()
+			}
+			delete(s.servers, name)
+		case actRestart:
+			s.servers[name].spec = want[name].server
+		case actNone, actStart, actStop:
+		}
+	}
+	s.mu.Unlock()
+	s.startAll(start)
+	s.syncWatches()
+	s.persist()
+}
+
+// stopAll ends the named servers' groups in parallel and waits for them.
+func (s *Supervisor) stopAll(names []string) {
+	var wg sync.WaitGroup
+	for _, name := range names {
+		s.mu.Lock()
+		var g *group
+		if sv := s.servers[name]; sv != nil {
+			g, sv.g = sv.g, nil
+		}
+		s.mu.Unlock()
+		if g == nil {
+			continue
+		}
+		wg.Go(func() {
+			s.logf("stop %s pgid=%d", name, g.pgid)
+			if err := stopGroup(g.pgid, s.cfg.Grace); err != nil {
+				s.logf("stop %s: %v", name, err)
+			}
+			<-g.done
+		})
+	}
+	wg.Wait()
+}
+
+// startAll starts the named servers in parallel.
+func (s *Supervisor) startAll(names []string) {
+	var wg sync.WaitGroup
+	for _, name := range names {
+		wg.Go(func() { s.start(name) })
+	}
+	wg.Wait()
+}
+
+// start waits for the server's port and starts it. A failure leaves it
+// crashed with exit {code: -1, signal: port_busy|start_failed} and the reason
+// in its log.
+func (s *Supervisor) start(name string) {
+	s.mu.Lock()
+	sv := s.servers[name]
+	if sv == nil || sv.g != nil {
+		s.mu.Unlock()
+		return
+	}
+	spec := sv.spec
+	sv.starting = true
+	sv.starts++
+	starts := sv.starts
+	s.mu.Unlock()
+
+	g, failure, err := s.launch(name, spec, starts)
+	now := time.Now().UTC()
+
+	s.mu.Lock()
+	sv.starting = false
+	sv.startedAt = &now
+	if err != nil {
+		s.logf("start %s: %v", name, err)
+		sv.exit = &Exit{Code: -1, Signal: failure, At: now}
+		s.mu.Unlock()
+		return
+	}
+	s.logf("started %s pgid=%d start#%d", name, g.pgid, starts)
+	sv.g = g
+	s.mu.Unlock()
+	go s.watchExit(sv, g)
+	if spec.Port > 0 {
+		go s.awaitListen(g, spec.Port)
+	}
+}
+
+// launch opens the server's log and starts its group once the port is free.
+func (s *Supervisor) launch(name string, spec Server, starts int) (*group, string, error) {
+	lp := LogPath(s.cfg.StateDir, name)
+	if fi, err := os.Stat(lp); err == nil && fi.Size() > logRotateSize {
+		_ = os.Rename(lp, lp+".1")
+	}
+	f, err := os.OpenFile(lp, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return nil, ExitStartFailed, fmt.Errorf("open log: %w", err)
+	}
+	defer f.Close()
+	signal, err := s.preflight(spec)
+	if err == nil {
+		fmt.Fprintf(f, "--- zcp-devsup: start #%d at %s: %s\n", starts, time.Now().UTC().Format(time.RFC3339), spec.Command)
+		var g *group
+		if g, err = startGroup(spec.Command, filepath.Join(s.cfg.Root, filepath.FromSlash(spec.Cwd)), s.cfg.Env, f); err == nil {
+			return g, "", nil
+		}
+		signal = ExitStartFailed
+	}
+	fmt.Fprintf(f, "--- zcp-devsup: start #%d failed: %v\n", starts, err)
+	return nil, signal, err
+}
+
+// preflight checks the cwd and waits for the port; a failure names its exit
+// signal.
+func (s *Supervisor) preflight(spec Server) (string, error) {
+	dir := filepath.Join(s.cfg.Root, filepath.FromSlash(spec.Cwd))
+	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+		return ExitStartFailed, fmt.Errorf("cwd %s is not a directory", spec.Cwd)
+	}
+	if !waitPortFree(spec.Port, s.cfg.PortWait) {
+		return ExitPortBusy, fmt.Errorf("port %d is still busy after %s", spec.Port, s.cfg.PortWait)
+	}
+	return "", nil
+}
+
+// watchExit records a server whose leader exited while the supervisor held it
+// as crashed, and ends what is left of its group.
+func (s *Supervisor) watchExit(sv *server, g *group) {
+	<-g.done
+	s.mu.Lock()
+	if sv.g != g {
+		s.mu.Unlock()
+		return
+	}
+	sv.g = nil
+	sv.exit = exitOf(g.state)
+	s.logf("crashed %s: exit %d %s", sv.name, sv.exit.Code, sv.exit.Signal)
+	s.mu.Unlock()
+	_ = stopGroup(g.pgid, s.cfg.Grace)
+	s.persist()
+}
+
+// awaitListen records starting → running once the port accepts.
+func (s *Supervisor) awaitListen(g *group, port int) {
+	deadline := time.Now().Add(listenWait)
+	for time.Now().Before(deadline) {
+		select {
+		case <-g.done:
+			return
+		default:
+		}
+		if portAccepts(port) {
+			s.persist()
+			return
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+}
+
+func exitOf(ps *os.ProcessState) *Exit {
+	e := &Exit{Code: -1, At: time.Now().UTC()}
+	if ps == nil {
+		return e
+	}
+	e.Code = ps.ExitCode()
+	if ws, ok := ps.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+		e.Signal = signalName(ws.Signal())
+	}
+	return e
+}
+
+// signalName is the conventional name (SIGKILL) of a signal.
+func signalName(sig syscall.Signal) string {
+	if n := sigNames[sig]; n != "" {
+		return n
+	}
+	return sig.String()
+}
+
+var sigNames = map[syscall.Signal]string{
+	syscall.SIGHUP: "SIGHUP", syscall.SIGINT: "SIGINT", syscall.SIGQUIT: "SIGQUIT", syscall.SIGILL: "SIGILL",
+	syscall.SIGABRT: "SIGABRT", syscall.SIGBUS: "SIGBUS", syscall.SIGFPE: "SIGFPE", syscall.SIGKILL: "SIGKILL",
+	syscall.SIGSEGV: "SIGSEGV", syscall.SIGPIPE: "SIGPIPE", syscall.SIGTERM: "SIGTERM", syscall.SIGUSR1: "SIGUSR1",
+	syscall.SIGUSR2: "SIGUSR2",
+}
+
+// syncWatches keeps one watcher per server that has a watch and is meant to
+// run; a change restarts it (a crashed one too: the change is the fix).
+func (s *Supervisor) syncWatches() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for name, sv := range s.servers {
+		need := sv.desired == DesiredRunning && sv.spec.Watch != nil
+		if sv.watch != nil && (!need || sv.watch.w != sv.spec.Watch) {
+			sv.watch.close()
+			sv.watch = nil
+		}
+		if need && sv.watch == nil {
+			w, err := newWatcher(s.cfg.Root, sv.spec.Watch, func(rel string) { s.watchFired(name, rel) })
+			if err != nil {
+				s.logf("watch %s: %v", name, err)
+				continue
+			}
+			sv.watch = w
+		}
+	}
+}
+
+func (s *Supervisor) watchFired(name, rel string) {
+	s.op.Lock()
+	defer s.op.Unlock()
+	s.mu.Lock()
+	sv := s.servers[name]
+	if sv == nil || sv.desired != DesiredRunning {
+		s.mu.Unlock()
+		return
+	}
+	sv.starting = true
+	s.mu.Unlock()
+	s.logf("restart %s: %s changed", name, rel)
+	s.stopAll([]string{name})
+	s.start(name)
+	s.persist()
+}
+
+// ErrUnknownServer marks a control call naming a server the supervisor does
+// not hold.
+var ErrUnknownServer = errors.New("unknown server")
+
+// Start sets a server to run and starts it unless it runs.
+func (s *Supervisor) Start(name string) error {
+	s.op.Lock()
+	defer s.op.Unlock()
+	if err := s.setDesired(name, DesiredRunning); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	live := s.servers[name].g != nil
+	s.mu.Unlock()
+	if !live {
+		s.start(name)
+	}
+	s.syncWatches()
+	s.persist()
+	return nil
+}
+
+// Stop sets a server to stay stopped and ends its process group.
+func (s *Supervisor) Stop(name string) error {
+	s.op.Lock()
+	defer s.op.Unlock()
+	if err := s.setDesired(name, DesiredStopped); err != nil {
+		return err
+	}
+	s.stopAll([]string{name})
+	s.syncWatches()
+	s.persist()
+	return nil
+}
+
+// Restart stops a server if it runs and starts it again.
+func (s *Supervisor) Restart(name string) error {
+	s.op.Lock()
+	defer s.op.Unlock()
+	if err := s.setDesired(name, DesiredRunning); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.servers[name].starting = true
+	s.mu.Unlock()
+	s.stopAll([]string{name})
+	s.start(name)
+	s.syncWatches()
+	s.persist()
+	return nil
+}
+
+// RunEntry adds (or replaces) a runtime entry — a server the declaration does
+// not hold, such as a crew app — and starts it.
+func (s *Supervisor) RunEntry(spec Server) error {
+	norm, err := normalizeServer(spec)
+	if err != nil {
+		return err
+	}
+	if err := insideRoot(s.cfg.Root, norm.Cwd); err != nil {
+		return err
+	}
+	s.op.Lock()
+	defer s.op.Unlock()
+	s.mu.Lock()
+	sv, ok := s.servers[norm.Name]
+	if ok && sv.source == SourceDeclared {
+		s.mu.Unlock()
+		return fmt.Errorf("%q is declared in %s; it cannot also be a runtime entry", norm.Name, DeclarationPath)
+	}
+	if !ok {
+		sv = &server{name: norm.Name, source: SourceRuntime}
+		s.servers[norm.Name] = sv
+	}
+	restart := sv.g != nil && !sv.spec.SameRun(norm)
+	sv.desired = DesiredRunning
+	s.mu.Unlock()
+	if restart {
+		s.stopAll([]string{norm.Name})
+	}
+	s.mu.Lock()
+	sv.spec = norm
+	live := sv.g != nil
+	s.mu.Unlock()
+	if !live {
+		s.start(norm.Name)
+	}
+	s.persist()
+	return nil
+}
+
+// Remove stops and forgets a runtime entry.
+func (s *Supervisor) Remove(name string) error {
+	s.op.Lock()
+	defer s.op.Unlock()
+	s.mu.Lock()
+	sv, ok := s.servers[name]
+	if !ok {
+		s.mu.Unlock()
+		return fmt.Errorf("%w: %q", ErrUnknownServer, name)
+	}
+	if sv.source == SourceDeclared {
+		s.mu.Unlock()
+		return fmt.Errorf("%q is declared in %s; remove it there", name, DeclarationPath)
+	}
+	s.mu.Unlock()
+	s.stopAll([]string{name})
+	s.mu.Lock()
+	delete(s.servers, name)
+	s.mu.Unlock()
+	s.persist()
+	return nil
+}
+
+func (s *Supervisor) setDesired(name string, d Desired) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sv, ok := s.servers[name]
+	if !ok || sv.spec.Command == "" {
+		return fmt.Errorf("%w: no server named %q", ErrUnknownServer, name)
+	}
+	sv.desired = d
+	return nil
+}
+
+// Shutdown stops every server and keeps what each was set to, so the next
+// instance starts the same ones.
+func (s *Supervisor) Shutdown() {
+	s.op.Lock()
+	defer s.op.Unlock()
+	s.mu.Lock()
+	names := make([]string, 0, len(s.servers))
+	for name, sv := range s.servers {
+		names = append(names, name)
+		if sv.watch != nil {
+			sv.watch.close()
+			sv.watch = nil
+		}
+	}
+	s.mu.Unlock()
+	s.logf("shutdown: stopping %d server(s)", len(names))
+	s.stopAll(names)
+	s.persist()
+}
+
+// State is the current state, each status derived now.
+func (s *Supervisor) State() State {
+	s.mu.Lock()
+	type row struct {
+		name string
+		sv   server
+	}
+	rows := make([]row, 0, len(s.servers))
+	for name, sv := range s.servers {
+		rows = append(rows, row{name, *sv})
+	}
+	st := State{
+		Format:      StateFormat,
+		Supervisor:  SupervisorInfo{Version: s.cfg.Version, Pid: os.Getpid(), StartedAt: s.startedAt},
+		Declaration: s.decl,
+		Servers:     make(map[string]ServerState, len(rows)),
+	}
+	s.mu.Unlock()
+	for _, r := range rows {
+		st.Servers[r.name] = s.serverState(r.name, &r.sv)
+	}
+	return st
+}
+
+// serverState renders one server; it probes the port of a live group, so it
+// runs outside mu.
+func (s *Supervisor) serverState(name string, sv *server) ServerState {
+	ss := ServerState{
+		Source: sv.source, Desired: sv.desired, StartedAt: sv.startedAt, Exit: sv.exit,
+		LogPath: LogPath(s.cfg.StateDir, name),
+	}
+	if sv.starts > 1 {
+		ss.Restarts = sv.starts - 1
+	}
+	if sv.source == SourceRuntime {
+		ss.Command, ss.Cwd, ss.Port = sv.spec.Command, sv.spec.Cwd, sv.spec.Port
+	}
+	if sv.g != nil {
+		ss.Pid, ss.Pgid, ss.LeaderStart = sv.g.pgid, sv.g.pgid, sv.g.leaderStart
+	}
+	switch {
+	case sv.desired == DesiredStopped:
+		ss.Status = StatusStopped
+	case sv.starting:
+		ss.Status = StatusStarting
+	case sv.g != nil && sv.spec.Port > 0 && !portAccepts(sv.spec.Port):
+		ss.Status = StatusStarting
+	case sv.g == nil && sv.exit != nil:
+		ss.Status = StatusCrashed
+	default:
+		ss.Status = StatusRunning
+	}
+	return ss
+}
+
+func (s *Supervisor) persist() {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+	if err := writeState(s.cfg.StateDir, s.State()); err != nil {
+		s.logf("%v", err)
+	}
+}

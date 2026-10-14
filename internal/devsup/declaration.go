@@ -1,0 +1,253 @@
+// Package devsup is zcp-devsup, the dev-server supervisor a dev service runs as
+// its run.start (docs/spec-mate.md §2.8a.2): it holds the named dev servers the
+// repo declares in .zcp/dev-servers.json, each as the leader of its own process
+// group with its own log, and keeps the start/stop state in $HOME so it
+// survives a container restart while a redeploy (a fresh $HOME) starts every
+// declared server again. A server that exits on its own stays down and is
+// reported as crashed with its exit.
+//
+// The package imports the standard library and golang.org/x/sys only: zcp's
+// dev-server tool reads its declaration and state types, and the binary runs
+// inside every dev container.
+package devsup
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strings"
+)
+
+// Formats lists the declaration format versions this supervisor runs. A
+// declaration in another version is not run; zcp reports the supervisor as
+// older than the declaration.
+var Formats = []int{1}
+
+// DeclarationPath is where a repo declares its dev servers, relative to the
+// repo root.
+const DeclarationPath = ".zcp/dev-servers.json"
+
+// Declaration is the repo's .zcp/dev-servers.json: the set of named dev
+// servers. It changes only when the set changes; start and stop never write it.
+type Declaration struct {
+	Version int      `json:"version"`
+	Servers []Server `json:"servers"`
+}
+
+// Server is one named dev server: the shell command, its working directory
+// relative to the repo root, the port it listens on (0 when it has none), the
+// paths whose change restarts it and the dev service that runs it (variant B).
+type Server struct {
+	Name    string `json:"name"`
+	Port    int    `json:"port,omitempty"`
+	Command string `json:"command"`
+	Cwd     string `json:"cwd,omitempty"`
+	Watch   *Watch `json:"watch,omitempty"`
+	Service string `json:"service,omitempty"`
+}
+
+// Watch names the repo paths whose change restarts a server; .git,
+// node_modules and the ignore patterns never do.
+type Watch struct {
+	Paths  []string `json:"paths"`
+	Ignore []string `json:"ignore,omitempty"`
+}
+
+// SameRun reports whether two entries run the same thing; a change of
+// command, cwd, port or watch restarts the server.
+func (s Server) SameRun(o Server) bool {
+	if s.Command != o.Command || s.Cwd != o.Cwd || s.Port != o.Port || (s.Watch == nil) != (o.Watch == nil) {
+		return false
+	}
+	return s.Watch == nil || (slices.Equal(s.Watch.Paths, o.Watch.Paths) && slices.Equal(s.Watch.Ignore, o.Watch.Ignore))
+}
+
+// ForService keeps the entries the supervisor of the dev service hostname
+// runs: those without a service (variant A) and those naming it.
+func (d Declaration) ForService(hostname string) []Server {
+	out := make([]Server, 0, len(d.Servers))
+	for _, s := range d.Servers {
+		if s.Service == "" || s.Service == hostname {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+var serverName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,39}$`)
+
+// ErrUnsupportedFormat marks a declaration whose version this supervisor does
+// not run.
+var ErrUnsupportedFormat = errors.New("unsupported declaration format")
+
+// ParseDeclaration decodes and validates a declaration. Unknown keys are
+// ignored within a format version; a version this supervisor does not run is
+// an error wrapping ErrUnsupportedFormat.
+func ParseDeclaration(b []byte) (Declaration, error) {
+	// The version is read first: another format may change the rest.
+	var v struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(b, &v); err != nil {
+		return Declaration{}, fmt.Errorf("parse %s: %w", DeclarationPath, err)
+	}
+	if v.Version <= 0 {
+		return Declaration{}, fmt.Errorf("%s: version is missing", DeclarationPath)
+	}
+	if !slices.Contains(Formats, v.Version) {
+		return Declaration{}, fmt.Errorf("%s: format %d is not one this supervisor runs (%v): %w", DeclarationPath, v.Version, Formats, ErrUnsupportedFormat)
+	}
+	var d Declaration
+	if err := json.Unmarshal(b, &d); err != nil {
+		return Declaration{}, fmt.Errorf("parse %s: %w", DeclarationPath, err)
+	}
+	names, ports := map[string]bool{}, map[int]string{}
+	for i, s := range d.Servers {
+		s, err := normalizeServer(s)
+		if err != nil {
+			return Declaration{}, fmt.Errorf("%s: %w", DeclarationPath, err)
+		}
+		if names[s.Name] {
+			return Declaration{}, fmt.Errorf("%s: %q is declared twice", DeclarationPath, s.Name)
+		}
+		names[s.Name] = true
+		if s.Port != 0 {
+			if other, ok := ports[s.Port]; ok {
+				return Declaration{}, fmt.Errorf("%s: %q and %q both listen on port %d", DeclarationPath, other, s.Name, s.Port)
+			}
+			ports[s.Port] = s.Name
+		}
+		d.Servers[i] = s
+	}
+	return d, nil
+}
+
+// LoadDeclaration reads root's declaration; a missing file is an empty
+// declaration. Beyond ParseDeclaration it resolves symlinks: a cwd that
+// resolves outside root makes the file invalid.
+func LoadDeclaration(root string) (Declaration, error) {
+	b, err := os.ReadFile(filepath.Join(root, DeclarationPath))
+	if errors.Is(err, os.ErrNotExist) {
+		return Declaration{Version: Formats[len(Formats)-1], Servers: []Server{}}, nil
+	}
+	if err != nil {
+		return Declaration{}, fmt.Errorf("read %s: %w", DeclarationPath, err)
+	}
+	d, err := ParseDeclaration(b)
+	if err != nil {
+		return Declaration{}, err
+	}
+	for _, s := range d.Servers {
+		if err := insideRoot(root, s.Cwd); err != nil {
+			return Declaration{}, fmt.Errorf("%s: %q: %w", DeclarationPath, s.Name, err)
+		}
+	}
+	return d, nil
+}
+
+// insideRoot checks that rel, with symlinks resolved, stays under root. A
+// path that does not exist yet passes; starting the server reports it.
+func insideRoot(root, rel string) error {
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return fmt.Errorf("repo root: %w", err)
+	}
+	resolved, err := filepath.EvalSymlinks(filepath.Join(root, filepath.FromSlash(rel)))
+	if err != nil {
+		return nil //nolint:nilerr // a missing cwd fails visibly when the server starts
+	}
+	if r, err := filepath.Rel(realRoot, resolved); err != nil || r == ".." || strings.HasPrefix(r, "../") {
+		return fmt.Errorf("cwd %s resolves outside the repo", rel)
+	}
+	return nil
+}
+
+// normalizeServer validates one entry and fills the default cwd.
+func normalizeServer(s Server) (Server, error) {
+	if !serverName.MatchString(s.Name) {
+		return Server{}, fmt.Errorf("%q: name must match %s", s.Name, serverName)
+	}
+	if strings.TrimSpace(s.Command) == "" {
+		return Server{}, fmt.Errorf("%q: command is empty", s.Name)
+	}
+	if s.Port < 0 || s.Port > 65535 {
+		return Server{}, fmt.Errorf("%q: port %d is out of range", s.Name, s.Port)
+	}
+	cwd, err := cleanRel(s.Cwd)
+	if err != nil {
+		return Server{}, fmt.Errorf("%q: cwd: %w", s.Name, err)
+	}
+	s.Cwd = cwd
+	if s.Watch != nil {
+		w := Watch{Ignore: s.Watch.Ignore}
+		if len(s.Watch.Paths) == 0 {
+			return Server{}, fmt.Errorf("%q: watch has no paths", s.Name)
+		}
+		for _, p := range s.Watch.Paths {
+			c, err := cleanRel(p)
+			if err != nil {
+				return Server{}, fmt.Errorf("%q: watch path %q: %w", s.Name, p, err)
+			}
+			w.Paths = append(w.Paths, c)
+		}
+		for _, p := range s.Watch.Ignore {
+			if _, err := path.Match(p, ""); err != nil {
+				return Server{}, fmt.Errorf("%q: watch ignore %q: %w", s.Name, p, err)
+			}
+		}
+		s.Watch = &w
+	}
+	return s, nil
+}
+
+// cleanRel keeps a repo-relative path inside the repo.
+func cleanRel(p string) (string, error) {
+	if p == "" {
+		return ".", nil
+	}
+	if strings.HasPrefix(p, "/") {
+		return "", errors.New("must be relative to the repo root")
+	}
+	c := path.Clean(p)
+	if c == ".." || strings.HasPrefix(c, "../") {
+		return "", errors.New("must stay inside the repo")
+	}
+	return c, nil
+}
+
+// ignored reports whether a change at rel (repo-relative, slash-separated)
+// must not restart a server watching with w: anything under .git or
+// node_modules, or matching an ignore entry as a path, a parent directory or
+// a glob.
+func (w *Watch) ignored(rel string) bool {
+	for seg := range strings.SplitSeq(rel, "/") {
+		if seg == ".git" || seg == "node_modules" {
+			return true
+		}
+	}
+	for _, ig := range w.Ignore {
+		ig = strings.TrimSuffix(path.Clean(ig), "/")
+		if rel == ig || strings.HasPrefix(rel, ig+"/") {
+			return true
+		}
+		if ok, _ := path.Match(ig, rel); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// covers reports whether rel lies under one of the watched paths.
+func (w *Watch) covers(rel string) bool {
+	for _, p := range w.Paths {
+		if p == "." || rel == p || strings.HasPrefix(rel, p+"/") {
+			return true
+		}
+	}
+	return false
+}
