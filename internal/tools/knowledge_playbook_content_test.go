@@ -228,3 +228,44 @@ func TestPlaybookMapping_SlugsResolveInCorpus(t *testing.T) {
 		})
 	}
 }
+
+func TestPlaybookMonorepo_ContentPins_PartRules(t *testing.T) {
+	t.Parallel()
+
+	store, err := knowledge.GetEmbeddedStore()
+	if err != nil {
+		t.Fatalf("GetEmbeddedStore: %v", err)
+	}
+	doc, err := store.Get("zerops://playbooks/monorepo")
+	if err != nil {
+		t.Fatalf("Get monorepo playbook: %v", err)
+	}
+	body := strings.Join(strings.Fields(doc.Content), " ")
+
+	for _, tt := range []struct{ name, needle string }{
+		{"single-part repo is out of scope", "A repo with one deployable app follows the ordinary develop flow unchanged"},
+		{"parts are the zerops.yaml setups", "Parts are the setups in the repo's `zerops.yaml`"},
+		{"workspace markers", "`pnpm-workspace.yaml`, `workspaces` in `package.json`, `nx.json`, `turbo.json`"},
+		{"propose parts once", "Propose the parts to the person once"},
+		{"variant A is the default", "**one dev service holds the whole repo** (default)"},
+		{"variant B on a local storage volume", "**one dev service per part on one shared Local Storage volume**"},
+		{"mountPath is a subfolder", "`mountPath` is a subfolder of `/var/www`"},
+		{"more people means more Mates", "More people on the repo means more Mates, never more dev services"},
+		{"pnpm via prepareCommands", "install it in `build.prepareCommands`"},
+		{"extends replaces lists", "`extends` replaces lists whole"},
+		{"ubuntu zsc install", "`sudo zsc install <runtime>` on Ubuntu"},
+		{"alpine apk add", "`sudo apk add <package>` on Alpine"},
+		{"vite allowedHosts", "`server.allowedHosts`"},
+		{"watch-path or polling", "`node --watch-path=<dir>` or polling"},
+		{"static cannot proxy", "A static service cannot proxy requests to the API"},
+		{"compose to native parts", "Convert compose services to native parts"},
+		{"docker only with registry images", "only when its image already exists in a registry"},
+		{"SPA and API in one folder is one part", "SPA and API in one folder are one app"},
+		{"cross-part URLs from project variables", "project variable built on `${zeropsSubdomainHost}`"},
+		{"heavy build scaling", "`zsc scale cpu max 10m`"},
+	} {
+		if !strings.Contains(body, tt.needle) {
+			t.Errorf("%s: monorepo playbook missing %q", tt.name, tt.needle)
+		}
+	}
+}

@@ -1,0 +1,79 @@
+---
+description: Procedural playbook for repos with more than one deployable part (pnpm/turbo workspaces, polyglot repos, docker-compose, SPA + API) — detect parts, choose one dev service or one per part, write one setup per part.
+---
+
+# Monorepo — several parts in one repo
+
+Applies only when the repo holds more than one deployable part. A repo with one
+deployable app follows the ordinary develop flow unchanged — stop reading here.
+
+## 1. Detect the parts
+
+Parts are the setups in the repo's `zerops.yaml`. The file is the only truth once
+it exists: when it already has several setups, take them as the parts and do not
+re-detect.
+
+Without a `zerops.yaml`, read the repo for these signals:
+
+| Signal | Reading |
+|---|---|
+| `pnpm-workspace.yaml`, `workspaces` in `package.json`, `nx.json`, `turbo.json` | JS workspace — parts are the packages with a start script (`apps/*`) |
+| `package.json` packages without a start script | libraries, not parts |
+| `go.mod`, `pyproject.toml`, `requirements.txt` in a subfolder | one more part in that language |
+| several `Dockerfile`s | one part per Dockerfile |
+| `docker-compose.yml` | see §6 |
+| one `package.json` with a bundler (vite) and a server | one part — SPA and API in one folder are one app; ask only if the person wants the web as a separate static service |
+
+Propose the parts to the person once, in one sentence ("I found web, api and
+packages/shared (a library). Deploy web and api as two parts?"), then write one
+setup per part plus a `dev` setup in the single root `zerops.yaml`.
+
+## 2. One dev service or one per part
+
+1. All runtimes can run in one container (a second runtime comes from
+   `sudo zsc install <runtime>` on Ubuntu, `sudo apk add <package>` on Alpine) and the
+   dev servers plus the install peak fit its RAM → **one dev service holds the whole
+   repo** (default). Each part's dev server runs under its own name in that service.
+2. Otherwise — runtimes that cannot share a container, or one container is not
+   enough — **one dev service per part on one shared Local Storage volume**:
+   `mountPath` is a subfolder of `/var/www` (the platform rejects `/var/www`
+   itself), and deploys take `workingDir` on the volume.
+3. More people on the repo means more Mates, never more dev services.
+
+## 3. Write the setups
+
+- One `build` per part. Build always receives the whole repo; narrow it with the
+  package-manager filter and `deployFiles`.
+- Put shared settings in a `base` setup and let the others `extends` it. `extends`
+  replaces lists whole (`buildCommands`, `deployFiles`, ports) and merges maps, so
+  repeat a list in the child when it differs.
+- Every setup needs a `run` section, including static parts.
+- pnpm is not in the base image: install it in `build.prepareCommands`.
+- pnpm `node_modules` are symlinks into the repo root, so a part that deploys
+  `node_modules` ships the root `node_modules` and the shared packages too.
+- A heavy build: `zsc scale cpu max 10m` in the build commands, then
+  `zsc scale cpu auto`.
+
+## 4. Dev servers
+
+- Vite rejects unknown hosts: set `server.allowedHosts` in `vite.config` to accept the
+  service subdomain.
+- A file watcher must survive renames: use `node --watch-path=<dir>` or polling
+  (`CHOKIDAR_USEPOLLING=1` and similar) — renamed files otherwise vanish from the
+  watch.
+- Stop a dev server by its process group, never by a name match — `pkill -f <name>`
+  kills sibling parts.
+- A static service cannot proxy requests to the API.
+
+## 5. Cross-part URLs
+
+A part never hardcodes another part's URL. Define the URL as a project variable
+built on `${zeropsSubdomainHost}` and read that variable at build or run time. A
+`${<service>_zeropsSubdomain}` reference stays literal in a project variable.
+
+## 6. docker-compose
+
+Convert compose services to native parts: app services become runtime setups,
+databases and caches become managed services. Keep a compose service as a Docker
+service only when its image already exists in a registry and the person wants
+Docker — say so and ask once.

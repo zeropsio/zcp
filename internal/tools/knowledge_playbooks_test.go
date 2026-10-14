@@ -26,6 +26,11 @@ func TestKnowledgeTool_PlaybookURI_FetchesEmbedded(t *testing.T) {
 			uri:         "zerops://playbooks/orientation",
 			wantContent: "# Getting oriented: Zerops & ZCP",
 		},
+		{
+			name:        "monorepo playbook",
+			uri:         "zerops://playbooks/monorepo",
+			wantContent: "# Monorepo — several parts in one repo",
+		},
 	}
 
 	for _, tt := range tests {
