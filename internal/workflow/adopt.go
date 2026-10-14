@@ -325,13 +325,14 @@ func AdoptPair(stateDir string, target BootstrapTarget, date string) error {
 	if rt.DevHostname == "" || len(stages) == 0 {
 		return fmt.Errorf("adopt pair: %q is not a dev/stage pair (bootstrapMode %q, stage %q)", rt.DevHostname, rt.EffectiveMode(), rt.ExplicitStage)
 	}
-	for _, stage := range stages {
-		own, err := ReadServiceMeta(stateDir, stage.Hostname)
+	halves := append(rt.StageHostnames(), rt.CodeVolume.DevServiceHostnames()...)
+	for _, half := range halves {
+		own, err := ReadServiceMeta(stateDir, half)
 		if err != nil {
 			return fmt.Errorf("adopt pair %s: %w", rt.DevHostname, err)
 		}
 		if own != nil {
-			return fmt.Errorf("adopt pair %s: its stage half %s is already recorded as a service of its own", rt.DevHostname, stage.Hostname)
+			return fmt.Errorf("adopt pair %s: its half %s is already recorded as a service of its own", rt.DevHostname, half)
 		}
 	}
 	target.Runtime.IsExisting = true

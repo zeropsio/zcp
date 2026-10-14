@@ -180,6 +180,7 @@ func targetMeta(target BootstrapTarget, hostname string, mode topology.Mode, sta
 		BuildIntegration: topology.BuildIntegrationNone,
 		BootstrapSession: bootstrapSession,
 		BootstrappedAt:   bootstrappedAt,
+		CodeVolume:       cloneCodeVolume(target.Runtime.CodeVolume),
 	}
 	setPlanPublicAccess(meta, target.Runtime.PublicAccess, hostname, meta.StageHostnames())
 	return meta
@@ -196,6 +197,17 @@ func stagesByHostname(stages []topology.StageRef) []topology.StageRef {
 		out = append(out, topology.StageRef{Hostname: s.Hostname})
 	}
 	return out
+}
+
+// cloneCodeVolume copies a plan's code volume into a meta, so the plan and the
+// meta never share its dev-service list.
+func cloneCodeVolume(v *topology.CodeVolume) *topology.CodeVolume {
+	if v == nil {
+		return nil
+	}
+	c := *v
+	c.DevServices = slices.Clone(v.DevServices)
+	return &c
 }
 
 // firstStageHostname is the hostname of a plan target's first stage, "" when
@@ -252,6 +264,9 @@ func mergeExistingMeta(meta, existing *ServiceMeta) {
 
 	if existing.PrimarySetupName != "" {
 		meta.PrimarySetupName = existing.PrimarySetupName
+	}
+	if meta.CodeVolume == nil {
+		meta.CodeVolume = existing.CodeVolume
 	}
 	for _, s := range existing.Stages {
 		if s.SetupName != "" {

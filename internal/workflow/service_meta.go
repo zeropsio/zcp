@@ -44,6 +44,10 @@ type ServiceMeta struct {
 	// stagesUnrecorded is a meta read without `stages`: written before them,
 	// or by an older zcp that dropped them. StagesRebuildDue reads it.
 	stagesUnrecorded bool
+	// CodeVolume is a variant-B pair's shared code: the local-storage
+	// service holding the repository, where every dev service mounts it,
+	// and the pair's dev services beside Hostname. nil for every other pair.
+	CodeVolume *topology.CodeVolume `json:"codeVolume,omitempty"`
 
 	// Per-pair deploy dimensions (deploy-strategy decomposition; see
 	// plans/archive/deploy-strategy-decomposition-2026-04-28.md §3.1 for
@@ -291,6 +295,25 @@ func (m *ServiceMeta) SetupNameFor(targetHostname string) string {
 	if targetHostname == m.Hostname {
 		return m.PrimarySetupName
 	}
+	if d, ok := m.CodeVolume.DevService(targetHostname); ok {
+		return d.SetupName
+	}
+	return ""
+}
+
+// WorkingDirFor is the container directory a deploy from hostname runs in:
+// the code volume's mount for a dev service of a variant-B pair, whose
+// repository lives there, else "" — the deploy's default, /var/www.
+func (m *ServiceMeta) WorkingDirFor(hostname string) string {
+	if m == nil || m.CodeVolume == nil {
+		return ""
+	}
+	if hostname == m.Hostname {
+		return m.CodeVolume.MountPath
+	}
+	if _, ok := m.CodeVolume.DevService(hostname); ok {
+		return m.CodeVolume.MountPath
+	}
 	return ""
 }
 
@@ -434,9 +457,10 @@ func (m *ServiceMeta) IsAdopted() bool {
 // hostnames.
 //
 // For container+standard and local+standard that's Hostname followed by every
-// stage hostname; for everything else just [Hostname].
+// stage hostname; for everything else just [Hostname]. A variant-B pair's
+// further dev services follow.
 func (m *ServiceMeta) Hostnames() []string {
-	return append([]string{m.Hostname}, m.StageHostnames()...)
+	return append(append([]string{m.Hostname}, m.StageHostnames()...), m.CodeVolume.DevServiceHostnames()...)
 }
 
 // ManagedRuntimeIndex builds a hostname → meta map honoring the pair-keyed
@@ -500,6 +524,9 @@ func (m *ServiceMeta) RoleFor(hostname string) topology.Mode {
 	}
 	if hostname == m.Hostname {
 		return m.PrimaryRole()
+	}
+	if _, ok := m.CodeVolume.DevService(hostname); ok {
+		return topology.DeployRoleDev
 	}
 	return ""
 }
@@ -958,12 +985,13 @@ func cleanIncompleteMetasForSession(stateDir, sessionID string) {
 	}
 }
 
-// FindServiceMeta returns the meta whose Hostname OR a stage hostname matches
+// FindServiceMeta returns the meta whose Hostname, a stage hostname or a
+// variant-B dev service matches
 // — the disk-backed counterpart to ManagedRuntimeIndex. Honors the pair-keyed
 // invariant (spec-workflows.md §8 E8): container+standard and local+standard
 // store exactly one file per pair; a direct read by the non-primary hostname
 // would miss. Fast path hits the direct file; slow path scans metas for a
-// stage match. Returns (nil, nil) when no meta tracks hostname.
+// stage or dev-service match. Returns (nil, nil) when no meta tracks hostname.
 //
 // Use this from tool-layer handlers when you have a hostname but not a
 // pre-loaded meta slice. For slice→map construction, use ManagedRuntimeIndex.
@@ -977,6 +1005,9 @@ func FindServiceMeta(stateDir, hostname string) (*ServiceMeta, error) {
 	}
 	for _, m := range metas {
 		if _, ok := m.StageFor(hostname); ok {
+			return m, nil
+		}
+		if _, ok := m.CodeVolume.DevService(hostname); ok {
 			return m, nil
 		}
 	}

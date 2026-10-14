@@ -106,7 +106,10 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// Raised +67 (19151→19218): `service` also serves
 		// action="group-recipe", proposing a part's service added to or
 		// removed from the recipe tiers on main; no new field.
-		"zerops_workflow":    19218,
+		// Raised +386 (19218→19604) for the plan runtime's `codeVolume`:
+		// variant B, {hostname, mountPath, devServices[{hostname,
+		// setupName}]}; no description — the monorepo playbook carries its use.
+		"zerops_workflow":    19604,
 		"zerops_record_fact": 3299,
 		"zerops_dev_server":  3220,
 		// Raised +28 (2945→2973) for the OS-axis migration: the runtime/services
