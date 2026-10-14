@@ -55,6 +55,8 @@ type fakeHQ struct {
 	repos       map[string]bool
 	changes     []hq.Change
 	attachments map[string][]byte
+	// receipts are the last receipt each change was given, by repo/number.
+	receipts map[string]*hq.ChangeReceipt
 	// failing is how many of the next requests failOn matches — any, when
 	// nil — are answered failStatus with failCode instead of being served.
 	failing    int
@@ -73,7 +75,7 @@ func newFakeHQ(t *testing.T) *fakeHQ {
 	requireGitForLab(t)
 	f := &fakeHQ{
 		t: t, root: t.TempDir(), appID: labApp,
-		repos: map[string]bool{}, attachments: map[string][]byte{},
+		repos: map[string]bool{}, attachments: map[string][]byte{}, receipts: map[string]*hq.ChangeReceipt{},
 	}
 	f.refsFile = filepath.Join(t.TempDir(), "open-refs")
 	f.writeRefs()
@@ -223,6 +225,9 @@ func (f *fakeHQ) api(w http.ResponseWriter, r *http.Request) {
 			}
 			if edit.Body != nil {
 				change.Body = *edit.Body
+			}
+			if edit.Receipt != nil {
+				f.receipts[fmt.Sprintf("%s/%d", change.Repo, change.Number)] = edit.Receipt
 			}
 			writeHQJSON(w, http.StatusOK, *change)
 		case r.Method == http.MethodPost && len(parts) == 6 && parts[5] == "attachments":
@@ -475,6 +480,14 @@ func (f *fakeHQ) setDown(down bool) {
 // change is the Mate's change number in appdev of the application it was
 // first in.
 func (f *fakeHQ) change(number int) *hq.Change { return f.changeIn("appdev", number) }
+
+// receipt is the last receipt the Mate's change number in appdev was given,
+// nil for none.
+func (f *fakeHQ) receipt(number int) *hq.ChangeReceipt {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.receipts[fmt.Sprintf("appdev/%d", number)]
+}
 
 // changeIn is the Mate's change number in repo of the application it was
 // first in.
