@@ -82,6 +82,14 @@ jobs:
             file: zcp-win-x64.exe
             compress: false
             strip: false
+          # The dev-server supervisor a dev setup downloads in its
+          # prepareCommands (docs/spec-mate.md §2.8a.2).
+          - name: zcp-devsup linux amd64
+            env: { GOOS: linux, GOARCH: amd64 }
+            file: zcp-devsup-linux-amd64
+            pkg: ./cmd/zcp-devsup
+            compress: false
+            strip: false
 
     steps:
       - uses: actions/checkout@v5
@@ -105,8 +113,9 @@ jobs:
           -ldflags "-s -w
           -X github.com/zeropsio/zcp/internal/server.Version=${{ github.ref_name }}
           -X github.com/zeropsio/zcp/internal/server.Commit=${{ github.sha }}
-          -X github.com/zeropsio/zcp/internal/server.Built=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          ./cmd/zcp
+          -X github.com/zeropsio/zcp/internal/server.Built=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          -X main.version=${{ github.ref_name }}"
+          ${{ matrix.pkg || './cmd/zcp' }}
 
       # UPX is fetched here rather than through svenstaro/upx-action: that
       # action curls the release tarball with no retry, so a single TLS reset

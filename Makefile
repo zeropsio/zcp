@@ -238,7 +238,7 @@ dc-live-remote: ## Run Data Console live conformance ON the zcp container over S
 #########
 # BUILD #
 #########
-all: linux-amd linux-386 darwin-amd darwin-arm windows-amd ## Cross-build all platforms
+all: linux-amd linux-386 darwin-amd darwin-arm windows-amd devsup-linux-amd ## Cross-build all platforms
 
 linux-amd: ## Build for Linux amd64
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o builds/zcp-linux-amd64 ./cmd/zcp
@@ -251,6 +251,9 @@ darwin-amd: ## Build for macOS amd64
 
 darwin-arm: ## Build for macOS arm64
 	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o builds/zcp-darwin-arm64 ./cmd/zcp
+
+devsup-linux-amd: ## Build the dev-server supervisor zcp-devsup for Linux amd64
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w -X main.version=$(VERSION)" -o builds/zcp-devsup-linux-amd64 ./cmd/zcp-devsup
 
 windows-amd: ## Build for Windows amd64
 	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o builds/zcp-win-x64.exe ./cmd/zcp
