@@ -383,15 +383,17 @@ func TestSupervisor_AWatchedChangeRestartsTheServerAndIgnoredOutputDoesNot(t *te
 	r.write("apps/api/main.go", "package main")
 	r.write("apps/api/node_modules/x/index.js", "1")
 	srv := r.listener("api", api)
-	srv.Watch = &Watch{Paths: []string{"apps/api"}, Ignore: []string{"apps/api/app"}}
+	srv.Watch = &Watch{Paths: []string{"apps/api"}, Ignore: []string{"apps/api/app*"}}
 	r.declare(srv)
 	s := r.supervisor()
 	s.Boot()
 	eventually(t, "api to listen", func() bool { return listening(api) })
 	first := mustServer(t, s.State(), "api").Pid
 
-	// Build output and dependencies do not restart it.
+	// Build output and dependencies do not restart it; `go build -o app`
+	// also writes app-go-tmp-umask beside its output.
 	r.write("apps/api/app", "binary")
+	r.write("apps/api/app-go-tmp-umask", "")
 	r.write("apps/api/node_modules/x/index.js", "2")
 	time.Sleep(4 * watchSettle) // a restart that should not happen has no event to wait on
 	if sv := mustServer(t, s.State(), "api"); sv.Pid != first || sv.Restarts != 0 {
@@ -484,5 +486,31 @@ func TestSupervisor_ControlSocketDrivesTheServers(t *testing.T) {
 	}
 	if listening(web) {
 		t.Fatal("web outlived the supervisor's shutdown")
+	}
+}
+
+func TestSupervisor_AWatchedChangeStartsACrashedServer(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	api := freePort(t)
+	srv := r.listener("api", api)
+	// It crashes until the fix lands: the change is the fix.
+	srv.Command = "if [ -f apps/api/fixed ]; then " + srv.Command + "; else exit 3; fi"
+	srv.Watch = &Watch{Paths: []string{"apps/api"}}
+	r.write("apps/api/main.go", "package main")
+	r.declare(srv)
+	s := r.supervisor()
+	s.Boot()
+	eventually(t, "api to be recorded as crashed", func() bool {
+		return mustServer(t, s.State(), "api").Status == StatusCrashed
+	})
+
+	r.write("apps/api/fixed", "1")
+	eventually(t, "the change to start api", func() bool {
+		sv := mustServer(t, s.State(), "api")
+		return sv.Status == StatusRunning && sv.Restarts == 1 && listening(api)
+	})
+	if sv := mustServer(t, s.State(), "api"); sv.Exit == nil || sv.Exit.Code != 3 {
+		t.Fatalf("the crash is no longer visible: %+v", sv.Exit)
 	}
 }

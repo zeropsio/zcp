@@ -17,7 +17,7 @@
           "apps/api"
         ],
         "ignore": [
-          "apps/api/app"
+          "apps/api/app*"
         ]
       }
     },

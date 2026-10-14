@@ -755,7 +755,7 @@ never write it (MODEL §9/1a, REVIEW N5).
   "servers": [
     { "name": "web", "port": 3000, "command": "bun --watch index.ts", "cwd": "apps/web" },
     { "name": "api", "port": 8080, "command": "go build -o app . && exec ./app", "cwd": "apps/api",
-      "watch": { "paths": ["apps/api"], "ignore": ["apps/api/app"] } },
+      "watch": { "paths": ["apps/api"], "ignore": ["apps/api/app*"] } },
     { "name": "worker", "command": "bun --watch src/worker.ts", "cwd": "apps/worker" },
     { "name": "admin", "port": 4200, "command": "npx ng serve --host 0.0.0.0 --port 4200", "cwd": "apps/admin",
       "autostart": false }
@@ -770,7 +770,7 @@ never write it (MODEL §9/1a, REVIEW N5).
 | `servers[].port` | optional integer 1–65535, unique in the file; absent for a server without a listener (a worker) |
 | `servers[].command` | required, non-empty; run as `/bin/sh -c <command>` in `cwd`, as the leader of its own process group, with the environment `run.start` gave the supervisor (the service's env vars) |
 | `servers[].cwd` | optional, default `"."`; relative to the repo root; after cleaning and resolving symlinks it stays inside the repo root, otherwise the file is invalid |
-| `servers[].watch` | optional; the supervisor restarts the server's group on a change under `paths` (relative to the repo root), never for paths under `.git`, `node_modules` or matching `ignore` (MODEL §9/1a, P4 H3). Absent: the command's own watcher (`--watch`, vite) does it |
+| `servers[].watch` | optional; the supervisor restarts the server's group on a change under `paths` (relative to the repo root), never for paths under `.git`, `node_modules` or matching `ignore` (MODEL §9/1a, P4 H3). An `ignore` entry matches a repo-relative path as a prefix or as a `path.Match` glob; a build output in a watched directory needs its glob — `go build -o app` also writes `app-go-tmp-umask` beside it, hence `apps/api/app*`. Absent: the command's own watcher (`--watch`, vite) does it |
 | `servers[].service` | optional; variant B only — the hostname of the dev service whose supervisor runs it (MODEL §4). Absent: run by the one supervisor reading the file (variant A). In variant B every entry carries it |
 | `servers[].autostart` | optional bool, default `true`; the server's **first** desired state: `autostart ? running : stopped` (§2.8a.2 *Events*). `false` keeps a declared server down until `ctl start` — a repo with many heavy dev servers (five Angular apps) starts only the ones it marks |
 
@@ -800,14 +800,15 @@ release reads the declaration's `version` yet, zcp writes no pin and says so.
 ```yaml
 run:
   prepareCommands:
-    - sudo sh -c 'curl -fsSL https://github.com/zeropsio/zcp/releases/download/vX.Y.Z/zcp-devsup-linux-amd64 -o /usr/local/bin/zcp-devsup && chmod 0755 /usr/local/bin/zcp-devsup'
+    - sudo sh -c 'u=https://github.com/zeropsio/zcp/releases/download/vX.Y.Z/zcp-devsup-linux-amd64; f=/usr/local/bin/zcp-devsup; if command -v curl >/dev/null; then curl -fsSL "$u" -o "$f"; else wget -qO "$f" "$u"; fi && chmod 0755 "$f"'
   start: zcp-devsup run
 ```
 
 The binary lands in the image, never in `$HOME` or `~/bin` (both are lost on redeploy, P2 S4).
 `run --root <dir>` overrides the repo root (variant B); in variant B the supervisor runs only the
-entries whose `service` is its own `hostname`. The supervisor lane pins the download line live
-(Alpine bases may need `wget -qO` instead of `curl`).
+entries whose `service` is its own `hostname` (`--service` overrides it). The download line falls
+back to `wget` because Alpine bases lack `curl`; it runs on both kinds of base (bun on Alpine,
+go on Ubuntu).
 
 **Dev override.** `ZCP_DEVSUP_URL`, an env var on the zcp service, replaces the release download
 URL in the line zcp writes, so a dev build of the supervisor can be tried before any release. Dev
@@ -840,11 +841,15 @@ lost on a redeploy (P1 T7, P2 S4) — which is exactly the start-up rule below.
 ```
 
 - `desired` (`running|stopped`) is the agent's last word; `restarts` counts starts after the first
-  in this state file's life; `exit` is the last process end `{code, signal, at}` or `null`;
+  in this state file's life; `exit` is the last end the agent did not ask for `{code, signal, at}`
+  or `null`: the server ending on its own (`code` -1 and `signal` such as `SIGKILL` when a signal
+  ended it) or a failed start (`port_busy`; `start_failed` with the reason in the server's log). A
+  stop or restart never overwrites it, so a crash stays visible after the server runs again;
   `leaderStart` is the leader's start time from `/proc/<pid>/stat`, the identity check below.
 - `status` is derived **once, by the supervisor**: `stopped` = desired stopped; `crashed` = desired
   running, no live group, `exit` set; `starting` = live group whose `port` does not yet accept TCP;
-  `running` = everything else. zcp and Mate read it, never recompute it.
+  `running` = everything else; a start still waiting for its port is `starting`. zcp and Mate read
+  it, never recompute it.
 - `source: runtime` entries are not in the declaration: crew apps (MODEL §9/1c). They carry their
   own `command`, `cwd`, `port`, are added and removed only through `ctl`, and are not restored after
   a redeploy — their owner, Mate's engine, adds them again.
@@ -864,13 +869,16 @@ verb is idempotent, so the caller asks `status` again.
 | `version` | `{"version":"vX.Y.Z","formats":[1]}` |
 
 Exit codes: `0` done, `2` no supervisor (socket absent), `3` unknown name, `4` invalid declaration.
+A start that fails still answers `0`; the failure is the server's `exit` in the answer.
 `zerops_dev_server` adds an undeclared server to the file once (then `reload`, then `start`), and on
 a dev service where `zcp-devsup` is absent or exits `2` it changes nothing and answers that the dev
 setup needs the supervisor (MODEL §9/1c migration).
 
 **Stop** signals the **group**: `SIGTERM` to `-pgid`, up to 10 s, then `SIGKILL` to `-pgid` — only
 after confirming the group is still the one it started (the leader's `/proc` start time equals
-`leaderStart`; a reused pid is left alone). **Start** waits up to 10 s for its `port` to be free;
+`leaderStart`; a reused pid is left alone, and so is a group whose leader is gone, since nothing
+identifies it). A leader that ends on its own takes its group with it: the supervisor kills what is
+left of the group at once, while the pgid still cannot be reused. **Start** waits up to 10 s for its `port` to be free;
 still busy → the start fails with `exit: {code: -1, signal: "port_busy"}`. No `pkill`, `pgrep` or
 command-pattern match anywhere (MODEL §9/0).
 
@@ -882,6 +890,7 @@ default), else `desired: stopped`. From then on only `ctl start`/`stop`/`restart
 |---|---|
 | A server exits on its own | left down and visible: `status: crashed`, `exit` recorded, **no restart** in this container life except by a watched change (below) — the keeper's principle (`internal/tools/dev_server_keep.go:16-25`), seen at the agent's next call (MODEL §11.3) |
 | A watched path changes | for a server with `desired: running`: a live group restarts, and no live group (`crashed` — the agent fixed the code) starts; `restarts` + 1 either way. A `stopped` server stays stopped |
+| The supervisor is killed (zenv starts `run.start` again) | the new supervisor stops the groups the old one left (identity-checked), then starts every entry with `desired: running` |
 | Container restart (`$HOME` kept) | every entry with `desired: running` starts, `crashed` ones included; `stopped` stays stopped |
 | Redeploy (new container, `$HOME` empty) | every declared server for this service gets its first desired state: `autostart` ones start, the rest stay `stopped` |
 | `SIGHUP` / `ctl reload` | re-reads the declaration: an added name gets its first desired state (starts only with `autostart`), a removed one stops and is dropped, a changed `command`/`cwd`/`port`/`watch` restarts that one only if it is `desired: running`, the rest is untouched; an invalid file changes nothing and sets `declaration.error` |

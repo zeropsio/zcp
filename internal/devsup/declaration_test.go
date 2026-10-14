@@ -101,7 +101,7 @@ func TestParseDeclaration_ContractFixture(t *testing.T) {
 	}
 	want := []Server{
 		{Name: "web", Port: 3000, Command: "bun --watch index.ts", Cwd: "apps/web"},
-		{Name: "api", Port: 8080, Command: "go build -o app . && exec ./app", Cwd: "apps/api", Watch: &Watch{Paths: []string{"apps/api"}, Ignore: []string{"apps/api/app"}}},
+		{Name: "api", Port: 8080, Command: "go build -o app . && exec ./app", Cwd: "apps/api", Watch: &Watch{Paths: []string{"apps/api"}, Ignore: []string{"apps/api/app*"}}},
 		{Name: "worker", Command: "bun --watch src/worker.ts", Cwd: "apps/worker"},
 	}
 	if !reflect.DeepEqual(d.Servers, want) {
