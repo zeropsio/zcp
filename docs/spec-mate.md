@@ -816,7 +816,8 @@ loop only; production never sets it.
 
 **Variant B stand-up.** The dev services start before the repo is cloned onto the shared volume, so
 each supervisor first reads a missing file (an empty declaration). After the clone, stand-up runs
-`zcp-devsup ctl reload` on every dev service's supervisor.
+`zcp-devsup ctl reload` on every dev service's supervisor (§2.8a.4a); each starts only the entries
+of its own service (`TestSupervisor_EachDevServicesSupervisorStartsOnlyTheServersAssignedToIt`).
 
 **Runtime state.** `$HOME/.zcp/devsup/state.json`, written only by the supervisor (atomic rename),
 beside `logs/<name>.log` and the control socket `sock`. `$HOME` survives a container restart and is
@@ -1015,6 +1016,43 @@ Stages []StageRef `json:"stages,omitempty"`
   zcp's keeper and its SSH start do not know the supervisor and may collide with it on a declared
   port. This ends when the new zcp is back: at startup it removes the old keeper's
   `zerops@devservers-*` units and its `dev-servers.json` record (`TestRetireDevServerKeeper`).
+
+#### 2.8a.4a Variant B: `ServiceMeta.CodeVolume` (zcp-internal)
+
+```go
+type CodeVolume struct {
+	Hostname    string          `json:"hostname"`    // the local-storage service
+	MountPath   string          `json:"mountPath"`   // e.g. /var/www/ws
+	DevServices []DevServiceRef `json:"devServices"` // {hostname, setupName}
+}
+// on the plan's runtime target and on ServiceMeta:
+CodeVolume *CodeVolume `json:"codeVolume,omitempty"`
+```
+
+- Variant B (MODEL §4) is chosen only by MODEL §4's rule; a pair without `codeVolume` is variant A
+  and reads, deploys and stands up exactly as before.
+- The pair stays one meta, keyed on the dev service the agent edits (`Hostname`). Every
+  `DevServices[i]` is a further dev service of the pair with its own dev setup; the pair-keyed
+  lookups resolve it to the pair, `RoleFor` names it a dev half and `SetupNameFor` its setup.
+- Validation, before import: `mountPath` is an absolute folder strictly under `/var/www` — the
+  platform refuses `/var/www` itself as a mount (P4 H3) and zcp's mount `<host>:/var/www` shows the
+  volume as `/var/www/<host>/<folder>` — and the pair needs at least one further dev service. The
+  volume and every dev service are planned once and collide with no live service
+  (`TestValidateBootstrapTargets_PlanB_MountsTheCodeVolumeUnderVarWwwNeverAtIt`).
+- Deploy: a deploy from any dev service of the pair runs with `workingDir` = `mountPath` unless the
+  caller names one (`ServiceMeta.WorkingDirFor`), and pre-flight reads `zerops.yml` from the same
+  folder below the source's mount. In a project holding a local-storage service a `workingDir`
+  under `/var/www` is a container path unless its first folder is a service's hostname, which stays
+  refused as a local mount path (`TestDeployTool_FromVariantBDevService_RunsWithWorkingDirOnTheVolume`).
+- Stand-up of a pair recorded with `codeVolume`: the dev half deploys from the checkout in
+  `/var/www`, then every further dev service deploys its own dev setup from the same checkout; then
+  the volume is filled once from that checkout (left as it is when it already holds `.git`) and
+  `zcp-devsup ctl reload` runs on every dev service; the pair's stage builds from the volume after
+  the fill. A tier pair whose dev half is a further dev service folds into the variant-B pair; its
+  stage is reported as a further stage the stand-up does not build
+  (`TestStandup_VariantB_FillsTheVolumeOnceAndEveryDevServiceDeploysItsOwnDevSetup`).
+- Not built: recognising variant B from a fresh tier (the stand-up reads it from the record only),
+  and building more than one stage per pair in the stand-up (variant A or B).
 
 #### 2.8a.5 Tier: hostname → `zeropsSetup`
 
