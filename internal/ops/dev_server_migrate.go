@@ -1,7 +1,6 @@
 package ops
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -78,75 +77,38 @@ func DevsupPrepareCommand(url string) string {
 // AdoptSupervisorYAML puts the dev setup's run under the supervisor: the
 // install line in run.prepareCommands (replacing an older zcp-devsup line) and
 // run.start DevsupStartFor(root) — root is the repository root the supervisor
-// runs on, "" for /var/www. setup names the dev setup; empty picks the only
-// setup, else the one named after hostname, else the one named "dev". It
-// returns the setup it changed; changed is false when both lines are there.
+// runs on, "" for /var/www — spliced into data so nothing else the user wrote
+// changes. setup names the dev setup; empty picks the only setup, else the one
+// named after hostname, else the one named "dev". It returns the setup it
+// changed; changed is false when both lines are there.
 func AdoptSupervisorYAML(data []byte, setup, hostname, url, root string) (out []byte, used string, changed bool, err error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return nil, "", false, fmt.Errorf("zerops.yaml: %w", err)
 	}
-	run, setup, err := setupRun(&doc, setup, hostname)
+	entry, setup, err := devSetupEntry(&doc, setup, hostname)
 	if err != nil {
 		return nil, "", false, err
 	}
-	out, changed, err = adoptSupervisorRun(&doc, run, setup, url, DevsupStartFor(root))
-	if err != nil || !changed {
+	run := mappingValue(entry, "run")
+	if run != nil && run.Kind != yaml.MappingNode {
+		return nil, "", false, fmt.Errorf("zerops.yaml setup %q: run is not a mapping", setup)
+	}
+	want := supervisorLines{prepare: DevsupPrepareCommand(url), start: DevsupStartFor(root)}
+	src := newYAMLSource(data, &doc)
+	splices, err := supervisorSplices(src, entry, run, setup, want)
+	if err != nil || len(splices) == 0 {
 		return data, setup, false, err
+	}
+	out = src.apply(splices)
+	if err := spliceVerified(data, out, setup, want); err != nil {
+		return nil, "", false, fmt.Errorf("zerops.yaml setup %q: %w; add to its run by hand: prepareCommands item %q and start: %s", setup, err, want.prepare, want.start)
 	}
 	return out, setup, true, nil
 }
 
-// adoptSupervisorRun edits run in doc and re-encodes doc when it changed.
-func adoptSupervisorRun(doc, run *yaml.Node, setup, url, startLine string) ([]byte, bool, error) {
-	line := DevsupPrepareCommand(url)
-	changed := false
-	prepare := mappingValue(run, "prepareCommands")
-	switch {
-	case prepare == nil:
-		prepare = &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
-		setMapping(run, "prepareCommands", prepare)
-		fallthrough
-	case prepare.Kind == yaml.SequenceNode:
-		found := false
-		for _, item := range prepare.Content {
-			if item.Kind == yaml.ScalarNode && strings.Contains(item.Value, "/"+DevsupAsset) {
-				found = true
-				if item.Value != line {
-					item.Value, item.Style, changed = line, 0, true
-				}
-			}
-		}
-		if !found {
-			prepare.Content = append(prepare.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: line})
-			changed = true
-		}
-	default:
-		return nil, false, fmt.Errorf("zerops.yaml setup %q: run.prepareCommands is not a list", setup)
-	}
-	start := mappingValue(run, "start")
-	if start == nil || start.Kind != yaml.ScalarNode || strings.TrimSpace(start.Value) != startLine {
-		setMapping(run, "start", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: startLine})
-		changed = true
-	}
-	if !changed {
-		return nil, false, nil
-	}
-	var out bytes.Buffer
-	enc := yaml.NewEncoder(&out)
-	enc.SetIndent(2)
-	if err := enc.Encode(doc); err != nil {
-		return nil, false, fmt.Errorf("zerops.yaml: %w", err)
-	}
-	if err := enc.Close(); err != nil {
-		return nil, false, fmt.Errorf("zerops.yaml: %w", err)
-	}
-	return out.Bytes(), true, nil
-}
-
-// setupRun finds the dev setup's run mapping (creating an empty one when the
-// setup has none) and the setup's name.
-func setupRun(doc *yaml.Node, setup, hostname string) (*yaml.Node, string, error) {
+// devSetupEntry finds the dev setup's mapping and the setup's name.
+func devSetupEntry(doc *yaml.Node, setup, hostname string) (*yaml.Node, string, error) {
 	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
 		return nil, "", errors.New("zerops.yaml is empty")
 	}
@@ -178,15 +140,7 @@ func setupRun(doc *yaml.Node, setup, hostname string) (*yaml.Node, string, error
 	if entry == nil {
 		return nil, "", fmt.Errorf("zerops.yaml has no setup %q (setups: %s)", setup, strings.Join(names, ", "))
 	}
-	run := mappingValue(entry, "run")
-	if run == nil {
-		run = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-		setMapping(entry, "run", run)
-	}
-	if run.Kind != yaml.MappingNode {
-		return nil, "", fmt.Errorf("zerops.yaml setup %q: run is not a mapping", setup)
-	}
-	return run, setup, nil
+	return entry, setup, nil
 }
 
 // mappingValue is the value of key in mapping m, nil when absent.
@@ -200,17 +154,6 @@ func mappingValue(m *yaml.Node, key string) *yaml.Node {
 		}
 	}
 	return nil
-}
-
-// setMapping sets key in mapping m to v, appending the key when absent.
-func setMapping(m *yaml.Node, key string, v *yaml.Node) {
-	for i := 0; i+1 < len(m.Content); i += 2 {
-		if m.Content[i].Value == key {
-			m.Content[i+1] = v
-			return
-		}
-	}
-	m.Content = append(m.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, v)
 }
 
 // readZeropsYAMLCmd prints the zerops.yaml (or zerops.yml) in dir after a

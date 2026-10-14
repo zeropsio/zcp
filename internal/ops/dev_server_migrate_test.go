@@ -1,6 +1,8 @@
 package ops
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -222,4 +224,160 @@ func TestAdoptSupervisorYAML(t *testing.T) {
 func yamlQuote(s string) string {
 	b, _ := yaml.Marshal(s)
 	return strings.TrimSpace(string(b))
+}
+
+// TestAdoptSupervisorYAML_ChangesNothingButTheSupervisorLines (orchestrator
+// decision A, review hole 4a): moving a dev setup onto the supervisor splices
+// the install line and run.start into the user's own bytes — blank lines,
+// comments, zero-indented lists and flow maps stay exactly as written.
+func TestAdoptSupervisorYAML_ChangesNothingButTheSupervisorLines(t *testing.T) {
+	t.Parallel()
+	item := DevsupPrepareCommand(testDevsupURL)
+	recipe, err := os.ReadFile(filepath.Join("..", "authoring", "recipe", "testdata", "goldens", "showcase-zerops.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name, yaml, setup string
+		removed, added    []string
+	}{
+		{
+			name: "a hand-written file with blank lines, comments, a zero-indented cache list and flow maps",
+			yaml: `# zerops.yml for the app
+
+zerops:
+  - setup: dev
+    build:
+      base: nodejs@22
+      buildCommands:
+      - npm ci   # zero-indented
+      cache:
+      - node_modules
+
+      deployFiles: ./
+    run:
+      base: nodejs@22
+      ports: [{port: 3000, httpSupport: true}]
+      envVariables: {NODE_ENV: development, LOG: "debug"}
+      prepareCommands:
+        - sudo apk add jq   # tools
+
+        # more tools later
+      start: zsc noop --silent   # keep alive
+  - setup: prod
+    run: {start: node dist/main.js}
+`,
+			setup:   "dev",
+			removed: []string{"      start: zsc noop --silent   # keep alive"},
+			added:   []string{"        - " + item, "      start: zcp-devsup run   # keep alive"},
+		},
+		{
+			name: "a zero-indented prepareCommands list and no start",
+			yaml: `zerops:
+- setup: dev
+  run:
+    prepareCommands:
+    - sudo apk add jq
+    base: bun@1.3
+
+- setup: prod
+`,
+			setup: "dev",
+			added: []string{"    - " + item, "    start: zcp-devsup run"},
+		},
+		{
+			name: "a run without prepareCommands or start",
+			yaml: `zerops:
+  - setup: dev
+    run:
+      base: go@1
+      # ports later
+`,
+			setup: "dev",
+			added: []string{"      prepareCommands:", "        - " + item, "      start: zcp-devsup run"},
+		},
+		{
+			name: "a block-scalar start followed by a comment",
+			yaml: `zerops:
+  - setup: dev
+    run:
+      prepareCommands: [sudo apk add jq]
+      start: |
+        npm run dev
+
+      # ports below
+      ports:
+        - port: 3000
+`,
+			setup:   "dev",
+			removed: []string{"      prepareCommands: [sudo apk add jq]", "      start: |", "        npm run dev"},
+			added:   []string{"      prepareCommands: [sudo apk add jq, " + item + "]", "      start: zcp-devsup run"},
+		},
+		{
+			name: "a flow-map run",
+			yaml: `zerops:
+  - setup: dev
+    run: {start: zsc noop}
+  - setup: dev-api
+    run: {start: zsc noop}
+`,
+			setup:   "dev-api",
+			removed: []string{"    run: {start: zsc noop}"},
+			added:   []string{"    run: {prepareCommands: [" + item + "], start: zcp-devsup run}"},
+		},
+		{
+			name:  "the showcase recipe's zerops.yaml",
+			yaml:  string(recipe),
+			setup: "dev",
+			added: []string{"        - " + item, "      start: zcp-devsup run"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			out, _, changed, err := AdoptSupervisorYAML([]byte(tt.yaml), tt.setup, "appdev", testDevsupURL, "")
+			if err != nil || !changed {
+				t.Fatalf("AdoptSupervisorYAML: changed=%v err=%v", changed, err)
+			}
+			removed, added := lineDiff(strings.Split(tt.yaml, "\n"), strings.Split(string(out), "\n"))
+			if strings.Join(removed, "\n") != strings.Join(tt.removed, "\n") || strings.Join(added, "\n") != strings.Join(tt.added, "\n") {
+				t.Errorf("diff:\n- %q\n+ %q\nwant:\n- %q\n+ %q\nfile:\n%s", removed, added, tt.removed, tt.added, out)
+			}
+			prepare, start := devSetupRun(t, out, tt.setup)
+			if start != DevsupStart || len(prepare) == 0 || prepare[len(prepare)-1] != item {
+				t.Errorf("run.start = %q, prepareCommands = %q; want the supervisor's", start, prepare)
+			}
+		})
+	}
+}
+
+// lineDiff is the lines a removed and b added (a longest common subsequence).
+func lineDiff(a, b []string) (removed, added []string) {
+	lcs := make([][]int, len(a)+1)
+	for i := range lcs {
+		lcs[i] = make([]int, len(b)+1)
+	}
+	for i := len(a) - 1; i >= 0; i-- {
+		for j := len(b) - 1; j >= 0; j-- {
+			if a[i] == b[j] {
+				lcs[i][j] = lcs[i+1][j+1] + 1
+			} else {
+				lcs[i][j] = max(lcs[i+1][j], lcs[i][j+1])
+			}
+		}
+	}
+	i, j := 0, 0
+	for i < len(a) || j < len(b) {
+		switch {
+		case i < len(a) && j < len(b) && a[i] == b[j]:
+			i, j = i+1, j+1
+		case j < len(b) && (i == len(a) || lcs[i][j+1] >= lcs[i+1][j]):
+			added = append(added, b[j])
+			j++
+		default:
+			removed = append(removed, a[i])
+			i++
+		}
+	}
+	return removed, added
 }
