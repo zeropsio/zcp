@@ -596,6 +596,15 @@ func writeHQPairState(stateDir, hostname string, state hqPairState) {
 	}
 }
 
+// forgetHQPairState removes hostname's record: a deleted service's backoff
+// must not outlive it.
+func forgetHQPairState(stateDir, hostname string) error {
+	if err := os.Remove(hqPairStatePath(stateDir, hostname)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove hq state %s: %w", hostname, err)
+	}
+	return nil
+}
+
 // appendRepositoryReport folds the reconcile's lines into a bootstrap
 // response's message. Separate from the reconcile so the reconcile stays a
 // pure "what happened" reporter with no opinion about where it is rendered.

@@ -465,3 +465,33 @@ func TestRemovingAPartDeletesItsPreviewOnlyAfterExplicitConsent(t *testing.T) {
 		})
 	}
 }
+
+// TestDeleteTool_RemovesTheServicesHQState: a deleted service leaves no HQ
+// state behind (hq/<hostname>.json in the state directory, the pair's backoff
+// record); another service's record stays.
+func TestDeleteTool_RemovesTheServicesHQState(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{Hostname: "appdev", BootstrapSession: "s1", BootstrappedAt: "2026-10-14T12:00:00Z"}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+	writeHQPairState(stateDir, "appdev", hqPairState{Attempts: 1, LastAttemptAt: "2026-10-14T12:00:00Z", LastOutcome: "wired"})
+	writeHQPairState(stateDir, "webdev", hqPairState{Attempts: 1, LastAttemptAt: "2026-10-14T12:00:00Z", LastOutcome: "wired"})
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "appdev"}}).
+		WithProcess(&platform.Process{ID: "proc-delete-svc-1", ActionName: "delete", Status: "FINISHED"})
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDelete(srv, mock, "proj-1", stateDir, nil, runtime.Info{})
+
+	result := callTool(t, srv, "zerops_delete", map[string]any{"serviceHostname": "appdev", "consent": "appdev"})
+	if result.IsError {
+		t.Fatalf("unexpected IsError: %s", getTextContent(t, result))
+	}
+	if _, err := os.Stat(filepath.Join(stateDir, "hq", "appdev.json")); !os.IsNotExist(err) {
+		t.Errorf("hq/appdev.json still exists after its service was deleted (stat err %v)", err)
+	}
+	if _, err := os.Stat(filepath.Join(stateDir, "hq", "webdev.json")); err != nil {
+		t.Errorf("another service's HQ state is gone: %v", err)
+	}
+}

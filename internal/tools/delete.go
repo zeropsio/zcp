@@ -89,6 +89,9 @@ func RegisterDelete(srv *mcp.Server, client platform.Client, projectID string, s
 			if delErr := workflow.DeleteServiceMeta(stateDir, input.ServiceHostname); delErr != nil {
 				fmt.Fprintf(os.Stderr, "zcp: delete service meta %s: %v\n", input.ServiceHostname, delErr)
 			}
+			if delErr := forgetHQPairState(stateDir, input.ServiceHostname); delErr != nil {
+				fmt.Fprintf(os.Stderr, "zcp: %v\n", delErr)
+			}
 		}
 
 		// Surface a poll timeout so the agent doesn't read a still-running
