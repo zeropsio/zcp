@@ -1042,18 +1042,17 @@ carries that thumbprint, redeemable only with the matching proof.
 
 A session from the throwaway door (§10.4) holds no credential of the person's, so nothing about it
 expires with a Zerops token and there is nothing to re-present. Its validity is the server's own
-re-check, `ZeropsMembershipWatch`: every `T3CODE_ZEROPS_ROLE_RECHECK_SECONDS` (default 300 s; from
-the fork's slice S.0 a configured value above 300 s is clamped to 300 s, so the bound below holds
-whatever `mate.env` sets), and at once when HQ relays a different answer, it asks who the project
+re-check, `ZeropsMembershipWatch`: every `T3CODE_ZEROPS_ROLE_RECHECK_SECONDS` (default 30 s; a
+configured value above 300 s is clamped to 300 s), and at once when HQ relays a different answer, it asks who the project
 lets in — HQ's relay while it holds (§10.4), else the org's member list and the project's
 `userRoles` read with the Mate's key — by the role function (§10.3), and ends every Zerops session
 whose answer is no longer `open`. One pass asks once however many people are connected. A pass that
-cannot say changes nothing while the last answer is under two intervals old; past that it ends every
-Zerops session, because by then the server has not known who belongs for two intervals — at once
-after a lapsed relay, which held one interval already. A session older than
+cannot say changes nothing while Zerops's last answer is under five minutes old (`ACCESS_HOLDS`, the
+same hold a scheduled turn follows); past that it ends every Zerops session, because by then the
+server has not known who belongs for five minutes. HQ's relay is trusted 30 s from HQ's read. A session older than
 `T3CODE_ZEROPS_SESSION_MAX_AGE_SECONDS` (default 24 hours) ends at the next pass whatever the read
 said. A removed member or a lowered role
-loses access within two re-check intervals plus one pass.
+loses access within one window of at most 60 s while Zerops answers.
 
 The end reaches open sockets. `/ws` verifies the session once at the upgrade; for the socket's
 life the upgrade races its handler against the session's own end — its deadline, and a
