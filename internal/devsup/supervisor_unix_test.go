@@ -514,3 +514,41 @@ func TestSupervisor_AWatchedChangeStartsACrashedServer(t *testing.T) {
 		t.Fatalf("the crash is no longer visible: %+v", sv.Exit)
 	}
 }
+
+func TestSupervisor_AnAutostartFalseServerStaysStoppedUntilStarted(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	web, admin, extra := freePort(t), freePort(t), freePort(t)
+	adm := r.listener("admin", admin)
+	adm.Autostart = autostart(false)
+	r.declare(r.listener("web", web), adm)
+	s := r.supervisor()
+	s.Boot()
+	eventually(t, "web to listen", func() bool { return listening(web) })
+	if sv := mustServer(t, s.State(), "admin"); sv.Desired != DesiredStopped || sv.Status != StatusStopped || sv.Pid != 0 || listening(admin) {
+		t.Fatalf("admin started on its own: %+v", sv)
+	}
+
+	// A name a reload adds gets its first desired state too.
+	ext := r.listener("extra", extra)
+	ext.Autostart = autostart(false)
+	r.declare(r.listener("web", web), adm, ext)
+	s.Reload()
+	if sv := mustServer(t, s.State(), "extra"); sv.Status != StatusStopped || listening(extra) {
+		t.Fatalf("a reload started an autostart:false name: %+v", sv)
+	}
+
+	// From then on only ctl changes desired: a start survives a container restart.
+	if err := s.Start("admin"); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "admin to listen", func() bool { return listening(admin) })
+	s.Shutdown()
+	again := r.supervisor()
+	again.Boot()
+	t.Cleanup(again.Shutdown)
+	eventually(t, "admin to listen after a container restart", func() bool { return listening(admin) })
+	if sv := mustServer(t, again.State(), "extra"); sv.Status != StatusStopped {
+		t.Fatalf("extra = %+v, want stopped", sv)
+	}
+}

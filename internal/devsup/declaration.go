@@ -41,14 +41,25 @@ type Declaration struct {
 
 // Server is one named dev server: the shell command, its working directory
 // relative to the repo root, the port it listens on (0 when it has none), the
-// paths whose change restarts it and the dev service that runs it (variant B).
+// paths whose change restarts it, the dev service that runs it (variant B) and
+// whether it starts before anyone asks (absent: it does).
 type Server struct {
-	Name    string `json:"name"`
-	Port    int    `json:"port,omitempty"`
-	Command string `json:"command"`
-	Cwd     string `json:"cwd,omitempty"`
-	Watch   *Watch `json:"watch,omitempty"`
-	Service string `json:"service,omitempty"`
+	Name      string `json:"name"`
+	Port      int    `json:"port,omitempty"`
+	Command   string `json:"command"`
+	Cwd       string `json:"cwd,omitempty"`
+	Watch     *Watch `json:"watch,omitempty"`
+	Service   string `json:"service,omitempty"`
+	Autostart *bool  `json:"autostart,omitempty"`
+}
+
+// FirstDesired is the desired state of a name the state file does not hold
+// yet; from then on only ctl changes it.
+func (s Server) FirstDesired() Desired {
+	if s.Autostart != nil && !*s.Autostart {
+		return DesiredStopped
+	}
+	return DesiredRunning
 }
 
 // Watch names the repo paths whose change restarts a server; .git,

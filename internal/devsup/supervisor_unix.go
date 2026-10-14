@@ -226,7 +226,7 @@ func (s *Supervisor) reconcile(boot bool) {
 		s.decl = DeclarationInfo{Version: decl.Version}
 		for _, spec := range decl.ForService(s.cfg.Service) {
 			declared[spec.Name] = true
-			desired := DesiredRunning
+			desired := spec.FirstDesired()
 			if sv, ok := s.servers[spec.Name]; ok && sv.desired != "" {
 				desired = sv.desired
 			}

@@ -103,6 +103,7 @@ func TestParseDeclaration_ContractFixture(t *testing.T) {
 		{Name: "web", Port: 3000, Command: "bun --watch index.ts", Cwd: "apps/web"},
 		{Name: "api", Port: 8080, Command: "go build -o app . && exec ./app", Cwd: "apps/api", Watch: &Watch{Paths: []string{"apps/api"}, Ignore: []string{"apps/api/app*"}}},
 		{Name: "worker", Command: "bun --watch src/worker.ts", Cwd: "apps/worker"},
+		{Name: "admin", Port: 4200, Command: "npx ng serve --host 0.0.0.0 --port 4200", Cwd: "apps/admin", Autostart: autostart(false)},
 	}
 	if !reflect.DeepEqual(d.Servers, want) {
 		t.Fatalf("servers = %+v", d.Servers)
@@ -186,3 +187,25 @@ func TestWatch_IgnoredPaths(t *testing.T) {
 		}
 	}
 }
+
+func TestServer_FirstDesired_FollowsAutostart(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		autostart *bool
+		want      Desired
+	}{
+		{"absent starts", nil, DesiredRunning},
+		{"true starts", autostart(true), DesiredRunning},
+		{"false stays stopped", autostart(false), DesiredStopped},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := (Server{Name: "admin", Command: "x", Autostart: tc.autostart}).FirstDesired(); got != tc.want {
+				t.Fatalf("FirstDesired = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func autostart(b bool) *bool { return &b }
