@@ -154,3 +154,52 @@ func TestValidateBootstrapTargets_PairStages(t *testing.T) {
 		})
 	}
 }
+
+// A stage belongs to one pair: a plan naming a stage another pair's meta
+// already records is refused before import (spec-mate §2.8a.4); the pair
+// itself naming its own stages again is not.
+func TestBootstrapCompletePlan_StageAnotherPairRecords(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		runtime RuntimeTarget
+		wantErr string
+	}{
+		{
+			name:    "another dev half claiming one of the pair's stages is refused",
+			runtime: RuntimeTarget{DevHostname: "otherdev", Type: "nodejs@22", BootstrapMode: "standard", Stages: []topology.StageRef{{Hostname: "webstage"}, {Hostname: "apistage"}}},
+			wantErr: `stage "apistage" is already a stage of pair "appdev"`,
+		},
+		{
+			name:    "the pair's own dev half naming its stages again proceeds",
+			runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", IsExisting: true, Stages: []topology.StageRef{{Hostname: "webstage"}, {Hostname: "apistage"}}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			pair := NewServiceMeta("appdev", topology.PlanModeStandard)
+			pair.Stages = []topology.StageRef{{Hostname: "apistage", SetupName: "api"}}
+			pair.BootstrapSession = "earlier"
+			pair.BootstrappedAt = "2026-10-14T00:00:00Z"
+			if err := WriteServiceMeta(dir, pair); err != nil {
+				t.Fatal(err)
+			}
+			eng := NewEngine(dir, EnvContainer, nil)
+			if _, err := eng.BootstrapStart("proj-1", "two parts"); err != nil {
+				t.Fatalf("BootstrapStart: %v", err)
+			}
+			_, err := eng.BootstrapCompletePlan([]BootstrapTarget{{Runtime: tt.runtime}}, nil, nil)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("BootstrapCompletePlan: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("err = %v, want one containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}

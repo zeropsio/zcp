@@ -797,6 +797,7 @@ func (e *Engine) Resume(sessionID string) (*WorkflowState, error) {
 // checkHostnameLocks verifies that no target hostname is locked by another active session.
 // A hostname is locked when it has an incomplete ServiceMeta from a different session
 // whose process is still alive. Orphaned metas (dead/missing session) are unlocked.
+// A planned stage another complete pair records as its stage is refused too.
 func (e *Engine) checkHostnameLocks(targets []BootstrapTarget) error {
 	sessions, _ := ListSessions(e.stateDir)
 	sessionByID := make(map[string]SessionEntry, len(sessions))
@@ -815,6 +816,12 @@ func (e *Engine) checkHostnameLocks(targets []BootstrapTarget) error {
 			meta, err := FindServiceMeta(e.stateDir, hostname)
 			if err != nil || meta == nil {
 				continue // no meta = no lock
+			}
+			// A stage belongs to one pair: another pair recording it as
+			// its stage keeps it (spec-mate §2.8a.4). An orphaned
+			// incomplete meta is still overwritten below.
+			if hostname != target.Runtime.DevHostname && meta.IsComplete() && meta.Hostname != hostname && meta.Hostname != target.Runtime.DevHostname {
+				return fmt.Errorf("stage %q is already a stage of pair %q — name another stage hostname", hostname, meta.Hostname)
 			}
 			if meta.IsComplete() {
 				continue // completed = not locked
