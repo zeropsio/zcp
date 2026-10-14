@@ -246,6 +246,8 @@ type standupSource struct {
 	appID     string
 	groupRepo string
 	tier      workflow.MateTier
+	// folded are the tier's pairs that stand up with a variant-B pair.
+	folded []standupFolded
 }
 
 // readTier reads the AI Agent tier on main of the recipe repository of the
@@ -287,7 +289,7 @@ func (d standupDeps) readTier(ctx context.Context, hqc hq.Client, progress *stan
 		return standupSource{}, standupRefusal(platform.ErrInvalidImportYml,
 			fmt.Sprintf("%s@%s:%s cannot be stood up: %v.", src.groupRepo, hqBase, path, err), fallback)
 	}
-	src.tier = tier
+	src.tier, src.folded = foldCodeVolumePairs(d.batch.stateDir, tier)
 	return src, nil
 }
 
@@ -321,11 +323,19 @@ type standupPair struct {
 	// stage deploys on this call, else on the next.
 	devRanBefore bool
 	devServer    *standupDevServer
+	// codeVolume is a variant-B pair's code volume, nil for any other.
+	codeVolume *standupCodeVolume
 }
 
 // stoodUp is a pair whose two halves both run code.
 func (p *standupPair) stoodUp() bool {
-	return p.failed == "" && p.devDeploy.running() && p.stageDeploy.running()
+	return p.devStands() && p.stageDeploy.running()
+}
+
+// devStands is a pair whose development runs: its dev half, and for a
+// variant-B pair every further dev service on the filled code volume.
+func (p *standupPair) devStands() bool {
+	return p.failed == "" && p.devDeploy.running() && p.codeVolume.devStands()
 }
 
 // fail stops the pair with what failed and the model's next step.

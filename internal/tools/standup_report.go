@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -78,7 +79,10 @@ type standupService struct {
 	Failed    string            `json:"failed,omitempty"`
 	Deploy    *standupDeploy    `json:"deploy,omitempty"`
 	DevServer *standupDevServer `json:"devServer,omitempty"`
-	Next      string            `json:"next"`
+	// CodeVolume is a variant-B dev half's code volume: filled once, and
+	// every dev service's supervisor reloaded.
+	CodeVolume *standupCodeVolume `json:"codeVolume,omitempty"`
+	Next       string             `json:"next"`
 }
 
 // buildStandupResponse is the report: the pairs, dev half then stage, in the
@@ -91,7 +95,13 @@ func buildStandupResponse(src standupSource, pairs []*standupPair, live map[stri
 	stood, devs, queued := 0, 0, 0
 	names := make([]string, 0, len(pairs))
 	for _, sp := range pairs {
-		resp.Services = append(resp.Services, standupDevService(sp), standupStageService(sp))
+		resp.Services = append(resp.Services, standupDevService(sp))
+		if cv := sp.codeVolume; cv != nil {
+			for _, ds := range cv.devServices {
+				resp.Services = append(resp.Services, standupFurtherDevService(sp, ds))
+			}
+		}
+		resp.Services = append(resp.Services, standupStageService(sp))
 		names = append(names, sp.pair.Dev.Hostname+"→"+sp.pair.Stage.Hostname)
 		switch {
 		case sp.stoodUp():
@@ -99,9 +109,12 @@ func buildStandupResponse(src standupSource, pairs []*standupPair, live map[stri
 		case sp.failed == "" && sp.stageDeploy != nil && sp.stageDeploy.Status == standupQueued:
 			queued++
 		}
-		if sp.failed == "" && sp.devDeploy.running() {
+		if sp.devStands() {
 			devs++
 		}
+	}
+	for _, f := range src.folded {
+		resp.Services = append(resp.Services, standupFoldedStage(f))
 	}
 	for _, s := range src.tier.Skipped {
 		resp.Services = append(resp.Services, standupSkippedService(s, live[s.Hostname]))
@@ -127,6 +140,9 @@ func buildStandupResponse(src standupSource, pairs []*standupPair, live map[stri
 		stood, len(pairs), devs, len(pairs), src.groupRepo, hq.RecipeTierPaths[hq.RecipeTierMate], strings.Join(names, ", "))
 	return resp
 }
+
+// standupCallAgain is the next step of a half the call left undecided.
+const standupCallAgain = "Call zerops_standup again."
 
 // standupDevelopmentNext is the model's way on once every dev half stands and
 // the stages are queued: development first, then the stages on a second call.
@@ -157,13 +173,13 @@ func standupDevService(sp *standupPair) standupService {
 		Hostname: p.Dev.Hostname, Role: standupRoleDev, Pair: p.Stage.Hostname,
 		Repository: sp.repository, Branch: sp.branch, Setup: p.Dev.Setup,
 		Adopted: sp.adopted, Wired: sp.wired, Failed: sp.failed,
-		Deploy: sp.devDeploy, DevServer: sp.devServer,
+		Deploy: sp.devDeploy, DevServer: sp.devServer, CodeVolume: sp.codeVolume,
 	}
 	switch d := sp.devDeploy; {
 	case sp.failed != "":
 		s.Next = sp.next
 	case d == nil:
-		s.Next = "Call zerops_standup again."
+		s.Next = standupCallAgain
 	case d.running():
 		s.Next = standupDevServerNext(p.Dev.Hostname, p.Dev.Setup, sp.devServer)
 	default:
@@ -188,7 +204,7 @@ func standupStageService(sp *standupPair) standupService {
 		s.Deploy = &standupDeploy{Status: standupNotDeployed, Reason: p.Dev.Hostname + " did not stand up, and the stage is built from it"}
 		s.Next = sp.next
 	case d == nil:
-		s.Next = "Call zerops_standup again."
+		s.Next = standupCallAgain
 	case d.running():
 		s.Next = fmt.Sprintf("Verify it: zerops_verify serviceHostname=%q. It is this Mate's preview of main", p.Stage.Hostname)
 		if d.URL != "" {
@@ -240,6 +256,39 @@ func standupDevServerNext(hostname, setup string, ds *standupDevServer) string {
 	return fmt.Sprintf("Start its dev server: zerops_dev_server action=\"start\" hostname=%q command=\"<the repository's dev command>\" port=%s — "+
 		"no dev command is recorded where zcp reads it, so take it from the repository (its package.json scripts, the comments beside the %s setup in zerops.yaml). Then %s.",
 		hostname, port, setup, verify)
+}
+
+// standupFurtherDevService is a further dev service of a variant-B pair: its
+// own dev setup deployed from the dev half's checkout.
+func standupFurtherDevService(sp *standupPair, ds *standupDevServiceRun) standupService {
+	dev := sp.pair.Dev.Hostname
+	s := standupService{
+		Hostname: ds.ref.Hostname, Role: standupRoleDev, Pair: dev,
+		Repository: sp.repository, Branch: sp.branch, Setup: ds.ref.SetupName,
+		Deploy: ds.deploy,
+	}
+	switch d := ds.deploy; {
+	case sp.failed != "":
+		s.Deploy = &standupDeploy{Status: standupNotDeployed, Reason: dev + " did not stand up, and its dev setup is deployed from it"}
+		s.Next = sp.next
+	case d == nil:
+		s.Next = standupCallAgain
+	case d.running():
+		s.Next = fmt.Sprintf("Its dev servers run from the code volume %s by its supervisor; read them with zerops_dev_server action=\"status\" hostname=%q.", sp.codeVolume.volume.Hostname, ds.ref.Hostname)
+	default:
+		s.Next = standupDeployNext(d, ds.ref.Hostname, fmt.Sprintf("zerops_deploy sourceService=%q targetService=%q setup=%q workingDir=%q", dev, ds.ref.Hostname, ds.ref.SetupName, ops.DefaultWorkingDir))
+	}
+	return s
+}
+
+// standupFoldedStage is the stage of a tier pair folded into a variant-B pair:
+// one more stage of it, which the stand-up does not build.
+func standupFoldedStage(f standupFolded) standupService {
+	return standupService{
+		Hostname: f.pair.Stage.Hostname, Role: standupRoleStage, Pair: f.owner, Setup: f.pair.Stage.Setup,
+		Deploy: &standupDeploy{Status: standupNotDeployed, Reason: fmt.Sprintf("a further stage of %s's pair, whose dev service %s shares its code volume; the stand-up builds one stage per pair", f.owner, f.pair.Dev.Hostname)},
+		Next:   fmt.Sprintf("Once %s's stage stands, deploy it by hand: zerops_deploy sourceService=%q targetService=%q setup=%q.", f.owner, f.owner, f.pair.Stage.Hostname, f.pair.Stage.Setup),
+	}
 }
 
 // standupSkippedService is a service of the tier the stand-up leaves as it is.

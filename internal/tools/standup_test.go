@@ -199,6 +199,8 @@ type standupSSH struct {
 	arrived  map[string]bool
 	allIn    chan struct{}
 	apart    []string
+	// volumeFilled is a variant-B code volume that holds the repository.
+	volumeFilled bool
 }
 
 type standupSSHCall struct{ host, cmd string }
@@ -231,6 +233,17 @@ func (s *standupSSH) ExecSSH(_ context.Context, host, cmd string) ([]byte, error
 		return []byte("ZCP_EMAIL_SEEDED\nZCP_NAME_SEEDED\n"), nil
 	case strings.Contains(cmd, "rev-parse --verify HEAD") && strings.Contains(cmd, "git status --porcelain"):
 		return nil, errStubSSHNoRepo
+	case strings.Contains(cmd, "@@zcp code-volume"):
+		s.mu.Lock()
+		already := s.volumeFilled
+		s.volumeFilled = true
+		s.mu.Unlock()
+		if already {
+			return []byte("@@zcp code-volume already\n"), nil
+		}
+		return []byte("@@zcp code-volume filled\n"), nil
+	case strings.Contains(cmd, "zcp-devsup ctl 'reload'"):
+		return []byte("{}\n@@zcp-devsup ctl 0\n"), nil
 	case strings.Contains(cmd, "ZCP_BRANCH_ELSEWHERE") && s.collide[host]:
 		out := []byte("ZCP_BRANCH_REFUSED:ZCP_UNTRACKED_COLLISION package.json \n")
 		return out, &platform.SSHExecError{Hostname: host, Output: string(out), Err: fmt.Errorf("exit status 5")}

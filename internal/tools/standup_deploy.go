@@ -255,6 +255,17 @@ func (d standupDeps) deployAll(ctx context.Context, pairs []*standupPair, live m
 		// and a stage built from a dirty tree is named as no commit.
 		halves[p.Stage.Hostname] = standupHalf{pair: sp,
 			target: ops.DeployBatchTarget{SourceService: p.Dev.Hostname, TargetService: p.Stage.Hostname, Setup: p.Stage.Setup, SHA: "HEAD"}}
+		if sp.codeVolume = codeVolumeOf(d.batch.stateDir, sp); sp.codeVolume != nil {
+			// The code volume is filled from the checkout once development
+			// runs, so the dev services deploy from /var/www itself.
+			h := halves[p.Dev.Hostname]
+			h.target.WorkingDir = ops.DefaultWorkingDir
+			halves[p.Dev.Hostname] = h
+			for _, ds := range sp.codeVolume.devServices {
+				halves[ds.ref.Hostname] = standupHalf{pair: sp, devService: ds,
+					target: ops.DeployBatchTarget{SourceService: p.Dev.Hostname, TargetService: ds.ref.Hostname, Setup: ds.ref.SetupName, WorkingDir: ops.DefaultWorkingDir}}
+			}
+		}
 	}
 	// The second call is the stages': every pair still standing ran code in
 	// its dev half when the call began.
@@ -281,17 +292,35 @@ func (d standupDeps) deployAll(ctx context.Context, pairs []*standupPair, live m
 	reads, unread := standupReads(tier, standupBodies(projectRootFromState(d.batch.stateDir), pairs), projectEnvs)
 	after := standupAfter(tier, reads, unread)
 	done := make(map[string]chan struct{}, len(halves))
-	for host := range halves {
+	for host, h := range halves {
 		done[host] = make(chan struct{})
+		if h.devService != nil {
+			after[host] = []string{h.pair.pair.Dev.Hostname}
+		}
 	}
 
 	slots := make(chan struct{}, standupBatchMax)
 	var wg sync.WaitGroup
+	for _, sp := range pairs {
+		if cv := sp.codeVolume; cv != nil {
+			wg.Go(func() {
+				defer close(cv.done)
+				<-done[sp.pair.Dev.Hostname]
+				for _, ds := range cv.devServices {
+					<-done[ds.ref.Hostname]
+				}
+				d.fillAndReload(ctx, sp, progress)
+			})
+		}
+	}
 	for host, h := range halves {
 		wg.Go(func() {
 			defer close(done[host])
 			for _, dep := range after[host] {
 				<-done[dep]
+			}
+			if cv := h.pair.codeVolume; cv != nil && h.stage() {
+				<-cv.done
 			}
 			// A pair stopped before its deploy says so in its report.
 			if h.pair.failed != "" {
@@ -330,19 +359,27 @@ type standupHalf struct {
 	pair   *standupPair
 	target ops.DeployBatchTarget
 	dev    bool
+	// devService is a variant-B pair's further dev service this half is.
+	devService *standupDevServiceRun
 }
+
+// stage reports the pair's stage half.
+func (h standupHalf) stage() bool { return !h.dev && h.devService == nil }
 
 // running reports a half that runs code — deployed now or before.
 func (h standupHalf) running() bool {
-	if h.dev {
+	switch {
+	case h.dev:
 		return h.pair.devDeploy.running()
+	case h.devService != nil:
+		return h.devService.deploy.running()
 	}
 	return h.pair.stageDeploy.running()
 }
 
 // queued reports a stage left for the next call.
 func (h standupHalf) queued() bool {
-	return !h.dev && h.pair.stageDeploy != nil && h.pair.stageDeploy.Status == standupQueued
+	return h.stage() && h.pair.stageDeploy != nil && h.pair.stageDeploy.Status == standupQueued
 }
 
 // held is what becomes of a half whose wait is over and that does not deploy
@@ -352,13 +389,19 @@ func (h standupHalf) queued() bool {
 // deployed; one waiting only for queued stages is queued with them.
 func (h standupHalf) held(halves map[string]standupHalf, waited []string) *standupDeploy {
 	dev := h.pair.pair.Dev.Hostname
-	if !h.dev {
+	if h.devService != nil && !h.pair.devDeploy.running() {
+		return &standupDeploy{Status: standupNotDeployed, Reason: fmt.Sprintf("%s did not deploy, and its dev setup is deployed from it", dev)}
+	}
+	if h.stage() {
 		if !h.pair.devDeploy.running() {
 			return &standupDeploy{Status: standupNotDeployed, Reason: fmt.Sprintf("%s did not deploy, and the stage is built from it", dev)}
 		}
 		if !h.pair.devRanBefore {
 			return &standupDeploy{Status: standupQueued,
 				Reason: fmt.Sprintf("%s was deployed on this call, and the stage builds on the next zerops_standup call", dev)}
+		}
+		if cv := h.pair.codeVolume; cv != nil && cv.Filled == "" {
+			return &standupDeploy{Status: standupNotDeployed, Reason: fmt.Sprintf("the code volume %s holds no repository yet, and the stage is built from it: %s", cv.volume.Hostname, cv.Reason)}
 		}
 	}
 	var down, queued []string
@@ -383,11 +426,14 @@ func (h standupHalf) held(halves map[string]standupHalf, waited []string) *stand
 }
 
 func (h standupHalf) record(deploy *standupDeploy) {
-	if h.dev {
+	switch {
+	case h.dev:
 		h.pair.devDeploy = deploy
-		return
+	case h.devService != nil:
+		h.devService.deploy = deploy
+	default:
+		h.pair.stageDeploy = deploy
 	}
-	h.pair.stageDeploy = deploy
 }
 
 // deployHalves deploys every half that runs no code yet — one that does is
