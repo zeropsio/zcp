@@ -38,6 +38,8 @@ func fakeOrgAPI(t *testing.T) (*httptest.Server, func() []string) {
 			"serviceStackTypeInfo": map[string]any{"serviceStackTypeVersionName": typ, "serviceStackTypeCategory": "USER"},
 		}
 	}
+	medusa := service("sMedusa", "pProd", "medusa", "nodejs@22", "ACTIVE")
+	medusa["ports"] = []any{map[string]any{"port": 9000, "protocol": "tcp", "scheme": "http", "httpRouting": true}}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		mu.Lock()
@@ -55,7 +57,7 @@ func fakeOrgAPI(t *testing.T) (*httptest.Server, func() []string) {
 			}}
 		case strings.HasSuffix(r.URL.Path, "/service-stack/search"):
 			out = map[string]any{"items": []any{
-				service("sMedusa", "pProd", "medusa", "nodejs@22", "ACTIVE"),
+				medusa,
 				service("sZcp", "pRossy", "zcp", "zcp@1", "ACTIVE"),
 			}}
 		case strings.HasSuffix(r.URL.Path, "/search"):
@@ -75,7 +77,7 @@ func fakeOrgAPI(t *testing.T) (*httptest.Server, func() []string) {
 
 // TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite runs the Chief's
 // tools the way the model calls them: it sees the organization, proposes a
-// restart and a message to a Mate, and the Zerops API receives reads only —
+// restart, a message to a Mate and a domain, and the Zerops API receives reads only —
 // through the region's API, or through ZCP_ORG_API (HQ's Chief proxy), where
 // every read lands under its path with the credential as the bearer and the
 // token's org is never resolved.
@@ -128,6 +130,7 @@ func TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite(t *testing.T) {
 				{tool: "zerops_org_failures", args: map[string]any{}, want: `"scanned"`},
 				{tool: "zerops_org_propose_service", args: map[string]any{"action": "restart", "project": "Contoso - production", "service": "medusa", "reason": "stuck"}, want: `"summary":"Restart medusa in Contoso - production"`},
 				{tool: "zerops_org_propose_message", args: map[string]any{"to": "Rossy", "words": "debug medusa", "reason": "Rossy's code"}, want: `"to":{"projectId":"pRossy","mateName":"Rossy"}`},
+				{tool: "zerops_org_propose_domain", args: map[string]any{"project": "Contoso - production", "service": "medusa", "domains": []string{"contoso.com", "www.contoso.com"}, "port": 9000, "reason": "its own name"}, want: `"summary":"Put Contoso - production on contoso.com and www.contoso.com"`},
 			}
 			for _, c := range calls {
 				res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: c.tool, Arguments: c.args})

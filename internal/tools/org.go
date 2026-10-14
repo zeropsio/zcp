@@ -77,6 +77,15 @@ type OrgProposeMessageInput struct {
 	Reason          string `json:"reason"                    jsonschema:"Why this belongs to that Mate, in one sentence."`
 }
 
+// OrgProposeDomainInput is zerops_org_propose_domain's input.
+type OrgProposeDomainInput struct {
+	Project string   `json:"project" jsonschema:"The project, usually an application's production: its id, its full name, or its Mate's name."`
+	Service string   `json:"service" jsonschema:"The hostname of the service that serves the web."`
+	Domains []string `json:"domains" jsonschema:"The person's domain names, bare (shop.example.com), and its www. name when they want both."`
+	Port    int      `json:"port"    jsonschema:"The service's web port the domains point at (zerops_org_services lists its ports)."`
+	Reason  string   `json:"reason"  jsonschema:"Why, in one sentence, for the person deciding."`
+}
+
 var orgServiceActions = map[string]string{
 	"restart": ops.ProposalServiceRestart,
 	"start":   ops.ProposalServiceStart,
@@ -189,6 +198,17 @@ func RegisterOrg(srv *mcp.Server, src ops.OrgSource, logs platform.LogFetcher, n
 		return orgAnswer(ops.ProposeOrgAction(ctx, src, newID, ops.OrgActionInput{
 			Kind: ops.ProposalMateMessage, To: in.To, Words: in.Words, Reason: in.Reason,
 			AttachmentTitle: in.AttachmentTitle, AttachmentText: in.AttachmentText,
+		}))
+	})
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "zerops_org_propose_domain",
+		Description: "Propose putting a project, usually production, on the person's own domain, pointed at a service's web port. Runs nothing: the person approves it on a card, their client adds the domain, and they then add the DNS records it shows at their DNS provider.",
+		Annotations: orgPropose("Propose a domain"),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in OrgProposeDomainInput) (*mcp.CallToolResult, any, error) {
+		return orgAnswer(ops.ProposeOrgAction(ctx, src, newID, ops.OrgActionInput{
+			Kind: ops.ProposalDomainAdd, Project: in.Project, Service: in.Service, Reason: in.Reason,
+			Domains: in.Domains, Port: in.Port,
 		}))
 	})
 }

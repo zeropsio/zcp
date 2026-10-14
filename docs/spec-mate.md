@@ -850,7 +850,7 @@ their own Zerops token after their click.
 or the newest build's), `zerops_org_failures` (spent build containers and system services left
 out), `zerops_org_env` (values masked unless a key is named in `reveal`; the result lists what was
 revealed), `zerops_org_processes`. Act: `zerops_org_propose_service` (`restart` | `start` |
-`stop`), `zerops_org_propose_env`, `zerops_org_propose_message`. Also `zerops_knowledge`, and in a
+`stop`), `zerops_org_propose_env`, `zerops_org_propose_message`, `zerops_org_propose_domain`. Also `zerops_knowledge`, and in a
 Mate's container `zerops_publish_page` (§5.9). The single-project surface acts on the empty own
 project and is not registered. A project's kind: tag `chief`; a Mate is tagged `mate` and runs
 a `zcp@*` service, its name the part of the project name after the last `" - "`; HQ runs a service
@@ -864,7 +864,7 @@ draws it as a card the person approves or declines, and executes an approved one
 {
   "proposal": {
     "id": "<uuid>",
-    "kind": "service.restart | service.start | service.stop | env.set | mate.message",
+    "kind": "service.restart | service.start | service.stop | env.set | mate.message | domain.add",
     "summary": "Restart medusa in Contoso - production",
     "reason": "<the agent's why>",
     "projectId": "…", "projectName": "…",
@@ -875,13 +875,21 @@ draws it as a card the person approves or declines, and executes an approved one
 }
 ```
 
-`serviceId`/`serviceName` are present for the service kinds and a service-scoped `env.set`.
+`serviceId`/`serviceName` are present for the service kinds, a service-scoped `env.set` and
+`domain.add`.
 `params` per kind: `{}` for the service kinds; `env.set` →
 `{"scope": "project" | "service", "key", "value", "secret": bool}`; `mate.message` →
 `{"to": {"projectId", "mateName"}, "words", "attachment"?: {"title", "text"}}`, where the top-level
-project is the addressed Mate's. Every field is validated against what the organization holds (the
-project, its own non-system service, a state the action fits, a valid key, a real Mate other than
-the Chief) and refused with a plain error otherwise. There is no delete, no token and no
+project is the addressed Mate's; `domain.add` → `{"domains": ["contoso.com", "www.contoso.com"],
+"port": 9000}`, the domains put on one routing to the service's port, summarised "Put <project> on
+<domains>". Every field is validated against what the organization holds (the project, its own
+non-system service, a state the action fits, a valid key, a real Mate other than the Chief; for a
+domain, a port of the service that serves the web — routed HTTP or an `http`/`https` scheme, never
+a Mate's own `zcp@` container, the ports Mate's addresses sheet offers — and names that are
+lowercase fully qualified domain names, each once, without scheme, port or path, none already one of
+the project's domains) and refused with a plain error otherwise. An approved
+`domain.add` is the client's own add-domain as the person; the person then adds the DNS records
+their addresses show at their DNS provider. There is no delete, no token and no
 scaling kind.
 
 **The reverse direction — a Mate asks the person's Chief.** In project mode, in a Mate's container
@@ -929,6 +937,7 @@ names `zerops_propose_ask_chief` for what neither its project nor `zerops_observ
 | OM-3 | Org mode registers the org surface only, and its `AGENTS.md` section is the Chief's. `TestNewOrg_RegistersTheOrgSurfaceOnly`, `TestBuildAgentsMD_Chief`. |
 | OM-4 | `OrgReads()` is exactly what org mode reads; with `ZCP_ORG_API` every read goes there with the credential as the bearer, `/user/info` is never read and `ZCP_ORG_ID` is required. `TestOrgReads_AreExactlyWhatOrgModeReads`, `TestOpenOrgReader_ThroughOrgAPI`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
 | OM-5 | A Mate's `zerops_propose_ask_chief` returns a `chief.message` proposal of the shape above from its own project and sends nothing; only a Mate's project mode registers it. `TestProposeAskChief_Shape`, `TestProposeAskChief_Validates`, `TestServer_AskChiefToolGating`, `TestAskChief_OverMCP_ProposesFromThisProjectAndSendsNothing`. |
+| OM-6 | `zerops_org_propose_domain` returns a `domain.add` proposal of the shape above for the organization's project, onto one of its service's web ports, naming only domains the project does not hold, and changes nothing. `TestProposeOrgAction_DomainAdd_Shape`, `TestProposeOrgAction_DomainAdd_RefusesWhatCannotGoLive`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
 
 ## Current account contract — Mate 0.11.0
 

@@ -549,7 +549,7 @@ func TestBuildAgentsMD_Container_GroupAndGitHost(t *testing.T) {
 			name:      "not a Mate",
 			rt:        runtime.Info{InContainer: true, ServiceName: "zcp"},
 			want:      []string{"zcli project list", "what it may do there is the token's"},
-			wantNever: []string{"zerops_observe", "zcp hq git-credential", "HQ", "Your group", "403", "zerops_propose_ask_chief", "Chief"},
+			wantNever: []string{"zerops_observe", "zcp hq git-credential", "HQ", "Your group", "403", "zerops_propose_ask_chief", "Chief", "addresses sheet"},
 		},
 		{
 			name: "a Mate",
@@ -558,8 +558,9 @@ func TestBuildAgentsMD_Container_GroupAndGitHost(t *testing.T) {
 				"`zerops_observe`", `action="environments"`, `action="status" projectId=`, `action="logs"`,
 				"reaches none of them", "other Mates", "zcp hq git-credential",
 				"`zerops_propose_ask_chief`", "another project's logs", "the person decides",
+				"addresses sheet", "··· → Addresses", "DNS records", "AAAA", "Full (strict)",
 			},
-			wantNever: []string{"zcli project list", "READ them", "403", "grants"},
+			wantNever: []string{"zcli project list", "READ them", "403", "grants", "HTTP Routing → Add Domain"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -891,6 +892,7 @@ func TestBuildAgentsMD_Chief(t *testing.T) {
 				"`zerops_org_overview`", "`zerops_org_services`", "`zerops_org_logs`", "`zerops_org_failures`",
 				"`zerops_org_env`", "`zerops_org_processes`",
 				"`zerops_org_propose_service`", "`zerops_org_propose_env`", "`zerops_org_propose_message`",
+				"`zerops_org_propose_domain`", "DNS records",
 				"the person decides", "that project's Mate", "Answer short",
 				"From <Mate> in <project>:", "proposing a `mate.message` back",
 			} {

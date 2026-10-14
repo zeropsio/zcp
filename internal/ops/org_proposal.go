@@ -18,6 +18,7 @@ const (
 	ProposalServiceStop    = "service.stop"
 	ProposalEnvSet         = "env.set"
 	ProposalMateMessage    = "mate.message"
+	ProposalDomainAdd      = "domain.add"
 )
 
 // ProposalNote is what every proposal result says about itself.
@@ -49,11 +50,15 @@ type OrgActionInput struct {
 	Words           string
 	AttachmentTitle string
 	AttachmentText  string
+	// domain.add
+	Domains []string
+	Port    int
 }
 
 // OrgProposal is one change for the person to approve or decline
 // (docs/spec-mate.md §2.11). Params is the kind's own object:
-// {} for a service action, OrgEnvSetParams, or OrgMateMessageParams.
+// {} for a service action, OrgEnvSetParams, OrgMateMessageParams or
+// OrgDomainAddParams.
 type OrgProposal struct {
 	ID          string          `json:"id"`
 	Kind        string          `json:"kind"`
@@ -99,16 +104,23 @@ type OrgMateMessageParams struct {
 	Attachment *OrgAttachment `json:"attachment,omitempty"`
 }
 
+// OrgDomainAddParams are domain.add's params: the domains, put on one
+// routing to the proposal's service at Port.
+type OrgDomainAddParams struct {
+	Domains []string `json:"domains"`
+	Port    int      `json:"port"`
+}
+
 // ProposeOrgAction validates a change against what the organization holds
 // and returns it as a proposal. It runs nothing: the person approves it on
 // a card and their client makes the change with their own token.
 func ProposeOrgAction(ctx context.Context, src OrgSource, newID func() string, in OrgActionInput) (*OrgProposalResult, error) {
 	reason := strings.TrimSpace(in.Reason)
 	switch in.Kind {
-	case ProposalServiceRestart, ProposalServiceStart, ProposalServiceStop, ProposalEnvSet, ProposalMateMessage:
+	case ProposalServiceRestart, ProposalServiceStart, ProposalServiceStop, ProposalEnvSet, ProposalMateMessage, ProposalDomainAdd:
 	default:
 		return nil, invalid(fmt.Sprintf("%q is not something org mode can propose", in.Kind),
-			"Propose service.restart, service.start, service.stop, env.set or mate.message")
+			"Propose service.restart, service.start, service.stop, env.set, mate.message or domain.add")
 	}
 	if reason == "" {
 		return nil, invalid("a proposal needs a reason", "Say in one sentence why, for the person deciding")
@@ -191,6 +203,26 @@ func ProposeOrgAction(ctx context.Context, src OrgSource, newID func() string, i
 		msg := OrgMateMessageParams{To: OrgMateAddress{ProjectID: p.ID, MateName: p.Class.MateName}, Words: words, Attachment: attachment}
 		summary = fmt.Sprintf("Message %s in %s", p.Class.MateName, p.Name)
 		params = msg
+
+	case ProposalDomainAdd:
+		if p, err = snap.resolve(in.Project); err != nil {
+			return nil, err
+		}
+		if s, err = p.ownService(in.Service); err != nil {
+			return nil, err
+		}
+		if err := domainPortFits(s, p.Name, in.Port); err != nil {
+			return nil, err
+		}
+		domains, err := proposedDomains(in.Domains)
+		if err != nil {
+			return nil, err
+		}
+		if err := domainsAreNew(ctx, src, p, domains); err != nil {
+			return nil, err
+		}
+		summary = fmt.Sprintf("Put %s on %s", p.Name, domainList(domains))
+		params = OrgDomainAddParams{Domains: domains, Port: in.Port}
 	}
 
 	raw, err := json.Marshal(params)
