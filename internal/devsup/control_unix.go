@@ -155,7 +155,8 @@ func Control(dir string, req Request, timeout time.Duration) (Response, error) {
 	d := net.Dialer{Timeout: 2 * time.Second}
 	c, err := d.DialContext(context.Background(), "unix", SocketPath(dir))
 	if err != nil {
-		return Response{Code: CodeNoSupervisor, Error: ErrNoSupervisor.Error()}, ErrNoSupervisor
+		err = fmt.Errorf("%w: %w", ErrNoSupervisor, err)
+		return Response{Code: CodeNoSupervisor, Error: err.Error()}, err
 	}
 	defer c.Close()
 	_ = c.SetDeadline(time.Now().Add(timeout))
