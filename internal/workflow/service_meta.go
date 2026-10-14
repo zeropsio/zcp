@@ -41,6 +41,9 @@ type ServiceMeta struct {
 	// WriteServiceMeta mirrors Stages[0] back into them for an older zcp —
 	// nothing else reads or writes them (spec-mate §2.8a.4).
 	Stages []topology.StageRef `json:"stages,omitempty"`
+	// stagesUnrecorded is a meta read without `stages`: written before them,
+	// or by an older zcp that dropped them. StagesRebuildDue reads it.
+	stagesUnrecorded bool
 
 	// Per-pair deploy dimensions (deploy-strategy decomposition; see
 	// plans/archive/deploy-strategy-decomposition-2026-04-28.md §3.1 for
@@ -778,6 +781,7 @@ func foldLegacyStage(data []byte, meta *ServiceMeta) error {
 	if len(meta.Stages) > 0 {
 		return nil
 	}
+	meta.stagesUnrecorded = true
 	var legacy legacyStageKeys
 	if err := json.Unmarshal(data, &legacy); err != nil {
 		return err

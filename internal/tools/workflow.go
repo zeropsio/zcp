@@ -430,6 +430,11 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		if input.Workflow == workflowLaunchProduction {
 			return handleLaunchProduction(ctx, projectID, client, httpClient, schemaCache, input, stateDir, rt, sshDeployer, apiHost)
 		}
+		if input.Workflow == workflowDevelop {
+			// A pair an older zcp left without stages gets them back
+			// before develop takes its scope (spec-mate §2.8a.4).
+			rebuildMateStages(ctx, httpClient, rt, stateDir, recipePairMountRoot)
+		}
 		return handleStart(ctx, projectID, engine, client, schemaCache, input, rt)
 	case "reset":
 		// Launch-production reset clears the per-launchID state file

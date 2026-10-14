@@ -124,7 +124,8 @@ func hqMateBranch(client hq.Client) string { return "mate/" + client.ProjectID()
 // reconcileMateRepositories runs both repository reconciles in the one order
 // that works: a pair gets its repository in HQ, and only then can the group
 // recipe name what builds it. Every bootstrap and adopt pass calls this; both
-// halves are silent when there is nothing to do.
+// halves are silent when there is nothing to do. Pairs an older zcp left
+// without stages get them back first, so the recipe names every stage.
 func reconcileMateRepositories(
 	ctx context.Context,
 	client platform.Client,
@@ -133,6 +134,7 @@ func reconcileMateRepositories(
 	rt runtime.Info,
 	stateDir string,
 ) []string {
+	rebuildMateStages(ctx, httpClient, rt, stateDir, recipePairMountRoot)
 	lines := reconcileHQRepositories(ctx, client, httpClient, sshDeployer, rt, stateDir)
 	if line := reconcileGroupRecipe(ctx, client, httpClient, rt, stateDir); line != "" {
 		lines = append(lines, "the group's recipe: "+line)
