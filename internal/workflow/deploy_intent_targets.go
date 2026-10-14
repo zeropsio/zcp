@@ -95,13 +95,18 @@ func ResolvedDeployTargets(stateDir string, ws *WorkSession) []string {
 		if target.Hostname == "" {
 			target.Hostname = h
 		}
-		bt := Resolve(target, snaps).BuildTarget
-		if bt == "" {
-			bt = h
+		built := []string{h}
+		if bts := Resolve(target, snaps).Builds(); len(bts) > 0 {
+			built = built[:0]
+			for _, bt := range bts {
+				built = append(built, bt.Hostname)
+			}
 		}
-		if !seen[bt] {
-			seen[bt] = true
-			out = append(out, bt)
+		for _, bt := range built {
+			if !seen[bt] {
+				seen[bt] = true
+				out = append(out, bt)
+			}
 		}
 	}
 	return out

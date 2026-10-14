@@ -61,6 +61,12 @@ type DeployIntent struct {
 	// self-deploy (builder defaults to the hostname).
 	BuildSetup string
 
+	// StageBuilds is set only under git-push from the dev half of a pair
+	// with more than one stage: every stage in Stages order, each with its
+	// setup (one commit, all parts — spec-mate §2.8a). BuildTarget and
+	// BuildSetup are its first entry. Read it through Builds.
+	StageBuilds []topology.StageRef
+
 	// DeployTool is the MCP tool name. Always "zerops_deploy" for direct /
 	// git-push deliveries; empty for manual.
 	DeployTool string
@@ -165,6 +171,16 @@ func Resolve(target ServiceSnapshot, services []ServiceSnapshot) DeployIntent {
 			// StageSetupName, else "prod" by recipe convention).
 			intent.BuildTarget = target.StageHostname
 			intent.BuildSetup = setupOrDefault(target.StageSetupName, RecipeSetupProd)
+			if len(target.Stages) > 1 {
+				for _, stage := range target.Stages {
+					intent.StageBuilds = append(intent.StageBuilds, topology.StageRef{
+						Hostname:  stage.Hostname,
+						SetupName: setupOrDefault(stage.SetupName, RecipeSetupProd),
+					})
+				}
+				intent.BuildTarget = intent.StageBuilds[0].Hostname
+				intent.BuildSetup = intent.StageBuilds[0].SetupName
+			}
 		} else {
 			// Direct delivery (or git-push without a paired stage):
 			// dev half deploys to itself.
@@ -228,6 +244,19 @@ func Resolve(target ServiceSnapshot, services []ServiceSnapshot) DeployIntent {
 	}
 
 	return intent
+}
+
+// Builds is every runtime the deploy builds, each with its setup: every
+// stage under git-push from a pair's dev half, otherwise the one BuildTarget;
+// none when BuildTarget is empty.
+func (i DeployIntent) Builds() []topology.StageRef {
+	if len(i.StageBuilds) > 0 {
+		return i.StageBuilds
+	}
+	if i.BuildTarget == "" {
+		return nil
+	}
+	return []topology.StageRef{{Hostname: i.BuildTarget, SetupName: i.BuildSetup}}
 }
 
 // setupOrDefault returns the canonical setup-block name when the snapshot
