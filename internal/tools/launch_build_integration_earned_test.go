@@ -189,7 +189,7 @@ func TestHandleBuildIntegration_RemoteDriftWarning(t *testing.T) {
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		GitPushState:     topology.GitPushConfigured,
 		RemoteURL:        "https://github.com/example/demo.git",
 		BootstrapSession: "test",

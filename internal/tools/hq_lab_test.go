@@ -596,7 +596,7 @@ func newHQLab(t *testing.T) *hqLab {
 	lab.mock = platform.NewMock().WithServices([]platform.ServiceStack{{ID: "svc-appdev", Name: "appdev"}, {ID: "svc-appstage", Name: "appstage"}})
 	lab.ssh = &labSSH{t: t, mock: lab.mock, dirs: map[string]string{"appdev": lab.pair}, home: t.TempDir(), caFile: fake.caFile}
 	if err := workflow.WriteServiceMeta(lab.stateDir, &workflow.ServiceMeta{
-		Hostname: "appdev", Mode: topology.PlanModeStandard, Stages: []topology.Stage{{Hostname: "appstage"}},
+		Hostname: "appdev", Mode: topology.PlanModeStandard, Stages: []topology.StageRef{{Hostname: "appstage"}},
 		BootstrapSession: "test", BootstrappedAt: "2026-10-02",
 	}); err != nil {
 		t.Fatal(err)

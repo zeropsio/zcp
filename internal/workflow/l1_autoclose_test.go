@@ -21,7 +21,7 @@ func TestL1AutoClose_PushBuildVerifyChain(t *testing.T) {
 	if err := WriteServiceMeta(dir, &ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		CloseDeployMode:  topology.CloseModeAuto,
 		GitPushState:     topology.GitPushConfigured,
 		RemoteURL:        "https://github.com/example/app.git",

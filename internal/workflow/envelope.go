@@ -135,8 +135,8 @@ type ServiceSnapshot struct {
 	// the one stage the envelope wire carries per pair. Stages holds every
 	// stage of the pair, off the wire until the envelope contract names
 	// them; read both through PairStageHostnames.
-	StageHostname string           `json:"stageHostname,omitempty"`
-	Stages        []topology.Stage `json:"-"`
+	StageHostname string              `json:"stageHostname,omitempty"`
+	Stages        []topology.StageRef `json:"-"`
 
 	// Setup-name projection from ServiceMeta (canonical store on disk).
 	// SetupName mirrors meta.SetupNameFor(Hostname) for this half;

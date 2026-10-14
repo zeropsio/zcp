@@ -114,7 +114,7 @@ func handleAdoptLocal(ctx context.Context, client platform.Client, projectID, st
 	// concurrent orthogonal-field update on this meta can't be lost (XCUT-1).
 	if err := workflow.UpdateServiceMeta(stateDir, local.Hostname, func(m *workflow.ServiceMeta) error {
 		m.Mode = topology.PlanModeLocalStage
-		m.Stages = []topology.Stage{{Hostname: target.Name}}
+		m.Stages = []topology.StageRef{{Hostname: target.Name}}
 		// Newly-linked stage means develop-strategy-review will prompt the
 		// agent post-deploy. Already unset coming in (per Phase-9 parity)
 		// but write defensively in case an upgrade path leaves it stale.

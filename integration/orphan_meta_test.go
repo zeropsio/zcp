@@ -54,7 +54,7 @@ func TestIntegration_OrphanMeta_StatusFallsThroughToBootstrap(t *testing.T) {
 
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:       "ghostdev",
-		Stages:         []topology.Stage{{Hostname: "ghoststage"}},
+		Stages:         []topology.StageRef{{Hostname: "ghoststage"}},
 		Mode:           topology.PlanModeStandard,
 		BootstrappedAt: "2026-04-25",
 	}); err != nil {

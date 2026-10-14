@@ -646,7 +646,7 @@ func DeriveRecipePlan(shape RecipeImportShape, overrides RecipeShapeOverrides) (
 				rt.StageSetupName = g.stages[0].ZeropsSetup
 			} else {
 				for _, st := range g.stages {
-					rt.Stages = append(rt.Stages, topology.Stage{Hostname: hostOf(st.Hostname), Setup: st.ZeropsSetup})
+					rt.Stages = append(rt.Stages, topology.StageRef{Hostname: hostOf(st.Hostname), SetupName: st.ZeropsSetup})
 				}
 			}
 			t := BootstrapTarget{Runtime: rt}

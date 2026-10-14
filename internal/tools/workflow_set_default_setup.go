@@ -124,7 +124,7 @@ func handleSetDefaultSetup(_ context.Context, _ platform.Client, _ string, input
 		Status:           "written",
 		Service:          input.TargetService,
 		PrimarySetupName: meta.PrimarySetupName,
-		StageSetupName:   written.Setup,
+		StageSetupName:   written.SetupName,
 	}), nil, nil
 }
 

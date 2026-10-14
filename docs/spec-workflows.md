@@ -84,7 +84,7 @@ ServiceMeta (`.zcp/state/services/{hostname}.json`) is the persistent evidence t
 ServiceMeta {
   Hostname                 string           // service identifier
   Mode                     Mode             // standard | dev | simple | local-stage | local-only
-  Stages                   []Stage          // the pair's only stage list, each {hostname, setup}: one per part of the app (standard / local-stage only; named explicitly on the plan target — no hostname-suffix derivation). A meta written before Stages carried one stageHostname/stageSetupName; reading it yields Stages[0] with the same values, and nothing else reads those keys.
+  Stages                   []StageRef       // the pair's only stage list, each {hostname, setupName}: one per part of the app (standard / local-stage only; named explicitly on the plan target — no hostname-suffix derivation). A meta without stages (written before them, or by an older zcp that dropped them) reads its stageHostname/stageSetupName as Stages[0] with the same values; every write mirrors Stages[0] into those keys for an older zcp, and nothing else reads them (spec-mate §2.8a.4).
   CloseDeployMode          CloseDeployMode  // unset | auto | manual (legacy git-push folds to auto)
   CloseDeployModeConfirmed bool             // true after user explicitly confirms/sets close-mode
   GitPushState             GitPushState     // unconfigured | configured | broken (git-push capability, orthogonal to close-mode)
@@ -470,7 +470,7 @@ Application access is declared in the consumer runtime's `zerops.yaml` through
 path/read-only fields). That volume hostname is a real managed dependency
 reference for reachability and export/launch analysis.
 
-**Validation**: Hostnames `[a-z0-9]` max 25 chars. Standard mode: explicit stages required on the plan target — `stageHostname` (+ `stageSetupName`) for a one-stage pair, or `stages: [{hostname, setup}]` for a pair with several, never both; no hostname-suffix derivation (since Release B.4). Stage hostnames are unique within the pair and distinct from its dev half; a runtime hostname planned twice is refused. A recipe plan pairs every stage-role runtime of the dev half's repository into that one pair. A stage's recorded setup must exist in zerops.yaml: a deploy whose recorded setup the yaml lacks returns `requiresSetupInput` naming it. Types against live catalog. Resolution: CREATE = must not exist, EXISTS = must exist, SHARED = another target creates it. Hostname lock check. Errors accumulated (all reported at once).
+**Validation**: Hostnames `[a-z0-9]` max 25 chars. Standard mode: explicit stages required on the plan target — `stageHostname` (+ `stageSetupName`) for a one-stage pair, or `stages: [{hostname, setupName}]` for a pair with several, never both; no hostname-suffix derivation (since Release B.4). Stage hostnames are unique within the pair and distinct from its dev half; a runtime hostname planned twice is refused. A recipe plan pairs every stage-role runtime of the dev half's repository into that one pair. A stage's recorded setup must exist in zerops.yaml: a deploy whose recorded setup the yaml lacks returns `requiresSetupInput` naming it. Types against live catalog. Resolution: CREATE = must not exist, EXISTS = must exist, SHARED = another target creates it. Hostname lock check. Errors accumulated (all reported at once).
 
 ### 2.4 Step 2: Provision
 

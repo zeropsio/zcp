@@ -17,7 +17,7 @@ func writeConfiguredPairMeta(t *testing.T, stateDir string) {
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		GitPushState:     topology.GitPushConfigured,
 		RemoteURL:        "https://github.com/example/app.git",
 		BootstrapSession: "test",

@@ -574,8 +574,8 @@ func TestStandup_StandsUpEveryPairFromTheRecipe(t *testing.T) {
 			t.Errorf("%s not adopted as a standard pair: %+v", pair[0], meta)
 			continue
 		}
-		if meta.PrimarySetupName != pair[0] || meta.FirstStage().Setup != pair[2] {
-			t.Errorf("%s setups = %q/%q", pair[0], meta.PrimarySetupName, meta.FirstStage().Setup)
+		if meta.PrimarySetupName != pair[0] || meta.FirstStage().SetupName != pair[2] {
+			t.Errorf("%s setups = %q/%q", pair[0], meta.PrimarySetupName, meta.FirstStage().SetupName)
 		}
 		if meta.HQ == nil || meta.HQ.Repo != pair[0] || meta.HQ.Branch != "mate/p1" || meta.GitPushState != topology.GitPushConfigured {
 			t.Errorf("%s not wired: hq=%+v gitPush=%s", pair[0], meta.HQ, meta.GitPushState)

@@ -132,7 +132,7 @@ func TestWorkflowTool_Action_Start_Develop_ReturnsBriefing(t *testing.T) {
 	meta := &workflow.ServiceMeta{
 		Hostname:                 "appdev",
 		Mode:                     "standard",
-		Stages:                   []topology.Stage{{Hostname: "appstage"}},
+		Stages:                   []topology.StageRef{{Hostname: "appstage"}},
 		CloseDeployMode:          topology.CloseModeAuto,
 		CloseDeployModeConfirmed: true,
 		BootstrappedAt:           "2026-03-04T12:00:00Z",

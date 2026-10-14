@@ -229,7 +229,7 @@ func TestGatherLaunchSourceContext_CollapsesStandardPair(t *testing.T) {
 	stateDir := writeRuntimeMeta(t, &workflow.ServiceMeta{
 		Hostname:       "appdev",
 		Mode:           topology.ModeStandard,
-		Stages:         []topology.Stage{{Hostname: "appstage"}},
+		Stages:         []topology.StageRef{{Hostname: "appstage"}},
 		BootstrappedAt: "2026-05-01T00:00:00Z",
 	})
 
@@ -326,7 +326,7 @@ func TestNormalizeTargetServiceForLaunch_StageInputCollapsesToDev(t *testing.T) 
 	t.Parallel()
 	stateDir := writeRuntimeMeta(t, &workflow.ServiceMeta{
 		Hostname:       "appdev",
-		Stages:         []topology.Stage{{Hostname: "appstage"}},
+		Stages:         []topology.StageRef{{Hostname: "appstage"}},
 		Mode:           topology.ModeStandard,
 		BootstrappedAt: "2026-05-01T00:00:00Z",
 	})

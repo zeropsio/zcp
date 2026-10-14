@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -14,7 +15,7 @@ func TestChangeReceipt_OnlyForAPairOfSeveralStages(t *testing.T) {
 	ws := &workflow.WorkSession{Deploys: map[string][]workflow.DeployAttempt{
 		"appstage": {{AttemptedAt: "2026-10-14T21:05:00Z", SucceededAt: "2026-10-14T21:06:00Z", SHA: "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"}},
 	}}
-	for _, stages := range [][]receiptStage{nil, {{Hostname: "appstage", Setup: "app"}}} {
+	for _, stages := range [][]topology.StageRef{nil, {{Hostname: "appstage", SetupName: "app"}}} {
 		if got := changeReceipt(stages, ws, time.Now()); got != nil {
 			t.Errorf("changeReceipt(%v) = %+v, want none", stages, got)
 		}
@@ -45,11 +46,11 @@ func TestChangeReceipt_EachPartsPreviewAsItsLastDeployLeftIt(t *testing.T) {
 			"workerstage": {{AttemptedAt: "2026-10-14T21:03:30Z", Passed: true}},
 		},
 	}
-	stages := []receiptStage{
-		{Hostname: "webstage", Setup: "web"},
-		{Hostname: "apistage", Setup: "api"},
-		{Hostname: "workerstage", Setup: "worker"},
-		{Hostname: "cronstage", Setup: "cron"},
+	stages := []topology.StageRef{
+		{Hostname: "webstage", SetupName: "web"},
+		{Hostname: "apistage", SetupName: "api"},
+		{Hostname: "workerstage", SetupName: "worker"},
+		{Hostname: "cronstage", SetupName: "cron"},
 	}
 	got := changeReceipt(stages, ws, time.Date(2026, 10, 14, 21, 10, 0, 0, time.UTC))
 	want := &hq.ChangeReceipt{At: "2026-10-14T21:10:00Z", Parts: []hq.ChangeReceiptPart{

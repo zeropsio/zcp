@@ -298,7 +298,7 @@ func TestFormatLocalStateNote_Shapes(t *testing.T) {
 		{
 			name: "local-stage linked",
 			metas: []*ServiceMeta{
-				{Hostname: "myproject", Stages: []topology.Stage{{Hostname: "apistage"}}, Mode: topology.PlanModeLocalStage},
+				{Hostname: "myproject", Stages: []topology.StageRef{{Hostname: "apistage"}}, Mode: topology.PlanModeLocalStage},
 			},
 			services: []platform.ServiceStack{
 				{Name: "apistage", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},

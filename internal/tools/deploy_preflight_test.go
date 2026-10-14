@@ -963,7 +963,7 @@ func TestDeployPreFlight_CrossDeploy_ReadsFromSourceMount(t *testing.T) {
 	// (spec-workflows.md §8 E8).
 	meta := &workflow.ServiceMeta{
 		Hostname:         "appdev",
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		Mode:             "standard",
 		BootstrapSession: "s1",
 		BootstrappedAt:   "2026-04-01T00:00:00Z",
@@ -1034,7 +1034,7 @@ func TestDeployPreFlight_PairAwareStageMetaLookup(t *testing.T) {
 
 	meta := &workflow.ServiceMeta{
 		Hostname:         "appdev",
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		Mode:             "standard",
 		BootstrapSession: "s1",
 		BootstrappedAt:   "2026-04-01T00:00:00Z",
@@ -1275,7 +1275,7 @@ func TestDeployPreFlight_CrossDeploy_LegacyRootLayoutRejected(t *testing.T) {
 	// only thing that can fail is yaml lookup itself.
 	meta := &workflow.ServiceMeta{
 		Hostname:         "appdev",
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		Mode:             "standard",
 		BootstrapSession: "s1",
 		BootstrappedAt:   "2026-04-01T00:00:00Z",

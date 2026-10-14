@@ -63,8 +63,8 @@ func TestHandleAdoptLocal_CascadeHit_PopulatesStageSetupName(t *testing.T) {
 	if meta == nil {
 		t.Fatal("expected meta after adoption")
 	}
-	if meta.FirstStage().Setup != "prod" {
-		t.Errorf("StageSetupName: got %q, want prod (cascade-written)", meta.FirstStage().Setup)
+	if meta.FirstStage().SetupName != "prod" {
+		t.Errorf("StageSetupName: got %q, want prod (cascade-written)", meta.FirstStage().SetupName)
 	}
 	if got := meta.SetupNameFor("apistage"); got != "prod" {
 		t.Errorf("SetupNameFor(apistage): got %q, want prod", got)
@@ -135,7 +135,7 @@ func TestHandleAdoptLocal_CascadeMiss_ReturnsRequiresSetupInput(t *testing.T) {
 	if meta.Mode != topology.PlanModeLocalStage {
 		t.Errorf("Mode: got %q, want local-stage (adoption itself succeeds)", meta.Mode)
 	}
-	if meta.FirstStage().Setup != "" {
-		t.Errorf("StageSetupName: got %q, want empty on cascade miss", meta.FirstStage().Setup)
+	if meta.FirstStage().SetupName != "" {
+		t.Errorf("StageSetupName: got %q, want empty on cascade miss", meta.FirstStage().SetupName)
 	}
 }

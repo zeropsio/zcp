@@ -360,7 +360,7 @@ func TestDeferredStartDurabilityNote(t *testing.T) {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
-		Hostname: "web", Mode: topology.PlanModeStandard, Stages: []topology.Stage{{Hostname: "webstage"}},
+		Hostname: "web", Mode: topology.PlanModeStandard, Stages: []topology.StageRef{{Hostname: "webstage"}},
 		BootstrapSession: "s", BootstrappedAt: "2026-06-01",
 	}); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
@@ -566,7 +566,7 @@ func TestVerifyTool_PushSourceRedirect(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
 			if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
-				Hostname: "appdev", Mode: topology.PlanModeStandard, Stages: []topology.Stage{{Hostname: "appstage"}},
+				Hostname: "appdev", Mode: topology.PlanModeStandard, Stages: []topology.StageRef{{Hostname: "appstage"}},
 				CloseDeployMode: topology.CloseModeGitPush, GitPushState: topology.GitPushConfigured,
 				BootstrapSession: "s", BootstrappedAt: "2026-06-01", FirstDeployedAt: "2026-06-01",
 			}); err != nil {
@@ -614,7 +614,7 @@ func TestVerifyPublicAccess_ADevServerServesTheDevHalf(t *testing.T) {
 	dir := t.TempDir()
 	for _, meta := range []*workflow.ServiceMeta{
 		{Hostname: "appdev", Mode: topology.PlanModeDev, BootstrapSession: "s", BootstrappedAt: "2026-06-01"},
-		{Hostname: "shopdev", Stages: []topology.Stage{{Hostname: "shopstage"}}, Mode: topology.PlanModeStandard, BootstrapSession: "s", BootstrappedAt: "2026-06-01"},
+		{Hostname: "shopdev", Stages: []topology.StageRef{{Hostname: "shopstage"}}, Mode: topology.PlanModeStandard, BootstrapSession: "s", BootstrappedAt: "2026-06-01"},
 		{Hostname: "api", Mode: topology.PlanModeSimple, BootstrapSession: "s", BootstrappedAt: "2026-06-01"},
 	} {
 		if err := workflow.WriteServiceMeta(dir, meta); err != nil {

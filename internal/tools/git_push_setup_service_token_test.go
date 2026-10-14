@@ -20,7 +20,7 @@ func seedGpsMeta(t *testing.T, stateDir string, gitPushState topology.GitPushSta
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		GitPushState:     gitPushState,
 		RemoteURL:        remoteURL,
 		BootstrapSession: "t",

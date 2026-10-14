@@ -70,7 +70,7 @@ func TestEvaluateAutoClose_OutOfScopeStage(t *testing.T) {
 	meta := &ServiceMeta{
 		Hostname:                 "appdev",
 		Mode:                     topology.PlanModeStandard,
-		Stages:                   []topology.Stage{{Hostname: "appstage"}},
+		Stages:                   []topology.StageRef{{Hostname: "appstage"}},
 		CloseDeployMode:          topology.CloseModeAuto,
 		CloseDeployModeConfirmed: true,
 		BootstrapSession:         "test",

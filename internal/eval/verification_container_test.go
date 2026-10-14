@@ -232,7 +232,7 @@ func TestMeta_FieldMatchesAndAbsent_Rows(t *testing.T) {
 		{
 			name:       "array index path pass",
 			hostname:   "appdev",
-			fixture:    `{"stages":[{"hostname":"webstage","setup":"web"},{"hostname":"apistage","setup":"api"}]}`,
+			fixture:    `{"stages":[{"hostname":"webstage","setupName":"web"},{"hostname":"apistage","setupName":"api"}]}`,
 			field:      "stages.1.hostname",
 			expect:     "apistage",
 			wantResult: CheckPassed,

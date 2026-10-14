@@ -281,7 +281,7 @@ func TestHandleLaunchProduction_StageHalfTarget_NormalizedToDevHalf(t *testing.T
 	ctx := context.Background()
 	stateDir := writeRuntimeMeta(t, &workflow.ServiceMeta{
 		Hostname:         "appdev",
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		Mode:             topology.ModeStandard,
 		BootstrappedAt:   "2026-05-01T00:00:00Z",
 		GitPushState:     topology.GitPushConfigured,
@@ -325,7 +325,7 @@ func TestHandleLaunchProduction_DevHalfTarget_Accepted(t *testing.T) {
 	ctx := context.Background()
 	stateDir := writeRuntimeMeta(t, &workflow.ServiceMeta{
 		Hostname:         "appdev",
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		Mode:             topology.ModeStandard,
 		BootstrappedAt:   "2026-05-01T00:00:00Z",
 		GitPushState:     topology.GitPushConfigured,

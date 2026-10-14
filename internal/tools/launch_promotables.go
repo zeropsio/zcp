@@ -183,8 +183,8 @@ func resolveLaunchSetupName(p LaunchPromotableInput, workflowOverride string, me
 		if !ok {
 			stage = meta.FirstStage()
 		}
-		if stage.Setup != "" {
-			return stage.Setup, setupProvenanceStageSetup
+		if stage.SetupName != "" {
+			return stage.SetupName, setupProvenanceStageSetup
 		}
 		if meta.PrimarySetupName != "" {
 			return meta.PrimarySetupName, setupProvenanceDevPromoted

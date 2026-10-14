@@ -137,7 +137,7 @@ func TestEnrichWithMetaStatus_AdoptedButBusy_GetsLiveActivityNote(t *testing.T) 
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		BootstrappedAt:   "2026-06-30",
 		BootstrapSession: "sess-1",
 	}); err != nil {

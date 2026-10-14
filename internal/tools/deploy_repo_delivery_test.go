@@ -18,7 +18,7 @@ func seedL1Meta(t *testing.T, stateDir, host string, mode topology.Mode, stage s
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         host,
 		Mode:             mode,
-		Stages:           []topology.Stage{{Hostname: stage}},
+		Stages:           []topology.StageRef{{Hostname: stage}},
 		GitPushState:     topology.GitPushConfigured,
 		BuildIntegration: integration,
 		RemoteURL:        "https://github.com/example/app.git",

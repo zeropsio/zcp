@@ -79,7 +79,7 @@ func TestHandleAdoptLocal_AlreadyLinked_Refused(t *testing.T) {
 	dir := t.TempDir()
 	// local-stage already — can't re-link via adopt-local.
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
-		Hostname: "myproject", Stages: []topology.Stage{{Hostname: "existing"}}, Mode: topology.PlanModeLocalStage,
+		Hostname: "myproject", Stages: []topology.StageRef{{Hostname: "existing"}}, Mode: topology.PlanModeLocalStage,
 		BootstrappedAt: "2026-04-01",
 	}); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)

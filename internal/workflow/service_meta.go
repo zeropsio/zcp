@@ -34,12 +34,13 @@ type ServiceMeta struct {
 	Hostname string        `json:"hostname"`
 	Mode     topology.Mode `json:"mode,omitempty"`
 	// Stages is the pair's only stage list: every stage runtime built from
-	// the dev half's repository, each with its zerops.yml setup (Setup empty
-	// until known). A single-part pair has one entry; dev/simple/local-only
-	// metas have none. Metas written before Stages carried one
+	// the dev half's repository, each with its zerops.yml setup (SetupName
+	// empty until known). A single-part pair has one entry; dev/simple/
+	// local-only metas have none. Metas written before Stages carried one
 	// stageHostname/stageSetupName; parseMeta folds those into Stages[0] and
-	// nothing reads or writes them anywhere else.
-	Stages []topology.Stage `json:"stages,omitempty"`
+	// WriteServiceMeta mirrors Stages[0] back into them for an older zcp —
+	// nothing else reads or writes them (spec-mate §2.8a.4).
+	Stages []topology.StageRef `json:"stages,omitempty"`
 
 	// Per-pair deploy dimensions (deploy-strategy decomposition; see
 	// plans/archive/deploy-strategy-decomposition-2026-04-28.md §3.1 for
@@ -282,7 +283,7 @@ func (m *ServiceMeta) SetupNameFor(targetHostname string) string {
 		return ""
 	}
 	if stage, ok := m.StageFor(targetHostname); ok {
-		return stage.Setup
+		return stage.SetupName
 	}
 	if targetHostname == m.Hostname {
 		return m.PrimarySetupName
@@ -296,16 +297,16 @@ func (m *ServiceMeta) HasStage() bool {
 }
 
 // StageFor returns the stage named hostname, and whether the pair has one.
-func (m *ServiceMeta) StageFor(hostname string) (topology.Stage, bool) {
+func (m *ServiceMeta) StageFor(hostname string) (topology.StageRef, bool) {
 	if m == nil || hostname == "" {
-		return topology.Stage{}, false
+		return topology.StageRef{}, false
 	}
 	for _, s := range m.Stages {
 		if s.Hostname == hostname {
 			return s, true
 		}
 	}
-	return topology.Stage{}, false
+	return topology.StageRef{}, false
 }
 
 // StageHostnames returns the hostname of every stage, in Stages order.
@@ -324,9 +325,9 @@ func (m *ServiceMeta) StageHostnames() []string {
 // It serves the surfaces that still name one stage per pair — the envelope's
 // stageHostname/stageSetupName, the build-integration target and the tier
 // composer's input — which on a single-part pair is the pair's only stage.
-func (m *ServiceMeta) FirstStage() topology.Stage {
+func (m *ServiceMeta) FirstStage() topology.StageRef {
 	if !m.HasStage() {
-		return topology.Stage{}
+		return topology.StageRef{}
 	}
 	return m.Stages[0]
 }
@@ -340,10 +341,10 @@ func (m *ServiceMeta) SetStageSetup(hostname, setup string) bool {
 	}
 	for i := range m.Stages {
 		if m.Stages[i].Hostname == hostname {
-			if m.Stages[i].Setup == setup {
+			if m.Stages[i].SetupName == setup {
 				return false
 			}
-			m.Stages[i].Setup = setup
+			m.Stages[i].SetupName = setup
 			return true
 		}
 	}
@@ -643,7 +644,10 @@ func WriteServiceMeta(baseDir string, meta *ServiceMeta) error {
 		return fmt.Errorf("create services dir: %w", err)
 	}
 
-	data, err := json.MarshalIndent(meta, "", "  ")
+	data, err := json.MarshalIndent(struct {
+		*ServiceMeta
+		legacyStageKeys
+	}{meta, mirrorFirstStage(meta)}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal service meta: %w", err)
 	}
@@ -748,24 +752,38 @@ func parseMeta(data []byte) (*ServiceMeta, error) {
 	return &meta, nil
 }
 
-// foldLegacyStage is the one-way lazy migration of a meta written before
-// Stages: its single stageHostname/stageSetupName become Stages[0]. Applied
-// at the single deserialization path only — a meta that already records
-// Stages keeps them, and the next write persists the folded list without the
-// old keys.
+// legacyStageKeys are the single-stage keys a meta carried before Stages.
+// This zcp reads them only to migrate a meta without stages, and writes them
+// only as the mirror of Stages[0]: the release a container restart pulls
+// back knows nothing else, and its first write keeps them and drops stages
+// (spec-mate §2.8a.4).
+type legacyStageKeys struct {
+	StageHostname  string `json:"stageHostname,omitempty"`
+	StageSetupName string `json:"stageSetupName,omitempty"`
+}
+
+// mirrorFirstStage is meta's first stage in the old keys; empty for a meta
+// without stages.
+func mirrorFirstStage(meta *ServiceMeta) legacyStageKeys {
+	first := meta.FirstStage()
+	return legacyStageKeys{StageHostname: first.Hostname, StageSetupName: first.SetupName}
+}
+
+// foldLegacyStage is the one-way lazy migration of a meta written without
+// Stages — before them, or by an older zcp that dropped them: its single
+// stageHostname/stageSetupName become Stages[0]. Applied at the single
+// deserialization path only; a meta that records Stages keeps them and its
+// mirrored old keys are not read.
 func foldLegacyStage(data []byte, meta *ServiceMeta) error {
 	if len(meta.Stages) > 0 {
 		return nil
 	}
-	var legacy struct {
-		StageHostname  string `json:"stageHostname"`
-		StageSetupName string `json:"stageSetupName"`
-	}
+	var legacy legacyStageKeys
 	if err := json.Unmarshal(data, &legacy); err != nil {
 		return err
 	}
 	if legacy.StageHostname != "" {
-		meta.Stages = []topology.Stage{{Hostname: legacy.StageHostname, Setup: legacy.StageSetupName}}
+		meta.Stages = []topology.StageRef{{Hostname: legacy.StageHostname, SetupName: legacy.StageSetupName}}
 	}
 	return nil
 }

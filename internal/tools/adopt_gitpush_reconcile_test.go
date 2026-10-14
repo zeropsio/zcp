@@ -18,7 +18,7 @@ func adoptReconcileFixture(t *testing.T) string {
 	stateDir := filepath.Join(t.TempDir(), ".zcp", "state")
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:       "appdev",
-		Stages:         []topology.Stage{{Hostname: "appstage"}},
+		Stages:         []topology.StageRef{{Hostname: "appstage"}},
 		Mode:           topology.ModeStandard,
 		BootstrappedAt: "2026-06-17T00:00:00Z", // IsComplete()=true
 	}); err != nil {
@@ -128,7 +128,7 @@ func TestReconcileAdoptedGitPush_IncompleteMeta_SkippedThenReconciledOnCompletio
 	// The shape writeProvisionMetas leaves behind: no BootstrappedAt.
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname: "appdev",
-		Stages:   []topology.Stage{{Hostname: "appstage"}},
+		Stages:   []topology.StageRef{{Hostname: "appstage"}},
 		Mode:     topology.ModeStandard,
 	}); err != nil {
 		t.Fatalf("seed partial meta: %v", err)

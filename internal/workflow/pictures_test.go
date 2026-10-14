@@ -114,7 +114,7 @@ func TestKeepPicture_ForgetsByAgeAndSize(t *testing.T) {
 			stateDir := t.TempDir()
 			if tt.described != "" {
 				if err := WriteServiceMeta(stateDir, &ServiceMeta{
-					Hostname: "appdev", Stages: []topology.Stage{{Hostname: "appstage"}}, BootstrapSession: "test", BootstrappedAt: "2026-09-29",
+					Hostname: "appdev", Stages: []topology.StageRef{{Hostname: "appstage"}}, BootstrapSession: "test", BootstrappedAt: "2026-09-29",
 					HQ: &HQRepoRef{AppID: "a1", Repo: "appdev", Branch: "mate/p1", ChangeDescription: &ChangeDescription{Text: tt.described}},
 				}); err != nil {
 					t.Fatalf("WriteServiceMeta: %v", err)
@@ -156,7 +156,7 @@ func writePair(t *testing.T, stateDir string, change int, described string) {
 		ref.ChangeDescription = &ChangeDescription{Text: described, Change: change}
 	}
 	if err := WriteServiceMeta(stateDir, &ServiceMeta{
-		Hostname: "appdev", Stages: []topology.Stage{{Hostname: "appstage"}}, BootstrapSession: "test", BootstrappedAt: "2026-09-29", HQ: ref,
+		Hostname: "appdev", Stages: []topology.StageRef{{Hostname: "appstage"}}, BootstrapSession: "test", BootstrappedAt: "2026-09-29", HQ: ref,
 	}); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}

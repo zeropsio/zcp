@@ -17,7 +17,7 @@ func TestRecordProdLaunchBackRefs(t *testing.T) {
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		BootstrapSession: "t",
 		BootstrappedAt:   "2026-06-10",
 	}); err != nil {
@@ -58,7 +58,7 @@ func TestResolveLaunchSetupName_ProdSetupNameWins(t *testing.T) {
 	t.Parallel()
 	meta := &workflow.ServiceMeta{
 		ProdSetupName:    "production",
-		Stages:           []topology.Stage{{Setup: "prod"}},
+		Stages:           []topology.StageRef{{SetupName: "prod"}},
 		PrimarySetupName: "appdev",
 	}
 	if got, _ := resolveLaunchSetupName(LaunchPromotableInput{}, "", meta); got != "production" {

@@ -267,7 +267,7 @@ func TestHandleDevelopBriefing_StandardPair_StageInScope_Accepted(t *testing.T) 
 	// One meta file representing the container+standard pair.
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		Mode:             topology.PlanModeStandard,
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-04-22",
@@ -326,7 +326,7 @@ func TestHandleDevelopBriefing_StandardPair_DevOnlyInScope_AutoExpandsStage(t *t
 	// Pair-keyed: ONE meta with Hostname=appdev, StageHostname=appstage.
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		Mode:             topology.PlanModeStandard,
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-04-22",
@@ -373,7 +373,7 @@ func TestHandleDevelopBriefing_StandardPair_BothHalvesInScope_NoDuplicate(t *tes
 
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		Mode:             topology.PlanModeStandard,
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-04-22",
@@ -414,7 +414,7 @@ func TestHandleDevelopBriefing_StandardPair_StageOnlyInScope_NoExpansion(t *test
 
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		Mode:             topology.PlanModeStandard,
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-04-22",
@@ -460,7 +460,7 @@ func TestHandleDevelopBriefing_StandardPair_StageMissingFromLive_FailsWithRepair
 	// Pair meta names appstage as the stage half.
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		Mode:             topology.PlanModeStandard,
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-04-22",
@@ -850,7 +850,7 @@ func TestHandleDevelopBriefing_LocalStage_ProjectNameNotInAvailable(t *testing.T
 
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:       "eval-zcp",
-		Stages:         []topology.Stage{{Hostname: "app"}},
+		Stages:         []topology.StageRef{{Hostname: "app"}},
 		Mode:           topology.PlanModeLocalStage,
 		BootstrappedAt: "2026-05-06",
 	}); err != nil {
@@ -888,7 +888,7 @@ func TestHandleDevelopBriefing_LocalStage_StageHostInScope_Accepted(t *testing.T
 
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:        "eval-zcp",
-		Stages:          []topology.Stage{{Hostname: "app"}},
+		Stages:          []topology.StageRef{{Hostname: "app"}},
 		Mode:            topology.PlanModeLocalStage,
 		BootstrappedAt:  "2026-05-06",
 		CloseDeployMode: topology.CloseModeAuto,
@@ -969,7 +969,7 @@ func TestHandleDevelopBriefing_StandardPair_OutOfScopeStage(t *testing.T) {
 
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		Mode:             topology.PlanModeStandard,
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-06-01",
@@ -1053,7 +1053,7 @@ func TestHandleDevelopBriefing_MateStandUp_LeavesTheStageOut(t *testing.T) {
 			}
 			if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 				Hostname:         "appdev",
-				Stages:           []topology.Stage{{Hostname: "appstage"}},
+				Stages:           []topology.StageRef{{Hostname: "appstage"}},
 				Mode:             topology.PlanModeStandard,
 				BootstrapSession: session,
 				BootstrappedAt:   "2026-09-29",

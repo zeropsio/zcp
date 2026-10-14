@@ -165,7 +165,7 @@ func (e *Engine) writeProvisionMetas(state *WorkflowState) {
 // rather than created (IsExisting) — no bootstrap session, which is what makes
 // it read as adopted (IsAdopted). bootstrappedAt is empty for provision's
 // partial write.
-func targetMeta(target BootstrapTarget, hostname string, mode topology.Mode, stages []topology.Stage, sessionID, bootstrappedAt string) *ServiceMeta {
+func targetMeta(target BootstrapTarget, hostname string, mode topology.Mode, stages []topology.StageRef, sessionID, bootstrappedAt string) *ServiceMeta {
 	bootstrapSession := sessionID
 	if target.Runtime.IsExisting {
 		bootstrapSession = ""
@@ -187,20 +187,20 @@ func targetMeta(target BootstrapTarget, hostname string, mode topology.Mode, sta
 
 // stagesByHostname is stages with only their hostnames — nil when there are
 // none, so a stageless meta reads back unchanged.
-func stagesByHostname(stages []topology.Stage) []topology.Stage {
+func stagesByHostname(stages []topology.StageRef) []topology.StageRef {
 	if len(stages) == 0 {
 		return nil
 	}
-	out := make([]topology.Stage, 0, len(stages))
+	out := make([]topology.StageRef, 0, len(stages))
 	for _, s := range stages {
-		out = append(out, topology.Stage{Hostname: s.Hostname})
+		out = append(out, topology.StageRef{Hostname: s.Hostname})
 	}
 	return out
 }
 
 // firstStageHostname is the hostname of a plan target's first stage, "" when
 // it has none — what the local-mode projection keys on.
-func firstStageHostname(stages []topology.Stage) string {
+func firstStageHostname(stages []topology.StageRef) string {
 	if len(stages) == 0 {
 		return ""
 	}
@@ -254,8 +254,8 @@ func mergeExistingMeta(meta, existing *ServiceMeta) {
 		meta.PrimarySetupName = existing.PrimarySetupName
 	}
 	for _, s := range existing.Stages {
-		if s.Setup != "" {
-			meta.SetStageSetup(s.Hostname, s.Setup)
+		if s.SetupName != "" {
+			meta.SetStageSetup(s.Hostname, s.SetupName)
 		}
 	}
 	// Sticky once set either side: the recipe-buildFromGit provenance can't

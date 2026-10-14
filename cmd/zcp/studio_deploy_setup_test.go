@@ -64,7 +64,7 @@ func TestResolveDeploySetup_StandardPairUsesMetaNotHostname(t *testing.T) {
 	meta := &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		Stages:           []topology.Stage{{Hostname: "appstage", Setup: "prod"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage", SetupName: "prod"}},
 		PrimarySetupName: "dev",
 		BootstrappedAt:   "2026-06-25",
 	}

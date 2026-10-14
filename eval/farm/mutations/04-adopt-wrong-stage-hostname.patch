@@ -5,7 +5,7 @@ diff --git a/internal/workflow/bootstrap_outputs.go b/internal/workflow/bootstra
  		}
  
  		meta := targetMeta(target, metaHostname, mode, stages, state.SessionID, now)
-+		meta.Stages = []topology.Stage{{Hostname: metaHostname}}
++		meta.Stages = []topology.StageRef{{Hostname: metaHostname}}
  
  		// Gate R — recipe-bootstrap setup names come from the recipe shape's
  		// LITERAL zeropsSetup (carried on the target by DeriveRecipePlan): a

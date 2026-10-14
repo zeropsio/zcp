@@ -119,9 +119,9 @@ func TestDeployBatch_CrossDeploy_PreflightReadsSourceMounts(t *testing.T) {
 
 	// Standard pair metas — one ServiceMeta per pair (spec-workflows.md §8 E8).
 	for _, m := range []*workflow.ServiceMeta{
-		{Hostname: "apidev", Stages: []topology.Stage{{Hostname: "apistage"}}, Mode: "standard", BootstrapSession: "s1", BootstrappedAt: "2026-04-01T00:00:00Z"},
-		{Hostname: "appdev", Stages: []topology.Stage{{Hostname: "appstage"}}, Mode: "standard", BootstrapSession: "s1", BootstrappedAt: "2026-04-01T00:00:00Z"},
-		{Hostname: "workerdev", Stages: []topology.Stage{{Hostname: "workerstage"}}, Mode: "standard", BootstrapSession: "s1", BootstrappedAt: "2026-04-01T00:00:00Z"},
+		{Hostname: "apidev", Stages: []topology.StageRef{{Hostname: "apistage"}}, Mode: "standard", BootstrapSession: "s1", BootstrappedAt: "2026-04-01T00:00:00Z"},
+		{Hostname: "appdev", Stages: []topology.StageRef{{Hostname: "appstage"}}, Mode: "standard", BootstrapSession: "s1", BootstrappedAt: "2026-04-01T00:00:00Z"},
+		{Hostname: "workerdev", Stages: []topology.StageRef{{Hostname: "workerstage"}}, Mode: "standard", BootstrapSession: "s1", BootstrappedAt: "2026-04-01T00:00:00Z"},
 	} {
 		if err := workflow.WriteServiceMeta(stateDir, m); err != nil {
 			t.Fatalf("write meta %s: %v", m.Hostname, err)

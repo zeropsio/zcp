@@ -44,10 +44,10 @@ func TestLocalAutoAdopt_Case1_CascadeHit_PopulatesStageSetupName(t *testing.T) {
 	}
 	if got := meta.SetupNameFor("apistage"); got != "prod" {
 		t.Errorf("SetupNameFor(apistage): got %q, want prod (primary=%q stage=%q)",
-			got, meta.PrimarySetupName, meta.FirstStage().Setup)
+			got, meta.PrimarySetupName, meta.FirstStage().SetupName)
 	}
-	if meta.FirstStage().Setup != "prod" {
-		t.Errorf("StageSetupName: got %q, want prod", meta.FirstStage().Setup)
+	if meta.FirstStage().SetupName != "prod" {
+		t.Errorf("StageSetupName: got %q, want prod", meta.FirstStage().SetupName)
 	}
 }
 
@@ -82,8 +82,8 @@ func TestLocalAutoAdopt_Case1_CascadeMiss_SilentlySwallows(t *testing.T) {
 	if result.Meta.Mode != topology.PlanModeLocalStage {
 		t.Errorf("Mode: got %q, want local-stage", result.Meta.Mode)
 	}
-	if result.Meta.FirstStage().Setup != "" {
+	if result.Meta.FirstStage().SetupName != "" {
 		t.Errorf("StageSetupName: got %q, want empty (cascade miss leaves field for later discovery)",
-			result.Meta.FirstStage().Setup)
+			result.Meta.FirstStage().SetupName)
 	}
 }

@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -13,9 +14,9 @@ import (
 func threeStagePair() *ServiceMeta {
 	m := NewServiceMeta("appdev", topology.PlanModeStandard)
 	m.PrimarySetupName = "dev"
-	m.Stages = []topology.Stage{
-		{Hostname: "webstage", Setup: "web"},
-		{Hostname: "apistage", Setup: "api"},
+	m.Stages = []topology.StageRef{
+		{Hostname: "webstage", SetupName: "web"},
+		{Hostname: "apistage", SetupName: "api"},
 		{Hostname: "workerstage"},
 	}
 	m.BootstrappedAt = "2026-10-14T00:00:00Z"
@@ -27,17 +28,17 @@ func TestReadServiceMeta_LegacyStageFields_ReadAsOneStage(t *testing.T) {
 	tests := []struct {
 		name string
 		json string
-		want []topology.Stage
+		want []topology.StageRef
 	}{
 		{
 			name: "an old pair meta reads as one stage with the same hostname and setup",
 			json: `{"hostname":"appdev","mode":"standard","stageHostname":"appstage","primarySetupName":"dev","stageSetupName":"prod","bootstrapSession":"s","bootstrappedAt":"t"}`,
-			want: []topology.Stage{{Hostname: "appstage", Setup: "prod"}},
+			want: []topology.StageRef{{Hostname: "appstage", SetupName: "prod"}},
 		},
 		{
 			name: "an old pair meta without a recorded stage setup reads as one stage with no setup",
 			json: `{"hostname":"appdev","mode":"standard","stageHostname":"appstage","bootstrapSession":"s","bootstrappedAt":"t"}`,
-			want: []topology.Stage{{Hostname: "appstage"}},
+			want: []topology.StageRef{{Hostname: "appstage"}},
 		},
 		{
 			name: "an old single-service meta reads with no stage",
@@ -45,9 +46,14 @@ func TestReadServiceMeta_LegacyStageFields_ReadAsOneStage(t *testing.T) {
 			want: nil,
 		},
 		{
+			name: "stages win over the mirrored old keys",
+			json: `{"hostname":"appdev","mode":"standard","stages":[{"hostname":"webstage","setupName":"web"},{"hostname":"apistage"}],"stageHostname":"oldstage","stageSetupName":"old","bootstrapSession":"s","bootstrappedAt":"t"}`,
+			want: []topology.StageRef{{Hostname: "webstage", SetupName: "web"}, {Hostname: "apistage"}},
+		},
+		{
 			name: "a meta that records stages reads them as written",
-			json: `{"hostname":"appdev","mode":"standard","stages":[{"hostname":"webstage","setup":"web"},{"hostname":"apistage","setup":"api"}],"bootstrapSession":"s","bootstrappedAt":"t"}`,
-			want: []topology.Stage{{Hostname: "webstage", Setup: "web"}, {Hostname: "apistage", Setup: "api"}},
+			json: `{"hostname":"appdev","mode":"standard","stages":[{"hostname":"webstage","setupName":"web"},{"hostname":"apistage","setupName":"api"}],"bootstrapSession":"s","bootstrappedAt":"t"}`,
+			want: []topology.StageRef{{Hostname: "webstage", SetupName: "web"}, {Hostname: "apistage", SetupName: "api"}},
 		},
 	}
 	for _, tt := range tests {
@@ -75,7 +81,75 @@ func TestReadServiceMeta_LegacyStageFields_ReadAsOneStage(t *testing.T) {
 	}
 }
 
-func TestWriteServiceMeta_MigratedLegacyMeta_WritesStagesOnly(t *testing.T) {
+// An older zcp (the release a container restart pulls back) decodes the meta
+// into its fixed struct and knows only stageHostname/stageSetupName; every
+// write mirrors the first stage there so it still sees the pair.
+func TestWriteServiceMeta_MirrorsTheFirstStageIntoTheOldKeys(t *testing.T) {
+	t.Parallel()
+	type olderZCP struct {
+		StageHostname  string `json:"stageHostname"`
+		StageSetupName string `json:"stageSetupName"`
+	}
+	tests := []struct {
+		name   string
+		stages []topology.StageRef
+		want   olderZCP
+		// wantStages is the stages key as written, re-read through ReadServiceMeta.
+		wantStages []topology.StageRef
+	}{
+		{
+			name:       "a one-stage pair keeps today's keys beside stages",
+			stages:     []topology.StageRef{{Hostname: "appstage", SetupName: "prod"}},
+			want:       olderZCP{StageHostname: "appstage", StageSetupName: "prod"},
+			wantStages: []topology.StageRef{{Hostname: "appstage", SetupName: "prod"}},
+		},
+		{
+			name:       "a three-stage pair mirrors its first stage",
+			stages:     threeStagePair().Stages,
+			want:       olderZCP{StageHostname: "webstage", StageSetupName: "web"},
+			wantStages: threeStagePair().Stages,
+		},
+		{
+			name: "a single service writes no stage key",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			m := NewServiceMeta("appdev", topology.PlanModeStandard)
+			m.Stages = tt.stages
+			if err := WriteServiceMeta(dir, m); err != nil {
+				t.Fatalf("WriteServiceMeta: %v", err)
+			}
+			data, err := os.ReadFile(filepath.Join(dir, "services", "appdev.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var older olderZCP
+			if err := json.Unmarshal(data, &older); err != nil {
+				t.Fatal(err)
+			}
+			if older != tt.want {
+				t.Errorf("older zcp reads %+v, want %+v:\n%s", older, tt.want, data)
+			}
+			if tt.stages == nil && strings.Contains(string(data), "stage") {
+				t.Errorf("a stageless meta carries a stage key:\n%s", data)
+			}
+			got, err := ReadServiceMeta(dir, "appdev")
+			if err != nil {
+				t.Fatalf("ReadServiceMeta: %v", err)
+			}
+			if !slices.Equal(got.Stages, tt.wantStages) {
+				t.Errorf("Stages = %+v, want %+v", got.Stages, tt.wantStages)
+			}
+		})
+	}
+}
+
+// A meta an older zcp wrote back (mirror only, stages dropped) and the next
+// write by this zcp: the pair survives the round trip.
+func TestWriteServiceMeta_MigratedLegacyMeta_WritesStagesAndTheMirror(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "services"), 0o755); err != nil {
@@ -95,12 +169,16 @@ func TestWriteServiceMeta_MigratedLegacyMeta_WritesStagesOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := string(data)
-	if strings.Contains(body, "stageHostname") || strings.Contains(body, "stageSetupName") {
-		t.Errorf("rewritten meta still carries a legacy stage field:\n%s", body)
+	var written struct {
+		Stages         []topology.StageRef `json:"stages"`
+		StageHostname  string              `json:"stageHostname"`
+		StageSetupName string              `json:"stageSetupName"`
 	}
-	if !strings.Contains(body, `"stages"`) || !strings.Contains(body, `"hostname": "appstage"`) || !strings.Contains(body, `"setup": "prod"`) {
-		t.Errorf("rewritten meta lost its stage:\n%s", body)
+	if err := json.Unmarshal(data, &written); err != nil {
+		t.Fatal(err)
+	}
+	if want := []topology.StageRef{{Hostname: "appstage", SetupName: "prod"}}; !slices.Equal(written.Stages, want) || written.StageHostname != "appstage" || written.StageSetupName != "prod" {
+		t.Errorf("rewritten meta = %+v, want stages %+v and the appstage/prod mirror:\n%s", written, want, data)
 	}
 }
 
@@ -186,7 +264,7 @@ func TestResolveCanonicalSetup_StageOfThreeStagePair_RecordsThatStagesSetup(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []topology.Stage{{Hostname: "webstage", Setup: "web"}, {Hostname: "apistage", Setup: "api"}, {Hostname: "workerstage", Setup: "workerstage"}}
+	want := []topology.StageRef{{Hostname: "webstage", SetupName: "web"}, {Hostname: "apistage", SetupName: "api"}, {Hostname: "workerstage", SetupName: "workerstage"}}
 	if !slices.Equal(read.Stages, want) {
 		t.Errorf("Stages = %+v, want %+v", read.Stages, want)
 	}

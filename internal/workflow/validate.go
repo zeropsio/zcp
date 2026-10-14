@@ -189,7 +189,7 @@ type RuntimeTarget struct {
 	// with its zerops.yml setup. A one-stage pair spells its stage with
 	// stageHostname (+ stageSetupName) as before; a plan uses one spelling or
 	// the other, never both. Read through StageRefs.
-	Stages []topology.Stage `json:"stages,omitempty"`
+	Stages []topology.StageRef `json:"stages,omitempty"`
 	// PublicAccess is the plan's public-access intent for this runtime
 	// (§8 O3 PA-6): "" | "auto" | "subdomain" | "none". Empty means auto —
 	// the default one-time subdomain auto-enable. "domain" is DERIVE-ONLY
@@ -254,7 +254,7 @@ func (r RuntimeTarget) EffectiveMode() topology.Mode {
 // non-conforming hostnames. Returns nil for dev/simple modes OR when standard
 // mode was requested without a stage; the latter is a caller bug —
 // ValidateBootstrapTargets catches it with a hard error.
-func (r RuntimeTarget) StageRefs() []topology.Stage {
+func (r RuntimeTarget) StageRefs() []topology.StageRef {
 	if r.EffectiveMode() != topology.PlanModeStandard {
 		return nil
 	}
@@ -264,7 +264,7 @@ func (r RuntimeTarget) StageRefs() []topology.Stage {
 	if r.ExplicitStage == "" {
 		return nil
 	}
-	return []topology.Stage{{Hostname: r.ExplicitStage, Setup: r.StageSetupName}}
+	return []topology.StageRef{{Hostname: r.ExplicitStage, SetupName: r.StageSetupName}}
 }
 
 // StageHostnames returns the hostname of every stage StageRefs names.

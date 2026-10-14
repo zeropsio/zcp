@@ -17,7 +17,7 @@ func TestWriteServiceMeta_Success(t *testing.T) {
 	meta := &ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             "standard",
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		CloseDeployMode:  topology.CloseModeAuto,
 		BootstrapSession: "abc123",
 		BootstrappedAt:   "2026-03-04T12:00:00Z",
@@ -78,7 +78,7 @@ func TestReadServiceMeta_Success(t *testing.T) {
 	original := &ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             "standard",
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		CloseDeployMode:  topology.CloseModeAuto,
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-03-04T12:00:00Z",
@@ -122,7 +122,7 @@ func TestServiceMeta_JSONRoundTrip(t *testing.T) {
 			ServiceMeta{
 				Hostname:         "apidev",
 				Mode:             "standard",
-				Stages:           []topology.Stage{{Hostname: "apistage"}},
+				Stages:           []topology.StageRef{{Hostname: "apistage"}},
 				CloseDeployMode:  topology.CloseModeAuto,
 				BootstrapSession: "sess123",
 				BootstrappedAt:   "2026-03-04T12:00:00Z",
@@ -190,7 +190,7 @@ func TestListServiceMetas_SameDeserializationAsRead(t *testing.T) {
 	original := &ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             "standard",
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		CloseDeployMode:  topology.CloseModeGitPush,
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-03-04T12:00:00Z",
@@ -471,7 +471,7 @@ func TestPruneServiceMetas_RemovesStaleEntries(t *testing.T) {
 		{
 			"removes stale metas not in live project",
 			[]*ServiceMeta{
-				{Hostname: "appdev", Mode: "standard", Stages: []topology.Stage{{Hostname: "appstage"}}, BootstrapSession: "s1", BootstrappedAt: "2026-03-04T12:00:00Z"},
+				{Hostname: "appdev", Mode: "standard", Stages: []topology.StageRef{{Hostname: "appstage"}}, BootstrapSession: "s1", BootstrappedAt: "2026-03-04T12:00:00Z"},
 				{Hostname: "docs", Mode: "simple", BootstrapSession: "s2", BootstrappedAt: "2026-03-04T12:00:00Z"},
 				{Hostname: "ghost", BootstrapSession: "s3", BootstrappedAt: "2026-03-04T12:00:00Z"},
 			},
@@ -481,7 +481,7 @@ func TestPruneServiceMetas_RemovesStaleEntries(t *testing.T) {
 		{
 			"keeps meta when stage hostname is live",
 			[]*ServiceMeta{
-				{Hostname: "appdev", Mode: "standard", Stages: []topology.Stage{{Hostname: "appstage"}}, BootstrapSession: "s1", BootstrappedAt: "2026-03-04T12:00:00Z"},
+				{Hostname: "appdev", Mode: "standard", Stages: []topology.StageRef{{Hostname: "appstage"}}, BootstrapSession: "s1", BootstrappedAt: "2026-03-04T12:00:00Z"},
 			},
 			[]string{"appstage"}, // only stage exists
 			[]string{"appdev"},
@@ -536,7 +536,7 @@ func TestPruneServiceMetas_RemovesStaleEntries(t *testing.T) {
 			// to "no meta" → ADOPT_REQUIRED on the next develop_start.
 			"local-stage meta survives even when stage host is gone",
 			[]*ServiceMeta{
-				{Hostname: "eval-zcp", Mode: topology.PlanModeLocalStage, Stages: []topology.Stage{{Hostname: "deleted-stage"}}, BootstrappedAt: "2026-05-06"},
+				{Hostname: "eval-zcp", Mode: topology.PlanModeLocalStage, Stages: []topology.StageRef{{Hostname: "deleted-stage"}}, BootstrappedAt: "2026-05-06"},
 			},
 			[]string{"app", "db"}, // stage host disappeared
 			[]string{"eval-zcp"},
@@ -545,7 +545,7 @@ func TestPruneServiceMetas_RemovesStaleEntries(t *testing.T) {
 			"local-only meta survives even when its project-name happens to collide with no service",
 			[]*ServiceMeta{
 				{Hostname: "myproject", Mode: topology.PlanModeLocalOnly, BootstrappedAt: "2026-05-06"},
-				{Hostname: "stalecontainer", Mode: topology.ModeStandard, Stages: []topology.Stage{{Hostname: "stalecontainerstage"}}, BootstrappedAt: "2026-05-06"},
+				{Hostname: "stalecontainer", Mode: topology.ModeStandard, Stages: []topology.StageRef{{Hostname: "stalecontainerstage"}}, BootstrappedAt: "2026-05-06"},
 			},
 			[]string{"app", "db"}, // neither container hostname is live → container meta pruned, local-only kept
 			[]string{"myproject"},
@@ -642,7 +642,7 @@ func TestIsKnownService(t *testing.T) {
 		{
 			"stage hostname match",
 			[]*ServiceMeta{
-				{Hostname: "appdev", Stages: []topology.Stage{{Hostname: "appstage"}}, BootstrapSession: "s1", BootstrappedAt: "2026-03-04T12:00:00Z"},
+				{Hostname: "appdev", Stages: []topology.StageRef{{Hostname: "appstage"}}, BootstrapSession: "s1", BootstrappedAt: "2026-03-04T12:00:00Z"},
 			},
 			"appstage",
 			true,
@@ -650,7 +650,7 @@ func TestIsKnownService(t *testing.T) {
 		{
 			"unknown hostname",
 			[]*ServiceMeta{
-				{Hostname: "appdev", Stages: []topology.Stage{{Hostname: "appstage"}}, BootstrapSession: "s1", BootstrappedAt: "2026-03-04T12:00:00Z"},
+				{Hostname: "appdev", Stages: []topology.StageRef{{Hostname: "appstage"}}, BootstrapSession: "s1", BootstrappedAt: "2026-03-04T12:00:00Z"},
 			},
 			"docs",
 			false,
@@ -712,7 +712,7 @@ func TestManagedRuntimeIndex(t *testing.T) {
 
 	standardPair := &ServiceMeta{
 		Hostname:         "appdev",
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		Mode:             topology.PlanModeStandard,
 		BootstrapSession: "s1",
 		BootstrappedAt:   "2026-03-04T12:00:00Z",
@@ -731,7 +731,7 @@ func TestManagedRuntimeIndex(t *testing.T) {
 	}
 	localStage := &ServiceMeta{
 		Hostname:         "myproject",
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		Mode:             topology.PlanModeLocalStage,
 		BootstrapSession: "s4",
 		BootstrappedAt:   "2026-03-04T12:00:00Z",
@@ -813,7 +813,7 @@ func TestManagedRuntimeIndex(t *testing.T) {
 
 	t.Run("empty hostname is skipped, never poisons map", func(t *testing.T) {
 		t.Parallel()
-		blank := &ServiceMeta{Hostname: "", Stages: []topology.Stage{{Hostname: "appstage"}}}
+		blank := &ServiceMeta{Hostname: "", Stages: []topology.StageRef{{Hostname: "appstage"}}}
 		idx := ManagedRuntimeIndex([]*ServiceMeta{blank, devOnly})
 		if _, present := idx[""]; present {
 			t.Errorf("empty-string key must never appear in index")
@@ -858,8 +858,8 @@ func TestManagedRuntimeIndex(t *testing.T) {
 	t.Run("multiple non-colliding metas merge correctly", func(t *testing.T) {
 		t.Parallel()
 		// Distinct hostnames — realistic multi-stack project state.
-		pairA := &ServiceMeta{Hostname: "appdev", Stages: []topology.Stage{{Hostname: "appstage"}}, Mode: topology.PlanModeStandard}
-		pairB := &ServiceMeta{Hostname: "apidev", Stages: []topology.Stage{{Hostname: "apistage"}}, Mode: topology.PlanModeStandard}
+		pairA := &ServiceMeta{Hostname: "appdev", Stages: []topology.StageRef{{Hostname: "appstage"}}, Mode: topology.PlanModeStandard}
+		pairB := &ServiceMeta{Hostname: "apidev", Stages: []topology.StageRef{{Hostname: "apistage"}}, Mode: topology.PlanModeStandard}
 		idx := ManagedRuntimeIndex([]*ServiceMeta{pairA, devOnly, simple, pairB})
 		// 2 (pairA) + 1 (devOnly) + 1 (simple) + 2 (pairB) = 6
 		if len(idx) != 6 {
@@ -921,7 +921,7 @@ func TestServiceMeta_PrimaryRole(t *testing.T) {
 	}{
 		{
 			"container_standard_returns_dev",
-			ServiceMeta{Hostname: "appdev", Mode: topology.PlanModeStandard, Stages: []topology.Stage{{Hostname: "appstage"}}},
+			ServiceMeta{Hostname: "appdev", Mode: topology.PlanModeStandard, Stages: []topology.StageRef{{Hostname: "appstage"}}},
 			topology.DeployRoleDev,
 		},
 		{
@@ -940,7 +940,7 @@ func TestServiceMeta_PrimaryRole(t *testing.T) {
 			// because the dev half of the topology lives on the user's
 			// machine — the Zerops side is the stage runtime.
 			"local_stage_returns_stage",
-			ServiceMeta{Hostname: "myproject", Stages: []topology.Stage{{Hostname: "appstage"}}, Mode: topology.PlanModeLocalStage},
+			ServiceMeta{Hostname: "myproject", Stages: []topology.StageRef{{Hostname: "appstage"}}, Mode: topology.PlanModeLocalStage},
 			topology.DeployRoleDev,
 		},
 		{
@@ -955,7 +955,7 @@ func TestServiceMeta_PrimaryRole(t *testing.T) {
 		},
 		{
 			"empty_mode_defaults_to_standard",
-			ServiceMeta{Hostname: "appdev", Stages: []topology.Stage{{Hostname: "appstage"}}},
+			ServiceMeta{Hostname: "appdev", Stages: []topology.StageRef{{Hostname: "appstage"}}},
 			topology.DeployRoleDev,
 		},
 	}
@@ -972,7 +972,7 @@ func TestServiceMeta_PrimaryRole(t *testing.T) {
 func TestServiceMeta_RoleFor(t *testing.T) {
 	t.Parallel()
 	meta := ServiceMeta{
-		Hostname: "appdev", Mode: topology.PlanModeStandard, Stages: []topology.Stage{{Hostname: "appstage"}},
+		Hostname: "appdev", Mode: topology.PlanModeStandard, Stages: []topology.StageRef{{Hostname: "appstage"}},
 	}
 	tests := []struct {
 		hostname string
@@ -1004,10 +1004,10 @@ func TestServiceMeta_ModeFor(t *testing.T) {
 	t.Parallel()
 
 	standardPair := &ServiceMeta{
-		Hostname: "appdev", Stages: []topology.Stage{{Hostname: "appstage"}}, Mode: topology.PlanModeStandard,
+		Hostname: "appdev", Stages: []topology.StageRef{{Hostname: "appstage"}}, Mode: topology.PlanModeStandard,
 	}
 	localStagePair := &ServiceMeta{
-		Hostname: "myproject", Stages: []topology.Stage{{Hostname: "apistage"}}, Mode: topology.PlanModeLocalStage,
+		Hostname: "myproject", Stages: []topology.StageRef{{Hostname: "apistage"}}, Mode: topology.PlanModeLocalStage,
 	}
 	devOnly := &ServiceMeta{Hostname: "appdev", Mode: topology.PlanModeDev}
 	simple := &ServiceMeta{Hostname: "app", Mode: topology.PlanModeSimple}
@@ -1070,7 +1070,7 @@ func TestServiceMeta_ModeFor(t *testing.T) {
 func TestServiceMeta_ModeFor_StandardPairStageHalf_NotDeferredStart(t *testing.T) {
 	t.Parallel()
 	meta := &ServiceMeta{
-		Hostname: "appdev", Stages: []topology.Stage{{Hostname: "appstage"}}, Mode: topology.PlanModeStandard,
+		Hostname: "appdev", Stages: []topology.StageRef{{Hostname: "appstage"}}, Mode: topology.PlanModeStandard,
 	}
 	got := meta.ModeFor("appstage")
 	if got != topology.ModeStage {
@@ -1088,7 +1088,7 @@ func TestServiceMeta_ModeFor_StandardPairStageHalf_NotDeferredStart(t *testing.T
 func TestServiceMeta_ModeFor_StandardPairDevHalf_StillDeferredStart(t *testing.T) {
 	t.Parallel()
 	meta := &ServiceMeta{
-		Hostname: "appdev", Stages: []topology.Stage{{Hostname: "appstage"}}, Mode: topology.PlanModeStandard,
+		Hostname: "appdev", Stages: []topology.StageRef{{Hostname: "appstage"}}, Mode: topology.PlanModeStandard,
 	}
 	got := meta.ModeFor("appdev")
 	if got != topology.ModeStandard {
@@ -1107,7 +1107,7 @@ func TestServiceMeta_Hostnames(t *testing.T) {
 		want []string
 	}{
 		{"dev_only", ServiceMeta{Hostname: "appdev"}, []string{"appdev"}},
-		{"dev_and_stage", ServiceMeta{Hostname: "appdev", Stages: []topology.Stage{{Hostname: "appstage"}}}, []string{"appdev", "appstage"}},
+		{"dev_and_stage", ServiceMeta{Hostname: "appdev", Stages: []topology.StageRef{{Hostname: "appstage"}}}, []string{"appdev", "appstage"}},
 		{"simple", ServiceMeta{Hostname: "app"}, []string{"app"}},
 	}
 	for _, tt := range tests {
@@ -1200,13 +1200,13 @@ func TestPushSourceCheckFor(t *testing.T) {
 		},
 		{
 			name:     "standard pair dev half is OK",
-			meta:     &ServiceMeta{Hostname: "appdev", Stages: []topology.Stage{{Hostname: "appstage"}}, Mode: topology.ModeStandard},
+			meta:     &ServiceMeta{Hostname: "appdev", Stages: []topology.StageRef{{Hostname: "appstage"}}, Mode: topology.ModeStandard},
 			hostname: "appdev",
 			want:     topology.PushSourceOK,
 		},
 		{
 			name:     "standard pair stage half is stage-half result",
-			meta:     &ServiceMeta{Hostname: "appdev", Stages: []topology.Stage{{Hostname: "appstage"}}, Mode: topology.ModeStandard},
+			meta:     &ServiceMeta{Hostname: "appdev", Stages: []topology.StageRef{{Hostname: "appstage"}}, Mode: topology.ModeStandard},
 			hostname: "appstage",
 			want:     topology.PushSourceIsStageHalf,
 		},
@@ -1242,7 +1242,7 @@ func TestPushSourceCheckFor(t *testing.T) {
 			// user's CWD (m.Hostname), not a Zerops service that can
 			// receive a deploy. Returning OK lets the deploy proceed.
 			name:     "ModeLocalStage stage hostname is OK (local-stage carve-out)",
-			meta:     &ServiceMeta{Hostname: "myproject", Stages: []topology.Stage{{Hostname: "apistage"}}, Mode: topology.ModeLocalStage},
+			meta:     &ServiceMeta{Hostname: "myproject", Stages: []topology.StageRef{{Hostname: "apistage"}}, Mode: topology.ModeLocalStage},
 			hostname: "apistage",
 			want:     topology.PushSourceOK,
 		},
@@ -1254,7 +1254,7 @@ func TestPushSourceCheckFor(t *testing.T) {
 		},
 		{
 			name:     "unknown hostname returns unknown-host",
-			meta:     &ServiceMeta{Hostname: "appdev", Stages: []topology.Stage{{Hostname: "appstage"}}, Mode: topology.ModeStandard},
+			meta:     &ServiceMeta{Hostname: "appdev", Stages: []topology.StageRef{{Hostname: "appstage"}}, Mode: topology.ModeStandard},
 			hostname: "otherservice",
 			want:     topology.PushSourceUnknownHost,
 		},
@@ -1276,7 +1276,7 @@ func TestPushSourceCheckFor(t *testing.T) {
 // the new field.
 func TestServiceMeta_PublicAccessFor_DefaultsToAuto_RoundTrips(t *testing.T) {
 	t.Parallel()
-	meta := &ServiceMeta{Hostname: "appdev", Stages: []topology.Stage{{Hostname: "appstage"}}, BootstrappedAt: "2026-03-04T12:00:00Z"}
+	meta := &ServiceMeta{Hostname: "appdev", Stages: []topology.StageRef{{Hostname: "appstage"}}, BootstrappedAt: "2026-03-04T12:00:00Z"}
 
 	// Missing map entry defaults to auto.
 	if got := meta.PublicAccessFor("appdev"); got.Intent != topology.PublicAccessAuto {

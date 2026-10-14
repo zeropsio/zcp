@@ -17,7 +17,7 @@ func writeMetaForResolver(t *testing.T, dir, stageHost string) {
 	t.Helper()
 	meta := &ServiceMeta{
 		Hostname:         "appdev",
-		Stages:           []topology.Stage{{Hostname: stageHost}},
+		Stages:           []topology.StageRef{{Hostname: stageHost}},
 		BootstrappedAt:   "2026-05-27T10:00:00Z",
 		BootstrapSession: "sess-1",
 	}
@@ -243,8 +243,8 @@ func TestResolveCanonicalSetup_StageHalfTarget_WritesStageSetupName(t *testing.T
 	}
 
 	reloaded, _ := FindServiceMeta(dir, "appstage")
-	if reloaded.FirstStage().Setup != "prod" {
-		t.Errorf("StageSetupName: want prod, got %q", reloaded.FirstStage().Setup)
+	if reloaded.FirstStage().SetupName != "prod" {
+		t.Errorf("StageSetupName: want prod, got %q", reloaded.FirstStage().SetupName)
 	}
 	if reloaded.PrimarySetupName != "" {
 		t.Errorf("PrimarySetupName must stay empty for stage-half resolve, got %q", reloaded.PrimarySetupName)

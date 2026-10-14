@@ -1417,8 +1417,8 @@ func TestMergeExistingMeta(t *testing.T) {
 
 	meta := &ServiceMeta{
 		Hostname: "appdev",
-		Mode:     topology.PlanModeStandard,                // upgrade
-		Stages:   []topology.Stage{{Hostname: "appstage"}}, // upgrade
+		Mode:     topology.PlanModeStandard,                   // upgrade
+		Stages:   []topology.StageRef{{Hostname: "appstage"}}, // upgrade
 		// Defaults written by writeBootstrapOutputs / writeProvisionMetas
 		// for fresh bootstrap targets — the merge must overwrite these
 		// with the existing values.
@@ -1527,7 +1527,7 @@ func TestMergeExistingMetaKeepsThePairsRepositoryRecords(t *testing.T) {
 		RemoteURL:    "https://hq.acme.example/git/a1/todoapp.git",
 		HQ:           &HQRepoRef{AppID: "a1", Repo: "todoapp", Branch: "mate/p1", Change: 1},
 	}
-	meta := &ServiceMeta{Hostname: "todoapp", Stages: []topology.Stage{{Hostname: "todoappstage"}}, Mode: topology.PlanModeStandard}
+	meta := &ServiceMeta{Hostname: "todoapp", Stages: []topology.StageRef{{Hostname: "todoappstage"}}, Mode: topology.PlanModeStandard}
 	mergeExistingMeta(meta, existing)
 	if meta.HQ == nil || meta.HQ.Repo != "todoapp" || meta.HQ.Change != 1 {
 		t.Fatalf("an expansion keeps the pair's HQ record, got %+v", meta.HQ)

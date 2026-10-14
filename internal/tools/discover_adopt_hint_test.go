@@ -139,7 +139,7 @@ func TestEnrichWithMetaStatus_FullyAdopted_AdoptedStateNoWarning(t *testing.T) {
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		BootstrappedAt:   "2026-05-27",
 		BootstrapSession: "sess-1",
 	}); err != nil {
@@ -264,7 +264,7 @@ func TestEnrichWithMetaStatus_MixedStates_BothWarningsFire(t *testing.T) {
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		BootstrappedAt:   "2026-05-27",
 		BootstrapSession: "sess-1",
 	}); err != nil {

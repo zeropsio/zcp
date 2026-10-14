@@ -285,7 +285,7 @@ func buildOneSnapshot(svc platform.ServiceStack, meta *ServiceMeta, ws *WorkSess
 		if meta.HasStage() && svc.Name == meta.Hostname {
 			first := meta.FirstStage()
 			snap.StageHostname = first.Hostname
-			snap.StageSetupName = first.Setup
+			snap.StageSetupName = first.SetupName
 			snap.Stages = slices.Clone(meta.Stages)
 		}
 	}

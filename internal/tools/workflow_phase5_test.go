@@ -20,7 +20,7 @@ func TestHandleCloseMode_Update(t *testing.T) {
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		BootstrapSession: "test",
 		BootstrappedAt:   "2026-04-28",
 	}); err != nil {
@@ -59,7 +59,7 @@ func TestHandleCloseMode_GitPushChainsSetup(t *testing.T) {
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		BootstrapSession: "test",
 		BootstrappedAt:   "2026-04-28",
 		// GitPushState left unconfigured — migrate at parseMeta would land
@@ -95,7 +95,7 @@ func TestHandleCloseMode_GitPushFold_MessageReadsAsConfirmationNotRejection(t *t
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		GitPushState:     topology.GitPushConfigured,
 		RemoteURL:        "https://github.com/example/app.git",
 		BootstrapSession: "test",
@@ -199,7 +199,7 @@ func TestHandleGitPushSetup_Confirm(t *testing.T) {
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		BootstrapSession: "test",
 		BootstrappedAt:   "2026-04-28",
 	}); err != nil {
@@ -246,7 +246,7 @@ func TestHandleGitPushSetup_RejectsStageHostname(t *testing.T) {
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		BootstrapSession: "test",
 		BootstrappedAt:   "2026-04-28",
 	}); err != nil {
@@ -278,7 +278,7 @@ func TestHandleBuildIntegration_NeedsGitPushSetup(t *testing.T) {
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		BootstrapSession: "test",
 		BootstrappedAt:   "2026-04-28",
 	}); err != nil {
@@ -310,7 +310,7 @@ func TestHandleBuildIntegration_Configures(t *testing.T) {
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		GitPushState:     topology.GitPushConfigured,
 		BootstrapSession: "test",
 		BootstrappedAt:   "2026-04-28",
@@ -360,7 +360,7 @@ func TestHandleGitPush_RejectsUnconfiguredState(t *testing.T) {
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		BootstrapSession: "test",
 		BootstrappedAt:   "2026-04-28",
 		// GitPushState left unset — parseMeta lands at GitPushUnconfigured
@@ -452,7 +452,7 @@ func TestHandleBuildIntegration_ActionsConfirmEnrichesResponse(t *testing.T) {
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		GitPushState:     topology.GitPushConfigured,
 		RemoteURL:        "https://github.com/example/demo.git",
 		BootstrapSession: "test",
@@ -539,7 +539,7 @@ func TestHandleBuildIntegration_ActionsConfirmEnrichesResponse(t *testing.T) {
 	if err := workflow.WriteServiceMeta(stateDirContainer, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		GitPushState:     topology.GitPushConfigured,
 		RemoteURL:        "https://github.com/example/demo.git",
 		BootstrapSession: "test",
@@ -593,7 +593,7 @@ func TestHandleBuildIntegration_NoneIsTerse(t *testing.T) {
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		GitPushState:     topology.GitPushConfigured,
 		BuildIntegration: topology.BuildIntegrationActions,
 		BootstrapSession: "test",
@@ -664,7 +664,7 @@ func TestHandleBuildIntegration_ActionsConfirmDegradesGracefully(t *testing.T) {
 			if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 				Hostname:         "appdev",
 				Mode:             topology.PlanModeStandard,
-				Stages:           []topology.Stage{{Hostname: "appstage"}},
+				Stages:           []topology.StageRef{{Hostname: "appstage"}},
 				GitPushState:     topology.GitPushConfigured,
 				RemoteURL:        tc.remoteURL,
 				BootstrapSession: "test",
@@ -753,7 +753,7 @@ func TestHandleGitPushSetup_StageHalfRedirectsToDevHalf(t *testing.T) {
 	stateDir := t.TempDir()
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		Mode:             topology.ModeStandard,
 		BootstrapSession: "test",
 		BootstrappedAt:   "2026-04-29",
@@ -789,7 +789,7 @@ func TestHandleGitPushSetup_LocalStage_StageHostnameTarget_Proceeds(t *testing.T
 	stateDir := t.TempDir()
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:                 "myproject",
-		Stages:                   []topology.Stage{{Hostname: "apistage"}},
+		Stages:                   []topology.StageRef{{Hostname: "apistage"}},
 		Mode:                     topology.PlanModeLocalStage,
 		CloseDeployMode:          topology.CloseModeUnset,
 		CloseDeployModeConfirmed: false,
@@ -824,7 +824,7 @@ func TestHandleGitPushSetup_ContainerStandard_StageHalfStillRejects(t *testing.T
 	stateDir := t.TempDir()
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		Mode:             topology.PlanModeStandard,
 		BootstrapSession: "test",
 		BootstrappedAt:   "2026-04-29",
@@ -869,7 +869,7 @@ func TestHandleCloseMode_FiresAutoCloseWhenScopeReady(t *testing.T) {
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		BootstrapSession: "test",
 		BootstrappedAt:   "2026-04-28",
 	}); err != nil {
@@ -950,7 +950,7 @@ func TestHandleCloseMode_StaysOpenWhenManualBlocks(t *testing.T) {
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		BootstrapSession: "test",
 		BootstrappedAt:   "2026-04-28",
 	}); err != nil {
@@ -1014,7 +1014,7 @@ func TestHandleBuildIntegration_PushSourceComputedFromCanonicalMeta(t *testing.T
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		GitPushState:     topology.GitPushConfigured,
 		RemoteURL:        "https://github.com/example/demo.git",
 		BootstrapSession: "test",
@@ -1055,7 +1055,7 @@ func TestHandleBuildIntegration_NoOpReCall_MatchesFirstCallShape(t *testing.T) {
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		GitPushState:     topology.GitPushConfigured,
 		BuildIntegration: topology.BuildIntegrationActions,
 		RemoteURL:        "https://github.com/example/demo.git",
@@ -1112,7 +1112,7 @@ func TestHandleCloseMode_DivergentDualHalves_Rejected(t *testing.T) {
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		BootstrapSession: "test",
 		BootstrappedAt:   "2026-04-28",
 	}); err != nil {
@@ -1157,7 +1157,7 @@ func TestHandleCloseMode_SameValueDualHalves_Accepted(t *testing.T) {
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		Stages:           []topology.Stage{{Hostname: "appstage"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage"}},
 		BootstrapSession: "test",
 		BootstrappedAt:   "2026-04-28",
 	}); err != nil {

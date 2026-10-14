@@ -31,7 +31,7 @@ func threeStagePairState(t *testing.T) string {
 	scaffoldServiceYaml(t, dir, "appdev", "zerops:\n"+block("dev")+block("prod")+block("web")+block("api")+block("worker"))
 	m := workflow.NewServiceMeta("appdev", topology.PlanModeStandard)
 	m.PrimarySetupName = "dev"
-	m.Stages = []topology.Stage{{Hostname: "webstage", Setup: "web"}, {Hostname: "apistage", Setup: "api"}, {Hostname: "workerstage"}}
+	m.Stages = []topology.StageRef{{Hostname: "webstage", SetupName: "web"}, {Hostname: "apistage", SetupName: "api"}, {Hostname: "workerstage"}}
 	m.BootstrapSession = "s1"
 	m.BootstrappedAt = "2026-10-14T00:00:00Z"
 	if err := workflow.WriteServiceMeta(stateDir, m); err != nil {
@@ -71,7 +71,7 @@ func TestDeployPreFlight_StageWithoutRecordedSetup_RecordsTheResolvedOneOnThatSt
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []topology.Stage{{Hostname: "webstage", Setup: "web"}, {Hostname: "apistage", Setup: "api"}, {Hostname: "workerstage", Setup: "worker"}}
+	want := []topology.StageRef{{Hostname: "webstage", SetupName: "web"}, {Hostname: "apistage", SetupName: "api"}, {Hostname: "workerstage", SetupName: "worker"}}
 	if !slices.Equal(meta.Stages, want) || meta.PrimarySetupName != "dev" {
 		t.Errorf("meta = primary %q, stages %+v; want dev and %+v", meta.PrimarySetupName, meta.Stages, want)
 	}
@@ -81,7 +81,7 @@ func TestValidateDevelopScope_DevHalfOfThreeStagePair_IncludesEveryStage(t *test
 	t.Parallel()
 	m := &workflow.ServiceMeta{
 		Hostname: "appdev", Mode: topology.PlanModeStandard, BootstrappedAt: "2026-10-14",
-		Stages: []topology.Stage{{Hostname: "webstage"}, {Hostname: "apistage"}, {Hostname: "workerstage"}},
+		Stages: []topology.StageRef{{Hostname: "webstage"}, {Hostname: "apistage"}, {Hostname: "workerstage"}},
 	}
 	runtimeMetas := workflow.ManagedRuntimeIndex([]*workflow.ServiceMeta{m})
 	live := map[string]bool{"appdev": true, "webstage": true, "apistage": true, "workerstage": true}
@@ -117,7 +117,7 @@ func TestHandleSetDefaultSetup_ThreeStagePair_WritesTheNamedStage(t *testing.T) 
 		t.Fatalf("expected success; got: %s", getTextContent(t, result))
 	}
 	meta, _ := workflow.ReadServiceMeta(stateDir, "appdev")
-	want := []topology.Stage{{Hostname: "webstage", Setup: "web"}, {Hostname: "apistage", Setup: "api"}, {Hostname: "workerstage", Setup: "worker"}}
+	want := []topology.StageRef{{Hostname: "webstage", SetupName: "web"}, {Hostname: "apistage", SetupName: "api"}, {Hostname: "workerstage", SetupName: "worker"}}
 	if !slices.Equal(meta.Stages, want) {
 		t.Errorf("Stages = %+v, want %+v", meta.Stages, want)
 	}

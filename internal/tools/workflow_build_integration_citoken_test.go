@@ -36,7 +36,7 @@ func TestActionsConfirm_NeverHandsOutTheContainerKey(t *testing.T) {
 			if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 				Hostname:         "appdev",
 				Mode:             topology.PlanModeStandard,
-				Stages:           []topology.Stage{{Hostname: "appstage"}},
+				Stages:           []topology.StageRef{{Hostname: "appstage"}},
 				GitPushState:     topology.GitPushConfigured,
 				RemoteURL:        "https://github.com/example/demo.git",
 				BootstrapSession: "test",
@@ -80,7 +80,7 @@ func TestActionsConfirm_UnknownHost_KeepsGitHubEmission(t *testing.T) {
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         "api",
 		Mode:             topology.PlanModeStandard,
-		Stages:           []topology.Stage{{Hostname: "apistage"}},
+		Stages:           []topology.StageRef{{Hostname: "apistage"}},
 		GitPushState:     topology.GitPushConfigured,
 		RemoteURL:        "https://web-2ff4-3000.prg1.zerops.app/acme/api",
 		BootstrapSession: "test",

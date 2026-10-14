@@ -42,8 +42,8 @@ func TestServiceMeta_PreP0Format_LoadsCleanly(t *testing.T) {
 	if meta.PrimarySetupName != "" {
 		t.Errorf("PrimarySetupName: want empty (cache miss), got %q", meta.PrimarySetupName)
 	}
-	if meta.FirstStage().Setup != "" {
-		t.Errorf("StageSetupName: want empty (cache miss), got %q", meta.FirstStage().Setup)
+	if meta.FirstStage().SetupName != "" {
+		t.Errorf("StageSetupName: want empty (cache miss), got %q", meta.FirstStage().SetupName)
 	}
 	if got := meta.SetupNameFor("appdev"); got != "" {
 		t.Errorf("SetupNameFor on pre-P0 meta: want empty cache miss, got %q", got)
@@ -76,19 +76,19 @@ func TestSetupNameFor_PairKeyed(t *testing.T) {
 		},
 		{
 			"stage hostname returns stage setup",
-			&ServiceMeta{Hostname: "appdev", Stages: []topology.Stage{{Hostname: "appstage", Setup: "prod"}}, PrimarySetupName: "dev"},
+			&ServiceMeta{Hostname: "appdev", Stages: []topology.StageRef{{Hostname: "appstage", SetupName: "prod"}}, PrimarySetupName: "dev"},
 			"appstage", "prod",
 			"hostname matches stage half; returns StageSetupName",
 		},
 		{
 			"primary half of pair returns primary",
-			&ServiceMeta{Hostname: "appdev", Stages: []topology.Stage{{Hostname: "appstage", Setup: "prod"}}, PrimarySetupName: "dev"},
+			&ServiceMeta{Hostname: "appdev", Stages: []topology.StageRef{{Hostname: "appstage", SetupName: "prod"}}, PrimarySetupName: "dev"},
 			"appdev", "dev",
 			"hostname is primary in pair; not stage",
 		},
 		{
 			"out-of-scope hostname returns empty",
-			&ServiceMeta{Hostname: "appdev", Stages: []topology.Stage{{Hostname: "appstage", Setup: "prod"}}, PrimarySetupName: "dev"},
+			&ServiceMeta{Hostname: "appdev", Stages: []topology.StageRef{{Hostname: "appstage", SetupName: "prod"}}, PrimarySetupName: "dev"},
 			"unrelated", "",
 			"caller must load that hostname's own meta",
 		},
@@ -100,7 +100,7 @@ func TestSetupNameFor_PairKeyed(t *testing.T) {
 		},
 		{
 			"empty stage cache misses on stage half",
-			&ServiceMeta{Hostname: "appdev", Stages: []topology.Stage{{Hostname: "appstage"}}, PrimarySetupName: "dev"},
+			&ServiceMeta{Hostname: "appdev", Stages: []topology.StageRef{{Hostname: "appstage"}}, PrimarySetupName: "dev"},
 			"appstage", "",
 			"unset StageSetupName returns empty even when primary is set",
 		},
@@ -128,7 +128,7 @@ func TestComputeEnvelope_PopulatesSetupNameFromMeta(t *testing.T) {
 	meta := &ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
-		Stages:           []topology.Stage{{Hostname: "appstage", Setup: "prod"}},
+		Stages:           []topology.StageRef{{Hostname: "appstage", SetupName: "prod"}},
 		BootstrappedAt:   "2026-05-27T10:00:00Z",
 		BootstrapSession: "sess-1",
 		PrimarySetupName: "dev",
