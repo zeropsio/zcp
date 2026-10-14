@@ -26,6 +26,9 @@ import (
 
 const mateContractDir = "testdata/mate-contract"
 
+// contractStatusRunning is the supervisor's running status (§2.8a.2).
+const contractStatusRunning = "running"
+
 type contractStage struct {
 	Hostname string `json:"hostname"`
 	Setup    string `json:"setup,omitempty"`
@@ -78,7 +81,9 @@ type contractDeclaration struct {
 		Command string `json:"command"`
 		Cwd     string `json:"cwd,omitempty"`
 		Service string `json:"service,omitempty"`
-		Watch   *struct {
+		// Autostart is the server's first desired state; absent means true.
+		Autostart *bool `json:"autostart,omitempty"`
+		Watch     *struct {
 			Paths  []string `json:"paths"`
 			Ignore []string `json:"ignore,omitempty"`
 		} `json:"watch,omitempty"`
@@ -278,6 +283,33 @@ func TestMateContractFixtures_DevServerResults_KeepTodaysFieldsAndAddTheEnvelope
 	}
 }
 
+func TestMateContractFixtures_DevServerResults_RunningIsTheReportedServersStatus(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"dev-server.one-server.json", "dev-server.three-servers-one-crashed.json"} {
+		var res contractDevServerResult
+		readContractFixture(t, name, &res)
+		if res.Envelope == nil {
+			t.Fatalf("%s: no envelope", name)
+		}
+		reported := res.Name
+		if reported == "" {
+			reported = res.Hostname
+		}
+		var entry *contractDevServer
+		for i, d := range res.Envelope.Services[0].DevServers {
+			if d.Name == reported {
+				entry = &res.Envelope.Services[0].DevServers[i]
+			}
+		}
+		if entry == nil {
+			t.Fatalf("%s: the envelope carries no dev server named %q", name, reported)
+		}
+		if running := entry.Status == contractStatusRunning; res.Running != running {
+			t.Errorf("%s: running = %v, but %s's status is %q", name, res.Running, reported, entry.Status)
+		}
+	}
+}
+
 func TestMateContractFixtures_Declaration_FollowsTheRules(t *testing.T) {
 	t.Parallel()
 	var decl contractDeclaration
@@ -307,8 +339,28 @@ func TestMateContractFixtures_Declaration_FollowsTheRules(t *testing.T) {
 			t.Errorf("%s: cwd %q leaves the repo", s.Name, s.Cwd)
 		}
 	}
-	if want := []string{"web", "api", "worker"}; !reflect.DeepEqual(got, want) {
+	if want := []string{"web", "api", "worker", "admin"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("servers = %v, want %v", got, want)
+	}
+}
+
+func TestMateContractFixtures_Declaration_AutostartFalseStartsStopped(t *testing.T) {
+	t.Parallel()
+	var decl contractDeclaration
+	readContractFixture(t, "dev-servers.declaration.json", &decl)
+	var started, stopped []string
+	for _, s := range decl.Servers {
+		if s.Autostart == nil || *s.Autostart {
+			started = append(started, s.Name)
+		} else {
+			stopped = append(stopped, s.Name)
+		}
+	}
+	if want := []string{"web", "api", "worker"}; !reflect.DeepEqual(started, want) {
+		t.Errorf("first desired running = %v, want %v", started, want)
+	}
+	if want := []string{"admin"}; !reflect.DeepEqual(stopped, want) {
+		t.Errorf("first desired stopped = %v, want %v", stopped, want)
 	}
 }
 
