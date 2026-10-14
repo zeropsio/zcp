@@ -56,9 +56,7 @@ func TestStopGroup_StoppingADevServerEndsItsWholeProcessGroupAndFreesItsPort(t *
 	if processAlive(leader) {
 		t.Fatalf("leader %d survived the stop", leader)
 	}
-	if !portFree(port) {
-		t.Fatalf("port %d is still held", port)
-	}
+	released(t, port)
 }
 
 func TestStopGroup_KillsAGroupThatIgnoresTermAfterGrace(t *testing.T) {
@@ -77,9 +75,7 @@ func TestStopGroup_KillsAGroupThatIgnoresTermAfterGrace(t *testing.T) {
 	if processAlive(grandchild) {
 		t.Fatalf("grandchild %d survived SIGKILL", grandchild)
 	}
-	if !portFree(port) {
-		t.Fatalf("port %d is still held", port)
-	}
+	released(t, port)
 }
 
 func TestOwnsGroup_OnlyTheLeaderWithTheRecordedStartTime(t *testing.T) {

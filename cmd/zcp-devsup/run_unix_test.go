@@ -97,6 +97,18 @@ func TestCtl_DrivesARunningSupervisor(t *testing.T) {
 	if code, st := state1("status"); code != 0 || st.Servers["web"].Source != devsup.SourceDeclared {
 		t.Fatalf("status: %d %+v", code, st)
 	}
+	// web's output may trail its start; the stop below must not cut it off.
+	var code int
+	var out string
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+		code, out = ctl(t, state, "logs", "web", "--lines", "1")
+		if out == "hello\n" || time.Now().After(deadline) {
+			break
+		}
+	}
+	if code != 0 || out != "hello\n" {
+		t.Fatalf("logs: %d %q", code, out)
+	}
 	if code, st := state1("stop", "web"); code != 0 || st.Servers["web"].Status != devsup.StatusStopped {
 		t.Fatalf("stop: %d %+v", code, st)
 	}
@@ -106,10 +118,6 @@ func TestCtl_DrivesARunningSupervisor(t *testing.T) {
 	if code, st := state1("run", "--name", "crew-ada", "--cwd", ".", "--", "exec", "sleep", "300"); code != 0 ||
 		st.Servers["crew-ada"].Command != "exec sleep 300" || st.Servers["crew-ada"].Source != devsup.SourceRuntime {
 		t.Fatalf("run: %d %+v", code, st)
-	}
-	code, out := ctl(t, state, "logs", "web", "--lines", "1")
-	if code != 0 || out != "hello\n" {
-		t.Fatalf("logs: %d %q", code, out)
 	}
 	if code, _ := ctl(t, state, "logs", "nope"); code != devsup.CodeUnknownName {
 		t.Fatalf("logs nope: exit %d", code)

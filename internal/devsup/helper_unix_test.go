@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -75,17 +76,39 @@ func helperCmd(t *testing.T, mode string, env ...string) string {
 	return "SUPERVISOR_TEST_HELPER=" + mode + " " + strings.Join(env, " ") + " exec " + shellQuote(exe)
 }
 
+// testPorts hands out ports below every kernel's ephemeral range, so a port
+// another test's dial or listener just released is never handed out again
+// while a parallel test still expects it to be its own.
+var testPorts = struct {
+	sync.Mutex
+	next int
+}{next: 20000 + os.Getpid()%6000}
+
 // freePort returns a port nothing listens on.
 func freePort(t *testing.T) int {
 	t.Helper()
-	var lc net.ListenConfig
-	l, err := lc.Listen(context.Background(), "tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	testPorts.Lock()
+	defer testPorts.Unlock()
+	for range 2000 {
+		port := testPorts.next
+		testPorts.next++
+		if testPorts.next >= 32000 {
+			testPorts.next = 20000
+		}
+		if portFree(port) {
+			return port
+		}
 	}
-	port := l.Addr().(*net.TCPAddr).Port
-	_ = l.Close()
-	return port
+	t.Fatal("no free test port in 20000-31999")
+	return 0
+}
+
+// released waits for a stopped group's port to be free. Under parallel fork
+// load darwin was seen holding it for a moment after the whole group was
+// reaped; a start waits for its port for the same reason (waitPortFree).
+func released(t *testing.T, port int) {
+	t.Helper()
+	eventually(t, "port "+strconv.Itoa(port)+" to be released", func() bool { return portFree(port) })
 }
 
 // eventually polls cond until it holds or 10 s pass.

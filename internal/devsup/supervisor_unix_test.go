@@ -128,14 +128,13 @@ func TestSupervisor_EachNamedServerHasItsOwnLogAndPid(t *testing.T) {
 	if w.LogPath == a.LogPath || w.Pid == a.Pid {
 		t.Fatalf("web and api share a log or a pid: %+v %+v", w, a)
 	}
+	// The helper prints after it listens, so the line may trail the port.
 	for _, sv := range []ServerState{w, a} {
-		b, err := os.ReadFile(sv.LogPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(string(b), "listening pid="+strconv.Itoa(sv.Pid)) {
-			t.Fatalf("%s does not hold its own server's output:\n%s", sv.LogPath, b)
-		}
+		own := "listening pid=" + strconv.Itoa(sv.Pid)
+		eventually(t, sv.LogPath+" to hold its own server's output", func() bool {
+			b, err := os.ReadFile(sv.LogPath)
+			return err == nil && strings.Contains(string(b), own)
+		})
 	}
 }
 
@@ -153,9 +152,7 @@ func TestSupervisor_StoppingOneNamedServerLeavesItsSiblingsRunning(t *testing.T)
 		t.Fatal(err)
 	}
 
-	if !portFree(web) {
-		t.Fatal("web's port is still held after stop")
-	}
+	released(t, web)
 	st := s.State()
 	if sv := mustServer(t, st, "web"); sv.Status != StatusStopped || sv.Desired != DesiredStopped || sv.Pid != 0 || sv.Exit != nil {
 		t.Fatalf("web = %+v", sv)
@@ -330,9 +327,10 @@ func TestSupervisor_ReloadRestartsOnlyTheChangedServerAndDropsARemovedOne(t *tes
 	if a := mustServer(t, after, "api"); a.Pid == mustServer(t, before, "api").Pid || a.Restarts != 1 {
 		t.Fatalf("api did not restart: %+v", a)
 	}
-	if _, ok := after.Servers["worker"]; ok || !portFree(worker) {
+	if _, ok := after.Servers["worker"]; ok {
 		t.Fatal("worker was not stopped and dropped")
 	}
+	released(t, worker)
 	eventually(t, "api to listen again", func() bool { return listening(api) })
 }
 
@@ -429,9 +427,10 @@ func TestSupervisor_ControlSocketDrivesTheServers(t *testing.T) {
 		return resp
 	}
 
-	if resp := call(Request{Verb: VerbStop, Name: "web"}); resp.Code != CodeOK || mustServer(t, resp.State, "web").Status != StatusStopped || !portFree(web) {
+	if resp := call(Request{Verb: VerbStop, Name: "web"}); resp.Code != CodeOK || mustServer(t, resp.State, "web").Status != StatusStopped {
 		t.Fatalf("stop: %+v", resp)
 	}
+	released(t, web)
 	if resp := call(Request{Verb: VerbStop, Name: "web"}); resp.Code != CodeOK {
 		t.Fatalf("a second stop is not idempotent: %+v", resp)
 	}
@@ -463,9 +462,10 @@ func TestSupervisor_ControlSocketDrivesTheServers(t *testing.T) {
 	if resp := call(Request{Verb: VerbRun, Server: &Server{Name: "web", Command: "true"}}); resp.Code != CodeFailed {
 		t.Fatalf("a runtime entry replaced a declared server: %+v", resp)
 	}
-	if resp := call(Request{Verb: VerbRm, Name: "crew-ada"}); resp.Code != CodeOK || !portFree(crew) {
+	if resp := call(Request{Verb: VerbRm, Name: "crew-ada"}); resp.Code != CodeOK {
 		t.Fatalf("rm: %+v", resp)
 	}
+	released(t, crew)
 	if _, ok := call(Request{Verb: VerbStatus}).State.Servers["crew-ada"]; ok {
 		t.Fatal("rm kept the entry")
 	}
