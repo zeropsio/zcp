@@ -81,7 +81,7 @@ type OrgProposeMessageInput struct {
 type OrgProposeDomainInput struct {
 	Project string   `json:"project" jsonschema:"The project, usually an application's production: its id, its full name, or its Mate's name."`
 	Service string   `json:"service" jsonschema:"The hostname of the service that serves the web."`
-	Domains []string `json:"domains" jsonschema:"The person's domain names, bare (shop.example.com), and its www. name when they want both."`
+	Domains []string `json:"domains" jsonschema:"The person's domain names, bare (shop.example.com), its www. name when they want both, and *.shop.example.com for every subdomain."`
 	Port    int      `json:"port"    jsonschema:"The service's web port the domains point at (zerops_org_services lists its ports)."`
 	Reason  string   `json:"reason"  jsonschema:"Why, in one sentence, for the person deciding."`
 }

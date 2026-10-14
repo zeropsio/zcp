@@ -886,10 +886,11 @@ project is the addressed Mate's; `domain.add` → `{"domains": ["contoso.com", "
 non-system service, a state the action fits, a valid key, a real Mate other than the Chief; for a
 domain, a port of the service that serves the web — routed HTTP or an `http`/`https` scheme, never
 a Mate's own `zcp@` container, the ports Mate's addresses sheet offers — and names that are
-lowercase fully qualified domain names, each once, without scheme, port or path, none already one of
-the project's domains) and refused with a plain error otherwise. An approved
-`domain.add` is the client's own add-domain as the person; the person then adds the DNS records
-their addresses show at their DNS provider. There is no delete, no token and no
+lowercase fully qualified domain names, a leading `*.` allowed for every subdomain of one, each
+once, without scheme, port or path, none already one of the project's domains) and refused with a
+plain error otherwise. An approved `domain.add` is the client's own add-domain as the person; its
+card then prints the DNS records the domains need, as their addresses do (a wildcard's beside its
+`_acme-challenge` CNAME), for the person to add at their DNS provider. There is no delete, no token and no
 scaling kind.
 
 **The reverse direction — a Mate asks the person's Chief.** In project mode, in a Mate's container

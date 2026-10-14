@@ -156,6 +156,11 @@ func TestProposeOrgAction_DomainAdd_Shape(t *testing.T) {
 			in:   OrgActionInput{Kind: ProposalDomainAdd, Project: "pProd", Service: "medusa", Domains: []string{" API.Contoso.com. "}, Port: 8080, Reason: "an API name"},
 			want: `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"domain.add","summary":"Put Contoso - production on api.contoso.com","reason":"an API name","projectId":"pProd","projectName":"Contoso - production","serviceId":"sMedusa","serviceName":"medusa","params":{"domains":["api.contoso.com"],"port":8080}},"note":"Nothing has run. The person approves or declines it on the card."}`,
 		},
+		{
+			name: "a domain and every subdomain of it, a wildcard",
+			in:   OrgActionInput{Kind: ProposalDomainAdd, Project: "pProd", Service: "medusa", Domains: []string{"contoso.com", "*.contoso.com"}, Port: 9000, Reason: "every shop on its own subdomain"},
+			want: `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"domain.add","summary":"Put Contoso - production on contoso.com and *.contoso.com","reason":"every shop on its own subdomain","projectId":"pProd","projectName":"Contoso - production","serviceId":"sMedusa","serviceName":"medusa","params":{"domains":["contoso.com","*.contoso.com"],"port":9000}},"note":"Nothing has run. The person approves or declines it on the card."}`,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -206,6 +211,8 @@ func TestProposeOrgAction_DomainAdd_RefusesWhatCannotGoLive(t *testing.T) {
 		{name: "a domain with a path", in: domain("pProd", "medusa", 9000, "contoso.com/shop"), wantErr: "contoso.com/shop"},
 		{name: "a bare word", in: domain("pProd", "medusa", 9000, "contoso"), wantErr: "contoso"},
 		{name: "a label starting with a hyphen", in: domain("pProd", "medusa", 9000, "-shop.contoso.com"), wantErr: "-shop.contoso.com"},
+		{name: "a wildcard inside the name", in: domain("pProd", "medusa", 9000, "shop.*.contoso.com"), wantErr: "shop.*.contoso.com"},
+		{name: "a wildcard over a top-level domain", in: domain("pProd", "medusa", 9000, "*.com"), wantErr: "*.com"},
 		{name: "the same domain twice", in: domain("pProd", "medusa", 9000, "contoso.com", "Contoso.com"), wantErr: "twice"},
 		{name: "a domain the project already answers at", in: domain("pProd", "medusa", 9000, "shop.example.com"), wantErr: "already"},
 		{name: "no reason", in: OrgActionInput{Kind: ProposalDomainAdd, Project: "pProd", Service: "medusa", Port: 9000, Domains: []string{"contoso.com"}}, wantErr: "reason"},
