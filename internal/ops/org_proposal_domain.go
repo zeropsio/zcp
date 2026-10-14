@@ -13,8 +13,9 @@ import (
 
 // domainPattern is a fully qualified domain name as a person puts a project
 // on it: lowercase labels of letters, digits and inner hyphens, at least two
-// of them, the last a top-level domain. No scheme, port, path or wildcard.
-var domainPattern = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+([a-z]{2,63}|xn--[a-z0-9-]{1,59})$`)
+// of them, the last a top-level domain, and a leading "*." for every subdomain
+// of one (the platform takes wildcards). No scheme, port or path.
+var domainPattern = regexp.MustCompile(`^(\*\.)?([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+([a-z]{2,63}|xn--[a-z0-9-]{1,59})$`)
 
 // domainMaxLength is the longest name DNS holds.
 const domainMaxLength = 253
