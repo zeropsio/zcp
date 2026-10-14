@@ -400,7 +400,7 @@ installed it degrades like any other install failure (MD-1).
 
 | Check | Rule |
 |---|---|
-| `contract` | must equal `mate.SupportedContract` (today `1` = C-1…C-7 in §2.8). A manifest declaring a contract zcp does not know is refused with a message naming both numbers — the one case where an old zcp deliberately stays on the mate it has. |
+| `contract` | must equal `mate.SupportedContract` (today `1` = C-1…C-12 in §2.8 and §2.8a). A manifest declaring a contract zcp does not know is refused with a message naming both numbers — the one case where an old zcp deliberately stays on the mate it has. |
 | `version` | must be ≥ `mate.MinimumMateVersion`, the oldest release zcp still drives (moves only when a contract fact changes; 0.14.0, the first release that judges a stand-up by its zcp process instead of a heartbeat, and keeps a link to HQ — a Mate is HQ's whatever its enrollment, §10.10). A manifest below it is refused, and so is a cached one on read: the cache holds what an earlier zcp checked against its own floor. |
 | `sha256` | the downloaded tarball must match it — damage detection, nothing more. |
 
@@ -693,6 +693,8 @@ environment instead, never a probed flag (§2.2).
 | C-6 | **`/mate` is baked into the released artifact, not chosen by zcp.** The release workflow builds the bundled web client with `VITE_BASE_PATH=/mate`, and `pack` refuses a tarball without `dist/client/index.html`. `mate.BasePath` must equal it; moving the prefix is a coordinated two-repo change | fork's release workflow + `mate.BasePath` |
 | C-7 | `~/.zcp/hq/outcome.json`, beside the HQ enrollment, is zcp's last word on enrolling: `{state: enrolled\|no_hq\|refused, code?, at}`, written by its keep loop in a single rename after every attempt that says something about this Mate (HQ or Zerops not answering leaves it as it was). The enrollment is there only while zcp holds a credential HQ has not refused: when HQ answers the kept one `401 mate_credential_required` (revoked) or names another project for it, zcp removes the enrollment with that answer and enrolls anew, so a server re-reading the enrollment reads a Mate not enrolled until a new one is written — never a revoked credential. The server reads the outcome from the directory `T3CODE_ZEROPS_HQ_ENROLLMENT` names, only to say why a new Mate's stand-up waits (`/setup.json`: `no_hq`, `not_enrolled` with HQ's `code`); a missing, unreadable or unknown document is plain `not_enrolled`. Additive: an older zcp writes none | zcp's `hq.SaveOutcome`, fork's `ZeropsHqLink` |
 
+The monorepo facts C-8…C-12 continue this table in §2.8a.
+
 The fork's release workflow triggers only on stable `v<major>.<minor>.<patch>` tags, so GitHub's
 "latest release" *is* the stable channel — nightlies never produce one.
 
@@ -721,6 +723,298 @@ actively refused today (C-1's `pack` assertion), so it would be a fork-side chan
 | MD-15 | The unit starts at boot on its own (`WantedBy=multi-user.target`), independently of `zcp init` — measured on `z3-eval`: `active` at 16:45:12, the zcp binary replaced by `install.sh` at 16:45:14, `zcp init` later still. So it serves whatever was on disk at boot, and `zcp init` restarts an ALREADY-EXISTING unit whenever it replaced the bundle or rewrote the env contract; a unit it created in the same run is left alone, since `zsc unit create` starts it. Ordinary supervisor starts recover an interrupted switch and preserve the installed release; they cannot bypass hold or confirmation. First installation and attended container init use the shared install lock. `TestRun_Mate_UpdatedBundle_RestartsExistingUnit`, `TestRun_Mate_ChangedEnvContract_RestartsExistingUnit`, `TestRun_Mate_UnchangedBundle_DoesNotRestart`, `TestRun_Mate_FirstBoot_DoesNotRestartFreshUnit`, `TestRun_Mate_InstallsUnderTheSharedLock`, `TestStart_Mate_InstallsBeforeItStarts`, `TestRunMateUpdate_InstallsAndRestartsWhenUnitPresent`, `TestLockInstall`. |
 | MD-16 | Every flag in `ServeArgv` belongs to contract 1's flag list (C-2), asserted on the zcp side against a literal list and on the fork side by CI against `mate serve --help`; the env contract's key set is exactly `T3CODE_ZEROPS_{PROJECT_ID,API_HOST,ALLOWED_ORIGINS}`; a malformed `ZCP_MATE_ALLOWED_ORIGINS` is never written and never fails init. `TestServeArgv_FlagsAreContract1`, `TestEnvContract_KeysAreTheSpecList`, `TestValidateAllowedOrigins`, `TestRun_Mate_InvalidAllowedOrigins_NotWritten_InitContinues`; fork: `serve-contract.test.ts`. |
 | MD-17 | `zcp mate status --json` and `zcp mate update` share `DesiredRelease()` with `zcp init`; `status` never installs, `update` restarts the unit only after a successful activation, and both answer JSON a caller can act on without parsing prose; `status --refresh` bypasses the manifest cache (§2.9 step 5). `TestMateStatus_*`, `TestMateUpdate_*`, `TestRunMateStatus_Refresh_*`. |
+
+### 2.8a Monorepo: dev servers, stages, the receipt (C-8…C-12)
+
+An application is made of **parts** (MODEL §1); a part is the `zeropsSetup` its stage/production
+service names. This section is the cross-seam shape every monorepo lane builds against. Each fact
+has one source; a reader never recomputes it. **A single-part app means exactly what it means
+today**: every new key below is additive, and an app with one part shows no part name, no part
+count and no receipt anywhere.
+
+| # | The fact | Owned by |
+|---|---|---|
+| C-8 | `.zcp/dev-servers.json` in the repo root declares the dev servers (§2.8a.1) | zcp (writes on a set change), the supervisor (reads) |
+| C-9 | `zcp-devsup`, run by the dev setup's `run.start`, runs the declared servers; its runtime state lives in `$HOME/.zcp/devsup/` and zcp drives it with `zcp-devsup ctl` over SSH (§2.8a.2) | zcp repo `cmd/zcp-devsup` |
+| C-10 | The envelope's dev-service snapshot carries `stages[]` and `devServers[]` (§2.8a.3) | zcp `workflow.ServiceSnapshot`, fork's `ZeropsServiceSnapshot` |
+| C-11 | A tier names a part by `zeropsSetup` beside its hostname (§2.8a.5) | zcp composer, HQ `tierRuntimes` |
+| C-12 | An HQ change of an app with more than one part carries a `receipt` written by zcp (§2.8a.6) | zcp `hq.Client`, HQ change record |
+
+All five are additive to contract 1: an older release ignores an unknown key, so none bumps
+`SupportedContract`. New envelope keys follow the field order in §2.8a.3.
+
+#### 2.8a.1 The declaration — `.zcp/dev-servers.json`
+
+The file sits beside `zerops.yml` in the repo root (variant A: `/var/www`; variant B: the shared
+volume, e.g. `/var/www/ws`). It changes only when the **set** of servers changes; start and stop
+never write it (MODEL §9/1a, REVIEW N5).
+
+```json
+{
+  "version": 1,
+  "servers": [
+    { "name": "web", "port": 3000, "command": "bun --watch index.ts", "cwd": "apps/web" },
+    { "name": "api", "port": 8080, "command": "go build -o app . && exec ./app", "cwd": "apps/api",
+      "watch": { "paths": ["apps/api"], "ignore": ["apps/api/app"] } },
+    { "name": "worker", "command": "bun --watch src/worker.ts", "cwd": "apps/worker" }
+  ]
+}
+```
+
+| Key | Rule |
+|---|---|
+| `version` | required integer, format version; today `1`. A supervisor that does not know it runs nothing new and reports it (§2.8a.2 *Versions*) |
+| `servers[].name` | required, `^[a-z][a-z0-9-]{0,39}$`, unique in the file. It is the key everywhere: state, logs, `ctl`, envelope |
+| `servers[].port` | optional integer 1–65535, unique in the file; absent for a server without a listener (a worker) |
+| `servers[].command` | required, non-empty; run as `/bin/sh -c <command>` in `cwd`, as the leader of its own process group, with the environment `run.start` gave the supervisor (the service's env vars) |
+| `servers[].cwd` | optional, default `"."`; relative to the repo root; after cleaning and resolving symlinks it stays inside the repo root, otherwise the file is invalid |
+| `servers[].watch` | optional; the supervisor restarts the server's group on a change under `paths` (relative to the repo root), never for paths under `.git`, `node_modules` or matching `ignore` (MODEL §9/1a, P4 H3). Absent: the command's own watcher (`--watch`, vite) does it |
+| `servers[].service` | optional; variant B only — the hostname of the dev service whose supervisor runs it (MODEL §4). Absent: run by the one supervisor reading the file (variant A). In variant B every entry carries it |
+
+HTTP support is **not** declared here: it is the dev setup's `run.ports[].httpSupport` in
+`zerops.yml`, read by zcp (verify, URL). A port not in `run.ports` is internal only (MODEL §8, P1 T1).
+
+**A missing file** is an empty declaration: the supervisor starts nothing and stays up.
+`zerops_dev_server action=start` without `name` behaves as today (one server per dev service) and
+writes the file once with one entry named after the **dev service hostname**, so a single-part app
+reports one dev server under its hostname. **An invalid file** (parse error or a broken rule) is
+never overwritten by zcp; the supervisor keeps what it runs, starts nothing new and records the
+error in its state.
+
+#### 2.8a.2 The supervisor — `zcp-devsup`
+
+**Binary and delivery.** `zcp-devsup` is built from the zcp repository (`cmd/zcp-devsup`) and
+published on every zcp release as the asset `zcp-devsup-linux-amd64`, same version as zcp. zcp
+writes the dev setup's two lines, pinned to the release that wrote them (MODEL §9/1c, P4 H1):
+
+```yaml
+run:
+  prepareCommands:
+    - sudo sh -c 'curl -fsSL https://github.com/zeropsio/zcp/releases/download/vX.Y.Z/zcp-devsup-linux-amd64 -o /usr/local/bin/zcp-devsup && chmod 0755 /usr/local/bin/zcp-devsup'
+  start: zcp-devsup run
+```
+
+The binary lands in the image, never in `$HOME` or `~/bin` (both are lost on redeploy, P2 S4).
+`run --root <dir>` overrides the repo root (variant B); in variant B the supervisor runs only the
+entries whose `service` is its own `hostname`. The supervisor lane pins the download line live
+(Alpine bases may need `wget -qO` instead of `curl`).
+
+**Runtime state.** `$HOME/.zcp/devsup/state.json`, written only by the supervisor (atomic rename),
+beside `logs/<name>.log` and the control socket `sock`. `$HOME` survives a container restart and is
+lost on a redeploy (P1 T7, P2 S4) — which is exactly the start-up rule below.
+
+```json
+{
+  "format": 1,
+  "supervisor": { "version": "vX.Y.Z", "pid": 412, "startedAt": "2026-10-14T21:00:00Z" },
+  "declaration": { "version": 1, "error": "" },
+  "servers": {
+    "web":    { "source": "declared", "desired": "running", "status": "running", "pid": 731, "pgid": 731, "leaderStart": 88213,
+                "startedAt": "2026-10-14T21:00:01Z", "restarts": 0, "exit": null, "logPath": "/home/zerops/.zcp/devsup/logs/web.log" },
+    "worker": { "source": "declared", "desired": "running", "status": "crashed", "pid": 0, "pgid": 0, "leaderStart": 0,
+                "startedAt": "2026-10-14T21:00:01Z", "restarts": 0, "exit": { "code": 1, "signal": "", "at": "2026-10-14T21:03:10Z" },
+                "logPath": "/home/zerops/.zcp/devsup/logs/worker.log" },
+    "crew-ada": { "source": "runtime", "desired": "running", "status": "running", "command": "bun run dev", "cwd": ".crew/ada", "port": 4100,
+                "pid": 902, "pgid": 902, "leaderStart": 90544, "startedAt": "2026-10-14T21:05:00Z", "restarts": 0, "exit": null,
+                "logPath": "/home/zerops/.zcp/devsup/logs/crew-ada.log" }
+  }
+}
+```
+
+- `desired` (`running|stopped`) is the agent's last word; `restarts` counts starts after the first
+  in this state file's life; `exit` is the last process end `{code, signal, at}` or `null`;
+  `leaderStart` is the leader's start time from `/proc/<pid>/stat`, the identity check below.
+- `status` is derived **once, by the supervisor**: `stopped` = desired stopped; `crashed` = desired
+  running, no live group, `exit` set; `starting` = live group whose `port` does not yet accept TCP;
+  `running` = everything else. zcp and Mate read it, never recompute it.
+- `source: runtime` entries are not in the declaration: crew apps (MODEL §9/1c). They carry their
+  own `command`, `cwd`, `port`, are added and removed only through `ctl`, and are not restored after
+  a redeploy — their owner, Mate's engine, adds them again.
+
+**Control.** zcp (and Mate's engine) run `zcp-devsup ctl <verb> --json` over SSH; `ctl` talks to the
+supervisor over the unix socket and prints one JSON answer. Every process is a child of the
+supervisor, never of the SSH session, so an SSH session killed by OOM loses only the answer; every
+verb is idempotent, so the caller asks `status` again.
+
+| Verb | Effect |
+|---|---|
+| `status [name]` | the `servers` map above (all or one) plus `supervisor` and `declaration` |
+| `start <name>` / `stop <name>` / `restart <name>` | sets `desired` and acts; never writes the declaration |
+| `reload` | same as `SIGHUP` |
+| `logs <name> [--lines N]` | the tail of `logs/<name>.log` |
+| `run --name <n> --cwd <d> [--port <p>] -- <command>` / `rm <name>` | add / remove a `runtime` entry |
+| `version` | `{"version":"vX.Y.Z","formats":[1]}` |
+
+Exit codes: `0` done, `2` no supervisor (socket absent), `3` unknown name, `4` invalid declaration.
+`zerops_dev_server` adds an undeclared server to the file once (then `reload`, then `start`), and on
+a dev service where `zcp-devsup` is absent or exits `2` it changes nothing and answers that the dev
+setup needs the supervisor (MODEL §9/1c migration).
+
+**Stop** signals the **group**: `SIGTERM` to `-pgid`, up to 10 s, then `SIGKILL` to `-pgid` — only
+after confirming the group is still the one it started (the leader's `/proc` start time equals
+`leaderStart`; a reused pid is left alone). **Start** waits up to 10 s for its `port` to be free;
+still busy → the start fails with `exit: {code: -1, signal: "port_busy"}`. No `pkill`, `pgrep` or
+command-pattern match anywhere (MODEL §9/0).
+
+| Event | Behaviour |
+|---|---|
+| A server exits on its own | left down and visible: `status: crashed`, `exit` recorded, **no restart** in this container life — the keeper's principle (`internal/tools/dev_server_keep.go:16-25`), seen at the agent's next call (MODEL §11.3) |
+| A watched path changes | the supervisor restarts that group, `restarts` + 1 |
+| Container restart (`$HOME` kept) | every entry with `desired: running` starts, `crashed` ones included; `stopped` stays stopped |
+| Redeploy (new container, `$HOME` empty) | every declared server for this service starts |
+| `SIGHUP` / `ctl reload` | re-reads the declaration: an added name starts, a removed one stops and is dropped, a changed `command`/`cwd`/`port`/`watch` restarts that one only, the rest is untouched; an invalid file changes nothing and sets `declaration.error` |
+
+**Versions.** A declaration whose `version` is not in the supervisor's `formats` is not run (the
+supervisor keeps what runs and sets `declaration.error`); zcp compares `ctl version` with the file
+and answers that the supervisor is older than the declaration, naming both.
+
+#### 2.8a.3 The envelope — `stages[]` and `devServers[]`
+
+Both ride the dev service's `ServiceSnapshot` (the snapshot whose `hostname` keys the pair).
+
+```json
+"stages": [ { "hostname": "webstage", "setup": "web" }, { "hostname": "apistage", "setup": "api" } ]
+```
+
+- `stages` projects `ServiceMeta.Stages` (§2.8a.4) in its order; `setup` is omitted while zcp has
+  not resolved it, exactly as `stageSetupName` is today. Absent when the pair has no stage.
+- It **replaces** `stageHostname` and `stageSetupName`: one stage ≡
+  `[{hostname: stageHostname, setup: stageSetupName}]`. Each snapshot's own `setupName` stays as it
+  is — it names that service's setup, not a pair.
+- zcp's synthesis and render read it (the envelope is their input, §1). **Mate never pairs from
+  it**: Mate pairs from the tier on `main`, then an open recipe change, then the hostname stem
+  (MODEL §9/3m, §11.2). A preview's address is its Zerops subdomain and the commit a preview runs is
+  the receipt's (§2.8a.6), so neither rides here.
+
+```json
+"devServers": [
+  { "name": "web", "port": 3000, "url": "https://appdev-1df2-3000.prg1.zerops.app", "status": "running",
+    "readAt": "2026-10-14T21:04:00Z", "verify": { "ok": true, "httpStatus": 200, "at": "2026-10-14T21:04:00Z" } },
+  { "name": "worker", "status": "crashed", "readAt": "2026-10-14T21:04:00Z",
+    "lastExit": { "code": 1, "at": "2026-10-14T21:03:10Z" } }
+]
+```
+
+| Key | Meaning |
+|---|---|
+| `name`, `port` | from the declaration (§2.8a.1); `port` absent for a portless server |
+| `url` | the port's public subdomain URL as Zerops reports it — only when the dev setup's port has `httpSupport` and the subdomain is enabled |
+| `status` | the supervisor's `status`, verbatim: `running\|stopped\|crashed\|starting` |
+| `readAt` | when zcp read the supervisor for this envelope |
+| `verify` | `{ok, httpStatus?, at}` — zcp's HTTP probe of this port, only when this call probed it |
+| `lastExit` | `{code?, signal?, at}` — the supervisor's `exit`, when set |
+
+zcp reads the supervisor on `zerops_workflow action="status"`, `zerops_verify`, `zerops_deploy` and
+`zerops_dev_server`, which gains the `envelope` key (§1.2 — an added key, never a reshape; its own
+fields stay, `name` added only when it differs from `hostname`). **Absent `devServers` means "not
+read in this call"**, never "none running": Mate keeps the last read with its `readAt` (MODEL §6, N7).
+A dev service with one dev server shows today's card, without a server name.
+
+**Field order** (MODEL §9/1g): (1) a Mate release accepts `stages` and `devServers` beside the old
+keys; (2) zcp raises `MinimumMateVersion` to it; (3) zcp emits `stages`/`devServers` and stops
+emitting `stageHostname`/`stageSetupName`; (4) Mate drops the old keys. Until (2) zcp emits today's
+keys only. No Mate on `kh-next` reads `stageHostname`/`setupName`/`stageSetupName` beyond its schema.
+
+Single-part, today and after (3) — the same pair, the same meaning:
+
+```json
+{"hostname":"appdev",…,"stageHostname":"appstage","setupName":"dev","stageSetupName":"prod"}
+{"hostname":"appdev",…,"setupName":"dev","stages":[{"hostname":"appstage","setup":"prod"}],"devServers":[{"name":"appdev","port":3000,…}]}
+```
+
+The full 1- and 3-part envelopes are the fixtures (§2.8a.7).
+
+#### 2.8a.4 `ServiceMeta.Stages[]` (zcp-internal)
+
+```go
+type StageRef struct {
+	Hostname  string `json:"hostname"`
+	SetupName string `json:"setupName,omitempty"`
+}
+// on ServiceMeta, replacing StageHostname / StageSetupName:
+Stages []StageRef `json:"stages,omitempty"`
+```
+
+- A pair is one dev service (`Hostname`, `PrimarySetupName`) and N previews. `Stages[0]` is the
+  pair's first stage — today's `StageHostname`. Local-stage mode holds exactly one.
+- Readers: `SetupNameFor(host)` and the pair-keyed lookups (`FindServiceMeta`,
+  `ManagedRuntimeIndex`) match any `Stages[i].Hostname`; deploy takes the setup from here, never from
+  a hostname suffix (`SetupCandidatesFor` goes); develop scope takes every stage under today's rule
+  (a recipe-born pair's stages wait until asked); the recipe plan adds a second stage of the same repo
+  to the pair; the composer emits one stage/production runtime per entry.
+- Validation, before import: stage hostnames are unique in the pair, differ from `Hostname`, and no
+  other meta names them.
+- Migration on load: no `stages` and a `stageHostname` → `Stages = [{stageHostname, stageSetupName}]`;
+  when `stages` is present it wins and the old keys are not read. On write zcp writes `stages` and
+  mirrors `Stages[0]` into `stageHostname`/`stageSetupName`, so a zcp a container restart pulls back
+  still sees today's pair.
+
+#### 2.8a.5 Tier: hostname → `zeropsSetup`
+
+Today: a tier's `services[]` entry carries `hostname`, `buildFromGit` and `zeropsSetup`; zcp's
+composer writes `zeropsSetup` (the pair's stage setup) beside a credential-free `buildFromGit`
+(`internal/ops/bundle/group.go` `groupRuntimeEntry`); HQ's `tierRuntimes` takes the runtimes built
+from the app's HQ repo that name a `zeropsSetup` and deploys each with it
+(`apps/hq/src/deploys.ts`, `zeropsSetup ?? hostname`); Mate's client strips both keys before it
+imports empty services (`recipeTier.ts`).
+
+Added — no new key, only meaning: (1) a **part is its `zeropsSetup`**: the same part has the same
+`zeropsSetup` in the Mate tier (preview), the stage tier and the production tier; (2) the composer
+emits one runtime per `Stages[]` entry with that entry's setup; (3) a hostname is chosen once, when
+the service first enters a tier, and the composer reads it back from the tier, never recomputes it
+(naming rule: MODEL §9/3); (4) a change of the set of parts is a targeted "add/remove service X"
+proposal to the existing tiers, the mechanism of today's `scaling=<hostname>`, merged by a person.
+
+#### 2.8a.6 The receipt on an HQ change (only N > 1)
+
+zcp writes it with the change edit it already makes, `PATCH /api/mate/changes/<repo>/<number>`,
+body `{"receipt": …}`, after each push of the change branch, **only when the pair has more than one
+stage** — a single-part change never carries one. HQ stores the last one whole and returns it on
+the change record as `receipt` (`null` when none). HQ's review and Mate's review show it; merge warns
+on it and never blocks.
+
+```json
+{ "at": "2026-10-14T21:10:00Z", "parts": [
+  { "setup": "web", "previewHostname": "webstage", "deploy": "ok", "deployedAt": "2026-10-14T21:06:00Z",
+    "workspaceClean": true, "deployedCommit": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678", "verified": true },
+  { "setup": "api", "previewHostname": "apistage", "deploy": "ok", "deployedAt": "2026-10-14T21:07:00Z",
+    "workspaceClean": false, "verified": true },
+  { "setup": "worker", "previewHostname": "workerstage", "deploy": "failed", "deployedAt": "2026-10-14T21:08:00Z",
+    "workspaceClean": true, "verified": false } ] }
+```
+
+- `parts` follows `Stages[]`; `deploy` is `ok|failed|none` (zcp's last deploy of that preview in the
+  work session); `verified` is a passing verify after that deploy; `deployedCommit` is the dev HEAD
+  and is present **only** for `deploy: ok` with `--workspace-state clean` (SHAPES C14).
+- No "changed / unchanged" (REVIEW 6). "Preview older than the change" is the reader comparing
+  `deployedCommit` with the change's `head`, which HQ already holds (REVIEW N11).
+- Order: HQ accepts the key first; zcp writes it after.
+
+#### 2.8a.7 Shared fixtures
+
+**One source, in zcp** (zcp produces every value): `internal/tools/testdata/mate-contract/`.
+
+| File | Shows |
+|---|---|
+| `envelope.single-pair.today.json` | today's envelope for one pair — the bytes zcp marshals today |
+| `envelope.single-pair.json` | the same pair after step (3): `stages[1]`, one dev server named `appdev` |
+| `envelope.three-parts.json` | `appdev` + `webstage`/`apistage`/`workerstage`, three dev servers, one crashed |
+| `dev-server.one-server.json` | a `zerops_dev_server` result for one server, with its `envelope` key |
+| `dev-server.three-servers-one-crashed.json` | the same for three servers |
+| `dev-servers.declaration.json` | the §2.8a.1 example |
+| `hq-change.receipt.json` | an HQ change record carrying the §2.8a.6 receipt |
+
+- zcp: `TestMateContractFixtures_*` (`internal/tools/mate_contract_fixtures_test.go`) parses every
+  file strictly against the contract shapes, asserts the values, and marshals today's single-pair
+  envelope from `workflow.StateEnvelope` byte for byte. The lane that emits a shape switches its
+  case to render through the real handler (`docs/spec-testing-architecture.md`).
+- z3: a byte copy in `packages/client-runtime/src/zerops/fixtures/zcp/` with `SOURCE.json`
+  `{zcpCommit, files: {name: sha256}}`, refreshed only by `scripts/sync-zcp-fixtures.ts` (copies from
+  `../zcp`, rewrites `SOURCE.json`). `zcpFixtures.test.ts` recomputes every hash — a hand edit of the
+  copy fails — and decodes every file through Mate's consumers (the envelope schema, the card
+  payload decoder), asserting values.
+- Direction: a wire change lands in zcp first with its fixtures; the Mate lane runs the sync and
+  lands its decoder (field order above).
 
 ---
 
