@@ -97,9 +97,9 @@ func intentSignalsProduction(intent string) bool {
 // transientRequiredHosts returns the required (RoleRequired) service hostnames
 // that are deferred-start — dev-mode dynamic runtimes served only by the
 // zerops_dev_server process (RC-A′). Their deploy+verify "pass" reflects a
-// live dev process, not the app's own start: zcp starts a dev server it keeps
-// again after a restart or redeploy (spec-workflows §8 O4), but a crash leaves
-// it down until it is started. Pure over the snapshot's STABLE
+// live dev process, not the app's own start: the dev service's supervisor
+// starts a declared server again after a restart or redeploy (spec-workflows
+// §8 O4), but a crash leaves it down until it is started. Pure over the snapshot's STABLE
 // (mode, class) — reads no liveness — so the envelope stays byte-deterministic
 // (the constraint the derived-close model depends on for compaction safety).
 func transientRequiredHosts(env StateEnvelope) []string {

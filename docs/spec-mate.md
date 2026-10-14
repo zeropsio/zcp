@@ -870,9 +870,16 @@ verb is idempotent, so the caller asks `status` again.
 
 Exit codes: `0` done, `2` no supervisor (socket absent), `3` unknown name, `4` invalid declaration.
 A start that fails still answers `0`; the failure is the server's `exit` in the answer.
-`zerops_dev_server` adds an undeclared server to the file once (then `reload`, then `start`), and on
-a dev service where `zcp-devsup` is absent or exits `2` it changes nothing and answers that the dev
-setup needs the supervisor (MODEL §9/1c migration).
+`zerops_dev_server` adds an undeclared server to the file once (then `reload`, then `start`). On a
+dev service where `zcp-devsup` is absent or exits `2`, stop/status/logs change nothing and say so,
+and the first `start` moves the dev setup onto the supervisor without asking (orchestrator decision
+2026-10-14 23:05, replacing "answers that the dev setup needs the supervisor"): it writes the two
+lines above into the dev setup (the meta's setup, else the only one, else the one named after the
+hostname, else `dev`), declares the server being started, redeploys the dev service once from
+inside (uncommitted work stays), starts the server under the supervisor and prefixes its answer
+with one sentence saying what changed. A failed redeploy answers `supervisor_redeploy_failed`; the
+files stay written, so the next deploy finishes the move. Nothing stays on the old SSH start.
+`TestDevServer_FirstStartWithoutSupervisor_MigratesIt`, `TestAdoptSupervisorYAML`.
 
 **Stop** signals the **group**: `SIGTERM` to `-pgid`, up to 10 s, then `SIGKILL` to `-pgid` — only
 after confirming the group is still the one it started (the leader's `/proc` start time equals
@@ -888,7 +895,7 @@ default), else `desired: stopped`. From then on only `ctl start`/`stop`/`restart
 
 | Event | Behaviour |
 |---|---|
-| A server exits on its own | left down and visible: `status: crashed`, `exit` recorded, **no restart** in this container life except by a watched change (below) — the keeper's principle (`internal/tools/dev_server_keep.go:16-25`), seen at the agent's next call (MODEL §11.3) |
+| A server exits on its own | left down and visible: `status: crashed`, `exit` recorded, **no restart** in this container life except by a watched change (below), seen at the agent's next call (MODEL §11.3) |
 | A watched path changes | for a server with `desired: running`: a live group restarts, and no live group (`crashed` — the agent fixed the code) starts; `restarts` + 1 either way. A `stopped` server stays stopped |
 | The supervisor is killed (zenv starts `run.start` again) | the new supervisor stops the groups the old one left (identity-checked), then starts every entry with `desired: running` |
 | Container restart (`$HOME` kept) | every entry with `desired: running` starts, `crashed` ones included; `stopped` stays stopped |
@@ -997,7 +1004,8 @@ Stages []StageRef `json:"stages,omitempty"`
   single-part app loses nothing: the mirror is its whole pair.
 - While an old zcp runs, the mirror holds the pair only and dev servers are degraded: the old
   zcp's keeper and its SSH start do not know the supervisor and may collide with it on a declared
-  port. This ends when the new zcp is back; no machinery handles it.
+  port. This ends when the new zcp is back: at startup it removes the old keeper's
+  `zerops@devservers-*` units and its `dev-servers.json` record (`TestRetireDevServerKeeper`).
 
 #### 2.8a.5 Tier: hostname → `zeropsSetup`
 

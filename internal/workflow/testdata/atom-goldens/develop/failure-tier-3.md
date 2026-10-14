@@ -278,8 +278,8 @@ runtimes the web server auto-starts and this checklist does not apply.
 
 - Dev setup block in `zerops.yaml`: **`run.start: zsc noop --silent`**
   (a no-op keepalive), **no** `healthCheck`. You start the real dev
-  process yourself via `zerops_dev_server action=start`; zcp starts it
-  again after later redeploys and restarts, until `action=stop`.
+  process yourself via `zerops_dev_server action=start`; its supervisor
+  starts it again after later redeploys and restarts, until `action=stop`.
 - Stage setup block (if a dev+stage pair exists): real `start:`
   command **plus** a `healthCheck`. Stage auto-starts on deploy and
   Zerops probes it on its configured interval.
@@ -308,31 +308,30 @@ Client-side pre-flight rejects this with `INVALID_ZEROPS_YML` before any build t
 === develop-dynamic-runtime-start-container ===
 ### Dynamic-runtime dev server
 
-Dev-mode dynamic runtime containers start running `zsc noop --silent`
-after deploy — a no-op keepalive; no dev process is live until you start
-one. Once started, zcp keeps it — one per dev container, the last you
-started: when the dev container restarts or is redeployed, zcp starts
-it again with the same command, working directory and port — a
-deploy's response reports it under `devServer` — until you `stop` it.
-A server that crashes in its container stays down for you to read and
-fix. It is still a dev process: a passing
-verify means "live now", not "durably shipped" — for an always-on
-service use simple mode. Action family on `zerops_dev_server`:
+Dev-mode dynamic runtime containers run no dev process until you start
+one. It runs under the dev service's supervisor (`zcp-devsup`, the dev
+setup's `run.start`); its first start declares it in `.zcp/dev-servers.json`.
+If the dev setup still runs `zsc noop`, that start adds the supervisor's two
+lines and redeploys once (uncommitted work stays) — commit both files. The
+supervisor starts it again after a restart or redeploy (a deploy reports it
+under `devServer`) until you `stop` it; a crash leaves it down. A passing
+verify means "live now", not "durably shipped" — for an always-on service
+use simple mode. Action family on `zerops_dev_server`:
 
 | Action | Use | Args |
 |---|---|---|
-| `status` | check before `start` (idempotent) — avoids duplicate listener | `hostname port healthPath` |
-| `start` | spawn the dev process | `hostname command port healthPath` |
-| `restart` | survives-the-deploy config/code change | `hostname command port healthPath` |
-| `logs` | tail recent for diagnosis | `hostname logLines=40` |
-| `stop` | free the port; zcp stops keeping it | `hostname port` |
+| `status` | check before `start` (idempotent) | `hostname port healthPath` |
+| `start` | run the dev process | `hostname command port healthPath` |
+| `restart` | after a config/code change | `hostname healthPath` |
+| `logs` | tail its log | `hostname logLines=40` |
+| `stop` | end its process group, free the port | `hostname` |
 
 Args:
-- `command` — the app's dev-server start command (the real long-running
-  process, e.g. `npm run dev`). NOT the `zsc noop --silent` keepalive that
-  sits in the dev block's `run.start`.
-- `port` — `run.ports[0].port`.
-- `healthPath` — app-owned (`/api/health`, `/status`) or `/`.
+- `command` — the app's dev-server start command (e.g. `npm run dev`),
+  not the dev block's `run.start`.
+- `port` — `run.ports[0].port`; `healthPath` — app-owned or `/`.
+- `name` — when one dev service runs several servers (`web`, `api`);
+  stopping one leaves the others running.
 
 Response carries `running`, `healthStatus`, `url` (the hostname-vantage
 address to reach the server — the probe runs localhost inside the

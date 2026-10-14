@@ -198,7 +198,7 @@ func (d batchDeployer) preflight(ctx context.Context, t ops.DeployBatchTarget) (
 }
 
 // deploy runs the targets as one batch and applies each entry's post-deploy
-// steps: its deploy attempt, the dev server zcp keeps on it, its public
+// steps: its deploy attempt, its supervisor's dev server, its public
 // access. deliver adds the HQ delivery of a wired pair's stage half
 // (hq_delivery.go) — the stand-up's first stage deploy builds `main` as it
 // is and has nothing to deliver.

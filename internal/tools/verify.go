@@ -265,9 +265,9 @@ func publicAccessResolver(stateDir string) ops.PublicAccessResolver {
 // deferredStartDurabilityNote returns a durability caveat when a passing
 // verify reflects a deferred-start runtime — a dev-mode dynamic service whose
 // app runs ONLY via the zerops_dev_server process (RC-A′). For those, an HTTP
-// 200 is a live dev process, not the app's own start: zcp starts a dev server
-// it keeps again after a restart or redeploy (spec-workflows §8 O4), but a
-// crash leaves the URL down. Returns "" for non-deferred or
+// 200 is a live dev process, not the app's own start: the dev service's
+// supervisor starts a declared server again after a restart or redeploy
+// (spec-workflows §8 O4), but a crash leaves the URL down. Returns "" for non-deferred or
 // failing verifies (the latter already carry their own failure detail).
 // Pure over stable (mode, class) — no liveness read.
 func deferredStartDurabilityNote(stateDir, host string, result *ops.VerifyResult) string {
@@ -282,7 +282,7 @@ func deferredStartDurabilityNote(stateDir, host string, result *ops.VerifyResult
 	if !topology.IsDeferredStart(meta.ModeFor(host), class) {
 		return ""
 	}
-	return fmt.Sprintf("Durability: %q is dev-mode — this 200 is served by the zerops_dev_server process, not the app's own start. zcp starts the dev server it keeps again after a restart or redeploy, but a crash leaves the URL down until you start it again. For an always-on service switch to simple mode; this is not a production deployment.", host)
+	return fmt.Sprintf("Durability: %q is dev-mode — this 200 is served by the zerops_dev_server process, not the app's own start. Its supervisor starts the dev server again after a restart or redeploy, but a crash leaves the URL down until you start it again. For an always-on service switch to simple mode; this is not a production deployment.", host)
 }
 
 // recordVerifyToWorkSession records one service verify result as a WorkSession attempt.

@@ -57,7 +57,6 @@ zerops_dev_server action=start hostname="{hostname}" command="{start-command}" p
 Bash run_in_background=true command="{start-command}"
 ```
 
-A redeploy replaces the runtime container: a dev server zcp keeps is
-started again right after it — read the deploy response's `devServer` before
-`zerops_verify`; start one yourself only when none was kept or it did
-not come back.
+A redeploy replaces the runtime container: its supervisor starts your dev
+servers again right after it — read the deploy response's `devServer`
+before `zerops_verify`; start one only when it did not come back.

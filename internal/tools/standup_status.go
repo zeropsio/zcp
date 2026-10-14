@@ -180,7 +180,7 @@ func standupStepForPhase(failedPhase string) string {
 // read ops.ProjectActivity owns): a build process building is the build, the
 // same process deploying is the deploy, and a target whose process has ended
 // while its deploy has not returned is being verified (its container
-// answering SSH, its public access, the dev server zcp keeps). The returned
+// answering SSH, its public access, its supervisor's dev servers). The returned
 // stop ends the tracking and waits for it, so it never writes after the
 // batch's own results.
 func (d standupDeps) trackDeploys(ctx context.Context, hosts []string, live map[string]*platform.ServiceStack, status *standupStatus) func() {

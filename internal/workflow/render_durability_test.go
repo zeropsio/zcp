@@ -40,8 +40,8 @@ func TestRenderStatus_DevModeClose_SurfacesTransience(t *testing.T) {
 	requireKeptDevServerWording(t, out)
 }
 
-// requireKeptDevServerWording: zcp keeps the dev server an agent started and
-// starts it again after a restart or redeploy (spec-workflows §8 O4), so a
+// requireKeptDevServerWording: the dev service's supervisor starts a declared
+// dev server again after a restart or redeploy (spec-workflows §8 O4), so a
 // durability note says a crash leaves it down — never that a container cycle
 // does.
 func requireKeptDevServerWording(t *testing.T, out string) {
