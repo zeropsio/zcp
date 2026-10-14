@@ -2,17 +2,20 @@
 # promote to required after two consecutive baseline greens (plan D9)
 id: develop-late-zsc-noop
 description: |
-  S5 self-review friction (run 3): the dev-mode `start: zsc noop --silent`
-  requirement (dev-mode keeps the runtime container alive via a no-op
-  process; the real process is started separately via `zerops_dev_server`)
-  only surfaces in develop-active guidance — AFTER the agent has already
-  written a production `start:` command (e.g. `node dist/index.js`) into
-  zerops.yaml during bootstrap/first-write, before any develop-active atom
-  has fired. The agent has to discover the mismatch and rewrite
-  zerops.yaml once develop guidance arrives. Frozen expectation: despite
-  the rewrite, the run ends with the dev process live and reachable.
+  S5 self-review friction (run 3): the agent wrote a production `start:`
+  (e.g. `node dist/index.js`) or `zsc noop --silent` into the dev setup
+  before any develop-active atom fired, and had to rewrite zerops.yaml once
+  develop guidance arrived. Dev servers now run under the dev service's
+  supervisor (`zcp-devsup`, the dev setup's `run.start`): the first
+  `zerops_dev_server action=start` moves a dev setup that does not run it
+  onto it by itself — two lines in the dev setup, the server declared in
+  `.zcp/dev-servers.json`, one redeploy — and asks nothing. Frozen
+  expectation: the run ends with the dev process running under the
+  supervisor and reachable, its server declared, and no rewrite of the
+  dev setup's start by hand. Needs a zcp release that ships the
+  supervisor binary as a release asset (or ZCP_DEVSUP_URL on a dev build).
 seed: empty
-tags: [develop, dev-mode, zsc-noop, start-command, late-guidance, observe, s5-signal]
+tags: [develop, dev-mode, zsc-noop, supervisor, start-command, late-guidance, observe, s5-signal]
 area: develop
 retrospective:
   promptStyle: briefing-future-agent
@@ -27,6 +30,12 @@ verification:
   spec: spec-workflows.md §4
   liveness: {service: api, marker: "zsc-noop-ready"}
   noFailedProcesses: true
+  toolArg:
+    - {always: "zerops_dev_server{action=start}"}
+  containerCheck:
+    - {service: api, cmd: "grep -qE 'start: *zcp-devsup run' /var/www/zerops.y*ml && echo supervised", match: "^supervised"}
+    - {service: api, cmd: "test -s /var/www/.zcp/dev-servers.json && echo declared", match: "^declared"}
+    - {service: api, cmd: "zcp-devsup ctl status --json | grep -qE '\"status\": *\"running\"' && echo running", match: "^running"}
   never: ["zerops_import{override=true}", "zerops_delete"]
 notableFriction:
   - id: late-zsc-noop-guidance
@@ -43,6 +52,7 @@ notableFriction:
       start."
     suspectedCauses:
       - "internal/content/atoms/develop-dynamic-runtime-start-container.md (dev-mode start: convention not surfaced at bootstrap/first-write time)"
+      - "bootstrap does not write the supervisor lines yet: no published zcp release ships zcp-devsup, so the first dev-server start migrates with one redeploy"
 ---
 
 Set up a small Node.js API for me on Zerops, dev-only — I want to iterate on the code live, no stage, no production yet. Use project `{{projectId}}`. Once it's running, make `GET /` return `200` with a body containing the literal text `zsc-noop-ready`.
