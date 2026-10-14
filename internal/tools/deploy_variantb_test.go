@@ -110,7 +110,7 @@ func TestDeployTool_FromVariantBDevService_RunsWithWorkingDirOnTheVolume(t *test
 			ssh := &recordingSSH{}
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 			RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
-				nil, runtime.Info{}, stateDir, testDeployEngine(t), nil)
+				nil, runtime.Info{}, stateDir, testDeployEngine(t), nil, DevsupSource{})
 
 			result := callTool(t, srv, "zerops_deploy", tt.args)
 
@@ -134,7 +134,7 @@ func TestDeployTool_FromPairWithoutCodeVolume_RunsInVarWww(t *testing.T) {
 	ssh := &recordingSSH{}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
-		nil, runtime.Info{}, stateDir, testDeployEngine(t), nil)
+		nil, runtime.Info{}, stateDir, testDeployEngine(t), nil, DevsupSource{})
 
 	callTool(t, srv, "zerops_deploy", map[string]any{"targetService": "appdev"})
 
