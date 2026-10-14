@@ -25,6 +25,11 @@ type OrgSource interface {
 	ListPublicHTTPRoutings(ctx context.Context, projectID string) ([]platform.PublicHTTPRouting, error)
 	SearchProcesses(ctx context.Context, projectID string, limit int) ([]platform.ProcessEvent, error)
 	SearchAppVersions(ctx context.Context, projectID string, limit int) ([]platform.AppVersionEvent, error)
+	GetPerson(ctx context.Context) (platform.OrgPerson, error)
+	ListPortRoutings(ctx context.Context, projectID string) ([]platform.OrgPortRouting, error)
+	SearchCosts(ctx context.Context) (*platform.OrgCosts, error)
+	SearchCostBreakdown(ctx context.Context, q platform.OrgCostQuery) ([]platform.OrgCostLine, error)
+	SearchResourceUse(ctx context.Context, projectID string, from, till time.Time, step string) ([]platform.OrgResourceUse, error)
 }
 
 // OrgProjectKind is what a project is to the organization.
@@ -126,11 +131,13 @@ type OrgGroup struct {
 	Projects []OrgProjectSummary `json:"projects"`
 }
 
-// OrgOverviewResult is every project of the organization, grouped by kind.
+// OrgOverviewResult is every project of the organization, grouped by kind,
+// and who the Chief acts for — absent when that could not be read.
 type OrgOverviewResult struct {
-	Org      string     `json:"org"`
-	Projects int        `json:"projects"`
-	Groups   []OrgGroup `json:"groups"`
+	Org      string              `json:"org"`
+	ActsFor  *platform.OrgPerson `json:"actsFor,omitempty"`
+	Projects int                 `json:"projects"`
+	Groups   []OrgGroup          `json:"groups"`
 }
 
 // orgSnapshot is the organization's projects and services, read once.
@@ -182,6 +189,9 @@ func OrgOverview(ctx context.Context, src OrgSource) (*OrgOverviewResult, error)
 		grouped[class.Kind] = append(grouped[class.Kind], summary)
 	}
 	result := &OrgOverviewResult{Org: src.OrgID(), Projects: len(snap.projects)}
+	if person, err := src.GetPerson(ctx); err == nil {
+		result.ActsFor = &person
+	}
 	for _, kind := range orgKindOrder {
 		projects := grouped[kind]
 		if len(projects) == 0 {
@@ -282,6 +292,21 @@ type OrgServicePort struct {
 	Public   bool   `json:"public,omitempty"`
 }
 
+// OrgPublicPort is a port of the project's own IP forwarded to one of the
+// service's ports.
+type OrgPublicPort struct {
+	// IP is IP_V4 or IP_V6.
+	IP         string `json:"ip"`
+	PublicPort int    `json:"publicPort"`
+	Port       int    `json:"port"`
+	Protocol   string `json:"protocol"`
+	// Firewall is BLACKLIST or WHITELIST over Ranges.
+	Firewall string   `json:"firewall"`
+	Ranges   []string `json:"ranges,omitempty"`
+	// Pending is set while a change waits to be applied.
+	Pending bool `json:"pending,omitempty"`
+}
+
 // OrgService is one service of a project.
 type OrgService struct {
 	ID       string           `json:"id"`
@@ -292,6 +317,8 @@ type OrgService struct {
 	// Domains are the service's subdomain URL (when enabled) and the
 	// custom domains routed to it.
 	Domains []string `json:"domains,omitempty"`
+	// PublicPorts are the project IP's ports forwarded to the service.
+	PublicPorts []OrgPublicPort `json:"publicPorts,omitempty"`
 }
 
 // OrgServicesResult is a project's services.
@@ -301,8 +328,9 @@ type OrgServicesResult struct {
 }
 
 // OrgServices lists a project's own services — the platform's system
-// services and spent build containers left out — with status, type, ports
-// and domains.
+// services and spent build containers left out — with status, type, ports,
+// domains and public ports. Public ports an HQ that predates them refuses
+// are left out rather than failing the list.
 func OrgServices(ctx context.Context, src OrgSource, projectRef string) (*OrgServicesResult, error) {
 	p, err := resolveOrgProject(ctx, src, projectRef)
 	if err != nil {
@@ -320,6 +348,15 @@ func OrgServices(ctx context.Context, src OrgSource, projectRef string) (*OrgSer
 					custom[loc.ServiceID] = append(custom[loc.ServiceID], d.Name)
 				}
 			}
+		}
+	}
+	public := map[string][]OrgPublicPort{}
+	if ports, err := src.ListPortRoutings(ctx, p.ID); err == nil {
+		for _, r := range ports {
+			public[r.ServiceID] = append(public[r.ServiceID], OrgPublicPort{
+				IP: r.IPType, PublicPort: r.PublicPort, Port: r.InternalPort, Protocol: r.Protocol,
+				Firewall: r.FirewallPolicy, Ranges: r.FirewallRanges, Pending: !r.Synced,
+			})
 		}
 	}
 	result := &OrgServicesResult{Project: p.ref(), Services: []OrgService{}}
@@ -346,6 +383,7 @@ func OrgServices(ctx context.Context, src OrgSource, projectRef string) (*OrgSer
 				out.Domains = append(out.Domains, d)
 			}
 		}
+		out.PublicPorts = public[s.ID]
 		result.Services = append(result.Services, out)
 	}
 	sort.SliceStable(result.Services, func(i, j int) bool { return result.Services[i].Hostname < result.Services[j].Hostname })

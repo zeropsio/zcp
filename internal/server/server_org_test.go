@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/knowledge"
@@ -42,11 +43,26 @@ func (emptyOrg) SearchAppVersions(context.Context, string, int) ([]platform.AppV
 	return nil, nil
 }
 func (emptyOrg) ListActiveServiceTypeVersions(context.Context) ([]string, error) { return nil, nil }
+func (emptyOrg) GetPerson(context.Context) (platform.OrgPerson, error) {
+	return platform.OrgPerson{}, nil
+}
+func (emptyOrg) ListPortRoutings(context.Context, string) ([]platform.OrgPortRouting, error) {
+	return nil, nil
+}
+func (emptyOrg) SearchCosts(context.Context) (*platform.OrgCosts, error) {
+	return &platform.OrgCosts{}, nil
+}
+func (emptyOrg) SearchCostBreakdown(context.Context, platform.OrgCostQuery) ([]platform.OrgCostLine, error) {
+	return nil, nil
+}
+func (emptyOrg) SearchResourceUse(context.Context, string, time.Time, time.Time, string) ([]platform.OrgResourceUse, error) {
+	return nil, nil
+}
 
 // orgTools is org mode's own surface.
 var orgTools = []string{
 	"zerops_org_overview", "zerops_org_services", "zerops_org_logs", "zerops_org_failures",
-	"zerops_org_env", "zerops_org_processes",
+	"zerops_org_env", "zerops_org_processes", "zerops_org_costs", "zerops_org_usage",
 	"zerops_org_propose_service", "zerops_org_propose_env", "zerops_org_propose_message",
 	"zerops_org_propose_domain",
 }

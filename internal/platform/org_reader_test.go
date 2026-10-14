@@ -17,16 +17,21 @@ import (
 // and a name here must read as a read: org mode makes no write call to the
 // Zerops API, ever — every change is the person's own, made from their client.
 var orgReaderMethods = []string{
+	"GetPerson",
 	"GetProjectEnv",
 	"GetProjectLog",
 	"GetServiceEnv",
 	"ListActiveServiceTypeVersions",
+	"ListPortRoutings",
 	"ListProjects",
 	"ListPublicHTTPRoutings",
 	"ListServices",
 	"OrgID",
 	"SearchAppVersions",
+	"SearchCostBreakdown",
+	"SearchCosts",
 	"SearchProcesses",
+	"SearchResourceUse",
 }
 
 func TestOrgReader_ExposesNoWriteMethod(t *testing.T) {
@@ -59,12 +64,16 @@ func TestReadOnlyTransport_RefusesWrites(t *testing.T) {
 	}{
 		{name: "a GET reads", method: http.MethodGet, path: "/api/rest/public/project/p1/env", allowed: true},
 		{name: "a search POST reads", method: http.MethodPost, path: "/api/rest/public/service-stack/search", allowed: true},
+		{name: "a cost search POST reads", method: http.MethodPost, path: "/api/rest/public/transaction-debit/cost-search", allowed: true},
+		{name: "a grouped search POST reads", method: http.MethodPost, path: "/api/rest/public/stats-history/group-by-search", allowed: true},
 		{name: "a restart PUT is refused", method: http.MethodPut, path: "/api/rest/public/service-stack/s1/restart", allowed: false},
 		{name: "an env POST is refused", method: http.MethodPost, path: "/api/rest/public/project/p1/env", allowed: false},
 		{name: "an import POST is refused", method: http.MethodPost, path: "/api/rest/public/project/p1/service-stack/import", allowed: false},
 		{name: "a DELETE is refused", method: http.MethodDelete, path: "/api/rest/public/service-stack/s1", allowed: false},
 		{name: "a PATCH is refused", method: http.MethodPatch, path: "/api/rest/public/project/p1", allowed: false},
 		{name: "a POST whose path only contains search is refused", method: http.MethodPost, path: "/api/rest/public/search/p1/restart", allowed: false},
+		{name: "a POST to a name merely ending in search is refused", method: http.MethodPost, path: "/api/rest/public/project/p1/research", allowed: false},
+		{name: "a POST to a bare -search is refused", method: http.MethodPost, path: "/api/rest/public/project/-search", allowed: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -158,7 +167,7 @@ func TestOrgReader_EveryCallReadsInsideTheOrg(t *testing.T) {
 	for _, req := range seen() {
 		switch {
 		case req.Method == http.MethodGet:
-		case req.Method == http.MethodPost && strings.HasSuffix(req.Path, "/search"):
+		case req.Method == http.MethodPost && isSearchPath(req.Path):
 			if strings.Contains(req.Path, "service-stack-type") {
 				continue
 			}

@@ -837,19 +837,34 @@ write-capable client exists in org mode. `platform.OrgReads()` is the exact set 
 — the allowlist HQ's proxy forwards, paths under the public API root:
 
 - `POST /project/search`, `POST /service-stack/search`, `POST /process/search`,
-  `POST /app-version/search` — each filtered by the org's `clientId`;
+  `POST /app-version/search`, `POST /public-port-routing/search` — each filtered by the org's
+  `clientId`;
+- `POST /transaction-debit/cost-search` (the org's, each project's and each service's cost over the
+  platform's periods), `POST /transaction-debit/group-by-search` (a range a `1d` step at a time, per project, or per
+  service of one project — only a line per service says what its cost is made of), `POST /stats-history/group-by-search` (a project's services' CPU, RAM and
+  disk against their limits, `1h` or `1d`; the API takes one project at a time, and a range aligned
+  to its step) — each filtered by the org's `clientId`;
 - `POST /service-stack-type/search` — the platform's service-type catalogue, no organization's;
-- `GET /service-stack/{id}/env`, `GET /project/{id}/log`, `GET /project/{id}/public-http-routing`.
+- `GET /service-stack/{id}/env`, `GET /project/{id}/log`, `GET /project/{id}/public-http-routing`;
+- `GET /chief/person` — HQ's own answer, no Zerops read: the person the Chief acts for, as
+  `{name, roleCode, canViewFinances, canEditFinances, canCreateProjects}`. HQ keeps every answer to
+  the projects that person reads, and costs to their projects unless `canViewFinances`.
 
-Through the region's API it also reads `GET /user/info` once at start, to resolve the token's
-organization; through `ZCP_ORG_API` it does not. Every change is the person's: their client makes it with
-their own Zerops token after their click.
+Through the region's API it also reads `GET /user/info`: once at start, to resolve the token's
+organization, and for the person (the token's membership in it); through `ZCP_ORG_API` it does not. A
+person or public ports an HQ does not yet forward are left out of the overview and the services list
+rather than failing them. Every change is the person's: their client makes it with their own Zerops
+token after their click.
 
-**Tool surface.** Look: `zerops_org_overview` (every project, grouped as `mate`, `hq`,
-`production`, `stage`, `other`, `chief`), `zerops_org_services`, `zerops_org_logs` (runtime,
-or the newest build's), `zerops_org_failures` (spent build containers and system services left
-out), `zerops_org_env` (values masked unless a key is named in `reveal`; the result lists what was
-revealed), `zerops_org_processes`. Act: `zerops_org_propose_service` (`restart` | `start` |
+**Tool surface.** Look: `zerops_org_overview` (`actsFor`, the person; every project, grouped as
+`mate`, `hq`, `production`, `stage`, `other`, `chief`), `zerops_org_services` (with public ports),
+`zerops_org_logs` (runtime, or the newest build's), `zerops_org_failures` (spent build containers and
+system services left out), `zerops_org_env` (values masked unless a key is named in `reveal`; the
+result lists what was revealed), `zerops_org_processes`, `zerops_org_costs` (the periods per project,
+or per service of one project; with `from`/`till`, at most 31 days, a range's total and days, and
+one project's services' parts;
+a `note` when the answer is only the person's projects), `zerops_org_usage` (hourly up to 48 h,
+whole UTC days past that, at most 31 d). Act: `zerops_org_propose_service` (`restart` | `start` |
 `stop`), `zerops_org_propose_env`, `zerops_org_propose_message`, `zerops_org_propose_domain`. Also `zerops_knowledge`, and in a
 Mate's container `zerops_publish_page` (§5.9). The single-project surface acts on the empty own
 project and is not registered. A project's kind: tag `chief`; a Mate is tagged `mate` and runs
