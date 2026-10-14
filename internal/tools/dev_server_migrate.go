@@ -122,13 +122,9 @@ func superviseNewDevSetup(ctx context.Context, client platform.Client, projectID
 	if meta == nil || meta.IsDeployed() {
 		return "", nil
 	}
-	services, err := client.ListServices(ctx, projectID)
-	if err != nil {
-		return "", nil //nolint:nilerr // no service list: the dev setup keeps today's shape and the first start migrates it
-	}
-	svc, err := ops.FindService(services, target)
+	svc, err := ops.LookupService(ctx, client, projectID, target)
 	if err != nil || !isDeferredStartTarget(meta, svc, target) {
-		return "", nil //nolint:nilerr // not a dev-mode dynamic runtime here
+		return "", nil //nolint:nilerr // not a dev-mode dynamic runtime here, or no service read: the first start migrates it
 	}
 	url, err := src.URL(ctx)
 	if err != nil {
