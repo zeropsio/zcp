@@ -50,7 +50,10 @@ type Container struct {
 	Commands []string
 	// Deploys counts zcli pushes (each one replaces the container).
 	Deploys int
-	pid     int
+	// DirtyCrew names the crew copies (.crew/<name>) with uncommitted or
+	// untracked changes.
+	DirtyCrew []string
+	pid       int
 }
 
 // SupervisedYAML is a zerops.yaml whose dev setup runs the supervisor.
@@ -85,6 +88,12 @@ func (c *Container) ExecSSH(_ context.Context, _ string, command string) ([]byte
 	case strings.Contains(command, "dev-servers.json.tmp"):
 		c.Declaration = strings.TrimSuffix(firstQuoted(command, "printf '%s\\n' "), "\n")
 		return nil, nil
+	case strings.Contains(command, "@@zcp-crew-dirty"):
+		var out strings.Builder
+		for _, name := range c.DirtyCrew {
+			out.WriteString("@@zcp-crew-dirty " + name + "\n")
+		}
+		return []byte(out.String()), nil
 	case strings.Contains(command, "@@zcp-file"):
 		if c.YAML == "" {
 			return []byte("@@zcp-file -\n"), nil

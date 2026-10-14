@@ -197,6 +197,29 @@ func AdoptSupervisorInDevSetup(ctx context.Context, ssh SSHDeployer, hostname, s
 	return file, used, true, nil
 }
 
+// crewDirtyCmd prints a line per crew copy (a git worktree in .crew/<name>)
+// whose uncommitted or untracked changes a redeploy would lose; a copy git
+// cannot read counts as dirty.
+const crewDirtyCmd = `cd '` + DevRepoRoot + `/.crew' 2>/dev/null || exit 0; for d in */; do d=${d%/}; [ -e "$d/.git" ] || continue; out=$(git -C "$d" status --porcelain 2>/dev/null) || out=unreadable; [ -z "$out" ] || echo "@@zcp-crew-dirty $d"; done`
+
+// DirtyCrewCopies names hostname's crew copies (.crew/<name>) that hold
+// uncommitted or untracked work.
+func DirtyCrewCopies(ctx context.Context, ssh SSHDeployer, hostname string) ([]string, error) {
+	readCtx, cancel := context.WithTimeout(ctx, containerIdentityTimeout)
+	defer cancel()
+	out, err := ssh.ExecSSH(readCtx, hostname, crewDirtyCmd)
+	if err != nil {
+		return nil, fmt.Errorf("read the crew copies on %s: %w", hostname, err)
+	}
+	var dirty []string
+	for line := range strings.Lines(string(out)) {
+		if name, ok := strings.CutPrefix(strings.TrimSpace(line), "@@zcp-crew-dirty "); ok {
+			dirty = append(dirty, ".crew/"+name)
+		}
+	}
+	return dirty, nil
+}
+
 // DeclareDevServerForStart writes the declaration entry a start of p asks for
 // on a dev service without the supervisor yet, and returns the server's name.
 func DeclareDevServerForStart(ctx context.Context, ssh SSHDeployer, p DevServerParams) (string, error) {

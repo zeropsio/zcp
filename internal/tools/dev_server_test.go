@@ -365,6 +365,32 @@ func TestDevServer_MigrationRedeployFails(t *testing.T) {
 	}
 }
 
+// TestDevServer_MigrationWaitsForDirtyCrewCopies (orchestrator decision C,
+// review hole 6): the move onto the supervisor never redeploys while a crew
+// copy holds uncommitted or untracked work — one sentence names the copies
+// and what to do, and nothing changes.
+func TestDevServer_MigrationWaitsForDirtyCrewCopies(t *testing.T) {
+	t.Parallel()
+	c := &devservertest.Container{YAMLFile: "zerops.yml", YAML: todaysDevSetup, DirtyCrew: []string{"ada", "bob"}}
+	srv, _ := migrationToolServer(t, c, statusActive)
+
+	a := callDevServer(t, srv, map[string]any{"action": "start", "hostname": "appdev", "command": "bun --watch index.ts", "port": 3000})
+	if a.Running || a.Reason != reasonCrewWorkUnsaved {
+		t.Fatalf("answer = %+v, want %s", a, reasonCrewWorkUnsaved)
+	}
+	if !strings.Contains(a.Message, ".crew/ada, .crew/bob") || !strings.Contains(a.Message, "commit it in each copy") || strings.Count(a.Message, ". ") != 0 {
+		t.Errorf("message = %q, want one sentence naming the dirty copies and what to do", a.Message)
+	}
+	if c.Deploys != 0 || c.YAML != todaysDevSetup || c.Declaration != "" {
+		t.Errorf("something changed: deploys %d, declaration %q, zerops.yml:\n%s", c.Deploys, c.Declaration, c.YAML)
+	}
+
+	c.DirtyCrew = nil
+	if a := callDevServer(t, srv, map[string]any{"action": "start", "hostname": "appdev", "command": "bun --watch index.ts", "port": 3000}); !a.Running || c.Deploys != 1 {
+		t.Errorf("with the crew work committed the move did not run (deploys %d): %+v", c.Deploys, a)
+	}
+}
+
 // TestDevServer_MigrationNeedsADevSetup: a zerops.yaml whose dev setup zcp
 // cannot tell is left as it is and nothing is redeployed.
 func TestDevServer_MigrationNeedsADevSetup(t *testing.T) {

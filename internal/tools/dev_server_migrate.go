@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -37,6 +38,10 @@ func (m *devServerMigration) sentence() string {
 // the fix completes it.
 const reasonMigrationDeployFailed = "supervisor_redeploy_failed"
 
+// reasonCrewWorkUnsaved: the move onto the supervisor waits because a crew
+// copy holds work its redeploy would lose.
+const reasonCrewWorkUnsaved = "crew_work_unsaved"
+
 // migrateToSupervisor moves hostname's dev setup onto the supervisor and then
 // starts the server under it: declares the server, adds the two lines to the
 // dev setup, redeploys the dev service once from inside (the supervisor then
@@ -52,6 +57,19 @@ func migrateToSupervisor(ctx context.Context, req *mcp.CallToolRequest, d DevSer
 	if err != nil {
 		return nil, nil, platform.NewPlatformError(platform.ErrInvalidParameter,
 			host+"'s dev setup does not run the dev-server supervisor yet: "+err.Error(), "")
+	}
+	// The move redeploys host unasked; crew copies live outside the deploy
+	// (orchestrator decision C), so it waits until their work is committed.
+	dirty, err := ops.DirtyCrewCopies(ctx, d.SSH, host)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(dirty) > 0 {
+		return nil, &ops.DevServerResult{
+			Action: p.Action, Hostname: host, Reason: reasonCrewWorkUnsaved,
+			Message: fmt.Sprintf("zcp changed nothing and did not start the dev server: moving %s onto the dev-server supervisor redeploys it, which would lose the uncommitted and untracked work in %s — commit it in each copy (or remove the copy), then start the dev server again.",
+				host, strings.Join(dirty, ", ")),
+		}, nil
 	}
 	// A variant-B dev service's repository is on the code volume: its dev
 	// setup is edited there, the supervisor runs on it, and the redeploy
