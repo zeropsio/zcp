@@ -6,9 +6,9 @@ index 2e855d8b..a7f86feb 100644
  	}
  
  	// Container environment: yaml on the source service's mount.
--	mountPath := filepath.Join(projectRoot, sourceHostname)
+-	mountPath := ops.SourceMountDir(projectRoot, sourceHostname, workingDir)
 +	cwd, _ := os.Getwd()
-+	mountPath := filepath.Join(filepath.Dir(cwd), sourceHostname)
++	mountPath := ops.SourceMountDir(filepath.Dir(cwd), sourceHostname, workingDir)
  	state, probeErr := probeMountForZeropsYml(mountPath)
  	switch {
  	case probeErr != nil:
