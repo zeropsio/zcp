@@ -756,7 +756,9 @@ never write it (MODEL §9/1a, REVIEW N5).
     { "name": "web", "port": 3000, "command": "bun --watch index.ts", "cwd": "apps/web" },
     { "name": "api", "port": 8080, "command": "go build -o app . && exec ./app", "cwd": "apps/api",
       "watch": { "paths": ["apps/api"], "ignore": ["apps/api/app"] } },
-    { "name": "worker", "command": "bun --watch src/worker.ts", "cwd": "apps/worker" }
+    { "name": "worker", "command": "bun --watch src/worker.ts", "cwd": "apps/worker" },
+    { "name": "admin", "port": 4200, "command": "npx ng serve --host 0.0.0.0 --port 4200", "cwd": "apps/admin",
+      "autostart": false }
   ]
 }
 ```
@@ -770,6 +772,10 @@ never write it (MODEL §9/1a, REVIEW N5).
 | `servers[].cwd` | optional, default `"."`; relative to the repo root; after cleaning and resolving symlinks it stays inside the repo root, otherwise the file is invalid |
 | `servers[].watch` | optional; the supervisor restarts the server's group on a change under `paths` (relative to the repo root), never for paths under `.git`, `node_modules` or matching `ignore` (MODEL §9/1a, P4 H3). Absent: the command's own watcher (`--watch`, vite) does it |
 | `servers[].service` | optional; variant B only — the hostname of the dev service whose supervisor runs it (MODEL §4). Absent: run by the one supervisor reading the file (variant A). In variant B every entry carries it |
+| `servers[].autostart` | optional bool, default `true`; the server's **first** desired state: `autostart ? running : stopped` (§2.8a.2 *Events*). `false` keeps a declared server down until `ctl start` — a repo with many heavy dev servers (five Angular apps) starts only the ones it marks |
+
+**Unknown keys.** The supervisor ignores a key it does not know, at the top level and in an entry, so
+an optional key never needs a new `version`. zcp writes only the keys above.
 
 HTTP support is **not** declared here: it is the dev setup's `run.ports[].httpSupport` in
 `zerops.yml`, read by zcp (verify, URL). A port not in `run.ports` is internal only (MODEL §8, P1 T1).
@@ -785,7 +791,11 @@ error in its state.
 
 **Binary and delivery.** `zcp-devsup` is built from the zcp repository (`cmd/zcp-devsup`) and
 published on every zcp release as the asset `zcp-devsup-linux-amd64`, same version as zcp. zcp
-writes the dev setup's two lines, pinned to the release that wrote them (MODEL §9/1c, P4 H1):
+writes the dev setup's two lines (MODEL §9/1c, P4 H1), pinned to the **newest published zcp
+release whose supervisor `formats` include the declaration's `version`** — never to the release of
+the zcp that writes them (a dev build has no asset). A release never drops a format, so this is the
+newest release zcp's update check sees (`internal/update`, `releases/latest`); when no published
+release reads the declaration's `version` yet, zcp writes no pin and says so.
 
 ```yaml
 run:
@@ -798,6 +808,14 @@ The binary lands in the image, never in `$HOME` or `~/bin` (both are lost on red
 `run --root <dir>` overrides the repo root (variant B); in variant B the supervisor runs only the
 entries whose `service` is its own `hostname`. The supervisor lane pins the download line live
 (Alpine bases may need `wget -qO` instead of `curl`).
+
+**Dev override.** `ZCP_DEVSUP_URL`, an env var on the zcp service, replaces the release download
+URL in the line zcp writes, so a dev build of the supervisor can be tried before any release. Dev
+loop only; production never sets it.
+
+**Variant B stand-up.** The dev services start before the repo is cloned onto the shared volume, so
+each supervisor first reads a missing file (an empty declaration). After the clone, stand-up runs
+`zcp-devsup ctl reload` on every dev service's supervisor.
 
 **Runtime state.** `$HOME/.zcp/devsup/state.json`, written only by the supervisor (atomic rename),
 beside `logs/<name>.log` and the control socket `sock`. `$HOME` survives a container restart and is
@@ -856,13 +874,17 @@ after confirming the group is still the one it started (the leader's `/proc` sta
 still busy → the start fails with `exit: {code: -1, signal: "port_busy"}`. No `pkill`, `pgrep` or
 command-pattern match anywhere (MODEL §9/0).
 
+**First desired state.** A declared name the state file does not hold yet — every name on an empty
+`$HOME`, a name `reload` adds — gets `desired: running` when its `autostart` is `true` (the
+default), else `desired: stopped`. From then on only `ctl start`/`stop`/`restart` change `desired`.
+
 | Event | Behaviour |
 |---|---|
-| A server exits on its own | left down and visible: `status: crashed`, `exit` recorded, **no restart** in this container life — the keeper's principle (`internal/tools/dev_server_keep.go:16-25`), seen at the agent's next call (MODEL §11.3) |
-| A watched path changes | the supervisor restarts that group, `restarts` + 1 |
+| A server exits on its own | left down and visible: `status: crashed`, `exit` recorded, **no restart** in this container life except by a watched change (below) — the keeper's principle (`internal/tools/dev_server_keep.go:16-25`), seen at the agent's next call (MODEL §11.3) |
+| A watched path changes | for a server with `desired: running`: a live group restarts, and no live group (`crashed` — the agent fixed the code) starts; `restarts` + 1 either way. A `stopped` server stays stopped |
 | Container restart (`$HOME` kept) | every entry with `desired: running` starts, `crashed` ones included; `stopped` stays stopped |
-| Redeploy (new container, `$HOME` empty) | every declared server for this service starts |
-| `SIGHUP` / `ctl reload` | re-reads the declaration: an added name starts, a removed one stops and is dropped, a changed `command`/`cwd`/`port`/`watch` restarts that one only, the rest is untouched; an invalid file changes nothing and sets `declaration.error` |
+| Redeploy (new container, `$HOME` empty) | every declared server for this service gets its first desired state: `autostart` ones start, the rest stay `stopped` |
+| `SIGHUP` / `ctl reload` | re-reads the declaration: an added name gets its first desired state (starts only with `autostart`), a removed one stops and is dropped, a changed `command`/`cwd`/`port`/`watch` restarts that one only if it is `desired: running`, the rest is untouched; an invalid file changes nothing and sets `declaration.error` |
 
 **Versions.** A declaration whose `version` is not in the supervisor's `formats` is not run (the
 supervisor keeps what runs and sets `declaration.error`); zcp compares `ctl version` with the file
@@ -910,6 +932,11 @@ fields stay, `name` added only when it differs from `hostname`). **Absent `devSe
 read in this call"**, never "none running": Mate keeps the last read with its `readAt` (MODEL §6, N7).
 A dev service with one dev server shows today's card, without a server name.
 
+**One source in the `zerops_dev_server` result.** Its top-level `running` is exactly
+`status == "running"` of the `devServers[]` entry it reports (the entry named `name`, else the one
+named `hostname`) — never a second probe. From field-order step (3) Mate's card reads that entry's
+`status` and `url`; at step (4) zcp stops emitting the top-level `running` and `url`.
+
 **Field order** (MODEL §9/1g): (1) a Mate release accepts `stages` and `devServers` beside the old
 keys; (2) zcp raises `MinimumMateVersion` to it; (3) zcp emits `stages`/`devServers` and stops
 emitting `stageHostname`/`stageSetupName`; (4) Mate drops the old keys. Until (2) zcp emits today's
@@ -948,6 +975,20 @@ Stages []StageRef `json:"stages,omitempty"`
   when `stages` is present it wins and the old keys are not read. On write zcp writes `stages` and
   mirrors `Stages[0]` into `stageHostname`/`stageSetupName`, so a zcp a container restart pulls back
   still sees today's pair.
+- An older zcp drops `stages`. The release a container restart pulls back (v9.209.0 today) decodes
+  ServiceMeta into its fixed struct (`parseMeta`, `json.Unmarshal`) and every update writes that
+  whole struct back (`WriteServiceMeta`, `json.MarshalIndent`), so its first write keeps the
+  `stageHostname`/`stageSetupName` mirror and loses `stages` and every other key it does not know.
+- Rebuild: when zcp loads a ServiceMeta without `stages` and the repo's root `zerops.yml` declares
+  more than one part, it rebuilds `Stages[]` from the repo — the parts in `zerops.yml` are the truth
+  (MODEL §1). A part is a setup other than the dev setup (`PrimarySetupName`) and other than a setup
+  only `extends` names (a `base`). The mirror's stage stays first; every other part's preview
+  hostname is the app's tier entry whose `zeropsSetup` is that part (§2.8a.5); a part no tier names
+  stays out until a plan adds its stage — zcp never derives a hostname. zcp then writes the meta. A
+  single-part app loses nothing: the mirror is its whole pair.
+- While an old zcp runs, the mirror holds the pair only and dev servers are degraded: the old
+  zcp's keeper and its SSH start do not know the supervisor and may collide with it on a declared
+  port. This ends when the new zcp is back; no machinery handles it.
 
 #### 2.8a.5 Tier: hostname → `zeropsSetup`
 
@@ -999,9 +1040,9 @@ on it and never blocks.
 | `envelope.single-pair.today.json` | today's envelope for one pair — the bytes zcp marshals today |
 | `envelope.single-pair.json` | the same pair after step (3): `stages[1]`, one dev server named `appdev` |
 | `envelope.three-parts.json` | `appdev` + `webstage`/`apistage`/`workerstage`, three dev servers, one crashed |
-| `dev-server.one-server.json` | a `zerops_dev_server` result for one server, with its `envelope` key |
+| `dev-server.one-server.json` | a `zerops_dev_server` result for one server, with its `envelope` key; top-level `running` ≡ the reported entry's `status == "running"` (§2.8a.3) |
 | `dev-server.three-servers-one-crashed.json` | the same for three servers |
-| `dev-servers.declaration.json` | the §2.8a.1 example |
+| `dev-servers.declaration.json` | the §2.8a.1 example, `admin` with `autostart: false` |
 | `hq-change.receipt.json` | an HQ change record carrying the §2.8a.6 receipt |
 
 - zcp: `TestMateContractFixtures_*` (`internal/tools/mate_contract_fixtures_test.go`) parses every
