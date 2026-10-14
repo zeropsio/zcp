@@ -53,22 +53,25 @@ func migrateToSupervisor(ctx context.Context, req *mcp.CallToolRequest, d DevSer
 		return nil, nil, platform.NewPlatformError(platform.ErrInvalidParameter,
 			host+"'s dev setup does not run the dev-server supervisor yet: "+err.Error(), "")
 	}
-	setup := ""
+	// A variant-B dev service's repository is on the code volume: its dev
+	// setup is edited there, the supervisor runs on it, and the redeploy
+	// runs from it (ServiceMeta.WorkingDirFor; "" is /var/www).
+	setup, root := "", ""
 	if meta, _ := workflow.FindServiceMeta(d.StateDir, host); meta != nil {
-		setup = meta.SetupNameFor(host)
+		setup, root = meta.SetupNameFor(host), meta.WorkingDirFor(host)
 	}
 	name, err := ops.DeclareDevServerForStart(ctx, d.SSH, p)
 	if err != nil {
 		return nil, nil, err
 	}
-	file, setup, _, err := ops.AdoptSupervisorInDevSetup(ctx, d.SSH, host, setup, url)
+	file, setup, _, err := ops.AdoptSupervisorInDevSetup(ctx, d.SSH, host, setup, url, root, root)
 	if err != nil {
 		return nil, nil, platform.NewPlatformError(platform.ErrInvalidParameter,
 			fmt.Sprintf("cannot move %s onto the dev-server supervisor: %v", host, err),
 			"Fix zerops.yaml on "+host+" (or deploy it once with zerops_deploy setup=<dev setup>), then start the dev server again.")
 	}
 	m := &devServerMigration{hostname: host, setup: setup, yamlFile: file, name: name}
-	deployed := redeployForSupervisor(ctx, req, d, host, setup)
+	deployed := redeployForSupervisor(ctx, req, d, host, setup, root)
 	if deployed.Status != statusDeployed {
 		return m, &ops.DevServerResult{
 			Action: p.Action, Hostname: host, Reason: reasonMigrationDeployFailed,
@@ -113,8 +116,10 @@ func (s DevsupSource) URL(ctx context.Context) (string, error) {
 // changes nothing when the target is not a dev-mode dynamic runtime's
 // self-deploy, was deployed before (its first start migrates it), or no
 // zcp-devsup is published or named yet — the dev setup keeps today's shape.
-// It returns the sentence saying what changed, "" when nothing did.
-func superviseNewDevSetup(ctx context.Context, client platform.Client, projectID string, ssh ops.SSHDeployer, stateDir string, src DevsupSource, source, target, setup string) (string, error) {
+// It edits the dev setup in workingDir, the folder the deploy runs from, and a
+// variant-B dev service's supervisor runs on its code volume. It returns the
+// sentence saying what changed, "" when nothing did.
+func superviseNewDevSetup(ctx context.Context, client platform.Client, projectID string, ssh ops.SSHDeployer, stateDir string, src DevsupSource, source, target, setup, workingDir string) (string, error) {
 	if source != "" && source != target {
 		return "", nil
 	}
@@ -130,7 +135,7 @@ func superviseNewDevSetup(ctx context.Context, client platform.Client, projectID
 	if err != nil {
 		return "", nil //nolint:nilerr // no zcp-devsup published or named yet: today's shape, the first start migrates it
 	}
-	file, used, changed, err := ops.AdoptSupervisorInDevSetup(ctx, ssh, target, setup, url)
+	file, used, changed, err := ops.AdoptSupervisorInDevSetup(ctx, ssh, target, setup, url, workingDir, meta.WorkingDirFor(target))
 	if err != nil {
 		return "", fmt.Errorf("dev-server supervisor: %w", err)
 	}
@@ -141,15 +146,15 @@ func superviseNewDevSetup(ctx context.Context, client platform.Client, projectID
 		target, used, file), nil
 }
 
-// redeployForSupervisor self-deploys hostname with setup and records the
-// attempt like every other deploy path.
-func redeployForSupervisor(ctx context.Context, req *mcp.CallToolRequest, d DevServerDeps, host, setup string) *ops.DeployResult {
+// redeployForSupervisor self-deploys hostname with setup from workingDir ("" is
+// /var/www) and records the attempt like every other deploy path.
+func redeployForSupervisor(ctx context.Context, req *mcp.CallToolRequest, d DevServerDeps, host, setup, workingDir string) *ops.DeployResult {
 	attempt := workflow.DeployAttempt{
 		AttemptedAt: time.Now().UTC().Format(time.RFC3339),
 		Setup:       setup,
 		Strategy:    deployStrategyZCLILabel,
 	}
-	result, err := ops.DeploySSH(ctx, d.Client, d.ProjectID, d.SSH, *d.AuthInfo, host, host, setup, "", "")
+	result, err := ops.DeploySSH(ctx, d.Client, d.ProjectID, d.SSH, *d.AuthInfo, host, host, setup, workingDir, "")
 	if err != nil {
 		attempt.Error, attempt.FailureClass = err.Error(), topology.FailureClassNetwork
 		_ = workflow.RecordDeployAttempt(d.StateDir, host, attempt)

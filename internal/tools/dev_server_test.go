@@ -272,6 +272,83 @@ func TestDevServer_FirstStartWithoutSupervisor_MigratesIt(t *testing.T) {
 	}
 }
 
+// variantBDevMeta is webdev's pair recorded as variant B (docs/spec-mate.md
+// §2.8a.4a): its repository on the code volume vol at /var/www/ws, which the
+// further dev service apidev (setup dev-api) mounts too.
+func variantBDevMeta() *workflow.ServiceMeta {
+	return &workflow.ServiceMeta{
+		Hostname: "webdev", Stages: []topology.StageRef{{Hostname: "webstage", SetupName: "web"}}, Mode: topology.PlanModeStandard,
+		BootstrapSession: "sess1", BootstrappedAt: "2026-10-15", PrimarySetupName: "dev",
+		CodeVolume: &topology.CodeVolume{Hostname: "vol", MountPath: "/var/www/ws",
+			DevServices: []topology.DevServiceRef{{Hostname: "apidev", SetupName: "dev-api"}}},
+	}
+}
+
+// variantBDevSetup is apidev's dev setup before the supervisor.
+const variantBDevSetup = `zerops:
+  - setup: dev-api
+    build:
+      base: go@1
+      deployFiles: [.]
+    run:
+      base: go@1
+      volume:
+        hostname: vol
+        mountPath: /var/www/ws
+      ports:
+        - port: 8080
+          httpSupport: true
+      start: zsc noop --silent
+`
+
+// TestDevServer_FirstStartOnAVariantBDevService_RunsTheSupervisorOnTheCodeVolume
+// (docs/spec-mate.md §2.8a.2): moving a variant-B dev service onto the
+// supervisor edits the dev setup where its repository lives, on the code
+// volume, makes run.start `zcp-devsup run --root <mountPath>` so the
+// supervisor reads the shared declaration, and redeploys from there.
+func TestDevServer_FirstStartOnAVariantBDevService_RunsTheSupervisorOnTheCodeVolume(t *testing.T) {
+	t.Parallel()
+	c := &devservertest.Container{YAMLFile: "zerops.yml", YAML: variantBDevSetup}
+	dir := t.TempDir()
+	if err := workflow.WriteServiceMeta(dir, variantBDevMeta()); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-api", Name: "apidev", ProjectID: "proj-1", Status: serviceStatusRunning,
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "go@1"}},
+			{ID: "svc-vol", Name: "vol", ProjectID: "proj-1", Status: "RUNNING",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "local-storage:single@1", ServiceStackTypeCategoryName: "STANDARD"}},
+		}).
+		WithAppVersionEvents([]platform.AppVersionEvent{{ID: "av-2", ProjectID: "proj-1", ServiceStackID: "svc-api", Status: statusActive, Sequence: 2}})
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDevServer(srv, DevServerDeps{
+		Client: mock, ProjectID: "proj-1", SSH: c, StateDir: dir,
+		AuthInfo: &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
+		Devsup:   DevsupSource{Latest: func(context.Context) (string, error) { return testDevsupURL, nil }},
+	})
+
+	a := callDevServer(t, srv, map[string]any{"action": "start", "hostname": "apidev", "command": "go run ./apps/api", "port": 8080})
+	if a.Reason == reasonMigrationDeployFailed || c.Deploys != 1 {
+		t.Errorf("the redeploy did not run once (%d): %+v", c.Deploys, a)
+	}
+	if !strings.HasPrefix(a.Message, `zcp moved apidev onto the dev-server supervisor: setup "dev-api"`) {
+		t.Errorf("message = %q", a.Message)
+	}
+	if !strings.Contains(c.YAML, "start: zcp-devsup run --root /var/www/ws\n") || !strings.Contains(c.YAML, testDevsupURL) {
+		t.Errorf("zerops.yml after the move:\n%s", c.YAML)
+	}
+	var read, wrote, pushed bool
+	for _, cmd := range c.Sent() {
+		read = read || (strings.Contains(cmd, "@@zcp-file") && strings.Contains(cmd, "'/var/www/ws'/\"$f\""))
+		wrote = wrote || strings.Contains(cmd, "'/var/www/ws/zerops.yml.zcp-tmp'")
+		pushed = pushed || (strings.Contains(cmd, "zcli push") && strings.HasPrefix(cmd, "cd '/var/www/ws' &&"))
+	}
+	if !read || !wrote || !pushed {
+		t.Errorf("the dev setup is read %v, written %v and redeployed %v on the code volume, want all three:\n%s", read, wrote, pushed, strings.Join(c.Sent(), "\n"))
+	}
+}
+
 // TestDevServer_MigrationRedeployFails: when the redeploy that brings up the
 // supervisor fails, the answer says so with what is written and how to finish.
 func TestDevServer_MigrationRedeployFails(t *testing.T) {
@@ -417,6 +494,46 @@ func TestDevServer_PartsEnvelopeOnlyBehindTheGate(t *testing.T) {
 		if !carries && strings.Contains(text, `"envelope"`) {
 			t.Errorf("an envelope rides the result before the gate opens:\n%s", text)
 		}
+	}
+}
+
+// TestDeploy_NewVariantBDevSetup_RunsTheSupervisorOnTheCodeVolume
+// (docs/spec-mate.md §2.8a.2): the first deploy of a variant-B dev service
+// runs from the code volume, so the supervisor's lines go into the dev setup
+// there, and run.start is `zcp-devsup run --root <mountPath>`.
+func TestDeploy_NewVariantBDevSetup_RunsTheSupervisorOnTheCodeVolume(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := workflow.WriteServiceMeta(dir, variantBDevMeta()); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-api", Name: "apidev", ProjectID: "proj-1", Status: serviceStatusRunning,
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "go@1"}},
+			{ID: "svc-vol", Name: "vol", ProjectID: "proj-1", Status: "RUNNING",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "local-storage:single@1", ServiceStackTypeCategoryName: "STANDARD"}},
+		}).
+		WithAppVersionEvents([]platform.AppVersionEvent{{ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-api", Status: statusActive, Sequence: 1}})
+	c := &devservertest.Container{YAMLFile: "zerops.yml", YAML: variantBDevSetup}
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", c, &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
+		nil, runtime.Info{}, dir, testDeployEngine(t), nil, DevsupSource{Latest: func(context.Context) (string, error) { return testDevsupURL, nil }})
+
+	result := callTool(t, srv, "zerops_deploy", map[string]any{"targetService": "apidev", "setup": "dev-api"})
+	if result.IsError {
+		t.Fatalf("zerops_deploy: %s", getTextContent(t, result))
+	}
+	if !strings.Contains(c.YAML, "start: zcp-devsup run --root /var/www/ws\n") || !strings.Contains(c.YAML, testDevsupURL) {
+		t.Errorf("zerops.yml after the first deploy:\n%s", c.YAML)
+	}
+	var read, wrote bool
+	for _, cmd := range c.Sent() {
+		read = read || (strings.Contains(cmd, "@@zcp-file") && strings.Contains(cmd, "'/var/www/ws'/\"$f\""))
+		wrote = wrote || strings.Contains(cmd, "'/var/www/ws/zerops.yml.zcp-tmp'")
+	}
+	if !read || !wrote {
+		t.Errorf("the dev setup is read %v and written %v on the code volume, want both:\n%s", read, wrote, strings.Join(c.Sent(), "\n"))
 	}
 }
 

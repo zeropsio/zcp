@@ -21,6 +21,28 @@ import (
 // DevsupStart is the dev setup's run.start under the supervisor.
 const DevsupStart = "zcp-devsup run"
 
+// DevsupStartFor is the dev setup's run.start for a supervisor whose repository
+// root is root: DevsupStart for "" (variant A, /var/www), else `zcp-devsup run
+// --root <root>` — a variant-B dev service's code volume, where the shared
+// declaration lives (docs/spec-mate.md §2.8a.2).
+func DevsupStartFor(root string) string {
+	if root == "" {
+		return DevsupStart
+	}
+	return DevsupStart + " --root " + shellWord(root)
+}
+
+// plainWordRe is a shell word that needs no quoting.
+var plainWordRe = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
+
+// shellWord is s as one shell word: as it is when it needs no quoting.
+func shellWord(s string) string {
+	if plainWordRe.MatchString(s) {
+		return s
+	}
+	return shellQuote(s)
+}
+
 // DevsupAsset is the release asset zcp-devsup ships as.
 const DevsupAsset = "zcp-devsup-linux-amd64"
 
@@ -55,10 +77,11 @@ func DevsupPrepareCommand(url string) string {
 
 // AdoptSupervisorYAML puts the dev setup's run under the supervisor: the
 // install line in run.prepareCommands (replacing an older zcp-devsup line) and
-// run.start `zcp-devsup run`. setup names the dev setup; empty picks the only
+// run.start DevsupStartFor(root) — root is the repository root the supervisor
+// runs on, "" for /var/www. setup names the dev setup; empty picks the only
 // setup, else the one named after hostname, else the one named "dev". It
 // returns the setup it changed; changed is false when both lines are there.
-func AdoptSupervisorYAML(data []byte, setup, hostname, url string) (out []byte, used string, changed bool, err error) {
+func AdoptSupervisorYAML(data []byte, setup, hostname, url, root string) (out []byte, used string, changed bool, err error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return nil, "", false, fmt.Errorf("zerops.yaml: %w", err)
@@ -67,7 +90,7 @@ func AdoptSupervisorYAML(data []byte, setup, hostname, url string) (out []byte, 
 	if err != nil {
 		return nil, "", false, err
 	}
-	out, changed, err = adoptSupervisorRun(&doc, run, setup, url)
+	out, changed, err = adoptSupervisorRun(&doc, run, setup, url, DevsupStartFor(root))
 	if err != nil || !changed {
 		return data, setup, false, err
 	}
@@ -75,7 +98,7 @@ func AdoptSupervisorYAML(data []byte, setup, hostname, url string) (out []byte, 
 }
 
 // adoptSupervisorRun edits run in doc and re-encodes doc when it changed.
-func adoptSupervisorRun(doc, run *yaml.Node, setup, url string) ([]byte, bool, error) {
+func adoptSupervisorRun(doc, run *yaml.Node, setup, url, startLine string) ([]byte, bool, error) {
 	line := DevsupPrepareCommand(url)
 	changed := false
 	prepare := mappingValue(run, "prepareCommands")
@@ -102,8 +125,8 @@ func adoptSupervisorRun(doc, run *yaml.Node, setup, url string) ([]byte, bool, e
 		return nil, false, fmt.Errorf("zerops.yaml setup %q: run.prepareCommands is not a list", setup)
 	}
 	start := mappingValue(run, "start")
-	if start == nil || start.Kind != yaml.ScalarNode || strings.TrimSpace(start.Value) != DevsupStart {
-		setMapping(run, "start", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: DevsupStart})
+	if start == nil || start.Kind != yaml.ScalarNode || strings.TrimSpace(start.Value) != startLine {
+		setMapping(run, "start", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: startLine})
 		changed = true
 	}
 	if !changed {
@@ -190,30 +213,37 @@ func setMapping(m *yaml.Node, key string, v *yaml.Node) {
 	m.Content = append(m.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, v)
 }
 
-// readZeropsYAMLCmd prints the dev repo's zerops.yaml (or zerops.yml) after a
+// readZeropsYAMLCmd prints the zerops.yaml (or zerops.yml) in dir after a
 // line naming the file.
-const readZeropsYAMLCmd = `for f in zerops.yaml zerops.yml; do if [ -f '` + DevRepoRoot + `'/"$f" ]; then echo "@@zcp-file $f"; cat '` + DevRepoRoot + `'/"$f"; exit 0; fi; done; echo "@@zcp-file -"`
+func readZeropsYAMLCmd(dir string) string {
+	q := shellQuote(dir)
+	return `for f in zerops.yaml zerops.yml; do if [ -f ` + q + `/"$f" ]; then echo "@@zcp-file $f"; cat ` + q + `/"$f"; exit 0; fi; done; echo "@@zcp-file -"`
+}
 
-// AdoptSupervisorInDevSetup rewrites hostname's zerops.yaml so its dev setup
-// runs the supervisor (AdoptSupervisorYAML) and returns the file's name and
-// the setup.
-func AdoptSupervisorInDevSetup(ctx context.Context, ssh SSHDeployer, hostname, setup, url string) (file, used string, changed bool, err error) {
+// AdoptSupervisorInDevSetup rewrites the zerops.yaml in hostname's dir — the
+// folder its deploy runs from, "" for /var/www — so its dev setup runs the
+// supervisor on the repository root given as root (AdoptSupervisorYAML), and returns
+// the file's name and the setup.
+func AdoptSupervisorInDevSetup(ctx context.Context, ssh SSHDeployer, hostname, setup, url, dir, root string) (file, used string, changed bool, err error) {
+	if dir == "" {
+		dir = DevRepoRoot
+	}
 	readCtx, cancel := context.WithTimeout(ctx, containerIdentityTimeout)
 	defer cancel()
-	out, err := ssh.ExecSSH(readCtx, hostname, readZeropsYAMLCmd)
+	out, err := ssh.ExecSSH(readCtx, hostname, readZeropsYAMLCmd(dir))
 	if err != nil {
 		return "", "", false, fmt.Errorf("read zerops.yaml on %s: %w", hostname, err)
 	}
 	head, body, _ := strings.Cut(string(out), "\n")
 	file, ok := strings.CutPrefix(strings.TrimSpace(head), "@@zcp-file ")
 	if !ok || file == "-" {
-		return "", "", false, fmt.Errorf("%s has no zerops.yaml in %s", hostname, DevRepoRoot)
+		return "", "", false, fmt.Errorf("%s has no zerops.yaml in %s", hostname, dir)
 	}
-	updated, used, changed, err := AdoptSupervisorYAML([]byte(body), setup, hostname, url)
+	updated, used, changed, err := AdoptSupervisorYAML([]byte(body), setup, hostname, url, root)
 	if err != nil || !changed {
 		return file, used, false, err
 	}
-	target := DevRepoRoot + "/" + file
+	target := strings.TrimSuffix(dir, "/") + "/" + file
 	cmd := fmt.Sprintf(`printf '%%s' %s > %s && mv -f %s %s`,
 		shellQuote(string(updated)), shellQuote(target+".zcp-tmp"), shellQuote(target+".zcp-tmp"), shellQuote(target))
 	writeCtx, cancelWrite := context.WithTimeout(ctx, containerIdentityTimeout)

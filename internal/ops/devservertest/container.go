@@ -146,7 +146,7 @@ func (c *Container) Redeploy() {
 // supervisor (which starts every declared server) when it says so.
 func (c *Container) redeploy() {
 	c.Installed = strings.Contains(c.YAML, "/zcp-devsup-linux-amd64")
-	c.Running = c.Installed && regexp.MustCompile(`(?m)^\s*start: zcp-devsup run\s*$`).MatchString(c.YAML)
+	c.Running = c.Installed && regexp.MustCompile(`(?m)^\s*start: zcp-devsup run(\s+--root\s+\S+)?\s*$`).MatchString(c.YAML)
 	if c.Installed && c.SupervisorVersion == "" {
 		c.SupervisorVersion, c.Formats = "v9.300.0", []int{1}
 	}

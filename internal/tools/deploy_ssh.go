@@ -406,7 +406,7 @@ func runDeploySSHZCLIPush(
 		Strategy:    deployStrategyZCLILabel,
 	}
 
-	supervised, superviseErr := superviseNewDevSetup(ctx, client, projectID, sshDeployer, stateDir, devsup, input.SourceService, input.TargetService, input.Setup)
+	supervised, superviseErr := superviseNewDevSetup(ctx, client, projectID, sshDeployer, stateDir, devsup, input.SourceService, input.TargetService, input.Setup, input.WorkingDir)
 
 	// Default: zcli push to Zerops.
 	result, err := ops.DeploySSH(ctx, client, projectID, sshDeployer, *authInfo,

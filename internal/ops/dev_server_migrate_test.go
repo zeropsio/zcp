@@ -62,16 +62,22 @@ func devSetupRun(t *testing.T, data []byte, setup string) (prepare []string, sta
 }
 
 // TestAdoptSupervisorYAML: the dev setup gains the install line and
-// run.start `zcp-devsup run`; everything else in the file stays.
+// run.start `zcp-devsup run` — `zcp-devsup run --root <mountPath>` for a
+// variant-B dev service, whose repository is on the code volume;
+// everything else in the file stays.
 func TestAdoptSupervisorYAML(t *testing.T) {
 	t.Parallel()
 	line := DevsupPrepareCommand(testDevsupURL)
 	tests := []struct {
 		name, yaml, setup, hostname string
-		wantSetup                   string
-		wantPrepare                 []string
-		wantChanged                 bool
-		wantErr                     string
+		// root is the repository root the supervisor runs on, "" for /var/www.
+		root        string
+		wantSetup   string
+		wantPrepare []string
+		// wantStart is run.start after the edit, "" for `zcp-devsup run`.
+		wantStart   string
+		wantChanged bool
+		wantErr     string
 	}{
 		{
 			name:     "a single setup with today's noop start",
@@ -135,6 +141,34 @@ func TestAdoptSupervisorYAML(t *testing.T) {
 			wantSetup: "dev", wantPrepare: []string{line}, wantChanged: false,
 		},
 		{
+			name: "a variant-B dev service's supervisor runs on the code volume",
+			yaml: `zerops:
+  - setup: dev-api
+    run:
+      base: go@1
+      volume:
+        hostname: vol
+        mountPath: /var/www/ws
+      start: zsc noop --silent
+`,
+			setup: "dev-api", hostname: "apidev", root: "/var/www/ws",
+			wantSetup: "dev-api", wantPrepare: []string{line}, wantStart: "zcp-devsup run --root /var/www/ws", wantChanged: true,
+		},
+		{
+			name:      "a supervisor on /var/www moves onto the code volume",
+			yaml:      "zerops:\n  - setup: dev\n    run:\n      prepareCommands:\n        - " + yamlQuote(line) + "\n      start: zcp-devsup run\n",
+			hostname:  "webdev",
+			root:      "/var/www/ws",
+			wantSetup: "dev", wantPrepare: []string{line}, wantStart: "zcp-devsup run --root /var/www/ws", wantChanged: true,
+		},
+		{
+			name:      "already on the supervisor on the code volume",
+			yaml:      "zerops:\n  - setup: dev\n    run:\n      prepareCommands:\n        - " + yamlQuote(line) + "\n      start: zcp-devsup run --root /var/www/ws\n",
+			hostname:  "webdev",
+			root:      "/var/www/ws",
+			wantSetup: "dev", wantPrepare: []string{line}, wantStart: "zcp-devsup run --root /var/www/ws", wantChanged: false,
+		},
+		{
 			name:     "several setups and none is the dev one",
 			yaml:     "zerops:\n  - setup: web\n  - setup: api\n",
 			hostname: "appdev",
@@ -151,7 +185,7 @@ func TestAdoptSupervisorYAML(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			out, used, changed, err := AdoptSupervisorYAML([]byte(tt.yaml), tt.setup, tt.hostname, testDevsupURL)
+			out, used, changed, err := AdoptSupervisorYAML([]byte(tt.yaml), tt.setup, tt.hostname, testDevsupURL, tt.root)
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("err = %v, want %q", err, tt.wantErr)
@@ -168,8 +202,12 @@ func TestAdoptSupervisorYAML(t *testing.T) {
 				t.Errorf("an unchanged file was rewritten:\n%s", out)
 			}
 			prepare, start := devSetupRun(t, out, used)
-			if start != DevsupStart {
-				t.Errorf("run.start = %q, want %q", start, DevsupStart)
+			wantStart := tt.wantStart
+			if wantStart == "" {
+				wantStart = "zcp-devsup run"
+			}
+			if start != wantStart {
+				t.Errorf("run.start = %q, want %q", start, wantStart)
 			}
 			if strings.Join(prepare, "\n") != strings.Join(tt.wantPrepare, "\n") {
 				t.Errorf("prepareCommands = %q, want %q", prepare, tt.wantPrepare)
