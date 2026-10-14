@@ -16,6 +16,7 @@
 #
 # Environment:
 #   EVAL_REMOTE_HOST  ssh host (default: zcp — resolves inside whichever project VPN is up)
+#   EVAL_SSH_OPTS     ssh/scp options replacing the unchecked-host-key default (build-deploy.sh)
 #   MATE_REPO           fork checkout (default: ../z3 next to this repo)
 #   MATE_PREFIX         npm prefix on the container mate lives under. Each version
 #                     gets its own dir under $MATE_PREFIX/versions/; a dev push
@@ -41,8 +42,10 @@ MATE_PREFIX="${MATE_PREFIX:-/home/zerops/.zcp/mate}"
 MATE_UNIT="${MATE_UNIT:-zerops@mate}"
 WHAT="${1:-zcp}"
 
-# Container host keys rotate on every recreate — same policy as build-deploy.sh.
-SSH_OPTS=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR)
+# Container host keys rotate on every recreate — same policy as build-deploy.sh,
+# including its EVAL_SSH_OPTS override (a word-split option list).
+# shellcheck disable=SC2206
+SSH_OPTS=(${EVAL_SSH_OPTS:--o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR})
 remote() { ssh "${SSH_OPTS[@]}" "$REMOTE_HOST" "$@"; }
 
 # node-pty ships no Linux prebuild and a container has no compiler, so a release

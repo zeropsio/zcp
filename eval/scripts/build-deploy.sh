@@ -8,6 +8,7 @@
 # Environment:
 #   EVAL_REMOTE_HOST  — SSH host (default: zcp)
 #   EVAL_REMOTE_BIN   — Remote binary path (default: /usr/local/bin/zcp)
+#   EVAL_SSH_OPTS     — ssh/scp options replacing the unchecked-host-key default
 
 set -euo pipefail
 
@@ -21,8 +22,9 @@ REMOTE_BIN="${EVAL_REMOTE_BIN:-/usr/local/bin/zcp}"
 LOCAL_BIN="$PROJECT_DIR/builds/zcp-linux-amd64"
 
 # Zerops container host keys rotate on every deploy/recreate — strict checking
-# would break deploys at every release. Disable it for all ssh/scp in this script.
-SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
+# would break deploys at every release. Disable it for all ssh/scp in this script,
+# unless EVAL_SSH_OPTS supplies the options (e.g. `-F <config>` pinning the host key).
+SSH_OPTS="${EVAL_SSH_OPTS:--o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR}"
 
 echo "==> Building ZCP for linux/amd64..."
 (cd "$PROJECT_DIR" && make linux-amd)
