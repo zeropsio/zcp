@@ -203,6 +203,17 @@ type fakeAccount struct {
 	// itself failing (TestFarmRun_RollbackFailure_KeepsProjectIDAndError,
 	// R6).
 	failDeleteProjectName string
+
+	// firstOrg, when non-empty, makes the account a member of a second org
+	// listed before clientID in user/info's clientUserList — the real farm
+	// account token's shape. Mints in firstOrg land in firstOrgTokens, and
+	// revoking one of those against clientID answers 404 the way the
+	// platform does ("Client user connection not found").
+	firstOrg       string
+	firstOrgTokens map[string]bool
+	// launchMinted lists every delegated launch-token id minted in clientID
+	// (run tokens are not tracked: deleting their project deletes them).
+	launchMinted []string
 }
 
 type fakeProject struct{ id, name string }
@@ -215,6 +226,8 @@ func newFakeAccount(t *testing.T, clientID string, timeline *sharedTimeline) *fa
 		timeline: timeline,
 		projects: map[string]fakeProject{},
 		tokens:   map[string]bool{},
+
+		firstOrgTokens: map[string]bool{},
 	}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.handle))
 	t.Cleanup(f.srv.Close)
@@ -267,7 +280,23 @@ func (f *fakeAccount) handle(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/api/rest/public/user/info":
+		f.mu.Lock()
+		firstOrg := f.firstOrg
+		f.mu.Unlock()
+		if firstOrg != "" {
+			fmt.Fprintf(w, `{"id":"user-1","email":"farm@example.com","fullName":"Farm","clientUserList":[{"id":"cu0","clientId":%q,"userId":"user-1"},{"id":"cu1","clientId":%q,"userId":"user-1"}]}`, firstOrg, f.clientID)
+			return
+		}
 		fmt.Fprintf(w, `{"id":"user-1","email":"farm@example.com","fullName":"Farm","clientUserList":[{"id":"cu1","clientId":%q,"userId":"user-1"}]}`, f.clientID)
+		return
+
+	case r.Method == http.MethodPost && f.firstOrg != "" && r.URL.Path == "/api/rest/public/client/"+f.firstOrg+"/integration-token":
+		f.mu.Lock()
+		f.nextTok++
+		tokID := fmt.Sprintf("tok-%d", f.nextTok)
+		f.firstOrgTokens[tokID] = true
+		f.mu.Unlock()
+		fmt.Fprintf(w, `{"id":%q,"token":"launch-secret-%s"}`, tokID, tokID)
 		return
 
 	case r.Method == http.MethodPost && r.URL.Path == "/api/rest/public/project/search":
@@ -319,8 +348,14 @@ func (f *fakeAccount) handle(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/rest/public/client/"+f.clientID+"/integration-token/"):
 		tokID := strings.TrimPrefix(r.URL.Path, "/api/rest/public/client/"+f.clientID+"/integration-token/")
 		f.mu.Lock()
+		_, inOtherOrg := f.firstOrgTokens[tokID]
 		delete(f.tokens, tokID)
 		f.mu.Unlock()
+		if inOtherOrg {
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"error":{"code":"clientUserNotFound","message":"Client user connection not found."}}`)
+			return
+		}
 		fmt.Fprint(w, `{"success":true}`)
 		return
 
@@ -399,6 +434,9 @@ func (f *fakeAccount) handleIntegrationTokenMint(w http.ResponseWriter, r *http.
 	f.nextTok++
 	tokID := fmt.Sprintf("tok-%d", f.nextTok)
 	f.tokens[tokID] = true
+	if !isScopedMint {
+		f.launchMinted = append(f.launchMinted, tokID)
+	}
 	f.mu.Unlock()
 	fmt.Fprintf(w, `{"id":%q,"token":"launch-secret-%s"}`, tokID, tokID)
 }
@@ -595,7 +633,7 @@ func (p panicClient) DeleteProject(context.Context, string) (*platform.Process, 
 	return nil, errUnexpectedPlatformCall
 }
 
-func (p panicClient) MintDelegatedLaunchToken(context.Context, string) (platform.MintedToken, error) {
+func (p panicClient) MintDelegatedLaunchToken(context.Context, string, string) (platform.MintedToken, error) {
 	p.t.Fatal("unexpected MintDelegatedLaunchToken call")
 	return platform.MintedToken{}, errUnexpectedPlatformCall
 }
@@ -1466,6 +1504,53 @@ func TestFarmRun_NoDoneJSON_BudgetElapsed_ProjectKept(t *testing.T) {
 	account.mu.Unlock()
 	if !stillExists {
 		t.Errorf("project %s was deleted, want it kept (no bundle)", ProjectPrefix+runID)
+	}
+}
+
+// TestFarmRun_LaunchScenario_MultiOrgAccount_MintsAndRevokesInFarmOrg pins
+// that the farm never leaks a launch token: an account token that belongs to
+// another org before the farm's ZCP_FARM_CLIENT_ID still mints the run's
+// launch token in the farm org, so the revoke in that same org succeeds and
+// no live token is left anywhere once the run settles.
+func TestFarmRun_LaunchScenario_MultiOrgAccount_MintsAndRevokesInFarmOrg(t *testing.T) {
+	t.Parallel()
+	const clientID = "client-farm-org"
+	f := newControllerFixture(t, clientID)
+	account, client, fake, sink := f.account, f.client, f.s3, f.sink
+	account.mu.Lock()
+	account.firstOrg = "client-personal-org"
+	account.mu.Unlock()
+
+	batch := "batch-multi-org"
+	sc := ScenarioRun{ID: "launch-scenario", Launch: true}
+	runID := testRunID(t, batch, sc.ID)
+	seedSettledRun(t, fake, runID, sc.ID, ResultPassed)
+
+	opts := RunOptions{
+		Batch: batch, ClientID: clientID, Set: "gate",
+		CandidateSHA256: "cand", EvaluatorSHA256: "eval", WrapperSHA256: "wrap", ScenariosDigest: "scen",
+		Scenarios: []ScenarioRun{sc}, OAuthToken: "oauth-token",
+		Sink:      Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		RunBudget: time.Second, PollInterval: time.Millisecond,
+	}
+	results, err := RunBatch(context.Background(), client, sink, opts)
+	if err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+	if len(results) != 1 || results[0].LaunchTokenID != "" {
+		t.Errorf("results = %+v, want one run with its launch token revoked", results)
+	}
+
+	account.mu.Lock()
+	defer account.mu.Unlock()
+	if len(account.firstOrgTokens) != 0 {
+		t.Errorf("launch tokens minted in the account's other org = %v, want none", account.firstOrgTokens)
+	}
+	if len(account.launchMinted) != 1 {
+		t.Fatalf("launch tokens minted in the farm org = %v, want one; requests: %v", account.launchMinted, account.requests)
+	}
+	if account.tokens[account.launchMinted[0]] {
+		t.Errorf("launch token %s is still live in the farm org after the run, want revoked", account.launchMinted[0])
 	}
 }
 

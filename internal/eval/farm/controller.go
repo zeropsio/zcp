@@ -70,7 +70,9 @@ type PlatformClient interface {
 	ImportServiceStack(ctx context.Context, projectID, yaml string) (*platform.ImportResult, error)
 	GetProject(ctx context.Context, projectID string) (*platform.Project, error)
 	DeleteProject(ctx context.Context, projectID string) (*platform.Process, error)
-	MintDelegatedLaunchToken(ctx context.Context, name string) (platform.MintedToken, error)
+	// MintDelegatedLaunchToken mints the run's launch token in clientID —
+	// the org RevokeIntegrationToken later revokes it in (§3.4 FM-23).
+	MintDelegatedLaunchToken(ctx context.Context, clientID, name string) (platform.MintedToken, error)
 	// MintProjectScopedToken mints the run's own project-scoped ZCP_API_KEY
 	// (§2.1 step 2, platform.MintProjectScopedToken) — a REST-created
 	// zcp@1 service gets no first-class injected key the way the GUI's
@@ -115,8 +117,8 @@ func (a *accountClient) DeleteProject(ctx context.Context, projectID string) (*p
 	return a.admin.DeleteProject(ctx, projectID)
 }
 
-func (a *accountClient) MintDelegatedLaunchToken(ctx context.Context, name string) (platform.MintedToken, error) {
-	return a.z.MintDelegatedLaunchToken(ctx, name)
+func (a *accountClient) MintDelegatedLaunchToken(ctx context.Context, clientID, name string) (platform.MintedToken, error) {
+	return a.z.MintDelegatedLaunchTokenIn(ctx, clientID, name)
 }
 
 func (a *accountClient) MintProjectScopedToken(ctx context.Context, clientID, projectID, name string) (platform.MintedToken, error) {
@@ -368,7 +370,7 @@ func createRun(ctx context.Context, client PlatformClient, opts RunOptions, r sc
 
 	var launchTokenID, launchKeyValue string
 	if r.Launch {
-		minted, err := client.MintDelegatedLaunchToken(ctx, "farm-"+r.RunID)
+		minted, err := client.MintDelegatedLaunchToken(ctx, opts.ClientID, "farm-"+r.RunID)
 		if err != nil {
 			// No project was created for this run — §5.1: "a run whose
 			// project was never created is not reported at all" (in the

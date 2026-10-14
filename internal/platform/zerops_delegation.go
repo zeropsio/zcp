@@ -139,7 +139,13 @@ func (z *ZeropsClient) MintDelegatedLaunchToken(ctx context.Context, name string
 	if err != nil {
 		return MintedToken{}, fmt.Errorf("mint delegated launch token: %w", err)
 	}
+	return z.MintDelegatedLaunchTokenIn(ctx, clientID, name)
+}
 
+// MintDelegatedLaunchTokenIn mints the same token in the named org. A
+// caller whose token belongs to several orgs and revokes in a known one
+// (the eval farm, ZCP_FARM_CLIENT_ID) mints there, so the revoke finds it.
+func (z *ZeropsClient) MintDelegatedLaunchTokenIn(ctx context.Context, clientID, name string) (MintedToken, error) {
 	reqBody := body.ClientIntegrationToken{
 		Name:              types.NewString(name),
 		RoleCode:          enum.ClientUserRoleCodeEnumNoAccess,
