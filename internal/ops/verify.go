@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 	"sync"
 
+	"github.com/zeropsio/zcp/internal/devsup"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
 )
@@ -111,6 +113,18 @@ type PublicAccessInput struct {
 	// runtime, whatever its dev server's live state: its HTTP probes give a
 	// page its first compile (devServerFirstCompile).
 	DevServer bool
+	// DevPorts are the dev service's declared dev servers with a port, when
+	// it declares more than one (docs/spec-mate.md §2.8a): http_internal,
+	// and http_root while the subdomain is on, are checked per server and
+	// port. Empty: one check on the service's preferred HTTP port.
+	DevPorts []DevPort
+}
+
+// DevPort is one declared dev server with a port and its supervisor status.
+type DevPort struct {
+	Name   string
+	Port   int
+	Status devsup.Status
 }
 
 // defaultPublicAccessInput is what meta-less callers (Verify, VerifyAll, and
@@ -146,6 +160,11 @@ type CheckResult struct {
 	// produced BodyText. Each entry is capped at browserConsoleEntryCap
 	// chars. Absent under the same conditions as BodyText.
 	ConsoleErrors []string `json:"consoleErrors,omitempty"`
+
+	// Server and Port name the dev server a per-port check probed — set only
+	// when a dev service declares several (PublicAccessInput.DevPorts).
+	Server string `json:"server,omitempty"`
+	Port   int    `json:"port,omitempty"`
 }
 
 // isManagedCategory returns true if the API category represents a managed service.
@@ -321,17 +340,25 @@ func verifyService(
 			// internal probe goes first and is given that compile, so the
 			// public one finds the page compiled.
 			probe := newHTTPProbe(httpClient, publicAccess.DevServer && rc == RuntimeDynamic)
+			perPort := len(publicAccess.DevPorts) > 1
 			var checks []CheckResult
-			checks = append(checks, checkHTTPInternal(ctx, probe, svc, publicAccess.DeferredStart))
+			if perPort {
+				checks = append(checks, devPortInternalChecks(ctx, probe, svc, publicAccess.DevPorts)...)
+			} else {
+				checks = append(checks, checkHTTPInternal(ctx, probe, svc, publicAccess.DeferredStart))
+			}
 
 			obs, obsErr := ObservePublicAccess(ctx, client, projectID, svc)
-			if obsErr != nil {
+			switch {
+			case obsErr != nil:
 				checks = append(checks, CheckResult{
 					Name:   checkNameHTTPRoot,
 					Status: CheckFail,
 					Detail: fmt.Sprintf("observe public access: %v", obsErr),
 				})
-			} else {
+			case perPort && obs.Observed.Subdomain == topology.SubdomainOn:
+				checks = append(checks, devPortPublicChecks(ctx, client, probe, projectID, svc, publicAccess.DevPorts)...)
+			default:
 				checks = append(checks, buildHTTPPublicChecks(ctx, client, probe, projectID, svc, publicAccess.Record.Intent, obs, listener)...)
 			}
 			hostRefusedInside(checks)
@@ -361,24 +388,22 @@ func verifyService(
 // failure, and a 4xx with no public answer has nothing to set it against;
 // both stay failed.
 func hostRefusedInside(checks []CheckResult) {
-	internal, public := -1, -1
 	for i := range checks {
-		switch checks[i].Name {
-		case checkNameHTTPInternal:
-			internal = i
-		case checkNameHTTPRoot:
-			public = i
+		in := &checks[i]
+		if in.Name != checkNameHTTPInternal || in.Status != CheckFail || in.HTTPStatus < 400 || in.HTTPStatus >= 500 {
+			continue
 		}
+		// The public answer for the same port (Port is 0 for the one-port
+		// pair of checks).
+		served := slices.ContainsFunc(checks, func(c CheckResult) bool {
+			return c.Name == checkNameHTTPRoot && c.Port == in.Port && c.Status == CheckPass
+		})
+		if !served {
+			continue
+		}
+		in.Status = CheckInfo
+		in.Detail = fmt.Sprintf("HTTP %d on the internal address while the public address serves the same path: the server answers, and refuses the service's hostname as the Host (a dev server's host check, e.g. Vite's allowedHosts). A service calling this one by its hostname gets the same answer; allow the hostname in the server's host list if one must.", in.HTTPStatus)
 	}
-	if internal < 0 || public < 0 || checks[public].Status != CheckPass {
-		return
-	}
-	in := &checks[internal]
-	if in.Status != CheckFail || in.HTTPStatus < 400 || in.HTTPStatus >= 500 {
-		return
-	}
-	in.Status = CheckInfo
-	in.Detail = fmt.Sprintf("HTTP %d on the internal address while the public address serves the same path: the server answers, and refuses the service's hostname as the Host (a dev server's host check, e.g. Vite's allowedHosts). A service calling this one by its hostname gets the same answer; allow the hostname in the server's host list if one must.", in.HTTPStatus)
 }
 
 // replaceCheck overwrites the named check in-place with the replacement.

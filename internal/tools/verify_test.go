@@ -641,3 +641,93 @@ func TestVerifyPublicAccess_ADevServerServesTheDevHalf(t *testing.T) {
 		}
 	}
 }
+
+// TestVerifyTool_EveryDeclaredPort (TEST-PLAN E1 #11): verify checks every
+// declared port of a dev service — one http_internal check per dev server
+// with a port, probed while its supervisor runs it, skipped with the way to
+// start it while stopped, failed while crashed; a server without a port
+// has none. A dev service
+// with one server keeps its one unnamed check.
+func TestVerifyTool_EveryDeclaredPort(t *testing.T) {
+	t.Parallel()
+	const decl = `{"version":1,"servers":[` +
+		`{"name":"web","port":3000,"command":"pnpm dev","cwd":"apps/web"},` +
+		`{"name":"api","port":8080,"command":"pnpm dev","cwd":"apps/api"},` +
+		`{"name":"worker","command":"bun worker.ts","cwd":"apps/worker"}]}`
+	tests := []struct {
+		name  string
+		decl  string
+		setup func(c *devservertest.Container)
+		want  map[string]string // server → check status; "" key = the one unnamed check
+	}{
+		{name: "two servers with ports run", decl: decl, want: map[string]string{"web": "probed", "api": "probed"}},
+		{name: "one of them is stopped", decl: decl, setup: func(c *devservertest.Container) {
+			c.Servers["api"].Status = "stopped"
+		}, want: map[string]string{"web": "probed", "api": "skip"}},
+		{name: "one of them crashed", decl: decl, setup: func(c *devservertest.Container) {
+			c.Servers["web"].Status = "crashed"
+		}, want: map[string]string{"web": "crashed", "api": "probed"}},
+		{name: "one server", decl: `{"version":1,"servers":[{"name":"appdev","port":3000,"command":"bun index.ts","cwd":"."}]}`,
+			want: map[string]string{"": "probed"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+				Hostname: "appdev", Mode: topology.PlanModeDev, BootstrapSession: "s", BootstrappedAt: "2026-10-14",
+			}); err != nil {
+				t.Fatalf("WriteServiceMeta: %v", err)
+			}
+			mock := platform.NewMock().WithServices([]platform.ServiceStack{
+				{ID: "svc-1", Name: "appdev", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"},
+					Status: serviceStatusRunning, Ports: []platform.Port{{Port: 3000, HTTPSupport: true}, {Port: 8080, HTTPSupport: true}}},
+			})
+			c := devservertest.NewSupervised(tt.decl)
+			if tt.setup != nil {
+				tt.setup(c)
+			}
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterVerify(srv, mock, platform.NewMockLogFetcher(), "proj-1", dir, runtime.Info{}, c)
+			result := callTool(t, srv, "zerops_verify", map[string]any{"serviceHostname": "appdev"})
+			if result.IsError {
+				t.Fatalf("verify: %s", getTextContent(t, result))
+			}
+			var vr ops.VerifyResult
+			if err := json.Unmarshal([]byte(getTextContent(t, result)), &vr); err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			got := map[string]string{}
+			for _, ch := range vr.Checks {
+				if ch.Name != "http_internal" {
+					continue
+				}
+				// The tool probes over the network, so a probed check's
+				// outcome is the ops tests' to pin; this one pins which
+				// servers verify probes, skips or fails without probing.
+				switch {
+				case ch.Status == ops.CheckSkip:
+					got[ch.Server] = "skip"
+				case strings.Contains(ch.Detail, "crashed"):
+					got[ch.Server] = "crashed"
+				default:
+					got[ch.Server] = "probed"
+				}
+				if ch.Server != "" && ch.Port != map[string]int{"web": 3000, "api": 8080}[ch.Server] {
+					t.Errorf("check %+v names the wrong port", ch)
+				}
+				if ch.Server == "api" && ch.Status == ops.CheckSkip && !strings.Contains(ch.Detail, "start it with zerops_dev_server name=api") {
+					t.Errorf("stopped server's check = %q, want the way to start it", ch.Detail)
+				}
+			}
+			if len(got) != len(tt.want) {
+				t.Fatalf("http_internal checks = %v, want %v", got, tt.want)
+			}
+			for server, want := range tt.want {
+				if got[server] != want {
+					t.Errorf("server %q: %s, want %s (all: %v)", server, got[server], want, got)
+				}
+			}
+		})
+	}
+}

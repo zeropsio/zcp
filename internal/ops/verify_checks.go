@@ -7,10 +7,12 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/devsup"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
 )
@@ -249,6 +251,59 @@ func checkHTTPInternal(ctx context.Context, probe httpProbe, svc *platform.Servi
 	}
 	url := "http://" + net.JoinHostPort(svc.Name, strconv.Itoa(port.Port)) + "/"
 	return probe.probe(ctx, url, name)
+}
+
+// devPortInternalChecks probes each declared dev server's port over the
+// project network: a server its supervisor runs is probed, a crashed one
+// fails with the way to read it, one not running is skipped with the way to
+// start it.
+func devPortInternalChecks(ctx context.Context, probe httpProbe, svc *platform.ServiceStack, ports []DevPort) []CheckResult {
+	checks := make([]CheckResult, 0, len(ports))
+	for _, d := range ports {
+		var check CheckResult
+		switch d.Status {
+		case devsup.StatusRunning, devsup.StatusStarting:
+			check = probe.probe(ctx, "http://"+net.JoinHostPort(svc.Name, strconv.Itoa(d.Port))+"/", checkNameHTTPInternal)
+		case devsup.StatusCrashed:
+			check = CheckResult{Name: checkNameHTTPInternal, Status: CheckFail,
+				Detail: fmt.Sprintf("dev server %s crashed — read zerops_dev_server action=logs name=%s, fix it, start it again", d.Name, d.Name)}
+		case devsup.StatusStopped:
+			check = CheckResult{Name: checkNameHTTPInternal, Status: CheckSkip,
+				Detail: fmt.Sprintf("dev server %s is stopped — start it with zerops_dev_server name=%s to check it", d.Name, d.Name)}
+		default:
+			check = CheckResult{Name: checkNameHTTPInternal, Status: CheckSkip,
+				Detail: fmt.Sprintf("dev server %s is not started — start it with zerops_dev_server name=%s to check it", d.Name, d.Name)}
+		}
+		check.Server, check.Port = d.Name, d.Port
+		checks = append(checks, check)
+	}
+	return checks
+}
+
+// devPortPublicChecks probes the subdomain URL of each running dev server
+// whose port has HTTP support — Zerops gives every such port its own
+// subdomain address. A port without HTTP support is internal only.
+func devPortPublicChecks(ctx context.Context, client platform.Client, probe httpProbe, projectID string, svc *platform.ServiceStack, ports []DevPort) []CheckResult {
+	proj, err := client.GetProject(ctx, projectID)
+	if err != nil || proj.SubdomainHost == "" {
+		return []CheckResult{{Name: checkNameHTTPRoot, Status: CheckSkip, Detail: "cannot resolve subdomain URL"}}
+	}
+	var checks []CheckResult
+	for _, d := range ports {
+		if d.Status != devsup.StatusRunning && d.Status != devsup.StatusStarting {
+			continue
+		}
+		if !slices.ContainsFunc(svc.Ports, func(p platform.Port) bool { return p.Port == d.Port && (p.HTTPSupport || isHTTPScheme(p)) }) {
+			continue
+		}
+		check := CheckResult{Name: checkNameHTTPRoot, Status: CheckSkip, Detail: "cannot resolve subdomain URL"}
+		if url := subdomainURLForPort(ctx, client, proj.SubdomainHost, svc, d.Port, nil); url != "" {
+			check = probe.probe(ctx, url+"/", checkNameHTTPRoot)
+		}
+		check.Server, check.Port = d.Name, d.Port
+		checks = append(checks, check)
+	}
+	return checks
 }
 
 // buildHTTPPublicChecks implements PA-4's http_public rule set

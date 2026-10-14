@@ -202,7 +202,9 @@ func defaultPublicAccessInput() ops.PublicAccessInput {
 // with a port it runs means the runtime DOES have a listener, so DeferredStart
 // flips to false and http_internal probes
 // for real instead of skipping with the "start it with zerops_dev_server"
-// message. An SSH error (no deployer, unreachable container) falls back to
+// message. A dev service that declares several servers with a port has each
+// checked (ops.PublicAccessInput.DevPorts, TEST-PLAN E1 #11). An SSH error
+// (no deployer, unreachable container) falls back to
 // the static classification — verify must never fail because the listener
 // probe itself failed.
 func publicAccessInputForHost(ctx context.Context, client platform.Client, ssh ops.SSHDeployer, projectID, stateDir, host string) ops.PublicAccessInput {
@@ -215,16 +217,18 @@ func publicAccessInputForHost(ctx context.Context, client platform.Client, ssh o
 	}
 	devServer := servedByDevServer(meta, host)
 	deferredStart := false
+	var devPorts []ops.DevPort
 	if svc, lookupErr := ops.LookupService(ctx, client, projectID, host); lookupErr == nil && svc != nil {
 		class := topology.RuntimeClassFor(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName)
 		deferredStart = topology.IsDeferredStart(meta.ModeFor(host), class)
 		if deferredStart && ssh != nil {
-			if ds, readErr := ops.ReadDevServers(ctx, ssh, host); readErr == nil && ds.Listening() {
-				deferredStart = false
+			if ds, readErr := ops.ReadDevServers(ctx, ssh, host); readErr == nil {
+				deferredStart = !ds.Listening()
+				devPorts = ds.DevPorts()
 			}
 		}
 	}
-	return ops.PublicAccessInput{Record: meta.PublicAccessFor(host), DeferredStart: deferredStart, DevServer: devServer}
+	return ops.PublicAccessInput{Record: meta.PublicAccessFor(host), DeferredStart: deferredStart, DevServer: devServer, DevPorts: devPorts}
 }
 
 // servedByDevServer reports a host whose mode leaves a dynamic runtime to a

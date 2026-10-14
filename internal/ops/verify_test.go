@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zeropsio/zcp/internal/devsup"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
 )
@@ -1410,4 +1411,97 @@ func checkNames(checks []CheckResult) []string {
 		names[i] = c.Name
 	}
 	return names
+}
+
+// TestVerify_DevPorts_EachDeclaredPort (TEST-PLAN E1 #11): a dev service
+// declaring several dev servers gets one http_internal check per server on
+// its own port, and while the subdomain is on one http_public per running
+// server on that port's subdomain address. A crashed server fails, a
+// stopped one is skipped; neither is probed.
+func TestVerify_DevPorts_EachDeclaredPort(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{{
+			ID: "svc-1", Name: "appdev", Status: "RUNNING", SubdomainAccess: true,
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"},
+			Ports:                []platform.Port{{Port: 3000, HTTPSupport: true}, {Port: 8080, HTTPSupport: true}, {Port: 9000, HTTPSupport: true}, {Port: 9100, HTTPSupport: true}},
+		}}).
+		WithProject(&platform.Project{ID: "proj-1", SubdomainHost: "1df2.prg1.zerops.app"})
+	doer := &recordingHTTPDoer{}
+	input := defaultPublicAccessInput()
+	input.DevPorts = []DevPort{
+		{Name: "web", Port: 3000, Status: devsup.StatusRunning},
+		{Name: "api", Port: 8080, Status: devsup.StatusRunning},
+		{Name: "admin", Port: 9000, Status: devsup.StatusCrashed},
+		{Name: "docs", Port: 9100, Status: devsup.StatusStopped},
+	}
+	result, err := VerifyWithMeta(context.Background(), mock, platform.NewMockLogFetcher(), doer, "proj-1", "appdev", RuntimeMeta{}, input)
+	if err != nil {
+		t.Fatalf("VerifyWithMeta: %v", err)
+	}
+	type key struct {
+		name, server string
+		port         int
+	}
+	got := map[key]string{}
+	for _, c := range result.Checks {
+		if c.Name == "http_internal" || c.Name == "http_public" {
+			got[key{c.Name, c.Server, c.Port}] = c.Status
+		}
+	}
+	want := map[key]string{
+		{"http_internal", "web", 3000}:   CheckPass,
+		{"http_internal", "api", 8080}:   CheckPass,
+		{"http_internal", "admin", 9000}: CheckFail,
+		{"http_internal", "docs", 9100}:  CheckSkip,
+		{"http_public", "web", 3000}:     CheckPass,
+		{"http_public", "api", 8080}:     CheckPass,
+	}
+	if len(got) != len(want) {
+		t.Errorf("checks = %v, want %v", got, want)
+	}
+	for k, w := range want {
+		if got[k] != w {
+			t.Errorf("%v = %q, want %q (all: %v)", k, got[k], w, got)
+		}
+	}
+	probed := strings.Join(doer.urls, " ")
+	for _, u := range []string{"http://appdev:3000/", "http://appdev:8080/"} {
+		if !strings.Contains(probed, u) {
+			t.Errorf("internal %s not probed; probed: %s", u, probed)
+		}
+	}
+	for _, port := range []string{"9000", "9100"} {
+		if strings.Contains(probed, port) {
+			t.Errorf("a server not running on %s was probed: %s", port, probed)
+		}
+	}
+	public := 0
+	for _, u := range doer.urls {
+		if strings.HasPrefix(u, "https://") {
+			public++
+		}
+	}
+	if public < 2 {
+		t.Errorf("public probes = %d, want one per running port: %s", public, probed)
+	}
+}
+
+// TestHostRefusedInside_PairsByPort: an internal 4xx becomes info only when
+// the public check for the same port passed.
+func TestHostRefusedInside_PairsByPort(t *testing.T) {
+	t.Parallel()
+	checks := []CheckResult{
+		{Name: checkNameHTTPInternal, Status: CheckFail, HTTPStatus: 403, Server: "web", Port: 3000},
+		{Name: checkNameHTTPInternal, Status: CheckFail, HTTPStatus: 403, Server: "api", Port: 8080},
+		{Name: checkNameHTTPRoot, Status: CheckPass, Server: "web", Port: 3000},
+		{Name: checkNameHTTPRoot, Status: CheckFail, HTTPStatus: 502, Server: "api", Port: 8080},
+	}
+	hostRefusedInside(checks)
+	if checks[0].Status != CheckInfo {
+		t.Errorf("web internal = %q, want info (its public address serves)", checks[0].Status)
+	}
+	if checks[1].Status != CheckFail {
+		t.Errorf("api internal = %q, want fail (its public address does not serve)", checks[1].Status)
+	}
 }

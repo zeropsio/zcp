@@ -188,6 +188,21 @@ func (ds *DevServers) Server(name string) (devsup.Server, bool) {
 	return devsup.Server{}, false
 }
 
+// DevPorts are the declared servers with a port and their status, when more
+// than one is declared — verify then checks each (PublicAccessInput.DevPorts).
+func (ds *DevServers) DevPorts() []DevPort {
+	var out []DevPort
+	for _, s := range ds.Declared.Servers {
+		if s.Port != 0 {
+			out = append(out, DevPort{Name: s.Name, Port: s.Port, Status: ds.State.Servers[s.Name].Status})
+		}
+	}
+	if len(out) < 2 {
+		return nil
+	}
+	return out
+}
+
 // Listening reports whether the supervisor runs a declared server with a port
 // — "is something listening" for public access (docs/spec-mate.md §2.8a.2:
 // status is derived once, by the supervisor).
