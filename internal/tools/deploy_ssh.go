@@ -247,6 +247,7 @@ func RegisterDeploySSH(
 	stateDir string,
 	engine *workflow.Engine,
 	recipeProbe RecipeSessionProbe,
+	devsup DevsupSource,
 ) {
 	desc := "Deploy code via SSH — blocks until build completes. "
 	if rtInfo.InContainer {
@@ -373,7 +374,7 @@ func RegisterDeploySSH(
 			return handleGitPush(ctx, client, httpClient, projectID, sshDeployer, logFetcher, buildProgressCallback(ctx, req), input, stateDir, rtInfo)
 		}
 
-		return runDeploySSHZCLIPush(ctx, req, client, httpClient, sshDeployer, authInfo, logFetcher, rtInfo, projectID, stateDir, input)
+		return runDeploySSHZCLIPush(ctx, req, client, httpClient, sshDeployer, authInfo, logFetcher, rtInfo, projectID, stateDir, devsup, input)
 	})
 }
 
@@ -394,6 +395,7 @@ func runDeploySSHZCLIPush(
 	logFetcher platform.LogFetcher,
 	rtInfo runtime.Info,
 	projectID, stateDir string,
+	devsup DevsupSource,
 	input DeploySSHInput,
 ) (*mcp.CallToolResult, any, error) {
 	// Record attempt up front so a crash still leaves a trace.
@@ -403,6 +405,8 @@ func runDeploySSHZCLIPush(
 		Setup:       input.Setup,
 		Strategy:    deployStrategyZCLILabel,
 	}
+
+	supervised, superviseErr := superviseNewDevSetup(ctx, client, projectID, sshDeployer, stateDir, devsup, input.SourceService, input.TargetService, input.Setup)
 
 	// Default: zcli push to Zerops.
 	result, err := ops.DeploySSH(ctx, client, projectID, sshDeployer, *authInfo,
@@ -427,6 +431,12 @@ func runDeploySSHZCLIPush(
 
 	onProgress := buildProgressCallback(ctx, req)
 	pollDeployBuild(ctx, client, projectID, result, onProgress, logFetcher, sshDeployer, stateDir)
+	if supervised != "" {
+		result.Message = supervised + " " + result.Message
+	}
+	if superviseErr != nil {
+		result.Warnings = append(result.Warnings, superviseErr.Error())
+	}
 
 	// L1 break-glass aftermath: a direct deploy on a push-delivering
 	// pair leaves the container ahead of the repo — flag the standing

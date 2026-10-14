@@ -881,6 +881,13 @@ with one sentence saying what changed. A failed redeploy answers `supervisor_red
 files stay written, so the next deploy finishes the move. Nothing stays on the old SSH start.
 `TestDevServer_FirstStartWithoutSupervisor_MigratesIt`, `TestAdoptSupervisorYAML`.
 
+**A new dev setup** gets the two lines before it ever runs: the first `zerops_deploy` of a dev-mode
+dynamic dev service (a self-deploy, the pair never deployed) writes them into the dev setup it
+deploys when the pin rule above finds a release or `ZCP_DEVSUP_URL` is set, and its message says
+so; the first `start` then finds the supervisor and redeploys nothing. Otherwise the dev setup
+keeps today's shape and the first `start` moves it as above.
+`TestDeploy_NewDevSetup_GetsTheSupervisorLines`.
+
 **Stop** signals the **group**: `SIGTERM` to `-pgid`, up to 10 s, then `SIGKILL` to `-pgid` — only
 after confirming the group is still the one it started (the leader's `/proc` start time equals
 `leaderStart`; a reused pid is left alone, and so is a group whose leader is gone, since nothing

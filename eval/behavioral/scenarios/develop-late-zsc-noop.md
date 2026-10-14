@@ -6,14 +6,15 @@ description: |
   (e.g. `node dist/index.js`) or `zsc noop --silent` into the dev setup
   before any develop-active atom fired, and had to rewrite zerops.yaml once
   develop guidance arrived. Dev servers now run under the dev service's
-  supervisor (`zcp-devsup`, the dev setup's `run.start`): the first
-  `zerops_dev_server action=start` moves a dev setup that does not run it
-  onto it by itself — two lines in the dev setup, the server declared in
-  `.zcp/dev-servers.json`, one redeploy — and asks nothing. Frozen
-  expectation: the run ends with the dev process running under the
-  supervisor and reachable, its server declared, and no rewrite of the
-  dev setup's start by hand. Needs a zcp release that ships the
-  supervisor binary as a release asset (or ZCP_DEVSUP_URL on a dev build).
+  supervisor (`zcp-devsup`, the dev setup's `run.start`): the dev service's
+  first `zerops_deploy` writes the supervisor's two lines into its dev
+  setup when a published zcp release ships the supervisor binary (or
+  ZCP_DEVSUP_URL names a dev build), so the first `zerops_dev_server
+  action=start` only declares the server in `.zcp/dev-servers.json`;
+  without either, that first start moves the dev setup onto it by itself
+  with one redeploy. Neither asks anything. Frozen expectation: the run
+  ends with the dev process running under the supervisor and reachable,
+  its server declared, and no rewrite of the dev setup's start by hand.
 seed: empty
 tags: [develop, dev-mode, zsc-noop, supervisor, start-command, late-guidance, observe, s5-signal]
 area: develop
@@ -52,7 +53,7 @@ notableFriction:
       start."
     suspectedCauses:
       - "internal/content/atoms/develop-dynamic-runtime-start-container.md (dev-mode start: convention not surfaced at bootstrap/first-write time)"
-      - "bootstrap does not write the supervisor lines yet: no published zcp release ships zcp-devsup, so the first dev-server start migrates with one redeploy"
+      - "internal/tools/dev_server_migrate.go superviseNewDevSetup (the first deploy writes the supervisor lines only when a release ships zcp-devsup or ZCP_DEVSUP_URL is set; otherwise the first dev-server start migrates with one redeploy)"
 ---
 
 Set up a small Node.js API for me on Zerops, dev-only — I want to iterate on the code live, no stage, no production yet. Use project `{{projectId}}`. Once it's running, make `GET /` return `200` with a body containing the literal text `zsc-noop-ready`.

@@ -37,7 +37,7 @@ func TestDeploySSH_AppVersionID_ReactivatesBackup(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, t.TempDir(), testDeployEngine(t), nil)
+	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, t.TempDir(), testDeployEngine(t), nil, DevsupSource{})
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{
 		"targetService": "appstage",
@@ -90,7 +90,7 @@ func TestDeploySSH_AppVersionID_ActiveRefuses(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, t.TempDir(), testDeployEngine(t), nil)
+	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, t.TempDir(), testDeployEngine(t), nil, DevsupSource{})
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{
 		"targetService": "appstage",
@@ -119,7 +119,7 @@ func TestDeploySSH_AppVersionID_UnknownRefuses(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, t.TempDir(), testDeployEngine(t), nil)
+	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, t.TempDir(), testDeployEngine(t), nil, DevsupSource{})
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{
 		"targetService": "appstage",

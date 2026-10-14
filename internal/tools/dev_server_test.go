@@ -22,6 +22,7 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/ops/devservertest"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -199,8 +200,8 @@ func migrationToolServer(t *testing.T, c *devservertest.Container, buildStatus s
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDevServer(srv, DevServerDeps{
 		Client: mock, ProjectID: "proj-1", SSH: c, StateDir: dir,
-		AuthInfo:     &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
-		LatestDevsup: func(context.Context) (string, error) { return testDevsupURL, nil },
+		AuthInfo: &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
+		Devsup:   DevsupSource{Latest: func(context.Context) (string, error) { return testDevsupURL, nil }},
 	})
 	return srv, dir
 }
@@ -416,5 +417,93 @@ func TestDevServer_PartsEnvelopeOnlyBehindTheGate(t *testing.T) {
 		if !carries && strings.Contains(text, `"envelope"`) {
 			t.Errorf("an envelope rides the result before the gate opens:\n%s", text)
 		}
+	}
+}
+
+// TestDeploy_NewDevSetup_GetsTheSupervisorLines (docs/spec-mate.md §2.8a.2,
+// orchestrator decision for mono-z-devtool-2): the first deploy of a dev
+// service writes the supervisor's two lines into its dev setup when a
+// published release ships zcp-devsup or ZCP_DEVSUP_URL names one, so its
+// first dev-server start redeploys nothing. Without either, or for a stage or
+// an already deployed dev service, the dev setup keeps today's shape and the
+// first start migrates it.
+func TestDeploy_NewDevSetup_GetsTheSupervisorLines(t *testing.T) {
+	t.Parallel()
+	const override = "https://storage.example.com/devsup/zcp-devsup-linux-amd64"
+	tests := []struct {
+		name     string
+		latest   string
+		override string
+		deployed bool
+		target   string
+		wantURL  string
+	}{
+		{name: "a published release ships it", latest: testDevsupURL, target: "appdev", wantURL: testDevsupURL},
+		{name: "ZCP_DEVSUP_URL names a build", override: override, target: "appdev", wantURL: override},
+		{name: "no release ships it yet", target: "appdev"},
+		{name: "the dev service was deployed before", latest: testDevsupURL, deployed: true, target: "appdev"},
+		{name: "the stage of the pair", latest: testDevsupURL, target: "appstage"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			meta := &workflow.ServiceMeta{
+				Hostname: "appdev", Stages: []topology.StageRef{{Hostname: "appstage", SetupName: "prod"}}, Mode: topology.PlanModeStandard,
+				BootstrapSession: "sess1", BootstrappedAt: "2026-10-14", PrimarySetupName: "dev",
+			}
+			if tt.deployed {
+				meta.FirstDeployedAt = "2026-10-14T20:00:00Z"
+			}
+			if err := workflow.WriteServiceMeta(dir, meta); err != nil {
+				t.Fatalf("WriteServiceMeta: %v", err)
+			}
+			mock := platform.NewMock().
+				WithServices([]platform.ServiceStack{
+					{ID: "svc-1", Name: "appdev", ProjectID: "proj-1", Status: serviceStatusRunning,
+						ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "bun@1.3"}},
+					{ID: "svc-2", Name: "appstage", ProjectID: "proj-1", Status: serviceStatusRunning,
+						ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "bun@1.3"}},
+				}).
+				WithAppVersionEvents([]platform.AppVersionEvent{
+					{ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-1", Status: statusActive, Sequence: 1},
+					{ID: "av-2", ProjectID: "proj-1", ServiceStackID: "svc-2", Status: statusActive, Sequence: 1},
+				})
+			c := &devservertest.Container{YAMLFile: "zerops.yml", YAML: todaysDevSetup}
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterDeploySSH(srv, mock, okHTTP, "proj-1", c, &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
+				nil, runtime.Info{}, dir, testDeployEngine(t), nil, DevsupSource{
+					Latest:   func(context.Context) (string, error) { return tt.latest, nil },
+					Override: tt.override,
+				})
+
+			result := callTool(t, srv, "zerops_deploy", map[string]any{"targetService": tt.target, "setup": "dev"})
+			text := getTextContent(t, result)
+			if result.IsError {
+				t.Fatalf("zerops_deploy: %s", text)
+			}
+			if c.Deploys != 1 {
+				t.Errorf("deploys = %d, want 1", c.Deploys)
+			}
+			supervised := strings.Contains(c.YAML, "start: zcp-devsup run")
+			if tt.wantURL == "" {
+				if c.YAML != todaysDevSetup {
+					t.Errorf("the dev setup changed:\n%s", c.YAML)
+				}
+				return
+			}
+			if !supervised || !strings.Contains(c.YAML, tt.wantURL) || !strings.Contains(c.YAML, "httpSupport: true") {
+				t.Errorf("zerops.yml after the first deploy:\n%s", c.YAML)
+			}
+			if !strings.Contains(text, `setup \"dev\" in zerops.yml now installs and runs zcp-devsup`) {
+				t.Errorf("the deploy does not say what changed: %s", text)
+			}
+			RegisterDevServer(srv, DevServerDeps{Client: mock, ProjectID: "proj-1", SSH: c, StateDir: dir,
+				AuthInfo: &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}})
+			a := callDevServer(t, srv, map[string]any{"action": "start", "hostname": "appdev", "command": "bun --watch index.ts", "port": 3000})
+			if !a.Running || c.Deploys != 1 || strings.Contains(a.Message, "zcp moved") {
+				t.Errorf("first start after the first deploy: %+v, deploys = %d; want it running with no redeploy", a, c.Deploys)
+			}
+		})
 	}
 }

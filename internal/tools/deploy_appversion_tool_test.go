@@ -55,7 +55,7 @@ func TestDeploySSH_AppVersionLatest_SkipsSourceAndRedeploys(t *testing.T) {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	// No ServiceMeta written for "api" — the appVersion path must not need
 	// adoption at all, unlike the normal source-resolving deploy path.
-	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, t.TempDir(), testDeployEngine(t), nil)
+	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, t.TempDir(), testDeployEngine(t), nil, DevsupSource{})
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{
 		"targetService": "api",

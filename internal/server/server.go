@@ -330,7 +330,15 @@ func (s *Server) registerTools() {
 	// adoption gate so cross-deploys (e.g. `apidev → apistage`) succeed
 	// before any bootstrap workflow runs. Nil outside authoring mode.
 	if s.sshDeployer != nil {
-		tools.RegisterDeploySSH(s.server, s.client, httpClient, projectID, s.sshDeployer, s.authInfo, s.logFetcher, s.rtInfo, stateDir, wfEngine, recipeProbe)
+		// The zcp-devsup a dev setup installs (docs/spec-mate.md §2.8a.2): the
+		// newest published release's asset unless ZCP_DEVSUP_URL names a build.
+		devsup := tools.DevsupSource{
+			Latest: func(ctx context.Context) (string, error) {
+				return update.NewChecker(Version).LatestAssetURL(ctx, ops.DevsupAsset)
+			},
+			Override: os.Getenv("ZCP_DEVSUP_URL"),
+		}
+		tools.RegisterDeploySSH(s.server, s.client, httpClient, projectID, s.sshDeployer, s.authInfo, s.logFetcher, s.rtInfo, stateDir, wfEngine, recipeProbe, devsup)
 		// v8.94: batch-deploy keeps multi-target parallelism server-side
 		// so the MCP STDIO channel isn't saturated (v23 "Not connected"
 		// failure class). SSH-only — local deploys don't face the same
@@ -342,11 +350,8 @@ func (s *Server) registerTools() {
 		tools.RegisterDevServer(s.server, tools.DevServerDeps{
 			Client: s.client, HTTPClient: httpClient, ProjectID: projectID, SSH: s.sshDeployer, StateDir: stateDir,
 			AuthInfo: s.authInfo, LogFetcher: s.logFetcher, RtInfo: s.rtInfo,
-			LatestDevsup: func(ctx context.Context) (string, error) {
-				return update.NewChecker(Version).LatestAssetURL(ctx, ops.DevsupAsset)
-			},
-			DevsupURLOverride: os.Getenv("ZCP_DEVSUP_URL"),
-			CarriesParts:      mate.EnvelopeCarriesParts(),
+			Devsup:       devsup,
+			CarriesParts: mate.EnvelopeCarriesParts(),
 		})
 		// A Mate stands up from its group's recipe in one call (docs/spec-mate.md
 		// D32). Mate-gated like every mate-shaped effect (§2.0): a container

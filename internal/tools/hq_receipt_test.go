@@ -186,7 +186,7 @@ func TestAReceiptNamesACommitOnlyForADeployMadeWithACleanWorkspace(t *testing.T)
 				WithAppVersionEvents([]platform.AppVersionEvent{{ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-2", Status: tt.status, Sequence: 1}})
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 			RegisterDeploySSH(srv, mock, okHTTP, "proj-1", tt.ssh, &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
-				nil, runtime.Info{}, stateDir, testDeployEngine(t), nil)
+				nil, runtime.Info{}, stateDir, testDeployEngine(t), nil, DevsupSource{})
 
 			args := map[string]any{"sourceService": "appdev", "targetService": "webstage", "setup": "web"}
 			if tt.sha != "" {

@@ -100,12 +100,9 @@ type DevServerDeps struct {
 	AuthInfo   *auth.Info
 	LogFetcher platform.LogFetcher
 	RtInfo     runtime.Info
-	// LatestDevsup finds the zcp-devsup a dev setup moved onto the
-	// supervisor installs — the newest published release's asset, "" when it
-	// ships none — unless DevsupURLOverride (ZCP_DEVSUP_URL) names one
-	// (ops.DevsupURL). Nil finds none.
-	LatestDevsup      func(ctx context.Context) (string, error)
-	DevsupURLOverride string
+	// Devsup finds the zcp-devsup a dev setup moved onto the supervisor
+	// installs.
+	Devsup DevsupSource
 	// CarriesParts is mate.EnvelopeCarriesParts: the result carries the
 	// envelope with the dev service's devServers[] only when every mate
 	// this zcp drives accepts it (docs/spec-mate.md §2.8a.3).

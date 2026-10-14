@@ -48,7 +48,7 @@ func migrateToSupervisor(ctx context.Context, req *mcp.CallToolRequest, d DevSer
 			host+"'s dev setup does not run the dev-server supervisor, and this zcp cannot redeploy it",
 			"Run zcp where it can deploy (the zcp service of the project) and start the dev server again.")
 	}
-	url, err := devsupURL(ctx, d)
+	url, err := d.Devsup.URL(ctx)
 	if err != nil {
 		return nil, nil, platform.NewPlatformError(platform.ErrInvalidParameter,
 			host+"'s dev setup does not run the dev-server supervisor yet: "+err.Error(), "")
@@ -81,22 +81,68 @@ func migrateToSupervisor(ctx context.Context, req *mcp.CallToolRequest, d DevSer
 	return m, result, err
 }
 
-// devsupURL is the zcp-devsup download a dev setup moved onto the supervisor
-// installs: the override, else the newest release's asset.
-func devsupURL(ctx context.Context, d DevServerDeps) (string, error) {
+// DevsupSource finds the zcp-devsup a dev setup installs (ops.DevsupURL):
+// Latest is the newest published release's asset, "" when it ships none (nil
+// finds none); Override (ZCP_DEVSUP_URL) replaces it.
+type DevsupSource struct {
+	Latest   func(ctx context.Context) (string, error)
+	Override string
+}
+
+// URL is the zcp-devsup download a dev setup installs: the override, else
+// the newest release's asset.
+func (s DevsupSource) URL(ctx context.Context) (string, error) {
 	latest := ""
-	if d.DevsupURLOverride == "" && d.LatestDevsup != nil {
-		found, err := d.LatestDevsup(ctx)
+	if s.Override == "" && s.Latest != nil {
+		found, err := s.Latest(ctx)
 		if err != nil {
 			return "", fmt.Errorf("find the newest zcp release: %w", err)
 		}
 		latest = found
 	}
-	url, err := ops.DevsupURL(latest, d.DevsupURLOverride)
+	url, err := ops.DevsupURL(latest, s.Override)
 	if err != nil {
 		return "", fmt.Errorf("devsup download: %w", err)
 	}
 	return url, nil
+}
+
+// superviseNewDevSetup writes the supervisor's two lines into the dev setup a
+// dev service deploys for the first time (docs/spec-mate.md §2.8a.2), so its
+// first dev-server start finds the supervisor and redeploys nothing. It
+// changes nothing when the target is not a dev-mode dynamic runtime's
+// self-deploy, was deployed before (its first start migrates it), or no
+// zcp-devsup is published or named yet — the dev setup keeps today's shape.
+// It returns the sentence saying what changed, "" when nothing did.
+func superviseNewDevSetup(ctx context.Context, client platform.Client, projectID string, ssh ops.SSHDeployer, stateDir string, src DevsupSource, source, target, setup string) (string, error) {
+	if source != "" && source != target {
+		return "", nil
+	}
+	meta, _ := workflow.FindServiceMeta(stateDir, target)
+	if meta == nil || meta.IsDeployed() {
+		return "", nil
+	}
+	services, err := client.ListServices(ctx, projectID)
+	if err != nil {
+		return "", nil //nolint:nilerr // no service list: the dev setup keeps today's shape and the first start migrates it
+	}
+	svc, err := ops.FindService(services, target)
+	if err != nil || !isDeferredStartTarget(meta, svc, target) {
+		return "", nil //nolint:nilerr // not a dev-mode dynamic runtime here
+	}
+	url, err := src.URL(ctx)
+	if err != nil {
+		return "", nil //nolint:nilerr // no zcp-devsup published or named yet: today's shape, the first start migrates it
+	}
+	file, used, changed, err := ops.AdoptSupervisorInDevSetup(ctx, ssh, target, setup, url)
+	if err != nil {
+		return "", fmt.Errorf("dev-server supervisor: %w", err)
+	}
+	if !changed {
+		return "", nil
+	}
+	return fmt.Sprintf("Before this first deploy zcp put %s under the dev-server supervisor: setup %q in %s now installs and runs zcp-devsup (run.prepareCommands, run.start) — commit it with your next change; zerops_dev_server action=start runs your dev server under it.",
+		target, used, file), nil
 }
 
 // redeployForSupervisor self-deploys hostname with setup and records the
