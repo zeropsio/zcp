@@ -1,0 +1,48 @@
+{
+  "appId": "app-weather",
+  "repo": "weather",
+  "number": 12,
+  "mateProjectId": "proj-weather",
+  "title": "Show the forecast for tomorrow",
+  "body": "",
+  "state": "open",
+  "head": "d4e5f60718293a4b5c6d7e8f9012345678a1b2c3",
+  "mergedSha": null,
+  "landedHead": null,
+  "openedAt": "2026-10-14T21:09:00Z",
+  "mergedAt": null,
+  "closedAt": null,
+  "updatedAt": "2026-10-14T21:10:00Z",
+  "mergeability": "clean",
+  "behind": false,
+  "receipt": {
+    "at": "2026-10-14T21:10:00Z",
+    "parts": [
+      {
+        "setup": "web",
+        "previewHostname": "webstage",
+        "deploy": "ok",
+        "deployedAt": "2026-10-14T21:06:00Z",
+        "workspaceClean": true,
+        "deployedCommit": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+        "verified": true
+      },
+      {
+        "setup": "api",
+        "previewHostname": "apistage",
+        "deploy": "ok",
+        "deployedAt": "2026-10-14T21:07:00Z",
+        "workspaceClean": false,
+        "verified": true
+      },
+      {
+        "setup": "worker",
+        "previewHostname": "workerstage",
+        "deploy": "failed",
+        "deployedAt": "2026-10-14T21:08:00Z",
+        "workspaceClean": true,
+        "verified": false
+      }
+    ]
+  }
+}
