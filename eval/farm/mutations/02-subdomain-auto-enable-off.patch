@@ -1,11 +1,10 @@
 diff --git a/internal/tools/dev_server.go b/internal/tools/dev_server.go
-index 9902b802..d49e9cae 100644
 --- a/internal/tools/dev_server.go
 +++ b/internal/tools/dev_server.go
-@@ -138,7 +138,7 @@ func RegisterDevServer(srv *mcp.Server, client platform.Client, httpClient ops.H
+@@ -158,7 +158,7 @@
+ 		// start/restart with a passing health probe just proved a live
  		// listener exists, so force listener=true regardless of the
- 		// runtime's static deferred-start classification — a dev-mode
- 		// dynamic runtime has none until THIS call.
+ 		// runtime's static deferred-start classification.
 -		if result.Running && isDevServerStartAction(input.Action) {
 +		if false && result.Running && isDevServerStartAction(input.Action) {
  			scratch := &ops.DeployResult{}

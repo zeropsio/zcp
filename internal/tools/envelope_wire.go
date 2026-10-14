@@ -8,6 +8,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -30,7 +31,17 @@ import (
 // here, so the rendered markdown and the machine-readable state can never
 // describe different moments.
 func statusResult(resp workflow.Response) *mcp.CallToolResult {
-	return textResult(workflow.AppendEnvelope(workflow.RenderStatus(resp), resp.Envelope))
+	return textResult(workflow.AppendEnvelope(workflow.RenderStatus(resp), wireEnvelope(resp.Envelope)))
+}
+
+// wireEnvelope is the envelope as this zcp sends it: from field-order step
+// (3) of docs/spec-mate.md §2.8a.3 a pair's stages ride stages[] in place of
+// stageHostname/stageSetupName (mate.EnvelopeCarriesParts).
+func wireEnvelope(env workflow.StateEnvelope) workflow.StateEnvelope {
+	if !mate.EnvelopeCarriesParts() {
+		return env
+	}
+	return env.WithParts(nil)
 }
 
 // withFreshEnvelope appends a freshly computed StateEnvelope to a successful
@@ -96,6 +107,7 @@ func freshEnvelope(
 		fmt.Fprintf(os.Stderr, "zcp: compute envelope for tool result: %v\n", err)
 		return nil
 	}
+	envelope = wireEnvelope(envelope)
 	return &envelope
 }
 

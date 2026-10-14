@@ -76,6 +76,10 @@ type DevServerResult struct {
 	// differs from Hostname (docs/spec-mate.md §2.8a.3): a single-part app's
 	// one server is named after its dev service.
 	Name string `json:"name,omitempty"`
+	// Read is the call's read of the dev service's dev servers, its state the
+	// supervisor's last answer in the call — what the envelope's devServers[]
+	// projects (DevServerStates). Nil when no supervisor answered.
+	Read *DevServers `json:"-"`
 }
 
 // DevServerParams is the typed input of ExecuteDevServer. Fields not relevant
@@ -194,16 +198,22 @@ func ExecuteDevServer(
 	case err != nil:
 		return nil, err
 	}
+	var result *DevServerResult
 	switch action {
 	case devServerActionStart, devServerActionRestart:
-		return startDevServer(ctx, ssh, p, ds)
+		result, err = startDevServer(ctx, ssh, p, ds)
 	case devServerActionStop:
-		return stopDevServer(ctx, ssh, p, ds)
+		result, err = stopDevServer(ctx, ssh, p, ds)
 	case devServerActionStatus:
-		return statusDevServer(ctx, ssh, p, ds)
+		result, err = statusDevServer(ctx, ssh, p, ds)
 	default:
-		return logsDevServer(ctx, ssh, p, ds)
+		result, err = logsDevServer(ctx, ssh, p, ds)
 	}
+	if err != nil {
+		return nil, err
+	}
+	result.Read = ds
+	return result, nil
 }
 
 func validateDevServerParams(p DevServerParams) error {
@@ -471,25 +481,28 @@ func startDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds 
 		verb = devServerActionRestart
 	}
 	begun := time.Now()
-	if _, err := supervisorCtl(ctx, ssh, p.Hostname, verb, name); err != nil {
+	st, err := supervisorCtl(ctx, ssh, p.Hostname, verb, name)
+	if err != nil {
 		return nil, err
 	}
+	ds.observe(st)
 	result := newResult(action, p.Hostname, name)
 	if want.Port == 0 || p.NoHTTPProbe {
-		return settleNoProbe(ctx, ssh, result, name)
+		return settleNoProbe(ctx, ssh, ds, result, name)
 	}
-	return probeStarted(ctx, ssh, result, p, name, want.Port, begun)
+	return probeStarted(ctx, ssh, ds, result, p, name, want.Port, begun)
 }
 
 // settleNoProbe decides a portless start from the supervisor's status after a
 // short settle: a server that ended during init is reported crashed.
-func settleNoProbe(ctx context.Context, ssh SSHDeployer, result *DevServerResult, name string) (*DevServerResult, error) {
+func settleNoProbe(ctx context.Context, ssh SSHDeployer, ds *DevServers, result *DevServerResult, name string) (*DevServerResult, error) {
 	settle := currentNoProbeSettle()
 	sleepCtx(ctx, settle)
 	st, err := supervisorCtl(ctx, ssh, result.Hostname, devServerActionStatus, name)
 	if err != nil {
 		return nil, err
 	}
+	ds.observe(st)
 	server := st.Servers[name]
 	result.LogFile, result.PID = server.LogPath, server.Pid
 	label := serverLabel(result.Hostname, name)
@@ -508,7 +521,7 @@ func settleNoProbe(ctx context.Context, ssh SSHDeployer, result *DevServerResult
 
 // probeStarted runs the in-container health probe for a started server and
 // then confirms with the supervisor that its group is the one answering.
-func probeStarted(ctx context.Context, ssh SSHDeployer, result *DevServerResult, p DevServerParams, name string, port int, begun time.Time) (*DevServerResult, error) {
+func probeStarted(ctx context.Context, ssh SSHDeployer, ds *DevServers, result *DevServerResult, p DevServerParams, name string, port int, begun time.Time) (*DevServerResult, error) {
 	wait := p.WaitSeconds
 	if wait <= 0 {
 		wait = defaultDevServerWait
@@ -525,6 +538,7 @@ func probeStarted(ctx context.Context, ssh SSHDeployer, result *DevServerResult,
 	if err != nil {
 		return nil, err
 	}
+	ds.observe(st)
 	server := st.Servers[name]
 	result.LogFile, result.PID = server.LogPath, server.Pid
 	probeLine := strings.TrimSpace(string(probeOut))
@@ -584,6 +598,7 @@ func stopDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds *
 	if err != nil {
 		return nil, err
 	}
+	ds.observe(st)
 	result := newResult(devServerActionStop, p.Hostname, name)
 	server := st.Servers[name]
 	result.LogFile = server.LogPath

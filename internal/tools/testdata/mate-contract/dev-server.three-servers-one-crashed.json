@@ -4,7 +4,7 @@
   "running": false,
   "logTail": "Error: QUEUE_URL is not set\n",
   "logFile": "/home/zerops/.zcp/devsup/logs/worker.log",
-  "message": "Dev server worker on appdev crashed (exit 1); the supervisor leaves it down.",
+  "message": "Dev server worker on appdev crashed (exit 1); the supervisor leaves it down. Read logTail, fix the cause, then start it again.",
   "reason": "crashed",
   "name": "worker",
   "envelope": {
@@ -50,24 +50,14 @@
             "port": 3000,
             "url": "https://appdev-1df2-3000.prg1.zerops.app",
             "status": "running",
-            "readAt": "2026-10-14T21:04:00Z",
-            "verify": {
-              "ok": true,
-              "httpStatus": 200,
-              "at": "2026-10-14T21:04:00Z"
-            }
+            "readAt": "2026-10-14T21:04:00Z"
           },
           {
             "name": "api",
             "port": 8080,
             "url": "https://appdev-1df2-8080.prg1.zerops.app",
             "status": "running",
-            "readAt": "2026-10-14T21:04:00Z",
-            "verify": {
-              "ok": true,
-              "httpStatus": 200,
-              "at": "2026-10-14T21:04:00Z"
-            }
+            "readAt": "2026-10-14T21:04:00Z"
           },
           {
             "name": "worker",

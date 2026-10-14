@@ -28,6 +28,12 @@ const (
 	// Mate as HQ's whatever its enrollment.
 	MinimumMateVersion = "0.14.0"
 
+	// PartsMateVersion is the first mate release that accepts the envelope's
+	// stages[] and devServers[] (docs/spec-mate.md §2.8a.3, field-order
+	// step 1); empty while no release does. zcp sends them only once
+	// MinimumMateVersion reaches it (step 2) — EnvelopeCarriesParts.
+	PartsMateVersion = ""
+
 	// defaultManifestURL is GitHub's own "latest release" redirect for the
 	// fork's stable release asset. The fork's release workflow triggers only
 	// on stable v<major>.<minor>.<patch> tags, so this is the stable
@@ -276,6 +282,18 @@ func compareSemver(a, b string) (int, error) {
 		return 0, fmt.Errorf("version %q: %w", b, err)
 	}
 	return am.compare(bm), nil
+}
+
+// EnvelopeCarriesParts reports whether this zcp sends stages[] and
+// devServers[] in place of stageHostname/stageSetupName (docs/spec-mate.md
+// §2.8a.3 field-order step 3): only when every mate it drives accepts them.
+func EnvelopeCarriesParts() bool {
+	return carriesParts(MinimumMateVersion, PartsMateVersion)
+}
+
+func carriesParts(minimum, accepting string) bool {
+	cmp, err := compareSemver(minimum, accepting)
+	return err == nil && cmp >= 0
 }
 
 // VersionOlder reports whether installed names a strictly older release

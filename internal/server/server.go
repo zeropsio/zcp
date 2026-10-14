@@ -21,6 +21,7 @@ import (
 	"github.com/zeropsio/zcp/internal/capture"
 	"github.com/zeropsio/zcp/internal/content"
 	"github.com/zeropsio/zcp/internal/knowledge"
+	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -345,6 +346,7 @@ func (s *Server) registerTools() {
 				return update.NewChecker(Version).LatestAssetURL(ctx, ops.DevsupAsset)
 			},
 			DevsupURLOverride: os.Getenv("ZCP_DEVSUP_URL"),
+			CarriesParts:      mate.EnvelopeCarriesParts(),
 		})
 		// A Mate stands up from its group's recipe in one call (docs/spec-mate.md
 		// D32). Mate-gated like every mate-shaped effect (§2.0): a container

@@ -10,10 +10,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/zeropsio/zcp/internal/devsup"
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/ops/devservertest"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -371,4 +375,129 @@ func TestMateContractFixtures_Receipt_CommitOnlyFromACleanTree(t *testing.T) {
 	if web := change.Receipt.Parts[0]; web.DeployedCommit == "" || web.DeployedCommit == *change.Head {
 		t.Errorf("the fixture shows a preview older than the change head, got %q vs %q", web.DeployedCommit, *change.Head)
 	}
+}
+
+// TestMateContractFixtures_DevServerResults_RenderedByTheHandler (TEST-PLAN
+// E1 #15/#16, zcp side): with the parts envelope on, zerops_dev_server
+// renders each dev-server fixture — its own fields, the dev service's
+// stages[] and devServers[] — through the real handler; the read times are
+// the call's own, so they are checked against the call instead.
+func TestMateContractFixtures_DevServerResults_RenderedByTheHandler(t *testing.T) {
+	t.Parallel()
+	crashedAt := time.Date(2026, 10, 14, 21, 3, 10, 0, time.UTC)
+	tests := []struct {
+		fixture string
+		decl    string
+		stages  []topology.StageRef
+		args    map[string]any
+		setup   func(c *devservertest.Container)
+	}{
+		{
+			fixture: "dev-server.one-server.json",
+			decl:    `{"version":1,"servers":[{"name":"appdev","port":3000,"command":"bun --hot index.ts","cwd":"."}]}`,
+			stages:  []topology.StageRef{{Hostname: "appstage", SetupName: "prod"}},
+			args:    map[string]any{"action": "status", "hostname": "appdev"},
+		},
+		{
+			fixture: "dev-server.three-servers-one-crashed.json",
+			decl: `{"version":1,"servers":[{"name":"web","port":3000,"command":"bun --hot index.ts","cwd":"apps/web"},` +
+				`{"name":"api","port":8080,"command":"go run .","cwd":"apps/api"},` +
+				`{"name":"worker","command":"bun worker.ts","cwd":"apps/worker"}]}`,
+			stages: []topology.StageRef{{Hostname: "webstage", SetupName: "web"}, {Hostname: "apistage", SetupName: "api"}, {Hostname: "workerstage", SetupName: "worker"}},
+			args:   map[string]any{"action": "status", "hostname": "appdev", "name": "worker"},
+			setup: func(c *devservertest.Container) {
+				c.Servers["worker"].Status = "crashed"
+				c.Servers["worker"].Pid = 0
+				c.Servers["worker"].Exit = &devsup.Exit{Code: 1, At: crashedAt}
+				c.Logs = map[string][]string{"worker": {"Error: QUEUE_URL is not set"}}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.fixture, func(t *testing.T) {
+			t.Parallel()
+			var want contractDevServerResult
+			readContractFixture(t, tt.fixture, &want)
+
+			dir := t.TempDir()
+			if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+				Hostname: "appdev", Mode: topology.PlanModeStandard, Stages: tt.stages, PrimarySetupName: "dev",
+				BootstrapSession: "s", BootstrappedAt: "2026-10-14",
+			}); err != nil {
+				t.Fatalf("WriteServiceMeta: %v", err)
+			}
+			services := make([]platform.ServiceStack, 0, 1+len(tt.stages))
+			services = append(services, platform.ServiceStack{ID: "svc-dev", Name: "appdev", ProjectID: "proj-weather", Status: serviceStatusRunning, SubdomainAccess: true,
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "bun@1.3", ServiceStackTypeCategoryName: "USER"},
+				Ports:                []platform.Port{{Port: 3000, HTTPSupport: true}, {Port: 8080, HTTPSupport: true}}})
+			for _, st := range tt.stages {
+				services = append(services, platform.ServiceStack{ID: "svc-" + st.Hostname, Name: st.Hostname, ProjectID: "proj-weather", Status: serviceStatusRunning,
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "bun@1.3", ServiceStackTypeCategoryName: "USER"}})
+			}
+			mock := platform.NewMock().WithServices(services).
+				WithProject(&platform.Project{ID: "proj-weather", Name: "weather", SubdomainHost: "1df2.prg1.zerops.app"})
+			c := devservertest.NewSupervised(tt.decl)
+			if tt.setup != nil {
+				tt.setup(c)
+			}
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterDevServer(srv, DevServerDeps{Client: mock, ProjectID: "proj-weather", SSH: c, StateDir: dir,
+				RtInfo: runtime.Info{InContainer: true, ServiceName: "zcp"}, CarriesParts: true})
+
+			before := time.Now().UTC()
+			result := callTool(t, srv, "zerops_dev_server", tt.args)
+			after := time.Now().UTC()
+			text := getTextContent(t, result)
+			if result.IsError {
+				t.Fatalf("zerops_dev_server: %s", text)
+			}
+			var got contractDevServerResult
+			dec := json.NewDecoder(strings.NewReader(text))
+			dec.DisallowUnknownFields()
+			if err := dec.Decode(&got); err != nil {
+				t.Fatalf("the handler's result does not match the contract shape: %v\n%s", err, text)
+			}
+			if got.Envelope == nil {
+				t.Fatalf("no envelope with the parts envelope on:\n%s", text)
+			}
+			if !reflect.DeepEqual(got.DevServerResult, want.DevServerResult) || got.Name != want.Name {
+				t.Errorf("result fields\n got %+v name=%q\nwant %+v name=%q", got.DevServerResult, got.Name, want.DevServerResult, want.Name)
+			}
+			dev := contractService(t, got.Envelope, "appdev")
+			if dev.StageHostname != "" || dev.StageSetupName != "" {
+				t.Errorf("the dev half still carries today's stage keys: %+v", dev.ServiceSnapshot)
+			}
+			wantDev := contractService(t, want.Envelope, "appdev")
+			if !reflect.DeepEqual(dev.Stages, wantDev.Stages) {
+				t.Errorf("stages = %+v, want %+v", dev.Stages, wantDev.Stages)
+			}
+			for i := range dev.DevServers {
+				d := &dev.DevServers[i]
+				if d.ReadAt.Before(before.Truncate(time.Second)) || d.ReadAt.After(after) {
+					t.Errorf("%s read at %v, outside the call [%v, %v]", d.Name, d.ReadAt, before, after)
+				}
+				d.ReadAt = wantDev.DevServers[0].ReadAt
+				if d.Verify != nil {
+					d.Verify.At = d.ReadAt
+				}
+			}
+			if !reflect.DeepEqual(dev.DevServers, wantDev.DevServers) {
+				g, _ := json.Marshal(dev.DevServers)
+				w, _ := json.Marshal(wantDev.DevServers)
+				t.Errorf("devServers\n got %s\nwant %s", g, w)
+			}
+		})
+	}
+}
+
+// contractService is the envelope's snapshot of hostname.
+func contractService(t *testing.T, env *contractEnvelope, hostname string) contractSnapshot {
+	t.Helper()
+	for _, s := range env.Services {
+		if s.Hostname == hostname {
+			return s
+		}
+	}
+	t.Fatalf("the envelope has no %s", hostname)
+	return contractSnapshot{}
 }

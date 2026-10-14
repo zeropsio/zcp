@@ -326,3 +326,35 @@ func TestVersionOlder(t *testing.T) {
 		})
 	}
 }
+
+// TestEnvelopeCarriesParts (TEST-PLAN E1 #16): zcp sends per-server state
+// only to a Mate at or above the minimum version that accepts it — so only
+// once MinimumMateVersion reaches the first release that accepts it, and
+// never while no release does.
+func TestEnvelopeCarriesParts(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, minimum, accepting string
+		want                     bool
+	}{
+		{name: "no mate release accepts it yet", minimum: "0.14.0", accepting: "", want: false},
+		{name: "a release accepts it, the minimum is older", minimum: "0.14.0", accepting: "0.15.0", want: false},
+		{name: "the minimum is that release", minimum: "0.15.0", accepting: "0.15.0", want: true},
+		{name: "the minimum is past it", minimum: "0.16.2", accepting: "0.15.0", want: true},
+		{name: "an unreadable version", minimum: "0.16", accepting: "0.15.0", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := mate.CarriesParts(tt.minimum, tt.accepting); got != tt.want {
+				t.Errorf("CarriesParts(%q, %q) = %v, want %v", tt.minimum, tt.accepting, got, tt.want)
+			}
+		})
+	}
+	if mate.EnvelopeCarriesParts() != mate.CarriesParts(mate.MinimumMateVersion, mate.PartsMateVersion) {
+		t.Error("EnvelopeCarriesParts does not read MinimumMateVersion and PartsMateVersion")
+	}
+	if mate.PartsMateVersion == "" && mate.EnvelopeCarriesParts() {
+		t.Error("zcp sends stages/devServers while no mate release accepts them")
+	}
+}

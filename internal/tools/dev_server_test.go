@@ -397,3 +397,24 @@ func TestRetireDevServerKeeper(t *testing.T) {
 		t.Errorf("a unit removal failure is not reported: %v", err)
 	}
 }
+
+// TestDevServer_PartsEnvelopeOnlyBehindTheGate (TEST-PLAN E1 #16): until
+// every mate zcp drives accepts per-server state, the result is today's —
+// no envelope, no devServers[].
+func TestDevServer_PartsEnvelopeOnlyBehindTheGate(t *testing.T) {
+	t.Parallel()
+	for _, carries := range []bool{false, true} {
+		mock := platform.NewMock().WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "appdev", ProjectID: "proj-1", Status: serviceStatusRunning,
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "bun@1.3"}}})
+		srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+		RegisterDevServer(srv, DevServerDeps{Client: mock, ProjectID: "proj-1", StateDir: t.TempDir(), CarriesParts: carries,
+			SSH: devservertest.NewSupervised(`{"version":1,"servers":[{"name":"appdev","port":3000,"command":"bun index.ts","cwd":"."}]}`)})
+		text := getTextContent(t, callTool(t, srv, "zerops_dev_server", map[string]any{"action": "status", "hostname": "appdev"}))
+		if got := strings.Contains(text, `"devServers"`); got != carries {
+			t.Errorf("CarriesParts=%v: result carries devServers = %v\n%s", carries, got, text)
+		}
+		if !carries && strings.Contains(text, `"envelope"`) {
+			t.Errorf("an envelope rides the result before the gate opens:\n%s", text)
+		}
+	}
+}

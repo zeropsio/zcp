@@ -6,6 +6,7 @@
   "healthPath": "/",
   "healthStatus": 200,
   "logFile": "/home/zerops/.zcp/devsup/logs/appdev.log",
+  "pid": 800,
   "url": "http://appdev:3000/",
   "message": "Dev server appdev is running on :3000 (HTTP 200 on /).",
   "envelope": {
@@ -43,7 +44,12 @@
             "port": 3000,
             "url": "https://appdev-1df2-3000.prg1.zerops.app",
             "status": "running",
-            "readAt": "2026-10-14T21:04:00Z"
+            "readAt": "2026-10-14T21:04:00Z",
+            "verify": {
+              "ok": true,
+              "httpStatus": 200,
+              "at": "2026-10-14T21:04:00Z"
+            }
           }
         ]
       },

@@ -151,6 +151,13 @@ type ServiceSnapshot struct {
 	SetupName      string `json:"setupName,omitempty"`
 	StageSetupName string `json:"stageSetupName,omitempty"`
 
+	// WireStages and DevServers are the dev half's parts as the envelope
+	// carries them from field-order step (3) of docs/spec-mate.md §2.8a.3;
+	// only WithParts sets them. DevServers is absent when the call did not
+	// read the supervisor — never "none running".
+	WireStages []topology.StageWire      `json:"stages,omitempty"`
+	DevServers []topology.DevServerState `json:"devServers,omitempty"`
+
 	// Repo is the live repo state for this service (docs/spec-workflows.md
 	// §8 GLC-7, G1/G2) — nil for managed/unknown-class services (they never
 	// carry a working tree) and for any runtime service ApplyRepoStatus
@@ -186,6 +193,33 @@ func (s ServiceSnapshot) PairStageHostnames() []string {
 		return []string{s.StageHostname}
 	}
 	return nil
+}
+
+// WithParts is the envelope as zcp sends it from field-order step (3) of
+// docs/spec-mate.md §2.8a.3: every dev half carries stages[] in place of
+// stageHostname/stageSetupName, and devServers[] where this call read its
+// supervisor (keyed by dev hostname). The receiver is left as it was; a
+// second application keeps the stages the first one projected.
+func (e StateEnvelope) WithParts(devServers map[string][]topology.DevServerState) StateEnvelope {
+	services := make([]ServiceSnapshot, len(e.Services))
+	copy(services, e.Services)
+	for i := range services {
+		s := &services[i]
+		stages := s.Stages
+		if len(stages) == 0 && s.StageHostname != "" {
+			stages = []topology.StageRef{{Hostname: s.StageHostname, SetupName: s.StageSetupName}}
+		}
+		if len(stages) > 0 {
+			s.WireStages = make([]topology.StageWire, 0, len(stages))
+			for _, st := range stages {
+				s.WireStages = append(s.WireStages, topology.StageWire{Hostname: st.Hostname, Setup: st.SetupName})
+			}
+		}
+		s.StageHostname, s.StageSetupName = "", ""
+		s.DevServers = devServers[s.Hostname]
+	}
+	e.Services = services
+	return e
 }
 
 // RollbackInfo is the per-service rollback-candidate id summary (docs/

@@ -11,6 +11,8 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // DevServerInput is the input type for zerops_dev_server.
@@ -104,6 +106,10 @@ type DevServerDeps struct {
 	// (ops.DevsupURL). Nil finds none.
 	LatestDevsup      func(ctx context.Context) (string, error)
 	DevsupURLOverride string
+	// CarriesParts is mate.EnvelopeCarriesParts: the result carries the
+	// envelope with the dev service's devServers[] only when every mate
+	// this zcp drives accepts it (docs/spec-mate.md §2.8a.3).
+	CarriesParts bool
 }
 
 // RegisterDevServer registers the zerops_dev_server tool. The tool is
@@ -159,6 +165,13 @@ func RegisterDevServer(srv *mcp.Server, d DevServerDeps) {
 			resp.Warnings = append(resp.Warnings, scratch.Warnings...)
 			resp.PublicAccess = scratch.PublicAccess
 		}
+		if d.CarriesParts {
+			if env := freshEnvelope(ctx, stateDir, client, projectID, d.RtInfo); env != nil {
+				states := ops.DevServerStates(ctx, client, projectID, result)
+				withServers := env.WithParts(map[string][]topology.DevServerState{input.Hostname: states})
+				resp.Envelope = &withServers
+			}
+		}
 		if input.Action == "logs" {
 			return jsonResult(devServerLogRead{devServerToolResult: resp}), nil, nil
 		}
@@ -209,6 +222,10 @@ type devServerToolResult struct {
 	// Warnings carries any non-fatal anomaly: a public-access hook failure,
 	// or what moving the dev setup onto the supervisor could not finish.
 	Warnings []string `json:"warnings,omitempty"`
+	// Envelope is the post-call state envelope with the dev service's
+	// devServers[] (docs/spec-mate.md §2.8a.3) — only from field-order
+	// step (3), DevServerDeps.CarriesParts.
+	Envelope *workflow.StateEnvelope `json:"envelope,omitempty"`
 }
 
 // devServerLogRead is a log read's answer. A log read checks nothing, so it

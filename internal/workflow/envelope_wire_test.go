@@ -334,3 +334,53 @@ func TestExtractEnvelope_CarrierPrecedence(t *testing.T) {
 		t.Errorf("JSON carrier must win over a fence inside a value: got %q", got.Phase)
 	}
 }
+
+// TestStateEnvelope_WithParts (docs/spec-mate.md §2.8a.3): from field-order
+// step (3) a dev half's stages ride stages[] {hostname, setup} in place of
+// stageHostname/stageSetupName — one stage means today's pair — and
+// devServers[] only where the call read them; the envelope zcp computed is
+// left as it was, and projecting twice changes nothing.
+func TestStateEnvelope_WithParts(t *testing.T) {
+	t.Parallel()
+	at := time.Date(2026, 10, 14, 21, 4, 0, 0, time.UTC)
+	env := StateEnvelope{Services: []ServiceSnapshot{
+		{Hostname: "appdev", StageHostname: "appstage", SetupName: "dev", StageSetupName: "prod"},
+		{Hostname: "appstage", SetupName: "prod"},
+		{Hostname: "monodev", StageHostname: "webstage", Stages: []topology.StageRef{{Hostname: "webstage", SetupName: "web"}, {Hostname: "apistage"}}},
+	}}
+	servers := map[string][]topology.DevServerState{"monodev": {{Name: "web", Port: 3000, Status: "running", ReadAt: at}}}
+
+	got := env.WithParts(servers)
+	if env.Services[0].StageHostname != "appstage" || env.Services[0].WireStages != nil {
+		t.Errorf("the computed envelope changed: %+v", env.Services[0])
+	}
+	want := []struct {
+		stages  []topology.StageWire
+		servers int
+	}{
+		{stages: []topology.StageWire{{Hostname: "appstage", Setup: "prod"}}},
+		{},
+		{stages: []topology.StageWire{{Hostname: "webstage", Setup: "web"}, {Hostname: "apistage"}}, servers: 1},
+	}
+	for _, twice := range []bool{false, true} {
+		if twice {
+			got = got.WithParts(servers)
+		}
+		for i, w := range want {
+			s := got.Services[i]
+			if !reflect.DeepEqual(s.WireStages, w.stages) || len(s.DevServers) != w.servers {
+				t.Errorf("twice=%v %s: stages %+v devServers %d, want %+v %d", twice, s.Hostname, s.WireStages, len(s.DevServers), w.stages, w.servers)
+			}
+			if s.StageHostname != "" || s.StageSetupName != "" {
+				t.Errorf("twice=%v %s still carries stageHostname/stageSetupName", twice, s.Hostname)
+			}
+		}
+	}
+	b, err := json.Marshal(got.Services[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"setupName":"dev","stages":[{"hostname":"appstage","setup":"prod"}]`) {
+		t.Errorf("single pair on the wire = %s", b)
+	}
+}

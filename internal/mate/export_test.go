@@ -38,3 +38,6 @@ func SetResolveDesiredRelease(fn func(opts EnsureOptions) (Manifest, error)) {
 	resolveDesiredRelease = fn
 }
 func ResetResolveDesiredRelease() { resolveDesiredRelease = defaultResolveDesiredRelease }
+
+// CarriesParts exposes carriesParts to the external test package.
+var CarriesParts = carriesParts

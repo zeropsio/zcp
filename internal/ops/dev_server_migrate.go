@@ -283,7 +283,7 @@ func DevServersAfterDeploy(ctx context.Context, ssh SSHDeployer, hostname string
 		result.Message = fmt.Sprintf("Dev server %s is %s under the supervisor.", serverLabel(hostname, server.Name), st.Status)
 		return ds, result, nil
 	}
-	result, err = probeStarted(ctx, ssh, result, DevServerParams{Hostname: hostname}, server.Name, server.Port, ds.ReadAt)
+	result, err = probeStarted(ctx, ssh, ds, result, DevServerParams{Hostname: hostname}, server.Name, server.Port, ds.ReadAt)
 	if err != nil {
 		return nil, nil, err
 	}
