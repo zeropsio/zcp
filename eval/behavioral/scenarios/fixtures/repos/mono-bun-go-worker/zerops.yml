@@ -1,0 +1,68 @@
+# F2 (MODEL S2, variant B): parts web, api, worker. Two dev services share one
+# local-storage volume `vol` holding the repo at /var/www/ws: webdev (setup dev,
+# Bun, Alpine) runs web + worker, apidev (setup dev-api, Go, Ubuntu) runs api.
+# Volume shape as verified live in mono-v4 LIVE-PROBE-4 H3; /var/www itself is
+# rejected as a mountPath. The dev setups are today's shape; zcp's supervisor
+# migration adds the two `zcp-devsup` lines (spec-mate §2.8a.2, `run --root /var/www/ws`).
+zerops:
+  - setup: dev
+    build:
+      base: bun@1.3
+      deployFiles: [.]
+    run:
+      base: bun@1.3
+      volume:
+        hostname: vol
+        mountPath: /var/www/ws
+      ports:
+        - port: 3000
+          httpSupport: true
+      start: zsc noop --silent
+
+  - setup: dev-api
+    build:
+      base: go@1
+      os: ubuntu
+      deployFiles: [.]
+    run:
+      base: go@1
+      os: ubuntu
+      volume:
+        hostname: vol
+        mountPath: /var/www/ws
+      ports:
+        - port: 8080
+          httpSupport: true
+      start: zsc noop --silent
+
+  - setup: web
+    build:
+      base: bun@1.3
+      deployFiles: [apps/web/~]
+    run:
+      base: bun@1.3
+      ports:
+        - port: 3000
+          httpSupport: true
+      start: bun index.ts
+
+  - setup: api
+    build:
+      base: go@1
+      buildCommands:
+        - cd apps/api && go build -o app .
+      deployFiles: [apps/api/~]
+    run:
+      base: go@1
+      ports:
+        - port: 8080
+          httpSupport: true
+      start: ./app
+
+  - setup: worker
+    build:
+      base: bun@1.3
+      deployFiles: [apps/worker/~]
+    run:
+      base: bun@1.3
+      start: bun index.ts

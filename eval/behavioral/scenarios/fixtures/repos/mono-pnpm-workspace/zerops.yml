@@ -1,0 +1,59 @@
+# F3 (MODEL S3): pnpm + turbo workspace, parts web (static) and api (node);
+# packages/shared is a library. `extends` replaces lists and merges maps
+# (SHAPES C11). The dev setup is today's shape; zcp's supervisor migration adds
+# the two `zcp-devsup` lines (spec-mate §2.8a.2).
+zerops:
+  - setup: base
+    build:
+      base: nodejs@22
+      prepareCommands:
+        - npm i -g pnpm@9.15.0
+      cache:
+        - node_modules
+        - apps/*/node_modules
+        - packages/*/node_modules
+        - .turbo
+    run:
+      base: nodejs@22
+
+  - setup: dev
+    extends: base
+    build:
+      buildCommands:
+        - pnpm i --frozen-lockfile
+      deployFiles: [.]
+    run:
+      prepareCommands:
+        - npm i -g pnpm@9.15.0
+      ports:
+        - port: 3000
+          httpSupport: true
+        - port: 8080
+          httpSupport: true
+      start: zsc noop --silent
+
+  - setup: web
+    extends: base
+    build:
+      buildCommands:
+        - pnpm i --frozen-lockfile
+        - pnpm turbo run build --filter=web
+      deployFiles: [apps/web/dist/~]
+    run:
+      base: static
+
+  - setup: api
+    extends: base
+    build:
+      buildCommands:
+        - pnpm i --frozen-lockfile
+        - pnpm turbo run build --filter=api
+      deployFiles:
+        - apps/api
+        - packages/shared
+        - node_modules
+    run:
+      ports:
+        - port: 8080
+          httpSupport: true
+      start: node apps/api/dist/index.js
