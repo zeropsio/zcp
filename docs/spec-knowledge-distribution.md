@@ -207,7 +207,7 @@ Example: `develop-ready-to-deploy` atom describes recovery for services stuck in
 
 ### 3.10 Service-scoped axis conjunction
 
-The nine service-scoped axes (`modes`, `closeDeployModes`, `gitPushStates`, `buildIntegrations`, `runtimes`, `runtimeBases`, `deployStates`, `serviceStatus`, `stageScope`) evaluate **together per service** (`synthesize.go::serviceSatisfiesAxes`): an atom fires only when a single service in the envelope satisfies EVERY declared service-scoped axis. Axis independence (ANY service satisfies X while a DIFFERENT service satisfies Y) would fire atoms whose `{hostname}` substitution references a service the atom isn't semantically about — e.g. an atom scoped `runtimes=[dynamic], deployStates=[never-deployed]` must NOT surface when service A is a deployed dynamic runtime and service B is a never-deployed managed dep, since no single service is both dynamic AND never-deployed.
+The ten service-scoped axes (`modes`, `closeDeployModes`, `gitPushStates`, `buildIntegrations`, `runtimes`, `runtimeBases`, `deployStates`, `serviceStatus`, `stageScope`, `parts`) evaluate **together per service** (`synthesize.go::serviceSatisfiesAxes`): an atom fires only when a single service in the envelope satisfies EVERY declared service-scoped axis. Axis independence (ANY service satisfies X while a DIFFERENT service satisfies Y) would fire atoms whose `{hostname}` substitution references a service the atom isn't semantically about — e.g. an atom scoped `runtimes=[dynamic], deployStates=[never-deployed]` must NOT surface when service A is a deployed dynamic runtime and service B is a never-deployed managed dep, since no single service is both dynamic AND never-deployed.
 
 Envelope-wide axes (`phases`, `environments`, `routes`, `steps`, `idleScenarios`, `exportStatus`, `envelopeDeployStates`, `managedTypes`) match the envelope directly — conjunction only applies to the service-scoped group.
 
@@ -253,7 +253,18 @@ Where a standard pair's stage half stands in the develop session, read per servi
 
 **Empty = no gate.** An atom that promotes to or delivers through the stage half declares `[in-scope]` (or `[in-scope, none]` when it also serves services with no stage half, as `develop-git-push-delivery` does), so a session that left the stage out gets no promotion or delivery guidance for it; `develop-stage-out-of-scope` declares `[out-of-scope]` and says what such a session does instead. A Mate's stand-up is one: develop start leaves the stage of an adopted, never-deployed pair out of scope (`docs/spec-workflows.md` §8, D2f).
 
-### 3.16 `multiService` (scalar attribute, optional)
+### 3.16 `parts` (service-scoped, optional)
+
+How many deployable parts a dev half's repo holds, read per service from `ServiceSnapshot.MultiPart` (`synthesize.go::partsOf`). zcp reads it in one SSH round trip per dev half on `action="status"` and the develop briefing (`ops.ReadPartsSignal`): the repo is multi-part when its root `zerops.yaml` declares more than one part (a setup other than the dev setup and other than a base only `extends` names), its `.zcp/dev-servers.json` lists more than one dev server, or a workspace marker (`pnpm-workspace.yaml`, `turbo.json`, `nx.json`, `lerna.json`, `go.work`, `workspaces` in `package.json`) sits beside more than one package with a start or dev script or a `go.mod` one or two folders down. Off the wire. Closed enum:
+
+| Value | Meaning |
+|---|---|
+| `single` | One deployable part, or zcp did not read the repo (local mode, a failed read). |
+| `multi` | More than one. |
+
+**Empty = no gate.** `develop-monorepo-parts` declares `[multi]` and points to `zerops_knowledge uri="zerops://playbooks/monorepo"`; no other atom reads the axis, so every single-part golden is unchanged (`TestScenario_S15_MultiPartRepoPointsToTheMonorepoPlaybook`).
+
+### 3.17 `multiService` (scalar attribute, optional)
 
 Scalar (not a list axis), closed enum `{"" , aggregate}`. The default empty value (`MultiServicePerService`) renders the atom once per matching service with `{hostname}` substituted from that service. `aggregate` (`MultiServiceAggregate`) renders the atom **once**, regardless of how many services match — for atoms whose body addresses the scope as a whole rather than a single service. Validated via `validScalarEnumValues` in `internal/workflow/atom.go`.
 
@@ -302,7 +313,8 @@ this boundary; `internal/tools/next_actions.go` owns the next-tool pointer.
 | `exportStatus` | no | Envelope-scoped (§3.11). Closed enum of seven export sub-statuses. Only meaningful with `phases: [export-active]`. |
 | `managedTypes` | no | Envelope-scoped (§3.14). Managed-dep-type gate; platform strings, not a closed enum. |
 | `stageScope` | no | Service-scoped (§3.15). `in-scope` / `out-of-scope` / `none` — where the pair's stage half stands in the develop session. |
-| `multiService` | no | Scalar attribute (§3.16). `aggregate` renders the atom once for the whole scope. |
+| `parts` | no | Service-scoped (§3.16). `single` / `multi` — how many deployable parts the dev half's repo holds. |
+| `multiService` | no | Scalar attribute (§3.17). `aggregate` renders the atom once for the whole scope. |
 | `references-fields` | no | List of Go struct fields in `pkg.Type.Field` form (e.g. `ops.DeployResult.Status`) cited by the atom body. Validated: parser enforces the shape regex, `TestAtomReferenceFieldIntegrity` (in `internal/workflow/`) resolves each entry against `internal/{ops,tools,platform,workflow}/*.go` via AST scan. Part of the authoring contract (§11). |
 | `references-atoms` | no | List of atom IDs the body has a CONTENT dependency on — its body relies on the target's body being present in the SAME rendered payload. A content dependency MUST target an INLINE atom. Validated by `TestAtomReferencesAtomsIntegrity` (exists) + `TestAtomCrossRefContract` (target is inline). Part of the authoring contract (§11). See §4.6. |
 | `reference` | no | Delivery attribute, strict-validated `{true,false}`. `false` (default) = **inline**: `Synthesize` composes the body into the response. `true` = **pointer**: the body is deferred — `Synthesize` emits a one-line stub carrying the canonical pull URI, and the agent fetches it on demand. A `reference: true` atom MUST be envelope-substitution-free (`{hostname}`/`{stage-hostname}`/`{project-name}`) because the pull fetch returns the raw body with no live envelope. See §4.6. |

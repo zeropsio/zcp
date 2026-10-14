@@ -435,7 +435,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 			// before develop takes its scope (spec-mate §2.8a.4).
 			rebuildMateStages(ctx, httpClient, rt, stateDir, recipePairMountRoot)
 		}
-		return handleStart(ctx, projectID, engine, client, schemaCache, input, rt)
+		return handleStart(ctx, projectID, engine, client, schemaCache, input, rt, sshDeployer)
 	case "reset":
 		// Launch-production reset clears the per-launchID state file
 		// (.zcp/state/launch-production/<launchID>.json). Separate from
@@ -557,7 +557,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	}
 }
 
-func handleStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, schemaCache *schema.Cache, input WorkflowInput, rt runtime.Info) (*mcp.CallToolResult, any, error) {
+func handleStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, schemaCache *schema.Cache, input WorkflowInput, rt runtime.Info, sshDeployer ops.SSHDeployer) (*mcp.CallToolResult, any, error) {
 	// v8.90 Fix A: reject action=start when a DIFFERENT workflow is already
 	// active. This closes the sub-agent-misuse path: a sub-agent spawned by
 	// the main agent inside a running recipe calling action=start
@@ -590,7 +590,7 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 
 	// Develop workflow — stateless briefing, no session created.
 	if input.Workflow == workflowDevelop {
-		return handleDevelopBriefing(ctx, engine, client, projectID, input, rt)
+		return handleDevelopBriefing(ctx, engine, client, projectID, input, rt, sshDeployer)
 	}
 
 	// The retired v2 recipe sub-mode is not reachable through
@@ -947,6 +947,7 @@ func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client 
 		return convertError(wrapStageErr("Compute envelope", err), WithRecoveryStatus()), nil, nil
 	}
 	attachRepoStatus(ctx, envelope.Services, sshDeployer, rt, engine.StateDir())
+	attachPartsSignal(ctx, envelope.Services, sshDeployer, rt)
 	attachRollbackInfo(ctx, envelope.Services, client, projectID)
 	corpus, err := workflow.LoadAtomCorpus()
 	if err != nil {

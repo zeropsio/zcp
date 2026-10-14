@@ -284,6 +284,16 @@ func developGoldenScenarios() []goldenScenario {
 			},
 		},
 		{
+			id:          "develop/monorepo-three-parts",
+			description: "A standard pair whose repo holds three deployable parts (web, api, worker) — one dev service, three stages; the dev half deployed. The guidance points to the monorepo playbook.",
+			envelope: StateEnvelope{
+				Phase:       PhaseDevelopActive,
+				Environment: EnvContainer,
+				Services:    fixSnapMonorepoPair(),
+				WorkSession: fixSession("appdev", "webstage", "apistage", "workerstage"),
+			},
+		},
+		{
 			id:          "develop/post-adopt-standard-unset",
 			description: "Adopted standard pair, both halves running, close-mode never picked.",
 			envelope: StateEnvelope{
@@ -910,4 +920,27 @@ func fixSession(hostnames ...string) *WorkSessionSummary {
 func fixTimePtr(year int, month time.Month, day, hour, minute, second int) *time.Time {
 	t := time.Date(year, month, day, hour, minute, second, 0, time.UTC)
 	return &t
+}
+
+// fixSnapMonorepoPair is a standard pair over a repo with three parts: the dev
+// half appdev (its repo read as multi-part) and the stages webstage, apistage
+// and workerstage, all deployed, close-mode auto.
+func fixSnapMonorepoPair() []ServiceSnapshot {
+	stage := func(host, setup string) ServiceSnapshot {
+		return ServiceSnapshot{Hostname: host, TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStage,
+			CloseDeployMode: topology.CloseModeAuto, GitPushState: topology.GitPushUnconfigured, BuildIntegration: topology.BuildIntegrationNone,
+			Bootstrapped: true, Deployed: true, SetupName: setup}
+	}
+	return []ServiceSnapshot{
+		{
+			Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard,
+			CloseDeployMode: topology.CloseModeAuto, GitPushState: topology.GitPushUnconfigured, BuildIntegration: topology.BuildIntegrationNone,
+			StageHostname: "webstage", SetupName: "dev", StageSetupName: "web",
+			Stages:       []topology.StageRef{{Hostname: "webstage", SetupName: "web"}, {Hostname: "apistage", SetupName: "api"}, {Hostname: "workerstage", SetupName: "worker"}},
+			Bootstrapped: true, Deployed: true, MultiPart: true,
+		},
+		stage("webstage", "web"),
+		stage("apistage", "api"),
+		stage("workerstage", "worker"),
+	}
 }

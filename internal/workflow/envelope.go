@@ -158,6 +158,13 @@ type ServiceSnapshot struct {
 	WireStages []topology.StageWire      `json:"stages,omitempty"`
 	DevServers []topology.DevServerState `json:"devServers,omitempty"`
 
+	// MultiPart is the mechanical multi-part signal of a dev half's repo
+	// (ops.ReadPartsSignal): its zerops.yaml declares more than one part,
+	// its .zcp/dev-servers.json more than one server, or workspace markers
+	// name several deployable packages. Read by the `parts:` atom axis; off
+	// the wire. False when not read.
+	MultiPart bool `json:"-"`
+
 	// Repo is the live repo state for this service (docs/spec-workflows.md
 	// §8 GLC-7, G1/G2) — nil for managed/unknown-class services (they never
 	// carry a working tree) and for any runtime service ApplyRepoStatus

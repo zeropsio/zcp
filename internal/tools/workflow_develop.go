@@ -67,7 +67,7 @@ func blockedManualHosts(stateDir string, scope []string) []string {
 // Guidance is synthesized via the Layer 2 atom pipeline (ComputeEnvelope →
 // Synthesize → BuildPlan → RenderStatus): runtime, strategy, mode and
 // environment axes of the envelope drive which atoms match.
-func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, input WorkflowInput, rt runtime.Info) (*mcp.CallToolResult, any, error) {
+func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, input WorkflowInput, rt runtime.Info, sshDeployer ops.SSHDeployer) (*mcp.CallToolResult, any, error) {
 	metas, err := workflow.ListServiceMetas(engine.StateDir())
 	if err != nil {
 		return convertError(platform.NewPlatformError(
@@ -195,7 +195,7 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 		// session state. Scope on this call is treated as confirmation, not
 		// a mutation; a scope change requires an explicit close first.
 		if existing.Intent != "" && existing.Intent == input.Intent {
-			return renderDevelopBriefing(ctx, engine, client, projectID, rt)
+			return renderDevelopBriefing(ctx, engine, client, projectID, rt, sshDeployer)
 		}
 		// Different intent — manual/unset close-mode session blocks the
 		// implicit auto-delete (deploy-decomp P6 §3.4 Scenario D + §6 step 5).
@@ -266,7 +266,7 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 		return errResult, nil, nil
 	}
 
-	return renderDevelopBriefing(ctx, engine, client, projectID, rt)
+	return renderDevelopBriefing(ctx, engine, client, projectID, rt, sshDeployer)
 }
 
 // mateStandUpStages is the stage half of every standard pair in scope that a
@@ -330,7 +330,7 @@ func appendMissing(list []string, add ...string) []string {
 // renderDevelopBriefing runs the atom pipeline and returns the rendered status
 // block. Extracted so the idempotent-restart path in handleDevelopBriefing can
 // skip session mutation but still return fresh guidance.
-func renderDevelopBriefing(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, rt runtime.Info) (*mcp.CallToolResult, any, error) {
+func renderDevelopBriefing(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, rt runtime.Info, sshDeployer ops.SSHDeployer) (*mcp.CallToolResult, any, error) {
 	envelope, err := workflow.ComputeEnvelope(ctx, client, engine.StateDir(), projectID, rt, time.Now())
 	if err != nil {
 		return convertError(platform.NewPlatformError(
@@ -338,6 +338,7 @@ func renderDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 			fmt.Sprintf("Compute envelope: %v", err),
 			""), WithRecoveryStatus()), nil, nil
 	}
+	attachPartsSignal(ctx, envelope.Services, sshDeployer, rt)
 	corpus, err := workflow.LoadAtomCorpus()
 	if err != nil {
 		return convertError(platform.NewPlatformError(

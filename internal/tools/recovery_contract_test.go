@@ -53,7 +53,7 @@ func TestErrAdoptRequiredCarriesAdoptRecovery(t *testing.T) {
 					{ID: "svc-appdev", Name: "appdev", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
 				})
 				result, _, err := handleDevelopBriefing(context.Background(), engine, mock, "proj1",
-					WorkflowInput{Intent: "deploy something"}, runtime.Info{InContainer: true})
+					WorkflowInput{Intent: "deploy something"}, runtime.Info{InContainer: true}, nil)
 				if err != nil {
 					t.Fatalf("handleDevelopBriefing: %v", err)
 				}

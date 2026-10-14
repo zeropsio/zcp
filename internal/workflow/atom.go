@@ -170,6 +170,10 @@ type AxisVector struct {
 	// of scope, and one that explains that (`[out-of-scope]`) reaches only
 	// such a pair. Empty = no gate.
 	StageScopes []StageScope
+	// Parts scopes the atom by how many deployable parts a dev service's
+	// repo holds (see PartsShape). Service-scoped: read per service from
+	// ServiceSnapshot.MultiPart. Empty = no gate.
+	Parts []PartsShape
 	// MultiService toggles single-render aggregation for atoms whose body
 	// needs per-service iteration only inside discrete `{services-list:
 	// TEMPLATE}` directives, not for the whole body. Default ""
@@ -183,6 +187,17 @@ type AxisVector struct {
 	// primaryHostnames picker (same contract as service-agnostic atoms).
 	MultiService MultiServiceMode
 }
+
+// PartsShape is how many deployable parts a dev service's repo holds — the
+// value the `parts:` axis matches.
+type PartsShape string
+
+const (
+	// PartsSingle — the repo holds one deployable part, or zcp has not read it.
+	PartsSingle PartsShape = "single"
+	// PartsMulti — the repo holds more than one (ServiceSnapshot.MultiPart).
+	PartsMulti PartsShape = "multi"
+)
 
 // StageScope is where a service's paired stage half stands in the develop
 // session — the value the `stageScope:` axis matches.
@@ -249,6 +264,7 @@ var validAtomFrontmatterKeys = map[string]struct{}{
 	"exportStatus":         {},
 	"managedTypes":         {},
 	"stageScope":           {},
+	"parts":                {},
 	"multiService":         {},
 	"reference":            {},
 	"references-fields":    {},
@@ -282,6 +298,7 @@ var listAxisKeys = map[string]struct{}{
 	"exportStatus":         {},
 	"managedTypes":         {},
 	"stageScope":           {},
+	"parts":                {},
 	"references-fields":    {},
 	"references-atoms":     {},
 	"pointer-atoms":        {},
@@ -389,6 +406,10 @@ var validAtomEnumValues = map[string]map[string]struct{}{
 		"out-of-scope": {},
 		"none":         {},
 	},
+	"parts": {
+		"single": {},
+		"multi":  {},
+	},
 }
 
 // validScalarEnumValues maps scalar (non-list) frontmatter keys to their
@@ -428,7 +449,7 @@ var validScalarEnumValues = map[string]map[string]struct{}{
 func validateAtomFrontmatter(fields map[string]string) error {
 	for key := range fields {
 		if _, ok := validAtomFrontmatterKeys[key]; !ok {
-			return fmt.Errorf("unknown atom frontmatter key %q (valid keys: id, title, priority, phases, modes, environments, closeDeployModes, gitPushStates, buildIntegrations, runtimes, runtimeBases, routes, steps, idleScenarios, deployStates, envelopeDeployStates, serviceStatus, deployHistory, exportStatus, managedTypes, stageScope, multiService, reference, references-fields, references-atoms, pointer-atoms, pinned-by-scenario, coverageExempt)", key)
+			return fmt.Errorf("unknown atom frontmatter key %q (valid keys: id, title, priority, phases, modes, environments, closeDeployModes, gitPushStates, buildIntegrations, runtimes, runtimeBases, routes, steps, idleScenarios, deployStates, envelopeDeployStates, serviceStatus, deployHistory, exportStatus, managedTypes, stageScope, parts, multiService, reference, references-fields, references-atoms, pointer-atoms, pinned-by-scenario, coverageExempt)", key)
 		}
 	}
 	for key, raw := range fields {
@@ -573,6 +594,7 @@ func ParseAtom(content string) (KnowledgeAtom, error) {
 			ExportStatuses:       parseExportStatuses(fields["exportStatus"]),
 			ManagedTypes:         parseYAMLList(fields["managedTypes"]),
 			StageScopes:          parseStageScopes(fields["stageScope"]),
+			Parts:                parsePartsShapes(fields["parts"]),
 			MultiService:         MultiServiceMode(strings.TrimSpace(fields["multiService"])),
 		},
 		ReferencesFields:  parseYAMLList(fields["references-fields"]),
@@ -775,6 +797,20 @@ func parseDeployStates(raw string) []DeployState {
 	out := make([]DeployState, 0, len(values))
 	for _, v := range values {
 		out = append(out, DeployState(v))
+	}
+	return out
+}
+
+// parsePartsShapes reads the optional `parts:` frontmatter field, a closed
+// enum validated up front by validateAtomFrontmatter.
+func parsePartsShapes(raw string) []PartsShape {
+	values := parseYAMLList(raw)
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]PartsShape, 0, len(values))
+	for _, v := range values {
+		out = append(out, PartsShape(v))
 	}
 	return out
 }

@@ -467,7 +467,16 @@ func hasServiceScopedAxes(axes AxisVector) bool {
 		len(axes.DeployStates) > 0 ||
 		len(axes.ServiceStatuses) > 0 ||
 		len(axes.DeployHistories) > 0 ||
-		len(axes.StageScopes) > 0
+		len(axes.StageScopes) > 0 ||
+		len(axes.Parts) > 0
+}
+
+// partsOf is the `parts:` axis value of svc.
+func partsOf(svc ServiceSnapshot) PartsShape {
+	if svc.MultiPart {
+		return PartsMulti
+	}
+	return PartsSingle
 }
 
 // stageScopeOf is where svc's paired stage half stands in the develop session
@@ -497,6 +506,9 @@ func serviceSatisfiesAxes(svc ServiceSnapshot, axes AxisVector, stageScope Stage
 		return false
 	}
 	if len(axes.StageScopes) > 0 && !slices.Contains(axes.StageScopes, stageScope) {
+		return false
+	}
+	if len(axes.Parts) > 0 && !slices.Contains(axes.Parts, partsOf(svc)) {
 		return false
 	}
 	if len(axes.CloseDeployModes) > 0 && !slices.Contains(axes.CloseDeployModes, svc.CloseDeployMode) {

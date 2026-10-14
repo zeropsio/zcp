@@ -917,6 +917,60 @@ func TestScenario_S13_GitPushDeliveryGating(t *testing.T) {
 	}
 }
 
+// TestScenario_S15_MultiPartRepoPointsToTheMonorepoPlaybook pins the parts
+// gate. A dev half whose repo zcp read as multi-part gets one atom pointing to
+// the monorepo playbook; the same envelope read as one part does not, and no
+// golden scenario of a single-part app ever renders it — their goldens stay
+// byte-identical.
+func TestScenario_S15_MultiPartRepoPointsToTheMonorepoPlaybook(t *testing.T) {
+	t.Parallel()
+
+	corpus, err := LoadAtomCorpus()
+	if err != nil {
+		t.Fatalf("LoadAtomCorpus: %v", err)
+	}
+	const atom = "develop-monorepo-parts"
+	env := StateEnvelope{Phase: PhaseDevelopActive, Environment: EnvContainer, Services: fixSnapMonorepoPair(),
+		WorkSession: fixSession("appdev", "webstage", "apistage", "workerstage")}
+	out, err := Synthesize(env, corpus)
+	if err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	requireAtomIDsContain(t, "S15 multi-part", out, "develop-monorepo-parts")
+	for _, m := range out {
+		if m.AtomID == atom && !strings.Contains(m.Body, `zerops_knowledge uri="zerops://playbooks/monorepo"`) {
+			t.Errorf("S15: %s does not point to the playbook:\n%s", atom, m.Body)
+		}
+	}
+
+	env.Services = fixSnapMonorepoPair()
+	env.Services[0].MultiPart = false
+	single, err := Synthesize(env, corpus)
+	if err != nil {
+		t.Fatalf("Synthesize (one part): %v", err)
+	}
+	for _, m := range single {
+		if m.AtomID == atom {
+			t.Errorf("S15: %s fired for a repo read as one part", atom)
+		}
+	}
+
+	for _, sc := range canonicalGoldenScenarios() {
+		if sc.id == "develop/monorepo-three-parts" {
+			continue
+		}
+		got, err := Synthesize(sc.envelope, corpus)
+		if err != nil {
+			continue // a scenario Synthesize refuses is the golden test's to report
+		}
+		for _, m := range got {
+			if m.AtomID == atom {
+				t.Errorf("S15: %s fired in the single-part golden %s", atom, sc.id)
+			}
+		}
+	}
+}
+
 // TestScenario_S14_StageLeftOutOfScope pins the stageScope gate. A develop
 // session that left a standard pair's stage half out of scope (RC-B — and a
 // Mate's stand-up, whose develop start does it by itself) gets no guidance

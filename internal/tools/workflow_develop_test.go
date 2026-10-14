@@ -45,7 +45,7 @@ func TestHandleDevelopBriefing_UnsetStrategy_NeverDeployed_CreatesWorkSession_Fi
 	})
 
 	result, _, err := handleDevelopBriefing(context.Background(), engine, mock, "proj1",
-		WorkflowInput{Intent: "test", Scope: []string{"appdev"}}, runtime.Info{InContainer: true})
+		WorkflowInput{Intent: "test", Scope: []string{"appdev"}}, runtime.Info{InContainer: true}, nil)
 	if err != nil {
 		t.Fatalf("handleDevelopBriefing: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestHandleDevelopBriefing_UnsetStrategy_Deployed_StrategyReview(t *testing.
 	})
 
 	result, _, err := handleDevelopBriefing(context.Background(), engine, mock, "proj1",
-		WorkflowInput{Intent: "test", Scope: []string{"appdev"}}, runtime.Info{InContainer: true})
+		WorkflowInput{Intent: "test", Scope: []string{"appdev"}}, runtime.Info{InContainer: true}, nil)
 	if err != nil {
 		t.Fatalf("handleDevelopBriefing: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestHandleDevelopBriefing_ConfirmedStrategy_Deployed_NoReview(t *testing.T)
 	})
 
 	result, _, err := handleDevelopBriefing(context.Background(), engine, mock, "proj1",
-		WorkflowInput{Intent: "test", Scope: []string{"appdev"}}, runtime.Info{InContainer: true})
+		WorkflowInput{Intent: "test", Scope: []string{"appdev"}}, runtime.Info{InContainer: true}, nil)
 	if err != nil {
 		t.Fatalf("handleDevelopBriefing: %v", err)
 	}
@@ -226,7 +226,7 @@ func TestHandleDevelopBriefing_MultiStack_ScopeHonorsInput(t *testing.T) {
 
 	result, _, err := handleDevelopBriefing(context.Background(), engine, mock, "proj1",
 		WorkflowInput{Intent: "run fizzy", Scope: []string{"fizzydev", "fizzystage"}},
-		runtime.Info{InContainer: true})
+		runtime.Info{InContainer: true}, nil)
 	if err != nil {
 		t.Fatalf("handleDevelopBriefing: %v", err)
 	}
@@ -282,7 +282,7 @@ func TestHandleDevelopBriefing_StandardPair_StageInScope_Accepted(t *testing.T) 
 
 	result, _, err := handleDevelopBriefing(context.Background(), engine, mock, "proj1",
 		WorkflowInput{Intent: "first deploy + promote", Scope: []string{"appdev", "appstage"}},
-		runtime.Info{InContainer: true})
+		runtime.Info{InContainer: true}, nil)
 	if err != nil {
 		t.Fatalf("handleDevelopBriefing: %v", err)
 	}
@@ -341,7 +341,7 @@ func TestHandleDevelopBriefing_StandardPair_DevOnlyInScope_AutoExpandsStage(t *t
 
 	result, _, err := handleDevelopBriefing(context.Background(), engine, mock, "proj1",
 		WorkflowInput{Intent: "iterate then promote", Scope: []string{"appdev"}},
-		runtime.Info{InContainer: true})
+		runtime.Info{InContainer: true}, nil)
 	if err != nil {
 		t.Fatalf("handleDevelopBriefing: %v", err)
 	}
@@ -388,7 +388,7 @@ func TestHandleDevelopBriefing_StandardPair_BothHalvesInScope_NoDuplicate(t *tes
 
 	result, _, err := handleDevelopBriefing(context.Background(), engine, mock, "proj1",
 		WorkflowInput{Intent: "explicit both", Scope: []string{"appdev", "appstage"}},
-		runtime.Info{InContainer: true})
+		runtime.Info{InContainer: true}, nil)
 	if err != nil {
 		t.Fatalf("handleDevelopBriefing: %v", err)
 	}
@@ -429,7 +429,7 @@ func TestHandleDevelopBriefing_StandardPair_StageOnlyInScope_NoExpansion(t *test
 
 	result, _, err := handleDevelopBriefing(context.Background(), engine, mock, "proj1",
 		WorkflowInput{Intent: "stage only", Scope: []string{"appstage"}},
-		runtime.Info{InContainer: true})
+		runtime.Info{InContainer: true}, nil)
 	if err != nil {
 		t.Fatalf("handleDevelopBriefing: %v", err)
 	}
@@ -477,7 +477,7 @@ func TestHandleDevelopBriefing_StandardPair_StageMissingFromLive_FailsWithRepair
 
 	result, _, err := handleDevelopBriefing(context.Background(), engine, mock, "proj1",
 		WorkflowInput{Intent: "iterate broken pair", Scope: []string{"appdev"}},
-		runtime.Info{InContainer: true})
+		runtime.Info{InContainer: true}, nil)
 	if err != nil {
 		t.Fatalf("handleDevelopBriefing: %v", err)
 	}
@@ -523,7 +523,7 @@ func TestHandleDevelopBriefing_DevMode_NoExpansion(t *testing.T) {
 
 	result, _, err := handleDevelopBriefing(context.Background(), engine, mock, "proj1",
 		WorkflowInput{Intent: "dev mode iterate", Scope: []string{"appdev"}},
-		runtime.Info{InContainer: true})
+		runtime.Info{InContainer: true}, nil)
 	if err != nil {
 		t.Fatalf("handleDevelopBriefing: %v", err)
 	}
@@ -566,7 +566,7 @@ func TestHandleDevelopBriefing_NoBootstrappedServices_RecoveryPointsAtBootstrapA
 	})
 
 	result, _, err := handleDevelopBriefing(context.Background(), engine, mock, "proj1",
-		WorkflowInput{Intent: "deploy something"}, runtime.Info{InContainer: true})
+		WorkflowInput{Intent: "deploy something"}, runtime.Info{InContainer: true}, nil)
 	if err != nil {
 		t.Fatalf("handleDevelopBriefing: %v", err)
 	}
@@ -614,7 +614,7 @@ func TestHandleDevelopBriefing_MissingScope_Rejected(t *testing.T) {
 	})
 
 	result, _, err := handleDevelopBriefing(context.Background(), engine, mock, "proj1",
-		WorkflowInput{Intent: "no scope"}, runtime.Info{InContainer: true})
+		WorkflowInput{Intent: "no scope"}, runtime.Info{InContainer: true}, nil)
 	if err != nil {
 		t.Fatalf("handleDevelopBriefing: %v", err)
 	}
@@ -655,7 +655,7 @@ func TestHandleDevelopBriefing_UnknownHostInScope_Rejected(t *testing.T) {
 	})
 
 	result, _, err := handleDevelopBriefing(context.Background(), engine, mock, "proj1",
-		WorkflowInput{Intent: "typo", Scope: []string{"appdev", "ghost"}}, runtime.Info{InContainer: true})
+		WorkflowInput{Intent: "typo", Scope: []string{"appdev", "ghost"}}, runtime.Info{InContainer: true}, nil)
 	if err != nil {
 		t.Fatalf("handleDevelopBriefing: %v", err)
 	}
@@ -698,7 +698,7 @@ func TestHandleDevelopBriefing_NewIntent_AutoClosesPrior(t *testing.T) {
 
 	// First start — task A.
 	resA, _, err := handleDevelopBriefing(context.Background(), engine, mock, "proj1",
-		WorkflowInput{Intent: "task A", Scope: []string{"appdev"}}, runtime.Info{InContainer: true})
+		WorkflowInput{Intent: "task A", Scope: []string{"appdev"}}, runtime.Info{InContainer: true}, nil)
 	if err != nil || resA.IsError {
 		t.Fatalf("first start failed: %v / %s", err, extractText(resA))
 	}
@@ -715,7 +715,7 @@ func TestHandleDevelopBriefing_NewIntent_AutoClosesPrior(t *testing.T) {
 
 	// Second start — task B with different intent.
 	resB, _, err := handleDevelopBriefing(context.Background(), engine, mock, "proj1",
-		WorkflowInput{Intent: "task B", Scope: []string{"appdev"}}, runtime.Info{InContainer: true})
+		WorkflowInput{Intent: "task B", Scope: []string{"appdev"}}, runtime.Info{InContainer: true}, nil)
 	if err != nil {
 		t.Fatalf("second start error: %v", err)
 	}
@@ -759,7 +759,7 @@ func TestHandleDevelopBriefing_SameIntent_Idempotent(t *testing.T) {
 	})
 
 	_, _, err := handleDevelopBriefing(context.Background(), engine, mock, "proj1",
-		WorkflowInput{Intent: "task A", Scope: []string{"appdev"}}, runtime.Info{InContainer: true})
+		WorkflowInput{Intent: "task A", Scope: []string{"appdev"}}, runtime.Info{InContainer: true}, nil)
 	if err != nil {
 		t.Fatalf("first start: %v", err)
 	}
@@ -771,7 +771,7 @@ func TestHandleDevelopBriefing_SameIntent_Idempotent(t *testing.T) {
 
 	// Same intent again — must not drop history.
 	_, _, err = handleDevelopBriefing(context.Background(), engine, mock, "proj1",
-		WorkflowInput{Intent: "task A", Scope: []string{"appdev"}}, runtime.Info{InContainer: true})
+		WorkflowInput{Intent: "task A", Scope: []string{"appdev"}}, runtime.Info{InContainer: true}, nil)
 	if err != nil {
 		t.Fatalf("idempotent start: %v", err)
 	}
@@ -817,7 +817,7 @@ func TestHandleDevelopBriefing_LocalOnly_GuidesAdoptLocal(t *testing.T) {
 	})
 
 	result, _, err := handleDevelopBriefing(context.Background(), engine, mock, "proj1",
-		WorkflowInput{Intent: "deploy notes API", Scope: []string{"app"}}, runtime.Info{InContainer: false})
+		WorkflowInput{Intent: "deploy notes API", Scope: []string{"app"}}, runtime.Info{InContainer: false}, nil)
 	if err != nil {
 		t.Fatalf("handleDevelopBriefing: %v", err)
 	}
@@ -862,7 +862,7 @@ func TestHandleDevelopBriefing_LocalStage_ProjectNameNotInAvailable(t *testing.T
 	})
 
 	result, _, err := handleDevelopBriefing(context.Background(), engine, mock, "proj1",
-		WorkflowInput{Intent: "wrong scope", Scope: []string{"wrongHost"}}, runtime.Info{InContainer: false})
+		WorkflowInput{Intent: "wrong scope", Scope: []string{"wrongHost"}}, runtime.Info{InContainer: false}, nil)
 	if err != nil {
 		t.Fatalf("handleDevelopBriefing: %v", err)
 	}
@@ -902,7 +902,7 @@ func TestHandleDevelopBriefing_LocalStage_StageHostInScope_Accepted(t *testing.T
 	})
 
 	result, _, err := handleDevelopBriefing(context.Background(), engine, mock, "proj1",
-		WorkflowInput{Intent: "deploy notes API", Scope: []string{"app"}}, runtime.Info{InContainer: false})
+		WorkflowInput{Intent: "deploy notes API", Scope: []string{"app"}}, runtime.Info{InContainer: false}, nil)
 	if err != nil {
 		t.Fatalf("handleDevelopBriefing: %v", err)
 	}
@@ -983,7 +983,7 @@ func TestHandleDevelopBriefing_StandardPair_OutOfScopeStage(t *testing.T) {
 
 	result, _, err := handleDevelopBriefing(context.Background(), engine, mock, "proj1",
 		WorkflowInput{Intent: "redesign dev homepage, leave staging", Scope: []string{"appdev"}, OutOfScope: []string{"appstage"}},
-		runtime.Info{InContainer: true})
+		runtime.Info{InContainer: true}, nil)
 	if err != nil {
 		t.Fatalf("handleDevelopBriefing: %v", err)
 	}
@@ -1068,7 +1068,7 @@ func TestHandleDevelopBriefing_MateStandUp_LeavesTheStageOut(t *testing.T) {
 
 			result, _, err := handleDevelopBriefing(context.Background(), engine, mock, "proj1",
 				WorkflowInput{Intent: "Stand up development of the project.", Scope: tt.scope},
-				runtime.Info{InContainer: true, MateEnabled: tt.mate})
+				runtime.Info{InContainer: true, MateEnabled: tt.mate}, nil)
 			if err != nil {
 				t.Fatalf("handleDevelopBriefing: %v", err)
 			}

@@ -38,7 +38,7 @@ func TestHandleDevelopBriefing_DerivedAutoComplete_SameIntent_StartsFresh(t *tes
 
 	// Start task A.
 	if res, _, err := handleDevelopBriefing(context.Background(), engine, mock, "proj1",
-		WorkflowInput{Intent: "task A", Scope: []string{"appdev"}}, runtime.Info{InContainer: true}); err != nil || res.IsError {
+		WorkflowInput{Intent: "task A", Scope: []string{"appdev"}}, runtime.Info{InContainer: true}, nil); err != nil || res.IsError {
 		t.Fatalf("first start failed: %v / %s", err, extractText(res))
 	}
 
@@ -56,7 +56,7 @@ func TestHandleDevelopBriefing_DerivedAutoComplete_SameIntent_StartsFresh(t *tes
 
 	// Re-start with the SAME intent. Must replace, not return the stuck briefing.
 	if res, _, err := handleDevelopBriefing(context.Background(), engine, mock, "proj1",
-		WorkflowInput{Intent: "task A", Scope: []string{"appdev"}}, runtime.Info{InContainer: true}); err != nil || res.IsError {
+		WorkflowInput{Intent: "task A", Scope: []string{"appdev"}}, runtime.Info{InContainer: true}, nil); err != nil || res.IsError {
 		t.Fatalf("re-start failed: %v / %s", err, extractText(res))
 	}
 	fresh, _ := workflow.CurrentWorkSession(dir)
