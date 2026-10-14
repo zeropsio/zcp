@@ -6,8 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -550,5 +552,39 @@ func TestSupervisor_AnAutostartFalseServerStaysStoppedUntilStarted(t *testing.T)
 	eventually(t, "admin to listen after a container restart", func() bool { return listening(admin) })
 	if sv := mustServer(t, again.State(), "extra"); sv.Status != StatusStopped {
 		t.Fatalf("extra = %+v, want stopped", sv)
+	}
+}
+
+// Variant B (docs/spec-mate.md §2.8a): webdev and apidev mount one code
+// volume, so both supervisors read one declaration; the stand-up writes it
+// after the clone and reloads each.
+func TestSupervisor_EachDevServicesSupervisorStartsOnlyTheServersAssignedToIt(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	web := r.supervisorWith("webdev", 5*time.Second)
+	apiState := shortDir(t)
+	api, err := New(Config{Root: r.root, StateDir: apiState, Service: "apidev", Env: os.Environ(), Grace: time.Second, PortWait: 5 * time.Second, Version: "v-test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(api.Shutdown)
+	web.Boot()
+	api.Boot()
+
+	webPort, workerPort, apiPort := freePort(t), freePort(t), freePort(t)
+	w, k, a := r.listener("web", webPort), r.listener("worker", workerPort), r.listener("api", apiPort)
+	w.Service, k.Service, a.Service = "webdev", "webdev", "apidev"
+	r.declare(w, k, a)
+	web.Reload()
+	api.Reload()
+
+	eventually(t, "every server to listen", func() bool {
+		return listening(webPort) && listening(workerPort) && listening(apiPort)
+	})
+	for sup, want := range map[*Supervisor][]string{web: {"web", "worker"}, api: {"api"}} {
+		got := slices.Sorted(maps.Keys(sup.State().Servers))
+		if !slices.Equal(got, want) {
+			t.Errorf("supervisor runs %v, want %v", got, want)
+		}
 	}
 }
