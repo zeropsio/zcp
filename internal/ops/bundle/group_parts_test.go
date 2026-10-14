@@ -1,6 +1,8 @@
 package bundle
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -120,5 +122,32 @@ func TestTierService_NoAnchorOrUnreadable(t *testing.T) {
 	}
 	if _, err := RemoveTierService(flow, "shop"); err == nil {
 		t.Error("a service the splice cannot find was reported removed")
+	}
+}
+
+// A tier the composer wrote — preprocessor secrets, comments and all — is
+// read back by the hostname, setup and canonical repository of every
+// runtime it builds from a repository with a setup; a managed service never.
+func TestHeldRuntimes_ReadsTheComposersOwnTiers(t *testing.T) {
+	t.Parallel()
+	body, err := os.ReadFile(filepath.Join("testdata", "group_recipe", "medusa-small-production.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, held := range HeldRuntimes(string(body)) {
+		got[held.Hostname] = held.SetupName + " " + held.RepoURL
+	}
+	want := map[string]string{
+		"medusa":    "medusaprod https://hq.example.com/git/app-1/medusadev",
+		"nextstore": "nextstoreprod https://hq.example.com/git/app-1/nextstoredev",
+	}
+	for host, w := range want {
+		if got[host] != w {
+			t.Errorf("held %s = %q, want %q (all: %v)", host, got[host], w, got)
+		}
+	}
+	if _, managed := got["db"]; managed {
+		t.Errorf("a managed service was read as held: %v", got)
 	}
 }
