@@ -45,7 +45,6 @@ const (
 
 	// Dev server states.
 	standupDevServerNotStarted = "not started"
-	standupDevServerKept       = "kept"
 	standupDevServerRunning    = "running"
 	standupDevServerDown       = "did not come up"
 
@@ -230,12 +229,9 @@ func standupDevServerNext(hostname, setup string, ds *standupDevServer) string {
 	}
 	switch ds.State {
 	case standupDevServerRunning:
-		return "zcp started the dev server it keeps on it again; verify it: " + verify + "."
-	case standupDevServerKept:
-		return fmt.Sprintf("zcp keeps its dev server (%s) and brings it back after a restart; check it with zerops_dev_server action=\"status\" hostname=%q port=%d, then %s.",
-			ds.Command, hostname, ds.Port, verify)
+		return "Its supervisor started the dev server again; verify it: " + verify + "."
 	case standupDevServerDown:
-		return fmt.Sprintf("The dev server zcp keeps on it did not come up (%s): fix the cause, then zerops_dev_server action=\"restart\" hostname=%q, then %s.", ds.Why, hostname, verify)
+		return fmt.Sprintf("The dev server its supervisor runs did not come up (%s): fix the cause, then zerops_dev_server action=\"restart\" hostname=%q, then %s.", ds.Why, hostname, verify)
 	}
 	port := "<the port it listens on>"
 	if ds.Port > 0 {

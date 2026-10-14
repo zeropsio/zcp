@@ -198,9 +198,9 @@ func defaultPublicAccessInput() ops.PublicAccessInput {
 // runs) rather than blocking verify on an unrelated read.
 //
 // A statically deferred-start classification (dev-mode dynamic runtime) is
-// then freshened against ops.DevServerRunning (§8 O4): a live dev-server
-// process means the runtime DOES have a listener even though it starts
-// via `zsc noop`, so DeferredStart flips to false and http_internal probes
+// then freshened against the dev-server supervisor (§8 O4): a declared server
+// with a port it runs means the runtime DOES have a listener, so DeferredStart
+// flips to false and http_internal probes
 // for real instead of skipping with the "start it with zerops_dev_server"
 // message. An SSH error (no deployer, unreachable container) falls back to
 // the static classification — verify must never fail because the listener
@@ -219,7 +219,7 @@ func publicAccessInputForHost(ctx context.Context, client platform.Client, ssh o
 		class := topology.RuntimeClassFor(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName)
 		deferredStart = topology.IsDeferredStart(meta.ModeFor(host), class)
 		if deferredStart && ssh != nil {
-			if running, sshErr := ops.DevServerRunning(ctx, ssh, host); sshErr == nil && running {
+			if ds, readErr := ops.ReadDevServers(ctx, ssh, host); readErr == nil && ds.Listening() {
 				deferredStart = false
 			}
 		}

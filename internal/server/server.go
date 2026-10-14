@@ -132,13 +132,12 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 		tools.RegisterAskChief(ctx, s.server, nil, authInfo.ProjectID, authInfo.ProjectName)
 	}
 
-	// A dev server kept on this project needs its keeper running, and a
-	// redeploy of this container drops the keeper's unit (tools/
-	// dev_server_keep.go). Best-effort and off the startup path.
-	if rtInfo.InContainer && sshDeployer != nil && stateDir != "" {
+	// Dev servers run under each dev service's supervisor now; the keeper an
+	// older zcp left on this container goes. Best-effort and off the startup path.
+	if rtInfo.InContainer {
 		go func() {
-			if err := tools.EnsureDevServerKeeper(ctx, platform.NewSystemUnits(), stateDir); err != nil {
-				fmt.Fprintf(os.Stderr, "zcp: dev-server keeper: %v\n", err)
+			if err := tools.RetireDevServerKeeper(ctx, platform.NewSystemUnits(), stateDir); err != nil {
+				fmt.Fprintf(os.Stderr, "zcp: retire dev-server keeper: %v\n", err)
 			}
 		}()
 	}
@@ -335,16 +334,14 @@ func (s *Server) registerTools() {
 		// failure class). SSH-only — local deploys don't face the same
 		// parallelism problem.
 		tools.RegisterDeployBatch(s.server, s.client, httpClient, projectID, s.sshDeployer, s.authInfo, s.logFetcher, s.rtInfo, stateDir, wfEngine, recipeProbe)
-		// dev_server depends on the SSH deployer — it's the lifecycle
-		// primitive for background dev servers on target containers.
-		// Skipped in local-only mode where SSH to Zerops siblings is
-		// not available. In a container a started dev server is kept, and
-		// the keeper that brings it back runs as a unit on this container.
-		var units ops.UnitRegistrar
-		if s.rtInfo.InContainer {
-			units = platform.NewSystemUnits()
-		}
-		tools.RegisterDevServer(s.server, s.client, httpClient, projectID, s.sshDeployer, stateDir, units)
+		// dev_server depends on the SSH deployer — it drives the dev
+		// servers' supervisor on target containers. Skipped in local-only
+		// mode where SSH to Zerops siblings is not available.
+		tools.RegisterDevServer(s.server, tools.DevServerDeps{
+			Client: s.client, HTTPClient: httpClient, ProjectID: projectID, SSH: s.sshDeployer, StateDir: stateDir,
+			AuthInfo: s.authInfo, LogFetcher: s.logFetcher, RtInfo: s.rtInfo,
+			ZcpVersion: Version, DevsupURLOverride: os.Getenv("ZCP_DEVSUP_URL"),
+		})
 		// A Mate stands up from its group's recipe in one call (docs/spec-mate.md
 		// D32). Mate-gated like every mate-shaped effect (§2.0): a container
 		// without ZCP_MATE_ENABLED keeps the tool surface it had.

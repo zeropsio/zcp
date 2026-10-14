@@ -2,12 +2,18 @@ package ops
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
+	"path"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/devsup"
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
@@ -26,19 +32,17 @@ type DevServerResult struct {
 	// HealthStatus is the HTTP status code returned by the health probe,
 	// or 0 when no probe was run or it never completed.
 	HealthStatus int `json:"healthStatus,omitempty"`
-	// StartMillis is the time between kicking off the process and the
-	// health probe returning 2xx (start, restart). Zero on failure.
+	// StartMillis is the time between asking the supervisor to start the
+	// server and the health probe returning 2xx (start, restart). Zero on failure.
 	StartMillis int64 `json:"startMillis,omitempty"`
-	// LogTail is the last N lines of the dev-server log file. Always
-	// populated when the log file exists on the target, whether the
-	// action succeeded or not — gives the agent something to read on
-	// failure without a follow-up call.
+	// LogTail is the last N lines of the server's own log, read through the
+	// supervisor on a failed start, a crash and a log read.
 	LogTail string `json:"logTail,omitempty"`
-	// LogFile is the absolute path to the log file on the target
-	// container, so the agent can tail it further if needed.
+	// LogFile is the server's own log on the dev container
+	// ($HOME/.zcp/devsup/logs/<name>.log), so the agent can tail it further.
 	LogFile string `json:"logFile,omitempty"`
-	// PID is the process a start/restart spawned, as its spawn acknowledged
-	// it; zero when unknown.
+	// PID is the leader of the server's process group as the supervisor
+	// reports it; zero when it does not run.
 	PID int `json:"pid,omitempty"`
 	// URL is the consumer-vantage address of the probed dev server —
 	// http://<hostname>:<port><healthPath>, reachable from the agent's
@@ -52,53 +56,48 @@ type DevServerResult struct {
 	URL string `json:"url,omitempty"`
 	// Message is a one-line human summary of what happened.
 	Message string `json:"message"`
-	// Reason is set when Running=false on a start/restart — concrete
-	// failure classification the agent can dispatch on. Known values:
-	//   spawn_timeout             — background spawn exceeded the 8s
-	//                               budget (remote shell did not detach)
-	//   spawn_error               — ssh returned non-zero before the
-	//                               remote shell reached the detach step
+	// Reason is set when Running=false — concrete failure classification the
+	// agent can dispatch on. Known values:
+	//   crashed                   — the supervisor reports the server ended
+	//                               on its own; it stays down until started
+	//   port_in_use               — the supervisor could not start it: its
+	//                               port stayed busy
+	//   stopped                   — the server is stopped (status)
+	//   no_supervisor             — the dev setup does not run zcp-devsup
 	//   health_probe_timeout      — probe context deadline exceeded
 	//   health_probe_no_output    — probe returned nothing (malformed)
 	//   health_probe_connection_refused  — curl got no response
 	//   health_probe_http_<code>  — server returned non-ready status
 	//   health_probe_unknown: <…> — unclassified; includes raw probe line
-	//   post_spawn_exit           — no-probe mode: spawn succeeded but
-	//                               `kill -0 <pid>` on the pidfile pid
-	//                               returned non-zero after the settle
-	//                               interval (process exited, or pidfile
-	//                               never written — both treated as dead)
-	//   liveness_check_error      — no-probe mode: the ssh call that
-	//                               ran the liveness check itself failed
-	//                               (transport error) — we cannot prove
-	//                               alive or dead, agent must investigate
 	//   connection_refused        — status-action: no HTTP response
 	//   http_<code>               — status-action: non-ready HTTP code
 	Reason string `json:"reason,omitempty"`
+	// Name is the dev server's name in the declaration — set only when it
+	// differs from Hostname (docs/spec-mate.md §2.8a.3): a single-part app's
+	// one server is named after its dev service.
+	Name string `json:"name,omitempty"`
 }
 
-// DevServerParams is the typed input for StartDevServer / StopDevServer /
-// StatusDevServer / LogsDevServer / RestartDevServer. Fields not relevant
+// DevServerParams is the typed input of ExecuteDevServer. Fields not relevant
 // to a given action are ignored (e.g. Command is unused by stop and logs).
 type DevServerParams struct {
-	Action       string
-	Hostname     string
-	Command      string
-	Port         int
-	HealthPath   string
-	LogFile      string
-	WaitSeconds  int
-	LogLines     int
-	WorkDir      string
-	ProcessMatch string
-	// NoHTTPProbe skips the post-spawn health probe. Set true for worker
+	Action   string
+	Hostname string
+	// Name is the dev server's name in the declaration. Empty: the server
+	// named after the hostname, or the only one declared.
+	Name        string
+	Command     string
+	Port        int
+	HealthPath  string
+	WaitSeconds int
+	LogLines    int
+	WorkDir     string
+	// NoHTTPProbe skips the post-start health probe. Set true for worker
 	// services that have no HTTP port (NATS/Kafka consumers, disk-queue
 	// runners, cron-style processes). With NoHTTPProbe=true, Port becomes
-	// optional and the tool decides Running from a post-spawn process-liveness
-	// check (kill -0 on the spawned pidfile pid via checkProcessAlive), not
-	// from an HTTP 2xx probe. Callers should follow up with zerops_logs to
-	// confirm the worker is actually consuming — the tool cannot verify
-	// liveness for a process without a readable endpoint.
+	// optional and the tool decides Running from the supervisor's status
+	// after a short settle. Callers should follow up with zerops_logs to
+	// confirm the worker is actually consuming.
 	NoHTTPProbe bool
 }
 
@@ -112,17 +111,12 @@ const (
 	devServerActionRestart = "restart"
 )
 
-// DevServerResult.Reason values. Declared as constants so assignments in
-// ops code and assertions in tests reference the same literal — linter
-// also enforces this via goconst.
+// DevServerResult.Reason values.
 const (
-	reasonSpawnTimeout       = "spawn_timeout"
-	reasonSpawnError         = "spawn_error"
-	reasonPostSpawnExit      = "post_spawn_exit"
-	reasonLivenessCheckError = "liveness_check_error"
-	// reasonPortInUse (F3): the HTTP probe passed but the process THIS call
-	// spawned is dead — a foreign/stale listener already owns the port.
-	reasonPortInUse = "port_in_use"
+	reasonCrashed      = "crashed"
+	reasonPortInUse    = "port_in_use"
+	reasonStopped      = "stopped"
+	reasonNoSupervisor = "no_supervisor"
 )
 
 // ReasonHealthProbeTimeout is the start/restart Reason when the health probe
@@ -144,64 +138,38 @@ const (
 	defaultLogTailLines = 40
 	// pollIntervalMillis is the poll cadence of the start-probe loop.
 	pollIntervalMillis = 500
-	// defaultLogFilePattern is the path used when the caller does not
-	// specify a log file. Slash-safe and stable across agents.
-	defaultLogFilePattern = "/tmp/zcp-dev-server.log"
-	// spawnTimeout bounds the background-ssh call that kicks off the
-	// dev-server process. A correct detach (setsid + stdio redirect +
-	// `-T -n` ssh flags) returns in well under a second; 8s gives us
-	// headroom for a slow handshake on a cold container without eating
-	// any of the probe budget. The v17 run hung for 300s on the old
-	// `nohup ... & disown` pattern — this ceiling is how we guarantee
-	// that regression can never cost more than 8 seconds again.
-	spawnTimeout = 8 * time.Second
 	// probeTimeoutSlack is added on top of waitSeconds to bound the
 	// foreground ssh call. The remote probe has its own `seq 1..N` loop
 	// so slack only covers ssh dial + channel tear-down jitter.
 	probeTimeoutSlack = 5 * time.Second
 	// logTailTimeout bounds the log-tail ssh call on the failure path.
-	// Fetching diagnostic logs must never dwarf the spawn budget.
 	logTailTimeout = 5 * time.Second
-	// spawnAckMarker is the stdout sentinel the outer remote shell prints
-	// right before its `exit 0`. Its presence in the spawn output proves:
-	// (1) the ssh channel reached the remote shell, (2) the `setsid ... &`
-	// line executed without error, and (3) the outer shell ran through to
-	// the final echo — which in turn means the backgrounded child's stdio
-	// redirects took effect (otherwise the outer shell would have been
-	// blocked by the child holding the ssh channel's fds open). A missing
-	// marker is a strong signal that the spawn shape broke somewhere on
-	// the remote side.
-	spawnAckMarker = "zcp-dev-server-spawned"
+	// containerIdentityTimeout bounds a one-round-trip remote write or read.
+	containerIdentityTimeout = 10 * time.Second
 )
 
 var (
-	// hostnameRe bounds the dev-server hostname to the same shape as
+	// devHostnameRe bounds the dev-server hostname to the same shape as
 	// Zerops container hostnames. Prevents shell injection through
 	// a crafted hostname that would end up inside `ssh HOST ...`.
 	devHostnameRe = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
-	// logPathRe bounds the log-file path to an absolute POSIX path
-	// with no shell metacharacters. The tool always double-quotes
-	// the path in shell commands, but we also pre-filter for safety.
-	devLogPathRe = regexp.MustCompile(`^/[A-Za-z0-9._/-]{1,256}$`)
+	// devServerNameRe is the declaration's name rule (docs/spec-mate.md §2.8a.1).
+	devServerNameRe = regexp.MustCompile(`^[a-z][a-z0-9-]{0,39}$`)
+	// devWorkDirRe bounds workDir to an absolute POSIX path with no shell
+	// metacharacters.
+	devWorkDirRe = regexp.MustCompile(`^/[A-Za-z0-9._/-]{1,256}$`)
 	// devHealthPathRe bounds the health-probe path to a URL path with no
 	// shell metacharacters. healthPath is interpolated into the remote
 	// curl probe (http://localhost:PORT<healthPath>); a single quote or `;`
 	// would otherwise break or inject into that command (B3).
 	devHealthPathRe = regexp.MustCompile(`^/[A-Za-z0-9._~/?=&%-]*$`)
-	// devShellEnvPrefixRe detects the `KEY=VAL ...` shell-prefix env
-	// var assignment at the start of a command. The dev-server spawn
-	// path uses `exec` directly (not a shell), so this prefix is
-	// parsed as the program name and exec fails with `: not found`.
-	// Caught early here with a structured Recovery hint pointing at
-	// `env KEY=VAL cmd` form. Empirically reproduced 2026-05-05 in
-	// `recover-failed-buildfromgit-missing-dep` baseline retrospective.
-	devShellEnvPrefixRe = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*=`)
 )
 
-// ExecuteDevServer is the single entry point for all dev_server actions.
-// Dispatching inside the ops package (instead of five separate exported
-// functions) lets the tool handler stay a one-liner and keeps the SSH
-// shape decisions centralized.
+// ExecuteDevServer is the single entry point for all dev_server actions. Every
+// action reads the dev service's dev servers once and acts through its
+// supervisor (docs/spec-mate.md §2.8a.2). A start or restart on a dev service
+// whose dev setup does not run the supervisor returns *NoSupervisorError with
+// nothing changed; the caller moves the dev setup onto it.
 func ExecuteDevServer(
 	ctx context.Context,
 	ssh SSHDeployer,
@@ -215,72 +183,82 @@ func ExecuteDevServer(
 	if err := verifyDevServerTarget(ctx, client, projectID, p.Hostname); err != nil {
 		return nil, err
 	}
-	switch strings.ToLower(p.Action) {
-	case devServerActionStart:
-		return startDevServer(ctx, ssh, p)
+	action := strings.ToLower(p.Action)
+	ds, err := ReadDevServers(ctx, ssh, p.Hostname)
+	var noSup *NoSupervisorError
+	switch {
+	case errors.As(err, &noSup) && (action == devServerActionStart || action == devServerActionRestart):
+		return nil, err
+	case errors.As(err, &noSup):
+		return noSupervisorResult(action, p.Hostname), nil
+	case err != nil:
+		return nil, err
+	}
+	switch action {
+	case devServerActionStart, devServerActionRestart:
+		return startDevServer(ctx, ssh, p, ds)
 	case devServerActionStop:
-		return stopDevServer(ctx, ssh, p)
+		return stopDevServer(ctx, ssh, p, ds)
 	case devServerActionStatus:
-		return statusDevServer(ctx, ssh, p)
-	case devServerActionLogs:
-		return logsDevServer(ctx, ssh, p)
-	case devServerActionRestart:
-		return restartDevServer(ctx, ssh, p)
+		return statusDevServer(ctx, ssh, p, ds)
 	default:
-		return nil, platform.NewPlatformError(platform.ErrInvalidParameter,
-			fmt.Sprintf("Unknown dev_server action %q", p.Action),
-			"Use one of: start, stop, status, logs, restart")
+		return logsDevServer(ctx, ssh, p, ds)
 	}
 }
 
 func validateDevServerParams(p DevServerParams) error {
+	switch strings.ToLower(p.Action) {
+	case devServerActionStart, devServerActionStop, devServerActionStatus, devServerActionLogs, devServerActionRestart:
+	default:
+		return platform.NewPlatformError(platform.ErrInvalidParameter,
+			fmt.Sprintf("Unknown dev_server action %q", p.Action),
+			"Use one of: start, stop, status, logs, restart")
+	}
 	if !devHostnameRe.MatchString(p.Hostname) {
 		return platform.NewPlatformError(platform.ErrInvalidParameter,
 			fmt.Sprintf("Invalid hostname %q", p.Hostname),
 			"Hostname must match Zerops container conventions: lowercase alphanumeric with dashes, starting with a letter, up to 63 chars.")
 	}
-	if p.LogFile != "" && !devLogPathRe.MatchString(p.LogFile) {
+	if p.Name != "" && !devServerNameRe.MatchString(p.Name) {
 		return platform.NewPlatformError(platform.ErrInvalidParameter,
-			fmt.Sprintf("Invalid log file path %q", p.LogFile),
-			"Log file must be an absolute POSIX path containing only letters, digits, dots, dashes, underscores, and slashes.")
+			fmt.Sprintf("Invalid dev server name %q", p.Name),
+			"A dev server name is lowercase letters, digits and dashes, starting with a letter, up to 40 chars (e.g. web, api, worker).")
 	}
-	if p.WorkDir != "" && !devLogPathRe.MatchString(p.WorkDir) {
-		return platform.NewPlatformError(platform.ErrInvalidParameter,
-			fmt.Sprintf("Invalid working directory %q", p.WorkDir),
-			"workDir must be an absolute POSIX path (e.g. /var/www).")
+	if p.WorkDir != "" {
+		if _, err := devServerCwd(p.WorkDir); err != nil {
+			return err
+		}
 	}
 	if p.HealthPath != "" && !devHealthPathRe.MatchString(p.HealthPath) {
 		return platform.NewPlatformError(platform.ErrInvalidParameter,
 			fmt.Sprintf("Invalid health path %q", p.HealthPath),
 			"healthPath must be a URL path starting with / and containing only URL-safe characters (e.g. /health, /api/status).")
 	}
-	action := strings.ToLower(p.Action)
-	if action == devServerActionStart || action == devServerActionRestart {
-		trimmed := strings.TrimSpace(p.Command)
-		if trimmed == "" {
-			return platform.NewPlatformError(platform.ErrInvalidParameter,
-				"Missing dev server command",
-				"Pass the exact shell command that starts the dev server, e.g. 'npm run start:dev' or 'vite --host 0.0.0.0'.")
-		}
-		if devShellEnvPrefixRe.MatchString(trimmed) {
-			firstToken, _, _ := strings.Cut(trimmed, " ")
-			return platform.NewPlatformError(platform.ErrInvalidParameter,
-				fmt.Sprintf("Shell-prefix env-var assignment in command: %q", firstToken),
-				"dev_server spawns commands via exec (not a shell), so `KEY=VAL cmd` is parsed as the program name and fails. Use `env KEY=VAL cmd` instead — the env binary handles the assignment before exec'ing the real command. Example: `env PYTHONPATH=/var/www/vendor gunicorn --bind 0.0.0.0:8000 app:app`.")
-		}
-		if !p.NoHTTPProbe {
-			if p.Port <= 0 || p.Port > 65535 {
-				return platform.NewPlatformError(platform.ErrInvalidParameter,
-					fmt.Sprintf("Invalid port %d", p.Port),
-					"Pass the HTTP port the dev server listens on (e.g. 3000 for NestJS, 5173 for Vite). For services with no HTTP surface (NATS/queue workers, cron runners), set noHttpProbe=true to skip the health probe entirely.")
-			}
-		} else if p.Port < 0 || p.Port > 65535 {
-			return platform.NewPlatformError(platform.ErrInvalidParameter,
-				fmt.Sprintf("Invalid port %d", p.Port),
-				"Port must be in 0..65535. Use 0 when noHttpProbe=true (the tool ignores it).")
-		}
+	if p.Port < 0 || p.Port > 65535 {
+		return platform.NewPlatformError(platform.ErrInvalidParameter,
+			fmt.Sprintf("Invalid port %d", p.Port),
+			"Pass the HTTP port the dev server listens on (e.g. 3000 for NestJS, 5173 for Vite). For services with no HTTP surface (NATS/queue workers, cron runners), set noHttpProbe=true and omit it.")
 	}
 	return nil
+}
+
+// devServerCwd turns an absolute workDir into the declaration's cwd, relative
+// to the repo root.
+func devServerCwd(workDir string) (string, error) {
+	if workDir == "" {
+		return ".", nil
+	}
+	clean := path.Clean(workDir)
+	rel, ok := strings.CutPrefix(clean, DevRepoRoot)
+	if !devWorkDirRe.MatchString(workDir) || !ok || (rel != "" && !strings.HasPrefix(rel, "/")) {
+		return "", platform.NewPlatformError(platform.ErrInvalidParameter,
+			fmt.Sprintf("Invalid working directory %q", workDir),
+			"workDir must be an absolute path inside the repo at "+DevRepoRoot+" (e.g. "+DevRepoRoot+"/apps/web).")
+	}
+	if rel = strings.TrimPrefix(rel, "/"); rel == "" {
+		return ".", nil
+	}
+	return rel, nil
 }
 
 // verifyDevServerTarget confirms the hostname resolves to an actual service
@@ -289,12 +267,11 @@ func validateDevServerParams(p DevServerParams) error {
 // failed-redeploy READY_TO_DEPLOY target gets a clear PRECONDITION error
 // ("deploy it to RUNNING first") instead of an opaque SSH timeout.
 //
-// This is a precondition, NOT the deleted deploy refusal. Spawning a dev
+// This is a precondition, NOT the deleted deploy refusal. Starting a dev
 // server cannot itself fix a non-running container (unlike a corrective
-// redeploy — which is why zerops_deploy no longer gates; see
-// plans/deploy-gate-category-error-2026-06-04.md). Resolving this is a
-// different op (deploy), so there is no deadlock: once the deploy lands the
-// service is RUNNING and the dev server attaches.
+// redeploy — which is why zerops_deploy no longer gates), so there is no
+// deadlock: once the deploy lands the service is RUNNING and the dev server
+// attaches.
 func verifyDevServerTarget(ctx context.Context, client platform.Client, projectID, hostname string) error {
 	if client == nil {
 		// Unit tests can pass a nil client when only the SSH shape matters.
@@ -337,143 +314,495 @@ func devServerNotRunningErr(hostname, status string) error {
 	)
 }
 
-// containerIdentityCmd prints the container's hostname, the kernel's boot id
-// and its init's start time (field 22 of /proc/1/stat, counted after the
-// parenthesised command name, which may hold spaces). A redeploy is a new
-// container; a restart starts a new init — whose start time moves when the
-// container shares its host's kernel, and whose boot id moves when it boots
-// its own. A crash of the dev server changes none of the three.
-const containerIdentityCmd = `printf '%s %s %s\n' "$(hostname)" "$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo -)" "$(sed 's/^.*) //' /proc/1/stat 2>/dev/null | cut -d' ' -f20)"`
-
-// containerIdentityTimeout bounds the identity read: one round trip, no
-// retries — a container that does not answer is down or being replaced.
-const containerIdentityTimeout = 10 * time.Second
-
-// ContainerIdentity names the life of hostname's container — "<hostname>/<boot
-// id>/<init start time>" — so a kept dev server can tell "its container
-// restarted or was redeployed" (the process is gone and zcp starts it again)
-// from "it crashed" (the agent's to fix). An unreachable container, or an
-// answer without all three parts, is an error: nothing may be concluded from it.
-func ContainerIdentity(ctx context.Context, ssh SSHDeployer, hostname string) (string, error) {
-	probeCtx, cancel := context.WithTimeout(ctx, containerIdentityTimeout)
-	defer cancel()
-	out, err := ssh.ExecSSH(probeCtx, hostname, containerIdentityCmd)
-	if err != nil {
-		return "", fmt.Errorf("container identity of %s: %w", hostname, err)
+// noSupervisorResult answers stop, status and logs on a dev service whose dev
+// setup does not run the supervisor: no dev server runs under zcp there.
+func noSupervisorResult(action, hostname string) *DevServerResult {
+	return &DevServerResult{
+		Action:   action,
+		Hostname: hostname,
+		Reason:   reasonNoSupervisor,
+		Message: fmt.Sprintf("%s has no dev-server supervisor yet, so no dev server runs under zcp there. zerops_dev_server action=start sets it up (one redeploy of %s; uncommitted work stays).",
+			hostname, hostname),
 	}
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	fields := strings.Fields(lines[len(lines)-1])
-	if len(fields) != 3 {
-		return "", fmt.Errorf("container identity of %s: unreadable answer %q", hostname, strings.TrimSpace(string(out)))
-	}
-	if _, convErr := strconv.ParseUint(fields[2], 10, 64); convErr != nil {
-		return "", fmt.Errorf("container identity of %s: init start time %q: %w", hostname, fields[2], convErr)
-	}
-	return strings.Join(fields, "/"), nil
 }
 
-// portListeningCmd prints "listening" when a TCP socket listens on port in the
-// container's own socket table — /proc/net/tcp and tcp6, a local :PORT (hex)
-// with remote port 0000 in state 0A (LISTEN) — and "free" otherwise. Nothing
-// is asked of the server (an HTTP request would make a dev server compile) and
-// no tool a minimal image may lack is needed.
-func portListeningCmd(port int) string {
-	return fmt.Sprintf(`if grep -Eqs ':%04X [0-9A-Fa-f]+:0000 0A' /proc/net/tcp /proc/net/tcp6; then echo listening; else echo free; fi`, port)
+// resolveServerName picks the declared server a call names: the given name,
+// else the one named after the hostname, else the only one declared. A start
+// of a repo that declares several, none named after the hostname, defaults to
+// the hostname too (a new single server).
+func resolveServerName(p DevServerParams, ds *DevServers, starting bool) (string, error) {
+	if p.Name != "" {
+		return p.Name, nil
+	}
+	if _, ok := ds.Server(p.Hostname); ok {
+		return p.Hostname, nil
+	}
+	if len(ds.Declared.Servers) == 1 {
+		return ds.Declared.Servers[0].Name, nil
+	}
+	if starting || len(ds.Declared.Servers) == 0 {
+		return p.Hostname, nil
+	}
+	return "", platform.NewPlatformError(platform.ErrInvalidParameter,
+		fmt.Sprintf("%s declares several dev servers; name the one you mean", p.Hostname),
+		"Pass name: one of "+declaredSummary(ds)+".")
 }
 
-// PortListening reports whether something already listens on port inside
-// hostname's container — what a bring-back checks before it spawns, so a
-// server the agent (or another bring-back) already started is never doubled.
-func PortListening(ctx context.Context, ssh SSHDeployer, hostname string, port int) (bool, error) {
-	probeCtx, cancel := context.WithTimeout(ctx, containerIdentityTimeout)
-	defer cancel()
-	out, err := ssh.ExecSSH(probeCtx, hostname, portListeningCmd(port))
-	if err != nil {
-		return false, fmt.Errorf("port %d listener on %s: %w", port, hostname, err)
+// declaredSummary lists the declared servers with the supervisor's status.
+func declaredSummary(ds *DevServers) string {
+	parts := make([]string, 0, len(ds.Declared.Servers))
+	for _, s := range ds.Declared.Servers {
+		status := "not started"
+		if st, ok := ds.State.Servers[s.Name]; ok {
+			status = string(st.Status)
+		}
+		parts = append(parts, fmt.Sprintf("%s (%s)", s.Name, status))
 	}
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	switch strings.TrimSpace(lines[len(lines)-1]) {
-	case "listening":
-		return true, nil
-	case "free":
-		return false, nil
-	}
-	return false, fmt.Errorf("port %d listener on %s: unreadable answer %q", port, hostname, strings.TrimSpace(string(out)))
+	return strings.Join(parts, ", ")
 }
 
-// KillSpawnedDevServer stops what one dev-server spawn started — pid, as its
-// ack reported it (DevServerResult.PID) — and only while the pidfile next to
-// logFile (default log when empty) still holds that pid: a later start
-// overwrites the pidfile, and its process is not this caller's to stop. The
-// spawn ran it under setsid, so pid leads its own process group and the whole
-// group is signalled: a runner that does not pass SIGTERM on (npm, sh -c)
-// would leave its listener up. Never the bare pid — with its group gone, pid
-// can only name a process that reused it. An unknown pid (0) stops nothing.
-func KillSpawnedDevServer(ctx context.Context, ssh SSHDeployer, hostname, logFile string, pid int) error {
-	if pid <= 0 {
-		return nil
+// unknownServerErr answers a name the repo does not declare.
+func unknownServerErr(ds *DevServers, name string) error {
+	hint := "Start it with zerops_dev_server action=start name=" + name + " command=<the command that runs it>."
+	if len(ds.Declared.Servers) > 0 {
+		hint = "Declared: " + declaredSummary(ds) + ". " + hint
 	}
-	if logFile == "" {
-		logFile = defaultLogFilePattern
+	return platform.NewPlatformError(platform.ErrInvalidParameter,
+		fmt.Sprintf("%s declares no dev server named %q", ds.Hostname, name), hint)
+}
+
+// newResult starts a result for name on hostname.
+func newResult(action, hostname, name string) *DevServerResult {
+	r := &DevServerResult{Action: action, Hostname: hostname}
+	if name != hostname {
+		r.Name = name
 	}
-	want := strconv.Itoa(pid)
-	cmd := fmt.Sprintf(`if [ "$(cat %s 2>/dev/null)" = %s ]; then kill -TERM -%s 2>/dev/null; fi; true`,
-		shellQuote(pidFileFor(logFile)), shellQuote(want), want)
-	killCtx, cancel := context.WithTimeout(ctx, containerIdentityTimeout)
-	defer cancel()
-	if _, err := ssh.ExecSSH(killCtx, hostname, cmd); err != nil {
-		return fmt.Errorf("kill spawned dev server on %s: %w", hostname, err)
+	return r
+}
+
+// serverLabel is how messages name a server: by its dev service when it is
+// named after it, "<name> on <hostname>" otherwise.
+func serverLabel(hostname, name string) string {
+	if name == hostname || name == "" {
+		return hostname
+	}
+	return name + " on " + hostname
+}
+
+// declarationProblem refuses to act on a declaration zcp cannot read or a
+// supervisor that cannot run it.
+func declarationProblem(ds *DevServers) error {
+	// A declaration newer than the supervisor is unreadable to it (and to an
+	// equally old zcp); name the old supervisor, not a broken file.
+	if msg := ds.OlderThanDeclaration(); msg != "" {
+		return platform.NewPlatformError(platform.ErrInvalidParameter, msg,
+			"Redeploy the dev service (zerops_deploy) so its run.prepareCommands install the zcp-devsup this zcp writes, then start the server again.")
+	}
+	if ds.DeclarationErr != nil {
+		return platform.NewPlatformError(platform.ErrInvalidParameter,
+			fmt.Sprintf("%s on %s is invalid: %v", devsup.DeclarationPath, ds.Hostname, ds.DeclarationErr),
+			"Fix the file by hand (zcp never overwrites an invalid declaration); the supervisor keeps running what it runs meanwhile.")
 	}
 	return nil
 }
 
-// SpawnedDevServerAlive reports whether the process one dev-server spawn
-// started — pid, as its ack reported it (DevServerResult.PID) — is alive while
-// the pidfile next to logFile (default log when empty) still names it: a dev
-// server that is still starting, not yet listening, is alive. A pidfile left
-// from an earlier container life, or a later start's, says nothing about it,
-// and an unknown pid (0) is no process, read without a call.
-func SpawnedDevServerAlive(ctx context.Context, ssh SSHDeployer, hostname, logFile string, pid int) (bool, error) {
-	if pid <= 0 {
-		return false, nil
+// wantedServer is the declaration entry a start asks for: the declared one,
+// with what the call passes replacing its command, port and cwd.
+func wantedServer(p DevServerParams, name string, declared devsup.Server, isDeclared bool) (devsup.Server, error) {
+	want := declared
+	want.Name = name
+	if !isDeclared && strings.TrimSpace(p.Command) == "" {
+		return devsup.Server{}, platform.NewPlatformError(platform.ErrInvalidParameter,
+			"Missing dev server command",
+			"Pass the exact shell command that starts the dev server, e.g. 'npm run start:dev' or 'vite --host 0.0.0.0'. zcp declares it in "+devsup.DeclarationPath+" once; later starts need only the name.")
 	}
-	if logFile == "" {
-		logFile = defaultLogFilePattern
+	if strings.TrimSpace(p.Command) != "" {
+		want.Command = strings.TrimSpace(p.Command)
 	}
-	want := strconv.Itoa(pid)
-	cmd := fmt.Sprintf(`if [ "$(cat %s 2>/dev/null)" = %s ] && kill -0 %s 2>/dev/null; then echo alive; else echo dead; fi`,
-		shellQuote(pidFileFor(logFile)), shellQuote(want), want)
-	probeCtx, cancel := context.WithTimeout(ctx, livenessCheckTimeout)
-	defer cancel()
-	out, err := ssh.ExecSSH(probeCtx, hostname, cmd)
+	if p.WorkDir != "" || !isDeclared {
+		cwd, err := devServerCwd(p.WorkDir)
+		if err != nil {
+			return devsup.Server{}, err
+		}
+		want.Cwd = cwd
+	}
+	switch {
+	case p.Port > 0:
+		want.Port = p.Port
+	case p.NoHTTPProbe && !isDeclared:
+		want.Port = 0
+	}
+	if want.Port == 0 && !p.NoHTTPProbe && (!isDeclared || declared.Port != 0) {
+		return devsup.Server{}, platform.NewPlatformError(platform.ErrInvalidParameter,
+			fmt.Sprintf("Invalid port %d", p.Port),
+			"Pass the HTTP port the dev server listens on (e.g. 3000 for NestJS, 5173 for Vite). For services with no HTTP surface (NATS/queue workers, cron runners), set noHttpProbe=true to skip the health probe entirely.")
+	}
+	return want, nil
+}
+
+// startDevServer declares the server when the set (or its entry) changes,
+// asks the supervisor to start it and waits for its health probe — or, for a
+// server without HTTP, for the supervisor's status after a short settle.
+func startDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds *DevServers) (*DevServerResult, error) {
+	action := strings.ToLower(p.Action)
+	if err := declarationProblem(ds); err != nil {
+		return nil, err
+	}
+	name, err := resolveServerName(p, ds, true)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	return strings.Contains(string(out), "alive"), nil
+	declared, isDeclared := ds.Server(name)
+	want, err := wantedServer(p, name, declared, isDeclared)
+	if err != nil {
+		return nil, err
+	}
+	decl, changed := DeclareDevServer(ds.Declared, want)
+	if changed {
+		if err := WriteDevDeclaration(ctx, ssh, p.Hostname, decl); err != nil {
+			return nil, err
+		}
+		if _, err := supervisorCtl(ctx, ssh, p.Hostname, "reload"); err != nil {
+			return nil, err
+		}
+	}
+	verb := devServerActionStart
+	if action == devServerActionRestart && !changed {
+		verb = devServerActionRestart
+	}
+	begun := time.Now()
+	if _, err := supervisorCtl(ctx, ssh, p.Hostname, verb, name); err != nil {
+		return nil, err
+	}
+	result := newResult(action, p.Hostname, name)
+	if want.Port == 0 || p.NoHTTPProbe {
+		return settleNoProbe(ctx, ssh, result, name)
+	}
+	return probeStarted(ctx, ssh, result, p, name, want.Port, begun)
 }
 
-// DevServerStopPattern is the pattern a stop's kill matches processes by:
-// processMatch when given, else the command's first token past any leading
-// KEY=VAL assignments. "" when neither names one.
-func DevServerStopPattern(processMatch, command string) string {
-	if match := strings.TrimSpace(processMatch); match != "" {
-		return match
+// settleNoProbe decides a portless start from the supervisor's status after a
+// short settle: a server that ended during init is reported crashed.
+func settleNoProbe(ctx context.Context, ssh SSHDeployer, result *DevServerResult, name string) (*DevServerResult, error) {
+	settle := currentNoProbeSettle()
+	sleepCtx(ctx, settle)
+	st, err := supervisorCtl(ctx, ssh, result.Hostname, devServerActionStatus, name)
+	if err != nil {
+		return nil, err
 	}
-	return firstShellToken(command)
+	server := st.Servers[name]
+	result.LogFile, result.PID = server.LogPath, server.Pid
+	label := serverLabel(result.Hostname, name)
+	if server.Status == devsup.StatusCrashed {
+		applyCrash(ctx, ssh, result, name, server)
+		return result, nil
+	}
+	result.Running = true
+	result.LogTail = supervisorLogTail(ctx, ssh, result.Hostname, name, defaultLogTailLines)
+	result.Message = fmt.Sprintf(
+		"Dev server %s started under the supervisor in no-probe mode (no HTTP surface); after %s it is %s. "+
+			"This tool CANNOT verify the worker is actually consuming messages / processing work — follow up with `zerops_logs serviceHostname=%q` to confirm the subscription / job loop is making progress.",
+		label, settle, server.Status, result.Hostname)
+	return result, nil
 }
 
-// DevServerRunning reports whether a dev-server process is currently
-// alive on hostname. It reuses checkProcessAlive — the same pidfile
-// `kill -0` liveness read the start/restart no-probe path uses — against
-// the default log/pidfile pair, so it needs no caller-supplied port and
-// performs no mutation.
-//
-// This is a coarser signal than the full `status` action (which does an
-// HTTP health probe and therefore requires Port): DevServerRunning only
-// answers "is a process alive", not "is it serving 2xx". That is exactly
-// what verify's listener classification needs (docs/spec-workflows.md §8
-// O3 PA-4, O4) — verify runs its own HTTP probe once it decides the
-// runtime has a listener at all.
-func DevServerRunning(ctx context.Context, ssh SSHDeployer, hostname string) (bool, error) {
-	return checkProcessAlive(ctx, ssh, hostname, pidFileFor(defaultLogFilePattern))
+// probeStarted runs the in-container health probe for a started server and
+// then confirms with the supervisor that its group is the one answering.
+func probeStarted(ctx context.Context, ssh SSHDeployer, result *DevServerResult, p DevServerParams, name string, port int, begun time.Time) (*DevServerResult, error) {
+	wait := p.WaitSeconds
+	if wait <= 0 {
+		wait = defaultDevServerWait
+	} else if wait > maxDevServerWait {
+		wait = maxDevServerWait
+	}
+	healthPath := p.HealthPath
+	if healthPath == "" {
+		healthPath = "/"
+	}
+	result.Port, result.HealthPath = port, healthPath
+	probeOut, _, probeDeadline, probeErr := runHealthProbe(ctx, ssh, p.Hostname, port, healthPath, wait)
+	st, err := supervisorCtl(ctx, ssh, p.Hostname, devServerActionStatus, name)
+	if err != nil {
+		return nil, err
+	}
+	server := st.Servers[name]
+	result.LogFile, result.PID = server.LogPath, server.Pid
+	probeLine := strings.TrimSpace(string(probeOut))
+	if server.Status == devsup.StatusCrashed {
+		// A passing probe with the server's group gone is someone else's
+		// listener answering its port (F3).
+		applyCrash(ctx, ssh, result, name, server)
+		return result, nil
+	}
+	result.LogTail = supervisorLogTail(ctx, ssh, p.Hostname, name, defaultLogTailLines)
+	if probeErr == nil && strings.HasPrefix(probeLine, "OK ") {
+		applyProbeSuccess(result, probeLine, time.Since(begun).Milliseconds(), name)
+		return result, nil
+	}
+	applyProbeFailure(result, probeLine, probeDeadline, name, healthPath, wait)
+	return result, nil
+}
+
+// applyCrash reports a server the supervisor holds as crashed, with its exit
+// and log tail.
+func applyCrash(ctx context.Context, ssh SSHDeployer, result *DevServerResult, name string, server devsup.ServerState) {
+	result.Running = false
+	result.LogTail = supervisorLogTail(ctx, ssh, result.Hostname, name, defaultLogTailLines)
+	label := serverLabel(result.Hostname, name)
+	if server.Exit != nil && server.Exit.Signal == devsup.ExitPortBusy {
+		result.Reason = reasonPortInUse
+		result.Message = fmt.Sprintf("Dev server %s could not start: its port stayed busy — something outside the supervisor listens on it. Find and stop that process, then start the server again.", label)
+		return
+	}
+	result.Reason = reasonCrashed
+	result.Message = fmt.Sprintf("Dev server %s crashed (%s); the supervisor leaves it down. Read logTail, fix the cause, then start it again.", label, exitText(server.Exit))
+}
+
+// exitText is a server's last exit as messages say it.
+func exitText(e *devsup.Exit) string {
+	switch {
+	case e == nil:
+		return "no exit recorded"
+	case e.Signal != "":
+		return "signal " + e.Signal
+	default:
+		return "exit " + strconv.Itoa(e.Code)
+	}
+}
+
+// stopDevServer asks the supervisor to stop the server's process group; it
+// stays stopped until started (a redeploy starts every declared server).
+func stopDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds *DevServers) (*DevServerResult, error) {
+	name, err := resolveServerName(p, ds, false)
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := ds.State.Servers[name]; !ok {
+		return nil, unknownServerErr(ds, name)
+	}
+	st, err := supervisorCtl(ctx, ssh, p.Hostname, devServerActionStop, name)
+	if err != nil {
+		return nil, err
+	}
+	result := newResult(devServerActionStop, p.Hostname, name)
+	server := st.Servers[name]
+	result.LogFile = server.LogPath
+	result.Message = fmt.Sprintf("Dev server %s stopped — its whole process group ended and its port is free. It stays stopped until you start it; a redeploy of %s starts every declared server again.",
+		serverLabel(p.Hostname, name), p.Hostname)
+	if siblings := runningSiblings(st, name); len(siblings) > 0 {
+		result.Message += " Still running: " + strings.Join(siblings, ", ") + "."
+	}
+	return result, nil
+}
+
+// runningSiblings names the other servers the supervisor runs.
+func runningSiblings(st devsup.State, name string) []string {
+	var out []string
+	for n, s := range st.Servers {
+		if n != name && (s.Status == devsup.StatusRunning || s.Status == devsup.StatusStarting) {
+			out = append(out, n)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// statusDevServer reports the supervisor's status of a server and, when it
+// has a port, probes it once from inside the container.
+func statusDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds *DevServers) (*DevServerResult, error) {
+	name, err := resolveServerName(p, ds, false)
+	if err != nil {
+		return nil, err
+	}
+	server, ok := ds.State.Servers[name]
+	if !ok {
+		return nil, unknownServerErr(ds, name)
+	}
+	declared, _ := ds.Server(name)
+	result := newResult(devServerActionStatus, p.Hostname, name)
+	result.LogFile, result.PID = server.LogPath, server.Pid
+	label := serverLabel(p.Hostname, name)
+	switch server.Status {
+	case devsup.StatusCrashed:
+		applyCrash(ctx, ssh, result, name, server)
+		return result, nil
+	case devsup.StatusStopped:
+		result.Reason = reasonStopped
+		result.Message = fmt.Sprintf("Dev server %s is stopped.", label)
+		return result, nil
+	case devsup.StatusRunning, devsup.StatusStarting:
+	}
+	port := p.Port
+	if port == 0 {
+		port = declared.Port
+	}
+	if port == 0 {
+		result.Running = true
+		result.Message = fmt.Sprintf("Dev server %s is %s (no HTTP port).", label, server.Status)
+		return result, nil
+	}
+	healthPath := p.HealthPath
+	if healthPath == "" {
+		healthPath = "/"
+	}
+	result.Port, result.HealthPath = port, healthPath
+	out, _ := ssh.ExecSSH(ctx, p.Hostname, fmt.Sprintf(
+		"curl -s -o /dev/null -w '%%{http_code}' --max-time 2 http://localhost:%d%s", port, healthPath))
+	code := strings.TrimSpace(string(out))
+	if code == "" || code == "000" {
+		result.Reason = "connection_refused"
+		result.Message = fmt.Sprintf("Dev server %s is %s but nothing answers HTTP on :%d yet.", label, server.Status, port)
+		return result, nil
+	}
+	var httpCode int
+	_, _ = fmt.Sscanf(code, "%d", &httpCode)
+	result.HealthStatus = httpCode
+	result.Running = httpCode >= 200 && httpCode < 500
+	if !result.Running {
+		result.Reason = fmt.Sprintf("http_%d", httpCode)
+		result.Message = fmt.Sprintf("Dev server %s returned HTTP %d on :%d%s.", label, httpCode, port, healthPath)
+		return result, nil
+	}
+	result.URL = devServerURL(p.Hostname, port, healthPath)
+	result.Message = fmt.Sprintf("Dev server %s is running on :%d (HTTP %d on %s).", label, port, httpCode, healthPath)
+	return result, nil
+}
+
+// logsDevServer tails the server's own log through the supervisor.
+func logsDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds *DevServers) (*DevServerResult, error) {
+	name, err := resolveServerName(p, ds, false)
+	if err != nil {
+		return nil, err
+	}
+	server, ok := ds.State.Servers[name]
+	if !ok {
+		return nil, unknownServerErr(ds, name)
+	}
+	lines := p.LogLines
+	if lines <= 0 {
+		lines = defaultLogTailLines
+	}
+	lines = min(lines, 500)
+	result := newResult(devServerActionLogs, p.Hostname, name)
+	result.LogFile = server.LogPath
+	result.LogTail = supervisorLogTail(ctx, ssh, p.Hostname, name, lines)
+	result.Message = fmt.Sprintf("Tailing last %d lines of %s on %s.", lines, server.LogPath, p.Hostname)
+	return result, nil
+}
+
+// defaultNoProbeSettle bounds the pause between a start and the status read
+// in no-probe mode: long enough for init-phase failures to end the process.
+const defaultNoProbeSettle = 3 * time.Second
+
+// noProbeSettleNanos holds the current settle interval in nanoseconds,
+// atomic so test helpers can override it without racing parallel readers.
+var noProbeSettleNanos atomic.Int64
+
+func init() {
+	noProbeSettleNanos.Store(int64(defaultNoProbeSettle))
+}
+
+func currentNoProbeSettle() time.Duration {
+	return time.Duration(noProbeSettleNanos.Load())
+}
+
+func storeNoProbeSettle(d time.Duration) time.Duration {
+	return time.Duration(noProbeSettleNanos.Swap(int64(d)))
+}
+
+// sleepCtx sleeps for d or until ctx is cancelled, whichever comes first.
+func sleepCtx(ctx context.Context, d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+	case <-ctx.Done():
+	}
+}
+
+// runHealthProbe polls the health endpoint server-side in a single SSH
+// call. Returns probe output, locally-measured elapsed, a deadline-hit
+// flag, and the ssh error (convention: error last).
+func runHealthProbe(parent context.Context, ssh SSHDeployer, hostname string, port int, healthPath string, wait int) ([]byte, int64, bool, error) {
+	maxAttempts := (wait*1000)/pollIntervalMillis + 1
+	probe := fmt.Sprintf(
+		`set +e; start_ns=$(date +%%s%%N); for i in $(seq 1 %d); do `+
+			`code=$(curl -s -o /dev/null -w '%%{http_code}' --max-time 2 http://localhost:%d%s 2>/dev/null); `+
+			`if [ -n "$code" ] && [ "$code" -ge 200 ] 2>/dev/null && [ "$code" -lt 400 ] 2>/dev/null; then `+
+			`end_ns=$(date +%%s%%N); echo "OK $code $(( (end_ns - start_ns) / 1000000 ))"; exit 0; fi; `+
+			`sleep %s; done; `+
+			`echo "FAIL $code"; exit 1`,
+		maxAttempts, port, healthPath, pollIntervalAsShellDuration(),
+	)
+
+	probeCtx, cancel := context.WithTimeout(parent, time.Duration(wait)*time.Second+probeTimeoutSlack)
+	defer cancel()
+	start := time.Now()
+	out, err := ssh.ExecSSH(probeCtx, hostname, probe)
+	elapsed := time.Since(start).Milliseconds()
+	return out, elapsed, probeCtx.Err() == context.DeadlineExceeded, err
+}
+
+// applyProbeSuccess fills in result fields for a successful probe.
+func applyProbeSuccess(result *DevServerResult, probeLine string, elapsedMs int64, name string) {
+	var httpCode int
+	fields := strings.Fields(probeLine)
+	if len(fields) >= 2 {
+		// A malformed probe response is self-reported via the result shape.
+		_, _ = fmt.Sscanf(fields[1], "%d", &httpCode)
+	}
+	result.Running = true
+	result.HealthStatus = httpCode
+	// The probe measures its own wait inside the container; the caller's
+	// clock (elapsedMs) also counts SSH round trips.
+	result.StartMillis = elapsedMs
+	if len(fields) >= 3 {
+		if ms, err := strconv.ParseInt(fields[2], 10, 64); err == nil {
+			result.StartMillis = ms
+		}
+	}
+	result.URL = devServerURL(result.Hostname, result.Port, result.HealthPath)
+	result.Message = fmt.Sprintf("Dev server %s started under the supervisor — health probe passed (HTTP %d in %dms, probed from inside the container). Reach it at %s (requires the app to bind 0.0.0.0, not loopback). It has its own log (logFile) and comes back by itself after a container restart or redeploy.",
+		serverLabel(result.Hostname, name), httpCode, result.StartMillis, result.URL)
+}
+
+// applyProbeFailure classifies probe failure into a Reason code.
+func applyProbeFailure(result *DevServerResult, probeLine string, deadlineHit bool, name, healthPath string, wait int) {
+	result.Running = false
+	switch {
+	case deadlineHit:
+		result.Reason = ReasonHealthProbeTimeout
+	case probeLine == "":
+		result.Reason = "health_probe_no_output"
+	case strings.HasPrefix(probeLine, "FAIL "):
+		fields := strings.Fields(probeLine)
+		if len(fields) >= 2 && fields[1] != "" && fields[1] != "000" {
+			result.Reason = "health_probe_http_" + fields[1]
+		} else {
+			result.Reason = "health_probe_connection_refused"
+		}
+	default:
+		result.Reason = "health_probe_unknown: " + probeLine
+	}
+	result.Message = fmt.Sprintf(
+		"Dev server %s did not pass the health probe (localhost:%d%s, probed from inside the container) within %ds (%s); the supervisor keeps it as started. See logTail for the failing startup — if it references a missing dependency, install it over SSH first; if the server is still compiling, check again with action=status.",
+		serverLabel(result.Hostname, name), result.Port, healthPath, wait, result.Reason,
+	)
+}
+
+// devServerURL composes the consumer-vantage address of a dev server — the
+// form reachable from the agent's container over the project-private network
+// (internal DNS), NOT the localhost the in-container probe curls. Single owner
+// so start, restart, and status messages compose it identically (B9).
+func devServerURL(hostname string, port int, healthPath string) string {
+	return "http://" + net.JoinHostPort(hostname, strconv.Itoa(port)) + healthPath
+}
+
+// pollIntervalAsShellDuration returns the pollIntervalMillis as a shell
+// sleep argument ("0.500" for 500ms).
+func pollIntervalAsShellDuration() string {
+	return fmt.Sprintf("%d.%03d", pollIntervalMillis/1000, pollIntervalMillis%1000)
 }

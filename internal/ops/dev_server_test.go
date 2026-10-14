@@ -1,73 +1,30 @@
-// Tests for: internal/ops/dev_server.go — dev-server lifecycle primitive.
-// The mockSSHDeployer from deploy_ssh_test.go is reused so the same
-// transport-layer shape captures SSH calls for assertion here.
+// Tests for: internal/ops/dev_server.go, dev_server_supervisor.go — the
+// dev-server lifecycle on top of a dev service's supervisor (zcp-devsup),
+// driven over SSH against devservertest.Container, a fake dev container that
+// answers like one running the supervisor (docs/spec-mate.md §2.8a).
 package ops
 
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
-	"time"
 
+	"github.com/zeropsio/zcp/internal/devsup"
+	"github.com/zeropsio/zcp/internal/ops/devservertest"
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
-// scriptSSH is a scripted mockSSHDeployer: every ExecSSH call returns
-// the next (output, err) pair from the queued list, or a zero-value
-// response once the queue is drained. A single queue across all calls
-// is the simplest test shape that still lets us assert the SSH-command
-// sequence the tool sent.
-//
-// Background calls go through the same queue as foreground calls so a
-// test can assert the combined sequence. Each recorded call carries a
-// `background` flag and the timeout the caller passed, which lets the
-// dev_server tests verify that the spawn step took the background
-// codepath with the correct budget.
-type scriptSSH struct {
-	queue []scriptStep
-	calls []scriptCall
-}
-
-type scriptStep struct {
-	output string
-	err    error
-}
-
-type scriptCall struct {
-	hostname   string
-	command    string
-	background bool
-	bgTimeout  time.Duration
-}
-
-func (s *scriptSSH) ExecSSH(_ context.Context, hostname, command string) ([]byte, error) {
-	s.calls = append(s.calls, scriptCall{hostname: hostname, command: command})
-	return s.next()
-}
-
-func (s *scriptSSH) ExecSSHBackground(_ context.Context, hostname, command string, timeout time.Duration) ([]byte, error) {
-	s.calls = append(s.calls, scriptCall{hostname: hostname, command: command, background: true, bgTimeout: timeout})
-	return s.next()
-}
-
-func (s *scriptSSH) next() ([]byte, error) {
-	if len(s.queue) == 0 {
-		return nil, nil
-	}
-	step := s.queue[0]
-	s.queue = s.queue[1:]
-	if step.err != nil {
-		return []byte(step.output), step.err
-	}
-	return []byte(step.output), nil
-}
-
 // disableNoProbeSettleForTest zeroes the no-probe settle interval so
-// unit tests don't wait 3s per case for init-time crashes that will
-// never happen in a scripted scriptSSH queue. Uses atomic.Int64 under
-// the hood (storeNoProbeSettle) so parallel tests don't data-race the
-// settle-interval reader. Restored via t.Cleanup.
+// unit tests don't wait 3s per case for init-time crashes. Uses
+// atomic.Int64 under the hood (storeNoProbeSettle) so parallel tests don't
+// data-race the settle-interval reader. Restored via t.Cleanup.
+//
+// non-parallel: callers override the package's settle interval, so they run
+// before the parallel tests are released.
 func disableNoProbeSettleForTest(t *testing.T) {
 	t.Helper()
 	orig := storeNoProbeSettle(0)
@@ -92,28 +49,50 @@ func mockClientWithServices(hostnames ...string) platform.Client {
 		WithServices(svcs)
 }
 
+// twoServers declares web (:3000) and api (:8080) on appdev.
+const twoServers = `{"version":1,"servers":[` +
+	`{"name":"web","port":3000,"command":"pnpm dev","cwd":"apps/web"},` +
+	`{"name":"api","port":8080,"command":"pnpm dev","cwd":"apps/api"}]}`
+
+// oneServer declares apidev's one server, named after the dev service.
+const oneServer = `{"version":1,"servers":[{"name":"apidev","port":3000,"command":"npm run start:dev","cwd":"."}]}`
+
+func runDevServer(t *testing.T, c *devservertest.Container, p DevServerParams) *DevServerResult {
+	t.Helper()
+	result, err := ExecuteDevServer(context.Background(), c, mockClientWithServices(p.Hostname), "p1", p)
+	if err != nil {
+		t.Fatalf("ExecuteDevServer(%s): %v", p.Action, err)
+	}
+	return result
+}
+
+// sentWith counts the commands that contain every part.
+func sentWith(c *devservertest.Container, parts ...string) int {
+	n := 0
+	for _, cmd := range c.Sent() {
+		all := true
+		for _, p := range parts {
+			all = all && strings.Contains(cmd, p)
+		}
+		if all {
+			n++
+		}
+	}
+	return n
+}
+
 func TestDevServer_Start_Success(t *testing.T) {
 	t.Parallel()
+	c := devservertest.NewSupervised("")
+	c.Logs = map[string][]string{"apidev": {"starting...", "ok"}}
 
-	// Scripted SSH: spawn (bg, emits pid ack), probe (OK), tail, liveness (F3).
-	ssh := &scriptSSH{queue: []scriptStep{
-		{output: "zcp-dev-server-spawned pid=1234"}, // bg spawn ack
-		{output: "OK 200 123"},                      // health probe
-		{output: "starting...\nok"},                 // log tail
-		{output: "alive\n"},                         // F3 spawned-pid liveness
-	}}
-
-	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
-		DevServerParams{
-			Action:     "start",
-			Hostname:   "apidev",
-			Command:    "npm run start:dev",
-			Port:       3000,
-			HealthPath: "/api/health",
-		})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	result := runDevServer(t, c, DevServerParams{
+		Action:     "start",
+		Hostname:   "apidev",
+		Command:    "npm run start:dev",
+		Port:       3000,
+		HealthPath: "/api/health",
+	})
 	if !result.Running {
 		t.Errorf("expected Running=true, got %+v", result)
 	}
@@ -139,283 +118,63 @@ func TestDevServer_Start_Success(t *testing.T) {
 	if !strings.Contains(result.Message, "http://apidev:3000/api/health") {
 		t.Errorf("success message must hand the hostname-vantage URL: %q", result.Message)
 	}
-	if len(ssh.calls) != 4 {
-		t.Fatalf("expected exactly 4 SSH calls (spawn + probe + tail + liveness), got %d", len(ssh.calls))
+	// The server is named after its dev service, so the result does not name it.
+	if result.Name != "" {
+		t.Errorf("Name = %q, want empty for the server named after the dev service", result.Name)
 	}
-	// Call 3: F3 spawned-pid liveness guard — kill -0, no curl.
-	if !strings.Contains(ssh.calls[3].command, "kill -0") {
-		t.Errorf("call 3 must be the spawned-pid liveness check (kill -0), got: %q", ssh.calls[3].command)
+	if result.LogFile != "/home/zerops/.zcp/devsup/logs/apidev.log" || result.PID == 0 {
+		t.Errorf("LogFile/PID = %q/%d, want the supervisor's log path and the group's pid", result.LogFile, result.PID)
 	}
-
-	// Call 0: spawn. MUST go through the background codepath (scriptCall.background=true)
-	// and carry a bounded timeout. The spawn command MUST use setsid for
-	// session detach, redirect stdio, and emit the ack marker so the
-	// outer ssh shell has something to print before exiting.
-	spawn := ssh.calls[0]
-	if !spawn.background {
-		t.Error("spawn call did not go through ExecSSHBackground — dev_server must use the background variant so ssh uses -T -n and a tight timeout")
+	d, err := devsup.ParseDeclaration([]byte(c.Declaration))
+	if err != nil {
+		t.Fatalf("declaration written is invalid: %v\n%s", err, c.Declaration)
 	}
-	if spawn.bgTimeout <= 0 {
-		t.Errorf("spawn call bgTimeout=%s, want a positive bounded timeout", spawn.bgTimeout)
+	want := devsup.Server{Name: "apidev", Port: 3000, Command: "npm run start:dev", Cwd: "."}
+	if len(d.Servers) != 1 || !d.Servers[0].SameRun(want) || d.Servers[0].Port != 3000 {
+		t.Errorf("declaration = %+v, want one server %+v", d.Servers, want)
 	}
-	if spawn.bgTimeout > 30*time.Second {
-		t.Errorf("spawn call bgTimeout=%s, want <= 30s — a correct detach returns in well under a second", spawn.bgTimeout)
-	}
-	if !strings.Contains(spawn.command, "setsid") {
-		t.Errorf("spawn missing setsid — process must leave the remote shell's session/pgroup so sshd can close the channel: %q", spawn.command)
-	}
-	if !strings.Contains(spawn.command, "> ") || !strings.Contains(spawn.command, "2>&1") {
-		t.Errorf("spawn missing stdout/stderr redirect to log file: %q", spawn.command)
-	}
-	if !strings.Contains(spawn.command, "< /dev/null") {
-		t.Errorf("spawn missing '< /dev/null' stdin redirect: %q", spawn.command)
-	}
-	if !strings.Contains(spawn.command, "zcp-dev-server-spawned") {
-		t.Errorf("spawn missing pid-ack echo marker — tool relies on this to confirm the outer shell reached the exit point: %q", spawn.command)
-	}
-	if !strings.Contains(spawn.command, "npm run start:dev") {
-		t.Errorf("spawn missing user command: %q", spawn.command)
-	}
-	// The new shape must NOT use disown — setsid already moves the child
-	// out of harm's way, and disown was part of the v17 pattern that hung.
-	if strings.Contains(spawn.command, "disown") {
-		t.Errorf("spawn still uses 'disown' — setsid replaces it, do not stack both: %q", spawn.command)
-	}
-
-	// Call 1: probe, foreground.
-	if ssh.calls[1].background {
-		t.Error("probe call went through background codepath — should be foreground ExecSSH")
-	}
-	// Call 2: log tail, foreground.
-	if ssh.calls[2].background {
-		t.Error("log tail call went through background codepath — should be foreground ExecSSH")
+	if c.Status("apidev") != devsup.StatusRunning {
+		t.Errorf("supervisor status = %q, want running", c.Status("apidev"))
 	}
 }
 
 // TestDevServer_Start_ProbeOKButSpawnedPidDead_PortInUse pins F3: when the HTTP
-// probe passes but the process THIS call spawned is dead (a stale/foreign
+// probe passes but the server's own process group is gone (a stale/foreign
 // listener owns the port), the tool must report running:false reason=port_in_use
 // instead of trusting the foreign 2xx. Reproduces the p.txt #2 EADDRINUSE
 // false-positive (running:true + healthStatus:200 next to an EADDRINUSE log).
 func TestDevServer_Start_ProbeOKButSpawnedPidDead_PortInUse(t *testing.T) {
 	t.Parallel()
+	c := devservertest.NewSupervised("")
+	c.Foreign = map[int]int{3000: 200}
+	c.Logs = map[string][]string{"apidev": {"Error: listen EADDRINUSE: address already in use :::3000"}}
 
-	ssh := &scriptSSH{queue: []scriptStep{
-		{output: "zcp-dev-server-spawned pid=1234"},              // bg spawn ack
-		{output: "OK 200 12"},                                    // probe passes — but via a FOREIGN listener
-		{output: "error: Failed to start server ... EADDRINUSE"}, // log tail: our spawn crashed
-		{output: "dead\n"},                                       // F3 liveness: spawned pid is gone
-	}}
-
-	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
-		DevServerParams{
-			Action:     "start",
-			Hostname:   "apidev",
-			Command:    "bun run dev",
-			Port:       3000,
-			HealthPath: "/status",
-		})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	result := runDevServer(t, c, DevServerParams{Action: "start", Hostname: "apidev", Command: "npm run start:dev", Port: 3000})
 	if result.Running {
-		t.Errorf("probe passed via a foreign listener but our spawn is dead — Running must be false, got %+v", result)
+		t.Errorf("Running = true while another listener answers the port: %+v", result)
 	}
-	if result.Reason != "port_in_use" {
-		t.Errorf("Reason = %q, want port_in_use", result.Reason)
+	if result.Reason != reasonPortInUse {
+		t.Errorf("Reason = %q, want %q", result.Reason, reasonPortInUse)
 	}
-	if !strings.Contains(result.Message, "already owns port") {
-		t.Errorf("message should explain a foreign listener owns the port, got: %q", result.Message)
-	}
-	// LogTail (already fetched pre-verdict) must carry the spawn crash.
 	if !strings.Contains(result.LogTail, "EADDRINUSE") {
-		t.Errorf("logTail should carry the spawn crash, got: %q", result.LogTail)
-	}
-}
-
-// TestDevServer_Start_SpawnTimeoutReturnsStructuredReason — when the
-// background spawn exceeds its budget, the tool must NOT bubble a raw
-// error up to the agent. It must return a DevServerResult with
-// Running=false, a "spawn_timeout" reason, and a Message that tells
-// the agent exactly what to do next. Anything less is a regression to
-// the v17 failure where `dev_server start: spawn: ssh apidev: signal:
-// killed` landed in the agent's context with no guidance.
-func TestDevServer_Start_SpawnTimeoutReturnsStructuredReason(t *testing.T) {
-	t.Parallel()
-
-	timeoutErr := &platform.SSHExecError{
-		Hostname: "apidev",
-		Output:   "",
-		Err:      context.DeadlineExceeded,
-	}
-	ssh := &scriptSSH{queue: []scriptStep{
-		{output: "", err: timeoutErr}, // spawn times out
-		{output: ""},                  // fallback log tail (empty log file — spawn didn't get far)
-	}}
-
-	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
-		DevServerParams{
-			Action:     "start",
-			Hostname:   "apidev",
-			Command:    "npm run start:dev",
-			Port:       3000,
-			HealthPath: "/api/health",
-		})
-	if err != nil {
-		t.Fatalf("expected nil error (structured DevServerResult), got %v", err)
-	}
-	if result == nil {
-		t.Fatal("expected non-nil result on spawn timeout")
-	}
-	if result.Running {
-		t.Errorf("expected Running=false on spawn timeout, got %+v", result)
-	}
-	if result.Reason != reasonSpawnTimeout {
-		t.Errorf("Reason = %q, want %q", result.Reason, "spawn_timeout")
-	}
-	if !strings.Contains(result.Message, "did not detach") && !strings.Contains(result.Message, "spawn") {
-		t.Errorf("Message should explain the spawn didn't detach; got: %q", result.Message)
-	}
-}
-
-// TestDevServer_Start_SpawnGenericErrorReturnsStructuredReason — any
-// non-timeout spawn error (auth fail, connection refused, no such host)
-// must also land as a structured result, not a bubbled error.
-func TestDevServer_Start_SpawnGenericErrorReturnsStructuredReason(t *testing.T) {
-	t.Parallel()
-
-	ssh := &scriptSSH{queue: []scriptStep{
-		{output: "Permission denied (publickey)", err: errors.New("exit status 255")}, // spawn fails
-		{output: ""}, // fallback log tail
-	}}
-
-	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
-		DevServerParams{
-			Action:     "start",
-			Hostname:   "apidev",
-			Command:    "npm run start:dev",
-			Port:       3000,
-			HealthPath: "/api/health",
-		})
-	if err != nil {
-		t.Fatalf("expected nil error (structured DevServerResult), got %v", err)
-	}
-	if result == nil || result.Running {
-		t.Fatalf("expected Running=false result, got %+v", result)
-	}
-	if result.Reason != "spawn_error" {
-		t.Errorf("Reason = %q, want %q", result.Reason, "spawn_error")
-	}
-	if !strings.Contains(result.Message, "spawn") {
-		t.Errorf("Message should mention spawn failure; got: %q", result.Message)
-	}
-}
-
-// TestDevServer_Start_SpawnMissingAckMarker — if the spawn returns
-// successfully but the output does NOT contain the "zcp-dev-server-spawned"
-// marker, something is off on the remote (e.g. echo disabled, stdout
-// swallowed, non-bash shell). The tool must flag this as a distinct
-// reason so the agent knows to investigate shell configuration rather
-// than the dev-server code.
-func TestDevServer_Start_SpawnMissingAckMarker(t *testing.T) {
-	t.Parallel()
-
-	ssh := &scriptSSH{queue: []scriptStep{
-		{output: ""},          // spawn returned no output at all
-		{output: "OK 200 50"}, // probe still returns OK
-		{output: "starting."}, // log tail
-	}}
-
-	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
-		DevServerParams{
-			Action:     "start",
-			Hostname:   "apidev",
-			Command:    "npm run start:dev",
-			Port:       3000,
-			HealthPath: "/api/health",
-		})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	// The health probe succeeded so Running should still be true — the
-	// missing ack only matters diagnostically. But Warnings must carry
-	// a note so the close-step review catches future regressions.
-	if !result.Running {
-		t.Errorf("probe returned OK, Running should be true, got %+v", result)
-	}
-	if !strings.Contains(result.Message, "ack") && !strings.Contains(result.Message, "spawn") {
-		// Soft assertion — either the Message or Warnings path is fine,
-		// as long as the agent has something to notice.
-		t.Logf("note: spawn ack missing but result.Message = %q — consider surfacing", result.Message)
-	}
-}
-
-// TestDevServer_Start_SpawnShapeHasSetsidBeforeCommand — a defense-in-
-// depth check on the exact ordering of setsid / redirect / background.
-// The redirect MUST bind to the backgrounded setsid process, not to
-// the outer shell — otherwise the subshell inherits the ssh channel's
-// stdio and ssh holds the connection open.
-func TestDevServer_Start_SpawnShapeHasSetsidBeforeCommand(t *testing.T) {
-	t.Parallel()
-
-	ssh := &scriptSSH{queue: []scriptStep{
-		{output: "zcp-dev-server-spawned pid=1"},
-		{output: "OK 200 10"},
-		{output: ""},
-	}}
-
-	_, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
-		DevServerParams{
-			Action:     "start",
-			Hostname:   "apidev",
-			Command:    "npm run start:dev",
-			Port:       3000,
-			HealthPath: "/api/health",
-		})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	spawn := ssh.calls[0].command
-	// Verify ordering invariants. setsid must appear BEFORE the & and the
-	// redirect must appear BEFORE the &, so the redirect binds to the
-	// backgrounded command not the outer shell.
-	iSetsid := strings.Index(spawn, "setsid")
-	iRedirect := strings.Index(spawn, "2>&1")
-	iAmp := strings.LastIndex(spawn, " &")
-	if iAmp < 0 {
-		iAmp = strings.Index(spawn, "&\n")
-	}
-	if iSetsid < 0 || iRedirect < 0 || iAmp < 0 {
-		t.Fatalf("spawn shape missing one of setsid/redirect/background: %q", spawn)
-	}
-	if iSetsid > iRedirect || iRedirect > iAmp {
-		t.Errorf("spawn ordering wrong — want setsid < redirect < &, got setsid=%d redirect=%d &=%d in %q",
-			iSetsid, iRedirect, iAmp, spawn)
+		t.Errorf("LogTail = %q, want the server's EADDRINUSE", result.LogTail)
 	}
 }
 
 func TestDevServer_Start_HealthProbeFails(t *testing.T) {
 	t.Parallel()
+	c := devservertest.NewSupervised("")
+	c.HTTP = map[int]int{3000: 0}
+	c.Logs = map[string][]string{"apidev": {"Error: listen EADDRINUSE ::: 3000"}}
 
-	ssh := &scriptSSH{queue: []scriptStep{
-		{output: "zcp-dev-server-spawned pid=7"},        // bg spawn ack
-		{output: "FAIL 000"},                            // probe returns connection refused
-		{output: "Error: listen EADDRINUSE ::: 3000\n"}, // log tail
-	}}
-
-	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
-		DevServerParams{
-			Action:      "start",
-			Hostname:    "apidev",
-			Command:     "npm run start:dev",
-			Port:        3000,
-			HealthPath:  "/api/health",
-			WaitSeconds: 5,
-		})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	result := runDevServer(t, c, DevServerParams{
+		Action:      "start",
+		Hostname:    "apidev",
+		Command:     "npm run start:dev",
+		Port:        3000,
+		HealthPath:  "/api/health",
+		WaitSeconds: 5,
+	})
 	if result.Running {
 		t.Errorf("expected Running=false, got %+v", result)
 	}
@@ -427,11 +186,12 @@ func TestDevServer_Start_HealthProbeFails(t *testing.T) {
 	}
 }
 
+// TestDevServer_Start_MissingCommand: the first start of a server must name
+// its command; nothing is declared or started without one.
 func TestDevServer_Start_MissingCommand(t *testing.T) {
 	t.Parallel()
-
-	ssh := &scriptSSH{}
-	_, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
+	c := devservertest.NewSupervised("")
+	_, err := ExecuteDevServer(context.Background(), c, mockClientWithServices("apidev"), "p1",
 		DevServerParams{
 			Action:   "start",
 			Hostname: "apidev",
@@ -447,85 +207,24 @@ func TestDevServer_Start_MissingCommand(t *testing.T) {
 	if pe.Code != platform.ErrInvalidParameter {
 		t.Errorf("expected ErrInvalidParameter, got %s", pe.Code)
 	}
-	if len(ssh.calls) != 0 {
-		t.Errorf("expected no SSH calls on validation error, got %d", len(ssh.calls))
-	}
-}
-
-// TestDevServer_RejectsShellEnvPrefix_SuggestsEnvForm pins Phase 3.3 of the
-// diagnose-before-destruct plan: the dev_server spawn path uses exec (not a
-// shell), so `KEY=VAL cmd` is parsed as the program name and fails with
-// `: not found`. The validator catches this early with a structured Recovery
-// hint pointing at `env KEY=VAL cmd`. Empirically reproduced in the
-// `recover-failed-buildfromgit-missing-dep` baseline run 2026-05-05.
-func TestDevServer_RejectsShellEnvPrefix_SuggestsEnvForm(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		name    string
-		command string
-		wantTok string
-	}{
-		{"single_var", "PYTHONPATH=/var/www/vendor gunicorn app:app", "PYTHONPATH=/var/www/vendor"},
-		{"underscore_var", "MY_VAR=x cmd", "MY_VAR=x"},
-		{"all_caps_assign", "FOO=bar python app.py", "FOO=bar"},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			t.Parallel()
-			ssh := &scriptSSH{}
-			_, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
-				DevServerParams{
-					Action:   "start",
-					Hostname: "apidev",
-					Command:  c.command,
-					Port:     3000,
-				})
-			if err == nil {
-				t.Fatal("expected error for shell env-prefix command")
-			}
-			var pe *platform.PlatformError
-			if !errors.As(err, &pe) {
-				t.Fatalf("expected PlatformError, got %T", err)
-			}
-			if pe.Code != platform.ErrInvalidParameter {
-				t.Errorf("expected ErrInvalidParameter, got %s", pe.Code)
-			}
-			if !strings.Contains(pe.Message, c.wantTok) {
-				t.Errorf("expected message to quote rejected token %q, got: %s", c.wantTok, pe.Message)
-			}
-			if !strings.Contains(pe.Suggestion, "env KEY=VAL") {
-				t.Errorf("expected suggestion to point at `env KEY=VAL cmd`, got: %s", pe.Suggestion)
-			}
-			if len(ssh.calls) != 0 {
-				t.Errorf("expected no SSH calls on validation error, got %d", len(ssh.calls))
-			}
-		})
+	if c.Declaration != "" || sentWith(c, "zcp-devsup ctl 'start'") != 0 {
+		t.Errorf("a start without a command declared %q or started a server", c.Declaration)
 	}
 }
 
 // TestDevServer_AcceptsEnvPrefixForm pins the positive case: `env KEY=VAL cmd`
-// passes validation. The validator only rejects the shell-prefix form.
+// starts like any other command.
 func TestDevServer_AcceptsEnvPrefixForm(t *testing.T) {
 	t.Parallel()
-	// The validator should not reject this form during params validation;
-	// downstream errors are mock-dependent so we only verify the validator
-	// did not synthesize an ErrInvalidParameter.
-	ssh := &scriptSSH{}
-	_, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
-		DevServerParams{
-			Action:   "start",
-			Hostname: "apidev",
-			Command:  "env PYTHONPATH=/var/www/vendor gunicorn app:app",
-			Port:     3000,
-		})
-	// Whatever error comes back must NOT be the shell-env-prefix rejection.
-	if err != nil {
-		var pe *platform.PlatformError
-		if errors.As(err, &pe) && pe.Code == platform.ErrInvalidParameter &&
-			strings.Contains(pe.Suggestion, "env KEY=VAL") {
-			t.Fatalf("env KEY=VAL form was rejected — should pass shell-prefix guard: %v", err)
-		}
+	c := devservertest.NewSupervised("")
+	result := runDevServer(t, c, DevServerParams{
+		Action:   "start",
+		Hostname: "apidev",
+		Command:  "env PYTHONPATH=/var/www/vendor gunicorn app:app",
+		Port:     3000,
+	})
+	if !result.Running {
+		t.Errorf("env KEY=VAL form did not start: %+v", result)
 	}
 }
 
@@ -542,8 +241,8 @@ func TestDevServer_Start_InvalidHostname(t *testing.T) {
 	for _, hostname := range cases {
 		t.Run(hostname, func(t *testing.T) {
 			t.Parallel()
-			ssh := &scriptSSH{}
-			_, err := ExecuteDevServer(context.Background(), ssh, nil, "p1",
+			c := devservertest.NewSupervised("")
+			_, err := ExecuteDevServer(context.Background(), c, nil, "p1",
 				DevServerParams{
 					Action:   "start",
 					Hostname: hostname,
@@ -553,8 +252,8 @@ func TestDevServer_Start_InvalidHostname(t *testing.T) {
 			if err == nil {
 				t.Errorf("expected error for hostname %q", hostname)
 			}
-			if len(ssh.calls) != 0 {
-				t.Errorf("hostname %q: expected 0 ssh calls, got %d", hostname, len(ssh.calls))
+			if n := len(c.Sent()); n != 0 {
+				t.Errorf("hostname %q: expected 0 ssh calls, got %d", hostname, n)
 			}
 		})
 	}
@@ -563,8 +262,7 @@ func TestDevServer_Start_InvalidHostname(t *testing.T) {
 func TestDevServer_Start_ServiceNotFound(t *testing.T) {
 	t.Parallel()
 
-	ssh := &scriptSSH{}
-	_, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("other"), "p1",
+	_, err := ExecuteDevServer(context.Background(), devservertest.NewSupervised(""), mockClientWithServices("other"), "p1",
 		DevServerParams{
 			Action:   "start",
 			Hostname: "apidev",
@@ -583,248 +281,119 @@ func TestDevServer_Start_ServiceNotFound(t *testing.T) {
 	}
 }
 
-func TestDevServer_Stop_ByCommand(t *testing.T) {
+// TestDevServer_StopOneNamed_SiblingsKeepRunning (TEST-PLAN E1 #2): stopping
+// one named server leaves its siblings running, and the answer says which.
+func TestDevServer_StopOneNamed_SiblingsKeepRunning(t *testing.T) {
 	t.Parallel()
+	c := devservertest.NewSupervised(twoServers)
 
-	// Two scripted responses: the kill command, then the post-stop
-	// port-free probe (v8.96). Empty probe output means the port is
-	// free, so the verification succeeds on the first poll.
-	ssh := &scriptSSH{queue: []scriptStep{
-		{output: "stopped"},
-		{output: ""}, // ss -tnlp returns nothing → port free
-	}}
-	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
-		DevServerParams{
-			Action:   "stop",
-			Hostname: "apidev",
-			Command:  "npm run start:dev",
-			Port:     3000,
-		})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	result := runDevServer(t, c, DevServerParams{Action: "stop", Hostname: "appdev", Name: "web"})
+	if c.Status("web") != devsup.StatusStopped || c.Status("api") != devsup.StatusRunning {
+		t.Errorf("after stopping web: web=%s api=%s, want stopped/running", c.Status("web"), c.Status("api"))
 	}
-	if result.Running {
-		t.Errorf("expected Running=false after stop")
+	if result.Running || result.Name != "web" {
+		t.Errorf("result = %+v, want web not running", result)
 	}
-	if len(ssh.calls) != 2 {
-		t.Fatalf("expected 2 ssh calls (kill + port-probe), got %d", len(ssh.calls))
+	if !strings.Contains(result.Message, "Still running: api.") {
+		t.Errorf("message = %q, want it to name the sibling still running", result.Message)
 	}
-	cmd := ssh.calls[0].command
-	// Must include pkill with the derived first-token match AND fuser on the port.
-	// v8.80 adds --ignore-ancestors + pgrep-PPID fallback between `pkill` and `-f`.
-	if !strings.Contains(cmd, "pkill") || !strings.Contains(cmd, "-f 'npm'") {
-		t.Errorf("expected pkill -f with derived match in stop command: %q", cmd)
-	}
-	if !strings.Contains(cmd, "fuser -k 3000/tcp") {
-		t.Errorf("expected fuser on port 3000: %q", cmd)
-	}
-	// Must tolerate "nothing to kill" with || true.
-	if !strings.Contains(cmd, "|| true") {
-		t.Errorf("expected '|| true' tolerance in stop command: %q", cmd)
-	}
-	// v8.96: post-stop port-free verification must run.
-	probeCmd := ssh.calls[1].command
-	if !strings.Contains(probeCmd, "ss -tnlp") || !strings.Contains(probeCmd, ":3000") {
-		t.Errorf("expected ss -tnlp port-3000 probe after kill: %q", probeCmd)
-	}
-	if !strings.Contains(result.Message, "Port 3000 is free") {
-		t.Errorf("message must report verified port-free state: %q", result.Message)
+	if sentWith(c, "zcp-devsup ctl 'stop' 'web'") != 1 {
+		t.Errorf("want exactly one supervisor stop of web, sent %q", c.Sent())
 	}
 }
 
-// TestStopDevServer_PkillMatchesSelf_Returns255_ClassifiedAsSuccess — the
-// v21 post-mortem's §3.7a fix. `pkill -f <match>` issued over SSH kills
-// its own sh -c parent when the match string appears in the shell's
-// command line (e.g. `pkill -f nest` matches `sh -c "pkill -f nest; ..."`).
-// SSH then surfaces exit 255 ("connection terminated abnormally"). The
-// stop succeeded — the process tree is gone — so the tool must classify
-// this specific failure shape as a structured success, not propagate the
-// raw error.
-func TestStopDevServer_PkillMatchesSelf_Returns255_ClassifiedAsSuccess(t *testing.T) {
+// TestDevServer_SeveralDeclared_NameRequired: a dev service with several
+// servers, none named after it, needs the name for stop/status/logs.
+func TestDevServer_SeveralDeclared_NameRequired(t *testing.T) {
 	t.Parallel()
-	// v8.96: the self-kill path now ALSO runs the post-stop port-free
-	// verification — the kill landed even if SSH dropped, so the port
-	// poll proves the listener is gone. Queue: kill (255), port-probe
-	// (empty = free).
-	ssh := &scriptSSH{queue: []scriptStep{
-		{output: "", err: errors.New("ssh apidev: exit status 255")},
-		{output: ""},
-	}}
-	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
-		DevServerParams{
-			Action:   "stop",
-			Hostname: "apidev",
-			Command:  "npm run start:dev",
-			Port:     3000,
-		})
-	if err != nil {
-		t.Fatalf("ssh self-kill must be classified as success, got err: %v", err)
+	c := devservertest.NewSupervised(twoServers)
+	_, err := ExecuteDevServer(context.Background(), c, mockClientWithServices("appdev"), "p1",
+		DevServerParams{Action: "stop", Hostname: "appdev"})
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) || !strings.Contains(pe.Suggestion, "web (running), api (running)") {
+		t.Fatalf("err = %v, want a request to name one of the declared servers", err)
 	}
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
-	if result.Running {
-		t.Error("expected Running=false on self-kill")
-	}
-	// After v8.96: when port is supplied, the port-free verification
-	// supersedes the ssh_self_killed narrative — the user gets the
-	// stronger guarantee (the port is verifiably free), not just the
-	// hand-wavy "SSH session dropped, trust me." Reason is cleared on
-	// the verified-free path.
-	if !strings.Contains(result.Message, "Port 3000 is free") {
-		t.Errorf("post-self-kill message must report verified port-free state: %q", result.Message)
+	if c.Status("web") != devsup.StatusRunning || c.Status("api") != devsup.StatusRunning {
+		t.Error("an unnamed stop stopped a server")
 	}
 }
 
-// TestStopDevServer_GenuineSSHFailure_PropagatesError — a non-255 SSH
-// error is a real failure (auth, DNS, target unreachable). Propagate it
-// so the caller can act.
-func TestStopDevServer_GenuineSSHFailure_PropagatesError(t *testing.T) {
+// TestDevServer_UndeclaredStart_DeclaredOnce (TEST-PLAN E1 #5): starting an
+// undeclared server adds it to .zcp/dev-servers.json once; start and stop of
+// a declared one never rewrite the declaration.
+func TestDevServer_UndeclaredStart_DeclaredOnce(t *testing.T) {
+	disableNoProbeSettleForTest(t)
+	c := devservertest.NewSupervised(twoServers)
+	c.Logs = map[string][]string{"worker": {"tick"}}
+
+	runDevServer(t, c, DevServerParams{Action: "start", Hostname: "appdev", Name: "worker", Command: "bun run worker.ts", WorkDir: "/var/www/apps/worker", NoHTTPProbe: true})
+	d, err := devsup.ParseDeclaration([]byte(c.Declaration))
+	if err != nil || len(d.Servers) != 3 || d.Servers[2].Name != "worker" || d.Servers[2].Cwd != "apps/worker" || d.Servers[2].Port != 0 {
+		t.Fatalf("declaration after the first start = %s (%v), want web, api and worker in apps/worker", c.Declaration, err)
+	}
+	if !strings.HasPrefix(c.Declaration, `{"version":1,`) && !strings.Contains(c.Declaration, `"version": 1`) {
+		t.Errorf("declaration lost its format version: %s", c.Declaration)
+	}
+	written := c.Declaration
+	runDevServer(t, c, DevServerParams{Action: "stop", Hostname: "appdev", Name: "worker"})
+	runDevServer(t, c, DevServerParams{Action: "start", Hostname: "appdev", Name: "worker", NoHTTPProbe: true})
+	runDevServer(t, c, DevServerParams{Action: "restart", Hostname: "appdev", Name: "web"})
+	if n := sentWith(c, "dev-servers.json.tmp"); n != 1 {
+		t.Errorf("declaration written %d times, want once", n)
+	}
+	if c.Declaration != written {
+		t.Errorf("start/stop rewrote the declaration:\n%s\nwant\n%s", c.Declaration, written)
+	}
+	if c.Status("worker") != devsup.StatusRunning {
+		t.Errorf("worker = %s after its second start, want running", c.Status("worker"))
+	}
+}
+
+// TestDevServer_InvalidDeclaration_NeverOverwritten: zcp never overwrites a
+// declaration it cannot read (docs/spec-mate.md §2.8a.1).
+func TestDevServer_InvalidDeclaration_NeverOverwritten(t *testing.T) {
 	t.Parallel()
-	ssh := &scriptSSH{queue: []scriptStep{{output: "", err: errors.New("ssh apidev: Permission denied (publickey)")}}}
-	_, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
-		DevServerParams{
-			Action:   "stop",
-			Hostname: "apidev",
-			Command:  "npm run start:dev",
-			Port:     3000,
-		})
+	broken := `{"version":1,"servers":[{"name":"web"`
+	c := devservertest.NewSupervised(broken)
+	_, err := ExecuteDevServer(context.Background(), c, mockClientWithServices("appdev"), "p1",
+		DevServerParams{Action: "start", Hostname: "appdev", Name: "api", Command: "pnpm dev", Port: 8080})
+	if err == nil || !strings.Contains(err.Error(), "is invalid") {
+		t.Fatalf("err = %v, want the declaration reported invalid", err)
+	}
+	if c.Declaration != broken || sentWith(c, "dev-servers.json.tmp") != 0 {
+		t.Errorf("an invalid declaration was overwritten: %s", c.Declaration)
+	}
+}
+
+// TestDevServer_SupervisorOlderThanDeclaration (TEST-PLAN E1 #6): the
+// declaration carries a format version; zcp reports a supervisor older than it.
+func TestDevServer_SupervisorOlderThanDeclaration(t *testing.T) {
+	t.Parallel()
+	c := devservertest.NewSupervised("")
+	c.Declaration = `{"version":2,"servers":[]}`
+	c.SupervisorVersion = "v9.210.0"
+	_, err := ExecuteDevServer(context.Background(), c, mockClientWithServices("appdev"), "p1",
+		DevServerParams{Action: "start", Hostname: "appdev", Command: "pnpm dev", Port: 3000})
 	if err == nil {
-		t.Fatal("expected genuine ssh failure to propagate")
+		t.Fatal("a start against a declaration newer than the supervisor succeeded")
 	}
-	if strings.Contains(err.Error(), "ssh_self_killed") {
-		t.Errorf("permission-denied must not be classified as self-kill: %v", err)
-	}
-}
-
-// TestStopDevServer_PkillCommandIncludesIgnoreAncestors — the generated
-// shell command must use `pkill --ignore-ancestors` so modern procps
-// (≥3.3.15) doesn't kill the sh -c running pkill itself, plus a pgrep
-// fallback filtering $$ / $PPID for older procps on busybox.
-func TestStopDevServer_PkillCommandIncludesIgnoreAncestors(t *testing.T) {
-	t.Parallel()
-	// v8.96: post-stop also probes the port; queue an empty probe.
-	ssh := &scriptSSH{queue: []scriptStep{
-		{output: "stopped"},
-		{output: ""},
-	}}
-	_, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
-		DevServerParams{
-			Action:   "stop",
-			Hostname: "apidev",
-			Command:  "npm run start:dev",
-			Port:     3000,
-		})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	cmd := ssh.calls[0].command
-	if !strings.Contains(cmd, "--ignore-ancestors") {
-		t.Errorf("stop command must carry --ignore-ancestors: %q", cmd)
-	}
-	if !strings.Contains(cmd, "pgrep") {
-		t.Errorf("stop command must carry pgrep fallback for older procps: %q", cmd)
-	}
-}
-
-// TestStopDevServer_PortFreesAfterPolling — v8.96. Listener lingers on
-// the port for one poll cycle (SO_REUSEADDR delay), then releases.
-// The stop call must wait it out and then return success — NOT race
-// the OS reaper and leave the next start to fail with "address in use."
-//
-// Queue: kill, probe-1 returns a listener, probe-2 empty.
-func TestStopDevServer_PortFreesAfterPolling(t *testing.T) {
-	t.Parallel()
-	ssh := &scriptSSH{queue: []scriptStep{
-		{output: "stopped"},
-		{output: "LISTEN 0 511 *:3000 *:* users:((\"node\",pid=1234,fd=20))"},
-		{output: ""}, // freed on second poll
-	}}
-	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
-		DevServerParams{
-			Action:   "stop",
-			Hostname: "apidev",
-			Command:  "npm run start:dev",
-			Port:     3000,
-		})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(result.Message, "Port 3000 is free") {
-		t.Errorf("expected verified-free message after polling, got %q", result.Message)
-	}
-	if result.Reason == "port_still_bound" {
-		t.Error("port that frees on second poll must NOT escalate to port_still_bound")
-	}
-	if len(ssh.calls) < 3 {
-		t.Errorf("expected ≥3 ssh calls (kill + 2 probes), got %d", len(ssh.calls))
-	}
-}
-
-// TestStopDevServer_PortStillBoundAfterEscalation — v8.96. Listener
-// refuses to release even after SIGKILL escalation. The stop call MUST
-// surface a structured failure (Reason=port_still_bound) so the caller
-// knows not to immediately re-start; if the agent silently hits "addr
-// in use" on next start, it invents a workaround and ships it as a
-// false gotcha. The error message must explicitly tell the agent NOT
-// to ship a manual pkill workaround in the recipe.
-func TestStopDevServer_PortStillBoundAfterEscalation(t *testing.T) {
-	t.Parallel()
-	stuck := scriptStep{output: "LISTEN 0 511 *:3000 *:* users:((\"node\",pid=1234,fd=20))"}
-	// Many stuck probes — the poll loop keeps firing until budget exhausts.
-	queue := make([]scriptStep, 0, 42)
-	queue = append(queue, scriptStep{output: "stopped"})
-	for range 20 {
-		queue = append(queue, stuck)
-	}
-	queue = append(queue, scriptStep{output: ""}) // SIGKILL escalation
-	for range 20 {
-		queue = append(queue, stuck) // still stuck after escalation
-	}
-	ssh := &scriptSSH{queue: queue}
-	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
-		DevServerParams{
-			Action:   "stop",
-			Hostname: "apidev",
-			Command:  "npm run start:dev",
-			Port:     3000,
-		})
-	if err != nil {
-		t.Fatalf("port-stuck must surface as structured result, not error: %v", err)
-	}
-	if result.Reason != "port_still_bound" {
-		t.Errorf("expected Reason=port_still_bound, got %q (msg: %s)", result.Reason, result.Message)
-	}
-	if !strings.Contains(result.Message, "do NOT add a manual pkill workaround") {
-		t.Errorf("message must explicitly warn against shipping a workaround as a recipe gotcha: %q", result.Message)
-	}
-	// SIGKILL escalation must have been attempted.
-	sawSIGKILL := false
-	for _, c := range ssh.calls {
-		if strings.Contains(c.command, "fuser -k -KILL") {
-			sawSIGKILL = true
-			break
+	for _, want := range []string{"v9.210.0", "format 2"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %q, want it to name %q", err, want)
 		}
-	}
-	if !sawSIGKILL {
-		t.Error("port-stuck must trigger SIGKILL escalation via `fuser -k -KILL`")
 	}
 }
 
 func TestDevServer_Status_NotRunning(t *testing.T) {
 	t.Parallel()
-
-	ssh := &scriptSSH{queue: []scriptStep{{output: "000"}}}
-	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
-		DevServerParams{
-			Action:     "status",
-			Hostname:   "apidev",
-			Port:       3000,
-			HealthPath: "/api/health",
-		})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	c := devservertest.NewSupervised(oneServer)
+	c.HTTP = map[int]int{3000: 0}
+	result := runDevServer(t, c, DevServerParams{
+		Action:     "status",
+		Hostname:   "apidev",
+		Port:       3000,
+		HealthPath: "/api/health",
+	})
 	if result.Running {
 		t.Errorf("expected Running=false for 000 curl response")
 	}
@@ -835,18 +404,13 @@ func TestDevServer_Status_NotRunning(t *testing.T) {
 
 func TestDevServer_Status_Running(t *testing.T) {
 	t.Parallel()
-
-	ssh := &scriptSSH{queue: []scriptStep{{output: "200"}}}
-	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
-		DevServerParams{
-			Action:     "status",
-			Hostname:   "apidev",
-			Port:       3000,
-			HealthPath: "/health",
-		})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	c := devservertest.NewSupervised(oneServer)
+	result := runDevServer(t, c, DevServerParams{
+		Action:     "status",
+		Hostname:   "apidev",
+		Port:       3000,
+		HealthPath: "/health",
+	})
 	if !result.Running {
 		t.Errorf("expected Running=true for 200 response, got %+v", result)
 	}
@@ -855,57 +419,61 @@ func TestDevServer_Status_Running(t *testing.T) {
 	}
 }
 
-func TestDevServer_Logs_ReturnsTail(t *testing.T) {
+// TestDevServer_Status_Crashed: a server the supervisor holds as crashed is
+// reported with its exit, and the supervisor leaves it down.
+func TestDevServer_Status_Crashed(t *testing.T) {
 	t.Parallel()
+	c := devservertest.NewSupervised("")
+	c.Declaration = twoServers
+	c.Crash = map[string]bool{"api": true}
+	c.Logs = map[string][]string{"api": {"panic: boom"}}
+	runDevServer(t, c, DevServerParams{Action: "start", Hostname: "appdev", Name: "web"})
+	runDevServer(t, c, DevServerParams{Action: "start", Hostname: "appdev", Name: "api"})
 
-	ssh := &scriptSSH{queue: []scriptStep{{output: "line 1\nline 2\nline 3"}}}
-	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
-		DevServerParams{
-			Action:   "logs",
-			Hostname: "apidev",
-			LogFile:  "/tmp/nest.log",
-			LogLines: 10,
-		})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	result := runDevServer(t, c, DevServerParams{Action: "status", Hostname: "appdev", Name: "api"})
+	if result.Running || result.Reason != reasonCrashed {
+		t.Errorf("result = %+v, want crashed", result)
 	}
-	if !strings.Contains(result.LogTail, "line 1") {
-		t.Errorf("expected log tail to include 'line 1', got %q", result.LogTail)
-	}
-	if result.LogFile != "/tmp/nest.log" {
-		t.Errorf("expected LogFile to be passed through, got %q", result.LogFile)
-	}
-	// Verify the SSH command uses `tail -n 10` with the supplied log path.
-	cmd := ssh.calls[0].command
-	if !strings.Contains(cmd, "tail -n 10") {
-		t.Errorf("expected 'tail -n 10' in command, got %q", cmd)
+	if !strings.Contains(result.Message, "api on appdev crashed (exit 1)") || strings.TrimSpace(result.LogTail) != "panic: boom" {
+		t.Errorf("message/logTail = %q/%q, want the exit and the server's log", result.Message, result.LogTail)
 	}
 }
 
+func TestDevServer_Logs_ReturnsTail(t *testing.T) {
+	t.Parallel()
+	c := devservertest.NewSupervised(oneServer)
+	c.Logs = map[string][]string{"apidev": {"line 1", "line 2", "line 3"}}
+	result := runDevServer(t, c, DevServerParams{
+		Action:   "logs",
+		Hostname: "apidev",
+		LogLines: 10,
+	})
+	if !strings.Contains(result.LogTail, "line 1") {
+		t.Errorf("expected log tail to include 'line 1', got %q", result.LogTail)
+	}
+	if result.LogFile != "/home/zerops/.zcp/devsup/logs/apidev.log" {
+		t.Errorf("expected LogFile to be the server's own log, got %q", result.LogFile)
+	}
+	if sentWith(c, "zcp-devsup ctl logs 'apidev' --lines 10") != 1 {
+		t.Errorf("want one supervisor log read of 10 lines, sent %q", c.Sent())
+	}
+}
+
+// TestDevServer_Restart_IsStopThenStart: a restart is the supervisor's own
+// stop-then-start of the server's group.
 func TestDevServer_Restart_IsStopThenStart(t *testing.T) {
 	t.Parallel()
+	c := devservertest.NewSupervised(`{"version":1,"servers":[{"name":"workerdev","port":3001,"command":"npm run start:dev","cwd":"."}]}`)
+	c.HTTP = map[int]int{3001: 204}
+	before := c.Servers["workerdev"].Pid
 
-	// v8.96: stop now also runs a port-free probe before returning, so
-	// the call sequence is: kill + port-probe + spawn + probe + logTail.
-	ssh := &scriptSSH{queue: []scriptStep{
-		{output: "stopped"},                      // stop kill
-		{output: ""},                             // post-stop port-free probe (empty = free)
-		{output: "zcp-dev-server-spawned pid=1"}, // bg spawn ack
-		{output: "OK 204 500"},                   // probe (204 also counts as ready)
-		{output: "ok"},                           // log tail
-		{output: "alive\n"},                      // F3 spawned-pid liveness
-	}}
-	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("workerdev"), "p1",
-		DevServerParams{
-			Action:     "restart",
-			Hostname:   "workerdev",
-			Command:    "npm run start:dev",
-			Port:       3001,
-			HealthPath: "/health",
-		})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	result := runDevServer(t, c, DevServerParams{
+		Action:     "restart",
+		Hostname:   "workerdev",
+		Command:    "npm run start:dev",
+		Port:       3001,
+		HealthPath: "/health",
+	})
 	if result.Action != "restart" {
 		t.Errorf("expected Action=restart, got %q", result.Action)
 	}
@@ -915,27 +483,15 @@ func TestDevServer_Restart_IsStopThenStart(t *testing.T) {
 	if result.HealthStatus != 204 {
 		t.Errorf("expected HealthStatus=204, got %d", result.HealthStatus)
 	}
-	if len(ssh.calls) != 6 {
-		t.Fatalf("expected 6 SSH calls (kill + port-probe + spawn + probe + tail + liveness), got %d", len(ssh.calls))
-	}
-	// First call is the stop kill.
-	if !strings.Contains(ssh.calls[0].command, "pkill") {
-		t.Errorf("expected first call to be stop (pkill), got %q", ssh.calls[0].command)
-	}
-	// Second call is the v8.96 post-stop port-free probe.
-	if !strings.Contains(ssh.calls[1].command, "ss -tnlp") {
-		t.Errorf("expected second call to be the port-free probe (ss -tnlp), got %q", ssh.calls[1].command)
-	}
-	// Third call is the background spawn.
-	if !ssh.calls[2].background {
-		t.Error("spawn call in restart must use ExecSSHBackground")
+	if sentWith(c, "zcp-devsup ctl 'restart' 'workerdev'") != 1 || result.PID == before {
+		t.Errorf("want one supervisor restart and a new group (pid %d → %d)", before, result.PID)
 	}
 }
 
 func TestDevServer_UnknownAction(t *testing.T) {
 	t.Parallel()
 
-	_, err := ExecuteDevServer(context.Background(), &scriptSSH{}, mockClientWithServices("apidev"), "p1",
+	_, err := ExecuteDevServer(context.Background(), devservertest.NewSupervised(""), mockClientWithServices("apidev"), "p1",
 		DevServerParams{
 			Action:   "kill-all",
 			Hostname: "apidev",
@@ -945,45 +501,23 @@ func TestDevServer_UnknownAction(t *testing.T) {
 	}
 }
 
-// TestDevServer_Start_NoHTTPProbe_Success — the no-probe mode is the
-// v19 fix for services with no HTTP surface. A long-running consumer,
-// a cron runner, a sidecar writer — any background process that has
-// no port to curl — cannot be probed for readiness via an HTTP endpoint.
-// Before this mode, agents worked around the gap with raw `ssh host
-// "nohup ... & disown"` calls, bypassing the whole zerops_dev_server
-// tool and re-introducing the class of bugs the v17.1 spawn shape was
-// designed to eliminate.
-//
-// With NoHTTPProbe=true, the tool spawns the process through the same
-// bounded-timeout + setsid + ack-marker + pidfile path as a regular
-// start, skips the HTTP probe, and decides liveness structurally via
-// `kill -0 <pid>` against the pid recorded in the spawn pidfile —
-// framework-agnostic by design.
+// TestDevServer_Start_NoHTTPProbe_Success — the no-probe mode serves
+// services with no HTTP surface: a long-running consumer, a cron runner, a
+// sidecar writer. The supervisor runs it like any server; the tool skips the
+// HTTP probe and decides from the supervisor's status after a settle.
 func TestDevServer_Start_NoHTTPProbe_Success(t *testing.T) {
-	t.Parallel()
 	disableNoProbeSettleForTest(t)
+	c := devservertest.NewSupervised("")
+	c.Logs = map[string][]string{"workerdev": {"process started", "waiting..."}}
 
-	ssh := &scriptSSH{queue: []scriptStep{
-		{output: "zcp-dev-server-spawned pid=1234"}, // bg spawn ack
-		{output: "alive\n"},                         // liveness check (kill -0)
-		{output: "process started\nwaiting..."},     // log tail (diagnostic only)
-	}}
-
-	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("workerdev"), "p1",
-		DevServerParams{
-			Action:      "start",
-			Hostname:    "workerdev",
-			Command:     "./bin/worker",
-			NoHTTPProbe: true, // no Port, no HealthPath — service has no HTTP surface
-		})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
+	result := runDevServer(t, c, DevServerParams{
+		Action:      "start",
+		Hostname:    "workerdev",
+		Command:     "./bin/worker",
+		NoHTTPProbe: true, // no Port, no HealthPath — service has no HTTP surface
+	})
 	if !result.Running {
-		t.Errorf("expected Running=true in no-probe mode when liveness=alive, got %+v", result)
+		t.Errorf("expected Running=true in no-probe mode when the supervisor runs it, got %+v", result)
 	}
 	if result.HealthStatus != 0 {
 		t.Errorf("expected HealthStatus=0 in no-probe mode (probe skipped), got %d", result.HealthStatus)
@@ -1006,59 +540,19 @@ func TestDevServer_Start_NoHTTPProbe_Success(t *testing.T) {
 	if !strings.Contains(strings.ToLower(result.Message), "zerops_logs") {
 		t.Errorf("expected Message to reference zerops_logs for verification: %q", result.Message)
 	}
-
-	// Exactly three SSH calls: spawn (background) + liveness check + log tail.
-	if len(ssh.calls) != 3 {
-		t.Fatalf("expected exactly 3 SSH calls (spawn + liveness + log tail), got %d: %+v", len(ssh.calls), ssh.calls)
-	}
-	if !ssh.calls[0].background {
-		t.Error("spawn call must use ExecSSHBackground")
-	}
-	if ssh.calls[1].background {
-		t.Error("liveness check call must be foreground ExecSSH")
-	}
-	if ssh.calls[2].background {
-		t.Error("log tail call must be foreground ExecSSH")
-	}
-	// The liveness check must read the pidfile and run kill -0 — no curl,
-	// no HTTP. This is the structural replacement for log-string matching.
-	if !strings.Contains(ssh.calls[1].command, "kill -0") {
-		t.Errorf("liveness check must use 'kill -0', got: %q", ssh.calls[1].command)
-	}
-	if !strings.Contains(ssh.calls[1].command, "cat ") {
-		t.Errorf("liveness check must read pidfile via cat, got: %q", ssh.calls[1].command)
-	}
-	if strings.Contains(ssh.calls[1].command, "curl") {
-		t.Errorf("liveness check must not curl — no HTTP in no-probe mode: %q", ssh.calls[1].command)
-	}
-	// The spawn command must include the pidfile write so the liveness
-	// check has a pid to probe. Write is `echo $$ > <logFile>.pid`.
-	if !strings.Contains(ssh.calls[0].command, ".pid") {
-		t.Errorf("spawn command must write pidfile (logFile.pid), got: %q", ssh.calls[0].command)
-	}
-	if !strings.Contains(ssh.calls[0].command, "echo $$") {
-		t.Errorf("spawn command must capture real child pid via 'echo $$' before exec, got: %q", ssh.calls[0].command)
-	}
-	if !strings.Contains(ssh.calls[0].command, "exec ") {
-		t.Errorf("spawn command must use 'exec' so the child shell PID becomes the command PID, got: %q", ssh.calls[0].command)
+	for _, cmd := range c.Sent() {
+		if strings.Contains(cmd, "curl") {
+			t.Errorf("no-probe start curled: %q", cmd)
+		}
 	}
 }
 
 // TestDevServer_Start_NoHTTPProbe_AllowsZeroPort — validation must accept
-// Port=0 when NoHTTPProbe=true. The v19 worker flow had no HTTP surface
-// and passing Port=0 without NoHTTPProbe fails validation, which is why
-// the main agent gave up on the tool and hand-rolled SSH+background calls.
+// Port=0 when NoHTTPProbe=true.
 func TestDevServer_Start_NoHTTPProbe_AllowsZeroPort(t *testing.T) {
-	t.Parallel()
 	disableNoProbeSettleForTest(t)
 
-	ssh := &scriptSSH{queue: []scriptStep{
-		{output: "zcp-dev-server-spawned pid=7"},
-		{output: "alive\n"},
-		{output: "worker started"},
-	}}
-
-	_, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("workerdev"), "p1",
+	_, err := ExecuteDevServer(context.Background(), devservertest.NewSupervised(""), mockClientWithServices("workerdev"), "p1",
 		DevServerParams{
 			Action:      "start",
 			Hostname:    "workerdev",
@@ -1077,7 +571,7 @@ func TestDevServer_Start_NoHTTPProbe_AllowsZeroPort(t *testing.T) {
 func TestDevServer_Start_PortRequiredWithoutNoHTTPProbe(t *testing.T) {
 	t.Parallel()
 
-	_, err := ExecuteDevServer(context.Background(), &scriptSSH{}, mockClientWithServices("apidev"), "p1",
+	_, err := ExecuteDevServer(context.Background(), devservertest.NewSupervised(""), mockClientWithServices("apidev"), "p1",
 		DevServerParams{
 			Action:      "start",
 			Hostname:    "apidev",
@@ -1093,369 +587,91 @@ func TestDevServer_Start_PortRequiredWithoutNoHTTPProbe(t *testing.T) {
 	}
 }
 
-// TestDevServer_Start_NoHTTPProbe_SpawnTimeoutPropagates — spawn failures
-// in no-probe mode must still surface the structured spawn_* reasons.
-// The no-probe mode ONLY changes what happens AFTER a successful spawn.
-func TestDevServer_Start_NoHTTPProbe_SpawnTimeoutPropagates(t *testing.T) {
-	t.Parallel()
+// TestDevServer_Start_NoHTTPProbe_CrashedAfterSettle — a worker that dies
+// during init (bad config, missing env var, syntax error) is crashed in the
+// supervisor's state, and that is what the check observes. No
+// runtime-specific log-string matching.
+func TestDevServer_Start_NoHTTPProbe_CrashedAfterSettle(t *testing.T) {
 	disableNoProbeSettleForTest(t)
+	c := devservertest.NewSupervised("")
+	c.Crash = map[string]bool{"workerdev": true}
+	c.Logs = map[string][]string{"workerdev": {"starting...", "fatal: something went wrong"}}
 
-	timeoutErr := &platform.SSHExecError{
-		Hostname: "workerdev",
-		Output:   "",
-		Err:      context.DeadlineExceeded,
-	}
-	ssh := &scriptSSH{queue: []scriptStep{
-		{output: "", err: timeoutErr}, // spawn times out
-		{output: ""},                  // fallback log tail
-	}}
-
-	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("workerdev"), "p1",
-		DevServerParams{
-			Action:      "start",
-			Hostname:    "workerdev",
-			Command:     "./bin/worker",
-			NoHTTPProbe: true,
-		})
-	if err != nil {
-		t.Fatalf("expected structured result on spawn timeout, got error: %v", err)
-	}
+	result := runDevServer(t, c, DevServerParams{Action: "start", Hostname: "workerdev", Command: "./bin/worker", NoHTTPProbe: true})
 	if result.Running {
-		t.Errorf("expected Running=false on spawn timeout even in no-probe mode, got %+v", result)
+		t.Errorf("expected Running=false when the supervisor reports crashed, got %+v", result)
 	}
-	if result.Reason != reasonSpawnTimeout {
-		t.Errorf("expected Reason=spawn_timeout on spawn timeout, got %q", result.Reason)
-	}
-}
-
-// TestDevServer_Start_NoHTTPProbe_DeadProcessAfterSettle — a process that
-// spawns successfully but exits during init must be reported as
-// Running=false. The liveness check uses kill(2) semantics: a process
-// that died during init (for ANY runtime-level reason — bad import,
-// missing dependency, broker auth failure, panic, uncaught exception,
-// syntax error) is dead by POSIX signal, and that's what the check
-// observes. No runtime-specific log-string matching.
-func TestDevServer_Start_NoHTTPProbe_DeadProcessAfterSettle(t *testing.T) {
-	t.Parallel()
-	disableNoProbeSettleForTest(t)
-
-	// Clean spawn ack, but the liveness check returns "dead" — the
-	// process exited during the settle interval.
-	ssh := &scriptSSH{queue: []scriptStep{
-		{output: "zcp-dev-server-spawned pid=42"},
-		{output: "dead\n"},                                                // kill -0 returned non-zero
-		{output: "starting...\nfatal: something went wrong\nexit code 1"}, // log tail — agent can read details
-	}}
-
-	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("workerdev"), "p1",
-		DevServerParams{
-			Action:      "start",
-			Hostname:    "workerdev",
-			Command:     "./bin/worker",
-			NoHTTPProbe: true,
-		})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result.Running {
-		t.Errorf("expected Running=false when liveness check returns dead, got %+v", result)
-	}
-	if result.Reason != reasonPostSpawnExit {
-		t.Errorf("expected Reason=post_spawn_exit, got %q", result.Reason)
+	if result.Reason != reasonCrashed {
+		t.Errorf("expected Reason=%s, got %q", reasonCrashed, result.Reason)
 	}
 	if result.LogTail == "" {
 		t.Errorf("expected LogTail populated so agent can diagnose the exit")
 	}
 }
 
-// TestDevServer_Start_NoHTTPProbe_MissingPidfileTreatedAsDead — if the
-// spawn succeeded (ack marker seen) but the pidfile was never written
-// (remote filesystem issue, shell quirk, or the inner shell crashed
-// before `echo $$ >` ran), the liveness check reads an empty pid and
-// returns "dead". This is the correct conservative behavior — we can't
-// prove the process is alive without a pid, so we report "not alive"
-// and let the agent dig into the log.
-func TestDevServer_Start_NoHTTPProbe_MissingPidfileTreatedAsDead(t *testing.T) {
+// TestDevServer_NoSupervisor: stop, status and logs on a dev service whose dev
+// setup does not run the supervisor change nothing and say how to set it up;
+// a start returns *NoSupervisorError for the caller to migrate.
+func TestDevServer_NoSupervisor(t *testing.T) {
 	t.Parallel()
-	disableNoProbeSettleForTest(t)
-
-	ssh := &scriptSSH{queue: []scriptStep{
-		{output: "zcp-dev-server-spawned pid=99"}, // spawn ack
-		{output: "dead\n"},                        // liveness: cat failed, branch to "dead"
-		{output: ""},                              // empty log tail
-	}}
-
-	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("workerdev"), "p1",
-		DevServerParams{
-			Action:      "start",
-			Hostname:    "workerdev",
-			Command:     "./bin/worker",
-			NoHTTPProbe: true,
-		})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	for _, action := range []string{"stop", "status", "logs"} {
+		c := &devservertest.Container{}
+		result := runDevServer(t, c, DevServerParams{Action: action, Hostname: "appdev"})
+		if result.Reason != reasonNoSupervisor || !strings.Contains(result.Message, "action=start sets it up") {
+			t.Errorf("%s: result = %+v, want no_supervisor with the way to set it up", action, result)
+		}
+		if n := len(c.Sent()); n != 1 {
+			t.Errorf("%s: sent %d commands, want only the read", action, n)
+		}
 	}
-	if result.Running {
-		t.Errorf("expected Running=false when pidfile missing, got %+v", result)
-	}
-	if result.Reason != reasonPostSpawnExit {
-		t.Errorf("expected Reason=post_spawn_exit, got %q", result.Reason)
-	}
-}
-
-// TestDevServer_Start_NoHTTPProbe_LivenessCheckTransportError — if the
-// ssh call for the liveness check itself fails (connection drop,
-// handshake error), the tool must surface it as liveness_check_error so
-// the agent distinguishes "process definitely dead" from "we don't know
-// because ssh failed".
-func TestDevServer_Start_NoHTTPProbe_LivenessCheckTransportError(t *testing.T) {
-	t.Parallel()
-	disableNoProbeSettleForTest(t)
-
-	transportErr := &platform.SSHExecError{
-		Hostname: "workerdev",
-		Output:   "",
-		Err:      errors.New("ssh: connection reset"),
-	}
-	ssh := &scriptSSH{queue: []scriptStep{
-		{output: "zcp-dev-server-spawned pid=42"},
-		{output: "", err: transportErr}, // liveness ssh errored
-		{output: "some log output"},     // tail still succeeds
-	}}
-
-	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("workerdev"), "p1",
-		DevServerParams{
-			Action:      "start",
-			Hostname:    "workerdev",
-			Command:     "./bin/worker",
-			NoHTTPProbe: true,
-		})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result.Running {
-		t.Errorf("expected Running=false on liveness check transport error, got %+v", result)
-	}
-	if result.Reason != reasonLivenessCheckError {
-		t.Errorf("expected Reason=%s, got %q", reasonLivenessCheckError, result.Reason)
-	}
-}
-
-func TestDevServer_FirstShellToken(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		in, want string
-	}{
-		{"npm run start:dev", "npm"},
-		{"PORT=3000 npm run start:dev", "npm"},
-		{"NODE_ENV=dev PORT=3000 node dist/main.js", "node"},
-		{"./node_modules/.bin/vite --host 0.0.0.0", "./node_modules/.bin/vite"},
-		{"", ""},
-	}
-	for _, tc := range cases {
-		got := firstShellToken(tc.in)
-		if got != tc.want {
-			t.Errorf("firstShellToken(%q) = %q, want %q", tc.in, got, tc.want)
+	for _, installed := range []bool{false, true} {
+		c := &devservertest.Container{Installed: installed, SupervisorVersion: "v9.300.0", Formats: []int{1}}
+		_, err := ExecuteDevServer(context.Background(), c, mockClientWithServices("appdev"), "p1",
+			DevServerParams{Action: "start", Hostname: "appdev", Command: "bun index.ts", Port: 3000})
+		var noSup *NoSupervisorError
+		if !errors.As(err, &noSup) || noSup.Installed != installed {
+			t.Errorf("installed=%v: err = %v, want *NoSupervisorError{Installed: %v}", installed, err, installed)
+		}
+		if c.Declaration != "" {
+			t.Errorf("installed=%v: a refused start declared %q", installed, c.Declaration)
 		}
 	}
 }
 
-// TestContainerIdentity pins the container-life read the dev server keeper
-// compares: the container's hostname, the kernel's boot id and its init's
-// start time, one SSH round trip. A restart starts a new init (and, in a
-// container that boots its own kernel, a new boot id); a redeploy is a new
-// container.
-func TestContainerIdentity(t *testing.T) {
+// TestDevServer_NoProcessPatternMatching (TEST-PLAN E1 #3, #14): no
+// dev-server path finds processes by name or command pattern, and the
+// keeper, the zcp-side dev-servers.json and the SSH start are gone. One
+// mechanism runs dev servers: the dev service's supervisor.
+func TestDevServer_NoProcessPatternMatching(t *testing.T) {
 	t.Parallel()
-
-	tests := []struct {
-		name    string
-		output  string
-		err     error
-		want    string
-		wantErr bool
-	}{
-		{name: "hostname, boot id and init start time", output: "appdev-1-376 5f0c-boot 8123456\n", want: "appdev-1-376/5f0c-boot/8123456"},
-		{name: "no boot id to read", output: "appdev-1-376 - 8123456\n", want: "appdev-1-376/-/8123456"},
-		{name: "noise before the answer", output: "Welcome\nappdev-1-376 5f0c-boot 8123456\n", want: "appdev-1-376/5f0c-boot/8123456"},
-		{name: "no init start time", output: "appdev-1-376 5f0c-boot \n", wantErr: true},
-		{name: "nothing", output: "", wantErr: true},
-		{name: "ssh failed", err: errors.New("exit status 255"), wantErr: true},
+	root := filepath.Join("..", "..")
+	forbidden := regexp.MustCompile(`\bpkill\b|\bpgrep\b|processMatch|ProcessMatch|setsid|nohup|zcp-dev-server-spawned|devservers-%|KeepDevServer|KeptDevServer|DevServerRunning|RunDevServerKeeper|"dev-server", "keep"`)
+	paths := []string{
+		"internal/ops/dev_server.go", "internal/ops/dev_server_supervisor.go", "internal/ops/dev_server_migrate.go",
+		"internal/tools/dev_server.go", "internal/tools/dev_server_migrate.go", "internal/tools/verify.go",
+		"internal/tools/deploy_ssh.go", "internal/tools/deploy_batch.go", "internal/tools/delete.go",
+		"internal/platform/units.go", "cmd/zcp/main.go",
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			ssh := &scriptSSH{queue: []scriptStep{{output: tt.output, err: tt.err}}}
-			got, err := ContainerIdentity(context.Background(), ssh, "appdev")
-			if tt.wantErr {
-				if err == nil {
-					t.Fatalf("want an error, got %q", got)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("ContainerIdentity: %v", err)
-			}
-			if got != tt.want {
-				t.Errorf("ContainerIdentity = %q, want %q", got, tt.want)
-			}
-			if len(ssh.calls) != 1 || ssh.calls[0].hostname != "appdev" || ssh.calls[0].background {
-				t.Fatalf("want one foreground ssh call to appdev, got %+v", ssh.calls)
-			}
-			for _, want := range []string{"/proc/1/stat", "boot_id"} {
-				if !strings.Contains(ssh.calls[0].command, want) {
-					t.Errorf("the identity reads %s: %q", want, ssh.calls[0].command)
-				}
-			}
-		})
-	}
-}
-
-// TestPortListening pins the listener read a bring-back makes before it
-// spawns: the container's own socket table, no HTTP request (a GET would make
-// a dev server compile), no tool that a minimal image may lack.
-func TestPortListening(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name    string
-		output  string
-		err     error
-		want    bool
-		wantErr bool
-	}{
-		{name: "listening", output: "listening\n", want: true},
-		{name: "not listening", output: "free\n", want: false},
-		{name: "ssh failed", err: errors.New("exit status 255"), wantErr: true},
-		{name: "no answer", output: "", wantErr: true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			ssh := &scriptSSH{queue: []scriptStep{{output: tt.output, err: tt.err}}}
-			got, err := PortListening(context.Background(), ssh, "appdev", 3000)
-			if tt.wantErr {
-				if err == nil {
-					t.Fatalf("want an error, got %v", got)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("PortListening: %v", err)
-			}
-			if got != tt.want {
-				t.Errorf("PortListening = %v, want %v", got, tt.want)
-			}
-			cmd := ssh.calls[0].command
-			for _, want := range []string{"/proc/net/tcp", ":0BB8 ", " 0A"} {
-				if !strings.Contains(cmd, want) {
-					t.Errorf("the read looks for a LISTEN socket on port 3000 (%q): %q", want, cmd)
-				}
-			}
-		})
-	}
-}
-
-// TestKillSpawnedDevServer stops exactly what one spawn started — its process
-// group, which the spawn's setsid made that pid lead, so a runner that does not
-// pass SIGTERM on (npm, sh -c) leaves no listener behind: only while the
-// pidfile still holds that spawn's pid (a later start overwrites it), and never
-// on a pid it does not know.
-func TestKillSpawnedDevServer(t *testing.T) {
-	t.Parallel()
-
-	ssh := &scriptSSH{queue: []scriptStep{{output: ""}}}
-	if err := KillSpawnedDevServer(context.Background(), ssh, "appdev", "", 4242); err != nil {
-		t.Fatalf("KillSpawnedDevServer: %v", err)
-	}
-	cmd := ssh.calls[0].command
-	for _, want := range []string{"/tmp/zcp-dev-server.log.pid", `= '4242'`, "kill -TERM -4242"} {
-		if !strings.Contains(cmd, want) {
-			t.Errorf("kill only the spawn's own pid while the pidfile holds it (%q): %q", want, cmd)
+	for _, p := range paths {
+		b, err := os.ReadFile(filepath.Join(root, p))
+		if err != nil {
+			t.Fatalf("read %s: %v", p, err)
 		}
-	}
-	if strings.Contains(cmd, "pkill") {
-		t.Errorf("never a pattern kill: %q", cmd)
-	}
-	if strings.Contains(cmd, "kill -TERM 4242") {
-		t.Errorf("never the bare pid: with the group gone it can only name a process that reused it: %q", cmd)
-	}
-
-	none := &scriptSSH{}
-	if err := KillSpawnedDevServer(context.Background(), none, "appdev", "", 0); err != nil || len(none.calls) != 0 {
-		t.Errorf("an unknown pid kills nothing: err=%v calls=%v", err, none.calls)
-	}
-}
-
-// TestDevServer_Start_ReportsSpawnPID: a start reports the pid its spawn
-// acknowledged, so a caller can later stop exactly that process.
-func TestDevServer_Start_ReportsSpawnPID(t *testing.T) {
-	t.Parallel()
-	ssh := &scriptSSH{queue: []scriptStep{
-		{output: "zcp-dev-server-spawned pid=4242"},
-		{output: "OK 200 12"},
-		{output: "ready"},
-		{output: "alive\n"},
-	}}
-	result, err := ExecuteDevServer(context.Background(), ssh, nil, "", DevServerParams{
-		Action: "start", Hostname: "appdev", Command: "npm run dev", Port: 3000,
-	})
-	if err != nil {
-		t.Fatalf("ExecuteDevServer: %v", err)
-	}
-	if result.PID != 4242 {
-		t.Errorf("PID = %d, want 4242", result.PID)
-	}
-}
-
-// TestDevServerStopPattern is the pattern a stop's kill matches processes by —
-// what a caller compares a kept command against to know whether a stop hits it.
-func TestDevServerStopPattern(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		processMatch string
-		command      string
-		want         string
-	}{
-		{processMatch: "vite", command: "npm run dev", want: "vite"},
-		{command: "npm run dev", want: "npm"},
-		{command: "env PORT=3000 node server.js", want: "env"},
-		{command: "PORT=3000 node server.js", want: "node"},
-		{want: ""},
-	}
-	for _, tt := range tests {
-		if got := DevServerStopPattern(tt.processMatch, tt.command); got != tt.want {
-			t.Errorf("DevServerStopPattern(%q, %q) = %q, want %q", tt.processMatch, tt.command, got, tt.want)
-		}
-	}
-}
-
-// TestSpawnedDevServerAlive reads whether the process one spawn started still
-// lives — exactly that pid, and only while the pidfile still names it: a
-// pidfile left from an earlier container life, or a later start's, says
-// nothing about it. A pid the spawn never reported is no process, read without
-// a call.
-func TestSpawnedDevServerAlive(t *testing.T) {
-	t.Parallel()
-	for _, tt := range []struct {
-		output string
-		want   bool
-	}{{"alive\n", true}, {"dead\n", false}} {
-		ssh := &scriptSSH{queue: []scriptStep{{output: tt.output}}}
-		got, err := SpawnedDevServerAlive(context.Background(), ssh, "appdev", "/tmp/web.log", 4242)
-		if err != nil || got != tt.want {
-			t.Errorf("SpawnedDevServerAlive(%q) = %v, %v; want %v", tt.output, got, err, tt.want)
-		}
-		cmd := ssh.calls[0].command
-		for _, want := range []string{"/tmp/web.log.pid", `= '4242'`, "kill -0 4242"} {
-			if !strings.Contains(cmd, want) {
-				t.Errorf("reads exactly the spawn's pid while the pidfile names it (%q): %q", want, cmd)
+		for i, line := range strings.Split(string(b), "\n") {
+			if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, "//") {
+				continue
+			}
+			if m := forbidden.FindString(line); m != "" {
+				t.Errorf("%s:%d uses %q — dev servers run only under the supervisor", p, i+1, m)
 			}
 		}
 	}
-
-	none := &scriptSSH{}
-	if got, err := SpawnedDevServerAlive(context.Background(), none, "appdev", "/tmp/web.log", 0); got || err != nil || len(none.calls) != 0 {
-		t.Errorf("an unreported pid is no process: got %v, %v, calls=%v", got, err, none.calls)
+	for _, gone := range []string{
+		"internal/ops/dev_server_start.go", "internal/ops/dev_server_lifecycle.go",
+		"internal/tools/dev_server_keep.go", "internal/workflow/dev_servers.go", "cmd/zcp/dev_server.go",
+	} {
+		if _, err := os.Stat(filepath.Join(root, gone)); err == nil {
+			t.Errorf("%s is back — the keeper and the SSH start are deleted, not kept beside the supervisor", gone)
+		}
 	}
 }

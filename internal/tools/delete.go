@@ -70,17 +70,12 @@ func RegisterDelete(srv *mcp.Server, client platform.Client, projectID string, s
 		onProgress := buildProgressCallback(ctx, req)
 		finalProc, timedOut := pollManageProcess(ctx, client, proc, onProgress)
 
-		// Best-effort: clean up service meta after successful delete+poll,
-		// and the dev server zcp kept on it — no container is left for the
-		// keeper to bring it back into.
+		// Best-effort: clean up service meta after successful delete+poll.
 		var recipe string
 		if stateDir != "" && finalProc.Status == statusFinished {
 			recipe = forgetStageOfSeveral(stateDir, input.ServiceHostname)
 			if delErr := workflow.DeleteServiceMeta(stateDir, input.ServiceHostname); delErr != nil {
 				fmt.Fprintf(os.Stderr, "zcp: delete service meta %s: %v\n", input.ServiceHostname, delErr)
-			}
-			if forgetErr := workflow.ForgetDevServer(stateDir, input.ServiceHostname); forgetErr != nil {
-				fmt.Fprintf(os.Stderr, "zcp: forget kept dev server %s: %v\n", input.ServiceHostname, forgetErr)
 			}
 		}
 

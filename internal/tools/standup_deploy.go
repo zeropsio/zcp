@@ -582,11 +582,11 @@ type standupDevServer struct {
 }
 
 // observeDevServers says, for every dev half that runs code, whether a dev
-// server runs on it. None is started here: a dev setup idles on a no-op
-// keepalive, and the command that serves the app is recorded nowhere zcp
-// reads — only as a comment in a hand-written recipe — so starting one is the
-// model's, with the port the dev setup declares. A server zcp already keeps
-// (one the model started before) is what a deploy brings back.
+// server runs on it. None is started here: a dev setup without the supervisor
+// idles on a no-op keepalive, and the command that serves the app is recorded
+// nowhere zcp reads — only as a comment in a hand-written recipe — so starting
+// one is the model's, with the port the dev setup declares. A dev setup under
+// the supervisor starts its declared server itself; the deploy reports it.
 func (d standupDeps) observeDevServers(pairs []*standupPair) {
 	for _, sp := range pairs {
 		if !sp.devDeploy.running() {
@@ -599,10 +599,6 @@ func (d standupDeps) observeDevServers(pairs []*standupPair) {
 				state = standupDevServerDown
 			}
 			sp.devServer = &standupDevServer{State: state, Why: r.DevServer.Reason}
-			continue
-		}
-		if kept, err := workflow.KeptDevServerFor(d.batch.stateDir, host); err == nil && kept != nil {
-			sp.devServer = &standupDevServer{State: standupDevServerKept, Command: kept.Command, Port: kept.Port}
 			continue
 		}
 		sp.devServer = &standupDevServer{

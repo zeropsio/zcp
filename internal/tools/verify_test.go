@@ -12,6 +12,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/ops/devservertest"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -393,8 +394,8 @@ func TestDeferredStartDurabilityNote(t *testing.T) {
 }
 
 // TestVerifyTool_DevServerRunning_ListenerTrue_InternalProbed pins §8 O3
-// PA-4 / O4: a dev-mode dynamic runtime whose dev server IS running (the
-// pidfile liveness check ops.DevServerRunning reports alive) has a real
+// PA-4 / O4: a dev-mode dynamic runtime whose dev server IS running (its
+// supervisor runs a declared server with a port) has a real
 // listener — http_internal probes instead of skipping with the
 // "start it with zerops_dev_server" deferred-start message.
 func TestVerifyTool_DevServerRunning_ListenerTrue_InternalProbed(t *testing.T) {
@@ -413,7 +414,7 @@ func TestVerifyTool_DevServerRunning_ListenerTrue_InternalProbed(t *testing.T) {
 			{ID: "svc-1", Name: "appdev", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/bun@1.3.9", ServiceStackTypeCategoryName: "USER"}, Status: serviceStatusRunning, Ports: []platform.Port{{Port: 3000}}},
 		})
 	fetcher := platform.NewMockLogFetcher()
-	ssh := &scriptSSH{queue: []scriptStep{{output: "alive"}}}
+	ssh := devservertest.NewSupervised(`{"version":1,"servers":[{"name":"appdev","port":3000,"command":"bun index.ts","cwd":"."}]}`)
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterVerify(srv, mock, fetcher, "proj-1", dir, runtime.Info{}, ssh)
@@ -443,7 +444,8 @@ func TestVerifyTool_DevServerRunning_ListenerTrue_InternalProbed(t *testing.T) {
 }
 
 // TestVerifyTool_DevServerStopped_StaysDeferred pins the complementary
-// case: the dev server is NOT running (liveness check reports "dead") —
+// case: the dev server is NOT running (declared, but the supervisor does
+// not run it) —
 // http_internal stays the deferred-start skip, and no probe is attempted.
 func TestVerifyTool_DevServerStopped_StaysDeferred(t *testing.T) {
 	t.Parallel()
@@ -461,7 +463,8 @@ func TestVerifyTool_DevServerStopped_StaysDeferred(t *testing.T) {
 			{ID: "svc-1", Name: "appdev", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/bun@1.3.9", ServiceStackTypeCategoryName: "USER"}, Status: serviceStatusRunning, Ports: []platform.Port{{Port: 3000}}},
 		})
 	fetcher := platform.NewMockLogFetcher()
-	ssh := &scriptSSH{queue: []scriptStep{{output: "dead"}}}
+	ssh := devservertest.NewSupervised("")
+	ssh.Declaration = `{"version":1,"servers":[{"name":"appdev","port":3000,"command":"bun index.ts","cwd":"."}]}`
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterVerify(srv, mock, fetcher, "proj-1", dir, runtime.Info{}, ssh)
@@ -491,7 +494,7 @@ func TestVerifyTool_DevServerStopped_StaysDeferred(t *testing.T) {
 }
 
 // TestVerifyTool_DevServerStatusError_FallsBackToStatic pins the failure
-// mode: the SSH liveness read errors (no SSH deployer, unreachable
+// mode: the supervisor read errors (no SSH deployer, unreachable
 // container) — verify must not fail because of it, and the classification
 // falls back to the static (mode, class) DeferredStart, same as "stopped".
 func TestVerifyTool_DevServerStatusError_FallsBackToStatic(t *testing.T) {
@@ -510,7 +513,7 @@ func TestVerifyTool_DevServerStatusError_FallsBackToStatic(t *testing.T) {
 			{ID: "svc-1", Name: "appdev", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/bun@1.3.9", ServiceStackTypeCategoryName: "USER"}, Status: serviceStatusRunning, Ports: []platform.Port{{Port: 3000}}},
 		})
 	fetcher := platform.NewMockLogFetcher()
-	ssh := &scriptSSH{queue: []scriptStep{{err: fmt.Errorf("ssh: connection refused")}}}
+	ssh := &stubSSH{err: fmt.Errorf("ssh: connection refused")}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterVerify(srv, mock, fetcher, "proj-1", dir, runtime.Info{}, ssh)

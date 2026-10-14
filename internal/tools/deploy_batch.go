@@ -211,14 +211,6 @@ func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallba
 	if d.authInfo != nil {
 		authVal = *d.authInfo
 	}
-	// The dev servers zcp keeps on the targets, as they stood before these
-	// deploys replace the containers (dev_server_keep.go).
-	keptBefore := map[string]*workflow.KeptDevServer{}
-	for _, t := range targets {
-		if rec, err := workflow.KeptDevServerFor(d.stateDir, t.TargetService); err == nil && rec != nil {
-			keptBefore[t.TargetService] = rec
-		}
-	}
 	result := ops.DeployBatchSSH(
 		ctx, d.client, d.projectID, d.sshDeployer, authVal,
 		targets, d.logFetcher, onProgress, pollFn,
@@ -247,13 +239,10 @@ func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallba
 			}
 		case entry.Result != nil && entry.Result.Status == statusDeployed:
 			attempt.SucceededAt = entry.EndedAt
-			// A dev server zcp keeps on the target is started again
-			// first: when it answers, a listener exists.
-			if bringBackKeptDevServer(ctx, d.sshDeployer, d.stateDir, entry.Result.TargetService, keptBefore[entry.Result.TargetService], entry.Result) {
-				ensurePublicAccess(ctx, d.client, d.httpClient, d.projectID, d.stateDir, entry.Result.TargetService, entry.Result, true)
-			} else {
-				ensurePublicAccess(ctx, d.client, d.httpClient, d.projectID, d.stateDir, entry.Result.TargetService, entry.Result)
-			}
+			// Whether something listens is the dev-server supervisor's
+			// word when the target runs one.
+			ensurePublicAccess(ctx, d.client, d.httpClient, d.projectID, d.stateDir, entry.Result.TargetService, entry.Result,
+				deployListener(ctx, d.sshDeployer, entry.Result.TargetService, entry.Result)...)
 		case entry.Result != nil && entry.Result.TimedOut:
 			// In-flight (B23): the build is still running — record the
 			// attempt without a FailureClass so the gate doesn't read it
