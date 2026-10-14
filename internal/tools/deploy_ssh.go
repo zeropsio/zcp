@@ -334,17 +334,17 @@ func RegisterDeploySSH(
 		// auto-infer). Pre-flight reads yaml from the source service's mount
 		// — the canonical per-codebase location and the same path
 		// `ops.deploySSH` reads from after pre-flight.
+		sourceForPreflight := input.SourceService
+		if sourceForPreflight == "" {
+			sourceForPreflight = input.TargetService
+		}
+		input.WorkingDir = sourceWorkingDir(stateDir, sourceForPreflight, input.WorkingDir)
 		if input.Strategy != deployStrategyGitPush {
-			sourceForPreflight := input.SourceService
-			if sourceForPreflight == "" {
-				sourceForPreflight = input.TargetService
-			}
 			// SSH deploy reads yaml from the source SSHFS mount in container
-			// env; workingDir parameter here names a CONTAINER path, irrelevant
-			// for dev-side yaml lookup — pass "" to keep the local-mode
-			// workingDir branch from firing. In LOCAL env there is no mount:
-			// sourceMountReadable=false defers yaml validation to deploy time.
-			resolvedSetup, pfResult, pfErr := deployPreFlight(ctx, client, projectID, stateDir, sourceForPreflight, input.TargetService, input.Setup, "", rtInfo.InContainer)
+			// env, below it for a workingDir on a code volume. In LOCAL env
+			// there is no mount: sourceMountReadable=false defers yaml
+			// validation to deploy time.
+			resolvedSetup, pfResult, pfErr := deployPreFlight(ctx, client, projectID, stateDir, sourceForPreflight, input.TargetService, input.Setup, input.WorkingDir, rtInfo.InContainer)
 			if pfErr != nil {
 				var blocker *workflow.ErrRequiresSetupInput
 				if errors.As(pfErr, &blocker) {

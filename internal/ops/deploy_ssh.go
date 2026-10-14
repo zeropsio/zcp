@@ -11,6 +11,7 @@ import (
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/ops/git"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 const defaultWorkingDir = "/var/www"
@@ -18,6 +19,41 @@ const defaultWorkingDir = "/var/www"
 // DefaultWorkingDir is the container-side deploy working directory used
 // when the caller omits workingDir. Shared with the tools layer.
 const DefaultWorkingDir = defaultWorkingDir
+
+// SourceMountDir is where zcp's mounts under root show sourceService's
+// container directory workingDir: `<root>/<source>` for /var/www (or no
+// workingDir), the same folder below it for a workingDir under /var/www — a
+// variant-B code volume (docs/spec-mate.md §2.8a).
+func SourceMountDir(root, sourceService, workingDir string) string {
+	rel, under := strings.CutPrefix(filepath.Clean(workingDir), defaultWorkingDir+"/")
+	if workingDir == "" || !under {
+		return filepath.Join(root, sourceService)
+	}
+	return filepath.Join(root, sourceService, rel)
+}
+
+// mountStyleWorkingDir reports whether workingDir under /var/www names zcp's
+// local mount of a service rather than a folder in the container, with the
+// hostname it names. A folder under /var/www is a container path only in a
+// project holding a local-storage volume, and only when the folder is no
+// service's hostname — a variant-B code volume mounted there.
+func mountStyleWorkingDir(services []platform.ServiceStack, workingDir string) (string, bool) {
+	rel, under := strings.CutPrefix(workingDir, defaultWorkingDir+"/")
+	if !under {
+		return "", false
+	}
+	mountHost, _, _ := strings.Cut(rel, "/")
+	hasVolume := false
+	for _, svc := range services {
+		if svc.Name == mountHost {
+			return mountHost, true
+		}
+		if topology.IsLocalStorageType(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) {
+			hasVolume = true
+		}
+	}
+	return mountHost, !hasVolume
+}
 
 // GitIdentity holds user name and email for git commits.
 type GitIdentity struct {
@@ -158,11 +194,7 @@ func deploySSH(
 	}
 	// Reject mount-style paths — workingDir runs INSIDE the container where
 	// /var/www/{hostname} doesn't exist. The correct container path is /var/www.
-	if workingDir != defaultWorkingDir && strings.HasPrefix(workingDir, defaultWorkingDir+"/") {
-		mountHost := strings.TrimPrefix(workingDir, defaultWorkingDir+"/")
-		if i := strings.IndexByte(mountHost, '/'); i >= 0 {
-			mountHost = mountHost[:i]
-		}
+	if mountHost, mountStyle := mountStyleWorkingDir(services, workingDir); mountStyle {
 		return nil, platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("workingDir %q looks like a local SSHFS mount path, not a container path. Inside the container, code lives at /var/www", workingDir),
@@ -171,13 +203,14 @@ func deploySSH(
 	}
 
 	// Pre-deploy validation: read zerops.yaml from SSHFS mount (local filesystem).
-	// Mount path: /var/www/{sourceService}/ maps to remote /var/www/
+	// Mount path: /var/www/{sourceService}/ maps to remote /var/www/, so a
+	// workingDir on a code volume under it reads from the same folder below.
 	setupName := setup
 	if setupName == "" {
 		setupName = targetService
 	}
 	var warnings []string
-	mountPath := filepath.Join("/var/www", sourceService)
+	mountPath := SourceMountDir(defaultWorkingDir, sourceService, workingDir)
 	serviceType := target.ServiceStackTypeInfo.ServiceStackTypeVersionName
 	class := ClassifyDeploy(sourceService, targetService)
 

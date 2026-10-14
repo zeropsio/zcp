@@ -178,9 +178,8 @@ func (d batchDeployer) preflight(ctx context.Context, t ops.DeployBatchTarget) (
 	if sourceForPreflight == "" {
 		sourceForPreflight = t.TargetService
 	}
-	// Batch entries are container-env SSH deploys; workingDir is "".
-	// See deploy_ssh.go for the same threading rationale.
-	resolvedSetup, pfResult, pfErr := deployPreFlight(ctx, d.client, d.projectID, d.stateDir, sourceForPreflight, t.TargetService, t.Setup, "", d.rtInfo.InContainer)
+	t.WorkingDir = sourceWorkingDir(d.stateDir, sourceForPreflight, t.WorkingDir)
+	resolvedSetup, pfResult, pfErr := deployPreFlight(ctx, d.client, d.projectID, d.stateDir, sourceForPreflight, t.TargetService, t.Setup, t.WorkingDir, d.rtInfo.InContainer)
 	if pfErr != nil {
 		var blocker *workflow.ErrRequiresSetupInput
 		if errors.As(pfErr, &blocker) {

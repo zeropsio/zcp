@@ -12,6 +12,21 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
+// sourceWorkingDir is the container directory a deploy from source runs in:
+// explicit when the caller passed one, else the code volume of a variant-B
+// pair's dev service (docs/spec-mate.md §2.8a), else "" — ops' default
+// /var/www.
+func sourceWorkingDir(stateDir, source, explicit string) string {
+	if explicit != "" || stateDir == "" {
+		return explicit
+	}
+	meta, err := workflow.FindServiceMeta(stateDir, source)
+	if err != nil || meta == nil {
+		return ""
+	}
+	return meta.WorkingDirFor(source)
+}
+
 // deployPreFlight validates zerops.yaml configuration BEFORE deploy execution.
 // This is the harness: it catches config errors that would cause silent deploy failures.
 // Returns nil when stateDir is empty (no state directory = skip validation).
@@ -30,9 +45,9 @@ import (
 // (local mode). When set on a local-env deploy, it overrides the
 // state-derived projectRoot for yaml lookup — honoring the advertised
 // `workingDir` contract end-to-end (preflight checks the same yaml that
-// ops.DeployLocal will deploy from). Container-env callers pass "" because
-// workingDir there is a CONTAINER path and not relevant for dev-side
-// yaml lookup.
+// ops.DeployLocal will deploy from). On a container source it is the
+// CONTAINER directory the deploy runs in (sourceWorkingDir), read from the
+// same folder below the source's mount.
 func deployPreFlight(ctx context.Context, client platform.Client, projectID, stateDir, sourceHostname, targetHostname, setup, workingDir string, sourceMountReadable bool) (resolvedSetup string, result *workflow.StepCheckResult, err error) {
 	if stateDir == "" {
 		return setup, nil, nil

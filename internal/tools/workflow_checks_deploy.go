@@ -78,10 +78,10 @@ func checkDevProdEnvDivergence(doc *ops.ZeropsYmlDoc) []workflow.StepCheck {
 // G16 fix). Probe errors (permission denied, stale SSHFS, non-directory)
 // surface immediately for the same reason.
 //
-// The workingDir parameter is meaningful only for local env (sourceHostname
-// == ""). Container-env callers should pass "" — workingDir for SSH deploys
-// names a CONTAINER path (default `/var/www`), not a dev-machine path, so
-// it's irrelevant for the dev-side yaml lookup.
+// For a container source, workingDir is the CONTAINER directory the deploy
+// runs in (default `/var/www`); the yaml is read where the source's mount
+// shows it (ops.SourceMountDir) — below the mount for a variant-B code
+// volume.
 func findAndParseZeropsYml(projectRoot, sourceHostname, workingDir string) (*ops.ZeropsYmlDoc, error) {
 	if sourceHostname == "" {
 		// Local environment. workingDir wins when set — that honors the
@@ -102,7 +102,7 @@ func findAndParseZeropsYml(projectRoot, sourceHostname, workingDir string) (*ops
 	}
 
 	// Container environment: yaml on the source service's mount.
-	mountPath := filepath.Join(projectRoot, sourceHostname)
+	mountPath := ops.SourceMountDir(projectRoot, sourceHostname, workingDir)
 	state, probeErr := probeMountForZeropsYml(mountPath)
 	switch {
 	case probeErr != nil:
