@@ -204,17 +204,26 @@ func evaluateOneMetaCheck(entry MetaCheckEntry, workDir string, now time.Time) R
 }
 
 // lookupMetaField resolves a dot-separated field path inside the decoded
-// meta document (`publicAccess.appdev.intent`); a bare key reads the top
-// level. Every intermediate segment must be a JSON object.
+// meta document (`publicAccess.appdev.intent`, `stages.0.hostname`); a bare
+// key reads the top level. Every intermediate segment must be a JSON object,
+// or an array indexed by a number.
 func lookupMetaField(doc map[string]any, field string) (any, bool) {
 	var cur any = doc
 	for seg := range strings.SplitSeq(field, ".") {
-		m, ok := cur.(map[string]any)
-		if !ok {
-			return nil, false
-		}
-		cur, ok = m[seg]
-		if !ok {
+		switch node := cur.(type) {
+		case map[string]any:
+			next, ok := node[seg]
+			if !ok {
+				return nil, false
+			}
+			cur = next
+		case []any:
+			i, err := strconv.Atoi(seg)
+			if err != nil || i < 0 || i >= len(node) {
+				return nil, false
+			}
+			cur = node[i]
+		default:
 			return nil, false
 		}
 	}

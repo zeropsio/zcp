@@ -230,6 +230,22 @@ func TestMeta_FieldMatchesAndAbsent_Rows(t *testing.T) {
 			wantResult: CheckPassed,
 		},
 		{
+			name:       "array index path pass",
+			hostname:   "appdev",
+			fixture:    `{"stages":[{"hostname":"webstage","setup":"web"},{"hostname":"apistage","setup":"api"}]}`,
+			field:      "stages.1.hostname",
+			expect:     "apistage",
+			wantResult: CheckPassed,
+		},
+		{
+			name:       "array index out of range fail",
+			hostname:   "appdev",
+			fixture:    `{"stages":[{"hostname":"appstage"}]}`,
+			field:      "stages.1.hostname",
+			expect:     "apistage",
+			wantResult: CheckFailed,
+		},
+		{
 			name:       "dot path absent fail",
 			hostname:   "appdev",
 			fixture:    `{"publicAccess":{"appstage":{"intent":"auto"}}}`,
