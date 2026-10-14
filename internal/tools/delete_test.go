@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -334,3 +336,67 @@ func TestDeleteTool_OtherService_InContainer_Allowed(t *testing.T) {
 
 // Ensure ops.Mounter is satisfied by stubMounter (compile check).
 var _ ops.Mounter = (*stubMounter)(nil)
+
+// Deleting one preview of a pair of several leaves the pair: the stage
+// leaves its Stages, the pair's meta and its other stages stay, and the
+// answer names the call that proposes the part's removal from the group
+// recipe's tiers. A pair's only stage keeps today's answer.
+func TestDeleteTool_StageOfSeveral_LeavesThePairAndNamesTheRecipeCall(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		stages     []topology.StageRef
+		delete     string
+		wantStages []string
+		wantSteer  bool
+	}{
+		{
+			name:       "one stage of three",
+			stages:     []topology.StageRef{{Hostname: "webstage", SetupName: "web"}, {Hostname: "apistage", SetupName: "api"}, {Hostname: "workerstage", SetupName: "worker"}},
+			delete:     "workerstage",
+			wantStages: []string{"webstage", "apistage"},
+			wantSteer:  true,
+		},
+		{
+			name:       "the only stage",
+			stages:     []topology.StageRef{{Hostname: "appstage", SetupName: "prod"}},
+			delete:     "appstage",
+			wantStages: []string{"appstage"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			stateDir := t.TempDir()
+			meta := &workflow.ServiceMeta{
+				Hostname: "appdev", Mode: topology.PlanModeStandard, BootstrapSession: "s1", BootstrappedAt: "2026-10-14T12:00:00Z",
+				Stages: tt.stages, HQ: &workflow.HQRepoRef{AppID: "app-1", Repo: "appdev"},
+			}
+			if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
+				t.Fatalf("WriteServiceMeta: %v", err)
+			}
+			mock := platform.NewMock().
+				WithServices([]platform.ServiceStack{{ID: "svc-1", Name: tt.delete}}).
+				WithProcess(&platform.Process{ID: "proc-delete-svc-1", ActionName: "delete", Status: "FINISHED"})
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterDelete(srv, mock, "proj-1", stateDir, nil, runtime.Info{})
+
+			result := callTool(t, srv, "zerops_delete", map[string]any{"serviceHostname": tt.delete})
+			text := getTextContent(t, result)
+			if result.IsError {
+				t.Fatalf("unexpected IsError: %s", text)
+			}
+			got, err := workflow.ReadServiceMeta(stateDir, "appdev")
+			if err != nil || got == nil {
+				t.Fatalf("the pair's meta is gone (%v)", err)
+			}
+			if hosts := got.StageHostnames(); !slices.Equal(hosts, tt.wantStages) {
+				t.Errorf("stages = %v, want %v", hosts, tt.wantStages)
+			}
+			steer := `action=\"group-recipe\" service=\"` + tt.delete + `\"`
+			if strings.Contains(text, steer) != tt.wantSteer {
+				t.Errorf("answer %s: carries the recipe call %v, want %v", text, !tt.wantSteer, tt.wantSteer)
+			}
+		})
+	}
+}

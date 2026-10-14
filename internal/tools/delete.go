@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -24,6 +26,9 @@ type deleteResponse struct {
 	Process  *platform.Process `json:"process,omitempty"`
 	TimedOut bool              `json:"timedOut,omitempty"`
 	Warning  string            `json:"warning,omitempty"`
+	// Recipe names the call that proposes a deleted part's removal from the
+	// group recipe's tiers (hq_recipe_parts.go).
+	Recipe string `json:"recipe,omitempty"`
 }
 
 // RegisterDelete registers the zerops_delete tool.
@@ -68,7 +73,9 @@ func RegisterDelete(srv *mcp.Server, client platform.Client, projectID string, s
 		// Best-effort: clean up service meta after successful delete+poll,
 		// and the dev server zcp kept on it — no container is left for the
 		// keeper to bring it back into.
+		var recipe string
 		if stateDir != "" && finalProc.Status == statusFinished {
+			recipe = forgetStageOfSeveral(stateDir, input.ServiceHostname)
 			if delErr := workflow.DeleteServiceMeta(stateDir, input.ServiceHostname); delErr != nil {
 				fmt.Fprintf(os.Stderr, "zcp: delete service meta %s: %v\n", input.ServiceHostname, delErr)
 			}
@@ -80,10 +87,34 @@ func RegisterDelete(srv *mcp.Server, client platform.Client, projectID string, s
 		// Surface a poll timeout so the agent doesn't read a still-running
 		// delete as confirmed (the ServiceMeta cleanup above is also skipped
 		// on timeout, so the local state intentionally still references it).
-		resp := deleteResponse{Process: finalProc, TimedOut: timedOut}
+		resp := deleteResponse{Process: finalProc, TimedOut: timedOut, Recipe: recipe}
 		if timedOut {
 			resp.Warning = "delete did not confirm within the poll window — verify with zerops_discover; the service may still be deleting."
 		}
 		return jsonResult(resp), nil, nil
 	})
+}
+
+// forgetStageOfSeveral takes a deleted stage out of its pair when the pair
+// has others: the pair stays, one part fewer (spec-mate §2.8a.4). It returns
+// the sentence naming the call that proposes the part's removal from the
+// group recipe's tiers when the pair builds from HQ, "" otherwise. A pair's
+// only stage is left as it always was.
+func forgetStageOfSeveral(stateDir, hostname string) string {
+	meta, err := workflow.FindServiceMeta(stateDir, hostname)
+	if err != nil || meta == nil || meta.Hostname == hostname || len(meta.Stages) < 2 {
+		return ""
+	}
+	if err := workflow.UpdateServiceMeta(stateDir, meta.Hostname, func(m *workflow.ServiceMeta) error {
+		m.Stages = slices.DeleteFunc(m.Stages, func(s topology.StageRef) bool { return s.Hostname == hostname })
+		return nil
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "zcp: forget stage %s of %s: %v\n", hostname, meta.Hostname, err)
+		return ""
+	}
+	if !hqPairWired(meta) {
+		return ""
+	}
+	return fmt.Sprintf("%s was a part of the pair %q, and the group recipe's tiers on main may still carry it: call zerops_workflow action=\"group-recipe\" service=%q to propose its removal, as a change the person reviews.",
+		hostname, meta.Hostname, hostname)
 }

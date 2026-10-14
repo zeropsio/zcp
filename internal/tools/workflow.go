@@ -63,7 +63,7 @@ type WorkflowInput struct {
 	CloseModes  map[string]string          `json:"closeMode,omitempty"   jsonschema:"Per-service close-deploy-mode map for action=close-mode (e.g. {\"appdev\":\"auto\"}). Valid values per service: auto (zcli push direct on develop close), manual (ZCP yields close orchestration). Delivery via git push is a separate dimension — run action=git-push-setup (works under either close-mode)."`
 	Integration string                     `json:"integration,omitempty" jsonschema:"ZCP-managed CI integration value for action=build-integration: 'webhook' (Zerops dashboard OAuth — Zerops pulls + builds on git push), 'actions' (GitHub Actions workflow runs zcli push from CI), or 'none' (no ZCP-managed integration; user may have independent CI/CD that ZCP doesn't track)."`
 	RemoteURL   string                     `json:"remoteUrl,omitempty"   jsonschema:"Remote git repository URL for action=git-push-setup confirm step. Passed after the walkthrough atom completes; HTTPS only in container env (https://github.com/owner/repo). Omit on first call to receive env-aware setup atom."`
-	Service     string                     `json:"service,omitempty"     jsonschema:"Single-target runtime service hostname for action=git-push-setup, action=build-integration and action=describe-change. Pair-keyed lookup honors stage hostnames (one ServiceMeta per dev/stage pair, indexed by either hostname)."`
+	Service     string                     `json:"service,omitempty"     jsonschema:"Single-target runtime service hostname for action=git-push-setup, action=build-integration, action=describe-change and action=group-recipe (propose its part added/removed in the tiers). Pair-keyed lookup honors stage hostnames (one ServiceMeta per dev/stage pair, indexed by either hostname)."`
 	BuildTarget string                     `json:"buildTarget,omitempty" jsonschema:"Optional for action=build-integration: pair hostname CI should build to, overriding the standard-pair default (stage receives builds). Set to the dev/push-source hostname to wire CI directly on it."`
 	GitToken    string                     `json:"gitToken,omitempty"    jsonschema:"Fine-grained PAT for action=git-push-setup confirm step (container env only). Required when remoteUrl is set in container mode. Handler probes the token against the remote BEFORE writing the service-scope secret or restarting — failed probe leaves project state untouched. Never echoed back in any response or state file."`
 	TrackedRef  string                     `json:"trackedRef,omitempty"  jsonschema:"Optional tracked ref for action=git-push-setup confirm (the branch stage/prod builds from). Overrides auto-detection; omit to let ZCP detect it. Recorded once."`
@@ -536,6 +536,11 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		// (hq_recipe_scaling.go).
 		if input.Scaling != "" {
 			return handleGroupRecipeScaling(ctx, client, httpClient, rt, stateDir, input.Scaling)
+		}
+		// service=<host>: propose adding or removing that host's part in
+		// the tiers on main (hq_recipe_parts.go).
+		if input.Service != "" {
+			return handleGroupRecipeService(ctx, client, httpClient, rt, stateDir, input.Service)
 		}
 		// A2: ask for the group's recipe export outright. The same reconcile
 		// that runs on every bootstrap/adopt pass, reported to whoever asked.

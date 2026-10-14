@@ -366,8 +366,9 @@ func groupPartsOf(r GroupRuntime, setups []string) []groupPart {
 }
 
 // nameGroupParts gives each part the hostname a group environment runs it
-// under. A part a group tier on main holds keeps the tier's name, read back
-// and never derived again; a part no tier holds yet is named once, by the
+// under. A part a group tier on main holds keeps the tier's name — the first
+// tier's in Held, when people renamed it in one — read back and never derived
+// again; a part no tier holds yet is named once, by the
 // rule a tier then keeps: the pair's stem (GroupPromotedHostname) for its
 // first part, the part's own name — its setup — for every other. A new name
 // that is no hostname, or that another service of the group environments
@@ -377,8 +378,10 @@ func nameGroupParts(runtimes []GroupRuntime, parts map[string][]groupPart, held 
 	type partKey struct{ repo, setup string }
 	heldBy := map[partKey]string{}
 	for _, h := range held {
-		if repo, private := publicRepoURL(h.RepoURL); !private && h.SetupName != "" && h.Hostname != "" {
-			heldBy[partKey{repo, h.SetupName}] = h.Hostname
+		repo, private := publicRepoURL(h.RepoURL)
+		key := partKey{repo, h.SetupName}
+		if _, named := heldBy[key]; !named && !private && h.SetupName != "" && h.Hostname != "" {
+			heldBy[key] = h.Hostname
 		}
 	}
 	taken := map[string]bool{}

@@ -175,6 +175,17 @@ func groupRecipeOutcome(
 	case outcome.Committed:
 		outcome.Line = fmt.Sprintf("the group recipe changed; change #%d (%s) carries the update", outcome.Change, outcome.ChangeURL)
 	}
+	// A part the tiers on main lack or still carry is the targeted
+	// proposal's, never this one's (hq_recipe_parts.go): said, with its call.
+	steer, err := recipePartSteer(ctx, comp)
+	switch {
+	case err != nil:
+		outcome.Warnings = append(outcome.Warnings, err.Error())
+	case steer != "" && outcome.Line != "":
+		outcome.Line += "; " + steer
+	case steer != "":
+		outcome.Line = steer
+	}
 	return outcome
 }
 
