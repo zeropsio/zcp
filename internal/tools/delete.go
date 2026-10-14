@@ -17,7 +17,8 @@ import (
 
 // DeleteInput is the input type for zerops_delete.
 type DeleteInput struct {
-	ServiceHostname string `json:"serviceHostname" jsonschema:"Hostname of the service to delete."`
+	ServiceHostname string `json:"serviceHostname"   jsonschema:"Hostname of the service to delete."`
+	Consent         string `json:"consent,omitempty" jsonschema:"serviceHostname again, only once the person agreed to delete it by name."`
 }
 
 // deleteResponse wraps the delete process with a poll-timeout signal so a
@@ -39,7 +40,8 @@ func RegisterDelete(srv *mcp.Server, client platform.Client, projectID string, s
 		Name: "zerops_delete",
 		Description: "Delete a service. This is destructive and permanent. " +
 			"IMPORTANT: You MUST have explicit user approval in the current conversation to delete " +
-			"THIS SPECIFIC service by name. Never delete proactively — only when the user explicitly asks.",
+			"THIS SPECIFIC service by name. Never delete proactively — only when the user explicitly asks. " +
+			"Without consent naming the service, the call is refused.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Delete a service",
 			DestructiveHint: boolPtr(true),
@@ -52,6 +54,16 @@ func RegisterDelete(srv *mcp.Server, client platform.Client, projectID string, s
 				fmt.Sprintf("Cannot delete %q — ZCP is running on this service", input.ServiceHostname),
 				"Delete this service manually via zcli or Zerops GUI.",
 			), WithRecoveryStatus()), nil, nil
+		}
+
+		// zcp never deletes a service without the person's explicit consent
+		// to deleting that service by name.
+		if input.Consent != input.ServiceHostname {
+			return convertError(platform.NewPlatformError(
+				platform.ErrConsentRequired,
+				fmt.Sprintf("Deleting %q is permanent and needs the person's explicit consent to deleting it by name", input.ServiceHostname),
+				fmt.Sprintf("Ask the person whether to delete %q. Only after they agree, call zerops_delete serviceHostname=%q consent=%q.", input.ServiceHostname, input.ServiceHostname, input.ServiceHostname),
+			)), nil, nil
 		}
 
 		// Best-effort: unmount SSHFS before delete so the service still exists for clean unmount.

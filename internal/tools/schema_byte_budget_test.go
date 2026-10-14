@@ -157,9 +157,11 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// deliberate new capability, not description bloat.
 		"zerops_process": 580,
 		"zerops_events":  259,
-		"zerops_delete":  179,
-		"zerops_export":  177,
-		"zerops_verify":  177,
+		// Raised 179 -> 296: the consent field — zcp never deletes a service
+		// without the person's explicit consent to deleting it by name.
+		"zerops_delete": 296,
+		"zerops_export": 177,
+		"zerops_verify": 177,
 	}
 
 	// browser is container+binary-gated; covered by TestAnnotations_BrowserTool.

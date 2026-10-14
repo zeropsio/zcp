@@ -348,6 +348,7 @@ func TestIntegration_Delete(t *testing.T) {
 	// Delete a service — must succeed.
 	result := callAndGetResult(t, session, "zerops_delete", map[string]any{
 		"serviceHostname": "app",
+		"consent":         "app",
 	})
 	if result.IsError {
 		t.Fatalf("delete returned error: %s", getTextContent(t, result))

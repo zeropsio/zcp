@@ -297,6 +297,7 @@ func TestE2E_SubdomainLifecycle(t *testing.T) {
 	for _, hostname := range []string{phpHost, goHost} {
 		deleteText := s.mustCallSuccess("zerops_delete", map[string]any{
 			"serviceHostname": hostname,
+			"consent":         hostname,
 		})
 		procID := extractProcessID(t, deleteText)
 		waitForProcess(s, procID)

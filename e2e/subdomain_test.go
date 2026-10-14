@@ -253,6 +253,7 @@ func TestE2E_Subdomain(t *testing.T) {
 	logStep(t, step, "zerops_delete %s", appHostname)
 	deleteText := s.mustCallSuccess("zerops_delete", map[string]any{
 		"serviceHostname": appHostname,
+		"consent":         appHostname,
 	})
 	deleteProcID := extractProcessID(t, deleteText)
 	t.Logf("  Delete process: %s", deleteProcID)

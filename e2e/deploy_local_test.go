@@ -169,6 +169,7 @@ func TestE2E_LocalDeploy_Success(t *testing.T) {
 	logStep(t, step, "zerops_delete %s", hostname)
 	deleteText := s.mustCallSuccess("zerops_delete", map[string]any{
 		"serviceHostname": hostname,
+		"consent":         hostname,
 	})
 	procID := extractProcessID(t, deleteText)
 	waitForProcess(s, procID)

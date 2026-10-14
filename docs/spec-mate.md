@@ -1042,7 +1042,9 @@ How zcp does it:
   for scaling. The reconcile's line names the call for each part `main`'s tiers lack or still carry,
   unless that part's change is the open one. A one-part app's tiers carry its part, so nothing is
   said or proposed.
-- Removal. `zerops_delete` of one stage of a pair with several takes it out of `Stages[]` and its
+- Removal. `zerops_delete` deletes a service only with the person's explicit consent: a call
+  whose `consent` does not name the service is refused (`CONSENT_REQUIRED`) and deletes nothing,
+  so the agent asks first. With it, a stage of a pair with several leaves `Stages[]` and its
   answer's `recipe` names the call; a pair's only stage keeps today's behaviour.
 - Tier header. An app with more than one part says the tier also takes a part's service added or
   removed; a one-part app's header is today's.

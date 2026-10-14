@@ -75,7 +75,11 @@ const (
 	ErrAdoptTargetBusy    = "ADOPT_TARGET_BUSY"
 	ErrWorkflowRequired   = "WORKFLOW_REQUIRED"
 	ErrSelfServiceBlocked = "SELF_SERVICE_BLOCKED"
-	ErrGitTokenMissing    = "GIT_TOKEN_MISSING"
+	// ErrConsentRequired marks a call that would delete a service without the
+	// person's explicit consent to deleting that service by name. Recovery:
+	// ask the person, then call again with their consent.
+	ErrConsentRequired = "CONSENT_REQUIRED"
+	ErrGitTokenMissing = "GIT_TOKEN_MISSING"
 	// ErrGitTokenInvalid signals that a GIT_TOKEN was supplied but the
 	// remote rejected the auth probe (bad token, expired PAT, insufficient
 	// scope, or URL unreachable). Distinct from ErrGitTokenMissing — the

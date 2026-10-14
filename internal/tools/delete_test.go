@@ -30,6 +30,7 @@ func TestDeleteTool_Confirmed(t *testing.T) {
 
 	result := callTool(t, srv, "zerops_delete", map[string]any{
 		"serviceHostname": "api",
+		"consent":         "api",
 	})
 
 	if result.IsError {
@@ -92,6 +93,7 @@ func TestDeleteTool_CleansUpServiceMeta(t *testing.T) {
 
 	result := callTool(t, srv, "zerops_delete", map[string]any{
 		"serviceHostname": "api",
+		"consent":         "api",
 	})
 
 	if result.IsError {
@@ -116,6 +118,7 @@ func TestDeleteTool_NoStateDir_StillSucceeds(t *testing.T) {
 
 	result := callTool(t, srv, "zerops_delete", map[string]any{
 		"serviceHostname": "api",
+		"consent":         "api",
 	})
 
 	if result.IsError {
@@ -138,6 +141,7 @@ func TestDeleteTool_UnmountsOnSuccess(t *testing.T) {
 
 	result := callTool(t, srv, "zerops_delete", map[string]any{
 		"serviceHostname": "api",
+		"consent":         "api",
 	})
 
 	if result.IsError {
@@ -165,6 +169,7 @@ func TestDeleteTool_UnmountOrphanUnit(t *testing.T) {
 
 	result := callTool(t, srv, "zerops_delete", map[string]any{
 		"serviceHostname": "api",
+		"consent":         "api",
 	})
 
 	if result.IsError {
@@ -194,6 +199,7 @@ func TestDeleteTool_NilMounter_NoUnmount(t *testing.T) {
 
 	result := callTool(t, srv, "zerops_delete", map[string]any{
 		"serviceHostname": "api",
+		"consent":         "api",
 	})
 
 	if result.IsError {
@@ -217,6 +223,7 @@ func TestDeleteTool_UnmountError_StillSucceeds(t *testing.T) {
 
 	result := callTool(t, srv, "zerops_delete", map[string]any{
 		"serviceHostname": "api",
+		"consent":         "api",
 	})
 
 	// Delete should still succeed even if unmount has issues.
@@ -249,6 +256,7 @@ func TestDeleteTool_SelfDelete_Blocked(t *testing.T) {
 
 	result := callTool(t, srv, "zerops_delete", map[string]any{
 		"serviceHostname": "zcp",
+		"consent":         "zcp",
 	})
 
 	if !result.IsError {
@@ -297,6 +305,7 @@ func TestDeleteTool_SelfDelete_LocalDev_Allowed(t *testing.T) {
 
 	result := callTool(t, srv, "zerops_delete", map[string]any{
 		"serviceHostname": "zcp",
+		"consent":         "zcp",
 	})
 
 	if result.IsError {
@@ -318,6 +327,7 @@ func TestDeleteTool_OtherService_InContainer_Allowed(t *testing.T) {
 
 	result := callTool(t, srv, "zerops_delete", map[string]any{
 		"serviceHostname": "api",
+		"consent":         "api",
 	})
 
 	if result.IsError {
@@ -372,7 +382,7 @@ func TestDeleteTool_StageOfSeveral_LeavesThePairAndNamesTheRecipeCall(t *testing
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 			RegisterDelete(srv, mock, "proj-1", stateDir, nil, runtime.Info{})
 
-			result := callTool(t, srv, "zerops_delete", map[string]any{"serviceHostname": tt.delete})
+			result := callTool(t, srv, "zerops_delete", map[string]any{"serviceHostname": tt.delete, "consent": tt.delete})
 			text := getTextContent(t, result)
 			if result.IsError {
 				t.Fatalf("unexpected IsError: %s", text)
@@ -387,6 +397,70 @@ func TestDeleteTool_StageOfSeveral_LeavesThePairAndNamesTheRecipeCall(t *testing
 			steer := `action=\"group-recipe\" service=\"` + tt.delete + `\"`
 			if strings.Contains(text, steer) != tt.wantSteer {
 				t.Errorf("answer %s: carries the recipe call %v, want %v", text, !tt.wantSteer, tt.wantSteer)
+			}
+		})
+	}
+}
+
+// TestRemovingAPartDeletesItsPreviewOnlyAfterExplicitConsent: zcp never
+// deletes a service without the person's explicit consent. The agent asks the
+// person; zerops_delete refuses a call that does not carry that consent for
+// the service by name, deletes nothing and leaves the pair's parts as they
+// were. With it, the preview goes and the pair keeps its other parts.
+func TestRemovingAPartDeletesItsPreviewOnlyAfterExplicitConsent(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		consent    string
+		wantStages []string
+		deleted    bool
+	}{
+		{name: "without consent", wantStages: []string{"webstage", "apistage"}},
+		{name: "with consent to another service", consent: "apistage", wantStages: []string{"webstage", "apistage"}},
+		{name: "with consent to this preview", consent: "webstage", wantStages: []string{"apistage"}, deleted: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			stateDir := t.TempDir()
+			if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+				Hostname: "appdev", Mode: topology.PlanModeStandard, BootstrapSession: "s1", BootstrappedAt: "2026-10-15T00:00:00Z",
+				Stages: []topology.StageRef{{Hostname: "webstage", SetupName: "web"}, {Hostname: "apistage", SetupName: "api"}},
+			}); err != nil {
+				t.Fatalf("WriteServiceMeta: %v", err)
+			}
+			mock := platform.NewMock().
+				WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "webstage"}, {ID: "svc-2", Name: "apistage"}}).
+				WithProcess(&platform.Process{ID: "proc-delete-svc-1", ActionName: "delete", Status: "FINISHED"})
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterDelete(srv, mock, "proj-1", stateDir, nil, runtime.Info{})
+
+			args := map[string]any{"serviceHostname": "webstage"}
+			if tt.consent != "" {
+				args["consent"] = tt.consent
+			}
+			result := callTool(t, srv, "zerops_delete", args)
+			text := getTextContent(t, result)
+
+			if got := mock.CallCounts["DeleteService"] == 1; got != tt.deleted {
+				t.Errorf("webstage deleted = %v, want %v: %s", got, tt.deleted, text)
+			}
+			if result.IsError == tt.deleted {
+				t.Errorf("IsError = %v, want %v: %s", result.IsError, !tt.deleted, text)
+			}
+			if !tt.deleted {
+				for _, want := range []string{platform.ErrConsentRequired, "webstage", `consent=\"webstage\"`} {
+					if !strings.Contains(text, want) {
+						t.Errorf("the refusal misses %q: %s", want, text)
+					}
+				}
+			}
+			got, err := workflow.ReadServiceMeta(stateDir, "appdev")
+			if err != nil || got == nil {
+				t.Fatalf("the pair's meta is gone (%v)", err)
+			}
+			if hosts := got.StageHostnames(); !slices.Equal(hosts, tt.wantStages) {
+				t.Errorf("stages = %v, want %v", hosts, tt.wantStages)
 			}
 		})
 	}
