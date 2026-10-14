@@ -7,7 +7,7 @@ zerops:
     build:
       base: nodejs@22
       prepareCommands:
-        - npm i -g pnpm@9.15.0
+        - npm i -g --force pnpm@9.15.0
       cache:
         - node_modules
         - apps/*/node_modules
@@ -24,7 +24,7 @@ zerops:
       deployFiles: [.]
     run:
       prepareCommands:
-        - npm i -g pnpm@9.15.0
+        - npm i -g --force pnpm@9.15.0
       ports:
         - port: 3000
           httpSupport: true
