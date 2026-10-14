@@ -52,10 +52,19 @@ type Container struct {
 	pid     int
 }
 
+// SupervisedYAML is a zerops.yaml whose dev setup runs the supervisor.
+const SupervisedYAML = `zerops:
+  - setup: dev
+    run:
+      prepareCommands:
+        - sudo sh -c 'curl -fsSL https://github.com/zeropsio/zcp/releases/download/v9.300.0/zcp-devsup-linux-amd64 -o /usr/local/bin/zcp-devsup && chmod 0755 /usr/local/bin/zcp-devsup'
+      start: zcp-devsup run
+`
+
 // NewSupervised is a container whose dev setup runs the supervisor, with the
 // declaration decl (JSON; "" for none) whose servers all run.
 func NewSupervised(decl string) *Container {
-	c := &Container{Installed: true, Running: true, SupervisorVersion: "v9.300.0", Formats: []int{1}, Declaration: decl, YAMLFile: "zerops.yaml"}
+	c := &Container{Installed: true, Running: true, SupervisorVersion: "v9.300.0", Formats: []int{1}, Declaration: decl, YAMLFile: "zerops.yaml", YAML: SupervisedYAML}
 	c.boot()
 	return c
 }

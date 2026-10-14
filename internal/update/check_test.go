@@ -385,3 +385,30 @@ func TestNewChecker_ZCPUpdateURL(t *testing.T) {
 		t.Errorf("DownloadBaseURL = %q, want mock download URL", c.DownloadBaseURL)
 	}
 }
+
+func TestLatestAssetURL(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, body, base, want string
+	}{
+		{name: "the newest release ships it", body: `{"tag_name":"v9.300.0","assets":[{"name":"zcp-linux-amd64"},{"name":"zcp-devsup-linux-amd64"}]}`,
+			want: "https://github.com/zeropsio/zcp/releases/download/v9.300.0/zcp-devsup-linux-amd64"},
+		{name: "the newest release does not", body: `{"tag_name":"v9.209.0","assets":[{"name":"zcp-linux-amd64"}]}`},
+		{name: "a private deployment's download base", body: `{"tag_name":"v9.300.0","assets":[{"name":"zcp-devsup-linux-amd64"}]}`,
+			base: "https://mirror.example/download", want: "https://mirror.example/download/v9.300.0/zcp-devsup-linux-amd64"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer srv.Close()
+			c := &Checker{GitHubAPIURL: srv.URL, DownloadBaseURL: tt.base, HTTPClient: srv.Client()}
+			got, err := c.LatestAssetURL(t.Context(), "zcp-devsup-linux-amd64")
+			if err != nil || got != tt.want {
+				t.Errorf("= %q, %v; want %q", got, err, tt.want)
+			}
+		})
+	}
+}

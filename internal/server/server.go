@@ -27,6 +27,7 @@ import (
 	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/telemetry"
 	"github.com/zeropsio/zcp/internal/tools"
+	"github.com/zeropsio/zcp/internal/update"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -340,7 +341,10 @@ func (s *Server) registerTools() {
 		tools.RegisterDevServer(s.server, tools.DevServerDeps{
 			Client: s.client, HTTPClient: httpClient, ProjectID: projectID, SSH: s.sshDeployer, StateDir: stateDir,
 			AuthInfo: s.authInfo, LogFetcher: s.logFetcher, RtInfo: s.rtInfo,
-			ZcpVersion: Version, DevsupURLOverride: os.Getenv("ZCP_DEVSUP_URL"),
+			LatestDevsup: func(ctx context.Context) (string, error) {
+				return update.NewChecker(Version).LatestAssetURL(ctx, ops.DevsupAsset)
+			},
+			DevsupURLOverride: os.Getenv("ZCP_DEVSUP_URL"),
 		})
 		// A Mate stands up from its group's recipe in one call (docs/spec-mate.md
 		// D32). Mate-gated like every mate-shaped effect (§2.0): a container

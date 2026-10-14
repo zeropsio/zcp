@@ -9,21 +9,21 @@ import (
 
 const testDevsupURL = "https://github.com/zeropsio/zcp/releases/download/v9.300.0/zcp-devsup-linux-amd64"
 
-func TestDevsupDownloadURL(t *testing.T) {
+func TestDevsupURL(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name, version, override, want, wantErr string
+		name, latest, override, want, wantErr string
 	}{
-		{name: "a release pins its own asset", version: "v9.300.0", want: testDevsupURL},
-		{name: "a dev build without override has none", version: "v9.209.0-3-gabc-dirty", wantErr: "not a release"},
-		{name: "the override wins", version: "v9.209.0-dirty", override: "https://lab.example/b/zcp-devsup-linux-amd64", want: "https://lab.example/b/zcp-devsup-linux-amd64"},
-		{name: "an override that would break the quoted line", version: "v9.300.0", override: "https://x/a'b/zcp-devsup-linux-amd64", wantErr: "ZCP_DEVSUP_URL"},
-		{name: "an override for another asset", version: "v9.300.0", override: "https://x/zcp-linux-amd64", wantErr: "ZCP_DEVSUP_URL"},
+		{name: "the newest release's asset", latest: testDevsupURL, want: testDevsupURL},
+		{name: "no release ships it yet", wantErr: "no published zcp release ships"},
+		{name: "the override wins", latest: testDevsupURL, override: "https://lab.example/b/zcp-devsup-linux-amd64", want: "https://lab.example/b/zcp-devsup-linux-amd64"},
+		{name: "an override that would break the quoted line", override: "https://x/a'b/zcp-devsup-linux-amd64", wantErr: "not an http(s) URL"},
+		{name: "an override for another asset", override: "https://x/zcp-linux-amd64", wantErr: "not an http(s) URL"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := DevsupDownloadURL(tt.version, tt.override)
+			got, err := DevsupURL(tt.latest, tt.override)
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("err = %v, want %q", err, tt.wantErr)

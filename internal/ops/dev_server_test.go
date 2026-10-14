@@ -675,3 +675,52 @@ func TestDevServer_NoProcessPatternMatching(t *testing.T) {
 		}
 	}
 }
+
+// TestDevServersAfterDeploy: after a deploy replaced the container, a dev
+// service with one declared server reports it from the supervisor — probed
+// when it runs, its exit when it crashed, stopped when it is not run — and
+// one with several reports none on its own.
+func TestDevServersAfterDeploy(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		container   func() *devservertest.Container
+		wantResult  bool
+		wantRunning bool
+		wantReason  string
+	}{
+		{name: "the declared server runs", container: func() *devservertest.Container { return devservertest.NewSupervised(oneServer) },
+			wantResult: true, wantRunning: true},
+		{name: "it crashed", container: func() *devservertest.Container {
+			c := devservertest.NewSupervised("")
+			c.Declaration, c.Crash = oneServer, map[string]bool{"apidev": true}
+			c.Redeploy()
+			return c
+		}, wantResult: true, wantReason: reasonCrashed},
+		{name: "it is stopped", container: func() *devservertest.Container {
+			c := devservertest.NewSupervised(oneServer)
+			c.Servers["apidev"].Status = devsup.StatusStopped
+			return c
+		}, wantResult: true, wantReason: reasonStopped},
+		{name: "several servers", container: func() *devservertest.Container { return devservertest.NewSupervised(twoServers) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			c := tt.container()
+			_, result, err := DevServersAfterDeploy(context.Background(), c, "apidev")
+			if err != nil {
+				t.Fatalf("DevServersAfterDeploy: %v", err)
+			}
+			if (result != nil) != tt.wantResult {
+				t.Fatalf("result = %+v, want one: %v", result, tt.wantResult)
+			}
+			if result != nil && (result.Running != tt.wantRunning || result.Reason != tt.wantReason) {
+				t.Errorf("result = %+v, want running=%v reason=%q", result, tt.wantRunning, tt.wantReason)
+			}
+			if !tt.wantRunning && sentWith(c, "for i in $(seq") != 0 {
+				t.Error("probed a server the supervisor does not run")
+			}
+		})
+	}
+}

@@ -48,7 +48,7 @@ func migrateToSupervisor(ctx context.Context, req *mcp.CallToolRequest, d DevSer
 			host+"'s dev setup does not run the dev-server supervisor, and this zcp cannot redeploy it",
 			"Run zcp where it can deploy (the zcp service of the project) and start the dev server again.")
 	}
-	url, err := ops.DevsupDownloadURL(d.ZcpVersion, d.DevsupURLOverride)
+	url, err := devsupURL(ctx, d)
 	if err != nil {
 		return nil, nil, platform.NewPlatformError(platform.ErrInvalidParameter,
 			host+"'s dev setup does not run the dev-server supervisor yet: "+err.Error(), "")
@@ -79,6 +79,24 @@ func migrateToSupervisor(ctx context.Context, req *mcp.CallToolRequest, d DevSer
 	m.warnings = deployed.Warnings
 	result, err := ops.ExecuteDevServer(ctx, d.SSH, d.Client, d.ProjectID, p)
 	return m, result, err
+}
+
+// devsupURL is the zcp-devsup download a dev setup moved onto the supervisor
+// installs: the override, else the newest release's asset.
+func devsupURL(ctx context.Context, d DevServerDeps) (string, error) {
+	latest := ""
+	if d.DevsupURLOverride == "" && d.LatestDevsup != nil {
+		found, err := d.LatestDevsup(ctx)
+		if err != nil {
+			return "", fmt.Errorf("find the newest zcp release: %w", err)
+		}
+		latest = found
+	}
+	url, err := ops.DevsupURL(latest, d.DevsupURLOverride)
+	if err != nil {
+		return "", fmt.Errorf("devsup download: %w", err)
+	}
+	return url, nil
 }
 
 // redeployForSupervisor self-deploys hostname with setup and records the

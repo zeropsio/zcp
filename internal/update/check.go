@@ -98,6 +98,29 @@ func (c *Checker) Check(ctx context.Context) *Info {
 
 type githubRelease struct {
 	TagName string `json:"tag_name"` //nolint:tagliatelle // GitHub API uses snake_case
+	Assets  []struct {
+		Name string `json:"name"`
+	} `json:"assets"`
+}
+
+// LatestAssetURL is the download URL of asset in the newest published
+// release, "" when that release does not ship it. It reads the release
+// afresh: the update cache holds no asset list.
+func (c *Checker) LatestAssetURL(ctx context.Context, asset string) (string, error) {
+	release, err := c.fetchLatestRelease(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, a := range release.Assets {
+		if a.Name != asset {
+			continue
+		}
+		if c.DownloadBaseURL != "" {
+			return fmt.Sprintf("%s/%s/%s", c.DownloadBaseURL, release.TagName, asset), nil
+		}
+		return fmt.Sprintf("https://github.com/zeropsio/zcp/releases/download/%s/%s", release.TagName, asset), nil
+	}
+	return "", nil
 }
 
 type cacheEntry struct {

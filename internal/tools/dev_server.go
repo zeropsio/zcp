@@ -98,9 +98,11 @@ type DevServerDeps struct {
 	AuthInfo   *auth.Info
 	LogFetcher platform.LogFetcher
 	RtInfo     runtime.Info
-	// ZcpVersion and DevsupURLOverride (ZCP_DEVSUP_URL) pin the zcp-devsup
-	// a dev setup moved onto the supervisor installs (ops.DevsupDownloadURL).
-	ZcpVersion        string
+	// LatestDevsup finds the zcp-devsup a dev setup moved onto the
+	// supervisor installs — the newest published release's asset, "" when it
+	// ships none — unless DevsupURLOverride (ZCP_DEVSUP_URL) names one
+	// (ops.DevsupURL). Nil finds none.
+	LatestDevsup      func(ctx context.Context) (string, error)
 	DevsupURLOverride string
 }
 

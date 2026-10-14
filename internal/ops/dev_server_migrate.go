@@ -21,30 +21,30 @@ import (
 // DevsupStart is the dev setup's run.start under the supervisor.
 const DevsupStart = "zcp-devsup run"
 
-// devsupAsset is the release asset zcp-devsup ships as.
-const devsupAsset = "zcp-devsup-linux-amd64"
-
-// devsupReleaseRe is a zcp release tag; a dev build has no release asset.
-var devsupReleaseRe = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
+// DevsupAsset is the release asset zcp-devsup ships as.
+const DevsupAsset = "zcp-devsup-linux-amd64"
 
 // devsupURLRe bounds a download URL to what the prepareCommands line carries
 // inside single quotes.
-var devsupURLRe = regexp.MustCompile(`^https?://[A-Za-z0-9._~:/?#\[\]@!$&()*+,;=%-]+/` + devsupAsset + `$`)
+var devsupURLRe = regexp.MustCompile(`^https?://[A-Za-z0-9._~:/?#\[\]@!$&()*+,;=%-]+/` + DevsupAsset + `$`)
 
-// DevsupDownloadURL is where a dev setup's prepareCommands fetch zcp-devsup:
-// the asset of the zcp release that writes the line, or override (a dev
-// build's own upload, ZCP_DEVSUP_URL) when set.
-func DevsupDownloadURL(version, override string) (string, error) {
+// DevsupURL is where a dev setup's prepareCommands fetch zcp-devsup
+// (docs/spec-mate.md §2.8a.2): override (ZCP_DEVSUP_URL, a dev build's own
+// upload) when set, else latest — the asset of the newest published zcp
+// release, "" when that release does not ship one. Every zcp-devsup release
+// reads format 1, the only one zcp writes, and a release never drops a format.
+func DevsupURL(latest, override string) (string, error) {
+	url := latest
 	if override != "" {
-		if !devsupURLRe.MatchString(override) {
-			return "", fmt.Errorf("ZCP_DEVSUP_URL %q is not an http(s) URL ending in /%s", override, devsupAsset)
-		}
-		return override, nil
+		url = override
 	}
-	if !devsupReleaseRe.MatchString(version) {
-		return "", fmt.Errorf("this zcp (%s) is not a release, so no zcp-devsup is published for it; set ZCP_DEVSUP_URL to a %s build", version, devsupAsset)
+	switch {
+	case url == "":
+		return "", errors.New("no published zcp release ships " + DevsupAsset + " yet, so zcp writes no download line; set ZCP_DEVSUP_URL on the zcp service to a build of it")
+	case !devsupURLRe.MatchString(url):
+		return "", fmt.Errorf("%q is not an http(s) URL ending in /%s", url, DevsupAsset)
 	}
-	return "https://github.com/zeropsio/zcp/releases/download/" + version + "/" + devsupAsset, nil
+	return url, nil
 }
 
 // DevsupPrepareCommand is the run.prepareCommands line that installs
@@ -87,7 +87,7 @@ func adoptSupervisorRun(doc, run *yaml.Node, setup, url string) ([]byte, bool, e
 	case prepare.Kind == yaml.SequenceNode:
 		found := false
 		for _, item := range prepare.Content {
-			if item.Kind == yaml.ScalarNode && strings.Contains(item.Value, "/"+devsupAsset) {
+			if item.Kind == yaml.ScalarNode && strings.Contains(item.Value, "/"+DevsupAsset) {
 				found = true
 				if item.Value != line {
 					item.Value, item.Style, changed = line, 0, true
@@ -267,10 +267,19 @@ func DevServersAfterDeploy(ctx context.Context, ssh SSHDeployer, hostname string
 	}
 	server := ds.Declared.Servers[0]
 	result := newResult(devServerActionStart, hostname, server.Name)
-	if server.Port == 0 {
-		st := ds.State.Servers[server.Name]
-		result.LogFile, result.PID = st.LogPath, st.Pid
-		result.Running = st.Status == devsup.StatusRunning || st.Status == devsup.StatusStarting
+	st := ds.State.Servers[server.Name]
+	result.LogFile, result.PID = st.LogPath, st.Pid
+	switch {
+	case st.Status == devsup.StatusCrashed:
+		applyCrash(ctx, ssh, result, server.Name, st)
+		return ds, result, nil
+	case st.Status == devsup.StatusStopped || st.Status == "":
+		// Declared with autostart false, or not run by this supervisor.
+		result.Reason = reasonStopped
+		result.Message = fmt.Sprintf("Dev server %s is declared but not running; start it with zerops_dev_server action=start hostname=%s.", serverLabel(hostname, server.Name), hostname)
+		return ds, result, nil
+	case server.Port == 0:
+		result.Running = true
 		result.Message = fmt.Sprintf("Dev server %s is %s under the supervisor.", serverLabel(hostname, server.Name), st.Status)
 		return ds, result, nil
 	}

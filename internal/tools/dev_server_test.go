@@ -199,8 +199,8 @@ func migrationToolServer(t *testing.T, c *devservertest.Container, buildStatus s
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDevServer(srv, DevServerDeps{
 		Client: mock, ProjectID: "proj-1", SSH: c, StateDir: dir,
-		AuthInfo:   &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
-		ZcpVersion: "v9.300.0",
+		AuthInfo:     &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
+		LatestDevsup: func(context.Context) (string, error) { return testDevsupURL, nil },
 	})
 	return srv, dir
 }
