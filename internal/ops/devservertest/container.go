@@ -155,7 +155,8 @@ func (c *Container) redeploy() {
 	}
 }
 
-// boot starts every declared server, as a supervisor does on a fresh $HOME.
+// boot gives every declared server its first desired state (autostart),
+// as a supervisor does on a fresh $HOME.
 func (c *Container) boot() {
 	c.Servers = map[string]*devsup.ServerState{}
 	d, err := devsup.ParseDeclaration([]byte(c.Declaration))
@@ -163,6 +164,11 @@ func (c *Container) boot() {
 		return
 	}
 	for _, s := range d.Servers {
+		if s.FirstDesired() == devsup.DesiredStopped {
+			c.Servers[s.Name] = &devsup.ServerState{Source: devsup.SourceDeclared, Desired: devsup.DesiredStopped, Status: devsup.StatusStopped,
+				LogPath: "/home/zerops/.zcp/devsup/logs/" + s.Name + ".log"}
+			continue
+		}
 		c.start(s.Name, false)
 	}
 }

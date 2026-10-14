@@ -702,6 +702,9 @@ func TestDevServersAfterDeploy(t *testing.T) {
 			c.Servers["apidev"].Status = devsup.StatusStopped
 			return c
 		}, wantResult: true, wantReason: reasonStopped},
+		{name: "it is declared with autostart false", container: func() *devservertest.Container {
+			return devservertest.NewSupervised(`{"version":1,"servers":[{"name":"apidev","port":3000,"command":"npm run start:dev","cwd":".","autostart":false}]}`)
+		}, wantResult: true, wantReason: reasonStopped},
 		{name: "several servers", container: func() *devservertest.Container { return devservertest.NewSupervised(twoServers) }},
 	}
 	for _, tt := range tests {
