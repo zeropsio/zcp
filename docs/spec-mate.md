@@ -1015,6 +1015,35 @@ the service first enters a tier, and the composer reads it back from the tier, n
 (naming rule: MODEL §9/3); (4) a change of the set of parts is a targeted "add/remove service X"
 proposal to the existing tiers, the mechanism of today's `scaling=<hostname>`, merged by a person.
 
+How zcp does it:
+
+- Naming. The reconcile reads the Stage and Small Production tiers on `main` (`bundle.HeldRuntimes`:
+  each runtime with a `buildFromGit` and a `zeropsSetup`) and the composer gives a part the hostname
+  a tier holds for its repository and setup — the Stage tier's when people renamed it in one. A part
+  no tier holds is named once: the pair's stem (`appdev` → `app`) for its first stage, its setup
+  for every other. A new name that is no hostname or that a managed service or another part
+  already has is never changed on a guess: the part is left out of the group tiers and the
+  composer warns.
+- Proposal. `zerops_workflow action="group-recipe" service=<host>` (the host a stage, or a runtime a
+  tier names) adds that part's composed entry to each tier file on `main` that carries a service of
+  its repository and lacks the part — after the repository's last service — or removes the part's
+  entry, its comment lines and its blank separator from each tier still carrying it; a dev half is
+  never removed, a tier carrying no service of the repository is left alone, and a tier the text
+  edit cannot read is refused and named. Every other line stays as `main` has it. The change is
+  titled `Mate: <host> in the group recipe`; HQ's one open change per Mate per repository holds as
+  for scaling. The reconcile's line names the call for each part `main`'s tiers lack or still carry,
+  unless that part's change is the open one. A one-part app's tiers carry its part, so nothing is
+  said or proposed.
+- Removal. `zerops_delete` of one stage of a pair with several takes it out of `Stages[]` and its
+  answer's `recipe` names the call; a pair's only stage keeps today's behaviour.
+- Tier header. An app with more than one part says the tier also takes a part's service added or
+  removed; a one-part app's header is today's.
+
+zcp `TestBuildGroupRecipe_OnePart_ComposesAsBeforeStages`, `TestBuildGroupRecipe_ThreeParts_OneRuntimePerStage`,
+`TestBuildGroupRecipe_PartHostnames_HeldByTheTier`, `TestTierService_AddOrRemove_OnlyThatService`,
+`TestGroupRecipeService_OnePart_ProposesNoTierEdit`, `TestGroupRecipeService_AddThenRemovePart_OnlyThatService`,
+`TestDeleteTool_StageOfSeveral_LeavesThePairAndNamesTheRecipeCall`.
+
 #### 2.8a.6 The receipt on an HQ change (only N > 1)
 
 zcp writes it with the change edit it already makes, `PATCH /api/mate/changes/<repo>/<number>`,
