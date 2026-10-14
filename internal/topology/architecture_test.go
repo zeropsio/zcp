@@ -20,6 +20,8 @@ import (
 //	Layer 3 peers (ops/, workflow/) — must not import each other or upper layers.
 //	internal/telemetry/wire — stdlib-only (imported by both the client and
 //	cmd/zcp-ingest, spec-telemetry.md §4.3 single-owner rule).
+//	internal/devsup — stdlib-only (the supervisor binary every dev
+//	container runs as run.start, spec-mate.md §2.8a.2).
 //	ops/, workflow/ — must not import internal/telemetry; instrumentation
 //	stays at the L4 choke point (server middleware), spec-telemetry.md §5.3.
 //	(topology/ and platform/ already deny ALL internal/ imports above, so
@@ -51,6 +53,14 @@ func TestArchitectureLayering(t *testing.T) {
 				"github.com/zeropsio/zcp/internal/",
 			},
 			reason: "wire is the single schema/validation owner imported by both the telemetry client and cmd/zcp-ingest; imports stdlib + 3rd-party only (spec-telemetry.md §4.3)",
+		},
+		{
+			name:    "devsup-stdlib-only",
+			rootDir: "devsup",
+			deny: []string{
+				"github.com/zeropsio/zcp/internal/",
+			},
+			reason: "devsup is the supervisor binary every dev container runs as run.start; imports stdlib + golang.org/x/sys only (spec-mate.md §2.8a.2)",
 		},
 		{
 			name:    "ops-not-workflow",

@@ -149,6 +149,7 @@ cross-cutting peers, but they observe the foundational rules
 | `internal/envclass/` | SDK-driven env-var classifier (Layer 3 — orchestration-level). Imports `ops/inventory` and `topology/`; sits above `ops/`, never imported by `ops/` or `workflow/`. |
 | `internal/preprocess/`, `internal/schema/`, `internal/catalog/`, `internal/sync/`, `internal/init/`, `internal/update/` | Utility / cross-cutting. Each obeys "import only what you actually need from below." |
 | `internal/service/` | Container exec wrappers (nginx/vscode). Name-collision-distinct from `topology/` — that is why the new package is `topology/`, not `service/`. |
+| `internal/devsup/` | The dev-server supervisor `cmd/zcp-devsup` runs as a dev setup's `run.start` in every dev container (docs/spec-mate.md §2.8a.2). Standalone: stdlib and `golang.org/x/sys` only, no `internal/` import, so the binary stays small and static. |
 
 ---
 

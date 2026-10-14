@@ -202,6 +202,19 @@ linters:
             - github.com/zeropsio/zcp/internal/telemetry/wire
             - github.com/ClickHouse/clickhouse-go/v2
             - github.com/google/uuid
+        devsup-allowlist:
+          # internal/devsup and cmd/zcp-devsup are the dev-server supervisor
+          # every dev container runs as run.start (spec-mate.md §2.8a.2): a
+          # small static binary, so stdlib + golang.org/x/sys only. Mirrors
+          # ingest-allowlist above.
+          list-mode: strict
+          files:
+            - "**/internal/devsup/*.go"
+            - "**/cmd/zcp-devsup/*.go"
+          allow:
+            - $gostd
+            - github.com/zeropsio/zcp/internal/devsup
+            - golang.org/x/sys
         core-not-authoring:
           # Authoring boundary, direction 1 (L1 in
           # docs/spec-authoring-boundary.md): no core package depends on
