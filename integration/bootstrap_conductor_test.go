@@ -86,9 +86,9 @@ func TestIntegration_BootstrapConductor_FullFlow(t *testing.T) {
 	// Submit standard mode plan (bundev/bunstage + db).
 	planResp, err := engine.BootstrapCompletePlan([]workflow.BootstrapTarget{
 		{
-			Runtime: workflow.RuntimeTarget{DevHostname: "bundev", Type: "bun@1.2", BootstrapMode: "standard", ExplicitStage: "bunstage"},
+			Runtime: workflow.RuntimeTarget{DevHostname: "bundev", Type: "bun@1.3", BootstrapMode: "standard", ExplicitStage: "bunstage"},
 			Dependencies: []workflow.Dependency{
-				{Hostname: "bunstage", Type: "bun@1.2", Mode: "NON_HA", Resolution: "CREATE"},
+				{Hostname: "bunstage", Type: "bun@1.3", Mode: "NON_HA", Resolution: "CREATE"},
 				{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"},
 			},
 		},
@@ -495,7 +495,7 @@ func TestIntegration_BootstrapConductor_DevMode_G4Skipped(t *testing.T) {
 
 	// Submit dev mode plan directly.
 	_, err = engine.BootstrapCompletePlan([]workflow.BootstrapTarget{{
-		Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2", BootstrapMode: "dev"},
+		Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "bun@1.3", BootstrapMode: "dev"},
 	}}, nil, nil)
 	if err != nil {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
@@ -529,7 +529,7 @@ func TestIntegration_BootstrapConductor_SimpleMode_Completes(t *testing.T) {
 	}
 
 	_, err = engine.BootstrapCompletePlan([]workflow.BootstrapTarget{{
-		Runtime: workflow.RuntimeTarget{DevHostname: "myapp", Type: "bun@1.2", BootstrapMode: "simple"},
+		Runtime: workflow.RuntimeTarget{DevHostname: "myapp", Type: "bun@1.3", BootstrapMode: "simple"},
 	}}, nil, nil)
 	if err != nil {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
@@ -563,8 +563,8 @@ func TestIntegration_BootstrapConductor_MixedModes_StandardRequired(t *testing.T
 
 	// Mixed: standard + simple. PlanMode should be "standard".
 	resp, err := engine.BootstrapCompletePlan([]workflow.BootstrapTarget{
-		{Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2", BootstrapMode: "standard", ExplicitStage: "appstage"}},
-		{Runtime: workflow.RuntimeTarget{DevHostname: "frontend", Type: "bun@1.2", BootstrapMode: "simple"}},
+		{Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "bun@1.3", BootstrapMode: "standard", ExplicitStage: "appstage"}},
+		{Runtime: workflow.RuntimeTarget{DevHostname: "frontend", Type: "bun@1.3", BootstrapMode: "simple"}},
 	}, nil, nil)
 	if err != nil {
 		t.Fatalf("BootstrapCompletePlan: %v", err)

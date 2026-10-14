@@ -27,7 +27,7 @@ both bases:
 | `alpine/static@1.0` | `alpine/nodejs@22` (or whatever produces `dist/`) | `static` | `npm install`, `npm run build` |
 | `<os>/python@3.12` | `<os>/python@3.12` | `<os>/python@3.12` | `pip install -r requirements.txt` |
 | `<os>/go@1.22` | `<os>/go@1.22` | `<os>/go@1.22` | `go build -o app ./...` |
-| `<os>/bun@1.2` | `<os>/bun@1.2` | `<os>/bun@1.2` | `bun install`, `bun run build` |
+| `<os>/bun@1.3` | `<os>/bun@1.3` | `<os>/bun@1.3` | `bun install`, `bun run build` |
 
 ## Write the file
 

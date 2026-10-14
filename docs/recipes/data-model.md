@@ -34,7 +34,7 @@ sourceData:
       projectName: "bun-hello-world-agent"
       services:
         - name: "app"
-          typeId/typeName/typeVersionName: "bun@1.2"
+          typeId/typeName/typeVersionName: "bun@1.3"
           category: "runtime"
           content: (app README.md)
           zeropsYaml: (full zerops.yaml)

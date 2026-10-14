@@ -29,7 +29,7 @@ var compositeSchemas = &schema.Schemas{
 		ServiceTypes: []string{
 			"alpine/nodejs@22", "ubuntu/nodejs@22",
 			"alpine/php-nginx@8.4", "ubuntu/php-nginx@8.4",
-			"alpine/bun@1.2",
+			"alpine/bun@1.3",
 			"postgresql:single@18", "postgresql:ha@18",
 			"valkey:single@7.2",
 		},

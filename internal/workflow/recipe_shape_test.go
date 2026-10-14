@@ -224,11 +224,11 @@ func TestDeriveRecipePlan(t *testing.T) {
 		// (provisioned-but-untracked).
 		shape := parse(t, `services:
   - hostname: appdev
-    type: bun@1.2
+    type: bun@1.3
     zeropsSetup: dev
     buildFromGit: https://github.com/zerops-recipe-apps/showcase-recipe-app
   - hostname: appstage
-    type: bun@1.2
+    type: bun@1.3
     zeropsSetup: prod
     buildFromGit: https://github.com/zerops-recipe-apps/showcase-recipe-app
   - hostname: workerdev

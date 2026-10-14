@@ -67,7 +67,7 @@ func TestBootstrapComplete_AppendsReflog(t *testing.T) {
 	}
 
 	_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
-		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2", BootstrapMode: "standard", ExplicitStage: "appstage"},
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.3", BootstrapMode: "standard", ExplicitStage: "appstage"},
 	}}, nil, nil)
 	if err != nil {
 		t.Fatalf("BootstrapCompletePlan: %v", err)

@@ -32,7 +32,7 @@ func TestIsImplicitWebServerType_CompositeShapes(t *testing.T) {
 		// Non-implicit runtimes — false in both shapes.
 		{"alpine/nodejs@22", false},
 		{"nodejs@22", false},
-		{"alpine/bun@1.2", false},
+		{"alpine/bun@1.3", false},
 		{"ubuntu/go@1.22", false},
 
 		// Managed services — never implicit.

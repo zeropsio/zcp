@@ -3,6 +3,6 @@
 # the mailpit binary from the official recipe repo via buildFromGit.
 services:
   - hostname: mailpit
-    type: alpine@3.20
+    type: alpine@3.23
     buildFromGit: https://github.com/zeropsio/recipe-mailpit
     enableSubdomainAccess: true

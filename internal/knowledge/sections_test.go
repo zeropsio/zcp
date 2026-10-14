@@ -171,7 +171,7 @@ func TestNormalizeRuntimeName(t *testing.T) {
 		{"nodejs@22", "nodejs"},
 		{"nodejs@20", "nodejs"},
 		{"nodejs", "nodejs"},
-		{"bun@1.2", "bun"},
+		{"bun@1.3", "bun"},
 		{"bun", "bun"},
 		{"deno@2", "deno"},
 

@@ -406,7 +406,7 @@ func TestBuildResponse_PriorContext_WithPlan(t *testing.T) {
 	bs.Plan = &ServicePlan{
 		Targets: []BootstrapTarget{
 			{
-				Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"},
+				Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.3"},
 				Dependencies: []Dependency{
 					{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"},
 				},
@@ -517,28 +517,28 @@ func TestPlanMode(t *testing.T) {
 		{
 			"standard_mode",
 			&ServicePlan{Targets: []BootstrapTarget{
-				{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2", BootstrapMode: "standard", ExplicitStage: "appstage"}},
+				{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.3", BootstrapMode: "standard", ExplicitStage: "appstage"}},
 			}},
 			"standard",
 		},
 		{
 			"simple_mode",
 			&ServicePlan{Targets: []BootstrapTarget{
-				{Runtime: RuntimeTarget{DevHostname: "app", Type: "bun@1.2", BootstrapMode: "simple"}},
+				{Runtime: RuntimeTarget{DevHostname: "app", Type: "bun@1.3", BootstrapMode: "simple"}},
 			}},
 			"simple",
 		},
 		{
 			"dev_mode",
 			&ServicePlan{Targets: []BootstrapTarget{
-				{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2", BootstrapMode: "dev"}},
+				{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.3", BootstrapMode: "dev"}},
 			}},
 			"dev",
 		},
 		{
 			"mixed_with_standard_returns_standard",
 			&ServicePlan{Targets: []BootstrapTarget{
-				{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2", BootstrapMode: "standard", ExplicitStage: "appstage"}},
+				{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.3", BootstrapMode: "standard", ExplicitStage: "appstage"}},
 				{Runtime: RuntimeTarget{DevHostname: "api", Type: "go@1", BootstrapMode: "simple"}},
 			}},
 			"standard",
@@ -546,7 +546,7 @@ func TestPlanMode(t *testing.T) {
 		{
 			"mixed_dev_simple_returns_mixed",
 			&ServicePlan{Targets: []BootstrapTarget{
-				{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2", BootstrapMode: "dev"}},
+				{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.3", BootstrapMode: "dev"}},
 				{Runtime: RuntimeTarget{DevHostname: "api", Type: "go@1", BootstrapMode: "simple"}},
 			}},
 			"mixed",
@@ -576,7 +576,7 @@ func TestBuildResponse_PlanMode(t *testing.T) {
 
 	// After plan submission, PlanMode should reflect the plan.
 	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
-		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2", BootstrapMode: "standard", ExplicitStage: "appstage"}},
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.3", BootstrapMode: "standard", ExplicitStage: "appstage"}},
 	}}
 	resp = bs.BuildResponse("sess1", "test", 0, EnvLocal, nil)
 	if resp.Current.PlanMode != "standard" {
@@ -628,7 +628,7 @@ func TestBuildResponse_Iteration_YieldsHardStop(t *testing.T) {
 	t.Parallel()
 	bs := NewBootstrapState()
 	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
-		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2", BootstrapMode: "standard", ExplicitStage: "appstage"}},
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.3", BootstrapMode: "standard", ExplicitStage: "appstage"}},
 	}}
 	bs.Steps[0].Status = stepComplete
 	bs.Steps[0].Attestation = "discover complete"
@@ -722,7 +722,7 @@ func TestBuildPriorContext_PlanAlwaysIncluded(t *testing.T) {
 			bs := NewBootstrapState()
 			bs.Plan = &ServicePlan{
 				Targets: []BootstrapTarget{
-					{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}},
+					{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.3"}},
 				},
 			}
 			for i := 0; i < tt.attestations; i++ {
@@ -788,10 +788,10 @@ func TestValidateSkip(t *testing.T) {
 		{"close_nil_plan_allowed", nil, "close", false, ""},
 		{"close_empty_targets_allowed", &ServicePlan{Targets: []BootstrapTarget{}}, "close", false, ""},
 		{"close_with_targets_blocked", &ServicePlan{Targets: []BootstrapTarget{
-			{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}},
+			{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.3"}},
 		}}, "close", true, "runtime services"},
 		{"close_all_existing_allowed", &ServicePlan{Targets: []BootstrapTarget{
-			{Runtime: RuntimeTarget{DevHostname: "legacy", Type: "bun@1.2", IsExisting: true}},
+			{Runtime: RuntimeTarget{DevHostname: "legacy", Type: "bun@1.3", IsExisting: true}},
 		}}, "close", false, ""},
 		// generate/deploy no longer exist in Option A — they are unknown steps.
 		{"generate_unknown", nil, "generate", true, "unknown step"},

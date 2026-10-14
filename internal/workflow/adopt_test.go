@@ -22,8 +22,8 @@ func TestInferServicePairing(t *testing.T) {
 		{
 			name: "two hostname-suffixed runtimes become two dev targets (no pairing)",
 			candidates: []AdoptCandidate{
-				{Hostname: "appdev", Type: "bun@1.2"},
-				{Hostname: "appstage", Type: "bun@1.2"},
+				{Hostname: "appdev", Type: "bun@1.3"},
+				{Hostname: "appstage", Type: "bun@1.3"},
 				{Hostname: "db", Type: "postgresql@16"},
 			},
 			wantCount: 2,
@@ -68,7 +68,7 @@ func TestInferServicePairing(t *testing.T) {
 		{
 			name: "hostname dev alone",
 			candidates: []AdoptCandidate{
-				{Hostname: "appdev", Type: "bun@1.2"},
+				{Hostname: "appdev", Type: "bun@1.3"},
 			},
 			wantCount: 1,
 			wantHosts: []string{"appdev"},
@@ -92,8 +92,8 @@ func TestInferServicePairing(t *testing.T) {
 		{
 			name: "managed services become dependencies on every target",
 			candidates: []AdoptCandidate{
-				{Hostname: "appdev", Type: "bun@1.2"},
-				{Hostname: "appstage", Type: "bun@1.2"},
+				{Hostname: "appdev", Type: "bun@1.3"},
+				{Hostname: "appstage", Type: "bun@1.3"},
 				{Hostname: "db", Type: "postgresql@16"},
 				{Hostname: "cache", Type: "valkey@7.2"},
 			},

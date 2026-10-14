@@ -99,7 +99,7 @@ func TestHandleBootstrapComplete_ClassicPlan_InvalidHostname_TagsWorkerPlanShape
 		"plan": []any{map[string]any{
 			"runtime": map[string]any{
 				"devHostname":   "my-app", // invalid hostname shape (hyphen)
-				"type":          "bun@1.2",
+				"type":          "bun@1.3",
 				"bootstrapMode": "dev",
 			},
 		}},

@@ -105,7 +105,7 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		"zerops_dev_server":  3220,
 		// Raised +28 (2945→2973) for the OS-axis migration: the runtime/services
 		// jsonschema examples now show the composite `<os>/<tech>@<ver>` /
-		// `<tech>:single|ha@<ver>` forms (ubuntu/php-nginx@8.4, alpine/bun@1.2,
+		// `<tech>:single|ha@<ver>` forms (ubuntu/php-nginx@8.4, alpine/bun@1.3,
 		// postgresql:single@16) instead of the deprecated bare forms — a
 		// correctness fix (tell == what the platform now expects), not new
 		// surface.

@@ -901,7 +901,7 @@ func TestWorkflowTool_Action_BootstrapComplete_DiscoverStep_Structured(t *testin
 		"step":   "discover",
 		"plan": []any{
 			map[string]any{
-				"runtime": map[string]any{"devHostname": "appdev", "type": "bun@1.2", "bootstrapMode": "standard", "stageHostname": "appstage"},
+				"runtime": map[string]any{"devHostname": "appdev", "type": "bun@1.3", "bootstrapMode": "standard", "stageHostname": "appstage"},
 				"dependencies": []any{
 					map[string]any{"hostname": "db", "type": "postgresql@16", "mode": "NON_HA", "resolution": "CREATE"},
 				},
@@ -939,7 +939,7 @@ func TestWorkflowTool_Action_BootstrapComplete_DiscoverStep_InvalidPlan(t *testi
 		"step":   "discover",
 		"plan": []any{
 			map[string]any{
-				"runtime": map[string]any{"devHostname": "my-app", "type": "bun@1.2", "bootstrapMode": "dev"},
+				"runtime": map[string]any{"devHostname": "my-app", "type": "bun@1.3", "bootstrapMode": "dev"},
 			},
 		},
 	})
@@ -1153,7 +1153,7 @@ func TestWorkflowTool_Action_BootstrapComplete_DiscoverStep_FallbackAttestation(
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":      "complete",
 		"step":        "discover",
-		"attestation": "Services: appdev (bun@1.2), db (postgresql@16 NON_HA) — validated manually",
+		"attestation": "Services: appdev (bun@1.3), db (postgresql@16 NON_HA) — validated manually",
 	})
 
 	if result.IsError {

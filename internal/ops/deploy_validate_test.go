@@ -603,7 +603,7 @@ func TestHasImplicitWebServer(t *testing.T) {
 		{"nodejs is not implicit", "nodejs@22", nil, false},
 		{"both empty", "", nil, false},
 		{"multi build bases with implicit", "", []string{"php-nginx@8.4", "nodejs@22"}, true},
-		{"multi build bases without implicit", "", []string{"nodejs@22", "bun@1.2"}, false},
+		{"multi build bases without implicit", "", []string{"nodejs@22", "bun@1.3"}, false},
 	}
 
 	for _, tt := range tests {
@@ -784,7 +784,7 @@ func TestParseZeropsYml_ExtensionFallback(t *testing.T) {
 	validYAML := `zerops:
   - setup: appdev
     build:
-      base: bun@1.2
+      base: bun@1.3
       buildCommands: ["bun install"]
       deployFiles: [.]
     run:

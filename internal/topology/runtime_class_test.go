@@ -82,7 +82,7 @@ func TestRuntimeClassFor_BareCompositeSymmetry(t *testing.T) {
 		{"nodejs@22", "alpine/nodejs@22"},
 		{"nodejs@22", "ubuntu/nodejs@22"},
 		{"go@1", "alpine/go@1"},
-		{"bun@1.2", "alpine/bun@1.2"},
+		{"bun@1.3", "alpine/bun@1.3"},
 		{"php-nginx@8.4", "alpine/php-nginx@8.4"},
 		{"php-apache@8.3", "ubuntu/php-apache@8.3"},
 		{"nginx@1.22", "alpine/nginx@1.22"},

@@ -541,7 +541,7 @@ func recipeServiceTypeRefs(content string) []string {
 		refs = append(refs, v)
 	}
 
-	// Array values: type: [nodejs@22, bun@1.2]
+	// Array values: type: [nodejs@22, bun@1.3]
 	for _, match := range recipeTypeArrayRe.FindAllStringSubmatch(content, -1) {
 		for _, part := range strings.Split(match[1], ",") {
 			addRef(part)

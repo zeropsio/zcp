@@ -62,7 +62,7 @@ func TestCheckServiceType_TypesAreEquivalent(t *testing.T) {
 		{
 			name:         "different_runtime_fails",
 			expectedType: "nodejs@22",
-			actualType:   "alpine/bun@1.2",
+			actualType:   "alpine/bun@1.3",
 			wantFail:     true,
 		},
 		// Same-family/different-version (nodejs@22 vs alpine/nodejs@24) is no
@@ -175,8 +175,8 @@ func TestCheckServiceType_SameFamilyDifferentVersion_PassesWithNote(t *testing.T
 		},
 		{
 			name:         "bun_concrete_version_resolved",
-			expectedType: "bun@1.2",
-			actualType:   "bun@1.3",
+			expectedType: "bun@1.3",
+			actualType:   "bun@1.4",
 			wantFail:     false,
 		},
 		{

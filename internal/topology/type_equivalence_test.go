@@ -243,7 +243,7 @@ func TestTypeFamily_StripsOSPrefixAndVersion_KeepsVariant(t *testing.T) {
 	}{
 		{"bare runtime", "nodejs@22", "nodejs"},
 		{"OS-prefixed runtime, different version", "ubuntu/nodejs@24", "nodejs"},
-		{"alpine runtime", "alpine/bun@1.2", "bun"},
+		{"alpine runtime", "alpine/bun@1.3", "bun"},
 		{"bare, no version", "nodejs", "nodejs"},
 		{"managed, single variant kept", "postgresql:single@18", "postgresql:single"},
 		{"managed, ha variant kept", "postgresql:ha@18", "postgresql:ha"},

@@ -61,7 +61,7 @@ func TestAppendReflogEntry_ExistingFile_Appends(t *testing.T) {
 	}
 
 	targets := []BootstrapTarget{
-		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2", BootstrapMode: "standard", ExplicitStage: "appstage"}},
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.3", BootstrapMode: "standard", ExplicitStage: "appstage"}},
 	}
 
 	err := AppendReflogEntry(path, "Test append", targets, "sess456", "2026-03-04")
@@ -88,7 +88,7 @@ func TestAppendReflogEntry_MultipleEntries(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "CLAUDE.md")
 
-	t1 := []BootstrapTarget{{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2", BootstrapMode: "standard", ExplicitStage: "appstage"}}}
+	t1 := []BootstrapTarget{{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.3", BootstrapMode: "standard", ExplicitStage: "appstage"}}}
 	t2 := []BootstrapTarget{{Runtime: RuntimeTarget{DevHostname: "apidev", Type: "go@1", BootstrapMode: "standard", ExplicitStage: "apistage"}}}
 
 	if err := AppendReflogEntry(path, "First bootstrap", t1, "sess1", "2026-03-01"); err != nil {
@@ -119,7 +119,7 @@ func TestAppendReflogEntry_DevMode(t *testing.T) {
 	path := filepath.Join(dir, "CLAUDE.md")
 
 	targets := []BootstrapTarget{
-		{Runtime: RuntimeTarget{DevHostname: "myapp", Type: "bun@1.2", BootstrapMode: "dev"}},
+		{Runtime: RuntimeTarget{DevHostname: "myapp", Type: "bun@1.3", BootstrapMode: "dev"}},
 	}
 
 	err := AppendReflogEntry(path, "Dev mode app", targets, "sess-dev", "2026-03-08")

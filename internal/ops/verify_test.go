@@ -80,7 +80,7 @@ func TestClassifyRuntime_Dynamic(t *testing.T) {
 	}{
 		{"nodejs@22", true},
 		{"go@1", true},
-		{"bun@1.2", true},
+		{"bun@1.3", true},
 		{"python@3.12", true},
 		{"rust@stable", true},
 		{"java@21", true},

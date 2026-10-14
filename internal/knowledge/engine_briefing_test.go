@@ -76,7 +76,7 @@ func TestGetBriefing_NilTypes_NoVersionSection(t *testing.T) {
 
 func TestGetBriefing_BunRuntime_ContainsKnowledgeBase(t *testing.T) {
 	store := newTestStore(t)
-	briefing, err := store.GetBriefing("bun@1.2", []string{"postgresql@16"}, "", nil)
+	briefing, err := store.GetBriefing("bun@1.3", []string{"postgresql@16"}, "", nil)
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestStore_GetRecipe_BunHelloWorld(t *testing.T) {
 
 func TestStore_GetBriefing_SurfacesMatchingRecipes(t *testing.T) {
 	store := newTestStore(t)
-	briefing, err := store.GetBriefing("bun@1.2", nil, "", nil)
+	briefing, err := store.GetBriefing("bun@1.3", nil, "", nil)
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
@@ -294,7 +294,7 @@ func TestStore_GetBriefing_NoPromotionWhenRuntimeSet(t *testing.T) {
 
 func TestStore_GetBriefing_LayerOrderRealDocs(t *testing.T) {
 	store := newTestStore(t)
-	briefing, err := store.GetBriefing("bun@1.2", []string{"postgresql@16"}, "", nil)
+	briefing, err := store.GetBriefing("bun@1.3", []string{"postgresql@16"}, "", nil)
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
@@ -325,7 +325,7 @@ func TestGetBriefing_NoStaticVersionLines(t *testing.T) {
 	versionsPattern := regexp.MustCompile(`(?m)^\*\*Versions?\*\*:`)
 
 	runtimes := []string{
-		"php-nginx@8.4", "nodejs@22", "bun@1.2", "python@3.12",
+		"php-nginx@8.4", "nodejs@22", "bun@1.3", "python@3.12",
 		"go@1", "java@21", "dotnet@9", "ruby@3.4", "alpine@3.23",
 	}
 

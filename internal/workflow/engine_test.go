@@ -883,7 +883,7 @@ func TestEngine_BootstrapCompletePlan_Valid(t *testing.T) {
 
 	plan := []BootstrapTarget{
 		{
-			Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2", BootstrapMode: "standard", ExplicitStage: "appstage"},
+			Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.3", BootstrapMode: "standard", ExplicitStage: "appstage"},
 			Dependencies: []Dependency{
 				{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"},
 			},
@@ -919,7 +919,7 @@ func TestEngine_BootstrapCompletePlan_InvalidHostname(t *testing.T) {
 	}
 
 	plan := []BootstrapTarget{
-		{Runtime: RuntimeTarget{DevHostname: "my-app", Type: "bun@1.2"}},
+		{Runtime: RuntimeTarget{DevHostname: "my-app", Type: "bun@1.3"}},
 	}
 	_, err := eng.BootstrapCompletePlan(plan, nil, nil)
 	if err == nil {
@@ -943,7 +943,7 @@ func TestEngine_BootstrapCompletePlan_InvalidHostname_WrapsErrPlanShapeInvalid(t
 	}
 
 	plan := []BootstrapTarget{
-		{Runtime: RuntimeTarget{DevHostname: "my-app", Type: "bun@1.2"}},
+		{Runtime: RuntimeTarget{DevHostname: "my-app", Type: "bun@1.3"}},
 	}
 	_, err := eng.BootstrapCompletePlan(plan, nil, nil)
 	if err == nil {
@@ -1209,7 +1209,7 @@ func TestEngine_BootstrapCompletePlan_WrongStep(t *testing.T) {
 	}
 
 	plan := []BootstrapTarget{
-		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2", BootstrapMode: "standard", ExplicitStage: "appstage"}},
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.3", BootstrapMode: "standard", ExplicitStage: "appstage"}},
 	}
 	_, err := eng.BootstrapCompletePlan(plan, nil, nil)
 	if err == nil {

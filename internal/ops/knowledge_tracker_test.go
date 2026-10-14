@@ -47,7 +47,7 @@ func TestKnowledgeTracker_ConcurrentAccess(t *testing.T) {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			kt.RecordBriefing("bun@1.2", []string{"postgresql@16"})
+			kt.RecordBriefing("bun@1.3", []string{"postgresql@16"})
 		}()
 		go func() {
 			defer wg.Done()
