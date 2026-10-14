@@ -1,89 +1,42 @@
 #zeropsPreprocessor=on
+# yaml-language-server: $schema=https://api.app-prg1.zerops.io/api/rest/public/settings/import-project-yaml-json-schema.json
 
-# AI Agent workspace for building and versioning the app.
-# BETTER_AUTH_SECRET is generated once at import as a
-# project-level value — every service here inherits it
-# automatically instead of each one minting its own.
+# Payload CMS only — zerops-recipe-apps/payload (pair with payload-next-frontend for Next.js).
+# Setups: only `dev` and `prod`. Stage hostnames use `zeropsSetup: prod`.
+# Vault: API_URL / APP_URL (+ DEV_* on Agent/Remote). Map NEXT_PUBLIC_PAYLOAD_URL from API_URL in storefront zerops.yaml in frontend zerops.yaml.
+
 project:
-  name: analog-ssr-better-auth-agent
-  envVariables:
-    BETTER_AUTH_SECRET: <@generateRandomString(<32>)>
+  name: payload-agent
+  vault:
+    APP_URL: https://payloadstage-${zeropsSubdomainHost}-3000.prg1.zerops.app
+    API_URL: https://payloadstage-${zeropsSubdomainHost}-3000.prg1.zerops.app
+    DEV_APP_URL: https://payloaddev-${zeropsSubdomainHost}-3000.prg1.zerops.app
+    DEV_API_URL: https://payloaddev-${zeropsSubdomainHost}-3000.prg1.zerops.app
+
+    PAYLOAD_SECRET:
+      value: <@generateRandomString(<32>)>
+      sensitive: true
+
 
 services:
-  # Two containers: appdev for SSH iteration with hot-reload,
-  # appstage running the compiled Nitro build to verify changes
-  # against a production-shaped target. appdev's RAM floor is
-  # higher because SSH-driven build tooling spikes memory harder
-  # than the compiled server appstage runs.
-  - hostname: appdev
-    type: nodejs@22
+  - hostname: db
+    type: postgresql:single@17
+    profile: oltp-hobby
+    priority: 10
+  - hostname: payloaddev
+    type: nodejs@24
+    priority: 6
     zeropsSetup: dev
-    buildFromGit: https://github.com/zerops-recipe-apps/analog-ssr-better-auth-app
+    buildFromGit: https://github.com/zerops-recipe-apps/payload
+    enableSubdomainAccess: true
+    envIsolation: service
+  - hostname: payloadstage
+    type: nodejs@24
+    priority: 6
+    zeropsSetup: prod
+    buildFromGit: https://github.com/zerops-recipe-apps/payload
     enableSubdomainAccess: true
     verticalAutoscaling:
       minRam: 1
-
-  - hostname: appstage
-    type: nodejs@22
-    zeropsSetup: prod
-    buildFromGit: https://github.com/zerops-recipe-apps/analog-ssr-better-auth-app
-    enableSubdomainAccess: true
-    verticalAutoscaling:
-      minRam: 0.5
-
-  # Set higher priority on db, cache, broker, storage, and
-  # search than the app, so every dependency is ready before the
-  # app's first init command or request runs.
-  #
-  # Deploy single-node PostgreSQL, used by Better Auth to store
-  # user accounts, sessions, and the name/bio profile fields the
-  # dashboard reads and writes. Automatic, encrypted backups are
-  # enabled by default.
-  - hostname: db
-    type: postgresql:single@18
-    priority: 10
-    profile: oltp-hobby
-    verticalAutoscaling:
-      minRam: 0.25
-
-  # Spin up Valkey, used by the app as a read-through cache for
-  # profile lookups — a repeat GET /api/profile call within the
-  # same session skips the Postgres round-trip.
-  - hostname: cache
-    type: valkey:single@7.2
-    priority: 10
-    profile: hobby
-    verticalAutoscaling:
-      minRam: 0.25
-
-  # Deploy NATS — the app publishes signup and profile-update
-  # events here, and one in-process queue-group worker consumes
-  # them to build the activity feed and keep Meilisearch's index
-  # current. Core NATS pub/sub, no persisted message stream.
-  - hostname: broker
-    type: nats:single@2.12
-    priority: 10
-    verticalAutoscaling:
-      minRam: 0.25
-
-  # Spin up object storage for avatar uploads. The app always
-  # reads avatars back through a time-limited signed URL because
-  # it never assumes the bucket is public, so uploads work under
-  # whatever policy this service is provisioned with.
-  - hostname: storage
-    type: object-storage
-    priority: 10
-    objectStorageSize: 1
-    objectStoragePolicy: private
-
-  # Deploy Meilisearch, used by the app for full-text search
-  # over user name and bio fields. The same queue-group worker
-  # that builds the activity feed indexes each signup and
-  # profile-update event, so a user becomes searchable within
-  # seconds instead of needing a separate reindex step.
-  - hostname: search
-    type: meilisearch:single@1.20
-    priority: 10
-    verticalAutoscaling:
-      minRam: 0.25
-
+      minFreeRamGB: 0.5
+    envIsolation: service

@@ -6,10 +6,10 @@ project:
 
 services:
   # Dev service — AI agent works here via SSH.
-  # Uses nodejs@22 (not static) so the agent has Node.js available
+  # Uses nodejs@24 (not static) so the agent has Node.js available
   # to run 'npm start' and interact with the source directly.
   - hostname: appdev
-    type: nodejs@22
+    type: nodejs@24
     # zeropsSetup selects which setup from zerops.yaml in the source repo
     # to use for building and deploying. 'dev' deploys full source +
     # node_modules so the agent has a ready workspace.
