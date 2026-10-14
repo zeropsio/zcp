@@ -204,7 +204,8 @@ func TestParseMateTier(t *testing.T) {
 				got := tier.Pairs[i]
 				if got.Repository != want.repo || got.RepoName != want.repoName ||
 					got.Dev.Hostname != want.dev || got.Dev.Setup != want.devSetup || got.Dev.Type != want.devType ||
-					got.Stage.Hostname != want.stage || got.Stage.Setup != want.stageSetup || got.Stage.Type != want.sType ||
+					len(got.Stages) != 1 || got.FirstStage().Hostname != want.stage || got.FirstStage().Setup != want.stageSetup || got.FirstStage().Type != want.sType ||
+					got.CodeVolume != "" || len(got.DevServices) != 0 ||
 					got.Priority() != want.priority {
 					t.Errorf("pair %d = %+v (priority %d), want %+v", i, got, got.Priority(), want)
 				}
@@ -217,6 +218,124 @@ func TestParseMateTier(t *testing.T) {
 				t.Errorf("skipped = %v, want %v", skipped, tt.wantSkipped)
 			}
 		})
+	}
+}
+
+// TestParseMateTier_OneDevHalfTakesEveryStageOfItsRepository (docs/spec-mate.md
+// §2.8a.4): a repository the tier builds into one dev half and a stage per
+// part is one pair holding every stage — the one named like the dev half
+// first, then the tier's order — never a pair and stages left unpaired.
+func TestParseMateTier_OneDevHalfTakesEveryStageOfItsRepository(t *testing.T) {
+	t.Parallel()
+	tier, err := ParseMateTier(`services:
+  - hostname: webstage
+    type: bun@1.3
+    buildFromGit: https://hq.acme.example/git/app-1/app
+    zeropsSetup: web
+  - hostname: appdev
+    type: bun@1.3
+    buildFromGit: https://hq.acme.example/git/app-1/app
+    zeropsSetup: dev
+  - hostname: apistage
+    type: go@1
+    buildFromGit: https://hq.acme.example/git/app-1/app
+    zeropsSetup: api
+    priority: 4
+  - hostname: appstage
+    type: bun@1.3
+    buildFromGit: https://hq.acme.example/git/app-1/app
+    zeropsSetup: prod
+`, tierHQ, tierApp)
+	if err != nil {
+		t.Fatalf("ParseMateTier: %v", err)
+	}
+	if len(tier.Pairs) != 1 || len(tier.Skipped) != 0 {
+		t.Fatalf("pairs = %+v, skipped = %+v; want one pair and nothing skipped", tier.Pairs, tier.Skipped)
+	}
+	p := tier.Pairs[0]
+	stages := make([]string, 0, len(p.Stages))
+	for _, s := range p.Stages {
+		stages = append(stages, s.Hostname+"/"+s.Setup+"/"+s.Type)
+	}
+	if p.Dev.Hostname != "appdev" || strings.Join(stages, " ") != "appstage/prod/bun@1.3 webstage/web/bun@1.3 apistage/api/go@1" {
+		t.Errorf("pair = %s with stages %v", p.Dev.Hostname, stages)
+	}
+	if p.CodeVolume != "" || len(p.DevServices) != 0 || p.Priority() != 4 {
+		t.Errorf("a one-dev-half pair is variant A with its highest priority: codeVolume %q, devServices %+v, priority %d", p.CodeVolume, p.DevServices, p.Priority())
+	}
+}
+
+// TestParseMateTier_VariantB_SeveralDevServicesOfOneRepositoryAndACodeVolumeAreOnePair
+// (docs/spec-mate.md §2.8a.4a; Decision: B is recognised from the tier the
+// same way A is): F2's tier — webdev and apidev from one repository, a stage
+// per part and the local-storage service vol — is one variant-B pair, the
+// first dev runtime its dev half. Without exactly one local-storage service
+// the same runtimes pair by name, as before.
+func TestParseMateTier_VariantB_SeveralDevServicesOfOneRepositoryAndACodeVolumeAreOnePair(t *testing.T) {
+	t.Parallel()
+	const runtimes = `  - hostname: webdev
+    type: bun@1.3
+    buildFromGit: https://hq.acme.example/git/app-1/mono
+    zeropsSetup: dev
+  - hostname: webstage
+    type: bun@1.3
+    buildFromGit: https://hq.acme.example/git/app-1/mono
+    zeropsSetup: web
+  - hostname: apidev
+    type: go@1
+    buildFromGit: https://hq.acme.example/git/app-1/mono
+    zeropsSetup: dev-api
+  - hostname: apistage
+    type: go@1
+    buildFromGit: https://hq.acme.example/git/app-1/mono
+    zeropsSetup: api
+  - hostname: workerstage
+    type: bun@1.3
+    buildFromGit: https://hq.acme.example/git/app-1/mono
+    zeropsSetup: worker
+`
+	tier, err := ParseMateTier("services:\n"+runtimes+"  - hostname: vol\n    type: local-storage:single@1\n", tierHQ, tierApp)
+	if err != nil {
+		t.Fatalf("ParseMateTier: %v", err)
+	}
+	if len(tier.Pairs) != 1 {
+		t.Fatalf("pairs = %+v, want one variant-B pair", tier.Pairs)
+	}
+	p := tier.Pairs[0]
+	stages := make([]string, 0, len(p.Stages))
+	devs := make([]string, 0, len(p.DevServices))
+	for _, s := range p.Stages {
+		stages = append(stages, s.Hostname+"/"+s.Setup)
+	}
+	for _, d := range p.DevServices {
+		devs = append(devs, d.Hostname+"/"+d.Setup)
+	}
+	if p.Dev.Hostname != "webdev" || p.Dev.Setup != "dev" || p.CodeVolume != "vol" || strings.Join(devs, " ") != "apidev/dev-api" ||
+		strings.Join(stages, " ") != "webstage/web apistage/api workerstage/worker" {
+		t.Errorf("pair = %s/%s on %q, dev services %v, stages %v", p.Dev.Hostname, p.Dev.Setup, p.CodeVolume, devs, stages)
+	}
+	if len(tier.Skipped) != 1 || tier.Skipped[0].Hostname != "vol" || tier.Skipped[0].Reason != MateTierSkipManaged {
+		t.Errorf("skipped = %+v, want vol as managed", tier.Skipped)
+	}
+
+	for name, rest := range map[string]string{
+		"no local-storage service":   "",
+		"two local-storage services": "  - hostname: vol\n    type: local-storage:single@1\n  - hostname: data\n    type: local-storage:single@1\n",
+	} {
+		tier, err := ParseMateTier("services:\n"+runtimes+rest, tierHQ, tierApp)
+		if err != nil {
+			t.Fatalf("%s: ParseMateTier: %v", name, err)
+		}
+		pairs := make([]string, 0, len(tier.Pairs))
+		for _, p := range tier.Pairs {
+			if p.CodeVolume != "" || len(p.DevServices) != 0 || len(p.Stages) != 1 {
+				t.Errorf("%s: pair %+v is not variant A", name, p)
+			}
+			pairs = append(pairs, p.Dev.Hostname+"→"+p.FirstStage().Hostname)
+		}
+		if strings.Join(pairs, " ") != "apidev→apistage webdev→webstage" {
+			t.Errorf("%s: pairs = %v, want each stage with the runtime named like it", name, pairs)
+		}
 	}
 }
 
@@ -302,7 +421,7 @@ func TestParseMateTier_CarriesEachHalfsOwnVariables(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseMateTier: %v", err)
 	}
-	stage := tier.Pairs[0].Stage
+	stage := tier.Pairs[0].FirstStage()
 	if stage.Envs["API_URL"] != "https://${apistage_zeropsSubdomain}" || stage.Envs["PORT_NUMBER"] != "8000" {
 		t.Errorf("stage envs = %v", stage.Envs)
 	}
@@ -381,7 +500,7 @@ func TestParseMateTier_ReadsTheVaults(t *testing.T) {
 		t.Errorf("project = %v, want %v", tier.ProjectEnvs, wantProject)
 	}
 	wantStage := map[string]string{"STORE_URL": "https://${storestage_zeropsSubdomain}", "STORE_TOKEN": "${api_TOKEN}"}
-	if got := tier.Pairs[0].Stage.Envs; !maps.Equal(got, wantStage) {
+	if got := tier.Pairs[0].FirstStage().Envs; !maps.Equal(got, wantStage) {
 		t.Errorf("stage = %v, want %v", got, wantStage)
 	}
 }

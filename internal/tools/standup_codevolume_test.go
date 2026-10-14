@@ -12,12 +12,12 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// variantBStandupFixture is the stand-up fixture with medusadev's pair
-// recorded as variant B (docs/spec-mate.md §2.8a): its repository builds a
-// further dev service apidev (setup dev-api) beside the dev half, both
-// mounting the code volume vol at /var/www/ws, and a further stage apistage.
-// The tier names apidev→apistage as a pair of the same repository.
-func variantBStandupFixture(t *testing.T) *standupFixture {
+// variantBTierFixture is the stand-up fixture whose tier is variant B
+// (docs/spec-mate.md §2.8a.4a), the shape of F2: medusadev's repository builds
+// a further dev service apidev (setup dev-api) beside the dev half, both dev
+// setups mounting the code volume vol at /var/www/ws, and a second stage
+// apistage (setup api). Nothing is recorded yet.
+func variantBTierFixture(t *testing.T) *standupFixture {
 	t.Helper()
 	f := newStandupFixture(t)
 	f.hq.tier += `  - hostname: apidev
@@ -41,18 +41,39 @@ func variantBStandupFixture(t *testing.T) *standupFixture {
         hostname: vol
         mountPath: /var/www/ws
       start: zsc noop --silent
+  - setup: api
+    build:
+      base: go@1
+      deployFiles: [.]
+    run:
+      base: go@1
+      start: ./app
 `
-	if err := os.WriteFile(filepath.Join(f.root, "medusadev", "zerops.yaml"), []byte(standupZeropsYAML("medusa")+devAPI), 0o600); err != nil {
+	devHalf := strings.Replace(standupZeropsYAML("medusa"), "    run:\n      base: nodejs@22\n",
+		"    run:\n      base: nodejs@22\n      volume:\n        hostname: vol\n        mountPath: /var/www/ws\n", 1)
+	body := devHalf + devAPI
+	if err := os.WriteFile(filepath.Join(f.root, "medusadev", "zerops.yaml"), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	f.ssh.zeropsYAML = map[string]string{"medusadev": body}
 	empty := &platform.ActiveAppVersionDigest{ID: "av-placeholder", Source: platform.AppVersionSourceNone}
 	f.services = append(f.services,
 		platform.ServiceStack{ID: "svc-apidev", Name: "apidev", Status: statusActive, ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "go@1", ServiceStackTypeCategoryName: "USER"}, ActiveAppVersion: empty},
 		platform.ServiceStack{ID: "svc-apistage", Name: "apistage", Status: "READY_TO_DEPLOY", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "go@1", ServiceStackTypeCategoryName: "USER"}},
 		platform.ServiceStack{ID: "svc-vol", Name: "vol", Status: "RUNNING", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "local-storage:single@1", ServiceStackTypeCategoryName: "STANDARD"}},
 	)
-	f.events = append(f.events, platform.AppVersionEvent{ID: "av-apidev", ServiceStackID: "svc-apidev", Status: statusActive, Sequence: 2})
+	f.events = append(f.events,
+		platform.AppVersionEvent{ID: "av-apidev", ServiceStackID: "svc-apidev", Status: statusActive, Sequence: 2},
+		platform.AppVersionEvent{ID: "av-apistage", ServiceStackID: "svc-apistage", Status: statusActive, Sequence: 2})
 	f.mock.WithServices(f.services).WithAppVersionEvents(f.events)
+	return f
+}
+
+// variantBStandupFixture is variantBTierFixture with medusadev's pair already
+// recorded as variant B, as the plan route records it.
+func variantBStandupFixture(t *testing.T) *standupFixture {
+	t.Helper()
+	f := variantBTierFixture(t)
 
 	meta := workflow.NewServiceMeta("medusadev", topology.PlanModeStandard)
 	meta.PrimarySetupName = "medusadev"
@@ -122,7 +143,7 @@ func TestStandup_VariantB_FillsTheVolumeOnceAndEveryDevServiceDeploysItsOwnDevSe
 	if meta, _ := workflow.FindServiceMeta(f.stateDir, "apidev"); meta == nil || meta.Hostname != "medusadev" || meta.CodeVolume == nil {
 		t.Errorf("apidev resolves to %+v, want medusadev's variant-B pair", meta)
 	}
-	if stage := body.service(t, "apistage"); stage.Pair != "medusadev" || stage.Deploy == nil || stage.Deploy.Status != standupNotDeployed ||
+	if stage := body.service(t, "apistage"); stage.Pair != "medusadev" || stage.Deploy == nil || stage.Deploy.Status != standupQueued ||
 		!strings.Contains(stage.Next, `targetService="apistage"`) {
 		t.Errorf("apistage = %+v", stage)
 	}
@@ -132,7 +153,7 @@ func TestStandup_VariantB_FillsTheVolumeOnceAndEveryDevServiceDeploysItsOwnDevSe
 	if err := os.MkdirAll(filepath.Join(f.root, "medusadev", "ws"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(f.root, "medusadev", "ws", "zerops.yaml"), []byte(standupZeropsYAML("medusa")), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(f.root, "medusadev", "ws", "zerops.yaml"), []byte(f.ssh.zeropsYAML["medusadev"]), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	f.deployed("medusadev", "nextstoredev", "apidev")
@@ -143,11 +164,73 @@ func TestStandup_VariantB_FillsTheVolumeOnceAndEveryDevServiceDeploysItsOwnDevSe
 	if dev := body.service(t, "medusadev"); dev.CodeVolume == nil || dev.CodeVolume.Filled != standupAlready {
 		t.Errorf("second call: medusadev's code volume = %+v", dev.CodeVolume)
 	}
-	if stage := body.service(t, "medusastage"); stage.Deploy == nil || stage.Deploy.Status != standupDeployed {
-		t.Errorf("second call: medusastage = %+v", stage)
+	for _, host := range []string{"medusastage", "apistage"} {
+		if stage := body.service(t, host); stage.Deploy == nil || stage.Deploy.Status != standupDeployed {
+			t.Errorf("second call: %s = %+v", host, stage)
+		}
 	}
 	if body.StandUp != standupReady {
 		t.Errorf("second call: standUp = %q", body.StandUp)
+	}
+}
+
+// TestStandup_VariantBFromAFreshTier_StandsUpAsOnePair (docs/spec-mate.md
+// §2.8a.4a; Decision: B is recognised from the tier the same way A is): a
+// fresh tier whose repository builds two dev services and two stages beside a
+// local-storage service is one variant-B pair — the code volume and its mount
+// read from the dev setups, every dev service and every stage stood up —
+// never two variant-A pairs.
+func TestStandup_VariantBFromAFreshTier_StandsUpAsOnePair(t *testing.T) {
+	t.Parallel()
+	f := variantBTierFixture(t)
+
+	result, body := f.run(t)
+	if result.IsError || body.StandUp != standupDevelopment {
+		t.Fatalf("first call: %s", getTextContent(t, result))
+	}
+	meta, _ := workflow.ReadServiceMeta(f.stateDir, "medusadev")
+	if meta == nil || meta.CodeVolume == nil {
+		t.Fatalf("medusadev is not recorded as a variant-B pair: %+v", meta)
+	}
+	want := topology.CodeVolume{Hostname: "vol", MountPath: "/var/www/ws", DevServices: []topology.DevServiceRef{{Hostname: "apidev", SetupName: "dev-api"}}}
+	if got := *meta.CodeVolume; got.Hostname != want.Hostname || got.MountPath != want.MountPath || !slices.Equal(got.DevServices, want.DevServices) {
+		t.Errorf("code volume = %+v, want %+v", got, want)
+	}
+	if got := meta.StageHostnames(); !slices.Equal(got, []string{"medusastage", "apistage"}) {
+		t.Errorf("stages = %v, want medusastage and apistage", got)
+	}
+	if own, _ := workflow.ReadServiceMeta(f.stateDir, "apidev"); own != nil {
+		t.Errorf("apidev recorded as a pair of its own: %+v", own)
+	}
+	pushes := f.ssh.pushes()
+	for _, wantPush := range []string{"medusadev → svc-medusadev (medusadev)", "medusadev → svc-apidev (dev-api)"} {
+		if !slices.Contains(pushes, wantPush) {
+			t.Errorf("deploys = %v, want %q", pushes, wantPush)
+		}
+	}
+	if n := len(f.ssh.commandsFor("@@zcp code-volume")); n != 1 {
+		t.Errorf("the volume was filled %d times, want once", n)
+	}
+	if api := body.service(t, "apidev"); api.Role != standupRoleDev || api.Pair != "medusadev" {
+		t.Errorf("apidev = %+v, want a dev service of medusadev's pair", api)
+	}
+
+	if err := os.MkdirAll(filepath.Join(f.root, "medusadev", "ws"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.root, "medusadev", "ws", "zerops.yaml"), []byte(f.ssh.zeropsYAML["medusadev"]), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.deployed("medusadev", "nextstoredev", "apidev")
+	result, body = f.run(t)
+	if result.IsError || body.StandUp != standupReady {
+		t.Fatalf("second call: %s", getTextContent(t, result))
+	}
+	pushes = f.ssh.pushes()
+	for _, wantPush := range []string{"medusadev → svc-medusastage (medusaprod)", "medusadev → svc-apistage (api)"} {
+		if !slices.Contains(pushes, wantPush) {
+			t.Errorf("second call: deploys = %v, want %q", pushes, wantPush)
+		}
 	}
 }
 

@@ -95,17 +95,24 @@ func standupAfter(pairs []workflow.MateTierPair, reads map[string][]string, unre
 	after := make(map[string][]string, 2*len(pairs))
 	for _, p := range pairs {
 		after[p.Dev.Hostname] = nil
-		after[p.Stage.Hostname] = standupStagesAbove(pairs, p, []string{p.Dev.Hostname})
+		for _, stage := range p.Stages {
+			after[stage.Hostname] = standupStagesAbove(pairs, p, []string{p.Dev.Hostname})
+		}
 	}
 	return after
 }
 
-// standupStagesAbove is waits with the stage of every pair above p by
+// standupStagesAbove is waits with every stage of every pair above p by
 // priority, sorted.
 func standupStagesAbove(pairs []workflow.MateTierPair, p workflow.MateTierPair, waits []string) []string {
 	for _, above := range pairs {
-		if above.Priority() > p.Priority() && !slices.Contains(waits, above.Stage.Hostname) {
-			waits = append(waits, above.Stage.Hostname)
+		if above.Priority() <= p.Priority() {
+			continue
+		}
+		for _, stage := range above.Stages {
+			if !slices.Contains(waits, stage.Hostname) {
+				waits = append(waits, stage.Hostname)
+			}
 		}
 	}
 	slices.Sort(waits)
@@ -118,7 +125,10 @@ func standupAfterReads(pairs []workflow.MateTierPair, reads map[string][]string,
 	dev := map[string]bool{}
 	known := map[string]bool{}
 	for _, p := range pairs {
-		dev[p.Dev.Hostname], known[p.Dev.Hostname], known[p.Stage.Hostname] = true, true, true
+		dev[p.Dev.Hostname], known[p.Dev.Hostname] = true, true
+		for _, stage := range p.Stages {
+			known[stage.Hostname] = true
+		}
 	}
 	after := make(map[string][]string, 2*len(pairs))
 	ordered := false
@@ -134,14 +144,19 @@ func standupAfterReads(pairs []workflow.MateTierPair, reads map[string][]string,
 	}
 	for _, p := range pairs {
 		after[p.Dev.Hostname] = add(p.Dev.Hostname, nil, func(read string) bool { return dev[read] })
-		after[p.Stage.Hostname] = add(p.Stage.Hostname, []string{p.Dev.Hostname}, func(string) bool { return true })
+		for _, stage := range p.Stages {
+			after[stage.Hostname] = add(stage.Hostname, []string{p.Dev.Hostname}, func(string) bool { return true })
+		}
 	}
 	if !ordered {
 		return nil, false
 	}
 	for _, p := range pairs {
-		if unread[p.Dev.Hostname] {
-			after[p.Stage.Hostname] = standupStagesAbove(pairs, p, after[p.Stage.Hostname])
+		if !unread[p.Dev.Hostname] {
+			continue
+		}
+		for _, stage := range p.Stages {
+			after[stage.Hostname] = standupStagesAbove(pairs, p, after[stage.Hostname])
 		}
 	}
 	if standupCircular(after) {
@@ -191,7 +206,8 @@ func standupCircular(after map[string][]string) bool {
 func standupReads(pairs []workflow.MateTierPair, bodies, projectEnvs map[string]string) (map[string][]string, map[string]bool) {
 	hosts := make([]string, 0, 2*len(pairs))
 	for _, p := range pairs {
-		hosts = append(hosts, p.Dev.Hostname, p.Stage.Hostname)
+		hosts = append(hosts, p.Dev.Hostname)
+		hosts = append(hosts, stageHostnames(p)...)
 	}
 	reads := map[string][]string{}
 	unread := map[string]bool{}
@@ -201,7 +217,7 @@ func standupReads(pairs []workflow.MateTierPair, bodies, projectEnvs map[string]
 			unread[p.Dev.Hostname] = true
 			continue
 		}
-		for _, half := range []workflow.MateTierRuntime{p.Dev, p.Stage} {
+		for _, half := range append([]workflow.MateTierRuntime{p.Dev}, p.Stages...) {
 			var read []string
 			for _, h := range bundle.ReferencedHosts(bundle.BuildReadValues(body, half.Setup, half.Envs), hosts, projectEnvs) {
 				if h != half.Hostname {
@@ -253,8 +269,10 @@ func (d standupDeps) deployAll(ctx context.Context, pairs []*standupPair, live m
 		// working tree: the dev servers the model starts between the two
 		// calls may rewrite tracked files (`next dev` and next-env.d.ts),
 		// and a stage built from a dirty tree is named as no commit.
-		halves[p.Stage.Hostname] = standupHalf{pair: sp,
-			target: ops.DeployBatchTarget{SourceService: p.Dev.Hostname, TargetService: p.Stage.Hostname, Setup: p.Stage.Setup, SHA: "HEAD"}}
+		for _, st := range sp.stages {
+			halves[st.rt.Hostname] = standupHalf{pair: sp, stageRun: st,
+				target: ops.DeployBatchTarget{SourceService: p.Dev.Hostname, TargetService: st.rt.Hostname, Setup: st.rt.Setup, SHA: "HEAD"}}
+		}
 		if sp.codeVolume = codeVolumeOf(d.batch.stateDir, sp); sp.codeVolume != nil {
 			// The code volume is filled from the checkout once development
 			// runs, so the dev services deploy from /var/www itself.
@@ -361,10 +379,12 @@ type standupHalf struct {
 	dev    bool
 	// devService is a variant-B pair's further dev service this half is.
 	devService *standupDevServiceRun
+	// stageRun is the pair's stage this half is.
+	stageRun *standupStage
 }
 
-// stage reports the pair's stage half.
-func (h standupHalf) stage() bool { return !h.dev && h.devService == nil }
+// stage reports a stage of the pair.
+func (h standupHalf) stage() bool { return h.stageRun != nil }
 
 // running reports a half that runs code — deployed now or before.
 func (h standupHalf) running() bool {
@@ -374,12 +394,12 @@ func (h standupHalf) running() bool {
 	case h.devService != nil:
 		return h.devService.deploy.running()
 	}
-	return h.pair.stageDeploy.running()
+	return h.stageRun.deploy.running()
 }
 
 // queued reports a stage left for the next call.
 func (h standupHalf) queued() bool {
-	return h.stage() && h.pair.stageDeploy != nil && h.pair.stageDeploy.Status == standupQueued
+	return h.stage() && h.stageRun.deploy != nil && h.stageRun.deploy.Status == standupQueued
 }
 
 // held is what becomes of a half whose wait is over and that does not deploy
@@ -432,7 +452,7 @@ func (h standupHalf) record(deploy *standupDeploy) {
 	case h.devService != nil:
 		h.devService.deploy = deploy
 	default:
-		h.pair.stageDeploy = deploy
+		h.stageRun.deploy = deploy
 	}
 }
 

@@ -15,7 +15,7 @@ func standupTestPair(name string, priority int) workflow.MateTierPair {
 	return workflow.MateTierPair{
 		RepoName: name + "dev",
 		Dev:      workflow.MateTierRuntime{Hostname: name + "dev", Priority: priority},
-		Stage:    workflow.MateTierRuntime{Hostname: name + "stage", Priority: priority},
+		Stages:   []workflow.MateTierRuntime{{Hostname: name + "stage", Priority: priority}},
 	}
 }
 
@@ -68,7 +68,7 @@ func TestStandupAfter_EveryDevHalfStartsAtOnce(t *testing.T) {
 		{
 			name: "a pair's priority is its higher half's",
 			pairs: []workflow.MateTierPair{
-				{RepoName: "apidev", Dev: workflow.MateTierRuntime{Hostname: "apidev"}, Stage: workflow.MateTierRuntime{Hostname: "apistage", Priority: 3}},
+				{RepoName: "apidev", Dev: workflow.MateTierRuntime{Hostname: "apidev"}, Stages: []workflow.MateTierRuntime{{Hostname: "apistage", Priority: 3}}},
 				standupTestPair("web", 2),
 			},
 			want: map[string][]string{
@@ -140,8 +140,8 @@ func TestStandupAfter_EveryDevHalfStartsAtOnce(t *testing.T) {
 func TestStandupReads_FromTheRecipe(t *testing.T) {
 	t.Parallel()
 	pairs := []workflow.MateTierPair{standupTestPair("medusa", 5), standupTestPair("nextstore", 0)}
-	pairs[0].Dev.Setup, pairs[0].Stage.Setup = "medusadev", "medusaprod"
-	pairs[1].Dev.Setup, pairs[1].Stage.Setup = "nextstoredev", "nextstoreprod"
+	pairs[0].Dev.Setup, pairs[0].Stages[0].Setup = "medusadev", "medusaprod"
+	pairs[1].Dev.Setup, pairs[1].Stages[0].Setup = "nextstoredev", "nextstoreprod"
 	const medusa = "zerops:\n  - setup: medusadev\n    run:\n      start: zsc noop\n  - setup: medusaprod\n    run:\n      envVariables:\n        STORE_CORS: https://${nextstorestage_zeropsSubdomain}\n"
 	storefront := func(build string) string {
 		return "zerops:\n  - setup: nextstoredev\n    run:\n      envVariables:\n        API: ${medusadev_zeropsSubdomain}\n      start: zsc noop\n  - setup: nextstoreprod\n" + build +
@@ -228,9 +228,9 @@ func TestStandupReads_EveryRouteTheWriterCounts(t *testing.T) {
 			pairs := []workflow.MateTierPair{standupTestPair("api", 5), standupTestPair("storefront", 0), standupTestPair("worker", 0)}
 			for i := range pairs {
 				name := strings.TrimSuffix(pairs[i].Dev.Hostname, "dev")
-				pairs[i].Dev.Setup, pairs[i].Stage.Setup = name+"dev", name+"prod"
+				pairs[i].Dev.Setup, pairs[i].Stages[0].Setup = name+"dev", name+"prod"
 			}
-			pairs[1].Stage.Envs = tt.stageEnvs
+			pairs[1].Stages[0].Envs = tt.stageEnvs
 			bodies := map[string]string{"apidev": api, "workerdev": worker}
 			if tt.storefront != "" {
 				bodies["storefrontdev"] = tt.storefront

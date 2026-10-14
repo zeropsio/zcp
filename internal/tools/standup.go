@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -246,8 +247,6 @@ type standupSource struct {
 	appID     string
 	groupRepo string
 	tier      workflow.MateTier
-	// folded are the tier's pairs that stand up with a variant-B pair.
-	folded []standupFolded
 }
 
 // readTier reads the AI Agent tier on main of the recipe repository of the
@@ -289,7 +288,7 @@ func (d standupDeps) readTier(ctx context.Context, hqc hq.Client, progress *stan
 		return standupSource{}, standupRefusal(platform.ErrInvalidImportYml,
 			fmt.Sprintf("%s@%s:%s cannot be stood up: %v.", src.groupRepo, hqBase, path, err), fallback)
 	}
-	src.tier, src.folded = foldCodeVolumePairs(d.batch.stateDir, tier)
+	src.tier = tier
 	return src, nil
 }
 
@@ -309,15 +308,16 @@ func standupRefusal(code, message, suggestion string) *mcp.CallToolResult {
 type standupPair struct {
 	pair       workflow.MateTierPair
 	repository string // appId/name
-	dev, stage *platform.ServiceStack
-	adopted    string // standupNow | standupAlready
-	wired      string
-	branch     string
+	dev        *platform.ServiceStack
+	// stages are the pair's stages, as the tier orders them.
+	stages  []*standupStage
+	adopted string // standupNow | standupAlready
+	wired   string
+	branch  string
 	// failed is what stopped the pair before any deploy, exactly; next is
 	// the model's call for it; failedHost is the half it is about, when one.
 	failed, next, failedHost string
 	devDeploy                *standupDeploy
-	stageDeploy              *standupDeploy
 	devResult                *ops.DeployResult
 	// devRanBefore is a dev half that ran code when the call began: its
 	// stage deploys on this call, else on the next.
@@ -327,9 +327,48 @@ type standupPair struct {
 	codeVolume *standupCodeVolume
 }
 
-// stoodUp is a pair whose two halves both run code.
+// standupStage is one stage of a pair through the stand-up.
+type standupStage struct {
+	rt     workflow.MateTierRuntime
+	deploy *standupDeploy
+}
+
+// newStandupPair is a tier pair at the start of the stand-up.
+func newStandupPair(p workflow.MateTierPair, appID string) *standupPair {
+	sp := &standupPair{pair: p, repository: appID + "/" + p.RepoName}
+	for _, rt := range p.Stages {
+		sp.stages = append(sp.stages, &standupStage{rt: rt})
+	}
+	return sp
+}
+
+// stoodUp is a pair whose development and every stage run code.
 func (p *standupPair) stoodUp() bool {
-	return p.devStands() && p.stageDeploy.running()
+	if !p.devStands() {
+		return false
+	}
+	for _, st := range p.stages {
+		if !st.deploy.running() {
+			return false
+		}
+	}
+	return true
+}
+
+// stagesQueued is a pair still standing whose stages run code or wait for
+// the next call, at least one of them waiting.
+func (p *standupPair) stagesQueued() bool {
+	queued := false
+	for _, st := range p.stages {
+		switch {
+		case st.deploy.running():
+		case st.deploy != nil && st.deploy.Status == standupQueued:
+			queued = true
+		default:
+			return false
+		}
+	}
+	return p.failed == "" && queued
 }
 
 // devStands is a pair whose development runs: its dev half, and for a
@@ -352,7 +391,7 @@ func (p *standupPair) fail(what, next string) {
 func (d standupDeps) preparePairs(ctx context.Context, hqc hq.Client, src standupSource, progress *standupProgress) ([]*standupPair, map[string]*platform.ServiceStack) {
 	pairs := make([]*standupPair, 0, len(src.tier.Pairs))
 	for _, p := range src.tier.Pairs {
-		pairs = append(pairs, &standupPair{pair: p, repository: src.appID + "/" + p.RepoName})
+		pairs = append(pairs, newStandupPair(p, src.appID))
 	}
 	bootFailed := d.awaitBootImport(ctx, progress)
 	live, err := d.awaitRuntimes(ctx, src.tier, progress)
@@ -371,8 +410,8 @@ func (d standupDeps) preparePairs(ctx context.Context, hqc hq.Client, src standu
 	open := d.projectOpen(ctx, src.tier, live)
 	var adoptedNow []workflow.BootstrapTarget
 	for _, sp := range pairs {
-		sp.dev, sp.stage = live[sp.pair.Dev.Hostname], live[sp.pair.Stage.Hostname]
-		if !d.presentAndRunning(sp, src, bootFailed, open) {
+		sp.dev = live[sp.pair.Dev.Hostname]
+		if !d.presentAndRunning(sp, src, live, bootFailed, open) {
 			continue
 		}
 		if target, now := d.adopt(sp, managedDependencies(src.tier, live)); now {
@@ -395,6 +434,11 @@ func (d standupDeps) preparePairs(ctx context.Context, hqc hq.Client, src standu
 		wg.Go(func() { d.wire(ctx, hqc, src.appID, sp, progress) })
 	}
 	wg.Wait()
+	for _, sp := range pairs {
+		if sp.failed == "" && sp.pair.CodeVolume != "" {
+			d.recordCodeVolumeMount(sp)
+		}
+	}
 	for _, sp := range pairs {
 		if sp.failed == "" {
 			continue
@@ -439,14 +483,29 @@ func (d standupDeps) awaitRuntimes(ctx context.Context, tier workflow.MateTier, 
 func runtimesNotUp(tier workflow.MateTier, live map[string]*platform.ServiceStack) []string {
 	var pending []string
 	for _, p := range tier.Pairs {
-		if dev := live[p.Dev.Hostname]; dev == nil || !dev.IsLive() {
-			pending = append(pending, p.Dev.Hostname)
+		for _, dev := range append([]workflow.MateTierRuntime{p.Dev}, p.DevServices...) {
+			if svc := live[dev.Hostname]; svc == nil || !svc.IsLive() {
+				pending = append(pending, dev.Hostname)
+			}
 		}
-		if live[p.Stage.Hostname] == nil {
-			pending = append(pending, p.Stage.Hostname)
+		for _, stage := range p.Stages {
+			if live[stage.Hostname] == nil {
+				pending = append(pending, stage.Hostname)
+			}
 		}
 	}
 	return pending
+}
+
+// pairHosts is every service of the pair: its dev half, its further dev
+// services, its stages.
+func pairHosts(p workflow.MateTierPair) []string {
+	hosts := make([]string, 0, 1+len(p.DevServices)+len(p.Stages))
+	hosts = append(hosts, p.Dev.Hostname)
+	for _, rt := range append(slices.Clone(p.DevServices), p.Stages...) {
+		hosts = append(hosts, rt.Hostname)
+	}
+	return hosts
 }
 
 // liveServices reads the project's services straight from the database — the
@@ -475,8 +534,9 @@ func (d standupDeps) settle(ctx context.Context, tier workflow.MateTier, live ma
 		}
 	}
 	for _, p := range tier.Pairs {
-		add(p.Dev.Hostname)
-		add(p.Stage.Hostname)
+		for _, host := range pairHosts(p) {
+			add(host)
+		}
 	}
 	for _, s := range tier.Skipped {
 		if s.Reason == workflow.MateTierSkipManaged {
@@ -519,8 +579,8 @@ func (d standupDeps) closedOff(ctx context.Context) (bool, error) {
 func (d standupDeps) projectOpen(ctx context.Context, tier workflow.MateTier, live map[string]*platform.ServiceStack) bool {
 	missing := false
 	for _, p := range tier.Pairs {
-		if live[p.Dev.Hostname] == nil || live[p.Stage.Hostname] == nil {
-			missing = true
+		for _, host := range pairHosts(p) {
+			missing = missing || live[host] == nil
 		}
 	}
 	if !missing || !newFlowMate(d.batch.rtInfo, d.liveEnvPath) {
@@ -534,14 +594,22 @@ func (d standupDeps) projectOpen(ctx context.Context, tier workflow.MateTier, li
 	return !closed
 }
 
-func (d standupDeps) presentAndRunning(sp *standupPair, src standupSource, bootFailed map[string]string, open bool) bool {
+func (d standupDeps) presentAndRunning(sp *standupPair, src standupSource, live map[string]*platform.ServiceStack, bootFailed map[string]string, open bool) bool {
 	p := sp.pair
-	for _, half := range []struct {
+	type half struct {
 		rt  workflow.MateTierRuntime
-		svc *platform.ServiceStack
 		dev bool
-	}{{p.Dev, sp.dev, true}, {p.Stage, sp.stage, false}} {
-		if half.svc != nil {
+	}
+	halves := make([]half, 0, 1+len(p.DevServices)+len(p.Stages))
+	halves = append(halves, half{p.Dev, true})
+	for _, rt := range p.DevServices {
+		halves = append(halves, half{rt, true})
+	}
+	for _, rt := range p.Stages {
+		halves = append(halves, half{rt, false})
+	}
+	for _, half := range halves {
+		if live[half.rt.Hostname] != nil {
 			continue
 		}
 		shape := "a stage half is imported with no build, waiting for its first deploy"
@@ -580,25 +648,32 @@ func (d standupDeps) presentAndRunning(sp *standupPair, src standupSource, bootF
 // Returns the target and whether it was adopted by this call.
 func (d standupDeps) adopt(sp *standupPair, deps []workflow.Dependency) (workflow.BootstrapTarget, bool) {
 	p := sp.pair
+	stages := make([]topology.StageRef, 0, len(p.Stages))
+	for _, s := range p.Stages {
+		stages = append(stages, topology.StageRef{Hostname: s.Hostname, SetupName: s.Setup})
+	}
 	target := workflow.BootstrapTarget{
 		Runtime: workflow.RuntimeTarget{
 			DevHostname:      p.Dev.Hostname,
-			ExplicitStage:    p.Stage.Hostname,
+			Stages:           stages,
 			Type:             p.Dev.Type,
 			BootstrapMode:    topology.PlanModeStandard,
 			IsExisting:       true,
 			PrimarySetupName: p.Dev.Setup,
-			StageSetupName:   p.Stage.Setup,
 		},
 		Dependencies: deps,
 	}
-	if !topology.TypesAreEquivalent(p.Dev.Type, p.Stage.Type) {
-		target.Runtime.StageType = p.Stage.Type
+	if first := p.FirstStage(); !topology.TypesAreEquivalent(p.Dev.Type, first.Type) {
+		target.Runtime.StageType = first.Type
 	}
 	existing, _ := workflow.ReadServiceMeta(d.batch.stateDir, p.Dev.Hostname)
-	already := existing != nil && existing.IsComplete() && isStageOf(existing, p.Stage.Hostname)
+	target.Runtime.CodeVolume = tierCodeVolume(p, existing)
+	already := existing != nil && existing.IsComplete()
+	for _, s := range p.Stages {
+		already = already && isStageOf(existing, s.Hostname)
+	}
 	if err := workflow.AdoptPair(d.batch.stateDir, target, time.Now().UTC().Format("2006-01-02")); err != nil {
-		sp.fail(fmt.Sprintf("adopting %s→%s failed: %v", p.Dev.Hostname, p.Stage.Hostname, err),
+		sp.fail(fmt.Sprintf("adopting %s→%s failed: %v", p.Dev.Hostname, strings.Join(stageHostnames(p), "+"), err),
 			"Adopt the pair by hand with zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"adopt\" and an explicit standard plan for it.")
 		return target, false
 	}
@@ -608,6 +683,15 @@ func (d standupDeps) adopt(sp *standupPair, deps []workflow.Dependency) (workflo
 	}
 	sp.adopted = standupNow
 	return target, true
+}
+
+// stageHostnames is the hostname of every stage of the pair, in order.
+func stageHostnames(p workflow.MateTierPair) []string {
+	out := make([]string, 0, len(p.Stages))
+	for _, s := range p.Stages {
+		out = append(out, s.Hostname)
+	}
+	return out
 }
 
 // managedDependencies are the tier's managed services the project holds, as

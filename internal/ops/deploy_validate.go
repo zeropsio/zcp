@@ -391,6 +391,14 @@ type zeropsYmlRun struct {
 	DeployFiles     any               `yaml:"deployFiles"`     // catch misplaced field (belongs under build:)
 	PrepareCommands any               `yaml:"prepareCommands"` // for /var/www detection
 	EnvVariables    map[string]string `yaml:"envVariables"`    // canonical location (zerops.yaml schema)
+	Volume          zeropsYmlVolume   `yaml:"volume"`          // a local-storage mount
+}
+
+// zeropsYmlVolume is run.volume: the local-storage service a runtime mounts,
+// and where.
+type zeropsYmlVolume struct {
+	Hostname  string `yaml:"hostname"`
+	MountPath string `yaml:"mountPath"`
 }
 
 type zeropsYmlPort struct {

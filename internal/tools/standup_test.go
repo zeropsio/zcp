@@ -201,6 +201,9 @@ type standupSSH struct {
 	apart    []string
 	// volumeFilled is a variant-B code volume that holds the repository.
 	volumeFilled bool
+	// zeropsYAML is, by dev half, the zerops.yaml its commits carry when it
+	// is not standupZeropsYAML's.
+	zeropsYAML map[string]string
 }
 
 type standupSSHCall struct{ host, cmd string }
@@ -222,6 +225,12 @@ func (s *standupSSH) ExecSSH(_ context.Context, host, cmd string) ([]byte, error
 	case strings.Contains(cmd, "rev-parse --verify") && strings.Contains(cmd, "^{commit}"):
 		return []byte(standupHead + "\n"), nil
 	case strings.Contains(cmd, "git show") && strings.Contains(cmd, ":zerops.yaml"):
+		s.mu.Lock()
+		body, own := s.zeropsYAML[host]
+		s.mu.Unlock()
+		if own {
+			return []byte(body), nil
+		}
 		return []byte(standupZeropsYAML(strings.TrimSuffix(host, "dev"))), nil
 	case strings.Contains(cmd, "mktemp -d"):
 		return []byte("/tmp/zcp-extract-1\n"), nil

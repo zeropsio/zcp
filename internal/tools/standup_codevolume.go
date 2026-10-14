@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
@@ -11,14 +12,16 @@ import (
 )
 
 // A variant-B pair (docs/spec-mate.md §2.8a) keeps its repository on a code
-// volume every dev service of the pair mounts. Its stand-up deploys the dev
-// half from the checkout in /var/www, then every further dev service with its
-// own dev setup from the same checkout, then fills the volume once from it
-// and reloads every dev service's supervisor, which read a missing
-// declaration until then. The pair's stage builds from the volume, so it
-// waits for the fill. The stand-up recognises the pair by its record — the
-// tier's pair of a further dev service folds into it — and never guesses it
-// from the tier.
+// volume every dev service of the pair mounts. The stand-up recognises it from
+// the tier as it recognises every pair (workflow.ParseMateTier): one
+// repository building several dev services beside the tier's one
+// local-storage service. It records the pair with its code volume, reads the
+// volume's mount from the dev setups once the repository is checked out, and
+// deploys the dev half from the checkout in /var/www, then every further dev
+// service with its own dev setup from the same checkout, then fills the
+// volume once from it and reloads every dev service's supervisor, which read
+// a missing declaration until then. The pair's stages build from the volume,
+// so they wait for the fill.
 
 // standupCodeVolume is a variant-B pair's code volume through the stand-up.
 type standupCodeVolume struct {
@@ -40,35 +43,69 @@ type standupDevServiceRun struct {
 	deploy *standupDeploy
 }
 
-// standupFolded is a tier pair whose dev half is a further dev service of
-// owner's variant-B pair: it stands up with that pair, and its stage is one
-// more stage of it.
-type standupFolded struct {
-	pair  workflow.MateTierPair
-	owner string
+// tierCodeVolume is the code volume a variant-B tier pair is adopted with:
+// the tier's volume and further dev services, and the mount the record
+// already holds for that volume ("" until the dev setups are read,
+// recordCodeVolumeMount). Nil for variant A.
+func tierCodeVolume(p workflow.MateTierPair, existing *workflow.ServiceMeta) *topology.CodeVolume {
+	if p.CodeVolume == "" {
+		return nil
+	}
+	v := &topology.CodeVolume{Hostname: p.CodeVolume}
+	if existing != nil && existing.CodeVolume != nil && existing.CodeVolume.Hostname == p.CodeVolume {
+		v.MountPath = existing.CodeVolume.MountPath
+	}
+	for _, ds := range p.DevServices {
+		v.DevServices = append(v.DevServices, topology.DevServiceRef{Hostname: ds.Hostname, SetupName: ds.Setup})
+	}
+	return v
 }
 
-// foldCodeVolumePairs takes out of the tier every pair whose dev half the
-// record names a further dev service of another pair: adopting it as a pair
-// of its own would record that service twice.
-func foldCodeVolumePairs(stateDir string, tier workflow.MateTier) (workflow.MateTier, []standupFolded) {
-	if stateDir == "" {
-		return tier, nil
+// recordCodeVolumeMount reads where every dev setup of a variant-B pair mounts
+// its code volume — run.volume in the zerops.yaml the checkout put on the dev
+// half's mount, the repository being the truth — and records it on the pair.
+// A dev setup that does not mount the volume, or mounts it elsewhere than the
+// others or outside /var/www, stops the pair: its code would not be shared.
+func (d standupDeps) recordCodeVolumeMount(sp *standupPair) {
+	p := sp.pair
+	dev := p.Dev.Hostname
+	doc, err := ops.ParseZeropsYml(filepath.Join(projectRootFromState(d.batch.stateDir), dev))
+	if err != nil {
+		sp.fail(fmt.Sprintf("%s keeps its repository on the code volume %s, and its zerops.yaml, which says where the dev setups mount it, cannot be read: %v", dev, p.CodeVolume, err),
+			"Check the repository's zerops.yaml on main, then call zerops_standup again.")
+		return
 	}
-	var folded []standupFolded
-	kept := make([]workflow.MateTierPair, 0, len(tier.Pairs))
-	for _, p := range tier.Pairs {
-		meta, err := workflow.FindServiceMeta(stateDir, p.Dev.Hostname)
-		if err == nil && meta != nil && meta.Hostname != p.Dev.Hostname {
-			if _, ok := meta.CodeVolume.DevService(p.Dev.Hostname); ok {
-				folded = append(folded, standupFolded{pair: p, owner: meta.Hostname})
-				continue
-			}
+	mountPath := ""
+	for _, rt := range append([]workflow.MateTierRuntime{p.Dev}, p.DevServices...) {
+		mounted := ""
+		if entry := doc.FindEntry(rt.Setup); entry != nil && entry.Run.Volume.Hostname == p.CodeVolume {
+			mounted = entry.Run.Volume.MountPath
 		}
-		kept = append(kept, p)
+		var why string
+		switch {
+		case mounted == "":
+			why = fmt.Sprintf("the dev setup %s of %s does not mount the code volume %s (run.volume)", rt.Setup, rt.Hostname, p.CodeVolume)
+		case mountPath != "" && mounted != mountPath:
+			why = fmt.Sprintf("the dev setup %s of %s mounts the code volume %s at %s, the others at %s", rt.Setup, rt.Hostname, p.CodeVolume, mounted, mountPath)
+		default:
+			why = topology.CodeVolumeMountPathError(mounted)
+		}
+		if why != "" {
+			sp.fail(why, fmt.Sprintf("Mount it in every dev setup of the pair with run.volume {hostname: %s, mountPath: /var/www/<folder>} in zerops.yaml on main, then call zerops_standup again.", p.CodeVolume))
+			return
+		}
+		mountPath = mounted
 	}
-	tier.Pairs = kept
-	return tier, folded
+	err = workflow.UpsertServiceMeta(d.batch.stateDir, dev, func(m *workflow.ServiceMeta, existed bool) error {
+		if !existed || m.CodeVolume == nil {
+			return fmt.Errorf("%s is not recorded with its code volume", dev)
+		}
+		m.CodeVolume.MountPath = mountPath
+		return nil
+	})
+	if err != nil {
+		sp.fail(fmt.Sprintf("recording where %s mounts its code volume failed: %v", dev, err), "Call zerops_standup again.")
+	}
 }
 
 // codeVolumeOf is the pair's code volume as its record holds it, nil for a
