@@ -181,19 +181,12 @@ var crossRefPattern = regexp.MustCompile(`\$\{[a-zA-Z_][a-zA-Z0-9_]*\}`)
 // envKeyZeropsSubdomain is the platform-injected env var containing the full subdomain URL.
 const envKeyZeropsSubdomain = "zeropsSubdomain"
 
-// platformInjectedKeys are env vars injected by the Zerops platform (not user-defined),
-// unconditionally regardless of owning service type. These are annotated with
-// isPlatformInjected: true in discover output.
-var platformInjectedKeys = map[string]bool{
-	envKeyZeropsSubdomain: true,
-}
-
 // managedServiceIdentityKeys maps a managed service's canonical base type
 // (topology.CanonicalBaseName — "postgresql", "kafka", "object-storage", ...)
 // to the FULL set of env var keys the platform injects for that type:
 // identity/config fields (hostname, port, user, dbName, ...) AND credential
-// fields (password, connectionString, ...). Combined with platformInjectedKeys
-// this drives the isPlatformInjected KEY annotation in envVarsToMaps.
+// fields (password, connectionString, ...). Combined with the platform's
+// SYSTEM type this drives the isPlatformInjected KEY annotation in envVarsToMaps.
 //
 // This is deliberately a SEPARATE axis from managedCredentialFieldKeys
 // (env.go, RedactEnvValue), which masks VALUES and only evaluates inside the includeValues
@@ -298,8 +291,8 @@ func isManagedServiceKey(serviceType, key string) bool {
 // (no secret values in LLM context). Values containing ${...}
 // cross-service references are annotated with isReference: true.
 // Platform-injected keys are annotated with isPlatformInjected: true — both
-// the fixed platformInjectedKeys set (e.g. zeropsSubdomain, any service type)
-// and, for a managed service, its identity/credential keys per
+// every var the platform types SYSTEM (zeropsSubdomain, ZEROPS_*, any
+// service type, and the project's own) and, for a managed service, its identity/credential keys per
 // managedServiceIdentityKeys (e.g. postgresql's hostname/port/password).
 // This fires REGARDLESS of includeValues — it is the mechanical
 // platform-vs-user signal for the default keys-only discover mode, where the
@@ -338,7 +331,7 @@ func envVarsToMaps[T platform.EnvAccessor](envs []T, includeValues bool, service
 		if crossRefPattern.MatchString(content) {
 			m["isReference"] = true
 		}
-		if platformInjectedKeys[key] || isManagedServiceKey(serviceType, key) {
+		if e.IsSystem() || isManagedServiceKey(serviceType, key) {
 			m["isPlatformInjected"] = true
 		}
 		result = append(result, m)
