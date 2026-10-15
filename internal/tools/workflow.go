@@ -904,6 +904,15 @@ func handleBootstrapStart(ctx context.Context, projectID string, engine *workflo
 	// doesn't trigger destructive cleanup based on missing data.
 	cleanedOrphans := pruneOrphanMetasBeforeBootstrap(ctx, client, projectID, engine.StateDir())
 
+	// The adopt route's guidance is about the existing repos: read them first,
+	// so it names the config file each keeps (namingRepoConfigFile) even when
+	// the agent skipped the route menu that reads them too.
+	if route == workflow.BootstrapRouteAdopt {
+		if existing, listErr := listExistingServices(ctx, client, projectID); listErr == nil {
+			readExistingRepos(ctx, existing, sshDeployer, rt, engine)
+		}
+	}
+
 	resp, err := engine.BootstrapStartWithRoute(projectID, input.Intent, route, input.RecipeSlug)
 	if err != nil {
 		return convertError(platform.NewPlatformError(

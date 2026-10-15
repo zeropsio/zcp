@@ -63,6 +63,19 @@ func TestRepoConfigFile_AnAgentIsOnlyEverToldTheReposOwnConfigFileName(t *testin
 				t.Fatalf("develop start failed: %s", getTextContent(t, develop))
 			}
 			told := map[string]string{"develop start": getTextContent(t, develop)}
+
+			// An agent that goes straight to the adopt route reads its guidance
+			// before any other call has read the repo.
+			adoptDir := t.TempDir()
+			adoptSrv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterWorkflow(adoptSrv, mock, nil, "proj1", nil, workflow.NewEngine(adoptDir, workflow.EnvContainer, nil), nil, adoptDir, "zcp", nil, repos, rt, "")
+			adopt := callTool(t, adoptSrv, "zerops_workflow", map[string]any{
+				"action": "start", "workflow": "bootstrap", "route": "adopt", "intent": "adopt the weather app",
+			})
+			if adopt.IsError {
+				t.Fatalf("bootstrap adopt start failed: %s", getTextContent(t, adopt))
+			}
+			told["bootstrap adopt start"] = getTextContent(t, adopt)
 			for name, args := range map[string]map[string]any{
 				"core reference":    {"uri": "zerops://themes/core"},
 				"monorepo playbook": {"uri": "zerops://playbooks/monorepo"},

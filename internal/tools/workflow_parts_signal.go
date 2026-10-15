@@ -70,15 +70,7 @@ func attachPartsSignal(ctx context.Context, services []workflow.ServiceSnapshot,
 // parts, so the plan is made with the playbook in hand rather than after the
 // first bootstrap. "" when none is multi-part, or outside a container.
 func multiPartRouteNote(ctx context.Context, existing []platform.ServiceStack, ssh ops.SSHDeployer, rt runtime.Info, engine *workflow.Engine) string {
-	var services []workflow.ServiceSnapshot
-	for _, s := range existing {
-		class := topology.RuntimeClassFor(s.ServiceStackTypeInfo.ServiceStackTypeVersionName)
-		if class == topology.RuntimeManaged || class == topology.RuntimeUnknown {
-			continue
-		}
-		services = append(services, workflow.ServiceSnapshot{Hostname: s.Name, Mode: topology.ModeDev, RuntimeClass: class})
-	}
-	attachPartsSignal(ctx, services, ssh, rt, engine)
+	services := readExistingRepos(ctx, existing, ssh, rt, engine)
 	var multi []string
 	for _, s := range services {
 		if s.MultiPart {
@@ -90,4 +82,21 @@ func multiPartRouteNote(ctx context.Context, existing []platform.ServiceStack, s
 	}
 	return "\n\nThe repo of " + strings.Join(multi, ", ") + " holds more than one deployable part. " +
 		"Before you plan its services and stages, read `zerops_knowledge uri=\"zerops://playbooks/monorepo\"`."
+}
+
+// readExistingRepos reads the repo of every existing runtime service, before
+// bootstrap has given any of them a mode, as attachPartsSignal reads a dev
+// half's — so the route menu and the adopt route see the parts and name the
+// config file each repo keeps.
+func readExistingRepos(ctx context.Context, existing []platform.ServiceStack, ssh ops.SSHDeployer, rt runtime.Info, engine *workflow.Engine) []workflow.ServiceSnapshot {
+	var services []workflow.ServiceSnapshot
+	for _, s := range existing {
+		class := topology.RuntimeClassFor(s.ServiceStackTypeInfo.ServiceStackTypeVersionName)
+		if class == topology.RuntimeManaged || class == topology.RuntimeUnknown {
+			continue
+		}
+		services = append(services, workflow.ServiceSnapshot{Hostname: s.Name, Mode: topology.ModeDev, RuntimeClass: class})
+	}
+	attachPartsSignal(ctx, services, ssh, rt, engine)
+	return services
 }
