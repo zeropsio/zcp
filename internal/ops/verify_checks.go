@@ -263,6 +263,11 @@ func devPortInternalChecks(ctx context.Context, probe httpProbe, svc *platform.S
 		var check CheckResult
 		switch d.Status {
 		case devsup.StatusRunning, devsup.StatusStarting:
+			if d.LoopbackOnly {
+				check = CheckResult{Name: checkNameHTTPInternal, Status: CheckInfo,
+					Detail: fmt.Sprintf("dev server %s listens on loopback only (127.0.0.1:%d) — by design not reachable by hostname; its supervisor sees it accept there, and the web server in front of it reaches it if proxied", d.Name, d.Port)}
+				break
+			}
 			url := "http://" + net.JoinHostPort(svc.Name, strconv.Itoa(d.Port)) + "/"
 			check = probe.probe(ctx, url, checkNameHTTPInternal)
 			check.URL = url

@@ -125,6 +125,9 @@ type DevPort struct {
 	Name   string
 	Port   int
 	Status devsup.Status
+	// LoopbackOnly: the server listens only at a loopback address, by
+	// design — verify judges it where it listens, not at the hostname.
+	LoopbackOnly bool
 }
 
 // defaultPublicAccessInput is what meta-less callers (Verify, VerifyAll, and
@@ -343,7 +346,7 @@ func verifyService(
 			// internal probe goes first and is given that compile, so the
 			// public one finds the page compiled.
 			probe := newHTTPProbe(httpClient, publicAccess.DevServer && rc == RuntimeDynamic)
-			perPort := len(publicAccess.DevPorts) > 1
+			perPort := len(publicAccess.DevPorts) > 0
 			var checks []CheckResult
 			if perPort {
 				checks = append(checks, devPortInternalChecks(ctx, probe, svc, publicAccess.DevPorts)...)

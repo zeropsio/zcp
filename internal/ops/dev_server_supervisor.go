@@ -99,6 +99,9 @@ type DevServers struct {
 	State devsup.State
 	// ReadAt is when zcp read it.
 	ReadAt time.Time
+	// LoopbackOnly holds the TCP ports the container listens on only at a
+	// loopback address (`ss -ltn`); a port absent here is public or unread.
+	LoopbackOnly map[int]bool
 }
 
 // SupervisorVersion is `zcp-devsup ctl version`.
@@ -115,6 +118,7 @@ func readDevServersCmd(root string) string {
 		`zcp-devsup ctl version --json 2>/dev/null; c=$?; echo; echo "@@zcp-devsup version $c"; ` +
 		`zcp-devsup ctl status --json 2>/dev/null; c=$?; echo; echo "@@zcp-devsup status $c"; ` +
 		`else echo "@@zcp-devsup version 127"; fi; ` +
+		`ss -ltn 2>/dev/null; echo "@@zcp-devsup listen 0"; ` +
 		`if [ -f '` + file + `' ]; then cat '` + file + `'; echo; echo "@@zcp-devsup declaration 0"; ` +
 		`else echo "@@zcp-devsup declaration 1"; fi`
 }
@@ -147,6 +151,7 @@ func ReadDevServers(ctx context.Context, ssh SSHDeployer, hostname, root string)
 	if !ds.DeclarationExists {
 		ds.Declared = devsup.Declaration{Version: devsupFormat, Servers: []devsup.Server{}}
 	}
+	ds.LoopbackOnly = loopbackOnlyPorts(sections["listen"].body)
 	version := sections["version"]
 	if version.code == devsupCodeAbsent {
 		return ds, &NoSupervisorError{Hostname: hostname}
@@ -166,6 +171,42 @@ func ReadDevServers(ctx context.Context, ssh SSHDeployer, hostname, root string)
 	default:
 		return nil, ctlFailure(status)
 	}
+}
+
+// loopbackOnlyPorts reads `ss -ltn` output: the ports whose every listening
+// socket is bound to a loopback address.
+func loopbackOnlyPorts(out string) map[int]bool {
+	loopback := map[int]bool{}
+	public := map[int]bool{}
+	for line := range strings.SplitSeq(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 4 || f[0] != "LISTEN" {
+			continue
+		}
+		host, portText, ok := cutLastColon(f[3])
+		port, err := strconv.Atoi(portText)
+		if !ok || err != nil {
+			continue
+		}
+		host = strings.Trim(host, "[]")
+		if strings.HasPrefix(host, "127.") || host == "::1" {
+			loopback[port] = true
+		} else {
+			public[port] = true
+		}
+	}
+	for port := range public {
+		delete(loopback, port)
+	}
+	return loopback
+}
+
+func cutLastColon(addr string) (host, port string, ok bool) {
+	i := strings.LastIndex(addr, ":")
+	if i < 0 {
+		return "", "", false
+	}
+	return addr[:i], addr[i+1:], true
 }
 
 // devsupFormat is the declaration format zcp writes.
@@ -204,15 +245,15 @@ func (ds *DevServers) Server(name string) (devsup.Server, bool) {
 }
 
 // DevPorts are the declared servers with a port and their status, when more
-// than one is declared — verify then checks each (PublicAccessInput.DevPorts).
+// than one is declared, or one listens only on loopback — verify then checks each (PublicAccessInput.DevPorts).
 func (ds *DevServers) DevPorts() []DevPort {
 	var out []DevPort
 	for _, s := range ds.Declared.Servers {
 		if s.Port != 0 {
-			out = append(out, DevPort{Name: s.Name, Port: s.Port, Status: ds.State.Servers[s.Name].Status})
+			out = append(out, DevPort{Name: s.Name, Port: s.Port, Status: ds.State.Servers[s.Name].Status, LoopbackOnly: ds.LoopbackOnly[s.Port]})
 		}
 	}
-	if len(out) < 2 {
+	if len(out) < 2 && !slices.ContainsFunc(out, func(d DevPort) bool { return d.LoopbackOnly }) {
 		return nil
 	}
 	return out
