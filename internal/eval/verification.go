@@ -108,7 +108,16 @@ func mcpToolCallTexts(mcpStreamPaths []string) []string {
 			continue
 		}
 		for _, call := range calls {
-			if data, marshalErr := json.Marshal(call.Arguments); marshalErr == nil {
+			args := call.Arguments
+			if isWorkflowTool(call.Tool) {
+				args = make(map[string]any, len(call.Arguments))
+				for k, v := range call.Arguments {
+					if k != launchKeyArg {
+						args[k] = v
+					}
+				}
+			}
+			if data, marshalErr := json.Marshal(args); marshalErr == nil {
 				texts = append(texts, string(data))
 			}
 		}

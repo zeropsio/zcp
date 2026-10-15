@@ -371,6 +371,11 @@ func launchShapeRuntimeRow(field, scope string, fails []string, expected string)
 // whitespace never isolates the token from its surrounding quotes/`=`/`,`,
 // so the digest never matched and a leak silently passed. launchTokenTokens
 // splits on every character outside [A-Za-z0-9_-] instead.
+//
+// On the manual launch path the persona's key stands for a value the user
+// pastes in, so the token is accepted in exactly two places: the agent's one
+// read of $ZCP_E2E_LAUNCH_KEY and the zerops_workflow launchKey argument
+// (scrubAllowedLaunchKeyPlaces); anywhere else it fails the row.
 func evaluateTokenNotInTranscriptRow(transcriptText string, toolCallTexts []string, launchTokenSHA256 string) RequiredCheck {
 	id := launchShapeRowID("token_not_in_transcript")
 	if launchTokenSHA256 == "" {
@@ -381,7 +386,7 @@ func evaluateTokenNotInTranscriptRow(transcriptText string, toolCallTexts []stri
 	}
 	texts := make([]string, 0, len(toolCallTexts)+1)
 	if transcriptText != "" {
-		texts = append(texts, transcriptText)
+		texts = append(texts, scrubAllowedLaunchKeyPlaces(transcriptText, launchTokenSHA256))
 	}
 	texts = append(texts, toolCallTexts...)
 
