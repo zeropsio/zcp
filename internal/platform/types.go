@@ -388,6 +388,10 @@ type ServiceEnvVar struct {
 	Content   string         `json:"content"`
 	Type      ServiceEnvType `json:"type,omitempty"`
 	Sensitive bool           `json:"sensitive,omitempty"`
+	// Masked marks a row whose value the platform withheld from the reading
+	// token (MaskedEnvValue). ops.FetchServiceEnv sets it and blanks Content,
+	// so no consumer uses the placeholder as the secret.
+	Masked bool `json:"-"`
 }
 
 // EnvAccessor is the minimal read-side interface shared by

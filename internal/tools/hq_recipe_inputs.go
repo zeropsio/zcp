@@ -301,7 +301,12 @@ func groupRecipeServiceEnvs(ctx context.Context, client platform.Client, svc ops
 		if isControlPlaneEnv(env.Key) {
 			continue
 		}
-		out = append(out, bundle.ProjectEnvVar{Key: env.Key, Value: env.Content, Sensitive: env.Sensitive})
+		value := env.Content
+		if env.Masked {
+			// The bundle reads the platform's mask as "a secret to set again".
+			value = platform.MaskedEnvValue
+		}
+		out = append(out, bundle.ProjectEnvVar{Key: env.Key, Value: value, Sensitive: env.Sensitive})
 	}
 	return out, nil
 }

@@ -295,3 +295,33 @@ func TestProdOpsDoneBoundary_ActionsFamilyPendingIsDone(t *testing.T) {
 		t.Errorf("webhook family with a pending pipeline entry must stay open: %+v", webhook)
 	}
 }
+
+func TestLaunchKeyFromStage_MaskedStagedSecret_IsNotTheKey(t *testing.T) {
+	t.Parallel()
+	client := platform.NewMock().
+		WithServices([]platform.ServiceStack{{ID: "svc-dev", Name: "appdev", Status: "ACTIVE"}}).
+		WithServiceEnv("svc-dev", []platform.ServiceEnvVar{
+			{ID: "env-1", Key: ops.LaunchTokenEnvKey, Content: platform.MaskedEnvValue, Type: platform.ServiceEnvUser, Sensitive: true},
+		})
+	state := &launchState{TargetServiceHostname: "appdev"}
+	got, err := launchKeyFromStage(context.Background(), client, "src-proj", state)
+	if err != nil {
+		t.Fatalf("launchKeyFromStage: %v", err)
+	}
+	if got != "" {
+		t.Fatalf("a masked staged secret must read as absent so the pass-launchKey message appears, got a key of length %d", len(got))
+	}
+}
+
+func TestHeldPushCredential_MaskedCopy_IsUnknownNotAMismatch(t *testing.T) {
+	t.Parallel()
+	client := platform.NewMock().
+		WithServices([]platform.ServiceStack{{ID: "svc-dev", Name: "appdev", Status: "ACTIVE"}}).
+		WithServiceEnv("svc-dev", []platform.ServiceEnvVar{
+			{ID: "env-1", Key: ops.GitTokenEnvKey, Content: platform.MaskedEnvValue, Type: platform.ServiceEnvUser, Sensitive: true},
+		})
+	_, held, known := heldPushCredential(context.Background(), client, "src-proj", "appdev")
+	if known || held != "" {
+		t.Fatalf("a masked credential copy cannot be compared: known=%v, held length %d", known, len(held))
+	}
+}

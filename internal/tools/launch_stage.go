@@ -71,6 +71,10 @@ func launchKeyFromStage(ctx context.Context, client platform.Client, projectID s
 	}
 	for _, e := range envs {
 		if e.Key == ops.LaunchTokenEnvKey {
+			// A masked copy is not the token: absent, so the caller asks for launchKey.
+			if e.Masked {
+				return "", nil
+			}
 			return e.Content, nil
 		}
 	}

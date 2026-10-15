@@ -173,3 +173,24 @@ func serviceEnv(env map[string]string) []platform.ServiceEnvVar {
 	}
 	return out
 }
+
+func TestAdapter_ConnectionInfo_MaskedPassword_NamesTheServiceNotTheMaskedValue(t *testing.T) {
+	t.Parallel()
+	client := platform.NewMock().
+		WithServices([]platform.ServiceStack{service("pg-id", "db", "postgresql@16")}).
+		WithServiceEnv("pg-id", []platform.ServiceEnvVar{
+			{ID: "e1", Key: "hostname", Content: "db"},
+			{ID: "e2", Key: "port", Content: "5432"},
+			{ID: "e3", Key: "user", Content: "app"},
+			{ID: "e4", Key: "dbName", Content: "app"},
+			{ID: "e5", Key: "password", Content: platform.MaskedEnvValue, Sensitive: true},
+		})
+	adapter := New(client, &auth.Info{ProjectID: "p", ProjectName: "proj"})
+	if _, err := adapter.ManagedServices(context.Background()); err != nil {
+		t.Fatalf("ManagedServices: %v", err)
+	}
+	_, err := adapter.ConnectionInfo(context.Background(), "pg-id")
+	if err == nil || !strings.Contains(err.Error(), "this Mate's key cannot read db's password") {
+		t.Fatalf("ConnectionInfo error = %v, want the named masked-password error", err)
+	}
+}

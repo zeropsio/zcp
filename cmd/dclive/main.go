@@ -16,6 +16,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/dataconsole/console/provider/conformance"
@@ -91,9 +92,10 @@ func genConfig(ctx context.Context) (*conformance.LiveConfig, int, error) {
 			fmt.Fprintf(os.Stderr, "[%s] env: %v\n", s.Hostname, err)
 			continue
 		}
-		scalars := make(map[string]string, len(envs))
-		for _, e := range envs {
-			scalars[e.Key] = e.Content
+		scalars, masked := ops.EnvScalars(envs)
+		if len(masked) > 0 {
+			fmt.Fprintf(os.Stderr, "[%s] this key cannot read %s, skipping\n", s.Hostname, strings.Join(masked, ", "))
+			continue
 		}
 		entry, ok := mapServiceEnv(s.Hostname, s.Type, scalars)
 		if !ok {

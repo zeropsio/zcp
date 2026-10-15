@@ -67,6 +67,9 @@ type EffectiveEnvVar struct {
 	Key   string
 	Value string
 	Layer EnvLayer
+	// Masked: the platform withheld the value from this token; Value is empty
+	// and the entry takes no part in value comparisons.
+	Masked bool
 }
 
 // EffectiveEnv is the layered, API-reconstructed view of a service's env.
@@ -181,7 +184,7 @@ func ServiceHigherLayers(ctx context.Context, client platform.Client, svc platfo
 	} else {
 		out.ServiceState = LayerState{Availability: LayerPresent}
 		for _, e := range svcEnvs {
-			out.Service = append(out.Service, EffectiveEnvVar{Key: e.Key, Value: e.Content, Layer: EnvLayerService})
+			out.Service = append(out.Service, EffectiveEnvVar{Key: e.Key, Value: e.Content, Layer: EnvLayerService, Masked: e.Masked})
 		}
 	}
 

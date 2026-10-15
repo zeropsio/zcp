@@ -346,6 +346,25 @@ func TestEnvGenerateDotenv_ResolvesRefs(t *testing.T) {
 			wantErr: "could not resolve",
 		},
 		{
+			// The platform withholds a sibling's sensitive value from a
+			// project-scoped token and answers the placeholder: it must
+			// never be written into .env as if it were the secret.
+			name: "a masked sibling secret is unresolved, never written as the value",
+			zeropsYml: `zerops:
+  - setup: app
+    run:
+      envVariables:
+        DB_PASS: ${db_password}
+`,
+			hostname: "app",
+			serviceEnvs: map[string][]platform.ServiceEnvVar{
+				"db": {
+					{ID: "e1", Key: "password", Content: platform.MaskedEnvValue, Sensitive: true},
+				},
+			},
+			wantErr: "could not resolve",
+		},
+		{
 			// Dash-bearing hostname: Zerops accepts hyphens in service
 			// names but env-var refs swap them for underscores. Without
 			// longest-prefix matching against live hostnames the splitter

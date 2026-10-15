@@ -30,11 +30,36 @@ func LookupService(ctx context.Context, client platform.Client, projectID, hostn
 
 // FetchServiceEnv is the canonical entry point for callers that need a
 // service's full env-var list. Like ListProjectServices, it exists so
-// upper layers don't reach into platform.Client directly. Today this is
-// a thin passthrough, but caching / batching / retries can land here
-// without touching every site.
+// upper layers don't reach into platform.Client directly. It is also the one
+// place that decides a row is masked: a value the platform answers with
+// platform.MaskedEnvValue is marked Masked and its Content blanked, so no
+// consumer can use the placeholder as the secret.
 func FetchServiceEnv(ctx context.Context, client platform.Client, serviceID string) ([]platform.ServiceEnvVar, error) {
-	return client.GetServiceEnv(ctx, serviceID)
+	envs, err := client.GetServiceEnv(ctx, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range envs {
+		if envs[i].Content == platform.MaskedEnvValue {
+			envs[i].Masked, envs[i].Content = true, ""
+		}
+	}
+	return envs, nil
+}
+
+// EnvScalars flattens env rows into a key→value map for consumers that build a
+// connection from them, and lists the keys whose value the platform withheld —
+// those never enter the map.
+func EnvScalars(envs []platform.ServiceEnvVar) (scalars map[string]string, masked []string) {
+	scalars = make(map[string]string, len(envs))
+	for _, e := range envs {
+		if e.Masked {
+			masked = append(masked, e.Key)
+			continue
+		}
+		scalars[e.Key] = e.Content
+	}
+	return scalars, masked
 }
 
 // FetchServiceUserEnvs returns a service's user-set env layer — the slim

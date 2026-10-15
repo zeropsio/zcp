@@ -215,7 +215,7 @@ func (r *refExpander) expandRefs(ctx context.Context, value, sourceService strin
 				unresolved++
 				continue
 			}
-			envs, err := r.client.GetServiceEnv(ctx, svc.ID)
+			envs, err := FetchServiceEnv(ctx, r.client, svc.ID)
 			if err != nil {
 				// Wrap as transient — most fetch failures here are
 				// VPN/API connectivity, not yaml-invalidity. Caller
@@ -244,6 +244,14 @@ func (r *refExpander) expandRefs(ctx context.Context, value, sourceService strin
 		}
 
 		row, found := findEnvRow(r.cache[svcHost], varName)
+		if found && row.Masked {
+			// The platform withheld the value from this token: leave the ref
+			// literal and count it unresolved rather than write the placeholder.
+			sb.WriteString(m.Raw)
+			last = m.End
+			unresolved++
+			continue
+		}
 		rawVal, sensitive := row.Content, row.Sensitive
 		if !found && projectFallback {
 			if pv, ok := r.projectEnv[varName]; ok {
