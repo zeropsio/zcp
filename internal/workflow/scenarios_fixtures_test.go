@@ -108,6 +108,16 @@ func idleGoldenScenarios() []goldenScenario {
 func bootstrapGoldenScenarios() []goldenScenario {
 	return []goldenScenario{
 		{
+			id:          "bootstrap/classic/new-part-of-pair",
+			description: "Classic route, discover step, in a project whose single-part standard pair is deployed — a new part of that repo is a stage of the pair.",
+			envelope: StateEnvelope{
+				Phase:       PhaseBootstrapActive,
+				Environment: EnvContainer,
+				Bootstrap:   &BootstrapSessionSummary{Route: BootstrapRouteClassic, Step: StepDiscover},
+				Services:    fixSnapDeployedPairAuto("appdev", "appstage", "nodejs@22", topology.RuntimeDynamic),
+			},
+		},
+		{
 			id:          "bootstrap/recipe/provision",
 			description: "Recipe route, provision step in progress, target service ACTIVE awaiting first deploy.",
 			envelope: StateEnvelope{

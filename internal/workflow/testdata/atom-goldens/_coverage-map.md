@@ -8,14 +8,15 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 |---|---|---|
 | `bootstrap-adopt-baseline-commit` | 1 | bootstrap/adopt/provision |
 | `bootstrap-adopt-discover` | 1 | bootstrap/adopt/discover-existing-pair |
-| `bootstrap-classic-plan-dynamic` | 1 | bootstrap/classic/discover-standard-dynamic |
-| `bootstrap-classic-plan-static` | 1 | bootstrap/classic/discover-standard-dynamic |
+| `bootstrap-classic-plan-dynamic` | 2 | bootstrap/classic/discover-standard-dynamic, bootstrap/classic/new-part-of-pair |
+| `bootstrap-classic-plan-static` | 2 | bootstrap/classic/discover-standard-dynamic, bootstrap/classic/new-part-of-pair |
 | `bootstrap-close` | 1 | bootstrap/recipe/close |
 | `bootstrap-close-baseline-commit` | 1 | bootstrap/recipe/close |
 | `bootstrap-discover-local` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
 | `bootstrap-env-var-discovery` | 2 | bootstrap/adopt/provision, bootstrap/classic/provision-local |
-| `bootstrap-intro` | 2 | bootstrap/adopt/discover-existing-pair, bootstrap/classic/discover-standard-dynamic |
-| `bootstrap-mode-prompt` | 1 | bootstrap/classic/discover-standard-dynamic |
+| `bootstrap-intro` | 3 | bootstrap/adopt/discover-existing-pair, bootstrap/classic/discover-standard-dynamic, bootstrap/classic/new-part-of-pair |
+| `bootstrap-mode-prompt` | 2 | bootstrap/classic/discover-standard-dynamic, bootstrap/classic/new-part-of-pair |
+| `bootstrap-new-part-of-pair` | 1 | bootstrap/classic/new-part-of-pair |
 | `bootstrap-provision-local` | 1 | bootstrap/classic/provision-local |
 | `bootstrap-provision-local-finalize` | 1 | bootstrap/classic/provision-local |
 | `bootstrap-provision-rules` | 1 | bootstrap/classic/provision-local |
@@ -25,7 +26,7 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 | `bootstrap-recipe-local-clone` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
 | `bootstrap-resume` | 1 | idle/incomplete-resume |
 | `bootstrap-route-options` | 4 | idle/adopt-only, idle/bootstrapped-with-managed, idle/empty, idle/incomplete-resume |
-| `bootstrap-runtime-classes` | 1 | bootstrap/classic/discover-standard-dynamic |
+| `bootstrap-runtime-classes` | 2 | bootstrap/classic/discover-standard-dynamic, bootstrap/classic/new-part-of-pair |
 | `bootstrap-verify` | 1 | bootstrap/recipe/close |
 | `bootstrap-wait-active` | 1 | bootstrap/classic/provision-local |
 | `develop-auto-close-semantics` | 16 | develop/closed-auto-complete, develop/closed-iteration-cap, develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/first-deploy-unset-decision, develop/git-push-broken, develop/git-push-configured-webhook, develop/mode-expansion-source, develop/monorepo-three-parts, develop/multi-service-scope-narrow, develop/post-adopt-standard-unset, develop/standard-auto-pair, develop/standup-dev-deployed-wired, develop/standup-stage-out-of-scope, develop/steady-dev-auto-container |

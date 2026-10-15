@@ -1558,3 +1558,58 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		"launch-pipeline-configured",
 	)
 }
+
+// TestScenario_NewPartOfSinglePartPairIsAStageNotABootstrap pins the guidance
+// at the moment a person asks a project with one complete single-part pair
+// for another part: the bootstrap discover step leads to a new setup and
+// stage of the pair. A repo already read as several parts,
+// a pair not yet deployed and a project without a standard pair never see it.
+func TestScenario_NewPartOfSinglePartPairIsAStageNotABootstrap(t *testing.T) {
+	t.Parallel()
+
+	corpus, err := LoadAtomCorpus()
+	if err != nil {
+		t.Fatalf("LoadAtomCorpus: %v", err)
+	}
+	const atom = "bootstrap-new-part-of-pair"
+	pair := func() []ServiceSnapshot {
+		return fixSnapDeployedPairAuto("appdev", "appstage", "nodejs@22", topology.RuntimeDynamic)
+	}
+	discover := &BootstrapSessionSummary{Route: BootstrapRouteClassic, Step: "discover"}
+	fires := func(env StateEnvelope) bool {
+		out, err := Synthesize(env, corpus)
+		if err != nil {
+			t.Fatalf("Synthesize: %v", err)
+		}
+		for _, m := range out {
+			if m.AtomID == atom {
+				if !strings.Contains(m.Body, "appdev") || !strings.Contains(m.Body, `zerops_knowledge uri="zerops://playbooks/monorepo"`) {
+					t.Errorf("%s body lacks the pair or the playbook:\n%s", atom, m.Body)
+				}
+				return true
+			}
+		}
+		return false
+	}
+
+	boot := StateEnvelope{Phase: PhaseBootstrapActive, Environment: EnvContainer, Services: pair(), Bootstrap: discover}
+	if got, err := Synthesize(boot, corpus); err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	} else {
+		requireAtomIDsContain(t, "new part of a single-part pair", got, "bootstrap-new-part-of-pair")
+	}
+	if !fires(boot) {
+		t.Errorf("%s did not fire at bootstrap discover with a deployed single-part pair", atom)
+	}
+
+	multi := boot
+	multi.Services = pair()
+	multi.Services[0].MultiPart = true
+	if fires(multi) {
+		t.Errorf("%s fired for a repo already read as several parts", atom)
+	}
+	fresh := StateEnvelope{Phase: PhaseBootstrapActive, Environment: EnvContainer, Bootstrap: discover}
+	if fires(fresh) {
+		t.Errorf("%s fired in a project without a pair", atom)
+	}
+}
