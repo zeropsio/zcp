@@ -21,8 +21,20 @@ import (
 // dev-server declaration live here.
 const DevRepoRoot = "/var/www"
 
-// devDeclarationFile is the declaration's absolute path on a dev container.
-const devDeclarationFile = DevRepoRoot + "/" + devsup.DeclarationPath
+// devRepoRoot is the repository root a dev service's supervisor runs on:
+// root, or DevRepoRoot when root is empty (variant A). A variant-B dev
+// service's root is its code volume's mount.
+func devRepoRoot(root string) string {
+	if root == "" {
+		return DevRepoRoot
+	}
+	return strings.TrimSuffix(root, "/")
+}
+
+// devDeclarationFile is the declaration's absolute path under root.
+func devDeclarationFile(root string) string {
+	return devRepoRoot(root) + "/" + devsup.DeclarationPath
+}
 
 // `zcp-devsup ctl` exit codes (docs/spec-mate.md §2.8a.2); devsupCodeAbsent is
 // what a container without the binary answers.
@@ -97,20 +109,23 @@ type SupervisorVersion struct {
 
 // readDevServersCmd reads, in one round trip, the supervisor's version and
 // state and the repo's declaration, each section closed by its exit code.
-const readDevServersCmd = `if command -v zcp-devsup >/dev/null 2>&1; then ` +
-	`zcp-devsup ctl version --json 2>/dev/null; c=$?; echo; echo "@@zcp-devsup version $c"; ` +
-	`zcp-devsup ctl status --json 2>/dev/null; c=$?; echo; echo "@@zcp-devsup status $c"; ` +
-	`else echo "@@zcp-devsup version 127"; fi; ` +
-	`if [ -f '` + devDeclarationFile + `' ]; then cat '` + devDeclarationFile + `'; echo; echo "@@zcp-devsup declaration 0"; ` +
-	`else echo "@@zcp-devsup declaration 1"; fi`
+func readDevServersCmd(root string) string {
+	file := devDeclarationFile(root)
+	return `if command -v zcp-devsup >/dev/null 2>&1; then ` +
+		`zcp-devsup ctl version --json 2>/dev/null; c=$?; echo; echo "@@zcp-devsup version $c"; ` +
+		`zcp-devsup ctl status --json 2>/dev/null; c=$?; echo; echo "@@zcp-devsup status $c"; ` +
+		`else echo "@@zcp-devsup version 127"; fi; ` +
+		`if [ -f '` + file + `' ]; then cat '` + file + `'; echo; echo "@@zcp-devsup declaration 0"; ` +
+		`else echo "@@zcp-devsup declaration 1"; fi`
+}
 
 // ReadDevServers reads hostname's dev servers. A dev service whose dev setup
 // does not run the supervisor answers *NoSupervisorError; its declaration is
 // read all the same.
-func ReadDevServers(ctx context.Context, ssh SSHDeployer, hostname string) (*DevServers, error) {
+func ReadDevServers(ctx context.Context, ssh SSHDeployer, hostname, root string) (*DevServers, error) {
 	readCtx, cancel := context.WithTimeout(ctx, devsupCtlTimeout)
 	defer cancel()
-	out, err := ssh.ExecSSH(readCtx, hostname, readDevServersCmd)
+	out, err := ssh.ExecSSH(readCtx, hostname, readDevServersCmd(root))
 	if err != nil {
 		return nil, fmt.Errorf("read dev servers on %s: %w", hostname, err)
 	}
@@ -316,7 +331,7 @@ func supervisorLogTail(ctx context.Context, ssh SSHDeployer, hostname, name stri
 
 // WriteDevDeclaration replaces hostname's declaration with d (atomic rename).
 // Only a change of the set of servers writes it.
-func WriteDevDeclaration(ctx context.Context, ssh SSHDeployer, hostname string, d devsup.Declaration) error {
+func WriteDevDeclaration(ctx context.Context, ssh SSHDeployer, hostname, root string, d devsup.Declaration) error {
 	b, err := json.MarshalIndent(d, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode %s: %w", devsup.DeclarationPath, err)
@@ -324,9 +339,10 @@ func WriteDevDeclaration(ctx context.Context, ssh SSHDeployer, hostname string, 
 	if _, err := devsup.ParseDeclaration(b); err != nil {
 		return fmt.Errorf("declare dev server: %w", err)
 	}
-	tmp := devDeclarationFile + ".tmp"
+	file := devDeclarationFile(root)
+	tmp := file + ".tmp"
 	cmd := fmt.Sprintf(`mkdir -p %s && printf '%%s\n' %s > %s && mv -f %s %s`,
-		shellQuote(DevRepoRoot+"/.zcp"), shellQuote(string(b)), shellQuote(tmp), shellQuote(tmp), shellQuote(devDeclarationFile))
+		shellQuote(devRepoRoot(root)+"/.zcp"), shellQuote(string(b)), shellQuote(tmp), shellQuote(tmp), shellQuote(file))
 	writeCtx, cancel := context.WithTimeout(ctx, containerIdentityTimeout)
 	defer cancel()
 	if _, err := ssh.ExecSSH(writeCtx, hostname, cmd); err != nil {

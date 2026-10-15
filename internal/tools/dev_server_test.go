@@ -349,6 +349,44 @@ func TestDevServer_FirstStartOnAVariantBDevService_RunsTheSupervisorOnTheCodeVol
 	}
 }
 
+// TestDevServer_DeclarationOfAVariantBDevService_LivesOnTheCodeVolume
+// (docs/spec-mate.md §2.8a.1): the file the supervisor reads is the volume's
+// .zcp/dev-servers.json, so the declaration zcp writes for a variant-B dev
+// service goes there, never to /var/www/.zcp.
+func TestDevServer_DeclarationOfAVariantBDevService_LivesOnTheCodeVolume(t *testing.T) {
+	t.Parallel()
+	c := &devservertest.Container{YAMLFile: "zerops.yml", YAML: variantBDevSetup}
+	dir := t.TempDir()
+	if err := workflow.WriteServiceMeta(dir, variantBDevMeta()); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-api", Name: "apidev", ProjectID: "proj-1", Status: serviceStatusRunning,
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "go@1"}},
+			{ID: "svc-vol", Name: "vol", ProjectID: "proj-1", Status: "RUNNING",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "local-storage:single@1", ServiceStackTypeCategoryName: "STANDARD"}},
+		}).
+		WithAppVersionEvents([]platform.AppVersionEvent{{ID: "av-2", ProjectID: "proj-1", ServiceStackID: "svc-api", Status: statusActive, Sequence: 2}})
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDevServer(srv, DevServerDeps{
+		Client: mock, ProjectID: "proj-1", SSH: c, StateDir: dir,
+		AuthInfo: &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
+		Devsup:   DevsupSource{Latest: func(context.Context) (string, error) { return testDevsupURL, nil }},
+	})
+
+	callDevServer(t, srv, map[string]any{"action": "start", "hostname": "apidev", "command": "go run ./apps/api", "port": 8080, "workDir": "/var/www/ws/apps/api"})
+
+	var onVolume, onVarWww bool
+	for _, cmd := range c.Sent() {
+		onVolume = onVolume || strings.Contains(cmd, "'/var/www/ws/.zcp/dev-servers.json.tmp'")
+		onVarWww = onVarWww || strings.Contains(cmd, "'/var/www/.zcp")
+	}
+	if !onVolume || onVarWww {
+		t.Errorf("declaration written on the volume %v, on /var/www/.zcp %v:\n%s", onVolume, onVarWww, strings.Join(c.Sent(), "\n"))
+	}
+}
+
 // TestDevServer_MigrationRedeployFails: when the redeploy that brings up the
 // supervisor fails, the answer says so with what is written and how to finish.
 func TestDevServer_MigrationRedeployFails(t *testing.T) {
@@ -442,7 +480,7 @@ func TestDeployListener_SupervisorReportsListener(t *testing.T) {
 			mock := autoEnableTestMockWithType(t, false, "nodejs@22")
 			result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
 			c := tt.container()
-			ensurePublicAccess(context.Background(), mock, okHTTP, "proj-1", dir, "app", result, deployListener(context.Background(), c, "app", result)...)
+			ensurePublicAccess(context.Background(), mock, okHTTP, "proj-1", dir, "app", result, deployListener(context.Background(), c, dir, "app", result)...)
 			if got := mock.CallCounts["EnableSubdomainAccess"]; got != tt.wantEnable {
 				t.Errorf("EnableSubdomainAccess calls = %d, want %d", got, tt.wantEnable)
 			}

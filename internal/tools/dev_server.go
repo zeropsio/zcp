@@ -133,6 +133,7 @@ func RegisterDevServer(srv *mcp.Server, d DevServerDeps) {
 		},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input DevServerInput) (*mcp.CallToolResult, any, error) {
 		params := devServerParams(input)
+		params.Root = supervisorRoot(stateDir, input.Hostname)
 		result, err := ops.ExecuteDevServer(ctx, ssh, client, projectID, params)
 		var noSup *ops.NoSupervisorError
 		var migration *devServerMigration

@@ -742,7 +742,7 @@ func TestDevServersAfterDeploy(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			c := tt.container()
-			_, result, err := DevServersAfterDeploy(context.Background(), c, "apidev")
+			_, result, err := DevServersAfterDeploy(context.Background(), c, "apidev", "")
 			if err != nil {
 				t.Fatalf("DevServersAfterDeploy: %v", err)
 			}

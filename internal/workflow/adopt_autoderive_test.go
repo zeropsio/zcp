@@ -33,7 +33,7 @@ func TestBootstrapCompleteAdoptPlan_SingleRuntime_ScopedAutoCommits(t *testing.T
 		userSvc("appdev", "php-nginx@8.4"),
 		userSvc("db", "postgresql@16"),
 	}
-	resp, err := eng.BootstrapCompleteAdoptPlan(existing, []string{"appdev"}, runtime.Info{}, nil)
+	resp, err := eng.BootstrapCompleteAdoptPlan(existing, []string{"appdev"}, runtime.Info{}, nil, nil)
 	if err != nil {
 		t.Fatalf("BootstrapCompleteAdoptPlan: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestBootstrapCompleteAdoptPlan_ScopedToNamed(t *testing.T) {
 		userSvc("workerstage", "nodejs@22"),
 		userSvc("db", "postgresql@16"),
 	}
-	resp, err := eng.BootstrapCompleteAdoptPlan(existing, []string{"workerstage"}, runtime.Info{}, nil)
+	resp, err := eng.BootstrapCompleteAdoptPlan(existing, []string{"workerstage"}, runtime.Info{}, nil, nil)
 	if err != nil {
 		t.Fatalf("BootstrapCompleteAdoptPlan: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestBootstrapCompleteAdoptPlan_EmptyScopeListsCandidates(t *testing.T) {
 		userSvc("api", "go@1"),
 		userSvc("db", "postgresql@16"),
 	}
-	_, err := eng.BootstrapCompleteAdoptPlan(existing, nil, runtime.Info{}, nil)
+	_, err := eng.BootstrapCompleteAdoptPlan(existing, nil, runtime.Info{}, nil, nil)
 	if err == nil {
 		t.Fatal("want empty-scope diagnostic, got nil")
 	}
@@ -163,7 +163,7 @@ func TestBootstrapCompleteAdoptPlan_TwoSameType_RefusesWithTemplates(t *testing.
 		userSvc("appstage", "php-nginx@8.4"),
 		userSvc("db", "postgresql@16"),
 	}
-	_, err := eng.BootstrapCompleteAdoptPlan(existing, []string{"appdev", "appstage"}, runtime.Info{}, nil)
+	_, err := eng.BootstrapCompleteAdoptPlan(existing, []string{"appdev", "appstage"}, runtime.Info{}, nil, nil)
 	if err == nil {
 		t.Fatal("want ErrAdoptPairingChoice refusal, got nil")
 	}
@@ -205,7 +205,7 @@ func TestBootstrapCompleteAdoptPlan_SameBareTypeDifferentOS_RefusesWithTemplates
 		userSvc("appdev", "ubuntu/nodejs@22"),
 		userSvc("appstage", "alpine/nodejs@22"),
 	}
-	_, err := eng.BootstrapCompleteAdoptPlan(existing, []string{"appdev", "appstage"}, runtime.Info{}, nil)
+	_, err := eng.BootstrapCompleteAdoptPlan(existing, []string{"appdev", "appstage"}, runtime.Info{}, nil, nil)
 	if err == nil {
 		t.Fatal("want ErrAdoptPairingChoice for same-bare-type (ubuntu/alpine) dev/stage pair, got nil")
 	}
@@ -237,7 +237,7 @@ func TestBootstrapCompleteAdoptPlan_DifferentVersionSameRuntime_CommitsIndepende
 		userSvc("appdev", "nodejs@22"),
 		userSvc("api", "nodejs@20"),
 	}
-	resp, err := eng.BootstrapCompleteAdoptPlan(existing, []string{"appdev", "api"}, runtime.Info{}, nil)
+	resp, err := eng.BootstrapCompleteAdoptPlan(existing, []string{"appdev", "api"}, runtime.Info{}, nil, nil)
 	if err != nil {
 		t.Fatalf("different-version runtimes must commit independent, got %v", err)
 	}
@@ -258,7 +258,7 @@ func TestBootstrapCompleteAdoptPlan_MixedTypes_ScopedAutoCommitsIndependent(t *t
 		userSvc("appdev", "php-nginx@8.4"),
 		userSvc("api", "go@1"),
 	}
-	resp, err := eng.BootstrapCompleteAdoptPlan(existing, []string{"appdev", "api"}, runtime.Info{}, nil)
+	resp, err := eng.BootstrapCompleteAdoptPlan(existing, []string{"appdev", "api"}, runtime.Info{}, nil, nil)
 	if err != nil {
 		t.Fatalf("BootstrapCompleteAdoptPlan: %v", err)
 	}
@@ -287,7 +287,7 @@ func TestBootstrapCompleteAdoptPlan_RejectsNonAdoptRoute(t *testing.T) {
 	if _, err := eng.BootstrapStartWithRoute("proj-1", "classic", BootstrapRouteClassic, ""); err != nil {
 		t.Fatalf("BootstrapStartWithRoute(classic): %v", err)
 	}
-	_, err := eng.BootstrapCompleteAdoptPlan([]platform.ServiceStack{userSvc("appdev", "go@1")}, []string{"appdev"}, runtime.Info{}, nil)
+	_, err := eng.BootstrapCompleteAdoptPlan([]platform.ServiceStack{userSvc("appdev", "go@1")}, []string{"appdev"}, runtime.Info{}, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "adopt-route only") {
 		t.Fatalf("want adopt-route-only error, got %v", err)
 	}
@@ -311,7 +311,7 @@ func TestBootstrapCompleteAdoptPlan_UsesCanonicalAdoptable(t *testing.T) {
 		userSvc("appdev", "php-nginx@8.4"),
 		userSvc("apidone", "go@1"),
 	}
-	_, err := eng.BootstrapCompleteAdoptPlan(existing, []string{"appdev", "apidone"}, runtime.Info{}, nil)
+	_, err := eng.BootstrapCompleteAdoptPlan(existing, []string{"appdev", "apidone"}, runtime.Info{}, nil, nil)
 	if err == nil {
 		t.Fatal("want non-adoptable completed-meta rejection, got nil")
 	}
@@ -334,7 +334,7 @@ func TestBootstrapCompleteAdoptPlan_NoRuntimes_Errors(t *testing.T) {
 	dir := t.TempDir()
 	eng := startAdopt(t, dir)
 
-	_, err := eng.BootstrapCompleteAdoptPlan([]platform.ServiceStack{userSvc("db", "postgresql@16")}, []string{"db"}, runtime.Info{}, nil)
+	_, err := eng.BootstrapCompleteAdoptPlan([]platform.ServiceStack{userSvc("db", "postgresql@16")}, []string{"db"}, runtime.Info{}, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "no adoptable runtime services") {
 		t.Fatalf("want no-adoptable error, got %v", err)
 	}
@@ -369,7 +369,7 @@ func TestBootstrapCompleteAdoptPlan_ExcludesConcurrentSessionService(t *testing.
 		userSvc("appdev", "php-nginx@8.4"),
 		userSvc("mailpit", "nodejs@22"),
 	}
-	_, err := eng.BootstrapCompleteAdoptPlan(existing, nil, runtime.Info{}, nil)
+	_, err := eng.BootstrapCompleteAdoptPlan(existing, nil, runtime.Info{}, nil, nil)
 	if err == nil {
 		t.Fatal("want empty-scope diagnostic, got nil")
 	}
@@ -381,11 +381,59 @@ func TestBootstrapCompleteAdoptPlan_ExcludesConcurrentSessionService(t *testing.
 		t.Fatalf("foreign live-session service must not be listed as adoptable; got:\n%s", msg)
 	}
 
-	_, err = eng.BootstrapCompleteAdoptPlan(existing, []string{"mailpit"}, runtime.Info{}, nil)
+	_, err = eng.BootstrapCompleteAdoptPlan(existing, []string{"mailpit"}, runtime.Info{}, nil, nil)
 	if err == nil {
 		t.Fatal("want scoped rejection for foreign live-session service, got nil")
 	}
 	if !strings.Contains(err.Error(), "unknown or non-adoptable") || !strings.Contains(err.Error(), "mailpit") {
 		t.Fatalf("want mailpit rejected as non-adoptable, got %v", err)
+	}
+}
+
+// TestBootstrapCompleteAdoptPlan_DevServicesSharingAVolume_AreOneVariantBPair
+// (docs/spec-mate.md §2.8a, Decision: B is recognised from topology on every
+// route): two dev services whose dev setups mount one local-storage volume
+// are adopted as one pair holding the code volume, the volume is no
+// dependency, and one dev service alone stays an ordinary adopt.
+func TestBootstrapCompleteAdoptPlan_DevServicesSharingAVolume_AreOneVariantBPair(t *testing.T) {
+	t.Parallel()
+	existing := []platform.ServiceStack{
+		userSvc("webdev", "bun@1.3"),
+		userSvc("apidev", "go@1"),
+		userSvc("vol", "local-storage:single@1"),
+	}
+	mount := func(setup, base string) AdoptVolumeSetup {
+		return AdoptVolumeSetup{Setup: setup, RunBase: base, Volume: "vol", MountPath: "/var/www/ws"}
+	}
+	eng := startAdopt(t, t.TempDir())
+	if _, err := eng.BootstrapCompleteAdoptPlan(existing, []string{"webdev", "apidev"}, runtime.Info{}, nil,
+		[]AdoptVolumeSetup{mount("dev", "bun@1.3"), mount("dev-api", "go@1")}); err != nil {
+		t.Fatalf("BootstrapCompleteAdoptPlan: %v", err)
+	}
+	state, err := eng.GetState()
+	if err != nil {
+		t.Fatalf("GetState: %v", err)
+	}
+	targets := state.Bootstrap.Plan.Targets
+	if len(targets) != 1 {
+		t.Fatalf("want one pair, got %+v", targets)
+	}
+	rt := targets[0].Runtime
+	cv := rt.CodeVolume
+	if rt.DevHostname != "webdev" || cv == nil || cv.Hostname != "vol" || cv.MountPath != "/var/www/ws" ||
+		len(cv.DevServices) != 1 || cv.DevServices[0].Hostname != "apidev" || cv.DevServices[0].SetupName != "dev-api" || rt.PrimarySetupName != "dev" {
+		t.Errorf("pair = %+v codeVolume = %+v", rt, cv)
+	}
+	if len(targets[0].Dependencies) != 0 {
+		t.Errorf("the code volume is no dependency: %+v", targets[0].Dependencies)
+	}
+
+	one := startAdopt(t, t.TempDir())
+	if _, err := one.BootstrapCompleteAdoptPlan(existing, []string{"webdev"}, runtime.Info{}, nil, []AdoptVolumeSetup{mount("dev", "bun@1.3")}); err != nil {
+		t.Fatalf("single: %v", err)
+	}
+	st, _ := one.GetState()
+	if got := st.Bootstrap.Plan.Targets[0].Runtime.CodeVolume; got != nil {
+		t.Errorf("one dev service has no code volume, got %+v", got)
 	}
 }

@@ -61,7 +61,7 @@ const SupervisedYAML = `zerops:
   - setup: dev
     run:
       prepareCommands:
-        - sudo sh -c 'curl -fsSL https://github.com/zeropsio/zcp/releases/download/v9.300.0/zcp-devsup-linux-amd64 -o /usr/local/bin/zcp-devsup && chmod 0755 /usr/local/bin/zcp-devsup'
+        - sudo sh -c 'u=https://github.com/zeropsio/zcp/releases/download/v9.300.0/zcp-devsup-linux-amd64; f=/usr/local/bin/zcp-devsup; if command -v curl >/dev/null; then curl -fsSL "$u" -o "$f"; else wget -qO "$f" "$u"; fi && chmod 0755 "$f"'
       start: zcp-devsup run
 `
 

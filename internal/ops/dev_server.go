@@ -103,6 +103,9 @@ type DevServerParams struct {
 	WaitSeconds int
 	LogLines    int
 	WorkDir     string
+	// Root is the repository root the dev service's supervisor runs on, ""
+	// for /var/www; a variant-B dev service's is its code volume's mount.
+	Root string
 	// NoHTTPProbe skips the post-start health probe. Set true for worker
 	// services that have no HTTP port (NATS/Kafka consumers, disk-queue
 	// runners, cron-style processes). With NoHTTPProbe=true, Port becomes
@@ -195,7 +198,7 @@ func ExecuteDevServer(
 		return nil, err
 	}
 	action := strings.ToLower(p.Action)
-	ds, err := ReadDevServers(ctx, ssh, p.Hostname)
+	ds, err := ReadDevServers(ctx, ssh, p.Hostname, p.Root)
 	var noSup *NoSupervisorError
 	switch {
 	case errors.As(err, &noSup) && (action == devServerActionStart || action == devServerActionRestart):
@@ -260,7 +263,7 @@ func validateDevServerParams(p DevServerParams) error {
 			"A dev server name is lowercase letters, digits and dashes, starting with a letter, up to 40 chars (e.g. web, api, worker).")
 	}
 	if p.WorkDir != "" {
-		if _, err := devServerCwd(p.WorkDir); err != nil {
+		if _, err := devServerCwd(p.Root, p.WorkDir); err != nil {
 			return err
 		}
 	}
@@ -279,16 +282,17 @@ func validateDevServerParams(p DevServerParams) error {
 
 // devServerCwd turns an absolute workDir into the declaration's cwd, relative
 // to the repo root.
-func devServerCwd(workDir string) (string, error) {
+func devServerCwd(root, workDir string) (string, error) {
 	if workDir == "" {
 		return ".", nil
 	}
+	repo := devRepoRoot(root)
 	clean := path.Clean(workDir)
-	rel, ok := strings.CutPrefix(clean, DevRepoRoot)
+	rel, ok := strings.CutPrefix(clean, repo)
 	if !devWorkDirRe.MatchString(workDir) || !ok || (rel != "" && !strings.HasPrefix(rel, "/")) {
 		return "", platform.NewPlatformError(platform.ErrInvalidParameter,
 			fmt.Sprintf("Invalid working directory %q", workDir),
-			"workDir must be an absolute path inside the repo at "+DevRepoRoot+" (e.g. "+DevRepoRoot+"/apps/web).")
+			"workDir must be an absolute path inside the repo at "+repo+" (e.g. "+repo+"/apps/web).")
 	}
 	if rel = strings.TrimPrefix(rel, "/"); rel == "" {
 		return ".", nil
@@ -455,7 +459,7 @@ func wantedServer(p DevServerParams, name string, declared devsup.Server, isDecl
 		want.Command = strings.TrimSpace(p.Command)
 	}
 	if p.WorkDir != "" || !isDeclared {
-		cwd, err := devServerCwd(p.WorkDir)
+		cwd, err := devServerCwd(p.Root, p.WorkDir)
 		if err != nil {
 			return devsup.Server{}, err
 		}
@@ -501,7 +505,7 @@ func startDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds 
 	}
 	decl, changed := DeclareDevServer(ds.Declared, want)
 	if changed {
-		if err := WriteDevDeclaration(ctx, ssh, p.Hostname, decl); err != nil {
+		if err := WriteDevDeclaration(ctx, ssh, p.Hostname, p.Root, decl); err != nil {
 			return nil, err
 		}
 		if _, err := supervisorCtl(ctx, ssh, p.Hostname, "reload"); err != nil {

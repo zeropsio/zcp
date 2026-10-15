@@ -381,3 +381,14 @@ func lineDiff(a, b []string) (removed, added []string) {
 	}
 	return removed, added
 }
+
+// TestDevsupPrepareCommand_FallsBackToWgetWhenCurlIsAbsent (docs/spec-mate.md
+// §2.8a.2): an Alpine image without curl still installs the supervisor.
+func TestDevsupPrepareCommand_FallsBackToWgetWhenCurlIsAbsent(t *testing.T) {
+	t.Parallel()
+	got := DevsupPrepareCommand(testDevsupURL)
+	want := `sudo sh -c 'u=` + testDevsupURL + `; f=/usr/local/bin/zcp-devsup; if command -v curl >/dev/null; then curl -fsSL "$u" -o "$f"; else wget -qO "$f" "$u"; fi && chmod 0755 "$f"'`
+	if got != want {
+		t.Errorf("DevsupPrepareCommand = %q, want %q", got, want)
+	}
+}

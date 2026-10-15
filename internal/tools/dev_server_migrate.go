@@ -75,9 +75,9 @@ func migrateToSupervisor(ctx context.Context, req *mcp.CallToolRequest, d DevSer
 	// A variant-B dev service's repository is on the code volume: its dev
 	// setup is edited there, the supervisor runs on it, and the redeploy
 	// runs from it (ServiceMeta.WorkingDirFor; "" is /var/www).
-	setup, root := "", ""
+	setup, root := "", supervisorRoot(d.StateDir, host)
 	if meta, _ := workflow.FindServiceMeta(d.StateDir, host); meta != nil {
-		setup, root = meta.SetupNameFor(host), meta.WorkingDirFor(host)
+		setup = meta.SetupNameFor(host)
 	}
 	name, err := ops.DeclareDevServerForStart(ctx, d.SSH, p)
 	if err != nil {
@@ -184,7 +184,8 @@ func carryKeptServer(ctx context.Context, ssh ops.SSHDeployer, stateDir string, 
 	if ssh == nil {
 		return devSetupMove{}, nil
 	}
-	_, err := ops.ReadDevServers(ctx, ssh, target)
+	root := supervisorRoot(stateDir, target)
+	_, err := ops.ReadDevServers(ctx, ssh, target, root)
 	var noSup *ops.NoSupervisorError
 	switch {
 	case err == nil:
@@ -199,15 +200,11 @@ func carryKeptServer(ctx context.Context, ssh ops.SSHDeployer, stateDir string, 
 	if err != nil {
 		return devSetupMove{}, lost(err)
 	}
-	root := ""
-	if meta, _ := workflow.FindServiceMeta(stateDir, target); meta != nil {
-		root = meta.WorkingDirFor(target)
-		if setup == "" {
-			setup = meta.SetupNameFor(target)
-		}
+	if meta, _ := workflow.FindServiceMeta(stateDir, target); meta != nil && setup == "" {
+		setup = meta.SetupNameFor(target)
 	}
 	name, err := ops.DeclareDevServerForStart(ctx, ssh, ops.DevServerParams{
-		Action: "start", Hostname: target, Command: kept.Command, Port: kept.Port, HealthPath: kept.HealthPath,
+		Action: "start", Hostname: target, Root: root, Command: kept.Command, Port: kept.Port, HealthPath: kept.HealthPath,
 		WaitSeconds: kept.WaitSeconds, WorkDir: kept.WorkDir, NoHTTPProbe: kept.NoHTTPProbe,
 	})
 	if err != nil {
@@ -289,16 +286,25 @@ func redeployForSupervisor(ctx context.Context, req *mcp.CallToolRequest, d DevS
 	return result
 }
 
+// supervisorRoot is the repository root hostname's supervisor runs on: the
+// code volume's mount for a variant-B dev service, "" (/var/www) otherwise.
+func supervisorRoot(stateDir, hostname string) string {
+	if meta, _ := workflow.FindServiceMeta(stateDir, hostname); meta != nil {
+		return meta.WorkingDirFor(hostname)
+	}
+	return ""
+}
+
 // deployListener is "is something listening" after a deploy of hostname
 // (docs/spec-workflows.md §8 O3 PA-1, MODEL §9/1b): the supervisor's word when
 // the dev setup runs one — it starts every declared server on a redeploy, and
 // a dev service with one declared server reports it as result.DevServer —
 // else nothing, and ensurePublicAccess falls back to the runtime's class.
-func deployListener(ctx context.Context, ssh ops.SSHDeployer, hostname string, result *ops.DeployResult) []bool {
+func deployListener(ctx context.Context, ssh ops.SSHDeployer, stateDir, hostname string, result *ops.DeployResult) []bool {
 	if ssh == nil {
 		return nil
 	}
-	ds, devServer, err := ops.DevServersAfterDeploy(ctx, ssh, hostname)
+	ds, devServer, err := ops.DevServersAfterDeploy(ctx, ssh, hostname, supervisorRoot(stateDir, hostname))
 	if err != nil {
 		var noSup *ops.NoSupervisorError
 		if !errors.As(err, &noSup) {

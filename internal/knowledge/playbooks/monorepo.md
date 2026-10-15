@@ -38,6 +38,18 @@ setup per part plus a `dev` setup in the single root `zerops.yaml`.
    enough — **one dev service per part on one shared Local Storage volume**:
    `mountPath` is a subfolder of `/var/www` (the platform rejects `/var/www`
    itself), and deploys take `workingDir` on the volume.
+   Adopted or imported, zcp recognises it from the services: dev services whose dev
+   setups mount one volume come as one pair with its code volume. Deploy in this order:
+   1. `zerops_deploy targetService="webdev" setup="dev" workingDir="/var/www"` — the
+      dev half (replace the names with the pair's dev half and its dev setup); the
+      deploy mounts the volume, and zcp then puts the repository on it and reloads
+      every dev service's supervisor.
+   2. `zerops_deploy sourceService="webdev" targetService="apidev" setup="dev-api"` —
+      each further dev service, built from the volume (replace the names with the
+      pair's dev half, the further dev service and its dev setup).
+
+   Never copy files onto the volume by hand: the volume must be a git repository,
+   and a hand copy leaves it without one.
 3. More people on the repo means more Mates, never more dev services.
 
 ## 3. Write the setups

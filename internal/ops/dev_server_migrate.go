@@ -69,9 +69,11 @@ func DevsupURL(latest, override string) (string, error) {
 }
 
 // DevsupPrepareCommand is the run.prepareCommands line that installs
-// zcp-devsup into the runtime image (never $HOME: a redeploy loses it).
+// zcp-devsup into the runtime image (never $HOME: a redeploy loses it); wget
+// stands in where the base has no curl (Alpine).
 func DevsupPrepareCommand(url string) string {
-	return "sudo sh -c 'curl -fsSL " + url + " -o /usr/local/bin/zcp-devsup && chmod 0755 /usr/local/bin/zcp-devsup'"
+	return "sudo sh -c 'u=" + url + "; f=/usr/local/bin/zcp-devsup; " +
+		`if command -v curl >/dev/null; then curl -fsSL "$u" -o "$f"; else wget -qO "$f" "$u"; fi && chmod 0755 "$f"'`
 }
 
 // AdoptSupervisorYAML puts the dev setup's run under the supervisor: the
@@ -223,7 +225,7 @@ func DirtyCrewCopies(ctx context.Context, ssh SSHDeployer, hostname string) ([]s
 // DeclareDevServerForStart writes the declaration entry a start of p asks for
 // on a dev service without the supervisor yet, and returns the server's name.
 func DeclareDevServerForStart(ctx context.Context, ssh SSHDeployer, p DevServerParams) (string, error) {
-	ds, err := ReadDevServers(ctx, ssh, p.Hostname)
+	ds, err := ReadDevServers(ctx, ssh, p.Hostname, p.Root)
 	var noSup *NoSupervisorError
 	if err != nil && !errors.As(err, &noSup) {
 		return "", err
@@ -241,7 +243,7 @@ func DeclareDevServerForStart(ctx context.Context, ssh SSHDeployer, p DevServerP
 		return "", err
 	}
 	if decl, changed := DeclareDevServer(ds.Declared, want); changed {
-		if err := WriteDevDeclaration(ctx, ssh, p.Hostname, decl); err != nil {
+		if err := WriteDevDeclaration(ctx, ssh, p.Hostname, p.Root, decl); err != nil {
 			return "", err
 		}
 	}
@@ -253,8 +255,8 @@ func DeclareDevServerForStart(ctx context.Context, ssh SSHDeployer, p DevServerP
 // itself, so a dev service with exactly one declared server reports it as
 // its start would (health probe on its port). *NoSupervisorError when its
 // dev setup does not run the supervisor.
-func DevServersAfterDeploy(ctx context.Context, ssh SSHDeployer, hostname string) (*DevServers, *DevServerResult, error) {
-	ds, err := ReadDevServers(ctx, ssh, hostname)
+func DevServersAfterDeploy(ctx context.Context, ssh SSHDeployer, hostname, root string) (*DevServers, *DevServerResult, error) {
+	ds, err := ReadDevServers(ctx, ssh, hostname, root)
 	if err != nil {
 		return nil, nil, err
 	}

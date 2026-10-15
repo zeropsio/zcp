@@ -261,7 +261,7 @@ func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallba
 			attempt.SucceededAt = entry.EndedAt
 			// Whether something listens is the dev-server supervisor's
 			// word when the target runs one.
-			listening := deployListener(ctx, d.sshDeployer, entry.Result.TargetService, entry.Result)
+			listening := deployListener(ctx, d.sshDeployer, d.stateDir, entry.Result.TargetService, entry.Result)
 			ensurePublicAccess(ctx, d.client, d.httpClient, d.projectID, d.stateDir, entry.Result.TargetService, entry.Result, listening...)
 			moves[entry.Target.TargetService].settle(d.stateDir, entry.Target.TargetService, listening, entry.Result)
 		case entry.Result != nil && entry.Result.TimedOut:

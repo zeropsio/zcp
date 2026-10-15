@@ -222,7 +222,7 @@ func publicAccessInputForHost(ctx context.Context, client platform.Client, ssh o
 		class := topology.RuntimeClassFor(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName)
 		deferredStart = topology.IsDeferredStart(meta.ModeFor(host), class)
 		if deferredStart && ssh != nil {
-			if ds, readErr := ops.ReadDevServers(ctx, ssh, host); readErr == nil {
+			if ds, readErr := ops.ReadDevServers(ctx, ssh, host, meta.WorkingDirFor(host)); readErr == nil {
 				deferredStart = !ds.Listening()
 				devPorts = ds.DevPorts()
 			}

@@ -105,7 +105,7 @@ var ErrAdoptPairingChoice = errors.New("adopt: ambiguous dev/stage pairing")
 // dev→stage relationship later promote/launch flows depend on). One named
 // runtime, or multiple named runtimes of mixed types, commit frictionlessly as
 // independent dev containers.
-func (e *Engine) BootstrapCompleteAdoptPlan(existing []platform.ServiceStack, scope []string, self runtime.Info, schemas *schema.Schemas) (*BootstrapResponse, error) {
+func (e *Engine) BootstrapCompleteAdoptPlan(existing []platform.ServiceStack, scope []string, self runtime.Info, schemas *schema.Schemas, volumeSetups []AdoptVolumeSetup) (*BootstrapResponse, error) {
 	state, err := e.loadState()
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap adopt plan: %w", err)
@@ -138,10 +138,17 @@ func (e *Engine) BootstrapCompleteAdoptPlan(existing []platform.ServiceStack, sc
 		typeByHost[svc.Name] = svc.ServiceStackTypeInfo.ServiceStackTypeVersionName
 	}
 
+	// Variant B: dev services of one repository sharing a local-storage
+	// volume are one pair, recognised from the topology as stand-up does.
+	variantB, adoptable := adoptVariantB(adoptable, typeByHost, volumeSetups)
+
 	// Managed services become shared EXISTS dependencies on every target.
 	var deps []Dependency
 	for _, svc := range existing {
 		t := svc.ServiceStackTypeInfo.ServiceStackTypeVersionName
+		if variantB != nil && svc.Name == variantB.Runtime.CodeVolume.Hostname {
+			continue
+		}
 		if !svc.IsSystem() && topology.IsManagedService(t) {
 			deps = append(deps, Dependency{Hostname: svc.Name, Type: t, Resolution: ResolutionExists})
 		}
@@ -173,6 +180,10 @@ func (e *Engine) BootstrapCompleteAdoptPlan(existing []platform.ServiceStack, sc
 		managed = schemas.ManagedBaseNames()
 	}
 	targets := InferServicePairing(candidates, managed)
+	if variantB != nil {
+		variantB.Dependencies = deps
+		targets = append([]BootstrapTarget{*variantB}, targets...)
+	}
 	if len(targets) == 0 {
 		return nil, fmt.Errorf("bootstrap adopt plan: no adoptable runtime services found — nothing to adopt")
 	}
@@ -343,4 +354,81 @@ func AdoptPair(stateDir string, target BootstrapTarget, date string) error {
 		return fmt.Errorf("adopt pair %s: %w", rt.DevHostname, err)
 	}
 	return nil
+}
+
+// AdoptVolumeSetup is a dev setup of the repository's zerops.yaml that mounts
+// a local-storage volume (run.volume), in file order.
+type AdoptVolumeSetup struct {
+	Setup     string
+	RunBase   string
+	Volume    string
+	MountPath string
+}
+
+// adoptVariantB recognises variant B (docs/spec-mate.md §2.8a) among the
+// adoptable runtimes the way the stand-up does from a tier: several dev
+// services of one repository mounting one local-storage volume are one pair.
+// A setup that mounts the volume belongs to the one adoptable runtime of its
+// run.base; a setup no runtime matches uniquely leaves the topology alone.
+// It returns the dev-mode target holding the code volume (nil when there is
+// none) and the adoptable runtimes left for the ordinary derivation.
+func adoptVariantB(adoptable []string, typeByHost map[string]string, setups []AdoptVolumeSetup) (*BootstrapTarget, []string) {
+	byVolume := map[string][]AdoptVolumeSetup{}
+	var order []string
+	for _, s := range setups {
+		if s.Volume == "" {
+			continue
+		}
+		if _, seen := byVolume[s.Volume]; !seen {
+			order = append(order, s.Volume)
+		}
+		byVolume[s.Volume] = append(byVolume[s.Volume], s)
+	}
+	for _, volume := range order {
+		mounts := byVolume[volume]
+		if len(mounts) < 2 || topology.CodeVolumeMountPathError(mounts[0].MountPath) != "" {
+			continue
+		}
+		var hosts []string
+		var refs []topology.DevServiceRef
+		taken := map[string]bool{}
+		for _, m := range mounts {
+			host := ""
+			for _, h := range adoptable {
+				if taken[h] || topology.CanonicalBaseName(typeByHost[h]) != topology.CanonicalBaseName(m.RunBase) {
+					continue
+				}
+				if host != "" {
+					host = ""
+					break
+				}
+				host = h
+			}
+			if host == "" || m.MountPath != mounts[0].MountPath {
+				hosts = nil
+				break
+			}
+			taken[host] = true
+			hosts = append(hosts, host)
+			refs = append(refs, topology.DevServiceRef{Hostname: host, SetupName: m.Setup})
+		}
+		if len(hosts) < 2 {
+			continue
+		}
+		rest := make([]string, 0, len(adoptable))
+		for _, h := range adoptable {
+			if !taken[h] {
+				rest = append(rest, h)
+			}
+		}
+		return &BootstrapTarget{Runtime: RuntimeTarget{
+			DevHostname:      hosts[0],
+			Type:             typeByHost[hosts[0]],
+			IsExisting:       true,
+			BootstrapMode:    topology.PlanModeDev,
+			PrimarySetupName: refs[0].SetupName,
+			CodeVolume:       &topology.CodeVolume{Hostname: volume, MountPath: mounts[0].MountPath, DevServices: refs[1:]},
+		}}, rest
+	}
+	return nil, adoptable
 }
