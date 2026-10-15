@@ -91,7 +91,7 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 			var resp *workflow.BootstrapResponse
 			var err error
 			if len(input.Plan) == 0 {
-				resp, err = engine.BootstrapCompleteAdoptPlan(existing, input.Scope, rt, schemas, adoptVolumeSetups(existing, stateDir))
+				resp, err = engine.BootstrapCompleteAdoptPlan(existing, input.Scope, rt, schemas, adoptVolumeSetups(ctx, sshDeployer, existing, stateDir))
 			} else {
 				resp, err = engine.BootstrapCompletePlan(input.Plan, schemas, existing)
 			}
