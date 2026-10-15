@@ -979,3 +979,18 @@ func TestClassifyDeployFailure_NamesTheReposConfigFile_QuotedLogTextKeepsItsOwn(
 		})
 	}
 }
+
+func TestClassifyDeployFailure_ArchiveWriteTooLong_SourceChangedNotNetwork(t *testing.T) {
+	t.Parallel()
+	got := ClassifyDeployFailure(FailureInput{
+		Phase: PhaseTransport,
+		TransportErr: &platform.SSHExecError{
+			Hostname: "src",
+			Output:   "➤ INFO Creating package\n➤ INFO Uploading package\n✗ ERR archive/tar: write too long",
+			Err:      errors.New("exit status 1"),
+		},
+	})
+	if got == nil || got.Category == topology.FailureClassNetwork || !slices.Contains(got.Signals, "transport:zcli-archive-source-changed") {
+		t.Fatalf("classification = %+v, want source-changed signal, not network", got)
+	}
+}
