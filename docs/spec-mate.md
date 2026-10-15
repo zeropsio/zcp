@@ -638,23 +638,35 @@ between the two for long.
 
 ### 2.6b Managed browser batches
 
-`zerops_browser` owns a Linux transient systemd service for each batch. One
-nonblocking container-wide file lock admits one managed batch across zcp processes;
-a competing caller fails without stopping the owner. The service's cgroup includes
-the detached daemon and Chrome's separate process groups. Success, error, deadline
-and cancellation all stop it with a cleanup context independent of the caller.
-A task cap of 10% of systemd's available task ceiling bounds this one managed
-service; unrelated workloads and raw browser scripts are outside that cap.
+`zerops_browser` and `zerops_verify`'s render check share one warm browser per
+container: the transient systemd service `zcp-browser.service` holds agent-browser's
+daemon and its Chrome between calls. It is `Type=forking`, started through
+`agent-browser open about:blank`, with the daemon's pid file as `PIDFile`. Its
+`RuntimeDirectory` holds the daemon socket, so once the service is gone no client
+can respawn a daemon outside it. systemd bounds it: `TasksMax=1000`, `CPUQuota` at
+75% of the container's CPUs, `RuntimeMaxSec=3600`, and `KillMode=control-group`
+with `SIGKILL`. Chrome's profile lives in `/tmp/zcp-browser`, which `ExecStopPost`
+removes on every stop. The daemon exits after 5 idle minutes, and the service ends
+with it. The service and every step get one environment built by one function,
+because agent-browser restarts a daemon whose settings differ from its client's.
 
-On the next managed start, acquiring the lock proves the previous owner ended.
-Only the owned service is stopped, and its private temporary profile/socket
-folder is removed only after its cgroup is empty or absent. Browser installation
-caches, explicit persistent profiles and unmanaged sessions are preserved. A
-managed stream symlink preserves Mate's existing endpoint when no other owner
-has published one; cleanup removes only that exact owned link. Cleanup failure
-retains residue and reports an error. `forceReset` remains a compatibility option;
-every managed batch starts clean. No process-name sweep or stale PID file has
-kill authority. Raw browser tools and provider lifetimes remain unchanged.
+A call waits on one container-wide `flock` until its own deadline, then fails as
+busy. It reuses the warm browser only if the browser is running, the last call in
+it ended cleanly (a marker in the runtime directory says `idle`; a caller that died
+mid-call leaves it `busy`), and neither the idle exit nor the max age can cut the
+call. Otherwise it starts a fresh one. Each step is its own `agent-browser --json`
+process, so a deadline or cancel keeps the finished steps. A call clears the
+daemon-wide logs, opens its own tab, and closes every tab but the base one when it
+ends. A deadline, cancel, fork exhaustion, unanswered step, CDP wedge or failed
+cleanup stops the service instead.
+
+`isolation` is one parameter: `tab` (default) is a tab in the warm default context,
+so cookies, storage, HTTP cache and service workers carry over between calls;
+`fresh-context` is `window new`, a new browser context; `new-browser` recycles the
+service. The Mate's stream endpoint `~/.agent-browser/default.stream` is a symlink
+into the runtime directory, and dangles (no stream) while no browser runs. No
+process-name sweep or PID has kill authority. Raw browser tools and provider
+lifetimes are outside this service.
 
 ### 2.7 Base path on the mate side
 
