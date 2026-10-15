@@ -1,5 +1,4 @@
 project:
   name: zcp-farm-run-launch789
-  tags: [zcp-farm, disposable]
   sshIsolation: "vpn project"
 services: []

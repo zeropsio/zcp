@@ -425,9 +425,7 @@ is pinned by the `.golangci.yaml` depguard rules `core-not-eval` and
 `eval-no-upper-layers`, and enforced independently of depguard by
 `internal/eval/architecture_test.go`.
 
-The gate set is currently 10 scenarios. The two launch scenarios (O6) are
-deferred out of it until a source-control fixture exists for them to build
-from.
+The gate set is the list in `eval/farm/gate-set.txt`.
 
 Input safety also lives at the controller boundary, independently of CLI
 parsing: selected scenario IDs must be unique, and the batch identity must

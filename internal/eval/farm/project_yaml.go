@@ -240,7 +240,6 @@ func yamlDQ(s string) string {
 
 var projectImportYAMLTemplate = template.Must(template.New("projectImportYAML").Parse(`project:
   name: {{.ProjectName}}
-  tags: [zcp-farm, disposable]
   sshIsolation: "vpn project"
 services: []
 `))
