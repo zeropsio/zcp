@@ -53,6 +53,10 @@ userPersona: |
   and you expect ZCP to tell you to delete it once it reports launched.
   Either way, push back if ZCP tries to persist a key anywhere or asks
   for ongoing prod access.
+  When the agent shows the production bundle and asks you to approve it
+  before it uses the launch token, approve it ("yes, go ahead") and, if
+  you have not yet, tell it the token is in `$ZCP_E2E_LAUNCH_KEY`. Never
+  end the conversation on an unanswered approval question.
 notableFriction:
   - id: trust-boundary-clarity
     description: |

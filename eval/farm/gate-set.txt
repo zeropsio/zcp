@@ -33,3 +33,4 @@ repo-always-bootstrap
 deploy-from-commit-stage
 dev-self-deploy-keeps-repo
 repo-adopt-initialized-no-git
+launch-to-existing-prod-project
