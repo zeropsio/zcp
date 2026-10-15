@@ -19,8 +19,10 @@ import (
 )
 
 const (
-	// browserLockPath serialises every call in the container.
-	browserLockPath = "/tmp/zcp-browser-owned/lock"
+	// browserLockPath serialises every call in the container. It stays
+	// outside the service's directories, which every stop removes: a lock
+	// file removed while held would let the next call lock a new one.
+	browserLockPath = "/tmp/zcp-browser.lock"
 	// browserReleaseTimeout bounds the end-of-call tab cleanup and a stop.
 	browserReleaseTimeout = 15 * time.Second
 )
@@ -128,22 +130,15 @@ func (execBrowserRunner) Acquire(ctx context.Context, isolation string) (func(bo
 		unlock()
 		return nil, err
 	}
+	handBack := func(rctx context.Context) error {
+		if err := h.closeCallTabs(rctx); err != nil {
+			return err
+		}
+		return writeBrowserMarker(browserMarkerIdle)
+	}
 	release := func(reuse bool) error {
 		defer unlock()
-		// Release runs after a cancel or deadline too; its own bound.
-		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), browserReleaseTimeout)
-		defer cancel()
-		if reuse {
-			err := h.closeCallTabs(rctx)
-			if err == nil {
-				err = writeBrowserMarker(browserMarkerIdle)
-			}
-			if err == nil {
-				return nil
-			}
-			return errors.Join(fmt.Errorf("hand the browser back: %w", err), stopBrowser(rctx))
-		}
-		return stopBrowser(rctx)
+		return releaseBrowser(ctx, reuse, browserReleaseTimeout, handBack, stopBrowser)
 	}
 	return release, nil
 }
@@ -179,7 +174,8 @@ func (h browserHost) start(ctx context.Context) error {
 	if err := os.MkdirAll(browserTmpDir, 0o700); err != nil {
 		return fmt.Errorf("browser profile directory: %w", err)
 	}
-	args := browserUnitArgs(h.binary, h.env, os.Getuid(), runtime.GOMAXPROCS(0))
+	memory, _ := containerMemoryMax()
+	args := browserUnitArgs(h.binary, h.env, os.Getuid(), runtime.GOMAXPROCS(0), memory)
 	if out, err := exec.CommandContext(ctx, "sudo", args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("start the browser: %w: %s", err, strings.TrimSpace(string(out)))
 	}

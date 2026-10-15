@@ -288,6 +288,11 @@ const (
 	browserCmdClose = "close"
 	// browserCmdOpen is the agent-browser open command.
 	browserCmdOpen = "open"
+	// browserCmdTab and browserCmdWindow open, switch and close tabs and
+	// contexts; stripped from caller commands, since the tool keeps the warm
+	// browser's base tab and closes every other one when a call ends.
+	browserCmdTab    = "tab"
+	browserCmdWindow = "window"
 	// browserCmdEval is the raw eval command. Stripped from caller
 	// commands like open/close — dedicated commands (get/find/is/set)
 	// produce structured, parseable output; eval's return value does
@@ -395,21 +400,34 @@ func defaultBrowserScale(ctx context.Context) error {
 	return nil
 }
 
+// containerMemoryMax reads the container's cgroup-v2 memory ceiling: limit 0
+// when unbounded, ok=false when unreadable (not a Linux container).
+func containerMemoryMax() (limit int64, ok bool) {
+	raw, err := os.ReadFile("/sys/fs/cgroup/memory.max")
+	if err != nil {
+		return 0, false
+	}
+	s := strings.TrimSpace(string(raw))
+	if s == "max" {
+		return 0, true
+	}
+	limit, err = strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return limit, true
+}
+
 // containerFreeRAMBytes returns free bytes (cgroup-v2 memory.max − .current),
 // ok=false when unreadable (not a Linux container) or unbounded. Best-effort:
 // callers proceed on !ok.
 func containerFreeRAMBytes() (int64, bool) {
-	maxRaw, err := os.ReadFile("/sys/fs/cgroup/memory.max")
-	if err != nil {
+	maxB, ok := containerMemoryMax()
+	if !ok {
 		return 0, false
 	}
-	maxStr := strings.TrimSpace(string(maxRaw))
-	if maxStr == "max" { // unbounded ceiling — effectively unlimited headroom
+	if maxB == 0 { // unbounded ceiling — effectively unlimited headroom
 		return 1 << 62, true
-	}
-	maxB, err := strconv.ParseInt(maxStr, 10, 64)
-	if err != nil {
-		return 0, false
 	}
 	curRaw, err := os.ReadFile("/sys/fs/cgroup/memory.current")
 	if err != nil {
@@ -545,7 +563,9 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 	// Only a walk that ended on its own hands the browser back warm.
 	reuse := runErr == nil && !recycle
 	result.BrowserRecycled = !reuse
-	if err := release(reuse); err != nil {
+	// agent-browser cannot dispose a browser context, so the browser that
+	// holds a fresh context ends with the call instead of keeping it.
+	if err := release(reuse && isolation != BrowserIsolationFreshContext); err != nil {
 		fmt.Fprintf(os.Stderr, "zerops_browser: browser release: %v\n", err)
 	}
 	if !done && runErr == nil {
@@ -739,10 +759,11 @@ func scanStepsForCDPWedge(steps []BrowserStepResult) (string, bool) {
 
 // buildCanonicalBatch assembles [open url] + the first-paint wait +
 // stripped caller commands + an optional [screenshot screenshotPath] +
-// [errors] [console] [network requests]. Any open/close/eval in the
-// caller's commands is silently dropped — the canonical open is the only
-// navigation the tool owns, a close would end the warm browser, and
-// dedicated commands replace eval. screenshotPath == "" omits the
+// [errors] [console] [network requests]. Any open/close/tab/window/eval in
+// the caller's commands is silently dropped — the canonical open is the only
+// navigation the tool owns, a close would end the warm browser, tab and
+// window could close or switch its base tab, and dedicated commands replace
+// eval. screenshotPath == "" omits the
 // screenshot step entirely.
 func buildCanonicalBatch(url string, commands [][]string, screenshotPath string) [][]string {
 	inner := make([][]string, 0, len(commands))
@@ -751,8 +772,8 @@ func buildCanonicalBatch(url string, commands [][]string, screenshotPath string)
 			continue
 		}
 		switch cmd[0] {
-		case browserCmdOpen, browserCmdClose:
-			// Strip — caller should not manage lifecycle.
+		case browserCmdOpen, browserCmdClose, browserCmdTab, browserCmdWindow:
+			// Strip — the tool owns navigation, tabs and contexts.
 			continue
 		case browserCmdEval:
 			// Strip — dedicated commands produce structured output.

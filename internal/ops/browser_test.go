@@ -298,6 +298,35 @@ func TestBrowserBatch_StripsAgentOpenAndClose(t *testing.T) {
 	}
 }
 
+// TestBrowserBatch_StripsTabAndWindowCommands pins that the tool owns the
+// call's tabs and contexts: a caller's tab or window command could close or
+// switch the warm browser's base tab, which would then survive every cleanup.
+func TestBrowserBatch_StripsTabAndWindowCommands(t *testing.T) {
+	fake := &fakeBrowserRunner{runStdout: `[]`}
+	defer OverrideBrowserRunnerForTest(fake)()
+
+	_, err := BrowserBatch(context.Background(), BrowserBatchInput{
+		URL: "https://example.com",
+		Commands: [][]string{
+			{"tab", "close", "t1"},
+			{"snapshot"},
+			{"tab", "t1"},
+			{"window", "new"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, cmd := range parseStdinBatch(t, fake.lastStdin) {
+		if cmd[0] == "tab" || cmd[0] == "window" {
+			t.Errorf("caller %v must be stripped: %v", cmd, fake.lastStdin)
+		}
+	}
+	if !strings.Contains(fake.lastStdin, `["snapshot"]`) {
+		t.Errorf("other commands must stay: %s", fake.lastStdin)
+	}
+}
+
 // TestBrowserBatch_AcceptsSetCommandsStripsEval pins the S7 vocabulary
 // extension: `set viewport`, `set device`, `set media` (agent-browser
 // 0.35.1 `set --help`: "viewport <w> <h> [scale]", "device <name>",
@@ -1171,6 +1200,32 @@ func TestBrowserBatch_WarmBrowserStaysOnlyAfterACleanCall(t *testing.T) {
 				t.Errorf("BrowserRecycled = %v, want %v", result.BrowserRecycled, !tt.reuse)
 			}
 		})
+	}
+}
+
+// TestBrowserBatch_FreshContextEndsWithItsBrowser pins that a fresh-context
+// call leaves nothing behind: agent-browser cannot dispose a browser context,
+// so the browser holding it is stopped when the call ends, while a clean call
+// is still not reported as recycled.
+func TestBrowserBatch_FreshContextEndsWithItsBrowser(t *testing.T) {
+	for isolation, reuse := range map[string]bool{
+		BrowserIsolationTab:          true,
+		BrowserIsolationFreshContext: false,
+		BrowserIsolationNewBrowser:   true,
+	} {
+		fake := &fakeBrowserRunner{runStdout: `[]`}
+		restore := OverrideBrowserRunnerForTest(fake)
+		result, err := BrowserBatch(context.Background(), BrowserBatchInput{URL: "https://example.com", Isolation: isolation})
+		restore()
+		if err != nil {
+			t.Fatalf("%s: unexpected error: %v", isolation, err)
+		}
+		if !slices.Equal(fake.releases, []bool{reuse}) {
+			t.Errorf("%s: releases = %v, want exactly [%v]", isolation, fake.releases, reuse)
+		}
+		if result.BrowserRecycled {
+			t.Errorf("%s: a clean call must not report browserRecycled", isolation)
+		}
 	}
 }
 

@@ -201,3 +201,32 @@ func TestBrowserBatch_WaitEndsAtTheCallDeadline(t *testing.T) {
 		t.Errorf("waited %v, want about the 200ms deadline", waited)
 	}
 }
+
+// TestBrowserBatch_LateWaiterAnswersBusyWithoutTouchingTheBrowser pins that a
+// waiting call gives up while a sixth of its time is left: one that got the
+// browser with too little time would be cut mid-walk and recycle the warm
+// browser everyone shares, so it answers busy and never runs.
+func TestBrowserBatch_LateWaiterAnswersBusyWithoutTouchingTheBrowser(t *testing.T) {
+	lock := filepath.Join(t.TempDir(), "lock")
+	unlock, err := waitBrowserLock(context.Background(), lock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.AfterFunc(900*time.Millisecond, unlock)
+	var runs atomic.Int32
+	defer OverrideBrowserRunnerForTest(&lockingRunner{lock: lock, onRun: func() { runs.Add(1) }})()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	start := time.Now()
+	_, err = BrowserBatch(ctx, BrowserBatchInput{URL: "https://example.com"})
+	if err == nil || !strings.Contains(err.Error(), "busy") {
+		t.Fatalf("want a busy error, got %v", err)
+	}
+	if runs.Load() != 0 {
+		t.Error("a late waiter must not run on the browser")
+	}
+	if waited := time.Since(start); waited < 750*time.Millisecond || waited > 880*time.Millisecond {
+		t.Errorf("waited %v, want about 5/6 of the 1s deadline", waited)
+	}
+}
