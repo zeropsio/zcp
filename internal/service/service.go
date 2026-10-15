@@ -93,6 +93,12 @@ func services() map[string]execConfig {
 			extraEnvFn: mateExtraEnv,
 			guard:      mateGuard,
 			prepare:    mateLaunchSetupThenInstall,
+			// The unit's default TasksMax is 300; one software-WebGL Chromium
+			// takes ~90 tasks, so 2-3 agent browsers plus Claude Code exhaust it
+			// (fork EAGAIN, agent SIGABRT mid-turn). 1200 fits 6 browsers (~540)
+			// plus agent helpers, leaving 800 of the container's shared 2000 pid
+			// budget for nginx, sshd and the rest.
+			tasksMax: 1200,
 		},
 	}
 }
