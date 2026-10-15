@@ -951,6 +951,44 @@ func TestDevServer_PageCache_DoesNotCountAsUsedMemory(t *testing.T) {
 	}
 }
 
+// TestDevServer_StartingAServerBesideAnotherRunningOne_TellsTheAgentToCapEachHeapToFitTheSharedCeiling:
+// two dev servers compiling at once ran a 6 GiB service out of memory twice
+// although the start fitted, so a start beside another running declared
+// server adds one line naming the ceiling they share and asking for a heap
+// cap on each. A start with no other server running, and a restart of a
+// running one, add nothing.
+func TestDevServer_StartingAServerBesideAnotherRunningOne_TellsTheAgentToCapEachHeapToFitTheSharedCeiling(t *testing.T) {
+	t.Parallel()
+	const heapLine = "NODE_OPTIONS=--max-old-space-size"
+
+	beside := runDevServer(t, memoryContainer(6, 3, map[string]float64{"web": 2.5}),
+		DevServerParams{Action: "start", Hostname: "appdev", Name: "api"})
+	var lines []string
+	for line := range strings.SplitSeq(beside.Message, "\n") {
+		if strings.Contains(line, heapLine) {
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) != 1 {
+		t.Fatalf("want one heap-cap line, got %d in %q", len(lines), beside.Message)
+	}
+	for _, want := range []string{"api and web", "appdev's 6.0 GiB RAM ceiling", "side by side"} {
+		if !strings.Contains(lines[0], want) {
+			t.Errorf("heap-cap line %q lacks %q", lines[0], want)
+		}
+	}
+
+	alone := memoryContainer(6, 0, nil)
+	alone.Servers["web"].Status, alone.Servers["web"].Desired = devsup.StatusStopped, devsup.DesiredStopped
+	if msg := runDevServer(t, alone, DevServerParams{Action: "start", Hostname: "appdev", Name: "api"}).Message; strings.Contains(msg, heapLine) {
+		t.Errorf("a start with no other server running must add no heap-cap line: %q", msg)
+	}
+	if msg := runDevServer(t, memoryContainer(6, 3, map[string]float64{"web": 2.5}),
+		DevServerParams{Action: "restart", Hostname: "appdev", Name: "web"}).Message; strings.Contains(msg, heapLine) {
+		t.Errorf("a restart of a running server must add no heap-cap line: %q", msg)
+	}
+}
+
 func TestDevServer_RestartOfARunningServer_IsNeverRefusedOnMemory(t *testing.T) {
 	t.Parallel()
 	c := memoryContainer(6, 5, map[string]float64{"web": 2.5})

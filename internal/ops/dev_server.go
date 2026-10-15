@@ -498,7 +498,8 @@ func startDevServer(ctx context.Context, ssh SSHDeployer, client platform.Client
 	if err != nil {
 		return nil, err
 	}
-	if err := refuseStartOnMemory(ctx, ssh, client, projectID, p, name, ds); err != nil {
+	memoryNote, err := guardStartOnMemory(ctx, ssh, client, projectID, p, name, ds)
+	if err != nil {
 		return nil, err
 	}
 	declared, isDeclared := ds.Server(name)
@@ -527,9 +528,14 @@ func startDevServer(ctx context.Context, ssh SSHDeployer, client platform.Client
 	ds.observe(st)
 	result := newResult(action, p.Hostname, name)
 	if want.Port == 0 || p.NoHTTPProbe {
-		return settleNoProbe(ctx, ssh, ds, result, name)
+		result, err = settleNoProbe(ctx, ssh, ds, result, name)
+	} else {
+		result, err = probeStarted(ctx, ssh, ds, result, p, name, want.Port, begun)
 	}
-	return probeStarted(ctx, ssh, ds, result, p, name, want.Port, begun)
+	if err == nil && memoryNote != "" {
+		result.Message += "\n" + memoryNote
+	}
+	return result, err
 }
 
 // settleNoProbe decides a portless start from the supervisor's status after a

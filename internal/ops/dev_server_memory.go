@@ -100,14 +100,20 @@ func serviceMaxRAMKB(ctx context.Context, client platform.Client, projectID, hos
 	return 0
 }
 
+// memoryCeilingKB is the RAM a service's dev servers share: what its
+// autoscaling can grow to when known, else the cgroup's grant; 0 when
+// unlimited.
+func memoryCeilingKB(mem containerMemory, maxRAMKB int64) int64 {
+	if maxRAMKB > 0 {
+		return maxRAMKB
+	}
+	return mem.MaxKB
+}
+
 // memoryRefusal is the one sentence for a start that would leave less headroom
 // than the largest running server holds; "" when the start fits or no server
 // runs to measure one more by.
-func memoryRefusal(hostname, name string, mem containerMemory, maxRAMKB int64, st devsup.State) string {
-	ceiling := mem.MaxKB
-	if maxRAMKB > 0 {
-		ceiling = maxRAMKB
-	}
+func memoryRefusal(hostname, name string, mem containerMemory, ceiling int64, st devsup.State) string {
 	if ceiling <= 0 {
 		return ""
 	}
@@ -135,21 +141,45 @@ func gib(kb int64) string {
 	return strconv.FormatFloat(float64(kb)/gbKB, 'f', 1, 64) + " GiB"
 }
 
-// refuseStartOnMemory is the guard of a start: nil, or the precondition error
-// carrying memoryRefusal. A restart of a running server and an unreadable
-// cgroup pass.
-func refuseStartOnMemory(ctx context.Context, ssh SSHDeployer, client platform.Client, projectID string, p DevServerParams, name string, ds *DevServers) error {
+// sharedMemoryNote is the line a start adds when another declared server
+// already runs on the host: the guard weighs only what runs at start time,
+// and servers compiling together can still outgrow the ceiling they share
+// (zeropsio/apps: two Analog servers ran a 6 GiB service out of memory
+// twice). "" when no other declared server runs or the ceiling is unknown.
+func sharedMemoryNote(hostname, name string, ceiling int64, ds *DevServers) string {
+	if ceiling <= 0 {
+		return ""
+	}
+	sharing := []string{name}
+	for n, s := range ds.State.Servers {
+		if _, declared := ds.Server(n); !declared || n == name || s.Status == devsup.StatusStopped || s.Status == devsup.StatusCrashed {
+			continue
+		}
+		sharing = append(sharing, n)
+	}
+	if len(sharing) == 1 {
+		return ""
+	}
+	slices.Sort(sharing)
+	return fmt.Sprintf("Dev servers %s and %s share %s's %s RAM ceiling: cap each one's heap (e.g. NODE_OPTIONS=--max-old-space-size=<MiB>) so they fit side by side while they compile.",
+		strings.Join(sharing[:len(sharing)-1], ", "), sharing[len(sharing)-1], hostname, gib(ceiling))
+}
+
+// guardStartOnMemory is the guard of a start: the precondition error carrying
+// memoryRefusal, or the sharedMemoryNote the start's reply adds. A restart of
+// a running server and an unreadable cgroup pass with no note.
+func guardStartOnMemory(ctx context.Context, ssh SSHDeployer, client platform.Client, projectID string, p DevServerParams, name string, ds *DevServers) (string, error) {
 	if s, ok := ds.State.Servers[name]; ok && s.Status != devsup.StatusStopped && s.Status != devsup.StatusCrashed {
-		return nil
+		return "", nil
 	}
 	mem, ok := readContainerMemory(ctx, ssh, p.Hostname)
 	if !ok {
-		return nil
+		return "", nil
 	}
-	msg := memoryRefusal(p.Hostname, name, mem, serviceMaxRAMKB(ctx, client, projectID, p.Hostname), ds.State)
-	if msg == "" {
-		return nil
+	ceiling := memoryCeilingKB(mem, serviceMaxRAMKB(ctx, client, projectID, p.Hostname))
+	if msg := memoryRefusal(p.Hostname, name, mem, ceiling, ds.State); msg != "" {
+		return "", platform.NewPlatformError(platform.ErrPreflightFailed, msg,
+			"Stop a dev server you are not working on (zerops_dev_server action=stop name=<server>), or raise the service's max RAM (zerops_scale).")
 	}
-	return platform.NewPlatformError(platform.ErrPreflightFailed, msg,
-		"Stop a dev server you are not working on (zerops_dev_server action=stop name=<server>), or raise the service's max RAM (zerops_scale).")
+	return sharedMemoryNote(p.Hostname, name, ceiling, ds), nil
 }
