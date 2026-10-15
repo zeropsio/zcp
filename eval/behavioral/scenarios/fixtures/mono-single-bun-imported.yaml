@@ -1,4 +1,4 @@
-# Fixture for mono-e1-f1-single-part.md (mono-e0 TEST-PLAN §2.3 L4, F1):
+# Fixture for mono-e1-f1-single.md (mono-e0 TEST-PLAN §2.3 L4, F1):
 # one Bun part as a dev/stage pair, both running and empty until their
 # setups deploy. The preseed plants fixtures/repos/mono-single-bun on appdev.
 

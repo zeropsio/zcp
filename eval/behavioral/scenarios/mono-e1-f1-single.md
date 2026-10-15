@@ -1,5 +1,5 @@
 ---
-id: mono-e1-f1-single-part
+id: mono-e1-f1-single
 description: |
   F1, the single-part invariant live (mono-e0 TEST-PLAN §2.3 L4, E1 rows 13
   and 20): one Bun part planted on appdev with an uncommitted edit and an

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Preseed for mono-e1-f1-single-part (F1): plant the fixture repo into
+# Preseed for mono-e1-f1-single (F1): plant the fixture repo into
 # appdev's /var/www, then leave one uncommitted edit and one untracked file
 # that every deploy of the dev setup must carry.
 set -eu
