@@ -39,6 +39,8 @@ type PartsSignal struct {
 	// YAMLParts names the root zerops.yaml's setups other than the dev
 	// setup and other than a base only `extends` names, in file order.
 	YAMLParts []string
+	// YAMLSetups names every setup of the root zerops.yaml, in file order.
+	YAMLSetups []string
 	// DeclaredServers counts the servers in .zcp/dev-servers.json.
 	DeclaredServers int
 	// Workspace is true when a workspace marker (pnpm-workspace.yaml,
@@ -87,7 +89,7 @@ func parsePartsSignal(out, hostname, devSetup string) PartsSignal {
 		}
 	}
 	yamlDoc := []byte(strings.Join(sections["yaml"], "\n"))
-	sig.YAMLParts = yamlParts(yamlDoc, hostname, devSetup)
+	sig.YAMLParts, sig.YAMLSetups = yamlParts(yamlDoc, hostname, devSetup)
 	sig.DeclaresBase = declaresBase(yamlDoc)
 	var decl struct {
 		Servers []json.RawMessage `json:"servers"`
@@ -109,8 +111,9 @@ func parsePartsSignal(out, hostname, devSetup string) PartsSignal {
 }
 
 // yamlParts names zerops.yaml's parts (docs/spec-mate.md §2.8a.4): setups
-// other than the dev setup and other than a base only `extends` names.
-func yamlParts(data []byte, hostname, devSetup string) []string {
+// other than the dev setup and other than a base only `extends` names; setups
+// names every setup.
+func yamlParts(data []byte, hostname, devSetup string) (parts, setups []string) {
 	var doc struct {
 		Zerops []struct {
 			Setup   string    `yaml:"setup"`
@@ -118,7 +121,7 @@ func yamlParts(data []byte, hostname, devSetup string) []string {
 		} `yaml:"zerops"`
 	}
 	if yaml.Unmarshal(data, &doc) != nil {
-		return nil
+		return nil, nil
 	}
 	extended := map[string]bool{}
 	for _, e := range doc.Zerops {
@@ -137,14 +140,17 @@ func yamlParts(data []byte, hostname, devSetup string) []string {
 		}
 		return setup == "dev" || setup == hostname
 	}
-	var parts []string
 	for _, e := range doc.Zerops {
-		if e.Setup == "" || isDev(e.Setup) || extended[e.Setup] {
+		if e.Setup == "" {
+			continue
+		}
+		setups = append(setups, e.Setup)
+		if isDev(e.Setup) || extended[e.Setup] {
 			continue
 		}
 		parts = append(parts, e.Setup)
 	}
-	return parts
+	return parts, setups
 }
 
 // declaresBase reports whether a setup of zerops.yaml names a build.base or

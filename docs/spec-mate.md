@@ -1031,12 +1031,15 @@ Stages []StageRef `json:"stages,omitempty"`
 - Plan, before it is accepted: a classic or adopt plan that pairs an existing dev service with
   stages has that service's repo read first (with the dev's setup when the plan names it). When its
   root `zerops.yml` declares more than one part, the plan is refused only for a stage that matches no
-  part — one naming no setup or a setup that is no part of the repo — with the plan made from the
-  repo: a stage the plan already gave a part keeps its hostname, the others are proposed as
-  `<part>stage` for the agent to submit. A part without a stage is accepted, so an app whose further
-  setups are environments (`dev`/`stage`/`prod`) or a recipe pair keeps its one stage
+  part — one naming no setup or a setup the file declares that is no part of the repo (the dev
+  setup, a base only extended) — with the plan made from the repo: a stage the plan already gave a
+  part keeps its hostname, the others are proposed as `<part>stage` for the agent to submit. A stage
+  whose setup the file does not declare yet is a part the agent adds (develop writes its setup); it
+  is accepted and kept in the proposed plan. A part without a stage is accepted, so an app whose
+  further setups are environments (`dev`/`stage`/`prod`) or a recipe pair keeps its one stage
   (`TestBootstrapPlan_MountedRepoParts_ReadBeforeThePlanIsAccepted`,
-  `TestBootstrapPlan_RepoSetups_RefusesOnlyAStageMatchingNoPart`). The meta of a pair planned
+  `TestBootstrapPlan_RepoSetups_RefusesOnlyAStageMatchingNoPart`,
+  `TestBootstrapPlan_AddingAPartToAMultiPartRepo_KeepsItsStage`). The meta of a pair planned
   with several stages records each stage's setup from the plan; a one-stage pair's setup is resolved
   at its first deploy (`TestBootstrapComplete_MultiPartPair_RecordsEachStagesSetup`).
 - Migration on load: no `stages` and a `stageHostname` → `Stages = [{stageHostname, stageSetupName}]`;

@@ -19,11 +19,13 @@ import (
 // declares several parts (ops.ReadPartsSignal, with the dev's setup when the
 // plan knows it), every stage is built with one part's setup
 // (docs/spec-mate.md §2.8a.4). A plan with a stage that matches no part —
-// one naming no setup or a setup that is no part of the repo — is refused
-// with the plan made from the repo, so a multi-part pair's stages come from
-// the repo, never from a guess made before it was read. A part without a
-// stage is not refused: a repo's further setups may be environments, not
-// parts. nil outside a container, for a single-part repo, and when the repo
+// one naming no setup or a setup the file declares that is no part of the
+// repo (the dev setup, a base only extended) — is refused with the plan made
+// from the repo, so a multi-part pair's stages come from the repo, never from
+// a guess made before it was read. A stage whose setup the file does not
+// declare yet is a part the agent adds (its setup is written in develop) and
+// is kept. A part without a stage is not refused: a repo's further setups may
+// be environments, not parts. nil outside a container, for a single-part repo, and when the repo
 // cannot be read. adopt adds that the adopt route attaches only existing
 // services.
 func repoPartsPlanError(ctx context.Context, plan []workflow.BootstrapTarget, ssh ops.SSHDeployer, rt runtime.Info, adopt bool) *platform.PlatformError {
@@ -41,7 +43,7 @@ func repoPartsPlanError(ctx context.Context, plan []workflow.BootstrapTarget, ss
 		if err != nil || len(sig.YAMLParts) < 2 {
 			continue
 		}
-		stages, reason := stagesForParts(r.StageRefs(), sig.YAMLParts)
+		stages, reason := stagesForParts(r.StageRefs(), sig.YAMLParts, sig.YAMLSetups)
 		if reason == "" {
 			continue
 		}
@@ -69,10 +71,12 @@ func repoPartsPlanError(ctx context.Context, plan []workflow.BootstrapTarget, ss
 
 // stagesForParts is the pair's stages made from the repo's parts: a stage the
 // plan already gives a part keeps its hostname, a part without one gets
-// <part>stage. reason names the planned stages that match no part, "" when
-// every stage is built with a part's setup.
-func stagesForParts(planned []topology.StageRef, parts []string) ([]topology.StageRef, string) {
+// <part>stage, and a stage whose setup no entry of setups declares follows
+// as planned. reason names the planned stages that match no part — no setup,
+// or a declared setup that is no part — "" when there is none.
+func stagesForParts(planned []topology.StageRef, parts, setups []string) ([]topology.StageRef, string) {
 	bySetup := map[string]string{}
+	var added []topology.StageRef
 	var unnamed, unknown []string
 	for _, s := range planned {
 		switch {
@@ -80,6 +84,8 @@ func stagesForParts(planned []topology.StageRef, parts []string) ([]topology.Sta
 			unnamed = append(unnamed, s.Hostname)
 		case slices.Contains(parts, s.SetupName):
 			bySetup[s.SetupName] = s.Hostname
+		case !slices.Contains(setups, s.SetupName):
+			added = append(added, s)
 		default:
 			unknown = append(unknown, fmt.Sprintf("stage %q names the setup %q, no part of the repo", s.Hostname, s.SetupName))
 		}
@@ -92,6 +98,7 @@ func stagesForParts(planned []topology.StageRef, parts []string) ([]topology.Sta
 		}
 		stages = append(stages, topology.StageRef{Hostname: host, SetupName: part})
 	}
+	stages = append(stages, added...)
 	var reason []string
 	if len(unnamed) > 0 {
 		reason = append(reason, "stage "+quoteAll(unnamed)+" names no part")

@@ -122,7 +122,7 @@ func TestPartsSignalScript_ReadsARealRepo(t *testing.T) {
 		t.Fatalf("script: %v\n%s", err, out)
 	}
 	sig := parsePartsSignal(string(out), "appdev", "dev")
-	want := PartsSignal{ConfigFile: "zerops.yaml", YAMLParts: []string{"web", "api", "worker"}, DeclaredServers: 2, Workspace: true, Packages: 2}
+	want := PartsSignal{ConfigFile: "zerops.yaml", YAMLParts: []string{"web", "api", "worker"}, YAMLSetups: []string{"dev", "web", "api", "worker"}, DeclaredServers: 2, Workspace: true, Packages: 2}
 	if !reflect.DeepEqual(sig, want) {
 		t.Errorf("signal = %+v, want %+v\n%s", sig, want, out)
 	}
