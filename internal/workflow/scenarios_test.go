@@ -1613,3 +1613,61 @@ func TestScenario_NewPartOfSinglePartPairIsAStageNotABootstrap(t *testing.T) {
 		t.Errorf("%s fired in a project without a pair", atom)
 	}
 }
+
+// TestScenario_AdoptingAPairAndAddingAPartNamesTheStageNotANewService pins the
+// moment the sweep's agent chose the wrong shape: a bootstrap adopt discover
+// where the pair is not yet adopted, so the pair carries no mode or deploy
+// state. Adopt discover leads to the pair's own setup and stage; other routes
+// and steps never see it.
+func TestScenario_AdoptingAPairAndAddingAPartNamesTheStageNotANewService(t *testing.T) {
+	t.Parallel()
+
+	corpus, err := LoadAtomCorpus()
+	if err != nil {
+		t.Fatalf("LoadAtomCorpus: %v", err)
+	}
+	const atom = "bootstrap-adopt-new-part"
+	unadopted := []ServiceSnapshot{
+		{Hostname: "appdev", TypeVersion: "bun@1.3", RuntimeClass: topology.RuntimeDynamic, Status: "ACTIVE"},
+		{Hostname: "appstage", TypeVersion: "bun@1.3", RuntimeClass: topology.RuntimeDynamic, Status: "ACTIVE"},
+	}
+	fires := func(route BootstrapRoute, step string) (bool, string) {
+		env := StateEnvelope{
+			Phase: PhaseBootstrapActive, Environment: EnvContainer, Services: unadopted,
+			Bootstrap: &BootstrapSessionSummary{Route: route, Step: step},
+		}
+		out, err := Synthesize(env, corpus)
+		if err != nil {
+			t.Fatalf("Synthesize: %v", err)
+		}
+		for _, m := range out {
+			if m.AtomID == atom {
+				return true, m.Body
+			}
+		}
+		return false, ""
+	}
+
+	adoptEnv := StateEnvelope{
+		Phase: PhaseBootstrapActive, Environment: EnvContainer, Services: unadopted,
+		Bootstrap: &BootstrapSessionSummary{Route: BootstrapRouteAdopt, Step: StepDiscover},
+	}
+	if got, err := Synthesize(adoptEnv, corpus); err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	} else {
+		requireAtomIDsContain(t, "adopt discover with a new part", got, "bootstrap-adopt-new-part")
+	}
+	ok, body := fires(BootstrapRouteAdopt, StepDiscover)
+	if !ok {
+		t.Fatalf("%s did not fire at adopt discover", atom)
+	}
+	if !strings.Contains(body, `zerops_knowledge uri="zerops://playbooks/monorepo"`) {
+		t.Errorf("%s body lacks the monorepo playbook:\n%s", atom, body)
+	}
+	if got, _ := fires(BootstrapRouteAdopt, "provision"); got {
+		t.Errorf("%s fired past the adopt discover step", atom)
+	}
+	if got, _ := fires(BootstrapRouteClassic, StepDiscover); got {
+		t.Errorf("%s fired on the classic route", atom)
+	}
+}

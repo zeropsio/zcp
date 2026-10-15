@@ -8,6 +8,7 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 |---|---|---|
 | `bootstrap-adopt-baseline-commit` | 1 | bootstrap/adopt/provision |
 | `bootstrap-adopt-discover` | 1 | bootstrap/adopt/discover-existing-pair |
+| `bootstrap-adopt-new-part` | 1 | bootstrap/adopt/discover-existing-pair |
 | `bootstrap-classic-plan-dynamic` | 2 | bootstrap/classic/discover-standard-dynamic, bootstrap/classic/new-part-of-pair |
 | `bootstrap-classic-plan-static` | 2 | bootstrap/classic/discover-standard-dynamic, bootstrap/classic/new-part-of-pair |
 | `bootstrap-close` | 1 | bootstrap/recipe/close |
