@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -66,5 +67,30 @@ func TestAttachPartsSignal(t *testing.T) {
 	attachPartsSignal(context.Background(), got, local, runtime.Info{})
 	if len(local.read) != 0 || got[0].MultiPart {
 		t.Errorf("local mode read %v", local.read)
+	}
+}
+
+// TestMultiPartRouteNote: the route menu names the monorepo playbook only for
+// an existing runtime service whose repo is multi-part.
+func TestMultiPartRouteNote(t *testing.T) {
+	t.Parallel()
+	stack := func(name, typ string) platform.ServiceStack {
+		return platform.ServiceStack{Name: name, ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: typ}}
+	}
+	existing := []platform.ServiceStack{stack("appdev", "nodejs@22"), stack("db", "postgresql@17")}
+	multi := "@@yaml\nzerops:\n  - setup: dev\n  - setup: web\n  - setup: api\n@@declaration\n@@markers\n@@packages\n"
+	single := "@@yaml\nzerops:\n  - setup: dev\n@@declaration\n@@markers\n@@packages\n"
+	rt := runtime.Info{InContainer: true}
+
+	got := multiPartRouteNote(context.Background(), existing, &partsRepos{out: map[string]string{"appdev": multi}}, rt)
+	if !strings.Contains(got, "`appdev`") || !strings.Contains(got, `uri="zerops://playbooks/monorepo"`) {
+		t.Errorf("multi-part note = %q", got)
+	}
+	repos := &partsRepos{out: map[string]string{"appdev": single, "db": multi}}
+	if got := multiPartRouteNote(context.Background(), existing, repos, rt); got != "" {
+		t.Errorf("single-part note = %q, want none", got)
+	}
+	if len(repos.read) != 1 {
+		t.Errorf("read %v, want appdev only", repos.read)
 	}
 }

@@ -614,7 +614,7 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 
 	// Bootstrap conductor — discovery + commit split.
 	if input.Workflow == workflowBootstrap {
-		return handleBootstrapStart(ctx, projectID, engine, client, schemaCache, input, rt)
+		return handleBootstrapStart(ctx, projectID, engine, client, schemaCache, input, sshDeployer, rt)
 	}
 
 	// Develop workflow — stateless briefing, no session created.
@@ -842,7 +842,7 @@ func handleResume(ctx context.Context, engine *workflow.Engine, schemaCache *sch
 //     resumeSession field.
 //  3. route=adopt|recipe|classic → commits session via
 //     BootstrapStartWithRoute with the LLM's explicit choice.
-func handleBootstrapStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, schemaCache *schema.Cache, input WorkflowInput, rt runtime.Info) (*mcp.CallToolResult, any, error) {
+func handleBootstrapStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, schemaCache *schema.Cache, input WorkflowInput, sshDeployer ops.SSHDeployer, rt runtime.Info) (*mcp.CallToolResult, any, error) {
 	// Parse the route at the boundary so all downstream comparisons use the
 	// typed BootstrapRoute and the engine API takes its native vocabulary.
 	route := workflow.BootstrapRoute(input.Route)
@@ -878,6 +878,7 @@ func handleBootstrapStart(ctx context.Context, projectID string, engine *workflo
 				fmt.Sprintf("Bootstrap discovery failed: %v", err),
 				""), WithRecoveryStatus()), nil, nil
 		}
+		resp.Message += multiPartRouteNote(ctx, existing, sshDeployer, rt)
 		return jsonResult(bootstrapDiscoveryResponse{
 			BootstrapDiscoveryResponse: resp,
 			Envelope:                   freshEnvelope(ctx, engine.StateDir(), client, projectID, rt),
