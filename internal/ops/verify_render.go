@@ -39,8 +39,8 @@ const (
 // surfacing an error. The verify path treats absence as the normal
 // fallback — never as a degraded signal.
 //
-// The walk is the canonical batch [open, snapshot -i, get text body,
-// errors, console, network requests, close]. snapshot -i forces the
+// The walk is the canonical batch [open, paint wait, snapshot -i,
+// get text body, errors, console, network requests]. snapshot -i forces the
 // page to settle (the accessibility-tree dump waits for layout) so SPA
 // frameworks reach a real DOM before we read innerText. We use the
 // `get text body` command (textContent semantics) — the spec calls for innerText
@@ -61,15 +61,15 @@ func renderHTTPRoot(ctx context.Context, url string) (string, []string) {
 		TimeoutSeconds: browserRenderTimeoutSeconds,
 	})
 	if err != nil {
-		// agent-browser missing / lock not acquired / unmarshal of input.
+		// agent-browser missing / browser busy past the deadline / unmarshal of input.
 		// Best-effort path: silent no-op.
 		return "", nil
 	}
-	// Fork-recovery, CDP wedge, deadline timeout, or parse failure all
+	// Fork exhaustion, CDP wedge, deadline timeout, or parse failure all
 	// leave Message set and the canonical [errors] step un-populated.
 	// Treat any of those as "no rendered text available" — never claim
 	// a partial walk produced data.
-	if result.ForkRecoveryAttempted || result.Message != "" {
+	if result.BrowserRecycled || result.Message != "" {
 		return "", nil
 	}
 

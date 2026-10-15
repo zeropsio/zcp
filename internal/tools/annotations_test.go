@@ -29,7 +29,9 @@ func (browserAnnotationStub) LookPath() (string, error) { return "/fake/agent-br
 func (browserAnnotationStub) Run(_ context.Context, _ string, _ time.Duration) (string, string, bool, error) {
 	return "", "", false, nil
 }
-func (browserAnnotationStub) RecoverFork(_ context.Context) {}
+func (browserAnnotationStub) Acquire(_ context.Context, _ string) (func(bool) error, error) {
+	return func(bool) error { return nil }, nil
+}
 
 // nopMounter satisfies ops.Mounter for annotation tests (never called).
 type nopMounter struct{}
