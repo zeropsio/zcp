@@ -32,6 +32,12 @@ func TestClassifyTranscriptTail(t *testing.T) {
 		// done-marker scan is scoped to the tail + a modal/hand-back cue (incl.
 		// Czech) takes precedence over a mid-body done word.
 		{"waiting_czech_tail_live", "waiting_czech_tail_live.jsonl", VerdictWaiting, "Dej mi další prompt"},
+		// The agent asked "Good to proceed?" and then closed with a statement that
+		// holds the action until the user confirms ("…as you set up, once you
+		// confirm."). The "?" sits outside the 200-char tail and "set up" matches
+		// a done marker, so the run ended before the user-sim could approve
+		// (farm flo-6: the launch never ran). A "once you confirm" hold is waiting.
+		{"waiting_confirm_tail_after_question", "waiting_confirm_tail_after_question.jsonl", VerdictWaiting, "once you confirm"},
 		{"done_via_verify", "done_via_verify.jsonl", VerdictDone, "Verify confirms"},
 		{"waiting_question_mark", "waiting_question_mark.jsonl", VerdictWaiting, "do you want to adjust"},
 		{"waiting_modal_phrase", "waiting_modal_phrase.jsonl", VerdictWaiting, "Should I go with"},

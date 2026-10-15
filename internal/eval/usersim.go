@@ -176,7 +176,7 @@ var (
 
 	// modalPhraseRE — English phrases that signal a question even without `?`.
 	// Anchored on word boundaries so "I should I" inside a sentence still hits.
-	modalPhraseRE = regexp.MustCompile(`(?i)\b(should\s+I|do\s+you\s+want|would\s+you\s+(?:prefer|like)|let\s+me\s+know|please\s+confirm|shall\s+I|which\s+would\s+you\s+like|either\s+is\s+fine)\b`)
+	modalPhraseRE = regexp.MustCompile(`(?i)\b(should\s+I|do\s+you\s+want|would\s+you\s+(?:prefer|like)|let\s+me\s+know|please\s+confirm|shall\s+I|which\s+would\s+you\s+like|either\s+is\s+fine|(?:once|until|after|when|if)\s+you\s+(?:confirm|approve|agree))\b`)
 
 	// modalPhraseCsRE — Czech hand-back / waiting cues (most flow-eval prompts
 	// are Czech, so an English-only modal check missed "agent hands back without
