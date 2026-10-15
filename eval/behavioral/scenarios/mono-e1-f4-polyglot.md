@@ -30,7 +30,7 @@ verification:
   toolArg:
     - {always: "zerops_dev_server{action=start}"}
   containerCheck:
-    - {service: appdev, cmd: "grep -qE 'start: *zcp-devsup run' /var/www/zerops.yml && echo supervised", match: "^supervised"}
+    - {service: appdev, cmd: "cat /var/www/zerops.y*ml | grep -qE 'start: *zcp-devsup run' && echo supervised", match: "^supervised"}
     - {service: appdev, cmd: "grep -c '\"name\"' /var/www/.zcp/dev-servers.json", match: "^[2-9]"}
     - {service: appdev, cmd: "zcp-devsup ctl status --json | grep -cE '\"status\": *\"running\"'", match: "^[2-9]"}
     - {service: appdev, cmd: "curl -fsS http://127.0.0.1:8080/forecast >/dev/null && echo python-api-up", match: "^python-api-up"}
