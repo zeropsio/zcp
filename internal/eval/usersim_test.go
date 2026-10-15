@@ -39,6 +39,12 @@ func TestClassifyTranscriptTail(t *testing.T) {
 		// (farm flo-6: the launch never ran). A "once you confirm" hold is waiting.
 		{"waiting_confirm_tail_after_question", "waiting_confirm_tail_after_question.jsonl", VerdictWaiting, "once you confirm"},
 		{"done_via_verify", "done_via_verify.jsonl", VerdictDone, "Verify confirms"},
+		// A verify success is past evidence, not the agent's last word: when the
+		// final text after it asks the user to approve or confirm before the agent
+		// acts, the user-sim must answer (farm mono-farm-final-1: the launch run
+		// ended as agent_declared_done on "Confirm the scaling … and I'll proceed").
+		{"waiting_approval_after_verify", "waiting_approval_after_verify.jsonl", VerdictWaiting, "Confirm the scaling"},
+		{"waiting_question_after_verify", "waiting_question_after_verify.jsonl", VerdictWaiting, "Can you confirm the force-push"},
 		{"waiting_question_mark", "waiting_question_mark.jsonl", VerdictWaiting, "do you want to adjust"},
 		{"waiting_modal_phrase", "waiting_modal_phrase.jsonl", VerdictWaiting, "Should I go with"},
 		{"error_max_turns", "error_max_turns.jsonl", VerdictMaxTurns, ""},
