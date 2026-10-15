@@ -1113,7 +1113,7 @@ func (r *Runner) scenarioRuntimeInputs(sc *Scenario, result *BehavioralResult) R
 			fmt.Fprintf(os.Stderr, "warning: scenario MCP stream paths: %v\n", err)
 		}
 	}
-	if launchKey := os.Getenv("ZCP_E2E_LAUNCH_KEY"); launchKey != "" {
+	if launchKey := os.Getenv(LaunchKeyEnvVar); launchKey != "" {
 		sum := sha256.Sum256([]byte(launchKey))
 		runtime.LaunchTokenSHA256 = hex.EncodeToString(sum[:])
 	}
