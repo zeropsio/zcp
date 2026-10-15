@@ -1,31 +1,21 @@
-// Tests for: BrowserBatch — canonical agent-browser batch wrapper.
+// Tests for: BrowserBatch — canonical agent-browser walk on the warm browser.
 //
-// These tests lock the lifecycle contract the recipe workflow depends on:
-//   - Tool auto-prepends ["open", url] and auto-appends ["errors"],
-//     ["console"], ["close"] — agent never manages lifecycle directly.
-//   - Any "open" or "close" the agent accidentally passes in Commands is
-//     stripped so we never double-open or double-close the daemon.
-//   - stdin is valid JSON of the fully-built batch, fed to
-//     `agent-browser batch --json`.
-//   - Fork-exhaustion signatures in stderr (only) trigger auto-recovery
-//     (owned cleanup) and surface a clear message instead of a raw error.
-//   - Context-deadline timeout also triggers recovery.
-//   - Any other non-zero exit with no parseable output also triggers
-//     recovery — daemon crashes must reap leaked Chrome helpers.
-//   - On non-zero exit, ErrorsOutput/ConsoleOutput are NOT populated
-//     from partial steps — those fields must only reflect a clean walk.
-//   - JSON output is parsed, with errorsOutput/consoleOutput extracted
-//     from the canonical penultimate steps on successful runs.
-//   - Calls are serialized through browserMu — two concurrent callers
-//     cannot execute Run at the same instant.
-//   - A ctx-cancelled caller returns immediately without piling up
-//     behind a stuck predecessor.
+// These tests lock the contract the recipe workflow depends on:
+//   - Tool auto-prepends ["open", url] and the first-paint wait, and
+//     auto-appends ["errors"], ["console"], ["network requests"] — the
+//     agent never manages lifecycle directly.
+//   - Any "open", "close" or "eval" the agent passes in Commands is stripped.
+//   - Fork exhaustion (stderr only), a deadline, a cancel, a crash or a CDP
+//     wedge release the browser for a recycle and say so in the result;
+//     a clean call hands it back warm.
+//   - A timed-out walk keeps the steps that finished.
+//   - On a failed run, ErrorsOutput/ConsoleOutput are NOT populated from
+//     partial steps — those fields must only reflect a clean walk.
+//   - Calls wait for the container's browser lock until their deadline.
 //
 // These tests do NOT run in parallel. BrowserBatch uses a package-level
-// browserRun global overridden via OverrideBrowserRunnerForTest, and the
-// underlying browserMu serializes all calls — running tests in parallel
-// would either race the override or one test would acquire the mutex and
-// starve others. Both problems vanish by keeping the suite sequential.
+// browserRun global overridden via OverrideBrowserRunnerForTest; running
+// tests in parallel would race the override.
 package ops
 
 import (
@@ -40,7 +30,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -48,15 +37,18 @@ import (
 // fakeBrowserRunner captures calls and returns scripted results.
 type fakeBrowserRunner struct {
 	lookPathErr error
+	acquireErr  error
 
+	lastIsolation string
 	lastStdin     string
 	lastTimeout   time.Duration
 	runStdout     string
 	runStderr     string
 	runTruncated  bool
 	runErr        error
-	recoverCalls  int
-	recoverCallMu sync.Mutex
+
+	mu       sync.Mutex
+	releases []bool // the reuse verdict of every release, in order
 }
 
 func (f *fakeBrowserRunner) LookPath() (string, error) {
@@ -66,16 +58,36 @@ func (f *fakeBrowserRunner) LookPath() (string, error) {
 	return "/usr/local/bin/agent-browser", nil
 }
 
+func (f *fakeBrowserRunner) Acquire(_ context.Context, isolation string) (func(reuse bool) error, error) {
+	if f.acquireErr != nil {
+		return nil, f.acquireErr
+	}
+	f.lastIsolation = isolation
+	return func(reuse bool) error {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.releases = append(f.releases, reuse)
+		return nil
+	}, nil
+}
+
 func (f *fakeBrowserRunner) Run(_ context.Context, stdin string, timeout time.Duration) (string, string, bool, error) {
 	f.lastStdin = stdin
 	f.lastTimeout = timeout
 	return f.runStdout, f.runStderr, f.runTruncated, f.runErr
 }
 
-func (f *fakeBrowserRunner) RecoverFork(_ context.Context) {
-	f.recoverCallMu.Lock()
-	f.recoverCalls++
-	f.recoverCallMu.Unlock()
+// recycles counts the releases that asked for a fresh browser.
+func (f *fakeBrowserRunner) recycles() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, reuse := range f.releases {
+		if !reuse {
+			n++
+		}
+	}
+	return n
 }
 
 // parseStdinBatch parses the JSON array the tool sent to agent-browser.
@@ -194,15 +206,19 @@ func TestBrowserBatch_AgentBrowserNotFound(t *testing.T) {
 	}
 }
 
+// TestBrowserBatch_BuildsCanonicalShape pins the walk: open, the wait for
+// the page's first contentful paint, the caller's commands, then errors,
+// console and failed network requests. No close: the call ends by closing
+// its tabs, and the warm browser stays for the next call.
 func TestBrowserBatch_BuildsCanonicalShape(t *testing.T) {
 	batch := [][]string{
 		{"open", "https://example.com/app"},
+		{"wait", "--fn", "performance.getEntriesByName('first-contentful-paint').length>0", "--timeout", "5000"},
 		{"snapshot", "-i", "-c"},
 		{"click", "@e1"},
 		{"errors"},
 		{"console"},
 		{"network", "requests", "--status", "400-599"},
-		{"close"},
 	}
 	fake := &fakeBrowserRunner{runStdout: makeStdout(t, batch)}
 	defer OverrideBrowserRunnerForTest(fake)()
@@ -219,51 +235,36 @@ func TestBrowserBatch_BuildsCanonicalShape(t *testing.T) {
 	}
 
 	got := parseStdinBatch(t, fake.lastStdin)
-	if len(got) != 7 {
-		t.Fatalf("expected 7 commands in batch, got %d: %v", len(got), got)
+	if len(got) != len(batch) {
+		t.Fatalf("expected %d commands in batch, got %d: %v", len(batch), len(got), got)
 	}
-	if got[0][0] != "open" || got[0][1] != "https://example.com/app" {
-		t.Errorf("first command must be [\"open\", url], got: %v", got[0])
-	}
-	if got[1][0] != "snapshot" {
-		t.Errorf("second command should be agent's snapshot, got: %v", got[1])
-	}
-	if got[2][0] != "click" {
-		t.Errorf("third command should be agent's click, got: %v", got[2])
-	}
-	if got[3][0] != "errors" {
-		t.Errorf("fourth (auto) command should be errors, got: %v", got[3])
-	}
-	if got[4][0] != "console" {
-		t.Errorf("fifth (auto) command should be console, got: %v", got[4])
-	}
-	if !slices.Equal(got[5], []string{"network", "requests", "--status", "400-599"}) {
-		t.Errorf("sixth (auto) command should be network requests --status 400-599, got: %v", got[5])
-	}
-	if got[6][0] != "close" {
-		t.Errorf("last (auto) command must be close, got: %v", got[6])
+	for i, want := range batch {
+		if !slices.Equal(got[i], want) {
+			t.Errorf("batch[%d] = %v, want %v", i, got[i], want)
+		}
 	}
 
 	if result.URL != "https://example.com/app" {
 		t.Errorf("result.URL = %q", result.URL)
 	}
-	if len(result.Steps) != 7 {
-		t.Errorf("expected 7 parsed steps, got %d", len(result.Steps))
+	if len(result.Steps) != len(batch) {
+		t.Errorf("expected %d parsed steps, got %d", len(batch), len(result.Steps))
 	}
 	if len(result.ErrorsOutput) == 0 {
-		t.Errorf("ErrorsOutput should be populated from final [errors] step")
+		t.Errorf("ErrorsOutput should be populated from the [errors] step")
 	}
 	if len(result.ConsoleOutput) == 0 {
-		t.Errorf("ConsoleOutput should be populated from final [console] step")
+		t.Errorf("ConsoleOutput should be populated from the [console] step")
 	}
-	if result.ForkRecoveryAttempted {
-		t.Errorf("ForkRecoveryAttempted should be false on success")
+	if result.BrowserRecycled {
+		t.Errorf("BrowserRecycled should be false on success")
 	}
 }
 
 func TestBrowserBatch_StripsAgentOpenAndClose(t *testing.T) {
 	// Agent erroneously includes open/close in their Commands. Tool must
-	// strip both so the canonical wrappers don't double-apply.
+	// strip both: the canonical open is the only one, and a close would end
+	// the warm browser every other call shares.
 	fake := &fakeBrowserRunner{runStdout: `[]`}
 	defer OverrideBrowserRunnerForTest(fake)()
 
@@ -292,12 +293,8 @@ func TestBrowserBatch_StripsAgentOpenAndClose(t *testing.T) {
 	if openCount != 1 {
 		t.Errorf("expected exactly 1 open, got %d: %v", openCount, got)
 	}
-	if closeCount != 1 {
-		t.Errorf("expected exactly 1 close, got %d: %v", closeCount, got)
-	}
-	// Close must still be last.
-	if got[len(got)-1][0] != "close" {
-		t.Errorf("close must be last element, got: %v", got[len(got)-1])
+	if closeCount != 0 {
+		t.Errorf("expected no close (the warm browser stays), got %d: %v", closeCount, got)
 	}
 }
 
@@ -385,8 +382,8 @@ func TestBrowserBatch_StillStripsOpenCloseEvalTogether(t *testing.T) {
 	if openN != 1 {
 		t.Errorf("open occurrences = %d, want 1", openN)
 	}
-	if closeN != 1 {
-		t.Errorf("close occurrences = %d, want 1", closeN)
+	if closeN != 0 {
+		t.Errorf("close occurrences = %d, want 0 (stripped)", closeN)
 	}
 	if evalN != 0 {
 		t.Errorf("eval occurrences = %d, want 0 (stripped)", evalN)
@@ -397,9 +394,9 @@ func TestBrowserBatch_StillStripsOpenCloseEvalTogether(t *testing.T) {
 }
 
 // TestBrowserBatch_WrapsScreenshotBeforeErrorsConsoleWhenRequested pins
-// the S7 screenshot batch shape: when Screenshot is requested, the tail
-// becomes open, commands, screenshot <tmpfile>, errors,
-// console, network requests, close — screenshot slots in right after
+// the S7 screenshot batch shape: when Screenshot is requested, the walk
+// becomes open, paint wait, commands, screenshot <tmpfile>, errors,
+// console, network requests — screenshot slots in right after
 // the caller's commands, before the reporting tail. agent-browser
 // 0.35.1 `screenshot --help`: "Usage: agent-browser screenshot
 // [selector] [path]"; the annotate flag is not honoured inside `batch` (measured 2026-09-04),
@@ -419,10 +416,11 @@ func TestBrowserBatch_WrapsScreenshotBeforeErrorsConsoleWhenRequested(t *testing
 
 	got := parseStdinBatch(t, fake.lastStdin)
 	if len(got) != 7 {
-		t.Fatalf("expected 7 commands (open, snapshot, screenshot, errors, console, network requests, close), got %d: %v", len(got), got)
+		t.Fatalf("expected 7 commands (open, paint wait, snapshot, screenshot, errors, console, network requests), got %d: %v", len(got), got)
 	}
 	wantPrefix := [][]string{
 		{"open", "https://example.com"},
+		browserPaintWait,
 		{"snapshot", "-i"},
 	}
 	for i, w := range wantPrefix {
@@ -430,18 +428,17 @@ func TestBrowserBatch_WrapsScreenshotBeforeErrorsConsoleWhenRequested(t *testing
 			t.Errorf("batch[%d] = %v, want %v", i, got[i], w)
 		}
 	}
-	if len(got[2]) != 2 || got[2][0] != "screenshot" || got[2][1] == "" {
-		t.Errorf("batch[2] must be [screenshot <path>], got: %v", got[2])
+	if len(got[3]) != 2 || got[3][0] != "screenshot" || got[3][1] == "" {
+		t.Errorf("batch[3] must be [screenshot <path>], got: %v", got[3])
 	}
 	wantTail := [][]string{
 		{"errors"},
 		{"console"},
 		{"network", "requests", "--status", "400-599"},
-		{"close"},
 	}
 	for i, w := range wantTail {
-		if !slices.Equal(got[3+i], w) {
-			t.Errorf("batch[%d] = %v, want %v", 3+i, got[3+i], w)
+		if !slices.Equal(got[4+i], w) {
+			t.Errorf("batch[%d] = %v, want %v", 4+i, got[4+i], w)
 		}
 	}
 }
@@ -665,8 +662,8 @@ func (f *fakeScreenshotRunner) Run(ctx context.Context, stdin string, timeout ti
 }
 
 // TestBrowserBatch_AlwaysAppendsNetworkRequestsToTail pins the S7 tail
-// extension: every batch now ends errors, console, network requests,
-// close (previously errors, console, close) — the outcome statement says
+// extension: every batch ends errors, console, network requests
+// — the outcome statement says
 // zerops_browser "always reports failed network requests next to errors
 // and console". The tail step is bound to 4xx/5xx at the source
 // (`network requests --status 400-599`) rather than requesting the full
@@ -691,15 +688,15 @@ func TestBrowserBatch_AlwaysAppendsNetworkRequestsToTail(t *testing.T) {
 
 	got := parseStdinBatch(t, fake.lastStdin)
 	if len(got) != 6 {
-		t.Fatalf("expected 6 commands (open, snapshot, errors, console, network requests, close), got %d: %v", len(got), got)
+		t.Fatalf("expected 6 commands (open, paint wait, snapshot, errors, console, network requests), got %d: %v", len(got), got)
 	}
 	want := [][]string{
 		{"open", "https://example.com"},
+		browserPaintWait,
 		{"snapshot", "-i"},
 		{"errors"},
 		{"console"},
 		{"network", "requests", "--status", "400-599"},
-		{"close"},
 	}
 	for i, w := range want {
 		if !slices.Equal(got[i], w) {
@@ -732,7 +729,6 @@ func TestBrowserBatch_ParsesNetworkOutputFilteredToFailures(t *testing.T) {
 		{"command": []string{"errors"}, "success": true, "result": map[string]any{"errors": []any{}}},
 		{"command": []string{"console"}, "success": true, "result": map[string]any{"logs": []any{}}},
 		{"command": []string{"network", "requests", "--status", "400-599"}, "success": true, "result": json.RawMessage(networkResult)},
-		{"command": []string{"close"}, "success": true, "result": map[string]any{}},
 	}
 	raw, err := json.Marshal(steps)
 	if err != nil {
@@ -771,7 +767,7 @@ func TestBrowserBatch_ParsesNetworkOutputFilteredToFailures(t *testing.T) {
 // without re-parsing free text. Wedge signals take priority over the
 // generic "timeout" match — "CDP command timed out" must classify as
 // wedge, not timeout, because it is also a cdpWedgeSignals entry that
-// triggers RecoverFork.
+// recycles the browser.
 func TestClassifyStepError_Table(t *testing.T) {
 	tests := []struct {
 		name string
@@ -808,7 +804,6 @@ func TestBrowserBatch_PopulatesStepErrorKind(t *testing.T) {
 		{"command": []string{"errors"}, "success": true, "result": map[string]any{"errors": []any{}}},
 		{"command": []string{"console"}, "success": true, "result": map[string]any{"logs": []any{}}},
 		{"command": []string{"network", "requests"}, "success": true, "result": map[string]any{"requests": []any{}}},
-		{"command": []string{"close"}, "success": true, "result": map[string]any{}},
 	}
 	raw, err := json.Marshal(steps)
 	if err != nil {
@@ -843,11 +838,11 @@ func TestBrowserBatch_ForkExhaustionTriggersRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fork exhaustion should not error — surface in result: %v", err)
 	}
-	if !result.ForkRecoveryAttempted {
-		t.Error("expected ForkRecoveryAttempted=true")
+	if !result.BrowserRecycled {
+		t.Error("expected BrowserRecycled=true")
 	}
-	if fake.recoverCalls != 1 {
-		t.Errorf("expected 1 recovery call, got %d", fake.recoverCalls)
+	if fake.recycles() != 1 {
+		t.Errorf("expected 1 recovery call, got %d", fake.recycles())
 	}
 	if result.Message == "" {
 		t.Error("expected a recovery message")
@@ -868,7 +863,7 @@ func TestBrowserBatch_PthreadCreateAlsoTriggersRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !result.ForkRecoveryAttempted {
+	if !result.BrowserRecycled {
 		t.Error("pthread_create should trigger recovery")
 	}
 }
@@ -879,7 +874,7 @@ func TestBrowserBatch_PthreadCreateAlsoTriggersRecovery(t *testing.T) {
 // the browsed site) and MUST NOT spuriously trigger owned cleanup.
 func TestBrowserBatch_ForkSignatureOnlyInStdoutNoRecovery(t *testing.T) {
 	// A tiny valid JSON array with a result containing the matching text.
-	stdoutWithMatch := `[{"command":["open","https://example.com"],"success":true,"result":{"title":"Resource temporarily unavailable - my-app"}},{"command":["errors"],"success":true,"result":{"errors":[]}},{"command":["console"],"success":true,"result":{"logs":[]}},{"command":["close"],"success":true,"result":{}}]`
+	stdoutWithMatch := `[{"command":["open","https://example.com"],"success":true,"result":{"title":"Resource temporarily unavailable - my-app"}},{"command":["errors"],"success":true,"result":{"errors":[]}},{"command":["console"],"success":true,"result":{"logs":[]}}]`
 	fake := &fakeBrowserRunner{
 		runStdout: stdoutWithMatch,
 		runStderr: "", // clean stderr — the only place we check
@@ -890,11 +885,11 @@ func TestBrowserBatch_ForkSignatureOnlyInStdoutNoRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.ForkRecoveryAttempted {
+	if result.BrowserRecycled {
 		t.Error("fork signature in stdout must NOT trigger recovery — stderr is the only trusted source")
 	}
-	if fake.recoverCalls != 0 {
-		t.Errorf("expected 0 recovery calls, got %d", fake.recoverCalls)
+	if fake.recycles() != 0 {
+		t.Errorf("expected 0 recovery calls, got %d", fake.recycles())
 	}
 }
 
@@ -906,7 +901,7 @@ func TestBrowserBatch_ContextDeadlineTriggersRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !result.ForkRecoveryAttempted {
+	if !result.BrowserRecycled {
 		t.Error("deadline exceeded should trigger recovery")
 	}
 	if !strings.Contains(strings.ToLower(result.Message), "timed out") {
@@ -930,11 +925,11 @@ func TestBrowserBatch_UnknownCrashTriggersRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !result.ForkRecoveryAttempted {
+	if !result.BrowserRecycled {
 		t.Error("daemon crash with no stdout should trigger recovery")
 	}
-	if fake.recoverCalls != 1 {
-		t.Errorf("expected 1 recovery call, got %d", fake.recoverCalls)
+	if fake.recycles() != 1 {
+		t.Errorf("expected 1 recovery call, got %d", fake.recycles())
 	}
 	if !strings.Contains(result.Message, "exit status 2") {
 		t.Errorf("message should preserve exit status: %q", result.Message)
@@ -970,14 +965,14 @@ func TestBrowserBatch_PartialJSONWithExitErrorKeepsBothMessages(t *testing.T) {
 // TestBrowserBatch_ErrorsOutputNotPopulatedOnFailedRun guards the "partial
 // walk must not look like a successful one" invariant: on non-zero exit,
 // ErrorsOutput/ConsoleOutput must remain empty even if the last 3 steps
-// happen to be the canonical errors/console/close sequence.
+// happen to be the canonical errors/console/network sequence.
 func TestBrowserBatch_ErrorsOutputNotPopulatedOnFailedRun(t *testing.T) {
 	// Full valid JSON with canonical tail, but runErr is set.
 	batch := [][]string{
 		{"open", "https://example.com"},
 		{"errors"},
 		{"console"},
-		{"close"},
+		{"network", "requests", "--status", "400-599"},
 	}
 	fake := &fakeBrowserRunner{
 		runStdout: makeStdout(t, batch),
@@ -1094,125 +1089,140 @@ func TestCapBufferTruncates(t *testing.T) {
 	}
 }
 
-// TestBrowserBatch_SerializesCalls spawns several concurrent callers and
-// asserts they execute sequentially inside Run. This is the load-bearing
-// safety property: one agent-browser session at a time across the process.
-// The test uses a runner that busy-waits in Run to make overlap detectable.
-func TestBrowserBatch_SerializesCalls(t *testing.T) {
-	const concurrency = 5
-
-	var inFlight atomic.Int32
-	var maxInFlight atomic.Int32
-
-	runner := &serializationRunner{
-		onRun: func() {
-			cur := inFlight.Add(1)
-			defer inFlight.Add(-1)
-			for {
-				oldMax := maxInFlight.Load()
-				if cur <= oldMax || maxInFlight.CompareAndSwap(oldMax, cur) {
-					break
-				}
-			}
-			// Hold the "session" briefly to make any overlap visible.
-			time.Sleep(5 * time.Millisecond)
-		},
+// TestBrowserBatch_IsolationReachesTheBrowser pins the one isolation
+// choice: the default is a tab in the warm browser, and fresh-context and
+// new-browser are handed to the runner as asked. Anything else is refused
+// before the browser is touched.
+func TestBrowserBatch_IsolationReachesTheBrowser(t *testing.T) {
+	tests := []struct {
+		name, isolation, want string
+	}{
+		{"default is a tab", "", BrowserIsolationTab},
+		{"tab", "tab", BrowserIsolationTab},
+		{"fresh context", "fresh-context", BrowserIsolationFreshContext},
+		{"new browser", "new-browser", BrowserIsolationNewBrowser},
 	}
-	defer OverrideBrowserRunnerForTest(runner)()
-
-	var wg sync.WaitGroup
-	for range concurrency {
-		wg.Go(func() {
-			_, err := BrowserBatch(context.Background(), BrowserBatchInput{URL: "https://example.com"})
-			if err != nil {
-				t.Errorf("concurrent call errored: %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := &fakeBrowserRunner{runStdout: `[]`}
+			defer OverrideBrowserRunnerForTest(fake)()
+			if _, err := BrowserBatch(context.Background(), BrowserBatchInput{URL: "https://example.com", Isolation: tt.isolation}); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if fake.lastIsolation != tt.want {
+				t.Errorf("runner got isolation %q, want %q", fake.lastIsolation, tt.want)
 			}
 		})
 	}
-	wg.Wait()
-
-	if got := maxInFlight.Load(); got != 1 {
-		t.Errorf("max concurrent Run invocations = %d, want 1 — browser calls must be serialized", got)
-	}
-}
-
-// serializationRunner is a runner that calls onRun inside Run so tests
-// can observe concurrency.
-type serializationRunner struct {
-	onRun func()
-}
-
-func (*serializationRunner) LookPath() (string, error) { return "/fake/agent-browser", nil }
-
-func (s *serializationRunner) Run(_ context.Context, _ string, _ time.Duration) (string, string, bool, error) {
-	s.onRun()
-	return `[]`, "", false, nil
-}
-
-func (*serializationRunner) RecoverFork(_ context.Context) {}
-
-// TestBrowserBatch_ForceResetRunsRecoveryBeforeBatch verifies the
-// ForceReset input flag triggers RecoverFork BEFORE the batch starts,
-// retaining the compatibility call ordering. The call order is asserted via a hook that
-// records what ran when.
-func TestBrowserBatch_ForceResetRunsRecoveryBeforeBatch(t *testing.T) {
-	var order []string
-	fake := &fakeBrowserRunner{
-		runStdout: `[]`,
-	}
-	runnerWrap := &orderingRunner{inner: fake, order: &order}
-	defer OverrideBrowserRunnerForTest(runnerWrap)()
-
-	_, err := BrowserBatch(context.Background(), BrowserBatchInput{
-		URL:        "https://example.com",
-		ForceReset: true,
+	t.Run("unknown isolation is refused", func(t *testing.T) {
+		fake := &fakeBrowserRunner{runStdout: `[]`}
+		defer OverrideBrowserRunnerForTest(fake)()
+		_, err := BrowserBatch(context.Background(), BrowserBatchInput{URL: "https://example.com", Isolation: "incognito"})
+		if err == nil || !strings.Contains(err.Error(), "isolation") {
+			t.Fatalf("want an isolation error, got %v", err)
+		}
+		if fake.lastStdin != "" || fake.lastIsolation != "" {
+			t.Error("a refused isolation must not reach the browser")
+		}
 	})
+}
+
+// TestBrowserBatch_WarmBrowserStaysOnlyAfterACleanCall pins when the warm
+// browser is handed back for the next call: a walk that ended on its own,
+// even with a failed step, keeps it; a deadline, a cancel, fork exhaustion,
+// a crash or a CDP wedge recycle it, so the next call starts a clean Chrome.
+func TestBrowserBatch_WarmBrowserStaysOnlyAfterACleanCall(t *testing.T) {
+	failedClick := `[{"command":["open","https://example.com"],"success":true,"result":{}},` +
+		`{"command":["click","@e9"],"success":false,"error":"no element @e9"},` +
+		`{"command":["errors"],"success":true,"result":{"errors":[]}},` +
+		`{"command":["console"],"success":true,"result":{"logs":[]}},` +
+		`{"command":["network","requests","--status","400-599"],"success":true,"result":{"requests":[]}}]`
+	wedged := `[{"command":["open","https://example.com"],"success":false,"error":"CDP command timed out: Page.navigate"}]`
+	tests := []struct {
+		name   string
+		fake   *fakeBrowserRunner
+		cancel bool
+		reuse  bool
+	}{
+		{"clean walk keeps it", &fakeBrowserRunner{runStdout: `[]`}, false, true},
+		{"failed step keeps it", &fakeBrowserRunner{runStdout: failedClick}, false, true},
+		{"deadline recycles", &fakeBrowserRunner{runErr: context.DeadlineExceeded}, false, false},
+		{"cancel recycles", &fakeBrowserRunner{runStdout: `[]`, runErr: context.Canceled}, true, false},
+		{"fork exhaustion recycles", &fakeBrowserRunner{runStderr: "fork failed: resource temporarily unavailable", runErr: errors.New("exit status 1")}, false, false},
+		{"crash recycles", &fakeBrowserRunner{runErr: errors.New("signal: killed")}, false, false},
+		{"wedge recycles", &fakeBrowserRunner{runStdout: wedged}, false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			defer OverrideBrowserRunnerForTest(tt.fake)()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if tt.cancel {
+				cancel()
+			}
+			result, err := BrowserBatch(ctx, BrowserBatchInput{URL: "https://example.com"})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !slices.Equal(tt.fake.releases, []bool{tt.reuse}) {
+				t.Errorf("releases = %v, want exactly [%v]", tt.fake.releases, tt.reuse)
+			}
+			if result.BrowserRecycled == tt.reuse {
+				t.Errorf("BrowserRecycled = %v, want %v", result.BrowserRecycled, !tt.reuse)
+			}
+		})
+	}
+}
+
+// TestBrowserBatch_TimeoutKeepsFinishedSteps pins that a walk cut by its
+// deadline still returns the steps that finished, so the agent sees how far
+// the page got, while the reporting fields stay empty.
+func TestBrowserBatch_TimeoutKeepsFinishedSteps(t *testing.T) {
+	finished := `[{"command":["open","https://example.com"],"success":true,"result":{"url":"https://example.com"}},` +
+		`{"command":["click","@e1"],"success":true,"result":{}}]`
+	fake := &fakeBrowserRunner{runStdout: finished, runErr: context.DeadlineExceeded}
+	defer OverrideBrowserRunnerForTest(fake)()
+
+	result, err := BrowserBatch(context.Background(), BrowserBatchInput{URL: "https://example.com", Commands: [][]string{{"click", "@e1"}, {"wait", "60000"}}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-
-	if len(order) < 2 {
-		t.Fatalf("expected at least recover + run events, got %v", order)
+	if len(result.Steps) != 2 || !isCommand(result.Steps[1].Command, "click") {
+		t.Fatalf("finished steps lost on timeout: %+v", result.Steps)
 	}
-	if order[0] != "recover" {
-		t.Errorf("first event must be 'recover', got %v", order)
+	if !strings.Contains(result.Message, "timed out") {
+		t.Errorf("message should say the walk timed out: %q", result.Message)
 	}
-	if order[1] != "run" {
-		t.Errorf("second event must be 'run', got %v", order)
-	}
-	if fake.recoverCalls != 1 {
-		t.Errorf("expected 1 RecoverFork call, got %d", fake.recoverCalls)
+	if len(result.ErrorsOutput) != 0 || len(result.ConsoleOutput) != 0 {
+		t.Error("a timed-out walk must not populate the reporting fields")
 	}
 }
 
-// orderingRunner wraps a runner so tests can observe call ordering.
-type orderingRunner struct {
-	inner *fakeBrowserRunner
-	order *[]string
-}
-
-func (o *orderingRunner) LookPath() (string, error) { return o.inner.LookPath() }
-func (o *orderingRunner) Run(ctx context.Context, stdin string, timeout time.Duration) (string, string, bool, error) {
-	*o.order = append(*o.order, "run")
-	return o.inner.Run(ctx, stdin, timeout)
-}
-func (o *orderingRunner) RecoverFork(ctx context.Context) {
-	*o.order = append(*o.order, "recover")
-	o.inner.RecoverFork(ctx)
+// TestBrowserBatch_AcquireFailureIsAnError pins that a browser that could
+// not be readied (busy past the deadline, or failed to start) fails the call
+// before any step runs.
+func TestBrowserBatch_AcquireFailureIsAnError(t *testing.T) {
+	fake := &fakeBrowserRunner{acquireErr: errors.New("the browser is busy with another call")}
+	defer OverrideBrowserRunnerForTest(fake)()
+	_, err := BrowserBatch(context.Background(), BrowserBatchInput{URL: "https://example.com"})
+	if err == nil || !strings.Contains(err.Error(), "busy") {
+		t.Fatalf("want the acquire error, got %v", err)
+	}
+	if fake.lastStdin != "" {
+		t.Error("no step may run without the browser")
+	}
 }
 
 // TestBrowserBatch_CDPTimeoutInStepsTriggersRecovery: daemon returned
 // exit 0 with a step error matching a CDP-wedge signal. Tool must
-// auto-RecoverFork, set ForkRecoveryAttempted, and surface a message
-// naming the triggering signal — the next call's ForceReset retry is
-// the escape hatch the recipe guide teaches.
+// recycle the browser, set BrowserRecycled, and surface a message
+// naming the triggering signal — the next call starts a clean Chrome.
 func TestBrowserBatch_CDPTimeoutInStepsTriggersRecovery(t *testing.T) {
 	errMsg := "CDP command timed out: DOM.enable"
 	steps := []map[string]any{
 		{"command": []string{"open", "https://example.com"}, "success": false, "error": errMsg},
 		{"command": []string{"errors"}, "success": true, "result": map[string]any{"errors": []any{}}},
 		{"command": []string{"console"}, "success": true, "result": map[string]any{"logs": []any{}}},
-		{"command": []string{"close"}, "success": true, "result": map[string]any{}},
 	}
 	raw, err := json.Marshal(steps)
 	if err != nil {
@@ -1229,11 +1239,11 @@ func TestBrowserBatch_CDPTimeoutInStepsTriggersRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !result.ForkRecoveryAttempted {
-		t.Error("CDP-timeout in step errors must trigger RecoverFork")
+	if !result.BrowserRecycled {
+		t.Error("CDP-timeout in step errors must recycle the browser")
 	}
-	if fake.recoverCalls != 1 {
-		t.Errorf("expected 1 RecoverFork call, got %d", fake.recoverCalls)
+	if fake.recycles() != 1 {
+		t.Errorf("expected 1 recycle, got %d", fake.recycles())
 	}
 	if !strings.Contains(result.Message, "Chrome wedged") {
 		t.Errorf("message must name 'Chrome wedged' signal; got: %q", result.Message)
@@ -1254,7 +1264,6 @@ func TestBrowserBatch_TargetClosedAlsoTriggersRecovery(t *testing.T) {
 	errMsg := "Target closed"
 	steps := []map[string]any{
 		{"command": []string{"open", "https://example.com"}, "success": false, "error": errMsg},
-		{"command": []string{"close"}, "success": true, "result": map[string]any{}},
 	}
 	raw, err := json.Marshal(steps)
 	if err != nil {
@@ -1267,112 +1276,7 @@ func TestBrowserBatch_TargetClosedAlsoTriggersRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !result.ForkRecoveryAttempted {
-		t.Error("'Target closed' in step errors must trigger RecoverFork")
+	if !result.BrowserRecycled {
+		t.Error("'Target closed' in step errors must recycle the browser")
 	}
-}
-
-// TestBrowserBatch_ForceResetGatedByMutex: a caller that arrives with
-// ForceReset=true while another caller holds browserMu waits for the
-// in-flight call to complete before running its own RecoverFork +
-// batch. The mutex holds across ForceReset too.
-func TestBrowserBatch_ForceResetGatedByMutex(t *testing.T) {
-	held := make(chan struct{})
-	release := make(chan struct{})
-	var runCount atomic.Int32
-
-	blocker := &serializationRunner{
-		onRun: func() {
-			if runCount.Add(1) == 1 {
-				close(held)
-				<-release
-			}
-		},
-	}
-	defer OverrideBrowserRunnerForTest(blocker)()
-
-	// Start the blocker in the background so it holds the mutex.
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		_, _ = BrowserBatch(context.Background(), BrowserBatchInput{URL: "https://example.com"})
-	}()
-	<-held
-
-	// Second caller requests ForceReset. It must wait for the blocker.
-	gotResult := make(chan struct{})
-	go func() {
-		defer close(gotResult)
-		_, _ = BrowserBatch(context.Background(), BrowserBatchInput{URL: "https://second.example.com", ForceReset: true})
-	}()
-
-	select {
-	case <-gotResult:
-		t.Fatal("ForceReset caller should not complete while mutex is held")
-	case <-time.After(50 * time.Millisecond):
-		// Expected — it's blocked behind browserMu.
-	}
-
-	// Let the blocker finish so the ForceReset caller can proceed.
-	close(release)
-	select {
-	case <-gotResult:
-		// Expected progress.
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("ForceReset caller never made progress after mutex release")
-	}
-	<-done
-}
-
-// TestBrowserBatch_CtxCancelWhileLockHeld verifies that a caller whose ctx
-// is already cancelled returns immediately without blocking on browserMu,
-// even when another caller is mid-flight.
-func TestBrowserBatch_CtxCancelWhileLockHeld(t *testing.T) {
-	held := make(chan struct{})
-	release := make(chan struct{})
-
-	blocker := &serializationRunner{
-		onRun: func() {
-			close(held)
-			<-release
-		},
-	}
-	defer OverrideBrowserRunnerForTest(blocker)()
-
-	// Start the blocker in the background.
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		_, _ = BrowserBatch(context.Background(), BrowserBatchInput{URL: "https://example.com"})
-	}()
-
-	// Wait until the blocker is inside Run (mutex held).
-	<-held
-
-	// A caller with a pre-cancelled ctx must return quickly, not block.
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	returned := make(chan error, 1)
-	go func() {
-		_, err := BrowserBatch(ctx, BrowserBatchInput{URL: "https://example.com"})
-		returned <- err
-	}()
-
-	select {
-	case err := <-returned:
-		if err == nil {
-			t.Error("expected ctx cancellation error")
-		} else if !strings.Contains(err.Error(), "context canceled") &&
-			!strings.Contains(err.Error(), "context deadline") &&
-			!strings.Contains(err.Error(), "acquire browser lock") {
-			t.Errorf("unexpected error: %v", err)
-		}
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("cancelled caller blocked on browserMu — ctx-aware lock is broken")
-	}
-
-	// Let the blocker finish so we don't leak the goroutine.
-	close(release)
-	<-done
 }
