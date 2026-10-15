@@ -12,3 +12,6 @@ func processStart(pid int) (int64, bool) {
 	t := kp.Proc.P_starttime
 	return t.Sec*1_000_000 + int64(t.Usec), true
 }
+
+// groupRSSKB is 0 off Linux: the supervisor runs in Linux containers.
+func groupRSSKB(int) int64 { return 0 }

@@ -408,3 +408,21 @@ func TestAdoptSupervisorInDevSetup_ZeropsYmlRepo_ErrorNamesZeropsYmlNeverZeropsY
 		t.Fatalf("error must name the repo's zerops.yml and never zerops.yaml: %v", err)
 	}
 }
+
+func TestAdoptSupervisorYAML_WritesNoEnvVariableNeverAZeropsPrefixedOne(t *testing.T) {
+	t.Parallel()
+	in := "zerops:\n  - setup: dev\n    run:\n      base: nodejs@24\n      envVariables:\n        NODE_ENV: development\n      start: npm run dev\n"
+	out, _, changed, err := AdoptSupervisorYAML([]byte(in), "dev", "appdev", testDevsupURL, "")
+	if err != nil || !changed {
+		t.Fatalf("AdoptSupervisorYAML: changed=%v err=%v", changed, err)
+	}
+	if strings.Contains(string(out), "ZEROPS_") {
+		t.Errorf("the supervisor wiring wrote a ZEROPS_ name, which the platform refuses on deploy:\n%s", out)
+	}
+	_, added := lineDiff(strings.Split(in, "\n"), strings.Split(string(out), "\n"))
+	for _, l := range added {
+		if strings.Contains(l, "envVariables") || strings.Contains(l, ": ") && !strings.Contains(l, "start:") && !strings.Contains(l, "prepare") && !strings.HasPrefix(strings.TrimSpace(l), "- ") {
+			t.Errorf("wiring added an env-like line %q", l)
+		}
+	}
+}

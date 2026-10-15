@@ -30,3 +30,45 @@ func processStart(pid int) (int64, bool) {
 	}
 	return v, true
 }
+
+// groupRSSKB sums the resident memory (KiB) of every process in the group,
+// read from /proc/<pid>/stat (pgrp, field 5) and /proc/<pid>/statm (resident
+// pages, field 2).
+func groupRSSKB(pgid int) int64 {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return 0
+	}
+	var pages int64
+	for _, e := range entries {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue
+		}
+		b, err := os.ReadFile("/proc/" + e.Name() + "/stat")
+		if err != nil {
+			continue
+		}
+		s := string(b)
+		i := strings.LastIndexByte(s, ')')
+		if i < 0 {
+			continue
+		}
+		f := strings.Fields(s[i+1:])
+		if len(f) < 3 || f[2] != strconv.Itoa(pgid) {
+			continue
+		}
+		m, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/statm")
+		if err != nil {
+			continue
+		}
+		mf := strings.Fields(string(m))
+		if len(mf) < 2 {
+			continue
+		}
+		if n, err := strconv.ParseInt(mf[1], 10, 64); err == nil {
+			pages += n
+		}
+	}
+	return pages * int64(os.Getpagesize()) / 1024
+}

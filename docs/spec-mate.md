@@ -855,7 +855,12 @@ lost on a redeploy (P1 T7, P2 S4) — which is exactly the start-up rule below.
   or `null`: the server ending on its own (`code` -1 and `signal` such as `SIGKILL` when a signal
   ended it) or a failed start (`port_busy`; `start_failed` with the reason in the server's log). A
   stop or restart never overwrites it, so a crash stays visible after the server runs again;
-  `leaderStart` is the leader's start time from `/proc/<pid>/stat`, the identity check below.
+  `leaderStart` is the leader's start time from `/proc/<pid>/stat`, the identity check below;
+  `rssKb` is the resident memory of the server's whole process group in KiB at read time
+  (omitted when there is no live group). zcp's `start` of a server that is not running reads it
+  with the container's cgroup memory (`memory.current` less `inactive_file`, against the service's
+  `maxRam`, else `memory.max`) and refuses the start when the headroom is below the largest running
+  server's `rssKb` (floor 1 GiB), naming the numbers (`TestDevServer_StartThatWouldLeaveLessHeadroom…`).
 - `status` is derived **once, by the supervisor**: `stopped` = desired stopped; `crashed` = desired
   running, no live group, `exit` set; `starting` = live group whose `port` does not yet accept TCP;
   `running` = everything else; a start still waiting for its port is `starting`. zcp and Mate read

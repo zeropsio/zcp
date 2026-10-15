@@ -81,6 +81,9 @@ type ServerState struct {
 	Restarts int    `json:"restarts"`
 	Exit     *Exit  `json:"exit"`
 	LogPath  string `json:"logPath"`
+	// RssKB is the resident memory of the server's whole process group in
+	// KiB, measured when the state is read; 0 when it has no live group.
+	RssKB int64 `json:"rssKb,omitempty"`
 }
 
 // SupervisorInfo identifies the running supervisor.

@@ -832,3 +832,74 @@ func TestDevServer_Running_IsTheSupervisorsStatus(t *testing.T) {
 		})
 	}
 }
+
+const gib64 = int64(1) << 30
+
+func memoryContainer(maxGiB, usedGiB int64, rssGiB map[string]float64) *devservertest.Container {
+	c := devservertest.NewSupervised(twoServers)
+	c.MemMaxB, c.MemCurrentB = maxGiB*gib64, usedGiB*gib64
+	c.Servers["api"].Status, c.Servers["api"].Desired = devsup.StatusStopped, devsup.DesiredStopped
+	for n, g := range rssGiB {
+		c.Servers[n].RssKB = int64(g * 1024 * 1024)
+	}
+	return c
+}
+
+func TestDevServer_StartThatWouldLeaveLessHeadroomThanTheLargestRunningServer_IsRefusedWithNumbersAndTwoWaysOut(t *testing.T) {
+	t.Parallel()
+	c := memoryContainer(6, 5, map[string]float64{"web": 2.5})
+	_, err := ExecuteDevServer(context.Background(), c, mockClientWithServices("appdev"), "p1",
+		DevServerParams{Action: "start", Hostname: "appdev", Name: "api"})
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) {
+		t.Fatalf("want a refusal, got %v", err)
+	}
+	for _, want := range []string{"Not starting api on appdev", "5.0 GiB", "6.0 GiB", "1.0 GiB", "2.5 GiB", "web 2.5 GiB"} {
+		if !strings.Contains(pe.Message, want) {
+			t.Errorf("message %q lacks %q", pe.Message, want)
+		}
+	}
+	if !strings.Contains(pe.Suggestion, "action=stop") || !strings.Contains(pe.Suggestion, "zerops_scale") {
+		t.Errorf("suggestion %q must name stopping another server and scaling max RAM", pe.Suggestion)
+	}
+	if sentWith(c, "ctl 'start' 'api'") != 0 {
+		t.Errorf("a refused start must not reach the supervisor")
+	}
+	if c.Status("web") != devsup.StatusRunning {
+		t.Errorf("the running server must stay running, got %s", c.Status("web"))
+	}
+}
+
+func TestDevServer_StartThatFitsTheHeadroom_Starts(t *testing.T) {
+	t.Parallel()
+	c := memoryContainer(6, 3, map[string]float64{"web": 2.5})
+	result := runDevServer(t, c, DevServerParams{Action: "start", Hostname: "appdev", Name: "api"})
+	if result.Name != "api" || sentWith(c, "ctl 'start' 'api'") != 1 {
+		t.Errorf("api must start, got %+v", result)
+	}
+}
+
+func TestDevServer_StartWhenTheServiceMaxRamIsAboveTheGrantedRam_JudgesAgainstTheMaxRam(t *testing.T) {
+	t.Parallel()
+	c := memoryContainer(4, 3, map[string]float64{"web": 2.5})
+	client := platform.NewMock().
+		WithProject(&platform.Project{ID: "p1", Name: "test"}).
+		WithServices([]platform.ServiceStack{{ID: "svc-appdev", Name: "appdev", ProjectID: "p1", Status: "ACTIVE",
+			CustomAutoscaling: &platform.CustomAutoscaling{MaxRAM: 8}}})
+	if _, err := ExecuteDevServer(context.Background(), c, client, "p1",
+		DevServerParams{Action: "start", Hostname: "appdev", Name: "api"}); err != nil {
+		t.Fatalf("8 GiB ceiling with 3 GiB used leaves 5 GiB, enough for another 2.5 GiB server: %v", err)
+	}
+}
+
+func TestDevServer_RestartOfARunningServer_IsNeverRefusedOnMemory(t *testing.T) {
+	t.Parallel()
+	c := memoryContainer(6, 5, map[string]float64{"web": 2.5})
+	runDevServer(t, c, DevServerParams{Action: "restart", Hostname: "appdev", Name: "web"})
+}
+
+func TestDevServer_StartWhenTheCgroupIsUnreadable_StartsAsBefore(t *testing.T) {
+	t.Parallel()
+	c := memoryContainer(0, 0, nil)
+	runDevServer(t, c, DevServerParams{Action: "start", Hostname: "appdev", Name: "api"})
+}

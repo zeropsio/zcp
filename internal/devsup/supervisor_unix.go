@@ -690,6 +690,7 @@ func (s *Supervisor) serverState(name string, sv *server) ServerState {
 	}
 	if sv.g != nil {
 		ss.Pid, ss.Pgid, ss.LeaderStart = sv.g.pgid, sv.g.pgid, sv.g.leaderStart
+		ss.RssKB = groupRSSKB(sv.g.pgid)
 	}
 	switch {
 	case sv.desired == DesiredStopped:

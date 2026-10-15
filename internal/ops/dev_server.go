@@ -211,7 +211,7 @@ func ExecuteDevServer(
 	var result *DevServerResult
 	switch action {
 	case devServerActionStart, devServerActionRestart:
-		result, err = startDevServer(ctx, ssh, p, ds)
+		result, err = startDevServer(ctx, ssh, client, projectID, p, ds)
 	case devServerActionStop:
 		result, err = stopDevServer(ctx, ssh, p, ds)
 	case devServerActionStatus:
@@ -489,13 +489,16 @@ func wantedServer(p DevServerParams, name string, declared devsup.Server, isDecl
 // startDevServer declares the server when the set (or its entry) changes,
 // asks the supervisor to start it and waits for its health probe — or, for a
 // server without HTTP, for the supervisor's status after a short settle.
-func startDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds *DevServers) (*DevServerResult, error) {
+func startDevServer(ctx context.Context, ssh SSHDeployer, client platform.Client, projectID string, p DevServerParams, ds *DevServers) (*DevServerResult, error) {
 	action := strings.ToLower(p.Action)
 	if err := declarationProblem(ds); err != nil {
 		return nil, err
 	}
 	name, err := resolveServerName(p, ds, true)
 	if err != nil {
+		return nil, err
+	}
+	if err := refuseStartOnMemory(ctx, ssh, client, projectID, p, name, ds); err != nil {
 		return nil, err
 	}
 	declared, isDeclared := ds.Server(name)

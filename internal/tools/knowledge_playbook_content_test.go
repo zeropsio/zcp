@@ -262,6 +262,7 @@ func TestPlaybookMonorepo_ContentPins_PartRules(t *testing.T) {
 		{"the supervisor watches a declared dev server", "The supervisor watches a declared dev server"},
 		{"never a runtime's own watcher", "Never add a runtime's own watcher"},
 		{"stages carry hostname and setupName", `"stages": [{"hostname": "webstage", "setupName": "web"}`},
+		{"heavy servers not being worked on do not autostart", "declares the ones not being worked on `\"autostart\": false`"},
 		{"static cannot proxy", "A static service cannot proxy requests to the API"},
 		{"compose to native parts", "Convert compose services to native parts"},
 		{"docker only with registry images", "only when its image already exists in a registry"},
