@@ -34,6 +34,23 @@ setup per part plus a `dev` setup in the single root `zerops.yaml`.
    `sudo zsc install <runtime>` on Ubuntu, `sudo apk add <package>` on Alpine) and the
    dev servers plus the install peak fit its RAM → **one dev service holds the whole
    repo** (default). Each part's dev server runs under its own name in that service.
+   A part you add gets its dev server in the same step as its setup. Worked example —
+   `appdev` runs the `web` part and the repo gains a `worker` part (no port): after
+   adding the `worker` setup to `zerops.yaml`, start the worker on the dev service:
+
+   ```
+   zerops_dev_server action=start hostname="appdev" name="worker" command="bun worker.ts" noHttpProbe=true
+   ```
+
+   The first start declares it in `.zcp/dev-servers.json` beside the running one:
+
+   ```json
+   {"version": 1, "servers": [{"name": "web", "port": 3000, "command": "bun index.ts"}, {"name": "worker", "command": "bun worker.ts"}]}
+   ```
+
+   Commit the declaration with the setup. `zerops_dev_server action=status
+   hostname="appdev"` then lists both servers. Deploying the part's stage
+   (`workerstage`) never runs it on `appdev`.
 2. Otherwise — runtimes that cannot share a container, or one container is not
    enough — **one dev service per part on one shared Local Storage volume**:
    `mountPath` is a subfolder of `/var/www` (the platform rejects `/var/www`

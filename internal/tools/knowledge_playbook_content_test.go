@@ -263,6 +263,8 @@ func TestPlaybookMonorepo_ContentPins_PartRules(t *testing.T) {
 		{"never a runtime's own watcher", "Never add a runtime's own watcher"},
 		{"stages carry hostname and setupName", `"stages": [{"hostname": "webstage", "setupName": "web"}`},
 		{"heavy servers not being worked on do not autostart", "declares the ones not being worked on `\"autostart\": false`"},
+		{"worked example: a new part's dev server starts by name on the shared dev service", `zerops_dev_server action=start hostname="appdev" name="worker" command="bun worker.ts" noHttpProbe=true`},
+		{"worked example: the first start declares it beside the running one", `{"name": "web", "port": 3000, "command": "bun index.ts"}, {"name": "worker", "command": "bun worker.ts"}`},
 		{"static cannot proxy", "A static service cannot proxy requests to the API"},
 		{"compose to native parts", "Convert compose services to native parts"},
 		{"docker only with registry images", "only when its image already exists in a registry"},
