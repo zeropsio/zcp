@@ -198,7 +198,7 @@ func TestEvalFarmRun_IntegrationTokenPreflight_NamesTheFix(t *testing.T) {
 
 // newMintForbiddenFakeAccountServer serves exactly the account-wide paths a
 // single-run farm run exercises up to (and including) the token mint:
-// user/info, project/import (create succeeds), and integration-token (mint
+// user/info, project/search (the quota preflight), project/import (create succeeds), and integration-token (mint
 // always answers 403 notAllowedForIntegrationToken — simulating
 // ZCP_FARM_ACCOUNT_TOKEN being an integration token). Also serves the
 // per-project GET/DELETE the rollback (farm.Guard) issues after the mint
@@ -214,6 +214,10 @@ func newMintForbiddenFakeAccountServer(t *testing.T, clientID string) *httptest.
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/rest/public/user/info":
 			fmt.Fprintf(w, `{"id":"user-1","email":"farm@example.com","fullName":"Farm","clientUserList":[{"id":"cu1","clientId":%q,"userId":"user-1"}]}`, clientID)
+
+		case r.Method == http.MethodPost && r.URL.Path == "/api/rest/public/project/search":
+			// The quota preflight reads the org before any project exists.
+			fmt.Fprint(w, `{"limit":100,"offset":0,"totalHits":0,"items":[]}`)
 
 		case r.Method == http.MethodPost && r.URL.Path == "/api/rest/public/client/"+clientID+"/project/import":
 			mu.Lock()
@@ -1034,6 +1038,10 @@ func newHangingRunFakeAccountServer(t *testing.T, clientID, runProjectName strin
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/rest/public/user/info":
 			fmt.Fprintf(w, `{"id":"user-1","email":"farm@example.com","fullName":"Farm","clientUserList":[{"id":"cu1","clientId":%q,"userId":"user-1"}]}`, clientID)
+
+		case r.Method == http.MethodPost && r.URL.Path == "/api/rest/public/project/search":
+			// The quota preflight reads the org before any project exists.
+			fmt.Fprint(w, `{"limit":100,"offset":0,"totalHits":0,"items":[]}`)
 
 		case r.Method == http.MethodPost && r.URL.Path == "/api/rest/public/client/"+clientID+"/project/import":
 			mu.Lock()

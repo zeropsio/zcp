@@ -535,7 +535,12 @@ requires, so a reader can tell what a batch ran under. A negative or
 non-integer `--max-concurrent` is a flag error, checked before any network
 dependency. Windowing changes only when projects are created relative to
 each other; FM-21's no-bundle exemption, FM-23's launch-token lifecycle,
-and R3's interrupt handling are unchanged.
+and R3's interrupt handling are unchanged. Before the batch, a quota
+preflight reads the org's live project count and caps the window to
+50 − projects − 4 (the org's project limit, keeping 4 slots for launch
+production targets and other users), printing the count and the window it
+runs under; with no slot left the batch refuses before writing a manifest
+(`TestQuotaWindow_CapsRunWindowToOrgHeadroom`).
 
 **FM-66.** A candidate whose bytes carry fewer than 20 `guiSlug: "` recipe
 markers is refused — the corpus is embedded from disk at build time and a

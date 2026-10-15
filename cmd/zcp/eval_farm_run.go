@@ -139,6 +139,18 @@ func runFarmRun(args []string, envr *farm.EnvResolver) int {
 	}
 	defer closer()
 
+	quota, err := farm.QuotaWindow(ctx, client, clientID, maxConcurrent)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	if quota.Window != maxConcurrent {
+		fmt.Fprintf(os.Stderr, "farm run: org holds %d of %d projects; run window capped from %d to %d (%d kept free)\n", quota.Projects, farm.OrgProjectLimit, maxConcurrent, quota.Window, farm.QuotaHeadroom)
+	} else {
+		fmt.Fprintf(os.Stderr, "farm run: org holds %d of %d projects; run window %d\n", quota.Projects, farm.OrgProjectLimit, quota.Window)
+	}
+	maxConcurrent = quota.Window
+
 	candidateInfo, err := resolveCandidateInfo(ctx, sink, flags.candidate)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: read candidate info: %v\n", err)
