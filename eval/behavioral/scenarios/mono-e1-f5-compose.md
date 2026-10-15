@@ -36,7 +36,7 @@ verification:
   toolArg:
     - {always: "zerops_dev_server{action=start}"}
   containerCheck:
-    - {service: appdev, cmd: "grep -qE 'start: *zcp-devsup run' /var/www/zerops.yml && echo supervised", match: "^supervised"}
+    - {service: appdev, cmd: "cat /var/www/zerops.y*ml | grep -qE 'start: *zcp-devsup run' && echo supervised", match: "^supervised"}
     - {service: appdev, cmd: "grep -c '\"name\"' /var/www/.zcp/dev-servers.json", match: "^[2-9]"}
     - {service: appdev, cmd: "curl -fsS http://127.0.0.1:8080/health | grep -q 'db-configured' && echo api-has-db", match: "^api-has-db"}
     - {service: appdev, cmd: "curl -fsS -H 'Host: appdev.example' http://127.0.0.1:3000/ | grep -q Praha && echo web-reaches-api", match: "^web-reaches-api"}
