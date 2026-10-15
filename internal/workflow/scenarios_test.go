@@ -1583,6 +1583,9 @@ func TestScenario_NewPartOfSinglePartPairIsAStageNotABootstrap(t *testing.T) {
 		}
 		for _, m := range out {
 			if m.AtomID == atom {
+				if !strings.Contains(m.Body, ".zcp/dev-servers.json") || !strings.Contains(m.Body, "zerops_dev_server action=start name=<part>") {
+					t.Errorf("%s body does not tell the agent to declare and start the new part's dev server:\n%s", atom, m.Body)
+				}
 				if !strings.Contains(m.Body, "appdev") || !strings.Contains(m.Body, `zerops_knowledge uri="zerops://playbooks/monorepo"`) {
 					t.Errorf("%s body lacks the pair or the playbook:\n%s", atom, m.Body)
 				}
@@ -1669,6 +1672,11 @@ func TestScenario_AdoptingAPairAndAddingAPartNamesTheStageNotANewService(t *test
 	}
 	if !strings.Contains(body, `zerops_knowledge uri="zerops://playbooks/monorepo"`) {
 		t.Errorf("%s body lacks the monorepo playbook:\n%s", atom, body)
+	}
+	for _, want := range []string{".zcp/dev-servers.json", "zerops_dev_server action=start name=<part>"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("%s body does not tell the agent to declare and start the new part's dev server (%q):\n%s", atom, want, body)
+		}
 	}
 	if got, _ := fires(BootstrapRouteAdopt, "provision"); got {
 		t.Errorf("%s fired past the adopt discover step", atom)

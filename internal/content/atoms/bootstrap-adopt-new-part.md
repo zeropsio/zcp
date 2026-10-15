@@ -19,8 +19,11 @@ runtime of the plan:
    `isExisting: true` and `stages` listing every stage with its setup, the
    new one included (`{"hostname": "workerstage", "setupName": "worker"}`).
    Never a second runtime for the part.
-3. In develop, add the part's `setup:` to the repo's `zerops.yaml` and declare
-   a named dev server for it.
+3. In develop, add the part's `setup:` to the repo's `zerops.yaml`, then in
+   the same step give the part its own entry in `.zcp/dev-servers.json`
+   (autostart, unless the dev service's RAM is short) and run
+   `zerops_dev_server action=start name=<part>`. A worker without a port is
+   still a named server. Every part on the dev service runs as one.
 
 Read `zerops_knowledge uri="zerops://playbooks/monorepo"` first. Plan a new
 runtime only for a different repo.
