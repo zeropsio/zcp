@@ -111,6 +111,7 @@ func TestOrgTools_EachAnswersWithItsDocument(t *testing.T) {
 		{tool: "zerops_org_propose_env", args: map[string]any{"project": "pProd", "scope": "project", "key": "APP_URL", "value": "https://x", "reason": "domain"}, wantKey: "proposal", wantIn: `"kind":"env.set"`},
 		{tool: "zerops_org_propose_message", args: map[string]any{"to": "Rossy", "words": "debug this", "reason": "Rossy's code"}, wantKey: "proposal", wantIn: `"mateName":"Rossy"`},
 		{tool: "zerops_org_propose_domain", args: map[string]any{"project": "pProd", "service": "medusa", "domains": []string{"contoso.com", "www.contoso.com"}, "port": 9000, "reason": "the shop's own name"}, wantKey: "proposal", wantIn: `"params":{"domains":["contoso.com","www.contoso.com"],"port":9000}`},
+		{tool: "zerops_org_propose_access", args: map[string]any{"project": "Contoso - production", "people": []map[string]any{{"person": "dana@example.com", "level": "full"}}, "reason": "she works on the shop"}, wantKey: "proposal", wantIn: `"people":[{"person":"dana@example.com","level":"full"}]`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.tool, func(t *testing.T) {
@@ -183,7 +184,7 @@ func TestOrgTools_Annotations(t *testing.T) {
 		"zerops_org_failures": true, "zerops_org_env": true, "zerops_org_processes": true,
 		"zerops_org_costs": true, "zerops_org_usage": true,
 		"zerops_org_propose_service": false, "zerops_org_propose_env": false, "zerops_org_propose_message": false,
-		"zerops_org_propose_domain": false,
+		"zerops_org_propose_domain": false, "zerops_org_propose_access": false,
 	}
 	if len(listed.Tools) != len(want) {
 		t.Errorf("registered %d tools, want %d", len(listed.Tools), len(want))
