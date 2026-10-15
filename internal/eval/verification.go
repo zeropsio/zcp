@@ -149,10 +149,17 @@ func RunVerification(
 		ctx,
 		client,
 		projectID,
-		len(sc.Verification.ExpectedServices) > 0 || sc.Verification.Liveness != nil || len(sc.Verification.Unchanged) > 0,
+		sc.Verification.needsServices(),
 		sc.Verification.NoFailedProcesses,
 	)
 	return runVerificationWithObservation(ctx, sc, observation, httpDoer, retrospectiveText, runStart, projectID, client, true, nil, runtime)
+}
+
+// needsServices reports whether any check reads the project's service list
+// (expected services, liveness, unchanged); the one owner of that predicate
+// for both the enforce and the observe collection.
+func (v *VerificationConfig) needsServices() bool {
+	return len(v.ExpectedServices) > 0 || v.Liveness != nil || len(v.Unchanged) > 0
 }
 
 // runVerificationWithObservation derives the legacy advisory findings list

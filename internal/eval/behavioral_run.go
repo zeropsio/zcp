@@ -548,7 +548,7 @@ func (r *Runner) observeTaskEnd(ctx context.Context, sc *Scenario, outDir string
 	evidenceCtx, cancelEvidence := context.WithTimeout(ctx, 30*time.Second)
 	defer cancelEvidence()
 
-	readServices := sc.Verification != nil && len(sc.Verification.ExpectedServices) > 0
+	readServices := sc.Verification != nil && sc.Verification.needsServices()
 	readProcesses := sc.Verification != nil && sc.Verification.NoFailedProcesses
 	observation := collectPlatformObservation(evidenceCtx, r.client, r.projectID, readServices, readProcesses)
 	rows := generateRequiredChecks(evidenceCtx, sc, observation, r.httpDoer, startedAt, r.projectID, r.client, true, result.Baseline, r.scenarioRuntimeInputs(sc, result))

@@ -996,3 +996,20 @@ func TestRunVerification_ExpectedService_SubdomainAccess(t *testing.T) {
 		})
 	}
 }
+
+func TestVerificationConfig_NeedsServices_ExpectedLivenessOrUnchanged(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct {
+		v    VerificationConfig
+		want bool
+	}{
+		"nothing declared":  {VerificationConfig{}, false},
+		"expected services": {VerificationConfig{ExpectedServices: []ExpectedService{{Hostname: "a"}}}, true},
+		"liveness":          {VerificationConfig{Liveness: &LivenessProbe{}}, true},
+		"unchanged":         {VerificationConfig{Unchanged: []string{"x"}}, true},
+	} {
+		if got := tc.v.needsServices(); got != tc.want {
+			t.Errorf("%s: needsServices() = %v, want %v", name, got, tc.want)
+		}
+	}
+}
