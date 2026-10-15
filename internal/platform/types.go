@@ -372,6 +372,11 @@ type ProjectEnvVar struct {
 	Editable  bool           `json:"editable,omitempty"`
 }
 
+// MaskedEnvValue is what the platform returns for a sensitive env value the
+// reading token may not see — a read-only or project-scoped integration
+// token (spec-zerops-env-lifecycle.md §7).
+const MaskedEnvValue = "REDACTED"
+
 // ServiceEnvVar is a service-stack env entry. Mirrors the SDK's
 // ServiceStackEnv DTO. Note: NO Editable field — the SDK doesn't
 // expose Editable on service-stack-env scope (verified live, see

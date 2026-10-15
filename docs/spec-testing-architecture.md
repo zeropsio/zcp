@@ -475,7 +475,7 @@ at the task-end freeze. The block counts as an executable check for
 |---|---|---|---|
 | `node_postgres_record/<stage>/record_roundtrip` | `POST /records {nonce,value}` → 201 with an `id`, and `GET /records/<id>` returns that `id`, the verifier's `nonce` and `value` | any of those differ, or a non-2xx status | URL unresolvable, HTTP unreachable, or the freeze is unsettled |
 | `node_postgres_record/<stage>/environment` | the GET body's `environment` equals the literal `stage` | it differs | as above |
-| `node_postgres_record/<database>/db_row` | `SELECT id, value FROM records WHERE nonce = $1` returns exactly one row whose `value` equals the verifier's and whose `id` equals the GET-returned id | zero rows, more than one, or a mismatch (the plausible in-memory fake fails HERE) | DB unreachable, credentials unresolvable, or the freeze is unsettled |
+| `node_postgres_record/<database>/db_row` | `SELECT id, value FROM records WHERE nonce = $1` returns exactly one row whose `value` equals the verifier's and whose `id` equals the GET-returned id | zero rows, more than one, or a mismatch (the plausible in-memory fake fails HERE) | DB unreachable, credentials unresolvable, the password masked for the run's project-scoped token, or the freeze is unsettled |
 | `unrelated_artifact/<unrelated>/unchanged` | the service's active app-version id at the freeze equals the one recorded at scenario start | it differs | either observation missing |
 
 **Independence.** The verifier generates a fresh unpredictable `nonce` and

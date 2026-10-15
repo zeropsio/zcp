@@ -241,6 +241,10 @@ func (v NodePostgresVerifier) Verify(ctx context.Context, in NodePostgresInput) 
 		// Point 4: db host override refused — HTTP still runs normally, but
 		// the SELECT never fires against an operator/user-set override.
 		dbRow = blockedRow(nodePostgresDBRowID(in.Database), in.Database, now, "db host override refused")
+	case conn.Password == platform.MaskedEnvValue:
+		// The platform masks a sensitive password for a project-scoped
+		// token; connecting with the mask only fails authentication.
+		dbRow = blockedRow(nodePostgresDBRowID(in.Database), in.Database, now, "platform masks the database password for this token")
 	case httpErr != nil:
 		dbRow = blockedRow(nodePostgresDBRowID(in.Database), in.Database, now, "HTTP unreachable, no id to verify against")
 	default:

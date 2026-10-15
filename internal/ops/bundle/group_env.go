@@ -8,6 +8,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/zeropsio/zcp/internal/platform"
 )
 
 // What a group recipe does with a live variable.
@@ -58,10 +60,6 @@ const maxGeneratedSecret = 1024
 // maskedSecretLength stands in for a masked value's unknown length: the
 // platform recipes' own default.
 const maskedSecretLength = 32
-
-// maskedValue is what the platform returns for a sensitive value the reader
-// may not see (spec-zerops-env-lifecycle.md §7).
-const maskedValue = "REDACTED"
 
 // recipeCredentialWords are the words a credential goes by, wherever they
 // stand in a name. A name is the only signal for what no shape tells from a
@@ -233,7 +231,7 @@ func recipeSecret(env ProjectEnvVar) (secret, setAgain bool) {
 	if value == "" {
 		return env.Sensitive || (recipeCredentialName(env.Key) && !recipePublicName(env.Key)), false
 	}
-	flagged := env.Sensitive || value == maskedValue
+	flagged := env.Sensitive || value == platform.MaskedEnvValue
 	// A public name is public only for a value that is no key: a private key
 	// or a vendor's secret under NEXT_PUBLIC_ is a secret in the wrong place.
 	public := recipePublicName(env.Key) && !recipePrivateKeyShape.MatchString(value) && !matchesAny(recipeExternalShapes, value)
@@ -269,7 +267,7 @@ func generatedSecret(value string) string {
 	if value == "" {
 		return ""
 	}
-	if value == maskedValue {
+	if value == platform.MaskedEnvValue {
 		return generator(maskedSecretLength)
 	}
 	if strings.HasPrefix(value, "base64:") {

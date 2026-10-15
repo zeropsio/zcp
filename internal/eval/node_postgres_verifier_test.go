@@ -651,3 +651,35 @@ func TestNodePostgresRecordQuery_IDAsText(t *testing.T) {
 		t.Fatalf("query = %q", nodePostgresRecordQuery)
 	}
 }
+
+// TestNodePostgresVerifier_MaskedPassword_DBRowBlockedNamingTheMask pins
+// that a database password the platform masks for the run's project-scoped
+// token blocks db_row with that cause instead of connecting with the mask
+// as the password ("password authentication failed"); the HTTP rows still
+// grade normally.
+func TestNodePostgresVerifier_MaskedPassword_DBRowBlockedNamingTheMask(t *testing.T) {
+	app := newNodePostgresAppServer("stage")
+	server := httptest.NewServer(app.handler())
+	defer server.Close()
+	client := mockWithSubdomainFixture(
+		platform.ServiceStack{ID: "db-1", Name: "db", Status: "ACTIVE"},
+		platform.ServiceStack{ID: "other-1", Name: "other", Status: "ACTIVE", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-1"}},
+	).WithServiceEnv("db-1", []platform.ServiceEnvVar{
+		{Key: "hostname", Content: "db"}, {Key: "port", Content: "5432"},
+		{Key: "user", Content: "u"}, {Key: "password", Content: "REDACTED", Sensitive: true}, {Key: "dbName", Content: "d"},
+	})
+	db := &fakeNodePostgresDB{rowsByNonce: map[string]fakeDBRow{"nonce-1": {id: "rec-1", value: "value-1"}}}
+
+	v := NodePostgresVerifier{Client: client, HTTP: loopbackHTTPClient(server), DB: db, Nonce: fixedNonce()}
+	rows := v.Verify(context.Background(), nodePostgresBaseInput())
+	got := rowsByID(t, rows)
+	assertResult(t, got, "node_postgres_record/appstage/record_roundtrip", CheckPassed)
+	assertResult(t, got, "node_postgres_record/appstage/environment", CheckPassed)
+	assertResult(t, got, "node_postgres_record/db/db_row", CheckBlocked)
+	if msg := got["node_postgres_record/db/db_row"].Message; msg != "platform masks the database password for this token" {
+		t.Errorf("db_row message = %q, want the masking cause", msg)
+	}
+	if db.calls != 0 {
+		t.Errorf("db.calls = %d, want 0 (never connect with a masked password)", db.calls)
+	}
+}
