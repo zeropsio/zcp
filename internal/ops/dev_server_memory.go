@@ -97,7 +97,9 @@ func memoryRefusal(hostname, name string, mem containerMemory, maxRAMKB int64, s
 	if ceiling <= 0 {
 		return ""
 	}
-	margin := int64(devServerMarginFloorKB)
+	// On a small service the floor would refuse every second server: it is
+	// capped at a quarter of the ceiling.
+	margin := min(int64(devServerMarginFloorKB), ceiling/4)
 	var running []string
 	for n, s := range st.Servers {
 		if s.Status == devsup.StatusStopped || s.Status == devsup.StatusCrashed || s.RssKB == 0 {

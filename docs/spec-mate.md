@@ -860,7 +860,7 @@ lost on a redeploy (P1 T7, P2 S4) — which is exactly the start-up rule below.
   (omitted when there is no live group). zcp's `start` of a server that is not running reads it
   with the container's cgroup memory (`memory.current` less `inactive_file`, against the service's
   `maxRam`, else `memory.max`) and refuses the start when the headroom is below the largest running
-  server's `rssKb` (floor 1 GiB), naming the numbers (`TestDevServer_StartThatWouldLeaveLessHeadroom…`).
+  server's `rssKb` (floor 1 GiB, at most a quarter of the ceiling), naming the numbers (`TestDevServer_StartThatWouldLeaveLessHeadroom…`).
 - `status` is derived **once, by the supervisor**: `stopped` = desired stopped; `crashed` = desired
   running, no live group, `exit` set; `starting` = live group whose `port` does not yet accept TCP;
   `running` = everything else; a start still waiting for its port is `starting`. zcp and Mate read

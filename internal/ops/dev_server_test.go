@@ -892,6 +892,17 @@ func TestDevServer_StartWhenTheServiceMaxRamIsAboveTheGrantedRam_JudgesAgainstTh
 	}
 }
 
+func TestDevServer_StartOfASecondNamedServerOnAOneGiBService_IsNotRefusedWhileNothingHeavyRuns(t *testing.T) {
+	t.Parallel()
+	c := devservertest.NewSupervised(twoServers)
+	c.MemMaxB, c.MemCurrentB = gib64, gib64/10
+	c.Servers["api"].Status, c.Servers["api"].Desired = devsup.StatusStopped, devsup.DesiredStopped
+	result := runDevServer(t, c, DevServerParams{Action: "start", Hostname: "appdev", Name: "api"})
+	if result.Name != "api" || sentWith(c, "ctl 'start' 'api'") != 1 {
+		t.Errorf("api must start on a 1 GiB service with 0.9 GiB free, got %+v", result)
+	}
+}
+
 func TestDevServer_RestartOfARunningServer_IsNeverRefusedOnMemory(t *testing.T) {
 	t.Parallel()
 	c := memoryContainer(6, 5, map[string]float64{"web": 2.5})
