@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -91,8 +92,8 @@ func TestPartsSignalScript_ReadsARealRepo(t *testing.T) {
 		t.Fatalf("script: %v\n%s", err, out)
 	}
 	sig := parsePartsSignal(string(out), "appdev", "dev")
-	want := PartsSignal{YAMLParts: 3, DeclaredServers: 2, Workspace: true, Packages: 2}
-	if sig != want {
+	want := PartsSignal{YAMLParts: []string{"web", "api", "worker"}, DeclaredServers: 2, Workspace: true, Packages: 2}
+	if !reflect.DeepEqual(sig, want) {
 		t.Errorf("signal = %+v, want %+v\n%s", sig, want, out)
 	}
 }

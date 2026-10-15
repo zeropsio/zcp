@@ -30,9 +30,9 @@ true`
 
 // PartsSignal is what a dev service's repo says about its deployable parts.
 type PartsSignal struct {
-	// YAMLParts counts the root zerops.yaml's setups other than the dev
-	// setup and other than a base only `extends` names.
-	YAMLParts int
+	// YAMLParts names the root zerops.yaml's setups other than the dev
+	// setup and other than a base only `extends` names, in file order.
+	YAMLParts []string
 	// DeclaredServers counts the servers in .zcp/dev-servers.json.
 	DeclaredServers int
 	// Workspace is true when a workspace marker (pnpm-workspace.yaml,
@@ -47,7 +47,7 @@ type PartsSignal struct {
 // declares more than one part, its declaration lists more than one dev
 // server, or workspace markers name several deployable packages.
 func (s PartsSignal) MultiPart() bool {
-	return s.YAMLParts > 1 || s.DeclaredServers > 1 || (s.Workspace && s.Packages > 1)
+	return len(s.YAMLParts) > 1 || s.DeclaredServers > 1 || (s.Workspace && s.Packages > 1)
 }
 
 // ReadPartsSignal reads hostname's repo for the multi-part signal; devSetup
@@ -92,9 +92,9 @@ func parsePartsSignal(out, hostname, devSetup string) PartsSignal {
 	return sig
 }
 
-// yamlParts counts zerops.yaml's parts (docs/spec-mate.md §2.8a.4): setups
+// yamlParts names zerops.yaml's parts (docs/spec-mate.md §2.8a.4): setups
 // other than the dev setup and other than a base only `extends` names.
-func yamlParts(data []byte, hostname, devSetup string) int {
+func yamlParts(data []byte, hostname, devSetup string) []string {
 	var doc struct {
 		Zerops []struct {
 			Setup   string    `yaml:"setup"`
@@ -102,7 +102,7 @@ func yamlParts(data []byte, hostname, devSetup string) int {
 		} `yaml:"zerops"`
 	}
 	if yaml.Unmarshal(data, &doc) != nil {
-		return 0
+		return nil
 	}
 	extended := map[string]bool{}
 	for _, e := range doc.Zerops {
@@ -121,12 +121,12 @@ func yamlParts(data []byte, hostname, devSetup string) int {
 		}
 		return setup == "dev" || setup == hostname
 	}
-	parts := 0
+	var parts []string
 	for _, e := range doc.Zerops {
 		if e.Setup == "" || isDev(e.Setup) || extended[e.Setup] {
 			continue
 		}
-		parts++
+		parts = append(parts, e.Setup)
 	}
 	return parts
 }
