@@ -84,7 +84,9 @@ exactly two conversational rules on top:
 - Consent: before running `zerops_import`, tell the person what the returned recipe
   plan will create and get one plain yes — they may not know a confirm step exists.
 - Handoff URL: give them the STAGE service's URL exactly as the workflow response
-  reports it (the dev service idles by design); never compose a URL yourself.
+  reports it (the dev service idles by design); never compose a URL yourself. Call
+  it their preview, never "online", "live" or "stage" (AGENTS.md, "Words for the
+  person").
 
 Branch tails, after the recipe serves:
 

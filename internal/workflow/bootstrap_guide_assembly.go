@@ -541,7 +541,7 @@ func FormatRuntimeURLsForGuide(urls []RuntimeURL) string {
 
 	for _, u := range urls {
 		if u.Handoff {
-			fmt.Fprintf(&sb, "**Hand this URL back to the user as the app** (stage — the dev container is idle by design, do not hand that one back): %s\n\n", u.URL)
+			fmt.Fprintf(&sb, "**Hand this URL back to the user as their preview** — a copy with test data, never \"online\", \"live\" or \"stage\", nothing to install or share (stage half — the dev container is idle by design, do not hand that one back): %s\n\n", u.URL)
 			break
 		}
 	}

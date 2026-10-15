@@ -6,7 +6,7 @@ Goal: turn the plain story into the resolved decision set + a concrete service p
 
 Scan the repo first. **Greenfield** (empty / only ZCP scaffolding) → design fresh. **Brownfield** (real app code, a `zerops.yaml`, a deployed service) → the existing code/data is the truth; do not greenfield over it (this is the `adopt-path` of CLASSIFY). Read `zerops_workflow action="status"` to see what already exists on the platform.
 
-**Returning with a defect** ("it's broken", "the cards don't move", "it's slow") → the report is a symptom, not a diagnosis: a layperson names what they see, not what failed. Observe before scoping the fix — render the live URL and read `zerops_logs` + `zerops_verify` to find the real failure (the save endpoint 500s, not the drag handler), then fix the cause, not the symptom.
+**Returning with a defect** ("it's broken", "the cards don't move", "it's slow") → the report is a symptom, not a diagnosis: a layperson names what they see, not what failed. Observe before scoping the fix — render the app's URL and read `zerops_logs` + `zerops_verify` to find the real failure (the save endpoint 500s, not the drag handler), then fix the cause, not the symptom.
 
 ## Step 2 — CLASSIFY (run first; non-buildable branches STOP normal inference)
 
@@ -128,8 +128,8 @@ Resolve CLASSIFY + D1/D2/D3/D5, then offer the user a choice. **Path A asks noth
 The grill extends Path B from infra-only to **product**: beyond audience/tier, confirm the **core wedge** (the one feature that defines the product), **what slice 1 is** (the thinnest end-to-end thing), and **what's explicitly out of scope** — everything else you infer.
 
 ### Path A — "I'll describe how I'd build it" (default)
-Infer everything, then narrate the plan **in the user's terms** — what it is, what they'll be able to do, what you're leaving for later. Not the stack, not a service count, not "slice": say only — in a clause, not a method lecture — that you'll build it in stages they can try one at a time, and name the first one plainly. For example:
-> "Here's what I'll build: **a shared board for your team** — everyone logs in and moves task cards across To-Do / Doing / Done. I'll build it in stages you can try one at a time, starting with **logging in and one working board you can add and move cards on**, then the rest. Leaving comments, attachments and notifications for later. Want it like this, or change anything?"
+Infer everything, then narrate the plan **in the user's terms** — what it is, what they'll be able to do, what you're leaving for later. Not the stack, not a service count, not "slice", not "dev" or "stage": say only — in a clause, not a method lecture — that you'll build it in steps they can try one at a time, and name the first one plainly. For example:
+> "Here's what I'll build: **a shared board for your team** — everyone logs in and moves task cards across To-Do / Doing / Done. I'll build it in steps you can try one at a time, starting with **logging in and one working board you can add and move cards on**, then the rest. Leaving comments, attachments and notifications for later. Want it like this, or change anything?"
 
 Then **stop and wait** — this is the one direction check, before any code exists. Ask via `AskUserQuestion` if the harness exposes it ("Build it like this?" → "Yes, build it" / "I'd change something"; the free-text option lets them say what), else inline in plain words, and wait for their reply. On a go → proceed to the PRD (phase 2) and the slice DAG (phase 3). On a change → fold it in, re-narrate the adjusted plan, confirm again. After this one check they react to working software, not docs.
 

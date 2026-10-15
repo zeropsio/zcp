@@ -152,8 +152,13 @@ func TestCodeVolume_OnlyAnEmptyVolumeIsFilledAndOnlyThisRepositoryCountsAsItsChe
 		{name: "an empty volume", volume: func(t *testing.T, _, vol string) { t.Helper(); mustMkdir(t, vol) }, want: topology.VolumeEmpty, wantFilled: true},
 		{name: "a copy of the dev service's repository", volume: func(t *testing.T, root, vol string) {
 			t.Helper()
-			if out, err := exec.CommandContext(context.Background(), "cp", "-a", root, vol).CombinedOutput(); err != nil {
+			// Copied beside the volume, then moved in: GNU cp refuses to copy a directory into itself.
+			copied := filepath.Join(t.TempDir(), "www")
+			if out, err := exec.CommandContext(context.Background(), "cp", "-a", root, copied).CombinedOutput(); err != nil {
 				t.Fatalf("cp: %v %s", err, out)
+			}
+			if err := os.Rename(copied, vol); err != nil {
+				t.Fatal(err)
 			}
 		}, want: topology.VolumeCheckout},
 		{name: "Laravel's storage folder", volume: func(t *testing.T, _, vol string) {

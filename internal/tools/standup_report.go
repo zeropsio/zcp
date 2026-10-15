@@ -124,7 +124,7 @@ func buildStandupResponse(src standupSource, pairs []*standupPair, live map[stri
 	case stood == len(pairs):
 		resp.StandUp = standupReady
 		resp.Next = "Every pair stands: each dev half runs main's code on this Mate's branch, and each stage runs main as this Mate's preview. " +
-			"Start each dev half's dev server as its next step says if it is not running yet, verify, then tell the person the stages are up, with their URLs. " +
+			"Start each dev half's dev server as its next step says if it is not running yet, verify, then tell the person this Mate's preview is up, with its address — a preview with test data, never \"stage\" or \"online\". " +
 			"Nothing was committed, pushed or proposed."
 	case devs == len(pairs) && stood+queued == len(pairs):
 		resp.StandUp = standupDevelopment
