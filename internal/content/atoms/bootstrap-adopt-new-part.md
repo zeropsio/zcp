@@ -4,6 +4,7 @@ priority: 3
 phases: [bootstrap-active]
 routes: [adopt]
 steps: [discover]
+parts: [multi]
 title: "Adopting a pair and adding a part: the part is a stage of the pair"
 ---
 
