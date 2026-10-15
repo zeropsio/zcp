@@ -260,5 +260,5 @@ zerops[]:
 
 ### zsc Commands
 - `zsc execOnce <key> -- <cmd>`: run once across all containers (HA-safe migrations)
-- `zsc install <runtime>@<version>`: install additional runtime in `run.prepareCommands` (the build-side `build.prepareCommands` uses `zsc add`; `add` does not exist in the runtime container)
+- `sudo zsc install <runtime>@<version>`: install additional runtime in `run.prepareCommands` — sudo required on Ubuntu and Alpine alike (containers run as `zerops` user; without it the deploy ends `PREPARING_RUNTIME_FAILED`) (the build-side `build.prepareCommands` uses `zsc add`; `add` does not exist in the runtime container)
 
