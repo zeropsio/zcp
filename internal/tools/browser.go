@@ -52,13 +52,13 @@ func RegisterBrowser(srv *mcp.Server, stateDir string) {
 			"isolation: \"tab\" (default) keeps cookies, login, storage, HTTP cache and service workers from earlier calls, " +
 			"like your own browser — right for re-checking your change after a deploy. " +
 			"\"fresh-context\" starts with none of them — for a first visit, a signed-out view, or an app whose " +
-			"service worker or long-cached assets could still serve the old deploy. \"new-browser\" also restarts Chrome — only after a wedge. " +
+			"service worker or long-cached assets could still serve the old deploy. \"new-browser\" also restarts Chrome first — to rule out Chrome's own state when a page misbehaves only in the warm browser. " +
 			"Each step's errorKind classifies selector-not-found, not-editable, timeout, wedge or other failures. " +
 			"Inner command vocabulary (inside commands[]): [\"snapshot\",\"-i\",\"-c\"], [\"click\",\"@e1\"], " +
 			"[\"fill\",\"@e2\",\"text\"], [\"find\",\"role\",\"button\",\"click\",\"--name\",\"Submit\"], [\"get\",\"text\",\"<sel>\"], " +
 			"[\"get\",\"count\",\"<sel>\"], [\"is\",\"visible\",\"<sel>\"], [\"wait\",\"<sel>\"], " +
 			"[\"set\",\"viewport\",\"<w>\",\"<h>\"], [\"set\",\"device\",\"<name>\"], [\"set\",\"media\",\"dark|light\"]. " +
-			"Do NOT pass [\"open\",...] or [\"close\"] in commands — both are stripped. " +
+			"Do NOT pass [\"open\",...], [\"close\"], [\"tab\",...] or [\"window\",...] in commands — they are stripped; the tool owns the call's tab. " +
 			"Do NOT use [\"eval\",...] — it is stripped; dedicated commands produce structured output. " +
 			"Pass screenshot=true to capture a screenshot after your commands run — returned as " +
 			"an image content block alongside the text result, not inlined into it, and kept as a picture the " +

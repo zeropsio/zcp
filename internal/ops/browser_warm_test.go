@@ -193,7 +193,7 @@ func TestBrowserEnv_IdenticalForTheBrowserAndEveryStep(t *testing.T) {
 	if !slices.Equal(env, want) {
 		t.Errorf("env = %v, want %v", env, want)
 	}
-	args := browserUnitArgs("/usr/bin/agent-browser", env, 1000, 2)
+	args := browserUnitArgs("/usr/bin/agent-browser", env, 1000, 2, 0)
 	for _, kv := range env {
 		if !slices.Contains(args, "--setenv="+kv) {
 			t.Errorf("the browser unit misses %q: %v", kv, args)
@@ -210,7 +210,7 @@ func TestBrowserEnv_IdenticalForTheBrowserAndEveryStep(t *testing.T) {
 // of the warm browser: its own cgroup killed whole, a task and CPU ceiling,
 // a max age, and its profile removed on every stop.
 func TestBrowserUnitArgs_BoundEverythingTheBrowserRuns(t *testing.T) {
-	args := browserUnitArgs("/usr/bin/agent-browser", browserEnv("/home/zerops", "/usr/bin"), 1000, 2)
+	args := browserUnitArgs("/usr/bin/agent-browser", browserEnv("/home/zerops", "/usr/bin"), 1000, 2, 4<<30)
 	for _, want := range []string{
 		"-n", "systemd-run",
 		"--unit=" + browserUnit,
@@ -222,6 +222,8 @@ func TestBrowserUnitArgs_BoundEverythingTheBrowserRuns(t *testing.T) {
 		"--property=KillSignal=SIGKILL",
 		"--property=TasksMax=1000",
 		"--property=CPUQuota=150%",
+		"--property=MemoryMax=3221225472",
+		"--property=OOMScoreAdjust=1000",
 		"--property=RuntimeMaxSec=3600",
 		"--property=ExecStopPost=/usr/bin/rm -rf " + browserTmpDir,
 	} {
@@ -234,6 +236,26 @@ func TestBrowserUnitArgs_BoundEverythingTheBrowserRuns(t *testing.T) {
 	}
 	if slices.ContainsFunc(args, func(a string) bool { return a == "--wait" || a == "--pipe" }) {
 		t.Errorf("the unit outlives the call; no --wait/--pipe: %v", args)
+	}
+	unbounded := browserUnitArgs("/usr/bin/agent-browser", nil, 1000, 2, 0)
+	if slices.ContainsFunc(unbounded, func(a string) bool { return strings.HasPrefix(a, "--property=MemoryMax=") }) {
+		t.Errorf("an unknown container ceiling sets no MemoryMax: %v", unbounded)
+	}
+}
+
+// TestReleaseBrowser_StopGetsItsOwnBoundAfterAHungHandBack pins that a
+// hand-back stuck on a hung tab until its bound still leaves the stop a whole
+// bound of its own, so a spinning page never keeps Chrome up.
+func TestReleaseBrowser_StopGetsItsOwnBoundAfterAHungHandBack(t *testing.T) {
+	hung := func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }
+	stopCtxErr := errors.New("stop never ran")
+	stop := func(ctx context.Context) error { stopCtxErr = ctx.Err(); return nil }
+	err := releaseBrowser(context.Background(), true, 50*time.Millisecond, hung, stop)
+	if stopCtxErr != nil {
+		t.Errorf("the stop must start with its bound left, got %v", stopCtxErr)
+	}
+	if err == nil {
+		t.Error("a failed hand-back must be reported")
 	}
 }
 

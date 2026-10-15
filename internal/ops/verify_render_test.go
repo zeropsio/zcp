@@ -189,7 +189,7 @@ func TestRenderHTTPRoot_AgentBrowserMissing_Silent(t *testing.T) {
 	}
 }
 
-func TestRenderHTTPRoot_ForkRecovery_Silent(t *testing.T) {
+func TestRenderHTTPRoot_ForkExhaustion_Silent(t *testing.T) {
 	// Stderr signals fork exhaustion → BrowserBatch sets BrowserRecycled
 	// and returns Result with a Message. Render must not surface partial data.
 	fake := &fakeBrowserRunner{

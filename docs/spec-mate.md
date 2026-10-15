@@ -657,13 +657,19 @@ mid-call leaves it `busy`), and neither the idle exit nor the max age can cut th
 call. Otherwise it starts a fresh one. Each step is its own `agent-browser --json`
 process, so a deadline or cancel keeps the finished steps. A call clears the
 daemon-wide logs, opens its own tab, and closes every tab but the base one when it
-ends. A deadline, cancel, fork exhaustion, unanswered step, CDP wedge or failed
-cleanup stops the service instead.
+ends; caller `tab` and `window` commands are stripped, so the base tab is always the
+first. A deadline, cancel, fork exhaustion, unanswered step, CDP wedge or failed
+cleanup stops the service instead; the stop has its own bound, so a cleanup that hung
+on a spinning tab cannot spend it. A waiting call gives up while a sixth of its time
+is left and answers busy without touching the browser, so a late waiter is never cut
+mid-walk. The unit caps memory at 75% of the container's ceiling at its start and
+sets `OOMScoreAdjust=1000`, so Chrome, not the agent, is the first to die of memory.
 
 `isolation` is one parameter: `tab` (default) is a tab in the warm default context,
 so cookies, storage, HTTP cache and service workers carry over between calls;
-`fresh-context` is `window new`, a new browser context; `new-browser` recycles the
-service. The Mate's stream endpoint `~/.agent-browser/default.stream` is a symlink
+`fresh-context` is `window new`, a new browser context; agent-browser cannot dispose
+one, so the service stops when that call ends; `new-browser` recycles the service
+before the call. The Mate's stream endpoint `~/.agent-browser/default.stream` is a symlink
 into the runtime directory, and dangles (no stream) while no browser runs. No
 process-name sweep or PID has kill authority. Raw browser tools and provider
 lifetimes are outside this service.

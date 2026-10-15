@@ -38,6 +38,9 @@ const (
 	// browserCPUPercentPerCPU caps the browser at 75% of the container's
 	// CPUs, so a runaway page always leaves the agent some.
 	browserCPUPercentPerCPU = 75
+	// browserMemoryPercent caps the browser at 75% of the container's memory
+	// at its start, so a page that grows without end is killed with it.
+	browserMemoryPercent = 75
 )
 
 // browserPaintWait waits for the page's first contentful paint: it returns
@@ -62,9 +65,11 @@ func browserEnv(home, path string) []string {
 
 // browserUnitArgs are the sudo arguments that start the warm browser: the
 // daemon forks out of `agent-browser open about:blank` and its pid file
-// makes it the service's main process.
-func browserUnitArgs(binary string, env []string, uid, cpus int) []string {
-	args := make([]string, 0, 18+len(env))
+// makes it the service's main process. containerMemory is the container's
+// memory ceiling in bytes, 0 when unknown. OOMScoreAdjust makes Chrome, not
+// the agent, the first to go when the whole container runs out.
+func browserUnitArgs(binary string, env []string, uid, cpus int, containerMemory int64) []string {
+	args := make([]string, 0, 20+len(env))
 	args = append(args,
 		"-n", "systemd-run", "--quiet", "--collect",
 		"--unit="+browserUnit,
@@ -78,7 +83,11 @@ func browserUnitArgs(binary string, env []string, uid, cpus int) []string {
 		"--property=CPUQuota="+strconv.Itoa(browserCPUPercentPerCPU*max(cpus, 1))+"%",
 		"--property=RuntimeMaxSec="+strconv.Itoa(int(browserMaxAge.Seconds())),
 		"--property=ExecStopPost=/usr/bin/rm -rf "+browserTmpDir,
+		"--property=OOMScoreAdjust=1000",
 	)
+	if containerMemory > 0 {
+		args = append(args, "--property=MemoryMax="+strconv.FormatInt(containerMemory*browserMemoryPercent/100, 10))
+	}
 	for _, kv := range env {
 		args = append(args, "--setenv="+kv)
 	}
@@ -140,6 +149,26 @@ func browserCleanupSteps(tabList string) ([][]string, error) {
 		steps = append(steps, []string{"tab", "close", tab.TabID})
 	}
 	return steps, nil
+}
+
+// releaseBrowser ends a call: handBack readies the browser for the next call
+// after a clean one, and stop ends it otherwise or when handBack fails. It
+// runs after a cancel or deadline too, so each gets its own bound: a hand-back
+// that spent its bound on a hung tab still leaves the stop a whole one.
+func releaseBrowser(ctx context.Context, reuse bool, bound time.Duration, handBack, stop func(context.Context) error) error {
+	bounded := func(f func(context.Context) error) error {
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), bound)
+		defer cancel()
+		return f(rctx)
+	}
+	if reuse {
+		err := bounded(handBack)
+		if err == nil {
+			return nil
+		}
+		return errors.Join(fmt.Errorf("hand the browser back: %w", err), bounded(stop))
+	}
+	return bounded(stop)
 }
 
 // browserStepExec runs one agent-browser command and returns its --json
