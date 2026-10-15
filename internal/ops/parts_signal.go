@@ -10,12 +10,15 @@ import (
 )
 
 // partsSignalScript prints, from a dev service's repo root, what the
-// multi-part signal reads: the root zerops.yaml, the dev-server declaration,
+// multi-part signal reads: the root config file's name and content (zerops.yaml,
+// else zerops.yml), the dev-server declaration,
 // the workspace markers present, and the packages with a start or dev script
 // one or two folders down (outside node_modules) — one SSH round trip. Each
 // file is followed by a newline so a file without one cannot swallow the
 // next section's marker.
 const partsSignalScript = `cd ` + defaultWorkingDir + ` 2>/dev/null || exit 0
+echo @@file
+for f in zerops.yaml zerops.yml; do if [ -f "$f" ]; then echo "$f"; break; fi; done
 echo @@yaml
 for f in zerops.yaml zerops.yml; do if [ -f "$f" ]; then cat "$f"; printf '\n'; break; fi; done
 echo @@declaration
@@ -30,6 +33,9 @@ true`
 
 // PartsSignal is what a dev service's repo says about its deployable parts.
 type PartsSignal struct {
+	// ConfigFile is the name of the repo's root config file — "zerops.yaml",
+	// else "zerops.yml" — or "" when it has none.
+	ConfigFile string
 	// YAMLParts names the root zerops.yaml's setups other than the dev
 	// setup and other than a base only `extends` names, in file order.
 	YAMLParts []string
@@ -75,6 +81,11 @@ func parsePartsSignal(out, hostname, devSetup string) PartsSignal {
 		sections[current] = append(sections[current], line)
 	}
 	var sig PartsSignal
+	for _, l := range sections["file"] {
+		if name := strings.TrimSpace(l); name != "" {
+			sig.ConfigFile = name
+		}
+	}
 	yamlDoc := []byte(strings.Join(sections["yaml"], "\n"))
 	sig.YAMLParts = yamlParts(yamlDoc, hostname, devSetup)
 	sig.DeclaresBase = declaresBase(yamlDoc)

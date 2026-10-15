@@ -19,9 +19,6 @@ reference: true
   — don't rename those to hostnames. Authoring `zerops.yaml` from scratch you
   choose the name (a `setup:` per runtime hostname is fine). Each block
   deploys independently.
-- **The repo's config file is `zerops.yaml` or `zerops.yml`.** Wherever this
-  guidance says `zerops.yaml`, it means the file the repo already has — keep
-  its name, never rename it.
 - **Build ≠ runtime container.** Runtime packages → `run.prepareCommands`;
   build-only packages → `build.prepareCommands`. Build-time tools may
   not exist at run time; see guide `deployment-lifecycle`.

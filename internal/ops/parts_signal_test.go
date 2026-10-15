@@ -122,8 +122,31 @@ func TestPartsSignalScript_ReadsARealRepo(t *testing.T) {
 		t.Fatalf("script: %v\n%s", err, out)
 	}
 	sig := parsePartsSignal(string(out), "appdev", "dev")
-	want := PartsSignal{YAMLParts: []string{"web", "api", "worker"}, DeclaredServers: 2, Workspace: true, Packages: 2}
+	want := PartsSignal{ConfigFile: "zerops.yaml", YAMLParts: []string{"web", "api", "worker"}, DeclaredServers: 2, Workspace: true, Packages: 2}
 	if !reflect.DeepEqual(sig, want) {
 		t.Errorf("signal = %+v, want %+v\n%s", sig, want, out)
+	}
+}
+
+// TestPartsSignalScript_NamesTheConfigFileTheRepoKeeps: the read names the
+// root config file by the name the repo gave it — zerops.yml stays
+// zerops.yml — and a repo without one names none.
+func TestPartsSignalScript_NamesTheConfigFileTheRepoKeeps(t *testing.T) {
+	t.Parallel()
+	for _, file := range []string{"zerops.yml", "zerops.yaml", ""} {
+		dir := t.TempDir()
+		if file != "" {
+			if err := os.WriteFile(filepath.Join(dir, file), []byte("zerops:\n  - setup: dev\n  - setup: web\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		script := strings.Replace(partsSignalScript, "cd "+defaultWorkingDir, "cd "+dir, 1)
+		out, err := exec.CommandContext(context.Background(), "sh", "-c", script).CombinedOutput()
+		if err != nil {
+			t.Fatalf("script: %v\n%s", err, out)
+		}
+		if sig := parsePartsSignal(string(out), "appdev", "dev"); sig.ConfigFile != file {
+			t.Errorf("repo with %q: ConfigFile = %q", file, sig.ConfigFile)
+		}
 	}
 }

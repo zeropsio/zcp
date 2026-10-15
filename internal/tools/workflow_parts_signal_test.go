@@ -51,7 +51,7 @@ func TestAttachPartsSignal(t *testing.T) {
 	}
 	repos := &partsRepos{out: map[string]string{"monodev": threeParts, "appdev": onePart, "webstage": threeParts}}
 	got := services()
-	attachPartsSignal(context.Background(), got, repos, runtime.Info{InContainer: true})
+	attachPartsSignal(context.Background(), got, repos, runtime.Info{InContainer: true}, nil)
 	want := map[string]bool{"monodev": true, "webstage": false, "appdev": false, "db": false}
 	for _, s := range got {
 		if s.MultiPart != want[s.Hostname] {
@@ -64,7 +64,7 @@ func TestAttachPartsSignal(t *testing.T) {
 
 	local := &partsRepos{out: repos.out}
 	got = services()
-	attachPartsSignal(context.Background(), got, local, runtime.Info{})
+	attachPartsSignal(context.Background(), got, local, runtime.Info{}, nil)
 	if len(local.read) != 0 || got[0].MultiPart {
 		t.Errorf("local mode read %v", local.read)
 	}
@@ -87,7 +87,7 @@ func TestAttachPartsSignal_DeclaredBasesReachThePairStages(t *testing.T) {
 		{Hostname: "otherstage", Mode: topology.ModeStage, RuntimeClass: topology.RuntimeDynamic},
 	}
 	repos := &partsRepos{out: map[string]string{"appdev": withBases, "otherdev": noBases}}
-	attachPartsSignal(context.Background(), got, repos, runtime.Info{InContainer: true})
+	attachPartsSignal(context.Background(), got, repos, runtime.Info{InContainer: true}, nil)
 	want := map[string]bool{"appdev": true, "webstage": true, "apistage": true, "otherdev": false, "otherstage": false}
 	for _, s := range got {
 		if s.DeclaresBase != want[s.Hostname] {
@@ -108,12 +108,12 @@ func TestMultiPartRouteNote(t *testing.T) {
 	single := "@@yaml\nzerops:\n  - setup: dev\n@@declaration\n@@markers\n@@packages\n"
 	rt := runtime.Info{InContainer: true}
 
-	got := multiPartRouteNote(context.Background(), existing, &partsRepos{out: map[string]string{"appdev": multi}}, rt)
+	got := multiPartRouteNote(context.Background(), existing, &partsRepos{out: map[string]string{"appdev": multi}}, rt, nil)
 	if !strings.Contains(got, "`appdev`") || !strings.Contains(got, `uri="zerops://playbooks/monorepo"`) {
 		t.Errorf("multi-part note = %q", got)
 	}
 	repos := &partsRepos{out: map[string]string{"appdev": single, "db": multi}}
-	if got := multiPartRouteNote(context.Background(), existing, repos, rt); got != "" {
+	if got := multiPartRouteNote(context.Background(), existing, repos, rt, nil); got != "" {
 		t.Errorf("single-part note = %q, want none", got)
 	}
 	if len(repos.read) != 1 {

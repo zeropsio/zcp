@@ -44,6 +44,10 @@ type Engine struct {
 	// runtime; the other Engine fields tolerate the rare parallel tool_use
 	// race without corruption.
 	knowledgeCache sync.Map
+	// repoConfigFiles holds, per dev hostname, the root config file name its
+	// repo kept at the latest read ("" when it has none). sync.Map for the
+	// same reason as knowledgeCache.
+	repoConfigFiles sync.Map
 	// recipeCorpus drives BootstrapRoute selection when intent matches a
 	// viable recipe. Populated when NewEngine receives a concrete
 	// *knowledge.Store (production); nil for test engines using only a
@@ -126,6 +130,41 @@ func (e *Engine) SetKnowledgeCache(key string, value any) {
 		return
 	}
 	e.knowledgeCache.Store(key, value)
+}
+
+// RecordRepoConfigFile notes the root config file the repo of dev service
+// host keeps, as the latest read of it found it ("" when it has none).
+func (e *Engine) RecordRepoConfigFile(host, file string) {
+	if e == nil {
+		return
+	}
+	e.repoConfigFiles.Store(host, file)
+}
+
+// RepoConfigFile is the config file name every repo read so far that has
+// one keeps; "" when none has one or two repos name theirs differently. A
+// repo without a config file names none, so it never outvotes one that has.
+func (e *Engine) RepoConfigFile() string {
+	if e == nil {
+		return ""
+	}
+	common, agree := "", true
+	e.repoConfigFiles.Range(func(_, value any) bool {
+		file, _ := value.(string)
+		switch {
+		case file == "" || file == common:
+		case common == "":
+			common = file
+		default:
+			agree = false
+			return false
+		}
+		return true
+	})
+	if !agree {
+		return ""
+	}
+	return common
 }
 
 // claimSession takes ownership of a session: updates PID, saves state, updates registry.

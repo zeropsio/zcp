@@ -383,7 +383,7 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, httpClient ops.HT
 			OpenWorldHint:  boolPtr(false),
 		},
 		InputSchema: workflowInputSchema(),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+	}, namingRepoConfigFile(engine, func(ctx context.Context, _ *mcp.CallToolRequest, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 		// New multi-action handler.
 		if input.Action != "" {
 			return handleWorkflowAction(ctx, projectID, engine, client, httpClient, schemaCache, logFetcher, input, stateDir, selfHostname, mounter, sshDeployer, rt, apiHost)
@@ -417,7 +417,7 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, httpClient ops.HT
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Workflow %q requires action=\"start\"", input.Workflow),
 			fmt.Sprintf(`Use action="start" workflow=%q intent="..."`, input.Workflow)), WithRecoveryStatus()), nil, nil
-	})
+	}))
 }
 
 func handleWorkflowAction(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, httpClient ops.HTTPDoer, schemaCache *schema.Cache, logFetcher platform.LogFetcher, input WorkflowInput, stateDir, selfHostname string, mounter ops.Mounter, sshDeployer ops.SSHDeployer, rt runtime.Info, apiHost string) (*mcp.CallToolResult, any, error) {
@@ -878,7 +878,7 @@ func handleBootstrapStart(ctx context.Context, projectID string, engine *workflo
 				fmt.Sprintf("Bootstrap discovery failed: %v", err),
 				""), WithRecoveryStatus()), nil, nil
 		}
-		resp.Message += multiPartRouteNote(ctx, existing, sshDeployer, rt)
+		resp.Message += multiPartRouteNote(ctx, existing, sshDeployer, rt, engine)
 		return jsonResult(bootstrapDiscoveryResponse{
 			BootstrapDiscoveryResponse: resp,
 			Envelope:                   freshEnvelope(ctx, engine.StateDir(), client, projectID, rt),
@@ -977,7 +977,7 @@ func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client 
 		return convertError(wrapStageErr("Compute envelope", err), WithRecoveryStatus()), nil, nil
 	}
 	attachRepoStatus(ctx, envelope.Services, sshDeployer, rt, engine.StateDir())
-	attachPartsSignal(ctx, envelope.Services, sshDeployer, rt)
+	attachPartsSignal(ctx, envelope.Services, sshDeployer, rt, engine)
 	attachRollbackInfo(ctx, envelope.Services, client, projectID)
 	corpus, err := workflow.LoadAtomCorpus()
 	if err != nil {

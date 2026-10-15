@@ -338,7 +338,7 @@ func renderDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 			fmt.Sprintf("Compute envelope: %v", err),
 			""), WithRecoveryStatus()), nil, nil
 	}
-	attachPartsSignal(ctx, envelope.Services, sshDeployer, rt)
+	attachPartsSignal(ctx, envelope.Services, sshDeployer, rt, engine)
 	corpus, err := workflow.LoadAtomCorpus()
 	if err != nil {
 		return convertError(platform.NewPlatformError(

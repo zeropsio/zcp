@@ -15,9 +15,11 @@ import (
 // attachPartsSignal reads each dev half's repo (ops.ReadPartsSignal) for the
 // multi-part signal the `parts:` atom axis sees, and for whether its
 // zerops.yaml already declares bases — carried to each stage of the pair,
-// which deploys setups of the same file. Container only; a read that fails
-// leaves the service single and undeclared, as an unread one is.
-func attachPartsSignal(ctx context.Context, services []workflow.ServiceSnapshot, ssh ops.SSHDeployer, rt runtime.Info) {
+// which deploys setups of the same file — and records on engine the config
+// file name each repo keeps, so guidance names the file the repo has
+// (namingRepoConfigFile). Container only; a read that fails leaves the
+// service single and undeclared, as an unread one is, and records nothing.
+func attachPartsSignal(ctx context.Context, services []workflow.ServiceSnapshot, ssh ops.SSHDeployer, rt runtime.Info, engine *workflow.Engine) {
 	if !rt.InContainer || ssh == nil {
 		return
 	}
@@ -43,6 +45,7 @@ func attachPartsSignal(ctx context.Context, services []workflow.ServiceSnapshot,
 			// Each goroutine writes only its own index.
 			services[i].MultiPart = sig.MultiPart()
 			services[i].DeclaresBase = sig.DeclaresBase
+			engine.RecordRepoConfigFile(svc.Hostname, sig.ConfigFile)
 		}(i, svc)
 	}
 	wg.Wait()
@@ -66,7 +69,7 @@ func attachPartsSignal(ctx context.Context, services []workflow.ServiceSnapshot,
 // playbook when an existing runtime service's repo holds several deployable
 // parts, so the plan is made with the playbook in hand rather than after the
 // first bootstrap. "" when none is multi-part, or outside a container.
-func multiPartRouteNote(ctx context.Context, existing []platform.ServiceStack, ssh ops.SSHDeployer, rt runtime.Info) string {
+func multiPartRouteNote(ctx context.Context, existing []platform.ServiceStack, ssh ops.SSHDeployer, rt runtime.Info, engine *workflow.Engine) string {
 	var services []workflow.ServiceSnapshot
 	for _, s := range existing {
 		class := topology.RuntimeClassFor(s.ServiceStackTypeInfo.ServiceStackTypeVersionName)
@@ -75,7 +78,7 @@ func multiPartRouteNote(ctx context.Context, existing []platform.ServiceStack, s
 		}
 		services = append(services, workflow.ServiceSnapshot{Hostname: s.Name, Mode: topology.ModeDev, RuntimeClass: class})
 	}
-	attachPartsSignal(ctx, services, ssh, rt)
+	attachPartsSignal(ctx, services, ssh, rt, engine)
 	var multi []string
 	for _, s := range services {
 		if s.MultiPart {
