@@ -1,6 +1,7 @@
 package ops
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -68,13 +69,13 @@ func validateZeropsYmlDoc(doc *ZeropsYmlDoc, targetHostname, serviceType string,
 	var warnings []string
 
 	if len(doc.Zerops) == 0 {
-		return []string{"zerops.yaml has no setup entries under 'zerops:' key"}, nil
+		return []string{doc.ConfigFileName() + " has no setup entries under 'zerops:' key"}, nil
 	}
 
 	// Find matching setup entry.
 	entry := doc.FindEntry(targetHostname)
 	if entry == nil {
-		warnings = append(warnings, fmt.Sprintf("no setup entry for hostname %q in zerops.yaml", targetHostname))
+		warnings = append(warnings, fmt.Sprintf("no setup entry for hostname %q in %s", targetHostname, doc.ConfigFileName()))
 		return warnings, nil
 	}
 
@@ -148,6 +149,10 @@ func validateZeropsYmlDoc(doc *ZeropsYmlDoc, targetHostname, serviceType string,
 	}
 
 	if err := CheckReservedEnvNames(entry); err != nil {
+		var pe *platform.PlatformError
+		if errors.As(err, &pe) && doc.File != "" {
+			pe.Message = NameRepoConfigFile(pe.Message, doc.File)
+		}
 		return warnings, err
 	}
 
@@ -227,7 +232,33 @@ func CheckReservedEnvNames(entry *ZeropsYmlEntry) error {
 // ZeropsYmlDoc is the top-level zerops.yaml structure (minimal for validation).
 type ZeropsYmlDoc struct {
 	Zerops []ZeropsYmlEntry `yaml:"zerops"`
+
+	// File is the name the repo keeps the document under (zerops.yaml or
+	// zerops.yml); "" when the caller did not say.
+	File string `yaml:"-"`
 }
+
+// ConfigFileName is the file name zcp's own texts use for the document: the
+// repo's own name, else the primary one.
+func (d *ZeropsYmlDoc) ConfigFileName() string {
+	if d == nil || d.File == "" {
+		return zeropsYmlPrimary
+	}
+	return d.File
+}
+
+// InvalidZeropsYmlError is a config file that does not parse; File is the
+// name the repo keeps it under.
+type InvalidZeropsYmlError struct {
+	File string
+	Err  error
+}
+
+func (e *InvalidZeropsYmlError) Error() string {
+	return fmt.Sprintf("%s invalid YAML: %v", e.File, e.Err)
+}
+
+func (e *InvalidZeropsYmlError) Unwrap() error { return e.Err }
 
 // ZeropsYmlEntry represents a single setup entry in zerops.yaml.
 type ZeropsYmlEntry struct {
@@ -370,12 +401,13 @@ func ParseZeropsYml(workingDir string) (*ZeropsYmlDoc, error) {
 // fetched from the container via SSH cat, parsed here, then env-var refs are
 // validated against live API state.
 func ParseZeropsYmlContent(data []byte, source string) (*ZeropsYmlDoc, error) {
-	if source == "" {
-		source = zeropsYmlPrimary
+	file := source
+	if file == "" {
+		file = zeropsYmlPrimary
 	}
-	var doc ZeropsYmlDoc
+	doc := ZeropsYmlDoc{File: source}
 	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return nil, fmt.Errorf("%s invalid YAML: %w", source, err)
+		return nil, &InvalidZeropsYmlError{File: file, Err: err}
 	}
 	return &doc, nil
 }

@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -98,12 +99,18 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 	// contract for the workingDir-vs-projectRoot precedence.
 	doc, parseErr := findAndParseZeropsYml(projectRoot, sourceHostname, workingDir)
 	if parseErr != nil {
+		file, reason := (*ops.ZeropsYmlDoc)(nil).ConfigFileName(), parseErr.Error()
+		var invalid *ops.InvalidZeropsYmlError
+		if errors.As(parseErr, &invalid) {
+			file = invalid.File
+			reason = ops.NameRepoConfigFile(reason, file)
+		}
 		checks = append(checks, workflow.StepCheck{
 			Name: "zerops_yml_exists", Status: statusFail,
-			Detail: fmt.Sprintf("zerops.yaml not found or invalid: %v", parseErr),
+			Detail: fmt.Sprintf("%s not found or invalid: %s", file, reason),
 		})
 		return setup, &workflow.StepCheckResult{
-			Passed: false, Checks: checks, Summary: "zerops.yaml not found or invalid",
+			Passed: false, Checks: checks, Summary: file + " not found or invalid",
 		}, nil
 	}
 	checks = append(checks, workflow.StepCheck{
@@ -154,7 +161,7 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 			if recorded != "" {
 				// The pair records this half's setup (a stage's in Stages):
 				// it must exist in zerops.yaml, and no convention replaces it.
-				reason = fmt.Sprintf("%s records setup %q, which zerops.yaml does not declare — choose from availableSetups", targetHostname, recorded)
+				reason = fmt.Sprintf("%s records setup %q, which %s does not declare — choose from availableSetups", targetHostname, recorded, doc.ConfigFileName())
 			}
 			return setup, nil, &workflow.ErrRequiresSetupInput{
 				Service:         targetHostname,
@@ -169,7 +176,7 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 		}
 		checks = append(checks, workflow.StepCheck{
 			Name: targetHostname + "_setup", Status: statusFail,
-			Detail: fmt.Sprintf("no setup entry %q found in zerops.yaml — available setups: [%s]. Pass one explicitly via the `setup` parameter; in recipes setup names differ from hostnames (e.g. hostname=%s → setup=dev), the deploy tool cannot guess when multiple setups are declared.", tried, strings.Join(availableSetups, ", "), targetHostname),
+			Detail: fmt.Sprintf("no setup entry %q found in %s — available setups: [%s]. Pass one explicitly via the `setup` parameter; in recipes setup names differ from hostnames (e.g. hostname=%s → setup=dev), the deploy tool cannot guess when multiple setups are declared.", tried, doc.ConfigFileName(), strings.Join(availableSetups, ", "), targetHostname),
 		})
 		return setup, &workflow.StepCheckResult{
 			Passed: false, Checks: checks,
