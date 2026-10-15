@@ -260,5 +260,5 @@ zerops[]:
 
 ### zsc Commands
 - `zsc execOnce <key> -- <cmd>`: run once across all containers (HA-safe migrations)
-- `zsc add <runtime>@<version>`: install additional runtime in prepareCommands
+- `zsc install <runtime>@<version>`: install additional runtime in `run.prepareCommands` (the build-side `build.prepareCommands` uses `zsc add`; `add` does not exist in the runtime container)
 

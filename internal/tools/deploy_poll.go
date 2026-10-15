@@ -116,7 +116,7 @@ func pollDeployBuild(
 		result.FailedPhase = failedPhaseForStatus(event.Status)
 		if logFetcher != nil {
 			// Fetch logs from the right container based on failure phase.
-			// BUILD_FAILED + PREPARING_RUNTIME_FAILED: build container has the stderr.
+			// BUILD_FAILED: build container has the stderr; PREPARING_RUNTIME_FAILED adds the runtime container's.
 			// DEPLOY_FAILED: runtime container has the initCommand stderr.
 			switch event.Status {
 			case statusDeployFailed:
@@ -134,6 +134,15 @@ func pollDeployBuild(
 				result.BuildLogs = ops.FetchBuildLogs(ctx, client, logFetcher, projectID, event, 50)
 				if len(result.BuildLogs) > 0 {
 					result.BuildLogsSource = buildContainerSource
+				}
+				if event.Status == statusPreparingRuntimeFailed {
+					// run.prepareCommands execute in the target's runtime
+					// container, so their stderr is absent from the build
+					// service-stack's log.
+					result.RuntimeLogs = ops.FetchRuntimeLogs(ctx, client, logFetcher, projectID, result.TargetServiceID, containerCreationAnchor(event), 50)
+					if len(result.RuntimeLogs) > 0 {
+						result.RuntimeLogsSource = "runtime_container"
+					}
 				}
 			}
 		}

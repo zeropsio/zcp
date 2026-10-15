@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1035,6 +1036,40 @@ func TestDeployTool_PreparingRuntimeFailed(t *testing.T) {
 	}
 	if !strings.Contains(parsed.Suggestion, "prepareCommands") {
 		t.Errorf("suggestion should direct agent to prepareCommands, got: %s", parsed.Suggestion)
+	}
+}
+
+func TestDeployTool_PreparingRuntimeFailed_CarriesPrepareStderr(t *testing.T) {
+	t.Parallel()
+
+	buildSvcID := "build-svc-99"
+	created := "2026-10-15T01:00:00Z"
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "app"}}).
+		WithAppVersionEvents([]platform.AppVersionEvent{{
+			ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-1",
+			Status: "PREPARING_RUNTIME_FAILED", Sequence: 1,
+			Build: &platform.BuildInfo{ServiceStackID: &buildSvcID, ContainerCreationStart: &created},
+		}}).
+		WithLogAccess(&platform.LogAccess{URL: "https://log.example.com/logs"})
+	logFetcher := platform.NewMockLogFetcher().WithEntries([]platform.LogEntry{
+		{Facility: "local0", Tag: "zbuilder@av-1", Message: "downloading source"},
+		{Facility: "local0", Tag: "zsc", Timestamp: "2026-10-15T01:00:05Z", Message: "Error: unknown command \"add\" for \"zsc\""},
+	})
+	ssh := &stubSSH{output: []byte("ok")}
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, logFetcher, runtime.Info{}, "", testDeployEngine(t), nil, DevsupSource{})
+
+	result := callTool(t, srv, "zerops_deploy", map[string]any{"targetService": "app"})
+
+	var parsed ops.DeployResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &parsed); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if !slices.ContainsFunc(parsed.RuntimeLogs, func(l string) bool { return strings.Contains(l, "unknown command") }) {
+		t.Errorf("runtimeLogs = %v, want the prepare phase's stderr line", parsed.RuntimeLogs)
 	}
 }
 
