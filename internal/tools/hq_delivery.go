@@ -332,7 +332,7 @@ func deliverHeldHQPair(
 			return notDelivered(hqUnreachableDelivery(target, meta.Hostname,
 				hqNotAnsweringLine(hqc.Address(), fmt.Sprintf("taking %q in", hqBase), tries, gitNotServingWords(err, output))))
 		}
-		if cls := classifyTransportError(err, deployStrategyGitPush); cls != nil && cls.Category == topology.FailureClassCredential {
+		if cls := classifyTransportError(err, deployStrategyGitPush, ""); cls != nil && cls.Category == topology.FailureClassCredential {
 			hqMarkPushRefused(stateDir, meta)
 			return notDelivered(fmt.Sprintf(
 				"%s runs, but its code has not reached its repository %q in HQ: HQ refused %s's credential (%s). %s is marked as refused; the next stage deploy checks its credential against this Mate's current HQ credential again and delivers once it works — if HQ keeps refusing it, tell the person: this Mate's credential is HQ's to issue.",

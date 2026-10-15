@@ -268,7 +268,7 @@ func RegisterDeploySSH(
 			Title:           "Deploy code to a service",
 			DestructiveHint: boolPtr(true),
 		},
-	}, namingRepoConfigFile(engine, func(ctx context.Context, req *mcp.CallToolRequest, input DeploySSHInput) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input DeploySSHInput) (*mcp.CallToolResult, any, error) {
 		// R2 in-place recovery (docs/spec-workflows.md §8 R2): appVersion
 		// redeploy has no source to resolve and no cross/self distinction —
 		// dispatch BEFORE strategy validation, the adoption gate, and the
@@ -371,11 +371,11 @@ func RegisterDeploySSH(
 		// Route: git-push strategy pushes to the external git remote, then
 		// follows the integration-triggered build to terminal (§6.1 watch).
 		if input.Strategy == deployStrategyGitPush {
-			return handleGitPush(ctx, client, httpClient, projectID, sshDeployer, logFetcher, buildProgressCallback(ctx, req), input, stateDir, rtInfo)
+			return handleGitPush(ctx, client, httpClient, projectID, sshDeployer, logFetcher, buildProgressCallback(ctx, req), input, stateDir, rtInfo, engine.RepoConfigFile())
 		}
 
-		return runDeploySSHZCLIPush(ctx, req, client, httpClient, sshDeployer, authInfo, logFetcher, rtInfo, projectID, stateDir, devsup, input)
-	}))
+		return runDeploySSHZCLIPush(ctx, req, client, httpClient, sshDeployer, authInfo, logFetcher, rtInfo, projectID, stateDir, engine.RepoConfigFile(), devsup, input)
+	})
 }
 
 // runDeploySSHZCLIPush is the default zcli-push branch of zerops_deploy's
@@ -394,7 +394,7 @@ func runDeploySSHZCLIPush(
 	authInfo *auth.Info,
 	logFetcher platform.LogFetcher,
 	rtInfo runtime.Info,
-	projectID, stateDir string,
+	projectID, stateDir, configFile string,
 	devsup DevsupSource,
 	input DeploySSHInput,
 ) (*mcp.CallToolResult, any, error) {
@@ -414,7 +414,7 @@ func runDeploySSHZCLIPush(
 	if err != nil {
 		attempt.Error = err.Error()
 		// SSH/transport-layer failure — we never reached the build.
-		classification := classifyTransportError(err, deployStrategyZCLILabel)
+		classification := classifyTransportError(err, deployStrategyZCLILabel, configFile)
 		if classification != nil {
 			attempt.FailureClass = classification.Category
 		} else {
@@ -431,7 +431,7 @@ func runDeploySSHZCLIPush(
 
 	onProgress := buildProgressCallback(ctx, req)
 	ctx = deployFollowUpContext(ctx)
-	pollDeployBuild(ctx, client, projectID, result, onProgress, logFetcher, sshDeployer, stateDir)
+	pollDeployBuild(ctx, client, projectID, result, onProgress, logFetcher, sshDeployer, stateDir, configFile)
 	if move.sentence != "" {
 		result.Message = move.sentence + " " + result.Message
 	}

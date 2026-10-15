@@ -431,6 +431,7 @@ func handleGitPush(
 	input DeploySSHInput,
 	stateDir string,
 	rt runtime.Info,
+	configFile string,
 ) (*mcp.CallToolResult, any, error) {
 	attempt := workflow.DeployAttempt{
 		AttemptedAt: time.Now().UTC().Format(time.RFC3339),
@@ -663,7 +664,7 @@ func handleGitPush(
 		// Run the classifier so credential-class git failures land as
 		// FailureClassCredential instead of generic Network — the recovery
 		// (rotate GIT_TOKEN vs check connectivity) differs (E2).
-		classification := classifyTransportError(err, "git-push")
+		classification := classifyTransportError(err, "git-push", configFile)
 		category := topology.FailureClassNetwork
 		if classification != nil {
 			category = classification.Category
@@ -766,7 +767,7 @@ func handleGitPush(
 		// logs + classification on FAILED → auto-record on ACTIVE. The manual
 		// zerops_events + record-deploy bridge survives as the RECOVERY path
 		// (watch timeout, compaction), never the happy path.
-		finishGitPushWithBuildWatch(ctx, client, projectID, logFetcher, onProgress, input, stateDir, pushedAt, result)
+		finishGitPushWithBuildWatch(ctx, client, projectID, logFetcher, onProgress, input, stateDir, configFile, pushedAt, result)
 	}
 
 	// Container-side trackTriggerMissingWarning parity (deploy-decomp P4
@@ -823,7 +824,7 @@ func finishGitPushWithBuildWatch(
 	logFetcher platform.LogFetcher,
 	onProgress ops.ProgressCallback,
 	input DeploySSHInput,
-	stateDir string,
+	stateDir, configFile string,
 	pushedAt time.Time,
 	result *ops.GitPushResult,
 ) {
@@ -865,7 +866,7 @@ func finishGitPushWithBuildWatch(
 		return
 	}
 	if len(builds) == 1 {
-		watchIntegrationBuildOn(ctx, client, projectID, logFetcher, onProgress, input, stateDir, pushedAt, meta, buildHost, manualBridge, result)
+		watchIntegrationBuildOn(ctx, client, projectID, logFetcher, onProgress, input, stateDir, configFile, pushedAt, meta, buildHost, manualBridge, result)
 		return
 	}
 	// One commit, all parts (spec-mate §2.8a): every stage builds from the
@@ -875,7 +876,7 @@ func finishGitPushWithBuildWatch(
 	var pending *ops.GitPushResult
 	for _, b := range builds {
 		one := &ops.GitPushResult{}
-		watchIntegrationBuildOn(ctx, client, projectID, logFetcher, onProgress, input, stateDir, pushedAt, meta, b.Hostname, manualBridge, one)
+		watchIntegrationBuildOn(ctx, client, projectID, logFetcher, onProgress, input, stateDir, configFile, pushedAt, meta, b.Hostname, manualBridge, one)
 		result.Warnings = append(result.Warnings, one.Warnings...)
 		if one.Status == gitPushStatusDelivered {
 			landed = append(landed, b)
@@ -924,7 +925,7 @@ func watchIntegrationBuildOn(
 	logFetcher platform.LogFetcher,
 	onProgress ops.ProgressCallback,
 	input DeploySSHInput,
-	stateDir string,
+	stateDir, configFile string,
 	pushedAt time.Time,
 	meta *workflow.ServiceMeta,
 	buildHost, manualBridge string,
@@ -985,9 +986,10 @@ func watchIntegrationBuildOn(
 			result.BuildLogs = ops.FetchBuildLogs(ctx, client, logFetcher, projectID, watch.Event, 100)
 		}
 		result.FailureClassification = ops.ClassifyDeployFailure(ops.FailureInput{
-			Phase:     ops.PhaseBuild,
-			Strategy:  deployStrategyGitPush,
-			BuildLogs: result.BuildLogs,
+			Phase:      ops.PhaseBuild,
+			Strategy:   deployStrategyGitPush,
+			BuildLogs:  result.BuildLogs,
+			ConfigFile: configFile,
 		})
 		result.NextActions = fmt.Sprintf(
 			"The integration build on %q finished %s. Read failureClassification first; buildLogs carry the diagnostic depth. Fix, commit, and push again.",

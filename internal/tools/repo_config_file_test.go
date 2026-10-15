@@ -3,6 +3,7 @@ package tools
 import (
 	"encoding/json"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -100,10 +101,10 @@ func TestRepoConfigFile_AnAgentIsOnlyEverToldTheReposOwnConfigFileName(t *testin
 			}
 			for _, a := range atoms {
 				if a.ID == "scaffold-zerops-yaml" {
-					told["export scaffold"] = nameRepoConfigFile(a.Body, tc.file)
+					told["export scaffold"] = ops.NameRepoConfigFile(a.Body, tc.file)
 				}
 			}
-			if got, want := nameRepoConfigFile("notzerops.yml beside /var/www/zerops.yml", tc.file), "notzerops.yml beside /var/www/"+tc.file; got != want {
+			if got, want := ops.NameRepoConfigFile("notzerops.yml beside /var/www/zerops.yml", tc.file), "notzerops.yml beside /var/www/"+tc.file; got != want {
 				t.Errorf("renamed = %q, want %q", got, want)
 			}
 			for name, text := range told {
@@ -200,4 +201,68 @@ func TestRepoConfigFile_ABuildFailureAndTheDiscoverEnvSource_NameTheReposOwnConf
 			}
 		})
 	}
+}
+
+// TestRepoConfigFile_ADeployReplyKeepsBuildLogsAndErrorsAsWritten: in a repo
+// that keeps zerops.yml, a zerops_deploy reply still quotes a build-log line
+// that says zerops.yaml as the build wrote it, and the in-place redeploy's
+// error names the raw zerops.yaml URL zcp really fetched. Only the guidance
+// zcp writes itself names the repo's file.
+func TestRepoConfigFile_ADeployReplyKeepsBuildLogsAndErrorsAsWritten(t *testing.T) {
+	t.Parallel()
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+
+	t.Run("build log line", func(t *testing.T) {
+		t.Parallel()
+		engine := workflow.NewEngine(t.TempDir(), workflow.EnvContainer, nil)
+		engine.RecordRepoConfigFile("app", "zerops.yml")
+		buildSvcID := "build-svc-1"
+		mock := platform.NewMock().
+			WithProject(&platform.Project{ID: "proj-1", Name: "p", Status: statusActive}).
+			WithServices([]platform.ServiceStack{{
+				ID: "svc-1", Name: "app", Status: statusActive,
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+			}}).
+			WithAppVersionEvents([]platform.AppVersionEvent{{
+				ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-1", Status: statusBuildFailed, Sequence: 1,
+				Build: &platform.BuildInfo{ServiceStackID: &buildSvcID},
+			}}).
+			WithLogAccess(&platform.LogAccess{URL: "https://log.example.com/logs"})
+		const logLine = "reading zerops.yaml from /build/source failed"
+		logFetcher := platform.NewMockLogFetcher().WithEntries([]platform.LogEntry{
+			{Facility: "local0", Tag: "zbuilder@av-1", Message: logLine},
+		})
+		srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+		RegisterDeploySSH(srv, mock, okHTTP, "proj-1", &stubSSH{output: []byte("ok")},
+			authInfo, logFetcher, runtime.Info{}, "", engine, nil, DevsupSource{})
+
+		var deployed ops.DeployResult
+		if err := json.Unmarshal([]byte(getTextContent(t, callTool(t, srv, "zerops_deploy", map[string]any{"targetService": "app"}))), &deployed); err != nil {
+			t.Fatalf("parse deploy result: %v", err)
+		}
+		if !slices.ContainsFunc(deployed.BuildLogs, func(l string) bool { return strings.Contains(l, logLine) }) {
+			t.Errorf("buildLogs = %q, want the build's own line %q", deployed.BuildLogs, logLine)
+		}
+	})
+
+	t.Run("in-place redeploy raw URL error", func(t *testing.T) {
+		t.Parallel()
+		engine := workflow.NewEngine(t.TempDir(), workflow.EnvContainer, nil)
+		engine.RecordRepoConfigFile("api", "zerops.yml")
+		// The branch carries a control byte so the raw fetch fails on its URL
+		// before any network call; the error still names that URL.
+		mock := platform.NewMock().
+			WithServices([]platform.ServiceStack{{ID: "s1", Name: "api", Status: platform.ServiceStatusReadyToDeploy}}).
+			WithServiceAppVersions("s1", []platform.AppVersionEvent{{
+				ID: "av-2", ServiceStackID: "s1", Status: platform.BuildStatusDeployFailed, Source: "GIT", Sequence: 2,
+				PublicGitSource: &platform.AppVersionGitSource{GitURL: "https://github.com/o/r", BranchName: "main\x7f"},
+			}})
+		srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+		RegisterDeploySSH(srv, mock, okHTTP, "proj-1", &countingSSH{}, authInfo, nil, runtime.Info{}, t.TempDir(), engine, nil, DevsupSource{})
+
+		text := getTextContent(t, callTool(t, srv, "zerops_deploy", map[string]any{"targetService": "api", "appVersion": "latest", "setup": "prod"}))
+		if !strings.Contains(text, "https://raw.githubusercontent.com/o/r/main") || !strings.Contains(text, "/zerops.yaml") || strings.Contains(text, "zerops.yml") {
+			t.Errorf("redeploy error does not name the raw zerops.yaml URL zcp fetched: %s", text)
+		}
+	})
 }

@@ -267,7 +267,7 @@ func TestPollDeployBuild_NamesTheBuildItFollowed(t *testing.T) {
 				defer cancel()
 			}
 			result := &ops.DeployResult{Status: "BUILD_TRIGGERED", TargetService: "app", TargetServiceID: "svc-1"}
-			pollDeployBuild(ctx, client, "proj-1", result, nil, nil, nil, "")
+			pollDeployBuild(ctx, client, "proj-1", result, nil, nil, nil, "", "")
 			if result.AppVersionID != "av-ours" {
 				t.Errorf("AppVersionID = %q, want av-ours", result.AppVersionID)
 			}

@@ -353,7 +353,7 @@ func handleLocalGitPushFailure(
 	// same text the tools.withSSHStderr discipline expects elsewhere.
 	detail := truncateStderr(pushErr.Error())
 	gitWrap := &platform.SSHExecError{Hostname: "local-git", Output: detail, Err: pushErr}
-	classification := classifyTransportError(gitWrap, "git-push")
+	classification := classifyTransportError(gitWrap, "git-push", "")
 	category := topology.FailureClassNetwork
 	if classification != nil {
 		category = classification.Category

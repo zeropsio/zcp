@@ -28,7 +28,8 @@ const buildContainerSource = "build_container"
 // next-action pointer can branch on (mode, runtimeClass) — empty stateDir
 // is acceptable (recipe-authoring scaffolds, freshly-imported services
 // without a bootstrap session); next_actions falls back to generic
-// `zerops_verify` guidance in that path.
+// `zerops_verify` guidance in that path. configFile is the repo's config
+// file name the failure classification's text names ("" keeps it).
 func pollDeployBuild(
 	ctx context.Context,
 	client platform.Client,
@@ -37,7 +38,7 @@ func pollDeployBuild(
 	onProgress ops.ProgressCallback,
 	logFetcher platform.LogFetcher,
 	sshDeployer ops.SSHDeployer,
-	stateDir string,
+	stateDir, configFile string,
 ) {
 	if result.TargetServiceID == "" {
 		return
@@ -175,6 +176,7 @@ func pollDeployBuild(
 				Strategy:    "", // strategy already drove which deploy path got us here; classifier only needs it for transport
 				BuildLogs:   result.BuildLogs,
 				RuntimeLogs: result.RuntimeLogs,
+				ConfigFile:  configFile,
 			})
 		}
 		// Suggestion / NextActions are sourced from the classifier owner when

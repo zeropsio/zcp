@@ -209,7 +209,7 @@ func RegisterDeployLocal(
 			attempt.Error = err.Error()
 			// Local push failed before reaching the platform — transport-
 			// layer error (e.g. zcli auth, connection).
-			classification := classifyTransportError(err, deployStrategyZCLILabel)
+			classification := classifyTransportError(err, deployStrategyZCLILabel, "")
 			if classification != nil {
 				attempt.FailureClass = classification.Category
 			} else {
@@ -221,7 +221,7 @@ func RegisterDeployLocal(
 
 		onProgress := buildProgressCallback(ctx, req)
 		ctx = deployFollowUpContext(ctx)
-		pollDeployBuild(ctx, client, projectID, result, onProgress, logFetcher, nil, stateDir)
+		pollDeployBuild(ctx, client, projectID, result, onProgress, logFetcher, nil, stateDir, "")
 
 		// L1 break-glass aftermath: a direct deploy on a push-delivering
 		// pair leaves the container ahead of the repo — flag the standing

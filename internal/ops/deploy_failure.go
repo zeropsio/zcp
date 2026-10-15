@@ -4,6 +4,7 @@ import (
 	"errors"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -78,6 +79,10 @@ type FailureInput struct {
 	// classified by classifySSHError). Carries APICode / APIMeta / raw
 	// SSH output in Diagnostic.
 	APIErr *platform.PlatformError
+	// ConfigFile is the repo's config file name as the repo keeps it
+	// ("zerops.yaml" or "zerops.yml"); the classification's own text names
+	// it. "" keeps the text as written.
+	ConfigFile string
 }
 
 // ClassifyDeployFailure inspects a FailureInput and returns the best matching
@@ -111,12 +116,39 @@ func ClassifyDeployFailure(in FailureInput) *topology.DeployFailureClassificatio
 		if out == nil {
 			continue
 		}
-		return out
+		return nameClassificationConfigFile(out, in.ConfigFile, matched)
 	}
 
 	// No specific signal — fall back to a phase-level baseline so the agent
 	// at least sees the category instead of nothing.
-	return baselineForPhase(in)
+	return nameClassificationConfigFile(baselineForPhase(in), in.ConfigFile, "")
+}
+
+// nameClassificationConfigFile names the repo's config file in the text the
+// classifier wrote (LikelyCause, SuggestedAction). The log or error text a
+// signal quotes (matched, bare or %q-quoted) stays as its writer wrote it.
+func nameClassificationConfigFile(cls *topology.DeployFailureClassification, file, matched string) *topology.DeployFailureClassification {
+	if cls == nil || file == "" {
+		return cls
+	}
+	name := func(text string) string {
+		if matched == "" {
+			return NameRepoConfigFile(text, file)
+		}
+		for _, quoted := range []string{strconv.Quote(matched), matched} {
+			if strings.Contains(text, quoted) {
+				parts := strings.Split(text, quoted)
+				for i := range parts {
+					parts[i] = NameRepoConfigFile(parts[i], file)
+				}
+				return strings.Join(parts, quoted)
+			}
+		}
+		return NameRepoConfigFile(text, file)
+	}
+	cls.LikelyCause = name(cls.LikelyCause)
+	cls.SuggestedAction = name(cls.SuggestedAction)
+	return cls
 }
 
 // baselineForPhase emits a classification when no specific signal matched

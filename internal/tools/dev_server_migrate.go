@@ -271,7 +271,7 @@ func redeployForSupervisor(ctx context.Context, req *mcp.CallToolRequest, d DevS
 		_ = workflow.RecordDeployAttempt(d.StateDir, host, attempt)
 		return &ops.DeployResult{TargetService: host, Status: err.Error()}
 	}
-	pollDeployBuild(ctx, d.Client, d.ProjectID, result, buildProgressCallback(ctx, req), d.LogFetcher, d.SSH, d.StateDir)
+	pollDeployBuild(ctx, d.Client, d.ProjectID, result, buildProgressCallback(ctx, req), d.LogFetcher, d.SSH, d.StateDir, "")
 	switch {
 	case result.Status == statusDeployed:
 		attempt.SucceededAt = time.Now().UTC().Format(time.RFC3339)

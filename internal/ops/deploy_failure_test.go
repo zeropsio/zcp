@@ -923,3 +923,59 @@ func assertClassification(t *testing.T, got *topology.DeployFailureClassificatio
 		t.Errorf("SuggestedAction empty for %v", got.Signals)
 	}
 }
+
+// TestClassifyDeployFailure_NamesTheReposConfigFile_QuotedLogTextKeepsItsOwn:
+// in a repo that keeps zerops.yml, the cause and the next step the classifier
+// writes name zerops.yml, while the log text a cause quotes keeps the name
+// the log wrote. An unknown name keeps today's text.
+func TestClassifyDeployFailure_NamesTheReposConfigFile_QuotedLogTextKeepsItsOwn(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		in         FailureInput
+		wantCause  string
+		wantAction string
+	}{
+		{
+			name:       "build baseline",
+			in:         FailureInput{Phase: PhaseBuild, BuildLogs: []string{"something unusual"}, ConfigFile: "zerops.yml"},
+			wantCause:  "Build pipeline failed; no recognized log pattern matched.",
+			wantAction: "fix buildCommands or dependencies in zerops.yml.",
+		},
+		{
+			name: "zcli setup mismatch",
+			in: FailureInput{Phase: PhaseTransport, ConfigFile: "zerops.yml",
+				TransportErr: errors.New("Cannot find corresponding setup in zerops.yml")},
+			wantCause:  "zerops.yml has multiple setup blocks",
+			wantAction: "setup keys declared in zerops.yml (one block",
+		},
+		{
+			name: "quoted runtime log",
+			in: FailureInput{Phase: PhaseInit, ConfigFile: "zerops.yml",
+				RuntimeLogs: []string{"open /build/source/zerops.yaml: no such file"}},
+			wantCause:  "(/build/source/zerops.yaml:)",
+			wantAction: "from buildCommands to run.initCommands",
+		},
+		{
+			name:       "name unknown",
+			in:         FailureInput{Phase: PhaseBuild, BuildLogs: []string{"something unusual"}},
+			wantCause:  "Build pipeline failed; no recognized log pattern matched.",
+			wantAction: "fix buildCommands or dependencies in zerops.yaml.",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := ClassifyDeployFailure(tt.in)
+			if got == nil {
+				t.Fatal("no classification")
+			}
+			if !strings.Contains(got.LikelyCause, tt.wantCause) {
+				t.Errorf("likelyCause = %q, want it to contain %q", got.LikelyCause, tt.wantCause)
+			}
+			if !strings.Contains(got.SuggestedAction, tt.wantAction) {
+				t.Errorf("suggestedAction = %q, want it to contain %q", got.SuggestedAction, tt.wantAction)
+			}
+		})
+	}
+}

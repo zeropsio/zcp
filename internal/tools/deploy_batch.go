@@ -62,7 +62,7 @@ func RegisterDeployBatch(
 			Title:           "Deploy batch — parallel deploys",
 			DestructiveHint: boolPtr(true),
 		},
-	}, namingRepoConfigFile(engine, func(ctx context.Context, req *mcp.CallToolRequest, input DeployBatchInput) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input DeployBatchInput) (*mcp.CallToolResult, any, error) {
 		if len(input.Targets) == 0 {
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
@@ -73,6 +73,7 @@ func RegisterDeployBatch(
 		d := batchDeployer{
 			client: client, httpClient: httpClient, projectID: projectID, sshDeployer: sshDeployer,
 			authInfo: authInfo, logFetcher: logFetcher, rtInfo: rtInfo, stateDir: stateDir, recipeProbe: recipeProbe, devsup: devsup,
+			configFile: engine.RepoConfigFile(),
 		}
 		if blocked := d.gate(input.Targets); blocked != nil {
 			return blocked, nil, nil
@@ -91,13 +92,12 @@ func RegisterDeployBatch(
 			input.Targets[i] = resolved
 		}
 
-		_ = engine // engine is unused; per-entry DeployAttempt recording uses stateDir directly.
 		result := d.deploy(ctx, buildProgressCallback(ctx, req), input.Targets, true)
 		return jsonResult(deployBatchResponse{
 			DeployBatchResult: result,
 			WorkSessionState:  sessionAnnotations(stateDir),
 		}), nil, nil
-	}))
+	})
 }
 
 // batchDeployer is everything a batch of SSH deploys needs. zerops_deploy_batch
@@ -116,6 +116,9 @@ type batchDeployer struct {
 	// devsup finds the zcp-devsup a deploy carrying a kept dev server onto
 	// the supervisor installs.
 	devsup DevsupSource
+	// configFile is the repo's config file name each failure
+	// classification's text names ("" keeps it as written).
+	configFile string
 }
 
 // gate applies the adoption gate and the push-delivery redirect to every
@@ -208,7 +211,7 @@ func (d batchDeployer) preflight(ctx context.Context, t ops.DeployBatchTarget) (
 func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallback, targets []ops.DeployBatchTarget, deliver bool) *ops.DeployBatchResult {
 	ctx = deployFollowUpContext(ctx)
 	pollFn := func(c context.Context, r *ops.DeployResult, cb ops.ProgressCallback, lf platform.LogFetcher, s ops.SSHDeployer) {
-		pollDeployBuild(c, d.client, d.projectID, r, cb, lf, s, d.stateDir)
+		pollDeployBuild(c, d.client, d.projectID, r, cb, lf, s, d.stateDir, d.configFile)
 	}
 
 	authVal := auth.Info{}
@@ -252,7 +255,7 @@ func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallba
 		case entry.Error != "":
 			// Kickoff/transport failure (build never started).
 			attempt.Error = entry.Error
-			classification := classifyTransportError(errors.New(entry.Error), deployStrategyZCLILabel)
+			classification := classifyTransportError(errors.New(entry.Error), deployStrategyZCLILabel, d.configFile)
 			if classification != nil {
 				attempt.FailureClass = classification.Category
 			} else {

@@ -243,7 +243,7 @@ func shipChange(
 		case gitHQUnavailable(err, output):
 			return shipOutcome{unreachable: true, line: hqNotAnsweringLine(hqc.Address(), "pushing "+branch, tries, gitNotServingWords(err, output))}
 		}
-		if cls := classifyTransportError(err, deployStrategyGitPush); cls != nil && cls.Category == topology.FailureClassCredential {
+		if cls := classifyTransportError(err, deployStrategyGitPush, ""); cls != nil && cls.Category == topology.FailureClassCredential {
 			hqMarkPushRefused(stateDir, m)
 			return shipOutcome{line: fmt.Sprintf("HQ refused %s's push credential (%s). %s is marked as refused; the next stage deploy checks its credential against this Mate's current HQ credential again and delivers once it works — if HQ keeps refusing it, tell the person: this Mate's credential is HQ's to issue",
 				m.Hostname, gitPushErrorDetail(err, output), m.Hostname)}
