@@ -455,6 +455,92 @@ func TestDeployListener_SupervisorReportsListener(t *testing.T) {
 	}
 }
 
+// TestDeploy_KeptDevServer_ComesBackUnderTheSupervisor (orchestrator
+// decision B, review hole 4b): the dev server an older zcp's keeper kept on a
+// dev service still comes back after zcp deploys it. The deploy of a dev
+// service with a keeper record and no supervisor carries the move — the two
+// lines, the kept server declared from the record — so the supervisor starts
+// it with no extra redeploy; the record goes only after that, and a failed
+// deploy keeps it.
+func TestDeploy_KeptDevServer_ComesBackUnderTheSupervisor(t *testing.T) {
+	t.Parallel()
+	const record = `{
+  "appdev": {"hostname": "appdev", "command": "bun --watch index.ts", "port": 3000, "healthPath": "/health", "container": "c-1", "startedAt": "2026-10-13T10:00:00Z"},
+  "apidev": {"hostname": "apidev", "command": "go run .", "port": 8080, "container": "c-2", "startedAt": "2026-10-13T10:00:00Z"}
+}`
+	for _, tc := range []struct{ tool, build string }{
+		{"zerops_deploy", statusActive}, {"zerops_deploy", statusBuildFailed}, {"zerops_deploy_batch", statusActive},
+	} {
+		build := tc.build
+		t.Run(tc.tool+" "+build, func(t *testing.T) {
+			t.Parallel()
+			// The batch's pre-flight reads the dev setup from the source mount
+			// beside the state directory.
+			root := t.TempDir()
+			dir := filepath.Join(root, ".zcp", "state")
+			if err := os.MkdirAll(filepath.Join(root, "appdev"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "appdev", "zerops.yml"), []byte(todaysDevSetup), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+				Hostname: "appdev", Mode: topology.PlanModeDev, BootstrapSession: "sess1",
+				BootstrappedAt: "2026-10-13", PrimarySetupName: "dev", FirstDeployedAt: "2026-10-13T09:00:00Z",
+			}); err != nil {
+				t.Fatalf("WriteServiceMeta: %v", err)
+			}
+			recordPath := filepath.Join(dir, "dev-servers.json")
+			if err := os.WriteFile(recordPath, []byte(record), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			mock := platform.NewMock().
+				WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "appdev", ProjectID: "proj-1", Status: serviceStatusRunning,
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "bun@1.3"}}}).
+				WithAppVersionEvents([]platform.AppVersionEvent{{ID: "av-2", ProjectID: "proj-1", ServiceStackID: "svc-1", Status: build, Sequence: 2}})
+			c := &devservertest.Container{YAMLFile: "zerops.yml", YAML: todaysDevSetup}
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+			src := DevsupSource{Latest: func(context.Context) (string, error) { return testDevsupURL, nil }}
+			args := map[string]any{"targetService": "appdev", "setup": "dev"}
+			if tc.tool == "zerops_deploy" {
+				RegisterDeploySSH(srv, mock, okHTTP, "proj-1", c, authInfo, nil, runtime.Info{}, dir, testDeployEngine(t), nil, src)
+			} else {
+				RegisterDeployBatch(srv, mock, okHTTP, "proj-1", c, authInfo, nil, runtime.Info{InContainer: true}, dir, testDeployEngine(t), nil, src)
+				args = map[string]any{"targets": []any{args}}
+			}
+
+			text := getTextContent(t, callTool(t, srv, tc.tool, args))
+			if c.Deploys != 1 {
+				t.Fatalf("deploys = %d, want the one asked for: %s", c.Deploys, text)
+			}
+			d, err := devsup.ParseDeclaration([]byte(c.Declaration))
+			if err != nil || len(d.Servers) != 1 || d.Servers[0].Name != "appdev" || d.Servers[0].Command != "bun --watch index.ts" || d.Servers[0].Port != 3000 || d.Servers[0].Cwd != "." {
+				t.Fatalf("declaration = %s (%v), want the kept server", c.Declaration, err)
+			}
+			if !strings.Contains(c.YAML, "start: zcp-devsup run") || !strings.Contains(c.YAML, testDevsupURL) {
+				t.Errorf("the deploy did not carry the supervisor lines:\n%s", c.YAML)
+			}
+			after, _ := os.ReadFile(recordPath)
+			if build == statusBuildFailed {
+				if string(after) != record {
+					t.Errorf("a failed deploy dropped the keeper record:\n%s", after)
+				}
+				return
+			}
+			if c.Status("appdev") != devsup.StatusRunning {
+				t.Errorf("kept server after the deploy = %q, want running under the supervisor", c.Status("appdev"))
+			}
+			if !strings.Contains(text, `declared \"appdev\", the dev server zcp kept there`) {
+				t.Errorf("the deploy does not say what changed: %s", text)
+			}
+			if strings.Contains(string(after), `"appdev"`) || !strings.Contains(string(after), `"apidev"`) {
+				t.Errorf("record after the deploy = %s, want appdev's entry gone and apidev's kept", after)
+			}
+		})
+	}
+}
+
 // recordingUnits records the unit prefixes removed.
 type recordingUnits struct {
 	removed []string
@@ -466,9 +552,10 @@ func (u *recordingUnits) RemoveUnits(_ context.Context, prefix string) error {
 	return u.err
 }
 
-// TestRetireDevServerKeeper (TEST-PLAN E1 #14): an upgraded zcp removes what
-// the deleted keeper left on its container — the devservers- units and
-// dev-servers.json in the state directory — and nothing else.
+// TestRetireDevServerKeeper (TEST-PLAN E1 #14, orchestrator decision B): an
+// upgraded zcp removes the deleted keeper's devservers- units and nothing
+// else; its dev-servers.json record stays until each host's deploy moves the
+// kept server onto the supervisor.
 func TestRetireDevServerKeeper(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -480,11 +567,11 @@ func TestRetireDevServerKeeper(t *testing.T) {
 		}
 	}
 	units := &recordingUnits{}
-	if err := RetireDevServerKeeper(context.Background(), units, dir); err != nil {
+	if err := RetireDevServerKeeper(context.Background(), units); err != nil {
 		t.Fatalf("RetireDevServerKeeper: %v", err)
 	}
-	if _, err := os.Stat(kept); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("dev-servers.json is still in the state directory (%v)", err)
+	if _, err := os.Stat(kept); err != nil {
+		t.Errorf("startup removed the keeper record of hosts not on the supervisor yet: %v", err)
 	}
 	if _, err := os.Stat(other); err != nil {
 		t.Errorf("another state file went with it: %v", err)
@@ -493,11 +580,11 @@ func TestRetireDevServerKeeper(t *testing.T) {
 		t.Errorf("units removed = %q, want the keeper's devservers- units", units.removed)
 	}
 	// A second run finds nothing left and is no error.
-	if err := RetireDevServerKeeper(context.Background(), units, dir); err != nil {
+	if err := RetireDevServerKeeper(context.Background(), units); err != nil {
 		t.Errorf("second run: %v", err)
 	}
 	units.err = errors.New("systemctl: boom")
-	if err := RetireDevServerKeeper(context.Background(), units, dir); err == nil || !strings.Contains(err.Error(), "boom") {
+	if err := RetireDevServerKeeper(context.Background(), units); err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Errorf("a unit removal failure is not reported: %v", err)
 	}
 }

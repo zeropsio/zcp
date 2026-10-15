@@ -406,7 +406,7 @@ func runDeploySSHZCLIPush(
 		Strategy:    deployStrategyZCLILabel,
 	}
 
-	supervised, superviseErr := superviseNewDevSetup(ctx, client, projectID, sshDeployer, stateDir, devsup, input.SourceService, input.TargetService, input.Setup, input.WorkingDir)
+	move, superviseErr := superviseDevSetup(ctx, client, projectID, sshDeployer, stateDir, devsup, input.SourceService, input.TargetService, input.Setup, input.WorkingDir)
 
 	// Default: zcli push to Zerops.
 	result, err := ops.DeploySSH(ctx, client, projectID, sshDeployer, *authInfo,
@@ -431,8 +431,8 @@ func runDeploySSHZCLIPush(
 
 	onProgress := buildProgressCallback(ctx, req)
 	pollDeployBuild(ctx, client, projectID, result, onProgress, logFetcher, sshDeployer, stateDir)
-	if supervised != "" {
-		result.Message = supervised + " " + result.Message
+	if move.sentence != "" {
+		result.Message = move.sentence + " " + result.Message
 	}
 	if superviseErr != nil {
 		result.Warnings = append(result.Warnings, superviseErr.Error())
@@ -456,8 +456,9 @@ func runDeploySSHZCLIPush(
 		// result payload surfaces SubdomainAccessEnabled + SubdomainURL
 		// alongside the deploy outcome. Whether something listens is the
 		// dev-server supervisor's word when the target runs one.
-		ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, input.TargetService, result,
-			deployListener(ctx, sshDeployer, input.TargetService, result)...)
+		listening := deployListener(ctx, sshDeployer, input.TargetService, result)
+		ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, input.TargetService, result, listening...)
+		move.settle(stateDir, input.TargetService, listening, result)
 	case result != nil && result.TimedOut:
 		// In-flight (B23): the build is still running at poll timeout, not
 		// failed. Record without a FailureClass so the envelope doesn't

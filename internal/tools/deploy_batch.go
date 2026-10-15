@@ -47,6 +47,7 @@ func RegisterDeployBatch(
 	stateDir string,
 	engine *workflow.Engine,
 	recipeProbe RecipeSessionProbe,
+	devsup DevsupSource,
 ) {
 	desc := "Deploy multiple services in parallel — single MCP call kicks off N builds server-side. " +
 		"Closes the MCP STDIO serialization penalty (calling zerops_deploy multiple times in parallel returns 'Not connected'). " +
@@ -71,7 +72,7 @@ func RegisterDeployBatch(
 		}
 		d := batchDeployer{
 			client: client, httpClient: httpClient, projectID: projectID, sshDeployer: sshDeployer,
-			authInfo: authInfo, logFetcher: logFetcher, rtInfo: rtInfo, stateDir: stateDir, recipeProbe: recipeProbe,
+			authInfo: authInfo, logFetcher: logFetcher, rtInfo: rtInfo, stateDir: stateDir, recipeProbe: recipeProbe, devsup: devsup,
 		}
 		if blocked := d.gate(input.Targets); blocked != nil {
 			return blocked, nil, nil
@@ -112,6 +113,9 @@ type batchDeployer struct {
 	rtInfo      runtime.Info
 	stateDir    string
 	recipeProbe RecipeSessionProbe
+	// devsup finds the zcp-devsup a deploy carrying a kept dev server onto
+	// the supervisor installs.
+	devsup DevsupSource
 }
 
 // gate applies the adoption gate and the push-delivery redirect to every
@@ -210,6 +214,23 @@ func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallba
 	if d.authInfo != nil {
 		authVal = *d.authInfo
 	}
+	// A self-deployed dev service the deleted keeper kept a server on
+	// carries it onto the supervisor (carryKeptServer).
+	moves := map[string]devSetupMove{}
+	warnings := map[string]string{}
+	for _, t := range targets {
+		if t.SourceService != "" && t.SourceService != t.TargetService {
+			continue
+		}
+		kept, ok, err := readKeeperRecord(d.stateDir, t.TargetService)
+		if ok {
+			moves[t.TargetService], err = carryKeptServer(ctx, d.sshDeployer, d.stateDir, d.devsup, t.TargetService, t.Setup, t.WorkingDir, kept)
+		}
+		if err != nil {
+			warnings[t.TargetService] = err.Error()
+		}
+	}
+
 	result := ops.DeployBatchSSH(
 		ctx, d.client, d.projectID, d.sshDeployer, authVal,
 		targets, d.logFetcher, onProgress, pollFn,
@@ -240,8 +261,9 @@ func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallba
 			attempt.SucceededAt = entry.EndedAt
 			// Whether something listens is the dev-server supervisor's
 			// word when the target runs one.
-			ensurePublicAccess(ctx, d.client, d.httpClient, d.projectID, d.stateDir, entry.Result.TargetService, entry.Result,
-				deployListener(ctx, d.sshDeployer, entry.Result.TargetService, entry.Result)...)
+			listening := deployListener(ctx, d.sshDeployer, entry.Result.TargetService, entry.Result)
+			ensurePublicAccess(ctx, d.client, d.httpClient, d.projectID, d.stateDir, entry.Result.TargetService, entry.Result, listening...)
+			moves[entry.Target.TargetService].settle(d.stateDir, entry.Target.TargetService, listening, entry.Result)
 		case entry.Result != nil && entry.Result.TimedOut:
 			// In-flight (B23): the build is still running — record the
 			// attempt without a FailureClass so the gate doesn't read it
@@ -252,6 +274,12 @@ func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallba
 			attempt.FailureClass = classifyDeployStatus(entry.Result.Status)
 		}
 		if entry.Result != nil {
+			if move := moves[entry.Target.TargetService]; move.sentence != "" {
+				entry.Result.Message = move.sentence + " " + entry.Result.Message
+			}
+			if w := warnings[entry.Target.TargetService]; w != "" {
+				entry.Result.Warnings = append(entry.Result.Warnings, w)
+			}
 			attempt.SHA = entry.Result.SHA
 			attempt.AppVersionID = entry.Result.AppVersionID
 			attempt.Dirty = entry.Result.Dirty

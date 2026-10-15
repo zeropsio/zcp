@@ -134,11 +134,13 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 		tools.RegisterAskChief(ctx, s.server, nil, authInfo.ProjectID, authInfo.ProjectName)
 	}
 
-	// Dev servers run under each dev service's supervisor now; the keeper an
-	// older zcp left on this container goes. Best-effort and off the startup path.
+	// Dev servers run under each dev service's supervisor now; the keeper
+	// units an older zcp left on this container go (its record stays until
+	// each host's deploy carries the kept server over). Best-effort and off
+	// the startup path.
 	if rtInfo.InContainer {
 		go func() {
-			if err := tools.RetireDevServerKeeper(ctx, platform.NewSystemUnits(), stateDir); err != nil {
+			if err := tools.RetireDevServerKeeper(ctx, platform.NewSystemUnits()); err != nil {
 				fmt.Fprintf(os.Stderr, "zcp: retire dev-server keeper: %v\n", err)
 			}
 		}()
@@ -343,7 +345,7 @@ func (s *Server) registerTools() {
 		// so the MCP STDIO channel isn't saturated (v23 "Not connected"
 		// failure class). SSH-only — local deploys don't face the same
 		// parallelism problem.
-		tools.RegisterDeployBatch(s.server, s.client, httpClient, projectID, s.sshDeployer, s.authInfo, s.logFetcher, s.rtInfo, stateDir, wfEngine, recipeProbe)
+		tools.RegisterDeployBatch(s.server, s.client, httpClient, projectID, s.sshDeployer, s.authInfo, s.logFetcher, s.rtInfo, stateDir, wfEngine, recipeProbe, devsup)
 		// dev_server depends on the SSH deployer — it drives the dev
 		// servers' supervisor on target containers. Skipped in local-only
 		// mode where SSH to Zerops siblings is not available.

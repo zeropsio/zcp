@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -98,6 +99,11 @@ func migrateToSupervisor(ctx context.Context, req *mcp.CallToolRequest, d DevSer
 		}, nil
 	}
 	m.warnings = deployed.Warnings
+	// The start replaces what the deleted keeper kept on host, as a start
+	// replaced it before.
+	if err := dropKeeperRecord(d.StateDir, host); err != nil {
+		m.warnings = append(m.warnings, err.Error())
+	}
 	result, err := ops.ExecuteDevServer(ctx, d.SSH, d.Client, d.ProjectID, p)
 	return m, result, err
 }
@@ -126,6 +132,96 @@ func (s DevsupSource) URL(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("devsup download: %w", err)
 	}
 	return url, nil
+}
+
+// devSetupMove is what a deploy carried onto the dev-server supervisor.
+type devSetupMove struct {
+	// sentence says what changed, "" when nothing did.
+	sentence string
+	// keptServer: the deploy declared the server the deleted keeper kept on
+	// its target; the keeper record goes once the supervisor answers after
+	// the deploy.
+	keptServer bool
+}
+
+// settle drops the keeper record of a kept server the deploy carried once the
+// supervisor answers after it (listening is deployListener's word, nil when
+// no supervisor answered).
+func (m devSetupMove) settle(stateDir, target string, listening []bool, result *ops.DeployResult) {
+	if !m.keptServer || listening == nil {
+		return
+	}
+	if err := dropKeeperRecord(stateDir, target); err != nil {
+		result.Warnings = append(result.Warnings, err.Error())
+	}
+}
+
+// superviseDevSetup puts the dev setup a self-deploy from workingDir ("" is
+// /var/www) deploys under the supervisor when it is not there yet: carrying
+// the server an older zcp's keeper kept on the target, else on the dev
+// service's first deploy.
+func superviseDevSetup(ctx context.Context, client platform.Client, projectID string, ssh ops.SSHDeployer, stateDir string, src DevsupSource, source, target, setup, workingDir string) (devSetupMove, error) {
+	if source != "" && source != target {
+		return devSetupMove{}, nil
+	}
+	kept, ok, err := readKeeperRecord(stateDir, target)
+	if err != nil {
+		return devSetupMove{}, err
+	}
+	if ok {
+		return carryKeptServer(ctx, ssh, stateDir, src, target, setup, workingDir, kept)
+	}
+	sentence, err := superviseNewDevSetup(ctx, client, projectID, ssh, stateDir, src, source, target, setup, workingDir)
+	return devSetupMove{sentence: sentence}, err
+}
+
+// carryKeptServer makes a deploy of target bring back the dev server the
+// deleted keeper kept there (orchestrator decision B): without the
+// supervisor, the dev setup gains its two lines and the kept server is
+// declared from the record, so the supervisor this deploy starts runs it. On
+// the supervisor already, the record has nothing left to bring back.
+func carryKeptServer(ctx context.Context, ssh ops.SSHDeployer, stateDir string, src DevsupSource, target, setup, workingDir string, kept keeperRecord) (devSetupMove, error) {
+	if ssh == nil {
+		return devSetupMove{}, nil
+	}
+	_, err := ops.ReadDevServers(ctx, ssh, target)
+	var noSup *ops.NoSupervisorError
+	switch {
+	case err == nil:
+		return devSetupMove{}, dropKeeperRecord(stateDir, target)
+	case !errors.As(err, &noSup):
+		return devSetupMove{}, fmt.Errorf("the dev server zcp kept on %s: %w", target, err)
+	}
+	lost := func(err error) error {
+		return fmt.Errorf("the dev server zcp kept on %s does not come back after this deploy (start it with zerops_dev_server): %w", target, err)
+	}
+	url, err := src.URL(ctx)
+	if err != nil {
+		return devSetupMove{}, lost(err)
+	}
+	root := ""
+	if meta, _ := workflow.FindServiceMeta(stateDir, target); meta != nil {
+		root = meta.WorkingDirFor(target)
+		if setup == "" {
+			setup = meta.SetupNameFor(target)
+		}
+	}
+	name, err := ops.DeclareDevServerForStart(ctx, ssh, ops.DevServerParams{
+		Action: "start", Hostname: target, Command: kept.Command, Port: kept.Port, HealthPath: kept.HealthPath,
+		WaitSeconds: kept.WaitSeconds, WorkDir: kept.WorkDir, NoHTTPProbe: kept.NoHTTPProbe,
+	})
+	if err != nil {
+		return devSetupMove{}, lost(err)
+	}
+	file, used, _, err := ops.AdoptSupervisorInDevSetup(ctx, ssh, target, setup, url, workingDir, root)
+	if err != nil {
+		return devSetupMove{}, lost(err)
+	}
+	return devSetupMove{
+		sentence: fmt.Sprintf("Before this deploy zcp put %s under the dev-server supervisor and declared %q, the dev server zcp kept there: setup %q in %s now installs and runs zcp-devsup (run.prepareCommands, run.start) and %s declares it, so the supervisor starts it after this deploy — commit both files with your next change.",
+			target, name, used, file, devsup.DeclarationPath),
+		keptServer: true,
+	}, nil
 }
 
 // superviseNewDevSetup writes the supervisor's two lines into the dev setup a
@@ -218,23 +314,95 @@ func deployListener(ctx context.Context, ssh ops.SSHDeployer, hostname string, r
 // zcp container (zerops@devservers-<hash>).
 const keeperUnitPrefix = "devservers-"
 
-// keptDevServersFile is the deleted keeper's record in the state directory.
-const keptDevServersFile = "dev-servers.json"
+// keeperRecordFile is the deleted keeper's record in the state directory:
+// hostname → the server it kept there.
+const keeperRecordFile = "dev-servers.json"
 
-// RetireDevServerKeeper removes what an older zcp's dev-server keeper left on
-// this container — its units and its record of kept servers: dev servers run
-// under each dev service's supervisor now, and one mechanism runs them.
-func RetireDevServerKeeper(ctx context.Context, units ops.UnitRemover, stateDir string) error {
-	var errs []error
-	if stateDir != "" {
-		if err := os.Remove(filepath.Join(stateDir, keptDevServersFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
-			errs = append(errs, fmt.Errorf("remove kept dev servers: %w", err))
-		}
+// keeperRecord is the part of the deleted keeper's record that declares the
+// server it kept: the start the agent last made on that dev service.
+type keeperRecord struct {
+	Command     string `json:"command"`
+	Port        int    `json:"port,omitempty"`
+	HealthPath  string `json:"healthPath,omitempty"`
+	WorkDir     string `json:"workDir,omitempty"`
+	WaitSeconds int    `json:"waitSeconds,omitempty"`
+	NoHTTPProbe bool   `json:"noHttpProbe,omitempty"`
+}
+
+// readKeeperRecords reads the keeper record whole (raw entries, so the hosts
+// zcp does not touch are written back as they were); empty when there is none.
+func readKeeperRecords(stateDir string) (map[string]json.RawMessage, error) {
+	none := map[string]json.RawMessage{}
+	if stateDir == "" {
+		return none, nil
 	}
-	if units != nil {
-		if err := units.RemoveUnits(ctx, keeperUnitPrefix); err != nil {
-			errs = append(errs, err)
-		}
+	data, err := os.ReadFile(filepath.Join(stateDir, keeperRecordFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return none, nil
 	}
-	return errors.Join(errs...)
+	if err != nil {
+		return nil, fmt.Errorf("read the kept dev servers: %w", err)
+	}
+	var records map[string]json.RawMessage
+	if err := json.Unmarshal(data, &records); err != nil {
+		return nil, fmt.Errorf("read the kept dev servers: %w", err)
+	}
+	return records, nil
+}
+
+// readKeeperRecord is the server the deleted keeper kept on hostname; ok is
+// false when it kept none.
+func readKeeperRecord(stateDir, hostname string) (rec keeperRecord, ok bool, err error) {
+	records, err := readKeeperRecords(stateDir)
+	if err != nil || records[hostname] == nil {
+		return rec, false, err
+	}
+	if err := json.Unmarshal(records[hostname], &rec); err != nil {
+		return rec, false, fmt.Errorf("read the dev server kept on %s: %w", hostname, err)
+	}
+	return rec, strings.TrimSpace(rec.Command) != "", nil
+}
+
+// dropKeeperRecord forgets the server kept on hostname once the supervisor
+// runs it; the file goes with its last entry. Only this zcp writes the file
+// now (the keeper is retired), and a lost race leaves an entry the next
+// deploy of that host drops.
+func dropKeeperRecord(stateDir, hostname string) error {
+	records, err := readKeeperRecords(stateDir)
+	if err != nil || records[hostname] == nil {
+		return err
+	}
+	delete(records, hostname)
+	path := filepath.Join(stateDir, keeperRecordFile)
+	if len(records) == 0 {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("forget the dev server kept on %s: %w", hostname, err)
+		}
+		return nil
+	}
+	data, err := json.MarshalIndent(records, "", "  ")
+	if err != nil {
+		return fmt.Errorf("forget the dev server kept on %s: %w", hostname, err)
+	}
+	if err := os.WriteFile(path+".tmp", data, 0o600); err != nil {
+		return fmt.Errorf("forget the dev server kept on %s: %w", hostname, err)
+	}
+	if err := os.Rename(path+".tmp", path); err != nil {
+		return fmt.Errorf("forget the dev server kept on %s: %w", hostname, err)
+	}
+	return nil
+}
+
+// RetireDevServerKeeper removes the units an older zcp's dev-server keeper
+// left on this container: dev servers run under each dev service's supervisor
+// now, and one mechanism runs them. Its record stays until each host's deploy
+// carries the kept server onto the supervisor (carryKeptServer).
+func RetireDevServerKeeper(ctx context.Context, units ops.UnitRemover) error {
+	if units == nil {
+		return nil
+	}
+	if err := units.RemoveUnits(ctx, keeperUnitPrefix); err != nil {
+		return fmt.Errorf("retire the dev-server keeper: %w", err)
+	}
+	return nil
 }

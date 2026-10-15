@@ -885,7 +885,17 @@ hostname, else `dev`), declares the server being started, redeploys the dev serv
 inside (uncommitted work stays), starts the server under the supervisor and prefixes its answer
 with one sentence saying what changed. A failed redeploy answers `supervisor_redeploy_failed`; the
 files stay written, so the next deploy finishes the move. Nothing stays on the old SSH start.
-`TestDevServer_FirstStartWithoutSupervisor_MigratesIt`, `TestAdoptSupervisorYAML`.
+The two lines are spliced into the bytes the user wrote — blank lines, comments, list indentation
+and flow maps stay as written, and a file zcp cannot splice without changing anything else is
+refused with the lines to add by hand (orchestrator decision A). While any crew copy
+(`.crew/<name>`, outside every deploy) has uncommitted or untracked changes, the move redeploys
+nothing: it answers `crew_work_unsaved` with one sentence naming the copies and changes nothing
+(decision C). A call with `workDir` never rewrites a declared server's `cwd`: a copy of the repo
+runs as a `runtime` entry beside it (decision D).
+`TestDevServer_FirstStartWithoutSupervisor_MigratesIt`, `TestAdoptSupervisorYAML`,
+`TestAdoptSupervisorYAML_ChangesNothingButTheSupervisorLines`,
+`TestDevServer_MigrationWaitsForDirtyCrewCopies`,
+`TestDevServer_WorkDirOfACrewCopy_NeverRewritesTheDeclaredCwd`.
 
 **A new dev setup** gets the two lines before it ever runs: the first `zerops_deploy` of a dev-mode
 dynamic dev service (a self-deploy, the pair never deployed) writes them into the dev setup it
@@ -1020,7 +1030,12 @@ Stages []StageRef `json:"stages,omitempty"`
 - While an old zcp runs, the mirror holds the pair only and dev servers are degraded: the old
   zcp's keeper and its SSH start do not know the supervisor and may collide with it on a declared
   port. This ends when the new zcp is back: at startup it removes the old keeper's
-  `zerops@devservers-*` units and its `dev-servers.json` record (`TestRetireDevServerKeeper`).
+  `zerops@devservers-*` units (`TestRetireDevServerKeeper`). Its `dev-servers.json` record stays
+  until each host moves: a `zerops_deploy` (or batch) self-deploy of a dev service with a record
+  and no supervisor carries the move — the two lines, the kept server declared from the record —
+  so the supervisor brings the server back with no extra redeploy; the host's entry goes once the
+  supervisor answers after that deploy, or after a `start` moved the host (decision B,
+  `TestDeploy_KeptDevServer_ComesBackUnderTheSupervisor`).
 
 #### 2.8a.4a Variant B: `ServiceMeta.CodeVolume` (zcp-internal)
 
