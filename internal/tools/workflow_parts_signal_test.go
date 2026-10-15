@@ -70,6 +70,32 @@ func TestAttachPartsSignal(t *testing.T) {
 	}
 }
 
+// TestAttachPartsSignal_DeclaredBasesReachThePairStages: a dev half whose
+// repo's zerops.yaml declares its bases marks itself and every stage of its
+// pair, since the stages deploy setups of that same zerops.yaml; a repo that
+// declares none marks nothing.
+func TestAttachPartsSignal_DeclaredBasesReachThePairStages(t *testing.T) {
+	t.Parallel()
+	withBases := "@@yaml\nzerops:\n  - setup: base\n    build:\n      base: nodejs@22\n    run:\n      base: nodejs@22\n  - setup: dev\n    extends: base\n  - setup: web\n    extends: base\n  - setup: api\n    extends: base\n@@declaration\n@@markers\n@@packages\n"
+	noBases := "@@yaml\nzerops:\n  - setup: dev\n    run:\n      start: zsc noop\n@@declaration\n@@markers\n@@packages\n"
+	got := []workflow.ServiceSnapshot{
+		{Hostname: "appdev", Mode: topology.ModeStandard, RuntimeClass: topology.RuntimeDynamic, SetupName: "dev",
+			Stages: []topology.StageRef{{Hostname: "webstage", SetupName: "web"}, {Hostname: "apistage", SetupName: "api"}}},
+		{Hostname: "webstage", Mode: topology.ModeStage, RuntimeClass: topology.RuntimeDynamic},
+		{Hostname: "apistage", Mode: topology.ModeStage, RuntimeClass: topology.RuntimeDynamic},
+		{Hostname: "otherdev", Mode: topology.ModeStandard, RuntimeClass: topology.RuntimeDynamic, SetupName: "dev", StageHostname: "otherstage"},
+		{Hostname: "otherstage", Mode: topology.ModeStage, RuntimeClass: topology.RuntimeDynamic},
+	}
+	repos := &partsRepos{out: map[string]string{"appdev": withBases, "otherdev": noBases}}
+	attachPartsSignal(context.Background(), got, repos, runtime.Info{InContainer: true})
+	want := map[string]bool{"appdev": true, "webstage": true, "apistage": true, "otherdev": false, "otherstage": false}
+	for _, s := range got {
+		if s.DeclaresBase != want[s.Hostname] {
+			t.Errorf("%s: DeclaresBase = %v, want %v", s.Hostname, s.DeclaresBase, want[s.Hostname])
+		}
+	}
+}
+
 // TestMultiPartRouteNote: the route menu names the monorepo playbook only for
 // an existing runtime service whose repo is multi-part.
 func TestMultiPartRouteNote(t *testing.T) {

@@ -41,6 +41,9 @@ type PartsSignal struct {
 	// go.mod one or two folders down.
 	Workspace bool
 	Packages  int
+	// DeclaresBase is true when a setup of the root zerops.yaml names a
+	// build.base or a run.base.
+	DeclaresBase bool
 }
 
 // MultiPart is the mechanical multi-part signal: the repo's zerops.yaml
@@ -72,7 +75,9 @@ func parsePartsSignal(out, hostname, devSetup string) PartsSignal {
 		sections[current] = append(sections[current], line)
 	}
 	var sig PartsSignal
-	sig.YAMLParts = yamlParts([]byte(strings.Join(sections["yaml"], "\n")), hostname, devSetup)
+	yamlDoc := []byte(strings.Join(sections["yaml"], "\n"))
+	sig.YAMLParts = yamlParts(yamlDoc, hostname, devSetup)
+	sig.DeclaresBase = declaresBase(yamlDoc)
 	var decl struct {
 		Servers []json.RawMessage `json:"servers"`
 	}
@@ -129,4 +134,28 @@ func yamlParts(data []byte, hostname, devSetup string) []string {
 		parts = append(parts, e.Setup)
 	}
 	return parts
+}
+
+// declaresBase reports whether a setup of zerops.yaml names a build.base or
+// a run.base (a scalar or a list).
+func declaresBase(data []byte) bool {
+	var doc struct {
+		Zerops []struct {
+			Build struct {
+				Base yaml.Node `yaml:"base"`
+			} `yaml:"build"`
+			Run struct {
+				Base yaml.Node `yaml:"base"`
+			} `yaml:"run"`
+		} `yaml:"zerops"`
+	}
+	if yaml.Unmarshal(data, &doc) != nil {
+		return false
+	}
+	for _, e := range doc.Zerops {
+		if !e.Build.Base.IsZero() || !e.Run.Base.IsZero() {
+			return true
+		}
+	}
+	return false
 }

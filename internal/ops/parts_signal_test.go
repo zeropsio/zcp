@@ -60,6 +60,36 @@ func TestReadPartsSignal(t *testing.T) {
 	}
 }
 
+// TestReadPartsSignal_DeclaresBase: the repo read says the zerops.yaml
+// already declares a base when any setup names a build.base or a run.base —
+// a scalar or a list — and not when the file is absent or names none.
+func TestReadPartsSignal_DeclaresBase(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, yaml string
+		want       bool
+	}{
+		{name: "bare bases on a shared base setup", want: true, yaml: "zerops:\n  - setup: base\n    build:\n      base: nodejs@22\n    run:\n      base: nodejs@22\n  - setup: dev\n    extends: base\n"},
+		{name: "a build base list", want: true, yaml: "zerops:\n  - setup: dev\n    build:\n      base: [php@8.4, nodejs@22]\n"},
+		{name: "a run base only", want: true, yaml: "zerops:\n  - setup: dev\n    run:\n      base: ubuntu/nodejs@22\n"},
+		{name: "setups without a base", yaml: "zerops:\n  - setup: dev\n    run:\n      start: zsc noop\n"},
+		{name: "no zerops.yaml"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			out := "@@yaml\n" + tt.yaml + "@@declaration\n@@markers\n@@packages\n"
+			sig, err := ReadPartsSignal(context.Background(), partsSSH{out: out}, "appdev", "")
+			if err != nil {
+				t.Fatalf("ReadPartsSignal: %v", err)
+			}
+			if sig.DeclaresBase != tt.want {
+				t.Errorf("DeclaresBase = %v, want %v", sig.DeclaresBase, tt.want)
+			}
+		})
+	}
+}
+
 // TestPartsSignalScript_ReadsARealRepo runs the script itself in a shell over
 // a repo on disk: three parts in zerops.yaml, two declared dev servers, a
 // pnpm workspace with two apps that start, a library without a start script

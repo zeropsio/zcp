@@ -165,6 +165,13 @@ type ServiceSnapshot struct {
 	// the wire. False when not read.
 	MultiPart bool `json:"-"`
 
+	// DeclaresBase is true when the zerops.yaml this service deploys from
+	// already declares a build.base or run.base (ops.PartsSignal, read on the
+	// dev half and carried to each stage of its pair). The repo has chosen
+	// its OS then, and the envelope never asks to change it. Off the wire;
+	// false when not read.
+	DeclaresBase bool `json:"-"`
+
 	// Repo is the live repo state for this service (docs/spec-workflows.md
 	// §8 GLC-7, G1/G2) — nil for managed/unknown-class services (they never
 	// carry a working tree) and for any runtime service ApplyRepoStatus

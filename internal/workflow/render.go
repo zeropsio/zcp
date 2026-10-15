@@ -389,17 +389,25 @@ func renderServiceLine(svc ServiceSnapshot) string {
 // unlike a first-deploy-only atom gated on never-deployed, which an adopted
 // service already running deployed code never sees.
 //
+// The rule is for a base the agent adds. zcp needs no particular OS (its
+// zcp-devsup binary is static), and a base a zerops.yaml already declares
+// is the repo's choice: run.base sets the service OS on each deploy, so an
+// import-time ubuntu/ type beside a bare nodejs@22 (alpine) is not a
+// conflict, and switching it changes the build image (ubuntu's global npm
+// directory needs sudo). So the rule is withheld when the repo declares its
+// bases (ServiceSnapshot.DeclaresBase).
+//
 // Excluded on purpose: static runtimes (`run.base` is the bare special
 // token `static`, not an OS-prefixed base — the build base OS is the
 // builder's choice) and managed services (never carry an OS prefix).
 func renderBasePrefixHint(svc ServiceSnapshot) string {
 	prefix := topology.OSPrefix(svc.TypeVersion)
-	if prefix == "" {
+	if prefix == "" || svc.DeclaresBase {
 		return ""
 	}
 	bare := topology.CanonicalBareForm(svc.TypeVersion)
 	return fmt.Sprintf(
-		"base prefix %s/ — write it on BOTH zerops.yaml build.base and run.base (legacy %s + os: %s ≡ %s; run.base rewrites the service OS on every deploy)",
+		"base prefix %s/ — a zerops.yaml base you add takes it on BOTH build.base and run.base (legacy %s + os: %s ≡ %s); run.base sets the service OS on every deploy, so bases that already deploy stay as they are",
 		prefix, bare, prefix, svc.TypeVersion,
 	)
 }

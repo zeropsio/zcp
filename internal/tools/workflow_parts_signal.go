@@ -12,9 +12,11 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// attachPartsSignal reads each dev half's repo for the multi-part signal
-// (ops.ReadPartsSignal) so the `parts:` atom axis sees it. Container only;
-// a read that fails leaves the service single, as an unread one is.
+// attachPartsSignal reads each dev half's repo (ops.ReadPartsSignal) for the
+// multi-part signal the `parts:` atom axis sees, and for whether its
+// zerops.yaml already declares bases — carried to each stage of the pair,
+// which deploys setups of the same file. Container only; a read that fails
+// leaves the service single and undeclared, as an unread one is.
 func attachPartsSignal(ctx context.Context, services []workflow.ServiceSnapshot, ssh ops.SSHDeployer, rt runtime.Info) {
 	if !rt.InContainer || ssh == nil {
 		return
@@ -40,9 +42,24 @@ func attachPartsSignal(ctx context.Context, services []workflow.ServiceSnapshot,
 			}
 			// Each goroutine writes only its own index.
 			services[i].MultiPart = sig.MultiPart()
+			services[i].DeclaresBase = sig.DeclaresBase
 		}(i, svc)
 	}
 	wg.Wait()
+	declared := map[string]bool{}
+	for _, svc := range services {
+		if !svc.DeclaresBase {
+			continue
+		}
+		for _, stage := range svc.PairStageHostnames() {
+			declared[stage] = true
+		}
+	}
+	for i := range services {
+		if declared[services[i].Hostname] {
+			services[i].DeclaresBase = true
+		}
+	}
 }
 
 // multiPartRouteNote is the route-menu line that points at the monorepo
