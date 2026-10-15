@@ -45,6 +45,7 @@ func evaluateLaunchShapeRows(
 	ctx context.Context,
 	cfg *LaunchShapeConfig,
 	client platform.Client,
+	scopedClient func(token string) (platform.Client, error),
 	transcriptText string,
 	toolCallTexts []string,
 	launchTokenSHA256 string,
@@ -55,7 +56,7 @@ func evaluateLaunchShapeRows(
 	var rows []RequiredCheck
 
 	scope := launchShapeScope(cfg)
-	prodProject, projectRow := resolveLaunchProdProject(ctx, client, cfg)
+	prodProject, projectRow := resolveLaunchProdProject(ctx, client, scopedClient, cfg)
 	rows = append(rows, projectRow)
 	if prodProject == nil {
 		reason := "prod project not found or not resolvable: " + projectRow.Message
@@ -95,11 +96,47 @@ func launchShapeScope(cfg *LaunchShapeConfig) string {
 // resolveLaunchProdProject dispatches to name-based or id-based prod
 // project resolution depending on which of cfg.ProdProject /
 // cfg.ProdProjectIDEnv is set (validate() guarantees exactly one).
-func resolveLaunchProdProject(ctx context.Context, client platform.Client, cfg *LaunchShapeConfig) (*platform.Project, RequiredCheck) {
+func resolveLaunchProdProject(ctx context.Context, client platform.Client, scopedClient func(token string) (platform.Client, error), cfg *LaunchShapeConfig) (*platform.Project, RequiredCheck) {
 	if cfg.ProdProjectIDEnv != "" {
+		if cfg.ProdTokenEnv != "" {
+			scoped, row := prodTokenClient(cfg, scopedClient)
+			if scoped == nil {
+				return nil, row
+			}
+			client = scoped
+		}
 		return findLaunchProdProjectByIDEnv(ctx, client, cfg.ProdProjectIDEnv)
 	}
 	return findLaunchProdProject(ctx, client, cfg.ProdProject)
+}
+
+// prodTokenClient builds the client for launchShape.prodTokenEnv: the
+// standing prod project is outside the run's own token scope, so it is read
+// with the project-scoped token the scenario declares. A missing token or a
+// failed client build blocks project_exists — the project was never read.
+func prodTokenClient(cfg *LaunchShapeConfig, scopedClient func(token string) (platform.Client, error)) (platform.Client, RequiredCheck) {
+	id := launchShapeRowID("project_exists")
+	scope := cfg.ProdProjectIDEnv
+	token := os.Getenv(cfg.ProdTokenEnv)
+	if token == "" {
+		return nil, RequiredCheck{
+			ID: id, Check: "launch_shape", Scope: scope, Result: CheckBlocked,
+			Message: fmt.Sprintf("resource %s missing", cfg.ProdTokenEnv),
+		}
+	}
+	if scopedClient == nil {
+		scopedClient = func(token string) (platform.Client, error) {
+			return platform.NewZeropsClient(token, os.Getenv("ZCP_API_HOST"))
+		}
+	}
+	c, err := scopedClient(token)
+	if err != nil {
+		return nil, RequiredCheck{
+			ID: id, Check: "launch_shape", Scope: scope, Result: CheckBlocked,
+			Message: fmt.Sprintf("client for %s failed: %v", cfg.ProdTokenEnv, err),
+		}
+	}
+	return c, RequiredCheck{}
 }
 
 // findLaunchProdProjectByIDEnv resolves launchShape.prodProjectIdEnv

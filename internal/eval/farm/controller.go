@@ -275,6 +275,9 @@ type RunOptions struct {
 	// pass-through discipline as GitHubPAT.
 	ExistingProjectID string
 	ExistingProdToken string
+	// ResetExistingProd empties the standing existing-prod project after a
+	// run whose scenario declared it in requiredEnvVars; nil skips.
+	ResetExistingProd ExistingProdResetFunc
 	// DevsupURL is the controller's own ZCP_DEVSUP_URL, passed to every run
 	// project's zcp service when set (RunDescriptor.DevsupURL).
 	DevsupURL string
@@ -883,6 +886,11 @@ func finalizeActiveRun(ctx context.Context, client PlatformClient, sink *SinkCli
 	} else {
 		cleanupErrs = append(cleanupErrs, fmt.Errorf("farm run: cleanup project %s: %w", a.RunID, err))
 	}
+	if opts.ResetExistingProd != nil && scenarioRequiresExistingProd(a.RequiredEnvVars) {
+		if err := opts.ResetExistingProd(ctx, opts.ExistingProjectID, opts.ExistingProdToken); err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("farm run: reset existing prod project %s: %w", a.RunID, err))
+		}
+	}
 	if a.Launch {
 		if a.ProductionProjectName != "" {
 			prodID, ok, err := findProjectByName(ctx, client, opts.ClientID, a.ProductionProjectName)
@@ -903,6 +911,12 @@ func finalizeActiveRun(ctx context.Context, client PlatformClient, sink *SinkCli
 		}
 	}
 	return rr, false, false, errors.Join(cleanupErrs...)
+}
+
+// scenarioRequiresExistingProd reports whether names declares the standing
+// existing-prod project id.
+func scenarioRequiresExistingProd(names []string) bool {
+	return slices.Contains(names, eval.ExistingProjectIDEnvVar)
 }
 
 // recordBlocked is D10's single call site for a creation-phase run

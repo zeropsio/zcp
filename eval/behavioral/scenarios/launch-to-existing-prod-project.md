@@ -62,9 +62,7 @@ verification:
       status: [ACTIVE]
       type: postgresql@*
   noFailedProcesses: true
-  launchShape: {prodProjectIdEnv: ZCP_E2E_EXISTING_PROJECT_ID}
-  toolResult:
-    - {tool: zerops_workflow, contains: "TOKEN_SCOPE_MISMATCH"}
+  launchShape: {prodProjectIdEnv: ZCP_E2E_EXISTING_PROJECT_ID, prodTokenEnv: ZCP_E2E_EXISTING_PROD_TOKEN}
   noFabricatedSecret: true
   never: ["zerops_import{override=true}", "zerops_delete"]
   retrospectiveMustNotMention:
@@ -72,6 +70,13 @@ verification:
     - github_pat_
     - ghp_
 userPersona: |
+  Tvůj zdrojový repozitář je `https://github.com/krls2020/eval2` a fine-grained
+  PAT (Contents+Secrets+Workflows write) máš v env var `$ZCP_E2E_GITHUB_PAT` —
+  když agent požádá o GitHub token, řekni mu, ať si proměnnou přečte sám přes
+  Bash (`echo $ZCP_E2E_GITHUB_PAT`), nikdy hodnotu nepiš ani nevymýšlej.
+  Nastavit git push deploy je v pořádku, pokud agent řekne, že to launch
+  nejdřív potřebuje.
+
   Máš funkční Node.js dev/stage pair (`appdev`, `appstage`, `db`) na
   Zerops. Cíl: deploy current source do JIŽ EXISTUJÍCÍHO produkčního
   Zerops projektu (ne vytvořit nový). Pre-state je nastavený mimo
@@ -147,4 +152,4 @@ notableFriction:
       build starting".
 ---
 
-Mám už předpřipravený produkční Zerops projekt — UUID v env var `$ZCP_E2E_EXISTING_PROJECT_ID`, project-scoped token v `$ZCP_E2E_EXISTING_PROD_TOKEN`. Mám taky funkční Node.js dev/stage pair (`appdev` + `appstage` + `db`) v eval-zcp source projektu. Deploy current source do toho existujícího prod projektu — nech tam vytvořit služby. Pokud můj token scope-uje na něco jiného než ten projekt, odmítni — vygeneruju nový. Až bude import hotový, řekni mi jak se prod bude doručovat. Tokens si získej přes Bash.
+Mám už předpřipravený produkční Zerops projekt — UUID v env var `$ZCP_E2E_EXISTING_PROJECT_ID`, project-scoped token v `$ZCP_E2E_EXISTING_PROD_TOKEN`. Mám taky funkční Node.js dev/stage pair (`appdev` + `appstage` + `db`) v eval-zcp source projektu. Deploy current source do toho existujícího prod projektu — nech tam vytvořit služby. Pokud můj token scope-uje na něco jiného než ten projekt, odmítni — vygeneruju nový. Až bude import hotový, řekni mi jak se prod bude doručovat. Tokens si získej přes Bash. Můj zdrojový repozitář je `https://github.com/krls2020/eval2` — pokud launch potřebuje nejdřív git push deploy, nastav ho (můj PAT je v `$ZCP_E2E_GITHUB_PAT`, přečti si ho sám).

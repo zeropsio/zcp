@@ -32,7 +32,7 @@ func TestVerification_LaunchShape_AllRowsFromSnapshot(t *testing.T) {
 				{ID: "av2", ProjectID: "prod-1", ServiceStackID: "svc-app2", Source: "NONE", Status: "ACTIVE", Created: "2026-09-10T00:00:00Z"},
 			})
 
-		rows := evaluateLaunchShapeRows(context.Background(), cfg, client, "", nil, "")
+		rows := evaluateLaunchShapeRows(context.Background(), cfg, client, nil, "", nil, "")
 		want := map[string]CheckResult{
 			"launch_shape/project_exists":               CheckPassed,
 			"launch_shape/runtimes_start_without_code":  CheckPassed,
@@ -57,7 +57,7 @@ func TestVerification_LaunchShape_AllRowsFromSnapshot(t *testing.T) {
 				{ID: "av1", ProjectID: "prod-1", ServiceStackID: "svc-app1", Source: "GIT", Status: "ACTIVE", Created: "2026-09-10T00:00:00Z", Build: &platform.BuildInfo{}},
 			})
 
-		rows := evaluateLaunchShapeRows(context.Background(), cfg, client, "", nil, "")
+		rows := evaluateLaunchShapeRows(context.Background(), cfg, client, nil, "", nil, "")
 		row := findRow(t, rows, "launch_shape/no_build_from_git")
 		if row.Result != CheckFailed {
 			t.Fatalf("expected no_build_from_git to fail, got %+v", row)
@@ -85,7 +85,7 @@ func TestLaunchShape_CliBuild_NoBuildFromGitPasses(t *testing.T) {
 			{ID: "av1", ProjectID: "prod-1", ServiceStackID: "svc-app1", Source: "CLI", Status: "ACTIVE", Created: "2026-09-10T00:00:00Z", Build: &platform.BuildInfo{}},
 		})
 
-	rows := evaluateLaunchShapeRows(context.Background(), cfg, client, "", nil, "")
+	rows := evaluateLaunchShapeRows(context.Background(), cfg, client, nil, "", nil, "")
 	row := findRow(t, rows, "launch_shape/no_build_from_git")
 	if row.Result != CheckPassed {
 		t.Fatalf("expected no_build_from_git to pass for a CLI-sourced appVersion carrying a Build, got %+v", row)
@@ -163,7 +163,7 @@ func TestVerification_LaunchShape_ListNotPermitted_Blocked(t *testing.T) {
 		WithUserInfo(&platform.UserInfo{ID: "client-1"}).
 		WithError("ListProjects", errors.New("403 forbidden"))
 
-	rows := evaluateLaunchShapeRows(context.Background(), cfg, client, "", nil, "")
+	rows := evaluateLaunchShapeRows(context.Background(), cfg, client, nil, "", nil, "")
 	projectRow := findRow(t, rows, "launch_shape/project_exists")
 	if projectRow.Result != CheckBlocked {
 		t.Fatalf("expected project_exists blocked, got %+v", projectRow)
@@ -193,7 +193,7 @@ func TestLaunchShape_ProdProjectIDEnv_ResolvesByID(t *testing.T) {
 			{ID: "av1", ProjectID: "prod-secret-id-1", ServiceStackID: "svc-app1", Source: "NONE", Status: "ACTIVE", Created: "2026-09-10T00:00:00Z"},
 		})
 
-	rows := evaluateLaunchShapeRows(context.Background(), cfg, client, "", nil, "")
+	rows := evaluateLaunchShapeRows(context.Background(), cfg, client, nil, "", nil, "")
 	row := findRow(t, rows, "launch_shape/project_exists")
 	if row.Result != CheckPassed {
 		t.Fatalf("expected project_exists to pass, got %+v", row)
@@ -217,7 +217,7 @@ func TestLaunchShape_ProdProjectIDEnv_Unset_Blocked(t *testing.T) {
 	cfg := &LaunchShapeConfig{ProdProjectIDEnv: envName}
 	client := platform.NewMock()
 
-	rows := evaluateLaunchShapeRows(context.Background(), cfg, client, "", nil, "")
+	rows := evaluateLaunchShapeRows(context.Background(), cfg, client, nil, "", nil, "")
 	row := findRow(t, rows, "launch_shape/project_exists")
 	if row.Result != CheckBlocked {
 		t.Fatalf("expected project_exists blocked when env is unset, got %+v", row)
@@ -227,6 +227,48 @@ func TestLaunchShape_ProdProjectIDEnv_Unset_Blocked(t *testing.T) {
 	}
 	if row.Scope != envName {
 		t.Errorf("Scope = %q, want the env NAME %q", row.Scope, envName)
+	}
+}
+
+// TestLaunchShape_ProdTokenEnv_ReadsWithTheScopedToken pins O6 for a standing
+// prod project outside the run's own token scope: project_exists is read with
+// the client built from launchShape.prodTokenEnv, not the run's client, which
+// is denied.
+func TestLaunchShape_ProdTokenEnv_ReadsWithTheScopedToken(t *testing.T) {
+	const idEnv, tokEnv = "ZCP_E2E_EXISTING_PROJECT_ID", "ZCP_E2E_EXISTING_PROD_TOKEN"
+	t.Setenv(idEnv, "prod-1")
+	t.Setenv(tokEnv, "scoped-token")
+	cfg := &LaunchShapeConfig{ProdProjectIDEnv: idEnv, ProdTokenEnv: tokEnv}
+	runClient := platform.NewMock().WithError("GetProject", errors.New("Insufficient permissions"))
+	var gotToken string
+	scoped := func(token string) (platform.Client, error) {
+		gotToken = token
+		return platform.NewMock().WithProject(&platform.Project{ID: "prod-1", Name: "prod"}), nil
+	}
+
+	rows := evaluateLaunchShapeRows(context.Background(), cfg, runClient, scoped, "", nil, "")
+	row := findRow(t, rows, "launch_shape/project_exists")
+	if row.Result != CheckPassed {
+		t.Fatalf("expected project_exists to pass with the scoped token, got %+v", row)
+	}
+	if gotToken != "scoped-token" {
+		t.Errorf("scoped client built with %q, want the prodTokenEnv value", gotToken)
+	}
+}
+
+// TestLaunchShape_ProdTokenEnv_Unset_Blocked pins that a missing scoped token
+// blocks project_exists instead of falling back to the run's client.
+func TestLaunchShape_ProdTokenEnv_Unset_Blocked(t *testing.T) {
+	const idEnv, tokEnv = "ZCP_E2E_EXISTING_PROJECT_ID", "ZCP_E2E_EXISTING_PROD_TOKEN"
+	t.Setenv(idEnv, "prod-1")
+	t.Setenv(tokEnv, "")
+	cfg := &LaunchShapeConfig{ProdProjectIDEnv: idEnv, ProdTokenEnv: tokEnv}
+	runClient := platform.NewMock().WithProject(&platform.Project{ID: "prod-1", Name: "prod"})
+
+	rows := evaluateLaunchShapeRows(context.Background(), cfg, runClient, nil, "", nil, "")
+	row := findRow(t, rows, "launch_shape/project_exists")
+	if row.Result != CheckBlocked || !strings.Contains(row.Message, tokEnv) {
+		t.Fatalf("expected blocked naming %s, got %+v", tokEnv, row)
 	}
 }
 

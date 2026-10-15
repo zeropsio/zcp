@@ -386,6 +386,12 @@ type LaunchShapeConfig struct {
 	// ProdProject / ProdProjectIDEnv is required (validate()). The row's
 	// Scope carries this env NAME, never the id value.
 	ProdProjectIDEnv string `yaml:"prodProjectIdEnv,omitempty"`
+	// ProdTokenEnv names an environment variable holding the project-scoped
+	// token that can read the prod project resolved by ProdProjectIDEnv:
+	// the run's own token has no access to a standing project outside the
+	// run. Empty reads with the run's client. Valid only with
+	// ProdProjectIDEnv (validate()).
+	ProdTokenEnv string `yaml:"prodTokenEnv,omitempty"`
 }
 
 // ArtifactPromotionEntry declares one O7 artifact-promotion oracle entry
@@ -688,6 +694,9 @@ func (s *Scenario) validate() error {
 			hasEnv := ls.ProdProjectIDEnv != ""
 			if hasName == hasEnv {
 				return fmt.Errorf("verification.launchShape requires exactly one of prodProject or prodProjectIdEnv")
+			}
+			if ls.ProdTokenEnv != "" && !hasEnv {
+				return fmt.Errorf("verification.launchShape.prodTokenEnv requires prodProjectIdEnv")
 			}
 		}
 		for _, ap := range s.Verification.ArtifactPromotion {

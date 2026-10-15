@@ -171,6 +171,7 @@ func runFarmRun(args []string, envr *farm.EnvResolver) int {
 		GitHubAdminPAT:    os.Getenv(eval.GitHubAdminPATEnvVar),
 		ExistingProjectID: os.Getenv(eval.ExistingProjectIDEnvVar),
 		ExistingProdToken: os.Getenv(eval.ExistingProdTokenEnvVar),
+		ResetExistingProd: farm.NewExistingProdReset(os.Getenv("ZCP_API_HOST")),
 		DevsupURL:         os.Getenv("ZCP_DEVSUP_URL"),
 	}
 	results, err := farm.RunBatch(ctx, client, sink, opts)

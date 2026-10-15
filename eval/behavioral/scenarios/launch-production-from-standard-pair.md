@@ -18,6 +18,7 @@ tags: [launch-production, prod-transition, one-shot-key, separate-project, trust
 area: launch
 requiredEnvVars:
   - ZCP_E2E_GITHUB_PAT
+  - ZCP_E2E_LAUNCH_KEY
 retrospective:
   promptStyle: briefing-future-agent
 verification:
@@ -44,9 +45,12 @@ userPersona: |
   offer to mint the launch token itself from a one-time platform
   delegation — no token value crosses the conversation; if so, confirm
   explicitly that it should go ahead. If instead ZCP falls back to
-  asking you to generate one manually (no delegation available), you
-  generate a temporary account-wide Zerops API token, use it for the
-  launch window only, and DELETE it as soon as ZCP reports launched.
+  asking you for a launch token (no delegation available), your
+  temporary account-wide Zerops API token is in the env var
+  `$ZCP_E2E_LAUNCH_KEY` — tell the agent to read it itself via Bash
+  (`echo $ZCP_E2E_LAUNCH_KEY`), never paste the value or invent one; use
+  it for the launch window only and expect ZCP to tell you to delete it
+  once it reports launched.
   Either way, push back if ZCP tries to persist a key anywhere or asks
   for ongoing prod access.
 notableFriction:

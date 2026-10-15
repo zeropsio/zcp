@@ -43,6 +43,10 @@ type RuntimeInputs struct {
 	TranscriptPath    string
 	UserSimTurns      []UserSimTurn
 	MutatingTools     map[string]bool
+	// ScopedClient builds a platform client for a project-scoped token
+	// (launchShape.prodTokenEnv); nil uses platform.NewZeropsClient against
+	// ZCP_API_HOST.
+	ScopedClient func(token string) (platform.Client, error)
 	// WorkDir and ExecSSH feed the O10/O2' container-side oracle stubs
 	// (internalLiveness, containerCheck, meta, schemaValid —
 	// verification_container.go). ExecSSH mirrors
@@ -267,14 +271,14 @@ func generateRequiredChecks(
 	}
 	if sc.Verification.LaunchShape != nil {
 		rows = append(rows, evaluateLaunchShapeRows(
-			ctx, sc.Verification.LaunchShape, client,
+			ctx, sc.Verification.LaunchShape, client, runtime.ScopedClient,
 			readTranscriptText(runtime.TranscriptPath),
 			mcpToolCallTexts(runtime.MCPStreamPaths),
 			runtime.LaunchTokenSHA256,
 		)...)
 	}
 	if sc.Verification.NoFabricatedSecret {
-		rows = append(rows, evaluateNoFabricatedSecretRow(runtime.MCPStreamPaths, sc.ID))
+		rows = append(rows, evaluateNoFabricatedSecretRow(runtime.MCPStreamPaths, sc.ID, declaredSecretValues(sc.RequiredEnvVars)))
 	}
 	for _, entry := range sc.Verification.ArtifactPromotion {
 		rows = append(rows, evaluateArtifactPromotionRows(ctx, entry, client, projectID, runStart, baseline)...)

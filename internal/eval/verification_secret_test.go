@@ -10,7 +10,7 @@ import (
 // captured tool call's arguments fails the row, naming the tool and key.
 func TestVerification_NoFabricatedSecret_UndeclaredToken_Fails(t *testing.T) {
 	t.Parallel()
-	row := evaluateNoFabricatedSecretRow([]string{"testdata/mcpstream/undeclared.jsonl"}, "r1")
+	row := evaluateNoFabricatedSecretRow([]string{"testdata/mcpstream/undeclared.jsonl"}, "r1", nil)
 	if row.Result != CheckFailed {
 		t.Fatalf("expected failed, got %+v", row)
 	}
@@ -23,7 +23,7 @@ func TestVerification_NoFabricatedSecret_UndeclaredToken_Fails(t *testing.T) {
 // absent capture window blocks the row rather than passing or failing it.
 func TestVerification_NoFabricatedSecret_NoCapture_Blocked(t *testing.T) {
 	t.Parallel()
-	row := evaluateNoFabricatedSecretRow(nil, "r1")
+	row := evaluateNoFabricatedSecretRow(nil, "r1", nil)
 	if row.Result != CheckBlocked {
 		t.Fatalf("expected blocked, got %+v", row)
 	}
@@ -38,7 +38,7 @@ func TestVerification_NoFabricatedSecret_NoCapture_Blocked(t *testing.T) {
 // token-shaped one; the row must still fail.
 func TestSecretScan_EnvsArray_AllPairsScanned(t *testing.T) {
 	t.Parallel()
-	row := evaluateNoFabricatedSecretRow([]string{"testdata/mcpstream/envs-array.jsonl"}, "r1")
+	row := evaluateNoFabricatedSecretRow([]string{"testdata/mcpstream/envs-array.jsonl"}, "r1", nil)
 	if row.Result != CheckFailed {
 		t.Fatalf("expected failed (token in the first envs array element), got %+v", row)
 	}
@@ -53,8 +53,44 @@ func TestSecretScan_EveryStreamPath(t *testing.T) {
 	row := evaluateNoFabricatedSecretRow([]string{
 		"testdata/mcpstream/multi-a.jsonl",
 		"testdata/mcpstream/multi-b.jsonl",
-	}, "r1")
+	}, "r1", nil)
 	if row.Result != CheckFailed {
 		t.Fatalf("expected failed (token only in the second stream file), got %+v", row)
+	}
+}
+
+// TestVerification_NoFabricatedSecret_DeclaredEnvCredential_Passes pins the
+// declared-inputs allowance (docs/spec-eval-farm.md §4.4 O8): a token-shaped
+// value that is a scenario's requiredEnvVars credential, passed on as a tool
+// argument, is the declared input and not fabricated.
+func TestVerification_NoFabricatedSecret_DeclaredEnvCredential_Passes(t *testing.T) {
+	const envName = "ZCP_E2E_TEST_DECLARED_CREDENTIAL"
+	t.Setenv(envName, "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+	row := evaluateNoFabricatedSecretRow([]string{"testdata/mcpstream/undeclared.jsonl"}, "r1", declaredSecretValues([]string{envName}))
+	if row.Result != CheckPassed {
+		t.Fatalf("expected passed for a declared credential, got %+v", row)
+	}
+}
+
+// TestVerification_NoFabricatedSecret_InventedValueNextToDeclared_Fails pins
+// that the allowance covers only the declared value: an invented ghp_
+// placeholder still fails when a different credential is declared.
+func TestVerification_NoFabricatedSecret_InventedValueNextToDeclared_Fails(t *testing.T) {
+	const envName = "ZCP_E2E_TEST_DECLARED_CREDENTIAL"
+	t.Setenv(envName, "ghp_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz")
+	row := evaluateNoFabricatedSecretRow([]string{"testdata/mcpstream/undeclared.jsonl"}, "r1", declaredSecretValues([]string{envName}))
+	if row.Result != CheckFailed {
+		t.Fatalf("expected failed for an invented value, got %+v", row)
+	}
+}
+
+// TestVerification_NoFabricatedSecret_UnsetDeclaredEnv_DoesNotAllowAnything
+// pins that an unset declared env var contributes no allowance (an empty
+// value must not blank every argument).
+func TestVerification_NoFabricatedSecret_UnsetDeclaredEnv_DoesNotAllowAnything(t *testing.T) {
+	t.Setenv("ZCP_E2E_TEST_UNSET_CREDENTIAL", "")
+	row := evaluateNoFabricatedSecretRow([]string{"testdata/mcpstream/undeclared.jsonl"}, "r1", declaredSecretValues([]string{"ZCP_E2E_TEST_UNSET_CREDENTIAL"}))
+	if row.Result != CheckFailed {
+		t.Fatalf("expected failed, got %+v", row)
 	}
 }
