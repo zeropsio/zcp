@@ -1,0 +1,15 @@
+# F5 (MODEL S5): a docker-compose repository (web, api, db), no part declared
+# yet — only today's dev setup for the Node runtime. Converting the compose
+# services to native Zerops parts and a managed database is the agent's to
+# propose and, once agreed, to do.
+zerops:
+  - setup: dev
+    build:
+      base: nodejs@22
+      deployFiles: [.]
+    run:
+      base: nodejs@22
+      ports:
+        - port: 3000
+          httpSupport: true
+      start: zsc noop --silent

@@ -1,0 +1,13 @@
+# Fixture for mono-e1-f5-compose.md (mono-e0 TEST-PLAN §4 E1 row 21, F5):
+# one Node dev service, running and empty until its dev setup deploys. The
+# preseed plants fixtures/repos/mono-compose on appdev.
+
+services:
+  - hostname: appdev
+    type: nodejs@22
+    startWithoutCode: true
+    minContainers: 1
+    maxContainers: 1
+    verticalAutoscaling:
+      minRam: 1
+      maxRam: 2

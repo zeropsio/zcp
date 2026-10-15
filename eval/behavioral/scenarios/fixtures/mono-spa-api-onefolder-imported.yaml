@@ -1,0 +1,22 @@
+# Fixture for mono-e1-f6-spa-api-onefolder.md (mono-e0 TEST-PLAN §4 E1 row 21,
+# F6): one Node dev/stage pair, both running and empty until their setups
+# deploy. The preseed plants fixtures/repos/mono-spa-api-onefolder on appdev.
+
+services:
+  - hostname: appdev
+    type: nodejs@22
+    startWithoutCode: true
+    minContainers: 1
+    maxContainers: 1
+    verticalAutoscaling:
+      minRam: 1
+      maxRam: 2
+
+  - hostname: appstage
+    type: nodejs@22
+    startWithoutCode: true
+    minContainers: 1
+    maxContainers: 1
+    verticalAutoscaling:
+      minRam: 0.5
+      maxRam: 1

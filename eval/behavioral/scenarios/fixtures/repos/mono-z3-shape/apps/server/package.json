@@ -1,0 +1,8 @@
+{
+  "name": "@mate-shape/server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/bin.ts"
+  }
+}

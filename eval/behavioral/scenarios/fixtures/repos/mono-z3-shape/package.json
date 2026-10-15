@@ -1,0 +1,10 @@
+{
+  "name": "mate-shape",
+  "private": true,
+  "type": "module",
+  "engines": { "node": "^24.13.1" },
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "dev": "node scripts/dev-runner.ts"
+  }
+}

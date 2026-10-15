@@ -1,0 +1,28 @@
+# S8 stand-in (mono-e0 TARGETS §1): the shape of z3 — a Node 24 workspace with
+# a server (`node --watch src/bin.ts`, a fixed port from env, never 3773) and a
+# Vite web that proxies /api, /ws, /oauth to that server, one `prod` part
+# (static web). Only today's dev setup and the prod setup; no dev-server
+# declaration. The real z3 is a private repository the farm cannot clone.
+zerops:
+  - setup: dev
+    build:
+      base: nodejs@24
+      buildCommands:
+        - npm install
+      deployFiles: [.]
+    run:
+      base: nodejs@24
+      ports:
+        - port: 5733
+          httpSupport: true
+      start: zsc noop --silent
+
+  - setup: prod
+    build:
+      base: nodejs@24
+      buildCommands:
+        - npm install
+        - npm run build --workspace @mate-shape/web
+      deployFiles: apps/web/~dist
+    run:
+      base: static

@@ -1,0 +1,16 @@
+# F6 (MODEL S7): one package.json, a Vite SPA built into dist/ and a Node
+# server that serves dist/ and /api — one app, one folder. Only today's dev
+# setup; the agent proposes the shape and stays at one part (decision 7).
+zerops:
+  - setup: dev
+    build:
+      base: nodejs@22
+      buildCommands:
+        - npm install
+      deployFiles: [.]
+    run:
+      base: nodejs@22
+      ports:
+        - port: 3000
+          httpSupport: true
+      start: zsc noop --silent

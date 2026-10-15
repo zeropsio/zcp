@@ -1,0 +1,15 @@
+# F4 (MODEL S4): a Node front end in web/ and a Python API in api/, no part
+# declared yet — only today's dev setup for the Node runtime. The second
+# runtime (Python) is the agent's to install at run time (run.os ubuntu +
+# `sudo zsc install python@3.12`, MODEL S4).
+zerops:
+  - setup: dev
+    build:
+      base: nodejs@22
+      deployFiles: [.]
+    run:
+      base: nodejs@22
+      ports:
+        - port: 3000
+          httpSupport: true
+      start: zsc noop --silent

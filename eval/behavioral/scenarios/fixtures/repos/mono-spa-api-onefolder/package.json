@@ -1,0 +1,13 @@
+{
+  "name": "pocasi",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 5173 --strictPort",
+    "build": "vite build",
+    "start": "node server.js"
+  },
+  "devDependencies": {
+    "vite": "8.3.4"
+  }
+}
