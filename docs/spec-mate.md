@@ -858,9 +858,14 @@ lost on a redeploy (P1 T7, P2 S4) — which is exactly the start-up rule below.
   `leaderStart` is the leader's start time from `/proc/<pid>/stat`, the identity check below;
   `rssKb` is the resident memory of the server's whole process group in KiB at read time
   (omitted when there is no live group). zcp's `start` of a server that is not running reads it
-  with the container's cgroup memory (`memory.current` less `inactive_file`, against the service's
-  `maxRam`, else `memory.max`) and refuses the start when the headroom is below the largest running
-  server's `rssKb` (floor 1 GiB, at most a quarter of the ceiling), naming the numbers (`TestDevServer_StartThatWouldLeaveLessHeadroom…`).
+  with the container's cgroup memory (used = `memory.current` less the page cache, `active_file` and
+  `inactive_file`; ceiling = the `maxRam` the service's autoscaling can grow to, from the service's own
+  `currentAutoscaling`, else `customAutoscaling`, else `memory.max`) and refuses the start only when
+  a server runs and the headroom is below the largest running server's `rssKb` (floor 1 GiB, at most
+  a quarter of the ceiling), naming the numbers (`TestDevServer_StartThatWouldLeaveLessHeadroom…`).
+  With no server running nothing is refused, the migration's final start included
+  (`TestDevServer_AFirstDevServerStartWithNoServerRunning…`, `TestDevServer_ADefaultAutoscaledService…`,
+  `TestDevServer_PageCache…`).
 - `status` is derived **once, by the supervisor**: `stopped` = desired stopped; `crashed` = desired
   running, no live group, `exit` set; `starting` = live group whose `port` does not yet accept TCP;
   `running` = everything else; a start still waiting for its port is `starting`. zcp and Mate read

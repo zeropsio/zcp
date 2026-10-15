@@ -53,10 +53,11 @@ type Container struct {
 	// DirtyCrew names the crew copies (.crew/<name>) with uncommitted or
 	// untracked changes.
 	DirtyCrew []string
-	// MemMaxB, MemCurrentB and MemInactiveB answer the cgroup memory probe in
-	// bytes; MemMaxB 0 means the cgroup files are unreadable.
-	MemMaxB, MemCurrentB, MemInactiveB int64
-	pid                                int
+	// MemMaxB, MemCurrentB, MemInactiveB and MemActiveB (memory.stat's
+	// inactive_file and active_file) answer the cgroup memory probe in bytes;
+	// MemMaxB 0 means the cgroup files are unreadable.
+	MemMaxB, MemCurrentB, MemInactiveB, MemActiveB int64
+	pid                                            int
 }
 
 // SupervisedYAML is a zerops.yaml whose dev setup runs the supervisor.
@@ -95,7 +96,7 @@ func (c *Container) ExecSSH(_ context.Context, _ string, command string) ([]byte
 		if c.MemMaxB == 0 {
 			return nil, errors.New("exit status 1")
 		}
-		return fmt.Appendf(nil, "@@zcp-memory %d %d %d\n", c.MemMaxB, c.MemCurrentB, c.MemInactiveB), nil
+		return fmt.Appendf(nil, "@@zcp-memory %d %d %d %d\n", c.MemMaxB, c.MemCurrentB, c.MemInactiveB, c.MemActiveB), nil
 	case strings.Contains(command, "@@zcp-crew-dirty"):
 		var out strings.Builder
 		for _, name := range c.DirtyCrew {

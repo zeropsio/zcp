@@ -903,6 +903,54 @@ func TestDevServer_StartOfASecondNamedServerOnAOneGiBService_IsNotRefusedWhileNo
 	}
 }
 
+func TestDevServer_AFirstDevServerStartWithNoServerRunning_IsNeverRefusedOnMemory(t *testing.T) {
+	t.Parallel()
+	// A single-part app on a 0.5 GiB grant with 400 MiB in use: nothing runs
+	// to measure one more server by, and the autoscaler grows the grant.
+	c := memoryContainer(0, 0, nil)
+	c.MemMaxB, c.MemCurrentB = gib64/2, 400<<20
+	c.Servers["web"].Status, c.Servers["web"].Desired = devsup.StatusStopped, devsup.DesiredStopped
+	result := runDevServer(t, c, DevServerParams{Action: "start", Hostname: "appdev", Name: "api"})
+	if result.Name != "api" || sentWith(c, "ctl 'start' 'api'") != 1 {
+		t.Errorf("api must start, got %+v", result)
+	}
+}
+
+func TestDevServer_ADefaultAutoscaledService_IsJudgedAgainstItsAutoscalingMaxNotItsCurrentGrant(t *testing.T) {
+	t.Parallel()
+	// 2 GiB granted, 1.6 GiB used, web holds 0.5 GiB: against the grant 0.4
+	// GiB is left, against the 6 GiB the service can grow to 4.4 GiB.
+	c := memoryContainer(2, 0, map[string]float64{"web": 0.5})
+	c.MemCurrentB = gib64 * 16 / 10
+	// The project's service list carries no currentAutoscaling; only the
+	// service's own detail does, and a default-autoscaled service has no
+	// customAutoscaling.
+	client := platform.NewMock().
+		WithProject(&platform.Project{ID: "p1", Name: "test"}).
+		WithServices([]platform.ServiceStack{{ID: "svc-appdev", Name: "appdev", ProjectID: "p1", Status: "ACTIVE"}}).
+		WithService(&platform.ServiceStack{ID: "svc-appdev", Name: "appdev", ProjectID: "p1", Status: "ACTIVE",
+			CurrentAutoscaling: &platform.CustomAutoscaling{MinRAM: 0.5, MaxRAM: 6}})
+	if _, err := ExecuteDevServer(context.Background(), c, client, "p1",
+		DevServerParams{Action: "start", Hostname: "appdev", Name: "api"}); err != nil {
+		t.Fatalf("6 GiB autoscaling max with 1.6 GiB used leaves 4.4 GiB, enough for another 0.5 GiB server: %v", err)
+	}
+	if sentWith(c, "ctl 'start' 'api'") != 1 {
+		t.Errorf("api must reach the supervisor")
+	}
+}
+
+func TestDevServer_PageCache_DoesNotCountAsUsedMemory(t *testing.T) {
+	t.Parallel()
+	// 5.5 GiB charged of 6, of it 2.5 GiB file cache the kernel reclaims:
+	// 3 GiB is in use, and another 2.5 GiB server fits.
+	c := memoryContainer(6, 0, map[string]float64{"web": 2.5})
+	c.MemCurrentB, c.MemActiveB = gib64*55/10, gib64*25/10
+	result := runDevServer(t, c, DevServerParams{Action: "start", Hostname: "appdev", Name: "api"})
+	if result.Name != "api" || sentWith(c, "ctl 'start' 'api'") != 1 {
+		t.Errorf("api must start, got %+v", result)
+	}
+}
+
 func TestDevServer_RestartOfARunningServer_IsNeverRefusedOnMemory(t *testing.T) {
 	t.Parallel()
 	c := memoryContainer(6, 5, map[string]float64{"web": 2.5})

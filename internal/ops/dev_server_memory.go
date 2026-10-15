@@ -17,7 +17,7 @@ import (
 // one more server is refused when the headroom left would not hold another
 // server like the largest one already running.
 const (
-	// devServerMarginFloorKB is the margin when no server runs yet or all are
+	// devServerMarginFloorKB is the margin when every running server is
 	// small: the platform's default free-RAM buffer is 2 GiB (AUTOSCALING.md);
 	// half of it still leaves the autoscaler room to react.
 	devServerMarginFloorKB = 1024 * 1024
@@ -25,11 +25,12 @@ const (
 )
 
 // memoryProbeCmd prints one line: cgroup v2 memory.max, memory.current and
-// memory.stat's inactive_file, in bytes ("max" when unlimited).
-const memoryProbeCmd = `m=/sys/fs/cgroup; echo "@@zcp-memory $(cat $m/memory.max 2>/dev/null) $(cat $m/memory.current 2>/dev/null) $(awk '/^inactive_file /{print $2}' $m/memory.stat 2>/dev/null)"`
+// memory.stat's inactive_file and active_file, in bytes ("max" when
+// unlimited).
+const memoryProbeCmd = `m=/sys/fs/cgroup; echo "@@zcp-memory $(cat $m/memory.max 2>/dev/null) $(cat $m/memory.current 2>/dev/null) $(awk '/^inactive_file /{i=$2} /^active_file /{a=$2} END{print i+0, a+0}' $m/memory.stat 2>/dev/null)"`
 
-// containerMemory is the dev container's memory in KiB. UsedKB leaves out
-// reclaimable page cache. MaxKB is 0 when the cgroup is unlimited.
+// containerMemory is the dev container's memory in KiB. MaxKB is 0 when the
+// cgroup is unlimited.
 type containerMemory struct {
 	MaxKB, UsedKB int64
 }
@@ -54,9 +55,12 @@ func readContainerMemory(ctx context.Context, ssh SSHDeployer, hostname string) 
 		if err != nil {
 			return containerMemory{}, false
 		}
-		var inactive int64
-		if len(f) > 2 {
-			inactive, _ = strconv.ParseInt(f[2], 10, 64)
+		// Used leaves out both file LRU lists: page cache the kernel reclaims
+		// before it runs out of memory (shmem sits on the anon lists, counted).
+		var fileCache int64
+		for _, v := range f[min(2, len(f)):] {
+			n, _ := strconv.ParseInt(v, 10, 64)
+			fileCache += n
 		}
 		var maxB int64
 		if f[0] != "max" {
@@ -64,14 +68,16 @@ func readContainerMemory(ctx context.Context, ssh SSHDeployer, hostname string) 
 				return containerMemory{}, false
 			}
 		}
-		return containerMemory{MaxKB: maxB / 1024, UsedKB: (current - inactive) / 1024}, true
+		return containerMemory{MaxKB: maxB / 1024, UsedKB: (current - fileCache) / 1024}, true
 	}
 	return containerMemory{}, false
 }
 
-// serviceMaxRAMKB is the service's autoscaling ceiling (maxRam, GiB) in KiB, 0
-// when unknown. The cgroup's memory.max is only what is granted now; the
-// autoscaler grows it up to this.
+// serviceMaxRAMKB is the RAM the service's autoscaling can grow to (maxRam,
+// GiB) in KiB, 0 when unknown. The cgroup's memory.max is only what is granted
+// now. The project's service list carries only customAutoscaling, which a
+// default-autoscaled service lacks; the service's own detail carries the
+// resolved currentAutoscaling.
 func serviceMaxRAMKB(ctx context.Context, client platform.Client, projectID, hostname string) int64 {
 	if client == nil {
 		return 0
@@ -81,14 +87,22 @@ func serviceMaxRAMKB(ctx context.Context, client platform.Client, projectID, hos
 		return 0
 	}
 	svc, err := FindService(services, hostname)
-	if err != nil || svc.CustomAutoscaling == nil {
+	if err != nil {
 		return 0
 	}
-	return int64(svc.CustomAutoscaling.MaxRAM * gbKB)
+	detail, err := client.GetService(ctx, svc.ID)
+	if err != nil {
+		return 0
+	}
+	if scaling := scalingFromStack(detail); scaling != nil {
+		return int64(scaling.MaxRAM * gbKB)
+	}
+	return 0
 }
 
 // memoryRefusal is the one sentence for a start that would leave less headroom
-// than the largest running server holds; "" when the start fits.
+// than the largest running server holds; "" when the start fits or no server
+// runs to measure one more by.
 func memoryRefusal(hostname, name string, mem containerMemory, maxRAMKB int64, st devsup.State) string {
 	ceiling := mem.MaxKB
 	if maxRAMKB > 0 {
@@ -109,7 +123,7 @@ func memoryRefusal(hostname, name string, mem containerMemory, maxRAMKB int64, s
 		running = append(running, fmt.Sprintf("%s %s", n, gib(s.RssKB)))
 	}
 	headroom := ceiling - mem.UsedKB
-	if headroom >= margin {
+	if len(running) == 0 || headroom >= margin {
 		return ""
 	}
 	slices.Sort(running)

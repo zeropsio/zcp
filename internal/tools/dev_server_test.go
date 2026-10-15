@@ -277,6 +277,26 @@ func TestDevServer_FirstStartWithoutSupervisor_MigratesIt(t *testing.T) {
 	}
 }
 
+// The move's final start passes the start's memory rule: when the server the
+// redeploy brought up has ended, a single-part app on a nearly full 0.5 GiB
+// grant has no server running, so its start reaches the supervisor and answers
+// how the server ended, never a memory refusal.
+func TestDevServer_MigrationsFinalStartWithNoServerRunning_IsNotRefusedOnMemory(t *testing.T) {
+	t.Parallel()
+	c := &devservertest.Container{YAMLFile: "zerops.yml", YAML: todaysDevSetup,
+		MemMaxB: 512 << 20, MemCurrentB: 400 << 20, Crash: map[string]bool{"appdev": true}}
+	srv, _ := migrationToolServer(t, c, statusActive)
+
+	result := callTool(t, srv, "zerops_dev_server", map[string]any{"action": "start", "hostname": "appdev", "command": "bun --watch index.ts", "port": 3000})
+	if text := getTextContent(t, result); strings.Contains(text, "Not starting") {
+		t.Fatalf("the move's final start was refused on memory: %s", text)
+	}
+	finalStart := slices.ContainsFunc(c.Sent(), func(cmd string) bool { return strings.Contains(cmd, "ctl 'start' 'appdev'") })
+	if c.Deploys != 1 || !finalStart {
+		t.Errorf("the final start must reach the supervisor after the one redeploy (deploys %d)", c.Deploys)
+	}
+}
+
 // variantBDevMeta is webdev's pair recorded as variant B (docs/spec-mate.md
 // §2.8a.4a): its repository on the code volume vol at /var/www/ws, which the
 // further dev service apidev (setup dev-api) mounts too.
