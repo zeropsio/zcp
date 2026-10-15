@@ -16,9 +16,14 @@ below, it is a second part of that app, never a second bootstrap:
 
 {services-list:- `{hostname}`}
 
-1. Add a `setup:` for the part to the repo's `zerops.yaml`.
-2. Declare a named dev server for it in the same declaration.
-3. Append its stage to the pair's stages.
+1. Import the part's stage service (`zerops_import`, `startWithoutCode: true`)
+   under its own hostname, such as `workerstage`.
+2. Plan the pair as the one runtime it is: its dev hostname with
+   `isExisting: true` and `stages` listing every stage with its setup, the
+   new one included (`{"hostname": "workerstage", "setupName": "worker"}`).
+   Never a second runtime for the part.
+3. In develop, add the part's `setup:` to the repo's `zerops.yaml` and declare
+   a named dev server for it.
 
 Read `zerops_knowledge uri="zerops://playbooks/monorepo"` first. Bootstrap a
-new service only for a different repo.
+new runtime only for a different repo.

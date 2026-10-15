@@ -61,13 +61,17 @@ Each named service becomes a tracked runtime target; `adoptionState="managed-dep
 ### A new part next to the adopted pair
 
 If the task also asks for another piece (a worker, an api) built from the
-repo of the pair you adopt, it is a second part of that app. Adopt the pair
-alone — the plan lists no new service for the part:
+repo of the pair you adopt, it is a second part of that app, never a second
+runtime of the plan:
 
-1. Adopt the pair as it is.
-2. In develop, add a `setup:` for the part to the repo's `zerops.yaml`.
-3. Declare a named dev server for it in the same declaration.
-4. Append its stage to the pair's stages.
+1. Import the part's stage service (`zerops_import`, `startWithoutCode: true`)
+   under its own hostname, such as `workerstage`.
+2. Plan the pair as the one runtime it is: its dev hostname with
+   `isExisting: true` and `stages` listing every stage with its setup, the
+   new one included (`{"hostname": "workerstage", "setupName": "worker"}`).
+   Never a second runtime for the part.
+3. In develop, add the part's `setup:` to the repo's `zerops.yaml` and declare
+   a named dev server for it.
 
-Read `zerops_knowledge uri="zerops://playbooks/monorepo"` first. Create a new
-service only for a different repo.
+Read `zerops_knowledge uri="zerops://playbooks/monorepo"` first. Plan a new
+runtime only for a different repo.
