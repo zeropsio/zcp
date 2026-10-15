@@ -151,15 +151,15 @@ func TestStart_Mate_RaisesTasksMaxForBrowsers(t *testing.T) {
 	t.Cleanup(func() { service.ResetRunFunc(); service.ResetTuneFunc() })
 
 	// The unit's default TasksMax is 300; one software-WebGL Chromium takes
-	// ~90 tasks, so 2-3 browsers plus the agent hit the cap (fork EAGAIN,
-	// agent SIGABRT). 1200 fits 6 browsers (~540) + agent helpers with margin
-	// inside the container's shared 2000 pid budget.
+	// 90-150 tasks, so 2-3 browsers plus the agent hit the cap (fork EAGAIN,
+	// agent SIGABRT). 1600 fits 6 browsers (~900 measured) + agent helpers and
+	// leaves 400 of the container's shared 2000 pid budget, like vscode.
 	_ = service.Start("mate")
 	if tunedUnit != "zerops@mate.service" {
 		t.Errorf("tuned unit: got %q, want zerops@mate.service", tunedUnit)
 	}
-	if tunedMax != 1200 {
-		t.Errorf("tuned TasksMax: got %d, want 1200", tunedMax)
+	if tunedMax != 1600 {
+		t.Errorf("tuned TasksMax: got %d, want 1600", tunedMax)
 	}
 }
 
