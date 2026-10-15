@@ -24,8 +24,8 @@ Deploy dev first, start the dev server, verify, then promote to stage. Run per d
 zerops_dev_server action=start hostname="{hostname}" command="{start-command}" port={port} healthPath="{path}"
 zerops_verify serviceHostname="{hostname}"
 
-zerops_deploy sourceService="{hostname}" targetService="{stage-hostname}" setup="prod"
-zerops_verify serviceHostname="{stage-hostname}"}
+{each-stage:zerops_deploy sourceService="{hostname}" targetService="{stage-hostname}" setup="{stage-setup}"
+zerops_verify serviceHostname="{stage-hostname}"}}
 ```
 
 <!-- axis-o-keep: conditional inspection — phrase is "If the dev server is already running" inside an `action=status`-then-decide flow, not a state assertion -->

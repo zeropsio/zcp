@@ -18,8 +18,8 @@ Standard mode pairs dev + stage. After each dev runtime verifies,
 cross-deploy it to its paired stage:
 
 ```
-{services-list:zerops_deploy sourceService="{hostname}" targetService="{stage-hostname}" setup="prod"
-zerops_verify serviceHostname="{stage-hostname}"}
+{services-list:{each-stage:zerops_deploy sourceService="{hostname}" targetService="{stage-hostname}" setup="{stage-setup}"
+zerops_verify serviceHostname="{stage-hostname}"}}
 ```
 
 Cross-deploy builds the dev source on stage; dev side unchanged.

@@ -252,8 +252,12 @@ zerops_deploy targetService="appdev" setup="dev"
 zerops_dev_server action=start hostname="appdev" command="{start-command}" port={port} healthPath="{path}"
 zerops_verify serviceHostname="appdev"
 
-zerops_deploy sourceService="appdev" targetService="webstage" setup="prod"
+zerops_deploy sourceService="appdev" targetService="webstage" setup="web"
 zerops_verify serviceHostname="webstage"
+zerops_deploy sourceService="appdev" targetService="apistage" setup="api"
+zerops_verify serviceHostname="apistage"
+zerops_deploy sourceService="appdev" targetService="workerstage" setup="worker"
+zerops_verify serviceHostname="workerstage"
 ```
 
 Cross-deploy builds the dev source on stage (dev side unchanged); stage has a real `run.start` + `healthCheck`, so it auto-starts (no `zerops_dev_server` on the stage side). The work session closes once both halves have a successful deploy + passing verify (`closeReason=auto-complete`). If the dev server is already running after a code-only change, run `action=status` first; if `running: true`, skip `action=start`.
