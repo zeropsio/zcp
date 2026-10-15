@@ -731,3 +731,78 @@ func TestVerifyTool_EveryDeclaredPort(t *testing.T) {
 		})
 	}
 }
+
+// TestVerifyTool_APartWithoutADevServer_NamesTheStartCall: verifying the dev
+// service of a pair whose stages build the app and an added worker, while the
+// supervisor declares only the app's server, says that the worker runs no dev
+// server and gives the exact start call — and never fails the verify. The same
+// repo with one stage, or outside a container, says nothing (the single-part
+// reply stays as it is).
+func TestVerifyTool_APartWithoutADevServer_NamesTheStartCall(t *testing.T) {
+	t.Parallel()
+	const appAndWorker = "zerops:\n  - setup: dev\n    run:\n      start: zcp-devsup run\n  - setup: prod\n    run:\n      start: bun index.ts\n  - setup: worker\n    run:\n      start: bun worker.ts\n"
+	const startWorker = `zerops_dev_server action=start hostname="appdev" name="worker"`
+	tests := []struct {
+		name        string
+		stages      []topology.StageRef
+		inContainer bool
+		all         bool
+		wantNote    bool
+	}{
+		{name: "an added worker without a dev server is named with its start call", inContainer: true, wantNote: true,
+			stages: []topology.StageRef{{Hostname: "appstage", SetupName: "prod"}, {Hostname: "workerstage", SetupName: "worker"}}},
+		{name: "verifying every service names the worker too", inContainer: true, all: true, wantNote: true,
+			stages: []topology.StageRef{{Hostname: "appstage", SetupName: "prod"}, {Hostname: "workerstage", SetupName: "worker"}}},
+		{name: "a pair with one stage says nothing", inContainer: true,
+			stages: []topology.StageRef{{Hostname: "appstage", SetupName: "prod"}}},
+		{name: "outside a container says nothing",
+			stages: []topology.StageRef{{Hostname: "appstage", SetupName: "prod"}, {Hostname: "workerstage", SetupName: "worker"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+				Hostname: "appdev", Mode: topology.PlanModeStandard, PrimarySetupName: "dev", Stages: tt.stages,
+				CloseDeployMode: topology.CloseModeAuto, BootstrapSession: "s", BootstrappedAt: "2026-06-01",
+			}); err != nil {
+				t.Fatalf("WriteServiceMeta: %v", err)
+			}
+			mock := platform.NewMock().
+				WithServices([]platform.ServiceStack{
+					{ID: "svc-1", Name: "appdev", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/bun@1.3.9", ServiceStackTypeCategoryName: "USER"}, Status: serviceStatusRunning, Ports: []platform.Port{{Port: 3000}}},
+				})
+			ssh := devservertest.NewSupervised(`{"version":1,"servers":[{"name":"appdev","port":3000,"command":"bun --watch index.ts","cwd":"."}]}`)
+			ssh.YAMLFile, ssh.YAML = "zerops.yml", appAndWorker
+
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterVerify(srv, mock, platform.NewMockLogFetcher(), "proj-1", dir, runtime.Info{InContainer: tt.inContainer}, ssh)
+			args := map[string]any{"serviceHostname": "appdev"}
+			if tt.all {
+				args = map[string]any{}
+			}
+			result := callTool(t, srv, "zerops_verify", args)
+			if result.IsError {
+				t.Fatalf("unexpected error: %s", getTextContent(t, result))
+			}
+			var resp struct {
+				Note string `json:"note"`
+			}
+			if err := json.Unmarshal([]byte(getTextContent(t, result)), &resp); err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if !tt.wantNote {
+				if strings.Contains(resp.Note, "zerops_dev_server") {
+					t.Errorf("note = %q, want no dev-server fact", resp.Note)
+				}
+				return
+			}
+			if !strings.Contains(resp.Note, `part "worker"`) || !strings.Contains(resp.Note, startWorker) {
+				t.Errorf("note = %q, want the worker part named with %s", resp.Note, startWorker)
+			}
+			if strings.Contains(resp.Note, `"prod"`) {
+				t.Errorf("note = %q, names the app part its server under the dev hostname serves", resp.Note)
+			}
+		})
+	}
+}

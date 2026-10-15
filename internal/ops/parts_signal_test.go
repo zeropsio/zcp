@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 type partsSSH struct{ out string }
@@ -122,7 +124,7 @@ func TestPartsSignalScript_ReadsARealRepo(t *testing.T) {
 		t.Fatalf("script: %v\n%s", err, out)
 	}
 	sig := parsePartsSignal(string(out), "appdev", "dev")
-	want := PartsSignal{ConfigFile: "zerops.yaml", YAMLParts: []string{"web", "api", "worker"}, YAMLSetups: []string{"dev", "web", "api", "worker"}, DeclaredServers: 2, Workspace: true, Packages: 2}
+	want := PartsSignal{ConfigFile: "zerops.yaml", YAMLParts: []string{"web", "api", "worker"}, YAMLSetups: []string{"dev", "web", "api", "worker"}, DeclaredServers: []string{"web", "api"}, Workspace: true, Packages: 2}
 	if !reflect.DeepEqual(sig, want) {
 		t.Errorf("signal = %+v, want %+v\n%s", sig, want, out)
 	}
@@ -148,5 +150,64 @@ func TestPartsSignalScript_NamesTheConfigFileTheRepoKeeps(t *testing.T) {
 		if sig := parsePartsSignal(string(out), "appdev", "dev"); sig.ConfigFile != file {
 			t.Errorf("repo with %q: ConfigFile = %q", file, sig.ConfigFile)
 		}
+	}
+}
+
+// TestPartsWithoutDevServer: a pair whose stages build several parts of the
+// repo names each part that runs a process (its setup, or a base it extends,
+// has a run.start) and has no dev server declared on the dev service. The
+// pair's first part is served by the server named after the dev hostname
+// (the one a start without a name declares); a part without run.start (a
+// static output) and a pair with one stage name nothing; a server named after
+// no part may serve one, so as many unnamed parts stay unnamed.
+func TestPartsWithoutDevServer(t *testing.T) {
+	t.Parallel()
+	const appAndWorker = "zerops:\n  - setup: dev\n    run: {start: zcp-devsup run}\n  - setup: prod\n    run: {start: bun index.ts}\n  - setup: worker\n    run: {start: bun worker.ts}\n"
+	twoStages := []topology.StageRef{{Hostname: "appstage", SetupName: "prod"}, {Hostname: "workerstage", SetupName: "worker"}}
+	tests := []struct {
+		name, yaml, declaration string
+		stages                  []topology.StageRef
+		want                    []string
+	}{
+		{name: "a worker added beside the app with no dev server is named", yaml: appAndWorker,
+			declaration: `{"version":1,"servers":[{"name":"appdev","port":3000,"command":"bun --watch index.ts"}]}`,
+			stages:      twoStages, want: []string{"worker"}},
+		{name: "a repo with no declared server names every part that runs", yaml: appAndWorker,
+			stages: twoStages, want: []string{"prod", "worker"}},
+		{name: "every part with a dev server of its name names nothing", yaml: appAndWorker,
+			declaration: `{"version":1,"servers":[{"name":"prod","command":"a"},{"name":"worker","command":"b"}]}`,
+			stages:      twoStages},
+		{name: "the app's server under the dev hostname and the worker's under its own name leave nothing unnamed", yaml: appAndWorker,
+			declaration: `{"version":1,"servers":[{"name":"appdev","command":"a"},{"name":"worker","command":"b"}]}`,
+			stages:      twoStages},
+		{name: "a server named after no part may serve the part it leaves unnamed", yaml: appAndWorker,
+			declaration: `{"version":1,"servers":[{"name":"appdev","command":"a"},{"name":"jobs","command":"b"}]}`,
+			stages:      twoStages},
+		{name: "a static part without run.start is not named",
+			yaml:        "zerops:\n  - setup: dev\n  - setup: api\n    run: {start: ./app}\n  - setup: web\n    run: {base: static}\n",
+			declaration: `{"version":1,"servers":[{"name":"appdev","command":"a"}]}`,
+			stages:      []topology.StageRef{{Hostname: "apistage", SetupName: "api"}, {Hostname: "webstage", SetupName: "web"}}},
+		{name: "a part whose start comes from the base it extends is named",
+			yaml:        "zerops:\n  - setup: base\n    run: {start: node main.js}\n  - setup: dev\n  - setup: api\n    run: {start: ./app}\n  - setup: jobs\n    extends: base\n",
+			declaration: `{"version":1,"servers":[{"name":"appdev","command":"a"}]}`,
+			stages:      []topology.StageRef{{Hostname: "apistage", SetupName: "api"}, {Hostname: "jobsstage", SetupName: "jobs"}}, want: []string{"jobs"}},
+		{name: "a pair with one stage names nothing", yaml: appAndWorker,
+			stages: twoStages[:1]},
+		{name: "a stage whose setup the file does not declare yet is not named", yaml: appAndWorker,
+			declaration: `{"version":1,"servers":[{"name":"appdev","command":"a"}]}`,
+			stages:      []topology.StageRef{{Hostname: "appstage", SetupName: "prod"}, {Hostname: "apistage", SetupName: "api"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			out := "@@yaml\n" + tt.yaml + "@@declaration\n" + tt.declaration + "\n@@markers\n@@packages\n"
+			sig, err := ReadPartsSignal(context.Background(), partsSSH{out: out}, "appdev", "dev")
+			if err != nil {
+				t.Fatalf("ReadPartsSignal: %v", err)
+			}
+			if got := sig.PartsWithoutDevServer(tt.stages, "appdev"); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("PartsWithoutDevServer = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

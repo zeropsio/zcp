@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // partsSignalScript prints, from a dev service's repo root, what the
@@ -41,8 +44,13 @@ type PartsSignal struct {
 	YAMLParts []string
 	// YAMLSetups names every setup of the root zerops.yaml, in file order.
 	YAMLSetups []string
-	// DeclaredServers counts the servers in .zcp/dev-servers.json.
-	DeclaredServers int
+	// RunParts names the YAMLParts that run a process: their setup, or a
+	// setup it extends, names a run.start. A part without one (a static
+	// output) runs no dev server.
+	RunParts []string
+	// DeclaredServers names the servers in .zcp/dev-servers.json, in file
+	// order.
+	DeclaredServers []string
 	// Workspace is true when a workspace marker (pnpm-workspace.yaml,
 	// turbo.json, nx.json, lerna.json, go.work, package.json workspaces) is
 	// present; Packages counts the packages with a start/dev script or a
@@ -58,7 +66,48 @@ type PartsSignal struct {
 // declares more than one part, its declaration lists more than one dev
 // server, or workspace markers name several deployable packages.
 func (s PartsSignal) MultiPart() bool {
-	return len(s.YAMLParts) > 1 || s.DeclaredServers > 1 || (s.Workspace && s.Packages > 1)
+	return len(s.YAMLParts) > 1 || len(s.DeclaredServers) > 1 || (s.Workspace && s.Packages > 1)
+}
+
+// PartsWithoutDevServer names, in stage order, the parts a pair's stages
+// build that run a process and have no dev server declared on the dev service
+// devHostname — nil for a pair with one stage. A part's dev server is declared
+// under the part's name; the pair's first part may also be served by the one
+// named after the dev hostname, which a start without a name declares
+// (docs/spec-mate.md §2.8a.1). A server named after no part may serve any
+// part, so while those are as many as the unnamed parts, none is named.
+func (s PartsSignal) PartsWithoutDevServer(stages []topology.StageRef, devHostname string) []string {
+	if len(stages) < 2 {
+		return nil
+	}
+	declared := map[string]bool{}
+	for _, name := range s.DeclaredServers {
+		declared[name] = true
+	}
+	parts := map[string]bool{}
+	for _, st := range stages {
+		parts[st.SetupName] = true
+	}
+	var missing []string
+	for i, st := range stages {
+		if !slices.Contains(s.RunParts, st.SetupName) || declared[st.SetupName] || slices.Contains(missing, st.SetupName) {
+			continue
+		}
+		if i == 0 && declared[devHostname] {
+			continue
+		}
+		missing = append(missing, st.SetupName)
+	}
+	unattributed := 0
+	for name := range declared {
+		if !parts[name] && name != devHostname {
+			unattributed++
+		}
+	}
+	if len(missing) <= unattributed {
+		return nil
+	}
+	return missing
 }
 
 // ReadPartsSignal reads hostname's repo for the multi-part signal; devSetup
@@ -90,12 +139,17 @@ func parsePartsSignal(out, hostname, devSetup string) PartsSignal {
 	}
 	yamlDoc := []byte(strings.Join(sections["yaml"], "\n"))
 	sig.YAMLParts, sig.YAMLSetups = yamlParts(yamlDoc, hostname, devSetup)
+	sig.RunParts = runParts(yamlDoc, sig.YAMLParts)
 	sig.DeclaresBase = declaresBase(yamlDoc)
 	var decl struct {
-		Servers []json.RawMessage `json:"servers"`
+		Servers []struct {
+			Name string `json:"name"`
+		} `json:"servers"`
 	}
 	if json.Unmarshal([]byte(strings.Join(sections["declaration"], "\n")), &decl) == nil {
-		sig.DeclaredServers = len(decl.Servers)
+		for _, s := range decl.Servers {
+			sig.DeclaredServers = append(sig.DeclaredServers, s.Name)
+		}
 	}
 	for _, l := range sections["markers"] {
 		if strings.TrimSpace(l) != "" {
@@ -125,13 +179,8 @@ func yamlParts(data []byte, hostname, devSetup string) (parts, setups []string) 
 	}
 	extended := map[string]bool{}
 	for _, e := range doc.Zerops {
-		if e.Extends.Kind == yaml.ScalarNode {
-			extended[e.Extends.Value] = true
-		}
-		if e.Extends.Kind == yaml.SequenceNode {
-			for _, n := range e.Extends.Content {
-				extended[n.Value] = true
-			}
+		for _, base := range extendedSetups(e.Extends) {
+			extended[base] = true
 		}
 	}
 	isDev := func(setup string) bool {
@@ -151,6 +200,64 @@ func yamlParts(data []byte, hostname, devSetup string) (parts, setups []string) 
 		parts = append(parts, e.Setup)
 	}
 	return parts, setups
+}
+
+// extendedSetups names the setups an `extends` value names: a scalar or a
+// list.
+func extendedSetups(n yaml.Node) []string {
+	if n.Kind == yaml.ScalarNode {
+		return []string{n.Value}
+	}
+	var out []string
+	if n.Kind == yaml.SequenceNode {
+		for _, c := range n.Content {
+			out = append(out, c.Value)
+		}
+	}
+	return out
+}
+
+// runParts names the parts whose setup, or a setup it extends (transitively),
+// names a run.start.
+func runParts(data []byte, parts []string) []string {
+	var doc struct {
+		Zerops []struct {
+			Setup   string    `yaml:"setup"`
+			Extends yaml.Node `yaml:"extends"`
+			Run     struct {
+				Start string `yaml:"start"`
+			} `yaml:"run"`
+		} `yaml:"zerops"`
+	}
+	if yaml.Unmarshal(data, &doc) != nil {
+		return nil
+	}
+	starts := map[string]bool{}
+	extends := map[string][]string{}
+	for _, e := range doc.Zerops {
+		starts[e.Setup] = strings.TrimSpace(e.Run.Start) != ""
+		extends[e.Setup] = extendedSetups(e.Extends)
+	}
+	var runs func(setup string, seen map[string]bool) bool
+	runs = func(setup string, seen map[string]bool) bool {
+		if starts[setup] {
+			return true
+		}
+		seen[setup] = true
+		for _, base := range extends[setup] {
+			if !seen[base] && runs(base, seen) {
+				return true
+			}
+		}
+		return false
+	}
+	var out []string
+	for _, p := range parts {
+		if runs(p, map[string]bool{}) {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // declaresBase reports whether a setup of zerops.yaml names a build.base or

@@ -108,6 +108,14 @@ func (c *Container) ExecSSH(_ context.Context, _ string, command string) ([]byte
 			return []byte("@@zcp-file -\n"), nil
 		}
 		return []byte("@@zcp-file " + c.YAMLFile + "\n" + c.YAML), nil
+	case strings.Contains(command, "echo @@yaml"):
+		// The parts read (ops.ReadPartsSignal): the repo's zerops.yaml and
+		// declaration; no workspace markers or packages.
+		file := ""
+		if c.YAML != "" {
+			file = c.YAMLFile
+		}
+		return []byte("@@file\n" + file + "\n@@yaml\n" + c.YAML + "\n@@declaration\n" + c.Declaration + "\n@@markers\n@@packages\n"), nil
 	case strings.Contains(command, ".zcp-tmp"):
 		c.YAML = firstQuoted(command, "printf '%s' ")
 		return nil, nil

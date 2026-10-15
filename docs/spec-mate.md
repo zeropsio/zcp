@@ -985,6 +985,14 @@ fields stay, `name` added only when it differs from `hostname`). **Absent `devSe
 read in this call"**, never "none running": Mate keeps the last read with its `readAt` (MODEL §6, N7).
 A dev service with one dev server shows today's card, without a server name.
 
+**A part with no dev server.** `zerops_verify` of a container dev service whose pair has more than one
+stage names, in its `note`, each stage's part that runs a process (its setup, or one it extends, has a
+`run.start`) and has no server declared under its name, with the `zerops_dev_server action=start
+hostname=… name=<part>` call that starts it. The pair's first part is also served by the server named
+after the dev hostname; while servers named after no part are as many as the unnamed parts, none is
+named. It never fails the verify; a pair with one stage and local mode read nothing more
+(`TestVerifyTool_APartWithoutADevServer_NamesTheStartCall`, `TestPartsWithoutDevServer`).
+
 **One source in the `zerops_dev_server` result.** Its top-level `running` is exactly
 `status == "running"` of the `devServers[]` entry it reports (the entry named `name`, else the one
 named `hostname`) — never a second probe. The HTTP probe is a health fact beside it — `healthStatus`,
