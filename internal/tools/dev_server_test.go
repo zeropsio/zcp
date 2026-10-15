@@ -211,6 +211,8 @@ type devServerAnswer struct {
 	Reason  string `json:"reason"`
 	Message string `json:"message"`
 	URL     string `json:"url"`
+
+	MigratedToSupervisor *bool `json:"migratedToSupervisor"`
 }
 
 func callDevServer(t *testing.T, srv *mcp.Server, args map[string]any) devServerAnswer {
@@ -247,6 +249,9 @@ func TestDevServer_FirstStartWithoutSupervisor_MigratesIt(t *testing.T) {
 		strings.Count(a.Message, "zcp moved") != 1 {
 		t.Errorf("message = %q, want one sentence saying what changed, then the start's own answer", a.Message)
 	}
+	if a.MigratedToSupervisor == nil || !*a.MigratedToSupervisor {
+		t.Errorf("a migrating start carries migratedToSupervisor=true as data, got %v", a.MigratedToSupervisor)
+	}
 	if c.Deploys != 1 {
 		t.Errorf("redeploys = %d, want exactly one", c.Deploys)
 	}
@@ -267,7 +272,7 @@ func TestDevServer_FirstStartWithoutSupervisor_MigratesIt(t *testing.T) {
 	}
 
 	again := callDevServer(t, srv, map[string]any{"action": "restart", "hostname": "appdev"})
-	if !again.Running || strings.Contains(again.Message, "zcp moved") || c.Deploys != 1 {
+	if !again.Running || strings.Contains(again.Message, "zcp moved") || again.MigratedToSupervisor != nil || c.Deploys != 1 {
 		t.Errorf("a later start moved the dev setup again (deploys %d): %+v", c.Deploys, again)
 	}
 }

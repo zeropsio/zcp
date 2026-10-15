@@ -789,6 +789,8 @@ error in its state.
 
 #### 2.8a.2 The supervisor — `zcp-devsup`
 
+A `zerops_dev_server` start that moved the host onto the supervisor and redeployed it carries `migratedToSupervisor: true` in its result (omitted otherwise); the Mate acts on that field, never on the message sentence.
+
 **Binary and delivery.** `zcp-devsup` is built from the zcp repository (`cmd/zcp-devsup`) and
 published on every zcp release as the asset `zcp-devsup-linux-amd64`, same version as zcp. zcp
 writes the dev setup's two lines (MODEL §9/1c, P4 H1), pinned to the **newest published zcp
