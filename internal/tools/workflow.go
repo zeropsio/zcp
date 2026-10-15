@@ -319,7 +319,36 @@ func workflowInputSchema() *jsonschema.Schema {
 	patchFlexBoolProperty(s, "force")
 	patchFlexBoolProperty(s, "skipPipelineSetup")
 	patchFlexBoolProperty(s, "confirmLaunch")
+	patchEnumProperty(s, "publicAccess", "auto", "subdomain", "none")
 	return s
+}
+
+// patchEnumProperty gives every property named key in the schema tree (the
+// plan runtime's, wherever the inferred schema nests or references it) an
+// enum, so the allowed values are published rather than guessed.
+func patchEnumProperty(s *jsonschema.Schema, key string, values ...string) {
+	seen := map[*jsonschema.Schema]bool{}
+	var walk func(n *jsonschema.Schema)
+	walk = func(n *jsonschema.Schema) {
+		if n == nil || seen[n] {
+			return
+		}
+		seen[n] = true
+		if prop := n.Properties[key]; prop != nil {
+			prop.Enum = prop.Enum[:0]
+			for _, v := range values {
+				prop.Enum = append(prop.Enum, v)
+			}
+		}
+		for _, c := range n.Properties {
+			walk(c)
+		}
+		for _, c := range n.Defs {
+			walk(c)
+		}
+		walk(n.Items)
+	}
+	walk(s)
 }
 
 // patchFlexBoolProperty replaces an inferred (type:boolean) property with the

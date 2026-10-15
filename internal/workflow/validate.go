@@ -195,7 +195,7 @@ type RuntimeTarget struct {
 	// the default one-time subdomain auto-enable. "domain" is DERIVE-ONLY
 	// (adopt sets it from observed custom domains) and is rejected here by
 	// ValidateBootstrapTargets — an agent-authored plan cannot request it.
-	PublicAccess string `json:"publicAccess,omitempty"`
+	PublicAccess string `json:"publicAccess,omitempty" jsonschema:"auto (default) | subdomain | none = internal-only, never public. Other values are rejected."`
 	// CodeVolume plans the pair as variant B: its repository on a shared
 	// local-storage service mounted under /var/www in the dev half and in
 	// every further dev service it names, each deploying its own dev setup.
@@ -244,7 +244,7 @@ func publicAccessPlanError(rt RuntimeTarget) string {
 	if validPublicAccessPlanValues[rt.PublicAccess] {
 		return ""
 	}
-	return fmt.Sprintf(`target %q: invalid publicAccess %q (must be "", auto, subdomain, or none)`, rt.DevHostname, rt.PublicAccess)
+	return fmt.Sprintf(`target %q: invalid publicAccess %q (allowed: auto, subdomain, none; omit for auto)`, rt.DevHostname, rt.PublicAccess)
 }
 
 // EffectiveMode returns the bootstrap mode. Empty is no longer mapped to

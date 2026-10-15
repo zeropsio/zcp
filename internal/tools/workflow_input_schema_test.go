@@ -61,3 +61,52 @@ func TestWorkflowInputSchema_CloseModePresentsAutoManualOnly(t *testing.T) {
 		t.Error("schema should present close-mode as auto/manual")
 	}
 }
+
+// TestWorkflowInputSchema_PublicAccessListsAllowedValues pins that the plan's
+// runtime.publicAccess is published with its allowed values, so the agent
+// reads them instead of guessing.
+func TestWorkflowInputSchema_PublicAccessListsAllowedValues(t *testing.T) {
+	t.Parallel()
+	s := workflowInputSchema()
+	if s == nil {
+		t.Fatal("workflowInputSchema returned nil")
+	}
+	b, err := json.Marshal(s)
+	if err != nil {
+		t.Fatalf("marshal schema: %v", err)
+	}
+	var doc any
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatalf("unmarshal schema: %v", err)
+	}
+	var found map[string]any
+	var walk func(v any)
+	walk = func(v any) {
+		switch x := v.(type) {
+		case map[string]any:
+			if props, ok := x["properties"].(map[string]any); ok {
+				if pa, ok := props["publicAccess"].(map[string]any); ok {
+					found = pa
+				}
+			}
+			for _, c := range x {
+				walk(c)
+			}
+		case []any:
+			for _, c := range x {
+				walk(c)
+			}
+		}
+	}
+	walk(doc)
+	if found == nil {
+		t.Fatal("publicAccess property missing from schema")
+	}
+	enum, _ := found["enum"].([]any)
+	if len(enum) != 3 || enum[0] != "auto" || enum[1] != "subdomain" || enum[2] != "none" {
+		t.Errorf("publicAccess enum = %v, want [auto subdomain none]", enum)
+	}
+	if desc, _ := found["description"].(string); !strings.Contains(desc, "none") {
+		t.Errorf("publicAccess description = %q, want it to explain none", desc)
+	}
+}

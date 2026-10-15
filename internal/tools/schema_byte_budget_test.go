@@ -109,7 +109,10 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// Raised +386 (19218→19604) for the plan runtime's `codeVolume`:
 		// variant B, {hostname, mountPath, devServices[{hostname,
 		// setupName}]}; no description — the monorepo playbook carries its use.
-		"zerops_workflow":    19604,
+		// Raised +143 (19604→19747) for the plan runtime's `publicAccess`
+		// enum (auto|subdomain|none) and one-line description: the agent
+		// reads the allowed values instead of guessing.
+		"zerops_workflow":    19747,
 		"zerops_record_fact": 3299,
 		"zerops_dev_server":  3220,
 		// Raised +28 (2945→2973) for the OS-axis migration: the runtime/services
