@@ -56,4 +56,4 @@ notableFriction:
       - "internal/tools/dev_server_migrate.go superviseNewDevSetup (the first deploy writes the supervisor lines only when a release ships zcp-devsup or ZCP_DEVSUP_URL is set; otherwise the first dev-server start migrates with one redeploy)"
 ---
 
-Set up a small Node.js API for me on Zerops, dev-only — I want to iterate on the code live, no stage, no production yet. Use project `{{projectId}}`. Once it's running, make `GET /` return `200` with a body containing the literal text `zsc-noop-ready`.
+Set up a small Node.js API for me on Zerops as service `api`, dev-only — I want to iterate on the code live, no stage, no production yet. Use project `{{projectId}}`. Once it's running, make `GET /` return `200` with a body containing the literal text `zsc-noop-ready`.

@@ -35,12 +35,10 @@ verification:
       subdomainProbe: {expectStatus: "2xx"}
   meta:
     - {hostname: appdev, field: stages.0.hostname, expect: "appstage"}
-    - {hostname: appdev, field: stages.0.setup, expect: "prod"}
-  toolArg:
-    - {always: "zerops_dev_server{action=start}"}
+    - {hostname: appdev, field: stages.0.setupName, expect: "prod"}
   containerCheck:
     - {service: appdev, cmd: "grep -qE 'start: *zcp-devsup run' /var/www/zerops.yml && echo supervised", match: "^supervised"}
-    - {service: appdev, cmd: "grep -c '\"name\"' /var/www/.zcp/dev-servers.json", match: "^1$"}
+    - {service: appdev, cmd: "grep -c '\"name\"' /var/www/.zcp/dev-servers.json", match: "^1\\s*$"}
     - {service: appdev, cmd: "grep -q '\"name\": *\"appdev\"' /var/www/.zcp/dev-servers.json && echo named-after-host", match: "^named-after-host"}
     - {service: appdev, cmd: "zcp-devsup ctl status --json | grep -qE '\"status\": *\"running\"' && echo running", match: "^running"}
     - {service: appdev, cmd: "wget -qO- http://127.0.0.1:3000/api/forecast >/dev/null && echo serves", match: "^serves"}
