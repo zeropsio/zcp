@@ -17,8 +17,10 @@ import (
 // zcp has read a repo that keeps its config as zerops.yml, neither the
 // develop guidance nor any knowledge it points to calls that file
 // zerops.yaml — the agent has no name to rename it to — and a repo with
-// zerops.yaml never hears zerops.yml. A GitHub Actions workflow file
-// (.github/workflows/zerops.yml) is another file and keeps its name.
+// zerops.yaml never hears zerops.yml. A text that names both files names
+// the repo's file once, never one name twice. A GitHub Actions workflow file
+// (.github/workflows/zerops.yml) and a file whose name only ends in
+// zerops.yml (notzerops.yml) are other files and keep their names.
 func TestRepoConfigFile_AnAgentIsOnlyEverToldTheReposOwnConfigFileName(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -87,7 +89,24 @@ func TestRepoConfigFile_AnAgentIsOnlyEverToldTheReposOwnConfigFileName(t *testin
 			if !strings.Contains(told["develop start"], tc.file) {
 				t.Errorf("develop start never names %s:\n%s", tc.file, told["develop start"])
 			}
+			// The export scaffold atom is delivered inline in the export
+			// workflow's response, which the same wrapper renames.
+			atoms, err := workflow.LoadAtomCorpus()
+			if err != nil {
+				t.Fatalf("LoadAtomCorpus: %v", err)
+			}
+			for _, a := range atoms {
+				if a.ID == "scaffold-zerops-yaml" {
+					told["export scaffold"] = nameRepoConfigFile(a.Body, tc.file)
+				}
+			}
+			if got, want := nameRepoConfigFile("notzerops.yml beside /var/www/zerops.yml", tc.file), "notzerops.yml beside /var/www/"+tc.file; got != want {
+				t.Errorf("renamed = %q, want %q", got, want)
+			}
 			for name, text := range told {
+				if twice := "-name " + tc.file + " -o -name " + tc.file; strings.Contains(text, twice) {
+					t.Errorf("%s names the repo's file twice: %q", name, twice)
+				}
 				for at := 0; ; {
 					i := strings.Index(text[at:], tc.never)
 					if i < 0 {

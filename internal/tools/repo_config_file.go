@@ -9,8 +9,9 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// configFileName matches the repo config file under either name it may have.
-var configFileName = regexp.MustCompile(`zerops\.ya?ml\b`)
+// configFileName matches the repo config file under either name it may have,
+// never a longer name that ends in one (notzerops.yml).
+var configFileName = regexp.MustCompile(`\bzerops\.ya?ml\b`)
 
 // nameRepoConfigFile returns text with every mention of the repo's config
 // file named as the repo keeps it (file is "zerops.yaml" or "zerops.yml";
