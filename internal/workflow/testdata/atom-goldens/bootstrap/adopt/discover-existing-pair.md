@@ -70,6 +70,10 @@ runtime of the plan:
    `isExisting: true` and `stages` listing every stage with its setup, the
    new one included (`{"hostname": "workerstage", "setupName": "worker"}`).
    Never a second runtime for the part.
+   An existing setup and its stage keep their names; only the new part gets
+   a new setup. A stage that deploys `setup: prod` stays
+   `{"hostname": "appstage", "setupName": "prod"}` — never rename a `setup:`
+   the repo already has.
 3. In develop, add the part's `setup:` to the repo's `zerops.yaml`, then in
    the same step give the part its own entry in `.zcp/dev-servers.json`
    (autostart, unless the dev service's RAM is short) and run

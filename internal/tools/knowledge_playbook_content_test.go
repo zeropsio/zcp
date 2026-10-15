@@ -262,6 +262,8 @@ func TestPlaybookMonorepo_ContentPins_PartRules(t *testing.T) {
 		{"the supervisor watches a declared dev server", "The supervisor watches a declared dev server"},
 		{"never a runtime's own watcher", "Never add a runtime's own watcher"},
 		{"stages carry hostname and setupName", `"stages": [{"hostname": "webstage", "setupName": "web"}`},
+		{"adding a part never renames an existing setup or its stage", "An existing setup and its stage keep their names; only the new part gets a new setup"},
+		{"the adding-a-part example keeps the existing setup name beside the new one", `"stages": [{"hostname": "appstage", "setupName": "prod"}, {"hostname": "workerstage", "setupName": "worker"}]`},
 		{"heavy servers not being worked on do not autostart", "declares the ones not being worked on `\"autostart\": false`"},
 		{"worked example: a new part's dev server starts by name on the shared dev service", `zerops_dev_server action=start hostname="appdev" name="worker" command="bun worker.ts" noHttpProbe=true`},
 		{"worked example: the first start declares it beside the running one", `{"name": "web", "port": 3000, "command": "bun index.ts"}, {"name": "worker", "command": "bun worker.ts"}`},

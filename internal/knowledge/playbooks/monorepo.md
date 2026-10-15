@@ -91,6 +91,12 @@ inside `runtime` instead of `stageHostname`, and use one spelling, never both. T
 service and all its stages are then one pair; a stage left out of `stages` becomes a
 standalone `simple` service.
 
+When a part is added to a repo that already has setups, nothing is renamed.
+An existing setup and its stage keep their names; only the new part gets a new
+setup. Never rename a `setup:` the repo already has — its stage deploys under that
+name. A repo whose `appstage` deploys `setup: prod` gains a `worker` part as
+`"stages": [{"hostname": "appstage", "setupName": "prod"}, {"hostname": "workerstage", "setupName": "worker"}]`.
+
 ## 4. Dev servers
 
 - Vite rejects unknown hosts: set `server.allowedHosts` in `vite.config` to accept the

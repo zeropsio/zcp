@@ -1678,6 +1678,14 @@ func TestScenario_AdoptingAPairAndAddingAPartNamesTheStageNotANewService(t *test
 			t.Errorf("%s body does not tell the agent to declare and start the new part's dev server (%q):\n%s", atom, want, body)
 		}
 	}
+	for _, want := range []string{
+		"An existing setup and its stage keep their names; only the new part gets a new setup",
+		`{"hostname": "appstage", "setupName": "prod"}`,
+	} {
+		if !strings.Contains(strings.Join(strings.Fields(body), " "), want) {
+			t.Errorf("%s body does not tell the agent that the existing setup keeps its name (%q):\n%s", atom, want, body)
+		}
+	}
 	if got, _ := fires(BootstrapRouteAdopt, "provision"); got {
 		t.Errorf("%s fired past the adopt discover step", atom)
 	}
