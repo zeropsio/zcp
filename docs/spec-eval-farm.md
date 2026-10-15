@@ -520,7 +520,11 @@ binary as `candidates/<sha256>.info.json`; `farm run` copies it into the
 manifest when present. `farm push` writes the info file only when the
 binary carries `vcs.revision`; without it the batch has no `candidateInfo`
 and readers show the sha. None of these fields reaches a
-run project.
+run project. Go stamps `vcs.*` only from a `.git` directory, so a plain build
+in a linked worktree carries the enclosing repository's revision;
+`eval/farm/build-candidate.sh` builds from a clone at the checkout's own HEAD
+with its uncommitted changes and synced corpus carried over
+(`TestBuildCandidate_LinkedWorktree_StampsItsOwnHead`).
 
 **FM-65.** `farm run --max-concurrent <n>` (env `ZCP_FARM_MAX_CONCURRENT`,
 default 8; `0` means unlimited, the behaviour before this field existed)

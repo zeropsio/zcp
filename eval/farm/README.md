@@ -38,7 +38,9 @@ export ZCP_AUTHORING=1 ZCP_FARM_PROJECT_ID=swY2yczpQlqVLlcz0fCyFA
 
 # 1. Build the binary under test. Farm run-projects are always linux/amd64;
 #    --evaluator wants the same shape (build it once per farm, not per batch).
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/zcp-linux ./cmd/zcp
+#    The script stamps the checkout's own HEAD even in a linked worktree,
+#    where a plain `go build` stamps the enclosing repository.
+eval/farm/build-candidate.sh /tmp/zcp-linux
 
 # 2. Push each part; every push prints its digest. Pushing is always safe:
 #    parts are content-addressed, and `run` resolves the evaluator/wrapper
@@ -142,7 +144,7 @@ to certify:
 #    never on the branch itself. Farm run-projects are always linux/amd64.
 git worktree add /tmp/mut-01 <integration sha>
 git -C /tmp/mut-01 apply eval/farm/mutations/01-env-set-no-restart.patch
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go -C /tmp/mut-01 build -o /tmp/mut-01/zcp-linux ./cmd/zcp
+(cd /tmp/mut-01 && eval/farm/build-candidate.sh /tmp/mut-01/zcp-linux)
 
 # 2. Push the mutated candidate — prints its sha256.
 go run ./cmd/zcp eval farm push --candidate /tmp/mut-01/zcp-linux
