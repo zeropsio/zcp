@@ -1316,3 +1316,63 @@ func TestDeploySSH_ShaPath_NoReproducibilityWarning(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildSSHCommand_RunsTheCrewSaveBeforeThePush: a Mate with a crew keeps
+// its copies' work through a deploy of their service — its save runs before
+// zcli pushes, and a failing save pushes nothing; without a save the push
+// runs as before.
+func TestBuildSSHCommand_RunsTheCrewSaveBeforeThePush(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("skipping under -short; needs real git binary")
+	}
+	tests := []struct {
+		name   string
+		save   string // the hook's body; "" writes none
+		pushed bool
+		saved  bool
+	}{
+		{name: "no crew, no save: the push runs", save: "", pushed: true},
+		{name: "the save runs first", save: "touch saved\n", pushed: true, saved: true},
+		{name: "a failing save pushes nothing", save: "touch saved\nexit 1\n", pushed: false, saved: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			bin := t.TempDir()
+			env := isolatedGitEnv(t)
+			mustRunGit(t, dir, env, "init", "-q", "-b", "main")
+			mustRunGit(t, dir, env, "-c", "user.email=a@b", "-c", "user.name=a", "commit", "-q", "--allow-empty", "-m", "seed")
+			if tt.save != "" {
+				if err := os.WriteFile(filepath.Join(dir, ".git", "t3-crew-save"), []byte("#!/bin/sh\ncd \"$(dirname \"$0\")/..\" || exit 1\n"+tt.save), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// zcli records whether the save had run when the push started.
+			fake := "#!/bin/sh\nif [ -e saved ]; then echo after-save > pushed; else echo pushed > pushed; fi\n"
+			if err := os.WriteFile(filepath.Join(bin, "zcli"), []byte(fake), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			env = append(env, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			//nolint:gosec // test-only: buildSSHCommand over t.TempDir paths
+			cmd := exec.CommandContext(ctx, "bash", "-c", buildSSHCommand(auth.Info{Token: "tok"}, "svc-1", dir, "", true, ""))
+			cmd.Env = env
+			_ = cmd.Run()
+			pushed, _ := os.ReadFile(filepath.Join(dir, "pushed"))
+			_, savedErr := os.Stat(filepath.Join(dir, "saved"))
+			want := ""
+			if tt.pushed {
+				want = "pushed\n"
+				if tt.saved {
+					want = "after-save\n"
+				}
+			}
+			if string(pushed) != want || (savedErr == nil) != tt.saved {
+				t.Errorf("pushed=%q saved=%v, want pushed=%q saved=%v", pushed, savedErr == nil, want, tt.saved)
+			}
+		})
+	}
+}

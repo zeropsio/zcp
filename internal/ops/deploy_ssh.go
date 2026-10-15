@@ -625,8 +625,16 @@ func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup stri
 		pushArgs += " -g"
 	}
 
-	return fmt.Sprintf("%s && %s", gitEnsure, pushArgs)
+	return fmt.Sprintf("%s && %s && %s", gitEnsure, crewSaveCommand, pushArgs)
 }
+
+// crewSaveCommand runs the Mate crew's save before the push, when the Mate
+// wrote one (spec-mate §2.8a.2): a deploy of the service replaces its
+// container, which keeps .git but not the crew's copies under .crew/, so the
+// save commits each copy's uncommitted and untracked work onto a ref in .git
+// first. A failing save stops the push — the work would be lost. Without a
+// crew there is no save and the push runs as before.
+const crewSaveCommand = `{ save="$(git rev-parse --git-common-dir)/t3-crew-save"; [ ! -x "$save" ] || "$save"; }`
 
 // buildSSHCommandSHA builds the push command for a resolved deploy-from-
 // commit: extractedDir already holds sha's tree (see ExtractCommitToTemp)
