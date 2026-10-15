@@ -664,8 +664,12 @@ upload_dir() {
 
 # ---- JSON -------------------------------------------------------------
 
+# json_escape prints $1 as the body of a JSON string: backslash and quote
+# are escaped and every control character (U+0000-U+001F, e.g. the \r of an
+# HTTP error body) becomes \u00XX, so done.json always parses. The value
+# goes through the environment, never into perl's program text.
 json_escape() {
-	printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+	JSON_ESCAPE_VALUE="$1" perl -e '$_ = $ENV{JSON_ESCAPE_VALUE}; s/(["\\])/\\$1/g; s/([\x00-\x1f])/sprintf("\\u%04x", ord($1))/ge; print'
 }
 
 # ---- child (FM-13 steps 1-3, §10.4 binding) --------------------------

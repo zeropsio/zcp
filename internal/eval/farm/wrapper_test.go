@@ -1877,3 +1877,44 @@ func TestWrapper_PartUploadFailure_DoesNotPublishDoneOrMarkUploaded(t *testing.T
 		t.Fatal(".uploaded exists after a failed part upload")
 	}
 }
+
+// TestWrapper_JSONEscape_ControlCharactersStayValidJSON pins that a
+// done.json field never breaks the JSON: a preparation message carrying a
+// carriage return, newline, tab or other control character (a GitHub 401
+// body) escapes to a JSON string that decodes back to the same text, so a
+// blocked run is reported as blocked, not as "no bundle".
+func TestWrapper_JSONEscape_ControlCharactersStayValidJSON(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not on PATH")
+	}
+	if _, err := exec.LookPath("perl"); err != nil {
+		t.Skip("perl not on PATH")
+	}
+
+	src, err := os.ReadFile(wrapperScriptPath(t))
+	if err != nil {
+		t.Fatalf("read wrapper.sh: %v", err)
+	}
+	const trailer = "main \"$@\"\n"
+	body := strings.TrimSuffix(string(src), trailer)
+	if body == string(src) {
+		t.Fatalf("wrapper.sh does not end with %q — test fixture assumption broke", trailer)
+	}
+
+	const message = "preparation: gitRepoReset: HTTP 401\r\n{\"message\":\"Bad credentials\"}\tpath=C:\\repo\x01\x1f end"
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "sh", "-c", body+"\n"+`printf '"%s"' "$(json_escape "$FARM_TEST_MESSAGE")"`) //nolint:gosec // body is this repo's own eval/farm/wrapper.sh, never external/user input
+	cmd.Env = append(os.Environ(), "FARM_TEST_MESSAGE="+message)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("json_escape: %v", err)
+	}
+	var decoded string
+	if err := json.Unmarshal(out, &decoded); err != nil {
+		t.Fatalf("json_escape output is not a valid JSON string: %v\n%q", err, out)
+	}
+	if decoded != message {
+		t.Errorf("json_escape round trip = %q, want %q", decoded, message)
+	}
+}
