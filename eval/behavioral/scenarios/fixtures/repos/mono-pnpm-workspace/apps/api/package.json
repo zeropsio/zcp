@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node --watch-path=src --watch-path=../../packages/shared src/index.js",
+    "dev": "node src/index.js",
     "build": "node build.mjs",
     "start": "node dist/index.js"
   },

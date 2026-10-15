@@ -66,13 +66,22 @@ setup per part plus a `dev` setup in the single root `zerops.yaml`.
 - A heavy build: `zsc scale cpu max 10m` in the build commands, then
   `zsc scale cpu auto`.
 
+## 3a. Stages in the bootstrap plan
+
+A plan for a repo with several parts names every stage with its setup: put
+`"stages": [{"hostname": "webstage", "setupName": "web"}, {"hostname": "apistage", "setupName": "api"}]`
+inside `runtime` instead of `stageHostname`, and use one spelling, never both. The dev
+service and all its stages are then one pair; a stage left out of `stages` becomes a
+standalone `simple` service.
+
 ## 4. Dev servers
 
 - Vite rejects unknown hosts: set `server.allowedHosts` in `vite.config` to accept the
   service subdomain.
-- A file watcher must survive renames: use `node --watch-path=<dir>` or polling
-  (`CHOKIDAR_USEPOLLING=1` and similar) — renamed files otherwise vanish from the
-  watch.
+- The supervisor watches a declared dev server: give it a plain start command and
+  `watch.paths` (plus `ignore`) in the declaration. Never add a runtime's own watcher
+  (`node --watch`, `--watch-path`, nodemon) — it goes blind after the first
+  `git checkout`.
 - Stop a dev server by its process group, never by a name match — `pkill -f <name>`
   kills sibling parts.
 - A static service cannot proxy requests to the API.
