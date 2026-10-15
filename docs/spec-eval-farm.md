@@ -757,7 +757,11 @@ unchanged" row that `nodePostgresRecord` already produces for its `unrelated`
 field (`spec-testing-architecture.md §10.3`): each hostname listed gets its
 own `unrelated_artifact/<hostname>/unchanged` row, graded the same way
 (active app-version id at freeze == at baseline), independent of whether the
-scenario also declares `nodePostgresRecord`.
+scenario also declares `nodePostgresRecord`. One redeploy is exempt: when the
+captured MCP traffic holds exactly one `zerops_dev_server` result with
+`migratedToSupervisor: true` for the hostname and no `zerops_deploy` targeting
+it, a changed app-version passes — the dev-server supervisor migration, keyed
+on that structured field only (`TestVerification_UnchangedRow_SupervisorMigration`).
 
 ### 4.2 Decision rows — `never` and `askWhen`
 

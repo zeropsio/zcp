@@ -266,8 +266,11 @@ func generateRequiredChecks(
 	if sc.Verification.Liveness != nil {
 		rows = append(rows, evaluateLivenessRow(ctx, sc.Verification.Liveness, observation, httpDoer, client, projectID))
 	}
-	for _, hostname := range sc.Verification.Unchanged {
-		rows = append(rows, evaluateUnchangedFieldRow(hostname, observation, baseline))
+	if len(sc.Verification.Unchanged) > 0 {
+		calls, _ := readRuntimeMCPCalls(runtime.MCPStreamPaths)
+		for _, hostname := range sc.Verification.Unchanged {
+			rows = append(rows, evaluateUnchangedFieldRow(hostname, observation, baseline, calls))
+		}
 	}
 	if sc.Verification.LaunchShape != nil {
 		rows = append(rows, evaluateLaunchShapeRows(
@@ -355,7 +358,14 @@ func generateAskWhenAdvisoryFindings(sc *Scenario, runtime RuntimeInputs, now ti
 // hostname absent from that map (never recorded, or recorded with no
 // active app-version) blocks with an explicit "no baseline for <host>"
 // message, never a silent pass.
-func evaluateUnchangedFieldRow(hostname string, observation platformObservation, baseline *ScenarioBaseline) RequiredCheck {
+//
+// One redeploy is not the agent's: a zerops_dev_server start that moves the
+// host onto the dev-server supervisor redeploys it once and reports
+// migratedToSupervisor:true (docs/spec-mate.md §2.8a.2). A changed
+// app-version passes when calls hold exactly that one migration of the host
+// and no zerops_deploy of it — keyed on the structured field, never on the
+// message sentence.
+func evaluateUnchangedFieldRow(hostname string, observation platformObservation, baseline *ScenarioBaseline, calls []capture.MCPToolCall) RequiredCheck {
 	id := unrelatedArtifactRowID(hostname)
 	now := observation.observedAt
 	if observation.servicesErr != nil {
@@ -369,7 +379,39 @@ func evaluateUnchangedFieldRow(hostname string, observation platformObservation,
 		return RequiredCheck{ID: id, Check: checkUnrelatedArtifact, Scope: hostname, Result: CheckBlocked, ObservedAt: now, Source: "ListServicesDirect", Message: fmt.Sprintf("no baseline for %s", hostname)}
 	}
 	svc := findServiceByHostname(observation.services, hostname)
-	return gradeUnchangedRow(id, hostname, baselineAppVersion, svc, now)
+	row := gradeUnchangedRow(id, hostname, baselineAppVersion, svc, now)
+	if row.Result == CheckFailed && onlySupervisorMigrationRedeployed(calls, hostname) {
+		row.Result = CheckPassed
+		row.Message = "active app-version changed only by the one dev-server supervisor migration (migratedToSupervisor)"
+	}
+	return row
+}
+
+// onlySupervisorMigrationRedeployed reports whether calls hold exactly one
+// successful zerops_dev_server result with migratedToSupervisor:true for
+// hostname and no zerops_deploy targeting it.
+func onlySupervisorMigrationRedeployed(calls []capture.MCPToolCall, hostname string) bool {
+	migrations := 0
+	for _, call := range calls {
+		switch call.Tool {
+		case "zerops_deploy":
+			if target, _ := call.Arguments["targetService"].(string); target == hostname {
+				return false
+			}
+		case "zerops_dev_server":
+			if call.ResultIsError {
+				continue
+			}
+			var result struct {
+				Hostname             string `json:"hostname"`
+				MigratedToSupervisor bool   `json:"migratedToSupervisor"`
+			}
+			if json.Unmarshal([]byte(call.ResultText), &result) == nil && result.MigratedToSupervisor && result.Hostname == hostname {
+				migrations++
+			}
+		}
+	}
+	return migrations == 1
 }
 
 // livenessRowID builds the stable row id for the O2 liveness check
