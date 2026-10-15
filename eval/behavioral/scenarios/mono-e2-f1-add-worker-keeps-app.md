@@ -39,7 +39,7 @@ verification:
     - {hostname: appdev, field: stages.0.setupName, expect: "prod"}
     - {hostname: appdev, field: stages.1.setupName, expect: "worker"}
   containerCheck:
-    - {service: appdev, cmd: "grep -qE '^ *- setup: *worker\\b' /var/www/zerops.yml && echo worker-setup", match: "^worker-setup"}
+    - {service: appdev, cmd: "grep -qE '^ *- setup: *worker\\b' /var/www/zerops.y*ml && echo worker-setup", match: "^worker-setup"}
     - {service: appdev, cmd: "zcp-devsup ctl status --json | grep -cE '\"status\": *\"running\"'", match: "^[2-9]"}
   noFailedProcesses: true
   never: ["zerops_import{override=true}", "zerops_delete"]
