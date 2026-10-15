@@ -139,6 +139,30 @@ func TestStart_VSCode_RaisesTasksMax(t *testing.T) {
 	}
 }
 
+func TestStart_Mate_RaisesTasksMaxForBrowsers(t *testing.T) {
+	// Not parallel — mutates runFunc + tuneFunc.
+	var tunedUnit string
+	var tunedMax int
+	service.SetRunFunc(func(string, []string, []string) error { return nil })
+	service.SetTuneFunc(func(unit string, tasksMax int) error {
+		tunedUnit, tunedMax = unit, tasksMax
+		return nil
+	})
+	t.Cleanup(func() { service.ResetRunFunc(); service.ResetTuneFunc() })
+
+	// The unit's default TasksMax is 300; one software-WebGL Chromium takes
+	// 90-150 tasks, so 2-3 browsers plus the agent hit the cap (fork EAGAIN,
+	// agent SIGABRT). 1600 fits 6 browsers (~900 measured) + agent helpers and
+	// leaves 400 of the container's shared 2000 pid budget, like vscode.
+	_ = service.Start("mate")
+	if tunedUnit != "zerops@mate.service" {
+		t.Errorf("tuned unit: got %q, want zerops@mate.service", tunedUnit)
+	}
+	if tunedMax != 1600 {
+		t.Errorf("tuned TasksMax: got %d, want 1600", tunedMax)
+	}
+}
+
 // TestServiceStart_TasksMaxTunerStubbed_NoSudo pins that TestStart_VSCode_
 // RaisesTasksMax's stub-tuneFunc pattern is the only path any test in this
 // package takes to a vscode TasksMax tune: the two other tests exercising
