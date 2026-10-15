@@ -204,33 +204,6 @@ func bootstrapGoldenScenarios() []goldenScenario {
 			},
 		},
 		{
-			id:          "bootstrap/adopt/discover-existing-multipart-pair",
-			description: "Adopt route, discover step — pre-existing dev/stage pair whose repo is read as several parts, agent adopting.",
-			envelope: StateEnvelope{
-				Phase:       PhaseBootstrapActive,
-				Environment: EnvContainer,
-				Bootstrap: &BootstrapSessionSummary{
-					Route: BootstrapRouteAdopt,
-					Step:  StepDiscover,
-				},
-				Services: []ServiceSnapshot{
-					{
-						Hostname:     "appdev",
-						TypeVersion:  "nodejs@22",
-						RuntimeClass: topology.RuntimeDynamic,
-						Status:       "ACTIVE",
-						MultiPart:    true,
-					},
-					{
-						Hostname:     "appstage",
-						TypeVersion:  "nodejs@22",
-						RuntimeClass: topology.RuntimeDynamic,
-						Status:       "ACTIVE",
-					},
-				},
-			},
-		},
-		{
 			id:          "bootstrap/adopt/provision",
 			description: "Adopt route, provision step — complete step=provision just returned; agent checks the adopted runtime's repo state before reporting adopt done.",
 			envelope: StateEnvelope{

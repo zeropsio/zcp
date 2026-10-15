@@ -7,15 +7,15 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 | Atom ID | Scenario count | Scenarios |
 |---|---|---|
 | `bootstrap-adopt-baseline-commit` | 1 | bootstrap/adopt/provision |
-| `bootstrap-adopt-discover` | 2 | bootstrap/adopt/discover-existing-multipart-pair, bootstrap/adopt/discover-existing-pair |
-| `bootstrap-adopt-new-part` | 1 | bootstrap/adopt/discover-existing-multipart-pair |
+| `bootstrap-adopt-discover` | 1 | bootstrap/adopt/discover-existing-pair |
+| `bootstrap-adopt-new-part` | 1 | bootstrap/adopt/discover-existing-pair |
 | `bootstrap-classic-plan-dynamic` | 2 | bootstrap/classic/discover-standard-dynamic, bootstrap/classic/new-part-of-pair |
 | `bootstrap-classic-plan-static` | 2 | bootstrap/classic/discover-standard-dynamic, bootstrap/classic/new-part-of-pair |
 | `bootstrap-close` | 1 | bootstrap/recipe/close |
 | `bootstrap-close-baseline-commit` | 1 | bootstrap/recipe/close |
 | `bootstrap-discover-local` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
 | `bootstrap-env-var-discovery` | 2 | bootstrap/adopt/provision, bootstrap/classic/provision-local |
-| `bootstrap-intro` | 4 | bootstrap/adopt/discover-existing-multipart-pair, bootstrap/adopt/discover-existing-pair, bootstrap/classic/discover-standard-dynamic, bootstrap/classic/new-part-of-pair |
+| `bootstrap-intro` | 3 | bootstrap/adopt/discover-existing-pair, bootstrap/classic/discover-standard-dynamic, bootstrap/classic/new-part-of-pair |
 | `bootstrap-mode-prompt` | 2 | bootstrap/classic/discover-standard-dynamic, bootstrap/classic/new-part-of-pair |
 | `bootstrap-new-part-of-pair` | 1 | bootstrap/classic/new-part-of-pair |
 | `bootstrap-provision-local` | 1 | bootstrap/classic/provision-local |

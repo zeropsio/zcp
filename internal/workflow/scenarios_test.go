@@ -1626,8 +1626,8 @@ func TestScenario_NewPartOfSinglePartPairIsAStageNotABootstrap(t *testing.T) {
 // TestScenario_AdoptingAPairAndAddingAPartNamesTheStageNotANewService pins the
 // moment the sweep's agent chose the wrong shape: a bootstrap adopt discover
 // where the pair is not yet adopted, so the pair carries no mode or deploy
-// state. Adopt discover of a repo read as several parts leads to the pair's own
-// setup and stage; a single-part repo, other routes and steps never see it.
+// state. Adopt discover leads to the pair's own setup and stage; other routes
+// and steps never see it.
 func TestScenario_AdoptingAPairAndAddingAPartNamesTheStageNotANewService(t *testing.T) {
 	t.Parallel()
 
@@ -1637,7 +1637,7 @@ func TestScenario_AdoptingAPairAndAddingAPartNamesTheStageNotANewService(t *test
 	}
 	const atom = "bootstrap-adopt-new-part"
 	unadopted := []ServiceSnapshot{
-		{Hostname: "appdev", TypeVersion: "bun@1.3", RuntimeClass: topology.RuntimeDynamic, Status: "ACTIVE", MultiPart: true},
+		{Hostname: "appdev", TypeVersion: "bun@1.3", RuntimeClass: topology.RuntimeDynamic, Status: "ACTIVE"},
 		{Hostname: "appstage", TypeVersion: "bun@1.3", RuntimeClass: topology.RuntimeDynamic, Status: "ACTIVE"},
 	}
 	fires := func(route BootstrapRoute, step string) (bool, string) {
@@ -1683,9 +1683,5 @@ func TestScenario_AdoptingAPairAndAddingAPartNamesTheStageNotANewService(t *test
 	}
 	if got, _ := fires(BootstrapRouteClassic, StepDiscover); got {
 		t.Errorf("%s fired on the classic route", atom)
-	}
-	unadopted[0].MultiPart = false
-	if got, _ := fires(BootstrapRouteAdopt, StepDiscover); got {
-		t.Errorf("%s fired at adopt discover of a single-part repo", atom)
 	}
 }
