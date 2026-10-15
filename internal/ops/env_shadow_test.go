@@ -304,3 +304,17 @@ func assertShadows(t *testing.T, got, want []LayeredShadow) {
 		}
 	}
 }
+
+func TestDetectLayeredShadows_MaskedWinningValue_IsNotACompare(t *testing.T) {
+	t.Parallel()
+	lower := []EffectiveEnvVar{{Key: "TOKEN", Value: "abc", Layer: EnvLayerProject}}
+	service := []EffectiveEnvVar{{Key: "TOKEN", Masked: true, Layer: EnvLayerService}}
+	if got := DetectLayeredShadows("api", lower, service, nil); len(got) != 0 {
+		t.Fatalf("a value the platform withheld cannot be compared, got shadows %+v", got)
+	}
+	maskedLower := []EffectiveEnvVar{{Key: "TOKEN", Masked: true, Layer: EnvLayerProject}}
+	plain := []EffectiveEnvVar{{Key: "TOKEN", Value: "abc", Layer: EnvLayerService}}
+	if got := DetectLayeredShadows("api", maskedLower, plain, nil); len(got) != 0 {
+		t.Fatalf("a withheld lower value cannot be compared, got shadows %+v", got)
+	}
+}

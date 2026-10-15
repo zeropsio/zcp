@@ -96,7 +96,7 @@ func DetectLayeredShadows(hostname string, lower, service, yamlBaked []Effective
 		if !ok {
 			w, ok = svc[l.Key]
 		}
-		if !ok || w.Value == l.Value {
+		if !ok || l.Masked || w.Masked || w.Value == l.Value {
 			continue
 		}
 		out = append(out, LayeredShadow{

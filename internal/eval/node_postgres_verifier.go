@@ -49,6 +49,8 @@ type NodePostgresConn struct {
 	User     string
 	Password string
 	DBName   string
+	// PasswordMasked: the platform withheld the password from this token.
+	PasswordMasked bool
 }
 
 // NodePostgresDB is the tiny read interface the node-postgres oracle uses.
@@ -241,7 +243,7 @@ func (v NodePostgresVerifier) Verify(ctx context.Context, in NodePostgresInput) 
 		// Point 4: db host override refused — HTTP still runs normally, but
 		// the SELECT never fires against an operator/user-set override.
 		dbRow = blockedRow(nodePostgresDBRowID(in.Database), in.Database, now, "db host override refused")
-	case conn.Password == platform.MaskedEnvValue:
+	case conn.PasswordMasked:
 		// The platform masks a sensitive password for a project-scoped
 		// token; connecting with the mask only fails authentication.
 		dbRow = blockedRow(nodePostgresDBRowID(in.Database), in.Database, now, "platform masks the database password for this token")
@@ -534,7 +536,7 @@ func buildNodePostgresConn(envVars []platform.ServiceEnvVar) NodePostgresConn {
 		case "user":
 			conn.User = e.Content
 		case "password":
-			conn.Password = e.Content
+			conn.Password, conn.PasswordMasked = e.Content, e.Masked
 		case "dbName":
 			conn.DBName = e.Content
 		}

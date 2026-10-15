@@ -184,6 +184,9 @@ func heldPushCredential(ctx context.Context, client platform.Client, projectID, 
 	}
 	for _, env := range envs {
 		if env.Key == ops.GitTokenEnvKey {
+			if env.Masked {
+				return svc.ID, "", false
+			}
 			return svc.ID, env.Content, true
 		}
 	}

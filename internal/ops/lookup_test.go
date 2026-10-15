@@ -194,3 +194,41 @@ func TestAppVersionEnvVars_NewModel_YamlLayerPresent(t *testing.T) {
 		t.Fatalf("YamlBaked = %+v, want exactly one entry (FOO)", higher.YamlBaked)
 	}
 }
+
+func TestFetchServiceEnv_MaskedRow_IsMarkedAndCarriesNoPlaceholderValue(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().WithServiceEnv("svc-db", []platform.ServiceEnvVar{
+		{ID: "e1", Key: "password", Content: platform.MaskedEnvValue, Sensitive: true},
+		{ID: "e2", Key: "hostname", Content: "db"},
+	})
+	envs, err := FetchServiceEnv(context.Background(), mock, "svc-db")
+	if err != nil {
+		t.Fatalf("FetchServiceEnv: %v", err)
+	}
+	for _, e := range envs {
+		switch e.Key {
+		case "password":
+			if !e.Masked || e.Content != "" {
+				t.Errorf("masked row = %+v, want Masked with empty Content", e)
+			}
+		case "hostname":
+			if e.Masked || e.Content != "db" {
+				t.Errorf("plain row = %+v, want untouched", e)
+			}
+		}
+	}
+}
+
+func TestEnvScalars_MaskedRows_AreListedNotUsedAsValues(t *testing.T) {
+	t.Parallel()
+	scalars, masked := EnvScalars([]platform.ServiceEnvVar{
+		{Key: "hostname", Content: "db"},
+		{Key: "password", Masked: true},
+	})
+	if _, has := scalars["password"]; has || scalars["hostname"] != "db" {
+		t.Errorf("scalars = %v, want hostname only", scalars)
+	}
+	if len(masked) != 1 || masked[0] != "password" {
+		t.Errorf("masked = %v, want [password]", masked)
+	}
+}

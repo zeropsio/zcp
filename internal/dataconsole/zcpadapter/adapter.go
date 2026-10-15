@@ -81,9 +81,13 @@ func (a *Adapter) ConnectionInfo(ctx context.Context, serviceID string) (console
 	if err != nil {
 		return console.ConnectionInfo{}, err
 	}
-	scalars := make(map[string]string, len(envs))
-	for _, e := range envs {
-		scalars[e.Key] = e.Content
+	scalars, masked := ops.EnvScalars(envs)
+	if len(masked) > 0 {
+		host := serviceID
+		if svc, err := a.client.GetService(ctx, serviceID); err == nil {
+			host = svc.Name
+		}
+		return console.ConnectionInfo{}, fmt.Errorf("this Mate's key cannot read %s's %s", host, strings.Join(masked, ", "))
 	}
 	a.mu.Lock()
 	typ := a.typeByID[serviceID]
