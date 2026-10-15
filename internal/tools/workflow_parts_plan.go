@@ -16,13 +16,16 @@ import (
 
 // repoPartsPlanError reads the repo of every existing dev runtime a plan
 // pairs with stages, before the plan is accepted: when its zerops.yml
-// declares several parts (ops.ReadPartsSignal), the pair holds one stage per
-// part, built with that part's setup (docs/spec-mate.md §2.8a.4). A plan
-// that leaves a part without a stage, or names a stage with no part, is
-// refused with the plan made from the repo — so a multi-part pair's stages
-// come from the repo, never from a guess made before it was read. nil
-// outside a container, for a single-part repo, and when the repo cannot be
-// read. adopt adds that the adopt route attaches only existing services.
+// declares several parts (ops.ReadPartsSignal, with the dev's setup when the
+// plan knows it), every stage is built with one part's setup
+// (docs/spec-mate.md §2.8a.4). A plan with a stage that matches no part —
+// one naming no setup or a setup that is no part of the repo — is refused
+// with the plan made from the repo, so a multi-part pair's stages come from
+// the repo, never from a guess made before it was read. A part without a
+// stage is not refused: a repo's further setups may be environments, not
+// parts. nil outside a container, for a single-part repo, and when the repo
+// cannot be read. adopt adds that the adopt route attaches only existing
+// services.
 func repoPartsPlanError(ctx context.Context, plan []workflow.BootstrapTarget, ssh ops.SSHDeployer, rt runtime.Info, adopt bool) *platform.PlatformError {
 	if !rt.InContainer || ssh == nil {
 		return nil
@@ -34,7 +37,7 @@ func repoPartsPlanError(ctx context.Context, plan []workflow.BootstrapTarget, ss
 		if !r.IsExisting || r.EffectiveMode() != topology.PlanModeStandard {
 			continue
 		}
-		sig, err := ops.ReadPartsSignal(ctx, ssh, r.DevHostname, "")
+		sig, err := ops.ReadPartsSignal(ctx, ssh, r.DevHostname, r.PrimarySetupName)
 		if err != nil || len(sig.YAMLParts) < 2 {
 			continue
 		}
@@ -42,7 +45,7 @@ func repoPartsPlanError(ctx context.Context, plan []workflow.BootstrapTarget, ss
 		if reason == "" {
 			continue
 		}
-		reasons = append(reasons, fmt.Sprintf("target %q: its repo's zerops.yml declares the parts %s, and the pair holds one stage per part, built with that part's setup — %s",
+		reasons = append(reasons, fmt.Sprintf("target %q: its repo's zerops.yml declares the parts %s, and every stage of the pair is built with one part's setup — %s",
 			r.DevHostname, quoteAll(sig.YAMLParts), reason))
 		r.ExplicitStage, r.StageSetupName, r.Stages = "", "", stages
 		fixed[i].Runtime = r
@@ -66,41 +69,34 @@ func repoPartsPlanError(ctx context.Context, plan []workflow.BootstrapTarget, ss
 
 // stagesForParts is the pair's stages made from the repo's parts: a stage the
 // plan already gives a part keeps its hostname, a part without one gets
-// <part>stage, and a stage built with a setup the repo does not declare yet
-// (a part being added) stays. reason says what the planned stages miss, ""
-// when every part has a stage and every stage a part.
+// <part>stage. reason names the planned stages that match no part, "" when
+// every stage is built with a part's setup.
 func stagesForParts(planned []topology.StageRef, parts []string) ([]topology.StageRef, string) {
 	bySetup := map[string]string{}
-	var unnamed []string
+	var unnamed, unknown []string
 	for _, s := range planned {
-		if s.SetupName == "" {
+		switch {
+		case s.SetupName == "":
 			unnamed = append(unnamed, s.Hostname)
-			continue
+		case slices.Contains(parts, s.SetupName):
+			bySetup[s.SetupName] = s.Hostname
+		default:
+			unknown = append(unknown, fmt.Sprintf("stage %q names the setup %q, no part of the repo", s.Hostname, s.SetupName))
 		}
-		bySetup[s.SetupName] = s.Hostname
 	}
 	stages := make([]topology.StageRef, 0, len(parts))
-	var missing []string
 	for _, part := range parts {
 		host, ok := bySetup[part]
 		if !ok {
-			missing = append(missing, part)
 			host = part + "stage"
 		}
 		stages = append(stages, topology.StageRef{Hostname: host, SetupName: part})
-	}
-	for _, s := range planned {
-		if s.SetupName != "" && !slices.Contains(parts, s.SetupName) {
-			stages = append(stages, s)
-		}
 	}
 	var reason []string
 	if len(unnamed) > 0 {
 		reason = append(reason, "stage "+quoteAll(unnamed)+" names no part")
 	}
-	if len(missing) > 0 {
-		reason = append(reason, "part "+quoteAll(missing)+" has no stage")
-	}
+	reason = append(reason, unknown...)
 	return stages, strings.Join(reason, ", ")
 }
 

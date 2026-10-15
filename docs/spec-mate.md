@@ -1029,11 +1029,14 @@ Stages []StageRef `json:"stages,omitempty"`
 - Validation, before import: stage hostnames are unique in the pair, differ from `Hostname`, and no
   other meta names them.
 - Plan, before it is accepted: a classic or adopt plan that pairs an existing dev service with
-  stages has that service's repo read first. When its root `zerops.yml` declares more than one part,
-  every part needs a stage built with its setup and every stage a setup; otherwise the plan is
-  refused with the plan made from the repo — a stage the plan already gave a part keeps its
-  hostname, the others are proposed as `<part>stage` for the agent to submit
-  (`TestBootstrapPlan_MountedRepoParts_ReadBeforeThePlanIsAccepted`). The meta of a pair planned
+  stages has that service's repo read first (with the dev's setup when the plan names it). When its
+  root `zerops.yml` declares more than one part, the plan is refused only for a stage that matches no
+  part — one naming no setup or a setup that is no part of the repo — with the plan made from the
+  repo: a stage the plan already gave a part keeps its hostname, the others are proposed as
+  `<part>stage` for the agent to submit. A part without a stage is accepted, so an app whose further
+  setups are environments (`dev`/`stage`/`prod`) or a recipe pair keeps its one stage
+  (`TestBootstrapPlan_MountedRepoParts_ReadBeforeThePlanIsAccepted`,
+  `TestBootstrapPlan_RepoSetups_RefusesOnlyAStageMatchingNoPart`). The meta of a pair planned
   with several stages records each stage's setup from the plan; a one-stage pair's setup is resolved
   at its first deploy (`TestBootstrapComplete_MultiPartPair_RecordsEachStagesSetup`).
 - Migration on load: no `stages` and a `stageHostname` → `Stages = [{stageHostname, stageSetupName}]`;
