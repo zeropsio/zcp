@@ -1023,9 +1023,17 @@ Stages []StageRef `json:"stages,omitempty"`
   `ManagedRuntimeIndex`) match any `Stages[i].Hostname`; deploy takes the setup from here, never from
   a hostname suffix (`SetupCandidatesFor` goes); develop scope takes every stage under today's rule
   (a recipe-born pair's stages wait until asked); the recipe plan adds a second stage of the same repo
-  to the pair; the composer emits one stage/production runtime per entry.
+  to the pair; the composer emits one stage/production runtime per entry; develop's promote-to-stage
+  commands cross-deploy every stage with its own setup, `prod` only while none is recorded
+  (`TestSynthesize_PromoteStage_NamesTheRepoOwnSetup`).
 - Validation, before import: stage hostnames are unique in the pair, differ from `Hostname`, and no
   other meta names them.
+- Plan, before it is accepted: a classic or adopt plan that pairs an existing dev service with
+  stages has that service's repo read first. When its root `zerops.yml` declares more than one part,
+  every part needs a stage built with its setup and every stage a setup; otherwise the plan is
+  refused with the plan made from the repo — a stage the plan already gave a part keeps its
+  hostname, the others are proposed as `<part>stage` for the agent to submit
+  (`TestBootstrapPlan_MountedRepoParts_ReadBeforeThePlanIsAccepted`).
 - Migration on load: no `stages` and a `stageHostname` → `Stages = [{stageHostname, stageSetupName}]`;
   when `stages` is present it wins and the old keys are not read. On write zcp writes `stages` and
   mirrors `Stages[0]` into `stageHostname`/`stageSetupName`, so a zcp a container restart pulls back
