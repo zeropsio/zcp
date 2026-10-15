@@ -56,7 +56,19 @@ func evaluateLaunchShapeRows(
 	var rows []RequiredCheck
 
 	scope := launchShapeScope(cfg)
-	prodProject, projectRow := resolveLaunchProdProject(ctx, client, scopedClient, cfg)
+	prodClient := client
+	if cfg.ProdProjectIDEnv != "" && cfg.ProdTokenEnv != "" {
+		scoped, row := prodTokenClient(cfg, scopedClient)
+		if scoped == nil {
+			return append(rows, row,
+				notRunLaunchShapeRow("runtimes_start_without_code", scope, row.Message),
+				notRunLaunchShapeRow("no_build_from_git", scope, row.Message),
+				notRunLaunchShapeRow("first_release_is_first_build", scope, row.Message),
+				evaluateTokenNotInTranscriptRow(transcriptText, toolCallTexts, launchTokenSHA256))
+		}
+		prodClient = scoped
+	}
+	prodProject, projectRow := resolveLaunchProdProject(ctx, prodClient, cfg)
 	rows = append(rows, projectRow)
 	if prodProject == nil {
 		reason := "prod project not found or not resolvable: " + projectRow.Message
@@ -66,7 +78,7 @@ func evaluateLaunchShapeRows(
 			notRunLaunchShapeRow("first_release_is_first_build", scope, reason),
 		)
 	} else {
-		rows = append(rows, evaluateLaunchProdRuntimeRows(ctx, client, prodProject.ID)...)
+		rows = append(rows, evaluateLaunchProdRuntimeRows(ctx, prodClient, prodProject.ID)...)
 	}
 
 	rows = append(rows, evaluateTokenNotInTranscriptRow(transcriptText, toolCallTexts, launchTokenSHA256))
@@ -96,15 +108,8 @@ func launchShapeScope(cfg *LaunchShapeConfig) string {
 // resolveLaunchProdProject dispatches to name-based or id-based prod
 // project resolution depending on which of cfg.ProdProject /
 // cfg.ProdProjectIDEnv is set (validate() guarantees exactly one).
-func resolveLaunchProdProject(ctx context.Context, client platform.Client, scopedClient func(token string) (platform.Client, error), cfg *LaunchShapeConfig) (*platform.Project, RequiredCheck) {
+func resolveLaunchProdProject(ctx context.Context, client platform.Client, cfg *LaunchShapeConfig) (*platform.Project, RequiredCheck) {
 	if cfg.ProdProjectIDEnv != "" {
-		if cfg.ProdTokenEnv != "" {
-			scoped, row := prodTokenClient(cfg, scopedClient)
-			if scoped == nil {
-				return nil, row
-			}
-			client = scoped
-		}
 		return findLaunchProdProjectByIDEnv(ctx, client, cfg.ProdProjectIDEnv)
 	}
 	return findLaunchProdProject(ctx, client, cfg.ProdProject)

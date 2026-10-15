@@ -45,12 +45,12 @@ userPersona: |
   offer to mint the launch token itself from a one-time platform
   delegation — no token value crosses the conversation; if so, confirm
   explicitly that it should go ahead. If instead ZCP falls back to
-  asking you for a launch token (no delegation available), your
-  temporary account-wide Zerops API token is in the env var
-  `$ZCP_E2E_LAUNCH_KEY` — tell the agent to read it itself via Bash
-  (`echo $ZCP_E2E_LAUNCH_KEY`), never paste the value or invent one; use
-  it for the launch window only and expect ZCP to tell you to delete it
-  once it reports launched.
+  asking you for a launch token (no delegation available), you do not
+  generate one yourself — your temporary account-wide Zerops API token is
+  already in the env var `$ZCP_E2E_LAUNCH_KEY`. Reply that it is there and
+  tell the agent to read it itself via Bash (`echo $ZCP_E2E_LAUNCH_KEY`),
+  never paste the value or invent one; it is for the launch window only,
+  and you expect ZCP to tell you to delete it once it reports launched.
   Either way, push back if ZCP tries to persist a key anywhere or asks
   for ongoing prod access.
 notableFriction:
@@ -82,4 +82,4 @@ notableFriction:
       retries with corrected inputs.
 ---
 
-Dev and stage are working — I want to launch production now. Create a separate Zerops project called `zcp-farm-prod__{{runId}}` in the eu-central region. If you can mint the launch token yourself, confirm with me first; otherwise I'll generate one manually and delete it right after. Don't try to keep any standing access to the prod project — I'll manage prod through the Zerops dashboard and a separate ZCP session once it's up. My source repo is `https://github.com/krls2020/eval2` — if the launch needs git push deploy wired first, set it up (my PAT is in `$ZCP_E2E_GITHUB_PAT`, read it yourself).
+Dev and stage are working — I want to launch production now. Create a separate Zerops project called `zcp-farm-prod__{{runId}}` in the eu-central region. If you can mint the launch token yourself, confirm with me first; otherwise my temporary token is in `$ZCP_E2E_LAUNCH_KEY` — read it yourself via Bash and I'll delete it right after. Don't try to keep any standing access to the prod project — I'll manage prod through the Zerops dashboard and a separate ZCP session once it's up. My source repo is `https://github.com/krls2020/eval2` — if the launch needs git push deploy wired first, set it up (my PAT is in `$ZCP_E2E_GITHUB_PAT`, read it yourself).

@@ -239,17 +239,31 @@ func TestLaunchShape_ProdTokenEnv_ReadsWithTheScopedToken(t *testing.T) {
 	t.Setenv(idEnv, "prod-1")
 	t.Setenv(tokEnv, "scoped-token")
 	cfg := &LaunchShapeConfig{ProdProjectIDEnv: idEnv, ProdTokenEnv: tokEnv}
-	runClient := platform.NewMock().WithError("GetProject", errors.New("Insufficient permissions"))
+	runClient := platform.NewMock().
+		WithError("GetProject", errors.New("Insufficient permissions")).
+		WithError("ListServicesDirect", errors.New("Insufficient permissions"))
 	var gotToken string
 	scoped := func(token string) (platform.Client, error) {
 		gotToken = token
-		return platform.NewMock().WithProject(&platform.Project{ID: "prod-1", Name: "prod"}), nil
+		return platform.NewMock().
+			WithProject(&platform.Project{ID: "prod-1", Name: "prod"}).
+			WithServicesDirect([]platform.ServiceStack{
+				{ID: "svc-app1", ProjectID: "prod-1", Name: "app1", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}},
+			}).
+			WithAppVersionEvents([]platform.AppVersionEvent{
+				{ID: "av1", ProjectID: "prod-1", ServiceStackID: "svc-app1", Source: "NONE", Status: "ACTIVE", Created: "2026-09-10T00:00:00Z"},
+			}), nil
 	}
 
 	rows := evaluateLaunchShapeRows(context.Background(), cfg, runClient, scoped, "", nil, "")
 	row := findRow(t, rows, "launch_shape/project_exists")
 	if row.Result != CheckPassed {
 		t.Fatalf("expected project_exists to pass with the scoped token, got %+v", row)
+	}
+	for _, id := range []string{"runtimes_start_without_code", "no_build_from_git", "first_release_is_first_build"} {
+		if r := findRow(t, rows, "launch_shape/"+id); r.Result != CheckPassed {
+			t.Errorf("%s read with the run's own token instead of the scoped one: %+v", id, r)
+		}
 	}
 	if gotToken != "scoped-token" {
 		t.Errorf("scoped client built with %q, want the prodTokenEnv value", gotToken)
