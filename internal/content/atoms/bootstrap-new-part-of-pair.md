@@ -5,7 +5,6 @@ phases: [bootstrap-active]
 routes: [classic]
 steps: [discover]
 modes: [standard]
-deployStates: [deployed]
 parts: [single]
 title: "A new part of this repo is a stage of the pair, not a new service"
 ---

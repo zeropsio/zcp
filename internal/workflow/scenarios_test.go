@@ -1562,8 +1562,8 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 // TestScenario_NewPartOfSinglePartPairIsAStageNotABootstrap pins the guidance
 // at the moment a person asks a project with one complete single-part pair
 // for another part: the bootstrap discover step leads to a new setup and
-// stage of the pair. A repo already read as several parts,
-// a pair not yet deployed and a project without a standard pair never see it.
+// stage of the pair, deployed or not yet. A repo already read as several parts
+// and a project without a standard pair never see it.
 func TestScenario_NewPartOfSinglePartPairIsAStageNotABootstrap(t *testing.T) {
 	t.Parallel()
 
@@ -1600,6 +1600,12 @@ func TestScenario_NewPartOfSinglePartPairIsAStageNotABootstrap(t *testing.T) {
 	}
 	if !fires(boot) {
 		t.Errorf("%s did not fire at bootstrap discover with a deployed single-part pair", atom)
+	}
+
+	fresh1 := boot
+	fresh1.Services = fixSnapBootstrappedNeverDeployedPair("appdev", "appstage", "nodejs@22", topology.RuntimeDynamic)
+	if !fires(fresh1) {
+		t.Errorf("%s did not fire for a pair that has not been deployed yet", atom)
 	}
 
 	multi := boot
