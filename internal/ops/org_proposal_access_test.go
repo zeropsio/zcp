@@ -100,6 +100,7 @@ func TestProposeOrgAction_AccessSet_RefusesWhatCannotBeGiven(t *testing.T) {
 	}{
 		{name: "a project or application outside the org", in: access("Fabrikam", dana), wantErr: "Fabrikam"},
 		{name: "the Chief's own project", in: access("pMM", dana), wantErr: "Chief"},
+		{name: "HQ's own project, which holds the organization's keys", in: access("pHQ", dana), wantErr: "HQ"},
 		{name: "nobody", in: access("Contoso"), wantErr: "person"},
 		{name: "a blank person", in: access("Contoso", OrgAccessPerson{Person: " ", Level: "full"}), wantErr: "person"},
 		{name: "a level Mate does not give", in: access("Contoso", OrgAccessPerson{Person: "Dana", Level: "owner"}), wantErr: "owner"},
