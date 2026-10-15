@@ -1000,3 +1000,17 @@ func TestDevServer_StartWhenTheCgroupIsUnreadable_StartsAsBefore(t *testing.T) {
 	c := memoryContainer(0, 0, nil)
 	runDevServer(t, c, DevServerParams{Action: "start", Hostname: "appdev", Name: "api"})
 }
+
+// TestDevServer_StartBesideARunningServerWhenTheCgroupIsUnreadable_AddsNoHeapCapLine:
+// with the service's RAM ceiling unknown, a start beside another running
+// server names no shared ceiling and asks for no heap cap.
+func TestDevServer_StartBesideARunningServerWhenTheCgroupIsUnreadable_AddsNoHeapCapLine(t *testing.T) {
+	t.Parallel()
+	c := memoryContainer(0, 0, map[string]float64{"web": 2.5})
+	if c.Status("web") != devsup.StatusRunning {
+		t.Fatalf("web must be running beside the start, got %s", c.Status("web"))
+	}
+	if msg := runDevServer(t, c, DevServerParams{Action: "start", Hostname: "appdev", Name: "api"}).Message; strings.Contains(msg, "NODE_OPTIONS=--max-old-space-size") || strings.Contains(msg, "RAM ceiling") {
+		t.Errorf("an unreadable cgroup must add no heap-cap line: %q", msg)
+	}
+}
