@@ -173,7 +173,7 @@ func targetMeta(target BootstrapTarget, hostname string, mode topology.Mode, sta
 	meta := &ServiceMeta{
 		Hostname:         hostname,
 		Mode:             mode,
-		Stages:           stagesByHostname(stages),
+		Stages:           planStages(stages),
 		ServesHTTP:       target.Runtime.ServesHTTP,
 		CloseDeployMode:  topology.CloseModeUnset,
 		GitPushState:     topology.GitPushUnconfigured,
@@ -186,11 +186,18 @@ func targetMeta(target BootstrapTarget, hostname string, mode topology.Mode, sta
 	return meta
 }
 
-// stagesByHostname is stages with only their hostnames — nil when there are
-// none, so a stageless meta reads back unchanged.
-func stagesByHostname(stages []topology.StageRef) []topology.StageRef {
+// planStages is the stages a plan records on the meta — nil when there are
+// none, so a stageless meta reads back unchanged. A pair of several stages
+// keeps each stage's setup: it is what tells the parts apart, and the plan
+// step checked it against the repo's zerops.yml (docs/spec-mate.md
+// §2.8a.4). A one-stage pair records only its hostname; its setup is
+// resolved at its first deploy.
+func planStages(stages []topology.StageRef) []topology.StageRef {
 	if len(stages) == 0 {
 		return nil
+	}
+	if len(stages) > 1 {
+		return slices.Clone(stages)
 	}
 	out := make([]topology.StageRef, 0, len(stages))
 	for _, s := range stages {

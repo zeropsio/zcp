@@ -1033,7 +1033,9 @@ Stages []StageRef `json:"stages,omitempty"`
   every part needs a stage built with its setup and every stage a setup; otherwise the plan is
   refused with the plan made from the repo — a stage the plan already gave a part keeps its
   hostname, the others are proposed as `<part>stage` for the agent to submit
-  (`TestBootstrapPlan_MountedRepoParts_ReadBeforeThePlanIsAccepted`).
+  (`TestBootstrapPlan_MountedRepoParts_ReadBeforeThePlanIsAccepted`). The meta of a pair planned
+  with several stages records each stage's setup from the plan; a one-stage pair's setup is resolved
+  at its first deploy (`TestBootstrapComplete_MultiPartPair_RecordsEachStagesSetup`).
 - Migration on load: no `stages` and a `stageHostname` → `Stages = [{stageHostname, stageSetupName}]`;
   when `stages` is present it wins and the old keys are not read. On write zcp writes `stages` and
   mirrors `Stages[0]` into `stageHostname`/`stageSetupName`, so a zcp a container restart pulls back

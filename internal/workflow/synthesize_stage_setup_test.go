@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -104,5 +105,59 @@ func TestSynthesize_PromoteStage_NamesTheRepoOwnSetup(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestBootstrapComplete_MultiPartPair_RecordsEachStagesSetup: the next deploy
+// step names the repo's own setup from the moment bootstrap closes. A pair
+// planned with several stages records each stage's setup — it is what tells
+// the parts apart — so develop's first deploy of webstage builds `web`, not
+// `prod`. A one-stage pair records only its stage, as today; its setup is
+// resolved at its first deploy.
+func TestBootstrapComplete_MultiPartPair_RecordsEachStagesSetup(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		rt   RuntimeTarget
+		want map[string]string // stage → recorded setup
+	}{
+		{
+			name: "two parts",
+			rt:   RuntimeTarget{Stages: []topology.StageRef{{Hostname: "webstage", SetupName: "web"}, {Hostname: "apistage", SetupName: "api"}}},
+			want: map[string]string{"webstage": "web", "apistage": "api"},
+		},
+		{
+			name: "one stage",
+			rt:   RuntimeTarget{ExplicitStage: "appstage", StageSetupName: "prod"},
+			want: map[string]string{"appstage": ""},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			eng := NewEngine(dir, EnvContainer, nil)
+			if _, err := eng.BootstrapStartWithRoute("proj-1", "develop the repo on appdev", BootstrapRouteClassic, ""); err != nil {
+				t.Fatalf("BootstrapStartWithRoute: %v", err)
+			}
+			rt := tt.rt
+			rt.DevHostname, rt.Type, rt.BootstrapMode, rt.IsExisting = "appdev", "nodejs@22", topology.PlanModeStandard, true
+			if _, err := eng.BootstrapCompletePlan([]BootstrapTarget{{Runtime: rt}}, nil, nil); err != nil {
+				t.Fatalf("BootstrapCompletePlan: %v", err)
+			}
+			// An adopted pair's bootstrap closes with its provision step.
+			if _, err := eng.BootstrapComplete(context.Background(), "provision", "Attestation for provision step completed ok", nil); err != nil {
+				t.Fatalf("BootstrapComplete(provision): %v", err)
+			}
+			meta, err := ReadServiceMeta(dir, "appdev")
+			if err != nil || meta == nil {
+				t.Fatalf("ReadServiceMeta: %v", err)
+			}
+			for stage, setup := range tt.want {
+				if got := meta.SetupNameFor(stage); got != setup {
+					t.Errorf("setup of %s = %q, want %q", stage, got, setup)
+				}
+			}
+		})
 	}
 }
