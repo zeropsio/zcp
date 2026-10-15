@@ -268,7 +268,7 @@ func RegisterDeploySSH(
 			Title:           "Deploy code to a service",
 			DestructiveHint: boolPtr(true),
 		},
-	}, func(ctx context.Context, req *mcp.CallToolRequest, input DeploySSHInput) (*mcp.CallToolResult, any, error) {
+	}, namingRepoConfigFile(engine, func(ctx context.Context, req *mcp.CallToolRequest, input DeploySSHInput) (*mcp.CallToolResult, any, error) {
 		// R2 in-place recovery (docs/spec-workflows.md §8 R2): appVersion
 		// redeploy has no source to resolve and no cross/self distinction —
 		// dispatch BEFORE strategy validation, the adoption gate, and the
@@ -375,7 +375,7 @@ func RegisterDeploySSH(
 		}
 
 		return runDeploySSHZCLIPush(ctx, req, client, httpClient, sshDeployer, authInfo, logFetcher, rtInfo, projectID, stateDir, devsup, input)
-	})
+	}))
 }
 
 // runDeploySSHZCLIPush is the default zcli-push branch of zerops_deploy's

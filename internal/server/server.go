@@ -316,7 +316,7 @@ func (s *Server) registerTools() {
 
 	// Read-only tools
 	tools.RegisterWorkflow(s.server, s.client, httpClient, projectID, schemaCache, wfEngine, s.logFetcher, stateDir, s.rtInfo.ServiceName, s.mounter, s.sshDeployer, s.rtInfo, s.authInfo.APIHost)
-	tools.RegisterDiscover(s.server, s.client, projectID, stateDir)
+	tools.RegisterDiscover(s.server, s.client, projectID, stateDir, wfEngine)
 	tools.RegisterKnowledge(s.server, s.store, s.client, schemaCache, knowledgeTracker, wfEngine)
 	tools.RegisterRecordFact(s.server, wfEngine, recipeProbe)
 	tools.RegisterWorkspaceManifest(s.server, wfEngine, recipeProbe)

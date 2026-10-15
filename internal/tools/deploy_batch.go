@@ -62,7 +62,7 @@ func RegisterDeployBatch(
 			Title:           "Deploy batch — parallel deploys",
 			DestructiveHint: boolPtr(true),
 		},
-	}, func(ctx context.Context, req *mcp.CallToolRequest, input DeployBatchInput) (*mcp.CallToolResult, any, error) {
+	}, namingRepoConfigFile(engine, func(ctx context.Context, req *mcp.CallToolRequest, input DeployBatchInput) (*mcp.CallToolResult, any, error) {
 		if len(input.Targets) == 0 {
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
@@ -97,7 +97,7 @@ func RegisterDeployBatch(
 			DeployBatchResult: result,
 			WorkSessionState:  sessionAnnotations(stateDir),
 		}), nil, nil
-	})
+	}))
 }
 
 // batchDeployer is everything a batch of SSH deploys needs. zerops_deploy_batch

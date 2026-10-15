@@ -1,12 +1,15 @@
 package tools
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/knowledge"
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -119,6 +122,81 @@ func TestRepoConfigFile_AnAgentIsOnlyEverToldTheReposOwnConfigFileName(t *testin
 					}
 					at = i + len(tc.never)
 				}
+			}
+		})
+	}
+}
+
+// TestRepoConfigFile_ABuildFailureAndTheDiscoverEnvSource_NameTheReposOwnConfigFile:
+// in a repo that keeps zerops.yml, the build-failure suggestion of
+// zerops_deploy tells the agent to fix zerops.yml, and zerops_discover tags a
+// yaml-baked env var as coming from zerops.yml. While zcp has not read which
+// name the repo keeps, both say zerops.yaml as before.
+func TestRepoConfigFile_ABuildFailureAndTheDiscoverEnvSource_NameTheReposOwnConfigFile(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, recorded, want, never string
+	}{
+		{name: "zerops.yml repo", recorded: "zerops.yml", want: "zerops.yml", never: "zerops.yaml"},
+		{name: "name not read yet", recorded: "", want: "zerops.yaml", never: "zerops.yml"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			engine := workflow.NewEngine(t.TempDir(), workflow.EnvContainer, nil)
+			if tc.recorded != "" {
+				engine.RecordRepoConfigFile("app", tc.recorded)
+			}
+
+			buildSvcID := "build-svc-1"
+			mock := platform.NewMock().
+				WithProject(&platform.Project{ID: "proj-1", Name: "p", Status: statusActive}).
+				WithServices([]platform.ServiceStack{{
+					ID: "svc-1", Name: "app", Status: statusActive,
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+					ActiveAppVersion:     &platform.ActiveAppVersionDigest{ID: "av-0"},
+				}}).
+				WithAppVersionUserData("av-0", []platform.ServiceEnvVar{{Key: "FOO", Content: "fromyaml", Type: platform.ServiceEnvUser}}).
+				WithAppVersionEvents([]platform.AppVersionEvent{{
+					ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-1", Status: statusBuildFailed, Sequence: 1,
+					Build: &platform.BuildInfo{ServiceStackID: &buildSvcID},
+				}}).
+				WithLogAccess(&platform.LogAccess{URL: "https://log.example.com/logs"})
+			logFetcher := platform.NewMockLogFetcher().WithEntries([]platform.LogEntry{
+				{Facility: "local0", Tag: "zbuilder@av-1", Message: "something unusual went wrong"},
+			})
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterDeploySSH(srv, mock, okHTTP, "proj-1", &stubSSH{output: []byte("ok")},
+				&auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}, logFetcher, runtime.Info{}, "", engine, nil, DevsupSource{})
+			RegisterDiscover(srv, mock, "proj-1", "", engine)
+
+			var deployed ops.DeployResult
+			if err := json.Unmarshal([]byte(getTextContent(t, callTool(t, srv, "zerops_deploy", map[string]any{"targetService": "app"}))), &deployed); err != nil {
+				t.Fatalf("parse deploy result: %v", err)
+			}
+			if deployed.FailureClassification == nil {
+				t.Fatalf("a failed build carries a classification: %+v", deployed)
+			}
+			for field, text := range map[string]string{
+				"failureClassification.suggestedAction": deployed.FailureClassification.SuggestedAction,
+				"suggestion":                            deployed.Suggestion,
+			} {
+				if !strings.Contains(text, "buildCommands or dependencies in "+tc.want+".") || strings.Contains(text, tc.never) {
+					t.Errorf("%s names the config file other than %s: %q", field, tc.want, text)
+				}
+			}
+
+			var discovered ops.DiscoverResult
+			if err := json.Unmarshal([]byte(getTextContent(t, callTool(t, srv, "zerops_discover", map[string]any{"service": "app", "includeEnvs": true}))), &discovered); err != nil {
+				t.Fatalf("parse discover result: %v", err)
+			}
+			var source any
+			for _, e := range discovered.Services[0].Envs {
+				if e["key"] == "FOO" {
+					source = e["source"]
+				}
+			}
+			if source != tc.want {
+				t.Errorf("yaml-baked FOO source = %v, want %s", source, tc.want)
 			}
 		})
 	}

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -63,5 +64,19 @@ func namingRepoConfigFile[In any](engine *workflow.Engine, handler mcp.ToolHandl
 			named.Content[i] = c
 		}
 		return &named, nil, err
+	}
+}
+
+// nameYamlBakedSource tags each yaml-baked env var of a discover result as
+// coming from the repo's config file as the repo names it ("" leaves the
+// tag as it is). Only the tag is renamed: env values are the platform's
+// data and stay as read.
+func nameYamlBakedSource(result *ops.DiscoverResult, file string) {
+	for _, svc := range result.Services {
+		for _, env := range svc.Envs {
+			if env["source"] == string(ops.EnvLayerYamlBaked) {
+				env["source"] = nameRepoConfigFile(string(ops.EnvLayerYamlBaked), file)
+			}
+		}
 	}
 }
