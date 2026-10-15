@@ -177,16 +177,22 @@ func AdoptSupervisorInDevSetup(ctx context.Context, ssh SSHDeployer, hostname, s
 	defer cancel()
 	out, err := ssh.ExecSSH(readCtx, hostname, readZeropsYAMLCmd(dir))
 	if err != nil {
-		return "", "", false, fmt.Errorf("read zerops.yaml on %s: %w", hostname, err)
+		return "", "", false, fmt.Errorf("read zerops.yaml (or zerops.yml) on %s: %w", hostname, err)
 	}
 	head, body, _ := strings.Cut(string(out), "\n")
 	file, ok := strings.CutPrefix(strings.TrimSpace(head), "@@zcp-file ")
 	if !ok || file == "-" {
-		return "", "", false, fmt.Errorf("%s has no zerops.yaml in %s", hostname, dir)
+		return "", "", false, fmt.Errorf("%s has no zerops.yaml (or zerops.yml) in %s", hostname, dir)
 	}
 	updated, used, changed, err := AdoptSupervisorYAML([]byte(body), setup, hostname, url, root)
-	if err != nil || !changed {
-		return file, used, false, err
+	if err != nil {
+		// The parse and splice messages name the config file generically; the
+		// file is known here, so the agent is told its real name and never
+		// has reason to rename it.
+		return file, used, false, errors.New(strings.ReplaceAll(err.Error(), "zerops.yaml", file))
+	}
+	if !changed {
+		return file, used, false, nil
 	}
 	target := strings.TrimSuffix(dir, "/") + "/" + file
 	cmd := fmt.Sprintf(`printf '%%s' %s > %s && mv -f %s %s`,

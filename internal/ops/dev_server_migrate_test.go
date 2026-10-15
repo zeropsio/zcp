@@ -1,6 +1,7 @@
 package ops
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -390,5 +391,20 @@ func TestDevsupPrepareCommand_FallsBackToWgetWhenCurlIsAbsent(t *testing.T) {
 	want := `sudo sh -c 'u=` + testDevsupURL + `; f=/usr/local/bin/zcp-devsup; if command -v curl >/dev/null; then curl -fsSL "$u" -o "$f"; else wget -qO "$f" "$u"; fi && chmod 0755 "$f"'`
 	if got != want {
 		t.Errorf("DevsupPrepareCommand = %q, want %q", got, want)
+	}
+}
+
+func TestAdoptSupervisorInDevSetup_ZeropsYmlRepo_ErrorNamesZeropsYmlNeverZeropsYaml(t *testing.T) {
+	t.Parallel()
+	ssh := &mockSSHDeployer{output: []byte("@@zcp-file zerops.yml\nzerops:\n  - setup: a\n    run: {}\n  - setup: b\n    run: {}\n")}
+	file, _, _, err := AdoptSupervisorInDevSetup(context.Background(), ssh, "appdev", "", "http://x", "", "")
+	if file != "zerops.yml" {
+		t.Fatalf("file = %q", file)
+	}
+	if err == nil {
+		t.Fatal("expected an error: several setups, none the dev one")
+	}
+	if !strings.Contains(err.Error(), "zerops.yml") || strings.Contains(err.Error(), "zerops.yaml") {
+		t.Fatalf("error must name the repo's zerops.yml and never zerops.yaml: %v", err)
 	}
 }
