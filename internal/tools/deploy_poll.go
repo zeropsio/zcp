@@ -117,6 +117,11 @@ func pollDeployBuild(
 					fmt.Sprintf("SSH not ready on %s after 30s — deployed but SSH may need more time", result.TargetService))
 			} else {
 				result.SSHReady = true
+				root := ""
+				if meta, _ := workflow.FindServiceMeta(stateDir, result.TargetService); meta != nil {
+					root = meta.WorkingDirFor(result.TargetService)
+				}
+				result.NextActions = deployNextActionsFor(ctx, sshDeployer, root, result, mode, class)
 			}
 		}
 	} else {

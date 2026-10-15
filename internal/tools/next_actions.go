@@ -1,8 +1,11 @@
 package tools
 
 import (
+	"context"
 	"fmt"
+	"strings"
 
+	"github.com/zeropsio/zcp/internal/devsup"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/topology"
 )
@@ -53,6 +56,31 @@ func deploySuccessNextActions(_ *ops.DeployResult, mode topology.Mode, class top
 		return "Dev-mode dynamic runtime is idle (no start command). Start the dev server: zerops_dev_server action=start. Then run zerops_verify."
 	}
 	return nextActionDeploySuccess
+}
+
+// deployNextActionsFor is deploySuccessNextActions, told the truth by the
+// supervisor when one answers: a dev setup under zcp-devsup starts its declared
+// servers itself, so the reply names the ones it runs instead of calling the
+// container idle. A container without the supervisor keeps today's pointer.
+func deployNextActionsFor(ctx context.Context, ssh ops.SSHDeployer, root string, result *ops.DeployResult, mode topology.Mode, class topology.RuntimeClass) string {
+	base := deploySuccessNextActions(result, mode, class)
+	if ssh == nil || base == nextActionDeploySuccess {
+		return base
+	}
+	ds, err := ops.ReadDevServers(ctx, ssh, result.TargetService, root)
+	if err != nil {
+		return base
+	}
+	var running []string
+	for _, s := range ds.Declared.Servers {
+		if st, ok := ds.State.Servers[s.Name]; ok && (st.Status == devsup.StatusRunning || st.Status == devsup.StatusStarting) {
+			running = append(running, s.Name)
+		}
+	}
+	if len(running) == 0 {
+		return base
+	}
+	return fmt.Sprintf("The dev-server supervisor started %s on %s. Run zerops_verify.", strings.Join(running, ", "), result.TargetService)
 }
 
 // deploySuggestionForStatus is the FALLBACK suggestion for a non-ACTIVE deploy

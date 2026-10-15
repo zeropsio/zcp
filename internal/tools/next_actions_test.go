@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/ops/devservertest"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -189,5 +190,28 @@ func TestDeploySuccessNextActions(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestDeployNextActions_NamesTheDevServersTheSupervisorStarted: a dev setup
+// under the supervisor starts its declared servers itself, so a deploy's reply
+// names them and never calls the container idle.
+func TestDeployNextActions_NamesTheDevServersTheSupervisorStarted(t *testing.T) {
+	t.Parallel()
+	decl := `{"version":1,"servers":[{"name":"server","port":3000,"command":"a","cwd":"."},{"name":"web","port":5173,"command":"b","cwd":"."}]}`
+	c := devservertest.NewSupervised(decl)
+	got := deployNextActionsFor(t.Context(), c, "/root", &ops.DeployResult{TargetService: "matedev"}, topology.ModeDev, topology.RuntimeDynamic)
+	for _, want := range []string{"server", "web", "zerops_verify"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("nextActions = %q, want it to name %q", got, want)
+		}
+	}
+	if strings.Contains(got, "idle") || strings.Contains(got, "action=start") {
+		t.Errorf("nextActions = %q, must not call a supervised container idle", got)
+	}
+
+	idle := deployNextActionsFor(t.Context(), &devservertest.Container{}, "/root", &ops.DeployResult{TargetService: "matedev"}, topology.ModeDev, topology.RuntimeDynamic)
+	if !strings.Contains(idle, "idle") {
+		t.Errorf("a container without the supervisor keeps today's pointer, got %q", idle)
 	}
 }
