@@ -154,7 +154,7 @@ func (d standupDeps) fillAndReload(ctx context.Context, sp *standupPair, progres
 		return
 	}
 	progress.say(fmt.Sprintf("filling the code volume %s at %s from %s", cv.volume.Hostname, cv.volume.MountPath, dev))
-	filled, err := ops.FillCodeVolume(ctx, d.batch.sshDeployer, dev, cv.volume.MountPath)
+	filled, err := ops.FillCodeVolume(ctx, d.batch.sshDeployer, dev, cv.volume.Hostname, cv.volume.MountPath)
 	if err != nil {
 		cv.Reason = err.Error()
 		progress.st().step(dev, mate.StepVerify, mate.StepFailed, "", cv.Reason)

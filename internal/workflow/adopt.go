@@ -363,6 +363,12 @@ type AdoptVolumeSetup struct {
 	RunBase   string
 	Volume    string
 	MountPath string
+	// WorksIn says the setup's run works in MountPath rather than in /var/www
+	// (ops.ZeropsYmlEntry.WorksIn).
+	WorksIn bool
+	// Content is what each runtime finds at MountPath, by hostname
+	// (ops.CodeVolumeContent); a runtime absent from it proved nothing.
+	Content map[string]topology.VolumeContent
 }
 
 // adoptVariantB recognises variant B (docs/spec-mate.md §2.8a) among the
@@ -370,6 +376,10 @@ type AdoptVolumeSetup struct {
 // services of one repository mounting one local-storage volume are one pair.
 // A setup that mounts the volume belongs to the one adoptable runtime of its
 // run.base; a setup no runtime matches uniquely leaves the topology alone.
+// The volume is a code volume only when proven: every setup works in the
+// mount, and its runtime finds nothing there yet, an empty folder or this
+// repository — a data volume (a Laravel app and worker sharing storage) is
+// never taken for one, since the pair's deploys and fill write code there.
 // It returns the dev-mode target holding the code volume (nil when there is
 // none) and the adoptable runtimes left for the ordinary derivation.
 func adoptVariantB(adoptable []string, typeByHost map[string]string, setups []AdoptVolumeSetup) (*BootstrapTarget, []string) {
@@ -404,7 +414,7 @@ func adoptVariantB(adoptable []string, typeByHost map[string]string, setups []Ad
 				}
 				host = h
 			}
-			if host == "" || m.MountPath != mounts[0].MountPath {
+			if host == "" || m.MountPath != mounts[0].MountPath || !m.WorksIn || !m.Content[host].MayHoldCode() {
 				hosts = nil
 				break
 			}

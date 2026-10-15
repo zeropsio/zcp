@@ -8,6 +8,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // startAdopt opens a fresh adopt-route bootstrap session for the auto-derive tests.
@@ -403,7 +404,8 @@ func TestBootstrapCompleteAdoptPlan_DevServicesSharingAVolume_AreOneVariantBPair
 		userSvc("vol", "local-storage:single@1"),
 	}
 	mount := func(setup, base string) AdoptVolumeSetup {
-		return AdoptVolumeSetup{Setup: setup, RunBase: base, Volume: "vol", MountPath: "/var/www/ws"}
+		return AdoptVolumeSetup{Setup: setup, RunBase: base, Volume: "vol", MountPath: "/var/www/ws", WorksIn: true,
+			Content: map[string]topology.VolumeContent{"webdev": topology.VolumeAbsent, "apidev": topology.VolumeAbsent}}
 	}
 	eng := startAdopt(t, t.TempDir())
 	if _, err := eng.BootstrapCompleteAdoptPlan(existing, []string{"webdev", "apidev"}, runtime.Info{}, nil,
@@ -435,5 +437,83 @@ func TestBootstrapCompleteAdoptPlan_DevServicesSharingAVolume_AreOneVariantBPair
 	st, _ := one.GetState()
 	if got := st.Bootstrap.Plan.Targets[0].Runtime.CodeVolume; got != nil {
 		t.Errorf("one dev service has no code volume, got %+v", got)
+	}
+}
+
+// TestBootstrapCompleteAdoptPlan_ASharedVolume_IsACodeVolumeOnlyWhenTheDevSetupsWorkInItAndItHoldsNoOtherContent:
+// zcp never writes code into a volume it did not prove is a code volume.
+// Adopt takes two dev services sharing a local-storage volume for a variant-B
+// pair only when every dev setup works in the mount and every one of them
+// finds nothing there yet, an empty folder or this repository. A Laravel app
+// and worker sharing their storage volume adopt as two services, as before.
+func TestBootstrapCompleteAdoptPlan_ASharedVolume_IsACodeVolumeOnlyWhenTheDevSetupsWorkInItAndItHoldsNoOtherContent(t *testing.T) {
+	t.Parallel()
+	type seen = map[string]topology.VolumeContent
+	f2 := []platform.ServiceStack{userSvc("webdev", "bun@1.3"), userSvc("apidev", "go@1"), userSvc("vol", "local-storage:single@1")}
+	f2Mounts := func(worksIn bool, content seen) []AdoptVolumeSetup {
+		return []AdoptVolumeSetup{
+			{Setup: "dev", RunBase: "bun@1.3", Volume: "vol", MountPath: "/var/www/ws", WorksIn: true, Content: content},
+			{Setup: "dev-api", RunBase: "go@1", Volume: "vol", MountPath: "/var/www/ws", WorksIn: worksIn, Content: content},
+		}
+	}
+	laravel := []platform.ServiceStack{userSvc("app", "php-nginx@8.4"), userSvc("worker", "php@8.4"), userSvc("storage", "local-storage:single@1")}
+	laravelMounts := func(worksIn bool, content topology.VolumeContent) []AdoptVolumeSetup {
+		c := seen{"app": content, "worker": content}
+		return []AdoptVolumeSetup{
+			{Setup: "app", RunBase: "php-nginx@8.4", Volume: "storage", MountPath: "/var/www/storage", WorksIn: worksIn, Content: c},
+			{Setup: "worker", RunBase: "php@8.4", Volume: "storage", MountPath: "/var/www/storage", WorksIn: worksIn, Content: c},
+		}
+	}
+	tests := []struct {
+		name     string
+		existing []platform.ServiceStack
+		scope    []string
+		mounts   []AdoptVolumeSetup
+		wantPair bool
+	}{
+		{name: "F2 before its first deploy mounts the volume", existing: f2, scope: []string{"webdev", "apidev"},
+			mounts: f2Mounts(true, seen{"webdev": topology.VolumeAbsent, "apidev": topology.VolumeAbsent}), wantPair: true},
+		{name: "F2 with an empty volume", existing: f2, scope: []string{"webdev", "apidev"},
+			mounts: f2Mounts(true, seen{"webdev": topology.VolumeEmpty, "apidev": topology.VolumeEmpty}), wantPair: true},
+		{name: "F2 whose volume already holds the repository", existing: f2, scope: []string{"webdev", "apidev"},
+			mounts: f2Mounts(true, seen{"webdev": topology.VolumeCheckout, "apidev": topology.VolumeCheckout}), wantPair: true},
+		{name: "Laravel app and worker sharing their storage volume", existing: laravel, scope: []string{"app", "worker"},
+			mounts: laravelMounts(false, topology.VolumeForeign)},
+		{name: "Laravel's storage still empty", existing: laravel, scope: []string{"app", "worker"},
+			mounts: laravelMounts(false, topology.VolumeEmpty)},
+		{name: "a volume the dev setups work in that holds data", existing: laravel, scope: []string{"app", "worker"},
+			mounts: laravelMounts(true, topology.VolumeForeign)},
+		{name: "F2 where one dev setup works in /var/www", existing: f2, scope: []string{"webdev", "apidev"},
+			mounts: f2Mounts(false, seen{"webdev": topology.VolumeAbsent, "apidev": topology.VolumeAbsent})},
+		{name: "F2 where one dev service could not be read", existing: f2, scope: []string{"webdev", "apidev"},
+			mounts: f2Mounts(true, seen{"webdev": topology.VolumeAbsent})},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			eng := startAdopt(t, t.TempDir())
+			if _, err := eng.BootstrapCompleteAdoptPlan(tt.existing, tt.scope, runtime.Info{}, nil, tt.mounts); err != nil {
+				t.Fatalf("BootstrapCompleteAdoptPlan: %v", err)
+			}
+			state, err := eng.GetState()
+			if err != nil {
+				t.Fatalf("GetState: %v", err)
+			}
+			targets := state.Bootstrap.Plan.Targets
+			if tt.wantPair {
+				if len(targets) != 1 || targets[0].Runtime.CodeVolume == nil {
+					t.Fatalf("want one variant-B pair, got %+v", targets)
+				}
+				return
+			}
+			if len(targets) != len(tt.scope) {
+				t.Fatalf("want %d services adopted on their own, got %+v", len(tt.scope), targets)
+			}
+			for _, target := range targets {
+				if target.Runtime.CodeVolume != nil {
+					t.Errorf("%s holds no code volume, got %+v", target.Runtime.DevHostname, target.Runtime.CodeVolume)
+				}
+			}
+		})
 	}
 }

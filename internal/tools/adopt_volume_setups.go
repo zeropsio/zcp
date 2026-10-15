@@ -11,8 +11,9 @@ import (
 )
 
 // adoptVolumeSetups are the setups of the repository's zerops.yaml that mount
-// a local-storage volume of the project — what the adopt route recognises
-// variant B from (docs/spec-mate.md §2.8a). The discover step runs before the
+// a local-storage volume of the project, with whether each works in the mount
+// and what the runtimes find there — what the adopt route recognises variant
+// B from (docs/spec-mate.md §2.8a). The discover step runs before the
 // runtimes are mounted, so the file is read from the first runtime container
 // that holds one (/var/www), and from its mount when the container is out of
 // reach; none yields nothing.
@@ -38,12 +39,51 @@ func adoptVolumeSetups(ctx context.Context, ssh ops.SSHDeployer, existing []plat
 		var out []workflow.AdoptVolumeSetup
 		for _, entry := range doc.Zerops {
 			if v := entry.Run.Volume; volumes[v.Hostname] {
-				out = append(out, workflow.AdoptVolumeSetup{Setup: entry.Setup, RunBase: entry.Run.Base, Volume: v.Hostname, MountPath: v.MountPath})
+				out = append(out, workflow.AdoptVolumeSetup{Setup: entry.Setup, RunBase: entry.Run.Base, Volume: v.Hostname, MountPath: v.MountPath,
+					WorksIn: entry.WorksIn(v.MountPath)})
 			}
 		}
+		probeAdoptVolumes(ctx, ssh, existing, out)
 		return out
 	}
 	return nil
+}
+
+// probeAdoptVolumes reads what each runtime of a setup's run.base finds at
+// the mount of a volume that ≥2 setups work in — the content proof adopt
+// needs before it takes the volume for a code volume. A runtime that cannot
+// be read proves nothing and stays out of Content.
+func probeAdoptVolumes(ctx context.Context, ssh ops.SSHDeployer, existing []platform.ServiceStack, setups []workflow.AdoptVolumeSetup) {
+	if ssh == nil {
+		return
+	}
+	workers := map[string]int{}
+	for _, s := range setups {
+		if s.WorksIn {
+			workers[s.Volume]++
+		}
+	}
+	seen := map[[2]string]topology.VolumeContent{}
+	for i, s := range setups {
+		if workers[s.Volume] < 2 {
+			continue
+		}
+		setups[i].Content = map[string]topology.VolumeContent{}
+		for _, svc := range existing {
+			if svc.IsSystem() || topology.CanonicalBaseName(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) != topology.CanonicalBaseName(s.RunBase) {
+				continue
+			}
+			key := [2]string{svc.Name, s.MountPath}
+			content, done := seen[key]
+			if !done {
+				content, _ = ops.CodeVolumeContent(ctx, ssh, svc.Name, s.MountPath)
+				seen[key] = content
+			}
+			if content != "" {
+				setups[i].Content[svc.Name] = content
+			}
+		}
+	}
 }
 
 func readAdoptZeropsYml(ctx context.Context, ssh ops.SSHDeployer, host, mount string) *ops.ZeropsYmlDoc {

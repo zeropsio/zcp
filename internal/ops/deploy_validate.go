@@ -3,6 +3,7 @@ package ops
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -265,6 +266,77 @@ func (e ZeropsYmlEntry) HasImplicitWebServer() bool {
 	return hasImplicitWebServer(e.Run.Base, e.Build.BaseStrings())
 }
 
+// WorksIn reports whether the setup's run treats dir — a folder under
+// /var/www, a volume's mount — as its working dir, read from the file alone:
+// every run.initCommands and run.start command is a `zsc noop` or names dir
+// as a path, and a built-in web server without run.start serves a
+// documentRoot inside dir. A run working in /var/www — a worker started
+// there, a web server serving /var/www or a folder of it — does not.
+func (e ZeropsYmlEntry) WorksIn(dir string) bool {
+	dir = path.Clean(dir)
+	commands := yamlStrings(e.Run.InitCommands)
+	if start := strings.TrimSpace(e.Run.Start); start != "" {
+		commands = append(commands, start)
+	} else if e.HasImplicitWebServer() && !pathWithin(path.Join(defaultWorkingDir, e.Run.DocumentRoot), dir) {
+		return false
+	}
+	for _, c := range commands {
+		if !strings.HasPrefix(strings.TrimSpace(c), "zsc noop") && !namesPathWithin(c, dir) {
+			return false
+		}
+	}
+	return true
+}
+
+// pathWithin reports whether p is dir or lies below it.
+func pathWithin(p, dir string) bool {
+	return p == dir || strings.HasPrefix(p, dir+"/")
+}
+
+// namesPathWithin reports whether command names dir, or a path below it, as
+// a whole word — /var/www/wsx is no path within /var/www/ws.
+func namesPathWithin(command, dir string) bool {
+	for rest := command; ; {
+		i := strings.Index(rest, dir)
+		if i < 0 {
+			return false
+		}
+		before, after := byte(' '), byte(' ')
+		if i > 0 {
+			before = rest[i-1]
+		}
+		if j := i + len(dir); j < len(rest) {
+			after = rest[j]
+		}
+		if strings.IndexByte(" \t'\"=(", before) >= 0 && strings.IndexByte(" \t'\";&|)/", after) >= 0 {
+			return true
+		}
+		rest = rest[i+len(dir):]
+	}
+}
+
+// yamlStrings normalizes a zerops.yaml field Zerops accepts as a string or a
+// list of strings.
+func yamlStrings(v any) []string {
+	switch v := v.(type) {
+	case string:
+		if v == "" {
+			return nil
+		}
+		return []string{v}
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
 // zeropsYmlPrimary / zeropsYmlFallback are the canonical zerops.yaml filenames
 // (primary + legacy fallback), centralized so the repeated literals don't drift —
 // and don't collide (goconst) with the EnvLayerYamlBaked label that shares the
@@ -364,23 +436,7 @@ type zeropsYmlBuild struct {
 
 // deployFilesList normalizes DeployFiles to []string regardless of YAML format.
 func (b zeropsYmlBuild) deployFilesList() []string {
-	switch v := b.DeployFiles.(type) {
-	case string:
-		if v == "" {
-			return nil
-		}
-		return []string{v}
-	case []any:
-		out := make([]string, 0, len(v))
-		for _, item := range v {
-			if s, ok := item.(string); ok {
-				out = append(out, s)
-			}
-		}
-		return out
-	default:
-		return nil
-	}
+	return yamlStrings(b.DeployFiles)
 }
 
 type zeropsYmlRun struct {
@@ -392,6 +448,8 @@ type zeropsYmlRun struct {
 	PrepareCommands any               `yaml:"prepareCommands"` // for /var/www detection
 	EnvVariables    map[string]string `yaml:"envVariables"`    // canonical location (zerops.yaml schema)
 	Volume          zeropsYmlVolume   `yaml:"volume"`          // a local-storage mount
+	InitCommands    any               `yaml:"initCommands"`    // string or []string
+	DocumentRoot    string            `yaml:"documentRoot"`    // a built-in web server's root below /var/www
 }
 
 // zeropsYmlVolume is run.volume: the local-storage service a runtime mounts,
@@ -407,23 +465,7 @@ type zeropsYmlPort struct {
 
 // BaseStrings normalizes Base to []string regardless of YAML format (string or []string).
 func (b zeropsYmlBuild) BaseStrings() []string {
-	switch v := b.Base.(type) {
-	case string:
-		if v == "" {
-			return nil
-		}
-		return []string{v}
-	case []any:
-		out := make([]string, 0, len(v))
-		for _, item := range v {
-			if s, ok := item.(string); ok {
-				out = append(out, s)
-			}
-		}
-		return out
-	default:
-		return nil
-	}
+	return yamlStrings(b.Base)
 }
 
 // hasZscNoop returns true if buildCommands contains "zsc noop".

@@ -1081,10 +1081,20 @@ CodeVolume *CodeVolume `json:"codeVolume,omitempty"`
   that does not mount the volume, mounts it elsewhere than the others or outside `/var/www` stops
   the pair. The dev half deploys from the checkout in `/var/www`, then every further dev service
   deploys its own dev setup from the same checkout; then the volume is filled once from that
-  checkout (left as it is when it already holds `.git`) and `zcp-devsup ctl reload` runs on every
-  dev service; the pair's stages build from the volume after the fill
+  checkout (left as it is when it already holds this repository) and `zcp-devsup ctl reload` runs on
+  every dev service; the pair's stages build from the volume after the fill
   (`TestStandup_VariantBFromAFreshTier_StandsUpAsOnePair`,
   `TestStandup_VariantB_FillsTheVolumeOnceAndEveryDevServiceDeploysItsOwnDevSetup`).
+- zcp never writes code into a volume it did not prove is a code volume. Adopt takes a local-storage
+  volume that several dev setups mount for a pair's code volume only when every dev setup works in
+  the mount — each `run.initCommands`/`run.start` command is a `zsc noop` or names the mount, and a
+  built-in web server serves a `documentRoot` inside it (`ops.ZeropsYmlEntry.WorksIn`) — and every
+  matched runtime finds nothing at the mount yet, an empty folder or a git checkout sharing a root
+  commit with its `/var/www`; anything else (a Laravel app and worker sharing `/var/www/storage`)
+  adopts as separate services. The fill writes only into an empty volume and refuses any other
+  content, naming the volume
+  (`TestBootstrapCompleteAdoptPlan_ASharedVolume_IsACodeVolumeOnlyWhenTheDevSetupsWorkInItAndItHoldsNoOtherContent`,
+  `TestCodeVolume_OnlyAnEmptyVolumeIsFilledAndOnlyThisRepositoryCountsAsItsCheckout`).
 - Stand-up builds every stage of a pair, variant A or B, each cross-deployed from the dev half with
   its own setup (`TestStandup_DeploysEveryStageOfAPair`).
 

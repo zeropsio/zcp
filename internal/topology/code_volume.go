@@ -30,6 +30,30 @@ type CodeVolume struct {
 	DevServices []DevServiceRef `json:"devServices"`
 }
 
+// VolumeContent is what a runtime finds at a code volume's mount path — the
+// proof zcp needs before it treats a local-storage volume as one holding code
+// and before it writes the repository onto it.
+type VolumeContent string
+
+const (
+	// VolumeAbsent: nothing is there yet — the volume is mounted by a deploy
+	// that has not run.
+	VolumeAbsent VolumeContent = "absent"
+	// VolumeEmpty: an empty folder.
+	VolumeEmpty VolumeContent = "empty"
+	// VolumeCheckout: a git checkout sharing history with the runtime's own
+	// repository in /var/www.
+	VolumeCheckout VolumeContent = "checkout"
+	// VolumeForeign: anything else — data zcp never writes code into.
+	VolumeForeign VolumeContent = "foreign"
+)
+
+// MayHoldCode reports whether the content leaves the volume free to hold the
+// repository: nothing yet, or this repository already.
+func (c VolumeContent) MayHoldCode() bool {
+	return c == VolumeAbsent || c == VolumeEmpty || c == VolumeCheckout
+}
+
 // DevServiceRef is a further dev service of a variant-B pair with the
 // zerops.yml dev setup it deploys (empty until known).
 type DevServiceRef struct {

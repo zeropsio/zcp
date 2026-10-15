@@ -25,7 +25,7 @@ func fillCodeVolumeAfterDeploy(ctx context.Context, ssh ops.SSHDeployer, stateDi
 	if meta == nil || meta.CodeVolume == nil || meta.Hostname != target || meta.CodeVolume.MountPath == "" {
 		return
 	}
-	filled, err := ops.FillCodeVolume(ctx, ssh, target, meta.CodeVolume.MountPath)
+	filled, err := ops.FillCodeVolume(ctx, ssh, target, meta.CodeVolume.Hostname, meta.CodeVolume.MountPath)
 	if err != nil {
 		result.Warnings = append(result.Warnings, err.Error())
 		return
