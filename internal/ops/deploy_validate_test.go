@@ -26,7 +26,7 @@ func TestValidateZeropsYmlContent_SameFindingsAsPathBased(t *testing.T) {
 	}
 
 	pathWarnings, pathErr := ValidateZeropsYml(dir, "app", "", DeployClassCross)
-	contentWarnings, contentErr := ValidateZeropsYmlContent(content, "app", "", DeployClassCross)
+	contentWarnings, contentErr := ValidateZeropsYmlContent(content, "zerops.yaml", "app", "", DeployClassCross)
 
 	if pathErr != nil || contentErr != nil {
 		t.Fatalf("unexpected errors: path=%v content=%v", pathErr, contentErr)
@@ -43,7 +43,7 @@ func TestValidateZeropsYmlContent_DM2SelfDeployViolation_ReturnsError(t *testing
 	t.Parallel()
 
 	content := []byte("zerops:\n  - setup: app\n    build:\n      deployFiles: dist\n")
-	_, err := ValidateZeropsYmlContent(content, "app", "", DeployClassSelf)
+	_, err := ValidateZeropsYmlContent(content, "zerops.yaml", "app", "", DeployClassSelf)
 	if err == nil {
 		t.Fatal("expected a DM-2 error for self-deploy with narrower-than-[.] deployFiles")
 	}
@@ -1636,6 +1636,20 @@ func TestReservedEnvNames_AtomCoverage(t *testing.T) {
 	for key := range runScopeReservedEnvKeys {
 		if !strings.Contains(atomText, "`"+key+"`") {
 			t.Errorf("runScopeReservedEnvKeys has %q but develop-reserved-env-names.md doesn't cite it (expected `%s` in backticks)", key, key)
+		}
+	}
+}
+
+// TestValidateZeropsYmlContent_ZeropsYmlRepo_NamesZeropsYml proves a repo that
+// keeps zerops.yml sees that name in the content-path findings, never zerops.yaml.
+func TestValidateZeropsYmlContent_ZeropsYmlRepo_NamesZeropsYml(t *testing.T) {
+	t.Parallel()
+	empty, _ := ValidateZeropsYmlContent([]byte("zerops: []\n"), "zerops.yml", "app", "", DeployClassCross)
+	missing, _ := ValidateZeropsYmlContent([]byte("zerops:\n  - setup: other\n"), "zerops.yml", "app", "", DeployClassCross)
+	bad, _ := ValidateZeropsYmlContent([]byte("zerops: [\n"), "zerops.yml", "app", "", DeployClassCross)
+	for _, w := range [][]string{empty, missing, bad} {
+		if len(w) != 1 || !strings.Contains(w[0], "zerops.yml") || strings.Contains(w[0], "zerops.yaml") {
+			t.Errorf("warnings = %q, want one naming zerops.yml only", w)
 		}
 	}
 }

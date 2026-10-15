@@ -54,8 +54,10 @@ func ValidateZeropsYml(workingDir, targetHostname, serviceType string, class Dep
 // ship. Same contract as ValidateZeropsYml (see its doc-comment);
 // ValidateZeropsYml itself delegates here after reading the file from
 // disk, so the two stay behaviorally identical for the same content.
-func ValidateZeropsYmlContent(content []byte, targetHostname, serviceType string, class DeployClass, roles ...topology.DeployRole) ([]string, error) {
-	doc, err := ParseZeropsYmlContent(content, "")
+// source is the file name the content was read from (zerops.yaml or
+// zerops.yml); the findings name it.
+func ValidateZeropsYmlContent(content []byte, source, targetHostname, serviceType string, class DeployClass, roles ...topology.DeployRole) ([]string, error) {
+	doc, err := ParseZeropsYmlContent(content, source)
 	if err != nil {
 		return []string{err.Error()}, nil //nolint:nilerr // parse error demoted to warning; authoritative validation is API-side
 	}

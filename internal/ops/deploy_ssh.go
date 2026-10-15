@@ -485,9 +485,11 @@ func deployFromCommitPrep(
 
 	// Same file-name fallback as ParseZeropsYml/DeployLocal: a pre-rename
 	// repo carries zerops.yml, and a working-tree deploy accepts it.
-	content, showErr := git.ReadFileAtCommit(ctx, gitRunner, workingDir, resolvedSHA, "zerops.yaml")
+	source := zeropsYmlPrimary
+	content, showErr := git.ReadFileAtCommit(ctx, gitRunner, workingDir, resolvedSHA, source)
 	if showErr != nil {
-		content, showErr = git.ReadFileAtCommit(ctx, gitRunner, workingDir, resolvedSHA, "zerops.yml")
+		source = zeropsYmlFallback
+		content, showErr = git.ReadFileAtCommit(ctx, gitRunner, workingDir, resolvedSHA, source)
 	}
 	if showErr != nil {
 		return "", nil, "", nil, platform.NewPlatformError(
@@ -497,7 +499,7 @@ func deployFromCommitPrep(
 		)
 	}
 	var vErr error
-	warnings, vErr = ValidateZeropsYmlContent([]byte(content), setupName, serviceType, class)
+	warnings, vErr = ValidateZeropsYmlContent([]byte(content), source, setupName, serviceType, class)
 	// DM-2 violation is a hard error — deploy aborts, warnings (if any)
 	// travel with the error for visibility but the caller won't issue a
 	// push.
