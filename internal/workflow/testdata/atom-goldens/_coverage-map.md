@@ -60,6 +60,7 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 | `develop-first-deploy-asset-pipeline-local` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
 | `develop-first-deploy-env-vars` | 5 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/first-deploy-unset-decision, develop/standup-stage-out-of-scope |
 | `develop-first-deploy-execute` | 5 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/first-deploy-unset-decision, develop/standup-stage-out-of-scope |
+| `develop-first-deploy-existing-repo` | 4 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-unset-decision, develop/standup-stage-out-of-scope |
 | `develop-first-deploy-intro` | 5 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/first-deploy-unset-decision, develop/standup-stage-out-of-scope |
 | `develop-first-deploy-promote-stage` | 1 | develop/first-deploy-recipe-implicit-standard |
 | `develop-first-deploy-scaffold-yaml` | 5 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/first-deploy-unset-decision, develop/standup-stage-out-of-scope |

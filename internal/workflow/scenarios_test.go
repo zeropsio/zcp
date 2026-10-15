@@ -1693,3 +1693,23 @@ func TestScenario_AdoptingAPairAndAddingAPartNamesTheStageNotANewService(t *test
 		t.Errorf("%s fired on the classic route", atom)
 	}
 }
+
+// TestScenario_S16_ExistingRepoRunsItsOwnDevFlow pins that develop starting on
+// a never-deployed dev service in a container carries, without a playbook
+// call, how a repository that already exists runs its own dev flow there.
+func TestScenario_S16_ExistingRepoRunsItsOwnDevFlow(t *testing.T) {
+	t.Parallel()
+
+	corpus, err := LoadAtomCorpus()
+	if err != nil {
+		t.Fatalf("LoadAtomCorpus: %v", err)
+	}
+	env := StateEnvelope{Phase: PhaseDevelopActive, Environment: EnvContainer,
+		Services:    []ServiceSnapshot{fixSnapBootstrappedNeverDeployedUnset("appdev", "nodejs@24", topology.RuntimeDynamic, topology.ModeDev)},
+		WorkSession: fixSession("appdev")}
+	out, err := Synthesize(env, corpus)
+	if err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	requireAtomIDsContain(t, "S16 existing repo", out, "develop-first-deploy-existing-repo")
+}

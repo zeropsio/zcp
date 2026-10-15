@@ -1,6 +1,6 @@
 ---
 id: develop/failure-tier-3
-atomIds: [develop-first-deploy-intro, develop-env-var-model, develop-change-drives-deploy, develop-deploy-modes, develop-env-var-channels, develop-first-deploy-env-vars, develop-first-deploy-scaffold-yaml, develop-http-diagnostic, develop-nodejs-greenfield-buildhint, develop-platform-rules-common, develop-reserved-env-names, develop-self-deploy-reproducibility, develop-checklist-dev-mode, develop-deploy-files-self-deploy, develop-dynamic-runtime-start-container, develop-first-deploy-write-app, develop-knowledge-pointers, develop-auto-close-semantics, develop-first-deploy-execute, develop-verify-matrix, develop-first-deploy-verify, develop-platform-rules-container, develop-strategy-awareness]
+atomIds: [develop-first-deploy-intro, develop-env-var-model, develop-first-deploy-existing-repo, develop-change-drives-deploy, develop-deploy-modes, develop-env-var-channels, develop-first-deploy-env-vars, develop-first-deploy-scaffold-yaml, develop-http-diagnostic, develop-nodejs-greenfield-buildhint, develop-platform-rules-common, develop-reserved-env-names, develop-self-deploy-reproducibility, develop-checklist-dev-mode, develop-deploy-files-self-deploy, develop-dynamic-runtime-start-container, develop-first-deploy-write-app, develop-knowledge-pointers, develop-auto-close-semantics, develop-first-deploy-execute, develop-verify-matrix, develop-first-deploy-verify, develop-platform-rules-container, develop-strategy-awareness]
 description: "Active session, third-iteration failure history — three failed deploy attempts on appdev (close-mode auto)."
 ---
 === develop-first-deploy-intro ===
@@ -12,8 +12,7 @@ here: establish `zerops.yaml` and the app, deploy, verify.
 
 That includes an adopted service imported without code: ACTIVE, maybe
 with the repository's source already in its working directory, but
-with nothing built, installed or started — its dependencies arrive
-with this first deploy's build.
+with nothing built, installed or started.
 
 Flow for each never-deployed runtime:
 
@@ -93,6 +92,41 @@ it by name.
 
 A set restarts the services whose deployed lines read the key
 (`readers`); nothing reads it → add the line, then deploy.
+
+---
+
+=== develop-first-deploy-existing-repo ===
+### A repository that already exists
+
+A repository you did not write — in the working directory, or one the
+person asks to run or develop here — runs in the dev service as its
+developers run it locally. Scaffold nothing for it.
+
+1. **Read how the repo is developed before you write any setup:**
+   `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, README, package scripts,
+   `Makefile`, `.devcontainer/`, `Procfile`, a compose file — the
+   install and dev commands, ports, system packages, host setting.
+2. **The dev setup stays minimal:** base, system packages in
+   `run.prepareCommands`, `run.ports`, `deployFiles: [.]`, no dependency
+   install in `buildCommands`; the first deploy puts its `run.start`
+   under the dev-server supervisor.
+3. **Size it before the first install** from the repo's own hints, else
+   for a JavaScript workspace with several apps
+   `zerops_scale serviceHostname="appdev" minRam=8 minCpu=2`.
+4. **Install as its docs say, in the running container:**
+   `ssh appdev "cd /var/www && <the repo's install command>"`. A
+   restart keeps the installed dependencies; a redeploy replaces the
+   container with what git carries (`notCarried` lists what is gone), so
+   install again after one.
+5. **Start each dev command as a named dev server**, the command exactly
+   as the repo runs it:
+   `zerops_dev_server action=start hostname="appdev" name="<name>" command="<the repo's dev command>" port=<port>`.
+6. **The subdomain reaches a dev server only beyond loopback:** use the
+   repo's own host or allowed-hosts setting, or a dev mode the repo
+   documents for remote use. Never put your own proxy (socat, a Node
+   pipe) in front of a dev server or edit the repo's config to widen its
+   bind. Without such a setting, tell the person plainly that it listens
+   only on loopback — do not improvise.
 
 ---
 

@@ -12,8 +12,7 @@ here: establish `zerops.yaml` and the app, deploy, verify.
 
 That includes an adopted service imported without code: ACTIVE, maybe
 with the repository's source already in its working directory, but
-with nothing built, installed or started — its dependencies arrive
-with this first deploy's build.
+with nothing built, installed or started.
 
 Flow for each never-deployed runtime:
 

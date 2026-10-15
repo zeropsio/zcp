@@ -26,7 +26,10 @@ Without a `zerops.yaml`, read the repo for these signals:
 
 Propose the parts to the person once, in one sentence ("I found web, api and
 packages/shared (a library). Deploy web and api as two parts?"), then write one
-setup per part plus a `dev` setup in the single root `zerops.yaml`.
+setup per part plus a `dev` setup in the single root `zerops.yaml`. The `dev`
+setup stays minimal — base, system packages in `run.prepareCommands`, ports —
+and installs no dependencies: they are installed in the running dev service
+the way the repo's docs install them.
 
 ## 2. One dev service or one per part
 
@@ -99,7 +102,11 @@ name. A repo whose `appstage` deploys `setup: prod` gains a `worker` part as
 
 ## 4. Dev servers
 
-- Vite rejects unknown hosts: set `server.allowedHosts` in `vite.config` to accept the
+- A repo that documents its own dev command runs that command as it stands, with its
+  own watcher, ports and host setting; the watcher rule below is for a command you
+  write. Never put your own proxy in front of a dev server that listens on loopback.
+- Vite rejects unknown hosts: use the repo's own allowed-hosts setting when it has one;
+  in an app you write, set `server.allowedHosts` in `vite.config` to accept the
   service subdomain.
 - The supervisor watches a declared dev server: give it a plain start command and
   `watch.paths` (plus `ignore`) in the declaration. Never add a runtime's own watcher

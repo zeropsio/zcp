@@ -6,6 +6,7 @@ runtimes: [dynamic]
 environments: [container]
 modes: [dev, standard]
 closeDeployModes: [auto, manual, unset]
+multiService: aggregate
 title: "Dynamic runtime — start dev server via zerops_dev_server"
 references-fields: [ops.DevServerResult.Running, ops.DevServerResult.HealthStatus, ops.DevServerResult.StartMillis, ops.DevServerResult.Reason, ops.DevServerResult.LogTail, ops.DevServerResult.Port, ops.DevServerResult.HealthPath, ops.DeployResult.DevServer]
 references-atoms: [develop-dev-server-reason-codes]
