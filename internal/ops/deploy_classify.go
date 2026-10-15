@@ -50,6 +50,11 @@ func classifySSHError(err error, sourceService, targetService string) *platform.
 
 	// Only classify OS/SSH-level errors — these NEVER appear in zcli progress output.
 	switch {
+	case strings.Contains(output, crewSaveFailedMarker):
+		saveStderr, _, _ := strings.Cut(output, crewSaveFailedMarker)
+		pe.Message = fmt.Sprintf("SSH deploy from %s to %s refused: the Mate's crew save failed, so this deploy is held and crewmates' unsaved work is not lost:\n%s",
+			sourceService, targetService, lastLines(saveStderr, 5))
+		pe.Suggestion = "Fix what the crew save reports (its stderr is above), then deploy again."
 	case strings.Contains(exitMsg, "signal: killed"):
 		pe.Message = fmt.Sprintf("SSH deploy from %s to %s killed (likely OOM)", sourceService, targetService)
 		pe.Suggestion = fmt.Sprintf("Process killed. Scale up: zerops_scale serviceHostname=%s minRam=2", sourceService)

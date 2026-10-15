@@ -1376,3 +1376,23 @@ func TestBuildSSHCommand_RunsTheCrewSaveBeforeThePush(t *testing.T) {
 		})
 	}
 }
+
+// TestDeploySSH_FailingCrewSave_NamesTheSaveAndHoldsTheDeploy: a refused
+// deploy says the Mate's crew save failed, quotes its stderr tail and that
+// the person's own deploy is held so crewmates' unsaved work is not lost.
+func TestDeploySSH_FailingCrewSave_NamesTheSaveAndHoldsTheDeploy(t *testing.T) {
+	t.Parallel()
+	pe := classifySSHError(&platform.SSHExecError{
+		Hostname: "builder",
+		Output:   "t3-crew-save: cannot write ref: disk full\n" + crewSaveFailedMarker + "\n",
+		Err:      fmt.Errorf("exit status 1"),
+	}, "builder", "app")
+	for _, want := range []string{"crew save", "disk full", "held", "unsaved work"} {
+		if !containsSubstring(pe.Message, want) {
+			t.Errorf("message should contain %q, got: %s", want, pe.Message)
+		}
+	}
+	if containsSubstring(pe.Message, crewSaveFailedMarker) {
+		t.Errorf("marker leaked into message: %s", pe.Message)
+	}
+}

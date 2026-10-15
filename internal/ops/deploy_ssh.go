@@ -634,7 +634,11 @@ func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup stri
 // save commits each copy's uncommitted and untracked work onto a ref in .git
 // first. A failing save stops the push — the work would be lost. Without a
 // crew there is no save and the push runs as before.
-const crewSaveCommand = `{ save="$(git rev-parse --git-common-dir)/t3-crew-save"; [ ! -x "$save" ] || "$save"; }`
+const crewSaveCommand = `{ save="$(git rev-parse --git-common-dir)/t3-crew-save"; [ ! -x "$save" ] || "$save" || { echo "` + crewSaveFailedMarker + `" >&2; exit 1; }; }`
+
+// crewSaveFailedMarker precedes the failing save's stderr in the SSH output,
+// so classifySSHError tells a refused save from a failed push.
+const crewSaveFailedMarker = "ZCP_CREW_SAVE_FAILED"
 
 // buildSSHCommandSHA builds the push command for a resolved deploy-from-
 // commit: extractedDir already holds sha's tree (see ExtractCommitToTemp)

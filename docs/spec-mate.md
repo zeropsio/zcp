@@ -797,6 +797,8 @@ the zcp that writes them (a dev build has no asset). A release never drops a for
 newest release zcp's update check sees (`internal/update`, `releases/latest`); when no published
 release reads the declaration's `version` yet, zcp writes no pin and says so.
 
+**Crew save.** Before every push from a service, zcp runs `<git-common-dir>/t3-crew-save` when it is executable; absent → the push runs as before; non-zero → the deploy is refused with the save's error.
+
 ```yaml
 run:
   prepareCommands:
