@@ -11,6 +11,15 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
+// deployFollowUpContext frees a started deploy from its caller: the build poll
+// and every step after it (public access, supervisor, attempt record) run on a
+// context that outlives the tool call, so a caller that drops mid-build
+// (client tool-call timeout, closed connection) still leaves a stage with its
+// subdomain and a recorded deploy. The poll's own timeout bounds the work.
+func deployFollowUpContext(ctx context.Context) context.Context {
+	return context.WithoutCancel(ctx)
+}
+
 const buildContainerSource = "build_container"
 
 // pollDeployBuild polls build status after deploy trigger and updates result in-place.

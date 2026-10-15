@@ -430,6 +430,7 @@ func runDeploySSHZCLIPush(
 	}
 
 	onProgress := buildProgressCallback(ctx, req)
+	ctx = deployFollowUpContext(ctx)
 	pollDeployBuild(ctx, client, projectID, result, onProgress, logFetcher, sshDeployer, stateDir)
 	if move.sentence != "" {
 		result.Message = move.sentence + " " + result.Message

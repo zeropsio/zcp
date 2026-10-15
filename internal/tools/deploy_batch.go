@@ -206,6 +206,7 @@ func (d batchDeployer) preflight(ctx context.Context, t ops.DeployBatchTarget) (
 // (hq_delivery.go) — the stand-up's first stage deploy builds `main` as it
 // is and has nothing to deliver.
 func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallback, targets []ops.DeployBatchTarget, deliver bool) *ops.DeployBatchResult {
+	ctx = deployFollowUpContext(ctx)
 	pollFn := func(c context.Context, r *ops.DeployResult, cb ops.ProgressCallback, lf platform.LogFetcher, s ops.SSHDeployer) {
 		pollDeployBuild(c, d.client, d.projectID, r, cb, lf, s, d.stateDir)
 	}

@@ -220,6 +220,7 @@ func RegisterDeployLocal(
 		}
 
 		onProgress := buildProgressCallback(ctx, req)
+		ctx = deployFollowUpContext(ctx)
 		pollDeployBuild(ctx, client, projectID, result, onProgress, logFetcher, nil, stateDir)
 
 		// L1 break-glass aftermath: a direct deploy on a push-delivering
