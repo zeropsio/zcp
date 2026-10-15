@@ -1,0 +1,10 @@
+# Fixture for devflow-own-runner-{a,b}.md (mono-z-dev-in-place): one Node 24 dev
+# service, running and empty until its dev setup deploys. The preseed plants
+# fixtures/repos/devflow-own-runner on appdev.
+
+services:
+  - hostname: appdev
+    type: nodejs@24
+    startWithoutCode: true
+    minContainers: 1
+    maxContainers: 1
