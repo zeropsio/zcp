@@ -177,9 +177,9 @@ type browserStepExec func(ctx context.Context, args []string) (stdout, stderr st
 
 // runBrowserSteps walks steps one at a time and answers with the JSON
 // []BrowserStepResult of the steps that got an answer. A step that answered
-// success:false is kept in its place and the walk goes on; a step with no
-// answer, or the end of ctx, ends the walk with an error, keeping the steps
-// before it.
+// success:false is kept in its place and the walk goes on, unless it names a
+// CDP wedge, which ends the walk there; a step with no answer, or the end of
+// ctx, ends the walk with an error, keeping the steps before it.
 func runBrowserSteps(ctx context.Context, steps [][]string, run browserStepExec) (string, string, bool, error) {
 	results := make([]BrowserStepResult, 0, len(steps))
 	stderr := &capBuffer{cap: browserOutputCap}
@@ -215,6 +215,11 @@ func runBrowserSteps(ctx context.Context, steps [][]string, run browserStepExec)
 			answer.Data = nil
 		}
 		results = append(results, BrowserStepResult{Command: step, Success: answer.Success, Result: answer.Data, Error: answer.Error})
+		// A wedged page would make every later step wait out the same CDP
+		// timeout; the browser is recycled for it anyway.
+		if _, wedged := scanStepsForCDPWedge(results[len(results)-1:]); wedged {
+			break
+		}
 	}
 	out, err := json.Marshal(results)
 	if err != nil {

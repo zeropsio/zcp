@@ -126,6 +126,27 @@ func TestRunBrowserSteps_UnansweredStepEndsTheWalk(t *testing.T) {
 	}
 }
 
+// TestRunBrowserSteps_WedgedStepEndsTheWalk pins that a step answering with a
+// CDP wedge ends the walk there: every later step that needs the page would
+// wait out the same 30 s CDP timeout on a page that spins forever.
+func TestRunBrowserSteps_WedgedStepEndsTheWalk(t *testing.T) {
+	var seen [][]string
+	run := scriptedSteps(map[string]answer{
+		"wait": {stdout: `{"success":false,"data":null,"error":"CDP command timed out: Runtime.evaluate"}`},
+	}, &seen)
+	stdout, _, _, err := runBrowserSteps(context.Background(), [][]string{{"open", "u"}, {"wait", "--fn", "x"}, {"get", "title"}, {"errors"}}, run)
+	if err != nil {
+		t.Fatalf("a wedge is an answer, not a walk error: %v", err)
+	}
+	var got []BrowserStepResult
+	if jerr := json.Unmarshal([]byte(stdout), &got); jerr != nil || len(got) != 2 {
+		t.Errorf("want open and the wedged wait, got %s (%v)", stdout, jerr)
+	}
+	if len(seen) != 2 {
+		t.Errorf("the walk must stop at the wedged step, sent %v", seen)
+	}
+}
+
 // TestRunBrowserSteps_OversizedAnswerIsCut pins that one step's answer past
 // the output cap becomes a failed step and flags the walk truncated, while
 // the steps after it still run.
