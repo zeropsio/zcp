@@ -183,16 +183,28 @@ func (h browserHost) start(ctx context.Context) error {
 }
 
 // stopBrowser stops the warm browser's service: systemd kills its whole
-// cgroup and removes its runtime and profile directories.
+// cgroup and removes its runtime and profile directories. It returns once
+// systemd has unloaded the service: stop answers while killed Chrome
+// processes are still exiting, and until its cgroup is empty the service
+// stays loaded and a new start of it is refused.
 func stopBrowser(ctx context.Context) error {
 	out, err := exec.CommandContext(ctx, "sudo", "-n", "systemctl", "stop", browserUnit).CombinedOutput()
-	if err == nil {
-		return nil
+	if err != nil {
+		if _, state, showErr := readWarmBrowser(ctx); showErr != nil || state != "inactive" {
+			return fmt.Errorf("stop the browser: %w: %s", err, strings.TrimSpace(string(out)))
+		}
 	}
-	if _, state, showErr := readWarmBrowser(ctx); showErr == nil && state == "inactive" {
-		return nil // already gone (collected after it ended)
+	for {
+		load, err := exec.CommandContext(ctx, "systemctl", "show", browserUnit, "--property=LoadState", "--value").Output()
+		if err == nil && strings.TrimSpace(string(load)) == "not-found" {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("the stopped browser is still loaded: %w", ctx.Err())
+		case <-time.After(browserLockPoll):
+		}
 	}
-	return fmt.Errorf("stop the browser: %w: %s", err, strings.TrimSpace(string(out)))
 }
 
 // readWarmBrowser reads the service's state and the last call's marker.
