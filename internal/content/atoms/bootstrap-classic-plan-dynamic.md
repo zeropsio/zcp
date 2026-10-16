@@ -30,6 +30,11 @@ If the plan you're about to submit includes a dynamic runtime (Node, Go, Python,
 ]
 ```
 
+A repo with several deployable parts: read
+`zerops_knowledge uri="zerops://playbooks/monorepo"` before you submit — the
+plan then names one stage per part with its setup in `stages` instead of
+`stageHostname`.
+
 Confirm dev/stage pairing with the user before submitting the plan. Mode + close-mode + git-push capability decisions all happen later in develop, not here.
 
 Add `"publicAccess": "none"` inside `runtime` when the user wants this runtime kept internal-only (no public subdomain ever) — omit the field entirely for the default (a public subdomain switches on automatically the first time it can).

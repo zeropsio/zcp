@@ -94,6 +94,11 @@ inside `runtime` instead of `stageHostname`, and use one spelling, never both. T
 service and all its stages are then one pair; a stage left out of `stages` becomes a
 standalone `simple` service.
 
+A variant-B pair (§2) adds its code volume inside `runtime` beside `stages`:
+`"codeVolume": {"hostname": "code", "mountPath": "/var/www/ws", "devServices": [{"hostname": "apidev", "setupName": "dev-api"}]}`
+— the local-storage service, the folder under `/var/www` where every dev service
+mounts it, and each further dev service with its dev setup.
+
 When a part is added to a repo that already has setups, nothing is renamed.
 An existing setup and its stage keep their names; only the new part gets a new
 setup. Never rename a `setup:` the repo already has — its stage deploys under that
@@ -112,6 +117,10 @@ name. A repo whose `appstage` deploys `setup: prod` gains a `worker` part as
   `watch.paths` (plus `ignore`) in the declaration. Never add a runtime's own watcher
   (`node --watch`, `--watch-path`, nodemon) — it goes blind after the first
   `git checkout`.
+- `.git` and `node_modules` never restart a server. An `ignore` entry is a path
+  from the repo root, ignoring itself and everything below it (`apps/api/dist`),
+  or a glob over that whole path where `*` stays within one folder: write
+  `apps/api/*.egg-info`, not `**/*.egg-info`.
 - A dev service with more than one heavy server (Angular, Analog, Next) declares the ones
   not being worked on `"autostart": false`; two such servers plus a deploy can exhaust
   the service's RAM and wedge it. `zerops_dev_server action=start` refuses a server that

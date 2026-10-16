@@ -277,6 +277,8 @@ func TestPlaybookMonorepo_ContentPins_PartRules(t *testing.T) {
 		{"SPA and API in one folder is one part", "SPA and API in one folder are one app"},
 		{"cross-part URLs from project variables", "project variable built on `${zeropsSubdomainHost}`"},
 		{"heavy build scaling", "`zsc scale cpu max 10m`"},
+		{"a variant-B plan names its code volume, mount folder and further dev services", `"codeVolume": {"hostname": "code", "mountPath": "/var/www/ws", "devServices": [{"hostname": "apidev", "setupName": "dev-api"}]}`},
+		{"watch ignore entries are repo-relative paths or full-path globs", "`apps/api/*.egg-info`, not `**/*.egg-info`"},
 	} {
 		if !strings.Contains(body, tt.needle) {
 			t.Errorf("%s: monorepo playbook missing %q", tt.name, tt.needle)
