@@ -147,7 +147,10 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// action description had to state the new keys+refs contract — the old
 		// "keys and values" wording drifted from the new behavior, so this is a
 		// correctness fix (tell == behavior), not surface bloat.
-		"zerops_env":                2546,
+		// Raised +39 (2546→2585): request says to ask when the feature using
+		// the value is being built — the env model's when-to-ask lines render
+		// only before the first deploy, so a later request never saw them.
+		"zerops_env":                2585,
 		"zerops_scale":              2242,
 		"zerops_import":             1910,
 		"zerops_discover":           879,

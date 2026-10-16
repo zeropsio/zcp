@@ -57,7 +57,7 @@ func envInputSchema() *jsonschema.Schema {
 		"action": {
 			Type:        "string",
 			Enum:        []any{"get", "set", "delete", "request", "generate-dotenv"},
-			Description: "get: keys + ${host_var} refs — reference a value as $VAR by name, never paste it. set: upsert KEY=VALUE pairs. delete: remove keys. request: ask the person for a value only they have; it goes to the vault, never the chat. generate-dotenv: writes a resolved .env from a local zerops.yaml.",
+			Description: "get: keys + ${host_var} refs — reference a value as $VAR by name, never paste it. set: upsert KEY=VALUE pairs. delete: remove keys. request: ask the person, when the feature using it is being built, for a value only they have; it goes to the vault, never the chat. generate-dotenv: writes a resolved .env from a local zerops.yaml.",
 		},
 		"serviceHostname": {
 			Type:        "string",

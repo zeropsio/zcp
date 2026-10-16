@@ -975,3 +975,14 @@ func TestEnvSet_AStoredKeysAnswerNamesTheVaultItsRequestNamed(t *testing.T) {
 		})
 	}
 }
+
+// A value only the person has was asked for after the first deploy, where the
+// env model's when-to-ask lines no longer render. The request action itself
+// says to ask when the feature using the value is being built.
+func TestEnvSchema_RequestAsksWhenTheFeatureUsingTheValueIsBeingBuilt(t *testing.T) {
+	t.Parallel()
+	action := envInputSchema().Properties["action"].Description
+	if !strings.Contains(action, "request: ask the person, when the feature using it is being built, for a value only they have") {
+		t.Errorf("action description = %q, want request to say to ask when the feature using it is being built", action)
+	}
+}
