@@ -44,6 +44,10 @@ type Container struct {
 	HTTP, Foreign map[int]int
 	// Crash names servers that end on their own right after they start.
 	Crash map[string]bool
+	// Settle names servers that answer starting for that many reads of the
+	// state after they start, and only then as running or as Crash says.
+	Settle   map[string]int
+	settling map[string]int
 	// Logs is each server's log.
 	Logs map[string][]string
 	// Commands records every command, in order.
@@ -215,6 +219,12 @@ func (c *Container) start(name string, restart bool) {
 		return
 	}
 	st.Desired = devsup.DesiredRunning
+	if n := c.Settle[name]; n > 0 {
+		if c.settling == nil {
+			c.settling = map[string]int{}
+		}
+		c.settling[name] = n
+	}
 	now := time.Date(2026, 10, 14, 21, 0, 0, 0, time.UTC)
 	st.StartedAt = &now
 	switch {
@@ -243,6 +253,10 @@ func (c *Container) state(only string) devsup.State {
 			server := *s
 			if code, ok := c.HTTP[c.declaredPort(n)]; ok && code == 0 && server.Status == devsup.StatusRunning && c.declaredPort(n) != 0 {
 				server.Status = devsup.StatusStarting
+			}
+			if c.settling[n] > 0 {
+				c.settling[n]--
+				server.Status, server.Exit = devsup.StatusStarting, nil
 			}
 			st.Servers[n] = server
 		}

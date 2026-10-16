@@ -61,7 +61,8 @@ func deploySuccessNextActions(_ *ops.DeployResult, mode topology.Mode, class top
 // deployNextActionsFor is deploySuccessNextActions, told the truth by the
 // supervisor when one answers: a dev setup under zcp-devsup starts its declared
 // servers itself, so the reply names every declared server with its status —
-// a crashed one with its exit and the way back — instead of calling the
+// read once each starting one has answered, within the start budget; a
+// crashed one with its exit and the way back — instead of calling the
 // container idle. A container without the supervisor or a declaration keeps
 // today's pointer.
 func deployNextActionsFor(ctx context.Context, ssh ops.SSHDeployer, root string, result *ops.DeployResult, mode topology.Mode, class topology.RuntimeClass) string {
@@ -69,7 +70,7 @@ func deployNextActionsFor(ctx context.Context, ssh ops.SSHDeployer, root string,
 	if ssh == nil || base == nextActionDeploySuccess {
 		return base
 	}
-	ds, err := ops.ReadDevServers(ctx, ssh, result.TargetService, root)
+	ds, err := ops.ReadDevServersSettled(ctx, ssh, result.TargetService, root)
 	if err != nil || len(ds.Servers()) == 0 {
 		return base
 	}

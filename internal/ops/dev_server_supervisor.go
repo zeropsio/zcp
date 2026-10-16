@@ -176,6 +176,42 @@ func ReadDevServers(ctx context.Context, ssh SSHDeployer, hostname, root string)
 
 // loopbackOnlyPorts reads `ss -ltn` output: the ports whose every listening
 // socket is bound to a loopback address.
+// devServersSettlePoll is how often ReadDevServersSettled reads again.
+const devServersSettlePoll = time.Second
+
+// ReadDevServersSettled is ReadDevServers once each of the host's declared
+// servers that was starting has answered running or crashed, or the start
+// budget (maxDevServerWait) has passed: a server that crashes a minute into
+// its start is named crashed, not starting. A failed read ends the wait.
+func ReadDevServersSettled(ctx context.Context, ssh SSHDeployer, hostname, root string) (*DevServers, error) {
+	return readDevServersSettled(ctx, ssh, hostname, root, time.Duration(maxDevServerWait)*time.Second, devServersSettlePoll)
+}
+
+func readDevServersSettled(ctx context.Context, ssh SSHDeployer, hostname, root string, budget, every time.Duration) (*DevServers, error) {
+	deadline := time.Now().Add(budget)
+	for {
+		ds, err := ReadDevServers(ctx, ssh, hostname, root)
+		if err != nil || !ds.starting() || time.Now().Add(every).After(deadline) {
+			return ds, err
+		}
+		select {
+		case <-ctx.Done():
+			return ds, nil
+		case <-time.After(every):
+		}
+	}
+}
+
+// starting reports whether one of the host's declared servers is starting.
+func (ds *DevServers) starting() bool {
+	for _, s := range ds.Servers() {
+		if ds.State.Servers[s.Name].Status == devsup.StatusStarting {
+			return true
+		}
+	}
+	return false
+}
+
 func loopbackOnlyPorts(out string) map[int]bool {
 	loopback := map[int]bool{}
 	public := map[int]bool{}

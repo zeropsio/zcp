@@ -245,6 +245,30 @@ func TestDeployNextActions_NamesEveryDeclaredDevServerACrashedOneWithItsExit(t *
 	}
 }
 
+// Four Spring servers answered "starting" in the deploy reply; one crashed a
+// minute later and nobody was told. The reply waits, within the start budget,
+// for each starting server's first running or crashed answer and names the
+// crashed one with its exit and the way back.
+func TestDeployNextActions_WaitsForEachStartingDevServerAndNamesOneThatCrashes(t *testing.T) {
+	t.Parallel()
+	decl := `{"version":1,"servers":[{"name":"gateway","port":8080,"command":"a","cwd":"."},{"name":"vets","port":8083,"command":"b","cwd":"."}]}`
+	c := devservertest.NewSupervised(decl)
+	c.Crash = map[string]bool{"vets": true}
+	c.Settle = map[string]int{"gateway": 1, "vets": 2}
+	c.Redeploy()
+
+	got := deployNextActionsFor(t.Context(), c, "/var/www", &ops.DeployResult{TargetService: "petclinicdev"}, topology.ModeDev, topology.RuntimeDynamic)
+
+	for _, want := range []string{"gateway running", "vets crashed (exit 1)", "action=logs", `name="vets"`, "zerops_verify"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("nextActions = %q, want it to contain %q", got, want)
+		}
+	}
+	if strings.Contains(got, "starting") {
+		t.Errorf("nextActions = %q, says starting for a server that answered within the budget", got)
+	}
+}
+
 // In variant B the code volume's declaration also holds the other dev
 // services' servers: a deploy's reply names only the deployed service's.
 func TestDeployNextActions_AVariantBDeploy_NamesOnlyThatDevServicesServers(t *testing.T) {

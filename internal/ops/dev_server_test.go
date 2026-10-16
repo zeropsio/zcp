@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/devsup"
 	"github.com/zeropsio/zcp/internal/ops/devservertest"
@@ -1012,5 +1013,26 @@ func TestDevServer_StartBesideARunningServerWhenTheCgroupIsUnreadable_AddsNoHeap
 	}
 	if msg := runDevServer(t, c, DevServerParams{Action: "start", Hostname: "appdev", Name: "api"}).Message; strings.Contains(msg, "NODE_OPTIONS=--max-old-space-size") || strings.Contains(msg, "RAM ceiling") {
 		t.Errorf("an unreadable cgroup must add no heap-cap line: %q", msg)
+	}
+}
+
+// The settled read waits for starting servers only within its budget: a
+// server still starting when the budget ends is read as starting.
+func TestReadDevServersSettled_AServerStillStartingWhenTheBudgetEndsIsReadStarting(t *testing.T) {
+	t.Parallel()
+	c := devservertest.NewSupervised(`{"version":1,"servers":[{"name":"vets","port":8083,"command":"b","cwd":"."}]}`)
+	c.Settle = map[string]int{"vets": 1000}
+	c.Redeploy()
+
+	start := time.Now()
+	ds, err := readDevServersSettled(t.Context(), c, "petclinicdev", "/var/www", 100*time.Millisecond, 10*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(start); took > time.Second {
+		t.Fatalf("the read took %s past a 100ms budget", took)
+	}
+	if got := ds.State.Servers["vets"].Status; got != devsup.StatusStarting {
+		t.Fatalf("vets = %q, want starting", got)
 	}
 }
