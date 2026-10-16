@@ -118,6 +118,10 @@ type PublicAccessInput struct {
 	// and http_root while the subdomain is on, are checked per server and
 	// port. Empty: one check on the service's preferred HTTP port.
 	DevPorts []DevPort
+	// HealthPath is the path the service's HTTP checks probe when it serves
+	// one other than `/`: its one dev server's declared healthPath, or the
+	// deployed setup's deploy.readinessCheck.httpGet.path. Empty: `/`.
+	HealthPath string
 }
 
 // DevPort is one declared dev server with a port and its supervisor status.
@@ -125,6 +129,9 @@ type DevPort struct {
 	Name   string
 	Port   int
 	Status devsup.Status
+	// HealthPath is the server's declared healthPath (devsup.Server), the
+	// path its checks probe. Empty: `/`.
+	HealthPath string
 	// LoopbackOnly: the server listens only at a loopback address, by
 	// design — verify judges it where it listens, not at the hostname.
 	LoopbackOnly bool
@@ -327,17 +334,12 @@ func verifyService(
 
 	// Group B: HTTP checks — http_internal (project-network reachability,
 	// every HTTP-class runtime) + http_public (subdomain/domain
-	// reachability, gated by the user's public-access intent). verify is a
-	// generic aliveness tool: it does NOT curl workflow-specific health
-	// paths because those paths are framework-dependent (recipes live at
-	// /api/status, bootstrap at /status, Laravel at /up, etc.). Workflow
-	// layers that know their paths iterate them themselves: the recipe
-	// workflow's feature-sweep-dev sub-step iterates plan.Features and
-	// curls each health path with a content-type contract; bootstrap's
-	// workflow guidance explicitly curls its /status endpoint. Those checks
-	// belong to the workflows, not to a generic "does this service
-	// respond?" probe. http_internal/http_public ask the two questions
-	// verify is qualified to answer (docs/spec-workflows.md §8 O3 PA-4).
+	// reachability, gated by the user's public-access intent). Each probes
+	// the health path the service declares (a dev server's healthPath, the
+	// deployed readinessCheck path), else `/`; feature paths stay with the
+	// workflows that know them. http_internal/http_public ask the two
+	// questions verify is qualified to answer (docs/spec-workflows.md §8 O3
+	// PA-4).
 	needHTTP := rc == RuntimeDynamic || rc == RuntimeImplicit || rc == RuntimeStatic
 	if needHTTP {
 		wg.Go(func() {
@@ -351,7 +353,7 @@ func verifyService(
 			if perPort {
 				checks = append(checks, devPortInternalChecks(ctx, probe, svc, publicAccess.DevPorts)...)
 			} else {
-				checks = append(checks, checkHTTPInternal(ctx, probe, svc, publicAccess.DeferredStart))
+				checks = append(checks, checkHTTPInternal(ctx, probe, svc, publicAccess.DeferredStart, publicAccess.HealthPath))
 			}
 
 			obs, obsErr := ObservePublicAccess(ctx, client, projectID, svc)
@@ -365,7 +367,7 @@ func verifyService(
 			case perPort && obs.Observed.Subdomain == topology.SubdomainOn:
 				checks = append(checks, devPortPublicChecks(ctx, client, probe, projectID, svc, publicAccess.DevPorts)...)
 			default:
-				checks = append(checks, buildHTTPPublicChecks(ctx, client, probe, projectID, svc, publicAccess.Record.Intent, obs, listener)...)
+				checks = append(checks, buildHTTPPublicChecks(ctx, client, probe, projectID, svc, publicAccess.Record.Intent, obs, listener, publicAccess.HealthPath)...)
 			}
 			hostRefusedInside(checks)
 			mu.Lock()

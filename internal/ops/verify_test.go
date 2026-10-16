@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1497,6 +1498,76 @@ func TestVerify_DevPorts_EachDeclaredPort(t *testing.T) {
 	}
 	if public < 2 {
 		t.Errorf("public probes = %d, want one per running port: %s", public, probed)
+	}
+}
+
+// TestVerify_DevPorts_ProbeEachServersHealthPath: a dev server that declares
+// a healthPath is checked at that path, inside and on its subdomain address;
+// one that declares none is checked at `/`.
+func TestVerify_DevPorts_ProbeEachServersHealthPath(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{{
+			ID: "svc-1", Name: "appdev", Status: "RUNNING", SubdomainAccess: true,
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"},
+			Ports:                []platform.Port{{Port: 3000, HTTPSupport: true}, {Port: 8080, HTTPSupport: true}},
+		}}).
+		WithProject(&platform.Project{ID: "proj-1", SubdomainHost: "1df2.prg1.zerops.app"})
+	doer := &recordingHTTPDoer{}
+	input := defaultPublicAccessInput()
+	input.DevPorts = []DevPort{
+		{Name: "web", Port: 3000, Status: devsup.StatusRunning},
+		{Name: "api", Port: 8080, Status: devsup.StatusRunning, HealthPath: "/actuator/health"},
+	}
+	if _, err := VerifyWithMeta(context.Background(), mock, platform.NewMockLogFetcher(), doer, "proj-1", "appdev", RuntimeMeta{}, input); err != nil {
+		t.Fatalf("VerifyWithMeta: %v", err)
+	}
+	want := []string{
+		"http://appdev:3000/",
+		"http://appdev:8080/actuator/health",
+		"https://appdev-1df2-3000.prg1.zerops.app/",
+		"https://appdev-1df2-8080.prg1.zerops.app/actuator/health",
+	}
+	for _, u := range want {
+		if !slices.Contains(doer.urls, u) {
+			t.Errorf("%s not probed; probed: %v", u, doer.urls)
+		}
+	}
+	for _, u := range []string{"http://appdev:8080/", "https://appdev-1df2-8080.prg1.zerops.app/"} {
+		if slices.Contains(doer.urls, u) {
+			t.Errorf("api probed at / although it declares /actuator/health: %v", doer.urls)
+		}
+	}
+}
+
+// TestVerify_HealthPath_ProbedInsideAndPublic: a service whose health path is
+// not `/` (a deployed readinessCheck path, or its one dev server's
+// healthPath) is checked at that path, over the project network and on its
+// subdomain address.
+func TestVerify_HealthPath_ProbedInsideAndPublic(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{{
+			ID: "svc-1", Name: "apistage", Status: "RUNNING", SubdomainAccess: true,
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"},
+			Ports:                []platform.Port{{Port: 3000, HTTPSupport: true}},
+		}}).
+		WithProject(&platform.Project{ID: "proj-1", SubdomainHost: "1df2.prg1.zerops.app"})
+	doer := &recordingHTTPDoer{}
+	input := defaultPublicAccessInput()
+	input.HealthPath = "/api/health"
+	if _, err := VerifyWithMeta(context.Background(), mock, platform.NewMockLogFetcher(), doer, "proj-1", "apistage", RuntimeMeta{}, input); err != nil {
+		t.Fatalf("VerifyWithMeta: %v", err)
+	}
+	for _, u := range []string{"http://apistage:3000/api/health", "https://apistage-1df2-3000.prg1.zerops.app/api/health"} {
+		if !slices.Contains(doer.urls, u) {
+			t.Errorf("%s not probed; probed: %v", u, doer.urls)
+		}
+	}
+	for _, u := range doer.urls {
+		if strings.HasSuffix(u, ":3000/") || strings.HasSuffix(u, ".zerops.app/") {
+			t.Errorf("probed / although the health path is /api/health: %v", doer.urls)
+		}
 	}
 }
 
