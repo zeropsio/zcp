@@ -446,10 +446,13 @@ func declarationProblem(ds *DevServers) error {
 }
 
 // wantedServer is the declaration entry a start asks for: the declared one,
-// with what the call passes replacing its command, port and cwd.
+// with what the call passes replacing its command, port, health path and cwd.
 func wantedServer(p DevServerParams, name string, declared devsup.Server, isDeclared bool) (devsup.Server, error) {
 	want := declared
 	want.Name = name
+	if p.HealthPath != "" {
+		want.HealthPath = p.HealthPath
+	}
 	if !isDeclared && strings.TrimSpace(p.Command) == "" {
 		return devsup.Server{}, platform.NewPlatformError(platform.ErrInvalidParameter,
 			"Missing dev server command",
@@ -516,8 +519,10 @@ func startDevServer(ctx context.Context, ssh SSHDeployer, client platform.Client
 			return nil, err
 		}
 	}
+	// A reload restarts a server whose run changed and starts a new one; a
+	// restart of any other is the supervisor's own.
 	verb := devServerActionStart
-	if action == devServerActionRestart && !changed {
+	if action == devServerActionRestart && isDeclared && declared.SameRun(want) {
 		verb = devServerActionRestart
 	}
 	begun := time.Now()
@@ -572,10 +577,7 @@ func probeStarted(ctx context.Context, ssh SSHDeployer, ds *DevServers, result *
 	} else if wait > maxDevServerWait {
 		wait = maxDevServerWait
 	}
-	healthPath := p.HealthPath
-	if healthPath == "" {
-		healthPath = "/"
-	}
+	healthPath := probedPath(p, ds, name)
 	result.Port, result.HealthPath = port, healthPath
 	probeOut, _, probeDeadline, probeErr := runHealthProbe(ctx, ssh, p.Hostname, port, healthPath, wait)
 	st, err := supervisorCtl(ctx, ssh, p.Hostname, devServerActionStatus, name)
@@ -599,6 +601,18 @@ func probeStarted(ctx context.Context, ssh SSHDeployer, ds *DevServers, result *
 	}
 	applyProbeFailure(result, probeLine, probeDeadline, name, healthPath, wait, server.Status)
 	return result, nil
+}
+
+// probedPath is the HTTP path a probe of name reads: the call's, else the
+// one its declaration names, else /.
+func probedPath(p DevServerParams, ds *DevServers, name string) string {
+	if p.HealthPath != "" {
+		return p.HealthPath
+	}
+	if declared, _ := ds.Server(name); declared.HealthPath != "" {
+		return declared.HealthPath
+	}
+	return "/"
 }
 
 // applyCrash reports a server the supervisor holds as crashed, with its exit
@@ -698,10 +712,7 @@ func statusDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds
 		result.Message = fmt.Sprintf("Dev server %s is %s (no HTTP port).", label, server.Status)
 		return result, nil
 	}
-	healthPath := p.HealthPath
-	if healthPath == "" {
-		healthPath = "/"
-	}
+	healthPath := probedPath(p, ds, name)
 	result.Port, result.HealthPath = port, healthPath
 	out, _ := ssh.ExecSSH(ctx, p.Hostname, fmt.Sprintf(
 		"curl -s -o /dev/null -w '%%{http_code}' --max-time 2 http://localhost:%d%s", port, healthPath))

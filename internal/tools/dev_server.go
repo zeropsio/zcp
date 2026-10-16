@@ -63,7 +63,7 @@ func devServerInputSchema() *jsonschema.Schema {
 		},
 		"healthPath": {
 			Type:        "string",
-			Description: "HTTP path to probe for readiness. Defaults to '/' if omitted. Example: '/api/health', '/health', '/'. Must return 2xx or 3xx to count as ready. Ignored when noHttpProbe=true.",
+			Description: "HTTP path to probe for readiness. A start declares it for the server, so later calls probe it without passing it again; defaults to '/' when none is declared. Example: '/api/health', '/health', '/'. Must return 2xx or 3xx to count as ready. Ignored when noHttpProbe=true.",
 		},
 		"waitSeconds": {
 			Type:        "integer",

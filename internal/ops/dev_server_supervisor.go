@@ -393,8 +393,8 @@ func WriteDevDeclaration(ctx context.Context, ssh SSHDeployer, hostname, root st
 }
 
 // DeclareDevServer returns d with s declared: unchanged when an entry of the
-// same name runs the same thing, that entry replaced when it runs something
-// else, s appended otherwise. changed says whether the file needs writing.
+// same name runs the same thing for the same service and health path, that
+// entry replaced otherwise, s appended when none has its name. changed says whether the file needs writing.
 func DeclareDevServer(d devsup.Declaration, s devsup.Server) (devsup.Declaration, bool) {
 	out := devsup.Declaration{Version: d.Version, Servers: slices.Clone(d.Servers)}
 	if out.Version == 0 {
@@ -404,7 +404,7 @@ func DeclareDevServer(d devsup.Declaration, s devsup.Server) (devsup.Declaration
 		if have.Name != s.Name {
 			continue
 		}
-		if have.SameRun(s) && have.Service == s.Service {
+		if have.SameRun(s) && have.Service == s.Service && have.HealthPath == s.HealthPath {
 			return d, false
 		}
 		out.Servers[i] = s
