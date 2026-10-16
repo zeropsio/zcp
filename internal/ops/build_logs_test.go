@@ -67,6 +67,52 @@ func TestFetchBuildLogs_Success(t *testing.T) {
 	}
 }
 
+// The platform logs a build container's out-of-memory alert on the build's
+// service stack without the build's tag (seen live 2026-10-16 on a Next.js
+// build: "granted 8.00GB, max: 8.00GB" and "OOM Alert: Process 'next-build
+// (v16' terminated"), so a tag-scoped tail ends mid-build with no error line.
+// The build's log carries those error lines in time order, once each, and
+// nothing from another build or the builder's own chatter.
+func TestAFailedBuildsLogCarriesThePlatformsOutOfMemoryAlertForItsBuildContainer(t *testing.T) {
+	t.Parallel()
+
+	const (
+		creating = "Creating an optimized production build ..."
+		npmError = "npm error something earlier"
+		granted  = "granted 8.00GB, max: 8.00GB, minFree: 1.00GB"
+		oom      = "OOM Alert: Process 'next-build (v16' terminated - memory limit exceeded. Consider increasing the memory limits (min or minFree) in the service configuration."
+		restart  = "┃   ZEROPS BUILD CONTAINER STARTED   ┃"
+	)
+	mock := platform.NewMock().WithLogAccess(&platform.LogAccess{URL: "https://log.example.com/logs"})
+	fetcher := newRecordingLogFetcher([]platform.LogEntry{
+		{Timestamp: "2026-10-16T03:40:00Z", Facility: "local0", Severity: "Error", Message: "OOM Alert: an older build's alert"},
+		{Timestamp: "2026-10-16T03:53:00Z", Facility: "local0", Severity: "Error", Tag: "zbuilder@av-1", Message: npmError},
+		{Timestamp: "2026-10-16T03:53:17Z", Facility: "local0", Severity: "Informational", Tag: "zbuilder@av-1", Message: creating},
+		{Timestamp: "2026-10-16T03:59:55.737026329Z", Facility: "local0", Severity: "Error", Message: granted},
+		{Timestamp: "2026-10-16T03:59:55.737026329Z", Facility: "local0", Severity: "Error", Message: oom},
+		{Timestamp: "2026-10-16T03:59:55.7804Z", Facility: "local0", Severity: "Informational", Tag: "zenv", Message: "Error: exit status 1"},
+		{Timestamp: "2026-10-16T03:59:59.1957Z", Facility: "local0", Severity: "Informational", Tag: "zbuilder@av-1", Message: restart},
+	})
+	event := &platform.AppVersionEvent{
+		ID: "av-1",
+		Build: &platform.BuildInfo{
+			ServiceStackID: strPtr("build-svc-1"),
+			PipelineStart:  strPtr("2026-10-16T03:51:33.711080515Z"),
+		},
+	}
+
+	logs := FetchBuildLogs(context.Background(), mock, fetcher, "proj-1", event, 50)
+
+	want := []string{npmError, creating, granted, oom, restart}
+	if fmt.Sprint(logs) != fmt.Sprint(want) {
+		t.Fatalf("build log =\n%q\nwant\n%q", logs, want)
+	}
+	alerts := fetcher.lastCall(t)
+	if alerts.ServiceID != "build-svc-1" || alerts.Severity != "error" || len(alerts.Tags) != 0 {
+		t.Errorf("alert query = %+v, want the build service stack's error lines whatever their tag", alerts)
+	}
+}
+
 func TestFetchBuildLogs_NoBuildInfo(t *testing.T) {
 	t.Parallel()
 

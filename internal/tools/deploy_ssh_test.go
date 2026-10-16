@@ -649,6 +649,50 @@ func TestDeployTool_BuildFailed_WithBuildLogs(t *testing.T) {
 	}
 }
 
+// A build the platform stopped for memory says so in the deploy reply: the
+// platform's OOM alert for the build container (logged without the build's
+// tag) reaches buildLogs and failureClassification, so the agent does not
+// rebuild on its dev container to find a cause the log tail never showed.
+func TestAFailedBuildStoppedForMemorySaysSoInTheDeployReply(t *testing.T) {
+	t.Parallel()
+
+	const oom = "OOM Alert: Process 'next-build (v16' terminated - memory limit exceeded. Consider increasing the memory limits (min or minFree) in the service configuration."
+	buildSvcID := "build-svc-99"
+	pipelineStart := "2026-10-16T03:51:33.711080515Z"
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "webstage"}}).
+		WithAppVersionEvents([]platform.AppVersionEvent{{
+			ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-1", Status: statusBuildFailed, Sequence: 1,
+			Build: &platform.BuildInfo{ServiceStackID: &buildSvcID, PipelineStart: &pipelineStart},
+		}}).
+		WithLogAccess(&platform.LogAccess{URL: "https://log.example.com/logs"})
+	logFetcher := platform.NewMockLogFetcher().WithEntries([]platform.LogEntry{
+		{Timestamp: "2026-10-16T03:53:17Z", Facility: "local0", Severity: "Informational", Tag: "zbuilder@av-1", Message: "Creating an optimized production build ..."},
+		{Timestamp: "2026-10-16T03:59:55.737026329Z", Facility: "local0", Severity: "Error", Message: oom},
+		{Timestamp: "2026-10-16T03:59:59.1957Z", Facility: "local0", Severity: "Informational", Tag: "zbuilder@av-1", Message: "┃   ZEROPS BUILD CONTAINER STARTED   ┃"},
+	})
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", &stubSSH{output: []byte("ok")}, authInfo, logFetcher, runtime.Info{}, "", testDeployEngine(t), nil, DevsupSource{})
+
+	result := callTool(t, srv, "zerops_deploy", map[string]any{"targetService": "webstage"})
+
+	var parsed ops.DeployResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &parsed); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if !slices.Contains(parsed.BuildLogs, oom) {
+		t.Errorf("buildLogs = %q, want the platform's OOM alert", parsed.BuildLogs)
+	}
+	cls := parsed.FailureClassification
+	if cls == nil || !slices.Contains(cls.Signals, "build:oom-killed") || !strings.Contains(cls.LikelyCause, "next-build") {
+		t.Fatalf("failureClassification = %+v, want build:oom-killed naming the killed next-build", cls)
+	}
+	if !strings.Contains(parsed.Suggestion, "8 GB") {
+		t.Errorf("suggestion = %q, want the build container's 8 GB cap", parsed.Suggestion)
+	}
+}
+
 type stubSSHWithReadiness struct {
 	deployOutput []byte
 	deployErr    error

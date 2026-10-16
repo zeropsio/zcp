@@ -118,7 +118,7 @@ func buildSignalLibrary() []failureSignal {
 		{
 			id:         "build:oom-killed",
 			phases:     []DeployFailurePhase{PhaseBuild},
-			logRegex:   regexp.MustCompile(`(?:Killed\b|Out of memory|OOMKilled)`),
+			logRegex:   regexp.MustCompile(`(?:OOM Alert: Process '[^']*' terminated|Killed\b|Out of memory|OOMKilled)`),
 			requireLog: true,
 			build:      buildOOMKilled,
 		},
@@ -495,12 +495,17 @@ func buildComposerMissing(_ string) *topology.DeployFailureClassification {
 	}
 }
 
-func buildOOMKilled(_ string) *topology.DeployFailureClassification {
+// buildOOMKilled: the platform reports a build container out of memory as
+// "OOM Alert: Process '…' terminated" on the build's service stack. Build
+// containers get the same resources for every runtime, 8 GB RAM at most
+// (zerops-docs features/pipeline.mdx, "Build hardware resources").
+func buildOOMKilled(match string) *topology.DeployFailureClassification {
 	return &topology.DeployFailureClassification{
-		Category:        topology.FailureClassBuild,
-		LikelyCause:     "Build container OOM-killed during compile/install.",
-		SuggestedAction: "Increase build container RAM via zerops.yaml `build.containerOptions` or split heavy install steps. Webpack/Vite builds frequently need 2-4 GB.",
-		Signals:         []string{"build:oom-killed"},
+		Category:    topology.FailureClassBuild,
+		LikelyCause: fmt.Sprintf("The build container ran out of memory (the log says %q).", match),
+		SuggestedAction: "A build container gets at most 8 GB RAM, the same for every runtime; scaling the service does not raise it. " +
+			"Lower the peak memory of the build step that was running (e.g. fewer parallel build workers), or split it into smaller steps.",
+		Signals: []string{"build:oom-killed"},
 	}
 }
 

@@ -1037,6 +1037,51 @@ func TestAFailedDeployWithNoKnownSignalSaysTheNewContainerFailedAfterStart(t *te
 	}
 }
 
+// The platform's OOM alert for a build container names the cause: the build
+// ran out of memory at the build container's cap, which is 8 GB for every
+// runtime, so the next step lowers the build's memory instead of pointing at
+// a build setting that does not exist.
+func TestABuildContainerOutOfMemoryAlertNamesTheAlertAndTheFixedBuildMemoryCap(t *testing.T) {
+	t.Parallel()
+
+	got := ClassifyDeployFailure(FailureInput{
+		Phase: PhaseBuild,
+		BuildLogs: []string{
+			"Creating an optimized production build ...",
+			"granted 8.00GB, max: 8.00GB, minFree: 1.00GB",
+			"OOM Alert: Process 'next-build (v16' terminated - memory limit exceeded. Consider increasing the memory limits (min or minFree) in the service configuration.",
+			"┃   ZEROPS BUILD CONTAINER STARTED   ┃",
+		},
+	})
+	assertClassification(t, got, topology.FailureClassBuild, "build:oom-killed", "OOM Alert: Process 'next-build (v16' terminated")
+	if !strings.Contains(got.SuggestedAction, "8 GB") {
+		t.Errorf("SuggestedAction = %q, want it to name the build container's 8 GB cap", got.SuggestedAction)
+	}
+	if strings.Contains(got.SuggestedAction, "containerOptions") {
+		t.Errorf("SuggestedAction = %q names build.containerOptions, which zerops.yaml does not have", got.SuggestedAction)
+	}
+}
+
+// A build that failed with no known signal does not claim its log tail holds
+// the failing stderr: the tail may end mid-build with no error line. The
+// reply says so and names what is established — the build container's caps.
+func TestABuildFailureWithNoKnownSignalSaysTheTailMayHoldNoErrorLine(t *testing.T) {
+	t.Parallel()
+
+	got := ClassifyDeployFailure(FailureInput{Phase: PhaseBuild, BuildLogs: []string{"Creating an optimized production build ..."}})
+	if got == nil {
+		t.Fatal("no classification")
+	}
+	if strings.Contains(got.SuggestedAction, "for the exact stderr") {
+		t.Errorf("SuggestedAction = %q claims the tail holds the exact stderr", got.SuggestedAction)
+	}
+	for _, want := range []string{"without an error line", "no reason", "8 GB RAM and 1 hour"} {
+		if !strings.Contains(got.SuggestedAction, want) {
+			t.Errorf("SuggestedAction = %q, want it to contain %q", got.SuggestedAction, want)
+		}
+	}
+}
+
 // The platform reports a container that ran out of memory at start as
 // "OOM Alert: Process '…' terminated" (turbo stage at the 0.12 GB default).
 func TestAnOOMAlertInTheRuntimeLogIsClassifiedAsOutOfMemory(t *testing.T) {

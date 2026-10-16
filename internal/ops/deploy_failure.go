@@ -177,7 +177,8 @@ func baselineForPhase(in FailureInput) *topology.DeployFailureClassification {
 		// or another tool bypassed our gate. Name the trap explicitly
 		// instead of pointing the agent at buildCommands bisection.
 		if len(in.BuildLogs) > 0 {
-			cls.SuggestedAction = "Read the build log tail (deploy response `buildLogs`, event `buildLogTail`) for the exact stderr; fix buildCommands or dependencies in zerops.yaml."
+			cls.SuggestedAction = "Read the build log tail (deploy response `buildLogs`, event `buildLogTail`): if it ends on the failing command's output, fix buildCommands or dependencies in zerops.yaml. " +
+				"If it ends without an error line, the platform gave no reason ZCP could read; a build container's caps are 8 GB RAM and 1 hour, the same for every runtime."
 		} else {
 			cls.SuggestedAction = "Build container exited before producing logs (typically <10s). The most common cause is a reserved key in run.envVariables — HOSTNAME, Path, or path — which crashes runtime-init before any build output. Remove that key from zerops.yaml run.envVariables. If those aren't present, re-check buildCommands syntax + manifests. See the develop-reserved-env-names atom for the full reserved-key set."
 		}
