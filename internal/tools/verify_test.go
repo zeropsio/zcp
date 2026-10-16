@@ -349,6 +349,52 @@ func TestVerifyTool_PassesIntentFromMeta(t *testing.T) {
 	}
 }
 
+// verify marked a healthy worker stage degraded on "subdomain access not
+// enabled": the pair's dev half serves HTTP, the worker declares no port. A
+// service that declares no port gets no HTTP check, so nothing about HTTP
+// degrades it.
+func TestVerifyTool_AServiceThatDeclaresNoPortIsNotDegradedOnHTTP(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	servesHTTP := true
+	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+		Hostname: "difydev", Mode: topology.ModeDev,
+		BootstrapSession: "s", BootstrappedAt: "2026-10-16",
+		PrimarySetupName: "dev",
+		Stages:           []topology.StageRef{{Hostname: "apistage", SetupName: "api"}, {Hostname: "workerstage", SetupName: "worker"}},
+		ServesHTTP:       &servesHTTP,
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-w", Name: "workerstage", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/python@3.14", ServiceStackTypeCategoryName: "USER"}, Status: serviceStatusRunning, SubdomainAccess: false},
+		}).
+		WithLogAccess(&platform.LogAccess{URL: "http://logs.test"})
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterVerify(srv, mock, platform.NewMockLogFetcher(), "proj-1", dir, runtime.Info{}, nil)
+
+	result := callTool(t, srv, "zerops_verify", map[string]any{"serviceHostname": "workerstage"})
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", getTextContent(t, result))
+	}
+	var vr ops.VerifyResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &vr); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if vr.Status != ops.StatusHealthy {
+		t.Errorf("status = %q, want %q; checks: %+v", vr.Status, ops.StatusHealthy, vr.Checks)
+	}
+	for _, c := range vr.Checks {
+		if c.Name == "http_public" || c.Name == "http_internal" {
+			t.Errorf("a service that declares no port got %s %s: %q", c.Name, c.Status, c.Detail)
+		}
+	}
+}
+
 // TestDeferredStartDurabilityNote pins RC-A′: a passing verify on a dev-mode
 // dynamic runtime annotates the transience; durable runtimes / non-healthy
 // results get no note.

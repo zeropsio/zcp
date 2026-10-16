@@ -97,12 +97,13 @@ func (rc RuntimeClass) String() string {
 // `topology.CanonicalBareForm` before the switch so the bare-name cases
 // (`runtimePHPNginx`, `runtimeNginx`, etc.) match regardless of which
 // shape the API returns.
+//
+// A recorded "serves HTTP" never stands in for ports the service does not
+// declare: the record is one per dev/stage pair, so a worker stage carries
+// its dev half's answer.
 func classifyRuntime(serviceType string, hasPorts bool, recordedServesHTTP *bool) RuntimeClass {
-	if recordedServesHTTP != nil {
-		if !*recordedServesHTTP {
-			return RuntimeWorker
-		}
-		hasPorts = true
+	if recordedServesHTTP != nil && !*recordedServesHTTP {
+		return RuntimeWorker
 	}
 	canonical := topology.CanonicalBareForm(serviceType)
 	base, _, _ := strings.Cut(canonical, "@")

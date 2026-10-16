@@ -431,6 +431,9 @@ func runtimeClassificationProvenance(rc RuntimeClass, runtimeMeta RuntimeMeta) s
 	if !runtimeMeta.Recorded {
 		return ""
 	}
+	if runtimeMeta.ServesHTTP && rc == RuntimeWorker {
+		return "classified worker: the service declares no port"
+	}
 	if runtimeMeta.Setup != "" {
 		if runtimeMeta.ServesHTTP {
 			return fmt.Sprintf("classified HTTP runtime from deployed setup %q (has HTTP)", runtimeMeta.Setup)
