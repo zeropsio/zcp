@@ -336,6 +336,52 @@ func TestSupervisor_ReloadRestartsOnlyTheChangedServerAndDropsARemovedOne(t *tes
 	eventually(t, "api to listen again", func() bool { return listening(api) })
 }
 
+// An agent edits .zcp/dev-servers.json and asks for a restart or a start; it
+// never has to know about `ctl reload`.
+func TestSupervisor_StartAndRestartRunTheDeclarationAsEditedWithoutAReload(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	web := freePort(t)
+	srv := r.listener("web", web)
+	r.declare(srv)
+	s := r.supervisor()
+	s.Boot()
+	eventually(t, "web to listen", func() bool { return listening(web) })
+
+	ranLast := func(marker string) bool {
+		b, _ := os.ReadFile(LogPath(r.state, "web"))
+		starts := strings.Split(string(b), "--- zcp-devsup: start #")
+		return strings.Contains(starts[len(starts)-1], marker)
+	}
+	v2 := srv
+	v2.Command += " # v2"
+	r.declare(v2)
+	if err := s.Restart("web"); err != nil {
+		t.Fatal(err)
+	}
+	if !ranLast("# v2") {
+		t.Fatal("restart ran the command from before the edit")
+	}
+	if sv := mustServer(t, s.State(), "web"); sv.Restarts != 1 {
+		t.Fatalf("the edit restarted web twice: %+v", sv)
+	}
+
+	if err := s.Stop("web"); err != nil {
+		t.Fatal(err)
+	}
+	released(t, web)
+	v3 := srv
+	v3.Command += " # v3"
+	r.declare(v3)
+	if err := s.Start("web"); err != nil {
+		t.Fatal(err)
+	}
+	if !ranLast("# v3") {
+		t.Fatal("start ran the command from before the edit")
+	}
+	eventually(t, "web to listen again", func() bool { return listening(web) })
+}
+
 func TestSupervisor_AnInvalidOrNewerDeclarationChangesNothingAndIsReported(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)

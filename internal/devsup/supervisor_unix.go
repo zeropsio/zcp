@@ -205,8 +205,9 @@ func (s *Supervisor) reapLeft() {
 	wg.Wait()
 }
 
-// reconcile brings the servers to the declaration and the kept state.
-func (s *Supervisor) reconcile(boot bool) {
+// reconcile brings the servers to the declaration and the kept state, and
+// answers what it did to each.
+func (s *Supervisor) reconcile(boot bool) map[string]action {
 	decl, err := LoadDeclaration(s.cfg.Root)
 
 	s.mu.Lock()
@@ -297,6 +298,7 @@ func (s *Supervisor) reconcile(boot bool) {
 	s.startAll(start)
 	s.syncWatches()
 	s.persist()
+	return acts
 }
 
 // stopAll ends the named servers' groups in parallel and waits for them.
@@ -510,10 +512,12 @@ func (s *Supervisor) watchFired(name, rel string) {
 // not hold.
 var ErrUnknownServer = errors.New("unknown server")
 
-// Start sets a server to run and starts it unless it runs.
+// Start re-reads the declaration, sets a server to run and starts it unless it
+// runs.
 func (s *Supervisor) Start(name string) error {
 	s.op.Lock()
 	defer s.op.Unlock()
+	s.reconcile(false)
 	if err := s.setDesired(name, DesiredRunning); err != nil {
 		return err
 	}
@@ -541,12 +545,17 @@ func (s *Supervisor) Stop(name string) error {
 	return nil
 }
 
-// Restart stops a server if it runs and starts it again.
+// Restart re-reads the declaration, then stops a server if it runs and starts
+// it again, unless the re-read just did.
 func (s *Supervisor) Restart(name string) error {
 	s.op.Lock()
 	defer s.op.Unlock()
+	acts := s.reconcile(false)
 	if err := s.setDesired(name, DesiredRunning); err != nil {
 		return err
+	}
+	if a := acts[name]; a == actRestart || a == actStart {
+		return nil
 	}
 	s.mu.Lock()
 	s.servers[name].starting = true
