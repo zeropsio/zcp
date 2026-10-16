@@ -395,9 +395,37 @@ func readWorkingTreeHead(ctx context.Context, gitRunner git.SSHRunner, workingDi
 	// git alone — say so where the agent will see it. Self-deploy is
 	// excluded by construction; the explicit-sha path never reaches here.
 	if dirty {
-		head.warnings = append(head.warnings, dirtyCrossDeployWarning(targetName, sourceName, sha))
+		head.warnings = append(head.warnings,
+			dirtyCrossDeployWarning(targetName, sourceName, sha)+" "+uncommittedIn(ctx, gitRunner, workingDir, sourceName))
 	}
 	return head, nil
+}
+
+// uncommittedShown is how many uncommitted paths a dirty warning names.
+const uncommittedShown = 10
+
+// uncommittedIn names what made a cross-deploy dirty and the directory it was
+// read in: the agent's own `git status` may have run in another tree — the
+// deploy copy beside a code volume — and found it clean.
+func uncommittedIn(ctx context.Context, gitRunner git.SSHRunner, workingDir, sourceName string) string {
+	where := fmt.Sprintf("Uncommitted in %s on %s", workingDir, sourceName)
+	out, _, err := gitRunner.Run(ctx, workingDir, fmt.Sprintf("git status --porcelain | head -n %d", uncommittedShown+1))
+	if err != nil {
+		return where + "."
+	}
+	var paths []string
+	for line := range strings.Lines(out) {
+		if line = strings.TrimRight(line, "\r\n"); len(line) > 3 {
+			paths = append(paths, line[3:])
+		}
+	}
+	switch {
+	case len(paths) == 0:
+		return where + "."
+	case len(paths) > uncommittedShown:
+		paths = append(paths[:uncommittedShown], "and more")
+	}
+	return fmt.Sprintf("%s: %s.", where, strings.Join(paths, ", "))
 }
 
 // selfDeployPreflightFacts runs the combined GF-12 self-deploy preflight

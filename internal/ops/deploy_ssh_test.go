@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/zeropsio/zcp/internal/auth"
+	"github.com/zeropsio/zcp/internal/ops/git"
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
@@ -1221,8 +1222,9 @@ func TestDeploySSH_CrossDeployDirty_WarnsNotReproducible(t *testing.T) {
 		})
 	sha := "fullhead1234567"
 	ssh := &mockSSHDeployer{results: []sshResult{
-		{output: []byte(sha + "\nM")}, // HeadStatus: dirty (non-empty porcelain char)
-		{output: []byte("ok")},        // login+push
+		{output: []byte(sha + "\nM")},     // HeadStatus: dirty (non-empty porcelain char)
+		{output: []byte(" M index.js\n")}, // the uncommitted paths
+		{output: []byte("ok")},            // login+push
 	}}
 	authInfo := testAuthInfo()
 
@@ -1235,7 +1237,7 @@ func TestDeploySSH_CrossDeployDirty_WarnsNotReproducible(t *testing.T) {
 		t.Fatalf("result.Dirty = false, want true")
 	}
 	want := fmt.Sprintf(
-		"app received HEAD %s plus uncommitted changes from builder — not reproducible from git. Commit on builder and redeploy, or pass sha=%q to ship an exact commit.",
+		"app received HEAD %s plus uncommitted changes from builder — not reproducible from git. Commit on builder and redeploy, or pass sha=%q to ship an exact commit. Uncommitted in /var/www on builder: index.js.",
 		sha[:7], sha,
 	)
 	found := false
@@ -1246,6 +1248,46 @@ func TestDeploySSH_CrossDeployDirty_WarnsNotReproducible(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("Warnings = %#v, want to contain %q", result.Warnings, want)
+	}
+}
+
+// TestDeploySSH_CrossDeployDirty_WarningNamesTheUncommittedFilesAndTheDirectory:
+// the dirty warning says what is uncommitted and in which directory it was
+// read, so an agent whose own `git status` ran elsewhere — the deploy copy
+// beside a code volume — sees which tree shipped and what to commit there.
+func TestDeploySSH_CrossDeployDirty_WarningNamesTheUncommittedFilesAndTheDirectory(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	root := t.TempDir()
+	repo := filepath.Join(root, "dify")
+	env := isolatedGitEnv(t)
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustRunGit(t, repo, env, "init", "-q")
+	if err := os.WriteFile(filepath.Join(repo, "app.js"), []byte("v1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mustRunGit(t, repo, env, "add", "-A")
+	mustRunGit(t, repo, env, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "v1")
+	for name, body := range map[string]string{"app.js": "v2\n", "footer.js": "new\n"} {
+		if err := os.WriteFile(filepath.Join(repo, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	runner := git.SSHRunner{Executor: localShell{root: root}, Hostname: "apidev"}
+	head, err := readWorkingTreeHead(t.Context(), runner, "/var/www/dify", DeployClassCross, "apidev", "webstage")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !head.dirty || len(head.warnings) != 1 {
+		t.Fatalf("dirty = %v, warnings = %#v, want one dirty warning", head.dirty, head.warnings)
+	}
+	if want := "Uncommitted in /var/www/dify on apidev: app.js, footer.js."; !strings.HasSuffix(head.warnings[0], want) {
+		t.Errorf("warning = %q, want it to end %q", head.warnings[0], want)
 	}
 }
 
