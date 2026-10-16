@@ -266,6 +266,29 @@ func TestDeployNextActions_NamesEveryDeclaredDevServerACrashedOneWithItsExit(t *
 	}
 }
 
+// The deploy reply named a crashed server and the way back, and the agent's
+// paste of that call was refused: zerops_dev_server requires hostname. The
+// logs and start calls of the way back name the dev service the deploy
+// targeted, so each is accepted as written.
+func TestDeployNextActions_TheWayBackForACrashedServerNamesItsDevServiceSoTheCallIsAccepted(t *testing.T) {
+	t.Parallel()
+	decl := `{"version":1,"servers":[{"name":"web","port":3000,"command":"a","cwd":"."},{"name":"lingui","port":3001,"command":"b","cwd":"."}]}`
+	c := devservertest.NewSupervised(decl)
+	c.Crash = map[string]bool{"lingui": true}
+	c.Redeploy()
+
+	got := deployNextActionsFor(t.Context(), c, "/var/www", &ops.DeployResult{TargetService: "appdev"}, topology.ModeDev, topology.RuntimeDynamic)
+
+	for _, want := range []string{
+		`zerops_dev_server action=logs hostname="appdev" name="lingui"`,
+		`zerops_dev_server action=start hostname="appdev" name="lingui"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("nextActions = %q, want the call %q", got, want)
+		}
+	}
+}
+
 // The agent stopped beat on purpose, and the next deploy's reply listed beat
 // under the servers to read, fix and start. A server whose desired state is
 // stopped is named as stopped and is never one to fix.
@@ -334,7 +357,7 @@ func TestDeployNextActions_AServerThatCrashedOnTheServicesTaskLimitIsNamedWithTh
 		"api crashed (exit 1): the service's task limit (300) was reached, 297 tasks run now; the supervisor starts it again after a backoff, one server at a time",
 		"web crashed (exit 1): the service's task limit (300) was reached, 297 tasks run now; the supervisor stopped starting it.",
 		`Check api again in about 30 s with zerops_dev_server action=status hostname="difydev".`,
-		`zerops_dev_server action=start name="web"`,
+		`zerops_dev_server action=start hostname="difydev" name="web"`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("nextActions = %q, want it to contain %q", got, want)

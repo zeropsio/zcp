@@ -125,7 +125,7 @@ func deployNextActionsFor(ctx context.Context, ssh ops.SSHDeployer, root string,
 		if nc := result.NotCarried; nc != nil && nc.Count > 0 {
 			fmt.Fprintf(&b, " The deploy did not carry %d git-ignored path(s) (%s): reinstall dependencies first.", nc.Count, strings.Join(nc.Sample, ", "))
 		}
-		fmt.Fprintf(&b, " For each server that is down: read zerops_dev_server action=logs name=%q, fix it, then zerops_dev_server action=start name=%q.", down[0], down[0])
+		fmt.Fprintf(&b, " For each server that is down: read zerops_dev_server action=logs hostname=%q name=%q, fix it, then zerops_dev_server action=start hostname=%q name=%q.", result.TargetService, down[0], result.TargetService, down[0])
 	}
 	if len(unsettled) > 0 {
 		b.WriteString(" " + ops.RecheckSentence(result.TargetService, "", unsettled))

@@ -142,6 +142,14 @@ var atomLintRules = []atomLintRule{
 		category: "tool-call-shape",
 		pattern:  regexp.MustCompile(`\bselect:zerops_`),
 	},
+	// zerops_dev_server requires hostname: a call that names arguments but
+	// not hostname right after its action is refused as the agent pastes it.
+	// A bare `zerops_dev_server action=start` names the action, not a call.
+	{
+		name:     "dev-server-call-missing-hostname",
+		category: "tool-call-shape",
+		pattern:  regexp.MustCompile(`zerops_dev_server action=[a-z]+ [a-gi-zA-Z][a-zA-Z]*=`),
+	},
 }
 
 // LintAtomCorpus scans every atom body (frontmatter excluded) for the
