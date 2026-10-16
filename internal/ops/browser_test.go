@@ -263,6 +263,53 @@ func TestBrowserBatch_BuildsCanonicalShape(t *testing.T) {
 	}
 }
 
+// TestBrowserBatch_PageLoadsAtTheLeadingViewport: a page that reads
+// matchMedia or measures only on load is captured at the default width when
+// the viewport is set after the open, so a leading set viewport runs before
+// it. The steps come back in the order they ran, the agent's commands in the
+// order sent; a set viewport later in the list stays where it was sent.
+func TestBrowserBatch_PageLoadsAtTheLeadingViewport(t *testing.T) {
+	batch := [][]string{
+		{"set", "viewport", "390", "844"},
+		{"open", "https://example.com/app"},
+		{"wait", "--fn", "performance.getEntriesByName('first-contentful-paint').length>0", "--timeout", "5000"},
+		{"snapshot", "-i", "-c"},
+		{"set", "viewport", "1440", "900"},
+		{"errors"},
+		{"console"},
+		{"network", "requests", "--status", "400-599"},
+	}
+	fake := &fakeBrowserRunner{runStdout: makeStdout(t, batch)}
+	defer OverrideBrowserRunnerForTest(fake)()
+
+	result, err := BrowserBatch(context.Background(), BrowserBatchInput{
+		URL: "https://example.com/app",
+		Commands: [][]string{
+			{"set", "viewport", "390", "844"},
+			{"snapshot", "-i", "-c"},
+			{"set", "viewport", "1440", "900"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := parseStdinBatch(t, fake.lastStdin)
+	if len(got) != len(batch) {
+		t.Fatalf("expected %d commands in batch, got %d: %v", len(batch), len(got), got)
+	}
+	for i, want := range batch {
+		if !slices.Equal(got[i], want) {
+			t.Errorf("batch[%d] = %v, want %v", i, got[i], want)
+		}
+	}
+	if len(result.Steps) != len(batch) || !slices.Equal(result.Steps[0].Command, batch[0]) {
+		t.Errorf("steps must come back in the order they ran, the viewport first: %+v", result.Steps)
+	}
+	if len(result.ConsoleOutput) == 0 {
+		t.Errorf("ConsoleOutput should still be read from the [console] step")
+	}
+}
+
 func TestBrowserBatch_StripsAgentOpenAndClose(t *testing.T) {
 	// Agent erroneously includes open/close in their Commands. Tool must
 	// strip both: the canonical open is the only one, and a close would end

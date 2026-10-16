@@ -33,7 +33,8 @@ type BrowserBatchInput struct {
 	// [network requests]. Each element is one agent-browser command as a
 	// string array — e.g. ["snapshot", "-i", "-c"], ["click", "@e1"],
 	// ["find", "role", "link", "click", "--name", "Users"]. Any "open",
-	// "close" or "eval" elements are stripped.
+	// "close" or "eval" elements are stripped. A leading ["set", "viewport",
+	// w, h] runs before the open instead.
 	Commands [][]string `json:"commands,omitempty"`
 
 	// TimeoutSeconds bounds the whole call, the wait for the browser
@@ -302,6 +303,9 @@ const (
 	browserCmdClose = "close"
 	// browserCmdOpen is the agent-browser open command.
 	browserCmdOpen = "open"
+	// browserCmdSet and browserSubcmdViewport form [set viewport w h].
+	browserCmdSet         = "set"
+	browserSubcmdViewport = "viewport"
 	// browserCmdTab and browserCmdWindow open, switch and close tabs and
 	// contexts; stripped from caller commands, since the tool keeps the warm
 	// browser's base tab and closes every other one when a call ends.
@@ -824,7 +828,9 @@ func scanStepsForCDPWedge(steps []BrowserStepResult) (string, bool) {
 // window could close or switch its base tab, and dedicated commands replace
 // eval. screenshotPath == "" omits the
 // screenshot step entirely; fullPage captures the whole page, not the
-// viewport.
+// viewport. A leading [set viewport w h] runs before the open, so the page
+// loads at that size instead of reflowing from the default width; the steps
+// come back in the order they ran, the caller's commands in the order sent.
 func buildCanonicalBatch(url string, commands [][]string, screenshotPath string, fullPage bool) [][]string {
 	inner := make([][]string, 0, len(commands))
 	for _, cmd := range commands {
@@ -842,6 +848,9 @@ func buildCanonicalBatch(url string, commands [][]string, screenshotPath string,
 		inner = append(inner, cmd)
 	}
 	batch := make([][]string, 0, len(inner)+6)
+	if len(inner) > 0 && isSetViewport(inner[0]) {
+		batch, inner = append(batch, inner[0]), inner[1:]
+	}
 	batch = append(batch, []string{browserCmdOpen, url}, browserPaintWait)
 	batch = append(batch, inner...)
 	if screenshotPath != "" {
@@ -857,6 +866,11 @@ func buildCanonicalBatch(url string, commands [][]string, screenshotPath string,
 		[]string{browserCmdNetwork, browserSubcmdRequests, browserFlagStatus, browserStatusRange4xx5xx},
 	)
 	return batch
+}
+
+// isSetViewport reports whether a command is [set viewport ...].
+func isSetViewport(cmd []string) bool {
+	return len(cmd) > 1 && cmd[0] == browserCmdSet && cmd[1] == browserSubcmdViewport
 }
 
 // isCommand reports whether a step's command starts with the given name.
