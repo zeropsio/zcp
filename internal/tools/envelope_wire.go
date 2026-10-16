@@ -29,9 +29,17 @@ import (
 // statusResult renders a lifecycle Response and appends the envelope it was
 // rendered from. Every handler that already owns an envelope returns through
 // here, so the rendered markdown and the machine-readable state can never
-// describe different moments.
+// describe different moments. It is action="status"'s carrier, so the
+// envelope keeps the whole attempt history.
 func statusResult(resp workflow.Response) *mcp.CallToolResult {
 	return textResult(workflow.AppendEnvelope(workflow.RenderStatus(resp), wireEnvelope(resp.Envelope)))
+}
+
+// briefingResult is statusResult for the develop briefing, a reply other than
+// action="status": the markdown renders from the whole envelope, the fence
+// carries replyEnvelope.
+func briefingResult(resp workflow.Response) *mcp.CallToolResult {
+	return textResult(workflow.AppendEnvelope(workflow.RenderStatus(resp), replyEnvelope(resp.Envelope)))
 }
 
 // wireEnvelope is the envelope as this zcp sends it: from field-order step
@@ -42,6 +50,34 @@ func wireEnvelope(env workflow.StateEnvelope) workflow.StateEnvelope {
 		return env
 	}
 	return env.WithParts(nil)
+}
+
+// replyEnvelope is the envelope a reply other than action="status" carries:
+// wireEnvelope with each host's deploy and verify history cut to its last
+// attempt, every host kept. Mate reads only the last attempt and which hosts
+// have one (docs/spec-mate.md §1.4); action="status", the recovery primitive,
+// keeps the whole history.
+func replyEnvelope(env workflow.StateEnvelope) workflow.StateEnvelope {
+	env = wireEnvelope(env)
+	if env.WorkSession == nil {
+		return env
+	}
+	ws := *env.WorkSession
+	ws.Deploys = lastAttempts(ws.Deploys)
+	ws.Verifies = lastAttempts(ws.Verifies)
+	env.WorkSession = &ws
+	return env
+}
+
+func lastAttempts(byHost map[string][]workflow.AttemptInfo) map[string][]workflow.AttemptInfo {
+	if byHost == nil {
+		return nil
+	}
+	out := make(map[string][]workflow.AttemptInfo, len(byHost))
+	for host, attempts := range byHost {
+		out[host] = attempts[max(len(attempts)-1, 0):]
+	}
+	return out
 }
 
 // withFreshEnvelope appends a freshly computed StateEnvelope to a successful
@@ -107,7 +143,7 @@ func freshEnvelope(
 		fmt.Fprintf(os.Stderr, "zcp: compute envelope for tool result: %v\n", err)
 		return nil
 	}
-	envelope = wireEnvelope(envelope)
+	envelope = replyEnvelope(envelope)
 	return &envelope
 }
 

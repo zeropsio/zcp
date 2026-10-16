@@ -193,11 +193,16 @@ One reducer reads both carriers, in this order:
 | `zerops_workflow` bootstrap `start`/`complete`/`skip`/`status` | JSON | `envelope` key |
 | `zerops_standup` | JSON | `envelope` key |
 
-The three prose carriers route through `tools.statusResult` / `tools.withFreshEnvelope`; the
-first two render and append from the *same* envelope, so the markdown and the machine-readable
-state can never describe different moments. The JSON carriers each call `tools.freshEnvelope`
-**after** their mutation has succeeded, so the envelope describes the state that mutation
-produced.
+The three prose carriers route through `tools.statusResult` / `tools.briefingResult` /
+`tools.withFreshEnvelope`; the first two render and append from the *same* envelope, so the
+markdown and the machine-readable state can never describe different moments. The JSON carriers
+each call `tools.freshEnvelope` **after** their mutation has succeeded, so the envelope describes
+the state that mutation produced.
+
+Only `action="status"` carries the work session's whole deploy and verify history. Every other
+carrier keeps each host's last deploy and last verify attempt, and every host that has one
+(`tools.replyEnvelope`): Mate reads only the last attempt and which hosts have any, and the
+recovery primitive still has the rest. `TestEnvelope_AttemptHistory_OnlyStatusCarriesItWhole`.
 
 Error results carry **no** envelope, under either carrier. An error is a leaf payload
 (`spec-workflows.md` P4); attaching state to one would let a reducer read a failed call as

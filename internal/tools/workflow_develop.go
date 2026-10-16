@@ -354,7 +354,7 @@ func renderDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 			""), WithRecoveryStatus()), nil, nil
 	}
 	plan := workflow.BuildPlan(envelope)
-	return statusResult(workflow.Response{
+	return briefingResult(workflow.Response{
 		Envelope: envelope,
 		Guidance: workflow.BodiesOf(matches),
 		Plan:     &plan,
