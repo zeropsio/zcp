@@ -950,6 +950,21 @@ func devServerURL(hostname string, port int, healthPath string) string {
 	return "http://" + net.JoinHostPort(hostname, strconv.Itoa(port)) + healthPath
 }
 
+// DevServerSubdomainURL is the subdomain address of the port a dev server
+// result probed — Zerops gives each HTTP port its own — or "" when that port
+// serves no HTTP or its address is not known. Ask it only while the service's
+// subdomain is on.
+func DevServerSubdomainURL(ctx context.Context, client platform.Client, projectID string, result *DevServerResult) string {
+	if result.Port == 0 {
+		return ""
+	}
+	svc, err := LookupService(ctx, client, projectID, result.Hostname)
+	if err != nil || !slices.ContainsFunc(svc.Ports, func(p platform.Port) bool { return p.Port == result.Port && (p.HTTPSupport || isHTTPScheme(p)) }) {
+		return ""
+	}
+	return SubdomainURLForPort(ctx, client, projectID, svc, result.Port)
+}
+
 // pollIntervalAsShellDuration returns the pollIntervalMillis as a shell
 // sleep argument ("0.500" for 500ms).
 func pollIntervalAsShellDuration() string {

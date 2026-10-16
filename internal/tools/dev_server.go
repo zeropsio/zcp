@@ -157,13 +157,19 @@ func RegisterDevServer(srv *mcp.Server, d DevServerDeps) {
 		// the supervisor reports running just proved a live listener — its
 		// status is running only once the port accepts connections — so force
 		// listener=true regardless of the runtime's static deferred-start
-		// classification.
+		// classification. The address it reports is the started server's own
+		// port's, not the service's first HTTP port's.
 		if result.Running && isDevServerStartAction(input.Action) {
 			scratch := &ops.DeployResult{}
 			ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, input.Hostname, scratch, true)
-			resp.SubdomainURL = scratch.SubdomainURL
+			if scratch.SubdomainURL != "" {
+				resp.SubdomainURL = ops.DevServerSubdomainURL(ctx, client, projectID, result)
+			}
+			if pa := scratch.PublicAccess; pa != nil {
+				pa.URL = resp.SubdomainURL
+				resp.PublicAccess = pa
+			}
 			resp.Warnings = append(resp.Warnings, scratch.Warnings...)
-			resp.PublicAccess = scratch.PublicAccess
 		}
 		if d.CarriesParts {
 			if env := freshEnvelope(ctx, stateDir, client, projectID, d.RtInfo); env != nil {
