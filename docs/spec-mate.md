@@ -976,7 +976,7 @@ after confirming the group is still the one it started (the leader's `/proc` sta
 `leaderStart`; a reused pid is left alone, and so is a group whose leader is gone, since nothing
 identifies it). A leader that ends on its own takes its group with it: the supervisor kills what is
 left of the group at once, while the pgid still cannot be reused. **Start** waits up to 10 s for its `port` to be free;
-still busy → the start fails with `exit: {code: -1, signal: "port_busy"}`. No `pkill`, `pgrep` or
+still busy → the start fails with `exit: {code: -1, signal: "port_busy"}`; a deploy or `zerops_dev_server` reply names it as a server whose port stayed busy (`TestDeployNextActions_AServerWhosePortStayedBusyIsNamedAsZeropsDevServerNamesIt`). No `pkill`, `pgrep` or
 command-pattern match anywhere (MODEL §9/0).
 
 **First desired state.** A declared name the state file does not hold yet — every name on an empty

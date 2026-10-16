@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/zeropsio/zcp/internal/devsup"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/topology"
 )
@@ -86,30 +85,13 @@ func deployNextActionsFor(ctx context.Context, ssh ops.SSHDeployer, root string,
 	var states, down, unsettled []string
 	for _, s := range ds.Servers() {
 		st, ok := ds.State.Servers[s.Name]
-		switch {
-		case !ok:
-			states = append(states, s.Name+" not started")
+		verdict := ops.JudgeServer(st, ok)
+		states = append(states, s.Name+" "+verdict.Phrase)
+		if verdict.Down {
 			down = append(down, s.Name)
-		case st.Status == devsup.StatusRunning:
-			states = append(states, s.Name+" running")
-		case st.Status == devsup.StatusStopped:
-			states = append(states, s.Name+" stopped")
-		case st.Status == devsup.StatusStarting:
-			states = append(states, s.Name+" still starting")
+		}
+		if verdict.Unsettled {
 			unsettled = append(unsettled, s.Name)
-		case st.Status == devsup.StatusCrashed && st.TaskLimit != nil:
-			states = append(states, s.Name+" crashed"+exitNote(st.Exit)+": "+ops.TaskLimitNote(*st.TaskLimit, st.RetryPending))
-			if st.RetryPending {
-				unsettled = append(unsettled, s.Name)
-			} else {
-				down = append(down, s.Name)
-			}
-		case st.Status == devsup.StatusCrashed && st.RetryPending:
-			states = append(states, s.Name+" crashed while starting"+exitNote(st.Exit)+"; "+ops.RetryPendingNote)
-			unsettled = append(unsettled, s.Name)
-		default:
-			states = append(states, s.Name+" "+string(st.Status)+exitNote(st.Exit))
-			down = append(down, s.Name)
 		}
 	}
 	var b strings.Builder
@@ -132,17 +114,6 @@ func deployNextActionsFor(ctx context.Context, ssh ops.SSHDeployer, root string,
 	}
 	b.WriteString(" Then run zerops_verify.")
 	return b.String()
-}
-
-// exitNote is a stopped or crashed server's last exit, "" when none is known.
-func exitNote(exit *devsup.Exit) string {
-	switch {
-	case exit == nil:
-		return ""
-	case exit.Signal != "":
-		return " (" + exit.Signal + ")"
-	}
-	return fmt.Sprintf(" (exit %d)", exit.Code)
 }
 
 // deploySuggestionForStatus is the FALLBACK suggestion for a non-ACTIVE deploy

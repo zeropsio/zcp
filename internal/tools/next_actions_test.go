@@ -464,3 +464,26 @@ func TestDeployNextActions_AVariantBDeploy_NamesOnlyThatDevServicesServers(t *te
 		t.Errorf("nextActions = %q, names apidev's api on webdev", got)
 	}
 }
+
+// A server that could not start because something outside the supervisor
+// holds its port is named in the deploy reply as zerops_dev_server names it —
+// its port stayed busy — never as a crash with a made-up exit, and is one the
+// agent gets back.
+func TestDeployNextActions_AServerWhosePortStayedBusyIsNamedAsZeropsDevServerNamesIt(t *testing.T) {
+	t.Parallel()
+	decl := `{"version":1,"servers":[{"name":"web","port":3000,"command":"a","cwd":"."},{"name":"api","port":3001,"command":"b","cwd":"."}]}`
+	c := devservertest.NewSupervised(decl)
+	c.Foreign = map[int]int{3001: 900}
+	c.Redeploy()
+
+	got := deployNextActionsFor(t.Context(), c, "/var/www", &ops.DeployResult{TargetService: "appdev"}, topology.ModeDev, topology.RuntimeDynamic)
+
+	for _, want := range []string{"web running", "api could not start: its port stayed busy", `name="api"`, "zerops_verify"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("nextActions = %q, want it to contain %q", got, want)
+		}
+	}
+	if strings.Contains(got, "port_busy") {
+		t.Errorf("nextActions = %q, names the supervisor's internal exit marker", got)
+	}
+}

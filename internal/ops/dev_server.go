@@ -692,33 +692,63 @@ func probedPath(p DevServerParams, ds *DevServers, name string) string {
 	return "/"
 }
 
+// ServerVerdict is a declared server's state as every reply judges it: the
+// phrase that follows its name, and what it asks of the agent — Down: read its
+// logs, fix it and start it; Unsettled: read it again later, as it is still
+// starting or the supervisor starts it once more.
+type ServerVerdict struct {
+	Phrase          string
+	Down, Unsettled bool
+}
+
+// JudgeServer is the verdict on a declared server whose state the supervisor
+// reports as server; ok false is one the supervisor does not run.
+func JudgeServer(server devsup.ServerState, ok bool) ServerVerdict {
+	switch {
+	case !ok:
+		return ServerVerdict{Phrase: "not started", Down: true}
+	case server.Status == devsup.StatusRunning:
+		return ServerVerdict{Phrase: "running"}
+	case server.Status == devsup.StatusStopped:
+		return ServerVerdict{Phrase: "stopped"}
+	case server.Status == devsup.StatusStarting:
+		return ServerVerdict{Phrase: "still starting", Unsettled: true}
+	case server.Status != devsup.StatusCrashed:
+		return ServerVerdict{Phrase: string(server.Status), Down: true}
+	}
+	verdict := ServerVerdict{Down: !server.RetryPending, Unsettled: server.RetryPending}
+	switch {
+	case server.TaskLimit != nil:
+		verdict.Phrase = fmt.Sprintf("crashed (%s): %s", exitText(server.Exit), TaskLimitNote(*server.TaskLimit, server.RetryPending))
+	case server.RetryPending:
+		verdict.Phrase = fmt.Sprintf("crashed while starting (%s); %s", exitText(server.Exit), RetryPendingNote)
+	case server.Exit != nil && server.Exit.Signal == devsup.ExitPortBusy:
+		verdict.Phrase = "could not start: its port stayed busy"
+	default:
+		verdict.Phrase = fmt.Sprintf("crashed (%s)", exitText(server.Exit))
+	}
+	return verdict
+}
+
 // applyCrash reports a server the supervisor holds as crashed, with its exit
 // and log tail: down until started, or coming back when the supervisor's one
 // more start is pending.
 func applyCrash(ctx context.Context, ssh SSHDeployer, result *DevServerResult, name string, server devsup.ServerState) {
 	result.LogTail = currentRun(supervisorLogTail(ctx, ssh, result.Hostname, name, defaultLogTailLines))
 	label := serverLabel(result.Hostname, name)
-	if server.TaskLimit != nil {
-		result.Reason = reasonCrashed
-		result.Message = fmt.Sprintf("Dev server %s crashed (%s): %s.", label, exitText(server.Exit), TaskLimitNote(*server.TaskLimit, server.RetryPending))
-		if server.RetryPending {
-			result.Message += " " + RecheckSentence(result.Hostname, name, []string{name})
-		}
-		return
-	}
-	if server.RetryPending {
-		result.Reason = reasonCrashed
-		result.Message = fmt.Sprintf("Dev server %s crashed while starting (%s); %s. %s",
-			label, exitText(server.Exit), RetryPendingNote, RecheckSentence(result.Hostname, name, []string{name}))
-		return
-	}
-	if server.Exit != nil && server.Exit.Signal == devsup.ExitPortBusy {
-		result.Reason = reasonPortInUse
-		result.Message = fmt.Sprintf("Dev server %s could not start: its port stayed busy — something outside the supervisor listens on it. Find and stop that process, then start the server again.", label)
-		return
-	}
+	verdict := JudgeServer(server, true)
 	result.Reason = reasonCrashed
-	result.Message = fmt.Sprintf("Dev server %s crashed (%s); the supervisor leaves it down. Read logTail, fix the cause, then start it again.", label, exitText(server.Exit))
+	switch {
+	case verdict.Unsettled:
+		result.Message = fmt.Sprintf("Dev server %s %s. %s", label, verdict.Phrase, RecheckSentence(result.Hostname, name, []string{name}))
+	case server.TaskLimit != nil:
+		result.Message = fmt.Sprintf("Dev server %s %s.", label, verdict.Phrase)
+	case server.Exit != nil && server.Exit.Signal == devsup.ExitPortBusy:
+		result.Reason = reasonPortInUse
+		result.Message = fmt.Sprintf("Dev server %s %s — something outside the supervisor listens on it. Find and stop that process, then start the server again.", label, verdict.Phrase)
+	default:
+		result.Message = fmt.Sprintf("Dev server %s %s; the supervisor leaves it down. Read logTail, fix the cause, then start it again.", label, verdict.Phrase)
+	}
 }
 
 // exitText is a server's last exit as messages say it.
