@@ -34,8 +34,9 @@ type Config struct {
 	// PortWait bounds the wait for a server's port to be free before it starts.
 	PortWait time.Duration
 	// StartWindow is how long after a start the server is still starting: a
-	// crash within it is started once more, and a watched change within it
-	// may be the server's own (watchLoopLimit).
+	// crash within it, or before a server with a port first listens, is
+	// started once more, and a watched change within it may be the server's
+	// own (watchLoopLimit).
 	StartWindow time.Duration
 	// Version is the release reported in the state.
 	Version string
@@ -88,8 +89,10 @@ type server struct {
 	leftPgid        int
 	leftLeaderStart int64
 	watch           *watcher
-	// retry: this start is the one more start after a crash in the window.
+	// retry: this start is the one more start after a start crash.
 	retry bool
+	// listened: this start's port has accepted once.
+	listened bool
 	// restartReason says why it last restarted, or why a watched change
 	// did not restart it.
 	restartReason string
@@ -385,7 +388,7 @@ func (s *Supervisor) start(name, reason string) {
 	}
 	spec := sv.spec
 	sv.starting = true
-	sv.retry, sv.windowChanged = reason == reasonRetry, false
+	sv.retry, sv.windowChanged, sv.listened = reason == reasonRetry, false, false
 	if sv.starts > 0 {
 		sv.restartReason = reason
 	}
@@ -410,7 +413,7 @@ func (s *Supervisor) start(name, reason string) {
 	s.mu.Unlock()
 	go s.watchExit(sv, g)
 	if spec.Port > 0 {
-		go s.awaitListen(g, spec.Port)
+		go s.awaitListen(sv, g, spec.Port)
 	}
 }
 
@@ -452,9 +455,10 @@ func (s *Supervisor) preflight(spec Server) (string, error) {
 }
 
 // watchExit records a server whose leader exited while the supervisor held it
-// as crashed, and ends what is left of its group. A crash within the start
-// window, unless that start was already the retry, is started once more when
-// the window has passed again, after the siblings it started beside settle.
+// as crashed, and ends what is left of its group. A start crash, unless that
+// start was already the retry, is started once more when the window has
+// passed again and no sibling is still starting: servers that crashed racing
+// each other at start come back one at a time.
 func (s *Supervisor) watchExit(sv *server, g *group) {
 	<-g.done
 	s.mu.Lock()
@@ -464,35 +468,72 @@ func (s *Supervisor) watchExit(sv *server, g *group) {
 	}
 	sv.g = nil
 	sv.exit = exitOf(g.state)
-	retry := !sv.retry && sv.startedAt != nil && sv.exit.At.Sub(*sv.startedAt) < s.cfg.StartWindow
+	retry := !sv.retry && sv.startCrash(s.cfg.StartWindow)
 	starts := sv.starts
 	s.logf("crashed %s: exit %d %s", sv.name, sv.exit.Code, sv.exit.Signal)
 	s.mu.Unlock()
 	_ = stopGroup(g.pgid, s.cfg.Grace)
 	s.persist()
 	if retry {
-		s.logf("retry %s in %s: it crashed within its start window", sv.name, s.cfg.StartWindow)
-		time.AfterFunc(s.cfg.StartWindow, func() { s.retryStart(sv, starts) })
+		s.logf("retry %s in %s: it crashed while starting", sv.name, s.cfg.StartWindow)
+		deadline := time.Now().Add(listenWait)
+		time.AfterFunc(s.cfg.StartWindow, func() { s.retryStart(sv, starts, deadline) })
 	}
 }
 
-// retryStart starts a server that crashed in its start window once more,
-// unless anything started, stopped or removed it since.
-func (s *Supervisor) retryStart(sv *server, starts int) {
+// startCrash: the server's exit came within its start window, or before its
+// port first accepted (a Maven or Gradle start can outlast any fixed window).
+func (sv *server) startCrash(window time.Duration) bool {
+	if sv.startedAt == nil {
+		return false
+	}
+	return sv.exit.At.Sub(*sv.startedAt) < window || (sv.spec.Port > 0 && !sv.listened)
+}
+
+// retryStart starts a server that crashed while starting once more,
+// unless anything started, stopped or removed it since. While a sibling is
+// still starting it looks again one window later, until deadline.
+func (s *Supervisor) retryStart(sv *server, starts int, deadline time.Time) {
 	s.op.Lock()
 	defer s.op.Unlock()
 	s.mu.Lock()
 	still := !s.closed && s.servers[sv.name] == sv && sv.desired == DesiredRunning && sv.g == nil && sv.starts == starts
+	wait := still && time.Now().Before(deadline) && s.siblingStarting(sv)
 	s.mu.Unlock()
 	if !still {
+		return
+	}
+	if wait {
+		time.AfterFunc(s.cfg.StartWindow, func() { s.retryStart(sv, starts, deadline) })
 		return
 	}
 	s.start(sv.name, reasonRetry)
 	s.persist()
 }
 
+// siblingStarting reports whether another server is still starting: its start
+// is under way, or its group lives and has not yet listened (one with a port)
+// or passed its start window (one without). Callers hold mu.
+func (s *Supervisor) siblingStarting(sv *server) bool {
+	for _, o := range s.servers {
+		if o == sv {
+			continue
+		}
+		if o.starting {
+			return true
+		}
+		if o.g == nil || o.startedAt == nil {
+			continue
+		}
+		if (o.spec.Port > 0 && !o.listened) || (o.spec.Port == 0 && time.Since(*o.startedAt) < s.cfg.StartWindow) {
+			return true
+		}
+	}
+	return false
+}
+
 // awaitListen records starting → running once the port accepts.
-func (s *Supervisor) awaitListen(g *group, port int) {
+func (s *Supervisor) awaitListen(sv *server, g *group, port int) {
 	deadline := time.Now().Add(listenWait)
 	for time.Now().Before(deadline) {
 		select {
@@ -501,6 +542,11 @@ func (s *Supervisor) awaitListen(g *group, port int) {
 		default:
 		}
 		if portAccepts(port) {
+			s.mu.Lock()
+			if sv.g == g {
+				sv.listened = true
+			}
+			s.mu.Unlock()
 			s.persist()
 			return
 		}

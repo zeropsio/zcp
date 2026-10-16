@@ -754,6 +754,51 @@ func TestSupervisor_AServerThatCrashesInItsStartWindowIsStartedOnceMoreThenStays
 	}
 }
 
+// Four Spring services started at once; each Maven wrapper unpacked the same
+// distribution for longer than the start window, all four crashed before they
+// ever listened, and none came back. A crash before the server first answers
+// on its port is a start crash however long the start took: it is started
+// once more, one server at a time while a sibling is still starting. A server
+// that crashed after it listened stays down.
+func TestSupervisor_AServerThatCrashesBeforeItFirstListensIsStartedOnceMoreOneAtATime(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.window = 300 * time.Millisecond
+	vets, visits, late := freePort(t), freePort(t), freePort(t)
+	// The first start unpacks past the window and dies; a later start that
+	// meets a sibling still unpacking (.unpack held) dies of the race again.
+	maven := func(name string, port int) Server {
+		srv := r.listener(name, port)
+		srv.Command = "if [ -f .tried-" + name + " ]; then mkdir .unpack || exit 9; sleep 0.4; rmdir .unpack; " + srv.Command +
+			"; else touch .tried-" + name + "; sleep 0.6; exit 1; fi"
+		return srv
+	}
+	// It listens, then dies: no longer starting.
+	crashLate := r.listener("late", late)
+	crashLate.Command = "if [ -f .tried-late ]; then exit 4; fi; touch .tried-late; (sleep 1; kill $$) & " + crashLate.Command
+	r.declare(maven("vets", vets), maven("visits", visits), crashLate)
+	s := r.supervisor()
+	s.Boot()
+
+	for name, port := range map[string]int{"vets": vets, "visits": visits} {
+		eventually(t, name+" to run after one more start", func() bool {
+			sv := mustServer(t, s.State(), name)
+			return sv.Status == StatusRunning && sv.Restarts == 1 && listening(port)
+		})
+		sv := mustServer(t, s.State(), name)
+		if sv.Exit == nil || sv.Exit.Code != 1 || sv.LastRestartReason != "it crashed within its start window" {
+			t.Fatalf("%s = %+v exit %+v, want its first crash visible and the retry named", name, sv, sv.Exit)
+		}
+	}
+	eventually(t, "late to crash after it listened", func() bool {
+		return mustServer(t, s.State(), "late").Status == StatusCrashed
+	})
+	time.Sleep(3 * r.window) // a start that should not happen has no event to wait on
+	if sv := mustServer(t, s.State(), "late"); sv.Status != StatusCrashed || sv.Restarts != 0 {
+		t.Fatalf("late = %+v, want it down: it crashed after it listened", sv)
+	}
+}
+
 // `uv run` rebuilds the repo's local packages, writing into the watched tree,
 // on every start: each start restarted the server again, 900 times. A server
 // whose every recent start changed its own watched files is no longer
