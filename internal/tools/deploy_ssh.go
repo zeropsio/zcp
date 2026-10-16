@@ -339,12 +339,15 @@ func RegisterDeploySSH(
 			sourceForPreflight = input.TargetService
 		}
 		input.WorkingDir = sourceWorkingDir(stateDir, sourceForPreflight, input.WorkingDir)
+		// configFile is the config file the deploy builds from, as pre-flight
+		// read it; its failure classification names that file.
+		var configFile string
 		if input.Strategy != deployStrategyGitPush {
 			// SSH deploy reads yaml from the source SSHFS mount in container
 			// env, below it for a workingDir on a code volume. In LOCAL env
 			// there is no mount: sourceMountReadable=false defers yaml
 			// validation to deploy time.
-			resolvedSetup, pfResult, pfErr := deployPreFlight(ctx, client, projectID, stateDir, sourceForPreflight, input.TargetService, input.Setup, input.WorkingDir, rtInfo.InContainer)
+			resolved, pfResult, pfErr := deployPreFlight(ctx, client, projectID, stateDir, sourceForPreflight, input.TargetService, input.Setup, input.WorkingDir, rtInfo.InContainer)
 			if pfErr != nil {
 				var blocker *workflow.ErrRequiresSetupInput
 				if errors.As(pfErr, &blocker) {
@@ -363,18 +366,19 @@ func RegisterDeploySSH(
 					WithRecoveryStatus(),
 				), nil, nil
 			}
-			if resolvedSetup != "" {
-				input.Setup = resolvedSetup
+			if resolved.setup != "" {
+				input.Setup = resolved.setup
 			}
+			configFile = resolved.configFile
 		}
 
 		// Route: git-push strategy pushes to the external git remote, then
 		// follows the integration-triggered build to terminal (§6.1 watch).
 		if input.Strategy == deployStrategyGitPush {
-			return handleGitPush(ctx, client, httpClient, projectID, sshDeployer, logFetcher, buildProgressCallback(ctx, req), input, stateDir, rtInfo, engine.RepoConfigFile())
+			return handleGitPush(ctx, client, httpClient, projectID, sshDeployer, logFetcher, buildProgressCallback(ctx, req), input, stateDir, rtInfo)
 		}
 
-		return runDeploySSHZCLIPush(ctx, req, client, httpClient, sshDeployer, authInfo, logFetcher, rtInfo, projectID, stateDir, engine.RepoConfigFile(), devsup, input)
+		return runDeploySSHZCLIPush(ctx, req, client, httpClient, sshDeployer, authInfo, logFetcher, rtInfo, projectID, stateDir, configFile, devsup, input)
 	})
 }
 

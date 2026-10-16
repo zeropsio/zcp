@@ -54,8 +54,8 @@ func TestDeployPreFlight_StageOfThreeStagePair_TakesItsSetupFromStages(t *testin
 		if result == nil || !result.Passed {
 			t.Fatalf("%s: expected preflight pass; got %+v", tt.stage, result)
 		}
-		if resolved != tt.want {
-			t.Errorf("%s: resolved setup = %q, want %q (its Stages entry, not the prod a suffix guess picks)", tt.stage, resolved, tt.want)
+		if resolved.setup != tt.want {
+			t.Errorf("%s: resolved setup = %q, want %q (its Stages entry, not the prod a suffix guess picks)", tt.stage, resolved.setup, tt.want)
 		}
 	}
 }
@@ -64,8 +64,8 @@ func TestDeployPreFlight_StageWithoutRecordedSetup_RecordsTheResolvedOneOnThatSt
 	t.Parallel()
 	stateDir := threeStagePairState(t)
 	resolved, result, err := deployPreFlight(context.Background(), platform.NewMock(), "proj-1", stateDir, "appdev", "workerstage", "worker", "", true)
-	if err != nil || result == nil || !result.Passed || resolved != "worker" {
-		t.Fatalf("preflight = %q, %+v, %v; want worker passing", resolved, result, err)
+	if err != nil || result == nil || !result.Passed || resolved.setup != "worker" {
+		t.Fatalf("preflight = %q, %+v, %v; want worker passing", resolved.setup, result, err)
 	}
 	meta, err := workflow.ReadServiceMeta(stateDir, "appdev")
 	if err != nil {

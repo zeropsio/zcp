@@ -24,6 +24,10 @@ type DeployBatchTarget struct {
 	// (DeploySSH's deploy-from-commit) instead of its working tree. Not an
 	// input of zerops_deploy_batch: set by callers inside zcp.
 	SHA string `json:"-"`
+	// ConfigFile is the config file pre-flight read from the source's repo
+	// (zerops.yaml or zerops.yml); the target's failure classification
+	// names it. Not an input either.
+	ConfigFile string `json:"-"`
 }
 
 // DeployBatchEntryResult is the outcome for one target inside a batch. The

@@ -170,7 +170,7 @@ func RegisterDeployLocal(
 		// Local mode: yaml lives at the project root (the user's working
 		// directory), so sourceHostname is empty — there are no per-service
 		// SSHFS mounts on a developer's local box.
-		resolvedSetup, pfResult, pfErr := deployPreFlight(ctx, client, projectID, stateDir, "", input.TargetService, input.Setup, input.WorkingDir, true)
+		resolved, pfResult, pfErr := deployPreFlight(ctx, client, projectID, stateDir, "", input.TargetService, input.Setup, input.WorkingDir, true)
 		if pfErr != nil {
 			var blocker *workflow.ErrRequiresSetupInput
 			if errors.As(pfErr, &blocker) {
@@ -189,8 +189,8 @@ func RegisterDeployLocal(
 				WithRecoveryStatus(),
 			), nil, nil
 		}
-		if resolvedSetup != "" {
-			input.Setup = resolvedSetup
+		if resolved.setup != "" {
+			input.Setup = resolved.setup
 		}
 
 		// Strategy on the local deploy path is "zcli" (zcli push from the

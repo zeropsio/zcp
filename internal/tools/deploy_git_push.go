@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -52,28 +53,32 @@ func sshGitRunner(ctx context.Context, sshDeployer ops.SSHDeployer, hostname, wo
 }
 
 // fetchZeropsYamlOverSSH reads zerops.yaml (or zerops.yml fallback) from
-// the target container via SSH `cat`. Returns ("", nil) when the file is
-// absent so callers can treat "no yaml" the same way the filesystem path
-// does (skip validation). A read error is returned for transport failures
-// so the caller can log; validation itself falls back to the server which
-// will error just the same if the YAML were malformed.
-func fetchZeropsYamlOverSSH(ctx context.Context, sshDeployer ops.SSHDeployer, hostname, workingDir string) (string, error) {
+// the target container via SSH and names the file it read. Returns
+// ("", "", nil) when the file is absent so callers can treat "no yaml" the
+// same way the filesystem path does (skip validation). A read error is
+// returned for transport failures so the caller can log; validation itself
+// falls back to the server which will error just the same if the YAML were
+// malformed.
+func fetchZeropsYamlOverSSH(ctx context.Context, sshDeployer ops.SSHDeployer, hostname, workingDir string) (content, file string, err error) {
 	if sshDeployer == nil {
-		return "", nil
+		return "", "", nil
 	}
-	// Try zerops.yaml then zerops.yml; 2>/dev/null + trailing echo lets us
-	// distinguish "file missing" (nothing in stdout) from "read failed"
-	// (SSH error) without special-casing exit codes.
-	qwd := ops.ShellQuote(workingDir)
+	// The first file present prints its name on the first line, then its
+	// content; nothing in stdout means neither exists.
+	names := []string{"zerops.yaml", "zerops.yml"}
 	cmd := fmt.Sprintf(
-		`cat %s/zerops.yaml 2>/dev/null || cat %s/zerops.yml 2>/dev/null || true`,
-		qwd, qwd,
+		`for f in %s; do if [ -f %s/"$f" ]; then echo "$f"; cat %s/"$f"; exit 0; fi; done`,
+		strings.Join(names, " "), ops.ShellQuote(workingDir), ops.ShellQuote(workingDir),
 	)
 	out, err := sshDeployer.ExecSSH(ctx, hostname, cmd)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	return strings.TrimRight(string(out), "\n"), nil
+	file, content, _ = strings.Cut(string(out), "\n")
+	if !slices.Contains(names, file) {
+		return "", "", nil
+	}
+	return strings.TrimRight(content, "\n"), file, nil
 }
 
 // gitPushPrerequisites is a structured response when GIT_TOKEN is missing.
@@ -431,7 +436,6 @@ func handleGitPush(
 	input DeploySSHInput,
 	stateDir string,
 	rt runtime.Info,
-	configFile string,
 ) (*mcp.CallToolResult, any, error) {
 	attempt := workflow.DeployAttempt{
 		AttemptedAt: time.Now().UTC().Format(time.RFC3339),
@@ -613,7 +617,8 @@ func handleGitPush(
 	// is about to consume by running the same platform validator now. YAML
 	// lives in the container at workingDir; fetch via SSH cat and pass to
 	// the content-based entry point. Any failure aborts the push.
-	yamlContent, yamlErr := fetchZeropsYamlOverSSH(ctx, sshDeployer, hostname, workingDir)
+	// configFile names the file in the failure classification.
+	yamlContent, configFile, yamlErr := fetchZeropsYamlOverSSH(ctx, sshDeployer, hostname, workingDir)
 	if yamlErr == nil && yamlContent != "" {
 		setupName := input.Setup
 		if resolvedSetup, recordErr := recordDeploySetupMetaFromContent(stateDir, hostname, input.Setup, yamlContent); recordErr != nil {

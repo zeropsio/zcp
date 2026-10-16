@@ -3,6 +3,7 @@ package tools
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -144,7 +145,11 @@ func TestRepoConfigFile_ABuildFailureAndTheDiscoverEnvSource_NameTheReposOwnConf
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			engine := workflow.NewEngine(t.TempDir(), workflow.EnvContainer, nil)
+			// The deploy reads the name from the repo it deploys; discover
+			// from the latest parts read.
+			stateDir := ""
 			if tc.recorded != "" {
+				stateDir = repoWithConfigFile(t, "app", tc.recorded)
 				engine.RecordRepoConfigFile("app", tc.recorded)
 			}
 
@@ -167,7 +172,7 @@ func TestRepoConfigFile_ABuildFailureAndTheDiscoverEnvSource_NameTheReposOwnConf
 			})
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 			RegisterDeploySSH(srv, mock, okHTTP, "proj-1", &stubSSH{output: []byte("ok")},
-				&auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}, logFetcher, runtime.Info{}, "", engine, nil, DevsupSource{})
+				&auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}, logFetcher, runtime.Info{InContainer: true}, stateDir, engine, nil, DevsupSource{})
 			RegisterDiscover(srv, mock, "proj-1", "", engine)
 
 			var deployed ops.DeployResult
@@ -265,4 +270,102 @@ func TestRepoConfigFile_ADeployReplyKeepsBuildLogsAndErrorsAsWritten(t *testing.
 			t.Errorf("redeploy error does not name the raw zerops.yaml URL zcp fetched: %s", text)
 		}
 	})
+}
+
+// TestRepoConfigFile_ADeployNamesTheConfigFileItDeploysFrom: the build-failure
+// suggestion of zerops_deploy and zerops_deploy_batch names the config file
+// the deploy itself read from the source's repo — zerops.yml here — even when
+// another repo of the project keeps zerops.yaml, and even before zcp has read
+// any repo's parts.
+func TestRepoConfigFile_ADeployNamesTheConfigFileItDeploysFrom(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		other string // config file another repo of the project was read keeping
+	}{
+		{name: "another repo keeps zerops.yaml", other: "zerops.yaml"},
+		{name: "no repo read yet"},
+	} {
+		for _, tool := range []string{"zerops_deploy", "zerops_deploy_batch"} {
+			t.Run(tc.name+"/"+tool, func(t *testing.T) {
+				t.Parallel()
+				stateDir := repoWithConfigFile(t, "app", "zerops.yml")
+				engine := workflow.NewEngine(t.TempDir(), workflow.EnvContainer, nil)
+				engine.RecordRepoConfigFile("app", "zerops.yml")
+				if tc.other != "" {
+					engine.RecordRepoConfigFile("api", tc.other)
+				} else {
+					engine.RecordRepoConfigFile("app", "")
+				}
+
+				buildSvcID := "build-svc-1"
+				mock := platform.NewMock().
+					WithProject(&platform.Project{ID: "proj-1", Name: "p", Status: statusActive}).
+					WithServices([]platform.ServiceStack{{
+						ID: "svc-1", Name: "app", Status: statusActive,
+						ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+					}}).
+					WithAppVersionEvents([]platform.AppVersionEvent{{
+						ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-1", Status: statusBuildFailed, Sequence: 1,
+						Build: &platform.BuildInfo{ServiceStackID: &buildSvcID},
+					}}).
+					WithLogAccess(&platform.LogAccess{URL: "https://log.example.com/logs"})
+				logFetcher := platform.NewMockLogFetcher().WithEntries([]platform.LogEntry{
+					{Facility: "local0", Tag: "zbuilder@av-1", Message: "something unusual went wrong"},
+				})
+				authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+				rt := runtime.Info{InContainer: true}
+				srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+				var deployed *ops.DeployResult
+				if tool == "zerops_deploy" {
+					RegisterDeploySSH(srv, mock, okHTTP, "proj-1", &stubSSH{output: []byte("ok")}, authInfo, logFetcher, rt, stateDir, engine, nil, DevsupSource{})
+					deployed = &ops.DeployResult{}
+					text := getTextContent(t, callTool(t, srv, tool, map[string]any{"targetService": "app"}))
+					if err := json.Unmarshal([]byte(text), deployed); err != nil {
+						t.Fatalf("parse deploy result: %v: %s", err, text)
+					}
+				} else {
+					RegisterDeployBatch(srv, mock, okHTTP, "proj-1", &stubSSH{output: []byte("ok")}, authInfo, logFetcher, rt, stateDir, engine, nil, DevsupSource{})
+					var batch ops.DeployBatchResult
+					text := getTextContent(t, callTool(t, srv, tool, map[string]any{"targets": []any{map[string]any{"targetService": "app"}}}))
+					if err := json.Unmarshal([]byte(text), &batch); err != nil || len(batch.Entries) != 1 || batch.Entries[0].Result == nil {
+						t.Fatalf("parse batch result: %v: %s", err, text)
+					}
+					deployed = batch.Entries[0].Result
+				}
+				if deployed.FailureClassification == nil {
+					t.Fatalf("a failed build carries a classification: %+v", deployed)
+				}
+				for field, text := range map[string]string{
+					"failureClassification.suggestedAction": deployed.FailureClassification.SuggestedAction,
+					"suggestion":                            deployed.Suggestion,
+				} {
+					if !strings.Contains(text, "buildCommands or dependencies in zerops.yml.") || strings.Contains(text, "zerops.yaml") {
+						t.Errorf("%s names the config file other than zerops.yml: %q", field, text)
+					}
+				}
+			})
+		}
+	}
+}
+
+// repoWithConfigFile lays out a container project whose adopted dev service
+// host keeps its repo's config, a one-setup node app, under file on its
+// mount, and returns the project's state dir.
+func repoWithConfigFile(t *testing.T, host, file string) string {
+	t.Helper()
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+	mount := filepath.Join(dir, host)
+	for _, d := range []string{stateDir, mount} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	yml := "zerops:\n  - setup: " + host + "\n    build:\n      base: nodejs@22\n      deployFiles: [.]\n    run:\n      base: nodejs@22\n      start: node index.js\n"
+	if err := os.WriteFile(filepath.Join(mount, file), []byte(yml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	setupAdoptedService(t, stateDir, host, "")
+	return stateDir
 }

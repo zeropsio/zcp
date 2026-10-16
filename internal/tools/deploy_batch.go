@@ -74,7 +74,6 @@ func RegisterDeployBatch(
 		d := batchDeployer{
 			client: client, httpClient: httpClient, projectID: projectID, sshDeployer: sshDeployer,
 			authInfo: authInfo, logFetcher: logFetcher, rtInfo: rtInfo, stateDir: stateDir, recipeProbe: recipeProbe, devsup: devsup,
-			configFile: engine.RepoConfigFile(),
 		}
 		if blocked := d.gate(input.Targets); blocked != nil {
 			return blocked, nil, nil
@@ -117,9 +116,6 @@ type batchDeployer struct {
 	// devsup finds the zcp-devsup a deploy carrying a kept dev server onto
 	// the supervisor installs.
 	devsup DevsupSource
-	// configFile is the repo's config file name each failure
-	// classification's text names ("" keeps it as written).
-	configFile string
 }
 
 // gate applies the adoption gate and the push-delivery redirect to every
@@ -177,7 +173,7 @@ func (r *batchPreflightRefusal) result() *mcp.CallToolResult {
 }
 
 // preflight checks one target before any build burns time and resolves the
-// setup it deploys with.
+// setup it deploys with and the config file it builds from.
 func (d batchDeployer) preflight(ctx context.Context, t ops.DeployBatchTarget) (ops.DeployBatchTarget, *batchPreflightRefusal) {
 	// Source defaults to target for self-deploy (mirrors
 	// ops.DeploySSH auto-infer). Pre-flight reads yaml from the
@@ -187,7 +183,7 @@ func (d batchDeployer) preflight(ctx context.Context, t ops.DeployBatchTarget) (
 		sourceForPreflight = t.TargetService
 	}
 	t.WorkingDir = sourceWorkingDir(d.stateDir, sourceForPreflight, t.WorkingDir)
-	resolvedSetup, pfResult, pfErr := deployPreFlight(ctx, d.client, d.projectID, d.stateDir, sourceForPreflight, t.TargetService, t.Setup, t.WorkingDir, d.rtInfo.InContainer)
+	resolved, pfResult, pfErr := deployPreFlight(ctx, d.client, d.projectID, d.stateDir, sourceForPreflight, t.TargetService, t.Setup, t.WorkingDir, d.rtInfo.InContainer)
 	if pfErr != nil {
 		var blocker *workflow.ErrRequiresSetupInput
 		if errors.As(pfErr, &blocker) {
@@ -198,9 +194,10 @@ func (d batchDeployer) preflight(ctx context.Context, t ops.DeployBatchTarget) (
 	if pfResult != nil && !pfResult.Passed {
 		return t, &batchPreflightRefusal{target: t.TargetService, checks: pfResult}
 	}
-	if resolvedSetup != "" {
-		t.Setup = resolvedSetup
+	if resolved.setup != "" {
+		t.Setup = resolved.setup
 	}
+	t.ConfigFile = resolved.configFile
 	return t, nil
 }
 
@@ -211,8 +208,12 @@ func (d batchDeployer) preflight(ctx context.Context, t ops.DeployBatchTarget) (
 // is and has nothing to deliver.
 func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallback, targets []ops.DeployBatchTarget, deliver bool) *ops.DeployBatchResult {
 	ctx = deployFollowUpContext(ctx)
+	configFiles := make(map[string]string, len(targets))
+	for _, t := range targets {
+		configFiles[t.TargetService] = t.ConfigFile
+	}
 	pollFn := func(c context.Context, r *ops.DeployResult, cb ops.ProgressCallback, lf platform.LogFetcher, s ops.SSHDeployer) {
-		pollDeployBuild(c, d.client, d.projectID, r, cb, lf, s, d.stateDir, d.configFile)
+		pollDeployBuild(c, d.client, d.projectID, r, cb, lf, s, d.stateDir, configFiles[r.TargetService])
 	}
 
 	authVal := auth.Info{}
@@ -256,7 +257,7 @@ func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallba
 		case entry.Error != "":
 			// Kickoff/transport failure (build never started).
 			attempt.Error = entry.Error
-			classification := classifyTransportError(errors.New(entry.Error), deployStrategyZCLILabel, d.configFile)
+			classification := classifyTransportError(errors.New(entry.Error), deployStrategyZCLILabel, entry.Target.ConfigFile)
 			if classification != nil {
 				attempt.FailureClass = classification.Category
 			} else {

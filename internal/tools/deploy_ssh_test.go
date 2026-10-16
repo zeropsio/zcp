@@ -1481,7 +1481,11 @@ func (s *stubSSHWithCommands) ExecSSH(_ context.Context, _ string, command strin
 	}
 	if strings.Contains(command, "zerops.yaml") || strings.Contains(command, "zerops.yml") {
 		s.yamlCalls++
-		return s.yamlContent, s.yamlErr
+		if len(s.yamlContent) == 0 {
+			return s.yamlContent, s.yamlErr
+		}
+		// The read names the file it found on its first line.
+		return append([]byte("zerops.yaml\n"), s.yamlContent...), s.yamlErr
 	}
 	// Dirty-tree probe (`git status --porcelain`) — MUST precede the push
 	// fallthrough, else the porcelain command mis-routes to the push branch

@@ -65,8 +65,8 @@ func TestDeployPreFlight_GateB_FirstDeployWritesBackResolvedSetup(t *testing.T) 
 	if result == nil || !result.Passed {
 		t.Fatalf("expected preflight pass; got: %+v", result)
 	}
-	if resolved != "dev" {
-		t.Errorf("resolvedSetup: got %q, want dev (role-based fallback)", resolved)
+	if resolved.setup != "dev" {
+		t.Errorf("resolvedSetup: got %q, want dev (role-based fallback)", resolved.setup)
 	}
 
 	// Cache write-back: subsequent ReadServiceMeta sees PrimarySetupName="dev".
@@ -123,8 +123,8 @@ func TestDeployPreFlight_GateB_SubsequentDeployUsesCachedSetup(t *testing.T) {
 	if result == nil || !result.Passed {
 		t.Fatalf("expected preflight pass (cache hit); got: %+v", result)
 	}
-	if resolved != "user-customized-setup" {
-		t.Errorf("resolvedSetup: got %q, want user-customized-setup (cache hit)", resolved)
+	if resolved.setup != "user-customized-setup" {
+		t.Errorf("resolvedSetup: got %q, want user-customized-setup (cache hit)", resolved.setup)
 	}
 }
 
@@ -183,8 +183,8 @@ func TestDeployPreFlight_GateB_ExplicitSetupAlsoWritesBackCache(t *testing.T) {
 	if result == nil || !result.Passed {
 		t.Fatalf("expected preflight pass; got: %+v", result)
 	}
-	if resolved != "dev" {
-		t.Errorf("resolvedSetup: got %q, want dev (explicit input)", resolved)
+	if resolved.setup != "dev" {
+		t.Errorf("resolvedSetup: got %q, want dev (explicit input)", resolved.setup)
 	}
 
 	// Cache write-back must fire EVEN when setup arrived explicit.
