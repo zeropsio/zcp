@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // ScaleParams holds scaling configuration for a service.
@@ -35,6 +36,13 @@ type ScaleResult struct {
 	ServiceID   string            `json:"serviceId"`
 	TimedOut    bool              `json:"timedOut,omitempty"`
 	NextActions string            `json:"nextActions,omitempty"`
+	// Effective is the service's autoscaling read back once the change
+	// landed; Clamped names each requested field the platform set to
+	// another value.
+	Effective *platform.CustomAutoscaling `json:"effective,omitempty"`
+	Clamped   []string                    `json:"clamped,omitempty"`
+
+	requested ScaleParams
 }
 
 // Start starts a stopped service.
@@ -114,7 +122,10 @@ func DisconnectStorage(ctx context.Context, client platform.Client, projectID, h
 	return client.DisconnectSharedStorage(ctx, svc.ID, storage.ID)
 }
 
-// Scale updates the autoscaling parameters for a service.
+// Scale updates the autoscaling parameters for a service. The platform
+// replaces the whole autoscaling with the body it gets, so every field the
+// caller leaves out is filled from the service's current autoscaling — a
+// RAM-only call keeps the CPU and container bounds it had.
 func Scale(ctx context.Context, client platform.Client, projectID, hostname string, params ScaleParams) (*ScaleResult, error) {
 	if err := validateScaleParams(params); err != nil {
 		return nil, err
@@ -125,7 +136,15 @@ func Scale(ctx context.Context, client platform.Client, projectID, hostname stri
 		return nil, err
 	}
 
+	// The search behind resolveUserVisibleService lags writes; the direct
+	// read carries the autoscaling a previous scale just set.
+	current, err := client.GetService(ctx, svc.ID)
+	if err != nil {
+		return nil, fmt.Errorf("scale: read current autoscaling: %w", err)
+	}
 	apiParams := buildAutoscalingParams(params)
+	fillOmittedAutoscaling(&apiParams, effectiveAutoscaling(current),
+		topology.IsManagedService(current.ServiceStackTypeInfo.ServiceStackTypeVersionName))
 	apiParams.ServiceMode = svc.Mode
 	proc, err := client.SetAutoscaling(ctx, svc.ID, apiParams)
 	if err != nil {
@@ -136,12 +155,127 @@ func Scale(ctx context.Context, client platform.Client, projectID, hostname stri
 		Process:   proc,
 		Hostname:  svc.Name,
 		ServiceID: svc.ID,
+		requested: params,
 	}
 	if proc == nil {
 		result.Message = "Scaling parameters updated"
 	}
 
 	return result, nil
+}
+
+// ReadBackScale reads the service once a scale landed: Effective is what
+// the service runs with, Clamped names each requested field the platform set
+// to another value (an account or plan ceiling).
+func ReadBackScale(ctx context.Context, client platform.Client, result *ScaleResult) error {
+	svc, err := client.GetService(ctx, result.ServiceID)
+	if err != nil {
+		return fmt.Errorf("read back scaling of %s: %w", result.Hostname, err)
+	}
+	result.Effective = effectiveAutoscaling(svc)
+	if result.Effective != nil {
+		result.Clamped = clampedFields(result.requested, result.Effective)
+	}
+	return nil
+}
+
+// effectiveAutoscaling is the active config (CurrentAutoscaling) over the
+// user overrides (CustomAutoscaling) — the same preference discover shows.
+func effectiveAutoscaling(svc *platform.ServiceStack) *platform.CustomAutoscaling {
+	if svc.CurrentAutoscaling != nil {
+		return svc.CurrentAutoscaling
+	}
+	return svc.CustomAutoscaling
+}
+
+// fillOmittedAutoscaling fills each field the request leaves out from cur.
+// A zero in cur is a field the platform did not return, so it stays out and
+// the platform default applies. A managed service's container count is fixed
+// by its variant, so none is sent for it.
+func fillOmittedAutoscaling(p *platform.AutoscalingParams, cur *platform.CustomAutoscaling, managed bool) {
+	if cur == nil {
+		return
+	}
+	fillInt := func(dst **int32, v int32) {
+		if *dst == nil && v != 0 {
+			*dst = &v
+		}
+	}
+	fillFloat := func(dst **float64, v float64) {
+		if *dst == nil && v != 0 {
+			*dst = &v
+		}
+	}
+	if p.VerticalCPUMode == nil && cur.CPUMode != "" {
+		mode := cur.CPUMode
+		p.VerticalCPUMode = &mode
+	}
+	fillInt(&p.VerticalMinCPU, cur.MinCPU)
+	fillInt(&p.VerticalMaxCPU, cur.MaxCPU)
+	fillInt(&p.VerticalStartCPU, cur.StartCPUCoreCount)
+	fillFloat(&p.VerticalMinRAM, cur.MinRAM)
+	fillFloat(&p.VerticalMaxRAM, cur.MaxRAM)
+	fillFloat(&p.VerticalMinDisk, cur.MinDisk)
+	fillFloat(&p.VerticalMaxDisk, cur.MaxDisk)
+	fillFloat(&p.VerticalMinFreeRAMGB, cur.MinFreeRAMGB)
+	fillFloat(&p.VerticalMinFreeRAMPct, cur.MinFreeRAMPercent)
+	fillFloat(&p.VerticalMinFreeCPUCores, cur.MinFreeCPUCores)
+	fillFloat(&p.VerticalMinFreeCPUPct, cur.MinFreeCPUPercent)
+	if p.VerticalSwapEnabled == nil && cur.SwapEnabled {
+		swap := true
+		p.VerticalSwapEnabled = &swap
+	}
+	if !managed {
+		fillInt(&p.HorizontalMinCount, cur.HorizontalMinCount)
+		fillInt(&p.HorizontalMaxCount, cur.HorizontalMaxCount)
+	}
+}
+
+// clampedFields names each requested field whose effective value differs.
+func clampedFields(p ScaleParams, eff *platform.CustomAutoscaling) []string {
+	var out []string
+	note := func(name string, asked, got any) {
+		out = append(out, fmt.Sprintf("%s: asked %v, the platform set %v", name, asked, got))
+	}
+	if p.CPUMode != nil && *p.CPUMode != eff.CPUMode {
+		note("cpuMode", *p.CPUMode, eff.CPUMode)
+	}
+	ints := []struct {
+		name  string
+		asked *int
+		got   int32
+	}{
+		{"minCpu", p.MinCPU, eff.MinCPU},
+		{"maxCpu", p.MaxCPU, eff.MaxCPU},
+		{"startCpu", p.StartCPU, eff.StartCPUCoreCount},
+		{"minContainers", p.MinContainers, eff.HorizontalMinCount},
+		{"maxContainers", p.MaxContainers, eff.HorizontalMaxCount},
+	}
+	for _, f := range ints {
+		if f.asked != nil && int32(*f.asked) != f.got {
+			note(f.name, *f.asked, f.got)
+		}
+	}
+	floats := []struct {
+		name  string
+		asked *float64
+		got   float64
+	}{
+		{"minRam", p.MinRAM, eff.MinRAM},
+		{"maxRam", p.MaxRAM, eff.MaxRAM},
+		{"minDisk", p.MinDisk, eff.MinDisk},
+		{"maxDisk", p.MaxDisk, eff.MaxDisk},
+		{"minFreeRamGB", p.MinFreeRAMGB, eff.MinFreeRAMGB},
+		{"minFreeRamPercent", p.MinFreeRAMPercent, eff.MinFreeRAMPercent},
+		{"minFreeCpuCores", p.MinFreeCPUCores, eff.MinFreeCPUCores},
+		{"minFreeCpuPercent", p.MinFreeCPUPercent, eff.MinFreeCPUPercent},
+	}
+	for _, f := range floats {
+		if f.asked != nil && *f.asked != f.got {
+			note(f.name, *f.asked, f.got)
+		}
+	}
+	return out
 }
 
 // resolveService is a convenience wrapper that fetches services and resolves

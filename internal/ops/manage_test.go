@@ -537,3 +537,167 @@ func TestScale_InvalidCPUMode(t *testing.T) {
 		t.Errorf("expected code %s, got %s", platform.ErrInvalidScaling, pe.Code)
 	}
 }
+
+// scaleCaptureClient records the autoscaling body Scale sends.
+type scaleCaptureClient struct {
+	*platform.Mock
+	sent *platform.AutoscalingParams
+}
+
+func (c *scaleCaptureClient) SetAutoscaling(ctx context.Context, serviceID string, p platform.AutoscalingParams) (*platform.Process, error) {
+	c.sent = &p
+	return c.Mock.SetAutoscaling(ctx, serviceID, p)
+}
+
+func TestScale_OmittedFieldsKeepTheServiceCurrentScaling(t *testing.T) {
+	t.Parallel()
+	const dedicated = "DEDICATED"
+
+	client := &scaleCaptureClient{Mock: platform.NewMock().
+		WithServices([]platform.ServiceStack{{
+			ID: "svc-1", Name: "apidev", ProjectID: "proj-1", Status: "RUNNING",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+			CurrentAutoscaling: &platform.CustomAutoscaling{
+				CPUMode: dedicated, MinCPU: 2, MaxCPU: 4, StartCPUCoreCount: 2,
+				MinRAM: 1, MaxRAM: 4, MinDisk: 1, MaxDisk: 10,
+				HorizontalMinCount: 1, HorizontalMaxCount: 1,
+				MinFreeRAMGB: 0.25, MinFreeCPUCores: 0.2, SwapEnabled: true,
+			},
+		}})}
+
+	if _, err := Scale(context.Background(), client, "proj-1", "apidev", ScaleParams{
+		MinRAM: scaleFloatPtr(2),
+		MaxRAM: scaleFloatPtr(8),
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got := client.sent
+	if got == nil {
+		t.Fatal("SetAutoscaling was not called")
+	}
+	wantInt := map[string]struct {
+		got  *int32
+		want int32
+	}{
+		"minCpu": {got.VerticalMinCPU, 2}, "maxCpu": {got.VerticalMaxCPU, 4}, "startCpu": {got.VerticalStartCPU, 2},
+		"minContainers": {got.HorizontalMinCount, 1}, "maxContainers": {got.HorizontalMaxCount, 1},
+	}
+	for name, f := range wantInt {
+		if f.got == nil || *f.got != f.want {
+			t.Errorf("%s sent = %v, want %d", name, f.got, f.want)
+		}
+	}
+	wantFloat := map[string]struct {
+		got  *float64
+		want float64
+	}{
+		"minRam": {got.VerticalMinRAM, 2}, "maxRam": {got.VerticalMaxRAM, 8},
+		"minDisk": {got.VerticalMinDisk, 1}, "maxDisk": {got.VerticalMaxDisk, 10},
+		"minFreeRamGB": {got.VerticalMinFreeRAMGB, 0.25}, "minFreeCpuCores": {got.VerticalMinFreeCPUCores, 0.2},
+	}
+	for name, f := range wantFloat {
+		if f.got == nil || *f.got != f.want {
+			t.Errorf("%s sent = %v, want %g", name, f.got, f.want)
+		}
+	}
+	if got.VerticalCPUMode == nil || *got.VerticalCPUMode != dedicated {
+		t.Errorf("cpuMode sent = %v, want DEDICATED", got.VerticalCPUMode)
+	}
+	if got.VerticalSwapEnabled == nil || !*got.VerticalSwapEnabled {
+		t.Errorf("swapEnabled sent = %v, want true", got.VerticalSwapEnabled)
+	}
+}
+
+func TestScale_ManagedServiceNeverSendsAContainerCount(t *testing.T) {
+	t.Parallel()
+
+	client := &scaleCaptureClient{Mock: platform.NewMock().
+		WithServices([]platform.ServiceStack{{
+			ID: "svc-db", Name: "db", ProjectID: "proj-1", Status: "RUNNING",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"},
+			CurrentAutoscaling: &platform.CustomAutoscaling{
+				MinCPU: 1, MaxCPU: 2, MinRAM: 0.25, MaxRAM: 2,
+				HorizontalMinCount: 1, HorizontalMaxCount: 1,
+			},
+		}})}
+
+	if _, err := Scale(context.Background(), client, "proj-1", "db", ScaleParams{MaxRAM: scaleFloatPtr(4)}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if client.sent.HorizontalMinCount != nil || client.sent.HorizontalMaxCount != nil {
+		t.Errorf("container count sent for a managed service: min=%v max=%v", client.sent.HorizontalMinCount, client.sent.HorizontalMaxCount)
+	}
+	if client.sent.VerticalMinCPU == nil || *client.sent.VerticalMinCPU != 1 {
+		t.Errorf("minCpu sent = %v, want 1", client.sent.VerticalMinCPU)
+	}
+}
+
+func TestReadBackScale_NamesEveryFieldThePlatformSetDifferently(t *testing.T) {
+	t.Parallel()
+
+	effective := &platform.CustomAutoscaling{
+		CPUMode: "SHARED", MinCPU: 3, MaxCPU: 3, MinRAM: 6, MaxRAM: 6,
+		HorizontalMinCount: 1, HorizontalMaxCount: 1,
+	}
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{{
+			ID: "svc-1", Name: "webdev", ProjectID: "proj-1", Status: "RUNNING",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+			CurrentAutoscaling:   effective,
+		}})
+
+	result, err := Scale(context.Background(), mock, "proj-1", "webdev", ScaleParams{
+		MinCPU: scaleIntPtr(3), MaxCPU: scaleIntPtr(8),
+		MinRAM: scaleFloatPtr(16), MaxRAM: scaleFloatPtr(24),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := ReadBackScale(context.Background(), mock, result); err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+
+	if result.Effective == nil || *result.Effective != *effective {
+		t.Errorf("effective = %+v, want %+v", result.Effective, effective)
+	}
+	want := []string{
+		"maxCpu: asked 8, the platform set 3",
+		"minRam: asked 16, the platform set 6",
+		"maxRam: asked 24, the platform set 6",
+	}
+	if len(result.Clamped) != len(want) {
+		t.Fatalf("clamped = %q, want %q", result.Clamped, want)
+	}
+	for i := range want {
+		if result.Clamped[i] != want[i] {
+			t.Errorf("clamped[%d] = %q, want %q", i, result.Clamped[i], want[i])
+		}
+	}
+}
+
+func TestReadBackScale_NothingClampedWhenTheServiceTookEveryValue(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{{
+			ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+			CurrentAutoscaling: &platform.CustomAutoscaling{MinRAM: 0.5, MaxRAM: 2, HorizontalMinCount: 1, HorizontalMaxCount: 2},
+		}})
+
+	result, err := Scale(context.Background(), mock, "proj-1", "api", ScaleParams{
+		MinRAM: scaleFloatPtr(0.5), MaxRAM: scaleFloatPtr(2), MaxContainers: scaleIntPtr(2),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := ReadBackScale(context.Background(), mock, result); err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if result.Effective == nil || result.Effective.MaxRAM != 2 {
+		t.Errorf("effective = %+v, want maxRam 2", result.Effective)
+	}
+	if len(result.Clamped) != 0 {
+		t.Errorf("clamped = %q, want none", result.Clamped)
+	}
+}

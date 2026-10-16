@@ -237,3 +237,39 @@ func TestScaleTool_SteersTheGroupRecipe(t *testing.T) {
 		})
 	}
 }
+
+func TestScaleTool_FinishedScaleReportsTheEffectiveValuesAndNamesTheClamp(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{{
+			ID: "svc-1", Name: "webdev", Mode: "NON_HA",
+			CurrentAutoscaling: &platform.CustomAutoscaling{MinRAM: 6, MaxRAM: 6, MinCPU: 1, MaxCPU: 3},
+		}}).
+		WithAutoscalingProcess(&platform.Process{ID: "proc-scale-1", ActionName: "scale", Status: "PENDING"}).
+		WithProcess(&platform.Process{ID: "proc-scale-1", Status: statusFinished, ActionName: "scale"})
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterScale(srv, mock, "proj-1", nil)
+
+	result := callTool(t, srv, "zerops_scale", map[string]any{
+		"serviceHostname": "webdev",
+		"minRam":          8,
+	})
+	if result.IsError {
+		t.Fatalf("unexpected IsError: %s", getTextContent(t, result))
+	}
+
+	var parsed struct {
+		Effective *platform.CustomAutoscaling `json:"effective"`
+		Clamped   []string                    `json:"clamped"`
+	}
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &parsed); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if parsed.Effective == nil || parsed.Effective.MinRAM != 6 || parsed.Effective.MaxCPU != 3 {
+		t.Errorf("effective = %+v, want minRam 6, maxCpu 3", parsed.Effective)
+	}
+	if len(parsed.Clamped) != 1 || parsed.Clamped[0] != "minRam: asked 8, the platform set 6" {
+		t.Errorf("clamped = %q, want [\"minRam: asked 8, the platform set 6\"]", parsed.Clamped)
+	}
+}
