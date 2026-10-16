@@ -63,7 +63,8 @@ dedicated CPU + high minima); set it explicitly — dev → PostgreSQL
 higher only on a clear load signal. A hobby PostgreSQL's connections
 (`max_connections` follows its RAM, a few reserved) serve every part's dev
 and stage at once: cap each part's connection pool so all of them fit, or
-connect through pgBouncer on port `6432`. Other managed types (MariaDB,
+connect through pgBouncer on port `6432` with `sslmode=require` (it takes
+only TLS). Other managed types (MariaDB,
 ClickHouse, Kafka, …) have no profile — scale them with `verticalAutoscaling`.
 
 **OS variant.** The OS is part of the runtime `type` / `base`, never a
