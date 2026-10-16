@@ -136,8 +136,9 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 
 	// Dev servers run under each dev service's supervisor now; the keeper
 	// units an older zcp left on this container go (its record stays until
-	// each host's deploy carries the kept server over). Best-effort and off
-	// the startup path.
+	// each host's deploy carries the kept server over). `zcp init` does the
+	// same at every container start; this covers a zcp updated in place
+	// since. Best-effort and off the startup path.
 	if rtInfo.InContainer {
 		go func() {
 			if err := tools.RetireDevServerKeeper(ctx, platform.NewSystemUnits()); err != nil {

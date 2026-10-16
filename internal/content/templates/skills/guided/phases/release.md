@@ -12,7 +12,7 @@ Ask for targeted feedback, not a generic opinion: point the user at one acceptan
 
 ## Production-business → the launch-production flow
 
-When the PRD tier is production-business and the user wants to go live for real ("ship it", "customers will use this", "run the business on it"), drive `zerops_workflow` launch-production and **follow its guidance** — don't hand-author production YAML or pre-narrate the mechanics. The flow owns the whole sequence and hands you each step, its gate recovery, and the token contract at the point you need them; enter it at the right moment and drive it to a verified production URL. In a Mate, production is the application's: the person releases to it from Mate's projects page, and you never launch it yourself.
+When the PRD tier is production-business and the user wants to go live for real ("ship it", "customers will use this", "run the business on it"), drive `zerops_workflow` launch-production and **follow its guidance** — don't hand-author production YAML or pre-narrate the mechanics. The flow owns the whole sequence and hands you each step, its gate recovery, and the token contract at the point you need them; enter it at the right moment and drive it to a verified production URL. In a Mate, production is the application's: the person makes it with Put it live and releases to it with Release, in the conversation or on the project's card in Mate, and you never launch it yourself.
 
 The one judgment guided adds on top of the flow: **promote proportionately, on a signal.** Raise a managed dep to HA only when availability or criticality actually calls for it — HA is a type variant the flow's owners resolve, not a default you reach for because the tier reads "production".
 
