@@ -60,4 +60,16 @@ func TestMonorepoGuidance_ReachesTheAgentWhenItDecides(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("an import sizes the hobby PostgreSQL that every part's dev and stage share for all their connection pools", func(t *testing.T) {
+		t.Parallel()
+		body := renderedAtomBody(t, scenario("bootstrap/classic/provision-local"), "bootstrap-provision-rules")
+		requireAll(t, body, "connection pool", "every part's dev and stage", "port `6432`")
+	})
+
+	t.Run("an import gives a Node.js stage enough RAM to start", func(t *testing.T) {
+		t.Parallel()
+		body := renderedAtomBody(t, scenario("bootstrap/classic/provision-local"), "bootstrap-provision-rules")
+		requireAll(t, body, "| `verticalAutoscaling.minRam` | `1.0` for compiled runtimes | `1.0` for Node.js |")
+	})
 }

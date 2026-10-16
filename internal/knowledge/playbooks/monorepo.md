@@ -86,7 +86,8 @@ the way the repo's docs install them.
 - pnpm `node_modules` are symlinks into the repo root, so a part that deploys
   `node_modules` ships the root `node_modules` and the shared packages too.
 - A heavy build: `zsc scale cpu max 10m` in the build commands, then
-  `zsc scale cpu auto`.
+  `zsc scale cpu auto`; a build killed out of memory (`next build`) also
+  takes `zsc scale ram max 10m`.
 
 ## 3a. Stages in the bootstrap plan
 

@@ -60,7 +60,10 @@ choose-database / choose-cache decisions). Omitting `profile` applies a
 default (PostgreSQL single → `oltp-staging`, HA → `oltp-production` =
 dedicated CPU + high minima); set it explicitly — dev → PostgreSQL
 `oltp-hobby` / Valkey `hobby`, production → `oltp-staging` / `staging`,
-higher only on a clear load signal. Other managed types (MariaDB,
+higher only on a clear load signal. A hobby PostgreSQL's connections
+(`max_connections` follows its RAM, a few reserved) serve every part's dev
+and stage at once: cap each part's connection pool so all of them fit, or
+connect through pgBouncer on port `6432`. Other managed types (MariaDB,
 ClickHouse, Kafka, …) have no profile — scale them with `verticalAutoscaling`.
 
 **OS variant.** The OS is part of the runtime `type` / `base`, never a
@@ -95,7 +98,10 @@ Set these during import-yaml generation:
 | `startWithoutCode` | `true` | omit | `true` |
 | `maxContainers` | `1` | omit | omit |
 | `enableSubdomainAccess` | `true`* | `true`* | `true`* |
-| `verticalAutoscaling.minRam` | `1.0` for compiled runtimes | omit | omit |
+| `verticalAutoscaling.minRam` | `1.0` for compiled runtimes | `1.0` for Node.js | omit |
+
+A Node.js stage at the default minimum RAM is OOM-killed at start; raise
+it further when its `run.initCommands` are.
 
 \* Omit `enableSubdomainAccess` entirely for a runtime whose submitted
 plan set `publicAccess: "none"` — that runtime is internal-only by
