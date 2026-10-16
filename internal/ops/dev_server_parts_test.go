@@ -198,6 +198,40 @@ func TestDevServer_AListenerThatAnswersSlowerThanTheWait_IsReportedSlowNotConnec
 	}
 }
 
+// A container so busy that the probe's wait runs out before its first curl
+// still gets that curl: the verdict comes from the listener, and a port that
+// accepts is never reported refused.
+func TestDevServer_AProbeStalledPastItsWaitBeforeItsFirstAttempt_IsReportedSlowNotConnectionRefused(t *testing.T) {
+	t.Parallel()
+	seq, err := exec.LookPath("seq")
+	if err != nil {
+		t.Skip("seq is not installed")
+	}
+	for _, stall := range []string{"1"} {
+		t.Run(stall+"s", func(t *testing.T) {
+			t.Parallel()
+			port := slowServer(t, 10*time.Second)
+			ssh := newLocalCurl(t, devservertest.NewSupervised(declaredOn(port)))
+			// The probe runs seq between taking its deadline and its first
+			// attempt; a seq that takes the whole 1 s wait or more is that
+			// stall.
+			stalled := "#!/bin/sh\nsleep " + stall + "\nexec " + shellQuote(seq) + " \"$@\"\n"
+			if err := os.WriteFile(filepath.Join(ssh.bin, "seq"), []byte(stalled), 0o755); err != nil {
+				t.Fatal(err)
+			}
+
+			result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
+				DevServerParams{Action: "restart", Hostname: "apidev", WaitSeconds: 1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Reason != reasonHealthProbeSlow {
+				t.Errorf("reason = %q, want %q for a listener that accepts and has not answered yet", result.Reason, reasonHealthProbeSlow)
+			}
+		})
+	}
+}
+
 func TestDevServer_StatusOfAServerSlowerThanItsProbe_SaysSlowNotConnectionRefused(t *testing.T) {
 	t.Parallel()
 	port := slowServer(t, 10*time.Second)

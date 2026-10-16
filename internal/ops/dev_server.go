@@ -909,14 +909,16 @@ func sleepCtx(ctx context.Context, d time.Duration) {
 // runHealthProbe polls the health endpoint server-side in a single SSH
 // call. Each attempt may take the rest of the wait, so a first response
 // slower than one poll still passes; an attempt that runs out of it on an
-// open connection (curl exit 28) answers SLOW. Returns probe output,
+// open connection (curl exit 28) answers SLOW. The first attempt runs even
+// when a stalled container spent the wait before it, so the verdict always
+// comes from the listener, never from the clock alone. Returns probe output,
 // locally-measured elapsed, a deadline-hit flag, and the ssh error
 // (convention: error last).
 func runHealthProbe(parent context.Context, ssh SSHDeployer, hostname string, port int, healthPath string, wait int) ([]byte, int64, bool, error) {
 	maxAttempts := (wait*1000)/pollIntervalMillis + 1
 	probe := fmt.Sprintf(
 		`set +e; start_ns=$(date +%%s%%N); end=$(( $(date +%%s) + %d )); code=000; for i in $(seq 1 %d); do `+
-			`left=$(( end - $(date +%%s) )); [ "$left" -gt 0 ] || break; `+
+			`left=$(( end - $(date +%%s) )); if [ "$left" -le 0 ]; then [ "$i" -eq 1 ] || break; left=1; fi; `+
 			`code=$(curl -s -o /dev/null -w '%%{http_code}' --max-time "$left" http://localhost:%d%s 2>/dev/null); rc=$?; `+
 			`if [ -n "$code" ] && [ "$code" -ge 200 ] 2>/dev/null && [ "$code" -lt 400 ] 2>/dev/null; then `+
 			`end_ns=$(date +%%s%%N); echo "OK $code $(( (end_ns - start_ns) / 1000000 ))"; exit 0; fi; `+
