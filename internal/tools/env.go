@@ -205,6 +205,8 @@ func projectEnvGetResponse(result *ops.DiscoverResult, projectScope bool) *EnvGe
 type envChangeResult struct {
 	Process            *platform.Process   `json:"process,omitempty"`
 	Stored             []ops.StoredEnv     `json:"stored,omitempty"`
+	Scope              ops.EnvRequestScope `json:"scope,omitempty"`
+	ServiceHostname    string              `json:"serviceHostname,omitempty"`
 	TimedOut           bool                `json:"timedOut,omitempty"`
 	Readers            map[string][]string `json:"readers,omitempty"`
 	RestartedServices  []string            `json:"restartedServices,omitempty"`
@@ -294,7 +296,7 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 					storedEcho[i].Value = masked
 				}
 			}
-			resp := envChangeResult{Process: setResult.Process, Stored: storedEcho, TimedOut: setTimedOut}
+			resp := envChangeResult{Process: setResult.Process, Stored: storedEcho, Scope: setResult.Scope, ServiceHostname: setResult.ServiceHostname, TimedOut: setTimedOut}
 			resp.ShadowWarnings, resp.ShadowUnverified = detectSetShadows(ctx, client, projectID, input, selfHostname, setResult.Stored)
 			setKeys := make([]string, 0, len(setResult.Stored))
 			for _, st := range setResult.Stored {

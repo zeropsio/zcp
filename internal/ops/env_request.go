@@ -11,7 +11,8 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
-// EnvRequestScope names the vault a requested value goes to.
+// EnvRequestScope names the vault a requested value goes to, and the vault a
+// set wrote to (EnvSetResult).
 type EnvRequestScope string
 
 const (

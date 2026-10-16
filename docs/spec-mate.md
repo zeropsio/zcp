@@ -2420,7 +2420,9 @@ the values those entries reference.
   answered. The person's client writes the value to the vault as them; the engine is told only
   saved or declined, records who and when, and the agent hears `saved to <vault>/<KEY>` or
   `declined` in a run of its own, a wake joining the run that asked. The value never enters the
-  engine's records, a log, the agent's context or HQ.
+  engine's records, a log, the agent's context or HQ. A `set` answer names the vault its `stored`
+  keys went to in the request's own fields (`scope`, `serviceHostname`), so an open ask for a key
+  the agent stored itself matches it by key and vault. zcp `TestEnvSet_AStoredKeysAnswerNamesTheVaultItsRequestNamed`.
 
 ### 5.9 Pages — the agent shows a page in the conversation (2026-10-10)
 
