@@ -109,13 +109,17 @@ developers run it locally. Scaffold nothing for it.
 2. **The dev setup stays minimal:** base, system packages in
    `run.prepareCommands`, `run.ports`, `deployFiles: [.]`, no dependency
    install in `buildCommands`; the first deploy puts its `run.start`
-   under the dev-server supervisor.
+   under the dev-server supervisor. A package manager the run image
+   already ships is used as it stands: installing it again globally fails
+   with `EEXIST`.
 3. **Size it before the first install** from the repo's own hints, else
    for a JavaScript workspace with several apps
    `zerops_scale serviceHostname="appdev" minRam=8 minCpu=2`.
 4. **Install as its docs say, in the running container:**
-   `ssh appdev "cd /var/www && <the repo's install command>"`. A
-   restart keeps the installed dependencies; a redeploy replaces the
+   `ssh appdev "cd /var/www && <the repo's install command>"`.
+   Nothing answers a prompt over SSH: prefix the command with `CI=true`
+   and end it with `</dev/null`, or a prompt hangs it until the call
+   times out. A restart keeps the installed dependencies; a redeploy replaces the
    container with what git carries (`notCarried` lists what is gone), so
    install again after one.
 5. **Start each dev command as a named dev server**, the command exactly

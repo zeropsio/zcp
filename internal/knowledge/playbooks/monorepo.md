@@ -80,7 +80,9 @@ the way the repo's docs install them.
   replaces lists whole (`buildCommands`, `deployFiles`, ports) and merges maps, so
   repeat a list in the child when it differs.
 - Every setup needs a `run` section, including static parts.
-- pnpm is not in the base image: install it in `build.prepareCommands`.
+- pnpm is not in the base image: install it in `build.prepareCommands`. The
+  Ubuntu Node run image ships it through Corepack: never `npm i -g pnpm` in
+  `run.prepareCommands` or over SSH — it fails with `EEXIST`.
 - pnpm `node_modules` are symlinks into the repo root, so a part that deploys
   `node_modules` ships the root `node_modules` and the shared packages too.
 - A heavy build: `zsc scale cpu max 10m` in the build commands, then

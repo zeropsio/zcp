@@ -92,6 +92,16 @@ func TestDevelopExistingRepo_RunsTheReposOwnDevFlow(t *testing.T) {
 		}
 	})
 
+	t.Run("an install over SSH runs without waiting for input and uses the package manager the image already ships", func(t *testing.T) {
+		t.Parallel()
+		_, body := existingRepoBody(t, "nodejs@24", topology.ModeDev, "run this repo here")
+		requireAll(t, body,
+			"Nothing answers a prompt over SSH: prefix the command with `CI=true` and end it with `</dev/null`",
+			"A package manager the run image already ships is used as it stands",
+			"`EEXIST`",
+		)
+	})
+
 	t.Run("a dev server is reached through the repo's own host knob and never through a proxy the agent adds", func(t *testing.T) {
 		t.Parallel()
 		_, body := existingRepoBody(t, "nodejs@24", topology.ModeDev, "get it running")
