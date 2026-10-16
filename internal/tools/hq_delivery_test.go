@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -132,6 +133,39 @@ func TestAStageDeployOfAWiredPairDeliversItself(t *testing.T) {
 // deployed tree in the pair's checkout, and its line names that commit — its
 // sha, its message and the checkout — so no commit the agent did not make goes
 // unsaid. A delivery with nothing to commit names none.
+// TestABatchOfAPairsStagesDeliversItOnce: a batch that deploys two stages of
+// one pair delivers the pair once, under its first stage; the other stage's
+// entry names that one instead of repeating the delivery.
+func TestABatchOfAPairsStagesDeliversItOnce(t *testing.T) {
+	lab := newHQLab(t)
+	if err := workflow.UpdateServiceMeta(lab.stateDir, "appdev", func(m *workflow.ServiceMeta) error {
+		m.Stages = append(m.Stages, topology.StageRef{Hostname: "workerstage", SetupName: "worker"})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	lab.wire()
+	startSession(t, lab.stateDir, "Build a todo app")
+	lab.write(map[string]string{"index.js": "the app\n"})
+	result := &ops.DeployBatchResult{Entries: []ops.DeployBatchEntryResult{
+		{Target: ops.DeployBatchTarget{SourceService: "appdev", TargetService: "appstage"}, Result: &ops.DeployResult{Status: statusDeployed}},
+		{Target: ops.DeployBatchTarget{SourceService: "appdev", TargetService: "workerstage"}, Result: &ops.DeployResult{Status: statusDeployed}},
+	}}
+
+	batchDeployer{client: lab.mock, httpClient: lab.hq.srv.Client(), sshDeployer: lab.ssh, rtInfo: lab.rt, stateDir: lab.stateDir}.deliverStages(t.Context(), result)
+
+	first, second := result.Entries[0].Result.NextActions, result.Entries[1].Result.NextActions
+	if !strings.HasPrefix(first, "Delivered: appdev's code") {
+		t.Fatalf("the first stage must carry the delivery: %s", first)
+	}
+	if want := "workerstage is delivered with appstage: see its entry."; second != want {
+		t.Errorf("the second stage must name the first instead of delivering again:\n got %s\nwant %s", second, want)
+	}
+	if lab.hq.change(2) != nil {
+		t.Errorf("one delivery opens one change, got a second: %+v", lab.hq.change(2))
+	}
+}
+
 func TestAStageDeliveryThatCommitsSaysTheCommitItMade(t *testing.T) {
 	lab := newHQLab(t)
 	lab.wire()

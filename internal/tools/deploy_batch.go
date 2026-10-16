@@ -292,25 +292,40 @@ func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallba
 		_ = workflow.RecordDeployAttempt(d.stateDir, entry.Target.TargetService, attempt)
 	}
 
-	if !deliver {
-		return result
+	if deliver {
+		d.deliverStages(ctx, result)
 	}
-	// A wired pair's stage deploy is its delivery (hq_delivery.go), after
-	// the attempts are recorded.
+	return result
+}
+
+// deliverStages delivers the wired pairs whose stages the batch deployed
+// (hq_delivery.go), after the attempts are recorded: each pair once, under
+// the first of its stages, whose code is every stage's.
+func (d batchDeployer) deliverStages(ctx context.Context, result *ops.DeployBatchResult) {
+	deliveredUnder := map[string]string{} // pair's dev hostname → the stage it was delivered under
 	for i := range result.Entries {
 		entry := &result.Entries[i]
+		target := entry.Target.TargetService
 		switch {
 		case entry.Result != nil && entry.Result.Status == statusDeployed:
-			if delivery := deliverHQPair(ctx, d.client, d.httpClient, d.sshDeployer, d.rtInfo, d.stateDir, entry.Target.TargetService); delivery != nil {
+			meta, _ := workflow.FindServiceMeta(d.stateDir, target)
+			if meta != nil && deliveredUnder[meta.Hostname] != "" {
+				entry.Result.NextActions = strings.TrimSpace(entry.Result.NextActions + " " +
+					fmt.Sprintf("%s is delivered with %s: see its entry.", target, deliveredUnder[meta.Hostname]))
+				continue
+			}
+			if delivery := deliverHQPair(ctx, d.client, d.httpClient, d.sshDeployer, d.rtInfo, d.stateDir, target); delivery != nil {
 				entry.Result.NextActions = strings.TrimSpace(entry.Result.NextActions + " " + delivery.Line)
+				if meta != nil {
+					deliveredUnder[meta.Hostname] = target
+				}
 			}
 		case entry.Result != nil && entry.Result.TimedOut:
-			if line := hqDeliveryNotRun(d.rtInfo, d.stateDir, entry.Target.TargetService); line != "" {
+			if line := hqDeliveryNotRun(d.rtInfo, d.stateDir, target); line != "" {
 				entry.Result.NextActions = strings.TrimSpace(entry.Result.NextActions + " " + line)
 			}
 		}
 	}
-	return result
 }
 
 // deployBatchResponse wraps ops.DeployBatchResult with the same
