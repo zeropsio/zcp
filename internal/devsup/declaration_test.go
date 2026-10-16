@@ -43,6 +43,12 @@ func TestParseDeclaration_Shapes(t *testing.T) {
 			in:   `{"version":1,"servers":[{"name":"app","port":3000,"command":"x","later":true}],"later":1}`,
 			want: []Server{{Name: "app", Port: 3000, Command: "x", Cwd: "."}},
 		},
+		{
+			name: "an API part that 404s on / declares the path its health probe reads",
+			in:   `{"version":1,"servers":[{"name":"api","port":8080,"command":"x","healthPath":"/actuator/health"}]}`,
+			want: []Server{{Name: "api", Port: 8080, Command: "x", Cwd: ".", HealthPath: "/actuator/health"}},
+		},
+		{name: "a health path that is not absolute", in: `{"version":1,"servers":[{"name":"api","port":8080,"command":"x","healthPath":"health"}]}`, wantErr: `"api": healthPath "health" must start with /`},
 		{name: "no servers", in: `{"version":1,"servers":[]}`, want: []Server{}},
 		{name: "missing version", in: `{"servers":[{"name":"app","command":"x"}]}`, wantErr: "version is missing"},
 		{name: "newer format with another shape", in: `{"version":2,"servers":{"app":{}}}`, wantErr: "format 2 is not one this supervisor runs ([1])"},

@@ -41,16 +41,18 @@ type Declaration struct {
 
 // Server is one named dev server: the shell command, its working directory
 // relative to the repo root, the port it listens on (0 when it has none), the
-// paths whose change restarts it, the dev service that runs it (variant B) and
-// whether it starts before anyone asks (absent: it does).
+// HTTP path its health probe reads on that port (absent: /), the paths whose
+// change restarts it, the dev service that runs it (variant B) and whether it
+// starts before anyone asks (absent: it does).
 type Server struct {
-	Name      string `json:"name"`
-	Port      int    `json:"port,omitempty"`
-	Command   string `json:"command"`
-	Cwd       string `json:"cwd,omitempty"`
-	Watch     *Watch `json:"watch,omitempty"`
-	Service   string `json:"service,omitempty"`
-	Autostart *bool  `json:"autostart,omitempty"`
+	Name       string `json:"name"`
+	Port       int    `json:"port,omitempty"`
+	HealthPath string `json:"healthPath,omitempty"`
+	Command    string `json:"command"`
+	Cwd        string `json:"cwd,omitempty"`
+	Watch      *Watch `json:"watch,omitempty"`
+	Service    string `json:"service,omitempty"`
+	Autostart  *bool  `json:"autostart,omitempty"`
 }
 
 // FirstDesired is the desired state of a name the state file does not hold
@@ -188,6 +190,9 @@ func normalizeServer(s Server) (Server, error) {
 	}
 	if s.Port < 0 || s.Port > 65535 {
 		return Server{}, fmt.Errorf("%q: port %d is out of range", s.Name, s.Port)
+	}
+	if s.HealthPath != "" && !strings.HasPrefix(s.HealthPath, "/") {
+		return Server{}, fmt.Errorf("%q: healthPath %q must start with /", s.Name, s.HealthPath)
 	}
 	cwd, err := cleanRel(s.Cwd)
 	if err != nil {
