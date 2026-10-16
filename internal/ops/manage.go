@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -129,8 +130,9 @@ const apiCodeInvalidAutoscaling = "invalidCustomAutoscalingValue"
 
 // Scale updates the autoscaling parameters for a service. The platform
 // replaces the whole autoscaling with the body it gets, so every field the
-// caller leaves out is filled from the service's current autoscaling — a
-// RAM-only call keeps the CPU and container bounds it had.
+// caller leaves out is filled from the service's customAutoscaling — a
+// RAM-only call keeps the CPU and container bounds it had. A field the
+// service never set stays out and keeps its platform default.
 func Scale(ctx context.Context, client platform.Client, projectID, hostname string, params ScaleParams) (*ScaleResult, error) {
 	if err := validateScaleParams(params); err != nil {
 		return nil, err
@@ -142,13 +144,16 @@ func Scale(ctx context.Context, client platform.Client, projectID, hostname stri
 	}
 
 	// The search behind resolveUserVisibleService lags writes; the direct
-	// read carries the autoscaling a previous scale just set.
+	// read carries the autoscaling a previous scale just set. Its
+	// currentAutoscaling also carries platform defaults, which the platform
+	// refuses as input (minFreeRamGB 0.0625), so the fill reads only the
+	// user's own values.
 	current, err := client.GetService(ctx, svc.ID)
 	if err != nil {
 		return nil, fmt.Errorf("scale: read current autoscaling: %w", err)
 	}
 	apiParams := buildAutoscalingParams(params)
-	fillOmittedAutoscaling(&apiParams, effectiveAutoscaling(current),
+	fillOmittedAutoscaling(&apiParams, current.CustomAutoscaling,
 		topology.IsManagedService(current.ServiceStackTypeInfo.ServiceStackTypeVersionName))
 	apiParams.ServiceMode = svc.Mode
 	proc, err := client.SetAutoscaling(ctx, svc.ID, apiParams)
@@ -201,8 +206,10 @@ func effectiveAutoscaling(svc *platform.ServiceStack) *platform.CustomAutoscalin
 
 // fillOmittedAutoscaling fills each field the request leaves out from cur.
 // A zero in cur is a field the platform did not return, so it stays out and
-// the platform default applies. A managed service's container count is fixed
-// by its variant, so none is sent for it.
+// the platform default applies. A memory size the platform would refuse as
+// input (more than 3 decimal places) can only be its own default, so it
+// stays out too. A managed service's container count is fixed by its
+// variant, so none is sent for it.
 func fillOmittedAutoscaling(p *platform.AutoscalingParams, cur *platform.CustomAutoscaling, managed bool) {
 	if cur == nil {
 		return
@@ -224,11 +231,16 @@ func fillOmittedAutoscaling(p *platform.AutoscalingParams, cur *platform.CustomA
 	fillInt(&p.VerticalMinCPU, cur.MinCPU)
 	fillInt(&p.VerticalMaxCPU, cur.MaxCPU)
 	fillInt(&p.VerticalStartCPU, cur.StartCPUCoreCount)
-	fillFloat(&p.VerticalMinRAM, cur.MinRAM)
-	fillFloat(&p.VerticalMaxRAM, cur.MaxRAM)
+	fillMemoryGB := func(dst **float64, v float64) {
+		if math.Abs(v*1000-math.Round(v*1000)) < 1e-9 {
+			fillFloat(dst, v)
+		}
+	}
+	fillMemoryGB(&p.VerticalMinRAM, cur.MinRAM)
+	fillMemoryGB(&p.VerticalMaxRAM, cur.MaxRAM)
 	fillFloat(&p.VerticalMinDisk, cur.MinDisk)
 	fillFloat(&p.VerticalMaxDisk, cur.MaxDisk)
-	fillFloat(&p.VerticalMinFreeRAMGB, cur.MinFreeRAMGB)
+	fillMemoryGB(&p.VerticalMinFreeRAMGB, cur.MinFreeRAMGB)
 	fillFloat(&p.VerticalMinFreeRAMPct, cur.MinFreeRAMPercent)
 	fillFloat(&p.VerticalMinFreeCPUCores, cur.MinFreeCPUCores)
 	fillFloat(&p.VerticalMinFreeCPUPct, cur.MinFreeCPUPercent)

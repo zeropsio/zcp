@@ -4,6 +4,7 @@ package ops
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 
@@ -559,7 +560,7 @@ func TestScale_OmittedFieldsKeepTheServiceCurrentScaling(t *testing.T) {
 		WithServices([]platform.ServiceStack{{
 			ID: "svc-1", Name: "apidev", ProjectID: "proj-1", Status: "RUNNING",
 			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
-			CurrentAutoscaling: &platform.CustomAutoscaling{
+			CustomAutoscaling: &platform.CustomAutoscaling{
 				CPUMode: dedicated, MinCPU: 2, MaxCPU: 4, StartCPUCoreCount: 2,
 				MinRAM: 1, MaxRAM: 4, MinDisk: 1, MaxDisk: 10,
 				HorizontalMinCount: 1, HorizontalMaxCount: 1,
@@ -611,6 +612,76 @@ func TestScale_OmittedFieldsKeepTheServiceCurrentScaling(t *testing.T) {
 	}
 }
 
+// A partial scale on a service still on platform defaults sends a body the
+// platform accepts: the default minFreeRamGB 0.0625 was copied into the
+// request and the platform refused it ("minFreeResource.memoryGBytes … no more
+// than 3 decimal places", seen live 2026-10-16). Omitted fields come from the
+// service's customAutoscaling, or stay out when it has none.
+func TestScale_APartialScaleOnAServiceStillOnDefaultsSendsABodyThePlatformAccepts(t *testing.T) {
+	t.Parallel()
+	defaults := &platform.CustomAutoscaling{
+		CPUMode: "SHARED", MinCPU: 1, MaxCPU: 8, StartCPUCoreCount: 2,
+		MinRAM: 0.125, MaxRAM: 48, MinDisk: 1, MaxDisk: 250,
+		HorizontalMinCount: 1, HorizontalMaxCount: 1,
+		MinFreeRAMGB: 0.0625, MinFreeCPUCores: 0.1,
+	}
+	tests := []struct {
+		name   string
+		custom *platform.CustomAutoscaling
+		// wantMinCPU is the minCpu the body carries, nil when it stays out.
+		wantMinCPU *int32
+	}{
+		{name: "no customAutoscaling", custom: nil},
+		{
+			name:       "customAutoscaling carries the default minFreeRamGB",
+			custom:     &platform.CustomAutoscaling{MinCPU: 2, MaxCPU: 4, MinFreeRAMGB: 0.0625},
+			wantMinCPU: func() *int32 { v := int32(2); return &v }(),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			client := &scaleCaptureClient{Mock: platform.NewMock().
+				WithServices([]platform.ServiceStack{{
+					ID: "svc-1", Name: "vetsstage", ProjectID: "proj-1", Status: "RUNNING",
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "java@21"},
+					CurrentAutoscaling:   defaults,
+					CustomAutoscaling:    tt.custom,
+				}})}
+
+			if _, err := Scale(context.Background(), client, "proj-1", "vetsstage", ScaleParams{MaxRAM: scaleFloatPtr(4)}); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			got := client.sent
+			if got == nil {
+				t.Fatal("SetAutoscaling was not called")
+			}
+			for name, v := range map[string]*float64{
+				"minRam": got.VerticalMinRAM, "maxRam": got.VerticalMaxRAM, "minFreeRamGB": got.VerticalMinFreeRAMGB,
+			} {
+				if v != nil && math.Abs(*v*1000-math.Round(*v*1000)) > 1e-9 {
+					t.Errorf("%s sent = %g, the platform refuses more than 3 decimal places", name, *v)
+				}
+			}
+			if got.VerticalMaxRAM == nil || *got.VerticalMaxRAM != 4 {
+				t.Errorf("maxRam sent = %v, want 4", got.VerticalMaxRAM)
+			}
+			if got.VerticalMinFreeRAMGB != nil {
+				t.Errorf("minFreeRamGB sent = %g, want it left out so the platform default stays", *got.VerticalMinFreeRAMGB)
+			}
+			if got.HorizontalMinCount != nil || got.VerticalMaxDisk != nil {
+				t.Errorf("a platform default was sent: minContainers=%v maxDisk=%v", got.HorizontalMinCount, got.VerticalMaxDisk)
+			}
+			switch {
+			case tt.wantMinCPU == nil && got.VerticalMinCPU != nil:
+				t.Errorf("minCpu sent = %d, want it left out", *got.VerticalMinCPU)
+			case tt.wantMinCPU != nil && (got.VerticalMinCPU == nil || *got.VerticalMinCPU != *tt.wantMinCPU):
+				t.Errorf("minCpu sent = %v, want %d from customAutoscaling", got.VerticalMinCPU, *tt.wantMinCPU)
+			}
+		})
+	}
+}
+
 // A scale call that raises minRam above the maxRam the service keeps (the
 // call did not set maxRam) is refused by the platform with a field error whose
 // suggestion says to fix YAML (seen live 2026-10-16). The error names both
@@ -625,7 +696,7 @@ func TestScale_ARefusedMinAboveTheMaxTheServiceKeepsNamesBothValues(t *testing.T
 		WithServices([]platform.ServiceStack{{
 			ID: "svc-1", Name: "difydev", ProjectID: "proj-1", Status: "RUNNING",
 			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/python@3.12"},
-			CurrentAutoscaling: &platform.CustomAutoscaling{
+			CustomAutoscaling: &platform.CustomAutoscaling{
 				MinCPU: 1, MaxCPU: 3, MinRAM: 4, MaxRAM: 6, MinDisk: 1, MaxDisk: 100,
 				HorizontalMinCount: 1, HorizontalMaxCount: 1,
 			},
@@ -656,7 +727,7 @@ func TestScale_ManagedServiceNeverSendsAContainerCount(t *testing.T) {
 		WithServices([]platform.ServiceStack{{
 			ID: "svc-db", Name: "db", ProjectID: "proj-1", Status: "RUNNING",
 			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"},
-			CurrentAutoscaling: &platform.CustomAutoscaling{
+			CustomAutoscaling: &platform.CustomAutoscaling{
 				MinCPU: 1, MaxCPU: 2, MinRAM: 0.25, MaxRAM: 2,
 				HorizontalMinCount: 1, HorizontalMaxCount: 1,
 			},
