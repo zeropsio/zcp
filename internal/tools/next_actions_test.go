@@ -248,6 +248,30 @@ func TestDeployNextActions_NamesEveryDeclaredDevServerACrashedOneWithItsExit(t *
 	}
 }
 
+// The agent stopped beat on purpose, and the next deploy's reply listed beat
+// under the servers to read, fix and start. A server whose desired state is
+// stopped is named as stopped and is never one to fix.
+func TestDeployNextActions_AServerStoppedOnPurposeIsNamedStoppedNotAsOneToFix(t *testing.T) {
+	t.Parallel()
+	decl := `{"version":1,"servers":[{"name":"api","port":8080,"command":"a","cwd":"."},{"name":"beat","command":"b","cwd":"."}]}`
+	c := devservertest.NewSupervised(decl)
+	c.Redeploy()
+	c.Servers["beat"].Desired, c.Servers["beat"].Status = devsup.DesiredStopped, devsup.StatusStopped
+
+	got := deployNextActionsFor(t.Context(), c, "/var/www", &ops.DeployResult{TargetService: "difydev"}, topology.ModeDev, topology.RuntimeDynamic)
+
+	for _, want := range []string{"api running", "beat stopped", "zerops_verify"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("nextActions = %q, want it to contain %q", got, want)
+		}
+	}
+	for _, never := range []string{"For each server that is down", "action=logs", "action=start"} {
+		if strings.Contains(got, never) {
+			t.Errorf("nextActions = %q, asks to fix a server stopped on purpose (%q)", got, never)
+		}
+	}
+}
+
 // Four Spring servers answered "starting" in the deploy reply; one crashed a
 // minute later and nobody was told. The reply waits, within the start budget,
 // for each starting server's first running or crashed answer and names the

@@ -64,7 +64,8 @@ func deploySuccessNextActions(_ *ops.DeployResult, mode topology.Mode, class top
 // read once each starting one has answered, within the start budget; a
 // crashed one with its exit and the way back, or as coming back when the
 // supervisor's one more start is pending; one still starting or coming back
-// with when to look again — instead of calling the container idle. A
+// with when to look again; a stopped one, whose desired state is stopped, only
+// as stopped — instead of calling the container idle. A
 // container without the supervisor or a declaration keeps today's pointer.
 func deployNextActionsFor(ctx context.Context, ssh ops.SSHDeployer, root string, result *ops.DeployResult, mode topology.Mode, class topology.RuntimeClass) string {
 	base := deploySuccessNextActions(result, mode, class)
@@ -84,6 +85,8 @@ func deployNextActionsFor(ctx context.Context, ssh ops.SSHDeployer, root string,
 			down = append(down, s.Name)
 		case st.Status == devsup.StatusRunning:
 			states = append(states, s.Name+" running")
+		case st.Status == devsup.StatusStopped:
+			states = append(states, s.Name+" stopped")
 		case st.Status == devsup.StatusStarting:
 			states = append(states, s.Name+" still starting")
 			unsettled = append(unsettled, s.Name)
