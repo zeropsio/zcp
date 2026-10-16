@@ -913,6 +913,35 @@ func TestDeriveDeployed_ProvisionedFromGit(t *testing.T) {
 	}
 }
 
+// The pair's first-deploy stamp is shared by its dev half and every stage: a
+// dev deploy marked three never-deployed stages deployed while the platform
+// still listed them READY_TO_DEPLOY. A service the platform lists
+// READY_TO_DEPLOY without deployed code has had no deploy land, whatever the
+// pair's stamp says — unless this session deployed it (the list lags).
+func TestDeriveDeployed_AStageThePlatformStillListsReadyToDeployIsNotDeployed(t *testing.T) {
+	t.Parallel()
+	meta := &ServiceMeta{
+		Hostname: "petclinicdev", Mode: topology.ModeStandard, BootstrapSession: "s", BootstrappedAt: "2026-10-16",
+		Stages:          []topology.StageRef{{Hostname: "vetsstage", SetupName: "vets"}, {Hostname: "gatewaystage", SetupName: "gateway"}},
+		FirstDeployedAt: "2026-10-16T07:28:20Z",
+	}
+	ws := &WorkSession{Deploys: map[string][]DeployAttempt{"gatewaystage": {{SucceededAt: "2026-10-16T07:40:00Z"}}}}
+	cases := []struct {
+		host, status string
+		want         bool
+	}{
+		{"petclinicdev", StatusActive, true},
+		{"vetsstage", "READY_TO_DEPLOY", false},
+		{"gatewaystage", "READY_TO_DEPLOY", true},
+	}
+	for _, tc := range cases {
+		live := &platform.ServiceStack{Name: tc.host, Status: tc.status}
+		if got := DeriveDeployed(tc.host, live, meta, ws); got != tc.want {
+			t.Errorf("DeriveDeployed(%s, %s) = %v, want %v", tc.host, tc.status, got, tc.want)
+		}
+	}
+}
+
 // TestComputeEnvelope_ReadsDirectList pins that the envelope reads services
 // off the DIRECT list: it is the only read that carries the active version's
 // source, which tells an empty startWithoutCode runtime from a deployed one,

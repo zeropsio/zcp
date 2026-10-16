@@ -332,11 +332,19 @@ const StatusActive = "ACTIVE"
 // the platform lists it, nil when it is not live. meta is the local record
 // for that hostname (or its paired dev hostname); nil → Deployed=false.
 // ws is optional; when nil only signals 1, 3 and 4 apply.
+//
+// The stamp is the pair's, shared by its dev half and every stage, so it
+// cannot speak for a service the platform still lists READY_TO_DEPLOY
+// without deployed code: no deploy has landed there, unless this session
+// recorded one (the list lags the deploy).
 func DeriveDeployed(hostname string, live *platform.ServiceStack, meta *ServiceMeta, ws *WorkSession) bool {
-	if meta != nil && meta.IsDeployed() {
+	if HasSuccessfulDeployFor(ws, hostname) {
 		return true
 	}
-	if HasSuccessfulDeployFor(ws, hostname) {
+	if live != nil && live.Status == platform.ServiceStatusReadyToDeploy && !live.HasDeployedCode() {
+		return false
+	}
+	if meta != nil && meta.IsDeployed() {
 		return true
 	}
 	active := live != nil && live.Status == StatusActive
