@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 
@@ -74,7 +75,8 @@ func RegisterBrowser(srv *mcp.Server, stateDir string) {
 			"Returns: steps[] (each with errorKind on failure), errorsOutput (from [errors]), " +
 			"consoleOutput (from [console]), networkOutput (4xx/5xx requests from [network requests], " +
 			"always populated — no flag needed; a request that failed at the network layer or is still " +
-			"in flight has no status and is not reported), durationMs, freshBrowser, browserRecycled, message. " +
+			"in flight has no status and is not reported), durationMs, freshBrowser, browserRecycled, message; " +
+			"past 20k chars the outputs are cut to their heads and fullResult names a file holding the whole result. " +
 			"To say how a call ran, report the result's durationMs, freshBrowser and browserRecycled; a script that summarises results keeps them.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Drive browser via agent-browser",
@@ -126,7 +128,7 @@ func keepBrowserPicture(stateDir string, result *ops.BrowserBatchResult) {
 // marshals a non-nil typed output into structuredContent and Claude Code
 // replaces the model-facing text with it, stripping every guidance atom.
 func browserToolResult(result *ops.BrowserBatchResult) *mcp.CallToolResult {
-	tr := jsonResult(result)
+	tr := jsonResult(shortBrowserResult(result))
 	if result.Screenshot != nil && len(result.Screenshot.PNG) > 0 {
 		tr.Content = append(tr.Content, &mcp.ImageContent{
 			Data:     result.Screenshot.PNG,
@@ -134,4 +136,57 @@ func browserToolResult(result *ops.BrowserBatchResult) *mcp.CallToolResult {
 		})
 	}
 	return tr
+}
+
+// browserTextCap bounds the result text the model reads: one page snapshot or
+// network tail can run to hundreds of thousands of chars.
+const browserTextCap = 20000
+
+// shortBrowserResult is the result as the model reads it. Within
+// browserTextCap it is the whole result; past it, the whole result goes to a
+// temp file the reply names (fullResult) and each step result, errors and
+// console output keeps its head as a string, the network tail its first
+// requests — the longest outputs cut first, as little as fits.
+func shortBrowserResult(result *ops.BrowserBatchResult) any {
+	whole, err := json.Marshal(result)
+	if err != nil || len(whole) <= browserTextCap {
+		return result
+	}
+	short := *result
+	if f, err := os.CreateTemp("", "zerops-browser-*.json"); err == nil {
+		_, werr := f.Write(whole)
+		if cerr := f.Close(); werr == nil && cerr == nil {
+			short.FullResult = f.Name()
+		}
+	}
+	for limit := browserTextCap; ; limit /= 2 {
+		short.Steps = make([]ops.BrowserStepResult, len(result.Steps))
+		for i, step := range result.Steps {
+			step.Result = cutBrowserOutput(step.Result, limit)
+			short.Steps[i] = step
+		}
+		short.ErrorsOutput = cutBrowserOutput(result.ErrorsOutput, limit)
+		short.ConsoleOutput = cutBrowserOutput(result.ConsoleOutput, limit)
+		short.NetworkOutput = result.NetworkOutput[:min(len(result.NetworkOutput), limit/100)]
+		if b, err := json.Marshal(short); limit == 0 || (err == nil && len(b) <= browserTextCap) {
+			return short
+		}
+	}
+}
+
+// cutBrowserOutput keeps an output within limit chars: its head, as a JSON
+// string, when it is longer; nothing at limit 0.
+func cutBrowserOutput(raw json.RawMessage, limit int) json.RawMessage {
+	if len(raw) <= limit {
+		return raw
+	}
+	if limit == 0 {
+		return nil
+	}
+	head := []rune(string(raw[:limit]))
+	cut, err := json.Marshal(string(head[:len(head)-1]) + "… (cut; the whole result is in fullResult)")
+	if err != nil {
+		return nil
+	}
+	return cut
 }

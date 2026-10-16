@@ -94,6 +94,74 @@ func TestBrowserToolResult_EmptyScreenshotBytesNoImageContent(t *testing.T) {
 	}
 }
 
+// TestBrowserToolResult_LongOutputIsCutAndTheWholeResultIsInAFile: a 73k-char
+// snapshot and hundreds of failed requests reach the model as at most 20k
+// chars — the head of each output, still JSON — and the reply names the file
+// that holds the whole result.
+func TestBrowserToolResult_LongOutputIsCutAndTheWholeResultIsInAFile(t *testing.T) {
+	// Not parallel: points the temp dir at this test's own.
+	t.Setenv("TMPDIR", t.TempDir())
+	snapshot, err := json.Marshal(map[string]string{"snapshot": "- heading \"Orders\" [ref=e1]\n" + strings.Repeat("- row \"order\" [ref=e2]\n", 3000)})
+	if err != nil {
+		t.Fatalf("marshal snapshot: %v", err)
+	}
+	network := make([]ops.NetworkRequest, 0, 400)
+	for i := range 400 {
+		network = append(network, ops.NetworkRequest{URL: fmt.Sprintf("https://appdev.example.invalid/api/item/%d", i), Method: "GET", Status: 404})
+	}
+	result := &ops.BrowserBatchResult{
+		URL:           "https://appdev.example.invalid",
+		Steps:         []ops.BrowserStepResult{{Command: []string{"snapshot", "-i", "-c"}, Success: true, Result: snapshot}},
+		NetworkOutput: network,
+		DurationMs:    1234,
+	}
+	whole, err := json.Marshal(result)
+	if err != nil || len(whole) <= 20000 {
+		t.Fatalf("the fixture must be longer than the cap: %d chars, %v", len(whole), err)
+	}
+
+	text := resultText(t, browserToolResult(result))
+
+	if len(text) > 20000 {
+		t.Errorf("the model got %d chars, want at most 20000", len(text))
+	}
+	var shown struct {
+		Steps []struct {
+			Result string `json:"result"`
+		} `json:"steps"`
+		NetworkOutput []ops.NetworkRequest `json:"networkOutput"`
+		DurationMs    int64                `json:"durationMs"`
+		FullResult    string               `json:"fullResult"`
+	}
+	if err := json.Unmarshal([]byte(text), &shown); err != nil {
+		t.Fatalf("the cut reply must stay JSON: %v\n%.300s", err, text)
+	}
+	if shown.DurationMs != 1234 || len(shown.Steps) != 1 || !strings.HasPrefix(shown.Steps[0].Result, `{"snapshot":"- heading \"Orders\"`) {
+		t.Errorf("the reply must keep the facts and the head of the snapshot: %.300s", text)
+	}
+	if len(shown.NetworkOutput) == 0 || len(shown.NetworkOutput) >= 400 || shown.NetworkOutput[0].URL != "https://appdev.example.invalid/api/item/0" {
+		t.Errorf("the reply must keep the first failed requests, not all 400: got %d", len(shown.NetworkOutput))
+	}
+	saved, err := os.ReadFile(shown.FullResult)
+	if err != nil || !bytes.Equal(saved, whole) {
+		t.Errorf("fullResult %q must hold the whole result (%d chars): got %d chars, %v", shown.FullResult, len(whole), len(saved), err)
+	}
+}
+
+// TestBrowserToolResult_ShortOutputStaysWhole: a result within the cap is the
+// whole result, and names no file.
+func TestBrowserToolResult_ShortOutputStaysWhole(t *testing.T) {
+	result := &ops.BrowserBatchResult{URL: "https://example.com", ConsoleOutput: json.RawMessage(`{"messages":["ready"]}`), DurationMs: 9}
+	whole, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	if text := resultText(t, browserToolResult(result)); text != string(whole) {
+		t.Errorf("a short result must reach the model whole:\n got %s\nwant %s", text, whole)
+	}
+}
+
 // TestKeepBrowserPicture: a screenshot zerops_browser takes is kept, and its
 // result names it — the only way the Mate can put it in a description.
 func TestKeepBrowserPicture(t *testing.T) {

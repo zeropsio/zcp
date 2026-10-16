@@ -120,6 +120,9 @@ type BrowserBatchResult struct {
 	BrowserRecycled bool                     `json:"browserRecycled,omitempty"`
 	OutputTruncated bool                     `json:"outputTruncated,omitempty"`
 	Message         string                   `json:"message,omitempty"`
+	// FullResult is the file holding the whole result when the reply cut its
+	// outputs to fit the model's text. Set by the tools layer.
+	FullResult string `json:"fullResult,omitempty"`
 }
 
 // BrowserScreenshotResult carries a captured screenshot. PNG is excluded
