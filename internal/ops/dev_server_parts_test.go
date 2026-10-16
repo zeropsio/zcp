@@ -265,3 +265,13 @@ func TestDevServer_StatusWithoutANameOnSeveralServers_ReportsEveryServer(t *test
 		}
 	}
 }
+
+func TestDevServer_StatusSaysHowOftenTheSupervisorRestartedTheServer(t *testing.T) {
+	t.Parallel()
+	c := devservertest.NewSupervised(oneServer)
+	c.Servers["apidev"].Restarts = 136
+	result := runDevServer(t, c, DevServerParams{Action: "status", Hostname: "apidev"})
+	if result.Restarts != 136 || !strings.Contains(result.Message, "restarted it 136 times") {
+		t.Errorf("restarts/message = %d/%q, want the supervisor's 136 restarts", result.Restarts, result.Message)
+	}
+}

@@ -91,6 +91,9 @@ type DevServerResult struct {
 	// supervisor's last answer in the call — what the envelope's devServers[]
 	// projects (DevServerStates). Nil when no supervisor answered.
 	Read *DevServers `json:"-"`
+	// Restarts is how often the supervisor restarted the reported server
+	// (status).
+	Restarts int `json:"restarts,omitempty"`
 	// Unreported: the call read several servers and reports none of them
 	// alone (a status of a dev service with several), so it says nothing of
 	// whether "the" server runs.
@@ -723,7 +726,12 @@ func statusDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds
 	}
 	declared, _ := ds.Server(name)
 	result := newResult(devServerActionStatus, p.Hostname, name)
-	result.LogFile, result.PID = server.LogPath, server.Pid
+	result.LogFile, result.PID, result.Restarts = server.LogPath, server.Pid, server.Restarts
+	defer func() {
+		if result.Restarts > 0 {
+			result.Message += fmt.Sprintf(" The supervisor has restarted it %d times.", result.Restarts)
+		}
+	}()
 	label := serverLabel(p.Hostname, name)
 	switch server.Status {
 	case devsup.StatusCrashed:
