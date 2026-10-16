@@ -1,6 +1,7 @@
 package ops
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -60,6 +61,15 @@ func classifySSHError(err error, sourceService, targetService string) *platform.
 		pe.Message = fmt.Sprintf("SSH deploy from %s to %s refused: the Mate's crew save failed, so this deploy is held and crewmates' unsaved work is not lost:\n%s",
 			sourceService, targetService, lastLines(saveStderr, 5))
 		pe.Suggestion = "Fix what the crew save reports (its stderr is above), then deploy again."
+	case errors.Is(sshErr.Err, context.Canceled), errors.Is(sshErr.Err, context.DeadlineExceeded):
+		// The ssh client was stopped, not the remote command: a push stopped
+		// before zcli said it was deploying is ended by stopPush.
+		how := "was cancelled"
+		if errors.Is(sshErr.Err, context.DeadlineExceeded) {
+			how = "timed out"
+		}
+		pe.Message = fmt.Sprintf("SSH deploy from %s to %s %s before its upload finished; the push was stopped and started no build", sourceService, targetService, how)
+		pe.Suggestion = "Nothing is building from this deploy. Deploy again when ready."
 	case strings.Contains(exitMsg, "signal: killed"):
 		pe.Message = fmt.Sprintf("SSH deploy from %s to %s killed (likely OOM)", sourceService, targetService)
 		pe.Suggestion = fmt.Sprintf("Process killed. Scale up: zerops_scale serviceHostname=%s minRam=2", sourceService)

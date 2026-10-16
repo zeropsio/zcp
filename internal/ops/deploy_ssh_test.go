@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -1527,6 +1528,272 @@ func TestBuildSSHCommand_ReturnsOnUpload_BuildWaitReportsTheBuild(t *testing.T) 
 			}
 			if _, err := os.Stat(pushDir); !os.IsNotExist(err) {
 				t.Errorf("push run directory left behind: %v", err)
+			}
+		})
+	}
+}
+
+// pushRig is a source repository with a fake zcli on PATH, for running the
+// push and build-wait commands in real bash.
+type pushRig struct {
+	t       *testing.T
+	dir     string
+	pushDir string
+	env     []string
+}
+
+func newPushRig(t *testing.T, zcli string) *pushRig {
+	t.Helper()
+	dir := t.TempDir()
+	bin := t.TempDir()
+	env := isolatedGitEnv(t)
+	mustRunGit(t, dir, env, "init", "-q", "-b", "main")
+	mustRunGit(t, dir, env, "-c", "user.email=a@b", "-c", "user.name=a", "commit", "-q", "--allow-empty", "-m", "seed")
+	if err := os.WriteFile(filepath.Join(bin, "zcli"), []byte("#!/bin/sh\n"+zcli), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return &pushRig{
+		t:       t,
+		dir:     dir,
+		pushDir: filepath.Join(t.TempDir(), "zcp-push-test"),
+		env:     append(env, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH")),
+	}
+}
+
+// run runs script in bash until it exits or ctx ends, as an ssh session does.
+func (r *pushRig) run(ctx context.Context, script string) (string, int) {
+	r.t.Helper()
+	cmd := exec.CommandContext(ctx, "bash", "-c", script)
+	cmd.Env = r.env
+	out, err := cmd.CombinedOutput()
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return string(out), exitErr.ExitCode()
+	}
+	if err != nil {
+		r.t.Fatalf("run: %v", err)
+	}
+	return string(out), 0
+}
+
+// TestBuildSSHCommand_PushStoppedBeforeItsUpload_DeploysNothing: a push whose
+// session ends before zcli says it is deploying — the call cancelled or past
+// its ceiling — is stopped by the next call: zcli never asks for the build
+// and its run directory is gone. A push already past that line is left to
+// its build, and the stop's output says the build started.
+func TestBuildSSHCommand_PushStoppedBeforeItsUpload_DeploysNothing(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("skipping under -short; needs real git binary")
+	}
+	tests := []struct {
+		name       string
+		zcli       string
+		wantBuilt  bool
+		wantMarker bool
+	}{
+		{
+			name:      "stopped mid-upload",
+			zcli:      "echo 'Uploading'\nwhile [ ! -e upload-go ]; do sleep 0.1; done\necho 'Deploying service'\necho built > built\n",
+			wantBuilt: false,
+		},
+		{
+			name:       "stopped after the upload",
+			zcli:       "echo 'Deploying service'\necho built > built\nwhile [ ! -e upload-go ]; do sleep 0.1; done\n",
+			wantBuilt:  true,
+			wantMarker: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			r := newPushRig(t, tt.zcli)
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			defer cancel()
+			// The upload call's session ends as a stopped ssh client's does.
+			session, endSession := context.WithTimeout(ctx, 2*time.Second)
+			defer endSession()
+			r.run(session, buildSSHCommand(auth.Info{Token: "tok"}, "svc-1", r.dir, "", false, "", r.pushDir))
+
+			stopOut, _ := r.run(ctx, pushStopCommand(r.pushDir))
+			if err := os.WriteFile(filepath.Join(r.dir, "upload-go"), nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(time.Second)
+			if _, err := os.Stat(filepath.Join(r.dir, "built")); (err == nil) != tt.wantBuilt {
+				t.Errorf("zcli asked for the build = %v, want %v", err == nil, tt.wantBuilt)
+			}
+			if got := isSSHBuildTriggered(stopOut); got != tt.wantMarker {
+				t.Errorf("stop output says the build started = %v, want %v: %q", got, tt.wantMarker, stopOut)
+			}
+			if _, err := os.Stat(r.pushDir); !tt.wantMarker && !os.IsNotExist(err) {
+				t.Errorf("stopped push left its run directory: %v", err)
+			}
+			if tt.wantMarker {
+				r.run(ctx, buildWaitCommand(r.pushDir))
+			}
+		})
+	}
+}
+
+// TestBuildWaitCommand_RunDirectoryAbsent_EndsAtOnce: a build wait that
+// reaches a container without the push's run directory — another container
+// of the source, or a replaced one — ends at once with exit 254 rather than
+// waiting out its ceiling.
+func TestBuildWaitCommand_RunDirectoryAbsent_EndsAtOnce(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("skipping under -short; needs real git binary")
+	}
+	r := newPushRig(t, "exit 0\n")
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	out, code := r.run(ctx, buildWaitCommand(r.pushDir))
+	if code != 254 {
+		t.Errorf("build wait without its run directory = exit %d %q, want exit 254 at once", code, out)
+	}
+}
+
+// TestBuildSSHCommand_GitSetupFails_ReportsItsOwnError: a push whose git
+// setup fails ends with that failure's own line and status, not a line about
+// zcp's run directory.
+func TestBuildSSHCommand_GitSetupFails_ReportsItsOwnError(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("skipping under -short; needs real git binary")
+	}
+	r := newPushRig(t, "exit 0\n")
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	missing := filepath.Join(r.dir, "missing")
+	out, code := r.run(ctx, buildSSHCommand(auth.Info{Token: "tok"}, "svc-1", missing, "", false, "", r.pushDir))
+	last := lastLines(out, 1)
+	if code == 0 || !strings.Contains(last, missing) || strings.Contains(out, "zcp-push") {
+		t.Errorf("failed git setup = exit %d, last line %q, want its own failure as the last line:\n%s", code, last, out)
+	}
+}
+
+// TestBuildSSHCommand_NextPush_RemovesOldFinishedRuns: a push removes the run
+// directories of pushes that finished over an hour ago, which no build wait
+// will read any more, and keeps recent and still-running ones.
+func TestBuildSSHCommand_NextPush_RemovesOldFinishedRuns(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("skipping under -short; needs real git binary")
+	}
+	r := newPushRig(t, "echo 'Deploying service'\n")
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	runs := filepath.Dir(r.pushDir)
+	old := time.Now().Add(-2 * time.Hour)
+	for _, run := range []struct {
+		name     string
+		finished time.Time // zero: still running
+		started  time.Time
+	}{
+		{name: "zcp-push-OLDDONE", finished: old, started: old},
+		{name: "zcp-push-NEWDONE", finished: time.Now(), started: old},
+		{name: "zcp-push-OLDRUNNING", started: old},
+	} {
+		d := filepath.Join(runs, run.name)
+		if err := os.Mkdir(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if !run.finished.IsZero() {
+			rc := filepath.Join(d, "rc")
+			if err := os.WriteFile(rc, []byte("0\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chtimes(rc, run.finished, run.finished); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.Chtimes(d, run.started, run.started); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if out, code := r.run(ctx, buildSSHCommand(auth.Info{Token: "tok"}, "svc-1", r.dir, "", false, "", r.pushDir)); code != 0 {
+		t.Fatalf("push = exit %d: %s", code, out)
+	}
+	r.run(ctx, buildWaitCommand(r.pushDir))
+	for name, wantKept := range map[string]bool{"zcp-push-OLDDONE": false, "zcp-push-NEWDONE": true, "zcp-push-OLDRUNNING": true} {
+		if _, err := os.Stat(filepath.Join(runs, name)); (err == nil) != wantKept {
+			t.Errorf("%s kept = %v, want %v", name, err == nil, wantKept)
+		}
+	}
+}
+
+// stoppedPushSSH fails the push's upload call as a stopped ssh client does:
+// its context cancelled, or its ceiling hit. Every call records whether its
+// context was still live.
+type stoppedPushSSH struct {
+	mockSSHDeployer
+	stop    error
+	cancel  context.CancelFunc
+	ctxErrs []error
+}
+
+func (m *stoppedPushSSH) ExecSSH(ctx context.Context, hostname, command string) ([]byte, error) {
+	m.ctxErrs = append(m.ctxErrs, ctx.Err())
+	if !strings.Contains(command, "zcli push") {
+		return m.mockSSHDeployer.ExecSSH(ctx, hostname, command)
+	}
+	m.calls = append(m.calls, sshCall{hostname: hostname, command: command})
+	m.cancel()
+	return []byte("Uploading\n"), &platform.SSHExecError{Hostname: hostname, Output: "Uploading\n", Err: m.stop}
+}
+
+// TestDeploySSH_PushStoppedBeforeItsUpload_StopsZcliAndSaysNoBuild: a deploy
+// whose push is cancelled or times out before zcli says it is deploying
+// stops zcli over a call of its own, which its cancellation does not stop,
+// and says the push started no build — never that the source ran out of
+// memory.
+func TestDeploySSH_PushStoppedBeforeItsUpload_StopsZcliAndSaysNoBuild(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		stop     error
+		cancel   bool
+		wantWord string
+	}{
+		{name: "cancelled", stop: fmt.Errorf("ssh stopped: %w (signal: killed)", context.Canceled), cancel: true, wantWord: "cancelled"},
+		{name: "past the ceiling", stop: fmt.Errorf("ssh stopped: %w (signal: killed)", context.DeadlineExceeded), wantWord: "timed out"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mock := platform.NewMock().WithServices([]platform.ServiceStack{
+				{ID: "svc-1", Name: "builder"},
+				{ID: "svc-2", Name: "app"},
+			})
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			ssh := &stoppedPushSSH{stop: tt.stop, cancel: func() {}}
+			if tt.cancel {
+				ssh.cancel = cancel
+			}
+			_, err := DeploySSH(ctx, mock, "proj-1", ssh, testAuthInfo(), "builder", "app", "", "", "")
+			var pe *platform.PlatformError
+			if !errorAs(err, &pe) {
+				t.Fatalf("want a PlatformError, got %T: %v", err, err)
+			}
+			if !strings.Contains(pe.Message, tt.wantWord) || !strings.Contains(pe.Message, "started no build") ||
+				strings.Contains(pe.Message, "OOM") || strings.Contains(pe.Suggestion, "zerops_scale") {
+				t.Errorf("message %q / suggestion %q, want it %s and to have started no build, without OOM or scaling", pe.Message, pe.Suggestion, tt.wantWord)
+			}
+			var push string
+			for _, c := range ssh.calls {
+				if strings.Contains(c.command, "zcli push") {
+					push = c.command
+				}
+			}
+			pushDir := regexp.MustCompile(`/tmp/zcp-push-[A-Z2-7]+`).FindString(push)
+			last := ssh.calls[len(ssh.calls)-1]
+			if pushDir == "" || last.command != pushStopCommand(pushDir) {
+				t.Fatalf("last call = %q, want the stop of push run %q", last.command, pushDir)
+			}
+			if ctxErr := ssh.ctxErrs[len(ssh.ctxErrs)-1]; ctxErr != nil {
+				t.Errorf("stop call ran with a dead context: %v", ctxErr)
 			}
 		})
 	}
