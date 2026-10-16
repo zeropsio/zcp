@@ -189,7 +189,10 @@ interaction / SPA routes / non-root / auth, drive the browser **inline** with
 `zerops_browser` — inner commands cover click/fill/find/get/is/wait plus
 `set viewport`/`set device`/`set media` for responsive and dark-mode checks;
 pass `screenshot: true` for visual evidence; failed/4xx/5xx network requests
-are always reported alongside errors/console, no flag needed. Never spawn a
+are always reported alongside errors/console, no flag needed. The default
+tab keeps earlier calls' cookies, storage and cache; pass
+`isolation: "fresh-context"` for a first visit — signed out, or an app whose
+service worker or long-cached assets could still serve the old deploy. Never spawn a
 sub-agent, call raw `agent-browser`, or use `eval`.
 To make an already-public service internal-only, call `zerops_subdomain action="disable"` — after that, `http_public` reports `skip` on every later verify, same as a `publicAccess: "none"` plan intent.
 
