@@ -45,8 +45,8 @@ type PartsSignal struct {
 	// YAMLSetups names every setup of the root zerops.yaml, in file order.
 	YAMLSetups []string
 	// RunParts names the YAMLParts that run a process: their setup, or a
-	// setup it extends, names a run.start. A part without one (a static
-	// output) runs no dev server.
+	// setup it extends, names a run.start or run.startCommands. A part
+	// without one (a static output) runs no dev server.
 	RunParts []string
 	// DeclaredServers names the servers in .zcp/dev-servers.json, in file
 	// order.
@@ -138,9 +138,7 @@ func parsePartsSignal(out, hostname, devSetup string) PartsSignal {
 		}
 	}
 	yamlDoc := []byte(strings.Join(sections["yaml"], "\n"))
-	sig.YAMLParts, sig.YAMLSetups = yamlParts(yamlDoc, hostname, devSetup)
-	sig.RunParts = runParts(yamlDoc, sig.YAMLParts)
-	sig.DeclaresBase = declaresBase(yamlDoc)
+	sig.YAMLParts, sig.YAMLSetups, sig.RunParts, sig.DeclaresBase = yamlSetups(yamlDoc, hostname, devSetup)
 	var decl struct {
 		Servers []struct {
 			Name string `json:"name"`
@@ -164,24 +162,24 @@ func parsePartsSignal(out, hostname, devSetup string) PartsSignal {
 	return sig
 }
 
-// yamlParts names zerops.yaml's parts (docs/spec-mate.md §2.8a.4): setups
-// other than the dev setup and other than a base only `extends` names; setups
-// names every setup.
-func yamlParts(data []byte, hostname, devSetup string) (parts, setups []string) {
-	var doc struct {
-		Zerops []struct {
-			Setup   string    `yaml:"setup"`
-			Extends yaml.Node `yaml:"extends"`
-		} `yaml:"zerops"`
-	}
+// yamlSetups reads zerops.yaml once, with extends resolved as the platform
+// resolves it (decodeResolved): its parts (docs/spec-mate.md §2.8a.4) — setups
+// other than the dev setup and other than a base only `extends` names —, every
+// setup, the parts that run a process (a run.start or run.startCommands, their
+// own or inherited) and whether a setup names a build.base or a run.base.
+func yamlSetups(data []byte, hostname, devSetup string) (parts, setups, run []string, declaresBase bool) {
+	var doc ZeropsYmlDoc
 	if yaml.Unmarshal(data, &doc) != nil {
-		return nil, nil
+		return nil, nil, nil, false
 	}
 	extended := map[string]bool{}
 	for _, e := range doc.Zerops {
-		for _, base := range extendedSetups(e.Extends) {
+		for _, base := range extendsNames(e.Extends) {
 			extended[base] = true
 		}
+	}
+	if doc.extends() && decodeResolved(data, &doc) != nil {
+		return nil, nil, nil, false
 	}
 	isDev := func(setup string) bool {
 		if devSetup != "" {
@@ -190,6 +188,9 @@ func yamlParts(data []byte, hostname, devSetup string) (parts, setups []string) 
 		return setup == devSetupName || setup == hostname
 	}
 	for _, e := range doc.Zerops {
+		if e.Build.Base != nil || e.Run.Base != "" {
+			declaresBase = true
+		}
 		if e.Setup == "" {
 			continue
 		}
@@ -198,88 +199,9 @@ func yamlParts(data []byte, hostname, devSetup string) (parts, setups []string) 
 			continue
 		}
 		parts = append(parts, e.Setup)
-	}
-	return parts, setups
-}
-
-// extendedSetups names the setups an `extends` value names: a scalar or a
-// list.
-func extendedSetups(n yaml.Node) []string {
-	if n.Kind == yaml.ScalarNode {
-		return []string{n.Value}
-	}
-	var out []string
-	if n.Kind == yaml.SequenceNode {
-		for _, c := range n.Content {
-			out = append(out, c.Value)
+		if strings.TrimSpace(e.Run.Start) != "" || e.Run.StartCommands != nil {
+			run = append(run, e.Setup)
 		}
 	}
-	return out
-}
-
-// runParts names the parts whose setup, or a setup it extends (transitively),
-// names a run.start.
-func runParts(data []byte, parts []string) []string {
-	var doc struct {
-		Zerops []struct {
-			Setup   string    `yaml:"setup"`
-			Extends yaml.Node `yaml:"extends"`
-			Run     struct {
-				Start string `yaml:"start"`
-			} `yaml:"run"`
-		} `yaml:"zerops"`
-	}
-	if yaml.Unmarshal(data, &doc) != nil {
-		return nil
-	}
-	starts := map[string]bool{}
-	extends := map[string][]string{}
-	for _, e := range doc.Zerops {
-		starts[e.Setup] = strings.TrimSpace(e.Run.Start) != ""
-		extends[e.Setup] = extendedSetups(e.Extends)
-	}
-	var runs func(setup string, seen map[string]bool) bool
-	runs = func(setup string, seen map[string]bool) bool {
-		if starts[setup] {
-			return true
-		}
-		seen[setup] = true
-		for _, base := range extends[setup] {
-			if !seen[base] && runs(base, seen) {
-				return true
-			}
-		}
-		return false
-	}
-	var out []string
-	for _, p := range parts {
-		if runs(p, map[string]bool{}) {
-			out = append(out, p)
-		}
-	}
-	return out
-}
-
-// declaresBase reports whether a setup of zerops.yaml names a build.base or
-// a run.base (a scalar or a list).
-func declaresBase(data []byte) bool {
-	var doc struct {
-		Zerops []struct {
-			Build struct {
-				Base yaml.Node `yaml:"base"`
-			} `yaml:"build"`
-			Run struct {
-				Base yaml.Node `yaml:"base"`
-			} `yaml:"run"`
-		} `yaml:"zerops"`
-	}
-	if yaml.Unmarshal(data, &doc) != nil {
-		return false
-	}
-	for _, e := range doc.Zerops {
-		if !e.Build.Base.IsZero() || !e.Run.Base.IsZero() {
-			return true
-		}
-	}
-	return false
+	return parts, setups, run, declaresBase
 }

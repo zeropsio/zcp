@@ -92,6 +92,44 @@ func TestReadPartsSignal_DeclaresBase(t *testing.T) {
 	}
 }
 
+// TestReadPartsSignal_RunParts: a part runs a process when its setup, or a
+// setup it extends, names a run.start or run.startCommands; a static part
+// that names neither runs none.
+func TestReadPartsSignal_RunParts(t *testing.T) {
+	t.Parallel()
+	yamlDoc := `zerops:
+  - setup: base
+    run:
+      start: node server.js
+  - setup: dev
+    run:
+      start: zsc noop
+  - setup: web
+    extends: base
+  - setup: api
+    run:
+      start: bun api.ts
+  - setup: worker
+    run:
+      startCommands:
+        - command: node worker.js
+          name: worker
+  - setup: docs
+    build:
+      deployFiles: dist
+`
+	sig, err := ReadPartsSignal(context.Background(), partsSSH{out: "@@yaml\n" + yamlDoc + "@@declaration\n@@markers\n@@packages\n"}, "appdev", "")
+	if err != nil {
+		t.Fatalf("ReadPartsSignal: %v", err)
+	}
+	if want := []string{"web", "api", "worker", "docs"}; !reflect.DeepEqual(sig.YAMLParts, want) {
+		t.Errorf("YAMLParts = %v, want %v", sig.YAMLParts, want)
+	}
+	if want := []string{"web", "api", "worker"}; !reflect.DeepEqual(sig.RunParts, want) {
+		t.Errorf("RunParts = %v, want %v", sig.RunParts, want)
+	}
+}
+
 // TestPartsSignalScript_ReadsARealRepo runs the script itself in a shell over
 // a repo on disk: three parts in zerops.yaml, two declared dev servers, a
 // pnpm workspace with two apps that start, a library without a start script
