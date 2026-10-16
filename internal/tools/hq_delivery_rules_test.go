@@ -290,3 +290,19 @@ func TestProductionGuidance_HQUnavailableIsUnknown(t *testing.T) {
 		t.Fatalf("HQ's failure must be visible, with a manual next step: %s", text)
 	}
 }
+
+// The closing message points at what Mate shows under it, never at a path
+// through other pages the person would have to find.
+func TestHQHandoffNote_NamesWhatMateOffersUnderTheMessage(t *testing.T) {
+	t.Parallel()
+	for _, want := range []string{"Review", "Put it live"} {
+		if !strings.Contains(hqHandoffNote, want) {
+			t.Errorf("handoff note lacks %q: %q", want, hqHandoffNote)
+		}
+	}
+	for _, never := range []string{"projects page", "stage"} {
+		if strings.Contains(hqHandoffNote, never) {
+			t.Errorf("handoff note still says %q: %q", never, hqHandoffNote)
+		}
+	}
+}
