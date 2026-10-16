@@ -16,6 +16,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -123,6 +124,25 @@ func TestAStageDeployOfAWiredPairDeliversItself(t *testing.T) {
 	}
 	if lab.meta().HQ.Change != 1 {
 		t.Errorf("the change's number is not on the pair: %+v", lab.meta().HQ)
+	}
+}
+
+// TestAStageDeployWhoseBuildIsStillRunningSaysHQDeliveryDidNotRun: a delivery
+// follows only a stage deploy that ran, so one that stopped watching a build
+// still running says its pair's work has not gone to HQ and how it will —
+// never silence, which reads as a delivery. Any other target says nothing.
+func TestAStageDeployWhoseBuildIsStillRunningSaysHQDeliveryDidNotRun(t *testing.T) {
+	lab := newHQLab(t)
+	lab.wire()
+	want := "HQ delivery did not run: appstage's build was still running. Once it finishes, deploy appstage again — the change follows that deploy."
+	if got := hqDeliveryNotRun(lab.rt, lab.stateDir, "appstage"); got != want {
+		t.Errorf("the stage's line = %q, want %q", got, want)
+	}
+	if got := hqDeliveryNotRun(lab.rt, lab.stateDir, "appdev"); got != "" {
+		t.Errorf("the dev half delivers nothing, so says nothing; got %q", got)
+	}
+	if got := hqDeliveryNotRun(runtime.Info{}, lab.stateDir, "appstage"); got != "" {
+		t.Errorf("outside a container nothing delivers, so nothing is said; got %q", got)
 	}
 }
 

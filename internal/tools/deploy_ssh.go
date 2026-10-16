@@ -479,10 +479,15 @@ func runDeploySSHZCLIPush(
 
 	// A wired pair's stage deploy is its delivery (hq_delivery.go).
 	var change *changeRef
-	if result != nil && result.Status == statusDeployed {
+	switch {
+	case result != nil && result.Status == statusDeployed:
 		if delivery := deliverHQPair(ctx, client, httpClient, sshDeployer, rtInfo, stateDir, input.TargetService); delivery != nil {
 			result.NextActions = strings.TrimSpace(result.NextActions + " " + delivery.Line)
 			change = delivery.Change
+		}
+	case result != nil && result.TimedOut:
+		if line := hqDeliveryNotRun(rtInfo, stateDir, input.TargetService); line != "" {
+			result.NextActions = strings.TrimSpace(result.NextActions + " " + line)
 		}
 	}
 

@@ -298,11 +298,15 @@ func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallba
 	// the attempts are recorded.
 	for i := range result.Entries {
 		entry := &result.Entries[i]
-		if entry.Result == nil || entry.Result.Status != statusDeployed {
-			continue
-		}
-		if delivery := deliverHQPair(ctx, d.client, d.httpClient, d.sshDeployer, d.rtInfo, d.stateDir, entry.Target.TargetService); delivery != nil {
-			entry.Result.NextActions = strings.TrimSpace(entry.Result.NextActions + " " + delivery.Line)
+		switch {
+		case entry.Result != nil && entry.Result.Status == statusDeployed:
+			if delivery := deliverHQPair(ctx, d.client, d.httpClient, d.sshDeployer, d.rtInfo, d.stateDir, entry.Target.TargetService); delivery != nil {
+				entry.Result.NextActions = strings.TrimSpace(entry.Result.NextActions + " " + delivery.Line)
+			}
+		case entry.Result != nil && entry.Result.TimedOut:
+			if line := hqDeliveryNotRun(d.rtInfo, d.stateDir, entry.Target.TargetService); line != "" {
+				entry.Result.NextActions = strings.TrimSpace(entry.Result.NextActions + " " + line)
+			}
 		}
 	}
 	return result

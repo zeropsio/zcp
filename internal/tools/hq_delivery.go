@@ -212,11 +212,8 @@ func deliverHeldHQPair(
 	if sshDeployer == nil || !rt.InContainer {
 		return nil
 	}
-	delivers := func(m *workflow.ServiceMeta) bool {
-		return hqPairOnItsBranch(m) && isStageOf(m, target)
-	}
 	meta, _ := workflow.FindServiceMeta(stateDir, target)
-	if !delivers(meta) {
+	if !hqDeliversOn(meta, target) {
 		return nil
 	}
 	hqc, enrolled := openHQ(httpClient)
@@ -259,7 +256,7 @@ func deliverHeldHQPair(
 	// Whoever held the checkout may have moved the record: a delivery it
 	// finished, a change it learned of.
 	meta, _ = workflow.FindServiceMeta(stateDir, target)
-	if !delivers(meta) {
+	if !hqDeliversOn(meta, target) {
 		return nil
 	}
 	var landed []string
@@ -398,6 +395,26 @@ func deliveryRefusalLine(output, target, repo, hostname, landedCommit string) st
 			target, repo, ops.DeliveryUnignored(output), hostname, target)
 	}
 	return ""
+}
+
+// hqDeliversOn reports whether a deploy of target delivers m's pair: target
+// is the stage half of a pair wired through.
+func hqDeliversOn(m *workflow.ServiceMeta, target string) bool {
+	return hqPairOnItsBranch(m) && isStageOf(m, target)
+}
+
+// hqDeliveryNotRun is the line for a stage deploy of a wired pair whose build
+// was still running when the deploy stopped following it: the delivery
+// follows only a deploy that ran, so this one delivered nothing — "" for any
+// other target.
+func hqDeliveryNotRun(rt runtime.Info, stateDir, target string) string {
+	if !rt.InContainer {
+		return ""
+	}
+	if meta, _ := workflow.FindServiceMeta(stateDir, target); !hqDeliversOn(meta, target) {
+		return ""
+	}
+	return fmt.Sprintf("HQ delivery did not run: %s's build was still running. Once it finishes, deploy %s again — the change follows that deploy.", target, target)
 }
 
 // hqPairOnItsBranch reports whether a pair is wired through: its repository
