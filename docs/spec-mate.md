@@ -770,7 +770,8 @@ never write it (MODEL §9/1a, REVIEW N5).
 | `servers[].port` | optional integer 1–65535, unique in the file; absent for a server without a listener (a worker) |
 | `servers[].command` | required, non-empty; run as `/bin/sh -c <command>` in `cwd`, as the leader of its own process group, with the environment `run.start` gave the supervisor (the service's env vars) |
 | `servers[].cwd` | optional, default `"."`; relative to the repo root; after cleaning and resolving symlinks it stays inside the repo root, otherwise the file is invalid |
-| `servers[].watch` | optional; the supervisor restarts the server's group on a change under `paths` (relative to the repo root), never for paths under `.git`, `node_modules` or matching `ignore` (MODEL §9/1a, P4 H3). An `ignore` entry matches a repo-relative path as a prefix or as a `path.Match` glob; a build output in a watched directory needs its glob — `go build -o app` also writes `app-go-tmp-umask` beside it, hence `apps/api/app*`. Absent: the command's own watcher (`--watch`, vite) does it |
+| `servers[].watch` | optional; the supervisor restarts the server's group on a change under `paths` (relative to the repo root), never for paths under `.git`, `node_modules` or matching `ignore` (MODEL §9/1a, P4 H3). An `ignore` entry is matched against a repo-relative path one segment at a time with `path.Match`, a `**` segment matching any number of directories, and ignores the path it names and everything under it; a build output in a watched directory needs its glob — `go build -o app` also writes `app-go-tmp-umask` beside it, hence `apps/api/app*`, and `uv run` rewrites `src/<pkg>.egg-info` at any depth, hence `**/*.egg-info` (`TestWatch_AnIgnoreGlobMatchesAtAnyDepthWithDoubleStar`). Absent: the command's own watcher (`--watch`, vite) does it |
+| `servers[].healthPath` | optional, default `/`; must start with `/`. The HTTP path a health probe of the server's `port` reads — an API part that answers 404 on `/` names the path it answers on (`TestParseDeclaration_Shapes`) |
 | `servers[].service` | optional; variant B only — the hostname of the dev service whose supervisor runs it (MODEL §4). Absent: run by the one supervisor reading the file (variant A). In variant B every entry carries it |
 | `servers[].autostart` | optional bool, default `true`; the server's **first** desired state: `autostart ? running : stopped` (§2.8a.2 *Events*). `false` keeps a declared server down until `ctl start` — a repo with many heavy dev servers (five Angular apps) starts only the ones it marks |
 
@@ -882,7 +883,7 @@ verb is idempotent, so the caller asks `status` again.
 | Verb | Effect |
 |---|---|
 | `status [name]` | the `servers` map above (all or one) plus `supervisor` and `declaration` |
-| `start <name>` / `stop <name>` / `restart <name>` | sets `desired` and acts; never writes the declaration |
+| `start <name>` / `stop <name>` / `restart <name>` | sets `desired` and acts; never writes the declaration. `start` and `restart` first re-read it as `reload` does, so an edited entry runs as edited; a server that re-read already restarted is not restarted again (`TestSupervisor_StartAndRestartRunTheDeclarationAsEditedWithoutAReload`) |
 | `reload` | same as `SIGHUP` |
 | `logs <name> [--lines N]` | the tail of `logs/<name>.log` |
 | `run --name <n> --cwd <d> [--port <p>] -- <command>` / `rm <name>` | add / remove a `runtime` entry |
@@ -932,8 +933,8 @@ default), else `desired: stopped`. From then on only `ctl start`/`stop`/`restart
 
 | Event | Behaviour |
 |---|---|
-| A server exits on its own | left down and visible: `status: crashed`, `exit` recorded, **no restart** in this container life except by a watched change (below), seen at the agent's next call (MODEL §11.3) |
-| A watched path changes | for a server with `desired: running`: a live group restarts, and no live group (`crashed` — the agent fixed the code) starts; `restarts` + 1 either way. A `stopped` server stays stopped |
+| A server exits on its own | left down and visible: `status: crashed`, `exit` recorded, **no restart** in this container life except by a watched change (below), seen at the agent's next call (MODEL §11.3). One exception: a server that exits within its **start window** (10 s after a start) is started once more one window later, unless something started, stopped or removed it meanwhile — siblings started beside it (two Maven wrappers unpacking one distribution) have settled by then; a crash of that second start stays down (`TestSupervisor_AServerThatCrashesInItsStartWindowIsStartedOnceMoreThenStaysDown`, `TestSupervisor_AServerThatExitsStaysDownAndVisible`) |
+| A watched path changes | for a server with `desired: running`: a live group restarts, and no live group (`crashed` — the agent fixed the code) starts; `restarts` + 1 either way. A `stopped` server stays stopped. After 10 starts in a row that each saw a watched change within their own start window, a change within the window is the server's own output and restarts nothing (the supervisor log names the path to add to `ignore`); a change after the window always restarts, and one there after a start that saw none resets the count (`TestSupervisor_AServerThatChangesItsWatchedFilesOnEveryStartIsNotRestartedByThemForever`) |
 | The supervisor is killed (zenv starts `run.start` again) | the new supervisor stops the groups the old one left (identity-checked), then starts every entry with `desired: running` |
 | Container restart (`$HOME` kept) | every entry with `desired: running` starts, `crashed` ones included; `stopped` stays stopped |
 | Redeploy (new container, `$HOME` empty) | every declared server for this service gets its first desired state: `autostart` ones start, the rest stay `stopped` |
