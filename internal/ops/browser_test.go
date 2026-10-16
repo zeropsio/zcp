@@ -208,12 +208,14 @@ func TestBrowserBatch_AgentBrowserNotFound(t *testing.T) {
 	}
 }
 
-// TestBrowserBatch_BuildsCanonicalShape pins the walk: open, the wait for
+// TestBrowserBatch_BuildsCanonicalShape pins the walk: the default viewport,
+// open, the wait for
 // the page's first contentful paint, the caller's commands, then errors,
 // console and failed network requests. No close: the call ends by closing
 // its tabs, and the warm browser stays for the next call.
 func TestBrowserBatch_BuildsCanonicalShape(t *testing.T) {
 	batch := [][]string{
+		{"set", "viewport", "1280", "577"},
 		{"open", "https://example.com/app"},
 		{"wait", "--fn", "performance.getEntriesByName('first-contentful-paint').length>0", "--timeout", "5000"},
 		{"snapshot", "-i", "-c"},
@@ -307,6 +309,37 @@ func TestBrowserBatch_PageLoadsAtTheLeadingViewport(t *testing.T) {
 	}
 	if len(result.ConsoleOutput) == 0 {
 		t.Errorf("ConsoleOutput should still be read from the [console] step")
+	}
+}
+
+// TestBrowserBatch_ACallThatSetsNoViewportLoadsAtTheDefaultSize: the warm
+// Chrome keeps a set viewport, so after a call at 390 px the next call that
+// set none loaded at 390 too, and a desktop check after a mobile one came
+// back mobile. A call whose commands do not start with a set viewport runs
+// [set viewport 1280 577], the size a fresh Chrome opens at, before the open.
+func TestBrowserBatch_ACallThatSetsNoViewportLoadsAtTheDefaultSize(t *testing.T) {
+	tests := []struct {
+		name     string
+		commands [][]string
+	}{
+		{"no commands", nil},
+		{"commands without a viewport", [][]string{{"get", "title"}}},
+		{"a viewport after other commands", [][]string{{"get", "title"}, {"set", "viewport", "390", "844"}}},
+		{"a viewport after a stripped open", [][]string{{"open", "https://example.com"}, {"set", "device", "iPhone 12"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := &fakeBrowserRunner{runStdout: `[]`}
+			defer OverrideBrowserRunnerForTest(fake)()
+
+			if _, err := BrowserBatch(context.Background(), BrowserBatchInput{URL: "https://example.com", Commands: tt.commands}); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			got := parseStdinBatch(t, fake.lastStdin)
+			if len(got) < 2 || !slices.Equal(got[0], []string{"set", "viewport", "1280", "577"}) || !slices.Equal(got[1], []string{"open", "https://example.com"}) {
+				t.Errorf("the batch must start with [set viewport 1280 577] then the open, got: %v", got)
+			}
+		})
 	}
 }
 
@@ -473,7 +506,7 @@ func TestBrowserBatch_StillStripsOpenCloseEvalTogether(t *testing.T) {
 
 // TestBrowserBatch_WrapsScreenshotBeforeErrorsConsoleWhenRequested pins
 // the S7 screenshot batch shape: when Screenshot is requested, the walk
-// becomes open, paint wait, commands, screenshot <tmpfile>, errors,
+// becomes default viewport, open, paint wait, commands, screenshot <tmpfile>, errors,
 // console, network requests — screenshot slots in right after
 // the caller's commands, before the reporting tail. agent-browser
 // 0.35.1 `screenshot --help`: "Usage: agent-browser screenshot
@@ -493,10 +526,11 @@ func TestBrowserBatch_WrapsScreenshotBeforeErrorsConsoleWhenRequested(t *testing
 	}
 
 	got := parseStdinBatch(t, fake.lastStdin)
-	if len(got) != 7 {
-		t.Fatalf("expected 7 commands (open, paint wait, snapshot, screenshot, errors, console, network requests), got %d: %v", len(got), got)
+	if len(got) != 8 {
+		t.Fatalf("expected 8 commands (default viewport, open, paint wait, snapshot, screenshot, errors, console, network requests), got %d: %v", len(got), got)
 	}
 	wantPrefix := [][]string{
+		{"set", "viewport", "1280", "577"},
 		{"open", "https://example.com"},
 		browserPaintWait,
 		{"snapshot", "-i"},
@@ -506,8 +540,8 @@ func TestBrowserBatch_WrapsScreenshotBeforeErrorsConsoleWhenRequested(t *testing
 			t.Errorf("batch[%d] = %v, want %v", i, got[i], w)
 		}
 	}
-	if len(got[3]) != 2 || got[3][0] != "screenshot" || got[3][1] == "" {
-		t.Errorf("batch[3] must be [screenshot <path>], got: %v", got[3])
+	if len(got[4]) != 2 || got[4][0] != "screenshot" || got[4][1] == "" {
+		t.Errorf("batch[4] must be [screenshot <path>], got: %v", got[4])
 	}
 	wantTail := [][]string{
 		{"errors"},
@@ -515,8 +549,8 @@ func TestBrowserBatch_WrapsScreenshotBeforeErrorsConsoleWhenRequested(t *testing
 		{"network", "requests", "--status", "400-599"},
 	}
 	for i, w := range wantTail {
-		if !slices.Equal(got[4+i], w) {
-			t.Errorf("batch[%d] = %v, want %v", 4+i, got[4+i], w)
+		if !slices.Equal(got[5+i], w) {
+			t.Errorf("batch[%d] = %v, want %v", 5+i, got[5+i], w)
 		}
 	}
 }
@@ -856,10 +890,11 @@ func TestBrowserBatch_AlwaysAppendsNetworkRequestsToTail(t *testing.T) {
 	}
 
 	got := parseStdinBatch(t, fake.lastStdin)
-	if len(got) != 6 {
-		t.Fatalf("expected 6 commands (open, paint wait, snapshot, errors, console, network requests), got %d: %v", len(got), got)
+	if len(got) != 7 {
+		t.Fatalf("expected 7 commands (default viewport, open, paint wait, snapshot, errors, console, network requests), got %d: %v", len(got), got)
 	}
 	want := [][]string{
+		{"set", "viewport", "1280", "577"},
 		{"open", "https://example.com"},
 		browserPaintWait,
 		{"snapshot", "-i"},

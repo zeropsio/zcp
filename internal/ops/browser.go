@@ -34,7 +34,8 @@ type BrowserBatchInput struct {
 	// string array — e.g. ["snapshot", "-i", "-c"], ["click", "@e1"],
 	// ["find", "role", "link", "click", "--name", "Users"]. Any "open",
 	// "close" or "eval" elements are stripped. A leading ["set", "viewport",
-	// w, h] runs before the open instead.
+	// w, h] runs before the open instead; without one the page loads at
+	// browserDefaultViewport, whatever an earlier call set.
 	Commands [][]string `json:"commands,omitempty"`
 
 	// TimeoutSeconds bounds the whole call, the wait for the browser
@@ -829,8 +830,10 @@ func scanStepsForCDPWedge(steps []BrowserStepResult) (string, bool) {
 // eval. screenshotPath == "" omits the
 // screenshot step entirely; fullPage captures the whole page, not the
 // viewport. A leading [set viewport w h] runs before the open, so the page
-// loads at that size instead of reflowing from the default width; the steps
-// come back in the order they ran, the caller's commands in the order sent.
+// loads at that size instead of reflowing from the default width; without
+// one, browserDefaultViewport runs there, so no call inherits the viewport an
+// earlier call set. The steps come back in the order they ran, the caller's
+// commands in the order sent.
 func buildCanonicalBatch(url string, commands [][]string, screenshotPath string, fullPage bool) [][]string {
 	inner := make([][]string, 0, len(commands))
 	for _, cmd := range commands {
@@ -847,9 +850,11 @@ func buildCanonicalBatch(url string, commands [][]string, screenshotPath string,
 		}
 		inner = append(inner, cmd)
 	}
-	batch := make([][]string, 0, len(inner)+6)
+	batch := make([][]string, 0, len(inner)+7)
 	if len(inner) > 0 && isSetViewport(inner[0]) {
 		batch, inner = append(batch, inner[0]), inner[1:]
+	} else {
+		batch = append(batch, browserDefaultViewport)
 	}
 	batch = append(batch, []string{browserCmdOpen, url}, browserPaintWait)
 	batch = append(batch, inner...)
@@ -867,6 +872,13 @@ func buildCanonicalBatch(url string, commands [][]string, screenshotPath string,
 	)
 	return batch
 }
+
+// browserDefaultViewport is the size a fresh Chrome opens at (measured
+// 2026-10-16 with agent-browser 0.38.2 on a Zerops container: a new browser
+// that set no viewport loaded the page at innerWidth 1280 and screenshot it
+// 1280×577). The warm Chrome keeps a set viewport for later calls, so a call
+// whose commands do not set one first runs this before the open.
+var browserDefaultViewport = []string{browserCmdSet, browserSubcmdViewport, "1280", "577"}
 
 // isSetViewport reports whether a command is [set viewport ...].
 func isSetViewport(cmd []string) bool {
