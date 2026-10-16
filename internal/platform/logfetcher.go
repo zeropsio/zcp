@@ -241,16 +241,29 @@ func filterEntries(entries []LogEntry, params LogFetchParams, effectiveLimit int
 				continue
 			}
 		}
-		if params.Search != "" && !strings.Contains(d.e.Message, params.Search) {
-			continue
-		}
 		out = append(out, d.e)
 	}
+	out = SearchLogs(out, params.Search)
 
 	if effectiveLimit > 0 && len(out) > effectiveLimit {
 		out = out[len(out)-effectiveLimit:]
 	}
 
+	return out
+}
+
+// SearchLogs keeps the entries whose message contains search (case-sensitive).
+// The backend ignores `search=`, so every log search is this client-side match.
+func SearchLogs(entries []LogEntry, search string) []LogEntry {
+	if search == "" {
+		return entries
+	}
+	out := make([]LogEntry, 0, len(entries))
+	for _, e := range entries {
+		if strings.Contains(e.Message, search) {
+			out = append(out, e)
+		}
+	}
 	return out
 }
 

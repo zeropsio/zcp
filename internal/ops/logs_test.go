@@ -3,6 +3,7 @@ package ops
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -242,6 +243,79 @@ func TestFetchLogs_EmptyResultEnrichment(t *testing.T) {
 				}
 			} else if result.Recovery != nil {
 				t.Errorf("expected no recovery, got %+v", result.Recovery)
+			}
+		})
+	}
+}
+
+func TestFetchLogs_LimitKeepsTheNewestLines(t *testing.T) {
+	t.Parallel()
+
+	entries := make([]platform.LogEntry, 101)
+	for i := range entries {
+		entries[i] = platform.LogEntry{Timestamp: recentTS(-i), Severity: "info", Facility: "local0", Message: fmt.Sprintf("line %d seconds ago", i)}
+	}
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api", ProjectID: "proj-1"}}).
+		WithLogAccess(&platform.LogAccess{URL: "https://logs.example.com"})
+
+	result, err := FetchLogs(context.Background(), mock, platform.NewMockLogFetcher().WithEntries(entries), "proj-1", "api", "", "", 100, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Entries) != 100 {
+		t.Fatalf("entries = %d, want 100", len(result.Entries))
+	}
+	if first, last := result.Entries[0].Message, result.Entries[99].Message; first != "line 99 seconds ago" || last != "line 0 seconds ago" {
+		t.Errorf("entries run %q .. %q, want line 99 seconds ago .. line 0 seconds ago", first, last)
+	}
+}
+
+func TestFetchLogs_SearchSaysWhereReadingStoppedWhenTheWindowIsCut(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name            string
+		lines           int
+		wantEntries     int
+		wantHasMore     bool
+		wantWindowStart bool
+	}{
+		// The match is the oldest line; 1000 newer lines fill the backend window.
+		{"window cut before since", platform.LogLimitMax + 1, 0, true, true},
+		{"whole since read", platform.LogLimitMax - 1, 1, false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			entries := make([]platform.LogEntry, tc.lines)
+			for i := range entries {
+				entries[i] = platform.LogEntry{Timestamp: recentTS(-i), Severity: "info", Facility: "local0", Message: "request served"}
+			}
+			entries[tc.lines-1].Message = `Migrating schema "PUBLIC"`
+			mock := platform.NewMock().
+				WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: platform.ServiceStatusActive}}).
+				WithLogAccess(&platform.LogAccess{URL: "https://logs.example.com"})
+
+			result, err := FetchLogs(context.Background(), mock, platform.NewMockLogFetcher().WithEntries(entries), "proj-1", "api", "", "", 10, "Migrat")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(result.Entries) != tc.wantEntries {
+				t.Errorf("entries = %d, want %d", len(result.Entries), tc.wantEntries)
+			}
+			if result.HasMore != tc.wantHasMore {
+				t.Errorf("hasMore = %v, want %v", result.HasMore, tc.wantHasMore)
+			}
+			oldestRead := ""
+			if tc.wantWindowStart {
+				oldestRead = entries[platform.LogLimitMax-1].Timestamp
+			}
+			if result.WindowStart != oldestRead {
+				t.Errorf("windowStart = %q, want %q", result.WindowStart, oldestRead)
+			}
+			if tc.wantWindowStart && !strings.Contains(result.EmptyReason, "not searched") {
+				t.Errorf("EmptyReason %q should say older lines were not searched", result.EmptyReason)
 			}
 		})
 	}

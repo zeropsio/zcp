@@ -14,6 +14,10 @@ const defaultLogLimit = 100
 type LogsResult struct {
 	Entries []LogEntryOutput `json:"entries"`
 	HasMore bool             `json:"hasMore"`
+	// WindowStart is the timestamp of the oldest line a search read, set only
+	// when the read filled the backend's newest-lines window inside since:
+	// older lines, if any, were not searched, so HasMore is true.
+	WindowStart string `json:"windowStart,omitempty"`
 	// The three fields below are populated ONLY when Entries is empty, from
 	// state FetchLogs already holds — so a 0-entry result explains WHY it is
 	// empty and points at the surface that does carry the answer, instead of a
@@ -72,26 +76,42 @@ func FetchLogs(
 	// app log stream, not daemon noise (sshfs, systemd). If a future use
 	// case needs daemon or webserver logs, add a Facility field to the
 	// tool input schema rather than widening the default.
-	entries, err := fetcher.FetchLogs(ctx, logAccess, platform.LogFetchParams{
+	params := platform.LogFetchParams{
 		ServiceID: svc.ID,
 		Severity:  severity,
 		Facility:  "application",
 		Since:     sinceTime,
 		Limit:     limit + 1,
-		Search:    search,
-	})
+	}
+	if search != "" {
+		// The backend serves only the newest lines, so a search reads the
+		// widest window it serves and matches here, where a full window shows
+		// that the read ended inside since.
+		params.Limit = platform.LogLimitMax
+	}
+	entries, err := fetcher.FetchLogs(ctx, logAccess, params)
 	if err != nil {
 		return nil, err
 	}
 
-	hasMore := len(entries) > limit
-	if hasMore {
-		entries = entries[:limit]
+	windowStart := ""
+	if search != "" {
+		if len(entries) == platform.LogLimitMax {
+			windowStart = entries[0].Timestamp
+		}
+		entries = platform.SearchLogs(entries, search)
+	}
+
+	// Entries are oldest first; keep the newest limit.
+	hasMore := len(entries) > limit || windowStart != ""
+	if len(entries) > limit {
+		entries = entries[len(entries)-limit:]
 	}
 
 	result := &LogsResult{
-		Entries: make([]LogEntryOutput, len(entries)),
-		HasMore: hasMore,
+		Entries:     make([]LogEntryOutput, len(entries)),
+		HasMore:     hasMore,
+		WindowStart: windowStart,
 	}
 	for i, e := range entries {
 		result.Entries[i] = LogEntryOutput{
@@ -148,6 +168,10 @@ func enrichEmptyLogs(
 		window := sinceInput
 		if window == "" {
 			window = "last 1h (default — since was omitted)"
+		}
+		if result.WindowStart != "" {
+			result.EmptyReason = fmt.Sprintf("the search read the newest %d lines, back to %s, and none matched; older lines inside since=%s, if any, were not searched.", platform.LogLimitMax, result.WindowStart, window)
+			return
 		}
 		result.EmptyReason = fmt.Sprintf("the service is live but no entries matched the applied filters (since=%s). Widen since or drop severity/search.", window)
 	}
