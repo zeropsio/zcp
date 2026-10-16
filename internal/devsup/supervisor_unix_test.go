@@ -20,6 +20,8 @@ type rig struct {
 	t     *testing.T
 	root  string
 	state string
+	// window is the supervisors' start window; zero is the default.
+	window time.Duration
 }
 
 // newRig makes a repo root and a short state directory (a unix socket path
@@ -66,7 +68,7 @@ func (r *rig) write(rel, s string) {
 
 func (r *rig) supervisorWith(service string, portWait time.Duration) *Supervisor {
 	r.t.Helper()
-	s, err := New(Config{Root: r.root, StateDir: r.state, Service: service, Env: os.Environ(), Grace: time.Second, PortWait: portWait, Version: "v-test"})
+	s, err := New(Config{Root: r.root, StateDir: r.state, Service: service, Env: os.Environ(), Grace: time.Second, PortWait: portWait, StartWindow: r.window, Version: "v-test"})
 	if err != nil {
 		r.t.Fatal(err)
 	}
@@ -167,13 +169,16 @@ func TestSupervisor_StoppingOneNamedServerLeavesItsSiblingsRunning(t *testing.T)
 func TestSupervisor_AServerThatExitsStaysDownAndVisible(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
-	r.declare(Server{Name: "api", Command: helperCmd(t, "exit", "CODE=3")})
+	r.window = 300 * time.Millisecond
+	// It exits after its start window: a crash within it is started once more.
+	r.declare(Server{Name: "api", Command: "sleep 1; " + helperCmd(t, "exit", "CODE=3")})
 	s := r.supervisor()
 	s.Boot()
 
 	eventually(t, "api to be recorded as crashed", func() bool {
 		return mustServer(t, s.State(), "api").Status == StatusCrashed
 	})
+	time.Sleep(3 * r.window) // a restart that should not happen has no event to wait on
 	s.Reload()
 	sv := mustServer(t, s.State(), "api")
 	if sv.Status != StatusCrashed || sv.Restarts != 0 || sv.Pid != 0 {
@@ -632,5 +637,71 @@ func TestSupervisor_EachDevServicesSupervisorStartsOnlyTheServersAssignedToIt(t 
 		if !slices.Equal(got, want) {
 			t.Errorf("supervisor runs %v, want %v", got, want)
 		}
+	}
+}
+
+// After a container replacement every server starts at once; two Maven
+// wrappers unpacking one distribution race and the loser dies within seconds.
+// One more start after its siblings settle brings it up; a server that keeps
+// crashing at start stays down and visible.
+func TestSupervisor_AServerThatCrashesInItsStartWindowIsStartedOnceMoreThenStaysDown(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.window = 300 * time.Millisecond
+	port := freePort(t)
+	flaky := r.listener("flaky", port)
+	flaky.Command = "if [ -f .tried ]; then " + flaky.Command + "; else touch .tried; exit 1; fi"
+	r.declare(flaky, Server{Name: "broken", Command: helperCmd(t, "exit", "CODE=3")})
+	s := r.supervisor()
+	s.Boot()
+
+	eventually(t, "flaky to run after one more start", func() bool {
+		sv := mustServer(t, s.State(), "flaky")
+		return sv.Status == StatusRunning && sv.Restarts == 1 && listening(port)
+	})
+	if sv := mustServer(t, s.State(), "flaky"); sv.Exit == nil || sv.Exit.Code != 1 {
+		t.Fatalf("the first crash is not visible: %+v", sv.Exit)
+	}
+	eventually(t, "broken to crash on its second start too", func() bool {
+		sv := mustServer(t, s.State(), "broken")
+		return sv.Status == StatusCrashed && sv.Restarts == 1
+	})
+	time.Sleep(3 * r.window) // a third start that should not happen has no event to wait on
+	if sv := mustServer(t, s.State(), "broken"); sv.Status != StatusCrashed || sv.Restarts != 1 || sv.Exit == nil || sv.Exit.Code != 3 {
+		t.Fatalf("broken = %+v exit %+v, want crashed after one more start", sv, sv.Exit)
+	}
+}
+
+// `uv run` rebuilds the repo's local packages, writing into the watched tree,
+// on every start: each start restarted the server again, 900 times. A server
+// whose every recent start changed its own watched files is no longer
+// restarted by a change made during its start; a change after it still is.
+func TestSupervisor_AServerThatChangesItsWatchedFilesOnEveryStartIsNotRestartedByThemForever(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.window = 2 * time.Second // a start, its write, the poll and the settle fit in it under -race
+	r.write("apps/api/main.py", "v1")
+	r.write("apps/api/pkg/PKG-INFO", "")
+	srv := Server{Name: "api", Command: "sleep 0.2; echo $$ > apps/api/pkg/PKG-INFO; exec sleep 300", Watch: &Watch{Paths: []string{"apps/api"}}}
+	r.declare(srv)
+	s := r.supervisor()
+	s.Boot()
+
+	eventually(t, "the self-caused restarts to stop", func() bool {
+		return mustServer(t, s.State(), "api").Restarts == watchLoopLimit
+	})
+	time.Sleep(r.window + 4*watchSettle) // a restart that should not happen has no event to wait on
+	sv := mustServer(t, s.State(), "api")
+	if sv.Restarts != watchLoopLimit || sv.Status != StatusRunning || sv.Pid == 0 {
+		t.Fatalf("api = %+v, want running after %d restarts", sv, watchLoopLimit)
+	}
+
+	r.write("apps/api/main.py", "v2")
+	eventually(t, "a change after the start window to restart api", func() bool {
+		return mustServer(t, s.State(), "api").Restarts == watchLoopLimit+1
+	})
+	time.Sleep(r.window + 4*watchSettle)
+	if sv := mustServer(t, s.State(), "api"); sv.Restarts != watchLoopLimit+1 || sv.Status != StatusRunning {
+		t.Fatalf("api = %+v, want one restart for the edit", sv)
 	}
 }

@@ -33,6 +33,10 @@ type Config struct {
 	Grace time.Duration
 	// PortWait bounds the wait for a server's port to be free before it starts.
 	PortWait time.Duration
+	// StartWindow is how long after a start the server is still starting: a
+	// crash within it is started once more, and a watched change within it
+	// may be the server's own (watchLoopLimit).
+	StartWindow time.Duration
 	// Version is the release reported in the state.
 	Version string
 	// Log receives the supervisor's own lines (the service's runtime log).
@@ -41,9 +45,15 @@ type Config struct {
 
 // Defaults for Config (docs/spec-mate.md §2.8a.2).
 const (
-	DefaultGrace    = 10 * time.Second
-	DefaultPortWait = 10 * time.Second
+	DefaultGrace       = 10 * time.Second
+	DefaultPortWait    = 10 * time.Second
+	DefaultStartWindow = 10 * time.Second
 )
+
+// watchLoopLimit is how many starts in a row may each be restarted by a
+// watched change made within its start window; past it, such a change is the
+// server's own output and restarts nothing.
+const watchLoopLimit = 10
 
 // logRotateSize is the size above which a server's log moves to .log.1 when
 // the server starts.
@@ -68,6 +78,12 @@ type server struct {
 	leftPgid        int
 	leftLeaderStart int64
 	watch           *watcher
+	// retry: this start is the one more start after a crash in the window.
+	retry bool
+	// windowChanged: a watched change came within this start's window;
+	// selfChanged counts the starts in a row that saw one.
+	windowChanged bool
+	selfChanged   int
 }
 
 // Supervisor holds the dev servers of one repo.
@@ -82,6 +98,8 @@ type Supervisor struct {
 	decl    DeclarationInfo
 	// persistMu orders state.json writes so the newest snapshot lands last.
 	persistMu sync.Mutex
+	// closed: Shutdown ran; a pending retry starts nothing.
+	closed bool
 }
 
 // New prepares a supervisor and loads the state an earlier instance left in
@@ -95,6 +113,9 @@ func New(cfg Config) (*Supervisor, error) {
 	}
 	if cfg.PortWait <= 0 {
 		cfg.PortWait = DefaultPortWait
+	}
+	if cfg.StartWindow <= 0 {
+		cfg.StartWindow = DefaultStartWindow
 	}
 	if cfg.Log == nil {
 		cfg.Log = io.Discard
@@ -329,15 +350,15 @@ func (s *Supervisor) stopAll(names []string) {
 func (s *Supervisor) startAll(names []string) {
 	var wg sync.WaitGroup
 	for _, name := range names {
-		wg.Go(func() { s.start(name) })
+		wg.Go(func() { s.start(name, false) })
 	}
 	wg.Wait()
 }
 
-// start waits for the server's port and starts it. A failure leaves it
-// crashed with exit {code: -1, signal: port_busy|start_failed} and the reason
-// in its log.
-func (s *Supervisor) start(name string) {
+// start waits for the server's port and starts it; retry marks the one more
+// start after a crash in the window. A failure leaves it crashed with exit
+// {code: -1, signal: port_busy|start_failed} and the reason in its log.
+func (s *Supervisor) start(name string, retry bool) {
 	s.mu.Lock()
 	sv := s.servers[name]
 	if sv == nil || sv.g != nil {
@@ -346,6 +367,7 @@ func (s *Supervisor) start(name string) {
 	}
 	spec := sv.spec
 	sv.starting = true
+	sv.retry, sv.windowChanged = retry, false
 	sv.starts++
 	starts := sv.starts
 	s.mu.Unlock()
@@ -409,7 +431,9 @@ func (s *Supervisor) preflight(spec Server) (string, error) {
 }
 
 // watchExit records a server whose leader exited while the supervisor held it
-// as crashed, and ends what is left of its group.
+// as crashed, and ends what is left of its group. A crash within the start
+// window, unless that start was already the retry, is started once more when
+// the window has passed again, after the siblings it started beside settle.
 func (s *Supervisor) watchExit(sv *server, g *group) {
 	<-g.done
 	s.mu.Lock()
@@ -419,9 +443,30 @@ func (s *Supervisor) watchExit(sv *server, g *group) {
 	}
 	sv.g = nil
 	sv.exit = exitOf(g.state)
+	retry := !sv.retry && sv.startedAt != nil && sv.exit.At.Sub(*sv.startedAt) < s.cfg.StartWindow
+	starts := sv.starts
 	s.logf("crashed %s: exit %d %s", sv.name, sv.exit.Code, sv.exit.Signal)
 	s.mu.Unlock()
 	_ = stopGroup(g.pgid, s.cfg.Grace)
+	s.persist()
+	if retry {
+		s.logf("retry %s in %s: it crashed within its start window", sv.name, s.cfg.StartWindow)
+		time.AfterFunc(s.cfg.StartWindow, func() { s.retryStart(sv, starts) })
+	}
+}
+
+// retryStart starts a server that crashed in its start window once more,
+// unless anything started, stopped or removed it since.
+func (s *Supervisor) retryStart(sv *server, starts int) {
+	s.op.Lock()
+	defer s.op.Unlock()
+	s.mu.Lock()
+	still := !s.closed && s.servers[sv.name] == sv && sv.desired == DesiredRunning && sv.g == nil && sv.starts == starts
+	s.mu.Unlock()
+	if !still {
+		return
+	}
+	s.start(sv.name, true)
 	s.persist()
 }
 
@@ -491,6 +536,10 @@ func (s *Supervisor) syncWatches() {
 	}
 }
 
+// watchFired restarts a server on a watched change. A change within the
+// start window, after watchLoopLimit starts in a row each saw one, is the
+// server's own output and restarts nothing; a change outside it always
+// restarts, and clears the count when the start before it saw no change.
 func (s *Supervisor) watchFired(name, rel string) {
 	s.op.Lock()
 	defer s.op.Unlock()
@@ -500,11 +549,24 @@ func (s *Supervisor) watchFired(name, rel string) {
 		s.mu.Unlock()
 		return
 	}
+	if sv.startedAt != nil && time.Since(*sv.startedAt) < s.cfg.StartWindow {
+		if !sv.windowChanged {
+			sv.windowChanged = true
+			sv.selfChanged++
+		}
+		if sv.selfChanged > watchLoopLimit {
+			s.mu.Unlock()
+			s.logf("no restart of %s: %s changed during its start, as on each of its last %d starts; add the path to watch.ignore", name, rel, watchLoopLimit)
+			return
+		}
+	} else if !sv.windowChanged {
+		sv.selfChanged = 0
+	}
 	sv.starting = true
 	s.mu.Unlock()
 	s.logf("restart %s: %s changed", name, rel)
 	s.stopAll([]string{name})
-	s.start(name)
+	s.start(name, false)
 	s.persist()
 }
 
@@ -525,7 +587,7 @@ func (s *Supervisor) Start(name string) error {
 	live := s.servers[name].g != nil
 	s.mu.Unlock()
 	if !live {
-		s.start(name)
+		s.start(name, false)
 	}
 	s.syncWatches()
 	s.persist()
@@ -561,7 +623,7 @@ func (s *Supervisor) Restart(name string) error {
 	s.servers[name].starting = true
 	s.mu.Unlock()
 	s.stopAll([]string{name})
-	s.start(name)
+	s.start(name, false)
 	s.syncWatches()
 	s.persist()
 	return nil
@@ -600,7 +662,7 @@ func (s *Supervisor) RunEntry(spec Server) error {
 	live := sv.g != nil
 	s.mu.Unlock()
 	if !live {
-		s.start(norm.Name)
+		s.start(norm.Name, false)
 	}
 	s.persist()
 	return nil
@@ -646,6 +708,7 @@ func (s *Supervisor) Shutdown() {
 	s.op.Lock()
 	defer s.op.Unlock()
 	s.mu.Lock()
+	s.closed = true
 	names := make([]string, 0, len(s.servers))
 	for name, sv := range s.servers {
 		names = append(names, name)

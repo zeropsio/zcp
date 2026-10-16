@@ -4,7 +4,8 @@
 // group with its own log, and keeps the start/stop state in $HOME so it
 // survives a container restart while a redeploy (a fresh $HOME) starts every
 // declared server again. A server that exits on its own stays down and is
-// reported as crashed with its exit.
+// reported as crashed with its exit; one that crashes within its start window
+// is started once more first.
 //
 // The package imports the standard library and golang.org/x/sys only: zcp's
 // dev-server tool reads its declaration and state types, and the binary runs
