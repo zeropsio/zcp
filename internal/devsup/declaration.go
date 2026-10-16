@@ -233,24 +233,44 @@ func cleanRel(p string) (string, error) {
 
 // ignored reports whether a change at rel (repo-relative, slash-separated)
 // must not restart a server watching with w: anything under .git or
-// node_modules, or matching an ignore entry as a path, a parent directory or
-// a glob.
+// node_modules, or at or under a path an ignore entry matches. An entry is
+// matched segment by segment with path.Match, and a `**` segment matches any
+// number of directories.
 func (w *Watch) ignored(rel string) bool {
-	for seg := range strings.SplitSeq(rel, "/") {
+	segs := strings.Split(rel, "/")
+	for _, seg := range segs {
 		if seg == ".git" || seg == "node_modules" {
 			return true
 		}
 	}
 	for _, ig := range w.Ignore {
-		ig = strings.TrimSuffix(path.Clean(ig), "/")
-		if rel == ig || strings.HasPrefix(rel, ig+"/") {
-			return true
-		}
-		if ok, _ := path.Match(ig, rel); ok {
+		if matchesLeading(strings.Split(path.Clean(ig), "/"), segs) {
 			return true
 		}
 	}
 	return false
+}
+
+// matchesLeading reports whether the pattern segments match the leading
+// segments of a path: the path is what the pattern names or lies under it.
+func matchesLeading(pat, segs []string) bool {
+	for ; len(pat) > 0; pat, segs = pat[1:], segs[1:] {
+		if pat[0] == "**" {
+			for i := range len(segs) + 1 {
+				if matchesLeading(pat[1:], segs[i:]) {
+					return true
+				}
+			}
+			return false
+		}
+		if len(segs) == 0 {
+			return false
+		}
+		if ok, _ := path.Match(pat[0], segs[0]); !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // covers reports whether rel lies under one of the watched paths.

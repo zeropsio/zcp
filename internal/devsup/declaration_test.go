@@ -188,6 +188,34 @@ func TestWatch_IgnoredPaths(t *testing.T) {
 	}
 }
 
+// A `**` segment matches any number of directories, and a glob that matches a
+// directory ignores everything under it: `uv run` rewrites
+// src/<pkg>.egg-info deep in a watched tree on every start.
+func TestWatch_AnIgnoreGlobMatchesAtAnyDepthWithDoubleStar(t *testing.T) {
+	t.Parallel()
+	w := &Watch{Paths: []string{"api"}, Ignore: []string{"**/*.egg-info", "**/__pycache__/**", "api/**/*.pyc", "*.log"}}
+	tests := []struct {
+		rel    string
+		ignore bool
+	}{
+		{"api/providers/trace/trace-opik/src/dify_trace_opik.egg-info", true},
+		{"api/providers/trace/trace-opik/src/dify_trace_opik.egg-info/PKG-INFO", true},
+		{"top.egg-info/PKG-INFO", true},
+		{"api/core/__pycache__/app.cpython-312.pyc", true},
+		{"api/core/deep/x.pyc", true},
+		{"api/x.pyc", true},
+		{"server.log", true},
+		{"api/core/app.py", false},
+		{"api/logs/server.log", false},
+		{"api/egg-info.py", false},
+	}
+	for _, tt := range tests {
+		if got := w.ignored(tt.rel); got != tt.ignore {
+			t.Errorf("ignored(%q) = %v, want %v", tt.rel, got, tt.ignore)
+		}
+	}
+}
+
 func TestServer_FirstDesired_FollowsAutostart(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
