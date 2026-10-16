@@ -210,3 +210,41 @@ func TestDevServer_StatusOfAServerSlowerThanItsProbe_SaysSlowNotConnectionRefuse
 		t.Errorf("reason/message = %q/%q, want %q and a port that accepts connections", result.Reason, result.Message, reasonSlow)
 	}
 }
+
+func TestDevServer_AStartsLogTail_HoldsOnlyTheCurrentRun(t *testing.T) {
+	t.Parallel()
+	c := devservertest.NewSupervised(oneServer)
+	c.HTTP = map[int]int{3000: 0}
+	c.Logs = map[string][]string{"apidev": {
+		"--- zcp-devsup: start #1 at 2026-10-14T20:00:00Z: npm run start:dev",
+		"Error: Cannot find module 'old'",
+		"--- zcp-devsup: start #2 at 2026-10-14T21:00:00Z: npm run start:dev",
+		"compiling...",
+	}}
+	result := runDevServer(t, c, DevServerParams{Action: "restart", Hostname: "apidev", WaitSeconds: 1})
+	if strings.Contains(result.LogTail, "Cannot find module") || !strings.HasPrefix(result.LogTail, "--- zcp-devsup: start #2") {
+		t.Errorf("logTail = %q, want only the run that start #2 began", result.LogTail)
+	}
+	logs := runDevServer(t, c, DevServerParams{Action: "logs", Hostname: "apidev"})
+	if !strings.Contains(logs.LogTail, "Cannot find module") {
+		t.Errorf("a log read = %q, want every line it asked for", logs.LogTail)
+	}
+}
+
+func TestDevServer_APassingStartProbe_CarriesAShortLogTail(t *testing.T) {
+	t.Parallel()
+	c := devservertest.NewSupervised(oneServer)
+	c.Logs = map[string][]string{"apidev": {"ready"}}
+	runDevServer(t, c, DevServerParams{Action: "restart", Hostname: "apidev"})
+	if sentWith(c, "zcp-devsup ctl logs 'apidev' --lines 8 ") != 1 || sentWith(c, "--lines 40") != 0 {
+		t.Errorf("log reads = %q, want one of 8 lines after a passing probe", c.Sent())
+	}
+
+	c = devservertest.NewSupervised(oneServer)
+	c.HTTP = map[int]int{3000: 0}
+	c.Logs = map[string][]string{"apidev": {"compiling"}}
+	runDevServer(t, c, DevServerParams{Action: "restart", Hostname: "apidev", WaitSeconds: 1})
+	if sentWith(c, "--lines 40") != 1 {
+		t.Errorf("log reads = %q, want 40 lines after a failed probe", c.Sent())
+	}
+}

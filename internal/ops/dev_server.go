@@ -162,6 +162,9 @@ const (
 	// every result. Small enough to fit in an MCP response, large
 	// enough to diagnose a failed startup.
 	defaultLogTailLines = 40
+	// startedLogTailLines is the tail of a server that started: enough to
+	// show it came up, nothing to diagnose.
+	startedLogTailLines = 8
 	// pollIntervalMillis is the poll cadence of the start-probe loop.
 	pollIntervalMillis = 500
 	// probeTimeoutSlack is added on top of waitSeconds to bound the
@@ -579,7 +582,7 @@ func settleNoProbe(ctx context.Context, ssh SSHDeployer, ds *DevServers, result 
 		applyCrash(ctx, ssh, result, name, server)
 		return result, nil
 	}
-	result.LogTail = supervisorLogTail(ctx, ssh, result.Hostname, name, defaultLogTailLines)
+	result.LogTail = currentRun(supervisorLogTail(ctx, ssh, result.Hostname, name, startedLogTailLines))
 	result.Message = fmt.Sprintf(
 		"Dev server %s started under the supervisor in no-probe mode (no HTTP surface); after %s it is %s. "+
 			"This tool CANNOT verify the worker is actually consuming messages / processing work — follow up with `zerops_logs serviceHostname=%q` to confirm the subscription / job loop is making progress.",
@@ -613,11 +616,12 @@ func probeStarted(ctx context.Context, ssh SSHDeployer, ds *DevServers, result *
 		applyCrash(ctx, ssh, result, name, server)
 		return result, nil
 	}
-	result.LogTail = supervisorLogTail(ctx, ssh, p.Hostname, name, defaultLogTailLines)
 	if probeErr == nil && strings.HasPrefix(probeLine, "OK ") {
+		result.LogTail = currentRun(supervisorLogTail(ctx, ssh, p.Hostname, name, startedLogTailLines))
 		applyProbeSuccess(result, probeLine, time.Since(begun).Milliseconds(), name)
 		return result, nil
 	}
+	result.LogTail = currentRun(supervisorLogTail(ctx, ssh, p.Hostname, name, defaultLogTailLines))
 	applyProbeFailure(result, probeLine, probeDeadline, name, healthPath, wait, server.Status)
 	return result, nil
 }
@@ -637,7 +641,7 @@ func probedPath(p DevServerParams, ds *DevServers, name string) string {
 // applyCrash reports a server the supervisor holds as crashed, with its exit
 // and log tail.
 func applyCrash(ctx context.Context, ssh SSHDeployer, result *DevServerResult, name string, server devsup.ServerState) {
-	result.LogTail = supervisorLogTail(ctx, ssh, result.Hostname, name, defaultLogTailLines)
+	result.LogTail = currentRun(supervisorLogTail(ctx, ssh, result.Hostname, name, defaultLogTailLines))
 	label := serverLabel(result.Hostname, name)
 	if server.Exit != nil && server.Exit.Signal == devsup.ExitPortBusy {
 		result.Reason = reasonPortInUse

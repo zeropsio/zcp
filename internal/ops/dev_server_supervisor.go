@@ -360,6 +360,7 @@ func supervisorCtl(ctx context.Context, ssh SSHDeployer, hostname string, args .
 }
 
 // supervisorLogTail is `ctl logs <name> --lines N`; "" when the server has no log yet.
+// A start reads it through currentRun.
 func supervisorLogTail(ctx context.Context, ssh SSHDeployer, hostname, name string, lines int) string {
 	cmd := fmt.Sprintf(`zcp-devsup ctl logs %s --lines %d --json 2>/dev/null`, shellQuote(name), lines)
 	tailCtx, cancel := context.WithTimeout(ctx, logTailTimeout)
@@ -377,8 +378,22 @@ func supervisorLogTail(ctx context.Context, ssh SSHDeployer, hostname, name stri
 	return strings.Join(tail.Lines, "\n") + "\n"
 }
 
+// startMarker opens each run of a server in its log ("--- zcp-devsup: start
+// #N at …" or "… start #N failed: …").
+const startMarker = "--- zcp-devsup: start #"
+
+// currentRun cuts a log tail to the server's current run: from the last start
+// marker on, so an earlier run's failure never reads as this one's.
+func currentRun(tail string) string {
+	if i := strings.LastIndex(tail, startMarker); i == 0 || i > 0 && tail[i-1] == '\n' {
+		return tail[i:]
+	}
+	return tail
+}
+
 // WriteDevDeclaration replaces hostname's declaration with d (atomic rename).
-// Only a change of the set of servers writes it.
+// Only a change of the set of servers writes it. A d the supervisor would
+// refuse is refused here, coded, before anything is written.
 func WriteDevDeclaration(ctx context.Context, ssh SSHDeployer, hostname, root string, d devsup.Declaration) error {
 	b, err := json.MarshalIndent(d, "", "  ")
 	if err != nil {
