@@ -80,12 +80,14 @@ literal `${APP_KEY}`, and so does every other line referencing
 Store a secret with `zerops_env action="set" … sensitive=true`; a
 secret-shaped key defaults to it (not a `PUBLIC`/`PUBLISHABLE` one),
 and reads mask it. Point the person to it in the vault ("Vault → Admin
-sign-in → Password, press Show"), never the value.
+sign-in → Password, press Show"), never the value. Test with the
+stored name (`$API_KEY` on the service), never a literal in a command.
 
 A value only the person has (an API key, a password, a webhook secret)
 is never asked for in the chat: call `zerops_env action="request"
 key="STRIPE_SECRET_KEY" project=true reason="…"` — one sentence on what
-it is for and where to find it. The person types it into Mate, which
+it is for and where to find it. Request it when the feature using it is
+built, and only if that feature is on the chosen path. The person types it into Mate, which
 writes it to the vault; their next message notes it is set. Until then continue with what does not need it, or end the
 turn. A key already in that vault is answered `alreadySet` — reference
 it by name.
@@ -484,8 +486,10 @@ HMR-first dev setup: every push rebuilds assets (~20–30 s penalty).
 === develop-first-deploy-promote-stage ===
 ### Promote the first deploy to stage
 
-Standard mode pairs dev + stage. After each dev runtime verifies,
-cross-deploy it to its paired stage:
+Standard mode pairs dev + stage on the same managed services: keep dev
+data apart (own database or schema, own queue prefix) or accept shared
+data. After each dev runtime verifies, cross-deploy it to its paired
+stage:
 
 ```
 zerops_deploy sourceService="appdev" targetService="appstage" setup="prod"

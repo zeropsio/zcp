@@ -14,8 +14,10 @@ references-atoms: [develop-auto-close-semantics]
 
 ### Promote the first deploy to stage
 
-Standard mode pairs dev + stage. After each dev runtime verifies,
-cross-deploy it to its paired stage:
+Standard mode pairs dev + stage on the same managed services: keep dev
+data apart (own database or schema, own queue prefix) or accept shared
+data. After each dev runtime verifies, cross-deploy it to its paired
+stage:
 
 ```
 {services-list:{each-stage:zerops_deploy sourceService="{hostname}" targetService="{stage-hostname}" setup="{stage-setup}"
