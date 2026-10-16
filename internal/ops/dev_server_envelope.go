@@ -32,7 +32,7 @@ func DevServerStates(ctx context.Context, client platform.Client, projectID stri
 		reported = result.Hostname
 	}
 	names := make([]string, 0, len(ds.State.Servers))
-	for _, s := range ds.Declared.Servers {
+	for _, s := range ds.Servers() {
 		if _, ok := ds.State.Servers[s.Name]; ok {
 			names = append(names, s.Name)
 		}
@@ -89,7 +89,7 @@ func devServerPublicURLs(ctx context.Context, client platform.Client, projectID 
 		return nil
 	}
 	urls := map[int]string{}
-	for _, s := range ds.Declared.Servers {
+	for _, s := range ds.Servers() {
 		if s.Port == 0 || !slices.ContainsFunc(svc.Ports, func(p platform.Port) bool { return p.Port == s.Port && (p.HTTPSupport || isHTTPScheme(p)) }) {
 			continue
 		}

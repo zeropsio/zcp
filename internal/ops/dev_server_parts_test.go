@@ -292,3 +292,23 @@ func TestDevServer_AStartOnAPortAnotherDeclaredServerHolds_IsAnInvalidParameterN
 		t.Errorf("message/suggestion = %q/%q, want the holder named and how to remove it", pe.Message, pe.Suggestion)
 	}
 }
+
+// webdevContainer is webdev in variant B: the code volume's declaration also
+// holds apidev's servers, which webdev's supervisor does not run.
+func webdevContainer() *devservertest.Container {
+	c := devservertest.NewSupervised(variantBDeclaration)
+	delete(c.Servers, "api")
+	delete(c.Servers, "admin")
+	return c
+}
+
+func TestDevServer_ADeployOfAVariantBDevServiceWithOneServer_ReportsThatServer(t *testing.T) {
+	t.Parallel()
+	_, result, err := DevServersAfterDeploy(context.Background(), webdevContainer(), "webdev", "/var/www/ws")
+	if err != nil {
+		t.Fatalf("DevServersAfterDeploy: %v", err)
+	}
+	if result == nil || result.Name != "web" || !result.Running || result.Port != 3000 {
+		t.Errorf("result = %+v, want webdev's one server web, running on 3000 — apidev's api and admin are not webdev's", result)
+	}
+}

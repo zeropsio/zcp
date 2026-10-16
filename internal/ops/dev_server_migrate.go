@@ -266,10 +266,11 @@ func DevServersAfterDeploy(ctx context.Context, ssh SSHDeployer, hostname, root 
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(ds.Declared.Servers) != 1 {
+	servers := ds.Servers()
+	if len(servers) != 1 {
 		return ds, nil, nil
 	}
-	server := ds.Declared.Servers[0]
+	server := servers[0]
 	result := newResult(devServerActionStart, hostname, server.Name)
 	st := ds.State.Servers[server.Name]
 	result.LogFile, result.PID = st.LogPath, st.Pid
