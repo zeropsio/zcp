@@ -426,3 +426,47 @@ func TestAdoptSupervisorYAML_WritesNoEnvVariableNeverAZeropsPrefixedOne(t *testi
 		}
 	}
 }
+
+// TestRepinSupervisorYAML_ReplacesOnlyTheInstallLineTheDevSetupCarries
+// (docs/spec-mate.md §2.8a.2): re-pinning swaps the zcp-devsup line of the dev
+// setup for the newest one and names the download it replaced; the rest of
+// the file, other setups and run.start stay as written, and a setup without
+// the line or already on the newest pin is not touched.
+func TestRepinSupervisorYAML_ReplacesOnlyTheInstallLineTheDevSetupCarries(t *testing.T) {
+	t.Parallel()
+	const older = "https://github.com/zeropsio/zcp/releases/download/v9.200.0/zcp-devsup-linux-amd64"
+	setups := func(devURL, prodURL string) string {
+		return `zerops:
+  - setup: dev
+    run:
+      base: bun@1.3
+      prepareCommands:
+        - echo before   # kept
+        - ` + yamlQuote(DevsupPrepareCommand(devURL)) + `
+      start: zcp-devsup run --root /var/www/ws
+  - setup: prod
+    run:
+      prepareCommands: [` + yamlQuote(DevsupPrepareCommand(prodURL)) + `]
+      start: bun index.ts
+`
+	}
+	tests := []struct {
+		name, yaml, want, wantFrom string
+	}{
+		{name: "an older pin", yaml: setups(older, older), want: setups(testDevsupURL, older), wantFrom: older},
+		{name: "the newest pin", yaml: setups(testDevsupURL, older), want: setups(testDevsupURL, older)},
+		{name: "no supervisor line", yaml: "zerops:\n  - setup: dev\n    run:\n      start: bun index.ts\n", want: "zerops:\n  - setup: dev\n    run:\n      start: bun index.ts\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			out, used, from, err := RepinSupervisorYAML([]byte(tt.yaml), "dev", "appdev", testDevsupURL)
+			if err != nil {
+				t.Fatalf("RepinSupervisorYAML: %v", err)
+			}
+			if string(out) != tt.want || from != tt.wantFrom || used != "dev" {
+				t.Errorf("RepinSupervisorYAML = from %q, setup %q:\n%s\nwant from %q:\n%s", from, used, out, tt.wantFrom, tt.want)
+			}
+		})
+	}
+}

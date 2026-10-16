@@ -819,7 +819,12 @@ writes the dev setup's two lines (MODEL §9/1c, P4 H1), pinned to the **newest p
 release whose supervisor `formats` include the declaration's `version`** — never to the release of
 the zcp that writes them (a dev build has no asset). A release never drops a format, so this is the
 newest release zcp's update check sees (`internal/update`, `releases/latest`); when no published
-release reads the declaration's `version` yet, zcp writes no pin and says so.
+release reads the declaration's `version` yet, zcp writes no pin and says so. A pin is refreshed
+only inside a deploy the agent asked for: before a self-deploy of a dev service deployed before,
+zcp points the zcp-devsup line its dev setup already carries at the newest pin, changing nothing
+else, and the deploy reply names both releases — that deploy installs it, nothing redeploys on its
+own, and a dev setup without the line stays as written
+(`TestDeploy_ADeployedDevSetupPinnedToAnOlderSupervisor_InstallsTheNewestInTheSameDeploy`).
 
 **Crew save.** Before every push from a service, zcp runs `<git-common-dir>/t3-crew-save` when it is executable; absent → the push runs as before; non-zero → the deploy is refused with the save's error.
 

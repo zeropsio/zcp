@@ -1,6 +1,7 @@
 package ops
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -109,6 +110,9 @@ func AdoptSupervisorYAML(data []byte, setup, hostname, url, root string) (out []
 	return out, setup, true, nil
 }
 
+// devSetupName is the setup a dev service deploys when none is named after it.
+const devSetupName = "dev"
+
 // devSetupEntry finds the dev setup's mapping and the setup's name.
 func devSetupEntry(doc *yaml.Node, setup, hostname string) (*yaml.Node, string, error) {
 	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
@@ -132,8 +136,8 @@ func devSetupEntry(doc *yaml.Node, setup, hostname string) (*yaml.Node, string, 
 			setup = names[0]
 		case entries[hostname] != nil:
 			setup = hostname
-		case entries["dev"] != nil:
-			setup = "dev"
+		case entries[devSetupName] != nil:
+			setup = devSetupName
 		default:
 			return nil, "", fmt.Errorf("zerops.yaml has several setups (%s) and none is named %s or dev — zcp cannot tell the dev setup", strings.Join(names, ", "), hostname)
 		}
@@ -170,6 +174,83 @@ func readZeropsYAMLCmd(dir string) string {
 // supervisor on the repository root given as root (AdoptSupervisorYAML), and returns
 // the file's name and the setup.
 func AdoptSupervisorInDevSetup(ctx context.Context, ssh SSHDeployer, hostname, setup, url, dir, root string) (file, used string, changed bool, err error) {
+	return rewriteDevSetup(ctx, ssh, hostname, dir, func(data []byte) ([]byte, string, bool, error) {
+		return AdoptSupervisorYAML(data, setup, hostname, url, root)
+	})
+}
+
+// RepinSupervisorYAML points the zcp-devsup install line the dev setup already
+// carries at url, changing nothing else; from is the download the line named
+// before, "" when the setup carries no such line or it names url already. A
+// dev setup without the line stays as written: the first dev-server start
+// moves it onto the supervisor. setup is picked as in AdoptSupervisorYAML.
+func RepinSupervisorYAML(data []byte, setup, hostname, url string) (out []byte, used, from string, err error) {
+	if !bytes.Contains(data, []byte("/"+DevsupAsset)) {
+		return data, setup, "", nil
+	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, "", "", fmt.Errorf("zerops.yaml: %w", err)
+	}
+	entry, setup, err := devSetupEntry(&doc, setup, hostname)
+	if err != nil {
+		return nil, "", "", err
+	}
+	prepare := mappingValue(mappingValue(entry, "run"), "prepareCommands")
+	if prepare == nil || prepare.Kind != yaml.SequenceNode {
+		return data, setup, "", nil
+	}
+	line := DevsupPrepareCommand(url)
+	for _, item := range prepare.Content {
+		if item.Kind == yaml.ScalarNode && strings.Contains(item.Value, "/"+DevsupAsset) && item.Value != line {
+			from = pinnedDownload(item.Value)
+			break
+		}
+	}
+	if from == "" {
+		return data, setup, "", nil
+	}
+	src := newYAMLSource(data, &doc)
+	splices, err := prepareSplice(src, prepare, setup, line)
+	if err != nil {
+		return nil, "", "", err
+	}
+	out = src.apply(splices)
+	if err := spliceVerified(data, out, setup, supervisorLines{prepare: line}); err != nil {
+		return nil, "", "", fmt.Errorf("zerops.yaml setup %q: %w; replace its zcp-devsup line in run.prepareCommands by hand with: %s", setup, err, line)
+	}
+	return out, setup, from, nil
+}
+
+// pinnedDownload is the URL a zcp-devsup install line downloads, the whole
+// line when it is not one zcp wrote.
+func pinnedDownload(line string) string {
+	_, rest, ok := strings.Cut(line, "u=")
+	url, _, end := strings.Cut(rest, ";")
+	if !ok || !end || !strings.HasSuffix(url, "/"+DevsupAsset) {
+		return line
+	}
+	return url
+}
+
+// RepinSupervisorInDevSetup rewrites the zerops.yaml in hostname's dir (as
+// AdoptSupervisorInDevSetup) so its dev setup's zcp-devsup line installs url
+// (RepinSupervisorYAML); from is "" when nothing changed.
+func RepinSupervisorInDevSetup(ctx context.Context, ssh SSHDeployer, hostname, setup, url, dir string) (file, used, from string, err error) {
+	file, used, _, err = rewriteDevSetup(ctx, ssh, hostname, dir, func(data []byte) ([]byte, string, bool, error) {
+		out, used, pinned, err := RepinSupervisorYAML(data, setup, hostname, url)
+		from = pinned
+		return out, used, pinned != "", err
+	})
+	if err != nil {
+		return file, used, "", err
+	}
+	return file, used, from, nil
+}
+
+// rewriteDevSetup reads the zerops.yaml (or zerops.yml) in hostname's dir, ""
+// for /var/www, and writes back what edit makes of it when edit changed it.
+func rewriteDevSetup(ctx context.Context, ssh SSHDeployer, hostname, dir string, edit func([]byte) ([]byte, string, bool, error)) (file, used string, changed bool, err error) {
 	if dir == "" {
 		dir = DevRepoRoot
 	}
@@ -184,7 +265,7 @@ func AdoptSupervisorInDevSetup(ctx context.Context, ssh SSHDeployer, hostname, s
 	if !ok || file == "-" {
 		return "", "", false, fmt.Errorf("%s has no zerops.yaml (or zerops.yml) in %s", hostname, dir)
 	}
-	updated, used, changed, err := AdoptSupervisorYAML([]byte(body), setup, hostname, url, root)
+	updated, used, changed, err := edit([]byte(body))
 	if err != nil {
 		// The parse and splice messages name the config file generically; the
 		// file is known here, so the agent is told its real name and never

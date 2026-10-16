@@ -223,10 +223,13 @@ func carryKeptServer(ctx context.Context, ssh ops.SSHDeployer, stateDir string, 
 
 // superviseNewDevSetup writes the supervisor's two lines into the dev setup a
 // dev service deploys for the first time (docs/spec-mate.md §2.8a.2), so its
-// first dev-server start finds the supervisor and redeploys nothing. It
-// changes nothing when the target is not a dev-mode dynamic runtime's
-// self-deploy, was deployed before (its first start migrates it), or no
-// zcp-devsup is published or named yet — the dev setup keeps today's shape.
+// first dev-server start finds the supervisor and redeploys nothing. On a dev
+// service deployed before it only re-pins the zcp-devsup line its dev setup
+// already carries, so the deploy the agent asked for installs the newest
+// supervisor and nothing redeploys on its own; a dev setup without the line
+// stays as written (its first start migrates it). It changes nothing when the
+// target is not a dev-mode dynamic runtime's self-deploy or no zcp-devsup is
+// published or named yet — the dev setup keeps today's shape.
 // It edits the dev setup in workingDir, the folder the deploy runs from, and a
 // variant-B dev service's supervisor runs on its code volume. It returns the
 // sentence saying what changed, "" when nothing did.
@@ -235,7 +238,7 @@ func superviseNewDevSetup(ctx context.Context, client platform.Client, projectID
 		return "", nil
 	}
 	meta, _ := workflow.FindServiceMeta(stateDir, target)
-	if meta == nil || meta.IsDeployed() {
+	if meta == nil {
 		return "", nil
 	}
 	svc, err := ops.LookupService(ctx, client, projectID, target)
@@ -246,6 +249,17 @@ func superviseNewDevSetup(ctx context.Context, client platform.Client, projectID
 	if err != nil {
 		return "", nil //nolint:nilerr // no zcp-devsup published or named yet: today's shape, the first start migrates it
 	}
+	if meta.IsDeployed() {
+		file, used, from, err := ops.RepinSupervisorInDevSetup(ctx, ssh, target, setup, url, workingDir)
+		if err != nil {
+			return "", fmt.Errorf("dev-server supervisor: %w", err)
+		}
+		if from == "" {
+			return "", nil
+		}
+		return fmt.Sprintf("Before this deploy zcp re-pinned zcp-devsup in setup %q of %s from %s to %s, so this deploy installs it on %s — commit it with your next change.",
+			used, file, devsupRelease(from), devsupRelease(url), target), nil
+	}
 	file, used, changed, err := ops.AdoptSupervisorInDevSetup(ctx, ssh, target, setup, url, workingDir, meta.WorkingDirFor(target))
 	if err != nil {
 		return "", fmt.Errorf("dev-server supervisor: %w", err)
@@ -255,6 +269,17 @@ func superviseNewDevSetup(ctx context.Context, client platform.Client, projectID
 	}
 	return fmt.Sprintf("Before this first deploy zcp put %s under the dev-server supervisor: setup %q in %s now installs and runs zcp-devsup (run.prepareCommands, run.start) — commit it with your next change; zerops_dev_server action=start runs your dev server under it.",
 		target, used, file), nil
+}
+
+// devsupRelease names a zcp-devsup download by its release tag, by the whole
+// URL when it is no release's.
+func devsupRelease(url string) string {
+	_, rest, ok := strings.Cut(url, "/releases/download/")
+	tag, _, found := strings.Cut(rest, "/")
+	if !ok || !found || tag == "" {
+		return url
+	}
+	return tag
 }
 
 // redeployForSupervisor self-deploys hostname with setup from workingDir ("" is

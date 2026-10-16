@@ -819,3 +819,71 @@ func TestDeploy_NewDevSetup_GetsTheSupervisorLines(t *testing.T) {
 		})
 	}
 }
+
+// TestDeploy_ADeployedDevSetupPinnedToAnOlderSupervisor_InstallsTheNewestInTheSameDeploy
+// (docs/spec-mate.md §2.8a.2): a dev service whose dev setup an older zcp
+// pinned to an older zcp-devsup gets its install line re-pinned to the newest
+// release before a deploy the agent asked for, so that deploy installs it and
+// nothing redeploys on its own. A pin that is already the newest stays as
+// written and the deploy says nothing about it.
+func TestDeploy_ADeployedDevSetupPinnedToAnOlderSupervisor_InstallsTheNewestInTheSameDeploy(t *testing.T) {
+	t.Parallel()
+	const older = "https://github.com/zeropsio/zcp/releases/download/v9.200.0/zcp-devsup-linux-amd64"
+	tests := []struct {
+		name    string
+		pinned  string
+		wantNew bool
+	}{
+		{name: "pinned to an older release", pinned: older, wantNew: true},
+		{name: "pinned to the newest release", pinned: testDevsupURL},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+				Hostname: "appdev", Mode: topology.PlanModeDev, BootstrapSession: "sess1",
+				BootstrappedAt: "2026-10-14", PrimarySetupName: "dev", FirstDeployedAt: "2026-10-14T20:00:00Z",
+			}); err != nil {
+				t.Fatalf("WriteServiceMeta: %v", err)
+			}
+			mock := platform.NewMock().
+				WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "appdev", ProjectID: "proj-1", Status: serviceStatusRunning,
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "bun@1.3"}}}).
+				WithAppVersionEvents([]platform.AppVersionEvent{{ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-1", Status: statusActive, Sequence: 1}})
+			pinnedSetup, _, _, err := ops.AdoptSupervisorYAML([]byte(todaysDevSetup), "dev", "appdev", tt.pinned, "")
+			if err != nil {
+				t.Fatalf("AdoptSupervisorYAML: %v", err)
+			}
+			c := &devservertest.Container{YAMLFile: "zerops.yml", YAML: string(pinnedSetup)}
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterDeploySSH(srv, mock, okHTTP, "proj-1", c, &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
+				nil, runtime.Info{}, dir, testDeployEngine(t), nil, DevsupSource{Latest: func(context.Context) (string, error) { return testDevsupURL, nil }})
+
+			result := callTool(t, srv, "zerops_deploy", map[string]any{"targetService": "appdev", "setup": "dev"})
+			text := getTextContent(t, result)
+			if result.IsError {
+				t.Fatalf("zerops_deploy: %s", text)
+			}
+			if c.Deploys != 1 {
+				t.Errorf("deploys = %d, want 1: the re-pin rides the deploy the agent asked for", c.Deploys)
+			}
+			if !tt.wantNew {
+				if c.YAML != string(pinnedSetup) || strings.Contains(text, "re-pinned") {
+					t.Errorf("a newest pin changed:\n%s\n%s", c.YAML, text)
+				}
+				return
+			}
+			want, _, _, err := ops.AdoptSupervisorYAML([]byte(todaysDevSetup), "dev", "appdev", testDevsupURL, "")
+			if err != nil {
+				t.Fatalf("AdoptSupervisorYAML: %v", err)
+			}
+			if c.YAML != string(want) {
+				t.Errorf("zerops.yml after the deploy:\n%s\nwant the newest pin and nothing else changed:\n%s", c.YAML, want)
+			}
+			if !strings.Contains(text, `zcp re-pinned zcp-devsup in setup \"dev\" of zerops.yml from v9.200.0 to v9.300.0, so this deploy installs it`) {
+				t.Errorf("the deploy does not say what changed: %s", text)
+			}
+		})
+	}
+}

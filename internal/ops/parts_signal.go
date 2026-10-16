@@ -187,7 +187,7 @@ func yamlParts(data []byte, hostname, devSetup string) (parts, setups []string) 
 		if devSetup != "" {
 			return setup == devSetup
 		}
-		return setup == "dev" || setup == hostname
+		return setup == devSetupName || setup == hostname
 	}
 	for _, e := range doc.Zerops {
 		if e.Setup == "" {
