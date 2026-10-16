@@ -4,6 +4,7 @@ priority: 5
 phases: [develop-active]
 closeDeployModes: [auto, manual]
 multiService: aggregate
+reference: true
 title: "Deploy config — recorded dimensions + how delivery derives"
 references-fields: [workflow.ServiceSnapshot.CloseDeployMode, workflow.ServiceSnapshot.GitPushState, workflow.ServiceSnapshot.BuildIntegration]
 ---
@@ -46,11 +47,11 @@ Change any dimension without closing the session:
 - `git-push-setup` and `build-integration` are **per-pair**: capability is stamped on the dev half's record and shared by both halves. `git-push-setup` rejects stage-half input with `INVALID_PARAMETER` (it mutates push-side state — would write to the wrong target). `build-integration` is permissive: pair-keyed lookup resolves either half to the dev record and the response carries `pushSource`/`buildTarget`/`topologyNote` so the redirect is visible. Either way: prefer passing the dev half directly.
 
 ```
-zerops_workflow action="close-mode" closeMode={"{hostname}":"auto"}
-zerops_workflow action="git-push-setup" service="{hostname}" remoteUrl="..."
-zerops_workflow action="build-integration" service="{hostname}" integration="actions"
+zerops_workflow action="close-mode" closeMode={"<dev-hostname>":"auto"}
+zerops_workflow action="git-push-setup" service="<dev-hostname>" remoteUrl="..."
+zerops_workflow action="build-integration" service="<dev-hostname>" integration="actions"
 ```
 
-Substitute `{hostname}` with the dev-half hostname (or single-runtime hostname). For a multi-service project, repeat each call once per dev-half service — never per stage-half.
+`<dev-hostname>` is the dev-half hostname (or the single-runtime hostname). For a multi-service project, repeat each call once per dev-half service — never per stage-half.
 
 Mixed config across services in one project is fine — each service's dimensions are independent in the envelope.

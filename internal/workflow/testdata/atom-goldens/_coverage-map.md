@@ -68,6 +68,7 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 | `develop-first-deploy-write-app` | 5 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/first-deploy-unset-decision, develop/standup-stage-out-of-scope |
 | `develop-git-push-broken` | 1 | develop/git-push-broken |
 | `develop-git-push-delivery` | 1 | develop/git-push-configured-webhook |
+| `develop-git-push-delivery-results` | 1 | develop/git-push-configured-webhook |
 | `develop-git-push-start-from-remote` | 2 | develop/git-push-configured-webhook, develop/standup-dev-deployed-wired |
 | `develop-http-diagnostic` | 5 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/first-deploy-unset-decision, develop/standup-stage-out-of-scope |
 | `develop-implicit-webserver` | 1 | develop/first-deploy-recipe-implicit-standard |

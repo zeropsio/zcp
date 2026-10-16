@@ -5,7 +5,7 @@ phases: [develop-active]
 envelopeDeployStates: [never-deployed]
 title: "First-deploy branch — scaffold + write + deploy + stamp"
 references-fields: [workflow.ServiceSnapshot.Deployed, ops.VerifyResult.Status, workflow.ServiceSnapshot.CloseDeployMode]
-references-atoms: [develop-first-deploy-scaffold-yaml, develop-first-deploy-write-app, develop-verify-matrix, develop-strategy-awareness]
+references-atoms: [develop-first-deploy-scaffold-yaml, develop-first-deploy-write-app, develop-verify-matrix]
 ---
 
 ### You're in the develop first-deploy branch

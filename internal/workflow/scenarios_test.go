@@ -826,7 +826,8 @@ func TestScenario_S12_ExportActiveEmptyPlan(t *testing.T) {
 // TestScenario_S13_GitPushDeliveryGating pins the post-ladder gating of
 // the git-push delivery atom pair. Close-mode carries no delivery intent
 // anymore (the legacy git-push value folds to auto); GitPushState alone
-// keys the atoms: configured fires develop-git-push-delivery, broken
+// keys the atoms: configured fires develop-git-push-delivery (with its
+// on-demand develop-git-push-delivery-results), broken
 // fires develop-git-push-broken (capability existed and degraded), and
 // unconfigured fires NEITHER — it is the default of every fresh service,
 // so a needs-setup atom keyed on it would spam every develop session.
@@ -871,19 +872,20 @@ func TestScenario_S13_GitPushDeliveryGating(t *testing.T) {
 	}{
 		{
 			topology.GitPushConfigured,
-			[]string{"develop-git-push-delivery", "develop-git-push-start-from-remote"},
+			[]string{"develop-git-push-delivery", "develop-git-push-delivery-results", "develop-git-push-start-from-remote"},
 			[]string{"develop-git-push-broken"},
 		},
 		{
 			topology.GitPushBroken,
 			[]string{"develop-git-push-broken"},
-			[]string{"develop-git-push-delivery", "develop-git-push-start-from-remote"},
+			[]string{"develop-git-push-delivery", "develop-git-push-delivery-results", "develop-git-push-start-from-remote"},
 		},
 		{
 			topology.GitPushUnconfigured,
 			nil,
 			[]string{
 				"develop-git-push-delivery",
+				"develop-git-push-delivery-results",
 				"develop-git-push-broken",
 				"develop-git-push-start-from-remote",
 			},
@@ -905,6 +907,8 @@ func TestScenario_S13_GitPushDeliveryGating(t *testing.T) {
 				// slice reads as no pin at all.
 				requireAtomIDsContain(t, "S13 start from the remote", matches,
 					"develop-git-push-start-from-remote")
+				requireAtomIDsContain(t, "S13 push results on demand", matches,
+					"develop-git-push-delivery-results")
 			}
 			for _, m := range matches {
 				for _, f := range tc.forbid {
