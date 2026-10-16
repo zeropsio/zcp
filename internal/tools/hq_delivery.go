@@ -464,5 +464,7 @@ func hqMergeAnyMoment(base string) string {
 }
 
 // hqHandoffNote is what the person needs from the Mate's closing message in a
-// Mate that delivers through HQ: the change to review, and what they do next.
-const hqHandoffNote = "In your closing message tell the person: the change to review, by its link, and that once it is merged they add a stage and a production from the projects page."
+// Mate that delivers through HQ: the change to review, and what they do next —
+// in the words Mate shows under that message (Review, Put it live), never a
+// path through other pages.
+const hqHandoffNote = "In your closing message tell the person: the change to review, by its link, and that they can press Review to look it over and merge it, or Put it live to merge it and release it to production in one go."

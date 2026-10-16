@@ -137,6 +137,8 @@ func runInitCmd(args []string) int {
 			return 0
 		}
 	}
+	// Ahead of the steps, so an init that fails still retires them.
+	retireDevServerKeeperAtBoot(context.Background(), rt, platform.NewSystemUnits(), os.Stderr)
 	// `--guided` is a user-only flag: record the local per-project
 	// preference (.zcp marker) before setup reads it. Present → guided
 	// mode ON; absent → plain `zcp init` turns it OFF (clean tree).

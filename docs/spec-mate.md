@@ -1054,8 +1054,9 @@ Stages []StageRef `json:"stages,omitempty"`
   single-part app loses nothing: the mirror is its whole pair.
 - While an old zcp runs, the mirror holds the pair only and dev servers are degraded: the old
   zcp's keeper and its SSH start do not know the supervisor and may collide with it on a declared
-  port. This ends when the new zcp is back: at startup it removes the old keeper's
-  `zerops@devservers-*` units (`TestRetireDevServerKeeper`). Its `dev-servers.json` record stays
+  port. This ends when the new zcp is back: `zcp init` at every container start, and each `zcp
+  serve`, removes the old keeper's `zerops@devservers-*` units (`TestRetireDevServerKeeper`,
+  `TestRetireDevServerKeeperAtBoot_RemovesKeeperUnits_NeverFailsInit`). Its `dev-servers.json` record stays
   until each host moves: a `zerops_deploy` (or batch) self-deploy of a dev service with a record
   and no supervisor carries the move — the two lines, the kept server declared from the record —
   so the supervisor brings the server back with no extra redeploy; the host's entry goes once the
