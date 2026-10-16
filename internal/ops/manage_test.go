@@ -3,6 +3,8 @@ package ops
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -606,6 +608,44 @@ func TestScale_OmittedFieldsKeepTheServiceCurrentScaling(t *testing.T) {
 	}
 	if got.VerticalSwapEnabled == nil || !*got.VerticalSwapEnabled {
 		t.Errorf("swapEnabled sent = %v, want true", got.VerticalSwapEnabled)
+	}
+}
+
+// A scale call that raises minRam above the maxRam the service keeps (the
+// call did not set maxRam) is refused by the platform with a field error whose
+// suggestion says to fix YAML (seen live 2026-10-16). The error names both
+// values and which one the call left as it was instead.
+func TestScale_ARefusedMinAboveTheMaxTheServiceKeepsNamesBothValues(t *testing.T) {
+	t.Parallel()
+
+	refused := platform.NewPlatformError(platform.ErrAPIError, "Invalid custom autoscaling value.",
+		"Field 'minResource.memoryGBytes' (Value must not be greater than maxResource.memoryGBytes) rejected. Fix in YAML and retry.")
+	refused.APICode = "invalidCustomAutoscalingValue"
+	client := &scaleCaptureClient{Mock: platform.NewMock().
+		WithServices([]platform.ServiceStack{{
+			ID: "svc-1", Name: "difydev", ProjectID: "proj-1", Status: "RUNNING",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/python@3.12"},
+			CurrentAutoscaling: &platform.CustomAutoscaling{
+				MinCPU: 1, MaxCPU: 3, MinRAM: 4, MaxRAM: 6, MinDisk: 1, MaxDisk: 100,
+				HorizontalMinCount: 1, HorizontalMaxCount: 1,
+			},
+		}}).WithError("SetAutoscaling", refused)}
+
+	_, err := Scale(context.Background(), client, "proj-1", "difydev", ScaleParams{
+		MinRAM: scaleFloatPtr(8),
+		MinCPU: scaleIntPtr(2),
+	})
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) || pe.Code != platform.ErrInvalidScaling {
+		t.Fatalf("err = %v, want an %s PlatformError", err, platform.ErrInvalidScaling)
+	}
+	for _, want := range []string{"minRam 8 GB", "maxRam 6 GB", "this call did not set it"} {
+		if !strings.Contains(pe.Message, want) {
+			t.Errorf("message = %q, want it to contain %q", pe.Message, want)
+		}
+	}
+	if !strings.Contains(pe.Suggestion, "maxRam") || strings.Contains(pe.Suggestion, "YAML") {
+		t.Errorf("suggestion = %q, want it to name maxRam and not YAML", pe.Suggestion)
 	}
 }
 
