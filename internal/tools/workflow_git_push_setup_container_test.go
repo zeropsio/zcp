@@ -257,7 +257,7 @@ func TestGitPushSetupContainer_GarbageTokenSameRemote_DoesNotClobber(t *testing.
 	if len(ssh.commands) != 3 {
 		t.Fatalf("expected exactly 3 SSH calls (presence + self-heal + probe); got %d: %v", len(ssh.commands), ssh.commands)
 	}
-	if !strings.Contains(ssh.commands[0], "test -d /var/www/.git") {
+	if !strings.Contains(ssh.commands[0], "test -d '/var/www/.git'") {
 		t.Errorf("first SSH call should be the presence check; got: %s", ssh.commands[0])
 	}
 	if !strings.Contains(ssh.commands[2], "push --dry-run") {
@@ -424,7 +424,7 @@ func TestGitPushSetupContainer_SameRemoteNewToken_Rotates(t *testing.T) {
 	if len(ssh.commands) != 9 {
 		t.Fatalf("rotation should run presence+self-heal+probe+origin+session+divergence(4) (9 SSH calls); got %d: %v", len(ssh.commands), ssh.commands)
 	}
-	if !strings.Contains(ssh.commands[0], "test -d /var/www/.git") {
+	if !strings.Contains(ssh.commands[0], "test -d '/var/www/.git'") {
 		t.Errorf("first SSH call should be the presence check; got: %s", ssh.commands[0])
 	}
 	if strings.Contains(ssh.commands[1], "push --dry-run") || strings.Contains(ssh.commands[1], "GIT_TOKEN=") {
@@ -476,7 +476,7 @@ func TestGitPushSetupContainer_RotationWithToken_MissingGitStillReconstructs(t *
 
 	ssh := &containerSSHStub{
 		dispatch: func(cmd string) ([]byte, error) {
-			if strings.Contains(cmd, "test -d /var/www/.git") {
+			if strings.Contains(cmd, "test -d '/var/www/.git'") {
 				return []byte("absent"), nil
 			}
 			if strings.Contains(cmd, "git status --porcelain") {
@@ -562,7 +562,7 @@ func TestGitPushSetupContainer_PresenceProbeError_FailsClosed(t *testing.T) {
 
 			ssh := &containerSSHStub{
 				dispatch: func(cmd string) ([]byte, error) {
-					if strings.Contains(cmd, "test -d /var/www/.git") {
+					if strings.Contains(cmd, "test -d '/var/www/.git'") {
 						return nil, errors.New("ssh transport lost")
 					}
 					return []byte("ok"), nil
@@ -714,7 +714,7 @@ func TestGitPushSetupContainer_AlreadyConfigured_NoRestart(t *testing.T) {
 	if len(ssh.commands) != 2 {
 		t.Fatalf("short-circuit must perform only presence + identity-read; got %d: %v", len(ssh.commands), ssh.commands)
 	}
-	if !strings.Contains(ssh.commands[0], "test -d /var/www/.git") {
+	if !strings.Contains(ssh.commands[0], "test -d '/var/www/.git'") {
 		t.Errorf("first SSH call should be the presence check; got: %s", ssh.commands[0])
 	}
 	if !strings.Contains(ssh.commands[1], "git config user.email") || !strings.Contains(ssh.commands[1], "git config user.name") {

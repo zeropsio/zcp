@@ -522,7 +522,7 @@ func TestGitPushSetupContainer_ReconstructUsesDerivedIdentity(t *testing.T) {
 
 	ssh := &containerSSHStub{
 		dispatch: func(cmd string) ([]byte, error) {
-			if strings.Contains(cmd, "test -d /var/www/.git") {
+			if strings.Contains(cmd, "test -d '/var/www/.git'") {
 				return []byte("absent"), nil
 			}
 			if strings.Contains(cmd, "git status --porcelain") {
@@ -585,7 +585,7 @@ func TestGitPushSetupContainer_RecallNote_StillRobot(t *testing.T) {
 
 	ssh := &containerSSHStub{
 		dispatch: func(cmd string) ([]byte, error) {
-			if strings.Contains(cmd, "test -d /var/www/.git") {
+			if strings.Contains(cmd, "test -d '/var/www/.git'") {
 				return []byte("present"), nil
 			}
 			if strings.Contains(cmd, `printf '%s\n' "$(git config user.email)"`) {
@@ -632,7 +632,7 @@ func TestGitPushSetupContainer_RecallNote_AlreadyHuman(t *testing.T) {
 
 	ssh := &containerSSHStub{
 		dispatch: func(cmd string) ([]byte, error) {
-			if strings.Contains(cmd, "test -d /var/www/.git") {
+			if strings.Contains(cmd, "test -d '/var/www/.git'") {
 				return []byte("present"), nil
 			}
 			if strings.Contains(cmd, `printf '%s\n' "$(git config user.email)"`) {
@@ -677,7 +677,7 @@ func TestGitPushSetupContainer_RecallNote_NonGitHubHost(t *testing.T) {
 
 	ssh := &containerSSHStub{
 		dispatch: func(cmd string) ([]byte, error) {
-			if strings.Contains(cmd, "test -d /var/www/.git") {
+			if strings.Contains(cmd, "test -d '/var/www/.git'") {
 				return []byte("present"), nil
 			}
 			return []byte("ok"), nil
@@ -719,7 +719,7 @@ func TestGitPushIdentityPreservedNote_ShellQuoted(t *testing.T) {
 		Name:  `O'Brien`,
 		Email: `$(rm -rf /)@example.com`,
 	}
-	note := gitPushIdentityPreservedNote(identity, "appdev", true, true)
+	note := gitPushIdentityPreservedNote(identity, "appdev", "/var/www", true, true)
 
 	// Reconstruct the expected quoting using the SAME single-owner
 	// function the production code calls, rather than hand-predicting the
@@ -729,8 +729,8 @@ func TestGitPushIdentityPreservedNote_ShellQuoted(t *testing.T) {
 	// gitPushIdentityPreservedNote actually ROUTES both the individual
 	// values and the whole remote script through ops.ShellQuote, instead
 	// of hand-splicing a bare `'%s'` (Codex diff-review finding 3's bug).
-	wantScript := fmt.Sprintf("cd /var/www && git config user.name %s && git config user.email %s",
-		ops.ShellQuote(identity.Name), ops.ShellQuote(identity.Email))
+	wantScript := fmt.Sprintf("cd %s && git config user.name %s && git config user.email %s",
+		ops.ShellQuote("/var/www"), ops.ShellQuote(identity.Name), ops.ShellQuote(identity.Email))
 	wantQuotedScript := ops.ShellQuote(wantScript)
 	if !strings.Contains(note, wantQuotedScript) {
 		t.Errorf("note must embed the doubly-shell-quoted remote script exactly as ops.ShellQuote produces it:\nwant substring: %s\ngot note: %s", wantQuotedScript, note)
