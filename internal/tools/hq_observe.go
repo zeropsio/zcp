@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"time"
@@ -37,11 +38,11 @@ var observationID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 func registerObserve(srv *mcp.Server, httpClient hq.Doer, path, projectID string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_observe",
-		Description: "Observe this project's stage and production through HQ. A stage or production that Mate delivers to a Git repository is not listed here. environments lists project IDs; status reads service IDs, status and active versions; logs reads up to 100 service entries. Read only: no sibling Zerops grants or secrets. Failures end the call; retry manually after fixing them.",
+		Description: "Observe this project's stage and production through HQ. A stage or production that Mate delivers to a Git repository is not listed here. environments lists project IDs; status reads service IDs, status and active versions; logs reads up to 100 service entries. Read only: no sibling Zerops grants or secrets. Failures say: fix input, retry later, or accept HQ's refusal.",
 		Annotations: &mcp.ToolAnnotations{Title: "Observe stage and production", ReadOnlyHint: true, IdempotentHint: true, DestructiveHint: boolPtr(false)},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in ObserveInput) (*mcp.CallToolResult, any, error) {
 		failure := func(message string) *mcp.CallToolResult {
-			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: message + "; fix it and call zerops_observe again."}}}
+			return observeFailure(message + "; fix it and call zerops_observe again.")
 		}
 		if in.Action == "" {
 			in.Action = observeEnvironments
@@ -75,19 +76,19 @@ func registerObserve(srv *mcp.Server, httpClient hq.Doer, path, projectID string
 		case observeEnvironments:
 			out, readErr := client.Environments(ctx)
 			if readErr != nil {
-				return failure(readErr.Error()), nil, nil
+				return readFailure(readErr, failure), nil, nil
 			}
 			body, err = json.Marshal(out)
 		case observeStatus:
 			out, readErr := client.EnvironmentStatus(ctx, in.ProjectID)
 			if readErr != nil {
-				return failure(readErr.Error()), nil, nil
+				return readFailure(readErr, failure), nil, nil
 			}
 			body, err = json.Marshal(out)
 		case observeLogs:
 			out, readErr := client.EnvironmentLogs(ctx, in.ProjectID, in.ServiceID, in.Limit)
 			if readErr != nil {
-				return failure(readErr.Error()), nil, nil
+				return readFailure(readErr, failure), nil, nil
 			}
 			body, err = json.Marshal(out)
 		}
@@ -96,4 +97,34 @@ func registerObserve(srv *mcp.Server, httpClient hq.Doer, path, projectID string
 		}
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(body)}}}, nil, nil
 	})
+}
+
+func observeFailure(text string) *mcp.CallToolResult {
+	return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: text}}}
+}
+
+// readFailure says what the agent can do about HQ's answer: an unavailable
+// HQ is waited out, a refusal is HQ's answer to the same call; anything else
+// stays the input failure.
+func readFailure(err error, failure func(string) *mcp.CallToolResult) *mcp.CallToolResult {
+	var unavailable *hq.UnavailableError
+	if errors.As(err, &unavailable) {
+		if unavailable.Code == "zerops_unavailable" {
+			return observeFailure("HQ could not read Zerops right now (zerops_unavailable); try again later — nothing to fix on your side.")
+		}
+		detail := unavailable.Code
+		if detail == "" && unavailable.Err != nil {
+			detail = unavailable.Err.Error()
+		}
+		return observeFailure(fmt.Sprintf("HQ is not serving right now (%s); try again later — nothing to fix on your side.", detail))
+	}
+	var refused *hq.RefusedError
+	if errors.As(err, &refused) {
+		refusal := fmt.Sprintf("%d %s", refused.Status, refused.Code)
+		if refused.Reason != "" && refused.Reason != refused.Code {
+			refusal += " (" + refused.Reason + ")"
+		}
+		return observeFailure("HQ refused the observation: " + refusal + "; the same call gets the same answer.")
+	}
+	return failure(err.Error())
 }
