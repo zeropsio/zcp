@@ -376,10 +376,11 @@ func resolveServerName(p DevServerParams, ds *DevServers, starting bool) (string
 	if _, ok := ds.Server(p.Hostname); ok {
 		return p.Hostname, nil
 	}
-	if len(ds.Declared.Servers) == 1 {
-		return ds.Declared.Servers[0].Name, nil
+	servers := ds.Servers()
+	if len(servers) == 1 {
+		return servers[0].Name, nil
 	}
-	if starting || len(ds.Declared.Servers) == 0 {
+	if starting || len(servers) == 0 {
 		return p.Hostname, nil
 	}
 	return "", platform.NewPlatformError(platform.ErrInvalidParameter,
@@ -389,8 +390,9 @@ func resolveServerName(p DevServerParams, ds *DevServers, starting bool) (string
 
 // declaredSummary lists the declared servers with the supervisor's status.
 func declaredSummary(ds *DevServers) string {
-	parts := make([]string, 0, len(ds.Declared.Servers))
-	for _, s := range ds.Declared.Servers {
+	servers := ds.Servers()
+	parts := make([]string, 0, len(servers))
+	for _, s := range servers {
 		status := "not started"
 		if st, ok := ds.State.Servers[s.Name]; ok {
 			status = string(st.Status)
@@ -403,7 +405,7 @@ func declaredSummary(ds *DevServers) string {
 // unknownServerErr answers a name the repo does not declare.
 func unknownServerErr(ds *DevServers, name string) error {
 	hint := "Start it with zerops_dev_server action=start name=" + name + " command=<the command that runs it>."
-	if len(ds.Declared.Servers) > 0 {
+	if len(ds.Servers()) > 0 {
 		hint = "Declared: " + declaredSummary(ds) + ". " + hint
 	}
 	return platform.NewPlatformError(platform.ErrInvalidParameter,
@@ -447,9 +449,14 @@ func declarationProblem(ds *DevServers) error {
 
 // wantedServer is the declaration entry a start asks for: the declared one,
 // with what the call passes replacing its command, port, health path and cwd.
+// In variant B (a code volume's declaration, root set) it names the dev
+// service whose supervisor runs it.
 func wantedServer(p DevServerParams, name string, declared devsup.Server, isDeclared bool) (devsup.Server, error) {
 	want := declared
 	want.Name = name
+	if p.Root != "" && want.Service == "" {
+		want.Service = p.Hostname
+	}
 	if p.HealthPath != "" {
 		want.HealthPath = p.HealthPath
 	}

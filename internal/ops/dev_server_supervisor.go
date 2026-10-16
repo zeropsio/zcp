@@ -234,6 +234,12 @@ func (ds *DevServers) OlderThanDeclaration() string {
 		ds.Hostname, ds.Supervisor.Version, ds.Supervisor.Formats, devsup.DeclarationPath, ds.DeclaredVersion, ds.Hostname)
 }
 
+// Servers are the declared entries this dev service's supervisor runs: in
+// variant B the code volume's declaration also holds the other dev services'.
+func (ds *DevServers) Servers() []devsup.Server {
+	return ds.Declared.ForService(ds.Hostname)
+}
+
 // Server returns the declared entry named name.
 func (ds *DevServers) Server(name string) (devsup.Server, bool) {
 	for _, s := range ds.Declared.Servers {
@@ -244,13 +250,14 @@ func (ds *DevServers) Server(name string) (devsup.Server, bool) {
 	return devsup.Server{}, false
 }
 
-// DevPorts are the declared servers with a port and their status, when more
-// than one is declared, or one listens only on loopback — verify then checks each (PublicAccessInput.DevPorts).
+// DevPorts are this dev service's declared servers with a port, their status
+// and health path, when more than one is declared, or one listens only on
+// loopback — verify then checks each (PublicAccessInput.DevPorts).
 func (ds *DevServers) DevPorts() []DevPort {
 	var out []DevPort
-	for _, s := range ds.Declared.Servers {
+	for _, s := range ds.Servers() {
 		if s.Port != 0 {
-			out = append(out, DevPort{Name: s.Name, Port: s.Port, Status: ds.State.Servers[s.Name].Status, LoopbackOnly: ds.LoopbackOnly[s.Port]})
+			out = append(out, DevPort{Name: s.Name, Port: s.Port, Status: ds.State.Servers[s.Name].Status, HealthPath: s.HealthPath, LoopbackOnly: ds.LoopbackOnly[s.Port]})
 		}
 	}
 	if len(out) < 2 && !slices.ContainsFunc(out, func(d DevPort) bool { return d.LoopbackOnly }) {
@@ -263,7 +270,7 @@ func (ds *DevServers) DevPorts() []DevPort {
 // — "is something listening" for public access (docs/spec-mate.md §2.8a.2:
 // status is derived once, by the supervisor).
 func (ds *DevServers) Listening() bool {
-	for _, s := range ds.Declared.Servers {
+	for _, s := range ds.Servers() {
 		if s.Port == 0 {
 			continue
 		}
