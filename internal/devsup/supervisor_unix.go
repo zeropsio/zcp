@@ -89,8 +89,9 @@ type server struct {
 	leftPgid        int
 	leftLeaderStart int64
 	watch           *watcher
-	// retry: this start is the one more start after a start crash.
-	retry bool
+	// retry: this start is the one more start after a start crash;
+	// retryPending: that start is scheduled and has not run yet.
+	retry, retryPending bool
 	// listened: this start's port has accepted once.
 	listened bool
 	// restartReason says why it last restarted, or why a watched change
@@ -388,7 +389,7 @@ func (s *Supervisor) start(name, reason string) {
 	}
 	spec := sv.spec
 	sv.starting = true
-	sv.retry, sv.windowChanged, sv.listened = reason == reasonRetry, false, false
+	sv.retry, sv.retryPending, sv.windowChanged, sv.listened = reason == reasonRetry, false, false, false
 	if sv.starts > 0 {
 		sv.restartReason = reason
 	}
@@ -469,6 +470,7 @@ func (s *Supervisor) watchExit(sv *server, g *group) {
 	sv.g = nil
 	sv.exit = exitOf(g.state)
 	retry := !sv.retry && sv.startCrash(s.cfg.StartWindow)
+	sv.retryPending = retry
 	starts := sv.starts
 	s.logf("crashed %s: exit %d %s", sv.name, sv.exit.Code, sv.exit.Signal)
 	s.mu.Unlock()
@@ -499,6 +501,9 @@ func (s *Supervisor) retryStart(sv *server, starts int, deadline time.Time) {
 	s.mu.Lock()
 	still := !s.closed && s.servers[sv.name] == sv && sv.desired == DesiredRunning && sv.g == nil && sv.starts == starts
 	wait := still && time.Now().Before(deadline) && s.siblingStarting(sv)
+	if !still && sv.starts == starts {
+		sv.retryPending = false
+	}
 	s.mu.Unlock()
 	if !still {
 		return
@@ -846,6 +851,7 @@ func (s *Supervisor) serverState(name string, sv *server) ServerState {
 		ss.Status = StatusStarting
 	case sv.g == nil && sv.exit != nil:
 		ss.Status = StatusCrashed
+		ss.RetryPending = sv.retryPending
 	default:
 		ss.Status = StatusRunning
 	}

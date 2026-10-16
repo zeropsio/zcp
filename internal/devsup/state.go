@@ -83,7 +83,10 @@ type ServerState struct {
 	// stopped restarting it on watched changes.
 	LastRestartReason string `json:"lastRestartReason,omitempty"`
 	Exit              *Exit  `json:"exit"`
-	LogPath           string `json:"logPath"`
+	// RetryPending: the server crashed while starting and the supervisor
+	// starts it once more after its siblings settle; set only while crashed.
+	RetryPending bool   `json:"retryPending,omitempty"`
+	LogPath      string `json:"logPath"`
 	// RssKB is the resident memory of the server's whole process group in
 	// KiB, measured when the state is read; 0 when it has no live group.
 	RssKB int64 `json:"rssKb,omitempty"`

@@ -799,6 +799,49 @@ func TestSupervisor_AServerThatCrashesBeforeItFirstListensIsStartedOnceMoreOneAt
 	}
 }
 
+// A deploy reply called a server crashed and told the agent to fix it while
+// the supervisor had already scheduled its one more start. While that start
+// is pending — waiting for its window and for a sibling still starting — the
+// state says so; once it starts, or when the retry was the start that crashed,
+// it says nothing.
+func TestSupervisor_AServerThatCrashedWhileStartingSaysItsOneMoreStartIsPendingUntilItStarts(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.window = 300 * time.Millisecond
+	flakyPort, slowPort := freePort(t), freePort(t)
+	flaky := r.listener("flaky", flakyPort)
+	flaky.Command = "if [ -f .tried ]; then " + flaky.Command + "; else touch .tried; exit 1; fi"
+	slow := r.listener("slow", slowPort)
+	slow.Command = "sleep 2; " + slow.Command
+	r.declare(flaky, slow, Server{Name: "broken", Command: helperCmd(t, "exit", "CODE=3")})
+	s := r.supervisor()
+	s.Boot()
+
+	eventually(t, "flaky to be crashed with its one more start pending", func() bool {
+		sv := mustServer(t, s.State(), "flaky")
+		return sv.Status == StatusCrashed && sv.RetryPending
+	})
+	eventually(t, "flaky to run after its one more start", func() bool {
+		sv := mustServer(t, s.State(), "flaky")
+		return sv.Status == StatusRunning && sv.Restarts == 1 && listening(flakyPort)
+	})
+	if sv := mustServer(t, s.State(), "flaky"); sv.RetryPending {
+		t.Fatalf("flaky = %+v, still says a start is pending after it started", sv)
+	}
+	eventually(t, "broken to crash on its one more start too", func() bool {
+		sv := mustServer(t, s.State(), "broken")
+		return sv.Status == StatusCrashed && sv.Restarts == 1
+	})
+	if sv := mustServer(t, s.State(), "broken"); sv.RetryPending {
+		t.Fatalf("broken = %+v, says a start is pending after its one more start crashed", sv)
+	}
+	eventually(t, "state.json to hold broken crashed with nothing pending", func() bool {
+		kept, err := ReadState(r.state)
+		sv, ok := kept.Servers["broken"]
+		return err == nil && ok && sv.Status == StatusCrashed && !sv.RetryPending
+	})
+}
+
 // `uv run` rebuilds the repo's local packages, writing into the watched tree,
 // on every start: each start restarted the server again, 900 times. A server
 // whose every recent start changed its own watched files is no longer
