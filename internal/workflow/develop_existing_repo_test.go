@@ -78,7 +78,7 @@ func TestDevelopExistingRepo_RunsTheReposOwnDevFlow(t *testing.T) {
 			"`run.prepareCommands`",
 			"no dependency install in `buildCommands`",
 			"the first deploy puts its `run.start` under the dev-server supervisor",
-			`ssh appdev "cd /var/www && <the repo's install command>"`,
+			`ssh appdev "cd <repo dir> && <the repo's install command>"`, "(`/var/www`, or the code volume's `mountPath`)",
 			"A restart keeps the installed dependencies",
 			"a redeploy replaces the container with what git carries",
 			"`notCarried`",

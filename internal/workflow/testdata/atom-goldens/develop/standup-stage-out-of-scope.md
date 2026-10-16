@@ -120,7 +120,8 @@ developers run it locally. Scaffold nothing for it.
    for a JavaScript workspace with several apps
    `zerops_scale serviceHostname="appdev" minRam=8 minCpu=2`.
 4. **Install as its docs say, in the running container:**
-   `ssh appdev "cd /var/www && <the repo's install command>"`.
+   `ssh appdev "cd <repo dir> && <the repo's install command>"`
+   (`/var/www`, or the code volume's `mountPath`).
    Nothing answers a prompt over SSH: prefix the command with `CI=true`
    and end it with `</dev/null`, or a prompt hangs it until the call
    times out. A restart keeps the installed dependencies; a redeploy replaces the
