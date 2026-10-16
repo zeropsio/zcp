@@ -462,6 +462,49 @@ func TestSupervisor_AWatchedChangeRestartsTheServerAndIgnoredOutputDoesNot(t *te
 	eventually(t, "api to listen again", func() bool { return listening(api) })
 }
 
+// An agent reading the repo over the zcp mount restarted the server it read:
+// the read moved the file's access time. Reading a watched file never
+// restarts its server; writing one does.
+func TestSupervisor_ReadingAWatchedFileNeverRestartsItsServerAndWritingOneDoes(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	api := freePort(t)
+	r.write("apps/api/Main.java", "class Main {}")
+	srv := r.listener("api", api)
+	srv.Watch = &Watch{Paths: []string{"apps/api"}}
+	r.declare(srv)
+	s := r.supervisor()
+	s.Boot()
+	eventually(t, "api to listen", func() bool { return listening(api) })
+	first := mustServer(t, s.State(), "api").Pid
+
+	// A read: the content, the directory listing and the access time it moves.
+	p := filepath.Join(r.root, "apps/api/Main.java")
+	if _, err := os.ReadFile(p); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.ReadDir(filepath.Dir(p)); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(p, time.Now().Add(time.Hour), fi.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(4 * watchSettle) // a restart that should not happen has no event to wait on
+	if sv := mustServer(t, s.State(), "api"); sv.Pid != first || sv.Restarts != 0 {
+		t.Fatalf("reading Main.java restarted api: %+v, reason %q", sv, sv.LastRestartReason)
+	}
+
+	r.write("apps/api/Main.java", "class Main { int v2; }")
+	eventually(t, "the write to restart api", func() bool {
+		sv := mustServer(t, s.State(), "api")
+		return sv.Restarts == 1 && sv.LastRestartReason == "apps/api/Main.java changed"
+	})
+}
+
 func TestSupervisor_StateSaysWhyTheSupervisorLastRestartedAServer(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
