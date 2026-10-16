@@ -87,7 +87,14 @@ func RedeployLastAppVersion(
 
 	yaml, err := resolveRedeployYaml(ctx, client, newest)
 	if err != nil {
-		return nil, fmt.Errorf("redeploy last app version: %w", err)
+		// No stored yaml (an SSH push stores none) means no redeploy of
+		// this version can ever succeed: say so with a code, and name the
+		// rebuild, so the agent does not retry it.
+		return nil, fmt.Errorf("redeploy last app version: %w", platform.NewPlatformError(
+			platform.ErrPrerequisiteMissing,
+			"rebuild required: "+err.Error(),
+			fmt.Sprintf("This appVersion cannot be redeployed in place. Rebuild it: run the usual zerops_deploy to %s without appVersion.", hostname),
+		))
 	}
 
 	effectiveSetup, err := resolveRedeploySetup(setup, hostname, yaml)
