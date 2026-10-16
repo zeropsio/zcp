@@ -7,6 +7,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/ops/devservertest"
+	"github.com/zeropsio/zcp/internal/ops/git"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -213,5 +214,33 @@ func TestDeployNextActions_NamesTheDevServersTheSupervisorStarted(t *testing.T) 
 	idle := deployNextActionsFor(t.Context(), &devservertest.Container{}, "/root", &ops.DeployResult{TargetService: "matedev"}, topology.ModeDev, topology.RuntimeDynamic)
 	if !strings.Contains(idle, "idle") {
 		t.Errorf("a container without the supervisor keeps today's pointer, got %q", idle)
+	}
+}
+
+// A deploy's reply names every declared dev server with its status — a server
+// that crashed after the container was replaced too, with its exit and how
+// to get it back — and, when the deploy did not carry git-ignored paths, says
+// to reinstall them. It never calls a container with declared servers idle.
+func TestDeployNextActions_NamesEveryDeclaredDevServerACrashedOneWithItsExit(t *testing.T) {
+	t.Parallel()
+	decl := `{"version":1,"servers":[{"name":"web","port":3000,"command":"a","cwd":"."},{"name":"lingui","port":3001,"command":"b","cwd":"."}]}`
+	c := devservertest.NewSupervised(decl)
+	c.Crash = map[string]bool{"lingui": true}
+	c.Redeploy()
+	result := &ops.DeployResult{TargetService: "appdev", NotCarried: &git.NotCarried{Count: 1, Sample: []string{"node_modules"}}}
+
+	got := deployNextActionsFor(t.Context(), c, "/var/www", result, topology.ModeDev, topology.RuntimeDynamic)
+
+	for _, want := range []string{"web running", "lingui crashed (exit 1)", "node_modules", "action=logs", `name="lingui"`, "zerops_verify"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("nextActions = %q, want it to contain %q", got, want)
+		}
+	}
+
+	c.Crash = map[string]bool{"web": true, "lingui": true}
+	c.Redeploy()
+	allDown := deployNextActionsFor(t.Context(), c, "/var/www", &ops.DeployResult{TargetService: "appdev"}, topology.ModeDev, topology.RuntimeDynamic)
+	if strings.Contains(allDown, "idle") || !strings.Contains(allDown, "web crashed") {
+		t.Errorf("nextActions = %q, want both crashed servers named, never 'idle'", allDown)
 	}
 }

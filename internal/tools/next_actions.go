@@ -60,27 +60,54 @@ func deploySuccessNextActions(_ *ops.DeployResult, mode topology.Mode, class top
 
 // deployNextActionsFor is deploySuccessNextActions, told the truth by the
 // supervisor when one answers: a dev setup under zcp-devsup starts its declared
-// servers itself, so the reply names the ones it runs instead of calling the
-// container idle. A container without the supervisor keeps today's pointer.
+// servers itself, so the reply names every declared server with its status —
+// a crashed one with its exit and the way back — instead of calling the
+// container idle. A container without the supervisor or a declaration keeps
+// today's pointer.
 func deployNextActionsFor(ctx context.Context, ssh ops.SSHDeployer, root string, result *ops.DeployResult, mode topology.Mode, class topology.RuntimeClass) string {
 	base := deploySuccessNextActions(result, mode, class)
 	if ssh == nil || base == nextActionDeploySuccess {
 		return base
 	}
 	ds, err := ops.ReadDevServers(ctx, ssh, result.TargetService, root)
-	if err != nil {
+	if err != nil || len(ds.Declared.Servers) == 0 {
 		return base
 	}
-	var running []string
+	var states, down []string
 	for _, s := range ds.Declared.Servers {
-		if st, ok := ds.State.Servers[s.Name]; ok && (st.Status == devsup.StatusRunning || st.Status == devsup.StatusStarting) {
-			running = append(running, s.Name)
+		st, ok := ds.State.Servers[s.Name]
+		switch {
+		case !ok:
+			states = append(states, s.Name+" not started")
+			down = append(down, s.Name)
+		case st.Status == devsup.StatusRunning || st.Status == devsup.StatusStarting:
+			states = append(states, s.Name+" "+string(st.Status))
+		default:
+			states = append(states, s.Name+" "+string(st.Status)+exitNote(st.Exit))
+			down = append(down, s.Name)
 		}
 	}
-	if len(running) == 0 {
-		return base
+	var b strings.Builder
+	fmt.Fprintf(&b, "Dev servers on %s after the deploy: %s.", result.TargetService, strings.Join(states, ", "))
+	if len(down) > 0 {
+		if nc := result.NotCarried; nc != nil && nc.Count > 0 {
+			fmt.Fprintf(&b, " The deploy did not carry %d git-ignored path(s) (%s): reinstall dependencies first.", nc.Count, strings.Join(nc.Sample, ", "))
+		}
+		fmt.Fprintf(&b, " For each server that is down: read zerops_dev_server action=logs name=%q, fix it, then zerops_dev_server action=start name=%q.", down[0], down[0])
 	}
-	return fmt.Sprintf("The dev-server supervisor started %s on %s. Run zerops_verify.", strings.Join(running, ", "), result.TargetService)
+	b.WriteString(" Then run zerops_verify.")
+	return b.String()
+}
+
+// exitNote is a stopped or crashed server's last exit, "" when none is known.
+func exitNote(exit *devsup.Exit) string {
+	switch {
+	case exit == nil:
+		return ""
+	case exit.Signal != "":
+		return " (" + exit.Signal + ")"
+	}
+	return fmt.Sprintf(" (exit %d)", exit.Code)
 }
 
 // deploySuggestionForStatus is the FALLBACK suggestion for a non-ACTIVE deploy
