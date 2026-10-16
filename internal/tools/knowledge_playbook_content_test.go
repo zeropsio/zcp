@@ -277,10 +277,11 @@ func TestPlaybookMonorepo_ContentPins_PartRules(t *testing.T) {
 		{"SPA and API in one folder is one part", "SPA and API in one folder are one app"},
 		{"cross-part URLs from project variables", "project variable built on `${zeropsSubdomainHost}`"},
 		{"heavy build scaling", "`zsc scale cpu max 10m`"},
+		{"a build killed out of memory scales its RAM for the build", "`zsc scale ram max 10m`"},
+		{"the Node run image's own pnpm is used as it stands", "never `npm i -g pnpm` in `run.prepareCommands`"},
 		{"a variant-B plan names its code volume, mount folder and further dev services", `"codeVolume": {"hostname": "code", "mountPath": "/var/www/ws", "devServices": [{"hostname": "apidev", "setupName": "dev-api"}]}`},
 		{"watch ignore entries are repo-relative paths or full-path globs", "`apps/api/*.egg-info`, not `**/*.egg-info`"},
-		{"the Node run image's own pnpm is used as it stands", "never `npm i -g pnpm` in `run.prepareCommands`"},
-		{"a build killed out of memory scales its RAM for the build", "`zsc scale ram max 10m`"},
+		{"a dev server with very many unbundled modules is opened in its bundled or preview mode", "the repo's bundled or preview mode"},
 	} {
 		if !strings.Contains(body, tt.needle) {
 			t.Errorf("%s: monorepo playbook missing %q", tt.name, tt.needle)

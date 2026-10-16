@@ -131,6 +131,9 @@ name. A repo whose `appstage` deploys `setup: prod` gains a `worker` part as
 - Stop a dev server by its process group, never by a name match — `pkill -f <name>`
   kills sibling parts.
 - A static service cannot proxy requests to the API.
+- A dev server serving very many unbundled modules (a large Vite app) can stall
+  in a browser over the subdomain while curl loads every module: open it in the
+  repo's bundled or preview mode.
 
 ## 5. Cross-part URLs
 
