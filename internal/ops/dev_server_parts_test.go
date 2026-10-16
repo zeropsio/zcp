@@ -248,3 +248,20 @@ func TestDevServer_APassingStartProbe_CarriesAShortLogTail(t *testing.T) {
 		t.Errorf("log reads = %q, want 40 lines after a failed probe", c.Sent())
 	}
 }
+
+func TestDevServer_StatusWithoutANameOnSeveralServers_ReportsEveryServer(t *testing.T) {
+	t.Parallel()
+	c := devservertest.NewSupervised(twoServers)
+	c.Crash = map[string]bool{"api": true}
+	runDevServer(t, c, DevServerParams{Action: "restart", Hostname: "appdev", Name: "api"})
+
+	result := runDevServer(t, c, DevServerParams{Action: "status", Hostname: "appdev"})
+	if !result.Unreported {
+		t.Errorf("a status of several servers reports none of them alone: %+v", result)
+	}
+	for _, want := range []string{"web on appdev is running on :3000 (HTTP 200 on /)", "api on appdev crashed (exit 1)"} {
+		if !strings.Contains(result.Message, want) {
+			t.Errorf("message = %q, want %q", result.Message, want)
+		}
+	}
+}

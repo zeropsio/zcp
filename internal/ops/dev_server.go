@@ -91,6 +91,10 @@ type DevServerResult struct {
 	// supervisor's last answer in the call — what the envelope's devServers[]
 	// projects (DevServerStates). Nil when no supervisor answered.
 	Read *DevServers `json:"-"`
+	// Unreported: the call read several servers and reports none of them
+	// alone (a status of a dev service with several), so it says nothing of
+	// whether "the" server runs.
+	Unreported bool `json:"-"`
 }
 
 // DevServerParams is the typed input of ExecuteDevServer. Fields not relevant
@@ -703,9 +707,13 @@ func runningSiblings(st devsup.State, name string) []string {
 }
 
 // statusDevServer reports the supervisor's status of a server and, when it
-// has a port, probes it once from inside the container.
+// has a port, probes it once from inside the container. Without a name on a
+// dev service with several servers, none named after it, it reports each.
 func statusDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds *DevServers) (*DevServerResult, error) {
 	name, err := resolveServerName(p, ds, false)
+	if err != nil && p.Name == "" && len(ds.Servers()) > 1 {
+		return statusEveryServer(ctx, ssh, p, ds)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -763,6 +771,30 @@ func statusDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds
 	}
 	result.URL = devServerURL(p.Hostname, port, healthPath)
 	result.Message = fmt.Sprintf("Dev server %s is running on :%d (HTTP %d on %s).", label, port, httpCode, healthPath)
+	return result, nil
+}
+
+// statusEveryServer is a status of each of the dev service's servers, one
+// sentence each; it reports none of them alone.
+func statusEveryServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds *DevServers) (*DevServerResult, error) {
+	servers := ds.Servers()
+	lines := make([]string, 0, len(servers))
+	for _, s := range servers {
+		one := p
+		one.Name, one.Port, one.HealthPath = s.Name, 0, ""
+		if _, ok := ds.State.Servers[s.Name]; !ok {
+			lines = append(lines, fmt.Sprintf("Dev server %s is declared but the supervisor does not run it.", serverLabel(p.Hostname, s.Name)))
+			continue
+		}
+		r, err := statusDevServer(ctx, ssh, one, ds)
+		if err != nil {
+			return nil, err
+		}
+		lines = append(lines, r.Message)
+	}
+	result := newResult(devServerActionStatus, p.Hostname, p.Hostname)
+	result.Unreported = true
+	result.Message = fmt.Sprintf("%s declares %d dev servers:\n%s", p.Hostname, len(servers), strings.Join(lines, "\n"))
 	return result, nil
 }
 

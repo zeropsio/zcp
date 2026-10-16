@@ -43,7 +43,7 @@ func devServerInputSchema() *jsonschema.Schema {
 	return objectSchema(map[string]*jsonschema.Schema{
 		"action": {
 			Type:        "string",
-			Description: "Action to perform: start, stop, status, logs, restart. start has the dev service's supervisor run the named server (declaring it in the repo's .zcp/dev-servers.json the first time) and waits for the health endpoint to return 2xx. stop ends the server's whole process group and frees its port. status reports the supervisor's state and probes the port. logs tails the server's own log. restart is stop+start.",
+			Description: "Action to perform: start, stop, status, logs, restart. start has the dev service's supervisor run the named server (declaring it in the repo's .zcp/dev-servers.json the first time) and waits for the health endpoint to return 2xx. stop ends the server's whole process group and frees its port. status reports the supervisor's state and probes the port — without name on a dev service with several servers, each of them. logs tails the server's own log. restart is stop+start.",
 		},
 		"hostname": {
 			Type:        "string",
@@ -172,7 +172,7 @@ func RegisterDevServer(srv *mcp.Server, d DevServerDeps) {
 				resp.Envelope = &withServers
 			}
 		}
-		if input.Action == "logs" {
+		if input.Action == "logs" || result.Unreported {
 			return jsonResult(devServerLogRead{devServerToolResult: resp}), nil, nil
 		}
 		return jsonResult(resp), nil, nil
@@ -232,9 +232,10 @@ type devServerToolResult struct {
 	Envelope *workflow.StateEnvelope `json:"envelope,omitempty"`
 }
 
-// devServerLogRead is a log read's answer. A log read checks nothing, so it
-// says nothing of whether the server runs: Running, always nil, shadows the
-// embedded result's `running`, which a reader would take for "it stopped".
+// devServerLogRead is the answer of a call that reports no one server's
+// running — a log read, which checks nothing, or a status of several servers
+// (ops.DevServerResult.Unreported): Running, always nil, shadows the embedded
+// result's `running`, which a reader would take for "it stopped".
 type devServerLogRead struct {
 	*devServerToolResult
 	Running *bool `json:"running,omitempty"`
