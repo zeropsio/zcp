@@ -1343,7 +1343,7 @@ or per service of one project; with `from`/`till`, at most 31 days, a range's to
 one project's services' parts;
 a `note` when the answer is only the person's projects), `zerops_org_usage` (hourly up to 48 h,
 whole UTC days past that, at most 31 d). Act: `zerops_org_propose_service` (`restart` | `start` |
-`stop`), `zerops_org_propose_env`, `zerops_org_propose_message`, `zerops_org_propose_domain`. Also `zerops_knowledge`, and in a
+`stop`), `zerops_org_propose_env`, `zerops_org_propose_message`, `zerops_org_propose_domain`, `zerops_org_propose_access`. Also `zerops_knowledge`, and in a
 Mate's container `zerops_publish_page` (§5.9). The single-project surface acts on the empty own
 project and is not registered. A project's kind: tag `chief`; a Mate is tagged `mate` and runs
 a `zcp@*` service, its name the part of the project name after the last `" - "`; HQ runs a service
@@ -1357,7 +1357,7 @@ draws it as a card the person approves or declines, and executes an approved one
 {
   "proposal": {
     "id": "<uuid>",
-    "kind": "service.restart | service.start | service.stop | env.set | mate.message | domain.add",
+    "kind": "service.restart | service.start | service.stop | env.set | mate.message | domain.add | access.set",
     "summary": "Restart medusa in Contoso - production",
     "reason": "<the agent's why>",
     "projectId": "…", "projectName": "…",
@@ -1369,7 +1369,8 @@ draws it as a card the person approves or declines, and executes an approved one
 ```
 
 `serviceId`/`serviceName` are present for the service kinds, a service-scoped `env.set` and
-`domain.add`.
+`domain.add`. For `access.set` naming an application, `projectName` is the application's name and
+`projectId` its first project.
 `params` per kind: `{}` for the service kinds; `env.set` →
 `{"scope": "project" | "service", "key", "value", "secret": bool}`; `mate.message` →
 `{"to": {"projectId", "mateName"}, "words", "attachment"?: {"title", "text"}}`, where the top-level
@@ -1383,8 +1384,18 @@ lowercase fully qualified domain names, a leading `*.` allowed for every subdoma
 once, without scheme, port or path, none already one of the project's domains) and refused with a
 plain error otherwise. An approved `domain.add` is the client's own add-domain as the person; its
 card then prints the DNS records the domains need, as their addresses do (a wildcard's beside its
-`_acme-challenge` CNAME), for the person to add at their DNS provider. There is no delete, no token and no
-scaling kind.
+`_acme-challenge` CNAME), for the person to add at their DNS provider. `access.set` →
+`{"projects": [{"id", "name"}], "people": [{"person", "level"}]}`: the project named, or every
+production, stage and Mate of the application named (an application's People in Mate change them
+at once; never the Chief's own project), and each person once as the person named them — an address
+or a name, since org mode reads no member list — at `full` (`ADMIN`), `read` (`READ_ONLY`), `none`
+(`NO_ACCESS`, hidden) or `remove` (their own grant dropped, their organization role decides),
+summarised "Access to <place>: <person> <level>, …". It is refused for a person whose role
+`chief/person` names and who is not an `OWNER` or `ADMIN`. An approved `access.set` is the client's
+own `set-project-access` as the person, written on each member's own list
+(`PUT /client-user/{id}/roles`), the Mates a member owns left theirs; the card finds each person
+among the organization's members and holds Approve while a name finds nobody or several. There is
+no delete, no token, no invitation and no scaling kind.
 
 **The reverse direction — a Mate asks the person's Chief.** In project mode, in a Mate's container
 (`ZCP_MATE_ENABLED`), `zerops_propose_ask_chief {words, attachmentTitle?, attachmentText?, reason}`
@@ -1432,6 +1443,7 @@ names `zerops_propose_ask_chief` for what neither its project nor `zerops_observ
 | OM-4 | `OrgReads()` is exactly what org mode reads; with `ZCP_ORG_API` every read goes there with the credential as the bearer, `/user/info` is never read and `ZCP_ORG_ID` is required. `TestOrgReads_AreExactlyWhatOrgModeReads`, `TestOpenOrgReader_ThroughOrgAPI`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
 | OM-5 | A Mate's `zerops_propose_ask_chief` returns a `chief.message` proposal of the shape above from its own project and sends nothing; only a Mate's project mode registers it. `TestProposeAskChief_Shape`, `TestProposeAskChief_Validates`, `TestServer_AskChiefToolGating`, `TestAskChief_OverMCP_ProposesFromThisProjectAndSendsNothing`. |
 | OM-6 | `zerops_org_propose_domain` returns a `domain.add` proposal of the shape above for the organization's project, onto one of its service's web ports, naming only domains the project does not hold, and changes nothing. `TestProposeOrgAction_DomainAdd_Shape`, `TestProposeOrgAction_DomainAdd_RefusesWhatCannotGoLive`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
+| OM-7 | `zerops_org_propose_access` returns an `access.set` proposal of the shape above for the organization's project or application, each person once at a level Mate gives, refused for a person who may not change access, and changes nothing. `TestProposeOrgAction_AccessSet_Shape`, `TestProposeOrgAction_AccessSet_RefusesWhatCannotBeGiven`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
 
 ## Current account contract — Mate 0.11.0
 
