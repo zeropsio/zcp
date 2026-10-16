@@ -28,7 +28,9 @@ The dev servers of a dev service run under `zcp-devsup`, the supervisor its dev 
 | `servers[].watch` | optional `{"paths": [...], "ignore": [...]}`: the supervisor restarts the server on a change under `paths` (relative to the repo root). Absent: the command's own watcher (`--watch`, vite) does it |
 | `servers[].healthPath` | optional, default `/`; the HTTP path a health probe of `port` reads — set it for an API that answers 404 on `/` |
 | `servers[].service` | only when several dev services share one code volume: the dev service whose supervisor runs this server |
-| `servers[].autostart` | optional, default `true`; `false` keeps a declared server stopped until you start it — declare heavy servers you are not working on this way |
+| `servers[].autostart` | optional, default `true`; `false` keeps a declared server stopped until you start it |
+
+A dev service with more than one heavy server (Angular, Analog, Next) declares the ones not being worked on `"autostart": false`; two such servers plus a deploy can exhaust the service's RAM and wedge it. `zerops_dev_server action=start` refuses a server that would not fit and names the numbers.
 
 The supervisor ignores keys it does not know.
 
@@ -36,10 +38,10 @@ The supervisor ignores keys it does not know.
 
 - A change is a write, create, delete or move. Reading a file, or touching only its access time, restarts nothing.
 - `.git` and `node_modules` never restart a server.
-- An `ignore` entry is a path from the repo root, matched folder by folder (`*` within one folder, `**` across any number of them); it ignores what it names and everything below it.
+- An `ignore` entry is a path from the repo root, matched folder by folder (`*` within one folder, `**` across any number of them); it ignores what it names and everything below it: `apps/api/dist`, `**/*.egg-info`.
 - A build output inside a watched folder needs its own entry: `go build -o app` also writes `app-go-tmp-umask` beside `app`, hence `apps/api/app*`; `uv run` rewrites `<pkg>.egg-info` at any depth, hence `**/*.egg-info`; a compiled `target/` or `dist/` folder is `apps/api/target`.
 - A server whose every recent start changed its own watched files is no longer restarted by a change made during its start; its last restart reason in `zerops_dev_server action=status` names the path to add to `ignore`. A change after the start still restarts it.
-- Give a watched server a plain start command. Never add the runtime's own watcher on top (`node --watch`, `--watch-path`, nodemon) — it goes blind after the first `git checkout`.
+- The supervisor watches a declared dev server through its `watch.paths` (plus `ignore`): give it a plain start command. Never add a runtime's own watcher on top (`node --watch`, `--watch-path`, nodemon) — it goes blind after the first `git checkout`.
 
 ## Changing the declaration
 

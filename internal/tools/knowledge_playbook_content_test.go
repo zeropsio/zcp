@@ -263,12 +263,10 @@ func TestPlaybookMonorepo_ContentPins_PartRules(t *testing.T) {
 		{"a repo's own dev command runs as it stands", "A repo that documents its own dev command runs that command as it stands"},
 		{"the repo's own allowed-hosts setting comes first", "use the repo's own allowed-hosts setting when it has one"},
 		{"no agent proxy in front of a loopback dev server", "Never put your own proxy in front of a dev server that listens on loopback"},
-		{"the supervisor watches a declared dev server", "The supervisor watches a declared dev server"},
-		{"never a runtime's own watcher", "Never add a runtime's own watcher"},
+		{"watch, ignore and heavy servers are the dev-servers theme's", `zerops_knowledge uri="zerops://themes/dev-servers"`},
 		{"stages carry hostname and setupName", `"stages": [{"hostname": "webstage", "setupName": "web"}`},
 		{"adding a part never renames an existing setup or its stage", "An existing setup and its stage keep their names; only the new part gets a new setup"},
 		{"the adding-a-part example keeps the existing setup name beside the new one", `"stages": [{"hostname": "appstage", "setupName": "prod"}, {"hostname": "workerstage", "setupName": "worker"}]`},
-		{"heavy servers not being worked on do not autostart", "declares the ones not being worked on `\"autostart\": false`"},
 		{"worked example: a new part's dev server starts by name on the shared dev service", `zerops_dev_server action=start hostname="appdev" name="worker" command="bun worker.ts" noHttpProbe=true`},
 		{"worked example: the first start declares it beside the running one", `{"name": "web", "port": 3000, "command": "bun index.ts"}, {"name": "worker", "command": "bun worker.ts"}`},
 		{"static cannot proxy", "A static service cannot proxy requests to the API"},
@@ -280,11 +278,37 @@ func TestPlaybookMonorepo_ContentPins_PartRules(t *testing.T) {
 		{"a build killed out of memory scales its RAM for the build", "`zsc scale ram max 10m`"},
 		{"the Node run image's own pnpm is used as it stands", "never `npm i -g pnpm` in `run.prepareCommands`"},
 		{"a variant-B plan names its code volume, mount folder and further dev services", `"codeVolume": {"hostname": "code", "mountPath": "/var/www/ws", "devServices": [{"hostname": "apidev", "setupName": "dev-api"}]}`},
-		{"watch ignore entries are repo-root paths matched folder by folder, with ** across folders", "`apps/api/dist`, `**/*.egg-info`"},
 		{"a dev server with very many unbundled modules is opened in its bundled or preview mode", "the repo's bundled or preview mode"},
 	} {
 		if !strings.Contains(body, tt.needle) {
 			t.Errorf("%s: monorepo playbook missing %q", tt.name, tt.needle)
+		}
+	}
+}
+
+// TestThemeDevServers_ContentPins_WatchAndHeavyServers pins the dev-server
+// rules the monorepo playbook points to rather than restates.
+func TestThemeDevServers_ContentPins_WatchAndHeavyServers(t *testing.T) {
+	t.Parallel()
+
+	store, err := knowledge.GetEmbeddedStore()
+	if err != nil {
+		t.Fatalf("GetEmbeddedStore: %v", err)
+	}
+	doc, err := store.Get("zerops://themes/dev-servers")
+	if err != nil {
+		t.Fatalf("Get dev-servers theme: %v", err)
+	}
+	body := strings.Join(strings.Fields(doc.Content), " ")
+
+	for _, tt := range []struct{ name, needle string }{
+		{"the supervisor watches a declared dev server", "The supervisor watches a declared dev server"},
+		{"never a runtime's own watcher", "Never add a runtime's own watcher"},
+		{"heavy servers not being worked on do not autostart", "declares the ones not being worked on `\"autostart\": false`"},
+		{"watch ignore entries are repo-root paths matched folder by folder, with ** across folders", "`apps/api/dist`, `**/*.egg-info`"},
+	} {
+		if !strings.Contains(body, tt.needle) {
+			t.Errorf("%s: dev-servers theme missing %q", tt.name, tt.needle)
 		}
 	}
 }

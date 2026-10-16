@@ -116,18 +116,8 @@ name. A repo whose `appstage` deploys `setup: prod` gains a `worker` part as
 - Vite rejects unknown hosts: use the repo's own allowed-hosts setting when it has one;
   in an app you write, set `server.allowedHosts` in `vite.config` to accept the
   service subdomain.
-- The supervisor watches a declared dev server: give it a plain start command and
-  `watch.paths` (plus `ignore`) in the declaration. Never add a runtime's own watcher
-  (`node --watch`, `--watch-path`, nodemon) — it goes blind after the first
-  `git checkout`.
-- `.git` and `node_modules` never restart a server. An `ignore` entry is a path
-  from the repo root, matched folder by folder (`*` within one folder, `**`
-  across any number of them), and ignores what it names and everything below
-  it: `apps/api/dist`, `**/*.egg-info`.
-- A dev service with more than one heavy server (Angular, Analog, Next) declares the ones
-  not being worked on `"autostart": false`; two such servers plus a deploy can exhaust
-  the service's RAM and wedge it. `zerops_dev_server action=start` refuses a server that
-  would not fit and names the numbers.
+- Watch, ignore and heavy servers that do not autostart:
+  `zerops_knowledge uri="zerops://themes/dev-servers"`.
 - Stop a dev server by its process group, never by a name match — `pkill -f <name>`
   kills sibling parts.
 - A static service cannot proxy requests to the API.
