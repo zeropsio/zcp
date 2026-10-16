@@ -121,9 +121,9 @@ name. A repo whose `appstage` deploys `setup: prod` gains a `worker` part as
   (`node --watch`, `--watch-path`, nodemon) — it goes blind after the first
   `git checkout`.
 - `.git` and `node_modules` never restart a server. An `ignore` entry is a path
-  from the repo root, ignoring itself and everything below it (`apps/api/dist`),
-  or a glob over that whole path where `*` stays within one folder: write
-  `apps/api/*.egg-info`, not `**/*.egg-info`.
+  from the repo root, matched folder by folder (`*` within one folder, `**`
+  across any number of them), and ignores what it names and everything below
+  it: `apps/api/dist`, `**/*.egg-info`.
 - A dev service with more than one heavy server (Angular, Analog, Next) declares the ones
   not being worked on `"autostart": false`; two such servers plus a deploy can exhaust
   the service's RAM and wedge it. `zerops_dev_server action=start` refuses a server that

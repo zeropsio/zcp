@@ -280,7 +280,7 @@ func TestPlaybookMonorepo_ContentPins_PartRules(t *testing.T) {
 		{"a build killed out of memory scales its RAM for the build", "`zsc scale ram max 10m`"},
 		{"the Node run image's own pnpm is used as it stands", "never `npm i -g pnpm` in `run.prepareCommands`"},
 		{"a variant-B plan names its code volume, mount folder and further dev services", `"codeVolume": {"hostname": "code", "mountPath": "/var/www/ws", "devServices": [{"hostname": "apidev", "setupName": "dev-api"}]}`},
-		{"watch ignore entries are repo-relative paths or full-path globs", "`apps/api/*.egg-info`, not `**/*.egg-info`"},
+		{"watch ignore entries are repo-root paths matched folder by folder, with ** across folders", "`apps/api/dist`, `**/*.egg-info`"},
 		{"a dev server with very many unbundled modules is opened in its bundled or preview mode", "the repo's bundled or preview mode"},
 	} {
 		if !strings.Contains(body, tt.needle) {
