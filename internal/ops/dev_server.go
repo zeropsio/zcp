@@ -183,9 +183,11 @@ const (
 	// pollIntervalMillis is the poll cadence of the start-probe loop.
 	pollIntervalMillis = 500
 	// probeTimeoutSlack is added on top of waitSeconds to bound the
-	// foreground ssh call. The remote probe has its own `seq 1..N` loop
-	// so slack only covers ssh dial + channel tear-down jitter.
-	probeTimeoutSlack = 5 * time.Second
+	// foreground ssh call. The remote probe ends by itself (its `seq 1..N`
+	// loop and curl's --max-time), so this bound only ends a wedged call: it
+	// covers ssh dial, tear-down and the probe's process starts on a
+	// container busy compiling — a probe killed by it loses its verdict.
+	probeTimeoutSlack = 30 * time.Second
 	// logTailTimeout bounds the log-tail ssh call on the failure path.
 	logTailTimeout = 5 * time.Second
 	// containerIdentityTimeout bounds a one-round-trip remote write or read.
