@@ -1571,6 +1571,41 @@ func TestVerify_HealthPath_ProbedInsideAndPublic(t *testing.T) {
 	}
 }
 
+// A pass on a health path names that path as the one probed, never `/`: the
+// detail read "GET / probed only" over a pass on /actuator/health.
+func TestVerify_APassOnAHealthPathNamesThePathItProbed(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{{
+			ID: "svc-1", Name: "vetsstage", Status: "RUNNING", SubdomainAccess: true,
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "java@21", ServiceStackTypeCategoryName: "USER"},
+			Ports:                []platform.Port{{Port: 8080, HTTPSupport: true}},
+		}}).
+		WithProject(&platform.Project{ID: "proj-1", SubdomainHost: "1df2.prg1.zerops.app"})
+	input := defaultPublicAccessInput()
+	input.HealthPath = "/actuator/health"
+	result, err := VerifyWithMeta(context.Background(), mock, platform.NewMockLogFetcher(), &recordingHTTPDoer{}, "proj-1", "vetsstage", RuntimeMeta{}, input)
+	if err != nil {
+		t.Fatalf("VerifyWithMeta: %v", err)
+	}
+	probes := 0
+	for _, c := range result.Checks {
+		if c.Name != checkNameHTTPInternal && c.Name != checkNameHTTPRoot {
+			continue
+		}
+		probes++
+		if c.Status != CheckPass {
+			t.Errorf("%s status = %s, want pass", c.Name, c.Status)
+		}
+		if !strings.Contains(c.Detail, "GET /actuator/health probed only") || strings.Contains(c.Detail, "GET / ") {
+			t.Errorf("%s detail = %q, want it to name GET /actuator/health and not GET /", c.Name, c.Detail)
+		}
+	}
+	if probes != 2 {
+		t.Errorf("http checks = %d, want the internal and the public one: %+v", probes, result.Checks)
+	}
+}
+
 // TestHostRefusedInside_PairsByPort: an internal 4xx becomes info only when
 // the public check for the same port passed.
 func TestHostRefusedInside_PairsByPort(t *testing.T) {

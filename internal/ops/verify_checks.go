@@ -449,6 +449,7 @@ func probeHTTPWithin(ctx context.Context, httpClient HTTPDoer, url, name string,
 	if err != nil {
 		return CheckResult{Name: name, Status: CheckFail, Detail: fmt.Sprintf("request failed: %v", err)}, false
 	}
+	probed := req.URL.RequestURI()
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return CheckResult{Name: name, Status: CheckFail, Detail: fmt.Sprintf("request failed: %v", err)}, probeTimedOut(err)
@@ -461,16 +462,17 @@ func probeHTTPWithin(ctx context.Context, httpClient HTTPDoer, url, name string,
 
 	// 2xx / 3xx — root path serves a real response. Pass.
 	if resp.StatusCode < 400 {
-		// http_root probes GET / ONLY. A / pass does NOT prove a specific
-		// route the agent just added works — without this caveat the agent
-		// generalized a / 200 into "the new endpoint works" and reported an
-		// unprobed route as healthy (Wave-3 develop-loop: "/version works" off
-		// a / 200, never fetched). Nudge the agent to probe added routes itself.
+		// The check probes the one path it names (`/` or the service's health
+		// path) ONLY. A pass does NOT prove a specific route the agent just
+		// added works — without this caveat the agent generalized a / 200 into
+		// "the new endpoint works" and reported an unprobed route as healthy
+		// (Wave-3 develop-loop: "/version works" off a / 200, never fetched).
+		// Nudge the agent to probe added routes itself.
 		return CheckResult{
 			Name:       name,
 			Status:     CheckPass,
 			HTTPStatus: resp.StatusCode,
-			Detail:     "GET / probed only — a specific route you added (e.g. a new endpoint) is NOT covered by this check; curl it to confirm before reporting it works",
+			Detail:     "GET " + probed + " probed only — a specific route you added (e.g. a new endpoint) is NOT covered by this check; curl it to confirm before reporting it works",
 		}, false
 	}
 	// 4xx — server reachable but root path not served (404), auth-gated
@@ -483,7 +485,7 @@ func probeHTTPWithin(ctx context.Context, httpClient HTTPDoer, url, name string,
 		detail += ": " + truncateBody(body, 200)
 	}
 	if resp.StatusCode < 500 {
-		detail += " (server reachable but root path not serving a 2xx/3xx — verify a real endpoint or accept as cosmetic)"
+		detail += " (server reachable but " + probed + " not serving a 2xx/3xx — verify a real endpoint or accept as cosmetic)"
 	}
 	return CheckResult{Name: name, Status: CheckFail, Detail: detail, HTTPStatus: resp.StatusCode}, false
 }
