@@ -1594,12 +1594,12 @@ func TestBuildSSHCommand_PushStoppedBeforeItsUpload_DeploysNothing(t *testing.T)
 	}{
 		{
 			name:      "stopped mid-upload",
-			zcli:      "echo 'Uploading'\nwhile [ ! -e upload-go ]; do sleep 0.1; done\necho 'Deploying service'\necho built > built\n",
+			zcli:      "echo 'Uploading'\necho > \"$ZCLI_REACHED\"\nwhile [ ! -e upload-go ]; do sleep 0.1; done\necho 'Deploying service'\necho built > built\n",
 			wantBuilt: false,
 		},
 		{
 			name:       "stopped after the upload",
-			zcli:       "echo 'Deploying service'\necho built > built\nwhile [ ! -e upload-go ]; do sleep 0.1; done\n",
+			zcli:       "echo 'Deploying service'\necho built > built\necho > \"$ZCLI_REACHED\"\nwhile [ ! -e upload-go ]; do sleep 0.1; done\n",
 			wantBuilt:  true,
 			wantMarker: true,
 		},
@@ -1610,10 +1610,37 @@ func TestBuildSSHCommand_PushStoppedBeforeItsUpload_DeploysNothing(t *testing.T)
 			r := newPushRig(t, tt.zcli)
 			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 			defer cancel()
-			// The upload call's session ends as a stopped ssh client's does.
-			session, endSession := context.WithTimeout(ctx, 2*time.Second)
+			// zcli writes this fifo when it reaches the line the case stops
+			// it at; reading it waits for that, however slow the setup is.
+			reached := filepath.Join(t.TempDir(), "reached")
+			if out, err := exec.CommandContext(ctx, "mkfifo", reached).CombinedOutput(); err != nil {
+				t.Fatalf("mkfifo: %v: %s", err, out)
+			}
+			r.env = append(r.env, "ZCLI_REACHED="+reached)
+			// The upload call's session ends as a stopped ssh client's does,
+			// once zcli is there.
+			session, endSession := context.WithCancel(ctx)
 			defer endSession()
-			r.run(session, buildSSHCommand(auth.Info{Token: "tok"}, "svc-1", r.dir, "", false, "", r.pushDir))
+			pushed := make(chan struct{})
+			go func() {
+				defer close(pushed)
+				r.run(session, buildSSHCommand(auth.Info{Token: "tok"}, "svc-1", r.dir, "", false, "", r.pushDir))
+			}()
+			zcliThere := make(chan error, 1)
+			go func() {
+				_, err := os.ReadFile(reached)
+				zcliThere <- err
+			}()
+			select {
+			case err := <-zcliThere:
+				if err != nil {
+					t.Fatalf("read %s: %v", reached, err)
+				}
+			case <-ctx.Done():
+				t.Fatal("zcli never reached the line the push is stopped at")
+			}
+			endSession()
+			<-pushed
 
 			stopOut, _ := r.run(ctx, pushStopCommand(r.pushDir))
 			if err := os.WriteFile(filepath.Join(r.dir, "upload-go"), nil, 0o600); err != nil {
