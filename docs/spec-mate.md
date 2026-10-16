@@ -653,8 +653,11 @@ because agent-browser restarts a daemon whose settings differ from its client's.
 A call waits on one container-wide `flock` until its own deadline, then fails as
 busy. It reuses the warm browser only if the browser is running, the last call in
 it ended cleanly (a marker in the runtime directory says `idle`; a caller that died
-mid-call leaves it `busy`), and neither the idle exit nor the max age can cut the
-call. Otherwise it starts a fresh one. Each step is its own `agent-browser --json`
+mid-call leaves it `busy`), neither the idle exit nor the max age can cut the
+call, and the service used at most a tenth of a CPU since that call ended (systemd's
+`CPUUsageNSec`, recorded in the marker): agent-browser's tab list can miss popups of a
+storm and Chrome can keep a hung renderer, so a browser that stayed busy while idle is
+recycled. Otherwise it starts a fresh one. Each step is its own `agent-browser --json`
 process, so a deadline or cancel keeps the finished steps. A call clears the
 daemon-wide logs, opens its own tab, and closes every tab but the base one when it
 ends; caller `tab` and `window` commands are stripped, so the base tab is always the

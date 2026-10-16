@@ -134,7 +134,11 @@ func (execBrowserRunner) Acquire(ctx context.Context, isolation string) (func(bo
 		if err := h.closeCallTabs(rctx); err != nil {
 			return err
 		}
-		return writeBrowserMarker(browserMarkerIdle)
+		w, _, err := readWarmBrowser(rctx)
+		if err != nil {
+			return err
+		}
+		return writeBrowserMarker(browserIdleMarker(w.CPU))
 	}
 	release := func(reuse bool) error {
 		defer unlock()
@@ -210,13 +214,19 @@ func stopBrowser(ctx context.Context) error {
 // readWarmBrowser reads the service's state and the last call's marker.
 func readWarmBrowser(ctx context.Context) (warmBrowser, string, error) {
 	out, err := exec.CommandContext(ctx, "systemctl", "show", browserUnit,
-		"--property=ActiveState", "--property=ActiveEnterTimestampMonotonic").Output()
+		"--property=ActiveState", "--property=ActiveEnterTimestampMonotonic", "--property=CPUUsageNSec").Output()
 	if err != nil {
 		return warmBrowser{}, "", fmt.Errorf("inspect the browser: %w", err)
 	}
 	var state string
 	var enteredUsec int64
+	cpu := time.Duration(-1)
 	for line := range strings.SplitSeq(string(out), "\n") {
+		if v, ok := strings.CutPrefix(line, "CPUUsageNSec="); ok {
+			if nsec, err := strconv.ParseInt(v, 10, 64); err == nil {
+				cpu = time.Duration(nsec)
+			}
+		}
 		if v, ok := strings.CutPrefix(line, "ActiveState="); ok {
 			state = v
 		}
@@ -224,15 +234,19 @@ func readWarmBrowser(ctx context.Context) (warmBrowser, string, error) {
 			enteredUsec, _ = strconv.ParseInt(v, 10, 64)
 		}
 	}
-	w := warmBrowser{Active: state == "active"}
+	w := warmBrowser{Active: state == "active", CPU: cpu, IdleCPU: -1}
 	var now unix.Timespec
 	if err := unix.ClockGettime(unix.CLOCK_MONOTONIC, &now); err == nil && enteredUsec > 0 {
 		w.Age = time.Duration(now.Nano()) - time.Duration(enteredUsec)*time.Microsecond
 	}
 	if data, err := os.ReadFile(browserMarkerPath); err == nil {
-		w.Marker = strings.TrimSpace(string(data))
+		var endCPU time.Duration
+		w.Marker, endCPU = parseBrowserMarker(string(data))
 		if info, err := os.Stat(browserMarkerPath); err == nil {
 			w.IdleFor = time.Since(info.ModTime())
+		}
+		if endCPU >= 0 && cpu >= endCPU {
+			w.IdleCPU = cpu - endCPU
 		}
 	}
 	return w, state, nil
