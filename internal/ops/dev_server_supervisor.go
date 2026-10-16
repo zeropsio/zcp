@@ -214,6 +214,11 @@ func (ds *DevServers) starting() bool {
 // the supervisor's one more start is still to come (ServerState.RetryPending).
 const RetryPendingNote = "the supervisor starts it once more after its siblings settle"
 
+// OutOfMemoryHint follows the restart reason of a server systemd restarted,
+// with every other one, because the service ran out of memory
+// (ServerState.OutOfMemory).
+const OutOfMemoryHint = "If it runs out of memory again, raise the service's max RAM with zerops_scale or stop a dev server you are not working on."
+
 // TaskLimitNote is how a reply says a server crashed, or its start was
 // refused, because the service's task limit was reached
 // (ServerState.TaskLimit): the limit, the tasks running now, and whether the

@@ -347,6 +347,23 @@ func TestDevServer_ADeployOfAVariantBDevServiceWithOneServer_ReportsThatServer(t
 	}
 }
 
+// The kernel's OOM killer made systemd restart every dev server, and status
+// said only that the supervisor started again. Status says the service ran
+// out of memory and points to the service's RAM.
+func TestDevServer_StatusOfAServerSystemdRestartedWhenTheServiceRanOutOfMemoryPointsToItsRAM(t *testing.T) {
+	t.Parallel()
+	c := devservertest.NewSupervised(oneServer)
+	c.Servers["apidev"].Restarts = 1
+	c.Servers["apidev"].LastRestartReason = "the service ran out of memory: the kernel killed one of its processes and systemd restarted every dev server"
+	c.Servers["apidev"].OutOfMemory = true
+	result := runDevServer(t, c, DevServerParams{Action: "status", Hostname: "apidev"})
+	want := "Last restart reason: the service ran out of memory: the kernel killed one of its processes and systemd restarted every dev server. " +
+		"If it runs out of memory again, raise the service's max RAM with zerops_scale or stop a dev server you are not working on."
+	if !strings.Contains(result.Message, want) {
+		t.Errorf("message = %q, want it to contain %q", result.Message, want)
+	}
+}
+
 func TestDevServer_StatusSaysWhyTheSupervisorLastRestartedTheServer(t *testing.T) {
 	t.Parallel()
 	c := devservertest.NewSupervised(oneServer)

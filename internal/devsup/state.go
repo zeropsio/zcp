@@ -90,7 +90,10 @@ type ServerState struct {
 	// service's task limit was reached; set only while crashed. RetryPending
 	// says whether a start after backoff is still to come.
 	TaskLimit *TaskLimit `json:"taskLimit,omitempty"`
-	LogPath   string     `json:"logPath"`
+	// OutOfMemory: the server's last start is the one after systemd restarted
+	// the service because it ran out of memory.
+	OutOfMemory bool   `json:"outOfMemory,omitempty"`
+	LogPath     string `json:"logPath"`
 	// RssKB is the resident memory of the server's whole process group in
 	// KiB, measured when the state is read; 0 when it has no live group.
 	RssKB int64 `json:"rssKb,omitempty"`

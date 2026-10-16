@@ -324,6 +324,31 @@ func TestDeployNextActions_AServerThatCrashedOnTheServicesTaskLimitIsNamedWithTh
 	}
 }
 
+// The kernel's OOM killer made systemd restart every dev server while they
+// settled after a deploy; the reply named them running and the agent never
+// learned why they had all restarted. The reply says the service ran out of
+// memory, once, and points to the service's RAM.
+func TestDeployNextActions_DevServersSystemdRestartedWhenTheServiceRanOutOfMemorySayWhyOnce(t *testing.T) {
+	t.Parallel()
+	decl := `{"version":1,"servers":[{"name":"api","port":8080,"command":"a","cwd":"."},{"name":"web","port":3000,"command":"b","cwd":"."}]}`
+	c := devservertest.NewSupervised(decl)
+	c.Redeploy()
+	for _, name := range []string{"api", "web"} {
+		c.Servers[name].Restarts = 1
+		c.Servers[name].LastRestartReason = "the service ran out of memory: the kernel killed one of its processes and systemd restarted every dev server"
+		c.Servers[name].OutOfMemory = true
+	}
+
+	got := deployNextActionsFor(t.Context(), c, "/var/www", &ops.DeployResult{TargetService: "difydev"}, topology.ModeDev, topology.RuntimeDynamic)
+
+	want := "Dev servers on difydev after the deploy: api running, web running. " +
+		"The service ran out of memory: the kernel killed one of its processes and systemd restarted every dev server. " +
+		"If it runs out of memory again, raise the service's max RAM with zerops_scale or stop a dev server you are not working on."
+	if !strings.Contains(got, want) || strings.Count(got, "ran out of memory") != 1 {
+		t.Errorf("nextActions = %q, want it to contain %q once", got, want)
+	}
+}
+
 // A deploy reply told the agent to read vets' logs, fix it and start it while
 // the supervisor had already scheduled its one more start; the agent built its
 // own workaround. A server that crashed while starting with that start pending

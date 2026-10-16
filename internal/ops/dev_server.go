@@ -773,6 +773,9 @@ func statusDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds
 		}
 		if result.LastRestartReason != "" {
 			result.Message += fmt.Sprintf(" Last restart reason: %s.", result.LastRestartReason)
+			if server.OutOfMemory {
+				result.Message += " " + OutOfMemoryHint
+			}
 		}
 	}()
 	label := serverLabel(p.Hostname, name)

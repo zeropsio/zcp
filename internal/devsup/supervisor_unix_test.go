@@ -27,6 +27,9 @@ type rig struct {
 	stagger time.Duration
 	// tasks, when set, is the supervisors' reading of the service's task limit.
 	tasks func() (Tasks, bool)
+	// previousRun, when set, is the supervisors' reading of systemd's result
+	// for the previous run of their unit.
+	previousRun func() (string, bool)
 }
 
 // newRig makes a repo root and a short state directory (a unix socket path
@@ -79,7 +82,7 @@ func (r *rig) supervisorWith(service string, portWait time.Duration) *Supervisor
 	}
 	s, err := New(Config{
 		Root: r.root, StateDir: r.state, Service: service, Env: os.Environ(), Grace: time.Second, PortWait: portWait,
-		StartWindow: r.window, Stagger: stagger, LimitBackoff: 50 * time.Millisecond, Tasks: r.tasks, Version: "v-test",
+		StartWindow: r.window, Stagger: stagger, LimitBackoff: 50 * time.Millisecond, Tasks: r.tasks, PreviousRun: r.previousRun, Version: "v-test",
 	})
 	if err != nil {
 		r.t.Fatal(err)
@@ -991,5 +994,84 @@ func TestSupervisor_ServersStartedTogetherStartAGapApart(t *testing.T) {
 		if gap := at[i].Sub(at[i-1]); gap < 350*time.Millisecond {
 			t.Fatalf("starts %v apart, want at least the 400 ms gap: %v", gap, at)
 		}
+	}
+}
+
+// The kernel's OOM killer killed a dev server's process; the platform unit's
+// OOMPolicy=stop made systemd stop the unit, every dev server with it, and
+// start it again, and each server's restart reason said only "the supervisor
+// started again". The new supervisor reads how the previous run of its unit
+// ended and says on every server it started that the service ran out of
+// memory and systemd restarted them all, until that server starts again for
+// another reason.
+func TestSupervisor_AfterSystemdRestartedTheServiceBecauseItRanOutOfMemoryEachServerSaysSo(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	web, api := freePort(t), freePort(t)
+	r.declare(r.listener("web", web), r.listener("api", api))
+	s1 := r.supervisor()
+	s1.Boot()
+	eventually(t, "both to listen", func() bool { return listening(web) && listening(api) })
+	s1.Shutdown() // systemd stops the unit on the OOM kill
+
+	r.previousRun = func() (string, bool) { return "oom-kill", true }
+	s2 := r.supervisor()
+	s2.Boot()
+	eventually(t, "both to listen again", func() bool { return listening(web) && listening(api) })
+
+	const want = "the service ran out of memory: the kernel killed one of its processes and systemd restarted every dev server"
+	st, err := ReadState(r.state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"web", "api"} {
+		if sv := mustServer(t, st, name); sv.LastRestartReason != want || !sv.OutOfMemory {
+			t.Fatalf("%s lastRestartReason/outOfMemory = %q/%v, want %q/true", name, sv.LastRestartReason, sv.OutOfMemory, want)
+		}
+	}
+
+	if err := s2.Restart("api"); err != nil {
+		t.Fatal(err)
+	}
+	st = s2.State()
+	if sv := mustServer(t, st, "api"); sv.OutOfMemory || sv.LastRestartReason != "a restart was asked for" {
+		t.Fatalf("api after ctl restart = %q/%v, want the asked restart and no out-of-memory mark", sv.LastRestartReason, sv.OutOfMemory)
+	}
+	if sv := mustServer(t, st, "web"); !sv.OutOfMemory || sv.LastRestartReason != want {
+		t.Fatalf("web = %q/%v, lost the out-of-memory restart when api restarted", sv.LastRestartReason, sv.OutOfMemory)
+	}
+}
+
+// A previous run that ended for any other reason, or one the journal does not
+// tell, is no out-of-memory restart.
+func TestSupervisor_AfterAnyOtherEndOfThePreviousRunTheSupervisorStartedAgain(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		result string
+		ok     bool
+	}{
+		{"its main process exited with an error", "exit-code", true},
+		{"the journal cannot be read", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t)
+			api := freePort(t)
+			r.declare(r.listener("api", api))
+			s1 := r.supervisor()
+			s1.Boot()
+			eventually(t, "api to listen", func() bool { return listening(api) })
+			s1.Shutdown()
+
+			r.previousRun = func() (string, bool) { return tt.result, tt.ok }
+			s2 := r.supervisor()
+			s2.Boot()
+			eventually(t, "api to listen again", func() bool { return listening(api) })
+			if sv := mustServer(t, s2.State(), "api"); sv.OutOfMemory || sv.LastRestartReason != "the supervisor started again" {
+				t.Fatalf("api = %q/%v, want the supervisor started again and no out-of-memory mark", sv.LastRestartReason, sv.OutOfMemory)
+			}
+		})
 	}
 }

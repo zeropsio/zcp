@@ -49,6 +49,9 @@ type Config struct {
 	// Tasks reads the task budget the servers share; nil is the supervisor's
 	// own cgroup.
 	Tasks func() (Tasks, bool)
+	// PreviousRun reads systemd's result for the previous run of the
+	// supervisor's unit; nil reads the journal.
+	PreviousRun func() (string, bool)
 	// Version is the release reported in the state.
 	Version string
 	// Log receives the supervisor's own lines (the service's runtime log).
@@ -127,8 +130,10 @@ type server struct {
 	limitStarts int
 	taskLimit   *Tasks
 	// restartReason says why it last restarted, or why a watched change
-	// did not restart it.
+	// did not restart it; outOfMemory: that restart is the one after systemd
+	// restarted the service because it ran out of memory.
 	restartReason string
+	outOfMemory   bool
 	// windowChanged: a watched change came within this start's window;
 	// selfChanged counts the starts in a row that saw one.
 	windowChanged bool
@@ -149,6 +154,9 @@ type Supervisor struct {
 	persistMu sync.Mutex
 	// closed: Shutdown ran; a pending retry starts nothing.
 	closed bool
+	// outOfMemory: systemd restarted the service because it ran out of
+	// memory. Set once, before Boot starts anything.
+	outOfMemory bool
 }
 
 // New prepares a supervisor and loads the state an earlier instance left in
@@ -174,6 +182,9 @@ func New(cfg Config) (*Supervisor, error) {
 	}
 	if cfg.Tasks == nil {
 		cfg.Tasks = readTasks
+	}
+	if cfg.PreviousRun == nil {
+		cfg.PreviousRun = readPreviousRun
 	}
 	if cfg.Log == nil {
 		cfg.Log = io.Discard
@@ -236,10 +247,17 @@ func (s *Supervisor) Run(ctx context.Context) error {
 
 // Boot is the first reconcile of this instance: it reaps the groups an earlier
 // instance left running, then starts every server whose desired state is
-// running, crashed ones included.
+// running, crashed ones included. When the previous run of the supervisor's
+// unit ended because the kernel's OOM killer killed one of its processes,
+// systemd stopped every server with it (OOMPolicy=stop on the platform's unit)
+// and their restart reason says so.
 func (s *Supervisor) Boot() {
 	s.op.Lock()
 	defer s.op.Unlock()
+	if result, ok := s.cfg.PreviousRun(); ok {
+		s.logf("the previous run of the unit ended: %s", result)
+		s.outOfMemory = result == unitResultOOMKill
+	}
 	s.reapLeft()
 	s.reconcile(true)
 }
@@ -375,7 +393,10 @@ func (s *Supervisor) reconcile(boot bool) map[string]action {
 	}
 	s.mu.Unlock()
 	reason := reasonDecl
-	if boot {
+	switch {
+	case boot && s.outOfMemory:
+		reason = reasonOutOfMemoryRestart
+	case boot:
 		reason = reasonBoot
 	}
 	s.startAll(start, reason)
@@ -453,8 +474,10 @@ func (s *Supervisor) start(name, reason string) {
 	} else {
 		sv.retry, sv.limitStarts = reason == reasonRetry, 0
 	}
+	sv.outOfMemory = false
 	if sv.starts > 0 {
 		sv.restartReason = reason
+		sv.outOfMemory = reason == reasonOutOfMemoryRestart
 		if reason == reasonLimit {
 			sv.restartReason = limitReason(sv.taskLimit)
 		}
@@ -928,7 +951,7 @@ func (s *Supervisor) State() State {
 func (s *Supervisor) serverState(name string, sv *server) ServerState {
 	ss := ServerState{
 		Source: sv.source, Desired: sv.desired, StartedAt: sv.startedAt, Exit: sv.exit,
-		LogPath: LogPath(s.cfg.StateDir, name), LastRestartReason: sv.restartReason,
+		LogPath: LogPath(s.cfg.StateDir, name), LastRestartReason: sv.restartReason, OutOfMemory: sv.outOfMemory,
 	}
 	if sv.starts > 1 {
 		ss.Restarts = sv.starts - 1

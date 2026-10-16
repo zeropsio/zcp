@@ -18,3 +18,6 @@ func groupRSSKB(int) int64 { return 0 }
 
 // readTasks knows no task budget off Linux.
 func readTasks() (Tasks, bool) { return Tasks{}, false }
+
+// readPreviousRun knows no systemd unit off Linux.
+func readPreviousRun() (string, bool) { return "", false }

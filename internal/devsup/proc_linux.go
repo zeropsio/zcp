@@ -1,10 +1,13 @@
 package devsup
 
 import (
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // processStart is the process's start time in clock ticks since boot
@@ -74,17 +77,49 @@ func groupRSSKB(pgid int) int64 {
 	return pages * int64(os.Getpagesize()) / 1024
 }
 
-// readTasks reads the task budget of the cgroup this supervisor runs in, which
-// every server it starts shares (cgroup v2: /proc/self/cgroup's "0::" line).
-func readTasks() (Tasks, bool) {
+// ownCgroup is the cgroup v2 path this supervisor runs in, which every server
+// it starts shares (/proc/self/cgroup's "0::" line); "" when there is none.
+func ownCgroup() string {
 	b, err := os.ReadFile("/proc/self/cgroup")
 	if err != nil {
-		return Tasks{}, false
+		return ""
 	}
 	for line := range strings.SplitSeq(string(b), "\n") {
 		if path, ok := strings.CutPrefix(line, "0::"); ok {
-			return readTasksAt(filepath.Join("/sys/fs/cgroup", path))
+			return path
 		}
 	}
-	return Tasks{}, false
+	return ""
+}
+
+// readTasks reads the task budget of the cgroup this supervisor runs in.
+func readTasks() (Tasks, bool) {
+	path := ownCgroup()
+	if path == "" {
+		return Tasks{}, false
+	}
+	return readTasksAt(filepath.Join("/sys/fs/cgroup", path))
+}
+
+// readPreviousRun reads systemd's result for the previous run of the unit
+// this supervisor runs in (its cgroup's last element, zerops@zerops.service on
+// Zerops) from systemd's journal lines about the unit. Only root and the
+// systemd-journal group read the journal; Zerops' zerops user reads it
+// through passwordless sudo.
+func readPreviousRun() (string, bool) {
+	unit := filepath.Base(ownCgroup())
+	if !strings.HasSuffix(unit, ".service") {
+		return "", false
+	}
+	args := []string{"journalctl", "UNIT=" + unit, "--output=json", "--lines=200", "--no-pager", "--quiet"}
+	if os.Geteuid() != 0 {
+		args = append([]string{"sudo", "-n"}, args...)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, args[0], args[1:]...).Output()
+	if err != nil {
+		return "", false
+	}
+	return previousRunResult(out)
 }
