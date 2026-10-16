@@ -19,6 +19,7 @@ const (
 	ProposalEnvSet         = "env.set"
 	ProposalMateMessage    = "mate.message"
 	ProposalDomainAdd      = "domain.add"
+	ProposalAccessSet      = "access.set"
 )
 
 // ProposalNote is what every proposal result says about itself.
@@ -53,12 +54,14 @@ type OrgActionInput struct {
 	// domain.add
 	Domains []string
 	Port    int
+	// access.set
+	People []OrgAccessPerson
 }
 
 // OrgProposal is one change for the person to approve or decline
 // (docs/spec-mate.md §2.11). Params is the kind's own object:
-// {} for a service action, OrgEnvSetParams, OrgMateMessageParams or
-// OrgDomainAddParams.
+// {} for a service action, OrgEnvSetParams, OrgMateMessageParams,
+// OrgDomainAddParams or OrgAccessSetParams.
 type OrgProposal struct {
 	ID          string          `json:"id"`
 	Kind        string          `json:"kind"`
@@ -117,10 +120,10 @@ type OrgDomainAddParams struct {
 func ProposeOrgAction(ctx context.Context, src OrgSource, newID func() string, in OrgActionInput) (*OrgProposalResult, error) {
 	reason := strings.TrimSpace(in.Reason)
 	switch in.Kind {
-	case ProposalServiceRestart, ProposalServiceStart, ProposalServiceStop, ProposalEnvSet, ProposalMateMessage, ProposalDomainAdd:
+	case ProposalServiceRestart, ProposalServiceStart, ProposalServiceStop, ProposalEnvSet, ProposalMateMessage, ProposalDomainAdd, ProposalAccessSet:
 	default:
 		return nil, invalid(fmt.Sprintf("%q is not something org mode can propose", in.Kind),
-			"Propose service.restart, service.start, service.stop, env.set, mate.message or domain.add")
+			"Propose service.restart, service.start, service.stop, env.set, mate.message, domain.add or access.set")
 	}
 	if reason == "" {
 		return nil, invalid("a proposal needs a reason", "Say in one sentence why, for the person deciding")
@@ -135,6 +138,9 @@ func ProposeOrgAction(ctx context.Context, src OrgSource, newID func() string, i
 		s       *platform.ServiceStack
 		summary string
 		params  any = struct{}{}
+		// placeName names where the proposal acts where that is not p
+		// alone: an application, for access to every one of its projects.
+		placeName string
 	)
 	switch in.Kind {
 	case ProposalServiceRestart, ProposalServiceStart, ProposalServiceStop:
@@ -223,6 +229,13 @@ func ProposeOrgAction(ctx context.Context, src OrgSource, newID func() string, i
 		}
 		summary = fmt.Sprintf("Put %s on %s", p.Name, domainList(domains))
 		params = OrgDomainAddParams{Domains: domains, Port: in.Port}
+
+	case ProposalAccessSet:
+		access, err := proposeAccess(ctx, src, snap, in)
+		if err != nil {
+			return nil, err
+		}
+		p, summary, params, placeName = access.first, access.summary, access.params, access.name
 	}
 
 	raw, err := json.Marshal(params)
@@ -230,6 +243,9 @@ func ProposeOrgAction(ctx context.Context, src OrgSource, newID func() string, i
 		return nil, fmt.Errorf("encode proposal params: %w", err)
 	}
 	proposal := OrgProposal{ID: newID(), Kind: in.Kind, Summary: summary, Reason: reason, ProjectID: p.ID, ProjectName: p.Name, Params: raw}
+	if placeName != "" {
+		proposal.ProjectName = placeName
+	}
 	if s != nil {
 		proposal.ServiceID, proposal.ServiceName = s.ID, s.Name
 	}

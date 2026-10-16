@@ -131,6 +131,7 @@ func TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite(t *testing.T) {
 				{tool: "zerops_org_propose_service", args: map[string]any{"action": "restart", "project": "Contoso - production", "service": "medusa", "reason": "stuck"}, want: `"summary":"Restart medusa in Contoso - production"`},
 				{tool: "zerops_org_propose_message", args: map[string]any{"to": "Rossy", "words": "debug medusa", "reason": "Rossy's code"}, want: `"to":{"projectId":"pRossy","mateName":"Rossy"}`},
 				{tool: "zerops_org_propose_domain", args: map[string]any{"project": "Contoso - production", "service": "medusa", "domains": []string{"contoso.com", "www.contoso.com"}, "port": 9000, "reason": "its own name"}, want: `"summary":"Put Contoso - production on contoso.com and www.contoso.com"`},
+				{tool: "zerops_org_propose_access", args: map[string]any{"project": "Contoso - production", "people": []map[string]any{{"person": "Dana", "level": "read"}}, "reason": "she reviews the shop"}, want: `"summary":"Access to Contoso - production: Dana read only"`},
 			}
 			for _, c := range calls {
 				res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: c.tool, Arguments: c.args})

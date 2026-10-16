@@ -33,7 +33,7 @@ Surface the composite to the user. State it as the composite ("acceptance tests 
 
 ## Step 3 — promote to stage at a checkpoint (not per slice)
 
-A formal deploy promotes the dev work to the stage service — a production-shaped build (build commands + health-check start, the way production will). Do it at a checkpoint, not per slice: a milestone worth a clean built-verification, before showing the user something durable, before launch, or to prove the app builds from scratch (not just in the living dev runtime).
+A formal deploy promotes the dev work to the stage service — a production-shaped build (build commands + health-check start, the way production will). Do it at a checkpoint, not per slice: a milestone worth a clean built-verification, before showing the user something durable (to them, the stage half is their preview), before launch, or to prove the app builds from scratch (not just in the living dev runtime).
 
 Deploy through `zerops_deploy` on the develop pipeline; the work session scopes it. After a stage deploy, `zerops_verify` the stage URL. If a deploy fails, redeploy through the same tool and follow its recovery guidance — don't reach around it.
 
@@ -41,6 +41,6 @@ Deploy through `zerops_deploy` on the develop pipeline; the work session scopes 
 
 Hand the user **working software**, not a status dump:
 
-> "I built **slice NN** — you can now **[concrete thing]** at **[live URL]**. Try **[one acceptance action]** and tell me only whether **[specific outcome]** matches your real workflow. Next I'll add **[slice NN+1]** unless that is off."
+> "I built **[what it does, in their words]** — you can now **[concrete thing]** on your preview at **[its URL]**. Try **[one acceptance action]** and tell me only whether **[specific outcome]** matches your real workflow. Next I'll add **[the next slice, in their words]** unless that is off."
 
 A reaction ("others should log in", "make it public") maps to a seam you built cheap to change (`phases/slices.md` codebase-design) → flip it, reload, re-narrate; update the PRD's inferred-assumptions if a veto changed a one-way call. Then advance to the next slice (phase 4); read `zerops_workflow action="status"` to confirm where things stand.

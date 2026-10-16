@@ -32,12 +32,12 @@ func makeRenderStdout(t *testing.T, url, bodyText string, errorMessages []string
 	}
 	steps := []map[string]any{
 		{"command": []string{"open", url}, "success": true, "result": map[string]any{"url": url}},
+		{"command": browserPaintWait, "success": true, "result": map[string]any{}},
 		{"command": []string{"snapshot", "-i"}, "success": true, "result": map[string]any{"snapshot": ""}},
 		{"command": []string{"get", "text", "body"}, "success": true, "result": map[string]any{"text": bodyText, "origin": url}},
 		{"command": []string{"errors"}, "success": true, "result": map[string]any{"errors": errors}},
 		{"command": []string{"console"}, "success": true, "result": map[string]any{"messages": []any{}}},
 		{"command": []string{"network", "requests"}, "success": true, "result": map[string]any{"requests": []any{}}},
-		{"command": []string{"close"}, "success": true, "result": map[string]any{"closed": true}},
 	}
 	b, err := json.Marshal(steps)
 	if err != nil {
@@ -189,8 +189,8 @@ func TestRenderHTTPRoot_AgentBrowserMissing_Silent(t *testing.T) {
 	}
 }
 
-func TestRenderHTTPRoot_ForkRecovery_Silent(t *testing.T) {
-	// Stderr signals fork exhaustion → BrowserBatch sets ForkRecoveryAttempted
+func TestRenderHTTPRoot_ForkExhaustion_Silent(t *testing.T) {
+	// Stderr signals fork exhaustion → BrowserBatch sets BrowserRecycled
 	// and returns Result with a Message. Render must not surface partial data.
 	fake := &fakeBrowserRunner{
 		runStderr: "pthread_create: Resource temporarily unavailable",

@@ -101,6 +101,13 @@ type OrgProposeDomainInput struct {
 	Reason  string   `json:"reason"  jsonschema:"Why, in one sentence, for the person deciding."`
 }
 
+// OrgProposeAccessInput is zerops_org_propose_access's input.
+type OrgProposeAccessInput struct {
+	Project string                `json:"project" jsonschema:"An application's name (every one of its projects at once: production, stage and its Mates), or one project: its id, its full name, or its Mate's name."`
+	People  []ops.OrgAccessPerson `json:"people"  jsonschema:"Each person once, with the level they get there."`
+	Reason  string                `json:"reason"  jsonschema:"Why, in one sentence, for the person deciding."`
+}
+
 var orgServiceActions = map[string]string{
 	"restart": ops.ProposalServiceRestart,
 	"start":   ops.ProposalServiceStart,
@@ -240,6 +247,16 @@ func RegisterOrg(srv *mcp.Server, src ops.OrgSource, logs platform.LogFetcher, n
 		return orgAnswer(ops.ProposeOrgAction(ctx, src, newID, ops.OrgActionInput{
 			Kind: ops.ProposalDomainAdd, Project: in.Project, Service: in.Service, Reason: in.Reason,
 			Domains: in.Domains, Port: in.Port,
+		}))
+	})
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "zerops_org_propose_access",
+		Description: "Propose who has access to an application or one project: each person (email or name) at full, read, none (hidden) or remove (their own grant dropped). Runs nothing: the person approves it on a card, and their client writes it with their own Zerops account. Only an organization owner or admin changes access.",
+		Annotations: orgPropose("Propose access"),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in OrgProposeAccessInput) (*mcp.CallToolResult, any, error) {
+		return orgAnswer(ops.ProposeOrgAction(ctx, src, newID, ops.OrgActionInput{
+			Kind: ops.ProposalAccessSet, Project: in.Project, People: in.People, Reason: in.Reason,
 		}))
 	})
 }

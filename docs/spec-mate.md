@@ -638,23 +638,44 @@ between the two for long.
 
 ### 2.6b Managed browser batches
 
-`zerops_browser` owns a Linux transient systemd service for each batch. One
-nonblocking container-wide file lock admits one managed batch across zcp processes;
-a competing caller fails without stopping the owner. The service's cgroup includes
-the detached daemon and Chrome's separate process groups. Success, error, deadline
-and cancellation all stop it with a cleanup context independent of the caller.
-A task cap of 10% of systemd's available task ceiling bounds this one managed
-service; unrelated workloads and raw browser scripts are outside that cap.
+`zerops_browser` and `zerops_verify`'s render check share one warm browser per
+container: the transient systemd service `zcp-browser.service` holds agent-browser's
+daemon and its Chrome between calls. It is `Type=forking`, started through
+`agent-browser open about:blank`, with the daemon's pid file as `PIDFile`. Its
+`RuntimeDirectory` holds the daemon socket, so once the service is gone no client
+can respawn a daemon outside it. systemd bounds it: `TasksMax=1000`, `CPUQuota` at
+75% of the container's CPUs, `RuntimeMaxSec=3600`, and `KillMode=control-group`
+with `SIGKILL`. Chrome's profile lives in `/tmp/zcp-browser`, which `ExecStopPost`
+removes on every stop. The daemon exits after 5 idle minutes, and the service ends
+with it. The service and every step get one environment built by one function,
+because agent-browser restarts a daemon whose settings differ from its client's.
 
-On the next managed start, acquiring the lock proves the previous owner ended.
-Only the owned service is stopped, and its private temporary profile/socket
-folder is removed only after its cgroup is empty or absent. Browser installation
-caches, explicit persistent profiles and unmanaged sessions are preserved. A
-managed stream symlink preserves Mate's existing endpoint when no other owner
-has published one; cleanup removes only that exact owned link. Cleanup failure
-retains residue and reports an error. `forceReset` remains a compatibility option;
-every managed batch starts clean. No process-name sweep or stale PID file has
-kill authority. Raw browser tools and provider lifetimes remain unchanged.
+A call waits on one container-wide `flock` until its own deadline, then fails as
+busy. It reuses the warm browser only if the browser is running, the last call in
+it ended cleanly (a marker in the runtime directory says `idle`; a caller that died
+mid-call leaves it `busy`), neither the idle exit nor the max age can cut the
+call, and the service used at most a tenth of a CPU since that call ended (systemd's
+`CPUUsageNSec`, recorded in the marker): agent-browser's tab list can miss popups of a
+storm and Chrome can keep a hung renderer, so a browser that stayed busy while idle is
+recycled. Otherwise it starts a fresh one. Each step is its own `agent-browser --json`
+process, so a deadline or cancel keeps the finished steps. A call clears the
+daemon-wide logs, opens its own tab, and closes every tab but the base one when it
+ends; caller `tab` and `window` commands are stripped, so the base tab is always the
+first. A deadline, cancel, fork exhaustion, unanswered step, CDP wedge or failed
+cleanup stops the service instead; the stop has its own bound, so a cleanup that hung
+on a spinning tab cannot spend it. A waiting call gives up while a sixth of its time
+is left and answers busy without touching the browser, so a late waiter is never cut
+mid-walk. The unit caps memory at 75% of the container's ceiling at its start and
+sets `OOMScoreAdjust=1000`, so Chrome, not the agent, is the first to die of memory.
+
+`isolation` is one parameter: `tab` (default) is a tab in the warm default context,
+so cookies, storage, HTTP cache and service workers carry over between calls;
+`fresh-context` is `window new`, a new browser context; agent-browser cannot dispose
+one, so the service stops when that call ends; `new-browser` recycles the service
+before the call. The Mate's stream endpoint `~/.agent-browser/default.stream` is a symlink
+into the runtime directory, and dangles (no stream) while no browser runs. No
+process-name sweep or PID has kill authority. Raw browser tools and provider
+lifetimes are outside this service.
 
 ### 2.7 Base path on the mate side
 
@@ -1378,7 +1399,7 @@ or per service of one project; with `from`/`till`, at most 31 days, a range's to
 one project's services' parts;
 a `note` when the answer is only the person's projects), `zerops_org_usage` (hourly up to 48 h,
 whole UTC days past that, at most 31 d). Act: `zerops_org_propose_service` (`restart` | `start` |
-`stop`), `zerops_org_propose_env`, `zerops_org_propose_message`, `zerops_org_propose_domain`. Also `zerops_knowledge`, and in a
+`stop`), `zerops_org_propose_env`, `zerops_org_propose_message`, `zerops_org_propose_domain`, `zerops_org_propose_access`. Also `zerops_knowledge`, and in a
 Mate's container `zerops_publish_page` (§5.9). The single-project surface acts on the empty own
 project and is not registered. A project's kind: tag `chief`; a Mate is tagged `mate` and runs
 a `zcp@*` service, its name the part of the project name after the last `" - "`; HQ runs a service
@@ -1392,7 +1413,7 @@ draws it as a card the person approves or declines, and executes an approved one
 {
   "proposal": {
     "id": "<uuid>",
-    "kind": "service.restart | service.start | service.stop | env.set | mate.message | domain.add",
+    "kind": "service.restart | service.start | service.stop | env.set | mate.message | domain.add | access.set",
     "summary": "Restart medusa in Contoso - production",
     "reason": "<the agent's why>",
     "projectId": "…", "projectName": "…",
@@ -1404,7 +1425,8 @@ draws it as a card the person approves or declines, and executes an approved one
 ```
 
 `serviceId`/`serviceName` are present for the service kinds, a service-scoped `env.set` and
-`domain.add`.
+`domain.add`. For `access.set` naming an application, `projectName` is the application's name and
+`projectId` its first project.
 `params` per kind: `{}` for the service kinds; `env.set` →
 `{"scope": "project" | "service", "key", "value", "secret": bool}`; `mate.message` →
 `{"to": {"projectId", "mateName"}, "words", "attachment"?: {"title", "text"}}`, where the top-level
@@ -1418,8 +1440,18 @@ lowercase fully qualified domain names, a leading `*.` allowed for every subdoma
 once, without scheme, port or path, none already one of the project's domains) and refused with a
 plain error otherwise. An approved `domain.add` is the client's own add-domain as the person; its
 card then prints the DNS records the domains need, as their addresses do (a wildcard's beside its
-`_acme-challenge` CNAME), for the person to add at their DNS provider. There is no delete, no token and no
-scaling kind.
+`_acme-challenge` CNAME), for the person to add at their DNS provider. `access.set` →
+`{"projects": [{"id", "name"}], "people": [{"person", "level"}]}`: the project named, or every
+production, stage and Mate of the application named (an application's People in Mate change them
+at once; never the Chief's own project), and each person once as the person named them — an address
+or a name, since org mode reads no member list — at `full` (`ADMIN`), `read` (`READ_ONLY`), `none`
+(`NO_ACCESS`, hidden) or `remove` (their own grant dropped, their organization role decides),
+summarised "Access to <place>: <person> <level>, …". It is refused for a person whose role
+`chief/person` names and who is not an `OWNER` or `ADMIN`. An approved `access.set` is the client's
+own `set-project-access` as the person, written on each member's own list
+(`PUT /client-user/{id}/roles`), the Mates a member owns left theirs; the card finds each person
+among the organization's members and holds Approve while a name finds nobody or several. There is
+no delete, no token, no invitation and no scaling kind.
 
 **The reverse direction — a Mate asks the person's Chief.** In project mode, in a Mate's container
 (`ZCP_MATE_ENABLED`), `zerops_propose_ask_chief {words, attachmentTitle?, attachmentText?, reason}`
@@ -1467,6 +1499,7 @@ names `zerops_propose_ask_chief` for what neither its project nor `zerops_observ
 | OM-4 | `OrgReads()` is exactly what org mode reads; with `ZCP_ORG_API` every read goes there with the credential as the bearer, `/user/info` is never read and `ZCP_ORG_ID` is required. `TestOrgReads_AreExactlyWhatOrgModeReads`, `TestOpenOrgReader_ThroughOrgAPI`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
 | OM-5 | A Mate's `zerops_propose_ask_chief` returns a `chief.message` proposal of the shape above from its own project and sends nothing; only a Mate's project mode registers it. `TestProposeAskChief_Shape`, `TestProposeAskChief_Validates`, `TestServer_AskChiefToolGating`, `TestAskChief_OverMCP_ProposesFromThisProjectAndSendsNothing`. |
 | OM-6 | `zerops_org_propose_domain` returns a `domain.add` proposal of the shape above for the organization's project, onto one of its service's web ports, naming only domains the project does not hold, and changes nothing. `TestProposeOrgAction_DomainAdd_Shape`, `TestProposeOrgAction_DomainAdd_RefusesWhatCannotGoLive`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
+| OM-7 | `zerops_org_propose_access` returns an `access.set` proposal of the shape above for the organization's project or application, each person once at a level Mate gives, refused for a person who may not change access, and changes nothing. `TestProposeOrgAction_AccessSet_Shape`, `TestProposeOrgAction_AccessSet_RefusesWhatCannotBeGiven`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
 
 ## Current account contract — Mate 0.11.0
 

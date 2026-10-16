@@ -58,7 +58,7 @@ This is the Zerops-native half — the plan Align resolved, written down (don't 
 - **Architecture drivers:** max 3 `trigger → action → failure mode` lines. If a driver does not change services, data ownership, seam, release gate, or next slice, delete it.
 - **Architecture decisions:** max 5 active rows. Record only decisions that affect multiple slices/services; when a later request changes one, supersede the row instead of appending a duplicate.
 - **Boundaries:** 1-7 workflow/actor-action components, never padded for count and not entity buckets. Record owner/consumer/access path for each DB, bucket, job, or event; slices reference these boundaries instead of re-defining them.
-- **The runtime pair:** the app's **dev/stage pair** (derivation: `phases/align.md` D7).
+- **The runtime pair:** the app's **dev/stage pair** (derivation: `phases/align.md` D7). That name is the record's; to the person the stage half is their preview (AGENTS.md, "Words for the person").
 - **The concrete service set:** every service the app needs, each with *why it exists* and *what breaks without it* (so over-provisioning is visibly absent and each service is justified). Name the capability + mode/tier; the **concrete service + version is resolved live** at provision time from the owner — do not pin a version in the PRD.
 - **The substrate:** the curated recipe the app starts from (named by stack/framework, never a pinned version) and the delta — services added beyond it and why, or the smaller-recipe choice that avoided an unneeded one. If no framework-matching recipe fit, record "from scratch" and why.
 - **The negative space:** services you deliberately did NOT add and why ("no search engine — DB search covers this until content grows"; "no cache — one small app").
@@ -74,4 +74,4 @@ Record (a few lines; vetoable; never gated): the **surface type** (product/brand
 
 The acceptance test crosses the slice's **seam** — the same interface a real caller uses (the red→green contract each slice inherits). Name it in the PRD's Testing decisions; depth scales by tier and is develop's job (`phases/develop.md`).
 
-When this phase is done: `.zcp/guided/PRD.md` exists, you've narrated the shape to the user in plain words (without asking for approval), and you carry the topology chapter into the slice DAG.
+When this phase is done: `.zcp/guided/PRD.md` exists, you've narrated the shape to the user in plain words — no service names, no dev/stage pair (without asking for approval), and you carry the topology chapter into the slice DAG.

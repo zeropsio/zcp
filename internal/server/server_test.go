@@ -166,7 +166,9 @@ func (*stubBrowserRunner) Run(_ context.Context, _ string, _ time.Duration) (str
 	return "", "", false, nil
 }
 
-func (*stubBrowserRunner) RecoverFork(_ context.Context) {}
+func (*stubBrowserRunner) Acquire(_ context.Context, _ string) (func(bool) error, bool, error) {
+	return func(bool) error { return nil }, false, nil
+}
 
 // TestServer_BrowserToolGating locks the registration condition: zerops_browser
 // is exposed IFF running in a Zerops container AND agent-browser is on PATH.

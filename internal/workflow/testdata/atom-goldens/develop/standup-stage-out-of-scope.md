@@ -158,7 +158,8 @@ adopted, zcp leaves their stage out on its own, and the stand-up ends at a
 running dev.
 
 When the dev half is verified, end by telling the person what runs on the dev
-half, and that promoting it to the stage is the next step they can ask for.
+half, and that putting it on their preview (the stage half) is the next step
+they can ask for.
 If they already asked for it, start a new develop session for it once this
 one closes — with the dev half deployed, its stage is part of the work again.
 
@@ -511,9 +512,12 @@ When `bodyText`/`consoleErrors` are missing, truncated, or the page needs
 interaction / SPA routes / non-root / auth, drive the browser **inline** with
 `zerops_browser` — inner commands cover click/fill/find/get/is/wait plus
 `set viewport`/`set device`/`set media` for responsive and dark-mode checks;
-pass `screenshot: true` for visual evidence; failed/4xx/5xx network requests
-are always reported alongside errors/console, no flag needed. Never spawn a
-sub-agent, call raw `agent-browser`, or use `eval`.
+pass `screenshot: true` (`fullPage: true`: whole page) for evidence;
+4xx/5xx requests come with errors/console. Wait for an element/text, never
+a fixed time. The default tab keeps cookies, storage and cache;
+`isolation: "fresh-context"` is only for the first check after a deploy that
+changed sign-in, storage, a service worker or caches — it stops Chrome.
+Never spawn a sub-agent, call raw `agent-browser`, or use `eval`.
 To make an already-public service internal-only, call `zerops_subdomain action="disable"` — after that, `http_public` reports `skip` on every later verify, same as a `publicAccess: "none"` plan intent.
 
 - **VERDICT: PASS** — healthy + real rendered content; proceed.

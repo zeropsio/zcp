@@ -7,9 +7,16 @@ package tools
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
+	"image"
+	"image/png"
+	"os"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
@@ -124,5 +131,135 @@ func TestKeepBrowserPicture(t *testing.T) {
 	keepBrowserPicture("", result)
 	if _, _, err := workflow.KeptPicture(stateDir, "shot-2"); err == nil {
 		t.Error("a result with no picture kept one")
+	}
+}
+
+// fullPageRunner answers every step of a walk and writes png wherever the
+// walk asks for a screenshot, the way agent-browser does.
+type fullPageRunner struct {
+	png       []byte
+	lastStdin string
+}
+
+func (fullPageRunner) LookPath() (string, error) { return "/fake/agent-browser", nil }
+func (fullPageRunner) Acquire(context.Context, string) (func(bool) error, bool, error) {
+	return func(bool) error { return nil }, false, nil
+}
+
+func (f *fullPageRunner) Run(_ context.Context, stdin string, _ time.Duration) (string, string, bool, error) {
+	f.lastStdin = stdin
+	var batch [][]string
+	if err := json.Unmarshal([]byte(stdin), &batch); err != nil {
+		return "", "", false, fmt.Errorf("fullPageRunner: parse stdin: %w", err)
+	}
+	out := make([]map[string]any, 0, len(batch))
+	for _, cmd := range batch {
+		if cmd[0] == "screenshot" {
+			if err := os.WriteFile(cmd[len(cmd)-1], f.png, 0o600); err != nil {
+				return "", "", false, fmt.Errorf("fullPageRunner: write PNG: %w", err)
+			}
+		}
+		out = append(out, map[string]any{"command": cmd, "success": true, "result": map[string]any{}})
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return "", "", false, fmt.Errorf("fullPageRunner: marshal: %w", err)
+	}
+	return string(b), "", false, nil
+}
+
+// browserSession serves zerops_browser to an in-memory client.
+func browserSession(t *testing.T) *mcp.ClientSession {
+	t.Helper()
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterBrowser(srv, "")
+	st, ct := mcp.NewInMemoryTransports()
+	if _, err := srv.Connect(t.Context(), st, nil); err != nil {
+		t.Fatalf("server connect: %v", err)
+	}
+	session, err := mcp.NewClient(&mcp.Implementation{Name: "client", Version: "0.1"}, nil).Connect(t.Context(), ct, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	t.Cleanup(func() { session.Close() })
+	return session
+}
+
+// TestBrowserTool_FullPageReturnsOneImageOfTheWholePage: fullPage asks for
+// the whole page and the call answers with that one image — an agent that
+// could not ask for it scrolled and took eleven viewport screenshots.
+func TestBrowserTool_FullPageReturnsOneImageOfTheWholePage(t *testing.T) {
+	// Not parallel: overrides the ops browser runner.
+	img := image.NewRGBA(image.Rect(0, 0, 390, 3200))
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("encode test PNG: %v", err)
+	}
+	runner := &fullPageRunner{png: buf.Bytes()}
+	defer ops.OverrideBrowserRunnerForTest(runner)()
+
+	res, err := browserSession(t).CallTool(t.Context(), &mcp.CallToolParams{
+		Name:      "zerops_browser",
+		Arguments: map[string]any{"url": "https://appdev.example.invalid", "fullPage": true},
+	})
+	if err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	var images []*mcp.ImageContent
+	for _, c := range res.Content {
+		if ic, ok := c.(*mcp.ImageContent); ok {
+			images = append(images, ic)
+		}
+	}
+	if len(images) != 1 || !bytes.Equal(images[0].Data, buf.Bytes()) {
+		t.Fatalf("got %d images, want the one full-page image", len(images))
+	}
+	if !strings.Contains(runner.lastStdin, `["screenshot","--full",`) {
+		t.Errorf("the walk did not ask for the whole page: %s", runner.lastStdin)
+	}
+	var shown struct {
+		Screenshot struct {
+			Width  int `json:"width"`
+			Height int `json:"height"`
+		} `json:"screenshot"`
+	}
+	text, _ := res.Content[0].(*mcp.TextContent)
+	if text == nil || json.Unmarshal([]byte(text.Text), &shown) != nil || shown.Screenshot.Width != 390 || shown.Screenshot.Height != 3200 {
+		t.Errorf("the result must say the image is 390x3200: %+v", res.Content[0])
+	}
+}
+
+// TestBrowserTool_DescriptionTeachesTheCall pins what the description tells
+// an agent — which may call the tool from a script, not directly: the paint
+// wait is done, so wait for something, not for a time; fresh-context costs a
+// cold Chrome and pays only on the first check after a deploy; the result's
+// timing facts are the ones to report.
+func TestBrowserTool_DescriptionTeachesTheCall(t *testing.T) {
+	tl, err := browserSession(t).ListTools(t.Context(), &mcp.ListToolsParams{})
+	if err != nil || len(tl.Tools) != 1 {
+		t.Fatalf("list tools: %v %+v", err, tl)
+	}
+	desc := tl.Tools[0].Description
+	for _, want := range []string{
+		"The call already waits for the page's first paint",
+		`wait for what should appear — ["wait","<sel>"] or ["wait","--text","<text>"] — never for a fixed time`,
+		`"fresh-context" starts with none of them — only for the first check after a deploy that changed sign-in, storage, a service worker or long-cached assets, or for a signed-out view`,
+		"it stops Chrome as the call ends, so the next call starts a cold one",
+		`Every other call stays on "tab"`,
+		"fullPage=true for the whole page as one image",
+		"browserRecycled: true means the call ended unclean and the browser was stopped",
+		"To say how a call ran, report the result's durationMs, freshBrowser and browserRecycled; a script that summarises results keeps them.",
+	} {
+		if !strings.Contains(desc, want) {
+			t.Errorf("description lacks %q", want)
+		}
+	}
+	for _, gone := range []string{"for a first visit"} {
+		if strings.Contains(desc, gone) {
+			t.Errorf("description still says %q", gone)
+		}
+	}
+	if prop := tl.Tools[0].InputSchema.(map[string]any)["properties"].(map[string]any)["fullPage"]; prop == nil {
+		t.Error("the input schema has no fullPage option")
 	}
 }
