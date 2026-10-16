@@ -21,15 +21,15 @@ Deploy dev first, start the dev server, verify, then promote to stage. Run per d
 
 ```
 {services-list:zerops_deploy targetService="{hostname}" setup="dev"
-zerops_dev_server action=start hostname="{hostname}" command="{start-command}" port={port} healthPath="{path}"
+{one-stage:zerops_dev_server action=start hostname="{hostname}" command="{start-command}" port={port} healthPath="{path}"}{many-stages:zerops_dev_server action=status hostname="{hostname}"}
 zerops_verify serviceHostname="{hostname}"
 
-{each-stage:zerops_deploy sourceService="{hostname}" targetService="{stage-hostname}" setup="{stage-setup}"
-zerops_verify serviceHostname="{stage-hostname}"}}
+{one-stage:{each-stage:zerops_deploy sourceService="{hostname}" targetService="{stage-hostname}" setup="{stage-setup}"}}{many-stages:zerops_deploy_batch targets={stage-targets}}
+{each-stage:zerops_verify serviceHostname="{stage-hostname}"}}
 ```
 
 <!-- axis-o-keep: conditional inspection — phrase is "If the dev server is already running" inside an `action=status`-then-decide flow, not a state assertion -->
-Cross-deploy builds the dev source on stage (dev side unchanged); stage has a real `run.start` + `healthCheck`, so it auto-starts (no `zerops_dev_server` on the stage side). The work session closes once both halves have a successful deploy + passing verify (`closeReason=auto-complete`). If the dev server is already running after a code-only change, run `action=status` first; if `running: true`, skip `action=start`.
+Cross-deploy builds the dev source on stage (dev side unchanged); stage has a real `run.start` + `healthCheck`, so it auto-starts (no `zerops_dev_server` on the stage side). The work session closes once both halves have a successful deploy + passing verify (`closeReason=auto-complete`). If the dev server is already running after a code-only change, run `action=status` first; if `running: true`, skip `action=start`.{services-list:{many-stages: `{hostname}` runs several parts: its deploy starts every declared `autostart` server, so `action=status` checks them — start only one that is down, by its `name`; one `zerops_deploy_batch` builds its stages in parallel.}}
 
 Commit the dev half over SSH after it verifies and before the cross-deploy
 — not the mount — so the stage receives a commit: the response then
@@ -37,8 +37,8 @@ carries `sha` with `dirty: false` and an `appVersionId`. Cross-deploying
 uncommitted work still succeeds, but the response marks `dirty: true`
 and that stage build isn't reproducible from git alone. To ship an exact
 or older commit without touching the dev working tree, add
-`sha="<commit>"` to the cross-deploy — never on the dev self-deploy
-above. To roll the stage back without a rebuild, re-activate a recorded
+`sha="<commit>"` to a `zerops_deploy` cross-deploy — never on the dev
+self-deploy above. To roll the stage back without a rebuild, re-activate a recorded
 build instead: `zerops_deploy targetService="{stage-hostname}"
 appVersion="<id>"`, with candidate ids from the status envelope's
 `rollback` block or `zerops_events serviceHostname="{stage-hostname}"`.

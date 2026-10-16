@@ -289,11 +289,38 @@ func expandServicesListDirectives(body string, services []ServiceSnapshot) (stri
 // `{stage-hostname}` is the stage, `{stage-setup}` the zerops.yml setup it
 // is built with — the recorded one, else the recipe convention "prod".
 // A service with no stage collapses the directive to "".
+//
+// `{one-stage:TEMPLATE}` keeps TEMPLATE for a pair with at most one stage and
+// `{many-stages:TEMPLATE}` for a pair with several (a multi-part pair), so an
+// atom renders the commands that fit the pair's shape. `{stage-targets}` is
+// the zerops_deploy_batch targets array cross-deploying svc to every stage.
 func expandEachStage(template string, svc ServiceSnapshot) (string, error) {
 	stages := svc.Stages
 	if len(stages) == 0 && svc.StageHostname != "" {
 		stages = []topology.StageRef{{Hostname: svc.StageHostname, SetupName: svc.StageSetupName}}
 	}
+	keepIf := func(keep bool) func(string) (string, error) {
+		return func(inner string) (string, error) {
+			if keep {
+				return inner, nil
+			}
+			return "", nil
+		}
+	}
+	template, err := expandDirective(template, "{one-stage:", keepIf(len(stages) <= 1))
+	if err != nil {
+		return "", err
+	}
+	template, err = expandDirective(template, "{many-stages:", keepIf(len(stages) > 1))
+	if err != nil {
+		return "", err
+	}
+	targets := make([]string, 0, len(stages))
+	for _, stage := range stages {
+		targets = append(targets, fmt.Sprintf(`{"sourceService":%q,"targetService":%q,"setup":%q}`,
+			svc.Hostname, stage.Hostname, setupOrDefault(stage.SetupName, RecipeSetupProd)))
+	}
+	template = strings.ReplaceAll(template, "{stage-targets}", "["+strings.Join(targets, ",")+"]")
 	return expandDirective(template, "{each-stage:", func(inner string) (string, error) {
 		rendered := make([]string, 0, len(stages))
 		for _, stage := range stages {

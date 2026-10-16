@@ -19,11 +19,11 @@ references-atoms: [develop-strategy-review, develop-auto-close-semantics]
 After each successful `zerops_deploy` + `zerops_verify` on the dev half, cross-deploy the dev tree into the paired stage so the stage's public artifact reflects current code:
 
 ```
-{services-list:{each-stage:zerops_deploy sourceService="{hostname}" targetService="{stage-hostname}" setup="{stage-setup}"
-zerops_verify serviceHostname="{stage-hostname}"}}
+{services-list:{one-stage:{each-stage:zerops_deploy sourceService="{hostname}" targetService="{stage-hostname}" setup="{stage-setup}"}}{many-stages:zerops_deploy_batch targets={stage-targets}}
+{each-stage:zerops_verify serviceHostname="{stage-hostname}"}}
 ```
 
-Cross-deploy builds the dev source on stage (dev side unchanged); stage runs its own `run.start`. Independent of close-mode — close-mode picks the per-mode iteration cadence on the dev side, not whether the stage half stays current. Standard-pair auto-close requires both halves to carry a successful deploy + passing verify and `closeDeployMode = auto` (`manual` keeps the session open); while `unset`, the session stays open until you pick a close-mode.
+Cross-deploy builds the dev source on stage (dev side unchanged); stage runs its own `run.start`.{services-list:{many-stages: `{hostname}` feeds several stages: one `zerops_deploy_batch` builds them in parallel.}} Independent of close-mode — close-mode picks the per-mode iteration cadence on the dev side, not whether the stage half stays current. Standard-pair auto-close requires both halves to carry a successful deploy + passing verify and `closeDeployMode = auto` (`manual` keeps the session open); while `unset`, the session stays open until you pick a close-mode.
 
 Commit the dev half over SSH before cross-deploying — not the mount —
 so the stage receives a commit: the response then carries `sha` with
@@ -31,7 +31,7 @@ so the stage receives a commit: the response then carries `sha` with
 still succeeds, but the response marks `dirty: true` and that stage
 build isn't reproducible from git alone. To ship an exact or older
 commit without touching the dev working tree, add `sha="<commit>"` to
-the cross-deploy — never on a self-deploy. To roll the stage back
+a `zerops_deploy` cross-deploy — never on a self-deploy. To roll the stage back
 without a rebuild, re-activate a recorded build instead: `zerops_deploy
 targetService="{stage-hostname}" appVersion="<id>"`, with candidate ids
 from the status envelope's `rollback` block or `zerops_events

@@ -20,11 +20,11 @@ shared data. After each dev runtime verifies, cross-deploy it to its paired
 stage:
 
 ```
-{services-list:{each-stage:zerops_deploy sourceService="{hostname}" targetService="{stage-hostname}" setup="{stage-setup}"
-zerops_verify serviceHostname="{stage-hostname}"}}
+{services-list:{one-stage:{each-stage:zerops_deploy sourceService="{hostname}" targetService="{stage-hostname}" setup="{stage-setup}"}}{many-stages:zerops_deploy_batch targets={stage-targets}}
+{each-stage:zerops_verify serviceHostname="{stage-hostname}"}}
 ```
 
-Cross-deploy builds the dev source on stage; dev side unchanged.
+Cross-deploy builds the dev source on stage; dev side unchanged.{services-list:{many-stages: `{hostname}` feeds several stages: one `zerops_deploy_batch` builds them in parallel.}}
 Auto-close fires once both halves carry a successful deploy +
 passing verify.
 
@@ -34,7 +34,7 @@ so the stage receives a commit: the response then carries `sha` with
 still succeeds, but the response marks `dirty: true` and that stage
 build isn't reproducible from git alone. To ship an exact or older
 commit without touching the dev working tree, add `sha="<commit>"` to
-the cross-deploy — never on a self-deploy. To roll the stage back
+a `zerops_deploy` cross-deploy — never on a self-deploy. To roll the stage back
 without a rebuild, re-activate a recorded build instead: `zerops_deploy
 targetService="{stage-hostname}" appVersion="<id>"`, with candidate ids
 from the status envelope's `rollback` block or `zerops_events

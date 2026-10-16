@@ -20,10 +20,11 @@ import (
 // serialization penalty that causes "Not connected" errors when an agent
 // calls zerops_deploy three times in parallel from the client side.
 //
-// Use for every 3-deploy cluster in a recipe run: initial dev, snapshot-dev,
-// stage cross-deploy, close redeploys. Single-target redeploys (e.g. a
-// worker redeploy after a fix) still use zerops_deploy directly — batch is
-// only worth the overhead at two-plus targets.
+// Use whenever two or more deploys go together — every stage of a pair
+// (stages fed from one dev service build in parallel), several dev services,
+// close redeploys. Single-target redeploys (e.g. a worker redeploy after a
+// fix) still use zerops_deploy directly — batch is only worth the overhead at
+// two-plus targets.
 type DeployBatchInput struct {
 	Targets []ops.DeployBatchTarget `json:"targets" jsonschema:"required,Array of deploy targets. Each target is one sourceService+targetService+setup combination. Minimum 1; recommend 2-3 for parallelism gains. Values beyond 5 may hit build-queue limits and fall back to serial scheduling on the platform side."`
 }
@@ -51,7 +52,7 @@ func RegisterDeployBatch(
 ) {
 	desc := "Deploy multiple services in parallel — single MCP call kicks off N builds server-side. " +
 		"Closes the MCP STDIO serialization penalty (calling zerops_deploy multiple times in parallel returns 'Not connected'). " +
-		"Use for every 3-deploy cluster: initial dev, snapshot-dev, cross-stage, close redeploy. " +
+		"Use whenever two or more deploys go together: every stage of a pair in one call (stages fed from one dev service build in parallel), several dev services, a close redeploy. " +
 		"Per-target failures do NOT cancel siblings — each target runs to completion independently. " +
 		"Response aggregates per-target results so you can apply targeted fixes without rolling back the cluster."
 

@@ -10,9 +10,10 @@ import (
 
 // TestSynthesize_PromoteStage_NamesTheRepoOwnSetup: the next deploy step names
 // the repo's own setup. Every promote-to-stage command a develop session is
-// handed cross-deploys each stage of the pair with that stage's setup — one
-// command per part of a multi-part pair, the dev half's own commands once —
-// and a stage whose setup is not recorded keeps `setup="prod"`.
+// handed cross-deploys each stage of the pair with that stage's setup — every
+// part of a multi-part pair in one zerops_deploy_batch, so the stages build in
+// parallel, the dev half's own commands once — and a stage whose setup is not
+// recorded keeps `setup="prod"`.
 func TestSynthesize_PromoteStage_NamesTheRepoOwnSetup(t *testing.T) {
 	t.Parallel()
 	corpus, err := LoadAtomCorpus()
@@ -55,10 +56,10 @@ func TestSynthesize_PromoteStage_NamesTheRepoOwnSetup(t *testing.T) {
 			name:   "two parts",
 			stages: webAPI,
 			want: []string{
-				`zerops_deploy sourceService="appdev" targetService="webstage" setup="web"` + "\n" + `zerops_verify serviceHostname="webstage"`,
-				`zerops_deploy sourceService="appdev" targetService="apistage" setup="api"` + "\n" + `zerops_verify serviceHostname="apistage"`,
+				`zerops_deploy_batch targets=[{"sourceService":"appdev","targetService":"webstage","setup":"web"},{"sourceService":"appdev","targetService":"apistage","setup":"api"}]` + "\n" +
+					`zerops_verify serviceHostname="webstage"` + "\n" + `zerops_verify serviceHostname="apistage"`,
 			},
-			absent: []string{`setup="prod"`},
+			absent: []string{`setup="prod"`, `"setup":"prod"`, `zerops_deploy sourceService=`},
 		},
 		{
 			name:   "one stage without a recorded setup",
@@ -105,6 +106,61 @@ func TestSynthesize_PromoteStage_NamesTheRepoOwnSetup(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestSynthesize_CloseModeAuto_MultiPartPairChecksItsDeclaredServers: on a
+// pair with several parts the close step's one unnamed start overwrote the
+// declared web server. The deploy starts every declared server, so a
+// multi-part pair's close step checks them with action=status and never
+// renders an unnamed start; a one-stage pair keeps its start.
+func TestSynthesize_CloseModeAuto_MultiPartPairChecksItsDeclaredServers(t *testing.T) {
+	t.Parallel()
+	corpus, err := LoadAtomCorpus()
+	if err != nil {
+		t.Fatalf("LoadAtomCorpus: %v", err)
+	}
+	snapshots := func(stages ...topology.StageRef) []ServiceSnapshot {
+		dev := ServiceSnapshot{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard,
+			SetupName: "dev", StageHostname: stages[0].Hostname, StageSetupName: stages[0].SetupName,
+			CloseDeployMode: topology.CloseModeAuto, GitPushState: topology.GitPushUnconfigured, Bootstrapped: true, Deployed: true}
+		if len(stages) > 1 {
+			dev.Stages = stages
+		}
+		out := make([]ServiceSnapshot, 0, 1+len(stages))
+		out = append(out, dev)
+		for _, s := range stages {
+			out = append(out, ServiceSnapshot{Hostname: s.Hostname, TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStage,
+				SetupName: s.SetupName, CloseDeployMode: topology.CloseModeAuto, GitPushState: topology.GitPushUnconfigured, Bootstrapped: true})
+		}
+		return out
+	}
+	closeStep := func(t *testing.T, services []ServiceSnapshot) string {
+		t.Helper()
+		out, err := Synthesize(StateEnvelope{Phase: PhaseDevelopActive, Environment: EnvContainer, Services: services}, corpus)
+		if err != nil {
+			t.Fatalf("Synthesize: %v", err)
+		}
+		for _, m := range out {
+			if m.AtomID == "develop-close-mode-auto-standard" {
+				return m.Body
+			}
+		}
+		t.Fatal("develop-close-mode-auto-standard did not render")
+		return ""
+	}
+
+	multi := closeStep(t, snapshots(topology.StageRef{Hostname: "webstage", SetupName: "web"}, topology.StageRef{Hostname: "apistage", SetupName: "api"}))
+	if !strings.Contains(multi, `zerops_dev_server action=status hostname="appdev"`) {
+		t.Errorf("multi-part close step misses the status check:\n%s", multi)
+	}
+	if strings.Contains(multi, "zerops_dev_server action=start hostname=") {
+		t.Errorf("multi-part close step still renders an unnamed start:\n%s", multi)
+	}
+
+	single := closeStep(t, snapshots(topology.StageRef{Hostname: "appstage"}))
+	if !strings.Contains(single, `zerops_dev_server action=start hostname="appdev" command=`) {
+		t.Errorf("one-stage close step lost its start:\n%s", single)
 	}
 }
 

@@ -506,7 +506,7 @@ so the stage receives a commit: the response then carries `sha` with
 still succeeds, but the response marks `dirty: true` and that stage
 build isn't reproducible from git alone. To ship an exact or older
 commit without touching the dev working tree, add `sha="<commit>"` to
-the cross-deploy — never on a self-deploy. To roll the stage back
+a `zerops_deploy` cross-deploy — never on a self-deploy. To roll the stage back
 without a rebuild, re-activate a recorded build instead: `zerops_deploy
 targetService="appstage" appVersion="<id>"`, with candidate ids
 from the status envelope's `rollback` block or `zerops_events
