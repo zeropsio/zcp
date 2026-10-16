@@ -6,7 +6,18 @@
 package ops
 
 import (
+	"context"
+	"fmt"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/devsup"
 	"github.com/zeropsio/zcp/internal/ops/devservertest"
@@ -94,5 +105,108 @@ func TestDevServers_AnotherDevServicesServers_AreNotThisDevServicesServers(t *te
 	}
 	if webdev.DevPorts() != nil {
 		t.Errorf("DevPorts = %+v, want none: webdev runs one server, verify keeps its one check", webdev.DevPorts())
+	}
+}
+
+// localCurl is a dev container whose HTTP probes really run: every command
+// that curls runs in a local sh against a local server, everything else is
+// answered by the fake container. Its PATH puts a date first that answers
+// GNU's +%s%N on every OS, as the container's coreutils do.
+type localCurl struct {
+	*devservertest.Container
+	bin string
+}
+
+func newLocalCurl(t *testing.T, c *devservertest.Container) *localCurl {
+	t.Helper()
+	if _, err := exec.LookPath("curl"); err != nil {
+		t.Skip("curl is not installed")
+	}
+	bin := t.TempDir()
+	date := "#!/bin/sh\nif [ \"$1\" = '+%s%N' ]; then echo \"$(/bin/date +%s)000000000\"; else exec /bin/date \"$@\"; fi\n"
+	if err := os.WriteFile(filepath.Join(bin, "date"), []byte(date), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return &localCurl{Container: c, bin: bin}
+}
+
+func (l *localCurl) ExecSSH(ctx context.Context, hostname, command string) ([]byte, error) {
+	if !strings.Contains(command, "curl ") || strings.Contains(command, "zcp-devsup") {
+		return l.Container.ExecSSH(ctx, hostname, command)
+	}
+	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	cmd.Env = append(os.Environ(), "PATH="+l.bin+":"+os.Getenv("PATH"))
+	out, err := cmd.Output()
+	if err != nil {
+		return out, fmt.Errorf("probe: %w", err)
+	}
+	return out, nil
+}
+
+// slowServer answers every request with 200 after delay; its port.
+func slowServer(t *testing.T, delay time.Duration) int {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-time.After(delay):
+			w.WriteHeader(http.StatusOK)
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(srv.Close)
+	_, port, _ := net.SplitHostPort(strings.TrimPrefix(srv.URL, "http://"))
+	n, _ := strconv.Atoi(port)
+	return n
+}
+
+func declaredOn(port int) string {
+	return fmt.Sprintf(`{"version":1,"servers":[{"name":"apidev","port":%d,"command":"npm run dev","cwd":"."}]}`, port)
+}
+
+func TestDevServer_AFirstResponseSlowerThanTwoSeconds_PassesTheStartProbe(t *testing.T) {
+	t.Parallel()
+	port := slowServer(t, 3*time.Second)
+	ssh := newLocalCurl(t, devservertest.NewSupervised(declaredOn(port)))
+
+	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
+		DevServerParams{Action: "restart", Hostname: "apidev", WaitSeconds: 6})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.HealthOK || result.HealthStatus != 200 || result.Reason != "" {
+		t.Errorf("a server answering in 3 s within a 6 s wait: healthOK=%v status=%d reason=%q, want a passing probe", result.HealthOK, result.HealthStatus, result.Reason)
+	}
+}
+
+func TestDevServer_AListenerThatAnswersSlowerThanTheWait_IsReportedSlowNotConnectionRefused(t *testing.T) {
+	t.Parallel()
+	port := slowServer(t, 10*time.Second)
+	ssh := newLocalCurl(t, devservertest.NewSupervised(declaredOn(port)))
+
+	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
+		DevServerParams{Action: "restart", Hostname: "apidev", WaitSeconds: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Reason != reasonHealthProbeSlow {
+		t.Errorf("reason = %q, want %q for a listener that accepts and has not answered yet", result.Reason, reasonHealthProbeSlow)
+	}
+	if !strings.Contains(result.Message, "accepts connections") || strings.Contains(result.Message, "refused") {
+		t.Errorf("message = %q, want it to say the port accepts connections", result.Message)
+	}
+}
+
+func TestDevServer_StatusOfAServerSlowerThanItsProbe_SaysSlowNotConnectionRefused(t *testing.T) {
+	t.Parallel()
+	port := slowServer(t, 10*time.Second)
+	ssh := newLocalCurl(t, devservertest.NewSupervised(declaredOn(port)))
+
+	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
+		DevServerParams{Action: "status", Hostname: "apidev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Reason != reasonSlow || !strings.Contains(result.Message, "accepts connections") {
+		t.Errorf("reason/message = %q/%q, want %q and a port that accepts connections", result.Reason, result.Message, reasonSlow)
 	}
 }

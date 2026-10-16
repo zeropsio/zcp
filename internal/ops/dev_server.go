@@ -72,11 +72,15 @@ type DevServerResult struct {
 	//   stopped                   — the server is stopped (status)
 	//   no_supervisor             — the dev setup does not run zcp-devsup
 	//   health_probe_timeout      — probe context deadline exceeded
+	//   health_probe_slow         — the port accepts connections, no HTTP
+	//                               answer within the wait
 	//   health_probe_no_output    — probe returned nothing (malformed)
 	//   health_probe_connection_refused  — curl got no response
 	//   health_probe_http_<code>  — server returned non-ready status
 	//   health_probe_unknown: <…> — unclassified; includes raw probe line
 	//   connection_refused        — status-action: no HTTP response
+	//   slow                      — status-action: accepts, no HTTP answer
+	//                               within 2s
 	//   http_<code>               — status-action: a code other than 2xx/3xx
 	Reason string `json:"reason,omitempty"`
 	// Name is the dev server's name in the declaration — set only when it
@@ -137,6 +141,14 @@ const (
 // got no ready answer within the wait — the process may still be starting (a
 // dev server compiling on its first request), unlike a refused connection.
 const ReasonHealthProbeTimeout = "health_probe_timeout"
+
+// reasonHealthProbeSlow (start/restart) and reasonSlow (status): the port
+// accepts connections but no HTTP answer came within the wait — a dev server
+// still compiling its first response, not a refused connection.
+const (
+	reasonHealthProbeSlow = "health_probe_slow"
+	reasonSlow            = "slow"
+)
 
 const (
 	// defaultDevServerWait is how long the start probe waits for a
@@ -721,10 +733,17 @@ func statusDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds
 	}
 	healthPath := probedPath(p, ds, name)
 	result.Port, result.HealthPath = port, healthPath
+	// curl's exit follows the code: 28 is a listener that accepted and did
+	// not answer within --max-time.
 	out, _ := ssh.ExecSSH(ctx, p.Hostname, fmt.Sprintf(
-		"curl -s -o /dev/null -w '%%{http_code}' --max-time 2 http://localhost:%d%s", port, healthPath))
-	code := strings.TrimSpace(string(out))
-	if code == "" || code == "000" {
+		"curl -s -o /dev/null -w '%%{http_code}' --max-time 2 http://localhost:%d%s; echo \" $?\"", port, healthPath))
+	code, exit, _ := strings.Cut(strings.TrimSpace(string(out)), " ")
+	switch {
+	case (code == "" || code == "000") && exit == "28":
+		result.Reason = reasonSlow
+		result.Message = fmt.Sprintf("Dev server %s is %s and accepts connections on :%d, but sent no HTTP answer on %s within 2s — likely still compiling its first response; check again shortly.", label, server.Status, port, healthPath)
+		return result, nil
+	case code == "" || code == "000":
 		result.Reason = "connection_refused"
 		result.Message = fmt.Sprintf("Dev server %s is %s but nothing answers HTTP on :%d yet.", label, server.Status, port)
 		return result, nil
@@ -799,18 +818,23 @@ func sleepCtx(ctx context.Context, d time.Duration) {
 }
 
 // runHealthProbe polls the health endpoint server-side in a single SSH
-// call. Returns probe output, locally-measured elapsed, a deadline-hit
-// flag, and the ssh error (convention: error last).
+// call. Each attempt may take the rest of the wait, so a first response
+// slower than one poll still passes; an attempt that runs out of it on an
+// open connection (curl exit 28) answers SLOW. Returns probe output,
+// locally-measured elapsed, a deadline-hit flag, and the ssh error
+// (convention: error last).
 func runHealthProbe(parent context.Context, ssh SSHDeployer, hostname string, port int, healthPath string, wait int) ([]byte, int64, bool, error) {
 	maxAttempts := (wait*1000)/pollIntervalMillis + 1
 	probe := fmt.Sprintf(
-		`set +e; start_ns=$(date +%%s%%N); for i in $(seq 1 %d); do `+
-			`code=$(curl -s -o /dev/null -w '%%{http_code}' --max-time 2 http://localhost:%d%s 2>/dev/null); `+
+		`set +e; start_ns=$(date +%%s%%N); end=$(( $(date +%%s) + %d )); code=000; for i in $(seq 1 %d); do `+
+			`left=$(( end - $(date +%%s) )); [ "$left" -gt 0 ] || break; `+
+			`code=$(curl -s -o /dev/null -w '%%{http_code}' --max-time "$left" http://localhost:%d%s 2>/dev/null); rc=$?; `+
 			`if [ -n "$code" ] && [ "$code" -ge 200 ] 2>/dev/null && [ "$code" -lt 400 ] 2>/dev/null; then `+
 			`end_ns=$(date +%%s%%N); echo "OK $code $(( (end_ns - start_ns) / 1000000 ))"; exit 0; fi; `+
+			`if [ "$rc" -eq 28 ]; then echo "SLOW $code"; exit 1; fi; `+
 			`sleep %s; done; `+
 			`echo "FAIL $code"; exit 1`,
-		maxAttempts, port, healthPath, pollIntervalAsShellDuration(),
+		wait, maxAttempts, port, healthPath, pollIntervalAsShellDuration(),
 	)
 
 	probeCtx, cancel := context.WithTimeout(parent, time.Duration(wait)*time.Second+probeTimeoutSlack)
@@ -851,6 +875,12 @@ func applyProbeFailure(result *DevServerResult, probeLine string, deadlineHit bo
 		result.Reason = ReasonHealthProbeTimeout
 	case probeLine == "":
 		result.Reason = "health_probe_no_output"
+	case strings.HasPrefix(probeLine, "SLOW"):
+		result.Reason = reasonHealthProbeSlow
+		result.Message = fmt.Sprintf(
+			"Dev server %s accepts connections on :%d but sent no HTTP answer on %s within %ds (probed from inside the container); the supervisor reports it %s. It is likely still compiling its first response — check again with action=status, or start it with a longer waitSeconds.",
+			serverLabel(result.Hostname, name), result.Port, healthPath, wait, status)
+		return
 	case strings.HasPrefix(probeLine, "FAIL "):
 		fields := strings.Fields(probeLine)
 		if len(fields) >= 2 && fields[1] != "" && fields[1] != "000" {
