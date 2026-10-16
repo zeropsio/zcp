@@ -4,6 +4,7 @@ package ops
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -460,5 +461,73 @@ func TestClassifyDeployFailure_BuildBaseline_NamesBuildLogTail(t *testing.T) {
 	}
 	if !strings.Contains(cls.SuggestedAction, "buildLogTail") || !strings.Contains(cls.SuggestedAction, "buildLogs") {
 		t.Errorf("baseline SuggestedAction must name both `buildLogs` (deploy response) and `buildLogTail` (event), got %q", cls.SuggestedAction)
+	}
+}
+
+// A build the platform stopped for memory restarts its builder in the same
+// container, and the second run's output (here a failed source unpack) then
+// fills the tail: the platform's alert must survive in the event, and the
+// stack.build process's own error — absent from the activity search — must be
+// read by its ID (shape verified 2026-10-16 on a BUILD_FAILED Next.js build).
+func TestAFailedBuildsEventsShowThePlatformsOutOfMemoryAlertAndTheBuildProcessError(t *testing.T) {
+	t.Parallel()
+
+	const (
+		granted  = "granted 8.00GB, max: 8.00GB, minFree: 1.00GB"
+		oom      = "OOM Alert: Process 'next-build (v16' terminated - memory limit exceeded. Consider increasing the memory limits (min or minFree) in the service configuration."
+		procErr  = "appVersionBuildFailed: deploy: failed to download application artifact: symlink ../../.agents/skills/x /build/source/.claude/skills/x: file exists"
+		buildSvc = "build-svc-1"
+	)
+	entries := make([]platform.LogEntry, 0, 63)
+	entries = append(entries,
+		platform.LogEntry{Timestamp: "2026-10-16T03:53:17Z", Facility: "local0", Severity: "Informational", Tag: "zbuilder@av-fail", Message: "Creating an optimized production build ..."},
+		platform.LogEntry{Timestamp: "2026-10-16T03:59:55.737Z", Facility: "local0", Severity: "Error", Message: granted},
+		platform.LogEntry{Timestamp: "2026-10-16T03:59:55.737Z", Facility: "local0", Severity: "Error", Message: oom},
+	)
+	for i := range 60 {
+		entries = append(entries, platform.LogEntry{
+			Timestamp: fmt.Sprintf("2026-10-16T04:00:%02dZ", i), Facility: "local0", Severity: "Informational",
+			Tag: "zbuilder@av-fail", Message: fmt.Sprintf("zbuilder usage line %d", i),
+		})
+	}
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "web"}}).
+		WithLogAccess(&platform.LogAccess{URL: "https://log.example.com/logs"}).
+		WithProcessEvents([]platform.ProcessEvent{{
+			ID: "proc-build", ActionName: "stack.build", Status: statusFailed, Created: "2026-10-16T03:51:30Z",
+			ServiceStacks: []platform.ServiceStackRef{{ID: "svc-1", Name: "web"}},
+		}}).
+		WithProcess(&platform.Process{ID: "proc-build", ActionName: "stack.build", Status: statusFailed, FailReason: strPtr(procErr)}).
+		WithAppVersionEvents([]platform.AppVersionEvent{{
+			ID: "av-fail", ServiceStackID: "svc-1", Status: platform.BuildStatusBuildFailed, Created: "2026-10-16T03:51:33Z",
+			Build: &platform.BuildInfo{PipelineStart: strPtr("2026-10-16T03:51:33.711Z"), ServiceStackID: strPtr(buildSvc)},
+		}})
+
+	result, err := Events(context.Background(), mock, platform.NewMockLogFetcher().WithEntries(entries), "proj-1", "web", 50)
+	if err != nil {
+		t.Fatalf("Events: %v", err)
+	}
+	var build, proc *TimelineEvent
+	for i := range result.Events {
+		switch result.Events[i].Type {
+		case eventTypeBuild:
+			build = &result.Events[i]
+		case eventTypeProcess:
+			proc = &result.Events[i]
+		}
+	}
+	if build == nil || proc == nil {
+		t.Fatalf("timeline lacks the build or its process: %+v", result.Events)
+	}
+	for _, line := range []string{granted, oom} {
+		if !slices.Contains(build.BuildLogTail, line) {
+			t.Errorf("build event's buildLogTail lacks the platform's line %q:\n%q", line, build.BuildLogTail)
+		}
+	}
+	if !strings.Contains(build.FailureCause, "OOM Alert: Process 'next-build (v16' terminated") {
+		t.Errorf("failureCause = %q, want it to quote the platform's out-of-memory alert", build.FailureCause)
+	}
+	if proc.FailReason != procErr {
+		t.Errorf("stack.build process failReason = %q, want the process's own error %q", proc.FailReason, procErr)
 	}
 }

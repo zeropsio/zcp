@@ -10,7 +10,7 @@ import (
 
 // TestBuildLogsContract_UsesTagIdentityAndApplicationFacility pins the
 // invariants I-LOG-2 (tag identity) and I-LOG-3 (application facility) for
-// the FetchBuildWarnings and FetchBuildLogs functions.
+// the FetchBuildWarnings and fetchBuildLog (FetchBuildLogs, FetchBuildLogTail) functions.
 //
 // Regression scenario this test catches:
 //  1. Someone deletes the Tags line from FetchBuildWarnings to "simplify".
@@ -44,7 +44,7 @@ func TestBuildLogsContract_UsesTagIdentityAndApplicationFacility(t *testing.T) {
 
 	requireContract := map[string]bool{
 		"FetchBuildWarnings": false,
-		"FetchBuildLogs":     false,
+		"fetchBuildLog":      false,
 	}
 
 	ast.Inspect(file, func(n ast.Node) bool {

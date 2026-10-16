@@ -36,16 +36,59 @@ func FetchBuildLogs(
 	event *platform.AppVersionEvent,
 	limit int,
 ) []string {
-	if event == nil || event.Build == nil {
+	entries, _ := fetchBuildLog(ctx, client, fetcher, projectID, event, limit)
+	if entries == nil {
 		return nil
+	}
+	return messagesOf(entries)
+}
+
+// FetchBuildLogTail returns the build log FetchBuildLogs returns and its last
+// n lines, with the build container's alerts kept even when they come earlier:
+// a builder the platform stopped for memory starts again in the same container,
+// and that second run's output fills the tail after the alert that says why.
+func FetchBuildLogTail(
+	ctx context.Context,
+	client platform.Client,
+	fetcher platform.LogFetcher,
+	projectID string,
+	event *platform.AppVersionEvent,
+	limit int,
+	n int,
+) (logs, tail []string) {
+	entries, tag := fetchBuildLog(ctx, client, fetcher, projectID, event, limit)
+	if entries == nil {
+		return nil, nil
+	}
+	start := max(0, len(entries)-n)
+	for i, e := range entries {
+		if i >= start || e.Tag != tag {
+			tail = append(tail, e.Message)
+		}
+	}
+	return messagesOf(entries), tail
+}
+
+// fetchBuildLog is FetchBuildLogs' entries in time order, with the build's tag:
+// an entry without it is one of the build container's alerts.
+func fetchBuildLog(
+	ctx context.Context,
+	client platform.Client,
+	fetcher platform.LogFetcher,
+	projectID string,
+	event *platform.AppVersionEvent,
+	limit int,
+) ([]platform.LogEntry, string) {
+	if event == nil || event.Build == nil {
+		return nil, ""
 	}
 	tag := buildTagForEvent(event)
 	if tag == "" {
-		return nil
+		return nil, ""
 	}
 	logAccess, err := client.GetProjectLog(ctx, projectID)
 	if err != nil {
-		return nil
+		return nil, ""
 	}
 	entries, err := fetcher.FetchLogs(ctx, logAccess, platform.LogFetchParams{
 		Facility: "application",
@@ -53,11 +96,11 @@ func FetchBuildLogs(
 		Limit:    limit,
 	})
 	if err != nil {
-		return nil
+		return nil, ""
 	}
 	entries = append(entries, fetchBuildContainerAlerts(ctx, fetcher, logAccess, event, tag, limit)...)
 	sortByTime(entries)
-	return messagesOf(entries)
+	return entries, tag
 }
 
 // fetchBuildContainerAlerts fetches the error lines the platform logs on the

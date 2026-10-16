@@ -287,8 +287,8 @@ func Events(
 		// need metadata) or when status isn't a failure.
 		if fetcher != nil {
 			if phase := FailurePhaseFromStatus(av.Status); phase != "" {
-				logs := FetchBuildLogs(ctx, client, fetcher, projectID, &av, 200)
-				te.BuildLogTail = tailLines(logs, buildLogTailLines)
+				logs, tail := FetchBuildLogTail(ctx, client, fetcher, projectID, &av, 200, buildLogTailLines)
+				te.BuildLogTail = tail
 				if cls := ClassifyDeployFailure(FailureInput{
 					Phase:     phase,
 					Status:    av.Status,
@@ -328,6 +328,7 @@ func Events(
 	if len(events) > limit {
 		events = events[:limit]
 	}
+	readProcessErrors(ctx, client, events)
 
 	// Compute counts from filtered+trimmed events.
 	processCount := 0
@@ -351,6 +352,25 @@ func Events(
 		},
 		AppVersions: appVersionCandidates,
 	}, nil
+}
+
+// readProcessErrors fills a failed process's FailReason from its by-ID read
+// where the activity search gave none: the search's process carries only
+// publicMeta.failReason, never the process's `error`, so a failed stack.build
+// reached the timeline with no reason at all (verified 2026-10-16 on a
+// BUILD_FAILED Next.js build). Best-effort: a failed read leaves it empty.
+func readProcessErrors(ctx context.Context, client platform.Client, events []TimelineEvent) {
+	for i := range events {
+		e := &events[i]
+		if e.Type != eventTypeProcess || e.Status != statusFailed || e.FailReason != "" || e.ProcessID == "" {
+			continue
+		}
+		proc, err := client.GetProcess(ctx, e.ProcessID)
+		if err != nil || proc.FailReason == nil {
+			continue
+		}
+		e.FailReason = *proc.FailReason
+	}
 }
 
 // resolveAppVersionCandidates is Events' per-service `appVersions`
@@ -461,11 +481,3 @@ func formatDuration(d time.Duration) string {
 // buildLogTailLines bounds TimelineEvent.BuildLogTail: enough to show the
 // failing command and its error, small enough not to swamp the timeline.
 const buildLogTailLines = 40
-
-// tailLines returns the last n entries of lines (all of them when shorter).
-func tailLines(lines []string, n int) []string {
-	if len(lines) <= n {
-		return lines
-	}
-	return lines[len(lines)-n:]
-}
