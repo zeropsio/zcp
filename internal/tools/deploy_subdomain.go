@@ -89,18 +89,15 @@ func ensurePublicAccess(
 				persistPublicAccess(stateDir, hostname, rec2)
 			}
 			result.SubdomainAccessEnabled = true
-			// Pick the HTTP-serving port's URL by scheme — multi-port
-			// services (e.g. mailpit: SMTP 1025 + HTTP UI 8025) must not
-			// report a non-HTTP port as the URL. svc here is the
-			// pre-enable snapshot (SubdomainAccess still false), so
-			// ResolveSubdomainURL is a no-op belt-and-suspenders read;
-			// the real value comes from subRes (built fresh inside
-			// ops.Subdomain via GetService).
-			httpURL := ops.ResolveSubdomainURL(ctx, client, projectID, svc)
-			if httpURL == "" && len(subRes.SubdomainUrls) > 0 {
-				httpURL = subRes.SubdomainUrls[0]
+			// The URL is the HTTP port's own address — a multi-port
+			// service (mailpit: SMTP 1025 + HTTP UI 8025) serves each port
+			// at its own one. Ports are read by ID: svc comes from a
+			// search, which can lag the deploy that declared them.
+			if fresh, getErr := client.GetService(ctx, svc.ID); getErr == nil {
+				if port, ok := ops.PreferredHTTPPort(fresh.Ports); ok {
+					result.SubdomainURL = ops.SubdomainURLForPort(ctx, client, projectID, fresh, port.Port)
+				}
 			}
-			result.SubdomainURL = httpURL
 			for _, w := range subRes.Warnings {
 				result.Warnings = append(result.Warnings, "subdomain: "+w)
 			}

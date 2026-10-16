@@ -552,18 +552,14 @@ func truncateBody(b []byte, limit int) string {
 // 2-port service reports scheme "http" on the httpSupport port and "tcp" on the
 // other BEFORE subdomain enable — so no network probe is needed to pick it.
 func ResolveSubdomainURL(ctx context.Context, client platform.Client, projectID string, svc *platform.ServiceStack) string {
-	if !svc.SubdomainAccess || len(svc.Ports) == 0 {
-		return ""
-	}
-	proj, err := client.GetProject(ctx, projectID)
-	if err != nil || proj.SubdomainHost == "" {
+	if !svc.SubdomainAccess {
 		return ""
 	}
 	port, ok := PreferredHTTPPort(svc.Ports)
 	if !ok {
 		return ""
 	}
-	return subdomainURLForPort(ctx, client, proj.SubdomainHost, svc, port.Port, nil)
+	return SubdomainURLForPort(ctx, client, projectID, svc, port.Port)
 }
 
 // aggregateStatus computes overall status from checks.

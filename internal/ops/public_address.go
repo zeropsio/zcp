@@ -9,6 +9,18 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
+// SubdomainURLForPort is the subdomain address of one port of svc: Zerops
+// gives every HTTP port its own address, so a caller names the port it
+// reports. "" when the project has no subdomain host or the address is not
+// known yet.
+func SubdomainURLForPort(ctx context.Context, client platform.Client, projectID string, svc *platform.ServiceStack, port int) string {
+	proj, err := client.GetProject(ctx, projectID)
+	if err != nil || proj.SubdomainHost == "" {
+		return ""
+	}
+	return subdomainURLForPort(ctx, client, proj.SubdomainHost, svc, port, nil)
+}
+
 // subdomainURLForPort is the public-address projection for a selected port.
 // Full project hosts can be built without reading envs. Bare hosts and env-only
 // discovery use the same platform URL-list projection. A missing cached key

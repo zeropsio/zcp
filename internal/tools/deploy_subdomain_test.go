@@ -243,6 +243,33 @@ func TestEnsurePublicAccess_AutoFirstDeploy_EnablesAndStamps(t *testing.T) {
 	}
 }
 
+// TestEnsurePublicAccess_FirstEnable_MultiPort_ReportsTheHTTPPortURL: a
+// service whose first port is not HTTP (mailpit: SMTP 1025, web UI 8025)
+// reports the subdomain URL of its HTTP port after the first enable — every
+// port has its own address, and the first one is not served over HTTP.
+func TestEnsurePublicAccess_FirstEnable_MultiPort_ReportsTheHTTPPortURL(t *testing.T) {
+	restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 50*time.Millisecond)
+	defer restore()
+
+	dir := t.TempDir()
+	writeMeta(t, dir, topology.PlanModeSimple)
+
+	mock := autoEnableTestMock(t, false)
+	svc := platform.ServiceStack{
+		ID: autoEnableTestServiceID, Name: autoEnableTestHostname, ProjectID: "proj-1",
+		Ports:                []platform.Port{{Port: 1025, Protocol: "tcp", Scheme: "tcp"}, {Port: 8025, Protocol: "tcp", Scheme: "http"}},
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeCategoryName: "USER"},
+	}
+	mock.WithServices([]platform.ServiceStack{svc}).WithService(&svc)
+	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
+
+	ensurePublicAccess(context.Background(), mock, okHTTP, "proj-1", dir, "app", result)
+
+	if want := "https://app-abc1-8025.prg1.zerops.app"; result.SubdomainURL != want {
+		t.Errorf("SubdomainURL = %q, want %q (the HTTP port's address)", result.SubdomainURL, want)
+	}
+}
+
 // writeMetaWithPublicAccess is writeMeta plus a pre-recorded public-access
 // record for autoEnableTestHostname — used by PA-2/PA-3 tests that need a
 // prior stamp or intent already on disk.
