@@ -21,7 +21,8 @@ const (
 	// browserTmpDir holds Chrome's profile; the service removes it on stop.
 	browserTmpDir = "/tmp/zcp-browser"
 	// browserMarkerPath says whether a call is in the browser ("busy") or
-	// the last one ended cleanly ("idle"); its mtime is the last call's end.
+	// the last one ended cleanly ("idle", with the service's CPU time then);
+	// its mtime is the last call's end.
 	// It lives in the RuntimeDirectory, so it dies with the service.
 	browserMarkerPath = browserRuntimeDir + "/zcp-call"
 	browserMarkerIdle = "idle"
@@ -100,6 +101,10 @@ type warmBrowser struct {
 	Age     time.Duration
 	Marker  string
 	IdleFor time.Duration
+	// CPU is the service's CPU time so far, -1 when unknown; IdleCPU is the
+	// part of it used since the last call ended, -1 when unknown.
+	CPU     time.Duration
+	IdleCPU time.Duration
 }
 
 // reusable reports whether a call with the given budget may run on the
@@ -108,7 +113,32 @@ type warmBrowser struct {
 func (w warmBrowser) reusable(budget time.Duration) bool {
 	return w.Active && w.Marker == browserMarkerIdle &&
 		w.IdleFor < browserIdleTimeout-browserBoundMargin &&
-		w.Age+budget < browserMaxAge
+		w.Age+budget < browserMaxAge && w.quietWhileIdle()
+}
+
+// quietWhileIdle reports whether the browser used at most a tenth of a CPU
+// while no call was in it. One that used more still runs a page: a popup
+// agent-browser never tracked, or a hung renderer Chrome kept after its tab
+// closed. A gap under a second is too short to judge.
+func (w warmBrowser) quietWhileIdle() bool {
+	return w.IdleCPU < 0 || w.IdleFor < time.Second || w.IdleCPU <= w.IdleFor/10
+}
+
+// browserIdleMarker is the marker a clean call leaves: idle, with the
+// service's CPU time when the call ended.
+func browserIdleMarker(cpu time.Duration) string {
+	return browserMarkerIdle + " " + strconv.FormatInt(cpu.Nanoseconds(), 10)
+}
+
+// parseBrowserMarker reads a marker back: its state and the CPU time it
+// carries, -1 when it carries none.
+func parseBrowserMarker(raw string) (string, time.Duration) {
+	state, cpu, _ := strings.Cut(strings.TrimSpace(raw), " ")
+	nsec, err := strconv.ParseInt(cpu, 10, 64)
+	if err != nil {
+		return state, -1
+	}
+	return state, time.Duration(nsec)
 }
 
 // browserSetupSteps ready the browser for one call: clear the logs earlier

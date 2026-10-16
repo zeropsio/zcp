@@ -174,7 +174,7 @@ func TestRunBrowserSteps_OversizedAnswerIsCut(t *testing.T) {
 // warm browser instead of starting a fresh one.
 func TestWarmBrowser_ReusableOnlyInsideItsBounds(t *testing.T) {
 	budget := 2 * time.Minute
-	idle := warmBrowser{Active: true, Age: 10 * time.Minute, Marker: browserMarkerIdle, IdleFor: time.Minute}
+	idle := warmBrowser{Active: true, Age: 10 * time.Minute, Marker: browserMarkerIdle, IdleFor: time.Minute, IdleCPU: time.Second}
 	tests := []struct {
 		name string
 		w    func(warmBrowser) warmBrowser
@@ -186,6 +186,12 @@ func TestWarmBrowser_ReusableOnlyInsideItsBounds(t *testing.T) {
 		{"started by nobody known", func(w warmBrowser) warmBrowser { w.Marker = ""; return w }, false},
 		{"about to hit its idle exit", func(w warmBrowser) warmBrowser { w.IdleFor = browserIdleTimeout - 10*time.Second; return w }, false},
 		{"the call could outlive its max age", func(w warmBrowser) warmBrowser { w.Age = browserMaxAge - budget + time.Second; return w }, false},
+		{"a page kept running while no call was in it", func(w warmBrowser) warmBrowser { w.IdleCPU = 30 * time.Second; return w }, false},
+		{"a gap too short to judge its CPU", func(w warmBrowser) warmBrowser {
+			w.IdleFor, w.IdleCPU = 500*time.Millisecond, 400*time.Millisecond
+			return w
+		}, true},
+		{"its CPU use is unknown", func(w warmBrowser) warmBrowser { w.IdleCPU = -1; return w }, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -193,6 +199,24 @@ func TestWarmBrowser_ReusableOnlyInsideItsBounds(t *testing.T) {
 				t.Errorf("reusable = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestBrowserMarker_CarriesTheCPUUsedWhenTheCallEnded pins the marker a
+// clean call leaves: idle with the service's CPU time at that moment, so the
+// next call can tell how much the browser used while no call was in it.
+func TestBrowserMarker_CarriesTheCPUUsedWhenTheCallEnded(t *testing.T) {
+	state, cpu := parseBrowserMarker(browserIdleMarker(1500 * time.Millisecond))
+	if state != browserMarkerIdle || cpu != 1500*time.Millisecond {
+		t.Errorf("idle marker read back as %q %v", state, cpu)
+	}
+	for _, raw := range []string{"busy\n", "idle\n", "idle x\n", ""} {
+		if _, cpu := parseBrowserMarker(raw); cpu != -1 {
+			t.Errorf("marker %q must carry no CPU, got %v", raw, cpu)
+		}
+	}
+	if state, _ := parseBrowserMarker("busy\n"); state != browserMarkerBusy {
+		t.Errorf("busy marker read back as %q", state)
 	}
 }
 
