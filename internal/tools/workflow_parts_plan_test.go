@@ -95,7 +95,7 @@ func TestBootstrapPlan_RepoSetups_RefusesOnlyAStageMatchingNoPart(t *testing.T) 
 	t.Parallel()
 	environments := "@@yaml\nzerops:\n  - setup: dev\n  - setup: stage\n  - setup: prod\n@@declaration\n@@markers\n@@packages\n"
 	recipe := "@@yaml\nzerops:\n  - setup: appdev\n  - setup: appstage\n@@declaration\n@@markers\n@@packages\n"
-	webAPI := "@@yaml\nzerops:\n  - setup: base\n  - setup: dev\n    extends: base\n  - setup: web\n    extends: base\n  - setup: api\n    extends: base\n@@declaration\n@@markers\n@@packages\n"
+	webAPI := "@@yaml\nzerops:\n  - setup: base\n  - setup: dev\n    extends: base\n  - setup: web\n    extends: base\n  - setup: api\n    extends: base\n@@declaration\n@@markers\npnpm-workspace.yaml\n@@packages\napps/web/package.json\napps/api/package.json\n"
 	webAPIOverAdmin := strings.ReplaceAll(webAPI, "base", "admin")
 	pair := func(dev string, r workflow.RuntimeTarget) []workflow.BootstrapTarget {
 		r.DevHostname, r.Type, r.IsExisting, r.BootstrapMode = dev, "ubuntu/nodejs@22", true, topology.PlanModeStandard
@@ -114,6 +114,8 @@ func TestBootstrapPlan_RepoSetups_RefusesOnlyAStageMatchingNoPart(t *testing.T) 
 			plan: pair("appdev", workflow.RuntimeTarget{ExplicitStage: "appprod", StageSetupName: "prod"})},
 		{name: "a single app with dev, stage and prod setups is accepted with one stage naming one of them, stage", dev: "appdev", repo: environments,
 			plan: pair("appdev", workflow.RuntimeTarget{ExplicitStage: "appstage", StageSetupName: "stage"})},
+		{name: "a single app with dev, stage and prod setups is accepted with one stage naming no setup", dev: "appdev", repo: environments,
+			plan: pair("appdev", workflow.RuntimeTarget{ExplicitStage: "appstage"})},
 		{name: "a recipe pair whose stage names its setup is accepted", dev: "nodedev", repo: recipe,
 			plan: pair("nodedev", workflow.RuntimeTarget{ExplicitStage: "nodestage", StageSetupName: "appstage"})},
 		{name: "a recipe pair whose stage names its setup is accepted, with the dev's setup known", dev: "nodedev", repo: recipe,
@@ -200,6 +202,53 @@ func TestBootstrapPlan_AddingAPartToAMultiPartRepo_KeepsItsStage(t *testing.T) {
 			want := `[{\"hostname\":\"webstage\",\"setupName\":\"web\"},{\"hostname\":\"apistage\",\"setupName\":\"api\"},{\"hostname\":\"workerstage\",\"setupName\":\"worker\"}]`
 			if !strings.Contains(proposed, want) {
 				t.Errorf("the plan made from the repo is not %s:\n%s", want, text)
+			}
+		})
+	}
+}
+
+// TestBootstrapPlan_RefusedPlan_ImportsEveryProposedStageNotLive: a plan
+// pairing an existing dev service is attached to existing services only, so a
+// plan refused for its parts names the import of every proposed stage that is
+// not live before the plan is re-submitted, on the classic and the adopt
+// route; a refusal whose proposed stages are all live names no import.
+func TestBootstrapPlan_RefusedPlan_ImportsEveryProposedStageNotLive(t *testing.T) {
+	t.Parallel()
+	webAPI := "@@yaml\nzerops:\n  - setup: base\n  - setup: dev\n    extends: base\n  - setup: web\n    extends: base\n  - setup: api\n    extends: base\n@@declaration\n@@markers\npnpm-workspace.yaml\n@@packages\n"
+	plan := []workflow.BootstrapTarget{{Runtime: workflow.RuntimeTarget{
+		DevHostname: "appdev", Type: "ubuntu/nodejs@22", IsExisting: true,
+		BootstrapMode: topology.PlanModeStandard, ExplicitStage: "appstage",
+	}}}
+	container := runtime.Info{InContainer: true}
+
+	tests := []struct {
+		name       string
+		route      workflow.BootstrapRoute
+		live       []string
+		wantImport []string
+	}{
+		{name: "classic, neither proposed stage is live", route: workflow.BootstrapRouteClassic, live: []string{"appstage"}, wantImport: []string{"webstage", "apistage"}},
+		{name: "adopt, neither proposed stage is live", route: workflow.BootstrapRouteAdopt, live: []string{"appstage"}, wantImport: []string{"webstage", "apistage"}},
+		{name: "classic, only the api stage is not live", route: workflow.BootstrapRouteClassic, live: []string{"appstage", "webstage"}, wantImport: []string{"apistage"}},
+		{name: "classic, every proposed stage is live", route: workflow.BootstrapRouteClassic, live: []string{"webstage", "apistage"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			text, _ := submitPlanOverRepo(t, tt.route, "appdev", webAPI, plan, container, tt.live...)
+			if !strings.Contains(text, "declares the parts") {
+				t.Fatalf("the plan is not refused for its parts:\n%s", text)
+			}
+			suggestion, _, _ := strings.Cut(text, "plan=")
+			imports := strings.Contains(suggestion, "zerops_import")
+			if imports != (len(tt.wantImport) > 0) {
+				t.Fatalf("the refusal names an import = %v, want %v:\n%s", imports, len(tt.wantImport) > 0, text)
+			}
+			named, _, _ := strings.Cut(suggestion, "e-submit the plan")
+			for _, host := range []string{"webstage", "apistage"} {
+				if want := slices.Contains(tt.wantImport, host); strings.Contains(named, `\"`+host+`\"`) != want {
+					t.Errorf("the import names %s = %v, want %v:\n%s", host, !want, want, text)
+				}
 			}
 		})
 	}

@@ -18,17 +18,20 @@ import (
 // pairs with stages, before the plan is accepted: when its zerops.yml
 // declares several parts (ops.ReadPartsSignal, with the dev's setup when the
 // plan knows it), every stage is built with one part's setup
-// (docs/spec-mate.md §2.8a.4). A plan with a stage that matches no part —
-// one naming no setup or a setup the file declares that is no part of the
-// repo (the dev setup, a base only extended) — is refused with the plan made
-// from the repo, so a multi-part pair's stages come from the repo, never from
-// a guess made before it was read. A stage whose setup the file does not
-// declare yet is a part the agent adds (its setup is written in develop) and
-// is kept. A part without a stage is not refused: a repo's further setups may
-// be environments, not parts. nil outside a container, for a single-part repo, and when the repo
-// cannot be read. adopt adds that the adopt route attaches only existing
-// services.
-func repoPartsPlanError(ctx context.Context, plan []workflow.BootstrapTarget, ssh ops.SSHDeployer, rt runtime.Info, adopt bool) *platform.PlatformError {
+// (docs/spec-mate.md §2.8a.4). A plan with a stage that matches no part — one
+// naming a setup the file declares that is no part of the repo (the dev
+// setup, a base only extended), or one naming no setup over a repo that is a
+// monorepo (a workspace marker or several packages) — is refused with the
+// plan made from the repo, so a multi-part pair's stages come from the repo,
+// never from a guess made before it was read. Without monorepo evidence the
+// further setups may be environments (dev/stage/prod), so a stage naming no
+// setup is accepted. A stage whose setup the file does not declare yet is a
+// part the agent adds (its setup is written in develop) and is kept. A part
+// without a stage is not refused. The pair attaches existing services only,
+// so the refusal names the import of each proposed stage that is not live.
+// nil outside a container, for a single-part repo, and when the repo cannot
+// be read.
+func repoPartsPlanError(ctx context.Context, client platform.Client, projectID string, plan []workflow.BootstrapTarget, ssh ops.SSHDeployer, rt runtime.Info) *platform.PlatformError {
 	if !rt.InContainer || ssh == nil {
 		return nil
 	}
@@ -43,7 +46,8 @@ func repoPartsPlanError(ctx context.Context, plan []workflow.BootstrapTarget, ss
 		if err != nil || len(sig.YAMLParts) < 2 {
 			continue
 		}
-		stages, reason := stagesForParts(r.StageRefs(), sig.YAMLParts, sig.YAMLSetups)
+		monorepo := sig.Workspace || sig.Packages >= 2
+		stages, reason := stagesForParts(r.StageRefs(), sig.YAMLParts, sig.YAMLSetups, monorepo)
 		if reason == "" {
 			continue
 		}
@@ -60,8 +64,9 @@ func repoPartsPlanError(ctx context.Context, plan []workflow.BootstrapTarget, ss
 		planText = "plan=" + string(planJSON)
 	}
 	suggestion := "Re-submit the plan with one stage per part: " + planText
-	if adopt {
-		suggestion = "The adopt route attaches only existing services: import each stage that does not exist yet (zerops_import, startWithoutCode: true), then re-submit the plan with one stage per part: " + planText
+	if missing := stagesNotLive(ctx, client, projectID, fixed); len(missing) > 0 {
+		suggestion = "A pair with isExisting attaches only existing services: import each stage the project does not hold yet (" + quoteAll(missing) +
+			"; zerops_import, startWithoutCode: true), then re-submit the plan with one stage per part: " + planText
 	}
 	pe := platform.NewPlatformError(platform.ErrInvalidParameter,
 		"Plan validation failed: "+strings.Join(reasons, "; "), suggestion)
@@ -69,18 +74,43 @@ func repoPartsPlanError(ctx context.Context, plan []workflow.BootstrapTarget, ss
 	return pe
 }
 
+// stagesNotLive names the stages of plan's existing pairs that the project
+// does not hold, read lag-free; every stage when the services cannot be read.
+func stagesNotLive(ctx context.Context, client platform.Client, projectID string, plan []workflow.BootstrapTarget) []string {
+	live := map[string]bool{}
+	if client != nil {
+		if services, err := client.ListServicesDirect(ctx, projectID); err == nil {
+			for _, svc := range services {
+				live[svc.Name] = true
+			}
+		}
+	}
+	var missing []string
+	for _, target := range plan {
+		if !target.Runtime.IsExisting {
+			continue
+		}
+		for _, host := range target.Runtime.StageHostnames() {
+			if !live[host] {
+				missing = append(missing, host)
+			}
+		}
+	}
+	return missing
+}
+
 // stagesForParts is the pair's stages made from the repo's parts: a stage the
 // plan already gives a part keeps its hostname, a part without one gets
-// <part>stage, and a stage whose setup no entry of setups declares follows
-// as planned. reason names the planned stages that match no part — no setup,
-// or a declared setup that is no part — "" when there is none.
-func stagesForParts(planned []topology.StageRef, parts, setups []string) ([]topology.StageRef, string) {
+// <part>stage, and a stage whose setup no entry of setups declares (or that
+// names none outside a monorepo) follows as planned. reason names the planned stages that match no part — a declared
+// setup that is no part, or no setup when monorepo — "" when there is none.
+func stagesForParts(planned []topology.StageRef, parts, setups []string, monorepo bool) ([]topology.StageRef, string) {
 	bySetup := map[string]string{}
 	var added []topology.StageRef
 	var unnamed, unknown []string
 	for _, s := range planned {
 		switch {
-		case s.SetupName == "":
+		case s.SetupName == "" && monorepo:
 			unnamed = append(unnamed, s.Hostname)
 		case slices.Contains(parts, s.SetupName):
 			bySetup[s.SetupName] = s.Hostname

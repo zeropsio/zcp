@@ -1094,15 +1094,19 @@ Stages []StageRef `json:"stages,omitempty"`
 - Plan, before it is accepted: a classic or adopt plan that pairs an existing dev service with
   stages has that service's repo read first (with the dev's setup when the plan names it). When its
   root `zerops.yml` declares more than one part, the plan is refused only for a stage that matches no
-  part — one naming no setup or a setup the file declares that is no part of the repo (the dev
-  setup, a base only extended) — with the plan made from the repo: a stage the plan already gave a
-  part keeps its hostname, the others are proposed as `<part>stage` for the agent to submit. A stage
-  whose setup the file does not declare yet is a part the agent adds (develop writes its setup); it
-  is accepted and kept in the proposed plan. A part without a stage is accepted, so an app whose
-  further setups are environments (`dev`/`stage`/`prod`) or a recipe pair keeps its one stage
+  part — one naming a setup the file declares that is no part of the repo (the dev setup, a base
+  only extended), or one naming no setup when the repo is a monorepo (a workspace marker or two or
+  more packages) — with the plan made from the repo: a stage the plan already gave a part keeps its
+  hostname, the others are proposed as `<part>stage` for the agent to submit. Such a pair attaches
+  existing services only, so the refusal names the import of every proposed stage the project does
+  not hold yet. A stage whose setup the file does not declare yet is a part the agent adds (develop
+  writes its setup); it is accepted and kept in the proposed plan. A part without a stage is
+  accepted, and without monorepo evidence a stage naming no setup is too, so an app whose further
+  setups are environments (`dev`/`stage`/`prod`) or a recipe pair keeps its one stage
   (`TestBootstrapPlan_MountedRepoParts_ReadBeforeThePlanIsAccepted`,
   `TestBootstrapPlan_RepoSetups_RefusesOnlyAStageMatchingNoPart`,
-  `TestBootstrapPlan_AddingAPartToAMultiPartRepo_KeepsItsStage`). The meta of a pair planned
+  `TestBootstrapPlan_AddingAPartToAMultiPartRepo_KeepsItsStage`,
+  `TestBootstrapPlan_RefusedPlan_ImportsEveryProposedStageNotLive`). The meta of a pair planned
   with several stages records each stage's setup from the plan; a one-stage pair's setup is resolved
   at its first deploy (`TestBootstrapComplete_MultiPartPair_RecordsEachStagesSetup`).
 - Migration on load: no `stages` and a `stageHostname` → `Stages = [{stageHostname, stageSetupName}]`;
