@@ -94,8 +94,8 @@ func serviceMaxRAMKB(ctx context.Context, client platform.Client, projectID, hos
 	if err != nil {
 		return 0
 	}
-	if scaling := scalingFromStack(detail); scaling != nil {
-		return int64(scaling.MaxRAM * gbKB)
+	if a := effectiveAutoscaling(detail); a != nil {
+		return int64(a.MaxRAM * gbKB)
 	}
 	return 0
 }
