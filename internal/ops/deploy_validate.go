@@ -83,7 +83,7 @@ func validateZeropsYmlDoc(doc *ZeropsYmlDoc, targetHostname, serviceType string,
 
 	implicitWS := hasImplicitWebServer(entry.Run.Base, entry.Build.BaseStrings()) || IsImplicitWebServerType(serviceType)
 	if !implicitWS {
-		if entry.Run.Start == "" {
+		if entry.Run.Start == "" && entry.Run.StartCommands == nil {
 			warnings = append(warnings, "run.start is empty — app will not start after deploy")
 		}
 
@@ -476,6 +476,7 @@ func (b zeropsYmlBuild) deployFilesList() []string {
 type zeropsYmlRun struct {
 	Base            string            `yaml:"base"`
 	Start           string            `yaml:"start"`
+	StartCommands   any               `yaml:"startCommands"` // the multi-process alternative to start
 	Ports           []zeropsYmlPort   `yaml:"ports"`
 	HealthCheck     any               `yaml:"healthCheck"`
 	DeployFiles     any               `yaml:"deployFiles"`     // catch misplaced field (belongs under build:)

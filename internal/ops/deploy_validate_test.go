@@ -36,6 +36,36 @@ func TestValidateZeropsYmlContent_SameFindingsAsPathBased(t *testing.T) {
 	}
 }
 
+// A setup that starts its processes with run.startCommands starts the app
+// after deploy, so it gets no "run.start is empty" warning.
+func TestValidateZeropsYmlContent_ASetupWithStartCommandsIsNotWarnedThatRunStartIsEmpty(t *testing.T) {
+	t.Parallel()
+
+	content := []byte(`zerops:
+  - setup: api
+    build:
+      deployFiles: ./
+    run:
+      base: python@3.12
+      ports:
+        - port: 5001
+      startCommands:
+        - command: uv run python -m app
+          name: api
+        - command: uv run celery worker
+          name: worker
+`)
+	warnings, err := ValidateZeropsYmlContent(content, "zerops.yaml", "api", "python@3.12", DeployClassCross)
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	for _, w := range warnings {
+		if strings.Contains(w, "run.start is empty") {
+			t.Errorf("warnings = %q, want no run.start warning for a startCommands setup", warnings)
+		}
+	}
+}
+
 // TestValidateZeropsYmlContent_DM2SelfDeployViolation_ReturnsError proves
 // the content-based core still enforces DM-2 (self-deploy deployFiles
 // contract) — the hard-error channel is not a path-based-only behavior.
