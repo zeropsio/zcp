@@ -4,6 +4,7 @@ package ops
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1681,5 +1682,101 @@ func TestValidateZeropsYmlContent_ZeropsYmlRepo_NamesZeropsYml(t *testing.T) {
 		if len(w) != 1 || !strings.Contains(w[0], "zerops.yml") || strings.Contains(w[0], "zerops.yaml") {
 			t.Errorf("warnings = %q, want one naming zerops.yml only", w)
 		}
+	}
+}
+
+// A deploy of setups written as `extends: base` warned "build.deployFiles is
+// empty" though base held them: the platform resolves extends before it
+// builds, so the warnings read the setup as the platform resolves it —
+// recursive key by key, lists replaced whole, a null key removed, chains and
+// lists of parents in order.
+func TestValidateZeropsYml_ASetupThatExtendsABaseIsCheckedAsThePlatformResolvesIt(t *testing.T) {
+	t.Parallel()
+	const yml = `zerops:
+  - setup: base
+    build:
+      base: python@3.12
+      buildCommands: [uv sync]
+      deployFiles: ./
+    run:
+      base: python@3.12
+      start: uv run app
+      ports:
+        - port: 8000
+      envVariables:
+        LOG_LEVEL: info
+  - setup: logging
+    run:
+      envVariables:
+        LOG_STYLE: json
+  - setup: apidev
+    extends: base
+    run:
+      start: zcp-devsup run
+  - setup: apistage
+    extends: [base, logging]
+    build:
+      deployFiles: [dist]
+  - setup: workerstage
+    extends: apistage
+    run:
+      ports: null
+`
+	tests := []struct {
+		setup string
+		class DeployClass
+		want  []string
+	}{
+		{setup: "apidev", class: DeployClassSelf, want: nil},
+		{setup: "apistage", class: DeployClassCross, want: nil},
+		{setup: "workerstage", class: DeployClassCross, want: []string{"run.ports is empty — no ports exposed, HTTP checks will fail"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.setup, func(t *testing.T) {
+			t.Parallel()
+			warnings, err := ValidateZeropsYmlContent([]byte(yml), "zerops.yaml", tt.setup, "python@3.12", tt.class)
+			if err != nil {
+				t.Fatalf("err = %v", err)
+			}
+			if !slices.Equal(warnings, tt.want) {
+				t.Fatalf("warnings = %q, want %q", warnings, tt.want)
+			}
+		})
+	}
+
+	doc, err := ParseZeropsYmlContent([]byte(yml), "zerops.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage := doc.FindEntry("apistage")
+	if got := stage.DeployFilesList(); !slices.Equal(got, []string{"dist"}) {
+		t.Errorf("apistage deployFiles = %q, want its own list replacing base's", got)
+	}
+	if stage.Run.Start != "uv run app" || stage.Run.EnvVariables["LOG_LEVEL"] != "info" || stage.Run.EnvVariables["LOG_STYLE"] != "json" {
+		t.Errorf("apistage run = %+v, want base's start and both parents' env merged", stage.Run)
+	}
+	if dev := doc.FindEntry("apidev"); dev.Run.Start != "zcp-devsup run" || len(dev.Run.Ports) != 1 {
+		t.Errorf("apidev run = %+v, want its own start over base's ports", dev.Run)
+	}
+}
+
+// extends that loops back on itself still parses, as far as it resolves: the
+// platform's own validation names the cycle.
+func TestParseZeropsYml_AnExtendsCycleResolvesWhatItCanAndEnds(t *testing.T) {
+	t.Parallel()
+	const yml = `zerops:
+  - setup: a
+    extends: [b, a]
+    run: {start: a}
+  - setup: b
+    extends: a
+    build: {deployFiles: ./}
+`
+	doc, err := ParseZeropsYmlContent([]byte(yml), "zerops.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := doc.FindEntry("a"); a.Run.Start != "a" || !slices.Equal(a.DeployFilesList(), []string{"./"}) {
+		t.Errorf("a = %+v, want its own start and b's deployFiles", *a)
 	}
 }

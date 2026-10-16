@@ -264,10 +264,13 @@ func (e *InvalidZeropsYmlError) Unwrap() error { return e.Err }
 
 // ZeropsYmlEntry represents a single setup entry in zerops.yaml.
 type ZeropsYmlEntry struct {
-	Setup  string          `yaml:"setup"`
-	Build  zeropsYmlBuild  `yaml:"build"`
-	Deploy zeropsYmlDeploy `yaml:"deploy"`
-	Run    zeropsYmlRun    `yaml:"run"`
+	Setup string `yaml:"setup"`
+	// Extends names the setups this one extends; a parsed document holds it
+	// resolved (ParseZeropsYmlContent), so it is nil there.
+	Extends any             `yaml:"extends"`
+	Build   zeropsYmlBuild  `yaml:"build"`
+	Deploy  zeropsYmlDeploy `yaml:"deploy"`
+	Run     zeropsYmlRun    `yaml:"run"`
 }
 
 // HasPorts returns true when the setup declares an HTTP-serving runtime.
@@ -401,7 +404,8 @@ func ParseZeropsYml(workingDir string) (*ZeropsYmlDoc, error) {
 // error message so a malformed YAML hauled in over SSH still names the right
 // file. Used by the git-push pre-flight (deploy-decomp P4): yaml content is
 // fetched from the container via SSH cat, parsed here, then env-var refs are
-// validated against live API state.
+// validated against live API state. Each setup is read as the platform
+// resolves it: `extends` merged in (resolveExtends).
 func ParseZeropsYmlContent(data []byte, source string) (*ZeropsYmlDoc, error) {
 	file := source
 	if file == "" {
@@ -410,6 +414,11 @@ func ParseZeropsYmlContent(data []byte, source string) (*ZeropsYmlDoc, error) {
 	doc := ZeropsYmlDoc{File: source}
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return nil, &InvalidZeropsYmlError{File: file, Err: err}
+	}
+	if doc.extends() {
+		if err := decodeResolved(data, &doc); err != nil {
+			return nil, &InvalidZeropsYmlError{File: file, Err: err}
+		}
 	}
 	return &doc, nil
 }
@@ -427,6 +436,16 @@ func ReadZeropsYmlRaw(workingDir string) ([]byte, error) {
 		}
 	}
 	return data, nil
+}
+
+// extends reports whether a setup extends another.
+func (d *ZeropsYmlDoc) extends() bool {
+	for _, e := range d.Zerops {
+		if e.Extends != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // FindEntry returns the entry matching hostname, or nil if not found.
