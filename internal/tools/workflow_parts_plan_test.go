@@ -211,7 +211,9 @@ func TestBootstrapPlan_AddingAPartToAMultiPartRepo_KeepsItsStage(t *testing.T) {
 // pairing an existing dev service is attached to existing services only, so a
 // plan refused for its parts names the import of every proposed stage that is
 // not live before the plan is re-submitted, on the classic and the adopt
-// route; a refusal whose proposed stages are all live names no import.
+// route, imported as every stage is — without startWithoutCode, waiting for
+// its first deploy; a refusal whose proposed stages are all live names no
+// import.
 func TestBootstrapPlan_RefusedPlan_ImportsEveryProposedStageNotLive(t *testing.T) {
 	t.Parallel()
 	webAPI := "@@yaml\nzerops:\n  - setup: base\n  - setup: dev\n    extends: base\n  - setup: web\n    extends: base\n  - setup: api\n    extends: base\n@@declaration\n@@markers\npnpm-workspace.yaml\n@@packages\n"
@@ -243,6 +245,9 @@ func TestBootstrapPlan_RefusedPlan_ImportsEveryProposedStageNotLive(t *testing.T
 			imports := strings.Contains(suggestion, "zerops_import")
 			if imports != (len(tt.wantImport) > 0) {
 				t.Fatalf("the refusal names an import = %v, want %v:\n%s", imports, len(tt.wantImport) > 0, text)
+			}
+			if strings.Contains(suggestion, "startWithoutCode: true") {
+				t.Errorf("the import starts a stage without code; a stage waits for its first deploy:\n%s", text)
 			}
 			named, _, _ := strings.Cut(suggestion, "e-submit the plan")
 			for _, host := range []string{"webstage", "apistage"} {

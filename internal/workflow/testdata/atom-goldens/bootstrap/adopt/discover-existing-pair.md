@@ -64,8 +64,9 @@ If the task also asks for another piece (a worker, an api) built from the
 repo of the pair you adopt, it is a second part of that app, never a second
 runtime of the plan:
 
-1. Import the part's stage service (`zerops_import`, `startWithoutCode: true`)
-   under its own hostname, such as `workerstage`.
+1. Import the part's stage service (`zerops_import`) under its own
+   hostname, such as `workerstage`, without `startWithoutCode`: like every
+   stage it waits at READY_TO_DEPLOY for its first deploy.
 2. Plan the pair as the one runtime it is: its dev hostname with
    `isExisting: true` and `stages` listing every stage with its setup, the
    new one included (`{"hostname": "workerstage", "setupName": "worker"}`).

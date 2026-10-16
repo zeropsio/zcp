@@ -66,7 +66,7 @@ func repoPartsPlanError(ctx context.Context, client platform.Client, projectID s
 	suggestion := "Re-submit the plan with one stage per part: " + planText
 	if missing := stagesNotLive(ctx, client, projectID, fixed); len(missing) > 0 {
 		suggestion = "A pair with isExisting attaches only existing services: import each stage the project does not hold yet (" + quoteAll(missing) +
-			"; zerops_import, startWithoutCode: true), then re-submit the plan with one stage per part: " + planText
+			"; zerops_import, without startWithoutCode: a stage waits at READY_TO_DEPLOY for its first deploy), then re-submit the plan with one stage per part: " + planText
 	}
 	pe := platform.NewPlatformError(platform.ErrInvalidParameter,
 		"Plan validation failed: "+strings.Join(reasons, "; "), suggestion)
