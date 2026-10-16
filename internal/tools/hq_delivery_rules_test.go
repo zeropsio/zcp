@@ -151,7 +151,7 @@ func TestLaunchProduction_AMateWithoutItsEnrollmentSaysSo(t *testing.T) {
 // application's production is a project the person adds from the projects
 // page, so a Mate delivering through HQ refuses launch-production outright,
 // and its next step says what is TRUE of its own pairs — a change still open
-// by number, the projects page once the work is on main, or to deliver first
+// by number, Put it live once the work is on main, or to deliver first
 // — read fresh, so a change merged since the last pass is never named as
 // open.
 func TestLaunchProduction_AMateDeliveringThroughHQRefusesAndSaysWhatIsTrue(t *testing.T) {
@@ -177,7 +177,7 @@ func TestLaunchProduction_AMateDeliveringThroughHQRefusesAndSaysWhatIsTrue(t *te
 			}
 		}, want: []string{"#1", "appdev", "merge"}},
 		{name: "a change merged since the last pass is not named as open", settle: func(lab *hqLab) { lab.hq.merge() },
-			want: []string{"projects page"}, wantNone: []string{"#1", "merge ", "stage half first"}},
+			want: []string{"Put it live"}, wantNone: []string{"#1", "merge ", "stage half first"}},
 		{name: "a change closed without merging means deliver first", settle: func(lab *hqLab) { lab.hq.close(1) },
 			want: []string{"stage half first"}, wantNone: []string{"#1", "Tell the person: production is added and released"}},
 	}
@@ -274,7 +274,7 @@ func TestProductionKnowsMergedWorkAfterTheMergeIsAbsorbed(t *testing.T) {
 		t.Fatalf("want an absorbed landing and nothing new to propose, got %+v", d)
 	}
 	text := hqLaunchProductionNextStep(t.Context(), lab.hq.srv.Client(), lab.stateDir)
-	if !strings.Contains(text, "projects page") || strings.Contains(text, "stage half first") || strings.Contains(text, "merge ") {
+	if !strings.Contains(text, "Put it live") || strings.Contains(text, "stage half first") || strings.Contains(text, "merge ") {
 		t.Fatalf("the guidance forgot the work HQ has merged: %s", text)
 	}
 }
@@ -303,6 +303,17 @@ func TestHQHandoffNote_NamesWhatMateOffersUnderTheMessage(t *testing.T) {
 	for _, never := range []string{"projects page", "stage"} {
 		if strings.Contains(hqHandoffNote, never) {
 			t.Errorf("handoff note still says %q: %q", never, hqHandoffNote)
+		}
+	}
+}
+
+// Once production runs a release, the closing message names production's
+// address as the app and the Mate's own as the person's preview.
+func TestHQHandoffNote_NamesProductionOnceItRunsARelease(t *testing.T) {
+	t.Parallel()
+	for _, want := range []string{"while the application has no production", "production runs a release", "that address is the app", "preview"} {
+		if !strings.Contains(hqHandoffNote, want) {
+			t.Errorf("handoff note lacks %q: %q", want, hqHandoffNote)
 		}
 	}
 }

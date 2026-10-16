@@ -61,7 +61,7 @@ func hqPairPlanError(plan []workflow.BootstrapTarget, mate bool) *platform.Platf
 // imports its OWN production project on a user-owned remote
 // (workflow_launch_production.go) — it has no case for an application's
 // production, which can be a Zerops project or a Git repository branch
-// the person adds from the projects page. mate is
+// the person adds with Put it live in Mate. mate is
 // runtime.Info.MateEnabled. nil outside a Mate, so the classic route is
 // untouched.
 func hqLaunchProductionRefusal(ctx context.Context, httpClient ops.HTTPDoer, stateDir string, mate bool) *mcp.CallToolResult {
@@ -70,7 +70,7 @@ func hqLaunchProductionRefusal(ctx context.Context, httpClient ops.HTTPDoer, sta
 	}
 	return launchFailedResponse(nil, topology.BlockerCategoryOther, "wired_mate_production_is_the_groups",
 		"This Mate delivers through its HQ, where an application's production can be a Zerops project or a Git repository branch the person adds "+
-			"from the projects page — launch-production creates its own production project outside the "+
+			"with Put it live in Mate — launch-production creates its own production project outside the "+
 			"application and has no case for that. "+hqLaunchProductionNextStep(ctx, httpClient, stateDir))
 }
 
@@ -84,7 +84,7 @@ func hqLaunchProductionRefusal(ctx context.Context, httpClient ops.HTTPDoer, sta
 //   - a change still open after the fresh read → name it, tell the person to
 //     merge it;
 //   - a merge in HQ, even after its local landing was absorbed → the code
-//     is on main; point to the projects page;
+//     is on main; point to Put it live;
 //   - no change at all, or one closed without merging → nothing of this
 //     pair's work has reached main; deliver through the stage half first.
 //
@@ -92,7 +92,7 @@ func hqLaunchProductionRefusal(ctx context.Context, httpClient ops.HTTPDoer, sta
 // read — knows none of the three, and says so.
 func hqLaunchProductionNextStep(ctx context.Context, httpClient ops.HTTPDoer, stateDir string) string {
 	if problem := hqEnrollmentProblem(); problem != "" {
-		return fmt.Sprintf("Whether this Mate's work reached main is HQ's to say, and %s. Ask again once it is enrolled; production is added and released from Mate's projects page.", problem)
+		return fmt.Sprintf("Whether this Mate's work reached main is HQ's to say, and %s. Ask again once it is enrolled; production is added with Put it live and released with Release, both offered in this conversation and on the project's card in Mate.", problem)
 	}
 	var open []string
 	merged := false
@@ -107,7 +107,7 @@ func hqLaunchProductionNextStep(ctx context.Context, httpClient ops.HTTPDoer, st
 			}
 			state, err := self()
 			if err != nil {
-				return fmt.Sprintf("This Mate could not read its changes from HQ (%v), so whether its work reached main is unknown. Ask again once HQ can be reached; production is added and released from Mate's projects page.", err)
+				return fmt.Sprintf("This Mate could not read its changes from HQ (%v), so whether its work reached main is unknown. Ask again once HQ can be reached; production is added with Put it live and released with Release, both offered in this conversation and on the project's card in Mate.", err)
 			}
 			if state.AppID == nil || *state.AppID != m.HQ.AppID {
 				continue
@@ -127,12 +127,12 @@ func hqLaunchProductionNextStep(ctx context.Context, httpClient ops.HTTPDoer, st
 	}
 	if len(open) > 0 {
 		return "Tell the person to merge " + strings.Join(open, " and ") +
-			" first — once it lands, production is added and released from the project on Mate's projects page."
+			" first — once it lands, production is added with Put it live and released with Release, both offered in this conversation and on the project's card in Mate."
 	}
 	if merged {
-		return "Tell the person: production is added and released from the project on Mate's projects page."
+		return "Tell the person: production is added with Put it live and released with Release, both offered in this conversation and on the project's card in Mate."
 	}
-	return "Tell the person: none of this Mate's work has reached its repository's main yet — deliver it by deploying the pair's stage half first, then production is added and released from the project on Mate's projects page."
+	return "Tell the person: none of this Mate's work has reached its repository's main yet — deliver it by deploying the pair's stage half first, then production is added with Put it live and released with Release, both offered in this conversation and on the project's card in Mate."
 }
 
 // stageNameFor suggests the stage half's hostname: appdev → appstage,
@@ -466,5 +466,6 @@ func hqMergeAnyMoment(base string) string {
 // hqHandoffNote is what the person needs from the Mate's closing message in a
 // Mate that delivers through HQ: the change to review, and what they do next —
 // in the words Mate shows under that message (Review, Put it live), never a
-// path through other pages.
-const hqHandoffNote = "In your closing message tell the person: the change to review, by its link, and that they can press Review to look it over and merge it, or Put it live to merge it and release it to production in one go."
+// path through other pages. Once production runs a release, Mate's turn note
+// gives its address, and that, not the Mate's preview, is the app.
+const hqHandoffNote = "In your closing message tell the person: the change to review, by its link, and that they can press Review to look it over and merge it, or, while the application has no production, Put it live to merge it and release it to production in one go. Once Mate has told you production runs a release, that address is the app: give it for anything real, and yours only as their preview."

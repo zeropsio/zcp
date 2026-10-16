@@ -258,7 +258,7 @@ func TestHandleRelease_HQHandsOffBeforeLegacyPreflight(t *testing.T) {
 			if body["status"] != "release-person-required" {
 				t.Errorf("status = %q, want release-person-required", body["status"])
 			}
-			for _, want := range []string{"person", "Mate", "projects page", "Review release", "Release"} {
+			for _, want := range []string{"person", "Mate", "conversation", "Put it live", "Release"} {
 				if !strings.Contains(body["nextStep"], want) {
 					t.Errorf("nextStep missing %q: %s", want, body["nextStep"])
 				}
@@ -296,16 +296,16 @@ func TestHandleRelease_HQExplainsProductionWithoutLegacyPipelineAdvice(t *testin
 			if body["pipeline"] != wantPipeline {
 				t.Errorf("pipeline = %q, want %q", body["pipeline"], wantPipeline)
 			}
-			wantNextStep := "Tell the person: open this Mate's application on Mate's projects page. Mate shows whether the application has a production. If it offers Add production, choose it. For any changes you want included that are still open, review them and press Merge. Then choose Review release, review what it carries, and press Release with the version shown. If the review is blocked, Mate names what needs doing first. Nothing has been released by this tool."
+			wantNextStep := "Tell the person: they release in Mate, from this conversation. While the application has no production, Put it live (beside the change to review, or on the project) merges what waits, makes production and releases to it in one press. With a production, Release in the conversation's header shows what goes out, and they press Release with the version shown. If something blocks it, Mate names what needs doing first. Nothing has been released by this tool. Once it is live, Mate tells you production's address: from then on that is the app, and yours is only their preview."
 			if body["nextStep"] != wantNextStep {
 				t.Errorf("nextStep = %q, want %q", body["nextStep"], wantNextStep)
 			}
-			for _, want := range []string{"Add production", "Merge", "Review release", "Release"} {
+			for _, want := range []string{"Put it live", "Release", "header", "production's address"} {
 				if !strings.Contains(body["nextStep"], want) {
 					t.Errorf("nextStep missing %q: %s", want, body["nextStep"])
 				}
 			}
-			for _, unwanted := range []string{"No production launch is recorded", "launch-production", "CI", "Actions", "releaseVersion", "re-call", "git tag"} {
+			for _, unwanted := range []string{"projects page", "No production launch is recorded", "launch-production", "CI", "Actions", "releaseVersion", "re-call", "git tag"} {
 				if strings.Contains(text, unwanted) {
 					t.Errorf("HQ handoff gives legacy recovery advice %q: %s", unwanted, text)
 				}
