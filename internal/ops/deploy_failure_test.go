@@ -1018,3 +1018,33 @@ func TestAFailedPrepareReadsItsOutputAtTheEndOfTheBuildLogForEveryRuntime(t *tes
 		}
 	}
 }
+
+// A deploy that failed after its container started names what is known — the
+// new container failed — and claims neither that a run.initCommand failed nor
+// that some response field names the failing command; it leaves no unfilled
+// placeholder either.
+func TestAFailedDeployWithNoKnownSignalSaysTheNewContainerFailedAfterStart(t *testing.T) {
+	t.Parallel()
+
+	got := ClassifyDeployFailure(FailureInput{Phase: PhaseInit, RuntimeLogs: []string{"some unrecognized output"}})
+	if got == nil || !strings.Contains(got.LikelyCause, "new container failed") {
+		t.Fatalf("LikelyCause = %+v, want it to say the new container failed", got)
+	}
+	for _, claim := range []string{"A run.initCommand exited non-zero", "'error' field", "{service}"} {
+		if strings.Contains(got.LikelyCause+" "+got.SuggestedAction, claim) {
+			t.Errorf("classification %q / %q contains %q", got.LikelyCause, got.SuggestedAction, claim)
+		}
+	}
+}
+
+// The platform reports a container that ran out of memory at start as
+// "OOM Alert: Process '…' terminated" (turbo stage at the 0.12 GB default).
+func TestAnOOMAlertInTheRuntimeLogIsClassifiedAsOutOfMemory(t *testing.T) {
+	t.Parallel()
+
+	got := ClassifyDeployFailure(FailureInput{
+		Phase:       PhaseInit,
+		RuntimeLogs: []string{"OOM Alert: Process 'zerops-zembed' terminated - memory limit exceeded. Consider increasing the memory limits (min or minFree) in the service configuration."},
+	})
+	assertClassification(t, got, topology.FailureClassStart, "init:oom-killed", "")
+}

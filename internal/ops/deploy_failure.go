@@ -203,13 +203,13 @@ func baselineForPhase(in FailureInput) *topology.DeployFailureClassification {
 	case PhaseInit:
 		return &topology.DeployFailureClassification{
 			Category: topology.FailureClassStart,
-			LikelyCause: "A run.initCommand exited non-zero, which aborts the deploy — the new appVersion is " +
-				"DEPLOY_FAILED and was not activated; the previous version keeps serving.",
+			LikelyCause: "The new container failed after the build (a run.initCommand, the start command or the container itself), " +
+				"which aborts the deploy — the new appVersion is DEPLOY_FAILED and was not activated; the previous version keeps serving.",
 			SuggestedAction: "Diagnose via appVersion.status (DEPLOY_FAILED) + activationDate (null), NOT service.status " +
-				"(it stays ACTIVE on the old version). The deploy response's 'error' field names the failing command; " +
-				"fetch its stderr from the RUNTIME container (not buildLogs): zerops_logs serviceHostname={service} severity=ERROR since=5m. " +
+				"(it stays ACTIVE on the old version). Read the new container's runtime log (deploy response `runtimeLogs`, " +
+				"else zerops_logs for the deploy target with since=10m), NOT buildLogs. " +
 				"Common causes: a build-time cache that baked /build/source paths (move e.g. `artisan config:cache` from buildCommands to run.initCommands), " +
-				"DB connectivity during migration, or missing env vars at container start.",
+				"DB connectivity during migration, missing env vars at container start, or too little memory to start.",
 			Signals: []string{"phase:init"},
 		}
 	case PhaseTransport:

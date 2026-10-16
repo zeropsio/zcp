@@ -3,6 +3,7 @@ package ops
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -266,4 +267,24 @@ func TestEvents_FailReasonPropagated(t *testing.T) {
 
 func strPtr(s string) *string {
 	return &s
+}
+
+// A failed appVersion's hint points where the failure's output is and claims
+// nothing the response does not carry: the prepare output ends the event's
+// buildLogTail, no 'error' field names a failing command, and no {service}
+// placeholder is left for the agent to fill.
+func TestEvents_AFailedAppVersionHintPointsAtItsRealOutput(t *testing.T) {
+	t.Parallel()
+
+	prepare := statusHint(platform.BuildStatusPreparingRuntimeFail, appVersionHintMap)
+	if !strings.Contains(prepare, "buildLogTail") {
+		t.Errorf("prepare hint %q, want it to point at buildLogTail", prepare)
+	}
+	for status, hint := range appVersionHintMap {
+		for _, claim := range []string{"runtimeLogs", "'error' field", "{service}", "php84"} {
+			if strings.Contains(hint, claim) {
+				t.Errorf("%s hint %q contains %q", status, hint, claim)
+			}
+		}
+	}
 }

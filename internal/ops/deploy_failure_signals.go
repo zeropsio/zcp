@@ -217,7 +217,7 @@ func buildSignalLibrary() []failureSignal {
 		{
 			id:         "init:oom-killed",
 			phases:     []DeployFailurePhase{PhaseInit},
-			logRegex:   regexp.MustCompile(`(?:OOMKilled|Killed\s+(?:node|python|ruby|php|java)|JavaScript heap out of memory)`),
+			logRegex:   regexp.MustCompile(`(?:OOMKilled|OOM Alert|Killed\s+(?:node|python|ruby|php|java)|JavaScript heap out of memory)`),
 			requireLog: true,
 			build:      initOOMKilled,
 		},
