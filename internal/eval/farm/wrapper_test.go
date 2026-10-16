@@ -864,12 +864,14 @@ func TestWrapper_RedactionFailure_BlocksEvidenceAndCompletion(t *testing.T) {
 	// syscall(...) — every Linux run takes this path before anything else
 	// runs, since Darwin has no PR_SET_CHILD_SUBREAPER). Delegate every
 	// invocation to the real binary except the redaction pass's `-pi`, so
-	// the fixture definitely writes a secret before sanitization fails.
+	// the fixture definitely writes a secret before sanitization fails. Only
+	// the first argument is matched: the other invocations carry paths (the
+	// wrapper's own, the run directory), and a path may contain "-pi".
 	binDir := t.TempDir()
 	perlStub := filepath.Join(binDir, "perl")
 	stub := "#!/bin/sh\n" +
-		"case \"$*\" in\n" +
-		"*-pi*) exit 97 ;;\n" +
+		"case \"$1\" in\n" +
+		"-pi) exit 97 ;;\n" +
 		"*) exec " + shQuote(realPerl) + " \"$@\" ;;\n" +
 		"esac\n"
 	if err := os.WriteFile(perlStub, []byte(stub), 0o755); err != nil {
