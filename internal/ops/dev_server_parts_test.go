@@ -7,6 +7,7 @@ package ops
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/devsup"
 	"github.com/zeropsio/zcp/internal/ops/devservertest"
+	"github.com/zeropsio/zcp/internal/platform"
 )
 
 func TestDevServer_ARestartOrStatusWithoutHealthPath_ProbesThePathTheStartDeclared(t *testing.T) {
@@ -273,5 +275,20 @@ func TestDevServer_StatusSaysHowOftenTheSupervisorRestartedTheServer(t *testing.
 	result := runDevServer(t, c, DevServerParams{Action: "status", Hostname: "apidev"})
 	if result.Restarts != 136 || !strings.Contains(result.Message, "restarted it 136 times") {
 		t.Errorf("restarts/message = %d/%q, want the supervisor's 136 restarts", result.Restarts, result.Message)
+	}
+}
+
+func TestDevServer_AStartOnAPortAnotherDeclaredServerHolds_IsAnInvalidParameterNamingIt(t *testing.T) {
+	t.Parallel()
+	c := devservertest.NewSupervised(twoServers)
+	runDevServer(t, c, DevServerParams{Action: "stop", Hostname: "appdev", Name: "web"})
+	_, err := ExecuteDevServer(context.Background(), c, mockClientWithServices("appdev"), "p1",
+		DevServerParams{Action: "start", Hostname: "appdev", Name: "docs", Command: "pnpm docs", Port: 3000})
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) || pe.Code != platform.ErrInvalidParameter {
+		t.Fatalf("err = %v, want INVALID_PARAMETER", err)
+	}
+	if !strings.Contains(pe.Message, `"web" and "docs" both listen on port 3000`) || !strings.Contains(pe.Suggestion, "zcp-devsup ctl reload") || !strings.Contains(pe.Suggestion, "even while stopped") {
+		t.Errorf("message/suggestion = %q/%q, want the holder named and how to remove it", pe.Message, pe.Suggestion)
 	}
 }

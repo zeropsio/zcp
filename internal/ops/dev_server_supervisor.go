@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/zeropsio/zcp/internal/devsup"
+	"github.com/zeropsio/zcp/internal/platform"
 )
 
 // The dev servers of a dev service run under zcp-devsup, the supervisor its dev
@@ -399,10 +400,12 @@ func WriteDevDeclaration(ctx context.Context, ssh SSHDeployer, hostname, root st
 	if err != nil {
 		return fmt.Errorf("encode %s: %w", devsup.DeclarationPath, err)
 	}
-	if _, err := devsup.ParseDeclaration(b); err != nil {
-		return fmt.Errorf("declare dev server: %w", err)
-	}
 	file := devDeclarationFile(root)
+	if _, err := devsup.ParseDeclaration(b); err != nil {
+		return platform.NewPlatformError(platform.ErrInvalidParameter,
+			fmt.Sprintf("cannot declare the dev server on %s: %v", hostname, err),
+			"A declared server keeps its name and port even while stopped. Start this one under another name or port, or remove the server that holds it from "+file+" over SSH and run `zcp-devsup ctl reload` there.")
+	}
 	tmp := file + ".tmp"
 	cmd := fmt.Sprintf(`mkdir -p %s && printf '%%s\n' %s > %s && mv -f %s %s`,
 		shellQuote(devRepoRoot(root)+"/.zcp"), shellQuote(string(b)), shellQuote(tmp), shellQuote(tmp), shellQuote(file))
