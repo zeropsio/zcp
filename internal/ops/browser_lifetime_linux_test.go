@@ -38,14 +38,16 @@ func TestWarmBrowser_RealChrome_ReusedUntilACallEndsUncleanOrFresh(t *testing.T)
 		return r
 	}
 
-	if r := walk(BrowserBatchInput{Isolation: BrowserIsolationNewBrowser}); r.BrowserRecycled || r.Message != "" {
-		t.Fatalf("first call: recycled=%v message=%q", r.BrowserRecycled, r.Message)
+	if r := walk(BrowserBatchInput{Isolation: BrowserIsolationNewBrowser}); !r.FreshBrowser || r.BrowserRecycled || r.Message != "" {
+		t.Fatalf("first call: fresh=%v recycled=%v message=%q", r.FreshBrowser, r.BrowserRecycled, r.Message)
 	}
 	first := browserMainPID(t)
 	if first == "0" {
 		t.Fatal("no warm browser after a clean call")
 	}
-	walk(BrowserBatchInput{Commands: [][]string{{"get", "text", "body"}}})
+	if r := walk(BrowserBatchInput{Commands: [][]string{{"get", "text", "body"}}}); r.FreshBrowser {
+		t.Error("a tab call in the warm browser must not report a fresh browser")
+	}
 	if got := browserMainPID(t); got != first {
 		t.Errorf("a tab call must reuse the browser: pid %s, then %s", first, got)
 	}
@@ -55,7 +57,9 @@ func TestWarmBrowser_RealChrome_ReusedUntilACallEndsUncleanOrFresh(t *testing.T)
 	}
 	walk(BrowserBatchInput{})
 	second := browserMainPID(t)
-	walk(BrowserBatchInput{Isolation: BrowserIsolationNewBrowser})
+	if r := walk(BrowserBatchInput{Isolation: BrowserIsolationNewBrowser}); !r.FreshBrowser {
+		t.Error("a new-browser call must report a fresh browser")
+	}
 	if got := browserMainPID(t); got == second || got == "0" {
 		t.Errorf("new-browser must start a fresh browser: pid %s, then %s", second, got)
 	}

@@ -53,6 +53,8 @@ func RegisterBrowser(srv *mcp.Server, stateDir string) {
 			"like your own browser — right for re-checking your change after a deploy. " +
 			"\"fresh-context\" starts with none of them — for a first visit, a signed-out view, or an app whose " +
 			"service worker or long-cached assets could still serve the old deploy. \"new-browser\" also restarts Chrome first — to rule out Chrome's own state when a page misbehaves only in the warm browser. " +
+			"freshBrowser: true means the call ran in a Chrome started for it (always after new-browser); " +
+			"browserRecycled: true means the browser was stopped as the call ended. " +
 			"Each step's errorKind classifies selector-not-found, not-editable, timeout, wedge or other failures. " +
 			"Inner command vocabulary (inside commands[]): [\"snapshot\",\"-i\",\"-c\"], [\"click\",\"@e1\"], " +
 			"[\"fill\",\"@e2\",\"text\"], [\"find\",\"role\",\"button\",\"click\",\"--name\",\"Submit\"], [\"get\",\"text\",\"<sel>\"], " +
@@ -67,7 +69,7 @@ func RegisterBrowser(srv *mcp.Server, stateDir string) {
 			"Returns: steps[] (each with errorKind on failure), errorsOutput (from [errors]), " +
 			"consoleOutput (from [console]), networkOutput (4xx/5xx requests from [network requests], " +
 			"always populated — no flag needed; a request that failed at the network layer or is still " +
-			"in flight has no status and is not reported), durationMs, browserRecycled, message.",
+			"in flight has no status and is not reported), durationMs, freshBrowser, browserRecycled, message.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Drive browser via agent-browser",
 			IdempotentHint:  false,

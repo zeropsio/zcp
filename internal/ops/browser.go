@@ -97,7 +97,10 @@ func classifyStepError(msg string) string {
 	}
 }
 
-// BrowserBatchResult is the structured return value.
+// BrowserBatchResult is the structured return value. FreshBrowser says the
+// call ran in a Chrome started for it (new-browser, a warm browser that could
+// not be reused, or none running); BrowserRecycled says the browser was
+// stopped as the call ended.
 type BrowserBatchResult struct {
 	URL             string                   `json:"url"`
 	Steps           []BrowserStepResult      `json:"steps,omitempty"`
@@ -106,6 +109,7 @@ type BrowserBatchResult struct {
 	NetworkOutput   []NetworkRequest         `json:"networkOutput,omitempty"`
 	Screenshot      *BrowserScreenshotResult `json:"screenshot,omitempty"`
 	DurationMs      int64                    `json:"durationMs"`
+	FreshBrowser    bool                     `json:"freshBrowser,omitempty"`
 	BrowserRecycled bool                     `json:"browserRecycled,omitempty"`
 	OutputTruncated bool                     `json:"outputTruncated,omitempty"`
 	Message         string                   `json:"message,omitempty"`
@@ -191,8 +195,9 @@ type browserRunner interface {
 	LookPath() (string, error)
 	// Acquire waits, until ctx ends, for the container's browser, readies it
 	// for one call at the given isolation and returns release. release(true)
-	// hands the browser back warm; release(false) recycles it.
-	Acquire(ctx context.Context, isolation string) (release func(reuse bool) error, err error)
+	// hands the browser back warm; release(false) recycles it. fresh reports
+	// that the browser was started for this call instead of reused.
+	Acquire(ctx context.Context, isolation string) (release func(reuse bool) error, fresh bool, err error)
 	// Run walks the JSON [][]string batch in stdin and answers with the
 	// JSON []BrowserStepResult of the steps that finished. err is set only
 	// when the walk could not finish (ctx ended, a step got no answer).
@@ -537,7 +542,7 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 		)
 	}
 
-	release, err := browserRun.Acquire(ctx, isolation)
+	release, fresh, err := browserRun.Acquire(ctx, isolation)
 	if err != nil {
 		return nil, fmt.Errorf("acquire browser: %w", err)
 	}
@@ -558,6 +563,7 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 	result := &BrowserBatchResult{
 		URL:             input.URL,
 		DurationMs:      duration.Milliseconds(),
+		FreshBrowser:    fresh,
 		OutputTruncated: truncated,
 	}
 

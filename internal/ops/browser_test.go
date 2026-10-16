@@ -38,6 +38,7 @@ import (
 type fakeBrowserRunner struct {
 	lookPathErr error
 	acquireErr  error
+	fresh       bool // Acquire started the browser for the call
 
 	lastIsolation string
 	lastStdin     string
@@ -58,9 +59,9 @@ func (f *fakeBrowserRunner) LookPath() (string, error) {
 	return "/usr/local/bin/agent-browser", nil
 }
 
-func (f *fakeBrowserRunner) Acquire(_ context.Context, isolation string) (func(reuse bool) error, error) {
+func (f *fakeBrowserRunner) Acquire(_ context.Context, isolation string) (func(reuse bool) error, bool, error) {
 	if f.acquireErr != nil {
-		return nil, f.acquireErr
+		return nil, false, f.acquireErr
 	}
 	f.lastIsolation = isolation
 	return func(reuse bool) error {
@@ -68,7 +69,7 @@ func (f *fakeBrowserRunner) Acquire(_ context.Context, isolation string) (func(r
 		defer f.mu.Unlock()
 		f.releases = append(f.releases, reuse)
 		return nil
-	}, nil
+	}, f.fresh, nil
 }
 
 func (f *fakeBrowserRunner) Run(_ context.Context, stdin string, timeout time.Duration) (string, string, bool, error) {
@@ -1227,6 +1228,55 @@ func TestBrowserBatch_FreshContextEndsWithItsBrowser(t *testing.T) {
 		if result.BrowserRecycled {
 			t.Errorf("%s: a clean call must not report browserRecycled", isolation)
 		}
+	}
+}
+
+// TestBrowserBatch_SaysWhenTheCallRanInAFreshChrome pins that the result
+// tells the agent whether its call ran in a Chrome started for it — always
+// after new-browser — apart from browserRecycled, which only says the
+// browser ended with the call. Nothing in a fresh call's result says reused.
+func TestBrowserBatch_SaysWhenTheCallRanInAFreshChrome(t *testing.T) {
+	lifecycle := func(launched bool) string {
+		return fmt.Sprintf(`"lifecycle":{"effectiveLaunch":{"browserLaunched":true,"engine":"chrome","launchHash":11677035664275010974},"launched":%v,"reused":true}`, launched)
+	}
+	run := scriptedSteps(map[string]answer{
+		"open": {stdout: `{"success":true,"data":{` + lifecycle(false) + `,"title":"Example","url":"https://example.com/"},"error":null}`},
+		"get":  {stdout: `{"success":true,"data":{` + lifecycle(false) + `,"title":"Example"},"error":null}`},
+	}, new([][]string))
+	stdout, _, _, err := runBrowserSteps(context.Background(), [][]string{{"open", "https://example.com"}, {"get", "title"}, {"errors"}}, run)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	tests := []struct {
+		name, isolation string
+		fresh           bool
+	}{
+		{"new-browser starts Chrome for the call", BrowserIsolationNewBrowser, true},
+		{"a tab beside no warm browser starts one", BrowserIsolationTab, true},
+		{"a tab in the warm browser is not fresh", BrowserIsolationTab, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := &fakeBrowserRunner{runStdout: stdout, fresh: tt.fresh}
+			defer OverrideBrowserRunnerForTest(fake)()
+			result, err := BrowserBatch(context.Background(), BrowserBatchInput{URL: "https://example.com", Isolation: tt.isolation})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			wire, err := json.Marshal(result)
+			if err != nil {
+				t.Fatalf("marshal result: %v", err)
+			}
+			if got := strings.Contains(string(wire), `"freshBrowser":true`); got != tt.fresh {
+				t.Errorf("freshBrowser in result = %v, want %v: %s", got, tt.fresh, wire)
+			}
+			if strings.Contains(string(wire), "reused") {
+				t.Errorf("the result must not say reused: %s", wire)
+			}
+			if strings.Contains(string(wire), "browserRecycled") {
+				t.Errorf("a clean call must not report browserRecycled: %s", wire)
+			}
+		})
 	}
 }
 

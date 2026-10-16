@@ -107,11 +107,13 @@ type warmBrowser struct {
 	IdleCPU time.Duration
 }
 
-// reusable reports whether a call with the given budget may run on the
-// warm browser: it is running, the last call in it ended cleanly, and
-// neither its idle exit nor its max age can cut the call.
-func (w warmBrowser) reusable(budget time.Duration) bool {
-	return w.Active && w.Marker == browserMarkerIdle &&
+// reusable reports whether a call at the given isolation and budget may run
+// on the warm browser: it did not ask for a new browser, the browser is
+// running, the last call in it ended cleanly, and neither its idle exit nor
+// its max age can cut the call.
+func (w warmBrowser) reusable(isolation string, budget time.Duration) bool {
+	return isolation != BrowserIsolationNewBrowser &&
+		w.Active && w.Marker == browserMarkerIdle &&
 		w.IdleFor < browserIdleTimeout-browserBoundMargin &&
 		w.Age+budget < browserMaxAge && w.quietWhileIdle()
 }
@@ -244,7 +246,7 @@ func runBrowserSteps(ctx context.Context, steps [][]string, run browserStepExec)
 		if string(answer.Data) == "null" {
 			answer.Data = nil
 		}
-		results = append(results, BrowserStepResult{Command: step, Success: answer.Success, Result: answer.Data, Error: answer.Error})
+		results = append(results, BrowserStepResult{Command: step, Success: answer.Success, Result: withoutLifecycle(answer.Data), Error: answer.Error})
 		// A wedged page would make every later step wait out the same CDP
 		// timeout; the browser is recycled for it anyway.
 		if _, wedged := scanStepsForCDPWedge(results[len(results)-1:]); wedged {
@@ -256,4 +258,25 @@ func runBrowserSteps(ctx context.Context, steps [][]string, run browserStepExec)
 		return "", stderr.String(), truncated, fmt.Errorf("marshal steps: %w", err)
 	}
 	return string(out), stderr.String(), truncated || stderr.truncated, walkErr
+}
+
+// withoutLifecycle drops the lifecycle agent-browser adds to every answer. It
+// says how that step's client reached the browser — reused on every step
+// after the browser's own start — not whether the call's Chrome is fresh;
+// BrowserBatchResult.FreshBrowser says that. Data that is not an object, or
+// has no lifecycle, is kept as it came.
+func withoutLifecycle(data json.RawMessage) json.RawMessage {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return data
+	}
+	if _, ok := fields["lifecycle"]; !ok {
+		return data
+	}
+	delete(fields, "lifecycle")
+	out, err := json.Marshal(fields)
+	if err != nil {
+		return data
+	}
+	return out
 }

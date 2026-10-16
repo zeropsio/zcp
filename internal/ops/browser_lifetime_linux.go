@@ -83,15 +83,15 @@ func (h browserHost) walk(ctx context.Context, steps [][]string) error {
 	return nil
 }
 
-func (execBrowserRunner) Acquire(ctx context.Context, isolation string) (func(bool) error, error) {
+func (execBrowserRunner) Acquire(ctx context.Context, isolation string) (func(bool) error, bool, error) {
 	unlock, err := waitBrowserLock(ctx, browserLockPath)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	h, err := newBrowserHost()
 	if err != nil {
 		unlock()
-		return nil, err
+		return nil, false, err
 	}
 	budget := browserDefaultTimeout
 	if deadline, ok := ctx.Deadline(); ok {
@@ -100,10 +100,12 @@ func (execBrowserRunner) Acquire(ctx context.Context, isolation string) (func(bo
 	warm, state, err := readWarmBrowser(ctx)
 	if err != nil {
 		unlock()
-		return nil, err
+		return nil, false, err
 	}
-	reused := isolation != BrowserIsolationNewBrowser && warm.reusable(budget)
+	reused := warm.reusable(isolation, budget)
+	fresh := false
 	ready := func(running bool) error {
+		fresh = true
 		if running {
 			if err := stopBrowser(ctx); err != nil {
 				return err
@@ -128,7 +130,7 @@ func (execBrowserRunner) Acquire(ctx context.Context, isolation string) (func(bo
 		defer cancel()
 		err = errors.Join(err, stopBrowser(rctx))
 		unlock()
-		return nil, err
+		return nil, false, err
 	}
 	handBack := func(rctx context.Context) error {
 		if err := h.closeCallTabs(rctx); err != nil {
@@ -144,7 +146,7 @@ func (execBrowserRunner) Acquire(ctx context.Context, isolation string) (func(bo
 		defer unlock()
 		return releaseBrowser(ctx, reuse, browserReleaseTimeout, handBack, stopBrowser)
 	}
-	return release, nil
+	return release, fresh, nil
 }
 
 // setup marks the browser busy (a caller that dies mid-call leaves it so,

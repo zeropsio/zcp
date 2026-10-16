@@ -195,10 +195,46 @@ func TestWarmBrowser_ReusableOnlyInsideItsBounds(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.w(idle).reusable(budget); got != tt.want {
+			if got := tt.w(idle).reusable(BrowserIsolationTab, budget); got != tt.want {
 				t.Errorf("reusable = %v, want %v", got, tt.want)
 			}
 		})
+	}
+	t.Run("a call that asked for a new browser", func(t *testing.T) {
+		if idle.reusable(BrowserIsolationNewBrowser, budget) {
+			t.Error("a new-browser call must start a fresh browser, even beside an idle one")
+		}
+	})
+}
+
+// TestRunBrowserSteps_StepsCarryNoAgentBrowserLifecycle pins that a step's
+// result drops the lifecycle agent-browser adds to every answer: it says
+// how that step's client reached the browser — reused, on every step after
+// the browser's own start — never whether the call's Chrome is fresh, so an
+// agent reading reused: true after a new-browser call was misled.
+func TestRunBrowserSteps_StepsCarryNoAgentBrowserLifecycle(t *testing.T) {
+	var seen [][]string
+	run := scriptedSteps(map[string]answer{
+		"open": {stdout: `{"success":true,"data":{"lifecycle":{"effectiveLaunch":{"browserLaunched":true,"engine":"chrome","launchHash":11677035664275010974},` +
+			`"launched":false,"relaunchedBrowser":false,"reused":true},"title":"Example","url":"https://example.com/"},"error":null}`},
+	}, &seen)
+	stdout, _, _, err := runBrowserSteps(context.Background(), [][]string{{"open", "https://example.com"}}, run)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var got []BrowserStepResult
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil || len(got) != 1 {
+		t.Fatalf("want the open step, got %s (%v)", stdout, err)
+	}
+	var result map[string]any
+	if err := json.Unmarshal(got[0].Result, &result); err != nil {
+		t.Fatalf("open result is not an object: %v\n%s", err, got[0].Result)
+	}
+	if _, ok := result["lifecycle"]; ok || strings.Contains(stdout, "reused") {
+		t.Errorf("the step must carry no agent-browser lifecycle: %s", stdout)
+	}
+	if result["title"] != "Example" || result["url"] != "https://example.com/" {
+		t.Errorf("the step lost its answer: %s", got[0].Result)
 	}
 }
 
