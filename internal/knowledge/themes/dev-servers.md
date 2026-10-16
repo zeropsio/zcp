@@ -54,6 +54,7 @@ The supervisor ignores keys it does not know.
 - A second crash, or a crash after the server listened, stays down until you start it again or a watched change restarts it.
 - A redeploy starts every `autostart` server; a container restart starts every server that was meant to run.
 - Each server has its own log: `zerops_dev_server action=logs name=...`.
+- A server that listens on 127.0.0.1 only is reachable only inside its container: start and status say it listens on loopback only and give no address. Bind it to 0.0.0.0 (`--host 0.0.0.0` for Vite and similar), unless a web server in front of it proxies to it.
 
 ## The task limit
 

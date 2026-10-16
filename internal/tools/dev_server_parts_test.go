@@ -83,3 +83,43 @@ func TestDevServer_AStartedServer_ReportsTheSubdomainAddressOfItsOwnPort(t *test
 		t.Errorf("publicAccess.url = %q beside subdomainUrl %q, want the same port's address", answer.PublicAccess.URL, answer.SubdomainURL)
 	}
 }
+
+// A started server that listens on loopback only answered a subdomainUrl that
+// returned 502: the reply names no address nothing outside the container
+// reaches.
+func TestDevServer_AStartedServerThatListensOnLoopbackOnly_ReportsNoSubdomainAddress(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+		Hostname: "appdev", Mode: topology.PlanModeDev, BootstrapSession: "sess1", BootstrappedAt: "2026-10-16",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+	svc := platform.ServiceStack{ID: "svc-1", Name: "appdev", ProjectID: "proj-1", Status: "ACTIVE", SubdomainAccess: true,
+		Ports:                []platform.Port{{Port: 3000, Protocol: "tcp", Scheme: "http"}, {Port: 5173, Protocol: "tcp", Scheme: "http"}},
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeCategoryName: "USER", ServiceStackTypeVersionName: "nodejs@22"}}
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{svc}).
+		WithService(&svc).
+		WithProject(&platform.Project{ID: "proj-1", Name: "test", Status: statusActive, SubdomainHost: "abc1.prg1.zerops.app"})
+	c := devservertest.NewSupervised(webAndDocs)
+	c.Loopback = map[int]bool{5173: true}
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDevServer(srv, DevServerDeps{Client: mock, HTTPClient: okHTTP, ProjectID: "proj-1", SSH: c, StateDir: dir})
+
+	result := callTool(t, srv, "zerops_dev_server", map[string]any{"action": "restart", "hostname": "appdev", "name": "docs"})
+	text := getTextContent(t, result)
+	if result.IsError {
+		t.Fatalf("restart docs: %s", text)
+	}
+	var answer map[string]any
+	if err := json.Unmarshal([]byte(text), &answer); err != nil {
+		t.Fatalf("parse %s: %v", text, err)
+	}
+	if url, said := answer["subdomainUrl"]; said {
+		t.Errorf("subdomainUrl = %v for a loopback-only server, want none", url)
+	}
+	if reason, _ := answer["reason"].(string); reason != "loopback_only" {
+		t.Errorf("reason = %q, want loopback_only", reason)
+	}
+}

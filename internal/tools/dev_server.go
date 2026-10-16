@@ -158,8 +158,9 @@ func RegisterDevServer(srv *mcp.Server, d DevServerDeps) {
 		// status is running only once the port accepts connections — so force
 		// listener=true regardless of the runtime's static deferred-start
 		// classification. The address it reports is the started server's own
-		// port's, not the service's first HTTP port's.
-		if result.Running && isDevServerStartAction(input.Action) {
+		// port's, not the service's first HTTP port's. A server listening on
+		// loopback only has no public address.
+		if result.Running && isDevServerStartAction(input.Action) && result.Reason != ops.ReasonLoopbackOnly {
 			scratch := &ops.DeployResult{}
 			ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, input.Hostname, scratch, true)
 			if scratch.SubdomainURL != "" {

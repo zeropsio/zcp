@@ -521,6 +521,31 @@ func TestDevServer_AServerThatCrashedOnTheServicesTaskLimitNamesTheLimitAndTheTa
 	}
 }
 
+// vinext bound to 127.0.0.1 was reported "slow" with a public URL that
+// answered 502: the probe inside the container reaches a loopback listener,
+// nothing outside it does. A start or status of a server that listens on
+// loopback only says so and to bind 0.0.0.0, and gives no address.
+func TestDevServer_AServerThatListensOnLoopbackOnlyIsNamedSoWithoutAnAddress(t *testing.T) {
+	t.Parallel()
+	for _, action := range []string{"start", "restart", "status"} {
+		t.Run(action, func(t *testing.T) {
+			t.Parallel()
+			c := devservertest.NewSupervised(twoServers)
+			c.Loopback = map[int]bool{8080: true}
+
+			result := runDevServer(t, c, DevServerParams{Action: action, Hostname: "appdev", Name: "api"})
+
+			want := "Dev server api on appdev listens on loopback only (127.0.0.1:8080): neither http://appdev:8080 nor its subdomain reaches it. Make it bind 0.0.0.0 (for example --host 0.0.0.0) and restart it, unless a web server in front of it proxies to it."
+			if result.Reason != ReasonLoopbackOnly || !strings.Contains(result.Message, want) {
+				t.Errorf("reason/message = %q/%q, want %q and %q", result.Reason, result.Message, ReasonLoopbackOnly, want)
+			}
+			if result.URL != "" {
+				t.Errorf("url = %q, want none for a server nothing outside the container reaches", result.URL)
+			}
+		})
+	}
+}
+
 // A restart whose health probe ends while the supervisor still reports the
 // server starting names it as still starting and says when to look again.
 func TestDevServer_ARestartStillStartingWhenItsProbeEndsSaysWhenToCheckItAgain(t *testing.T) {

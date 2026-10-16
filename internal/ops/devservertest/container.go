@@ -42,6 +42,9 @@ type Container struct {
 	// no running server holds it, and a server started on it finds the port
 	// busy. Any other port refuses the connection.
 	HTTP, Foreign map[int]int
+	// Loopback names the ports a running server listens on only at
+	// 127.0.0.1; every other running server's port listens on all addresses.
+	Loopback map[int]bool
 	// Crash names servers that end on their own right after they start;
 	// RetryPending names those of them the supervisor starts once more.
 	Crash, RetryPending map[string]bool
@@ -133,6 +136,8 @@ func (c *Container) ExecSSH(_ context.Context, _ string, command string) ([]byte
 			return fmt.Appendf(nil, "OK %d 123", code), nil // 123: the probe's own in-container measure
 		}
 		return fmt.Appendf(nil, "FAIL %03d", code), errors.New("exit status 1")
+	case strings.HasPrefix(command, "ss -ltn"):
+		return []byte(c.listen()), nil
 	case strings.Contains(command, "curl -s -o /dev/null"):
 		return fmt.Appendf(nil, "%03d", c.httpCode(command)), nil
 	case strings.Contains(command, "rev-parse --verify HEAD") && strings.Contains(command, "git status --porcelain"):
@@ -280,10 +285,28 @@ func (c *Container) read() string {
 	} else {
 		b.WriteString("@@zcp-devsup version 127\n")
 	}
+	fmt.Fprintf(&b, "%s@@zcp-devsup listen 0\n", c.listen())
 	if c.Declaration != "" {
 		fmt.Fprintf(&b, "%s\n@@zcp-devsup declaration 0\n", c.Declaration)
 	} else {
 		b.WriteString("@@zcp-devsup declaration 1\n")
+	}
+	return b.String()
+}
+
+// listen is `ss -ltn` of the running servers' ports.
+func (c *Container) listen() string {
+	var b strings.Builder
+	b.WriteString("State  Recv-Q Send-Q Local Address:Port Peer Address:Port\n")
+	for name, s := range c.Servers {
+		port := c.declaredPort(name)
+		switch {
+		case port == 0 || s.Status != devsup.StatusRunning:
+		case c.Loopback[port]:
+			fmt.Fprintf(&b, "LISTEN 0      511        127.0.0.1:%d      0.0.0.0:*\n", port)
+		default:
+			fmt.Fprintf(&b, "LISTEN 0      4096               *:%d            *:*\n", port)
+		}
 	}
 	return b.String()
 }

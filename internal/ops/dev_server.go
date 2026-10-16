@@ -82,6 +82,8 @@ type DevServerResult struct {
 	//   slow                      — status-action: accepts, no HTTP answer
 	//                               within 2s
 	//   http_<code>               — status-action: a code other than 2xx/3xx
+	//   loopback_only             — it listens on a loopback address only:
+	//                               nothing outside the container reaches it
 	Reason string `json:"reason,omitempty"`
 	// Name is the dev server's name in the declaration — set only when it
 	// differs from Hostname (docs/spec-mate.md §2.8a.3): a single-part app's
@@ -158,7 +160,9 @@ const ReasonHealthProbeTimeout = "health_probe_timeout"
 // still compiling its first response, not a refused connection.
 const (
 	reasonHealthProbeSlow = "health_probe_slow"
-	reasonSlow            = "slow"
+	// ReasonLoopbackOnly: the server listens on a loopback address only.
+	ReasonLoopbackOnly = "loopback_only"
+	reasonSlow         = "slow"
 )
 
 const (
@@ -630,11 +634,25 @@ func probeStarted(ctx context.Context, ssh SSHDeployer, ds *DevServers, result *
 	if probeErr == nil && strings.HasPrefix(probeLine, "OK ") {
 		result.LogTail = currentRun(supervisorLogTail(ctx, ssh, p.Hostname, name, startedLogTailLines))
 		applyProbeSuccess(result, probeLine, time.Since(begun).Milliseconds(), name)
-		return result, nil
+	} else {
+		result.LogTail = currentRun(supervisorLogTail(ctx, ssh, p.Hostname, name, defaultLogTailLines))
+		applyProbeFailure(result, probeLine, probeDeadline, name, healthPath, wait, server.Status)
 	}
-	result.LogTail = currentRun(supervisorLogTail(ctx, ssh, p.Hostname, name, defaultLogTailLines))
-	applyProbeFailure(result, probeLine, probeDeadline, name, healthPath, wait, server.Status)
+	// The probe reaches a loopback listener from inside the container; the
+	// server listens only now, so the call's first read of them is stale.
+	if ds.observeListeners(ctx, ssh); ds.LoopbackOnly[port] {
+		applyLoopbackOnly(result, name, port)
+	}
 	return result, nil
+}
+
+// applyLoopbackOnly reports a server that listens on a loopback address only
+// (as verify's DevPort.LoopbackOnly): a probe inside the container reaches
+// it, nothing outside does, so the reply gives no address.
+func applyLoopbackOnly(result *DevServerResult, name string, port int) {
+	result.Reason, result.URL = ReasonLoopbackOnly, ""
+	result.Message = fmt.Sprintf("Dev server %s listens on loopback only (127.0.0.1:%d): neither %s nor its subdomain reaches it. Make it bind 0.0.0.0 (for example --host 0.0.0.0) and restart it, unless a web server in front of it proxies to it.",
+		serverLabel(result.Hostname, name), port, devServerURL(result.Hostname, port, ""))
 }
 
 // probedPath is the HTTP path a probe of name reads: the call's, else the
@@ -776,6 +794,10 @@ func statusDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds
 	}
 	healthPath := probedPath(p, ds, name)
 	result.Port, result.HealthPath = port, healthPath
+	if ds.LoopbackOnly[port] {
+		applyLoopbackOnly(result, name, port)
+		return result, nil
+	}
 	// curl's exit follows the code: 28 is a listener that accepted and did
 	// not answer within --max-time.
 	out, _ := ssh.ExecSSH(ctx, p.Hostname, fmt.Sprintf(

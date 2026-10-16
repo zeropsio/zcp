@@ -237,6 +237,15 @@ func RecheckSentence(hostname, name string, names []string) string {
 	return fmt.Sprintf("Check %s again in about 30 s with %s.", strings.Join(names, ", "), call)
 }
 
+// observeListeners re-reads which ports listen on a loopback address only: a
+// server this call started listens only now. An unreadable answer keeps the
+// last read.
+func (ds *DevServers) observeListeners(ctx context.Context, ssh SSHDeployer) {
+	if out, err := ssh.ExecSSH(ctx, ds.Hostname, "ss -ltn 2>/dev/null"); err == nil {
+		ds.LoopbackOnly = loopbackOnlyPorts(string(out))
+	}
+}
+
 // loopbackOnlyPorts reads `ss -ltn` output: the ports whose every listening
 // socket is bound to a loopback address.
 func loopbackOnlyPorts(out string) map[int]bool {
