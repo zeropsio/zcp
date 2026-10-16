@@ -487,8 +487,8 @@ HMR-first dev setup: every push rebuilds assets (~20–30 s penalty).
 ### Promote the first deploy to stage
 
 Standard mode pairs dev + stage on the same managed services: keep dev
-data apart (own database or schema, own queue prefix) or accept shared
-data. After each dev runtime verifies, cross-deploy it to its paired
+data apart (own database or schema, own queue or key prefix) or accept
+shared data. After each dev runtime verifies, cross-deploy it to its paired
 stage:
 
 ```
