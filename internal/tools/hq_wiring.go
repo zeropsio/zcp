@@ -36,9 +36,15 @@ import (
 // configured) lives on the ServiceMeta, where the rest of ZCP can see it.
 const hqStateDir = "hq"
 
-// hqPairWorkingDir is where a Zerops runtime's code lives, and so where the
-// pair's git repository is — the same default the git-push deploy uses.
-const hqPairWorkingDir = "/var/www"
+// hqPairWorkingDir is where the pair's git repository is: the directory its
+// dev half deploys from (ServiceMeta.WorkingDirFor) — the code volume's mount
+// for a variant-B pair — else where a Zerops runtime's code lives.
+func hqPairWorkingDir(m *workflow.ServiceMeta) string {
+	if dir := m.WorkingDirFor(m.Hostname); dir != "" {
+		return dir
+	}
+	return topology.CodeMountRoot
+}
 
 // hqWaitBackoff is how long a pass waits after an unproductive attempt before
 // trying again, doubling to hqWaitBackoffMax. The passes that drive this step
@@ -458,13 +464,13 @@ func wireHQPair(
 	// refuses still has its repository, and the next pass tries again.
 	branch := hqMateBranch(hqc)
 	if out, branchErr := sshDeployer.ExecSSH(ctx, m.Hostname,
-		ops.BuildMateBranchCommand(hqPairWorkingDir, branch)); branchErr != nil {
+		ops.BuildMateBranchCommand(hqPairWorkingDir(m), branch)); branchErr != nil {
 		prefix := fmt.Sprintf("repository %q is ready in HQ, but %s could not be put on %q branched off \"main\"", repo.Name, m.Hostname, branch)
 		refusal := ops.MateBranchRefusal(string(out))
 		if remedy := ops.MateBranchRefusalRemedy(refusal, branch); remedy != "" {
 			return hqWiringOutcome{
-				line:   fmt.Sprintf("%s (%s): in %s on %s, %s", prefix, refusal, hqPairWorkingDir, m.Hostname, remedy),
-				remedy: fmt.Sprintf("In %s on %s, %s", hqPairWorkingDir, m.Hostname, remedy),
+				line:   fmt.Sprintf("%s (%s): in %s on %s, %s", prefix, refusal, hqPairWorkingDir(m), m.Hostname, remedy),
+				remedy: fmt.Sprintf("In %s on %s, %s", hqPairWorkingDir(m), m.Hostname, remedy),
 			}
 		}
 		return hqWiringOutcome{line: fmt.Sprintf("%s (%v) — a push would have nothing to send, or nothing HQ could merge; retrying on the next pass.", prefix, branchErr)}

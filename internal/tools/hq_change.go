@@ -183,7 +183,7 @@ func shipChange(
 	m *workflow.ServiceMeta,
 	landed []string,
 ) shipOutcome {
-	treeOutput, treeErr := sshDeployer.ExecSSH(ctx, m.Hostname, ops.BuildDeliveryTreeCommand(hqPairWorkingDir))
+	treeOutput, treeErr := sshDeployer.ExecSSH(ctx, m.Hostname, ops.BuildDeliveryTreeCommand(hqPairWorkingDir(m)))
 	if treeErr != nil {
 		return shipOutcome{line: fmt.Sprintf("reading the delivered tree failed (%s)", gitPushErrorDetail(treeErr, treeOutput))}
 	}
@@ -232,7 +232,7 @@ func shipChange(
 			return stopped
 		}
 	}
-	output, tries, err := pushChangeBranch(ctx, sshDeployer, hqc, m.Hostname, branch)
+	output, tries, err := pushChangeBranch(ctx, sshDeployer, hqc, m, branch)
 	if err != nil {
 		switch refusal := ops.ChangePushRefusal(string(output)); {
 		case refusal == "change_closed" || refusal == "unknown_change":
@@ -281,7 +281,7 @@ func changeTitleOf(ctx context.Context, sshDeployer ops.SSHDeployer, m *workflow
 	if m.HQ.Landed != nil && !slices.Contains(landed, m.HQ.Landed.Head) {
 		landed = append(slices.Clip(landed), m.HQ.Landed.Head)
 	}
-	output, err := sshDeployer.ExecSSH(ctx, m.Hostname, ops.BuildChangeWorkCommand(hqPairWorkingDir, landed))
+	output, err := sshDeployer.ExecSSH(ctx, m.Hostname, ops.BuildChangeWorkCommand(hqPairWorkingDir(m), landed))
 	if err != nil {
 		return changeFallbackTitle(m.Hostname)
 	}
@@ -309,7 +309,7 @@ func landedHeads(state hq.MateState, repo string) []string {
 // the agent can settle, an HQ that could not serve the read after its tries,
 // or a read that failed.
 func takeChangeIn(ctx context.Context, sshDeployer ops.SSHDeployer, hqc hq.Client, m *workflow.ServiceMeta, number int, branch string) (shipOutcome, bool) {
-	output, tries, err := gitAgainstHQ(ctx, sshDeployer, hqc, m.Hostname, ops.BuildTakeChangeInCommand(hqPairWorkingDir, branch))
+	output, tries, err := gitAgainstHQ(ctx, sshDeployer, hqc, m.Hostname, ops.BuildTakeChangeInCommand(hqPairWorkingDir(m), branch))
 	if err == nil {
 		return shipOutcome{}, true
 	}
@@ -326,8 +326,8 @@ func takeChangeIn(ctx context.Context, sshDeployer ops.SSHDeployer, hqc hq.Clien
 
 // pushChangeBranch pushes the checkout's HEAD to branch, tried again while HQ
 // cannot serve it.
-func pushChangeBranch(ctx context.Context, sshDeployer ops.SSHDeployer, hqc hq.Client, hostname, branch string) (output []byte, tries int, err error) {
-	return gitAgainstHQ(ctx, sshDeployer, hqc, hostname, ops.BuildChangePushCommand(hqPairWorkingDir, branch))
+func pushChangeBranch(ctx context.Context, sshDeployer ops.SSHDeployer, hqc hq.Client, m *workflow.ServiceMeta, branch string) (output []byte, tries int, err error) {
+	return gitAgainstHQ(ctx, sshDeployer, hqc, m.Hostname, ops.BuildChangePushCommand(hqPairWorkingDir(m), branch))
 }
 
 // gitAgainstHQ runs command — git that reaches HQ — in hostname's checkout,

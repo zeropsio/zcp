@@ -75,7 +75,7 @@ func hqEnsurePushCredential(
 	if client == nil || sshDeployer == nil || !hqPairWired(meta) || !ops.IsHQRemote(meta.RemoteURL, hqc.Address()) {
 		return nil
 	}
-	_, _ = sshDeployer.ExecSSH(ctx, meta.Hostname, ops.BuildGitCredentialHelperAssertCommand(hqPairWorkingDir, meta.RemoteURL, hqc.Address()))
+	_, _ = sshDeployer.ExecSSH(ctx, meta.Hostname, ops.BuildGitCredentialHelperAssertCommand(hqPairWorkingDir(meta), meta.RemoteURL, hqc.Address()))
 	marked := meta.GitPushState == topology.GitPushBroken
 	serviceID, held, known := heldPushCredential(ctx, client, projectID, meta.Hostname)
 	current := known && subtle.ConstantTimeCompare([]byte(held), []byte(hqc.Credential())) == 1

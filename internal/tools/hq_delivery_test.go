@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -122,6 +123,58 @@ func TestAStageDeployOfAWiredPairDeliversItself(t *testing.T) {
 	}
 	if lab.meta().HQ.Change != 1 {
 		t.Errorf("the change's number is not on the pair: %+v", lab.meta().HQ)
+	}
+}
+
+// fillCodeVolume makes the lab's pair variant B the way ops.FillCodeVolume
+// does: its checkout, .git included, copied onto a code volume mounted at
+// /var/www/dify, recorded on the pair. Returns the volume's directory.
+func (l *hqLab) fillCodeVolume() string {
+	l.t.Helper()
+	copied := filepath.Join(l.t.TempDir(), "volume")
+	if err := os.CopyFS(copied, os.DirFS(l.pair)); err != nil {
+		l.t.Fatal(err)
+	}
+	volume := filepath.Join(l.pair, "dify")
+	if err := os.Rename(copied, volume); err != nil {
+		l.t.Fatal(err)
+	}
+	if err := workflow.UpsertServiceMeta(l.stateDir, "appdev", func(m *workflow.ServiceMeta, _ bool) error {
+		m.CodeVolume = &topology.CodeVolume{Hostname: "code", MountPath: "/var/www/dify"}
+		return nil
+	}); err != nil {
+		l.t.Fatal(err)
+	}
+	return volume
+}
+
+// TestAStageDeployOfACodeVolumePairDeliversTheVolumesRepository is a variant-B
+// pair (docs/spec-mate.md §2.8a): filling the code volume copied the dev
+// half's /var/www checkout onto it, and from then on the agent edits and
+// commits there. The delivery commits and pushes that repository — never
+// /var/www, where the volume is only a nested folder.
+func TestAStageDeployOfACodeVolumePairDeliversTheVolumesRepository(t *testing.T) {
+	lab := newHQLab(t)
+	lab.wire()
+	volume := lab.fillCodeVolume()
+	deployCopyHead := lab.git("rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(volume, "footer.js"), []byte("the footer\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	delivery := lab.deliver()
+	if delivery == nil || delivery.Change == nil {
+		t.Fatalf("want a delivery through a change, got %+v", delivery)
+	}
+	volumeHead := lab.git("-C", volume, "rev-parse", "HEAD")
+	if head := lab.remoteHead("mate/p-mate/1"); head != volumeHead {
+		t.Errorf("the change's branch is at %q, want the volume's HEAD %q", head, volumeHead)
+	}
+	if files := lab.git("-C", volume, "ls-tree", "--name-only", "HEAD"); files != "footer.js" {
+		t.Errorf("the delivered commit holds %q, want the volume's own footer.js", files)
+	}
+	if got := lab.git("rev-parse", "HEAD"); got != deployCopyHead {
+		t.Errorf("/var/www's checkout moved to %s: the delivery committed there, not on the volume", got)
 	}
 }
 

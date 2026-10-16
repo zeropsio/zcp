@@ -309,7 +309,7 @@ func deliverHeldHQPair(
 	// The deployed tree is committed before anything reaches HQ, so the work
 	// is the checkout's own whether or not HQ then answers; the delivery
 	// command after it commits nothing more.
-	committed, err := sshDeployer.ExecSSH(ctx, meta.Hostname, ops.BuildDeliveryCommitCommand(hqPairWorkingDir, message))
+	committed, err := sshDeployer.ExecSSH(ctx, meta.Hostname, ops.BuildDeliveryCommitCommand(hqPairWorkingDir(meta), message))
 	if line := deliveryRefusalLine(string(committed), target, repo, meta.Hostname, landedCommit); line != "" {
 		return notDelivered(line)
 	}
@@ -319,7 +319,7 @@ func deliverHeldHQPair(
 			target, repo, meta.Hostname, gitPushErrorDetail(err, committed), target))
 	}
 	output, tries, err := gitAgainstHQ(ctx, sshDeployer, hqc, meta.Hostname,
-		ops.BuildDeliveryCommand(hqPairWorkingDir, message, landedCommit, landedHead))
+		ops.BuildDeliveryCommand(hqPairWorkingDir(meta), message, landedCommit, landedHead))
 	if line := deliveryRefusalLine(string(output), target, repo, meta.Hostname, landedCommit); line != "" {
 		return notDelivered(line)
 	}
