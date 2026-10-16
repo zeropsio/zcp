@@ -806,6 +806,7 @@ func TestClassifyStepError_Table(t *testing.T) {
 		{"CDP timeout is wedge not timeout", "CDP command timed out: DOM.enable", ErrorKindWedge},
 		{"target closed is wedge", "Target closed", ErrorKindWedge},
 		{"protocol error is wedge", "Protocol error (Page.navigate): unknown", ErrorKindWedge},
+		{"a daemon that never answers is wedge", "Failed to read: Resource temporarily unavailable (os error 11) (the command reached the daemon but no response came back; it may or may not have run, so it was not retried)", ErrorKindWedge},
 		{"selector not found", `no element matching selector "#missing"`, ErrorKindSelectorNotFound},
 		{"no such element", "no such element: @e9", ErrorKindSelectorNotFound},
 		{"not editable", "Element is not editable", ErrorKindNotEditable},

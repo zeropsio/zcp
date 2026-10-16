@@ -453,12 +453,14 @@ func OverrideBrowserScaleForTest(fn func(context.Context) error) func() {
 
 // cdpWedgeSignals are per-step error substrings that indicate Chrome
 // wedged behind a stuck CDP connection even when the daemon returned
-// exit 0. A match on any of these recycles the browser so the next
-// call doesn't reattach to the same zombie Chrome.
+// exit 0, or a daemon that took a command and never answered (agent-browser's
+// client gives up after at least 30 s). A match on any of these recycles the
+// browser so the next call doesn't reattach to the same zombie Chrome.
 var cdpWedgeSignals = []string{
 	"CDP command timed out",
 	"Target closed",
 	"Protocol error",
+	"no response came back",
 }
 
 // resolveBrowserTimeout clamps the caller-requested timeout to
