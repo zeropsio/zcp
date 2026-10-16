@@ -78,9 +78,12 @@ type ServerState struct {
 	LeaderStart int64      `json:"leaderStart"`
 	StartedAt   *time.Time `json:"startedAt"`
 	// Restarts counts the starts after the first in this state file's life.
-	Restarts int    `json:"restarts"`
-	Exit     *Exit  `json:"exit"`
-	LogPath  string `json:"logPath"`
+	Restarts int `json:"restarts"`
+	// LastRestartReason says why the supervisor last restarted it, or why it
+	// stopped restarting it on watched changes.
+	LastRestartReason string `json:"lastRestartReason,omitempty"`
+	Exit              *Exit  `json:"exit"`
+	LogPath           string `json:"logPath"`
 	// RssKB is the resident memory of the server's whole process group in
 	// KiB, measured when the state is read; 0 when it has no live group.
 	RssKB int64 `json:"rssKb,omitempty"`

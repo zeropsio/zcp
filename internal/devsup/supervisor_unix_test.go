@@ -462,6 +462,42 @@ func TestSupervisor_AWatchedChangeRestartsTheServerAndIgnoredOutputDoesNot(t *te
 	eventually(t, "api to listen again", func() bool { return listening(api) })
 }
 
+func TestSupervisor_StateSaysWhyTheSupervisorLastRestartedAServer(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	api := freePort(t)
+	r.write("apps/api/main.go", "package main")
+	srv := r.listener("api", api)
+	srv.Watch = &Watch{Paths: []string{"apps/api"}}
+	r.declare(srv)
+	s := r.supervisor()
+	s.Boot()
+	eventually(t, "api to listen", func() bool { return listening(api) })
+	if sv := mustServer(t, s.State(), "api"); sv.LastRestartReason != "" {
+		t.Fatalf("a first start has a restart reason: %q", sv.LastRestartReason)
+	}
+
+	r.write("apps/api/main.go", "package main // v2")
+	eventually(t, "api to restart on the change", func() bool {
+		return mustServer(t, s.State(), "api").LastRestartReason == "apps/api/main.go changed"
+	})
+	eventually(t, "api to listen again", func() bool { return listening(api) })
+
+	if err := s.Restart("api"); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustServer(t, s.State(), "api").LastRestartReason; got != "a restart was asked for" {
+		t.Fatalf("reason after ctl restart = %q", got)
+	}
+	st, err := ReadState(r.state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := mustServer(t, st, "api").LastRestartReason; got != "a restart was asked for" {
+		t.Fatalf("state.json reason = %q", got)
+	}
+}
+
 func TestSupervisor_ControlSocketDrivesTheServers(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
@@ -662,6 +698,9 @@ func TestSupervisor_AServerThatCrashesInItsStartWindowIsStartedOnceMoreThenStays
 	if sv := mustServer(t, s.State(), "flaky"); sv.Exit == nil || sv.Exit.Code != 1 {
 		t.Fatalf("the first crash is not visible: %+v", sv.Exit)
 	}
+	if got := mustServer(t, s.State(), "flaky").LastRestartReason; got != "it crashed within its start window" {
+		t.Fatalf("flaky restart reason = %q", got)
+	}
 	eventually(t, "broken to crash on its second start too", func() bool {
 		sv := mustServer(t, s.State(), "broken")
 		return sv.Status == StatusCrashed && sv.Restarts == 1
@@ -694,6 +733,9 @@ func TestSupervisor_AServerThatChangesItsWatchedFilesOnEveryStartIsNotRestartedB
 	sv := mustServer(t, s.State(), "api")
 	if sv.Restarts != watchLoopLimit || sv.Status != StatusRunning || sv.Pid == 0 {
 		t.Fatalf("api = %+v, want running after %d restarts", sv, watchLoopLimit)
+	}
+	if want := "restarts stopped: apps/api/pkg/PKG-INFO changed during each of its last 10 starts; add the path to watch.ignore"; sv.LastRestartReason != want {
+		t.Fatalf("reason = %q, want %q", sv.LastRestartReason, want)
 	}
 
 	r.write("apps/api/main.py", "v2")

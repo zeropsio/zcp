@@ -94,6 +94,10 @@ type DevServerResult struct {
 	// Restarts is how often the supervisor restarted the reported server
 	// (status).
 	Restarts int `json:"restarts,omitempty"`
+	// LastRestartReason is the supervisor's word on why it last restarted
+	// the reported server, or stopped restarting it on watched changes
+	// (status).
+	LastRestartReason string `json:"lastRestartReason,omitempty"`
 	// Unreported: the call read several servers and reports none of them
 	// alone (a status of a dev service with several), so it says nothing of
 	// whether "the" server runs.
@@ -727,9 +731,13 @@ func statusDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds
 	declared, _ := ds.Server(name)
 	result := newResult(devServerActionStatus, p.Hostname, name)
 	result.LogFile, result.PID, result.Restarts = server.LogPath, server.Pid, server.Restarts
+	result.LastRestartReason = server.LastRestartReason
 	defer func() {
 		if result.Restarts > 0 {
 			result.Message += fmt.Sprintf(" The supervisor has restarted it %d times.", result.Restarts)
+		}
+		if result.LastRestartReason != "" {
+			result.Message += fmt.Sprintf(" Last restart reason: %s.", result.LastRestartReason)
 		}
 	}()
 	label := serverLabel(p.Hostname, name)

@@ -55,6 +55,16 @@ const (
 // server's own output and restarts nothing.
 const watchLoopLimit = 10
 
+// Restart reasons that name no path.
+const (
+	reasonRetry   = "it crashed within its start window"
+	reasonAsked   = "a restart was asked for"
+	reasonStart   = "a start was asked for"
+	reasonDecl    = "its declaration changed"
+	reasonBoot    = "the supervisor started again"
+	reasonRunSpec = "its run entry changed"
+)
+
 // logRotateSize is the size above which a server's log moves to .log.1 when
 // the server starts.
 const logRotateSize = 10 << 20
@@ -80,6 +90,9 @@ type server struct {
 	watch           *watcher
 	// retry: this start is the one more start after a crash in the window.
 	retry bool
+	// restartReason says why it last restarted, or why a watched change
+	// did not restart it.
+	restartReason string
 	// windowChanged: a watched change came within this start's window;
 	// selfChanged counts the starts in a row that saw one.
 	windowChanged bool
@@ -128,7 +141,7 @@ func New(cfg Config) (*Supervisor, error) {
 		for name, p := range prev.Servers {
 			sv := &server{
 				name: name, source: p.Source, desired: p.Desired, exit: p.Exit, startedAt: p.StartedAt,
-				leftPgid: p.Pgid, leftLeaderStart: p.LeaderStart,
+				leftPgid: p.Pgid, leftLeaderStart: p.LeaderStart, restartReason: p.LastRestartReason,
 			}
 			if p.StartedAt != nil {
 				sv.starts = p.Restarts + 1
@@ -316,7 +329,11 @@ func (s *Supervisor) reconcile(boot bool) map[string]action {
 		}
 	}
 	s.mu.Unlock()
-	s.startAll(start)
+	reason := reasonDecl
+	if boot {
+		reason = reasonBoot
+	}
+	s.startAll(start, reason)
 	s.syncWatches()
 	s.persist()
 	return acts
@@ -347,18 +364,19 @@ func (s *Supervisor) stopAll(names []string) {
 }
 
 // startAll starts the named servers in parallel.
-func (s *Supervisor) startAll(names []string) {
+func (s *Supervisor) startAll(names []string, reason string) {
 	var wg sync.WaitGroup
 	for _, name := range names {
-		wg.Go(func() { s.start(name, false) })
+		wg.Go(func() { s.start(name, reason) })
 	}
 	wg.Wait()
 }
 
-// start waits for the server's port and starts it; retry marks the one more
-// start after a crash in the window. A failure leaves it crashed with exit
+// start waits for the server's port and starts it; reason is why, recorded
+// when it is a restart, and reasonRetry marks the one more start after a crash
+// in the window. A failure leaves it crashed with exit
 // {code: -1, signal: port_busy|start_failed} and the reason in its log.
-func (s *Supervisor) start(name string, retry bool) {
+func (s *Supervisor) start(name, reason string) {
 	s.mu.Lock()
 	sv := s.servers[name]
 	if sv == nil || sv.g != nil {
@@ -367,7 +385,10 @@ func (s *Supervisor) start(name string, retry bool) {
 	}
 	spec := sv.spec
 	sv.starting = true
-	sv.retry, sv.windowChanged = retry, false
+	sv.retry, sv.windowChanged = reason == reasonRetry, false
+	if sv.starts > 0 {
+		sv.restartReason = reason
+	}
 	sv.starts++
 	starts := sv.starts
 	s.mu.Unlock()
@@ -466,7 +487,7 @@ func (s *Supervisor) retryStart(sv *server, starts int) {
 	if !still {
 		return
 	}
-	s.start(sv.name, true)
+	s.start(sv.name, reasonRetry)
 	s.persist()
 }
 
@@ -555,8 +576,10 @@ func (s *Supervisor) watchFired(name, rel string) {
 			sv.selfChanged++
 		}
 		if sv.selfChanged > watchLoopLimit {
+			sv.restartReason = fmt.Sprintf("restarts stopped: %s changed during each of its last %d starts; add the path to watch.ignore", rel, watchLoopLimit)
 			s.mu.Unlock()
 			s.logf("no restart of %s: %s changed during its start, as on each of its last %d starts; add the path to watch.ignore", name, rel, watchLoopLimit)
+			s.persist()
 			return
 		}
 	} else if !sv.windowChanged {
@@ -566,7 +589,7 @@ func (s *Supervisor) watchFired(name, rel string) {
 	s.mu.Unlock()
 	s.logf("restart %s: %s changed", name, rel)
 	s.stopAll([]string{name})
-	s.start(name, false)
+	s.start(name, rel+" changed")
 	s.persist()
 }
 
@@ -587,7 +610,7 @@ func (s *Supervisor) Start(name string) error {
 	live := s.servers[name].g != nil
 	s.mu.Unlock()
 	if !live {
-		s.start(name, false)
+		s.start(name, reasonStart)
 	}
 	s.syncWatches()
 	s.persist()
@@ -623,7 +646,7 @@ func (s *Supervisor) Restart(name string) error {
 	s.servers[name].starting = true
 	s.mu.Unlock()
 	s.stopAll([]string{name})
-	s.start(name, false)
+	s.start(name, reasonAsked)
 	s.syncWatches()
 	s.persist()
 	return nil
@@ -662,7 +685,11 @@ func (s *Supervisor) RunEntry(spec Server) error {
 	live := sv.g != nil
 	s.mu.Unlock()
 	if !live {
-		s.start(norm.Name, false)
+		reason := reasonStart
+		if restart {
+			reason = reasonRunSpec
+		}
+		s.start(norm.Name, reason)
 	}
 	s.persist()
 	return nil
@@ -752,7 +779,7 @@ func (s *Supervisor) State() State {
 func (s *Supervisor) serverState(name string, sv *server) ServerState {
 	ss := ServerState{
 		Source: sv.source, Desired: sv.desired, StartedAt: sv.startedAt, Exit: sv.exit,
-		LogPath: LogPath(s.cfg.StateDir, name),
+		LogPath: LogPath(s.cfg.StateDir, name), LastRestartReason: sv.restartReason,
 	}
 	if sv.starts > 1 {
 		ss.Restarts = sv.starts - 1

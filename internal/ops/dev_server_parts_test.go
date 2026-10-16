@@ -312,3 +312,15 @@ func TestDevServer_ADeployOfAVariantBDevServiceWithOneServer_ReportsThatServer(t
 		t.Errorf("result = %+v, want webdev's one server web, running on 3000 — apidev's api and admin are not webdev's", result)
 	}
 }
+
+func TestDevServer_StatusSaysWhyTheSupervisorLastRestartedTheServer(t *testing.T) {
+	t.Parallel()
+	c := devservertest.NewSupervised(oneServer)
+	c.Servers["apidev"].Restarts = 136
+	c.Servers["apidev"].LastRestartReason = "src/pkg.egg-info/PKG-INFO changed"
+	result := runDevServer(t, c, DevServerParams{Action: "status", Hostname: "apidev"})
+	if result.LastRestartReason != "src/pkg.egg-info/PKG-INFO changed" ||
+		!strings.Contains(result.Message, "Last restart reason: src/pkg.egg-info/PKG-INFO changed.") {
+		t.Errorf("reason/message = %q/%q, want the supervisor's last restart reason", result.LastRestartReason, result.Message)
+	}
+}
