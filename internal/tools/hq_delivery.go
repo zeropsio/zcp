@@ -466,5 +466,6 @@ func hqMergeAnyMoment(base string) string {
 // hqHandoffNote is what the person needs from the Mate's closing message in a
 // Mate that delivers through HQ: the change to review, and what they do next —
 // in the words Mate shows under that message (Review, Put it live), never a
-// path through other pages.
-const hqHandoffNote = "In your closing message tell the person: the change to review, by its link, and that they can press Review to look it over and merge it, or Put it live to merge it and release it to production in one go."
+// path through other pages. Once production runs a release, Mate's turn note
+// gives its address, and that, not the Mate's preview, is the app.
+const hqHandoffNote = "In your closing message tell the person: the change to review, by its link, and that they can press Review to look it over and merge it, or, while the application has no production, Put it live to merge it and release it to production in one go. Once Mate has told you production runs a release, that address is the app: give it for anything real, and yours only as their preview."

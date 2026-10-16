@@ -306,3 +306,14 @@ func TestHQHandoffNote_NamesWhatMateOffersUnderTheMessage(t *testing.T) {
 		}
 	}
 }
+
+// Once production runs a release, the closing message names production's
+// address as the app and the Mate's own as the person's preview.
+func TestHQHandoffNote_NamesProductionOnceItRunsARelease(t *testing.T) {
+	t.Parallel()
+	for _, want := range []string{"while the application has no production", "production runs a release", "that address is the app", "preview"} {
+		if !strings.Contains(hqHandoffNote, want) {
+			t.Errorf("handoff note lacks %q: %q", want, hqHandoffNote)
+		}
+	}
+}
