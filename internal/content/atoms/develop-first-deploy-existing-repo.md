@@ -22,9 +22,11 @@ developers run it locally. Scaffold nothing for it.
    `Makefile`, `.devcontainer/`, `Procfile`, a compose file — the
    install and dev commands, ports, system packages, host setting.
 2. **The dev setup stays minimal:** base, system packages in
-   `run.prepareCommands`, `run.ports`, `deployFiles: [.]`, no dependency
-   install in `buildCommands`; the first deploy puts its `run.start`
-   under the dev-server supervisor. A package manager the run image
+   `run.prepareCommands`, `run.ports` with every port a dev server will
+   listen on (a port added later takes a redeploy, which replaces the dev
+   container), `deployFiles: [.]`, no dependency install in
+   `buildCommands`; the first deploy puts its `run.start` under the
+   dev-server supervisor. A package manager the run image
    already ships is used as it stands: installing it again globally fails
    with `EEXIST`.
 3. **Size it before the first install** from the repo's own hints, else

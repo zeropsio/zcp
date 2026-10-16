@@ -61,6 +61,12 @@ func TestMonorepoGuidance_ReachesTheAgentWhenItDecides(t *testing.T) {
 		}
 	})
 
+	t.Run("every port a dev server will listen on is declared at the first deploy, because a port added later takes a redeploy", func(t *testing.T) {
+		t.Parallel()
+		body := renderedAtomBody(t, firstDeploy, "develop-first-deploy-existing-repo")
+		requireAll(t, body, "`run.ports` with every port a dev server will listen on", "a port added later takes a redeploy")
+	})
+
 	t.Run("an import sizes the hobby PostgreSQL that every part's dev and stage share for all their connection pools", func(t *testing.T) {
 		t.Parallel()
 		body := renderedAtomBody(t, scenario("bootstrap/classic/provision-local"), "bootstrap-provision-rules")
