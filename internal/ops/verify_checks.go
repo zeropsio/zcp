@@ -99,8 +99,8 @@ func (rc RuntimeClass) String() string {
 // shape the API returns.
 //
 // A recorded "serves HTTP" never stands in for ports the service does not
-// declare: the record is one per dev/stage pair, so a worker stage carries
-// its dev half's answer.
+// declare: the record is what the host last deployed through ZCP, the ports
+// are what it declares now.
 func classifyRuntime(serviceType string, hasPorts bool, recordedServesHTTP *bool) RuntimeClass {
 	if recordedServesHTTP != nil && !*recordedServesHTTP {
 		return RuntimeWorker

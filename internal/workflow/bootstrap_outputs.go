@@ -174,13 +174,15 @@ func targetMeta(target BootstrapTarget, hostname string, mode topology.Mode, sta
 		Hostname:         hostname,
 		Mode:             mode,
 		Stages:           planStages(stages),
-		ServesHTTP:       target.Runtime.ServesHTTP,
 		CloseDeployMode:  topology.CloseModeUnset,
 		GitPushState:     topology.GitPushUnconfigured,
 		BuildIntegration: topology.BuildIntegrationNone,
 		BootstrapSession: bootstrapSession,
 		BootstrappedAt:   bootstrappedAt,
 		CodeVolume:       cloneCodeVolume(target.Runtime.CodeVolume),
+	}
+	if serves := target.Runtime.ServesHTTP; serves != nil {
+		meta.SetServesHTTP(hostname, *serves)
 	}
 	setPlanPublicAccess(meta, target.Runtime.PublicAccess, hostname, meta.StageHostnames())
 	return meta

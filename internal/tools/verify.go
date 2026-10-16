@@ -183,11 +183,12 @@ func runtimeMetaForHost(stateDir, host string) ops.RuntimeMeta {
 }
 
 func runtimeMetaFromServiceMeta(meta *workflow.ServiceMeta, host string) ops.RuntimeMeta {
-	if meta == nil || meta.ServesHTTP == nil {
+	serves := meta.ServesHTTPFor(host)
+	if serves == nil {
 		return ops.RuntimeMeta{}
 	}
 	return ops.RuntimeMeta{
-		ServesHTTP: *meta.ServesHTTP,
+		ServesHTTP: *serves,
 		Recorded:   true,
 		Setup:      meta.SetupNameFor(host),
 	}

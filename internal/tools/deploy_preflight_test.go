@@ -839,11 +839,12 @@ func TestDeployRecordsServesHTTP(t *testing.T) {
 			if meta == nil {
 				t.Fatal("expected service meta")
 			}
-			if meta.ServesHTTP == nil {
+			serves := meta.ServesHTTPFor("appdev")
+			if serves == nil {
 				t.Fatal("ServesHTTP = nil, want recorded bool")
 			}
-			if *meta.ServesHTTP != tt.wantServe {
-				t.Errorf("ServesHTTP = %v, want %v", *meta.ServesHTTP, tt.wantServe)
+			if *serves != tt.wantServe {
+				t.Errorf("ServesHTTP = %v, want %v", *serves, tt.wantServe)
 			}
 		})
 	}

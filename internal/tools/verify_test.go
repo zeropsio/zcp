@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -357,13 +358,12 @@ func TestVerifyTool_AServiceThatDeclaresNoPortIsNotDegradedOnHTTP(t *testing.T) 
 	t.Parallel()
 
 	dir := t.TempDir()
-	servesHTTP := true
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname: "difydev", Mode: topology.ModeDev,
 		BootstrapSession: "s", BootstrappedAt: "2026-10-16",
 		PrimarySetupName: "dev",
 		Stages:           []topology.StageRef{{Hostname: "apistage", SetupName: "api"}, {Hostname: "workerstage", SetupName: "worker"}},
-		ServesHTTP:       &servesHTTP,
+		ServesHTTPByHost: map[string]bool{"difydev": true},
 	}); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
@@ -392,6 +392,78 @@ func TestVerifyTool_AServiceThatDeclaresNoPortIsNotDegradedOnHTTP(t *testing.T) 
 		if c.Name == "http_public" || c.Name == "http_internal" {
 			t.Errorf("a service that declares no port got %s %s: %q", c.Name, c.Status, c.Detail)
 		}
+	}
+}
+
+// A pair recorded one "serves HTTP" for all its hosts, so the last deploy won:
+// a worker stage deployed after the API stage turned the API stage into a
+// worker, and a broken API read healthy with no HTTP check at all.
+func TestVerifyTool_AStageThatServesHTTPKeepsItsHTTPCheckAfterAPortlessSiblingStageDeploys(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	scaffoldServiceYaml(t, dir, "difydev", `zerops:
+  - setup: api
+    build:
+      base: python@3.14
+      deployFiles: [.]
+    run:
+      ports:
+        - port: 5001
+          httpSupport: true
+      start: gunicorn app:app
+  - setup: worker
+    build:
+      base: python@3.14
+      deployFiles: [.]
+    run:
+      start: celery worker
+`)
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname: "difydev", Mode: topology.ModeStandard,
+		BootstrapSession: "s", BootstrappedAt: "2026-10-16",
+		Stages: []topology.StageRef{{Hostname: "apistage", SetupName: "api"}, {Hostname: "workerstage", SetupName: "worker"}},
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+	for _, stage := range []struct{ host, setup string }{{"apistage", "api"}, {"workerstage", "worker"}} {
+		if _, result, err := deployPreFlight(context.Background(), platform.NewMock(), "proj-1", stateDir, "difydev", stage.host, stage.setup, "", true); err != nil || result == nil || !result.Passed {
+			t.Fatalf("deployPreFlight %s: err=%v result=%+v", stage.host, err, result)
+		}
+	}
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-a", Name: "apistage", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/python@3.14", ServiceStackTypeCategoryName: "USER"}, Status: platform.ServiceStatusStopped, Ports: []platform.Port{{Port: 5001}}},
+		}).
+		WithLogAccess(&platform.LogAccess{URL: "http://logs.test"})
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterVerify(srv, mock, platform.NewMockLogFetcher(), "proj-1", stateDir, runtime.Info{}, nil)
+
+	result := callTool(t, srv, "zerops_verify", map[string]any{"serviceHostname": "apistage"})
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", getTextContent(t, result))
+	}
+	var vr ops.VerifyResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &vr); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if vr.RuntimeClass != "dynamic" {
+		t.Errorf("runtimeClass = %q, want %q (%s)", vr.RuntimeClass, "dynamic", vr.RuntimeClassification)
+	}
+	var httpChecks []string
+	for _, c := range vr.Checks {
+		if c.Name == "http_public" || c.Name == "http_internal" {
+			httpChecks = append(httpChecks, c.Name)
+		}
+	}
+	if len(httpChecks) != 2 {
+		t.Errorf("http checks = %v, want http_internal and http_public; checks: %+v", httpChecks, vr.Checks)
 	}
 }
 

@@ -540,10 +540,11 @@ func TestHandleLocalGitPush_RecordsServesHTTPFromSetup(t *testing.T) {
 	if meta.PrimarySetupName != "worker" {
 		t.Errorf("PrimarySetupName = %q, want worker", meta.PrimarySetupName)
 	}
-	if meta.ServesHTTP == nil {
+	serves := meta.ServesHTTPFor("myproject")
+	if serves == nil {
 		t.Fatal("ServesHTTP = nil, want recorded bool")
 	}
-	if *meta.ServesHTTP {
+	if *serves {
 		t.Errorf("ServesHTTP = true, want false for worker setup without ports")
 	}
 }

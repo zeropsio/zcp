@@ -1390,3 +1390,51 @@ func TestUpsertServiceMeta_LegacyPendingDelivery_IsDropped(t *testing.T) {
 		t.Errorf("the record after its next write = %s; want the owed delivery gone and the write applied", data)
 	}
 }
+
+// A meta written before the per-host record carries one servesHttp for the
+// whole meta. A lone service wrote it for itself; a pair wrote whichever host
+// deployed last, so none of its hosts reads it — each falls back to its
+// declared ports.
+func TestReadServiceMeta_AnExistingServesHTTPRecordStaysOnlyWithTheHostThatWroteIt(t *testing.T) {
+	t.Parallel()
+	worker := false
+	tests := []struct {
+		name   string
+		legacy string
+		want   map[string]*bool
+	}{
+		{
+			name:   "a lone worker keeps its record",
+			legacy: `{"hostname":"workerapp","mode":"simple","servesHttp":false}`,
+			want:   map[string]*bool{"workerapp": &worker},
+		},
+		{
+			name:   "a pair with one stage reads no host's record",
+			legacy: `{"hostname":"appdev","mode":"standard","stageHostname":"appstage","servesHttp":false}`,
+			want:   map[string]*bool{"appdev": nil, "appstage": nil},
+		},
+		{
+			name:   "a pair with several stages reads no host's record",
+			legacy: `{"hostname":"difydev","mode":"standard","stages":[{"hostname":"apistage","setupName":"api"},{"hostname":"workerstage","setupName":"worker"}],"servesHttp":false}`,
+			want:   map[string]*bool{"difydev": nil, "apistage": nil, "workerstage": nil},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			meta, err := parseMeta([]byte(tt.legacy))
+			if err != nil {
+				t.Fatalf("parseMeta: %v", err)
+			}
+			for host, want := range tt.want {
+				got := meta.ServesHTTPFor(host)
+				switch {
+				case want == nil && got != nil:
+					t.Errorf("%s reads servesHttp %v, want no record", host, *got)
+				case want != nil && (got == nil || *got != *want):
+					t.Errorf("%s reads servesHttp %v, want %v", host, got, *want)
+				}
+			}
+		})
+	}
+}

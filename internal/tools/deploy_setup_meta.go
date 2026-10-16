@@ -13,7 +13,6 @@ func recordResolvedDeploySetupMeta(stateDir, targetHostname, setupName string, s
 	if stateDir == "" || targetHostname == "" {
 		return nil
 	}
-	serves := servesHTTP
 	err := workflow.UpdateServiceMeta(stateDir, targetHostname, func(m *workflow.ServiceMeta) error {
 		changed := false
 		_, isStage := m.StageFor(targetHostname)
@@ -30,8 +29,7 @@ func recordResolvedDeploySetupMeta(stateDir, targetHostname, setupName string, s
 		default:
 			return workflow.ErrSkipWrite
 		}
-		if m.ServesHTTP == nil || *m.ServesHTTP != servesHTTP {
-			m.ServesHTTP = &serves
+		if m.SetServesHTTP(targetHostname, servesHTTP) {
 			changed = true
 		}
 		if !changed {

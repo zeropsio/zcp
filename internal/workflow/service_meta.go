@@ -112,10 +112,12 @@ type ServiceMeta struct {
 	// the literal "prod" tail). F4 ledger completion.
 	ProdSetupName string `json:"prodSetupName,omitempty"`
 
-	// ServesHTTP records whether the last ZCP-driven deploy setup for this
-	// pair declares an HTTP surface. Pointer because absent means "unknown" for
-	// adopted or externally deployed services; false means a known worker setup.
-	ServesHTTP *bool `json:"servesHttp,omitempty"`
+	// ServesHTTPByHost records, per host of this meta — Hostname and each
+	// stage — whether the setup that host last deployed through ZCP declares
+	// an HTTP surface; false is a known worker setup. A host without an entry
+	// is unknown (adopted, externally deployed, not deployed yet): readers
+	// fall back to its declared ports, never to another host's entry.
+	ServesHTTPByHost map[string]bool `json:"servesHttpByHost,omitempty"`
 	// ProvisionedFromGit marks a recipe-route runtime the platform cloned,
 	// built, and DEPLOYED from buildFromGit at import — so the service is
 	// already serving curated code when it reaches ACTIVE, NOT awaiting a first
@@ -375,6 +377,32 @@ func (m *ServiceMeta) SetStageSetup(hostname, setup string) bool {
 		}
 	}
 	return false
+}
+
+// ServesHTTPFor is host's own record of whether its deployed setup declares an
+// HTTP surface; nil when host has none.
+func (m *ServiceMeta) ServesHTTPFor(host string) *bool {
+	if m == nil {
+		return nil
+	}
+	serves, ok := m.ServesHTTPByHost[host]
+	if !ok {
+		return nil
+	}
+	return &serves
+}
+
+// SetServesHTTP records serves as host's own. Reports whether the meta
+// changed: false when host already records that value.
+func (m *ServiceMeta) SetServesHTTP(host string, serves bool) bool {
+	if old, ok := m.ServesHTTPByHost[host]; ok && old == serves {
+		return false
+	}
+	if m.ServesHTTPByHost == nil {
+		m.ServesHTTPByHost = map[string]bool{}
+	}
+	m.ServesHTTPByHost[host] = serves
+	return true
 }
 
 // IsComplete returns true if bootstrap finished for this service.
@@ -778,6 +806,9 @@ func parseMeta(data []byte) (*ServiceMeta, error) {
 	if err := foldLegacyStage(data, &meta); err != nil {
 		return nil, err
 	}
+	if err := foldLegacyServesHTTP(data, &meta); err != nil {
+		return nil, err
+	}
 	foldLegacyCloseMode(&meta)
 	return &meta, nil
 }
@@ -815,6 +846,30 @@ func foldLegacyStage(data []byte, meta *ServiceMeta) error {
 	}
 	if legacy.StageHostname != "" {
 		meta.Stages = []topology.StageRef{{Hostname: legacy.StageHostname, SetupName: legacy.StageSetupName}}
+	}
+	return nil
+}
+
+// legacyServesHTTP is the single serves-HTTP key a meta carried before
+// ServesHTTPByHost: the answer of the meta's last deploy, whichever host ran it.
+type legacyServesHTTP struct {
+	ServesHTTP *bool `json:"servesHttp,omitempty"`
+}
+
+// foldLegacyServesHTTP is the one-way lazy migration of that key, applied
+// after foldLegacyStage. A meta without stages wrote it only for Hostname, so
+// it becomes Hostname's entry; a pair's names no host and is not read — each
+// of its hosts falls back to its declared ports until it deploys again.
+func foldLegacyServesHTTP(data []byte, meta *ServiceMeta) error {
+	if meta.ServesHTTPByHost != nil || meta.HasStage() {
+		return nil
+	}
+	var legacy legacyServesHTTP
+	if err := json.Unmarshal(data, &legacy); err != nil {
+		return err
+	}
+	if legacy.ServesHTTP != nil {
+		meta.SetServesHTTP(meta.Hostname, *legacy.ServesHTTP)
 	}
 	return nil
 }
