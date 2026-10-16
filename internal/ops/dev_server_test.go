@@ -471,6 +471,41 @@ func TestDevServer_Status_Crashed(t *testing.T) {
 	}
 }
 
+// A restart reply that sees its server crashed while starting, with the
+// supervisor's one more start pending, says the server comes back and when to
+// look again — not that the supervisor leaves it down to be fixed.
+func TestDevServer_ARestartThatCrashedWithItsOneMoreStartPendingSaysItComesBack(t *testing.T) {
+	t.Parallel()
+	c := devservertest.NewSupervised(twoServers)
+	c.Crash = map[string]bool{"api": true}
+	c.RetryPending = map[string]bool{"api": true}
+
+	result := runDevServer(t, c, DevServerParams{Action: "restart", Hostname: "appdev", Name: "api"})
+
+	want := `Dev server api on appdev crashed while starting (exit 1); the supervisor starts it once more after its siblings settle. Check api again in about 30 s with zerops_dev_server action=status hostname="appdev" name="api".`
+	if result.Reason != reasonCrashed || !strings.Contains(result.Message, want) {
+		t.Errorf("result = %+v, want reason crashed and message containing %q", result, want)
+	}
+	if strings.Contains(result.Message, "leaves it down") {
+		t.Errorf("message = %q, says the supervisor leaves down a server it starts once more", result.Message)
+	}
+}
+
+// A restart whose health probe ends while the supervisor still reports the
+// server starting names it as still starting and says when to look again.
+func TestDevServer_ARestartStillStartingWhenItsProbeEndsSaysWhenToCheckItAgain(t *testing.T) {
+	t.Parallel()
+	c := devservertest.NewSupervised(twoServers)
+	c.HTTP = map[int]int{8080: 0}
+
+	result := runDevServer(t, c, DevServerParams{Action: "restart", Hostname: "appdev", Name: "api", WaitSeconds: 1})
+
+	want := `Check api again in about 30 s with zerops_dev_server action=status hostname="appdev" name="api".`
+	if !strings.Contains(result.Message, "the supervisor reports it starting") || !strings.Contains(result.Message, want) {
+		t.Errorf("message = %q, want it still starting and %q", result.Message, want)
+	}
+}
+
 func TestDevServer_Logs_ReturnsTail(t *testing.T) {
 	t.Parallel()
 	c := devservertest.NewSupervised(oneServer)

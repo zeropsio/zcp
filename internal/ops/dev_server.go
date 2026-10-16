@@ -650,10 +650,17 @@ func probedPath(p DevServerParams, ds *DevServers, name string) string {
 }
 
 // applyCrash reports a server the supervisor holds as crashed, with its exit
-// and log tail.
+// and log tail: down until started, or coming back when the supervisor's one
+// more start is pending.
 func applyCrash(ctx context.Context, ssh SSHDeployer, result *DevServerResult, name string, server devsup.ServerState) {
 	result.LogTail = currentRun(supervisorLogTail(ctx, ssh, result.Hostname, name, defaultLogTailLines))
 	label := serverLabel(result.Hostname, name)
+	if server.RetryPending {
+		result.Reason = reasonCrashed
+		result.Message = fmt.Sprintf("Dev server %s crashed while starting (%s); %s. %s",
+			label, exitText(server.Exit), RetryPendingNote, RecheckSentence(result.Hostname, name, []string{name}))
+		return
+	}
 	if server.Exit != nil && server.Exit.Signal == devsup.ExitPortBusy {
 		result.Reason = reasonPortInUse
 		result.Message = fmt.Sprintf("Dev server %s could not start: its port stayed busy — something outside the supervisor listens on it. Find and stop that process, then start the server again.", label)
@@ -948,6 +955,9 @@ func applyProbeFailure(result *DevServerResult, probeLine string, deadlineHit bo
 		"Dev server %s did not pass the health probe (localhost:%d%s, probed from inside the container) within %ds (%s); the supervisor reports it %s. See logTail for the failing startup — if it references a missing dependency, install it over SSH first; if the server is still compiling, check again with action=status.",
 		serverLabel(result.Hostname, name), result.Port, healthPath, wait, result.Reason, status,
 	)
+	if status == devsup.StatusStarting {
+		result.Message += " " + RecheckSentence(result.Hostname, name, []string{name})
+	}
 }
 
 // devServerURL composes the consumer-vantage address of a dev server — the

@@ -42,8 +42,9 @@ type Container struct {
 	// no running server holds it, and a server started on it finds the port
 	// busy. Any other port refuses the connection.
 	HTTP, Foreign map[int]int
-	// Crash names servers that end on their own right after they start.
-	Crash map[string]bool
+	// Crash names servers that end on their own right after they start;
+	// RetryPending names those of them the supervisor starts once more.
+	Crash, RetryPending map[string]bool
 	// Settle names servers that answer starting for that many reads of the
 	// state after they start, and only then as running or as Crash says.
 	Settle   map[string]int
@@ -230,13 +231,13 @@ func (c *Container) start(name string, restart bool) {
 	switch {
 	case c.Foreign[c.declaredPort(name)] != 0:
 		st.Status, st.Pid, st.Pgid = devsup.StatusCrashed, 0, 0
-		st.Exit = &devsup.Exit{Code: -1, Signal: devsup.ExitPortBusy, At: now}
+		st.Exit, st.RetryPending = &devsup.Exit{Code: -1, Signal: devsup.ExitPortBusy, At: now}, false
 	case c.Crash[name]:
 		st.Status, st.Pid, st.Pgid = devsup.StatusCrashed, 0, 0
-		st.Exit = &devsup.Exit{Code: 1, At: now}
+		st.Exit, st.RetryPending = &devsup.Exit{Code: 1, At: now}, c.RetryPending[name]
 	default:
 		c.pid += 100
-		st.Status, st.Pid, st.Pgid, st.Exit = devsup.StatusRunning, 700+c.pid, 700+c.pid, nil
+		st.Status, st.Pid, st.Pgid, st.Exit, st.RetryPending = devsup.StatusRunning, 700+c.pid, 700+c.pid, nil, false
 	}
 }
 
@@ -256,7 +257,7 @@ func (c *Container) state(only string) devsup.State {
 			}
 			if c.settling[n] > 0 {
 				c.settling[n]--
-				server.Status, server.Exit = devsup.StatusStarting, nil
+				server.Status, server.Exit, server.RetryPending = devsup.StatusStarting, nil, false
 			}
 			st.Servers[n] = server
 		}

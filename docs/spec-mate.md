@@ -892,6 +892,13 @@ lost on a redeploy (P1 T7, P2 S4) — which is exactly the start-up rule below.
   running, no live group, `exit` set; `starting` = live group whose `port` does not yet accept TCP;
   `running` = everything else; a start still waiting for its port is `starting`. zcp and Mate read
   it, never recompute it.
+- `retryPending: true` (omitted otherwise) marks a `crashed` server whose one more start after a
+  start crash (*Events* below) is still to come. A deploy or `zerops_dev_server` reply names such a
+  server as coming back, and one still `starting` when its wait ends as still starting, each with
+  when to read its status again — never as one to fix
+  (`TestSupervisor_AServerThatCrashedWhileStartingSaysItsOneMoreStartIsPendingUntilItStarts`,
+  `TestDeployNextActions_AServerThatCrashedWhileStartingWithItsOneMoreStartPendingIsNamedAsComingBack`,
+  `TestDeployNextActions_AServerStillStartingWhenTheWaitEndsIsNamedWithWhenToCheckItAgain`).
 - `source: runtime` entries are not in the declaration: crew apps (MODEL §9/1c). They carry their
   own `command`, `cwd`, `port`, are added and removed only through `ctl`, and are not restored after
   a redeploy — their owner, Mate's engine, adds them again.

@@ -62,9 +62,10 @@ func deploySuccessNextActions(_ *ops.DeployResult, mode topology.Mode, class top
 // supervisor when one answers: a dev setup under zcp-devsup starts its declared
 // servers itself, so the reply names every declared server with its status —
 // read once each starting one has answered, within the start budget; a
-// crashed one with its exit and the way back — instead of calling the
-// container idle. A container without the supervisor or a declaration keeps
-// today's pointer.
+// crashed one with its exit and the way back, or as coming back when the
+// supervisor's one more start is pending; one still starting or coming back
+// with when to look again — instead of calling the container idle. A
+// container without the supervisor or a declaration keeps today's pointer.
 func deployNextActionsFor(ctx context.Context, ssh ops.SSHDeployer, root string, result *ops.DeployResult, mode topology.Mode, class topology.RuntimeClass) string {
 	base := deploySuccessNextActions(result, mode, class)
 	if ssh == nil || base == nextActionDeploySuccess {
@@ -74,15 +75,21 @@ func deployNextActionsFor(ctx context.Context, ssh ops.SSHDeployer, root string,
 	if err != nil || len(ds.Servers()) == 0 {
 		return base
 	}
-	var states, down []string
+	var states, down, unsettled []string
 	for _, s := range ds.Servers() {
 		st, ok := ds.State.Servers[s.Name]
 		switch {
 		case !ok:
 			states = append(states, s.Name+" not started")
 			down = append(down, s.Name)
-		case st.Status == devsup.StatusRunning || st.Status == devsup.StatusStarting:
-			states = append(states, s.Name+" "+string(st.Status))
+		case st.Status == devsup.StatusRunning:
+			states = append(states, s.Name+" running")
+		case st.Status == devsup.StatusStarting:
+			states = append(states, s.Name+" still starting")
+			unsettled = append(unsettled, s.Name)
+		case st.Status == devsup.StatusCrashed && st.RetryPending:
+			states = append(states, s.Name+" crashed while starting"+exitNote(st.Exit)+"; "+ops.RetryPendingNote)
+			unsettled = append(unsettled, s.Name)
 		default:
 			states = append(states, s.Name+" "+string(st.Status)+exitNote(st.Exit))
 			down = append(down, s.Name)
@@ -95,6 +102,9 @@ func deployNextActionsFor(ctx context.Context, ssh ops.SSHDeployer, root string,
 			fmt.Fprintf(&b, " The deploy did not carry %d git-ignored path(s) (%s): reinstall dependencies first.", nc.Count, strings.Join(nc.Sample, ", "))
 		}
 		fmt.Fprintf(&b, " For each server that is down: read zerops_dev_server action=logs name=%q, fix it, then zerops_dev_server action=start name=%q.", down[0], down[0])
+	}
+	if len(unsettled) > 0 {
+		b.WriteString(" " + ops.RecheckSentence(result.TargetService, "", unsettled))
 	}
 	b.WriteString(" Then run zerops_verify.")
 	return b.String()

@@ -120,7 +120,7 @@ func RegisterDevServer(srv *mcp.Server, d DevServerDeps) {
 			"The dev servers run under the dev service's supervisor (zcp-devsup, the dev setup's run.start) and are declared in the repo's .zcp/dev-servers.json: " +
 			"the first start of a server declares it (command, port, working directory), later starts need only its name. " +
 			"Each server is its own process group with its own log; stop ends the whole group and frees the port, and the other servers keep running. " +
-			"A declared server comes back by itself after its container restarts or is redeployed; one that crashes stays down (status says crashed, with its exit) until you start it again. " +
+			"A declared server comes back by itself after its container restarts or is redeployed; one that crashes while starting is started once more after its siblings settle (status says so); any other crash stays down (status says crashed, with its exit) until you start it again. " +
 			"On a dev service whose dev setup does not run the supervisor yet, the first start moves it there: zcp adds two lines to the dev setup in zerops.yaml, declares the server, and redeploys the dev service once (uncommitted work stays) — commit both files with your next change. " +
 			"Results are structured {running, startMillis, healthStatus, url, logTail, reason} with a reason code on failure (crashed, port_in_use, health_probe_*) so the agent can diagnose without a follow-up call. " +
 			"For worker services with no HTTP port (NATS/queue consumers, cron runners), pass noHttpProbe=true. " +

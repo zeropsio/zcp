@@ -174,8 +174,6 @@ func ReadDevServers(ctx context.Context, ssh SSHDeployer, hostname, root string)
 	}
 }
 
-// loopbackOnlyPorts reads `ss -ltn` output: the ports whose every listening
-// socket is bound to a loopback address.
 // devServersSettlePoll is how often ReadDevServersSettled reads again.
 const devServersSettlePoll = time.Second
 
@@ -212,6 +210,23 @@ func (ds *DevServers) starting() bool {
 	return false
 }
 
+// RetryPendingNote is how a reply says a server crashed while starting and
+// the supervisor's one more start is still to come (ServerState.RetryPending).
+const RetryPendingNote = "the supervisor starts it once more after its siblings settle"
+
+// RecheckSentence tells the agent when to read names on hostname again: they
+// are still starting or wait for their one more start. name, when set, is
+// the one server the status call reads.
+func RecheckSentence(hostname, name string, names []string) string {
+	call := fmt.Sprintf("zerops_dev_server action=status hostname=%q", hostname)
+	if name != "" {
+		call += fmt.Sprintf(" name=%q", name)
+	}
+	return fmt.Sprintf("Check %s again in about 30 s with %s.", strings.Join(names, ", "), call)
+}
+
+// loopbackOnlyPorts reads `ss -ltn` output: the ports whose every listening
+// socket is bound to a loopback address.
 func loopbackOnlyPorts(out string) map[int]bool {
 	loopback := map[int]bool{}
 	public := map[int]bool{}

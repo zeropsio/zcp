@@ -2,8 +2,10 @@
 package tools
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/ops/devservertest"
@@ -266,6 +268,61 @@ func TestDeployNextActions_WaitsForEachStartingDevServerAndNamesOneThatCrashes(t
 	}
 	if strings.Contains(got, "starting") {
 		t.Errorf("nextActions = %q, says starting for a server that answered within the budget", got)
+	}
+}
+
+// A deploy reply told the agent to read vets' logs, fix it and start it while
+// the supervisor had already scheduled its one more start; the agent built its
+// own workaround. A server that crashed while starting with that start pending
+// is named as coming back, with when to look again — never as one to fix.
+func TestDeployNextActions_AServerThatCrashedWhileStartingWithItsOneMoreStartPendingIsNamedAsComingBack(t *testing.T) {
+	t.Parallel()
+	decl := `{"version":1,"servers":[{"name":"gateway","port":8080,"command":"a","cwd":"."},{"name":"vets","port":8083,"command":"b","cwd":"."}]}`
+	c := devservertest.NewSupervised(decl)
+	c.Crash = map[string]bool{"vets": true}
+	c.RetryPending = map[string]bool{"vets": true}
+	c.Redeploy()
+
+	got := deployNextActionsFor(t.Context(), c, "/var/www", &ops.DeployResult{TargetService: "petclinicdev"}, topology.ModeDev, topology.RuntimeDynamic)
+
+	for _, want := range []string{
+		"gateway running",
+		"vets crashed while starting (exit 1); the supervisor starts it once more after its siblings settle",
+		`Check vets again in about 30 s with zerops_dev_server action=status hostname="petclinicdev".`,
+		"zerops_verify",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("nextActions = %q, want it to contain %q", got, want)
+		}
+	}
+	if strings.Contains(got, "fix it") || strings.Contains(got, "action=start") {
+		t.Errorf("nextActions = %q, tells the agent to fix and start a server the supervisor brings back", got)
+	}
+}
+
+// A server still starting when the reply's wait ends was reported "starting"
+// as if that were fine; it crashed a minute later and nobody looked again.
+// The reply names each server still starting and when to check it again.
+func TestDeployNextActions_AServerStillStartingWhenTheWaitEndsIsNamedWithWhenToCheckItAgain(t *testing.T) {
+	t.Parallel()
+	decl := `{"version":1,"servers":[{"name":"gateway","port":8080,"command":"a","cwd":"."},{"name":"customers","port":8081,"command":"b","cwd":"."}]}`
+	c := devservertest.NewSupervised(decl)
+	c.Settle = map[string]int{"customers": 1000}
+	c.Redeploy()
+	ctx, cancel := context.WithTimeout(t.Context(), 1500*time.Millisecond) // the wait ends before customers settles
+	defer cancel()
+
+	got := deployNextActionsFor(ctx, c, "/var/www", &ops.DeployResult{TargetService: "petclinicdev"}, topology.ModeDev, topology.RuntimeDynamic)
+
+	for _, want := range []string{
+		"gateway running",
+		"customers still starting",
+		`Check customers again in about 30 s with zerops_dev_server action=status hostname="petclinicdev".`,
+		"zerops_verify",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("nextActions = %q, want it to contain %q", got, want)
+		}
 	}
 }
 
