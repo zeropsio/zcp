@@ -71,6 +71,8 @@ type DevServerResult struct {
 	//                               port stayed busy
 	//   stopped                   — the server is stopped (status)
 	//   no_supervisor             — the dev setup does not run zcp-devsup
+	//   supervisor_unresponsive   — zcp-devsup runs but did not answer in
+	//                               time (container out of memory or CPU)
 	//   health_probe_timeout      — probe context deadline exceeded
 	//   health_probe_slow         — the port accepts connections, no HTTP
 	//                               answer within the wait
@@ -148,6 +150,9 @@ const (
 	reasonPortInUse    = "port_in_use"
 	reasonStopped      = "stopped"
 	reasonNoSupervisor = "no_supervisor"
+	// reasonSupervisorUnresponsive never offers the move onto the
+	// supervisor: one runs there.
+	reasonSupervisorUnresponsive = "supervisor_unresponsive"
 )
 
 // ReasonHealthProbeTimeout is the start/restart Reason when the health probe
@@ -215,7 +220,8 @@ var (
 // action reads the dev service's dev servers once and acts through its
 // supervisor (docs/spec-mate.md §2.8a.2). A start or restart on a dev service
 // whose dev setup does not run the supervisor returns *NoSupervisorError with
-// nothing changed; the caller moves the dev setup onto it.
+// nothing changed; the caller moves the dev setup onto it. A supervisor that
+// does not answer in time is a result, never that error.
 func ExecuteDevServer(
 	ctx context.Context,
 	ssh SSHDeployer,
@@ -232,7 +238,10 @@ func ExecuteDevServer(
 	action := strings.ToLower(p.Action)
 	ds, err := ReadDevServers(ctx, ssh, p.Hostname, p.Root)
 	var noSup *NoSupervisorError
+	var unresponsive *SupervisorUnresponsiveError
 	switch {
+	case errors.As(err, &unresponsive):
+		return unresponsiveResult(action, p.Hostname, unresponsive), nil
 	case errors.As(err, &noSup) && (action == devServerActionStart || action == devServerActionRestart):
 		return nil, err
 	case errors.As(err, &noSup):
@@ -250,6 +259,9 @@ func ExecuteDevServer(
 		result, err = statusDevServer(ctx, ssh, p, ds)
 	default:
 		result, err = logsDevServer(ctx, ssh, p, ds)
+	}
+	if errors.As(err, &unresponsive) {
+		return unresponsiveResult(action, p.Hostname, unresponsive), nil
 	}
 	if err != nil {
 		return nil, err
@@ -394,6 +406,17 @@ func noSupervisorResult(action, hostname string) *DevServerResult {
 		Reason:   reasonNoSupervisor,
 		Message: fmt.Sprintf("%s has no dev-server supervisor yet, so no dev server runs under zcp there. zerops_dev_server action=start sets it up (one redeploy of %s; uncommitted work stays).",
 			hostname, hostname),
+	}
+}
+
+// unresponsiveResult is any action on a dev service whose supervisor did not
+// answer in time.
+func unresponsiveResult(action, hostname string, err *SupervisorUnresponsiveError) *DevServerResult {
+	return &DevServerResult{
+		Action:   action,
+		Hostname: hostname,
+		Reason:   reasonSupervisorUnresponsive,
+		Message:  err.Error(),
 	}
 }
 

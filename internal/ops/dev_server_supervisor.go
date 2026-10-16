@@ -44,6 +44,7 @@ const (
 	devsupCodeNoSupervisor       = 2
 	devsupCodeUnknownName        = 3
 	devsupCodeInvalidDeclaration = 4
+	devsupCodeUnresponsive       = 5
 	devsupCodeAbsent             = 127
 )
 
@@ -67,6 +68,17 @@ func (e *NoSupervisorError) Error() string {
 		return fmt.Sprintf("no zcp-devsup runs on %s (its dev setup's run.start is not `zcp-devsup run`)", e.Hostname)
 	}
 	return fmt.Sprintf("zcp-devsup is not installed on %s", e.Hostname)
+}
+
+// SupervisorUnresponsiveError says hostname's supervisor runs but did not
+// answer its control socket in time — a container out of memory or CPU, never
+// a dev setup to move onto the supervisor.
+type SupervisorUnresponsiveError struct {
+	Hostname string
+}
+
+func (e *SupervisorUnresponsiveError) Error() string {
+	return fmt.Sprintf("The dev-server supervisor on %s is running but did not answer in time — the container may be out of memory or CPU. Check its load and memory (zerops_logs, zerops_scale), then retry in a moment.", e.Hostname)
 }
 
 // SupervisorCtlError is a ctl answer other than done or "no supervisor".
@@ -125,8 +137,9 @@ func readDevServersCmd(root string) string {
 }
 
 // ReadDevServers reads hostname's dev servers. A dev service whose dev setup
-// does not run the supervisor answers *NoSupervisorError; its declaration is
-// read all the same.
+// does not run the supervisor answers *NoSupervisorError, one whose
+// supervisor does not answer in time *SupervisorUnresponsiveError; its
+// declaration is read all the same.
 func ReadDevServers(ctx context.Context, ssh SSHDeployer, hostname, root string) (*DevServers, error) {
 	readCtx, cancel := context.WithTimeout(ctx, devsupCtlTimeout)
 	defer cancel()
@@ -169,6 +182,8 @@ func ReadDevServers(ctx context.Context, ssh SSHDeployer, hostname, root string)
 		return ds, nil
 	case devsupCodeNoSupervisor:
 		return ds, &NoSupervisorError{Hostname: hostname, Installed: true}
+	case devsupCodeUnresponsive:
+		return ds, &SupervisorUnresponsiveError{Hostname: hostname}
 	default:
 		return nil, ctlFailure(status)
 	}
@@ -427,6 +442,8 @@ func supervisorCtl(ctx context.Context, ssh SSHDeployer, hostname string, args .
 		return devsup.State{}, &NoSupervisorError{Hostname: hostname}
 	case devsupCodeNoSupervisor:
 		return devsup.State{}, &NoSupervisorError{Hostname: hostname, Installed: true}
+	case devsupCodeUnresponsive:
+		return devsup.State{}, &SupervisorUnresponsiveError{Hostname: hostname}
 	default:
 		return devsup.State{}, ctlFailure(answer)
 	}

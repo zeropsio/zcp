@@ -931,7 +931,12 @@ verb is idempotent, so the caller asks `status` again.
 | `run --name <n> --cwd <d> [--port <p>] -- <command>` / `rm <name>` | add / remove a `runtime` entry |
 | `version` | `{"version":"vX.Y.Z","formats":[1]}` |
 
-Exit codes: `0` done, `2` no supervisor (socket absent), `3` unknown name, `4` invalid declaration.
+Exit codes: `0` done, `2` no supervisor (socket absent or refused), `3` unknown name, `4` invalid
+declaration, `5` supervisor not answering (the dial timed out or found the backlog full, or no answer
+came in time). On `5` every `zerops_dev_server` action changes nothing and answers reason
+`supervisor_unresponsive` — the container may be out of memory or CPU, check its load and memory and
+retry — and a start never takes the move onto the supervisor below; a deploy's reply says the same
+(`TestDevServer_ASupervisorThatDoesNotAnswerInTimeIsReportedUnresponsiveNotMissing`).
 A start that fails still answers `0`; the failure is the server's `exit` in the answer.
 `zerops_dev_server` adds an undeclared server to the file once (then `reload`, then `start`). On a
 dev service where `zcp-devsup` is absent or exits `2`, stop/status/logs change nothing and say so,

@@ -277,6 +277,25 @@ func TestDevServer_FirstStartWithoutSupervisor_MigratesIt(t *testing.T) {
 	}
 }
 
+// A start on a dev service whose supervisor runs but does not answer in time
+// is reported unresponsive and never moves the dev setup: no zerops.yaml
+// rewrite, no redeploy while the stalled supervisor lives.
+func TestDevServer_AStartOnASupervisorThatDoesNotAnswerIsReportedUnresponsiveAndDoesNotRedeploy(t *testing.T) {
+	t.Parallel()
+	c := devservertest.NewSupervised(`{"version":1,"servers":[{"name":"appdev","port":3000,"command":"next dev","cwd":"."}]}`)
+	c.Unresponsive = true
+	yaml := c.YAML
+	srv, _ := migrationToolServer(t, c, statusActive)
+
+	a := callDevServer(t, srv, map[string]any{"action": "start", "hostname": "appdev"})
+	if a.Reason != "supervisor_unresponsive" || a.Running || a.MigratedToSupervisor != nil {
+		t.Errorf("start = %+v, want supervisor_unresponsive with no move", a)
+	}
+	if c.Deploys != 0 || c.YAML != yaml {
+		t.Errorf("a start on a stalled supervisor redeployed %d time(s) or rewrote zerops.yaml:\n%s", c.Deploys, c.YAML)
+	}
+}
+
 // The move's final start passes the start's memory rule: when the server the
 // redeploy brought up has ended, a single-part app on a nearly full 0.5 GiB
 // grant has no server running, so its start reaches the supervisor and answers

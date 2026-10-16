@@ -220,6 +220,24 @@ func TestDeployNextActions_NamesTheDevServersTheSupervisorStarted(t *testing.T) 
 	}
 }
 
+// A deploy's reply on a dev service whose supervisor runs but does not answer
+// says so — check the container's load and memory, then look again — instead
+// of pointing at a start.
+func TestDeployNextActions_ASupervisorThatDoesNotAnswerIsNamedUnresponsive(t *testing.T) {
+	t.Parallel()
+	c := devservertest.NewSupervised(`{"version":1,"servers":[{"name":"web","port":3000,"command":"a","cwd":"."}]}`)
+	c.Unresponsive = true
+	got := deployNextActionsFor(t.Context(), c, "/var/www", &ops.DeployResult{TargetService: "appdev"}, topology.ModeDev, topology.RuntimeDynamic)
+	for _, want := range []string{"running but did not answer", "zerops_scale", "zerops_verify"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("nextActions = %q, want it to contain %q", got, want)
+		}
+	}
+	if strings.Contains(got, "idle") || strings.Contains(got, "action=start") {
+		t.Errorf("nextActions = %q, must not point a stalled supervisor at a start", got)
+	}
+}
+
 // A deploy's reply names every declared dev server with its status — a server
 // that crashed after the container was replaced too, with its exit and how
 // to get it back — and, when the deploy did not carry git-ignored paths, says

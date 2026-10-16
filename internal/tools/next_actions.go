@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -67,13 +68,18 @@ func deploySuccessNextActions(_ *ops.DeployResult, mode topology.Mode, class top
 // with when to look again; a stopped one, whose desired state is stopped, only
 // as stopped; once, that systemd restarted every server because the service
 // ran out of memory — instead of calling the container idle. A
-// container without the supervisor or a declaration keeps today's pointer.
+// container without the supervisor or a declaration keeps today's pointer;
+// one whose supervisor does not answer in time says so, never a start.
 func deployNextActionsFor(ctx context.Context, ssh ops.SSHDeployer, root string, result *ops.DeployResult, mode topology.Mode, class topology.RuntimeClass) string {
 	base := deploySuccessNextActions(result, mode, class)
 	if ssh == nil || base == nextActionDeploySuccess {
 		return base
 	}
 	ds, err := ops.ReadDevServersSettled(ctx, ssh, result.TargetService, root)
+	var unresponsive *ops.SupervisorUnresponsiveError
+	if errors.As(err, &unresponsive) {
+		return unresponsive.Error() + " Then run zerops_verify."
+	}
 	if err != nil || len(ds.Servers()) == 0 {
 		return base
 	}

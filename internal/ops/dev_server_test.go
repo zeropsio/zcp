@@ -760,6 +760,32 @@ func TestDevServer_NoSupervisor(t *testing.T) {
 	}
 }
 
+// A supervisor that is running but does not answer in time (a thrashing
+// container) is reported unresponsive, not missing: every action changes
+// nothing, says to check the container's load and memory and retry, and a
+// start never takes the move onto the supervisor (no redeploy).
+func TestDevServer_ASupervisorThatDoesNotAnswerInTimeIsReportedUnresponsiveNotMissing(t *testing.T) {
+	t.Parallel()
+	for _, action := range []string{"stop", "status", "logs", "start", "restart"} {
+		c := devservertest.NewSupervised(`{"version":1,"servers":[{"name":"web","port":3000,"command":"next dev","cwd":"."}]}`)
+		c.Unresponsive = true
+		decl := c.Declaration
+		result, err := ExecuteDevServer(context.Background(), c, mockClientWithServices("difydev"), "p1",
+			DevServerParams{Action: action, Hostname: "difydev", Name: "web"})
+		if err != nil {
+			t.Fatalf("%s: err = %v, want an unresponsive result", action, err)
+		}
+		if result.Reason != reasonSupervisorUnresponsive || result.Running ||
+			!strings.Contains(result.Message, "running but did not answer") || !strings.Contains(result.Message, "zerops_scale") ||
+			strings.Contains(result.Message, "redeploy") || strings.Contains(result.Message, "sets it up") {
+			t.Errorf("%s: result = %+v, want supervisor_unresponsive naming load/memory and no redeploy", action, result)
+		}
+		if n := len(c.Sent()); n != 1 || c.Declaration != decl || c.Deploys != 0 {
+			t.Errorf("%s: sent %d commands, declaration %q, deploys %d — want only the read, nothing changed", action, n, c.Declaration, c.Deploys)
+		}
+	}
+}
+
 // TestDevServer_NoProcessPatternMatching (TEST-PLAN E1 #3, #14): no
 // dev-server path finds processes by name or command pattern, and the
 // keeper, the zcp-side dev-servers.json and the SSH start are gone. One

@@ -27,6 +27,9 @@ type Container struct {
 	// Installed: the zcp-devsup binary is in the image. Running: its
 	// supervisor answers the control socket (run.start is `zcp-devsup run`).
 	Installed, Running bool
+	// Unresponsive: the supervisor runs but does not answer its control
+	// socket in time (a thrashing container); `ctl` exits 5.
+	Unresponsive bool
 	// SupervisorVersion and Formats answer `ctl version`.
 	SupervisorVersion string
 	Formats           []int
@@ -277,9 +280,12 @@ func (c *Container) read() string {
 	var b strings.Builder
 	if c.Installed {
 		fmt.Fprintf(&b, "%s\n@@zcp-devsup version 0\n", encode(map[string]any{"version": c.SupervisorVersion, "formats": c.Formats}))
-		if c.Running {
+		switch {
+		case c.Unresponsive:
+			fmt.Fprintf(&b, "{\"code\":5,\"error\":\"zcp-devsup is running here but did not answer\"}\n@@zcp-devsup status 5\n")
+		case c.Running:
 			fmt.Fprintf(&b, "%s\n@@zcp-devsup status 0\n", encode(c.state("")))
-		} else {
+		default:
 			fmt.Fprintf(&b, "{\"code\":2,\"error\":\"no zcp-devsup is running here\"}\n@@zcp-devsup status 2\n")
 		}
 	} else {
@@ -314,6 +320,9 @@ func (c *Container) listen() string {
 func (c *Container) ctl(command string) string {
 	if !c.Installed {
 		return "@@zcp-devsup ctl 127\n"
+	}
+	if c.Unresponsive {
+		return "{\"code\":5,\"error\":\"zcp-devsup is running here but did not answer\"}\n@@zcp-devsup ctl 5\n"
 	}
 	if !c.Running {
 		return "{\"code\":2,\"error\":\"no zcp-devsup is running here\"}\n@@zcp-devsup ctl 2\n"
