@@ -2,6 +2,7 @@ package ops
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -406,6 +407,43 @@ func TestAdoptSupervisorInDevSetup_ZeropsYmlRepo_ErrorNamesZeropsYmlNeverZeropsY
 	}
 	if !strings.Contains(err.Error(), "zerops.yml") || strings.Contains(err.Error(), "zerops.yaml") {
 		t.Fatalf("error must name the repo's zerops.yml and never zerops.yaml: %v", err)
+	}
+	if errors.Unwrap(err) == nil {
+		t.Fatalf("the named error must still wrap the setup error: %v", err)
+	}
+}
+
+// TestReadRepoConfigFile_NamesTheFileItRead: the repo config file read —
+// zerops.yaml first, else zerops.yml — names the file it read, run by a real
+// shell; a folder with neither reads as no file.
+func TestReadRepoConfigFile_NamesTheFileItRead(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name                  string
+		files                 []string
+		wantFile, wantContent string
+	}{
+		{name: "zerops.yaml", files: []string{"zerops.yaml"}, wantFile: "zerops.yaml", wantContent: "zerops: # zerops.yaml\n"},
+		{name: "zerops.yml", files: []string{"zerops.yml"}, wantFile: "zerops.yml", wantContent: "zerops: # zerops.yml\n"},
+		{name: "both", files: []string{"zerops.yaml", "zerops.yml"}, wantFile: "zerops.yaml", wantContent: "zerops: # zerops.yaml\n"},
+		{name: "neither"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			for _, f := range tc.files {
+				if err := os.WriteFile(filepath.Join(dir, f), []byte("zerops: # "+f+"\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			file, content, err := ReadRepoConfigFile(context.Background(), localShell{root: dir}, "app", dir)
+			if err != nil {
+				t.Fatalf("read: %v", err)
+			}
+			if file != tc.wantFile || content != tc.wantContent {
+				t.Errorf("read = (%q, %q), want (%q, %q)", file, content, tc.wantFile, tc.wantContent)
+			}
+		})
 	}
 }
 

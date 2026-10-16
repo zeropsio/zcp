@@ -1485,7 +1485,7 @@ func (s *stubSSHWithCommands) ExecSSH(_ context.Context, _ string, command strin
 			return s.yamlContent, s.yamlErr
 		}
 		// The read names the file it found on its first line.
-		return append([]byte("zerops.yaml\n"), s.yamlContent...), s.yamlErr
+		return append([]byte("@@zcp-file zerops.yaml\n"), s.yamlContent...), s.yamlErr
 	}
 	// Dirty-tree probe (`git status --porcelain`) — MUST precede the push
 	// fallthrough, else the porcelain command mis-routes to the push branch

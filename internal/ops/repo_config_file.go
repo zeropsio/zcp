@@ -35,3 +35,14 @@ func NameRepoConfigFile(text, file string) string {
 	out.WriteString(text[last:])
 	return out.String()
 }
+
+// configFileError is err with its text naming the repo's config file as file
+// keeps it (NameRepoConfigFile); errors.Is and errors.As still reach err.
+type configFileError struct {
+	err  error
+	file string
+}
+
+func (e configFileError) Error() string { return NameRepoConfigFile(e.err.Error(), e.file) }
+
+func (e configFileError) Unwrap() error { return e.err }

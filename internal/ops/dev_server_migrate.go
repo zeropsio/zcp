@@ -169,6 +169,22 @@ func readZeropsYAMLCmd(dir string) string {
 	return `for f in zerops.yaml zerops.yml; do if [ -f ` + q + `/"$f" ]; then echo "@@zcp-file $f"; cat ` + q + `/"$f"; exit 0; fi; done; echo "@@zcp-file -"`
 }
 
+// ReadRepoConfigFile reads the repo config file in hostname's dir —
+// zerops.yaml, else zerops.yml — and names the one it read; file is "" when
+// dir holds neither.
+func ReadRepoConfigFile(ctx context.Context, ssh SSHDeployer, hostname, dir string) (file, content string, err error) {
+	out, err := ssh.ExecSSH(ctx, hostname, readZeropsYAMLCmd(dir))
+	if err != nil {
+		return "", "", fmt.Errorf("read zerops.yaml (or zerops.yml) on %s: %w", hostname, err)
+	}
+	head, body, _ := strings.Cut(string(out), "\n")
+	file, ok := strings.CutPrefix(strings.TrimSpace(head), "@@zcp-file ")
+	if !ok || file == "-" {
+		return "", "", nil
+	}
+	return file, body, nil
+}
+
 // AdoptSupervisorInDevSetup rewrites the zerops.yaml in hostname's dir — the
 // folder its deploy runs from, "" for /var/www — so its dev setup runs the
 // supervisor on the repository root given as root (AdoptSupervisorYAML), and returns
@@ -256,13 +272,11 @@ func rewriteDevSetup(ctx context.Context, ssh SSHDeployer, hostname, dir string,
 	}
 	readCtx, cancel := context.WithTimeout(ctx, containerIdentityTimeout)
 	defer cancel()
-	out, err := ssh.ExecSSH(readCtx, hostname, readZeropsYAMLCmd(dir))
+	file, body, err := ReadRepoConfigFile(readCtx, ssh, hostname, dir)
 	if err != nil {
-		return "", "", false, fmt.Errorf("read zerops.yaml (or zerops.yml) on %s: %w", hostname, err)
+		return "", "", false, err
 	}
-	head, body, _ := strings.Cut(string(out), "\n")
-	file, ok := strings.CutPrefix(strings.TrimSpace(head), "@@zcp-file ")
-	if !ok || file == "-" {
+	if file == "" {
 		return "", "", false, fmt.Errorf("%s has no zerops.yaml (or zerops.yml) in %s", hostname, dir)
 	}
 	updated, used, changed, err := edit([]byte(body))
@@ -270,7 +284,7 @@ func rewriteDevSetup(ctx context.Context, ssh SSHDeployer, hostname, dir string,
 		// The parse and splice messages name the config file generically; the
 		// file is known here, so the agent is told its real name and never
 		// has reason to rename it.
-		return file, used, false, errors.New(strings.ReplaceAll(err.Error(), "zerops.yaml", file))
+		return file, used, false, configFileError{err: err, file: file}
 	}
 	if !changed {
 		return file, used, false, nil
