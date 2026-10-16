@@ -410,7 +410,8 @@ If empty — scaffold from scratch using the runtime + env-var catalog.
 If `ls` errors (stale SSHFS), run `zerops_mount action="mount"` to recover
 before deciding.
 
-**Checklist before deploying:**
+**Checklist for code you write** (a repo you did not write follows
+*A repository that already exists*):
 
 | Check | Requirement |
 |---|---|
