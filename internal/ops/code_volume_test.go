@@ -126,7 +126,9 @@ func TestCodeVolume_OnlyAnEmptyVolumeIsFilledAndOnlyThisRepositoryCountsAsItsChe
 		t.Helper()
 		run := func(args ...string) {
 			t.Helper()
-			cmd := exec.CommandContext(context.Background(), "git", append([]string{"-C", dir, "-c", "user.email=t@t", "-c", "user.name=t"}, args...)...) //nolint:gosec // G204: a test's own git
+			// No auto-maintenance: a commit would detach `git maintenance run --auto`,
+			// whose objects/maintenance.lock comes and goes under the before/after listings.
+			cmd := exec.CommandContext(context.Background(), "git", append([]string{"-C", dir, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "maintenance.auto=false"}, args...)...) //nolint:gosec // G204: a test's own git
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("git %v: %v %s", args, err, out)
 			}
