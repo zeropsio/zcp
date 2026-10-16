@@ -73,6 +73,10 @@ func TestClient_Chaos_NeverHarmsHost(t *testing.T) {
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			c := tt.build(t)
+			// A send stalled past the Shutdown budget still ends in a spool
+			// write after Shutdown returns (spec §5.5); wait for the worker
+			// before the temp dirs registered by build are removed.
+			t.Cleanup(func() { waitWorkerDone(t, c) })
 
 			emitStart := time.Now()
 			c.Emit(wire.Event{EventType: wire.EventToolCall, Tool: "zerops_deploy", Action: "deploy", Success: true})
@@ -112,11 +116,7 @@ func TestClient_Shutdown_ExpiredBudgetNeverHarmsHost(t *testing.T) {
 	t.Cleanup(func() {
 		close(release)
 		srv.Close()
-		select {
-		case <-c.doneCh:
-		case <-time.After(chaosShutdownCeiling):
-			t.Error("telemetry worker did not finish after the endpoint was released")
-		}
+		waitWorkerDone(t, c)
 	})
 	c.Emit(wire.Event{EventType: wire.EventCLICommand, Command: "status"})
 	firstShutdown := make(chan error, 1)
@@ -136,6 +136,17 @@ func TestClient_Shutdown_ExpiredBudgetNeverHarmsHost(t *testing.T) {
 	case err := <-firstShutdown:
 		t.Fatalf("the endpoint was not still stalled: first Shutdown returned %v", err)
 	default:
+	}
+}
+
+// waitWorkerDone waits for the worker goroutine to exit, so nothing writes
+// into the test's temp dirs after the test ends.
+func waitWorkerDone(t *testing.T, c *Client) {
+	t.Helper()
+	select {
+	case <-c.doneCh:
+	case <-time.After(chaosShutdownCeiling):
+		t.Error("telemetry worker did not finish after Shutdown")
 	}
 }
 
