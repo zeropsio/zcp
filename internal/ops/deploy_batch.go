@@ -67,8 +67,9 @@ type DeployBatchResult struct {
 // for concurrent calls. Deploy fan-out is safe across distinct SOURCE
 // containers; entries sharing a source serialize inside DeploySSH on a
 // per-source git lock because each source container has one shared
-// /var/www/.git tree. The lock covers only the SSH git/push critical section
-// and is released before pollBuild, so build polling remains parallel.
+// /var/www/.git tree. The lock covers only the git round trips and zcli's
+// archive and upload; the wait on each build and pollBuild run outside it,
+// so stages fed from one dev service build in parallel.
 // RecordDeployAttempt is protected by workSessionMu in the workflow layer.
 func DeployBatchSSH(
 	ctx context.Context,

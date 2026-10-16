@@ -3,6 +3,7 @@ package ops
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -141,12 +142,12 @@ func TestDeploy_SSHMode_Success(t *testing.T) {
 			if result.SourceService != tt.sourceService {
 				t.Errorf("sourceService = %s, want %s", result.SourceService, tt.sourceService)
 			}
-			// 2 calls: HeadStatus (item 4's working-
+			// 3 calls: HeadStatus (item 4's working-
 			// tree recording — the mock's canned "ok" output satisfies
 			// HeadStatus's rev-parse, so the source "has a repo" from the
-			// mock's perspective) + the push itself.
-			if len(ssh.calls) != 2 {
-				t.Fatalf("ssh calls = %d, want 2", len(ssh.calls))
+			// mock's perspective) + the push itself + its build wait.
+			if len(ssh.calls) != 3 {
+				t.Fatalf("ssh calls = %d, want 3", len(ssh.calls))
 			}
 			for _, c := range ssh.calls {
 				if c.hostname != "builder" {
@@ -386,10 +387,10 @@ func TestDeploy_SSHMode_WithRegion(t *testing.T) {
 		t.Errorf("mode = %s, want ssh", result.Mode)
 	}
 	// Verify the token rides the push's environment, without
-	// --zeropsRegion. 2 calls: the self-deploy preflight read (item 4) +
-	// the push itself.
-	if len(ssh.calls) != 2 {
-		t.Fatalf("ssh calls = %d, want 2", len(ssh.calls))
+	// --zeropsRegion. 3 calls: the self-deploy preflight read (item 4) +
+	// the push itself + its build wait.
+	if len(ssh.calls) != 3 {
+		t.Fatalf("ssh calls = %d, want 3", len(ssh.calls))
 	}
 	cmd := ssh.calls[1].command
 	if !containsSubstring(cmd, "ZEROPS_TOKEN='test-token' zcli push") {
@@ -571,7 +572,7 @@ func TestBuildSSHCommand_Shape(t *testing.T) {
 		APIHost: "api.app-prg1.zerops.io",
 		Region:  "prg1",
 	}
-	cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false, "")
+	cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false, "", "/tmp/zcp-push-test")
 
 	wantContains := []string{
 		"ZEROPS_TOKEN='test-token' zcli push --service-id svc-target",
@@ -618,7 +619,7 @@ func TestBuildSSHCommand_VersionNameFromHead(t *testing.T) {
 
 	t.Run("clean", func(t *testing.T) {
 		t.Parallel()
-		cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false, "fullhead1234567")
+		cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false, "fullhead1234567", "/tmp/zcp-push-test")
 		if !containsSubstring(cmd, "--version-name 'fullhead1234567'") {
 			t.Errorf("command missing --version-name 'fullhead1234567':\n%s", cmd)
 		}
@@ -626,7 +627,7 @@ func TestBuildSSHCommand_VersionNameFromHead(t *testing.T) {
 
 	t.Run("dirty", func(t *testing.T) {
 		t.Parallel()
-		cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false, "fullhead1234567-dirty")
+		cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false, "fullhead1234567-dirty", "/tmp/zcp-push-test")
 		if !containsSubstring(cmd, "--version-name 'fullhead1234567-dirty'") {
 			t.Errorf("command missing --version-name 'fullhead1234567-dirty':\n%s", cmd)
 		}
@@ -634,7 +635,7 @@ func TestBuildSSHCommand_VersionNameFromHead(t *testing.T) {
 
 	t.Run("unborn", func(t *testing.T) {
 		t.Parallel()
-		cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false, "")
+		cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false, "", "/tmp/zcp-push-test")
 		if containsSubstring(cmd, "--version-name") {
 			t.Errorf("command must NOT carry --version-name when versionName is empty (no reachable HEAD):\n%s", cmd)
 		}
@@ -710,15 +711,15 @@ func TestCommitVersionName(t *testing.T) {
 
 // extractGitEnsureChain pulls the self-heal chain (cd ... init ...
 // identity ... HEAD guarantee) out of buildSSHCommand's full output —
-// everything up to (not including) " && ZEROPS_TOKEN=… zcli push". Running
-// only this piece against a scratch dir is what a cold-path deploy would
-// actually execute; the trailing `zcli push` would fail locally against a
-// fake token and isn't the part these tests care about.
+// everything up to (not including) the crew save and the `zcli push` after
+// it. Running only this piece against a scratch dir is what a cold-path
+// deploy would actually execute; the trailing `zcli push` would fail locally
+// against a fake token and isn't the part these tests care about.
 func extractGitEnsureChain(t *testing.T, dir string) string {
 	t.Helper()
 	authInfo := auth.Info{Token: "tok"}
-	full := buildSSHCommand(authInfo, "svc-target", dir, "", false, "")
-	chain, _, found := strings.Cut(full, " && ZEROPS_TOKEN=")
+	full := buildSSHCommand(authInfo, "svc-target", dir, "", false, "", "/tmp/zcp-push-test")
+	chain, _, found := strings.Cut(full, " && "+crewSaveCommand)
 	if !found {
 		t.Fatalf("command missing `zcli push` anchor, shape drifted:\n%s", full)
 	}
@@ -1021,9 +1022,9 @@ func TestDeploy_SelfDeploy_AutoInfer(t *testing.T) {
 	if result.TargetService != "app" {
 		t.Errorf("targetService = %s, want app", result.TargetService)
 	}
-	// 2 calls: HeadStatus (item 4) + the push itself.
-	if len(ssh.calls) != 2 {
-		t.Fatalf("ssh calls = %d, want 2", len(ssh.calls))
+	// 3 calls: HeadStatus (item 4) + the push itself + its build wait.
+	if len(ssh.calls) != 3 {
+		t.Fatalf("ssh calls = %d, want 3", len(ssh.calls))
 	}
 	for _, c := range ssh.calls {
 		if c.hostname != "app" {
@@ -1052,9 +1053,9 @@ func TestDeploy_SelfDeploy_IncludesGit(t *testing.T) {
 	if result.Mode != "ssh" {
 		t.Errorf("mode = %s, want ssh", result.Mode)
 	}
-	// 2 calls: HeadStatus (item 4) + the push itself.
-	if len(ssh.calls) != 2 {
-		t.Fatalf("ssh calls = %d, want 2", len(ssh.calls))
+	// 3 calls: HeadStatus (item 4) + the push itself + its build wait.
+	if len(ssh.calls) != 3 {
+		t.Fatalf("ssh calls = %d, want 3", len(ssh.calls))
 	}
 	cmd := ssh.calls[1].command
 	if !containsSubstring(cmd, " -g") {
@@ -1080,9 +1081,9 @@ func TestDeploy_CrossDeploy_OmitsGit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// 2 calls: HeadStatus (item 4) + the push itself.
-	if len(ssh.calls) != 2 {
-		t.Fatalf("ssh calls = %d, want 2", len(ssh.calls))
+	// 3 calls: HeadStatus (item 4) + the push itself + its build wait.
+	if len(ssh.calls) != 3 {
+		t.Fatalf("ssh calls = %d, want 3", len(ssh.calls))
 	}
 	cmd := ssh.calls[1].command
 	if containsSubstring(cmd, " -g") {
@@ -1400,7 +1401,7 @@ func TestBuildSSHCommand_RunsTheCrewSaveBeforeThePush(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			//nolint:gosec // test-only: buildSSHCommand over t.TempDir paths
-			cmd := exec.CommandContext(ctx, "bash", "-c", buildSSHCommand(auth.Info{Token: "tok"}, "svc-1", dir, "", true, ""))
+			cmd := exec.CommandContext(ctx, "bash", "-c", buildSSHCommand(auth.Info{Token: "tok"}, "svc-1", dir, "", true, "", filepath.Join(t.TempDir(), "zcp-push-test")))
 			cmd.Env = env
 			_ = cmd.Run()
 			pushed, _ := os.ReadFile(filepath.Join(dir, "pushed"))
@@ -1436,5 +1437,97 @@ func TestDeploySSH_FailingCrewSave_NamesTheSaveAndHoldsTheDeploy(t *testing.T) {
 	}
 	if containsSubstring(pe.Message, crewSaveFailedMarker) {
 		t.Errorf("marker leaked into message: %s", pe.Message)
+	}
+}
+
+// TestBuildSSHCommand_ReturnsOnUpload_BuildWaitReportsTheBuild: the push
+// command returns once zcli has uploaded the package — zcli still running on
+// the build — and the build wait then reports zcli's own output and exit
+// status, a failure before the upload included.
+func TestBuildSSHCommand_ReturnsOnUpload_BuildWaitReportsTheBuild(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("skipping under -short; needs real git binary")
+	}
+	tests := []struct {
+		name      string
+		zcli      string // the fake zcli's body; it may wait for ./build-go
+		running   bool   // zcli still runs when the push command returns
+		wantOut   string
+		wantCode  int
+		pushedOut string // what the push command's own output carries
+	}{
+		{
+			name:      "upload done, the build fails later",
+			zcli:      "echo 'Package uploaded'\necho 'Deploying service'\nwhile [ ! -e build-go ]; do sleep 0.1; done\necho 'BUILD FAILED: out of memory'\nexit 3\n",
+			running:   true,
+			wantOut:   "BUILD FAILED: out of memory",
+			wantCode:  3,
+			pushedOut: "Deploying service",
+		},
+		{
+			name:     "upload fails",
+			zcli:     "echo 'Package upload failed' >&2\nexit 2\n",
+			wantOut:  "Package upload failed",
+			wantCode: 2,
+		},
+		{
+			name:     "build passes",
+			zcli:     "echo 'Deploying service'\nwhile [ ! -e build-go ]; do sleep 0.1; done\necho 'BUILD ARTEFACTS READY TO DEPLOY'\n",
+			running:  true,
+			wantOut:  "BUILD ARTEFACTS READY TO DEPLOY",
+			wantCode: 0,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			bin := t.TempDir()
+			pushDir := filepath.Join(t.TempDir(), "zcp-push-test")
+			env := isolatedGitEnv(t)
+			mustRunGit(t, dir, env, "init", "-q", "-b", "main")
+			mustRunGit(t, dir, env, "-c", "user.email=a@b", "-c", "user.name=a", "commit", "-q", "--allow-empty", "-m", "seed")
+			if err := os.WriteFile(filepath.Join(bin, "zcli"), []byte("#!/bin/sh\n"+tt.zcli), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			env = append(env, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			run := func(script string) (string, int) {
+				cmd := exec.CommandContext(ctx, "bash", "-c", script)
+				cmd.Env = env
+				out, err := cmd.CombinedOutput()
+				code := 0
+				var exitErr *exec.ExitError
+				if errors.As(err, &exitErr) {
+					code = exitErr.ExitCode()
+				} else if err != nil {
+					t.Fatalf("run: %v", err)
+				}
+				return string(out), code
+			}
+
+			pushOut, pushCode := run(buildSSHCommand(auth.Info{Token: "tok"}, "svc-1", dir, "", false, "", pushDir))
+			if pushCode != 0 {
+				t.Fatalf("push command exit %d, want 0: %s", pushCode, pushOut)
+			}
+			if !strings.Contains(pushOut, tt.pushedOut) {
+				t.Errorf("push output %q, want it to carry %q", pushOut, tt.pushedOut)
+			}
+			if _, err := os.Stat(filepath.Join(pushDir, "rc")); (err != nil) != tt.running {
+				t.Errorf("zcli still running when the push returned = %v, want %v", err != nil, tt.running)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "build-go"), nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			waitOut, waitCode := run(buildWaitCommand(pushDir))
+			if waitCode != tt.wantCode || !strings.Contains(waitOut, tt.wantOut) {
+				t.Errorf("build wait = exit %d %q, want exit %d carrying %q", waitCode, waitOut, tt.wantCode, tt.wantOut)
+			}
+			if _, err := os.Stat(pushDir); !os.IsNotExist(err) {
+				t.Errorf("push run directory left behind: %v", err)
+			}
+		})
 	}
 }

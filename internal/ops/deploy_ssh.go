@@ -2,6 +2,7 @@ package ops
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -228,14 +229,19 @@ func deploySSH(
 	}
 
 	// Every git round trip against the source's shared /var/www tree —
-	// resolve/validate/record reads as well as the final push — is
-	// serialized per source so a concurrent batch deploy sharing a
-	// source cannot interleave git operations against the same repo
-	// (deploySourceGitLocks; TestDeployBatchSSH_SerializesPerSource).
+	// resolve/validate/record reads, the repo/HEAD ensure, the crew save and
+	// zcli's archive and upload — is serialized per source so a concurrent
+	// batch deploy sharing a source cannot interleave git operations against
+	// the same repo: zcli's archiver writes a stash commit and then runs
+	// `git prune`, which would drop another archiver's unreferenced commit
+	// mid-archive. The wait on the build holds no git state and runs
+	// outside the lock (deploySourceGitLocks;
+	// TestDeployBatchSSH_SameSourceBuildsOverlap_GitSectionExclusive).
 	unlockGit, lockErr := deploySourceGitLocks.lock(ctx, source.Name)
 	if lockErr != nil {
 		return nil, lockErr
 	}
+	unlockGit = sync.OnceFunc(unlockGit)
 	defer unlockGit()
 
 	// Deploy-from-commit (docs/spec-workflows.md §4.9): sha is resolved and
@@ -297,24 +303,34 @@ func deploySSH(
 		defer cleanupTemp()
 	}
 
-	var cmd string
 	var versionName string
+	// uploaded is the push's output up to its upload, when the build is
+	// awaited in a call of its own; output is the call that ends with the build.
+	var uploaded, output []byte
 	if sha != "" {
 		headSHA, headBranch, _, _, _ := git.HeadStatus(ctx, gitRunner, sourceWorkingDir)
 		versionName = commitVersionName(resolvedSHA, headSHA, headBranch)
-		cmd = buildSSHCommandSHA(authInfo, target.ID, workingDir, setup, versionName)
+		// The commit's tree is already extracted and the push reads no git.
+		unlockGit()
+		output, err = sshDeployer.ExecSSH(ctx, source.Name, buildSSHCommandSHA(authInfo, target.ID, workingDir, setup, versionName))
 	} else {
 		// GF-10: a plain working-tree deploy also passes --version-name
 		// when the source has a reachable HEAD — its branch and short
 		// sha, with a "-dirty" suffix on top of an uncommitted working
 		// tree (versionNameFor).
 		versionName = versionNameFor(branch, resolvedSHA, dirty)
-		cmd = buildSSHCommand(authInfo, target.ID, workingDir, setup, includeGit, versionName)
+		pushDir := "/tmp/zcp-push-" + rand.Text()
+		output, err = sshDeployer.ExecSSH(ctx, source.Name, buildSSHCommand(authInfo, target.ID, workingDir, setup, includeGit, versionName, pushDir))
+		unlockGit()
+		if err == nil {
+			uploaded = output
+			output, err = sshDeployer.ExecSSH(ctx, source.Name, buildWaitCommand(pushDir))
+		}
 	}
-
-	output, err := sshDeployer.ExecSSH(ctx, source.Name, cmd)
 	if err != nil {
-		if isSSHBuildTriggered(string(output)) {
+		// A self-deploy's build replaces the source, dropping the wait's
+		// session: the upload's output still says the build started.
+		if isSSHBuildTriggered(string(uploaded) + string(output)) {
 			// SSH connection dropped after successful zcli push (common exit 255).
 			// Build was submitted — let pollDeployBuild take over.
 			return &DeployResult{
@@ -608,7 +624,7 @@ func shortSHA(sha string) string {
 	return sha[:min(versionNameShort, len(sha))]
 }
 
-func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup string, includeGit bool, versionName string) string {
+func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup string, includeGit bool, versionName, pushDir string) string {
 	// .git lifecycle (GLC-2 / GLC-3). Direct deploy is an ARTIFACT
 	// operation — it must reach a state where zcli's `--workspace-state
 	// all` archiver can snapshot the (possibly dirty) working tree, without
@@ -655,7 +671,28 @@ func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup stri
 		pushArgs += " -g"
 	}
 
-	return fmt.Sprintf("%s && %s && %s", gitEnsure, crewSaveCommand, pushArgs)
+	// zcli push returns only when the build ends, but its git work — the
+	// archive, then the archiver's cleanup — is done once it says it is
+	// deploying. It runs detached into pushDir, and this command returns at
+	// that line (or zcli's exit) with the output so far; buildWaitCommand
+	// awaits the rest outside the source's git lock. With its output and
+	// input redirected the background job outlives this session (a
+	// non-pty session signals nothing on close). The push rides as the
+	// wrapper's arguments, so its words keep the quoting above.
+	q := shellQuote(pushDir)
+	spawn := fmt.Sprintf(`mkdir %s && { sh -c 'd=$1; shift; "$@"; echo $? > "$d/rc.tmp" && mv "$d/rc.tmp" "$d/rc"' zcp-push %s env %s > %s/log 2>&1 < /dev/null & }`,
+		q, q, pushArgs, q)
+	waitUpload := fmt.Sprintf("until [ -e %s/rc ] || grep -qF %s %s/log 2>/dev/null; do sleep 1; done; cat %s/log",
+		q, shellQuote(zcliDeployingLine), q, q)
+	return fmt.Sprintf("%s && %s && %s && %s", gitEnsure, crewSaveCommand, spawn, waitUpload)
+}
+
+// buildWaitCommand awaits the push buildSSHCommand started in pushDir: it
+// prints zcli's whole output and exits with zcli's status, as the push
+// itself would have, and removes pushDir.
+func buildWaitCommand(pushDir string) string {
+	q := shellQuote(pushDir)
+	return fmt.Sprintf("until [ -e %s/rc ]; do sleep 1; done; cat %s/log; rc=$(cat %s/rc); rm -rf %s; exit \"$rc\"", q, q, q, q)
 }
 
 // crewSaveCommand runs the Mate crew's save before the push, when the Mate

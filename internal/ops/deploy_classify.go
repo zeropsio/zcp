@@ -8,12 +8,17 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
+// zcliDeployingLine is what zcli push prints once its package is uploaded,
+// as it asks the platform to build and deploy it (zcli i18n
+// PushDeployDeployingStart).
+const zcliDeployingLine = "Deploying service"
+
 // isSSHBuildTriggered checks SSH output for markers indicating a build was
 // successfully submitted before the SSH connection dropped (common exit 255).
 func isSSHBuildTriggered(output string) bool {
 	markers := []string{
 		"BUILD ARTEFACTS READY TO DEPLOY",
-		"Deploying service",
+		zcliDeployingLine,
 	}
 	for _, m := range markers {
 		if strings.Contains(output, m) {

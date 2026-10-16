@@ -2,6 +2,7 @@ package ops
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -12,11 +13,15 @@ import (
 // non-parallel: these tests observe timing around the package-level
 // per-source deploy git lock.
 
-func TestDeployBatchSSH_SerializesPerSource(t *testing.T) {
+// TestDeployBatchSSH_SameSourceBuildsOverlap_GitSectionExclusive: two stages
+// fed from one dev service wait on their builds at the same time, while every
+// git round trip and upload against the source's shared tree runs alone.
+func TestDeployBatchSSH_SameSourceBuildsOverlap_GitSectionExclusive(t *testing.T) {
 	source := "batch-f4-source"
 	mock := platform.NewMock().
 		WithServices(deployBatchTestServices(source, "batch-f4-stage", "batch-f4-worker"))
 	ssh := newBatchConcurrencySSH(50 * time.Millisecond)
+	ssh.waitForBuilds = 2
 
 	result := DeployBatchSSH(
 		context.Background(),
@@ -34,8 +39,11 @@ func TestDeployBatchSSH_SerializesPerSource(t *testing.T) {
 	)
 
 	assertDeployBatchNoKickoffErrors(t, result)
-	if got := ssh.peakForSource(source); got != 1 {
-		t.Fatalf("peak concurrent ExecSSH calls for source %q = %d, want 1", source, got)
+	if got := ssh.peakForSource(source); got != 2 {
+		t.Errorf("peak concurrent ExecSSH calls for source %q = %d, want 2 (both builds awaited at once)", source, got)
+	}
+	if got := ssh.peakGitForSource(source); got != 1 {
+		t.Errorf("peak concurrent git/upload ExecSSH calls for source %q = %d, want 1", source, got)
 	}
 }
 
@@ -104,6 +112,19 @@ type batchConcurrencySSH struct {
 	peakInFlight     int
 	inFlightBySource map[string]int
 	peakBySource     map[string]int
+	// waitForBuilds holds each build wait until that many have entered
+	// (or a second passes); git/upload calls never wait on it.
+	waitForBuilds   int
+	builds          int
+	buildsEntered   chan struct{}
+	gitBySource     map[string]int
+	peakGitBySource map[string]int
+}
+
+// isBuildWait reports a call that only awaits a build already uploaded: it
+// names the push's run directory and runs neither git nor zcli.
+func isBuildWait(command string) bool {
+	return strings.Contains(command, "zcp-push-") && !strings.Contains(command, "zcli push") && !strings.Contains(command, "git ")
 }
 
 func newBatchConcurrencySSH(delay time.Duration) *batchConcurrencySSH {
@@ -112,12 +133,28 @@ func newBatchConcurrencySSH(delay time.Duration) *batchConcurrencySSH {
 		allEntered:       make(chan struct{}),
 		inFlightBySource: make(map[string]int),
 		peakBySource:     make(map[string]int),
+		buildsEntered:    make(chan struct{}),
+		gitBySource:      make(map[string]int),
+		peakGitBySource:  make(map[string]int),
 	}
 }
 
-func (s *batchConcurrencySSH) ExecSSH(ctx context.Context, hostname, _ string) ([]byte, error) {
-	s.enter(hostname)
-	defer s.leave(hostname)
+func (s *batchConcurrencySSH) ExecSSH(ctx context.Context, hostname, command string) ([]byte, error) {
+	build := isBuildWait(command)
+	s.enter(hostname, build)
+	defer s.leave(hostname, build)
+
+	if build {
+		if s.waitForBuilds > 0 {
+			select {
+			case <-s.buildsEntered:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Second):
+			}
+		}
+		return []byte("ok"), nil
+	}
 
 	if s.waitForCalls > 0 {
 		select {
@@ -142,9 +179,21 @@ func (s *batchConcurrencySSH) ExecSSHBackground(_ context.Context, _ string, _ s
 	return []byte("ok"), nil
 }
 
-func (s *batchConcurrencySSH) enter(hostname string) {
+func (s *batchConcurrencySSH) enter(hostname string, build bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if build {
+		s.builds++
+		if s.builds == s.waitForBuilds {
+			close(s.buildsEntered)
+		}
+	} else {
+		s.gitBySource[hostname]++
+		if s.gitBySource[hostname] > s.peakGitBySource[hostname] {
+			s.peakGitBySource[hostname] = s.gitBySource[hostname]
+		}
+	}
 
 	s.entered++
 	if s.waitForCalls > 0 && s.entered >= s.waitForCalls && !s.allEnteredClosed {
@@ -162,9 +211,13 @@ func (s *batchConcurrencySSH) enter(hostname string) {
 	}
 }
 
-func (s *batchConcurrencySSH) leave(hostname string) {
+func (s *batchConcurrencySSH) leave(hostname string, build bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if !build {
+		s.gitBySource[hostname]--
+	}
 
 	s.inFlight--
 	s.inFlightBySource[hostname]--
@@ -174,6 +227,12 @@ func (s *batchConcurrencySSH) peakForSource(hostname string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.peakBySource[hostname]
+}
+
+func (s *batchConcurrencySSH) peakGitForSource(hostname string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.peakGitBySource[hostname]
 }
 
 func (s *batchConcurrencySSH) peak() int {

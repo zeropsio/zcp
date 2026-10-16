@@ -3711,8 +3711,8 @@ The order:
      once — a dev build installs dependencies — unless its build reads another dev half; the first
      call answers once they stand, its stages queued; on the model's second call, a stage is
      cross-deployed from its dev half — never alongside it, since both read the dev half and one
-     source's deploys serialise on its git lock in goroutine order, a self-deploy first dropping its
-     SSH session under the cross-deploy — once what its build reads stands. It ships the dev half's
+     source's deploys serialise their git work and upload on its git lock in goroutine order, a
+     self-deploy first dropping its SSH session under the cross-deploy — once what its build reads stands. It ships the dev half's
      HEAD commit exactly (deploy-from-commit, named `{branch} {short sha}`), never its working
      tree, which the dev servers started between the calls may have touched. A read counts by every
      route the writer counts: directly, through a setup it extends, through a runtime variable it
