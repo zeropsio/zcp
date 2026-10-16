@@ -8,11 +8,12 @@ import (
 )
 
 // buildTagForEvent returns the exact log tag the Zerops builder emits for a
-// given app-version event. Every entry on the build service-stack carries
-// this tag (verified 2026-04-23 against api.app-prg1.zerops.io).
-// Scoping a log query by this tag is the canonical way to surface only the
-// current build's entries, bypassing the stale-warning leak that would occur
-// if we queried the persistent build service-stack without identity.
+// given app-version event. Every entry of the build carries this tag
+// (verified 2026-04-23 against api.app-prg1.zerops.io), and so does the
+// runtime prepare phase's output, which is logged on its own prepare service
+// stack, not on the build stack (verified 2026-10-16 on a
+// PREPARING_RUNTIME_FAILED appVersion). Scoping a log query by this tag, and
+// not by a service stack, surfaces exactly this build's entries from both.
 func buildTagForEvent(event *platform.AppVersionEvent) string {
 	if event == nil || event.ID == "" {
 		return ""
@@ -21,8 +22,9 @@ func buildTagForEvent(event *platform.AppVersionEvent) string {
 }
 
 // FetchBuildLogs fetches the last N lines of build pipeline output for the
-// given app-version event. Scoped to this build via tag identity and the
-// application facility so daemon noise is excluded.
+// given app-version event, the runtime prepare phase's included. Scoped to
+// this build via tag identity and the application facility so daemon noise is
+// excluded.
 // Best-effort: returns nil on any error.
 func FetchBuildLogs(
 	ctx context.Context,
@@ -32,7 +34,7 @@ func FetchBuildLogs(
 	event *platform.AppVersionEvent,
 	limit int,
 ) []string {
-	if event == nil || event.Build == nil || event.Build.ServiceStackID == nil {
+	if event == nil || event.Build == nil {
 		return nil
 	}
 	tag := buildTagForEvent(event)
@@ -44,10 +46,9 @@ func FetchBuildLogs(
 		return nil
 	}
 	entries, err := fetcher.FetchLogs(ctx, logAccess, platform.LogFetchParams{
-		ServiceID: *event.Build.ServiceStackID,
-		Facility:  "application",
-		Tags:      []string{tag},
-		Limit:     limit,
+		Facility: "application",
+		Tags:     []string{tag},
+		Limit:    limit,
 	})
 	if err != nil {
 		return nil
@@ -68,7 +69,7 @@ func FetchBuildWarnings(
 	event *platform.AppVersionEvent,
 	limit int,
 ) []string {
-	if event == nil || event.Build == nil || event.Build.ServiceStackID == nil {
+	if event == nil || event.Build == nil {
 		return nil
 	}
 	tag := buildTagForEvent(event)
@@ -80,11 +81,10 @@ func FetchBuildWarnings(
 		return nil
 	}
 	entries, err := fetcher.FetchLogs(ctx, logAccess, platform.LogFetchParams{
-		ServiceID: *event.Build.ServiceStackID,
-		Severity:  "warning",
-		Facility:  "application",
-		Tags:      []string{tag},
-		Limit:     limit,
+		Severity: "warning",
+		Facility: "application",
+		Tags:     []string{tag},
+		Limit:    limit,
 	})
 	if err != nil {
 		return nil

@@ -994,3 +994,27 @@ func TestClassifyDeployFailure_ArchiveWriteTooLong_SourceChangedNotNetwork(t *te
 		t.Fatalf("classification = %+v, want source-changed signal, not network", got)
 	}
 }
+
+// A failed prepare's output ends the build log (the prepare phase logs under
+// the build's tag on its own stack), whatever the runtime: the baseline points
+// there, names no PHP/Alpine package for a Node or Python service, and leaves
+// no unfilled placeholder.
+func TestAFailedPrepareReadsItsOutputAtTheEndOfTheBuildLogForEveryRuntime(t *testing.T) {
+	t.Parallel()
+
+	withLogs := ClassifyDeployFailure(FailureInput{Phase: PhasePrepare, BuildLogs: []string{"npm error code EEXIST"}})
+	if withLogs == nil || !strings.Contains(withLogs.SuggestedAction, "end of the build log") {
+		t.Fatalf("SuggestedAction = %+v, want it to point at the end of the build log", withLogs)
+	}
+	noLogs := ClassifyDeployFailure(FailureInput{Phase: PhasePrepare})
+	if noLogs == nil || !strings.Contains(noLogs.SuggestedAction, "zerops_events") {
+		t.Fatalf("SuggestedAction = %+v, want it to point at zerops_events, whose buildLogTail carries the prepare output", noLogs)
+	}
+	for _, cls := range []*topology.DeployFailureClassification{withLogs, noLogs} {
+		for _, foreign := range []string{"php84", "Alpine PHP", "{service}", "zerops_logs"} {
+			if strings.Contains(cls.SuggestedAction, foreign) {
+				t.Errorf("SuggestedAction %q contains %q", cls.SuggestedAction, foreign)
+			}
+		}
+	}
+}

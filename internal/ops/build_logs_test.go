@@ -342,3 +342,53 @@ func TestFetchBuildLogs_GetProjectLogError_ReturnsNil(t *testing.T) {
 		t.Errorf("expected nil on GetProjectLog error, got %v", logs)
 	}
 }
+
+// stackScopedLogFetcher answers like the live log backend: a query scoped to
+// a service stack returns only that stack's lines, an unscoped one the whole
+// project's. Tags and facility then filter as the mock does.
+type stackScopedLogFetcher struct {
+	byStack map[string][]platform.LogEntry
+}
+
+func (f stackScopedLogFetcher) FetchLogs(ctx context.Context, access *platform.LogAccess, params platform.LogFetchParams) ([]platform.LogEntry, error) {
+	var entries []platform.LogEntry
+	for stack, lines := range f.byStack {
+		if params.ServiceID == "" || params.ServiceID == stack {
+			entries = append(entries, lines...)
+		}
+	}
+	return platform.NewMockLogFetcher().WithEntries(entries).FetchLogs(ctx, access, params)
+}
+
+// The runtime prepare phase runs on its own service stack after the build
+// and logs under the build's tag (live: appVersion KP0LkKL6QvensaDAsu0uEw,
+// stacks buildmemosdev… and preparememosdev…), so the failing prepare
+// command's output is part of the build's log.
+func TestFetchBuildLogs_AFailedPrepareReturnsThePrepareOutputLoggedOnItsOwnStack(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().WithLogAccess(&platform.LogAccess{URL: "https://logs"})
+	fetcher := stackScopedLogFetcher{byStack: map[string][]platform.LogEntry{
+		"build-stack": {
+			{Timestamp: "2026-10-15T19:09:36Z", Facility: "local0", Tag: "zbuilder@av-1", Message: "✅ BUILD ARTEFACTS READY TO DEPLOY"},
+		},
+		"prepare-stack": {
+			{Timestamp: "2026-10-15T19:12:04Z", Facility: "local0", Tag: "zbuilder@av-1", Message: "npm error code EEXIST"},
+			{Timestamp: "2026-10-15T19:12:04Z", Facility: "local0", Tag: "zbuilder@av-1", Message: "━━━━  ❌ sudo npm install -g pnpm@11  ━━━━"},
+		},
+		"runtime-stack": {
+			{Timestamp: "2026-10-15T19:12:34Z", Facility: "local0", Tag: "zerops@setup", Message: "Successfully accepted remote IP address"},
+		},
+	}}
+	event := &platform.AppVersionEvent{
+		ID:    "av-1",
+		Build: &platform.BuildInfo{ServiceStackID: strPtr("build-stack")},
+	}
+
+	logs := FetchBuildLogs(context.Background(), mock, fetcher, "proj-1", event, 50)
+
+	want := []string{"✅ BUILD ARTEFACTS READY TO DEPLOY", "npm error code EEXIST", "━━━━  ❌ sudo npm install -g pnpm@11  ━━━━"}
+	if fmt.Sprint(logs) != fmt.Sprint(want) {
+		t.Errorf("build logs = %q, want %q", logs, want)
+	}
+}

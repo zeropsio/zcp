@@ -188,15 +188,16 @@ func baselineForPhase(in FailureInput) *topology.DeployFailureClassification {
 			LikelyCause: "run.prepareCommands exited non-zero before deploy files arrived (NOT buildCommands, NOT initCommands).",
 			Signals:     []string{"phase:prepare"},
 		}
-		const prepareCauses = "Common causes: (1) missing sudo — every package install needs sudo " +
-			"(e.g. sudo apk add --no-cache pkg), containers run as the zerops user; " +
-			"(2) wrong package name — Alpine PHP extensions use a version prefix (php84-pdo_pgsql, NOT php-pgsql; " +
-			"php84-ctype, NOT php-ctype); some extensions are built-in since PHP 8.0 (json, tokenizer) — do not install those; " +
-			"(3) referencing /var/www/ paths (empty during prepare — use addToRunPrepare + /home/zerops/ instead)."
+		// The prepare phase logs under the build's tag on its own service
+		// stack, so its output is the end of the build log (FetchBuildLogs).
+		const prepareCauses = "Common causes: a package install without sudo (containers run as the zerops user); " +
+			"a package name that does not exist on the run.os image; " +
+			"reinstalling a tool the base image already provides (e.g. npm EEXIST); " +
+			"a /var/www path, which is empty during prepare (use addToRunPrepare + /home/zerops/ instead)."
 		if len(in.BuildLogs) > 0 {
-			cls.SuggestedAction = "Fix run.prepareCommands (it exited non-zero before deploy files arrived — NOT buildCommands, NOT initCommands). Read the build log tail (deploy response `buildLogs`, event `buildLogTail`) for the exact error. " + prepareCauses
+			cls.SuggestedAction = "Fix run.prepareCommands (it exited non-zero before deploy files arrived — NOT buildCommands, NOT initCommands). Its output is at the end of the build log (deploy response `buildLogs`, event `buildLogTail`). " + prepareCauses
 		} else {
-			cls.SuggestedAction = "Fix run.prepareCommands (it exited non-zero — NOT buildCommands, NOT initCommands). Prepare logs were not captured; fetch via zerops_logs serviceHostname={service} severity=ERROR since=5m. " + prepareCauses
+			cls.SuggestedAction = "Fix run.prepareCommands (it exited non-zero — NOT buildCommands, NOT initCommands). Its output was not captured here; zerops_events shows this deploy's `buildLogTail`, which ends with the prepare output. " + prepareCauses
 		}
 		return cls
 	case PhaseInit:

@@ -126,7 +126,7 @@ var appVersionHintMap = map[string]string{
 	statusBuilding:                "IN_PROGRESS: Build is running. Continue polling.",
 	statusBuildFailed:             "FAILED: Build failed. Read this event's `failureClass` + `failureCause` for the structured diagnosis (populated when LogFetcher is available — same shape as DeployResult.FailureClassification). That IS the build diagnosis — a failed build never started a runtime process, so `zerops_logs` is empty for this service. Don't re-call zerops_deploy until the cause is identified — re-running without a fix loops the failure.",
 	platform.BuildStatusDeploying: "IN_PROGRESS: Deploy is running. Continue polling.",
-	"PREPARING_RUNTIME_FAILED":    "FAILED: run.prepareCommands exited non-zero. Check runtimeLogs for the prepare stderr. Common causes: missing sudo prefix (containers run as zerops user), wrong package name (Alpine PHP: php84-<ext>).",
+	"PREPARING_RUNTIME_FAILED":    "FAILED: run.prepareCommands exited non-zero. The prepare output is at the end of this event's buildLogTail; read this event's `failureClass` + `failureCause` for the diagnosis.",
 	"DEPLOY_FAILED":               "FAILED: run.initCommands crashed the new container on startup (build succeeded). The deploy response 'error' field identifies the failing command. Fetch runtime stderr with zerops_logs serviceHostname={service} severity=ERROR since=5m — NOT buildLogs (that's build container output).",
 	statusCanceled:                "CANCELED: Build was canceled.",
 }

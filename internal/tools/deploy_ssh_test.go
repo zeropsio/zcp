@@ -1052,9 +1052,12 @@ func TestDeployTool_PreparingRuntimeFailed_CarriesPrepareStderr(t *testing.T) {
 			Build: &platform.BuildInfo{ServiceStackID: &buildSvcID, ContainerCreationStart: &created},
 		}}).
 		WithLogAccess(&platform.LogAccess{URL: "https://log.example.com/logs"})
+	// The prepare phase logs under the build's tag; the runtime container
+	// holds only its own SSH/sudo lines (live, appVersion KP0LkKL6QvensaDAsu0uEw).
 	logFetcher := platform.NewMockLogFetcher().WithEntries([]platform.LogEntry{
-		{Facility: "local0", Tag: "zbuilder@av-1", Message: "downloading source"},
-		{Facility: "local0", Tag: "zsc", Timestamp: "2026-10-15T01:00:05Z", Message: "Error: unknown command \"add\" for \"zsc\""},
+		{Facility: "local0", Tag: "zbuilder@av-1", Timestamp: "2026-10-15T01:00:01Z", Message: "downloading source"},
+		{Facility: "local0", Tag: "zbuilder@av-1", Timestamp: "2026-10-15T01:00:05Z", Message: "Error: unknown command \"add\" for \"zsc\""},
+		{Facility: "local0", Tag: "sudo", Timestamp: "2026-10-15T01:00:06Z", Message: "pam_unix(sudo:session): session opened for user root"},
 	})
 	ssh := &stubSSH{output: []byte("ok")}
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
@@ -1068,8 +1071,11 @@ func TestDeployTool_PreparingRuntimeFailed_CarriesPrepareStderr(t *testing.T) {
 	if err := json.Unmarshal([]byte(getTextContent(t, result)), &parsed); err != nil {
 		t.Fatalf("failed to parse result: %v", err)
 	}
-	if !slices.ContainsFunc(parsed.RuntimeLogs, func(l string) bool { return strings.Contains(l, "unknown command") }) {
-		t.Errorf("runtimeLogs = %v, want the prepare phase's stderr line", parsed.RuntimeLogs)
+	if !slices.ContainsFunc(parsed.BuildLogs, func(l string) bool { return strings.Contains(l, "unknown command") }) {
+		t.Errorf("buildLogs = %v, want the prepare phase's stderr line", parsed.BuildLogs)
+	}
+	if len(parsed.RuntimeLogs) != 0 {
+		t.Errorf("runtimeLogs = %v, want none: the prepare phase does not run in the runtime container", parsed.RuntimeLogs)
 	}
 }
 
