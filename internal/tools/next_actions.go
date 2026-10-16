@@ -70,11 +70,11 @@ func deployNextActionsFor(ctx context.Context, ssh ops.SSHDeployer, root string,
 		return base
 	}
 	ds, err := ops.ReadDevServers(ctx, ssh, result.TargetService, root)
-	if err != nil || len(ds.Declared.Servers) == 0 {
+	if err != nil || len(ds.Servers()) == 0 {
 		return base
 	}
 	var states, down []string
-	for _, s := range ds.Declared.Servers {
+	for _, s := range ds.Servers() {
 		st, ok := ds.State.Servers[s.Name]
 		switch {
 		case !ok:

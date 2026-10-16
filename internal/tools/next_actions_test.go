@@ -244,3 +244,23 @@ func TestDeployNextActions_NamesEveryDeclaredDevServerACrashedOneWithItsExit(t *
 		t.Errorf("nextActions = %q, want both crashed servers named, never 'idle'", allDown)
 	}
 }
+
+// In variant B the code volume's declaration also holds the other dev
+// services' servers: a deploy's reply names only the deployed service's.
+func TestDeployNextActions_AVariantBDeploy_NamesOnlyThatDevServicesServers(t *testing.T) {
+	t.Parallel()
+	decl := `{"version":1,"servers":[` +
+		`{"name":"web","port":3000,"command":"a","cwd":"apps/web","service":"webdev"},` +
+		`{"name":"api","port":8080,"command":"b","cwd":"apps/api","service":"apidev"}]}`
+	c := devservertest.NewSupervised(decl)
+	delete(c.Servers, "api")
+
+	got := deployNextActionsFor(t.Context(), c, "/var/www/ws", &ops.DeployResult{TargetService: "webdev"}, topology.ModeDev, topology.RuntimeDynamic)
+
+	if want := "Dev servers on webdev after the deploy: web running."; !strings.Contains(got, want) {
+		t.Errorf("nextActions = %q, want it to contain %q", got, want)
+	}
+	if strings.Contains(got, "api") {
+		t.Errorf("nextActions = %q, names apidev's api on webdev", got)
+	}
+}
