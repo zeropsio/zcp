@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"image/color"
 	"image/png"
 	"os"
 	"slices"
@@ -508,6 +509,97 @@ func TestBrowserBatch_ReturnsScreenshotBytesAndDeletesTempFile(t *testing.T) {
 	}
 }
 
+// TestBrowserBatch_FullPageScreenshotIsOneImageOfTheWholePage pins the
+// full-page option: the screenshot step asks agent-browser for the whole page
+// (agent-browser 0.38.2 `screenshot --help`: "--full, -f  Capture full page
+// (not just viewport)") and the call returns that one image. An agent that
+// could not ask for it scrolled and took eleven viewport screenshots instead.
+func TestBrowserBatch_FullPageScreenshotIsOneImageOfTheWholePage(t *testing.T) {
+	shot := testPNG(t, 12, 300)
+	fake := &fakeScreenshotRunner{png: shot}
+	defer OverrideBrowserRunnerForTest(fake)()
+
+	result, err := BrowserBatch(context.Background(), BrowserBatchInput{
+		URL:      "https://example.com",
+		FullPage: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var screenshots [][]string
+	for _, cmd := range parseStdinBatch(t, fake.lastStdin) {
+		if cmd[0] == "screenshot" {
+			screenshots = append(screenshots, cmd)
+		}
+	}
+	if want := [][]string{{"screenshot", "--full", fake.capturedPath}}; !slices.EqualFunc(screenshots, want, slices.Equal[[]string]) {
+		t.Fatalf("screenshot steps = %v, want %v", screenshots, want)
+	}
+	if result.Screenshot == nil {
+		t.Fatal("a full-page call returned no screenshot")
+	}
+	if !slices.Equal(result.Screenshot.PNG, shot) {
+		t.Error("the returned image is not the one agent-browser wrote")
+	}
+	if result.Screenshot.Width != 12 || result.Screenshot.Height != 300 || result.Screenshot.CapturedHeight != 0 {
+		t.Errorf("screenshot = %dx%d (captured %d), want 12x300 uncut",
+			result.Screenshot.Width, result.Screenshot.Height, result.Screenshot.CapturedHeight)
+	}
+	for _, step := range result.Steps {
+		if step.Command[0] == "screenshot" && !slices.Equal(step.Command, []string{"screenshot", "--full"}) {
+			t.Errorf("the result's screenshot step = %v, want [screenshot --full]", step.Command)
+		}
+	}
+}
+
+// TestBrowserBatch_ScreenshotTallerThanTheCapKeepsItsTop pins the bound on a
+// returned image: one taller than browserScreenshotMaxHeight keeps its top
+// that tall and says how tall the capture was. A full page of
+// docs.zerops.io/references/import at 1365 px wide is 1365×10870 px (2.6 MB,
+// agent-browser 0.38.2, 2026-10-16), and the Claude API refuses an image
+// with a side over 8000 px.
+func TestBrowserBatch_ScreenshotTallerThanTheCapKeepsItsTop(t *testing.T) {
+	const tall = browserScreenshotMaxHeight + 50
+	red := color.RGBA{R: 255, A: 255}
+	green := color.RGBA{G: 255, A: 255}
+	img := image.NewRGBA(image.Rect(0, 0, 3, tall))
+	img.Set(0, 0, red)
+	img.Set(0, browserScreenshotMaxHeight-1, green)
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("encode test PNG: %v", err)
+	}
+	fake := &fakeScreenshotRunner{png: buf.Bytes()}
+	defer OverrideBrowserRunnerForTest(fake)()
+
+	result, err := BrowserBatch(context.Background(), BrowserBatchInput{URL: "https://example.com", FullPage: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	shot := result.Screenshot
+	if shot == nil {
+		t.Fatal("a tall page returned no screenshot")
+	}
+	if shot.Width != 3 || shot.Height != browserScreenshotMaxHeight || shot.CapturedHeight != tall {
+		t.Fatalf("screenshot = %dx%d (captured %d), want 3x%d (captured %d)",
+			shot.Width, shot.Height, shot.CapturedHeight, browserScreenshotMaxHeight, tall)
+	}
+	got, err := png.Decode(bytes.NewReader(shot.PNG))
+	if err != nil {
+		t.Fatalf("the returned image is not a PNG: %v", err)
+	}
+	if b := got.Bounds(); b.Dx() != 3 || b.Dy() != browserScreenshotMaxHeight {
+		t.Errorf("the returned image is %dx%d, want 3x%d", b.Dx(), b.Dy(), browserScreenshotMaxHeight)
+	}
+	if c := color.RGBAModel.Convert(got.At(0, 0)); c != red {
+		t.Errorf("top pixel = %v, want the page's top (red)", c)
+	}
+	if c := color.RGBAModel.Convert(got.At(0, browserScreenshotMaxHeight-1)); c != green {
+		t.Errorf("last kept pixel = %v, want the page's row %d (green)", c, browserScreenshotMaxHeight-1)
+	}
+}
+
 // TestBrowserBatch_NoScreenshotWhenNotRequested guards the default path:
 // no screenshot step is added and result.Screenshot stays nil when the
 // caller does not ask for one.
@@ -659,8 +751,8 @@ func (f *fakeScreenshotRunner) Run(ctx context.Context, stdin string, timeout ti
 		return "", "", false, fmt.Errorf("fakeScreenshotRunner: parse stdin: %w", err)
 	}
 	for _, cmd := range batch {
-		if len(cmd) == 2 && cmd[0] == "screenshot" {
-			f.capturedPath = cmd[1]
+		if len(cmd) >= 2 && cmd[0] == "screenshot" {
+			f.capturedPath = cmd[len(cmd)-1]
 			if err := os.WriteFile(f.capturedPath, f.png, 0o600); err != nil {
 				return "", "", false, fmt.Errorf("fakeScreenshotRunner: write PNG: %w", err)
 			}

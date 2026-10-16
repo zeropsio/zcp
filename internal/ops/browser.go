@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
 	"image/png"
 	"os"
 	"os/exec"
@@ -48,6 +49,10 @@ type BrowserBatchInput struct {
 	// after Commands and before the errors/console/network-requests
 	// tail. The captured PNG is returned via BrowserBatchResult.Screenshot.
 	Screenshot bool `json:"screenshot,omitempty"`
+
+	// FullPage takes the screenshot of the whole page instead of the
+	// viewport; it implies Screenshot.
+	FullPage bool `json:"fullPage,omitempty"`
 }
 
 // BrowserStepResult is one step from agent-browser's --json output.
@@ -124,6 +129,10 @@ type BrowserScreenshotResult struct {
 	PNG    []byte `json:"-"`
 	Width  int    `json:"width,omitempty"`
 	Height int    `json:"height,omitempty"`
+	// CapturedHeight is set when the capture was taller than
+	// browserScreenshotMaxHeight: how tall it was. The image keeps its top
+	// Height px.
+	CapturedHeight int `json:"capturedHeight,omitempty"`
 	// Picture names the screenshot where the Mate's own pictures are kept
 	// ("shot-3") — how a change's description shows it, as
 	// ![what it shows](shot-3). Set by the tools layer, which keeps it.
@@ -337,6 +346,17 @@ const (
 	// but writes no file; the plain [screenshot <path>] step writes the
 	// PNG. buildCanonicalBatch therefore emits the plain form.
 	browserCmdScreenshot = "screenshot"
+	// browserFlagFull makes the screenshot step capture the whole page
+	// (agent-browser 0.38.2 `screenshot --help`: "--full, -f  Capture full
+	// page (not just viewport)"). Each step runs as its own CLI call, so the
+	// flag is honoured: measured 2026-10-16, [screenshot --full <path>] of
+	// docs.zerops.io/references/import wrote a 1365×10870 PNG.
+	browserFlagFull = "--full"
+	// browserScreenshotMaxHeight bounds a returned image's height: the
+	// Claude API refuses an image with a side over 8000 px, and a full page
+	// runs past it (docs.zerops.io/references/import at 1365 px wide is
+	// 1365×10870 px, 2.6 MB; agent-browser 0.38.2, 2026-10-16).
+	browserScreenshotMaxHeight = 8000
 )
 
 const (
@@ -522,13 +542,14 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	screenshotPath, cleanupScreenshot, err := prepareScreenshotTempFile(input.Screenshot)
+	wantScreenshot := input.Screenshot || input.FullPage
+	screenshotPath, cleanupScreenshot, err := prepareScreenshotTempFile(wantScreenshot)
 	if err != nil {
 		return nil, err
 	}
 	defer cleanupScreenshot()
 
-	batch := buildCanonicalBatch(input.URL, input.Commands, screenshotPath)
+	batch := buildCanonicalBatch(input.URL, input.Commands, screenshotPath, input.FullPage)
 	stdinBytes, err := json.Marshal(batch)
 	if err != nil {
 		return nil, fmt.Errorf("marshal batch: %w", err)
@@ -577,7 +598,7 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 		fmt.Fprintf(os.Stderr, "zerops_browser: browser release: %v\n", err)
 	}
 	if !done && runErr == nil {
-		populateBrowserBatchOutputs(result, input.Screenshot, screenshotPath)
+		populateBrowserBatchOutputs(result, wantScreenshot, screenshotPath)
 	}
 	omitScreenshotTempPath(result, screenshotPath)
 	return result, nil
@@ -600,7 +621,7 @@ func omitScreenshotTempPath(result *BrowserBatchResult, path string) {
 		if !isCommand(step.Command, browserCmdScreenshot) || !slices.Contains(step.Command, path) {
 			continue
 		}
-		step.Command = []string{browserCmdScreenshot}
+		step.Command = slices.DeleteFunc(slices.Clone(step.Command), func(arg string) bool { return arg == path })
 		step.Result = nil
 		if step.Error != nil {
 			text := strings.ReplaceAll(*step.Error, path, said)
@@ -740,11 +761,41 @@ func populateBrowserBatchOutputs(result *BrowserBatchResult, screenshotRequested
 	if readErr != nil {
 		return
 	}
-	width, height := 0, 0
+	shot := &BrowserScreenshotResult{PNG: data}
 	if cfg, cfgErr := png.DecodeConfig(bytes.NewReader(data)); cfgErr == nil {
-		width, height = cfg.Width, cfg.Height
+		shot.Width, shot.Height = cfg.Width, cfg.Height
 	}
-	result.Screenshot = &BrowserScreenshotResult{PNG: data, Width: width, Height: height}
+	if shot.Height > browserScreenshotMaxHeight {
+		if err := cutScreenshot(shot); err != nil {
+			result.Message = fmt.Sprintf("The screenshot is taller than %d px and could not be cut to it: %v", browserScreenshotMaxHeight, err)
+			return
+		}
+	}
+	result.Screenshot = shot
+}
+
+// cutScreenshot keeps the top browserScreenshotMaxHeight px of a taller
+// capture and records how tall the capture was in CapturedHeight.
+func cutScreenshot(shot *BrowserScreenshotResult) error {
+	img, err := png.Decode(bytes.NewReader(shot.PNG))
+	if err != nil {
+		return fmt.Errorf("decode screenshot: %w", err)
+	}
+	sub, ok := img.(interface {
+		SubImage(r image.Rectangle) image.Image
+	})
+	if !ok {
+		return fmt.Errorf("cut screenshot: %T cannot be cut", img)
+	}
+	b := img.Bounds()
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, sub.SubImage(image.Rect(b.Min.X, b.Min.Y, b.Max.X, b.Min.Y+browserScreenshotMaxHeight))); err != nil {
+		return fmt.Errorf("encode screenshot: %w", err)
+	}
+	shot.PNG = buf.Bytes()
+	shot.CapturedHeight = shot.Height
+	shot.Height = browserScreenshotMaxHeight
+	return nil
 }
 
 // scanStepsForCDPWedge returns the first matching signal substring and
@@ -766,14 +817,15 @@ func scanStepsForCDPWedge(steps []BrowserStepResult) (string, bool) {
 }
 
 // buildCanonicalBatch assembles [open url] + the first-paint wait +
-// stripped caller commands + an optional [screenshot screenshotPath] +
+// stripped caller commands + an optional [screenshot [--full] screenshotPath] +
 // [errors] [console] [network requests]. Any open/close/tab/window/eval in
 // the caller's commands is silently dropped — the canonical open is the only
 // navigation the tool owns, a close would end the warm browser, tab and
 // window could close or switch its base tab, and dedicated commands replace
 // eval. screenshotPath == "" omits the
-// screenshot step entirely.
-func buildCanonicalBatch(url string, commands [][]string, screenshotPath string) [][]string {
+// screenshot step entirely; fullPage captures the whole page, not the
+// viewport.
+func buildCanonicalBatch(url string, commands [][]string, screenshotPath string, fullPage bool) [][]string {
 	inner := make([][]string, 0, len(commands))
 	for _, cmd := range commands {
 		if len(cmd) == 0 {
@@ -793,7 +845,11 @@ func buildCanonicalBatch(url string, commands [][]string, screenshotPath string)
 	batch = append(batch, []string{browserCmdOpen, url}, browserPaintWait)
 	batch = append(batch, inner...)
 	if screenshotPath != "" {
-		batch = append(batch, []string{browserCmdScreenshot, screenshotPath})
+		shot := []string{browserCmdScreenshot}
+		if fullPage {
+			shot = append(shot, browserFlagFull)
+		}
+		batch = append(batch, append(shot, screenshotPath))
 	}
 	batch = append(batch,
 		[]string{browserCmdErrors},
