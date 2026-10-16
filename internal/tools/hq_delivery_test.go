@@ -6,6 +6,7 @@ package tools
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -124,6 +125,31 @@ func TestAStageDeployOfAWiredPairDeliversItself(t *testing.T) {
 	}
 	if lab.meta().HQ.Change != 1 {
 		t.Errorf("the change's number is not on the pair: %+v", lab.meta().HQ)
+	}
+}
+
+// TestAStageDeliveryThatCommitsSaysTheCommitItMade: the delivery commits the
+// deployed tree in the pair's checkout, and its line names that commit — its
+// sha, its message and the checkout — so no commit the agent did not make goes
+// unsaid. A delivery with nothing to commit names none.
+func TestAStageDeliveryThatCommitsSaysTheCommitItMade(t *testing.T) {
+	lab := newHQLab(t)
+	lab.wire()
+	startSession(t, lab.stateDir, "Build a todo app")
+	lab.write(map[string]string{"index.js": "the app\n"})
+
+	delivery := lab.deliver()
+	if delivery == nil || delivery.Change == nil {
+		t.Fatalf("want a delivery through a change, got %+v", delivery)
+	}
+	want := fmt.Sprintf(`Committed the deployed tree in /var/www on appdev as %s "Build a todo app".`, lab.git("log", "-1", "--format=%h", "--grep=Build a todo app"))
+	if !strings.Contains(delivery.Line, want) {
+		t.Errorf("the line must name the commit it made, %q:\n%s", want, delivery.Line)
+	}
+
+	again := lab.deliver()
+	if again == nil || strings.Contains(again.Line, "Committed the deployed tree") {
+		t.Errorf("a delivery that committed nothing must name no commit:\n%+v", again)
 	}
 }
 

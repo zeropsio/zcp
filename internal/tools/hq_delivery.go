@@ -315,6 +315,14 @@ func deliverHeldHQPair(
 			"%s runs, but its code has not reached its repository %q in HQ: committing it in %s's checkout failed (%s). Fix the cause, then deploy %s again — the change follows that deploy.",
 			target, repo, meta.Hostname, gitPushErrorDetail(err, committed), target))
 	}
+	// The commit is the checkout's whatever happens next, so every line from
+	// here says it.
+	if sha, subject := ops.DeliveryCommitted(string(committed)); sha != "" {
+		defer func() {
+			delivery.Line = strings.TrimSpace(delivery.Line + fmt.Sprintf(" Committed the deployed tree in %s on %s as %s %q.",
+				hqPairWorkingDir(meta), meta.Hostname, sha, subject))
+		}()
+	}
 	output, tries, err := gitAgainstHQ(ctx, sshDeployer, hqc, meta.Hostname,
 		ops.BuildDeliveryCommand(hqPairWorkingDir(meta), message, landedCommit, landedHead))
 	if line := deliveryRefusalLine(string(output), target, repo, meta.Hostname, landedCommit); line != "" {

@@ -148,6 +148,11 @@ const deliveryUnignoredMarker = "ZCP_UNIGNORED:"
 // changed, when taking `main` in could not be done without a decision.
 const deliveryConflictMarker = "ZCP_MERGE_CONFLICT:"
 
+// deliveryCommittedMarker prefixes the commit a delivery made of the
+// deployed tree — its short sha and subject — when there was anything to
+// commit.
+const deliveryCommittedMarker = "ZCP_COMMITTED:"
+
 // deliveryAheadMarker prefixes how many commits the checkout's HEAD has that
 // `main` does not, once `main` is taken in; this is not a content verdict.
 const deliveryAheadMarker = "ZCP_AHEAD:"
@@ -188,7 +193,8 @@ func deliveryCommitSteps(workingDir, message string) []string {
 		`{ unignored=""; for d in node_modules vendor .venv; do if [ -d "$d" ] && ! git check-ignore -q "$d"; then unignored="$unignored $d"; fi; done; ` +
 			`if [ -n "$unignored" ]; then echo "` + deliveryUnignoredMarker + `$unignored"; exit 3; fi; }`,
 		"git add -A",
-		fmt.Sprintf("(git diff --cached --quiet || git commit -q -m %s)", shellQuote(zcpCommitMessage(message))),
+		fmt.Sprintf(`(git diff --cached --quiet || { git commit -q -m %s && echo "%s$(git log -1 --format='%%h %%s')"; })`,
+			shellQuote(zcpCommitMessage(message)), deliveryCommittedMarker),
 	}
 }
 
@@ -288,6 +294,18 @@ func DeliveryAhead(output string) (ahead int, found bool) {
 		}
 	}
 	return 0, false
+}
+
+// DeliveryCommitted reads the commit a delivery made out of its output — its
+// short sha and subject — "" when it committed nothing.
+func DeliveryCommitted(output string) (sha, subject string) {
+	for line := range strings.SplitSeq(output, "\n") {
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), deliveryCommittedMarker); ok {
+			sha, subject, _ = strings.Cut(rest, " ")
+			return sha, subject
+		}
+	}
+	return "", ""
 }
 
 // ChangePushRefusal reads why HQ refused a change's branch out of a push's
