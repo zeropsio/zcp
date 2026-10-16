@@ -267,7 +267,8 @@ func TestBrowserTool_DescriptionTeachesTheCall(t *testing.T) {
 // TestBrowserTool_SchemaSaysWhatTheCaptureAndTheViewportDo: a fullPage
 // capture of a page whose map loads when scrolled into view came back blank
 // below the fold, and an agent cannot know a leading set viewport is applied
-// before the page loads unless the schema says so.
+// before the page loads, or that a call setting none loads at the default
+// size and not at an earlier call's, unless the schema says so.
 func TestBrowserTool_SchemaSaysWhatTheCaptureAndTheViewportDo(t *testing.T) {
 	tl, err := browserSession(t).ListTools(t.Context(), &mcp.ListToolsParams{})
 	if err != nil || len(tl.Tools) != 1 {
@@ -276,7 +277,7 @@ func TestBrowserTool_SchemaSaysWhatTheCaptureAndTheViewportDo(t *testing.T) {
 	props := tl.Tools[0].InputSchema.(map[string]any)["properties"].(map[string]any)
 	for field, want := range map[string]string{
 		"fullPage": "The capture does not scroll: content that loads when scrolled into view stays blank unless you scroll to it or wait for it first.",
-		"commands": `A leading ["set","viewport","<w>","<h>"] runs before the open, so the page loads at that size.`,
+		"commands": `A leading ["set","viewport","<w>","<h>"] runs before the open, so the page loads at that size; a call without one loads at 1280×577, the size a fresh Chrome opens at, whatever an earlier call set.`,
 	} {
 		prop, _ := props[field].(map[string]any)
 		if desc, _ := prop["description"].(string); !strings.Contains(desc, want) {
