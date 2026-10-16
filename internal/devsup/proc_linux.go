@@ -2,6 +2,7 @@ package devsup
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -71,4 +72,19 @@ func groupRSSKB(pgid int) int64 {
 		}
 	}
 	return pages * int64(os.Getpagesize()) / 1024
+}
+
+// readTasks reads the task budget of the cgroup this supervisor runs in, which
+// every server it starts shares (cgroup v2: /proc/self/cgroup's "0::" line).
+func readTasks() (Tasks, bool) {
+	b, err := os.ReadFile("/proc/self/cgroup")
+	if err != nil {
+		return Tasks{}, false
+	}
+	for line := range strings.SplitSeq(string(b), "\n") {
+		if path, ok := strings.CutPrefix(line, "0::"); ok {
+			return readTasksAt(filepath.Join("/sys/fs/cgroup", path))
+		}
+	}
+	return Tasks{}, false
 }

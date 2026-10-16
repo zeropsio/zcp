@@ -85,8 +85,12 @@ type ServerState struct {
 	Exit              *Exit  `json:"exit"`
 	// RetryPending: the server crashed while starting and the supervisor
 	// starts it once more after its siblings settle; set only while crashed.
-	RetryPending bool   `json:"retryPending,omitempty"`
-	LogPath      string `json:"logPath"`
+	RetryPending bool `json:"retryPending,omitempty"`
+	// TaskLimit: the server crashed, or its start was refused, because the
+	// service's task limit was reached; set only while crashed. RetryPending
+	// says whether a start after backoff is still to come.
+	TaskLimit *TaskLimit `json:"taskLimit,omitempty"`
+	LogPath   string     `json:"logPath"`
 	// RssKB is the resident memory of the server's whole process group in
 	// KiB, measured when the state is read; 0 when it has no live group.
 	RssKB int64 `json:"rssKb,omitempty"`

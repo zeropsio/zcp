@@ -54,3 +54,10 @@ The supervisor ignores keys it does not know.
 - A second crash, or a crash after the server listened, stays down until you start it again or a watched change restarts it.
 - A redeploy starts every `autostart` server; a container restart starts every server that was meant to run.
 - Each server has its own log: `zerops_dev_server action=logs name=...`.
+
+## The task limit
+
+- Every dev server on a dev service, and the supervisor itself, share one task limit: on Zerops 300 processes and threads together (the runtime unit's systemd default). A fork past it fails with `EAGAIN` — `resource temporarily unavailable`, `os error 11`.
+- A server that crashed, or could not start, because the limit was reached is started again after a backoff, one server at a time, up to 6 times; that is not its one more start. Servers started together start 1 s apart. Status names the limit and how many tasks run now.
+- Tools that size thread pools by CPU count can reach it alone. Cap them in the server's `command`: `RAYON_NUM_THREADS=4` (uv, ruff and other Rust tools), `UV_CONCURRENT_BUILDS=2 UV_CONCURRENT_INSTALLS=2` (uv), `--child-concurrency=2` (pnpm install). The supervisor sets none of these for you.
+- Stop servers you are not using: each one's processes and threads count against the same limit.

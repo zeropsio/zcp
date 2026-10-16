@@ -655,6 +655,14 @@ func probedPath(p DevServerParams, ds *DevServers, name string) string {
 func applyCrash(ctx context.Context, ssh SSHDeployer, result *DevServerResult, name string, server devsup.ServerState) {
 	result.LogTail = currentRun(supervisorLogTail(ctx, ssh, result.Hostname, name, defaultLogTailLines))
 	label := serverLabel(result.Hostname, name)
+	if server.TaskLimit != nil {
+		result.Reason = reasonCrashed
+		result.Message = fmt.Sprintf("Dev server %s crashed (%s): %s.", label, exitText(server.Exit), TaskLimitNote(*server.TaskLimit, server.RetryPending))
+		if server.RetryPending {
+			result.Message += " " + RecheckSentence(result.Hostname, name, []string{name})
+		}
+		return
+	}
 	if server.RetryPending {
 		result.Reason = reasonCrashed
 		result.Message = fmt.Sprintf("Dev server %s crashed while starting (%s); %s. %s",

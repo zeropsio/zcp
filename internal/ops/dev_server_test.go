@@ -491,6 +491,36 @@ func TestDevServer_ARestartThatCrashedWithItsOneMoreStartPendingSaysItComesBack(
 	}
 }
 
+// A server that crashed because the service's task limit was reached says
+// so, with the limit and the tasks running now — coming back while the
+// supervisor starts it again after a backoff, and what frees tasks once it
+// stopped trying — instead of an exit to fix in the server's code.
+func TestDevServer_AServerThatCrashedOnTheServicesTaskLimitNamesTheLimitAndTheTasksRunningNow(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name    string
+		pending bool
+		want    string
+	}{
+		{"coming back", true, `Dev server api on appdev crashed (exit 1): the service's task limit (300) was reached, 297 tasks run now; the supervisor starts it again after a backoff, one server at a time. Check api again in about 30 s with zerops_dev_server action=status hostname="appdev" name="api".`},
+		{"stopped trying", false, `Dev server api on appdev crashed (exit 1): the service's task limit (300) was reached, 297 tasks run now; the supervisor stopped starting it. Free tasks — stop a server you do not need, or cap the threads its tools start (RAYON_NUM_THREADS, UV_CONCURRENT_BUILDS, UV_CONCURRENT_INSTALLS) — then start it again.`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			c := devservertest.NewSupervised(twoServers)
+			c.Crash = map[string]bool{"api": true}
+			c.RetryPending = map[string]bool{"api": tt.pending}
+			c.TaskLimit = map[string]*devsup.TaskLimit{"api": {Max: 300, Current: 297}}
+
+			result := runDevServer(t, c, DevServerParams{Action: "restart", Hostname: "appdev", Name: "api"})
+
+			if result.Reason != reasonCrashed || !strings.Contains(result.Message, tt.want) {
+				t.Errorf("result = %+v, want reason crashed and message containing %q", result, tt.want)
+			}
+		})
+	}
+}
+
 // A restart whose health probe ends while the supervisor still reports the
 // server starting names it as still starting and says when to look again.
 func TestDevServer_ARestartStillStartingWhenItsProbeEndsSaysWhenToCheckItAgain(t *testing.T) {

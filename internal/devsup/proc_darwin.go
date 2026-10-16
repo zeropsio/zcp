@@ -15,3 +15,6 @@ func processStart(pid int) (int64, bool) {
 
 // groupRSSKB is 0 off Linux: the supervisor runs in Linux containers.
 func groupRSSKB(int) int64 { return 0 }
+
+// readTasks knows no task budget off Linux.
+func readTasks() (Tasks, bool) { return Tasks{}, false }

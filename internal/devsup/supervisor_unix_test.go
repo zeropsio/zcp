@@ -22,6 +22,11 @@ type rig struct {
 	state string
 	// window is the supervisors' start window; zero is the default.
 	window time.Duration
+	// stagger is the gap between servers started together; zero is 1 ms, so
+	// tests that start several servers do not wait the default gap.
+	stagger time.Duration
+	// tasks, when set, is the supervisors' reading of the service's task limit.
+	tasks func() (Tasks, bool)
 }
 
 // newRig makes a repo root and a short state directory (a unix socket path
@@ -68,7 +73,14 @@ func (r *rig) write(rel, s string) {
 
 func (r *rig) supervisorWith(service string, portWait time.Duration) *Supervisor {
 	r.t.Helper()
-	s, err := New(Config{Root: r.root, StateDir: r.state, Service: service, Env: os.Environ(), Grace: time.Second, PortWait: portWait, StartWindow: r.window, Version: "v-test"})
+	stagger := r.stagger
+	if stagger == 0 {
+		stagger = time.Millisecond
+	}
+	s, err := New(Config{
+		Root: r.root, StateDir: r.state, Service: service, Env: os.Environ(), Grace: time.Second, PortWait: portWait,
+		StartWindow: r.window, Stagger: stagger, LimitBackoff: 50 * time.Millisecond, Tasks: r.tasks, Version: "v-test",
+	})
 	if err != nil {
 		r.t.Fatal(err)
 	}
@@ -876,5 +888,108 @@ func TestSupervisor_AServerThatChangesItsWatchedFilesOnEveryStartIsNotRestartedB
 	time.Sleep(r.window + 4*watchSettle)
 	if sv := mustServer(t, s.State(), "api"); sv.Restarts != watchLoopLimit+1 || sv.Status != StatusRunning {
 		t.Fatalf("api = %+v, want one restart for the edit", sv)
+	}
+}
+
+// limitRig is a rig whose service's task limit (300) is reached each time a
+// server appends a line to .limit in the repo root: the kernel's pids.events
+// "max" count, which grows each time a fork is refused at pids.max.
+func limitRig(t *testing.T) *rig {
+	t.Helper()
+	r := newRig(t)
+	r.tasks = func() (Tasks, bool) {
+		b, _ := os.ReadFile(filepath.Join(r.root, ".limit"))
+		return Tasks{Max: 300, Current: 297, Refused: int64(strings.Count(string(b), "\n"))}, true
+	}
+	return r
+}
+
+// After a deploy every dev server crashed at once with EAGAIN — uv's rayon
+// pool, pnpm, fork/exec of /bin/sh — because together they reached the
+// service's task limit, and each stayed down: its one more start crashed the
+// same way. A server whose crash came with the limit reached is started again
+// with backoff, one at a time, and that is not its one more start; while it
+// waits the state names the limit and the tasks running now.
+func TestSupervisor_AServerThatCrashedWhenTheServicesTaskLimitWasReachedIsStartedAgainWithBackoffWithoutSpendingItsOneMoreStart(t *testing.T) {
+	t.Parallel()
+	r := limitRig(t)
+	r.window = 300 * time.Millisecond
+	port := freePort(t)
+	api := r.listener("api", port)
+	// Three starts meet the limit, the fourth runs.
+	api.Command = "n=$(cat .starts 2>/dev/null | wc -l); echo s >> .starts; if [ $n -lt 3 ]; then echo refused >> .limit; exit 1; fi; " + api.Command
+	r.declare(api)
+	s := r.supervisor()
+	s.Boot()
+
+	eventually(t, "api to be crashed on the task limit with a start pending", func() bool {
+		sv := mustServer(t, s.State(), "api")
+		return sv.Status == StatusCrashed && sv.RetryPending && sv.TaskLimit != nil
+	})
+	if sv := mustServer(t, s.State(), "api"); *sv.TaskLimit != (TaskLimit{Max: 300, Current: 297}) {
+		t.Fatalf("api taskLimit = %+v, want the limit 300 and the 297 tasks running now", *sv.TaskLimit)
+	}
+	eventually(t, "api to run after its starts on the task limit", func() bool {
+		sv := mustServer(t, s.State(), "api")
+		return sv.Status == StatusRunning && sv.Restarts == 3 && listening(port)
+	})
+	sv := mustServer(t, s.State(), "api")
+	if sv.TaskLimit != nil || sv.RetryPending {
+		t.Fatalf("api = %+v, still names the task limit or a pending start while it runs", sv)
+	}
+	if sv.LastRestartReason != "the service's task limit (300) was reached" {
+		t.Fatalf("api lastRestartReason = %q, want the task limit named", sv.LastRestartReason)
+	}
+}
+
+// The backoff is bounded: a server that meets the task limit on every start
+// stops being started again and stays down, still naming the limit.
+func TestSupervisor_AServerThatMeetsTheTaskLimitOnEveryStartStopsBeingStartedAndNamesTheLimit(t *testing.T) {
+	t.Parallel()
+	r := limitRig(t)
+	r.window = 300 * time.Millisecond
+	r.declare(Server{Name: "worker", Command: "echo refused >> .limit; exit 1"})
+	s := r.supervisor()
+	s.Boot()
+
+	eventually(t, "worker to stay down after its bounded starts", func() bool {
+		sv := mustServer(t, s.State(), "worker")
+		return sv.Status == StatusCrashed && !sv.RetryPending && sv.Restarts == maxLimitStarts
+	})
+	time.Sleep(time.Second) // a start that should not happen has no event to wait on
+	sv := mustServer(t, s.State(), "worker")
+	if sv.Restarts != maxLimitStarts || sv.TaskLimit == nil || sv.TaskLimit.Max != 300 {
+		t.Fatalf("worker = %+v, want %d restarts and the task limit named", sv, maxLimitStarts)
+	}
+}
+
+// Servers started together are started a gap apart, so N servers do not fork
+// their toolchains at the same moment.
+func TestSupervisor_ServersStartedTogetherStartAGapApart(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.stagger = 400 * time.Millisecond
+	r.declare(
+		Server{Name: "a", Command: "sleep 300"},
+		Server{Name: "b", Command: "sleep 300"},
+		Server{Name: "c", Command: "sleep 300"},
+	)
+	s := r.supervisor()
+	s.Boot()
+
+	st := s.State()
+	at := make([]time.Time, 0, 3)
+	for _, name := range []string{"a", "b", "c"} {
+		sv := mustServer(t, st, name)
+		if sv.StartedAt == nil || sv.Status != StatusRunning {
+			t.Fatalf("%s = %+v, want it started", name, sv)
+		}
+		at = append(at, *sv.StartedAt)
+	}
+	slices.SortFunc(at, func(x, y time.Time) int { return x.Compare(y) })
+	for i := 1; i < len(at); i++ {
+		if gap := at[i].Sub(at[i-1]); gap < 350*time.Millisecond {
+			t.Fatalf("starts %v apart, want at least the 400 ms gap: %v", gap, at)
+		}
 	}
 }

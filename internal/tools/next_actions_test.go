@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/devsup"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/ops/devservertest"
 	"github.com/zeropsio/zcp/internal/ops/git"
@@ -268,6 +269,34 @@ func TestDeployNextActions_WaitsForEachStartingDevServerAndNamesOneThatCrashes(t
 	}
 	if strings.Contains(got, "starting") {
 		t.Errorf("nextActions = %q, says starting for a server that answered within the budget", got)
+	}
+}
+
+// After a deploy every dev server crashed at once with EAGAIN because
+// together they reached the service's task limit, and the reply named them as
+// crashed to be fixed. A server that crashed on the task limit is named with
+// the limit and the tasks running now: as coming back while the supervisor
+// starts it again, as down once it stopped trying.
+func TestDeployNextActions_AServerThatCrashedOnTheServicesTaskLimitIsNamedWithTheLimit(t *testing.T) {
+	t.Parallel()
+	decl := `{"version":1,"servers":[{"name":"api","port":8080,"command":"a","cwd":"."},{"name":"web","port":3000,"command":"b","cwd":"."}]}`
+	c := devservertest.NewSupervised(decl)
+	c.Crash = map[string]bool{"api": true, "web": true}
+	c.RetryPending = map[string]bool{"api": true}
+	c.TaskLimit = map[string]*devsup.TaskLimit{"api": {Max: 300, Current: 297}, "web": {Max: 300, Current: 297}}
+	c.Redeploy()
+
+	got := deployNextActionsFor(t.Context(), c, "/var/www", &ops.DeployResult{TargetService: "difydev"}, topology.ModeDev, topology.RuntimeDynamic)
+
+	for _, want := range []string{
+		"api crashed (exit 1): the service's task limit (300) was reached, 297 tasks run now; the supervisor starts it again after a backoff, one server at a time",
+		"web crashed (exit 1): the service's task limit (300) was reached, 297 tasks run now; the supervisor stopped starting it.",
+		`Check api again in about 30 s with zerops_dev_server action=status hostname="difydev".`,
+		`zerops_dev_server action=start name="web"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("nextActions = %q, want it to contain %q", got, want)
+		}
 	}
 }
 

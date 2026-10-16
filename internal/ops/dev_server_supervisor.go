@@ -214,6 +214,18 @@ func (ds *DevServers) starting() bool {
 // the supervisor's one more start is still to come (ServerState.RetryPending).
 const RetryPendingNote = "the supervisor starts it once more after its siblings settle"
 
+// TaskLimitNote is how a reply says a server crashed, or its start was
+// refused, because the service's task limit was reached
+// (ServerState.TaskLimit): the limit, the tasks running now, and whether the
+// supervisor starts it again (pending) or has stopped trying.
+func TaskLimitNote(t devsup.TaskLimit, pending bool) string {
+	note := fmt.Sprintf("the service's task limit (%d) was reached, %d tasks run now", t.Max, t.Current)
+	if pending {
+		return note + "; the supervisor starts it again after a backoff, one server at a time"
+	}
+	return note + "; the supervisor stopped starting it. Free tasks — stop a server you do not need, or cap the threads its tools start (RAYON_NUM_THREADS, UV_CONCURRENT_BUILDS, UV_CONCURRENT_INSTALLS) — then start it again"
+}
+
 // RecheckSentence tells the agent when to read names on hostname again: they
 // are still starting or wait for their one more start. name, when set, is
 // the one server the status call reads.

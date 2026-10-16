@@ -87,6 +87,13 @@ func deployNextActionsFor(ctx context.Context, ssh ops.SSHDeployer, root string,
 		case st.Status == devsup.StatusStarting:
 			states = append(states, s.Name+" still starting")
 			unsettled = append(unsettled, s.Name)
+		case st.Status == devsup.StatusCrashed && st.TaskLimit != nil:
+			states = append(states, s.Name+" crashed"+exitNote(st.Exit)+": "+ops.TaskLimitNote(*st.TaskLimit, st.RetryPending))
+			if st.RetryPending {
+				unsettled = append(unsettled, s.Name)
+			} else {
+				down = append(down, s.Name)
+			}
 		case st.Status == devsup.StatusCrashed && st.RetryPending:
 			states = append(states, s.Name+" crashed while starting"+exitNote(st.Exit)+"; "+ops.RetryPendingNote)
 			unsettled = append(unsettled, s.Name)

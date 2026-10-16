@@ -45,6 +45,9 @@ type Container struct {
 	// Crash names servers that end on their own right after they start;
 	// RetryPending names those of them the supervisor starts once more.
 	Crash, RetryPending map[string]bool
+	// TaskLimit names those of them that crashed because the service's task
+	// limit was reached, with the limit the supervisor reports.
+	TaskLimit map[string]*devsup.TaskLimit
 	// Settle names servers that answer starting for that many reads of the
 	// state after they start, and only then as running or as Crash says.
 	Settle   map[string]int
@@ -231,13 +234,13 @@ func (c *Container) start(name string, restart bool) {
 	switch {
 	case c.Foreign[c.declaredPort(name)] != 0:
 		st.Status, st.Pid, st.Pgid = devsup.StatusCrashed, 0, 0
-		st.Exit, st.RetryPending = &devsup.Exit{Code: -1, Signal: devsup.ExitPortBusy, At: now}, false
+		st.Exit, st.RetryPending, st.TaskLimit = &devsup.Exit{Code: -1, Signal: devsup.ExitPortBusy, At: now}, false, nil
 	case c.Crash[name]:
 		st.Status, st.Pid, st.Pgid = devsup.StatusCrashed, 0, 0
-		st.Exit, st.RetryPending = &devsup.Exit{Code: 1, At: now}, c.RetryPending[name]
+		st.Exit, st.RetryPending, st.TaskLimit = &devsup.Exit{Code: 1, At: now}, c.RetryPending[name], c.TaskLimit[name]
 	default:
 		c.pid += 100
-		st.Status, st.Pid, st.Pgid, st.Exit, st.RetryPending = devsup.StatusRunning, 700+c.pid, 700+c.pid, nil, false
+		st.Status, st.Pid, st.Pgid, st.Exit, st.RetryPending, st.TaskLimit = devsup.StatusRunning, 700+c.pid, 700+c.pid, nil, false, nil
 	}
 }
 
@@ -257,7 +260,7 @@ func (c *Container) state(only string) devsup.State {
 			}
 			if c.settling[n] > 0 {
 				c.settling[n]--
-				server.Status, server.Exit, server.RetryPending = devsup.StatusStarting, nil, false
+				server.Status, server.Exit, server.RetryPending, server.TaskLimit = devsup.StatusStarting, nil, false, nil
 			}
 			st.Servers[n] = server
 		}
