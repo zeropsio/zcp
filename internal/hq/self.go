@@ -32,6 +32,22 @@ type MateState struct {
 	// repository, the newest push the origin took, in environment order. nil
 	// from an HQ older than Git environments in the Mate's state.
 	GitPushes []GitPush `json:"gitPushes"`
+	// Repos are the application's repositories in HQ, by name. nil from an HQ
+	// older than repositories in the Mate's state.
+	Repos []MateRepo `json:"repos"`
+}
+
+// MateRepo is one of the application's repositories in HQ, with the origin
+// connected to it, nil while none is.
+type MateRepo struct {
+	Name   string      `json:"name"`
+	Origin *RepoOrigin `json:"origin"`
+}
+
+// RepoOrigin is a connected origin: its https address as HQ stores it, which
+// never carries a credential.
+type RepoOrigin struct {
+	URL string `json:"url"`
 }
 
 // GitPush is a Git environment's newest confirmed push of one repository: the

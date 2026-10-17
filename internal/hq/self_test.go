@@ -82,3 +82,30 @@ func TestClient_Self_GitPushes_DecodesCIAndOlderHQ(t *testing.T) {
 		t.Errorf("gitPushes from an HQ that omits them = %+v, want nil", state.GitPushes)
 	}
 }
+
+// A Mate's state carries every repository of its application, with the
+// address of its connected origin, and an older HQ that omits them (nil, not
+// empty).
+func TestClient_Self_Repos_DecodesOriginsAndOlderHQ(t *testing.T) {
+	t.Parallel()
+	const repos = `{"projectId":"p-mate","name":"Ada","face":"face-1","standupRequestedBy":null,"appId":"a1","changes":[],` +
+		`"repos":[{"name":"appdev","origin":{"url":"https://github.com/acme/app"}},{"name":"web"}]}`
+	client, _ := answering(t, repos)
+	state, err := client.Self(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []MateRepo{{Name: "appdev", Origin: &RepoOrigin{URL: "https://github.com/acme/app"}}, {Name: "web"}}
+	if !reflect.DeepEqual(state.Repos, want) {
+		t.Errorf("repos = %+v\nwant %+v", state.Repos, want)
+	}
+
+	older, _ := answering(t, selfSample)
+	state, err = older.Self(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Repos != nil {
+		t.Errorf("repos from an HQ that omits them = %+v, want nil", state.Repos)
+	}
+}
