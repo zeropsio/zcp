@@ -166,6 +166,42 @@ func TestABatchOfAPairsStagesDeliversItOnce(t *testing.T) {
 	}
 }
 
+// A batch's first stage whose delivery did not reach HQ delivered nothing the
+// sibling could be "delivered with": the sibling tries its own delivery, and
+// neither entry claims one.
+// Non-parallel: the lab redirects HOME and writes the enrollment there.
+func TestABatchWhoseFirstStageDeliveryFailedLetsTheSiblingTryAndClaimsNoDelivery(t *testing.T) {
+	lab := newHQLab(t)
+	if err := workflow.UpdateServiceMeta(lab.stateDir, "appdev", func(m *workflow.ServiceMeta) error {
+		m.Stages = append(m.Stages, topology.StageRef{Hostname: "workerstage", SetupName: "worker"})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	lab.wire()
+	startSession(t, lab.stateDir, "Build a todo app")
+	lab.write(map[string]string{"index.js": "the app\n"})
+	if err := os.Remove(hq.EnrollmentPath()); err != nil {
+		t.Fatal(err)
+	}
+	result := &ops.DeployBatchResult{Entries: []ops.DeployBatchEntryResult{
+		{Target: ops.DeployBatchTarget{SourceService: "appdev", TargetService: "appstage"}, Result: &ops.DeployResult{Status: statusDeployed}},
+		{Target: ops.DeployBatchTarget{SourceService: "appdev", TargetService: "workerstage"}, Result: &ops.DeployResult{Status: statusDeployed}},
+	}}
+
+	batchDeployer{client: lab.mock, httpClient: lab.hq.srv.Client(), sshDeployer: lab.ssh, rtInfo: lab.rt, stateDir: lab.stateDir}.deliverStages(t.Context(), result)
+
+	for _, entry := range result.Entries {
+		target, line := entry.Target.TargetService, entry.Result.NextActions
+		if want := target + " runs, but its code has not reached HQ: this Mate holds no HQ enrollment yet"; !strings.HasPrefix(line, want) {
+			t.Errorf("%s must say its own delivery did not reach HQ:\n got %s\nwant prefix %s", target, line, want)
+		}
+		if strings.Contains(line, "is delivered with") {
+			t.Errorf("%s claims a delivery that did not happen: %s", target, line)
+		}
+	}
+}
+
 func TestAStageDeliveryThatCommitsSaysTheCommitItMade(t *testing.T) {
 	lab := newHQLab(t)
 	lab.wire()

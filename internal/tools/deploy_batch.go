@@ -317,7 +317,9 @@ func (d batchDeployer) deliverStages(ctx context.Context, result *ops.DeployBatc
 			}
 			if delivery := deliverHQPair(ctx, d.client, d.httpClient, d.sshDeployer, d.rtInfo, d.stateDir, target); delivery != nil {
 				entry.Result.NextActions = strings.TrimSpace(entry.Result.NextActions + " " + delivery.Line)
-				if meta != nil {
+				// Only a delivery that reached HQ carries the sibling's code;
+				// after a failed one the sibling tries its own.
+				if meta != nil && !delivery.failed {
 					deliveredUnder[meta.Hostname] = target
 				}
 			}
