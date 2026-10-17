@@ -74,8 +74,16 @@ func TestOriginRequest_WritesNothing_NamesTheRepositoryThePairWillWire(t *testin
 	if got := answer.Requested.Origin; got.URL != "https://github.com/zeropsio/mate" || got.Repo != "appdev" || got.Why != "to deliver finished work back" {
 		t.Errorf("requested.origin = %+v, want the canonical URL, repository appdev and the why", got)
 	}
-	if !strings.Contains(answer.NextActions, "appdev") {
-		t.Errorf("nextActions does not name the repository the pair will wire: %s", answer.NextActions)
+	for _, want := range []string{
+		"links it to appdev in HQ",
+		"Never ask for a token in the chat",
+		"Connected: take the code from HQ — `ssh appdev \"cd <repo dir> && git fetch origin main && git merge --no-edit FETCH_HEAD\"`",
+		"Declined: a public repository only — `ssh appdev \"cd <repo dir> && GIT_TERMINAL_PROMPT=0 git fetch https://github.com/zeropsio/mate HEAD && git merge --allow-unrelated-histories --no-edit FETCH_HEAD\"`",
+		"a private one cannot be fetched without its origin connected, so say so and ask again",
+	} {
+		if !strings.Contains(answer.NextActions, want) {
+			t.Errorf("nextActions lacks %q: %s", want, answer.NextActions)
+		}
 	}
 	if got := others(); len(got) != 0 {
 		t.Errorf("a request sent HQ more than its read: %v", got)

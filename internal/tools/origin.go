@@ -89,13 +89,19 @@ func originAnswerOf(req ops.OriginRequest, pushes []hq.GitPush) originAnswer {
 	if len(environments) > 0 {
 		return originAnswer{
 			Connected: &originConnected{Origin: req, Environments: environments},
-			NextActions: fmt.Sprintf("Nothing was asked: HQ's Git environments %s already push %s to its origin. Take its code from HQ, never from the origin, and never ask for a token.",
-				strings.Join(environments, ", "), req.Repo),
+			NextActions: fmt.Sprintf("Nothing was asked: HQ's Git environments %s already push %s to its origin. Take its code from HQ, never from the origin, and never ask for a token: %s.",
+				strings.Join(environments, ", "), req.Repo, originFromHQ(req)),
 		}
 	}
 	return originAnswer{
 		Requested: &originRequested{Origin: req},
-		NextActions: fmt.Sprintf("Now waiting on the person: Mate asks whether finished work goes back to %s, and Connect links it to %s in HQ. Tell them in one sentence why, and nothing about how they connect it. Never ask for a token in the chat. A message of its own tells you how it ended: connected or declined. End your turn.",
-			req.URL, req.Repo),
+		NextActions: fmt.Sprintf("Now waiting on the person: Mate asks whether finished work goes back to %[1]s, and Connect links it to %[2]s in HQ. Tell them in one sentence why, and nothing about how they connect it. Never ask for a token in the chat. A message of its own tells you how it ended. Connected: take the code from HQ — %[3]s. Declined: a public repository only — `ssh %[2]s \"cd <repo dir> && GIT_TERMINAL_PROMPT=0 git fetch %[1]s HEAD && git merge --allow-unrelated-histories --no-edit FETCH_HEAD\"`; a private one cannot be fetched without its origin connected, so say so and ask again. End your turn.",
+			req.URL, req.Repo, originFromHQ(req)),
 	}
+}
+
+// originFromHQ takes the origin's code into the pair's working copy from the
+// repository in HQ, whose main holds the origin's adopted history.
+func originFromHQ(req ops.OriginRequest) string {
+	return fmt.Sprintf("`ssh %s \"cd <repo dir> && git fetch origin main && git merge --no-edit FETCH_HEAD\"`", req.Repo)
 }
