@@ -92,8 +92,8 @@ func TestHQLearnLanding_MergedChange_CarriesTheCIOfItsPush(t *testing.T) {
 	failed := "failed"
 	url := ciUnit
 	pushes := []hq.GitPush{
-		{Environment: "git-stage", Repo: "appdev", Sha: ciSha, CI: &hq.PushCI{Sha: ciSha, Verdict: failed, Done: 1, Total: 1,
-			Failed: []hq.PushCIFailure{{Name: "check_types", URL: &url}}, Watch: hq.CIFinished}},
+		{Environment: "git-stage", Repo: "appdev", Sha: ciSha, CI: &hq.PushCI{Verdict: failed, Done: 1, Total: 1,
+			Failed: []hq.PushCIFailure{{Name: "check_types", URL: &url}}, Watch: "finished"}},
 		{Environment: "git-prod", Repo: "appdev", Sha: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"},
 		{Environment: "git-stage", Repo: "apidev", Sha: ciSha},
 	}
