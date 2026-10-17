@@ -25,7 +25,7 @@ import (
 // non-actionable schema errors.
 func TestEnvSchema_GenerateDotenv_PrefersSetupOverHostname(t *testing.T) {
 	t.Parallel()
-	schema := envInputSchema()
+	schema := envInputSchema(false)
 
 	hostnameProp, ok := schema.Properties["serviceHostname"]
 	if !ok || hostnameProp == nil {

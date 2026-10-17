@@ -376,7 +376,14 @@ func (s *Server) registerTools() {
 	tools.RegisterManage(s.server, s.client, projectID)
 	recipeSteer := tools.NewGroupRecipeSteer(s.client, httpClient, s.rtInfo, stateDir)
 	tools.RegisterScale(s.server, s.client, projectID, recipeSteer)
-	tools.RegisterEnv(s.server, s.client, projectID, s.rtInfo.ServiceName)
+	// A Mate puts its organization's AI key in the Shared vault for an app
+	// (zerops_env action=ai-key, docs/spec-mate.md §5.8): Mate-gated like every
+	// Mate effect (§2.0), its key asked of HQ with the enrollment.
+	var envOpts []tools.EnvOption
+	if s.rtInfo.InContainer && s.rtInfo.MateEnabled {
+		envOpts = append(envOpts, tools.WithOrgAIKey(httpClient))
+	}
+	tools.RegisterEnv(s.server, s.client, projectID, s.rtInfo.ServiceName, envOpts...)
 
 	tools.RegisterImportSteered(s.server, s.client, projectID, wfEngine, stateDir, recipeProbe, s.rtInfo, recipeSteer)
 	tools.RegisterDelete(s.server, s.client, projectID, stateDir, s.mounter, s.rtInfo)
