@@ -2562,11 +2562,14 @@ application in HQ themselves, with its token; neither crosses the conversation.
   wire — its dev hostname (§6, `hqRepoNameOf`) — so the origin is connected under the name the
   wiring takes; and a one-line `why`. A URL carrying a credential is refused and never echoed; no
   input takes a token. It writes nothing and reads `GET /api/mate/self` once: `connected`
-  (`origin`, `environments`) when one of the application's Git environments has pushed `repo`
-  (`gitPushes`), nothing asked; else `requested` (`origin`: `url`, `repo`, `why`), telling the agent
+  (`origin`; `repo`, the HQ repository holding it; `environments` that pushed that one), nothing
+  asked, when `url` already is the connected origin of `repo` in HQ's `repos`, or else of another
+  repository of the application, which the answer names as where the code comes from — compared
+  by `topology.SameRepoURL` (canonical form, any case), before any push. An HQ older than `repos`
+  answers `connected` when one of its Git environments has pushed `repo` (`gitPushes`). Otherwise
+  `requested` (`origin`: `url`, `repo`, `why`), telling the agent
   to say only why, in one sentence, and end its turn. Both answers say how the code comes in: from
-  HQ's `main` once connected, by an anonymous fetch of a public repository once declined. HQ tells a Mate no remote's address, so
-  `connected` names the environments, not the address. An HQ that cannot be read asks nothing.
+  HQ's `main` once connected, by an anonymous fetch of a public repository once declined. An HQ that cannot be read asks nothing.
   zcp never names an origin branch: which branch each Git environment pushes is Mate's and HQ's.
 - **mate.** The engine opens an origin ask on the call, as for a vault ask; the person's Connect
   opens the Git environment sheet with the address and the repository name; the agent hears
@@ -2580,7 +2583,10 @@ application in HQ themselves, with its token; neither crosses the conversation.
 Additive both ways: an older mate shows the call as any zcp call, and an older zcp has no tool.
 zcp `TestOriginRequest_WritesNothing_NamesTheRepositoryThePairWillWire`,
 `TestOriginRequest_URLWithCredentials_Refused`, `TestOriginRequest_OriginAlreadyConnected_AnswersConnected`,
-`TestServer_ObserveToolGating`, `TestAnnotations_OriginTool`, `TestDevelopExistingRepo_RunsTheReposOwnDevFlow`.
+`TestOriginRequest_OriginConnectedToTheRepository_AnswersConnectedBeforeItsFirstPush`,
+`TestOriginRequest_OriginConnectedUnderAnotherRepository_NamesThatRepository`,
+`TestOriginRequest_OlderHQWithoutRepos_FallsBackToItsPushes`, `TestClient_Self_Repos_DecodesOriginsAndOlderHQ`,
+`TestSameRepoURL`, `TestServer_ObserveToolGating`, `TestAnnotations_OriginTool`, `TestDevelopExistingRepo_RunsTheReposOwnDevFlow`.
 
 ### Invariants
 
