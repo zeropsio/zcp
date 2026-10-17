@@ -366,7 +366,8 @@ func (c *Container) ctl(command string) string {
 		}
 		st.Desired, st.Status, st.Pid, st.Pgid = devsup.DesiredStopped, devsup.StatusStopped, 0, 0
 	case "reload":
-		if derr != nil {
+		// A missing file is an empty declaration, as devsup.LoadDeclaration reads it.
+		if c.Declaration != "" && derr != nil {
 			return fail(4, derr.Error())
 		}
 		for n := range maps.Clone(c.Servers) {

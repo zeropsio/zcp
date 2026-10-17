@@ -292,8 +292,10 @@ func ExecuteDevServer(
 // and drops it. It answers the servers it stopped.
 func dropUndeclared(ctx context.Context, ssh SSHDeployer, ds *DevServers) ([]string, error) {
 	var gone []string
-	// A file the supervisor cannot run changes nothing on a reload.
-	runnable := ds.DeclarationErr == nil && ds.OlderThanDeclaration() == ""
+	// A file the supervisor cannot run changes nothing on a reload; a missing
+	// file (not committed, stashed, another commit) removed nothing by hand,
+	// though the supervisor would read it as empty and stop every server.
+	runnable := ds.DeclarationExists && ds.DeclarationErr == nil && ds.OlderThanDeclaration() == ""
 	for name, st := range ds.State.Servers {
 		live := st.Status == devsup.StatusRunning || st.Status == devsup.StatusStarting
 		if runnable && st.Source == devsup.SourceDeclared && live && !slices.ContainsFunc(ds.Servers(), func(s devsup.Server) bool { return s.Name == name }) {

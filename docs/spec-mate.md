@@ -954,6 +954,8 @@ A start that fails still answers `0`; the failure is the server's `exit` in the 
 When the supervisor still runs a declared server whose entry the file no longer holds (removed by
 hand), every `zerops_dev_server` action first sends `reload`, which stops and drops it, and its reply
 says that server was stopped (`TestDevServer_AServerRemovedFromTheDeclarationIsStoppedAndTheReplySaysSo`).
+A file missing from the checkout removed nothing by hand: no `reload` is sent and status and logs leave
+every server running (`TestDevServer_StatusAndLogsWithoutADeclarationFileLeaveTheRunningServersAlone`).
 `zerops_dev_server` adds an undeclared server to the file once (then `reload`, then `start`). On a
 dev service where `zcp-devsup` is absent or exits `2`, stop/status/logs change nothing and say so,
 and the first `start` moves the dev setup onto the supervisor without asking (orchestrator decision

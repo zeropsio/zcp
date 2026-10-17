@@ -847,6 +847,37 @@ func TestDevServer_AServerRemovedFromTheDeclarationIsStoppedAndTheReplySaysSo(t 
 	}
 }
 
+// A declaration missing from the checkout (never committed, stashed away or
+// absent from a checked-out commit) is not a declaration that removed every
+// server: status and logs leave the running servers alone and send no reload.
+func TestDevServer_StatusAndLogsWithoutADeclarationFileLeaveTheRunningServersAlone(t *testing.T) {
+	t.Parallel()
+	const both = `{"version":1,"servers":[{"name":"web","port":3000,"command":"next dev","cwd":"."},{"name":"lo","port":5999,"command":"python3 -m http.server 5999","cwd":"."}]}`
+	for _, tc := range []struct{ action, name string }{{"status", "web"}, {"logs", "web"}} {
+		c := devservertest.NewSupervised(both)
+		c.Logs = map[string][]string{"web": {"ready"}}
+		c.Declaration = ""
+		result, err := ExecuteDevServer(context.Background(), c, mockClientWithServices("difydev"), "p1",
+			DevServerParams{Action: tc.action, Hostname: "difydev", Name: tc.name})
+		if err != nil {
+			t.Fatalf("%s %s: err = %v, want a read-only reply", tc.action, tc.name, err)
+		}
+		for _, name := range []string{"web", "lo"} {
+			if c.Status(name) != devsup.StatusRunning {
+				t.Errorf("%s %s: %s is %q, want it left running", tc.action, tc.name, name, c.Status(name))
+			}
+		}
+		for _, cmd := range c.Sent() {
+			if strings.Contains(cmd, "ctl 'reload'") {
+				t.Errorf("%s %s: sent %q without a declaration file, want no reload", tc.action, tc.name, cmd)
+			}
+		}
+		if strings.Contains(result.Message, "no longer declared") {
+			t.Errorf("%s %s: message = %q, want no server reported stopped", tc.action, tc.name, result.Message)
+		}
+	}
+}
+
 // TestDevServer_NoProcessPatternMatching (TEST-PLAN E1 #3, #14): no
 // dev-server path finds processes by name or command pattern, and the
 // keeper, the zcp-side dev-servers.json and the SSH start are gone. One
