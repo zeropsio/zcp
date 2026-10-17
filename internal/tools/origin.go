@@ -11,6 +11,7 @@ import (
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // OriginInput is zerops_origin's input. It has no token field: the person
@@ -28,6 +29,9 @@ type originRequested struct {
 
 type originConnected struct {
 	Origin ops.OriginRequest `json:"origin"`
+	// Repo is the repository in HQ whose origin it is: Origin.Repo, or another
+	// repository of the application already holding it.
+	Repo string `json:"repo"`
 	// Environments are the application's Git environments that pushed Repo.
 	Environments []string `json:"environments"`
 }
@@ -73,35 +77,76 @@ func registerOrigin(srv *mcp.Server, httpClient hq.Doer, path, projectID string)
 		if err != nil {
 			return observeFailure(fmt.Sprintf("HQ could not be read, so whether %s already delivers to an origin is unknown and nothing was asked: %v. Ask again later.", req.Repo, err)), nil, nil
 		}
-		return jsonResult(originAnswerOf(req, state.GitPushes)), nil, nil
+		return jsonResult(originAnswerOf(req, state)), nil, nil
 	})
 }
 
-// originAnswerOf answers a checked request from HQ's Git environment pushes:
-// connected when one of them pushed the asked repository, else asked.
-func originAnswerOf(req ops.OriginRequest, pushes []hq.GitPush) originAnswer {
-	var environments []string
-	for _, push := range pushes {
-		if push.Repo == req.Repo && !slices.Contains(environments, push.Environment) {
-			environments = append(environments, push.Environment)
+// originAnswerOf answers a checked request from the Mate's state in HQ:
+// connected when the asked address already is the origin of the asked
+// repository, or of another one of the application; from an HQ older than
+// repositories in that state, when one of its Git environments pushed the
+// asked repository; else asked.
+func originAnswerOf(req ops.OriginRequest, state hq.MateState) originAnswer {
+	if holder := originHolder(req, state); holder != "" {
+		environments := []string{}
+		for _, push := range state.GitPushes {
+			if push.Repo == holder && !slices.Contains(environments, push.Environment) {
+				environments = append(environments, push.Environment)
+			}
 		}
-	}
-	if len(environments) > 0 {
-		return originAnswer{
-			Connected: &originConnected{Origin: req, Environments: environments},
-			NextActions: fmt.Sprintf("Nothing was asked: HQ's Git environments %s already push %s to its origin. Take its code from HQ, never from the origin, and never ask for a token: %s.",
-				strings.Join(environments, ", "), req.Repo, originFromHQ(req)),
+		connected := &originConnected{Origin: req, Repo: holder, Environments: environments}
+		switch {
+		case state.Repos == nil:
+			return originAnswer{Connected: connected,
+				NextActions: fmt.Sprintf("Nothing was asked: HQ's Git environments %s already push %s to its origin. Take its code from HQ, never from the origin, and never ask for a token: %s.",
+					strings.Join(environments, ", "), req.Repo, originFromHQ(holder))}
+		case holder == req.Repo:
+			return originAnswer{Connected: connected,
+				NextActions: fmt.Sprintf("Nothing was asked: %s is already the origin of %s in HQ. Take its code from HQ, never from the origin, and never ask for a token: %s.",
+					req.URL, holder, originFromHQ(holder))}
+		default:
+			return originAnswer{Connected: connected,
+				NextActions: fmt.Sprintf("Nothing was asked: %s is already the origin of %s in HQ, not of %s. Its code comes from that HQ repository, %s, never from the origin, and never ask for a token: %s.",
+					req.URL, holder, req.Repo, holder, originFromHQ(holder))}
 		}
 	}
 	return originAnswer{
 		Requested: &originRequested{Origin: req},
 		NextActions: fmt.Sprintf("Now waiting on the person: Mate asks whether finished work goes back to %[1]s, and Connect links it to %[2]s in HQ. Tell them in one sentence why, and nothing about how they connect it. Never ask for a token in the chat. A message of its own tells you how it ended. Connected: take the code from HQ — %[3]s. Declined: a public repository only — `ssh %[2]s \"cd <repo dir> && GIT_TERMINAL_PROMPT=0 git fetch %[1]s HEAD && git merge --allow-unrelated-histories --no-edit FETCH_HEAD\"`; a private one cannot be fetched without its origin connected, so say so and ask again. End your turn.",
-			req.URL, req.Repo, originFromHQ(req)),
+			req.URL, req.Repo, originFromHQ(req.Repo)),
 	}
+}
+
+// originHolder is the repository in HQ the asked address already is the
+// origin of: the asked repository first, else the first other one; from an
+// older HQ, the asked repository once a Git environment pushed it. "" for
+// none.
+func originHolder(req ops.OriginRequest, state hq.MateState) string {
+	if state.Repos == nil {
+		for _, push := range state.GitPushes {
+			if push.Repo == req.Repo {
+				return req.Repo
+			}
+		}
+		return ""
+	}
+	holder := ""
+	for _, repo := range state.Repos {
+		if repo.Origin == nil || !topology.SameRepoURL(repo.Origin.URL, req.URL) {
+			continue
+		}
+		if repo.Name == req.Repo {
+			return repo.Name
+		}
+		if holder == "" {
+			holder = repo.Name
+		}
+	}
+	return holder
 }
 
 // originFromHQ takes the origin's code into the pair's working copy from the
 // repository in HQ, whose main holds the origin's adopted history.
-func originFromHQ(req ops.OriginRequest) string {
-	return fmt.Sprintf("`ssh %s \"cd <repo dir> && git fetch origin main && git merge --no-edit FETCH_HEAD\"`", req.Repo)
+func originFromHQ(repo string) string {
+	return fmt.Sprintf("`ssh %s \"cd <repo dir> && git fetch origin main && git merge --no-edit FETCH_HEAD\"`", repo)
 }
