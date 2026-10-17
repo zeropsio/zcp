@@ -2551,6 +2551,37 @@ a page with its pictures inlined runs to megabytes, and a tool result reaches th
 
 Additive both ways: an older mate shows the call as any zcp call, and an older zcp has no tool.
 
+### 5.10 The origin — the agent asks whether finished work goes back (2026-10-17)
+
+When the person gives a repository to develop, the Mate's agent asks whether finished work goes
+back to it, the sibling of §5.8's ask for a value. The person connects the origin to the
+application in HQ themselves, with its token; neither crosses the conversation.
+
+- **zcp.** `zerops_origin action=request` (Mate-gated, §2.0) takes `url`, the repository's https
+  address (canonical, `topology.CanonicalRepoURL`); `repo`, the repository in HQ the pair will
+  wire — its dev hostname (§6, `hqRepoNameOf`) — so the origin is connected under the name the
+  wiring takes; and a one-line `why`. A URL carrying a credential is refused and never echoed; no
+  input takes a token. It writes nothing and reads `GET /api/mate/self` once: `connected`
+  (`origin`, `environments`) when one of the application's Git environments has pushed `repo`
+  (`gitPushes`), nothing asked; else `requested` (`origin`: `url`, `repo`, `why`), telling the agent
+  to say only why, in one sentence, and end its turn. Both answers say how the code comes in: from
+  HQ's `main` once connected, by an anonymous fetch of a public repository once declined. HQ tells a Mate no remote's address, so
+  `connected` names the environments, not the address. An HQ that cannot be read asks nothing.
+  zcp never names an origin branch: which branch each Git environment pushes is Mate's and HQ's.
+- **mate.** The engine opens an origin ask on the call, as for a vault ask; the person's Connect
+  opens the Git environment sheet with the address and the repository name; the agent hears
+  connected or declined in a run of its own, never a token.
+- **The order.** Ask, connect, then the code: HQ adopts the origin's history onto the
+  repository's `main` as a child of its seed, so the pair's branch, cut from that seed, merges it
+  in. The existing-repository guidance asks first when the person gives an address. On a decline the agent fetches a
+  public repository anonymously into the dev service; the first change then adds the whole
+  repository. A private repository cannot be declined that way: the agent asks again.
+
+Additive both ways: an older mate shows the call as any zcp call, and an older zcp has no tool.
+zcp `TestOriginRequest_WritesNothing_NamesTheRepositoryThePairWillWire`,
+`TestOriginRequest_URLWithCredentials_Refused`, `TestOriginRequest_OriginAlreadyConnected_AnswersConnected`,
+`TestServer_ObserveToolGating`, `TestAnnotations_OriginTool`, `TestDevelopExistingRepo_RunsTheReposOwnDevFlow`.
+
 ### Invariants
 
 | ID | Invariant |
