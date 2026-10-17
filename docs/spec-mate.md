@@ -2560,8 +2560,9 @@ application in HQ themselves, with its token; neither crosses the conversation.
 - **zcp.** `zerops_origin action=request` (Mate-gated, §2.0) takes `url`, the repository's https
   address (canonical, `topology.CanonicalRepoURL`); `repo`, the repository in HQ the pair will
   wire — its dev hostname (§6, `hqRepoNameOf`) — so the origin is connected under the name the
-  wiring takes; and a one-line `why`. A URL carrying a credential is refused and never echoed; no
-  input takes a token. It writes nothing and reads `GET /api/mate/self` once: `connected`
+  wiring takes; and a one-line `why`. A URL carrying a credential, a query or a fragment is
+  refused, and no refusal echoes the URL; an address past `owner/name`, a page inside the
+  repository, is refused asking for the repository's address. No input takes a token. It writes nothing and reads `GET /api/mate/self` once: `connected`
   (`origin`; `repo`, the HQ repository holding it; `environments` that pushed that one), nothing
   asked, when `url` already is the connected origin of `repo` in HQ's `repos`, or else of another
   repository of the application, which the answer names as where the code comes from — compared
@@ -2584,7 +2585,8 @@ Not additive on the mate side: a mate before 0.15.153 shows the call as any zcp 
 tells the agent how it ended, so `MinimumMateVersion` is 0.15.153 and zcp drives no older mate. An
 older zcp has no tool.
 zcp `TestOriginRequest_WritesNothing_NamesTheRepositoryThePairWillWire`,
-`TestOriginRequest_URLWithCredentials_Refused`, `TestOriginRequest_OriginAlreadyConnected_AnswersConnected`,
+`TestOriginRequest_URLWithCredentials_Refused`, `TestOriginRequest_RefusalNeverEchoesTheURL`,
+`TestOriginRequest_AddressPastTheRepository_RefusedAskingForTheRepositoryAddress`, `TestOriginRequest_OriginAlreadyConnected_AnswersConnected`,
 `TestOriginRequest_OriginConnectedToTheRepository_AnswersConnectedBeforeItsFirstPush`,
 `TestOriginRequest_OriginConnectedUnderAnotherRepository_NamesThatRepository`,
 `TestOriginRequest_OlderHQWithoutRepos_FallsBackToItsPushes`, `TestClient_Self_Repos_DecodesOriginsAndOlderHQ`,

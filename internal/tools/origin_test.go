@@ -122,6 +122,65 @@ func TestOriginRequest_URLWithCredentials_Refused(t *testing.T) {
 	}
 }
 
+// A refused origin request never echoes the URL: not a token in its query or
+// fragment, nor a credential in an address that does not parse.
+func TestOriginRequest_RefusalNeverEchoesTheURL(t *testing.T) {
+	t.Parallel()
+	for _, url := range []string{
+		"https://gitlab.com/acme/app?private_token=glpat-SECRET",
+		"https://github.com/acme/app#SECRET",
+		"https://u:tok-SECRET@github.com/acme/%zz",
+		"https://SECRET@github.com/acme/app",
+		"http://github.com/acme/SECRET",
+		"https://github.com/SECRET",
+	} {
+		srv, others := originHQ(t, `[]`, `[]`)
+
+		result := callTool(t, srv, "zerops_origin", map[string]any{
+			"action": "request", "url": url, "repo": "appdev", "why": "to deliver finished work back",
+		})
+
+		text := getTextContent(t, result)
+		if !result.IsError || !strings.Contains(text, "INVALID_PARAMETER") {
+			t.Errorf("%s: want an INVALID_PARAMETER refusal, got: %s", url, text)
+		}
+		if strings.Contains(text, "SECRET") {
+			t.Errorf("%s: the refusal echoes the URL: %s", url, text)
+		}
+		if got := others(); len(got) != 0 {
+			t.Errorf("%s: a refused request reached HQ: %v", url, got)
+		}
+	}
+}
+
+// An origin request refuses an address past the repository, such as a page
+// inside it, and says to give the repository's own address.
+func TestOriginRequest_AddressPastTheRepository_RefusedAskingForTheRepositoryAddress(t *testing.T) {
+	t.Parallel()
+	for _, url := range []string{
+		"https://github.com/acme/app/tree/develop",
+		"https://github.com/acme/app/pull/7",
+		"https://github.com/acme/app.git/info",
+	} {
+		srv, others := originHQ(t, `[]`, `[]`)
+
+		result := callTool(t, srv, "zerops_origin", map[string]any{
+			"action": "request", "url": url, "repo": "appdev", "why": "to deliver finished work back",
+		})
+
+		text := getTextContent(t, result)
+		if !result.IsError || !strings.Contains(text, "INVALID_PARAMETER") || strings.Contains(text, `"requested"`) {
+			t.Errorf("%s: want an INVALID_PARAMETER refusal, got: %s", url, text)
+		}
+		if !strings.Contains(text, "give the repository address, e.g. https://github.com/acme/app") {
+			t.Errorf("%s: the refusal does not say to give the repository address: %s", url, text)
+		}
+		if got := others(); len(got) != 0 {
+			t.Errorf("%s: a refused request reached HQ: %v", url, got)
+		}
+	}
+}
+
 // An origin request for an origin already connected answers connected.
 func TestOriginRequest_OriginAlreadyConnected_AnswersConnected(t *testing.T) {
 	t.Parallel()
