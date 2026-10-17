@@ -56,8 +56,6 @@ type RepoOrigin struct {
 // than GitHub).
 type GitPush struct {
 	Environment string  `json:"environment"`
-	Tier        string  `json:"tier"`
-	Branch      string  `json:"branch"`
 	Repo        string  `json:"repo"`
 	Sha         string  `json:"sha"`
 	CI          *PushCI `json:"ci"`
@@ -65,20 +63,16 @@ type GitPush struct {
 
 // PushCI is HQ's record of the origin's CI on a pushed commit. Done of Total
 // counted checks completed; Failed names each counted check that did not
-// pass; Reason says why it is unreadable or why HQ stopped watching. Required
-// lists the branch rules' required checks, which alone count; nil counts
-// every check. HQ watches until Until at the latest.
+// pass; Reason says why it is unreadable or why HQ stopped watching. HQ
+// watches until Until at the latest.
 type PushCI struct {
-	Sha      string          `json:"sha"`
-	Verdict  string          `json:"verdict"`
-	Done     int             `json:"done"`
-	Total    int             `json:"total"`
-	Failed   []PushCIFailure `json:"failed"`
-	Required []string        `json:"required"`
-	Reason   *string         `json:"reason"`
-	Watch    string          `json:"watch"`
-	ReadAt   string          `json:"readAt"`
-	Until    string          `json:"until"`
+	Verdict string          `json:"verdict"`
+	Done    int             `json:"done"`
+	Total   int             `json:"total"`
+	Failed  []PushCIFailure `json:"failed"`
+	Reason  *string         `json:"reason"`
+	Watch   string          `json:"watch"`
+	Until   string          `json:"until"`
 }
 
 // PushCIFailure is one counted check that did not pass; URL is nil where the
@@ -98,11 +92,10 @@ const (
 	CIUnreadable = "unreadable"
 )
 
-// PushCI.Watch: HQ still reads, every counted check completed, or HQ stopped
-// reading before that.
+// PushCI.Watch the answer tells: HQ still reads, or HQ stopped reading before
+// every counted check completed.
 const (
 	CIWatching = "watching"
-	CIFinished = "finished"
 	CIStopped  = "stopped"
 )
 

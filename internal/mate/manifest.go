@@ -27,8 +27,10 @@ const (
 	// writes; it also keeps a link to HQ (EnvHQEnrollment), so zcp treats a
 	// Mate as HQ's whatever its enrollment. 0.15.119 is the first release
 	// that accepts the envelope's stages[] and devServers[] (field-order
-	// step 2, PartsMateVersion).
-	MinimumMateVersion = "0.15.119"
+	// step 2, PartsMateVersion). 0.15.153 is the first release that draws
+	// zerops_origin's ask and tells the agent how it ended: an older one
+	// shows a plain call, and the agent waits on a card it never draws.
+	MinimumMateVersion = "0.15.153"
 
 	// PartsMateVersion is the first mate release that accepts the envelope's
 	// stages[] and devServers[] (docs/spec-mate.md §2.8a.3, field-order

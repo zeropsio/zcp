@@ -13,11 +13,20 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // originHQ is a fake HQ answering GET /api/mate/self with gitPushes and repos
 // ("" for an HQ older than them); it records every other request it is sent.
 func originHQ(t *testing.T, gitPushes, repos string) (srv *mcp.Server, others func() []string) {
+	t.Helper()
+	srv, others, _ = originHQIn(t, t.TempDir(), gitPushes, repos)
+	return srv, others
+}
+
+// originHQIn is originHQ for a project whose service metas live in stateDir;
+// it also returns the fake HQ's address.
+func originHQIn(t *testing.T, stateDir, gitPushes, repos string) (srv *mcp.Server, others func() []string, address string) {
 	t.Helper()
 	body := `{"projectId":"P_MATE","name":"Ada","face":"f","standupRequestedBy":null,"appId":"a1","changes":[]`
 	if gitPushes != "" {
@@ -45,12 +54,12 @@ func originHQ(t *testing.T, gitPushes, repos string) (srv *mcp.Server, others fu
 		t.Fatal(err)
 	}
 	srv = mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
-	registerOrigin(srv, fake.Client(), path, "P_MATE")
+	registerOrigin(srv, fake.Client(), path, "P_MATE", stateDir)
 	return srv, func() []string {
 		mu.Lock()
 		defer mu.Unlock()
 		return append([]string(nil), unexpected...)
-	}
+	}, fake.URL
 }
 
 // A request for an origin writes nothing and names the repository the pair
@@ -122,11 +131,71 @@ func TestOriginRequest_URLWithCredentials_Refused(t *testing.T) {
 	}
 }
 
+// A refused origin request never echoes the URL: not a token in its query or
+// fragment, nor a credential in an address that does not parse.
+func TestOriginRequest_RefusalNeverEchoesTheURL(t *testing.T) {
+	t.Parallel()
+	for _, url := range []string{
+		"https://gitlab.com/acme/app?private_token=glpat-SECRET",
+		"https://github.com/acme/app#SECRET",
+		"https://u:tok-SECRET@github.com/acme/%zz",
+		"https://SECRET@github.com/acme/app",
+		"http://github.com/acme/SECRET",
+		"https://github.com/SECRET",
+	} {
+		srv, others := originHQ(t, `[]`, `[]`)
+
+		result := callTool(t, srv, "zerops_origin", map[string]any{
+			"action": "request", "url": url, "repo": "appdev", "why": "to deliver finished work back",
+		})
+
+		text := getTextContent(t, result)
+		if !result.IsError || !strings.Contains(text, "INVALID_PARAMETER") {
+			t.Errorf("%s: want an INVALID_PARAMETER refusal, got: %s", url, text)
+		}
+		if strings.Contains(text, "SECRET") {
+			t.Errorf("%s: the refusal echoes the URL: %s", url, text)
+		}
+		if got := others(); len(got) != 0 {
+			t.Errorf("%s: a refused request reached HQ: %v", url, got)
+		}
+	}
+}
+
+// An origin request refuses an address past the repository, such as a page
+// inside it, and says to give the repository's own address.
+func TestOriginRequest_AddressPastTheRepository_RefusedAskingForTheRepositoryAddress(t *testing.T) {
+	t.Parallel()
+	for _, url := range []string{
+		"https://github.com/acme/app/tree/develop",
+		"https://github.com/acme/app/pull/7",
+		"https://github.com/acme/app.git/info",
+	} {
+		srv, others := originHQ(t, `[]`, `[]`)
+
+		result := callTool(t, srv, "zerops_origin", map[string]any{
+			"action": "request", "url": url, "repo": "appdev", "why": "to deliver finished work back",
+		})
+
+		text := getTextContent(t, result)
+		if !result.IsError || !strings.Contains(text, "INVALID_PARAMETER") || strings.Contains(text, `"requested"`) {
+			t.Errorf("%s: want an INVALID_PARAMETER refusal, got: %s", url, text)
+		}
+		if !strings.Contains(text, "give the repository address, e.g. https://github.com/acme/app") {
+			t.Errorf("%s: the refusal does not say to give the repository address: %s", url, text)
+		}
+		if got := others(); len(got) != 0 {
+			t.Errorf("%s: a refused request reached HQ: %v", url, got)
+		}
+	}
+}
+
 // An origin request for an origin already connected answers connected.
 func TestOriginRequest_OriginAlreadyConnected_AnswersConnected(t *testing.T) {
 	t.Parallel()
 	srv, _ := originHQ(t, `[{"environment":"git-prod","tier":"production","branch":"main","repo":"appdev","sha":"`+ciSha+`"},`+
-		`{"environment":"git-prod","tier":"production","branch":"main","repo":"web","sha":"`+ciSha+`"}]`, "")
+		`{"environment":"git-prod","tier":"production","branch":"main","repo":"web","sha":"`+ciSha+`"}]`,
+		`[{"name":"appdev","origin":{"url":"https://github.com/zeropsio/mate"}},{"name":"web","origin":{"url":"https://github.com/zeropsio/web"}}]`)
 
 	result := callTool(t, srv, "zerops_origin", map[string]any{
 		"action": "request", "url": "https://github.com/zeropsio/mate", "repo": "appdev", "why": "to deliver finished work back",
@@ -146,7 +215,7 @@ func TestOriginRequest_OriginAlreadyConnected_AnswersConnected(t *testing.T) {
 
 	// Another repository of the application delivering is not this one.
 	result = callTool(t, srv, "zerops_origin", map[string]any{
-		"action": "request", "url": "https://github.com/zeropsio/mate", "repo": "apidev", "why": "to deliver finished work back",
+		"action": "request", "url": "https://github.com/zeropsio/api", "repo": "apidev", "why": "to deliver finished work back",
 	})
 	if text := getTextContent(t, result); !strings.Contains(text, `"requested"`) {
 		t.Errorf("a repository no Git environment pushes answered: %s", text)
@@ -204,7 +273,11 @@ func TestOriginRequest_OriginConnectedToTheRepository_AnswersConnectedBeforeItsF
 // The same origin connected under another repository names that repository.
 func TestOriginRequest_OriginConnectedUnderAnotherRepository_NamesThatRepository(t *testing.T) {
 	t.Parallel()
-	srv, _ := originHQ(t, `[{"environment":"git-prod","tier":"production","branch":"main","repo":"web","sha":"`+ciSha+`"}]`,
+	stateDir := t.TempDir()
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{Hostname: "web", BootstrapSession: "test", BootstrappedAt: "2026-10-17"}); err != nil {
+		t.Fatal(err)
+	}
+	srv, _, _ := originHQIn(t, stateDir, `[{"environment":"git-prod","tier":"production","branch":"main","repo":"web","sha":"`+ciSha+`"}]`,
 		`[{"name":"appdev"},{"name":"web","origin":{"url":"https://github.com/acme/app"}}]`)
 
 	answer, text := originAnswerTo(t, srv, "https://github.com/acme/app")
@@ -227,21 +300,37 @@ func TestOriginRequest_OriginConnectedUnderAnotherRepository_NamesThatRepository
 	}
 }
 
-// An older HQ without repos falls back to its pushes.
-func TestOriginRequest_OlderHQWithoutRepos_FallsBackToItsPushes(t *testing.T) {
+// An older HQ without repos asks, whatever its Git environments pushed: its
+// pushes do not say which origin they went to.
+func TestOriginRequest_OlderHQWithoutRepos_Asks(t *testing.T) {
 	t.Parallel()
-	pushes := `[{"environment":"git-prod","tier":"production","branch":"main","repo":"appdev","sha":"` + ciSha + `"}]`
-	older, _ := originHQ(t, pushes, "")
+	older, _ := originHQ(t, `[{"environment":"git-prod","tier":"production","branch":"main","repo":"appdev","sha":"`+ciSha+`"}]`, "")
 
 	answer, text := originAnswerTo(t, older, "https://github.com/acme/app")
 
-	if answer.Connected == nil || answer.Connected.Repo != "appdev" || len(answer.Connected.Environments) != 1 || answer.Connected.Environments[0] != "git-prod" {
-		t.Errorf("an older HQ's push of appdev: want connected through git-prod, got: %s", text)
+	if answer.Requested == nil || answer.Connected != nil {
+		t.Errorf("an older HQ's push of appdev: want requested, got: %s", text)
 	}
+}
 
-	// An HQ that names the origins answers by the address, not its pushes.
-	newer, _ := originHQ(t, pushes, `[{"name":"appdev","origin":{"url":"https://github.com/acme/app"}}]`)
-	if answer, text := originAnswerTo(t, newer, "https://github.com/acme/other"); answer.Requested == nil || answer.Connected != nil {
-		t.Errorf("an address other than appdev's origin answered: %s", text)
+// The same origin connected under a repository that is no service of this
+// project — a sibling Mate's — names no host for it: its code is fetched from
+// HQ into the asked repository.
+func TestOriginRequest_OriginConnectedUnderAnotherProjectsRepository_FetchesItFromHQ(t *testing.T) {
+	t.Parallel()
+	srv, _, address := originHQIn(t, t.TempDir(), `[]`,
+		`[{"name":"appdev"},{"name":"web","origin":{"url":"https://github.com/acme/app"}}]`)
+
+	answer, text := originAnswerTo(t, srv, "https://github.com/acme/app")
+
+	if answer.Requested != nil || answer.Connected == nil || answer.Connected.Repo != "web" {
+		t.Fatalf("want connected, held by web: %s", text)
+	}
+	if strings.Contains(answer.NextActions, "ssh web") {
+		t.Errorf("nextActions names web, no service of this project, as a host: %s", answer.NextActions)
+	}
+	want := "`ssh appdev \"cd <repo dir> && git fetch " + address + "/git/a1/web.git main && git merge --allow-unrelated-histories --no-edit FETCH_HEAD\"`"
+	if !strings.Contains(answer.NextActions, want) {
+		t.Errorf("nextActions lacks the fetch from HQ %s: %s", want, answer.NextActions)
 	}
 }

@@ -63,11 +63,11 @@ func TestClient_Self_GitPushes_DecodesCIAndOlderHQ(t *testing.T) {
 	}
 	url := "https://github.com/acme/app/actions/runs/7/job/9"
 	want := []GitPush{
-		{Environment: "git-stage", Tier: "stage", Branch: "main", Repo: "appdev", Sha: "cccccccccccccccccccccccccccccccccccccccc",
-			CI: &PushCI{Sha: "cccccccccccccccccccccccccccccccccccccccc", Verdict: CIFailed, Done: 2, Total: 2,
-				Failed:   []PushCIFailure{{Name: "unit", URL: &url}, {Name: "lint"}},
-				Required: []string{"unit"}, Watch: CIFinished, ReadAt: "2026-10-17T10:00:10.000Z", Until: "2026-10-17T11:00:00.000Z"}},
-		{Environment: "git-prod", Tier: "production", Branch: "release", Repo: "appdev", Sha: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"},
+		{Environment: "git-stage", Repo: "appdev", Sha: "cccccccccccccccccccccccccccccccccccccccc",
+			CI: &PushCI{Verdict: CIFailed, Done: 2, Total: 2,
+				Failed: []PushCIFailure{{Name: "unit", URL: &url}, {Name: "lint"}},
+				Watch:  "finished", Until: "2026-10-17T11:00:00.000Z"}},
+		{Environment: "git-prod", Repo: "appdev", Sha: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"},
 	}
 	if !reflect.DeepEqual(state.GitPushes, want) {
 		t.Errorf("gitPushes = %+v\nwant %+v", state.GitPushes, want)

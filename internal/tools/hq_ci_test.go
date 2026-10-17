@@ -30,21 +30,24 @@ func ciPush(ci string) string {
 	return push + "}"
 }
 
+// TestObserve_CI_AnswersEachGitEnvironmentsPushPerVerdict: each push's CI,
+// with what the agent does about a running, failed or unreadable one — said
+// only to a Mate, which alone reads CI through HQ.
 func TestObserve_CI_AnswersEachGitEnvironmentsPushPerVerdict(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct {
 		name, gitPushes, want string
 	}{
 		{"running while HQ watches", `[` + ciPush(`"verdict":"running","done":1,"total":3,"failed":[],"required":null,"reason":null,"watch":"watching"`) + `]`,
-			"appdev: CI on 1a2b3c4d5e in git-stage: running — 1 of 3 checks done; HQ reads it until 2026-10-17T11:00:00.000Z"},
+			"appdev: CI on 1a2b3c4d5e in git-stage: running — 1 of 3 checks done; HQ reads it until 2026-10-17T11:00:00.000Z; tell the person CI is still running and read it again a few minutes later, never in a loop and not past then"},
 		{"running after HQ stopped watching", `[` + ciPush(`"verdict":"running","done":1,"total":3,"failed":[],"required":null,"reason":"Mate stopped watching CI 60 minutes after the push.","watch":"stopped"`) + `]`,
 			"appdev: CI on 1a2b3c4d5e in git-stage: running — 1 of 3 checks done; HQ stopped reading: Mate stopped watching CI 60 minutes after the push."},
 		{"passed", `[` + ciPush(`"verdict":"passed","done":3,"total":3,"failed":[],"required":null,"reason":null,"watch":"finished"`) + `]`,
 			"appdev: CI on 1a2b3c4d5e in git-stage: passed — 3 of 3 checks"},
 		{"failed names each check with its URL", `[` + ciPush(`"verdict":"failed","done":2,"total":2,"failed":[{"name":"check_types","url":"`+ciUnit+`"},{"name":"lint","url":null}],"required":null,"reason":null,"watch":"finished"`) + `]`,
-			"appdev: CI on 1a2b3c4d5e in git-stage: failed — check_types " + ciUnit + ", lint"},
+			"appdev: CI on 1a2b3c4d5e in git-stage: failed — check_types " + ciUnit + ", lint; you hold no token for the origin, so run the repository's own test command for each on the dev half, fix it and deliver the fix as a new change"},
 		{"unreadable says why", `[` + ciPush(`"verdict":"unreadable","done":0,"total":0,"failed":[],"required":null,"reason":"GitHub rejected this token (expired, revoked or mistyped). Replace the token to show CI.","watch":"stopped"`) + `]`,
-			"appdev: CI on 1a2b3c4d5e in git-stage: unreadable — GitHub rejected this token (expired, revoked or mistyped). Replace the token to show CI."},
+			"appdev: CI on 1a2b3c4d5e in git-stage: unreadable — GitHub rejected this token (expired, revoked or mistyped). Replace the token to show CI. Tell the person this reason: only they can replace the Git environment's token."},
 		{"none while HQ watches", `[` + ciPush(`"verdict":"none","done":0,"total":0,"failed":[],"required":null,"reason":null,"watch":"watching"`) + `]`,
 			"appdev: CI on 1a2b3c4d5e in git-stage: none — no check reported; HQ reads it until 2026-10-17T11:00:00.000Z"},
 		{"a push HQ read no CI for", `[` + ciPush("") + `]`,
@@ -92,8 +95,8 @@ func TestHQLearnLanding_MergedChange_CarriesTheCIOfItsPush(t *testing.T) {
 	failed := "failed"
 	url := ciUnit
 	pushes := []hq.GitPush{
-		{Environment: "git-stage", Repo: "appdev", Sha: ciSha, CI: &hq.PushCI{Sha: ciSha, Verdict: failed, Done: 1, Total: 1,
-			Failed: []hq.PushCIFailure{{Name: "check_types", URL: &url}}, Watch: hq.CIFinished}},
+		{Environment: "git-stage", Repo: "appdev", Sha: ciSha, CI: &hq.PushCI{Verdict: failed, Done: 1, Total: 1,
+			Failed: []hq.PushCIFailure{{Name: "check_types", URL: &url}}, Watch: "finished"}},
 		{Environment: "git-prod", Repo: "appdev", Sha: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"},
 		{Environment: "git-stage", Repo: "apidev", Sha: ciSha},
 	}
@@ -111,11 +114,11 @@ func TestHQLearnLanding_MergedChange_CarriesTheCIOfItsPush(t *testing.T) {
 
 	note := hqLearnLanding(stateDir, m, state)
 
-	want := `change #3 is merged — this Mate's work is on "main" now; CI on 1a2b3c4d5e in git-stage: failed — check_types ` + ciUnit + "; its next change opens a new one"
+	want := `change #3 is merged — this Mate's work is on "main" now; CI on 1a2b3c4d5e in git-stage: failed — check_types ` + ciUnit + "; you hold no token for the origin, so run the repository's own test command for each on the dev half, fix it and deliver the fix as a new change; its next change opens a new one"
 	if note != want {
 		t.Errorf("note = %q\nwant   %q", note, want)
 	}
-	if after := changeOutcomeAfterOpen(note); strings.HasSuffix(after, hqMergedNextClause) || !strings.HasSuffix(after, ciUnit) {
+	if after := changeOutcomeAfterOpen(note); strings.HasSuffix(after, hqMergedNextClause) || !strings.HasSuffix(after, "deliver the fix as a new change") {
 		t.Errorf("a delivery that opened the next change keeps the CI and drops the promise: %q", after)
 	}
 }

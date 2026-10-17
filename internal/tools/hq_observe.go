@@ -124,7 +124,9 @@ func gitPushesCI(pushes []hq.GitPush) string {
 }
 
 // gitPushCI is the short form of the origin's CI on one push, as HQ last read
-// it: "CI on 1a2b3c4d5e in git-stage: failed — check_types <url>".
+// it, with what the agent does about it: "CI on 1a2b3c4d5e in git-stage:
+// failed — check_types <url>; you hold no token …". Only a Mate reads CI
+// through HQ, so this is where that guidance lives.
 func gitPushCI(push hq.GitPush) string {
 	line := fmt.Sprintf("CI on %s in %s: ", shortSHA(push.Sha), push.Environment)
 	ci := push.CI
@@ -145,10 +147,11 @@ func gitPushCI(push hq.GitPush) string {
 				failed = append(failed, check.Name)
 			}
 		}
-		line += "failed — " + strings.Join(failed, ", ")
+		return line + "failed — " + strings.Join(failed, ", ") +
+			"; you hold no token for the origin, so run the repository's own test command for each on the dev half, fix it and deliver the fix as a new change"
 	case hq.CIUnreadable:
-		// The reason is the whole answer: it says what the token lacks.
-		return line + "unreadable — " + reasonOf(ci)
+		// The reason says what the token lacks.
+		return line + "unreadable — " + reasonOf(ci) + " Tell the person this reason: only they can replace the Git environment's token."
 	case hq.CINone:
 		line += "none — no check reported"
 	default:
@@ -157,6 +160,9 @@ func gitPushCI(push hq.GitPush) string {
 	switch ci.Watch {
 	case hq.CIWatching:
 		line += "; HQ reads it until " + ci.Until
+		if ci.Verdict == hq.CIRunning {
+			line += "; tell the person CI is still running and read it again a few minutes later, never in a loop and not past then"
+		}
 	case hq.CIStopped:
 		line += "; HQ stopped reading: " + reasonOf(ci)
 	}

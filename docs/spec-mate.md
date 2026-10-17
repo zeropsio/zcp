@@ -2564,14 +2564,17 @@ application in HQ themselves, with its token; neither crosses the conversation.
 - **zcp.** `zerops_origin action=request` (Mate-gated, §2.0) takes `url`, the repository's https
   address (canonical, `topology.CanonicalRepoURL`); `repo`, the repository in HQ the pair will
   wire — its dev hostname (§6, `hqRepoNameOf`) — so the origin is connected under the name the
-  wiring takes; and a one-line `why`. A URL carrying a credential is refused and never echoed; no
-  input takes a token. It writes nothing and reads `GET /api/mate/self` once: `connected`
+  wiring takes; and a one-line `why`. A URL carrying a credential, a query or a fragment is
+  refused, and no refusal echoes the URL; an address past `owner/name`, a page inside the
+  repository, is refused asking for the repository's address. No input takes a token. It writes nothing and reads `GET /api/mate/self` once: `connected`
   (`origin`; `repo`, the HQ repository holding it; `environments` that pushed that one), nothing
   asked, when `url` already is the connected origin of `repo` in HQ's `repos`, or else of another
-  repository of the application, which the answer names as where the code comes from — compared
-  by `topology.SameRepoURL` (canonical form, any case), before any push. An HQ older than `repos`
-  answers `connected` when one of its Git environments has pushed `repo` (`gitPushes`). Otherwise
-  `requested` (`origin`: `url`, `repo`, `why`), telling the agent
+  repository of the application, which the answer names as where the code comes from: in that
+  repository's own working copy when it is one of this project's services (`FindServiceMeta`),
+  else fetched from HQ's `/git/<app>/<name>.git` into `repo`'s, since an application's repository
+  can be a sibling Mate's and name no host here — compared
+  by `topology.SameRepoURL` (canonical form, any case), before any push. Otherwise, and from an
+  HQ older than `repos`, whose pushes do not say which origin they went to, `requested` (`origin`: `url`, `repo`, `why`), telling the agent
   to say only why, in one sentence, and end its turn. Both answers say how the code comes in: from
   HQ's `main` once connected, by an anonymous fetch of a public repository once declined. An HQ that cannot be read asks nothing.
   zcp never names an origin branch: which branch each Git environment pushes is Mate's and HQ's.
@@ -2584,13 +2587,17 @@ application in HQ themselves, with its token; neither crosses the conversation.
   public repository anonymously into the dev service; the first change then adds the whole
   repository. A private repository cannot be declined that way: the agent asks again.
 
-Additive both ways: an older mate shows the call as any zcp call, and an older zcp has no tool.
+Not additive on the mate side: a mate before 0.15.153 shows the call as any zcp call and never
+tells the agent how it ended, so `MinimumMateVersion` is 0.15.153 and zcp drives no older mate. An
+older zcp has no tool.
 zcp `TestOriginRequest_WritesNothing_NamesTheRepositoryThePairWillWire`,
-`TestOriginRequest_URLWithCredentials_Refused`, `TestOriginRequest_OriginAlreadyConnected_AnswersConnected`,
+`TestOriginRequest_URLWithCredentials_Refused`, `TestOriginRequest_RefusalNeverEchoesTheURL`,
+`TestOriginRequest_AddressPastTheRepository_RefusedAskingForTheRepositoryAddress`, `TestOriginRequest_OriginAlreadyConnected_AnswersConnected`,
 `TestOriginRequest_OriginConnectedToTheRepository_AnswersConnectedBeforeItsFirstPush`,
 `TestOriginRequest_OriginConnectedUnderAnotherRepository_NamesThatRepository`,
-`TestOriginRequest_OlderHQWithoutRepos_FallsBackToItsPushes`, `TestClient_Self_Repos_DecodesOriginsAndOlderHQ`,
-`TestSameRepoURL`, `TestServer_ObserveToolGating`, `TestAnnotations_OriginTool`, `TestDevelopExistingRepo_RunsTheReposOwnDevFlow`.
+`TestOriginRequest_OriginConnectedUnderAnotherProjectsRepository_FetchesItFromHQ`,
+`TestOriginRequest_OlderHQWithoutRepos_Asks`, `TestClient_Self_Repos_DecodesOriginsAndOlderHQ`,
+`TestSameRepoURL`, `TestServer_ObserveToolGating`, `TestAnnotations_OriginTool`, `TestDesiredRelease_RefusesInvalidManifest`, `TestDevelopExistingRepo_RunsTheReposOwnDevFlow`.
 
 ### Invariants
 
@@ -3388,6 +3395,11 @@ credential: `action="environments"` reads `GET /api/mate/environments`; `action=
 100), each message at most 4,096 characters; `action="ci"` reads `gitPushes` from `GET
 /api/mate/self`, one short line per push ("CI on <sha> in <environment>: failed — <check> <url>"),
 and the note that the pair's change merged carries the same line for a push of the merged commit.
+The line says what the agent does: on `running` while HQ watches, tell the person and read it again
+minutes later, never in a loop; on `failed`, run the repository's own test for each check on the
+dev half and deliver the fix as a new change, holding no origin token; on `unreadable`, tell the
+person its reason, since only they replace the token. The line is the one home of that guidance:
+the git-push delivery atom, which a project without a Mate also renders, never carries it.
 The first call supplies environment project IDs, the second service IDs. No application ID or Zerops credential is accepted from the model.
 HQ resolves the Mate's current placement by ID on each call and permits only environments of
 that application that every active person able to operate the Mate may read in Zerops. These
