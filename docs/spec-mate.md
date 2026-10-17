@@ -2420,6 +2420,15 @@ the values those entries reference.
   saved or declined, records who and when, and the agent hears `saved to <vault>/<KEY>` or
   `declined` in a run of its own, a wake joining the run that asked. The value never enters the
   engine's records, a log, the agent's context or HQ.
+- **The organization's AI key, for an app** (2026-10-17). In a Mate, `zerops_env action=ai-key`
+  asks HQ for the organization's key as the Mate (`POST /api/mate/ai-key`, one bounded try) and
+  sets it in the Shared vault: the key sensitive under the variable HQ names (`NEBIUS_API_KEY`),
+  its base URL plain beside it (`NEBIUS_BASE_URL`), restarting their readers unless `skipRestart`.
+  It answers the provider and the names only; the key never enters the answer, an error, a log or
+  the agent's context. HQ's `404 no_key` answers that an org Owner or Admin sets it in Mate under
+  Settings › Zerops › HQ; no enrollment, HQ not answering or refusing set nothing and say so.
+  Outside a Mate the action does not exist. A Mate's AGENTS.md has an AI feature read the two as
+  `OPENAI_API_KEY: ${NEBIUS_API_KEY}` and `OPENAI_BASE_URL: ${NEBIUS_BASE_URL}`.
 
 ### 5.9 Pages — the agent shows a page in the conversation (2026-10-10)
 
@@ -3248,7 +3257,7 @@ what is `zeropsPermissions.ts`'s `can` over the role function (§10.3).
 the application HQ holds it in and that application's name, its changes there); a repository of
 its application, made or joined (`POST /api/mate/repos`); its change in a repository, one open at a
 time (`POST /api/mate/changes`, `PATCH …/:repo/:n`, `POST …/attachments`); a tier of the recipe
-(`GET /api/mate/recipe/:tier`); git over HTTPS at `/git/<appId>/<repo>.git` as the user `mate`,
+(`GET /api/mate/recipe/:tier`); the organization's AI key (`POST /api/mate/ai-key`, §5.8); git over HTTPS at `/git/<appId>/<repo>.git` as the user `mate`,
 which takes a Mate's push only on the branch of its own open change, only forward. §10.10 is what
 zcp does with it.
 

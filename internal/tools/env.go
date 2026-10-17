@@ -52,12 +52,20 @@ type EnvInput struct {
 // `generate-dotenv` attempts that failed because the cwd had no
 // zerops.yaml — a UX failure that cost ~10 tool calls. Exposing `get`
 // as a first-class action eliminates that branch entirely.
-func envInputSchema() *jsonschema.Schema {
+//
+// orgAIKey adds the ai-key action, which only a Mate has (WithOrgAIKey).
+func envInputSchema(orgAIKey bool) *jsonschema.Schema {
+	actions := []any{"get", "set", "delete", "request", "generate-dotenv"}
+	actionDescription := "get: keys + ${host_var} refs — reference a value as $VAR by name, never paste it. set: upsert KEY=VALUE pairs. delete: remove keys. request: ask the person for a value only they have; it goes to the vault, never the chat. generate-dotenv: writes a resolved .env from a local zerops.yaml."
+	if orgAIKey {
+		actions = append(actions, "ai-key")
+		actionDescription += " ai-key: the organization's AI key into the Shared vault, unseen (NEBIUS_API_KEY sensitive, NEBIUS_BASE_URL), for an AI feature in the app; skipRestart as set."
+	}
 	return objectSchema(map[string]*jsonschema.Schema{
 		"action": {
 			Type:        "string",
-			Enum:        []any{"get", "set", "delete", "request", "generate-dotenv"},
-			Description: "get: keys + ${host_var} refs — reference a value as $VAR by name, never paste it. set: upsert KEY=VALUE pairs. delete: remove keys. request: ask the person for a value only they have; it goes to the vault, never the chat. generate-dotenv: writes a resolved .env from a local zerops.yaml.",
+			Enum:        actions,
+			Description: actionDescription,
 		},
 		"serviceHostname": {
 			Type:        "string",
@@ -219,11 +227,19 @@ type envChangeResult struct {
 // RegisterEnv registers the zerops_env tool.
 // selfHostname is the hostname of the service running ZCP — it is excluded
 // from auto-restart so the tool does not kill its own MCP connection.
-func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostname string) {
+func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostname string, opts ...EnvOption) {
+	var options envOptions
+	for _, opt := range opts {
+		opt(&options)
+	}
+	actions := "get (keys), set (upsert), delete, request (a value only the person has; never ask in chat), generate-dotenv (local .env)"
+	if options.aiKey != nil {
+		actions += ", ai-key (the organization's AI key into the Shared vault, unseen)"
+	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_env",
-		Description: "Manage the vault: a service's own (serviceHostname) or the Shared (project=true). Actions: get (keys), set (upsert), delete, request (a value only the person has; never ask in chat), generate-dotenv (local .env). An app reads only what its run.envVariables references: `NAME: ${KEY}` (own, else Shared), `${host_KEY}`. set: sensitive per key, expands <@...>, 'stored' verifies. set/delete restart the key's readers unless skipRestart=true",
-		InputSchema: envInputSchema(),
+		Description: "Manage the vault: a service's own (serviceHostname) or the Shared (project=true). Actions: " + actions + ". An app reads only what its run.envVariables references: `NAME: ${KEY}` (own, else Shared), `${host_KEY}`. set: sensitive per key, expands <@...>, 'stored' verifies. set/delete restart the key's readers unless skipRestart=true",
+		InputSchema: envInputSchema(options.aiKey != nil),
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Manage environment variables",
 			DestructiveHint: boolPtr(true),
@@ -231,6 +247,10 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input EnvInput) (*mcp.CallToolResult, any, error) {
 		onProgress := buildProgressCallback(ctx, req)
 
+		// Outside a Mate there is no ai-key action: it is an invalid one.
+		if input.Action == "ai-key" && options.aiKey != nil {
+			return setOrgAIKey(ctx, client, projectID, selfHostname, options.aiKey, input, onProgress), nil, nil
+		}
 		switch input.Action {
 		case "get":
 			// get delegates to the same discovery path used by zerops_discover

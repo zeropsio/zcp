@@ -866,6 +866,38 @@ func TestBuildAgentsMD_Container_MacIsReachedThroughMac(t *testing.T) {
 	}
 }
 
+// TestBuildAgentsMD_Container_AnAIFeatureRunsOnTheOrganizationsKey pins that a
+// Mate's agent builds an AI feature on the organization's key, which it puts
+// in the Shared vault without seeing it, and reads it under other names.
+func TestBuildAgentsMD_Container_AnAIFeatureRunsOnTheOrganizationsKey(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		rt   runtime.Info
+		want bool
+	}{
+		{name: "a Mate", rt: runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true}, want: true},
+		{name: "not a Mate", rt: runtime.Info{InContainer: true, ServiceName: "zcp"}},
+		{name: "the Chief", rt: runtime.Info{Chief: true, InContainer: true, ServiceName: "zcp", MateEnabled: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			out, err := BuildAgentsMD(tc.rt, false)
+			if err != nil {
+				t.Fatalf("BuildAgentsMD: %v", err)
+			}
+			for _, want := range []string{
+				`zerops_env action="ai-key"`, "`OPENAI_API_KEY: ${NEBIUS_API_KEY}`", "`OPENAI_BASE_URL: ${NEBIUS_BASE_URL}`",
+				"OpenAI-compatible", "/models", "Never print, log or commit the key", "Settings › Zerops › HQ",
+			} {
+				if strings.Contains(out, want) != tc.want {
+					t.Errorf("AGENTS.md says %q = %v, want %v", want, !tc.want, tc.want)
+				}
+			}
+		})
+	}
+}
+
 // TestBuildAgentsMD_Chief pins org mode's managed section: the
 // Chief's guidance in place of the single-project develop and bootstrap
 // doctrine, which acts on its own empty project and only confuses it.
