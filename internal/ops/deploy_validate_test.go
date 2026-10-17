@@ -1729,7 +1729,7 @@ func TestValidateZeropsYml_ASetupThatExtendsABaseIsCheckedAsThePlatformResolvesI
 	}{
 		{setup: "apidev", class: DeployClassSelf, want: nil},
 		{setup: "apistage", class: DeployClassCross, want: nil},
-		{setup: "workerstage", class: DeployClassCross, want: []string{"run.ports is empty — no ports exposed, HTTP checks will fail"}},
+		{setup: "workerstage", class: DeployClassCross, want: []string{"run.ports is empty — the service runs as a worker: no port is exposed and verify runs no HTTP check; declare run.ports if it serves HTTP"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.setup, func(t *testing.T) {

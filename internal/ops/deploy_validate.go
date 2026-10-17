@@ -88,7 +88,7 @@ func validateZeropsYmlDoc(doc *ZeropsYmlDoc, targetHostname, serviceType string,
 		}
 
 		if len(entry.Run.Ports) == 0 {
-			warnings = append(warnings, "run.ports is empty — no ports exposed, HTTP checks will fail")
+			warnings = append(warnings, "run.ports is empty — the service runs as a worker: no port is exposed and verify runs no HTTP check; declare run.ports if it serves HTTP")
 		}
 	}
 
