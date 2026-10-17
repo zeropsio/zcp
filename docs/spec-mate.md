@@ -3391,6 +3391,11 @@ credential: `action="environments"` reads `GET /api/mate/environments`; `action=
 100), each message at most 4,096 characters; `action="ci"` reads `gitPushes` from `GET
 /api/mate/self`, one short line per push ("CI on <sha> in <environment>: failed — <check> <url>"),
 and the note that the pair's change merged carries the same line for a push of the merged commit.
+The line says what the agent does: on `running` while HQ watches, tell the person and read it again
+minutes later, never in a loop; on `failed`, run the repository's own test for each check on the
+dev half and deliver the fix as a new change, holding no origin token; on `unreadable`, tell the
+person its reason, since only they replace the token. The line is the one home of that guidance:
+the git-push delivery atom, which a project without a Mate also renders, never carries it.
 The first call supplies environment project IDs, the second service IDs. No application ID or Zerops credential is accepted from the model.
 HQ resolves the Mate's current placement by ID on each call and permits only environments of
 that application that every active person able to operate the Mate may read in Zerops. These
