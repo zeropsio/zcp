@@ -2565,7 +2565,10 @@ application in HQ themselves, with its token; neither crosses the conversation.
   repository, is refused asking for the repository's address. No input takes a token. It writes nothing and reads `GET /api/mate/self` once: `connected`
   (`origin`; `repo`, the HQ repository holding it; `environments` that pushed that one), nothing
   asked, when `url` already is the connected origin of `repo` in HQ's `repos`, or else of another
-  repository of the application, which the answer names as where the code comes from — compared
+  repository of the application, which the answer names as where the code comes from: in that
+  repository's own working copy when it is one of this project's services (`FindServiceMeta`),
+  else fetched from HQ's `/git/<app>/<name>.git` into `repo`'s, since an application's repository
+  can be a sibling Mate's and name no host here — compared
   by `topology.SameRepoURL` (canonical form, any case), before any push. Otherwise, and from an
   HQ older than `repos`, whose pushes do not say which origin they went to, `requested` (`origin`: `url`, `repo`, `why`), telling the agent
   to say only why, in one sentence, and end its turn. Both answers say how the code comes in: from
@@ -2588,6 +2591,7 @@ zcp `TestOriginRequest_WritesNothing_NamesTheRepositoryThePairWillWire`,
 `TestOriginRequest_AddressPastTheRepository_RefusedAskingForTheRepositoryAddress`, `TestOriginRequest_OriginAlreadyConnected_AnswersConnected`,
 `TestOriginRequest_OriginConnectedToTheRepository_AnswersConnectedBeforeItsFirstPush`,
 `TestOriginRequest_OriginConnectedUnderAnotherRepository_NamesThatRepository`,
+`TestOriginRequest_OriginConnectedUnderAnotherProjectsRepository_FetchesItFromHQ`,
 `TestOriginRequest_OlderHQWithoutRepos_Asks`, `TestClient_Self_Repos_DecodesOriginsAndOlderHQ`,
 `TestSameRepoURL`, `TestServer_ObserveToolGating`, `TestAnnotations_OriginTool`, `TestDesiredRelease_RefusesInvalidManifest`, `TestDevelopExistingRepo_RunsTheReposOwnDevFlow`.
 
