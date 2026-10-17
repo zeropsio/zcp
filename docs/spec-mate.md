@@ -2580,13 +2580,15 @@ application in HQ themselves, with its token; neither crosses the conversation.
   public repository anonymously into the dev service; the first change then adds the whole
   repository. A private repository cannot be declined that way: the agent asks again.
 
-Additive both ways: an older mate shows the call as any zcp call, and an older zcp has no tool.
+Not additive on the mate side: a mate before 0.15.153 shows the call as any zcp call and never
+tells the agent how it ended, so `MinimumMateVersion` is 0.15.153 and zcp drives no older mate. An
+older zcp has no tool.
 zcp `TestOriginRequest_WritesNothing_NamesTheRepositoryThePairWillWire`,
 `TestOriginRequest_URLWithCredentials_Refused`, `TestOriginRequest_OriginAlreadyConnected_AnswersConnected`,
 `TestOriginRequest_OriginConnectedToTheRepository_AnswersConnectedBeforeItsFirstPush`,
 `TestOriginRequest_OriginConnectedUnderAnotherRepository_NamesThatRepository`,
 `TestOriginRequest_OlderHQWithoutRepos_FallsBackToItsPushes`, `TestClient_Self_Repos_DecodesOriginsAndOlderHQ`,
-`TestSameRepoURL`, `TestServer_ObserveToolGating`, `TestAnnotations_OriginTool`, `TestDevelopExistingRepo_RunsTheReposOwnDevFlow`.
+`TestSameRepoURL`, `TestServer_ObserveToolGating`, `TestAnnotations_OriginTool`, `TestDesiredRelease_RefusesInvalidManifest`, `TestDevelopExistingRepo_RunsTheReposOwnDevFlow`.
 
 ### Invariants
 
