@@ -829,7 +829,9 @@ only inside a deploy the agent asked for: before a self-deploy of a dev service 
 zcp points the zcp-devsup line its dev setup already carries at the newest pin, changing nothing
 else, and the deploy reply names both releases — that deploy installs it, nothing redeploys on its
 own, and a dev setup without the line stays as written
-(`TestDeploy_ADeployedDevSetupPinnedToAnOlderSupervisor_InstallsTheNewestInTheSameDeploy`).
+(`TestDeploy_ADeployedDevSetupPinnedToAnOlderSupervisor_InstallsTheNewestInTheSameDeploy`). A
+deploy that fails after the re-pin names it too
+(`TestDeploy_ADeployThatFailsAfterTheSupervisorRePinStillSaysTheDevSetupChanged`).
 
 **Crew save.** Before every push from a service, zcp runs `<git-common-dir>/t3-crew-save` when it is executable; absent → the push runs as before; non-zero → the deploy is refused with the save's error.
 

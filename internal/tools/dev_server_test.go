@@ -902,3 +902,52 @@ func TestDeploy_ADeployedDevSetupPinnedToAnOlderSupervisor_InstallsTheNewestInTh
 		})
 	}
 }
+
+// pushFails is a dev container whose zcli push fails before the build starts.
+type pushFails struct{ *devservertest.Container }
+
+func (c pushFails) ExecSSH(ctx context.Context, hostname, command string) ([]byte, error) {
+	if strings.Contains(command, "zcli push") {
+		return nil, &platform.SSHExecError{Hostname: hostname, Output: "connection reset", Err: errors.New("exit status 255")}
+	}
+	return c.Container.ExecSSH(ctx, hostname, command)
+}
+
+// The re-pin rewrites the dev setup before the deploy runs, so a deploy that
+// then fails still says zcp changed the file: the agent never meets an
+// unexplained zerops.yaml diff.
+func TestDeploy_ADeployThatFailsAfterTheSupervisorRePinStillSaysTheDevSetupChanged(t *testing.T) {
+	t.Parallel()
+	const older = "https://github.com/zeropsio/zcp/releases/download/v9.200.0/zcp-devsup-linux-amd64"
+	dir := t.TempDir()
+	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+		Hostname: "appdev", Mode: topology.PlanModeDev, BootstrapSession: "sess1",
+		BootstrappedAt: "2026-10-14", PrimarySetupName: "dev", FirstDeployedAt: "2026-10-14T20:00:00Z",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "appdev", ProjectID: "proj-1", Status: serviceStatusRunning,
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "bun@1.3"}}}).
+		WithAppVersionEvents([]platform.AppVersionEvent{{ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-1", Status: statusActive, Sequence: 1}})
+	pinnedSetup, _, _, err := ops.AdoptSupervisorYAML([]byte(todaysDevSetup), "dev", "appdev", older, "")
+	if err != nil {
+		t.Fatalf("AdoptSupervisorYAML: %v", err)
+	}
+	c := &devservertest.Container{YAMLFile: "zerops.yml", YAML: string(pinnedSetup)}
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", pushFails{c}, &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
+		nil, runtime.Info{}, dir, testDeployEngine(t), nil, DevsupSource{Latest: func(context.Context) (string, error) { return testDevsupURL, nil }})
+
+	result := callTool(t, srv, "zerops_deploy", map[string]any{"targetService": "appdev", "setup": "dev"})
+	text := getTextContent(t, result)
+	if !result.IsError {
+		t.Fatalf("zerops_deploy with a failing push = %s, want an error", text)
+	}
+	if c.YAML == string(pinnedSetup) {
+		t.Fatalf("the re-pin did not rewrite zerops.yml before the deploy: %s", c.YAML)
+	}
+	if !strings.Contains(text, `zcp re-pinned zcp-devsup in setup \"dev\" of zerops.yml from v9.200.0 to v9.300.0`) {
+		t.Errorf("the failed deploy does not say zcp changed zerops.yml: %s", text)
+	}
+}

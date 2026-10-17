@@ -430,7 +430,14 @@ func runDeploySSHZCLIPush(
 		// to source from at all) can never succeed on retry — override
 		// the generic transport suggestion with the in-place redeploy.
 		suggestion := appVersionRedeploySuggestion(ctx, client, projectID, input.SourceService, input.TargetService)
-		return convertError(err, WithRecoveryStatus(), WithFailureClassification(classification), WithSuggestion(suggestion)), nil, nil
+		// The dev setup was rewritten before the push, so a failed deploy
+		// still says so: the diff is never left unexplained.
+		toldMove := func(w *ErrorWire) {
+			if move.sentence != "" {
+				w.Suggestion = strings.TrimSpace(w.Suggestion + " " + move.sentence)
+			}
+		}
+		return convertError(err, WithRecoveryStatus(), WithFailureClassification(classification), WithSuggestion(suggestion), toldMove), nil, nil
 	}
 
 	onProgress := buildProgressCallback(ctx, req)
