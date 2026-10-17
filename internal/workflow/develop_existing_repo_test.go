@@ -124,6 +124,18 @@ func TestDevelopExistingRepo_RunsTheReposOwnDevFlow(t *testing.T) {
 		)
 	})
 
+	t.Run("a repository given by its address is asked about before its code comes in, and a token is never asked for", func(t *testing.T) {
+		t.Parallel()
+		_, body := existingRepoBody(t, "nodejs@24", topology.ModeDev, "run this repo here")
+		requireAll(t, body,
+			"Given its address, ask first** with `zerops_origin` if you have it",
+			"Never ask for a token.",
+		)
+		if strings.Index(body, "zerops_origin") > strings.Index(body, "Read how the repo is developed") {
+			t.Error("the ask comes after the repo is read, so its code is taken before the person answers")
+		}
+	})
+
 	t.Run("the guidance renders whenever develop starts on a never-deployed dev service in a container, without a playbook call", func(t *testing.T) {
 		t.Parallel()
 		for _, mode := range []topology.Mode{topology.ModeDev, topology.ModeStandard} {
