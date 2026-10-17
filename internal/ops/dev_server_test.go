@@ -786,6 +786,43 @@ func TestDevServer_ASupervisorThatDoesNotAnswerInTimeIsReportedUnresponsiveNotMi
 	}
 }
 
+// An entry removed from the declaration by hand leaves its server running
+// until the supervisor re-reads the file: the next zerops_dev_server call has
+// it re-read, which stops and drops that server, and the reply names it.
+func TestDevServer_AServerRemovedFromTheDeclarationIsStoppedAndTheReplySaysSo(t *testing.T) {
+	t.Parallel()
+	const both = `{"version":1,"servers":[{"name":"web","port":3000,"command":"next dev","cwd":"."},{"name":"lo","port":5999,"command":"python3 -m http.server 5999","cwd":"."}]}`
+	const removed = "Dev server lo on difydev is no longer declared in .zcp/dev-servers.json, so the supervisor stopped it."
+	for _, tc := range []struct{ action, name string }{{"status", ""}, {"logs", "web"}, {"stop", "lo"}, {"status", "lo"}} {
+		c := devservertest.NewSupervised(both)
+		c.Declaration = `{"version":1,"servers":[{"name":"web","port":3000,"command":"next dev","cwd":"."}]}`
+		result, err := ExecuteDevServer(context.Background(), c, mockClientWithServices("difydev"), "p1",
+			DevServerParams{Action: tc.action, Hostname: "difydev", Name: tc.name})
+		if err != nil {
+			t.Fatalf("%s %s: err = %v, want a reply naming lo as stopped", tc.action, tc.name, err)
+		}
+		if _, held := c.Servers["lo"]; held {
+			t.Errorf("%s %s: the supervisor still holds lo, want it stopped and dropped", tc.action, tc.name)
+		}
+		if c.Status("web") != devsup.StatusRunning {
+			t.Errorf("%s %s: web is %q, want it left running", tc.action, tc.name, c.Status("web"))
+		}
+		if !strings.Contains(result.Message, removed) {
+			t.Errorf("%s %s: message = %q, want it to contain %q", tc.action, tc.name, result.Message, removed)
+		}
+	}
+	c := devservertest.NewSupervised(both)
+	if _, err := ExecuteDevServer(context.Background(), c, mockClientWithServices("difydev"), "p1",
+		DevServerParams{Action: "status", Hostname: "difydev"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, cmd := range c.Sent() {
+		if strings.Contains(cmd, "ctl 'reload'") {
+			t.Errorf("sent %q with both servers still declared, want no reload", cmd)
+		}
+	}
+}
+
 // TestDevServer_NoProcessPatternMatching (TEST-PLAN E1 #3, #14): no
 // dev-server path finds processes by name or command pattern, and the
 // keeper, the zcp-side dev-servers.json and the SSH start are gone. One

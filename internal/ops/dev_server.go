@@ -249,13 +249,22 @@ func ExecuteDevServer(
 	case err != nil:
 		return nil, err
 	}
+	dropped, err := dropUndeclared(ctx, ssh, ds)
+	if errors.As(err, &unresponsive) {
+		return unresponsiveResult(action, p.Hostname, unresponsive), nil
+	}
+	if err != nil {
+		return nil, err
+	}
 	var result *DevServerResult
-	switch action {
-	case devServerActionStart, devServerActionRestart:
+	switch {
+	case slices.Contains(dropped, p.Name) && action != devServerActionStart && action != devServerActionRestart:
+		result = newResult(action, p.Hostname, p.Name)
+	case action == devServerActionStart, action == devServerActionRestart:
 		result, err = startDevServer(ctx, ssh, client, projectID, p, ds)
-	case devServerActionStop:
+	case action == devServerActionStop:
 		result, err = stopDevServer(ctx, ssh, p, ds)
-	case devServerActionStatus:
+	case action == devServerActionStatus:
 		result, err = statusDevServer(ctx, ssh, p, ds)
 	default:
 		result, err = logsDevServer(ctx, ssh, p, ds)
@@ -266,8 +275,40 @@ func ExecuteDevServer(
 	if err != nil {
 		return nil, err
 	}
+	for _, name := range dropped {
+		if result.Message != "" {
+			result.Message += "\n"
+		}
+		result.Message += fmt.Sprintf("Dev server %s is no longer declared in %s, so the supervisor stopped it.", serverLabel(p.Hostname, name), devsup.DeclarationPath)
+	}
 	result.settle(ds)
 	return result, nil
+}
+
+// dropUndeclared has the supervisor re-read the declaration when it still runs
+// a declared server the file no longer names (an entry removed by hand, which
+// the supervisor sees only on a reload, start or restart): the reload stops
+// and drops it. It answers the servers it stopped.
+func dropUndeclared(ctx context.Context, ssh SSHDeployer, ds *DevServers) ([]string, error) {
+	var gone []string
+	// A file the supervisor cannot run changes nothing on a reload.
+	runnable := ds.DeclarationErr == nil && ds.OlderThanDeclaration() == ""
+	for name, st := range ds.State.Servers {
+		live := st.Status == devsup.StatusRunning || st.Status == devsup.StatusStarting
+		if runnable && st.Source == devsup.SourceDeclared && live && !slices.ContainsFunc(ds.Servers(), func(s devsup.Server) bool { return s.Name == name }) {
+			gone = append(gone, name)
+		}
+	}
+	if len(gone) == 0 {
+		return nil, nil
+	}
+	st, err := supervisorCtl(ctx, ssh, ds.Hostname, "reload")
+	if err != nil {
+		return nil, err
+	}
+	ds.observe(st)
+	slices.Sort(gone)
+	return gone, nil
 }
 
 // settle ends a result on the call's read of the dev servers: running is the
