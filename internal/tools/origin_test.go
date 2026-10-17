@@ -185,7 +185,8 @@ func TestOriginRequest_AddressPastTheRepository_RefusedAskingForTheRepositoryAdd
 func TestOriginRequest_OriginAlreadyConnected_AnswersConnected(t *testing.T) {
 	t.Parallel()
 	srv, _ := originHQ(t, `[{"environment":"git-prod","tier":"production","branch":"main","repo":"appdev","sha":"`+ciSha+`"},`+
-		`{"environment":"git-prod","tier":"production","branch":"main","repo":"web","sha":"`+ciSha+`"}]`, "")
+		`{"environment":"git-prod","tier":"production","branch":"main","repo":"web","sha":"`+ciSha+`"}]`,
+		`[{"name":"appdev","origin":{"url":"https://github.com/zeropsio/mate"}},{"name":"web","origin":{"url":"https://github.com/zeropsio/web"}}]`)
 
 	result := callTool(t, srv, "zerops_origin", map[string]any{
 		"action": "request", "url": "https://github.com/zeropsio/mate", "repo": "appdev", "why": "to deliver finished work back",
@@ -205,7 +206,7 @@ func TestOriginRequest_OriginAlreadyConnected_AnswersConnected(t *testing.T) {
 
 	// Another repository of the application delivering is not this one.
 	result = callTool(t, srv, "zerops_origin", map[string]any{
-		"action": "request", "url": "https://github.com/zeropsio/mate", "repo": "apidev", "why": "to deliver finished work back",
+		"action": "request", "url": "https://github.com/zeropsio/api", "repo": "apidev", "why": "to deliver finished work back",
 	})
 	if text := getTextContent(t, result); !strings.Contains(text, `"requested"`) {
 		t.Errorf("a repository no Git environment pushes answered: %s", text)
@@ -286,21 +287,15 @@ func TestOriginRequest_OriginConnectedUnderAnotherRepository_NamesThatRepository
 	}
 }
 
-// An older HQ without repos falls back to its pushes.
-func TestOriginRequest_OlderHQWithoutRepos_FallsBackToItsPushes(t *testing.T) {
+// An older HQ without repos asks, whatever its Git environments pushed: its
+// pushes do not say which origin they went to.
+func TestOriginRequest_OlderHQWithoutRepos_Asks(t *testing.T) {
 	t.Parallel()
-	pushes := `[{"environment":"git-prod","tier":"production","branch":"main","repo":"appdev","sha":"` + ciSha + `"}]`
-	older, _ := originHQ(t, pushes, "")
+	older, _ := originHQ(t, `[{"environment":"git-prod","tier":"production","branch":"main","repo":"appdev","sha":"`+ciSha+`"}]`, "")
 
 	answer, text := originAnswerTo(t, older, "https://github.com/acme/app")
 
-	if answer.Connected == nil || answer.Connected.Repo != "appdev" || len(answer.Connected.Environments) != 1 || answer.Connected.Environments[0] != "git-prod" {
-		t.Errorf("an older HQ's push of appdev: want connected through git-prod, got: %s", text)
-	}
-
-	// An HQ that names the origins answers by the address, not its pushes.
-	newer, _ := originHQ(t, pushes, `[{"name":"appdev","origin":{"url":"https://github.com/acme/app"}}]`)
-	if answer, text := originAnswerTo(t, newer, "https://github.com/acme/other"); answer.Requested == nil || answer.Connected != nil {
-		t.Errorf("an address other than appdev's origin answered: %s", text)
+	if answer.Requested == nil || answer.Connected != nil {
+		t.Errorf("an older HQ's push of appdev: want requested, got: %s", text)
 	}
 }

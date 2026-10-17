@@ -2566,9 +2566,8 @@ application in HQ themselves, with its token; neither crosses the conversation.
   (`origin`; `repo`, the HQ repository holding it; `environments` that pushed that one), nothing
   asked, when `url` already is the connected origin of `repo` in HQ's `repos`, or else of another
   repository of the application, which the answer names as where the code comes from — compared
-  by `topology.SameRepoURL` (canonical form, any case), before any push. An HQ older than `repos`
-  answers `connected` when one of its Git environments has pushed `repo` (`gitPushes`). Otherwise
-  `requested` (`origin`: `url`, `repo`, `why`), telling the agent
+  by `topology.SameRepoURL` (canonical form, any case), before any push. Otherwise, and from an
+  HQ older than `repos`, whose pushes do not say which origin they went to, `requested` (`origin`: `url`, `repo`, `why`), telling the agent
   to say only why, in one sentence, and end its turn. Both answers say how the code comes in: from
   HQ's `main` once connected, by an anonymous fetch of a public repository once declined. An HQ that cannot be read asks nothing.
   zcp never names an origin branch: which branch each Git environment pushes is Mate's and HQ's.
@@ -2589,7 +2588,7 @@ zcp `TestOriginRequest_WritesNothing_NamesTheRepositoryThePairWillWire`,
 `TestOriginRequest_AddressPastTheRepository_RefusedAskingForTheRepositoryAddress`, `TestOriginRequest_OriginAlreadyConnected_AnswersConnected`,
 `TestOriginRequest_OriginConnectedToTheRepository_AnswersConnectedBeforeItsFirstPush`,
 `TestOriginRequest_OriginConnectedUnderAnotherRepository_NamesThatRepository`,
-`TestOriginRequest_OlderHQWithoutRepos_FallsBackToItsPushes`, `TestClient_Self_Repos_DecodesOriginsAndOlderHQ`,
+`TestOriginRequest_OlderHQWithoutRepos_Asks`, `TestClient_Self_Repos_DecodesOriginsAndOlderHQ`,
 `TestSameRepoURL`, `TestServer_ObserveToolGating`, `TestAnnotations_OriginTool`, `TestDesiredRelease_RefusesInvalidManifest`, `TestDevelopExistingRepo_RunsTheReposOwnDevFlow`.
 
 ### Invariants
