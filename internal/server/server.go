@@ -367,6 +367,10 @@ func (s *Server) registerTools() {
 	}
 	if s.rtInfo.InContainer && s.rtInfo.MateEnabled {
 		tools.RegisterObserve(s.server, httpClient, projectID)
+		// A Mate's agent asks whether finished work goes back to the
+		// repository it came from (docs/spec-mate.md §5.10); a Mate's client
+		// draws the card, so it is Mate-gated like every mate-shaped effect.
+		tools.RegisterOrigin(s.server, httpClient, projectID)
 		// A Mate asks its person's Chief for what lies outside its project
 		// (docs/spec-mate.md §2.11); the card it proposes is drawn by a
 		// Mate's client, so the tool is Mate-gated like every mate-shaped

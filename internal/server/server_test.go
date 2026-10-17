@@ -760,12 +760,16 @@ func TestServer_ObserveToolGating(t *testing.T) {
 			if err != nil {
 				t.Fatalf("list tools: %v", err)
 			}
-			found := false
-			for _, tool := range result.Tools {
-				found = found || tool.Name == "zerops_observe"
-			}
-			if found != tt.want {
-				t.Errorf("zerops_observe registered = %v, want %v", found, tt.want)
+			// zerops_origin asks through HQ like zerops_observe reads through
+			// it: both are a Mate's and nothing else's.
+			for _, name := range []string{"zerops_observe", "zerops_origin"} {
+				found := false
+				for _, tool := range result.Tools {
+					found = found || tool.Name == name
+				}
+				if found != tt.want {
+					t.Errorf("%s registered = %v, want %v", name, found, tt.want)
+				}
 			}
 		})
 	}
