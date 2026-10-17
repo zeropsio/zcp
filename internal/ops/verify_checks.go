@@ -283,13 +283,13 @@ func devPortInternalChecks(ctx context.Context, probe httpProbe, svc *platform.S
 			check.URL = url
 		case devsup.StatusCrashed:
 			check = CheckResult{Name: checkNameHTTPInternal, Status: CheckFail,
-				Detail: fmt.Sprintf("dev server %s crashed — read zerops_dev_server action=logs name=%s, fix it, start it again", d.Name, d.Name)}
+				Detail: fmt.Sprintf("dev server %s crashed — read zerops_dev_server action=logs hostname=%q name=%q, fix it, start it again", d.Name, svc.Name, d.Name)}
 		case devsup.StatusStopped:
 			check = CheckResult{Name: checkNameHTTPInternal, Status: CheckSkip,
-				Detail: fmt.Sprintf("dev server %s is stopped — start it with zerops_dev_server name=%s to check it", d.Name, d.Name)}
+				Detail: fmt.Sprintf("dev server %s is stopped — start it with zerops_dev_server action=start hostname=%q name=%q to check it", d.Name, svc.Name, d.Name)}
 		default:
 			check = CheckResult{Name: checkNameHTTPInternal, Status: CheckSkip,
-				Detail: fmt.Sprintf("dev server %s is not started — start it with zerops_dev_server name=%s to check it", d.Name, d.Name)}
+				Detail: fmt.Sprintf("dev server %s is not started — start it with zerops_dev_server action=start hostname=%q name=%q to check it", d.Name, svc.Name, d.Name)}
 		}
 		check.Server, check.Port = d.Name, d.Port
 		checks = append(checks, check)

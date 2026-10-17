@@ -144,6 +144,12 @@ func TestAtomAuthoringLint_FiresOnKnownViolations(t *testing.T) {
 			wantPattern: "dev-server-call-missing-hostname",
 			wantCat:     "tool-call-shape",
 		},
+		{
+			name:        "dev-server-call-without-action-or-hostname",
+			body:        "Start it with `zerops_dev_server name=<part>`.\n",
+			wantPattern: "dev-server-call-missing-hostname",
+			wantCat:     "tool-call-shape",
+		},
 		// axis-L (HARD-FORBID env-only title qualifiers) -----------------
 		{
 			name:        "axis-l-title-em-dash-container",

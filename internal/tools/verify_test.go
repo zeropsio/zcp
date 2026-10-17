@@ -834,7 +834,7 @@ func TestVerifyTool_EveryDeclaredPort(t *testing.T) {
 				if ch.Server != "" && ch.Port != map[string]int{"web": 3000, "api": 8080}[ch.Server] {
 					t.Errorf("check %+v names the wrong port", ch)
 				}
-				if ch.Server == "api" && ch.Status == ops.CheckSkip && !strings.Contains(ch.Detail, "start it with zerops_dev_server name=api") {
+				if ch.Server == "api" && ch.Status == ops.CheckSkip && !strings.Contains(ch.Detail, `start it with zerops_dev_server action=start hostname="appdev" name="api"`) {
 					t.Errorf("stopped server's check = %q, want the way to start it", ch.Detail)
 				}
 			}

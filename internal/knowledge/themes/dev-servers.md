@@ -45,8 +45,8 @@ The supervisor ignores keys it does not know.
 
 ## Changing the declaration
 
-- `zerops_dev_server action=start name=... command=... port=...` adds a server or changes its entry; a later start needs only the name.
-- After editing the file by hand (watch, ignore, autostart), run `zcp-devsup ctl reload` on the dev service over SSH, or `zerops_dev_server action=restart name=...`: an added server gets its first state, a removed one stops, a changed one restarts if it is meant to run.
+- `zerops_dev_server action=start hostname=... name=... command=... port=...` adds a server or changes its entry; a later start needs only the name.
+- After editing the file by hand (watch, ignore, autostart), run `zcp-devsup ctl reload` on the dev service over SSH, or `zerops_dev_server action=restart hostname=... name=...`: an added server gets its first state, a removed one stops, a changed one restarts if it is meant to run.
 - An invalid file changes nothing: the supervisor keeps what runs, starts nothing new, and status reports the error.
 
 ## Statuses and crashes
@@ -55,7 +55,7 @@ The supervisor ignores keys it does not know.
 - A server that crashes while starting (within 10 s of its start, or before its port first accepts) is started once more after its siblings settle; status says it comes back. Check `zerops_dev_server action=status` again before fixing anything.
 - A second crash, or a crash after the server listened, stays down until you start it again or a watched change restarts it.
 - A redeploy starts every `autostart` server; a container restart starts every server that was meant to run.
-- Each server has its own log: `zerops_dev_server action=logs name=...`.
+- Each server has its own log: `zerops_dev_server action=logs hostname=... name=...`.
 - A server that listens on 127.0.0.1 only is reachable only inside its container: start and status say it listens on loopback only and give no address. Bind it to 0.0.0.0 (`--host 0.0.0.0` for Vite and similar), unless a web server in front of it proxies to it.
 
 ## The task limit

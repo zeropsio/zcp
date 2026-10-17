@@ -503,7 +503,7 @@ func declaredSummary(ds *DevServers) string {
 
 // unknownServerErr answers a name the repo does not declare.
 func unknownServerErr(ds *DevServers, name string) error {
-	hint := "Start it with zerops_dev_server action=start name=" + name + " command=<the command that runs it>."
+	hint := fmt.Sprintf("Start it with zerops_dev_server action=start hostname=%q name=%q command=<the command that runs it>.", ds.Hostname, name)
 	if len(ds.Servers()) > 0 {
 		hint = "Declared: " + declaredSummary(ds) + ". " + hint
 	}

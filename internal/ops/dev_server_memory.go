@@ -179,7 +179,7 @@ func guardStartOnMemory(ctx context.Context, ssh SSHDeployer, client platform.Cl
 	ceiling := memoryCeilingKB(mem, serviceMaxRAMKB(ctx, client, projectID, p.Hostname))
 	if msg := memoryRefusal(p.Hostname, name, mem, ceiling, ds.State); msg != "" {
 		return "", platform.NewPlatformError(platform.ErrPreflightFailed, msg,
-			"Stop a dev server you are not working on (zerops_dev_server action=stop name=<server>), or raise the service's max RAM (zerops_scale).")
+			fmt.Sprintf("Stop a dev server you are not working on (zerops_dev_server action=stop hostname=%q name=<server>), or raise the service's max RAM (zerops_scale).", p.Hostname))
 	}
 	return sharedMemoryNote(p.Hostname, name, ceiling, ds), nil
 }
