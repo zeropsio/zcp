@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -144,29 +145,28 @@ const browserTextCap = 20000
 
 // shortBrowserResult is the result as the model reads it. Within
 // browserTextCap it is the whole result; past it, the whole result goes to a
-// temp file the reply names (fullResult) and each step result, errors and
-// console output keeps its head as a string, the network tail its first
-// requests — the longest outputs cut first, as little as fits.
+// temp file the reply names (fullResult) when it can be written and each step
+// result, errors and console output keeps its head as a string, the network
+// tail its first requests — the longest outputs cut first, as little as fits.
 func shortBrowserResult(result *ops.BrowserBatchResult) any {
 	whole, err := json.Marshal(result)
 	if err != nil || len(whole) <= browserTextCap {
 		return result
 	}
 	short := *result
-	if f, err := os.CreateTemp("", "zerops-browser-*.json"); err == nil {
-		_, werr := f.Write(whole)
-		if cerr := f.Close(); werr == nil && cerr == nil {
-			short.FullResult = f.Name()
-		}
+	short.FullResult = saveBrowserResult(whole)
+	note := "… (cut)"
+	if short.FullResult != "" {
+		note = "… (cut; the whole result is in fullResult)"
 	}
 	for limit := browserTextCap; ; limit /= 2 {
 		short.Steps = make([]ops.BrowserStepResult, len(result.Steps))
 		for i, step := range result.Steps {
-			step.Result = cutBrowserOutput(step.Result, limit)
+			step.Result = cutBrowserOutput(step.Result, limit, note)
 			short.Steps[i] = step
 		}
-		short.ErrorsOutput = cutBrowserOutput(result.ErrorsOutput, limit)
-		short.ConsoleOutput = cutBrowserOutput(result.ConsoleOutput, limit)
+		short.ErrorsOutput = cutBrowserOutput(result.ErrorsOutput, limit, note)
+		short.ConsoleOutput = cutBrowserOutput(result.ConsoleOutput, limit, note)
 		short.NetworkOutput = result.NetworkOutput[:min(len(result.NetworkOutput), limit/100)]
 		if b, err := json.Marshal(short); limit == 0 || (err == nil && len(b) <= browserTextCap) {
 			return short
@@ -174,9 +174,28 @@ func shortBrowserResult(result *ops.BrowserBatchResult) any {
 	}
 }
 
+// saveBrowserResult writes a cut result whole to this process's one file in
+// the temp dir, replacing the previous cut result so they never pile up. It
+// answers the file, "" when it could not be written. The rename replaces the
+// name itself, never following what an existing name points at.
+func saveBrowserResult(whole []byte) string {
+	f, err := os.CreateTemp("", "zerops-browser-*.tmp")
+	if err != nil {
+		return ""
+	}
+	_, werr := f.Write(whole)
+	cerr := f.Close()
+	path := filepath.Join(os.TempDir(), fmt.Sprintf("zerops-browser-%d.json", os.Getpid()))
+	if werr != nil || cerr != nil || os.Rename(f.Name(), path) != nil {
+		_ = os.Remove(f.Name())
+		return ""
+	}
+	return path
+}
+
 // cutBrowserOutput keeps an output within limit chars: its head, as a JSON
-// string, when it is longer; nothing at limit 0.
-func cutBrowserOutput(raw json.RawMessage, limit int) json.RawMessage {
+// string ending in note, when it is longer; nothing at limit 0.
+func cutBrowserOutput(raw json.RawMessage, limit int, note string) json.RawMessage {
 	if len(raw) <= limit {
 		return raw
 	}
@@ -184,7 +203,7 @@ func cutBrowserOutput(raw json.RawMessage, limit int) json.RawMessage {
 		return nil
 	}
 	head := []rune(string(raw[:limit]))
-	cut, err := json.Marshal(string(head[:len(head)-1]) + "… (cut; the whole result is in fullResult)")
+	cut, err := json.Marshal(string(head[:len(head)-1]) + note)
 	if err != nil {
 		return nil
 	}

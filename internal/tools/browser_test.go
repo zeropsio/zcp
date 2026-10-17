@@ -13,6 +13,7 @@ import (
 	"image"
 	"image/png"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -145,6 +146,59 @@ func TestBrowserToolResult_LongOutputIsCutAndTheWholeResultIsInAFile(t *testing.
 	saved, err := os.ReadFile(shown.FullResult)
 	if err != nil || !bytes.Equal(saved, whole) {
 		t.Errorf("fullResult %q must hold the whole result (%d chars): got %d chars, %v", shown.FullResult, len(whole), len(saved), err)
+	}
+}
+
+// longBrowserResult is a result past the cap: a snapshot of n rows.
+func longBrowserResult(t *testing.T, rows int) *ops.BrowserBatchResult {
+	t.Helper()
+	snapshot, err := json.Marshal(map[string]string{"snapshot": strings.Repeat("- row \"order\" [ref=e2]\n", rows)})
+	if err != nil {
+		t.Fatalf("marshal snapshot: %v", err)
+	}
+	return &ops.BrowserBatchResult{URL: "https://appdev.example.invalid", Steps: []ops.BrowserStepResult{{Command: []string{"snapshot"}, Success: true, Result: snapshot}}}
+}
+
+// TestBrowserToolResult_LongOutputsInARowKeepOneFileWithTheLatestResult: a
+// long-lived Mate cuts many results; each one replaces the file the previous
+// one wrote, so they never pile up, and fullResult holds the latest.
+func TestBrowserToolResult_LongOutputsInARowKeepOneFileWithTheLatestResult(t *testing.T) {
+	// Not parallel: points the temp dir at this test's own.
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	var shown struct {
+		FullResult string `json:"fullResult"`
+	}
+	for _, rows := range []int{3000, 4000} {
+		if err := json.Unmarshal([]byte(resultText(t, browserToolResult(longBrowserResult(t, rows)))), &shown); err != nil {
+			t.Fatalf("the cut reply must stay JSON: %v", err)
+		}
+	}
+	files, err := filepath.Glob(filepath.Join(tmp, "zerops-browser-*"))
+	if err != nil || len(files) != 1 {
+		t.Errorf("files after two cut results = %v (%v), want one", files, err)
+	}
+	whole, err := json.Marshal(longBrowserResult(t, 4000))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved, err := os.ReadFile(shown.FullResult); err != nil || !bytes.Equal(saved, whole) {
+		t.Errorf("fullResult %q must hold the latest result (%d chars): got %d chars, %v", shown.FullResult, len(whole), len(saved), err)
+	}
+}
+
+// TestBrowserToolResult_ACutResultWhoseFileCannotBeWrittenNamesNoFile: when
+// the whole result cannot be saved, the cut output says it was cut and points
+// at no fullResult.
+func TestBrowserToolResult_ACutResultWhoseFileCannotBeWrittenNamesNoFile(t *testing.T) {
+	// Not parallel: points the temp dir at a folder that does not exist.
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "gone"))
+	text := resultText(t, browserToolResult(longBrowserResult(t, 3000)))
+	if strings.Contains(text, "fullResult") {
+		t.Errorf("a result no file holds must not name fullResult: %.300s…%s", text, text[max(0, len(text)-200):])
+	}
+	if !strings.Contains(text, "… (cut)") {
+		t.Errorf("the cut output must still say it was cut: …%s", text[max(0, len(text)-200):])
 	}
 }
 
