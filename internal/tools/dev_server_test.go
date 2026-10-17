@@ -296,6 +296,21 @@ func TestDevServer_AStartOnASupervisorThatDoesNotAnswerIsReportedUnresponsiveAnd
 	}
 }
 
+// A dev-server call on a dev container that does not answer over SSH in time
+// answers not answering with its recovery, never an UNKNOWN error.
+func TestDevServer_ACallOnAContainerThatDoesNotAnswerSSHAnswersNotAnsweringNeverUnknown(t *testing.T) {
+	t.Parallel()
+	c := devservertest.NewSupervised(`{"version":1,"servers":[{"name":"appdev","port":3000,"command":"next dev","cwd":"."}]}`)
+	c.Silent = true
+	srv, _ := migrationToolServer(t, c, statusActive)
+
+	a := callDevServer(t, srv, map[string]any{"action": "status", "hostname": "appdev"})
+	if a.Reason != "supervisor_unresponsive" || !strings.Contains(a.Message, "appdev did not answer over SSH in time") ||
+		!strings.Contains(a.Message, "zerops_scale") || !strings.Contains(a.Message, "zerops_manage action=restart") {
+		t.Errorf("status = %+v, want supervisor_unresponsive naming the host, zerops_scale and a restart", a)
+	}
+}
+
 // The move's final start passes the start's memory rule: when the server the
 // redeploy brought up has ended, a single-part app on a nearly full 0.5 GiB
 // grant has no server running, so its start reaches the supervisor and answers

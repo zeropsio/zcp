@@ -786,6 +786,30 @@ func TestDevServer_ASupervisorThatDoesNotAnswerInTimeIsReportedUnresponsiveNotMi
 	}
 }
 
+// A dev container that does not answer over SSH in time (out of memory or
+// CPU) is reported not answering, never an unknown ssh error: every action
+// changes nothing and says to check its load and memory, scale it or restart it.
+func TestDevServer_AContainerThatDoesNotAnswerSSHInTimeIsReportedNotAnsweringWithItsRecovery(t *testing.T) {
+	t.Parallel()
+	for _, action := range []string{"stop", "status", "logs", "start", "restart"} {
+		c := devservertest.NewSupervised(`{"version":1,"servers":[{"name":"web","port":3000,"command":"next dev","cwd":"."}]}`)
+		c.Silent = true
+		decl := c.Declaration
+		result, err := ExecuteDevServer(context.Background(), c, mockClientWithServices("difydev"), "p1",
+			DevServerParams{Action: action, Hostname: "difydev", Name: "web"})
+		if err != nil {
+			t.Fatalf("%s: err = %v, want a not-answering result", action, err)
+		}
+		want := "difydev did not answer over SSH in time — the container may be out of memory or CPU. Check its load and memory (zerops_logs, zerops_scale) or restart it (zerops_manage action=restart), then retry."
+		if result.Reason != reasonSupervisorUnresponsive || result.Running || result.Message != want {
+			t.Errorf("%s: result = %+v, want supervisor_unresponsive saying %q", action, result, want)
+		}
+		if n := len(c.Sent()); n != 1 || c.Declaration != decl || c.Deploys != 0 {
+			t.Errorf("%s: sent %d commands, declaration %q, deploys %d — want only the read, nothing changed", action, n, c.Declaration, c.Deploys)
+		}
+	}
+}
+
 // An entry removed from the declaration by hand leaves its server running
 // until the supervisor re-reads the file: the next zerops_dev_server call has
 // it re-read, which stops and drops that server, and the reply names it.

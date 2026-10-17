@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/zeropsio/zcp/internal/devsup"
+	"github.com/zeropsio/zcp/internal/platform"
 )
 
 // Container is one dev container. Zero value: no zcp-devsup, no files.
@@ -30,6 +31,9 @@ type Container struct {
 	// Unresponsive: the supervisor runs but does not answer its control
 	// socket in time (a thrashing container); `ctl` exits 5.
 	Unresponsive bool
+	// Silent: the container itself does not answer over SSH in time (out of
+	// memory or CPU); every command ends at the ssh deadline.
+	Silent bool
 	// SupervisorVersion and Formats answer `ctl version`.
 	SupervisorVersion string
 	Formats           []int
@@ -92,10 +96,13 @@ func NewSupervised(decl string) *Container {
 }
 
 // ExecSSH answers one command.
-func (c *Container) ExecSSH(_ context.Context, _ string, command string) ([]byte, error) {
+func (c *Container) ExecSSH(_ context.Context, hostname string, command string) ([]byte, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.Commands = append(c.Commands, command)
+	if c.Silent {
+		return nil, &platform.SSHExecError{Hostname: hostname, Err: fmt.Errorf("ssh stopped: %w (signal: killed)", context.DeadlineExceeded)}
+	}
 	switch {
 	case strings.Contains(command, "@@zcp-devsup version"):
 		return []byte(c.read()), nil

@@ -946,7 +946,10 @@ declaration, `5` supervisor not answering (the dial timed out or found the backl
 came in time). On `5` every `zerops_dev_server` action changes nothing and answers reason
 `supervisor_unresponsive` — the container may be out of memory or CPU, check its load and memory and
 retry — and a start never takes the move onto the supervisor below; a deploy's reply says the same
-(`TestDevServer_ASupervisorThatDoesNotAnswerInTimeIsReportedUnresponsiveNotMissing`).
+(`TestDevServer_ASupervisorThatDoesNotAnswerInTimeIsReportedUnresponsiveNotMissing`). A container
+that does not answer the SSH call itself in time answers the same reason, naming the host, with a
+scale or restart as its recovery
+(`TestDevServer_AContainerThatDoesNotAnswerSSHInTimeIsReportedNotAnsweringWithItsRecovery`).
 A start that fails still answers `0`; the failure is the server's `exit` in the answer.
 When the supervisor still runs a declared server whose entry the file no longer holds (removed by
 hand), every `zerops_dev_server` action first sends `reload`, which stops and drops it, and its reply

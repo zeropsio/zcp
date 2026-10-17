@@ -71,8 +71,9 @@ type DevServerResult struct {
 	//                               port stayed busy
 	//   stopped                   — the server is stopped (status)
 	//   no_supervisor             — the dev setup does not run zcp-devsup
-	//   supervisor_unresponsive   — zcp-devsup runs but did not answer in
-	//                               time (container out of memory or CPU)
+	//   supervisor_unresponsive   — zcp-devsup, or the container over SSH,
+	//                               did not answer in time (container out
+	//                               of memory or CPU)
 	//   health_probe_timeout      — probe context deadline exceeded
 	//   health_probe_slow         — the port accepts connections, no HTTP
 	//                               answer within the wait

@@ -3,6 +3,7 @@ package ops
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -71,13 +72,18 @@ func (e *NoSupervisorError) Error() string {
 }
 
 // SupervisorUnresponsiveError says hostname's supervisor runs but did not
-// answer its control socket in time — a container out of memory or CPU, never
-// a dev setup to move onto the supervisor.
+// answer its control socket in time, or (SSH) the container itself did not
+// answer over SSH in time — a container out of memory or CPU, never a dev
+// setup to move onto the supervisor.
 type SupervisorUnresponsiveError struct {
 	Hostname string
+	SSH      bool
 }
 
 func (e *SupervisorUnresponsiveError) Error() string {
+	if e.SSH {
+		return fmt.Sprintf("%s did not answer over SSH in time — the container may be out of memory or CPU. Check its load and memory (zerops_logs, zerops_scale) or restart it (zerops_manage action=restart), then retry.", e.Hostname)
+	}
 	return fmt.Sprintf("The dev-server supervisor on %s is running but did not answer in time — the container may be out of memory or CPU. Check its load and memory (zerops_logs, zerops_scale), then retry in a moment.", e.Hostname)
 }
 
@@ -144,6 +150,9 @@ func ReadDevServers(ctx context.Context, ssh SSHDeployer, hostname, root string)
 	readCtx, cancel := context.WithTimeout(ctx, devsupCtlTimeout)
 	defer cancel()
 	out, err := ssh.ExecSSH(readCtx, hostname, readDevServersCmd(root))
+	if sshTimedOut(ctx, err) {
+		return nil, &SupervisorUnresponsiveError{Hostname: hostname, SSH: true}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("read dev servers on %s: %w", hostname, err)
 	}
@@ -416,6 +425,12 @@ func ctlFailure(a devsupAnswer) error {
 	return &SupervisorCtlError{Code: a.code, Message: msg}
 }
 
+// sshTimedOut says an SSH call failed at its own deadline while the caller's
+// ctx still runs: the container did not answer in time.
+func sshTimedOut(ctx context.Context, err error) bool {
+	return errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil
+}
+
 // supervisorCtl runs one `zcp-devsup ctl <args> --json` on hostname and returns
 // the state it answers with.
 func supervisorCtl(ctx context.Context, ssh SSHDeployer, hostname string, args ...string) (devsup.State, error) {
@@ -428,6 +443,9 @@ func supervisorCtl(ctx context.Context, ssh SSHDeployer, hostname string, args .
 	ctlCtx, cancel := context.WithTimeout(ctx, devsupCtlTimeout)
 	defer cancel()
 	out, err := ssh.ExecSSH(ctlCtx, hostname, cmd)
+	if sshTimedOut(ctx, err) {
+		return devsup.State{}, &SupervisorUnresponsiveError{Hostname: hostname, SSH: true}
+	}
 	if err != nil {
 		return devsup.State{}, fmt.Errorf("zcp-devsup ctl %s on %s: %w", strings.Join(args, " "), hostname, err)
 	}
