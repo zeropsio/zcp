@@ -438,8 +438,15 @@ func hqLearnLanding(stateDir string, m *workflow.ServiceMeta, state hq.MateState
 		// merge (BuildAbsorbLandedChangeCommand).
 		recordLanding(stateDir, m, number, *found.MergedSha, *found.LandedHead)
 		// Never claims WHEN it is absorbed — the caller may be the very
-		// delivery about to do it. Just the fact.
-		return fmt.Sprintf("change #%d is merged — this Mate's work is on %q now"+hqMergedNextClause, number, hqBase)
+		// delivery about to do it. Just the fact, and the origin's CI on a Git
+		// environment's push of that very commit.
+		note := []string{fmt.Sprintf("change #%d is merged — this Mate's work is on %q now", number, hqBase)}
+		for _, push := range state.GitPushes {
+			if push.Repo == m.HQ.Repo && push.Sha == *found.MergedSha {
+				note = append(note, gitPushCI(push))
+			}
+		}
+		return strings.Join(note, "; ") + hqMergedNextClause
 	}
 	clearChange(stateDir, m, number)
 	return fmt.Sprintf("change #%d was closed without merging — nothing of it is on %q"+hqClosedNextClause, number, hqBase)

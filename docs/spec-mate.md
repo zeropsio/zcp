@@ -3330,7 +3330,9 @@ what is `zeropsPermissions.ts`'s `can` over the role function (§10.3).
 
 **A Mate's side** (`Authorization: Mate <credential>`, §6.6): its enrollment (`POST
 /api/mate/challenge`, `POST /api/mate/credential`), its own state (`GET /api/mate/self`: its record,
-the application HQ holds it in and that application's name, its changes there); a repository of
+the application HQ holds it in and that application's name, its changes there, and each Git
+environment's newest push per repository with the origin's CI on it, `gitPushes`, which an older
+HQ omits); a repository of
 its application, made or joined (`POST /api/mate/repos`); its change in a repository, one open at a
 time (`POST /api/mate/changes`, `PATCH …/:repo/:n`, `POST …/attachments`); a tier of the recipe
 (`GET /api/mate/recipe/:tier`); git over HTTPS at `/git/<appId>/<repo>.git` as the user `mate`,
@@ -3342,8 +3344,10 @@ registered only in a Mate's container, with no SSH requirement. It uses the enro
 credential: `action="environments"` reads `GET /api/mate/environments`; `action="status"` reads
 `GET /api/mate/environments/:projectId`; `action="logs"` reads
 `GET /api/mate/environments/:projectId/services/:serviceId/logs?limit=`, 1–100 entries (default
-100), each message at most 4,096 characters. The first call supplies environment project IDs,
-the second service IDs. No application ID or Zerops credential is accepted from the model.
+100), each message at most 4,096 characters; `action="ci"` reads `gitPushes` from `GET
+/api/mate/self`, one short line per push ("CI on <sha> in <environment>: failed — <check> <url>"),
+and the note that the pair's change merged carries the same line for a push of the merged commit.
+The first call supplies environment project IDs, the second service IDs. No application ID or Zerops credential is accepted from the model.
 HQ resolves the Mate's current placement by ID on each call and permits only environments of
 that application that every active person able to operate the Mate may read in Zerops. These
 permission facts are read for the call, never served from the outage fallback. HQ opens and checks
@@ -3357,6 +3361,7 @@ so: its token reaches no other project, stage and production are observed with `
 and the application's other Mates are not readable from the Mate; a container that is not a Mate
 reads a block on its own token's reach instead (`agents_application.md`, `agents_group.md`).
 Tests: the fork's `observation.test.ts`, `zerops/observationHttp.test.ts`; zcp `TestObserve_*`,
+`TestHQLearnLanding_MergedChange_CarriesTheCIOfItsPush`, `TestClient_Self_GitPushes_DecodesCIAndOlderHQ`,
 `TestServer_ObserveToolGating`, `TestAnnotations_ObserveTool`,
 `TestBuildAgentsMD_Container_GroupAndGitHost`.
 

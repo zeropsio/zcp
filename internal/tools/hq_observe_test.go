@@ -36,7 +36,7 @@ func TestObserve_HQEnrollment_ReadsAndFailures(t *testing.T) {
 		t.Fatalf("list observe tool: result=%+v err=%v", listed, err)
 	}
 	tool := listed.Tools[0]
-	wantDescription := "Observe this project's stage and production through HQ. A stage or production that Mate delivers to a Git repository is not listed here. environments lists project IDs; status reads service IDs, status and active versions; logs reads up to 100 service entries. Read only: no sibling Zerops grants or secrets. Failures say: fix input, retry later, or accept HQ's refusal."
+	wantDescription := "Observe this project's stage and production through HQ. environments lists project IDs; status reads service IDs, status and active versions; logs reads up to 100 service entries; ci reads the newest push and CI where Mate delivers to Git, which environments omits. Read only: no sibling Zerops grants or secrets. Failures say: fix input, retry later, or accept HQ's refusal."
 	if tool == nil || tool.Description != wantDescription {
 		t.Fatalf("observe tool = %+v, want description %q", tool, wantDescription)
 	}
