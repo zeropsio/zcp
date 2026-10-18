@@ -280,8 +280,8 @@ func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallba
 			attempt.FailureClass = classifyDeployStatus(entry.Result.Status)
 		}
 		if entry.Result != nil {
-			if move := moves[entry.Target.TargetService]; move.sentence != "" {
-				entry.Result.Message = move.sentence + " " + entry.Result.Message
+			if told := moves[entry.Target.TargetService].told(entry.Result); told != "" {
+				entry.Result.Message = told + " " + entry.Result.Message
 			}
 			if w := warnings[entry.Target.TargetService]; w != "" {
 				entry.Result.Warnings = append(entry.Result.Warnings, w)

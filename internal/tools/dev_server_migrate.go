@@ -138,10 +138,23 @@ func (s DevsupSource) URL(ctx context.Context) (string, error) {
 type devSetupMove struct {
 	// sentence says what changed, "" when nothing did.
 	sentence string
+	// failedSentence replaces sentence on a deploy that did not succeed, when
+	// what sentence says the deploy does depends on its success.
+	failedSentence string
 	// keptServer: the deploy declared the server the deleted keeper kept on
 	// its target; the keeper record goes once the supervisor answers after
 	// the deploy.
 	keptServer bool
+}
+
+// told is what a deploy that ended in result (nil: it never reached the
+// build) says about the dev setup: a deploy that neither succeeded nor is
+// still building installed nothing.
+func (m devSetupMove) told(result *ops.DeployResult) string {
+	if m.failedSentence != "" && (result == nil || (result.Status != statusDeployed && !result.TimedOut)) {
+		return m.failedSentence
+	}
+	return m.sentence
 }
 
 // settle drops the keeper record of a kept server the deploy carried once the
@@ -171,8 +184,7 @@ func superviseDevSetup(ctx context.Context, client platform.Client, projectID st
 	if ok {
 		return carryKeptServer(ctx, ssh, stateDir, src, target, setup, workingDir, kept)
 	}
-	sentence, err := superviseNewDevSetup(ctx, client, projectID, ssh, stateDir, src, source, target, setup, workingDir)
-	return devSetupMove{sentence: sentence}, err
+	return superviseNewDevSetup(ctx, client, projectID, ssh, stateDir, src, source, target, setup, workingDir)
 }
 
 // carryKeptServer makes a deploy of target bring back the dev server the
@@ -232,43 +244,46 @@ func carryKeptServer(ctx context.Context, ssh ops.SSHDeployer, stateDir string, 
 // published or named yet — the dev setup keeps today's shape.
 // It edits the dev setup in workingDir, the folder the deploy runs from, and a
 // variant-B dev service's supervisor runs on its code volume. It returns the
-// sentence saying what changed, "" when nothing did.
-func superviseNewDevSetup(ctx context.Context, client platform.Client, projectID string, ssh ops.SSHDeployer, stateDir string, src DevsupSource, source, target, setup, workingDir string) (string, error) {
+// sentences saying what changed, none when nothing did.
+func superviseNewDevSetup(ctx context.Context, client platform.Client, projectID string, ssh ops.SSHDeployer, stateDir string, src DevsupSource, source, target, setup, workingDir string) (devSetupMove, error) {
 	if source != "" && source != target {
-		return "", nil
+		return devSetupMove{}, nil
 	}
 	meta, _ := workflow.FindServiceMeta(stateDir, target)
 	if meta == nil {
-		return "", nil
+		return devSetupMove{}, nil
 	}
 	svc, err := ops.LookupService(ctx, client, projectID, target)
 	if err != nil || !isDeferredStartTarget(meta, svc, target) {
-		return "", nil //nolint:nilerr // not a dev-mode dynamic runtime here, or no service read: the first start migrates it
+		return devSetupMove{}, nil //nolint:nilerr // not a dev-mode dynamic runtime here, or no service read: the first start migrates it
 	}
 	url, err := src.URL(ctx)
 	if err != nil {
-		return "", nil //nolint:nilerr // no zcp-devsup published or named yet: today's shape, the first start migrates it
+		return devSetupMove{}, nil //nolint:nilerr // no zcp-devsup published or named yet: today's shape, the first start migrates it
 	}
 	if meta.IsDeployed() {
 		file, used, from, err := ops.RepinSupervisorInDevSetup(ctx, ssh, target, setup, url, workingDir)
 		if err != nil {
-			return "", fmt.Errorf("dev-server supervisor: %w", err)
+			return devSetupMove{}, fmt.Errorf("dev-server supervisor: %w", err)
 		}
 		if from == "" {
-			return "", nil
+			return devSetupMove{}, nil
 		}
-		return fmt.Sprintf("Before this deploy zcp re-pinned zcp-devsup in setup %q of %s from %s to %s, so this deploy installs it on %s — commit it with your next change.",
-			used, file, devsupRelease(from), devsupRelease(url), target), nil
+		repinned := fmt.Sprintf("Before this deploy zcp re-pinned zcp-devsup in setup %q of %s from %s to %s", used, file, devsupRelease(from), devsupRelease(url))
+		return devSetupMove{
+			sentence:       fmt.Sprintf("%s, so this deploy installs it on %s — commit it with your next change.", repinned, target),
+			failedSentence: fmt.Sprintf("%s; this deploy failed, so the next successful deploy of %s installs it — commit it with your next change.", repinned, target),
+		}, nil
 	}
 	file, used, changed, err := ops.AdoptSupervisorInDevSetup(ctx, ssh, target, setup, url, workingDir, meta.WorkingDirFor(target))
 	if err != nil {
-		return "", fmt.Errorf("dev-server supervisor: %w", err)
+		return devSetupMove{}, fmt.Errorf("dev-server supervisor: %w", err)
 	}
 	if !changed {
-		return "", nil
+		return devSetupMove{}, nil
 	}
-	return fmt.Sprintf("Before this first deploy zcp put %s under the dev-server supervisor: setup %q in %s now installs and runs zcp-devsup (run.prepareCommands, run.start) — commit it with your next change; zerops_dev_server action=start runs your dev server under it.",
-		target, used, file), nil
+	return devSetupMove{sentence: fmt.Sprintf("Before this first deploy zcp put %s under the dev-server supervisor: setup %q in %s now installs and runs zcp-devsup (run.prepareCommands, run.start) — commit it with your next change; zerops_dev_server action=start runs your dev server under it.",
+		target, used, file)}, nil
 }
 
 // devsupRelease names a zcp-devsup download by its release tag, by the whole

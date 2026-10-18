@@ -831,7 +831,9 @@ else, and the deploy reply names both releases — that deploy installs it, noth
 own, and a dev setup without the line stays as written
 (`TestDeploy_ADeployedDevSetupPinnedToAnOlderSupervisor_InstallsTheNewestInTheSameDeploy`). A
 deploy that fails after the re-pin names it too
-(`TestDeploy_ADeployThatFailsAfterTheSupervisorRePinStillSaysTheDevSetupChanged`).
+(`TestDeploy_ADeployThatFailsAfterTheSupervisorRePinStillSaysTheDevSetupChanged`) and says the
+next successful deploy installs it
+(`TestDeploy_ABuildThatFailsAfterTheSupervisorRePinSaysTheNextSuccessfulDeployInstallsIt`).
 
 **Crew save.** Before every push from a service, zcp runs `<git-common-dir>/t3-crew-save` when it is executable; absent → the push runs as before; non-zero → the deploy is refused with the save's error.
 

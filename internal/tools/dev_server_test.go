@@ -951,3 +951,41 @@ func TestDeploy_ADeployThatFailsAfterTheSupervisorRePinStillSaysTheDevSetupChang
 		t.Errorf("the failed deploy does not say zcp changed zerops.yml: %s", text)
 	}
 }
+
+// A build that fails after the re-pin installed nothing: the deploy says the
+// next successful deploy installs the re-pinned supervisor, never this one.
+func TestDeploy_ABuildThatFailsAfterTheSupervisorRePinSaysTheNextSuccessfulDeployInstallsIt(t *testing.T) {
+	t.Parallel()
+	const older = "https://github.com/zeropsio/zcp/releases/download/v9.200.0/zcp-devsup-linux-amd64"
+	dir := t.TempDir()
+	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+		Hostname: "appdev", Mode: topology.PlanModeDev, BootstrapSession: "sess1",
+		BootstrappedAt: "2026-10-14", PrimarySetupName: "dev", FirstDeployedAt: "2026-10-14T20:00:00Z",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "appdev", ProjectID: "proj-1", Status: serviceStatusRunning,
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "bun@1.3"}}}).
+		WithAppVersionEvents([]platform.AppVersionEvent{{ID: "av-2", ProjectID: "proj-1", ServiceStackID: "svc-1", Status: statusBuildFailed, Sequence: 2}})
+	pinnedSetup, _, _, err := ops.AdoptSupervisorYAML([]byte(todaysDevSetup), "dev", "appdev", older, "")
+	if err != nil {
+		t.Fatalf("AdoptSupervisorYAML: %v", err)
+	}
+	c := &devservertest.Container{YAMLFile: "zerops.yml", YAML: string(pinnedSetup)}
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", c, &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
+		nil, runtime.Info{}, dir, testDeployEngine(t), nil, DevsupSource{Latest: func(context.Context) (string, error) { return testDevsupURL, nil }})
+
+	text := getTextContent(t, callTool(t, srv, "zerops_deploy", map[string]any{"targetService": "appdev", "setup": "dev"}))
+	var parsed ops.DeployResult
+	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
+		t.Fatalf("parse %s: %v", text, err)
+	}
+	if parsed.Status != statusBuildFailed {
+		t.Fatalf("status = %s, want BUILD_FAILED: %s", parsed.Status, text)
+	}
+	if want := `Before this deploy zcp re-pinned zcp-devsup in setup "dev" of zerops.yml from v9.200.0 to v9.300.0; this deploy failed, so the next successful deploy of appdev installs it — commit it with your next change.`; !strings.HasPrefix(parsed.Message, want) {
+		t.Errorf("message = %q, want it to start %q", parsed.Message, want)
+	}
+}

@@ -433,8 +433,8 @@ func runDeploySSHZCLIPush(
 		// The dev setup was rewritten before the push, so a failed deploy
 		// still says so: the diff is never left unexplained.
 		toldMove := func(w *ErrorWire) {
-			if move.sentence != "" {
-				w.Suggestion = strings.TrimSpace(w.Suggestion + " " + move.sentence)
+			if told := move.told(nil); told != "" {
+				w.Suggestion = strings.TrimSpace(w.Suggestion + " " + told)
 			}
 		}
 		return convertError(err, WithRecoveryStatus(), WithFailureClassification(classification), WithSuggestion(suggestion), toldMove), nil, nil
@@ -443,8 +443,8 @@ func runDeploySSHZCLIPush(
 	onProgress := buildProgressCallback(ctx, req)
 	ctx = deployFollowUpContext(ctx)
 	pollDeployBuild(ctx, client, projectID, result, onProgress, logFetcher, sshDeployer, stateDir, configFile)
-	if move.sentence != "" {
-		result.Message = move.sentence + " " + result.Message
+	if told := move.told(result); told != "" {
+		result.Message = told + " " + result.Message
 	}
 	if superviseErr != nil {
 		result.Warnings = append(result.Warnings, superviseErr.Error())
