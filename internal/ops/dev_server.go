@@ -1,9 +1,11 @@
 package ops
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"path"
 	"regexp"
@@ -501,8 +503,32 @@ func declaredSummary(ds *DevServers) string {
 	return strings.Join(parts, ", ")
 }
 
-// unknownServerErr answers a name the repo does not declare.
+// supervisedSummary lists the servers the supervisor runs, with its status.
+func supervisedSummary(ds *DevServers) string {
+	names := slices.Sorted(maps.Keys(ds.State.Servers))
+	for i, n := range names {
+		names[i] = fmt.Sprintf("%s (%s)", n, ds.State.Servers[n].Status)
+	}
+	return strings.Join(names, ", ")
+}
+
+// declareHint is how a dev service without a declaration file gets one back
+// without a start: a start declares only the server it names, and the reload
+// it sends stops every other one.
+func declareHint(hostname string) string {
+	return fmt.Sprintf("To have zcp manage them again, restore %s (from git when it was committed) or write it with each server's name, command, port and cwd, then run zcp-devsup ctl reload on %s over SSH. Do not start one of them with zerops_dev_server before that: the start declares only that server and stops the others.",
+		devsup.DeclarationPath, hostname)
+}
+
+// unknownServerErr answers a name the repo does not declare. Without a
+// declaration file it names what the supervisor runs, and suggests a start
+// only when it runs nothing.
 func unknownServerErr(ds *DevServers, name string) error {
+	if !ds.DeclarationExists && len(ds.State.Servers) > 0 {
+		return platform.NewPlatformError(platform.ErrInvalidParameter,
+			fmt.Sprintf("%s has no %s and its supervisor runs no dev server named %q", ds.Hostname, devsup.DeclarationPath, name),
+			fmt.Sprintf("Its supervisor runs %s: pass name=<one of them>. %s", supervisedSummary(ds), declareHint(ds.Hostname)))
+	}
 	hint := fmt.Sprintf("Start it with zerops_dev_server action=start hostname=%q name=%q command=<the command that runs it>.", ds.Hostname, name)
 	if len(ds.Servers()) > 0 {
 		hint = "Declared: " + declaredSummary(ds) + ". " + hint
@@ -849,6 +875,9 @@ func runningSiblings(st devsup.State, name string) []string {
 // has a port, probes it once from inside the container. Without a name on a
 // dev service with several servers, none named after it, it reports each.
 func statusDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds *DevServers) (*DevServerResult, error) {
+	if _, named := ds.State.Servers[p.Hostname]; p.Name == "" && !ds.DeclarationExists && len(ds.State.Servers) > 0 && !named {
+		return statusSupervisedServers(ctx, ssh, p, ds)
+	}
 	name, err := resolveServerName(p, ds, false)
 	if err != nil && p.Name == "" && len(ds.Servers()) > 1 {
 		return statusEveryServer(ctx, ssh, p, ds)
@@ -860,7 +889,7 @@ func statusDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds
 	if !ok {
 		return nil, unknownServerErr(ds, name)
 	}
-	declared, _ := ds.Server(name)
+	declared, isDeclared := ds.Server(name)
 	result := newResult(devServerActionStatus, p.Hostname, name)
 	result.LogFile, result.PID, result.Restarts = server.LogPath, server.Pid, server.Restarts
 	result.LastRestartReason = server.LastRestartReason
@@ -886,12 +915,9 @@ func statusDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds
 		return result, nil
 	case devsup.StatusRunning, devsup.StatusStarting:
 	}
-	port := p.Port
+	port := cmp.Or(p.Port, declared.Port, server.Port)
 	if port == 0 {
-		port = declared.Port
-	}
-	if port == 0 {
-		result.Message = fmt.Sprintf("Dev server %s is %s (no HTTP port).", label, server.Status)
+		result.Message = fmt.Sprintf("Dev server %s is %s%s", label, server.Status, unknownPortClause(ds, name, isDeclared, server))
 		return result, nil
 	}
 	healthPath := probedPath(p, ds, name)
@@ -929,6 +955,22 @@ func statusDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds
 	return result, nil
 }
 
+// unknownPortClause ends the status of a running server no call, declaration
+// or runtime entry gives a port: one declared or run without a port has none,
+// any other has a port zcp does not know.
+func unknownPortClause(ds *DevServers, name string, isDeclared bool, server devsup.ServerState) string {
+	switch {
+	case isDeclared:
+		return " (declared without an HTTP port)."
+	case server.Source == devsup.SourceRuntime:
+		return " (run without an HTTP port)."
+	case !ds.DeclarationExists:
+		return fmt.Sprintf("; zcp does not know its port, since %s is missing.", devsup.DeclarationPath)
+	default:
+		return fmt.Sprintf("; zcp does not know its port, since %s does not declare %s.", devsup.DeclarationPath, name)
+	}
+}
+
 // statusEveryServer is a status of each of the dev service's servers, one
 // sentence each; it reports none of them alone.
 func statusEveryServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds *DevServers) (*DevServerResult, error) {
@@ -950,6 +992,31 @@ func statusEveryServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, 
 	result := newResult(devServerActionStatus, p.Hostname, p.Hostname)
 	result.Unreported = true
 	result.Message = fmt.Sprintf("%s declares %d dev servers:\n%s", p.Hostname, len(servers), strings.Join(lines, "\n"))
+	return result, nil
+}
+
+// statusSupervisedServers is a status of each server the supervisor runs on a
+// dev service without a declaration file, and how to declare them again.
+func statusSupervisedServers(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds *DevServers) (*DevServerResult, error) {
+	names := slices.Sorted(maps.Keys(ds.State.Servers))
+	lines := make([]string, 0, len(names))
+	for _, name := range names {
+		one := p
+		one.Name, one.Port, one.HealthPath = name, 0, ""
+		r, err := statusDevServer(ctx, ssh, one, ds)
+		if err != nil {
+			return nil, err
+		}
+		lines = append(lines, r.Message)
+	}
+	count := "1 dev server"
+	if len(names) > 1 {
+		count = fmt.Sprintf("%d dev servers", len(names))
+	}
+	result := newResult(devServerActionStatus, p.Hostname, p.Hostname)
+	result.Unreported = true
+	result.Message = fmt.Sprintf("%s has no %s; its supervisor runs %s:\n%s\n%s",
+		p.Hostname, devsup.DeclarationPath, count, strings.Join(lines, "\n"), declareHint(p.Hostname))
 	return result, nil
 }
 

@@ -878,6 +878,73 @@ func TestDevServer_StatusAndLogsWithoutADeclarationFileLeaveTheRunningServersAlo
 	}
 }
 
+// Without a declaration file zcp knows the servers only from the supervisor:
+// a status without a name reports each server it runs and says how to declare
+// them, never a start that would run a duplicate beside them; a call that
+// names no server it runs says the same.
+func TestDevServer_StatusWithoutADeclarationFileReportsTheServersTheSupervisorRunsAndSuggestsNoDuplicateStart(t *testing.T) {
+	t.Parallel()
+	const both = `{"version":1,"servers":[{"name":"web","port":3000,"command":"next dev","cwd":"."},{"name":"lo","port":5999,"command":"python3 -m http.server 5999","cwd":"."}]}`
+	c := devservertest.NewSupervised(both)
+	c.Declaration = ""
+	result, err := ExecuteDevServer(context.Background(), c, mockClientWithServices("difydev"), "p1",
+		DevServerParams{Action: "status", Hostname: "difydev"})
+	if err != nil {
+		t.Fatalf("err = %v, want a status of the servers the supervisor runs", err)
+	}
+	for _, want := range []string{
+		"difydev has no .zcp/dev-servers.json; its supervisor runs 2 dev servers:",
+		"Dev server lo on difydev is running",
+		"Dev server web on difydev is running",
+	} {
+		if !strings.Contains(result.Message, want) {
+			t.Errorf("message = %q, want it to contain %q", result.Message, want)
+		}
+	}
+	if strings.Contains(result.Message, "action=start") {
+		t.Errorf("message = %q, want no start beside the running servers", result.Message)
+	}
+	if !result.Unreported {
+		t.Errorf("Unreported = false, want a status of several servers that reports none alone")
+	}
+	_, err = ExecuteDevServer(context.Background(), c, mockClientWithServices("difydev"), "p1",
+		DevServerParams{Action: "logs", Hostname: "difydev"})
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) {
+		t.Fatalf("logs without a name: err = %v, want a platform error naming the running servers", err)
+	}
+	if want := "difydev has no .zcp/dev-servers.json and its supervisor runs no dev server named \"difydev\""; pe.Message != want {
+		t.Errorf("logs without a name: message = %q, want %q", pe.Message, want)
+	}
+	if want := "Its supervisor runs lo (running), web (running): pass name="; !strings.HasPrefix(pe.Suggestion, want) || strings.Contains(pe.Suggestion, "action=start") {
+		t.Errorf("logs without a name: suggestion = %q, want it to start %q and suggest no start", pe.Suggestion, want)
+	}
+	for _, name := range []string{"web", "lo"} {
+		if c.Status(name) != devsup.StatusRunning {
+			t.Errorf("%s is %q, want it left running", name, c.Status(name))
+		}
+	}
+}
+
+// A server the declaration does not name has no port zcp knows: its status
+// says so instead of reporting it has no HTTP port. A server declared without
+// a port has none.
+func TestDevServer_StatusOfARunningServerWhosePortZcpDoesNotKnowNeverSaysItHasNoHTTPPort(t *testing.T) {
+	t.Parallel()
+	const both = `{"version":1,"servers":[{"name":"web","port":3000,"command":"next dev","cwd":"."},{"name":"worker","command":"node worker.js","cwd":"."}]}`
+	c := devservertest.NewSupervised(both)
+	c.Declaration = ""
+	result := runDevServer(t, c, DevServerParams{Action: "status", Hostname: "difydev", Name: "web"})
+	if want := "Dev server web on difydev is running; zcp does not know its port, since .zcp/dev-servers.json is missing."; result.Message != want {
+		t.Errorf("undeclared: message = %q, want %q", result.Message, want)
+	}
+	declared := devservertest.NewSupervised(both)
+	result = runDevServer(t, declared, DevServerParams{Action: "status", Hostname: "difydev", Name: "worker"})
+	if want := "Dev server worker on difydev is running (declared without an HTTP port)."; result.Message != want {
+		t.Errorf("declared without a port: message = %q, want %q", result.Message, want)
+	}
+}
+
 // TestDevServer_NoProcessPatternMatching (TEST-PLAN E1 #3, #14): no
 // dev-server path finds processes by name or command pattern, and the
 // keeper, the zcp-side dev-servers.json and the SSH start are gone. One
