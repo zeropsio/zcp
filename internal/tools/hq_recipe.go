@@ -175,16 +175,19 @@ func groupRecipeOutcome(
 	case outcome.Committed:
 		outcome.Line = fmt.Sprintf("the group recipe changed; change #%d (%s) carries the update", outcome.Change, outcome.ChangeURL)
 	}
-	// A part the tiers on main lack or still carry is the targeted
-	// proposal's, never this one's (hq_recipe_parts.go): said, with its call.
-	steer, err := recipePartSteer(ctx, comp)
-	switch {
-	case err != nil:
-		outcome.Warnings = append(outcome.Warnings, err.Error())
-	case steer != "" && outcome.Line != "":
-		outcome.Line += "; " + steer
-	case steer != "":
-		outcome.Line = steer
+	// A part the tiers on main lack or still carry, and a managed service
+	// they lack, is the targeted proposal's, never this one's
+	// (hq_recipe_parts.go, hq_recipe_managed.go): said, with its call.
+	for _, steerOf := range []func(context.Context, groupRecipeComposition) (string, error){recipePartSteer, recipeManagedSteer} {
+		steer, err := steerOf(ctx, comp)
+		switch {
+		case err != nil:
+			outcome.Warnings = append(outcome.Warnings, err.Error())
+		case steer != "" && outcome.Line != "":
+			outcome.Line += "; " + steer
+		case steer != "":
+			outcome.Line = steer
+		}
 	}
 	return outcome
 }
@@ -584,7 +587,7 @@ func handleGroupRecipe(
 		result["message"] = strings.ToUpper(outcome.Line[:1]) + outcome.Line[1:] + "."
 	case outcome.OnMain:
 		result["message"] = fmt.Sprintf(
-			"Main of the recipe repository %q already carries every tier of the recipe, so no tier is proposed: zcp adds only the tiers main lacks. To carry a service's scale into the tiers on main, call zerops_workflow action=\"group-recipe\" with scaling set to the service's hostname: it proposes only that service's verticalAutoscaling, floors applied, as a change the person reviews. A person changes anything else in a tier on main in HQ.",
+			"Main of the recipe repository %q already carries every tier of the recipe, so no tier is proposed: zcp adds only the tiers main lacks. To carry a service's scale into the tiers on main, call zerops_workflow action=\"group-recipe\" with scaling set to the service's hostname: it proposes only that service's verticalAutoscaling, floors applied, as a change the person reviews. To carry a managed service this project gained (a database, a cache, a storage), or a part of the app added or removed, call it with service set to the hostname: it proposes only that service added to, or removed from, each tier on main, as a change the person reviews.",
 			hq.RecipeRepo)
 	default:
 		result["message"] = fmt.Sprintf(
