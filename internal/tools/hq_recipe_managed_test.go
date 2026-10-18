@@ -1,0 +1,168 @@
+// Tests for: tools/hq_recipe_managed.go — a managed service the Mate's
+// project gained reaching the tiers on main as a targeted "add service X"
+// proposal, run against a fake HQ that serves real git (hq_lab_test.go).
+package tools
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/ops/bundle"
+	"github.com/zeropsio/zcp/internal/platform"
+)
+
+// cacheService is a Valkey the Mate adds to its project after the group's
+// recipe landed on main.
+var cacheService = platform.ServiceStack{ID: "svc-cache", Name: "cache", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "valkey:single@7.2", ServiceStackTypeCategoryName: "USER"}}
+
+// tierEntryType is the type a tier's entry for host writes, "" when the
+// tier names no host.
+func tierEntryType(body, host string) string {
+	lines := strings.Split(body, "\n")
+	for i, line := range lines {
+		if strings.TrimSpace(line) != "- hostname: "+host {
+			continue
+		}
+		for _, field := range lines[i+1:] {
+			if strings.HasPrefix(strings.TrimSpace(field), "- ") || strings.TrimSpace(field) == "" {
+				break
+			}
+			if value, ok := strings.CutPrefix(strings.TrimSpace(field), "type: "); ok {
+				return value
+			}
+		}
+	}
+	return ""
+}
+
+// A managed service added to a one-part app's Mate project is proposed into
+// every tier that lacks it, shaped by each tier's policy, as one change the
+// person reviews: the reconcile names the call and says the environments
+// already made need the service themselves; the proposal adds that service
+// alone, ahead of the runtimes, every other line — a person's edits
+// included — as main has it.
+func TestGroupRecipeService_ManagedAdded_ProposedIntoEveryTierLackingIt(t *testing.T) {
+	lab, main := newPartsLab(t)
+	client := recipeReconcileClient(cacheService)
+
+	outcome := lab.proposeRecipe(client)
+	if outcome.Change != 0 || !strings.Contains(outcome.Line, `action="group-recipe" service="cache"`) {
+		t.Fatalf("reconcile after adding a cache = %+v, want the steer to service=cache", outcome)
+	}
+	if !strings.Contains(outcome.Line, "environments already made need it added themselves") {
+		t.Errorf("the steer does not say the stage and production already made need the cache themselves: %s", outcome.Line)
+	}
+	if strings.Contains(outcome.Line, `service="db"`) {
+		t.Errorf("the steer names the database every tier already lists: %s", outcome.Line)
+	}
+
+	answer, text := lab.proposeService(client, "cache")
+	if answer == nil || answer.Change != 2 || len(answer.Tiers) != 3 {
+		t.Fatalf("service=cache = %s, want change #2 adding it to three tiers", text)
+	}
+	if change := lab.hq.changeIn(hq.RecipeRepo, 2); change == nil || change.Title != "Mate: cache in the group recipe" {
+		t.Fatalf("change #2 = %+v", change)
+	}
+	proposed := lab.hq.recipeFiles(recipeBranch(2))
+	wantType := map[string]string{
+		hq.RecipeTierPaths[hq.RecipeTierMate]:       "valkey:single@7.2",
+		hq.RecipeTierPaths[hq.RecipeTierStage]:      "valkey:single@7.2",
+		hq.RecipeTierPaths[hq.RecipeTierProduction]: "valkey:ha@7.2",
+	}
+	for path, body := range proposed {
+		want, targeted := wantType[path]
+		if !targeted {
+			if body != main[path] {
+				t.Errorf("%s changed, which no tier edit names", path)
+			}
+			continue
+		}
+		if got := tierEntryType(body, "cache"); got != want {
+			t.Errorf("%s writes the cache as %q, want %q:\n%s", path, got, want, body)
+		}
+		if back, err := bundle.RemoveTierService(body, "cache"); err != nil || back != main[path] {
+			t.Errorf("%s: the proposal changes more than the cache (%v):\n%s", path, err, body)
+		}
+		for _, held := range bundle.HeldRuntimes(body) {
+			if strings.Index(body, "- hostname: cache\n") > strings.Index(body, "- hostname: "+held.Hostname+"\n") {
+				t.Errorf("%s lists the cache after the runtime %s, which reads it:\n%s", path, held.Hostname, body)
+			}
+		}
+	}
+	if stage := proposed[hq.RecipeTierPaths[hq.RecipeTierStage]]; !strings.Contains(stage, "hostname: shop") || !strings.Contains(stage, "# edited by the group") {
+		t.Errorf("a person's edit in the Stage tier was not kept:\n%s", stage)
+	}
+
+	// Merged, the recipe carries the cache and nothing is said again.
+	lab.hq.mergeChange(hq.RecipeRepo, 2)
+	if outcome := lab.proposeRecipe(client); strings.Contains(outcome.Line, `service="cache"`) {
+		t.Errorf("reconcile after the cache merged = %+v, want no steer to it", outcome)
+	}
+}
+
+// A tier that already lists the service is left as it is: a person who
+// wrote the cache into one tier by hand gets it proposed into the others
+// alone.
+func TestGroupRecipeService_ManagedAlreadyInATier_LeavesThatTier(t *testing.T) {
+	lab, _ := newPartsLab(t)
+	mateTier := hq.RecipeTierPaths[hq.RecipeTierMate]
+	withCache, err := bundle.AddTierServiceInRank(lab.hq.recipeFiles("main")[mateTier],
+		"services:\n  - hostname: cache\n    type: valkey@7.2\n    mode: NON_HA\n    priority: 10\n    # written by Eva\n", "cache")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lab.hq.landOnMain(hq.RecipeRepo, map[string]string{mateTier: withCache})
+	main := lab.hq.recipeFiles("main")
+
+	answer, text := lab.proposeService(recipeReconcileClient(cacheService), "cache")
+	if answer == nil || answer.Change != 2 || len(answer.Tiers) != 2 {
+		t.Fatalf("service=cache = %s, want change #2 adding it to the two tiers that lack it", text)
+	}
+	if body := lab.hq.recipeFiles(recipeBranch(2))[mateTier]; body != main[mateTier] {
+		t.Errorf("the AI Agent tier, which lists the cache, changed:\n%s", body)
+	}
+}
+
+// A database and a cache added to a one-part app's Mate project — the
+// tiers on main listing only the runtime — are each proposed into every
+// tier, one change at a time, and the small production tier gets the
+// database highly available.
+func TestGroupRecipeService_DatabaseAndCache_EachProposedInTurn(t *testing.T) {
+	lab, _ := newPartsLab(t)
+	runtimeOnly := map[string]string{}
+	for _, tier := range []string{hq.RecipeTierMate, hq.RecipeTierStage, hq.RecipeTierProduction} {
+		path := hq.RecipeTierPaths[tier]
+		body, err := bundle.RemoveTierService(lab.hq.recipeFiles("main")[path], "db")
+		if err != nil {
+			t.Fatal(err)
+		}
+		runtimeOnly[path] = body
+	}
+	lab.hq.landOnMain(hq.RecipeRepo, runtimeOnly)
+	client := recipeReconcileClient(cacheService)
+
+	outcome := lab.proposeRecipe(client)
+	if !strings.Contains(outcome.Line, `service="db"`) || !strings.Contains(outcome.Line, `service="cache"`) {
+		t.Fatalf("reconcile over tiers lacking both = %+v, want a steer to each", outcome)
+	}
+	if answer, text := lab.proposeService(client, "db"); answer == nil || answer.Change != 2 || len(answer.Tiers) != 3 {
+		t.Fatalf("service=db = %s", text)
+	}
+	if _, text := lab.proposeService(client, "cache"); !strings.Contains(text, "one open change per Mate per repository") {
+		t.Errorf("service=cache while the database's change is open = %s, want it to wait", text)
+	}
+	production := lab.hq.recipeFiles(recipeBranch(2))[hq.RecipeTierPaths[hq.RecipeTierProduction]]
+	if got := tierEntryType(production, "db"); got != "postgresql:ha@18" {
+		t.Errorf("the Small Production tier writes the database as %q, want postgresql:ha@18:\n%s", got, production)
+	}
+	lab.hq.mergeChange(hq.RecipeRepo, 2)
+	if answer, text := lab.proposeService(client, "cache"); answer == nil || answer.Change != 3 || len(answer.Tiers) != 3 {
+		t.Fatalf("service=cache once the database merged = %s", text)
+	}
+	for path, body := range lab.hq.recipeFiles(recipeBranch(3)) {
+		if _, tier := runtimeOnly[path]; tier && (!bundle.TierNamesHost(body, "db") || !bundle.TierNamesHost(body, "cache")) {
+			t.Errorf("%s does not list both the database and the cache:\n%s", path, body)
+		}
+	}
+}
