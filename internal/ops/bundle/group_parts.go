@@ -89,6 +89,67 @@ func AddTierService(mainBody, composedBody, host, after string) (string, error) 
 	return strings.Join(out, "\n"), nil
 }
 
+// AddTierServiceInRank returns mainBody with composedBody's entry for host
+// added where the platform creates it: before the first of main's services
+// whose priority ranks below the entry's — a managed service among the
+// managed ones, ahead of every runtime — last when none does. A service
+// without a priority ranks as the platform's default, 0. A main that already
+// names host is returned as it is; one whose services are no list of
+// `- hostname:` items is refused, never written.
+func AddTierServiceInRank(mainBody, composedBody, host string) (string, error) {
+	lines := strings.Split(mainBody, "\n")
+	if start, _ := hostEntryRange(lines, host); start >= 0 {
+		return mainBody, nil
+	}
+	composed := strings.Split(composedBody, "\n")
+	from, to := hostEntryRange(composed, host)
+	if from < 0 {
+		return mainBody, fmt.Errorf("the composed tier names no %s", host)
+	}
+	rank := entryPriority(composed[from:to])
+	dash, before := -1, -1
+	for i, line := range lines {
+		m := hostnameLine.FindStringSubmatch(line)
+		if m == nil || dash >= 0 && len(m[1]) != dash {
+			continue
+		}
+		dash = len(m[1])
+		start, end := hostEntryRange(lines, strings.Trim(m[2], `"'`))
+		if start == i && entryPriority(lines[start:end]) < rank {
+			before = leadingComments(lines, start)
+			break
+		}
+	}
+	if dash < 0 {
+		return mainBody, fmt.Errorf("its services are no list of `- hostname:` items the edit reads — add %s by hand", host)
+	}
+	if before < 0 {
+		return AddTierService(mainBody, composedBody, host, "")
+	}
+	entry := reindent(composed[leadingComments(composed, from):to], dash-indentOf(composed[from]))
+	out := make([]string, 0, len(lines)+len(entry)+1)
+	out = append(out, lines[:before]...)
+	out = append(out, entry...)
+	out = append(out, "")
+	out = append(out, lines[before:]...)
+	return strings.Join(out, "\n"), nil
+}
+
+// entryPriority is the priority a `- hostname:` item's lines write, 0 when
+// they write none or do not parse.
+func entryPriority(entry []string) int {
+	if len(entry) == 0 {
+		return 0
+	}
+	var items []struct {
+		Priority int `yaml:"priority"`
+	}
+	if err := yaml.Unmarshal([]byte(strings.Join(reindent(entry, -indentOf(entry[0])), "\n")), &items); err != nil || len(items) == 0 {
+		return 0
+	}
+	return items[0].Priority
+}
+
 // RemoveTierService returns mainBody without host's entry, its comment lines
 // and the blank line that set it apart. A host main does not name as a
 // `- hostname:` item is refused, never reported removed.

@@ -151,3 +151,76 @@ func TestHeldRuntimes_ReadsTheComposersOwnTiers(t *testing.T) {
 		t.Errorf("a managed service was read as held: %v", got)
 	}
 }
+
+// composedCache is the composer's tier holding a cache the Mate added.
+const composedCache = `services:
+  - hostname: cache
+    type: valkey@7.2
+    mode: NON_HA
+    priority: 10
+
+  - hostname: db
+    type: postgresql@17
+    priority: 10
+`
+
+// A managed service the Mate's project gained goes into a tier on main where
+// the platform creates it: among the services of its priority, before the
+// first that ranks below it, every other line — a person's edits included —
+// as main has it.
+func TestTierService_AddInRank_ManagedFirst(t *testing.T) {
+	t.Parallel()
+	cacheEntry := "  - hostname: cache\n    type: valkey@7.2\n    mode: NON_HA\n    priority: 10\n"
+	runtimesOnly := "project:\n  name: mono stage\n\nservices:\n  # the storefront\n  - hostname: shop\n    type: nodejs@22\n    priority: 1\n"
+	managedOnly := "services:\n  - hostname: db\n    type: postgresql@17\n    priority: 10\n"
+	tests := []struct {
+		name, main, want string
+	}{
+		{
+			name: "a cache added beside a database goes after it, before the runtimes",
+			main: handEditedStage,
+			want: strings.Replace(handEditedStage, "    priority: 10\n\n  # the storefront", "    priority: 10\n\n"+cacheEntry+"\n  # the storefront", 1),
+		},
+		{
+			name: "a cache added to a tier of runtimes alone goes first, above a person's comment",
+			main: runtimesOnly,
+			want: strings.Replace(runtimesOnly, "services:\n", "services:\n"+cacheEntry+"\n", 1),
+		},
+		{
+			name: "a cache added to a tier whose every service ranks with it goes last",
+			main: managedOnly,
+			want: managedOnly + "\n" + cacheEntry,
+		},
+		{
+			name: "a tier that already lists the service is left as it is",
+			main: managedOnly + "\n" + cacheEntry,
+			want: managedOnly + "\n" + cacheEntry,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := AddTierServiceInRank(tt.main, composedCache, "cache")
+			if err != nil {
+				t.Fatalf("AddTierServiceInRank: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("--- got\n%s\n--- want\n%s", got, tt.want)
+			}
+			if tt.main == tt.want {
+				return
+			}
+			if back, err := RemoveTierService(got, "cache"); err != nil || back != tt.main {
+				t.Errorf("taking the cache out again = %v\n%s\nwant main as it was", err, back)
+			}
+		})
+	}
+
+	flow := "project:\n  name: x\nservices: [{hostname: shop, type: nodejs@22}]\n"
+	if _, err := AddTierServiceInRank(flow, composedCache, "cache"); err == nil {
+		t.Error("a flow-style services list was written to")
+	}
+	if _, err := AddTierServiceInRank(managedOnly, composedCache, "search"); err == nil {
+		t.Error("a service the composed tier does not name was added")
+	}
+}
