@@ -166,3 +166,78 @@ func TestGroupRecipeService_DatabaseAndCache_EachProposedInTurn(t *testing.T) {
 		}
 	}
 }
+
+// searchService is a Meilisearch the Mate adds beside the cache.
+var searchService = platform.ServiceStack{ID: "svc-search", Name: "search", Status: "ACTIVE",
+	ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "meilisearch:single@1.44", ServiceStackTypeCategoryName: "USER"},
+	CustomAutoscaling:    &platform.CustomAutoscaling{CPUMode: "SHARED", MinCPU: 1, MaxCPU: 8, MinRAM: 2, MaxRAM: 48, MinFreeRAMGB: 0.5}}
+
+// A person closing a managed service's change unmerged silences its
+// reminder: the reconcile stops naming the call until a later recipe change
+// of the Mate's merges, and then asks again.
+func TestGroupRecipeService_ManagedDeclined_ReminderStopsUntilALaterMerge(t *testing.T) {
+	lab, _ := newPartsLab(t)
+	client := recipeReconcileClient(cacheService)
+	if answer, text := lab.proposeService(client, "cache"); answer == nil || answer.Change != 2 {
+		t.Fatalf("service=cache = %s", text)
+	}
+	lab.hq.closeChange(hq.RecipeRepo, 2)
+
+	if outcome := lab.proposeRecipe(client); strings.Contains(outcome.Line, `service="cache"`) {
+		t.Errorf("reconcile after the person closed the cache's change = %q, want no steer to it", outcome.Line)
+	}
+
+	client = recipeReconcileClient(cacheService, searchService)
+	outcome := lab.proposeRecipe(client)
+	if !strings.Contains(outcome.Line, `service="search"`) || strings.Contains(outcome.Line, `service="cache"`) {
+		t.Fatalf("reconcile with a search added = %q, want the steer to search alone", outcome.Line)
+	}
+	if answer, text := lab.proposeService(client, "search"); answer == nil || answer.Change != 3 {
+		t.Fatalf("service=search = %s", text)
+	}
+	lab.hq.mergeChange(hq.RecipeRepo, 3)
+	if outcome := lab.proposeRecipe(client); !strings.Contains(outcome.Line, `service="cache"`) {
+		t.Errorf("reconcile after a later recipe change merged = %q, want the steer to the cache again", outcome.Line)
+	}
+}
+
+// A managed service no tier on main can take by zcp's edit is said once
+// per pass as one to add by hand, with no call to make.
+func TestGroupRecipeService_ManagedNoTierCanTakeIt_SaysToAddByHand(t *testing.T) {
+	lab, _ := newPartsLab(t)
+	flow := map[string]string{}
+	for _, tier := range []string{hq.RecipeTierMate, hq.RecipeTierStage, hq.RecipeTierProduction} {
+		flow[hq.RecipeTierPaths[tier]] = "project:\n  name: acme\nservices: [{hostname: db, type: postgresql@18, priority: 10}, {hostname: app, type: nodejs@22, priority: 1}]\n"
+	}
+	lab.hq.landOnMain(hq.RecipeRepo, flow)
+	client := recipeReconcileClient(cacheService)
+
+	outcome := lab.proposeRecipe(client)
+	if strings.Contains(outcome.Line, `service="cache"`) || strings.Count(outcome.Line, "by hand") != 1 || !strings.Contains(outcome.Line, "cache") {
+		t.Errorf("reconcile over tiers no edit can take = %q, want the cache named once as one to add by hand", outcome.Line)
+	}
+	if answer, text := lab.proposeService(client, "cache"); answer == nil || answer.Change != 0 || !strings.Contains(answer.Message, "Left as main has it") {
+		t.Errorf("service=cache = %s, want nothing proposed and each tier named", text)
+	}
+}
+
+// A proposal for a managed service the Mate has since deleted is withdrawn
+// by the same call: its open change is brought to main's tree and adds
+// nothing.
+func TestGroupRecipeService_ManagedDeleted_WithdrawsItsOpenChange(t *testing.T) {
+	lab, _ := newPartsLab(t)
+	if answer, text := lab.proposeService(recipeReconcileClient(cacheService), "cache"); answer == nil || answer.Change != 2 {
+		t.Fatalf("service=cache = %s", text)
+	}
+
+	answer, text := lab.proposeService(lab.mock, "cache")
+	if answer == nil || answer.Change != 2 || !strings.Contains(answer.Message, "withdrawn") {
+		t.Fatalf("service=cache once the cache is deleted = %s, want change #2 withdrawn", text)
+	}
+	if main, branch := lab.hq.recipeFiles("main"), lab.hq.recipeFiles(recipeBranch(2)); !equalFiles(main, branch) {
+		t.Errorf("the withdrawn change still differs from main: %v", diffPaths(main, branch))
+	}
+	if _, text := lab.proposeService(lab.mock, "nothing"); !strings.Contains(text, "runs no managed service") {
+		t.Errorf("service= for a host nothing names = %s, want it refused", text)
+	}
+}

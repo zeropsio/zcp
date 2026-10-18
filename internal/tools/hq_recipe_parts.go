@@ -252,6 +252,9 @@ func handleGroupRecipeService(
 		if err != nil {
 			return serviceProposalFailed(err.Error()), nil, nil
 		}
+		if open := openRecipeChange(comp.state); !found && open != nil && open.Title != nil && *open.Title == recipeServiceTitle(host) {
+			return withdrawRecipeService(ctx, comp, open, host), nil, nil
+		}
 		if !found {
 			return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
 				fmt.Sprintf("The service proposal was not made: this Mate's project runs no managed service %q, and neither this Mate's recipe nor the tiers on %q of the recipe repository %q name a service %q built from a repository with a setup.", host, hqBase, hq.RecipeRepo, host),
@@ -311,4 +314,27 @@ func serviceProposalFailed(reason string) *mcp.CallToolResult {
 	return convertError(platform.NewPlatformError(platform.ErrAPIError,
 		"The service proposal was not made: "+reason,
 		"Retry the call; the project is unaffected."), WithRecoveryStatus())
+}
+
+// withdrawRecipeService is a service= call for host while the Mate's open
+// change in the recipe repository is host's proposal and nothing names host
+// any more — a managed service the Mate has since deleted: the change is
+// brought to main's tree, so it adds nothing and Core closes it.
+func withdrawRecipeService(ctx context.Context, comp groupRecipeComposition, open *hq.MateChange, host string) *mcp.CallToolResult {
+	written, err := writeRecipeChange(ctx, comp, open, recipeServiceTitle(host),
+		"recipe: "+host+" withdrawn, from "+comp.inputs.MateProjectName,
+		func(context.Context, *hq.Scratch, string, []string) (map[string]string, error) {
+			return map[string]string{}, nil
+		})
+	if err != nil {
+		return serviceProposalFailed(err.Error())
+	}
+	url := comp.hqc.ChangeURL(comp.appID, hq.RecipeRepo, written.number)
+	return jsonResult(map[string]any{
+		"groupRepo": hq.RecipeRepo,
+		"change":    written.number,
+		"changeUrl": url,
+		"message": fmt.Sprintf("This Mate's project no longer runs %s, so change #%d (%s), which proposed it to the recipe repository %q, is withdrawn: it now adds nothing.",
+			host, written.number, url, hq.RecipeRepo),
+	})
 }

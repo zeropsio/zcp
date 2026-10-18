@@ -35,8 +35,8 @@ func recipeManagedService(comp groupRecipeComposition, host string) bool {
 
 // planRecipeManaged is, for each tier file on main, what adding the managed
 // service host does: the composed tier's entry for it added where main's
-// tier lacks it, main's own body where it lists host already or the edit
-// refused (why, in refused).
+// tier, read as YAML, lacks it, main's own body where it lists host already
+// or the edit refused (why, in refused).
 func planRecipeManaged(ctx context.Context, comp groupRecipeComposition, host string) ([]recipeServiceTier, error) {
 	var tiers []recipeServiceTier
 	for _, file := range recipeTierFiles(comp.files) {
@@ -44,11 +44,11 @@ func planRecipeManaged(ctx context.Context, comp groupRecipeComposition, host st
 		if err != nil {
 			return nil, fmt.Errorf("could not read %q of the recipe repository %q (%w)", file.Path, hq.RecipeRepo, err)
 		}
-		if !found || !bundle.TierNamesHost(file.Body, host) {
+		if !found || !bundle.TierListsService(file.Body, host) {
 			continue
 		}
 		tier := recipeServiceTier{path: file.Path, body: mainBody}
-		if !bundle.TierNamesHost(mainBody, host) {
+		if !bundle.TierListsService(mainBody, host) {
 			if edited, err := bundle.AddTierServiceInRank(mainBody, file.Body, host); err != nil {
 				tier.refused = err.Error()
 			} else {
@@ -60,32 +60,78 @@ func planRecipeManaged(ctx context.Context, comp groupRecipeComposition, host st
 	return tiers, nil
 }
 
+// recipeDeclined reports whether a person declined the proposal titled
+// title: the Mate's latest change of that title in the recipe repository
+// was closed without merging, and none of the Mate's changes there merged
+// after it. A later merge — a tier added, another service carried — changes
+// main, and what the proposal would be is worth asking about again.
+func recipeDeclined(state hq.MateState, title string) bool {
+	declined := 0
+	for _, c := range state.Changes {
+		if c.Repo == hq.RecipeRepo && c.Title != nil && *c.Title == title && c.Number > declined {
+			if c.State != hq.ChangeClosed {
+				return false
+			}
+			declined = c.Number
+		}
+	}
+	if declined == 0 {
+		return false
+	}
+	return !slices.ContainsFunc(state.Changes, func(c hq.MateChange) bool {
+		return c.Repo == hq.RecipeRepo && c.State == hq.ChangeMerged && c.Number > declined
+	})
+}
+
 // recipeManagedSteer is what the reconcile says when tiers on main lack a
 // managed service this Mate's project runs: for each, the call that
-// proposes it, and that the environments already made need it added
-// themselves. A service whose proposal is the Mate's open change already is
-// not said again. "" when every tier on main lists every managed service.
+// proposes it — or, for the tiers zcp's edit cannot write, that it is added
+// to them by hand — and that the environments already made need it added
+// themselves. A service whose proposal is the Mate's open change already,
+// or one a person declined (recipeDeclined), is not said again. "" when
+// every tier on main lists every managed service.
 func recipeManagedSteer(ctx context.Context, comp groupRecipeComposition) (string, error) {
 	open := openRecipeChange(comp.state)
-	var calls []string
+	var calls, byHand []string
 	for _, m := range comp.inputs.ManagedServices {
 		tiers, err := planRecipeManaged(ctx, comp, m.Hostname)
 		if err != nil {
 			return "", err
 		}
+		var refused []string
+		for _, tier := range tiers {
+			if tier.refused != "" {
+				refused = append(refused, tierTitle(tier.path))
+			}
+		}
+		if len(refused) > 0 {
+			byHand = append(byHand, fmt.Sprintf("%s (%s)", m.Hostname, strings.Join(refused, ", ")))
+		}
+		title := recipeServiceTitle(m.Hostname)
 		edits := serviceTierEdits(tiers)
-		if len(edits) == 0 || open != nil && open.Title != nil && *open.Title == recipeServiceTitle(m.Hostname) {
+		if len(edits) == 0 || open != nil && open.Title != nil && *open.Title == title || recipeDeclined(comp.state, title) {
 			continue
 		}
 		calls = append(calls, fmt.Sprintf("zerops_workflow action=\"group-recipe\" service=%q (%s)", m.Hostname, strings.Join(edits, "; ")))
 	}
-	if len(calls) == 0 {
+	if len(calls)+len(byHand) == 0 {
 		return "", nil
 	}
+	line := fmt.Sprintf("the tiers on %q of the recipe repository %q lack managed services this Mate's project runs, so the environments made from them would come up without them", hqBase, hq.RecipeRepo)
+	if len(calls) > 0 {
+		line += " — to propose each as a change the person reviews, call " + strings.Join(calls, ", then ")
+	}
+	if len(byHand) > 0 {
+		if len(calls) > 0 {
+			line += "; "
+		} else {
+			line += " — "
+		}
+		line += "zcp's edit cannot write into some of them as they are written, so add these to those tiers by hand: " + strings.Join(byHand, "; ")
+	}
 	them := "it"
-	if len(calls) > 1 {
+	if len(calls)+len(byHand) > 1 {
 		them = "them"
 	}
-	return fmt.Sprintf("the tiers on %q of the recipe repository %q lack managed services this Mate's project runs, so the environments made from them would come up without them — to propose each as a change the person reviews, call %s. The recipe only shapes environments made from it later: the stage and production environments already made need %s added themselves, by a person or the Chief",
-		hqBase, hq.RecipeRepo, strings.Join(calls, ", then "), them), nil
+	return line + fmt.Sprintf(". The recipe only shapes environments made from it later: the stage and production environments already made need %s added themselves, by a person or the Chief", them), nil
 }
