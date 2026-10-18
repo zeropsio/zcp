@@ -1163,9 +1163,14 @@ How zcp does it:
   call, for any app, one part or several: `service=<host>` adds the composer's entry, that tier's
   policy applied (Small Production's HA variant where the type has one), to each tier file on
   `main` lacking it, among the services of its priority ahead of every runtime, every other line as
-  `main` has it. It only adds: a managed service a tier carries and the project does not is left. The
-  reconcile's line names the call for each one, and says that environments already made need the
-  service added themselves, by a person or the Chief.
+  `main` has it. Whether a tier lists the service is what the tier reads as YAML, and an edit that
+  would read back as anything but `main` plus that service is refused. It only adds: a managed
+  service a tier carries and the project does not is left. The reconcile's line names the call for
+  each one, names a tier no edit can take as one to add the service to by hand, and says that
+  environments already made need the service added themselves, by a person or the Chief. A
+  proposal a person closed unmerged is not named again until a later recipe change of the Mate's
+  merges. The call for a service the project no longer runs, while its proposal is the open change,
+  withdraws it: the change is brought to `main`'s tree.
 - Tier header. Every tier says it also takes a managed service the Mate's project gained; an app
   with more than one part says it also takes a part's service added or removed.
 
@@ -1175,7 +1180,11 @@ zcp `TestBuildGroupRecipe_OnePart_ComposesAsBeforeStages`, `TestBuildGroupRecipe
 `TestDeleteTool_StageOfSeveral_LeavesThePairAndNamesTheRecipeCall`, `TestTierService_AddInRank_ManagedFirst`,
 `TestGroupRecipeService_ManagedAdded_ProposedIntoEveryTierLackingIt`,
 `TestGroupRecipeService_ManagedAlreadyInATier_LeavesThatTier`,
-`TestGroupRecipeService_DatabaseAndCache_EachProposedInTurn`.
+`TestGroupRecipeService_DatabaseAndCache_EachProposedInTurn`,
+`TestTierService_AddInRank_ReadsTheTierAsYAML`,
+`TestGroupRecipeService_ManagedDeclined_ReminderStopsUntilALaterMerge`,
+`TestGroupRecipeService_ManagedNoTierCanTakeIt_SaysToAddByHand`,
+`TestGroupRecipeService_ManagedDeleted_WithdrawsItsOpenChange`.
 
 #### 2.8a.6 The receipt on an HQ change (only N > 1)
 
