@@ -1159,13 +1159,23 @@ How zcp does it:
   whose `consent` does not name the service is refused (`CONSENT_REQUIRED`) and deletes nothing,
   so the agent asks first. With it, a stage of a pair with several leaves `Stages[]` and its
   answer's `recipe` names the call; a pair's only stage keeps today's behaviour.
-- Tier header. An app with more than one part says the tier also takes a part's service added or
-  removed; a one-part app's header is today's.
+- Managed service. A managed service the Mate's project runs and a tier on `main` lacks takes the same
+  call, for any app, one part or several: `service=<host>` adds the composer's entry, that tier's
+  policy applied (Small Production's HA variant where the type has one), to each tier file on
+  `main` lacking it, among the services of its priority ahead of every runtime, every other line as
+  `main` has it. It only adds: a managed service a tier carries and the project does not is left. The
+  reconcile's line names the call for each one, and says that environments already made need the
+  service added themselves, by a person or the Chief.
+- Tier header. Every tier says it also takes a managed service the Mate's project gained; an app
+  with more than one part says it also takes a part's service added or removed.
 
 zcp `TestBuildGroupRecipe_OnePart_ComposesAsBeforeStages`, `TestBuildGroupRecipe_ThreeParts_OneRuntimePerStage`,
 `TestBuildGroupRecipe_PartHostnames_HeldByTheTier`, `TestTierService_AddOrRemove_OnlyThatService`,
 `TestGroupRecipeService_OnePart_ProposesNoTierEdit`, `TestGroupRecipeService_AddThenRemovePart_OnlyThatService`,
-`TestDeleteTool_StageOfSeveral_LeavesThePairAndNamesTheRecipeCall`.
+`TestDeleteTool_StageOfSeveral_LeavesThePairAndNamesTheRecipeCall`, `TestTierService_AddInRank_ManagedFirst`,
+`TestGroupRecipeService_ManagedAdded_ProposedIntoEveryTierLackingIt`,
+`TestGroupRecipeService_ManagedAlreadyInATier_LeavesThatTier`,
+`TestGroupRecipeService_DatabaseAndCache_EachProposedInTurn`.
 
 #### 2.8a.6 The receipt on an HQ change (only N > 1)
 
