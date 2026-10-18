@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -12,7 +13,9 @@ import (
 // The atom lint's dev-server-call-missing-hostname rule reads atoms only; a
 // call zcp itself writes into a reply, an error or a knowledge theme reaches
 // the agent the same way. Every such call names hostname, under the same
-// rule's pattern.
+// rule's pattern. A text that tells the agent to run an action names hostname
+// too, never the bare action an agent would call without one (a Go comment
+// reaches no agent).
 func TestEveryAgentFacingDevServerCallInGoAndKnowledgeNamesHostname(t *testing.T) {
 	t.Parallel()
 	var rule *atomLintRule
@@ -40,8 +43,10 @@ func TestEveryAgentFacingDevServerCallInGoAndKnowledgeNamesHostname(t *testing.T
 		scanner := bufio.NewScanner(bytes.NewReader(body))
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		for lineNo := 1; scanner.Scan(); lineNo++ {
-			if rule.pattern.MatchString(scanner.Text()) {
-				violations = append(violations, rel+":"+itoa(lineNo)+": "+trim(strings.TrimSpace(scanner.Text()), 160))
+			line := scanner.Text()
+			comment := goSource && strings.HasPrefix(strings.TrimSpace(line), "//")
+			if rule.pattern.MatchString(line) || (!comment && bareDevServerAction.MatchString(line)) {
+				violations = append(violations, rel+":"+itoa(lineNo)+": "+trim(strings.TrimSpace(line), 160))
 			}
 		}
 	}
@@ -49,3 +54,7 @@ func TestEveryAgentFacingDevServerCallInGoAndKnowledgeNamesHostname(t *testing.T
 		t.Errorf("zerops_dev_server calls without hostname right after the action (refused as pasted):\n  %s", strings.Join(violations, "\n  "))
 	}
 }
+
+// bareDevServerAction is a zerops_dev_server action, quoted or not, that no
+// hostname follows.
+var bareDevServerAction = regexp.MustCompile(`zerops_dev_server action=\\?"?[a-z]+\\?"?($|[^a-z" \\]| [^h])`)

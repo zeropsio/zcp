@@ -244,7 +244,7 @@ func checkHTTPRoot(ctx context.Context, httpClient HTTPDoer, url string) CheckRe
 func checkHTTPInternal(ctx context.Context, probe httpProbe, svc *platform.ServiceStack, deferredStart bool, healthPath string) CheckResult {
 	name := checkNameHTTPInternal
 	if deferredStart {
-		return CheckResult{Name: name, Status: CheckSkip, Detail: "dev runtime has no process yet — start it with zerops_dev_server, then verify"}
+		return CheckResult{Name: name, Status: CheckSkip, Detail: fmt.Sprintf("dev runtime has no process yet — start it with zerops_dev_server action=start hostname=%q, then verify", svc.Name)}
 	}
 	port, ok := PreferredHTTPPort(svc.Ports)
 	if !ok {

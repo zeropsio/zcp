@@ -51,9 +51,9 @@ const (
 // freshly-imported services without a bootstrap session reach this
 // path. Verify is correct in every shape (web/worker/managed) so the
 // fallback is never wrong, only sometimes less specific.
-func deploySuccessNextActions(_ *ops.DeployResult, mode topology.Mode, class topology.RuntimeClass) string {
+func deploySuccessNextActions(result *ops.DeployResult, mode topology.Mode, class topology.RuntimeClass) string {
 	if mode != "" && class != "" && topology.IsDeferredStart(mode, class) {
-		return "Dev-mode dynamic runtime is idle (no start command). Start the dev server: zerops_dev_server action=start. Then run zerops_verify."
+		return fmt.Sprintf("Dev-mode dynamic runtime is idle (no start command). Start the dev server: zerops_dev_server action=start hostname=%q. Then run zerops_verify.", result.TargetService)
 	}
 	return nextActionDeploySuccess
 }

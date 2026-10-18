@@ -450,8 +450,8 @@ func noSupervisorResult(action, hostname string) *DevServerResult {
 		Action:   action,
 		Hostname: hostname,
 		Reason:   reasonNoSupervisor,
-		Message: fmt.Sprintf("%s has no dev-server supervisor yet, so no dev server runs under zcp there. zerops_dev_server action=start sets it up (one redeploy of %s; uncommitted work stays).",
-			hostname, hostname),
+		Message: fmt.Sprintf("%s has no dev-server supervisor yet, so no dev server runs under zcp there. zerops_dev_server hostname=%q action=start sets it up (one redeploy of %s; uncommitted work stays).",
+			hostname, hostname, hostname),
 	}
 }
 

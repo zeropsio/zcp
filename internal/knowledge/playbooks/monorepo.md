@@ -51,8 +51,8 @@ the way the repo's docs install them.
    {"version": 1, "servers": [{"name": "web", "port": 3000, "command": "bun index.ts"}, {"name": "worker", "command": "bun worker.ts"}]}
    ```
 
-   Commit the declaration with the setup. `zerops_dev_server action=status
-   hostname="appdev"` then lists both servers. Deploying the part's stage
+   Commit the declaration with the setup.
+   `zerops_dev_server action=status hostname="appdev"` then lists both servers. Deploying the part's stage
    (`workerstage`) never runs it on `appdev`.
 2. Otherwise — runtimes that cannot share a container, or one container is not
    enough — **one dev service per part on one shared Local Storage volume**:

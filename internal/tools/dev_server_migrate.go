@@ -206,7 +206,7 @@ func carryKeptServer(ctx context.Context, ssh ops.SSHDeployer, stateDir string, 
 		return devSetupMove{}, fmt.Errorf("the dev server zcp kept on %s: %w", target, err)
 	}
 	lost := func(err error) error {
-		return fmt.Errorf("the dev server zcp kept on %s does not come back after this deploy (start it with zerops_dev_server): %w", target, err)
+		return fmt.Errorf("the dev server zcp kept on %s does not come back after this deploy (start it with zerops_dev_server action=start hostname=%q): %w", target, target, err)
 	}
 	url, err := src.URL(ctx)
 	if err != nil {
@@ -282,8 +282,8 @@ func superviseNewDevSetup(ctx context.Context, client platform.Client, projectID
 	if !changed {
 		return devSetupMove{}, nil
 	}
-	return devSetupMove{sentence: fmt.Sprintf("Before this first deploy zcp put %s under the dev-server supervisor: setup %q in %s now installs and runs zcp-devsup (run.prepareCommands, run.start) — commit it with your next change; zerops_dev_server action=start runs your dev server under it.",
-		target, used, file)}, nil
+	return devSetupMove{sentence: fmt.Sprintf("Before this first deploy zcp put %s under the dev-server supervisor: setup %q in %s now installs and runs zcp-devsup (run.prepareCommands, run.start) — commit it with your next change; zerops_dev_server action=start hostname=%q runs your dev server under it.",
+		target, used, file, target)}, nil
 }
 
 // devsupRelease names a zcp-devsup download by its release tag, by the whole
