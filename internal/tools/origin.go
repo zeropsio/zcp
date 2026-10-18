@@ -131,9 +131,16 @@ func originHolder(req ops.OriginRequest, state hq.MateState) string {
 }
 
 // originFromHQ takes the origin's code into the pair's working copy from the
-// repository in HQ, whose main holds the origin's adopted history.
+// repository in HQ, whose main holds the origin's adopted history. Adopted
+// onto an untouched repository, main is the origin's own history and shares
+// nothing with HQ's seed, so a branch holding only the seed — one commit of
+// the empty tree, as the wiring cut it — moves onto main (`reset --keep`
+// refuses rather than overwrite a file in the way), and a branch with work of
+// its own merges main in, unrelated histories allowed.
 func originFromHQ(repo string) string {
-	return fmt.Sprintf("`ssh %s \"cd <repo dir> && git fetch origin main && git merge --no-edit FETCH_HEAD\"`", repo)
+	return fmt.Sprintf("`ssh %s 'cd <repo dir> && git fetch origin main && "+
+		"if [ \"$(git rev-list --count HEAD)\" = 1 ] && [ -z \"$(git ls-tree HEAD)\" ]; "+
+		"then git reset --keep FETCH_HEAD; else git merge --allow-unrelated-histories --no-edit FETCH_HEAD; fi'`", repo)
 }
 
 // originFromHolder takes the code of holder, another repository in HQ, into

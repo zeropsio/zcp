@@ -89,7 +89,7 @@ func TestOriginRequest_WritesNothing_NamesTheRepositoryThePairWillWire(t *testin
 	for _, want := range []string{
 		"links it to appdev in HQ",
 		"Never ask for a token in the chat",
-		"Connected: take the code from HQ — `ssh appdev \"cd <repo dir> && git fetch origin main && git merge --no-edit FETCH_HEAD\"`",
+		"Connected: take the code from HQ — " + originFromHQ("appdev"),
 		"Declined: a public repository only — `ssh appdev \"cd <repo dir> && GIT_TERMINAL_PROMPT=0 git fetch https://github.com/zeropsio/mate HEAD && git merge --allow-unrelated-histories --no-edit FETCH_HEAD\"`",
 		"a private one cannot be fetched without its origin connected, so say so and ask again",
 	} {
@@ -254,7 +254,7 @@ func TestOriginRequest_OriginConnectedToTheRepository_AnswersConnectedBeforeItsF
 	for _, want := range []string{
 		"Nothing was asked: https://github.com/acme/app is already the origin of appdev in HQ.",
 		"never ask for a token",
-		"`ssh appdev \"cd <repo dir> && git fetch origin main && git merge --no-edit FETCH_HEAD\"`",
+		originFromHQ("appdev"),
 	} {
 		if !strings.Contains(answer.NextActions, want) {
 			t.Errorf("nextActions lacks %q: %s", want, answer.NextActions)
@@ -292,7 +292,7 @@ func TestOriginRequest_OriginConnectedUnderAnotherRepository_NamesThatRepository
 		"Nothing was asked: https://github.com/acme/app is already the origin of web in HQ, not of appdev.",
 		"Its code comes from that HQ repository, web",
 		"never ask for a token",
-		"`ssh web \"cd <repo dir> && git fetch origin main && git merge --no-edit FETCH_HEAD\"`",
+		originFromHQ("web"),
 	} {
 		if !strings.Contains(answer.NextActions, want) {
 			t.Errorf("nextActions lacks %q: %s", want, answer.NextActions)

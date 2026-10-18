@@ -2583,9 +2583,13 @@ application in HQ themselves, with its token; neither crosses the conversation.
 - **mate.** The engine opens an origin ask on the call, as for a vault ask; the person's Connect
   opens the Git environment sheet with the address and the repository name; the agent hears
   connected or declined in a run of its own, never a token.
-- **The order.** Ask, connect, then the code: HQ adopts the origin's history onto the
-  repository's `main` as a child of its seed, so the pair's branch, cut from that seed, merges it
-  in. The existing-repository guidance asks first when the person gives an address. On a decline the agent fetches a
+- **The order.** Ask, connect, then the code. HQ adopts the origin's history: onto a repository
+  whose `main` is still its untouched seed — no other ref holds it, no record of HQ's names it —
+  `main` becomes the origin's tip, so the origin's history gains no commit of HQ's; onto any other
+  `main` as a two-parent child of it. Once connected, a pair's branch that holds only the seed, as
+  the wiring cut it, moves onto `main` (`git reset --keep`); a branch with work of its own merges
+  `main` in, unrelated histories allowed. The existing-repository guidance asks first when the
+  person gives an address. On a decline the agent fetches a
   public repository anonymously into the dev service; the first change then adds the whole
   repository. A private repository cannot be declined that way: the agent asks again.
 
@@ -2599,7 +2603,10 @@ zcp `TestOriginRequest_WritesNothing_NamesTheRepositoryThePairWillWire`,
 `TestOriginRequest_OriginConnectedUnderAnotherRepository_NamesThatRepository`,
 `TestOriginRequest_OriginConnectedUnderAnotherProjectsRepository_FetchesItFromHQ`,
 `TestOriginRequest_OlderHQWithoutRepos_Asks`, `TestClient_Self_Repos_DecodesOriginsAndOlderHQ`,
-`TestSameRepoURL`, `TestServer_ObserveToolGating`, `TestAnnotations_OriginTool`, `TestDesiredRelease_RefusesInvalidManifest`, `TestDevelopExistingRepo_RunsTheReposOwnDevFlow`.
+`TestSameRepoURL`, `TestServer_ObserveToolGating`, `TestAnnotations_OriginTool`, `TestDesiredRelease_RefusesInvalidManifest`, `TestDevelopExistingRepo_RunsTheReposOwnDevFlow`,
+`TestOriginFromHQ_BranchHoldingOnlyTheSeedMovesOntoHQMain`; mate "connecting an origin to an
+untouched repository takes the origin's history as main, with no commit of HQ's own" and "a seed
+$holder holds stays under main: adoption merges it with the origin" (`packages/hq-git`).
 
 ### Invariants
 
