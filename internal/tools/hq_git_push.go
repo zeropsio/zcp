@@ -136,7 +136,7 @@ func handleHQGitPush(
 		GitPushResult:    result,
 		PullRequest:      shipped.ref,
 		Warnings:         warnings,
-		WorkSessionState: sessionAnnotations(stateDir),
+		WorkSessionState: sessionAnnotations(ctx, httpClient, stateDir),
 		Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rt),
 	})
 }

@@ -177,7 +177,7 @@ func TestDeployLocalTool_SameToolName(t *testing.T) {
 func TestSessionAnnotations_NoSession_StatusNone(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	got := sessionAnnotations(dir)
+	got := sessionAnnotations(t.Context(), nil, dir)
 	if got == nil {
 		t.Fatal("expected non-nil WorkSessionState")
 	}
@@ -206,7 +206,7 @@ func TestSessionAnnotations_ActiveSession_StatusOpen(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = workflow.DeleteWorkSession(dir, os.Getpid()) })
 
-	got := sessionAnnotations(dir)
+	got := sessionAnnotations(t.Context(), nil, dir)
 	if got == nil {
 		t.Fatal("expected non-nil WorkSessionState")
 	}
@@ -236,7 +236,7 @@ func TestSessionAnnotations_ClosedSession_StatusAutoClosed(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = workflow.DeleteWorkSession(dir, os.Getpid()) })
 
-	got := sessionAnnotations(dir)
+	got := sessionAnnotations(t.Context(), nil, dir)
 	if got == nil {
 		t.Fatal("expected non-nil WorkSessionState")
 	}
@@ -289,7 +289,7 @@ func TestSessionAnnotations_OpenScopeGreenUnsetCloseMode_SurfacesReason(t *testi
 	}
 	t.Cleanup(func() { _ = workflow.DeleteWorkSession(dir, os.Getpid()) })
 
-	got := sessionAnnotations(dir)
+	got := sessionAnnotations(t.Context(), nil, dir)
 	if got == nil {
 		t.Fatal("expected non-nil WorkSessionState")
 	}

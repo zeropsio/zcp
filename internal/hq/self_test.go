@@ -109,3 +109,26 @@ func TestClient_Self_Repos_DecodesOriginsAndOlderHQ(t *testing.T) {
 		t.Errorf("repos from an HQ that omits them = %+v, want nil", state.Repos)
 	}
 }
+
+// HQ says whether the Mate's application has a production; an older HQ says
+// nothing, which decodes as nil, never as none.
+func TestClient_Self_Production_DecodesAndOlderHQ(t *testing.T) {
+	t.Parallel()
+	client, _ := answering(t, `{"projectId":"p-mate","name":"Ada","face":"face-1","standupRequestedBy":null,"appId":"a1","changes":[],"production":true}`)
+	state, err := client.Self(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Production == nil || !*state.Production {
+		t.Errorf("production = %v, want true", state.Production)
+	}
+
+	older, _ := answering(t, selfSample)
+	state, err = older.Self(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Production != nil {
+		t.Errorf("production from an HQ that omits it = %v, want nil", *state.Production)
+	}
+}

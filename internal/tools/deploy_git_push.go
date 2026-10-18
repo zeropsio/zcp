@@ -762,7 +762,7 @@ func handleGitPush(
 	return jsonResult(deployGitPushResponse{
 		GitPushResult:    result,
 		Warnings:         warnings,
-		WorkSessionState: sessionAnnotations(stateDir),
+		WorkSessionState: sessionAnnotations(ctx, httpClient, stateDir),
 		Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rt),
 	}), nil, nil
 }

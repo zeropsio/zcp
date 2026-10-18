@@ -35,6 +35,9 @@ type MateState struct {
 	// Repos are the application's repositories in HQ, by name. nil from an HQ
 	// older than repositories in the Mate's state.
 	Repos []MateRepo `json:"repos"`
+	// Production is whether that application has a production, of any
+	// target, released or not. nil from an HQ older than it.
+	Production *bool `json:"production"`
 }
 
 // MateRepo is one of the application's repositories in HQ, with the origin

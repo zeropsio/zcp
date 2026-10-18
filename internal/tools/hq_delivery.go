@@ -491,6 +491,27 @@ func hqMergeAnyMoment(base string) string {
 // hqHandoffNote is what the person needs from the Mate's closing message in a
 // Mate that delivers through HQ: the change to review, and what they do next —
 // in the words Mate shows under that message (Review, Put it live), never a
-// path through other pages. Once production runs a release, Mate's turn note
-// gives its address, and that, not the Mate's preview, is the app.
-const hqHandoffNote = "In your closing message tell the person: the change to review, by its link, and that they can press Review to look it over and merge it, or, while the application has no production, Put it live to merge it and release it to production in one go. Once Mate has told you production runs a release, that address is the app: give it for anything real, and yours only as their preview."
+// path through other pages. Put it live is Mate's only while the application
+// has no production, so it is named only while HQ says of none
+// (hasProduction false, or an HQ that cannot say). Once production runs a
+// release, Mate's turn note gives its address, and that, not the Mate's
+// preview, is the app.
+func hqHandoffNote(hasProduction bool) string {
+	next := ", or, while the application has no production, Put it live to merge it and release it to production in one go"
+	if hasProduction {
+		next = ""
+	}
+	return "In your closing message tell the person: the change to review, by its link, and that they can press Review to look it over and merge it" + next + ". Once Mate has told you production runs a release, that address is the app: give it for anything real, and yours only as their preview."
+}
+
+// hqHasProduction is whether HQ says the Mate's application has a
+// production; false where it says none, cannot be read, or is older than
+// the answer.
+func hqHasProduction(ctx context.Context, httpClient ops.HTTPDoer) bool {
+	hqc, enrolled := openHQ(httpClient)
+	if !enrolled {
+		return false
+	}
+	state, err := hqc.Self(ctx)
+	return err == nil && state.Production != nil && *state.Production
+}

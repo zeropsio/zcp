@@ -3388,8 +3388,10 @@ what is `zeropsPermissions.ts`'s `can` over the role function (§10.3).
 **A Mate's side** (`Authorization: Mate <credential>`, §6.6): its enrollment (`POST
 /api/mate/challenge`, `POST /api/mate/credential`), its own state (`GET /api/mate/self`: its record,
 the application HQ holds it in and that application's name, its changes there, and each Git
-environment's newest push per repository with the origin's CI on it, `gitPushes`, which an older
-HQ omits); a repository of
+environment's newest push per repository with the origin's CI on it, `gitPushes`, and whether that
+application has a production of any target, released or not, `production` — both of which an older
+HQ omits; the closing note of a session that hands over a change names Put it live only while
+`production` is not true); a repository of
 its application, made or joined (`POST /api/mate/repos`); its change in a repository, one open at a
 time (`POST /api/mate/changes`, `PATCH …/:repo/:n`, `POST …/attachments`); a tier of the recipe
 (`GET /api/mate/recipe/:tier`); git over HTTPS at `/git/<appId>/<repo>.git` as the user `mate`,

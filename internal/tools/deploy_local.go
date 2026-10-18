@@ -115,7 +115,7 @@ func RegisterDeployLocal(
 				}
 				return jsonResult(deployLocalResponse{
 					DeployResult:     result,
-					WorkSessionState: sessionAnnotations(stateDir),
+					WorkSessionState: sessionAnnotations(ctx, httpClient, stateDir),
 					Envelope:         freshEnvelope(ctx, stateDir, client, projectID, runtime.Info{}),
 				}), nil, nil
 			}
@@ -125,7 +125,7 @@ func RegisterDeployLocal(
 			}
 			return jsonResult(deployLocalResponse{
 				DeployResult:     result,
-				WorkSessionState: sessionAnnotations(stateDir),
+				WorkSessionState: sessionAnnotations(ctx, httpClient, stateDir),
 				Envelope:         freshEnvelope(ctx, stateDir, client, projectID, runtime.Info{}),
 			}), nil, nil
 		}
@@ -254,7 +254,7 @@ func RegisterDeployLocal(
 		// environment derives from a zero-value runtime.Info.
 		return jsonResult(deployLocalResponse{
 			DeployResult:     result,
-			WorkSessionState: sessionAnnotations(stateDir),
+			WorkSessionState: sessionAnnotations(ctx, httpClient, stateDir),
 			Envelope:         freshEnvelope(ctx, stateDir, client, projectID, runtime.Info{}),
 		}), nil, nil
 	})
@@ -318,7 +318,17 @@ type WorkSessionState struct {
 // annotation agrees with the envelope phase + summary at every response surface
 // WITHOUT a lazy stamp. The trigger-vs-state asymmetry the old MaybeFireAutoClose
 // papered over is gone — there is no event to fire, the state is recomputed.
-func sessionAnnotations(stateDir string) *WorkSessionState {
+//
+// httpClient reaches HQ only for the closing note of a session that hands
+// over a change; nil where the caller holds none.
+func sessionAnnotations(ctx context.Context, httpClient ops.HTTPDoer, stateDir string) *WorkSessionState {
+	return sessionStateOf(stateDir, func() bool { return hqHasProduction(ctx, httpClient) })
+}
+
+// sessionStateOf is sessionAnnotations with how it learns whether the
+// application has a production, asked only for a closing note that hands
+// over a change.
+func sessionStateOf(stateDir string, hasProduction func() bool) *WorkSessionState {
 	ws, err := workflow.CurrentWorkSession(stateDir)
 	if err != nil || ws == nil {
 		return &WorkSessionState{
@@ -333,7 +343,7 @@ func sessionAnnotations(stateDir string) *WorkSessionState {
 		// change remains open to hand over. A stand-up or an empty delivery
 		// has none.
 		if sessionHandsOverAChange(stateDir, ws) {
-			note += " " + hqHandoffNote
+			note += " " + hqHandoffNote(hasProduction())
 		}
 		return &WorkSessionState{
 			Status:      "auto-closed",
@@ -389,7 +399,7 @@ const noActiveSessionNote = "No active develop session — deploy not tracked. S
 // across mutation handlers means the agent reads one lifecycle signal,
 // not three different ones.
 func attachWorkSessionState(body map[string]any, stateDir string) map[string]any {
-	if state := sessionAnnotations(stateDir); state != nil {
+	if state := sessionStateOf(stateDir, func() bool { return false }); state != nil {
 		body["workSessionState"] = state
 	}
 	return body

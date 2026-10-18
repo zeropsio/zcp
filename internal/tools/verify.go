@@ -58,7 +58,7 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 			return jsonResult(verifyAllResponse{
 				VerifyAllResult:  result,
 				Note:             strings.Join(notes, " "),
-				WorkSessionState: sessionAnnotations(stateDir),
+				WorkSessionState: sessionAnnotations(ctx, httpClient, stateDir),
 				Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rt),
 			}), nil, nil
 		}
@@ -85,7 +85,7 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 		recordVerifyToWorkSession(stateDir, result)
 		resp := verifyResponse{
 			VerifyResult:     result,
-			WorkSessionState: sessionAnnotations(stateDir),
+			WorkSessionState: sessionAnnotations(ctx, httpClient, stateDir),
 			Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rt),
 		}
 		if redirectedFrom != "" {
