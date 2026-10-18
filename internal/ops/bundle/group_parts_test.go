@@ -224,3 +224,64 @@ func TestTierService_AddInRank_ManagedFirst(t *testing.T) {
 		t.Error("a service the composed tier does not name was added")
 	}
 }
+
+// Whether a tier lists a service is what the tier reads as YAML, never how
+// its hostname line is written: a tier that lists the service in any shape
+// is left as it is, an edit that would read back as anything but main plus
+// the one service is refused, and a tier keeps its own line endings.
+func TestTierService_AddInRank_ReadsTheTierAsYAML(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, main, host string
+		want             string // "" with wantErr false: main as it is
+		wantErr          bool
+	}{
+		{
+			name: "a tier listing the service with a comment on its hostname line is left as it is",
+			main: "services:\n  - hostname: cache  # primary\n    type: valkey@7.2\n    priority: 10\n\n  - hostname: app\n    type: nodejs@22\n    priority: 1\n",
+			host: "cache",
+		},
+		{
+			name: "a tier listing the service with its type first is left as it is",
+			main: "services:\n  - type: valkey@7.2\n    hostname: cache\n    priority: 10\n\n  - hostname: app\n    type: nodejs@22\n    priority: 1\n",
+			host: "cache",
+		},
+		{
+			name: "a tier whose services sit at its key's column takes the service there",
+			main: "services:\n- hostname: app\n  type: nodejs@22\n  priority: 1\nproject:\n  name: x\n",
+			host: "cache",
+			want: "services:\n- hostname: cache\n  type: valkey@7.2\n  mode: NON_HA\n  priority: 10\n\n- hostname: app\n  type: nodejs@22\n  priority: 1\nproject:\n  name: x\n",
+		},
+		{
+			name: "a CRLF tier keeps its own line endings",
+			main: "services:\r\n  - hostname: db\r\n    type: postgresql@17\r\n    priority: 10\r\n\r\n  - hostname: app\r\n    type: nodejs@22\r\n    priority: 1\r\n",
+			host: "cache",
+			want: "services:\r\n  - hostname: db\r\n    type: postgresql@17\r\n    priority: 10\r\n\r\n  - hostname: cache\r\n    type: valkey@7.2\r\n    mode: NON_HA\r\n    priority: 10\r\n\r\n  - hostname: app\r\n    type: nodejs@22\r\n    priority: 1\r\n",
+		},
+		{
+			name:    "an edit that would not read back as main plus the service is refused",
+			main:    "services:\n  - type: nodejs@22\n    hostname: app\n    priority: 1\n    extra:\n      - hostname: inner\n        priority: 0\n",
+			host:    "cache",
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := AddTierServiceInRank(tt.main, composedCache, tt.host)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("AddTierServiceInRank error = %v, want error %v:\n%s", err, tt.wantErr, got)
+			}
+			want := tt.want
+			if want == "" {
+				want = tt.main
+			}
+			if got != want {
+				t.Errorf("--- got\n%q\n--- want\n%q", got, want)
+			}
+			if !tt.wantErr && !TierListsService(got, tt.host) {
+				t.Errorf("the tier does not list %s as YAML:\n%s", tt.host, got)
+			}
+		})
+	}
+}
