@@ -937,6 +937,14 @@ and its message says so; the first `start` then finds the supervisor and redeplo
 Otherwise the dev setup keeps today's shape and the first `start` moves it as above.
 `TestDeploy_NewDevSetup_GetsTheSupervisorLines`, `TestStandup_FirstDeployPutsTheDevSetupUnderTheSupervisor`.
 
+**A move's waits** are never silent: a client that asked for progress hears from zcp at least
+every 15 s of every `zerops_dev_server` call (the server's keep-alive), and a move onto the
+supervisor says when its redeploy begins and when the dev server's start begins after the build.
+Its answer carries `migrationTimes` — the push, the build's wait with the checks after it
+(`buildDuration` is the platform's own), and the dev server's start — in milliseconds.
+`TestDevServer_MigrationSaysEachPhaseAndItsTime`,
+`TestKeepAlive_DevServerStartAfterTheBuild_SendsProgressEachInterval`.
+
 **Stop** signals the **group**: `SIGTERM` to `-pgid`, up to 10 s, then `SIGKILL` to `-pgid` — only
 after confirming the group is still the one it started (the leader's `/proc` start time equals
 `leaderStart`; a reused pid is left alone, and so is a group whose leader is gone, since nothing
