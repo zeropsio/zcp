@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -46,6 +47,18 @@ func newOpenCodeEnv(t *testing.T, home string) adapters.Env {
 
 func openCodeConfigPath(home string) string {
 	return filepath.Join(home, ".config", "opencode", "opencode.json")
+}
+
+// openCodeAgentsMD is the project root's AGENTS.md by its real path: t.TempDir
+// sits behind a symlink on macOS, as a project root may, and OpenCode keys the
+// files it loads by real path.
+func openCodeAgentsMD(t *testing.T, env adapters.Env) string {
+	t.Helper()
+	root, err := filepath.EvalSymlinks(env.BaseDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(root, "AGENTS.md")
 }
 
 func TestOpenCode_Name(t *testing.T) {
@@ -166,12 +179,12 @@ func TestOpenCode_ContainerInit_WritesConfig(t *testing.T) {
 	}{
 		{
 			name: "fresh home",
-			want: `{"mcp":{"zerops":` + zerops + `},"permission":{"zerops_*":"allow"}}`,
+			want: `{"mcp":{"zerops":` + zerops + `},"permission":{"zerops_*":"allow"},"instructions":["$AGENTS"]}`,
 		},
 		{
 			name:    "empty file",
 			initial: "",
-			want:    `{"mcp":{"zerops":` + zerops + `},"permission":{"zerops_*":"allow"}}`,
+			want:    `{"mcp":{"zerops":` + zerops + `},"permission":{"zerops_*":"allow"},"instructions":["$AGENTS"]}`,
 		},
 		{
 			name: "other servers and keys survive in their order",
@@ -180,39 +193,39 @@ func TestOpenCode_ContainerInit_WritesConfig(t *testing.T) {
 				`"agent":{"build":{"permission":{"*":"ask","read":"allow"}}}}`,
 			want: `{"$schema":"https://opencode.ai/config.json","model":"anthropic/x",` +
 				`"mcp":{"github":{"type":"remote","url":"https://gh.example/mcp","enabled":false},"ast":{"type":"local","command":["ast-mcp"]},"zerops":` + zerops + `},` +
-				`"agent":{"build":{"permission":{"*":"ask","read":"allow"}}},"permission":{"zerops_*":"allow"}}`,
+				`"agent":{"build":{"permission":{"*":"ask","read":"allow"}}},"permission":{"zerops_*":"allow"},"instructions":["$AGENTS"]}`,
 		},
 		{
 			name:    "a stale zerops entry is replaced in place",
 			initial: `{"mcp":{"zerops":{"type":"local","command":["old-zcp"],"enabled":false,"environment":{"X":"1"}},"b":{"type":"local","command":["b"]}}}`,
-			want:    `{"mcp":{"zerops":` + zerops + `,"b":{"type":"local","command":["b"]}},"permission":{"zerops_*":"allow"}}`,
+			want:    `{"mcp":{"zerops":` + zerops + `,"b":{"type":"local","command":["b"]}},"permission":{"zerops_*":"allow"},"instructions":["$AGENTS"]}`,
 		},
 		{
 			// OpenCode evaluates permission rules in key order, last match wins:
 			// the user's rules keep their order and zerops_* lands last.
 			name:    "permission object keeps the user's rule order",
 			initial: `{"permission":{"bash":"ask","*":"deny","edit":{"*.md":"allow"}}}`,
-			want:    `{"permission":{"bash":"ask","*":"deny","edit":{"*.md":"allow"},"zerops_*":"allow"},"mcp":{"zerops":` + zerops + `}}`,
+			want:    `{"permission":{"bash":"ask","*":"deny","edit":{"*.md":"allow"},"zerops_*":"allow"},"mcp":{"zerops":` + zerops + `},"instructions":["$AGENTS"]}`,
 		},
 		{
 			// The user's own zerops_* rule is their decision: value and place stay.
 			name:    "a user's zerops_* rule is left alone",
 			initial: `{"permission":{"zerops_*":"ask","*":"deny"}}`,
-			want:    `{"permission":{"zerops_*":"ask","*":"deny"},"mcp":{"zerops":` + zerops + `}}`,
+			want:    `{"permission":{"zerops_*":"ask","*":"deny"},"mcp":{"zerops":` + zerops + `},"instructions":["$AGENTS"]}`,
 		},
 		{
 			// Narrower zerops_ rules must still win (last match wins), so
 			// zerops_* goes in right before the first of them — after "*".
 			name:    "zerops_* lands before the user's narrower zerops_ rules",
 			initial: `{"permission":{"*":"ask","zerops_zerops_delete":"deny","bash":"ask","zerops_zerops_import":"ask"}}`,
-			want:    `{"permission":{"*":"ask","zerops_*":"allow","zerops_zerops_delete":"deny","bash":"ask","zerops_zerops_import":"ask"},"mcp":{"zerops":` + zerops + `}}`,
+			want:    `{"permission":{"*":"ask","zerops_*":"allow","zerops_zerops_delete":"deny","bash":"ask","zerops_zerops_import":"ask"},"mcp":{"zerops":` + zerops + `},"instructions":["$AGENTS"]}`,
 		},
 		{
 			// A blanket action is the user's whole policy; turning it into an
 			// object would rewrite it, so it is left exactly as it is.
 			name:    "a blanket permission string is left alone",
 			initial: `{"permission":"ask"}`,
-			want:    `{"permission":"ask","mcp":{"zerops":` + zerops + `}}`,
+			want:    `{"permission":"ask","mcp":{"zerops":` + zerops + `},"instructions":["$AGENTS"]}`,
 		},
 	}
 	for _, tt := range tests {
@@ -229,12 +242,77 @@ func TestOpenCode_ContainerInit_WritesConfig(t *testing.T) {
 				}
 			}
 
-			if err := adapters.NewOpenCode().ContainerInit(newOpenCodeEnv(t, home)); err != nil {
+			env := newOpenCodeEnv(t, home)
+			if err := adapters.NewOpenCode().ContainerInit(env); err != nil {
 				t.Fatalf("ContainerInit: %v", err)
 			}
 
-			if got := compactJSON(t, readFile(t, path)); got != tt.want {
-				t.Errorf("opencode.json\n  got:  %s\n  want: %s", got, tt.want)
+			want := strings.ReplaceAll(tt.want, "$AGENTS", openCodeAgentsMD(t, env))
+			if got := compactJSON(t, readFile(t, path)); got != want {
+				t.Errorf("opencode.json\n  got:  %s\n  want: %s", got, want)
+			}
+		})
+	}
+}
+
+// TestOpenCode_ContainerInit_ContainerAgentsMDLoadsInEveryDirectory: an
+// OpenCode session reads the container's AGENTS.md wherever it runs, as Claude
+// Code reads the CLAUDE.md beside it. OpenCode looks for AGENTS.md only up to
+// the session directory's git root, so a session in a git repository below the
+// project root — a crew member's lane, a dev service's mount — found none
+// (measured against opencode 1.19.3, 2026-10-19). The config's `instructions`
+// names the file by its real path, which OpenCode loads once even where its
+// own lookup finds it too. A user's own instructions stay, in their order.
+func TestOpenCode_ContainerInit_ContainerAgentsMDLoadsInEveryDirectory(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		initial string // "" = no file
+		want    func(agents string) []string
+	}{
+		{
+			name: "fresh home",
+			want: func(agents string) []string { return []string{agents} },
+		},
+		{
+			name:    "a user's instructions stay ahead of it",
+			initial: `{"instructions":["docs/STYLE.md","~/notes.md"]}`,
+			want:    func(agents string) []string { return []string{"docs/STYLE.md", "~/notes.md", agents} },
+		},
+		{
+			name:    "already listed, it is not repeated",
+			initial: `{"instructions":["$AGENTS","docs/STYLE.md"]}`,
+			want:    func(agents string) []string { return []string{agents, "docs/STYLE.md"} },
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			home := t.TempDir()
+			env := newOpenCodeEnv(t, home)
+			agents := openCodeAgentsMD(t, env)
+			path := openCodeConfigPath(home)
+			if tt.initial != "" {
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(strings.ReplaceAll(tt.initial, "$AGENTS", agents)), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if err := adapters.NewOpenCode().ContainerInit(env); err != nil {
+				t.Fatalf("ContainerInit: %v", err)
+			}
+
+			var doc struct {
+				Instructions []string `json:"instructions"`
+			}
+			if err := json.Unmarshal([]byte(readFile(t, path)), &doc); err != nil {
+				t.Fatal(err)
+			}
+			if want := tt.want(agents); !slices.Equal(doc.Instructions, want) {
+				t.Errorf("instructions = %q, want %q", doc.Instructions, want)
 			}
 		})
 	}

@@ -2826,7 +2826,9 @@ The shared readiness test still applies to every agent. A crew runs on an agent 
 the thread profile (Claude Code, Codex, Grok, OpenCode); Cursor and Antigravity are refused until their gate
 is seen live, since zcp pre-approves the Zerops tools in Cursor's project config. zcp gives OpenCode the
 `zerops` MCP server in `~/.config/opencode/opencode.json`, adding `zerops_*` as allowed
-only where it does not overrule the user's permission rules (`TestOpenCode_*`).
+only where it does not overrule the user's permission rules, and lists the project root's
+`AGENTS.md` in `instructions`: OpenCode looks for AGENTS.md only up to a session's git root, so a
+crew lane or a dev mount would otherwise run without it (`TestOpenCode_*`).
 
 ### 8.1 The agent-auth feed
 

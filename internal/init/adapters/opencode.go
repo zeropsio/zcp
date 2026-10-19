@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -89,6 +90,10 @@ func (OpenCode) Validate(env Env) ([]string, error) {
 // ContainerInit upserts mcp.zerops into ~/.config/opencode/opencode.json and
 // pre-approves zcp's tools with permission["zerops_*"] = "allow" — the
 // counterpart of Claude's `mcp__zerops__*` allow and Cursor's `Mcp(zerops:*)`.
+// It also lists the project root's AGENTS.md in `instructions`: OpenCode looks
+// for AGENTS.md only up to a session's git root, so a session in a repository
+// below the project root (a crew lane, a dev mount) would otherwise run without
+// it, where Claude Code reads the CLAUDE.md wrapper from any directory below.
 //
 // The rule never overrules the user (see withZeropsAllow); a blanket string
 // permission such as "ask" is the user's whole policy and is left untouched.
@@ -146,6 +151,25 @@ func (OpenCode) ContainerInit(env Env) error {
 		}
 	}
 
+	// An `instructions` that is not an array is the user's to fix; OpenCode
+	// refuses the file either way.
+	current, present = lookupMember(doc, "instructions")
+	if !present || bytes.HasPrefix(bytes.TrimSpace(current), []byte("[")) {
+		var paths []string
+		if present {
+			if err := json.Unmarshal(current, &paths); err != nil {
+				return fmt.Errorf("parse %s: instructions: %w", configPath, err)
+			}
+		}
+		if agents := containerAgentsMD(env.BaseDir); !slices.Contains(paths, agents) {
+			value, err := json.Marshal(append(paths, agents))
+			if err != nil {
+				return fmt.Errorf("encode %s: instructions: %w", configPath, err)
+			}
+			doc = upsertMember(doc, "instructions", value)
+		}
+	}
+
 	compact, err := encodeJSONObject(doc)
 	if err != nil {
 		return fmt.Errorf("encode %s: %w", configPath, err)
@@ -181,6 +205,16 @@ func withZeropsAllow(rules []jsonMember) []jsonMember {
 		}
 	}
 	return append(rules, allow)
+}
+
+// containerAgentsMD is the AGENTS.md `zcp init` writes into the project root,
+// by its real path: OpenCode keys the instruction files it loads by real path,
+// so the file its own lookup finds from the project root loads once.
+func containerAgentsMD(baseDir string) string {
+	if resolved, err := filepath.EvalSymlinks(baseDir); err == nil {
+		baseDir = resolved
+	}
+	return filepath.Join(baseDir, "AGENTS.md")
 }
 
 // openCodeServerEntry is OpenCode's local (stdio) MCP server shape: the
