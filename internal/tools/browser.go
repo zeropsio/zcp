@@ -44,27 +44,27 @@ func RegisterBrowser(srv *mcp.Server, stateDir string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "zerops_browser",
 		Description: "Drive Chrome via agent-browser in ONE bounded batch (ZCP-container only). " +
-			"The tool manages lifecycle: you pass url + inner commands, the tool runs [open url] + a wait for the page's first paint + " +
-			"your commands + [screenshot? if requested] + [errors] + [console] + [network requests]. " +
+			"The tool manages lifecycle: it runs [open url] + " +
+			"your commands + [screenshot if requested] + [errors] + [console] + [network requests]. " +
 			"The call already waits for the page's first paint; after a click, scroll, reload or navigation, wait for what should appear — " +
 			"[\"wait\",\"<sel>\"] or [\"wait\",\"--text\",\"<text>\"] — never for a fixed time. " +
 			"Only wait polls (up to 25 s, or [\"wait\",\"<sel>\",\"--timeout\",\"<ms>\"]); click, fill, check, find, get and is look once " +
 			"and fail at once on an element that is not there yet. " +
-			"Use this for recipe close-step browser verification — one call per subdomain (appstage, then appdev). " +
-			"One warm Chrome serves every call in the container: calls take turns (a call waits for the browser " +
-			"within its timeoutSeconds) and each call's tabs close when it ends. A call that times out, is cancelled " +
+			"Recipe close-step verification: one call per subdomain (appstage, then appdev). " +
+			"One warm Chrome serves every call: calls take turns (waiting for the browser " +
+			"within timeoutSeconds) and each call's tabs close when it ends. A call that times out, is cancelled " +
 			"or wedges Chrome returns its finished steps and recycles the browser (browserRecycled). " +
-			"isolation: \"tab\" (default) keeps cookies, login, storage, HTTP cache and service workers from earlier calls, " +
-			"like your own browser — right for re-checking your change after a deploy. " +
+			"isolation: \"tab\" (default) keeps cookies, login, storage, HTTP cache and service workers from earlier calls — " +
+			"right for re-checking your change after a deploy. " +
 			"\"fresh-context\" starts with none of them — only for the first check after a deploy that changed sign-in, storage, " +
 			"a service worker or long-cached assets, or for a signed-out view; it stops Chrome as the call ends, so the next call starts a cold one. " +
-			"Every other call stays on \"tab\". \"new-browser\" also restarts Chrome first — to rule out Chrome's own state when a page misbehaves only in the warm browser. " +
+			"Every other call stays on \"tab\". \"new-browser\" also restarts Chrome first, for a page that misbehaves only in the warm browser. " +
 			"freshBrowser: true means the call ran in a Chrome started for it (always after new-browser); " +
 			"browserRecycled: true means the call ended unclean and the browser was stopped (a fresh-context call stops it cleanly, without it). " +
-			"Each step's errorKind classifies selector-not-found, not-editable, timeout, wedge, invalid-command " +
-			"(a command, subcommand or find action agent-browser does not know: fix the command, the page is not at fault), " +
+			"Each step's errorKind: selector-not-found, not-editable, timeout, wedge, invalid-command " +
+			"(an unknown command, subcommand or find action: fix the command, not the page), " +
 			"stale-ref (an @eN ref no snapshot in this call's tab made) or other failures. " +
-			"Inner command vocabulary (inside commands[]; <sel> is a CSS selector): " +
+			"commands[] vocabulary (<sel> is a CSS selector): " +
 			"[\"find\",\"role\",\"button\",\"click\",\"--name\",\"Submit\"], [\"find\",\"label\",\"<text>\",\"check\"], " +
 			"[\"find\",\"label\",\"<text>\",\"fill\",\"<value>\"], [\"find\",\"text\",\"<text>\",\"click\"], " +
 			"[\"click\",\"<sel>\"], [\"fill\",\"<sel>\",\"<value>\"], [\"check\",\"<sel>\"], " +
@@ -76,17 +76,17 @@ func RegisterBrowser(srv *mcp.Server, stateDir string) {
 			"never as a positional; find cannot get or is — read state with get/is on a CSS selector (a checkbox: [\"is\",\"checked\",\"<sel>\"]). " +
 			"An @eN ref exists only after a snapshot earlier in the SAME call and dies with the call's tab: never reuse one from an earlier call " +
 			"or guess one; prefer find role|label|text or CSS. " +
-			"Do NOT pass [\"open\",...], [\"close\"], [\"tab\",...] or [\"window\",...] in commands — they are stripped; the tool owns the call's tab. " +
-			"Do NOT use [\"eval\",...] — it is stripped; dedicated commands produce structured output. " +
+			"Do NOT pass [\"open\",...], [\"close\"], [\"tab\",...], [\"window\",...] or [\"eval\",...] — they are stripped: " +
+			"the tool owns the call's tab, and dedicated commands give structured output. " +
 			"Pass screenshot=true to capture the viewport after your commands run, fullPage=true for the whole page as one image " +
-			"(cut to its top 8000 px; screenshot.capturedHeight then says how tall the page was) — returned as " +
-			"an image content block alongside the text result, not inlined into it, and kept as a picture the " +
-			"result names (screenshot.picture, e.g. \"shot-3\") for as long as screenshot.keptFor says: write ![what it shows](shot-3) in a " +
+			"(cut to its top 8000 px; screenshot.capturedHeight gives the page's full height) — returned as " +
+			"an image block beside the text result and kept as a picture the result names " +
+			"(screenshot.picture, e.g. \"shot-3\") for screenshot.keptFor: write ![what it shows](shot-3) in a " +
 			"zerops_workflow action=\"describe-change\" description to show it to the person. " +
 			"Returns: steps[] (each with errorKind on failure), errorsOutput (from [errors]), " +
-			"consoleOutput (from [console]), networkOutput (4xx/5xx requests from [network requests], " +
-			"always populated — no flag needed; a request that failed at the network layer or is still " +
-			"in flight has no status and is not reported), durationMs, freshBrowser, browserRecycled, message. " +
+			"consoleOutput (from [console]), networkOutput (4xx/5xx from [network requests], always on; " +
+			"a request with no status — failed at the network layer or still in flight — is not listed), " +
+			"durationMs, freshBrowser, browserRecycled, message. " +
 			"To say how a call ran, report the result's durationMs, freshBrowser and browserRecycled; a script that summarises results keeps them.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Drive browser via agent-browser",
