@@ -153,14 +153,16 @@ func (Codex) ContainerInit(env Env) error {
 //     its group recipe still wrote the old one (E2E F15, 2026-10-03).
 //
 // startup_timeout_sec is generous (30s) because the ZCP binary loads
-// recipe + atom corpus at boot. tool_timeout_sec covers the longest
-// poll (deploy + build phases, up to 10 minutes).
+// recipe + atom corpus at boot. tool_timeout_sec is a hard wall — Codex
+// does not reset it on progress — so it outlasts zcp's longest call
+// (zerops_standup's waits plus a deploy's push and build poll); zcp's own
+// bounds end every wait before it.
 func codexMCPServerEntry() map[string]any {
 	return map[string]any{
 		"command":             "zcp",
 		"args":                []any{"serve"},
 		"startup_timeout_sec": int64(30),
-		"tool_timeout_sec":    int64(600),
+		"tool_timeout_sec":    int64(3600),
 		"env_vars": []any{
 			"ZCP_API_KEY",
 			// Zerops runtime detection (runtime.Detect reads these).
