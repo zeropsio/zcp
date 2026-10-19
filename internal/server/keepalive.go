@@ -41,7 +41,7 @@ func keepAlive(interval, gap time.Duration) (receive, send mcp.Middleware) {
 			if token == nil {
 				return next(ctx, method, req)
 			}
-			stream := &progressStream{token: token}
+			stream := &progressStream{}
 			ctx = context.WithValue(ctx, progressStreamKey{}, stream)
 			beat := startHeartbeat(ctx, call.Session, token, interval)
 			result, err := next(ctx, method, req)
@@ -62,7 +62,7 @@ func keepAlive(interval, gap time.Duration) (receive, send mcp.Middleware) {
 			stream, _ := ctx.Value(progressStreamKey{}).(*progressStream)
 			params, ok := req.GetParams().(*mcp.ProgressNotificationParams)
 			session, isServer := req.GetSession().(*mcp.ServerSession)
-			if method != methodProgress || stream == nil || !ok || params == nil || !isServer || params.ProgressToken != stream.token {
+			if method != methodProgress || stream == nil || !ok || params == nil || !isServer {
 				return next(ctx, method, req)
 			}
 			// Held across the send, so the wire order is the numbering order.
@@ -85,10 +85,9 @@ const methodProgress = "notifications/progress"
 // progressStream is one tools/call's progress notifications: how many went
 // out and when the last one did.
 type progressStream struct {
-	token any
-	mu    sync.Mutex
-	n     float64
-	last  time.Time
+	mu   sync.Mutex
+	n    float64
+	last time.Time
 }
 
 type progressStreamKey struct{}

@@ -357,3 +357,20 @@ func TestKeepAlive_ProgressRisesAcrossEverySource(t *testing.T) {
 		}
 	}
 }
+
+// A progress token outside the spec (an object) still gets its keep-alive and
+// never takes zcp down.
+func TestKeepAlive_ObjectProgressToken_KeepsServing(t *testing.T) {
+	t.Parallel()
+	const interval = 20 * time.Millisecond
+	session, log := connectSilentTool(t, 5*interval, interval, 0)
+
+	params := &mcp.CallToolParams{Name: "silent", Arguments: map[string]any{}}
+	params.Meta = mcp.Meta{"progressToken": map[string]any{"id": "deploy-1"}}
+	if _, err := session.CallTool(t.Context(), params); err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if times, _ := log.snapshot(); len(times) == 0 {
+		t.Fatal("got no progress notifications for an object progress token, want the keep-alive")
+	}
+}
