@@ -16,14 +16,12 @@ import (
 // delivery resolves to direct — caller falls back to the input hostname
 // unchanged in both cases.
 //
-// Used by verify + record-deploy in Phase 4 to redirect a record-deploy
-// on the dev half (where the agent's bytes were pushed under git-push)
-// onto the stage half (where Zerops actually rebuilt the runtime).
-// Without this redirect an agent under git-push acks the wrong hostname
-// and the develop session's gate never closes. WITH this redirect firing
-// on closeMode=auto, the agent's verify on the dev half is silently
-// answered against stage, which broke the
-// greenfield-node-postgres-dev-stage flow-eval run on 2026-05-19.
+// Used by record-deploy in Phase 4 to redirect a record-deploy on the dev
+// half (where the agent's bytes were pushed under git-push) onto the stage
+// half (where Zerops actually rebuilt the runtime). Without this redirect an
+// agent under git-push acks the wrong hostname and the develop session's
+// gate never closes. Verify never redirects: the dev half is a runtime of its
+// own, and a verify answered against stage left it never verified.
 //
 // The resolver consumes the meta's ACTUAL CloseDeployMode +
 // GitPushState (Deployed=true to skip the FirstDeployBypass branch —

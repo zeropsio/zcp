@@ -547,22 +547,19 @@ func TestVerifyTool_DevServerStatusError_FallsBackToStatic(t *testing.T) {
 	}
 }
 
-// TestVerifyTool_PushSourceRedirect: a verify of a git-push pair's dev half
-// goes to its stage only once the stage runs a deploy, and then says which
-// service it checked; a stage that never had one leaves the dev half checked.
-func TestVerifyTool_PushSourceRedirect(t *testing.T) {
+// TestVerifyTool_PushSourceChecksItself: a verify of a git-push pair's dev
+// half checks the dev half, whether or not its stage runs a deploy — the
+// stage is verified by naming it, never in the dev half's place.
+func TestVerifyTool_PushSourceChecksItself(t *testing.T) {
 	t.Parallel()
 	deployed := &platform.ActiveAppVersionDigest{ID: "av-1", Source: "CLI", Built: true}
 	tests := []struct {
 		name        string
 		stageStatus string
 		stageCode   *platform.ActiveAppVersionDigest
-		wantHost    string
-		wantNote    string
 	}{
-		{name: "the stage never deployed: the dev half is checked", stageStatus: "READY_TO_DEPLOY", wantHost: "appdev"},
-		{name: "the stage runs a deploy: the stage is checked, and the answer says so", stageStatus: serviceStatusRunning, stageCode: deployed,
-			wantHost: "appstage", wantNote: `checked "appstage"`},
+		{name: "the stage never deployed: the dev half is checked", stageStatus: "READY_TO_DEPLOY"},
+		{name: "the stage runs a deploy: the dev half is checked, not its stage", stageStatus: serviceStatusRunning, stageCode: deployed},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -594,14 +591,11 @@ func TestVerifyTool_PushSourceRedirect(t *testing.T) {
 			if err := json.Unmarshal([]byte(getTextContent(t, result)), &resp); err != nil {
 				t.Fatalf("parse: %v", err)
 			}
-			if resp.Hostname != tt.wantHost {
-				t.Errorf("checked %q, want %q", resp.Hostname, tt.wantHost)
+			if resp.Hostname != "appdev" {
+				t.Errorf("checked %q, want %q", resp.Hostname, "appdev")
 			}
-			if tt.wantNote == "" && strings.Contains(resp.Note, "push source") {
+			if strings.Contains(resp.Note, "push source") {
 				t.Errorf("note = %q, want no redirect", resp.Note)
-			}
-			if !strings.Contains(resp.Note, tt.wantNote) {
-				t.Errorf("note = %q, want it to say %q", resp.Note, tt.wantNote)
 			}
 		})
 	}

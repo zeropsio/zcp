@@ -54,22 +54,10 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 				Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rt),
 			}), nil, nil
 		}
-		// Phase 4: if the input hostname is a push source whose builds land
-		// on a different runtime (dev half of a standard pair under
-		// git-push), verify against the BUILD TARGET instead. Self/cross
-		// (auto close-mode) modes resolve to self → no redirect.
-		// Recorded under the build-target hostname so the work session's
-		// auto-close gate (which evaluates resolved targets after Phase 2)
-		// sees the green tick on the right key.
-		// A build target that never ran a deploy has nothing to check yet
-		// (a new Mate's stage waits READY_TO_DEPLOY until its first build):
-		// the service asked for is verified instead.
+		// The service asked for is the one checked: a git-push pair's dev
+		// half is a runtime of its own, and the work session's gate needs its
+		// own verify. Its stage is verified by naming it.
 		host := input.ServiceHostname
-		var redirectedFrom string
-		if buildHost, _ := resolveBuildTargetForHost(stateDir, host); buildHost != "" && buildHost != host && runsDeploy(ctx, client, projectID, buildHost) {
-			redirectedFrom = host
-			host = buildHost
-		}
 		result, err := ops.VerifyWithMeta(ctx, client, fetcher, httpClient, projectID, host, runtimeMetaForHost(stateDir, host), publicAccessInputForHost(ctx, client, ssh, projectID, stateDir, host))
 		if err != nil {
 			return convertError(err, WithRecoveryStatus()), nil, nil
@@ -80,37 +68,14 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 			WorkSessionState: sessionAnnotations(stateDir),
 			Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rt),
 		}
-		if redirectedFrom != "" {
-			resp.Note = fmt.Sprintf("verify: checked %q, not %q: %q is a push source and %q is its build target (git-push standard pair builds on stage). Pass the build-target hostname directly next time.", host, redirectedFrom, redirectedFrom, host)
-		}
 		// RC-A′: a passing verify on a deferred-start (dev-mode dynamic)
 		// service reflects a LIVE dev-server process, not the app's own
 		// start — kept across restarts and redeploys, down after a crash.
 		// Annotate so the agent does not report it as an always-on service
 		// (the e2 failure).
-		if note := deferredStartDurabilityNote(stateDir, host, result); note != "" {
-			if resp.Note != "" {
-				resp.Note += " "
-			}
-			resp.Note += note
-		}
+		resp.Note = deferredStartDurabilityNote(stateDir, host, result)
 		return jsonResult(resp), nil, nil
 	})
-}
-
-// runsDeploy reports a service that runs a deploy, read lag-free; false when
-// the read fails, so a verify never moves to a target it cannot see.
-func runsDeploy(ctx context.Context, client platform.Client, projectID, hostname string) bool {
-	services, err := client.ListServicesDirect(ctx, projectID)
-	if err != nil {
-		return false
-	}
-	for i := range services {
-		if services[i].Name == hostname {
-			return services[i].HasDeployedCode()
-		}
-	}
-	return false
 }
 
 // verifyResponse wraps ops.VerifyResult with the structured
@@ -119,10 +84,7 @@ func runsDeploy(ctx context.Context, client platform.Client, projectID, hostname
 // lifecycle event — the agent sees whether this call landed inside an
 // open session, on an auto-closed one, or with no session tracking.
 //
-// Note carries any user-facing hint about the verify call's routing —
-// Phase 4 uses it to surface that the input hostname was redirected to
-// the build target (e.g. dev → stage under git-push) so the agent learns
-// the right hostname for next time.
+// Note carries a user-facing hint about what the verify's pass means.
 type verifyResponse struct {
 	*ops.VerifyResult
 	Note             string            `json:"note,omitempty"`
