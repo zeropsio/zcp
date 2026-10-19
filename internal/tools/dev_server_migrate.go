@@ -103,9 +103,11 @@ func migrateToSupervisor(ctx context.Context, req *mcp.CallToolRequest, d DevSer
 	m := &devServerMigration{hostname: host, setup: setup, yamlFile: file, name: name}
 	onProgress := buildProgressCallback(ctx, req)
 	began := time.Now()
+	// The server numbers the call's notifications and holds the answer after
+	// the last one (keepAlive), so a step failing at once is safe after say.
 	say := func(message string) {
 		if onProgress != nil {
-			onProgress(message, time.Since(began).Seconds(), 0)
+			onProgress(message, 0, 0)
 		}
 	}
 	say("moving " + host + " onto the dev-server supervisor: redeploying it once")
