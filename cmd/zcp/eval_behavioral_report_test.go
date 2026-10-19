@@ -60,7 +60,7 @@ func TestRunBehavioralReport_UnresolvableScope_ExitCode1(t *testing.T) {
 // TestBehavioralCLI_Report_EndToEnd_TextAndJSON
 // ---------------------------------------------------------------------------
 
-// non-parallel: builds and runs the zcp binary with a private HOME.
+// non-parallel: runs the zcp binary with a private HOME.
 func TestBehavioralCLI_Report_EndToEnd_TextAndJSON(t *testing.T) {
 	h := newCLIHarness(t, "FAILED")
 	h.server.hideAppForFirstDirectCall()

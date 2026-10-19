@@ -50,9 +50,7 @@ func captureStdout(t *testing.T, fn func()) string {
 // internal/mate's own tests use.
 func writeFakeBin(t *testing.T, path, body string) {
 	t.Helper()
-	if err := os.WriteFile(path, []byte(body), 0o700); err != nil {
-		t.Fatalf("write fake binary: %v", err)
-	}
+	installFakeExecutable(t, path, body)
 }
 
 // manifestVersion is the release every test in this file resolves toward —
@@ -141,11 +139,14 @@ func seedInstalledBundle(t *testing.T, home, version string) {
 func writeFakeInstallTools(t *testing.T) {
 	t.Helper()
 	binDir := t.TempDir()
-	// npm's fake script below shells out to mkdir/chmod; keep the system
+	// npm's fake script below shells out to mkdir/ln; keep the system
 	// PATH available for those while still resolving "npm"/"node" to the
 	// fakes ahead of any real ones.
 	t.Setenv("PATH", binDir+":/bin:/usr/bin")
 
+	// The installed mate is a link to one shared script, so its --version
+	// probe skips the first-exec assessment installFakeExecutable avoids.
+	mateBin := sharedFakeExecutable(t, fmt.Sprintf("#!/bin/sh\necho mate %s\n", manifestVersion))
 	writeFakeBin(t, filepath.Join(binDir, "npm"), fmt.Sprintf(`#!/bin/sh
 prefix=
 prev=
@@ -156,9 +157,8 @@ done
 mkdir -p "$prefix/node_modules/%s"
 mkdir -p "$prefix/node_modules/.bin"
 printf '{"name":"%s","version":"%s"}' > "$prefix/node_modules/%s/package.json"
-printf '#!/bin/sh\necho mate %s\n' > "$prefix/node_modules/.bin/%s"
-chmod +x "$prefix/node_modules/.bin/%s"
-`, mate.PackageName, mate.PackageName, manifestVersion, mate.PackageName, manifestVersion, mate.BinName, mate.BinName))
+ln "%s" "$prefix/node_modules/.bin/%s"
+`, mate.PackageName, mate.PackageName, manifestVersion, mate.PackageName, mateBin, mate.BinName))
 	writeFakeBin(t, filepath.Join(binDir, "node"), "#!/bin/sh\nexit 0\n")
 }
 
