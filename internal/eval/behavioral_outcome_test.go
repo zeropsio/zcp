@@ -71,10 +71,14 @@ func (h *behavioralHarness) writeScenario(t *testing.T, content string) string {
 	return p
 }
 
+// config leaves Timeout at the runner default: the fake claude exits on its
+// own and no test exercises the scenario deadline, so a short wall-clock
+// budget only turned a slow exec on a loaded machine into a spurious
+// not-run. A hung fake is still caught by go test's -timeout.
 func (h *behavioralHarness) config() RunnerConfig {
 	return RunnerConfig{
 		ResultsDir: h.resultsDir, WorkDir: h.work, ClaudeHome: h.home,
-		Model: "fake-offline", Timeout: 5 * time.Second, TaskEndSettle: 200 * time.Millisecond,
+		Model: "fake-offline", TaskEndSettle: 200 * time.Millisecond,
 	}
 }
 
