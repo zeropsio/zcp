@@ -33,8 +33,9 @@ type BrowserBatchInput struct {
 	// [network requests]. Each element is one agent-browser command as a
 	// string array — e.g. ["snapshot", "-i", "-c"], ["click", "#submit"],
 	// ["find", "role", "link", "click", "--name", "Users"]. Any "open",
-	// "close", "tab", "window" or "eval" elements do not run; each comes
-	// back first in the result's steps as a failed invalid-command step. A
+	// "close", "tab" or "window" elements do not run; each comes back first
+	// in the result's steps as a failed invalid-command step. An "eval"
+	// step's result is its value as JSON text (evalValuesAsText). A
 	// leading ["set", "viewport", w, h] runs before the open instead; without
 	// one the page loads at browserDefaultViewport, whatever an earlier call
 	// set.
@@ -326,12 +327,12 @@ const (
 	// browser's base tab and closes every other one when a call ends.
 	browserCmdTab    = "tab"
 	browserCmdWindow = "window"
-	// browserCmdEval is the raw eval command. Refused like open/close —
-	// dedicated commands (get/find/is/set)
-	// produce structured, parseable output; eval's return value does
-	// not have a stable shape. The tool description has always told
-	// callers not to use it; this enforces it.
+	// browserCmdEval runs a script in the page; its step's result is the
+	// value as JSON text, cut at browserEvalTextCap (evalValuesAsText).
 	browserCmdEval = "eval"
+	// browserEvalTextCap bounds an eval value's text in the result: room for
+	// a store's state or a list of computed styles, not a page's worth.
+	browserEvalTextCap = 10000
 	// browserCmdErrors, browserCmdConsole, browserCmdNetwork name the
 	// three auto-appended reporting commands, in the order they always
 	// appear in the tail (errors, console, network requests, close).
@@ -620,6 +621,7 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 		populateBrowserBatchOutputs(result, wantScreenshot, screenshotPath)
 	}
 	omitScreenshotTempPath(result, screenshotPath)
+	evalValuesAsText(result.Steps)
 	// The refused commands come first: they were turned away before the walk.
 	result.Steps = append(refused, result.Steps...)
 	return result, nil
@@ -839,12 +841,12 @@ func scanStepsForCDPWedge(steps []BrowserStepResult) (string, bool) {
 
 // buildCanonicalBatch assembles [open url] + the first-paint wait +
 // the caller's other commands + an optional [screenshot [--full] screenshotPath] +
-// [errors] [console] [network requests]. Any open/close/tab/window/eval in
+// [errors] [console] [network requests]. Any open/close/tab/window in
 // the caller's commands does not run and comes back in refused instead, as a
 // failed invalid-command step naming why and what to use (refusedCommands) —
 // the canonical open is the only navigation the tool owns, a close would end
-// the warm browser, tab and window could close or switch its base tab, and
-// dedicated commands replace eval. screenshotPath == "" omits the
+// the warm browser, and tab and window could close or switch its base tab.
+// screenshotPath == "" omits the
 // screenshot step entirely; fullPage captures the whole page, not the
 // viewport. A leading [set viewport w h] runs before the open, so the page
 // loads at that size instead of reflowing from the default width; without
@@ -893,7 +895,40 @@ var refusedCommands = map[string]string{
 	browserCmdClose:  "not run: the tool closes the call's tabs itself and keeps the shared browser",
 	browserCmdTab:    "not run: the tool owns the call's tab; for a clean context pass isolation \"fresh-context\"",
 	browserCmdWindow: "not run: the tool owns the call's tab; for a clean context pass isolation \"fresh-context\"",
-	browserCmdEval:   "not run: eval is refused; read the page with get, is or find, which give structured output",
+}
+
+// evalValuesAsText turns each answered eval step's result into its value as
+// JSON text: agent-browser answers {origin, result: <value>} (0.39.1, undefined
+// as null), and the value's shape is whatever the script returned. Text longer
+// than browserEvalTextCap keeps its start and says how long it was. A script
+// that threw is already a failed step carrying the page's error.
+func evalValuesAsText(steps []BrowserStepResult) {
+	for i := range steps {
+		step := &steps[i]
+		if !isCommand(step.Command, browserCmdEval) || !step.Success {
+			continue
+		}
+		var data struct {
+			Result json.RawMessage `json:"result"`
+		}
+		if json.Unmarshal(step.Result, &data) != nil || data.Result == nil {
+			continue
+		}
+		var value bytes.Buffer
+		if json.Compact(&value, data.Result) != nil {
+			continue
+		}
+		text := value.String()
+		if len(text) > browserEvalTextCap {
+			kept := strings.ToValidUTF8(text[:browserEvalTextCap], "")
+			text = fmt.Sprintf("%s… [cut: the value's JSON is %d bytes; the first %d are shown]", kept, len(text), len(kept))
+		}
+		quoted, err := json.Marshal(text)
+		if err != nil {
+			continue
+		}
+		step.Result = quoted
+	}
 }
 
 // browserDefaultViewport is the size a fresh Chrome opens at (measured

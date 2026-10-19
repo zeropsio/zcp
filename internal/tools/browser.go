@@ -71,20 +71,21 @@ func RegisterBrowser(srv *mcp.Server, stateDir string) {
 			"[\"get\",\"text\",\"<sel>\"], [\"get\",\"value\",\"<sel>\"], [\"get\",\"count\",\"<sel>\"], " +
 			"[\"is\",\"visible\",\"<sel>\"], [\"is\",\"enabled\",\"<sel>\"], [\"is\",\"checked\",\"<sel>\"], " +
 			"[\"wait\",\"<sel>\"], [\"wait\",\"--text\",\"<text>\"], [\"snapshot\",\"-i\",\"-c\"], " +
-			"[\"set\",\"viewport\",\"<w>\",\"<h>\"], [\"set\",\"device\",\"<name>\"], [\"set\",\"media\",\"dark|light\"]. " +
+			"[\"set\",\"viewport\",\"<w>\",\"<h>\"], [\"set\",\"device\",\"<name>\"], [\"set\",\"media\",\"dark|light\"], " +
+			"[\"eval\",\"<js>\"] (value as JSON text; only for what get/is/find cannot read, e.g. localStorage). " +
 			"find's action follows its value and is only click, fill, check, hover or text; a role's name goes in --name after the action, " +
 			"never as a positional; find cannot get or is — read state with get/is on a CSS selector (a checkbox: [\"is\",\"checked\",\"<sel>\"]). " +
 			"--name matches a substring (\"Sign in\" hits \"Sign in with passkey\"); --exact matches the whole name. " +
 			"An @eN ref exists only after a snapshot earlier in the SAME call and dies with the call's tab: never reuse one from an earlier call " +
 			"or guess one; prefer find role|label|text or CSS. " +
-			"open, close, tab, window and eval never run; each returns a failed invalid-command step. " +
+			"open, close, tab and window never run; each returns a failed invalid-command step. " +
 			"Pass screenshot=true to capture the viewport after your commands run, fullPage=true for the whole page as one image " +
-			"(cut to its top 8000 px; screenshot.capturedHeight gives the page's full height) — returned as " +
+			"(cut to its top 8000 px; screenshot.capturedHeight gives its full height) — returned as " +
 			"an image block beside the text result and kept as a picture the result names " +
 			"(screenshot.picture, e.g. \"shot-3\") for screenshot.keptFor: write ![what it shows](shot-3) in a " +
 			"zerops_workflow action=\"describe-change\" description to show it to the person. " +
-			"Returns: steps[] (each with errorKind on failure), errorsOutput (from [errors]), " +
-			"consoleOutput (from [console]), networkOutput (4xx/5xx from [network requests], always on; " +
+			"Returns: steps[], errorsOutput, consoleOutput, " +
+			"networkOutput (4xx/5xx from [network requests], always on; " +
 			"a request with no status — failed at the network layer or still in flight — is not listed), " +
 			"durationMs, freshBrowser, browserRecycled, message. " +
 			"To say how a call ran, report the result's durationMs, freshBrowser and browserRecycled; a script that summarises results keeps them.",
