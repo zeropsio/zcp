@@ -89,24 +89,24 @@ type consoleDeployHarness struct {
 	envFile      string // ZCP_FARM_CONSOLE_ENV_FILE override; empty = let deploy.sh default from HOME
 }
 
-// newConsoleDeployHarness builds the harness and copies the four stub
-// tools (curl.sh/zcli.sh/go.sh/mktemp.sh) into a bin dir as
-// curl/zcli/go/mktemp.
+// newConsoleDeployHarness builds the harness and links the four stub tools
+// (curl.sh/zcli.sh/go.sh/mktemp.sh) into a bin dir as curl/zcli/go/mktemp.
+// They are symlinks to the checked-in files rather than copies: macOS
+// assesses every newly created executable on its first exec, which on a
+// loaded machine outlasted deploy.sh's 30s safety net, while a checked-in
+// file is assessed once and stays assessed.
 func newConsoleDeployHarness(t *testing.T) *consoleDeployHarness {
 	t.Helper()
 	requireShAndPython3(t)
 
 	stubBin := t.TempDir()
-	testdata := consoleDeployTestdataDir(t)
+	testdata, err := filepath.Abs(consoleDeployTestdataDir(t))
+	if err != nil {
+		t.Fatalf("resolve stub dir: %v", err)
+	}
 	for _, name := range []string{"curl", "zcli", "go", "mktemp"} {
-		src := filepath.Join(testdata, name+".sh")
-		body, err := os.ReadFile(src)
-		if err != nil {
-			t.Fatalf("read stub %s: %v", src, err)
-		}
-		dst := filepath.Join(stubBin, name)
-		if err := os.WriteFile(dst, body, 0o700); err != nil {
-			t.Fatalf("write stub %s: %v", dst, err)
+		if err := os.Symlink(filepath.Join(testdata, name+".sh"), filepath.Join(stubBin, name)); err != nil {
+			t.Fatalf("link stub %s: %v", name, err)
 		}
 	}
 
