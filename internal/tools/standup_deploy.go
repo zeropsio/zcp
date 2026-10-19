@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -648,29 +649,53 @@ type standupDevServer struct {
 }
 
 // observeDevServers says, for every dev half that runs code, whether a dev
-// server runs on it. None is started here: a dev setup without the supervisor
-// idles on a no-op keepalive, and the command that serves the app is recorded
-// nowhere zcp reads — only as a comment in a hand-written recipe — so starting
-// one is the model's, with the port the dev setup declares. A dev setup under
-// the supervisor starts its declared server itself; the deploy reports it.
-func (d standupDeps) observeDevServers(pairs []*standupPair) {
+// server runs on it, as its supervisor answers now (the deploy's own read
+// when this call deployed it with one server declared). None is started
+// here: the command that serves the app is recorded nowhere zcp reads — only
+// as a comment in a hand-written recipe — so starting one is the model's,
+// with the port the dev setup declares. A declared server the supervisor
+// starts itself after every deploy.
+func (d standupDeps) observeDevServers(ctx context.Context, pairs []*standupPair) {
 	for _, sp := range pairs {
 		if !sp.devDeploy.running() {
 			continue
 		}
 		host := sp.pair.Dev.Hostname
-		if r := sp.devResult; r != nil && r.DevServer != nil {
-			state := standupDevServerRunning
-			if !r.DevServer.Running {
-				state = standupDevServerDown
-			}
-			sp.devServer = &standupDevServer{State: state, Why: r.DevServer.Reason}
-			continue
+		var ds *ops.DevServers
+		var devServer *ops.DevServerResult
+		var err error
+		if r := sp.devResult; r != nil {
+			devServer = r.DevServer
 		}
-		sp.devServer = &standupDevServer{
+		if devServer == nil && d.batch.sshDeployer != nil {
+			ds, devServer, err = ops.DevServersAfterDeploy(ctx, d.batch.sshDeployer, host, supervisorRoot(d.batch.stateDir, host))
+		}
+		notStarted := &standupDevServer{
 			State: standupDevServerNotStarted,
 			Port:  devSetupPort(projectRootFromState(d.batch.stateDir), host, sp.pair.Dev.Setup),
 			Why:   "the dev setup idles on a no-op keepalive, and no dev command is recorded where zcp reads it",
+		}
+		var noSup *ops.NoSupervisorError
+		switch {
+		case devServer != nil:
+			state := standupDevServerRunning
+			if !devServer.Running {
+				state = standupDevServerDown
+			}
+			sp.devServer = &standupDevServer{State: state, Why: devServer.Reason}
+		case ds != nil && len(ds.Declared.Servers) > 0:
+			state, why := standupDevServerRunning, ""
+			if !ds.Listening() {
+				state, why = standupDevServerDown, "none of the dev servers its supervisor runs listens"
+			}
+			sp.devServer = &standupDevServer{State: state, Why: why}
+		case ds != nil:
+			notStarted.Why = "its dev-server supervisor runs and declares no dev server yet, and no dev command is recorded where zcp reads it"
+			sp.devServer = notStarted
+		case err != nil && !errors.As(err, &noSup):
+			sp.devServer = &standupDevServer{State: standupDevServerUnread, Port: notStarted.Port, Why: err.Error()}
+		default:
+			sp.devServer = notStarted
 		}
 	}
 }

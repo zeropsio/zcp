@@ -929,12 +929,13 @@ runs as a `runtime` entry beside it (decision D).
 `TestDevServer_MigrationWaitsForDirtyCrewCopies`,
 `TestDevServer_WorkDirOfACrewCopy_NeverRewritesTheDeclaredCwd`.
 
-**A new dev setup** gets the two lines before it ever runs: the first `zerops_deploy` of a dev-mode
-dynamic dev service (a self-deploy, the pair never deployed) writes them into the dev setup it
-deploys when the pin rule above finds a release or `ZCP_DEVSUP_URL` is set, and its message says
-so; the first `start` then finds the supervisor and redeploys nothing. Otherwise the dev setup
-keeps today's shape and the first `start` moves it as above.
-`TestDeploy_NewDevSetup_GetsTheSupervisorLines`.
+**A new dev setup** gets the two lines before it ever runs: the first deploy of a dev-mode
+dynamic dev service (a self-deploy, the pair never deployed) — through `zerops_deploy`,
+`zerops_deploy_batch` or `zerops_standup`'s dev-half deploy, one path for all three — writes them
+into the dev setup it deploys when the pin rule above finds a release or `ZCP_DEVSUP_URL` is set,
+and its message says so; the first `start` then finds the supervisor and redeploys nothing.
+Otherwise the dev setup keeps today's shape and the first `start` moves it as above.
+`TestDeploy_NewDevSetup_GetsTheSupervisorLines`, `TestStandup_FirstDeployPutsTheDevSetupUnderTheSupervisor`.
 
 **Stop** signals the **group**: `SIGTERM` to `-pgid`, up to 10 s, then `SIGKILL` to `-pgid` — only
 after confirming the group is still the one it started (the leader's `/proc` start time equals
@@ -3757,8 +3758,10 @@ The order:
      (an earlier call, or a deploy by hand) is left as it is, whatever it waits for. Through `zerops_deploy_batch`'s gate, pre-flight and
      post-deploy steps (subdomains included), with no delivery: the stage runs `main` as the Mate's
      preview;
-   - starts no dev server — no dev command is recorded anywhere zcp reads — and names, per dev half,
-     the `zerops_dev_server` call with the port its dev setup declares;
+   - starts no dev server — no dev command is recorded anywhere zcp reads — and reads, per dev half,
+     the dev server its supervisor runs (`running`, `did not come up`), else names the
+     `zerops_dev_server` call with the port its dev setup declares (`not started`; `unread` when the
+     supervisor did not answer);
    - answers one entry per service: adopted, wired, deployed with its URL, queued, or failed with
      zcp's failure classification, the dev server's state, and the model's next step.
 10. The model starts the dev servers, verifies, and tells the person development is up, with each dev

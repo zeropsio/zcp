@@ -113,8 +113,8 @@ type batchDeployer struct {
 	rtInfo      runtime.Info
 	stateDir    string
 	recipeProbe RecipeSessionProbe
-	// devsup finds the zcp-devsup a deploy carrying a kept dev server onto
-	// the supervisor installs.
+	// devsup finds the zcp-devsup a deploy putting a dev setup under the
+	// supervisor installs.
 	devsup DevsupSource
 }
 
@@ -214,18 +214,13 @@ func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallba
 	if d.authInfo != nil {
 		authVal = *d.authInfo
 	}
-	// A self-deployed dev service the deleted keeper kept a server on
-	// carries it onto the supervisor (carryKeptServer).
+	// Each self-deployed dev service goes under the supervisor as a single
+	// zerops_deploy puts it there (superviseDevSetup).
 	moves := map[string]devSetupMove{}
 	warnings := map[string]string{}
 	for _, t := range targets {
-		if t.SourceService != "" && t.SourceService != t.TargetService {
-			continue
-		}
-		kept, ok, err := readKeeperRecord(d.stateDir, t.TargetService)
-		if ok {
-			moves[t.TargetService], err = carryKeptServer(ctx, d.sshDeployer, d.stateDir, d.devsup, t.TargetService, t.Setup, t.WorkingDir, kept)
-		}
+		move, err := superviseDevSetup(ctx, d.client, d.projectID, d.sshDeployer, d.stateDir, d.devsup, t.SourceService, t.TargetService, t.Setup, t.WorkingDir)
+		moves[t.TargetService] = move
 		if err != nil {
 			warnings[t.TargetService] = err.Error()
 		}

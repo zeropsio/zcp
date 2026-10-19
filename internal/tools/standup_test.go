@@ -21,6 +21,7 @@ import (
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/mate"
+	"github.com/zeropsio/zcp/internal/ops/devservertest"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -204,6 +205,10 @@ type standupSSH struct {
 	// zeropsYAML is, by dev half, the zerops.yaml its commits carry when it
 	// is not standupZeropsYAML's.
 	zeropsYAML map[string]string
+	// dev is, by dev half, the dev container answering every command the
+	// stand-up's own steps do not (its dev setup, its supervisor, its pushes);
+	// a host without one runs no zcp-devsup.
+	dev map[string]*devservertest.Container
 }
 
 type standupSSHCall struct{ host, cmd string }
@@ -214,7 +219,7 @@ const (
 	standupHeadShort = "0123456"
 )
 
-func (s *standupSSH) ExecSSH(_ context.Context, host, cmd string) ([]byte, error) {
+func (s *standupSSH) ExecSSH(ctx context.Context, host, cmd string) ([]byte, error) {
 	s.mu.Lock()
 	s.commands = append(s.commands, standupSSHCall{host, cmd})
 	s.mu.Unlock()
@@ -256,6 +261,15 @@ func (s *standupSSH) ExecSSH(_ context.Context, host, cmd string) ([]byte, error
 	case strings.Contains(cmd, "ZCP_BRANCH_ELSEWHERE") && s.collide[host]:
 		out := []byte("ZCP_BRANCH_REFUSED:ZCP_UNTRACKED_COLLISION package.json \n")
 		return out, &platform.SSHExecError{Hostname: host, Output: string(out), Err: fmt.Errorf("exit status 5")}
+	}
+	s.mu.Lock()
+	dev := s.dev[host]
+	s.mu.Unlock()
+	switch {
+	case dev != nil:
+		return dev.ExecSSH(ctx, host, cmd)
+	case strings.Contains(cmd, "@@zcp-devsup version"):
+		return []byte("@@zcp-devsup version 127\n@@zcp-devsup declaration 1\n"), nil
 	}
 	return []byte("ok"), nil
 }
@@ -412,6 +426,9 @@ type standupFixture struct {
 	// closedOff is the Mate's project as Zerops reads it: envIsolation
 	// `service`, else `none` (ops.ProjectClosedOff).
 	closedOff bool
+	// devsup is the zcp-devsup a dev setup installs; none is published by
+	// default.
+	devsup DevsupSource
 }
 
 // importingClient is the platform while the browser's runtime import is still
@@ -518,6 +535,7 @@ func (f *standupFixture) run(t *testing.T) (*mcp.CallToolResult, standupResponse
 			authInfo:    &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
 			rtInfo:      runtime.Info{InContainer: true, MateEnabled: true, ProjectID: "p1", ServiceName: "zcp"},
 			stateDir:    f.stateDir,
+			devsup:      f.devsup,
 		},
 		mounter:        f.mounter,
 		liveEnvPath:    writeLiveEnvFile(t, f.env),
@@ -693,6 +711,54 @@ func TestStandup_ASecondCallContinuesAndSkipsWhatIsDone(t *testing.T) {
 	dev := body.service(t, "medusadev")
 	if dev.Adopted != standupAlready || dev.Wired != standupAlready || dev.Deploy == nil || dev.Deploy.Status != standupAlreadyDeployed {
 		t.Errorf("medusadev on the second call = %+v", dev)
+	}
+}
+
+// TestStandup_FirstDeployPutsTheDevSetupUnderTheSupervisor
+// (docs/spec-mate.md §2.8a.2): the stand-up's first deploy of a dev half
+// writes the supervisor's two lines into its dev setup as zerops_deploy's
+// does, so the model's first dev-server start runs under it with no second
+// build, and the next stand-up call reads the server the supervisor runs.
+func TestStandup_FirstDeployPutsTheDevSetupUnderTheSupervisor(t *testing.T) {
+	t.Parallel()
+	f := newStandupFixture(t)
+	f.devsup = DevsupSource{Latest: func(context.Context) (string, error) { return testDevsupURL, nil }}
+	containers := map[string]*devservertest.Container{}
+	for _, pair := range []string{"medusa", "nextstore"} {
+		containers[pair+"dev"] = &devservertest.Container{YAMLFile: "zerops.yaml", YAML: standupZeropsYAML(pair)}
+	}
+	f.ssh.dev = containers
+	medusa := containers["medusadev"]
+
+	if result, body := f.run(t); result.IsError || body.StandUp != standupDevelopment {
+		t.Fatalf("first call: %s", getTextContent(t, result))
+	}
+	if medusa.Deploys != 1 || !strings.Contains(medusa.YAML, "start: zcp-devsup run\n") || !strings.Contains(medusa.YAML, testDevsupURL) {
+		t.Fatalf("medusadev after the stand-up's first deploy: deploys = %d, zerops.yaml:\n%s", medusa.Deploys, medusa.YAML)
+	}
+	if !medusa.Running {
+		t.Fatal("no supervisor runs on medusadev after the stand-up's first deploy")
+	}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDevServer(srv, DevServerDeps{Client: f.mock, ProjectID: "p1", SSH: f.ssh, StateDir: f.stateDir, Devsup: f.devsup,
+		AuthInfo: &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}})
+	a := callDevServer(t, srv, map[string]any{"action": "start", "hostname": "medusadev", "command": "npm run dev", "port": 9000})
+	if !a.Running || a.MigratedToSupervisor != nil || medusa.Deploys != 1 {
+		t.Errorf("first start after the stand-up: %+v, deploys = %d; want it running with no second build", a, medusa.Deploys)
+	}
+
+	f.devsDeployed()
+	result, body := f.run(t)
+	if result.IsError {
+		t.Fatalf("second call: %s", getTextContent(t, result))
+	}
+	if dev := body.service(t, "medusadev"); dev.DevServer == nil || dev.DevServer.State != standupDevServerRunning {
+		t.Errorf("medusadev's dev server on the second call = %+v, want running: %s", dev.DevServer, getTextContent(t, result))
+	}
+	if dev := body.service(t, "nextstoredev"); dev.DevServer == nil || dev.DevServer.State != standupDevServerNotStarted || dev.DevServer.Port != 9000 ||
+		strings.Contains(dev.DevServer.Why, "keepalive") {
+		t.Errorf("nextstoredev, under the supervisor with no server declared = %+v", dev.DevServer)
 	}
 }
 

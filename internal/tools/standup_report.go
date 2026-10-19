@@ -48,6 +48,8 @@ const (
 	standupDevServerNotStarted = "not started"
 	standupDevServerRunning    = "running"
 	standupDevServerDown       = "did not come up"
+	// standupDevServerUnread: zcp could not read the dev half's supervisor.
+	standupDevServerUnread = "unread"
 
 	// standupAgain is how every stopped report ends: the call is idempotent.
 	standupAgain = "then call zerops_standup again — it continues from here and skips what is done."
@@ -246,9 +248,11 @@ func standupDevServerNext(hostname, setup string, ds *standupDevServer) string {
 	}
 	switch ds.State {
 	case standupDevServerRunning:
-		return "Its supervisor started the dev server again; verify it: " + verify + "."
+		return "Its supervisor runs the dev server; verify it: " + verify + "."
 	case standupDevServerDown:
 		return fmt.Sprintf("The dev server its supervisor runs did not come up (%s): fix the cause, then zerops_dev_server action=\"restart\" hostname=%q, then %s.", ds.Why, hostname, verify)
+	case standupDevServerUnread:
+		return fmt.Sprintf("zcp could not read its dev servers (%s): zerops_dev_server action=\"status\" hostname=%q says whether one runs; start it if none does, then %s.", ds.Why, hostname, verify)
 	}
 	port := "<the port it listens on>"
 	if ds.Port > 0 {
