@@ -33,9 +33,11 @@ type BrowserBatchInput struct {
 	// [network requests]. Each element is one agent-browser command as a
 	// string array — e.g. ["snapshot", "-i", "-c"], ["click", "#submit"],
 	// ["find", "role", "link", "click", "--name", "Users"]. Any "open",
-	// "close" or "eval" elements are stripped. A leading ["set", "viewport",
-	// w, h] runs before the open instead; without one the page loads at
-	// browserDefaultViewport, whatever an earlier call set.
+	// "close", "tab", "window" or "eval" elements do not run; each comes
+	// back first in the result's steps as a failed invalid-command step. A
+	// leading ["set", "viewport", w, h] runs before the open instead; without
+	// one the page loads at browserDefaultViewport, whatever an earlier call
+	// set.
 	Commands [][]string `json:"commands,omitempty"`
 
 	// TimeoutSeconds bounds the whole call, the wait for the browser
@@ -311,7 +313,7 @@ func AgentBrowserAvailable() bool {
 const (
 	browserDefaultTimeout = 120 * time.Second
 	browserMaxTimeout     = 300 * time.Second
-	// browserCmdClose is the agent-browser close command; stripped from
+	// browserCmdClose is the agent-browser close command; refused in
 	// caller commands, since closing would end the shared warm browser.
 	browserCmdClose = "close"
 	// browserCmdOpen is the agent-browser open command.
@@ -320,12 +322,12 @@ const (
 	browserCmdSet         = "set"
 	browserSubcmdViewport = "viewport"
 	// browserCmdTab and browserCmdWindow open, switch and close tabs and
-	// contexts; stripped from caller commands, since the tool keeps the warm
+	// contexts; refused in caller commands, since the tool keeps the warm
 	// browser's base tab and closes every other one when a call ends.
 	browserCmdTab    = "tab"
 	browserCmdWindow = "window"
-	// browserCmdEval is the raw eval command. Stripped from caller
-	// commands like open/close — dedicated commands (get/find/is/set)
+	// browserCmdEval is the raw eval command. Refused like open/close —
+	// dedicated commands (get/find/is/set)
 	// produce structured, parseable output; eval's return value does
 	// not have a stable shape. The tool description has always told
 	// callers not to use it; this enforces it.
@@ -566,7 +568,7 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 	}
 	defer cleanupScreenshot()
 
-	batch := buildCanonicalBatch(input.URL, input.Commands, screenshotPath, input.FullPage)
+	batch, refused := buildCanonicalBatch(input.URL, input.Commands, screenshotPath, input.FullPage)
 	stdinBytes, err := json.Marshal(batch)
 	if err != nil {
 		return nil, fmt.Errorf("marshal batch: %w", err)
@@ -618,6 +620,8 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 		populateBrowserBatchOutputs(result, wantScreenshot, screenshotPath)
 	}
 	omitScreenshotTempPath(result, screenshotPath)
+	// The refused commands come first: they were turned away before the walk.
+	result.Steps = append(refused, result.Steps...)
 	return result, nil
 }
 
@@ -834,35 +838,32 @@ func scanStepsForCDPWedge(steps []BrowserStepResult) (string, bool) {
 }
 
 // buildCanonicalBatch assembles [open url] + the first-paint wait +
-// stripped caller commands + an optional [screenshot [--full] screenshotPath] +
+// the caller's other commands + an optional [screenshot [--full] screenshotPath] +
 // [errors] [console] [network requests]. Any open/close/tab/window/eval in
-// the caller's commands is silently dropped — the canonical open is the only
-// navigation the tool owns, a close would end the warm browser, tab and
-// window could close or switch its base tab, and dedicated commands replace
-// eval. screenshotPath == "" omits the
+// the caller's commands does not run and comes back in refused instead, as a
+// failed invalid-command step naming why and what to use (refusedCommands) —
+// the canonical open is the only navigation the tool owns, a close would end
+// the warm browser, tab and window could close or switch its base tab, and
+// dedicated commands replace eval. screenshotPath == "" omits the
 // screenshot step entirely; fullPage captures the whole page, not the
 // viewport. A leading [set viewport w h] runs before the open, so the page
 // loads at that size instead of reflowing from the default width; without
 // one, browserDefaultViewport runs there, so no call inherits the viewport an
 // earlier call set. The steps come back in the order they ran, the caller's
 // commands in the order sent.
-func buildCanonicalBatch(url string, commands [][]string, screenshotPath string, fullPage bool) [][]string {
+func buildCanonicalBatch(url string, commands [][]string, screenshotPath string, fullPage bool) (batch [][]string, refused []BrowserStepResult) {
 	inner := make([][]string, 0, len(commands))
 	for _, cmd := range commands {
 		if len(cmd) == 0 {
 			continue
 		}
-		switch cmd[0] {
-		case browserCmdOpen, browserCmdClose, browserCmdTab, browserCmdWindow:
-			// Strip — the tool owns navigation, tabs and contexts.
-			continue
-		case browserCmdEval:
-			// Strip — dedicated commands produce structured output.
+		if why, ok := refusedCommands[cmd[0]]; ok {
+			refused = append(refused, BrowserStepResult{Command: cmd, Error: &why, ErrorKind: ErrorKindInvalidCommand})
 			continue
 		}
 		inner = append(inner, cmd)
 	}
-	batch := make([][]string, 0, len(inner)+7)
+	batch = make([][]string, 0, len(inner)+7)
 	if len(inner) > 0 && isSetViewport(inner[0]) {
 		batch, inner = append(batch, inner[0]), inner[1:]
 	} else {
@@ -882,7 +883,17 @@ func buildCanonicalBatch(url string, commands [][]string, screenshotPath string,
 		[]string{browserCmdConsole},
 		[]string{browserCmdNetwork, browserSubcmdRequests, browserFlagStatus, browserStatusRange4xx5xx},
 	)
-	return batch
+	return batch, refused
+}
+
+// refusedCommands maps each caller command the tool does not run to the
+// error its refused step carries: why, and what to use instead.
+var refusedCommands = map[string]string{
+	browserCmdOpen:   "not run: the call opens its url itself; follow a link with click or find, or pass another page as url in a new call",
+	browserCmdClose:  "not run: the tool closes the call's tabs itself and keeps the shared browser",
+	browserCmdTab:    "not run: the tool owns the call's tab; for a clean context pass isolation \"fresh-context\"",
+	browserCmdWindow: "not run: the tool owns the call's tab; for a clean context pass isolation \"fresh-context\"",
+	browserCmdEval:   "not run: eval is refused; read the page with get, is or find, which give structured output",
 }
 
 // browserDefaultViewport is the size a fresh Chrome opens at (measured

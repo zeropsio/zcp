@@ -504,6 +504,78 @@ func TestBrowserBatch_StillStripsOpenCloseEvalTogether(t *testing.T) {
 	}
 }
 
+// TestBrowserBatch_RefusedCommandsAreFailedSteps pins that a command the tool
+// does not run is reported, not dropped without a word: each refused open,
+// close, tab, window or eval comes back first in steps, in the order sent, as
+// a failed invalid-command step saying what to use instead — an agent whose
+// eval vanished spent a call finding out. The walk itself is unchanged.
+func TestBrowserBatch_RefusedCommandsAreFailedSteps(t *testing.T) {
+	batch := [][]string{
+		{"set", "viewport", "1280", "577"},
+		{"open", "https://example.com"},
+		{"wait", "--fn", "performance.getEntriesByName('first-contentful-paint').length>0", "--timeout", "5000"},
+		{"get", "text", ".error"},
+		{"errors"},
+		{"console"},
+		{"network", "requests", "--status", "400-599"},
+	}
+	fake := &fakeBrowserRunner{runStdout: makeStdout(t, batch)}
+	defer OverrideBrowserRunnerForTest(fake)()
+
+	result, err := BrowserBatch(context.Background(), BrowserBatchInput{
+		URL: "https://example.com",
+		Commands: [][]string{
+			{"eval", "document.title"},
+			{"open", "https://example.com/other"},
+			{"get", "text", ".error"},
+			{"tab", "new"},
+			{"window", "new"},
+			{"close"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got := parseStdinBatch(t, fake.lastStdin); len(got) != len(batch) {
+		t.Errorf("refused commands must not run; batch: %v", got)
+	}
+	refused := []struct {
+		command []string
+		says    string // a word of the alternative the step names
+	}{
+		{[]string{"eval", "document.title"}, "get"},
+		{[]string{"open", "https://example.com/other"}, "url"},
+		{[]string{"tab", "new"}, "isolation"},
+		{[]string{"window", "new"}, "isolation"},
+		{[]string{"close"}, "closes"},
+	}
+	if len(result.Steps) != len(refused)+len(batch) {
+		t.Fatalf("steps = %d, want %d refused + %d run: %+v", len(result.Steps), len(refused), len(batch), result.Steps)
+	}
+	for i, want := range refused {
+		step := result.Steps[i]
+		if !slices.Equal(step.Command, want.command) {
+			t.Errorf("steps[%d].command = %v, want %v", i, step.Command, want.command)
+		}
+		if step.Success {
+			t.Errorf("steps[%d] %v: success = true, want false", i, want.command)
+		}
+		if step.ErrorKind != ErrorKindInvalidCommand {
+			t.Errorf("steps[%d] %v: errorKind = %q, want %q", i, want.command, step.ErrorKind, ErrorKindInvalidCommand)
+		}
+		if step.Error == nil || !strings.Contains(*step.Error, want.says) {
+			t.Errorf("steps[%d] %v: error must name the alternative (%q), got %v", i, want.command, want.says, step.Error)
+		}
+	}
+	if !slices.Equal(result.Steps[len(refused)].Command, batch[0]) {
+		t.Errorf("the run's steps must follow the refused ones, got %v", result.Steps[len(refused)].Command)
+	}
+	if len(result.ErrorsOutput) == 0 || len(result.ConsoleOutput) == 0 {
+		t.Errorf("the reporting tail must still be read: errors=%s console=%s", result.ErrorsOutput, result.ConsoleOutput)
+	}
+}
+
 // TestBrowserBatch_WrapsScreenshotBeforeErrorsConsoleWhenRequested pins
 // the S7 screenshot batch shape: when Screenshot is requested, the walk
 // becomes default viewport, open, paint wait, commands, screenshot <tmpfile>, errors,
