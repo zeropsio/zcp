@@ -128,7 +128,7 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 		telemetry:   tel,
 	}
 
-	srv.AddReceivingMiddleware(s.observe())
+	srv.AddReceivingMiddleware(s.observe(), keepAlive(keepAliveInterval, keepAliveGap))
 	s.registerTools() //nolint:contextcheck // registerTools wires a lazy background schema provider (schemaCache.Get(context.Background())); no request context applies at startup wiring time
 	if rtInfo.InContainer && rtInfo.MateEnabled {
 		tools.RegisterAskChief(ctx, s.server, nil, authInfo.ProjectID, authInfo.ProjectName)
@@ -222,7 +222,7 @@ func NewOrg(_ context.Context, org OrgReader, apiHost string, store knowledge.Pr
 		logger:     logger,
 		telemetry:  tel,
 	}
-	srv.AddReceivingMiddleware(s.observe())
+	srv.AddReceivingMiddleware(s.observe(), keepAlive(keepAliveInterval, keepAliveGap))
 
 	tools.RegisterOrg(srv, org, logFetcher, uuid.NewString)
 	schemaCache := schema.NewCache(schema.DefaultCacheTTL, apiHost, org.ListActiveServiceTypeVersions)
