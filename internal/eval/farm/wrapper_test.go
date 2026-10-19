@@ -426,6 +426,8 @@ func readPIDFile(t *testing.T, path string, timeout time.Duration) int {
 // farm.TreeDigest oracle (never the script's own output), and
 // runnerDimensions carrying the stub's printed values.
 func TestWrapper_Success_UploadsPartsThenDoneLast(t *testing.T) {
+	t.Parallel()
+
 	requireShAndCurl(t)
 
 	h := newWrapperHarness(t)
@@ -543,6 +545,8 @@ func assertUploadedTreeDigest(t *testing.T, fake *fakeS3, prefix, want string) {
 // (internal/capture SessionManifest.write), so it never leaves one empty.
 // grandchild.pid is the stub's last write before it hangs.
 func TestWrapper_ChildKilled_StillUploadsDone(t *testing.T) {
+	t.Parallel()
+
 	requireShAndCurl(t)
 
 	h := newWrapperHarness(t)
@@ -583,6 +587,8 @@ func TestWrapper_ChildKilled_StillUploadsDone(t *testing.T) {
 // (STUB_MODE=hang); the test kills it too once both pidfiles are known, so
 // it does not have to wait out the full 30s sleep to reap it.
 func TestWrapper_SupervisorKilled_NoDone(t *testing.T) {
+	t.Parallel()
+
 	requireShAndCurl(t)
 
 	h := newWrapperHarness(t)
@@ -613,6 +619,8 @@ func TestWrapper_SupervisorKilled_NoDone(t *testing.T) {
 // ever exec'ing the evaluator, and done.json still gets written (by the
 // supervisor's ordinary trap path) naming the refusal.
 func TestWrapper_DigestMismatch_RefusesToRun(t *testing.T) {
+	t.Parallel()
+
 	requireShAndCurl(t)
 
 	h := newWrapperHarness(t)
@@ -662,6 +670,8 @@ func TestWrapper_DigestMismatch_RefusesToRun(t *testing.T) {
 }
 
 func TestWrapper_ScenarioTreeDigestMismatch_RefusesToRun(t *testing.T) {
+	t.Parallel()
+
 	requireShAndCurl(t)
 
 	h := newWrapperHarness(t)
@@ -689,6 +699,8 @@ func TestWrapper_ScenarioTreeDigestMismatch_RefusesToRun(t *testing.T) {
 }
 
 func TestWrapper_ScenarioTraversalKey_RefusesBeforeWrite(t *testing.T) {
+	t.Parallel()
+
 	requireShAndCurl(t)
 
 	h := newWrapperHarness(t)
@@ -726,6 +738,8 @@ func TestWrapper_ScenarioTraversalKey_RefusesBeforeWrite(t *testing.T) {
 // values were genuinely present pre-redaction, not just absent because the
 // stub never wrote them.
 func TestWrapper_Redaction_NoSecretValueInBundle(t *testing.T) {
+	t.Parallel()
+
 	requireShAndCurl(t)
 
 	h := newWrapperHarness(t)
@@ -797,6 +811,8 @@ func TestWrapper_Redaction_NoSecretValueInBundle(t *testing.T) {
 // UNREDACTED. The fix (perl's \Q...\E fixed-string quoting) must fully
 // redact a value carrying every one of those characters at once.
 func TestWrapper_Redaction_MetacharValue_Redacted(t *testing.T) {
+	t.Parallel()
+
 	requireShAndCurl(t)
 
 	h := newWrapperHarness(t)
@@ -848,6 +864,8 @@ func TestWrapper_Redaction_MetacharValue_Redacted(t *testing.T) {
 // but it must publish none of results/, capture/, or done.json and must not
 // claim the attempt was uploaded.
 func TestWrapper_RedactionFailure_BlocksEvidenceAndCompletion(t *testing.T) {
+	t.Parallel()
+
 	requireShAndCurl(t)
 
 	realPerl, err := exec.LookPath("perl")
@@ -921,6 +939,8 @@ func TestWrapper_RedactionFailure_BlocksEvidenceAndCompletion(t *testing.T) {
 // ANTHROPIC_API_KEY in the environment refuses before the child is even
 // forked — an API key can shadow the farm's OAuth profile.
 func TestWrapper_ApiKeyPresent_Refused(t *testing.T) {
+	t.Parallel()
+
 	requireShAndCurl(t)
 
 	h := newWrapperHarness(t)
@@ -952,6 +972,8 @@ func TestWrapper_ApiKeyPresent_Refused(t *testing.T) {
 // gate: an empty/absent CLAUDE_CODE_OAUTH_TOKEN refuses too — there is no
 // API-key fallback.
 func TestWrapper_NoOAuthToken_Refused(t *testing.T) {
+	t.Parallel()
+
 	requireShAndCurl(t)
 
 	h := newWrapperHarness(t)
@@ -992,6 +1014,8 @@ func TestWrapper_NoOAuthToken_Refused(t *testing.T) {
 // create /var/candidate-bin (D3). cmd/zcp/eval_behavioral.go now derives
 // that path from the results dir instead, so /var/www is safe to use.
 func TestWrapper_PassesWorkDirUnderRunDir(t *testing.T) {
+	t.Parallel()
+
 	requireShAndCurl(t)
 
 	h := newWrapperHarness(t)
@@ -1037,6 +1061,8 @@ func TestWrapper_PassesWorkDirUnderRunDir(t *testing.T) {
 // the mkdir/exec that follows it in the real script) so this never touches
 // a real /var/www on the machine running go test.
 func TestWrapper_WorkDirDefaultsToVarWww_WhenEnvUnset(t *testing.T) {
+	t.Parallel()
+
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("sh not on PATH")
 	}
@@ -1068,6 +1094,8 @@ func TestWrapper_WorkDirDefaultsToVarWww_WhenEnvUnset(t *testing.T) {
 // (cmd/zcp/eval_capture.go, S5b) — replacing the old "records:" grep
 // recovery this brief removes from eval/farm/wrapper.sh.
 func TestWrapper_PassesCaptureDirUnderRunDir(t *testing.T) {
+	t.Parallel()
+
 	requireShAndCurl(t)
 
 	h := newWrapperHarness(t)
@@ -1100,6 +1128,8 @@ func TestWrapper_PassesCaptureDirUnderRunDir(t *testing.T) {
 // passes ($RUNDIR/capture), ends up uploaded as a non-empty "capture" part —
 // no separate recovery step needed, eval/farm/wrapper.sh.
 func TestWrapper_CapturePart_NonEmptyWhenWindowWritten(t *testing.T) {
+	t.Parallel()
+
 	requireShAndCurl(t)
 
 	h := newWrapperHarness(t)
@@ -1143,6 +1173,8 @@ func TestWrapper_CapturePart_NonEmptyWhenWindowWritten(t *testing.T) {
 // a `sleep 300` grandchild in its own pgid (via perl setpgrp) and records
 // its pid to ./grandchild.pid before itself sleeping.
 func TestWrapper_ChildKilled_NewProcessGroupGrandchildAlsoDead(t *testing.T) {
+	t.Parallel()
+
 	requireShAndCurl(t)
 
 	h := newWrapperHarness(t)
@@ -1184,6 +1216,8 @@ func TestWrapper_ChildKilled_NewProcessGroupGrandchildAlsoDead(t *testing.T) {
 // therefore allowed only after the wrapper has terminated that descendant and
 // proved it can no longer mutate the evidence tree.
 func TestWrapper_NormalExit_NewSessionDescendantCannotWriteAfterDone(t *testing.T) {
+	t.Parallel()
+
 	requireShAndCurl(t)
 	if runtime.GOOS != "linux" {
 		t.Skip("Linux-only: production cleanup proof uses Linux subreaper semantics")
@@ -1232,6 +1266,8 @@ func TestWrapper_NormalExit_NewSessionDescendantCannotWriteAfterDone(t *testing.
 // ZCP_FARM_RUNDIR unset, the wrapper uses the fixed, discoverable root
 // $HOME/.zcp-farm/<runId>/ instead of an untraceable `mktemp -d` path.
 func TestWrapper_RunDir_FixedRootUnderHome(t *testing.T) {
+	t.Parallel()
+
 	requireShAndCurl(t)
 
 	home := t.TempDir()
@@ -1266,6 +1302,8 @@ func TestWrapper_RunDir_FixedRootUnderHome(t *testing.T) {
 // independent oracle here is os/user.Current().HomeDir — never anything
 // read back from the script's own behavior.
 func TestWrapper_NoHome_FallsBackToUserHome(t *testing.T) {
+	t.Parallel()
+
 	requireShAndCurl(t)
 
 	me, err := user.Current()
@@ -1337,6 +1375,8 @@ type captureManifestDoc struct {
 // wrapper must patch that entry to match the post-redaction bytes and name
 // the changed path in done.json's "redacted" array.
 func TestWrapper_Redaction_UpdatesCaptureManifestAndListsRedacted(t *testing.T) {
+	t.Parallel()
+
 	requireShAndCurl(t)
 
 	h := newWrapperHarness(t)
@@ -1435,6 +1475,8 @@ func TestWrapper_Redaction_UpdatesCaptureManifestAndListsRedacted(t *testing.T) 
 // wrapper.sh up to its trailing `main "$@"` — rather than running the
 // whole supervisor, so this stays a fast unit test.
 func TestWrapper_Redaction_ManifestRewrite_FlatLayoutStillWorks(t *testing.T) {
+	t.Parallel()
+
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("sh not on PATH")
 	}
@@ -1518,6 +1560,8 @@ func TestWrapper_Redaction_ManifestRewrite_FlatLayoutStillWorks(t *testing.T) {
 }
 
 func TestWrapper_ProcStatParser_ReadsMultilineCommAndUsesLastDelimiter(t *testing.T) {
+	t.Parallel()
+
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("sh not on PATH")
 	}
@@ -1544,6 +1588,8 @@ func TestWrapper_ProcStatParser_ReadsMultilineCommAndUsesLastDelimiter(t *testin
 }
 
 func TestWrapper_ProcStatParser_RejectsIncompleteOrInvalidInput(t *testing.T) {
+	t.Parallel()
+
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("sh not on PATH")
 	}
@@ -1555,6 +1601,8 @@ func TestWrapper_ProcStatParser_RejectsIncompleteOrInvalidInput(t *testing.T) {
 	}
 	for name, stat := range tests {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
 			statPath := filepath.Join(t.TempDir(), "stat")
 			if err := os.WriteFile(statPath, []byte(stat), 0o644); err != nil {
 				t.Fatalf("write synthetic proc stat: %v", err)
@@ -1574,6 +1622,8 @@ func TestWrapper_ProcStatParser_RejectsIncompleteOrInvalidInput(t *testing.T) {
 }
 
 func TestWrapper_ProcStatZombieIsInactiveOnlyWithOneThread(t *testing.T) {
+	t.Parallel()
+
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("sh not on PATH")
 	}
@@ -1590,6 +1640,8 @@ func TestWrapper_ProcStatZombieIsInactiveOnlyWithOneThread(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			driver := "proc_state=" + shQuote(tt.state) + "\n" +
 				"proc_num_threads=" + shQuote(tt.threads) + "\n" +
 				"if proc_stat_is_safely_inactive; then printf inactive; else printf cleanup; fi\n"
@@ -1605,6 +1657,8 @@ func TestWrapper_ProcStatZombieIsInactiveOnlyWithOneThread(t *testing.T) {
 }
 
 func TestWrapper_AdoptedChildren_VanishedPIDRequiresStableRescan(t *testing.T) {
+	t.Parallel()
+
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("sh not on PATH")
 	}
@@ -1680,6 +1734,8 @@ func shQuote(s string) string {
 // in-file via `# shellcheck disable=...` directives, not by loosening this
 // check).
 func TestWrapper_NoBashisms(t *testing.T) {
+	t.Parallel()
+
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("sh not on PATH")
 	}
@@ -1707,6 +1763,8 @@ func TestWrapper_NoBashisms(t *testing.T) {
 // claim is durable: a second invocation refuses before it can touch the
 // winner's evidence or start a second paid evaluator.
 func TestWrapper_RepeatedStart_DoesNotLaunchEvaluator(t *testing.T) {
+	t.Parallel()
+
 	requireShAndCurl(t)
 	h := newWrapperHarness(t)
 	first := h.start(t, nil)
@@ -1726,6 +1784,8 @@ func TestWrapper_RepeatedStart_DoesNotLaunchEvaluator(t *testing.T) {
 // TestWrapper_ConcurrentStart_OneChild exercises mkdir's atomic claim with
 // two supervisors racing on one empty run directory.
 func TestWrapper_ConcurrentStart_OneChild(t *testing.T) {
+	t.Parallel()
+
 	requireShAndCurl(t)
 	h := newWrapperHarness(t)
 	first := h.start(t, nil)
@@ -1751,6 +1811,8 @@ func TestWrapper_ConcurrentStart_OneChild(t *testing.T) {
 // claim is a refusal, including when the prior attempt left only a pid and
 // partial evidence behind.
 func TestWrapper_ExistingInterruptedAttempt_PreservesEvidence(t *testing.T) {
+	t.Parallel()
+
 	requireShAndCurl(t)
 	h := newWrapperHarness(t)
 	prior := []byte("prior evidence")
@@ -1781,6 +1843,8 @@ func TestWrapper_ExistingInterruptedAttempt_PreservesEvidence(t *testing.T) {
 // must still refuse on the durable attempt claim, preserving retry/debug
 // evidence for the operator rather than pretending the bundle was uploaded.
 func TestWrapper_UploadFailure_DoesNotMarkUploaded(t *testing.T) {
+	t.Parallel()
+
 	requireShAndCurl(t)
 	h := newWrapperHarness(t)
 	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1827,6 +1891,8 @@ func TestWrapper_UploadFailure_DoesNotMarkUploaded(t *testing.T) {
 // partial results upload cannot be advertised as a complete bundle. The
 // proxy fails one results object and forwards all later requests normally.
 func TestWrapper_PartUploadFailure_DoesNotPublishDoneOrMarkUploaded(t *testing.T) {
+	t.Parallel()
+
 	requireShAndCurl(t)
 	h := newWrapperHarness(t)
 	failedPart := false
@@ -1886,6 +1952,8 @@ func TestWrapper_PartUploadFailure_DoesNotPublishDoneOrMarkUploaded(t *testing.T
 // body) escapes to a JSON string that decodes back to the same text, so a
 // blocked run is reported as blocked, not as "no bundle".
 func TestWrapper_JSONEscape_ControlCharactersStayValidJSON(t *testing.T) {
+	t.Parallel()
+
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("sh not on PATH")
 	}
