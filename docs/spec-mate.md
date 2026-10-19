@@ -668,6 +668,13 @@ is left and answers busy without touching the browser, so a late waiter is never
 mid-walk. The unit caps memory at 75% of the container's ceiling at its start and
 sets `OOMScoreAdjust=1000`, so Chrome, not the agent, is the first to die of memory.
 
+Each step answers agent-browser's own `error` text verbatim with an `errorKind` beside it:
+`wedge` (a CDP wedge signal, which also recycles the service), `invalid-command` (a command,
+subcommand or `find` action agent-browser does not know — the call was wrong, not the page),
+`stale-ref` (an `@eN` ref no snapshot in the call's tab made; refs die with the tab),
+`selector-not-found`, `not-editable`, `timeout` or `other`. Only `wait` polls (agent-browser's
+25 s default); `click`, `fill`, `check`, `find`, `get` and `is` look once.
+
 `isolation` is one parameter: `tab` (default) is a tab in the warm default context,
 so cookies, storage, HTTP cache and service workers carry over between calls;
 `fresh-context` is `window new`, a new browser context; agent-browser cannot dispose

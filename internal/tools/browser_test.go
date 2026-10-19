@@ -249,12 +249,19 @@ func TestBrowserTool_DescriptionTeachesTheCall(t *testing.T) {
 		"fullPage=true for the whole page as one image",
 		"browserRecycled: true means the call ended unclean and the browser was stopped",
 		"To say how a call ran, report the result's durationMs, freshBrowser and browserRecycled; a script that summarises results keeps them.",
+		"click, fill, check, find, get and is look once and fail at once on an element that is not there yet",
+		`["is","checked","<sel>"]`,
+		`["find","label","<text>","check"]`,
+		"find's action follows its value and is only click, fill, check, hover or text; a role's name goes in --name after the action",
+		"An @eN ref exists only after a snapshot earlier in the SAME call and dies with the call's tab",
+		"invalid-command",
+		"stale-ref",
 	} {
 		if !strings.Contains(desc, want) {
 			t.Errorf("description lacks %q", want)
 		}
 	}
-	for _, gone := range []string{"for a first visit"} {
+	for _, gone := range []string{"for a first visit", `["click","@e1"]`} {
 		if strings.Contains(desc, gone) {
 			t.Errorf("description still says %q", gone)
 		}

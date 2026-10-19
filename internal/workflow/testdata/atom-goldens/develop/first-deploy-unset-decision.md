@@ -472,13 +472,14 @@ before any browser probe.
 
 When `bodyText`/`consoleErrors` are missing, truncated, or the page needs
 interaction / SPA routes / non-root / auth, drive the browser **inline** with
-`zerops_browser` — inner commands cover click/fill/find/get/is/wait plus
-`set viewport`/`set device`/`set media` for responsive and dark-mode checks;
-pass `screenshot: true` (`fullPage: true`: whole page) for evidence;
-4xx/5xx requests come with errors/console. Wait for an element/text, never
-a fixed time. The default tab keeps cookies, storage and cache;
-`isolation: "fresh-context"` is only for the first check after a deploy that
-changed sign-in, storage, a service worker or caches — it stops Chrome.
+`zerops_browser` (`screenshot: true` for evidence). Only `wait` polls —
+click/find/get/is look once — so after a click or reload
+`["wait","<sel>"]` or `["wait","--text","<text>"]`, never a fixed time,
+before asserting. Checkbox: `["is","checked","<sel>"]`. `find` actions are
+only click/fill/check/hover/text, `--name` after the action:
+`["find","label","<text>","check"]`,
+`["find","role","button","click","--name","Submit"]`. An `@eN` ref lives only
+after a snapshot in the same call — prefer `find` or CSS.
 Never spawn a sub-agent, call raw `agent-browser`, or use `eval`.
 To make an already-public service internal-only, call `zerops_subdomain action="disable"` — after that, `http_public` reports `skip` on every later verify, same as a `publicAccess: "none"` plan intent.
 
