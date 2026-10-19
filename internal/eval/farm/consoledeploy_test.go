@@ -233,6 +233,8 @@ func oneLine(t *testing.T, s string) string {
 // missing, or ANTHROPIC_API_KEY present, refuses to start: exit 1, one
 // line on stderr naming the offending variable.
 func TestConsoleDeploy_RefusesMissingInputsOrAPIKey(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name      string
 		overrides map[string]string
@@ -258,6 +260,8 @@ func TestConsoleDeploy_RefusesMissingInputsOrAPIKey(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			h := newConsoleDeployHarness(t)
 			h.copyFixture("list-empty.json", "list-response.json")
 			h.copyFixture("import-response.json", "import-response.json")
@@ -287,6 +291,8 @@ func TestConsoleDeploy_RefusesMissingInputsOrAPIKey(t *testing.T) {
 // (default-path) operator env file at mode 0600, imports the service, and
 // still reaches the push step.
 func TestConsoleDeploy_FirstRunImportsWritesEnvFile0600AndPushes(t *testing.T) {
+	t.Parallel()
+
 	h := newConsoleDeployHarness(t)
 	h.copyFixture("list-empty.json", "list-response.json")
 	h.copyFixture("import-response.json", "import-response.json")
@@ -344,6 +350,8 @@ func envValue(t *testing.T, envFileBody, key string) string {
 // generated console token) plus the four ${os_*} references as literal
 // text, and never the account token.
 func TestConsoleDeploy_ImportYAMLCarriesRefsAndSecrets(t *testing.T) {
+	t.Parallel()
+
 	h := newConsoleDeployHarness(t)
 	h.copyFixture("list-empty.json", "list-response.json")
 	h.copyFixture("import-response.json", "import-response.json")
@@ -401,6 +409,8 @@ func TestConsoleDeploy_ImportYAMLCarriesRefsAndSecrets(t *testing.T) {
 // already exists, so deploy.sh must not import again and must not
 // regenerate/overwrite the recorded console token.
 func TestConsoleDeploy_SecondRunSkipsImportKeepsToken(t *testing.T) {
+	t.Parallel()
+
 	h := newConsoleDeployHarness(t)
 	h.copyFixture("list-with-console.json", "list-response.json")
 	h.copyFixture("import-response.json", "import-response.json")
@@ -447,6 +457,8 @@ func TestConsoleDeploy_SecondRunSkipsImportKeepsToken(t *testing.T) {
 // subdomain is enabled only after the push, and the URL read back
 // afterward is recorded in the env file and printed.
 func TestConsoleDeploy_EnablesSubdomainAfterPushAndRecordsURL(t *testing.T) {
+	t.Parallel()
+
 	h := newConsoleDeployHarness(t)
 	h.copyFixture("list-empty.json", "list-response.json")
 	h.copyFixture("import-response.json", "import-response.json")
@@ -505,6 +517,8 @@ func TestConsoleDeploy_EnablesSubdomainAfterPushAndRecordsURL(t *testing.T) {
 // lives in its own temp dir, outside both $HOME and the pushed --workingDir
 // (the account token must never be uploaded).
 func TestConsoleDeploy_ZcliGetsPrivateDataFile(t *testing.T) {
+	t.Parallel()
+
 	h := newConsoleDeployHarness(t)
 	h.copyFixture("list-empty.json", "list-response.json")
 	h.copyFixture("import-response.json", "import-response.json")
@@ -563,6 +577,8 @@ func argAfterFlag(t *testing.T, argvLine, flag string) string {
 // token line — deploy.sh must refuse rather than write a tokenless copy or
 // silently mint a second, unrecorded token.
 func TestConsoleDeploy_ExistingServiceWithoutLocalTokenExits1(t *testing.T) {
+	t.Parallel()
+
 	h := newConsoleDeployHarness(t)
 	h.copyFixture("list-with-console.json", "list-response.json")
 	h.copyFixture("import-response.json", "import-response.json")
@@ -600,6 +616,8 @@ func TestConsoleDeploy_ExistingServiceWithoutLocalTokenExits1(t *testing.T) {
 // into is gone by the time the script exits (so nothing — secret or not —
 // is left behind in it).
 func TestConsoleDeploy_NoSecretInOutputOrLeftovers(t *testing.T) {
+	t.Parallel()
+
 	h := newConsoleDeployHarness(t)
 	h.copyFixture("list-empty.json", "list-response.json")
 	h.copyFixture("import-response.json", "import-response.json")
@@ -648,6 +666,8 @@ func TestConsoleDeploy_NoSecretInOutputOrLeftovers(t *testing.T) {
 // script has exited non-zero — the EXIT trap, not the manual rm, is what
 // has to catch this path.
 func TestConsoleDeploy_FailedImportLeavesNoSecretFile(t *testing.T) {
+	t.Parallel()
+
 	h := newConsoleDeployHarness(t)
 	h.copyFixture("list-empty.json", "list-response.json")
 	h.copyFixture("import-response.json", "import-response.json")
@@ -707,6 +727,8 @@ func TestConsoleDeploy_FailedImportLeavesNoSecretFile(t *testing.T) {
 // never outrun vertical autoscaling. Live 2026-09-11, at the platform default
 // 0.125 GB floor, an observer's claude was OOM-killed mid-batch.
 func TestConsoleDeploy_PinsScalingOnEveryDeploy(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name     string
 		list     string
@@ -716,6 +738,8 @@ func TestConsoleDeploy_PinsScalingOnEveryDeploy(t *testing.T) {
 		{"existing service", "list-with-console.json", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			h := newConsoleDeployHarness(t)
 			h.copyFixture(tc.list, "list-response.json")
 			h.copyFixture("import-response.json", "import-response.json")
