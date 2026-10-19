@@ -55,13 +55,17 @@ import (
 
 // standupDeploy is one half's deploy, as the report says it.
 type standupDeploy struct {
-	Status        string   `json:"status"`
-	AppVersionID  string   `json:"appVersionId,omitempty"`
-	BuildDuration string   `json:"buildDuration,omitempty"`
-	URL           string   `json:"url,omitempty"`
-	Reason        string   `json:"reason,omitempty"`
-	BuildLogs     []string `json:"buildLogs,omitempty"`
-	RuntimeLogs   []string `json:"runtimeLogs,omitempty"`
+	Status        string `json:"status"`
+	AppVersionID  string `json:"appVersionId,omitempty"`
+	BuildDuration string `json:"buildDuration,omitempty"`
+	URL           string `json:"url,omitempty"`
+	Reason        string `json:"reason,omitempty"`
+	// Message and Warnings are zerops_deploy's own — among them what the
+	// supervisor step changed in the dev setup or why it could not.
+	Message     string   `json:"message,omitempty"`
+	Warnings    []string `json:"warnings,omitempty"`
+	BuildLogs   []string `json:"buildLogs,omitempty"`
+	RuntimeLogs []string `json:"runtimeLogs,omitempty"`
 	// Failure is zcp's classification of a failed deploy.
 	Failure *standupFailure `json:"failureClassification,omitempty"`
 	next    string
@@ -581,7 +585,8 @@ func (d standupDeps) awaitInFlight(ctx context.Context, halves []standupHalf, li
 	return true
 }
 
-// standupDeployFrom reads one batch entry as the report says it.
+// standupDeployFrom reads one batch entry as the report says it, with the
+// message and warnings zerops_deploy answers.
 func standupDeployFrom(entry ops.DeployBatchEntryResult) *standupDeploy {
 	r := entry.Result
 	switch {
@@ -594,14 +599,18 @@ func standupDeployFrom(entry ops.DeployBatchEntryResult) *standupDeploy {
 		if url == "" && r.PublicAccess != nil {
 			url = r.PublicAccess.URL
 		}
-		return &standupDeploy{Status: standupDeployed, AppVersionID: r.AppVersionID, BuildDuration: r.BuildDuration, URL: url, next: r.NextActions}
+		return &standupDeploy{Status: standupDeployed, AppVersionID: r.AppVersionID, BuildDuration: r.BuildDuration, URL: url,
+			Message: r.Message, Warnings: r.Warnings, next: r.NextActions}
 	case r.TimedOut:
 		return &standupDeploy{Status: standupInFlight,
-			Reason: "the build is still running past the poll's budget; the platform finishes it — a second zerops_standup waits for it and carries on"}
+			Reason:  "the build is still running past the poll's budget; the platform finishes it — a second zerops_standup waits for it and carries on",
+			Message: r.Message, Warnings: r.Warnings}
 	}
 	deploy := &standupDeploy{
 		Status:        standupDeployFailed,
 		Reason:        fmt.Sprintf("the deploy ended %s", r.Status),
+		Message:       r.Message,
+		Warnings:      r.Warnings,
 		BuildDuration: r.BuildDuration,
 		BuildLogs:     r.BuildLogs,
 		RuntimeLogs:   r.RuntimeLogs,
