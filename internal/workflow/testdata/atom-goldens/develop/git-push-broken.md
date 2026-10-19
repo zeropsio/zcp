@@ -184,7 +184,7 @@ only click/fill/check/hover/text, `--name` after the action:
 `["find","label","<text>","check"]`,
 `["find","role","button","click","--name","Submit"]`. An `@eN` ref lives only
 after a snapshot in the same call — prefer `find` or CSS.
-Never spawn a sub-agent, call raw `agent-browser`, or use `eval`.
+Never spawn a sub-agent or call raw `agent-browser`.
 To make an already-public service internal-only, call `zerops_subdomain action="disable"` — after that, `http_public` reports `skip` on every later verify, same as a `publicAccess: "none"` plan intent.
 
 - **VERDICT: PASS** — healthy + real rendered content; proceed.
