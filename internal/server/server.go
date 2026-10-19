@@ -360,7 +360,7 @@ func (s *Server) registerTools() {
 		// D32). Mate-gated like every mate-shaped effect (§2.0): a container
 		// without ZCP_MATE_ENABLED keeps the tool surface it had.
 		if s.rtInfo.InContainer && s.rtInfo.MateEnabled {
-			tools.RegisterStandup(s.server, s.client, httpClient, projectID, s.sshDeployer, s.mounter, s.authInfo, s.logFetcher, s.rtInfo, stateDir)
+			tools.RegisterStandup(s.server, s.client, httpClient, projectID, s.sshDeployer, s.mounter, s.authInfo, s.logFetcher, s.rtInfo, stateDir, devsup)
 		}
 	} else {
 		tools.RegisterDeployLocal(s.server, s.client, httpClient, projectID, s.authInfo, s.logFetcher, stateDir, wfEngine, recipeProbe)
