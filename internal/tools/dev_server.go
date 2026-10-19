@@ -150,6 +150,7 @@ func RegisterDevServer(srv *mcp.Server, d DevServerDeps) {
 		resp := &devServerToolResult{DevServerResult: result}
 		if migration != nil {
 			resp.MigratedToSupervisor = true
+			resp.MigrationTimes = &migration.times
 			resp.Message = migration.sentence() + " " + resp.Message
 			resp.Warnings = append(resp.Warnings, migration.warnings...)
 		}
@@ -215,6 +216,8 @@ type devServerToolResult struct {
 	// supervisor and redeployed it (docs/spec-mate.md §2.8a.2); omitted
 	// otherwise. The Mate acts on this field, never on the message sentence.
 	MigratedToSupervisor bool `json:"migratedToSupervisor,omitempty"`
+	// MigrationTimes is where that move spent its time; omitted otherwise.
+	MigrationTimes *migrationTimes `json:"migrationTimes,omitempty"`
 	// SubdomainURL is the L7 subdomain URL when the start-success hook
 	// enabled (or found already-enabled) the route for this hostname.
 	SubdomainURL string `json:"subdomainUrl,omitempty"`
