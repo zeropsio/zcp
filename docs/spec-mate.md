@@ -933,9 +933,12 @@ runs as a `runtime` entry beside it (decision D).
 dynamic dev service (a self-deploy, the pair never deployed) — through `zerops_deploy`,
 `zerops_deploy_batch` or `zerops_standup`'s dev-half deploy, one path for all three — writes them
 into the dev setup it deploys when the pin rule above finds a release or `ZCP_DEVSUP_URL` is set,
-and its message says so; the first `start` then finds the supervisor and redeploys nothing.
-Otherwise the dev setup keeps today's shape and the first `start` moves it as above.
-`TestDeploy_NewDevSetup_GetsTheSupervisorLines`, `TestStandup_FirstDeployPutsTheDevSetupUnderTheSupervisor`.
+and the deploy's `message` says so and asks for the edit to be committed (the stand-up report
+carries each deploy's `message` and `warnings`); an edit that fails is one of its `warnings`. The
+first `start` then finds the supervisor and redeploys nothing. Otherwise the dev setup keeps
+today's shape and the first `start` moves it as above.
+`TestDeploy_NewDevSetup_GetsTheSupervisorLines`, `TestStandup_FirstDeployPutsTheDevSetupUnderTheSupervisor`,
+`TestStandup_ReportSaysWhatTheSupervisorStepDid`.
 
 **A move's waits** are never silent: a client that asked for progress hears from zcp at least
 every 15 s of every `zerops_dev_server` call (the server's keep-alive), and a move onto the

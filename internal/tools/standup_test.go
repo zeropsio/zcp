@@ -762,6 +762,41 @@ func TestStandup_FirstDeployPutsTheDevSetupUnderTheSupervisor(t *testing.T) {
 	}
 }
 
+// TestStandup_ReportSaysWhatTheSupervisorStepDid (docs/spec-mate.md
+// §2.8a.2): a dev half's deploy in the report says what zerops_deploy's
+// answer says of the supervisor — the dev setup it edited and that the edit
+// is to be committed, or why the edit failed.
+func TestStandup_ReportSaysWhatTheSupervisorStepDid(t *testing.T) {
+	t.Parallel()
+	f := newStandupFixture(t)
+	f.devsup = DevsupSource{Latest: func(context.Context) (string, error) { return testDevsupURL, nil }}
+	medusa := &devservertest.Container{YAMLFile: "zerops.yaml", YAML: standupZeropsYAML("medusa")}
+	// nextstore's dev setup goes by another name in its zerops.yaml, so
+	// there is no setup "nextstoredev" to edit.
+	nextstore := &devservertest.Container{YAMLFile: "zerops.yaml",
+		YAML: strings.Replace(standupZeropsYAML("nextstore"), "setup: nextstoredev", "setup: develop", 1)}
+	f.ssh.dev = map[string]*devservertest.Container{"medusadev": medusa, "nextstoredev": nextstore}
+
+	result, body := f.run(t)
+	if result.IsError {
+		t.Fatalf("first call: %s", getTextContent(t, result))
+	}
+	if !strings.Contains(medusa.YAML, "start: zcp-devsup run\n") {
+		t.Fatalf("medusadev's dev setup was not edited:\n%s", medusa.YAML)
+	}
+	dev := body.service(t, "medusadev")
+	if dev.Deploy == nil || !strings.Contains(dev.Deploy.Message, `Before this first deploy zcp put medusadev under the dev-server supervisor: setup "medusadev" in zerops.yaml`) ||
+		!strings.Contains(dev.Deploy.Message, "commit it with your next change") {
+		t.Errorf("medusadev's deploy in the report = %+v; want it to say the edited zerops.yaml is to be committed", dev.Deploy)
+	}
+	next := body.service(t, "nextstoredev")
+	if next.Deploy == nil || !slices.ContainsFunc(next.Deploy.Warnings, func(w string) bool {
+		return strings.Contains(w, "dev-server supervisor:") && strings.Contains(w, "nextstoredev")
+	}) {
+		t.Errorf("nextstoredev's deploy in the report = %+v; want the failed supervisor edit as a warning", next.Deploy)
+	}
+}
+
 // TestStandup_TheModelIsTheBackup is every way the stand-up can stop: it
 // says exactly what failed, does nothing past it for that pair, and hands
 // the model the next step.
