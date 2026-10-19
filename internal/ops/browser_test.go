@@ -986,6 +986,13 @@ func TestClassifyStepError_Table(t *testing.T) {
 		{"no such element", "no such element: @e9", ErrorKindSelectorNotFound},
 		{"not editable", "Element is not editable", ErrorKindNotEditable},
 		{"generic timeout", "Timeout 25000ms exceeded waiting for element to be visible", ErrorKindTimeout},
+		{"wait timeout", "Wait timed out after 25000ms", ErrorKindTimeout},
+		{"selector missing in the DOM", "Element not found: #late. Verify the selector, role, or name is correct and the element exists in the DOM.", ErrorKindSelectorNotFound},
+		{"find with an action it lacks is invalid-command", "Unknown action 'get' for find. Valid actions: click, fill, check, hover, text.", "invalid-command"},
+		{"find with the name as a positional is invalid-command", "Unknown action 'Order' for find. Valid actions: click, fill, check, hover, text.", "invalid-command"},
+		{"unknown command is invalid-command", "Unknown command: foo", "invalid-command"},
+		{"unknown get or is subcommand is invalid-command", "Unknown subcommand: foo\nValid options: visible, enabled, checked", "invalid-command"},
+		{"ref outside its snapshot's tab is stale-ref", "Unknown ref: e99", "stale-ref"},
 		{"unrecognized falls to other", "some unexpected agent-browser failure", ErrorKindOther},
 	}
 	for _, tt := range tests {

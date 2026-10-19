@@ -31,7 +31,7 @@ type BrowserBatchInput struct {
 	// Commands are the inner agent-browser commands to run AFTER open and
 	// the first-paint wait and BEFORE the auto-appended [errors], [console],
 	// [network requests]. Each element is one agent-browser command as a
-	// string array — e.g. ["snapshot", "-i", "-c"], ["click", "@e1"],
+	// string array — e.g. ["snapshot", "-i", "-c"], ["click", "#submit"],
 	// ["find", "role", "link", "click", "--name", "Users"]. Any "open",
 	// "close" or "eval" elements are stripped. A leading ["set", "viewport",
 	// w, h] runs before the open instead; without one the page loads at
@@ -75,7 +75,15 @@ const (
 	ErrorKindNotEditable      = "not-editable"
 	ErrorKindTimeout          = "timeout"
 	ErrorKindWedge            = "wedge"
-	ErrorKindOther            = "other"
+	// ErrorKindInvalidCommand is a command agent-browser does not know —
+	// an unknown command, subcommand or find action: the call was wrong,
+	// not the page.
+	ErrorKindInvalidCommand = "invalid-command"
+	// ErrorKindStaleRef is an @eN ref that no snapshot of the step's tab
+	// made — a ref from an earlier call's tab or one guessed before its
+	// snapshot ran.
+	ErrorKindStaleRef = "stale-ref"
+	ErrorKindOther    = "other"
 )
 
 // classifyStepError maps one step's raw agent-browser error text to an
@@ -93,6 +101,10 @@ func classifyStepError(msg string) string {
 		}
 	}
 	switch {
+	case strings.Contains(lc, "unknown command"), strings.Contains(lc, "unknown subcommand"), strings.Contains(lc, "unknown action"):
+		return ErrorKindInvalidCommand
+	case strings.Contains(lc, "unknown ref"):
+		return ErrorKindStaleRef
 	case strings.Contains(lc, "no element"), strings.Contains(lc, "no such element"), strings.Contains(lc, "not found"):
 		return ErrorKindSelectorNotFound
 	case strings.Contains(lc, "not editable"), strings.Contains(lc, "not fillable"):
