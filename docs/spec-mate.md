@@ -943,10 +943,14 @@ today's shape and the first `start` moves it as above.
 **A move's waits** are never silent: a client that asked for progress hears from zcp at least
 every 15 s of every `zerops_dev_server` call (the server's keep-alive), and a move onto the
 supervisor says when its redeploy begins and when the dev server's start begins after the build.
+The keep-alive owns each call's progress stream: it numbers every notification on the call's token
+(its own, a build poll's, a tool's) so the values rise, and the answer trails the last one by at
+least 1 s, so a step that fails at once never shares a stdin chunk with a notification.
 Its answer carries `migrationTimes` — the push, the build's wait with the checks after it
 (`buildDuration` is the platform's own), and the dev server's start — in milliseconds.
 `TestDevServer_MigrationSaysEachPhaseAndItsTime`,
-`TestKeepAlive_DevServerStartAfterTheBuild_SendsProgressEachInterval`.
+`TestKeepAlive_DevServerStartAfterTheBuild_SendsProgressEachInterval`,
+`TestKeepAlive_DevServerMoveFailingAtOnce_AnswersAfterTheGap`, `TestKeepAlive_ProgressRisesAcrossEverySource`.
 
 **Stop** signals the **group**: `SIGTERM` to `-pgid`, up to 10 s, then `SIGKILL` to `-pgid` — only
 after confirming the group is still the one it started (the leader's `/proc` start time equals
