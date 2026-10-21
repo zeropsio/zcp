@@ -64,7 +64,7 @@ func hqLearnLanding(stateDir string, m *workflow.ServiceMeta, state hq.MateState
 	}
 	clearChange(stateDir, m, number)
 	if found != nil && found.State == hq.ChangeMerged {
-		return fmt.Sprintf("change #%d is merged — this Mate's work is on %q now; bring it up to date (`git checkout %s && git fetch origin && git merge --ff-only origin/%s`) and cut the next work's branch from it", number, hqBase, hqBase, hqBase)
+		return fmt.Sprintf("change #%d is merged — this Mate's work is on %q now; bring it up to date in your own shell on the mounted checkout, never over ssh (`git checkout %s && git fetch origin && git merge --ff-only origin/%s`), and cut the next work's branch from it", number, hqBase, hqBase, hqBase)
 	}
 	return fmt.Sprintf("change #%d was closed without merging — nothing of it is on %q", number, hqBase)
 }

@@ -25,10 +25,10 @@ ssh <push-source-host> "cd /var/www && git fetch origin && git checkout <default
 
 Read the default branch from the remote rather than assuming `main` — `git remote show origin` names it, and a repo created before that convention may still be on `master`. Uncommitted changes in the working copy are the one thing this destroys, so look before resetting (`git status --short`). Local edits that survived a previous session are almost always leftovers from work that already landed; if they are not, commit them to a branch first and say so, rather than carrying them silently into new work.
 
-Wired to this Mate's HQ — take `main` in and start the work on a branch of your own cut from it; `main` itself is never pushed:
+Wired to this Mate's HQ — take `main` in and start the work on a branch of your own cut from it; `main` itself is never pushed. Run it in your own shell on the mounted checkout (`/var/www/<push-source-host>`, a code-volume pair's folder below it), never over ssh: whether the checkout's origin is HQ or GitHub, git asks `zcp hq git-credential`, which only your own shell has:
 
 ```
-ssh <push-source-host> "cd /var/www && git fetch origin && git checkout main && git merge --ff-only origin/main && git checkout -b <your-branch>"
+cd /var/www/<push-source-host> && git fetch origin && git checkout main && git merge --ff-only origin/main && git checkout -b <your-branch>
 ```
 
 A `main` that will not fast-forward carries local commits that never landed: put them on a branch of their own (`git branch <name>`), then `git reset --keep origin/main`, and say so rather than carrying them silently into new work.

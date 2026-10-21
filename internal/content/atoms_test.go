@@ -212,3 +212,32 @@ func TestDevelopFirstDeployIntroAtom_CloseModePrerequisite(t *testing.T) {
 		t.Error("develop-strategy-review (the DECISION atom) must carry the `action=\"close-mode\"` call shape")
 	}
 }
+
+// A pair wired to this Mate's HQ syncs in the Mate's own shell on the
+// mounted checkout, never over ssh: a checkout whose code the person keeps on
+// GitHub has git ask `zcp hq git-credential`, which only that shell has.
+func TestDevelopGitPushStartFromRemoteAtom_WiredPairSyncsInTheMatesOwnShell(t *testing.T) {
+	t.Parallel()
+	atoms, err := ReadAllAtoms()
+	if err != nil {
+		t.Fatalf("ReadAllAtoms: %v", err)
+	}
+	var body string
+	for _, a := range atoms {
+		if a.Name == "develop-git-push-start-from-remote.md" {
+			body = a.Content
+		}
+	}
+	_, wired, found := strings.Cut(body, "Wired to this Mate's HQ")
+	if !found {
+		t.Fatal("develop-git-push-start-from-remote.md has no guidance for a pair wired to HQ")
+	}
+	if strings.Contains(wired, "ssh ") {
+		t.Errorf("a wired pair's sync runs over ssh: %s", wired)
+	}
+	for _, want := range []string{"your own shell", "git merge --ff-only origin/main"} {
+		if !strings.Contains(wired, want) {
+			t.Errorf("a wired pair's sync lacks %q: %s", want, wired)
+		}
+	}
+}

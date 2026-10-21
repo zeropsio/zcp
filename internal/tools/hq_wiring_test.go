@@ -205,10 +205,12 @@ func TestReconcileHQRepositories_TellsTheMateWhatBecameOfItsChange(t *testing.T)
 	for _, tt := range []struct {
 		name   string
 		settle func(*fakeHQ)
-		want   string
+		want   []string
 	}{
-		{name: "merged", settle: func(f *fakeHQ) { f.merge() }, want: "change #1 is merged"},
-		{name: "closed without merging", settle: func(f *fakeHQ) { f.close(1) }, want: "change #1 was closed without merging"},
+		// The checkout is brought up to date where git can ask zcp, whether its
+		// origin is HQ or GitHub.
+		{name: "merged", settle: func(f *fakeHQ) { f.merge() }, want: []string{"change #1 is merged", "in your own shell on the mounted checkout, never over ssh"}},
+		{name: "closed without merging", settle: func(f *fakeHQ) { f.close(1) }, want: []string{"change #1 was closed without merging"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			lab := newHQLab(t)
@@ -222,8 +224,13 @@ func TestReconcileHQRepositories_TellsTheMateWhatBecameOfItsChange(t *testing.T)
 			tt.settle(lab.hq)
 			elapseHQBackoff(t, lab.stateDir)
 			report := lab.wire()
-			if len(report) != 1 || !strings.Contains(report[0], tt.want) {
-				t.Fatalf("report = %q, want %q", report, tt.want)
+			if len(report) != 1 {
+				t.Fatalf("report = %q, want one line", report)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(report[0], want) {
+					t.Errorf("report = %q, want %q", report[0], want)
+				}
 			}
 			if meta := lab.meta(); meta.HQ.Change != 0 {
 				t.Errorf("the pair's record = %+v", meta.HQ)
