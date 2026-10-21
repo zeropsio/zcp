@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -16,7 +15,7 @@ import (
 // ObserveInput uses HQ's project and service IDs, learned from environments
 // and status. No Zerops credential or application ID comes from the model.
 type ObserveInput struct {
-	Action    string `json:"action,omitempty"    jsonschema:"environments (default), status, logs, or ci"`
+	Action    string `json:"action,omitempty"    jsonschema:"environments (default), status, or logs"`
 	ProjectID string `json:"projectId,omitempty" jsonschema:"Environment project ID from environments; required for status and logs"`
 	ServiceID string `json:"serviceId,omitempty" jsonschema:"Service ID from status; required for logs"`
 	Limit     int    `json:"limit,omitempty"     jsonschema:"Log entries: 1 to 100; defaults to 100"`
@@ -32,7 +31,6 @@ const (
 	observeEnvironments = "environments"
 	observeStatus       = "status"
 	observeLogs         = "logs"
-	observeCI           = "ci"
 )
 
 var observationID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
@@ -40,7 +38,7 @@ var observationID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 func registerObserve(srv *mcp.Server, httpClient hq.Doer, path, projectID string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_observe",
-		Description: "Observe this project's stage and production through HQ. environments lists project IDs; status reads service IDs, status and active versions; logs reads up to 100 service entries; ci reads the newest push and CI where Mate delivers to Git, which environments omits. Read only: no sibling Zerops grants or secrets. Failures say: fix input, retry later, or accept HQ's refusal.",
+		Description: "Observe this project's stage and production through HQ. environments lists project IDs; status reads service IDs, status and active versions; logs reads up to 100 service entries. Read only: no sibling Zerops grants or secrets. Failures say: fix input, retry later, or accept HQ's refusal.",
 		Annotations: &mcp.ToolAnnotations{Title: "Observe stage and production", ReadOnlyHint: true, IdempotentHint: true, DestructiveHint: boolPtr(false)},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in ObserveInput) (*mcp.CallToolResult, any, error) {
 		failure := func(message string) *mcp.CallToolResult {
@@ -49,7 +47,7 @@ func registerObserve(srv *mcp.Server, httpClient hq.Doer, path, projectID string
 		if in.Action == "" {
 			in.Action = observeEnvironments
 		}
-		if in.Action != observeEnvironments && in.Action != observeStatus && in.Action != observeLogs && in.Action != observeCI {
+		if in.Action != observeEnvironments && in.Action != observeStatus && in.Action != observeLogs {
 			return failure("Unknown observation action"), nil, nil
 		}
 		if (in.Action == observeStatus || in.Action == observeLogs) && !observationID.MatchString(in.ProjectID) {
@@ -93,87 +91,12 @@ func registerObserve(srv *mcp.Server, httpClient hq.Doer, path, projectID string
 				return readFailure(readErr, failure), nil, nil
 			}
 			body, err = json.Marshal(out)
-		case observeCI:
-			state, readErr := client.Once().Self(ctx)
-			if readErr != nil {
-				return readFailure(readErr, failure), nil, nil
-			}
-			body = []byte(gitPushesCI(state.GitPushes))
 		}
 		if err != nil {
 			return failure(fmt.Sprintf("Observation could not be rendered: %v", err)), nil, nil
 		}
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(body)}}}, nil, nil
 	})
-}
-
-// gitPushesCI answers the ci observation: one line per Git environment's
-// newest push of a repository.
-func gitPushesCI(pushes []hq.GitPush) string {
-	switch {
-	case pushes == nil:
-		return "This HQ does not report its Git environments' pushes, so there is no CI to read through it."
-	case len(pushes) == 0:
-		return "No Git environment of this Mate's application has taken a push yet."
-	}
-	lines := make([]string, 0, len(pushes))
-	for _, push := range pushes {
-		lines = append(lines, push.Repo+": "+gitPushCI(push))
-	}
-	return strings.Join(lines, "\n")
-}
-
-// gitPushCI is the short form of the origin's CI on one push, as HQ last read
-// it, with what the agent does about it: "CI on 1a2b3c4d5e in git-stage:
-// failed — check_types <url>; you hold no token …". Only a Mate reads CI
-// through HQ, so this is where that guidance lives.
-func gitPushCI(push hq.GitPush) string {
-	line := fmt.Sprintf("CI on %s in %s: ", shortSHA(push.Sha), push.Environment)
-	ci := push.CI
-	if ci == nil {
-		return line + "not read — HQ holds no CI record for this push"
-	}
-	switch ci.Verdict {
-	case hq.CIRunning:
-		line += fmt.Sprintf("running — %d of %d checks done", ci.Done, ci.Total)
-	case hq.CIPassed:
-		line += fmt.Sprintf("passed — %d of %d checks", ci.Done, ci.Total)
-	case hq.CIFailed:
-		failed := make([]string, 0, len(ci.Failed))
-		for _, check := range ci.Failed {
-			if check.URL != nil {
-				failed = append(failed, check.Name+" "+*check.URL)
-			} else {
-				failed = append(failed, check.Name)
-			}
-		}
-		return line + "failed — " + strings.Join(failed, ", ") +
-			"; you hold no token for the origin, so run the repository's own test command for each on the dev half, fix it and deliver the fix as a new change"
-	case hq.CIUnreadable:
-		// The reason says what the token lacks.
-		return line + "unreadable — " + reasonOf(ci) + " Tell the person this reason: only they can replace the Git environment's token."
-	case hq.CINone:
-		line += "none — no check reported"
-	default:
-		line += ci.Verdict
-	}
-	switch ci.Watch {
-	case hq.CIWatching:
-		line += "; HQ reads it until " + ci.Until
-		if ci.Verdict == hq.CIRunning {
-			line += "; tell the person CI is still running and read it again a few minutes later, never in a loop and not past then"
-		}
-	case hq.CIStopped:
-		line += "; HQ stopped reading: " + reasonOf(ci)
-	}
-	return line
-}
-
-func reasonOf(ci *hq.PushCI) string {
-	if ci.Reason == nil || *ci.Reason == "" {
-		return "HQ gave no reason"
-	}
-	return *ci.Reason
 }
 
 func observeFailure(text string) *mcp.CallToolResult {

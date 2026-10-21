@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"fmt"
-	"slices"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -32,8 +31,6 @@ type originConnected struct {
 	// Repo is the repository in HQ whose origin it is: Origin.Repo, or another
 	// repository of the application already holding it.
 	Repo string `json:"repo"`
-	// Environments are the application's Git environments that pushed Repo.
-	Environments []string `json:"environments"`
 }
 
 type originAnswer struct {
@@ -88,13 +85,7 @@ func registerOrigin(srv *mcp.Server, httpClient hq.Doer, path, projectID, stateD
 // another repository's code comes in (originFromHolder).
 func originAnswerOf(req ops.OriginRequest, state hq.MateState, hqAddress, stateDir string) originAnswer {
 	if holder := originHolder(req, state); holder != "" {
-		environments := []string{}
-		for _, push := range state.GitPushes {
-			if push.Repo == holder && !slices.Contains(environments, push.Environment) {
-				environments = append(environments, push.Environment)
-			}
-		}
-		connected := &originConnected{Origin: req, Repo: holder, Environments: environments}
+		connected := &originConnected{Origin: req, Repo: holder}
 		if holder == req.Repo {
 			return originAnswer{Connected: connected,
 				NextActions: fmt.Sprintf("Nothing was asked: %s is already the origin of %s in HQ. Take its code from HQ, never from the origin, and never ask for a token: %s.",

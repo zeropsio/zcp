@@ -2,7 +2,6 @@ package tools
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -65,15 +64,7 @@ func hqLearnLanding(stateDir string, m *workflow.ServiceMeta, state hq.MateState
 	}
 	clearChange(stateDir, m, number)
 	if found != nil && found.State == hq.ChangeMerged {
-		// Just the fact, and the origin's CI on a Git environment's push of
-		// that very commit.
-		note := []string{fmt.Sprintf("change #%d is merged — this Mate's work is on %q now", number, hqBase)}
-		for _, push := range state.GitPushes {
-			if found.MergedSha != nil && push.Repo == m.HQ.Repo && push.Sha == *found.MergedSha {
-				note = append(note, gitPushCI(push))
-			}
-		}
-		return strings.Join(note, "; ") + fmt.Sprintf("; start the next work from %q", hqBase)
+		return fmt.Sprintf("change #%d is merged — this Mate's work is on %q now; take it in (`git fetch origin && git merge origin/%s`) and start the next work from it", number, hqBase, hqBase)
 	}
 	return fmt.Sprintf("change #%d was closed without merging — nothing of it is on %q", number, hqBase)
 }

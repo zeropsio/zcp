@@ -28,10 +28,6 @@ type MateState struct {
 	// Changes are, in each of that application's repositories, the Mate's
 	// latest changes, newest first: its open one, if any, is the newest.
 	Changes []MateChange `json:"changes"`
-	// GitPushes are, for each Git environment of that application and each
-	// repository, the newest push the origin took, in environment order. nil
-	// from an HQ older than Git environments in the Mate's state.
-	GitPushes []GitPush `json:"gitPushes"`
 	// Repos are the application's repositories in HQ, by name. nil from an HQ
 	// older than repositories in the Mate's state.
 	Repos []MateRepo `json:"repos"`
@@ -52,55 +48,6 @@ type MateRepo struct {
 type RepoOrigin struct {
 	URL string `json:"url"`
 }
-
-// GitPush is a Git environment's newest confirmed push of one repository: the
-// commit the origin took on the environment's branch, and what the origin's
-// CI reported for it as HQ last read it — nil where HQ read none (a host other
-// than GitHub).
-type GitPush struct {
-	Environment string  `json:"environment"`
-	Repo        string  `json:"repo"`
-	Sha         string  `json:"sha"`
-	CI          *PushCI `json:"ci"`
-}
-
-// PushCI is HQ's record of the origin's CI on a pushed commit. Done of Total
-// counted checks completed; Failed names each counted check that did not
-// pass; Reason says why it is unreadable or why HQ stopped watching. HQ
-// watches until Until at the latest.
-type PushCI struct {
-	Verdict string          `json:"verdict"`
-	Done    int             `json:"done"`
-	Total   int             `json:"total"`
-	Failed  []PushCIFailure `json:"failed"`
-	Reason  *string         `json:"reason"`
-	Watch   string          `json:"watch"`
-	Until   string          `json:"until"`
-}
-
-// PushCIFailure is one counted check that did not pass; URL is nil where the
-// origin gave none.
-type PushCIFailure struct {
-	Name string  `json:"name"`
-	URL  *string `json:"url"`
-}
-
-// PushCI.Verdict: no check reported, some still running, all passed, some
-// failed, or the origin refused HQ the read.
-const (
-	CINone       = "none"
-	CIRunning    = "running"
-	CIPassed     = "passed"
-	CIFailed     = "failed"
-	CIUnreadable = "unreadable"
-)
-
-// PushCI.Watch the answer tells: HQ still reads, or HQ stopped reading before
-// every counted check completed.
-const (
-	CIWatching = "watching"
-	CIStopped  = "stopped"
-)
 
 // MateChange is one of the Mate's own changes, as it reads its outcome.
 type MateChange struct {

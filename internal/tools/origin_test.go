@@ -16,22 +16,19 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// originHQ is a fake HQ answering GET /api/mate/self with gitPushes and repos
-// ("" for an HQ older than them); it records every other request it is sent.
-func originHQ(t *testing.T, gitPushes, repos string) (srv *mcp.Server, others func() []string) {
+// originHQ is a fake HQ answering GET /api/mate/self with repos ("" for an
+// HQ older than them); it records every other request it is sent.
+func originHQ(t *testing.T, repos string) (srv *mcp.Server, others func() []string) {
 	t.Helper()
-	srv, others, _ = originHQIn(t, t.TempDir(), gitPushes, repos)
+	srv, others, _ = originHQIn(t, t.TempDir(), repos)
 	return srv, others
 }
 
 // originHQIn is originHQ for a project whose service metas live in stateDir;
 // it also returns the fake HQ's address.
-func originHQIn(t *testing.T, stateDir, gitPushes, repos string) (srv *mcp.Server, others func() []string, address string) {
+func originHQIn(t *testing.T, stateDir, repos string) (srv *mcp.Server, others func() []string, address string) {
 	t.Helper()
 	body := `{"projectId":"P_MATE","name":"Ada","face":"f","standupRequestedBy":null,"appId":"a1","changes":[]`
-	if gitPushes != "" {
-		body += `,"gitPushes":` + gitPushes
-	}
 	if repos != "" {
 		body += `,"repos":` + repos
 	}
@@ -66,7 +63,7 @@ func originHQIn(t *testing.T, stateDir, gitPushes, repos string) (srv *mcp.Serve
 // will wire.
 func TestOriginRequest_WritesNothing_NamesTheRepositoryThePairWillWire(t *testing.T) {
 	t.Parallel()
-	srv, others := originHQ(t, `[]`, `[]`)
+	srv, others := originHQ(t, `[]`)
 
 	result := callTool(t, srv, "zerops_origin", map[string]any{
 		"action": "request", "url": "https://github.com/zeropsio/mate.git", "repo": "appdev", "why": "to deliver finished work back",
@@ -109,7 +106,7 @@ func TestOriginRequest_URLWithCredentials_Refused(t *testing.T) {
 		"https://ghp_secret123@github.com/zeropsio/mate",
 		"https://x-access-token:ghp_secret123@github.com/zeropsio/mate.git",
 	} {
-		srv, others := originHQ(t, `[]`, `[]`)
+		srv, others := originHQ(t, `[]`)
 
 		result := callTool(t, srv, "zerops_origin", map[string]any{
 			"action": "request", "url": url, "repo": "appdev", "why": "to deliver finished work back",
@@ -143,7 +140,7 @@ func TestOriginRequest_RefusalNeverEchoesTheURL(t *testing.T) {
 		"http://github.com/acme/SECRET",
 		"https://github.com/SECRET",
 	} {
-		srv, others := originHQ(t, `[]`, `[]`)
+		srv, others := originHQ(t, `[]`)
 
 		result := callTool(t, srv, "zerops_origin", map[string]any{
 			"action": "request", "url": url, "repo": "appdev", "why": "to deliver finished work back",
@@ -171,7 +168,7 @@ func TestOriginRequest_AddressPastTheRepository_RefusedAskingForTheRepositoryAdd
 		"https://github.com/acme/app/pull/7",
 		"https://github.com/acme/app.git/info",
 	} {
-		srv, others := originHQ(t, `[]`, `[]`)
+		srv, others := originHQ(t, `[]`)
 
 		result := callTool(t, srv, "zerops_origin", map[string]any{
 			"action": "request", "url": url, "repo": "appdev", "why": "to deliver finished work back",
@@ -193,8 +190,7 @@ func TestOriginRequest_AddressPastTheRepository_RefusedAskingForTheRepositoryAdd
 // An origin request for an origin already connected answers connected.
 func TestOriginRequest_OriginAlreadyConnected_AnswersConnected(t *testing.T) {
 	t.Parallel()
-	srv, _ := originHQ(t, `[{"environment":"git-prod","tier":"production","branch":"main","repo":"appdev","sha":"`+ciSha+`"},`+
-		`{"environment":"git-prod","tier":"production","branch":"main","repo":"web","sha":"`+ciSha+`"}]`,
+	srv, _ := originHQ(t,
 		`[{"name":"appdev","origin":{"url":"https://github.com/zeropsio/mate"}},{"name":"web","origin":{"url":"https://github.com/zeropsio/web"}}]`)
 
 	result := callTool(t, srv, "zerops_origin", map[string]any{
@@ -209,16 +205,16 @@ func TestOriginRequest_OriginAlreadyConnected_AnswersConnected(t *testing.T) {
 	if answer.Requested != nil || answer.Connected == nil {
 		t.Fatalf("want connected only: %s", text)
 	}
-	if got := answer.Connected; got.Origin.Repo != "appdev" || len(got.Environments) != 1 || got.Environments[0] != "git-prod" {
-		t.Errorf("connected = %+v, want appdev through git-prod", got)
+	if got := answer.Connected; got.Origin.Repo != "appdev" || got.Repo != "appdev" {
+		t.Errorf("connected = %+v, want appdev's own origin", got)
 	}
 
-	// Another repository of the application delivering is not this one.
+	// Another repository's origin is not this one.
 	result = callTool(t, srv, "zerops_origin", map[string]any{
 		"action": "request", "url": "https://github.com/zeropsio/api", "repo": "apidev", "why": "to deliver finished work back",
 	})
 	if text := getTextContent(t, result); !strings.Contains(text, `"requested"`) {
-		t.Errorf("a repository no Git environment pushes answered: %s", text)
+		t.Errorf("a repository no origin is connected to answered: %s", text)
 	}
 }
 
@@ -237,19 +233,18 @@ func originAnswerTo(t *testing.T, srv *mcp.Server, url string) (originAnswer, st
 	return answer, text
 }
 
-// An origin already connected to the repository answers connected before its
-// first push.
-func TestOriginRequest_OriginConnectedToTheRepository_AnswersConnectedBeforeItsFirstPush(t *testing.T) {
+// An origin already connected to the repository answers connected.
+func TestOriginRequest_OriginConnectedToTheRepository_AnswersConnected(t *testing.T) {
 	t.Parallel()
-	srv, others := originHQ(t, `[]`, `[{"name":"appdev","origin":{"url":"https://github.com/Acme/App"}},{"name":"web"}]`)
+	srv, others := originHQ(t, `[{"name":"appdev","origin":{"url":"https://github.com/Acme/App"}},{"name":"web"}]`)
 
 	answer, text := originAnswerTo(t, srv, "https://github.com/acme/app.git/")
 
 	if answer.Requested != nil || answer.Connected == nil {
 		t.Fatalf("want connected only: %s", text)
 	}
-	if got := answer.Connected; got.Repo != "appdev" || got.Origin.Repo != "appdev" || got.Origin.URL != "https://github.com/acme/app" || len(got.Environments) != 0 {
-		t.Errorf("connected = %+v, want https://github.com/acme/app held by appdev and no environment yet", got)
+	if got := answer.Connected; got.Repo != "appdev" || got.Origin.Repo != "appdev" || got.Origin.URL != "https://github.com/acme/app" {
+		t.Errorf("connected = %+v, want https://github.com/acme/app held by appdev", got)
 	}
 	for _, want := range []string{
 		"Nothing was asked: https://github.com/acme/app is already the origin of appdev in HQ.",
@@ -277,7 +272,7 @@ func TestOriginRequest_OriginConnectedUnderAnotherRepository_NamesThatRepository
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{Hostname: "web", BootstrapSession: "test", BootstrappedAt: "2026-10-17"}); err != nil {
 		t.Fatal(err)
 	}
-	srv, _, _ := originHQIn(t, stateDir, `[{"environment":"git-prod","tier":"production","branch":"main","repo":"web","sha":"`+ciSha+`"}]`,
+	srv, _, _ := originHQIn(t, stateDir,
 		`[{"name":"appdev"},{"name":"web","origin":{"url":"https://github.com/acme/app"}}]`)
 
 	answer, text := originAnswerTo(t, srv, "https://github.com/acme/app")
@@ -285,8 +280,8 @@ func TestOriginRequest_OriginConnectedUnderAnotherRepository_NamesThatRepository
 	if answer.Requested != nil || answer.Connected == nil {
 		t.Fatalf("want connected only: %s", text)
 	}
-	if got := answer.Connected; got.Repo != "web" || got.Origin.Repo != "appdev" || len(got.Environments) != 1 || got.Environments[0] != "git-prod" {
-		t.Errorf("connected = %+v, want the origin held by web, pushed through git-prod", got)
+	if got := answer.Connected; got.Repo != "web" || got.Origin.Repo != "appdev" {
+		t.Errorf("connected = %+v, want the origin held by web", got)
 	}
 	for _, want := range []string{
 		"Nothing was asked: https://github.com/acme/app is already the origin of web in HQ, not of appdev.",
@@ -300,16 +295,15 @@ func TestOriginRequest_OriginConnectedUnderAnotherRepository_NamesThatRepository
 	}
 }
 
-// An older HQ without repos asks, whatever its Git environments pushed: its
-// pushes do not say which origin they went to.
+// An older HQ without repos asks: nothing says which origin is connected.
 func TestOriginRequest_OlderHQWithoutRepos_Asks(t *testing.T) {
 	t.Parallel()
-	older, _ := originHQ(t, `[{"environment":"git-prod","tier":"production","branch":"main","repo":"appdev","sha":"`+ciSha+`"}]`, "")
+	older, _ := originHQ(t, "")
 
 	answer, text := originAnswerTo(t, older, "https://github.com/acme/app")
 
 	if answer.Requested == nil || answer.Connected != nil {
-		t.Errorf("an older HQ's push of appdev: want requested, got: %s", text)
+		t.Errorf("an older HQ: want requested, got: %s", text)
 	}
 }
 
@@ -318,7 +312,7 @@ func TestOriginRequest_OlderHQWithoutRepos_Asks(t *testing.T) {
 // HQ into the asked repository.
 func TestOriginRequest_OriginConnectedUnderAnotherProjectsRepository_FetchesItFromHQ(t *testing.T) {
 	t.Parallel()
-	srv, _, address := originHQIn(t, t.TempDir(), `[]`,
+	srv, _, address := originHQIn(t, t.TempDir(),
 		`[{"name":"appdev"},{"name":"web","origin":{"url":"https://github.com/acme/app"}}]`)
 
 	answer, text := originAnswerTo(t, srv, "https://github.com/acme/app")

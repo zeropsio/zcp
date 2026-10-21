@@ -45,44 +45,6 @@ func TestClient_Self_CarriesTheMatesApplicationAndItsChanges(t *testing.T) {
 	}
 }
 
-// TestClient_Self_GitPushes_DecodesCIAndOlderHQ pins the Git environments'
-// pushes beside the changes: a push with the origin's CI, one HQ read no CI
-// for, and an older HQ that omits the field (nil, not empty).
-func TestClient_Self_GitPushes_DecodesCIAndOlderHQ(t *testing.T) {
-	t.Parallel()
-	const pushes = `{"projectId":"p-mate","name":"Ada","face":"face-1","standupRequestedBy":null,"appId":"a1","changes":[],"gitPushes":[` +
-		`{"environment":"git-stage","tier":"stage","branch":"main","repo":"appdev","sha":"cccccccccccccccccccccccccccccccccccccccc",` +
-		`"ci":{"sha":"cccccccccccccccccccccccccccccccccccccccc","verdict":"failed","done":2,"total":2,` +
-		`"failed":[{"name":"unit","url":"https://github.com/acme/app/actions/runs/7/job/9"},{"name":"lint","url":null}],` +
-		`"required":["unit"],"reason":null,"watch":"finished","readAt":"2026-10-17T10:00:10.000Z","until":"2026-10-17T11:00:00.000Z"}},` +
-		`{"environment":"git-prod","tier":"production","branch":"release","repo":"appdev","sha":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}]}`
-	client, _ := answering(t, pushes)
-	state, err := client.Self(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	url := "https://github.com/acme/app/actions/runs/7/job/9"
-	want := []GitPush{
-		{Environment: "git-stage", Repo: "appdev", Sha: "cccccccccccccccccccccccccccccccccccccccc",
-			CI: &PushCI{Verdict: CIFailed, Done: 2, Total: 2,
-				Failed: []PushCIFailure{{Name: "unit", URL: &url}, {Name: "lint"}},
-				Watch:  "finished", Until: "2026-10-17T11:00:00.000Z"}},
-		{Environment: "git-prod", Repo: "appdev", Sha: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"},
-	}
-	if !reflect.DeepEqual(state.GitPushes, want) {
-		t.Errorf("gitPushes = %+v\nwant %+v", state.GitPushes, want)
-	}
-
-	older, _ := answering(t, selfSample)
-	state, err = older.Self(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if state.GitPushes != nil {
-		t.Errorf("gitPushes from an HQ that omits them = %+v, want nil", state.GitPushes)
-	}
-}
-
 // A Mate's state carries every repository of its application, with the
 // address of its connected origin, and an older HQ that omits them (nil, not
 // empty).
