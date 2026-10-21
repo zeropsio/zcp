@@ -328,10 +328,8 @@ func keepHQPairCurrent(
 }
 
 // rewireHQPair runs the wiring for one pair now, outside the backoff, and
-// records the attempt the way a pass does. It is the trigger a session has
-// after bootstrap: a git-push of a pair whose remote is this Mate's HQ but
-// which was never recorded as wired (handleGitPush), and a stand-up adopting
-// a pair from the group recipe.
+// records the attempt the way a pass does: a stand-up adopting a pair from
+// the group recipe wires it at once.
 func rewireHQPair(
 	ctx context.Context,
 	client platform.Client,

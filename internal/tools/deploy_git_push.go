@@ -587,7 +587,7 @@ func handleGitPush(
 			rejection := classifyGitPushNonFastForward(sshGitRunner(ctx, sshDeployer, hostname, workingDir), effectiveRemote, branch)
 			recordAttempt(fmt.Sprintf("git-push rejected non-fast-forward: %s", detail), topology.FailureClassConfig)
 			return convertError(
-				newGitPushNonFastForwardError(hostname, detail, effectiveRemote),
+				newGitPushNonFastForwardError(hostname, detail),
 				WithFailureClassification(classification),
 				WithGitPushRejection(rejection),
 				WithRecoveryStatus(),

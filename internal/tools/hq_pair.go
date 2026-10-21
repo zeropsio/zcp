@@ -148,8 +148,8 @@ func hqPairWiredThrough(m *workflow.ServiceMeta) bool {
 }
 
 // hqPairPushes reports whether a wired pair's state lets it push: set up, or
-// marked by a refused credential — a mark on the credential, not on the
-// wiring, so the pair is not wired again for it.
+// marked broken by a git-push setup an older zcp ran — a mark on the
+// credential, not on the wiring, so the pair is not wired again for it.
 func hqPairPushes(state topology.GitPushState) bool {
 	return state == topology.GitPushConfigured || state == topology.GitPushBroken
 }

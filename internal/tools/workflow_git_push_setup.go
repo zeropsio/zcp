@@ -508,7 +508,7 @@ func confirmGitPushSetupLocal(
 	}
 	if remoteState != nil {
 		body["remote"] = remoteState
-		if warn := gitPushRemoteStateWarning(remoteState, false); warn != "" {
+		if warn := gitPushRemoteStateWarning(remoteState); warn != "" {
 			body["remoteStateWarning"] = warn
 		}
 	}
@@ -749,7 +749,7 @@ func confirmGitPushSetupContainer(
 	remoteState := probeGitPushRemoteState(sshGitRunner(ctx, sshDeployer, pushHost, workDir), trackedRef)
 
 	return jsonResult(attachWorkSessionState(
-		gitPushContainerConfiguredResponse(input, meta, hqURL, rotation, reconstructed, reconstructDivergence,
+		gitPushContainerConfiguredResponse(input, meta, rotation, reconstructed, reconstructDivergence,
 			identity, emailSeeded, nameSeeded, emailPreserved, namePreserved, identityWarning, remoteState),
 		stateDir)), nil, nil
 }
@@ -981,7 +981,7 @@ func gitPushSetupPreProbeSelfHeal(ctx context.Context, sshDeployer ops.SSHDeploy
 // from confirmGitPushSetupContainer to keep that probe-orchestration function
 // under the maintainability ceiling.
 func gitPushContainerConfiguredResponse(
-	input WorkflowInput, meta *workflow.ServiceMeta, hqURL string, rotation, reconstructed bool, reconstructDivergence string,
+	input WorkflowInput, meta *workflow.ServiceMeta, rotation, reconstructed bool, reconstructDivergence string,
 	identity ops.GitIdentity, emailSeeded, nameSeeded, emailPreserved, namePreserved bool, identityWarning string,
 	remoteState *gitPushRemoteStateWire,
 ) map[string]any {
@@ -998,7 +998,7 @@ func gitPushContainerConfiguredResponse(
 	}
 	if remoteState != nil {
 		resp["remote"] = remoteState
-		if warn := gitPushRemoteStateWarning(remoteState, ops.IsHQRemote(meta.RemoteURL, hqURL)); warn != "" {
+		if warn := gitPushRemoteStateWarning(remoteState); warn != "" {
 			resp["remoteStateWarning"] = warn
 		}
 	}

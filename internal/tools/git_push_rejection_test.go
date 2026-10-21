@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/zeropsio/zcp/internal/auth"
-	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 
@@ -318,33 +317,5 @@ func TestConvertError_NonFastForward(t *testing.T) {
 	}
 	if !strings.Contains(wire.Suggestion, "never force-push") && !strings.Contains(wire.Suggestion, "never force-push or merge") {
 		t.Errorf("suggestion should state zcp never force-pushes on its own: %s", wire.Suggestion)
-	}
-}
-
-// TestClassifyGitPushNonFastForward_AnHQPairIsNeverOfferedAForce: a change's
-// branch in HQ moves only forward and its main only by HQ's merge, so a
-// rejection there offers the two ways to take the remote in and never
-// replace-remote.
-func TestClassifyGitPushNonFastForward_AnHQPairIsNeverOfferedAForce(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	if err := hq.SaveEnrollment(hq.EnrollmentPath(), hq.Enrollment{HQ: "https://hq.example", ProjectID: "p1", Credential: "c"}); err != nil {
-		t.Fatal(err)
-	}
-	run := func(...string) (string, error) { return "", errFakeExit1 }
-
-	onHQ := classifyGitPushNonFastForward(run, "https://hq.example/git/a1/appdev.git", "mate/p1/3")
-	for _, opt := range onHQ.Next {
-		if opt.Name == "replace-remote" || strings.Contains(opt.Command, "--force") {
-			t.Errorf("an HQ pair was offered %q: %s", opt.Name, opt.Command)
-		}
-	}
-	if len(onHQ.Next) != 2 {
-		t.Errorf("want rebase and merge, got %+v", onHQ.Next)
-	}
-	if suggestion := newGitPushNonFastForwardError("appdev", "rejected", "https://hq.example/git/a1/appdev.git").Suggestion; strings.Contains(suggestion, "replace-remote") {
-		t.Errorf("an HQ pair's suggestion must not name replace-remote: %s", suggestion)
-	}
-	if other := classifyGitPushNonFastForward(run, "https://github.com/example/repo", "main"); len(other.Next) != 3 {
-		t.Errorf("a remote of the user's own keeps all three options, got %+v", other.Next)
 	}
 }

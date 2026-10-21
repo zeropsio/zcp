@@ -3741,9 +3741,9 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   through this process, so nothing waits to be told. A merged change's note tells the agent to bring
   `main` up to date and cut the next work's branch from it; it carries no CI line (§10.8). The
   record's number is cleared once the change is no longer open. A pass never changes the checkout.
-- **HQ not answering, fast (D35).** An API call connects within 5 s, TLS included, and is answered
-  within 10 s (`hq.Client.Bounded`; `Once` sends it once, so the client's own 20 s wait on a 503
-  never stacks under the caller's tries). git has no connect setting — curl would wait 300 s — so
+- **HQ not answering, fast (D35).** A describe's and the git helper's HQ call connects within 5 s,
+  TLS included, and is answered within 30 s (`hq.Client.Bounded`; `Once` sends it once, so the
+  client's own 20 s wait on a 503 never stacks under the caller's tries). git has no connect setting — curl would wait 300 s — so
   zcp's own git against HQ (the wiring's fetch, the push proof) is bounded by a 10 s stall passed per
   command, with `timeout` 4 min (`ops.HQGitBound`) as a safety net under the SSH runner's own 5 min.
   A describe that meets HQ not serving tries again on its own pace (`hqRetry`) and otherwise keeps

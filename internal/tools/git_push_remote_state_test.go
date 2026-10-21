@@ -149,36 +149,3 @@ func TestGitPushSetup_RemoteState_Unrelated(t *testing.T) {
 		t.Errorf("unrelated state must carry a push-decision warning: %s", r.body)
 	}
 }
-
-// TestGitPushRemoteStateWarning_AnHQRemoteIsNeverOfferedAForce: the
-// probe-time warning names the same options a rejection does, so on this
-// Mate's HQ — a branch only its change takes, `main` moved only by HQ's
-// merge — it offers only the two ways to take the remote in.
-func TestGitPushRemoteStateWarning_AnHQRemoteIsNeverOfferedAForce(t *testing.T) {
-	t.Parallel()
-	state := &gitPushRemoteStateWire{Ref: "mate/mate-p1", State: "diverged"}
-	for _, tc := range []struct {
-		name     string
-		hqRemote bool
-		want     []string
-		absent   []string
-	}{
-		{name: "this Mate's HQ", hqRemote: true, want: []string{"rebase", "merge"}, absent: []string{"replace-remote", "--force"}},
-		{name: "the user's own remote", want: []string{"rebase", "merge", "replace-remote", "--force-with-lease"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			warn := gitPushRemoteStateWarning(state, tc.hqRemote)
-			for _, want := range tc.want {
-				if !strings.Contains(warn, want) {
-					t.Errorf("warning must name %q: %s", want, warn)
-				}
-			}
-			for _, absent := range tc.absent {
-				if strings.Contains(warn, absent) {
-					t.Errorf("warning must not name %q: %s", absent, warn)
-				}
-			}
-		})
-	}
-}
