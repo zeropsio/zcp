@@ -290,7 +290,7 @@ func TestFindActiveLaunchState_NoAdminClientConstructed(t *testing.T) {
 
 	// Override the factory with a panicker; if findActiveLaunchState OR
 	// renderLaunchActiveRecovery ever calls the factory, the test fails.
-	restore := setProjectAdminClientFactory(func(_, _ string) (platform.ProjectAdminClient, error) {
+	restore := setProjectAdminClientFactory(func(_, _, _ string) (platform.ProjectAdminClient, error) {
 		t.Fatal("P-LP-2 violation: ProjectAdminClient factory invoked on read-only status path")
 		return nil, errors.New("p-lp-2-pin: factory must not be called")
 	})

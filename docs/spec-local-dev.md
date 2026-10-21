@@ -63,6 +63,13 @@ Zerops supports three token scope levels:
 2. **Read access** — read-only (insufficient for deploy)
 3. **Custom per-project** — required by ZCP: full access to exactly one project
 
+The project is zcli's scope, else the container's injected `projectId`, else
+the one project the token reaches counted across every organization it
+belongs to (none → `TOKEN_NO_PROJECT`, several → `TOKEN_MULTI_PROJECT`).
+Every org-filtered call (service, env, process searches, launch-production's
+admin client and role grant) targets the organization that owns that project,
+never the token's first membership (`TestResolve_BindsTheOrgThatOwnsTheProject`).
+
 ### Multi-Project Isolation
 
 Each project directory has its own `.mcp.json` + `.zcp/state/`. No collision:

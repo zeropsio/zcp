@@ -17,18 +17,19 @@ import (
 // testUserInfo returns a standard UserInfo for tests.
 func testUserInfo() *platform.UserInfo {
 	return &platform.UserInfo{
-		ID:       "client-123",
-		FullName: "Test User",
-		Email:    "test@example.com",
+		Memberships: []platform.ClientMembership{{ClientID: "client-123", ClientUserID: "cu-123"}},
+		FullName:    "Test User",
+		Email:       "test@example.com",
 	}
 }
 
 // testProject returns a standard Project for tests.
 func testProject() platform.Project {
 	return platform.Project{
-		ID:     "proj-456",
-		Name:   "my-project",
-		Status: "ACTIVE",
+		ID:       "proj-456",
+		Name:     "my-project",
+		Status:   "ACTIVE",
+		ClientID: "client-123",
 	}
 }
 
@@ -152,17 +153,17 @@ func TestResolve_EnvVar_MultiProject(t *testing.T) {
 		{
 			name: "two projects returns TOKEN_MULTI_PROJECT",
 			projects: []platform.Project{
-				{ID: "p1", Name: "first", Status: "ACTIVE"},
-				{ID: "p2", Name: "second", Status: "ACTIVE"},
+				{ID: "p1", Name: "first", Status: "ACTIVE", ClientID: "client-123"},
+				{ID: "p2", Name: "second", Status: "ACTIVE", ClientID: "client-123"},
 			},
 			wantCode: platform.ErrTokenMultiProject,
 		},
 		{
 			name: "three projects returns TOKEN_MULTI_PROJECT",
 			projects: []platform.Project{
-				{ID: "p1", Name: "first", Status: "ACTIVE"},
-				{ID: "p2", Name: "second", Status: "ACTIVE"},
-				{ID: "p3", Name: "third", Status: "ACTIVE"},
+				{ID: "p1", Name: "first", Status: "ACTIVE", ClientID: "client-123"},
+				{ID: "p2", Name: "second", Status: "ACTIVE", ClientID: "client-123"},
+				{ID: "p3", Name: "third", Status: "ACTIVE", ClientID: "client-123"},
 			},
 			wantCode: platform.ErrTokenMultiProject,
 		},
@@ -669,8 +670,8 @@ func TestResolve_EnvVar_CustomRegion(t *testing.T) {
 // and it outranks counting.
 func TestResolve_InjectedProjectID(t *testing.T) {
 	group := []platform.Project{
-		{ID: "proj-456", Name: "my-project", Status: "ACTIVE"},
-		{ID: "proj-789", Name: "my-project - production", Status: "ACTIVE"},
+		{ID: "proj-456", Name: "my-project", Status: "ACTIVE", ClientID: "client-123"},
+		{ID: "proj-789", Name: "my-project - production", Status: "ACTIVE", ClientID: "client-123"},
 	}
 	tests := []struct {
 		name      string

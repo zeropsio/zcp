@@ -108,7 +108,7 @@ func handleLaunchConfirmProduction(
 	if launchKey == "" {
 		warnings = append(warnings, "liveness unverified: no staged "+ops.LaunchTokenEnvKey+" secret and no launchKey — confirm the production services in the dashboard")
 	} else {
-		admin, adminErr := projectAdminClientFactory(launchKey, apiHost)
+		admin, adminErr := newLaunchAdmin(ctx, client, launchKey, apiHost)
 		if adminErr != nil {
 			warnings = append(warnings, fmt.Sprintf("liveness unverified: launch token rejected (%v)", adminErr))
 		} else {

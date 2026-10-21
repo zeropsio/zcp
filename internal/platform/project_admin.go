@@ -19,8 +19,8 @@ import (
 // invocation from a user-supplied launch-window key, used during a single
 // workflow run, and discarded.
 //
-// Discipline (P-LP-2): NewProjectAdminClient is callable only from
-// internal/tools/workflow_launch_production.go. Pinned by
+// Discipline (P-LP-2): in internal/tools the constructors are callable only
+// from the launch-production files. Pinned by
 // internal/topology/architecture_test.go::TestProjectAdminClientRestrictedImport.
 //
 // Key handling (P-LP-1):
@@ -213,7 +213,9 @@ var ErrClientNotMember = errors.New("project admin: token is not a member of the
 //   - Empty launchKey → ErrEmptyLaunchKey.
 //   - Validates the key by calling GetUserInfo (one cheap GET). Invalid or
 //     expired keys surface the SDK's mapped error.
-//   - Discovers clientID from the response — needed for CreateAndImportProject.
+//   - Targets the key's first membership — right only for a key in one org.
+//     Operator tools and live tests use it; the launch-production workflow
+//     uses NewProjectAdminClientForClient with the source project's org.
 //   - Returns ErrNoClientResolved if the key authenticates but lacks org access.
 //
 // Caller MUST defer Close() on the returned client. Empty apiHost falls
@@ -232,13 +234,15 @@ func NewProjectAdminClient(launchKey, apiHost string) (ProjectAdminClient, error
 	if err != nil {
 		return nil, fmt.Errorf("project admin: validate key: %w", err)
 	}
-	if info.ID == "" {
+	if len(info.Memberships) == 0 || info.Memberships[0].ClientID == "" {
 		return nil, ErrNoClientResolved
 	}
+	first := info.Memberships[0]
+	z.BindOrg(first.ClientID)
 	return &projectAdminClient{
 		zerops:       z,
-		clientID:     info.ID,
-		clientUserID: info.ClientUserID,
+		clientID:     first.ClientID,
+		clientUserID: first.ClientUserID,
 	}, nil
 }
 
@@ -246,9 +250,10 @@ func NewProjectAdminClient(launchKey, apiHost string) (ProjectAdminClient, error
 // sibling (D11): instead of trusting ClientUserList[0] — the wrong org for
 // a token that is OWNER in more than one — it targets the caller-supplied
 // clientID and refuses, before any write, when the token's clientUserList
-// does not contain it. Used by the farm controller, which is configured
-// with the org it must target (ZCP_FARM_CLIENT_ID) rather than discovering
-// one.
+// does not contain it. Every call the client makes — the role grant's
+// clientUser, the project create, the service searches — targets that org.
+// Used by launch-production (the org owning the source project) and the
+// farm controller (ZCP_FARM_CLIENT_ID).
 //
 // Caller MUST defer Close() on the returned client. Empty apiHost falls
 // back to platform.defaultAPIHost via the underlying NewZeropsClient.
@@ -265,15 +270,15 @@ func NewProjectAdminClientForClient(launchKey, apiHost, clientID string) (Projec
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	memberships, err := z.ListClientMemberships(ctx)
+	info, err := z.GetUserInfo(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("project admin: validate key: %w", err)
 	}
 
 	var clientUserID string
 	member := false
-	seen := make([]string, 0, len(memberships))
-	for _, m := range memberships {
+	seen := make([]string, 0, len(info.Memberships))
+	for _, m := range info.Memberships {
 		seen = append(seen, m.ClientID)
 		if m.ClientID == clientID {
 			member = true
@@ -283,6 +288,7 @@ func NewProjectAdminClientForClient(launchKey, apiHost, clientID string) (Projec
 	if !member {
 		return nil, fmt.Errorf("%w: configured client %s, token is a member of %v", ErrClientNotMember, clientID, seen)
 	}
+	z.BindOrg(clientID)
 
 	return &projectAdminClient{
 		zerops:       z,

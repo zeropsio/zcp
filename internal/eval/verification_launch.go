@@ -152,7 +152,7 @@ func findLaunchProdProject(ctx context.Context, client platform.Client, name str
 			Message: fmt.Sprintf("GetUserInfo failed: %v", err),
 		}
 	}
-	projects, err := client.ListProjects(ctx, info.ID)
+	projects, err := platform.ListProjectsInEveryOrg(ctx, client, info.Memberships)
 	if err != nil {
 		return nil, RequiredCheck{
 			ID: id, Check: "launch_shape", Scope: name, Result: CheckBlocked, Source: "ListProjects",

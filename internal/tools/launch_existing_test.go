@@ -36,9 +36,9 @@ const sentinelExistingProdToken = "ZCP-EXISTING-PROD-TOKEN-SENTINEL-DO-NOT-LEAK"
 // import result (echoes ProjectID + services).
 func existingTargetMock(targetProjectID string, existingServices []platform.ServiceStack) *platform.Mock {
 	return platform.NewMock().
-		WithUserInfo(&platform.UserInfo{ID: "user-client-id"}).
+		WithUserInfo(&platform.UserInfo{Memberships: []platform.ClientMembership{{ClientID: "user-client-id"}}}).
 		WithProjects([]platform.Project{
-			{ID: targetProjectID, Name: "existing-prod-project"},
+			{ID: targetProjectID, Name: "existing-prod-project", ClientID: "user-client-id"},
 		}).
 		WithServices(existingServices).
 		WithImportResult(&platform.ImportResult{
@@ -291,8 +291,8 @@ func TestLaunchExistingProject_ImportError_ReportsFailed(t *testing.T) {
 	sourceClient := pLP3MockClient()
 
 	targetMock := platform.NewMock().
-		WithUserInfo(&platform.UserInfo{ID: "user-client-id"}).
-		WithProjects([]platform.Project{{ID: "expected-target-id", Name: "existing-prod-project"}}).
+		WithUserInfo(&platform.UserInfo{Memberships: []platform.ClientMembership{{ClientID: "user-client-id"}}}).
+		WithProjects([]platform.Project{{ID: "expected-target-id", Name: "existing-prod-project", ClientID: "user-client-id"}}).
 		WithImportResult(&platform.ImportResult{
 			ProjectID:   "expected-target-id",
 			ProjectName: "existing-prod-project",

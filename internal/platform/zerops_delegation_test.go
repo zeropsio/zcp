@@ -169,7 +169,7 @@ func TestApiCodeDelegationUnavailable_Constants(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// getTokenID caching (mirrors getClientID's mutex/retry-on-error pattern)
+// getTokenID caching (mirrors OrgID's mutex/retry-on-error pattern)
 // ---------------------------------------------------------------------------
 
 // userInfoJSON builds a minimal, validly-decodable /user/info response body.

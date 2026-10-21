@@ -95,7 +95,7 @@ func mapTokenDelegations(items []tokenDelegationDTO) []TokenDelegation {
 // sole source of delegation truth (D-1); ZCP never persists or infers
 // availability locally.
 func (z *ZeropsClient) ListOwnTokenDelegations(ctx context.Context) ([]TokenDelegation, error) {
-	clientID, err := z.getClientID(ctx)
+	clientID, err := z.OrgID(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list own token delegations: %w", err)
 	}
@@ -135,7 +135,7 @@ func (z *ZeropsClient) ListOwnTokenDelegations(ctx context.Context) ([]TokenDele
 // Token value is shown by the platform exactly once (F3) — the caller owns
 // the P-LP-14 staging discipline (never persisted here).
 func (z *ZeropsClient) MintDelegatedLaunchToken(ctx context.Context, name string) (MintedToken, error) {
-	clientID, err := z.getClientID(ctx)
+	clientID, err := z.OrgID(ctx)
 	if err != nil {
 		return MintedToken{}, fmt.Errorf("mint delegated launch token: %w", err)
 	}

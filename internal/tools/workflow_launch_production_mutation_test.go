@@ -18,7 +18,7 @@ import (
 // the supplied mock. Returns a cleanup that restores the original.
 func installMockAdminFactory(t *testing.T, mock *platform.MockProjectAdminClient) func() {
 	t.Helper()
-	restore := setProjectAdminClientFactory(func(launchKey, apiHost string) (platform.ProjectAdminClient, error) {
+	restore := setProjectAdminClientFactory(func(launchKey, apiHost, _ string) (platform.ProjectAdminClient, error) {
 		if launchKey == "" {
 			return nil, platform.ErrEmptyLaunchKey
 		}
@@ -314,7 +314,7 @@ func TestHandleLaunchProduction_Mutation_AuthFailureWrappedSafely(t *testing.T) 
 	stateDir := withTempState(t)
 	installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
 	// Factory that always errors (e.g., key invalid)
-	restore := setProjectAdminClientFactory(func(launchKey, apiHost string) (platform.ProjectAdminClient, error) {
+	restore := setProjectAdminClientFactory(func(launchKey, apiHost, _ string) (platform.ProjectAdminClient, error) {
 		_ = launchKey
 		_ = apiHost
 		return nil, errors.New("simulated invalid key")

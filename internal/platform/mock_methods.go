@@ -31,13 +31,35 @@ func (m *Mock) GetUserInfo(_ context.Context) (*UserInfo, error) {
 	return m.userInfo, nil
 }
 
-func (m *Mock) ListProjects(_ context.Context, _ string) ([]Project, error) {
+func (m *Mock) BindOrg(clientID string) {
+	m.mu.Lock()
+	m.boundOrg = clientID
+	m.mu.Unlock()
+}
+
+// OrgID returns the org the last BindOrg call named.
+func (m *Mock) OrgID(_ context.Context) (string, error) {
+	if err := m.getError("OrgID"); err != nil {
+		return "", err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.boundOrg, nil
+}
+
+func (m *Mock) ListProjects(_ context.Context, clientID string) ([]Project, error) {
 	if err := m.getError("ListProjects"); err != nil {
 		return nil, err
 	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.projects, nil
+	var owned []Project
+	for _, p := range m.projects {
+		if p.ClientID == clientID {
+			owned = append(owned, p)
+		}
+	}
+	return owned, nil
 }
 
 func (m *Mock) GetProject(_ context.Context, _ string) (*Project, error) {

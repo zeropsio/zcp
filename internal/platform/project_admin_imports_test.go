@@ -17,8 +17,9 @@ import (
 //     (handler entrypoint + factory definition) and launch_pipeline.go
 //     (Part 2 sibling: pipeline-config check).
 //  2. Factory-var laundering — the package vars projectAdminClientFactory
-//     and existingProdTokenClientFactory hand out an authenticated
-//     cross-project client WITHOUT the platform.* literal, so a grep on
+//     and existingProdTokenClientFactory, and newLaunchAdmin (the wrapper
+//     that calls the former for the source project's org), hand out an
+//     authenticated cross-project client WITHOUT the platform.* literal, so a grep on
 //     symbols alone misses callers (launch_reset.go reached the admin
 //     client this way while the old test pinned only seam 1). Allowed
 //     callers: the trust-boundary files that already own a per-call
@@ -83,6 +84,7 @@ func TestProjectAdminClientRestrictedImport(t *testing.T) {
 
 		referencesFactory :=
 			strings.Contains(content, "projectAdminClientFactory") ||
+				strings.Contains(content, "newLaunchAdmin") ||
 				strings.Contains(content, "existingProdTokenClientFactory")
 		if referencesFactory && !allowedFactoryFiles[base] {
 			violations = append(violations, path+" (cross-project client factory reference)")

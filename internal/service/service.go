@@ -276,11 +276,11 @@ func prepareEnrollment(ctx context.Context, lookup func(string) string) error {
 		(!errors.As(err, &refused) || refused.Code != "mate_credential_required") {
 		return err
 	}
-	info, err := client.GetUserInfo(ctx)
+	project, err := client.GetProject(ctx, e.ProjectID)
 	if err != nil {
-		return fmt.Errorf("read the key's organization: %w", err)
+		return fmt.Errorf("read the project's organization: %w", err)
 	}
-	e.OrgID = info.ID
+	e.OrgID = project.ClientID
 	_, err = e.Enroll(ctx)
 	if err != nil {
 		return fmt.Errorf("enroll the Mate before seeding: %w", err)
@@ -297,7 +297,7 @@ const hqCallTimeout = 15 * time.Second
 // keepEnrolled is hq.Keep over the container's environment: each attempt
 // builds the client from the live env store as it is then, so a rotated key
 // is the one it uses. An enrollment, and the anchor read while the kept HQ
-// does not answer, ask the key's own record which org it is in, to read that
+// does not answer, ask the container's project which org owns it, to read that
 // org's member list for the official HQ; a recheck asks the kept
 // enrollment's HQ alone (R6). Each attempt that says something about
 // this Mate leaves its outcome beside the enrollment.
@@ -315,11 +315,11 @@ func keepEnrolled(ctx context.Context, env func() func(string) string) {
 		}
 		e := mateEnroller(lookup, client)
 		if withOrg {
-			info, err := client.GetUserInfo(ctx)
+			project, err := client.GetProject(ctx, projectID)
 			if err != nil {
-				return hq.Enroller{}, fmt.Errorf("read the key's organization: %w", err)
+				return hq.Enroller{}, fmt.Errorf("read the project's organization: %w", err)
 			}
-			e.OrgID = info.ID
+			e.OrgID = project.ClientID
 		}
 		return e, nil
 	}

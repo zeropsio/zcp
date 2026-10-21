@@ -76,8 +76,8 @@ type launchResetReport struct {
 // NOT checkpoint — the project may still exist and stays tracked.
 // Returns a non-nil refusal result on any non-confirmed outcome; the
 // caller returns it verbatim (state file untouched in those cases).
-func deleteOrphanProjectConfirmed(ctx context.Context, launchKey, apiHost, stateDir string, state *launchState) (deletedProjectID, deleteProcessID string, refusal *mcp.CallToolResult) {
-	admin, adminErr := projectAdminClientFactory(launchKey, apiHost)
+func deleteOrphanProjectConfirmed(ctx context.Context, client platform.Client, launchKey, apiHost, stateDir string, state *launchState) (deletedProjectID, deleteProcessID string, refusal *mcp.CallToolResult) {
+	admin, adminErr := newLaunchAdmin(ctx, client, launchKey, apiHost)
 	if adminErr != nil {
 		return "", "", convertError(platform.NewPlatformError(
 			platform.ErrAPIError,
@@ -258,7 +258,7 @@ func handleLaunchReset(ctx context.Context, stateDir, sourceProjectID string, cl
 	var deletedProjectID, deleteProcessID string
 	if deleteProject {
 		var refusal *mcp.CallToolResult
-		deletedProjectID, deleteProcessID, refusal = deleteOrphanProjectConfirmed(ctx, launchKey, apiHost, stateDir, state)
+		deletedProjectID, deleteProcessID, refusal = deleteOrphanProjectConfirmed(ctx, client, launchKey, apiHost, stateDir, state)
 		if refusal != nil {
 			return refusal, nil, nil
 		}

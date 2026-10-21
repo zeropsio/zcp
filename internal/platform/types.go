@@ -11,22 +11,27 @@ const DefaultAPITimeout = 30 * time.Second
 
 // UserInfo contains user details from auth/info endpoint.
 //
-// Field-naming note: ID is historically populated with the
-// ClientUserList[0].ClientId (the org/client ID), NOT the user's own ID.
-// Existing code paths (ListProjects' clientID filter) depend on this
-// convention. ClientUserID is the separate clientUserList[0].id value —
-// the link between user and client, used by project.userRoles[].id when
-// the launch-production workflow grants ADMIN to the launching user on
-// a freshly-created prod project (P-LP-5 substrate, A.10 spike finding).
+// Memberships is the token's clientUserList in the platform's own order:
+// every org (client) it belongs to. No entry is "the" org — a token can
+// belong to several, and the org a project-scoped call targets is the one
+// owning that project (Project.ClientID), never Memberships[0].
 // UserID is the top-level response id — for an integration token this IS
 // the token's own id (F1: integration tokens are user-shaped), used as
-// {tokenId} in delegation paths. Distinct from both ID and ClientUserID.
+// {tokenId} in delegation paths.
 type UserInfo struct {
-	ID           string `json:"id"`
-	ClientUserID string `json:"clientUserId,omitempty"`
-	UserID       string `json:"userId,omitempty"`
-	FullName     string `json:"fullName"`
-	Email        string `json:"email"`
+	Memberships []ClientMembership `json:"memberships,omitempty"`
+	UserID      string             `json:"userId,omitempty"`
+	FullName    string             `json:"fullName"`
+	Email       string             `json:"email"`
+}
+
+// ClientMembership is one entry of the token's clientUserList: an org
+// (client) id plus the clientUserId — the user↔org link that
+// project.userRoles[].id names when a role is granted on a project of
+// that org (A.10 spike finding).
+type ClientMembership struct {
+	ClientID     string `json:"clientId"`
+	ClientUserID string `json:"clientUserId"`
 }
 
 // Project represents a Zerops project.
@@ -34,6 +39,9 @@ type Project struct {
 	ID     string `json:"id"`
 	Name   string `json:"name"`
 	Status string `json:"status"`
+	// ClientID is the org (client) that owns the project — the org every
+	// clientId-filtered call about this project targets.
+	ClientID string `json:"clientId,omitempty"`
 	// Description is the project's own description; a launch marks the
 	// project it creates with it (bundle.LaunchMarker). Read by ListProjects.
 	Description   string `json:"description,omitempty"`

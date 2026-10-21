@@ -60,7 +60,8 @@ func requireLiveEnv(t *testing.T, key string) string {
 
 // liveSourceClient builds a platform.Client from ZCP_API_KEY and resolves
 // the source project ID (expected to be the only project the token can
-// access — eval-zcp). Returns (client, sourceProjectID, clientID).
+// access — eval-zcp), binding the client to the org that owns it.
+// Returns (client, sourceProjectID, clientID).
 func liveSourceClient(t *testing.T) (platform.Client, string, string) {
 	t.Helper()
 	apiKey := requireLiveEnv(t, "ZCP_API_KEY")
@@ -75,17 +76,18 @@ func liveSourceClient(t *testing.T) (platform.Client, string, string) {
 	if err != nil {
 		t.Fatalf("source GetUserInfo: %v", err)
 	}
-	if info == nil || info.ID == "" {
+	if info == nil || len(info.Memberships) == 0 {
 		t.Fatalf("source token did not resolve to a client")
 	}
-	projects, err := c.ListProjects(ctx, info.ID)
+	projects, err := platform.ListProjectsInEveryOrg(ctx, c, info.Memberships)
 	if err != nil {
 		t.Fatalf("source ListProjects: %v", err)
 	}
 	if len(projects) != 1 {
 		t.Fatalf("ZCP_API_KEY expected to resolve exactly 1 project (eval-zcp); got %d", len(projects))
 	}
-	return c, projects[0].ID, info.ID
+	c.BindOrg(projects[0].ClientID)
+	return c, projects[0].ID, projects[0].ClientID
 }
 
 // liveTestCtx returns a deadline-bound context for the test. d=0 →

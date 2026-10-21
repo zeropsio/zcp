@@ -18,8 +18,8 @@ func TestAPI_GetUserInfo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserInfo failed: %v", err)
 	}
-	if info.ID == "" {
-		t.Error("ID is empty")
+	if len(info.Memberships) == 0 || info.Memberships[0].ClientID == "" {
+		t.Error("Memberships carry no org")
 	}
 	if info.Email == "" {
 		t.Error("Email is empty")
@@ -38,7 +38,7 @@ func TestAPI_ListProjects(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserInfo failed: %v", err)
 	}
-	projects, err := h.Client().ListProjects(h.Ctx(), info.ID)
+	projects, err := platform.ListProjectsInEveryOrg(h.Ctx(), h.Client(), info.Memberships)
 	if err != nil {
 		t.Fatalf("ListProjects failed: %v", err)
 	}

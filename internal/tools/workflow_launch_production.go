@@ -67,14 +67,27 @@ import (
 // internal/platform/project_admin_imports_test.go.
 //
 // projectAdminClientFactory constructs a ProjectAdminClient from a
-// launch-window key. Indirected so unit tests can inject a mock without
-// hitting the real Zerops API. Package-level var so the launch handler
-// can call it; tests override via setProjectAdminClientFactory.
+// launch-window key for the org (clientID) it acts in. Indirected so unit
+// tests can inject a mock without hitting the real Zerops API.
+// Package-level var so the launch handler can call it; tests override via
+// setProjectAdminClientFactory. Callers reach it through newLaunchAdmin.
 //
-// Production default: platform.NewProjectAdminClient.
+// Production default: platform.NewProjectAdminClientForClient.
 //
 //nolint:gochecknoglobals // test-injection point for the cross-project surface
-var projectAdminClientFactory = platform.NewProjectAdminClient
+var projectAdminClientFactory = platform.NewProjectAdminClientForClient
+
+// newLaunchAdmin builds the launch admin client for the org that owns the
+// source project — the org the prod project is created in, and whose
+// clientUser the per-project role is granted to — never the launch key's
+// first membership. client is bound to that org (auth.Resolve).
+func newLaunchAdmin(ctx context.Context, client platform.Client, launchKey, apiHost string) (platform.ProjectAdminClient, error) {
+	orgID, err := client.OrgID(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("launch admin: the source project's org: %w", err)
+	}
+	return projectAdminClientFactory(launchKey, apiHost, orgID)
+}
 
 // processStatusFinished is the canonical platform.Process success
 // terminal status. Pulled to a constant to satisfy strict-lint
@@ -89,7 +102,7 @@ const (
 
 // setProjectAdminClientFactory swaps the factory for tests. Restore with
 // the returned cleanup func via defer.
-func setProjectAdminClientFactory(f func(launchKey, apiHost string) (platform.ProjectAdminClient, error)) func() {
+func setProjectAdminClientFactory(f func(launchKey, apiHost, clientID string) (platform.ProjectAdminClient, error)) func() {
 	prev := projectAdminClientFactory
 	projectAdminClientFactory = f
 	return func() { projectAdminClientFactory = prev }
@@ -365,7 +378,7 @@ func handleLaunchProduction(
 				// to the status view (same as no token) rather than re-asking.
 				resumeKey, tokErr := resolveLaunchWindowToken(ctx, client, projectID, existing, input.LaunchKey)
 				if tokErr == nil && resumeKey != "" {
-					return executeLaunchPipelineResume(ctx, resumeKey, input, corpus, stateDir, existing, apiHost)
+					return executeLaunchPipelineResume(ctx, client, resumeKey, input, corpus, stateDir, existing, apiHost)
 				}
 			}
 			return launchResumeResponse(corpus, existing, stateDir), nil, nil
@@ -619,7 +632,7 @@ func readEndedLaunch(
 		}
 		return nil
 	}
-	admin, err := projectAdminClientFactory(token, apiHost)
+	admin, err := newLaunchAdmin(ctx, client, token, apiHost)
 	if err != nil {
 		return launchFailedAuthResponse(corpus, err)
 	}
@@ -725,6 +738,7 @@ func pipelineSkipRecorded(state *launchState) bool {
 // refreshed blockers. ZCP never PUTs (Path B); this is GetStatus-only.
 func executeLaunchPipelineResume(
 	ctx context.Context,
+	client platform.Client,
 	launchKey string,
 	input WorkflowInput,
 	corpus []workflow.KnowledgeAtom,
@@ -732,7 +746,7 @@ func executeLaunchPipelineResume(
 	state *launchState,
 	apiHost string,
 ) (*mcp.CallToolResult, any, error) {
-	admin, err := projectAdminClientFactory(launchKey, apiHost)
+	admin, err := newLaunchAdmin(ctx, client, launchKey, apiHost)
 	if err != nil {
 		return launchFailedAuthResponse(corpus, err), nil, nil
 	}
@@ -800,7 +814,7 @@ func executeLaunchMutation(
 	var admin platform.ProjectAdminClient
 	if input.LaunchKey != "" {
 		var adminErr error
-		admin, adminErr = projectAdminClientFactory(input.LaunchKey, apiHost)
+		admin, adminErr = newLaunchAdmin(ctx, client, input.LaunchKey, apiHost)
 		if adminErr != nil {
 			// Don't leak the key value in the error — wrap via the typed error.
 			return launchFailedAuthResponse(corpus, adminErr), nil, nil
@@ -920,7 +934,7 @@ func executeLaunchMutation(
 		mintedName = resolvedMintedName
 
 		var adminErr error
-		admin, adminErr = projectAdminClientFactory(launchToken, apiHost)
+		admin, adminErr = newLaunchAdmin(ctx, client, launchToken, apiHost)
 		if adminErr != nil {
 			if mintedName == "" {
 				// Staged-retry path: launchToken came from a PRIOR
@@ -2048,7 +2062,7 @@ func launchResumeResponse(corpus []workflow.KnowledgeAtom, state *launchState, s
 	return jsonResult(resp)
 }
 
-// launchFailedAuthResponse handles the case where NewProjectAdminClient
+// launchFailedAuthResponse handles the case where the launch admin client
 // fails to authenticate. The error from the constructor never contains
 // the key value (per P-LP-1) — we just wrap its message.
 func launchFailedAuthResponse(corpus []workflow.KnowledgeAtom, err error) *mcp.CallToolResult {

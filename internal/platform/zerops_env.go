@@ -117,7 +117,7 @@ func (z *ZeropsClient) DeleteUserData(ctx context.Context, userDataID string) (*
 // ---------------------------------------------------------------------------
 
 func (z *ZeropsClient) GetProjectEnv(ctx context.Context, projectID string) ([]ProjectEnvVar, error) {
-	clientID, err := z.getClientID(ctx)
+	clientID, err := z.OrgID(ctx)
 	if err != nil {
 		return nil, err
 	}

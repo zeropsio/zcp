@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -77,9 +78,23 @@ func resolveEndpoint(apiHost string) string {
 	return endpoint
 }
 
-// getClientID returns the cached clientId, fetching it once on the first
-// cold-cache call. On success the ID is cached permanently (it never changes
-// for a session); failures are not cached, so the next call retries.
+// BindOrg makes clientID — the org owning the project this client works
+// on — the org every clientId-filtered call targets (service, env,
+// process and appVersion searches, delegations). auth.Resolve binds it
+// from the resolved project, so every entry point targets the project's
+// org without a step of its own.
+func (z *ZeropsClient) BindOrg(clientID string) {
+	z.mu.Lock()
+	z.cachedID = clientID
+	z.mu.Unlock()
+}
+
+// OrgID returns the org clientId-filtered calls target: the bound
+// one (BindOrg), else the token's only membership, fetched once and
+// cached. A token in several orgs with no bound project has no answer —
+// ErrOrgAmbiguous, never clientUserList[0], which need not own the
+// project and turns every search empty. Failures are not cached, so the
+// next call retries.
 //
 // The GetUserInfo round-trip runs WITHOUT the lock held: holding a mutex
 // across a 30s API call would serialize every concurrent first-call behind
@@ -87,7 +102,7 @@ func resolveEndpoint(apiHost string) string {
 // cost is a rare duplicate fetch when several goroutines race the cold
 // cache — harmless, since GetUserInfo is an idempotent read and the stored
 // value is identical.
-func (z *ZeropsClient) getClientID(ctx context.Context) (string, error) {
+func (z *ZeropsClient) OrgID(ctx context.Context) (string, error) {
 	z.mu.Lock()
 	cached := z.cachedID
 	z.mu.Unlock()
@@ -99,15 +114,24 @@ func (z *ZeropsClient) getClientID(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if len(info.Memberships) > 1 {
+		return "", NewPlatformError(ErrOrgAmbiguous,
+			fmt.Sprintf("Token belongs to %d organizations and no project names which one this call is for", len(info.Memberships)),
+			"Run against one project: the organization that owns it is the one searched")
+	}
+	orgID := ""
+	if len(info.Memberships) == 1 {
+		orgID = info.Memberships[0].ClientID
+	}
 
 	z.mu.Lock()
-	z.cachedID = info.ID
+	z.cachedID = orgID
 	z.mu.Unlock()
-	return info.ID, nil
+	return orgID, nil
 }
 
 // getTokenID returns the cached own-token id, fetching it once on the first
-// cold-cache call. Sibling of getClientID — same mutex/retry-on-error
+// cold-cache call. Sibling of OrgID — same mutex/retry-on-error
 // pattern, same "never hold the lock across I/O" discipline (CLAUDE.md).
 // F1: for an integration token, /user/info's id IS the {tokenId} used in
 // delegation paths.
@@ -144,49 +168,6 @@ func (z *ZeropsClient) GetUserInfo(ctx context.Context) (*UserInfo, error) {
 		return nil, mapSDKError(err, "auth")
 	}
 
-	clientID := ""
-	clientUserID := ""
-	if len(out.ClientUserList) > 0 {
-		clientID = out.ClientUserList[0].ClientId.TypedString().String()
-		// ClientUserId is the link between user and client — distinct
-		// from both userId and clientId. Used by project.userRoles[].id
-		// at launch-production import time to grant per-project ADMIN
-		// on the freshly-created project (A.10 spike finding).
-		clientUserID = out.ClientUserList[0].Id.TypedString().String()
-	}
-
-	return &UserInfo{
-		ID:           clientID,
-		ClientUserID: clientUserID,
-		UserID:       out.Id.TypedString().String(),
-		Email:        out.Email.Native(),
-		FullName:     out.FullName.String(),
-	}, nil
-}
-
-// ClientMembership is one entry of GetUserInfo's clientUserList: an org
-// (client) id plus the clientUserId link for that org. GetUserInfo's own
-// UserInfo.ID collapses this list down to ClientUserList[0] — the wrong
-// org for a token that is a member of more than one (D11). Callers that
-// must target a specific, caller-supplied org use ListClientMemberships
-// instead and check membership themselves.
-type ClientMembership struct {
-	ClientID     string
-	ClientUserID string
-}
-
-// ListClientMemberships returns every org (client) the token is a member
-// of, in the platform's own clientUserList order — never collapsed to a
-// single "the" client id the way GetUserInfo's UserInfo.ID is.
-func (z *ZeropsClient) ListClientMemberships(ctx context.Context) ([]ClientMembership, error) {
-	resp, err := z.handler.GetUserInfo(ctx)
-	if err != nil {
-		return nil, mapSDKError(err, "auth")
-	}
-	out, err := resp.Output()
-	if err != nil {
-		return nil, mapSDKError(err, "auth")
-	}
 	memberships := make([]ClientMembership, 0, len(out.ClientUserList))
 	for _, cu := range out.ClientUserList {
 		memberships = append(memberships, ClientMembership{
@@ -194,7 +175,13 @@ func (z *ZeropsClient) ListClientMemberships(ctx context.Context) ([]ClientMembe
 			ClientUserID: cu.Id.TypedString().String(),
 		})
 	}
-	return memberships, nil
+
+	return &UserInfo{
+		Memberships: memberships,
+		UserID:      out.Id.TypedString().String(),
+		Email:       out.Email.Native(),
+		FullName:    out.FullName.String(),
+	}, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -229,6 +216,7 @@ func (z *ZeropsClient) ListProjects(ctx context.Context, clientID string) ([]Pro
 			ID:          p.Id.TypedString().String(),
 			Name:        p.Name.String(),
 			Status:      p.Status.String(),
+			ClientID:    p.ClientId.TypedString().String(),
 			Description: description.Native(),
 		})
 	}
@@ -255,6 +243,7 @@ func (z *ZeropsClient) GetProject(ctx context.Context, projectID string) (*Proje
 		ID:            out.Id.TypedString().String(),
 		Name:          out.Name.String(),
 		Status:        out.Status.String(),
+		ClientID:      out.ClientId.TypedString().String(),
 		SubdomainHost: subdomainHost,
 		Mode:          string(out.Mode),
 		LocationID:    out.PrimaryInstanceLocation.Id.Native(),
@@ -267,7 +256,7 @@ func (z *ZeropsClient) GetProject(ctx context.Context, projectID string) (*Proje
 // ---------------------------------------------------------------------------
 
 func (z *ZeropsClient) ListServices(ctx context.Context, projectID string) ([]ServiceStack, error) {
-	clientID, err := z.getClientID(ctx)
+	clientID, err := z.OrgID(ctx)
 	if err != nil {
 		return nil, err
 	}

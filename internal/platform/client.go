@@ -7,6 +7,13 @@ import "context"
 type Client interface {
 	// Auth
 	GetUserInfo(ctx context.Context) (*UserInfo, error)
+	// BindOrg names the org (client) owning the project this client works
+	// on; every clientId-filtered call targets it. auth.Resolve binds it.
+	BindOrg(clientID string)
+	// OrgID is the org clientId-filtered calls target: the bound one, else
+	// the token's only membership; ErrOrgAmbiguous for an unbound token in
+	// several orgs.
+	OrgID(ctx context.Context) (string, error)
 
 	// Project discovery
 	ListProjects(ctx context.Context, clientID string) ([]Project, error)

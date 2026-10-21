@@ -211,7 +211,7 @@ func (z *ZeropsClient) GetProjectLog(ctx context.Context, projectID string) (*Lo
 // ---------------------------------------------------------------------------
 
 func (z *ZeropsClient) SearchProcesses(ctx context.Context, projectID string, limit int) ([]ProcessEvent, error) {
-	clientID, err := z.getClientID(ctx)
+	clientID, err := z.OrgID(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -265,7 +265,7 @@ func (z *ZeropsClient) SearchProcesses(ctx context.Context, projectID string, li
 }
 
 func (z *ZeropsClient) SearchAppVersions(ctx context.Context, projectID string, limit int) ([]AppVersionEvent, error) {
-	clientID, err := z.getClientID(ctx)
+	clientID, err := z.OrgID(ctx)
 	if err != nil {
 		return nil, err
 	}

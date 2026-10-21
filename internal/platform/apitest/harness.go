@@ -50,7 +50,7 @@ func New(t *testing.T) *APIHarness {
 		t.Fatalf("GetUserInfo failed: %v", err)
 	}
 
-	projects, err := client.ListProjects(ctx, info.ID)
+	projects, err := platform.ListProjectsInEveryOrg(ctx, client, info.Memberships)
 	if err != nil {
 		cancel()
 		t.Fatalf("ListProjects failed: %v", err)
@@ -59,6 +59,7 @@ func New(t *testing.T) *APIHarness {
 		cancel()
 		t.Fatal("no projects found for this token")
 	}
+	client.BindOrg(projects[0].ClientID)
 
 	h := &APIHarness{
 		t:         t,

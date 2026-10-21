@@ -63,11 +63,12 @@ func pickBuildEvent(t *testing.T) (string, *platform.AppVersionEvent, platform.C
 	if err != nil {
 		t.Fatalf("GetUserInfo: %v", err)
 	}
-	projects, err := client.ListProjects(ctx, info.ID)
+	projects, err := platform.ListProjectsInEveryOrg(ctx, client, info.Memberships)
 	if err != nil || len(projects) == 0 {
 		t.Fatalf("no projects: %v", err)
 	}
 	projectID := projects[0].ID
+	client.BindOrg(projects[0].ClientID)
 
 	events, err := client.SearchAppVersions(ctx, projectID, 20)
 	if err != nil {
@@ -77,7 +78,7 @@ func pickBuildEvent(t *testing.T) (string, *platform.AppVersionEvent, platform.C
 		ev := events[i]
 		if ev.Build != nil && ev.Build.ServiceStackID != nil && ev.Build.PipelineStart != nil {
 			t.Logf("using build event: id=%s stackID=%s pipelineStart=%s", ev.ID, *ev.Build.ServiceStackID, *ev.Build.PipelineStart)
-			return projectID, &events[i], client, info.ID
+			return projectID, &events[i], client, projects[0].ClientID
 		}
 	}
 	t.Skip("no build event with PipelineStart in recent history")

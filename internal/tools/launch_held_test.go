@@ -102,7 +102,7 @@ func TestLaunchResume_LaunchingWithoutProject_ReadsItsHandle(t *testing.T) {
 			t.Fatalf("seed state: %v", err)
 		}
 		mockAdmin := happyMockAdmin().WithProjects([]platform.Project{{ID: "unrelated-id", Name: "other"}})
-		defer setProjectAdminClientFactory(func(string, string) (platform.ProjectAdminClient, error) {
+		defer setProjectAdminClientFactory(func(string, string, string) (platform.ProjectAdminClient, error) {
 			return keptOpen{mockAdmin}, nil
 		})()
 
@@ -157,7 +157,7 @@ func TestLaunchResume_LaunchingWithoutProject_ReadsItsHandle(t *testing.T) {
 				holdLaunch(t, stateDir, launchID)
 			}
 			mockAdmin := happyMockAdmin().WithProjects(tt.projects)
-			defer setProjectAdminClientFactory(func(string, string) (platform.ProjectAdminClient, error) {
+			defer setProjectAdminClientFactory(func(string, string, string) (platform.ProjectAdminClient, error) {
 				return keptOpen{mockAdmin}, nil
 			})()
 
@@ -258,7 +258,7 @@ func TestExecuteLaunchMutation_UnansweredCreate_ReadsItsHandleNext(t *testing.T)
 			sourceClient := pLP3MockClient()
 			launchID := generateLaunchID("source-project-id", "myapp-prod")
 			failing := platform.NewMockProjectAdminClient().WithImportError(tt.err)
-			restore := setProjectAdminClientFactory(func(string, string) (platform.ProjectAdminClient, error) {
+			restore := setProjectAdminClientFactory(func(string, string, string) (platform.ProjectAdminClient, error) {
 				return keptOpen{failing}, nil
 			})
 			input := delegatedPublishInput()
@@ -290,7 +290,7 @@ func TestExecuteLaunchMutation_UnansweredCreate_ReadsItsHandleNext(t *testing.T)
 			found := happyMockAdmin().WithProjects([]platform.Project{
 				{ID: "made-id", Name: "myapp-prod", Description: bundle.LaunchMarker(launchID)},
 			})
-			defer setProjectAdminClientFactory(func(string, string) (platform.ProjectAdminClient, error) {
+			defer setProjectAdminClientFactory(func(string, string, string) (platform.ProjectAdminClient, error) {
 				return keptOpen{found}, nil
 			})()
 			if _, _, err := handleLaunchProduction(context.Background(), "source-project-id", sourceClient, nil, nil,

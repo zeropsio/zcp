@@ -711,7 +711,7 @@ func TestExecuteLaunchMutation_MintOutcome_AdminFactoryFailure(t *testing.T) {
 	sourceClient := pLP3MockClient().
 		WithTokenDelegations(usableDelegation()).
 		WithMintedToken(platform.MintedToken{Token: sentinelMintedToken, TokenID: "minted-id"})
-	restore := setProjectAdminClientFactory(func(_, _ string) (platform.ProjectAdminClient, error) {
+	restore := setProjectAdminClientFactory(func(_, _, _ string) (platform.ProjectAdminClient, error) {
 		return nil, errors.New("simulated admin construction failure")
 	})
 	defer restore()
@@ -778,7 +778,7 @@ func TestExecuteLaunchMutation_StagedRetry_AdminFactoryRejectsStagedToken(t *tes
 		t.Fatalf("seed prior state: %v", err)
 	}
 
-	restore := setProjectAdminClientFactory(func(_, _ string) (platform.ProjectAdminClient, error) {
+	restore := setProjectAdminClientFactory(func(_, _, _ string) (platform.ProjectAdminClient, error) {
 		return nil, errors.New("simulated: token revoked")
 	})
 	defer restore()
@@ -970,7 +970,7 @@ func TestExecuteLaunchMutation_AbortStateForensics(t *testing.T) {
 				c := pLP3MockClient().
 					WithTokenDelegations(usableDelegation()).
 					WithMintedToken(platform.MintedToken{Token: sentinelMintedToken, TokenID: "minted-id"})
-				t.Cleanup(setProjectAdminClientFactory(func(_, _ string) (platform.ProjectAdminClient, error) {
+				t.Cleanup(setProjectAdminClientFactory(func(_, _, _ string) (platform.ProjectAdminClient, error) {
 					return nil, errors.New("simulated admin construction failure")
 				}))
 				return c

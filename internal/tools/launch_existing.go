@@ -48,8 +48,9 @@ func setExistingProdTokenClientFactory(f func(token, apiHost string) (platform.C
 
 // validateExistingProdTokenScope confirms that a project-scoped token
 // authenticates AND resolves to exactly one project AND that project's
-// ID matches the user-supplied expectedProjectID. Returns nil on
-// success; returns a structured PlatformError on every failure mode:
+// ID matches the user-supplied expectedProjectID — searching every org the
+// token belongs to, and binding the client to the org that owns the match.
+// Returns nil on success; returns a structured PlatformError on every failure mode:
 //
 //   - GetUserInfo failure → wraps with ErrAuthRequired equivalent
 //   - ListProjects returns 0 → ErrTokenNoProject
@@ -63,14 +64,14 @@ func validateExistingProdTokenScope(ctx context.Context, c platform.Client, expe
 	if err != nil {
 		return fmt.Errorf("existing-project token: validate user info: %w", err)
 	}
-	if info == nil || info.ID == "" {
+	if info == nil || len(info.Memberships) == 0 {
 		return platform.NewPlatformError(
 			platform.ErrAuthRequired,
 			"Existing-project token did not resolve to a Zerops client; cannot continue",
 			"Regenerate the project-scoped token on the target project's dashboard.",
 		)
 	}
-	projects, err := c.ListProjects(ctx, info.ID)
+	projects, err := platform.ListProjectsInEveryOrg(ctx, c, info.Memberships)
 	if err != nil {
 		return fmt.Errorf("existing-project token: list projects: %w", err)
 	}
@@ -90,6 +91,7 @@ func validateExistingProdTokenScope(ctx context.Context, c platform.Client, expe
 				"Regenerate the project-scoped token on the EXPECTED target project's dashboard (Settings → Access Tokens Management). The current token's project does not match existingProjectId.",
 			)
 		}
+		c.BindOrg(projects[0].ClientID)
 		return nil
 	default:
 		return platform.NewPlatformError(
