@@ -61,3 +61,28 @@ func TestGitPushToHQ_RefusedForPlainGitOnABranch(t *testing.T) {
 		})
 	}
 }
+
+// TestGitPushFromAPairWiredToHQ_RefusedWhateverTheRemote: the dev service of a
+// pair wired to HQ holds the Mate's HQ credential as GIT_TOKEN, so a git-push
+// deploy to any other remote — GitHub, say — would hand it to a host it is not
+// for. It runs nothing there and says the plain-git way.
+func TestGitPushFromAPairWiredToHQ_RefusedWhateverTheRemote(t *testing.T) {
+	lab := newHQLab(t)
+	lab.wire()
+	lab.write(map[string]string{"index.js": "the app\n"})
+	lab.commit("the app")
+	ran := len(lab.ssh.commands)
+
+	text := getTextContent(t, callTool(t, lab.gitPushTool(), "zerops_deploy", map[string]any{
+		"targetService": "appdev", "strategy": "git-push", "remoteUrl": "https://github.com/acme/app",
+	}))
+
+	if !strings.Contains(text, "did not run") || !strings.Contains(text, "a branch of your own") {
+		t.Errorf("want the plain-git refusal:\n%s", text)
+	}
+	for _, command := range lab.ssh.commands[ran:] {
+		if strings.Contains(command, "github.com") || strings.Contains(command, "GIT_TOKEN") {
+			t.Errorf("the dev service ran %q for another remote", command)
+		}
+	}
+}
