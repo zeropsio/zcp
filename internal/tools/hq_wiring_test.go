@@ -178,7 +178,7 @@ func TestReconcileHQRepositories_ARefusalNamesItsRemedy(t *testing.T) {
 	lab.git("-c", "user.name=mate", "-c", "user.email=mate@example.invalid", "commit", "-qm", "own history")
 
 	report := lab.wire()
-	if len(report) != 1 || !strings.Contains(report[0], "ZCP_BASE_NOT_SEED") || !strings.Contains(report[0], "git merge --allow-unrelated-histories") {
+	if len(report) != 1 || !strings.Contains(report[0], "ZCP_BASE_NOT_SEED") || !strings.Contains(report[0], "git reset --keep FETCH_HEAD") {
 		t.Fatalf("report = %q, want the refusal and its remedy", report)
 	}
 	if lab.meta().HQ != nil {

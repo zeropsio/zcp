@@ -452,16 +452,14 @@ func TestBaseBranchRefusalRemedy_TheNextAttemptWires(t *testing.T) {
 				commitAll(t, dir, "init")
 			},
 			refusal: "ZCP_BASE_NOT_SEED",
-			remedy:  []string{"git fetch origin 'main' && git merge --allow-unrelated-histories --no-edit FETCH_HEAD", "resolve", "commit"},
+			remedy:  []string{"git branch own-history && git fetch origin 'main' && git reset --keep FETCH_HEAD", "never joined", "git cherry-pick"},
 			apply: func(t *testing.T, pair string) {
 				t.Helper()
-				cmd := exec.CommandContext(t.Context(), "sh", "-c",
-					"git fetch -q origin 'main' && git merge --allow-unrelated-histories --no-edit FETCH_HEAD")
-				cmd.Dir = pair
-				_ = cmd.Run() // both sides add app.js: a conflict, settled by hand
-				writeLabFile(t, filepath.Join(pair, "app.js"), "both Mates' work\n")
-				runGit(t, pair, "add", "app.js")
-				runGit(t, pair, "commit", "-q", "--no-edit")
+				own := gitOr(t, pair, "rev-parse", "HEAD")
+				runRemedyShell(t, pair, "git branch own-history && git fetch -q origin 'main' && git reset -q --keep FETCH_HEAD")
+				if got := gitOr(t, pair, "rev-parse", "own-history"); got != own {
+					t.Errorf("own-history = %s, want the pair's own history %s kept", got, own)
+				}
 			},
 		},
 		{

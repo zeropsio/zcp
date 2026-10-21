@@ -70,7 +70,7 @@ func hqGit(args string) string {
 //     (`commit-tree`, plumbing: no index, working copy or hook is touched), so
 //     the pair's tree stays byte-identical;
 //   - anything else — real code on both sides, unrelated → refused by name
-//     (ZCP_BASE_NOT_SEED): no mechanical answer keeps both.
+//     (ZCP_BASE_NOT_SEED): two unrelated histories are never joined.
 //
 // `main` existing while HEAD is elsewhere is refused by name too.
 // Every refusal changes nothing; BaseBranchRefusal reads which one it was and
@@ -134,6 +134,10 @@ const baseBranchRefusalMarker = "ZCP_BRANCH_REFUSED:"
 // "ZCP_UNTRACKED_COLLISION app.js"); empty when it refused none.
 func BaseBranchRefusal(output string) string { return markedLine(output, baseBranchRefusalMarker) }
 
+// ownHistoryBranch keeps a pair's own history that shares nothing with HQ's
+// `main` (ZCP_BASE_NOT_SEED) while its working copy moves onto `main`.
+const ownHistoryBranch = "own-history"
+
 // BaseBranchRefusalRemedy is the one thing to do about a refusal
 // BaseBranchRefusal read, run in the pair's working copy; the next wiring
 // then finds the state it can wire. Empty for a refusal it does not know.
@@ -141,8 +145,8 @@ func BaseBranchRefusalRemedy(refusal string) string {
 	state, named, _ := strings.Cut(refusal, " ")
 	switch state {
 	case "ZCP_BASE_NOT_SEED":
-		return fmt.Sprintf("%q already holds code and this history is unrelated to it, so take it in: run `git fetch origin %s && git merge --allow-unrelated-histories --no-edit FETCH_HEAD`, resolve any conflicts and commit — the base is then part of the history.",
-			baseBranch, shellQuote(baseBranch))
+		return fmt.Sprintf("%q already holds code this history shares nothing with, and two unrelated histories are never joined: keep this history on a branch of its own and put the working copy on %q — run `git branch %s && git fetch origin %s && git reset --keep FETCH_HEAD` — then carry what it needs over with `git cherry-pick` onto a branch cut from %q.",
+			baseBranch, baseBranch, ownHistoryBranch, shellQuote(baseBranch), baseBranch)
 	case "ZCP_BRANCH_ELSEWHERE":
 		return fmt.Sprintf("%q already exists and the working copy is on another branch: run `git checkout %s`.",
 			baseBranch, shellQuote(baseBranch))
