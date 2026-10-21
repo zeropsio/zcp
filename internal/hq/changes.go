@@ -15,10 +15,11 @@ import (
 
 // A Mate's changes in HQ (@t3tools/shared/hqChanges, which zcp reads as the
 // spec): a change is HQ's record of the Mate's work toward `main` in one
-// repository of its application, on the branch `mate/<project id>/<number>`;
-// a Mate has at most one open change per repository. HQ refuses a push to a
-// branch with no open change of its own, so a change is opened before its
-// branch is pushed.
+// repository of its application, bound to a branch — one of the agent's own,
+// or `mate/<project id>/<number>` when none is named; a Mate has at most one
+// open change per repository. A Mate pushes any branch but `main`, a tag, or
+// another Mate's open change's, so a branch may be pushed before or after its
+// change is opened.
 
 // Doer sends one HTTP request.
 type Doer interface {
@@ -162,22 +163,25 @@ const (
 // merged, MergedSha is the squash on `main` and LandedHead the head it
 // squashed.
 type Change struct {
-	AppID         string  `json:"appId"`
-	Repo          string  `json:"repo"`
-	Number        int     `json:"number"`
-	MateProjectID string  `json:"mateProjectId"`
-	Title         string  `json:"title"`
-	Body          string  `json:"body"`
-	State         string  `json:"state"`
-	Head          *string `json:"head"`
-	MergedSha     *string `json:"mergedSha"`
-	LandedHead    *string `json:"landedHead"`
-	OpenedAt      string  `json:"openedAt"`
-	MergedAt      *string `json:"mergedAt"`
-	ClosedAt      *string `json:"closedAt"`
-	UpdatedAt     string  `json:"updatedAt"`
-	Mergeability  string  `json:"mergeability"`
-	Behind        bool    `json:"behind"`
+	AppID         string `json:"appId"`
+	Repo          string `json:"repo"`
+	Number        int    `json:"number"`
+	MateProjectID string `json:"mateProjectId"`
+	Title         string `json:"title"`
+	// Branch is the change's branch, a full ref under refs/heads/; "" from
+	// an HQ older than branches of the Mate's own.
+	Branch       string  `json:"branch,omitempty"`
+	Body         string  `json:"body"`
+	State        string  `json:"state"`
+	Head         *string `json:"head"`
+	MergedSha    *string `json:"mergedSha"`
+	LandedHead   *string `json:"landedHead"`
+	OpenedAt     string  `json:"openedAt"`
+	MergedAt     *string `json:"mergedAt"`
+	ClosedAt     *string `json:"closedAt"`
+	UpdatedAt    string  `json:"updatedAt"`
+	Mergeability string  `json:"mergeability"`
+	Behind       bool    `json:"behind"`
 }
 
 // OpenedChange is HQ's answer to opening a change: the Mate's open change in
@@ -185,16 +189,19 @@ type Change struct {
 type OpenedChange struct {
 	Change  Change `json:"change"`
 	Created bool   `json:"created"`
-	Reason  string `json:"reason,omitempty"`
 }
 
 // OpenChange is the Mate's open change in repo, or the next number opened
-// with title. An open change keeps its title: retitling it is EditChange's.
-func (c Client) OpenChange(ctx context.Context, repo, title string, tree ...string) (OpenedChange, error) {
+// with title on branch — a branch of the Mate's own, which HQ binds the
+// change to; "" lets HQ name it. An open change keeps its title and branch:
+// retitling it is EditChange's. HQ refuses a branch another open change
+// holds (code "branch_taken") and one it keeps for itself, `main` or a tag
+// ("protected_ref").
+func (c Client) OpenChange(ctx context.Context, repo, title, branch string) (OpenedChange, error) {
 	var opened OpenedChange
 	body := map[string]string{"repo": repo, "title": title}
-	if len(tree) != 0 {
-		body["tree"] = tree[0]
+	if branch != "" {
+		body["branch"] = branch
 	}
 	err := c.call.json(ctx, http.MethodPost, "/api/mate/changes", c.authorization(),
 		body, &opened)

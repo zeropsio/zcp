@@ -49,7 +49,7 @@ type atomLintRule struct {
 var AcceptedWorkflowActions = []string{
 	"start", "reset", "iterate", "complete",
 	"skip", "status", "close", "resume", "list", "route",
-	"close-mode", "git-push-setup", "build-integration", "group-recipe", "describe-change", "mac-pair", "prod-ops",
+	"close-mode", "git-push-setup", "build-integration", "group-recipe", "open-change", "describe-change", "mac-pair", "prod-ops",
 	"confirm-production", "adopt-local", "set-default-setup",
 	"record-deploy", "release",
 }

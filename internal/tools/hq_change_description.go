@@ -104,7 +104,7 @@ func handleDescribeChange(
 	if refusal := describeTitleRefusal(title); refusal != nil {
 		return convertError(refusal, WithRecoveryStatus()), nil, nil
 	}
-	meta, refusal := pairToDescribe(stateDir, input.Service)
+	meta, refusal := pairOfChange(stateDir, input.Service, "describe")
 	if refusal != nil {
 		return refusal, nil, nil
 	}
@@ -290,10 +290,13 @@ func openChangeIn(state hq.MateState, repo string) int {
 	return 0
 }
 
-// pairToDescribe is the pair a description is for: the one service names,
-// either half, or the only pair with a repository in HQ. Otherwise the
-// refusal that says which pairs there are.
-func pairToDescribe(stateDir, service string) (*workflow.ServiceMeta, *mcp.CallToolResult) {
+// noRepositoryYet is what to do for a pair with no repository in HQ yet.
+const noRepositoryYet = `A pair gets its repository once this Mate is in an application in HQ; then push a branch of your own and open its change with zerops_workflow action="open-change".`
+
+// pairOfChange is the pair whose change a call is to verb ("describe",
+// "open"): the one service names, either half, or the only pair with a
+// repository in HQ. Otherwise the refusal that says which pairs there are.
+func pairOfChange(stateDir, service, verb string) (*workflow.ServiceMeta, *mcp.CallToolResult) {
 	if service != "" {
 		meta, err := workflow.FindServiceMeta(stateDir, service)
 		if err != nil {
@@ -303,14 +306,14 @@ func pairToDescribe(stateDir, service string) (*workflow.ServiceMeta, *mcp.CallT
 			return nil, convertError(platform.NewPlatformError(
 				platform.ErrServiceNotFound,
 				fmt.Sprintf("No pair of this Mate is named %q.", service),
-				"Pass the dev or the stage hostname of the pair whose change this describes.",
+				fmt.Sprintf("Pass the dev or the stage hostname of the pair whose change this %ss.", verb),
 			), WithRecoveryStatus())
 		}
 		if !hqPairWired(meta) {
 			return nil, convertError(platform.NewPlatformError(
 				platform.ErrPrerequisiteMissing,
-				fmt.Sprintf("%s has no repository in HQ yet, so it has no change to describe.", meta.Hostname),
-				"A pair gets its repository once this Mate is in an application in HQ; its first stage deploy opens the change.",
+				fmt.Sprintf("%s has no repository in HQ yet, so it has no change to %s.", meta.Hostname, verb),
+				noRepositoryYet,
 			), WithRecoveryStatus())
 		}
 		return meta, nil
@@ -328,8 +331,8 @@ func pairToDescribe(stateDir, service string) (*workflow.ServiceMeta, *mcp.CallT
 	case 0:
 		return nil, convertError(platform.NewPlatformError(
 			platform.ErrPrerequisiteMissing,
-			"No pair of this Mate has its repository in HQ yet, so there is no change to describe.",
-			"A pair gets its repository once this Mate is in an application in HQ; its first stage deploy opens the change.",
+			"No pair of this Mate has its repository in HQ yet, so there is no change to "+verb+".",
+			noRepositoryYet,
 		), WithRecoveryStatus())
 	}
 	sort.Slice(wired, func(i, j int) bool { return wired[i].Hostname < wired[j].Hostname })
@@ -339,7 +342,7 @@ func pairToDescribe(stateDir, service string) (*workflow.ServiceMeta, *mcp.CallT
 	}
 	return nil, convertError(platform.NewPlatformError(
 		platform.ErrServiceRequired,
-		"This Mate has several pairs with a repository in HQ, each with its own change: say which change this describes.",
+		fmt.Sprintf("This Mate has several pairs with a repository in HQ, each with its own change: say which change this %ss.", verb),
 		"Pass "+strings.Join(names, " or ")+".",
 	), WithRecoveryStatus())
 }

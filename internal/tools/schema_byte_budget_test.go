@@ -112,7 +112,11 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// Raised +143 (19604→19747) for the plan runtime's `publicAccess`
 		// enum (auto|subdomain|none) and one-line description: the agent
 		// reads the allowed values instead of guessing.
-		"zerops_workflow":    19747,
+		// Raised +257 (19747→20004) for action="open-change" and its one new
+		// input, `branch`: a Mate opens the change of a branch of its own
+		// (HQ's change-is-a-branch contract); `title` and `service` name the
+		// action they now also serve.
+		"zerops_workflow":    20004,
 		"zerops_record_fact": 3299,
 		"zerops_dev_server":  3220,
 		// Raised +28 (2945→2973) for the OS-axis migration: the runtime/services

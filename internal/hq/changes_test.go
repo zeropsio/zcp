@@ -2,7 +2,6 @@ package hq
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -81,7 +80,7 @@ func TestClient_OpenChange_DecodesTheChangeHQOpenedOrHeld(t *testing.T) {
 	t.Parallel()
 	client, calls := answering(t, openSample)
 
-	opened, err := client.OpenChange(context.Background(), "appdev", "Add a todo list")
+	opened, err := client.OpenChange(context.Background(), "appdev", "Add a todo list", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -406,18 +405,16 @@ func TestClient_Addresses(t *testing.T) {
 	}
 }
 
-func TestClient_OpenChange_KeepsHQsNothingToDeliverVerdict(t *testing.T) {
+// A change opened from the agent's own branch names it to HQ, which binds the
+// change to that branch; with none named, HQ picks the change's branch.
+func TestClient_OpenChange_NamesTheAgentsBranch(t *testing.T) {
 	t.Parallel()
-	client, _ := answering(t, `{"change":null,"created":false,"reason":"nothing_to_deliver"}`)
-	opened, err := client.OpenChange(t.Context(), "appdev", "Next task")
-	if err != nil {
+	client, calls := answering(t, openSample)
+	if _, err := client.OpenChange(t.Context(), "appdev", "Fix the login", "fix-login"); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := json.Marshal(opened)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(raw), `"reason":"nothing_to_deliver"`) {
-		t.Fatalf("HQ verdict lost: %s", raw)
+	want := `{"branch":"fix-login","repo":"appdev","title":"Fix the login"}`
+	if len(*calls) != 1 || (*calls)[0].Body != want {
+		t.Errorf("calls = %+v, want one with body %s", *calls, want)
 	}
 }

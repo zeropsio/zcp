@@ -33,7 +33,7 @@ cd /var/www/<push-source-host> && git fetch origin && git checkout main && git m
 
 A `main` that will not fast-forward carries local commits that never landed: put them on a branch of their own (`git branch <name>`), then `git reset --keep origin/main`, and say so rather than carrying them silently into new work.
 
-Where the remote later refuses the branch you push, the ref is protected: the answer is a change a person merges, never a fresh token. The transport classifier names that case directly when it happens.
+Where the remote later refuses the branch you push, the ref is protected — on this Mate's HQ that is `main`, a tag, or a branch another open change holds: push a branch of your own and open its change with `zerops_workflow action="open-change"`, never a fresh token. The transport classifier names that case directly when it happens.
 
 ---
 

@@ -442,7 +442,7 @@ func ownRecipeChange(ctx context.Context, hqc hq.Client, open *hq.MateChange, ti
 	// answers the Mate's open change rather than opening a second one, so
 	// asking to open is how such a write learns whether the open one is its
 	// own.
-	opened, err := hqc.OpenChange(ctx, hq.RecipeRepo, title)
+	opened, err := hqc.OpenChange(ctx, hq.RecipeRepo, title, "")
 	if err != nil {
 		return recipeWrite{}, fmt.Errorf("could not open the Mate's change in the recipe repository %q (%w)", hq.RecipeRepo, err)
 	}

@@ -9,13 +9,11 @@ import (
 
 // A Mate's change lands its work on its repository's `main` (SPEC §3.2a).
 // `main` moves only by HQ's merge, so the change is not a courtesy — it is
-// the ONLY way the pair's code reaches it. HQ takes the Mate's push only on
-// the branch of its own open change, so the change is opened first — and
-// only when HQ says the candidate tree differs from `main` — and HEAD is
-// pushed to its branch then. A Mate has at
-// most one open change per repository: opening answers the open one, or the
-// next number. Its number is recorded on the pair; what became of it is read
-// from the Mate's own state in HQ.
+// the ONLY way the pair's code reaches it. The agent pushes a branch of its
+// own with plain git and opens its change from it (open-change); a Mate has
+// at most one open change per repository: opening answers the open one, or
+// the next number. Its number is recorded on the pair; what became of it is
+// read from the Mate's own state in HQ.
 
 // hqBase is the branch a change lands on.
 const hqBase = "main"

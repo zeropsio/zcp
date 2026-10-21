@@ -3727,12 +3727,15 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
 - **The agent's work** goes by plain git from the dev half's checkout, guided by AGENTS.md's git
   host paragraph: `git checkout main && git fetch origin && git merge --ff-only origin/main`, `git
   checkout -b <branch>`, commit, `git push origin <branch>`; never a push of `main`, never a force.
-  HQ's `/git` rule today takes a Mate's push only on `mate/<project id>/<n>` of its own open change;
-  design B relaxes it to any branch name, `main` and tags staying HQ's — until then a push of the
-  agent's own branch is refused by HQ, and zcp opens no change for it. `zerops_deploy
-  strategy="git-push"` to the Mate's HQ refuses before git runs and says the plain-git way. The
-  person reviews a change by its description: `zerops_workflow action="describe-change"` sets it
-  on the pair's open change (MB-34).
+  HQ takes a Mate's push on any branch but `main`, a tag, or a branch another Mate's open change
+  holds; no force, no deletion. The agent opens its change from its branch, pushed before or after:
+  `zerops_workflow action="open-change" branch=<branch> title=<…>` — `POST /api/mate/changes`
+  `{repo, title, branch}` binds the change to the branch; HQ refuses `branch_taken` and
+  `protected_ref`, and answers the Mate's open change in the repository, `created: false`, rather
+  than open a second; the pair records the number. `zerops_deploy strategy="git-push"` to the
+  Mate's HQ refuses before git runs and says the plain-git way. The person reviews a change by
+  its description: `zerops_workflow action="describe-change"` sets it on the pair's open change
+  (MB-34).
 - **What became of the change** (merged with `mergedSha`, closed) is read fresh from the Mate's own
   state, `GET /api/mate/self`, by every `describe-change` and reconcile pass — no merge passes
   through this process, so nothing waits to be told. A merged change's note tells the agent to bring

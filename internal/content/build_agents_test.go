@@ -657,6 +657,7 @@ func TestBuildAgentsMD_Container_GitHostIsHQ(t *testing.T) {
 		"git merge --ff-only origin/main",
 		hq.GitHubHelperConfig,
 		"never over ssh",
+		`action="open-change" branch="<branch>"`,
 		`action="describe-change"`,
 	} {
 		if !strings.Contains(out, want) {

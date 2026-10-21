@@ -181,20 +181,16 @@ func (f *fakeHQ) api(w http.ResponseWriter, r *http.Request) {
 		writeHQJSON(w, http.StatusOK, hq.Repo{AppID: f.appID, Name: in.Name})
 	case r.Method == http.MethodPost && r.URL.Path == "/api/mate/changes":
 		var in struct {
-			Repo  string `json:"repo"`
-			Title string `json:"title"`
-			Tree  string `json:"tree"`
+			Repo   string `json:"repo"`
+			Title  string `json:"title"`
+			Branch string `json:"branch"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&in)
 		if !f.repos[f.appID+"/"+in.Repo] {
 			refuse(http.StatusNotFound, "repo_not_found", "repo_not_found")
 			return
 		}
-		if in.Tree != "" && in.Tree == f.git(r.Context(), f.repoDir(f.appID, in.Repo), "rev-parse", "main^{tree}") {
-			writeHQJSON(w, http.StatusOK, hq.OpenedChange{Reason: "nothing_to_deliver"})
-			return
-		}
-		if open := f.find(f.appID, in.Repo, 0, hq.ChangeOpen); open != nil {
+		if open := f.findOf(labMate, f.appID, in.Repo); open != nil {
 			writeHQJSON(w, http.StatusOK, hq.OpenedChange{Change: *open, Created: false})
 			return
 		}
@@ -204,9 +200,21 @@ func (f *fakeHQ) api(w http.ResponseWriter, r *http.Request) {
 				number = max(number, c.Number+1)
 			}
 		}
+		branch := fmt.Sprintf("refs/heads/mate/%s/%d", labMate, number)
+		if in.Branch != "" {
+			branch = "refs/heads/" + strings.TrimPrefix(in.Branch, "refs/heads/")
+		}
+		switch {
+		case branch == "refs/heads/main" || strings.HasPrefix(in.Branch, "refs/tags/"):
+			refuse(http.StatusUnprocessableEntity, "protected_ref", "protected_ref")
+			return
+		case f.heldBranch(in.Repo, branch):
+			refuse(http.StatusConflict, "branch_taken", "branch_taken")
+			return
+		}
 		now := time.Now().UTC().Format(time.RFC3339)
 		change := hq.Change{AppID: f.appID, Repo: in.Repo, Number: number, MateProjectID: labMate, Title: in.Title,
-			State: hq.ChangeOpen, OpenedAt: now, UpdatedAt: now, Mergeability: "unknown"}
+			Branch: branch, State: hq.ChangeOpen, OpenedAt: now, UpdatedAt: now, Mergeability: "unknown"}
 		f.changes = append(f.changes, change)
 		f.writeRefs()
 		writeHQJSON(w, http.StatusOK, hq.OpenedChange{Change: change, Created: true})
@@ -260,12 +268,12 @@ func (f *fakeHQ) self(ctx context.Context) map[string]any {
 	}
 	var mine []hq.MateChange
 	for _, c := range f.changes {
-		if c.AppID != f.appID {
+		if c.AppID != f.appID || c.MateProjectID != labMate {
 			continue
 		}
 		head := c.Head
 		if c.State == hq.ChangeOpen {
-			head = f.branchHead(ctx, c.AppID, c.Repo, c.Number)
+			head = f.branchHead(ctx, &c)
 		}
 		change := hq.MateChange{Repo: c.Repo, Number: c.Number, State: c.State, Head: head, MergedSha: c.MergedSha, LandedHead: c.LandedHead}
 		if !f.untitled {
@@ -283,8 +291,37 @@ func (f *fakeHQ) self(ctx context.Context) map[string]any {
 	return state
 }
 
-// find is the Mate's change of the application; number 0 is any, state ""
-// any.
+// findOf is mate's open change in repo of the application, nil for none.
+func (f *fakeHQ) findOf(mate, app, repo string) *hq.Change {
+	for i := range f.changes {
+		if c := &f.changes[i]; c.MateProjectID == mate && c.AppID == app && c.Repo == repo && c.State == hq.ChangeOpen {
+			return c
+		}
+	}
+	return nil
+}
+
+// heldBranch reports whether an open change in repo is bound to branch.
+func (f *fakeHQ) heldBranch(repo, branch string) bool {
+	for _, c := range f.changes {
+		if c.AppID == f.appID && c.Repo == repo && c.State == hq.ChangeOpen && c.Branch == branch {
+			return true
+		}
+	}
+	return false
+}
+
+// openForAnotherMate is another Mate's open change in repo, on branch.
+func (f *fakeHQ) openForAnotherMate(repo, branch string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	now := time.Now().UTC().Format(time.RFC3339)
+	f.changes = append(f.changes, hq.Change{AppID: f.appID, Repo: repo, Number: 100 + len(f.changes), MateProjectID: "p-other",
+		Title: "Another Mate's work", Branch: "refs/heads/" + branch, State: hq.ChangeOpen, OpenedAt: now, UpdatedAt: now})
+	f.writeRefs()
+}
+
+// find is a change of the application; number 0 is any, state "" any.
 func (f *fakeHQ) find(app, repo string, number int, state string) *hq.Change {
 	for i := range f.changes {
 		c := &f.changes[i]
@@ -315,7 +352,11 @@ func (f *fakeHQ) initRepo(ctx context.Context, app, name string) string {
 	for _, kv := range [][2]string{{"http.receivepack", "true"}, {"receive.denyNonFastForwards", "true"}, {"receive.denyDeletes", "true"}} {
 		f.git(ctx, dir, "config", kv[0], kv[1])
 	}
-	hook := "#!/bin/sh\nrepo=$(basename \"$(pwd)\")\nwhile read old new ref; do grep -qxF \"$repo $ref\" \"$FAKE_HQ_REFS\" || { echo \"$ref is not an open change of this Mate\" >&2; exit 1; }; done\n"
+	// A Mate pushes any branch but main, a tag, or another Mate's open
+	// change's; HQ itself (FAKE_HQ_AS_HQ) moves anything.
+	hook := "#!/bin/sh\n[ -n \"$FAKE_HQ_AS_HQ\" ] && exit 0\nrepo=$(basename \"$(pwd)\")\nwhile read old new ref; do\n" +
+		"case $ref in refs/heads/main|refs/tags/*) echo \"$ref is HQ's\" >&2; exit 1;; esac\n" +
+		"grep -qxF \"$repo $ref\" \"$FAKE_HQ_REFS\" && { echo \"$ref is another Mate's open change\" >&2; exit 1; }\ndone\nexit 0\n"
 	if err := os.WriteFile(filepath.Join(dir, "hooks", "pre-receive"), []byte(hook), 0o755); err != nil {
 		f.t.Fatal(err)
 	}
@@ -325,13 +366,13 @@ func (f *fakeHQ) initRepo(ctx context.Context, app, name string) string {
 
 func (f *fakeHQ) repoDir(app, name string) string { return filepath.Join(f.root, app, name+".git") }
 
-// writeRefs writes the branches a push may move, by repository: the open
-// changes'. f.mu is held, or the fake is not serving yet.
+// writeRefs writes the branches the lab's Mate may not push, by repository:
+// other Mates' open changes'. f.mu is held, or the fake is not serving yet.
 func (f *fakeHQ) writeRefs() {
 	var refs []string
 	for _, c := range f.changes {
-		if c.State == hq.ChangeOpen {
-			refs = append(refs, fmt.Sprintf("%s.git refs/heads/mate/%s/%d", c.Repo, c.MateProjectID, c.Number))
+		if c.State == hq.ChangeOpen && c.MateProjectID != labMate {
+			refs = append(refs, fmt.Sprintf("%s.git %s", c.Repo, c.Branch))
 		}
 	}
 	if err := os.WriteFile(f.refsFile, []byte(strings.Join(refs, "\n")+"\n"), 0o600); err != nil {
@@ -339,9 +380,10 @@ func (f *fakeHQ) writeRefs() {
 	}
 }
 
-func (f *fakeHQ) branchHead(ctx context.Context, app, repo string, number int) *string {
-	out, err := exec.CommandContext(ctx, "git", "-C", f.repoDir(app, repo), "rev-parse", "-q", "--verify", //nolint:gosec // G204: a test's own git
-		fmt.Sprintf("refs/heads/mate/%s/%d", labMate, number)).Output()
+// branchHead is where change's branch is, nil while it is not pushed.
+func (f *fakeHQ) branchHead(ctx context.Context, change *hq.Change) *string {
+	out, err := exec.CommandContext(ctx, "git", "-C", f.repoDir(change.AppID, change.Repo), "rev-parse", "-q", "--verify", //nolint:gosec // G204: a test's own git
+		change.Branch).Output()
 	if err != nil {
 		return nil
 	}
@@ -386,8 +428,11 @@ func (f *fakeHQ) mergeChange(repo string, number int) string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	change := f.find(f.appID, repo, number, hq.ChangeOpen)
-	head := f.branchHead(f.t.Context(), f.appID, repo, number)
-	if change == nil || head == nil {
+	if change == nil {
+		f.t.Fatalf("no open change #%d in %s", number, repo)
+	}
+	head := f.branchHead(f.t.Context(), change)
+	if head == nil {
 		f.t.Fatalf("no open change #%d with a head in %s", number, repo)
 	}
 	dir := f.repoDir(f.appID, repo)
@@ -641,7 +686,7 @@ func (l *hqLab) openChange() hq.Change {
 	if !ok {
 		l.t.Fatal("the lab's Mate is not enrolled")
 	}
-	opened, err := hqc.OpenChange(l.t.Context(), "appdev", title)
+	opened, err := hqc.OpenChange(l.t.Context(), "appdev", title, "")
 	if err != nil {
 		l.t.Fatalf("opening the change: %v", err)
 	}
@@ -701,12 +746,8 @@ func (f *fakeHQ) landOnMain(repo string, files map[string]string) {
 	}
 	f.git(f.t.Context(), clone, "add", "-A")
 	f.git(f.t.Context(), clone, "-c", "user.name=other", "-c", "user.email=other@example.invalid", "commit", "-qm", "Another Mate's work")
-	allowed := filepath.Join(f.t.TempDir(), "main-only")
-	if err := os.WriteFile(allowed, []byte(repo+".git refs/heads/main\n"), 0o600); err != nil {
-		f.t.Fatal(err)
-	}
 	cmd := exec.CommandContext(f.t.Context(), "git", "-C", clone, "push", "-q", "origin", "main")
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "FAKE_HQ_REFS="+allowed)
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "FAKE_HQ_AS_HQ=1")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		f.t.Fatalf("land on main: %v\n%s", err, out)
 	}
