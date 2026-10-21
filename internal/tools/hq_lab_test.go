@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -55,10 +56,12 @@ type fakeHQ struct {
 	changes     []hq.Change
 	attachments map[string][]byte
 	// failing is how many of the next requests failOn matches — any, when
-	// nil — are answered failStatus with failCode instead of being served.
+	// nil — are answered failStatus with failCode, and failReason when one
+	// is set, instead of being served.
 	failing    int
 	failStatus int
 	failCode   string
+	failReason string
 	failOn     func(*http.Request) bool
 	// down: HQ does not answer at all — every connection is dropped.
 	down bool
@@ -116,12 +119,15 @@ func (f *fakeHQ) serve(w http.ResponseWriter, r *http.Request, backend http.Hand
 	}
 	if f.failing > 0 && (f.failOn == nil || f.failOn(r)) {
 		f.failing--
-		status, code := f.failStatus, f.failCode
+		status, refusal := f.failStatus, map[string]string{"code": f.failCode}
+		if f.failReason != "" {
+			refusal["reason"] = f.failReason
+		}
 		f.mu.Unlock()
 		if status == http.StatusServiceUnavailable {
 			w.Header().Set("Retry-After", "1")
 		}
-		writeHQJSON(w, status, map[string]string{"code": code})
+		writeHQJSON(w, status, refusal)
 		return
 	}
 	credential := f.credential
@@ -161,6 +167,28 @@ func writeHQJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_, _ = w.Write(raw)
+}
+
+// hqProtectedBranch is a branch HQ keeps from a change: main, a full ref,
+// or HQ's mate/ namespace.
+var hqProtectedBranch = regexp.MustCompile(`^(?:main$|mate(?:$|/)|refs/)`)
+
+// hqValidRef is HQ's validRef: a ref its git host takes.
+func hqValidRef(ref string) bool {
+	if strings.ContainsFunc(ref, func(r rune) bool { return r <= 32 || r == 127 || strings.ContainsRune("~^:?*[\\", r) }) ||
+		strings.Contains(ref, "..") || strings.Contains(ref, "@{") || strings.HasSuffix(ref, ".") {
+		return false
+	}
+	parts := strings.Split(ref, "/")
+	if len(parts) < 2 {
+		return false
+	}
+	for _, part := range parts {
+		if part == "" || strings.HasPrefix(part, ".") || strings.HasSuffix(part, ".lock") {
+			return false
+		}
+	}
+	return true
 }
 
 // api answers the Mate's side of the contract; f.mu is held.
@@ -206,16 +234,21 @@ func (f *fakeHQ) api(w http.ResponseWriter, r *http.Request) {
 				number = max(number, c.Number+1)
 			}
 		}
+		// HQ's own checks, in its order and with its answers: a branch is a
+		// short name, never main, a full ref or one in HQ's mate/ namespace.
 		branch := fmt.Sprintf("refs/heads/mate/%s/%d", labMate, number)
 		if in.Branch != "" {
-			branch = "refs/heads/" + strings.TrimPrefix(in.Branch, "refs/heads/")
+			branch = "refs/heads/" + in.Branch
 		}
 		switch {
-		case branch == "refs/heads/main" || strings.HasPrefix(in.Branch, "refs/tags/"):
-			refuse(http.StatusUnprocessableEntity, "protected_ref", "protected_ref")
+		case in.Branch != "" && hqProtectedBranch.MatchString(in.Branch):
+			refuse(http.StatusConflict, "conflict", "protected_ref")
+			return
+		case in.Branch != "" && !hqValidRef(branch):
+			refuse(http.StatusBadRequest, "invalid", "invalid_ref")
 			return
 		case f.heldBranch(in.Repo, branch):
-			refuse(http.StatusConflict, "branch_taken", "branch_taken")
+			refuse(http.StatusConflict, "conflict", "branch_taken")
 			return
 		}
 		now := time.Now().UTC().Format(time.RFC3339)
@@ -506,9 +539,15 @@ func (f *fakeHQ) standby(n int, on func(*http.Request) bool) {
 // answerWith makes HQ answer the next n requests on matches status with code
 // rather than serve them — any request, API or git, when on is nil.
 func (f *fakeHQ) answerWith(status int, code string, n int, on func(*http.Request) bool) {
+	f.refuseWith(status, code, "", n, on)
+}
+
+// refuseWith makes HQ refuse the next n requests on matches with status,
+// code and reason, as HQ's {code, reason} refusals read.
+func (f *fakeHQ) refuseWith(status int, code, reason string, n int, on func(*http.Request) bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.failing, f.failStatus, f.failCode, f.failOn = n, status, code, on
+	f.failing, f.failStatus, f.failCode, f.failReason, f.failOn = n, status, code, reason, on
 }
 
 // setDown makes HQ stop answering, or answer again.

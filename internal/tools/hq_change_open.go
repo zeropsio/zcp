@@ -64,14 +64,17 @@ func handleOpenChange(
 	callCtx, cancel := context.WithTimeout(ctx, hqCallTimeout)
 	opened, err := hqc.OpenChange(callCtx, meta.HQ.Repo, title, branch)
 	cancel()
+	// HQ refuses a branch as {code, reason}: the reason names which refusal.
 	var refused *hq.RefusedError
 	switch {
-	case errors.As(err, &refused) && refused.Code == "branch_taken":
+	case errors.As(err, &refused) && refused.Reason == "branch_taken":
 		return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
 			fmt.Sprintf("Nothing was opened: another open change holds the branch %q in %q.", branch, meta.HQ.Repo),
 			"Push this work to a branch of your own under another name and open its change from that."), WithRecoveryStatus()), nil, nil
-	case errors.As(err, &refused) && refused.Code == "protected_ref":
+	case errors.As(err, &refused) && refused.Reason == "protected_ref":
 		return convertError(branchNotOwn(branch), WithRecoveryStatus()), nil, nil
+	case errors.As(err, &refused) && refused.Reason == "invalid_ref":
+		return convertError(notABranchName(branch), WithRecoveryStatus()), nil, nil
 	case err != nil:
 		return convertError(platform.NewPlatformError(platform.ErrAPIError,
 			fmt.Sprintf("Nothing was opened: HQ did not open a change in %q (%v).", meta.HQ.Repo, err),
@@ -119,9 +122,7 @@ func changeBranchOf(input string) (string, *platform.PlatformError) {
 	}
 	name = strings.TrimPrefix(name, "refs/heads/")
 	if !gitBranchName(name) {
-		return "", platform.NewPlatformError(platform.ErrInvalidParameter,
-			fmt.Sprintf("%q is not a branch name git takes.", name),
-			"Name the branch with letters, digits, - _ . and /, as you pushed it.")
+		return "", notABranchName(name)
 	}
 	if name == hqBase {
 		return "", branchNotOwn(name)
@@ -132,8 +133,15 @@ func changeBranchOf(input string) (string, *platform.PlatformError) {
 // branchNotOwn refuses a ref HQ keeps for itself.
 func branchNotOwn(ref string) *platform.PlatformError {
 	return platform.NewPlatformError(platform.ErrInvalidParameter,
-		fmt.Sprintf("Nothing was opened: %q is HQ's — `main` moves only by a merge, and tags are HQ's.", ref),
+		fmt.Sprintf("Nothing was opened: %q is HQ's — `main` moves only by a merge, and tags and the mate/ branches are HQ's.", ref),
 		"Cut a branch of your own from main, push it, and open its change from that.")
+}
+
+// notABranchName refuses a name git, or HQ's git, does not take as a branch.
+func notABranchName(name string) *platform.PlatformError {
+	return platform.NewPlatformError(platform.ErrInvalidParameter,
+		fmt.Sprintf("Nothing was opened: %q is not a branch name git takes.", name),
+		"Name the branch with letters, digits, - _ . and /, as you pushed it.")
 }
 
 // gitBranchName reports whether git takes name as a branch name

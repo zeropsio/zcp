@@ -6,8 +6,11 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/hq"
 )
 
 // openChangeFrom is zerops_workflow action="open-change" in the lab.
@@ -72,18 +75,24 @@ func TestOpenChange_OpensTheChangeOnTheAgentsOwnBranch(t *testing.T) {
 	}
 }
 
-// A branch HQ keeps for itself, or another Mate's open change holds, opens
-// nothing and says what to do instead; so does a call that names no branch.
+// A branch HQ keeps for itself, one HQ cannot name, or one another Mate's
+// open change holds, opens nothing and says what to do instead; so does a
+// call that names no branch.
 func TestOpenChange_RefusesABranchThatIsNotTheAgentsOwn(t *testing.T) {
 	tests := []struct {
 		name, branch string
-		want         string
+		// refusal, when set, is the {code, reason} HQ answers the open with.
+		refusal *hq.RefusedError
+		want    string
 	}{
 		{name: "no branch", branch: " ", want: "branch="},
 		{name: "main", branch: "main", want: "a branch of your own"},
 		{name: "main as a ref", branch: "refs/heads/main", want: "a branch of your own"},
 		{name: "a tag", branch: "refs/tags/v1", want: "a branch of your own"},
+		{name: "HQ's mate/ namespace", branch: "mate/fix-login", want: "a branch of your own"},
 		{name: "not a branch name", branch: "fix login", want: "not a branch name"},
+		{name: "a name HQ cannot take", branch: "fix-login",
+			refusal: &hq.RefusedError{Status: http.StatusBadRequest, Code: "invalid", Reason: "invalid_ref"}, want: "not a branch name"},
 		{name: "another Mate's change", branch: "shared", want: "another open change holds"},
 	}
 	for _, tt := range tests {
@@ -91,6 +100,11 @@ func TestOpenChange_RefusesABranchThatIsNotTheAgentsOwn(t *testing.T) {
 			lab := newHQLab(t)
 			lab.wire()
 			lab.hq.openForAnotherMate("appdev", "shared")
+			if tt.refusal != nil {
+				lab.hq.refuseWith(tt.refusal.Status, tt.refusal.Code, tt.refusal.Reason, 1, func(r *http.Request) bool {
+					return r.Method == http.MethodPost && r.URL.Path == "/api/mate/changes"
+				})
+			}
 
 			_, text, isError := lab.openChangeFrom(tt.branch, "Fix the login")
 

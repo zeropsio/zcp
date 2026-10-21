@@ -195,8 +195,9 @@ type OpenedChange struct {
 // with title on branch — a branch of the Mate's own, which HQ binds the
 // change to; "" lets HQ name it. An open change keeps its title and branch:
 // retitling it is EditChange's. HQ refuses a branch another open change
-// holds (code "branch_taken") and one it keeps for itself, `main` or a tag
-// ("protected_ref").
+// holds (409, reason "branch_taken"), one it keeps for itself — `main`, a
+// full ref, its mate/ namespace (409, reason "protected_ref") — and one its
+// git does not take (400, reason "invalid_ref").
 func (c Client) OpenChange(ctx context.Context, repo, title, branch string) (OpenedChange, error) {
 	var opened OpenedChange
 	body := map[string]string{"repo": repo, "title": title}

@@ -3730,9 +3730,10 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   HQ takes a Mate's push on any branch but `main`, a tag, or a branch another Mate's open change
   holds; no force, no deletion. The agent opens its change from its branch, pushed before or after:
   `zerops_workflow action="open-change" branch=<branch> title=<…>` — `POST /api/mate/changes`
-  `{repo, title, branch}` binds the change to the branch; HQ refuses `branch_taken` and
-  `protected_ref`, and answers the Mate's open change in the repository, `created: false`, rather
-  than open a second; the pair records the number. `zerops_deploy strategy="git-push"` from a pair
+  `{repo, title, branch}` binds the change to the branch; HQ refuses with `{code, reason}` —
+  `409 conflict/branch_taken`, `409 conflict/protected_ref` (`main`, a full ref, `mate/`),
+  `400 invalid/invalid_ref` — and zcp reads the reason; it answers the Mate's open change in the
+  repository, `created: false`, rather than open a second; the pair records the number. `zerops_deploy strategy="git-push"` from a pair
   wired to HQ, to any remote, refuses before git runs — its `GIT_TOKEN` is the Mate's HQ
   credential — and says the plain-git way. The person reviews a change by its description:
   `zerops_workflow action="describe-change"` sets it on the pair's open change (MB-34).
