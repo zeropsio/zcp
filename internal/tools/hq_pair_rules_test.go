@@ -1,4 +1,4 @@
-// Tests for: tools/hq_delivery.go — what a Mate delivering through HQ plans,
+// Tests for: tools/hq_pair.go — what a Mate keeping its code in HQ plans,
 // launches and hands over.
 package tools
 
@@ -19,7 +19,7 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-func TestAMateDeliveringThroughHQPlansOnlyStandardPairs(t *testing.T) {
+func TestAMateKeepingItsCodeInHQPlansOnlyStandardPairs(t *testing.T) {
 	t.Parallel()
 	simple := []workflow.BootstrapTarget{{Runtime: workflow.RuntimeTarget{DevHostname: "todoapp", Type: "nodejs@22", BootstrapMode: topology.PlanModeSimple}}}
 	devOnly := []workflow.BootstrapTarget{{Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: topology.PlanModeDev}}}
@@ -149,26 +149,26 @@ func TestLaunchProduction_AMateWithoutItsEnrollmentSaysSo(t *testing.T) {
 	}
 }
 
-// TestLaunchProduction_AMateDeliveringThroughHQRefusesAndSaysWhatIsTrue: an
+// TestLaunchProduction_AMateKeepingItsCodeInHQRefusesAndSaysWhatIsTrue: an
 // application's production is a project the person adds from the projects
-// page, so a Mate delivering through HQ refuses launch-production outright,
+// page, so a Mate keeping its code in HQ refuses launch-production outright,
 // and its next step says what is TRUE of its own pairs — a change still open
-// by number, Put it live once the work is on main, or to deliver first
+// by number, Put it live once the work is on main, or to push and merge first
 // — read fresh, so a change merged since the last pass is never named as
 // open.
-func TestLaunchProduction_AMateDeliveringThroughHQRefusesAndSaysWhatIsTrue(t *testing.T) {
+func TestLaunchProduction_AMateKeepingItsCodeInHQRefusesAndSaysWhatIsTrue(t *testing.T) {
 	if refusal := hqLaunchProductionRefusal(context.Background(), nil, t.TempDir(), false); refusal != nil {
 		t.Fatalf("a container that is not a Mate keeps zcp's own launch-production, got %q", resultText(t, refusal))
 	}
 	tests := []struct {
 		name string
 		// settle is what happens to change #1 before the launch is asked for;
-		// nil delivers nothing at all.
+		// nil opens no change at all.
 		settle   func(lab *hqLab)
 		want     []string
 		wantNone []string
 	}{
-		{name: "nothing delivered", want: []string{"wired_mate_production_is_the_groups", "stage half first"}},
+		{name: "no change at all", want: []string{"wired_mate_production_is_the_groups", "branch of your own"}},
 		{name: "a change still open is named", settle: func(*hqLab) {}, want: []string{"#1", "appdev", "merge"}},
 		{name: "HQ's open change is named after its local number is lost", settle: func(lab *hqLab) {
 			if err := workflow.UpsertServiceMeta(lab.stateDir, "appdev", func(m *workflow.ServiceMeta, _ bool) error {
@@ -179,9 +179,9 @@ func TestLaunchProduction_AMateDeliveringThroughHQRefusesAndSaysWhatIsTrue(t *te
 			}
 		}, want: []string{"#1", "appdev", "merge"}},
 		{name: "a change merged since the last pass is not named as open", settle: func(lab *hqLab) { lab.hq.merge() },
-			want: []string{"Put it live"}, wantNone: []string{"#1", "merge ", "stage half first"}},
-		{name: "a change closed without merging means deliver first", settle: func(lab *hqLab) { lab.hq.close(1) },
-			want: []string{"stage half first"}, wantNone: []string{"#1", "Tell the person: production is added and released"}},
+			want: []string{"Put it live"}, wantNone: []string{"#1", "merge ", "branch of your own"}},
+		{name: "a change closed without merging means push and merge first", settle: func(lab *hqLab) { lab.hq.close(1) },
+			want: []string{"branch of your own"}, wantNone: []string{"#1", "Tell the person: production is added and released"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -189,7 +189,7 @@ func TestLaunchProduction_AMateDeliveringThroughHQRefusesAndSaysWhatIsTrue(t *te
 			lab.wire()
 			if tt.settle != nil {
 				lab.write(map[string]string{"index.js": "the app\n"})
-				lab.deliver()
+				lab.openChange()
 				tt.settle(lab)
 			}
 			text := resultText(t, hqLaunchProductionRefusal(context.Background(), lab.hq.srv.Client(), lab.stateDir, true))
@@ -207,14 +207,14 @@ func TestLaunchProduction_AMateDeliveringThroughHQRefusesAndSaysWhatIsTrue(t *te
 	}
 }
 
-// TestSessionAnnotations_HandoffOnlyAfterADelivery: a session that delivered
-// through the stage half closes by handing the person the change; a stand-up
-// that left the stage out delivered nothing to hand over. The pair's record
+// TestSessionAnnotations_HandoffOnlyWithAnOpenChange: a session that deployed
+// the stage half of a pair with an open change closes by handing the person
+// the change; a stand-up that left the stage out has nothing to hand over. The pair's record
 // of its change is the whole condition: the container holds no enrollment
 // here, and a change on record is still the person's to review.
 //
 // Not parallel: HOME is redirected so no enrollment is found (t.Setenv).
-func TestSessionAnnotations_HandoffOnlyAfterADelivery(t *testing.T) {
+func TestSessionAnnotations_HandoffOnlyWithAnOpenChange(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	tests := []struct {
 		name        string
@@ -223,9 +223,9 @@ func TestSessionAnnotations_HandoffOnlyAfterADelivery(t *testing.T) {
 		change      int
 		wantHandoff bool
 	}{
-		{name: "a stand-up: the stage left out, nothing delivered", roles: map[string]string{"appstage": workflow.RoleOutOfScope}, deployed: []string{"appdev"}},
-		{name: "a task delivered through the stage", deployed: []string{"appdev", "appstage"}, change: 1, wantHandoff: true},
-		{name: "a delivery with nothing beyond main", deployed: []string{"appdev", "appstage"}},
+		{name: "a stand-up: the stage left out, no change", roles: map[string]string{"appstage": workflow.RoleOutOfScope}, deployed: []string{"appdev"}},
+		{name: "a task with an open change, through the stage", deployed: []string{"appdev", "appstage"}, change: 1, wantHandoff: true},
+		{name: "a task with no change open", deployed: []string{"appdev", "appstage"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -264,19 +264,20 @@ func TestSessionAnnotations_HandoffOnlyAfterADelivery(t *testing.T) {
 	}
 }
 
-// HQ owns the merged history after the checkout has absorbed its landing.
+// HQ owns the merged history: a merged change the pair holds no record of
+// still reads as work on main.
 // Non-parallel: the lab redirects HOME and writes the enrollment there.
-func TestProductionKnowsMergedWorkAfterTheMergeIsAbsorbed(t *testing.T) {
+func TestProductionKnowsMergedWorkThePairHoldsNoRecordOf(t *testing.T) {
 	lab := newHQLab(t)
 	lab.wire()
 	lab.write(map[string]string{"index.js": "the app\n"})
-	lab.deliver()
+	lab.openChange()
 	lab.hq.merge()
-	if d := lab.deliver(); d == nil || d.Change != nil || lab.meta().HQ.Landed != nil {
-		t.Fatalf("want an absorbed landing and nothing new to propose, got %+v", d)
+	if number := lab.meta().HQ.Change; number != 0 {
+		t.Fatalf("the pair records change #%d; want no record", number)
 	}
 	text := hqLaunchProductionNextStep(t.Context(), lab.hq.srv.Client(), lab.stateDir)
-	if !strings.Contains(text, "Put it live") || strings.Contains(text, "stage half first") || strings.Contains(text, "merge ") {
+	if !strings.Contains(text, "Put it live") || strings.Contains(text, "branch of your own") || strings.Contains(text, "merge ") {
 		t.Fatalf("the guidance forgot the work HQ has merged: %s", text)
 	}
 }

@@ -1,8 +1,6 @@
 package ops
 
 import (
-	"crypto/sha1" //nolint:gosec // G505: git's object id, matched against git's own (SecretDigest)
-	"encoding/hex"
 	"fmt"
 	"net/url"
 	"strings"
@@ -105,30 +103,6 @@ func BuildGitSessionAuthProbeCommand(remoteURL, hqURL string) string {
 		"GIT_TERMINAL_PROMPT=0 git %s ls-remote %s HEAD",
 		gitCredentialHelperArgsFor(remoteURL, hqURL), shellQuote(remoteURL),
 	)
-}
-
-// BuildSessionGitTokenDigestCommand prints git's blob hash of the session's
-// $GIT_TOKEN — what SecretDigest computes of a credential — so whether a
-// credential written onto a service has reached its fresh sessions is read
-// without the credential on any command line, and without asking the remote.
-func BuildSessionGitTokenDigestCommand() string {
-	return `printf %s "$GIT_TOKEN" | git hash-object --stdin`
-}
-
-// SecretDigest is git's blob hash of value: what
-// BuildSessionGitTokenDigestCommand prints for a session whose GIT_TOKEN is
-// value. A digest to compare, never to keep.
-func SecretDigest(value string) string {
-	sum := sha1.Sum(fmt.Appendf(nil, "blob %d\x00%s", len(value), value)) //nolint:gosec // G401: git's object id, matched against git's own, not a protection
-	return hex.EncodeToString(sum[:])
-}
-
-// GitCredentialRefused reports whether a git command's output says the remote
-// refused its credential: git's own "Authentication failed" for a 401, or a
-// 401 or 403 it reports. Not reached, a 5xx or a missing repository is not.
-func GitCredentialRefused(output string) bool {
-	return strings.Contains(output, "Authentication failed") ||
-		strings.Contains(output, "returned error: 401") || strings.Contains(output, "returned error: 403")
 }
 
 // BuildGitReconstructCommand rebuilds a missing /var/www/.git from the
@@ -288,20 +262,6 @@ func gitCredentialScopeHost(remoteURL string) (string, bool) {
 		return host, strings.EqualFold(u.Hostname(), defaultGitHost)
 	}
 	return host, strings.HasPrefix(strings.ToLower(remoteURL), defaultGitHost+"/")
-}
-
-// BuildGitCredentialHelperAssertCommand re-persists the helper origin sync
-// writes, on a repository that already exists. A helper persisted before the
-// Mate's shell could authenticate to its HQ keeps the old text until
-// git-push-setup syncs origin again; the push-credential step runs this before
-// each delivery, so such a repository heals on its next one. No repository,
-// nothing written: the command never creates one. It writes the helper and
-// nothing else — the one-way ~/.netrc cleanup stays with origin sync and
-// reconstruction, since nothing ZCP runs writes that file any more and one
-// there now is the user's own.
-func BuildGitCredentialHelperAssertCommand(workingDir, remoteURL, hqURL string) string {
-	return fmt.Sprintf("cd %s && if test -d .git; then %s; fi",
-		shellQuote(workingDir), gitCredentialHelperWriteFragment(remoteURL, hqURL))
 }
 
 // BuildGitTagListCommand lists the remote's version tags (authenticated —

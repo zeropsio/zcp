@@ -73,8 +73,8 @@ type recipeOutcome struct {
 //
 // The proposal is the Mate's change in the recipe repository — the one HQ
 // keeps open per repository — titled hq.RecipeProposalTitle, with no
-// description: the delivery's flow, on a scratch repository of zcp's own
-// rather than a pair's checkout. What the change's branch holds is composed,
+// description, composed on a scratch repository of zcp's own rather than a
+// pair's checkout. What the change's branch holds is composed,
 // never merged: main's tree with the files main lacks written over it
 // (Scratch.TreeWith), so its diff against main only ever adds — the kind
 // Core lands by itself — and no conflict can arise. The branch only moves

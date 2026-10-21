@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -102,7 +101,7 @@ func TestHQLearnLanding_MergedChange_CarriesTheCIOfItsPush(t *testing.T) {
 	}
 	stateDir := t.TempDir()
 	m := &workflow.ServiceMeta{Hostname: "appdev", BootstrapSession: "test", BootstrappedAt: "2026-10-02",
-		HQ: &workflow.HQRepoRef{AppID: labApp, Repo: "appdev", Branch: "mate/p1", Change: 3}}
+		HQ: &workflow.HQRepoRef{AppID: labApp, Repo: "appdev", Change: 3}}
 	if err := workflow.WriteServiceMeta(stateDir, m); err != nil {
 		t.Fatal(err)
 	}
@@ -114,11 +113,8 @@ func TestHQLearnLanding_MergedChange_CarriesTheCIOfItsPush(t *testing.T) {
 
 	note := hqLearnLanding(stateDir, m, state)
 
-	want := `change #3 is merged — this Mate's work is on "main" now; CI on 1a2b3c4d5e in git-stage: failed — check_types ` + ciUnit + "; you hold no token for the origin, so run the repository's own test command for each on the dev half, fix it and deliver the fix as a new change; its next change opens a new one"
+	want := `change #3 is merged — this Mate's work is on "main" now; CI on 1a2b3c4d5e in git-stage: failed — check_types ` + ciUnit + "; you hold no token for the origin, so run the repository's own test command for each on the dev half, fix it and deliver the fix as a new change; start the next work from \"main\""
 	if note != want {
 		t.Errorf("note = %q\nwant   %q", note, want)
-	}
-	if after := changeOutcomeAfterOpen(note); strings.HasSuffix(after, hqMergedNextClause) || !strings.HasSuffix(after, "deliver the fix as a new change") {
-		t.Errorf("a delivery that opened the next change keeps the CI and drops the promise: %q", after)
 	}
 }

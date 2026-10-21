@@ -18,28 +18,28 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// TestReconcileHQRepositories_GivesThePairItsRepositoryAndBranch: the pass
-// asks HQ for the repository named after the dev half, points the checkout's
+// TestReconcileHQRepositories_GivesThePairItsRepositoryOnMain: the pass asks
+// HQ for the repository named after the dev half, points the checkout's
 // origin at it with the Mate credential where git-push-setup keeps it — a
 // sensitive service env on the push source, never a file zcp writes — and
-// puts the checkout on the Mate's branch, cut from HQ's main.
-func TestReconcileHQRepositories_GivesThePairItsRepositoryAndBranch(t *testing.T) {
+// puts the checkout on `main`, descending from HQ's main.
+func TestReconcileHQRepositories_GivesThePairItsRepositoryOnMain(t *testing.T) {
 	lab := newHQLab(t)
 
 	report := lab.wire()
 
-	if len(report) != 1 || !strings.Contains(report[0], `repository "appdev" wired in HQ`) || !strings.Contains(report[0], `"mate/p-mate"`) {
+	if len(report) != 1 || !strings.Contains(report[0], `repository "appdev" wired in HQ`) || !strings.Contains(report[0], `branches cut from "main"`) {
 		t.Fatalf("report = %q", report)
 	}
 	meta := lab.meta()
-	if meta.HQ == nil || meta.HQ.AppID != labApp || meta.HQ.Repo != "appdev" || meta.HQ.Branch != "mate/p-mate" {
+	if meta.HQ == nil || meta.HQ.AppID != labApp || meta.HQ.Repo != "appdev" {
 		t.Fatalf("the pair's HQ record = %+v", meta.HQ)
 	}
 	if meta.GitPushState != topology.GitPushConfigured || meta.RemoteURL != lab.hq.srv.URL+"/git/"+labApp+"/appdev.git" {
 		t.Errorf("git-push = %s to %q", meta.GitPushState, meta.RemoteURL)
 	}
-	if got := lab.git("rev-parse", "--abbrev-ref", "HEAD"); got != "mate/p-mate" {
-		t.Errorf("the checkout is on %q, want the Mate's branch", got)
+	if got := lab.git("rev-parse", "--abbrev-ref", "HEAD"); got != "main" {
+		t.Errorf("the checkout is on %q, want main", got)
 	}
 	if got := lab.git("remote", "get-url", "origin"); got != meta.RemoteURL {
 		t.Errorf("origin = %q, want the repository in HQ", got)
@@ -77,7 +77,7 @@ func TestReconcileHQRepositories_RewiresAPairToTheRepositoryItsRecordNames(t *te
 	lab := newHQLab(t)
 	if err := workflow.UpdateServiceMeta(lab.stateDir, "appdev", func(m *workflow.ServiceMeta) error {
 		m.GitPushState = topology.GitPushBroken
-		m.HQ = &workflow.HQRepoRef{AppID: labApp, Repo: "medusa", Branch: "mate/" + labMate}
+		m.HQ = &workflow.HQRepoRef{AppID: labApp, Repo: "medusa"}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -200,22 +200,21 @@ func TestReconcileHQRepositories_AWiredPairsTrackedRefStaysMain(t *testing.T) {
 // TestReconcileHQRepositories_TellsTheMateWhatBecameOfItsChange: nothing
 // pushes a merge at the Mate — a person merges in the app — so a pass asks
 // the Mate's own state what became of the change on record, says so once,
-// and forgets the number so the next delivery opens the next change.
+// and forgets the number: a later change is another one.
 func TestReconcileHQRepositories_TellsTheMateWhatBecameOfItsChange(t *testing.T) {
 	for _, tt := range []struct {
-		name       string
-		settle     func(*fakeHQ)
-		want       string
-		wantLanded bool
+		name   string
+		settle func(*fakeHQ)
+		want   string
 	}{
-		{name: "merged", settle: func(f *fakeHQ) { f.merge() }, want: "change #1 is merged", wantLanded: true},
+		{name: "merged", settle: func(f *fakeHQ) { f.merge() }, want: "change #1 is merged"},
 		{name: "closed without merging", settle: func(f *fakeHQ) { f.close(1) }, want: "change #1 was closed without merging"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			lab := newHQLab(t)
 			lab.wire()
 			lab.write(map[string]string{"index.js": "the app\n"})
-			lab.deliver()
+			recordChange(lab.stateDir, lab.meta(), lab.openChange().Number)
 			elapseHQBackoff(t, lab.stateDir)
 			if report := lab.wire(); len(report) != 0 {
 				t.Fatalf("an open change says nothing, got %q", report)
@@ -226,43 +225,27 @@ func TestReconcileHQRepositories_TellsTheMateWhatBecameOfItsChange(t *testing.T)
 			if len(report) != 1 || !strings.Contains(report[0], tt.want) {
 				t.Fatalf("report = %q, want %q", report, tt.want)
 			}
-			meta := lab.meta()
-			if meta.HQ.Change != 0 || (meta.HQ.Landed != nil) != tt.wantLanded {
+			if meta := lab.meta(); meta.HQ.Change != 0 {
 				t.Errorf("the pair's record = %+v", meta.HQ)
-			}
-			// A pass records the landing; the explicit delivery moves the checkout.
-			if tt.wantLanded && strings.Contains(lab.git("log", "--format=%H"), *lab.hq.change(1).MergedSha) {
-				t.Errorf("the pass must leave the checkout unchanged")
 			}
 		})
 	}
 }
 
-// TestRecordLandingAndClearChange_SkipAStaleNumber: a pass that read change
-// #3's outcome never writes over a pair a concurrent delivery already moved
-// on to #4.
-func TestRecordLandingAndClearChange_SkipAStaleNumber(t *testing.T) {
+// TestClearChange_SkipsAStaleNumber: a pass that read change #3's outcome
+// never writes over a pair a concurrent describe already moved on to #4.
+func TestClearChange_SkipsAStaleNumber(t *testing.T) {
 	t.Parallel()
-	for name, write := range map[string]func(string, *workflow.ServiceMeta){
-		"record a landing": func(stateDir string, m *workflow.ServiceMeta) { recordLanding(stateDir, m, 3, "s", "h") },
-		"clear the change": func(stateDir string, m *workflow.ServiceMeta) { clearChange(stateDir, m, 3) },
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			stateDir := t.TempDir()
-			if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
-				Hostname: "appdev", BootstrapSession: "test", BootstrappedAt: "2026-10-02",
-				HQ: &workflow.HQRepoRef{AppID: labApp, Repo: "appdev", Branch: "mate/p1", Change: 4},
-			}); err != nil {
-				t.Fatal(err)
-			}
-			stale := &workflow.ServiceMeta{Hostname: "appdev", HQ: &workflow.HQRepoRef{AppID: labApp, Repo: "appdev", Change: 3}}
-			write(stateDir, stale)
-			fresh, _ := workflow.FindServiceMeta(stateDir, "appdev")
-			if fresh.HQ.Change != 4 || fresh.HQ.Landed != nil {
-				t.Errorf("a stale read wrote over the newer change: %+v", fresh.HQ)
-			}
-		})
+	stateDir := t.TempDir()
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname: "appdev", BootstrapSession: "test", BootstrappedAt: "2026-10-02",
+		HQ: &workflow.HQRepoRef{AppID: labApp, Repo: "appdev", Change: 4},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	clearChange(stateDir, &workflow.ServiceMeta{Hostname: "appdev", HQ: &workflow.HQRepoRef{AppID: labApp, Repo: "appdev", Change: 3}}, 3)
+	if fresh, _ := workflow.FindServiceMeta(stateDir, "appdev"); fresh.HQ.Change != 4 {
+		t.Errorf("a stale read wrote over the newer change: %+v", fresh.HQ)
 	}
 }
 
@@ -335,9 +318,9 @@ func TestBootstrapClose_WiresTheRepository(t *testing.T) {
 	assertNoSecretOnDisk(t, stateDir, labCredential)
 }
 
-// A pass records a landing without changing even a clean checkout.
-// Only an explicit delivery starts the next change from main and reports it.
-func TestHQPass_RecordsALandingWithoutChangingTheCheckout(t *testing.T) {
+// A pass learns a merge without changing even a clean checkout: taking main
+// in is the agent's git.
+func TestHQPass_LearnsAMergeWithoutChangingTheCheckout(t *testing.T) {
 	for _, tt := range []struct {
 		name  string
 		upset func(*hqLab)
@@ -350,7 +333,7 @@ func TestHQPass_RecordsALandingWithoutChangingTheCheckout(t *testing.T) {
 			lab := newHQLab(t)
 			lab.wire()
 			lab.write(map[string]string{"index.js": "the app\n"})
-			lab.deliver()
+			recordChange(lab.stateDir, lab.meta(), lab.openChange().Number)
 			squash := lab.hq.merge()
 			tt.upset(lab)
 			head := lab.git("rev-parse", "HEAD")
@@ -361,9 +344,6 @@ func TestHQPass_RecordsALandingWithoutChangingTheCheckout(t *testing.T) {
 			}
 			if lab.git("rev-parse", "HEAD") != head {
 				t.Errorf("the checkout must be left exactly as it was, not take %s in", squash)
-			}
-			if lab.meta().HQ.Landed == nil {
-				t.Errorf("the landing must stay recorded for the next delivery")
 			}
 		})
 	}

@@ -31,15 +31,14 @@ import (
 // checked stays true.
 //
 // The words are kept on the pair first and put on the change second, so an
-// HQ that did not answer, or a change not open yet, loses nothing:
+// HQ that did not answer loses nothing — the pictures they show stay kept,
+// and describe-change called again puts them on:
 //
 //   - the pair's open change takes them at once;
-//   - with none open they wait for the one the pair opens next (shipChange
-//     puts them on it);
+//   - with none open there is nothing to describe;
 //   - words never reach a change they were not written for: when the change
 //     merged or closed before they reached it, the Mate is told and nothing is
-//     kept, and words kept for a change that is gone are dropped rather than
-//     put on the next change's.
+//     kept.
 //
 // describe-change never opens a change: describing is not a change.
 
@@ -82,7 +81,7 @@ func (e *picturesGoneError) Error() string {
 
 // handleDescribeChange is zerops_workflow action="describe-change": the
 // Mate's description of its change, set as the description of the pair's
-// open change in HQ, or kept until one is open.
+// open change in HQ.
 func handleDescribeChange(
 	ctx context.Context,
 	httpClient ops.HTTPDoer,
@@ -127,8 +126,7 @@ func handleDescribeChange(
 			return jsonResult(changeDescriptionResult{
 				Service: meta.Hostname,
 				Message: sentenceOf(learned) + " The description was not written: the change it was for is no longer open, " +
-					"and the next change is another one. If these words are about work not delivered yet, describe the change " +
-					nextDeliveryOf(meta) + ` opens once it holds that work (zerops_workflow action="describe-change"): it asks for review only then.`,
+					"and the next change is another one. If these words are about work no change holds yet, describe the change that holds it once it is open.",
 			}), nil, nil
 		}
 	}
@@ -148,13 +146,12 @@ func handleDescribeChange(
 		return jsonResult(changeDescriptionResult{Service: meta.Hostname, Message: describeStateUnknown(hqc.Address(), meta.Hostname, stateErr)}), nil, nil
 	}
 	if number == 0 {
-		// Words describe the work a change carries, and the change the next
-		// delivery opens carries whatever the pair holds then: nothing is
-		// kept for it.
+		// Words describe the work a change carries: nothing is kept for a
+		// change that is not open.
 		return jsonResult(changeDescriptionResult{
 			Service: meta.Hostname,
-			Message: fmt.Sprintf("No change is open from %s yet, so there is nothing to describe: %s opens it as a draft. Describe it once it holds the work — the person is asked to review it only then.",
-				meta.Hostname, nextDeliveryOf(meta)),
+			Message: fmt.Sprintf("No change of this Mate is open on %q in HQ, so there is nothing to describe yet. Describe the change once it is open and holds the work — the person is asked to review it only then.",
+				meta.HQ.Repo),
 		}), nil, nil
 	}
 	keepErr := keepChangeDescription(stateDir, meta, text, title, number)
@@ -194,8 +191,8 @@ func handleDescribeChange(
 			PullRequest:    number,
 			PullRequestURL: url,
 			Kept:           true,
-			Message: fmt.Sprintf("HQ did not take the description of change #%d (%v). It is kept, and goes onto #%d with %s unless that delivery changes its work; call describe-change again to try now.",
-				number, err, number, nextDeliveryOf(meta)),
+			Message: fmt.Sprintf("HQ did not take the description of change #%d (%v). It is kept; call describe-change again to put it on #%d.",
+				number, err, number),
 		}), nil, nil
 	}
 	return jsonResult(changeDescriptionResult{
@@ -385,9 +382,6 @@ func putChangeDescription(ctx context.Context, hqc hq.Client, stateDir string, m
 	if _, err := hqc.EditChange(callCtx, m.HQ.Repo, number, edit); err != nil {
 		return err
 	}
-	if title != "" {
-		forgetZcpTitle(stateDir, m)
-	}
 	forgetChangeDescription(stateDir, m, text)
 	return nil
 }
@@ -509,38 +503,6 @@ func missingPictures(stateDir, text, target string) ([]string, error) {
 	return missing, nil
 }
 
-// putKeptChangeDescription puts what the pair keeps onto change number — the
-// one a delivery or a push has just reached — and reports whether it did, or,
-// when a picture could not go with it, why not (the words stay kept). Read
-// fresh from disk: the caller's copy of the pair can predate a describe that
-// landed while it worked. Words go on only while the push that reached the
-// change moved nothing: they describe the change as it was when they were
-// written, so a push that moved it — or opened it — drops them (stale), and
-// the change stays a draft until the Mate describes it again. Words kept for
-// another change are dropped too: that change is gone.
-func putKeptChangeDescription(ctx context.Context, hqc hq.Client, stateDir string, m *workflow.ServiceMeta, number int, moved bool) (described bool, note string, stale bool) {
-	fresh, err := workflow.FindServiceMeta(stateDir, m.Hostname)
-	if err != nil || fresh == nil || fresh.HQ == nil || fresh.HQ.ChangeDescription == nil {
-		return false, "", false
-	}
-	kept := *fresh.HQ.ChangeDescription
-	if kept.Change != 0 && kept.Change != number {
-		forgetChangeDescription(stateDir, m, kept.Text)
-		return false, "", false
-	}
-	if moved {
-		forgetChangeDescription(stateDir, m, kept.Text)
-		return false, "", true
-	}
-	err = putChangeDescription(ctx, hqc, stateDir, m, number, kept.Text, kept.Title)
-	var gone *picturesGoneError
-	if errors.As(err, &gone) || errors.Is(err, errCannotAttach) {
-		forgetChangeDescription(stateDir, m, kept.Text)
-		return false, "The description you wrote is dropped, not on it: " + err.Error() + ".", false
-	}
-	return err == nil, "", false
-}
-
 // forgetChangeDescription drops the words the pair keeps, in memory and on
 // disk — only while they are still text: a describe that kept newer words
 // after these were read keeps them.
@@ -555,42 +517,6 @@ func forgetChangeDescription(stateDir string, m *workflow.ServiceMeta, text stri
 		meta.HQ.ChangeDescription = nil
 		return nil
 	})
-}
-
-// nextDeliveryOf names when a pair's next change opens: its next stage
-// deploy, which delivers.
-func nextDeliveryOf(m *workflow.ServiceMeta) string {
-	if m.HasStage() {
-		return fmt.Sprintf("%s's next delivery (a deploy of %s)", m.Hostname, strings.Join(m.StageHostnames(), " or "))
-	}
-	return m.Hostname + "'s next delivery"
-}
-
-// describeLine is what a push or a delivery that leaves a change open says
-// of its description: the person reviews the change by it, and is asked to
-// only once the Mate describes it at what it holds — so a change this call
-// moved is a draft until then — or, when the words it kept went on with this
-// call, that they did.
-func describeLine(ref *changeRef, hostname string) string {
-	if ref.DescriptionNote != "" {
-		return fmt.Sprintf(`%s Describe it again with zerops_workflow action="describe-change" service=%q, without that picture or with one this Mate keeps.`,
-			ref.DescriptionNote, hostname)
-	}
-	if ref.Described {
-		return fmt.Sprintf(`It carries the description you wrote, and asks for the person's review. A push that moves it makes it a draft again: describe it again then with zerops_workflow action="describe-change" service=%q title="…" description="…".`,
-			hostname)
-	}
-	ask := fmt.Sprintf(`zerops_workflow action="describe-change" service=%q title="…" description="…" — as its title, what this repository's change does in a few words; then what it does and why, how you checked it, and the zerops_browser screenshots that show it as ![what it shows](shot-N)`,
-		hostname)
-	if ref.Draft {
-		stale := ""
-		if ref.staleDescription {
-			stale = "The description you wrote for it before this push is not on it: it describes the change as it was. "
-		}
-		return fmt.Sprintf("%sChange #%d is a draft until you describe it as it is now: the person is not asked to review it before. Once its work is done — not while you still change it — describe it with %s. Every push that moves it makes it a draft again, until you describe it again.",
-			stale, ref.Number, ask)
-	}
-	return fmt.Sprintf("Describe it for the person's review with %s — and again after every push that moves it.", ask)
 }
 
 // sentenceOf makes one of the outcome lines a sentence of its own.

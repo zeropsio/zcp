@@ -75,7 +75,7 @@ func TestDescribeChange_WaitsOutARollingDeploy(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			lab := deliveredLab(t)
+			lab := openedLab(t)
 			words := describedWords
 			if tt.picture {
 				words += "\n\n![The count](" + keptScreenshot(t, lab.stateDir, []byte("\x89PNG\r\n\x1a\n-a-screenshot"), 1280, 720) + ")"
@@ -163,7 +163,7 @@ func TestDescribeChange_ReadsItsChangeThroughTheRoll(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			lab := deliveredLab(t)
+			lab := openedLab(t)
 			clearChange(lab.stateDir, lab.meta(), 1)
 			tt.hq(lab)
 			text, isError := lab.describe("appdev", describedWords)

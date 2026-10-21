@@ -368,8 +368,8 @@ func handleGitPush(
 	// (transport-layer failure to reach the remote).
 	//
 	// GF-13, extended to the failure side (judge review, item 5): a
-	// destination nothing can ever resolve — a change in HQ (nothing builds
-	// from a Mate's branch) or no BuildIntegration wired — must not record
+	// destination nothing can ever resolve — a repository in this Mate's HQ
+	// (nothing builds from it) or no BuildIntegration wired — must not record
 	// a FAILED attempt either, for the identical reason GF-13 already
 	// blocked the success side from recording an in-flight one there: no
 	// later pass would EVER record a successful attempt to supersede it, so
@@ -690,9 +690,6 @@ func handleGitPush(
 // want.
 type deployGitPushResponse struct {
 	*ops.GitPushResult
-	// PullRequest is the change in this Mate's HQ the push's work lands
-	// through — absent everywhere else. Named as the card decodes it.
-	PullRequest      *changeRef        `json:"pullRequest,omitempty"`
 	Warnings         []string          `json:"warnings,omitempty"`
 	WorkSessionState *WorkSessionState `json:"workSessionState,omitempty"`
 	// Envelope is the post-mutation lifecycle state (docs/spec-mate.md §1.3).

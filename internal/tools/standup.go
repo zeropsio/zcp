@@ -31,7 +31,7 @@ import (
 // stage half waiting for its first deploy (READY_TO_DEPLOY) — and `zcp
 // service mate` is enrolling the Mate with its HQ. What is left is zcp's:
 // read the tier from HQ, adopt each
-// pair, put the repository's main into its dev half on the Mate's branch,
+// pair, put the repository's main into its dev half,
 // deploy every dev half at once and answer once they stand, then — on the
 // model's second call — each stage once its dev half and the stages above it
 // by the tier's priority stand.
@@ -93,8 +93,8 @@ type standupDeps struct {
 	bootPoll   time.Duration
 	trackPoll  time.Duration
 	// enrollmentPath is the Mate's enrollment with its HQ (hq.EnrollmentPath):
-	// where the stand-up reads the tier, and what the pairs it adopts are
-	// wired to deliver to.
+	// where the stand-up reads the tier, and the HQ the pairs it adopts are
+	// wired to.
 	enrollmentPath string
 	// closedOffSeen is a call that read Zerops itself while the import's line
 	// still said it waited for the project to be closed off: that import is
@@ -314,7 +314,6 @@ type standupPair struct {
 	stages  []*standupStage
 	adopted string // standupNow | standupAlready
 	wired   string
-	branch  string
 	// failed is what stopped the pair before any deploy, exactly; next is
 	// the model's call for it; failedHost is the half it is about, when one.
 	failed, next, failedHost string
@@ -387,7 +386,7 @@ func (p *standupPair) fail(what, next string) {
 
 // preparePairs takes every pair of the tier to the point it can deploy: its
 // services settled and present, adopted, its dev half mounted, its
-// repository checked out on the Mate's branch. A pair that cannot get there
+// repository's `main` checked out. A pair that cannot get there
 // is stopped with what failed; the others go on.
 func (d standupDeps) preparePairs(ctx context.Context, hqc hq.Client, src standupSource, progress *standupProgress) ([]*standupPair, map[string]*platform.ServiceStack) {
 	pairs := make([]*standupPair, 0, len(src.tier.Pairs))
@@ -746,9 +745,9 @@ func (d standupDeps) mountDevHalf(ctx context.Context, sp *standupPair) {
 	}
 }
 
-// wire puts the recipe's repository into the pair's dev half on the Mate's
-// branch — the repository of the recipe's name in HQ, git-push to it, main
-// fetched and the branch cut from it (wireHQPair, the reconcile's own
+// wire puts the recipe's repository into the pair's dev half on its `main` —
+// the repository of the recipe's name in HQ, git-push to it, main fetched and
+// checked out (wireHQPair, the reconcile's own
 // wiring) — unless an earlier pass did. A repository the recipe names that
 // the application appID does not have is refused before HQ is asked for it:
 // HQ makes what it is asked for. It holds the pair's checkout throughout
@@ -766,8 +765,8 @@ func (d standupDeps) wire(ctx context.Context, hqc hq.Client, appID string, sp *
 		sp.fail(fmt.Sprintf("%s has no record after its adoption", host), "Call zerops_standup again.")
 		return
 	}
-	if hqPairOnItsBranch(meta) {
-		sp.wired, sp.branch = standupAlready, meta.HQ.Branch
+	if hqPairWiredThrough(meta) {
+		sp.wired = standupAlready
 		return
 	}
 	progress.say(fmt.Sprintf("checking %s out into %s", sp.repository, host))
@@ -791,9 +790,6 @@ func (d standupDeps) wire(ctx context.Context, hqc hq.Client, appID string, sp *
 		return
 	}
 	sp.wired = standupNow
-	if wired, _ := workflow.FindServiceMeta(d.batch.stateDir, host); hqPairWired(wired) {
-		sp.branch = wired.HQ.Branch
-	}
 }
 
 // standupProgress turns the stand-up's steps and its builds' polls into one

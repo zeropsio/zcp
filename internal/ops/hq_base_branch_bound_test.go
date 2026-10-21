@@ -1,5 +1,5 @@
-// Tests for: ops/delivery_git.go — every git command a delivery runs against
-// HQ ends within its bound, even against an HQ that never accepts it (spec-mate
+// Tests for: ops/hq_base_branch.go — the git zcp runs against HQ ends within
+// its bound, even against an HQ that never accepts it (spec-mate
 // §10.10): git has no setting for its connect, so a black-holed HQ would hold
 // it for curl's 300 s.
 package ops
@@ -20,31 +20,17 @@ import (
 	"time"
 )
 
-// hqGitCommands are the commands of a delivery that reach HQ, by name.
-func hqGitCommands(pair string) map[string]string {
-	return map[string]string{
-		"the Mate's branch":  BuildMateBranchCommand(pair, labBranch),
-		"a delivery":         BuildDeliveryCommand(pair, "Add a footer", "", ""),
-		"a push's sync":      BuildDeliverySyncCommand(pair, "", ""),
-		"taking a change in": BuildTakeChangeInCommand(pair, labChange1),
-		"pushing a change":   BuildChangePushCommand(pair, labChange1),
-	}
-}
-
 // TestHQGit_EveryCommandCarriesTheStallBound: git's own low-speed bound, per
 // command and never global config, ends a transfer HQ stops feeding.
 func TestHQGit_EveryCommandCarriesTheStallBound(t *testing.T) {
 	t.Parallel()
-	for name, command := range hqGitCommands("/var/www") {
-		if !strings.Contains(command, "-c http.lowSpeedLimit=1 -c http.lowSpeedTime=10") {
-			t.Errorf("%s runs git against HQ without the stall bound:\n%s", name, command)
-		}
+	if command := BuildBaseBranchCommand("/var/www"); !strings.Contains(command, "-c http.lowSpeedLimit=1 -c http.lowSpeedTime=10") {
+		t.Errorf("the base branch step runs git against HQ without the stall bound:\n%s", command)
 	}
 }
 
 // TestHQGit_AnHQThatNeverAcceptsEndsWithinTheBound: against a listener that
-// never accepts, each command ends within HQGitBound, says so, and reads as
-// HQ unable to serve it.
+// never accepts, the base branch step ends within HQGitBound.
 //
 // Non-parallel: it narrows HQGitBound, which every command reads.
 func TestHQGit_AnHQThatNeverAcceptsEndsWithinTheBound(t *testing.T) {
@@ -60,25 +46,15 @@ func TestHQGit_AnHQThatNeverAcceptsEndsWithinTheBound(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = listener.Close() })
 
-	pair := mateBranchLab(t, nil)
+	pair := baseLab(t, nil)
 	runGit(t, pair, "commit", "-q", "--allow-empty", "-m", "zcp init")
 	runGit(t, pair, "remote", "set-url", "origin", "https://"+listener.Addr().String()+"/git/app-1/appdev.git")
-	for name, command := range hqGitCommands(pair) {
-		t.Run(name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
-			defer cancel()
-			start := time.Now()
-			out, err := exec.CommandContext(ctx, "sh", "-c", command).CombinedOutput()
-			if took := time.Since(start); err == nil || took > 6*time.Second {
-				t.Fatalf("took %s, err %v; want it to fail within its bound\n%s", took, err, out)
-			}
-			if words, ok := HQGitNoAnswer(string(out)); !ok || words != "no answer within 1s" {
-				t.Errorf("HQGitNoAnswer = %q, %v; want the bound named\n%s", words, ok, out)
-			}
-			if !GitRemoteUnavailable(string(out)) {
-				t.Errorf("an HQ that never answered must read as unable to serve:\n%s", out)
-			}
-		})
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	start := time.Now()
+	out, err := exec.CommandContext(ctx, "sh", "-c", BuildBaseBranchCommand(pair)).CombinedOutput() //nolint:gosec // G204: the command under test
+	if took := time.Since(start); err == nil || took > 6*time.Second {
+		t.Fatalf("took %s, err %v; want it to fail within its bound\n%s", took, err, out)
 	}
 }
 
@@ -123,7 +99,7 @@ func pacedGitHQ(t *testing.T, bare string, pace func(w http.ResponseWriter, r *h
 
 // TestHQGit_ATransferIsBoundedByItsStallNotItsLength: a transfer HQ keeps
 // feeding runs as long as it takes — past 15 s here, which once ended it —
-// while one HQ stops feeding ends at the stall bound, said as a stall.
+// while one HQ stops feeding ends at the stall bound.
 func TestHQGit_ATransferIsBoundedByItsStallNotItsLength(t *testing.T) {
 	t.Parallel()
 	if testing.Short() {
@@ -157,7 +133,7 @@ func TestHQGit_ATransferIsBoundedByItsStallNotItsLength(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			pair := mateBranchLabOn(t, func(t *testing.T, dir string) {
+			pair := baseLabOn(t, func(t *testing.T, dir string) {
 				t.Helper()
 				writeLabFile(t, filepath.Join(dir, "app.js"), strings.Repeat("the app\n", 512))
 				commitAll(t, dir, "the app")
@@ -179,46 +155,6 @@ func TestHQGit_ATransferIsBoundedByItsStallNotItsLength(t *testing.T) {
 				if got, want := runGit(t, pair, "rev-parse", "origin/main"), runGit(t, remote, "rev-parse", "main"); got != want {
 					t.Errorf("origin/main = %s, want %s", got, want)
 				}
-				return
-			}
-			if !HQGitStalled(string(out)) || !GitRemoteUnavailable(string(out)) {
-				t.Errorf("a stalled transfer must read as a stall, HQ unable to serve it:\n%s", out)
-			}
-		})
-	}
-}
-
-// TestBuildDeliveryCommitCommand_CommitsWithoutHQ: a delivery commits the
-// deployed tree before anything reaches HQ — so the work is the checkout's
-// own whether or not HQ then answers — and refuses an unignored dependency
-// directory before anything is staged.
-func TestBuildDeliveryCommitCommand_CommitsWithoutHQ(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name       string
-		files      map[string]string
-		wantCommit bool
-		wantRefuse string
-	}{
-		{"the deployed tree", map[string]string{"footer.js": "the footer\n"}, true, ""},
-		{"an unignored dependency directory", map[string]string{"node_modules/x/index.js": "x\n"}, false, "node_modules"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			pair := mateBranchLab(t, nil)
-			runGit(t, pair, "commit", "-q", "--allow-empty", "-m", "zcp init")
-			runGit(t, pair, "remote", "set-url", "origin", "https://hq.invalid/git/app-1/appdev.git")
-			for name, body := range tt.files {
-				writeLabFile(t, filepath.Join(pair, name), body)
-			}
-
-			out, err := exec.CommandContext(t.Context(), "sh", "-c", BuildDeliveryCommitCommand(pair, "Add a footer")).CombinedOutput() //nolint:gosec // G204: the command under test
-			if got := runGit(t, pair, "log", "-1", "--format=%s"); (got == "Add a footer") != tt.wantCommit {
-				t.Errorf("HEAD reads %q after the commit (err %v)\n%s", got, err, out)
-			}
-			if got := DeliveryUnignored(string(out)); got != tt.wantRefuse {
-				t.Errorf("refused %q, want %q\n%s", got, tt.wantRefuse, out)
 			}
 		})
 	}

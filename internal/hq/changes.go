@@ -46,7 +46,7 @@ func Open(httpClient Doer, path string) (Client, error) {
 
 // Once is this client sending each call once: a 503 is UnavailableError at
 // once rather than waited out, for a caller that paces its own tries — a
-// delivery, which fails fast rather than waiting HQ out.
+// describe, which waits HQ out on its own pace.
 func (c Client) Once() Client {
 	c.call.once = true
 	return c
@@ -60,32 +60,6 @@ func (c Client) Once() Client {
 func (c Client) Bounded(connect, answer time.Duration) Client {
 	c.call.connect, c.call.answer = connect, answer
 	return c
-}
-
-// Serving asks whether HQ connects and serves at its address now — one HEAD
-// of its root under the client's bounds, the preflight a caller runs before
-// git against HQ, which has no connect bound of its own. Any answer below
-// 500 is HQ serving; a 5xx is a RefusedError (503 an UnavailableError), and
-// no answer an UnavailableError, as any call's would be.
-func (c Client) Serving(ctx context.Context) error {
-	try, connected, release := c.call.bounded(ctx)
-	defer release()
-	req, err := http.NewRequestWithContext(try, http.MethodHead, c.Address()+"/", nil)
-	if err != nil {
-		return fmt.Errorf("hq /: %w", err)
-	}
-	resp, err := c.call.http.Do(req)
-	if err != nil {
-		return &UnavailableError{Err: c.call.unanswered(ctx, try, connected, "/", fmt.Errorf("hq /: %w", err))}
-	}
-	_ = resp.Body.Close()
-	switch {
-	case resp.StatusCode == http.StatusServiceUnavailable:
-		return &UnavailableError{}
-	case resp.StatusCode >= http.StatusInternalServerError:
-		return &RefusedError{Status: resp.StatusCode}
-	}
-	return nil
 }
 
 // Repo is a repository HQ keeps for an application, served at
@@ -218,45 +192,13 @@ func (c Client) OpenChange(ctx context.Context, repo, title string, tree ...stri
 }
 
 // ChangeEdit is what an edit of an open change sets: its title, its
-// description (markdown), its parts' receipt, or any of them; a nil field
-// stays as it is.
+// description (markdown), or both; a nil field stays as it is.
 type ChangeEdit struct {
-	Title   *string        `json:"title,omitempty"`
-	Body    *string        `json:"body,omitempty"`
-	Receipt *ChangeReceipt `json:"receipt,omitempty"`
+	Title *string `json:"title,omitempty"`
+	Body  *string `json:"body,omitempty"`
 }
 
-// ChangeReceipt is what zcp says of each part's preview after a push of a
-// change's branch, only for a pair of more than one stage (spec-mate
-// §2.8a.6, hqChanges.ts ChangeReceipt). HQ keeps the last one whole.
-type ChangeReceipt struct {
-	At    string              `json:"at"`
-	Parts []ChangeReceiptPart `json:"parts"`
-}
-
-// ChangeReceiptPart is one part's preview: its last deploy in the work
-// session (ok, failed, or none), and whether a verify passed after it.
-// DeployedCommit is the dev HEAD, only for an ok deploy from a clean
-// workspace; DeployedAt is absent for a preview never deployed.
-type ChangeReceiptPart struct {
-	Setup           string `json:"setup"`
-	PreviewHostname string `json:"previewHostname"`
-	Deploy          string `json:"deploy"`
-	DeployedAt      string `json:"deployedAt,omitempty"`
-	WorkspaceClean  bool   `json:"workspaceClean"`
-	DeployedCommit  string `json:"deployedCommit,omitempty"`
-	Verified        bool   `json:"verified"`
-}
-
-// The deploy a receipt says of a part's preview.
-const (
-	ReceiptDeployOK     = "ok"
-	ReceiptDeployFailed = "failed"
-	ReceiptDeployNone   = "none"
-)
-
-// EditChange retitles, describes or writes the receipt of the Mate's open
-// change number in repo.
+// EditChange retitles or describes the Mate's open change number in repo.
 func (c Client) EditChange(ctx context.Context, repo string, number int, edit ChangeEdit) (Change, error) {
 	var change Change
 	err := c.call.json(ctx, http.MethodPatch, changePath(repo, number), c.authorization(), edit, &change)

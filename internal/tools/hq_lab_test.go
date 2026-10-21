@@ -6,7 +6,6 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/http/cgi" //nolint:gosec // G504: the fake serves git's own http-backend through CGI, in a test
 	"net/http/httptest"
@@ -55,8 +54,6 @@ type fakeHQ struct {
 	repos       map[string]bool
 	changes     []hq.Change
 	attachments map[string][]byte
-	// receipts are the last receipt each change was given, by repo/number.
-	receipts map[string]*hq.ChangeReceipt
 	// failing is how many of the next requests failOn matches — any, when
 	// nil — are answered failStatus with failCode instead of being served.
 	failing    int
@@ -75,7 +72,7 @@ func newFakeHQ(t *testing.T) *fakeHQ {
 	requireGitForLab(t)
 	f := &fakeHQ{
 		t: t, root: t.TempDir(), appID: labApp,
-		repos: map[string]bool{}, attachments: map[string][]byte{}, receipts: map[string]*hq.ChangeReceipt{},
+		repos: map[string]bool{}, attachments: map[string][]byte{},
 	}
 	f.refsFile = filepath.Join(t.TempDir(), "open-refs")
 	f.writeRefs()
@@ -225,9 +222,6 @@ func (f *fakeHQ) api(w http.ResponseWriter, r *http.Request) {
 			}
 			if edit.Body != nil {
 				change.Body = *edit.Body
-			}
-			if edit.Receipt != nil {
-				f.receipts[fmt.Sprintf("%s/%d", change.Repo, change.Number)] = edit.Receipt
 			}
 			writeHQJSON(w, http.StatusOK, *change)
 		case r.Method == http.MethodPost && len(parts) == 6 && parts[5] == "attachments":
@@ -422,13 +416,6 @@ func (f *fakeHQ) setUntitled(untitled bool) {
 	f.untitled = untitled
 }
 
-// callTotal is how many times HQ was called at all.
-func (f *fakeHQ) callTotal() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return len(f.calls)
-}
-
 // callCount is how many times HQ was called as call, "METHOD /path".
 func (f *fakeHQ) callCount(call string) int {
 	f.mu.Lock()
@@ -456,20 +443,6 @@ func (f *fakeHQ) answerWith(status int, code string, n int, on func(*http.Reques
 	f.failing, f.failStatus, f.failCode, f.failOn = n, status, code, on
 }
 
-// neverAccept makes HQ's address one whose listener never accepts: the
-// kernel completes the TCP handshake into its backlog and TLS never starts,
-// as for an HQ that drops every packet. HQ does not come back.
-func (f *fakeHQ) neverAccept() {
-	f.t.Helper()
-	address := f.srv.Listener.Addr().String()
-	f.srv.Close()
-	listener, err := (&net.ListenConfig{}).Listen(f.t.Context(), "tcp", address)
-	if err != nil {
-		f.t.Fatalf("listen again on %s: %v", address, err)
-	}
-	f.t.Cleanup(func() { _ = listener.Close() })
-}
-
 // setDown makes HQ stop answering, or answer again.
 func (f *fakeHQ) setDown(down bool) {
 	f.mu.Lock()
@@ -480,14 +453,6 @@ func (f *fakeHQ) setDown(down bool) {
 // change is the Mate's change number in appdev of the application it was
 // first in.
 func (f *fakeHQ) change(number int) *hq.Change { return f.changeIn("appdev", number) }
-
-// receipt is the last receipt the Mate's change number in appdev was given,
-// nil for none.
-func (f *fakeHQ) receipt(number int) *hq.ChangeReceipt {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.receipts[fmt.Sprintf("appdev/%d", number)]
-}
 
 // changeIn is the Mate's change number in repo of the application it was
 // first in.
@@ -571,9 +536,9 @@ type hqLab struct {
 	mock     *platform.Mock
 	ssh      *labSSH
 	rt       runtime.Info
-	// waits are the waits between a delivery step's tries, recorded rather
-	// than waited out; describeWaits a describe's.
-	waits, describeWaits []time.Duration
+	// describeWaits are the waits between a describe's tries, recorded
+	// rather than waited out.
+	describeWaits []time.Duration
 }
 
 func newHQLab(t *testing.T) *hqLab {
@@ -587,20 +552,15 @@ func newHQLab(t *testing.T) *hqLab {
 	}
 	lab := &hqLab{t: t, hq: fake, stateDir: t.TempDir(), pair: t.TempDir(),
 		rt: runtime.Info{InContainer: true, ProjectID: labMate}}
-	prevAttempts, prevDelay, prevRetry, prevPropagation := gitPushSessionAuthAttempts, gitPushSessionAuthDelay, deliveryRetry, credentialPropagation
+	prevAttempts, prevDelay := gitPushSessionAuthAttempts, gitPushSessionAuthDelay
 	prevDescribeRetry := describeRetry
 	gitPushSessionAuthAttempts, gitPushSessionAuthDelay = 2, 0
-	deliveryRetry = hqRetry{waits: prevRetry.waits, pause: func(_ context.Context, d time.Duration) error {
-		lab.waits = append(lab.waits, d)
-		return nil
-	}}
 	describeRetry = hqRetry{waits: prevDescribeRetry.waits, pause: func(_ context.Context, d time.Duration) error {
 		lab.describeWaits = append(lab.describeWaits, d)
 		return nil
 	}}
-	credentialPropagation.every, credentialPropagation.within = 10*time.Millisecond, 300*time.Millisecond
 	t.Cleanup(func() {
-		gitPushSessionAuthAttempts, gitPushSessionAuthDelay, deliveryRetry, credentialPropagation = prevAttempts, prevDelay, prevRetry, prevPropagation
+		gitPushSessionAuthAttempts, gitPushSessionAuthDelay = prevAttempts, prevDelay
 		describeRetry = prevDescribeRetry
 	})
 	lab.git("init", "-q", "-b", "main")
@@ -649,10 +609,30 @@ func (l *hqLab) wire() []string {
 	return reconcileHQRepositories(l.t.Context(), l.mock, l.hq.srv.Client(), l.ssh, l.rt, l.stateDir)
 }
 
-// deliver is a successful deploy of the pair's stage half.
-func (l *hqLab) deliver() *hqDelivery {
+// openChange puts the pair's work up as the Mate's change, "Build the app",
+// the way plain git
+// and HQ's API do, with nothing of zcp's: the working tree committed, the
+// change opened in HQ, HEAD pushed to the change's branch. It answers the
+// change as HQ opened it — or the open one HQ answered with.
+func (l *hqLab) openChange() hq.Change {
 	l.t.Helper()
-	return deliverHQPair(l.t.Context(), l.mock, l.hq.srv.Client(), l.ssh, l.rt, l.stateDir, "appstage")
+	const title = "Build the app"
+	if l.git("status", "--porcelain") != "" {
+		l.commit(title)
+	}
+	hqc, ok := openHQ(l.hq.srv.Client())
+	if !ok {
+		l.t.Fatal("the lab's Mate is not enrolled")
+	}
+	opened, err := hqc.OpenChange(l.t.Context(), "appdev", title)
+	if err != nil {
+		l.t.Fatalf("opening the change: %v", err)
+	}
+	push := "cd /var/www && git push -q origin HEAD:refs/heads/" + hqc.ChangeBranch(opened.Change.Number)
+	if out, err := l.ssh.ExecSSH(l.t.Context(), "appdev", push); err != nil {
+		l.t.Fatalf("pushing the change's branch: %v\n%s", err, out)
+	}
+	return opened.Change
 }
 
 // meta is the pair's record as it is on disk.
@@ -674,13 +654,6 @@ func (l *hqLab) remoteHead(branch string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
-}
-
-// descends reports whether, in the pair's repository in app, ancestor is an
-// ancestor of the branch.
-func (l *hqLab) descends(app, ancestor, branch string) bool {
-	return exec.CommandContext(l.t.Context(), "git", "-C", l.hq.repoDir(app, "appdev"), //nolint:gosec // G204: a test's own git
-		"merge-base", "--is-ancestor", ancestor, "refs/heads/"+branch).Run() == nil
 }
 
 func requireGitForLab(t *testing.T) {

@@ -635,10 +635,10 @@ func TestBuildAgentsMD_Container_PipelineScopedToOtherProjects(t *testing.T) {
 
 // The git host is this Mate's HQ, and ZCP knows it as one (SPEC §3.2a). Told
 // only "an access token minted for you alone", a Mate reads its host as a
-// generic forge: it goes looking for a settings page to mint a token on, and
-// pushes by hand to a branch HQ refuses. The paragraph names the host, the
-// user git signs in as, where the credential comes from, and that a change is
-// delivered by the stage deploy — never by a push of its own choosing.
+// generic forge: it goes looking for a settings page to mint a token on. The
+// paragraph names the host, the user git signs in as, where the credential
+// comes from, and that work goes by plain git on a branch of its own — never
+// a push of `main`, never a force.
 func TestBuildAgentsMD_Container_GitHostIsHQ(t *testing.T) {
 	t.Parallel()
 	out, err := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true}, false)
@@ -650,14 +650,15 @@ func TestBuildAgentsMD_Container_GitHostIsHQ(t *testing.T) {
 		"the user `mate`",
 		"zcp hq git-credential",
 		"`$GIT_TOKEN`",
-		"mate/<project id>/<number>",
+		"a branch of your own",
+		"Never push `main` and never force-push",
 		`action="describe-change"`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("git-host paragraph missing %q", want)
 		}
 	}
-	for _, retired := range []string{"zcp mate git-token", "pull request"} {
+	for _, retired := range []string{"zcp mate git-token", "pull request", "mate/<project id>"} {
 		if strings.Contains(out, retired) {
 			t.Errorf("git-host paragraph still names %q", retired)
 		}

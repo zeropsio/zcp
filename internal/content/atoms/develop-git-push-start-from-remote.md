@@ -11,7 +11,7 @@ references-atoms: [develop-git-push-delivery]
 ---
 The repo is the source of truth here, and this working copy is not it. A container's `/var/www` survives every session: it can still be sitting on a topic branch that was merged and deleted weeks ago, or on a `main` that is behind by everything anyone else has landed since. Writing code on top of that produces a diff against the wrong base, and the mistake only surfaces at the push — as a conflict, or worse, as a silent revert of someone else's work.
 
-Sync before the first edit, not after — the command depends on whether this pair is wired to this Mate's HQ (a repository HQ gave it; its branch is never `main`, which moves there only by a person's merge).
+Sync before the first edit, not after — the command depends on whether this pair is wired to this Mate's HQ (a repository HQ gave it, whose `main` moves only by a person's merge).
 
 Not wired to this Mate's HQ — sync by moving the working copy onto whatever the remote's default branch now is:
 
@@ -21,8 +21,12 @@ ssh <push-source-host> "cd /var/www && git fetch origin && git checkout <default
 
 Read the default branch from the remote rather than assuming `main` — `git remote show origin` names it, and a repo created before that convention may still be on `master`. Uncommitted changes in the working copy are the one thing this destroys, so look before resetting (`git status --short`). Local edits that survived a previous session are almost always leftovers from work that already landed; if they are not, commit them to a branch first and say so, rather than carrying them silently into new work.
 
-Wired to this Mate's HQ — there is no command to run here, on purpose: the working copy stays on this Mate's own branch always, and neither checking it out to the base, resetting it, nor merging the base in by hand is the sync. A plain `git merge origin/<base>` run by hand can fail on a false conflict — the base can carry a squash of THIS Mate's own earlier work, which shares no history with the branch it came from, so an ordinary merge reads it as two histories that both add the same files even though nothing really collides. When a change of this Mate's own is recorded as merged, zcp folds that landing in for you: the moment a pass learns of the merge, and again before whatever push follows it needs a landing absorbed — a delivery's own commit+push, or an ordinary `strategy="git-push"`. Usually that keeps the false conflict from ever reaching you or the change it pushes to; an old container git, or a landing zcp cannot prove lossless, can still leave it unabsorbed, and the ordinary step can then hit that same shape for real.
+Wired to this Mate's HQ — take `main` in and start the work on a branch of your own cut from it; `main` itself is never pushed:
 
-Either way, every conflict zcp reports here — from the absorb step itself, or the ordinary step behind an unabsorbed landing — names the exact commands in its own message: never a plain reset, and never the plain `git fetch origin && git merge origin/<base>` on its own, which would only repeat the same conflict. Run what the message says, in the checkout it names, then push or deploy again — that is what resolves it.
+```
+ssh <push-source-host> "cd /var/www && git fetch origin && git checkout main && git merge --ff-only origin/main && git checkout -b <your-branch>"
+```
+
+A `main` that will not fast-forward carries local commits that never landed: put them on a branch of their own (`git branch <name>`), then `git reset --keep origin/main`, and say so rather than carrying them silently into new work.
 
 Where the remote later refuses the branch you push, the ref is protected: the answer is a change a person merges, never a fresh token. The transport classifier names that case directly when it happens.

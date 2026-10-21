@@ -118,12 +118,6 @@ func TestClient_EditChange_SendsOnlyWhatChanges(t *testing.T) {
 		{"its words", ChangeEdit{Body: &body}, `{"body":"Adds a list."}`},
 		{"its title", ChangeEdit{Title: &title}, `{"title":"Add a todo list"}`},
 		{"both", ChangeEdit{Title: &title, Body: &body}, `{"title":"Add a todo list","body":"Adds a list."}`},
-		{"its parts' receipt", ChangeEdit{Receipt: &ChangeReceipt{At: "2026-10-14T21:10:00Z", Parts: []ChangeReceiptPart{
-			{Setup: "web", PreviewHostname: "webstage", Deploy: "ok", DeployedAt: "2026-10-14T21:06:00Z", WorkspaceClean: true, DeployedCommit: "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678", Verified: true},
-			{Setup: "worker", PreviewHostname: "workerstage", Deploy: "none"},
-		}}}, `{"receipt":{"at":"2026-10-14T21:10:00Z","parts":[` +
-			`{"setup":"web","previewHostname":"webstage","deploy":"ok","deployedAt":"2026-10-14T21:06:00Z","workspaceClean":true,"deployedCommit":"a1b2c3d4e5f60718293a4b5c6d7e8f9012345678","verified":true},` +
-			`{"setup":"worker","previewHostname":"workerstage","deploy":"none","workspaceClean":false,"verified":false}]}}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -350,63 +344,6 @@ func TestClient_Bounded_EndsATryHQDoesNotAnswer(t *testing.T) {
 			var noAnswer *NoAnswerError
 			if !IsUnavailable(err) || !errors.As(err, &noAnswer) || noAnswer.Connected != tt.wantConnected || noAnswer.Within != tt.wantWithin {
 				t.Fatalf("err = %v, want unavailable with no answer (connected=%v, within %s)", err, tt.wantConnected, tt.wantWithin)
-			}
-		})
-	}
-}
-
-// TestClient_Serving_IsAPreflight: before git runs against HQ, one bounded
-// request to its address says whether HQ connects and serves: any answer
-// below 500 is HQ serving; a 5xx, or no connection within the bound — an HQ
-// that never accepts — is HQ not serving, as any call's would be.
-func TestClient_Serving_IsAPreflight(t *testing.T) {
-	t.Parallel()
-	const connect = 200 * time.Millisecond
-	answering := func(status int) func(t *testing.T) (string, Doer) {
-		return func(t *testing.T) (string, Doer) {
-			t.Helper()
-			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(status) }))
-			t.Cleanup(srv.Close)
-			return srv.URL, srv.Client()
-		}
-	}
-	tests := []struct {
-		name    string
-		hq      func(t *testing.T) (string, Doer)
-		wantErr func(error) bool
-	}{
-		{"serving", answering(http.StatusOK), nil},
-		{"serving, asking for a credential", answering(http.StatusUnauthorized), nil},
-		{"the balancer's 502", answering(http.StatusBadGateway), func(err error) bool {
-			var refused *RefusedError
-			return errors.As(err, &refused) && refused.Status == http.StatusBadGateway
-		}},
-		{"a standby", answering(http.StatusServiceUnavailable), IsUnavailable},
-		{"never accepts", neverAccepting, func(err error) bool {
-			var noAnswer *NoAnswerError
-			return IsUnavailable(err) && errors.As(err, &noAnswer) && !noAnswer.Connected && noAnswer.Within == connect
-		}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			address, doer := tt.hq(t)
-			path := filepath.Join(t.TempDir(), "enrollment.json")
-			if err := SaveEnrollment(path, Enrollment{HQ: address, ProjectID: "p-mate", Credential: "good"}); err != nil {
-				t.Fatal(err)
-			}
-			client, err := Open(doer, path)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			start := time.Now()
-			err = client.Bounded(connect, connect).Serving(context.Background())
-			if took := time.Since(start); took > 2*time.Second {
-				t.Errorf("the preflight took %s, want it ended by its bound", took)
-			}
-			if tt.wantErr == nil && err != nil || tt.wantErr != nil && !tt.wantErr(err) {
-				t.Fatalf("err = %v", err)
 			}
 		})
 	}

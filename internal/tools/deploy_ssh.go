@@ -488,20 +488,6 @@ func runDeploySSHZCLIPush(
 	}
 	_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
 
-	// A wired pair's stage deploy is its delivery (hq_delivery.go).
-	var change *changeRef
-	switch {
-	case result != nil && result.Status == statusDeployed:
-		if delivery := deliverHQPair(ctx, client, httpClient, sshDeployer, rtInfo, stateDir, input.TargetService); delivery != nil {
-			result.NextActions = strings.TrimSpace(result.NextActions + " " + delivery.Line)
-			change = delivery.Change
-		}
-	case result != nil && result.TimedOut:
-		if line := hqDeliveryNotRun(rtInfo, stateDir, input.TargetService); line != "" {
-			result.NextActions = strings.TrimSpace(result.NextActions + " " + line)
-		}
-	}
-
 	// F10 fix (round-3 audit): default container SSH zerops_deploy was
 	// the sole deploy path returning raw *ops.DeployResult — the F5
 	// `WorkSessionState` lifecycle signal was already on every other
@@ -512,7 +498,6 @@ func runDeploySSHZCLIPush(
 	// signal inline. Wrap to match.
 	return jsonResult(deploySSHResponse{
 		DeployResult:     result,
-		PullRequest:      change,
 		WorkSessionState: sessionAnnotations(ctx, httpClient, stateDir),
 		Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rtInfo),
 	}), nil, nil
@@ -523,9 +508,6 @@ func runDeploySSHZCLIPush(
 // container deploys get the same F5 surface local deploys already have.
 type deploySSHResponse struct {
 	*ops.DeployResult
-	// PullRequest is the change in HQ a wired pair's stage deploy delivered
-	// its code through — absent everywhere else. Named as the card decodes it.
-	PullRequest      *changeRef        `json:"pullRequest,omitempty"`
 	WorkSessionState *WorkSessionState `json:"workSessionState,omitempty"`
 	// Envelope is the post-mutation lifecycle state (docs/spec-mate.md §1.3).
 	// Absent when its computation failed — the rest of the response is

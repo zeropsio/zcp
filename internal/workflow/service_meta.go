@@ -169,10 +169,9 @@ func (m *ServiceMeta) SetRepoBaseline(appVersionID string, provenance topology.R
 }
 
 // HQRepoRef is what a pair needs to keep working on its repository in HQ
-// across sessions: which repository it is, which local branch this Mate works
-// on, and its change toward `main`. `main` moves only by HQ's merge, so the
-// Mate's work lands through a change: HQ takes the Mate's push only on the
-// branch of its own open change (`mate/<project id>/<number>`).
+// across sessions: which repository it is, and its change toward `main`.
+// `main` moves only by a person's merge, so the Mate's work lands through a
+// change.
 type HQRepoRef struct {
 	// AppID is the HQ application the repository belongs to — the one HQ held
 	// the Mate in when it was wired. A Mate moved to another application is
@@ -181,70 +180,27 @@ type HQRepoRef struct {
 	// Repo is the repository's name in that application: the pair's dev
 	// hostname, or the one a recipe names.
 	Repo string `json:"repo"`
-	// Branch is the Mate's local branch in the pair's checkout, mate/<project
-	// id> — never main. Each change's own branch is cut from it at its push.
-	Branch string `json:"branch"`
 	// WiredAt is when the repository was wired, RFC3339.
 	WiredAt string `json:"wiredAt,omitempty"`
-	// Change is the number of the Mate's open change in Repo, 0 until a
-	// delivery opens one. Recorded rather than re-derived: a pass reads what
-	// became of it from the Mate's own state in HQ.
+	// Change is the number of the Mate's open change in Repo as the Mate's
+	// own state in HQ last named it, 0 for none. Recorded rather than
+	// re-derived: a pass reads what became of it from that state.
 	Change int `json:"change,omitempty"`
-	// Landed is the squash that merged the recorded change, recorded the
-	// moment a pass reads it merged — nil until then, and cleared once a
-	// delivery has absorbed it (or proven it needed no absorbing) by pushing
-	// successfully. A squash shares no history with the branch that became
-	// it, so the ordinary take-`main`-in merge alone reads it as two
-	// histories that both add the same files (MB-26).
-	Landed *LandedChange `json:"landed,omitempty"`
-	// ChangeDescription is what the Mate wrote about its change while no
-	// change could take it yet — none was open, or HQ did not take the edit.
-	// It is there only until a change carries it, and never longer than the
-	// change it was written for: the next change is another change, and
-	// inheriting the last one's words would tell the person about work that
-	// is not in it.
+	// ChangeDescription is what the Mate wrote about its change while HQ did
+	// not take the edit: there only until the change carries it, and never
+	// longer than the change it was written for.
 	ChangeDescription *ChangeDescription `json:"changeDescription,omitempty"`
-	// ZcpTitle is the title zcp last gave a change of the pair — it opened
-	// it with it, or retitled it to it — while that title is zcp's: a
-	// delivery retitles the change only while HQ still holds it. Dropped once
-	// the Mate names the change.
-	ZcpTitle *ZcpTitle `json:"zcpTitle,omitempty"`
-	// CredentialRenewedAt is when zcp last wrote the Mate's current HQ
-	// credential onto the push source, RFC3339 with nanoseconds — kept until a
-	// fresh session proves it, or the wait for it to reach the sessions has
-	// passed — so a delivery right after a renewal waits for it to take
-	// effect rather than read the old one's refusal as HQ's.
-	CredentialRenewedAt string `json:"credentialRenewedAt,omitempty"`
 }
 
-// ChangeDescription is a Mate's description of its change, kept for the
-// change that will carry it.
+// ChangeDescription is a Mate's description of its change, kept until HQ
+// takes it.
 type ChangeDescription struct {
 	// Text is the description, in markdown.
 	Text string `json:"text"`
 	// Title is the change's title the Mate gave with it, "" for none.
 	Title string `json:"title,omitempty"`
-	// Change is the change it was written for; 0 when it waits for whichever
-	// change the pair opens next.
+	// Change is the change it was written for.
 	Change int `json:"change,omitempty"`
-}
-
-// ZcpTitle is a title zcp gave the pair's change number Change.
-type ZcpTitle struct {
-	Change int    `json:"change"`
-	Title  string `json:"title"`
-}
-
-// LandedChange is what a change's merge needs recorded before a delivery can
-// absorb it losslessly, straight from the Mate's own state in HQ.
-type LandedChange struct {
-	// Commit is the squash on `main` (mergedSha) — S in
-	// BuildAbsorbLandedChangeCommand.
-	Commit string `json:"commit"`
-	// Head is the change's head HQ squashed (landedHead) — H in
-	// BuildAbsorbLandedChangeCommand, i.e. what this Mate's own checkout was
-	// at the moment of the landing.
-	Head string `json:"head"`
 }
 
 // PublicAccessFor returns the persisted public-access record for hostname —

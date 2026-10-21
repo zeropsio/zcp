@@ -40,8 +40,11 @@ func TestGitPushSetup_ACodeVolumePairWiredAfterTheFillSetsUpTheVolumesRepository
 	if email, name := inVolume("--get", "user.email"), inVolume("--get", "user.name"); email == "" || name == "" {
 		t.Errorf("the volume's identity = %q <%q>, want one set", name, email)
 	}
-	if got := lab.git("-C", volume, "rev-parse", "--abbrev-ref", "HEAD"); got != "mate/p-mate" {
-		t.Errorf("the volume is on %q, want the Mate's branch", got)
+	if got := lab.git("-C", volume, "rev-parse", "--abbrev-ref", "HEAD"); got != "main" {
+		t.Errorf("the volume is on %q, want main", got)
+	}
+	if exec.CommandContext(t.Context(), "git", "-C", volume, "merge-base", "--is-ancestor", lab.remoteHead("main"), "HEAD").Run() != nil {
+		t.Errorf("the volume's main does not descend from HQ's main")
 	}
 	if out, _ := exec.CommandContext(t.Context(), "git", "-C", lab.pair, "config", "--local", "--get", "remote.origin.url").Output(); len(out) != 0 { //nolint:gosec // G204: a test's own git
 		t.Errorf("/var/www got origin %q: the setup ran there, not on the volume", strings.TrimSpace(string(out)))

@@ -115,7 +115,7 @@ func TestKeepPicture_ForgetsByAgeAndSize(t *testing.T) {
 			if tt.described != "" {
 				if err := WriteServiceMeta(stateDir, &ServiceMeta{
 					Hostname: "appdev", Stages: []topology.StageRef{{Hostname: "appstage"}}, BootstrapSession: "test", BootstrappedAt: "2026-09-29",
-					HQ: &HQRepoRef{AppID: "a1", Repo: "appdev", Branch: "mate/p1", ChangeDescription: &ChangeDescription{Text: tt.described}},
+					HQ: &HQRepoRef{AppID: "a1", Repo: "appdev", ChangeDescription: &ChangeDescription{Text: tt.described}},
 				}); err != nil {
 					t.Fatalf("WriteServiceMeta: %v", err)
 				}
@@ -151,7 +151,7 @@ func TestKeepPicture_ForgetsByAgeAndSize(t *testing.T) {
 // application a1, with words kept for it when described is not "".
 func writePair(t *testing.T, stateDir string, change int, described string) {
 	t.Helper()
-	ref := &HQRepoRef{AppID: "a1", Repo: "appdev", Branch: "mate/p1", Change: change}
+	ref := &HQRepoRef{AppID: "a1", Repo: "appdev", Change: change}
 	if described != "" {
 		ref.ChangeDescription = &ChangeDescription{Text: described, Change: change}
 	}
