@@ -470,18 +470,6 @@ func hqRemoteOfThisMate(remoteURL string) bool {
 	return ops.IsHQRemote(remoteURL, hqAddress())
 }
 
-// hqPushNextActions answers a push from hostname to HQ. Nothing builds from
-// a change's branch: the Mate's own services change only through a direct
-// deploy, and deploying the stage half pushes by itself. A change left open
-// asks for its description.
-func hqPushNextActions(ref *changeRef, hostname string) string {
-	if ref == nil {
-		return "Nothing differs from main in HQ, so no change is open. Nothing builds from HQ: deploy the pair directly to run the code — deploying its stage half delivers and asks for the change again."
-	}
-	return fmt.Sprintf("Pushed to %s in HQ; change #%d (%s) carries it to %q, and the person merges it. %s %s Nothing builds from the branch: deploy the pair directly to run the code — deploying its stage half pushes and updates the change while it is open.",
-		ref.Branch, ref.Number, ref.URL, ref.Base, describeLine(ref, hostname), hqMergeAnyMoment(ref.Base))
-}
-
 // hqMergeAnyMoment prepares the agent for a person merging the change from
 // the conversation before the agent has finished working.
 func hqMergeAnyMoment(base string) string {

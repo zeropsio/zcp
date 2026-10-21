@@ -32,12 +32,3 @@ func pairHeldReason(hostname string, err error) string {
 	}
 	return fmt.Sprintf("its checkout could not be taken (%v)", err)
 }
-
-// pairKey is the hostname a pair's checkout is held by: its record's, so the
-// stage half's deploy and the dev half's push hold the same one.
-func pairKey(stateDir, hostname string) string {
-	if m, _ := workflow.FindServiceMeta(stateDir, hostname); m != nil {
-		return m.Hostname
-	}
-	return hostname
-}

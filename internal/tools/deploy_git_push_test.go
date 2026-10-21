@@ -1,9 +1,6 @@
 package tools
 
 import (
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/topology"
@@ -81,36 +78,5 @@ func TestTrackedRefOrDefault_NilMeta_ReturnsMain(t *testing.T) {
 	t.Parallel()
 	if got := trackedRefOrDefault(nil); got != "main" {
 		t.Errorf("trackedRefOrDefault(nil) = %q, want %q", got, "main")
-	}
-}
-
-// TestGitPush_ACodeVolumePairPushesTheVolumesCommits: a variant-B pair's
-// repository lives on its code volume (ServiceMeta.WorkingDirFor), so a
-// git-push from its dev half without workingDir pushes the commits made
-// there — never /var/www's deploy copy, which holds none of them.
-func TestGitPush_ACodeVolumePairPushesTheVolumesCommits(t *testing.T) {
-	lab := newHQLab(t)
-	lab.wire()
-	volume := lab.fillCodeVolume()
-	if err := os.WriteFile(filepath.Join(volume, "footer.js"), []byte("the footer\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	lab.git("-C", volume, "add", "-A")
-	lab.git("-C", volume, "-c", "user.name=mate", "-c", "user.email=mate@example.invalid", "commit", "-qm", "Add a footer")
-	lab.hq.landOnMain("appdev", map[string]string{"README.md": "another Mate's work\n"})
-	deployCopyHead := lab.git("rev-parse", "HEAD")
-
-	text := getTextContent(t, callTool(t, lab.gitPushTool(), "zerops_deploy", map[string]any{"targetService": "appdev", "strategy": "git-push"}))
-	if !strings.Contains(text, `"status":"PUSHED"`) {
-		t.Fatalf("the volume's commit must be pushed:\n%s", text)
-	}
-	if head, want := lab.remoteHead("mate/p-mate/1"), lab.git("-C", volume, "rev-parse", "HEAD"); head != want {
-		t.Errorf("change #1's branch is at %q, want the volume's HEAD %q", head, want)
-	}
-	if !lab.descends(labApp, "main", "mate/p-mate/1") {
-		t.Errorf("change #1's branch must take main in on the volume before it is pushed")
-	}
-	if got := lab.git("rev-parse", "HEAD"); got != deployCopyHead {
-		t.Errorf("/var/www's checkout moved to %s: the push worked there, not on the volume", got)
 	}
 }
