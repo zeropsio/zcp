@@ -68,6 +68,8 @@ type fakeHQ struct {
 	// credential is the one Mate credential HQ takes now: enrolling again
 	// revokes the one before.
 	credential string
+	// unnamedBranches: HQ answers a change without naming its branch.
+	unnamedBranches bool
 }
 
 func newFakeHQ(t *testing.T) *fakeHQ {
@@ -191,7 +193,11 @@ func (f *fakeHQ) api(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if open := f.findOf(labMate, f.appID, in.Repo); open != nil {
-			writeHQJSON(w, http.StatusOK, hq.OpenedChange{Change: *open, Created: false})
+			answered := *open
+			if f.unnamedBranches {
+				answered.Branch = ""
+			}
+			writeHQJSON(w, http.StatusOK, hq.OpenedChange{Change: answered, Created: false})
 			return
 		}
 		number := 1

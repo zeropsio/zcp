@@ -16,7 +16,7 @@ import (
 // changeOpenResult is open-change's answer.
 type changeOpenResult struct {
 	Service        string `json:"service"`
-	Branch         string `json:"branch"`
+	Branch         string `json:"branch,omitempty"`
 	PullRequest    int    `json:"pullRequest"`
 	PullRequestURL string `json:"pullRequestUrl"`
 	Created        bool   `json:"created"`
@@ -56,9 +56,9 @@ func handleOpenChange(
 	if refusal := describeTitleRefusal(title); refusal != nil {
 		return convertError(refusal, WithRecoveryStatus()), nil, nil
 	}
-	meta, held := pairOfChange(stateDir, input.Service, "open")
-	if held != nil {
-		return held, nil, nil
+	meta, noPair := pairOfChange(stateDir, input.Service, "open")
+	if noPair != nil {
+		return noPair, nil, nil
 	}
 
 	callCtx, cancel := context.WithTimeout(ctx, hqCallTimeout)
@@ -83,12 +83,20 @@ func handleOpenChange(
 		Service: meta.Hostname, Branch: branch, PullRequest: number,
 		PullRequestURL: hqc.ChangeURL(meta.HQ.AppID, meta.HQ.Repo, number), Created: opened.Created,
 	}
-	if held := strings.TrimPrefix(opened.Change.Branch, "refs/heads/"); held != "" {
+	held := strings.TrimPrefix(opened.Change.Branch, "refs/heads/")
+	if held != "" {
 		result.Branch = held
 	}
 	if !opened.Created {
-		result.Message = fmt.Sprintf("Change #%d is already open in %q on the branch %q, and a Mate has one open change per repository: it stays. Push this work to %q, or open its change once #%d is merged or closed.",
-			number, meta.HQ.Repo, result.Branch, result.Branch, number)
+		// The open change's branch is the one HQ names, never the one asked
+		// for: an HQ that names none leaves it unnamed.
+		result.Branch = held
+		where, push := "", "its branch"
+		if held != "" {
+			where, push = fmt.Sprintf(" on the branch %q", held), fmt.Sprintf("%q", held)
+		}
+		result.Message = fmt.Sprintf("Change #%d is already open in %q%s, and a Mate has one open change per repository: it stays. Push this work to %s, or open its change once #%d is merged or closed.",
+			number, meta.HQ.Repo, where, push, number)
 		return jsonResult(result), nil, nil
 	}
 	result.Message = fmt.Sprintf("Change #%d is open in %q for the branch %q: push the work there (`git push origin %s`) — never force-push — and write what it does and how you checked it with zerops_workflow action=\"describe-change\"; the person reviews it by that.",

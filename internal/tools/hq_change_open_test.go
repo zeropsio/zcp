@@ -121,4 +121,14 @@ func TestOpenChange_TheOpenChangeStays(t *testing.T) {
 	if !strings.Contains(answer.Message, "already open") || !strings.Contains(answer.Message, "fix-login") {
 		t.Errorf("the answer does not say the open change stays on its branch: %s", answer.Message)
 	}
+
+	// An HQ that does not name the open change's branch leaves it unnamed,
+	// never the branch just asked for.
+	lab.hq.mu.Lock()
+	lab.hq.unnamedBranches = true
+	lab.hq.mu.Unlock()
+	answer, text, isError = lab.openChangeFrom("add-signup", "Add the signup")
+	if isError || answer.Created || answer.PullRequest != 1 || answer.Branch != "" || strings.Contains(answer.Message, "add-signup") {
+		t.Errorf("want change #1 answered with no branch named, got: %s", text)
+	}
 }
