@@ -41,10 +41,10 @@ func takeFromHQ(t *testing.T, pair string) (string, error) {
 }
 
 // HQ's main and a pair wired to its seed: an HQ repository whose main is
-// first HQ's seed and then, after adoption, either the origin's own tip
-// (untouched) or a merge of the seed and that tip; and the pair's working
-// copy on the Mate's branch cut from the seed, holding work of its own when
-// own is set.
+// first HQ's seed and then, after it took the origin, either the origin's own
+// tip (untouched) or a merge of the seed and that tip; and the pair's working
+// copy on `main` as the wiring cut it from the seed, holding work of its own
+// when own is set.
 func originFixture(t *testing.T, replaced, own bool) (pair, hqMain, originTip string) {
 	t.Helper()
 	root := t.TempDir()
@@ -73,7 +73,7 @@ func originFixture(t *testing.T, replaced, own bool) (pair, hqMain, originTip st
 	gitOut(t, root, "init", "-q", pair)
 	gitOut(t, pair, "remote", "add", "origin", hqRepo)
 	gitOut(t, pair, "fetch", "-q", "origin", seed)
-	gitOut(t, pair, "checkout", "-q", "-b", "mate/ada/1", seed)
+	gitOut(t, pair, "checkout", "-q", "-B", "main", seed)
 	if own {
 		if err := os.WriteFile(filepath.Join(pair, "notes.md"), []byte("the Mate's notes\n"), 0o600); err != nil {
 			t.Fatal(err)
@@ -84,15 +84,16 @@ func originFixture(t *testing.T, replaced, own bool) (pair, hqMain, originTip st
 	return pair, hqMain, originTip
 }
 
-// Connecting an origin takes its history into a pair whose branch holds only
-// HQ's seed: the branch moves onto HQ's main, so it carries the origin's own
-// commits and no commit of HQ's; a branch with work of its own merges main in.
-func TestOriginFromHQ_BranchHoldingOnlyTheSeedMovesOntoHQMain(t *testing.T) {
+// Taking a repository's code from HQ moves a checkout holding only HQ's seed
+// onto HQ's main, so it carries the origin's own commits and no commit of
+// HQ's; a checkout with work of its own merges main in when they share
+// history, and git refuses by name a main they share none with — never two
+// unrelated histories joined.
+func TestOriginFromHQ_CheckoutHoldingOnlyTheSeedMovesOntoHQMain(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name     string
 		replaced bool
-		own      bool
 	}{
 		{name: "HQ's main is the origin's own history", replaced: true},
 		{name: "HQ's main merged the origin into its seed", replaced: false},
@@ -107,14 +108,14 @@ func TestOriginFromHQ_BranchHoldingOnlyTheSeedMovesOntoHQMain(t *testing.T) {
 			if got := gitOut(t, pair, "rev-parse", "HEAD"); got != hqMain {
 				t.Errorf("HEAD = %s, want HQ's main %s", got, hqMain)
 			}
-			if got := gitOut(t, pair, "branch", "--show-current"); got != "mate/ada/1" {
-				t.Errorf("branch = %q, want the Mate's branch kept", got)
+			if got := gitOut(t, pair, "branch", "--show-current"); got != "main" {
+				t.Errorf("branch = %q, want the checkout's own kept", got)
 			}
 		})
 	}
-	t.Run("a branch with work of its own merges the origin's history in", func(t *testing.T) {
+	t.Run("work of its own sharing HQ's history merges the origin's in", func(t *testing.T) {
 		t.Parallel()
-		pair, _, originTip := originFixture(t, true, true)
+		pair, _, originTip := originFixture(t, false, true)
 		if out, err := takeFromHQ(t, pair); err != nil {
 			t.Errorf("taking the code from HQ failed: %v\n%s", err, out)
 		}
@@ -122,5 +123,17 @@ func TestOriginFromHQ_BranchHoldingOnlyTheSeedMovesOntoHQMain(t *testing.T) {
 			t.Errorf("files = %q, want the origin's beside the Mate's", got)
 		}
 		gitOut(t, pair, "merge-base", "--is-ancestor", originTip, "HEAD")
+	})
+	t.Run("work of its own sharing no history with HQ's main is refused by name", func(t *testing.T) {
+		t.Parallel()
+		pair, _, _ := originFixture(t, true, true)
+		before := gitOut(t, pair, "rev-parse", "HEAD")
+		out, err := takeFromHQ(t, pair)
+		if err == nil || !strings.Contains(out, "unrelated histories") {
+			t.Errorf("want git's refusal of unrelated histories, got %v\n%s", err, out)
+		}
+		if got := gitOut(t, pair, "rev-parse", "HEAD"); got != before {
+			t.Errorf("HEAD moved to %s; the work must stay where it was", got)
+		}
 	})
 }

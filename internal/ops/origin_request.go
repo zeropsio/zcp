@@ -4,14 +4,15 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
-// OriginRequest asks the person whether finished work goes back to the
-// repository it came from (docs/spec-mate.md §5.10). It carries no token: on
-// Connect the person gives HQ the origin and its token themselves, so neither
-// crosses the conversation.
+// OriginRequest asks the person where the code of the repository it came from
+// is kept (docs/spec-mate.md §5.10): mounted from GitHub, or kept in Mate and
+// only following it. It carries no token: the person connects the repository
+// in HQ themselves, so none crosses the conversation.
 type OriginRequest struct {
 	// URL is the origin's https address, canonical (topology.CanonicalRepoURL).
 	URL string `json:"url"`
@@ -49,10 +50,10 @@ func originURL(raw string) (string, error) {
 	case err != nil:
 		return "", platform.NewPlatformError(platform.ErrInvalidParameter, "url is not a repository address", hint)
 	case u.User != nil:
-		// The person gives the token to HQ on Connect; one in the URL would
+		// The person connects the repository in HQ; a token in the URL would
 		// sit in the conversation and the engine's records.
 		return "", platform.NewPlatformError(platform.ErrInvalidParameter,
-			"url carries a credential; a token is never asked for or passed here — the person gives it to HQ when they connect", hint)
+			"url carries a credential; a token is never asked for or passed here — the person connects the repository in HQ", hint)
 	case u.Scheme != httpsScheme || u.Host == "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "":
 		return "", platform.NewPlatformError(platform.ErrInvalidParameter, "url is not a repository's https address", hint)
 	}
@@ -69,4 +70,23 @@ func originURL(raw string) (string, error) {
 			"Ask the person to give the repository address, e.g. https://github.com/acme/app, not a page inside it.")
 	}
 	return canonical, nil
+}
+
+// IsGitHubRepository reports whether origin, a canonical origin address
+// (OriginRequest.URL), is a repository on github.com: the one host HQ mounts
+// through its GitHub App and mints tokens for. Any other host is only
+// followed.
+func IsGitHubRepository(origin string) bool {
+	u, err := url.Parse(origin)
+	return err == nil && strings.EqualFold(u.Host, hq.GitHubHost)
+}
+
+// GitHubRepositoryPath is origin's `<owner>/<name>`, the path git names to a
+// credential helper for it.
+func GitHubRepositoryPath(origin string) string {
+	u, err := url.Parse(origin)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimPrefix(u.Path, "/")
 }

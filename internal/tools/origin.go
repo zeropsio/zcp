@@ -40,9 +40,11 @@ type originAnswer struct {
 }
 
 // RegisterOrigin registers zerops_origin: a Mate's agent asks the person
-// whether finished work goes back to the repository it came from
-// (docs/spec-mate.md §5.10). Like zerops_env action="request" it writes
-// nothing; Mate draws the card and the person connects the origin in HQ.
+// where the code of a repository it came from is kept (docs/spec-mate.md
+// §5.10) — on GitHub, which HQ mounts through its GitHub App and the
+// checkout's origin becomes, or in Mate, HQ's git staying the origin and the
+// repository only followed. Like zerops_env action="request" it writes
+// nothing; Mate draws the card and the person picks in HQ.
 func RegisterOrigin(srv *mcp.Server, httpClient hq.Doer, projectID, stateDir string) {
 	registerOrigin(srv, httpClient, hq.EnrollmentPath(), projectID, stateDir)
 }
@@ -50,8 +52,8 @@ func RegisterOrigin(srv *mcp.Server, httpClient hq.Doer, projectID, stateDir str
 func registerOrigin(srv *mcp.Server, httpClient hq.Doer, path, projectID, stateDir string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_origin",
-		Description: "Ask the person whether finished work goes back to the repository it came from. Writes nothing: Mate shows them a card; Connect links the origin to the repository in HQ the pair will wire (repo, the dev hostname). A message of its own tells you connected or declined. Never ask for a token in the chat.",
-		Annotations: &mcp.ToolAnnotations{Title: "Ask to deliver back to the origin", ReadOnlyHint: true, IdempotentHint: true, DestructiveHint: boolPtr(false), OpenWorldHint: boolPtr(false)},
+		Description: "Ask the person where a repository's code is kept: on GitHub, mounted in HQ as the checkout's origin, or in Mate, only following it; one outside GitHub is only followed. Writes nothing: Mate shows a card for repo, the dev hostname the pair will wire. A message of its own tells you their pick. Never ask for a token.",
+		Annotations: &mcp.ToolAnnotations{Title: "Ask where a repository's code is kept", ReadOnlyHint: true, IdempotentHint: true, DestructiveHint: boolPtr(false), OpenWorldHint: boolPtr(false)},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in OriginInput) (*mcp.CallToolResult, any, error) {
 		if in.Action != "request" {
 			return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
@@ -72,7 +74,7 @@ func registerOrigin(srv *mcp.Server, httpClient hq.Doer, path, projectID, stateD
 		defer cancel()
 		state, err := client.Once().Self(ctx)
 		if err != nil {
-			return observeFailure(fmt.Sprintf("HQ could not be read, so whether %s already delivers to an origin is unknown and nothing was asked: %v. Ask again later.", req.Repo, err)), nil, nil
+			return observeFailure(fmt.Sprintf("HQ could not be read, so whether %s already has an origin is unknown and nothing was asked: %v. Ask again later.", req.Repo, err)), nil, nil
 		}
 		return jsonResult(originAnswerOf(req, state, client.Address(), stateDir)), nil, nil
 	})
@@ -83,23 +85,77 @@ func registerOrigin(srv *mcp.Server, httpClient hq.Doer, path, projectID, stateD
 // repository, or of another one of the application; else asked, also by an
 // HQ older than repositories in that state. hqAddress and stateDir say how
 // another repository's code comes in (originFromHolder).
+//
+// HQ's record names an origin's address and not whether HQ mounts it or only
+// follows it, so a connected answer gives both ways and leaves the pick to
+// the person's own message.
 func originAnswerOf(req ops.OriginRequest, state hq.MateState, hqAddress, stateDir string) originAnswer {
 	if holder := originHolder(req, state); holder != "" {
 		connected := &originConnected{Origin: req, Repo: holder}
 		if holder == req.Repo {
 			return originAnswer{Connected: connected,
-				NextActions: fmt.Sprintf("Nothing was asked: %s is already the origin of %s in HQ. Take its code from HQ, never from the origin, and never ask for a token: %s.",
-					req.URL, holder, originFromHQ(holder))}
+				NextActions: fmt.Sprintf("Nothing was asked: %s is already the origin of %s in HQ. Take its code from HQ first, and never ask for a token: %s. %s",
+					req.URL, holder, originFromHQ(holder), originWays(req, "Which way the person keeps it, their own message said"))}
 		}
 		return originAnswer{Connected: connected,
 			NextActions: fmt.Sprintf("Nothing was asked: %s is already the origin of %s in HQ, not of %s. Its code comes from that HQ repository, %s, never from the origin, and never ask for a token: %s.",
 				req.URL, holder, req.Repo, holder, originFromHolder(req.Repo, holder, state, hqAddress, stateDir))}
 	}
+	if !ops.IsGitHubRepository(req.URL) {
+		return originAnswer{
+			Requested: &originRequested{Origin: req},
+			NextActions: fmt.Sprintf("Now waiting on the person: Mate asks whether %[2]s follows %[1]s — a repository outside GitHub is only followed, never pushed to; the code is kept in Mate. Tell them in one sentence why, and nothing about how they pick. Never ask for a token in the chat. A message of its own tells you how it ended. Followed: take the code from HQ — %[3]s — then %[4]s; only a public one can be fetched. Declined: nothing changes. End your turn.",
+				req.URL, req.Repo, originFromHQ(req.Repo), originFollowed(req)),
+		}
+	}
 	return originAnswer{
 		Requested: &originRequested{Origin: req},
-		NextActions: fmt.Sprintf("Now waiting on the person: Mate asks whether finished work goes back to %[1]s, and Connect links it to %[2]s in HQ. Tell them in one sentence why, and nothing about how they connect it. Never ask for a token in the chat. A message of its own tells you how it ended. Connected: take the code from HQ — %[3]s. Declined: a public repository only — `ssh %[2]s \"cd <repo dir> && GIT_TERMINAL_PROMPT=0 git fetch %[1]s HEAD && git merge --allow-unrelated-histories --no-edit FETCH_HEAD\"`; a private one cannot be fetched without its origin connected, so say so and ask again. End your turn.",
-			req.URL, req.Repo, originFromHQ(req.Repo)),
+		NextActions: fmt.Sprintf("Now waiting on the person: Mate asks where the code of %[2]s is kept — on GitHub at %[1]s, or in Mate, only following it. Tell them in one sentence why, and nothing about how they pick. Never ask for a token in the chat. A message of its own tells you what they picked. Either way take the code from HQ first: %[3]s. %[4]s Declined: nothing changes. End your turn.",
+			req.URL, req.Repo, originFromHQ(req.Repo), originWays(req, "Which they picked, that message says")),
 	}
+}
+
+// originWays is what each of the person's picks for a GitHub repository
+// means for the pair's checkout, after lead; a repository outside GitHub is
+// only ever followed.
+func originWays(req ops.OriginRequest, lead string) string {
+	if !ops.IsGitHubRepository(req.URL) {
+		return "It is only followed: " + originFollowed(req) + "; only a public one can be fetched."
+	}
+	return fmt.Sprintf("%s. Kept on GitHub: GitHub is the checkout's origin — %s; then work on a branch of your own (`git checkout -b <branch> origin/main`), commit, `git push origin <branch>` and open its pull request with %s. Never push `main` and never force-push: `main` moves only by a merge. Kept in Mate: HQ stays the origin and GitHub is only followed — %s; a private one is read with HQ's read token for it, and when HQ holds none, say so.",
+		lead, originMounted(req), originPullRequest(req), originFollowed(req))
+}
+
+// originMountedDir is the repository as the Mate's own shell mounts it: only
+// that shell runs `zcp`, which git's GitHub helper is, so git that talks to
+// GitHub runs there and never over ssh in the service.
+func originMountedDir(repo string) string { return "/var/www/" + repo }
+
+// originMounted makes GitHub the checkout's origin, its fetches and pushes
+// answered by `zcp hq git-credential` with the token HQ mints at each call.
+func originMounted(req ops.OriginRequest) string {
+	return fmt.Sprintf("in your own shell, never over ssh: `cd %s && git remote set-url origin %s && %s && git fetch origin`",
+		originMountedDir(req.Repo), req.URL, hq.GitHubHelperConfig)
+}
+
+// originPullRequest opens a branch's pull request with the token HQ mints for
+// the repository, handed to gh for that one command.
+func originPullRequest(req ops.OriginRequest) string {
+	return fmt.Sprintf("`GH_TOKEN=\"$(printf 'protocol=https\\nhost=github.com\\npath=%s\\n\\n' | zcp hq git-credential get | sed -n 's/^password=//p')\" gh pr create --fill`",
+		ops.GitHubRepositoryPath(req.URL))
+}
+
+// originFollowed adds the repository as a fetch-only `upstream` beside HQ's
+// origin: a push to it is refused by git itself. A GitHub one is fetched
+// through `zcp hq git-credential`, which answers a private one with HQ's read
+// token when HQ holds one.
+func originFollowed(req ops.OriginRequest) string {
+	helper := ""
+	if ops.IsGitHubRepository(req.URL) {
+		helper = " && " + hq.GitHubHelperConfig
+	}
+	return fmt.Sprintf("in your own shell, never over ssh: `cd %s && git remote add upstream %s && git remote set-url --push upstream no_push%s && git fetch upstream`, and take its new work in on a branch of your own with `git merge upstream/main`",
+		originMountedDir(req.Repo), req.URL, helper)
 }
 
 // originHolder is the repository in HQ the asked address already is the
@@ -122,16 +178,17 @@ func originHolder(req ops.OriginRequest, state hq.MateState) string {
 }
 
 // originFromHQ takes the origin's code into the pair's working copy from the
-// repository in HQ, whose main holds the origin's adopted history. Adopted
-// onto an untouched repository, main is the origin's own history and shares
-// nothing with HQ's seed, so a branch holding only the seed — one commit of
-// the empty tree, as the wiring cut it — moves onto main (`reset --keep`
-// refuses rather than overwrite a file in the way), and a branch with work of
-// its own merges main in, unrelated histories allowed.
+// repository in HQ, whose main took the origin's history. Taken onto an
+// untouched repository, main is the origin's own history and shares nothing
+// with HQ's seed, so a checkout holding only the seed — one commit of the
+// empty tree, as the wiring cut it — moves onto main (`reset --keep` refuses
+// rather than overwrite a file in the way); a checkout with work of its own
+// merges main in, and git refuses by name a main its work shares no history
+// with.
 func originFromHQ(repo string) string {
 	return fmt.Sprintf("`ssh %s 'cd <repo dir> && git fetch origin main && "+
 		"if [ \"$(git rev-list --count HEAD)\" = 1 ] && [ -z \"$(git ls-tree HEAD)\" ]; "+
-		"then git reset --keep FETCH_HEAD; else git merge --allow-unrelated-histories --no-edit FETCH_HEAD; fi'`", repo)
+		"then git reset --keep FETCH_HEAD; else git merge --no-edit FETCH_HEAD; fi'`", repo)
 }
 
 // originFromHolder takes the code of holder, another repository in HQ, into
@@ -147,6 +204,6 @@ func originFromHolder(repo, holder string, state hq.MateState, hqAddress, stateD
 	if state.AppID != nil {
 		appID = *state.AppID
 	}
-	return fmt.Sprintf("`ssh %s \"cd <repo dir> && git fetch %s main && git merge --allow-unrelated-histories --no-edit FETCH_HEAD\"`",
+	return fmt.Sprintf("`ssh %s \"cd <repo dir> && git fetch %s main && git merge --no-edit FETCH_HEAD\"`",
 		repo, hq.RepoURLAt(hqAddress, appID, holder))
 }

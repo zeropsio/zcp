@@ -682,7 +682,7 @@ func TestAnnotations_OriginTool(t *testing.T) {
 		t.Fatal("zerops_origin should be registered in a Mate")
 	}
 	ann := tool.Annotations
-	if ann == nil || ann.Title != "Ask to deliver back to the origin" || !ann.ReadOnlyHint || !ann.IdempotentHint ||
+	if ann == nil || ann.Title != "Ask where a repository's code is kept" || !ann.ReadOnlyHint || !ann.IdempotentHint ||
 		ann.DestructiveHint == nil || *ann.DestructiveHint || ann.OpenWorldHint == nil || *ann.OpenWorldHint {
 		t.Fatalf("annotations = %+v", ann)
 	}

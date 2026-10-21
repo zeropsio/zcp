@@ -84,15 +84,23 @@ func TestOriginRequest_WritesNothing_NamesTheRepositoryThePairWillWire(t *testin
 		t.Errorf("requested.origin = %+v, want the canonical URL, repository appdev and the why", got)
 	}
 	for _, want := range []string{
-		"links it to appdev in HQ",
+		"Mate asks where the code of appdev is kept — on GitHub at https://github.com/zeropsio/mate, or in Mate, only following it",
 		"Never ask for a token in the chat",
-		"Connected: take the code from HQ — " + originFromHQ("appdev"),
-		"Declined: a public repository only — `ssh appdev \"cd <repo dir> && GIT_TERMINAL_PROMPT=0 git fetch https://github.com/zeropsio/mate HEAD && git merge --allow-unrelated-histories --no-edit FETCH_HEAD\"`",
-		"a private one cannot be fetched without its origin connected, so say so and ask again",
+		"Either way take the code from HQ first: " + originFromHQ("appdev"),
+		"Kept on GitHub: GitHub is the checkout's origin — in your own shell, never over ssh: `cd /var/www/appdev && git remote set-url origin https://github.com/zeropsio/mate && " + hq.GitHubHelperConfig + " && git fetch origin`",
+		"`git push origin <branch>`",
+		"path=zeropsio/mate",
+		"gh pr create",
+		"Never push `main` and never force-push",
+		"Kept in Mate: HQ stays the origin and GitHub is only followed — in your own shell, never over ssh: `cd /var/www/appdev && git remote add upstream https://github.com/zeropsio/mate && git remote set-url --push upstream no_push && " + hq.GitHubHelperConfig + " && git fetch upstream`",
+		"a private one is read with HQ's read token for it, and when HQ holds none, say so",
 	} {
 		if !strings.Contains(answer.NextActions, want) {
 			t.Errorf("nextActions lacks %q: %s", want, answer.NextActions)
 		}
+	}
+	if strings.Contains(answer.NextActions, "allow-unrelated-histories") {
+		t.Errorf("nextActions joins unrelated histories: %s", answer.NextActions)
 	}
 	if got := others(); len(got) != 0 {
 		t.Errorf("a request sent HQ more than its read: %v", got)
@@ -250,6 +258,8 @@ func TestOriginRequest_OriginConnectedToTheRepository_AnswersConnected(t *testin
 		"Nothing was asked: https://github.com/acme/app is already the origin of appdev in HQ.",
 		"never ask for a token",
 		originFromHQ("appdev"),
+		"Which way the person keeps it, their own message said. Kept on GitHub: GitHub is the checkout's origin",
+		"Kept in Mate: HQ stays the origin and GitHub is only followed",
 	} {
 		if !strings.Contains(answer.NextActions, want) {
 			t.Errorf("nextActions lacks %q: %s", want, answer.NextActions)
@@ -323,8 +333,36 @@ func TestOriginRequest_OriginConnectedUnderAnotherProjectsRepository_FetchesItFr
 	if strings.Contains(answer.NextActions, "ssh web") {
 		t.Errorf("nextActions names web, no service of this project, as a host: %s", answer.NextActions)
 	}
-	want := "`ssh appdev \"cd <repo dir> && git fetch " + address + "/git/a1/web.git main && git merge --allow-unrelated-histories --no-edit FETCH_HEAD\"`"
+	want := "`ssh appdev \"cd <repo dir> && git fetch " + address + "/git/a1/web.git main && git merge --no-edit FETCH_HEAD\"`"
 	if !strings.Contains(answer.NextActions, want) {
 		t.Errorf("nextActions lacks the fetch from HQ %s: %s", want, answer.NextActions)
+	}
+}
+
+// A repository outside GitHub is only ever followed: HQ mounts and mints
+// tokens for GitHub alone, so the ask offers no push back and no GitHub
+// helper.
+func TestOriginRequest_RepositoryOutsideGitHub_IsOnlyFollowed(t *testing.T) {
+	t.Parallel()
+	srv, _ := originHQ(t, `[]`)
+
+	answer, text := originAnswerTo(t, srv, "https://gitlab.com/acme/app")
+
+	if answer.Requested == nil || answer.Connected != nil {
+		t.Fatalf("want requested only: %s", text)
+	}
+	for _, want := range []string{
+		"Mate asks whether appdev follows https://gitlab.com/acme/app — a repository outside GitHub is only followed, never pushed to",
+		"`cd /var/www/appdev && git remote add upstream https://gitlab.com/acme/app && git remote set-url --push upstream no_push && git fetch upstream`",
+		"only a public one can be fetched",
+	} {
+		if !strings.Contains(answer.NextActions, want) {
+			t.Errorf("nextActions lacks %q: %s", want, answer.NextActions)
+		}
+	}
+	for _, never := range []string{"Kept on GitHub", "zcp hq git-credential", "gh pr create", "set-url origin"} {
+		if strings.Contains(answer.NextActions, never) {
+			t.Errorf("nextActions offers %q for a repository outside GitHub: %s", never, answer.NextActions)
+		}
 	}
 }
