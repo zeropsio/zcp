@@ -30,13 +30,13 @@ func gitOut(t *testing.T, dir string, args ...string) string {
 // takeFromHQ runs, in pair, what originFromHQ tells the agent to run there.
 func takeFromHQ(t *testing.T, pair string) (string, error) {
 	t.Helper()
-	command := originFromHQ("appdev")
-	start := strings.Index(command, "cd <repo dir> && ")
-	if start < 0 || !strings.HasSuffix(command, "`") {
-		t.Fatalf("not a command run in the repo dir: %s", command)
+	text := originFromHQ(pair)
+	_, command, ok := strings.Cut(text, "`")
+	command, _, closed := strings.Cut(command, "`")
+	if !ok || !closed || !strings.HasPrefix(command, "cd "+pair+" && ") {
+		t.Fatalf("not a command run in the checkout: %s", text)
 	}
-	inner := strings.ReplaceAll(command[start:len(command)-2], "<repo dir>", pair)
-	out, err := exec.CommandContext(context.Background(), "sh", "-c", inner).CombinedOutput()
+	out, err := exec.CommandContext(context.Background(), "sh", "-c", command).CombinedOutput()
 	return string(out), err
 }
 
@@ -87,8 +87,8 @@ func originFixture(t *testing.T, replaced, own bool) (pair, hqMain, originTip st
 // Taking a repository's code from HQ moves a checkout holding only HQ's seed
 // onto HQ's main, so it carries the origin's own commits and no commit of
 // HQ's; a checkout with work of its own merges main in when they share
-// history, and git refuses by name a main they share none with — never two
-// unrelated histories joined.
+// history, and keeps work sharing none on a branch of its own while it moves
+// onto main — never two unrelated histories joined.
 func TestOriginFromHQ_CheckoutHoldingOnlyTheSeedMovesOntoHQMain(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -124,16 +124,23 @@ func TestOriginFromHQ_CheckoutHoldingOnlyTheSeedMovesOntoHQMain(t *testing.T) {
 		}
 		gitOut(t, pair, "merge-base", "--is-ancestor", originTip, "HEAD")
 	})
-	t.Run("work of its own sharing no history with HQ's main is refused by name", func(t *testing.T) {
+	t.Run("work of its own sharing no history with HQ's main stays on its own branch", func(t *testing.T) {
 		t.Parallel()
-		pair, _, _ := originFixture(t, true, true)
-		before := gitOut(t, pair, "rev-parse", "HEAD")
-		out, err := takeFromHQ(t, pair)
-		if err == nil || !strings.Contains(out, "unrelated histories") {
-			t.Errorf("want git's refusal of unrelated histories, got %v\n%s", err, out)
+		pair, hqMain, _ := originFixture(t, true, true)
+		own := gitOut(t, pair, "rev-parse", "HEAD")
+		for range 2 { // a take run again changes nothing
+			if out, err := takeFromHQ(t, pair); err != nil {
+				t.Fatalf("taking the code from HQ failed: %v\n%s", err, out)
+			}
 		}
-		if got := gitOut(t, pair, "rev-parse", "HEAD"); got != before {
-			t.Errorf("HEAD moved to %s; the work must stay where it was", got)
+		if got := gitOut(t, pair, "rev-parse", "HEAD"); got != hqMain {
+			t.Errorf("HEAD = %s, want HQ's main %s", got, hqMain)
+		}
+		if got := gitOut(t, pair, "rev-parse", "own-history-"+own[:12]); got != own {
+			t.Errorf("own-history-%s = %s, want the Mate's work %s kept", own[:12], got, own)
+		}
+		if err := exec.CommandContext(context.Background(), "git", "-C", pair, "merge-base", "HEAD", own).Run(); err == nil {
+			t.Errorf("HEAD shares history with the Mate's work: two unrelated histories were joined")
 		}
 	})
 }

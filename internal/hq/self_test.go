@@ -46,18 +46,22 @@ func TestClient_Self_CarriesTheMatesApplicationAndItsChanges(t *testing.T) {
 }
 
 // A Mate's state carries every repository of its application, with the
-// address of its connected origin, and an older HQ that omits them (nil, not
-// empty).
+// address of its connected origin and which way the code is kept, and an
+// older HQ that omits them (nil, not empty; no way, not one guessed).
 func TestClient_Self_Repos_DecodesOriginsAndOlderHQ(t *testing.T) {
 	t.Parallel()
 	const repos = `{"projectId":"p-mate","name":"Ada","face":"face-1","standupRequestedBy":null,"appId":"a1","changes":[],` +
-		`"repos":[{"name":"appdev","origin":{"url":"https://github.com/acme/app"}},{"name":"web"}]}`
+		`"repos":[{"name":"appdev","origin":{"url":"https://github.com/acme/app","mode":"github"}},{"name":"api","origin":{"url":"https://github.com/acme/api"}},{"name":"web"}]}`
 	client, _ := answering(t, repos)
 	state, err := client.Self(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []MateRepo{{Name: "appdev", Origin: &RepoOrigin{URL: "https://github.com/acme/app"}}, {Name: "web"}}
+	want := []MateRepo{
+		{Name: "appdev", Origin: &RepoOrigin{URL: "https://github.com/acme/app", Mode: OriginOnGitHub}},
+		{Name: "api", Origin: &RepoOrigin{URL: "https://github.com/acme/api"}},
+		{Name: "web"},
+	}
 	if !reflect.DeepEqual(state.Repos, want) {
 		t.Errorf("repos = %+v\nwant %+v", state.Repos, want)
 	}

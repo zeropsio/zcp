@@ -2629,19 +2629,24 @@ themselves; no token crosses the conversation.
   HQ repository holding it), nothing asked, when `url` already is the origin of `repo` in HQ's
   `repos`, or else of another repository of the application, which the answer names as where the
   code comes from: in that repository's own working copy when it is one of this project's
-  services (`FindServiceMeta`), else fetched from HQ's `/git/<app>/<name>.git` into `repo`'s, since
-  an application's repository can be a sibling Mate's and name no host here — compared by
+  services (`FindServiceMeta`), else fetched into `repo`'s — from GitHub when the person keeps that
+  repository's code there, else from HQ's `/git/<app>/<name>.git` — since an application's
+  repository can be a sibling Mate's and name no host here — compared by
   `topology.SameRepoURL` (canonical form, any case). Otherwise, and from an HQ older than `repos`,
   `requested` (`origin`: `url`, `repo`, `why`), telling the agent to say only why, in one sentence,
-  and end its turn. Both answers say how the code comes in, per pick: first from HQ's `main` either
-  way; kept on GitHub, the Mate's own shell on the mounted repository points `origin` at GitHub
+  and end its turn. Both answers say how the code comes in, all of it in the Mate's own shell on
+  the mounted checkout (`ops.SourceMountDir`, a code-volume pair's below its mount), never over
+  ssh: first `main` from the checkout's origin, a checkout holding only HQ's seed moving onto it,
+  one sharing history merging it, one with work sharing none keeping that work on its branch
+  `own-history-<commit>` (`ops.KeepOwnHistory`) and moving onto it; then per pick — kept on
+  GitHub, the same shell points `origin` at GitHub
   and has git ask only `zcp hq git-credential` for it (`credential.https://github.com.helper`
   emptied first, so no helper of the machine or the person answers ahead of it, then
   `useHttpPath`, `hq.GitHubHelperConfig`), work goes on a branch of the agent's own and its pull
   request (`gh pr create`, `GH_TOKEN` from the same helper); kept in Mate, the same shell adds the
-  repository as `upstream` with its push URL `no_push`. HQ's `repos` name an origin's address and
-  not which way it is kept, so a `connected` answer gives both ways and leaves the pick to the
-  person's own message.
+  repository as `upstream` with its push URL `no_push`. A `connected` answer gives the way HQ's
+  `repos[].origin.mode` says the code is kept (`github` or `follow`); from an HQ older than
+  `mode`, it gives both and has the agent ask the person in one sentence.
 - **The helper.** `zcp hq git-credential get` answers HQ's own host with the Mate credential under
   the user `mate`, as §6 has it, and `https://github.com` with what `GET
   /api/mate/git-credential?host=github.com&path=<owner>/<repo>[.git]` (as the Mate) answers at

@@ -44,10 +44,20 @@ type MateRepo struct {
 }
 
 // RepoOrigin is a connected origin: its https address as HQ stores it, which
-// never carries a credential.
+// never carries a credential, and which way the person keeps the code.
 type RepoOrigin struct {
 	URL string `json:"url"`
+	// Mode is OriginOnGitHub or OriginFollowed; "" from an HQ older than it.
+	Mode string `json:"mode,omitempty"`
 }
+
+// The ways a person keeps a repository's code: on GitHub, GitHub being the
+// checkout's origin; or in Mate, HQ the origin and GitHub only followed as a
+// fetch-only upstream.
+const (
+	OriginOnGitHub = "github"
+	OriginFollowed = "follow"
+)
 
 // MateChange is one of the Mate's own changes, as it reads its outcome.
 type MateChange struct {

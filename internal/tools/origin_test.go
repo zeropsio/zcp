@@ -86,7 +86,7 @@ func TestOriginRequest_WritesNothing_NamesTheRepositoryThePairWillWire(t *testin
 	for _, want := range []string{
 		"Mate asks where the code of appdev is kept — on GitHub at https://github.com/zeropsio/mate, or in Mate, only following it",
 		"Never ask for a token in the chat",
-		"Either way take the code from HQ first: " + originFromHQ("appdev"),
+		"Either way take the code from HQ first: " + originFromHQ("/var/www/appdev"),
 		"Kept on GitHub: GitHub is the checkout's origin — in your own shell, never over ssh: `cd /var/www/appdev && git remote set-url origin https://github.com/zeropsio/mate && " + hq.GitHubHelperConfig + " && git fetch origin`",
 		"`git push origin <branch>`",
 		"path=zeropsio/mate",
@@ -257,8 +257,9 @@ func TestOriginRequest_OriginConnectedToTheRepository_AnswersConnected(t *testin
 	for _, want := range []string{
 		"Nothing was asked: https://github.com/acme/app is already the origin of appdev in HQ.",
 		"never ask for a token",
-		originFromHQ("appdev"),
-		"Which way the person keeps it, their own message said. Kept on GitHub: GitHub is the checkout's origin",
+		originFromHQ("/var/www/appdev"),
+		"HQ does not say which way the person keeps it: ask them in one sentence",
+		"Kept on GitHub: GitHub is the checkout's origin",
 		"Kept in Mate: HQ stays the origin and GitHub is only followed",
 	} {
 		if !strings.Contains(answer.NextActions, want) {
@@ -295,9 +296,9 @@ func TestOriginRequest_OriginConnectedUnderAnotherRepository_NamesThatRepository
 	}
 	for _, want := range []string{
 		"Nothing was asked: https://github.com/acme/app is already the origin of web in HQ, not of appdev.",
-		"Its code comes from that HQ repository, web",
+		"Its code comes from that repository, web",
 		"never ask for a token",
-		originFromHQ("web"),
+		originFromHQ("/var/www/web"),
 	} {
 		if !strings.Contains(answer.NextActions, want) {
 			t.Errorf("nextActions lacks %q: %s", want, answer.NextActions)
@@ -333,9 +334,93 @@ func TestOriginRequest_OriginConnectedUnderAnotherProjectsRepository_FetchesItFr
 	if strings.Contains(answer.NextActions, "ssh web") {
 		t.Errorf("nextActions names web, no service of this project, as a host: %s", answer.NextActions)
 	}
-	want := "`ssh appdev \"cd <repo dir> && git fetch " + address + "/git/a1/web.git main && git merge --no-edit FETCH_HEAD\"`"
+	want := originTake("/var/www/appdev", "git fetch "+address+"/git/a1/web.git main")
 	if !strings.Contains(answer.NextActions, want) {
 		t.Errorf("nextActions lacks the fetch from HQ %s: %s", want, answer.NextActions)
+	}
+}
+
+// The same origin connected under a sibling Mate's repository whose code the
+// person keeps on GitHub is fetched from GitHub, where that code is, through
+// zcp's GitHub helper.
+func TestOriginRequest_OriginKeptOnGitHubUnderAnotherProjectsRepository_FetchesItFromGitHub(t *testing.T) {
+	t.Parallel()
+	srv, _, address := originHQIn(t, t.TempDir(),
+		`[{"name":"appdev"},{"name":"web","origin":{"url":"https://github.com/acme/app","mode":"github"}}]`)
+
+	answer, text := originAnswerTo(t, srv, "https://github.com/acme/app")
+
+	if answer.Connected == nil || answer.Connected.Repo != "web" {
+		t.Fatalf("want connected, held by web: %s", text)
+	}
+	want := originTake("/var/www/appdev", hq.GitHubHelperConfig+" && git fetch https://github.com/acme/app main")
+	if !strings.Contains(answer.NextActions, want) {
+		t.Errorf("nextActions lacks the fetch from GitHub %s: %s", want, answer.NextActions)
+	}
+	if strings.Contains(answer.NextActions, address) {
+		t.Errorf("nextActions fetches from HQ code kept on GitHub: %s", answer.NextActions)
+	}
+}
+
+// A connected origin's checkout is set up the way HQ says the person keeps
+// its code, and only that way.
+func TestOriginRequest_OriginConnectedToTheRepository_SetsUpTheWayHQSaysItIsKept(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		mode        string
+		want, never string
+	}{
+		{mode: "github", want: "Kept on GitHub: GitHub is the checkout's origin", never: "Kept in Mate"},
+		{mode: "follow", want: "Kept in Mate: HQ stays the origin and GitHub is only followed", never: "Kept on GitHub"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.mode, func(t *testing.T) {
+			t.Parallel()
+			srv, _ := originHQ(t, `[{"name":"appdev","origin":{"url":"https://github.com/acme/app","mode":"`+tt.mode+`"}}]`)
+
+			answer, text := originAnswerTo(t, srv, "https://github.com/acme/app")
+
+			if answer.Connected == nil {
+				t.Fatalf("want connected: %s", text)
+			}
+			for _, want := range []string{tt.want, originFromHQ("/var/www/appdev")} {
+				if !strings.Contains(answer.NextActions, want) {
+					t.Errorf("nextActions lacks %q: %s", want, answer.NextActions)
+				}
+			}
+			for _, never := range []string{tt.never, "ask them"} {
+				if strings.Contains(answer.NextActions, never) {
+					t.Errorf("nextActions says %q though HQ says how the code is kept: %s", never, answer.NextActions)
+				}
+			}
+		})
+	}
+}
+
+// A code-volume pair's checkout is the volume below the dev service's mount,
+// never the runtime's own /var/www: the origin's commands run there.
+func TestOriginRequest_CodeVolumePair_RunsInTheVolumeCheckout(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	writeVariantBPair(t, stateDir)
+	srv, _, _ := originHQIn(t, stateDir, `[]`)
+
+	result := callTool(t, srv, "zerops_origin", map[string]any{
+		"action": "request", "url": "https://github.com/acme/app", "repo": "webdev", "why": "to deliver finished work back",
+	})
+
+	var answer originAnswer
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &answer); err != nil || result.IsError {
+		t.Fatalf("want an answer, got: %s", getTextContent(t, result))
+	}
+	text := answer.NextActions
+	for _, want := range []string{"`cd /var/www/webdev/ws && git fetch origin main", "`cd /var/www/webdev/ws && git remote set-url origin", "`cd /var/www/webdev/ws && git remote add upstream"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("answer lacks %q: %s", want, text)
+		}
+	}
+	if strings.Contains(text, "cd /var/www/webdev &&") {
+		t.Errorf("answer runs git in the runtime's own /var/www: %s", text)
 	}
 }
 
