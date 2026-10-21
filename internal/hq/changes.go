@@ -2,6 +2,8 @@ package hq
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -114,6 +116,14 @@ func (c Client) ProjectID() string { return c.enrollment.ProjectID }
 // Credential is the Mate credential, the password git presents to HQ as
 // GitUser. Never printed.
 func (c Client) Credential() string { return c.enrollment.Credential }
+
+// CredentialFingerprint names the Mate credential without carrying it: what a
+// record keeps to know which credential a service was given, never the
+// secret itself.
+func (c Client) CredentialFingerprint() string {
+	sum := sha256.Sum256([]byte(c.enrollment.Credential))
+	return hex.EncodeToString(sum[:8])
+}
 
 // RepoURL is where git reaches the repository repo of the application appID.
 func (c Client) RepoURL(appID, repo string) string { return RepoURLAt(c.Address(), appID, repo) }

@@ -3756,9 +3756,11 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   its `main`; its change in the old application stays where it is.
 - **The credential.** The dev service holds the Mate credential as its `GIT_TOKEN` service secret,
   written by the wiring's `git-push-setup`, which the per-command credential helper presents as the
-  user `mate`. The enrollment is the credential's one home; zcp no longer rewrites the dev service's
-  copy before a push, so after a re-enrollment a dev session's git is refused until the pair is wired
-  again. The helper persisted in `.git/config` for HQ's host answers the dev service from
+  user `mate`. The enrollment is the credential's one home: the pair's record keeps only a
+  fingerprint of the copy the dev service holds (`HQRepoRef.credentialFingerprint`), and the
+  repository pass — bootstrap, adopt and every develop start — rewrites only that secret when the
+  fingerprint differs from the enrollment's, as after a re-enrollment, outside its backoff and
+  leaving the checkout's branch and origin alone. The helper persisted in `.git/config` for HQ's host answers the dev service from
   `GIT_TOKEN` and the Mate's own shell from `zcp hq git-credential`, which reads the enrollment at
   each request and answers for the enrolled HQ only — and, for github.com, with HQ's per-call token
   (§5.10).

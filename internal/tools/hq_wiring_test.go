@@ -396,3 +396,56 @@ func TestWireHQPair_TheRecipeRepositoryIsNoServicesRepository(t *testing.T) {
 		})
 	}
 }
+
+// TestReconcileHQRepositories_RenewsTheDevServicesCredentialAfterTheMateEnrollsAgain:
+// a redeployed zcp enrolls the Mate again and HQ revokes the credential the
+// dev service holds. The next pass gives the dev service the new one at once,
+// backoff or not, so git in its sessions keeps reaching HQ — and leaves the
+// checkout's branch and origin as the agent left them.
+func TestReconcileHQRepositories_RenewsTheDevServicesCredentialAfterTheMateEnrollsAgain(t *testing.T) {
+	const renewed = "the-renewed-credential"
+	lab := newHQLab(t)
+	lab.wire()
+	lab.git("checkout", "-q", "-b", "fix-login")
+	origin := lab.git("remote", "get-url", "origin")
+	lab.reenroll(renewed)
+	if _, err := lab.ssh.ExecSSH(t.Context(), "appdev", "cd /var/www && git fetch -q origin"); err == nil {
+		t.Fatal("the revoked credential still reaches HQ; the lab does not revoke it")
+	}
+
+	lab.wire()
+
+	if held := lab.ssh.gitToken(t.Context(), "svc-appdev"); held != renewed {
+		t.Errorf("the dev service holds %q, want the renewed credential", held)
+	}
+	if out, err := lab.ssh.ExecSSH(t.Context(), "appdev", "cd /var/www && git fetch -q origin"); err != nil {
+		t.Errorf("git in a dev service session cannot reach HQ: %v\n%s", err, out)
+	}
+	if got := lab.git("branch", "--show-current"); got != "fix-login" {
+		t.Errorf("the checkout is on %q, want the agent's branch kept", got)
+	}
+	if got := lab.git("remote", "get-url", "origin"); got != origin {
+		t.Errorf("origin = %q, want %q kept", got, origin)
+	}
+	assertNoSecretOnDisk(t, lab.stateDir, renewed)
+}
+
+// TestDevelopStart_RenewsTheDevServicesCredential: work starts at develop,
+// so its start runs the repository pass that renews a revoked credential.
+func TestDevelopStart_RenewsTheDevServicesCredential(t *testing.T) {
+	const renewed = "the-renewed-credential"
+	lab := newHQLab(t)
+	lab.wire()
+	lab.reenroll(renewed)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, lab.mock, lab.hq.srv.Client(), labMate, nil,
+		workflow.NewEngine(lab.stateDir, workflow.EnvContainer, nil), nil, lab.stateDir, "", nil, lab.ssh, lab.rt, "")
+
+	callTool(t, srv, "zerops_workflow", map[string]any{
+		"action": "start", "workflow": "develop", "intent": "fix the login", "scope": []string{"appdev"},
+	})
+
+	if held := lab.ssh.gitToken(t.Context(), "svc-appdev"); held != renewed {
+		t.Errorf("after develop's start the dev service holds %q, want the renewed credential", held)
+	}
+}

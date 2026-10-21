@@ -145,11 +145,13 @@ func reconcileMateRepositories(
 
 // reconcileHQRepositories gives every bootstrapped pair on this Mate its
 // repository in HQ with a checkout on its `main`, and keeps every wired pair
-// current: the change on record is asked what became of it, and a pair whose
-// Mate HQ now holds in another application is wired there. It pushes
-// nothing: what goes to HQ is the agent's git. It is a RECONCILE, not a one-shot step:
-// it runs on every bootstrap and adopt pass, does nothing for a pair with
-// nothing to do, and backs off per pair.
+// current: the dev service holds the Mate credential as it is now, the change
+// on record is asked what became of it, and a pair whose Mate HQ now holds in
+// another application is wired there. It pushes nothing: what goes to HQ is
+// the agent's git. It is a RECONCILE, not a one-shot step: it runs on every
+// bootstrap, adopt and develop start, does nothing for a pair with nothing
+// to do, and backs off per pair — except a credential to renew, which git in
+// the dev service cannot do without.
 //
 // It NEVER blocks bootstrap. Every failure it can meet — a Mate not enrolled
 // yet, HQ refusing or not answering, an SSH hiccup — leaves the pair exactly
@@ -194,7 +196,7 @@ func reconcileHQRepositories(
 	var report []string
 	for _, m := range pending {
 		state := readHQPairState(stateDir, m.Hostname)
-		if !hqAttemptDue(state, now) {
+		if !hqAttemptDue(state, now) && !hqPairCredentialStale(m, hqc) {
 			continue
 		}
 		// A pair another process runs git on is left to it, and no attempt
@@ -236,9 +238,47 @@ func passHQPair(
 		attempt := wireHQPair(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, m, hqRepoNameOf(m))
 		return attempt.line, attempt.wired
 	case hqPairWired(m):
+		if hqPairCredentialStale(m, hqc) {
+			if line := renewHQPairCredential(ctx, client, rt.ProjectID, stateDir, hqc, m); line != "" {
+				return line, false
+			}
+		}
 		return keepHQPairCurrent(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, self, m)
 	}
 	return "", false
+}
+
+// hqPairCredentialStale reports whether a wired pair's dev service holds
+// another Mate credential than the enrollment's: the Mate enrolled again —
+// a redeployed zcp does — and HQ revoked the one it holds. A pair wired before
+// its record named the credential is renewed once.
+func hqPairCredentialStale(m *workflow.ServiceMeta, hqc hq.Client) bool {
+	return hqPairWired(m) && m.GitPushState == topology.GitPushConfigured &&
+		m.HQ.CredentialFingerprint != hqc.CredentialFingerprint()
+}
+
+// renewHQPairCredential gives a wired pair's dev service the Mate credential
+// as it is now, as the service secret its sessions' git reads, and records
+// which one it holds. Only the secret: the checkout's branch, origin and
+// helper stay as the agent left them. "" once renewed, else the line saying
+// it was not.
+func renewHQPairCredential(ctx context.Context, client platform.Client, projectID, stateDir string, hqc hq.Client, m *workflow.ServiceMeta) string {
+	svc, err := ops.LookupService(ctx, client, projectID, m.Hostname)
+	if err == nil {
+		_, err = ops.EnvSetService(ctx, client, svc.ID, ops.GitTokenEnvKey, hqc.Credential(), true)
+	}
+	if err != nil {
+		return fmt.Sprintf("the Mate enrolled with HQ again, and git in %s's sessions cannot reach HQ until it holds the new credential, which could not be written (%v) — retrying on the next pass; your own shell's git is unaffected.", m.Hostname, err)
+	}
+	fingerprint := hqc.CredentialFingerprint()
+	_ = workflow.UpsertServiceMeta(stateDir, m.Hostname, func(meta *workflow.ServiceMeta, existed bool) error {
+		if existed && meta.HQ != nil {
+			meta.HQ.CredentialFingerprint = fingerprint
+		}
+		return nil
+	})
+	m.HQ.CredentialFingerprint = fingerprint
+	return ""
 }
 
 // lazySelf reads the Mate's own state from HQ at most once, when first asked:
@@ -476,7 +516,7 @@ func wireHQPair(
 		if !existed {
 			return fmt.Errorf("meta for %q vanished", m.Hostname)
 		}
-		meta.HQ, left = wiredHQRecord(meta.HQ, repo)
+		meta.HQ, left = wiredHQRecord(meta.HQ, repo, hqc.CredentialFingerprint())
 		recorded = meta.HQ
 		return nil
 	}); err != nil {
@@ -508,18 +548,19 @@ func reservedRepository(hostname, repoName string) (line, remedy string) {
 	return fmt.Sprintf("%s gets no repository in HQ: %q is the application's recipe repository. %s", hostname, hq.RecipeRepo, remedy), remedy
 }
 
-// wiredHQRecord is the pair's HQ record once it is wired to repo.
-// Wired again to the same repository it keeps everything; wired to another —
-// the Mate moved to another application — its change stays with the old
-// application (left is the change left there, 0 for none).
-func wiredHQRecord(prior *workflow.HQRepoRef, repo hq.Repo) (record *workflow.HQRepoRef, left int) {
+// wiredHQRecord is the pair's HQ record once it is wired to repo, its dev
+// service given the credential fingerprint names. Wired again to the same
+// repository it keeps everything else; wired to another — the Mate moved to
+// another application — its change stays with the old application (left is
+// the change left there, 0 for none).
+func wiredHQRecord(prior *workflow.HQRepoRef, repo hq.Repo, fingerprint string) (record *workflow.HQRepoRef, left int) {
 	wiredAt := time.Now().UTC().Format(time.RFC3339)
 	if prior != nil && prior.AppID == repo.AppID && prior.Repo == repo.Name {
 		kept := *prior
-		kept.WiredAt = wiredAt
+		kept.WiredAt, kept.CredentialFingerprint = wiredAt, fingerprint
 		return &kept, 0
 	}
-	record = &workflow.HQRepoRef{AppID: repo.AppID, Repo: repo.Name, WiredAt: wiredAt}
+	record = &workflow.HQRepoRef{AppID: repo.AppID, Repo: repo.Name, WiredAt: wiredAt, CredentialFingerprint: fingerprint}
 	if prior != nil {
 		left = prior.Change
 	}
@@ -608,6 +649,16 @@ func appendRepositoryReport(resp *workflow.BootstrapResponse, lines []string) {
 		return
 	}
 	resp.Message += " HQ — " + strings.Join(lines, "; ") + "."
+}
+
+// withRepositoryReport adds the reconcile's lines to a tool result as one
+// more text block; a result with nothing to add is returned as it is.
+func withRepositoryReport(result *mcp.CallToolResult, lines []string) *mcp.CallToolResult {
+	if result == nil || len(lines) == 0 {
+		return result
+	}
+	result.Content = append(result.Content, &mcp.TextContent{Text: "HQ — " + strings.Join(lines, "; ") + "."})
+	return result
 }
 
 // sameGitRepository reports whether two remote URLs name one repository:

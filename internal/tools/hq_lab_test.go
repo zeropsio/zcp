@@ -65,13 +65,16 @@ type fakeHQ struct {
 	// untitled: HQ from before the Mate's state named its changes' titles.
 	untitled bool
 	calls    []string
+	// credential is the one Mate credential HQ takes now: enrolling again
+	// revokes the one before.
+	credential string
 }
 
 func newFakeHQ(t *testing.T) *fakeHQ {
 	t.Helper()
 	requireGitForLab(t)
 	f := &fakeHQ{
-		t: t, root: t.TempDir(), appID: labApp,
+		t: t, root: t.TempDir(), appID: labApp, credential: labCredential,
 		repos: map[string]bool{}, attachments: map[string][]byte{},
 	}
 	f.refsFile = filepath.Join(t.TempDir(), "open-refs")
@@ -119,10 +122,11 @@ func (f *fakeHQ) serve(w http.ResponseWriter, r *http.Request, backend http.Hand
 		writeHQJSON(w, status, map[string]string{"code": code})
 		return
 	}
+	credential := f.credential
 	f.mu.Unlock()
 	if strings.HasPrefix(r.URL.Path, "/git/") {
 		user, password, ok := r.BasicAuth()
-		if !ok || user != hq.GitUser || password != labCredential {
+		if !ok || user != hq.GitUser || password != credential {
 			w.Header().Set("WWW-Authenticate", `Basic realm="HQ"`)
 			http.Error(w, "Authentication required", http.StatusUnauthorized)
 			return
@@ -137,7 +141,7 @@ func (f *fakeHQ) serve(w http.ResponseWriter, r *http.Request, backend http.Hand
 		backend.ServeHTTP(w, r)
 		return
 	}
-	if r.Header.Get("Authorization") != "Mate "+labCredential {
+	if r.Header.Get("Authorization") != "Mate "+credential {
 		writeHQJSON(w, http.StatusUnauthorized, map[string]string{"code": "mate_credential_required"})
 		return
 	}
@@ -357,6 +361,19 @@ func (f *fakeHQ) git(ctx context.Context, dir string, args ...string) string {
 		f.t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// reenroll is the Mate enrolling again, as it does after zcp is redeployed:
+// HQ takes credential from now on and revokes the one before, and the
+// enrollment on disk holds it.
+func (l *hqLab) reenroll(credential string) {
+	l.t.Helper()
+	l.hq.mu.Lock()
+	l.hq.credential = credential
+	l.hq.mu.Unlock()
+	if err := hq.SaveEnrollment(hq.EnrollmentPath(), hq.Enrollment{HQ: l.hq.srv.URL, HQProjectID: "hq1", ProjectID: labMate, Credential: credential}); err != nil {
+		l.t.Fatal(err)
+	}
 }
 
 // merge squashes the Mate's change #1 in appdev onto `main`, the way HQ's

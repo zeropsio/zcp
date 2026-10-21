@@ -460,9 +460,16 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 			return handleLaunchProduction(ctx, projectID, client, httpClient, schemaCache, input, stateDir, rt, sshDeployer, apiHost)
 		}
 		if input.Workflow == workflowDevelop {
-			// A pair an older zcp left without stages gets them back
-			// before develop takes its scope (spec-mate §2.8a.4).
+			// Work starts here, so the Mate's pairs are made current first:
+			// a pair an older zcp left without stages gets them back before
+			// develop takes its scope (spec-mate §2.8a.4), and a dev service
+			// whose credential HQ revoked gets the current one. The group
+			// recipe stays with bootstrap and adopt, which change what it
+			// composes.
 			rebuildMateStages(ctx, httpClient, rt, stateDir, recipePairMountRoot)
+			lines := reconcileHQRepositories(ctx, client, httpClient, sshDeployer, rt, stateDir)
+			result, _, err := handleStart(ctx, projectID, engine, client, schemaCache, input, rt, sshDeployer)
+			return withRepositoryReport(result, lines), nil, err
 		}
 		return handleStart(ctx, projectID, engine, client, schemaCache, input, rt, sshDeployer)
 	case "reset":
