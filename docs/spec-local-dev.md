@@ -66,9 +66,13 @@ Zerops supports three token scope levels:
 The project is zcli's scope, else the container's injected `projectId`, else
 the one project the token reaches counted across every organization it
 belongs to (none → `TOKEN_NO_PROJECT`, several → `TOKEN_MULTI_PROJECT`).
-Every org-filtered call (service, env, process searches, launch-production's
-admin client and role grant) targets the organization that owns that project,
-never the token's first membership (`TestResolve_BindsTheOrgThatOwnsTheProject`).
+Every org-filtered call (service, env, process searches) targets the
+organization that owns that project, never the token's first membership
+(`TestResolve_BindsTheOrgThatOwnsTheProject`). The launch-production window
+acts in the organization that owns the launch's target project — the source
+project's for a new project, the existing project's for an existing-project
+launch — for its admin client, role grant and searches
+(`TestLaunchWindow_ExistingProjectInAnotherOrg_ProdOpsConfirmAndResetReachTheTargetsServices`).
 
 ### Multi-Project Isolation
 

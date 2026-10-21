@@ -23,10 +23,15 @@ import (
 // P-LP-1 invariant: the launchKey is NEVER written here. The struct has
 // no field for it. Tests pin via TestLaunchState_NoLaunchKeyFieldExists.
 type launchState struct {
-	LaunchID              string                                   `json:"launchId"`
-	SourceProjectID       string                                   `json:"sourceProjectId"`
-	SourceRepoURL         string                                   `json:"sourceRepoUrl,omitempty"`
-	TargetProjectID       string                                   `json:"targetProjectId,omitempty"`
+	LaunchID        string `json:"launchId"`
+	SourceProjectID string `json:"sourceProjectId"`
+	SourceRepoURL   string `json:"sourceRepoUrl,omitempty"`
+	TargetProjectID string `json:"targetProjectId,omitempty"`
+	// TargetClientID is the org owning an existing-project launch's target,
+	// recorded at staging: every later launch-window step builds its admin
+	// client for that org. Empty for a new-project launch, whose project is
+	// created in the source project's org.
+	TargetClientID        string                                   `json:"targetClientId,omitempty"`
 	TargetProjectName     string                                   `json:"targetProjectName"`
 	TargetServiceHostname string                                   `json:"targetServiceHostname,omitempty"`
 	ImportedServices      []importedServiceEntry                   `json:"importedServices,omitempty"`

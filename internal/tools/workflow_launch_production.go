@@ -78,10 +78,15 @@ import (
 var projectAdminClientFactory = platform.NewProjectAdminClientForClient
 
 // newLaunchAdmin builds the launch admin client for the org that owns the
-// source project — the org the prod project is created in, and whose
-// clientUser the per-project role is granted to — never the launch key's
-// first membership. client is bound to that org (auth.Resolve).
-func newLaunchAdmin(ctx context.Context, client platform.Client, launchKey, apiHost string) (platform.ProjectAdminClient, error) {
+// launch's target project — never the launch key's first membership. An
+// existing-project launch recorded its target's org (state.TargetClientID);
+// a new-project launch creates its project in the source project's org,
+// the one client is bound to (auth.Resolve), and grants the per-project
+// role with that org's clientUser. state is nil before a launch records one.
+func newLaunchAdmin(ctx context.Context, client platform.Client, state *launchState, launchKey, apiHost string) (platform.ProjectAdminClient, error) {
+	if state != nil && state.TargetClientID != "" {
+		return projectAdminClientFactory(launchKey, apiHost, state.TargetClientID)
+	}
 	orgID, err := client.OrgID(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("launch admin: the source project's org: %w", err)
@@ -632,7 +637,7 @@ func readEndedLaunch(
 		}
 		return nil
 	}
-	admin, err := newLaunchAdmin(ctx, client, token, apiHost)
+	admin, err := newLaunchAdmin(ctx, client, state, token, apiHost)
 	if err != nil {
 		return launchFailedAuthResponse(corpus, err)
 	}
@@ -746,7 +751,7 @@ func executeLaunchPipelineResume(
 	state *launchState,
 	apiHost string,
 ) (*mcp.CallToolResult, any, error) {
-	admin, err := newLaunchAdmin(ctx, client, launchKey, apiHost)
+	admin, err := newLaunchAdmin(ctx, client, state, launchKey, apiHost)
 	if err != nil {
 		return launchFailedAuthResponse(corpus, err), nil, nil
 	}
@@ -814,7 +819,7 @@ func executeLaunchMutation(
 	var admin platform.ProjectAdminClient
 	if input.LaunchKey != "" {
 		var adminErr error
-		admin, adminErr = newLaunchAdmin(ctx, client, input.LaunchKey, apiHost)
+		admin, adminErr = newLaunchAdmin(ctx, client, nil, input.LaunchKey, apiHost)
 		if adminErr != nil {
 			// Don't leak the key value in the error — wrap via the typed error.
 			return launchFailedAuthResponse(corpus, adminErr), nil, nil
@@ -934,7 +939,7 @@ func executeLaunchMutation(
 		mintedName = resolvedMintedName
 
 		var adminErr error
-		admin, adminErr = newLaunchAdmin(ctx, client, launchToken, apiHost)
+		admin, adminErr = newLaunchAdmin(ctx, client, nil, launchToken, apiHost)
 		if adminErr != nil {
 			if mintedName == "" {
 				// Staged-retry path: launchToken came from a PRIOR

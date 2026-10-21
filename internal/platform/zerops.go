@@ -49,6 +49,23 @@ func NewZeropsClient(token, apiHost string) (*ZeropsClient, error) {
 	return newZeropsClientOn(token, resolveEndpoint(apiHost), &http.Client{Timeout: DefaultAPITimeout}), nil
 }
 
+// NewProjectClient is NewZeropsClient for a known project (a container's
+// injected projectId): it reads the project and binds the client to the
+// org that owns it, as auth.Resolve does for the CLI, so a key in several
+// orgs still targets the project's.
+func NewProjectClient(ctx context.Context, token, apiHost, projectID string) (*ZeropsClient, error) {
+	z, err := NewZeropsClient(token, apiHost)
+	if err != nil {
+		return nil, err
+	}
+	project, err := z.GetProject(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("read the project's organization: %w", err)
+	}
+	z.BindOrg(project.ClientID)
+	return z, nil
+}
+
 // newZeropsClientOn builds the client on a given HTTP client — the org
 // reader hands it one whose transport only reads (OpenOrgReader).
 func newZeropsClientOn(token, endpoint string, httpClient *http.Client) *ZeropsClient {
@@ -114,19 +131,18 @@ func (z *ZeropsClient) OrgID(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if len(info.Memberships) > 1 {
-		return "", NewPlatformError(ErrOrgAmbiguous,
-			fmt.Sprintf("Token belongs to %d organizations and no project names which one this call is for", len(info.Memberships)),
-			"Run against one project: the organization that owns it is the one searched")
-	}
-	orgID := ""
-	if len(info.Memberships) == 1 {
-		orgID = info.Memberships[0].ClientID
+	orgID, err := soleOrg(info.Memberships)
+	if err != nil {
+		return "", err
 	}
 
 	z.mu.Lock()
+	defer z.mu.Unlock()
+	if z.cachedID != "" {
+		// A BindOrg (or a racing fetch) landed during the unlocked read.
+		return z.cachedID, nil
+	}
 	z.cachedID = orgID
-	z.mu.Unlock()
 	return orgID, nil
 }
 

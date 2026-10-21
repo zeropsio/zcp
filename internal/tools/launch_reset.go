@@ -77,7 +77,7 @@ type launchResetReport struct {
 // Returns a non-nil refusal result on any non-confirmed outcome; the
 // caller returns it verbatim (state file untouched in those cases).
 func deleteOrphanProjectConfirmed(ctx context.Context, client platform.Client, launchKey, apiHost, stateDir string, state *launchState) (deletedProjectID, deleteProcessID string, refusal *mcp.CallToolResult) {
-	admin, adminErr := newLaunchAdmin(ctx, client, launchKey, apiHost)
+	admin, adminErr := newLaunchAdmin(ctx, client, state, launchKey, apiHost)
 	if adminErr != nil {
 		return "", "", convertError(platform.NewPlatformError(
 			platform.ErrAPIError,

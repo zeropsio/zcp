@@ -259,14 +259,11 @@ var mateHQPrepare = prepareEnrollment
 func SetMateHQPrepare(fn func(context.Context, func(string) string) error) { mateHQPrepare = fn }
 
 func prepareEnrollment(ctx context.Context, lookup func(string) string) error {
-	client, err := apiClientOf(lookup)
+	client, err := apiClientOf(ctx, lookup)
 	if err != nil {
 		return err
 	}
 	e := mateEnroller(lookup, client)
-	if e.ProjectID == "" {
-		return errors.New("projectId is not in this container's environment")
-	}
 	_, err = e.Recheck(ctx)
 	if err == nil {
 		return nil
@@ -276,11 +273,9 @@ func prepareEnrollment(ctx context.Context, lookup func(string) string) error {
 		(!errors.As(err, &refused) || refused.Code != "mate_credential_required") {
 		return err
 	}
-	project, err := client.GetProject(ctx, e.ProjectID)
-	if err != nil {
-		return fmt.Errorf("read the project's organization: %w", err)
+	if e.OrgID, err = client.OrgID(ctx); err != nil {
+		return fmt.Errorf("the project's organization: %w", err)
 	}
-	e.OrgID = project.ClientID
 	_, err = e.Enroll(ctx)
 	if err != nil {
 		return fmt.Errorf("enroll the Mate before seeding: %w", err)
@@ -305,21 +300,15 @@ func keepEnrolled(ctx context.Context, env func() func(string) string) {
 	seedInput := ""
 	enroller := func(ctx context.Context, withOrg bool) (hq.Enroller, error) {
 		lookup := env()
-		projectID := lookup("projectId")
-		if projectID == "" {
-			return hq.Enroller{}, errors.New("projectId is not in this container's environment")
-		}
-		client, err := apiClientOf(lookup)
+		client, err := apiClientOf(ctx, lookup)
 		if err != nil {
 			return hq.Enroller{}, err
 		}
 		e := mateEnroller(lookup, client)
 		if withOrg {
-			project, err := client.GetProject(ctx, projectID)
-			if err != nil {
-				return hq.Enroller{}, fmt.Errorf("read the project's organization: %w", err)
+			if e.OrgID, err = client.OrgID(ctx); err != nil {
+				return hq.Enroller{}, fmt.Errorf("the project's organization: %w", err)
 			}
-			e.OrgID = project.ClientID
 		}
 		return e, nil
 	}
@@ -409,13 +398,19 @@ func seedSignIns(ctx context.Context, lookup func(string) string) {
 }
 
 // apiClientOf is a client of the Zerops API over the Mate's key as the live
-// env store holds it now, so a rotated key is the one it uses.
-func apiClientOf(lookup func(string) string) (*platform.ZeropsClient, error) {
+// env store holds it now, so a rotated key is the one it uses — bound to
+// the org that owns the container's project, as `zcp hq` binds through
+// auth.Resolve.
+func apiClientOf(ctx context.Context, lookup func(string) string) (*platform.ZeropsClient, error) {
 	key := lookup("ZCP_API_KEY")
 	if key == "" {
 		return nil, errors.New("ZCP_API_KEY is not in this container's environment")
 	}
-	client, err := platform.NewZeropsClient(key, mate.ResolveAPIHost(lookup("ZCP_API_HOST")))
+	projectID := lookup("projectId")
+	if projectID == "" {
+		return nil, errors.New("projectId is not in this container's environment")
+	}
+	client, err := platform.NewProjectClient(ctx, key, mate.ResolveAPIHost(lookup("ZCP_API_HOST")), projectID)
 	if err != nil {
 		return nil, fmt.Errorf("build the API client: %w", err)
 	}

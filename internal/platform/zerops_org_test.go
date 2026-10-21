@@ -218,3 +218,61 @@ func TestAccountClient_SearchesTheConfiguredOrgNotTheFirstMembership(t *testing.
 		t.Errorf("service search clientId = %q, want org-b", got.ClientID)
 	}
 }
+
+// The mock answers OrgID the way ZeropsClient does, so tool tests see the
+// real refusal for an unbound token in several orgs.
+func TestMockOrgID_AnswersLikeTheRealClient(t *testing.T) {
+	t.Parallel()
+	two := &platform.UserInfo{Memberships: []platform.ClientMembership{{ClientID: "org-a"}, {ClientID: "org-b"}}}
+	tests := []struct {
+		name     string
+		info     *platform.UserInfo
+		bind     string
+		want     string
+		wantCode string
+	}{
+		{name: "a bound org wins", info: two, bind: "org-b", want: "org-b"},
+		{name: "an unbound single-org token answers its only org", info: &platform.UserInfo{Memberships: []platform.ClientMembership{{ClientID: "org-a"}}}, want: "org-a"},
+		{name: "an unbound token in several orgs refuses", info: two, wantCode: platform.ErrOrgAmbiguous},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			m := platform.NewMock().WithUserInfo(tt.info)
+			if tt.bind != "" {
+				m.BindOrg(tt.bind)
+			}
+			got, err := m.OrgID(context.Background())
+			if tt.wantCode != "" {
+				var pe *platform.PlatformError
+				if !errors.As(err, &pe) || pe.Code != tt.wantCode {
+					t.Fatalf("OrgID error = %v, want code %s", err, tt.wantCode)
+				}
+				return
+			}
+			if err != nil || got != tt.want {
+				t.Errorf("OrgID = %q, %v; want %q", got, err, tt.want)
+			}
+		})
+	}
+}
+
+// The Mate unit builds its clients from the container's key and project;
+// like the CLI (auth.Resolve), they target the org that owns the project.
+func TestNewProjectClient_TargetsTheOrgOwningTheProject(t *testing.T) {
+	t.Parallel()
+	api, srv := newOrgAPI(t,
+		[][2]string{{"cu-a", "org-a"}, {"cu-b", "org-b"}},
+		map[string]string{"proj-b": "org-b"},
+	)
+	client, err := platform.NewProjectClient(context.Background(), "token", srv.URL, "proj-b")
+	if err != nil {
+		t.Fatalf("NewProjectClient: %v", err)
+	}
+	if _, err := client.GetProjectEnv(context.Background(), "proj-b"); err != nil {
+		t.Fatalf("GetProjectEnv: %v", err)
+	}
+	if got := <-api.searches; got.ClientID != "org-b" {
+		t.Errorf("env search clientId = %q, want org-b", got.ClientID)
+	}
+}

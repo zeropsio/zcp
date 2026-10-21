@@ -43,8 +43,12 @@ func TestValidateExistingProdTokenScope_TargetsTheOrgOwningTheTargetProject(t *t
 		}}).
 		WithProjects([]platform.Project{{ID: "target-id", Name: "prod", ClientID: "org-owner"}})
 
-	if err := validateExistingProdTokenScope(context.Background(), target, "target-id"); err != nil {
+	org, err := validateExistingProdTokenScope(context.Background(), target, "target-id")
+	if err != nil {
 		t.Fatalf("validateExistingProdTokenScope: %v", err)
+	}
+	if org != "org-owner" {
+		t.Errorf("returned org = %q, want org-owner", org)
 	}
 	if got, _ := target.OrgID(context.Background()); got != "org-owner" {
 		t.Errorf("target client org = %q, want org-owner", got)

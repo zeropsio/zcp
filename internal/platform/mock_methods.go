@@ -37,14 +37,19 @@ func (m *Mock) BindOrg(clientID string) {
 	m.mu.Unlock()
 }
 
-// OrgID returns the org the last BindOrg call named.
+// OrgID answers as ZeropsClient.OrgID does: the bound org, else the
+// configured user's only membership, else ErrOrgAmbiguous. A mock with no
+// user info configured models no identity and answers "".
 func (m *Mock) OrgID(_ context.Context) (string, error) {
 	if err := m.getError("OrgID"); err != nil {
 		return "", err
 	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.boundOrg, nil
+	if m.boundOrg != "" || m.userInfo == nil {
+		return m.boundOrg, nil
+	}
+	return soleOrg(m.userInfo.Memberships)
 }
 
 func (m *Mock) ListProjects(_ context.Context, clientID string) ([]Project, error) {
