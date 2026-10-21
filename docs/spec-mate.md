@@ -3715,7 +3715,7 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   descends from HQ's (`ops.BuildBaseBranchCommand`: a pair fresh from `zcp init` takes `main`'s
   tree, a pair with history of its own is joined onto HQ's empty seed, anything else is refused
   with its remedy — two unrelated histories of code are never joined, the pair's own is kept on a
-  branch `own-history`), and the pair's record `ServiceMeta.HQ {appId, repo}`. There is no Mate
+  branch named after its commit, `ops.KeepOwnHistory`, so the remedy runs again as it is), and the pair's record `ServiceMeta.HQ {appId, repo}`. There is no Mate
   branch. A remote that is not this HQ's is the user's own and left alone. One repository per pair
   is enforced by that record; a pair the stand-up adopted is wired to the recipe's name, and wired
   again to it.

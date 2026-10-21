@@ -452,13 +452,16 @@ func TestBaseBranchRefusalRemedy_TheNextAttemptWires(t *testing.T) {
 				commitAll(t, dir, "init")
 			},
 			refusal: "ZCP_BASE_NOT_SEED",
-			remedy:  []string{"git branch own-history && git fetch origin 'main' && git reset --keep FETCH_HEAD", "never joined", "git cherry-pick"},
+			remedy:  []string{KeepOwnHistory + " && git fetch origin 'main' && git reset --keep FETCH_HEAD", "never joined", "git cherry-pick", "ask the person first"},
 			apply: func(t *testing.T, pair string) {
 				t.Helper()
 				own := gitOr(t, pair, "rev-parse", "HEAD")
-				runRemedyShell(t, pair, "git branch own-history && git fetch -q origin 'main' && git reset -q --keep FETCH_HEAD")
-				if got := gitOr(t, pair, "rev-parse", "own-history"); got != own {
-					t.Errorf("own-history = %s, want the pair's own history %s kept", got, own)
+				// Run twice: a remedy stopped half-way is run again as it is.
+				for range 2 {
+					runRemedyShell(t, pair, KeepOwnHistory+" && git fetch -q origin 'main' && git reset -q --keep FETCH_HEAD")
+				}
+				if got := gitOr(t, pair, "rev-parse", "own-history-"+own[:12]); got != own {
+					t.Errorf("own-history-%s = %s, want the pair's own history %s kept", own[:12], got, own)
 				}
 			},
 		},
