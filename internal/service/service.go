@@ -265,14 +265,11 @@ var mateHQPrepare = prepareEnrollment
 func SetMateHQPrepare(fn func(context.Context, func(string) string) error) { mateHQPrepare = fn }
 
 func prepareEnrollment(ctx context.Context, lookup func(string) string) error {
-	client, err := apiClientOf(lookup)
+	client, err := apiClientOf(ctx, lookup)
 	if err != nil {
 		return err
 	}
 	e := mateEnroller(lookup, client)
-	if e.ProjectID == "" {
-		return errors.New("projectId is not in this container's environment")
-	}
 	_, err = e.Recheck(ctx)
 	if err == nil {
 		return nil
@@ -282,11 +279,9 @@ func prepareEnrollment(ctx context.Context, lookup func(string) string) error {
 		(!errors.As(err, &refused) || refused.Code != "mate_credential_required") {
 		return err
 	}
-	info, err := client.GetUserInfo(ctx)
-	if err != nil {
-		return fmt.Errorf("read the key's organization: %w", err)
+	if e.OrgID, err = client.OrgID(ctx); err != nil {
+		return fmt.Errorf("the project's organization: %w", err)
 	}
-	e.OrgID = info.ID
 	_, err = e.Enroll(ctx)
 	if err != nil {
 		return fmt.Errorf("enroll the Mate before seeding: %w", err)
@@ -303,7 +298,7 @@ const hqCallTimeout = 15 * time.Second
 // keepEnrolled is hq.Keep over the container's environment: each attempt
 // builds the client from the live env store as it is then, so a rotated key
 // is the one it uses. An enrollment, and the anchor read while the kept HQ
-// does not answer, ask the key's own record which org it is in, to read that
+// does not answer, ask the container's project which org owns it, to read that
 // org's member list for the official HQ; a recheck asks the kept
 // enrollment's HQ alone (R6). Each attempt that says something about
 // this Mate leaves its outcome beside the enrollment.
@@ -311,21 +306,15 @@ func keepEnrolled(ctx context.Context, env func() func(string) string) {
 	seedInput := ""
 	enroller := func(ctx context.Context, withOrg bool) (hq.Enroller, error) {
 		lookup := env()
-		projectID := lookup("projectId")
-		if projectID == "" {
-			return hq.Enroller{}, errors.New("projectId is not in this container's environment")
-		}
-		client, err := apiClientOf(lookup)
+		client, err := apiClientOf(ctx, lookup)
 		if err != nil {
 			return hq.Enroller{}, err
 		}
 		e := mateEnroller(lookup, client)
 		if withOrg {
-			info, err := client.GetUserInfo(ctx)
-			if err != nil {
-				return hq.Enroller{}, fmt.Errorf("read the key's organization: %w", err)
+			if e.OrgID, err = client.OrgID(ctx); err != nil {
+				return hq.Enroller{}, fmt.Errorf("the project's organization: %w", err)
 			}
-			e.OrgID = info.ID
 		}
 		return e, nil
 	}
@@ -415,13 +404,19 @@ func seedSignIns(ctx context.Context, lookup func(string) string) {
 }
 
 // apiClientOf is a client of the Zerops API over the Mate's key as the live
-// env store holds it now, so a rotated key is the one it uses.
-func apiClientOf(lookup func(string) string) (*platform.ZeropsClient, error) {
+// env store holds it now, so a rotated key is the one it uses — bound to
+// the org that owns the container's project, as `zcp hq` binds through
+// auth.Resolve.
+func apiClientOf(ctx context.Context, lookup func(string) string) (*platform.ZeropsClient, error) {
 	key := lookup("ZCP_API_KEY")
 	if key == "" {
 		return nil, errors.New("ZCP_API_KEY is not in this container's environment")
 	}
-	client, err := platform.NewZeropsClient(key, mate.ResolveAPIHost(lookup("ZCP_API_HOST")))
+	projectID := lookup("projectId")
+	if projectID == "" {
+		return nil, errors.New("projectId is not in this container's environment")
+	}
+	client, err := platform.NewProjectClient(ctx, key, mate.ResolveAPIHost(lookup("ZCP_API_HOST")), projectID)
 	if err != nil {
 		return nil, fmt.Errorf("build the API client: %w", err)
 	}

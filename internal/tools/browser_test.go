@@ -355,7 +355,8 @@ func TestBrowserTool_FullPageReturnsOneImageOfTheWholePage(t *testing.T) {
 // an agent — which may call the tool from a script, not directly: the paint
 // wait is done, so wait for something, not for a time; fresh-context costs a
 // cold Chrome and pays only on the first check after a deploy; the result's
-// timing facts are the ones to report.
+// timing facts are the ones to report; find's --name is a substring match
+// unless --exact; a refused command comes back as a failed step.
 func TestBrowserTool_DescriptionTeachesTheCall(t *testing.T) {
 	tl, err := browserSession(t).ListTools(t.Context(), &mcp.ListToolsParams{})
 	if err != nil || len(tl.Tools) != 1 {
@@ -371,12 +372,22 @@ func TestBrowserTool_DescriptionTeachesTheCall(t *testing.T) {
 		"fullPage=true for the whole page as one image",
 		"browserRecycled: true means the call ended unclean and the browser was stopped",
 		"To say how a call ran, report the result's durationMs, freshBrowser and browserRecycled; a script that summarises results keeps them.",
+		"click, fill, check, find, get and is look once and fail at once on an element that is not there yet",
+		`["is","checked","<sel>"]`,
+		`["find","label","<text>","check"]`,
+		"find's action follows its value and is only click, fill, check, hover or text; a role's name goes in --name after the action",
+		"An @eN ref exists only after a snapshot earlier in the SAME call and dies with the call's tab",
+		"invalid-command",
+		"stale-ref",
+		`--name matches a substring ("Sign in" hits "Sign in with passkey"); --exact matches the whole name.`,
+		`["eval","<js>"] (value as JSON text; only for what get/is/find cannot read, e.g. localStorage).`,
+		"open, close, tab and window never run; each returns a failed invalid-command step.",
 	} {
 		if !strings.Contains(desc, want) {
 			t.Errorf("description lacks %q", want)
 		}
 	}
-	for _, gone := range []string{"for a first visit"} {
+	for _, gone := range []string{"for a first visit", `["click","@e1"]`} {
 		if strings.Contains(desc, gone) {
 			t.Errorf("description still says %q", gone)
 		}

@@ -4,7 +4,8 @@
 //   - Tool auto-prepends ["open", url] and the first-paint wait, and
 //     auto-appends ["errors"], ["console"], ["network requests"] — the
 //     agent never manages lifecycle directly.
-//   - Any "open", "close" or "eval" the agent passes in Commands is stripped.
+//   - Any "open", "close", "tab" or "window" the agent passes in Commands
+//     does not run; eval runs and returns its value as text.
 //   - Fork exhaustion (stderr only), a deadline, a cancel, a crash or a CDP
 //     wedge release the browser for a recycle and say so in the result;
 //     a clean call hands it back warm.
@@ -409,15 +410,12 @@ func TestBrowserBatch_StripsTabAndWindowCommands(t *testing.T) {
 	}
 }
 
-// TestBrowserBatch_AcceptsSetCommandsStripsEval pins the S7 vocabulary
+// TestBrowserBatch_AcceptsSetAndEvalCommands pins the S7 vocabulary
 // extension: `set viewport`, `set device`, `set media` (agent-browser
 // 0.35.1 `set --help`: "viewport <w> <h> [scale]", "device <name>",
 // "media [dark|light] [reduced-motion]") pass through unchanged as inner
-// commands, while `eval` is now stripped alongside `open`/`close` — the
-// tool description has always said "Do NOT use ["eval",...]" but nothing
-// enforced it; dedicated commands produce structured output, eval's
-// return shape is not stable.
-func TestBrowserBatch_AcceptsSetCommandsStripsEval(t *testing.T) {
+// commands, and so does `eval`: it reads what get/is/find cannot.
+func TestBrowserBatch_AcceptsSetAndEvalCommands(t *testing.T) {
 	tests := []struct {
 		name    string
 		command []string
@@ -426,7 +424,7 @@ func TestBrowserBatch_AcceptsSetCommandsStripsEval(t *testing.T) {
 		{"set viewport passes through", []string{"set", "viewport", "1920", "1080"}, 1},
 		{"set device passes through", []string{"set", "device", "iPhone 12"}, 1},
 		{"set media passes through", []string{"set", "media", "dark"}, 1},
-		{"eval is stripped", []string{"eval", "document.title"}, 0},
+		{"eval passes through", []string{"eval", "document.title"}, 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -455,11 +453,11 @@ func TestBrowserBatch_AcceptsSetCommandsStripsEval(t *testing.T) {
 	}
 }
 
-// TestBrowserBatch_StillStripsOpenCloseEvalTogether guards the "still
+// TestBrowserBatch_StillStripsOpenCloseBesideEval guards the "still
 // strips open, close" half of the S7 vocabulary extension in the same
-// batch a caller mixes them with a legitimate set command — the eval
-// strip is new; open/close stripping must keep working alongside it.
-func TestBrowserBatch_StillStripsOpenCloseEvalTogether(t *testing.T) {
+// batch a caller mixes them with a legitimate set command and an eval,
+// which both run.
+func TestBrowserBatch_StillStripsOpenCloseBesideEval(t *testing.T) {
 	fake := &fakeBrowserRunner{runStdout: `[]`}
 	defer OverrideBrowserRunnerForTest(fake)()
 
@@ -496,11 +494,174 @@ func TestBrowserBatch_StillStripsOpenCloseEvalTogether(t *testing.T) {
 	if closeN != 0 {
 		t.Errorf("close occurrences = %d, want 0 (stripped)", closeN)
 	}
-	if evalN != 0 {
-		t.Errorf("eval occurrences = %d, want 0 (stripped)", evalN)
+	if evalN != 1 {
+		t.Errorf("eval occurrences = %d, want 1 (runs)", evalN)
 	}
 	if setN != 1 {
 		t.Errorf("set occurrences = %d, want 1 (passes through)", setN)
+	}
+}
+
+// TestBrowserBatch_RefusedCommandsAreFailedSteps pins that a command the tool
+// does not run is reported, not dropped without a word: each refused open,
+// close, tab or window comes back first in steps, in the order sent, as
+// a failed invalid-command step saying what to use instead — an agent whose
+// command vanished spent a call finding out. The walk itself is unchanged.
+func TestBrowserBatch_RefusedCommandsAreFailedSteps(t *testing.T) {
+	batch := [][]string{
+		{"set", "viewport", "1280", "577"},
+		{"open", "https://example.com"},
+		{"wait", "--fn", "performance.getEntriesByName('first-contentful-paint').length>0", "--timeout", "5000"},
+		{"get", "text", ".error"},
+		{"errors"},
+		{"console"},
+		{"network", "requests", "--status", "400-599"},
+	}
+	fake := &fakeBrowserRunner{runStdout: makeStdout(t, batch)}
+	defer OverrideBrowserRunnerForTest(fake)()
+
+	result, err := BrowserBatch(context.Background(), BrowserBatchInput{
+		URL: "https://example.com",
+		Commands: [][]string{
+			{"open", "https://example.com/other"},
+			{"get", "text", ".error"},
+			{"tab", "new"},
+			{"window", "new"},
+			{"close"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got := parseStdinBatch(t, fake.lastStdin); len(got) != len(batch) {
+		t.Errorf("refused commands must not run; batch: %v", got)
+	}
+	refused := []struct {
+		command []string
+		says    string // a word of the alternative the step names
+	}{
+		{[]string{"open", "https://example.com/other"}, "url"},
+		{[]string{"tab", "new"}, "isolation"},
+		{[]string{"window", "new"}, "isolation"},
+		{[]string{"close"}, "closes"},
+	}
+	if len(result.Steps) != len(refused)+len(batch) {
+		t.Fatalf("steps = %d, want %d refused + %d run: %+v", len(result.Steps), len(refused), len(batch), result.Steps)
+	}
+	for i, want := range refused {
+		step := result.Steps[i]
+		if !slices.Equal(step.Command, want.command) {
+			t.Errorf("steps[%d].command = %v, want %v", i, step.Command, want.command)
+		}
+		if step.Success {
+			t.Errorf("steps[%d] %v: success = true, want false", i, want.command)
+		}
+		if step.ErrorKind != ErrorKindInvalidCommand {
+			t.Errorf("steps[%d] %v: errorKind = %q, want %q", i, want.command, step.ErrorKind, ErrorKindInvalidCommand)
+		}
+		if step.Error == nil || !strings.Contains(*step.Error, want.says) {
+			t.Errorf("steps[%d] %v: error must name the alternative (%q), got %v", i, want.command, want.says, step.Error)
+		}
+	}
+	if !slices.Equal(result.Steps[len(refused)].Command, batch[0]) {
+		t.Errorf("the run's steps must follow the refused ones, got %v", result.Steps[len(refused)].Command)
+	}
+	if len(result.ErrorsOutput) == 0 || len(result.ConsoleOutput) == 0 {
+		t.Errorf("the reporting tail must still be read: errors=%s console=%s", result.ErrorsOutput, result.ConsoleOutput)
+	}
+}
+
+// TestBrowserBatch_EvalReturnsItsValueAsText pins that an eval runs in its
+// place among the caller's commands and its step's result is the value as
+// JSON text — what get/is/find cannot read (localStorage, app state). A long
+// value is cut and says so; a script that throws is a failed step carrying
+// the page's error. Answers are agent-browser 0.39.1's, measured: data is
+// {lifecycle, origin, result: <value>}, undefined comes back as null.
+func TestBrowserBatch_EvalReturnsItsValueAsText(t *testing.T) {
+	long := strings.Repeat("x", 50000)
+	value := func(v string) string {
+		return `{"success":true,"data":{"lifecycle":{"launched":false,"reused":true},"origin":"https://example.com","result":` + v + `},"error":null}`
+	}
+	answers := map[string]string{
+		`localStorage.getItem("k")`: value(`"v"`),
+		`({a:1,b:[1,2]})`:           value(`{"a":1,"b":[1,2]}`),
+		`undefined`:                 value(`null`),
+		`"x".repeat(50000)`:         value(`"` + long + `"`),
+		`throw new Error("boom")`:   `{"success":false,"data":null,"error":"Evaluation error: Error: boom\n    at <anonymous>:1:7"}`,
+	}
+	commands := [][]string{
+		{"eval", `localStorage.getItem("k")`},
+		{"get", "text", "h1"},
+		{"eval", `({a:1,b:[1,2]})`},
+		{"eval", `undefined`},
+		{"eval", `"x".repeat(50000)`},
+		{"eval", `throw new Error("boom")`},
+	}
+	var seen [][]string
+	batch, _ := buildCanonicalBatch("https://example.com", commands, "", false)
+	stdout, _, _, err := runBrowserSteps(context.Background(), batch, func(_ context.Context, args []string) (string, string, error) {
+		seen = append(seen, args)
+		if args[0] == "eval" {
+			return answers[args[1]], "", nil
+		}
+		return `{"success":true,"data":{"ok":true},"error":null}`, "", nil
+	})
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	fake := &fakeBrowserRunner{runStdout: stdout}
+	defer OverrideBrowserRunnerForTest(fake)()
+
+	result, err := BrowserBatch(context.Background(), BrowserBatchInput{URL: "https://example.com", Commands: commands})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(seen) < 3+len(commands) || !slices.EqualFunc(seen[3:3+len(commands)], commands, slices.Equal) {
+		t.Fatalf("the caller's commands must run in order after open and the paint wait, ran %v", seen)
+	}
+	steps := map[string]BrowserStepResult{}
+	for _, step := range result.Steps {
+		if isCommand(step.Command, "eval") {
+			steps[step.Command[1]] = step
+		}
+	}
+	text := func(script string) string {
+		t.Helper()
+		step := steps[script]
+		if !step.Success || step.Error != nil {
+			t.Fatalf("eval %s: want a successful step, got %+v", script, step)
+		}
+		var s string
+		if err := json.Unmarshal(step.Result, &s); err != nil {
+			t.Fatalf("eval %s: result must be text, got %s", script, step.Result)
+		}
+		return s
+	}
+	for script, want := range map[string]string{
+		`localStorage.getItem("k")`: `"v"`,
+		`({a:1,b:[1,2]})`:           `{"a":1,"b":[1,2]}`,
+		`undefined`:                 `null`,
+	} {
+		if got := text(script); got != want {
+			t.Errorf("eval %s: result = %q, want %q", script, got, want)
+		}
+	}
+
+	cut := text(`"x".repeat(50000)`)
+	if !strings.HasPrefix(cut, `"`+strings.Repeat("x", 9000)) || len(cut) > 10200 {
+		t.Errorf("a long value must keep its start and be cut near 10000 bytes, got %d bytes", len(cut))
+	}
+	if !strings.Contains(cut, "cut") || !strings.Contains(cut, "50002") {
+		t.Errorf("a cut value must say it was cut and how long it was, ends %q", cut[len(cut)-120:])
+	}
+
+	thrown := steps[`throw new Error("boom")`]
+	if thrown.Success || thrown.Error == nil || !strings.Contains(*thrown.Error, "Error: boom") {
+		t.Errorf("a script that throws must be a failed step with the page's error, got %+v", thrown)
+	}
+	if len(result.ErrorsOutput) == 0 || result.BrowserRecycled {
+		t.Errorf("a thrown eval fails its step, not the walk: errors=%s recycled=%v", result.ErrorsOutput, result.BrowserRecycled)
 	}
 }
 
@@ -986,6 +1147,13 @@ func TestClassifyStepError_Table(t *testing.T) {
 		{"no such element", "no such element: @e9", ErrorKindSelectorNotFound},
 		{"not editable", "Element is not editable", ErrorKindNotEditable},
 		{"generic timeout", "Timeout 25000ms exceeded waiting for element to be visible", ErrorKindTimeout},
+		{"wait timeout", "Wait timed out after 25000ms", ErrorKindTimeout},
+		{"selector missing in the DOM", "Element not found: #late. Verify the selector, role, or name is correct and the element exists in the DOM.", ErrorKindSelectorNotFound},
+		{"find with an action it lacks is invalid-command", "Unknown action 'get' for find. Valid actions: click, fill, check, hover, text.", "invalid-command"},
+		{"find with the name as a positional is invalid-command", "Unknown action 'Order' for find. Valid actions: click, fill, check, hover, text.", "invalid-command"},
+		{"unknown command is invalid-command", "Unknown command: foo", "invalid-command"},
+		{"unknown get or is subcommand is invalid-command", "Unknown subcommand: foo\nValid options: visible, enabled, checked", "invalid-command"},
+		{"ref outside its snapshot's tab is stale-ref", "Unknown ref: e99", "stale-ref"},
 		{"unrecognized falls to other", "some unexpected agent-browser failure", ErrorKindOther},
 	}
 	for _, tt := range tests {

@@ -14,7 +14,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
@@ -182,7 +184,7 @@ const todaysDevSetup = `zerops:
 
 // migrationToolServer registers zerops_dev_server for appdev, a dev service
 // whose deploys the platform mock reports with buildStatus.
-func migrationToolServer(t *testing.T, c *devservertest.Container, buildStatus string) (*mcp.Server, string) {
+func migrationToolServer(t *testing.T, c ops.SSHDeployer, buildStatus string) (*mcp.Server, string) {
 	t.Helper()
 	dir := t.TempDir()
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
@@ -328,6 +330,94 @@ func TestDevServer_MigrationsFinalStartWithNoServerRunning_IsNotRefusedOnMemory(
 	finalStart := slices.ContainsFunc(c.Sent(), func(cmd string) bool { return strings.Contains(cmd, "ctl 'start' 'appdev'") })
 	if c.Deploys != 1 || !finalStart {
 		t.Errorf("the final start must reach the supervisor after the one redeploy (deploys %d)", c.Deploys)
+	}
+}
+
+// slowContainer is a dev container whose zcli push and supervisor calls after
+// it take a while, as a real container's do.
+type slowContainer struct {
+	*devservertest.Container
+	push, afterPush time.Duration
+	mu              sync.Mutex
+	pushed          bool
+}
+
+func (s *slowContainer) ExecSSH(ctx context.Context, host, cmd string) ([]byte, error) {
+	s.mu.Lock()
+	switch {
+	case strings.Contains(cmd, "zcli push"):
+		s.pushed = true
+		s.mu.Unlock()
+		time.Sleep(s.push)
+	case s.pushed && strings.Contains(cmd, "@@zcp-devsup ctl"):
+		s.mu.Unlock()
+		time.Sleep(s.afterPush)
+	default:
+		s.mu.Unlock()
+	}
+	return s.Container.ExecSSH(ctx, host, cmd)
+}
+
+// TestDevServer_MigrationSaysEachPhaseAndItsTime: a start that moves the dev
+// setup onto the supervisor tells a client that asked for progress when the
+// redeploy begins and when the dev server's start under the supervisor
+// begins after it, and its answer says where the time went.
+func TestDevServer_MigrationSaysEachPhaseAndItsTime(t *testing.T) {
+	t.Parallel()
+	const push, afterPush = 40 * time.Millisecond, 30 * time.Millisecond
+	c := &slowContainer{Container: &devservertest.Container{YAMLFile: "zerops.yml", YAML: todaysDevSetup}, push: push, afterPush: afterPush}
+	srv, _ := migrationToolServer(t, c, statusActive)
+	st, ct := mcp.NewInMemoryTransports()
+	ss, err := srv.Connect(t.Context(), st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ss.Close()
+	var mu sync.Mutex
+	var said []string
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0.1"}, &mcp.ClientOptions{
+		ProgressNotificationHandler: func(_ context.Context, req *mcp.ProgressNotificationClientRequest) {
+			mu.Lock()
+			defer mu.Unlock()
+			said = append(said, req.Params.Message)
+		},
+	})
+	session, err := client.Connect(t.Context(), ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	params := &mcp.CallToolParams{Name: "zerops_dev_server", Arguments: map[string]any{"action": "start", "hostname": "appdev", "command": "bun --watch index.ts", "port": 3000}}
+	params.SetProgressToken("start-1")
+	result, err := session.CallTool(t.Context(), params)
+	if err != nil || result.IsError {
+		t.Fatalf("zerops_dev_server: %v %+v", err, result)
+	}
+	var a struct {
+		Running        bool `json:"running"`
+		MigrationTimes *struct {
+			PushMillis      int64 `json:"pushMillis"`
+			BuildMillis     int64 `json:"buildMillis"`
+			DevServerMillis int64 `json:"devServerMillis"`
+		} `json:"migrationTimes"`
+	}
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &a); err != nil {
+		t.Fatal(err)
+	}
+	if !a.Running || a.MigrationTimes == nil {
+		t.Fatalf("answer = %s, want it running with the move's times", getTextContent(t, result))
+	}
+	if a.MigrationTimes.PushMillis < push.Milliseconds() || a.MigrationTimes.DevServerMillis < afterPush.Milliseconds() || a.MigrationTimes.BuildMillis < 0 {
+		t.Errorf("times = %+v, want the push ≥ %s and the dev server's start ≥ %s", *a.MigrationTimes, push, afterPush)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	redeploy := slices.IndexFunc(said, func(m string) bool { return m == "moving appdev onto the dev-server supervisor: redeploying it once" })
+	start := slices.IndexFunc(said, func(m string) bool {
+		return strings.HasPrefix(m, "appdev redeployed in ") && strings.HasSuffix(m, "; starting its dev server under the supervisor")
+	})
+	if redeploy < 0 || start <= redeploy {
+		t.Errorf("progress said %q, want the redeploy and then the dev server's start", said)
 	}
 }
 

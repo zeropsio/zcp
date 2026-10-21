@@ -119,11 +119,12 @@ func RegisterStandup(
 	logFetcher platform.LogFetcher,
 	rtInfo runtime.Info,
 	stateDir string,
+	devsup DevsupSource,
 ) {
 	registerStandup(srv, standupDeps{
 		batch: batchDeployer{
 			client: client, httpClient: httpClient, projectID: projectID, sshDeployer: sshDeployer,
-			authInfo: authInfo, logFetcher: logFetcher, rtInfo: rtInfo, stateDir: stateDir,
+			authInfo: authInfo, logFetcher: logFetcher, rtInfo: rtInfo, stateDir: stateDir, devsup: devsup,
 		},
 		mounter:        mounter,
 		liveEnvPath:    mate.LiveEnvStorePath,
@@ -212,7 +213,7 @@ func (d standupDeps) stand(ctx context.Context, progress *standupProgress) (*mcp
 
 	pairs, live := d.preparePairs(ctx, hqc, src, progress)
 	d.deployAll(ctx, pairs, live, src.tier.ProjectEnvs, progress)
-	d.observeDevServers(pairs)
+	d.observeDevServers(ctx, pairs)
 
 	resp := buildStandupResponse(src, pairs, live)
 	resp.Envelope = freshEnvelope(ctx, d.batch.stateDir, d.batch.client, d.batch.projectID, d.batch.rtInfo)

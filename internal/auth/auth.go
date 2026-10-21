@@ -80,21 +80,24 @@ func Resolve(ctx context.Context, client platform.Client) (*Info, error) {
 		return nil, err
 	}
 
-	// Discover project.
-	projectID, projectName, err := discoverProject(ctx, client, userInfo.ID, scopeProjectID)
+	// Discover project, then bind the client to the org that owns it: a
+	// token can belong to several orgs, and every clientId-filtered call
+	// (service, env, process searches) must target the project's.
+	project, err := discoverProject(ctx, client, userInfo.Memberships, scopeProjectID)
 	if err != nil {
 		return nil, err
 	}
+	client.BindOrg(project.ClientID)
 
 	return &Info{
 		Token:       token,
 		APIHost:     apiHost,
 		Region:      region,
-		ClientID:    userInfo.ID,
+		ClientID:    project.ClientID,
 		Email:       userInfo.Email,
 		FullName:    userInfo.FullName,
-		ProjectID:   projectID,
-		ProjectName: projectName,
+		ProjectID:   project.ID,
+		ProjectName: project.Name,
 	}, nil
 }
 
@@ -215,42 +218,43 @@ func resolveCredentials() (token, apiHost, region string, scopeProjectID *string
 // `ErrTokenMultiProject`, and every `zerops_*` tool refusing to operate on a
 // perfectly healthy container. A container's identity is a fact the platform
 // states; it was never a thing to count.
-func discoverProject(ctx context.Context, client platform.Client, clientID string, scopeProjectID *string) (string, string, error) {
+func discoverProject(ctx context.Context, client platform.Client, memberships []platform.ClientMembership, scopeProjectID *string) (*platform.Project, error) {
 	// If zcli has a scoped project, use it directly.
 	if scopeProjectID != nil && *scopeProjectID != "" {
 		proj, err := client.GetProject(ctx, *scopeProjectID)
 		if err != nil {
-			return "", "", fmt.Errorf("get scoped project: %w", err)
+			return nil, fmt.Errorf("get scoped project: %w", err)
 		}
-		return proj.ID, proj.Name, nil
+		return proj, nil
 	}
 
 	// In a container the platform states which project this is.
 	if injected := zruntime.Detect().ProjectID; injected != "" {
 		proj, err := client.GetProject(ctx, injected)
 		if err != nil {
-			return "", "", fmt.Errorf("get injected project: %w", err)
+			return nil, fmt.Errorf("get injected project: %w", err)
 		}
-		return proj.ID, proj.Name, nil
+		return proj, nil
 	}
 
-	// Otherwise list projects and require exactly one.
-	projects, err := client.ListProjects(ctx, clientID)
+	// Otherwise list projects in every org the token belongs to and require
+	// exactly one.
+	projects, err := platform.ListProjectsInEveryOrg(ctx, client, memberships)
 	if err != nil {
-		return "", "", fmt.Errorf("list projects: %w", err)
+		return nil, fmt.Errorf("list projects: %w", err)
 	}
 
 	switch len(projects) {
 	case 0:
-		return "", "", platform.NewPlatformError(
+		return nil, platform.NewPlatformError(
 			platform.ErrTokenNoProject,
 			"Token has no project access",
 			"Use a project-scoped token or grant project access",
 		)
 	case 1:
-		return projects[0].ID, projects[0].Name, nil
+		return &projects[0], nil
 	default:
-		return "", "", platform.NewPlatformError(
+		return nil, platform.NewPlatformError(
 			platform.ErrTokenMultiProject,
 			fmt.Sprintf("Token accesses %d projects; use project-scoped token", len(projects)),
 			"Set the project explicitly (zcli scope), or run where the platform injects projectId",

@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -54,13 +55,17 @@ import (
 
 // standupDeploy is one half's deploy, as the report says it.
 type standupDeploy struct {
-	Status        string   `json:"status"`
-	AppVersionID  string   `json:"appVersionId,omitempty"`
-	BuildDuration string   `json:"buildDuration,omitempty"`
-	URL           string   `json:"url,omitempty"`
-	Reason        string   `json:"reason,omitempty"`
-	BuildLogs     []string `json:"buildLogs,omitempty"`
-	RuntimeLogs   []string `json:"runtimeLogs,omitempty"`
+	Status        string `json:"status"`
+	AppVersionID  string `json:"appVersionId,omitempty"`
+	BuildDuration string `json:"buildDuration,omitempty"`
+	URL           string `json:"url,omitempty"`
+	Reason        string `json:"reason,omitempty"`
+	// Message and Warnings are zerops_deploy's own — among them what the
+	// supervisor step changed in the dev setup or why it could not.
+	Message     string   `json:"message,omitempty"`
+	Warnings    []string `json:"warnings,omitempty"`
+	BuildLogs   []string `json:"buildLogs,omitempty"`
+	RuntimeLogs []string `json:"runtimeLogs,omitempty"`
 	// Failure is zcp's classification of a failed deploy.
 	Failure *standupFailure `json:"failureClassification,omitempty"`
 	next    string
@@ -580,7 +585,8 @@ func (d standupDeps) awaitInFlight(ctx context.Context, halves []standupHalf, li
 	return true
 }
 
-// standupDeployFrom reads one batch entry as the report says it.
+// standupDeployFrom reads one batch entry as the report says it, with the
+// message and warnings zerops_deploy answers.
 func standupDeployFrom(entry ops.DeployBatchEntryResult) *standupDeploy {
 	r := entry.Result
 	switch {
@@ -593,14 +599,18 @@ func standupDeployFrom(entry ops.DeployBatchEntryResult) *standupDeploy {
 		if url == "" && r.PublicAccess != nil {
 			url = r.PublicAccess.URL
 		}
-		return &standupDeploy{Status: standupDeployed, AppVersionID: r.AppVersionID, BuildDuration: r.BuildDuration, URL: url, next: r.NextActions}
+		return &standupDeploy{Status: standupDeployed, AppVersionID: r.AppVersionID, BuildDuration: r.BuildDuration, URL: url,
+			Message: r.Message, Warnings: r.Warnings, next: r.NextActions}
 	case r.TimedOut:
 		return &standupDeploy{Status: standupInFlight,
-			Reason: "the build is still running past the poll's budget; the platform finishes it — a second zerops_standup waits for it and carries on"}
+			Reason:  "the build is still running past the poll's budget; the platform finishes it — a second zerops_standup waits for it and carries on",
+			Message: r.Message, Warnings: r.Warnings}
 	}
 	deploy := &standupDeploy{
 		Status:        standupDeployFailed,
 		Reason:        fmt.Sprintf("the deploy ended %s", r.Status),
+		Message:       r.Message,
+		Warnings:      r.Warnings,
 		BuildDuration: r.BuildDuration,
 		BuildLogs:     r.BuildLogs,
 		RuntimeLogs:   r.RuntimeLogs,
@@ -648,29 +658,53 @@ type standupDevServer struct {
 }
 
 // observeDevServers says, for every dev half that runs code, whether a dev
-// server runs on it. None is started here: a dev setup without the supervisor
-// idles on a no-op keepalive, and the command that serves the app is recorded
-// nowhere zcp reads — only as a comment in a hand-written recipe — so starting
-// one is the model's, with the port the dev setup declares. A dev setup under
-// the supervisor starts its declared server itself; the deploy reports it.
-func (d standupDeps) observeDevServers(pairs []*standupPair) {
+// server runs on it, as its supervisor answers now (the deploy's own read
+// when this call deployed it with one server declared). None is started
+// here: the command that serves the app is recorded nowhere zcp reads — only
+// as a comment in a hand-written recipe — so starting one is the model's,
+// with the port the dev setup declares. A declared server the supervisor
+// starts itself after every deploy.
+func (d standupDeps) observeDevServers(ctx context.Context, pairs []*standupPair) {
 	for _, sp := range pairs {
 		if !sp.devDeploy.running() {
 			continue
 		}
 		host := sp.pair.Dev.Hostname
-		if r := sp.devResult; r != nil && r.DevServer != nil {
-			state := standupDevServerRunning
-			if !r.DevServer.Running {
-				state = standupDevServerDown
-			}
-			sp.devServer = &standupDevServer{State: state, Why: r.DevServer.Reason}
-			continue
+		var ds *ops.DevServers
+		var devServer *ops.DevServerResult
+		var err error
+		if r := sp.devResult; r != nil {
+			devServer = r.DevServer
 		}
-		sp.devServer = &standupDevServer{
+		if devServer == nil && d.batch.sshDeployer != nil {
+			ds, devServer, err = ops.DevServersAfterDeploy(ctx, d.batch.sshDeployer, host, supervisorRoot(d.batch.stateDir, host))
+		}
+		notStarted := &standupDevServer{
 			State: standupDevServerNotStarted,
 			Port:  devSetupPort(projectRootFromState(d.batch.stateDir), host, sp.pair.Dev.Setup),
 			Why:   "the dev setup idles on a no-op keepalive, and no dev command is recorded where zcp reads it",
+		}
+		var noSup *ops.NoSupervisorError
+		switch {
+		case devServer != nil:
+			state := standupDevServerRunning
+			if !devServer.Running {
+				state = standupDevServerDown
+			}
+			sp.devServer = &standupDevServer{State: state, Why: devServer.Reason}
+		case ds != nil && len(ds.Declared.Servers) > 0:
+			state, why := standupDevServerRunning, ""
+			if !ds.Listening() {
+				state, why = standupDevServerDown, "none of the dev servers its supervisor runs listens"
+			}
+			sp.devServer = &standupDevServer{State: state, Why: why}
+		case ds != nil:
+			notStarted.Why = "its dev-server supervisor runs and declares no dev server yet, and no dev command is recorded where zcp reads it"
+			sp.devServer = notStarted
+		case err != nil && !errors.As(err, &noSup):
+			sp.devServer = &standupDevServer{State: standupDevServerUnread, Port: notStarted.Port, Why: err.Error()}
+		default:
+			sp.devServer = notStarted
 		}
 	}
 }

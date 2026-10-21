@@ -94,10 +94,10 @@ func (f *fakeHQ) recipeHolds(ancestor, ref string) bool {
 func handWrittenTiers() map[string]string {
 	return map[string]string{
 		"README.md":                                   "# acme\n",
-		"0 — AI Agent/import.yaml":                    "project:\n  name: acme-mate\nservices:\n  - hostname: appdev\n    zeropsSetup: appdev\n",
-		"3 — Stage/import.yaml":                       "project:\n  name: acme stage\n  envVariables:\n    APP_ENV: stage\nservices:\n  - hostname: app\n    zeropsSetup: appprod\n",
-		"4 — Small Production/import.yaml":            "project:\n  name: acme production\n  envVariables:\n    APP_ENV: production\nservices:\n  - hostname: app\n    zeropsSetup: appprod\n    envSecrets:\n      APP_KEY: <@generateRandomString(<32>)>\n",
-		"5 — Highly-available Production/import.yaml": "project:\n  name: acme ha\nservices:\n  - hostname: app\n    zeropsSetup: appprod\n",
+		"0 — AI Agent/import.yaml":                    "project:\n  name: acme-mate\nservices:\n  - hostname: db\n    type: postgresql@18\n  - hostname: appdev\n    zeropsSetup: appdev\n",
+		"3 — Stage/import.yaml":                       "project:\n  name: acme stage\n  envVariables:\n    APP_ENV: stage\nservices:\n  - hostname: db\n    type: postgresql@18\n  - hostname: app\n    zeropsSetup: appprod\n",
+		"4 — Small Production/import.yaml":            "project:\n  name: acme production\n  envVariables:\n    APP_ENV: production\nservices:\n  - hostname: db\n    type: postgresql:ha@18\n  - hostname: app\n    zeropsSetup: appprod\n    envSecrets:\n      APP_KEY: <@generateRandomString(<32>)>\n",
+		"5 — Highly-available Production/import.yaml": "project:\n  name: acme ha\nservices:\n  - hostname: db\n    type: postgresql:ha@18\n  - hostname: app\n    zeropsSetup: appprod\n",
 	}
 }
 
@@ -380,7 +380,7 @@ func TestHandleGroupRecipe_Table(t *testing.T) {
 				`"onMain":true`, "already carries every tier",
 				`call zerops_workflow action=\"group-recipe\" with scaling set to the service's hostname`,
 				"as a change the person reviews",
-				"anything else in a tier on main",
+				`with service set to the hostname`,
 			},
 			notText: []string{"never proposes over"},
 		},

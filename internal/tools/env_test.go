@@ -25,7 +25,7 @@ import (
 // non-actionable schema errors.
 func TestEnvSchema_GenerateDotenv_PrefersSetupOverHostname(t *testing.T) {
 	t.Parallel()
-	schema := envInputSchema()
+	schema := envInputSchema(false)
 
 	hostnameProp, ok := schema.Properties["serviceHostname"]
 	if !ok || hostnameProp == nil {
@@ -981,7 +981,7 @@ func TestEnvSet_AStoredKeysAnswerNamesTheVaultItsRequestNamed(t *testing.T) {
 // says to ask when the feature using the value is being built.
 func TestEnvSchema_RequestAsksWhenTheFeatureUsingTheValueIsBeingBuilt(t *testing.T) {
 	t.Parallel()
-	action := envInputSchema().Properties["action"].Description
+	action := envInputSchema(false).Properties["action"].Description
 	if !strings.Contains(action, "request: ask the person, when the feature using it is being built, for a value only they have") {
 		t.Errorf("action description = %q, want request to say to ask when the feature using it is being built", action)
 	}

@@ -78,12 +78,12 @@ func OpenOrgReader(ctx context.Context, access OrgAccess) (*OrgReader, error) {
 	}
 	httpClient := &http.Client{Timeout: DefaultAPITimeout, Transport: readOnlyTransport{base: http.DefaultTransport}}
 	z := newZeropsClientOn(access.Token, resolveEndpoint(access.APIHost), httpClient)
-	memberships, err := z.ListClientMemberships(ctx)
+	info, err := z.GetUserInfo(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("org mode: read the token's organizations: %w", err)
 	}
-	reach := make([]string, 0, len(memberships))
-	for _, m := range memberships {
+	reach := make([]string, 0, len(info.Memberships))
+	for _, m := range info.Memberships {
 		reach = append(reach, m.ClientID)
 	}
 	orgID, err := resolveOrgID(reach, named)

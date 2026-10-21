@@ -128,7 +128,9 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 		telemetry:   tel,
 	}
 
-	srv.AddReceivingMiddleware(s.observe())
+	receive, send := keepAlive(keepAliveInterval, keepAliveGap)
+	srv.AddReceivingMiddleware(s.observe(), receive)
+	srv.AddSendingMiddleware(send)
 	s.registerTools() //nolint:contextcheck // registerTools wires a lazy background schema provider (schemaCache.Get(context.Background())); no request context applies at startup wiring time
 	if rtInfo.InContainer && rtInfo.MateEnabled {
 		tools.RegisterAskChief(ctx, s.server, nil, authInfo.ProjectID, authInfo.ProjectName)
@@ -222,7 +224,9 @@ func NewOrg(_ context.Context, org OrgReader, apiHost string, store knowledge.Pr
 		logger:     logger,
 		telemetry:  tel,
 	}
-	srv.AddReceivingMiddleware(s.observe())
+	receive, send := keepAlive(keepAliveInterval, keepAliveGap)
+	srv.AddReceivingMiddleware(s.observe(), receive)
+	srv.AddSendingMiddleware(send)
 
 	tools.RegisterOrg(srv, org, logFetcher, uuid.NewString)
 	schemaCache := schema.NewCache(schema.DefaultCacheTTL, apiHost, org.ListActiveServiceTypeVersions)
@@ -360,7 +364,7 @@ func (s *Server) registerTools() {
 		// D32). Mate-gated like every mate-shaped effect (§2.0): a container
 		// without ZCP_MATE_ENABLED keeps the tool surface it had.
 		if s.rtInfo.InContainer && s.rtInfo.MateEnabled {
-			tools.RegisterStandup(s.server, s.client, httpClient, projectID, s.sshDeployer, s.mounter, s.authInfo, s.logFetcher, s.rtInfo, stateDir)
+			tools.RegisterStandup(s.server, s.client, httpClient, projectID, s.sshDeployer, s.mounter, s.authInfo, s.logFetcher, s.rtInfo, stateDir, devsup)
 		}
 	} else {
 		tools.RegisterDeployLocal(s.server, s.client, httpClient, projectID, s.authInfo, s.logFetcher, stateDir, wfEngine, recipeProbe)
@@ -380,7 +384,14 @@ func (s *Server) registerTools() {
 	tools.RegisterManage(s.server, s.client, projectID)
 	recipeSteer := tools.NewGroupRecipeSteer(s.client, httpClient, s.rtInfo, stateDir)
 	tools.RegisterScale(s.server, s.client, projectID, recipeSteer)
-	tools.RegisterEnv(s.server, s.client, projectID, s.rtInfo.ServiceName)
+	// A Mate puts its organization's AI key in the Shared vault for an app
+	// (zerops_env action=ai-key, docs/spec-mate.md §5.8): Mate-gated like every
+	// Mate effect (§2.0), its key asked of HQ with the enrollment.
+	var envOpts []tools.EnvOption
+	if s.rtInfo.InContainer && s.rtInfo.MateEnabled {
+		envOpts = append(envOpts, tools.WithOrgAIKey(httpClient))
+	}
+	tools.RegisterEnv(s.server, s.client, projectID, s.rtInfo.ServiceName, envOpts...)
 
 	tools.RegisterImportSteered(s.server, s.client, projectID, wfEngine, stateDir, recipeProbe, s.rtInfo, recipeSteer)
 	tools.RegisterDelete(s.server, s.client, projectID, stateDir, s.mounter, s.rtInfo)

@@ -638,7 +638,7 @@ func TestHandleLaunchProduction_AMateRefusesBeforeAnyStep(t *testing.T) {
 				WithProcess(&platform.Process{ID: "proc-build-1", Status: "FINISHED"}).
 				WithClientUserID("client-user-abc")
 			adminBuilt := 0
-			defer setProjectAdminClientFactory(func(string, string) (platform.ProjectAdminClient, error) {
+			defer setProjectAdminClientFactory(func(string, string, string) (platform.ProjectAdminClient, error) {
 				adminBuilt++
 				return mockAdmin, nil
 			})()

@@ -89,7 +89,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("verify GetUserInfo: %w", err)
 	}
-	log.Printf("LaunchKey verified: userID=%s clientUserID=%s", info.ID, info.ClientUserID)
+	log.Printf("LaunchKey verified: memberships=%+v", info.Memberships)
 
 	// 2. Mirror the fixture's source state (Laravel showcase pair).
 	managed := []bundle.ManagedServiceEntry{

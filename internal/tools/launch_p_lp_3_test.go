@@ -239,7 +239,7 @@ func TestRefusesOnSourceDriftBetweenReadyAndPublish(t *testing.T) {
 	// want CreateAndImportProject to actually run — set an import error
 	// so if Phase 0 code reaches that step the test surfaces evidence.
 	adminMock := platform.NewMockProjectAdminClient().WithImportError(errSimulatedImport)
-	defer setProjectAdminClientFactory(func(launchKey, apiHost string) (platform.ProjectAdminClient, error) {
+	defer setProjectAdminClientFactory(func(launchKey, apiHost, _ string) (platform.ProjectAdminClient, error) {
 		return adminMock, nil
 	})()
 
@@ -328,7 +328,7 @@ func TestRefusesOnTamperedStateFile(t *testing.T) {
 	ssh := pLP3SSHFrozen() // source is unchanged — only state file was tampered
 
 	adminMock := platform.NewMockProjectAdminClient().WithImportError(errSimulatedImport)
-	defer setProjectAdminClientFactory(func(launchKey, apiHost string) (platform.ProjectAdminClient, error) {
+	defer setProjectAdminClientFactory(func(launchKey, apiHost, _ string) (platform.ProjectAdminClient, error) {
 		return adminMock, nil
 	})()
 

@@ -15,6 +15,7 @@ type Mock struct {
 	mu sync.RWMutex
 
 	userInfo           *UserInfo
+	boundOrg           string // last BindOrg argument
 	projects           []Project
 	project            *Project
 	services           []ServiceStack
@@ -227,7 +228,8 @@ func (m *Mock) WithUserInfo(info *UserInfo) *Mock {
 	return m
 }
 
-// WithProjects sets the projects returned by ListProjects.
+// WithProjects sets the projects ListProjects searches: each is returned
+// only for the org (Project.ClientID) that owns it.
 func (m *Mock) WithProjects(projects []Project) *Mock {
 	m.mu.Lock()
 	defer m.mu.Unlock()

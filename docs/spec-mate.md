@@ -673,6 +673,13 @@ is left and answers busy without touching the browser, so a late waiter is never
 mid-walk. The unit caps memory at 75% of the container's ceiling at its start and
 sets `OOMScoreAdjust=1000`, so Chrome, not the agent, is the first to die of memory.
 
+Each step answers agent-browser's own `error` text verbatim with an `errorKind` beside it:
+`wedge` (a CDP wedge signal, which also recycles the service), `invalid-command` (a command,
+subcommand or `find` action agent-browser does not know — the call was wrong, not the page),
+`stale-ref` (an `@eN` ref no snapshot in the call's tab made; refs die with the tab),
+`selector-not-found`, `not-editable`, `timeout` or `other`. Only `wait` polls (agent-browser's
+25 s default); `click`, `fill`, `check`, `find`, `get` and `is` look once.
+
 `isolation` is one parameter: `tab` (default) is a tab in the warm default context,
 so cookies, storage, HTTP cache and service workers carry over between calls;
 `fresh-context` is `window new`, a new browser context; agent-browser cannot dispose
@@ -981,12 +988,28 @@ runs as a `runtime` entry beside it (decision D).
 `TestDevServer_MigrationWaitsForDirtyCrewCopies`,
 `TestDevServer_WorkDirOfACrewCopy_NeverRewritesTheDeclaredCwd`.
 
-**A new dev setup** gets the two lines before it ever runs: the first `zerops_deploy` of a dev-mode
-dynamic dev service (a self-deploy, the pair never deployed) writes them into the dev setup it
-deploys when the pin rule above finds a release or `ZCP_DEVSUP_URL` is set, and its message says
-so; the first `start` then finds the supervisor and redeploys nothing. Otherwise the dev setup
-keeps today's shape and the first `start` moves it as above.
-`TestDeploy_NewDevSetup_GetsTheSupervisorLines`.
+**A new dev setup** gets the two lines before it ever runs: the first deploy of a dev-mode
+dynamic dev service (a self-deploy, the pair never deployed) — through `zerops_deploy`,
+`zerops_deploy_batch` or `zerops_standup`'s dev-half deploy, one path for all three — writes them
+into the dev setup it deploys when the pin rule above finds a release or `ZCP_DEVSUP_URL` is set,
+and the deploy's `message` says so and asks for the edit to be committed (the stand-up report
+carries each deploy's `message` and `warnings`); an edit that fails is one of its `warnings`. The
+first `start` then finds the supervisor and redeploys nothing. Otherwise the dev setup keeps
+today's shape and the first `start` moves it as above.
+`TestDeploy_NewDevSetup_GetsTheSupervisorLines`, `TestStandup_FirstDeployPutsTheDevSetupUnderTheSupervisor`,
+`TestStandup_ReportSaysWhatTheSupervisorStepDid`.
+
+**A move's waits** are never silent: a client that asked for progress hears from zcp at least
+every 15 s of every `zerops_dev_server` call (the server's keep-alive), and a move onto the
+supervisor says when its redeploy begins and when the dev server's start begins after the build.
+The keep-alive owns each call's progress stream: it numbers every notification on the call's token
+(its own, a build poll's, a tool's) so the values rise, and the answer trails the last one by at
+least 1 s, so a step that fails at once never shares a stdin chunk with a notification.
+Its answer carries `migrationTimes` — the push, the build's wait with the checks after it
+(`buildDuration` is the platform's own), and the dev server's start — in milliseconds.
+`TestDevServer_MigrationSaysEachPhaseAndItsTime`,
+`TestKeepAlive_DevServerStartAfterTheBuild_SendsProgressEachInterval`,
+`TestKeepAlive_DevServerMoveFailingAtOnce_AnswersAfterTheGap`, `TestKeepAlive_ProgressRisesAcrossEverySource`.
 
 **Stop** signals the **group**: `SIGTERM` to `-pgid`, up to 10 s, then `SIGKILL` to `-pgid` — only
 after confirming the group is still the one it started (the leader's `/proc` start time equals
@@ -1248,13 +1271,32 @@ How zcp does it:
   whose `consent` does not name the service is refused (`CONSENT_REQUIRED`) and deletes nothing,
   so the agent asks first. With it, a stage of a pair with several leaves `Stages[]` and its
   answer's `recipe` names the call; a pair's only stage keeps today's behaviour.
-- Tier header. An app with more than one part says the tier also takes a part's service added or
-  removed; a one-part app's header is today's.
+- Managed service. A managed service the Mate's project runs and a tier on `main` lacks takes the same
+  call, for any app, one part or several: `service=<host>` adds the composer's entry, that tier's
+  policy applied (Small Production's HA variant where the type has one), to each tier file on
+  `main` lacking it, among the services of its priority ahead of every runtime, every other line as
+  `main` has it. Whether a tier lists the service is what the tier reads as YAML, and an edit that
+  would read back as anything but `main` plus that service is refused. It only adds: a managed
+  service a tier carries and the project does not is left. The reconcile's line names the call for
+  each one, names a tier no edit can take as one to add the service to by hand, and says that
+  environments already made need the service added themselves, by a person or the Chief. A
+  proposal a person closed unmerged is not named again until a later recipe change of the Mate's
+  merges. The call for a service the project no longer runs, while its proposal is the open change,
+  withdraws it: the change is brought to `main`'s tree.
+- Tier header. Every tier says it also takes a managed service the Mate's project gained; an app
+  with more than one part says it also takes a part's service added or removed.
 
 zcp `TestBuildGroupRecipe_OnePart_ComposesAsBeforeStages`, `TestBuildGroupRecipe_ThreeParts_OneRuntimePerStage`,
 `TestBuildGroupRecipe_PartHostnames_HeldByTheTier`, `TestTierService_AddOrRemove_OnlyThatService`,
 `TestGroupRecipeService_OnePart_ProposesNoTierEdit`, `TestGroupRecipeService_AddThenRemovePart_OnlyThatService`,
-`TestDeleteTool_StageOfSeveral_LeavesThePairAndNamesTheRecipeCall`.
+`TestDeleteTool_StageOfSeveral_LeavesThePairAndNamesTheRecipeCall`, `TestTierService_AddInRank_ManagedFirst`,
+`TestGroupRecipeService_ManagedAdded_ProposedIntoEveryTierLackingIt`,
+`TestGroupRecipeService_ManagedAlreadyInATier_LeavesThatTier`,
+`TestGroupRecipeService_DatabaseAndCache_EachProposedInTurn`,
+`TestTierService_AddInRank_ReadsTheTierAsYAML`,
+`TestGroupRecipeService_ManagedDeclined_ReminderStopsUntilALaterMerge`,
+`TestGroupRecipeService_ManagedNoTierCanTakeIt_SaysToAddByHand`,
+`TestGroupRecipeService_ManagedDeleted_WithdrawsItsOpenChange`.
 
 #### 2.8a.6 The receipt on an HQ change (only N > 1)
 
@@ -2511,6 +2553,15 @@ the values those entries reference.
   engine's records, a log, the agent's context or HQ. A `set` answer names the vault its `stored`
   keys went to in the request's own fields (`scope`, `serviceHostname`), so an open ask for a key
   the agent stored itself matches it by key and vault. zcp `TestEnvSet_AStoredKeysAnswerNamesTheVaultItsRequestNamed`.
+- **The organization's AI key, for an app** (2026-10-17). In a Mate, `zerops_env action=ai-key`
+  asks HQ for the organization's key as the Mate (`POST /api/mate/ai-key`, one bounded try) and
+  sets it in the Shared vault: the key sensitive under the variable HQ names (`NEBIUS_API_KEY`),
+  its base URL plain beside it (`NEBIUS_BASE_URL`), restarting their readers unless `skipRestart`.
+  It answers the provider and the names only; the key never enters the answer, an error, a log or
+  the agent's context. HQ's `404 no_key` answers that an org Owner or Admin sets it in Mate under
+  Settings › Zerops › HQ; no enrollment, HQ not answering or refusing set nothing and say so.
+  Outside a Mate the action does not exist. A Mate's AGENTS.md has an AI feature read the two as
+  `OPENAI_API_KEY: ${NEBIUS_API_KEY}` and `OPENAI_BASE_URL: ${NEBIUS_BASE_URL}`.
 
 ### 5.9 Pages — the agent shows a page in the conversation (2026-10-10)
 
@@ -2933,7 +2984,9 @@ The shared readiness test still applies to every agent. A crew runs on an agent 
 the thread profile (Claude Code, Codex, Grok, OpenCode); Cursor and Antigravity are refused until their gate
 is seen live, since zcp pre-approves the Zerops tools in Cursor's project config. zcp gives OpenCode the
 `zerops` MCP server in `~/.config/opencode/opencode.json`, adding `zerops_*` as allowed
-only where it does not overrule the user's permission rules (`TestOpenCode_*`).
+only where it does not overrule the user's permission rules, and lists the project root's
+`AGENTS.md` in `instructions`: OpenCode looks for AGENTS.md only up to a session's git root, so a
+crew lane or a dev mount would otherwise run without it (`TestOpenCode_*`).
 
 ### 8.1 The agent-auth feed
 
@@ -3394,7 +3447,7 @@ HQ omits; the closing note of a session that hands over a change names Put it li
 `production` is not true); a repository of
 its application, made or joined (`POST /api/mate/repos`); its change in a repository, one open at a
 time (`POST /api/mate/changes`, `PATCH …/:repo/:n`, `POST …/attachments`); a tier of the recipe
-(`GET /api/mate/recipe/:tier`); git over HTTPS at `/git/<appId>/<repo>.git` as the user `mate`,
+(`GET /api/mate/recipe/:tier`); the organization's AI key (`POST /api/mate/ai-key`, §5.8); git over HTTPS at `/git/<appId>/<repo>.git` as the user `mate`,
 which takes a Mate's push only on the branch of its own open change, only forward. §10.10 is what
 zcp does with it.
 
@@ -3874,8 +3927,10 @@ The order:
      (an earlier call, or a deploy by hand) is left as it is, whatever it waits for. Through `zerops_deploy_batch`'s gate, pre-flight and
      post-deploy steps (subdomains included), with no delivery: the stage runs `main` as the Mate's
      preview;
-   - starts no dev server — no dev command is recorded anywhere zcp reads — and names, per dev half,
-     the `zerops_dev_server` call with the port its dev setup declares;
+   - starts no dev server — no dev command is recorded anywhere zcp reads — and reads, per dev half,
+     the dev server its supervisor runs (`running`, `did not come up`), else names the
+     `zerops_dev_server` call with the port its dev setup declares (`not started`; `unread` when the
+     supervisor did not answer);
    - answers one entry per service: adopted, wired, deployed with its URL, queued, or failed with
      zcp's failure classification, the dev server's state, and the model's next step.
 10. The model starts the dev servers, verifies, and tells the person development is up, with each dev

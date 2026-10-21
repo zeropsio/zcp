@@ -21,8 +21,8 @@ func TestVerification_LaunchShape_AllRowsFromSnapshot(t *testing.T) {
 	t.Run("clean launch, all rows pass", func(t *testing.T) {
 		t.Parallel()
 		client := platform.NewMock().
-			WithUserInfo(&platform.UserInfo{ID: "client-1"}).
-			WithProjects([]platform.Project{{ID: "prod-1", Name: "zcp-farm-r1-prod"}}).
+			WithUserInfo(&platform.UserInfo{Memberships: []platform.ClientMembership{{ClientID: "client-1"}}}).
+			WithProjects([]platform.Project{{ID: "prod-1", Name: "zcp-farm-r1-prod", ClientID: "client-1"}}).
 			WithServicesDirect([]platform.ServiceStack{
 				{ID: "svc-app1", ProjectID: "prod-1", Name: "app1", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}},
 				{ID: "svc-app2", ProjectID: "prod-1", Name: "app2", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "go@1", ServiceStackTypeCategoryName: "USER"}},
@@ -43,8 +43,8 @@ func TestVerification_LaunchShape_AllRowsFromSnapshot(t *testing.T) {
 	t.Run("one runtime carries a build, no_build_from_git fails with hostname", func(t *testing.T) {
 		t.Parallel()
 		client := platform.NewMock().
-			WithUserInfo(&platform.UserInfo{ID: "client-1"}).
-			WithProjects([]platform.Project{{ID: "prod-1", Name: "zcp-farm-r1-prod"}}).
+			WithUserInfo(&platform.UserInfo{Memberships: []platform.ClientMembership{{ClientID: "client-1"}}}).
+			WithProjects([]platform.Project{{ID: "prod-1", Name: "zcp-farm-r1-prod", ClientID: "client-1"}}).
 			WithServicesDirect([]platform.ServiceStack{
 				{ID: "svc-app1", ProjectID: "prod-1", Name: "app1", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}},
 			}).
@@ -72,8 +72,8 @@ func TestLaunchShape_CliBuild_NoBuildFromGitPasses(t *testing.T) {
 	t.Parallel()
 	cfg := &LaunchShapeConfig{ProdProject: "zcp-farm-r1-prod"}
 	client := platform.NewMock().
-		WithUserInfo(&platform.UserInfo{ID: "client-1"}).
-		WithProjects([]platform.Project{{ID: "prod-1", Name: "zcp-farm-r1-prod"}}).
+		WithUserInfo(&platform.UserInfo{Memberships: []platform.ClientMembership{{ClientID: "client-1"}}}).
+		WithProjects([]platform.Project{{ID: "prod-1", Name: "zcp-farm-r1-prod", ClientID: "client-1"}}).
 		WithServicesDirect([]platform.ServiceStack{
 			{ID: "svc-app1", ProjectID: "prod-1", Name: "app1", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}},
 		}).
@@ -154,7 +154,7 @@ func TestVerification_LaunchShape_ListNotPermitted_Blocked(t *testing.T) {
 	t.Parallel()
 	cfg := &LaunchShapeConfig{ProdProject: "zcp-farm-r1-prod"}
 	client := platform.NewMock().
-		WithUserInfo(&platform.UserInfo{ID: "client-1"}).
+		WithUserInfo(&platform.UserInfo{Memberships: []platform.ClientMembership{{ClientID: "client-1"}}}).
 		WithError("ListProjects", errors.New("403 forbidden"))
 
 	rows := evaluateLaunchShapeRows(context.Background(), cfg, client, nil, "", nil, "")
@@ -305,14 +305,14 @@ func TestLaunchShape_LaunchKey_ReadsTheProjectItCreated(t *testing.T) {
 	t.Setenv(LaunchKeyEnvVar, "launch-key-value")
 	cfg := &LaunchShapeConfig{ProdProject: "zcp-farm-r1-prod"}
 	runClient := platform.NewMock().
-		WithUserInfo(&platform.UserInfo{ID: "client-1"}).
-		WithProjects([]platform.Project{{ID: "run-1", Name: "zcp-farm-run"}})
+		WithUserInfo(&platform.UserInfo{Memberships: []platform.ClientMembership{{ClientID: "client-1"}}}).
+		WithProjects([]platform.Project{{ID: "run-1", Name: "zcp-farm-run", ClientID: "client-1"}})
 	var gotToken string
 	keyClient := func(token string) (platform.Client, error) {
 		gotToken = token
 		return platform.NewMock().
-			WithUserInfo(&platform.UserInfo{ID: "client-1"}).
-			WithProjects([]platform.Project{{ID: "prod-1", Name: "zcp-farm-r1-prod"}}).
+			WithUserInfo(&platform.UserInfo{Memberships: []platform.ClientMembership{{ClientID: "client-1"}}}).
+			WithProjects([]platform.Project{{ID: "prod-1", Name: "zcp-farm-r1-prod", ClientID: "client-1"}}).
 			WithServicesDirect([]platform.ServiceStack{
 				{ID: "svc-app1", ProjectID: "prod-1", Name: "app1", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}},
 			}).

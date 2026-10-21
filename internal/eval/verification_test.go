@@ -803,8 +803,8 @@ func TestRunVerification_LaunchShapeAndSecret_RowsAppended(t *testing.T) {
 		NoFabricatedSecret: true,
 	}}
 	client := platform.NewMock().
-		WithUserInfo(&platform.UserInfo{ID: "u1"}).
-		WithProjects([]platform.Project{{ID: "prod1-id", Name: "prod1"}}).
+		WithUserInfo(&platform.UserInfo{Memberships: []platform.ClientMembership{{ClientID: "u1"}}}).
+		WithProjects([]platform.Project{{ID: "prod1-id", Name: "prod1", ClientID: "u1"}}).
 		WithServicesDirect(nil)
 	observation := collectPlatformObservation(context.Background(), client, "p1", false, false)
 	runtime := RuntimeInputs{MCPStreamPaths: []string{"testdata/mcpstream/declared.jsonl"}}
@@ -851,8 +851,8 @@ func TestRunVerification_LaunchTokenHashedNeverStored(t *testing.T) {
 
 	sc := &Scenario{Verification: &VerificationConfig{LaunchShape: &LaunchShapeConfig{ProdProject: "prod1"}}}
 	client := platform.NewMock().
-		WithUserInfo(&platform.UserInfo{ID: "u1"}).
-		WithProjects([]platform.Project{{ID: "prod1-id", Name: "prod1"}}).
+		WithUserInfo(&platform.UserInfo{Memberships: []platform.ClientMembership{{ClientID: "u1"}}}).
+		WithProjects([]platform.Project{{ID: "prod1-id", Name: "prod1", ClientID: "u1"}}).
 		WithServicesDirect([]platform.ServiceStack{})
 	observation := collectPlatformObservation(context.Background(), client, "p1", false, false)
 	runtime := RuntimeInputs{LaunchTokenSHA256: digest}

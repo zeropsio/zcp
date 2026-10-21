@@ -625,13 +625,14 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (string, []str
 // the tier is, that zcp wrote it and from which Mate, and that it is the
 // group's to change — zcp adds only a whole tier the group repo's main lacks
 // (D30), and into one main carries proposes nothing but a service's scale
-// (D34) and, for an app of several parts, a part's service added or removed
-// (spec-mate §2.8a.5), as a change a person reviews, so a person's edit is
-// never written over. An app of one part reads as it always did.
+// (D34), a managed service the Mate's project gained, for every app, and, for
+// an app of several parts, a part's service added or removed (spec-mate
+// §2.8a.5), as a change a person reviews, so a person's edit is never
+// written over.
 func groupTierHeader(inputs GroupRecipeInputs, policy groupTierPolicy) []string {
-	proposes := "only a service's scale (group-recipe scaling=<hostname>)"
+	proposes := "only a service's scale (group-recipe scaling=<hostname>) or a managed service added to the Mate's project (group-recipe service=<hostname>)"
 	if slices.ContainsFunc(inputs.Runtimes, func(r GroupRuntime) bool { return len(r.Stages) > 1 }) {
-		proposes = "only a service's scale (group-recipe scaling=<hostname>) or a part's service added or removed (group-recipe service=<hostname>)"
+		proposes = "only a service's scale (group-recipe scaling=<hostname>), a managed service added to the Mate's project or a part's service added or removed (group-recipe service=<hostname>)"
 	}
 	return []string{
 		"The " + policy.title + " tier. " + policy.summary,

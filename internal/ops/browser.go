@@ -31,11 +31,14 @@ type BrowserBatchInput struct {
 	// Commands are the inner agent-browser commands to run AFTER open and
 	// the first-paint wait and BEFORE the auto-appended [errors], [console],
 	// [network requests]. Each element is one agent-browser command as a
-	// string array — e.g. ["snapshot", "-i", "-c"], ["click", "@e1"],
+	// string array — e.g. ["snapshot", "-i", "-c"], ["click", "#submit"],
 	// ["find", "role", "link", "click", "--name", "Users"]. Any "open",
-	// "close" or "eval" elements are stripped. A leading ["set", "viewport",
-	// w, h] runs before the open instead; without one the page loads at
-	// browserDefaultViewport, whatever an earlier call set.
+	// "close", "tab" or "window" elements do not run; each comes back first
+	// in the result's steps as a failed invalid-command step. An "eval"
+	// step's result is its value as JSON text (evalValuesAsText). A
+	// leading ["set", "viewport", w, h] runs before the open instead; without
+	// one the page loads at browserDefaultViewport, whatever an earlier call
+	// set.
 	Commands [][]string `json:"commands,omitempty"`
 
 	// TimeoutSeconds bounds the whole call, the wait for the browser
@@ -75,7 +78,15 @@ const (
 	ErrorKindNotEditable      = "not-editable"
 	ErrorKindTimeout          = "timeout"
 	ErrorKindWedge            = "wedge"
-	ErrorKindOther            = "other"
+	// ErrorKindInvalidCommand is a command agent-browser does not know —
+	// an unknown command, subcommand or find action: the call was wrong,
+	// not the page.
+	ErrorKindInvalidCommand = "invalid-command"
+	// ErrorKindStaleRef is an @eN ref that no snapshot of the step's tab
+	// made — a ref from an earlier call's tab or one guessed before its
+	// snapshot ran.
+	ErrorKindStaleRef = "stale-ref"
+	ErrorKindOther    = "other"
 )
 
 // classifyStepError maps one step's raw agent-browser error text to an
@@ -93,6 +104,10 @@ func classifyStepError(msg string) string {
 		}
 	}
 	switch {
+	case strings.Contains(lc, "unknown command"), strings.Contains(lc, "unknown subcommand"), strings.Contains(lc, "unknown action"):
+		return ErrorKindInvalidCommand
+	case strings.Contains(lc, "unknown ref"):
+		return ErrorKindStaleRef
 	case strings.Contains(lc, "no element"), strings.Contains(lc, "no such element"), strings.Contains(lc, "not found"):
 		return ErrorKindSelectorNotFound
 	case strings.Contains(lc, "not editable"), strings.Contains(lc, "not fillable"):
@@ -302,7 +317,7 @@ func AgentBrowserAvailable() bool {
 const (
 	browserDefaultTimeout = 120 * time.Second
 	browserMaxTimeout     = 300 * time.Second
-	// browserCmdClose is the agent-browser close command; stripped from
+	// browserCmdClose is the agent-browser close command; refused in
 	// caller commands, since closing would end the shared warm browser.
 	browserCmdClose = "close"
 	// browserCmdOpen is the agent-browser open command.
@@ -311,16 +326,16 @@ const (
 	browserCmdSet         = "set"
 	browserSubcmdViewport = "viewport"
 	// browserCmdTab and browserCmdWindow open, switch and close tabs and
-	// contexts; stripped from caller commands, since the tool keeps the warm
+	// contexts; refused in caller commands, since the tool keeps the warm
 	// browser's base tab and closes every other one when a call ends.
 	browserCmdTab    = "tab"
 	browserCmdWindow = "window"
-	// browserCmdEval is the raw eval command. Stripped from caller
-	// commands like open/close — dedicated commands (get/find/is/set)
-	// produce structured, parseable output; eval's return value does
-	// not have a stable shape. The tool description has always told
-	// callers not to use it; this enforces it.
+	// browserCmdEval runs a script in the page; its step's result is the
+	// value as JSON text, cut at browserEvalTextCap (evalValuesAsText).
 	browserCmdEval = "eval"
+	// browserEvalTextCap bounds an eval value's text in the result: room for
+	// a store's state or a list of computed styles, not a page's worth.
+	browserEvalTextCap = 10000
 	// browserCmdErrors, browserCmdConsole, browserCmdNetwork name the
 	// three auto-appended reporting commands, in the order they always
 	// appear in the tail (errors, console, network requests, close).
@@ -557,7 +572,7 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 	}
 	defer cleanupScreenshot()
 
-	batch := buildCanonicalBatch(input.URL, input.Commands, screenshotPath, input.FullPage)
+	batch, refused := buildCanonicalBatch(input.URL, input.Commands, screenshotPath, input.FullPage)
 	stdinBytes, err := json.Marshal(batch)
 	if err != nil {
 		return nil, fmt.Errorf("marshal batch: %w", err)
@@ -609,6 +624,9 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 		populateBrowserBatchOutputs(result, wantScreenshot, screenshotPath)
 	}
 	omitScreenshotTempPath(result, screenshotPath)
+	evalValuesAsText(result.Steps)
+	// The refused commands come first: they were turned away before the walk.
+	result.Steps = append(refused, result.Steps...)
 	return result, nil
 }
 
@@ -825,35 +843,32 @@ func scanStepsForCDPWedge(steps []BrowserStepResult) (string, bool) {
 }
 
 // buildCanonicalBatch assembles [open url] + the first-paint wait +
-// stripped caller commands + an optional [screenshot [--full] screenshotPath] +
-// [errors] [console] [network requests]. Any open/close/tab/window/eval in
-// the caller's commands is silently dropped — the canonical open is the only
-// navigation the tool owns, a close would end the warm browser, tab and
-// window could close or switch its base tab, and dedicated commands replace
-// eval. screenshotPath == "" omits the
+// the caller's other commands + an optional [screenshot [--full] screenshotPath] +
+// [errors] [console] [network requests]. Any open/close/tab/window in
+// the caller's commands does not run and comes back in refused instead, as a
+// failed invalid-command step naming why and what to use (refusedCommands) —
+// the canonical open is the only navigation the tool owns, a close would end
+// the warm browser, and tab and window could close or switch its base tab.
+// screenshotPath == "" omits the
 // screenshot step entirely; fullPage captures the whole page, not the
 // viewport. A leading [set viewport w h] runs before the open, so the page
 // loads at that size instead of reflowing from the default width; without
 // one, browserDefaultViewport runs there, so no call inherits the viewport an
 // earlier call set. The steps come back in the order they ran, the caller's
 // commands in the order sent.
-func buildCanonicalBatch(url string, commands [][]string, screenshotPath string, fullPage bool) [][]string {
+func buildCanonicalBatch(url string, commands [][]string, screenshotPath string, fullPage bool) (batch [][]string, refused []BrowserStepResult) {
 	inner := make([][]string, 0, len(commands))
 	for _, cmd := range commands {
 		if len(cmd) == 0 {
 			continue
 		}
-		switch cmd[0] {
-		case browserCmdOpen, browserCmdClose, browserCmdTab, browserCmdWindow:
-			// Strip — the tool owns navigation, tabs and contexts.
-			continue
-		case browserCmdEval:
-			// Strip — dedicated commands produce structured output.
+		if why, ok := refusedCommands[cmd[0]]; ok {
+			refused = append(refused, BrowserStepResult{Command: cmd, Error: &why, ErrorKind: ErrorKindInvalidCommand})
 			continue
 		}
 		inner = append(inner, cmd)
 	}
-	batch := make([][]string, 0, len(inner)+7)
+	batch = make([][]string, 0, len(inner)+7)
 	if len(inner) > 0 && isSetViewport(inner[0]) {
 		batch, inner = append(batch, inner[0]), inner[1:]
 	} else {
@@ -873,7 +888,50 @@ func buildCanonicalBatch(url string, commands [][]string, screenshotPath string,
 		[]string{browserCmdConsole},
 		[]string{browserCmdNetwork, browserSubcmdRequests, browserFlagStatus, browserStatusRange4xx5xx},
 	)
-	return batch
+	return batch, refused
+}
+
+// refusedCommands maps each caller command the tool does not run to the
+// error its refused step carries: why, and what to use instead.
+var refusedCommands = map[string]string{
+	browserCmdOpen:   "not run: the call opens its url itself; follow a link with click or find, or pass another page as url in a new call",
+	browserCmdClose:  "not run: the tool closes the call's tabs itself and keeps the shared browser",
+	browserCmdTab:    "not run: the tool owns the call's tab; for a clean context pass isolation \"fresh-context\"",
+	browserCmdWindow: "not run: the tool owns the call's tab; for a clean context pass isolation \"fresh-context\"",
+}
+
+// evalValuesAsText turns each answered eval step's result into its value as
+// JSON text: agent-browser answers {origin, result: <value>} (0.39.1, undefined
+// as null), and the value's shape is whatever the script returned. Text longer
+// than browserEvalTextCap keeps its start and says how long it was. A script
+// that threw is already a failed step carrying the page's error.
+func evalValuesAsText(steps []BrowserStepResult) {
+	for i := range steps {
+		step := &steps[i]
+		if !isCommand(step.Command, browserCmdEval) || !step.Success {
+			continue
+		}
+		var data struct {
+			Result json.RawMessage `json:"result"`
+		}
+		if json.Unmarshal(step.Result, &data) != nil || data.Result == nil {
+			continue
+		}
+		var value bytes.Buffer
+		if json.Compact(&value, data.Result) != nil {
+			continue
+		}
+		text := value.String()
+		if len(text) > browserEvalTextCap {
+			kept := strings.ToValidUTF8(text[:browserEvalTextCap], "")
+			text = fmt.Sprintf("%s… [cut: the value's JSON is %d bytes; the first %d are shown]", kept, len(text), len(kept))
+		}
+		quoted, err := json.Marshal(text)
+		if err != nil {
+			continue
+		}
+		step.Result = quoted
+	}
 }
 
 // browserDefaultViewport is the size a fresh Chrome opens at (measured

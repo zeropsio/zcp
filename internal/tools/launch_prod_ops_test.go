@@ -32,7 +32,7 @@ func prodOpsAdminMock(t *testing.T) *platform.MockProjectAdminClient {
 		{ID: "svc-app", Name: "app", Status: "ACTIVE"},
 		{ID: "svc-db", Name: "db", Status: "ACTIVE"},
 	})
-	cleanup := setProjectAdminClientFactory(func(launchKey, _ string) (platform.ProjectAdminClient, error) {
+	cleanup := setProjectAdminClientFactory(func(launchKey, _, _ string) (platform.ProjectAdminClient, error) {
 		if launchKey == "" {
 			t.Fatal("factory called with empty launchKey")
 		}
@@ -52,7 +52,7 @@ func TestProdOps_RequiresLaunchKeyEveryCall(t *testing.T) {
 	stateDir := t.TempDir()
 	seedProdOpsState(t, stateDir, topology.LaunchStatusLaunched)
 
-	result, _, _ := handleLaunchProdOps(context.Background(), "src-proj", nil, nil, WorkflowInput{
+	result, _, _ := handleLaunchProdOps(context.Background(), "src-proj", platform.NewMock(), nil, WorkflowInput{
 		ProductionProjectName: "myapp-prod",
 		ProdOperation:         "status",
 	}, stateDir, "")
@@ -76,7 +76,7 @@ func TestProdOps_ThreadsAPIHostToFactory(t *testing.T) {
 		{ID: "svc-app", Name: "app", Status: "ACTIVE"},
 	})
 	var gotHost string
-	cleanup := setProjectAdminClientFactory(func(launchKey, apiHost string) (platform.ProjectAdminClient, error) {
+	cleanup := setProjectAdminClientFactory(func(launchKey, apiHost, _ string) (platform.ProjectAdminClient, error) {
 		gotHost = apiHost
 		m.Closed = false
 		return m, nil
@@ -84,7 +84,7 @@ func TestProdOps_ThreadsAPIHostToFactory(t *testing.T) {
 	t.Cleanup(cleanup)
 
 	const wantHost = "api.app-fra1.zerops.io"
-	result, _, _ := handleLaunchProdOps(context.Background(), "src-proj", nil, nil, WorkflowInput{
+	result, _, _ := handleLaunchProdOps(context.Background(), "src-proj", platform.NewMock(), nil, WorkflowInput{
 		ProductionProjectName: "myapp-prod",
 		ProdOperation:         "status",
 		LaunchKey:             "key-123",
@@ -105,7 +105,7 @@ func TestProdOps_StatusListsServicesAndDoneBoundary(t *testing.T) {
 	seedProdOpsState(t, stateDir, topology.LaunchStatusLaunched)
 	prodOpsAdminMock(t)
 
-	result, _, _ := handleLaunchProdOps(context.Background(), "src-proj", nil, nil, WorkflowInput{
+	result, _, _ := handleLaunchProdOps(context.Background(), "src-proj", platform.NewMock(), nil, WorkflowInput{
 		ProductionProjectName: "myapp-prod",
 		ProdOperation:         "status",
 		LaunchKey:             "key-123",
@@ -143,13 +143,13 @@ func TestProdOps_StatusSurfacesSubdomainURL(t *testing.T) {
 			{ID: "svc-app", Name: "app", Status: "ACTIVE", SubdomainAccess: true, Ports: []platform.Port{{Port: 3000, HTTPSupport: true, Scheme: "http"}}},
 			{ID: "svc-core", Name: "core", Status: "ACTIVE"}, // no subdomain → no URL
 		})
-	cleanup := setProjectAdminClientFactory(func(launchKey, _ string) (platform.ProjectAdminClient, error) {
+	cleanup := setProjectAdminClientFactory(func(launchKey, _, _ string) (platform.ProjectAdminClient, error) {
 		m.Closed = false
 		return m, nil
 	})
 	t.Cleanup(cleanup)
 
-	result, _, _ := handleLaunchProdOps(context.Background(), "src-proj", nil, nil, WorkflowInput{
+	result, _, _ := handleLaunchProdOps(context.Background(), "src-proj", platform.NewMock(), nil, WorkflowInput{
 		ProductionProjectName: "myapp-prod",
 		ProdOperation:         "status",
 		LaunchKey:             "key-123",
@@ -181,7 +181,7 @@ func TestProdOps_DeleteServiceRequiresAck(t *testing.T) {
 		TargetService:         "app",
 		LaunchKey:             "key-123",
 	}
-	result, _, _ := handleLaunchProdOps(context.Background(), "src-proj", nil, nil, input, stateDir, "")
+	result, _, _ := handleLaunchProdOps(context.Background(), "src-proj", platform.NewMock(), nil, input, stateDir, "")
 	body := getTextContent(t, result)
 	if !strings.Contains(body, `"refused":true`) || !strings.Contains(body, `"wouldDestroy"`) {
 		t.Fatalf("first delete call must refuse with wouldDestroy: %s", body)
@@ -194,7 +194,7 @@ func TestProdOps_DeleteServiceRequiresAck(t *testing.T) {
 		Operation:           "prod-delete-service",
 		AcknowledgedTargets: []string{"app"},
 	}
-	result, _, _ = handleLaunchProdOps(context.Background(), "src-proj", nil, nil, input, stateDir, "")
+	result, _, _ = handleLaunchProdOps(context.Background(), "src-proj", platform.NewMock(), nil, input, stateDir, "")
 	body = getTextContent(t, result)
 	if result.IsError {
 		t.Fatalf("acked delete failed: %s", body)
@@ -211,7 +211,7 @@ func TestProdOps_LifecycleTargetsProdService(t *testing.T) {
 	seedProdOpsState(t, stateDir, topology.LaunchStatusLaunching)
 	m := prodOpsAdminMock(t)
 
-	result, _, _ := handleLaunchProdOps(context.Background(), "src-proj", nil, nil, WorkflowInput{
+	result, _, _ := handleLaunchProdOps(context.Background(), "src-proj", platform.NewMock(), nil, WorkflowInput{
 		ProductionProjectName: "myapp-prod",
 		ProdOperation:         "restart",
 		TargetService:         "db",
@@ -233,7 +233,7 @@ func TestProdOps_EnableSubdomainTargetsProdService(t *testing.T) {
 	seedProdOpsState(t, stateDir, topology.LaunchStatusLaunching)
 	m := prodOpsAdminMock(t)
 
-	result, _, _ := handleLaunchProdOps(context.Background(), "src-proj", nil, nil, WorkflowInput{
+	result, _, _ := handleLaunchProdOps(context.Background(), "src-proj", platform.NewMock(), nil, WorkflowInput{
 		ProductionProjectName: "myapp-prod",
 		ProdOperation:         "enable-subdomain",
 		TargetService:         "db",

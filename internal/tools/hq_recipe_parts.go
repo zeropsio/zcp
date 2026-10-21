@@ -239,24 +239,35 @@ func handleGroupRecipeService(
 			reason = outcome.Line
 		}
 		return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
-			"The part proposal was not made: "+reason,
+			"The service proposal was not made: "+reason,
 			"Retry once this Mate is enrolled with its HQ and a pair has its repository there."), WithRecoveryStatus()), nil, nil
 	}
 	defer comp.close()
-	part, found, err := recipePartOf(ctx, comp, host)
-	if err != nil {
-		return serviceProposalFailed(err.Error()), nil, nil
-	}
-	if !found {
-		return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
-			fmt.Sprintf("The part proposal was not made: neither this Mate's recipe nor the tiers on %q of the recipe repository %q name a service %q built from a repository with a setup.", hqBase, hq.RecipeRepo, host),
-			"Name a stage of this Mate's pair, or a runtime a tier on main carries."), WithRecoveryStatus()), nil, nil
+	// A managed service the Mate's project runs is proposed for any app
+	// (hq_recipe_managed.go); anything else is a part of the app.
+	what := "the managed service " + host
+	plan := func(ctx context.Context) ([]recipeServiceTier, error) { return planRecipeManaged(ctx, comp, host) }
+	if !recipeManagedService(comp, host) {
+		part, found, err := recipePartOf(ctx, comp, host)
+		if err != nil {
+			return serviceProposalFailed(err.Error()), nil, nil
+		}
+		if open := openRecipeChange(comp.state); !found && open != nil && open.Title != nil && *open.Title == recipeServiceTitle(host) {
+			return withdrawRecipeService(ctx, comp, open, host), nil, nil
+		}
+		if !found {
+			return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
+				fmt.Sprintf("The service proposal was not made: this Mate's project runs no managed service %q, and neither this Mate's recipe nor the tiers on %q of the recipe repository %q name a service %q built from a repository with a setup.", host, hqBase, hq.RecipeRepo, host),
+				"Name a managed service this Mate's project runs, a stage of this Mate's pair, or a runtime a tier on main carries."), WithRecoveryStatus()), nil, nil
+		}
+		what = host + "'s part"
+		plan = func(ctx context.Context) ([]recipeServiceTier, error) { return planRecipeService(ctx, comp, part) }
 	}
 	var tiers []recipeServiceTier
 	written, err := writeRecipeChange(ctx, comp, openRecipeChange(comp.state), recipeServiceTitle(host),
 		"recipe: "+host+" in the group recipe, from "+comp.inputs.MateProjectName,
 		func(ctx context.Context, _ *hq.Scratch, _ string, _ []string) (map[string]string, error) {
-			planned, err := planRecipeService(ctx, comp, part)
+			planned, err := plan(ctx)
 			tiers = planned
 			files := make(map[string]string, len(planned))
 			for _, tier := range planned {
@@ -271,7 +282,7 @@ func handleGroupRecipeService(
 	result := map[string]any{"groupRepo": hq.RecipeRepo}
 	if written.other != nil && len(edits) > 0 {
 		return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
-			fmt.Sprintf("The part proposal was not made: this Mate's change #%d in the recipe repository %q (%q) is open, and HQ keeps one open change per Mate per repository.",
+			fmt.Sprintf("The service proposal was not made: this Mate's change #%d in the recipe repository %q (%q) is open, and HQ keeps one open change per Mate per repository.",
 				written.other.number, hq.RecipeRepo, written.other.title),
 			fmt.Sprintf("Retry once change #%d is merged or closed (%s).", written.other.number,
 				comp.hqc.ChangeURL(comp.appID, hq.RecipeRepo, written.other.number))), WithRecoveryStatus()), nil, nil
@@ -281,7 +292,7 @@ func handleGroupRecipeService(
 		result["changeUrl"] = comp.hqc.ChangeURL(comp.appID, hq.RecipeRepo, written.number)
 	}
 	if len(edits) == 0 {
-		message := fmt.Sprintf("The tiers on %q of the recipe repository %q already carry %s's part as this Mate runs it — nothing to propose.", hqBase, hq.RecipeRepo, host)
+		message := fmt.Sprintf("The tiers on %q of the recipe repository %q already carry %s as this Mate runs it — nothing to propose.", hqBase, hq.RecipeRepo, what)
 		if written.pushed {
 			message += fmt.Sprintf(" Change #%d, which proposed it before, now adds nothing.", written.number)
 		}
@@ -290,13 +301,40 @@ func handleGroupRecipeService(
 	}
 	result["branch"] = comp.hqc.ChangeBranch(written.number)
 	result["tiers"] = edits
-	result["message"] = fmt.Sprintf("Proposed %s's part to the recipe repository %q as change #%d (%s): %s — every other line of each tier as main has it. The person reviews and merges it like any recipe change.%s",
-		host, hq.RecipeRepo, written.number, result["changeUrl"], strings.Join(edits, "; "), refusedServiceTiers(tiers))
+	message := fmt.Sprintf("Proposed %s to the recipe repository %q as change #%d (%s): %s — every other line of each tier as main has it. The person reviews and merges it like any recipe change.%s",
+		what, hq.RecipeRepo, written.number, result["changeUrl"], strings.Join(edits, "; "), refusedServiceTiers(tiers))
+	if recipeManagedService(comp, host) {
+		message += fmt.Sprintf(" It shapes only the environments made from the recipe later: the stage and production environments already made need %s added themselves, by a person or the Chief.", host)
+	}
+	result["message"] = message
 	return jsonResult(result), nil, nil
 }
 
 func serviceProposalFailed(reason string) *mcp.CallToolResult {
 	return convertError(platform.NewPlatformError(platform.ErrAPIError,
-		"The part proposal was not made: "+reason,
+		"The service proposal was not made: "+reason,
 		"Retry the call; the project is unaffected."), WithRecoveryStatus())
+}
+
+// withdrawRecipeService is a service= call for host while the Mate's open
+// change in the recipe repository is host's proposal and nothing names host
+// any more — a managed service the Mate has since deleted: the change is
+// brought to main's tree, so it adds nothing and Core closes it.
+func withdrawRecipeService(ctx context.Context, comp groupRecipeComposition, open *hq.MateChange, host string) *mcp.CallToolResult {
+	written, err := writeRecipeChange(ctx, comp, open, recipeServiceTitle(host),
+		"recipe: "+host+" withdrawn, from "+comp.inputs.MateProjectName,
+		func(context.Context, *hq.Scratch, string, []string) (map[string]string, error) {
+			return map[string]string{}, nil
+		})
+	if err != nil {
+		return serviceProposalFailed(err.Error())
+	}
+	url := comp.hqc.ChangeURL(comp.appID, hq.RecipeRepo, written.number)
+	return jsonResult(map[string]any{
+		"groupRepo": hq.RecipeRepo,
+		"change":    written.number,
+		"changeUrl": url,
+		"message": fmt.Sprintf("This Mate's project no longer runs %s, so change #%d (%s), which proposed it to the recipe repository %q, is withdrawn: it now adds nothing.",
+			host, written.number, url, hq.RecipeRepo),
+	})
 }

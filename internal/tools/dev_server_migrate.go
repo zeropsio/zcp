@@ -25,6 +25,17 @@ import (
 type devServerMigration struct {
 	hostname, setup, yamlFile, name string
 	warnings                        []string
+	times                           migrationTimes
+}
+
+// migrationTimes is where a move onto the supervisor spent its time: the zcli
+// push, the wait for the build to go live and the checks after it, and the
+// dev server's start under the supervisor once the build is live.
+type migrationTimes struct {
+	PushMillis      int64  `json:"pushMillis"`
+	BuildMillis     int64  `json:"buildMillis"`
+	BuildDuration   string `json:"buildDuration,omitempty"`
+	DevServerMillis int64  `json:"devServerMillis"`
 }
 
 // sentence tells the agent in one sentence what changed, so it lands in the
@@ -90,7 +101,17 @@ func migrateToSupervisor(ctx context.Context, req *mcp.CallToolRequest, d DevSer
 			"Fix zerops.yaml on "+host+" (or deploy it once with zerops_deploy setup=<dev setup>), then start the dev server again.")
 	}
 	m := &devServerMigration{hostname: host, setup: setup, yamlFile: file, name: name}
-	deployed := redeployForSupervisor(ctx, req, d, host, setup, root)
+	onProgress := buildProgressCallback(ctx, req)
+	began := time.Now()
+	// The server numbers the call's notifications and holds the answer after
+	// the last one (keepAlive), so a step failing at once is safe after say.
+	say := func(message string) {
+		if onProgress != nil {
+			onProgress(message, 0, 0)
+		}
+	}
+	say("moving " + host + " onto the dev-server supervisor: redeploying it once")
+	deployed := redeployForSupervisor(ctx, onProgress, d, host, setup, root, &m.times)
 	if deployed.Status != statusDeployed {
 		return m, &ops.DevServerResult{
 			Action: p.Action, Hostname: host, Reason: reasonMigrationDeployFailed,
@@ -104,7 +125,10 @@ func migrateToSupervisor(ctx context.Context, req *mcp.CallToolRequest, d DevSer
 	if err := dropKeeperRecord(d.StateDir, host); err != nil {
 		m.warnings = append(m.warnings, err.Error())
 	}
+	say(fmt.Sprintf("%s redeployed in %s; starting its dev server under the supervisor", host, time.Since(began).Round(time.Second)))
+	started := time.Now()
 	result, err := ops.ExecuteDevServer(ctx, d.SSH, d.Client, d.ProjectID, p)
+	m.times.DevServerMillis = time.Since(started).Milliseconds()
 	return m, result, err
 }
 
@@ -298,20 +322,25 @@ func devsupRelease(url string) string {
 }
 
 // redeployForSupervisor self-deploys hostname with setup from workingDir ("" is
-// /var/www) and records the attempt like every other deploy path.
-func redeployForSupervisor(ctx context.Context, req *mcp.CallToolRequest, d DevServerDeps, host, setup, workingDir string) *ops.DeployResult {
+// /var/www), records the attempt like every other deploy path, and writes the
+// push's and the build's time into times.
+func redeployForSupervisor(ctx context.Context, onProgress ops.ProgressCallback, d DevServerDeps, host, setup, workingDir string, times *migrationTimes) *ops.DeployResult {
 	attempt := workflow.DeployAttempt{
 		AttemptedAt: time.Now().UTC().Format(time.RFC3339),
 		Setup:       setup,
 		Strategy:    deployStrategyZCLILabel,
 	}
+	pushed := time.Now()
 	result, err := ops.DeploySSH(ctx, d.Client, d.ProjectID, d.SSH, *d.AuthInfo, host, host, setup, workingDir, "")
+	times.PushMillis = time.Since(pushed).Milliseconds()
 	if err != nil {
 		attempt.Error, attempt.FailureClass = err.Error(), topology.FailureClassNetwork
 		_ = workflow.RecordDeployAttempt(d.StateDir, host, attempt)
 		return &ops.DeployResult{TargetService: host, Status: err.Error()}
 	}
-	pollDeployBuild(ctx, d.Client, d.ProjectID, result, buildProgressCallback(ctx, req), d.LogFetcher, d.SSH, d.StateDir, "")
+	built := time.Now()
+	pollDeployBuild(ctx, d.Client, d.ProjectID, result, onProgress, d.LogFetcher, d.SSH, d.StateDir, "")
+	times.BuildMillis, times.BuildDuration = time.Since(built).Milliseconds(), result.BuildDuration
 	switch {
 	case result.Status == statusDeployed:
 		attempt.SucceededAt = time.Now().UTC().Format(time.RFC3339)

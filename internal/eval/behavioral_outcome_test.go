@@ -57,9 +57,7 @@ func newBehavioralHarness(t *testing.T) *behavioralHarness {
 
 func (h *behavioralHarness) writeClaudeScript(t *testing.T, script string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(h.bin, "claude"), []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	installFakeExecutable(t, filepath.Join(h.bin, "claude"), script)
 }
 
 func (h *behavioralHarness) writeScenario(t *testing.T, content string) string {
@@ -71,10 +69,14 @@ func (h *behavioralHarness) writeScenario(t *testing.T, content string) string {
 	return p
 }
 
+// config leaves Timeout at the runner default: the fake claude exits on its
+// own and no test exercises the scenario deadline, so a short wall-clock
+// budget only turned a slow exec on a loaded machine into a spurious
+// not-run. A hung fake is still caught by go test's -timeout.
 func (h *behavioralHarness) config() RunnerConfig {
 	return RunnerConfig{
 		ResultsDir: h.resultsDir, WorkDir: h.work, ClaudeHome: h.home,
-		Model: "fake-offline", Timeout: 5 * time.Second, TaskEndSettle: 200 * time.Millisecond,
+		Model: "fake-offline", TaskEndSettle: 200 * time.Millisecond,
 	}
 }
 
@@ -87,9 +89,7 @@ func (h *behavioralHarness) outDir(scenarioID string) string {
 func (h *behavioralHarness) writeFakeCandidate(t *testing.T, script string) (path, sha string) {
 	t.Helper()
 	path = filepath.Join(h.root, "candidate-zcp")
-	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	installFakeExecutable(t, path, script)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

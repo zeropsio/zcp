@@ -34,7 +34,7 @@ func stagedSourceClient() *platform.Mock {
 func captureAdminFactory(t *testing.T, m *platform.MockProjectAdminClient) *string {
 	t.Helper()
 	var captured string
-	cleanup := setProjectAdminClientFactory(func(launchKey, _ string) (platform.ProjectAdminClient, error) {
+	cleanup := setProjectAdminClientFactory(func(launchKey, _, _ string) (platform.ProjectAdminClient, error) {
 		captured = launchKey
 		m.Closed = false
 		return m, nil

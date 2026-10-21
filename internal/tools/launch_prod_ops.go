@@ -120,7 +120,7 @@ func handleLaunchProdOps(
 		), WithRecoveryStatus()), nil, nil
 	}
 
-	admin, adminErr := projectAdminClientFactory(launchKey, apiHost)
+	admin, adminErr := newLaunchAdmin(ctx, client, state, launchKey, apiHost)
 	if adminErr != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,

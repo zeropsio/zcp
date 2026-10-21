@@ -868,7 +868,9 @@ func Boot(ctx context.Context, statusPath string, env func() func(string) string
 		return
 	}
 	im.Fresh = FreshAPI(env, func(token, apiHost string) (API, error) {
-		return platform.NewZeropsClient(token, apiHost)
+		readCtx, cancel := context.WithTimeout(ctx, platform.DefaultAPITimeout)
+		defer cancel()
+		return platform.NewProjectClient(readCtx, token, apiHost, im.ProjectID)
 	})
 	if im.API = im.Fresh(); im.API == nil {
 		im.finish(nil, "could not build the API client", false)

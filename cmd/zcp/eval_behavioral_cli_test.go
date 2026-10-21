@@ -22,67 +22,29 @@ import (
 	"github.com/zeropsio/zcp/internal/capture"
 )
 
-// This file exercises the ACTUAL `zcp` binary (built once, run via
+// This file exercises zcp's own main() in a real child process (run via
 // exec.Command) against a loopback fake of the Zerops REST API and a fake
 // `claude` on PATH — the real-binary CLI acceptance harness required by
 // docs/spec-testing-architecture.md §10.1 "CLI acceptance" and
 // docs/spec-capture-inspector.md §6. Every test in this file is
-// non-parallel: it builds and runs the zcp binary with a private HOME.
+// non-parallel: it runs the zcp binary with a private HOME.
 
 // ---------------------------------------------------------------------------
-// Binary build (once per test binary)
+// The zcp binary under test
 // ---------------------------------------------------------------------------
 
-var (
-	zcpBinaryOnce sync.Once
-	zcpBinaryPath string
-	errZCPBuild   error
-)
-
-// zcpRepoRoot resolves the module root from the test's working directory —
-// `go test` runs a package's tests with cwd = the package directory, and
-// cmd/zcp lives two levels below the root. Verified by the presence of go.mod
-// so a moved checkout fails loudly instead of building a stranger's tree.
-func zcpRepoRoot() (string, error) {
-	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		return "", fmt.Errorf("resolve module root: %w", err)
-	}
-	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
-		return "", fmt.Errorf("module root %s: %w", root, err)
-	}
-	return root, nil
-}
-
-func buildZCPBinary(t *testing.T) string {
+// zcpBinary returns the binary the CLI tests run as zcp: this test binary,
+// which TestMain turns into zcp's main() when started with a zcp command
+// line. It is the same package main a `go build` would link, minus a second
+// link and the first-exec assessment of a freshly written 70 MB file, which
+// together took over half a minute on a loaded machine.
+func zcpBinary(t *testing.T) string {
 	t.Helper()
-	zcpBinaryOnce.Do(func() {
-		dir, err := os.MkdirTemp("", "zcp-cli-test-build-") //nolint:usetesting // shared across every test via sync.Once; t.TempDir() would be removed after the first test
-		if err != nil {
-			errZCPBuild = fmt.Errorf("create build tempdir: %w", err)
-			return
-		}
-		root, err := zcpRepoRoot()
-		if err != nil {
-			errZCPBuild = err
-			return
-		}
-		out := filepath.Join(dir, "zcp")
-		cmd := exec.CommandContext(context.Background(), "go", "build", "-o", out, "./cmd/zcp")
-		cmd.Dir = root
-		var stderr bytes.Buffer
-		cmd.Stdout = &stderr
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
-			errZCPBuild = fmt.Errorf("go build ./cmd/zcp: %w\n%s", err, stderr.String())
-			return
-		}
-		zcpBinaryPath = out
-	})
-	if errZCPBuild != nil {
-		t.Fatalf("build zcp binary: %v", errZCPBuild)
+	bin, err := os.Executable()
+	if err != nil {
+		t.Fatalf("resolve test binary: %v", err)
 	}
-	return zcpBinaryPath
+	return bin
 }
 
 // ---------------------------------------------------------------------------
@@ -144,9 +106,7 @@ printf '{"type":"result","subtype":"success","is_error":false,"result":"Task com
 exit 0
 `
 	path := filepath.Join(dir, "claude")
-	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
-		t.Fatalf("write fake claude: %v", err)
-	}
+	installFakeExecutable(t, path, script)
 	return path
 }
 
@@ -407,7 +367,7 @@ func newCLIHarness(t *testing.T, appStatus string) *cliHarness {
 // behavioral CLI diagnostic is printed).
 func (h *cliHarness) run(t *testing.T, extraEnv []string, args ...string) (exitCode int, stderr string) {
 	t.Helper()
-	bin := buildZCPBinary(t)
+	bin := zcpBinary(t)
 	cmd := exec.CommandContext(context.Background(), bin, args...)
 	cmd.Env = append(append([]string{}, h.env...), extraEnv...)
 	var errBuf bytes.Buffer
@@ -456,7 +416,7 @@ func writeRequiredScenario(t *testing.T, dir, id, mode string) string {
 // TestBehavioralCLI_RequiredFailure_NonzeroWithExplicitDimensions
 // ---------------------------------------------------------------------------
 
-// non-parallel: builds and runs the zcp binary with a private HOME.
+// non-parallel: runs the zcp binary with a private HOME.
 func TestBehavioralCLI_RequiredFailure_NonzeroWithExplicitDimensions(t *testing.T) {
 	h := newCLIHarness(t, "FAILED")
 	h.server.hideAppForFirstDirectCall() // preflight fresh-target read sees an empty project; the task-end freeze sees the seeded FAILED "app"
@@ -519,7 +479,7 @@ func findResultFile(t *testing.T, resultsDir, scenarioID, name string) string {
 // TestBehavioralCLI_ObserveMode_PreservesExecutionOnlyExit
 // ---------------------------------------------------------------------------
 
-// non-parallel: builds and runs the zcp binary with a private HOME.
+// non-parallel: runs the zcp binary with a private HOME.
 func TestBehavioralCLI_ObserveMode_PreservesExecutionOnlyExit(t *testing.T) {
 	h := newCLIHarness(t, "FAILED")
 	scenarioDir := t.TempDir()
@@ -547,7 +507,7 @@ func TestBehavioralCLI_ObserveMode_PreservesExecutionOnlyExit(t *testing.T) {
 // TestBehavioralCLI_FailedTask_CompleteCaptureRemainsReadable
 // ---------------------------------------------------------------------------
 
-// non-parallel: builds and runs the zcp binary with a private HOME.
+// non-parallel: runs the zcp binary with a private HOME.
 func TestBehavioralCLI_FailedTask_CompleteCaptureRemainsReadable(t *testing.T) {
 	h := newCLIHarness(t, "FAILED")
 	h.server.hideAppForFirstDirectCall()
@@ -638,7 +598,7 @@ func findCaptureSessionDir(t *testing.T, home string) string {
 // TestBehavioralCLI_SharedCapture_RefusedBeforeMutation
 // ---------------------------------------------------------------------------
 
-// non-parallel: builds and runs the zcp binary with a private HOME.
+// non-parallel: runs the zcp binary with a private HOME.
 func TestBehavioralCLI_SharedCapture_RefusedBeforeMutation(t *testing.T) {
 	t.Run("no capture window at all", func(t *testing.T) {
 		h := newCLIHarness(t, "ACTIVE")
@@ -660,7 +620,7 @@ func TestBehavioralCLI_SharedCapture_RefusedBeforeMutation(t *testing.T) {
 		scenarioDir := t.TempDir()
 		scenarioPath := writeRequiredScenario(t, scenarioDir, "cli-required-inherited", "required")
 		outerCaptureRoot := t.TempDir()
-		bin := buildZCPBinary(t)
+		bin := zcpBinary(t)
 
 		exitCode, stderr := h.run(t, nil,
 			"capture", "raw", "--output-dir", outerCaptureRoot, "--",
@@ -698,7 +658,7 @@ func assertOnlyAuthAndDiscoveryRequests(t *testing.T, server *fakeZeropsServer) 
 // TestBehavioralCLI_OwnedScopedChild_FinalizesThenReturnsAcceptance
 // ---------------------------------------------------------------------------
 
-// non-parallel: builds and runs the zcp binary with a private HOME.
+// non-parallel: runs the zcp binary with a private HOME.
 func TestBehavioralCLI_OwnedScopedChild_FinalizesThenReturnsAcceptance(t *testing.T) {
 	h := newCLIHarness(t, "ACTIVE")
 	h.server.hideAppForFirstDirectCall()
@@ -773,7 +733,7 @@ func TestBehavioralCLI_OwnedScopedChild_FinalizesThenReturnsAcceptance(t *testin
 // TestBehavioralCLI_CaptureCloseFailure_NonzeroEvenIfTaskPassed
 // ---------------------------------------------------------------------------
 
-// non-parallel: builds and runs the zcp binary with a private HOME.
+// non-parallel: runs the zcp binary with a private HOME.
 func TestBehavioralCLI_CaptureCloseFailure_NonzeroEvenIfTaskPassed(t *testing.T) {
 	h := newCLIHarness(t, "ACTIVE")
 	h.server.hideAppForFirstDirectCall()
@@ -842,16 +802,39 @@ func errOrNil2(_ *capture.InspectionReport, err error) error       { return err 
 // project while the task-end freeze (the 2nd) sees the seeded state.
 func cliBindingArgs(t *testing.T) []string {
 	t.Helper()
-	bin := buildZCPBinary(t)
-	candidate := filepath.Join(t.TempDir(), "zcp-candidate")
-	copyExecutableFile(t, bin, candidate)
-	sha := sha256HexFile(t, candidate)
+	candidate, sha := candidateBinary(t)
 	return []string{
 		"--candidate", candidate,
 		"--candidate-sha256", sha,
 		"--project-id", fakeProjectID,
 		"--ack-disposable-project", "yes",
 	}
+}
+
+var (
+	candidateOnce   sync.Once
+	candidatePath   string
+	candidateSHA256 string
+)
+
+// candidateBinary returns the candidate every bound test runs: the binary
+// under test at its own path, made once per test binary. A hard link avoids
+// writing a new executable macOS would assess on its first exec; a copy is
+// the fallback when the shared directory is on another device.
+func candidateBinary(t *testing.T) (path, sha string) {
+	t.Helper()
+	bin := zcpBinary(t)
+	candidateOnce.Do(func() {
+		path := filepath.Join(sharedTestDir(t), "zcp-candidate")
+		if err := os.Link(bin, path); err != nil {
+			copyExecutableFile(t, bin, path)
+		}
+		candidatePath, candidateSHA256 = path, sha256HexFile(t, path)
+	})
+	if candidatePath == "" {
+		t.Fatal("candidate binary unavailable: its first preparation failed")
+	}
+	return candidatePath, candidateSHA256
 }
 
 // sha256HexFile hashes a file for use as --candidate-sha256 in tests.
@@ -865,7 +848,7 @@ func sha256HexFile(t *testing.T, path string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// non-parallel: builds and runs the zcp binary with a private HOME.
+// non-parallel: runs the zcp binary with a private HOME.
 //
 // TestExecutionBinding_WrongProject_RefusedBeforeRunner pins
 // docs/spec-testing-architecture.md §10.4: a binding whose --project-id
@@ -877,7 +860,7 @@ func TestExecutionBinding_WrongProject_RefusedBeforeRunner(t *testing.T) {
 	scenarioDir := t.TempDir()
 	scenarioPath := writeRequiredScenario(t, scenarioDir, "cli-wrong-project", "required")
 
-	bin := buildZCPBinary(t)
+	bin := zcpBinary(t)
 	sha := sha256HexFile(t, bin)
 
 	exitCode, stderr := h.run(t, nil,
@@ -908,7 +891,7 @@ func TestExecutionBinding_WrongProject_RefusedBeforeRunner(t *testing.T) {
 // TestBehavioralCLI_Bound_RequiredRefusesOnUnsupportedOS_OrAcceptsOnLinux
 // ---------------------------------------------------------------------------
 
-// non-parallel: builds and runs the zcp binary with a private HOME.
+// non-parallel: runs the zcp binary with a private HOME.
 //
 // TestBehavioralCLI_Bound_RequiredRefusesOnUnsupportedOS_OrAcceptsOnLinux
 // pins docs/spec-testing-architecture.md §10.4's fourth acceptance
@@ -930,10 +913,7 @@ func TestBehavioralCLI_Bound_RequiredRefusesOnUnsupportedOS_OrAcceptsOnLinux(t *
 	scenarioDir := t.TempDir()
 	scenarioPath := writeRequiredScenario(t, scenarioDir, "cli-bound-identity", "required")
 
-	bin := buildZCPBinary(t)
-	candidate := filepath.Join(t.TempDir(), "zcp-candidate")
-	copyExecutableFile(t, bin, candidate)
-	sha := sha256HexFile(t, candidate)
+	candidate, sha := candidateBinary(t)
 
 	exitCode, stderr := h.run(t, nil,
 		"eval", "behavioral", "run", "--file", scenarioPath, "--capture", "raw",

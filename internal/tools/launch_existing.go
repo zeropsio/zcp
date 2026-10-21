@@ -48,8 +48,9 @@ func setExistingProdTokenClientFactory(f func(token, apiHost string) (platform.C
 
 // validateExistingProdTokenScope confirms that a project-scoped token
 // authenticates AND resolves to exactly one project AND that project's
-// ID matches the user-supplied expectedProjectID. Returns nil on
-// success; returns a structured PlatformError on every failure mode:
+// ID matches the user-supplied expectedProjectID — searching every org the
+// token belongs to, and binding the client to the org that owns the match.
+// Returns that org on success; returns a structured PlatformError on every failure mode:
 //
 //   - GetUserInfo failure → wraps with ErrAuthRequired equivalent
 //   - ListProjects returns 0 → ErrTokenNoProject
@@ -58,41 +59,42 @@ func setExistingProdTokenClientFactory(f func(token, apiHost string) (platform.C
 //
 // Caller wraps the response via convertError so the LLM sees a
 // recovery-friendly status.
-func validateExistingProdTokenScope(ctx context.Context, c platform.Client, expectedProjectID string) error {
+func validateExistingProdTokenScope(ctx context.Context, c platform.Client, expectedProjectID string) (string, error) {
 	info, err := c.GetUserInfo(ctx)
 	if err != nil {
-		return fmt.Errorf("existing-project token: validate user info: %w", err)
+		return "", fmt.Errorf("existing-project token: validate user info: %w", err)
 	}
-	if info == nil || info.ID == "" {
-		return platform.NewPlatformError(
+	if info == nil || len(info.Memberships) == 0 {
+		return "", platform.NewPlatformError(
 			platform.ErrAuthRequired,
 			"Existing-project token did not resolve to a Zerops client; cannot continue",
 			"Regenerate the project-scoped token on the target project's dashboard.",
 		)
 	}
-	projects, err := c.ListProjects(ctx, info.ID)
+	projects, err := platform.ListProjectsInEveryOrg(ctx, c, info.Memberships)
 	if err != nil {
-		return fmt.Errorf("existing-project token: list projects: %w", err)
+		return "", fmt.Errorf("existing-project token: list projects: %w", err)
 	}
 	switch len(projects) {
 	case 0:
-		return platform.NewPlatformError(
+		return "", platform.NewPlatformError(
 			platform.ErrTokenNoProject,
 			"Existing-project token has no project access; cannot import into target",
 			"Regenerate a project-scoped token on the target project's dashboard (Settings → Access Tokens Management).",
 		)
 	case 1:
 		if projects[0].ID != expectedProjectID {
-			return platform.NewPlatformError(
+			return "", platform.NewPlatformError(
 				platform.ErrTokenScopeMismatch,
 				fmt.Sprintf("Existing-project token scoped to project %q but workflow expects %q",
 					projects[0].ID, expectedProjectID),
 				"Regenerate the project-scoped token on the EXPECTED target project's dashboard (Settings → Access Tokens Management). The current token's project does not match existingProjectId.",
 			)
 		}
-		return nil
+		c.BindOrg(projects[0].ClientID)
+		return projects[0].ClientID, nil
 	default:
-		return platform.NewPlatformError(
+		return "", platform.NewPlatformError(
 			platform.ErrTokenMultiProject,
 			fmt.Sprintf("Existing-project token resolves to %d projects; ZCP requires single-project scope", len(projects)),
 			"Regenerate the project-scoped token on the target project's dashboard (Settings → Access Tokens Management). Account-wide tokens are not accepted for the existing-project import path.",
@@ -141,7 +143,8 @@ func executeExistingProjectMutation(
 
 	// 2. Token scope validation. Errors return structured codes that
 	// the convertError boundary surfaces with recovery hints.
-	if scopeErr := validateExistingProdTokenScope(ctx, target, input.ExistingProjectID); scopeErr != nil {
+	targetOrg, scopeErr := validateExistingProdTokenScope(ctx, target, input.ExistingProjectID)
+	if scopeErr != nil {
 		_ = appendAuditLog(stateDir, launchAuditEntry{
 			LaunchID:          launchID,
 			Action:            "publish-rejected",
@@ -333,6 +336,7 @@ func executeExistingProjectMutation(
 		SourceRepoURL:         existingRepoURL,
 		TargetProjectName:     input.ProductionProjectName,
 		TargetProjectID:       input.ExistingProjectID,
+		TargetClientID:        targetOrg,
 		TargetServiceHostname: stageHost,
 		SourceSnapshot:        launchBundle.SourceSnapshot,
 		Classifications:       classifications,

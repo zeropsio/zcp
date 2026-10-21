@@ -410,9 +410,9 @@ and `CLAUDE_CODE_OAUTH_TOKEN`: every other `ZCP_FARM_*` key it lacks resolves
 once from the `farm` service's env in that project, a `${os_<key>}` value
 following to the `os` service; the environment always wins and no value is
 ever printed. Both services are found by the project-level direct read — the
-service-stack search is scoped to the first org in the token's
-`clientUserList`, and the account-wide token belongs to more than one org,
-the farm project's not being the first. `farm run` resolves everything it needs (the
+service-stack search targets one org, the one owning the project a client
+is bound to, and the farm's account-wide token belongs to several orgs with
+no project bound. `farm run` resolves everything it needs (the
 `--set gate`/`--set all` scenario id list, each scenario's front matter, and
 the evaluator pin absent `--evaluator`, the wrapper pin absent `--wrapper`)
 from the verified bucket tree (`scenarios/<digest>/.farm-gate-set.txt`,
