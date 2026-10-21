@@ -142,8 +142,8 @@ func TestAnswerGit_AGitHubRepositoryGetsTheTokenHQMintsForIt(t *testing.T) {
 	}
 }
 
-// git waits on the helper: an HQ that never answers is given up within the
-// helper's bound and said, never waited on for good.
+// git waits on the helper: an HQ that never answers, once the call is given
+// up, is said as "try again" and answered with nothing.
 func TestAnswerGit_AnHQThatNeverAnswersIsGivenUp(t *testing.T) {
 	t.Parallel()
 	release := make(chan struct{})
