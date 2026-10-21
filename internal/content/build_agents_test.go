@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/runtime"
 )
 
@@ -654,7 +655,7 @@ func TestBuildAgentsMD_Container_GitHostIsHQ(t *testing.T) {
 		"a branch of your own",
 		"Never push `main` and never force-push",
 		"git merge --ff-only origin/main",
-		"credential.https://github.com.useHttpPath true",
+		hq.GitHubHelperConfig,
 		"never over ssh",
 		`action="describe-change"`,
 	} {

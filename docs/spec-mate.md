@@ -2635,7 +2635,8 @@ themselves; no token crosses the conversation.
   `requested` (`origin`: `url`, `repo`, `why`), telling the agent to say only why, in one sentence,
   and end its turn. Both answers say how the code comes in, per pick: first from HQ's `main` either
   way; kept on GitHub, the Mate's own shell on the mounted repository points `origin` at GitHub
-  and has git ask `zcp hq git-credential` for it (`credential.https://github.com.helper` and
+  and has git ask only `zcp hq git-credential` for it (`credential.https://github.com.helper`
+  emptied first, so no helper of the machine or the person answers ahead of it, then
   `useHttpPath`, `hq.GitHubHelperConfig`), work goes on a branch of the agent's own and its pull
   request (`gh pr create`, `GH_TOKEN` from the same helper); kept in Mate, the same shell adds the
   repository as `upstream` with its push URL `no_push`. HQ's `repos` name an origin's address and

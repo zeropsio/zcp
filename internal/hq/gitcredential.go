@@ -21,8 +21,11 @@ const GitHubHost = "github.com"
 
 // GitHubHelperConfig is the git configuration that has `zcp hq git-credential`
 // answer github.com: git names the repository to a helper only with
-// useHttpPath, and HQ mints a token for one repository at a time.
-const GitHubHelperConfig = "git config credential.https://github.com.helper '!zcp hq git-credential' && git config credential.https://github.com.useHttpPath true"
+// useHttpPath, and HQ mints a token for one repository at a time. The empty
+// helper first clears every helper the machine or the person configured, so
+// none answers github.com ahead of it or keeps the minted token; running it
+// again changes nothing.
+const GitHubHelperConfig = "git config --replace-all credential.https://github.com.helper '' && git config --add credential.https://github.com.helper '!zcp hq git-credential' && git config credential.https://github.com.useHttpPath true"
 
 // gitHubAnswerBound is how long the helper waits on HQ minting a GitHub
 // token — HQ itself asks GitHub, with a bounded wait of its own; git waits on

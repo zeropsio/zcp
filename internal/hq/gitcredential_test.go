@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -176,4 +178,48 @@ func requestPath(request string) string {
 		}
 	}
 	return ""
+}
+
+// The checkout's GitHub helper is the only one git asks for github.com: a
+// helper the machine or the person configured (`gh auth setup-git`, a
+// credential store) never answers ahead of it with the person's own token,
+// nor keeps the minted one.
+func TestGitHubHelperConfig_OnlyZcpAnswersGitHub(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	bin := filepath.Join(root, "bin")
+	repo := filepath.Join(root, "repo")
+	global := filepath.Join(root, "gitconfig")
+	for _, dir := range []string{bin, repo} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fakeZcp := "#!/bin/sh\ncat >/dev/null\necho username=x-access-token\necho password=minted\n"
+	if err := os.WriteFile(filepath.Join(bin, "zcp"), []byte(fakeZcp), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	persons := "[credential]\n\thelper = \"!f() { echo username=person; echo password=persons-token; }; f\"\n"
+	if err := os.WriteFile(global, []byte(persons), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := append(os.Environ(),
+		"GIT_CONFIG_GLOBAL="+global, "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0",
+		"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	run := func(stdin, script string) string {
+		t.Helper()
+		cmd := exec.CommandContext(context.Background(), "sh", "-c", script)
+		cmd.Dir, cmd.Env, cmd.Stdin = repo, env, strings.NewReader(stdin)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s: %v\n%s", script, err, out)
+		}
+		return string(out)
+	}
+	run("", "git init -q && "+GitHubHelperConfig+" && "+GitHubHelperConfig) // a second run changes nothing
+
+	got := run("protocol=https\nhost=github.com\npath=acme/app.git\n\n", "git credential fill")
+	if !strings.Contains(got, "password=minted") || strings.Contains(got, "persons-token") {
+		t.Errorf("git credential fill = %q, want only the minted token", got)
+	}
 }
