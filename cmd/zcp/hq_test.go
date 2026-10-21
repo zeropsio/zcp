@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -123,38 +126,61 @@ func TestCLIDispatch_HQ_IsAVerb(t *testing.T) {
 }
 
 // TestRunHQGitCredential: `zcp hq git-credential` is the credential helper
-// git runs on every fetch and push to HQ from the Mate's shell — it prints the
-// Mate credential under HQ's git user, for the enrolled HQ only, and nothing
-// else on stdout. Declining exits non-zero with nothing printed, so a helper
-// chain goes on to its next answer and never sends an empty password.
+// git runs on every fetch and push from the Mate's shell — it prints the Mate
+// credential under HQ's git user for the enrolled HQ, and for a repository on
+// GitHub the token HQ mints for it at that call, and nothing else on stdout.
+// Declining exits non-zero with nothing printed, so a helper chain goes on to
+// its next answer and never sends an empty password; why it declined goes to
+// stderr, never the credential.
 func TestRunHQGitCredential(t *testing.T) {
 	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("path") != "acme/shop.git" {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, `{"reason":"not_mounted"}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"username":"x-access-token","password":"ghs_minted","expiresAt":"2026-10-21T13:00:00Z"}`)
+	}))
+	t.Cleanup(srv.Close)
+	hqHost := strings.TrimPrefix(srv.URL, "http://")
 	path := filepath.Join(t.TempDir(), "enrollment.json")
-	if err := hq.SaveEnrollment(path, hq.Enrollment{HQ: "https://hq.example", ProjectID: "p1", Credential: "secret"}); err != nil {
+	if err := hq.SaveEnrollment(path, hq.Enrollment{HQ: srv.URL, ProjectID: "p1", Credential: "secret"}); err != nil {
 		t.Fatal(err)
 	}
 	tests := []struct {
-		name     string
-		args     []string
-		stdin    string
-		want     string
-		wantCode int
+		name       string
+		args       []string
+		stdin      string
+		want       string
+		wantCode   int
+		wantStderr string
 	}{
-		{"get for the HQ", []string{"get"}, "protocol=https\nhost=hq.example\n\n", "username=mate\npassword=secret\n", 0},
-		{"get for another host", []string{"get"}, "protocol=https\nhost=github.com\n\n", "", 1},
-		{"store keeps nothing", []string{"store"}, "protocol=https\nhost=hq.example\nusername=mate\npassword=secret\n\n", "", 0},
-		{"erase keeps nothing", []string{"erase"}, "protocol=https\nhost=hq.example\n\n", "", 0},
-		{"no action", nil, "", "", 1},
+		{"get for the HQ", []string{"get"}, "protocol=http\nhost=" + hqHost + "\n\n", "username=mate\npassword=secret\n", 0, ""},
+		{"get for a mounted GitHub repository", []string{"get"}, "protocol=https\nhost=github.com\npath=acme/shop.git\n\n", "username=x-access-token\npassword=ghs_minted\n", 0, ""},
+		{"get for a GitHub repository HQ does not mount", []string{"get"}, "protocol=https\nhost=github.com\npath=acme/other.git\n\n", "", 1, "mounts no repository"},
+		{"get for GitHub naming no repository", []string{"get"}, "protocol=https\nhost=github.com\n\n", "", 1, "useHttpPath"},
+		{"get for another host", []string{"get"}, "protocol=https\nhost=gitlab.com\n\n", "", 1, ""},
+		{"store keeps nothing", []string{"store"}, "protocol=https\nhost=github.com\nusername=x-access-token\npassword=ghs_minted\n\n", "", 0, ""},
+		{"erase keeps nothing", []string{"erase"}, "protocol=https\nhost=github.com\n\n", "", 0, ""},
+		{"no action", nil, "", "", 1, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			var out strings.Builder
-			if code := runHQGitCredential(tt.args, strings.NewReader(tt.stdin), &out, path); code != tt.wantCode {
-				t.Fatalf("exit %d, want %d", code, tt.wantCode)
+			var out, errOut strings.Builder
+			if code := runHQGitCredential(tt.args, strings.NewReader(tt.stdin), &out, &errOut, path, srv.Client()); code != tt.wantCode {
+				t.Fatalf("exit %d, want %d (stderr %q)", code, tt.wantCode, errOut.String())
 			}
 			if out.String() != tt.want {
 				t.Errorf("stdout = %q, want %q", out.String(), tt.want)
+			}
+			if tt.wantStderr == "" && errOut.Len() > 0 || !strings.Contains(errOut.String(), tt.wantStderr) {
+				t.Errorf("stderr = %q, want %q", errOut.String(), tt.wantStderr)
+			}
+			if strings.Contains(errOut.String(), "secret") || strings.Contains(errOut.String(), "ghs_") {
+				t.Errorf("stderr %q carries a credential", errOut.String())
 			}
 		})
 	}

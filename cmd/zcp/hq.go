@@ -119,31 +119,37 @@ func runHQCmd(args []string) int {
 }
 
 // isHQGitCredential is `zcp hq git-credential`, which run answers before the
-// CLI's telemetry: git runs the helper on every fetch and push to HQ from the
-// Mate's shell (ops.hqCredentialHelperShell) and reads its whole stdout as
-// credential attributes — the telemetry's one-time notice on stdout, or its
-// flush, would break or hold every one of them.
+// CLI's telemetry: git runs the helper on every fetch and push to HQ or
+// GitHub from the Mate's shell (ops.hqCredentialHelperShell) and reads its
+// whole stdout as credential attributes — the telemetry's one-time notice on
+// stdout, or its flush, would break or hold every one of them.
 func isHQGitCredential(args []string) bool {
 	return len(args) >= 2 && args[0] == "hq" && args[1] == "git-credential"
 }
 
-// runHQGitCredential answers git's credential protocol: `get` prints the Mate
-// credential under HQ's git user when the request on stdin names the HQ the
-// enrollment at path holds (hq.GitCredential), and declines with nothing
-// printed and exit 1 otherwise; `store` and `erase` keep nothing — the
-// enrollment is the store.
-func runHQGitCredential(args []string, stdin io.Reader, stdout io.Writer, path string) int {
+// runHQGitCredential answers git's credential protocol: `get` prints what
+// hq.AnswerGit answers for the request on stdin — the Mate credential under
+// HQ's git user for the HQ the enrollment at path holds, the token HQ mints
+// at this call for a repository on GitHub — and declines with nothing on
+// stdout and exit 1 otherwise, saying why on stderr when there is a reason a
+// person can act on; `store` and `erase` keep nothing — the enrollment and HQ
+// are the store.
+func runHQGitCredential(args []string, stdin io.Reader, stdout, stderr io.Writer, path string, httpClient hq.Doer) int {
 	if len(args) == 0 {
 		return 1
 	}
 	if args[0] != "get" {
 		return 0
 	}
-	credential, ok := hq.GitCredential(stdin, path)
-	if !ok {
+	answer, err := hq.AnswerGit(context.Background(), stdin, path, httpClient)
+	if err != nil {
+		var declined *hq.DeclinedError
+		if errors.As(err, &declined) && declined.Reason != "" {
+			_, _ = fmt.Fprintln(stderr, "zcp hq git-credential: "+declined.Reason)
+		}
 		return 1
 	}
-	_, _ = fmt.Fprintf(stdout, "username=%s\npassword=%s\n", hq.GitUser, credential)
+	_, _ = fmt.Fprintf(stdout, "username=%s\npassword=%s\n", answer.Username, answer.Password)
 	return 0
 }
 
