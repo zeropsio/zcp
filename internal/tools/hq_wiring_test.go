@@ -635,6 +635,72 @@ func TestRepositoryPass_TheCheckoutsOriginIsWhereItsCodeIsKept(t *testing.T) {
 	}
 }
 
+// TestStatus_SaysWhatTheCheckoutsOriginIsNow: status names the wired pair's
+// checkout's origin as it is now, read from the checkout, beside how HQ says
+// its code is kept. While the wiring has not pointed origin where HQ's way
+// keeps it — a pair wired before zcp moved origin — status says the move is
+// pending and where develop's start points it; once moved, it says none.
+func TestStatus_SaysWhatTheCheckoutsOriginIsNow(t *testing.T) {
+	const github = "https://github.com/acme/app"
+	for _, tc := range []struct {
+		name    string
+		keep    hq.RepoOrigin
+		started bool
+		want    func(hqOrigin string) []string
+		never   []string
+	}{
+		{
+			name: "kept on GitHub before develop's start moves origin", keep: hq.RepoOrigin{URL: github, Mode: hq.OriginOnGitHub},
+			want: func(hqOrigin string) []string {
+				return []string{"origin.mode=github", "checkoutOrigin=" + hqOrigin + " (pending: develop's start points it at " + github + ")"}
+			},
+		},
+		{
+			name: "kept on GitHub once develop's start moved origin", keep: hq.RepoOrigin{URL: github, Mode: hq.OriginOnGitHub}, started: true,
+			want:  func(string) []string { return []string{"origin.mode=github", "checkoutOrigin=" + github} },
+			never: []string{"(pending: develop's start points it at"},
+		},
+		{
+			name: "followed, HQ the origin", keep: hq.RepoOrigin{URL: github, Mode: hq.OriginFollowed},
+			want:  func(hqOrigin string) []string { return []string{"origin.mode=follow", "checkoutOrigin=" + hqOrigin} },
+			never: []string{"(pending: develop's start points it at"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lab := newHQLab(t)
+			lab.wire()
+			hqOrigin := lab.git("remote", "get-url", "origin")
+			lab.mock.WithServices([]platform.ServiceStack{
+				{ID: "svc-appdev", Name: "appdev", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+				{ID: "svc-appstage", Name: "appstage", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+			})
+			if err := workflow.UpsertServiceMeta(lab.stateDir, "appdev", func(meta *workflow.ServiceMeta, _ bool) error {
+				meta.HQ.Origin = nil
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			lab.hq.keepOn(tc.keep)
+			if tc.started {
+				lab.developStart()
+			}
+
+			text := lab.status()
+
+			for _, want := range tc.want(hqOrigin) {
+				if !strings.Contains(text, want) {
+					t.Errorf("status lacks %q:\n%s", want, text)
+				}
+			}
+			for _, never := range tc.never {
+				if strings.Contains(text, never) {
+					t.Errorf("status says %q:\n%s", never, text)
+				}
+			}
+		})
+	}
+}
+
 // TestStatus_AWiredPairNotReadYetAsksHQHowItsCodeIsKept: status names how a
 // wired pair's code is kept from its record; a pair with none yet — wired
 // before zcp recorded it — is asked of HQ once, bounded, and recorded. When

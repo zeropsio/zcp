@@ -455,6 +455,13 @@ func renderBootstrappedFields(svc ServiceSnapshot) string {
 	if svc.HQOrigin != nil && svc.HQOrigin.URL != "" {
 		fields = append(fields, "origin="+svc.HQOrigin.URL)
 	}
+	if svc.HQCheckoutOrigin != "" {
+		checkout := "checkoutOrigin=" + svc.HQCheckoutOrigin
+		if svc.HQOriginPending != "" {
+			checkout += " (pending: develop's start points it at " + svc.HQOriginPending + ")"
+		}
+		fields = append(fields, checkout)
+	}
 	if svc.HQChange != 0 {
 		fields = append(fields, "change="+strconv.Itoa(svc.HQChange))
 	}

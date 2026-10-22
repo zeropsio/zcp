@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -57,19 +59,13 @@ func hqOriginIn(state hq.MateState, ref *workflow.HQRepoRef) (workflow.HQOrigin,
 // HQ's own address (ops.BuildMainSyncCommand). The line says a move, "" for
 // none.
 func hqPairOrigin(ctx context.Context, sshDeployer ops.SSHDeployer, hqc hq.Client, m *workflow.ServiceMeta) string {
-	if m.HQ.Origin == nil {
+	url := hqPairOriginTarget(hqc.Address(), m)
+	if url == "" {
 		return ""
 	}
-	url, helper := hqc.RepoURL(m.HQ.AppID, m.HQ.Repo), ""
-	switch m.HQ.Origin.Mode {
-	case hq.OriginOnGitHub:
-		if m.HQ.Origin.URL == "" {
-			return ""
-		}
-		url, helper = m.HQ.Origin.URL, hq.GitHubHelperConfig+" && "
-	case hq.OriginFollowed, workflow.HQOriginNone:
-	default:
-		return ""
+	helper := ""
+	if m.HQ.Origin.Mode == hq.OriginOnGitHub {
+		helper = hq.GitHubHelperConfig + " && "
 	}
 	out, err := sshDeployer.ExecSSH(ctx, m.Hostname, fmt.Sprintf(
 		`cd %s && %scur=$(git remote get-url origin 2>/dev/null || true); if [ "$cur" != %s ]; then { git remote set-url origin %s 2>/dev/null || git remote add origin %s; } && echo %s; fi`,
@@ -83,6 +79,69 @@ func hqPairOrigin(ctx context.Context, sshDeployer ops.SSHDeployer, hqc hq.Clien
 		return fmt.Sprintf("its code is kept on GitHub, so its checkout's origin is %s now: fetch and push it in your own shell on the mounted checkout, never over ssh", url)
 	}
 	return fmt.Sprintf("its code is kept in HQ, so its checkout's origin is its repository there again (%s)", url)
+}
+
+// hqPairOriginTarget is where the wiring points a wired pair's checkout's
+// origin (hqPairOrigin) by its record of how the code is kept: on GitHub, the
+// GitHub repository; in HQ or followed, its repository at the HQ at address.
+// "" when the record does not say, or HQ's address is unknown.
+func hqPairOriginTarget(address string, m *workflow.ServiceMeta) string {
+	if m.HQ.Origin == nil {
+		return ""
+	}
+	switch m.HQ.Origin.Mode {
+	case hq.OriginOnGitHub:
+		return m.HQ.Origin.URL
+	case hq.OriginFollowed, workflow.HQOriginNone:
+		if address == "" {
+			return ""
+		}
+		return hq.RepoURLAt(address, m.HQ.AppID, m.HQ.Repo)
+	}
+	return ""
+}
+
+// attachHQCheckoutOrigin reads, on each wired pair's dev half, its checkout's
+// origin as it is now, and where the wiring points it when that differs
+// (hqPairOriginTarget): status names what git pushes to, never only what the
+// record says it will be. Container only; a read that fails leaves the half
+// without it.
+func attachHQCheckoutOrigin(ctx context.Context, services []workflow.ServiceSnapshot, ssh ops.SSHDeployer, rt runtime.Info, stateDir string) {
+	if !rt.InContainer || ssh == nil {
+		return
+	}
+	address := hqAddress()
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, attachRepoStatusConcurrency)
+	for i := range services {
+		if services[i].HQRepo == "" {
+			continue
+		}
+		m, err := workflow.FindServiceMeta(stateDir, services[i].Hostname)
+		if err != nil || !hqPairWired(m) || m.Hostname != services[i].Hostname {
+			continue
+		}
+		wg.Add(1)
+		go func(i int, m *workflow.ServiceMeta) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			out, err := ssh.ExecSSH(ctx, m.Hostname, "cd "+ops.ShellQuote(hqPairWorkingDir(m))+" && { git remote get-url origin 2>/dev/null || true; }")
+			if err != nil {
+				return
+			}
+			now := strings.TrimSpace(string(out))
+			if now == "" {
+				now = workflow.HQOriginNone
+			}
+			// Each goroutine writes only its own index.
+			services[i].HQCheckoutOrigin = now
+			if target := hqPairOriginTarget(address, m); target != "" && target != now {
+				services[i].HQOriginPending = target
+			}
+		}(i, m)
+	}
+	wg.Wait()
 }
 
 // originMovedMarker is what hqPairOrigin's command says when it moved origin.

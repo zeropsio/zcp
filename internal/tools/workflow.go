@@ -1002,6 +1002,7 @@ func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client 
 		return convertError(wrapStageErr("Compute envelope", err), WithRecoveryStatus()), nil, nil
 	}
 	attachRepoStatus(ctx, envelope.Services, sshDeployer, rt, engine.StateDir())
+	attachHQCheckoutOrigin(ctx, envelope.Services, sshDeployer, rt, engine.StateDir())
 	attachPartsSignal(ctx, envelope.Services, sshDeployer, rt, engine)
 	attachRollbackInfo(ctx, envelope.Services, client, projectID)
 	corpus, err := workflow.LoadAtomCorpus()
