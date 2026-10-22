@@ -11,6 +11,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -521,5 +522,74 @@ func TestDevelopStart_AMainWithCommitsOfItsOwnIsLeftWithItsStepNamed(t *testing.
 		if !strings.Contains(text, step) {
 			t.Errorf("develop's start does not name %q:\n%s", step, text)
 		}
+	}
+}
+
+// TestDevelopStart_SaysHowEachRepositorysCodeIsKept: develop's start reads
+// from HQ how each wired pair's repository's code is kept and records it, so
+// status names it (origin.mode). A repository kept on GitHub is worked on
+// through its checkout's origin, which is GitHub — set there, never a second
+// remote — and its change is opened after the push: HQ opens its pull request
+// and the person merges it in Mate. A repository HQ alone keeps is worked on
+// as before.
+func TestDevelopStart_SaysHowEachRepositorysCodeIsKept(t *testing.T) {
+	const github = "https://github.com/acme/app"
+	for _, tc := range []struct {
+		name   string
+		origin *hq.RepoOrigin
+		record workflow.HQOrigin
+		want   []string
+		never  []string
+	}{
+		{
+			name: "kept on GitHub", origin: &hq.RepoOrigin{URL: github, Mode: hq.OriginOnGitHub},
+			record: workflow.HQOrigin{Mode: workflow.HQOriginGitHub, URL: github},
+			want: []string{
+				"origin.mode=github", "origin=" + github,
+				"git remote set-url origin " + github, hq.GitHubHelperConfig,
+				"git push origin <branch>", `action="open-change"`, "HQ opens its pull request", "merges it in Mate",
+			},
+			never: []string{"remote add github", "--fill"},
+		},
+		{
+			name: "followed", origin: &hq.RepoOrigin{URL: github, Mode: hq.OriginFollowed},
+			record: workflow.HQOrigin{Mode: workflow.HQOriginFollow, URL: github},
+			want:   []string{"origin.mode=follow", "origin=" + github},
+			never:  []string{"set-url origin"},
+		},
+		{
+			name:   "in HQ alone",
+			record: workflow.HQOrigin{Mode: workflow.HQOriginNone},
+			want:   []string{"origin.mode=none"},
+			never:  []string{"set-url origin", "origin=https"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lab := newHQLab(t)
+			lab.wire()
+			lab.mock.WithServices([]platform.ServiceStack{
+				{ID: "svc-appdev", Name: "appdev", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+				{ID: "svc-appstage", Name: "appstage", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+			})
+			if tc.origin != nil {
+				lab.hq.keepOn("appdev", *tc.origin)
+			}
+
+			text := lab.developStart()
+
+			if got := lab.meta().HQ.Origin; got == nil || *got != tc.record {
+				t.Errorf("the pair's record of how its code is kept = %+v, want %+v", got, tc.record)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(text, want) {
+					t.Errorf("develop's start lacks %q:\n%s", want, text)
+				}
+			}
+			for _, never := range tc.never {
+				if strings.Contains(text, never) {
+					t.Errorf("develop's start says %q:\n%s", never, text)
+				}
+			}
+		})
 	}
 }

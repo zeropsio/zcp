@@ -440,6 +440,15 @@ func renderBootstrappedFields(svc ServiceSnapshot) string {
 	if svc.RemoteURL != "" {
 		fields = append(fields, "remoteUrl="+svc.RemoteURL)
 	}
+	if svc.HQRepo != "" {
+		fields = append(fields, "hqRepo="+svc.HQRepo)
+	}
+	if svc.HQOrigin != nil && svc.HQOrigin.Mode != "" {
+		fields = append(fields, "origin.mode="+svc.HQOrigin.Mode)
+	}
+	if svc.HQOrigin != nil && svc.HQOrigin.URL != "" {
+		fields = append(fields, "origin="+svc.HQOrigin.URL)
+	}
 	if len(svc.FeedsProduction) > 0 {
 		fields = append(fields, "feedsProduction="+strings.Join(svc.FeedsProduction, "; "))
 	}

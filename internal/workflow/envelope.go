@@ -138,6 +138,12 @@ type ServiceSnapshot struct {
 	StageHostname string              `json:"stageHostname,omitempty"`
 	Stages        []topology.StageRef `json:"-"`
 
+	// HQRepo and HQOrigin name, on a wired pair's dev half, its repository in
+	// HQ and how its code is kept (HQRepoRef.Origin, nil until read). Off the
+	// envelope wire: status renders them.
+	HQRepo   string    `json:"-"`
+	HQOrigin *HQOrigin `json:"-"`
+
 	// Setup-name projection from ServiceMeta (canonical store on disk).
 	// SetupName mirrors meta.SetupNameFor(Hostname) for this half;
 	// StageSetupName mirrors the first stage's setup on the dev half's

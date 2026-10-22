@@ -2642,11 +2642,21 @@ themselves; no token crosses the conversation.
   GitHub, the same shell points `origin` at GitHub
   and has git ask only `zcp hq git-credential` for it (`credential.https://github.com.helper`
   emptied first, so no helper of the machine or the person answers ahead of it, then
-  `useHttpPath`, `hq.GitHubHelperConfig`), work goes on a branch of the agent's own and its pull
-  request (`gh pr create`, `GH_TOKEN` from the same helper); kept in Mate, the same shell adds the
+  `useHttpPath`, `hq.GitHubHelperConfig`) — `set-url`, never a second remote — and work goes on a
+  branch of the agent's own, pushed to that origin, its change opened after the push
+  (`open-change`): HQ opens the branch's pull request and the person merges it in Mate, so the
+  agent's own `gh pr create` is never where the work ends; kept in Mate, the same shell adds the
   repository as `upstream` with its push URL `no_push`. A `connected` answer gives the way HQ's
   `repos[].origin.mode` says the code is kept (`github` or `follow`); from an HQ older than
   `mode`, it gives both and has the agent ask the person in one sentence.
+- **Where the agent reads the way.** Every pass that reads the Mate's state records on the pair
+  how its repository's code is kept (`HQRepoRef.origin {mode, url}`; `mode` `none` for a repository
+  HQ alone keeps, no record from an HQ that names no repositories). Status names it on the dev
+  half — `hqRepo=`, `origin.mode=`, `origin=` — without asking HQ; develop's start, which runs the
+  pass, tells per repository kept on GitHub how it is worked on through that origin. AGENTS.md's git
+  host paragraph says the same for `origin.mode=github`. zcp
+  `TestRenderStatus_ADevHalfSaysHowItsRepositorysCodeIsKept`,
+  `TestDevelopStart_SaysHowEachRepositorysCodeIsKept`.
 - **The helper.** `zcp hq git-credential get` answers HQ's own host with the Mate credential under
   the user `mate`, as §6 has it, and `https://github.com` with what `GET
   /api/mate/git-credential?host=github.com&path=<owner>/<repo>[.git]` (as the Mate) answers at

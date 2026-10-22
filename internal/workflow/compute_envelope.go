@@ -282,6 +282,9 @@ func buildOneSnapshot(svc platform.ServiceStack, meta *ServiceMeta, ws *WorkSess
 		// The dev/primary side of a pair carries its stages; the wire
 		// fields StageHostname/StageSetupName name the first one.
 		snap.SetupName = meta.SetupNameFor(svc.Name)
+		if meta.HQ != nil && svc.Name == meta.Hostname {
+			snap.HQRepo, snap.HQOrigin = meta.HQ.Repo, meta.HQ.Origin
+		}
 		if meta.HasStage() && svc.Name == meta.Hostname {
 			first := meta.FirstStage()
 			snap.StageHostname = first.Hostname

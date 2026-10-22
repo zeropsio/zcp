@@ -313,8 +313,8 @@ func lazySelf(ctx context.Context, hqc hq.Client) func() (hq.MateState, error) {
 
 // keepHQPairCurrent is one wired pair's turn of a pass: wired again in the
 // application HQ holds the Mate in now, if that moved, what became of its
-// change on record, and its `main` against HQ's (hqPairMain). wired is
-// whether the pass wired it again.
+// change on record, how its code is kept (recordHQOrigin), and its `main`
+// against HQ's (hqPairMain). wired is whether the pass wired it again.
 func keepHQPairCurrent(
 	ctx context.Context,
 	client platform.Client,
@@ -338,6 +338,7 @@ func keepHQPairCurrent(
 		attempt := wireHQPair(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, m, m.HQ.Repo)
 		return attempt.line, attempt.wired
 	}
+	recordHQOrigin(stateDir, m, state)
 	lines := []string{}
 	for _, line := range []string{hqLearnLanding(stateDir, m, state), hqPairMain(ctx, sshDeployer, hqc, m)} {
 		if line != "" {

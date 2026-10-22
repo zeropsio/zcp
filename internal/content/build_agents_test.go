@@ -659,6 +659,13 @@ func TestBuildAgentsMD_Container_GitHostIsHQ(t *testing.T) {
 		"never over ssh",
 		`action="open-change" branch="<branch>"`,
 		`action="describe-change"`,
+		// A repository kept on GitHub: GitHub is origin, and its change is
+		// opened after the push — HQ's pull request, merged in Mate.
+		"`origin.mode=github`",
+		"git remote set-url origin",
+		"never a second remote",
+		"HQ opens its pull request on GitHub",
+		"merges it in Mate",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("git-host paragraph missing %q", want)

@@ -373,6 +373,7 @@ func patchFlexBoolProperty(s *jsonschema.Schema, key string) {
 func handleDevelopStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, httpClient ops.HTTPDoer, schemaCache *schema.Cache, input WorkflowInput, stateDir string, rt runtime.Info, sshDeployer ops.SSHDeployer) (*mcp.CallToolResult, any, error) {
 	rebuildMateStages(ctx, httpClient, rt, stateDir, recipePairMountRoot)
 	lines := reconcileHQRepositories(ctx, client, httpClient, sshDeployer, rt, stateDir, hqPassNow)
+	lines = append(lines, hqKeptOnGitHub(stateDir)...)
 	result, _, err := handleStart(ctx, projectID, engine, client, schemaCache, input, rt, sshDeployer)
 	return withRepositoryReport(result, lines), nil, err
 }

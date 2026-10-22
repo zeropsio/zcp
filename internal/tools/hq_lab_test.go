@@ -73,6 +73,9 @@ type fakeHQ struct {
 	credential string
 	// unnamedBranches: HQ answers a change without naming its branch.
 	unnamedBranches bool
+	// origins are the origins connected to the application's repositories,
+	// by name; a repository without one is kept by HQ alone.
+	origins map[string]hq.RepoOrigin
 }
 
 func newFakeHQ(t *testing.T) *fakeHQ {
@@ -80,7 +83,7 @@ func newFakeHQ(t *testing.T) *fakeHQ {
 	requireGitForLab(t)
 	f := &fakeHQ{
 		t: t, root: t.TempDir(), appID: labApp, credential: labCredential,
-		repos: map[string]bool{}, attachments: map[string][]byte{},
+		repos: map[string]bool{}, attachments: map[string][]byte{}, origins: map[string]hq.RepoOrigin{},
 	}
 	f.refsFile = filepath.Join(t.TempDir(), "open-refs")
 	f.writeRefs()
@@ -327,7 +330,30 @@ func (f *fakeHQ) self(ctx context.Context) map[string]any {
 		return b.Number - a.Number
 	})
 	state["changes"] = mine
+	// HQ's shape: {name} for a repository HQ alone keeps, {name, origin:
+	// {url, mode}} for one with an origin connected, by name.
+	repos := []map[string]any{}
+	for key := range f.repos {
+		app, name, _ := strings.Cut(key, "/")
+		if app != f.appID {
+			continue
+		}
+		repo := map[string]any{"name": name}
+		if origin, ok := f.origins[name]; ok {
+			repo["origin"] = map[string]string{"url": origin.URL, "mode": origin.Mode}
+		}
+		repos = append(repos, repo)
+	}
+	slices.SortFunc(repos, func(a, b map[string]any) int { return strings.Compare(a["name"].(string), b["name"].(string)) })
+	state["repos"] = repos
 	return state
+}
+
+// keepOn connects origin to repo, as a person connecting it in HQ does.
+func (f *fakeHQ) keepOn(repo string, origin hq.RepoOrigin) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.origins[repo] = origin
 }
 
 // findOf is mate's open change in repo of the application, nil for none.

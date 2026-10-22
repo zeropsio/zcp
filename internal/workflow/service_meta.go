@@ -194,7 +194,28 @@ type HQRepoRef struct {
 	// not take the edit: there only until the change carries it, and never
 	// longer than the change it was written for.
 	ChangeDescription *ChangeDescription `json:"changeDescription,omitempty"`
+	// Origin is how the Mate's own state in HQ last said Repo's code is
+	// kept; nil until zcp read it from an HQ that names its repositories.
+	// Recorded so status names it without asking HQ.
+	Origin *HQOrigin `json:"origin,omitempty"`
 }
+
+// HQOrigin is how a repository's code is kept, as HQ names its origin: Mode
+// HQOriginGitHub — GitHub is the checkout's origin; HQOriginFollow — HQ is,
+// GitHub only followed; HQOriginNone — no origin, HQ alone keeps it; "" from
+// an HQ older than modes. URL is the origin's address, "" for none.
+type HQOrigin struct {
+	Mode string `json:"mode,omitempty"`
+	URL  string `json:"url,omitempty"`
+}
+
+// The ways HQOrigin.Mode names: HQ's own (hq.OriginOnGitHub,
+// hq.OriginFollowed) and none.
+const (
+	HQOriginGitHub = "github"
+	HQOriginFollow = "follow"
+	HQOriginNone   = "none"
+)
 
 // ChangeDescription is a Mate's description of its change, kept until HQ
 // takes it.
