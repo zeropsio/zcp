@@ -120,3 +120,36 @@ func TestMultiPartRouteNote(t *testing.T) {
 		t.Errorf("read %v, want appdev only", repos.read)
 	}
 }
+
+// TestMultiPartRouteNote_AStageIsNeverNamedAsARepo: a service a pair records as
+// its stage holds what its setup deployed, not a repo — a stage that deployed
+// the whole monorepo is neither read nor named, only the pair's dev half is.
+func TestMultiPartRouteNote_AStageIsNeverNamedAsARepo(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname: "documensodev",
+		Mode:     topology.PlanModeStandard,
+		Stages:   []topology.StageRef{{Hostname: "documensostage", SetupName: "prod"}, {Hostname: "docsstage", SetupName: "docs"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	engine := workflow.NewEngine(stateDir, workflow.EnvContainer, nil)
+	stack := func(name string) platform.ServiceStack {
+		return platform.ServiceStack{Name: name, ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@24"}}
+	}
+	existing := []platform.ServiceStack{stack("documensodev"), stack("documensostage"), stack("docsstage")}
+	multi := "@@yaml\nzerops:\n  - setup: dev\n  - setup: prod\n  - setup: docs\n@@declaration\n@@markers\n@@packages\n"
+	repos := &partsRepos{out: map[string]string{"documensodev": multi, "documensostage": multi, "docsstage": multi}}
+
+	got := multiPartRouteNote(context.Background(), existing, repos, runtime.Info{InContainer: true}, engine)
+	if !strings.Contains(got, "The repo of `documensodev` holds") {
+		t.Errorf("note = %q, want it to name documensodev alone", got)
+	}
+	if strings.Contains(got, "stage`") {
+		t.Errorf("note names a stage: %q", got)
+	}
+	if len(repos.read) != 1 || repos.read[0] != "documensodev" {
+		t.Errorf("read %v, want documensodev only", repos.read)
+	}
+}

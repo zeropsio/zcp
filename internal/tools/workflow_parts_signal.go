@@ -87,12 +87,22 @@ func multiPartRouteNote(ctx context.Context, existing []platform.ServiceStack, s
 // readExistingRepos reads the repo of every existing runtime service, before
 // bootstrap has given any of them a mode, as attachPartsSignal reads a dev
 // half's — so the route menu and the adopt route see the parts and name the
-// config file each repo keeps.
+// config file each repo keeps. A service a pair already records as its stage
+// is skipped: it holds what its setup deployed, never a repo.
 func readExistingRepos(ctx context.Context, existing []platform.ServiceStack, ssh ops.SSHDeployer, rt runtime.Info, engine *workflow.Engine) []workflow.ServiceSnapshot {
+	stages := map[string]bool{}
+	if engine != nil {
+		metas, _ := workflow.ListServiceMetas(engine.StateDir())
+		for _, m := range metas {
+			for _, stage := range m.StageHostnames() {
+				stages[stage] = true
+			}
+		}
+	}
 	var services []workflow.ServiceSnapshot
 	for _, s := range existing {
 		class := topology.RuntimeClassFor(s.ServiceStackTypeInfo.ServiceStackTypeVersionName)
-		if class == topology.RuntimeManaged || class == topology.RuntimeUnknown {
+		if class == topology.RuntimeManaged || class == topology.RuntimeUnknown || stages[s.Name] {
 			continue
 		}
 		services = append(services, workflow.ServiceSnapshot{Hostname: s.Name, Mode: topology.ModeDev, RuntimeClass: class})
