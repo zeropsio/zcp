@@ -117,7 +117,7 @@ func readPreviousRun() (string, bool) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, args[0], args[1:]...).Output()
+	out, err := exec.CommandContext(ctx, args[0], args[1:]...).Output() //nolint:gosec // G204: journalctl, or sudo -n journalctl, with this unit's name
 	if err != nil {
 		return "", false
 	}
