@@ -20,7 +20,9 @@ import (
 //   - a seed-only `main`, nothing of the agent's on it → `main` is put on
 //     HQ's (MainFromSeed): moved by ref when the checkout is elsewhere, checked
 //     out when it is on `main` — refused by git, nothing moved, when an
-//     uncommitted file is in the way (MainSeedInTheWay);
+//     uncommitted file is in the way (MainSeedInTheWay); a `main` that moves
+//     while it is switched, a commit of the person's landing on it, is theirs
+//     and stays checked out where they put it;
 //   - commits HQ's `main` does not have that another ref holds too — a
 //     branch, or the branch of a change pushed from `main` → nothing: they are
 //     kept, and the agent's guidance names the way onto HQ's `main`;
@@ -39,7 +41,8 @@ func BuildMainSyncCommand(workingDir, repoURL string) string {
 			`if [ -z "$old" ] || git merge-base --is-ancestor "$old" "$new"; then exit 0; fi; ` +
 			`if [ "$(git rev-list --count "$old")" = 1 ] && [ "$(git rev-parse "$old^{tree}")" = "$(git hash-object -t tree /dev/null)" ]; then ` +
 			`if [ "$(git symbolic-ref -q HEAD)" != "$ref" ]; then git update-ref "$ref" "$new" "$old" && ` + mark(MainFromSeed+` $new`) + `; exit; fi; ` +
-			`if git checkout -q --detach "$new" 2>/dev/null; then git update-ref "$ref" "$new" "$old" && git symbolic-ref HEAD "$ref" && ` + mark(MainFromSeed+` $new`) + `; exit; fi; ` +
+			`if git checkout -q --detach "$new" 2>/dev/null; then if git update-ref "$ref" "$new" "$old" 2>/dev/null; then git symbolic-ref HEAD "$ref" && ` + mark(MainFromSeed+` $new`) + `; exit; fi; ` +
+			`git checkout -q ` + shellQuote(baseBranch) + `; exit; fi; ` +
 			mark(MainSeedInTheWay) + `; exit 0; fi; ` +
 			`if git for-each-ref --contains "$old" --format='%(refname)' | grep -qvx "$ref"; then exit 0; fi; ` +
 			mark(MainOwnCommits+` $(git rev-list --count "$new..$old")`) + `; }`,

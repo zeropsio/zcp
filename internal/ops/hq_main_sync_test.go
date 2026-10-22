@@ -5,6 +5,7 @@
 package ops
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -179,5 +180,54 @@ func TestMainSync_RunTwiceChangesNothingMore(t *testing.T) {
 	}
 	if got := runGit(t, pair, "rev-parse", "main"); got != main {
 		t.Errorf("main moved again: %s → %s", main, got)
+	}
+}
+
+// TestMainSync_AMainThatMovesMidSwitchKeepsTheCheckoutOnIt: the person commits
+// on the checked-out seed-only `main` in their own shell while the sync
+// switches it to HQ's. The switch does not take — `main` is theirs now —
+// and the checkout is left on `main` at their commit, never detached.
+func TestMainSync_AMainThatMovesMidSwitchKeepsTheCheckoutOnIt(t *testing.T) {
+	if testing.Short() {
+		t.Skip("exercises a real git repository")
+	}
+	pair := baseLabOn(t, landedBase, func(t *testing.T, dir string) {
+		t.Helper()
+		zcpSeedMain(t, dir)
+		runGit(t, dir, "checkout", "-q", "main")
+	})
+	remote := runGit(t, pair, "remote", "get-url", "origin")
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// git as the sync sees it: the person's commit lands on `main` just
+	// before the sync moves it.
+	bin := t.TempDir()
+	wrapper := "#!/bin/sh\n" +
+		"if [ \"$1\" = update-ref ] && [ \"$2\" = refs/heads/main ]; then\n" +
+		"  person=$(GIT_AUTHOR_NAME=p GIT_AUTHOR_EMAIL=p@example.invalid GIT_COMMITTER_NAME=p GIT_COMMITTER_EMAIL=p@example.invalid " +
+		realGit + " commit-tree \"$4^{tree}\" -p \"$4\" -m \"the person's commit\") && " + realGit + " update-ref refs/heads/main \"$person\"\n" +
+		"fi\nexec " + realGit + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(wrapper), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	//nolint:gosec // test-only, the command under test against a t.TempDir repository
+	cmd := exec.CommandContext(t.Context(), "sh", "-c", BuildMainSyncCommand(pair, remote))
+	cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	out, _ := cmd.CombinedOutput()
+
+	if state, _ := MainSync(string(out)); state == MainFromSeed {
+		t.Errorf("the sync says main is HQ's, but the person's commit is on it; output:\n%s", out)
+	}
+	if head := gitOr(t, pair, "symbolic-ref", "-q", "HEAD"); head != "refs/heads/main" {
+		t.Fatalf("HEAD is %q, want on main; output:\n%s", head, out)
+	}
+	if got := runGit(t, pair, "log", "-1", "--format=%s", "main"); got != "the person's commit" {
+		t.Errorf("main is at %q, want the person's commit", got)
+	}
+	if got := runGit(t, pair, "status", "--porcelain"); got != "" {
+		t.Errorf("the checkout differs from main:\n%s", got)
 	}
 }
