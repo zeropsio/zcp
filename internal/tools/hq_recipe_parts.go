@@ -299,7 +299,7 @@ func handleGroupRecipeService(
 		result["message"] = message + refusedServiceTiers(tiers)
 		return jsonResult(result), nil, nil
 	}
-	result["branch"] = comp.hqc.ChangeBranch(written.number)
+	result["branch"] = written.branch
 	result["tiers"] = edits
 	message := fmt.Sprintf("Proposed %s to the recipe repository %q as change #%d (%s): %s — every other line of each tier as main has it. The person reviews and merges it like any recipe change.%s",
 		what, hq.RecipeRepo, written.number, result["changeUrl"], strings.Join(edits, "; "), refusedServiceTiers(tiers))

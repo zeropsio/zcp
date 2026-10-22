@@ -141,10 +141,20 @@ func (c Client) ChangeURL(appID, repo string, number int) string {
 	return c.Address() + "/changes/" + url.PathEscape(appID) + "/" + url.PathEscape(repo) + "/" + strconv.Itoa(number)
 }
 
-// ChangeBranch is the branch of the Mate's change number: the one ref HQ lets
-// it push, while the change is open, only forward.
+// ChangeBranch is the branch HQ binds the Mate's change number to when it is
+// opened naming none.
 func (c Client) ChangeBranch(number int) string {
 	return "mate/" + c.enrollment.ProjectID + "/" + strconv.Itoa(number)
+}
+
+// BranchOf is the branch of the Mate's change number by its short name: the
+// one HQ names for it, branch — the Mate's own, or, for a change handed to it,
+// the branch it was on — and, from an HQ that names none, ChangeBranch.
+func (c Client) BranchOf(number int, branch string) string {
+	if branch = strings.TrimPrefix(branch, "refs/heads/"); branch != "" {
+		return branch
+	}
+	return c.ChangeBranch(number)
 }
 
 // AttachmentURL is where a picture HQ keeps at path is shown from.

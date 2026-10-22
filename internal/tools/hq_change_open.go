@@ -11,7 +11,6 @@ import (
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
-	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // changeOpenResult is open-change's answer.
@@ -29,9 +28,10 @@ type changeOpenResult struct {
 // repository in HQ. HQ binds the change to the branch, which may be pushed
 // before or after; the pair records the change, which describe-change then
 // describes. A Mate has one open change per repository: HQ answers the open
-// one rather than opening a second. In a repository whose code is kept on
-// GitHub, the branch is GitHub's and the change's pull request is HQ's to
-// open there; the person merges it in Mate.
+// one rather than opening a second, and a change a person handed the Mate
+// there is answered without asking HQ to open one. In a repository whose
+// code is kept on GitHub, the branch is GitHub's and the change's pull
+// request is HQ's to open there; the person merges it in Mate.
 func handleOpenChange(
 	ctx context.Context,
 	httpClient ops.HTTPDoer,
@@ -64,7 +64,28 @@ func handleOpenChange(
 		return noPair, nil, nil
 	}
 
+	// The Mate's own state says how the repository's code is kept, and names
+	// a change handed to the Mate there: that one is its change, and HQ is
+	// not asked to open another. A state that cannot be read leaves both to
+	// the pair's record and HQ's answer.
 	callCtx, cancel := context.WithTimeout(ctx, hqCallTimeout)
+	state, stateErr := hqc.Once().Self(callCtx)
+	cancel()
+	if stateErr == nil {
+		recordHQOrigin(stateDir, meta, state)
+		if handed := handedChangeIn(state, meta.HQ); handed != nil {
+			held := hqc.BranchOf(handed.Number, handed.Branch)
+			recordChange(stateDir, meta, handed.Number, held)
+			return jsonResult(changeOpenResult{
+				Service: meta.Hostname, Branch: held, PullRequest: handed.Number,
+				PullRequestURL: hqc.ChangeURL(meta.HQ.AppID, meta.HQ.Repo, handed.Number),
+				Message: sentenceOf(handedWork(handed, meta.HQ.Repo, held)) +
+					` Nothing else was opened: a Mate has one open change per repository. Write what it does and how you checked it with zerops_workflow action="describe-change"; the person reviews it by that.`,
+			}), nil, nil
+		}
+	}
+
+	callCtx, cancel = context.WithTimeout(ctx, hqCallTimeout)
 	opened, err := hqc.OpenChange(callCtx, meta.HQ.Repo, title, branch)
 	cancel()
 	// HQ refuses a branch as {code, reason}: the reason names which refusal.
@@ -84,19 +105,19 @@ func handleOpenChange(
 			`Call zerops_workflow action="open-change" again; the branch you pushed stays as it is.`), WithRecoveryStatus()), nil, nil
 	}
 	number := opened.Change.Number
-	recordChange(stateDir, meta, number)
 	result := changeOpenResult{
 		Service: meta.Hostname, Branch: branch, PullRequest: number,
 		PullRequestURL: hqc.ChangeURL(meta.HQ.AppID, meta.HQ.Repo, number), Created: opened.Created,
 	}
+	// The change's branch is the one HQ names; an open change it answered
+	// is never on the one asked for, so an HQ that names none leaves it
+	// unnamed.
 	held := strings.TrimPrefix(opened.Change.Branch, "refs/heads/")
-	if held != "" {
+	if held != "" || !opened.Created {
 		result.Branch = held
 	}
+	recordChange(stateDir, meta, number, result.Branch)
 	if !opened.Created {
-		// The open change's branch is the one HQ names, never the one asked
-		// for: an HQ that names none leaves it unnamed.
-		result.Branch = held
 		where, push := "", "its branch"
 		if held != "" {
 			where, push = fmt.Sprintf(" on the branch %q", held), fmt.Sprintf("%q", held)
@@ -105,7 +126,7 @@ func handleOpenChange(
 			number, meta.HQ.Repo, where, push, number)
 		return jsonResult(result), nil, nil
 	}
-	if hqKeepsOnGitHub(ctx, hqc, stateDir, meta) {
+	if meta.HQ.Origin != nil && meta.HQ.Origin.Mode == hq.OriginOnGitHub {
 		result.Message = fmt.Sprintf("Change #%d is open in %q for the branch %q, whose code is kept on GitHub: HQ opens its pull request on GitHub from that branch, so open none of your own, and the person merges it in Mate. Push the work there (`git push origin %s`, origin being GitHub) — never force-push — and write what it does and how you checked it with zerops_workflow action=\"describe-change\"; the person reviews it by that.",
 			number, meta.HQ.Repo, result.Branch, result.Branch)
 		return jsonResult(result), nil, nil
@@ -113,19 +134,6 @@ func handleOpenChange(
 	result.Message = fmt.Sprintf("Change #%d is open in %q for the branch %q: push the work there (`git push origin %s`) — never force-push — and write what it does and how you checked it with zerops_workflow action=\"describe-change\"; the person reviews it by that.",
 		number, meta.HQ.Repo, result.Branch, result.Branch)
 	return jsonResult(result), nil, nil
-}
-
-// hqKeepsOnGitHub reports whether the pair's repository's code is kept on
-// GitHub, as the Mate's own state in HQ says now — recorded on the pair — or,
-// when HQ cannot be read, as the pair's record last said.
-func hqKeepsOnGitHub(ctx context.Context, hqc hq.Client, stateDir string, meta *workflow.ServiceMeta) bool {
-	callCtx, cancel := context.WithTimeout(ctx, hqCallTimeout)
-	state, err := hqc.Once().Self(callCtx)
-	cancel()
-	if err == nil {
-		recordHQOrigin(stateDir, meta, state)
-	}
-	return meta.HQ.Origin != nil && meta.HQ.Origin.Mode == hq.OriginOnGitHub
 }
 
 // changeBranchOf is the branch a change is opened from, as its short name:

@@ -117,8 +117,8 @@ func hqLaunchProductionNextStep(ctx context.Context, httpClient ops.HTTPDoer, st
 					merged = true
 				}
 			}
-			if number := openChangeIn(state, m.HQ.Repo); number != 0 {
-				open = append(open, fmt.Sprintf("%s's change #%d on %q", m.Hostname, number, m.HQ.Repo))
+			if change := openChangeIn(state, m.HQ.Repo); change != nil {
+				open = append(open, fmt.Sprintf("%s's change #%d on %q", m.Hostname, change.Number, m.HQ.Repo))
 			}
 		}
 	}

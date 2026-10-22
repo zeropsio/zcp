@@ -43,7 +43,7 @@ func openedLab(t *testing.T) *hqLab {
 	lab := newHQLab(t)
 	lab.wire()
 	lab.write(map[string]string{"index.js": "the app\n"})
-	recordChange(lab.stateDir, lab.meta(), lab.openChange().Number)
+	recordChange(lab.stateDir, lab.meta(), lab.openChange().Number, "")
 	return lab
 }
 

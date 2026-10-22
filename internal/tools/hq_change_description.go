@@ -136,9 +136,9 @@ func handleDescribeChange(
 		// Nothing on record — the record of an open change may not have been
 		// written. The Mate's own state names its open change in the
 		// repository, if there is one.
-		if open := openChangeIn(state, meta.HQ.Repo); open != 0 {
-			recordChange(stateDir, meta, open)
-			number = open
+		if open := openChangeIn(state, meta.HQ.Repo); open != nil {
+			recordChange(stateDir, meta, open.Number, hqc.BranchOf(open.Number, open.Branch))
+			number = open.Number
 		}
 	}
 
@@ -279,15 +279,15 @@ func describeTitleRefusal(title string) *platform.PlatformError {
 	return nil
 }
 
-// openChangeIn is the number of the Mate's open change in repo as its own
-// state names it, 0 for none.
-func openChangeIn(state hq.MateState, repo string) int {
-	for _, c := range state.Changes {
-		if c.Repo == repo && c.State == hq.ChangeOpen {
-			return c.Number
+// openChangeIn is the Mate's open change in repo as its own state names it,
+// nil for none.
+func openChangeIn(state hq.MateState, repo string) *hq.MateChange {
+	for i := range state.Changes {
+		if c := &state.Changes[i]; c.Repo == repo && c.State == hq.ChangeOpen {
+			return c
 		}
 	}
-	return 0
+	return nil
 }
 
 // noRepositoryYet is what to do for a pair with no repository in HQ yet.

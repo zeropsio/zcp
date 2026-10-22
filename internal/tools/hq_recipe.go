@@ -163,7 +163,7 @@ func groupRecipeOutcome(
 	if written.number != 0 {
 		outcome.Change, outcome.Created = written.number, written.created
 		outcome.ChangeURL = comp.hqc.ChangeURL(comp.appID, hq.RecipeRepo, written.number)
-		outcome.Branch = comp.hqc.ChangeBranch(written.number)
+		outcome.Branch = written.branch
 	}
 	switch {
 	case outcome.Created:
@@ -349,12 +349,13 @@ func openRecipeChange(state hq.MateState) *hq.MateChange {
 }
 
 // recipeWrite is what a write to the Mate's change in the recipe repository
-// did: the change that carries it (0 when none is), whether this call opened
-// it, whether anything was pushed, and — when the Mate's open change there is
+// did: the change that carries it (0 when none is) and the branch HQ binds it
+// to, whether this call opened it, whether anything was pushed, and — when the Mate's open change there is
 // another of its proposals, under another title — that change, left as it
 // is: HQ keeps one open change per Mate per repository.
 type recipeWrite struct {
 	number  int
+	branch  string
 	created bool
 	pushed  bool
 	other   *otherRecipeChange
@@ -403,7 +404,7 @@ func writeRecipeChange(ctx context.Context, comp groupRecipeComposition, open *h
 	}
 	head := ""
 	if !write.created {
-		if head, _, err = scratch.Fetch(ctx, hqc.ChangeBranch(write.number)); err != nil {
+		if head, _, err = scratch.Fetch(ctx, write.branch); err != nil {
 			return recipeWrite{}, fmt.Errorf("could not read change #%d of the recipe repository %q (%w)", write.number, hq.RecipeRepo, err)
 		}
 	}
@@ -419,7 +420,7 @@ func writeRecipeChange(ctx context.Context, comp groupRecipeComposition, open *h
 	if err != nil {
 		return recipeWrite{}, fmt.Errorf("could not commit the recipe (%w)", err)
 	}
-	if err := scratch.Push(ctx, commit, hqc.ChangeBranch(write.number)); err != nil {
+	if err := scratch.Push(ctx, commit, write.branch); err != nil {
 		return recipeWrite{}, fmt.Errorf("could not push the recipe to change #%d of the recipe repository %q (%w)", write.number, hq.RecipeRepo, err)
 	}
 	write.pushed = true
@@ -429,13 +430,14 @@ func writeRecipeChange(ctx context.Context, comp groupRecipeComposition, open *h
 // ownRecipeChange is the Mate's change titled title in the recipe repository
 // a write goes on: open, the Mate's open change there, when its title is
 // title; opened when none is open; and the open one as the other change when
-// its title is another.
+// its title is another. A write goes on the branch HQ binds the change to — a
+// change handed to the Mate stays on its gone Mate's.
 func ownRecipeChange(ctx context.Context, hqc hq.Client, open *hq.MateChange, title string) (recipeWrite, error) {
 	if open != nil && open.Title != nil {
 		if *open.Title != title {
 			return recipeWrite{other: &otherRecipeChange{number: open.Number, title: *open.Title}}, nil
 		}
-		return recipeWrite{number: open.Number}, nil
+		return recipeWrite{number: open.Number, branch: hqc.BranchOf(open.Number, open.Branch)}, nil
 	}
 	// No open change, or an HQ whose state names no title: HQ updates are
 	// deferred, so a Mate meets an HQ from before titles for a while. HQ
@@ -449,7 +451,7 @@ func ownRecipeChange(ctx context.Context, hqc hq.Client, open *hq.MateChange, ti
 	if !opened.Created && opened.Change.Title != title {
 		return recipeWrite{other: &otherRecipeChange{number: opened.Change.Number, title: opened.Change.Title}}, nil
 	}
-	return recipeWrite{number: opened.Change.Number, created: opened.Created}, nil
+	return recipeWrite{number: opened.Change.Number, branch: hqc.BranchOf(opened.Change.Number, opened.Change.Branch), created: opened.Created}, nil
 }
 
 // recipeParents are the parents of the commit that brings the change's

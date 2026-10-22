@@ -98,3 +98,35 @@ func TestClient_Self_Production_DecodesAndOlderHQ(t *testing.T) {
 		t.Errorf("production from an HQ that omits it = %v, want nil", *state.Production)
 	}
 }
+
+// A change in the Mate's state names the branch it is bound to, as HQ stores
+// it, and whether a person handed it this Mate from a Mate that is gone; an
+// older HQ names neither.
+func TestClient_Self_Changes_DecodeBranchAndHandOver(t *testing.T) {
+	t.Parallel()
+	const handed = `{"projectId":"p-mate","name":"Ada","face":"face-1","standupRequestedBy":null,"appId":"a1","changes":[` +
+		`{"repo":"appdev","number":7,"title":"Fix the login","state":"open","head":null,"mergedSha":null,"landedHead":null,"branch":"mate/p-gone/7","handed":true},` +
+		`{"repo":"appdev","number":5,"title":"Add a list","state":"merged","head":null,"mergedSha":null,"landedHead":null,"branch":"add-list"}]}`
+	client, _ := answering(t, handed)
+	state, err := client.Self(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make([][2]any, 0, len(state.Changes))
+	for _, c := range state.Changes {
+		got = append(got, [2]any{c.Branch, c.Handed})
+	}
+	if want := [][2]any{{"mate/p-gone/7", true}, {"add-list", false}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("branch and hand-over = %v, want %v", got, want)
+	}
+
+	older, _ := answering(t, selfSample)
+	if state, err = older.Self(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range state.Changes {
+		if c.Branch != "" || c.Handed {
+			t.Errorf("change #%d from an HQ older than branches = %+v, want no branch and not handed", c.Number, c)
+		}
+	}
+}

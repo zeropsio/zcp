@@ -405,6 +405,35 @@ func TestClient_Addresses(t *testing.T) {
 	}
 }
 
+// A change's branch is the one HQ names for it — short, or a full ref — and,
+// from an HQ that names none, the one HQ gives a change opened without a
+// branch: the Mate's own default.
+func TestClient_BranchOf_IsTheStoredBranchElseTheDefault(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "enrollment.json")
+	if err := SaveEnrollment(path, Enrollment{HQ: "https://hq.example", ProjectID: "p-mate", Credential: "good"}); err != nil {
+		t.Fatal(err)
+	}
+	client, err := Open(http.DefaultClient, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		name   string
+		stored string
+		want   string
+	}{
+		{name: "named by its Mate", stored: "fix-login", want: "fix-login"},
+		{name: "a gone Mate's default", stored: "mate/p-gone/7", want: "mate/p-gone/7"},
+		{name: "as a full ref", stored: "refs/heads/fix-login", want: "fix-login"},
+		{name: "from an HQ that names none", want: "mate/p-mate/7"},
+	} {
+		if got := client.BranchOf(7, tt.stored); got != tt.want {
+			t.Errorf("%s: BranchOf(7, %q) = %q, want %q", tt.name, tt.stored, got, tt.want)
+		}
+	}
+}
+
 // A change opened from the agent's own branch names it to HQ, which binds the
 // change to that branch; with none named, HQ picks the change's branch.
 func TestClient_OpenChange_NamesTheAgentsBranch(t *testing.T) {

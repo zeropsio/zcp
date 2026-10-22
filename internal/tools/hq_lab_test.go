@@ -76,6 +76,9 @@ type fakeHQ struct {
 	// origins are the origins connected to the application's repositories,
 	// by name; a repository without one is kept by HQ alone.
 	origins map[string]hq.RepoOrigin
+	// handed are the changes a person handed the lab's Mate from a Mate that
+	// is gone, by repo#number.
+	handed map[string]bool
 }
 
 func newFakeHQ(t *testing.T) *fakeHQ {
@@ -84,6 +87,7 @@ func newFakeHQ(t *testing.T) *fakeHQ {
 	f := &fakeHQ{
 		t: t, root: t.TempDir(), appID: labApp, credential: labCredential,
 		repos: map[string]bool{}, attachments: map[string][]byte{}, origins: map[string]hq.RepoOrigin{},
+		handed: map[string]bool{},
 	}
 	f.refsFile = filepath.Join(t.TempDir(), "open-refs")
 	f.writeRefs()
@@ -317,7 +321,9 @@ func (f *fakeHQ) self(ctx context.Context) map[string]any {
 		if c.State == hq.ChangeOpen {
 			head = f.branchHead(ctx, &c)
 		}
-		change := hq.MateChange{Repo: c.Repo, Number: c.Number, State: c.State, Head: head, MergedSha: c.MergedSha, LandedHead: c.LandedHead}
+		// HQ stores a change's branch by its short name.
+		change := hq.MateChange{Repo: c.Repo, Number: c.Number, State: c.State, Head: head, MergedSha: c.MergedSha, LandedHead: c.LandedHead,
+			Branch: strings.TrimPrefix(c.Branch, "refs/heads/"), Handed: f.handed[fmt.Sprintf("%s#%d", c.Repo, c.Number)]}
 		if !f.untitled {
 			change.Title = &c.Title
 		}
@@ -391,6 +397,49 @@ func (f *fakeHQ) openForAnotherMate(repo, branch string) {
 	f.changes = append(f.changes, hq.Change{AppID: f.appID, Repo: repo, Number: 100 + len(f.changes), MateProjectID: "p-other",
 		Title: "Another Mate's work", Branch: "refs/heads/" + branch, State: hq.ChangeOpen, OpenedAt: now, UpdatedAt: now})
 	f.writeRefs()
+}
+
+// handOver is the open change titled title, on branch, of a Mate that is
+// gone, handed to the lab's Mate by a person, as HQ's hand-over does: the
+// Mate's own now, on the branch it was on — "" is the gone Mate's default.
+// files, when there are any, are the gone Mate's work, pushed there before.
+// It answers the change's number.
+func (f *fakeHQ) handOver(repo, title, branch string, files map[string]string) int {
+	f.t.Helper()
+	f.seed(repo)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	number := 1
+	for _, c := range f.changes {
+		if c.AppID == f.appID && c.Repo == repo {
+			number = max(number, c.Number+1)
+		}
+	}
+	if branch == "" {
+		branch = fmt.Sprintf("mate/p-gone/%d", number)
+	}
+	if files != nil {
+		clone := filepath.Join(f.t.TempDir(), "gone")
+		f.git(f.t.Context(), "", "clone", "-q", f.repoDir(f.appID, repo), clone)
+		for name, body := range files {
+			if err := os.WriteFile(filepath.Join(clone, name), []byte(body), 0o600); err != nil {
+				f.t.Fatal(err)
+			}
+		}
+		f.git(f.t.Context(), clone, "add", "-A")
+		f.git(f.t.Context(), clone, "-c", "user.name=gone", "-c", "user.email=gone@example.invalid", "commit", "-qm", "The gone Mate's work")
+		cmd := exec.CommandContext(f.t.Context(), "git", "-C", clone, "push", "-q", "origin", "HEAD:refs/heads/"+branch)
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "FAKE_HQ_AS_HQ=1")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			f.t.Fatalf("the gone Mate's push: %v\n%s", err, out)
+		}
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	f.changes = append(f.changes, hq.Change{AppID: f.appID, Repo: repo, Number: number, MateProjectID: labMate, Title: title,
+		Branch: "refs/heads/" + branch, State: hq.ChangeOpen, OpenedAt: now, UpdatedAt: now, Mergeability: "unknown"})
+	f.handed[fmt.Sprintf("%s#%d", repo, number)] = true
+	f.writeRefs()
+	return number
 }
 
 // find is a change of the application; number 0 is any, state "" any.

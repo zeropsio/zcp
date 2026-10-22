@@ -3754,7 +3754,9 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   `{repo, title, branch}` binds the change to the branch; HQ refuses with `{code, reason}` —
   `409 conflict/branch_taken`, `409 conflict/protected_ref` (`main`, a full ref, `mate/`),
   `400 invalid/invalid_ref` — and zcp reads the reason; it answers the Mate's open change in the
-  repository, `created: false`, rather than open a second; the pair records the number. In a
+  repository, `created: false`, rather than open a second; the pair records the number and the
+  branch HQ names (`ServiceMeta.HQ {change, branch}`), which status names on the dev half
+  (`change=`, `changeBranch=`). In a
   repository whose code is kept on GitHub (`origin.mode` `github`, read from `GET /api/mate/self`
   at the call and recorded, the pair's record when HQ cannot be read) the checkout's origin is
   GitHub (the wiring points it there), the branch is pushed there, and the answer says HQ opens its pull request on GitHub from
@@ -3768,6 +3770,16 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   through this process, so nothing waits to be told. A merged change's note tells the agent to bring
   `main` up to date and cut the next work's branch from it; it carries no CI line (§10.8). The
   record's number is cleared once the change is no longer open.
+- **A change handed to the Mate.** A person hands an open change whose Mate is gone to another
+  Mate of the application; HQ keeps its branch — one its Mate named, or `mate/<old>/<n>` — and
+  `GET /api/mate/self` lists it with `branch` and `handed: true`. The next pass records it as the
+  pair's change with that branch (`hqTakeHanded`, once the change on record is known to be no
+  longer open) and says once how to take the branch — fetched when its Mate pushed to it, cut from
+  `main` when nothing is there — and to push to it, never force. `open-change` reads the Mate's
+  state first and answers the handed change, opening none. The group recipe's writer moves a
+  handed proposal on its stored branch (`hq.Client.BranchOf`). zcp
+  `TestHandedChange_IsThePairsAndTheWorkGoesOnItsBranch`,
+  `TestGroupRecipe_AHandedProposalMovesOnItsOwnBranch`.
 - **The checkout's `main`.** A pass changes the checkout in one case only: a local `main` that is
   only zcp's empty seed — a checkout wired before branches of the agent's own kept it, the work on
   another branch, so `git merge --ff-only origin/main` failed — is put on HQ's `main`, fetched from

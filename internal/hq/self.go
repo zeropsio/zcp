@@ -70,6 +70,13 @@ type MateChange struct {
 	Head       *string `json:"head"`
 	MergedSha  *string `json:"mergedSha"`
 	LandedHead *string `json:"landedHead"`
+	// Branch is the branch the change is bound to, by its short name: one
+	// its Mate named, or `mate/<project id>/<number>` of the Mate that opened
+	// it. "" from an HQ older than branches in the Mate's state.
+	Branch string `json:"branch,omitempty"`
+	// Handed is a change a person handed this Mate from a Mate that is gone:
+	// the Mate's own now, on the branch it was on.
+	Handed bool `json:"handed,omitempty"`
 }
 
 // Self reads this Mate's state from its HQ.

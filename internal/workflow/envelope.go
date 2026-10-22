@@ -143,6 +143,10 @@ type ServiceSnapshot struct {
 	// envelope wire: status renders them.
 	HQRepo   string    `json:"-"`
 	HQOrigin *HQOrigin `json:"-"`
+	// HQChange and HQBranch name, there, the change the pair records and the
+	// branch it is bound to (HQRepoRef.Change, .Branch); off the wire too.
+	HQChange int    `json:"-"`
+	HQBranch string `json:"-"`
 
 	// Setup-name projection from ServiceMeta (canonical store on disk).
 	// SetupName mirrors meta.SetupNameFor(Hostname) for this half;

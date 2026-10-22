@@ -192,6 +192,10 @@ type HQRepoRef struct {
 	// own state in HQ last named it, 0 for none. Recorded rather than
 	// re-derived: a pass reads what became of it from that state.
 	Change int `json:"change,omitempty"`
+	// Branch is the branch Change is bound to, by its short name, as HQ named
+	// it — the work's place, a handed change's included; "" for none, or a
+	// change recorded before branches were.
+	Branch string `json:"branch,omitempty"`
 	// ChangeDescription is what the Mate wrote about its change while HQ did
 	// not take the edit: there only until the change carries it, and never
 	// longer than the change it was written for.

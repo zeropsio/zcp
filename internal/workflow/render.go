@@ -3,6 +3,7 @@ package workflow
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/topology"
@@ -453,6 +454,12 @@ func renderBootstrappedFields(svc ServiceSnapshot) string {
 	}
 	if svc.HQOrigin != nil && svc.HQOrigin.URL != "" {
 		fields = append(fields, "origin="+svc.HQOrigin.URL)
+	}
+	if svc.HQChange != 0 {
+		fields = append(fields, "change="+strconv.Itoa(svc.HQChange))
+	}
+	if svc.HQChange != 0 && svc.HQBranch != "" {
+		fields = append(fields, "changeBranch="+svc.HQBranch)
 	}
 	if len(svc.FeedsProduction) > 0 {
 		fields = append(fields, "feedsProduction="+strings.Join(svc.FeedsProduction, "; "))

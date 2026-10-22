@@ -212,7 +212,7 @@ func handleGroupRecipeScaling(
 		result["message"] = message + refusedTiers(tiers)
 		return jsonResult(result), nil, nil
 	}
-	result["branch"] = comp.hqc.ChangeBranch(written.number)
+	result["branch"] = written.branch
 	result["tiers"] = changed
 	result["message"] = fmt.Sprintf("Proposed %s's scale to the recipe repository %q as change #%d (%s): it changes only %s's verticalAutoscaling (%s). The person reviews and merges it like any recipe change.%s",
 		host, hq.RecipeRepo, written.number, result["changeUrl"], host, strings.Join(changed, "; "), refusedTiers(tiers))

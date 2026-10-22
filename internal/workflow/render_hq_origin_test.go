@@ -55,3 +55,48 @@ func TestRenderStatus_ADevHalfSaysHowItsRepositorysCodeIsKept(t *testing.T) {
 		})
 	}
 }
+
+// TestRenderStatus_ADevHalfNamesThePairsChangeAndItsBranch: status names, on
+// a wired pair's dev half, the change the pair records and the branch it is
+// bound to — where the work goes, a handed change's included — and nothing of
+// a change while the pair records none. A stage half says nothing of it.
+func TestRenderStatus_ADevHalfNamesThePairsChangeAndItsBranch(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		change int
+		branch string
+		want   []string
+		never  []string
+	}{
+		{name: "a handed change on its gone Mate's branch", change: 7, branch: "mate/p-gone/7", want: []string{"change=7", "changeBranch=mate/p-gone/7"}},
+		{name: "a change on a branch of the agent's own", change: 2, branch: "fix-login", want: []string{"change=2", "changeBranch=fix-login"}},
+		{name: "a change recorded before branches were", change: 2, want: []string{"change=2"}, never: []string{"changeBranch="}},
+		{name: "no change", never: []string{"change="}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			meta := &ServiceMeta{
+				Hostname: "appdev", Mode: topology.PlanModeStandard, Stages: []topology.StageRef{{Hostname: "appstage"}},
+				BootstrappedAt: "2026-10-22", GitPushState: topology.GitPushConfigured,
+				HQ: &HQRepoRef{AppID: "app-1", Repo: "app", Change: tc.change, Branch: tc.branch},
+			}
+			runtime := platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}
+			dev := renderServiceLine(buildOneSnapshot(platform.ServiceStack{Name: "appdev", Status: "ACTIVE", ServiceStackTypeInfo: runtime}, meta, nil))
+			stage := renderServiceLine(buildOneSnapshot(platform.ServiceStack{Name: "appstage", Status: "ACTIVE", ServiceStackTypeInfo: runtime}, meta, nil))
+			for _, want := range tc.want {
+				if !strings.Contains(dev, want) {
+					t.Errorf("the dev half's line lacks %q: %s", want, dev)
+				}
+			}
+			for _, never := range tc.never {
+				if strings.Contains(dev, never) {
+					t.Errorf("the dev half's line says %q: %s", never, dev)
+				}
+			}
+			if strings.Contains(stage, "change") {
+				t.Errorf("the stage half's line names the pair's change: %s", stage)
+			}
+		})
+	}
+}
