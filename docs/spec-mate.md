@@ -3744,7 +3744,12 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   `{repo, title, branch}` binds the change to the branch; HQ refuses with `{code, reason}` —
   `409 conflict/branch_taken`, `409 conflict/protected_ref` (`main`, a full ref, `mate/`),
   `400 invalid/invalid_ref` — and zcp reads the reason; it answers the Mate's open change in the
-  repository, `created: false`, rather than open a second; the pair records the number. `zerops_deploy strategy="git-push"` from a pair
+  repository, `created: false`, rather than open a second; the pair records the number. In a
+  repository whose code is kept on GitHub (`origin.mode` `github`, read from `GET /api/mate/self`
+  at the call and recorded, the pair's record when HQ cannot be read) the checkout's origin is
+  GitHub, the branch is pushed there, and the answer says HQ opens its pull request on GitHub from
+  that branch and the person merges it in Mate
+  (`TestOpenChange_InARepositoryKeptOnGitHubThePullRequestIsHQs`). `zerops_deploy strategy="git-push"` from a pair
   wired to HQ, to any remote, refuses before git runs — its `GIT_TOKEN` is the Mate's HQ
   credential — and says the plain-git way. The person reviews a change by its description:
   `zerops_workflow action="describe-change"` sets it on the pair's open change (MB-34).

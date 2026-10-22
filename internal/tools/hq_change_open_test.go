@@ -146,3 +146,60 @@ func TestOpenChange_TheOpenChangeStays(t *testing.T) {
 		t.Errorf("want change #1 answered with no branch named, got: %s", text)
 	}
 }
+
+// In a repository whose code is kept on GitHub, the change's pull request is
+// HQ's: the answer says HQ opens it on GitHub from the agent's branch and the
+// person merges it in Mate, and records the way the code is kept. Where HQ
+// keeps the code, the answer is as it always was.
+func TestOpenChange_InARepositoryKeptOnGitHubThePullRequestIsHQs(t *testing.T) {
+	const github = "https://github.com/acme/app"
+	for _, tc := range []struct {
+		name    string
+		origin  *hq.RepoOrigin
+		message string
+		want    []string
+	}{
+		{
+			name: "kept on GitHub", origin: &hq.RepoOrigin{URL: github, Mode: hq.OriginOnGitHub},
+			want: []string{
+				`Change #1 is open in "appdev" for the branch "fix-login"`,
+				"HQ opens its pull request on GitHub from that branch",
+				"the person merges it in Mate",
+				"`git push origin fix-login`",
+				`action="describe-change"`,
+			},
+		},
+		{
+			name:    "kept in HQ",
+			message: "Change #1 is open in \"appdev\" for the branch \"fix-login\": push the work there (`git push origin fix-login`) — never force-push — and write what it does and how you checked it with zerops_workflow action=\"describe-change\"; the person reviews it by that.",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lab := newHQLab(t)
+			lab.wire()
+			if tc.origin != nil {
+				lab.hq.keepOn("appdev", *tc.origin)
+			}
+			lab.pushBranch("fix-login", map[string]string{"login.js": "the fix\n"})
+
+			answer, text, isError := lab.openChangeFrom("fix-login", "Fix the login")
+
+			if isError || !answer.Created {
+				t.Fatalf("want change #1 opened: %s", text)
+			}
+			if tc.message != "" && answer.Message != tc.message {
+				t.Errorf("message = %q, want %q", answer.Message, tc.message)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(answer.Message, want) {
+					t.Errorf("message lacks %q: %s", want, answer.Message)
+				}
+			}
+			if tc.origin != nil {
+				if got := lab.meta().HQ.Origin; got == nil || got.Mode != tc.origin.Mode {
+					t.Errorf("the pair's record of how its code is kept = %+v, want %q", got, tc.origin.Mode)
+				}
+			}
+		})
+	}
+}
