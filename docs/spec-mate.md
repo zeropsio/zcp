@@ -3725,7 +3725,8 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   is enforced by that record; a pair the stand-up adopted is wired to the recipe's name, and wired
   again to it.
 - **The agent's work** goes by plain git from the dev half's checkout, guided by AGENTS.md's git
-  host paragraph: `git checkout main && git fetch origin && git merge --ff-only origin/main`, `git
+  host paragraph: `git checkout main && git fetch origin && git merge --ff-only origin/main` (a
+  `main` that will not fast-forward: `git branch <name>`, then `git reset --keep origin/main`), `git
   checkout -b <branch>`, commit, `git push origin <branch>`; never a push of `main`, never a force.
   HQ takes a Mate's push on any branch but `main`, a tag, or a branch another Mate's open change
   holds; no force, no deletion. The agent opens its change from its branch, pushed before or after:
@@ -3741,7 +3742,19 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   state, `GET /api/mate/self`, by every `describe-change` and reconcile pass — no merge passes
   through this process, so nothing waits to be told. A merged change's note tells the agent to bring
   `main` up to date and cut the next work's branch from it; it carries no CI line (§10.8). The
-  record's number is cleared once the change is no longer open. A pass never changes the checkout.
+  record's number is cleared once the change is no longer open.
+- **The checkout's `main`.** A pass changes the checkout in one case only: a local `main` that is
+  only zcp's empty seed — a checkout wired before branches of the agent's own kept it, the work on
+  another branch, so `git merge --ff-only origin/main` failed — is put on HQ's `main`, fetched from
+  HQ's address over ssh (`ops.BuildMainSyncCommand`): moved by ref while the checkout is elsewhere,
+  checked out while it is on `main`, refused by git with nothing moved when an uncommitted file is in
+  the way, the next step named. A `main` with commits HQ's lacks is never moved; when no other ref
+  holds them, the pass names the step that keeps them on a branch and puts `main` on HQ's. A `main`
+  HQ's has or descends from is left to the agent's fast-forward. Develop's start runs the pass for every pair outside the
+  backoff (`hqPassNow`); bootstrap and adopt keep it. zcp
+  `TestMainSync_ASeedOnlyMainTakesHQsMainAndNothingOfTheAgentsMoves`,
+  `TestDevelopStart_AMainThatIsOnlyZcpsSeedTakesHQsMain`,
+  `TestDevelopStart_AMainWithCommitsOfItsOwnIsLeftWithItsStepNamed`.
 - **HQ not answering, fast (D35).** A describe's and the git helper's HQ call connects within 5 s,
   TLS included, and is answered within 30 s (`hq.Client.Bounded`; `Once` sends it once, so the
   client's own 20 s wait on a 503 never stacks under the caller's tries). git has no connect setting — curl would wait 300 s — so

@@ -136,7 +136,7 @@ func reconcileMateRepositories(
 	stateDir string,
 ) []string {
 	rebuildMateStages(ctx, httpClient, rt, stateDir, recipePairMountRoot)
-	lines := reconcileHQRepositories(ctx, client, httpClient, sshDeployer, rt, stateDir)
+	lines := reconcileHQRepositories(ctx, client, httpClient, sshDeployer, rt, stateDir, hqPassBackedOff)
 	if line := reconcileGroupRecipe(ctx, client, httpClient, rt, stateDir); line != "" {
 		lines = append(lines, "the group's recipe: "+line)
 	}
@@ -150,8 +150,8 @@ func reconcileMateRepositories(
 // another application is wired there. It pushes nothing: what goes to HQ is
 // the agent's git. It is a RECONCILE, not a one-shot step: it runs on every
 // bootstrap, adopt and develop start, does nothing for a pair with nothing
-// to do, and backs off per pair — except a credential to renew, which git in
-// the dev service cannot do without.
+// to do, and backs off per pair (pace) — except a credential to renew, which
+// git in the dev service cannot do without.
 //
 // It NEVER blocks bootstrap. Every failure it can meet — a Mate not enrolled
 // yet, HQ refusing or not answering, an SSH hiccup — leaves the pair exactly
@@ -166,6 +166,7 @@ func reconcileHQRepositories(
 	sshDeployer ops.SSHDeployer,
 	rt runtime.Info,
 	stateDir string,
+	pace hqPassPace,
 ) []string {
 	// Local mode holds no Mate and no container to push from.
 	if !rt.InContainer || sshDeployer == nil {
@@ -196,7 +197,7 @@ func reconcileHQRepositories(
 	var report []string
 	for _, m := range pending {
 		state := readHQPairState(stateDir, m.Hostname)
-		if !hqAttemptDue(state, now) && !hqPairCredentialStale(m, hqc) {
+		if pace == hqPassBackedOff && !hqAttemptDue(state, now) && !hqPairCredentialStale(m, hqc) {
 			continue
 		}
 		// A pair another process runs git on is left to it, and no attempt
@@ -217,6 +218,18 @@ func reconcileHQRepositories(
 	}
 	return report
 }
+
+// hqPassPace is whether a pass keeps each pair's backoff.
+type hqPassPace int
+
+const (
+	// hqPassBackedOff: a pair is taken only once its backoff is over — the
+	// pace of passes that agent tool calls drive in bursts.
+	hqPassBackedOff hqPassPace = iota
+	// hqPassNow: every pair is taken — develop's start, after which the agent
+	// works on the checkout.
+	hqPassNow
+)
 
 // passHQPair is one pair's turn of a pass, on its record as it is once the
 // pass holds its checkout: wired, or kept current.
@@ -299,8 +312,9 @@ func lazySelf(ctx context.Context, hqc hq.Client) func() (hq.MateState, error) {
 }
 
 // keepHQPairCurrent is one wired pair's turn of a pass: wired again in the
-// application HQ holds the Mate in now, if that moved, and what became of its
-// change on record. wired is whether the pass wired it again.
+// application HQ holds the Mate in now, if that moved, what became of its
+// change on record, and its `main` against HQ's (hqPairMain). wired is
+// whether the pass wired it again.
 func keepHQPairCurrent(
 	ctx context.Context,
 	client platform.Client,
@@ -324,7 +338,36 @@ func keepHQPairCurrent(
 		attempt := wireHQPair(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, m, m.HQ.Repo)
 		return attempt.line, attempt.wired
 	}
-	return hqLearnLanding(stateDir, m, state), false
+	lines := []string{}
+	for _, line := range []string{hqLearnLanding(stateDir, m, state), hqPairMain(ctx, sshDeployer, hqc, m)} {
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return strings.Join(lines, "; "), false
+}
+
+// hqPairMain checks a wired pair's local `main` against HQ's
+// (ops.BuildMainSyncCommand): a `main` that is only zcp's empty seed is put on
+// HQ's; one with commits HQ's lacks is left, with the step that keeps them.
+// "" when there is nothing to say — a check that could not run among it: the
+// next pass runs it again.
+func hqPairMain(ctx context.Context, sshDeployer ops.SSHDeployer, hqc hq.Client, m *workflow.ServiceMeta) string {
+	dir := hqPairWorkingDir(m)
+	out, err := sshDeployer.ExecSSH(ctx, m.Hostname, ops.BuildMainSyncCommand(dir, hqc.RepoURL(m.HQ.AppID, m.HQ.Repo)))
+	if err != nil {
+		return ""
+	}
+	state, detail := ops.MainSync(string(out))
+	switch state {
+	case ops.MainFromSeed:
+		return fmt.Sprintf("its %q held only zcp's empty seed and nothing of yours, so it is HQ's %q now (%.12s) and takes HQ's work by fast-forward", hqBase, hqBase, detail)
+	case ops.MainSeedInTheWay:
+		return fmt.Sprintf("its %q holds only zcp's empty seed, and files the working copy holds uncommitted stand where HQ's %q puts its own: in your own shell on the mounted checkout, commit them on a branch of your own (`git checkout -b <branch> && git add -A && git commit`); the next develop start then puts %q on HQ's", hqBase, hqBase, hqBase)
+	case ops.MainOwnCommits:
+		return fmt.Sprintf("its %q holds %s commit(s) HQ's %q does not, and %q moves only by a merge: in your own shell on the mounted checkout, keep them on a branch (`git branch <name> main`), put %q on HQ's (`git checkout main && git fetch origin && git reset --keep origin/main`), and carry what they need onto a branch cut from it with `git cherry-pick`", hqBase, detail, hqBase, hqBase, hqBase)
+	}
+	return ""
 }
 
 // rewireHQPair runs the wiring for one pair now, outside the backoff, and

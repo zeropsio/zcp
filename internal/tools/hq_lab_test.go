@@ -713,7 +713,7 @@ func (l *hqLab) write(files map[string]string) {
 // wire runs a repository pass, which gives the pair its repository in HQ.
 func (l *hqLab) wire() []string {
 	l.t.Helper()
-	return reconcileHQRepositories(l.t.Context(), l.mock, l.hq.srv.Client(), l.ssh, l.rt, l.stateDir)
+	return reconcileHQRepositories(l.t.Context(), l.mock, l.hq.srv.Client(), l.ssh, l.rt, l.stateDir, hqPassBackedOff)
 }
 
 // openChange puts the pair's work up as the Mate's change, "Build the app",

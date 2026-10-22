@@ -449,3 +449,77 @@ func TestDevelopStart_RenewsTheDevServicesCredential(t *testing.T) {
 		t.Errorf("after develop's start the dev service holds %q, want the renewed credential", held)
 	}
 }
+
+// developStart starts develop on appdev through zerops_workflow, as the agent
+// does, and answers every text block of its result.
+func (l *hqLab) developStart() string {
+	l.t.Helper()
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, l.mock, l.hq.srv.Client(), labMate, nil,
+		workflow.NewEngine(l.stateDir, workflow.EnvContainer, nil), nil, l.stateDir, "", nil, l.ssh, l.rt, "")
+	result := callTool(l.t, srv, "zerops_workflow", map[string]any{
+		"action": "start", "workflow": "develop", "intent": "fix the login", "scope": []string{"appdev"},
+	})
+	var text strings.Builder
+	for _, content := range result.Content {
+		if block, ok := content.(*mcp.TextContent); ok {
+			text.WriteString(block.Text + "\n")
+		}
+	}
+	return text.String()
+}
+
+// TestDevelopStart_AMainThatIsOnlyZcpsSeedTakesHQsMain: a checkout wired
+// before branches of the agent's own kept zcp's empty seed as `main`, the
+// work on the Mate's branch, so `git merge --ff-only origin/main` failed on
+// it. Develop's start puts that `main` on HQ's — within the backoff of the
+// pass before it too — and the agent's branch and its commit stay as they are.
+func TestDevelopStart_AMainThatIsOnlyZcpsSeedTakesHQsMain(t *testing.T) {
+	lab := newHQLab(t)
+	lab.wire()
+	lab.hq.landOnMain("appdev", map[string]string{"app.js": "landed\n"})
+	lab.git("checkout", "-q", "-b", "mate/"+labMate)
+	lab.write(map[string]string{"work.txt": "the agent's work\n"})
+	lab.commit("the agent's work")
+	work := lab.git("rev-parse", "HEAD")
+	lab.git("update-ref", "refs/heads/main",
+		lab.git("-c", "user.name=zcp", "-c", "user.email=zcp@example.invalid", "commit-tree", lab.git("mktree"), "-m", "zcp init"))
+
+	text := lab.developStart()
+
+	if got, want := lab.git("rev-parse", "main"), lab.remoteHead("main"); got != want {
+		t.Errorf("main is %s, want HQ's main %s", got, want)
+	}
+	if got := lab.git("branch", "--show-current"); got != "mate/"+labMate {
+		t.Errorf("the checkout is on %q, want the agent's branch kept", got)
+	}
+	if got := lab.git("rev-parse", "HEAD"); got != work {
+		t.Errorf("the agent's branch moved: %s → %s", work, got)
+	}
+	if !strings.Contains(text, "zcp's empty seed") {
+		t.Errorf("develop's start does not say main was put on HQ's:\n%s", text)
+	}
+}
+
+// TestDevelopStart_AMainWithCommitsOfItsOwnIsLeftWithItsStepNamed: a `main`
+// carrying commits HQ's does not is never moved — main moves only by a
+// merge, and nothing of the agent's is discarded — and develop's start names
+// the one step that keeps them and puts main on HQ's.
+func TestDevelopStart_AMainWithCommitsOfItsOwnIsLeftWithItsStepNamed(t *testing.T) {
+	lab := newHQLab(t)
+	lab.wire()
+	lab.write(map[string]string{"own.txt": "committed on main\n"})
+	lab.commit("on main")
+	own := lab.git("rev-parse", "main")
+
+	text := lab.developStart()
+
+	if got := lab.git("rev-parse", "main"); got != own {
+		t.Errorf("main moved: %s → %s", own, got)
+	}
+	for _, step := range []string{"git branch <name> main", "git reset --keep origin/main"} {
+		if !strings.Contains(text, step) {
+			t.Errorf("develop's start does not name %q:\n%s", step, text)
+		}
+	}
+}
