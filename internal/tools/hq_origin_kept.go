@@ -16,8 +16,10 @@ import (
 
 // recordHQOrigin records on a wired pair how the Mate's own state in HQ says
 // its repository's code is kept (workflow.HQRepoRef.Origin), so status names
-// it without asking HQ. A state that names no repositories, from an older HQ
-// or of another application, leaves the record as it is.
+// it without asking HQ. A state from an HQ older than repositories records
+// the way unknown (Mode ""), so status does not ask that HQ on every call; a
+// pass asks again. A state of another application, or not naming the
+// repository, leaves the record as it is.
 func recordHQOrigin(stateDir string, m *workflow.ServiceMeta, state hq.MateState) {
 	origin, ok := hqOriginIn(state, m.HQ)
 	if !ok || m.HQ.Origin != nil && *m.HQ.Origin == origin {
@@ -32,12 +34,16 @@ func recordHQOrigin(stateDir string, m *workflow.ServiceMeta, state hq.MateState
 	m.HQ.Origin = &origin
 }
 
-// hqOriginIn is how state says the code of the repository ref names is kept;
-// false when state cannot say: it names no repositories, or not that one, or
-// holds the Mate in another application.
+// hqOriginIn is how state says the code of the repository ref names is kept,
+// unknown (Mode "") from an HQ older than repositories; false when state
+// cannot say: it does not name that repository, or holds the Mate in another
+// application.
 func hqOriginIn(state hq.MateState, ref *workflow.HQRepoRef) (workflow.HQOrigin, bool) {
-	if state.Repos == nil || state.AppID == nil || *state.AppID != ref.AppID {
+	if state.AppID == nil || *state.AppID != ref.AppID {
 		return workflow.HQOrigin{}, false
+	}
+	if state.Repos == nil {
+		return workflow.HQOrigin{}, true
 	}
 	for _, repo := range state.Repos {
 		switch {

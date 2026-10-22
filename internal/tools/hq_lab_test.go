@@ -65,6 +65,8 @@ type fakeHQ struct {
 	failOn     func(*http.Request) bool
 	// down: HQ does not answer at all — every connection is dropped.
 	down bool
+	// reposless: HQ from before the Mate's state named its repositories.
+	reposless bool
 	// untitled: HQ from before the Mate's state named its changes' titles.
 	untitled bool
 	calls    []string
@@ -360,7 +362,9 @@ func (f *fakeHQ) self(ctx context.Context) map[string]any {
 		repos = append(repos, repo)
 	}
 	slices.SortFunc(repos, func(a, b map[string]any) int { return strings.Compare(a["name"].(string), b["name"].(string)) })
-	state["repos"] = repos
+	if !f.reposless {
+		state["repos"] = repos
+	}
 	return state
 }
 

@@ -2653,7 +2653,8 @@ themselves; no token crosses the conversation.
   point `origin` itself.
 - **The wiring is the one writer of `origin`.** Every pass that reads the Mate's state records on
   the pair how its repository's code is kept (`HQRepoRef.origin {mode, url}`; `mode` `none` for a
-  repository HQ alone keeps, no record from an HQ that names no repositories), and the wiring and
+  repository HQ alone keeps, `mode` empty — unknown — from an HQ that names no repositories, so
+  status does not ask it again), and the wiring and
   every pass point the checkout's `origin` by it (`hqPairOrigin`, over ssh, config only): kept on
   GitHub, the GitHub repository, git asking only `zcp hq git-credential` for it
   (`credential.https://github.com.helper` emptied first, so no helper of the machine or the person
@@ -2676,7 +2677,7 @@ themselves; no token crosses the conversation.
   `TestRenderStatus_ADevHalfSaysHowItsRepositorysCodeIsKept`,
   `TestDevelopStart_SaysHowEachRepositorysCodeIsKept`,
   `TestStatus_AWiredPairNotReadYetAsksHQHowItsCodeIsKept`,
-  `TestStatus_SaysWhatTheCheckoutsOriginIsNow`.
+  `TestStatus_SaysWhatTheCheckoutsOriginIsNow`, `TestStatus_AnHQOlderThanRepositoriesIsAskedOnce`.
 - **The helper.** `zcp hq git-credential get` answers HQ's own host with the Mate credential under
   the user `mate`, as §6 has it, and `https://github.com` with what `GET
   /api/mate/git-credential?host=github.com&path=<owner>/<repo>[.git]` (as the Mate) answers at
