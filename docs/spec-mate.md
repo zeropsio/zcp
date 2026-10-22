@@ -2671,13 +2671,15 @@ themselves; no token crosses the conversation.
   HQ older than modes, `origin.mode=unknown`. Beside it, `checkoutOrigin=` is the checkout's origin
   as status reads it over ssh now; while it differs from where the wiring points it by the record
   (a pair wired before zcp moved origin), it adds `(pending: develop's start points it at <url>)`.
+  Status names every remote without the credentials a URL may carry (`***@`).
   Develop's start, which runs the pass, tells per repository kept on GitHub that its origin is
   GitHub and how the work goes. AGENTS.md's git host paragraph says the same for
   `origin.mode=github`, and that `checkoutOrigin` names a move still pending. zcp
   `TestRenderStatus_ADevHalfSaysHowItsRepositorysCodeIsKept`,
   `TestDevelopStart_SaysHowEachRepositorysCodeIsKept`,
   `TestStatus_AWiredPairNotReadYetAsksHQHowItsCodeIsKept`,
-  `TestStatus_SaysWhatTheCheckoutsOriginIsNow`, `TestStatus_AnHQOlderThanRepositoriesIsAskedOnce`.
+  `TestStatus_SaysWhatTheCheckoutsOriginIsNow`, `TestStatus_NamesNoCredentialOfTheCheckoutsOrigin`,
+  `TestStatus_AnHQOlderThanRepositoriesIsAskedOnce`.
 - **The helper.** `zcp hq git-credential get` answers HQ's own host with the Mate credential under
   the user `mate`, as §6 has it, and `https://github.com` with what `GET
   /api/mate/git-credential?host=github.com&path=<owner>/<repo>[.git]` (as the Mate) answers at

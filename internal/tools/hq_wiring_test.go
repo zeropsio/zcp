@@ -814,3 +814,26 @@ func TestStatus_AnHQOlderThanRepositoriesIsAskedOnce(t *testing.T) {
 		t.Errorf("two statuses asked HQ %d time(s), want once", n)
 	}
 }
+
+// TestStatus_NamesNoCredentialOfTheCheckoutsOrigin: a checkout whose origin a
+// person set with a token in it — the habit `gh` and personal tokens teach —
+// is named in status without the token.
+func TestStatus_NamesNoCredentialOfTheCheckoutsOrigin(t *testing.T) {
+	const secret = "ghp_theSecretToken"
+	lab := newHQLab(t)
+	lab.wire()
+	lab.mock.WithServices([]platform.ServiceStack{
+		{ID: "svc-appdev", Name: "appdev", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		{ID: "svc-appstage", Name: "appstage", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+	})
+	lab.git("remote", "set-url", "origin", "https://x-access-token:"+secret+"@github.com/acme/app")
+
+	text := lab.status()
+
+	if strings.Contains(text, secret) {
+		t.Errorf("status names the token:\n%s", text)
+	}
+	if want := "checkoutOrigin=https://***@github.com/acme/app"; !strings.Contains(text, want) {
+		t.Errorf("status lacks %q:\n%s", want, text)
+	}
+}

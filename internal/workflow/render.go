@@ -438,8 +438,9 @@ func renderBootstrappedFields(svc ServiceSnapshot) string {
 	} else {
 		fields = append(fields, "deployed=false")
 	}
+	// Every remote is named without the credentials a URL may carry.
 	if svc.RemoteURL != "" {
-		fields = append(fields, "remoteUrl="+svc.RemoteURL)
+		fields = append(fields, "remoteUrl="+topology.RedactRepoURLCredentials(svc.RemoteURL))
 	}
 	if svc.HQRepo != "" {
 		fields = append(fields, "hqRepo="+svc.HQRepo)
@@ -453,12 +454,12 @@ func renderBootstrappedFields(svc ServiceSnapshot) string {
 		fields = append(fields, "origin.mode=unknown")
 	}
 	if svc.HQOrigin != nil && svc.HQOrigin.URL != "" {
-		fields = append(fields, "origin="+svc.HQOrigin.URL)
+		fields = append(fields, "origin="+topology.RedactRepoURLCredentials(svc.HQOrigin.URL))
 	}
 	if svc.HQCheckoutOrigin != "" {
-		checkout := "checkoutOrigin=" + svc.HQCheckoutOrigin
+		checkout := "checkoutOrigin=" + topology.RedactRepoURLCredentials(svc.HQCheckoutOrigin)
 		if svc.HQOriginPending != "" {
-			checkout += " (pending: develop's start points it at " + svc.HQOriginPending + ")"
+			checkout += " (pending: develop's start points it at " + topology.RedactRepoURLCredentials(svc.HQOriginPending) + ")"
 		}
 		fields = append(fields, checkout)
 	}
