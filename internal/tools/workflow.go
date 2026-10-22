@@ -509,6 +509,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		}
 		return handleBootstrapSkip(ctx, engine, client, projectID, rt, schemaCache, input)
 	case "status":
+		recordMissingHQOrigins(ctx, httpClient, engine.StateDir())
 		// SPINE-1 fix: resolve precedence from DISK via the single
 		// ResolveLifecycle resolver (not the in-memory detectActiveWorkflow),
 		// so the dispatcher and the envelope agree. Focus rule (§5.3/§6.2):

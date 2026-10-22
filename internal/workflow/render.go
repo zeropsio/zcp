@@ -443,8 +443,13 @@ func renderBootstrappedFields(svc ServiceSnapshot) string {
 	if svc.HQRepo != "" {
 		fields = append(fields, "hqRepo="+svc.HQRepo)
 	}
-	if svc.HQOrigin != nil && svc.HQOrigin.Mode != "" {
+	switch {
+	case svc.HQRepo == "":
+	case svc.HQOrigin != nil && svc.HQOrigin.Mode != "":
 		fields = append(fields, "origin.mode="+svc.HQOrigin.Mode)
+	default:
+		// Not read yet, or from an HQ older than modes.
+		fields = append(fields, "origin.mode=unknown")
 	}
 	if svc.HQOrigin != nil && svc.HQOrigin.URL != "" {
 		fields = append(fields, "origin="+svc.HQOrigin.URL)

@@ -248,7 +248,7 @@ func passHQPair(
 	m, _ := workflow.FindServiceMeta(stateDir, hostname)
 	switch {
 	case hqPairNeedsRepository(m, address):
-		attempt := wireHQPair(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, m, hqRepoNameOf(m))
+		attempt := wireHQPair(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, self, m, hqRepoNameOf(m))
 		return attempt.line, attempt.wired
 	case hqPairWired(m):
 		if hqPairCredentialStale(m, hqc) {
@@ -313,8 +313,9 @@ func lazySelf(ctx context.Context, hqc hq.Client) func() (hq.MateState, error) {
 
 // keepHQPairCurrent is one wired pair's turn of a pass: wired again in the
 // application HQ holds the Mate in now, if that moved, what became of its
-// change on record, how its code is kept (recordHQOrigin), and its `main`
-// against HQ's (hqPairMain). wired is whether the pass wired it again.
+// change on record, how its code is kept (recordHQOrigin) and so where its
+// checkout's origin points (hqPairOrigin), and its `main` against HQ's
+// (hqPairMain). wired is whether the pass wired it again.
 func keepHQPairCurrent(
 	ctx context.Context,
 	client platform.Client,
@@ -335,12 +336,12 @@ func keepHQPairCurrent(
 		return "HQ holds this Mate in no application now, so its repository takes nothing from it — it will once the Mate is in one; nothing else is blocked.", false
 	}
 	if *state.AppID != m.HQ.AppID {
-		attempt := wireHQPair(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, m, m.HQ.Repo)
+		attempt := wireHQPair(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, self, m, m.HQ.Repo)
 		return attempt.line, attempt.wired
 	}
 	recordHQOrigin(stateDir, m, state)
 	lines := []string{}
-	for _, line := range []string{hqLearnLanding(stateDir, m, state), hqPairMain(ctx, sshDeployer, hqc, m)} {
+	for _, line := range []string{hqPairOrigin(ctx, sshDeployer, hqc, m), hqLearnLanding(stateDir, m, state), hqPairMain(ctx, sshDeployer, hqc, m)} {
 		if line != "" {
 			lines = append(lines, line)
 		}
@@ -385,7 +386,7 @@ func rewireHQPair(
 	m *workflow.ServiceMeta,
 	repoName string,
 ) hqWiringOutcome {
-	attempt := wireHQPair(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, m, repoName)
+	attempt := wireHQPair(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, lazySelf(ctx, hqc), m, repoName)
 	recordHQAttempt(stateDir, m.Hostname, readHQPairState(stateDir, m.Hostname), time.Now().UTC(), attempt.line, attempt.wired)
 	return attempt
 }
@@ -474,7 +475,8 @@ type hqWiringOutcome struct {
 
 // wireHQPair gives one pair its repository in HQ: the repository repoName in
 // the application HQ holds the Mate in (made if new), git-push to it, the
-// checkout on a `main` descending from the repository's, and the HQ record —
+// checkout on a `main` descending from the repository's, the HQ record, and
+// the checkout's origin where the person keeps the code (hqPairOrigin) —
 // nothing builds from the repository on the Mate's side: Core deploys the
 // application's environments from its commits. repoName is the pair's dev
 // hostname for a pair zcp
@@ -490,6 +492,7 @@ func wireHQPair(
 	rt runtime.Info,
 	stateDir string,
 	hqc hq.Client,
+	self func() (hq.MateState, error),
 	m *workflow.ServiceMeta,
 	repoName string,
 ) hqWiringOutcome {
@@ -565,10 +568,18 @@ func wireHQPair(
 		return hqWiringOutcome{line: fmt.Sprintf("repository %q is wired but recording it failed (%v) — the next pass re-reads it.", repo.Name, err)}
 	}
 	m.HQ = recorded
+	// git-push-setup pointed origin at HQ; where the person keeps the code on
+	// GitHub, the wiring points it there last.
+	if state, err := self(); err == nil {
+		recordHQOrigin(stateDir, m, state)
+	}
 
 	line := fmt.Sprintf("repository %q wired in HQ; work goes on branches cut from %q and lands on it by a person's merge, never by pushing %q", repo.Name, hqBase, hqBase)
 	if left != 0 {
 		line += fmt.Sprintf("; this Mate moved to another application, and its change #%d stays in the one it was opened in", left)
+	}
+	if kept := hqPairOrigin(ctx, sshDeployer, hqc, m); kept != "" {
+		line += "; " + kept
 	}
 	return hqWiringOutcome{line: line, wired: true}
 }

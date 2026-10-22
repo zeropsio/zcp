@@ -545,11 +545,10 @@ func TestDevelopStart_SaysHowEachRepositorysCodeIsKept(t *testing.T) {
 			name: "kept on GitHub", origin: &hq.RepoOrigin{URL: github, Mode: hq.OriginOnGitHub},
 			record: workflow.HQOrigin{Mode: hq.OriginOnGitHub, URL: github},
 			want: []string{
-				"origin.mode=github", "origin=" + github,
-				"git remote set-url origin " + github, hq.GitHubHelperConfig,
+				"origin.mode=github", "origin=" + github, "its checkout's origin is GitHub",
 				"git push origin <branch>", `action="open-change"`, "HQ opens its pull request", "merges it in Mate",
 			},
-			never: []string{"remote add github", "--fill"},
+			never: []string{"remote add", "set-url origin", "--fill"},
 		},
 		{
 			name: "followed", origin: &hq.RepoOrigin{URL: github, Mode: hq.OriginFollowed},
@@ -572,7 +571,7 @@ func TestDevelopStart_SaysHowEachRepositorysCodeIsKept(t *testing.T) {
 				{ID: "svc-appstage", Name: "appstage", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
 			})
 			if tc.origin != nil {
-				lab.hq.keepOn("appdev", *tc.origin)
+				lab.hq.keepOn(*tc.origin)
 			}
 
 			text := lab.developStart()
@@ -589,6 +588,93 @@ func TestDevelopStart_SaysHowEachRepositorysCodeIsKept(t *testing.T) {
 				if strings.Contains(text, never) {
 					t.Errorf("develop's start says %q:\n%s", never, text)
 				}
+			}
+		})
+	}
+}
+
+// TestRepositoryPass_TheCheckoutsOriginIsWhereItsCodeIsKept: the wiring is
+// the one writer of a wired pair's `origin`. Kept on GitHub, origin is the
+// GitHub repository, git asking only zcp for it; kept in HQ or followed, it
+// is HQ's repository — and it follows the person's pick when it changes.
+// There is never a second remote, and HQ is still reached at its own address.
+func TestRepositoryPass_TheCheckoutsOriginIsWhereItsCodeIsKept(t *testing.T) {
+	const github = "https://github.com/acme/app"
+	lab := newHQLab(t)
+	lab.wire()
+	hqOrigin := lab.git("remote", "get-url", "origin")
+	lab.hq.keepOn(hq.RepoOrigin{URL: github, Mode: hq.OriginOnGitHub})
+	lab.hq.landOnMain("appdev", map[string]string{"app.js": "landed\n"})
+	lab.git("checkout", "-q", "-b", "fix-login")
+	lab.git("update-ref", "refs/heads/main",
+		lab.git("-c", "user.name=zcp", "-c", "user.email=zcp@example.invalid", "commit-tree", lab.git("mktree"), "-m", "zcp init"))
+
+	lab.developStart()
+
+	if got := lab.git("remote", "get-url", "origin"); got != github {
+		t.Errorf("kept on GitHub, origin = %q, want %q", got, github)
+	}
+	if got := lab.git("config", "--get-all", "credential.https://github.com.helper"); !strings.Contains(got, "!zcp hq git-credential") {
+		t.Errorf("git does not ask zcp for GitHub: %q", got)
+	}
+	if got := lab.git("remote"); got != "origin" {
+		t.Errorf("remotes = %q, want origin alone", got)
+	}
+	if got, want := lab.git("rev-parse", "main"), lab.remoteHead("main"); got != want {
+		t.Errorf("HQ was not reached at its own address: main is %s, want HQ's %s", got, want)
+	}
+
+	lab.hq.keepInHQ()
+	lab.developStart()
+
+	if got := lab.git("remote", "get-url", "origin"); got != hqOrigin {
+		t.Errorf("kept in HQ again, origin = %q, want HQ's %q", got, hqOrigin)
+	}
+	if got := lab.git("branch", "--show-current"); got != "fix-login" {
+		t.Errorf("the checkout is on %q, want the agent's branch kept", got)
+	}
+}
+
+// TestStatus_AWiredPairNotReadYetAsksHQHowItsCodeIsKept: status names how a
+// wired pair's code is kept from its record; a pair with none yet — wired
+// before zcp recorded it — is asked of HQ once, bounded, and recorded. When
+// HQ does not answer, status says the way is unknown.
+func TestStatus_AWiredPairNotReadYetAsksHQHowItsCodeIsKept(t *testing.T) {
+	const github = "https://github.com/acme/app"
+	for _, tc := range []struct {
+		name string
+		down bool
+		want string
+	}{
+		{name: "HQ answers", want: "origin.mode=github"},
+		{name: "HQ does not answer", down: true, want: "origin.mode=unknown"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lab := newHQLab(t)
+			lab.wire()
+			lab.mock.WithServices([]platform.ServiceStack{
+				{ID: "svc-appdev", Name: "appdev", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+				{ID: "svc-appstage", Name: "appstage", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+			})
+			if err := workflow.UpsertServiceMeta(lab.stateDir, "appdev", func(meta *workflow.ServiceMeta, _ bool) error {
+				meta.HQ.Origin = nil
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			lab.hq.keepOn(hq.RepoOrigin{URL: github, Mode: hq.OriginOnGitHub})
+			lab.hq.setDown(tc.down)
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterWorkflow(srv, lab.mock, lab.hq.srv.Client(), labMate, nil,
+				workflow.NewEngine(lab.stateDir, workflow.EnvContainer, nil), nil, lab.stateDir, "", nil, lab.ssh, lab.rt, "")
+
+			text := getTextContent(t, callTool(t, srv, "zerops_workflow", map[string]any{"action": "status"}))
+
+			if !strings.Contains(text, tc.want) {
+				t.Errorf("status lacks %q:\n%s", tc.want, text)
+			}
+			if got := lab.meta().HQ.Origin; !tc.down && (got == nil || got.Mode != hq.OriginOnGitHub) {
+				t.Errorf("the pair's record = %+v, want github recorded", got)
 			}
 		})
 	}

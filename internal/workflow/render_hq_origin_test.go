@@ -11,8 +11,8 @@ import (
 // TestRenderStatus_ADevHalfSaysHowItsRepositorysCodeIsKept: status names, on
 // a wired pair's dev half, its repository in HQ and how HQ last said its code
 // is kept — on GitHub, the checkout's origin; followed, HQ the origin; or in
-// HQ alone — so the agent works on it the right way. A stage half says
-// nothing of it, and neither does a pair zcp has not read it for.
+// HQ alone — so the agent works on it the right way; unknown while zcp could
+// not read it. A stage half says nothing of it.
 func TestRenderStatus_ADevHalfSaysHowItsRepositorysCodeIsKept(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -27,7 +27,7 @@ func TestRenderStatus_ADevHalfSaysHowItsRepositorysCodeIsKept(t *testing.T) {
 			want: []string{"hqRepo=app", "origin.mode=follow", "origin=https://github.com/acme/app"}},
 		{name: "in HQ alone", origin: &HQOrigin{Mode: HQOriginNone},
 			want: []string{"hqRepo=app", "origin.mode=none"}, never: []string{"origin="}},
-		{name: "not read yet", want: []string{"hqRepo=app"}, never: []string{"origin.mode=", "origin="}},
+		{name: "not read yet", want: []string{"hqRepo=app", "origin.mode=unknown"}, never: []string{"origin="}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

@@ -349,11 +349,18 @@ func (f *fakeHQ) self(ctx context.Context) map[string]any {
 	return state
 }
 
-// keepOn connects origin to repo, as a person connecting it in HQ does.
-func (f *fakeHQ) keepOn(repo string, origin hq.RepoOrigin) {
+// keepOn connects origin to appdev, as a person connecting it in HQ does.
+func (f *fakeHQ) keepOn(origin hq.RepoOrigin) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.origins[repo] = origin
+	f.origins["appdev"] = origin
+}
+
+// keepInHQ disconnects appdev's origin: HQ alone keeps its code.
+func (f *fakeHQ) keepInHQ() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.origins, "appdev")
 }
 
 // findOf is mate's open change in repo of the application, nil for none.

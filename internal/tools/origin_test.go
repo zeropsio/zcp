@@ -87,7 +87,7 @@ func TestOriginRequest_WritesNothing_NamesTheRepositoryThePairWillWire(t *testin
 		"Mate asks where the code of appdev is kept — on GitHub at https://github.com/zeropsio/mate, or in Mate, only following it",
 		"Never ask for a token in the chat",
 		"Either way take the code from HQ first: " + originFromHQ("/var/www/appdev"),
-		"Kept on GitHub: GitHub is the checkout's origin, never a second remote — in your own shell, never over ssh: `cd /var/www/appdev && git remote set-url origin https://github.com/zeropsio/mate && " + hq.GitHubHelperConfig + " && git fetch origin`",
+		"Kept on GitHub: ZCP points the checkout's origin at GitHub, never a second remote; work on it in your own shell, never over ssh: `cd /var/www/appdev && git fetch origin`",
 		"`git push origin <branch>`, and open its change with `zerops_workflow action=\"open-change\"",
 		"HQ opens its pull request on GitHub from that branch and the person merges it in Mate",
 		"Never push `main` and never force-push",
@@ -100,6 +100,10 @@ func TestOriginRequest_WritesNothing_NamesTheRepositoryThePairWillWire(t *testin
 	}
 	if strings.Contains(answer.NextActions, "allow-unrelated-histories") {
 		t.Errorf("nextActions joins unrelated histories: %s", answer.NextActions)
+	}
+	// The wiring is the one writer of a wired checkout's origin.
+	if strings.Contains(answer.NextActions, "set-url origin") {
+		t.Errorf("nextActions has the agent point origin itself: %s", answer.NextActions)
 	}
 	if got := others(); len(got) != 0 {
 		t.Errorf("a request sent HQ more than its read: %v", got)
@@ -258,7 +262,7 @@ func TestOriginRequest_OriginConnectedToTheRepository_AnswersConnected(t *testin
 		"never ask for a token",
 		originFromHQ("/var/www/appdev"),
 		"HQ does not say which way the person keeps it: ask them in one sentence",
-		"Kept on GitHub: GitHub is the checkout's origin",
+		"Kept on GitHub: ZCP points the checkout's origin at GitHub",
 		"Kept in Mate: HQ stays the origin and GitHub is only followed",
 	} {
 		if !strings.Contains(answer.NextActions, want) {
@@ -369,7 +373,7 @@ func TestOriginRequest_OriginConnectedToTheRepository_SetsUpTheWayHQSaysItIsKept
 		mode        string
 		want, never string
 	}{
-		{mode: "github", want: "Kept on GitHub: GitHub is the checkout's origin", never: "Kept in Mate"},
+		{mode: "github", want: "Kept on GitHub: ZCP points the checkout's origin at GitHub", never: "Kept in Mate"},
 		{mode: "follow", want: "Kept in Mate: HQ stays the origin and GitHub is only followed", never: "Kept on GitHub"},
 	}
 	for _, tt := range tests {
@@ -413,7 +417,7 @@ func TestOriginRequest_CodeVolumePair_RunsInTheVolumeCheckout(t *testing.T) {
 		t.Fatalf("want an answer, got: %s", getTextContent(t, result))
 	}
 	text := answer.NextActions
-	for _, want := range []string{"`cd /var/www/webdev/ws && git fetch origin main", "`cd /var/www/webdev/ws && git remote set-url origin", "`cd /var/www/webdev/ws && git remote add upstream"} {
+	for _, want := range []string{"`cd /var/www/webdev/ws && git fetch origin main", "`cd /var/www/webdev/ws && git fetch origin`", "`cd /var/www/webdev/ws && git remote add upstream"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("answer lacks %q: %s", want, text)
 		}

@@ -108,7 +108,7 @@ func originAnswerOf(req ops.OriginRequest, state hq.MateState, hqAddress, stateD
 	return originAnswer{
 		Requested: &originRequested{Origin: req},
 		NextActions: fmt.Sprintf("Now waiting on the person: Mate asks where the code of %[2]s is kept — on GitHub at %[1]s, or in Mate, only following it. Tell them in one sentence why, and nothing about how they pick. Never ask for a token in the chat. A message of its own tells you what they picked. Either way take the code from HQ first: %[3]s. Which they picked, that message says. %[4]s %[5]s Declined: nothing changes. End your turn.",
-			req.URL, req.Repo, originFromHQ(dir), "Kept on GitHub: "+originOnGitHub(req.URL, dir), originInMate(req, dir)),
+			req.URL, req.Repo, originFromHQ(dir), "Kept on GitHub: "+originOnGitHub(dir), originInMate(req, dir)),
 	}
 }
 
@@ -120,24 +120,24 @@ func originKept(req ops.OriginRequest, mode, dir string) string {
 	case !ops.IsGitHubRepository(req.URL):
 		return "It is only followed: " + originFollowed(req, dir) + "; only a public one can be fetched."
 	case mode == hq.OriginOnGitHub:
-		return "Kept on GitHub: " + originOnGitHub(req.URL, dir)
+		return "Kept on GitHub: " + originOnGitHub(dir)
 	case mode == hq.OriginFollowed:
 		return originInMate(req, dir)
 	}
 	return fmt.Sprintf("HQ does not say which way the person keeps it: ask them in one sentence — on GitHub, or in Mate, only following it — and end your turn; their answer picks one of these. %s %s",
-		"Kept on GitHub: "+originOnGitHub(req.URL, dir), originInMate(req, dir))
+		"Kept on GitHub: "+originOnGitHub(dir), originInMate(req, dir))
 }
 
-// originOnGitHub is how a repository whose code is kept on GitHub at url is
-// worked on in its checkout at dir: GitHub is the checkout's origin — set
-// there, never a second remote — its fetches and pushes answered by `zcp hq
-// git-credential` with the token HQ mints at each call; work goes on a branch
-// of the agent's own, pushed, and its change is opened after the push. HQ
+// originOnGitHub is how a repository whose code is kept on GitHub is worked
+// on in its checkout at dir: its origin is GitHub — the wiring points it there
+// (hqPairOrigin), never a second remote — and git asks `zcp hq git-credential`
+// for it, which only the Mate's own shell has; work goes on a branch of the
+// agent's own, pushed to origin, and its change is opened after the push. HQ
 // opens the branch's pull request and the person merges it in Mate, so the
 // agent's own pull request is never where the work ends.
-func originOnGitHub(url, dir string) string {
-	return fmt.Sprintf("GitHub is the checkout's origin, never a second remote — in your own shell, never over ssh: `cd %s && git remote set-url origin %s && %s && git fetch origin`; then work on a branch of your own (`git checkout -b <branch> origin/main`), commit, `git push origin <branch>`, and open its change with `zerops_workflow action=\"open-change\" branch=\"<branch>\" title=\"<what it does>\"`: HQ opens its pull request on GitHub from that branch and the person merges it in Mate, so none of your own (`gh pr create`) is where the work ends. Never push `main` and never force-push: `main` moves only by a merge.",
-		dir, url, hq.GitHubHelperConfig)
+func originOnGitHub(dir string) string {
+	return fmt.Sprintf("ZCP points the checkout's origin at GitHub, never a second remote; work on it in your own shell, never over ssh: `cd %s && git fetch origin`, a branch of your own (`git checkout -b <branch> origin/main`), commit, `git push origin <branch>`, and open its change with `zerops_workflow action=\"open-change\" branch=\"<branch>\" title=\"<what it does>\"`: HQ opens its pull request on GitHub from that branch and the person merges it in Mate, so none of your own (`gh pr create`) is where the work ends. Never push `main` and never force-push: `main` moves only by a merge.",
+		dir)
 }
 
 // originInMate keeps HQ the checkout's origin and follows the repository.

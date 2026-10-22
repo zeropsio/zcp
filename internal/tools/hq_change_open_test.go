@@ -178,7 +178,7 @@ func TestOpenChange_InARepositoryKeptOnGitHubThePullRequestIsHQs(t *testing.T) {
 			lab := newHQLab(t)
 			lab.wire()
 			if tc.origin != nil {
-				lab.hq.keepOn("appdev", *tc.origin)
+				lab.hq.keepOn(*tc.origin)
 			}
 			lab.pushBranch("fix-login", map[string]string{"login.js": "the fix\n"})
 

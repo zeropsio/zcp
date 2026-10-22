@@ -2639,24 +2639,34 @@ themselves; no token crosses the conversation.
   ssh: first `main` from the checkout's origin, a checkout holding only HQ's seed moving onto it,
   one sharing history merging it, one with work sharing none keeping that work on its branch
   `own-history-<commit>` (`ops.KeepOwnHistory`) and moving onto it; then per pick — kept on
-  GitHub, the same shell points `origin` at GitHub
-  and has git ask only `zcp hq git-credential` for it (`credential.https://github.com.helper`
-  emptied first, so no helper of the machine or the person answers ahead of it, then
-  `useHttpPath`, `hq.GitHubHelperConfig`) — `set-url`, never a second remote — and work goes on a
+  GitHub, the checkout's origin is GitHub, which the wiring points there (below), and work goes on a
   branch of the agent's own, pushed to that origin, its change opened after the push
   (`open-change`): HQ opens the branch's pull request and the person merges it in Mate, so the
   agent's own `gh pr create` is never where the work ends; kept in Mate, the same shell adds the
   repository as `upstream` with its push URL `no_push`. A `connected` answer gives the way HQ's
   `repos[].origin.mode` says the code is kept (`github` or `follow`); from an HQ older than
-  `mode`, it gives both and has the agent ask the person in one sentence.
-- **Where the agent reads the way.** Every pass that reads the Mate's state records on the pair
-  how its repository's code is kept (`HQRepoRef.origin {mode, url}`; `mode` `none` for a repository
-  HQ alone keeps, no record from an HQ that names no repositories). Status names it on the dev
-  half — `hqRepo=`, `origin.mode=`, `origin=` — without asking HQ; develop's start, which runs the
-  pass, tells per repository kept on GitHub how it is worked on through that origin. AGENTS.md's git
-  host paragraph says the same for `origin.mode=github`. zcp
+  `mode`, it gives both and has the agent ask the person in one sentence. No answer has the agent
+  point `origin` itself.
+- **The wiring is the one writer of `origin`.** Every pass that reads the Mate's state records on
+  the pair how its repository's code is kept (`HQRepoRef.origin {mode, url}`; `mode` `none` for a
+  repository HQ alone keeps, no record from an HQ that names no repositories), and the wiring and
+  every pass point the checkout's `origin` by it (`hqPairOrigin`, over ssh, config only): kept on
+  GitHub, the GitHub repository, git asking only `zcp hq git-credential` for it
+  (`credential.https://github.com.helper` emptied first, so no helper of the machine or the person
+  answers ahead of it, then `useHttpPath`, `hq.GitHubHelperConfig`); `follow` or `none`, its
+  repository in HQ, as `git-push-setup` set it; a record that does not say leaves it. Never a second
+  remote: what zcp needs of HQ it reaches at HQ's own address (`ops.BuildMainSyncCommand`). A
+  rewire's `git-push-setup` points `origin` at HQ, and the wiring points it by the record last.
+  zcp `TestRepositoryPass_TheCheckoutsOriginIsWhereItsCodeIsKept`.
+- **Where the agent reads the way.** Status names it on the dev half — `hqRepo=`, `origin.mode=`,
+  `origin=` — from the record; a wired pair with none (wired before zcp recorded it) is asked of
+  `GET /api/mate/self` once per status, bounded at 5 s (`Once`), and recorded; unanswered or from an
+  HQ older than modes, `origin.mode=unknown`. Develop's start, which runs the pass, tells per
+  repository kept on GitHub that its origin is GitHub and how the work goes. AGENTS.md's git host
+  paragraph says the same for `origin.mode=github`. zcp
   `TestRenderStatus_ADevHalfSaysHowItsRepositorysCodeIsKept`,
-  `TestDevelopStart_SaysHowEachRepositorysCodeIsKept`.
+  `TestDevelopStart_SaysHowEachRepositorysCodeIsKept`,
+  `TestStatus_AWiredPairNotReadYetAsksHQHowItsCodeIsKept`.
 - **The helper.** `zcp hq git-credential get` answers HQ's own host with the Mate credential under
   the user `mate`, as §6 has it, and `https://github.com` with what `GET
   /api/mate/git-credential?host=github.com&path=<owner>/<repo>[.git]` (as the Mate) answers at
@@ -3730,7 +3740,7 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   descends from HQ's (`ops.BuildBaseBranchCommand`: a pair fresh from `zcp init` takes `main`'s
   tree, a pair with history of its own is joined onto HQ's empty seed, anything else is refused
   with its remedy — two unrelated histories of code are never joined, the pair's own is kept on a
-  branch named after its commit, `ops.KeepOwnHistory`, so the remedy runs again as it is), and the pair's record `ServiceMeta.HQ {appId, repo}`. There is no Mate
+  branch named after its commit, `ops.KeepOwnHistory`, so the remedy runs again as it is), the pair's record `ServiceMeta.HQ {appId, repo}`, and `origin` where the code is kept (§5.10). There is no Mate
   branch. A remote that is not this HQ's is the user's own and left alone. One repository per pair
   is enforced by that record; a pair the stand-up adopted is wired to the recipe's name, and wired
   again to it.
@@ -3747,7 +3757,7 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   repository, `created: false`, rather than open a second; the pair records the number. In a
   repository whose code is kept on GitHub (`origin.mode` `github`, read from `GET /api/mate/self`
   at the call and recorded, the pair's record when HQ cannot be read) the checkout's origin is
-  GitHub, the branch is pushed there, and the answer says HQ opens its pull request on GitHub from
+  GitHub (the wiring points it there), the branch is pushed there, and the answer says HQ opens its pull request on GitHub from
   that branch and the person merges it in Mate
   (`TestOpenChange_InARepositoryKeptOnGitHubThePullRequestIsHQs`). `zerops_deploy strategy="git-push"` from a pair
   wired to HQ, to any remote, refuses before git runs — its `GIT_TOKEN` is the Mate's HQ

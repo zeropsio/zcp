@@ -56,11 +56,13 @@ type ServiceMeta struct {
 	// GitPushState is whether git-push capability is set up;
 	// BuildIntegration is which ZCP-managed CI integration responds to
 	// remote git pushes.
-	CloseDeployMode          topology.CloseDeployMode  `json:"closeDeployMode,omitempty"`
-	CloseDeployModeConfirmed bool                      `json:"closeDeployModeConfirmed,omitempty"` // true after user explicitly confirms/sets close mode
-	GitPushState             topology.GitPushState     `json:"gitPushState,omitempty"`
-	RemoteURL                string                    `json:"remoteUrl,omitempty"` // cache; runtime source of truth = `git remote get-url origin`
-	BuildIntegration         topology.BuildIntegration `json:"buildIntegration,omitempty"`
+	CloseDeployMode          topology.CloseDeployMode `json:"closeDeployMode,omitempty"`
+	CloseDeployModeConfirmed bool                     `json:"closeDeployModeConfirmed,omitempty"` // true after user explicitly confirms/sets close mode
+	GitPushState             topology.GitPushState    `json:"gitPushState,omitempty"`
+	// RemoteURL caches `git remote get-url origin`; a pair wired to HQ keeps
+	// its repository in HQ here even while origin is GitHub (HQ.Origin).
+	RemoteURL        string                    `json:"remoteUrl,omitempty"`
+	BuildIntegration topology.BuildIntegration `json:"buildIntegration,omitempty"`
 	// TrackedRef is the ref a target consumes — what stage or prod is built
 	// from (GF-7, docs/spec-workflows.md §12.6). Recorded ONCE by
 	// git-push-setup's confirm step: an explicit trackedRef input always
