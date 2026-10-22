@@ -745,3 +745,37 @@ func TestStatus_AWiredPairNotReadYetAsksHQHowItsCodeIsKept(t *testing.T) {
 		})
 	}
 }
+
+// TestRepositoryPass_ARewiredPairKeptOnGitHubHasNoSecondRemote: a pair kept on
+// GitHub whose git-push an older zcp left broken is wired again; the wiring
+// keeps the origin it replaces as a remote of its own, which here is GitHub's
+// — the very origin the pass points the checkout back at. The pass leaves
+// origin alone, never a second remote naming GitHub.
+func TestRepositoryPass_ARewiredPairKeptOnGitHubHasNoSecondRemote(t *testing.T) {
+	const github = "https://github.com/acme/app"
+	lab := newHQLab(t)
+	lab.wire()
+	lab.hq.keepOn(hq.RepoOrigin{URL: github, Mode: hq.OriginOnGitHub})
+	lab.developStart()
+	if got := lab.git("remote", "get-url", "origin"); got != github {
+		t.Fatalf("kept on GitHub, origin = %q, want %q", got, github)
+	}
+	if err := workflow.UpsertServiceMeta(lab.stateDir, "appdev", func(meta *workflow.ServiceMeta, _ bool) error {
+		meta.GitPushState = topology.GitPushBroken
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	lab.developStart()
+
+	if got := lab.meta().GitPushState; got != topology.GitPushConfigured {
+		t.Fatalf("the pair was not wired again: git-push %q", got)
+	}
+	if got := lab.git("remote", "get-url", "origin"); got != github {
+		t.Errorf("origin = %q, want %q", got, github)
+	}
+	if got := lab.git("remote"); got != "origin" {
+		t.Errorf("remotes = %q, want origin alone", got)
+	}
+}

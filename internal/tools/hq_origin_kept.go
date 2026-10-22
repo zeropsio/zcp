@@ -67,9 +67,13 @@ func hqPairOrigin(ctx context.Context, sshDeployer ops.SSHDeployer, hqc hq.Clien
 	if m.HQ.Origin.Mode == hq.OriginOnGitHub {
 		helper = hq.GitHubHelperConfig + " && "
 	}
+	// Wiring again keeps the origin it replaces as a remote of its own
+	// (ops.BuildGitOriginSyncCommand); one naming where origin points is a
+	// second remote of the same repository, and goes.
 	out, err := sshDeployer.ExecSSH(ctx, m.Hostname, fmt.Sprintf(
-		`cd %s && %scur=$(git remote get-url origin 2>/dev/null || true); if [ "$cur" != %s ]; then { git remote set-url origin %s 2>/dev/null || git remote add origin %s; } && echo %s; fi`,
-		ops.ShellQuote(hqPairWorkingDir(m)), helper, ops.ShellQuote(url), ops.ShellQuote(url), ops.ShellQuote(url), originMovedMarker))
+		`cd %s && %s{ [ "$(git remote get-url %s 2>/dev/null)" != %s ] || git remote remove %s 2>/dev/null || true; } && cur=$(git remote get-url origin 2>/dev/null || true); if [ "$cur" != %s ]; then { git remote set-url origin %s 2>/dev/null || git remote add origin %s; } && echo %s; fi`,
+		ops.ShellQuote(hqPairWorkingDir(m)), helper, ops.KeptOriginRemote, ops.ShellQuote(url), ops.KeptOriginRemote,
+		ops.ShellQuote(url), ops.ShellQuote(url), ops.ShellQuote(url), originMovedMarker))
 	switch {
 	case err != nil:
 		return fmt.Sprintf("its checkout's origin could not be pointed at %s, where its code is kept (%v) — retrying on the next pass", url, err)

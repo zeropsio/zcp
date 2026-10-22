@@ -2660,8 +2660,10 @@ themselves; no token crosses the conversation.
   answers ahead of it, then `useHttpPath`, `hq.GitHubHelperConfig`); `follow` or `none`, its
   repository in HQ, as `git-push-setup` set it; a record that does not say leaves it. Never a second
   remote: what zcp needs of HQ it reaches at HQ's own address (`ops.BuildMainSyncCommand`). A
-  rewire's `git-push-setup` points `origin` at HQ, and the wiring points it by the record last.
-  zcp `TestRepositoryPass_TheCheckoutsOriginIsWhereItsCodeIsKept`.
+  rewire's `git-push-setup` points `origin` at HQ, keeping the origin it replaces as
+  `zerops-original-origin`, and the wiring points it by the record last, removing that remote
+  when it names the same URL. zcp `TestRepositoryPass_TheCheckoutsOriginIsWhereItsCodeIsKept`,
+  `TestRepositoryPass_ARewiredPairKeptOnGitHubHasNoSecondRemote`.
 - **Where the agent reads the way.** Status names it on the dev half — `hqRepo=`, `origin.mode=`,
   `origin=` — from the record; a wired pair with none (wired before zcp recorded it) is asked of
   `GET /api/mate/self` once per status, bounded at 5 s (`Once`), and recorded; unanswered or from an
