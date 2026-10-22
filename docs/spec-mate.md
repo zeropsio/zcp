@@ -1140,7 +1140,8 @@ Stages []StageRef `json:"stages,omitempty"`
   hostname, the others are proposed as `<part>stage` for the agent to submit. Such a pair attaches
   existing services only, so the refusal names the import of every proposed stage the project does
   not hold yet. A stage whose setup the file does not declare yet is a part the agent adds (develop
-  writes its setup); it is accepted and kept in the proposed plan. A part without a stage is
+  writes its setup); it is accepted and kept in the proposed plan, as is one naming a part's setup
+  for another environment. A part without a stage is
   accepted, and without monorepo evidence a stage naming no setup is too, so an app whose further
   setups are environments (`dev`/`stage`/`prod`) or a recipe pair keeps its one stage
   (`TestBootstrapPlan_MountedRepoParts_ReadBeforeThePlanIsAccepted`,
@@ -1159,8 +1160,11 @@ Stages []StageRef `json:"stages,omitempty"`
   `stageHostname`/`stageSetupName` mirror and loses `stages` and every other key it does not know.
 - Rebuild: when zcp loads a ServiceMeta without `stages` and the repo's root `zerops.yml` declares
   more than one part, it rebuilds `Stages[]` from the repo — the parts in `zerops.yml` are the truth
-  (MODEL §1). A part is a setup other than the dev setup (`PrimarySetupName`) and other than a setup
-  only `extends` names (a `base`). The mirror's stage stays first; every other part's preview
+  (MODEL §1). A part is a setup other than the dev setup (`PrimarySetupName`), other than a setup
+  only `extends` names (a `base`) and other than a setup that builds and starts what an earlier part
+  does — the same build commands, deploy files, start and document root —, which is that part in
+  another environment: an app's `stage` and `prod` are one part, and only distinct code makes a
+  monorepo. A setup naming none of these stays a part (`TestReadPartsSignal_EnvironmentsOfAPart`). The mirror's stage stays first; every other part's preview
   hostname is the app's tier entry whose `zeropsSetup` is that part (§2.8a.5); a part no tier names
   stays out until a plan adds its stage — zcp never derives a hostname. zcp then writes the meta. A
   single-part app loses nothing: the mirror is its whole pair.

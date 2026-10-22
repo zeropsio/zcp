@@ -40,8 +40,13 @@ type PartsSignal struct {
 	// else "zerops.yml" — or "" when it has none.
 	ConfigFile string
 	// YAMLParts names the root zerops.yaml's setups other than the dev
-	// setup and other than a base only `extends` names, in file order.
+	// setup, other than a base only `extends` names and other than
+	// YAMLEnvironments, in file order.
 	YAMLParts []string
+	// YAMLEnvironments names the setups that build and start the code of an
+	// earlier part (setupCode): that part in another environment — an app's
+	// stage and prod are one part.
+	YAMLEnvironments []string
 	// YAMLSetups names every setup of the root zerops.yaml, in file order.
 	YAMLSetups []string
 	// RunParts names the YAMLParts that run a process: their setup, or a
@@ -138,7 +143,7 @@ func parsePartsSignal(out, hostname, devSetup string) PartsSignal {
 		}
 	}
 	yamlDoc := []byte(strings.Join(sections["yaml"], "\n"))
-	sig.YAMLParts, sig.YAMLSetups, sig.RunParts, sig.DeclaresBase = yamlSetups(yamlDoc, hostname, devSetup)
+	readYAMLSetups(yamlDoc, hostname, devSetup, &sig)
 	var decl struct {
 		Servers []struct {
 			Name string `json:"name"`
@@ -162,15 +167,17 @@ func parsePartsSignal(out, hostname, devSetup string) PartsSignal {
 	return sig
 }
 
-// yamlSetups reads zerops.yaml once, with extends resolved as the platform
-// resolves it (decodeResolved): its parts (docs/spec-mate.md §2.8a.4) — setups
-// other than the dev setup and other than a base only `extends` names —, every
-// setup, the parts that run a process (a run.start or run.startCommands, their
-// own or inherited) and whether a setup names a build.base or a run.base.
-func yamlSetups(data []byte, hostname, devSetup string) (parts, setups, run []string, declaresBase bool) {
+// readYAMLSetups reads zerops.yaml once into sig, with extends resolved as
+// the platform resolves it (decodeResolved): its parts (docs/spec-mate.md
+// §2.8a.4) — setups other than the dev setup, other than a base only `extends`
+// names and other than another environment of an earlier part —, those
+// environments, every setup, the parts that run a process (a run.start or
+// run.startCommands, their own or inherited) and whether a setup names a
+// build.base or a run.base.
+func readYAMLSetups(data []byte, hostname, devSetup string, sig *PartsSignal) {
 	var doc ZeropsYmlDoc
 	if yaml.Unmarshal(data, &doc) != nil {
-		return nil, nil, nil, false
+		return
 	}
 	extended := map[string]bool{}
 	for _, e := range doc.Zerops {
@@ -179,7 +186,7 @@ func yamlSetups(data []byte, hostname, devSetup string) (parts, setups, run []st
 		}
 	}
 	if doc.extends() && decodeResolved(data, &doc) != nil {
-		return nil, nil, nil, false
+		return
 	}
 	isDev := func(setup string) bool {
 		if devSetup != "" {
@@ -187,21 +194,51 @@ func yamlSetups(data []byte, hostname, devSetup string) (parts, setups, run []st
 		}
 		return setup == devSetupName || setup == hostname
 	}
+	partCodes := map[string]bool{}
 	for _, e := range doc.Zerops {
 		if e.Build.Base != nil || e.Run.Base != "" {
-			declaresBase = true
+			sig.DeclaresBase = true
 		}
 		if e.Setup == "" {
 			continue
 		}
-		setups = append(setups, e.Setup)
+		sig.YAMLSetups = append(sig.YAMLSetups, e.Setup)
 		if isDev(e.Setup) || extended[e.Setup] {
 			continue
 		}
-		parts = append(parts, e.Setup)
+		if code := setupCode(e); code != "" {
+			if partCodes[code] {
+				sig.YAMLEnvironments = append(sig.YAMLEnvironments, e.Setup)
+				continue
+			}
+			partCodes[code] = true
+		}
+		sig.YAMLParts = append(sig.YAMLParts, e.Setup)
 		if strings.TrimSpace(e.Run.Start) != "" || e.Run.StartCommands != nil {
-			run = append(run, e.Setup)
+			sig.RunParts = append(sig.RunParts, e.Setup)
 		}
 	}
-	return parts, setups, run, declaresBase
+}
+
+// setupCode is what a setup builds and starts — its build commands, deploy
+// files, start and document root —, the code a part is: a setup with the code
+// of an earlier part is that part in another environment, whatever its
+// variables, ports or bases. "" for a setup that names none of them, which
+// nothing shows to be another's environment.
+func setupCode(e ZeropsYmlEntry) string {
+	startCommands := ""
+	if e.Run.StartCommands != nil {
+		startCommands = fmt.Sprint(e.Run.StartCommands)
+	}
+	code := []string{
+		strings.Join(yamlStrings(e.Build.BuildCommands), "\n"),
+		strings.Join(e.DeployFilesList(), "\n"),
+		strings.TrimSpace(e.Run.Start),
+		startCommands,
+		strings.TrimSpace(e.Run.DocumentRoot),
+	}
+	if strings.Join(code, "") == "" {
+		return ""
+	}
+	return strings.Join(code, "\x00")
 }

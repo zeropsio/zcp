@@ -26,8 +26,9 @@ import (
 // never from a guess made before it was read. Without monorepo evidence the
 // further setups may be environments (dev/stage/prod), so a stage naming no
 // setup is accepted. A stage whose setup the file does not declare yet is a
-// part the agent adds (its setup is written in develop) and is kept. A part
-// without a stage is not refused. The pair attaches existing services only,
+// part the agent adds (its setup is written in develop) and is kept, as is one
+// naming a part's setup for another environment. A part without a stage is
+// not refused. The pair attaches existing services only,
 // so the refusal names the import of each proposed stage that is not live.
 // nil outside a container, for a single-part repo, and when the repo cannot
 // be read.
@@ -47,7 +48,7 @@ func repoPartsPlanError(ctx context.Context, client platform.Client, projectID s
 			continue
 		}
 		monorepo := sig.Workspace || sig.Packages >= 2
-		stages, reason := stagesForParts(r.StageRefs(), sig.YAMLParts, sig.YAMLSetups, monorepo)
+		stages, reason := stagesForParts(r.StageRefs(), sig.YAMLParts, sig.YAMLEnvironments, sig.YAMLSetups, monorepo)
 		if reason == "" {
 			continue
 		}
@@ -101,10 +102,11 @@ func stagesNotLive(ctx context.Context, client platform.Client, projectID string
 
 // stagesForParts is the pair's stages made from the repo's parts: a stage the
 // plan already gives a part keeps its hostname, a part without one gets
-// <part>stage, and a stage whose setup no entry of setups declares (or that
-// names none outside a monorepo) follows as planned. reason names the planned stages that match no part — a declared
+// <part>stage, and a stage whose setup no entry of setups declares, one naming
+// a part's setup for another environment (environments) or one naming none
+// outside a monorepo follows as planned. reason names the planned stages that match no part — a declared
 // setup that is no part, or no setup when monorepo — "" when there is none.
-func stagesForParts(planned []topology.StageRef, parts, setups []string, monorepo bool) ([]topology.StageRef, string) {
+func stagesForParts(planned []topology.StageRef, parts, environments, setups []string, monorepo bool) ([]topology.StageRef, string) {
 	bySetup := map[string]string{}
 	var added []topology.StageRef
 	var unnamed, unknown []string
@@ -114,7 +116,7 @@ func stagesForParts(planned []topology.StageRef, parts, setups []string, monorep
 			unnamed = append(unnamed, s.Hostname)
 		case slices.Contains(parts, s.SetupName):
 			bySetup[s.SetupName] = s.Hostname
-		case !slices.Contains(setups, s.SetupName):
+		case !slices.Contains(setups, s.SetupName), slices.Contains(environments, s.SetupName):
 			added = append(added, s)
 		default:
 			unknown = append(unknown, fmt.Sprintf("stage %q names the setup %q, no part of the repo", s.Hostname, s.SetupName))

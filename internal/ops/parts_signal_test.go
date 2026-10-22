@@ -33,11 +33,22 @@ func (p partsSSH) ExecSSHBackground(context.Context, string, string, time.Durati
 func TestReadPartsSignal(t *testing.T) {
 	t.Parallel()
 	const singlePair = "zerops:\n  - setup: dev\n    run: {start: zsc noop}\n  - setup: prod\n    run: {start: bun index.ts}\n"
+	// One Node app with a setup per environment (eval3): the same build and
+	// start, different variables.
+	const environments = "zerops:\n" +
+		"  - setup: app\n    build: {buildCommands: [npm install], deployFiles: [.]}\n    run: {start: npm start, envVariables: {PORT: '3000'}}\n" +
+		"  - setup: prod\n    build: {buildCommands: [npm install], deployFiles: [.]}\n    run: {start: npm start, envVariables: {PORT: '3000', NODE_ENV: production}}\n"
+	const twoFolders = "zerops:\n" +
+		"  - setup: api\n    build: {buildCommands: [npm ci], deployFiles: [apps/api]}\n    run: {start: node apps/api/main.js}\n" +
+		"  - setup: web\n    build: {buildCommands: [npm ci], deployFiles: [apps/web/dist]}\n    run: {start: npx serve apps/web/dist}\n"
 	tests := []struct {
 		name, out, devSetup string
 		want                bool
 	}{
 		{name: "a dev setup and one part", out: "@@yaml\n" + singlePair + "@@declaration\n@@markers\n@@packages\n"},
+		{name: "one app's setups for two environments", out: "@@yaml\n" + environments + "@@declaration\n@@markers\n@@packages\n"},
+		{name: "one app's dev setup and its setups for two environments", out: "@@yaml\nzerops:\n  - setup: dev\n    run: {start: zsc noop}\n" + strings.TrimPrefix(environments, "zerops:\n") + "@@declaration\n@@markers\n@@packages\n"},
+		{name: "two setups built from different folders", want: true, out: "@@yaml\n" + twoFolders + "@@declaration\n@@markers\n@@packages\n"},
 		{name: "a dev setup and three parts", want: true, out: "@@yaml\nzerops:\n  - setup: dev\n  - setup: web\n  - setup: api\n  - setup: worker\n@@declaration\n@@markers\n@@packages\n"},
 		{name: "a base only extends names is not a part", out: "@@yaml\nzerops:\n  - setup: base\n  - setup: dev\n    extends: base\n  - setup: prod\n    extends: [base]\n@@declaration\n@@markers\n@@packages\n"},
 		{name: "the dev setup the meta names", devSetup: "appdev", out: "@@yaml\nzerops:\n  - setup: appdev\n  - setup: prod\n@@declaration\n@@markers\n@@packages\n"},
@@ -127,6 +138,49 @@ func TestReadPartsSignal_RunParts(t *testing.T) {
 	}
 	if want := []string{"web", "api", "worker"}; !reflect.DeepEqual(sig.RunParts, want) {
 		t.Errorf("RunParts = %v, want %v", sig.RunParts, want)
+	}
+}
+
+// TestReadPartsSignal_EnvironmentsOfAPart: a setup that builds and starts
+// what an earlier part does — the same build commands, deploy files, start
+// and document root — is that part in another environment, never a part of
+// its own; a setup that names none of them stays a part, as nothing says it
+// is another's environment.
+func TestReadPartsSignal_EnvironmentsOfAPart(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, yaml string
+		want       []string
+	}{
+		{name: "an app's stage and prod", want: []string{"stage"},
+			yaml: "zerops:\n  - setup: dev\n    run: {start: zsc noop}\n" +
+				"  - setup: stage\n    build: {buildCommands: [npm install], deployFiles: [.]}\n    run: {start: npm start}\n" +
+				"  - setup: prod\n    build: {buildCommands: [npm install], deployFiles: [.]}\n    run: {start: npm start, envVariables: {NODE_ENV: production}}\n"},
+		{name: "a monorepo whose api has a prod setup too", want: []string{"api", "web"},
+			yaml: "zerops:\n  - setup: dev\n" +
+				"  - setup: api\n    build: {deployFiles: [apps/api]}\n    run: {start: node apps/api/main.js}\n" +
+				"  - setup: web\n    build: {deployFiles: [apps/web/dist]}\n    run: {base: static, documentRoot: apps/web/dist}\n" +
+				"  - setup: apiprod\n    build: {deployFiles: [apps/api]}\n    run: {start: node apps/api/main.js, envVariables: {NODE_ENV: production}}\n"},
+		{name: "the same code started two ways is two parts", want: []string{"app", "worker"},
+			yaml: "zerops:\n  - setup: app\n    build: {deployFiles: [.]}\n    run: {start: bun index.ts}\n" +
+				"  - setup: worker\n    build: {deployFiles: [.]}\n    run: {start: bun worker.ts}\n"},
+		{name: "a twin of its part through the base both extend", want: []string{"app"},
+			yaml: "zerops:\n  - setup: base\n    build: {deployFiles: [.]}\n    run: {start: npm start}\n" +
+				"  - setup: app\n    extends: base\n  - setup: prod\n    extends: base\n"},
+		{name: "setups that name nothing stay parts", want: []string{"web", "api"},
+			yaml: "zerops:\n  - setup: dev\n  - setup: web\n  - setup: api\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			sig, err := ReadPartsSignal(context.Background(), partsSSH{out: "@@yaml\n" + tt.yaml + "@@declaration\n@@markers\n@@packages\n"}, "appdev", "")
+			if err != nil {
+				t.Fatalf("ReadPartsSignal: %v", err)
+			}
+			if !reflect.DeepEqual(sig.YAMLParts, tt.want) {
+				t.Errorf("YAMLParts = %v, want %v", sig.YAMLParts, tt.want)
+			}
+		})
 	}
 }
 

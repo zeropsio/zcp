@@ -97,6 +97,11 @@ func TestBootstrapPlan_RepoSetups_RefusesOnlyAStageMatchingNoPart(t *testing.T) 
 	recipe := "@@yaml\nzerops:\n  - setup: appdev\n  - setup: appstage\n@@declaration\n@@markers\n@@packages\n"
 	webAPI := "@@yaml\nzerops:\n  - setup: base\n  - setup: dev\n    extends: base\n  - setup: web\n    extends: base\n  - setup: api\n    extends: base\n@@declaration\n@@markers\npnpm-workspace.yaml\n@@packages\napps/web/package.json\napps/api/package.json\n"
 	webAPIOverAdmin := strings.ReplaceAll(webAPI, "base", "admin")
+	webAPIWithProd := "@@yaml\nzerops:\n  - setup: dev\n" +
+		"  - setup: web\n    build: {deployFiles: [apps/web/dist]}\n    run: {base: static, documentRoot: apps/web/dist}\n" +
+		"  - setup: api\n    build: {deployFiles: [apps/api]}\n    run: {start: node apps/api/main.js}\n" +
+		"  - setup: apiprod\n    build: {deployFiles: [apps/api]}\n    run: {start: node apps/api/main.js, envVariables: {NODE_ENV: production}}\n" +
+		"@@declaration\n@@markers\npnpm-workspace.yaml\n@@packages\napps/web/package.json\napps/api/package.json\n"
 	pair := func(dev string, r workflow.RuntimeTarget) []workflow.BootstrapTarget {
 		r.DevHostname, r.Type, r.IsExisting, r.BootstrapMode = dev, "ubuntu/nodejs@22", true, topology.PlanModeStandard
 		return []workflow.BootstrapTarget{{Runtime: r}}
@@ -126,6 +131,8 @@ func TestBootstrapPlan_RepoSetups_RefusesOnlyAStageMatchingNoPart(t *testing.T) 
 		{name: "a stage naming a setup that is no part of the repo is refused with the plan built from the repo", dev: "appdev", repo: webAPIOverAdmin,
 			plan:        pair("appdev", workflow.RuntimeTarget{Stages: []topology.StageRef{{Hostname: "webstage", SetupName: "web"}, {Hostname: "adminstage", SetupName: "admin"}}}),
 			wantRefused: []string{`stage \"adminstage\" names the setup \"admin\", no part of the repo`, `{\"hostname\":\"webstage\",\"setupName\":\"web\"}`, `{\"hostname\":\"apistage\",\"setupName\":\"api\"}`}},
+		{name: "a stage naming a part's setup for another environment is accepted", dev: "appdev", repo: webAPIWithProd,
+			plan: pair("appdev", workflow.RuntimeTarget{Stages: []topology.StageRef{{Hostname: "webstage", SetupName: "web"}, {Hostname: "apiprod", SetupName: "apiprod"}}})},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
