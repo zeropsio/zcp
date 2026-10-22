@@ -673,11 +673,13 @@ func (f *fakeHQ) changeIn(repo string, number int) *hq.Change {
 // the session's environment carries the GIT_TOKEN the platform holds for the
 // service now — what a fresh session reads.
 type labSSH struct {
-	t        *testing.T
-	mock     *platform.Mock
-	dirs     map[string]string
-	home     string
-	caFile   string
+	t      *testing.T
+	mock   *platform.Mock
+	dirs   map[string]string
+	home   string
+	caFile string
+	// mu guards commands: status reads a checkout concurrently.
+	mu       sync.Mutex
 	commands []string
 	// pause, when set, is called before each command runs: a test holds a
 	// command mid-way with it.
@@ -689,7 +691,9 @@ type labSSH struct {
 }
 
 func (s *labSSH) ExecSSH(ctx context.Context, hostname, command string) ([]byte, error) {
+	s.mu.Lock()
 	s.commands = append(s.commands, command)
+	s.mu.Unlock()
 	if s.pause != nil {
 		s.pause(command)
 	}

@@ -14,6 +14,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -1002,8 +1003,12 @@ func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client 
 	if err != nil {
 		return convertError(wrapStageErr("Compute envelope", err), WithRecoveryStatus()), nil, nil
 	}
-	attachRepoStatus(ctx, envelope.Services, sshDeployer, rt, engine.StateDir())
-	attachHQCheckoutOrigin(ctx, envelope.Services, sshDeployer, rt, engine.StateDir())
+	// Both read the dev halves over ssh, each its own fields: beside each
+	// other, a half that does not answer holds status once, not twice.
+	var reads sync.WaitGroup
+	reads.Go(func() { attachRepoStatus(ctx, envelope.Services, sshDeployer, rt, engine.StateDir()) })
+	reads.Go(func() { attachHQCheckoutOrigin(ctx, envelope.Services, sshDeployer, rt, engine.StateDir()) })
+	reads.Wait()
 	attachPartsSignal(ctx, envelope.Services, sshDeployer, rt, engine)
 	attachRollbackInfo(ctx, envelope.Services, client, projectID)
 	corpus, err := workflow.LoadAtomCorpus()

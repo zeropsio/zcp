@@ -6,6 +6,7 @@ package tools
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -835,5 +836,67 @@ func TestStatus_NamesNoCredentialOfTheCheckoutsOrigin(t *testing.T) {
 	}
 	if want := "checkoutOrigin=https://***@github.com/acme/app"; !strings.Contains(text, want) {
 		t.Errorf("status lacks %q:\n%s", want, text)
+	}
+}
+
+// deadlineSSH is the lab's SSH, recording the time the checkout's origin read
+// was given and whether the repository's own read began before it ended.
+type deadlineSSH struct {
+	*labSSH
+	once    sync.Once
+	started chan struct{}
+	mu      sync.Mutex
+	bound   time.Duration
+	bounded bool
+	waited  bool
+}
+
+func (s *deadlineSSH) ExecSSH(ctx context.Context, hostname, command string) ([]byte, error) {
+	if strings.Contains(command, "git remote get-url origin") {
+		deadline, ok := ctx.Deadline()
+		s.mu.Lock()
+		s.bounded, s.bound = ok, time.Until(deadline)
+		s.mu.Unlock()
+		s.once.Do(func() { close(s.started) })
+	} else {
+		select {
+		case <-s.started:
+		case <-time.After(3 * time.Second):
+			s.mu.Lock()
+			s.waited = true
+			s.mu.Unlock()
+		}
+	}
+	return s.labSSH.ExecSSH(ctx, hostname, command)
+}
+
+// TestStatus_TheCheckoutsOriginIsReadBoundedBesideTheRepository: status reads
+// a wired pair's checkout's origin within a short bound, beside the read of
+// its repository rather than after it, so a dev service that does not answer
+// costs status no more than it did before.
+func TestStatus_TheCheckoutsOriginIsReadBoundedBesideTheRepository(t *testing.T) {
+	lab := newHQLab(t)
+	lab.wire()
+	lab.mock.WithServices([]platform.ServiceStack{
+		{ID: "svc-appdev", Name: "appdev", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		{ID: "svc-appstage", Name: "appstage", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+	})
+	ssh := &deadlineSSH{labSSH: lab.ssh, started: make(chan struct{})}
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, lab.mock, lab.hq.srv.Client(), labMate, nil,
+		workflow.NewEngine(lab.stateDir, workflow.EnvContainer, nil), nil, lab.stateDir, "", nil, ssh, lab.rt, "")
+
+	text := getTextContent(t, callTool(t, srv, "zerops_workflow", map[string]any{"action": "status"}))
+
+	if !strings.Contains(text, "checkoutOrigin=") {
+		t.Fatalf("status names no checkout origin:\n%s", text)
+	}
+	ssh.mu.Lock()
+	defer ssh.mu.Unlock()
+	if !ssh.bounded || ssh.bound > 10*time.Second {
+		t.Errorf("the origin read is bounded=%v by %s, want at most 10s", ssh.bounded, ssh.bound)
+	}
+	if ssh.waited {
+		t.Error("the repository's read waited out the origin read: they run one after the other")
 	}
 }

@@ -111,16 +111,23 @@ func hqPairOriginTarget(address string, m *workflow.ServiceMeta) string {
 	return ""
 }
 
+// hqCheckoutOriginBound bounds status's read of the checkouts' origins: a
+// dev service that is stopped or restarting never holds status for long.
+const hqCheckoutOriginBound = 5 * time.Second
+
 // attachHQCheckoutOrigin reads, on each wired pair's dev half, its checkout's
 // origin as it is now, and where the wiring points it when that differs
 // (hqPairOriginTarget): status names what git pushes to, never only what the
-// record says it will be. Container only; a read that fails leaves the half
-// without it.
+// record says it will be. Container only; a read that fails, or does not
+// answer within hqCheckoutOriginBound, leaves the half without it. It writes
+// only these two fields of services, so it runs beside attachRepoStatus.
 func attachHQCheckoutOrigin(ctx context.Context, services []workflow.ServiceSnapshot, ssh ops.SSHDeployer, rt runtime.Info, stateDir string) {
 	if !rt.InContainer || ssh == nil {
 		return
 	}
 	address := hqAddress()
+	ctx, cancel := context.WithTimeout(ctx, hqCheckoutOriginBound)
+	defer cancel()
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, attachRepoStatusConcurrency)
 	for i := range services {

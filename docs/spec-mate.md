@@ -2669,7 +2669,8 @@ themselves; no token crosses the conversation.
   `origin=` — from the record; a wired pair with none (wired before zcp recorded it) is asked of
   `GET /api/mate/self` once per status, bounded at 5 s (`Once`), and recorded; unanswered or from an
   HQ older than modes, `origin.mode=unknown`. Beside it, `checkoutOrigin=` is the checkout's origin
-  as status reads it over ssh now; while it differs from where the wiring points it by the record
+  as status reads it over ssh now, bounded at 5 s and beside the read of the repository's state;
+  while it differs from where the wiring points it by the record
   (a pair wired before zcp moved origin), it adds `(pending: develop's start points it at <url>)`.
   Status names every remote without the credentials a URL may carry (`***@`).
   Develop's start, which runs the pass, tells per repository kept on GitHub that its origin is
@@ -2679,6 +2680,7 @@ themselves; no token crosses the conversation.
   `TestDevelopStart_SaysHowEachRepositorysCodeIsKept`,
   `TestStatus_AWiredPairNotReadYetAsksHQHowItsCodeIsKept`,
   `TestStatus_SaysWhatTheCheckoutsOriginIsNow`, `TestStatus_NamesNoCredentialOfTheCheckoutsOrigin`,
+  `TestStatus_TheCheckoutsOriginIsReadBoundedBesideTheRepository`,
   `TestStatus_AnHQOlderThanRepositoriesIsAskedOnce`.
 - **The helper.** `zcp hq git-credential get` answers HQ's own host with the Mate credential under
   the user `mate`, as §6 has it, and `https://github.com` with what `GET
