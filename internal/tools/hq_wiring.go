@@ -313,9 +313,10 @@ func lazySelf(ctx context.Context, hqc hq.Client) func() (hq.MateState, error) {
 
 // keepHQPairCurrent is one wired pair's turn of a pass: wired again in the
 // application HQ holds the Mate in now, if that moved, what became of its
-// change on record, a change handed to the Mate there (hqTakeHanded), how
-// its code is kept (recordHQOrigin) and so where its checkout's origin points
-// (hqPairOrigin), and its `main` against HQ's (hqPairMain). wired is whether the pass wired it again.
+// change on record, a change handed to the Mate there (hqTakeHanded) or the
+// one still open (hqOpenChangeWork), how its code is kept (recordHQOrigin)
+// and so where its checkout's origin points (hqPairOrigin), and its `main`
+// against HQ's (hqPairMain). wired is whether the pass wired it again.
 func keepHQPairCurrent(
 	ctx context.Context,
 	client platform.Client,
@@ -340,11 +341,16 @@ func keepHQPairCurrent(
 		return attempt.line, attempt.wired
 	}
 	recordHQOrigin(stateDir, m, state)
+	upgradeReleasedBranch(stateDir, hqc, m)
 	lines := []string{}
 	// What became of the change on record is learned before a handed one
-	// takes its place.
+	// takes its place; a change still open says where the work goes.
 	landed := hqLearnLanding(stateDir, m, state)
-	for _, line := range []string{hqPairOrigin(ctx, sshDeployer, hqc, m), landed, hqTakeHanded(stateDir, hqc, m, state), hqPairMain(ctx, sshDeployer, hqc, m)} {
+	work := hqTakeHanded(stateDir, hqc, m, state)
+	if work == "" {
+		work = hqOpenChangeWork(hqc, m)
+	}
+	for _, line := range []string{hqPairOrigin(ctx, sshDeployer, hqc, m), landed, work, hqPairMain(ctx, sshDeployer, hqc, m)} {
 		if line != "" {
 			lines = append(lines, line)
 		}

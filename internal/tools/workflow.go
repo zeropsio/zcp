@@ -509,6 +509,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		}
 		return handleBootstrapSkip(ctx, engine, client, projectID, rt, schemaCache, input)
 	case "status":
+		upgradeReleasedBranches(httpClient, engine.StateDir())
 		recordMissingHQOrigins(ctx, httpClient, engine.StateDir())
 		// SPINE-1 fix: resolve precedence from DISK via the single
 		// ResolveLifecycle resolver (not the in-memory detectActiveWorkflow),

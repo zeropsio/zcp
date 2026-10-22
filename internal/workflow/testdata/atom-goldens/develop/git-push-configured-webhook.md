@@ -31,6 +31,8 @@ Wired to this Mate's HQ — take `main` in and start the work on a branch of you
 cd /var/www/<push-source-host> && git fetch origin && git checkout main && git merge --ff-only origin/main && git checkout -b <your-branch>
 ```
 
+While status names `change=<n>` on the dev service, that change is open and the work goes on its branch, `changeBranch`, never on one cut from `main` — HQ refuses that push, as it is no fast-forward of the change's branch; develop's start says how to take it.
+
 A `main` that will not fast-forward carries local commits that never landed: put them on a branch of their own (`git branch <name>`), then `git reset --keep origin/main`, and say so rather than carrying them silently into new work.
 
 Where the remote later refuses the branch you push, the ref is protected — on this Mate's HQ that is `main`, a tag, or a branch another open change holds: push a branch of your own and open its change with `zerops_workflow action="open-change"`, never a fresh token. The transport classifier names that case directly when it happens.

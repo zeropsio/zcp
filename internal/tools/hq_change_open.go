@@ -106,24 +106,32 @@ func handleOpenChange(
 	}
 	number := opened.Change.Number
 	result := changeOpenResult{
-		Service: meta.Hostname, Branch: branch, PullRequest: number,
+		Service: meta.Hostname, PullRequest: number,
 		PullRequestURL: hqc.ChangeURL(meta.HQ.AppID, meta.HQ.Repo, number), Created: opened.Created,
 	}
-	// The change's branch is the one HQ names; an open change it answered
-	// is never on the one asked for, so an HQ that names none leaves it
+	// The change's branch is the one HQ names. An HQ from before changes
+	// were bound to a branch they name ignores the one asked for and binds
+	// a change it opens to the Mate's own (ChangeBranch); an open change it
+	// answers without naming one is never on the one asked for, and stays
 	// unnamed.
 	held := strings.TrimPrefix(opened.Change.Branch, "refs/heads/")
-	if held != "" || !opened.Created {
+	switch {
+	case held != "":
 		result.Branch = held
+	case opened.Created:
+		result.Branch = hqc.ChangeBranch(number)
 	}
 	recordChange(stateDir, meta, number, result.Branch)
 	if !opened.Created {
-		where, push := "", "its branch"
-		if held != "" {
-			where, push = fmt.Sprintf(" on the branch %q", held), fmt.Sprintf("%q", held)
+		if held == "" {
+			result.Message = fmt.Sprintf("Change #%d is already open in %q, and a Mate has one open change per repository: it stays. Push this work to its branch, or open its change once #%d is merged or closed.",
+				number, meta.HQ.Repo, number)
+			return jsonResult(result), nil, nil
 		}
-		result.Message = fmt.Sprintf("Change #%d is already open in %q%s, and a Mate has one open change per repository: it stays. Push this work to %s, or open its change once #%d is merged or closed.",
-			number, meta.HQ.Repo, where, push, number)
+		// Work cut from main is no fast-forward of the open change's branch:
+		// it goes onto that branch, or HQ refuses its push.
+		result.Message = fmt.Sprintf("Change #%d is already open in %q on the branch %q, and a Mate has one open change per repository: it stays, and this work goes on its branch — %s, bring this work onto it (`git merge %s`) and push it (`git push origin %s`), never force-pushing; or open this work's change once #%d is merged or closed.",
+			number, meta.HQ.Repo, held, takeChangeBranch(hqc, held), branch, held, number)
 		return jsonResult(result), nil, nil
 	}
 	if meta.HQ.Origin != nil && meta.HQ.Origin.Mode == hq.OriginOnGitHub {
@@ -131,8 +139,13 @@ func handleOpenChange(
 			number, meta.HQ.Repo, result.Branch, result.Branch)
 		return jsonResult(result), nil, nil
 	}
-	result.Message = fmt.Sprintf("Change #%d is open in %q for the branch %q: push the work there (`git push origin %s`) — never force-push — and write what it does and how you checked it with zerops_workflow action=\"describe-change\"; the person reviews it by that.",
-		number, meta.HQ.Repo, result.Branch, result.Branch)
+	push, bound := result.Branch, ""
+	if result.Branch != branch {
+		push = branch + ":" + result.Branch
+		bound = fmt.Sprintf(", not %q — this HQ binds a change to a branch of its own, as HQ did before changes were bound to the branch they name —", branch)
+	}
+	result.Message = fmt.Sprintf("Change #%d is open in %q for the branch %q%s: push the work there (`git push origin %s`) — never force-push — and write what it does and how you checked it with zerops_workflow action=\"describe-change\"; the person reviews it by that.",
+		number, meta.HQ.Repo, result.Branch, bound, push)
 	return jsonResult(result), nil, nil
 }
 

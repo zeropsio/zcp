@@ -71,7 +71,9 @@ type fakeHQ struct {
 	// credential is the one Mate credential HQ takes now: enrolling again
 	// revokes the one before.
 	credential string
-	// unnamedBranches: HQ answers a change without naming its branch.
+	// unnamedBranches: HQ from before changes were bound to a branch they
+	// name — it binds a change to the Mate's own branch whatever is asked,
+	// and answers it without naming its branch.
 	unnamedBranches bool
 	// origins are the origins connected to the application's repositories,
 	// by name; a repository without one is kept by HQ alone.
@@ -244,6 +246,9 @@ func (f *fakeHQ) api(w http.ResponseWriter, r *http.Request) {
 		// HQ's own checks, in its order and with its answers: a branch is a
 		// short name, never main, a full ref or one in HQ's mate/ namespace.
 		branch := fmt.Sprintf("refs/heads/mate/%s/%d", labMate, number)
+		if f.unnamedBranches {
+			in.Branch = ""
+		}
 		if in.Branch != "" {
 			branch = "refs/heads/" + in.Branch
 		}
@@ -263,7 +268,11 @@ func (f *fakeHQ) api(w http.ResponseWriter, r *http.Request) {
 			Branch: branch, State: hq.ChangeOpen, OpenedAt: now, UpdatedAt: now, Mergeability: "unknown"}
 		f.changes = append(f.changes, change)
 		f.writeRefs()
-		writeHQJSON(w, http.StatusOK, hq.OpenedChange{Change: change, Created: true})
+		answered := change
+		if f.unnamedBranches {
+			answered.Branch = ""
+		}
+		writeHQJSON(w, http.StatusOK, hq.OpenedChange{Change: answered, Created: true})
 	case len(parts) >= 5 && parts[2] == "changes":
 		number, _ := strconv.Atoi(parts[4])
 		change := f.find(f.appID, parts[3], number, "")

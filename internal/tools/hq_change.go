@@ -2,8 +2,10 @@ package tools
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -34,6 +36,84 @@ func recordChange(stateDir string, m *workflow.ServiceMeta, number int, branch s
 		meta.HQ.Change, meta.HQ.Branch = number, branch
 		return nil
 	})
+}
+
+// hqReleasedBranch is the branch an older zcp kept a wired pair's work on in
+// its checkout, and recorded where the pair now records its change's branch
+// (workflow.HQRepoRef.Branch): the Mate's own, never a change's — HQ bound
+// that zcp's changes, opened naming no branch, to ChangeBranch.
+func hqReleasedBranch(hqc hq.Client) string { return "mate/" + hqc.ProjectID() }
+
+// upgradeReleasedBranch records, on a pair whose record an older zcp wrote,
+// the branch its change is on in place of the Mate's own — ChangeBranch, as
+// HQ bound it, or none without a change — in memory and on disk. Nothing
+// then names the Mate's own branch as the change's: HQ refuses a push to it.
+func upgradeReleasedBranch(stateDir string, hqc hq.Client, m *workflow.ServiceMeta) {
+	released := hqReleasedBranch(hqc)
+	upgrade := func(ref *workflow.HQRepoRef) {
+		if ref.Branch != released {
+			return
+		}
+		ref.Branch = ""
+		if ref.Change != 0 {
+			ref.Branch = hqc.ChangeBranch(ref.Change)
+		}
+	}
+	if m == nil || m.HQ == nil || m.HQ.Branch != released {
+		return
+	}
+	upgrade(m.HQ)
+	_ = workflow.UpsertServiceMeta(stateDir, m.Hostname, func(meta *workflow.ServiceMeta, existed bool) error {
+		if existed && meta.HQ != nil {
+			upgrade(meta.HQ)
+		}
+		return nil
+	})
+}
+
+// upgradeReleasedBranches upgrades every wired pair's record an older zcp
+// wrote (upgradeReleasedBranch): status renders the records after it. A Mate
+// not enrolled has no record of a change.
+func upgradeReleasedBranches(httpClient ops.HTTPDoer, stateDir string) {
+	hqc, enrolled := openHQ(httpClient)
+	if !enrolled {
+		return
+	}
+	metas, err := workflow.ListServiceMetas(stateDir)
+	if err != nil {
+		return
+	}
+	for _, m := range metas {
+		if hqPairWired(m) {
+			upgradeReleasedBranch(stateDir, hqc, m)
+		}
+	}
+}
+
+// hqOpenChangeWork says, while the pair's change is open, that the work goes
+// on its branch and how to take it: work cut from main, as develop's start
+// otherwise has it, is no fast-forward of that branch, and HQ refuses its
+// push. "" for no change, or one whose branch HQ did not name.
+func hqOpenChangeWork(hqc hq.Client, m *workflow.ServiceMeta) string {
+	if m.HQ.Change == 0 || m.HQ.Branch == "" {
+		return ""
+	}
+	return fmt.Sprintf("change #%d in %q is open on the branch %q, so this Mate's work there goes on that branch rather than on a branch cut from %q: %s, carry the work on and push it (`git push origin %s`), never force-pushing; cut the next work's branch from %q once #%d is merged or closed",
+		m.HQ.Change, m.HQ.Repo, m.HQ.Branch, hqBase, takeChangeBranch(hqc, m.HQ.Branch), m.HQ.Branch, hqBase, m.HQ.Change)
+}
+
+// takeChangeBranch says how the agent takes branch, the Mate's open change's,
+// in its own shell on the mounted checkout. A checkout an older zcp kept the
+// change's work on holds it as the Mate's own branch (hqReleasedBranch),
+// which git cannot keep beside the change's branch beneath it: that one is
+// renamed instead.
+func takeChangeBranch(hqc hq.Client, branch string) string {
+	take := fmt.Sprintf("in your own shell on the mounted checkout take it (`git fetch origin %s && git checkout %s`)", branch, branch)
+	if released := hqReleasedBranch(hqc); strings.HasPrefix(branch, released+"/") {
+		take += fmt.Sprintf(" — or, where the checkout still has the branch %q an older zcp kept this work on, which git cannot keep beside it, rename that one instead (`git branch -m %s %s && git checkout %s`)",
+			released, released, branch, branch)
+	}
+	return take
 }
 
 // hqTakeHanded records the change a person handed this Mate in the pair's

@@ -147,6 +147,75 @@ func TestOpenChange_TheOpenChangeStays(t *testing.T) {
 	}
 }
 
+// The agent cuts new work from main while the Mate's change is open: the
+// answer says the work goes on the open change's branch and how to take it,
+// and the work taken and pushed as it says reaches the change by
+// fast-forward — never a push HQ refuses.
+func TestOpenChange_AnOpenChangeTakesTheWorkOntoItsBranch(t *testing.T) {
+	lab := newHQLab(t)
+	lab.wire()
+	lab.pushBranch("fix-login", map[string]string{"login.js": "the fix\n"})
+	if first, text, isError := lab.openChangeFrom("fix-login", "Fix the login"); isError || !first.Created {
+		t.Fatalf("the first open: %s", text)
+	}
+	before := lab.remoteHead("fix-login")
+	lab.git("checkout", "-q", "-b", "add-signup", "main")
+
+	answer, text, isError := lab.openChangeFrom("add-signup", "Add the signup")
+
+	if isError || answer.Created || answer.Branch != "fix-login" {
+		t.Fatalf("want change #1 on fix-login answered: %s", text)
+	}
+	take, push := takeCommand.FindStringSubmatch(answer.Message), pushCommand.FindStringSubmatch(answer.Message)
+	if take == nil || push == nil {
+		t.Fatalf("the answer gives no command that takes the open change's branch, or pushes it: %s", answer.Message)
+	}
+	if out, err := lab.ssh.ExecSSH(t.Context(), "appdev", "cd /var/www && "+take[1]); err != nil {
+		t.Fatalf("taking the branch as the answer says (%s): %v\n%s", take[1], err, out)
+	}
+	lab.write(map[string]string{"signup.js": "the signup\n"})
+	lab.commit("Add the signup")
+	if out, err := lab.ssh.ExecSSH(t.Context(), "appdev", "cd /var/www && "+push[1]); err != nil {
+		t.Fatalf("pushing as the answer says (%s): %v\n%s", push[1], err, out)
+	}
+	if got, want := lab.remoteHead("fix-login"), lab.git("rev-parse", "HEAD"); got != want {
+		t.Errorf("fix-login is at %q, want the work pushed onto it %q", got, want)
+	}
+	lab.git("merge-base", "--is-ancestor", before, "HEAD")
+}
+
+// An HQ from before changes were bound to a branch they name ignores the
+// branch asked for and binds the change to the Mate's own: the answer names
+// that branch and says the work goes there, never the one asked for.
+func TestOpenChange_AnHQBeforeNamedBranchesNamesTheBranchItBound(t *testing.T) {
+	lab := newHQLab(t)
+	lab.wire()
+	lab.hq.mu.Lock()
+	lab.hq.unnamedBranches = true
+	lab.hq.mu.Unlock()
+	lab.pushBranch("fix-signup", map[string]string{"signup.js": "the signup\n"})
+
+	answer, text, isError := lab.openChangeFrom("fix-signup", "Fix the signup")
+
+	const bound = "mate/" + labMate + "/1"
+	if isError || !answer.Created || answer.Branch != bound {
+		t.Fatalf("want change #1 opened on %q, got: %s", bound, text)
+	}
+	if got := lab.meta().HQ.Branch; got != bound {
+		t.Errorf("the pair records the change on %q, want %q", got, bound)
+	}
+	push := pushCommand.FindStringSubmatch(answer.Message)
+	if push == nil {
+		t.Fatalf("the answer gives no push: %s", answer.Message)
+	}
+	if out, err := lab.ssh.ExecSSH(t.Context(), "appdev", "cd /var/www && "+push[1]); err != nil {
+		t.Fatalf("pushing as the answer says (%s): %v\n%s", push[1], err, out)
+	}
+	if got, want := lab.remoteHead(bound), lab.git("rev-parse", "fix-signup"); got != want {
+		t.Errorf("%s is at %q, want the work %q", bound, got, want)
+	}
+}
+
 // In a repository whose code is kept on GitHub, the change's pull request is
 // HQ's: the answer says HQ opens it on GitHub from the agent's branch and the
 // person merges it in Mate, and records the way the code is kept. Where HQ

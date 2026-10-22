@@ -3762,9 +3762,19 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   `{repo, title, branch}` binds the change to the branch; HQ refuses with `{code, reason}` —
   `409 conflict/branch_taken`, `409 conflict/protected_ref` (`main`, a full ref, `mate/`),
   `400 invalid/invalid_ref` — and zcp reads the reason; it answers the Mate's open change in the
-  repository, `created: false`, rather than open a second; the pair records the number and the
-  branch HQ names (`ServiceMeta.HQ {change, branch}`), which status names on the dev half
-  (`change=`, `changeBranch=`). In a
+  repository, `created: false`, rather than open a second, saying how to take its branch and bring
+  the work onto it (work cut from `main` is no fast-forward of it); the pair records the number and
+  the branch HQ names (`ServiceMeta.HQ {change, branch}`), which status names on the dev half
+  (`change=`, `changeBranch=`). An HQ from before changes were bound to a named branch ignores
+  `branch` and opens the change on `mate/<mateId>/<n>`, naming none: zcp names and records that
+  branch and says to push the work there. While the change is open, develop's start says the work
+  goes on its branch rather than on one cut from `main`, and how to take it
+  (`TestOpenChange_AnOpenChangeTakesTheWorkOntoItsBranch`,
+  `TestOpenChange_AnHQBeforeNamedBranchesNamesTheBranchItBound`).
+  Released zcp recorded the Mate's local branch `mate/<mateId>` under the same key; status and
+  every pass read such a record as its change's `mate/<mateId>/<n>`, and the take step renames that
+  local branch, which git cannot keep beside the change's
+  (`TestUpgrade_AnOpenChangeTheReleasedZcpRecordedKeepsStatusAndPushWorking`). In a
   repository whose code is kept on GitHub (`origin.mode` `github`, read from `GET /api/mate/self`
   at the call and recorded, the pair's record when HQ cannot be read) the checkout's origin is
   GitHub (the wiring points it there), the branch is pushed there, and the answer says HQ opens its pull request on GitHub from
