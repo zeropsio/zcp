@@ -57,7 +57,7 @@ func hqKeptOnGitHub(stateDir string) []string {
 	sort.Slice(metas, func(i, j int) bool { return metas[i].Hostname < metas[j].Hostname })
 	var lines []string
 	for _, m := range metas {
-		if !hqPairWired(m) || m.HQ.Origin == nil || m.HQ.Origin.Mode != workflow.HQOriginGitHub {
+		if !hqPairWired(m) || m.HQ.Origin == nil || m.HQ.Origin.Mode != hq.OriginOnGitHub {
 			continue
 		}
 		lines = append(lines, fmt.Sprintf("%s: its code is kept on GitHub at %s, so %s",

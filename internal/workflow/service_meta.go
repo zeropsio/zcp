@@ -200,22 +200,18 @@ type HQRepoRef struct {
 	Origin *HQOrigin `json:"origin,omitempty"`
 }
 
-// HQOrigin is how a repository's code is kept, as HQ names its origin: Mode
-// HQOriginGitHub — GitHub is the checkout's origin; HQOriginFollow — HQ is,
-// GitHub only followed; HQOriginNone — no origin, HQ alone keeps it; "" from
-// an HQ older than modes. URL is the origin's address, "" for none.
+// HQOrigin is how a repository's code is kept: Mode is the origin's mode as
+// HQ names it (hq.OriginOnGitHub, hq.OriginFollowed), HQOriginNone for no
+// origin — HQ alone keeps the code — or "" from an HQ older than modes. URL
+// is the origin's address, "" for none.
 type HQOrigin struct {
 	Mode string `json:"mode,omitempty"`
 	URL  string `json:"url,omitempty"`
 }
 
-// The ways HQOrigin.Mode names: HQ's own (hq.OriginOnGitHub,
-// hq.OriginFollowed) and none.
-const (
-	HQOriginGitHub = "github"
-	HQOriginFollow = "follow"
-	HQOriginNone   = "none"
-)
+// HQOriginNone is HQOrigin.Mode for a repository with no origin: zcp's own
+// word, HQ sends no origin at all.
+const HQOriginNone = "none"
 
 // ChangeDescription is a Mate's description of its change, kept until HQ
 // takes it.

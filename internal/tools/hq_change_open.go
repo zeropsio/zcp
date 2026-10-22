@@ -125,7 +125,7 @@ func hqKeepsOnGitHub(ctx context.Context, hqc hq.Client, stateDir string, meta *
 	if err == nil {
 		recordHQOrigin(stateDir, meta, state)
 	}
-	return meta.HQ.Origin != nil && meta.HQ.Origin.Mode == workflow.HQOriginGitHub
+	return meta.HQ.Origin != nil && meta.HQ.Origin.Mode == hq.OriginOnGitHub
 }
 
 // changeBranchOf is the branch a change is opened from, as its short name:

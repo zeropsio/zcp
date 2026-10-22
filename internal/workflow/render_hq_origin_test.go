@@ -21,9 +21,9 @@ func TestRenderStatus_ADevHalfSaysHowItsRepositorysCodeIsKept(t *testing.T) {
 		want   []string
 		never  []string
 	}{
-		{name: "kept on GitHub", origin: &HQOrigin{Mode: HQOriginGitHub, URL: "https://github.com/acme/app"},
+		{name: "kept on GitHub", origin: &HQOrigin{Mode: "github", URL: "https://github.com/acme/app"},
 			want: []string{"hqRepo=app", "origin.mode=github", "origin=https://github.com/acme/app"}},
-		{name: "followed", origin: &HQOrigin{Mode: HQOriginFollow, URL: "https://github.com/acme/app"},
+		{name: "followed", origin: &HQOrigin{Mode: "follow", URL: "https://github.com/acme/app"},
 			want: []string{"hqRepo=app", "origin.mode=follow", "origin=https://github.com/acme/app"}},
 		{name: "in HQ alone", origin: &HQOrigin{Mode: HQOriginNone},
 			want: []string{"hqRepo=app", "origin.mode=none"}, never: []string{"origin="}},

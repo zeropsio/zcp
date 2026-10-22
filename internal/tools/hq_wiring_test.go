@@ -543,7 +543,7 @@ func TestDevelopStart_SaysHowEachRepositorysCodeIsKept(t *testing.T) {
 	}{
 		{
 			name: "kept on GitHub", origin: &hq.RepoOrigin{URL: github, Mode: hq.OriginOnGitHub},
-			record: workflow.HQOrigin{Mode: workflow.HQOriginGitHub, URL: github},
+			record: workflow.HQOrigin{Mode: hq.OriginOnGitHub, URL: github},
 			want: []string{
 				"origin.mode=github", "origin=" + github,
 				"git remote set-url origin " + github, hq.GitHubHelperConfig,
@@ -553,7 +553,7 @@ func TestDevelopStart_SaysHowEachRepositorysCodeIsKept(t *testing.T) {
 		},
 		{
 			name: "followed", origin: &hq.RepoOrigin{URL: github, Mode: hq.OriginFollowed},
-			record: workflow.HQOrigin{Mode: workflow.HQOriginFollow, URL: github},
+			record: workflow.HQOrigin{Mode: hq.OriginFollowed, URL: github},
 			want:   []string{"origin.mode=follow", "origin=" + github},
 			never:  []string{"set-url origin"},
 		},
