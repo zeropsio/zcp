@@ -47,7 +47,8 @@ type LeasePrepare struct {
 func afterLeaseCheckout(ctx context.Context, ssh SSHDeployer, alias string, v *LeaseView) {
 	prep, note := prepareLease(ctx, ssh, alias)
 	v.Prepare = prep
-	v.Note = joinNotes(v.Note, note, leaseSupervisorNote(ensureLeaseSupervisorAfterCheckout(ctx, ssh, alias)))
+	r, err := ensureLeaseSupervisorAfterCheckout(ctx, ssh, alias)
+	v.Note = joinNotes(v.Note, note, leaseSupervisorNote(alias, r, err))
 }
 
 // leaseDeclarationCommand reads the checked-out declaration, closed by a

@@ -185,14 +185,14 @@ func runningSupervisor(alias string, sections map[string]devsupAnswer, reload bo
 // leaseSupervisorNote is what an acquire says about the lease's supervisor:
 // nothing when one answers. A supervisor that is missing or will not start
 // never fails the acquire; the lease holds code either way.
-func leaseSupervisorNote(r leaseSupervisorResult, err error) string {
+func leaseSupervisorNote(alias string, r leaseSupervisorResult, err error) string {
 	if err != nil {
 		return fmt.Sprintf("zcp could not make sure the dev-server supervisor runs in the container (%s); zerops_dev_server starts it on its next call", sshFailureText(err))
 	}
 	switch r.outcome {
 	case leaseSupervisorRunning, leaseSupervisorStarted:
 		if r.reloadErr != nil {
-			return fmt.Sprintf("the dev-server supervisor did not take the checked-out %s (%v); zerops_dev_server action=status names what is wrong with it", devsup.DeclarationPath, r.reloadErr)
+			return fmt.Sprintf("the dev-server supervisor did not take the checked-out %s (%v); zerops_dev_server action=status hostname=%q names what is wrong with it", devsup.DeclarationPath, r.reloadErr, alias)
 		}
 		return ""
 	case leaseSupervisorAbsent:
