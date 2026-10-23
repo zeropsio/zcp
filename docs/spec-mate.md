@@ -1154,6 +1154,8 @@ record (§6.3), never a field here:
 | `state` | the reconciled state, verbatim (`held`, `lost`, `unknown-holder`, `unmounted`, …) — the one `zerops_lease action=status` reports (`spec-workflows.md` §8 DP-2), never enumerated by a reader |
 | `unverified` | `true` when the state is zcp's own last-known record because the pool's orchestrator did not answer — per pool: a stopped pool marks only its own leases, the others stay confirmed (`TestLeaseTool_Status_OneStoppedPool_OthersStillListed`) |
 | `acquiredAt` | when zcp acquired the lease (RFC 3339, UTC), from its record — also when the record stands in, unverified; absent for a lease zcp has no record of (`unknown-holder`). The leases of one branch are one group (`spec-workflows.md` §8 DP-17): it is the key a client can rebind by when the bound lease ends while others of its branch stay held (the earliest acquired). Additive (`TestEnvelopeJSON_LeaseAcquiredAt`, `TestComputeEnvelope_OrchestratorUnreachable_LeasesUnverified`) |
+| `activity` | present only on a `zerops_lease` call that read the lease's checkout — today `action=status`, for each lease zcp holds (`spec-workflows.md` §8 DP-21) — exactly as that result reports it: `lastChangeAt` (the checkout's last change), `previewLastConnAt` and `previewOpenConns` (the preview forward's last connection and open connections, when the lease's supervisor reports them), `acquiredAt`, `readAt` (when zcp read it), all times RFC 3339 UTC, and `note` (what could not be read, and why). Inside it too a fact not read is absent, never zero: a lease status did not read (`unverified`, its ssh alias missing) carries `activity` with only `acquiredAt` and `note`; a read that failed (the container unreachable, the read cut at its budget) carries its `readAt`, keeps what it did read and says what failed in `note` (`TestEnvelopeJSON_LeaseActivity`, `TestLeaseTool_EnvelopeCarriesActivityOnStatus`) |
+| `unsaved` | on the same calls, what releasing the lease would lose, read with the release guard's own reads (`spec-workflows.md` §8 DP-4): `files` (the first 20 `git status --porcelain` lines), `fileCount` (all of them), `unpushedCommits`. A clean checkout is `{"fileCount":0,"unpushedCommits":0}`; absent when either read did not answer. Files git ignores and stashes are never in it, and a release loses them too (`TestEnvelopeJSON_LeaseActivity`, `TestLeaseTool_EnvelopeCarriesActivityOnStatus`) |
 
 - **Absent means "not read"; `[]` means "read, none held".** The key is emitted whenever zcp read
   the leases for this envelope — `zerops_workflow action="status"`, every JSON carrier (§1.4, through
@@ -1163,6 +1165,15 @@ record (§6.3), never a field here:
   `TestEnvelopeJSON_LeasesReadNone_EmptyArray`).
 - **Additive: no version gate.** Mate decodes the envelope forward-compatibly, so the key needs no
   `SupportedContract` bump and no `MinimumMateVersion` raise; a Mate that does not know it ignores it.
+  The same holds for `activity` and `unsaved`.
+- **Absent `activity` / `unsaved` means "not read in this call"**, never "no activity" or "nothing
+  unsaved", as with `devServers`; a client keeps the last one it read, with its `readAt`. Only the
+  `zerops_lease` call that read a lease's checkout lays them on (`workflow.WithLeaseActivity`, keyed
+  by alias); the lease reader every envelope is filled by asks the pool orchestrators only and runs
+  no ssh, so every other tool's envelope — `zerops_dev_server` on the alias included — carries
+  neither and pays no ssh read, and no envelope reader derives them (`TestLeaseReader_NeverReadsActivity`,
+  `TestComputeEnvelope_LeaseActivity_NeverFromTheReader`, `TestEnvelope_OtherToolsCarryNoLeaseActivity`,
+  `TestJSONCarriers_LeaseActivity_ReadBackVerbatim`; fixture `envelope.lease-status.json`, §2.8a.7).
 - **The lease string never appears** (`spec-workflows.md` §8 DP-3): a lease has no field that could
   carry it (`TestEnvelopeJSON_NoLeaseString`).
 
@@ -1400,6 +1411,7 @@ on it and never blocks.
 | `envelope.single-pair.json` | the same pair after step (3): `stages[1]`, one dev server named `appdev` |
 | `envelope.three-parts.json` | `appdev` + `webstage`/`apistage`/`workerstage`, three dev servers, one crashed |
 | `envelope.pool-pair.json` | a pair keyed by its dev pool (`spec-workflows.md` §13 PM-10): `apppool` (a pool, no `mode`) carrying `stages[1]`, the stage `appstage`, the pool's lease in `leases[]`; the bytes zcp computes from the re-keyed pair |
+| `envelope.lease-status.json` | the envelope a `zerops_lease action=status` result carries: `devpool-3`, read, with `activity` and `unsaved`; `stoppool-2` of a stopped pool, unverified, its `activity` only `acquiredAt` and why it was not read, no `unsaved`; the bytes the real handler renders, its read times the call's own (`TestMateContractFixtures_LeaseStatus_RenderedByTheHandler`) |
 | `dev-server.one-server.json` | a `zerops_dev_server` result for one server, with its `envelope` key; top-level `running` ≡ the reported entry's `status == "running"` (§2.8a.3) |
 | `dev-server.three-servers-one-crashed.json` | the same for three servers |
 | `dev-server.running-http-404.json` | a running api with no root route: `running` true from the supervisor, its probe's 404 only in `healthStatus`, `reason` and the entry's `verify` |
