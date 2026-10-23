@@ -116,6 +116,11 @@ const (
 	// returns an empty Plan so callers know there's nothing to suggest
 	// outside the handler's response (same pattern as ExportActive).
 	PhaseLaunchProductionActive Phase = "launch-production-active"
+	// PhasePoolMigrateActive fires when zerops_workflow workflow="pool-migrate"
+	// walks a part's dev service onto a dev pool. Like launch-production, the
+	// handler emits its own atom guidance per step and BuildPlan returns an
+	// empty Plan (docs/spec-workflows.md §13).
+	PhasePoolMigrateActive Phase = "pool-migrate-active"
 )
 
 // SelfService names the ZCP host service when running in container environment.

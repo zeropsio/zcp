@@ -116,7 +116,11 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// input, `branch`: a Mate opens the change of a branch of its own
 		// (HQ's change-is-a-branch contract); `title` and `service` name the
 		// action they now also serve.
-		"zerops_workflow":    20004,
+		// Raised +215 (20004→20219) for workflow="pool-migrate" and its one
+		// new input, `pool` (docs/spec-workflows.md §13): the workflow enum
+		// and `service` name the flow, `pool` overrides the part's pool
+		// hostname; the steps and refusals live in the flow's atom.
+		"zerops_workflow":    20219,
 		"zerops_record_fact": 3299,
 		"zerops_dev_server":  3220,
 		// Raised +28 (2945→2973) for the OS-axis migration: the runtime/services

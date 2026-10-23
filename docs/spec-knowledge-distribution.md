@@ -98,6 +98,7 @@ A set of axes (and a few scalar attributes) decompose the guidance space. Each a
 | `strategy-setup` | Stateless synthesis phase emitted from `action="git-push-setup"` (probe-proves auth, provisions GIT_TOKEN + the session credential helper, stamps RemoteURL) and `action="build-integration"` (wires webhook / actions). Replaces retired `cicd-active` and the conflated `action="strategy"` entry point. |
 | `export-active` | Stateless export immediate workflow. |
 | `launch-production-active` | `zerops_workflow workflow="launch-production"` mid-flow on a source project. The launch-* atoms (16 of them) drive the handler's per-status guidance. |
+| `pool-migrate-active` | `zerops_workflow workflow="pool-migrate"` walking a part's dev service onto a dev pool (spec-workflows §13). The pool-migrate-* atoms drive the handler's per-step guidance, which it composes via `atomBody` like launch-production. |
 
 **Empty = error.** No atom applies to "any phase" — the phase determines workflow fundamentals. Atoms missing a `phases` declaration fail `LoadAtomCorpus`.
 
