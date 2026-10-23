@@ -81,13 +81,13 @@ func planDevelopClosed() Plan {
 func planDevelopActive(env StateEnvelope) Plan {
 	perService := perServiceDevelopActions(env)
 	if env.WorkSession != nil {
-		for _, host := range plannedHosts(env.WorkSession) {
+		for _, host := range plannedHosts(env) {
 			if needsDeploy(env.WorkSession, host) {
 				last := lastAttempt(env.WorkSession.Deploys[host])
-				return Plan{Primary: deployActionFor(host, last, env.Services), PerService: perService}
+				return Plan{Primary: deployActionFor(host, last, env), PerService: perService}
 			}
 		}
-		for _, host := range plannedHosts(env.WorkSession) {
+		for _, host := range plannedHosts(env) {
 			if needsVerify(env.WorkSession, host) {
 				last := lastAttempt(env.WorkSession.Verifies[host])
 				return Plan{Primary: verifyActionFor(host, last), PerService: perService}
@@ -116,10 +116,10 @@ func perServiceDevelopActions(env StateEnvelope) map[string]NextAction {
 		return nil
 	}
 	out := make(map[string]NextAction, len(env.WorkSession.Services))
-	for _, host := range plannedHosts(env.WorkSession) {
+	for _, host := range plannedHosts(env) {
 		switch {
 		case needsDeploy(env.WorkSession, host):
-			out[host] = deployActionFor(host, lastAttempt(env.WorkSession.Deploys[host]), env.Services)
+			out[host] = deployActionFor(host, lastAttempt(env.WorkSession.Deploys[host]), env)
 		case needsVerify(env.WorkSession, host):
 			out[host] = verifyActionFor(host, lastAttempt(env.WorkSession.Verifies[host]))
 		}
@@ -131,12 +131,15 @@ func perServiceDevelopActions(env StateEnvelope) map[string]NextAction {
 }
 
 // plannedHosts is the session's services a plan may point at: every declared
-// service except one left out of scope ("leave the stage as it is", RC-B).
-// That one stays visible as a reminder, never as a deploy or verify step.
-func plannedHosts(ws *WorkSessionSummary) []string {
+// service except one left out of scope ("leave the stage as it is", RC-B) —
+// that one stays visible as a reminder, never as a deploy or verify step —
+// and a pool that is its pair's dev half, which nothing deploys or verifies
+// as one container (its stage deploys from a lease of it).
+func plannedHosts(env StateEnvelope) []string {
+	ws := env.WorkSession
 	hosts := make([]string, 0, len(ws.Services))
 	for _, host := range ws.Services {
-		if ws.Roles[host] == RoleOutOfScope {
+		if ws.Roles[host] == RoleOutOfScope || snapshotByHostname(env.Services, host).DevIsPool {
 			continue
 		}
 		hosts = append(hosts, host)
@@ -289,14 +292,25 @@ func countIdleServices(env StateEnvelope) (bootstrapped, adoptable int) {
 // the (mode, deploy-class, source, target, setup) inference. The previous
 // inline implementation predates the resolver — see plan
 // `plans/git-push-deploy-flow-redesign-2026-05-19.md` for the redesign.
-func deployActionFor(host string, last AttemptInfo, services []ServiceSnapshot) NextAction {
-	target := snapshotByHostname(services, host)
-	intent := Resolve(target, services)
+//
+// A stage whose pair's dev half is a pool deploys from a held lease of the
+// pool (env.Leases); with none held the step is acquiring one — never a
+// deploy from the pool.
+func deployActionFor(host string, last AttemptInfo, env StateEnvelope) NextAction {
+	target := snapshotByHostname(env.Services, host)
+	intent := ResolveWithLeases(target, env.Services, env.LeaseList())
+	if intent.SourcePool != "" && intent.PushSource == "" && intent.Delivery != DeployDeliveryManual {
+		return leaseFirstAction(host, intent.SourcePool)
+	}
+	rationale := deployRationale(last)
+	if intent.SourcePool != "" && intent.PushSource != "" {
+		rationale += " It deploys from " + intent.PushSource + ", a lease of its dev pool " + intent.SourcePool + "."
+	}
 	return NextAction{
 		Label:     "Deploy " + host,
 		Tool:      intent.DeployTool,
 		Args:      intent.DeployArgs,
-		Rationale: deployRationale(last),
+		Rationale: rationale,
 	}
 }
 
@@ -315,18 +329,38 @@ func snapshotByHostname(services []ServiceSnapshot, host string) ServiceSnapshot
 	return ServiceSnapshot{Hostname: host}
 }
 
+// leaseFirstAction is the step before a deploy of host, a stage whose pair's
+// dev half is the dev pool named pool, while zcp holds no lease of that pool:
+// acquiring one.
+func leaseFirstAction(host, pool string) NextAction {
+	return NextAction{
+		Label:     "Lease a container of " + pool,
+		Tool:      "zerops_lease",
+		Args:      map[string]string{"action": "acquire", "pool": pool},
+		Rationale: host + " deploys from a lease of its dev pool " + pool + ", never from the pool itself: acquire one on the work's branch, then deploy with sourceService=<alias> targetService=" + host + ".",
+	}
+}
+
 // findDevHalfForStage returns the dev hostname of the standard pair when
 // host is a stage of one. Empty when host is not a stage. The dev half is
 // the snapshot whose pair stages include host. ServiceSnapshot for a stage
 // does NOT carry the paired dev hostname directly — only the dev half
 // lists its stages — so the lookup is a forward scan over services.
 func findDevHalfForStage(host string, services []ServiceSnapshot) string {
+	dev, _ := pairDevHalf(host, services)
+	return dev.Hostname
+}
+
+// pairDevHalf is the snapshot of the dev half of the pair host is a stage
+// of — a standard pair's dev service, or a pool keying its pair
+// (DevIsPool) — and whether there is one.
+func pairDevHalf(host string, services []ServiceSnapshot) (ServiceSnapshot, bool) {
 	for _, svc := range services {
-		if svc.Mode == topology.ModeStandard && slices.Contains(svc.PairStageHostnames(), host) {
-			return svc.Hostname
+		if (svc.Mode == topology.ModeStandard || svc.DevIsPool) && slices.Contains(svc.PairStageHostnames(), host) {
+			return svc, true
 		}
 	}
-	return ""
+	return ServiceSnapshot{}, false
 }
 
 // verifyActionFor mirrors deployActionFor for verify attempts. When the

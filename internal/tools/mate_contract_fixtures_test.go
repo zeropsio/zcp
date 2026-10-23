@@ -2,6 +2,7 @@ package tools
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -511,4 +512,71 @@ func contractService(t *testing.T, env *contractEnvelope, hostname string) contr
 	}
 	t.Fatalf("the envelope has no %s", hostname)
 	return contractSnapshot{}
+}
+
+// TestMateContractFixtures_PoolPair_StagesRideThePoolSnapshot pins the
+// envelope of a pair keyed by its dev pool (docs/spec-workflows.md §13): the
+// pool's snapshot keys the pair, so stages[] rides it; devServers[] never
+// does (a pool's dev servers run in its leases and ride leases[]); and the
+// bytes are what zcp computes from a dev/stage pair re-keyed onto its pool.
+func TestMateContractFixtures_PoolPair_StagesRideThePoolSnapshot(t *testing.T) {
+	t.Parallel()
+	var fixture contractEnvelope
+	raw := readContractFixture(t, "envelope.pool-pair.json", &fixture)
+
+	dir := t.TempDir()
+	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+		Hostname: "appdev", Mode: topology.PlanModeStandard,
+		Stages:          []topology.StageRef{{Hostname: "appstage", SetupName: "prod"}},
+		CloseDeployMode: topology.CloseModeAuto, GitPushState: topology.GitPushConfigured, BuildIntegration: topology.BuildIntegrationNone,
+		PrimarySetupName: "dev", BootstrappedAt: "2026-10-14T20:00:00Z", FirstDeployedAt: "2026-10-14T20:30:00Z",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+	if _, err := workflow.MigratePairToPool(dir, workflow.PoolPairMove{Dev: "appdev", Pool: "apppool", PoolServiceID: "svc-pool", PoolSetup: "pool"}); err != nil {
+		t.Fatalf("MigratePairToPool: %v", err)
+	}
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-pool", Name: "apppool", ProjectID: "proj-weather", Status: platform.ServiceStatusActive,
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
+			{ID: "svc-appstage", Name: "appstage", ProjectID: "proj-weather", Status: platform.ServiceStatusActive,
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "bun@1.3", ServiceStackTypeCategoryName: "USER"}},
+		}).
+		WithProject(&platform.Project{ID: "proj-weather", Name: "weather"})
+	lease := workflow.LeaseSnapshot{Alias: "apppool-1", Pool: "apppool", Branch: "feat-x", ContainerHostname: "node-id-1.runtime.apppool.zerops", State: "held"}
+	env, err := workflow.ComputeEnvelope(context.Background(), mock, dir, "proj-weather",
+		runtime.Info{InContainer: true, ServiceName: "zcp"}, time.Date(2026, 10, 14, 21, 4, 0, 0, time.UTC),
+		workflow.WithLeaseReader(func(context.Context) ([]workflow.LeaseSnapshot, error) { return []workflow.LeaseSnapshot{lease}, nil }))
+	if err != nil {
+		t.Fatalf("ComputeEnvelope: %v", err)
+	}
+	want, err := json.Marshal(env.WithParts(nil))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got bytes.Buffer
+	if err := json.Compact(&got, raw); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	if got.String() != string(want) {
+		t.Errorf("fixture differs from the envelope zcp computes:\n got %s\nwant %s", got.String(), want)
+	}
+
+	if len(fixture.Services) != 2 {
+		t.Fatalf("services = %d, want the pool and its stage", len(fixture.Services))
+	}
+	pool, stage := fixture.Services[0], fixture.Services[1]
+	if pool.Hostname != "apppool" || pool.RuntimeClass != topology.RuntimePool || pool.Mode != "" {
+		t.Errorf("services[0] = %+v, want the pool, modeless", pool.ServiceSnapshot)
+	}
+	if !reflect.DeepEqual(pool.Stages, []contractStage{{Hostname: "appstage", Setup: "prod"}}) || pool.DevServers != nil {
+		t.Errorf("the pool carries stages %+v and devServers %+v, want [{appstage prod}] and none", pool.Stages, pool.DevServers)
+	}
+	if stage.Stages != nil || stage.Mode != topology.ModeStage {
+		t.Errorf("the stage = %+v stages %+v, want a stage half carrying no stages", stage.ServiceSnapshot, stage.Stages)
+	}
+	if leases := fixture.LeaseList(); len(leases) != 1 || leases[0].Pool != "apppool" {
+		t.Errorf("leases = %+v, want the pool's one lease", leases)
+	}
 }

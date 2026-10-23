@@ -287,6 +287,18 @@ Compaction-safety invariant: envelope is deterministic, so recovered guidance is
 - **Plan.Primary** = idle branch logic.
 - Stale sessions from other PIDs are garbage-collected by age (separate concern).
 
+### 3.10 Pair keyed by its dev pool (after a pool migration's retire)
+
+- **State dir read**: one meta keyed by the pool, marked as a pool dev half, naming the stage
+  (`spec-workflows.md §13 PM-10`).
+- **Envelope**: the pool's snapshot keys the pair — `stages[]`, the HQ record, no `mode`; the stage
+  keeps `mode=stage`. Only atoms about pools bind to the pool; the develop session carries the
+  lease guidance (`develop-dev-pool`).
+- **Plan.Primary** for the stage: `zerops_deploy sourceService=<lease alias> targetService=<stage>`
+  from a held lease of the pool, else `zerops_lease action="acquire" pool=<pool>`; the pool half is
+  never a deploy or verify step, and a session naming the retired dev stops waiting on it.
+- Pinned by `TestScenario_PoolDevPair_RendersNoContainerWorkOnThePool`.
+
 ---
 
 ## 4. Phase: `develop-closed-auto`
@@ -340,6 +352,9 @@ Transient phase between auto-close trigger and explicit close tool call. Envelop
 - **Plan.Primary**: regular develop-active dispatch — agent observes
   the missing service via `zerops_discover` and decides whether to
   close the work session or restart bootstrap.
+- **Auto-close**: once the deleted service's meta is gone with it, no
+  pair names it and it is no deploy target — the session no longer
+  waits on it (`TestResolvedDeployTargets_DeadHostnameDropped`).
 - **Future hardening (not implemented)**: `ComputeEnvelope` could
   attach a typed `GhostServices []string` field and `BuildPlan`
   could surface a close-or-recreate Primary, replacing the inferred

@@ -388,6 +388,9 @@ func renderServiceLine(svc ServiceSnapshot) string {
 		parts = append(parts, "managed")
 	case topology.RuntimePool:
 		parts = append(parts, "pool")
+		if svc.DevIsPool {
+			parts = append(parts, renderDevPoolFields(svc))
+		}
 	case topology.RuntimeSandbox:
 		parts = append(parts, "sandbox")
 	case topology.RuntimeUnknown:
@@ -407,7 +410,7 @@ func renderServiceLine(svc ServiceSnapshot) string {
 			}
 		}
 	}
-	if svc.Status != "" && svc.Status != "ACTIVE" {
+	if svc.Status != "" && svc.Status != StatusActive {
 		parts = append(parts, "["+svc.Status+"]")
 	}
 	return strings.Join(parts, " — ")
@@ -473,6 +476,28 @@ func renderBootstrappedFields(svc ServiceSnapshot) string {
 	if svc.RemoteURL != "" {
 		fields = append(fields, "remoteUrl="+topology.RedactRepoURLCredentials(svc.RemoteURL))
 	}
+	fields = append(fields, hqFields(svc)...)
+	if len(svc.FeedsProduction) > 0 {
+		fields = append(fields, "feedsProduction="+strings.Join(svc.FeedsProduction, "; "))
+	}
+	return strings.Join(fields, ", ")
+}
+
+// renderDevPoolFields is the line of a pool keying its pair: the pair it is
+// the dev half of — every stage and the HQ record — and no claim of a mode,
+// deploy state or setup of its own (a pool runs leases, not one container).
+func renderDevPoolFields(svc ServiceSnapshot) string {
+	fields := []string{"dev half of a pair"}
+	if stages := svc.PairStageHostnames(); len(stages) > 0 {
+		fields = append(fields, "stage="+strings.Join(stages, ","))
+	}
+	fields = append(fields, hqFields(svc)...)
+	return strings.Join(fields, ", ")
+}
+
+// hqFields are a pair dev half's HQ record fields, none outside HQ.
+func hqFields(svc ServiceSnapshot) []string {
+	var fields []string
 	if svc.HQRepo != "" {
 		fields = append(fields, "hqRepo="+svc.HQRepo)
 	}
@@ -500,10 +525,7 @@ func renderBootstrappedFields(svc ServiceSnapshot) string {
 	if svc.HQChange != 0 && svc.HQBranch != "" {
 		fields = append(fields, "changeBranch="+svc.HQBranch)
 	}
-	if len(svc.FeedsProduction) > 0 {
-		fields = append(fields, "feedsProduction="+strings.Join(svc.FeedsProduction, "; "))
-	}
-	return strings.Join(fields, ", ")
+	return fields
 }
 
 // renderGuidance dumps the synthesized atom bodies as a single section. The

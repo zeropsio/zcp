@@ -163,6 +163,12 @@ type ServiceMeta struct {
 	// any other file ZCP writes) — it lives where git-push-setup put it, a
 	// sensitive service env on the push source.
 	HQ *HQRepoRef `json:"hq,omitempty"`
+
+	// DevPool marks a pair whose dev half is a dev pool: Hostname then names a
+	// pool, whose containers are leased one per branch — never one container
+	// zcp may ssh, mount, deploy from or probe by that hostname (spec-workflows
+	// §8 PS-3, §13). nil on every other meta. Read it through DevIsPool.
+	DevPool *DevPoolRef `json:"devPool,omitempty"`
 }
 
 // SetRepoBaseline records the adopt-time baseline marker for this meta.
@@ -584,6 +590,14 @@ func (m *ServiceMeta) ModeFor(hostname string) topology.Mode {
 		(m.Mode == topology.PlanModeLocalOnly || m.Mode == topology.PlanModeLocalStage) {
 		return ""
 	}
+	// The pool half of a pool-keyed pair is no dev runtime either: a pool's
+	// containers are leased, and no mode-sensitive guidance or probe (dev
+	// server, zsc noop, deferred start, a modes: atom) applies to the pool.
+	// It projects as a service with no meta, as a pool always did; readers
+	// that need the pair ask DevIsPool. Its stages keep the stage mode below.
+	if hostname == m.Hostname && m.DevIsPool() {
+		return ""
+	}
 	// RoleFor's contract narrows the return surface to DeployRoleStage /
 	// Simple / Dev / "" — the remaining topology.Mode enum values
 	// (PlanModeStandard, PlanModeLocalStage, PlanModeLocalOnly) are
@@ -775,6 +789,44 @@ func UpsertServiceMeta(stateDir, hostname string, mutate func(meta *ServiceMeta,
 		}
 		return WriteServiceMeta(stateDir, meta)
 	})
+}
+
+// rekeyServiceMeta moves a pair from the file keyed from onto the file keyed
+// to, inside one .services.lock: it reads both files as they are now (either
+// may be absent), asks rekey for the meta to keep under to, writes it, then
+// removes from's file. Writing before removing means a cut leaves both files,
+// never neither — a pair is never left without its record, and the next call
+// finishes the move (rekey sees both and decides). The caller holds whatever
+// pair locks fence the pair's other writers.
+func rekeyServiceMeta(stateDir, from, to string, rekey func(fromMeta, toMeta *ServiceMeta) (*ServiceMeta, error)) (*ServiceMeta, error) {
+	var out *ServiceMeta
+	err := withFileLock(filepath.Join(stateDir, serviceMetaLockName), func() error {
+		fromMeta, err := ReadServiceMeta(stateDir, from)
+		if err != nil {
+			return fmt.Errorf("rekey service meta: read %q: %w", from, err)
+		}
+		toMeta, err := ReadServiceMeta(stateDir, to)
+		if err != nil {
+			return fmt.Errorf("rekey service meta: read %q: %w", to, err)
+		}
+		next, err := rekey(fromMeta, toMeta)
+		if err != nil {
+			return err
+		}
+		if next == nil || next.Hostname != to {
+			return fmt.Errorf("rekey service meta %q → %q: the pair to keep is not keyed by %q", from, to, to)
+		}
+		if err := WriteServiceMeta(stateDir, next); err != nil {
+			return err
+		}
+		// Not DeleteServiceMeta: it takes the lock this function already holds.
+		if err := os.Remove(filepath.Join(stateDir, "services", from+".json")); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("rekey service meta: remove %q: %w", from, err)
+		}
+		out = next
+		return nil
+	})
+	return out, err
 }
 
 // parseMeta deserializes a ServiceMeta from JSON.
