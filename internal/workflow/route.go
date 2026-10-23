@@ -358,7 +358,7 @@ func isAdoptableRuntimeService(svc platform.ServiceStack, self runtime.Info) boo
 	if topology.IsManagedService(t) {
 		return false
 	}
-	if isControlPlaneType(t) {
+	if isControlPlaneType(t) || topology.IsPoolOrSandboxType(t) {
 		return false
 	}
 	if isSelf(svc, self) {

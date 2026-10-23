@@ -26,7 +26,7 @@ func isControlPlaneType(serviceType string) bool {
 }
 
 // InferServicePairing builds BootstrapTargets from live services for adoption.
-// Filters out managed and control-plane types; every remaining runtime
+// Filters out managed, control-plane, pool and Box types; every remaining runtime
 // becomes its own target with `BootstrapMode: PlanModeDev`. Managed
 // services become EXISTS-resolution dependencies shared across targets.
 //
@@ -47,7 +47,7 @@ func InferServicePairing(candidates []AdoptCandidate, liveManaged map[string]boo
 	var runtimes []AdoptCandidate
 	var managed []AdoptCandidate
 	for _, c := range candidates {
-		if isControlPlaneType(c.Type) {
+		if isControlPlaneType(c.Type) || topology.IsPoolOrSandboxType(c.Type) {
 			continue
 		}
 		if isManagedTypeWithLive(c.Type, liveManaged) {

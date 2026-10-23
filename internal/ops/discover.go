@@ -11,11 +11,11 @@ import (
 
 // DiscoverResult contains project and service information.
 //
-// Per-service AdoptionState (6-state enum) classifies each service into
+// Per-service AdoptionState (8-state enum) classifies each service into
 // exactly one bucket: adopted (ZCP-tracked, complete meta), resumable
 // (mid-bootstrap, workflow route=resume target), adoptable (live
 // runtime without meta, workflow route=adopt candidate), managed-dep
-// (db/cache/storage), zcp-self (control-plane), bootstrapping. Warnings carries
+// (db/cache/storage), zcp-self (control-plane), bootstrapping, pool, sandbox. Warnings carries
 // directive prose pointing at the correct recovery (route=adopt for
 // adoptables, route=resume sessionId=<...> for resumables).
 //
@@ -30,7 +30,7 @@ type DiscoverResult struct {
 }
 
 // AdoptionState classifies a service's ZCP-tracking status into one of
-// six mutually-exclusive buckets. Replaces the legacy ManagedByZCP
+// eight mutually-exclusive buckets. Replaces the legacy ManagedByZCP
 // bool whose `false` value meant 4 different things depending on
 // IsInfrastructure / Type / meta state.
 //
@@ -61,6 +61,12 @@ type DiscoverResult struct {
 //     explicit filter it would slip past IsInfrastructure check.
 //     Never an adopt target.
 //
+//   - AdoptionPool / AdoptionSandbox — a Swarm pool (`swarm@1`,
+//     `swarm-vm@1`) / a Zerops Box (`ubuntu/zbox@1`). Classified by type
+//     string (the platform category reads like a runtime's / a database's),
+//     reported with an `adoptionReason`; never an adopt target, never
+//     infrastructure (spec-workflows.md §8 PS-1/PS-2).
+//
 //   - AdoptionBootstrapping — no complete meta, but a LIVE bootstrap
 //     session that has reached the provision step is actively creating
 //     this service (the window between zerops_import and the
@@ -79,7 +85,25 @@ const (
 	AdoptionManagedDep    AdoptionState = "managed-dep"
 	AdoptionZCPSelf       AdoptionState = "zcp-self"
 	AdoptionBootstrapping AdoptionState = "bootstrapping"
+	AdoptionPool          AdoptionState = "pool"
+	AdoptionSandbox       AdoptionState = "sandbox"
 )
+
+// AdoptionReason returns the one-line reason a service reads as the given
+// AdoptionState when the state alone does not tell the agent why it is not
+// an adopt target — "" for every other state. Single owner of the prose, so
+// the discover surface and any future reader cannot drift.
+func AdoptionReason(state AdoptionState) string {
+	switch state {
+	case AdoptionPool:
+		return "a Swarm pool — its orchestrator hands out containers; deploy its image, never adopt it as an app's dev or stage"
+	case AdoptionSandbox:
+		return "a Zerops Box — hosts sandboxes; not an app runtime"
+	case AdoptionAdopted, AdoptionResumable, AdoptionAdoptable, AdoptionManagedDep, AdoptionZCPSelf, AdoptionBootstrapping:
+		return ""
+	}
+	return ""
+}
 
 // ProjectInfo contains basic project information.
 type ProjectInfo struct {
@@ -112,6 +136,7 @@ type ServiceInfo struct {
 	// autoscaling). See buildSummaryServiceInfo.
 	Mode             string        `json:"-"`
 	AdoptionState    AdoptionState `json:"adoptionState"`
+	AdoptionReason   string        `json:"adoptionReason,omitempty"`
 	IsInfrastructure bool          `json:"isInfrastructure"`
 	// Deployed answers, for a runtime, whether code was ever deployed into
 	// it (platform.ServiceStack.HasDeployedCode): false for a runtime that
@@ -289,7 +314,7 @@ func Discover(
 // are already filtered upstream of every call site here).
 func isHTTPClassService(svc *platform.ServiceStack) bool {
 	typeVersion := svc.ServiceStackTypeInfo.ServiceStackTypeVersionName
-	if topology.IsManagedService(typeVersion) {
+	if topology.IsManagedService(typeVersion) || topology.IsPoolOrSandboxType(typeVersion) {
 		return false
 	}
 	rc := classifyRuntime(typeVersion, len(svc.Ports) > 0, nil)

@@ -98,10 +98,13 @@ func IsUtilityType(serviceType string) bool {
 
 // IsRuntimeType returns true for Zerops runtime types — the categories where
 // user code executes (php-nginx, nodejs, go, bun, python, rust, nginx, static, ...).
-// Defined by exclusion: not managed and not a utility. Runtime services need
-// zeropsSetup + buildFromGit pointing at the recipe-app repo.
+// Defined by exclusion: not managed, not a utility, and not a Swarm pool or
+// Zerops Box (their platform category reads like a runtime's or a database's,
+// so they are named by type string — spec-workflows.md §8 PS-1). Runtime
+// services need zeropsSetup + buildFromGit pointing at the recipe-app repo.
 func IsRuntimeType(serviceType string) bool {
-	return !IsManagedService(serviceType) && !IsUtilityType(serviceType)
+	return !IsManagedService(serviceType) && !IsUtilityType(serviceType) &&
+		!IsPoolOrSandboxType(serviceType)
 }
 
 // IsPushSource returns true when the Mode value names a service that can

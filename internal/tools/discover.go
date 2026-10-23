@@ -112,9 +112,9 @@ func EnrichWithMetaStatus(result *ops.DiscoverResult, stateDir string) {
 	enrichWithMetaStatus(result, stateDir, nil)
 }
 
-// enrichWithMetaStatus classifies each service into one of six
+// enrichWithMetaStatus classifies each service into one of eight
 // AdoptionState values (adopted / resumable / adoptable / managed-dep
-// / zcp-self / bootstrapping), detects SSHFS mount paths, and appends directive
+// / zcp-self / bootstrapping / pool / sandbox), detects SSHFS mount paths, and appends directive
 // warnings to result.Warnings for adoptable and/or resumable services
 // (separate warnings — each points at the correct workflow route).
 //
@@ -184,6 +184,7 @@ func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string, activity 
 		s := &result.Services[i]
 		state, sessionID := classifyAdoptionState(s, idx, inFlight)
 		s.AdoptionState = state
+		s.AdoptionReason = ops.AdoptionReason(state)
 		switch state {
 		case ops.AdoptionAdoptable:
 			adoptCandidates = append(adoptCandidates, s.Hostname)
@@ -193,7 +194,8 @@ func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string, activity 
 				Hostname:  s.Hostname,
 				SessionID: sessionID,
 			})
-		case ops.AdoptionAdopted, ops.AdoptionManagedDep, ops.AdoptionZCPSelf, ops.AdoptionBootstrapping:
+		case ops.AdoptionAdopted, ops.AdoptionManagedDep, ops.AdoptionZCPSelf, ops.AdoptionBootstrapping,
+			ops.AdoptionPool, ops.AdoptionSandbox:
 			// No warning needed; per-service AdoptionState already
 			// carries the agent-actionable signal. AdoptionBootstrapping
 			// is silent on purpose — the agent's own alive session is
@@ -323,7 +325,8 @@ type resumeCandidate struct {
 // classifyAdoptionState returns the AdoptionState bucket for a service
 // plus the BootstrapSession ID when the state is Resumable (empty
 // otherwise). Precedence: zcp-self first (USER category, would slip past
-// IsInfrastructure), managed-dep second, complete meta → adopted third,
+// IsInfrastructure), pool then sandbox (type-string kinds that read as a
+// runtime / a database by platform category), managed-dep next, complete meta → adopted third,
 // then `inFlight` (an alive provision-reached session owns this hostname)
 // → bootstrapping — checked BEFORE incomplete-with-session → resumable so an
 // alive session's own service is never sent down the route=resume dead end;
@@ -333,6 +336,14 @@ type resumeCandidate struct {
 func classifyAdoptionState(s *ops.ServiceInfo, idx map[string]*workflow.ServiceMeta, inFlight map[string]bool) (ops.AdoptionState, string) {
 	if s.Type == "zcp@1" {
 		return ops.AdoptionZCPSelf, ""
+	}
+	// A pool or Box reads like a runtime / a database to the platform category,
+	// so the type string decides; neither is ever an adopt target (PS-2).
+	if topology.IsPoolType(s.Type) {
+		return ops.AdoptionPool, ""
+	}
+	if topology.IsSandboxType(s.Type) {
+		return ops.AdoptionSandbox, ""
 	}
 	if s.IsInfrastructure {
 		return ops.AdoptionManagedDep, ""
