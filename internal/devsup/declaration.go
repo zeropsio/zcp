@@ -33,11 +33,15 @@ var Formats = []int{1}
 // CapabilityEnv names the `ctl env` verb (the lease-wide env overlay).
 const CapabilityEnv = "env"
 
-// Capabilities lists the ctl verbs and flags this supervisor has that an
-// older one lacks; `ctl version` reports them. An older ctl fails on a verb
-// or flag it does not know, so zcp sends one only to a supervisor that lists
-// it.
-var Capabilities = []string{CapabilityEnv}
+// CapabilityActivity names the preview activity `ctl status` reports beside
+// the preview server's port: previewLastConnAt and previewOpenConns.
+const CapabilityActivity = "activity"
+
+// Capabilities lists the ctl verbs, flags and answer fields this supervisor
+// has that an older one lacks; `ctl version` reports them. An older ctl fails
+// on a verb or flag it does not know, so zcp sends one only to a supervisor
+// that lists it, and reads such a field only from one that lists it.
+var Capabilities = []string{CapabilityEnv, CapabilityActivity}
 
 // DeclarationPath is where a repo declares its dev servers, relative to the
 // repo root.

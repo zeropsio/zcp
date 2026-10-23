@@ -6,15 +6,47 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/devsup"
 )
+
+// echoPortEnv, set, makes the test binary the dev server a test supervises:
+// it echoes every connection's bytes back on that port.
+const echoPortEnv = "ZCP_DEVSUP_TEST_ECHO_PORT"
+
+func TestMain(m *testing.M) {
+	if port := os.Getenv(echoPortEnv); port != "" {
+		os.Exit(echoServer(port))
+	}
+	os.Exit(m.Run())
+}
+
+func echoServer(port string) int {
+	var lc net.ListenConfig
+	ln, err := lc.Listen(context.Background(), "tcp", "127.0.0.1:"+port)
+	if err != nil {
+		return 3
+	}
+	for {
+		c, err := ln.Accept()
+		if err != nil {
+			return 0
+		}
+		go func() {
+			defer c.Close()
+			_, _ = io.Copy(c, c)
+		}()
+	}
+}
 
 func shortDir(t *testing.T) string {
 	t.Helper()
@@ -184,9 +216,9 @@ func TestParseCtl_Env_SetPairsAndClear(t *testing.T) {
 	}
 }
 
-// runningSupervisor runs a supervisor on decl and returns its state directory
-// once its socket answers.
-func runningSupervisor(t *testing.T, decl string, grace time.Duration) string {
+// runningSupervisor runs a supervisor on decl, with env added to the test's
+// environment, and returns its state directory once its socket answers.
+func runningSupervisor(t *testing.T, decl string, grace time.Duration, env ...string) string {
 	t.Helper()
 	root, state := t.TempDir(), shortDir(t)
 	if err := os.MkdirAll(filepath.Join(root, ".zcp"), 0o755); err != nil {
@@ -195,7 +227,7 @@ func runningSupervisor(t *testing.T, decl string, grace time.Duration) string {
 	if err := os.WriteFile(filepath.Join(root, devsup.DeclarationPath), []byte(decl), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	sup, err := devsup.New(devsup.Config{Root: root, StateDir: state, Env: os.Environ(), Grace: grace})
+	sup, err := devsup.New(devsup.Config{Root: root, StateDir: state, Env: append(os.Environ(), env...), Grace: grace})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,8 +274,121 @@ func TestCtl_VersionNamesCapabilities(t *testing.T) {
 	var got struct {
 		Capabilities []string `json:"capabilities"`
 	}
-	if err := json.Unmarshal([]byte(out), &got); code != 0 || err != nil || !reflect.DeepEqual(got.Capabilities, []string{"env"}) {
+	if err := json.Unmarshal([]byte(out), &got); code != 0 || err != nil || !reflect.DeepEqual(got.Capabilities, []string{"env", "activity"}) {
 		t.Fatalf("exit %d out %q", code, out)
+	}
+}
+
+// `activity` says `ctl status` reports the preview server's
+// previewLastConnAt and previewOpenConns: zcp reads them only from a
+// supervisor whose `ctl version` lists it (docs/spec-mate.md §2.8a.2).
+func TestCapabilities_IncludeActivity(t *testing.T) {
+	t.Parallel()
+	code, out := ctl(t, shortDir(t), "version", "--json")
+	var got struct {
+		Capabilities []string `json:"capabilities"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); code != 0 || err != nil {
+		t.Fatalf("exit %d out %q (%v)", code, out, err)
+	}
+	if !strings.Contains(","+strings.Join(got.Capabilities, ",")+",", ",activity,") {
+		t.Fatalf("capabilities = %q, want activity among them", got.Capabilities)
+	}
+}
+
+// previewStatus is a server's preview activity as `ctl status --json` puts it.
+type previewStatus struct {
+	PreviewPort       int        `json:"previewPort"`
+	PreviewLastConnAt *time.Time `json:"previewLastConnAt"`
+	PreviewOpenConns  *int       `json:"previewOpenConns"`
+}
+
+func ctlPreview(t *testing.T, state, name string) (previewStatus, string) {
+	t.Helper()
+	code, out := ctl(t, state, "status", name, "--json")
+	var st struct {
+		Servers map[string]previewStatus `json:"servers"`
+	}
+	if err := json.Unmarshal([]byte(out), &st); code != 0 || err != nil {
+		t.Fatalf("status %s: exit %d out %q (%v)", name, code, out, err)
+	}
+	return st.Servers[name], out
+}
+
+// freeTCPPort is a port nothing listened on a moment ago.
+func freeTCPPort(t *testing.T) int {
+	t.Helper()
+	var lc net.ListenConfig
+	ln, err := lc.Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	addr, ok := ln.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("listener address %v is not TCP", ln.Addr())
+	}
+	return addr.Port
+}
+
+// TestCtlStatus_PreviewActivity: `ctl status --json` reports, for the preview
+// server, when its forward last took a connection (previewLastConnAt) and how
+// many it holds open (previewOpenConns, 0 included), counted at the forward
+// while the bytes pass unchanged; a server without a preview port has
+// neither (docs/spec-mate.md §2.8a.2).
+func TestCtlStatus_PreviewActivity(t *testing.T) {
+	t.Parallel()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	web, preview := freeTCPPort(t), freeTCPPort(t)
+	cmd := echoPortEnv + "=" + strconv.Itoa(web) + " exec '" + exe + "'"
+	state := runningSupervisor(t, `{"version":1,"previewPortBase":`+strconv.Itoa(preview-1)+`,"servers":[`+
+		`{"name":"web","port":`+strconv.Itoa(web)+`,"command":`+strconv.Quote(cmd)+`},`+
+		`{"name":"worker","command":"exec sleep 300"}]}`, time.Second, "ZEROPS_StableNumber=1")
+
+	// The forward opens once web listens; the first connection it takes is
+	// the one held open.
+	var conn net.Conn
+	before := time.Now()
+	waitFor(t, "the preview port to forward", func() bool {
+		d := net.Dialer{Timeout: time.Second}
+		c, err := d.DialContext(context.Background(), "tcp", "127.0.0.1:"+strconv.Itoa(preview))
+		if err != nil {
+			return false
+		}
+		conn = c
+		return true
+	})
+	t.Cleanup(func() { _ = conn.Close() })
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	got := make([]byte, 5)
+	if _, err := conn.Write([]byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.ReadFull(conn, got); err != nil || string(got) != "hello" {
+		t.Fatalf("the preview port answered %q (%v), want the bytes back unchanged", got, err)
+	}
+
+	p, out := ctlPreview(t, state, "web")
+	if p.PreviewPort != preview || p.PreviewOpenConns == nil || *p.PreviewOpenConns != 1 ||
+		p.PreviewLastConnAt == nil || p.PreviewLastConnAt.Before(before.Truncate(time.Microsecond)) || p.PreviewLastConnAt.After(time.Now()) {
+		t.Fatalf("web with one preview connection: %s\nwant previewPort %d, previewOpenConns 1, previewLastConnAt from %s on", out, preview, before)
+	}
+	last := *p.PreviewLastConnAt
+
+	_ = conn.Close()
+	var zero string
+	waitFor(t, "the closed connection to leave the count", func() bool {
+		p, zero = ctlPreview(t, state, "web")
+		return p.PreviewOpenConns != nil && *p.PreviewOpenConns == 0
+	})
+	if !strings.Contains(zero, `"previewOpenConns": 0`) || p.PreviewLastConnAt == nil || !p.PreviewLastConnAt.Equal(last) {
+		t.Fatalf("web after the connection closed: %s\nwant previewOpenConns 0 on the wire and previewLastConnAt %s kept", zero, last)
+	}
+	if w, out := ctlPreview(t, state, "worker"); w.PreviewOpenConns != nil || w.PreviewLastConnAt != nil {
+		t.Fatalf("worker has no preview port, yet reports preview activity: %s", out)
 	}
 }
 

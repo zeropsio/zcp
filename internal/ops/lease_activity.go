@@ -2,6 +2,7 @@ package ops
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -10,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/devsup"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
 )
@@ -26,7 +28,13 @@ const (
 	leaseActivityMarker = "@@zcp-lease activity "
 	leaseStatusMarker   = "@@zcp-lease status"
 	leaseUnpushedMarker = "@@zcp-lease unpushed"
+	leasePreviewMarker  = "@@zcp-lease preview"
 )
+
+// leasePreviewReadSeconds bounds the supervisor's `ctl status` inside the
+// read, where the container has `timeout`: a supervisor that does not answer
+// costs the read seconds, never the checkout facts read before it.
+const leasePreviewReadSeconds = 2
 
 // leaseActivityCommand is the one ssh invocation that reads a held lease's
 // checkout for status (DP-21). First the activity line: the epoch mtime of
@@ -37,7 +45,10 @@ const (
 // (leaseUnsavedFilesCommand, leaseUnpushedCommand), each after its marker, so
 // status and release agree on what is unsaved. Every git call runs with
 // GIT_OPTIONAL_LOCKS=0 (leaseGitRead): the read writes nothing into the
-// checkout, and works while another git holds .git/index.lock.
+// checkout, and works while another git holds .git/index.lock. Last, after
+// its marker and whatever the checkout part did, the supervisor's preview
+// activity (leasePreviewCommand); the read exits with the checkout part's
+// status, so a failed git read stays the read's failure.
 func leaseActivityCommand() string {
 	return strings.Join([]string{
 		"cd " + shellQuote(leaseWorkDir),
@@ -48,7 +59,20 @@ func leaseActivityCommand() string {
 		leaseUnsavedFilesCommand(),
 		"echo " + shellQuote(leaseUnpushedMarker),
 		leaseUnpushedCommand(),
-	}, " && ")
+	}, " && ") + "; rc=$?; echo " + shellQuote(leasePreviewMarker) + "; " + leasePreviewCommand() + "; exit $rc"
+}
+
+// leasePreviewCommand reads the container's zcp-devsup with two verbs every
+// supervisor knows — `ctl version` and `ctl status`, the status bounded by
+// leasePreviewReadSeconds — each closed by a devsup section with its exit
+// (version 127 without the binary). Whether the status's preview fields are
+// read is zcp's decision, from the version's capabilities (leasePreview).
+func leasePreviewCommand() string {
+	return `if command -v zcp-devsup >/dev/null 2>&1; then ` +
+		`zcp-devsup ctl version --json 2>/dev/null; c=$?; echo; echo "@@zcp-devsup version $c"; ` +
+		`if command -v timeout >/dev/null 2>&1; then b="timeout ` + strconv.Itoa(leasePreviewReadSeconds) + `"; else b=; fi; ` +
+		`$b zcp-devsup ctl status --json 2>/dev/null; c=$?; echo; echo "@@zcp-devsup status $c"; ` +
+		`else echo '@@zcp-devsup version 127'; fi`
 }
 
 // readLeaseActivities fills in, for each lease of views zcp holds — held or
@@ -121,6 +145,11 @@ func readLeaseActivity(ctx context.Context, d LeaseDeps, rec leaseRecord) (*topo
 		act.LastChangeAt = change
 		notes = append(notes, note)
 	}
+	if r.previewSeen {
+		var note string
+		act.PreviewLastConnAt, act.PreviewOpenConns, note = leasePreview(r.preview)
+		notes = append(notes, note)
+	}
 	var unsaved *topology.LeaseUnsaved
 	switch {
 	case err != nil:
@@ -147,19 +176,25 @@ type checkoutRead struct {
 	activityFields string // its two fields, as answered
 	statusSeen     bool   // the guard's git status began
 	unpushedSeen   bool   // the guard's unpushed count began
+	previewSeen    bool   // the supervisor part began
 	// before, status and unpushed are what came before the activity line (or
 	// between it and git status), from git status, and from the count —
-	// stderr included, as ssh hands them over together.
-	before, status, unpushed string
+	// stderr included, as ssh hands them over together; preview is the
+	// supervisor part, wherever the checkout part stopped.
+	before, status, unpushed, preview string
 }
 
 func splitCheckoutRead(out string) checkoutRead {
 	var r checkoutRead
-	var before, status, unpushed []string
+	var before, status, unpushed, preview []string
 	part := &before
 	for line := range strings.SplitSeq(out, "\n") {
 		trimmed := strings.TrimRight(line, "\r")
 		switch {
+		case r.previewSeen:
+			preview = append(preview, line)
+		case trimmed == leasePreviewMarker:
+			r.previewSeen = true
 		case !r.activity && strings.HasPrefix(trimmed, leaseActivityMarker):
 			r.activity, r.activityFields = true, strings.TrimPrefix(trimmed, leaseActivityMarker)
 		case r.activity && !r.statusSeen && trimmed == leaseStatusMarker:
@@ -171,8 +206,82 @@ func splitCheckoutRead(out string) checkoutRead {
 		}
 	}
 	r.before, r.status, r.unpushed = strings.Join(before, "\n"), strings.Join(status, "\n"), strings.Join(unpushed, "\n")
+	r.preview = strings.Join(preview, "\n")
 	return r
 }
+
+// leasePreview reads the supervisor part of the read: the preview server's
+// last connection time (RFC 3339 UTC, "" when none came in the supervisor's
+// life) and its open connections, from a supervisor whose `ctl version`
+// lists devsup.CapabilityActivity — from any other, from none, or from one
+// with no preview server, both are absent and note says why the preview was
+// not observed.
+func leasePreview(part string) (lastConnAt string, openConns *int, note string) {
+	const notObserved = "preview not observed: "
+	sections, err := splitDevsupSections(part)
+	if err != nil {
+		return "", nil, fmt.Sprintf(notObserved+"zcp could not read the supervisor's answer (%v)", err)
+	}
+	version, ok := sections["version"]
+	switch {
+	case !ok:
+		return "", nil, fmt.Sprintf(notObserved+"the supervisor part answered %q, with no zcp-devsup version", boundedText(part))
+	case version.code == devsupCodeAbsent:
+		return "", nil, notObserved + "zcp-devsup is not installed in the container"
+	case version.code != devsupCodeOK:
+		return "", nil, fmt.Sprintf(notObserved+"zcp-devsup ctl version exited %d", version.code)
+	}
+	var v SupervisorVersion
+	if err := json.Unmarshal([]byte(version.body), &v); err != nil {
+		return "", nil, fmt.Sprintf(notObserved+"zcp-devsup ctl version answered %q", boundedText(version.body))
+	}
+	if !v.Supports(devsup.CapabilityActivity) {
+		return "", nil, fmt.Sprintf(notObserved+"the container's zcp-devsup %s predates preview activity (its ctl version lists no %q); one from a newer zcp release reports it",
+			v.Version, devsup.CapabilityActivity)
+	}
+	status, ok := sections["status"]
+	switch {
+	case !ok:
+		return "", nil, notObserved + "zcp-devsup ctl status did not answer"
+	case status.code == devsupCodeNoSupervisor:
+		return "", nil, notObserved + "no zcp-devsup runs in the container (its dev setup's run.start is something else)"
+	case status.code == devsupCodeUnresponsive || status.code == timeoutExit:
+		return "", nil, fmt.Sprintf(notObserved+"the dev-server supervisor did not answer within %d s (the container may be out of memory or CPU)", leasePreviewReadSeconds)
+	case status.code != devsupCodeOK:
+		note = fmt.Sprintf(notObserved+"zcp-devsup ctl status exited %d", status.code)
+		var failure *SupervisorCtlError
+		if errors.As(ctlFailure(status), &failure) && failure.Message != "" {
+			note += ": " + boundedText(failure.Message)
+		}
+		return "", nil, note
+	}
+	var st devsup.State
+	if err := json.Unmarshal([]byte(status.body), &st); err != nil {
+		return "", nil, fmt.Sprintf(notObserved+"zcp-devsup ctl status answered %q", boundedText(status.body))
+	}
+	var last time.Time
+	open, found := 0, false
+	for _, ss := range st.Servers {
+		if ss.PreviewPort == 0 || ss.PreviewOpenConns == nil {
+			continue
+		}
+		found = true
+		open += *ss.PreviewOpenConns
+		if ss.PreviewLastConnAt != nil && ss.PreviewLastConnAt.After(last) {
+			last = *ss.PreviewLastConnAt
+		}
+	}
+	if !found {
+		return "", nil, notObserved + "no dev server in the container has a preview port"
+	}
+	if !last.IsZero() {
+		lastConnAt = last.UTC().Format(time.RFC3339)
+	}
+	return lastConnAt, &open, ""
+}
+
+// timeoutExit is the exit status of a command `timeout` ended.
+const timeoutExit = 124
 
 // lastChangeAt reads the activity line's two fields — the .git/logs/HEAD
 // mtime (0: none) and the newest changed file's mtime ("": none) — as the

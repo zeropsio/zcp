@@ -128,6 +128,9 @@ type server struct {
 	listened bool
 	// fwd is the preview forward of the live group, nil when it has none.
 	fwd *forward
+	// preview is what its preview forwards saw, kept across them; nil until
+	// the first opens.
+	preview *previewSeen
 	// tasks is the task budget read when this start began; tasksOK says it
 	// was read.
 	tasks   Tasks
@@ -1116,12 +1119,19 @@ func (s *Supervisor) State() State {
 }
 
 // serverState renders one server; it probes the port of a live group, so it
-// runs outside mu.
+// runs outside mu. The preview server's activity is read under its own lock.
 func (s *Supervisor) serverState(name string, sv *server, preview int) ServerState {
 	ss := ServerState{
 		Source: sv.source, Desired: sv.desired, StartedAt: sv.startedAt, Exit: sv.exit,
 		LogPath: LogPath(s.cfg.StateDir, name), LastRestartReason: sv.restartReason, OutOfMemory: sv.outOfMemory,
 		PreviewPort: preview,
+	}
+	if preview != 0 {
+		open := 0
+		if sv.preview != nil {
+			ss.PreviewLastConnAt, open = sv.preview.read()
+		}
+		ss.PreviewOpenConns = &open
 	}
 	if sv.starts > 1 {
 		ss.Restarts = sv.starts - 1
@@ -1156,10 +1166,18 @@ func (s *Supervisor) serverState(name string, sv *server, preview int) ServerSta
 	return ss
 }
 
+// persist writes the state to state.json, all but the preview activity,
+// which lives in memory only: a file a new supervisor finds never claims
+// connections it does not hold.
 func (s *Supervisor) persist() {
 	s.persistMu.Lock()
 	defer s.persistMu.Unlock()
-	if err := writeState(s.cfg.StateDir, s.State()); err != nil {
+	st := s.State()
+	for name, ss := range st.Servers {
+		ss.PreviewLastConnAt, ss.PreviewOpenConns = nil, nil
+		st.Servers[name] = ss
+	}
+	if err := writeState(s.cfg.StateDir, st); err != nil {
 		s.logf("%v", err)
 	}
 }
@@ -1206,6 +1224,7 @@ func (s *Supervisor) syncPreview() {
 		sv           *server
 		g            *group
 		listen, port int
+		seen         *previewSeen
 	}
 	var stale []*forward
 	var opens []open
@@ -1220,7 +1239,10 @@ func (s *Supervisor) syncPreview() {
 			sv.fwd = nil
 		}
 		if want > 0 && sv.fwd == nil {
-			opens = append(opens, open{sv, sv.g, want, sv.spec.Port})
+			if sv.preview == nil {
+				sv.preview = &previewSeen{}
+			}
+			opens = append(opens, open{sv, sv.g, want, sv.spec.Port, sv.preview})
 		}
 	}
 	s.mu.Unlock()
@@ -1228,7 +1250,7 @@ func (s *Supervisor) syncPreview() {
 		f.close()
 	}
 	for _, o := range opens {
-		f, err := openForward(o.listen, o.port)
+		f, err := openForward(o.listen, o.port, o.seen)
 		if err != nil {
 			s.logf("preview %s: cannot listen on :%d: %v", o.sv.name, o.listen, err)
 			continue

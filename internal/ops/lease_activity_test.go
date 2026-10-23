@@ -100,6 +100,190 @@ func TestLeaseActivity_CommandIsReadOnly(t *testing.T) {
 			t.Errorf("command redirects into %q; a read writes nowhere: %s", m[1], cmd)
 		}
 	}
+	// The supervisor's preview activity is read last, by verbs every
+	// zcp-devsup knows — `ctl version` and `ctl status`, never another verb
+	// or flag — the status bounded so a supervisor that does not answer
+	// cannot spend the checkout's budget, and the read exits with the
+	// checkout part's status, so a git failure stays the read's failure.
+	preview := strings.Index(cmd, previewMarker)
+	if preview < unpushed {
+		t.Fatalf("the supervisor part must come after the guard's reads:\n%s", cmd)
+	}
+	ctlCalls := regexp.MustCompile(`zcp-devsup ctl [^;]*`).FindAllString(cmd, -1)
+	if len(ctlCalls) != 2 || !strings.HasPrefix(ctlCalls[0], "zcp-devsup ctl version --json") || !strings.HasPrefix(ctlCalls[1], "zcp-devsup ctl status --json") {
+		t.Errorf("ctl calls = %q, want exactly `ctl version --json` then `ctl status --json`", ctlCalls)
+	}
+	if !strings.Contains(cmd, `"timeout 2"`) {
+		t.Errorf("ctl status is not bounded by a 2 s timeout: %s", cmd)
+	}
+	if !strings.Contains(cmd[unpushed:preview], "rc=$?") || !strings.HasSuffix(cmd, "exit $rc") {
+		t.Errorf("the read must keep the checkout part's exit status and end with it: %s", cmd)
+	}
+}
+
+// previewMarker opens the supervisor part of the read's answer.
+const previewMarker = "@@zcp-lease preview"
+
+// previewPart is the supervisor part of the read's answer: its marker, then
+// `ctl version` and `ctl status` each closed by its exit code — or only the
+// version section when status is "" and statusCode is negative.
+func previewPart(version string, versionCode int, status string, statusCode int) string {
+	var b strings.Builder
+	b.WriteString(previewMarker + "\n")
+	if version != "" {
+		b.WriteString(version + "\n")
+	}
+	fmt.Fprintf(&b, "@@zcp-devsup version %d\n", versionCode)
+	if statusCode >= 0 {
+		if status != "" {
+			b.WriteString(status + "\n")
+		}
+		fmt.Fprintf(&b, "@@zcp-devsup status %d\n", statusCode)
+	}
+	return b.String()
+}
+
+// Supervisor answers the preview tests read.
+const (
+	capableVersion = `{"version":"v9.500.0","formats":[1],"capabilities":["env","activity"]}`
+	envOnlyVersion = `{"version":"v9.400.0","formats":[1],"capabilities":["env"]}`
+	olderVersion   = `{"version":"v9.300.0","formats":[1]}`
+)
+
+// previewState is a `ctl status --json` answer whose preview server web has
+// the given activity (absent when nil) beside worker, which has no preview
+// port.
+func previewState(last string, open *int) string {
+	web := `"status":"running","previewPort":9003`
+	if last != "" {
+		web += `,"previewLastConnAt":"` + last + `"`
+	}
+	if open != nil {
+		web += `,"previewOpenConns":` + strconv.Itoa(*open)
+	}
+	return `{"format":1,"supervisor":{"version":"v9.500.0","pid":412},"declaration":{"version":1,"error":""},"env":{},"servers":{` +
+		`"web":{` + web + `},"worker":{"status":"running"}}}`
+}
+
+func intPtr(n int) *int { return &n }
+
+// TestLeaseActivity_PreviewFromSupervisorWhenCapable: a supervisor whose
+// `ctl version` lists `activity` gives the lease's preview facts from its
+// status — when its preview forward last took a connection (RFC 3339 UTC,
+// like every activity time) and how many it holds open, 0 being an observed
+// zero — beside the checkout's facts, with nothing to note. A checkout part
+// that fails keeps the preview facts the supervisor part read.
+func TestLeaseActivity_PreviewFromSupervisorWhenCapable(t *testing.T) {
+	t.Parallel()
+	const head = int64(1792756800)
+	clean := string(checkoutAnswer(head, "", nil, 0))
+	statusFailed := fmt.Sprintf("@@zcp-lease activity %d \n@@zcp-lease status\nfatal: not a git repository\n", head)
+	for _, tt := range []struct {
+		name     string
+		out      string
+		exit     int // the remote's exit status; 0: no error
+		wantLast string
+		wantOpen int
+		wantNote string // "" means no note
+	}{
+		{name: "one connection open", out: clean + previewPart(capableVersion, 0, previewState("2026-10-23T13:30:00.123456Z", intPtr(1)), 0),
+			wantLast: "2026-10-23T13:30:00Z", wantOpen: 1},
+		{name: "none open: an observed zero", out: clean + previewPart(capableVersion, 0, previewState("2026-10-23T13:30:00+02:00", intPtr(0)), 0),
+			wantLast: "2026-10-23T11:30:00Z", wantOpen: 0},
+		{name: "no connection yet in the supervisor's life", out: clean + previewPart(capableVersion, 0, previewState("", intPtr(0)), 0),
+			wantOpen: 0},
+		{name: "git status failed, the supervisor part still read", out: statusFailed + previewPart(capableVersion, 0, previewState("2026-10-23T13:30:00Z", intPtr(2)), 0), exit: 128,
+			wantLast: "2026-10-23T13:30:00Z", wantOpen: 2, wantNote: "git status"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var err error
+			if tt.exit != 0 {
+				err = sshFailure(tt.out, exitError(t, tt.exit))
+			}
+			ssh := &ctxSSH{fn: func(context.Context, string, string) ([]byte, error) { return []byte(tt.out), err }}
+			rec := leaseRecord{PoolHostname: testPoolHost, ContainerNumber: 3, AcquiredAt: "2026-10-23T11:00:00Z"}
+
+			act, _ := readLeaseActivity(context.Background(), LeaseDeps{SSH: ssh}, rec)
+
+			if act.PreviewLastConnAt != tt.wantLast {
+				t.Errorf("previewLastConnAt = %q, want %q", act.PreviewLastConnAt, tt.wantLast)
+			}
+			if act.PreviewOpenConns == nil || *act.PreviewOpenConns != tt.wantOpen {
+				t.Errorf("previewOpenConns = %v, want %d observed", act.PreviewOpenConns, tt.wantOpen)
+			}
+			if act.LastChangeAt != rfc3339(head) {
+				t.Errorf("lastChangeAt = %q, want %q: the checkout part stands beside the preview", act.LastChangeAt, rfc3339(head))
+			}
+			switch {
+			case tt.wantNote == "" && act.Note != "":
+				t.Errorf("note = %q, want none", act.Note)
+			case tt.wantNote != "" && (!strings.Contains(act.Note, tt.wantNote) || strings.Contains(act.Note, "preview")):
+				t.Errorf("note = %q, want it to name %q and nothing about the preview, which was read", act.Note, tt.wantNote)
+			}
+		})
+	}
+}
+
+// TestLeaseActivity_OlderSupervisor_PreviewNotObserved: the preview facts
+// come only from a supervisor whose `ctl version` lists `activity`; from an
+// older one — even one whose status carried such fields — and from a
+// container with no supervisor, one that did not answer, or no preview
+// server, they are absent, never zero, and the note says the preview was not
+// observed and why. The checkout's facts stand.
+func TestLeaseActivity_OlderSupervisor_PreviewNotObserved(t *testing.T) {
+	t.Parallel()
+	const head = int64(1792756800)
+	clean := string(checkoutAnswer(head, "", nil, 0))
+	withActivity := previewState("2026-10-23T13:30:00Z", intPtr(1))
+	for _, tt := range []struct {
+		name     string
+		preview  string
+		wantNote []string
+	}{
+		{name: "an older supervisor without capabilities", preview: previewPart(olderVersion, 0, withActivity, 0),
+			wantNote: []string{"v9.300.0", "activity"}},
+		{name: "a supervisor that lists env only", preview: previewPart(envOnlyVersion, 0, withActivity, 0),
+			wantNote: []string{"v9.400.0", "activity"}},
+		{name: "no zcp-devsup in the container", preview: previewPart("", 127, "", -1),
+			wantNote: []string{"zcp-devsup is not installed"}},
+		{name: "ctl version fails", preview: previewPart("", 1, "", -1),
+			wantNote: []string{"ctl version exited 1"}},
+		{name: "installed, but no supervisor runs", preview: previewPart(capableVersion, 0, `{"code":2,"error":"no zcp-devsup is running here"}`, 2),
+			wantNote: []string{"no zcp-devsup runs"}},
+		{name: "the supervisor did not answer in time", preview: previewPart(capableVersion, 0, "", 124),
+			wantNote: []string{"did not answer"}},
+		{name: "the supervisor said it was unresponsive", preview: previewPart(capableVersion, 0, `{"code":5,"error":"zcp-devsup is running here but did not answer in time"}`, 5),
+			wantNote: []string{"did not answer"}},
+		{name: "status fails otherwise", preview: previewPart(capableVersion, 0, `{"code":1,"error":"boom"}`, 1),
+			wantNote: []string{"ctl status exited 1", "boom"}},
+		{name: "a status that is no state", preview: previewPart(capableVersion, 0, "garbage", 0),
+			wantNote: []string{"garbage"}},
+		{name: "no dev server has a preview port", preview: previewPart(capableVersion, 0, `{"format":1,"servers":{"worker":{"status":"running"}}}`, 0),
+			wantNote: []string{"preview port"}},
+		{name: "an unreadable supervisor part", preview: previewMarker + "\n@@zcp-devsup version soon\n",
+			wantNote: []string{"soon"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ssh := &ctxSSH{fn: func(context.Context, string, string) ([]byte, error) { return []byte(clean + tt.preview), nil }}
+			rec := leaseRecord{PoolHostname: testPoolHost, ContainerNumber: 3, AcquiredAt: "2026-10-23T11:00:00Z"}
+
+			act, unsaved := readLeaseActivity(context.Background(), LeaseDeps{SSH: ssh}, rec)
+
+			if act.PreviewLastConnAt != "" || act.PreviewOpenConns != nil {
+				t.Errorf("preview = %q/%v, want absent: it was not observed", act.PreviewLastConnAt, act.PreviewOpenConns)
+			}
+			for _, want := range append([]string{"preview not observed"}, tt.wantNote...) {
+				if !strings.Contains(act.Note, want) {
+					t.Errorf("note %q lacks %q", act.Note, want)
+				}
+			}
+			if act.LastChangeAt != rfc3339(head) || unsaved == nil {
+				t.Errorf("checkout = %q / %+v, want lastChangeAt %s and the unsaved work read", act.LastChangeAt, unsaved, rfc3339(head))
+			}
+		})
+	}
 }
 
 // TestLeaseActivity_ParsesNewestChange: lastChangeAt is the newer of the two
