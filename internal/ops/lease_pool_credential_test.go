@@ -27,11 +27,11 @@ const (
 )
 
 // inAMate makes fx a Mate enrolled with leaseHQURL whose enrollment holds
-// credential; a fresh session's wait is short.
-func inAMate(fx *leaseFixture, credential string) {
+// poolMateCredential; a fresh session's wait is short.
+func inAMate(fx *leaseFixture) {
 	fx.deps.HQAddress = func() string { return leaseHQURL }
 	fx.deps.PoolCredential = PoolHQCredential{
-		Read:        func() (string, bool) { return credential, true },
+		Read:        func() (string, bool) { return poolMateCredential, true },
 		SessionWait: time.Millisecond,
 	}
 }
@@ -137,7 +137,7 @@ func TestLeaseAcquire_HQRepoInAMate_PutsTheMateCredentialOnThePool(t *testing.T)
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			fx := newLeaseFixture(t)
-			inAMate(fx, poolMateCredential)
+			inAMate(fx)
 			ssh := &leaseSSH{}
 			fx.deps.SSH = ssh
 			fx.swarm.acquired = acquiredAs(3)
@@ -191,12 +191,12 @@ func TestLeaseAcquire_PoolTokenStaysTheUsers(t *testing.T) {
 		repo  string
 		setup func(*leaseFixture)
 	}{
-		{"a repository outside HQ, in a Mate", testRepo, func(fx *leaseFixture) { inAMate(fx, poolMateCredential) }},
+		{"a repository outside HQ, in a Mate", testRepo, func(fx *leaseFixture) { inAMate(fx) }},
 		{"a repository on HQ, outside a Mate", leaseHQRepo, func(fx *leaseFixture) {
 			fx.deps.HQAddress = func() string { return leaseHQURL }
 		}},
 		{"a Mate enrolled with no HQ", leaseHQRepo, func(fx *leaseFixture) {
-			inAMate(fx, poolMateCredential)
+			inAMate(fx)
 			fx.deps.HQAddress = func() string { return "" }
 		}},
 	}
@@ -242,7 +242,7 @@ func TestLeaseAcquire_HQRepo_WaitsUntilASessionSeesTheWrittenCredential(t *testi
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			fx := newLeaseFixture(t)
-			inAMate(fx, poolMateCredential)
+			inAMate(fx)
 			if tt.recorded {
 				writePoolCredentialRecord(t, fx.stateDir, testPoolHost, "svc-pool", hq.CredentialFingerprint(poolMateCredential))
 			}
@@ -306,7 +306,7 @@ func TestLeaseAcquire_HQRepo_NoCredentialOnThePool_TakesNoContainer(t *testing.T
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			fx := newLeaseFixture(t)
-			inAMate(fx, poolMateCredential)
+			inAMate(fx)
 			tt.setup(fx)
 			fx.deps.SSH = &leaseSSH{}
 			fx.swarm.acquired = acquiredAs(3)
@@ -344,7 +344,7 @@ func TestLeaseAcquire_HQRepo_NoCredentialOnThePool_TakesNoContainer(t *testing.T
 func TestLeaseAcquire_HQRepo_RefusedCheckout_WritesAfreshNextTime(t *testing.T) {
 	t.Parallel()
 	fx := newLeaseFixture(t)
-	inAMate(fx, poolMateCredential)
+	inAMate(fx)
 	writePoolCredentialRecord(t, fx.stateDir, testPoolHost, "svc-pool", hq.CredentialFingerprint(poolMateCredential))
 	ssh := &leaseSSH{fn: func(_, command string) ([]byte, error) {
 		if strings.Contains(command, "fetch -q --prune origin") {
@@ -417,7 +417,7 @@ func TestRenewPoolHQCredentials_RewritesEveryPoolWhoseFingerprintDiffers(t *test
 			if got := mock.CallCount("CreateServiceEnvVar"); got != tt.wantWrites {
 				t.Errorf("GIT_TOKEN writes = %d, want %d", got, tt.wantWrites)
 			}
-			var failed []string
+			failed := make([]string, 0, len(failures))
 			for _, f := range failures {
 				failed = append(failed, f.Pool)
 				if f.Err == nil || strings.Contains(f.Err.Error(), poolMateCredential) {

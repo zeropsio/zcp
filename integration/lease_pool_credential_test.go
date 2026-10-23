@@ -64,7 +64,7 @@ func TestLease_Integration_HQRepoInAMate_PutsTheMateCredentialOnThePool(t *testi
 	}
 	defer session.Close()
 
-	var texts []string
+	texts := make([]string, 0, 2)
 	for range 2 {
 		res := callAndGetResult(t, session, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseIntHQRepo, "branch": "feat"})
 		text := getTextContent(t, res)
