@@ -58,6 +58,10 @@ type LeaseSnapshot struct {
 	// Unverified marks a state read from zcp's own record because the pool's
 	// orchestrator did not answer: last known, not confirmed.
 	Unverified bool `json:"unverified"`
+	// AcquiredAt is when zcp acquired the lease (RFC 3339, UTC), "" when it
+	// holds no record of it (an unknown holder): the key a client rebinds by
+	// when the bound lease of a branch ends and another stays held.
+	AcquiredAt string `json:"acquiredAt,omitempty"`
 	// DevServers is what the lease's supervisor reported, only on a call that
 	// read it (zerops_dev_server on the alias) — keyed by alias the way a dev
 	// service's devServers[] is keyed by its hostname (WithParts).

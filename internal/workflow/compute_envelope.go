@@ -206,6 +206,7 @@ type leaseRecordFields struct {
 	ContainerNumber   int64  `json:"containerNumber"`
 	ContainerHostname string `json:"containerHostname"`
 	Branch            string `json:"branch"`
+	AcquiredAt        string `json:"acquiredAt"`
 }
 
 // readLeaseRecordSnapshots reads zcp's lease records as unverified "held"
@@ -240,6 +241,7 @@ func readLeaseRecordSnapshots(stateDir string) []LeaseSnapshot {
 		out = append(out, LeaseSnapshot{
 			Alias: alias, Pool: r.PoolHostname, Branch: r.Branch,
 			ContainerHostname: r.ContainerHostname, State: leaseStateRecorded, Unverified: true,
+			AcquiredAt: r.AcquiredAt,
 		})
 	}
 	return out

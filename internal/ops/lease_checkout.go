@@ -41,6 +41,14 @@ var leaseBranchRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
 // keeps a pool name from naming a path outside the lease directory.
 var leasePoolNameRe = regexp.MustCompile(`^[a-z0-9]{1,40}$`)
 
+// leaseCommitRe is a full git commit id (SHA-1 or SHA-256), the only shape a
+// lease's base takes.
+var leaseCommitRe = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
+
+// leaseBaseMarker opens the line a checkout answers the main commit it cut a
+// new branch from with.
+const leaseBaseMarker = "@@zcp-lease base "
+
 func validateLeaseBranch(branch string) error {
 	if !leaseBranchRe.MatchString(branch) || strings.Contains(branch, "..") || strings.Contains(branch, "//") ||
 		strings.HasSuffix(branch, "/") || strings.HasSuffix(branch, ".") || strings.HasSuffix(branch, ".lock") {
@@ -168,23 +176,33 @@ func resolveLeaseRepo(stateDir, pool, repo string) (canonical string, becomesDef
 // and branch are shell-quoted; the caller has validated both.
 //
 // An existing origin/<branch> is checked out tracking it; a branch that does
-// not exist yet is cut from origin/main without tracking it (a push of the new
-// branch must not target main). Files the image left that the branch does not
-// track are removed; ignored files stay (never clean -x). For an https origin
-// the repository keeps the same helper (leaseCredentialHelperConfig), so the
-// agent's own push authenticates the same way. hqURL is the Mate's HQ, "" on
-// a container not enrolled with one: a repository on it is fetched as HQ's
-// git user (leaseCredentialHelperFor).
-func leaseCheckoutCommand(workDir, repo, branch, hqURL string) string {
+// not exist yet is cut without tracking it (a push of the new branch must not
+// target main) — from base, the main commit its group's other leases were cut
+// from, or from origin/main when base is no commit id (DP-17) — and the
+// command answers the commit it cut from on a leaseBaseMarker line
+// (checkoutBase). A base origin does not have fails the command naming it:
+// the branch is never cut from another commit than its group's. Files the
+// image left that the branch does not track are removed; ignored files stay
+// (never clean -x). For an https origin the repository keeps the same helper
+// (leaseCredentialHelperConfig), so the agent's own push authenticates the
+// same way. hqURL is the Mate's HQ, "" on a container not enrolled with one: a
+// repository on it is fetched as HQ's git user (leaseCredentialHelperFor).
+func leaseCheckoutCommand(workDir, repo, branch, base, hqURL string) string {
 	q := shellQuote
+	cut := "git checkout -q -f -B " + q(branch) + " --no-track origin/" + leaseDefaultBranch +
+		" && printf '" + leaseBaseMarker + "%s\\n' \"$(git rev-parse HEAD)\""
+	if leaseCommitRe.MatchString(base) {
+		cut = "{ git rev-parse -q --verify " + q(base+"^{commit}") + " >/dev/null || { echo " +
+			q("the branch's base commit "+base+" is not on origin") + " >&2; exit 3; }; } && " +
+			"git checkout -q -f -B " + q(branch) + " --no-track " + q(base) + " && echo " + q(leaseBaseMarker+base)
+	}
 	steps := []string{
 		"cd " + q(workDir),
 		"{ [ -d .git ] || git init -q; }",
 		"{ git remote add origin " + q(repo) + " 2>/dev/null || git remote set-url origin " + q(repo) + "; }",
 		"GIT_TERMINAL_PROMPT=0 git -c credential.helper= -c credential.helper=" + q(leaseCredentialHelperFor(repo, hqURL)) + " fetch -q --prune origin",
 		"if git rev-parse --verify -q " + q("refs/remotes/origin/"+branch) + " >/dev/null; then " +
-			"git checkout -q -f -B " + q(branch) + " --track " + q("origin/"+branch) + "; else " +
-			"git checkout -q -f -B " + q(branch) + " --no-track origin/" + leaseDefaultBranch + "; fi",
+			"git checkout -q -f -B " + q(branch) + " --track " + q("origin/"+branch) + "; else " + cut + "; fi",
 		"git clean -fd -q",
 	}
 	if persist := leaseCredentialHelperConfig(repo, hqURL); persist != "" {
@@ -243,20 +261,34 @@ func (d LeaseDeps) hqAddress() string {
 	return d.HQAddress()
 }
 
-// checkoutLease puts the leased container's /var/www on the branch. A failure
+// checkoutLease puts the leased container's /var/www on the branch, a new one
+// cut from base (leaseCheckoutCommand), and returns the main commit it cut a
+// new branch from — "" when it tracked the branch origin has. A failure
 // carries the ssh error (git's stderr rides in it) and classifies auth
 // failures so the credential contract reaches the agent.
-func checkoutLease(ctx context.Context, d LeaseDeps, rec leaseRecord, repo, branch string) error {
+func checkoutLease(ctx context.Context, d LeaseDeps, rec leaseRecord, repo, branch, base string) (string, error) {
 	hqURL := d.hqAddress()
-	_, err := d.SSH.ExecSSH(ctx, rec.alias(), leaseCheckoutCommand(leaseWorkDir, repo, branch, hqURL))
+	out, err := d.SSH.ExecSSH(ctx, rec.alias(), leaseCheckoutCommand(leaseWorkDir, repo, branch, base, hqURL))
 	if err == nil {
-		return nil
+		cut, _ := checkoutBase(string(out))
+		return cut, nil
 	}
 	code, suggestion := classifyCheckoutFailure(err, IsHQRemote(repo, hqURL))
 	pe := platform.NewPlatformError(code,
 		fmt.Sprintf("Lease %s could not put %s on branch %s of %s", rec.alias(), leaseWorkDir, branch, repo), suggestion)
 	pe.Cause = err
-	return pe
+	return "", pe
+}
+
+// checkoutBase is the commit a checkout's answer says it cut a new branch
+// from, false when it says none (it tracked the branch origin has).
+func checkoutBase(out string) (string, bool) {
+	for line := range strings.SplitSeq(out, "\n") {
+		if base, ok := strings.CutPrefix(strings.TrimSpace(line), leaseBaseMarker); ok && leaseCommitRe.MatchString(base) {
+			return base, true
+		}
+	}
+	return "", false
 }
 
 // classifyCheckoutFailure maps git's stderr (and ssh's exit status) to an error
@@ -286,6 +318,10 @@ func classifyCheckoutFailure(err error, onHQ bool) (code, suggestion string) {
 	if exitStatus(err) == leaseSSHUnreachableExit {
 		return platform.ErrSSHDeployFailed,
 			"The container did not answer ssh. Check that the pool's sshIsolation admits this service and that zerops_lease action=status shows the alias installed"
+	}
+	if strings.Contains(out, "base commit") && strings.Contains(out, "is not on origin") {
+		return platform.ErrSSHDeployFailed,
+			"The branch is new to origin, and its other leases were cut from a main commit origin no longer has (main was rewritten since). Push the branch from one of them (git push -u origin <branch>), then acquire again: a branch origin has is checked out as it is there"
 	}
 	return platform.ErrSSHDeployFailed,
 		"Check the repo URL and that the container can reach the git host"

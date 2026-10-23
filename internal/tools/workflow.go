@@ -1037,6 +1037,7 @@ func leaseReaderWith(client platform.Client, projectID, stateDir string, swarm o
 			out = append(out, workflow.LeaseSnapshot{
 				Alias: v.Alias, Pool: v.Pool, Branch: v.Branch,
 				ContainerHostname: v.ContainerHostname, State: v.State, Unverified: v.Unverified,
+				AcquiredAt: v.AcquiredAt,
 			})
 		}
 		return out, nil

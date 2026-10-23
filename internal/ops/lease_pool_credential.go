@@ -181,19 +181,20 @@ func ensurePoolHQCredential(ctx context.Context, d LeaseDeps, pool *platform.Ser
 	return state, nil
 }
 
-// checkout puts the leased container on the branch (checkoutLease) once a
-// fresh session there reads a credential this acquire wrote. HQ's git refusing
-// the pool's GIT_TOKEN (a PREREQUISITE_MISSING checkout) means it is not what
-// zcp's record says — the secret changed or HQ revoked it since — so the record
+// checkout puts the leased container on the branch, a new one cut from base
+// (checkoutLease, which answers the commit it cut from), once a fresh session
+// there reads a credential this acquire wrote. HQ's git refusing the pool's
+// GIT_TOKEN (a PREREQUISITE_MISSING checkout) means it is not what zcp's
+// record says — the secret changed or HQ revoked it since — so the record
 // goes, and the next acquire writes the credential afresh.
-func (s poolCredentialState) checkout(ctx context.Context, d LeaseDeps, rec leaseRecord, repo, branch string) error {
+func (s poolCredentialState) checkout(ctx context.Context, d LeaseDeps, rec leaseRecord, repo, branch, base string) (string, error) {
 	s.awaitSession(ctx, d, rec)
-	err := checkoutLease(ctx, d, rec, repo, branch)
+	cut, err := checkoutLease(ctx, d, rec, repo, branch, base)
 	var pe *platform.PlatformError
 	if s.pool != "" && errors.As(err, &pe) && pe.Code == platform.ErrPrerequisiteMissing {
 		_ = forgetPoolCredential(d.StateDir, s.pool)
 	}
-	return err
+	return cut, err
 }
 
 // awaitSession reads, after a write, the fingerprint of GIT_TOKEN in fresh

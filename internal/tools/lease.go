@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -22,8 +23,10 @@ const (
 
 // LeaseInput is the input type for zerops_lease.
 type LeaseInput struct {
-	Action string    `json:"action"`
-	Pool   string    `json:"pool,omitempty"`
+	Action string `json:"action"`
+	Pool   string `json:"pool,omitempty"`
+	// Pools is a group acquire: one lease per pool on the branch (DP-17).
+	Pools  []string  `json:"pools,omitempty"`
 	Branch string    `json:"branch,omitempty"`
 	Repo   string    `json:"repo,omitempty"`
 	Lease  string    `json:"lease,omitempty"`
@@ -35,7 +38,8 @@ type LeaseInput struct {
 func leaseInputSchema() *jsonschema.Schema {
 	return objectSchema(map[string]*jsonschema.Schema{
 		"action": {Type: "string", Description: "acquire, status, release or rollout."},
-		"pool":   {Type: "string", Description: "Pool service hostname. acquire, rollout: required. status: optional (default every pool)."},
+		"pool":   {Type: "string", Description: "Pool service hostname. acquire (or pools), rollout: required. status: optional (default every pool)."},
+		"pools":  {Type: "array", Items: &jsonschema.Schema{Type: "string"}, Description: "acquire: one lease per pool on the branch, all or none."},
 		"branch": {Type: "string", Description: "acquire: branch to check out (default main); a new one is cut from main."},
 		"repo":   {Type: "string", Description: "acquire: https clone URL; the first one on a pool becomes its default."},
 		"lease":  {Type: "string", Description: "release: the lease alias <pool>-<number> from acquire or status (not a secret)."},
@@ -113,20 +117,29 @@ func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir 
 			return convertError(platform.NewPlatformError(platform.ErrPrerequisiteMissing,
 				"No state directory: leases are recorded under .zcp/state/leases", "Run zcp from the project's working directory")), nil, nil
 		}
+		if input.Pools != nil && input.Action != leaseActionAcquire {
+			return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
+				"pools is for acquire only", "Address one lease by its alias as lease, or one pool as pool")), nil, nil
+		}
 		switch input.Action {
 		case leaseActionAcquire:
-			if input.Pool == "" {
+			pools := input.Pools
+			switch {
+			case input.Pool != "" && pools != nil:
 				return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
-					"acquire needs pool", "Pass the pool service's hostname as pool")), nil, nil
+					"acquire takes pool or pools, not both", "Pass one pool as pool, or every pool of the branch as pools")), nil, nil
+			case input.Pool != "":
+				pools = []string{input.Pool}
+			case len(pools) == 0:
+				return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
+					"acquire needs pool", "Pass the pool service's hostname as pool, or several as pools")), nil, nil
 			}
-			view, err := ops.LeaseAcquire(ctx, deps, input.Pool, input.Repo, input.Branch)
+			views, err := ops.LeaseAcquireGroup(ctx, deps, pools, input.Repo, input.Branch)
 			if err != nil {
 				return convertError(withLeaseSSHStderr(err)), nil, nil
 			}
 			return jsonResult(leaseToolResult{
-				Action: input.Action, Leases: []ops.LeaseView{view},
-				NextActions: fmt.Sprintf("The container is yours until you release it: zerops_lease action=release lease=%s. zerops_lease action=status shows every lease.", view.Alias),
-				Envelope:    envelope(ctx),
+				Action: input.Action, Leases: views, NextActions: leaseAcquireNext(views), Envelope: envelope(ctx),
 			}), nil, nil
 		case leaseActionStatus:
 			status, err := ops.LeaseStatus(ctx, deps, input.Pool)
@@ -167,6 +180,30 @@ func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir 
 				fmt.Sprintf("Unknown action %q", input.Action), "action is acquire, status, release or rollout")), nil, nil
 		}
 	})
+}
+
+// leaseAcquireNext is what an acquire's result tells the agent to do next:
+// release each lease when done, and that a reused one is the lease already
+// held for the branch, not a second container.
+func leaseAcquireNext(views []ops.LeaseView) string {
+	aliases := make([]string, 0, len(views))
+	var reused []string
+	for _, v := range views {
+		aliases = append(aliases, v.Alias)
+		if v.Reused {
+			reused = append(reused, v.Alias)
+		}
+	}
+	var next string
+	if len(views) == 1 {
+		next = fmt.Sprintf("The container is yours until you release it: zerops_lease action=release lease=%s.", views[0].Alias)
+	} else {
+		next = fmt.Sprintf("The containers are yours until you release them, each by its alias: zerops_lease action=release lease=<alias> for %s.", strings.Join(aliases, ", "))
+	}
+	if len(reused) > 0 {
+		next += fmt.Sprintf(" %s was already held for this branch (reused): the same container, not a second one.", strings.Join(reused, ", "))
+	}
+	return next + " zerops_lease action=status shows every lease."
 }
 
 // withLeaseSSHStderr puts git's stderr from an ssh failure into the error's
