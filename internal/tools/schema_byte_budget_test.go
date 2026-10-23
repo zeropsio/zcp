@@ -179,7 +179,10 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// Raised 708 -> 842: repo (the clone URL acquire checks out, DP-6) and
 		// force (release's guard override, DP-4) replace B-S1's reset — two
 		// real inputs of the same call, not description bloat.
-		"zerops_lease": 842,
+		// Raised 842 -> 969: pools, the group acquire (DP-17) — one lease per
+		// pool on the branch, all or none — a new input of acquire, its
+		// description one line; pool names it as the alternative.
+		"zerops_lease": 969,
 		// Raised 266 -> 580: action="wait" added processId/processIds/service
 		// routing fields (block until a process or a whole service settles) — a
 		// deliberate new capability, not description bloat.

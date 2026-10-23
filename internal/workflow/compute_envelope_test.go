@@ -1147,9 +1147,11 @@ func TestComputeEnvelope_OrchestratorUnreachable_LeasesUnverified(t *testing.T) 
 	if err != nil {
 		t.Fatalf("an unreachable orchestrator must never fail the envelope: %v", err)
 	}
+	// The record's acquiredAt stands in with the rest of its last known state.
 	want := []LeaseSnapshot{{
 		Alias: "devpool-3", Pool: "devpool", Branch: "feat-x",
 		ContainerHostname: "node-id-3.runtime.devpool.zerops", State: "held", Unverified: true,
+		AcquiredAt: "2026-10-23T10:00:00Z",
 	}}
 	if fmt.Sprintf("%+v", env.LeaseList()) != fmt.Sprintf("%+v", want) {
 		t.Errorf("Leases = %+v, want %+v", env.LeaseList(), want)

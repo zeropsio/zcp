@@ -337,12 +337,10 @@ func TestLeaseAcquire_RecordWriteFails_ReleasesContainer(t *testing.T) {
 	t.Parallel()
 	fx := newLeaseFixture(t)
 	fx.swarm.acquired = acquiredAs(3)
-	// A regular file where the state dir should be: the record cannot be written.
-	blocker := filepath.Join(t.TempDir(), "state")
-	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+	// A directory where the record goes: the record cannot be written.
+	if err := os.MkdirAll(filepath.Join(fx.stateDir, "leases", "devpool-3.json"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	fx.deps.StateDir = blocker
 
 	_, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, "")
 	if err == nil {

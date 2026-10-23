@@ -144,7 +144,11 @@ type LeaseView struct {
 	State             string `json:"state"`
 	// Unverified marks a state read from zcp's own record because the pool's
 	// orchestrator could not be asked (LeaseStatus of every pool).
-	Unverified bool   `json:"unverified,omitempty"`
+	Unverified bool `json:"unverified,omitempty"`
+	// Reused marks an acquire that returned the lease zcp already held for
+	// the repository, branch and pool instead of taking another container
+	// (DP-17): a client binds nothing to it.
+	Reused     bool   `json:"reused,omitempty"`
 	AcquiredAt string `json:"acquiredAt,omitempty"`
 	Note       string `json:"note,omitempty"`
 	// Prepare is what the repository's prepare command did after an
@@ -495,80 +499,22 @@ func swarmSuggestion(se *platform.SwarmError) string {
 }
 
 // LeaseAcquire leases a container of the pool and puts its /var/www on the
-// branch of repo (DP-6). It always asks for a clean, started container with no
-// expiry (leaseTtlSeconds 0): an expiring lease frees the container silently
-// and unreset — a clean acquire resets only a container marked dirty, which
-// ssh writes never mark — so the lease ends only by an explicit release, which
-// resets it. An empty repo is the pool's default repository (the first acquire
-// with a repo records it); with neither, or with a repo or branch that is not
-// usable, the acquire refuses before it takes a container. A checkout that
-// fails hands the container straight back.
+// branch of repo (DP-6): a group acquire of the one pool (LeaseAcquireGroup),
+// so a branch zcp already holds on the pool returns that lease, reused. It
+// always asks for a clean, started container with no expiry
+// (leaseTtlSeconds 0): an expiring lease frees the container silently and
+// unreset — a clean acquire resets only a container marked dirty, which ssh
+// writes never mark — so the lease ends only by an explicit release, which
+// resets it. An empty repo is the pool's default repository (the first
+// acquire with a repo records it); with neither, or with a repo or branch that
+// is not usable, the acquire refuses before it takes a container. A checkout
+// that fails hands the container straight back.
 func LeaseAcquire(ctx context.Context, d LeaseDeps, pool, repo, branch string) (LeaseView, error) {
-	rp, err := resolvePool(ctx, d, pool)
+	views, err := LeaseAcquireGroup(ctx, d, []string{pool}, repo, branch)
 	if err != nil {
 		return LeaseView{}, err
 	}
-	branch = cmp.Or(branch, leaseDefaultBranch)
-	if err := validateLeaseBranch(branch); err != nil {
-		return LeaseView{}, err
-	}
-	repoURL, becomesDefault, err := resolveLeaseRepo(d.StateDir, pool, repo)
-	if err != nil {
-		return LeaseView{}, err
-	}
-	// A repository on the Mate's HQ is fetched with the Mate credential, which
-	// zcp puts on the pool's GIT_TOKEN before it takes a container (DP-16).
-	poolCredential, err := ensurePoolHQCredential(ctx, d, rp.svc, repoURL)
-	if err != nil {
-		return LeaseView{}, err
-	}
-	// The orchestrator reserves the container before it answers, and an
-	// acquire carries no idempotency key: one cut short by its caller would
-	// leave a container reserved, with no expiry, for a lease zcp never
-	// received. The request runs to its own deadline instead; a caller gone
-	// meanwhile makes the steps below fail, which hands the container back.
-	acqCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), LeaseCallTimeout)
-	got, err := rp.api.Acquire(acqCtx, platform.SwarmAcquireRequest{Start: true, Clean: true, LeaseTTLSeconds: 0})
-	cancel()
-	if err != nil {
-		return LeaseView{}, leaseAcquireError(ctx, d, rp, err)
-	}
-	rec := leaseRecord{
-		PoolHostname: pool, PoolServiceID: rp.svc.ID,
-		ContainerID: got.Container.ID, ContainerNumber: got.Container.Number, ContainerHostname: got.Container.Hostname,
-		Lease: got.Lease.Secret(), Branch: branch, Repo: repoURL, AcquiredAt: time.Now().UTC().Format(time.RFC3339),
-	}
-	if err := writeLeaseRecord(d.StateDir, rec); err != nil {
-		// Without a record the lease is unusable and, with no expiry, the
-		// container would stay reserved for good: hand it straight back (it is
-		// clean, so no reset).
-		_, relErr := rp.api.Release(context.WithoutCancel(ctx), rec.ContainerID, rec.Lease, false)
-		if relErr != nil {
-			return LeaseView{}, fmt.Errorf("record lease %s: %w (and handing the container back failed: %s stays reserved on %s)", rec.alias(), err, rec.ContainerHostname, pool)
-		}
-		return LeaseView{}, fmt.Errorf("record lease %s: %w (the container was handed back)", rec.alias(), err)
-	}
-	v := rec.view(LeaseStateHeld)
-	if note := d.Host.attach(ctx, d, rec); note != "" {
-		// The lease is real and stays recorded; zcp init (or the next status)
-		// finds the alias or mount missing and restores it.
-		v.State = LeaseStateUnmounted
-		v.Note = note
-	}
-	if d.SSH != nil {
-		if err := poolCredential.checkout(ctx, d, rec, repoURL, branch); err != nil {
-			return LeaseView{}, abandonLease(ctx, d, rec, err)
-		}
-		// The repository's prepare (DP-14), then the supervisor, which a reused
-		// container's run.start never starts again (DP-13).
-		afterLeaseCheckout(ctx, d.SSH, rec.alias(), &v)
-	}
-	if becomesDefault {
-		if err := storePoolDefaultRepo(d.StateDir, pool, repoURL); err != nil {
-			v.Note = joinNotes(v.Note, fmt.Sprintf("the repository could not be recorded as the pool's default: %v", err))
-		}
-	}
-	return v, nil
+	return views[0], nil
 }
 
 // leaseRecord is zcp's own record of a lease it holds
@@ -584,7 +530,11 @@ type leaseRecord struct {
 	Lease             string `json:"lease"`
 	Branch            string `json:"branch,omitempty"`
 	Repo              string `json:"repo,omitempty"` // canonical clone URL, never a credential; "" in an older record
-	AcquiredAt        string `json:"acquiredAt"`
+	// Base is the main commit the branch was cut from when it was new to
+	// origin, so a lease joining its group later is cut from it too (DP-17);
+	// "" when the branch was tracked from origin, or in an older record.
+	Base       string `json:"base,omitempty"`
+	AcquiredAt string `json:"acquiredAt"`
 }
 
 func (r leaseRecord) alias() string { return leaseAlias(r.PoolHostname, r.ContainerNumber) }
@@ -593,7 +543,7 @@ func (r leaseRecord) alias() string { return leaseAlias(r.PoolHostname, r.Contai
 func (r leaseRecord) view(state string) LeaseView {
 	return LeaseView{
 		Alias: r.alias(), Pool: r.PoolHostname, ContainerHostname: r.ContainerHostname,
-		Branch: r.Branch, State: state,
+		Branch: r.Branch, State: state, AcquiredAt: r.AcquiredAt,
 	}
 }
 

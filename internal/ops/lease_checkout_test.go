@@ -263,10 +263,10 @@ func originWithBranches(t *testing.T) (origin, mainSHA, featSHA string) {
 // to the container's shell.
 func runCheckout(t *testing.T, workDir, repo, branch string) {
 	t.Helper()
-	cmd := exec.CommandContext(context.Background(), "sh", "-c", leaseCheckoutCommand(workDir, repo, branch, "")) //nolint:gosec // running the composed command is the test
+	cmd := exec.CommandContext(context.Background(), "sh", "-c", leaseCheckoutCommand(workDir, repo, branch, "", "")) //nolint:gosec // running the composed command is the test
 	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("checkout command failed: %v\n%s\ncommand: %s", err, out, leaseCheckoutCommand(workDir, repo, branch, ""))
+		t.Fatalf("checkout command failed: %v\n%s\ncommand: %s", err, out, leaseCheckoutCommand(workDir, repo, branch, "", ""))
 	}
 }
 
@@ -688,10 +688,10 @@ func TestLeaseRelease_NoSSH_ReleasesWithNote(t *testing.T) {
 func TestLeaseCheckoutCommand_PersistsHostScopedHelper(t *testing.T) {
 	t.Parallel()
 	want := "git config --replace-all " + shellQuote("credential.https://github.com.helper") + " " + shellQuote(leaseCredentialHelperShell)
-	if cmd := leaseCheckoutCommand("/var/www", "https://github.com/acme/app", "main", ""); !strings.Contains(cmd, want) {
+	if cmd := leaseCheckoutCommand("/var/www", "https://github.com/acme/app", "main", "", ""); !strings.Contains(cmd, want) {
 		t.Errorf("command lacks the persisted helper %q:\n%s", want, cmd)
 	}
-	if cmd := leaseCheckoutCommand("/var/www", "/srv/origin.git", "main", ""); strings.Contains(cmd, "credential.") && strings.Contains(cmd, "git config") {
+	if cmd := leaseCheckoutCommand("/var/www", "/srv/origin.git", "main", "", ""); strings.Contains(cmd, "credential.") && strings.Contains(cmd, "git config") {
 		t.Errorf("a non-https origin got a persisted helper:\n%s", cmd)
 	}
 }
@@ -797,7 +797,7 @@ func TestLeaseRelease_RestoresAliasesBeforeTheGuard(t *testing.T) {
 // credential contract's missing case), never as a rejected empty password.
 func TestLeaseCheckoutCommand_FetchHelperAnswersNothingWithoutToken(t *testing.T) {
 	t.Parallel()
-	cmd := leaseCheckoutCommand("/var/www", "https://github.com/acme/app", "main", "")
+	cmd := leaseCheckoutCommand("/var/www", "https://github.com/acme/app", "main", "", "")
 	if want := "-c credential.helper= -c credential.helper=" + shellQuote(leaseCredentialHelperShell) + " fetch"; !strings.Contains(cmd, want) {
 		t.Errorf("fetch does not use the token-guarded helper %q:\n%s", want, cmd)
 	}
