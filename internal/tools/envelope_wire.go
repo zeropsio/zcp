@@ -144,7 +144,7 @@ func freshEnvelope(
 	rt runtime.Info,
 	extra ...workflow.EnvelopeOption,
 ) *workflow.StateEnvelope {
-	opts := append([]workflow.EnvelopeOption{workflow.WithLeaseReader(leaseReader(client, projectID, stateDir))}, extra...)
+	opts := append([]workflow.EnvelopeOption{workflow.WithLeaseReader(leaseReader(client, projectID, stateDir, envelopeLeaseTimeout))}, extra...)
 	envelope, err := workflow.ComputeEnvelope(ctx, client, stateDir, projectID, rt, time.Now(), opts...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "zcp: compute envelope for tool result: %v\n", err)

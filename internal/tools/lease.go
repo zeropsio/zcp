@@ -75,7 +75,7 @@ func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir 
 	envelope := func(ctx context.Context) *workflow.StateEnvelope {
 		var extra []workflow.EnvelopeOption
 		if swarm != nil {
-			extra = append(extra, workflow.WithLeaseReader(leaseReaderWith(client, projectID, stateDir, swarm)))
+			extra = append(extra, workflow.WithLeaseReader(leaseReaderWith(client, projectID, stateDir, swarm, leaseStatusTimeout)))
 		}
 		return freshEnvelope(ctx, stateDir, client, projectID, rt, extra...)
 	}
