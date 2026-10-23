@@ -1,5 +1,5 @@
 // Tests for: ops/lease_supervisor.go, the lease cases of dev_server.go — a
-// lease always has its supervisor (docs/spec-workflows.md §8 DP-9). A pool
+// lease always has its supervisor (docs/spec-workflows.md §8 DP-12). A pool
 // container released with reset=true comes back as its image and Zerops never
 // runs its run.start again, so zcp starts `zcp-devsup run` itself: after an
 // acquire's checkout, and once when a dev-server call on a lease finds none

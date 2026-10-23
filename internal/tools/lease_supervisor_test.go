@@ -1,5 +1,5 @@
 // Tests for: tools/lease.go, tools/dev_server.go — a lease always has its
-// supervisor (docs/spec-workflows.md §8 DP-9): zerops_lease acquire starts
+// supervisor (docs/spec-workflows.md §8 DP-12): zerops_lease acquire starts
 // zcp-devsup in a reused container and says when the pool's image has none;
 // zerops_dev_server on a lease whose supervisor is gone starts it again.
 package tools
