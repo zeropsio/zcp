@@ -1014,21 +1014,23 @@ const envelopeLeaseTimeout = 3 * time.Second
 // records could not be read) is the reader's "could not ask" signal —
 // ComputeEnvelope then falls back to zcp's own records, all unverified. Only
 // the lease's non-secret view crosses over; the lease string never leaves ops
-// (DP-3).
-func leaseReader(client platform.Client, projectID, stateDir string, timeout time.Duration) workflow.LeaseReader {
-	return leaseReaderWith(client, projectID, stateDir, ops.NewSwarmFactory(&http.Client{Timeout: timeout}), timeout)
+// (DP-3). A held lease whose alias or mount is missing on host reads
+// `unmounted`, as action=status reports it (DP-2).
+func leaseReader(client platform.Client, projectID, stateDir string, host ops.LeaseHost, timeout time.Duration) workflow.LeaseReader {
+	return leaseReaderWith(client, projectID, stateDir, ops.NewSwarmFactory(&http.Client{Timeout: timeout}), host, timeout)
 }
 
 // leaseReaderWith is leaseReader over a given orchestrator factory and time
-// budget (the lease tool reads through the factory it was registered with).
-func leaseReaderWith(client platform.Client, projectID, stateDir string, swarm ops.SwarmFactory, timeout time.Duration) workflow.LeaseReader {
+// budget (the lease tool reads through the factory and host side it was
+// registered with).
+func leaseReaderWith(client platform.Client, projectID, stateDir string, swarm ops.SwarmFactory, host ops.LeaseHost, timeout time.Duration) workflow.LeaseReader {
 	return func(ctx context.Context) ([]workflow.LeaseSnapshot, error) {
 		if client == nil || stateDir == "" {
 			return nil, fmt.Errorf("lease reader: no platform client or state directory")
 		}
 		ctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
-		views, err := ops.LeaseList(ctx, ops.LeaseDeps{Client: client, ProjectID: projectID, StateDir: stateDir, Swarm: swarm}, "")
+		views, err := ops.LeaseList(ctx, ops.LeaseDeps{Client: client, ProjectID: projectID, StateDir: stateDir, Swarm: swarm, Host: host}, "")
 		if err != nil {
 			return nil, fmt.Errorf("list leases: %w", err)
 		}
@@ -1059,7 +1061,7 @@ func leaseReaderWith(client platform.Client, projectID, stateDir string, swarm o
 // to invoke generate-dotenv preview manually.
 func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, rt runtime.Info, sshDeployer ops.SSHDeployer) (*mcp.CallToolResult, any, error) {
 	envelope, err := workflow.ComputeEnvelope(ctx, client, engine.StateDir(), projectID, rt, time.Now(),
-		workflow.WithLeaseReader(leaseReader(client, projectID, engine.StateDir(), leaseStatusTimeout)))
+		workflow.WithLeaseReader(leaseReader(client, projectID, engine.StateDir(), envelopeLeaseHost(rt), leaseStatusTimeout)))
 	if err != nil {
 		return convertError(wrapStageErr("Compute envelope", err), WithRecoveryStatus()), nil, nil
 	}
