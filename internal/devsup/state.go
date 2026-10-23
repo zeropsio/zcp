@@ -94,6 +94,10 @@ type ServerState struct {
 	// the service because it ran out of memory.
 	OutOfMemory bool   `json:"outOfMemory,omitempty"`
 	LogPath     string `json:"logPath"`
+	// PreviewPort is the port the supervisor forwards to this server on every
+	// interface (previewPortBase + the container's ZEROPS_StableNumber); set
+	// only for the server the declaration names the preview server.
+	PreviewPort int `json:"previewPort,omitempty"`
 	// RssKB is the resident memory of the server's whole process group in
 	// KiB, measured when the state is read; 0 when it has no live group.
 	RssKB int64 `json:"rssKb,omitempty"`

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -138,5 +139,17 @@ func TestParseCtl_FlagsAnywhereBeforeTheCommand(t *testing.T) {
 		if _, err := parseCtl(bad); err == nil {
 			t.Errorf("%q parsed", bad)
 		}
+	}
+}
+
+func TestStatusText_NamesThePreviewPort(t *testing.T) {
+	t.Parallel()
+	st := devsup.State{Servers: map[string]devsup.ServerState{
+		"web": {Status: devsup.StatusRunning, PreviewPort: 9003},
+		"api": {Status: devsup.StatusRunning},
+	}}
+	got := statusText(st)
+	if !strings.Contains(got, "preview :9003") || strings.Count(got, "preview") != 1 {
+		t.Fatalf("statusText = %q", got)
 	}
 }

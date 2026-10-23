@@ -11,6 +11,8 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -120,6 +122,8 @@ type server struct {
 	retry, retryPending bool
 	// listened: this start's port has accepted once.
 	listened bool
+	// fwd is the preview forward of the live group, nil when it has none.
+	fwd *forward
 	// tasks is the task budget read when this start began; tasksOK says it
 	// was read.
 	tasks   Tasks
@@ -157,6 +161,15 @@ type Supervisor struct {
 	// outOfMemory: systemd restarted the service because it ran out of
 	// memory. Set once, before Boot starts anything.
 	outOfMemory bool
+	// slot is the container's ZEROPS_StableNumber, 0 when it has none; with
+	// the declaration's previewPortBase it names the preview port.
+	slot int
+	// previewBase and previewName are the declaration's previewPortBase and
+	// the name of its preview server, as last read; guarded by mu.
+	previewBase int
+	previewName string
+	// fwdMu serialises syncPreview; it is never held while taking op.
+	fwdMu sync.Mutex
 }
 
 // New prepares a supervisor and loads the state an earlier instance left in
@@ -192,7 +205,7 @@ func New(cfg Config) (*Supervisor, error) {
 	if err := os.MkdirAll(filepath.Join(cfg.StateDir, logsDir), 0o700); err != nil {
 		return nil, fmt.Errorf("devsup state dir: %w", err)
 	}
-	s := &Supervisor{cfg: cfg, startedAt: time.Now().UTC(), servers: map[string]*server{}}
+	s := &Supervisor{cfg: cfg, startedAt: time.Now().UTC(), servers: map[string]*server{}, slot: stableNumber(cfg.Env)}
 	if prev, err := ReadState(cfg.StateDir); err == nil {
 		for name, p := range prev.Servers {
 			sv := &server{
@@ -322,7 +335,12 @@ func (s *Supervisor) reconcile(boot bool) map[string]action {
 		s.logf("declaration: %v", err)
 	} else {
 		s.decl = DeclarationInfo{Version: decl.Version}
-		for _, spec := range decl.ForService(s.cfg.Service) {
+		mine := decl.ForService(s.cfg.Service)
+		s.previewBase, s.previewName = decl.PreviewPortBase, ""
+		if p, ok := PreviewServer(mine); ok {
+			s.previewName = p.Name
+		}
+		for _, spec := range mine {
 			declared[spec.Name] = true
 			desired := spec.FirstDesired()
 			if sv, ok := s.servers[spec.Name]; ok && sv.desired != "" {
@@ -401,6 +419,7 @@ func (s *Supervisor) reconcile(boot bool) map[string]action {
 	}
 	s.startAll(start, reason)
 	s.syncWatches()
+	s.syncPreview()
 	s.persist()
 	return acts
 }
@@ -411,10 +430,15 @@ func (s *Supervisor) stopAll(names []string) {
 	for _, name := range names {
 		s.mu.Lock()
 		var g *group
+		var fwd *forward
 		if sv := s.servers[name]; sv != nil {
 			g, sv.g = sv.g, nil
+			fwd, sv.fwd = sv.fwd, nil
 		}
 		s.mu.Unlock()
+		if fwd != nil {
+			fwd.close()
+		}
 		if g == nil {
 			continue
 		}
@@ -564,6 +588,8 @@ func (s *Supervisor) watchExit(sv *server, g *group) {
 		return
 	}
 	sv.g = nil
+	fwd := sv.fwd
+	sv.fwd = nil
 	sv.exit = exitOf(g.state)
 	starts := sv.starts
 	s.logf("crashed %s: exit %d %s", sv.name, sv.exit.Code, sv.exit.Signal)
@@ -577,6 +603,9 @@ func (s *Supervisor) watchExit(sv *server, g *group) {
 		sv.retryPending = retry
 	}
 	s.mu.Unlock()
+	if fwd != nil {
+		fwd.close()
+	}
 	_ = stopGroup(g.pgid, s.cfg.Grace)
 	s.persist()
 	if retry {
@@ -673,6 +702,7 @@ func (s *Supervisor) awaitListen(sv *server, g *group, port int) {
 				sv.listened = true
 			}
 			s.mu.Unlock()
+			s.syncPreview()
 			s.persist()
 			return
 		}
@@ -926,12 +956,13 @@ func (s *Supervisor) Shutdown() {
 func (s *Supervisor) State() State {
 	s.mu.Lock()
 	type row struct {
-		name string
-		sv   server
+		name    string
+		sv      server
+		preview int
 	}
 	rows := make([]row, 0, len(s.servers))
 	for name, sv := range s.servers {
-		rows = append(rows, row{name, *sv})
+		rows = append(rows, row{name, *sv, s.previewPortLocked(name)})
 	}
 	st := State{
 		Format:      StateFormat,
@@ -941,17 +972,18 @@ func (s *Supervisor) State() State {
 	}
 	s.mu.Unlock()
 	for _, r := range rows {
-		st.Servers[r.name] = s.serverState(r.name, &r.sv)
+		st.Servers[r.name] = s.serverState(r.name, &r.sv, r.preview)
 	}
 	return st
 }
 
 // serverState renders one server; it probes the port of a live group, so it
 // runs outside mu.
-func (s *Supervisor) serverState(name string, sv *server) ServerState {
+func (s *Supervisor) serverState(name string, sv *server, preview int) ServerState {
 	ss := ServerState{
 		Source: sv.source, Desired: sv.desired, StartedAt: sv.startedAt, Exit: sv.exit,
 		LogPath: LogPath(s.cfg.StateDir, name), LastRestartReason: sv.restartReason, OutOfMemory: sv.outOfMemory,
+		PreviewPort: preview,
 	}
 	if sv.starts > 1 {
 		ss.Restarts = sv.starts - 1
@@ -991,5 +1023,89 @@ func (s *Supervisor) persist() {
 	defer s.persistMu.Unlock()
 	if err := writeState(s.cfg.StateDir, s.State()); err != nil {
 		s.logf("%v", err)
+	}
+}
+
+// stableNumber is the container's ZEROPS_StableNumber in env (the last entry
+// wins, as for a started process); 0 when it is absent or not a positive
+// number.
+func stableNumber(env []string) int {
+	value := ""
+	for _, kv := range env {
+		if v, ok := strings.CutPrefix(kv, "ZEROPS_StableNumber="); ok {
+			value = v
+		}
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil || n < 1 {
+		return 0
+	}
+	return n
+}
+
+// previewPortLocked is the preview port of server name: previewPortBase plus
+// the container's slot when name is the declaration's preview server; 0 when
+// there is no base, no slot, another server, or a sum past the port range.
+// Callers hold mu.
+func (s *Supervisor) previewPortLocked(name string) int {
+	if s.previewBase <= 0 || s.slot <= 0 || name != s.previewName {
+		return 0
+	}
+	if port := s.previewBase + s.slot; port <= 65535 {
+		return port
+	}
+	return 0
+}
+
+// syncPreview brings the preview forward to what the declaration says: the
+// preview server's live group, once its port has accepted, is forwarded from
+// its preview port; any other forward ends. A forward that cannot listen
+// (its port is busy) is logged and the server runs on without one.
+func (s *Supervisor) syncPreview() {
+	s.fwdMu.Lock()
+	defer s.fwdMu.Unlock()
+	type open struct {
+		sv           *server
+		g            *group
+		listen, port int
+	}
+	var stale []*forward
+	var opens []open
+	s.mu.Lock()
+	for name, sv := range s.servers {
+		want := 0
+		if sv.g != nil && sv.listened && sv.spec.Port > 0 {
+			want = s.previewPortLocked(name)
+		}
+		if sv.fwd != nil && (want == 0 || sv.fwd.listenPort != want || sv.fwd.targetPort != sv.spec.Port) {
+			stale = append(stale, sv.fwd)
+			sv.fwd = nil
+		}
+		if want > 0 && sv.fwd == nil {
+			opens = append(opens, open{sv, sv.g, want, sv.spec.Port})
+		}
+	}
+	s.mu.Unlock()
+	for _, f := range stale {
+		f.close()
+	}
+	for _, o := range opens {
+		f, err := openForward(o.listen, o.port)
+		if err != nil {
+			s.logf("preview %s: cannot listen on :%d: %v", o.sv.name, o.listen, err)
+			continue
+		}
+		s.mu.Lock()
+		// The group may have ended, or been replaced, while the port opened.
+		keep := o.sv.g == o.g && o.sv.fwd == nil
+		if keep {
+			o.sv.fwd = f
+		}
+		s.mu.Unlock()
+		if !keep {
+			f.close()
+			continue
+		}
+		s.logf("preview %s: :%d -> 127.0.0.1:%d", o.sv.name, o.listen, o.port)
 	}
 }

@@ -5,6 +5,7 @@ package devsup
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -22,6 +23,7 @@ import (
 //
 //	listen       accept on $PORT and fork a grandchild (`sleep`) into the same group
 //	ignore-term  the same, but ignore SIGTERM so only SIGKILL ends it
+//	echo         accept on $PORT and echo every connection's bytes back
 //	exit         print "line 1".."line 30" and exit with $CODE
 func TestMain(m *testing.M) {
 	switch os.Getenv("SUPERVISOR_TEST_HELPER") {
@@ -31,6 +33,8 @@ func TestMain(m *testing.M) {
 		os.Exit(helperListen(false))
 	case "ignore-term":
 		os.Exit(helperListen(true))
+	case "echo":
+		os.Exit(helperEcho())
 	case "exit":
 		for i := 1; i <= 30; i++ {
 			fmt.Printf("line %d\n", i)
@@ -63,6 +67,26 @@ func helperListen(ignoreTerm bool) int {
 			return 0
 		}
 		_ = c.Close()
+	}
+}
+
+func helperEcho() int {
+	var lc net.ListenConfig
+	l, err := lc.Listen(context.Background(), "tcp", ":"+os.Getenv("PORT"))
+	if err != nil {
+		fmt.Println("listen:", err)
+		return 3
+	}
+	defer l.Close()
+	for {
+		c, err := l.Accept()
+		if err != nil {
+			return 0
+		}
+		go func() {
+			defer c.Close()
+			_, _ = io.Copy(c, c)
+		}()
 	}
 }
 

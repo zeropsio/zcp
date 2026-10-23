@@ -247,6 +247,9 @@ func statusText(st devsup.State) string {
 	for _, n := range names {
 		sv := st.Servers[n]
 		fmt.Fprintf(&b, "\n%-20s %-9s pid %-7d restarts %d", n, sv.Status, sv.Pid, sv.Restarts)
+		if sv.PreviewPort != 0 {
+			fmt.Fprintf(&b, "  preview :%d", sv.PreviewPort)
+		}
 		if sv.Exit != nil {
 			fmt.Fprintf(&b, "  exit %d %s at %s", sv.Exit.Code, sv.Exit.Signal, sv.Exit.At.Format(time.RFC3339))
 		}
