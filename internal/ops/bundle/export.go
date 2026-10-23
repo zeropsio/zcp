@@ -29,6 +29,10 @@ func BuildExport(
 	if inputs.ServiceType == "" {
 		return nil, fmt.Errorf("export bundle: runtime service type required")
 	}
+	// PS-3: a pool or Box is never the exported app runtime.
+	if topology.IsPoolOrSandboxType(inputs.ServiceType) {
+		return nil, fmt.Errorf("export bundle: %q is a %s (%s), not an app runtime — export targets the repo-backed app runtime", inputs.TargetHostname, notCarriedKind(inputs.ServiceType), inputs.ServiceType)
+	}
 	if classifications == nil {
 		classifications = map[string]topology.SecretClassification{}
 	}

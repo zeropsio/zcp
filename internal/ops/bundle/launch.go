@@ -88,6 +88,11 @@ func BuildLaunch(
 	if len(inputs.Runtimes) == 0 {
 		return nil, fmt.Errorf("launch bundle: at least one runtime required (Runtimes is empty)")
 	}
+	if err := refuseNonRuntimeLaunchRuntimes(inputs.Runtimes); err != nil {
+		return nil, err
+	}
+	managedServices, notCarried := splitNotCarriedServices(inputs.ManagedServices)
+	inputs.ManagedServices = managedServices
 	var setupAdoptions []string
 	for i := range inputs.Runtimes {
 		if inputs.Runtimes[i].SetupName == "" {
@@ -136,6 +141,7 @@ func BuildLaunch(
 	}
 
 	bundle.Warnings = append(bundle.Warnings, setupAdoptions...)
+	bundle.Warnings = append(bundle.Warnings, notCarriedWarnings(notCarried)...)
 
 	projectVault, envWarnings := composeProjectVault(inputs.ProjectEnvs, classifications)
 	bundle.Warnings = append(bundle.Warnings, envWarnings...)
@@ -411,4 +417,51 @@ func collectZeropsYAMLRunVolumeHosts(runtimes []LaunchRuntimeInput) map[string]b
 		}
 	}
 	return hosts
+}
+
+// splitNotCarriedServices separates the Swarm pools and Zerops Boxes from the
+// managed dependencies the composer promotes. A pool or Box is a service the
+// production import must declare itself (its orchestrator and containers are
+// not a deploy target), so the composer never emits one — it only names it.
+func splitNotCarriedServices(in []ManagedServiceEntry) (carried, notCarried []ManagedServiceEntry) {
+	for _, m := range in {
+		if topology.IsPoolOrSandboxType(m.Type) {
+			notCarried = append(notCarried, m)
+			continue
+		}
+		carried = append(carried, m)
+	}
+	return carried, notCarried
+}
+
+// notCarriedKind is the human name of a service type the launch bundle does
+// not carry: "Swarm pool" or "Zerops Box".
+func notCarriedKind(serviceType string) string {
+	if topology.IsPoolType(serviceType) {
+		return "Swarm pool"
+	}
+	return "Zerops Box"
+}
+
+// refuseNonRuntimeLaunchRuntimes refuses a pool or Box passed as a launch
+// runtime (PS-3): neither is an app, whatever the caller composed.
+func refuseNonRuntimeLaunchRuntimes(runtimes []LaunchRuntimeInput) error {
+	for _, r := range runtimes {
+		if topology.IsPoolOrSandboxType(r.ServiceType) {
+			return fmt.Errorf("launch bundle: runtime %q is a %s (%s), not an app runtime — a pool or Box cannot be a launch runtime", r.ProdHostname, notCarriedKind(r.ServiceType), r.ServiceType)
+		}
+	}
+	return nil
+}
+
+// notCarriedWarnings names each pool / Box the bundle leaves out, so the
+// omission is never silent (PS-3).
+func notCarriedWarnings(notCarried []ManagedServiceEntry) []string {
+	out := make([]string, 0, len(notCarried))
+	for _, n := range notCarried {
+		out = append(out, fmt.Sprintf(
+			"%s %q (%s) is not carried into the production bundle — add it to the production import yourself",
+			notCarriedKind(n.Type), n.Hostname, n.Type))
+	}
+	return out
 }
