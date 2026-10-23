@@ -199,6 +199,16 @@ call that puts main back. Verify a container with
 `zerops_verify serviceHostname="<alias>"` — it reports SSH reachability, the
 supervisor and the dev servers.
 
+**Data.** Every lease of a part uses the part's dev database. The pool's
+service env reaches every leased container, so the database it names — wired
+into the pool's env the way a dev service's is — is the one each branch's app
+connects to, with no change to the app. A migration one branch runs is
+seen by every other branch at once. Keep migrations additive (new tables and
+columns; nothing renamed or dropped), and agree a destructive one with
+whoever works on the other branches before running it — branches whose
+migrations conflict break each other. No lease gets a database or schema of
+its own.
+
 **Pitfalls**
 
 - A deploy of the pool itself changes only containers created after it. A
