@@ -5,9 +5,10 @@ package ops
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -595,7 +596,7 @@ func TestLeaseAcquire_ConcurrentSameKey_ReservesOnce(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 	}
 	close(gate)
-	var got []outcome
+	got := make([]outcome, 0, 2)
 	for range 2 {
 		got = append(got, <-results)
 	}
@@ -674,7 +675,7 @@ func TestLeaseGroup_HeldLeasesOfOneRepositoryAndBranch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LeaseGroup: %v", err)
 	}
-	var aliases []string
+	aliases := make([]string, 0, len(got))
 	for _, m := range got {
 		aliases = append(aliases, m.Alias)
 	}
@@ -686,8 +687,8 @@ func TestLeaseGroup_HeldLeasesOfOneRepositoryAndBranch(t *testing.T) {
 			t.Errorf("member = %+v, want hqpool's container on feat", m)
 		}
 	}
-	if raw, _ := json.Marshal(got); strings.Contains(string(raw), testLease) {
-		t.Errorf("the group carries a lease: %s", raw)
+	if dump := fmt.Sprintf("%+v", got); strings.Contains(dump, testLease) {
+		t.Errorf("the group carries a lease: %s", dump)
 	}
 	if _, err := LeaseGroup(stateDir, "nosuch-1"); err == nil {
 		t.Error("the group of an alias zcp holds no lease for must be an error")
@@ -732,5 +733,24 @@ func TestLeaseViews_CarryAcquiredAt(t *testing.T) {
 	released, err := LeaseRelease(context.Background(), gf.deps, "hqpool-3", true)
 	if err != nil || released.AcquiredAt != want {
 		t.Errorf("release view = %+v, %v; want acquired at %q", released, err, want)
+	}
+}
+
+// A state directory that cannot be written refuses the acquire before any
+// container is taken: the key's lock lives there, ahead of the record.
+func TestLeaseAcquire_StateDirUnwritable_TakesNoContainer(t *testing.T) {
+	t.Parallel()
+	gf := newGroupFixture(t)
+	// A regular file where the state directory should be.
+	blocker := filepath.Join(t.TempDir(), "state")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gf.deps.StateDir = blocker
+	if _, err := LeaseAcquire(context.Background(), gf.deps, groupHQPool, testRepo, "feat"); err == nil {
+		t.Fatal("want a refusal when the state directory cannot be written")
+	}
+	if n := gf.hq.acquireCount(); n != 0 {
+		t.Errorf("the orchestrator reserved %d container(s) for an acquire that could not record one", n)
 	}
 }

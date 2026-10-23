@@ -173,6 +173,17 @@ func TestLeaseTool_GroupAcquire_MembersInPoolsOrder(t *testing.T) {
 func TestLeaseTool_GroupAcquire_BadInput_TypedRefusal(t *testing.T) {
 	t.Parallel()
 	srv, orchs := groupLeaseServer(t)
+	// Read once every case, run in parallel, has ended.
+	t.Cleanup(func() {
+		for name, o := range orchs {
+			o.mu.Lock()
+			n := o.acquires
+			o.mu.Unlock()
+			if n != 0 {
+				t.Errorf("%s reserved %d container(s) on bad input", name, n)
+			}
+		}
+	})
 	for _, tt := range []struct {
 		name     string
 		args     map[string]any
@@ -184,20 +195,13 @@ func TestLeaseTool_GroupAcquire_BadInput_TypedRefusal(t *testing.T) {
 		{"pools on a release", map[string]any{"action": "release", "pools": []string{"hqpool"}, "lease": "hqpool-3"}, "pools"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			res := callTool(t, srv, "zerops_lease", tt.args)
 			text := getTextContent(t, res)
 			if !res.IsError || !strings.Contains(text, platform.ErrInvalidParameter) || !strings.Contains(text, tt.wantText) {
 				t.Errorf("result = (error %v) %s, want INVALID_PARAMETER mentioning %q", res.IsError, text, tt.wantText)
 			}
 		})
-	}
-	for name, o := range orchs {
-		o.mu.Lock()
-		n := o.acquires
-		o.mu.Unlock()
-		if n != 0 {
-			t.Errorf("%s reserved %d container(s) on bad input", name, n)
-		}
 	}
 }
 
@@ -225,7 +229,10 @@ func TestLeaseTool_Schema_OffersPools(t *testing.T) {
 		if tool.Name != "zerops_lease" {
 			continue
 		}
-		raw, _ := json.Marshal(tool.InputSchema)
+		raw, err := json.Marshal(tool.InputSchema)
+		if err != nil {
+			t.Fatal(err)
+		}
 		var schema struct {
 			Properties map[string]struct {
 				Type  string `json:"type"`
