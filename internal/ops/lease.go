@@ -150,6 +150,9 @@ type LeaseView struct {
 	// Prepare is what the repository's prepare command did after an
 	// acquire's checkout (DP-14); nil when none ran.
 	Prepare *LeasePrepare `json:"prepare,omitempty"`
+	// containerDeleted: a release deleted the container because it could not
+	// be reset (DP-15).
+	containerDeleted bool
 }
 
 // leaseTokenKey is the pool service's own env var that its orchestrator takes

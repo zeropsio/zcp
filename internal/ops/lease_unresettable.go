@@ -27,7 +27,9 @@ const unresettableNote = "the container could not be reset (the platform created
 func deleteUnresettable(ctx context.Context, d LeaseDeps, rp *resolvedPool, rec leaseRecord, alias string) (LeaseView, error) {
 	err := rp.api.Delete(ctx, rec.ContainerID, rec.Lease)
 	if err == nil {
-		return dropLeaseRecord(d.StateDir, rec, LeaseStateReleased, unresettableNote)
+		v, dropErr := dropLeaseRecord(d.StateDir, rec, LeaseStateReleased, unresettableNote)
+		v.containerDeleted = true
+		return v, dropErr
 	}
 	var se *platform.SwarmError
 	if errors.As(err, &se) && (se.Reason == "unknown-lease" || se.Reason == "container-not-found") {

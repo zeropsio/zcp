@@ -148,7 +148,7 @@ func TestLeaseCheckout_FailureOnAnUnresettableContainer_DeletesIt(t *testing.T) 
 	_, err := LeaseAcquire(context.Background(), hf.deps, testPoolHost, testRepo, "feature")
 
 	var pe *platform.PlatformError
-	if !errors.As(err, &pe) || !strings.Contains(pe.Message, "released") {
+	if !errors.As(err, &pe) || !strings.Contains(pe.Message, "deleted") {
 		t.Fatalf("err = %v, want the checkout failure with the container handed back", err)
 	}
 	if len(hf.swarm.deletes) != 1 || hf.swarm.deletes[0].id != "c-abc" {

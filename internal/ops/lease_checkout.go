@@ -288,7 +288,7 @@ func classifyCheckoutFailure(err error, onHQ bool) (code, suggestion string) {
 			"The container did not answer ssh. Check that the pool's sshIsolation admits this service and that zerops_lease action=status shows the alias installed"
 	}
 	return platform.ErrSSHDeployFailed,
-		"Check the repo URL and that the container can reach the git host; the lease was released, so acquire again once fixed"
+		"Check the repo URL and that the container can reach the git host"
 }
 
 // hqLeaseCredentialSuggestion is what a lease of a repository on the Mate's HQ
@@ -324,28 +324,46 @@ func exitStatus(err error) int {
 }
 
 // abandonLease hands a container whose checkout failed straight back: unmount,
-// release with reset, drop the record and its alias stanza. If the container
-// cannot be handed back it stays reserved and recorded, and the error says so.
+// release with reset — or delete it when it cannot be reset (DP-15) — and drop
+// the record and its alias stanza. The refusal's message and suggestion both
+// say where the container went (handBackOutcome); one that could not be
+// handed back stays reserved and recorded.
 func abandonLease(ctx context.Context, d LeaseDeps, rec leaseRecord, cause error) error {
 	// The caller's context may be what ended the checkout; the container must
 	// still go back.
-	if _, err := releaseAndDetach(context.WithoutCancel(ctx), d, rec, rec.alias()); err != nil {
-		var pe *platform.PlatformError
-		if errors.As(cause, &pe) {
-			out := *pe
-			out.Message += fmt.Sprintf("; handing the container back failed (%v), so %s stays reserved", err, rec.alias())
-			out.Suggestion = fmt.Sprintf("Release it with zerops_lease action=release lease=%s force=true. %s", rec.alias(), pe.Suggestion)
-			return &out
-		}
-		return fmt.Errorf("%w (and handing the container back failed: %s stays reserved; zerops_lease action=release lease=%s force=true releases it)", cause, rec.alias(), rec.alias())
-	}
+	view, err := releaseAndDetach(context.WithoutCancel(ctx), d, rec, rec.alias())
+	what, next := handBackOutcome(rec.alias(), view, err)
 	var pe *platform.PlatformError
-	if errors.As(cause, &pe) {
-		out := *pe
-		out.Message += "; the container was released and the lease dropped"
-		return &out
+	if !errors.As(cause, &pe) {
+		return fmt.Errorf("%w (%s; %s)", cause, what, next)
 	}
-	return cause
+	out := *pe
+	out.Message += "; " + what
+	out.Suggestion = strings.TrimSuffix(strings.TrimSpace(pe.Suggestion), ".")
+	if out.Suggestion != "" {
+		out.Suggestion += ". "
+	}
+	out.Suggestion += next
+	return &out
+}
+
+// handBackOutcome says where a failed checkout's container went — released,
+// deleted because it could not be reset, gone already, or still reserved —
+// once for the message (what) and once as what to do (next), so the two never
+// disagree.
+func handBackOutcome(alias string, view LeaseView, err error) (what, next string) {
+	switch {
+	case err != nil:
+		return fmt.Sprintf("handing the container back failed (%v), so %s stays reserved and its record is kept", err, alias),
+			fmt.Sprintf("Release it before acquiring again: zerops_lease action=release lease=%s force=true", alias)
+	case view.containerDeleted:
+		return "the container could not be reset (the platform created it for the pool's minContainers, so it has no primary snapshot), so it was deleted and the lease dropped",
+			"This lease is gone; acquire again for another (the pool creates a fresh container). Set the pool's minContainers to 0 and pre-warm containers through the orchestrator"
+	case view.State == LeaseStateLost:
+		return "the orchestrator no longer held the container for this lease, so nothing was left to hand back and the record was dropped",
+			"This lease is gone; acquire again for another"
+	}
+	return "the container was released with a reset and the lease dropped", "This lease is gone; acquire again for another"
 }
 
 // unsavedWork is what a release would lose from a container.
