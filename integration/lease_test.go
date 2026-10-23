@@ -730,7 +730,7 @@ func (s *branchGuardSSH) ExecSSHBackground(ctx context.Context, hostname, comman
 // through the full MCP server, a release of a branch reads every lease of it;
 // one lease with an untracked file refuses the whole branch — no orchestrator
 // is asked, every record stays — and force=true then releases every lease of
-// it with a reset, dropping each record (DP-21).
+// it with a reset, dropping each record (DP-23).
 func TestLease_Integration_ReleaseBranch_OneDirtyLeaseRefusesThenForceReleasesEvery(t *testing.T) {
 	// Non-parallel: t.Chdir and a swap of http.DefaultTransport, as above.
 	t.Chdir(t.TempDir())

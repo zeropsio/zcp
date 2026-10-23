@@ -29,7 +29,7 @@ import (
 // member fails. Each member goes through the one lease's steps: the HQ
 // credential (DP-16), the reservation (DP-3), the checkout (DP-6), then the
 // repository's prepare and the supervisor (DP-13, DP-14). A group release
-// (DP-21) reads every member before it releases any and releases each through
+// (DP-23) reads every member before it releases any and releases each through
 // the one lease's release step.
 
 // leaseLocksDir is where the per-key acquire locks live, apart from the lease
@@ -532,7 +532,7 @@ type releaseMember struct {
 
 // LeaseReleaseGroup releases every lease zcp holds of one repository and
 // branch — the group (DP-17) — all or none unless forced (docs/spec-workflows.md
-// §8 DP-21). Unless force is set it reads every lease first, changing nothing,
+// §8 DP-23). Unless force is set it reads every lease first, changing nothing,
 // and refuses the whole branch when any one holds work a release would lose or
 // cannot be read, naming each lease's own state; nothing is released, no record
 // dropped. Then each lease goes through the one lease's release step

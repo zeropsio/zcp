@@ -2,7 +2,7 @@
 // pool on one branch, all or none, and zcp holds one lease per repository,
 // branch and pool (docs/spec-workflows.md §8 DP-17); a group release reads
 // every lease of a branch before it releases any, and releases all or none
-// unless forced (DP-21).
+// unless forced (DP-23).
 package ops
 
 import (

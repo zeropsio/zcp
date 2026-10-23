@@ -155,7 +155,7 @@ type LeaseView struct {
 	AcquiredAt string `json:"acquiredAt,omitempty"`
 	Note       string `json:"note,omitempty"`
 	// Error is why a release of the lease's branch could not release this
-	// lease, which stays held and recorded (DP-21); "" on every other view.
+	// lease, which stays held and recorded (DP-23); "" on every other view.
 	Error string `json:"error,omitempty"`
 	// Prepare is what the repository's prepare command did after an
 	// acquire's checkout (DP-14); nil when none ran.
@@ -671,7 +671,7 @@ func LeaseRelease(ctx context.Context, d LeaseDeps, alias string, force bool) (L
 // cannot be reset (DP-15) — and drop the record and its alias stanza; a
 // container the guard could not reach is reported lost, and the guard's note
 // leads the view's. It is the one release step of a lease, alone or as a
-// member of its branch's release (DP-21).
+// member of its branch's release (DP-23).
 func releaseGuarded(ctx context.Context, d LeaseDeps, rec leaseRecord, guard leaseGuardResult) (LeaseView, error) {
 	view, err := releaseAndDetach(ctx, d, rec, rec.alias())
 	if err != nil {
