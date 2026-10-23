@@ -3933,7 +3933,9 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   leaving the checkout's branch and origin alone. A dev pool gets it the same way (`spec-workflows.md` §8 DP-16): inside a
   Mate an acquire of a repository on HQ writes it to the pool's `GIT_TOKEN` when zcp's fingerprint for that pool — kept in
   `.zcp/state/leases/credentials/<pool>.json`, a pool having no record of its own — is absent or differs, and the same pass
-  renews every pool holding one. The helper persisted in `.git/config` for HQ's host answers the dev service from
+  renews every pool holding one. A pool that keys a pair after a pool migration (`spec-workflows.md` §13 PM-10) is renewed
+  with its pair, by the pool service id the pair records and over no ssh: the pair's record takes the per-pool
+  fingerprint over and the per-pool record goes, so the pool is never renewed twice. The helper persisted in `.git/config` for HQ's host answers the dev service from
   `GIT_TOKEN` and the Mate's own shell from `zcp hq git-credential`, which reads the enrollment at
   each request and answers for the enrolled HQ only — and, for github.com, with HQ's per-call token
   (§5.10).
@@ -3943,7 +3945,7 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
 
 `hq_pair.go`, `hq_change.go`, `hq_change_description.go`, `hq_describe_retry.go`, `hq_retry.go`,
 `hq_wiring.go`, `hq_pair_lock.go`, `deploy_git_push.go`, `workflow/pair_lock.go`,
-`ops/hq_base_branch.go`, `ops/lease_pool_credential.go`, `internal/hq/changes.go`, `internal/hq/gitcredential.go`;
+`ops/hq_base_branch.go`, `ops/lease_pool_credential.go`, `ops/pool_credential_record.go`, `internal/hq/changes.go`, `internal/hq/gitcredential.go`;
 `TestReconcileHQRepositories_*`, `TestHQPass_LearnsAMergeWithoutChangingTheCheckout`,
 `TestAWiredPairDeploysDirectlyAndIsNeverSentToPush`, `TestGitPushToHQ_RefusedForPlainGitOnABranch`,
 `TestAMateKeepingItsCodeInHQPlansOnlyStandardPairs`, `TestBuildBaseBranchCommand_*`,
@@ -3951,7 +3953,8 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
 `TestHQNotServingWords`, `TestUpsertServiceMeta_LegacyPendingDelivery_IsDropped`,
 `TestClient_Bounded_EndsATryHQDoesNotAnswer`, `TestAPassSkipsAPairHeldElsewhere`, `TestLockPair`,
 `TestDescribeChange_WaitsWhileItsPairIsHeld`, `TestClient_*`, `TestGitCredential_*`,
-`TestPersistedCredentialHelper_*`, `TestReconcileHQRepositories_RenewsThePoolsCredentialAfterTheMateEnrollsAgain` — against a fake HQ that serves real git with HQ's ref rules.
+`TestPersistedCredentialHelper_*`, `TestReconcileHQRepositories_RenewsThePoolsCredentialAfterTheMateEnrollsAgain`,
+`TestHQPass_PoolDevHalf_RenewsOnPoolNoSSH`, `TestHQPass_PoolDevHalf_TakesOverThePoolsCredentialRecord` — against a fake HQ that serves real git with HQ's ref rules.
 
 **A new Mate stands up from its recipe in one call (D32, 2026-09-30).** Adding Wren to Beviro —
 whose recipe is `0 — AI Agent/import.yaml` on `main` of the application's recipe repository in HQ,

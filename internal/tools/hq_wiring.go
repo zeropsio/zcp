@@ -172,7 +172,8 @@ func reconcileMateRepositories(
 // Inside a Mate it also renews the credential of every pool an acquire gave
 // it (renewHQPoolCredentials): a lease is held until released, so the next
 // acquire may be far off, while its leases need the new credential from
-// their next fresh session.
+// their next fresh session. A pool that keys a pair is renewed with its pair,
+// from the pair's record (renewHQPairCredential), and never twice.
 //
 // Returns one report line per pair, then per pool, that has something to say,
 // by hostname so the message is stable.
@@ -247,7 +248,7 @@ func reconcileHQPairs(
 	var report []string
 	for _, m := range pending {
 		state := readHQPairState(stateDir, m.Hostname)
-		if pace == hqPassBackedOff && !hqAttemptDue(state, now) && !hqPairCredentialStale(m, hqc) {
+		if pace == hqPassBackedOff && !hqAttemptDue(state, now) && !hqPairCredentialStale(m, hqc, rt) {
 			continue
 		}
 		// A pair another process runs git on is left to it, and no attempt
@@ -301,7 +302,8 @@ func passHQPair(
 		attempt := wireHQPair(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, self, m, hqRepoNameOf(m))
 		return attempt.line, attempt.wired
 	case hqPairWired(m):
-		if hqPairCredentialStale(m, hqc) {
+		takeOverPoolCredential(stateDir, hqc, m)
+		if hqPairCredentialStale(m, hqc, rt) {
 			if line := renewHQPairCredential(ctx, client, rt.ProjectID, stateDir, hqc, m); line != "" {
 				return line, false
 			}
@@ -311,37 +313,116 @@ func passHQPair(
 	return "", false
 }
 
-// hqPairCredentialStale reports whether a wired pair's dev service holds
-// another Mate credential than the enrollment's: the Mate enrolled again —
-// a redeployed zcp does — and HQ revoked the one it holds. A pair wired before
-// its record named the credential is renewed once.
-func hqPairCredentialStale(m *workflow.ServiceMeta, hqc hq.Client) bool {
+// hqPairCredentialStale reports whether a wired pair's dev half holds another
+// Mate credential than the enrollment's: the Mate enrolled again — a
+// redeployed zcp does — and HQ revoked the one it holds. A pair wired before
+// its record named the credential is renewed once, and so is a pair just
+// keyed by its dev pool (the re-key clears the dev service's fingerprint).
+// Outside a Mate zcp never writes a pool's GIT_TOKEN (docs/spec-workflows.md
+// §8 DP-16), so a pool keying a pair is never stale there.
+func hqPairCredentialStale(m *workflow.ServiceMeta, hqc hq.Client, rt runtime.Info) bool {
+	if m.DevIsPool() && !rt.MateEnabled {
+		return false
+	}
 	return hqPairWired(m) && m.GitPushState == topology.GitPushConfigured &&
 		m.HQ.CredentialFingerprint != hqc.CredentialFingerprint()
 }
 
-// renewHQPairCredential gives a wired pair's dev service the Mate credential
-// as it is now, as the service secret its sessions' git reads, and records
-// which one it holds. Only the secret: the checkout's branch, origin and
-// helper stay as the agent left them. "" once renewed, else the line saying
-// it was not.
+// renewHQPairCredential gives a wired pair's dev half the Mate credential as
+// it is now, as the service secret its sessions' git reads, and records which
+// one it holds. Only the secret: the checkout's branch, origin and helper
+// stay as the agent left them. For a pair keyed by its dev pool the secret is
+// the pool's, which every lease's fresh session reads — written by the id the
+// pair records, over no ssh. "" once renewed, else the line saying it was
+// not. A pair gone from disk meanwhile (a pool migration re-keyed it) keeps
+// no stub of it.
 func renewHQPairCredential(ctx context.Context, client platform.Client, projectID, stateDir string, hqc hq.Client, m *workflow.ServiceMeta) string {
-	svc, err := ops.LookupService(ctx, client, projectID, m.Hostname)
+	serviceID, err := hqPairCredentialHolder(ctx, client, projectID, m)
 	if err == nil {
-		_, err = ops.EnvSetService(ctx, client, svc.ID, ops.GitTokenEnvKey, hqc.Credential(), true)
+		_, err = ops.EnvSetService(ctx, client, serviceID, ops.GitTokenEnvKey, hqc.Credential(), true)
 	}
 	if err != nil {
+		if m.DevIsPool() {
+			return fmt.Sprintf("the Mate enrolled with HQ again, and git in the leases of the dev pool %s cannot reach HQ until the pool's GIT_TOKEN holds the new credential, which could not be written (%v) — retrying on the next pass; a lease's next fresh session reads it once written.", m.Hostname, err)
+		}
 		return fmt.Sprintf("the Mate enrolled with HQ again, and git in %s's sessions cannot reach HQ until it holds the new credential, which could not be written (%v) — retrying on the next pass; your own shell's git is unaffected.", m.Hostname, err)
 	}
 	fingerprint := hqc.CredentialFingerprint()
 	_ = workflow.UpsertServiceMeta(stateDir, m.Hostname, func(meta *workflow.ServiceMeta, existed bool) error {
-		if existed && meta.HQ != nil {
-			meta.HQ.CredentialFingerprint = fingerprint
+		if !existed || meta.HQ == nil {
+			return workflow.ErrSkipWrite
 		}
+		meta.HQ.CredentialFingerprint = fingerprint
 		return nil
 	})
 	m.HQ.CredentialFingerprint = fingerprint
 	return ""
+}
+
+// hqPairCredentialHolder is the service whose GIT_TOKEN holds a wired pair's
+// Mate credential: its dev service, by hostname — or, for a pair keyed by its
+// dev pool, the pool, by the id the pair records (devPool.serviceId): a pool
+// re-created under the hostname is another service, holding nothing zcp
+// wrote. A pair that records no id finds its pool by hostname.
+func hqPairCredentialHolder(ctx context.Context, client platform.Client, projectID string, m *workflow.ServiceMeta) (string, error) {
+	if m.DevIsPool() && m.DevPool.ServiceID != "" {
+		return m.DevPool.ServiceID, nil
+	}
+	svc, err := ops.LookupService(ctx, client, projectID, m.Hostname)
+	if err != nil {
+		return "", fmt.Errorf("find %s: %w", m.Hostname, err)
+	}
+	return svc.ID, nil
+}
+
+// takeOverPoolCredential makes a pair keyed by its dev pool the one home of
+// the fingerprint of the Mate credential zcp put on the pool (docs/spec-workflows.md
+// §8 DP-16). An acquire keeps that fingerprint per pool
+// (ops.PoolCredentialRecord); once the pool keys a pair, the pair's HQ record
+// keeps it, the pass renews the pool from it, and the per-pool record goes —
+// so the per-pool renewal (renewHQPoolCredentials) never renews the pool a
+// second time. The record is taken over only when it names the pool service
+// the pair records; its fingerprint is adopted when it tells more than the
+// pair's — the pair names none yet (the re-key clears the dev service's) or
+// the record names the credential the enrollment holds now. A record of
+// another pool service is left to the per-pool renewal, which drops it once
+// that service is gone.
+func takeOverPoolCredential(stateDir string, hqc hq.Client, m *workflow.ServiceMeta) {
+	if !m.DevIsPool() || m.DevPool.ServiceID == "" || m.HQ == nil {
+		return
+	}
+	serviceID, fingerprint, found := ops.PoolCredentialRecord(stateDir, m.Hostname)
+	if !found || serviceID != m.DevPool.ServiceID {
+		return
+	}
+	current := hqc.CredentialFingerprint()
+	if adoptPoolFingerprint(m.HQ.CredentialFingerprint, fingerprint, current) {
+		adopted := false
+		err := workflow.UpdateServiceMeta(stateDir, m.Hostname, func(meta *workflow.ServiceMeta) error {
+			if !meta.DevIsPool() || meta.DevPool.ServiceID != serviceID || meta.HQ == nil ||
+				!adoptPoolFingerprint(meta.HQ.CredentialFingerprint, fingerprint, current) {
+				return workflow.ErrSkipWrite
+			}
+			meta.HQ.CredentialFingerprint, adopted = fingerprint, true
+			return nil
+		})
+		if err != nil {
+			// The per-pool record stays the renewal's until a pass can write
+			// the pair's.
+			return
+		}
+		if adopted {
+			m.HQ.CredentialFingerprint = fingerprint
+		}
+	}
+	_ = ops.ForgetPoolCredentialRecord(stateDir, m.Hostname)
+}
+
+// adoptPoolFingerprint reports whether the per-pool record's fingerprint is
+// the better word on what the pool holds than the pair's own: the pair names
+// none, or the record names the credential the enrollment holds now.
+func adoptPoolFingerprint(pair, record, current string) bool {
+	return record != pair && (pair == "" || record == current)
 }
 
 // lazySelf reads the Mate's own state from HQ at most once, when first asked:
@@ -413,7 +494,15 @@ func keepHQPairCurrent(
 // HQ's; one with commits HQ's lacks is left, with the step that keeps them.
 // "" when there is nothing to say — a check that could not run among it: the
 // next pass runs it again.
+//
+// A pair keyed by its dev pool has no checkout of its own — the pool's
+// hostname answers from a random container, possibly someone's lease — so
+// there is no `main` to check: each lease checks its branch out from the
+// repository afresh.
 func hqPairMain(ctx context.Context, sshDeployer ops.SSHDeployer, hqc hq.Client, m *workflow.ServiceMeta) string {
+	if m.DevIsPool() {
+		return ""
+	}
 	dir := hqPairWorkingDir(m)
 	out, err := sshDeployer.ExecSSH(ctx, m.Hostname, ops.BuildMainSyncCommand(dir, hqc.RepoURL(m.HQ.AppID, m.HQ.Repo)))
 	if err != nil {
@@ -491,8 +580,13 @@ func hqPairWired(m *workflow.ServiceMeta) bool {
 // retried when it is this pair's repository on this Mate's HQ (address); any
 // other remote is the user's own. Deciding that before HQ is asked matters: HQ
 // makes the repository it is asked for.
+//
+// A pair keyed by its dev pool never needs wiring: wiring sets git-push up on
+// the dev service's checkout and puts it on `main`, and a pool holds no
+// checkout of its own. The pool migration moves only a pair that already has
+// its origin.
 func hqPairNeedsRepository(m *workflow.ServiceMeta, address string) bool {
-	if m == nil || !m.IsComplete() {
+	if m == nil || !m.IsComplete() || m.DevIsPool() {
 		return false
 	}
 	if hqPairWired(m) && m.GitPushState == topology.GitPushConfigured {
@@ -555,6 +649,9 @@ func wireHQPair(
 	m *workflow.ServiceMeta,
 	repoName string,
 ) hqWiringOutcome {
+	if m.DevIsPool() {
+		return hqWiringOutcome{line: poolPairNotWired(m)}
+	}
 	if line, remedy := reservedRepository(m.Hostname, repoName); line != "" {
 		return hqWiringOutcome{line: line, remedy: remedy}
 	}
@@ -641,6 +738,19 @@ func wireHQPair(
 		line += "; " + kept
 	}
 	return hqWiringOutcome{line: line, wired: true}
+}
+
+// poolPairNotWired is why a pass does not wire a pair keyed by its dev pool —
+// reached when HQ holds the Mate in another application than the pair's
+// repository: wiring runs git-push setup and git on the dev service's
+// checkout, and the pool's hostname reaches a random container of the pool,
+// possibly someone's lease. The pair keeps its repository where it is.
+func poolPairNotWired(m *workflow.ServiceMeta) string {
+	kept := "it has no repository in HQ"
+	if hqPairWired(m) {
+		kept = fmt.Sprintf("it keeps its repository %q in the application it was wired in", m.HQ.Repo)
+	}
+	return fmt.Sprintf("the pair keyed by the dev pool %s is not wired again: a pool holds no checkout of its own to wire, and its hostname reaches a random one of its containers; %s, and a lease of the pool checks out whichever repository it is given", m.Hostname, kept)
 }
 
 // reservedRepository is why the pair hostname gets no repository repoName in

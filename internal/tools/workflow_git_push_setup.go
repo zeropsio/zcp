@@ -185,6 +185,9 @@ func handleGitPushSetup(
 				Args:   map[string]string{"workflow": "bootstrap", "route": "adopt"},
 			})), nil, nil
 	}
+	if meta.DevIsPool() {
+		return poolPairGitPushSetupRefusal(input.Service, meta), nil, nil
+	}
 	switch meta.PushSourceCheckFor(input.Service) {
 	case topology.PushSourceOK:
 		// proceed
@@ -319,6 +322,21 @@ func handleGitPushSetup(
 		return confirmGitPushSetupContainer(ctx, client, httpClient, sshDeployer, projectID, stateDir, hqAddress(), input, meta)
 	}
 	return confirmGitPushSetupLocal(ctx, stateDir, input, meta)
+}
+
+// poolPairGitPushSetupRefusal is git-push-setup's answer for either hostname
+// of a pair keyed by its dev pool (docs/spec-workflows.md §13 PM-10): the
+// setup probes, points origin and keeps a credential helper in the push
+// source's checkout over ssh, and the pool's hostname reaches a random one of
+// its containers, possibly someone's lease (§8 PS-3). Git runs in a lease of
+// the pool instead, which checks its branch out with the pool's own
+// GIT_TOKEN (§8 DP-6) — a token the person owns, asked for, never made up.
+func poolPairGitPushSetupRefusal(service string, meta *workflow.ServiceMeta) *mcp.CallToolResult {
+	return convertError(platform.NewPlatformError(
+		platform.ErrInvalidParameter,
+		fmt.Sprintf("git-push-setup target %q is a half of the pair keyed by the dev pool %q: a pool holds no checkout of its own to set git-push up in, and its hostname reaches a random one of its containers", service, meta.Hostname),
+		fmt.Sprintf("Run git in a lease of the pool: zerops_lease action=\"acquire\" pool=%q branch=<branch> checks the branch out with the pool's own GIT_TOKEN (a token the person owns — ask them for it, never make one up), and you push from the lease's checkout; a stage deploys from the lease (zerops_deploy sourceService=\"<lease alias>\").", meta.Hostname),
+	), WithRecoveryStatus())
 }
 
 // localGitProbeReader is the local-mode auth-probe hook. Production wires
@@ -515,6 +533,35 @@ func confirmGitPushSetupLocal(
 	return jsonResult(attachWorkSessionState(body, stateDir)), nil, nil
 }
 
+// containerGitPushSetupRefusal is container git-push-setup's refusal before
+// any probe, nil when it may go on. Every step after it runs on the push
+// source's checkout over ssh, which a pair keyed by its dev pool has not —
+// zcp's own HQ wiring reaches here as well as the action. The remote must be
+// HTTPS: SCP-form SSH remotes (git@github.com:owner/repo.git) don't
+// authenticate via PAT-over-HTTPS (the SSH deploy-key flow is a separate
+// phase, not yet implemented), and over http:// the PAT would travel in
+// cleartext (tell==check — the message already says HTTPS).
+func containerGitPushSetupRefusal(input WorkflowInput, meta *workflow.ServiceMeta) *mcp.CallToolResult {
+	if meta.DevIsPool() {
+		return poolPairGitPushSetupRefusal(input.Service, meta)
+	}
+	if scpStyleRemote.MatchString(input.RemoteURL) {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("Container git-push-setup uses HTTPS + PAT auth (session-env credential helper); SCP-form SSH remote %q is not supported.", input.RemoteURL),
+			"Pass an HTTPS URL: https://github.com/<owner>/<repo>.git. SSH deploy-key flow is not yet implemented.",
+		), WithRecoveryStatus())
+	}
+	if u, parseErr := url.Parse(input.RemoteURL); parseErr != nil || u.Scheme != "https" {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("Container git-push-setup requires an HTTPS remote URL; got %q", topology.RedactRepoURLCredentials(input.RemoteURL)),
+			"Pass an HTTPS URL: https://github.com/<owner>/<repo>.git.",
+		), WithRecoveryStatus())
+	}
+	return nil
+}
+
 // confirmGitPushSetupContainer implements the container-mode probe-first
 // verifier. Reached only when rt.InContainer is true. Probe-first principle:
 // no project state is mutated until the auth probe proves the supplied
@@ -528,28 +575,8 @@ func confirmGitPushSetupContainer(
 	input WorkflowInput,
 	meta *workflow.ServiceMeta,
 ) (*mcp.CallToolResult, any, error) {
-	// HTTPS-only: SCP-form SSH remotes (git@github.com:owner/repo.git)
-	// don't authenticate via PAT-over-HTTPS. Reject early with a clear
-	// remediation pointing at HTTPS form. (SSH deploy-key flow is a
-	// separate phase, not yet implemented.)
-	if scpStyleRemote.MatchString(input.RemoteURL) {
-		return convertError(platform.NewPlatformError(
-			platform.ErrInvalidParameter,
-			fmt.Sprintf("Container git-push-setup uses HTTPS + PAT auth (session-env credential helper); SCP-form SSH remote %q is not supported.", input.RemoteURL),
-			"Pass an HTTPS URL: https://github.com/<owner>/<repo>.git. SSH deploy-key flow is not yet implemented.",
-		), WithRecoveryStatus()), nil, nil
-	}
-	u, parseErr := url.Parse(input.RemoteURL)
-	if parseErr != nil || u.Scheme != "https" {
-		//nolint:nilerr // parseErr surfaced via error-code wrap below; caller wants structured error not raw url.Parse error
-		return convertError(platform.NewPlatformError(
-			platform.ErrInvalidParameter,
-			// http:// is rejected, not just non-URLs: the PAT would
-			// travel in cleartext over an http remote (tell==check — the
-			// message already says HTTPS).
-			fmt.Sprintf("Container git-push-setup requires an HTTPS remote URL; got %q", topology.RedactRepoURLCredentials(input.RemoteURL)),
-			"Pass an HTTPS URL: https://github.com/<owner>/<repo>.git.",
-		), WithRecoveryStatus()), nil, nil
+	if refusal := containerGitPushSetupRefusal(input, meta); refusal != nil {
+		return refusal, nil, nil
 	}
 
 	// O3 check-before-mutate (B6c/GPS-5): a pair already configured with this
