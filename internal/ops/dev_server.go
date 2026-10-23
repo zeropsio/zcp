@@ -17,6 +17,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/devsup"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // DevServerResult is the standardized response from dev_server actions.
@@ -459,6 +460,18 @@ func verifyDevServerTarget(ctx context.Context, client platform.Client, projectI
 		return platform.NewPlatformError(platform.ErrServiceNotFound,
 			fmt.Sprintf("No service with hostname %q in this project", hostname),
 			"Pass the hostname of a dev container that exists in the current project (e.g. apidev, appdev, workerdev).")
+	}
+	// A pool's or Box's own hostname reaches an arbitrary container over SSH
+	// (PS-3): a dev server in a pool runs in a lease, addressed by its alias.
+	switch typeVersion := target.ServiceStackTypeInfo.ServiceStackTypeVersionName; {
+	case topology.IsPoolType(typeVersion):
+		return platform.NewPlatformError(platform.ErrInvalidParameter,
+			fmt.Sprintf("%q is a Swarm pool, not a dev container", hostname),
+			fmt.Sprintf("Lease one of its containers with zerops_lease action=acquire pool=%q and pass the lease alias as hostname.", hostname))
+	case topology.IsSandboxType(typeVersion):
+		return platform.NewPlatformError(platform.ErrInvalidParameter,
+			fmt.Sprintf("%q is a Zerops Box, not a dev container", hostname),
+			"A Box hosts sandboxes; run dev servers in an app's dev container or a dev-pool lease.")
 	}
 	switch target.Status {
 	case platform.ServiceStatusFailed:
