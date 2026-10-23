@@ -399,7 +399,7 @@ func leaseContainerStillReserved(ctx context.Context, d LeaseDeps, rec leaseReco
 	if err != nil {
 		return false, err
 	}
-	containers, err := rp.api.Containers(ctx)
+	containers, err := d.containers(ctx, rp)
 	if err != nil {
 		return false, fmt.Errorf("list pool containers: %w", err)
 	}

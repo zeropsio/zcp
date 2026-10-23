@@ -55,6 +55,24 @@ type LeaseDeps struct {
 	// Env reads one key of the container's current env; nil means the live
 	// env (liveContainerEnv).
 	Env func(key string) (string, bool)
+	// ReadTimeout bounds one orchestrator read (a container listing); zero
+	// means leaseReadTimeout. The HTTP client allows minutes, for a start or
+	// a reset; a read that hangs must not hold a status call that long.
+	ReadTimeout time.Duration
+}
+
+// leaseReadTimeout is the default ReadTimeout.
+const leaseReadTimeout = 15 * time.Second
+
+// containers lists the pool's containers within the read budget.
+func (d LeaseDeps) containers(ctx context.Context, rp *resolvedPool) ([]platform.SwarmContainer, error) {
+	budget := d.ReadTimeout
+	if budget == 0 {
+		budget = leaseReadTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	return rp.api.Containers(ctx)
 }
 
 // env reads key from the container's current env.
@@ -244,7 +262,7 @@ func listPoolLeases(ctx context.Context, d LeaseDeps, pool string, records []lea
 		}
 		return nil, err
 	}
-	containers, err := rp.api.Containers(ctx)
+	containers, err := d.containers(ctx, rp)
 	if err != nil {
 		return nil, leaseOrchestratorError(pool, "list containers", err)
 	}

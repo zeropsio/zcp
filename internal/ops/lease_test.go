@@ -592,3 +592,34 @@ func TestLiveContainerEnv_FileWinsOverAStaleProcessEnv(t *testing.T) {
 		t.Errorf("without a live file = %q %v, want the process env's value", v, ok)
 	}
 }
+
+// hangingListSwarm is an orchestrator that accepts a container listing and
+// never answers it.
+type hangingListSwarm struct{ *fakeSwarm }
+
+func (hangingListSwarm) Containers(ctx context.Context) ([]platform.SwarmContainer, error) {
+	<-ctx.Done()
+	return nil, fmt.Errorf("list: %w", ctx.Err())
+}
+
+// A status read gives up on an orchestrator that does not answer within the
+// read budget, however long the client allows a start or a reset to take.
+func TestLeaseList_HangingOrchestrator_BoundedByTheReadBudget(t *testing.T) {
+	t.Parallel()
+	fx := newLeaseFixture(t)
+	fx.deps.Swarm = func(string, string) SwarmAPI { return hangingListSwarm{fx.swarm} }
+	fx.deps.ReadTimeout = 50 * time.Millisecond
+	done := make(chan error, 1)
+	go func() {
+		_, err := LeaseList(context.Background(), fx.deps, testPoolHost)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("a listing the orchestrator never answered reported no error")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("status still waiting on the orchestrator after 5s")
+	}
+}

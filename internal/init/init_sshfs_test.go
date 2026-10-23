@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	zcpinit "github.com/zeropsio/zcp/internal/init"
+	"github.com/zeropsio/zcp/internal/platform"
 )
 
 func TestRunSSHFS_SingleHostname(t *testing.T) {
@@ -362,5 +363,34 @@ func TestInitSSHFS_AliasInstallFails_SkipsLeaseMounts(t *testing.T) {
 	}
 	if len(executed) != 1 {
 		t.Errorf("commands = %q, want only the failed alias install", executed)
+	}
+}
+
+// TestInitSSHFS_LeaseMount_SameOptionsAsAcquire: a lease mount restored at
+// boot behaves like the one acquire made — the server mounter's sshfs
+// options, reconnect included.
+func TestInitSSHFS_LeaseMount_SameOptionsAsAcquire(t *testing.T) {
+	// Not parallel — mutates commandRunner and the sshfs/lease package vars.
+	stateDir := t.TempDir()
+	zcpinit.SetSSHFSMountBase(t.TempDir())
+	zcpinit.SetLeaseStateDir(stateDir)
+	zcpinit.SetLeaseAliasFile(filepath.Join(t.TempDir(), "zcp-leases.conf"))
+	t.Cleanup(func() { zcpinit.ResetSSHFSMountBase(); zcpinit.ResetLeaseStateDir(); zcpinit.ResetLeaseAliasFile() })
+	t.Setenv("ZCP_SSHFS_HOSTNAMES", "")
+	writeLeaseRecordFile(t, stateDir, "apppool", 3, "node-id-3.runtime.apppool.zerops")
+	var mountCmd string
+	zcpinit.SetCommandRunner(func(name string, args ...string) error {
+		if joined := strings.Join(args, " "); strings.Contains(joined, "unit create sshfs-apppool-3") {
+			mountCmd = joined
+		}
+		return nil
+	})
+	t.Cleanup(func() { zcpinit.ResetCommandRunner() })
+
+	if err := zcpinit.RunSSHFS(); err != nil {
+		t.Fatalf("RunSSHFS() error: %v", err)
+	}
+	if !strings.Contains(mountCmd, "-o "+platform.SSHFSMountOptions+" ") {
+		t.Errorf("lease mount %q does not use the server mounter's options %q", mountCmd, platform.SSHFSMountOptions)
 	}
 }

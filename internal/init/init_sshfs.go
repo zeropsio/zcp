@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 )
 
@@ -52,7 +53,7 @@ func RunSSHFS() error {
 			continue
 		}
 		fmt.Fprintf(os.Stderr, "  → SSHFS mount: %s\n", hostname)
-		if err := mountSSHFS(hostname); err != nil {
+		if err := mountSSHFS(hostname, serviceMountOptions); err != nil {
 			fmt.Fprintf(os.Stderr, "  ! sshfs mount %s: %v\n    (continuing — /var/www/%s stays unmounted)\n", hostname, err, hostname)
 		}
 	}
@@ -95,11 +96,16 @@ func restoreLeases() {
 	}
 	for _, alias := range aliases {
 		fmt.Fprintf(os.Stderr, "  → SSHFS mount: lease %s\n", alias)
-		if err := mountSSHFS(alias); err != nil {
+		if err := mountSSHFS(alias, platform.SSHFSMountOptions); err != nil {
 			fmt.Fprintf(os.Stderr, "  ! sshfs mount lease %s: %v\n    (continuing — /var/www/%s stays unmounted)\n", alias, err, alias)
 		}
 	}
 }
+
+// serviceMountOptions are the sshfs options of a service mount made at boot
+// (ZCP_SSHFS_HOSTNAMES); a lease mount takes platform.SSHFSMountOptions, the
+// options acquire used.
+const serviceMountOptions = "StrictHostKeyChecking=no,ServerAliveInterval=15,ServerAliveCountMax=3"
 
 // mountSSHFS creates a directory and a zsc unit for one SSHFS mount.
 //
@@ -107,7 +113,7 @@ func restoreLeases() {
 // "transport endpoint is not connected", so MkdirAll fails with "file exists".
 // That mount point is lazily unmounted and the mkdir retried once. sshfs runs
 // as root under `sudo zsc`, so the unmount needs sudo too.
-func mountSSHFS(hostname string) error {
+func mountSSHFS(hostname, options string) error {
 	mountPath := filepath.Join(sshfsMountBase, hostname)
 	if err := os.MkdirAll(mountPath, 0755); err != nil {
 		if umountErr := commandRunner("sudo", "umount", "-l", mountPath); umountErr != nil {
@@ -120,8 +126,8 @@ func mountSSHFS(hostname string) error {
 
 	unitName := "sshfs-" + hostname
 	sshfsCmd := fmt.Sprintf(
-		"sshfs -f -o StrictHostKeyChecking=no,ServerAliveInterval=15,ServerAliveCountMax=3 %s:/var/www %s",
-		hostname, mountPath,
+		"sshfs -f -o %s %s:/var/www %s",
+		options, hostname, mountPath,
 	)
 	return commandRunner("sudo", "-E", "zsc", "unit", "create", unitName, sshfsCmd)
 }

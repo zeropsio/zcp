@@ -17,6 +17,12 @@ const (
 	unmountTimeout     = 10 * time.Second
 )
 
+// SSHFSMountOptions are the sshfs options of a mount of a container's
+// /var/www: reconnect after a dropped connection, keepalives, and symlinks
+// rewritten to stay inside the mount. `zcp init` restores a lease mount with
+// the same options acquire used.
+const SSHFSMountOptions = "reconnect,StrictHostKeyChecking=no,ServerAliveInterval=15,ServerAliveCountMax=3,transform_symlinks,no_check_root"
+
 // SystemMounter implements ops.Mounter using real system commands.
 // Only works on Zerops containers where sshfs, zsc, and /proc/mounts are available.
 type SystemMounter struct {
@@ -95,8 +101,8 @@ func (m *SystemMounter) Mount(ctx context.Context, hostname, localPath string) e
 
 	unitName := "sshfs-" + hostname
 	sshfsCmd := fmt.Sprintf(
-		"sshfs -f -o reconnect,StrictHostKeyChecking=no,ServerAliveInterval=15,ServerAliveCountMax=3,transform_symlinks,no_check_root %s:/var/www %s",
-		hostname, localPath,
+		"sshfs -f -o %s %s:/var/www %s",
+		SSHFSMountOptions, hostname, localPath,
 	)
 
 	if err := m.exec(ctx, mountCreateTimeout, "sudo", "-E", "zsc", "unit", "create", unitName, sshfsCmd); err != nil {
