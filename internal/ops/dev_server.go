@@ -118,6 +118,12 @@ type DevServerResult struct {
 	// public address; set only for a lease, and only while the pool's
 	// subdomain is on.
 	PreviewURL string `json:"previewUrl,omitempty"`
+	// SiblingEnv is, for a start or restart on a lease whose declaration
+	// names siblingEnv, the overlay zcp set on its supervisor before it: each
+	// variable set to the container hostname of the branch's lease on the
+	// pool it names, and each left to the container's own env
+	// (docs/spec-workflows.md §8 DP-22).
+	SiblingEnv *LeaseSiblingEnv `json:"siblingEnv,omitempty"`
 	// Unreported: the call read several servers and reports none of them
 	// alone (a status of a dev service with several), so it says nothing of
 	// whether "the" server runs.
@@ -272,6 +278,11 @@ func ExecuteDevServer(
 		// A lease's supervisor is zcp's to start: its container's run.start
 		// never runs again after the reset of an earlier release (DP-13).
 		ds, why, err = recoverLeaseSupervisor(ctx, ssh, p.Hostname, p.Root, ds, err)
+		if ds != nil {
+			// It runs the entries naming its pool: the container's hostname
+			// env is the pool's.
+			ds.Service = p.lease.Pool
+		}
 	}
 	var noSup *NoSupervisorError
 	var unresponsive *SupervisorUnresponsiveError
@@ -671,11 +682,16 @@ func declarationProblem(ds *DevServers) error {
 // wantedServer is the declaration entry a start asks for: the declared one,
 // with what the call passes replacing its command, port, health path and cwd.
 // In variant B (a code volume's declaration, root set) it names the dev
-// service whose supervisor runs it.
+// service whose supervisor runs it. An entry a lease adds names the lease's
+// pool, so in a repository of several parts only that part's leases run it;
+// a declared entry keeps its service, or its lack of one.
 func wantedServer(p DevServerParams, name string, declared devsup.Server, isDeclared bool) (devsup.Server, error) {
 	want := declared
 	want.Name = name
-	if p.Root != "" && want.Service == "" {
+	switch {
+	case p.lease != nil && !isDeclared:
+		want.Service = p.lease.Pool
+	case p.Root != "" && want.Service == "":
 		want.Service = p.Hostname
 	}
 	if p.HealthPath != "" {
@@ -738,6 +754,16 @@ func startDevServer(ctx context.Context, ssh SSHDeployer, client platform.Client
 	if err != nil {
 		return nil, err
 	}
+	// A lease's servers get the branch's sibling hostnames through the
+	// supervisor's overlay before anything starts or reloads them (DP-22).
+	var wiring *leaseWiring
+	if p.lease != nil {
+		w, err := wireLeaseServers(ctx, ssh, p, ds)
+		if err != nil {
+			return nil, err
+		}
+		wiring = &w
+	}
 	decl, changed := DeclareDevServer(ds.Declared, want)
 	if changed {
 		if err := WriteDevDeclaration(ctx, ssh, p.Hostname, p.Root, decl); err != nil {
@@ -747,10 +773,11 @@ func startDevServer(ctx context.Context, ssh SSHDeployer, client platform.Client
 			return nil, err
 		}
 	}
-	// A reload restarts a server whose run changed and starts a new one; a
-	// restart of any other is the supervisor's own.
+	// A reload restarts a server whose run changed and starts a new one, and
+	// a changed overlay one that ran under the old; a restart of any other is
+	// the supervisor's own.
 	verb := devServerActionStart
-	if action == devServerActionRestart && isDeclared && declared.SameRun(want) {
+	if action == devServerActionRestart && isDeclared && declared.SameRun(want) && (wiring == nil || !wiring.restarted[name]) {
 		verb = devServerActionRestart
 	}
 	begun := time.Now()
@@ -767,6 +794,9 @@ func startDevServer(ctx context.Context, ssh SSHDeployer, client platform.Client
 	}
 	if err == nil && memoryNote != "" {
 		result.Message += "\n" + memoryNote
+	}
+	if err == nil && wiring != nil {
+		wiring.apply(result)
 	}
 	return result, err
 }

@@ -7,6 +7,7 @@ package ops
 import (
 	"context"
 	"errors"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -264,5 +265,359 @@ func TestDeclareDevServer_KeepsThePreviewPortBaseAndMarks(t *testing.T) {
 		if i := slices.IndexFunc(got.Servers, func(s devsup.Server) bool { return s.Name == "web" }); i < 0 || !got.Servers[i].Preview {
 			t.Errorf("%s: web lost its preview mark: %+v", name, got.Servers)
 		}
+	}
+}
+
+// wiringRepo is the repository of the wiring tests' branch feat-x.
+const wiringRepo = "https://github.com/acme/app"
+
+// wiringState is a state directory holding branch feat-x of wiringRepo on two
+// pools — hqpool-7 and webpool-3, the group — and apipool-2 on another branch.
+func wiringState(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, r := range []leaseRecord{
+		{PoolHostname: "hqpool", PoolServiceID: "svc-hq", ContainerID: "c-7", ContainerNumber: 7, ContainerHostname: "node-id-7.runtime.hqpool.zerops",
+			Lease: "hq-lease", Branch: "feat-x", Repo: wiringRepo, AcquiredAt: "2026-10-23T11:00:00Z"},
+		{PoolHostname: "webpool", PoolServiceID: "svc-web", ContainerID: "c-3", ContainerNumber: 3, ContainerHostname: "node-id-3.runtime.webpool.zerops",
+			Lease: "web-lease", Branch: "feat-x", Repo: wiringRepo, AcquiredAt: "2026-10-23T12:00:00Z"},
+		{PoolHostname: "apipool", PoolServiceID: "svc-api", ContainerID: "c-2", ContainerNumber: 2, ContainerHostname: "node-id-2.runtime.apipool.zerops",
+			Lease: "api-lease", Branch: "other", Repo: wiringRepo, AcquiredAt: "2026-10-23T10:00:00Z"},
+	} {
+		if err := writeLeaseRecord(dir, r); err != nil {
+			t.Fatalf("write lease record: %v", err)
+		}
+	}
+	return dir
+}
+
+// siblingDeclaration declares web (:3000) and the variables web's servers read:
+// hq's host (the branch leases hqpool), the api's (it does not) and its own.
+const siblingDeclaration = `{"version":1,"siblingEnv":{"HQ_HOST":"hqpool","API_HOST":"apipool","SELF_HOST":"webpool"},` +
+	`"servers":[{"name":"web","port":3000,"command":"pnpm dev"}]}`
+
+// wantWebOverlay is the overlay webpool-3's servers get from siblingDeclaration.
+var wantWebOverlay = map[string]string{"HQ_HOST": "node-id-7.runtime.hqpool.zerops", "SELF_HOST": "node-id-3.runtime.webpool.zerops"}
+
+// firstSent is the index of the first command containing every part, -1 when none.
+func firstSent(cmds []string, parts ...string) int {
+	for i, cmd := range cmds {
+		all := true
+		for _, p := range parts {
+			all = all && strings.Contains(cmd, p)
+		}
+		if all {
+			return i
+		}
+	}
+	return -1
+}
+
+func TestDevServer_LeaseSiblingEnv_SendsFullOverlayBeforeStart(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		params DevServerParams
+		// declares: the start writes the declaration and reloads first.
+		declares bool
+	}{
+		{name: "a declared server", params: DevServerParams{Action: "start", Name: "web"}},
+		{name: "a restart of a declared server", params: DevServerParams{Action: "restart", Name: "web"}},
+		{name: "a new server, declared and reloaded", params: DevServerParams{Action: "start", Name: "admin", Command: "pnpm admin", Port: 4200}, declares: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			c := devservertest.NewSupervised(siblingDeclaration)
+			p := tt.params
+			p.Hostname, p.StateDir = "webpool-3", wiringState(t)
+
+			result, err := ExecuteDevServer(context.Background(), c, poolClient(0), "p1", p)
+			if err != nil {
+				t.Fatalf("%s: %v", p.Action, err)
+			}
+
+			cmds := c.Sent()
+			env := firstSent(cmds, "zcp-devsup ctl 'env'")
+			if env < 0 {
+				t.Fatalf("no ctl env was sent: %v", cmds)
+			}
+			want := "zcp-devsup ctl 'env' '--set' 'HQ_HOST=node-id-7.runtime.hqpool.zerops' '--set' 'SELF_HOST=node-id-3.runtime.webpool.zerops' --json"
+			if !strings.Contains(cmds[env], want) {
+				t.Errorf("ctl env = %q, want the full overlay, every value quoted:\n%s", cmds[env], want)
+			}
+			start := firstSent(cmds, "zcp-devsup ctl '"+p.Action+"' '"+p.Name+"'")
+			if start < 0 {
+				start = firstSent(cmds, "zcp-devsup ctl 'start' '"+p.Name+"'")
+			}
+			if start < 0 || env > start {
+				t.Errorf("ctl env (%d) must come before the start (%d): %v", env, start, cmds)
+			}
+			if tt.declares {
+				write, reload := firstSent(cmds, "dev-servers.json.tmp"), firstSent(cmds, "zcp-devsup ctl 'reload'")
+				if write < 0 || reload < 0 || env > write || env > reload {
+					t.Errorf("ctl env (%d) must come before the declaration's write (%d) and the reload (%d): %v", env, write, reload, cmds)
+				}
+			}
+			if !maps.Equal(c.Env, wantWebOverlay) {
+				t.Errorf("the supervisor's overlay = %v, want %v", c.Env, wantWebOverlay)
+			}
+			if result.SiblingEnv == nil || !maps.Equal(result.SiblingEnv.Set, wantWebOverlay) || !slices.Equal(result.SiblingEnv.LeftToContainerEnv, []string{"API_HOST"}) {
+				t.Errorf("siblingEnv = %+v, want set %v and API_HOST left to the container's env", result.SiblingEnv, wantWebOverlay)
+			}
+			if !result.Running {
+				t.Errorf("result = %+v, want the server running", result)
+			}
+		})
+	}
+}
+
+func TestDevServer_LeaseSiblingEnv_PoolNotHeld_LeftToContainerEnv(t *testing.T) {
+	t.Parallel()
+	// apipool is leased, but on another branch: it is no member of feat-x's
+	// group, so API_HOST keeps the container's own value (the part's stage).
+	c := devservertest.NewSupervised(siblingDeclaration)
+	result, err := ExecuteDevServer(context.Background(), c, poolClient(0), "p1",
+		DevServerParams{Action: "start", Hostname: "webpool-3", Name: "web", StateDir: wiringState(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, set := c.Env["API_HOST"]; set {
+		t.Errorf("API_HOST is in the overlay (%v): another branch's lease of apipool is no sibling", c.Env)
+	}
+	if strings.Contains(strings.Join(c.Sent(), "\n"), "apipool") {
+		t.Errorf("a command names apipool: %v", c.Sent())
+	}
+	if result.SiblingEnv == nil || !slices.Equal(result.SiblingEnv.LeftToContainerEnv, []string{"API_HOST"}) {
+		t.Fatalf("siblingEnv = %+v, want API_HOST left to the container's env", result.SiblingEnv)
+	}
+	for _, want := range []string{"API_HOST", "apipool", "container's own", "HQ_HOST=node-id-7.runtime.hqpool.zerops", "feat-x"} {
+		if !strings.Contains(result.Message, want) {
+			t.Errorf("message %q lacks %q", result.Message, want)
+		}
+	}
+}
+
+func TestDevServer_LeaseEmptyOverlay_StillSentToReplaceAPreviousHolders(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		decl string
+	}{
+		{name: "no siblingEnv declared", decl: previewDeclaration},
+		{name: "siblingEnv names only pools the branch does not lease", decl: `{"version":1,"siblingEnv":{"API_HOST":"apipool"},"servers":[{"name":"web","port":3000,"command":"pnpm dev"}]}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			c := devservertest.NewSupervised(tt.decl)
+			// What the container's previous holder left on its supervisor.
+			c.Env = map[string]string{"HQ_HOST": "node-id-9.runtime.hqpool.zerops"}
+
+			if _, err := ExecuteDevServer(context.Background(), c, poolClient(0), "p1",
+				DevServerParams{Action: "start", Hostname: "webpool-3", Name: "web", StateDir: wiringState(t)}); err != nil {
+				t.Fatal(err)
+			}
+			cmds := c.Sent()
+			env, start := firstSent(cmds, "zcp-devsup ctl 'env' '--clear' --json"), firstSent(cmds, "zcp-devsup ctl 'start' 'web'")
+			if env < 0 || start < 0 || env > start {
+				t.Fatalf("want ctl env --clear before the start, got %v", cmds)
+			}
+			if len(c.Env) != 0 {
+				t.Errorf("the overlay = %v, want the previous holder's cleared", c.Env)
+			}
+		})
+	}
+}
+
+func TestDevServer_SupervisorWithoutEnvCapability_NotSentEnv(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		decl     string
+		wantLeft []string
+	}{
+		{name: "no siblingEnv declared", decl: previewDeclaration},
+		{name: "siblingEnv names only pools the branch does not lease", decl: `{"version":1,"siblingEnv":{"API_HOST":"apipool"},"servers":[{"name":"web","port":3000,"command":"pnpm dev"}]}`, wantLeft: []string{"API_HOST"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			c := devservertest.NewSupervised(tt.decl)
+			c.Capabilities = nil // a pool image pinning a zcp-devsup older than `ctl env`
+
+			result, err := ExecuteDevServer(context.Background(), c, poolClient(0), "p1",
+				DevServerParams{Action: "start", Hostname: "webpool-3", Name: "web", StateDir: wiringState(t)})
+			if err != nil {
+				t.Fatalf("an empty overlay starts as before on an older supervisor: %v", err)
+			}
+			if n := sentWith(c, "zcp-devsup ctl 'env'"); n != 0 {
+				t.Errorf("ctl env sent %d times to a supervisor that does not list it: %v", n, c.Sent())
+			}
+			if !result.Running {
+				t.Errorf("result = %+v, want web running", result)
+			}
+			if len(tt.wantLeft) > 0 && (result.SiblingEnv == nil || !slices.Equal(result.SiblingEnv.LeftToContainerEnv, tt.wantLeft)) {
+				t.Errorf("siblingEnv = %+v, want %v left to the container's env", result.SiblingEnv, tt.wantLeft)
+			}
+		})
+	}
+}
+
+func TestDevServer_SupervisorWithoutEnvCapability_NonEmptyOverlay_RefusedWithRecovery(t *testing.T) {
+	t.Parallel()
+	for _, action := range []string{"start", "restart"} {
+		t.Run(action, func(t *testing.T) {
+			t.Parallel()
+			c := devservertest.NewSupervised(siblingDeclaration)
+			c.Capabilities = nil
+
+			_, err := ExecuteDevServer(context.Background(), c, poolClient(0), "p1",
+				DevServerParams{Action: action, Hostname: "webpool-3", Name: "web", StateDir: wiringState(t)})
+			var pe *platform.PlatformError
+			if !errors.As(err, &pe) {
+				t.Fatalf("err = %v, want a refusal", err)
+			}
+			for _, want := range []string{"webpool-3", "webpool", "v9.300.0", "HQ_HOST", "env"} {
+				if !strings.Contains(pe.Message, want) {
+					t.Errorf("message %q lacks %q", pe.Message, want)
+				}
+			}
+			for _, want := range []string{"zcp-devsup", "run.prepareCommands", `zerops_lease action=release lease="webpool-3"`, `zerops_lease action=rollout pool="webpool"`, "acquire"} {
+				if !strings.Contains(pe.Suggestion, want) {
+					t.Errorf("suggestion %q lacks %q", pe.Suggestion, want)
+				}
+			}
+			for _, banned := range []string{"zcp-devsup ctl 'env'", "dev-servers.json.tmp", "zcp-devsup ctl 'reload'", "zcp-devsup ctl 'start'", "zcp-devsup ctl 'restart'"} {
+				if n := sentWith(c, banned); n != 0 {
+					t.Errorf("a refused start sent %q: %v", banned, c.Sent())
+				}
+			}
+		})
+	}
+}
+
+func TestDevServer_LeaseSiblingEnv_ChangedOverlay_ReadsStatusBeforeStart(t *testing.T) {
+	t.Parallel()
+	// web runs under the overlay a previous start set; the new one restarts it
+	// in the supervisor's own goroutine, after the env answer.
+	c := devservertest.NewSupervised(siblingDeclaration)
+	c.Env = map[string]string{"HQ_HOST": "node-id-9.runtime.hqpool.zerops"}
+
+	result, err := ExecuteDevServer(context.Background(), c, poolClient(0), "p1",
+		DevServerParams{Action: "start", Hostname: "webpool-3", Name: "web", StateDir: wiringState(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmds := c.Sent()
+	env, start := firstSent(cmds, "zcp-devsup ctl 'env'"), firstSent(cmds, "zcp-devsup ctl 'start' 'web'")
+	status := -1
+	for i := env + 1; env >= 0 && i < len(cmds); i++ {
+		if strings.Contains(cmds[i], "zcp-devsup ctl 'status' --json") {
+			status = i
+			break
+		}
+	}
+	if env < 0 || status < 0 || start < 0 || status > start {
+		t.Fatalf("want ctl env, then a status read, then the start: %v", cmds)
+	}
+	if got := c.Servers["web"]; got.Restarts != 1 || got.LastRestartReason != "env changed" {
+		t.Errorf("web restarts = %d (%q), want the supervisor's one restart under the new overlay, and no second", got.Restarts, got.LastRestartReason)
+	}
+	if !result.Running {
+		t.Errorf("result = %+v, want web running", result)
+	}
+}
+
+func TestDevServer_DevServiceNotALease_NoEnvCall(t *testing.T) {
+	t.Parallel()
+	// A dev service's declaration may carry siblingEnv (a repository shared
+	// with pools): zcp sends an overlay only to a lease's supervisor.
+	c := devservertest.NewSupervised(`{"version":1,"siblingEnv":{"HQ_HOST":"hqpool"},"servers":[{"name":"appdev","port":3000,"command":"pnpm dev"}]}`)
+	result := runDevServer(t, c, DevServerParams{Action: "start", Hostname: "appdev", StateDir: wiringState(t)})
+	if n := sentWith(c, "zcp-devsup ctl 'env'"); n != 0 {
+		t.Errorf("ctl env sent to a dev service: %v", c.Sent())
+	}
+	if result.SiblingEnv != nil || len(c.Env) != 0 {
+		t.Errorf("siblingEnv = %+v, overlay %v; want none on a dev service", result.SiblingEnv, c.Env)
+	}
+}
+
+func TestDevServer_LeaseDeclaresItsPoolAsService(t *testing.T) {
+	t.Parallel()
+	// The repository's one declaration holds every part's servers; a lease's
+	// supervisor runs only those naming its pool (or none).
+	c := devservertest.NewSupervised(`{"version":1,"servers":[{"name":"hq","port":8080,"command":"go run .","cwd":"apps/hq","service":"hqpool"}]}`)
+	stateDir := leaseState(t)
+
+	if _, err := ExecuteDevServer(context.Background(), c, poolClient(0), "p1",
+		DevServerParams{Action: "start", Hostname: "devpool-3", Name: "web", Command: "pnpm dev", Port: 3000, StateDir: stateDir}); err != nil {
+		t.Fatal(err)
+	}
+	d, err := devsup.ParseDeclaration([]byte(c.Declaration))
+	if err != nil {
+		t.Fatal(err)
+	}
+	services := map[string]string{}
+	for _, s := range d.Servers {
+		services[s.Name] = s.Service
+	}
+	if want := map[string]string{"hq": "hqpool", "web": "devpool"}; !maps.Equal(services, want) {
+		t.Errorf("declared services = %v, want %v (the new entry names the lease's pool)", services, want)
+	}
+}
+
+func TestDevServer_LeaseLeavesADeclaredEntryWithoutServiceAsIs(t *testing.T) {
+	t.Parallel()
+	c := devservertest.NewSupervised(previewDeclaration)
+
+	if _, err := ExecuteDevServer(context.Background(), c, poolClient(0), "p1",
+		DevServerParams{Action: "start", Hostname: "devpool-3", Name: "web", Command: "pnpm dev --host", StateDir: leaseState(t)}); err != nil {
+		t.Fatal(err)
+	}
+	d, err := devsup.ParseDeclaration([]byte(c.Declaration))
+	if err != nil || len(d.Servers) != 1 {
+		t.Fatalf("declaration = %s (%v)", c.Declaration, err)
+	}
+	if got := d.Servers[0]; got.Command != "pnpm dev --host" || got.Service != "" {
+		t.Errorf("web = %+v, want its new command and still no service", got)
+	}
+}
+
+func TestDevServer_LeaseReadsItsPoolsEntries(t *testing.T) {
+	t.Parallel()
+	// A lease's supervisor runs the entries naming its pool, so a status
+	// without a name finds web — never the alias, which no entry names.
+	c := devservertest.NewSupervised(`{"version":1,"servers":[` +
+		`{"name":"web","port":3000,"command":"pnpm dev","service":"devpool"},` +
+		`{"name":"hq","port":8080,"command":"go run .","service":"hqpool"}]}`)
+
+	result, err := ExecuteDevServer(context.Background(), c, poolClient(0), "p1",
+		DevServerParams{Action: "status", Hostname: "devpool-3", StateDir: leaseState(t)})
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if result.Name != "web" || !result.Running {
+		t.Errorf("result = %+v, want web running (devpool's one entry)", result)
+	}
+	states := DevServerStates(context.Background(), poolClient(0), "p1", result)
+	if len(states) == 0 || states[0].Name != "web" {
+		t.Errorf("devServers = %+v, want web first, as devpool's declared entry", states)
+	}
+}
+
+func TestDeclareDevServer_KeepsTheSiblingEnv(t *testing.T) {
+	t.Parallel()
+	d, err := devsup.ParseDeclaration([]byte(siblingDeclaration))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, changed := DeclareDevServer(d, devsup.Server{Name: "admin", Port: 4200, Command: "pnpm admin"})
+	if !changed || !maps.Equal(got.SiblingEnv, d.SiblingEnv) {
+		t.Errorf("declared = %+v (changed %v), want the repository's siblingEnv %v kept", got, changed, d.SiblingEnv)
+	}
+	got.SiblingEnv["HQ_HOST"] = "elsewhere"
+	if d.SiblingEnv["HQ_HOST"] != "hqpool" {
+		t.Error("the rewritten declaration shares its siblingEnv map with the one read")
 	}
 }

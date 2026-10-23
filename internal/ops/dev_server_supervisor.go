@@ -1,10 +1,12 @@
 package ops
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -101,6 +103,11 @@ func (e *SupervisorCtlError) Error() string {
 // repo and the supervisor's state.
 type DevServers struct {
 	Hostname string
+	// Service is the hostname the supervisor runs the declared entries of —
+	// those naming it and those naming none (devsup.Declaration.ForService):
+	// the pool for a lease, whose container's hostname env is the pool's;
+	// empty means Hostname.
+	Service string
 	// Declared is the parsed declaration; empty when the file is absent.
 	Declared devsup.Declaration
 	// DeclarationExists is false when the repo has no declaration file.
@@ -127,6 +134,15 @@ type DevServers struct {
 type SupervisorVersion struct {
 	Version string `json:"version"`
 	Formats []int  `json:"formats"`
+	// Capabilities names the ctl verbs and flags this supervisor has that an
+	// older one lacks (devsup.Capabilities); absent from an older answer.
+	Capabilities []string `json:"capabilities,omitempty"`
+}
+
+// Supports reports whether the supervisor lists capability: an older ctl
+// fails on a verb or flag it does not know, so zcp sends one only then.
+func (v SupervisorVersion) Supports(capability string) bool {
+	return slices.Contains(v.Capabilities, capability)
 }
 
 // readDevServersCmd reads, in one round trip, the supervisor's version and
@@ -337,9 +353,10 @@ func (ds *DevServers) OlderThanDeclaration() string {
 }
 
 // Servers are the declared entries this dev service's supervisor runs: in
-// variant B the code volume's declaration also holds the other dev services'.
+// variant B the code volume's declaration also holds the other dev services',
+// and a lease's repository every part's.
 func (ds *DevServers) Servers() []devsup.Server {
-	return ds.Declared.ForService(ds.Hostname)
+	return ds.Declared.ForService(cmp.Or(ds.Service, ds.Hostname))
 }
 
 // Server returns the declared entry named name.
@@ -531,9 +548,11 @@ func WriteDevDeclaration(ctx context.Context, ssh SSHDeployer, hostname, root st
 
 // DeclareDevServer returns d with s declared: unchanged when an entry of the
 // same name runs the same thing for the same service and health path, that
-// entry replaced otherwise, s appended when none has its name. changed says whether the file needs writing.
+// entry replaced otherwise, s appended when none has its name. changed says
+// whether the file needs writing. The repository's own top-level keys —
+// previewPortBase, siblingEnv, prepare — are kept as they are.
 func DeclareDevServer(d devsup.Declaration, s devsup.Server) (devsup.Declaration, bool) {
-	out := devsup.Declaration{Version: d.Version, PreviewPortBase: d.PreviewPortBase, Prepare: d.Prepare, Servers: slices.Clone(d.Servers)}
+	out := devsup.Declaration{Version: d.Version, PreviewPortBase: d.PreviewPortBase, SiblingEnv: maps.Clone(d.SiblingEnv), Prepare: d.Prepare, Servers: slices.Clone(d.Servers)}
 	if out.Version == 0 {
 		out.Version = devsupFormat
 	}

@@ -668,7 +668,7 @@ func VerifyLease(ctx context.Context, ssh SSHDeployer, lease LeaseTargetInfo, un
 		return result
 	}
 	result.Checks = append(result.Checks, CheckResult{Name: "ssh_reachable", Status: CheckPass})
-	result.Checks = append(result.Checks, leaseDevServerChecks(ctx, ssh, lease.Alias)...)
+	result.Checks = append(result.Checks, leaseDevServerChecks(ctx, ssh, lease.Alias, lease.Pool)...)
 	result.Status = StatusHealthy
 	for _, c := range result.Checks {
 		if c.Status == CheckFail {
@@ -679,9 +679,13 @@ func VerifyLease(ctx context.Context, ssh SSHDeployer, lease LeaseTargetInfo, un
 }
 
 // leaseDevServerChecks reads the lease's supervisor (`zcp-devsup ctl status
-// --json` over SSH) into one check per dev server it holds.
-func leaseDevServerChecks(ctx context.Context, ssh SSHDeployer, alias string) []CheckResult {
+// --json` over SSH) into one check per dev server it holds: the declared
+// entries naming pool, or none.
+func leaseDevServerChecks(ctx context.Context, ssh SSHDeployer, alias, pool string) []CheckResult {
 	ds, err := ReadDevServers(ctx, ssh, alias, "")
+	if ds != nil {
+		ds.Service = pool
+	}
 	var noSup *NoSupervisorError
 	var unresponsive *SupervisorUnresponsiveError
 	switch {

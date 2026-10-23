@@ -290,3 +290,88 @@ func TestDevServer_LeaseStart_ProbesItsOwnPreviewPort(t *testing.T) {
 		})
 	}
 }
+
+// writeWiringLeases records branch feat-x of acme/app on hqpool-7 and
+// webpool-3 — one group — the way zerops_lease does.
+func writeWiringLeases(t *testing.T, stateDir string) {
+	t.Helper()
+	dir := filepath.Join(stateDir, "leases")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for alias, rec := range map[string]string{
+		"hqpool-7": `{"poolHostname":"hqpool","poolServiceId":"svc-hq","containerId":"c-7","containerNumber":7,"containerHostname":"node-id-7.runtime.hqpool.zerops",` +
+			`"lease":"hq-secret","branch":"feat-x","repo":"https://github.com/acme/app","acquiredAt":"2026-10-23T11:00:00Z"}`,
+		"webpool-3": `{"poolHostname":"webpool","poolServiceId":"svc-web","containerId":"c-3","containerNumber":3,"containerHostname":"node-id-3.runtime.webpool.zerops",` +
+			`"lease":"web-secret","branch":"feat-x","repo":"https://github.com/acme/app","acquiredAt":"2026-10-23T12:00:00Z"}`,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, alias+".json"), []byte(rec), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// TestDevServerTool_LeaseSiblingEnv_ResultNamesSetAndLeftVariables: a start
+// in a lease names, in its result, each variable its servers got set to the
+// branch's sibling lease and each left to the container's own env; a
+// supervisor that cannot take the overlay is a typed refusal with the way to
+// a newer one.
+func TestDevServerTool_LeaseSiblingEnv_ResultNamesSetAndLeftVariables(t *testing.T) {
+	const decl = `{"version":1,"siblingEnv":{"HQ_HOST":"hqpool","API_HOST":"apipool"},"servers":[{"name":"web","port":3000,"command":"pnpm dev"}]}`
+	start := func(t *testing.T, c *devservertest.Container) *mcp.CallToolResult {
+		t.Helper()
+		dir := t.TempDir()
+		writeWiringLeases(t, dir)
+		srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+		RegisterDevServer(srv, DevServerDeps{Client: leasePoolMock(false), HTTPClient: okHTTP, ProjectID: "proj-1", SSH: c, StateDir: dir})
+		return callTool(t, srv, "zerops_dev_server", map[string]any{"action": "start", "hostname": "webpool-3", "name": "web"})
+	}
+
+	t.Run("set and left to the container's env", func(t *testing.T) {
+		restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 50*time.Millisecond)
+		defer restore()
+		c := devservertest.NewSupervised(decl)
+		result := start(t, c)
+		text := getTextContent(t, result)
+		if result.IsError {
+			t.Fatalf("unexpected error: %s", text)
+		}
+		var got struct {
+			Message    string `json:"message"`
+			SiblingEnv struct {
+				Set                map[string]string `json:"set"`
+				LeftToContainerEnv []string          `json:"leftToContainerEnv"`
+			} `json:"siblingEnv"`
+		}
+		if err := json.Unmarshal([]byte(text), &got); err != nil {
+			t.Fatalf("parse result: %v\n%s", err, text)
+		}
+		if got.SiblingEnv.Set["HQ_HOST"] != "node-id-7.runtime.hqpool.zerops" || len(got.SiblingEnv.Set) != 1 {
+			t.Errorf("siblingEnv.set = %v, want HQ_HOST = hqpool-7's container hostname", got.SiblingEnv.Set)
+		}
+		if !slices.Equal(got.SiblingEnv.LeftToContainerEnv, []string{"API_HOST"}) {
+			t.Errorf("siblingEnv.leftToContainerEnv = %v, want [API_HOST]", got.SiblingEnv.LeftToContainerEnv)
+		}
+		if !strings.Contains(got.Message, "HQ_HOST") || !strings.Contains(got.Message, "API_HOST") {
+			t.Errorf("message %q names neither variable", got.Message)
+		}
+		if strings.Contains(text, "hq-secret") || strings.Contains(text, "web-secret") {
+			t.Errorf("the result carries a lease string:\n%s", text)
+		}
+	})
+
+	t.Run("a supervisor without the env capability", func(t *testing.T) {
+		c := devservertest.NewSupervised(decl)
+		c.Capabilities = nil
+		result := start(t, c)
+		text := getTextContent(t, result)
+		if !result.IsError {
+			t.Fatalf("want a refusal, got %s", text)
+		}
+		for _, want := range []string{"HQ_HOST", "zcp-devsup", "rollout"} {
+			if !strings.Contains(text, want) {
+				t.Errorf("refusal %s lacks %q", text, want)
+			}
+		}
+	})
+}

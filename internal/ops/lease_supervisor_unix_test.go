@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,19 +26,23 @@ import (
 // stubDevsupScript stands in for zcp-devsup: `ctl status` exits $STUB_STATUS
 // (2, no supervisor, when unset) until a supervisor it started has bound,
 // then 0; `ctl reload` is recorded and exits $STUB_RELOAD (0 when unset);
+// `ctl env` is recorded with its arguments and exits $STUB_ENV (0 when unset);
 // `run` records its pid, cwd and ZEROPS_StableNumber, binds and stays up — or,
-// with STUB_RUN_FAILS set, says why on stderr and exits.
+// with STUB_RUN_FAILS set, says why on stderr and exits. Each run, env and
+// reload is also appended, in turn, to the order file.
 const stubDevsupScript = `#!/bin/sh
 s="$STUB_DIR"
 case "$1" in
 run)
   if [ -n "$STUB_RUN_FAILS" ]; then echo "zcp-devsup: control socket: permission denied" >&2; exit 1; fi
   echo "$$ $(pwd) ${ZEROPS_StableNumber:-none}" >> "$s/runs"
+  echo run >> "$s/order"
   : > "$s/bound"
   exec sleep 30
   ;;
 ctl)
-  if [ "$2" = reload ]; then echo reload >> "$s/reloads"; exit "${STUB_RELOAD:-0}"; fi
+  if [ "$2" = env ]; then shift 2; echo "env $*" >> "$s/order"; if [ -n "$STUB_ENV" ]; then echo '{"code":1,"error":"env: refused"}'; exit "$STUB_ENV"; fi; exit 0; fi
+  if [ "$2" = reload ]; then echo reload >> "$s/reloads"; echo reload >> "$s/order"; exit "${STUB_RELOAD:-0}"; fi
   if [ -f "$s/bound" ]; then exit 0; fi
   exit "${STUB_STATUS:-2}"
   ;;
@@ -193,7 +198,7 @@ func TestEnsureLeaseSupervisor_StartsOneOnlyWhenNoneAnswers(t *testing.T) {
 				t.Parallel()
 				h := newDevsupHarness(t, shell, tt.installed, tt.env...)
 
-				got, err := ensureSupervisorIn(context.Background(), h.container, "devpool-3", h.workDir, 2, false)
+				got, err := ensureSupervisorIn(context.Background(), h.container, "devpool-3", h.workDir, 2, false, nil)
 				if err != nil {
 					t.Fatalf("ensure: %v", err)
 				}
@@ -226,7 +231,7 @@ func testStartsItAsRunStartWould(t *testing.T, shell string) {
 	h := newDevsupHarness(t, shell, true)
 
 	begun := time.Now()
-	got, err := ensureSupervisorIn(context.Background(), h.container, "devpool-3", h.workDir, 5, false)
+	got, err := ensureSupervisorIn(context.Background(), h.container, "devpool-3", h.workDir, 5, false, nil)
 	if err != nil {
 		t.Fatalf("ensure: %v", err)
 	}
@@ -257,7 +262,7 @@ func testStartsItAsRunStartWould(t *testing.T, shell string) {
 	}
 
 	// Asked again, it finds the one it started and starts no second.
-	again, err := ensureSupervisorIn(context.Background(), h.container, "devpool-3", h.workDir, 5, false)
+	again, err := ensureSupervisorIn(context.Background(), h.container, "devpool-3", h.workDir, 5, false, nil)
 	if err != nil || again.outcome != leaseSupervisorRunning {
 		t.Errorf("second ensure = %+v, %v; want running", again, err)
 	}
@@ -276,7 +281,7 @@ func TestEnsureLeaseSupervisor_ConcurrentCallsStartOne(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 3 {
 		wg.Go(func() {
-			if _, err := ensureSupervisorIn(context.Background(), h.container, "devpool-3", h.workDir, 5, false); err != nil {
+			if _, err := ensureSupervisorIn(context.Background(), h.container, "devpool-3", h.workDir, 5, false, nil); err != nil {
 				t.Errorf("ensure: %v", err)
 			}
 		})
@@ -289,9 +294,12 @@ func TestEnsureLeaseSupervisor_ConcurrentCallsStartOne(t *testing.T) {
 
 func TestEnsureLeaseSupervisor_CommandQuotesItsWorkDir(t *testing.T) {
 	t.Parallel()
-	cmd := leaseSupervisorCommand("/var/www/it's; touch x", 10, true)
+	cmd := leaseSupervisorCommand("/var/www/it's; touch x", 10, true, []string{"env", "--set", "HQ_HOST=it's; touch y"})
 	if !strings.Contains(cmd, "cd "+shellQuote("/var/www/it's; touch x")) {
 		t.Errorf("the work dir is not shell-quoted:\n%s", cmd)
+	}
+	if !strings.Contains(cmd, "zcp-devsup ctl 'env' '--set' "+shellQuote("HQ_HOST=it's; touch y")+" --json") {
+		t.Errorf("the overlay is not shell-quoted:\n%s", cmd)
 	}
 	for _, banned := range []string{"pkill", "pgrep", "GIT_TOKEN"} {
 		if strings.Contains(cmd, banned) {
@@ -321,7 +329,7 @@ func TestEnsureLeaseSupervisor_ReloadsARunningOneOnlyWhenAsked(t *testing.T) {
 			t.Parallel()
 			h := newDevsupHarness(t, "sh", true, append([]string{"STUB_STATUS=0"}, tt.env...)...)
 
-			got, err := ensureSupervisorIn(context.Background(), h.container, "devpool-3", h.workDir, 2, tt.reload)
+			got, err := ensureSupervisorIn(context.Background(), h.container, "devpool-3", h.workDir, 2, tt.reload, nil)
 			if err != nil {
 				t.Fatalf("ensure: %v", err)
 			}
@@ -339,5 +347,49 @@ func TestEnsureLeaseSupervisor_ReloadsARunningOneOnlyWhenAsked(t *testing.T) {
 				t.Errorf("reload error = %v, want one naming %q", got.reloadErr, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestEnsureLeaseSupervisor_SendsTheOverlayBeforeTheReloadOrAfterTheStart(t *testing.T) {
+	t.Parallel()
+	env := []string{"env", "--set", "HQ_HOST=node-id-7.runtime.hqpool.zerops", "--set", "WEB_HOST=it's"}
+	const sent = "env --set HQ_HOST=node-id-7.runtime.hqpool.zerops --set WEB_HOST=it's --json"
+	tests := []struct {
+		name      string
+		stubEnv   []string
+		want      leaseSupervisorOutcome
+		wantOrder []string
+		wantErr   bool
+	}{
+		// A running supervisor (run.start's, in a container the platform just
+		// created) takes the overlay before the reload starts the servers.
+		{name: "one answers: the overlay, then the reload", stubEnv: []string{"STUB_STATUS=0"}, want: leaseSupervisorRunning, wantOrder: []string{sent, "reload"}},
+		// A reused container's supervisor boots the servers itself; the overlay
+		// follows at once and it restarts them under it.
+		{name: "none answers: the start, then the overlay", want: leaseSupervisorStarted, wantOrder: []string{"run", sent}},
+		{name: "a refused overlay: still reloaded, the refusal kept", stubEnv: []string{"STUB_STATUS=0", "STUB_ENV=1"}, want: leaseSupervisorRunning, wantOrder: []string{sent, "reload"}, wantErr: true},
+	}
+	for _, shell := range posixShells() {
+		for _, tt := range tests {
+			t.Run(shell+"/"+tt.name, func(t *testing.T) {
+				t.Parallel()
+				h := newDevsupHarness(t, shell, true, tt.stubEnv...)
+
+				got, err := ensureSupervisorIn(context.Background(), h.container, "devpool-3", h.workDir, 5, true, env)
+				if err != nil {
+					t.Fatalf("ensure: %v", err)
+				}
+				if got.outcome != tt.want || got.reloadErr != nil {
+					t.Errorf("outcome = %q (reload error %v), want %q", got.outcome, got.reloadErr, tt.want)
+				}
+				raw, _ := os.ReadFile(filepath.Join(h.stubDir, "order"))
+				if order := strings.Split(strings.TrimSpace(string(raw)), "\n"); !slices.Equal(order, tt.wantOrder) {
+					t.Errorf("order = %q, want %q", order, tt.wantOrder)
+				}
+				if tt.wantErr != (got.envErr != nil) || (tt.wantErr && !strings.Contains(got.envErr.Error(), "refused")) {
+					t.Errorf("env error = %v, want an error: %v", got.envErr, tt.wantErr)
+				}
+			})
+		}
 	}
 }
