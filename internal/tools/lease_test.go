@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -725,5 +726,241 @@ func TestEnvelopeLeaseHost_ChecksTheHostSideInsideAContainerOnly(t *testing.T) {
 	}
 	if out := envelopeLeaseHost(runtime.Info{}); out.Mounter != nil || out.Run != nil {
 		t.Errorf("outside a container: host = %+v, want none", out)
+	}
+}
+
+// guardSSH answers the release guard's reads per leased container: files are
+// an alias's `git status --porcelain` lines (clean when absent), and no
+// container holds an unpushed commit; every other command answers nothing.
+type guardSSH struct {
+	mu    sync.Mutex
+	files map[string]string
+	reads []string // the aliases whose git status was read
+}
+
+func (s *guardSSH) ExecSSH(_ context.Context, host, command string) ([]byte, error) {
+	switch {
+	case strings.Contains(command, "status --porcelain"):
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.reads = append(s.reads, host)
+		return []byte(s.files[host]), nil
+	case strings.Contains(command, "rev-list --count"):
+		return []byte("0\n"), nil
+	}
+	return nil, nil
+}
+
+func (s *guardSSH) ExecSSHBackground(ctx context.Context, host, command string, _ time.Duration) ([]byte, error) {
+	return s.ExecSSH(ctx, host, command)
+}
+
+// releaseCounts is how many releases each pool's orchestrator was asked for.
+func releaseCounts(orchs map[string]*poolOrchestrator) map[string]int {
+	out := map[string]int{}
+	for name, o := range orchs {
+		o.mu.Lock()
+		out[name] = o.releases
+		o.mu.Unlock()
+	}
+	return out
+}
+
+// leaseResultOf parses a zerops_lease result.
+func leaseResultOf(t *testing.T, text string) leaseToolResult {
+	t.Helper()
+	var got leaseToolResult
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatalf("result is not JSON: %v\n%s", err, text)
+	}
+	return got
+}
+
+// acquireFeatX leases webpool-7 and hqpool-3 on feat-x in one call.
+func acquireFeatX(t *testing.T, srv *mcp.Server) {
+	t.Helper()
+	res := callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pools": []string{"webpool", "hqpool"}, "repo": leaseTestRepo, "branch": "feat-x"})
+	if res.IsError {
+		t.Fatalf("group acquire failed: %s", getTextContent(t, res))
+	}
+}
+
+// TestLeaseTool_ReleaseBranch_ReleasesEveryLeaseOfTheBranch: release with
+// branch reads every lease of the branch, then releases each with a reset;
+// the result lists them all, never a lease or a bearer, and the envelope lists
+// none left.
+func TestLeaseTool_ReleaseBranch_ReleasesEveryLeaseOfTheBranch(t *testing.T) {
+	t.Parallel()
+	ssh := &guardSSH{}
+	srv, orchs, stateDir := groupLeaseServerSSH(t, ssh)
+	acquireFeatX(t, srv)
+
+	res := callTool(t, srv, "zerops_lease", map[string]any{"action": "release", "branch": "feat-x"})
+	text := getTextContent(t, res)
+	if res.IsError {
+		t.Fatalf("release of the branch failed: %s", text)
+	}
+	for _, o := range orchs {
+		for _, secret := range []string{o.lease(), o.token} {
+			if strings.Contains(text, secret) {
+				t.Errorf("result carries a secret: %s", text)
+			}
+		}
+	}
+	got := leaseResultOf(t, text)
+	if got.Action != "release" || len(got.Leases) != 2 || got.Leases[0].Alias != "hqpool-3" || got.Leases[1].Alias != "webpool-7" {
+		t.Fatalf("leases = %+v, want hqpool-3 then webpool-7 (earliest acquired first)", got.Leases)
+	}
+	for _, v := range got.Leases {
+		if v.State != ops.LeaseStateReleased || v.Error != "" {
+			t.Errorf("lease = %+v, want released", v)
+		}
+	}
+	ssh.mu.Lock()
+	reads := slices.Sorted(slices.Values(ssh.reads))
+	ssh.mu.Unlock()
+	if strings.Join(reads, ",") != "hqpool-3,webpool-7" {
+		t.Errorf("guard read %v, want every lease of the branch", reads)
+	}
+	if n := releaseCounts(orchs); n["hqpool"] != 1 || n["webpool"] != 1 {
+		t.Errorf("releases = %v, want one per pool", n)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(stateDir, "leases")); slices.ContainsFunc(entries, func(e os.DirEntry) bool { return !e.IsDir() }) {
+		t.Errorf("records left after the branch's release: %v", entries)
+	}
+	env, ok := workflow.ExtractEnvelope(text)
+	if !ok {
+		t.Fatalf("no envelope in\n%s", text)
+	}
+	if leases := env.LeaseList(); len(leases) != 0 {
+		t.Errorf("envelope leases = %+v, want none left", leases)
+	}
+}
+
+// TestLeaseTool_ReleaseBranch_OneUnsaved_RefusesAll: one lease of the branch
+// holding uncommitted files refuses the whole branch, naming that lease and
+// its files and the forced release of the branch; nothing reaches an
+// orchestrator. force=true then releases every lease.
+func TestLeaseTool_ReleaseBranch_OneUnsaved_RefusesAll(t *testing.T) {
+	t.Parallel()
+	srv, orchs, stateDir := groupLeaseServerSSH(t, &guardSSH{files: map[string]string{"webpool-7": "?? notes.txt\n"}})
+	acquireFeatX(t, srv)
+
+	res := callTool(t, srv, "zerops_lease", map[string]any{"action": "release", "branch": "feat-x"})
+	text := getTextContent(t, res)
+	if !res.IsError || !strings.Contains(text, platform.ErrPrerequisiteMissing) {
+		t.Fatalf("result = (error %v) %s, want a PREREQUISITE_MISSING refusal", res.IsError, text)
+	}
+	for _, want := range []string{"webpool-7", "notes.txt", "hqpool-3", "zerops_lease action=release branch=feat-x force=true"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("refusal %s lacks %q", text, want)
+		}
+	}
+	if n := releaseCounts(orchs); n["hqpool"] != 0 || n["webpool"] != 0 {
+		t.Errorf("releases = %v, want none: a refused branch releases nothing", n)
+	}
+	for _, alias := range []string{"hqpool-3", "webpool-7"} {
+		if _, err := os.Stat(filepath.Join(stateDir, "leases", alias+".json")); err != nil {
+			t.Errorf("record %s gone after a refused release: %v", alias, err)
+		}
+	}
+
+	res = callTool(t, srv, "zerops_lease", map[string]any{"action": "release", "branch": "feat-x", "force": "true"})
+	text = getTextContent(t, res)
+	if res.IsError {
+		t.Fatalf("forced release failed: %s", text)
+	}
+	if got := leaseResultOf(t, text); len(got.Leases) != 2 || got.Leases[0].State != ops.LeaseStateReleased || got.Leases[1].State != ops.LeaseStateReleased {
+		t.Errorf("forced release = %+v, want both released", got.Leases)
+	}
+}
+
+// TestLeaseTool_ReleaseBranch_OrchestratorFailsOne_PerMemberResult: an
+// orchestrator that will not release one lease leaves it held and recorded
+// while the others go; the result is per lease, the failed one with its
+// error, nextActions names the call that finishes the branch, and the
+// envelope still lists it. The same call again finishes the branch.
+func TestLeaseTool_ReleaseBranch_OrchestratorFailsOne_PerMemberResult(t *testing.T) {
+	t.Parallel()
+	srv, orchs, _ := groupLeaseServerSSH(t, &guardSSH{})
+	acquireFeatX(t, srv)
+	setBusy := func(busy bool) {
+		orchs["webpool"].mu.Lock()
+		orchs["webpool"].busy = busy
+		orchs["webpool"].mu.Unlock()
+	}
+	setBusy(true)
+
+	res := callTool(t, srv, "zerops_lease", map[string]any{"action": "release", "branch": "feat-x"})
+	text := getTextContent(t, res)
+	if res.IsError {
+		t.Fatalf("a failure of one lease is that lease's result, not the call's: %s", text)
+	}
+	got := leaseResultOf(t, text)
+	if len(got.Leases) != 2 || got.Leases[0].Alias != "hqpool-3" || got.Leases[1].Alias != "webpool-7" {
+		t.Fatalf("leases = %+v, want hqpool-3 then webpool-7", got.Leases)
+	}
+	if hq := got.Leases[0]; hq.State != ops.LeaseStateReleased || hq.Error != "" {
+		t.Errorf("hqpool-3 = %+v, want released", hq)
+	}
+	if web := got.Leases[1]; web.State != ops.LeaseStateHeld || !strings.Contains(web.Error, "work in progress") {
+		t.Errorf("webpool-7 = %+v, want held with the orchestrator's refusal as its error", web)
+	}
+	if !strings.Contains(text, `"error":`) {
+		t.Errorf("the failed lease carries no error key: %s", text)
+	}
+	if !strings.Contains(got.NextActions, "webpool-7") || !strings.Contains(got.NextActions, "zerops_lease action=release branch=feat-x") {
+		t.Errorf("nextActions %q should name webpool-7 and the call that finishes the branch", got.NextActions)
+	}
+	env, ok := workflow.ExtractEnvelope(text)
+	if !ok {
+		t.Fatalf("no envelope in\n%s", text)
+	}
+	if leases := env.LeaseList(); len(leases) != 1 || leases[0].Alias != "webpool-7" {
+		t.Errorf("envelope leases = %+v, want webpool-7 still held", leases)
+	}
+
+	setBusy(false)
+	res = callTool(t, srv, "zerops_lease", map[string]any{"action": "release", "branch": "feat-x"})
+	text = getTextContent(t, res)
+	if res.IsError {
+		t.Fatalf("the second call failed: %s", text)
+	}
+	if again := leaseResultOf(t, text); len(again.Leases) != 1 || again.Leases[0].Alias != "webpool-7" || again.Leases[0].State != ops.LeaseStateReleased {
+		t.Errorf("second call = %+v, want webpool-7 alone, released", again.Leases)
+	}
+}
+
+// TestLeaseTool_ReleaseBranch_BadInput_TypedRefusal: a release names one
+// lease or one branch, never both; a branch zcp holds no lease of, or a repo
+// that is no clone URL, is refused before any release.
+func TestLeaseTool_ReleaseBranch_BadInput_TypedRefusal(t *testing.T) {
+	t.Parallel()
+	srv, orchs, _ := groupLeaseServerSSH(t, &guardSSH{})
+	acquireFeatX(t, srv)
+	// Read once every case, run in parallel, has ended.
+	t.Cleanup(func() {
+		if n := releaseCounts(orchs); n["hqpool"] != 0 || n["webpool"] != 0 {
+			t.Errorf("releases = %v on bad input, want none", n)
+		}
+	})
+	for _, tt := range []struct {
+		name     string
+		args     map[string]any
+		wantText string
+	}{
+		{"lease and branch", map[string]any{"action": "release", "lease": "hqpool-3", "branch": "feat-x"}, "lease or branch"},
+		{"neither lease nor branch", map[string]any{"action": "release", "repo": leaseTestRepo}, "needs lease or branch"},
+		{"a branch zcp holds no lease of", map[string]any{"action": "release", "branch": "nosuch"}, "nosuch"},
+		{"a repo that is no clone URL", map[string]any{"action": "release", "branch": "feat-x", "repo": "git@github.com:acme/app.git"}, "clone URL"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			res := callTool(t, srv, "zerops_lease", tt.args)
+			text := getTextContent(t, res)
+			if !res.IsError || !strings.Contains(text, platform.ErrInvalidParameter) || !strings.Contains(text, tt.wantText) {
+				t.Errorf("result = (error %v) %s, want INVALID_PARAMETER mentioning %q", res.IsError, text, tt.wantText)
+			}
+		})
 	}
 }

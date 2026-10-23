@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -406,8 +407,17 @@ func (o orchestratorRoutes) RoundTrip(r *http.Request) (*http.Response, error) {
 // groupPoolOrchestrator is one pool's orchestrator holding one container.
 func groupPoolOrchestrator(t *testing.T, pool, number string) (target *url.URL, acquires func() int) {
 	t.Helper()
+	target, acquires, _ = groupPoolOrchestratorReleasing(t, pool, number)
+	return target, acquires
+}
+
+// groupPoolOrchestratorReleasing is groupPoolOrchestrator that also releases
+// its container on the lease, and reports the reset query of each release.
+func groupPoolOrchestratorReleasing(t *testing.T, pool, number string) (target *url.URL, acquires func() int, releases func() []string) {
+	t.Helper()
 	var mu sync.Mutex
 	reserved, n := false, 0
+	var resets []string
 	lease := pool + "-" + leaseIntLease
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
@@ -429,6 +439,10 @@ func groupPoolOrchestrator(t *testing.T, pool, number string) (target *url.URL, 
 		case r.Method == http.MethodPost && r.URL.Path == "/container/acquire":
 			reserved, n = true, n+1
 			_, _ = w.Write([]byte(strings.Replace(container, `"lockState":""`, `"lockState":"reserved"`, 1) + `,"lease":"` + lease + `"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/container/c-"+pool+"/release" && r.Header.Get("X-Swarm-Lease") == lease:
+			reserved = false
+			resets = append(resets, r.URL.Query().Get("reset"))
+			_, _ = w.Write([]byte(strings.Replace(container, `"lockState":"reserved"`, `"lockState":""`, 1) + `}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -439,10 +453,14 @@ func groupPoolOrchestrator(t *testing.T, pool, number string) (target *url.URL, 
 		t.Fatal(err)
 	}
 	return target, func() int {
-		mu.Lock()
-		defer mu.Unlock()
-		return n
-	}
+			mu.Lock()
+			defer mu.Unlock()
+			return n
+		}, func() []string {
+			mu.Lock()
+			defer mu.Unlock()
+			return slices.Clone(resets)
+		}
 }
 
 // TestLease_Integration_GroupAcquire_OneLeasePerPoolInPoolsOrder: through the
@@ -677,5 +695,124 @@ func TestLease_Integration_StatusReportsActivityAndUnsaved(t *testing.T) {
 	}
 	if got.Unsaved != nil {
 		t.Errorf("unreachable unsaved = %+v, want absent: nothing was read", got.Unsaved)
+	}
+}
+
+// branchGuardSSH is the leased containers as zcp reaches them: dirty names
+// the aliases whose checkout holds an untracked file; no container holds an
+// unpushed commit; every other command (checkout, prepare, supervisor)
+// answers ok.
+type branchGuardSSH struct {
+	mu    sync.Mutex
+	dirty map[string]bool
+}
+
+func (s *branchGuardSSH) ExecSSH(_ context.Context, hostname, command string) ([]byte, error) {
+	switch {
+	case strings.Contains(command, "status --porcelain"):
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.dirty[hostname] {
+			return []byte("?? notes.txt\n"), nil
+		}
+		return nil, nil
+	case strings.Contains(command, "rev-list --count"):
+		return []byte("0\n"), nil
+	}
+	return []byte("ok"), nil
+}
+
+func (s *branchGuardSSH) ExecSSHBackground(ctx context.Context, hostname, command string, _ time.Duration) ([]byte, error) {
+	return s.ExecSSH(ctx, hostname, command)
+}
+
+// TestLease_Integration_ReleaseBranch_OneDirtyLeaseRefusesThenForceReleasesEvery:
+// through the full MCP server, a release of a branch reads every lease of it;
+// one lease with an untracked file refuses the whole branch — no orchestrator
+// is asked, every record stays — and force=true then releases every lease of
+// it with a reset, dropping each record (DP-21).
+func TestLease_Integration_ReleaseBranch_OneDirtyLeaseRefusesThenForceReleasesEvery(t *testing.T) {
+	// Non-parallel: t.Chdir and a swap of http.DefaultTransport, as above.
+	t.Chdir(t.TempDir())
+
+	hqTarget, _, hqReleases := groupPoolOrchestratorReleasing(t, "hqpool", "3")
+	webTarget, _, webReleases := groupPoolOrchestratorReleasing(t, "webpool", "7")
+	orig := http.DefaultTransport
+	http.DefaultTransport = orchestratorRoutes{targets: map[string]*url.URL{"orch.hqpool.zerops": hqTarget, "orch.webpool.zerops": webTarget}, next: orig}
+	t.Cleanup(func() { http.DefaultTransport = orig })
+
+	mock := defaultMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-hqpool", Name: "hqpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
+			{ID: "svc-webpool", Name: "webpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
+		}).
+		WithServiceEnv("svc-hqpool", []platform.ServiceEnvVar{{ID: "env-h", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}}).
+		WithServiceEnv("svc-webpool", []platform.ServiceEnvVar{{ID: "env-w", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}})
+	ssh := &branchGuardSSH{dirty: map[string]bool{"webpool-7": true}}
+	session, cleanup := setupTestServerWithDeploy(t, mock, defaultLogFetcher(), ssh)
+	defer cleanup()
+
+	res := callAndGetResult(t, session, "zerops_lease", map[string]any{"action": "acquire", "pools": []string{"hqpool", "webpool"}, "repo": "https://github.com/acme/app", "branch": "feat-x"})
+	if text := getTextContent(t, res); res.IsError {
+		t.Fatalf("group acquire: %s", text)
+	}
+	records := func() []string {
+		t.Helper()
+		entries, err := os.ReadDir(filepath.Join(".zcp", "state", "leases"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, e := range entries {
+			if !e.IsDir() {
+				out = append(out, e.Name())
+			}
+		}
+		return out
+	}
+
+	res = callAndGetResult(t, session, "zerops_lease", map[string]any{"action": "release", "branch": "feat-x"})
+	text := getTextContent(t, res)
+	if !res.IsError {
+		t.Fatalf("want the branch refused while webpool-7 holds an untracked file, got: %s", text)
+	}
+	for _, want := range []string{"PREREQUISITE_MISSING", "webpool-7", "notes.txt", "hqpool-3", "branch=feat-x force=true"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("refusal %s lacks %q", text, want)
+		}
+	}
+	if len(hqReleases())+len(webReleases()) != 0 {
+		t.Errorf("a refused branch reached an orchestrator: hq %v, web %v", hqReleases(), webReleases())
+	}
+	if got := records(); len(got) != 2 {
+		t.Errorf("records after a refused release = %v, want both kept", got)
+	}
+
+	res = callAndGetResult(t, session, "zerops_lease", map[string]any{"action": "release", "branch": "feat-x", "force": true})
+	text = getTextContent(t, res)
+	if res.IsError {
+		t.Fatalf("forced release of the branch: %s", text)
+	}
+	if strings.Contains(text, leaseIntLease) || strings.Contains(text, leaseIntToken) {
+		t.Fatalf("result carries a secret: %s", text)
+	}
+	var got struct {
+		Leases []struct {
+			Alias string `json:"alias"`
+			State string `json:"state"`
+		} `json:"leases"`
+	}
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatalf("result is not JSON: %v\n%s", err, text)
+	}
+	if len(got.Leases) != 2 || got.Leases[0].Alias != "hqpool-3" || got.Leases[1].Alias != "webpool-7" ||
+		got.Leases[0].State != "released" || got.Leases[1].State != "released" {
+		t.Errorf("forced release = %+v, want hqpool-3 and webpool-7 released", got.Leases)
+	}
+	if hq, web := hqReleases(), webReleases(); len(hq) != 1 || hq[0] != "true" || len(web) != 1 || web[0] != "true" {
+		t.Errorf("releases hq %v, web %v; want one each with reset=true", hq, web)
+	}
+	if left := records(); len(left) != 0 {
+		t.Errorf("records left after the forced release: %v", left)
 	}
 }
