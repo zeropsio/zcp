@@ -249,3 +249,141 @@ func errorNote(err error) string {
 	}
 	return err.Error()
 }
+
+// PoolShrink is what lowering a pool's maxContainers to To deletes: the pool
+// deletes its highest-numbered containers above the new maximum within about
+// 30 s, leased ones included, each with its /var/www, and their leases then
+// answer container-not-found (live, 2026-10-23).
+type PoolShrink struct {
+	Pool string
+	To   int
+	// Holds is how many containers the orchestrator listed.
+	Holds int
+	// Deletes are the containers the lowering deletes, highest number first.
+	Deletes []PoolShrinkContainer
+	// Unread is why the containers could not be listed; empty when they were,
+	// or when the lowering cannot delete any (a raise).
+	Unread string
+	// LowestSafe is the lowest maxContainers that deletes no leased container
+	// (0 when none is leased); meaningful only when the containers were listed.
+	LowestSafe int
+}
+
+// PoolShrinkContainer is one container a lowering deletes.
+type PoolShrinkContainer struct {
+	Alias  string
+	Leased bool
+	// Yours marks a lease zcp holds a record for; Branch is that lease's.
+	Yours  bool
+	Branch string
+}
+
+// LeasedDeletes are the leased containers the lowering deletes.
+func (s PoolShrink) LeasedDeletes() []PoolShrinkContainer {
+	var out []PoolShrinkContainer
+	for _, c := range s.Deletes {
+		if c.Leased {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// NeedsApproval reports a lowering that would delete a leased container, or
+// whose deletions zcp could not check.
+func (s PoolShrink) NeedsApproval() bool {
+	return s.Unread != "" || len(s.LeasedDeletes()) > 0
+}
+
+// notice says what the lowering deletes, for the scale result.
+func (s PoolShrink) notice() string {
+	switch {
+	case s.Unread != "":
+		return fmt.Sprintf("zcp could not list the pool's containers (%s), so it cannot name the ones above maxContainers %d this lowering deletes.", s.Unread, s.To)
+	case len(s.Deletes) == 0:
+		return ""
+	case len(s.LeasedDeletes()) == 0:
+		names := make([]string, 0, len(s.Deletes))
+		for _, c := range s.Deletes {
+			names = append(names, c.Alias)
+		}
+		return fmt.Sprintf("This lowering deletes %s within about 30 s — free containers, leased by no one.", joinAnd(names))
+	}
+	names := make([]string, 0, len(s.Deletes))
+	for _, c := range s.Deletes {
+		names = append(names, c.Alias+" ("+c.Whose()+")")
+	}
+	return fmt.Sprintf("This lowering deletes %s within about 30 s. A deleted container takes its /var/www with it; zerops_lease action=status lists a lease of yours on one as lost, and its release drops the record.", joinAnd(names))
+}
+
+// Whose says whose the container is: your lease (with its branch), another
+// holder's, or free.
+func (c PoolShrinkContainer) Whose() string {
+	switch {
+	case c.Yours && c.Branch != "":
+		return "your lease, branch " + c.Branch
+	case c.Yours:
+		return "your lease"
+	case c.Leased:
+		return "another holder's lease"
+	}
+	return "free"
+}
+
+// joinAnd joins names as "a", "a and b", "a, b and c".
+func joinAnd(names []string) string {
+	if len(names) < 2 {
+		return strings.Join(names, "")
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
+}
+
+// planPoolShrink reads which containers lowering svc's maxContainers to `to`
+// deletes. A raise (to at or above the maximum the service runs with) can
+// delete nothing and reads nothing. Otherwise the orchestrator lists the
+// containers (check-before-mutate); one that cannot be asked leaves Unread.
+func planPoolShrink(ctx context.Context, d LeaseDeps, svc, current *platform.ServiceStack, to int) PoolShrink {
+	s := PoolShrink{Pool: svc.Name, To: to}
+	if eff := effectiveAutoscaling(current); eff != nil && eff.HorizontalMaxCount > 0 && int(eff.HorizontalMaxCount) <= to {
+		return s
+	}
+	if d.Swarm == nil {
+		s.Unread = "this zcp cannot ask the pool's orchestrator here"
+		return s
+	}
+	rp, err := orchestratorFor(ctx, d, svc)
+	if err != nil {
+		s.Unread = errorNote(err)
+		return s
+	}
+	containers, err := d.containers(ctx, rp)
+	if err != nil {
+		s.Unread = errorNote(leaseOrchestratorError(ctx, d, rp, "list containers", err))
+		return s
+	}
+	s.Holds = len(containers)
+	sorted := slices.Clone(containers)
+	slices.SortFunc(sorted, func(a, b platform.SwarmContainer) int { return cmp.Compare(b.Number, a.Number) })
+	records, _ := readLeaseRecords(d.StateDir)
+	own := map[string]leaseRecord{}
+	for _, r := range records {
+		if r.PoolHostname == svc.Name && r.PoolServiceID == svc.ID {
+			own[r.ContainerID] = r
+		}
+	}
+	for i, c := range sorted {
+		leased := c.LockState == leaseLockReserved
+		if leased && s.LowestSafe == 0 {
+			s.LowestSafe = len(sorted) - i
+		}
+		if i >= len(sorted)-to {
+			continue
+		}
+		pc := PoolShrinkContainer{Alias: leaseAlias(svc.Name, c.Number), Leased: leased}
+		if r, ok := own[c.ID]; ok && leased {
+			pc.Yours, pc.Branch = true, r.Branch
+		}
+		s.Deletes = append(s.Deletes, pc)
+	}
+	return s
+}

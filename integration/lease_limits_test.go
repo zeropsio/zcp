@@ -201,3 +201,52 @@ func TestLease_Integration_FullAndStoppedPools(t *testing.T) {
 		}
 	}
 }
+
+// TestScale_Integration_PoolLoweringOverALease_AsksFirst: through the full
+// server, zerops_scale reads the pool's orchestrator before it lowers the
+// pool's maxContainers; a lowering that would delete a lease is refused with
+// what would go until the call acknowledges it, and the acknowledged call
+// names what it deletes.
+func TestScale_Integration_PoolLoweringOverALease_AsksFirst(t *testing.T) {
+	// Non-parallel: t.Chdir and a swap of http.DefaultTransport, as above.
+	t.Chdir(t.TempDir())
+	routePools(t, map[string]http.Handler{"orch.devpool.zerops": poolOrchestrator(5, 5, map[int]bool{5: true})})
+	recordIntLease(t, "devpool", "svc-pool", 5, "feat-x")
+	mock := defaultMock().
+		WithServices([]platform.ServiceStack{intPool("svc-pool", "devpool", "ACTIVE", 5)}).
+		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{ID: "env-t", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}})
+	session, cleanup := setupTestServer(t, mock, defaultLogFetcher())
+	defer cleanup()
+
+	res := callAndGetResult(t, session, "zerops_scale", map[string]any{"serviceHostname": "devpool", "maxContainers": 4})
+	text := getTextContent(t, res)
+	if !res.IsError {
+		t.Fatalf("a lowering over a lease went through unasked: %s", text)
+	}
+	var refusal struct {
+		Code         string `json:"code"`
+		WouldDestroy struct {
+			Operation string   `json:"operation"`
+			Targets   []string `json:"targets"`
+		} `json:"wouldDestroy"`
+	}
+	if err := json.Unmarshal([]byte(text), &refusal); err != nil {
+		t.Fatalf("refusal is not JSON: %v\n%s", err, text)
+	}
+	if refusal.Code != platform.ErrDiagnosisRequired || refusal.WouldDestroy.Operation != "pool-shrink" || strings.Join(refusal.WouldDestroy.Targets, ",") != "devpool-5" {
+		t.Errorf("refusal = %+v, want %s pool-shrink naming devpool-5", refusal, platform.ErrDiagnosisRequired)
+	}
+
+	res = callAndGetResult(t, session, "zerops_scale", map[string]any{"serviceHostname": "devpool", "maxContainers": 4,
+		"confirmDestructive": map[string]any{"operation": "pool-shrink", "acknowledgedTargets": []string{"devpool-5"}}})
+	text = getTextContent(t, res)
+	if res.IsError {
+		t.Fatalf("the acknowledged lowering was refused: %s", text)
+	}
+	if !strings.Contains(text, "deletes devpool-5 (your lease, branch feat-x)") {
+		t.Errorf("result does not name what the lowering deletes:\n%s", text)
+	}
+	if strings.Contains(text, leaseIntToken) || strings.Contains(text, leaseIntLease) {
+		t.Fatal("scale result carries a secret")
+	}
+}

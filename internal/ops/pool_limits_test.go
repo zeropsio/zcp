@@ -6,6 +6,7 @@ package ops
 import (
 	"context"
 	"errors"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -349,5 +350,196 @@ func TestLeaseList_NoPool_OneStoppedPool_OthersStillVerified(t *testing.T) {
 	}
 	if len(views) != 2 {
 		t.Errorf("LeaseList = %+v, want the same two leases", views)
+	}
+}
+
+// shrinkPoolClient is a project holding devpool with maxContainers curMax,
+// capturing what Scale sends.
+func shrinkPoolClient(curMax int32) *scaleCaptureClient {
+	return &scaleCaptureClient{Mock: platform.NewMock().
+		WithProject(&platform.Project{ID: "p1", Name: "proj"}).
+		WithServices([]platform.ServiceStack{{
+			ID: "svc-pool", Name: testPoolHost, ProjectID: "p1", Status: "ACTIVE",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"},
+			CustomAutoscaling:    &platform.CustomAutoscaling{HorizontalMinCount: 0, HorizontalMaxCount: curMax},
+		}}).
+		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{Key: "API_TOKEN", Content: testPoolToken, Sensitive: true}})}
+}
+
+// freeContainer is container c-<number> of testPoolHost, not leased.
+func freeContainer(number int64) platform.SwarmContainer {
+	c := reservedContainer("c-"+strconv.FormatInt(number, 10), number)
+	c.LockState = ""
+	return c
+}
+
+func leasedAt(numbers ...int64) func(int64) bool {
+	return func(n int64) bool { return slices.Contains(numbers, n) }
+}
+
+// containersAt are containers c-<n> for each number, reserved where leased says.
+func containersAt(leased func(int64) bool, numbers ...int64) []platform.SwarmContainer {
+	out := make([]platform.SwarmContainer, 0, len(numbers))
+	for _, n := range numbers {
+		if leased(n) {
+			out = append(out, reservedContainer("c-"+strconv.FormatInt(n, 10), n))
+			continue
+		}
+		out = append(out, freeContainer(n))
+	}
+	return out
+}
+
+// TestScale_PoolLowering_ReadsTheOrchestratorFirst: lowering a pool's
+// maxContainers below the containers its orchestrator holds deletes the
+// highest-numbered ones, leased ones included. Before it mutates, Scale reads
+// the orchestrator's containers (check-before-mutate): a lowering over free
+// containers only proceeds and names them; one that would delete a leased
+// container — or that zcp cannot check — is put to the guard, whose refusal
+// stops the scale before anything is sent. A raise reads nothing.
+func TestScale_PoolLowering_ReadsTheOrchestratorFirst(t *testing.T) {
+	t.Parallel()
+	errRefused := errors.New("refused by the guard")
+
+	tests := []struct {
+		name           string
+		curMax, newMax int32
+		containers     []platform.SwarmContainer
+		yours          []int64
+		listErr        error
+		noSwarm        bool
+		approveErr     error
+		wantLists      int
+		wantAsked      bool
+		wantLeased     []string // aliases of the leased containers that go, yours marked "*"
+		wantUnread     string
+		wantSent       bool
+		wantNotice     []string
+		bannedNotice   []string
+	}{
+		{
+			name: "a raise reads nothing and asks nothing", curMax: 5, newMax: 8,
+			containers: containersAt(leasedAt(1), 1, 2, 3, 4, 5),
+			wantLists:  0, wantSent: true, bannedNotice: []string{"deletes devpool-"},
+		},
+		{
+			name: "a lowering over free containers proceeds and names them", curMax: 5, newMax: 3,
+			containers: containersAt(leasedAt(1, 2), 1, 2, 3, 4, 5),
+			wantLists:  1, wantSent: true,
+			wantNotice:   []string{"deletes devpool-5 and devpool-4", "free"},
+			bannedNotice: []string{"devpool-3"},
+		},
+		{
+			name: "the highest-numbered go first, whatever the listing order", curMax: 5, newMax: 2,
+			containers: containersAt(leasedAt(1), 11, 1, 2),
+			wantLists:  1, wantSent: true,
+			wantNotice:   []string{"deletes devpool-11"},
+			bannedNotice: []string{"devpool-2", "devpool-1 "},
+		},
+		{
+			name: "a lowering over your lease asks the guard, and its refusal sends nothing", curMax: 5, newMax: 4,
+			containers: containersAt(leasedAt(5), 1, 2, 3, 4, 5), yours: []int64{5}, approveErr: errRefused,
+			wantLists: 1, wantAsked: true, wantLeased: []string{"devpool-5*"}, wantSent: false,
+		},
+		{
+			name: "an approved lowering over your lease proceeds and says what goes with it", curMax: 5, newMax: 4,
+			containers: containersAt(leasedAt(5), 1, 2, 3, 4, 5), yours: []int64{5},
+			wantLists: 1, wantAsked: true, wantLeased: []string{"devpool-5*"}, wantSent: true,
+			wantNotice: []string{"deletes devpool-5 (your lease, branch b5)", "/var/www", "lost"},
+		},
+		{
+			name: "another holder's lease is put to the guard too", curMax: 5, newMax: 3,
+			containers: containersAt(leasedAt(4), 1, 2, 3, 4, 5), approveErr: errRefused,
+			wantLists: 1, wantAsked: true, wantLeased: []string{"devpool-4"}, wantSent: false,
+		},
+		{
+			name: "an orchestrator that does not answer is put to the guard", curMax: 5, newMax: 3,
+			listErr: noRouteToHost(), approveErr: errRefused,
+			wantLists: 1, wantAsked: true, wantUnread: "only inside the project", wantSent: false,
+		},
+		{
+			name: "no orchestrator client is put to the guard", curMax: 5, newMax: 3, noSwarm: true, approveErr: errRefused,
+			wantLists: 0, wantAsked: true, wantUnread: "cannot ask", wantSent: false,
+		},
+		{
+			name: "a lowering to the containers held deletes nothing", curMax: 8, newMax: 5,
+			containers: containersAt(leasedAt(1, 2, 3, 4, 5), 1, 2, 3, 4, 5),
+			wantLists:  1, wantSent: true, bannedNotice: []string{"deletes devpool-"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			client := shrinkPoolClient(tt.curMax)
+			stateDir := t.TempDir()
+			for _, n := range tt.yours {
+				recordLease(t, stateDir, testPoolHost, "svc-pool", n, "b"+strconv.FormatInt(n, 10))
+			}
+			swarm := &fakeSwarm{containers: tt.containers, listErr: tt.listErr}
+			deps := LeaseDeps{Client: client, ProjectID: "p1", StateDir: stateDir,
+				Swarm: func(string, string) SwarmAPI { return swarm },
+				Env:   func(string) (string, bool) { return "", false }}
+			if tt.noSwarm {
+				deps.Swarm = nil
+			}
+			var asked *PoolShrink
+			guard := WithPoolShrinkGuard(deps, func(s PoolShrink) error {
+				asked = &s
+				return tt.approveErr
+			})
+
+			res, err := Scale(context.Background(), client, "p1", testPoolHost, ScaleParams{MaxContainers: scaleIntPtr(int(tt.newMax))}, guard)
+			if tt.approveErr != nil {
+				if !errors.Is(err, tt.approveErr) {
+					t.Fatalf("err = %v, want the guard's refusal", err)
+				}
+			} else if err != nil {
+				t.Fatalf("Scale: %v", err)
+			}
+			if swarm.lists != tt.wantLists {
+				t.Errorf("container listings = %d, want %d", swarm.lists, tt.wantLists)
+			}
+			if (asked != nil) != tt.wantAsked {
+				t.Fatalf("guard asked = %v, want %v (plan %+v)", asked != nil, tt.wantAsked, asked)
+			}
+			if asked != nil {
+				leased := make([]string, 0, len(asked.LeasedDeletes()))
+				for _, c := range asked.LeasedDeletes() {
+					a := c.Alias
+					if c.Yours {
+						a += "*"
+					}
+					leased = append(leased, a)
+				}
+				if strings.Join(leased, ",") != strings.Join(tt.wantLeased, ",") {
+					t.Errorf("leased containers that go = %v, want %v", leased, tt.wantLeased)
+				}
+				if tt.wantUnread == "" && asked.Unread != "" || !strings.Contains(asked.Unread, tt.wantUnread) {
+					t.Errorf("Unread = %q, want it to contain %q", asked.Unread, tt.wantUnread)
+				}
+				if asked.Pool != testPoolHost || asked.To != int(tt.newMax) {
+					t.Errorf("plan = %+v, want pool %s lowered to %d", asked, testPoolHost, tt.newMax)
+				}
+			}
+			if sent := client.sent != nil; sent != tt.wantSent {
+				t.Fatalf("sent to the platform = %v, want %v", sent, tt.wantSent)
+			}
+			if !tt.wantSent {
+				return
+			}
+			if got := client.sent.HorizontalMaxCount; got == nil || *got != tt.newMax {
+				t.Errorf("maxContainers sent = %v, want %d", got, tt.newMax)
+			}
+			for _, want := range tt.wantNotice {
+				if !strings.Contains(res.Notice, want) {
+					t.Errorf("notice %q lacks %q", res.Notice, want)
+				}
+			}
+			for _, banned := range tt.bannedNotice {
+				if strings.Contains(res.Notice, banned) {
+					t.Errorf("notice %q carries %q", res.Notice, banned)
+				}
+			}
+		})
 	}
 }

@@ -384,7 +384,11 @@ func (s *Server) registerTools() {
 	tools.RegisterExport(s.server, s.client, projectID)
 	tools.RegisterManage(s.server, s.client, projectID)
 	recipeSteer := tools.NewGroupRecipeSteer(s.client, httpClient, s.rtInfo, stateDir)
-	tools.RegisterScale(s.server, s.client, projectID, recipeSteer)
+	// Lowering a pool's maxContainers deletes its highest-numbered containers,
+	// leases included: scale reads the pool's orchestrator first
+	// (docs/spec-workflows.md §8 PS-7).
+	tools.RegisterScale(s.server, s.client, projectID, recipeSteer,
+		tools.WithPoolOrchestratorsForScale(stateDir, ops.NewSwarmFactory(&http.Client{Timeout: ops.LeaseCallTimeout})))
 	// A Mate puts its organization's AI key in the Shared vault for an app
 	// (zerops_env action=ai-key, docs/spec-mate.md §5.8): Mate-gated like every
 	// Mate effect (§2.0), its key asked of HQ with the enrollment.
