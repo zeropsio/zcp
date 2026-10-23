@@ -93,6 +93,13 @@ func InstallLeaseAliases(ctx context.Context, run CommandRunner, stateDir, dest 
 	if run == nil {
 		return errors.New("no command runner")
 	}
+	// The records are read under the lock, so the install that lands last
+	// rendered every record written before it.
+	unlock, err := acquireLeaseAliasLock(stateDir)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	records, err := readLeaseRecords(stateDir)
 	if err != nil {
 		return err

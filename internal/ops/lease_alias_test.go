@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
 )
@@ -357,5 +358,60 @@ func TestLeaseList_MissingMount_Unmounted(t *testing.T) {
 	}
 	if v := states["devpool-5"]; v.State != LeaseStateUnmounted || !strings.Contains(v.Note, "ssh alias") {
 		t.Errorf("devpool-5 = %+v, want unmounted naming its missing alias", v)
+	}
+}
+
+// Two lease calls that overlap must not lose a stanza: the render and the
+// install of the alias file run as one step, so the last install reflects
+// every record written before it.
+func TestInstallLeaseAliases_Overlapping_LastInstallHasEveryRecord(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	dest := filepath.Join(t.TempDir(), "zcp-leases.conf")
+	if err := writeLeaseRecord(stateDir, aliasRecord("devpool", 1, "node-id-1.runtime.devpool.zerops")); err != nil {
+		t.Fatal(err)
+	}
+	copyInstall := func(_ context.Context, _ string, args ...string) error {
+		raw, err := os.ReadFile(args[len(args)-2])
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(args[len(args)-1], raw, 0o644)
+	}
+	inInstall, releaseA := make(chan struct{}), make(chan struct{})
+	slowA := func(ctx context.Context, name string, args ...string) error {
+		close(inInstall)
+		<-releaseA
+		return copyInstall(ctx, name, args...)
+	}
+	errA := make(chan error, 1)
+	go func() { errA <- InstallLeaseAliases(context.Background(), slowA, stateDir, dest) }()
+	<-inInstall // A rendered devpool-1 only and is installing it
+
+	if err := writeLeaseRecord(stateDir, aliasRecord("devpool", 2, "node-id-2.runtime.devpool.zerops")); err != nil {
+		t.Fatal(err)
+	}
+	errB := make(chan error, 1)
+	go func() { errB <- InstallLeaseAliases(context.Background(), copyInstall, stateDir, dest) }()
+	select {
+	case err := <-errB: // B overtook A; A's stale install lands after it unless serialized
+		errB <- err
+	case <-time.After(300 * time.Millisecond):
+	}
+	close(releaseA)
+	if err := <-errA; err != nil {
+		t.Fatalf("install A: %v", err)
+	}
+	if err := <-errB; err != nil {
+		t.Fatalf("install B: %v", err)
+	}
+	got, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, alias := range []string{"devpool-1", "devpool-2"} {
+		if !strings.Contains(string(got), "Host "+alias+"\n") {
+			t.Errorf("alias file lacks %s after both installs:\n%s", alias, got)
+		}
 	}
 }
