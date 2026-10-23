@@ -21,9 +21,9 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// writeLeaseFile records lease devpool-3 the way zerops_lease does (the
+// writeDevpoolLeaseFile records lease devpool-3 the way zerops_lease does (the
 // record's file is <state>/leases/<alias>.json).
-func writeLeaseFile(t *testing.T, stateDir string) {
+func writeDevpoolLeaseFile(t *testing.T, stateDir string) {
 	t.Helper()
 	dir := filepath.Join(stateDir, "leases")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -68,7 +68,7 @@ func TestEnsurePublicAccess_LeaseAlias_ActsOnPool(t *testing.T) {
 	defer restore()
 
 	dir := t.TempDir()
-	writeLeaseFile(t, dir)
+	writeDevpoolLeaseFile(t, dir)
 	writePoolMeta(t, dir)
 	mock := leasePoolMock(false)
 	result := &ops.DeployResult{}
@@ -116,7 +116,7 @@ func TestDevServer_LeaseAlias_PreviewURLFromPoolSubdomain(t *testing.T) {
 	defer restore()
 
 	dir := t.TempDir()
-	writeLeaseFile(t, dir)
+	writeDevpoolLeaseFile(t, dir)
 	writePoolMeta(t, dir)
 	mock := leasePoolMock(false)
 	c := devservertest.NewSupervised(`{"version":1,"previewPortBase":9000,"servers":[{"name":"web","port":3000,"command":"pnpm dev"}]}`)
@@ -172,7 +172,7 @@ func TestDevServer_LeaseAlias_StatusReportsThePreviewURLOnlyWhileThePoolSubdomai
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
-			writeLeaseFile(t, dir)
+			writeDevpoolLeaseFile(t, dir)
 			mock := leasePoolMock(tt.subdomainOn)
 			c := devservertest.NewSupervised(`{"version":1,"previewPortBase":9000,"servers":[{"name":"web","port":3000,"command":"pnpm dev"}]}`)
 			c.Servers["web"].PreviewPort = 9003
