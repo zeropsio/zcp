@@ -319,6 +319,14 @@ func RegisterDeploySSH(
 		if blocked := requireAdoption(stateDir, rtInfo, recipeProbe, gated...); blocked != nil {
 			return blocked, nil, nil
 		}
+		// A lease pushes its own branch itself; git-push pushes the target's
+		// tracked branch (main by default), so from a lease it would put the
+		// feature branch on the stage's delivery branch (DP-6).
+		if src := cmp.Or(input.SourceService, input.TargetService); input.Strategy == deployStrategyGitPush && isLease(stateDir, src) {
+			return convertError(platform.NewPlatformError(platform.ErrInvalidUsage,
+				fmt.Sprintf("git-push from the lease %s did not run: a lease pushes its own branch, and this strategy pushes the target's tracked branch", src),
+				fmt.Sprintf("Commit and `git push -u origin <branch>` over ssh to %s yourself; to run the code on a stage, deploy from the lease: zerops_deploy sourceService=%q targetService=<stage>", src, src)), WithRecoveryStatus()), nil, nil
+		}
 		// Before any read of the source's files: a pool source (named, or a
 		// self-deploy of a pool) is refused, never pushed from (PS-3).
 		if src := cmp.Or(input.SourceService, input.TargetService); !isLease(stateDir, src) {

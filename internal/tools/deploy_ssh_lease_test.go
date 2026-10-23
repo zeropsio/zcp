@@ -414,6 +414,30 @@ func TestDeployTool_PoolAsSource_Refused(t *testing.T) {
 	}
 }
 
+// TestDeployTool_LeaseSource_GitPushRefused: a lease works on a branch of its
+// own and pushes it itself; the git-push strategy pushes the target's tracked
+// branch (main by default), so from a lease it would put the feature branch
+// on the stage's delivery branch. It is refused before any ssh call, pointing
+// at the agent's own push and at the ssh-mode deploy.
+func TestDeployTool_LeaseSource_GitPushRefused(t *testing.T) {
+	t.Parallel()
+
+	rig := newLeaseDeployRig(t)
+	ssh := &leaseSSH{}
+	result, text := rig.deploy(t, ssh, map[string]any{"sourceService": rig.alias, "targetService": "appstage", "strategy": "git-push"})
+	if !result.IsError {
+		t.Fatalf("a git-push from a lease ran: %s", text)
+	}
+	for _, want := range []string{"git push", rig.alias} {
+		if !strings.Contains(text, want) {
+			t.Errorf("refusal %s lacks %q", text, want)
+		}
+	}
+	if len(ssh.hosts()) != 0 {
+		t.Errorf("ssh calls ran before the refusal: %v", ssh.hosts())
+	}
+}
+
 // TestDeployTool_LeaseToOwnPool_NextActionsNamesRollout: a release and a new
 // acquire can hand back the same outdated container, so the finished deploy
 // points at the rollout and says the lease keeps its version until it is
