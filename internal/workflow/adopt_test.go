@@ -210,3 +210,42 @@ func TestIsControlPlaneType(t *testing.T) {
 		}
 	}
 }
+
+// A Swarm pool or Zerops Box is not an app runtime (spec-workflows.md §8 PS-2):
+// it is never an adopt target and never a managed dependency, even when the
+// schema-derived managed set were to list its base name.
+func TestInferServicePairing_PoolAndSandbox_NotTargets(t *testing.T) {
+	t.Parallel()
+
+	candidates := []AdoptCandidate{
+		{Hostname: "app", Type: "nodejs@22"},
+		{Hostname: "pool", Type: "swarm@1"},
+		{Hostname: "poolvm", Type: "swarm-vm@1"},
+		{Hostname: "box", Type: "ubuntu/zbox@1"},
+		{Hostname: "db", Type: "postgresql@16"},
+	}
+	for name, live := range map[string]map[string]bool{
+		"static managed list":  nil,
+		"live set naming zbox": {"zbox": true, "postgresql": true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			targets := InferServicePairing(candidates, live)
+			if len(targets) != 1 || targets[0].Runtime.DevHostname != "app" {
+				t.Fatalf("want exactly [app] as target, got %+v", targets)
+			}
+			deps := targets[0].Dependencies
+			if len(deps) != 1 || deps[0].Hostname != "db" {
+				t.Errorf("want only db as dependency, got %+v", deps)
+			}
+		})
+	}
+
+	onlyInfra := []AdoptCandidate{
+		{Hostname: "pool", Type: "swarm@1"},
+		{Hostname: "box", Type: "ubuntu/zbox@1"},
+	}
+	if got := InferServicePairing(onlyInfra, nil); len(got) != 0 {
+		t.Errorf("pool+box only: want no targets, got %+v", got)
+	}
+}

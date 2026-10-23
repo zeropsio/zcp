@@ -517,3 +517,47 @@ func TestBootstrapCompleteAdoptPlan_ASharedVolume_IsACodeVolumeOnlyWhenTheDevSet
 		})
 	}
 }
+
+// TestInferServicePairing_TwoPools_NoPairQuestion — two Swarm pools of one type
+// are not a dev/stage pair (spec-workflows.md §8 PS-2): the adopt completion
+// path never asks the pairing question for them, and an app next to them
+// still commits as its own single target.
+func TestInferServicePairing_TwoPools_NoPairQuestion(t *testing.T) {
+	t.Parallel()
+	existing := []platform.ServiceStack{
+		userSvc("pool1", "swarm@1"),
+		userSvc("pool2", "swarm@1"),
+		userSvc("app", "nodejs@22"),
+	}
+
+	t.Run("scoped to both pools", func(t *testing.T) {
+		t.Parallel()
+		eng := startAdopt(t, t.TempDir())
+		_, err := eng.BootstrapCompleteAdoptPlan(existing, []string{"pool1", "pool2"}, runtime.Info{}, nil, nil)
+		if err == nil {
+			t.Fatal("want a refusal for pool-only scope, got nil")
+		}
+		if errors.Is(err, ErrAdoptPairingChoice) {
+			t.Fatalf("two pools must not raise the dev/stage pair question; got %v", err)
+		}
+	})
+
+	t.Run("app beside two pools", func(t *testing.T) {
+		t.Parallel()
+		eng := startAdopt(t, t.TempDir())
+		if _, err := eng.BootstrapCompleteAdoptPlan(existing, []string{"app"}, runtime.Info{}, nil, nil); err != nil {
+			t.Fatalf("BootstrapCompleteAdoptPlan: %v", err)
+		}
+		state, err := eng.GetState()
+		if err != nil {
+			t.Fatalf("GetState: %v", err)
+		}
+		plan := state.Bootstrap.Plan
+		if plan == nil || len(plan.Targets) != 1 || plan.Targets[0].Runtime.DevHostname != "app" {
+			t.Fatalf("want a single app target, got %+v", plan)
+		}
+		if len(plan.Targets[0].Dependencies) != 0 {
+			t.Errorf("a pool is no dependency of the app; got %+v", plan.Targets[0].Dependencies)
+		}
+	})
+}

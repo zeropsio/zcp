@@ -247,3 +247,44 @@ func TestHandleAdoptLocal_StageStartedWithoutCode_NoStamp(t *testing.T) {
 		t.Errorf("FirstDeployedAt stamped for a stage holding only its placeholder; got %q", got.FirstDeployedAt)
 	}
 }
+
+// A Swarm pool or Zerops Box is not an app runtime (spec-workflows.md §8
+// PS-2): adopt-local refuses it as a local-stage deploy target and leaves the
+// local meta untouched.
+func TestAdoptLocal_PoolTarget_Refused(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ host, typ, category string }{
+		{"pool", "swarm@1", "USER"},
+		{"poolvm", "swarm-vm@1", "USER"},
+		{"box", "ubuntu/zbox@1", "STANDARD"},
+	} {
+		t.Run(tc.typ, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+				Hostname: "myproject", Mode: topology.PlanModeLocalOnly, BootstrappedAt: "2026-04-01",
+			}); err != nil {
+				t.Fatalf("WriteServiceMeta: %v", err)
+			}
+			mock := platform.NewMock().WithServices([]platform.ServiceStack{
+				poolSandboxStack("s1", tc.host, tc.typ, tc.category),
+			})
+
+			result, _, _ := handleAdoptLocal(
+				context.Background(), mock, "p1", dir,
+				WorkflowInput{TargetService: tc.host},
+				runtime.Info{},
+			)
+			if !result.IsError {
+				t.Fatalf("%s target should be refused; got: %s", tc.typ, getTextContent(t, result))
+			}
+			if text := getTextContent(t, result); !strings.Contains(text, "not an app runtime") {
+				t.Errorf("refusal should say the target is not an app runtime; got:\n%s", text)
+			}
+			metas, err := workflow.ListServiceMetas(dir)
+			if err != nil || len(metas) != 1 || metas[0].Mode != topology.PlanModeLocalOnly {
+				t.Errorf("local meta must stay local-only after refusal; metas=%+v err=%v", metas, err)
+			}
+		})
+	}
+}

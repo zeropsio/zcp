@@ -1569,6 +1569,49 @@ func TestDiscover_PublicAccessPerRuntime_OneRoutingRead(t *testing.T) {
 	}
 }
 
+// A Swarm pool or Zerops Box is not an HTTP-class runtime (spec-workflows.md
+// §8 PS-2): discover observes no public access for it, so the agent is never
+// shown a per-service publicAccess intent for a service whose hostname reaches
+// a random container — while a real runtime beside it still carries one.
+func TestDiscover_PoolAndSandbox_NoPublicAccess(t *testing.T) {
+	t.Parallel()
+
+	httpPort := []platform.Port{{Port: 8080, Protocol: "tcp", HTTPSupport: true}}
+	services := []platform.ServiceStack{
+		{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: statusActive,
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}, Ports: httpPort},
+		{ID: "svc-2", Name: "pool", ProjectID: "proj-1", Status: statusActive,
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}, Ports: httpPort},
+		{ID: "svc-3", Name: "poolvm", ProjectID: "proj-1", Status: statusActive,
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm-vm@1", ServiceStackTypeCategoryName: "USER"}, Ports: httpPort},
+		{ID: "svc-4", Name: "box", ProjectID: "proj-1", Status: statusActive,
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/zbox@1", ServiceStackTypeCategoryName: "STANDARD"}, Ports: httpPort},
+	}
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
+		WithServices(services)
+
+	result, err := Discover(context.Background(), mock, "proj-1", "", false, false, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, svc := range result.Services {
+		switch svc.Hostname {
+		case "api":
+			if svc.PublicAccess == nil {
+				t.Error("api: PublicAccess want non-nil")
+			}
+		default:
+			if svc.PublicAccess != nil {
+				t.Errorf("%s: PublicAccess = %+v, want nil for a pool or Box", svc.Hostname, svc.PublicAccess)
+			}
+			if svc.IsInfrastructure {
+				t.Errorf("%s: IsInfrastructure must stay false", svc.Hostname)
+			}
+		}
+	}
+}
+
 func TestDiscover_ProjectNotFound(t *testing.T) {
 	t.Parallel()
 

@@ -639,3 +639,31 @@ func TestClassifyFit_Table(t *testing.T) {
 		})
 	}
 }
+
+// A Swarm pool or Zerops Box is never offered as an adoptable runtime
+// (spec-workflows.md §8 PS-2) — alone it yields no adopt route, beside an
+// app it is not listed among the adopt services.
+func TestIsAdoptableRuntimeService_PoolAndSandbox_False(t *testing.T) {
+	t.Parallel()
+	for _, typ := range []string{"swarm@1", "swarm-vm@1", "ubuntu/zbox@1", "zbox@1"} {
+		t.Run(typ, func(t *testing.T) {
+			t.Parallel()
+			alone, err := BuildBootstrapRouteOptions(context.Background(), "", []platform.ServiceStack{userSvc("x", typ)}, nil, nil, runtime.Info{})
+			if err != nil {
+				t.Fatalf("BuildBootstrapRouteOptions: %v", err)
+			}
+			if got := routesOf(alone); !slices.Equal(got, []BootstrapRoute{BootstrapRouteClassic}) {
+				t.Errorf("%s alone: routes = %v, want [classic]", typ, got)
+			}
+
+			beside, err := BuildBootstrapRouteOptions(context.Background(), "", []platform.ServiceStack{userSvc("x", typ), userSvc("appdev", "nodejs@22")}, nil, nil, runtime.Info{})
+			if err != nil {
+				t.Fatalf("BuildBootstrapRouteOptions: %v", err)
+			}
+			adopt := findOption(beside, BootstrapRouteAdopt)
+			if adopt == nil || !slices.Equal(adopt.AdoptServices, []string{"appdev"}) {
+				t.Errorf("%s beside app: adopt = %+v, want services [appdev]", typ, adopt)
+			}
+		})
+	}
+}

@@ -502,3 +502,27 @@ func TestFormatLocalStateNote_LocalOnlyMultiRuntime_LeadsWithAdoptLocal(t *testi
 		t.Errorf("'BEFORE running develop' should appear before 'Close-mode options'; got:\n%s", got)
 	}
 }
+
+// A pool or Box beside one app runtime is not a second runtime: the app is
+// still the single auto-linked stage (spec-workflows.md §8 PS-2).
+func TestLocalAutoAdopt_PoolAndSandbox_NotStageCandidates(t *testing.T) {
+	dir := t.TempDir()
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "p1", Name: "myproject"}).
+		WithServices([]platform.ServiceStack{
+			{ID: "pool-1", Name: "pool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
+			{ID: "box-1", Name: "box", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/zbox@1", ServiceStackTypeCategoryName: "STANDARD"}},
+			{ID: "app-1", Name: "appstage", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}},
+		})
+
+	result, err := LocalAutoAdopt(context.Background(), mock, "p1", dir)
+	if err != nil {
+		t.Fatalf("LocalAutoAdopt: %v", err)
+	}
+	if result == nil || !result.StageAutoLinked || result.Meta.FirstStage().Hostname != "appstage" {
+		t.Fatalf("want appstage auto-linked as the only stage; got %+v", result)
+	}
+	if len(result.Managed) != 0 {
+		t.Errorf("a pool or Box is no managed service; Managed = %v", result.Managed)
+	}
+}
