@@ -695,3 +695,35 @@ func TestRenderStatus_BlockersLineWhenPending(t *testing.T) {
 		})
 	}
 }
+
+// A pool or Box is neither a bootstrapped runtime nor an adoption candidate:
+// its status line names the kind and carries no deployed/bootstrapped claim
+// and no zerops.yaml base-prefix hint (PS-1).
+func TestRenderServiceLine_PoolAndSandbox(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		svc  ServiceSnapshot
+		want string
+	}{
+		{
+			name: "pool",
+			svc:  ServiceSnapshot{Hostname: "swarmpool", TypeVersion: "alpine/swarm@1", RuntimeClass: topology.RuntimePool, Status: "ACTIVE", Deployed: true},
+			want: "swarmpool (alpine/swarm@1) — pool",
+		},
+		{
+			name: "sandbox",
+			svc:  ServiceSnapshot{Hostname: "box", TypeVersion: "ubuntu/zbox@1", RuntimeClass: topology.RuntimeSandbox, Status: "ACTIVE"},
+			want: "box (ubuntu/zbox@1) — sandbox",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := renderServiceLine(tt.svc)
+			if got != tt.want {
+				t.Errorf("line = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

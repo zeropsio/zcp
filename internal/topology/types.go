@@ -8,7 +8,13 @@ const (
 	RuntimeStatic      RuntimeClass = "static"
 	RuntimeImplicitWeb RuntimeClass = "implicit-webserver"
 	RuntimeManaged     RuntimeClass = "managed"
-	RuntimeUnknown     RuntimeClass = "unknown"
+	// RuntimePool is a Swarm pool (swarm@1, swarm-vm@1): up to ten containers
+	// its orchestrator hands out by lease — not one app container.
+	RuntimePool RuntimeClass = "pool"
+	// RuntimeSandbox is a Zerops Box (ubuntu/zbox@1): a single container that
+	// hosts sandboxes — not a zerops.yml run.base and not an app runtime.
+	RuntimeSandbox RuntimeClass = "sandbox"
+	RuntimeUnknown RuntimeClass = "unknown"
 )
 
 // Mode is the bootstrapped service's deploy mode in envelope terms.

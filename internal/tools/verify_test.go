@@ -924,3 +924,70 @@ func TestVerifyTool_APartWithoutADevServer_NamesTheStartCall(t *testing.T) {
 		})
 	}
 }
+
+// A Swarm pool is a service of up to ten containers its orchestrator hands
+// out: an HTTP probe addressed to the service hostname reaches one random
+// container, so verify reports the pool and its Box by service_running alone
+// and never probes either as one runtime (spec-workflows.md §8 PS-3).
+func TestVerify_Pool_NotProbedAsSingleRuntime(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name     string
+		svc      platform.ServiceStack
+		wantType string
+	}{
+		{
+			name: "pool_with_ports_and_subdomain",
+			svc: platform.ServiceStack{
+				ID: "svc-1", Name: "swarmpool", Status: serviceStatusRunning, SubdomainAccess: true,
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"},
+				Ports:                []platform.Port{{Port: 3000}},
+			},
+			wantType: "pool",
+		},
+		{
+			name: "pool_vm_composite",
+			svc: platform.ServiceStack{
+				ID: "svc-1", Name: "swarmpool", Status: serviceStatusRunning,
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "alpine/swarm-vm@1", ServiceStackTypeCategoryName: "USER"},
+				Ports:                []platform.Port{{Port: 3000}},
+			},
+			wantType: "pool",
+		},
+		{
+			name: "box",
+			svc: platform.ServiceStack{
+				ID: "svc-1", Name: "box", Status: serviceStatusRunning,
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/zbox@1", ServiceStackTypeCategoryName: "STANDARD"},
+			},
+			wantType: "sandbox",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			mock := platform.NewMock().WithServices([]platform.ServiceStack{tc.svc})
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterVerify(srv, mock, platform.NewMockLogFetcher(), "proj-1", "", runtime.Info{}, nil)
+
+			result := callTool(t, srv, "zerops_verify", map[string]any{"serviceHostname": tc.svc.Name})
+			if result.IsError {
+				t.Fatalf("unexpected error: %s", getTextContent(t, result))
+			}
+			var vr ops.VerifyResult
+			if err := json.Unmarshal([]byte(getTextContent(t, result)), &vr); err != nil {
+				t.Fatalf("failed to parse result: %v", err)
+			}
+			if vr.Type != tc.wantType {
+				t.Errorf("Type = %q, want %q", vr.Type, tc.wantType)
+			}
+			if vr.Status != ops.StatusHealthy {
+				t.Errorf("Status = %q, want healthy; checks: %+v", vr.Status, vr.Checks)
+			}
+			if len(vr.Checks) != 1 || vr.Checks[0].Status != ops.CheckPass {
+				t.Errorf("checks = %+v, want the one passing service_running check (no http_internal/http_public/error_logs probe of the service hostname)", vr.Checks)
+			}
+		})
+	}
+}

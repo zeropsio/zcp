@@ -30,7 +30,7 @@ func attachPartsSignal(ctx context.Context, services []workflow.ServiceSnapshot,
 		if svc.Mode != topology.ModeDev && svc.Mode != topology.ModeStandard {
 			continue
 		}
-		if svc.RuntimeClass == topology.RuntimeManaged || svc.RuntimeClass == topology.RuntimeUnknown {
+		if holdsNoRepo(svc.RuntimeClass) {
 			continue
 		}
 		wg.Add(1)
@@ -63,6 +63,19 @@ func attachPartsSignal(ctx context.Context, services []workflow.ServiceSnapshot,
 			services[i].DeclaresBase = true
 		}
 	}
+}
+
+// holdsNoRepo reports a class whose service never holds the app's repo to read:
+// a managed service, an unknown type, a pool (a read by service hostname
+// reaches a random container of it) or a Box (spec-workflows.md §8 PS-3).
+func holdsNoRepo(class topology.RuntimeClass) bool {
+	switch class {
+	case topology.RuntimeManaged, topology.RuntimeUnknown, topology.RuntimePool, topology.RuntimeSandbox:
+		return true
+	case topology.RuntimeDynamic, topology.RuntimeStatic, topology.RuntimeImplicitWeb:
+		return false
+	}
+	return false
 }
 
 // multiPartRouteNote is the route-menu line that points at the monorepo
@@ -102,7 +115,7 @@ func readExistingRepos(ctx context.Context, existing []platform.ServiceStack, ss
 	var services []workflow.ServiceSnapshot
 	for _, s := range existing {
 		class := topology.RuntimeClassFor(s.ServiceStackTypeInfo.ServiceStackTypeVersionName)
-		if class == topology.RuntimeManaged || class == topology.RuntimeUnknown || stages[s.Name] {
+		if holdsNoRepo(class) || stages[s.Name] {
 			continue
 		}
 		services = append(services, workflow.ServiceSnapshot{Hostname: s.Name, Mode: topology.ModeDev, RuntimeClass: class})

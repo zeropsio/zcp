@@ -359,6 +359,10 @@ func renderServiceLine(svc ServiceSnapshot) string {
 	switch svc.RuntimeClass {
 	case topology.RuntimeManaged:
 		parts = append(parts, "managed")
+	case topology.RuntimePool:
+		parts = append(parts, "pool")
+	case topology.RuntimeSandbox:
+		parts = append(parts, "sandbox")
 	case topology.RuntimeUnknown:
 		parts = append(parts, "unknown runtime")
 	case topology.RuntimeDynamic, topology.RuntimeStatic, topology.RuntimeImplicitWeb:

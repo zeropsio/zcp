@@ -133,11 +133,14 @@ func deriveIdleScenario(phase Phase, services []ServiceSnapshot) IdleScenario {
 	if phase != PhaseIdle {
 		return ""
 	}
-	// Managed deps don't drive the runtime buckets (bootstrap/adopt/resume) —
-	// the bucket counts only consider runtime services.
+	// Managed deps, pools and Boxes don't drive the runtime buckets
+	// (bootstrap/adopt/resume) — the bucket counts only consider runtime
+	// services; a pool or Box is never an adoptable target (PS-2).
 	var bootstrapped, adoptable, resumable int
 	for _, svc := range services {
-		if svc.RuntimeClass == topology.RuntimeManaged {
+		if svc.RuntimeClass == topology.RuntimeManaged ||
+			svc.RuntimeClass == topology.RuntimePool ||
+			svc.RuntimeClass == topology.RuntimeSandbox {
 			continue
 		}
 		if svc.Resumable {

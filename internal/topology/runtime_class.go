@@ -6,6 +6,9 @@ import "strings"
 // enum-out classification — no platform calls, no per-instance state.
 //
 // Classification rules:
+//   - Swarm pools (swarm, swarm-vm) → RuntimePool; Zerops Box (zbox) →
+//     RuntimeSandbox — neither is an app container, so neither is ever
+//     RuntimeDynamic (spec-workflows.md §8 PS-1)
 //   - managed services (postgresql, mariadb, valkey, ...) → RuntimeManaged
 //   - php-apache / php-nginx → RuntimeImplicitWeb (webserver auto-starts)
 //   - static / nginx → RuntimeStatic (auto-serves deployFiles)
@@ -28,6 +31,12 @@ import "strings"
 func RuntimeClassFor(typeVersion string) RuntimeClass {
 	if typeVersion == "" {
 		return RuntimeUnknown
+	}
+	if IsPoolType(typeVersion) {
+		return RuntimePool
+	}
+	if IsSandboxType(typeVersion) {
+		return RuntimeSandbox
 	}
 	if IsManagedService(typeVersion) {
 		return RuntimeManaged
@@ -61,6 +70,8 @@ func RuntimeClassFor(typeVersion string) RuntimeClass {
 //   - RuntimeImplicitWeb (php-nginx, php-apache) — webserver auto-starts.
 //   - RuntimeStatic — auto-serves whatever's in deployFiles.
 //   - RuntimeManaged — no L7 anyway.
+//   - RuntimePool / RuntimeSandbox — containers leased from an orchestrator
+//     or hosted in a Box; there is no `zsc noop` dev-server lifecycle.
 //
 // Used by subdomain auto-enable + explicit-enable handlers to skip the
 // HTTP-readiness probe when 502 is the expected steady state. Probing in
