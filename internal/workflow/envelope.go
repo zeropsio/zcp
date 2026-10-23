@@ -66,6 +66,13 @@ type LeaseSnapshot struct {
 	// read it (zerops_dev_server on the alias) — keyed by alias the way a dev
 	// service's devServers[] is keyed by its hostname (WithParts).
 	DevServers []topology.DevServerState `json:"devServers,omitempty"`
+	// Activity and Unsaved are what a zerops_lease call read of the lease's
+	// checkout (docs/spec-workflows.md §8 DP-21), only on that call
+	// (WithLeaseActivity) — absent means not read in this call, never "no
+	// activity" or "nothing unsaved". ComputeEnvelope drops any a lease
+	// reader sets.
+	Activity *topology.LeaseActivity `json:"activity,omitempty"`
+	Unsaved  *topology.LeaseUnsaved  `json:"unsaved,omitempty"`
 }
 
 // LeaseList is the leases the envelope carries, nil when none were read or

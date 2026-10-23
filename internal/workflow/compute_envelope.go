@@ -29,20 +29,42 @@ import (
 // the pool orchestrators. It is injected (WithLeaseReader) so workflow does not
 // import ops. A reader error means the orchestrator could not be asked:
 // ComputeEnvelope then keeps zcp's own lease records' last known state and
-// marks it unverified.
+// marks it unverified. A reader reports reconciled state only: whatever
+// activity or unsaved work its snapshots carry is dropped, as those come from
+// WithLeaseActivity alone.
 type LeaseReader func(ctx context.Context) ([]LeaseSnapshot, error)
+
+// LeaseRead is what a zerops_lease call read of one lease's checkout
+// (docs/spec-workflows.md §8 DP-21): its activity and its unsaved work, each
+// nil when the call did not read it.
+type LeaseRead struct {
+	Activity *topology.LeaseActivity
+	Unsaved  *topology.LeaseUnsaved
+}
 
 // EnvelopeOption tunes ComputeEnvelope's inputs beyond the platform client.
 type EnvelopeOption func(*envelopeConfig)
 
 type envelopeConfig struct {
-	leases LeaseReader
+	leases     LeaseReader
+	leaseReads map[string]LeaseRead
 }
 
 // WithLeaseReader injects the reader that fills StateEnvelope.Leases. Without
 // it the envelope carries no leases.
 func WithLeaseReader(r LeaseReader) EnvelopeOption {
 	return func(c *envelopeConfig) { c.leases = r }
+}
+
+// WithLeaseActivity lays what this call read of its leases' checkouts onto
+// leases[] (docs/spec-mate.md §2.8a.3), keyed by alias the way WithParts keys
+// devServers: a lease the call read carries its activity and unsaved work,
+// every other lease neither, and a read of an alias leases[] does not list
+// adds nothing. Only the zerops_lease call that made the reads passes it; the
+// lease reader never reads a checkout, so no other tool's envelope pays for
+// one.
+func WithLeaseActivity(reads map[string]LeaseRead) EnvelopeOption {
+	return func(c *envelopeConfig) { c.leaseReads = reads }
 }
 
 // ComputeEnvelope is the single entry point for computing state. Every
@@ -130,7 +152,7 @@ func ComputeEnvelope(
 		projectSummary.Name = project.Name
 	}
 
-	leases := readLeases(ctx, cfg.leases, stateDir, services)
+	leases := readLeases(ctx, cfg.leases, cfg.leaseReads, stateDir, services)
 
 	return StateEnvelope{
 		Phase:        phase,
@@ -161,8 +183,10 @@ const leaseStateRecorded = leaseStateHeld
 // so a project without either costs nothing. When the reader cannot answer
 // (the orchestrator answers only inside the project), the records' last known
 // state is reported, marked unverified; an envelope never fails over it.
-// Only the non-secret fields of a record are ever decoded (DP-3).
-func readLeases(ctx context.Context, reader LeaseReader, stateDir string, services []platform.ServiceStack) *[]LeaseSnapshot {
+// Only the non-secret fields of a record are ever decoded (DP-3). Each lease
+// carries the activity and unsaved work of reads (WithLeaseActivity) and no
+// other.
+func readLeases(ctx context.Context, reader LeaseReader, reads map[string]LeaseRead, stateDir string, services []platform.ServiceStack) *[]LeaseSnapshot {
 	if reader == nil {
 		return nil
 	}
@@ -179,6 +203,10 @@ func readLeases(ctx context.Context, reader LeaseReader, stateDir string, servic
 	// Read: a reader that answered (or records that stood in) with nothing is
 	// the empty array on the wire, never an absent key.
 	leases = append([]LeaseSnapshot{}, leases...)
+	for i := range leases {
+		read := reads[leases[i].Alias]
+		leases[i].Activity, leases[i].Unsaved = read.Activity, read.Unsaved
+	}
 	slices.SortStableFunc(leases, func(a, b LeaseSnapshot) int {
 		if c := cmp.Compare(a.Pool, b.Pool); c != 0 {
 			return c
