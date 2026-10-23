@@ -239,14 +239,14 @@ Read this when an app needs a Swarm pool or a Zerops Box. Either is infrastructu
 ### Swarm pool
 
 **Type**: `swarm@1` (also `swarm-vm@1`). A pool is a service of up to 10 containers that its orchestrator hands out.
-**Import**: `minContainers` / `maxContainers` between 0 and 10 (a higher maximum is capped at 10), plus `verticalAutoscaling`.
+**Import**: `minContainers` / `maxContainers` between 0 and 10 (a higher maximum is capped at 10), plus `verticalAutoscaling`. Import a pool with `minContainers: 0`: containers the platform creates for the minimum have no primary snapshot and cannot be reset. Pre-warm containers through the orchestrator instead — `POST /container` with `{"count": N}`.
 **Image**: comes from the app's zerops.yml setup, deployed with `zcli push`; `run.base` is the language base (e.g. `python@3.12`). A deploy reaches only the containers created after it.
 **Orchestrator**: answers at `http://orch.<pool>.zerops`. An app service authenticates with the env reference `${<pool>_API_TOKEN}`; a call without it gets `401`.
 **Tokens**: the pool's `API_TOKEN` (the bearer of every orchestrator call) and `ADMIN_TOKEN` (sent in the `X-Swarm-Admin-Token` header, only to take a container from its holder) are generated with the pool. Both are secrets: an app wires `API_TOKEN` by reference in its `run.envVariables` — `POOL_TOKEN: ${<pool>_API_TOKEN}` — and never copies the value into code, a file or another variable.
 **Acquire**: `POST /container/acquire` with `start`, `clean`, `leaseTtlSeconds` (`0` = the lease never expires). The lease it returns must accompany every later call for that container — as the `X-Swarm-Lease` header or the `lease` query parameter.
-**Release**: `release` frees the container; `reset=true` also restores the container's primary snapshot. A lease that expires frees its container silently.
+**Release**: `release` frees the container; `reset=true` also restores the container's primary snapshot. A lease that expires frees its container silently, unreset. A container the platform created for `minContainers` has no primary snapshot: `reset=true` is refused (`400`, `containerAction`, reason `no-primary-snapshot`, not retryable) and the reservation stays; `DELETE /container/{id}` with its lease removes it (`202`, gone in about 7 s), and the pool creates fresh containers, with a snapshot, on later acquires.
 **Exec**: `POST /container/{id}/exec` — the output streams as NDJSON, one command at a time.
-**Clean**: a `clean` acquire resets a container that was used before — its `/var/www` comes back empty. Files the image put elsewhere through `run.prepareCommands` survive.
+**Clean**: a `clean` acquire resets only a container marked dirty, and writes over SSH never mark it: a container released without `reset` (or freed by an expiring lease) is handed out with the previous holder's files in `/var/www`, `/home/zerops`, `/tmp` and `/opt`. A reset restores the image: everything `run.prepareCommands` wrote survives, `/var/www` included; what was written or started since is gone, and `run.start` does not run again — `initCommands` do.
 **Removals**: container removals run one at a time.
 **Full pool**: when every container that can serve an acquire is leased and the pool holds its maximum, an acquire (or `POST /container/run`) is refused at once with reason `all-reserved` — nothing is queued and nothing created; it succeeds only after a release. A container freed with `reset=true` is handed out again at once; an empty pool creates one in about 10 s, and simultaneous acquires create one container at a time.
 **Lowering the maximum**: setting `maxContainers` below the containers the pool holds deletes the highest-numbered ones within about 30 s, leased ones included, with their `/var/www`; their leases then answer `container-not-found`.
@@ -265,8 +265,8 @@ A part's dev environment may be a pool: each branch gets one leased container (`
 services:
   - hostname: devpool
     type: swarm@1
-    minContainers: <0-10>
-    maxContainers: <0-10>
+    minContainers: 0
+    maxContainers: <1-10>
     verticalAutoscaling:
       minRam: <GB>
     envVariables:
@@ -275,6 +275,7 @@ services:
       GIT_TOKEN: <the user sets the value>
 ```
 
+- `minContainers: 0`: a container the platform creates for the minimum cannot be reset, so releasing its lease deletes it. Pre-warm through the orchestrator (`POST /container` with `{"count": N}`).
 - `sshIsolation` goes in `envVariables`: a pool container answers SSH only when it is set as a service env variable admitting the zcp service. The top-level import field did not reach pool containers.
 - `GIT_TOKEN` is a secret the user owns: name it in `envSecrets`, never write a value. Acquire clones with the pool's own `GIT_TOKEN`.
 - The service env reaches the pool's containers.
@@ -285,6 +286,10 @@ services:
 ```yaml
 zerops:
   - setup: devpool
+    build:
+      base: <language base>
+      addToRunPrepare:
+        - <the dependency manifest and its lockfile>
     run:
       base: <language base>
       ports:
@@ -292,14 +297,14 @@ zerops:
           httpSupport: true
         # ... one entry per preview port, up to previewPortBase + maxContainers
       prepareCommands:
-        - <install the dependencies outside /var/www, e.g. under /opt>
         - <install zcp-devsup>
+        - <copy the manifest and lockfile into /var/www and install the dependencies there>
       start: zcp-devsup run
 ```
 
 - Preview ports: with `previewPortBase` in `.zcp/dev-servers.json`, a lease answers on `previewPortBase + ZEROPS_StableNumber`. A per-port subdomain routes only to containers listening on that port, and a container's `ZEROPS_StableNumber` starts at 1, so every port from `previewPortBase + 1` to `previewPortBase + maxContainers` is declared in `run.ports` with `httpSupport: true`.
-- Dependencies: a reused container's `/var/www` comes back empty; files `run.prepareCommands` put outside `/var/www` survive.
-- Supervisor: `start: zcp-devsup run` and the `zcp-devsup` install in `run.prepareCommands` are what `zerops_dev_server` needs on a lease; without them it refuses the lease and names `run.start`. A dev service's setup carries the same two lines (see `zerops_knowledge uri="zerops://themes/dev-servers"`).
+- Dependencies: bake them into `/var/www` in `run.prepareCommands`, with the lockfile listed in `build.addToRunPrepare` so the image rebuilds when it changes. They survive a reset, and the checkout keeps them (ignored files stay). A branch whose lockfile differs declares its incremental install as `prepare` in `.zcp/dev-servers.json` (e.g. `"prepare": "npm install --prefer-offline"`); acquire runs it in `/var/www` after the checkout, before the supervisor starts the declared servers, and reports it — a failed one leaves the lease held.
+- Supervisor: the image carries `zcp-devsup` (installed in `run.prepareCommands`) and `start: zcp-devsup run`. `run.start` runs only in a container the pool just created — never again after a reset — so acquire and `zerops_dev_server` start the supervisor in a lease themselves. A pool whose image has no `zcp-devsup` is no dev pool: acquire says so and `zerops_dev_server` refuses its leases. A dev service's setup carries the same two lines (see `zerops_knowledge uri="zerops://themes/dev-servers"`).
 - A deploy of the pool changes only containers created after it; existing containers, leased or free, keep their version until `zerops_lease action=rollout pool="<pool>"` replaces the free outdated ones. A lease is skipped and keeps its version until it is released and the pool is rolled out again.
 
 ### Zerops Box

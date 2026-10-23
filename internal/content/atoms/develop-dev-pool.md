@@ -73,9 +73,20 @@ its own.
   `zerops_lease action=rollout pool="<pool>"` replaces the free outdated
   containers; a held lease keeps its version until you release it and roll
   the pool out again.
-- A reused container's `/var/www` comes back empty. Dependencies baked into
-  the pool image survive only outside `/var/www` (installed in
-  `run.prepareCommands`, e.g. under `/opt`).
+- A release resets a container to its image: what `run.prepareCommands`
+  wrote survives, `/var/www` included; everything written or started since
+  is gone. Bake the part's dependencies into `/var/www` there, listing the
+  lockfile in `build.addToRunPrepare` so the image rebuilds when it changes.
+  A branch whose lockfile differs declares its incremental install as
+  `prepare` in `.zcp/dev-servers.json` (e.g. `npm install --prefer-offline`):
+  acquire runs it after the checkout, before the dev servers start, and
+  reports it; a failed one leaves the lease held.
+- Import the pool with `minContainers: 0`. Containers Zerops creates for the
+  minimum cannot be reset, so releasing one deletes it (the release says
+  so): handed back unreset it would give the next holder your files, as a
+  clean acquire resets only a container marked dirty and SSH writes never
+  mark it. Pre-warm containers through the orchestrator instead
+  (`POST /container` with `{"count": N}`).
 - A container answers SSH only when the pool's `sshIsolation` is set as a
   service env variable admitting the zcp service. The top-level import field
   did not reach pool containers.
