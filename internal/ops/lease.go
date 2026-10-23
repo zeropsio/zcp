@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -144,6 +145,19 @@ type LeaseView struct {
 // as the bearer token.
 const leaseTokenKey = "API_TOKEN"
 
+// leaseTokenAliasKey names the variable a zcp service carries a pool's bearer
+// under when nothing hands it <pool>_API_TOKEN: <pool>_LEASE_TOKEN, set to the
+// reference ${<pool>_API_TOKEN}. The name must differ from the reference it
+// holds: a variable <pool>_API_TOKEN=${<pool>_API_TOKEN} stays the literal
+// text under every envIsolation, and while it exists every other reference to
+// that name on the service stays literal too; a different name resolves into
+// the live env within about 15 s (live, 2026-10-23).
+const leaseTokenAliasKey = "LEASE_TOKEN"
+
+// unresolvedReference is a value that is still the text of an env reference
+// (`${name}`): a reference the platform did not resolve. It is never a token.
+var unresolvedReference = regexp.MustCompile(`^\$\{[A-Za-z0-9_]+\}$`)
+
 // leaseAlias is the alias a lease is addressed by: <pool>-<container number>.
 func leaseAlias(pool string, number int64) string {
 	return pool + "-" + strconv.FormatInt(number, 10)
@@ -163,9 +177,10 @@ type resolvedPool struct {
 
 // resolvePool finds the pool service by hostname, refuses any other type by
 // name, and finds its API_TOKEN: in the container's live env as
-// <pool>_API_TOKEN first (a Mate's own API token sees the pool's secrets
-// masked, while a project with envIsolation none hands every container each
-// service's env), then through the ops env read (a token with full access).
+// <pool>_API_TOKEN, then as <pool>_LEASE_TOKEN (a Mate's own API token sees
+// the pool's secrets masked; the live env carries the token where the pool's
+// env reaches this container or this service references it under a different
+// name), then through the ops env read (a token with full access).
 func resolvePool(ctx context.Context, d LeaseDeps, hostname string) (*resolvedPool, error) {
 	svc, err := LookupService(ctx, d.Client, d.ProjectID, hostname)
 	if err != nil {
@@ -184,8 +199,8 @@ func orchestratorFor(ctx context.Context, d LeaseDeps, svc *platform.ServiceStac
 			fmt.Sprintf("Service '%s' is %s, not a Swarm pool", hostname, typ),
 			"zerops_lease leases a container of a pool (swarm@1 or swarm-vm@1); pass the pool's hostname")
 	}
-	liveKey := hostname + "_" + leaseTokenKey
-	if token, ok := d.env(liveKey); ok {
+	token, unresolved := liveBearer(d, hostname)
+	if token != "" {
 		return &resolvedPool{svc: svc, api: d.Swarm(orchestratorURL(hostname), token)}, nil
 	}
 	envs, err := FetchServiceEnv(ctx, d.Client, svc.ID)
@@ -193,19 +208,52 @@ func orchestratorFor(ctx context.Context, d LeaseDeps, svc *platform.ServiceStac
 		return nil, fmt.Errorf("read %s env: %w", hostname, err)
 	}
 	scalars, masked := EnvScalars(envs)
-	token := scalars[leaseTokenKey]
-	if token == "" {
+	if token = scalars[leaseTokenKey]; token == "" || unresolvedReference.MatchString(token) {
 		reason := leaseTokenKey + " is not set on the pool"
-		for _, k := range masked {
-			if k == leaseTokenKey {
-				reason = leaseTokenKey + " is masked for this zcp's API token"
-			}
+		if slices.Contains(masked, leaseTokenKey) {
+			reason = leaseTokenKey + " is masked for this zcp's API token"
 		}
-		return nil, platform.NewPlatformError(platform.ErrPrerequisiteMissing,
-			fmt.Sprintf("Cannot reach pool '%s': %s, and this container's env has no %s", hostname, reason, liveKey),
-			fmt.Sprintf("The orchestrator needs the pool's own %s as its bearer token. In a project with envIsolation none every container carries it as %s; otherwise add a service env var %s=${%s} on this zcp service", leaseTokenKey, liveKey, liveKey, liveKey))
+		return nil, noBearerError(hostname, reason, unresolved)
 	}
 	return &resolvedPool{svc: svc, api: d.Swarm(orchestratorURL(hostname), token)}, nil
+}
+
+// liveBearer reads a pool's bearer from the container's live env:
+// <pool>_API_TOKEN, then <pool>_LEASE_TOKEN. A value that is still the text of
+// a reference is skipped, and named in unresolved ("<key> is the unresolved
+// text ${...}").
+func liveBearer(d LeaseDeps, pool string) (token string, unresolved []string) {
+	for _, key := range []string{pool + "_" + leaseTokenKey, pool + "_" + leaseTokenAliasKey} {
+		v, ok := d.env(key)
+		if !ok {
+			continue
+		}
+		if unresolvedReference.MatchString(v) {
+			unresolved = append(unresolved, key+" is the unresolved text "+v)
+			continue
+		}
+		return v, nil
+	}
+	return "", unresolved
+}
+
+// noBearerError is the refusal of a pool zcp finds no bearer for: why the env
+// API did not give it, what the live env held instead, and the different-name
+// reference to add — never the same-name one, which cannot resolve.
+func noBearerError(pool, reason string, unresolved []string) error {
+	apiKey := pool + "_" + leaseTokenKey
+	aliasKey := pool + "_" + leaseTokenAliasKey
+	msg := fmt.Sprintf("Cannot reach pool '%s': %s, and this container's env has no usable %s or %s", pool, reason, apiKey, aliasKey)
+	if len(unresolved) > 0 {
+		msg += " (" + strings.Join(unresolved, "; ") + ")"
+	}
+	var suggestion strings.Builder
+	fmt.Fprintf(&suggestion, "The orchestrator needs the pool's own %s as its bearer token. ", leaseTokenKey)
+	if len(unresolved) > 0 && strings.HasPrefix(unresolved[0], apiKey+" ") {
+		fmt.Fprintf(&suggestion, "This zcp service has a variable %s holding ${%s}: a variable named like the reference it holds never resolves, and while it exists every other reference to that name on the service stays unresolved too — delete it. ", apiKey, apiKey)
+	}
+	fmt.Fprintf(&suggestion, "Add a service env var %s=${%s} on this zcp service; it reaches the container's live env within about 15 s, whatever the envIsolation. Never name it %s: a variable named like the reference it holds stays the literal text", aliasKey, apiKey, apiKey)
+	return platform.NewPlatformError(platform.ErrPrerequisiteMissing, msg, suggestion.String())
 }
 
 // LeaseList reports the leases of one pool, or of every pool the project
