@@ -62,6 +62,11 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 				Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rt),
 			}), nil, nil
 		}
+		// A lease alias names a pool container, not a service: it is read
+		// over SSH and never resolved as a service or a meta (DP-1, PS-3).
+		if lease, ok := leaseOf(stateDir, input.ServiceHostname); ok {
+			return verifyLease(ctx, client, httpClient, ssh, projectID, stateDir, rt, lease), nil, nil
+		}
 		// Phase 4: if the input hostname is a push source whose builds land
 		// on a different runtime (dev half of a standard pair under
 		// git-push), verify against the BUILD TARGET instead. Self/cross
@@ -106,6 +111,35 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 			resp.Note += note
 		}
 		return jsonResult(resp), nil, nil
+	})
+}
+
+// leaseProbeTimeout bounds `ssh <alias> true`: a container that does not
+// answer is unreachable, not a verify that hangs.
+const leaseProbeTimeout = 20 * time.Second
+
+// verifyLease answers zerops_verify for a lease alias: whether the container
+// answers over SSH, and the dev servers its supervisor reports. Nothing is
+// recorded to the work session — a lease is no service of the part.
+func verifyLease(ctx context.Context, client platform.Client, httpClient ops.HTTPDoer, ssh ops.SSHDeployer, projectID, stateDir string, rt runtime.Info, lease ops.LeaseTargetInfo) *mcp.CallToolResult {
+	if ssh == nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrNotImplemented,
+			fmt.Sprintf("%s is a lease: it is verified over SSH, and this zcp has no SSH access to it", lease.Alias),
+			"Run zerops_verify from the zcp container of the project that holds the lease.",
+		), WithRecoveryStatus())
+	}
+	unreachable := ""
+	probeCtx, cancel := context.WithTimeout(ctx, leaseProbeTimeout)
+	if _, err := ssh.ExecSSH(probeCtx, lease.Alias, "true"); err != nil {
+		unreachable = withSSHStderr("ssh "+lease.Alias, err)
+	}
+	cancel()
+	result := ops.VerifyLease(ctx, ssh, lease, unreachable)
+	return jsonResult(verifyResponse{
+		VerifyResult:     result,
+		WorkSessionState: sessionAnnotations(ctx, httpClient, stateDir),
+		Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rt),
 	})
 }
 

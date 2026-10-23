@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -67,6 +68,10 @@ func requireWorkflowContext(engine *workflow.Engine, stateDir string, recipeProb
 //   - stateDir is empty (no state directory configured)
 //   - services/ directory doesn't exist (no bootstrap ever ran — gate activates
 //     once the first service is adopted, giving a clean migration path)
+//   - h is the alias of a lease zcp holds a record for (ops.LeaseTarget): a
+//     pool container is no service to adopt (docs/spec-workflows.md §8 DP-1),
+//     and the pool of such a lease named beside it is the deploy target of a
+//     lease-to-pool deploy (PS-2 keeps a pool from being adopted)
 //   - recipeProbe.CoversHost(h) — an open recipe session's Plan owns the
 //     hostname; recipe authoring legitimately deploys its own dev/stage slots
 //     before any bootstrap workflow exists. recipeProbe may be nil; the
@@ -87,11 +92,15 @@ func requireAdoption(stateDir string, rt runtime.Info, recipeProbe RecipeSession
 	if _, err := os.Stat(servicesDir); os.IsNotExist(err) {
 		return nil
 	}
+	leasePools := leasePoolsAmong(stateDir, hostnames)
 	for _, h := range hostnames {
 		if h == "" {
 			continue
 		}
 		if workflow.IsKnownService(stateDir, h) {
+			continue
+		}
+		if _, isLease := leaseOf(stateDir, h); isLease || leasePools[h] {
 			continue
 		}
 		// Recipe-authoring exemption: an open recipe session whose Plan
@@ -132,4 +141,29 @@ func requireAdoption(stateDir string, rt runtime.Info, recipeProbe RecipeSession
 		), WithRecovery(recovery))
 	}
 	return nil
+}
+
+// leaseOf is the lease host names, when host is the alias of a lease zcp holds
+// a record for. An unreadable record set is no lease: the caller falls back to
+// the service rules it had before leases.
+func leaseOf(stateDir, host string) (ops.LeaseTargetInfo, bool) {
+	lease, ok, err := ops.LeaseTarget(stateDir, host)
+	if err != nil || !ok {
+		return ops.LeaseTargetInfo{}, false
+	}
+	return lease, true
+}
+
+// leasePoolsAmong is the set of pools whose lease is named in hostnames.
+func leasePoolsAmong(stateDir string, hostnames []string) map[string]bool {
+	var pools map[string]bool
+	for _, h := range hostnames {
+		if lease, ok := leaseOf(stateDir, h); ok {
+			if pools == nil {
+				pools = map[string]bool{}
+			}
+			pools[lease.Pool] = true
+		}
+	}
+	return pools
 }

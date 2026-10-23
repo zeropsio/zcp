@@ -2,6 +2,7 @@ package ops
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -639,4 +640,76 @@ func aggregateAllStatus(results []VerifyResult) (overall string, healthy int) {
 	default:
 		return StatusDegraded, healthy
 	}
+}
+
+// VerifyTypeLease is VerifyResult.Type of a lease: a pool container zcp holds
+// by lease (docs/spec-workflows.md §8 DP), not a service.
+const VerifyTypeLease = "lease"
+
+// VerifyLease reports a lease: whether its container answers over SSH and the
+// dev servers its supervisor reports. A lease is never resolved as a service
+// or a service meta — its alias names no service of the project (DP-1) and a
+// pool is never probed by service hostname as one container (PS-3).
+//
+// unreachable is why `ssh <alias> true` failed ("" when it answered): the
+// tools layer owns the probe so its stderr is worded in one place. The dev
+// servers are read only from a container that answered. No supervisor is no
+// failure — a lease need not run one.
+func VerifyLease(ctx context.Context, ssh SSHDeployer, lease LeaseTargetInfo, unreachable string) *VerifyResult {
+	result := &VerifyResult{Hostname: lease.Alias, Type: VerifyTypeLease}
+	identity := fmt.Sprintf("pool %s, container %s", lease.Pool, lease.ContainerHostname)
+	if lease.Branch != "" {
+		identity += ", branch " + lease.Branch
+	}
+	result.Checks = append(result.Checks, CheckResult{Name: "lease", Status: CheckInfo, Detail: identity})
+	if unreachable != "" {
+		result.Checks = append(result.Checks, CheckResult{Name: "ssh_reachable", Status: CheckFail, Detail: unreachable})
+		result.Status = StatusUnhealthy
+		return result
+	}
+	result.Checks = append(result.Checks, CheckResult{Name: "ssh_reachable", Status: CheckPass})
+	result.Checks = append(result.Checks, leaseDevServerChecks(ctx, ssh, lease.Alias)...)
+	result.Status = StatusHealthy
+	for _, c := range result.Checks {
+		if c.Status == CheckFail {
+			result.Status = StatusDegraded
+		}
+	}
+	return result
+}
+
+// leaseDevServerChecks reads the lease's supervisor (`zcp-devsup ctl status
+// --json` over SSH) into one check per dev server it holds.
+func leaseDevServerChecks(ctx context.Context, ssh SSHDeployer, alias string) []CheckResult {
+	ds, err := ReadDevServers(ctx, ssh, alias, "")
+	var noSup *NoSupervisorError
+	var unresponsive *SupervisorUnresponsiveError
+	switch {
+	case errors.As(err, &noSup):
+		return []CheckResult{{Name: "dev_servers", Status: CheckInfo, Detail: noSup.Error()}}
+	case errors.As(err, &unresponsive):
+		return []CheckResult{{Name: "dev_servers", Status: CheckFail, Detail: unresponsive.Error()}}
+	case err != nil:
+		return []CheckResult{{Name: "dev_servers", Status: CheckInfo, Detail: "dev servers unreadable: " + err.Error()}}
+	}
+	servers := ds.Servers()
+	if len(servers) == 0 {
+		return []CheckResult{{Name: "dev_servers", Status: CheckInfo, Detail: "the supervisor runs no dev server"}}
+	}
+	checks := make([]CheckResult, 0, len(servers))
+	for _, s := range servers {
+		status := ds.State.Servers[s.Name].Status
+		check := CheckResult{Name: "dev_server", Server: s.Name, Port: s.Port, Detail: string(status), Status: CheckInfo}
+		switch status {
+		case devsup.StatusRunning:
+			check.Status = CheckPass
+		case devsup.StatusCrashed:
+			check.Status = CheckFail
+		case devsup.StatusStopped, devsup.StatusStarting:
+			// An advisory state: a stopped server was asked to stop, a
+			// starting one is not yet a verdict.
+		}
+		checks = append(checks, check)
+	}
+	return checks
 }
