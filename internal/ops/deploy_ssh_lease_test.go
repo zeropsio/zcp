@@ -232,3 +232,37 @@ func TestSourceMountDir_LeaseAlias(t *testing.T) {
 		t.Fatalf("SourceMountDir = %q, want /var/www/webpool-3", got)
 	}
 }
+
+// TestDeploySSH_DevSourceToPool_NoteAndFlag: a deploy whose target is a pool
+// reaches only the containers the pool creates later whatever its source
+// (docs/spec-workflows.md §8 DP-7) — a plain dev service names no lease.
+func TestDeploySSH_DevSourceToPool_NoteAndFlag(t *testing.T) {
+	t.Parallel()
+
+	services := append(leaseDeployServices(), platform.ServiceStack{ID: "svc-dev", Name: "appdev",
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}})
+	mock := platform.NewMock().WithServices(services)
+	ssh := &mockSSHDeployer{output: []byte("ok")}
+
+	result, err := DeploySSHWithLeases(context.Background(), mock, "proj-1", ssh, testAuthInfo(),
+		t.TempDir(), "appdev", "webpool", "", "", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.ReachesNewContainersOnly {
+		t.Error("ReachesNewContainersOnly = false for a deploy whose target is a pool")
+	}
+	for _, want := range []string{"containers webpool creates after it", "leased or free, keep their version", "not updated"} {
+		if !strings.Contains(result.Message, want) {
+			t.Errorf("message %q lacks %q", result.Message, want)
+		}
+	}
+	if strings.Contains(result.Message, "leased container") {
+		t.Errorf("message %q names a leased container for a dev-service source", result.Message)
+	}
+	for _, c := range ssh.calls {
+		if c.hostname != "appdev" {
+			t.Errorf("ssh reached %q, want only the source appdev", c.hostname)
+		}
+	}
+}

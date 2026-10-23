@@ -28,6 +28,7 @@ type SwarmAPI interface {
 	Release(ctx context.Context, id, lease string, reset bool) (platform.SwarmContainer, error)
 	Renew(ctx context.Context, id, lease string) (platform.SwarmContainer, error)
 	Delete(ctx context.Context, id, lease string) error
+	Rollout(ctx context.Context) (platform.SwarmRollout, error)
 }
 
 // SwarmFactory builds an orchestrator client.

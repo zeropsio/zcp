@@ -411,10 +411,8 @@ func runDeploySSHZCLIPush(
 	}
 
 	// A lease is a pool container, not a dev service: the supervisor in it is
-	// not migrated by this deploy, and a deploy to its own pool reaches only
-	// the containers the pool creates later (docs/spec-workflows.md §8 DP).
+	// not migrated by this deploy (docs/spec-workflows.md §8 DP).
 	lease, fromLease := leaseOf(stateDir, input.SourceService)
-	toOwnPool := fromLease && lease.Pool == input.TargetService
 	var move devSetupMove
 	var superviseErr error
 	if !fromLease {
@@ -449,17 +447,24 @@ func runDeploySSHZCLIPush(
 		return convertError(err, WithRecoveryStatus(), WithFailureClassification(classification), WithSuggestion(suggestion), toldMove), nil, nil
 	}
 
+	// A deploy to a pool, whatever its source, reaches only the containers
+	// the pool creates later (docs/spec-workflows.md §8 DP-7).
+	toPool := result.ReachesNewContainersOnly
 	onProgress := buildProgressCallback(ctx, req)
 	ctx = deployFollowUpContext(ctx)
 	pollSSH := sshDeployer
-	if toOwnPool {
+	if toPool {
 		// No container of the pool is "the" pool: nothing is probed by its
 		// service hostname (PS-3).
 		pollSSH = nil
 	}
 	pollDeployBuild(ctx, client, projectID, result, onProgress, logFetcher, pollSSH, stateDir, configFile)
-	if toOwnPool {
-		sayPoolImageOnly(result, lease)
+	if toPool {
+		var ownLease string
+		if fromLease && lease.Pool == input.TargetService {
+			ownLease = lease.Alias
+		}
+		sayPoolImageOnly(result, input.TargetService, ownLease)
 	}
 	if told := move.told(result); told != "" {
 		result.Message = told + " " + result.Message
@@ -471,14 +476,14 @@ func runDeploySSHZCLIPush(
 	// L1 break-glass aftermath: a direct deploy on a push-delivering
 	// pair leaves the container ahead of the repo — flag the standing
 	// reconcile push (spec-git-delivery-target §1.1).
-	if result.Status == statusDeployed && !toOwnPool {
+	if result.Status == statusDeployed && !toPool {
 		if warn := repoDeliveryDivergenceWarning(stateDir, input.TargetService); warn != "" {
 			result.Warnings = append(result.Warnings, warn)
 		}
 	}
 
 	switch {
-	case result != nil && result.Status == statusDeployed && toOwnPool:
+	case result != nil && result.Status == statusDeployed && toPool:
 		// The pool is no app runtime (PS-1/PS-2): no public access is decided
 		// on it, no dev server asked for, no code volume filled.
 		attempt.SucceededAt = time.Now().UTC().Format(time.RFC3339)
@@ -525,17 +530,26 @@ func runDeploySSHZCLIPush(
 	}), nil, nil
 }
 
-// sayPoolImageOnly rewrites what a finished deploy from a lease to its own
-// pool tells the agent: the build changed the pool's image, it updated no
-// container, and the leased one keeps its version. pollDeployBuild's own
-// wording ("Successfully deployed", a verify pointer) speaks of a running
-// service and does not apply to a pool.
-func sayPoolImageOnly(result *ops.DeployResult, lease ops.LeaseTargetInfo) {
+// sayPoolImageOnly rewrites what a finished deploy to a pool tells the agent,
+// whatever its source: the build changed the pool's image, it updated no
+// container, and existing ones — a lease the deploy came from included
+// (lease, empty for any other source) — keep their version until the pool is
+// rolled out. pollDeployBuild's own wording ("Successfully deployed", a
+// verify pointer) speaks of a running service and does not apply to a pool.
+// Releasing and acquiring again can hand back the same outdated container,
+// so only the rollout puts free containers on this version.
+func sayPoolImageOnly(result *ops.DeployResult, pool, lease string) {
 	if result.Status != statusDeployed {
 		return
 	}
-	result.Message = fmt.Sprintf("Built appVersion %s for pool %s%s.", result.AppVersionID, lease.Pool, ops.LeaseToPoolNote(lease.Alias, lease.Pool))
-	result.NextActions = fmt.Sprintf("To run this version, release %s and acquire a fresh lease (zerops_lease) — a container created after the build starts on it. Verify a container through its lease alias (zerops_verify serviceHostname=%q), never through the pool's hostname.", lease.Alias, lease.Alias)
+	result.Message = fmt.Sprintf("Built appVersion %s for pool %s%s.", result.AppVersionID, pool, ops.PoolDeployNote(pool, lease))
+	held := "A held lease keeps its version"
+	if lease != "" {
+		held = fmt.Sprintf("Your lease %s keeps its version", lease)
+	}
+	result.NextActions = fmt.Sprintf("zerops_lease action=rollout pool=%q replaces the pool's free outdated containers with ones on this version. "+
+		"%s until it is released and the pool is rolled out again. "+
+		"Verify a container through its lease alias (zerops_verify serviceHostname=\"<alias>\"), never through the pool's hostname.", pool, held)
 }
 
 // deploySSHResponse mirrors deployLocalResponse — wraps the SSH-mode

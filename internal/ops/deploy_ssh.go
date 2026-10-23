@@ -256,7 +256,11 @@ func deploySSH(
 	mountPath := SourceMountDir(defaultWorkingDir, sourceService, workingDir)
 	serviceType := target.ServiceStackTypeInfo.ServiceStackTypeVersionName
 	class := ClassifyDeploy(sourceService, targetService)
-	toOwnPool := lease != nil && lease.Pool == target.Name
+	toPool := topology.IsPoolType(serviceType)
+	var poolLease string
+	if lease != nil && lease.Pool == target.Name {
+		poolLease = sourceService
+	}
 
 	// Self-deploy guard on the sha path (docs/spec-workflows.md §4.9): a
 	// self-deploy from a commit would extract sha's tree and push
@@ -378,7 +382,7 @@ func deploySSH(
 	outcome := sshDeployOutcome{
 		sourceService: sourceService, targetService: targetService, target: target,
 		resolvedSHA: resolvedSHA, versionName: versionName, dirty: dirty, warnings: warnings,
-		notCarried: notCarried, envFiles: envFiles, repoState: repoState, toOwnPool: toOwnPool,
+		notCarried: notCarried, envFiles: envFiles, repoState: repoState, toPool: toPool, poolLease: poolLease,
 	}
 	if err != nil {
 		// A self-deploy's build replaces the source, dropping the wait's
@@ -406,15 +410,17 @@ type sshDeployOutcome struct {
 	notCarried                   *git.NotCarried
 	envFiles                     []string
 	repoState                    string
-	// toOwnPool is a deploy from a lease to its own pool: the result says the
-	// build reaches only containers created after it.
-	toOwnPool bool
+	// toPool is a deploy whose target is a pool: the result says the build
+	// reaches only containers the pool creates after it.
+	toPool bool
+	// poolLease is the source's alias when it is a lease of that pool.
+	poolLease string
 }
 
 // result is the BUILD_TRIGGERED DeployResult carrying message.
 func (o sshDeployOutcome) result(message string) *DeployResult {
-	if o.toOwnPool {
-		message += LeaseToPoolNote(o.sourceService, o.target.Name)
+	if o.toPool {
+		message += PoolDeployNote(o.target.Name, o.poolLease)
 	}
 	return &DeployResult{
 		Status:            "BUILD_TRIGGERED",
@@ -433,7 +439,7 @@ func (o sshDeployOutcome) result(message string) *DeployResult {
 		EnvFiles:          o.envFiles,
 		RepoState:         o.repoState,
 
-		ReachesNewContainersOnly: o.toOwnPool,
+		ReachesNewContainersOnly: o.toPool,
 	}
 }
 

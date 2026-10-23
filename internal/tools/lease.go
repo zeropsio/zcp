@@ -17,6 +17,7 @@ const (
 	leaseActionAcquire = "acquire"
 	leaseActionStatus  = "status"
 	leaseActionRelease = "release"
+	leaseActionRollout = "rollout"
 )
 
 // LeaseInput is the input type for zerops_lease.
@@ -33,11 +34,11 @@ type LeaseInput struct {
 // stringifies booleans must not be bounced by the schema).
 func leaseInputSchema() *jsonschema.Schema {
 	return objectSchema(map[string]*jsonschema.Schema{
-		"action": {Type: "string", Description: "acquire, status or release."},
-		"pool":   {Type: "string", Description: "Pool service hostname. acquire: required. status: optional (default every pool)."},
+		"action": {Type: "string", Description: "acquire, status, release or rollout."},
+		"pool":   {Type: "string", Description: "Pool service hostname. acquire, rollout: required. status: optional (default every pool)."},
 		"branch": {Type: "string", Description: "acquire: branch to check out (default main); a new one is cut from main."},
 		"repo":   {Type: "string", Description: "acquire: https clone URL; the first one on a pool becomes its default."},
-		"lease":  {Type: "string", Description: "release: the lease alias <pool>-<number> from acquire or status. It names the lease; it is not a secret."},
+		"lease":  {Type: "string", Description: "release: the lease alias <pool>-<number> from acquire or status (not a secret)."},
 		"force":  flexBoolSchema("release: discard unpushed commits and uncommitted files (default false: refused while any exist)."),
 	}, "action")
 }
@@ -62,8 +63,16 @@ type leaseToolResult struct {
 	Envelope    *workflow.StateEnvelope `json:"envelope,omitempty"`
 }
 
+// leaseRolloutToolResult is what zerops_lease action=rollout returns.
+type leaseRolloutToolResult struct {
+	Action   string                  `json:"action"`
+	Rollout  ops.LeaseRolloutView    `json:"rollout"`
+	Envelope *workflow.StateEnvelope `json:"envelope,omitempty"`
+}
+
 // RegisterLease registers the zerops_lease tool: acquire, status and release
-// of a container of a Swarm pool, through the pool's orchestrator. swarm
+// of a container of a Swarm pool, and rollout of the pool, through the pool's
+// orchestrator. swarm
 // builds the orchestrator client (tests inject a fake or a stub transport).
 // mounter (container mode; nil elsewhere) gives a lease its ssh alias and
 // mount; ssh runs git inside the leased container (nil: no checkout and no
@@ -81,9 +90,9 @@ func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir 
 	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "zerops_lease",
-		Description: "Lease a container of a Swarm pool (swarm@1) for one branch. acquire takes a clean running container, names it <pool>-<number> and checks the branch out in /var/www; " +
-			"status lists your leases; release resets and returns it, refusing while it holds unpushed commits or uncommitted files unless force=true. " +
-			"The orchestrator answers only inside the project.",
+		Description: "Lease a Swarm pool (swarm@1) container for one branch. acquire takes a clean running container, names it <pool>-<number>, checks the branch out in /var/www; " +
+			"status lists your leases; release resets and returns it, refusing on unpushed commits or uncommitted files unless force=true; " +
+			"rollout replaces the pool's free outdated containers (leases keep their version). The orchestrator answers only inside the project.",
 		InputSchema: leaseInputSchema(),
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Lease a pool container",
@@ -132,9 +141,19 @@ func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir 
 				return convertError(withLeaseSSHStderr(err)), nil, nil
 			}
 			return jsonResult(leaseToolResult{Action: input.Action, Leases: []ops.LeaseView{view}, Envelope: envelope(ctx)}), nil, nil
+		case leaseActionRollout:
+			if input.Pool == "" {
+				return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
+					"rollout needs pool", "Pass the pool service's hostname as pool")), nil, nil
+			}
+			view, err := ops.LeaseRollout(ctx, deps, input.Pool)
+			if err != nil {
+				return convertError(err), nil, nil
+			}
+			return jsonResult(leaseRolloutToolResult{Action: input.Action, Rollout: view, Envelope: envelope(ctx)}), nil, nil
 		default:
 			return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
-				fmt.Sprintf("Unknown action %q", input.Action), "action is acquire, status or release")), nil, nil
+				fmt.Sprintf("Unknown action %q", input.Action), "action is acquire, status, release or rollout")), nil, nil
 		}
 	})
 }

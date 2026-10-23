@@ -10,10 +10,15 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // swarmMaxBody bounds what is read back from an orchestrator.
 const swarmMaxBody = 1 << 20
+
+// swarmRolloutTimeout bounds a rollout, which returns only once the pool's
+// outdated containers are removed and their replacements exist.
+const swarmRolloutTimeout = 10 * time.Minute
 
 // SwarmLease is the secret a Swarm orchestrator returns once, on acquire. It
 // is the credential of one reserved container, so it formats and marshals as
@@ -71,6 +76,47 @@ type SwarmAcquireRequest struct {
 type SwarmAcquired struct {
 	Container SwarmContainer `json:"container"`
 	Lease     SwarmLease     `json:"lease"`
+}
+
+// SwarmRollout is what POST /container/rollout did with each outdated
+// container (current:false) of the pool.
+type SwarmRollout struct {
+	// ActiveAppVersionID is the app version every created container runs;
+	// empty when the pool is empty.
+	ActiveAppVersionID string `json:"activeAppVersionId"`
+	// Replaced are the ids of the outdated containers removed.
+	Replaced []string `json:"replaced"`
+	// Created are the replacements.
+	Created []SwarmContainer `json:"created"`
+	// Retiring are the ids of outdated containers with work in progress; the
+	// orchestrator replaces each once its work ends.
+	Retiring []string `json:"retiring"`
+	// Skipped are the outdated containers not replaced, each with its reason.
+	Skipped []SwarmRolloutSkip `json:"skipped"`
+	// CreateErrors say why replacements could not be created.
+	CreateErrors []SwarmRolloutCreateError `json:"createErrors"`
+}
+
+// SwarmReasonPoolFixedSize is the SwarmError.Reason of a rollout refused
+// because the pool's minimum container count equals its maximum: there is no
+// room to replace a container.
+const SwarmReasonPoolFixedSize = "pool-fixed-size"
+
+// SwarmRolloutSkip is an outdated container a rollout did not replace.
+// Reason is held-by-other (reserved, and no force was sent),
+// container-deleting, containers-preparing, removal-failed or create-failed.
+type SwarmRolloutSkip struct {
+	ID      string `json:"id"`
+	Reason  string `json:"reason"`
+	Message string `json:"message,omitempty"`
+}
+
+// SwarmRolloutCreateError is one replacement a rollout could not create; it
+// names the new container only when the platform got far enough to name it.
+type SwarmRolloutCreateError struct {
+	ContainerID   string `json:"containerId,omitempty"`
+	ContainerName string `json:"containerName,omitempty"`
+	Message       string `json:"message"`
 }
 
 // SwarmClient talks to one pool's orchestrator (http://orch.<pool>.zerops,
@@ -191,6 +237,30 @@ func (c *SwarmClient) Delete(ctx context.Context, id, lease string) error {
 		return fmt.Errorf("swarm delete: %w", err)
 	}
 	return nil
+}
+
+// Rollout replaces the pool's outdated containers with ones built for its
+// current app version (POST /container/rollout). It never sends force: force
+// needs the admin token and would take a container from its holder, so every
+// reserved container is skipped as held-by-other and keeps its version. The
+// call carries no lease.
+//
+// The orchestrator answers once its removals and creates are done, which can
+// take minutes for a VM pool, so the call is bounded by swarmRolloutTimeout
+// instead of the client's own (short) budget; a rollout continues on the
+// orchestrator if the call is cut.
+func (c *SwarmClient) Rollout(ctx context.Context) (SwarmRollout, error) {
+	ctx, cancel := context.WithTimeout(ctx, swarmRolloutTimeout)
+	defer cancel()
+	hc := *c.http
+	hc.Timeout = 0 // the context bounds the call
+	long := *c
+	long.http = &hc
+	var out SwarmRollout
+	if err := long.do(ctx, http.MethodPost, "/container/rollout", nil, "", &out); err != nil {
+		return SwarmRollout{}, fmt.Errorf("swarm rollout: %w", err)
+	}
+	return out, nil
 }
 
 // do sends one request and decodes a JSON answer into out (nil: ignore the
