@@ -138,3 +138,28 @@ func TestDeployTool_LeaseToStage_StageTracksMain(t *testing.T) {
 		})
 	}
 }
+
+// TestDeployTool_LeaseGitPushRefusal_SteersStageToMain: the git-push refusal
+// from a lease no longer sends the branch to the stage; it points at the
+// lease's preview URL for review and at the call that puts main on the stage.
+func TestDeployTool_LeaseGitPushRefusal_SteersStageToMain(t *testing.T) {
+	t.Parallel()
+
+	rig := newLeaseDeployRig(t)
+	ssh := &leaseSSH{}
+	result, text := rig.deploy(t, ssh, map[string]any{"sourceService": rig.alias, "targetService": "appstage", "strategy": "git-push"})
+	if !result.IsError {
+		t.Fatalf("a git-push from a lease ran: %s", text)
+	}
+	for _, want := range []string{"git push", "preview URL", "stage tracks main", `sha=\"origin/main\"`} {
+		if !strings.Contains(text, want) {
+			t.Errorf("refusal %s lacks %q", text, want)
+		}
+	}
+	if strings.Contains(text, "to run the code on a stage") {
+		t.Errorf("refusal %s still sends the branch to the stage", text)
+	}
+	if len(ssh.hosts()) != 0 {
+		t.Errorf("ssh calls ran before the refusal: %v", ssh.hosts())
+	}
+}
