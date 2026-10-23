@@ -542,19 +542,20 @@ type activityLeaseSSH struct {
 	calls       []sshCall
 }
 
-func (s *activityLeaseSSH) ExecSSH(_ context.Context, hostname, command string) ([]byte, error) {
+func (s *activityLeaseSSH) ExecSSH(ctx context.Context, hostname, command string) ([]byte, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.calls = append(s.calls, sshCall{hostname: hostname, command: command})
+	answer, unreachable := s.answer, s.unreachable
+	s.mu.Unlock()
 	if !strings.Contains(command, "@@zcp-lease activity") {
 		return []byte("ok"), nil
 	}
-	if s.unreachable {
+	if unreachable {
 		// ssh's own exit status when it cannot reach the host.
-		exit := exec.CommandContext(context.Background(), "sh", "-c", "exit 255").Run()
+		exit := exec.CommandContext(ctx, "sh", "-c", "exit 255").Run()
 		return nil, &platform.SSHExecError{Hostname: hostname, Output: "ssh: connect to host node-id-3.runtime.devpool.zerops port 22: Connection refused", Err: exit}
 	}
-	return []byte(s.answer), nil
+	return []byte(answer), nil
 }
 
 func (s *activityLeaseSSH) ExecSSHBackground(ctx context.Context, hostname, command string, _ time.Duration) ([]byte, error) {

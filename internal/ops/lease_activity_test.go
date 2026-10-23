@@ -95,7 +95,7 @@ func TestLeaseActivity_CommandIsReadOnly(t *testing.T) {
 			t.Errorf("command contains %q, which writes: %s", write, cmd)
 		}
 	}
-	for _, m := range regexp.MustCompile(`[0-9]?>\s*(\S+)`).FindAllStringSubmatch(cmd, -1) {
+	for _, m := range regexp.MustCompile(`[0-9]?>\s*(&[0-9]|[^\s;|)"]+)`).FindAllStringSubmatch(cmd, -1) {
 		if m[1] != "/dev/null" && m[1] != "&1" {
 			t.Errorf("command redirects into %q; a read writes nowhere: %s", m[1], cmd)
 		}
@@ -187,58 +187,47 @@ func TestLeaseActivity_ParsesNewestChange(t *testing.T) {
 func TestLeaseActivity_ReadFails_SaysWhatFailedAndKeepsWhatItRead(t *testing.T) {
 	t.Parallel()
 	const head = int64(1792756800)
+	statusFailed := fmt.Sprintf("@@zcp-lease activity %d \n@@zcp-lease status\nfatal: not a git repository\n", head)
 	for _, tt := range []struct {
-		name        string
-		out         string // what the call returns beside the error
-		err         func(t *testing.T) error
-		wantChange  string
-		wantUnsaved bool
-		wantNote    []string
+		name       string
+		out        string // what the call returns beside its error
+		exit       int    // the remote's exit status; 0: no error
+		errOut     string // what the *SSHExecError carries
+		wantChange string
+		wantNote   []string
 	}{
 		{
-			name:     "ssh cannot reach the container",
-			err:      func(t *testing.T) error { return sshFailure("ssh: Could not resolve hostname devpool-3", exitError(t, 255)) },
+			name: "ssh cannot reach the container", exit: 255, errOut: "ssh: Could not resolve hostname devpool-3",
 			wantNote: []string{"could not reach the container over ssh", "Could not resolve hostname"},
 		},
 		{
-			name:     "the checkout directory is missing",
-			err:      func(t *testing.T) error { return sshFailure("sh: cd: /var/www: No such file or directory", exitError(t, 2)) },
+			name: "the checkout directory is missing", exit: 2, errOut: "sh: cd: /var/www: No such file or directory",
 			wantNote: []string{"/var/www", "No such file or directory"},
 		},
 		{
-			name: "git status fails after the activity read",
-			out:  fmt.Sprintf("@@zcp-lease activity %d \n@@zcp-lease status\nfatal: not a git repository\n", head),
-			err: func(t *testing.T) error {
-				return sshFailure(fmt.Sprintf("@@zcp-lease activity %d \n@@zcp-lease status\nfatal: not a git repository\n", head), exitError(t, 128))
-			},
-			wantChange: rfc3339(head),
-			wantNote:   []string{"git status", "fatal: not a git repository"},
+			name: "git status fails after the activity read", out: statusFailed, exit: 128, errOut: statusFailed,
+			wantChange: rfc3339(head), wantNote: []string{"git status", "fatal: not a git repository"},
 		},
 		{
-			name: "the unpushed count fails, the output only in the error",
-			err: func(t *testing.T) error {
-				return sshFailure(fmt.Sprintf("@@zcp-lease activity %d \n@@zcp-lease status\n?? a.txt\n@@zcp-lease unpushed\nfatal: bad object HEAD\n", head), exitError(t, 128))
-			},
-			wantChange: rfc3339(head),
-			wantNote:   []string{"commits on no remote branch", "fatal: bad object HEAD"},
+			name: "the unpushed count fails, the output only in the error", exit: 128,
+			errOut:     fmt.Sprintf("@@zcp-lease activity %d \n@@zcp-lease status\n?? a.txt\n@@zcp-lease unpushed\nfatal: bad object HEAD\n", head),
+			wantChange: rfc3339(head), wantNote: []string{"commits on no remote branch", "fatal: bad object HEAD"},
 		},
 		{
-			name:     "an answer with no activity line",
-			out:      "ok",
+			name: "an answer with no activity line", out: "ok",
 			wantNote: []string{"ok"},
 		},
 		{
 			name:       "an unpushed count that is no number",
 			out:        fmt.Sprintf("@@zcp-lease activity %d \n@@zcp-lease status\n@@zcp-lease unpushed\nmany\n", head),
-			wantChange: rfc3339(head),
-			wantNote:   []string{"many"},
+			wantChange: rfc3339(head), wantNote: []string{"many"},
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			var err error
-			if tt.err != nil {
-				err = tt.err(t)
+			if tt.exit != 0 {
+				err = sshFailure(tt.errOut, exitError(t, tt.exit))
 			}
 			ssh := &ctxSSH{fn: func(context.Context, string, string) ([]byte, error) {
 				if tt.out == "" {
@@ -259,7 +248,7 @@ func TestLeaseActivity_ReadFails_SaysWhatFailedAndKeepsWhatItRead(t *testing.T) 
 			if act.AcquiredAt != rec.AcquiredAt {
 				t.Errorf("acquiredAt = %q, want the record's %q", act.AcquiredAt, rec.AcquiredAt)
 			}
-			if (unsaved != nil) != tt.wantUnsaved {
+			if unsaved != nil {
 				t.Errorf("unsaved = %+v, want absent: it was not read", unsaved)
 			}
 			for _, want := range tt.wantNote {
@@ -351,9 +340,8 @@ func TestLeaseStatus_ReportsActivityAndUnsavedPerHeldLease(t *testing.T) {
 // is never zero activity.
 func TestLeaseStatus_ActivityUnreadable_SaysWhy(t *testing.T) {
 	t.Parallel()
-	ssh := &ctxSSH{fn: func(context.Context, string, string) ([]byte, error) {
-		return nil, sshFailure("ssh: connect to host node-id-3.runtime.devpool.zerops port 22: Connection refused", exitError(t, 255))
-	}}
+	refused := sshFailure("ssh: connect to host node-id-3.runtime.devpool.zerops port 22: Connection refused", exitError(t, 255))
+	ssh := &ctxSSH{fn: func(context.Context, string, string) ([]byte, error) { return nil, refused }}
 	fx := statusFixture(t, ssh)
 
 	status, err := LeaseStatus(context.Background(), fx.deps, testPoolHost)
