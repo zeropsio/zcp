@@ -52,15 +52,16 @@ func validateLeaseBranch(branch string) error {
 }
 
 // validateLeaseRepo checks a clone URL and returns its canonical form. Only
-// http(s) URLs without userinfo are taken: the credential reaches git through
-// the session-env helper, never through the URL (DP-6), and a value that is
-// not a URL could be read by git as an option or a transport.
+// https URLs without userinfo are taken: the credential reaches git through
+// the session-env helper, never through the URL (DP-6), plain http would send
+// it in clear, and a value that is not a URL could be read by git as an option
+// or a transport.
 func validateLeaseRepo(raw string) (string, error) {
 	bad := platform.NewPlatformError(platform.ErrInvalidParameter,
 		"repo is not a clone URL a lease takes",
 		"Pass an https://host/owner/repo URL with no credentials in it; the pool's GIT_TOKEN authenticates the clone")
 	raw = strings.TrimSpace(raw)
-	if !strings.HasPrefix(raw, "https://") && !strings.HasPrefix(raw, "http://") {
+	if !strings.HasPrefix(raw, "https://") {
 		return "", bad
 	}
 	if strings.ContainsFunc(raw, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {

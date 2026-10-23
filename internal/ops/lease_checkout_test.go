@@ -171,6 +171,7 @@ func TestLeaseAcquire_BadRepoOrBranch_RefusedBeforeLeasing(t *testing.T) {
 		{"ext transport", "ext::sh -c touch% /tmp/x", "main"},
 		{"scp form", "git@github.com:acme/app.git", "main"},
 		{"url with a space", "https://github.com/acme/app x", "main"},
+		{"plain http would send GIT_TOKEN in clear", "http://github.com/acme/app", "main"},
 		{"option-shaped branch", testRepo, "--orphan"},
 		{"branch with a space", testRepo, "a b"},
 		{"branch with a quote", testRepo, "a'b"},
