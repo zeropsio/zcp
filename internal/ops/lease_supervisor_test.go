@@ -267,7 +267,7 @@ func TestLeaseDevServerChecks_NoSupervisor_SaysWhatALeaseNeeds(t *testing.T) {
 			t.Parallel()
 			c := &devservertest.Container{Installed: tt.installed, SupervisorVersion: "v9.300.0", Formats: []int{1}, Declaration: previewDeclaration}
 
-			checks := leaseDevServerChecks(context.Background(), c, "devpool-3")
+			checks := leaseDevServerChecks(context.Background(), c, "devpool-3", "devpool")
 
 			if len(checks) != 1 || checks[0].Name != "dev_servers" {
 				t.Fatalf("checks = %+v, want one dev_servers note", checks)
@@ -286,5 +286,27 @@ func TestLeaseDevServerChecks_NoSupervisor_SaysWhatALeaseNeeds(t *testing.T) {
 				t.Errorf("verify started a supervisor: %v", c.Sent())
 			}
 		})
+	}
+}
+
+func TestVerifyLease_ReadsItsPoolsEntries(t *testing.T) {
+	t.Parallel()
+	// The repository's declaration holds every part's servers; the lease's
+	// supervisor runs those naming its pool, so verify checks web, never hq.
+	c := devservertest.NewSupervised(`{"version":1,"servers":[` +
+		`{"name":"web","port":3000,"command":"pnpm dev","service":"devpool"},` +
+		`{"name":"hq","port":8080,"command":"go run .","service":"hqpool"}]}`)
+	lease := LeaseTargetInfo{Alias: "devpool-3", Pool: "devpool", ContainerHostname: "node-id-3.runtime.devpool.zerops", Branch: "feat-x"}
+
+	result := VerifyLease(context.Background(), c, lease, "")
+
+	var servers []string
+	for _, check := range result.Checks {
+		if check.Name == "dev_server" {
+			servers = append(servers, check.Server)
+		}
+	}
+	if len(servers) != 1 || servers[0] != "web" {
+		t.Errorf("checked servers = %v, want web, devpool's one entry (checks %+v)", servers, result.Checks)
 	}
 }
