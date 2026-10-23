@@ -955,6 +955,16 @@ lost on a redeploy (P1 T7, P2 S4) — which is exactly the start-up rule below.
 - `source: runtime` entries are not in the declaration: crew apps (MODEL §9/1c). They carry their
   own `command`, `cwd`, `port`, are added and removed only through `ctl`, and are not restored after
   a redeploy — their owner, Mate's engine, adds them again.
+- `previewLastConnAt` and `previewOpenConns` ride on the preview server only, beside its
+  `previewPort` (§2.8a.1), and only in `ctl status`: when its preview forward last took a connection
+  in this supervisor's life (absent until one does) and how many connections the forward holds open
+  now (`0` included). They are counted at the forward without delaying or changing a byte: the
+  clients, never the forward's own dial to the server. A restart of the server cuts its connections
+  and opens a new forward, and the time stays. They live in the supervisor's memory: `state.json`
+  never holds them, and a new supervisor starts without them. `ctl version` lists `activity` for
+  them (`TestForward_RecordsLastConnectionAndOpenCount`,
+  `TestSupervisor_PreviewActivity_KeptAcrossServerRestartsNeverInStateFile`,
+  `TestCtlStatus_PreviewActivity`).
 
 **Control.** zcp (and Mate's engine) run `zcp-devsup ctl <verb> --json` over SSH; `ctl` talks to the
 supervisor over the unix socket and prints one JSON answer. Every process is a child of the
@@ -969,7 +979,7 @@ verb is idempotent, so the caller asks `status` again.
 | `logs <name> [--lines N]` | the tail of `logs/<name>.log` |
 | `run --name <n> --cwd <d> [--port <p>] -- <command>` / `rm <name>` | add / remove a `runtime` entry |
 | `env (--set NAME=VALUE)…` / `env --clear` | replaces the env overlay with exactly the `--set` pairs (`--clear` alone: none) — it never merges, so a full set also drops whatever a previous holder left; neither flag is refused (`status` shows the overlay). A name breaking the `siblingEnv` name rule (§2.8a.1) is refused and changes nothing. The answer — the state, `env` included — comes as soon as the overlay is stored in `state.json`; every server started from then on (boot, `start`, `restart`, `reload`, `run`, a watched change, a retry) gets the service's environment plus the overlay. The live servers whose group started under another overlay are then restarted by the supervisor itself, one at a time a stagger apart, each with `lastRestartReason: "env changed"` — a stop's grace of up to 10 s per server could outlast `ctl`'s 60 s wait. A stopped or crashed server is not started by it, and an identical overlay restarts nothing (`TestCtl_Env_AnswersBeforeTheRestarts`, `TestCtl_Env_ReplacesTheOverlay`, `TestCtl_Env_RejectsReservedAndMalformedKeys`, `TestSupervisor_EnvOverlay_AppliedAtEveryStart`, `TestSupervisor_EnvOverlay_ChangeRestartsRunningServersOnce`, `TestSupervisor_EnvOverlay_SameOverlay_NoRestart`) |
-| `version` | `{"version":"vX.Y.Z","formats":[1],"capabilities":["env"]}`; `capabilities` names the verbs and flags an older supervisor lacks. An older `ctl` fails on a verb or flag it does not know, so a caller sends one only when `version` lists it (`TestCtl_VersionNamesCapabilities`) |
+| `version` | `{"version":"vX.Y.Z","formats":[1],"capabilities":["env","activity"]}`; `capabilities` names the verbs, flags and answer fields an older supervisor lacks: `env` the verb, `activity` the preview server's `previewLastConnAt`/`previewOpenConns` in `status`. An older `ctl` fails on a verb or flag it does not know, so a caller sends one only when `version` lists it, and reads such a field only then (`TestCtl_VersionNamesCapabilities`, `TestCapabilities_IncludeActivity`) |
 
 Exit codes: `0` done, `2` no supervisor (socket absent or refused), `3` unknown name, `4` invalid
 declaration, `5` supervisor not answering (the dial timed out or found the backlog full, or no answer
