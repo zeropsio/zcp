@@ -10,17 +10,20 @@ import (
 // commandRunner + vsCodeWorkDir are package-level for test affordances
 // (export_test.go's Set/Reset* — see preserved API there). The init
 // dispatcher reads these and threads them through adapters.Env so the
-// adapter implementations stay stateless.
+// adapter implementations stay stateless. commandOutput is commandRunner's
+// twin for the steps that read what a command prints.
 var (
 	commandRunner = adapters.DefaultCommandRunner
+	commandOutput = adapters.DefaultCommandOutput
 	vsCodeWorkDir = adapters.DefaultVSCodeWorkDir
 )
 
-// defaultCommandRunner + defaultVSCodeWorkDir are the production values
-// the test resetters restore. Aliased to adapters package's exported
-// defaults so there's one source of truth.
+// defaultCommandRunner + defaultCommandOutput + defaultVSCodeWorkDir are the
+// production values the test resetters restore. Aliased to adapters
+// package's exported defaults so there's one source of truth.
 var (
 	defaultCommandRunner = adapters.DefaultCommandRunner
+	defaultCommandOutput = adapters.DefaultCommandOutput
 	defaultVSCodeWorkDir = adapters.DefaultVSCodeWorkDir
 )
 

@@ -292,6 +292,13 @@ now-off flag has to remove — so a container that never had mate prints not one
 2. **Bundle** — `mate.EnsureInstalled` (below) in full.
 3. **Environment.** `~/.zcp/mate.env` rewritten (mode 0600) every boot — §2.3.
 4. **Unit.** `mate.UnitFilePath` absent ⇒ `sudo -E zsc unit create mate "zcp service start mate"`.
+   Then, when systemd says the unit's file changed on disk since it loaded it
+   (`systemctl show --property=NeedDaemonReload --value zerops@mate.service` answers `yes` — what it
+   warns "run 'systemctl daemon-reload'" about), `sudo systemctl daemon-reload` before any restart
+   (step 7), whether or not one follows, so this restart and every later one runs the definition on
+   disk; an unchanged unit is never reloaded, and a reload that fails is a named line, not a degrade.
+   `eval/scripts/mate-dev-push.sh` reloads by the same rule before its own restart
+   (`TestRun_Mate_UnitFileChangedOnDisk_ReloadsSystemd`).
 
 The step is **best-effort** (`step.degraded`): a release 404, an unset/mismatched digest, or an npm
 dependency failure names the cause but `zcp init` still exits successfully — it is a `run.init`
