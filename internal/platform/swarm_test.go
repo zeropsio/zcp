@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // acquiredFixture is a Container as the live orchestrator answers an acquire
@@ -319,5 +320,165 @@ func TestSwarmClient_PoolAndContainers_DecodeLiveShapes(t *testing.T) {
 	}
 	if len(list) != 2 || list[0].LockState != "reserved" || list[1].Number != 4 || !list[1].Dirty || list[1].LockState != "" {
 		t.Errorf("containers = %+v, want a reserved #3 and a free dirty #4", list)
+	}
+}
+
+// rolloutFixture is a Rollout as the orchestrator answers POST
+// /container/rollout (field names from its OpenAPI, schema Rollout): two
+// outdated free containers replaced, one retiring, a lease skipped as
+// held-by-other, one removal refused, and one replacement that failed.
+const rolloutFixture = `{"activeAppVersionId":"av-new",` +
+	`"replaced":["c-1","c-2"],` +
+	`"created":[{"id":"c-8","name":"node-id-8","number":8,"hostname":"node-id-8.runtime.pool.zerops","appVersionId":"av-new","current":true,"lockState":"","dirty":false},` +
+	`{"id":"c-9","name":"node-id-9","number":9,"hostname":"node-id-9.runtime.pool.zerops","appVersionId":"av-new","current":true,"lockState":"","dirty":false}],` +
+	`"retiring":["c-4"],` +
+	`"skipped":[{"id":"c-3","reason":"held-by-other"},{"id":"c-5","reason":"removal-failed","message":"the platform refused the removal"}],` +
+	`"createErrors":[{"containerName":"node-id-10","message":"no capacity"}]}`
+
+func TestSwarmClient_Rollout_DecodesAndSendsNoForce(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name                                    string
+		body                                    string
+		wantAppVersion                          string
+		wantReplaced, wantCreated, wantRetiring int
+		wantSkipped                             []SwarmRolloutSkip
+		wantCreateErrors                        []SwarmRolloutCreateError
+		wantCreatedNumbers                      []int64
+	}{
+		{
+			name: "outdated containers replaced, a lease skipped", body: rolloutFixture,
+			wantAppVersion: "av-new", wantReplaced: 2, wantCreated: 2, wantRetiring: 1,
+			wantSkipped: []SwarmRolloutSkip{
+				{ID: "c-3", Reason: "held-by-other"},
+				{ID: "c-5", Reason: "removal-failed", Message: "the platform refused the removal"},
+			},
+			wantCreateErrors:   []SwarmRolloutCreateError{{ContainerName: "node-id-10", Message: "no capacity"}},
+			wantCreatedNumbers: []int64{8, 9},
+		},
+		{
+			// Live 2026-10-23: nothing outdated — every array present and empty.
+			name:           "nothing outdated",
+			body:           `{"activeAppVersionId":"SC1RLQ4ZTgK8l1iptsFfBg","replaced":[],"created":[],"retiring":[],"skipped":[],"createErrors":[]}`,
+			wantAppVersion: "SC1RLQ4ZTgK8l1iptsFfBg",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var gotMethod, gotURI, gotAuth, gotLease, gotBody string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotMethod, gotURI = r.Method, r.URL.RequestURI()
+				gotAuth, gotLease = r.Header.Get("Authorization"), r.Header.Get("X-Swarm-Lease")
+				b, _ := io.ReadAll(r.Body)
+				gotBody = string(b)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer srv.Close()
+
+			c := NewSwarmClient(srv.URL, "orch-api-token-0001", srv.Client())
+			got, err := c.Rollout(context.Background())
+			if err != nil {
+				t.Fatalf("Rollout: %v", err)
+			}
+
+			if gotMethod != http.MethodPost || gotURI != "/container/rollout" {
+				t.Errorf("request = %s %s, want POST /container/rollout with no query (never force)", gotMethod, gotURI)
+			}
+			if strings.Contains(gotURI, "force") || strings.Contains(gotBody, "force") {
+				t.Errorf("rollout sent force (uri %q, body %q): force takes leases from their holders", gotURI, gotBody)
+			}
+			if gotAuth != "Bearer orch-api-token-0001" {
+				t.Errorf("Authorization = %q, want the pool's bearer API token", gotAuth)
+			}
+			if gotLease != "" {
+				t.Errorf("X-Swarm-Lease = %q, want none: a rollout names no lease", gotLease)
+			}
+			if got.ActiveAppVersionID != tt.wantAppVersion {
+				t.Errorf("ActiveAppVersionID = %q, want %q", got.ActiveAppVersionID, tt.wantAppVersion)
+			}
+			if len(got.Replaced) != tt.wantReplaced || len(got.Created) != tt.wantCreated || len(got.Retiring) != tt.wantRetiring {
+				t.Errorf("replaced/created/retiring = %d/%d/%d, want %d/%d/%d",
+					len(got.Replaced), len(got.Created), len(got.Retiring), tt.wantReplaced, tt.wantCreated, tt.wantRetiring)
+			}
+			for i, n := range tt.wantCreatedNumbers {
+				if got.Created[i].Number != n || !got.Created[i].Current {
+					t.Errorf("created[%d] = %+v, want current container #%d", i, got.Created[i], n)
+				}
+			}
+			if len(got.Skipped) != len(tt.wantSkipped) {
+				t.Fatalf("skipped = %+v, want %+v", got.Skipped, tt.wantSkipped)
+			}
+			for i, w := range tt.wantSkipped {
+				if got.Skipped[i] != w {
+					t.Errorf("skipped[%d] = %+v, want %+v", i, got.Skipped[i], w)
+				}
+			}
+			if len(got.CreateErrors) != len(tt.wantCreateErrors) {
+				t.Fatalf("createErrors = %+v, want %+v", got.CreateErrors, tt.wantCreateErrors)
+			}
+			for i, w := range tt.wantCreateErrors {
+				if got.CreateErrors[i] != w {
+					t.Errorf("createErrors[%d] = %+v, want %+v", i, got.CreateErrors[i], w)
+				}
+			}
+		})
+	}
+}
+
+func TestSwarmClient_Rollout_PoolFixedSize(t *testing.T) {
+	t.Parallel()
+
+	// The message is text for a person and never names the reason: only
+	// meta[].metadata.reason says pool-fixed-size.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"code":"containerAction","message":"nothing can be replaced in this pool","meta":[` +
+			`{"error":"nothing can be replaced in this pool","code":"containerAction","metadata":{"reason":["pool-fixed-size"],"retryable":["false"]}}]}}`))
+	}))
+	defer srv.Close()
+
+	c := NewSwarmClient(srv.URL, "orch-api-token-0001", srv.Client())
+	_, err := c.Rollout(context.Background())
+	var se *SwarmError
+	if !errors.As(err, &se) {
+		t.Fatalf("err = %v (%T), want a *SwarmError", err, err)
+	}
+	if se.Reason != SwarmReasonPoolFixedSize {
+		t.Errorf("Reason = %q, want %q", se.Reason, SwarmReasonPoolFixedSize)
+	}
+	if se.Retryable {
+		t.Error("Retryable = true: a fixed-size pool needs its limits changed first")
+	}
+	if !strings.Contains(err.Error(), "swarm rollout") {
+		t.Errorf("error %q does not name the rollout", err)
+	}
+}
+
+// TestSwarmClient_Rollout_OutlivesClientTimeout: a rollout returns only once
+// its removals and creates are done (minutes for a VM pool), so the short
+// budget of the client's other calls must not cut it.
+func TestSwarmClient_Rollout_OutlivesClientTimeout(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(300 * time.Millisecond)
+		_, _ = w.Write([]byte(`{"activeAppVersionId":"av","replaced":["c-1"],"created":[],"retiring":[],"skipped":[],"createErrors":[]}`))
+	}))
+	defer srv.Close()
+
+	hc := srv.Client()
+	hc.Timeout = 50 * time.Millisecond
+	c := NewSwarmClient(srv.URL, "orch-api-token-0001", hc)
+	got, err := c.Rollout(context.Background())
+	if err != nil {
+		t.Fatalf("Rollout cut by the client's %s budget: %v", hc.Timeout, err)
+	}
+	if len(got.Replaced) != 1 {
+		t.Errorf("replaced = %v, want [c-1]", got.Replaced)
+	}
+	if _, err := c.Pool(context.Background()); err == nil {
+		t.Error("Pool outlived the client's budget too: only the rollout gets the long one")
 	}
 }
