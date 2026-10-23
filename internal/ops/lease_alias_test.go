@@ -238,7 +238,7 @@ func TestLeaseAcquire_HostSide_AliasThenMount(t *testing.T) {
 	hf := newHostFixture(t)
 	hf.swarm.acquired = acquiredAs(3)
 
-	view, err := LeaseAcquire(context.Background(), hf.deps, testPoolHost, "feature")
+	view, err := LeaseAcquire(context.Background(), hf.deps, testPoolHost, testRepo, "feature")
 	if err != nil {
 		t.Fatalf("LeaseAcquire: %v", err)
 	}
@@ -266,7 +266,7 @@ func TestLeaseAcquire_AliasInstallFails_HeldButUnmounted(t *testing.T) {
 	hf.swarm.acquired = acquiredAs(3)
 	hf.deps.Host.Run = func(context.Context, string, ...string) error { return errors.New("sudo: a password is required") }
 
-	view, err := LeaseAcquire(context.Background(), hf.deps, testPoolHost, "feature")
+	view, err := LeaseAcquire(context.Background(), hf.deps, testPoolHost, testRepo, "feature")
 	if err != nil {
 		t.Fatalf("LeaseAcquire must keep the lease it took, got %v", err)
 	}
@@ -289,12 +289,12 @@ func TestLeaseRelease_HostSide_UnmountsFirstAndDropsAlias(t *testing.T) {
 	hf := newHostFixture(t)
 	hf.swarm.acquired = acquiredAs(3)
 	ctx := context.Background()
-	if _, err := LeaseAcquire(ctx, hf.deps, testPoolHost, "feature"); err != nil {
+	if _, err := LeaseAcquire(ctx, hf.deps, testPoolHost, testRepo, "feature"); err != nil {
 		t.Fatal(err)
 	}
 	hf.swarm.acquired = acquiredAs(4)
 	hf.swarm.acquired.Container.ID = "c-def"
-	if _, err := LeaseAcquire(ctx, hf.deps, testPoolHost, "other"); err != nil {
+	if _, err := LeaseAcquire(ctx, hf.deps, testPoolHost, testRepo, "other"); err != nil {
 		t.Fatal(err)
 	}
 	hf.events = nil
@@ -325,7 +325,7 @@ func TestLeaseList_MissingMount_Unmounted(t *testing.T) {
 	for _, n := range []int64{3, 4, 5} {
 		hf.swarm.acquired = acquiredAs(n)
 		hf.swarm.acquired.Container.ID = "c-" + strconv.FormatInt(n, 10)
-		if _, err := LeaseAcquire(ctx, hf.deps, testPoolHost, ""); err != nil {
+		if _, err := LeaseAcquire(ctx, hf.deps, testPoolHost, testRepo, ""); err != nil {
 			t.Fatalf("acquire #%d: %v", n, err)
 		}
 	}

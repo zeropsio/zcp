@@ -1,0 +1,663 @@
+// Tests for: ops/lease_checkout.go — a lease's /var/www is put on its branch
+// at acquire, and a release refuses to lose work (DP-4, DP-6).
+package ops
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/zeropsio/zcp/internal/platform"
+)
+
+// leaseSSH is the leased container as zcp reaches it: a handler answers each
+// command run over ssh to an alias.
+type leaseSSH struct {
+	mu    sync.Mutex
+	fn    func(host, command string) ([]byte, error)
+	calls []sshCall
+}
+
+func (s *leaseSSH) ExecSSH(_ context.Context, host, command string) ([]byte, error) {
+	s.mu.Lock()
+	s.calls = append(s.calls, sshCall{hostname: host, command: command})
+	fn := s.fn
+	s.mu.Unlock()
+	if fn == nil {
+		return nil, nil
+	}
+	return fn(host, command)
+}
+
+func (s *leaseSSH) ExecSSHBackground(ctx context.Context, host, command string, _ time.Duration) ([]byte, error) {
+	return s.ExecSSH(ctx, host, command)
+}
+
+func (s *leaseSSH) commands() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, 0, len(s.calls))
+	for _, c := range s.calls {
+		out = append(out, c.command)
+	}
+	return out
+}
+
+func (s *leaseSSH) setHandler(fn func(host, command string) ([]byte, error)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fn = fn
+}
+
+func (s *leaseSSH) reset() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls = nil
+}
+
+// sshFailure is what SystemSSHDeployer returns when the remote command fails.
+func sshFailure(output string, err error) error {
+	return &platform.SSHExecError{Hostname: "devpool-3", Output: output, Err: err}
+}
+
+func exitError(t *testing.T, code int) error {
+	t.Helper()
+	err := exec.CommandContext(context.Background(), "sh", "-c", "exit "+strconv.Itoa(code)).Run() //nolint:gosec // the exit status is a test constant
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) {
+		t.Fatalf("sh exit %d gave %v, want an *exec.ExitError", code, err)
+	}
+	return err
+}
+
+func readPoolDefault(t *testing.T, stateDir, pool string) (string, bool) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(stateDir, "leases", "pools", pool+".json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return "", false
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw), true
+}
+
+func TestLeaseAcquire_NoRepoNoDefault_RefusedBeforeLeasing(t *testing.T) {
+	t.Parallel()
+	fx := newLeaseFixture(t)
+	fx.swarm.acquired = acquiredAs(3)
+	fx.deps.SSH = &leaseSSH{}
+
+	_, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, "", "feature")
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) || pe.Code != platform.ErrInvalidParameter {
+		t.Fatalf("err = %v, want an INVALID_PARAMETER refusal", err)
+	}
+	if !strings.Contains(pe.Message, "repo") {
+		t.Errorf("message %q should ask for repo", pe.Message)
+	}
+	if len(fx.swarm.acquireReqs) != 0 {
+		t.Errorf("the orchestrator was asked to acquire %d time(s); a refusal must take no container", len(fx.swarm.acquireReqs))
+	}
+	if entries, _ := os.ReadDir(filepath.Join(fx.stateDir, "leases")); len(entries) != 0 {
+		t.Errorf("a refused acquire left %d entr(ies) in the lease directory", len(entries))
+	}
+}
+
+func TestLeaseAcquire_StoresPoolDefaultRepo(t *testing.T) {
+	t.Parallel()
+	fx := newLeaseFixture(t)
+	ssh := &leaseSSH{}
+	fx.deps.SSH = ssh
+	fx.swarm.acquired = acquiredAs(3)
+	ctx := context.Background()
+
+	if _, err := LeaseAcquire(ctx, fx.deps, testPoolHost, testRepo, "feature"); err != nil {
+		t.Fatalf("first acquire: %v", err)
+	}
+	stored, ok := readPoolDefault(t, fx.stateDir, testPoolHost)
+	if !ok {
+		t.Fatal("the first acquire with a repo must store it as the pool's default")
+	}
+	canonical := "https://github.com/acme/app"
+	if !strings.Contains(stored, canonical) || strings.Contains(stored, ".git\"") {
+		t.Errorf("stored default = %s, want the canonical form %s", stored, canonical)
+	}
+	if info, err := os.Stat(filepath.Join(fx.stateDir, "leases", "pools", testPoolHost+".json")); err != nil || info.Mode().Perm() != 0o600 {
+		t.Errorf("default record stat = %v, %v; want mode 600", info, err)
+	}
+
+	// A later acquire without repo uses the default; one with another repo
+	// uses that repo and leaves the default alone.
+	fx.swarm.acquired = acquiredAs(4)
+	fx.swarm.acquired.Container.ID = "c-def"
+	if _, err := LeaseAcquire(ctx, fx.deps, testPoolHost, "", "other"); err != nil {
+		t.Fatalf("second acquire without repo: %v", err)
+	}
+	fx.swarm.acquired = acquiredAs(5)
+	fx.swarm.acquired.Container.ID = "c-ghi"
+	if _, err := LeaseAcquire(ctx, fx.deps, testPoolHost, "https://github.com/acme/other", "third"); err != nil {
+		t.Fatalf("third acquire: %v", err)
+	}
+	cmds := ssh.commands()
+	if len(cmds) != 3 {
+		t.Fatalf("ssh commands = %d, want one checkout per acquire", len(cmds))
+	}
+	if !strings.Contains(cmds[1], shellQuote(canonical)) {
+		t.Errorf("second checkout does not use the pool default %s:\n%s", canonical, cmds[1])
+	}
+	if !strings.Contains(cmds[2], shellQuote("https://github.com/acme/other")) {
+		t.Errorf("third checkout does not use the repo it was given:\n%s", cmds[2])
+	}
+	if again, _ := readPoolDefault(t, fx.stateDir, testPoolHost); again != stored {
+		t.Errorf("an acquire with another repo changed the default:\n%s\nto\n%s", stored, again)
+	}
+}
+
+func TestLeaseAcquire_BadRepoOrBranch_RefusedBeforeLeasing(t *testing.T) {
+	t.Parallel()
+	tests := []struct{ name, repo, branch string }{
+		{"userinfo carries a credential", "https://oauth2:ghp_secret@github.com/acme/app", "main"},
+		{"option-shaped url", "--upload-pack=touch /tmp/x", "main"},
+		{"local path", "/srv/repo", "main"},
+		{"ext transport", "ext::sh -c touch% /tmp/x", "main"},
+		{"scp form", "git@github.com:acme/app.git", "main"},
+		{"url with a space", "https://github.com/acme/app x", "main"},
+		{"option-shaped branch", testRepo, "--orphan"},
+		{"branch with a space", testRepo, "a b"},
+		{"branch with a quote", testRepo, "a'b"},
+		{"branch with dotdot", testRepo, "a..b"},
+		{"branch with a semicolon", testRepo, "a;touch"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			fx := newLeaseFixture(t)
+			fx.swarm.acquired = acquiredAs(3)
+			fx.deps.SSH = &leaseSSH{}
+			_, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, tt.repo, tt.branch)
+			var pe *platform.PlatformError
+			if !errors.As(err, &pe) || pe.Code != platform.ErrInvalidParameter {
+				t.Fatalf("err = %v, want INVALID_PARAMETER", err)
+			}
+			if strings.Contains(err.Error(), "ghp_secret") {
+				t.Errorf("the refusal echoes the credential: %v", err)
+			}
+			if len(fx.swarm.acquireReqs) != 0 {
+				t.Errorf("acquired %d time(s) for a refused input", len(fx.swarm.acquireReqs))
+			}
+		})
+	}
+}
+
+// gitIn runs git in dir with a fixed identity (the test's commits only).
+func gitIn(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.CommandContext(context.Background(), "git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com",
+		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v in %s: %v\n%s", args, dir, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// originWithBranches is a bare repo with main (README, app.txt) and feat
+// (main + feat.txt), the oracle for what a checkout must leave behind.
+func originWithBranches(t *testing.T) (origin, mainSHA, featSHA string) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	origin = filepath.Join(t.TempDir(), "origin.git")
+	work := t.TempDir()
+	gitIn(t, work, "init", "-q", "-b", "main")
+	for name, body := range map[string]string{"README": "r", "app.txt": "a"} {
+		if err := os.WriteFile(filepath.Join(work, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gitIn(t, work, "add", "-A")
+	gitIn(t, work, "commit", "-q", "-m", "main")
+	mainSHA = gitIn(t, work, "rev-parse", "HEAD")
+	gitIn(t, work, "checkout", "-q", "-b", "feat")
+	if err := os.WriteFile(filepath.Join(work, "feat.txt"), []byte("f"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, work, "add", "-A")
+	gitIn(t, work, "commit", "-q", "-m", "feat")
+	featSHA = gitIn(t, work, "rev-parse", "HEAD")
+	gitIn(t, filepath.Dir(origin), "init", "-q", "--bare", "-b", "main", origin)
+	gitIn(t, work, "push", "-q", origin, "main", "feat")
+	return origin, mainSHA, featSHA
+}
+
+// runCheckout runs the composed command in workDir the way ssh would hand it
+// to the container's shell.
+func runCheckout(t *testing.T, workDir, repo, branch string) {
+	t.Helper()
+	cmd := exec.CommandContext(context.Background(), "sh", "-c", leaseCheckoutCommand(workDir, repo, branch)) //nolint:gosec // running the composed command is the test
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("checkout command failed: %v\n%s\ncommand: %s", err, out, leaseCheckoutCommand(workDir, repo, branch))
+	}
+}
+
+// imageLeftovers is what a never-used container's /var/www holds: files of the
+// pool image, no .git.
+func imageLeftovers(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	for name, body := range map[string]string{"stale.txt": "image", "app.txt": "from the image"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "stale-dir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "stale-dir", "x"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestLeaseCheckout_ExistingBranch_TracksIt(t *testing.T) {
+	t.Parallel()
+	origin, _, featSHA := originWithBranches(t)
+	wd := imageLeftovers(t)
+
+	runCheckout(t, wd, origin, "feat")
+	runCheckout(t, wd, origin, "feat") // idempotent: the container may be re-prepared
+
+	if got := gitIn(t, wd, "rev-parse", "--abbrev-ref", "HEAD"); got != "feat" {
+		t.Errorf("branch = %q, want feat", got)
+	}
+	if got := gitIn(t, wd, "rev-parse", "HEAD"); got != featSHA {
+		t.Errorf("HEAD = %s, want origin/feat %s", got, featSHA)
+	}
+	if got := gitIn(t, wd, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"); got != "origin/feat" {
+		t.Errorf("upstream = %q, want origin/feat", got)
+	}
+	if got := gitIn(t, wd, "remote", "get-url", "origin"); got != origin {
+		t.Errorf("origin = %q, want %q", got, origin)
+	}
+	for _, gone := range []string{"stale.txt", "stale-dir"} {
+		if _, err := os.Stat(filepath.Join(wd, gone)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s left by the image survives the checkout (%v)", gone, err)
+		}
+	}
+	if body, err := os.ReadFile(filepath.Join(wd, "app.txt")); err != nil || string(body) != "a" {
+		t.Errorf("app.txt = %q, %v; want the branch's content (a checkout -f overwrites the image's file)", body, err)
+	}
+	if status := gitIn(t, wd, "status", "--porcelain"); status != "" {
+		t.Errorf("tree is dirty after the checkout:\n%s", status)
+	}
+}
+
+func TestLeaseCheckout_NewBranch_CutFromMain(t *testing.T) {
+	t.Parallel()
+	origin, mainSHA, _ := originWithBranches(t)
+	wd := imageLeftovers(t)
+	// An ignored file the image left stays: clean never uses -x.
+	if err := os.WriteFile(filepath.Join(wd, ".gitignore"), []byte("cache.bin\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wd, "cache.bin"), []byte("c"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	runCheckout(t, wd, origin, "brand-new")
+
+	if got := gitIn(t, wd, "rev-parse", "--abbrev-ref", "HEAD"); got != "brand-new" {
+		t.Errorf("branch = %q, want brand-new", got)
+	}
+	if got := gitIn(t, wd, "rev-parse", "HEAD"); got != mainSHA {
+		t.Errorf("HEAD = %s, want main %s (DP-6: a new branch is cut from main)", got, mainSHA)
+	}
+	cmd := exec.CommandContext(context.Background(), "git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+	cmd.Dir = wd
+	if out, err := cmd.CombinedOutput(); err == nil {
+		t.Errorf("the new branch tracks %q; it must not track main (a push would target main)", strings.TrimSpace(string(out)))
+	}
+	if _, err := os.Stat(filepath.Join(wd, "stale.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("stale.txt survives (%v)", err)
+	}
+	if _, err := os.Stat(filepath.Join(wd, "feat.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("feat.txt is on a branch cut from main (%v)", err)
+	}
+	if _, err := os.Stat(filepath.Join(wd, "cache.bin")); err != nil {
+		t.Errorf("an ignored file was removed although clean never takes -x: %v", err)
+	}
+}
+
+func TestLeaseCheckout_CredentialNeverInCommand(t *testing.T) {
+	// Non-parallel: t.Setenv plants a GIT_TOKEN in zcp's own env, which must
+	// never reach the command.
+	t.Setenv("GIT_TOKEN", "ghp_planted_in_the_zcp_env")
+	fx := newLeaseFixture(t)
+	ssh := &leaseSSH{}
+	fx.deps.SSH = ssh
+	fx.swarm.acquired = acquiredAs(3)
+
+	if _, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, "feat'ure; touch x"); err == nil {
+		t.Fatal("a branch with shell metacharacters must be refused")
+	}
+	if _, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, "feature/x-1.2"); err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	cmds := ssh.commands()
+	if len(cmds) != 1 {
+		t.Fatalf("ssh commands = %d, want 1", len(cmds))
+	}
+	cmd := cmds[0]
+	if ssh.calls[0].hostname != "devpool-3" {
+		t.Errorf("command ran on %q, want the alias devpool-3", ssh.calls[0].hostname)
+	}
+	for _, want := range []string{
+		gitCredentialHelperArgs(), "GIT_TERMINAL_PROMPT=0",
+		shellQuote("feature/x-1.2"), shellQuote("https://github.com/acme/app"), "cd '/var/www'", "git clean -fd",
+	} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("command lacks %q:\n%s", want, cmd)
+		}
+	}
+	for _, banned := range []string{"ghp_", "planted", "password=ghp", "https://oauth2", " -x", "-fdx", "-xfd"} {
+		if strings.Contains(cmd, banned) {
+			t.Errorf("command contains %q:\n%s", banned, cmd)
+		}
+	}
+	// The only credential reference is the helper reading the session env.
+	if n := strings.Count(cmd, "GIT_TOKEN"); n != strings.Count(cmd, gitCredentialHelperArgs())*strings.Count(gitCredentialHelperArgs(), "GIT_TOKEN") {
+		t.Errorf("GIT_TOKEN appears %d times, want only inside credential helpers:\n%s", n, cmd)
+	}
+}
+
+func TestLeaseCheckout_EmptyBranch_IsMain(t *testing.T) {
+	t.Parallel()
+	fx := newLeaseFixture(t)
+	ssh := &leaseSSH{}
+	fx.deps.SSH = ssh
+	fx.swarm.acquired = acquiredAs(3)
+
+	view, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Branch != "main" {
+		t.Errorf("view branch = %q, want main", view.Branch)
+	}
+	if cmds := ssh.commands(); len(cmds) != 1 || !strings.Contains(cmds[0], shellQuote("main")) {
+		t.Errorf("commands = %v, want a checkout of main", cmds)
+	}
+}
+
+func TestLeaseCheckout_Failure_ReleasesWithResetAndCleansUp(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		output   string
+		wantCode string
+	}{
+		{"rejected token", "fatal: Authentication failed for 'https://github.com/acme/app/'", platform.ErrGitTokenInvalid},
+		{"no token in the session", "fatal: could not read Password for 'https://oauth2@github.com': terminal prompts disabled", platform.ErrGitTokenMissing},
+		{"repository missing", "fatal: repository 'https://github.com/acme/app/' not found", platform.ErrSSHDeployFailed},
+		{"network", "fatal: unable to access 'https://github.com/acme/app/': Could not resolve host: github.com", platform.ErrSSHDeployFailed},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			hf := newHostFixture(t)
+			hf.swarm.acquired = acquiredAs(3)
+			hf.deps.SSH = &leaseSSH{fn: func(string, string) ([]byte, error) {
+				return []byte(tt.output), sshFailure(tt.output, exitError(t, 128))
+			}}
+
+			_, err := LeaseAcquire(context.Background(), hf.deps, testPoolHost, testRepo, "feature")
+			var pe *platform.PlatformError
+			if !errors.As(err, &pe) {
+				t.Fatalf("err = %v, want a *PlatformError", err)
+			}
+			if pe.Code != tt.wantCode {
+				t.Errorf("Code = %q, want %q", pe.Code, tt.wantCode)
+			}
+			var sshErr *platform.SSHExecError
+			if !errors.As(err, &sshErr) || sshErr.Output != tt.output {
+				t.Errorf("the ssh error with git's stderr must stay reachable for the tool to surface (got %v)", err)
+			}
+			if strings.Contains(err.Error(), testLease) || strings.Contains(pe.Suggestion, testLease) {
+				t.Errorf("error leaks the lease: %v", err)
+			}
+			if len(hf.swarm.releases) != 1 || hf.swarm.releases[0] != (fakeRelease{id: "c-abc", lease: testLease, reset: true}) {
+				t.Errorf("releases = %+v, want the container released with reset=true", hf.swarm.releases)
+			}
+			if _, statErr := os.Stat(filepath.Join(hf.stateDir, "leases", "devpool-3.json")); !errors.Is(statErr, os.ErrNotExist) {
+				t.Errorf("the record survives a failed checkout: %v", statErr)
+			}
+			raw, rErr := os.ReadFile(hf.aliasFile)
+			if rErr != nil {
+				t.Fatal(rErr)
+			}
+			if strings.Contains(string(raw), "devpool-3") {
+				t.Errorf("the stanza of the released lease is still in the alias file:\n%s", raw)
+			}
+			if st := hf.mounter.states["/var/www/devpool-3"]; st == platform.MountStateActive {
+				t.Errorf("devpool-3 is still mounted after the failed checkout")
+			}
+			if _, ok := readPoolDefault(t, hf.stateDir, testPoolHost); ok {
+				t.Error("a failed checkout must not store the repo as the pool's default")
+			}
+			want := "install-aliases,mount,unmount,orchestrator-release,install-aliases"
+			if got := strings.Join(hf.events, ","); got != want {
+				t.Errorf("host events = %s, want %s", got, want)
+			}
+		})
+	}
+}
+
+func TestLeaseCheckout_FailureAndReleaseFails_RecordKept(t *testing.T) {
+	t.Parallel()
+	fx := newLeaseFixture(t)
+	fx.swarm.acquired = acquiredAs(3)
+	fx.swarm.releaseErr = platform.NewPlatformError(platform.ErrNetworkError, "the orchestrator did not answer", "")
+	fx.deps.SSH = &leaseSSH{fn: func(string, string) ([]byte, error) {
+		return nil, sshFailure("fatal: Authentication failed", exitError(t, 128))
+	}}
+
+	_, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, "feature")
+	if err == nil {
+		t.Fatal("want the checkout failure")
+	}
+	// The container could not be handed back: the record stays so that
+	// zerops_lease can still release it.
+	if _, statErr := os.Stat(filepath.Join(fx.stateDir, "leases", "devpool-3.json")); statErr != nil {
+		t.Errorf("record dropped although the container is still reserved: %v", statErr)
+	}
+	if !strings.Contains(err.Error(), "devpool-3") || !strings.Contains(err.Error(), "release") {
+		t.Errorf("error %q should tell the agent the container is still held and how to release it", err)
+	}
+}
+
+// unsavedFixture is a leased devpool-3 whose container answers the two guard
+// reads (git status, unpushed count) as given.
+func unsavedFixture(t *testing.T, status string, unpushed int) (*hostFixture, *leaseSSH) {
+	t.Helper()
+	hf := newHostFixture(t)
+	ssh := &leaseSSH{fn: func(_, command string) ([]byte, error) {
+		switch {
+		case strings.Contains(command, "status --porcelain"):
+			return []byte(status), nil
+		case strings.Contains(command, "rev-list --count"):
+			return []byte(strconv.Itoa(unpushed) + "\n"), nil
+		}
+		return nil, nil
+	}}
+	hf.deps.SSH = ssh
+	hf.swarm.acquired = acquiredAs(3)
+	if _, err := LeaseAcquire(context.Background(), hf.deps, testPoolHost, testRepo, "feature"); err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	ssh.reset()
+	hf.events = nil
+	return hf, ssh
+}
+
+func assertRefusedAndKept(t *testing.T, hf *hostFixture, err error) *platform.PlatformError {
+	t.Helper()
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) {
+		t.Fatalf("err = %v, want a refusal", err)
+	}
+	if !strings.Contains(pe.Message+pe.Suggestion, "force") {
+		t.Errorf("refusal %q / %q should name force=true", pe.Message, pe.Suggestion)
+	}
+	if len(hf.swarm.releases) != 0 {
+		t.Errorf("a refused release reached the orchestrator: %+v", hf.swarm.releases)
+	}
+	if len(hf.events) != 0 {
+		t.Errorf("a refused release touched the host (%v); the mount must stay", hf.events)
+	}
+	if _, statErr := os.Stat(filepath.Join(hf.stateDir, "leases", "devpool-3.json")); statErr != nil {
+		t.Errorf("record gone after a refused release: %v", statErr)
+	}
+	return pe
+}
+
+func TestLeaseRelease_Unpushed_Refused(t *testing.T) {
+	t.Parallel()
+	hf, ssh := unsavedFixture(t, "", 2)
+
+	_, err := LeaseRelease(context.Background(), hf.deps, "devpool-3", false)
+	pe := assertRefusedAndKept(t, hf, err)
+	if !strings.Contains(pe.Message, "2 commit") {
+		t.Errorf("message %q should count the 2 commits on no remote branch", pe.Message)
+	}
+	var sawStatus, sawRevList bool
+	for _, c := range ssh.commands() {
+		sawStatus = sawStatus || strings.Contains(c, "git -C '/var/www' status --porcelain")
+		sawRevList = sawRevList || strings.Contains(c, "git -C '/var/www' rev-list --count HEAD --not --remotes=origin")
+	}
+	if !sawStatus || !sawRevList {
+		t.Errorf("guard commands = %v, want git status --porcelain and rev-list --count HEAD --not --remotes=origin on /var/www", ssh.commands())
+	}
+	if ssh.calls[0].hostname != "devpool-3" {
+		t.Errorf("guard ran on %q, want the alias", ssh.calls[0].hostname)
+	}
+}
+
+func TestLeaseRelease_Uncommitted_Refused(t *testing.T) {
+	t.Parallel()
+	var lines []string
+	for i := 1; i <= 25; i++ {
+		lines = append(lines, fmt.Sprintf("?? file%02d.txt", i))
+	}
+	hf, _ := unsavedFixture(t, " M src/main.go\n"+strings.Join(lines, "\n")+"\n", 0)
+
+	_, err := LeaseRelease(context.Background(), hf.deps, "devpool-3", false)
+	pe := assertRefusedAndKept(t, hf, err)
+	if !strings.Contains(pe.Message, "src/main.go") || !strings.Contains(pe.Message, "file19.txt") {
+		t.Errorf("message %q should name the first 20 files", pe.Message)
+	}
+	if strings.Contains(pe.Message, "file20.txt") || strings.Contains(pe.Message, "file25.txt") {
+		t.Errorf("message %q names more than 20 files", pe.Message)
+	}
+	if !strings.Contains(pe.Message, "26") {
+		t.Errorf("message %q should give the total (26)", pe.Message)
+	}
+}
+
+func TestLeaseRelease_Clean_Releases(t *testing.T) {
+	t.Parallel()
+	hf, _ := unsavedFixture(t, "", 0)
+
+	view, err := LeaseRelease(context.Background(), hf.deps, "devpool-3", false)
+	if err != nil {
+		t.Fatalf("a clean, pushed container must release: %v", err)
+	}
+	if view.State != LeaseStateReleased {
+		t.Errorf("view = %+v, want released", view)
+	}
+	if len(hf.swarm.releases) != 1 || !hf.swarm.releases[0].reset {
+		t.Errorf("releases = %+v, want one with reset=true", hf.swarm.releases)
+	}
+}
+
+func TestLeaseRelease_Force_Resets(t *testing.T) {
+	t.Parallel()
+	hf, ssh := unsavedFixture(t, "?? work.txt\n", 3)
+
+	view, err := LeaseRelease(context.Background(), hf.deps, "devpool-3", true)
+	if err != nil {
+		t.Fatalf("force must release: %v", err)
+	}
+	if view.State != LeaseStateReleased {
+		t.Errorf("view = %+v, want released", view)
+	}
+	if len(hf.swarm.releases) != 1 || hf.swarm.releases[0] != (fakeRelease{id: "c-abc", lease: testLease, reset: true}) {
+		t.Errorf("releases = %+v, want one with reset=true", hf.swarm.releases)
+	}
+	if cmds := ssh.commands(); len(cmds) != 0 {
+		t.Errorf("force still read the container: %v", cmds)
+	}
+}
+
+func TestLeaseRelease_Unreachable_Lost(t *testing.T) {
+	t.Parallel()
+	hf, ssh := unsavedFixture(t, "", 0)
+	ssh.setHandler(func(string, string) ([]byte, error) {
+		return []byte("ssh: connect to host node-id-3.runtime.devpool.zerops port 22: Connection timed out"),
+			sshFailure("ssh: connect to host ... Connection timed out", exitError(t, 255))
+	})
+
+	view, err := LeaseRelease(context.Background(), hf.deps, "devpool-3", false)
+	if err != nil {
+		t.Fatalf("an unreachable container cannot be checked, but must still be released: %v", err)
+	}
+	if view.State != LeaseStateLost || !strings.Contains(view.Note, "reach") {
+		t.Errorf("view = %+v, want state lost with a note that the container could not be reached", view)
+	}
+	if len(hf.swarm.releases) != 1 || !hf.swarm.releases[0].reset {
+		t.Errorf("releases = %+v, want one with reset=true", hf.swarm.releases)
+	}
+	if _, statErr := os.Stat(filepath.Join(hf.stateDir, "leases", "devpool-3.json")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("record survives: %v", statErr)
+	}
+}
+
+func TestLeaseRelease_GuardCannotRead_Refused(t *testing.T) {
+	t.Parallel()
+	hf, ssh := unsavedFixture(t, "", 0)
+	ssh.setHandler(func(string, string) ([]byte, error) {
+		return nil, sshFailure("fatal: not a git repository (or any of the parent directories): .git", exitError(t, 128))
+	})
+
+	_, err := LeaseRelease(context.Background(), hf.deps, "devpool-3", false)
+	_ = assertRefusedAndKept(t, hf, err)
+}
+
+func TestLeaseRelease_NoSSH_ReleasesWithNote(t *testing.T) {
+	t.Parallel()
+	fx := newLeaseFixture(t)
+	fx.swarm.acquired = acquiredAs(3)
+	if _, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, "feature"); err != nil {
+		t.Fatal(err)
+	}
+	view, err := LeaseRelease(context.Background(), fx.deps, "devpool-3", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.State != LeaseStateReleased || !strings.Contains(view.Note, "not checked") {
+		t.Errorf("view = %+v, want released with a note that the container was not checked for unsaved work", view)
+	}
+}
