@@ -26,8 +26,10 @@ own hostname reaches a random container — address a leased one by its alias.
    a credential.
 2. Work in `/var/www/<alias>`. Run the part's dev servers with
    `zerops_dev_server action=start hostname="<alias>" ...`.
-3. Commit and push from the leased container yourself (over SSH to the alias). A
-   release never commits for you.
+3. Commit and push from the leased container yourself, over SSH to the alias:
+   `git push -u origin <branch>` (the first push of a new branch sets its
+   upstream). The pool's `GIT_TOKEN` authenticates it. A release never commits
+   for you.
 4. `zerops_lease action=release lease="<alias>"` resets the leased container
    and returns it. It refuses while it holds commits on no remote
    branch or uncommitted files, naming them; `force=true` discards them.
