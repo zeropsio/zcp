@@ -235,6 +235,25 @@ func catalogTypeErrors(rt RuntimeTarget, schemas *schema.Schemas) []string {
 	return errs
 }
 
+// infrastructureKindError refuses a pool or Box as a runtime target (either
+// half of the pair): a Swarm pool / Zerops Box is infrastructure an app uses,
+// not the app, so the plan must import it as part of the app's infrastructure
+// instead. It runs
+// before the catalog check so the refusal holds whether or not the catalog
+// lists the type. Returns "" when neither half is such a kind. Spec:
+// spec-workflows.md §8 PS-5.
+func infrastructureKindError(rt RuntimeTarget) string {
+	for _, typ := range []string{rt.Type, rt.StageType} {
+		if topology.IsPoolType(typ) {
+			return fmt.Sprintf("target %q: type %q is a Swarm pool, not an app runtime — import it as part of the app's infrastructure, not as a bootstrap target", rt.DevHostname, typ)
+		}
+		if topology.IsSandboxType(typ) {
+			return fmt.Sprintf("target %q: type %q is a Zerops Box, not an app runtime — import it as part of the app's infrastructure, not as a bootstrap target", rt.DevHostname, typ)
+		}
+	}
+	return ""
+}
+
 // publicAccessPlanError validates a target's publicAccess field (§8 O3
 // PA-6): "" (→auto), auto, subdomain, none. "domain" is derive-only — adopt
 // sets it from observed custom domains; an agent-authored plan can never
@@ -472,6 +491,10 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, schemas *schema.Schemas
 		// plus the stage half's StageType when it differs (cross-type pair).
 		if rt.Type == "" {
 			errs = append(errs, fmt.Sprintf("target %q has empty type", rt.DevHostname))
+			continue
+		}
+		if err := infrastructureKindError(rt); err != "" {
+			errs = append(errs, err)
 			continue
 		}
 		if typeErrs := catalogTypeErrors(rt, schemas); len(typeErrs) > 0 {
