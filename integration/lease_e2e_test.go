@@ -1,6 +1,6 @@
 // Tests for: integration — what the live end-to-end run of dev-pool leases in a
 // Mate found, through the full MCP server against a mock platform and a fake
-// pool orchestrator (docs/spec-workflows.md §8 DP-2, DP-17…).
+// pool orchestrator (docs/spec-workflows.md §8 DP-2, DP-17, DP-18).
 
 package integration_test
 

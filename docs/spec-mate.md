@@ -1151,7 +1151,7 @@ record (§6.3), never a field here:
 | `pool`, `branch` | the pool service's hostname; the branch checked out in the leased container |
 | `containerHostname` | the container's own hostname (`node-id-<n>.runtime.<pool>.zerops`) |
 | `devServers` | present only on a call that read the lease's supervisor (`zerops_dev_server` on the alias): the same `DevServerState` entries a dev service's `devServers[]` carries, the preview server's `url` being the pool's per-port subdomain (`TestWithParts_LeaseDevServers`) |
-| `state` | the reconciled state, verbatim (`held`, `lost`, `unknown-holder`, …) — never enumerated by a reader |
+| `state` | the reconciled state, verbatim (`held`, `lost`, `unknown-holder`, `unmounted`, …) — the one `zerops_lease action=status` reports (`spec-workflows.md` §8 DP-2), never enumerated by a reader |
 | `unverified` | `true` when the state is zcp's own last-known record because the pool's orchestrator did not answer — per pool: a stopped pool marks only its own leases, the others stay confirmed (`TestLeaseTool_Status_OneStoppedPool_OthersStillListed`) |
 | `acquiredAt` | when zcp acquired the lease (RFC 3339, UTC), from its record — also when the record stands in, unverified; absent for a lease zcp has no record of (`unknown-holder`). The leases of one branch are one group (`spec-workflows.md` §8 DP-17): it is the key a client can rebind by when the bound lease ends while others of its branch stay held (the earliest acquired). Additive (`TestEnvelopeJSON_LeaseAcquiredAt`, `TestComputeEnvelope_OrchestratorUnreachable_LeasesUnverified`) |
 
