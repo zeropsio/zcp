@@ -25,6 +25,8 @@ const (
 	VerbReload  = "reload"
 	VerbRun     = "run"
 	VerbRm      = "rm"
+	// VerbEnv replaces the env overlay with Request.Env (CapabilityEnv).
+	VerbEnv = "env"
 )
 
 // `ctl` exit codes (docs/spec-mate.md §2.8a.2).
@@ -46,6 +48,8 @@ type Request struct {
 	Name string `json:"name,omitempty"`
 	// Server is the runtime entry of `run`.
 	Server *Server `json:"server,omitempty"`
+	// Env is the whole overlay `env` sets; absent or empty clears it.
+	Env map[string]string `json:"env,omitempty"`
 }
 
 // Response answers a Request with the state after it was applied.
@@ -132,6 +136,8 @@ func (s *Supervisor) apply(req Request) Response {
 		}
 	case VerbRm:
 		err = s.Remove(req.Name)
+	case VerbEnv:
+		err = s.SetEnv(req.Env)
 	default:
 		err = fmt.Errorf("unknown verb %q", req.Verb)
 	}

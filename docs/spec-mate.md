@@ -803,12 +803,13 @@ never write it (MODEL §9/1a, REVIEW N5).
 | `version` | required integer, format version; today `1`. A supervisor that does not know it runs nothing new and reports it (§2.8a.2 *Versions*) |
 | `servers[].name` | required, `^[a-z][a-z0-9-]{0,39}$`, unique in the file. It is the key everywhere: state, logs, `ctl`, envelope |
 | `servers[].port` | optional integer 1–65535, unique in the file; absent for a server without a listener (a worker) |
-| `servers[].command` | required, non-empty; run as `/bin/sh -c <command>` in `cwd`, as the leader of its own process group, with the environment `run.start` gave the supervisor (the service's env vars) |
+| `servers[].command` | required, non-empty; run as `/bin/sh -c <command>` in `cwd`, as the leader of its own process group, with the environment `run.start` gave the supervisor (the service's env vars) plus the overlay set with `ctl env` (§2.8a.2), an overlay entry replacing the service's value of the same name |
 | `servers[].cwd` | optional, default `"."`; relative to the repo root; after cleaning and resolving symlinks it stays inside the repo root, otherwise the file is invalid |
 | `servers[].watch` | optional; the supervisor restarts the server's group on a change under `paths` (relative to the repo root), never for paths under `.git`, `node_modules` or matching `ignore` (MODEL §9/1a, P4 H3). An `ignore` entry is matched against a repo-relative path one segment at a time with `path.Match`, a `**` segment matching any number of directories, and ignores the path it names and everything under it; a build output in a watched directory needs its glob — `go build -o app` also writes `app-go-tmp-umask` beside it, hence `apps/api/app*`, and `uv run` rewrites `src/<pkg>.egg-info` at any depth, hence `**/*.egg-info` (`TestWatch_AnIgnoreGlobMatchesAtAnyDepthWithDoubleStar`). Absent: the command's own watcher (`--watch`, vite) does it |
 | `servers[].healthPath` | optional, default `/`; must start with `/`. The HTTP path a health probe of the server's `port` reads — an API part that answers 404 on `/` names the path it answers on (`TestParseDeclaration_Shapes`) |
 | `servers[].service` | optional; variant B only — the hostname of the dev service whose supervisor runs it (MODEL §4). Absent: run by the one supervisor reading the file (variant A). In variant B every entry carries it |
 | `previewPortBase` | optional integer, top level; read in a Swarm pool container only (docs/spec-workflows.md §8 DP). The supervisor forwards `previewPortBase + ZEROPS_StableNumber` to the preview server's port, so each lease answers on its own per-port subdomain. `ZEROPS_StableNumber` starts at 1, so the pool's `run.ports` declares `previewPortBase + 1` through `previewPortBase + maxContainers` with `httpSupport: true`. zcp reads it, never writes it (`TestSupervisor_PreviewForward_SlotPort`, `TestDeclaration_PreviewPortBase_*`) |
+| `siblingEnv` | optional object, top level: an environment variable a part's dev server reads → the pool (`^[a-z0-9]{1,40}$`) whose lease of the same branch it reaches, e.g. `{"HQ_HOST": "hqpool"}`; the app keeps reading its own variable. A name matches `^[A-Za-z_][A-Za-z0-9_]*$` and is never `ZEROPS_*`, `hostname`, `serviceId`, `projectId`, `PATH` or `HOME`; a broken rule makes the file invalid like any other. The supervisor never puts it into any environment: what reaches a server is only the overlay set with `ctl env` (§2.8a.2) (`TestParseDeclaration_SiblingEnv_Shapes`, `TestSupervisor_EnvOverlay_DeclaredSiblingEnvNeverReachesAServer`) |
 | `servers[].preview` | optional bool; the server the preview forward reaches when more than one server listens (with one listening server, that one). zcp reads it, never writes it |
 | `servers[].autostart` | optional bool, default `true`; the server's **first** desired state: `autostart ? running : stopped` (§2.8a.2 *Events*). `false` keeps a declared server down until `ctl start` — a repo with many heavy dev servers (five Angular apps) starts only the ones it marks |
 
@@ -884,6 +885,7 @@ lost on a redeploy (P1 T7, P2 S4) — which is exactly the start-up rule below.
   "format": 1,
   "supervisor": { "version": "vX.Y.Z", "pid": 412, "startedAt": "2026-10-14T21:00:00Z" },
   "declaration": { "version": 1, "error": "" },
+  "env": { "HQ_HOST": "node-id-7.runtime.hqpool.zerops" },
   "servers": {
     "web":    { "source": "declared", "desired": "running", "status": "running", "pid": 731, "pgid": 731, "leaderStart": 88213,
                 "startedAt": "2026-10-14T21:00:01Z", "restarts": 0, "exit": null, "logPath": "/home/zerops/.zcp/devsup/logs/web.log" },
@@ -938,6 +940,10 @@ lost on a redeploy (P1 T7, P2 S4) — which is exactly the start-up rule below.
   service's max RAM (`zerops_scale`) or stopping a server; a deploy reply says it once for all
   servers (`TestDevServer_StatusOfAServerSystemdRestartedWhenTheServiceRanOutOfMemoryPointsToItsRAM`,
   `TestDeployNextActions_DevServersSystemdRestartedWhenTheServiceRanOutOfMemorySayWhyOnce`).
+- `env` is the overlay `ctl env` last set, `{}` when none is: container hostnames, never a secret. It
+  lives in `$HOME` with the rest of the state, so a container restart starts every server under it
+  again, while a redeploy or a pool container's reset (a fresh `$HOME`) starts without it until it is
+  set again (`TestSupervisor_EnvOverlay_SurvivesRestart`).
 - `source: runtime` entries are not in the declaration: crew apps (MODEL §9/1c). They carry their
   own `command`, `cwd`, `port`, are added and removed only through `ctl`, and are not restored after
   a redeploy — their owner, Mate's engine, adds them again.
@@ -954,7 +960,8 @@ verb is idempotent, so the caller asks `status` again.
 | `reload` | same as `SIGHUP` |
 | `logs <name> [--lines N]` | the tail of `logs/<name>.log` |
 | `run --name <n> --cwd <d> [--port <p>] -- <command>` / `rm <name>` | add / remove a `runtime` entry |
-| `version` | `{"version":"vX.Y.Z","formats":[1]}` |
+| `env (--set NAME=VALUE)…` / `env --clear` | replaces the env overlay with exactly the `--set` pairs (`--clear` alone: none) — it never merges, so a full set also drops whatever a previous holder left; neither flag is refused (`status` shows the overlay). A name breaking the `siblingEnv` name rule (§2.8a.1) is refused and changes nothing. The answer — the state, `env` included — comes as soon as the overlay is stored in `state.json`; every server started from then on (boot, `start`, `restart`, `reload`, `run`, a watched change, a retry) gets the service's environment plus the overlay. The live servers whose group started under another overlay are then restarted by the supervisor itself, one at a time a stagger apart, each with `lastRestartReason: "env changed"` — a stop's grace of up to 10 s per server could outlast `ctl`'s 60 s wait. A stopped or crashed server is not started by it, and an identical overlay restarts nothing (`TestCtl_Env_AnswersBeforeTheRestarts`, `TestCtl_Env_ReplacesTheOverlay`, `TestCtl_Env_RejectsReservedAndMalformedKeys`, `TestSupervisor_EnvOverlay_AppliedAtEveryStart`, `TestSupervisor_EnvOverlay_ChangeRestartsRunningServersOnce`, `TestSupervisor_EnvOverlay_SameOverlay_NoRestart`) |
+| `version` | `{"version":"vX.Y.Z","formats":[1],"capabilities":["env"]}`; `capabilities` names the verbs and flags an older supervisor lacks. An older `ctl` fails on a verb or flag it does not know, so a caller sends one only when `version` lists it (`TestCtl_VersionNamesCapabilities`) |
 
 Exit codes: `0` done, `2` no supervisor (socket absent or refused), `3` unknown name, `4` invalid
 declaration, `5` supervisor not answering (the dial timed out or found the backlog full, or no answer

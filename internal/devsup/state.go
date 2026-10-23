@@ -120,10 +120,15 @@ type DeclarationInfo struct {
 // State is $HOME/.zcp/devsup/state.json, written only by the supervisor, and
 // the answer of `ctl status`.
 type State struct {
-	Format      int                    `json:"format"`
-	Supervisor  SupervisorInfo         `json:"supervisor"`
-	Declaration DeclarationInfo        `json:"declaration"`
-	Servers     map[string]ServerState `json:"servers"`
+	Format      int             `json:"format"`
+	Supervisor  SupervisorInfo  `json:"supervisor"`
+	Declaration DeclarationInfo `json:"declaration"`
+	// Env is the lease-wide overlay `ctl env` last set, empty when none is:
+	// every server starts with the service's environment plus these, an
+	// overlay entry winning over the service's value of the same name. It
+	// holds container hostnames, never a secret.
+	Env     map[string]string      `json:"env"`
+	Servers map[string]ServerState `json:"servers"`
 }
 
 // StateFormat is the shape of state.json.
