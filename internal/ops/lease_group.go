@@ -28,7 +28,9 @@ import (
 // for every member, and hands back every container it reserved when any
 // member fails. Each member goes through the one lease's steps: the HQ
 // credential (DP-16), the reservation (DP-3), the checkout (DP-6), then the
-// repository's prepare and the supervisor (DP-13, DP-14).
+// repository's prepare and the supervisor (DP-13, DP-14). A group release
+// (DP-21) reads every member before it releases any and releases each through
+// the one lease's release step.
 
 // leaseLocksDir is where the per-key acquire locks live, apart from the lease
 // records (a record is replaced by rename on every write and cannot carry a
@@ -330,7 +332,7 @@ func recordedBase(group []leaseRecord) string {
 
 // runMembers runs fn for every member at once and waits for them all; each
 // fn touches only its own member.
-func runMembers(members []*groupMember, fn func(*groupMember)) {
+func runMembers[M any](members []M, fn func(M)) {
 	var wg sync.WaitGroup
 	for _, m := range members {
 		wg.Go(func() { fn(m) })
@@ -515,4 +517,237 @@ func leaseGroupRecords(stateDir, repo, branch string) ([]leaseRecord, error) {
 		return cmp.Or(cmp.Compare(a.AcquiredAt, b.AcquiredAt), cmp.Compare(a.alias(), b.alias()))
 	})
 	return group, nil
+}
+
+// releaseMember is one lease of a branch's release.
+type releaseMember struct {
+	rec   leaseRecord
+	guard leaseGuardResult
+	// work is the unsaved work the guard found; err is why the guard could
+	// not tell (a refusal of the branch).
+	work unsavedWork
+	err  error
+	view LeaseView
+}
+
+// LeaseReleaseGroup releases every lease zcp holds of one repository and
+// branch — the group (DP-17) — all or none unless forced (docs/spec-workflows.md
+// §8 DP-21). Unless force is set it reads every lease first, changing nothing,
+// and refuses the whole branch when any one holds work a release would lose or
+// cannot be read, naming each lease's own state; nothing is released, no record
+// dropped. Then each lease goes through the one lease's release step
+// (releaseGuarded: a reset, or the container deleted when it cannot be reset,
+// DP-15; a lease of a pool that is gone dropped as lost, DP-20). A lease the
+// orchestrator will not release stays held and recorded and its view carries
+// the failure, while the others go: the result is per lease, earliest acquired
+// first, and the same call again releases what is left. repo empty is the one
+// repository zcp leases the branch for.
+func LeaseReleaseGroup(ctx context.Context, d LeaseDeps, repo, branch string, force bool) ([]LeaseView, error) {
+	if err := validateLeaseBranch(branch); err != nil {
+		return nil, err
+	}
+	group, err := branchLeaseRecords(d.StateDir, repo, branch)
+	if err != nil {
+		return nil, err
+	}
+	members := make([]*releaseMember, 0, len(group))
+	for _, r := range group {
+		members = append(members, &releaseMember{rec: r})
+	}
+	if !force {
+		// The guards reach each container through its alias: put back a
+		// stanza another call or a redeploy lost before any of them runs.
+		restoreNote := d.Host.refreshAliases(ctx, d)
+		runMembers(members, func(m *releaseMember) {
+			m.guard, m.work, m.err = inspectLeaseRelease(ctx, d, m.rec)
+			m.guard.note = joinNotes(restoreNote, m.guard.note)
+		})
+		if err := branchReleaseRefusal(d, members, repo, branch); err != nil {
+			return nil, err
+		}
+	}
+	again := LeaseReleaseBranchCall(branch, repo, force)
+	runMembers(members, func(m *releaseMember) {
+		view, err := releaseGuarded(ctx, d, m.rec, m.guard)
+		if err != nil {
+			view = unreleasedView(ctx, d, m.rec, m.guard, err, again)
+		}
+		m.view = view
+	})
+	views := make([]LeaseView, 0, len(members))
+	for _, m := range members {
+		views = append(views, m.view)
+	}
+	return views, nil
+}
+
+// branchLeaseRecords is what a release of branch releases: zcp's records of
+// the branch of repo, earliest acquired first (leaseGroupRecords). repo empty
+// is the one repository zcp leases the branch for; a branch it leases for
+// several is refused naming each with its leases, and so is a branch it holds
+// no lease of. A record whose repository zcp knows neither way is a group of
+// one (DP-17), released by itself or by its alias.
+func branchLeaseRecords(stateDir, repo, branch string) ([]leaseRecord, error) {
+	if strings.TrimSpace(repo) != "" {
+		cloneURL, err := validateLeaseRepo(repo)
+		if err != nil {
+			return nil, err
+		}
+		group, err := leaseGroupRecords(stateDir, cloneURL, branch)
+		if err != nil {
+			return nil, err
+		}
+		if len(group) == 0 {
+			return nil, noLeaseOfBranch(branch, cloneURL)
+		}
+		return group, nil
+	}
+	records, err := readLeaseRecords(stateDir)
+	if err != nil {
+		return nil, err
+	}
+	aliases := map[string][]string{} // repository identity → its leases of the branch
+	var keys, named []string
+	var last leaseRecord
+	for _, r := range records {
+		if recordBranch(r) != branch {
+			continue
+		}
+		of := recordRepo(stateDir, r)
+		key := strings.ToLower(of)
+		if of == "" {
+			key, of = "\x00"+r.alias(), "a repository zcp has no record of"
+		}
+		if _, seen := aliases[key]; !seen {
+			keys = append(keys, key)
+			named = append(named, of)
+		}
+		aliases[key] = append(aliases[key], r.alias())
+		last = r
+	}
+	switch len(keys) {
+	case 0:
+		return nil, noLeaseOfBranch(branch, "")
+	case 1:
+		if of := recordRepo(stateDir, last); of != "" {
+			return leaseGroupRecords(stateDir, of, branch)
+		}
+		return []leaseRecord{last}, nil
+	}
+	parts := make([]string, 0, len(keys))
+	for i, key := range keys {
+		parts = append(parts, named[i]+": "+strings.Join(aliases[key], ", "))
+	}
+	return nil, platform.NewPlatformError(platform.ErrInvalidParameter,
+		fmt.Sprintf("This zcp leases branch %s for several repositories (%s)", branch, strings.Join(parts, "; ")),
+		"Pass repo, the clone URL whose leases of the branch to release, or release one lease by its alias as lease")
+}
+
+// noLeaseOfBranch is the refusal of a release of a branch (of repo, when one
+// was named) zcp holds no lease of.
+func noLeaseOfBranch(branch, repo string) error {
+	of := ""
+	if repo != "" {
+		of = " of " + repo
+	}
+	return platform.NewPlatformError(platform.ErrInvalidParameter,
+		fmt.Sprintf("This zcp holds no lease of branch %s%s", branch, of),
+		"zerops_lease action=status lists the leases this zcp holds, each with its branch")
+}
+
+// branchReleaseRefusal is the refusal of a branch's release, nil when every
+// lease's guard passed. A branch of one lease is refused as that lease's own
+// release is; several name each lease's own state — the work it holds, why
+// it could not be checked, or that it holds none — with how to save the work
+// and the forced release of the branch.
+func branchReleaseRefusal(d LeaseDeps, members []*releaseMember, repo, branch string) error {
+	if !slices.ContainsFunc(members, func(m *releaseMember) bool { return m.err != nil || m.work.any() }) {
+		return nil
+	}
+	if len(members) == 1 {
+		if m := members[0]; m.err != nil {
+			return m.err
+		}
+		m := members[0]
+		return unsavedWorkRefusal(m.rec.alias(), m.work, IsHQRemote(m.rec.Repo, d.hqAddress()))
+	}
+	var states, fixes []string
+	var unsaved, unchecked, onHQ bool
+	for _, m := range members {
+		alias := m.rec.alias()
+		switch {
+		case m.err != nil:
+			unchecked = true
+			states = append(states, guardFailureText(m.err))
+			var pe *platform.PlatformError
+			if errors.As(m.err, &pe) && pe.Suggestion != "" {
+				fixes = append(fixes, "For "+alias+": "+strings.TrimSuffix(pe.Suggestion, "."))
+			}
+		case m.work.any():
+			unsaved = true
+			onHQ = onHQ || IsHQRemote(m.rec.Repo, d.hqAddress())
+			states = append(states, alias+" holds "+m.work.describe())
+		default:
+			states = append(states, alias+" holds no unsaved work")
+		}
+	}
+	var why string
+	switch {
+	case unsaved && unchecked:
+		why = fmt.Sprintf("Branch %s's leases hold work that releasing would lose and not every one could be checked", branch)
+	case unsaved:
+		why = fmt.Sprintf("Branch %s's leases hold work that releasing would lose", branch)
+	default:
+		why = fmt.Sprintf("Not every lease of branch %s could be checked for unsaved work", branch)
+	}
+	if unsaved {
+		fixes = append([]string{saveWorkHint(onHQ, "each container that holds it")}, fixes...)
+	}
+	fixes = append(fixes, "Or release with force=true to discard whatever every lease of the branch holds: "+LeaseReleaseBranchCall(branch, repo, true))
+	return platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+		why+", so none of them was released: "+strings.Join(states, "; "),
+		strings.Join(fixes, ". "))
+}
+
+// guardFailureText is a guard's refusal of one lease as a clause of its
+// branch's refusal: its message, with what ssh or git answered (an
+// SSHExecError keeps it apart from its Error()).
+func guardFailureText(err error) string {
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) {
+		return err.Error()
+	}
+	if pe.Cause == nil {
+		return pe.Message
+	}
+	return pe.Message + " (" + sshFailureText(pe.Cause) + ")"
+}
+
+// unreleasedView is a lease its branch's release could not release, as status
+// reports it — held, or unmounted with what it lacks, since a release unmounts
+// first — carrying the failure as its error and the call that releases what is
+// left of the branch.
+func unreleasedView(ctx context.Context, d LeaseDeps, rec leaseRecord, guard leaseGuardResult, err error, again string) LeaseView {
+	v := rec.view(LeaseStateHeld)
+	gap := d.Host.gap(ctx, rec.alias())
+	if gap != "" {
+		v.State = LeaseStateUnmounted
+	}
+	v.Error = errorNote(err)
+	v.Note = joinNotes(guard.note, gap,
+		fmt.Sprintf("the release failed, so %s stays reserved and its record is kept; %s releases what is left of the branch (a released lease has no record left)", rec.alias(), again))
+	return v
+}
+
+// LeaseReleaseBranchCall is the zerops_lease call that releases branch — of
+// repo, when one was named — forced or not.
+func LeaseReleaseBranchCall(branch, repo string, force bool) string {
+	call := "zerops_lease action=release branch=" + branch
+	if repo = strings.TrimSpace(repo); repo != "" {
+		call += " repo=" + repo
+	}
+	if force {
+		call += " force=true"
+	}
+	return call
 }

@@ -187,7 +187,10 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// Raised 842 -> 969: pools, the group acquire (DP-17) — one lease per
 		// pool on the branch, all or none — a new input of acquire, its
 		// description one line; pool names it as the alternative.
-		"zerops_lease": 969,
+		// Raised 969 -> 1045: release by branch (DP-21) — every lease of a
+		// branch, all or none — gives branch and repo a release role, one
+		// clause each; no new field.
+		"zerops_lease": 1045,
 		// Raised 266 -> 580: action="wait" added processId/processIds/service
 		// routing fields (block until a process or a whole service settles) — a
 		// deliberate new capability, not description bloat.
