@@ -83,6 +83,44 @@ func TestBuildPlan_IdleOnlyUnmanagedRuntimes(t *testing.T) {
 	}
 }
 
+// TestCountIdleServices_PoolNotAdoptable pins, through the idle plan, that a
+// pool or a Box counts as neither bootstrapped nor adoptable
+// (docs/spec-workflows.md §8 PS-2): alone they leave the project empty for
+// plan purposes, and next to a bootstrapped runtime they offer no adopt
+// alternative.
+func TestCountIdleServices_PoolNotAdoptable(t *testing.T) {
+	t.Parallel()
+
+	for _, class := range []topology.RuntimeClass{topology.RuntimePool, topology.RuntimeSandbox} {
+		t.Run(string(class)+"_alone", func(t *testing.T) {
+			t.Parallel()
+			env := planEnvelope(PhaseIdle)
+			env.Services = []ServiceSnapshot{{Hostname: "swarm", RuntimeClass: class}}
+			plan := BuildPlan(env)
+			if plan.Primary.Args["workflow"] != "bootstrap" || plan.Primary.Args["route"] == "adopt" {
+				t.Errorf("primary = %v, want a plain bootstrap start, never route=adopt", plan.Primary.Args)
+			}
+		})
+		t.Run(string(class)+"_beside_bootstrapped", func(t *testing.T) {
+			t.Parallel()
+			env := planEnvelope(PhaseIdle)
+			env.Services = []ServiceSnapshot{
+				{Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Mode: topology.ModeDev},
+				{Hostname: "swarm", RuntimeClass: class},
+			}
+			plan := BuildPlan(env)
+			if plan.Primary.Args["workflow"] != "develop" {
+				t.Errorf("primary workflow = %q, want develop", plan.Primary.Args["workflow"])
+			}
+			for _, alt := range plan.Alternatives {
+				if alt.Args["route"] == "adopt" {
+					t.Errorf("alternatives offer adopt: %v, want none for a %s", alt.Args, class)
+				}
+			}
+		})
+	}
+}
+
 // TestBuildPlan_IdleOrphanCollapsesToBootstrap pins the post-E3 routing:
 // after bootstrap-start absorbed orphan cleanup as a transparent
 // side-effect, an orphan-only project (stale ServiceMetas, no live

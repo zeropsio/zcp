@@ -241,11 +241,16 @@ func planIdle(env StateEnvelope) Plan {
 
 // countIdleServices partitions the envelope's services for idle-phase plan
 // dispatch. `bootstrapped` is the count with complete ServiceMeta; `adoptable`
-// is unmanaged runtimes without complete meta.
+// is unmanaged runtimes without complete meta. Managed services, pools and
+// Boxes count toward neither.
 func countIdleServices(env StateEnvelope) (bootstrapped, adoptable int) {
 	for _, svc := range env.Services {
-		if svc.RuntimeClass == topology.RuntimeManaged {
+		switch svc.RuntimeClass {
+		case topology.RuntimeManaged, topology.RuntimePool, topology.RuntimeSandbox:
+			// Infrastructure, not an app runtime: nothing to bootstrap or adopt
+			// (docs/spec-workflows.md §8 PS-2).
 			continue
+		case topology.RuntimeDynamic, topology.RuntimeStatic, topology.RuntimeImplicitWeb, topology.RuntimeUnknown:
 		}
 		if svc.Bootstrapped {
 			bootstrapped++

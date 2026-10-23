@@ -279,12 +279,13 @@ type RepoStatus struct {
 }
 
 // ApplyRepoStatus attaches a live repo status to each service snapshot
-// that has one in statuses (keyed by hostname), skipping managed/unknown
-// services even if the caller mistakenly supplied one — a repo block
-// only ever makes sense for a service that runs application code.
+// that has one in statuses (keyed by hostname), skipping every service that
+// is not an app runtime (managed, unknown, pool, Box) even if the caller
+// mistakenly supplied one — a repo block only ever makes sense for a service
+// that runs application code in one addressable container.
 func ApplyRepoStatus(services []ServiceSnapshot, statuses map[string]RepoStatus) {
 	for i := range services {
-		if services[i].RuntimeClass == topology.RuntimeManaged || services[i].RuntimeClass == topology.RuntimeUnknown {
+		if !services[i].RuntimeClass.IsAppRuntime() {
 			continue
 		}
 		st, ok := statuses[services[i].Hostname]
@@ -297,13 +298,13 @@ func ApplyRepoStatus(services []ServiceSnapshot, statuses map[string]RepoStatus)
 }
 
 // ApplyRollbackInfo attaches per-service rollback candidate ids to each
-// service snapshot that has one in infos (keyed by hostname), skipping
-// managed/unknown services even if the caller mistakenly supplied one —
-// rollback only ever makes sense for a runtime service with app-version
-// history.
+// service snapshot that has one in infos (keyed by hostname), skipping every
+// service that is not an app runtime (managed, unknown, pool, Box) even if
+// the caller mistakenly supplied one — rollback only ever makes sense for a
+// runtime service with app-version history.
 func ApplyRollbackInfo(services []ServiceSnapshot, infos map[string]RollbackInfo) {
 	for i := range services {
-		if services[i].RuntimeClass == topology.RuntimeManaged || services[i].RuntimeClass == topology.RuntimeUnknown {
+		if !services[i].RuntimeClass.IsAppRuntime() {
 			continue
 		}
 		info, ok := infos[services[i].Hostname]

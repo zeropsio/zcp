@@ -133,6 +133,8 @@ func TestDiscover_RuntimeDeployedFlag(t *testing.T) {
 			runtime("s4", "worker", "alpine/nodejs@24", nil),
 			runtime("s5", "db", "postgresql:single@17", nil),
 			runtime("s6", "zcp", "zcp@1", &platform.ActiveAppVersionDigest{ID: "av-zcp", Source: "GIT", Built: true}),
+			runtime("s7", "fleet", "swarm@1", nil),
+			runtime("s8", "box", "ubuntu/zbox@1", nil),
 		})
 
 	result, err := Discover(context.Background(), mock, "proj-1", "", false, false, false)
@@ -146,6 +148,8 @@ func TestDiscover_RuntimeDeployedFlag(t *testing.T) {
 		"worker":   "false",
 		"db":       "absent",
 		"zcp":      "absent",
+		"fleet":    "absent", // a pool and a Box are not app runtimes (spec-workflows.md §8 PS-2)
+		"box":      "absent",
 	}
 	for _, svc := range result.Services {
 		got := "absent"

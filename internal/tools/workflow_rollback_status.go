@@ -6,7 +6,6 @@ import (
 
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
-	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -16,7 +15,7 @@ import (
 // seconds of API latency onto every status call.
 const attachRollbackInfoConcurrency = 4
 
-// attachRollbackInfo populates services[i].Rollback for every non-managed
+// attachRollbackInfo populates services[i].Rollback for every app-runtime
 // service (docs/spec-workflows.md §8 R2 generalised / §12.6 GF-8) — the
 // tools-layer half of workflow.ApplyRollbackInfo, which stays ops-free so
 // workflow/ never imports ops/. Lists the project's services ONCE to map
@@ -49,7 +48,7 @@ func attachRollbackInfo(ctx context.Context, services []workflow.ServiceSnapshot
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, attachRollbackInfoConcurrency)
 	for _, svc := range services {
-		if svc.RuntimeClass == topology.RuntimeManaged || svc.RuntimeClass == topology.RuntimeUnknown {
+		if !svc.RuntimeClass.IsAppRuntime() {
 			continue
 		}
 		id, ok := idByHostname[svc.Hostname]
