@@ -8,10 +8,12 @@ package tools
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -125,5 +127,42 @@ func TestJSONCarriers_WireContract(t *testing.T) {
 				t.Errorf("bare document must yield no envelope")
 			}
 		})
+	}
+}
+
+// TestJSONCarriers_LeaseActivity_ReadBackVerbatim pins the read-back half of
+// leases[].activity/unsaved (docs/spec-mate.md §2.8a.3): workflow.ExtractEnvelope
+// returns exactly what the zerops_lease result carried — each fact as sent, a
+// fact not sent still absent — and derives nothing for a lease that carried
+// neither.
+func TestJSONCarriers_LeaseActivity_ReadBackVerbatim(t *testing.T) {
+	t.Parallel()
+
+	open := 2
+	sent := []workflow.LeaseSnapshot{
+		{
+			Alias: "devpool-3", Pool: "devpool", Branch: "feat-x", ContainerHostname: "node-id-3.runtime.devpool.zerops", State: "held",
+			AcquiredAt: "2026-10-23T12:00:00Z",
+			Activity: &topology.LeaseActivity{
+				LastChangeAt: "2026-10-23T13:00:00Z", PreviewOpenConns: &open, AcquiredAt: "2026-10-23T12:00:00Z", ReadAt: "2026-10-23T14:00:00Z",
+			},
+			Unsaved: &topology.LeaseUnsaved{Files: []string{" M src/app.ts", "?? notes.txt"}, FileCount: 2},
+		},
+		{Alias: "devpool-4", Pool: "devpool", ContainerHostname: "node-id-4.runtime.devpool.zerops", State: "unknown-holder"},
+	}
+	env := workflow.StateEnvelope{Phase: workflow.PhaseIdle, Project: workflow.ProjectSummary{ID: "proj-1"}, Leases: &sent}
+	payload, err := json.Marshal(leaseToolResult{Action: "status", Leases: []ops.LeaseView{}, Envelope: &env})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	got, ok := workflow.ExtractEnvelope(string(payload))
+	if !ok {
+		t.Fatalf("ExtractEnvelope found nothing in\n%s", payload)
+	}
+	if !reflect.DeepEqual(got.LeaseList(), sent) {
+		t.Errorf("leases read back\n %+v\nwant\n %+v", got.LeaseList(), sent)
+	}
+	if a := got.LeaseList()[0].Activity; a.PreviewLastConnAt != "" || a.Note != "" {
+		t.Errorf("a fact not sent was read back: %+v", a)
 	}
 }

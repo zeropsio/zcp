@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/ops/devservertest"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -598,6 +600,145 @@ func TestLeaseTool_Status_CarriesActivity(t *testing.T) {
 	for _, secret := range []string{leaseTestLease, leaseTestToken} {
 		if strings.Contains(text, secret) {
 			t.Errorf("status result carries a secret")
+		}
+	}
+}
+
+// leaseActivityReads counts the reads of a lease's checkout ssh was asked to run.
+func leaseActivityReads(ssh *leaseStubSSH) int {
+	ssh.mu.Lock()
+	defer ssh.mu.Unlock()
+	reads := 0
+	for _, c := range ssh.calls {
+		if strings.Contains(c, "@@zcp-lease activity") {
+			reads++
+		}
+	}
+	return reads
+}
+
+// TestLeaseTool_EnvelopeCarriesActivityOnStatus: the envelope of a zerops_lease
+// action=status result carries, on the lease status read, the activity and
+// unsaved work the result reports — from status's one read of the checkout,
+// never a second (docs/spec-mate.md §2.8a.3). A zerops_lease call that reads no
+// checkout (acquire, rollout) carries neither on the same lease.
+func TestLeaseTool_EnvelopeCarriesActivityOnStatus(t *testing.T) {
+	t.Parallel()
+	changed := time.Date(2026, 10, 23, 13, 0, 0, 0, time.UTC)
+	ssh := &leaseStubSSH{fn: func(command string) ([]byte, error) {
+		if strings.Contains(command, "@@zcp-lease activity") {
+			return fmt.Appendf(nil, "@@zcp-lease activity %d \n@@zcp-lease status\n?? notes.txt\n@@zcp-lease unpushed\n2\n", changed.Unix()), nil
+		}
+		return nil, nil
+	}}
+	srv, _ := leaseToolServerSSH(t, &fakeOrchestrator{}, ssh)
+	envelopeLease := func(action string, args map[string]any) (leaseToolResult, workflow.LeaseSnapshot) {
+		t.Helper()
+		res := callTool(t, srv, "zerops_lease", args)
+		text := getTextContent(t, res)
+		if res.IsError {
+			t.Fatalf("%s failed: %s", action, text)
+		}
+		var got leaseToolResult
+		if err := json.Unmarshal([]byte(text), &got); err != nil {
+			t.Fatalf("%s result is not JSON: %v\n%s", action, err, text)
+		}
+		env, ok := workflow.ExtractEnvelope(text)
+		if !ok || len(env.LeaseList()) != 1 || env.LeaseList()[0].Alias != "devpool-3" {
+			t.Fatalf("%s: envelope does not list devpool-3:\n%s", action, text)
+		}
+		return got, env.LeaseList()[0]
+	}
+
+	if _, l := envelopeLease("acquire", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo, "branch": "feature-x"}); l.Activity != nil || l.Unsaved != nil {
+		t.Errorf("acquire read no checkout, but its envelope carries activity %+v unsaved %+v", l.Activity, l.Unsaved)
+	}
+
+	status, l := envelopeLease("status", map[string]any{"action": "status"})
+	if len(status.Leases) != 1 || status.Leases[0].Activity == nil || status.Leases[0].Unsaved == nil {
+		t.Fatalf("status leases = %+v, want devpool-3 with its activity and unsaved work", status.Leases)
+	}
+	if l.Activity == nil || l.Activity.LastChangeAt != "2026-10-23T13:00:00Z" || l.Activity.ReadAt == "" {
+		t.Errorf("envelope activity = %+v, want lastChangeAt 2026-10-23T13:00:00Z and a readAt", l.Activity)
+	}
+	if !reflect.DeepEqual(l.Activity, status.Leases[0].Activity) || !reflect.DeepEqual(l.Unsaved, status.Leases[0].Unsaved) {
+		t.Errorf("envelope activity %+v unsaved %+v, want what the result reports: %+v %+v",
+			l.Activity, l.Unsaved, status.Leases[0].Activity, status.Leases[0].Unsaved)
+	}
+	if reads := leaseActivityReads(ssh); reads != 1 {
+		t.Errorf("the checkout was read %d times, want once (the envelope takes status's read)", reads)
+	}
+
+	if _, l := envelopeLease("rollout", map[string]any{"action": "rollout", "pool": "devpool"}); l.Activity != nil || l.Unsaved != nil {
+		t.Errorf("rollout read no checkout, but its envelope carries activity %+v unsaved %+v", l.Activity, l.Unsaved)
+	}
+	if reads := leaseActivityReads(ssh); reads != 1 {
+		t.Errorf("the checkout was read %d times after rollout, want still once", reads)
+	}
+}
+
+// TestLeaseReader_NeverReadsActivity: the lease reader that fills every
+// envelope's leases[] (leaseReaderWith — the lease tool's and, through
+// freshEnvelope, every other tool's) asks only the pool orchestrators. It runs
+// no ssh, so it never reads a lease's checkout and its snapshots carry no
+// activity or unsaved work: those reach leases[] only from the zerops_lease
+// call that read them (workflow.WithLeaseActivity).
+func TestLeaseReader_NeverReadsActivity(t *testing.T) {
+	t.Parallel()
+	hs := httptest.NewServer(&fakeOrchestrator{reserved: true})
+	t.Cleanup(hs.Close)
+	stateDir := t.TempDir()
+	writeLeaseRecordFile(t, stateDir, "devpool", "svc-pool", "c-abc", 3, "feature-x")
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "proj"}).
+		WithServices([]platform.ServiceStack{swarmPoolService("svc-pool", "devpool", "ACTIVE")}).
+		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{Key: "API_TOKEN", Content: leaseTestToken, Sensitive: true}})
+	factory := func(_, token string) ops.SwarmAPI { return platform.NewSwarmClient(hs.URL, token, hs.Client()) }
+
+	snaps, err := leaseReaderWith(mock, "proj-1", stateDir, factory, ops.LeaseHost{}, leaseStatusTimeout)(context.Background())
+	if err != nil {
+		t.Fatalf("reader: %v", err)
+	}
+	if len(snaps) != 1 || snaps[0].Alias != "devpool-3" || snaps[0].State != ops.LeaseStateHeld || snaps[0].Unverified {
+		t.Fatalf("snapshots = %+v, want devpool-3 held, confirmed by its orchestrator", snaps)
+	}
+	if snaps[0].Activity != nil || snaps[0].Unsaved != nil {
+		t.Errorf("the reader read the checkout: activity %+v unsaved %+v", snaps[0].Activity, snaps[0].Unsaved)
+	}
+}
+
+// TestEnvelope_OtherToolsCarryNoLeaseActivity: a tool other than zerops_lease
+// carries no lease's activity or unsaved work in its envelope, even one that
+// has ssh into the leased container (zerops_dev_server on the alias, whose
+// envelope carries the lease's devServers): it never reads the checkout for
+// it, so it pays no ssh read (docs/spec-mate.md §2.8a.3).
+func TestEnvelope_OtherToolsCarryNoLeaseActivity(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeDevpoolLeaseFile(t, dir)
+	c := devservertest.NewSupervised(`{"version":1,"previewPortBase":9000,"servers":[{"name":"web","port":3000,"command":"pnpm dev"}]}`)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDevServer(srv, DevServerDeps{Client: leasePoolMock(false), HTTPClient: okHTTP, ProjectID: "proj-1", SSH: c, StateDir: dir, CarriesParts: true})
+
+	res := callTool(t, srv, "zerops_dev_server", map[string]any{"action": "status", "hostname": "devpool-3"})
+	text := getTextContent(t, res)
+	if res.IsError {
+		t.Fatalf("status failed: %s", text)
+	}
+	env, ok := workflow.ExtractEnvelope(text)
+	if !ok || len(env.LeaseList()) != 1 {
+		t.Fatalf("no envelope listing the lease in\n%s", text)
+	}
+	l := env.LeaseList()[0]
+	if l.Alias != "devpool-3" || len(l.DevServers) == 0 {
+		t.Fatalf("envelope lease = %+v, want devpool-3 carrying the servers this call read", l)
+	}
+	if l.Activity != nil || l.Unsaved != nil {
+		t.Errorf("zerops_dev_server's envelope carries lease activity %+v unsaved %+v", l.Activity, l.Unsaved)
+	}
+	for _, cmd := range c.Sent() {
+		if strings.Contains(cmd, "@@zcp-lease activity") || strings.Contains(cmd, "ls-files") {
+			t.Errorf("zerops_dev_server read the lease's checkout: %s", cmd)
 		}
 	}
 }

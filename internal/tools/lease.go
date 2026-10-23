@@ -95,10 +95,16 @@ func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir 
 		// wired dev service (DP-16); outside one the secret stays the user's.
 		deps.PoolCredential = ops.PoolHQCredential{Read: hqCredential}
 	}
-	envelope := func(ctx context.Context) *workflow.StateEnvelope {
+	// envelope is the result's lifecycle envelope; read are the views this
+	// call read checkouts for, whose activity and unsaved work ride leases[]
+	// (the envelope's own lease reader never reads a checkout).
+	envelope := func(ctx context.Context, read ...ops.LeaseView) *workflow.StateEnvelope {
 		var extra []workflow.EnvelopeOption
 		if swarm != nil {
 			extra = append(extra, workflow.WithLeaseReader(leaseReaderWith(client, projectID, stateDir, swarm, deps.Host, leaseStatusTimeout)))
+		}
+		if reads := leaseReads(read); len(reads) > 0 {
+			extra = append(extra, workflow.WithLeaseActivity(reads))
 		}
 		return freshEnvelope(ctx, stateDir, client, projectID, rt, extra...)
 	}
@@ -150,7 +156,7 @@ func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir 
 			if views == nil {
 				views = []ops.LeaseView{}
 			}
-			return jsonResult(leaseToolResult{Action: input.Action, Leases: views, UnreadPools: status.Unread, Envelope: envelope(ctx)}), nil, nil
+			return jsonResult(leaseToolResult{Action: input.Action, Leases: views, UnreadPools: status.Unread, Envelope: envelope(ctx, views...)}), nil, nil
 		case leaseActionRelease:
 			force := false
 			if f := input.Force.Ptr(); f != nil {
@@ -237,6 +243,19 @@ func leaseReleaseBranchNext(views []ops.LeaseView, branch, repo string, force bo
 		next += " Every other lease of the branch was released."
 	}
 	return next + " " + ops.LeaseReleaseBranchCall(branch, repo, force) + " again releases what is left of the branch."
+}
+
+// leaseReads is what a call read of each lease's checkout, keyed by alias, for
+// the envelope (workflow.WithLeaseActivity): a view that carries no activity
+// and no unsaved work was not read and is left out.
+func leaseReads(views []ops.LeaseView) map[string]workflow.LeaseRead {
+	reads := map[string]workflow.LeaseRead{}
+	for _, v := range views {
+		if v.Activity != nil || v.Unsaved != nil {
+			reads[v.Alias] = workflow.LeaseRead{Activity: v.Activity, Unsaved: v.Unsaved}
+		}
+	}
+	return reads
 }
 
 // withLeaseSSHStderr puts git's stderr from an ssh failure into the error's

@@ -1,0 +1,58 @@
+{
+  "phase": "idle",
+  "environment": "container",
+  "idleScenario": "empty",
+  "selfService": { "hostname": "zcp" },
+  "project": { "id": "proj-weather", "name": "weather" },
+  "services": [
+    {
+      "hostname": "devpool",
+      "typeVersion": "swarm@1",
+      "runtimeClass": "pool",
+      "status": "ACTIVE",
+      "bootstrapped": false
+    },
+    {
+      "hostname": "stoppool",
+      "typeVersion": "swarm@1",
+      "runtimeClass": "pool",
+      "status": "STOPPED",
+      "bootstrapped": false
+    }
+  ],
+  "leases": [
+    {
+      "alias": "devpool-3",
+      "pool": "devpool",
+      "branch": "feat-a",
+      "containerHostname": "node-id-3.runtime.devpool.zerops",
+      "state": "held",
+      "unverified": false,
+      "acquiredAt": "2026-10-23T18:00:00Z",
+      "activity": {
+        "lastChangeAt": "2026-10-23T19:12:40Z",
+        "acquiredAt": "2026-10-23T18:00:00Z",
+        "readAt": "2026-10-23T20:04:00Z"
+      },
+      "unsaved": {
+        "files": [" M src/App.tsx", "?? notes.txt"],
+        "fileCount": 2,
+        "unpushedCommits": 2
+      }
+    },
+    {
+      "alias": "stoppool-2",
+      "pool": "stoppool",
+      "branch": "feat-b",
+      "containerHostname": "node-id-2.runtime.stoppool.zerops",
+      "state": "held",
+      "unverified": true,
+      "acquiredAt": "2026-10-23T18:00:00Z",
+      "activity": {
+        "acquiredAt": "2026-10-23T18:00:00Z",
+        "note": "not read: the pool's orchestrator did not confirm this lease, so its container may no longer be this lease's"
+      }
+    }
+  ],
+  "generated": "2026-10-23T20:04:00Z"
+}

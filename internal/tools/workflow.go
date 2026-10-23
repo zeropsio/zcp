@@ -1042,7 +1042,11 @@ func leaseReader(client platform.Client, projectID, stateDir string, host ops.Le
 
 // leaseReaderWith is leaseReader over a given orchestrator factory and time
 // budget (the lease tool reads through the factory and host side it was
-// registered with).
+// registered with). It asks the orchestrators only: its deps carry no ssh, so
+// it never reads a lease's checkout, and a lease's activity and unsaved work
+// reach leases[] only from the zerops_lease call that read them
+// (workflow.WithLeaseActivity) — every other tool's envelope pays no ssh read
+// (TestLeaseReader_NeverReadsActivity).
 func leaseReaderWith(client platform.Client, projectID, stateDir string, swarm ops.SwarmFactory, host ops.LeaseHost, timeout time.Duration) workflow.LeaseReader {
 	return func(ctx context.Context) ([]workflow.LeaseSnapshot, error) {
 		if client == nil || stateDir == "" {
