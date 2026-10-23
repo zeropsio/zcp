@@ -1149,9 +1149,8 @@ func TestLeaseReleaseGroup_EachMemberTakesTheOneLeasesPath(t *testing.T) {
 	gf := newGroupFixture(t)
 	gf.heldGroup(t)
 	gf.web.releaseErr = noPrimarySnapshot()
-	hq := poolService("svc-hq", groupHQPool)
-	hq.Status = "DELETING"
-	gf.deps.Client.(*platform.Mock).WithServices([]platform.ServiceStack{hq, poolService("svc-web", groupWebPool)})
+	deleting := platform.ServiceStack{ID: "svc-hq", Name: groupHQPool, Status: "DELETING", ServiceStackTypeInfo: poolService("svc-hq", groupHQPool).ServiceStackTypeInfo}
+	gf.deps.Client.(*platform.Mock).WithServices([]platform.ServiceStack{deleting, poolService("svc-web", groupWebPool)})
 
 	views, err := LeaseReleaseGroup(context.Background(), gf.deps, "", "feat", true)
 	if err != nil {
@@ -1229,6 +1228,15 @@ func TestLeaseReleaseGroup_NothingToRelease_Refused(t *testing.T) {
 	t.Parallel()
 	gf := newGroupFixture(t)
 	gf.heldGroup(t)
+	// Read once every case, run in parallel, has ended.
+	t.Cleanup(func() {
+		if len(gf.hq.releaseLog())+len(gf.web.releaseLog()) != 0 {
+			t.Error("a refused release reached an orchestrator")
+		}
+		if cmds := gf.ssh.commands(); len(cmds) != 0 {
+			t.Errorf("a refused release read the containers: %v", cmds)
+		}
+	})
 	for _, tt := range []struct {
 		name, repo, branch, want string
 	}{
@@ -1239,17 +1247,12 @@ func TestLeaseReleaseGroup_NothingToRelease_Refused(t *testing.T) {
 		{"a branch a lease never takes", "", "../feat", "branch"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			_, err := LeaseReleaseGroup(context.Background(), gf.deps, tt.repo, tt.branch, true)
 			var pe *platform.PlatformError
 			if !errors.As(err, &pe) || pe.Code != platform.ErrInvalidParameter || !strings.Contains(pe.Message, tt.want) {
 				t.Errorf("err = %v, want an INVALID_PARAMETER refusal mentioning %q", err, tt.want)
 			}
 		})
-	}
-	if len(gf.hq.releaseLog())+len(gf.web.releaseLog()) != 0 {
-		t.Error("a refused release reached an orchestrator")
-	}
-	if cmds := gf.ssh.commands(); len(cmds) != 0 {
-		t.Errorf("a refused release read the containers: %v", cmds)
 	}
 }
