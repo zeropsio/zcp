@@ -160,3 +160,105 @@ func TestLease_Integration_AcquireStatusRelease(t *testing.T) {
 		t.Errorf("status after release = %+v, want none", got.Leases)
 	}
 }
+
+func TestLease_Integration_RolloutSkipsTheLease(t *testing.T) {
+	// Non-parallel: t.Chdir and a swap of http.DefaultTransport, as above.
+	t.Chdir(t.TempDir())
+
+	var mu sync.Mutex
+	reserved := false
+	var rolloutQuery, rolloutLease string
+	rollouts := 0
+	orch := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if r.Header.Get("Authorization") != "Bearer "+leaseIntToken {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":{"code":"notAuthorized","message":"missing or wrong API token"}}`))
+			return
+		}
+		lock := ""
+		if reserved {
+			lock = "reserved"
+		}
+		container := `{"id":"c-abc","name":"node-id-3","number":3,"hostname":"node-id-3.runtime.devpool.zerops","status":"ACTIVE",` +
+			`"serviceId":"svc-pool","stackId":"stk","appVersionId":"av-1","current":false,"lockState":"` + lock + `","dirty":false`
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/container":
+			_, _ = w.Write([]byte(`[` + container + `}]`))
+		case r.Method == http.MethodPost && r.URL.Path == "/container/acquire":
+			reserved = true
+			_, _ = w.Write([]byte(strings.Replace(container, `"lockState":""`, `"lockState":"reserved"`, 1) + `,"lease":"` + leaseIntLease + `"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/container/rollout":
+			rollouts++
+			rolloutQuery, rolloutLease = r.URL.RawQuery, r.Header.Get("X-Swarm-Lease")
+			_, _ = w.Write([]byte(`{"activeAppVersionId":"av-2","replaced":["c-old1","c-old2"],` +
+				`"created":[{"id":"c-n1","number":5,"current":true},{"id":"c-n2","number":6,"current":true}],` +
+				`"retiring":["c-busy"],"skipped":[{"id":"c-abc","reason":"held-by-other"}],"createErrors":[]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer orch.Close()
+	target, err := url.Parse(orch.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := http.DefaultTransport
+	http.DefaultTransport = orchestratorRoute{host: "orch.devpool.zerops", target: target, next: orig}
+	t.Cleanup(func() { http.DefaultTransport = orig })
+
+	mock := defaultMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-pool", Name: "devpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
+		}).
+		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{ID: "env-t", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}})
+	session, cleanup := setupTestServer(t, mock, defaultLogFetcher())
+	defer cleanup()
+
+	if res := callAndGetResult(t, session, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": "https://github.com/acme/app", "branch": "feature-x"}); res.IsError {
+		t.Fatalf("acquire failed: %s", getTextContent(t, res))
+	}
+	res := callAndGetResult(t, session, "zerops_lease", map[string]any{"action": "rollout", "pool": "devpool"})
+	text := getTextContent(t, res)
+	if res.IsError {
+		t.Fatalf("rollout failed: %s", text)
+	}
+	for _, secret := range []string{leaseIntLease, leaseIntToken} {
+		if strings.Contains(text, secret) {
+			t.Fatalf("rollout result carries a secret: %s", text)
+		}
+	}
+	var got struct {
+		Action  string `json:"action"`
+		Rollout struct {
+			Replaced int `json:"replaced"`
+			Created  int `json:"created"`
+			Retiring int `json:"retiring"`
+			Skipped  int `json:"skipped"`
+			Skips    []struct {
+				Lease  string `json:"lease"`
+				Reason string `json:"reason"`
+			} `json:"skips"`
+		} `json:"rollout"`
+		Envelope json.RawMessage `json:"envelope"`
+	}
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatalf("result is not JSON: %v\n%s", err, text)
+	}
+	r := got.Rollout
+	if got.Action != "rollout" || r.Replaced != 2 || r.Created != 2 || r.Retiring != 1 || r.Skipped != 1 {
+		t.Errorf("rollout = %+v, want 2 replaced, 2 created, 1 retiring, 1 skipped", r)
+	}
+	if len(r.Skips) != 1 || r.Skips[0].Lease != "devpool-3" || r.Skips[0].Reason != "held-by-other" {
+		t.Errorf("skips = %+v, want the lease devpool-3 skipped as held-by-other", r.Skips)
+	}
+	if len(got.Envelope) == 0 {
+		t.Errorf("rollout result carries no envelope:\n%s", text)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if rollouts != 1 || rolloutQuery != "" || rolloutLease != "" {
+		t.Errorf("orchestrator saw %d rollout(s), query %q, lease header %q; want one, with no force and no lease", rollouts, rolloutQuery, rolloutLease)
+	}
+}
