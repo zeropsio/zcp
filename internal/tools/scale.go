@@ -56,7 +56,7 @@ type scaleResponse struct {
 func RegisterScale(srv *mcp.Server, client platform.Client, projectID string, steer GroupRecipeSteer) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_scale",
-		Description: "Scale a service: adjust CPU, RAM, disk, and container autoscaling (verticalAutoscaling only — does NOT set the PostgreSQL/Valkey `profile`/`profileOverrides`). Blocks until completion (FINISHED/FAILED). Constraints: deployment variant (`:single`/`:ha`) immutable; Docker has no autoscaling; CPU mode changeable once/hour; managed services support vertical only, container count fixed by variant (`:single`=1, `:ha`=3). See zerops_knowledge query=\"scaling\".",
+		Description: "Scale a service: adjust CPU, RAM, disk, and container autoscaling (verticalAutoscaling only — does NOT set the PostgreSQL/Valkey `profile`/`profileOverrides`). Blocks until completion (FINISHED/FAILED). Constraints: deployment variant (`:single`/`:ha`) immutable; Docker has no autoscaling; CPU mode changeable once/hour; managed services support vertical only, container count fixed by variant (`:single`=1, `:ha`=3); pool counts (0-10) cap orchestrator leases; Box takes none. See zerops_knowledge query=\"scaling\".",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Scale a service",
 			IdempotentHint:  true,
