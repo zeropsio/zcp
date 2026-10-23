@@ -31,6 +31,10 @@ type fakeSwarm struct {
 
 	acquireReqs []platform.SwarmAcquireRequest
 	releases    []fakeRelease
+
+	rollout    platform.SwarmRollout
+	rolloutErr error
+	rollouts   int
 }
 
 type fakeRelease struct {
@@ -61,6 +65,11 @@ func (f *fakeSwarm) Renew(context.Context, string, string) (platform.SwarmContai
 }
 
 func (f *fakeSwarm) Delete(context.Context, string, string) error { return nil }
+
+func (f *fakeSwarm) Rollout(context.Context) (platform.SwarmRollout, error) {
+	f.rollouts++
+	return f.rollout, f.rolloutErr
+}
 
 // leaseFixture is a project holding one swarm pool, a plain runtime, and a
 // state dir, with the fake orchestrator behind the factory.
