@@ -161,7 +161,6 @@ func leaseOf(stateDir, host string) (ops.LeaseTargetInfo, bool) {
 	return lease, true
 }
 
-// leasePoolsAmong is the set of pools whose lease is named in hostnames.
 // withoutPoolHosts drops the hostnames that are Swarm pools: a pool is never
 // adopted (PS-5), so the adoption gate has nothing to ask of a deploy that
 // targets one (DP-7). A hostname the lookup cannot resolve stays, and the
@@ -180,6 +179,7 @@ func withoutPoolHosts(ctx context.Context, client platform.Client, projectID str
 	return kept
 }
 
+// leasePoolsAmong is the set of pools whose lease is named in hostnames.
 func leasePoolsAmong(stateDir string, hostnames []string) map[string]bool {
 	var pools map[string]bool
 	for _, h := range hostnames {
