@@ -321,11 +321,12 @@ func RegisterDeploySSH(
 		}
 		// A lease pushes its own branch itself; git-push pushes the target's
 		// tracked branch (main by default), so from a lease it would put the
-		// feature branch on the stage's delivery branch (DP-6).
+		// feature branch on the stage's delivery branch (DP-6). A branch is
+		// reviewed on its lease's preview URL; a stage tracks main (DP-8).
 		if src := cmp.Or(input.SourceService, input.TargetService); input.Strategy == deployStrategyGitPush && isLease(stateDir, src) {
 			return convertError(platform.NewPlatformError(platform.ErrInvalidUsage,
 				fmt.Sprintf("git-push from the lease %s did not run: a lease pushes its own branch, and this strategy pushes the target's tracked branch", src),
-				fmt.Sprintf("Commit and `git push -u origin <branch>` over ssh to %s yourself; to run the code on a stage, deploy from the lease: zerops_deploy sourceService=%q targetService=<stage>", src, src)), WithRecoveryStatus()), nil, nil
+				fmt.Sprintf("Commit and `git push -u origin <branch>` over ssh to %s yourself, and review the branch on the lease's preview URL (zerops_dev_server action=status hostname=%q names it as previewUrl). A stage tracks main: once the branch is merged, put main on it with zerops_deploy sourceService=%q targetService=<stage> sha=\"origin/main\"", src, src, src)), WithRecoveryStatus()), nil, nil
 		}
 		// Before any read of the source's files: a pool source (named, or a
 		// self-deploy of a pool) is refused, never pushed from (PS-3).

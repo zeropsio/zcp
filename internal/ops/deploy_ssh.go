@@ -225,22 +225,7 @@ func deploySSH(
 		return nil, fmt.Errorf("list services: %w", err)
 	}
 
-	// sourceName is the host the push runs on: the service's hostname, or a
-	// lease's alias — a pool container is no service of the project, so the
-	// alias is never looked up (DP-1).
-	sourceName := sourceService
-	if lease == nil {
-		source, findErr := FindService(services, sourceService)
-		if findErr != nil {
-			return nil, findErr
-		}
-		if err := RefusePoolSource(source, targetService); err != nil {
-			return nil, err
-		}
-		sourceName = source.Name
-	}
-
-	target, err := FindService(services, targetService)
+	sourceName, target, err := resolveDeployHosts(services, sourceService, targetService, lease)
 	if err != nil {
 		return nil, err
 	}
@@ -278,6 +263,10 @@ func deploySSH(
 	if lease != nil && lease.Pool == target.Name {
 		poolLease = sourceService
 	}
+	// A stage tracks main (DP-8): a deploy from a lease to the part's stage
+	// fetches origin/main before it resolves what ships, and says when that
+	// is not on it. Every other deploy fetches nothing and says nothing more.
+	stageMain := newLeaseStageMain(lease, target.Name, serviceType)
 
 	// Self-deploy guard on the sha path (docs/spec-workflows.md §4.9): a
 	// self-deploy from a commit would extract sha's tree and push
@@ -328,6 +317,7 @@ func deploySSH(
 	var cleanupTemp func()
 	gitRunner := git.SSHRunner{Executor: sshDeployer, Hostname: sourceName}
 	sourceWorkingDir := workingDir
+	stageMain.fetch(ctx, gitRunner, sourceWorkingDir)
 	if sha != "" {
 		var newWorkingDir string
 		var prepErr error
@@ -366,6 +356,7 @@ func deploySSH(
 	if cleanupTemp != nil {
 		defer cleanupTemp()
 	}
+	stageMain.check(ctx, gitRunner, sourceWorkingDir, resolvedSHA)
 
 	var versionName string
 	// uploaded is the push's output up to its upload, when the build is
@@ -396,6 +387,7 @@ func deploySSH(
 			output, err = sshDeployer.ExecSSH(ctx, sourceName, buildWaitCommand(pushDir))
 		}
 	}
+	warnings = stageMain.withNote(warnings, versionName, dirty)
 	outcome := sshDeployOutcome{
 		sourceService: sourceService, targetService: targetService, target: target,
 		resolvedSHA: resolvedSHA, versionName: versionName, dirty: dirty, warnings: warnings,
@@ -413,6 +405,29 @@ func deploySSH(
 	}
 
 	return outcome.result(fmt.Sprintf("Build triggered from %s to %s via SSH", sourceService, targetService)), nil
+}
+
+// resolveDeployHosts is the host a deploy's push runs on and its target
+// service. The host is the source service's hostname, or a lease's alias — a
+// pool container is no service of the project, so the alias is never looked
+// up (DP-1). A pool named as the source is refused (PS-3).
+func resolveDeployHosts(services []platform.ServiceStack, sourceService, targetService string, lease *LeaseTargetInfo) (string, *platform.ServiceStack, error) {
+	sourceName := sourceService
+	if lease == nil {
+		source, err := FindService(services, sourceService)
+		if err != nil {
+			return "", nil, err
+		}
+		if err := RefusePoolSource(source, targetService); err != nil {
+			return "", nil, err
+		}
+		sourceName = source.Name
+	}
+	target, err := FindService(services, targetService)
+	if err != nil {
+		return "", nil, err
+	}
+	return sourceName, target, nil
 }
 
 // sshDeployOutcome is what a triggered SSH deploy reports of itself: the

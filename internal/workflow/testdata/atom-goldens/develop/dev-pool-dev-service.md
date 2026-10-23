@@ -188,10 +188,26 @@ answers on `previewPortBase + ZEROPS_StableNumber`, and the dev-server
 result's `previewUrl` is the pool's subdomain on that port. With several
 servers that listen, mark the one the preview reaches with `"preview": true`.
 
-**Stage.** `zerops_deploy sourceService="<alias>" targetService="<stage>"`
-deploys the part's stage from the lease (add `sha` to deploy an exact commit).
-Verify a container with `zerops_verify serviceHostname="<alias>"` — it
-reports SSH reachability, the supervisor and the dev servers.
+**Stage.** The part's stage tracks `main`: review a branch on its lease's
+preview URL, not on the stage. Once the branch is merged, put main on the
+stage from a lease of the part:
+`zerops_deploy sourceService="<alias>" targetService="<stage>" sha="origin/main"`
+— the deploy fetches `main` first, so this ships main as the remote has it now.
+A deploy of a commit that is not on `origin/main`, or of uncommitted changes,
+still runs; its `warnings` say the stage no longer tracks main and name the
+call that puts main back. Verify a container with
+`zerops_verify serviceHostname="<alias>"` — it reports SSH reachability, the
+supervisor and the dev servers.
+
+**Data.** Every lease of a part uses the part's dev database. The pool's
+service env reaches every leased container, so the database it names — wired
+into the pool's env the way a dev service's is — is the one each branch's app
+connects to, with no change to the app. A migration one branch runs is
+seen by every other branch at once. Keep migrations additive (new tables and
+columns; nothing renamed or dropped), and agree a destructive one with
+whoever works on the other branches before running it — branches whose
+migrations conflict break each other. No lease gets a database or schema of
+its own.
 
 **Pitfalls**
 
