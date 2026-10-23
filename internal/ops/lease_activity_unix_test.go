@@ -106,7 +106,7 @@ func TestLeaseActivity_RealCheckout_ReadsWithoutWritingAndAgreesWithTheGuard(t *
 	setMtime(t, filepath.Join(work, "app.txt"), now.Add(-3*time.Hour))
 	before := readCheckoutIndex(t, work)
 
-	ssh := &localCheckoutSSH{dir: work, path: gnuStatPath(t)}
+	ssh := &localCheckoutSSH{dir: work, path: withFakeSupervisor(t, gnuStatPath(t), 0)}
 	d := LeaseDeps{SSH: ssh}
 	rec := leaseRecord{PoolHostname: testPoolHost, ContainerNumber: 3, AcquiredAt: "2026-10-23T11:00:00Z"}
 
@@ -194,5 +194,72 @@ func TestLeaseActivity_RealCheckout_NotACheckout_SaysGitStatusFailed(t *testing.
 		if !strings.Contains(strings.ToLower(act.Note), want) {
 			t.Errorf("note %q lacks %q", act.Note, want)
 		}
+	}
+}
+
+// fakeSupervisorStatus is what the fake zcp-devsup's `ctl status --json`
+// answers: web, the preview server, holding one connection.
+const fakeSupervisorStatus = `{"format":1,"supervisor":{"version":"v9.500.0","pid":412},"declaration":{"version":1,"error":""},"env":{},` +
+	`"servers":{"web":{"status":"running","previewPort":9003,"previewLastConnAt":"2026-10-23T13:30:00.5Z","previewOpenConns":1}}}`
+
+// withFakeSupervisor is a PATH prefix — pathEntry (may be "") and a directory
+// holding a zcp-devsup script — whose `ctl version --json` lists activity and
+// whose `ctl status --json` answers fakeSupervisorStatus with statusExit, as
+// the container's binary does. Any other call fails: the read sends no other.
+func withFakeSupervisor(t *testing.T, pathEntry string, statusExit int) string {
+	t.Helper()
+	dir := t.TempDir()
+	script := "#!/bin/sh\n" +
+		"[ \"$1 $3\" = 'ctl --json' ] || exit 1\n" +
+		"case \"$2\" in\n" +
+		"version) echo '{\"version\":\"v9.500.0\",\"formats\":[1],\"capabilities\":[\"env\",\"activity\"]}' ;;\n" +
+		"status) echo '" + fakeSupervisorStatus + "'; exit " + strconv.Itoa(statusExit) + " ;;\n" +
+		"*) exit 1 ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(filepath.Join(dir, "zcp-devsup"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if pathEntry == "" {
+		return dir
+	}
+	return pathEntry + string(os.PathListSeparator) + dir
+}
+
+// TestLeaseActivity_RealShell_SupervisorAnswersAfterGitFails_KeepsGitsFailure:
+// run by a real shell, the read asks the container's zcp-devsup for the
+// preview after the checkout part — even when git failed — and still exits
+// with git's status: the failure is reported in git's words, the preview
+// facts the supervisor answered stand, and a clean read takes them with no
+// note.
+func TestLeaseActivity_RealShell_SupervisorAnswersAfterGitFails_KeepsGitsFailure(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	rec := leaseRecord{PoolHostname: testPoolHost, ContainerNumber: 3, AcquiredAt: "2026-10-23T11:00:00Z"}
+
+	notACheckout := &localCheckoutSSH{dir: t.TempDir(), path: withFakeSupervisor(t, gnuStatPath(t), 0)}
+	act, unsaved := readLeaseActivity(context.Background(), LeaseDeps{SSH: notACheckout}, rec)
+	if unsaved != nil || !strings.Contains(strings.ToLower(act.Note), "not a git repository") || strings.Contains(act.Note, "preview") {
+		t.Errorf("not a checkout = %+v / %+v, want git status's failure in git's words, nothing about the preview", act, unsaved)
+	}
+	if act.PreviewLastConnAt != "2026-10-23T13:30:00Z" || act.PreviewOpenConns == nil || *act.PreviewOpenConns != 1 {
+		t.Errorf("preview = %q/%v, want 2026-10-23T13:30:00Z and 1: the supervisor answered", act.PreviewLastConnAt, act.PreviewOpenConns)
+	}
+
+	// A supervisor whose status fails leaves the checkout's read whole.
+	origin, _, _ := originWithBranches(t)
+	work := t.TempDir()
+	runCheckout(t, work, origin, "feat")
+	failing := &localCheckoutSSH{dir: work, path: withFakeSupervisor(t, gnuStatPath(t), 2)}
+	act, unsaved = readLeaseActivity(context.Background(), LeaseDeps{SSH: failing}, rec)
+	if act.LastChangeAt == "" || unsaved == nil || act.PreviewOpenConns != nil || !strings.Contains(act.Note, "preview not observed") {
+		t.Errorf("a failing supervisor = %+v / %+v, want the checkout read and the preview not observed", act, unsaved)
+	}
+
+	clean := &localCheckoutSSH{dir: work, path: withFakeSupervisor(t, gnuStatPath(t), 0)}
+	act, unsaved = readLeaseActivity(context.Background(), LeaseDeps{SSH: clean}, rec)
+	if act.LastChangeAt == "" || unsaved == nil || act.Note != "" || act.PreviewOpenConns == nil || *act.PreviewOpenConns != 1 {
+		t.Errorf("clean = %+v / %+v, want the checkout and the preview read, no note", act, unsaved)
 	}
 }
