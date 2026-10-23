@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -277,6 +278,27 @@ func leaseOrchestratorError(pool, op string, err error) error {
 	return fmt.Errorf("%s %s: %w", op, pool, err)
 }
 
+// LeaseCallTimeout bounds one orchestrator call of a lease: a start or a
+// reset restarts a container, and on a VM pool creating one takes minutes.
+// It is also the timeout of the HTTP client the lease tool is registered with.
+const LeaseCallTimeout = 10 * time.Minute
+
+// leaseAcquireError is leaseOrchestratorError for an acquire, except a
+// timeout: the orchestrator may have reserved a container before the answer
+// was lost, so the agent learns where it shows up, not that zcp runs outside
+// the project.
+func leaseAcquireError(pool string, err error) error {
+	var ne net.Error
+	if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout()) {
+		out := platform.NewPlatformError(platform.ErrNetworkError,
+			fmt.Sprintf("The orchestrator of pool '%s' did not answer the acquire in time; it may have reserved a container whose lease zcp never received", pool),
+			"zerops_lease action=status lists such a container as unknown-holder; it stays reserved until a pool admin releases it. Acquire again for a container of your own")
+		out.Cause = err
+		return out
+	}
+	return leaseOrchestratorError(pool, "acquire", err)
+}
+
 // swarmSuggestion is what to do about an orchestrator refusal.
 func swarmSuggestion(se *platform.SwarmError) string {
 	switch {
@@ -309,9 +331,16 @@ func LeaseAcquire(ctx context.Context, d LeaseDeps, pool, repo, branch string) (
 	if err != nil {
 		return LeaseView{}, err
 	}
-	got, err := rp.api.Acquire(ctx, platform.SwarmAcquireRequest{Start: true, Clean: true, LeaseTTLSeconds: 0})
+	// The orchestrator reserves the container before it answers, and an
+	// acquire carries no idempotency key: one cut short by its caller would
+	// leave a container reserved, with no expiry, for a lease zcp never
+	// received. The request runs to its own deadline instead; a caller gone
+	// meanwhile makes the steps below fail, which hands the container back.
+	acqCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), LeaseCallTimeout)
+	got, err := rp.api.Acquire(acqCtx, platform.SwarmAcquireRequest{Start: true, Clean: true, LeaseTTLSeconds: 0})
+	cancel()
 	if err != nil {
-		return LeaseView{}, leaseOrchestratorError(pool, "acquire", err)
+		return LeaseView{}, leaseAcquireError(pool, err)
 	}
 	rec := leaseRecord{
 		PoolHostname: pool, PoolServiceID: rp.svc.ID,

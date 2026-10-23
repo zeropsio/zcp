@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
 )
@@ -409,5 +411,77 @@ func TestLeaseList_NoPool_CoversEveryPoolAndRecord(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].Alias != "devpool-3" || got[0].State != LeaseStateHeld || got[0].Branch != "b" {
 		t.Errorf("views = %+v, want the one held devpool-3 on branch b (appdev is not a pool and is not asked)", got)
+	}
+}
+
+// slowAcquireSwarm reserves on the orchestrator side and answers only when
+// the test lets it, or gives up when its context ends — like a real request
+// cut short after the container was reserved.
+type slowAcquireSwarm struct {
+	*fakeSwarm
+	started chan struct{}
+	answer  chan struct{}
+}
+
+func (s slowAcquireSwarm) Acquire(ctx context.Context, req platform.SwarmAcquireRequest) (platform.SwarmAcquired, error) {
+	close(s.started)
+	select {
+	case <-ctx.Done():
+		return platform.SwarmAcquired{}, fmt.Errorf("request: %w", ctx.Err())
+	case <-s.answer:
+		return s.fakeSwarm.Acquire(ctx, req)
+	}
+}
+
+// An acquire whose caller goes away after the orchestrator reserved a
+// container must still receive the lease: the container ends up recorded or
+// handed back, never reserved with no record (it has no expiry).
+func TestLeaseAcquire_CallerGoneMidAcquire_NoLeak(t *testing.T) {
+	t.Parallel()
+	fx := newLeaseFixture(t)
+	fx.swarm.acquired = acquiredAs(3)
+	slow := slowAcquireSwarm{fakeSwarm: fx.swarm, started: make(chan struct{}), answer: make(chan struct{})}
+	fx.deps.Swarm = func(string, string) SwarmAPI { return slow }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = LeaseAcquire(ctx, fx.deps, testPoolHost, testRepo, "feature")
+	}()
+	<-slow.started
+	cancel()
+	time.Sleep(50 * time.Millisecond) // the caller is gone before the orchestrator answers
+	close(slow.answer)
+	<-done
+
+	_, statErr := os.Stat(filepath.Join(fx.stateDir, "leases", "devpool-3.json"))
+	recorded := statErr == nil
+	handedBack := len(fx.swarm.releases) == 1 && fx.swarm.releases[0].id == "c-abc"
+	if !recorded && !handedBack {
+		t.Errorf("the reserved container is neither recorded nor handed back (record: %v, releases: %+v)", statErr, fx.swarm.releases)
+	}
+}
+
+// An acquire the orchestrator did not answer in time may still have reserved
+// a container: the refusal says so and how status shows it, and does not send
+// the agent off to run zcp inside the project it already runs in.
+func TestLeaseAcquire_Timeout_SaysAContainerMayBeReserved(t *testing.T) {
+	t.Parallel()
+	fx := newLeaseFixture(t)
+	pe := platform.NewPlatformError(platform.ErrNetworkError, "the orchestrator at http://orch.devpool.zerops did not answer: context deadline exceeded", "")
+	pe.Cause = context.DeadlineExceeded
+	fx.swarm.acquireErr = pe
+
+	_, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, "feature")
+	var got *platform.PlatformError
+	if !errors.As(err, &got) {
+		t.Fatalf("err = %v, want a platform error", err)
+	}
+	if !strings.Contains(got.Message, "may have reserved") || !strings.Contains(got.Suggestion, "unknown-holder") {
+		t.Errorf("refusal %q / %q should say a container may be reserved and how status shows it", got.Message, got.Suggestion)
+	}
+	if strings.Contains(got.Suggestion, "answers only inside the project") {
+		t.Errorf("a timeout is not an outside-the-project error: %q", got.Suggestion)
 	}
 }
