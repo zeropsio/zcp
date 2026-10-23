@@ -49,8 +49,9 @@ reports SSH reachability, the supervisor and the dev servers.
 **Pitfalls**
 
 - A deploy of the pool itself changes only containers created after it. A
-  leased container keeps its version: release it and acquire a fresh lease to
-  run the new one.
+  leased container keeps its version, and a released one keeps it too: the
+  orchestrator replaces outdated free containers only when the pool is rolled
+  out, so a new acquire can still hand you an older container.
 - A reused container's `/var/www` comes back empty. Dependencies baked into
   the pool image survive only outside `/var/www` (installed in
   `run.prepareCommands`, e.g. under `/opt`).
