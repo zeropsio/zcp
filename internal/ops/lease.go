@@ -68,6 +68,9 @@ type LeaseDeps struct {
 	// means leaseReadTimeout. The HTTP client allows minutes, for a start or
 	// a reset; a read that hangs must not hold a status call that long.
 	ReadTimeout time.Duration
+	// ActivityTimeout bounds the one read of a held lease's checkout a status
+	// call makes (readLeaseActivity); zero means leaseActivityReadTimeout.
+	ActivityTimeout time.Duration
 }
 
 // leaseReadTimeout is the default ReadTimeout.
@@ -154,6 +157,12 @@ type LeaseView struct {
 	// Prepare is what the repository's prepare command did after an
 	// acquire's checkout (DP-14); nil when none ran.
 	Prepare *LeasePrepare `json:"prepare,omitempty"`
+	// Activity is what a status call read of the lease's checkout, or why it
+	// could not (DP-21); nil when it was not read (another action, or no ssh).
+	Activity *topology.LeaseActivity `json:"activity,omitempty"`
+	// Unsaved is what releasing the lease would lose, read with the release
+	// guard's own reads (DP-4, DP-21); nil when it was not read.
+	Unsaved *topology.LeaseUnsaved `json:"unsaved,omitempty"`
 	// containerDeleted: a release deleted the container because it could not
 	// be reset (DP-15).
 	containerDeleted bool
@@ -293,7 +302,9 @@ func LeaseList(ctx context.Context, d LeaseDeps, pool string) ([]LeaseView, erro
 // container forever). A named pool that cannot be read is an error; when
 // every pool is listed, one that cannot be read (stopped, unreachable) never
 // fails the rest: its leases are zcp's records, marked unverified with why,
-// and the pool is named in Unread.
+// and the pool is named in Unread. With ssh, each lease zcp holds also
+// carries what one read of its checkout found (readLeaseActivities, DP-21);
+// status changes nothing anywhere.
 func LeaseStatus(ctx context.Context, d LeaseDeps, pool string) (LeaseStatusView, error) {
 	records, err := readLeaseRecords(d.StateDir)
 	if err != nil {
@@ -308,6 +319,7 @@ func LeaseStatus(ctx context.Context, d LeaseDeps, pool string) (LeaseStatusView
 		if err != nil {
 			return LeaseStatusView{}, err
 		}
+		readLeaseActivities(ctx, d, records, views)
 		return LeaseStatusView{Leases: views}, nil
 	}
 	names := map[string]bool{}
@@ -334,6 +346,7 @@ func LeaseStatus(ctx context.Context, d LeaseDeps, pool string) (LeaseStatusView
 		}
 		status.Leases = append(status.Leases, got...)
 	}
+	readLeaseActivities(ctx, d, records, status.Leases)
 	return status, nil
 }
 
