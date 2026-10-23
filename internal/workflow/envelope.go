@@ -26,13 +26,35 @@ type StateEnvelope struct {
 	// for non-export phases. Atoms filter on this via exportStatus:
 	// frontmatter; service-scoped axes paired with this gate fire on the
 	// single targetService snapshot the export envelope carries.
-	ExportStatus topology.ExportStatus    `json:"exportStatus,omitempty"`
-	SelfService  *SelfService             `json:"selfService,omitempty"`
-	Project      ProjectSummary           `json:"project"`
-	Services     []ServiceSnapshot        `json:"services"`
-	WorkSession  *WorkSessionSummary      `json:"workSession,omitempty"`
-	Bootstrap    *BootstrapSessionSummary `json:"bootstrap,omitempty"`
-	Generated    time.Time                `json:"generated"`
+	ExportStatus topology.ExportStatus `json:"exportStatus,omitempty"`
+	SelfService  *SelfService          `json:"selfService,omitempty"`
+	Project      ProjectSummary        `json:"project"`
+	Services     []ServiceSnapshot     `json:"services"`
+	// Leases are the pool containers this project's zcp holds a lease on.
+	// Off the wire (`json:"-"`): Mate's envelope contract (docs/spec-mate.md
+	// §2.8) names no such key until an on-wire one is added behind a Mate
+	// version gate. DP-3 (docs/spec-workflows.md §8): a lease SECRET is never
+	// in the envelope — a snapshot carries the alias, never the lease string.
+	Leases      []LeaseSnapshot          `json:"-"`
+	WorkSession *WorkSessionSummary      `json:"workSession,omitempty"`
+	Bootstrap   *BootstrapSessionSummary `json:"bootstrap,omitempty"`
+	Generated   time.Time                `json:"generated"`
+}
+
+// LeaseSnapshot is one pool-container lease as the envelope sees it: what the
+// agent needs to address the container (alias, pool, branch, container
+// hostname) and its reconciled state. It never carries the lease string.
+type LeaseSnapshot struct {
+	Alias             string
+	Pool              string
+	Branch            string
+	ContainerHostname string
+	// State is the reconciled state the lease reader reports (held, lost,
+	// unknown-holder, … — rendered verbatim, never enumerated here).
+	State string
+	// Unverified marks a state read from zcp's own record because the pool's
+	// orchestrator did not answer: last known, not confirmed.
+	Unverified bool
 }
 
 // IdleScenario discriminates the sub-cases of PhaseIdle so atoms can

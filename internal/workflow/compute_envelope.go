@@ -1,11 +1,17 @@
 package workflow
 
 import (
+	"cmp"
 	"context"
+	"encoding/json"
 	"maps"
 	"os"
+	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,6 +24,26 @@ import (
 // synthesisEnvelope helper, NOT by ComputeEnvelope. ComputeEnvelope leaves
 // it nil; the bootstrap conductor builds a synthetic summary from the live
 // BootstrapState on every per-step render.
+
+// LeaseReader reports the project's pool-container leases, reconciled against
+// the pool orchestrators. It is injected (WithLeaseReader) so workflow does not
+// import ops. A reader error means the orchestrator could not be asked:
+// ComputeEnvelope then keeps zcp's own lease records' last known state and
+// marks it unverified.
+type LeaseReader func(ctx context.Context) ([]LeaseSnapshot, error)
+
+// EnvelopeOption tunes ComputeEnvelope's inputs beyond the platform client.
+type EnvelopeOption func(*envelopeConfig)
+
+type envelopeConfig struct {
+	leases LeaseReader
+}
+
+// WithLeaseReader injects the reader that fills StateEnvelope.Leases. Without
+// it the envelope carries no leases.
+func WithLeaseReader(r LeaseReader) EnvelopeOption {
+	return func(c *envelopeConfig) { c.leases = r }
+}
 
 // ComputeEnvelope is the single entry point for computing state. Every
 // workflow-aware tool handler calls this.
@@ -41,7 +67,12 @@ func ComputeEnvelope(
 	projectID string,
 	rt runtime.Info,
 	now time.Time,
+	opts ...EnvelopeOption,
 ) (StateEnvelope, error) {
+	var cfg envelopeConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
 	env := DetectEnvironment(rt)
 
 	var (
@@ -99,6 +130,8 @@ func ComputeEnvelope(
 		projectSummary.Name = project.Name
 	}
 
+	leases := readLeases(ctx, cfg.leases, stateDir, services)
+
 	return StateEnvelope{
 		Phase:        phase,
 		Environment:  env,
@@ -106,12 +139,111 @@ func ComputeEnvelope(
 		SelfService:  self,
 		Project:      projectSummary,
 		Services:     snapshots,
+		Leases:       leases,
 		WorkSession:  wsSummary,
 		// Bootstrap and Recipe are left nil here — the bootstrap conductor
 		// populates them on a per-render synthetic envelope (see
 		// bootstrap_guide_assembly.go::synthesisEnvelope), not from disk.
 		Generated: now.UTC(),
 	}, nil
+}
+
+// leaseStateRecorded is the state of a lease read from zcp's own record: the record is
+// only written by a successful acquire, so "held" is the last known state.
+const leaseStateRecorded = "held"
+
+// readLeases fills StateEnvelope.Leases. The reader is asked only when the
+// project could hold a lease — it lists a pool, or zcp has a lease record —
+// so a project without either costs nothing. When the reader cannot answer
+// (the orchestrator answers only inside the project), the records' last known
+// state is reported, marked unverified; an envelope never fails over it.
+// Only the non-secret fields of a record are ever decoded (DP-3).
+func readLeases(ctx context.Context, reader LeaseReader, stateDir string, services []platform.ServiceStack) []LeaseSnapshot {
+	if reader == nil {
+		return nil
+	}
+	records := readLeaseRecordSnapshots(stateDir)
+	if len(records) == 0 && !slices.ContainsFunc(services, func(s platform.ServiceStack) bool {
+		return topology.IsPoolType(s.ServiceStackTypeInfo.ServiceStackTypeVersionName)
+	}) {
+		return nil
+	}
+	leases, err := reader(ctx)
+	if err != nil {
+		leases = records
+	}
+	if len(leases) == 0 {
+		return nil
+	}
+	leases = slices.Clone(leases)
+	slices.SortStableFunc(leases, func(a, b LeaseSnapshot) int {
+		if c := cmp.Compare(a.Pool, b.Pool); c != 0 {
+			return c
+		}
+		return cmp.Compare(leaseNumber(a.Alias), leaseNumber(b.Alias))
+	})
+	return leases
+}
+
+// leaseNumber is the container number at the end of an alias (<pool>-<n>).
+func leaseNumber(alias string) int {
+	i := strings.LastIndex(alias, "-")
+	n, err := strconv.Atoi(alias[i+1:])
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+// leaseAliasRe is the shape of a lease alias (spec-workflows.md §8 DP-1); it
+// keeps a record from naming a path outside the lease directory.
+var leaseAliasRe = regexp.MustCompile(`^[a-z][a-z0-9]{0,39}-[0-9]+$`)
+
+// leaseRecordFields are the non-secret fields of a lease record
+// (.zcp/state/leases/<alias>.json, spec-workflows.md §8 DP-2). The record's
+// lease string is deliberately not a field here: it is never decoded.
+type leaseRecordFields struct {
+	PoolHostname      string `json:"poolHostname"`
+	ContainerNumber   int64  `json:"containerNumber"`
+	ContainerHostname string `json:"containerHostname"`
+	Branch            string `json:"branch"`
+}
+
+// readLeaseRecordSnapshots reads zcp's lease records as unverified "held"
+// snapshots. A record that cannot be read, or whose alias does not match its
+// file name, names no lease and is skipped.
+func readLeaseRecordSnapshots(stateDir string) []LeaseSnapshot {
+	if stateDir == "" {
+		return nil
+	}
+	dir := filepath.Join(stateDir, "leases")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var out []LeaseSnapshot
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		var r leaseRecordFields
+		if json.Unmarshal(raw, &r) != nil {
+			continue
+		}
+		alias := r.PoolHostname + "-" + strconv.FormatInt(r.ContainerNumber, 10)
+		if alias+".json" != e.Name() || !leaseAliasRe.MatchString(alias) {
+			continue
+		}
+		out = append(out, LeaseSnapshot{
+			Alias: alias, Pool: r.PoolHostname, Branch: r.Branch,
+			ContainerHostname: r.ContainerHostname, State: leaseStateRecorded, Unverified: true,
+		})
+	}
+	return out
 }
 
 // deriveIdleScenario classifies the idle phase into one of four sub-cases

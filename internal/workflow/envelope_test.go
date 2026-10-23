@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -121,5 +122,39 @@ func TestNextAction_IsZero(t *testing.T) {
 				t.Errorf("IsZero()=%v, want=%v", got, c.zero)
 			}
 		})
+	}
+}
+
+// TestEnvelopeJSON_LeasesOffWire pins that the leases stay off the envelope's
+// wire: Mate's contract (docs/spec-mate.md §2.8) names no such key, and
+// spec-workflows.md §8 DP-3 keeps a lease out of the envelope altogether.
+func TestEnvelopeJSON_LeasesOffWire(t *testing.T) {
+	t.Parallel()
+
+	env := StateEnvelope{
+		Phase: PhaseIdle, Environment: EnvContainer,
+		Generated: time.Date(2026, 4, 19, 10, 0, 0, 0, time.UTC),
+		Leases: []LeaseSnapshot{{
+			Alias: "devpool-3", Pool: "devpool", Branch: "feat-x",
+			ContainerHostname: "node-id-3.runtime.devpool.zerops", State: "held",
+		}},
+	}
+	got, err := json.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, banned := range []string{`"leases"`, "devpool-3", "node-id-3", "feat-x"} {
+		if strings.Contains(string(got), banned) {
+			t.Errorf("envelope JSON carries %q: %s", banned, got)
+		}
+	}
+	// And the lease-less envelope serializes the same bytes.
+	env.Leases = nil
+	bare, err := json.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if string(bare) != string(got) {
+		t.Errorf("leases changed the wire bytes:\nwith:    %s\nwithout: %s", got, bare)
 	}
 }

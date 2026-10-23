@@ -727,3 +727,40 @@ func TestRenderServiceLine_PoolAndSandbox(t *testing.T) {
 		})
 	}
 }
+
+func TestRenderStatus_LeasesBlock(t *testing.T) {
+	t.Parallel()
+
+	resp := Response{Envelope: StateEnvelope{
+		Phase: PhaseIdle,
+		Leases: []LeaseSnapshot{
+			{Alias: "devpool-3", Pool: "devpool", Branch: "feat-x", ContainerHostname: "node-id-3.runtime.devpool.zerops", State: "held"},
+			{Alias: "devpool-12", Pool: "devpool", State: "lost"},
+			{Alias: "apool-1", Pool: "apool", Branch: "main", State: "held", Unverified: true},
+		},
+	}}
+	out := RenderStatus(resp)
+
+	want := "Leases:\n" +
+		"  - devpool-3 · devpool · feat-x · held\n" +
+		"  - devpool-12 · devpool · - · lost\n" +
+		"  - apool-1 · apool · main · held (unverified)\n"
+	if !strings.Contains(out, want) {
+		t.Errorf("status lacks the Leases block\nwant:\n%s\ngot:\n%s", want, out)
+	}
+	if strings.Contains(out, "node-id-3") {
+		t.Error("the Leases block is one line of alias, pool, branch and state — no container hostname")
+	}
+}
+
+func TestRenderStatus_NoLeases_ByteIdentical(t *testing.T) {
+	t.Parallel()
+
+	// The literal status of a lease-less project, as it rendered before leases
+	// existed: no Leases heading, no blank line, nothing.
+	resp := Response{Envelope: StateEnvelope{Phase: PhaseIdle}}
+	const want = "## Status\nPhase: idle\nServices: none\n"
+	if got := RenderStatus(resp); got != want {
+		t.Errorf("RenderStatus = %q, want %q", got, want)
+	}
+}

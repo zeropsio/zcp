@@ -19,7 +19,7 @@ type Response struct {
 }
 
 // RenderStatus produces the markdown status block from a Response. Section
-// order is stable: Phase → Services → Progress → Blockers → Guidance →
+// order is stable: Phase → Services → Leases → Progress → Blockers → Guidance →
 // Next. Each section is skipped when it has no content, keeping the
 // output compact. Blockers is a one-line call-to-action surfaced above
 // the (large) Guidance section so the auto-close gate is visible
@@ -30,6 +30,7 @@ func RenderStatus(resp Response) string {
 
 	renderPhase(&b, resp.Envelope)
 	renderServices(&b, resp.Envelope)
+	renderLeases(&b, resp.Envelope)
 	renderProgressAndBlockers(&b, resp.Envelope)
 	renderProdSourceControlSignpost(&b, resp.Envelope)
 	renderGuidance(&b, resp.Guidance)
@@ -351,6 +352,31 @@ func renderServices(b *strings.Builder, env StateEnvelope) {
 	fmt.Fprintf(b, "Services: %s\n", strings.Join(names, ", "))
 	for _, svc := range env.Services {
 		fmt.Fprintf(b, "  - %s\n", renderServiceLine(svc))
+	}
+}
+
+// renderLeases prints the pool-container leases this project holds, one line
+// each — `<alias> · <pool> · <branch> · <state>` — and nothing at all when
+// there are none, so a lease-less project's status is byte-identical to what
+// it was before leases existed. The state is rendered verbatim (never
+// enumerated here); a state read from zcp's own record because the
+// orchestrator did not answer is marked unverified. A lease string has no
+// field in LeaseSnapshot, so it cannot appear here (DP-3).
+func renderLeases(b *strings.Builder, env StateEnvelope) {
+	if len(env.Leases) == 0 {
+		return
+	}
+	fmt.Fprintln(b, "Leases:")
+	for _, l := range env.Leases {
+		branch := l.Branch
+		if branch == "" {
+			branch = "-"
+		}
+		state := l.State
+		if l.Unverified {
+			state += " (unverified)"
+		}
+		fmt.Fprintf(b, "  - %s · %s · %s · %s\n", l.Alias, l.Pool, branch, state)
 	}
 }
 
