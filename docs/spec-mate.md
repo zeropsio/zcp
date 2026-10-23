@@ -1113,8 +1113,10 @@ Single-part, today and after (3) — the same pair, the same meaning:
 
 The full 1- and 3-part envelopes are the fixtures (§2.8a.7).
 
-**`leases[]` — a lease is per thread, not per service.** It is a top-level key of the envelope, beside
-`services`, not a field of a `ServiceSnapshot`:
+**`leases[]` — the leases this container's zcp holds, not a service's.** It is a top-level key of the
+envelope, beside `services`, not a field of a `ServiceSnapshot`. It lists every lease zcp holds for the
+container, whichever conversation acquired it; which conversation a lease is bound to is Mate's own
+record (§6.3), never a field here:
 
 ```json
 "leases": [ { "alias": "webpool-3", "pool": "webpool", "branch": "feat-x",
@@ -2813,7 +2815,11 @@ Three outcomes, deliberately distinct — a caller must never read one as anothe
 A repository may also be a **lease mount**: `/var/www/<pool>-<number>` (mount source `<alias>:/var/www`,
 `<alias>` the lease alias of §2.8a.3 `leases[]`) is a direct child of `/var/www` like any dev mount, so it
 is a repository by the same rule and the same bounded probe; it drops out of the set when its lease is
-released and the mount goes.
+released and the mount goes. **The name alone says it is a lease's** (`kind: "lease"`): a Zerops service
+hostname is lowercase alphanumeric with no dash, and zcp names a lease `<pool>-<number>`
+(`^[a-z][a-z0-9]{0,39}-[0-9]+$`), so no sweep depends on whether the envelope's `leases[]` has been read
+yet — the checkpoint sweep runs at boot before any envelope does. The leases an envelope reported stay a
+second signal, never the only one.
 
 The set is cached for 30 s (`REPOSITORY_CACHE_TTL`) and unconditionally re-read by `refresh`, which
 a turn start calls explicitly. `ZeropsRepositories` consumers — the git spawner (§6.2), the
@@ -2882,13 +2888,26 @@ hand-written RPC can set anything a mere default would allow:
 **The isolation unit is a service or a leased container.** A part's dev pool (`docs/spec-workflows.md`
 §8 "Dev pools (DP)") gives each branch a pool container of its own, leased through `zerops_lease`: one
 `/var/www`, one checkout, its own processes and preview port — the same unit a dev service is, so
-`worktreesAllowed:false` stands. A thread whose agent acquired a lease is bound to it — `thread.lease:
-{alias, pool, branch} | null`, taken from the thread's first `zerops_lease` acquire and kept until that
-lease is released or lost — and works in `/var/www/<alias>`, a repository by §6.1's rule. The binding is
-a field of its own, never `worktreePath`: T3 runs `git worktree remove` on a thread's `worktreePath`
-when the thread goes, and a lease mount is a container zcp holds, not a directory a thread owns —
-nothing removes or releases it with the thread; releasing it is the agent's `zerops_lease
-action=release`.
+`worktreesAllowed:false` stands. A conversation whose agent acquired a lease is bound to it — `lease:
+{alias, pool, branch} | null`, taken from that conversation's own `zerops_lease` acquire. The binding
+decides what a person sees for the conversation — the Git tab, Diff and the terminal's checkout open on
+`/var/www/<alias>`, a repository by §6.1's rule — and **not where its sessions run**: the agent's
+session keeps opening in the Mate workspace, because zcp keeps its state in the session's working
+directory (`.zcp/state`: the lease records, the work session, the ssh aliases it rewrites from them). A
+session opened in the lease mount would lose every lease record ("No lease record" on release), write
+`.zcp/state` into the leased checkout, and rewrite the ssh aliases from an empty set. The agent reaches
+the lease the way it reaches a dev service: files under `/var/www/<alias>`, commands over `ssh <alias>`.
+The media root stays with the session too, since the paths an agent writes are relative to it.
+
+zcp holds one set of leases for every conversation in the container, and a pool hands a released
+container out again under the same alias, so **a binding is (alias, the conversation that acquired it)**
+and unbinding fans out: when a `zerops_lease` result or an envelope's `leases[]` says a lease was
+released, is no longer held (gone, lost, or reserved with no zcp record), or was acquired again by
+another conversation, every conversation bound to it is unbound before the acquiring one is bound. The
+binding is a field of its own, never `worktreePath`: T3 runs `git worktree remove` on a thread's
+`worktreePath` when the thread goes, and a lease mount is a container zcp holds, not a directory a
+thread owns — nothing removes or releases it with the thread; releasing it is the agent's
+`zerops_lease action=release`.
 
 `zeropsPolicy` reads `ServerConfig` **optionally**: no config in context (most existing tests) reads
 as `UPSTREAM_POLICY`, the same set every one of upstream's own behaviours already has — the policy
