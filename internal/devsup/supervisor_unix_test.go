@@ -30,6 +30,8 @@ type rig struct {
 	// previousRun, when set, is the supervisors' reading of systemd's result
 	// for the previous run of their unit.
 	previousRun func() (string, bool)
+	// env is added to the environment the supervisors start servers with.
+	env []string
 }
 
 // newRig makes a repo root and a short state directory (a unix socket path
@@ -81,7 +83,7 @@ func (r *rig) supervisorWith(service string, portWait time.Duration) *Supervisor
 		stagger = time.Millisecond
 	}
 	s, err := New(Config{
-		Root: r.root, StateDir: r.state, Service: service, Env: os.Environ(), Grace: time.Second, PortWait: portWait,
+		Root: r.root, StateDir: r.state, Service: service, Env: append(os.Environ(), r.env...), Grace: time.Second, PortWait: portWait,
 		StartWindow: r.window, Stagger: stagger, LimitBackoff: 50 * time.Millisecond, Tasks: r.tasks, PreviousRun: r.previousRun, Version: "v-test",
 	})
 	if err != nil {

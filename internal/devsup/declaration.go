@@ -36,15 +36,21 @@ const DeclarationPath = ".zcp/dev-servers.json"
 // Declaration is the repo's .zcp/dev-servers.json: the set of named dev
 // servers. It changes only when the set changes; start and stop never write it.
 type Declaration struct {
-	Version int      `json:"version"`
-	Servers []Server `json:"servers"`
+	Version int `json:"version"`
+	// PreviewPortBase, when set, has a supervisor whose container has a
+	// ZEROPS_StableNumber forward PreviewPortBase+ZEROPS_StableNumber to the
+	// preview server's port (PreviewServer): a dev pool's containers each get
+	// a public port of their own. Absent: no forward.
+	PreviewPortBase int      `json:"previewPortBase,omitempty"`
+	Servers         []Server `json:"servers"`
 }
 
 // Server is one named dev server: the shell command, its working directory
 // relative to the repo root, the port it listens on (0 when it has none), the
 // HTTP path its health probe reads on that port (absent: /), the paths whose
 // change restarts it, the dev service that runs it (variant B) and whether it
-// starts before anyone asks (absent: it does).
+// starts before anyone asks (absent: it does). Preview marks the server the
+// preview port reaches when several have a port (PreviewServer).
 type Server struct {
 	Name       string `json:"name"`
 	Port       int    `json:"port,omitempty"`
@@ -54,6 +60,27 @@ type Server struct {
 	Watch      *Watch `json:"watch,omitempty"`
 	Service    string `json:"service,omitempty"`
 	Autostart  *bool  `json:"autostart,omitempty"`
+	Preview    bool   `json:"preview,omitempty"`
+}
+
+// PreviewServer is the server the preview port reaches: the only one with a
+// port, else the one marked preview. ok is false when there is none.
+func PreviewServer(servers []Server) (Server, bool) {
+	var withPort []Server
+	for _, s := range servers {
+		if s.Port != 0 {
+			withPort = append(withPort, s)
+		}
+	}
+	if len(withPort) == 1 {
+		return withPort[0], true
+	}
+	for _, s := range withPort {
+		if s.Preview {
+			return s, true
+		}
+	}
+	return Server{}, false
 }
 
 // FirstDesired is the desired state of a name the state file does not hold
@@ -120,7 +147,10 @@ func ParseDeclaration(b []byte) (Declaration, error) {
 	if err := json.Unmarshal(b, &d); err != nil {
 		return Declaration{}, fmt.Errorf("parse %s: %w", DeclarationPath, err)
 	}
-	names, ports := map[string]bool{}, map[int]string{}
+	if d.PreviewPortBase < 0 || d.PreviewPortBase > 65535 {
+		return Declaration{}, fmt.Errorf("%s: previewPortBase %d is out of range", DeclarationPath, d.PreviewPortBase)
+	}
+	names, ports, preview := map[string]bool{}, map[int]string{}, ""
 	for i, s := range d.Servers {
 		s, err := normalizeServer(s)
 		if err != nil {
@@ -135,6 +165,12 @@ func ParseDeclaration(b []byte) (Declaration, error) {
 				return Declaration{}, fmt.Errorf("%s: %q and %q both listen on port %d", DeclarationPath, other, s.Name, s.Port)
 			}
 			ports[s.Port] = s.Name
+		}
+		if s.Preview {
+			if preview != "" {
+				return Declaration{}, fmt.Errorf("%s: %q and %q are both marked preview", DeclarationPath, preview, s.Name)
+			}
+			preview = s.Name
 		}
 		d.Servers[i] = s
 	}
@@ -191,6 +227,9 @@ func normalizeServer(s Server) (Server, error) {
 	}
 	if s.Port < 0 || s.Port > 65535 {
 		return Server{}, fmt.Errorf("%q: port %d is out of range", s.Name, s.Port)
+	}
+	if s.Preview && s.Port == 0 {
+		return Server{}, fmt.Errorf("%q: preview needs a port", s.Name)
 	}
 	if s.HealthPath != "" && !strings.HasPrefix(s.HealthPath, "/") {
 		return Server{}, fmt.Errorf("%q: healthPath %q must start with /", s.Name, s.HealthPath)

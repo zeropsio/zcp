@@ -1,6 +1,7 @@
 package devsup
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -243,3 +244,93 @@ func TestServer_FirstDesired_FollowsAutostart(t *testing.T) {
 }
 
 func autostart(b bool) *bool { return &b }
+
+func TestDeclaration_PreviewPortBase_ParsesAndOldFilesUnchanged(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		in          string
+		wantBase    int
+		wantPreview []string // names of the servers marked preview
+		wantErr     string
+	}{
+		{name: "an old file has no base and no preview", in: `{"version":1,"servers":[{"name":"web","port":3000,"command":"x"}]}`},
+		{name: "a base", in: `{"version":1,"previewPortBase":9000,"servers":[{"name":"web","port":3000,"command":"x"}]}`, wantBase: 9000},
+		{
+			name:        "a server marked preview among several",
+			in:          `{"version":1,"previewPortBase":9000,"servers":[{"name":"web","port":3000,"command":"x","preview":true},{"name":"api","port":8080,"command":"y"}]}`,
+			wantBase:    9000,
+			wantPreview: []string{"web"},
+		},
+		{name: "a negative base", in: `{"version":1,"previewPortBase":-1,"servers":[]}`, wantErr: "previewPortBase -1 is out of range"},
+		{name: "a base over the port range", in: `{"version":1,"previewPortBase":70000,"servers":[]}`, wantErr: "previewPortBase 70000 is out of range"},
+		{name: "a preview server without a port", in: `{"version":1,"servers":[{"name":"worker","command":"x","preview":true}]}`, wantErr: `"worker": preview needs a port`},
+		{
+			name:    "two servers marked preview",
+			in:      `{"version":1,"servers":[{"name":"a","port":1,"command":"x","preview":true},{"name":"b","port":2,"command":"y","preview":true}]}`,
+			wantErr: `"a" and "b" are both marked preview`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			d, err := ParseDeclaration([]byte(tt.in))
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("err = %v, want containing %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if d.PreviewPortBase != tt.wantBase {
+				t.Fatalf("PreviewPortBase = %d, want %d", d.PreviewPortBase, tt.wantBase)
+			}
+			var marked []string
+			for _, s := range d.Servers {
+				if s.Preview {
+					marked = append(marked, s.Name)
+				}
+			}
+			if !reflect.DeepEqual(marked, tt.wantPreview) {
+				t.Fatalf("marked preview = %v, want %v", marked, tt.wantPreview)
+			}
+			// An old file written back stays an old file: neither key appears.
+			if tt.wantBase == 0 && tt.wantPreview == nil {
+				b, err := json.Marshal(d)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.Contains(string(b), "preview") {
+					t.Fatalf("an old declaration marshals with a preview key: %s", b)
+				}
+			}
+		})
+	}
+}
+
+func TestPreviewServer_PicksTheOnlyPortOrTheMarkedOne(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		servers []Server
+		want    string
+	}{
+		{name: "none", servers: nil},
+		{name: "a portless worker only", servers: []Server{{Name: "worker", Command: "x"}}},
+		{name: "the only server with a port", servers: []Server{{Name: "worker", Command: "x"}, {Name: "web", Port: 3000, Command: "y"}}, want: "web"},
+		{name: "several with ports, none marked", servers: []Server{{Name: "web", Port: 3000, Command: "x"}, {Name: "api", Port: 8080, Command: "y"}}},
+		{name: "several with ports, one marked", servers: []Server{{Name: "web", Port: 3000, Command: "x"}, {Name: "api", Port: 8080, Command: "y", Preview: true}}, want: "api"},
+		{name: "one with a port, marked", servers: []Server{{Name: "web", Port: 3000, Command: "x", Preview: true}}, want: "web"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, ok := PreviewServer(tt.servers)
+			if ok != (tt.want != "") || got.Name != tt.want {
+				t.Fatalf("PreviewServer = %q, %v; want %q", got.Name, ok, tt.want)
+			}
+		})
+	}
+}
