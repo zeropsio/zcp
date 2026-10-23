@@ -1695,6 +1695,94 @@ func TestDiscover_IncludeEnvValues_SensitiveMasked(t *testing.T) {
 	}
 }
 
+// TestDiscover_IncludeEnvValues_PoolAndBoxCredentialsMasked: a Swarm pool's
+// API_TOKEN and ADMIN_TOKEN and a Zerops Box's ZBOX_ variables are
+// credentials — discover with includeEnvValues=true masks their values even
+// when the platform reads them back plain, while the pool's and the Box's
+// other values stay readable and a runtime's own API_TOKEN is the agent's
+// value, untouched.
+func TestDiscover_IncludeEnvValues_PoolAndBoxCredentialsMasked(t *testing.T) {
+	t.Parallel()
+
+	const secret = "pool-" + "orchestrator-secret"
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "p", Status: statusActive}).
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-pool", Name: "devpool", ProjectID: "proj-1", Status: "RUNNING",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1"}},
+			{ID: "svc-vm", Name: "vmpool", ProjectID: "proj-1", Status: "RUNNING",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/swarm-vm@1"}},
+			{ID: "svc-box", Name: "box", ProjectID: "proj-1", Status: "RUNNING",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/zbox@1"}},
+			{ID: "svc-api", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		}).
+		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{
+			{ID: "p1", Key: "API_TOKEN", Content: secret + "-api"},
+			{ID: "p2", Key: "ADMIN_TOKEN", Content: secret + "-admin"},
+			{ID: "p3", Key: "sshIsolation", Content: "vpn service@zcp"},
+		}).
+		WithServiceEnv("svc-vm", []platform.ServiceEnvVar{
+			{ID: "v1", Key: "API_TOKEN", Content: secret + "-vm"},
+		}).
+		WithServiceEnv("svc-box", []platform.ServiceEnvVar{
+			{ID: "b1", Key: "ZBOX_WORKSPACE_API_KEY", Content: secret + "-box-key"},
+			{ID: "b2", Key: "ZBOX_WORKSPACE_VOLUME_KEY", Content: secret + "-box-disk"},
+			{ID: "b3", Key: "DATABASE_URL", Content: "${db_connectionString}"},
+		}).
+		WithServiceEnv("svc-api", []platform.ServiceEnvVar{
+			{ID: "a1", Key: "API_TOKEN", Content: "app-own-value"},
+			{ID: "a2", Key: "POOL_TOKEN", Content: "${devpool_API_TOKEN}"},
+		})
+
+	result, err := Discover(context.Background(), mock, "proj-1", "", true, true, false)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	raw, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(raw), secret) {
+		t.Errorf("discover echoes a pool or Box credential: %s", raw)
+	}
+
+	rows := map[string]map[string]any{}
+	for _, svc := range result.Services {
+		for _, e := range svc.Envs {
+			rows[svc.Hostname+"/"+e["key"].(string)] = e
+		}
+	}
+	tests := []struct {
+		row        string
+		wantMasked bool
+		wantValue  string
+	}{
+		{"devpool/API_TOKEN", true, ""},
+		{"devpool/ADMIN_TOKEN", true, ""},
+		{"vmpool/API_TOKEN", true, ""},
+		{"box/ZBOX_WORKSPACE_API_KEY", true, ""},
+		{"box/ZBOX_WORKSPACE_VOLUME_KEY", true, ""},
+		{"devpool/sshIsolation", false, "vpn service@zcp"},
+		{"box/DATABASE_URL", false, "${db_connectionString}"},
+		{"api/API_TOKEN", false, "app-own-value"},
+		{"api/POOL_TOKEN", false, "${devpool_API_TOKEN}"},
+	}
+	for _, tt := range tests {
+		row, ok := rows[tt.row]
+		if !ok {
+			t.Errorf("%s: missing from discover", tt.row)
+			continue
+		}
+		if got := row["isCredentialRedacted"] == true; got != tt.wantMasked {
+			t.Errorf("%s isCredentialRedacted = %v, want %v (value %v)", tt.row, got, tt.wantMasked, row["value"])
+		}
+		if !tt.wantMasked && row["value"] != tt.wantValue {
+			t.Errorf("%s value = %v, want %v", tt.row, row["value"], tt.wantValue)
+		}
+	}
+}
+
 // TestDiscover_ThePlatformsOwnSystemVars_AreMarkedPlatformInjected: every
 // env var the platform types SYSTEM — ZEROPS_DEBUG_BUILD and
 // ZEROPS_DEBUG_RUNTIME_PREPARE sit on every service — is listed with

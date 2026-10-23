@@ -253,6 +253,11 @@ func (r *refExpander) expandRefs(ctx context.Context, value, sourceService strin
 			continue
 		}
 		rawVal, sensitive := row.Content, row.Sensitive
+		if found {
+			// A pool's or a Box's own credential is a secret whatever flag
+			// its row carries.
+			sensitive = sensitive || isPoolOrBoxCredential(varName, r.serviceIndex[svcHost].ServiceStackTypeInfo.ServiceStackTypeVersionName)
+		}
 		if !found && projectFallback {
 			if pv, ok := r.projectEnv[varName]; ok {
 				rawVal, sensitive, found = pv.Content, pv.Sensitive, true

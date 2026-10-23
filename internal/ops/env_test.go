@@ -221,6 +221,61 @@ func TestEnvSet_SensitiveFlag(t *testing.T) {
 	}
 }
 
+// TestEnvSet_PoolAndBoxCredentials_AlwaysSensitive: a Swarm pool's API_TOKEN
+// and ADMIN_TOKEN and a Zerops Box's ZBOX_ variables are credentials, so a set
+// writes them sensitive even when the caller says plain; the pool's and the
+// Box's other keys, and a runtime's own API_TOKEN, keep the caller's flag.
+func TestEnvSet_PoolAndBoxCredentials_AlwaysSensitive(t *testing.T) {
+	t.Parallel()
+	no := false
+	tests := []struct {
+		name     string
+		host     string
+		variable string
+		want     bool
+	}{
+		{"pool API_TOKEN", "devpool", "API_TOKEN=x", true},
+		{"pool ADMIN_TOKEN", "devpool", "ADMIN_TOKEN=x", true},
+		{"vm pool API_TOKEN", "vmpool", "API_TOKEN=x", true},
+		{"Box workspace key", "box", "ZBOX_WORKSPACE_API_KEY=x", true},
+		{"Box other ZBOX_ variable", "box", "ZBOX_ANYTHING=x", true},
+		{"pool other key keeps the caller's flag", "devpool", "sshIsolation=vpn", false},
+		{"Box other key keeps the caller's flag", "box", "SANDBOX_MODE=x", false},
+		{"runtime API_TOKEN keeps the caller's flag", "api", "API_TOKEN=x", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mock := platform.NewMock().
+				WithServices([]platform.ServiceStack{
+					{ID: "svc-pool", Name: "devpool", ProjectID: "proj-1",
+						ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1"}},
+					{ID: "svc-vm", Name: "vmpool", ProjectID: "proj-1",
+						ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm-vm@1"}},
+					{ID: "svc-box", Name: "box", ProjectID: "proj-1",
+						ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/zbox@1"}},
+					{ID: "svc-api", Name: "api", ProjectID: "proj-1",
+						ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+				})
+			res, err := EnvSet(context.Background(), mock, "proj-1", tt.host, false, []string{tt.variable}, &no)
+			if err != nil {
+				t.Fatalf("EnvSet: %v", err)
+			}
+			if len(res.Stored) != 1 || res.Stored[0].Sensitive != tt.want {
+				t.Errorf("stored = %+v, want sensitive=%v", res.Stored, tt.want)
+			}
+			ids := map[string]string{"devpool": "svc-pool", "vmpool": "svc-vm", "box": "svc-box", "api": "svc-api"}
+			envs, _ := mock.GetServiceEnv(context.Background(), ids[tt.host])
+			if len(envs) != 1 {
+				t.Fatalf("service envs = %d, want 1", len(envs))
+			}
+			if envs[0].Sensitive != tt.want {
+				t.Errorf("written sensitive = %v, want %v", envs[0].Sensitive, tt.want)
+			}
+		})
+	}
+}
+
 // TestEnvSet_ServiceScope_YamlBakedKey_DeleteForbidden_YamlGuidance pins the
 // NEW yaml-baked collision signal (spec §1, [LIVE 08-21]): since 2026-08 a
 // yaml-baked run.envVariables key is ALSO mirrored (read-only) on the slim

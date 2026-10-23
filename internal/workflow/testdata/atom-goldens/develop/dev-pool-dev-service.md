@@ -218,6 +218,11 @@ reports SSH reachability, the supervisor and the dev servers.
   declared in `run.ports` with `httpSupport: true`.
 - The pool's service env reaches its containers. The orchestrator answers
   only inside the project.
+- Code in a leased container reads the project's Shared vault values and the
+  pool's own; in a project with `envIsolation: none` it also reads every
+  other service's values as `<host>_KEY`, the zcp service's `ZCP_API_KEY`
+  included. Run there only code you would trust with them —
+  `zerops_knowledge uri="zerops://themes/services"`, section "Untrusted code".
 
 The pool's import stanza and setup shape:
 `zerops_knowledge uri="zerops://themes/services"`, section "A part's dev pool".

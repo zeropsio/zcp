@@ -242,6 +242,7 @@ Read this when an app needs a Swarm pool or a Zerops Box. Either is infrastructu
 **Import**: `minContainers` / `maxContainers` between 0 and 10, plus `verticalAutoscaling`.
 **Image**: comes from the app's zerops.yml setup, deployed with `zcli push`; `run.base` is the language base (e.g. `python@3.12`). A deploy reaches only the containers created after it.
 **Orchestrator**: answers at `http://orch.<pool>.zerops`. An app service authenticates with the env reference `${<pool>_API_TOKEN}`; a call without it gets `401`.
+**Tokens**: the pool's `API_TOKEN` (the bearer of every orchestrator call) and `ADMIN_TOKEN` (sent in the `X-Swarm-Admin-Token` header, only to take a container from its holder) are generated with the pool. Both are secrets: an app wires `API_TOKEN` by reference in its `run.envVariables` — `POOL_TOKEN: ${<pool>_API_TOKEN}` — and never copies the value into code, a file or another variable.
 **Acquire**: `POST /container/acquire` with `start`, `clean`, `leaseTtlSeconds` (`0` = the lease never expires). The lease it returns must accompany every later call for that container — as the `X-Swarm-Lease` header or the `lease` query parameter.
 **Release**: `release` frees the container; `reset=true` also restores the container's primary snapshot. A lease that expires frees its container silently.
 **Exec**: `POST /container/{id}/exec` — the output streams as NDJSON, one command at a time.
@@ -299,6 +300,15 @@ zerops:
 ### Zerops Box
 
 **Type**: `ubuntu/zbox@1` — a single container (the import schema takes no container counts for it), in beta. It hosts sandboxes. It is not a zerops.yml `run.base`. Creation can fail on hardware capacity.
+**API**: other services reach the workspace API at `http://<box>:8080` with the workspace API key as the bearer token.
+**Keys**: the API key is the Box's `ZBOX_WORKSPACE_API_KEY` — the whole authority over the workspace, with no scopes. An app wires it by reference in its `run.envVariables` — `BOX_API_KEY: ${<box>_ZBOX_WORKSPACE_API_KEY}` — and never copies the value. `ZBOX_WORKSPACE_VOLUME_KEY` unlocks the Box's encrypted data disk; no app needs it. Box never delivers a `ZBOX_` variable into a sandbox.
+
+### Untrusted code
+
+Every container of a project, a pool's included, gets the project's Shared vault values and its own service's (Zerops still injects unreferenced ones today). In a project with `envIsolation: none` it also gets every other service's values as `<host>_KEY`, secrets included — a pool's `<pool>_API_TOKEN`, a database's password, the zcp service's `ZCP_API_KEY`. Code running in a pool container can read all of them. Where that code is not yours (an agent's experiments, users' submissions):
+
+- Keep the project, and every service whose values the code must not read, on `envIsolation: service` (the default): it stops the `<host>_KEY` copies. A service set to `envIsolation: none` hands its values to every other container. Keep secrets out of the Shared vault, which reaches every container either way.
+- Run code that must read none of the project's values in a Box sandbox: each sandbox is its own microVM and gets only the variables named for it with `--secret` (`--secrets all` hands it every variable the Box sees, project values included), never a `ZBOX_` one.
 
 ## Common Patterns
 
