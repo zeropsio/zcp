@@ -137,6 +137,30 @@ func DeploySSH(
 	workingDir string,
 	sha string,
 ) (*DeployResult, error) {
+	return DeploySSHWithLeases(ctx, client, projectID, sshDeployer, authInfo, "",
+		sourceService, targetService, setup, workingDir, sha)
+}
+
+// DeploySSHWithLeases is DeploySSH for a project whose state directory may
+// hold leases (docs/spec-workflows.md §8 DP): a sourceService that is the
+// alias of a lease zcp holds a record for (LeaseTarget) is a pool container,
+// not a service — it is never looked up in the project, the push runs inside
+// that container over its alias, and the git lock and the zerops.yaml
+// validation (read through its mount /var/www/<alias>) are keyed on the
+// alias. A stateDir of "" resolves no lease, which is DeploySSH.
+func DeploySSHWithLeases(
+	ctx context.Context,
+	client platform.Client,
+	projectID string,
+	sshDeployer SSHDeployer,
+	authInfo auth.Info,
+	stateDir string,
+	sourceService string,
+	targetService string,
+	setup string,
+	workingDir string,
+	sha string,
+) (*DeployResult, error) {
 	if sshDeployer == nil {
 		return nil, platform.NewPlatformError(
 			platform.ErrNotImplemented,
@@ -155,9 +179,17 @@ func DeploySSH(
 		sourceService = targetService // auto-infer self-deploy
 	}
 	includeGit := SelfBuildTarget(sourceService, targetService)
+	lease, isLease, err := LeaseTarget(stateDir, sourceService)
+	if err != nil {
+		return nil, fmt.Errorf("resolve lease %s: %w", sourceService, err)
+	}
+	var leaseSource *LeaseTargetInfo
+	if isLease {
+		leaseSource = &lease
+	}
 
 	return deploySSH(ctx, client, projectID, sshDeployer, authInfo,
-		sourceService, targetService, setup, workingDir, includeGit, sha)
+		sourceService, targetService, setup, workingDir, includeGit, sha, leaseSource)
 }
 
 func deploySSH(
@@ -172,15 +204,23 @@ func deploySSH(
 	workingDir string,
 	includeGit bool,
 	sha string,
+	lease *LeaseTargetInfo,
 ) (*DeployResult, error) {
 	services, err := client.ListServices(ctx, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("list services: %w", err)
 	}
 
-	source, err := FindService(services, sourceService)
-	if err != nil {
-		return nil, err
+	// sourceName is the host the push runs on: the service's hostname, or a
+	// lease's alias — a pool container is no service of the project, so the
+	// alias is never looked up (DP-1).
+	sourceName := sourceService
+	if lease == nil {
+		source, findErr := FindService(services, sourceService)
+		if findErr != nil {
+			return nil, findErr
+		}
+		sourceName = source.Name
 	}
 
 	target, err := FindService(services, targetService)
@@ -216,6 +256,7 @@ func deploySSH(
 	mountPath := SourceMountDir(defaultWorkingDir, sourceService, workingDir)
 	serviceType := target.ServiceStackTypeInfo.ServiceStackTypeVersionName
 	class := ClassifyDeploy(sourceService, targetService)
+	toOwnPool := lease != nil && lease.Pool == target.Name
 
 	// Self-deploy guard on the sha path (docs/spec-workflows.md §4.9): a
 	// self-deploy from a commit would extract sha's tree and push
@@ -239,7 +280,7 @@ func deploySSH(
 	// mid-archive. The wait on the build holds no git state and runs
 	// outside the lock (deploySourceGitLocks;
 	// TestDeployBatchSSH_SameSourceBuildsOverlap_GitSectionExclusive).
-	unlockGit, lockErr := deploySourceGitLocks.lock(ctx, source.Name)
+	unlockGit, lockErr := deploySourceGitLocks.lock(ctx, sourceName)
 	if lockErr != nil {
 		return nil, lockErr
 	}
@@ -264,13 +305,13 @@ func deploySSH(
 	var envFiles []string
 	var repoState string
 	var cleanupTemp func()
-	gitRunner := git.SSHRunner{Executor: sshDeployer, Hostname: source.Name}
+	gitRunner := git.SSHRunner{Executor: sshDeployer, Hostname: sourceName}
 	sourceWorkingDir := workingDir
 	if sha != "" {
 		var newWorkingDir string
 		var prepErr error
 		resolvedSHA, warnings, newWorkingDir, cleanupTemp, prepErr = deployFromCommitPrep(
-			ctx, client, target, gitRunner, source.Name, workingDir, setupName, serviceType, class, sha)
+			ctx, client, target, gitRunner, sourceName, workingDir, setupName, serviceType, class, sha)
 		if prepErr != nil {
 			return nil, prepErr
 		}
@@ -293,7 +334,7 @@ func deploySSH(
 				return nil, err
 			}
 		}
-		head, headErr := readWorkingTreeHead(ctx, gitRunner, workingDir, class, source.Name, target.Name)
+		head, headErr := readWorkingTreeHead(ctx, gitRunner, workingDir, class, sourceName, target.Name)
 		if headErr != nil {
 			return nil, headErr
 		}
@@ -314,7 +355,7 @@ func deploySSH(
 		versionName = commitVersionName(resolvedSHA, headSHA, headBranch)
 		// The commit's tree is already extracted and the push reads no git.
 		unlockGit()
-		output, err = sshDeployer.ExecSSH(ctx, source.Name, buildSSHCommandSHA(authInfo, target.ID, workingDir, setup, versionName))
+		output, err = sshDeployer.ExecSSH(ctx, sourceName, buildSSHCommandSHA(authInfo, target.ID, workingDir, setup, versionName))
 	} else {
 		// GF-10: a plain working-tree deploy also passes --version-name
 		// when the source has a reachable HEAD — its branch and short
@@ -322,17 +363,22 @@ func deploySSH(
 		// tree (versionNameFor).
 		versionName = versionNameFor(branch, resolvedSHA, dirty)
 		pushDir := "/tmp/zcp-push-" + rand.Text()
-		output, err = sshDeployer.ExecSSH(ctx, source.Name, buildSSHCommand(authInfo, target.ID, workingDir, setup, includeGit, versionName, pushDir))
+		output, err = sshDeployer.ExecSSH(ctx, sourceName, buildSSHCommand(authInfo, target.ID, workingDir, setup, includeGit, versionName, pushDir))
 		if err != nil && !isSSHBuildTriggered(string(output)) {
 			// The detached zcli outlives the failed call and would still
 			// ask for the build; the git lock is held until it is stopped.
-			output = append(output, stopPush(ctx, sshDeployer, source.Name, pushDir)...)
+			output = append(output, stopPush(ctx, sshDeployer, sourceName, pushDir)...)
 		}
 		unlockGit()
 		if err == nil {
 			uploaded = output
-			output, err = sshDeployer.ExecSSH(ctx, source.Name, buildWaitCommand(pushDir))
+			output, err = sshDeployer.ExecSSH(ctx, sourceName, buildWaitCommand(pushDir))
 		}
+	}
+	outcome := sshDeployOutcome{
+		sourceService: sourceService, targetService: targetService, target: target,
+		resolvedSHA: resolvedSHA, versionName: versionName, dirty: dirty, warnings: warnings,
+		notCarried: notCarried, envFiles: envFiles, repoState: repoState, toOwnPool: toOwnPool,
 	}
 	if err != nil {
 		// A self-deploy's build replaces the source, dropping the wait's
@@ -340,44 +386,55 @@ func deploySSH(
 		if isSSHBuildTriggered(string(uploaded) + string(output)) {
 			// SSH connection dropped after successful zcli push (common exit 255).
 			// Build was submitted — let pollDeployBuild take over.
-			return &DeployResult{
-				Status:            "BUILD_TRIGGERED",
-				Mode:              "ssh",
-				SourceService:     sourceService,
-				TargetService:     targetService,
-				TargetServiceID:   target.ID,
-				TargetServiceType: target.ServiceStackTypeInfo.ServiceStackTypeVersionName,
-				Message:           appendPreflightNote(fmt.Sprintf("Build triggered from %s to %s (SSH session closed after push)", sourceService, targetService), notCarried, envFiles),
-				MonitorHint:       "Build runs asynchronously. Poll zerops_events for build/deploy FINISHED status.",
-				Warnings:          warnings,
-				SHA:               resolvedSHA,
-				Dirty:             dirty,
-				VersionName:       versionName,
-				NotCarried:        notCarried,
-				EnvFiles:          envFiles,
-				RepoState:         repoState,
-			}, nil
+			return outcome.result(fmt.Sprintf("Build triggered from %s to %s (SSH session closed after push)", sourceService, targetService)), nil
 		}
 		return nil, classifySSHError(err, sourceService, targetService)
 	}
 
+	return outcome.result(fmt.Sprintf("Build triggered from %s to %s via SSH", sourceService, targetService)), nil
+}
+
+// sshDeployOutcome is what a triggered SSH deploy reports of itself: the
+// result is the same whether the push call returned or its session dropped
+// after the build was submitted, only its message differs.
+type sshDeployOutcome struct {
+	sourceService, targetService string
+	target                       *platform.ServiceStack
+	resolvedSHA, versionName     string
+	dirty                        bool
+	warnings                     []string
+	notCarried                   *git.NotCarried
+	envFiles                     []string
+	repoState                    string
+	// toOwnPool is a deploy from a lease to its own pool: the result says the
+	// build reaches only containers created after it.
+	toOwnPool bool
+}
+
+// result is the BUILD_TRIGGERED DeployResult carrying message.
+func (o sshDeployOutcome) result(message string) *DeployResult {
+	if o.toOwnPool {
+		message += LeaseToPoolNote(o.sourceService, o.target.Name)
+	}
 	return &DeployResult{
 		Status:            "BUILD_TRIGGERED",
 		Mode:              "ssh",
-		SourceService:     sourceService,
-		TargetService:     targetService,
-		TargetServiceID:   target.ID,
-		TargetServiceType: target.ServiceStackTypeInfo.ServiceStackTypeVersionName,
-		Message:           appendPreflightNote(fmt.Sprintf("Build triggered from %s to %s via SSH", sourceService, targetService), notCarried, envFiles),
+		SourceService:     o.sourceService,
+		TargetService:     o.targetService,
+		TargetServiceID:   o.target.ID,
+		TargetServiceType: o.target.ServiceStackTypeInfo.ServiceStackTypeVersionName,
+		Message:           appendPreflightNote(message, o.notCarried, o.envFiles),
 		MonitorHint:       "Build runs asynchronously. Poll zerops_events for build/deploy FINISHED status.",
-		Warnings:          warnings,
-		SHA:               resolvedSHA,
-		Dirty:             dirty,
-		VersionName:       versionName,
-		NotCarried:        notCarried,
-		EnvFiles:          envFiles,
-		RepoState:         repoState,
-	}, nil
+		Warnings:          o.warnings,
+		SHA:               o.resolvedSHA,
+		Dirty:             o.dirty,
+		VersionName:       o.versionName,
+		NotCarried:        o.notCarried,
+		EnvFiles:          o.envFiles,
+		RepoState:         o.repoState,
+
+		ReachesNewContainersOnly: o.toOwnPool,
+	}
 }
 
 // workingTreeHead is what a working-tree deploy records of its source's

@@ -102,6 +102,12 @@ type DeployResult struct {
 	// "detached" (GF-12). Empty when the source has no repo yet, or on a
 	// cross-deploy (preflight is self-deploy only).
 	RepoState string `json:"repoState,omitempty"`
+	// ReachesNewContainersOnly is true for a deploy from a lease to its own
+	// pool (docs/spec-workflows.md §8 DP): the build sets the image of the
+	// containers the pool creates after it, and updates no container that
+	// exists — the leased one keeps the version it runs. Nothing is verified
+	// on the pool by its service hostname (PS-3).
+	ReachesNewContainersOnly bool `json:"reachesNewContainersOnly,omitempty"`
 	// DevServer is the target's one declared dev server as its supervisor
 	// runs it right after this deploy replaced the container (docs/spec-
 	// workflows.md §8 O4) — running or not, with its reason and log tail.
@@ -239,4 +245,13 @@ const deployShaTempCleanupTimeout = 30 * time.Second
 // inside the source container. Callers must invoke the returned cancel.
 func cleanupTempCtx(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(ctx), deployShaTempCleanupTimeout)
+}
+
+// LeaseToPoolNote is the sentence a deploy from a lease to its own pool
+// carries: that build changes the image for containers created after it and
+// does not update the leased container (a deploy never reaches a container
+// that already exists, docs/spec-workflows.md §8 DP). Single owner — the
+// triggered message and the success message both append it.
+func LeaseToPoolNote(alias, pool string) string {
+	return fmt.Sprintf(" — this changes the image of containers %s creates after it; the leased container %s keeps the version it runs and is not updated", pool, alias)
 }
