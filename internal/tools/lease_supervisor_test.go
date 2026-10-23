@@ -6,7 +6,12 @@ package tools
 
 import (
 	"encoding/json"
+	"errors"
+	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -99,5 +104,75 @@ func TestDevServerTool_LeaseWhoseSupervisorIsGone_StartsIt(t *testing.T) {
 	}
 	if !got.Running || got.Reason == "no_supervisor" || got.Pool != "devpool" {
 		t.Errorf("result = %+v, want web running under the supervisor zcp started", got)
+	}
+}
+
+// TestLeaseTool_Release_Unresettable_DeletesWithTheLease: a container the
+// platform created for minContainers answers a reset with no-primary-snapshot;
+// zerops_lease deletes it with the lease in the header instead of releasing it
+// unreset, and the result says why (docs/spec-workflows.md §8 DP-15).
+func TestLeaseTool_Release_Unresettable_DeletesWithTheLease(t *testing.T) {
+	t.Parallel()
+	var mu sync.Mutex
+	var unresetRelease bool
+	var deleteLease string
+	inner := &fakeOrchestrator{}
+	srv, stateDir := leaseToolServerSSH(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/release") && r.URL.Query().Get("reset") == "true":
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"code":"containerAction","message":"container has no primary snapshot, so it cannot be reset","meta":[{"metadata":{"reason":["no-primary-snapshot"],"retryable":["false"]}}]}}`))
+			return
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/release"):
+			unresetRelease = true
+		case r.Method == http.MethodDelete && r.URL.Path == "/container/c-abc":
+			deleteLease = r.Header.Get("X-Swarm-Lease")
+			if r.URL.RawQuery != "" {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		inner.ServeHTTP(w, r)
+	}), &leaseStubSSH{})
+
+	if res := callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo}); res.IsError {
+		t.Fatalf("acquire failed: %s", getTextContent(t, res))
+	}
+	res := callTool(t, srv, "zerops_lease", map[string]any{"action": "release", "lease": "devpool-3", "force": true})
+	text := getTextContent(t, res)
+	if res.IsError {
+		t.Fatalf("release failed: %s", text)
+	}
+	var got leaseToolResult
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatalf("result is not JSON: %v\n%s", err, text)
+	}
+	if len(got.Leases) != 1 || got.Leases[0].State != ops.LeaseStateReleased {
+		t.Fatalf("leases = %+v, want devpool-3 released", got.Leases)
+	}
+	for _, want := range []string{"could not be reset", "deleted", "minContainers"} {
+		if !strings.Contains(got.Leases[0].Note, want) {
+			t.Errorf("note %q lacks %q", got.Leases[0].Note, want)
+		}
+	}
+	for _, secret := range []string{leaseTestLease, leaseTestToken} {
+		if strings.Contains(text, secret) {
+			t.Errorf("result carries a secret: %s", text)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if unresetRelease {
+		t.Error("the container was released without a reset: the next holder would get its files")
+	}
+	if deleteLease != leaseTestLease {
+		t.Errorf("DELETE carried lease header %q, want the lease", deleteLease)
+	}
+	if _, err := os.Stat(filepath.Join(stateDir, "leases", "devpool-3.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the record survives the deleted container: %v", err)
 	}
 }

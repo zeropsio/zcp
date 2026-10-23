@@ -328,6 +328,12 @@ type SwarmError struct {
 // not be created. The orchestrator queues nothing: it answers at once.
 const SwarmReasonAllReserved = "all-reserved"
 
+// SwarmReasonNoPrimarySnapshot is the SwarmError.Reason of a release with
+// reset refused because the container has no primary snapshot — the ones the
+// platform creates for the pool's minimum (live, 2026-10-23); the reservation
+// stays. Not retryable.
+const SwarmReasonNoPrimarySnapshot = "no-primary-snapshot"
+
 // swarmCauseServiceMaximum is how the platform words a refusal to create a
 // container for a service that already holds its maximum (live, 2026-10-23:
 // "[containerAction] Service is already at maximum number of containers").

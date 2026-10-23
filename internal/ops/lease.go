@@ -744,6 +744,10 @@ func releaseLease(ctx context.Context, d LeaseDeps, rec leaseRecord, alias strin
 	}
 	if _, err := rp.api.Release(ctx, rec.ContainerID, rec.Lease, reset); err != nil {
 		var se *platform.SwarmError
+		if reset && errors.As(err, &se) && se.Reason == platform.SwarmReasonNoPrimarySnapshot {
+			// Never released unreset: the next holder would get its files (DP-15).
+			return deleteUnresettable(ctx, d, rp, rec, alias)
+		}
 		if errors.As(err, &se) && (se.Reason == "unknown-lease" || se.Reason == "container-not-found") {
 			return dropLeaseRecord(d.StateDir, rec, LeaseStateLost, "the orchestrator no longer held this container for this lease, so there was nothing to release; the record is dropped")
 		}
