@@ -552,6 +552,9 @@ func LeaseAcquire(ctx context.Context, d LeaseDeps, pool, repo, branch string) (
 		if err := poolCredential.checkout(ctx, d, rec, repoURL, branch); err != nil {
 			return LeaseView{}, abandonLease(ctx, d, rec, err)
 		}
+		// A reused container was reset to its image and its run.start never
+		// runs again: zcp starts the supervisor itself (DP-9).
+		v.Note = joinNotes(v.Note, leaseSupervisorNote(ensureLeaseSupervisor(ctx, d.SSH, rec.alias())))
 	}
 	if becomesDefault {
 		if err := storePoolDefaultRepo(d.StateDir, pool, repoURL); err != nil {
