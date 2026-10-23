@@ -76,18 +76,25 @@ func liveContainerEnv(key string) (string, bool) {
 }
 
 // liveContainerEnvFrom reads key from the live env file at path, read fresh on
-// every call, and falls back to the process env.
+// every call. Where the file exists it is the answer — a key it lacks is
+// absent, never taken from the process env, which is a snapshot from the
+// process's start (a re-created pool's old token would win). Only where there
+// is no file (outside a Zerops container) does the process env answer.
 func liveContainerEnvFrom(path, key string) (string, bool) {
-	if raw, err := os.ReadFile(path); err == nil {
-		var env map[string]any
-		if json.Unmarshal(raw, &env) == nil {
-			if v, ok := env[key].(string); ok && v != "" {
-				return v, true
-			}
-		}
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		v := os.Getenv(key)
+		return v, v != ""
 	}
-	v := os.Getenv(key)
-	return v, v != ""
+	if err != nil {
+		return "", false
+	}
+	var env map[string]any
+	if json.Unmarshal(raw, &env) != nil {
+		return "", false
+	}
+	v, ok := env[key].(string)
+	return v, ok && v != ""
 }
 
 // Lease states.
@@ -143,6 +150,13 @@ func resolvePool(ctx context.Context, d LeaseDeps, hostname string) (*resolvedPo
 	if err != nil {
 		return nil, err
 	}
+	return orchestratorFor(ctx, d, svc)
+}
+
+// orchestratorFor checks svc is a pool and builds the client of its orchestrator
+// (resolvePool's work once the service is in hand).
+func orchestratorFor(ctx context.Context, d LeaseDeps, svc *platform.ServiceStack) (*resolvedPool, error) {
+	hostname := svc.Name
 	typ := svc.ServiceStackTypeInfo.ServiceStackTypeVersionName
 	if !topology.IsPoolType(typ) {
 		return nil, platform.NewPlatformError(platform.ErrInvalidParameter,

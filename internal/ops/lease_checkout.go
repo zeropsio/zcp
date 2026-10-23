@@ -382,19 +382,22 @@ func unreachableGuard(ctx context.Context, d LeaseDeps, rec leaseRecord, sshErr 
 }
 
 // leaseContainerStillReserved reports whether the pool's orchestrator still
-// lists the record's container as reserved. A pool that is gone or was
-// re-created holds nothing of this lease.
+// lists the record's container as reserved. The pool is read by id — the
+// service search lags writes, and a pool missing from one search is not a
+// pool that is gone; one the direct read no longer finds holds nothing of
+// this lease.
 func leaseContainerStillReserved(ctx context.Context, d LeaseDeps, rec leaseRecord) (bool, error) {
-	rp, err := resolvePool(ctx, d, rec.PoolHostname)
+	svc, err := d.Client.GetService(ctx, rec.PoolServiceID)
 	if err != nil {
 		var pe *platform.PlatformError
 		if errors.As(err, &pe) && pe.Code == platform.ErrServiceNotFound {
 			return false, nil
 		}
-		return false, err
+		return false, fmt.Errorf("read pool %s: %w", rec.PoolHostname, err)
 	}
-	if rp.svc.ID != rec.PoolServiceID {
-		return false, nil
+	rp, err := orchestratorFor(ctx, d, svc)
+	if err != nil {
+		return false, err
 	}
 	containers, err := rp.api.Containers(ctx)
 	if err != nil {

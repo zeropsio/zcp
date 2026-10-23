@@ -573,3 +573,22 @@ func TestLiveContainerEnv_ReadsTheFileFresh(t *testing.T) {
 		t.Error("an absent file and an unset process env must read as absent")
 	}
 }
+
+// TestLiveContainerEnv_FileWinsOverAStaleProcessEnv: where the live env file
+// exists it is the container's current env; the process env, a snapshot from
+// the process's start, answers only where there is no file (a dev machine).
+func TestLiveContainerEnv_FileWinsOverAStaleProcessEnv(t *testing.T) {
+	// Not parallel — sets a process env variable.
+	t.Setenv("zcppool_API_TOKEN", "stale")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "env.json")
+	if err := os.WriteFile(path, []byte(`{"other_KEY":"x"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := liveContainerEnvFrom(path, "zcppool_API_TOKEN"); ok {
+		t.Errorf("a key the live file lacks read as %q from the stale process env", v)
+	}
+	if v, ok := liveContainerEnvFrom(filepath.Join(dir, "absent.json"), "zcppool_API_TOKEN"); !ok || v != "stale" {
+		t.Errorf("without a live file = %q %v, want the process env's value", v, ok)
+	}
+}

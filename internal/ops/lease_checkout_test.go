@@ -791,3 +791,47 @@ func TestLeaseCheckoutCommand_FetchHelperAnswersNothingWithoutToken(t *testing.T
 		t.Errorf("fetch still uses the helper that sends an empty password:\n%s", cmd)
 	}
 }
+
+// TestLeaseRelease_Unreachable_SearchMissesPool_StillRefused: the service
+// search lags writes, so a pool absent from one search is not a pool that is
+// gone. The guard reads the pool by id; while it exists and its orchestrator
+// holds the container, the release is refused, never reset.
+func TestLeaseRelease_Unreachable_SearchMissesPool_StillRefused(t *testing.T) {
+	t.Parallel()
+	hf, ssh := unsavedFixture(t, "", 0)
+	pool := platform.ServiceStack{ID: "svc-pool", Name: testPoolHost, Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}}
+	hf.deps.Client = platform.NewMock().
+		WithProject(&platform.Project{ID: "p1", Name: "proj"}).
+		WithServices(nil). // the search has not caught up with the pool
+		WithService(&pool).
+		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{Key: "API_TOKEN", Content: testPoolToken, Sensitive: true}})
+	hf.swarm.containers = []platform.SwarmContainer{{ID: "c-abc", Number: 3, LockState: leaseLockReserved}}
+	ssh.setHandler(func(string, string) ([]byte, error) {
+		return nil, sshFailure("ssh: connect to host ... Connection timed out", exitError(t, 255))
+	})
+	_, err := LeaseRelease(context.Background(), hf.deps, "devpool-3", false)
+	pe := assertRefusedAndKept(t, hf, err)
+	if !strings.Contains(pe.Message, "still reserved") {
+		t.Errorf("refusal %q should say the container is still reserved", pe.Message)
+	}
+}
+
+// TestLeaseRelease_Unreachable_PoolGoneByID_Lost: a pool the direct read no
+// longer finds holds nothing of the lease; the release drops it as lost.
+func TestLeaseRelease_Unreachable_PoolGoneByID_Lost(t *testing.T) {
+	t.Parallel()
+	hf, ssh := unsavedFixture(t, "", 0)
+	hf.deps.Client = platform.NewMock().
+		WithProject(&platform.Project{ID: "p1", Name: "proj"}).
+		WithServices(nil)
+	ssh.setHandler(func(string, string) ([]byte, error) {
+		return nil, sshFailure("ssh: connect to host ... Connection timed out", exitError(t, 255))
+	})
+	view, err := LeaseRelease(context.Background(), hf.deps, "devpool-3", false)
+	if err != nil {
+		t.Fatalf("a lease of a pool that is gone must be dropped: %v", err)
+	}
+	if view.State != LeaseStateLost {
+		t.Errorf("state = %q, want lost", view.State)
+	}
+}
