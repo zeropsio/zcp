@@ -40,8 +40,10 @@ import (
 // `services[].envVariables` (additionalProperties:false), but the platform import
 // empirically ACCEPTS that field (verified via zcli service-import 2026-06-02; the
 // only error was an unrelated buildFromGit build failure). Several static-SSR recipes
-// carry `services[].envVariables`; the field is tolerated by the platform but likely
-// silently dropped. Surfaced here for recipe-content review, not failed.
+// carry `services[].envVariables`; the platform creates its values as plain service
+// env, and the field is deprecated in favour of `vault`
+// (docs/spec-zerops-env-lifecycle.md §8b). Surfaced here for recipe-content review,
+// not failed.
 func TestLiveAllRecipesValidate(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

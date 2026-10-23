@@ -144,7 +144,7 @@ Non-negotiable rules. Violating any causes failures.
 - `run.prepareCommands` runs BEFORE deploy files arrive. Never reference `/var/www/` there.
 - Zerops injects env vars as OS env vars. Do NOT create `.env` files — empty values shadow OS vars.
 - Cross-service wiring: `${hostname_varname}` in zerops.yaml `run.envVariables`.
-- import.yaml values: `vault:` at project and service level, a secret as `{value: …, sensitive: true}`. Never the deprecated `envSecrets`/`envVariables` (service-level `envVariables` is silently dropped by API).
+- import.yaml values: `vault:` at project and service level, a secret as `{value: …, sensitive: true}`. Never the deprecated `envSecrets`/`envVariables` (a service-level `envVariables` still creates the service's values, but every one plain — a secret there is stored readable).
 - Shared secrets (encryption keys, CSRF tokens): MUST be in the Shared vault (`project.vault`), not a service's own vault — and referenced in each service's `run.envVariables`.
 - Migrations: `zsc execOnce ${appVersionId} -- <command>` in `initCommands`.
 - Sessions: external store (Valkey, database) when running multiple containers.

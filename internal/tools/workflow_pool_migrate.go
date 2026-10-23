@@ -419,8 +419,8 @@ type poolStanzaService struct {
 	MaxContainers       int                 `yaml:"maxContainers"`
 	VerticalAutoscaling *poolStanzaVertical `yaml:"verticalAutoscaling,omitempty"`
 	// Vault holds the pool's own service env. A service-level envVariables
-	// block is dropped by the import API, and sshIsolation reaches the pool's
-	// containers only as a service env variable.
+	// block is deprecated in the import schema, and sshIsolation reaches the
+	// pool's containers only as a service env variable.
 	Vault map[string]string `yaml:"vault"`
 }
 

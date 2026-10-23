@@ -241,3 +241,26 @@ func TestGetBriefing_RealisticStack_SizeReasonable(t *testing.T) {
 		t.Errorf("briefing too large (%d chars), expected <100000", len(briefing))
 	}
 }
+
+// TestThemes_ServiceEnvVariables_NeverCalledDropped — an import's
+// service-level `envVariables` is deprecated, not dropped: it creates the
+// service's values, every one plain (docs/spec-zerops-env-lifecycle.md §8b).
+// No theme tells an agent the values are dropped.
+func TestThemes_ServiceEnvVariables_NeverCalledDropped(t *testing.T) {
+	t.Parallel()
+	themes := 0
+	for uri, doc := range loadFromEmbedded() {
+		if !strings.HasPrefix(uri, "zerops://themes/") {
+			continue
+		}
+		themes++
+		for line := range strings.SplitSeq(doc.Content, "\n") {
+			if strings.Contains(line, "envVariables") && strings.Contains(strings.ToLower(line), "dropped") {
+				t.Errorf("%s says envVariables are dropped: %q", uri, line)
+			}
+		}
+	}
+	if themes == 0 {
+		t.Fatal("no theme documents embedded")
+	}
+}

@@ -1706,10 +1706,10 @@ suffix; `pool=<hostname>` overrides it, on every call; a hostname the platform w
 `pool-hostname-invalid`, one a non-pool service holds is `pool-hostname-taken`), type `swarm@1`,
 `minContainers: 0`, `maxContainers: 3`, the dev service's own `verticalAutoscaling` (CPU mode and
 the CPU, RAM and disk bounds, read by id), and `vault.sshIsolation: "vpn service@<zcp hostname>"`.
-The pool's own env rides `vault`: the import API drops a service-level `envVariables` block
-(`spec-zerops-env-lifecycle.md`), and `sshIsolation` reaches a pool's containers only as a service
-env variable (§8 DP). The stanza never carries a credential — `GIT_TOKEN` reaches the pool in the
-env step.
+The pool's own env rides `vault`: a service-level `envVariables` block is deprecated in the import
+schema (it still creates the service's env, every value plain — `spec-zerops-env-lifecycle.md`
+§8b), and `sshIsolation` reaches a pool's containers only as a service env variable (§8 DP). The
+stanza never carries a credential — `GIT_TOKEN` reaches the pool in the env step.
 
 A response carries `status` (`step` | `not-a-candidate`), `service` (the pair's dev half when the
 call named its stage), `stages`, `pool`, `step`, `steps` (each `done` | `current` | `pending`),

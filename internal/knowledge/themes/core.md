@@ -159,7 +159,7 @@ zerops[]:
 
 **Critical rules:**
 - Secrets go in the vault as **sensitive** (write-only; reads return them masked). Never paste a secret into a zerops.yaml or a chat.
-- import.yaml values go in `vault:` — `project.vault` and each service's own — as `KEY: value`, or `KEY: {value: …, sensitive: true}` for a secret. `envVariables`, `envSecrets` and `dotEnvSecrets` are deprecated: never write them (a service-level `envVariables` is silently dropped).
+- import.yaml values go in `vault:` — `project.vault` and each service's own — as `KEY: value`, or `KEY: {value: …, sensitive: true}` for a secret. `envVariables`, `envSecrets` and `dotEnvSecrets` are deprecated: never write them (a service-level `envVariables` still creates the service's values, but every one plain — a secret there is stored readable).
 - Managed services auto-generate connection vars (service-specific) — SQL (postgres/mariadb): hostname, port, user, password, dbName, connectionString; cache (Valkey): hostname, port, password, connectionString (auth REQUIRED — `password` is mandatory, no separate `user`). Do NOT set these in import.yaml.
 - `zeropsSubdomain`: platform-injected full HTTPS URL (e.g. `https://app-1df2-3000.prg1.zerops.app`), created when `enableSubdomainAccess: true`.
 - **Self-URL variable**: most frameworks have an env var that controls absolute URL generation (redirects, signed URLs, mail links, CSRF origin validation). Set it to `${zeropsSubdomain}` in `run.envVariables` so the framework generates correct public URLs. Without it, the framework defaults to `localhost` and any feature producing absolute URLs breaks silently.
