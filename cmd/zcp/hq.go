@@ -72,6 +72,7 @@ func defaultHQService(ctx context.Context) (hqService, error) {
 		ProjectID: info.ProjectID,
 		// The container's own zcp service: HQ holds one per project as its Mate.
 		ServiceID: runtime.Detect().ServiceID,
+		Address:   os.Getenv(hq.EnvAddress),
 		Path:      hq.EnrollmentPath(),
 	}, nil
 }

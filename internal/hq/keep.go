@@ -136,7 +136,9 @@ func needsEnrollment(err error) bool {
 // ErrNotEnrolled with no enrollment kept for this project. An enrollment HQ
 // says no longer holds — the credential revoked, or held for another
 // project — is removed with the answer: every reader of the enrollment then
-// says this Mate is not enrolled until it is enrolled anew.
+// says this Mate is not enrolled until it is enrolled anew. One kept with an
+// HQ other than the address the launch environment names is ErrNotEnrolled
+// without asking it: enrolled anew at the configured one.
 func (e Enroller) Recheck(ctx context.Context) (Result, error) {
 	kept, found, err := LoadEnrollment(e.Path)
 	if err != nil {
@@ -144,6 +146,9 @@ func (e Enroller) Recheck(ctx context.Context) (Result, error) {
 	}
 	if !found || kept.ProjectID != e.ProjectID {
 		return Result{}, ErrNotEnrolled
+	}
+	if address := e.address(); address != "" && kept.HQ != address {
+		return Result{}, fmt.Errorf("%w at %s: the enrollment kept is with %s", ErrNotEnrolled, address, kept.HQ)
 	}
 	hq := hqClient{http: e.HTTP, address: kept.HQ}
 	projectID, err := hq.whoami(ctx, kept.Credential)

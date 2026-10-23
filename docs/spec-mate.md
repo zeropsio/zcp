@@ -528,6 +528,13 @@ Every launch adds three more on top (`mate.LaunchEnvLines`), whatever init wrote
 | `ZCP_STATUS_FILE` | the status file a new Mate's setup is read from (`mate.DefaultStatusFilePath`) |
 | `T3CODE_ZEROPS_HQ_ENROLLMENT` | the file zcp keeps the Mate's HQ enrollment in (`hq.EnrollmentPath`, `~/.zcp/hq/enrollment.json`, mode 0600): the HQ address and the credential the server opens its link to HQ with. It names a path, never the credential. zcp enrolls by itself in a Mate container and keeps enrolling, retrying whatever is not possible yet (`hq.Keep`); until the file exists the server's link stays quiet and its HQ state is unknown |
 
+`ZCP_MATE_HQ_ADDRESS` (`hq.EnvAddress`) is a service env zcp reads from the live env store and never
+writes into `~/.zcp/mate.env`: it names the Mate's HQ by its address. Set, enrollment, recheck,
+`Enroller.Moved` and `zcp hq` all take it, and the org's anchor (§10.1) is not read; an enrollment kept with another address is enrolled anew at it (`Enroller.Recheck`),
+the launch's enrollment included. Unset, the anchor names the HQ. The server needs nothing of it:
+it reaches HQ at the address the enrollment names. `TestKeep_AddressFromTheLaunchEnvironment`,
+`TestMateEnroller_TakesTheHQAddressFromTheLiveEnvironment`.
+
 ### 2.4 nginx — locations outside the cookie gate, behind the Mate gate
 
 Rendered identically whether or not `VSCODE_PASSWORD` is set, and **only when `MateEnabled`** — all
@@ -2905,7 +2912,8 @@ whether it still knows the credential (`Enroller.Recheck`). It enrolls anew only
 enrollment kept, when HQ refuses the credential (`401 mate_credential_required`, or names another
 project for it) — removing the refused enrollment at once, so zcp, the Mate server and git all say
 the Mate is not enrolled while HQ refuses it, and HQ revoking a Mate's credential when its project's
-access is lost needs nothing from zcp but this recheck — or when the org's member list names an official HQ other than the kept one
+access is lost needs nothing from zcp but this recheck — when the launch environment names another
+address (§2.3) — or when the org's member list names an official HQ other than the kept one
 (`Enroller.Moved`). That list is read while the kept HQ does not answer, on the retry's backoff
 (5 s doubling to 5 min): an HQ that lost the anchor answers `503 not_active` for good, a deploy's
 handover for seconds, and only the anchor tells the two apart — never how long the silence lasted

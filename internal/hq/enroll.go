@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -13,6 +14,10 @@ import (
 // ChallengeEnv is the project env key the challenge's nonce is written into:
 // unmarked, so HQ's Read only credential reads it in the clear.
 const ChallengeEnv = "MATE_HQ_CHALLENGE"
+
+// EnvAddress is the launch-environment variable naming this Mate's HQ by its
+// address. Set, it is the HQ and the org's anchor is not read.
+const EnvAddress = "ZCP_MATE_HQ_ADDRESS"
 
 // envPolls bounds the wait for the challenge env to show in the project
 // search before it is deleted: the search trails a write by up to ~1.6 s
@@ -54,6 +59,9 @@ type Enroller struct {
 	// zcp service but the one the Mate's record names
 	// (not_this_projects_mate). Empty names none, as an older zcp did.
 	ServiceID string
+	// Address is the HQ the launch environment names (EnvAddress). Set, it is
+	// the HQ and the org's member list is not read; empty, the anchor names it.
+	Address string
 	// Path is the enrollment file (EnrollmentPath in a container).
 	Path string
 	// Poll paces the retries; zero is 500 ms.
@@ -223,8 +231,12 @@ func (e Enroller) keyTokenID(ctx context.Context) (string, error) {
 	return info.UserID, nil
 }
 
-// official is the org's official HQ, or a NoHQError.
+// official is the HQ the launch environment names, else the org's official
+// HQ, or a NoHQError.
 func (e Enroller) official(ctx context.Context) (Official, error) {
+	if address := e.address(); address != "" {
+		return Official{Verdict: VerdictOfficial, Address: address}, nil
+	}
 	members, err := e.Zerops.ListOrgMembers(ctx, e.OrgID)
 	if err != nil {
 		return Official{}, fmt.Errorf("read org members: %w", err)
@@ -266,6 +278,12 @@ func (e Enroller) removeChallenge(ctx context.Context, polls int) error {
 		}
 	}
 	return nil
+}
+
+// address is the configured HQ address as the anchor's is kept: no trailing
+// slash.
+func (e Enroller) address() string {
+	return strings.TrimRight(strings.TrimSpace(e.Address), "/")
 }
 
 func (e Enroller) poll() time.Duration {
