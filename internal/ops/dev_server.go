@@ -105,6 +105,18 @@ type DevServerResult struct {
 	// the reported server, or stopped restarting it on watched changes
 	// (status).
 	LastRestartReason string `json:"lastRestartReason,omitempty"`
+	// Pool is the dev pool whose container the lease alias in Hostname
+	// reaches (docs/spec-workflows.md "Dev pools (DP)"); set only for a lease.
+	// Public access and max RAM are the pool's, never the alias's.
+	Pool string `json:"pool,omitempty"`
+	// PreviewPort is the port the supervisor forwards to the reported server
+	// on every interface (docs/spec-mate.md §2.8a.1 previewPortBase), 0 when
+	// it forwards none.
+	PreviewPort int `json:"previewPort,omitempty"`
+	// PreviewURL is the pool's subdomain address of PreviewPort — a lease's
+	// public address; set only for a lease, and only while the pool's
+	// subdomain is on.
+	PreviewURL string `json:"previewUrl,omitempty"`
 	// Unreported: the call read several servers and reports none of them
 	// alone (a status of a dev service with several), so it says nothing of
 	// whether "the" server runs.
@@ -135,6 +147,12 @@ type DevServerParams struct {
 	// after a short settle. Callers should follow up with zerops_logs to
 	// confirm the worker is actually consuming.
 	NoHTTPProbe bool
+	// StateDir is zcp's state directory: with it, a Hostname that is the
+	// alias of a lease zcp holds (LeaseTarget) is driven as that lease — the
+	// supervisor over SSH to the alias, every platform fact from its pool.
+	StateDir string
+	// lease is the lease Hostname names, resolved by ExecuteDevServer.
+	lease *LeaseTargetInfo
 }
 
 // DevServer action names — kept as constants so callers and tests
@@ -235,7 +253,15 @@ func ExecuteDevServer(
 	if err := validateDevServerParams(p); err != nil {
 		return nil, err
 	}
-	if err := verifyDevServerTarget(ctx, client, projectID, p.Hostname); err != nil {
+	lease, isLease, err := LeaseTarget(p.StateDir, p.Hostname)
+	if err != nil {
+		return nil, fmt.Errorf("resolve %s: %w", p.Hostname, err)
+	}
+	if isLease {
+		// A lease is a pool container, not a service: nothing to look up, and
+		// the container is reached by its alias.
+		p.lease = &lease
+	} else if err := verifyDevServerTarget(ctx, client, projectID, p.Hostname); err != nil {
 		return nil, err
 	}
 	action := strings.ToLower(p.Action)
@@ -245,8 +271,12 @@ func ExecuteDevServer(
 	switch {
 	case errors.As(err, &unresponsive):
 		return unresponsiveResult(action, p.Hostname, unresponsive), nil
+	case errors.As(err, &noSup) && p.lease != nil && (action == devServerActionStart || action == devServerActionRestart):
+		return nil, leaseNoSupervisorErr(*p.lease)
 	case errors.As(err, &noSup) && (action == devServerActionStart || action == devServerActionRestart):
 		return nil, err
+	case errors.As(err, &noSup) && p.lease != nil:
+		return leaseNoSupervisorResult(action, *p.lease), nil
 	case errors.As(err, &noSup):
 		return noSupervisorResult(action, p.Hostname), nil
 	case err != nil:
@@ -285,6 +315,9 @@ func ExecuteDevServer(
 		result.Message += fmt.Sprintf("Dev server %s is no longer declared in %s, so the supervisor stopped it.", serverLabel(p.Hostname, name), devsup.DeclarationPath)
 	}
 	result.settle(ds)
+	if p.lease != nil {
+		result.applyLease(*p.lease)
+	}
 	return result, nil
 }
 
@@ -326,6 +359,17 @@ func (r *DevServerResult) settle(ds *DevServers) {
 		name = r.Hostname
 	}
 	r.Running = ds.State.Servers[name].Status == devsup.StatusRunning
+	r.PreviewPort = ds.State.Servers[name].PreviewPort
+}
+
+// applyLease names the pool a lease result is about, and gives the consumer
+// vantage address the container's own hostname: the alias is an SSH host
+// name, not one the project network resolves.
+func (r *DevServerResult) applyLease(l LeaseTargetInfo) {
+	r.Pool = l.Pool
+	from, to := "http://"+l.Alias+":", "http://"+l.ContainerHostname+":"
+	r.URL = strings.ReplaceAll(r.URL, from, to)
+	r.Message = strings.ReplaceAll(r.Message, from, to)
 }
 
 // healthyHTTP is the health probe's pass: a 2xx or 3xx answer (the start
@@ -452,6 +496,27 @@ func noSupervisorResult(action, hostname string) *DevServerResult {
 		Reason:   reasonNoSupervisor,
 		Message: fmt.Sprintf("%s has no dev-server supervisor yet, so no dev server runs under zcp there. zerops_dev_server hostname=%q action=start sets it up (one redeploy of %s; uncommitted work stays).",
 			hostname, hostname, hostname),
+	}
+}
+
+// leaseNoSupervisorErr refuses a start on a lease whose container runs no
+// supervisor. The move onto the supervisor redeploys a dev service; a lease is
+// a pool container, and what a pool runs is its own zerops.yaml's.
+func leaseNoSupervisorErr(l LeaseTargetInfo) error {
+	return platform.NewPlatformError(platform.ErrPreflightFailed,
+		fmt.Sprintf("Lease %s (a container of pool %s) runs no zcp-devsup, so no dev server runs under zcp there", l.Alias, l.Pool),
+		fmt.Sprintf("The pool's dev setup must run the supervisor: set run.start to `zcp-devsup run` and install zcp-devsup in run.prepareCommands in the zerops.yaml of pool %s (docs: zerops_knowledge), deploy the pool, then acquire a lease again.", l.Pool))
+}
+
+// leaseNoSupervisorResult answers stop, status and logs on such a lease.
+func leaseNoSupervisorResult(action string, l LeaseTargetInfo) *DevServerResult {
+	return &DevServerResult{
+		Action:   action,
+		Hostname: l.Alias,
+		Pool:     l.Pool,
+		Reason:   reasonNoSupervisor,
+		Message: fmt.Sprintf("Lease %s (a container of pool %s) runs no dev-server supervisor, so no dev server runs under zcp there. The pool's zerops.yaml must set run.start to `zcp-devsup run` and install zcp-devsup in run.prepareCommands; deploy the pool, then acquire a lease again.",
+			l.Alias, l.Pool),
 	}
 }
 
@@ -1174,6 +1239,10 @@ func devServerURL(hostname string, port int, healthPath string) string {
 // serves no HTTP or its address is not known. Ask it only while the service's
 // subdomain is on.
 func DevServerSubdomainURL(ctx context.Context, client platform.Client, projectID string, result *DevServerResult) string {
+	if result.Pool != "" {
+		// A lease is reached on its preview port, at the pool's subdomain.
+		return leasePreviewURL(ctx, client, projectID, result.Pool, result.PreviewPort, false)
+	}
 	if result.Port == 0 {
 		return ""
 	}

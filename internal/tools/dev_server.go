@@ -47,7 +47,7 @@ func devServerInputSchema() *jsonschema.Schema {
 		},
 		"hostname": {
 			Type:        "string",
-			Description: "Target dev-container hostname (e.g. apidev, appdev, workerdev). Must exist in the current project.",
+			Description: "Target dev-container hostname (e.g. apidev, appdev, workerdev). Must exist in the current project. A dev-pool lease is addressed by its alias <pool>-<number> (zerops_lease): the dev servers run in that container, and the result's previewUrl is the pool's subdomain on the lease's preview port.",
 		},
 		"name": {
 			Type:        "string",
@@ -134,6 +134,7 @@ func RegisterDevServer(srv *mcp.Server, d DevServerDeps) {
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input DevServerInput) (*mcp.CallToolResult, any, error) {
 		params := devServerParams(input)
 		params.Root = supervisorRoot(stateDir, input.Hostname)
+		params.StateDir = stateDir
 		result, err := ops.ExecuteDevServer(ctx, ssh, client, projectID, params)
 		var noSup *ops.NoSupervisorError
 		var migration *devServerMigration
@@ -172,6 +173,15 @@ func RegisterDevServer(srv *mcp.Server, d DevServerDeps) {
 				resp.PublicAccess = pa
 			}
 			resp.Warnings = append(resp.Warnings, scratch.Warnings...)
+		}
+		if result.Pool != "" {
+			// A lease's public address is its pool's subdomain on its preview
+			// port: the one the hook above just enabled, else whatever the
+			// pool's subdomain serves now.
+			result.PreviewURL = resp.SubdomainURL
+			if result.PreviewURL == "" {
+				result.PreviewURL = ops.LeasePreviewURL(ctx, client, projectID, result.Pool, result.PreviewPort)
+			}
 		}
 		if d.CarriesParts {
 			if env := freshEnvelope(ctx, stateDir, client, projectID, d.RtInfo); env != nil {

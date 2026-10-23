@@ -53,6 +53,12 @@ func ensurePublicAccess(
 	result *ops.DeployResult,
 	listenerOverride ...bool,
 ) {
+	// A dev-pool lease is a container of its pool: the pool is the service
+	// that has a subdomain, an intent and a stamp (PA-1/PA-2 act on it, never
+	// on the alias).
+	if lease, ok, _ := ops.LeaseTarget(stateDir, hostname); ok {
+		hostname = lease.Pool
+	}
 	meta, _ := workflow.FindServiceMeta(stateDir, hostname)
 	svc, eligible := serviceEligibleForSubdomain(ctx, client, meta, projectID, hostname)
 	if !eligible {
