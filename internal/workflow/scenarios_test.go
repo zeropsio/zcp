@@ -1566,9 +1566,10 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		"launch-pipeline-configure-dashboard",
 		"launch-pipeline-skipped",
 		"launch-pipeline-configured",
-		// pool-migrate — the flow's atom fires on the PhasePoolMigrateActive
+		// pool-migrate — the flow's atoms fire on the PhasePoolMigrateActive
 		// envelope above.
 		"pool-migrate-plan",
+		"pool-migrate-move",
 	)
 }
 

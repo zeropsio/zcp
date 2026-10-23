@@ -25,19 +25,41 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// poolMigrateDevSSH stands in for the dev service: it answers the worktree
-// list and records every command.
+// poolMigrateDevSSH stands in for the dev service: it answers the census
+// with census and records every command.
 type poolMigrateDevSSH struct {
-	mu        sync.Mutex
-	worktrees string
-	commands  []string
+	mu       sync.Mutex
+	census   string
+	commands []string
 }
 
 func (s *poolMigrateDevSSH) ExecSSH(_ context.Context, hostname, command string) ([]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.commands = append(s.commands, hostname+": "+command)
-	return []byte(s.worktrees), nil
+	return []byte(s.census), nil
+}
+
+// poolMigrateIntCensus is what the census prints for a dev service whose main
+// checkout is on main, pushed and clean, beside the linked worktrees given as
+// (path, branch) pairs.
+func poolMigrateIntCensus(worktrees ...string) string {
+	var b strings.Builder
+	b.WriteString("zcp-census 1\n" +
+		"W worktree /var/www\nW HEAD 1111111111111111111111111111111111111111\nW branch refs/heads/main\n")
+	for i := 0; i+1 < len(worktrees); i += 2 {
+		for _, line := range []string{"", "worktree " + worktrees[i], "HEAD 2222222222222222222222222222222222222222", "branch refs/heads/" + worktrees[i+1]} {
+			b.WriteString("W " + line + "\n")
+		}
+	}
+	b.WriteString("B refs/heads/main\torigin\trefs/heads/main\nU refs/heads/main\t0\nRN 0\n" +
+		"T /var/www\nTS # branch.oid 1111111111111111111111111111111111111111\nTS # branch.head main\n" +
+		"TS # branch.upstream origin/main\nTS # branch.ab +0 -0\n")
+	for i := 0; i+1 < len(worktrees); i += 2 {
+		b.WriteString("T " + worktrees[i] + "\nTS # branch.head " + worktrees[i+1] + "\n")
+	}
+	b.WriteString("zcp-census-end\n")
+	return b.String()
 }
 
 func (s *poolMigrateDevSSH) ExecSSHBackground(_ context.Context, hostname, command string, _ time.Duration) ([]byte, error) {
@@ -86,7 +108,7 @@ func poolMigrateIntTree(t *testing.T, root string) map[string]string {
 	return out
 }
 
-func poolMigrateIntCall(t *testing.T, mode topology.Mode, worktrees string) (map[string]any, *platform.Mock, *poolMigrateDevSSH, bool) {
+func poolMigrateIntCall(t *testing.T, mode topology.Mode, census string) (map[string]any, *platform.Mock, *poolMigrateDevSSH, bool) {
 	t.Helper()
 	stateDir := t.TempDir()
 	meta := &workflow.ServiceMeta{
@@ -107,7 +129,7 @@ func poolMigrateIntCall(t *testing.T, mode topology.Mode, worktrees string) (map
 		poolMigrateIntService("appstage", "svc-stage", "nodejs@22"),
 	}
 	mock := platform.NewMock().WithServices(services).WithServicesDirect(services)
-	ssh := &poolMigrateDevSSH{worktrees: worktrees}
+	ssh := &poolMigrateDevSSH{census: census}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "zcp-test", Version: "0.1"}, nil)
 	engine := workflow.NewEngine(stateDir, workflow.EnvContainer, nil)
@@ -151,8 +173,7 @@ func poolMigrateIntCall(t *testing.T, mode topology.Mode, worktrees string) (map
 
 func TestPoolMigrate_Integration_PairNamesProvisionWithAStanza(t *testing.T) {
 	t.Parallel()
-	out, mock, ssh, unchanged := poolMigrateIntCall(t, topology.PlanModeStandard,
-		"worktree /var/www\nHEAD 1111111111111111111111111111111111111111\nbranch refs/heads/main\n")
+	out, mock, ssh, unchanged := poolMigrateIntCall(t, topology.PlanModeStandard, poolMigrateIntCensus())
 
 	if out["status"] != "step" || out["step"] != "provision" || out["pool"] != "apppool" {
 		t.Fatalf("status/step/pool = %v/%v/%v", out["status"], out["step"], out["pool"])
@@ -177,7 +198,14 @@ func TestPoolMigrate_Integration_PairNamesProvisionWithAStanza(t *testing.T) {
 		}
 	}
 	if len(ssh.commands) != 1 || !strings.Contains(ssh.commands[0], "worktree list --porcelain") {
-		t.Fatalf("ssh commands = %v, want the one worktree read", ssh.commands)
+		t.Fatalf("ssh commands = %v, want the one census", ssh.commands)
+	}
+	census, _ := out["census"].(map[string]any)
+	if census["clean"] != true {
+		t.Fatalf("census = %v, want the clean dev service's census", out["census"])
+	}
+	if wb, _ := out["workBranch"].(map[string]any); wb["branch"] != "main" || wb["source"] != "upstream" {
+		t.Fatalf("workBranch = %v, want main from the upstream", out["workBranch"])
 	}
 }
 
@@ -200,9 +228,7 @@ func TestPoolMigrate_Integration_SimpleServiceRefusedByName(t *testing.T) {
 
 func TestPoolMigrate_Integration_CrewWorktreesRefused(t *testing.T) {
 	t.Parallel()
-	out, _, _, unchanged := poolMigrateIntCall(t, topology.PlanModeStandard,
-		"worktree /var/www\nHEAD 1111111111111111111111111111111111111111\nbranch refs/heads/main\n\n"+
-			"worktree /var/www/.crew/ada\nHEAD 2222222222222222222222222222222222222222\nbranch refs/heads/crew/ada\n")
+	out, _, _, unchanged := poolMigrateIntCall(t, topology.PlanModeStandard, poolMigrateIntCensus("/var/www/.crew/ada", "crew/ada"))
 
 	if out["status"] != "not-a-candidate" {
 		t.Fatalf("status = %v, want not-a-candidate", out["status"])
