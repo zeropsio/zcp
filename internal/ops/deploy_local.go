@@ -12,6 +12,7 @@ import (
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/ops/git"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // commandRunner abstracts command execution for testability.
@@ -268,6 +269,10 @@ func DeployLocal(
 	if sha != "" {
 		message = fmt.Sprintf("Build triggered for %s via zcli push (commit %s)", targetService, resolvedSHA)
 	}
+	toPool := topology.IsPoolType(serviceType)
+	if toPool {
+		message += PoolDeployNote(targetService, "")
+	}
 	return &DeployResult{
 		Status:            "BUILD_TRIGGERED",
 		Mode:              "local",
@@ -280,6 +285,8 @@ func DeployLocal(
 		SHA:               resolvedSHA,
 		Dirty:             dirty,
 		VersionName:       versionName,
+
+		ReachesNewContainersOnly: toPool,
 	}, nil
 }
 

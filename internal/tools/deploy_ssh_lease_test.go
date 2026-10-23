@@ -253,3 +253,116 @@ func TestDeployTool_UnrecordedAliasSource_KeepsTodaysError(t *testing.T) {
 		t.Errorf("ssh calls = %d, want 0", len(ssh.calls))
 	}
 }
+
+// poolTargetDeploy deploys from the plain dev service appdev to the pool
+// webpool, in a project before its first bootstrap: the adoption gate is not
+// active yet (requireAdoption keeps refusing a pool target in an adopted
+// project unless the source is a lease of that pool).
+func poolTargetDeploy(t *testing.T, ssh ops.SSHDeployer) (*mcp.CallToolResult, string) {
+	t.Helper()
+	stateDir := filepath.Join(t.TempDir(), ".zcp", "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-dev", Name: "appdev", Status: serviceStatusRunning, ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+			{ID: "svc-pool", Name: "webpool", Status: serviceStatusRunning, ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1"}},
+		}).
+		WithAppVersionEvents([]platform.AppVersionEvent{
+			{ID: "av-pool", ProjectID: "proj-1", ServiceStackID: "svc-pool", Status: statusActive, Sequence: 1},
+		})
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{InContainer: true, ServiceName: "zcp"}, stateDir, testDeployEngine(t), nil, DevsupSource{})
+	result := callTool(t, srv, "zerops_deploy", map[string]any{"sourceService": "appdev", "targetService": "webpool"})
+	return result, getTextContent(t, result)
+}
+
+// assertPoolDeployResult is what every finished deploy to the pool webpool
+// says and does not do, whatever its source (docs/spec-workflows.md §8 DP-7,
+// PS-3): it reaches only containers the pool creates later, points at the
+// rollout, and runs no verify, dev-server or public-access step on the pool.
+func assertPoolDeployResult(t *testing.T, parsed ops.DeployResult) {
+	t.Helper()
+	if !parsed.ReachesNewContainersOnly {
+		t.Error("reachesNewContainersOnly = false for a deploy whose target is a pool")
+	}
+	if !strings.Contains(parsed.Message, "containers webpool creates after it") {
+		t.Errorf("message %q does not say it changes only containers webpool creates after it", parsed.Message)
+	}
+	if !strings.Contains(parsed.NextActions, `zerops_lease action=rollout pool="webpool"`) {
+		t.Errorf("next actions %q do not point at zerops_lease action=rollout pool=\"webpool\"", parsed.NextActions)
+	}
+	for _, banned := range []string{"Successfully deployed to webpool", "acquire a fresh lease", "verify your service"} {
+		if strings.Contains(parsed.Message, banned) || strings.Contains(parsed.NextActions, banned) {
+			t.Errorf("message %q / next actions %q must not say %q", parsed.Message, parsed.NextActions, banned)
+		}
+	}
+	if parsed.SSHReady {
+		t.Error("sshReady = true: the pool was probed by service hostname as one container (PS-3)")
+	}
+	if parsed.PublicAccess != nil || parsed.SubdomainAccessEnabled || parsed.SubdomainURL != "" {
+		t.Errorf("a deploy to the pool decided public access on it: %+v", parsed.PublicAccess)
+	}
+	for _, w := range parsed.Warnings {
+		if strings.Contains(w, "subdomain") || strings.Contains(w, "public access") {
+			t.Errorf("a deploy to the pool ran a public-access step: warning %q", w)
+		}
+	}
+}
+
+func TestDeployTool_ToPool_SaysOnlyNewContainers(t *testing.T) {
+	t.Parallel()
+
+	ssh := &leaseSSH{}
+	result, text := poolTargetDeploy(t, ssh)
+	if result.IsError {
+		t.Fatalf("a deploy from a dev service to a pool must run: %s", text)
+	}
+	var parsed ops.DeployResult
+	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	if parsed.Status != statusDeployed || parsed.SourceService != "appdev" || parsed.TargetService != "webpool" {
+		t.Errorf("result = %s → %s %s, want appdev → webpool %s", parsed.SourceService, parsed.TargetService, parsed.Status, statusDeployed)
+	}
+	assertPoolDeployResult(t, parsed)
+	if !strings.Contains(parsed.Message, "keep their version") {
+		t.Errorf("message %q must say the containers webpool already runs keep their version", parsed.Message)
+	}
+	if !ssh.hosts()["appdev"] {
+		t.Errorf("the push did not run on the source appdev; hosts = %v", ssh.hosts())
+	}
+	if ssh.hosts()["webpool"] {
+		t.Error("an ssh call reached the pool by service hostname — a random container (PS-3)")
+	}
+}
+
+// TestDeployTool_LeaseToOwnPool_NextActionsNamesRollout: a release and a new
+// acquire can hand back the same outdated container, so the finished deploy
+// points at the rollout and says the lease keeps its version until it is
+// released and the pool is rolled out again — never that a fresh lease gets
+// the new version.
+func TestDeployTool_LeaseToOwnPool_NextActionsNamesRollout(t *testing.T) {
+	t.Parallel()
+
+	rig := newLeaseDeployRig(t)
+	result, text := rig.deploy(t, &leaseSSH{}, map[string]any{"sourceService": rig.alias, "targetService": "webpool"})
+	if result.IsError {
+		t.Fatalf("a deploy from a lease to its own pool is allowed: %s", text)
+	}
+	var parsed ops.DeployResult
+	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	assertPoolDeployResult(t, parsed)
+	for _, want := range []string{"webpool-3 keeps its version", "released", "rolled out again"} {
+		if !strings.Contains(parsed.NextActions, want) {
+			t.Errorf("next actions %q lack %q", parsed.NextActions, want)
+		}
+	}
+	if strings.Contains(parsed.NextActions, "release webpool-3 and acquire") {
+		t.Errorf("next actions %q still claim a fresh lease gets the new version", parsed.NextActions)
+	}
+}

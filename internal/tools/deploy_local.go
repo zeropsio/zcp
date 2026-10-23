@@ -222,17 +222,27 @@ func RegisterDeployLocal(
 		onProgress := buildProgressCallback(ctx, req)
 		ctx = deployFollowUpContext(ctx)
 		pollDeployBuild(ctx, client, projectID, result, onProgress, logFetcher, nil, stateDir, "")
+		// A deploy to a pool reaches only the containers the pool creates
+		// later (docs/spec-workflows.md §8 DP-7).
+		toPool := result.ReachesNewContainersOnly
+		if toPool {
+			sayPoolImageOnly(result, input.TargetService, "")
+		}
 
 		// L1 break-glass aftermath: a direct deploy on a push-delivering
 		// pair leaves the container ahead of the repo — flag the standing
 		// reconcile push (spec-git-delivery-target §1.1).
-		if result.Status == statusDeployed {
+		if result.Status == statusDeployed && !toPool {
 			if warn := repoDeliveryDivergenceWarning(stateDir, input.TargetService); warn != "" {
 				result.Warnings = append(result.Warnings, warn)
 			}
 		}
 
 		switch {
+		case result != nil && result.Status == statusDeployed && toPool:
+			// The pool is no app runtime (PS-1/PS-2): no public access is
+			// decided on it.
+			attempt.SucceededAt = time.Now().UTC().Format(time.RFC3339)
 		case result != nil && result.Status == statusDeployed:
 			attempt.SucceededAt = time.Now().UTC().Format(time.RFC3339)
 			ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, input.TargetService, result)
