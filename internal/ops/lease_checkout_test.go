@@ -52,6 +52,20 @@ func (s *leaseSSH) commands() []string {
 	return out
 }
 
+// checkouts are the checkout commands, in order (an acquire also ensures the
+// lease's supervisor).
+func (s *leaseSSH) checkouts() []sshCall {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []sshCall
+	for _, c := range s.calls {
+		if strings.Contains(c.command, "fetch -q --prune origin") {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 func (s *leaseSSH) setHandler(fn func(host, command string) ([]byte, error)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -148,15 +162,15 @@ func TestLeaseAcquire_StoresPoolDefaultRepo(t *testing.T) {
 	if _, err := LeaseAcquire(ctx, fx.deps, testPoolHost, "https://github.com/acme/other", "third"); err != nil {
 		t.Fatalf("third acquire: %v", err)
 	}
-	cmds := ssh.commands()
+	cmds := ssh.checkouts()
 	if len(cmds) != 3 {
-		t.Fatalf("ssh commands = %d, want one checkout per acquire", len(cmds))
+		t.Fatalf("checkouts = %d, want one per acquire", len(cmds))
 	}
-	if !strings.Contains(cmds[1], shellQuote(canonical)) {
-		t.Errorf("second checkout does not use the pool default %s:\n%s", canonical, cmds[1])
+	if !strings.Contains(cmds[1].command, shellQuote(canonical)) {
+		t.Errorf("second checkout does not use the pool default %s:\n%s", canonical, cmds[1].command)
 	}
-	if !strings.Contains(cmds[2], shellQuote("https://github.com/acme/other")) {
-		t.Errorf("third checkout does not use the repo it was given:\n%s", cmds[2])
+	if !strings.Contains(cmds[2].command, shellQuote("https://github.com/acme/other")) {
+		t.Errorf("third checkout does not use the repo it was given:\n%s", cmds[2].command)
 	}
 	if again, _ := readPoolDefault(t, fx.stateDir, testPoolHost); again != stored {
 		t.Errorf("an acquire with another repo changed the default:\n%s\nto\n%s", stored, again)
@@ -359,13 +373,13 @@ func TestLeaseCheckout_CredentialNeverInCommand(t *testing.T) {
 	if _, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, "feature/x-1.2"); err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
-	cmds := ssh.commands()
+	cmds := ssh.checkouts()
 	if len(cmds) != 1 {
-		t.Fatalf("ssh commands = %d, want 1", len(cmds))
+		t.Fatalf("checkouts = %d, want 1", len(cmds))
 	}
-	cmd := cmds[0]
-	if ssh.calls[0].hostname != "devpool-3" {
-		t.Errorf("command ran on %q, want the alias devpool-3", ssh.calls[0].hostname)
+	cmd := cmds[0].command
+	if cmds[0].hostname != "devpool-3" {
+		t.Errorf("command ran on %q, want the alias devpool-3", cmds[0].hostname)
 	}
 	for _, want := range []string{
 		"-c credential.helper= -c credential.helper=" + shellQuote(leaseCredentialHelperShell), "GIT_TERMINAL_PROMPT=0",
@@ -402,8 +416,8 @@ func TestLeaseCheckout_EmptyBranch_IsMain(t *testing.T) {
 	if view.Branch != "main" {
 		t.Errorf("view branch = %q, want main", view.Branch)
 	}
-	if cmds := ssh.commands(); len(cmds) != 1 || !strings.Contains(cmds[0], shellQuote("main")) {
-		t.Errorf("commands = %v, want a checkout of main", cmds)
+	if cmds := ssh.checkouts(); len(cmds) != 1 || !strings.Contains(cmds[0].command, shellQuote("main")) {
+		t.Errorf("checkouts = %v, want a checkout of main", cmds)
 	}
 }
 

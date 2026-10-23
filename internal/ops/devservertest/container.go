@@ -1,8 +1,9 @@
 // Package devservertest is a fake dev container for tests of zcp's dev-server
 // path: it answers the SSH commands zcp sends to a dev service — the
-// supervisor's `zcp-devsup ctl`, the declaration and zerops.yaml reads and
-// writes, the in-container health probe and a zcli push — the way a container
-// running zcp-devsup does (docs/spec-mate.md §2.8a.2). Only tests import it.
+// supervisor's `zcp-devsup ctl`, zcp's start of a lease's supervisor, the
+// declaration and zerops.yaml reads and writes, the in-container health probe
+// and a zcli push — the way a container running zcp-devsup does
+// (docs/spec-mate.md §2.8a.2). Only tests import it.
 package devservertest
 
 import (
@@ -31,6 +32,19 @@ type Container struct {
 	// Unresponsive: the supervisor runs but does not answer its control
 	// socket in time (a thrashing container); `ctl` exits 5.
 	Unresponsive bool
+	// FailStart: a supervisor zcp starts in the container (a lease's, which
+	// run.start never starts again after a reset) does not come up; its own
+	// output is StartOutput.
+	FailStart   bool
+	StartOutput string
+	// SupervisorStarts counts the supervisors zcp started in the container;
+	// SupervisorReloads the reloads of a running one zcp asked for with them.
+	SupervisorStarts, SupervisorReloads int
+	// Prepared are the repository's prepare commands zcp ran, in order; with
+	// PrepareFails each fails (exit 1) with PrepareOutput.
+	Prepared      []string
+	PrepareFails  bool
+	PrepareOutput string
 	// Silent: the container itself does not answer over SSH in time (out of
 	// memory or CPU); every command ends at the ssh deadline.
 	Silent bool
@@ -104,6 +118,19 @@ func (c *Container) ExecSSH(_ context.Context, hostname string, command string) 
 		return nil, &platform.SSHExecError{Hostname: hostname, Err: fmt.Errorf("ssh stopped: %w (signal: killed)", context.DeadlineExceeded)}
 	}
 	switch {
+	case strings.Contains(command, "@@zcp-devsup check"):
+		return []byte(c.ensure(strings.Contains(command, "zcp-devsup ctl reload"))), nil
+	case strings.Contains(command, "@@zcp-devsup declaration") && !strings.Contains(command, "@@zcp-devsup version"):
+		if c.Declaration == "" {
+			return []byte("@@zcp-devsup declaration 1\n"), nil
+		}
+		return []byte(c.Declaration + "\n@@zcp-devsup declaration 0\n"), nil
+	case strings.Contains(command, "/bin/sh -c "):
+		c.Prepared = append(c.Prepared, firstQuoted(command, "/bin/sh -c "))
+		if c.PrepareFails {
+			return []byte(c.PrepareOutput), &platform.SSHExecError{Hostname: hostname, Output: c.PrepareOutput, Err: errors.New("exit status 1")}
+		}
+		return []byte(c.PrepareOutput), nil
 	case strings.Contains(command, "@@zcp-devsup version"):
 		return []byte(c.read()), nil
 	case strings.Contains(command, "zcp-devsup ctl logs"):
@@ -203,6 +230,40 @@ func (c *Container) redeploy() {
 	if c.Running {
 		c.boot()
 	}
+}
+
+// ensure answers zcp's start of a lease's supervisor: nothing is started
+// without the binary or while a supervisor holds the control socket — one
+// that answers is reloaded when zcp asks — otherwise one starts and boots the
+// declaration, unless FailStart.
+func (c *Container) ensure(reload bool) string {
+	switch {
+	case !c.Installed:
+		return "@@zcp-devsup check 127\n"
+	case c.Unresponsive:
+		return "@@zcp-devsup check 5\n"
+	case c.Running && reload:
+		c.SupervisorReloads++
+		out := strings.TrimSpace(c.ctl("zcp-devsup ctl 'reload' --json"))
+		i := strings.LastIndex(out, "@@zcp-devsup ctl ")
+		code := strings.TrimSpace(out[i+len("@@zcp-devsup ctl "):])
+		if code == "0" {
+			return "@@zcp-devsup check 0\n@@zcp-devsup reloaded 0\n"
+		}
+		return "@@zcp-devsup check 0\n" + strings.TrimSpace(out[:i]) + "\n@@zcp-devsup reloaded " + code + "\n"
+	case c.Running:
+		return "@@zcp-devsup check 0\n"
+	}
+	c.SupervisorStarts++
+	if c.FailStart {
+		return "@@zcp-devsup check 2\n@@zcp-devsup started 2\n" + c.StartOutput + "\n@@zcp-devsup log 0\n"
+	}
+	c.Running = true
+	if c.SupervisorVersion == "" {
+		c.SupervisorVersion, c.Formats = "v9.300.0", []int{1}
+	}
+	c.boot()
+	return "@@zcp-devsup check 2\n@@zcp-devsup started 0\n"
 }
 
 // boot gives every declared server its first desired state (autostart),

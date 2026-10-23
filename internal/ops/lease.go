@@ -147,6 +147,12 @@ type LeaseView struct {
 	Unverified bool   `json:"unverified,omitempty"`
 	AcquiredAt string `json:"acquiredAt,omitempty"`
 	Note       string `json:"note,omitempty"`
+	// Prepare is what the repository's prepare command did after an
+	// acquire's checkout (DP-14); nil when none ran.
+	Prepare *LeasePrepare `json:"prepare,omitempty"`
+	// containerDeleted: a release deleted the container because it could not
+	// be reset (DP-15).
+	containerDeleted bool
 }
 
 // leaseTokenKey is the pool service's own env var that its orchestrator takes
@@ -491,8 +497,9 @@ func swarmSuggestion(se *platform.SwarmError) string {
 // LeaseAcquire leases a container of the pool and puts its /var/www on the
 // branch of repo (DP-6). It always asks for a clean, started container with no
 // expiry (leaseTtlSeconds 0): an expiring lease frees the container silently
-// and the next clean acquire wipes it, so the lease ends only by an explicit
-// release. An empty repo is the pool's default repository (the first acquire
+// and unreset — a clean acquire resets only a container marked dirty, which
+// ssh writes never mark — so the lease ends only by an explicit release, which
+// resets it. An empty repo is the pool's default repository (the first acquire
 // with a repo records it); with neither, or with a repo or branch that is not
 // usable, the acquire refuses before it takes a container. A checkout that
 // fails hands the container straight back.
@@ -552,6 +559,9 @@ func LeaseAcquire(ctx context.Context, d LeaseDeps, pool, repo, branch string) (
 		if err := poolCredential.checkout(ctx, d, rec, repoURL, branch); err != nil {
 			return LeaseView{}, abandonLease(ctx, d, rec, err)
 		}
+		// The repository's prepare (DP-14), then the supervisor, which a reused
+		// container's run.start never starts again (DP-13).
+		afterLeaseCheckout(ctx, d.SSH, rec.alias(), &v)
 	}
 	if becomesDefault {
 		if err := storePoolDefaultRepo(d.StateDir, pool, repoURL); err != nil {
@@ -741,6 +751,10 @@ func releaseLease(ctx context.Context, d LeaseDeps, rec leaseRecord, alias strin
 	}
 	if _, err := rp.api.Release(ctx, rec.ContainerID, rec.Lease, reset); err != nil {
 		var se *platform.SwarmError
+		if reset && errors.As(err, &se) && se.Reason == platform.SwarmReasonNoPrimarySnapshot {
+			// Never released unreset: the next holder would get its files (DP-15).
+			return deleteUnresettable(ctx, d, rp, rec, alias)
+		}
 		if errors.As(err, &se) && (se.Reason == "unknown-lease" || se.Reason == "container-not-found") {
 			return dropLeaseRecord(d.StateDir, rec, LeaseStateLost, "the orchestrator no longer held this container for this lease, so there was nothing to release; the record is dropped")
 		}

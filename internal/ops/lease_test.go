@@ -38,6 +38,10 @@ type fakeSwarm struct {
 
 	acquireReqs []platform.SwarmAcquireRequest
 	releases    []fakeRelease
+	// deletes records DELETE /container/{id} calls (reset unused);
+	// deleteErr fails them.
+	deletes   []fakeRelease
+	deleteErr error
 
 	rollout    platform.SwarmRollout
 	rolloutErr error
@@ -78,7 +82,10 @@ func (f *fakeSwarm) Renew(context.Context, string, string) (platform.SwarmContai
 	return platform.SwarmContainer{}, nil
 }
 
-func (f *fakeSwarm) Delete(context.Context, string, string) error { return nil }
+func (f *fakeSwarm) Delete(_ context.Context, id, lease string) error {
+	f.deletes = append(f.deletes, fakeRelease{id: id, lease: lease})
+	return f.deleteErr
+}
 
 func (f *fakeSwarm) Rollout(context.Context) (platform.SwarmRollout, error) {
 	f.rollouts++

@@ -533,7 +533,7 @@ func WriteDevDeclaration(ctx context.Context, ssh SSHDeployer, hostname, root st
 // same name runs the same thing for the same service and health path, that
 // entry replaced otherwise, s appended when none has its name. changed says whether the file needs writing.
 func DeclareDevServer(d devsup.Declaration, s devsup.Server) (devsup.Declaration, bool) {
-	out := devsup.Declaration{Version: d.Version, PreviewPortBase: d.PreviewPortBase, Servers: slices.Clone(d.Servers)}
+	out := devsup.Declaration{Version: d.Version, PreviewPortBase: d.PreviewPortBase, Prepare: d.Prepare, Servers: slices.Clone(d.Servers)}
 	if out.Version == 0 {
 		out.Version = devsupFormat
 	}

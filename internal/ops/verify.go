@@ -686,7 +686,7 @@ func leaseDevServerChecks(ctx context.Context, ssh SSHDeployer, alias string) []
 	var unresponsive *SupervisorUnresponsiveError
 	switch {
 	case errors.As(err, &noSup):
-		return []CheckResult{{Name: "dev_servers", Status: CheckInfo, Detail: noSup.Error()}}
+		return []CheckResult{{Name: "dev_servers", Status: CheckInfo, Detail: leaseNoSupervisorDetail(alias, noSup.Installed)}}
 	case errors.As(err, &unresponsive):
 		return []CheckResult{{Name: "dev_servers", Status: CheckFail, Detail: unresponsive.Error()}}
 	case err != nil:

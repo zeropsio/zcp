@@ -267,17 +267,23 @@ func ExecuteDevServer(
 	}
 	action := strings.ToLower(p.Action)
 	ds, err := ReadDevServers(ctx, ssh, p.Hostname, p.Root)
+	why := ""
+	if p.lease != nil {
+		// A lease's supervisor is zcp's to start: its container's run.start
+		// never runs again after the reset of an earlier release (DP-13).
+		ds, why, err = recoverLeaseSupervisor(ctx, ssh, p.Hostname, p.Root, ds, err)
+	}
 	var noSup *NoSupervisorError
 	var unresponsive *SupervisorUnresponsiveError
 	switch {
 	case errors.As(err, &unresponsive):
 		return unresponsiveResult(action, p.Hostname, unresponsive), nil
 	case errors.As(err, &noSup) && p.lease != nil && (action == devServerActionStart || action == devServerActionRestart):
-		return nil, leaseNoSupervisorErr(*p.lease)
+		return nil, leaseNoSupervisorErr(*p.lease, noSup.Installed, why)
 	case errors.As(err, &noSup) && (action == devServerActionStart || action == devServerActionRestart):
 		return nil, err
 	case errors.As(err, &noSup) && p.lease != nil:
-		return leaseNoSupervisorResult(action, *p.lease), nil
+		return leaseNoSupervisorResult(action, *p.lease, noSup.Installed, why), nil
 	case errors.As(err, &noSup):
 		return noSupervisorResult(action, p.Hostname), nil
 	case err != nil:
@@ -514,22 +520,34 @@ func noSupervisorResult(action, hostname string) *DevServerResult {
 
 // leaseNoSupervisorErr refuses a start on a lease whose container runs no
 // supervisor. The move onto the supervisor redeploys a dev service; a lease is
-// a pool container, and what a pool runs is its own zerops.yaml's.
-func leaseNoSupervisorErr(l LeaseTargetInfo) error {
+// a pool container, and what a pool's image carries is its own zerops.yaml's.
+// installed: zcp-devsup is in the image and zcp's start of it (why) did not
+// bring it up.
+func leaseNoSupervisorErr(l LeaseTargetInfo, installed bool, why string) error {
+	if installed {
+		return platform.NewPlatformError(platform.ErrPreflightFailed,
+			fmt.Sprintf("Lease %s (a container of pool %s) runs no dev-server supervisor: %s", l.Alias, l.Pool, why),
+			fmt.Sprintf("Read the supervisor's own output over SSH (ssh %s %s), then retry; or release the lease and acquire another.", l.Alias, shellQuote("tail -n 50 "+leaseSupervisorLog)))
+	}
 	return platform.NewPlatformError(platform.ErrPreflightFailed,
-		fmt.Sprintf("Lease %s (a container of pool %s) runs no zcp-devsup, so no dev server runs under zcp there", l.Alias, l.Pool),
-		fmt.Sprintf("The pool's dev setup must run the supervisor: set run.start to `zcp-devsup run` and install zcp-devsup in run.prepareCommands in the zerops.yaml of pool %s (docs: zerops_knowledge), deploy the pool, then acquire a lease again.", l.Pool))
+		fmt.Sprintf("Lease %s (a container of pool %s): %s", l.Alias, l.Pool, leaseNoDevsupSentence),
+		fmt.Sprintf("A dev pool's image carries the supervisor: install zcp-devsup in run.prepareCommands and set run.start to `zcp-devsup run` in the zerops.yaml of pool %s (docs: zerops_knowledge), deploy the pool, release this lease, roll the pool out, then acquire again.", l.Pool))
 }
 
 // leaseNoSupervisorResult answers stop, status and logs on such a lease.
-func leaseNoSupervisorResult(action string, l LeaseTargetInfo) *DevServerResult {
+func leaseNoSupervisorResult(action string, l LeaseTargetInfo, installed bool, why string) *DevServerResult {
+	msg := fmt.Sprintf("Lease %s (a container of pool %s): %s. Install zcp-devsup in run.prepareCommands and set run.start to `zcp-devsup run` in the pool's zerops.yaml; deploy the pool, release this lease, roll the pool out, then acquire again.",
+		l.Alias, l.Pool, leaseNoDevsupSentence)
+	if installed {
+		msg = fmt.Sprintf("Lease %s (a container of pool %s) runs no dev-server supervisor, so no dev server runs under zcp there: %s. Its own output is in %s on the lease.",
+			l.Alias, l.Pool, why, leaseSupervisorLog)
+	}
 	return &DevServerResult{
 		Action:   action,
 		Hostname: l.Alias,
 		Pool:     l.Pool,
 		Reason:   reasonNoSupervisor,
-		Message: fmt.Sprintf("Lease %s (a container of pool %s) runs no dev-server supervisor, so no dev server runs under zcp there. The pool's zerops.yaml must set run.start to `zcp-devsup run` and install zcp-devsup in run.prepareCommands; deploy the pool, then acquire a lease again.",
-			l.Alias, l.Pool),
+		Message:  msg,
 	}
 }
 
