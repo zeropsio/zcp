@@ -23,10 +23,10 @@ type localCheckoutSSH struct {
 	commands []string
 }
 
-func (s *localCheckoutSSH) ExecSSH(_ context.Context, _, command string) ([]byte, error) {
+func (s *localCheckoutSSH) ExecSSH(ctx context.Context, _, command string) ([]byte, error) {
 	s.commands = append(s.commands, command)
 	local := strings.ReplaceAll(command, shellQuote(leaseWorkDir), shellQuote(s.dir))
-	cmd := exec.CommandContext(context.Background(), "sh", "-c", local) //nolint:gosec // running the composed command is the test
+	cmd := exec.CommandContext(ctx, "sh", "-c", local)
 	env := []string{"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null"}
 	for _, kv := range os.Environ() {
 		if !strings.HasPrefix(kv, "GIT_") {
