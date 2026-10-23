@@ -413,11 +413,18 @@ type unsavedWork struct {
 
 func (w unsavedWork) any() bool { return len(w.files) > 0 || w.unpushed > 0 }
 
+// leaseGitRead starts a git call that only reads a lease's checkout (DP-4):
+// GIT_OPTIONAL_LOCKS=0 keeps `git status` from refreshing .git/index and
+// writing it back — a new inode and mtime in the person's checkout, same
+// bytes (live, 2026-10-23) — so a read writes nothing there.
+const leaseGitRead = "GIT_OPTIONAL_LOCKS=0 git -C "
+
 // readUnsavedWork reads, over ssh, the uncommitted and untracked files and the
-// commits on no remote branch of the container's /var/www.
+// commits on no remote branch of the container's /var/www, writing nothing
+// into it (leaseGitRead).
 func readUnsavedWork(ctx context.Context, ssh SSHDeployer, alias string) (unsavedWork, error) {
 	var w unsavedWork
-	out, err := ssh.ExecSSH(ctx, alias, "git -C "+shellQuote(leaseWorkDir)+" status --porcelain")
+	out, err := ssh.ExecSSH(ctx, alias, leaseGitRead+shellQuote(leaseWorkDir)+" status --porcelain")
 	if err != nil {
 		return w, fmt.Errorf("git status: %w", err)
 	}
@@ -427,8 +434,8 @@ func readUnsavedWork(ctx context.Context, ssh SSHDeployer, alias string) (unsave
 		}
 	}
 	wd := shellQuote(leaseWorkDir)
-	out, err = ssh.ExecSSH(ctx, alias, "if git -C "+wd+" rev-parse -q --verify HEAD >/dev/null 2>&1; then "+
-		"git -C "+wd+" rev-list --count HEAD --not --remotes=origin; else echo 0; fi")
+	out, err = ssh.ExecSSH(ctx, alias, "if "+leaseGitRead+wd+" rev-parse -q --verify HEAD >/dev/null 2>&1; then "+
+		leaseGitRead+wd+" rev-list --count HEAD --not --remotes=origin; else echo 0; fi")
 	if err != nil {
 		return w, fmt.Errorf("git rev-list: %w", err)
 	}
