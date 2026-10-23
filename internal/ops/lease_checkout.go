@@ -184,8 +184,8 @@ func leaseCheckoutCommand(workDir, repo, branch string) string {
 			"git checkout -q -f -B " + q(branch) + " --no-track origin/" + leaseDefaultBranch + "; fi",
 		"git clean -fd -q",
 	}
-	if u, err := url.Parse(repo); err == nil && u.Scheme == httpsScheme && u.Host != "" {
-		steps = append(steps, "git config --replace-all "+q("credential.https://"+u.Host+".helper")+" "+q(leaseCredentialHelperShell))
+	if scope, ok := gitCredentialScopeHost(repo); ok && strings.HasPrefix(repo, httpsScheme+"://") {
+		steps = append(steps, "git config --replace-all "+q("credential.https://"+scope+".helper")+" "+q(leaseCredentialHelperShell))
 	}
 	return strings.Join(steps, " && ")
 }
