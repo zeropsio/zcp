@@ -64,6 +64,22 @@ func (o *fakeOrchestrator) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPost && r.URL.Path == "/container/acquire":
 		o.reserved = true
 		_, _ = w.Write([]byte(container(true)))
+	case r.Method == http.MethodPost && r.URL.Path == "/container/rollout":
+		// Live shape: a bearer-only call (no lease) without force. The
+		// reserved container is skipped as held-by-other; one outdated free
+		// container is replaced.
+		if r.Header.Get("X-Swarm-Lease") != "" || r.URL.RawQuery != "" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"code":"containerAction","message":"rolling out over held containers requires the admin token - present it in the X-Swarm-Admin-Token header"}}`))
+			return
+		}
+		skipped := `[]`
+		if o.reserved {
+			skipped = `[{"id":"c-abc","reason":"held-by-other"}]`
+		}
+		_, _ = w.Write([]byte(`{"activeAppVersionId":"av-2","replaced":["c-old"],` +
+			`"created":[{"id":"c-new","name":"node-id-5","number":5,"hostname":"node-id-5.runtime.devpool.zerops","appVersionId":"av-2","current":true,"lockState":"","dirty":false}],` +
+			`"retiring":[],"skipped":` + skipped + `,"createErrors":[]}`))
 	case r.Method == http.MethodPost && r.URL.Path == "/container/c-abc/release":
 		if r.Header.Get("X-Swarm-Lease") != leaseTestLease || r.URL.Query().Has("lease") {
 			w.WriteHeader(http.StatusConflict)
@@ -224,6 +240,7 @@ func TestLeaseTool_OrchestratorUnreachable_Explains(t *testing.T) {
 	for _, args := range []map[string]any{
 		{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo},
 		{"action": "status", "pool": "devpool"},
+		{"action": "rollout", "pool": "devpool"},
 	} {
 		res := callTool(t, srv, "zerops_lease", args)
 		text := getTextContent(t, res)
@@ -256,7 +273,9 @@ func TestLeaseTool_BadInput_TypedRefusal(t *testing.T) {
 		wantCode string
 		wantText string
 	}{
-		{"unknown action", map[string]any{"action": "renew"}, platform.ErrInvalidParameter, "acquire, status or release"},
+		{"unknown action", map[string]any{"action": "renew"}, platform.ErrInvalidParameter, "acquire, status, release or rollout"},
+		{"rollout without pool", map[string]any{"action": "rollout"}, platform.ErrInvalidParameter, "rollout needs pool"},
+		{"rollout an unknown pool", map[string]any{"action": "rollout", "pool": "nosuch"}, platform.ErrServiceNotFound, "nosuch"},
 		{"acquire without pool", map[string]any{"action": "acquire"}, platform.ErrInvalidParameter, "needs pool"},
 		{"release without lease", map[string]any{"action": "release"}, platform.ErrInvalidParameter, "needs lease"},
 		{"release path-shaped alias", map[string]any{"action": "release", "lease": "../../etc/x"}, platform.ErrInvalidParameter, "not a lease alias"},
@@ -504,6 +523,61 @@ func TestLeaseTool_ResultCarriesEnvelope(t *testing.T) {
 			if strings.Contains(text, secret) {
 				t.Errorf("%s: result carries a secret", st.name)
 			}
+		}
+	}
+}
+
+// TestLeaseTool_Rollout_ResultCarriesEnvelope pins that action=rollout answers
+// with what the rollout did — counts, each skip with its reason, the lease it
+// skipped by alias — and with the lifecycle envelope, which still lists the
+// lease (a rollout never takes it).
+func TestLeaseTool_Rollout_ResultCarriesEnvelope(t *testing.T) {
+	t.Parallel()
+	srv, _ := leaseToolServer(t, &fakeOrchestrator{})
+	if res := callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo, "branch": "feature-x"}); res.IsError {
+		t.Fatalf("acquire failed: %s", getTextContent(t, res))
+	}
+
+	res := callTool(t, srv, "zerops_lease", map[string]any{"action": "rollout", "pool": "devpool"})
+	text := getTextContent(t, res)
+	if res.IsError {
+		t.Fatalf("rollout failed: %s", text)
+	}
+	var got struct {
+		Action  string `json:"action"`
+		Rollout struct {
+			Pool                                 string `json:"pool"`
+			Replaced, Created, Retiring, Skipped int
+			Skips                                []struct{ ContainerID, Lease, Reason string }
+			Note                                 string `json:"note"`
+		} `json:"rollout"`
+	}
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatalf("rollout result is not JSON: %v\n%s", err, text)
+	}
+	r := got.Rollout
+	if got.Action != "rollout" || r.Pool != "devpool" {
+		t.Errorf("action/pool = %q/%q, want rollout/devpool", got.Action, r.Pool)
+	}
+	if r.Replaced != 1 || r.Created != 1 || r.Retiring != 0 || r.Skipped != 1 {
+		t.Errorf("replaced/created/retiring/skipped = %d/%d/%d/%d, want 1/1/0/1\n%s", r.Replaced, r.Created, r.Retiring, r.Skipped, text)
+	}
+	if len(r.Skips) != 1 || r.Skips[0].Lease != "devpool-3" || r.Skips[0].Reason != "held-by-other" {
+		t.Errorf("skips = %+v, want the lease devpool-3 skipped as held-by-other", r.Skips)
+	}
+	if !strings.Contains(r.Note, "keep their version") {
+		t.Errorf("note %q must say a lease keeps its version", r.Note)
+	}
+	env, ok := workflow.ExtractEnvelope(text)
+	if !ok {
+		t.Fatalf("no top-level envelope in\n%s", text)
+	}
+	if aliases := env.LeaseList(); len(aliases) != 1 || aliases[0].Alias != "devpool-3" {
+		t.Errorf("envelope leases = %+v, want devpool-3 still held", aliases)
+	}
+	for _, secret := range []string{leaseTestLease, leaseTestToken} {
+		if strings.Contains(text, secret) {
+			t.Errorf("rollout result carries a secret: %s", text)
 		}
 	}
 }
