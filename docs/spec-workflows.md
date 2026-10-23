@@ -1355,6 +1355,26 @@ apart — pools report `USER` like any runtime, Box reports `STANDARD` like a da
 | PS-4 | Scale applies each type's own import-schema bounds: a pool's container counts may be 0; a Box takes no container counts (single container) and refuses them by name. `TestScale_Pool_ZeroMinContainers_Accepted`, `TestScale_Box_ContainerCounts_Refused`. |
 | PS-5 | A bootstrap plan naming a pool or Box as a runtime target is refused with guidance (it is infrastructure an app uses, not the app); `ubuntu/zbox@1` passes the type check whenever the live schema lists it ACTIVE, and the embedded seed schema knows it. `TestValidateBootstrapTargets_PoolAsRuntime_Refused`, `TestCatalogTypeErrors_ZboxActive_Accepted`. |
 
+### Dev pools (DP)
+
+A part's dev environment may be a pool: each branch an agent works on gets one container of it,
+leased through `zerops_lease`. The agent takes and returns the container itself (the owner's decision,
+2026-10-23); Mate learns of it from the envelope. Platform facts behind these rules were live-verified
+on 2026-10-23: a pool container answers SSH on its own hostname `node-id-<n>.runtime.<pool>.zerops`
+(`<n>` never reused) when the pool's `sshIsolation` service variable admits the caller; a clean
+container's `/var/www` is empty (the image layer from `run.prepareCommands` survives); an expiring
+lease frees the container silently and the next clean acquire wipes it; a deploy never updates a
+leased container; the pool's own service env reaches its containers.
+
+| ID | Invariant |
+|----|-----------|
+| DP-1 | A lease is addressed by the alias `<pool>-<number>` (the orchestrator's container `number`) — dot-free, so it never equals a platform hostname and passes Mate's mount parser. zcp writes it as a `Host`/`HostName` stanza in `/etc/ssh/ssh_config.d/zcp-leases.conf` through an argv `sudo` call (never a shell), after the alias matches `^[a-z][a-z0-9]{0,39}-[0-9]+$` and the hostname `^node-id-[0-9]+\.runtime\.[a-z0-9]+\.zerops$`; it mounts `<alias>:/var/www` at `/var/www/<alias>`. `TestValidateLeaseAlias`, `TestLeaseAliasStanza_Rejects*`. |
+| DP-2 | The orchestrator is the truth for a lease; zcp's record `.zcp/state/leases/<alias>.json` (mode 0600) only carries the lease string and what zcp needs to find its own leases — never a ServiceMeta. Status reconciles: a record whose container is gone or not reserved is `lost`; a reserved container with no record is `unknown-holder`; a record without its alias or mount is `unmounted`, and `zcp init` re-renders the aliases and remounts from the records after a zcp redeploy. `TestLeaseList_*`, `TestInitSSHFS_RemountsLeases`. |
+| DP-3 | Every acquire is `{start:true, clean:true, leaseTtlSeconds:0}`. The lease string travels only in the `X-Swarm-Lease` header — never in a URL (a transport error prints the URL), a log, a tool result, the envelope or telemetry. `TestSwarmClient_LeaseOnlyInHeader`, `TestLeaseTool_ResultNeverCarriesLease`. |
+| DP-4 | Release refuses while the container holds commits on no remote branch or uncommitted/untracked files, naming them; `force=true` releases with `reset=true`. zcp never commits on the agent's behalf (GF-2). `TestLeaseRelease_Unpushed_Refused`, `TestLeaseRelease_Force_Resets`. |
+| DP-5 | `zerops_lease`: `action=acquire` (`pool`, optional `branch`), `action=status` (optional `pool`), `action=release` (`lease` = the alias, optional `force`). Results name the alias, the pool, the container hostname, the branch and the state. When the orchestrator does not answer (outside the project), the result says it answers only inside the project. `TestLeaseTool_*`. |
+| DP-6 | Acquire puts the branch in the container's empty `/var/www` by running git inside the container with the pool's own service env (its `GIT_TOKEN` wired the way a dev service's is); a credential never appears in a clone URL, `.git/config` or a process argument. A branch that does not exist yet is cut from `main`. `TestLeaseCheckout_*`. |
+
 ---
 
 ## 9. Export-for-buildFromGit Flow
