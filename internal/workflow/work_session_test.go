@@ -932,3 +932,60 @@ func equalStringSlices(a, b []string) bool {
 	}
 	return true
 }
+
+// TestResolvedDeployTargets_DeadHostnameDropped pins that a session stops
+// waiting on a service no pair names any more — the dev a retire re-keyed
+// onto its pool, whatever process's session named it — and on a pool dev
+// half, which nothing deploys: the stage alone gates, and the session closes
+// once it is deployed and verified.
+func TestResolvedDeployTargets_DeadHostnameDropped(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	pair, err := devKeyedPair().keyedOnPool(appPoolMove())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pair.GitPushState = topology.GitPushUnconfigured
+	if err := WriteServiceMeta(dir, pair); err != nil {
+		t.Fatal(err)
+	}
+	for _, scope := range [][]string{{"appdev", "appstage"}, {"apppool", "appstage"}} {
+		ws := &WorkSession{Services: scope, Deploys: map[string][]DeployAttempt{}, Verifies: map[string][]VerifyAttempt{}}
+		if got := ResolvedDeployTargets(dir, ws); !equalStringSlices(got, []string{"appstage"}) {
+			t.Errorf("scope %v: ResolvedDeployTargets = %v, want [appstage]", scope, got)
+		}
+		if EvaluateAutoClose(dir, ws) {
+			t.Errorf("scope %v: closed before the stage deployed", scope)
+		}
+		ws.Deploys["appstage"] = []DeployAttempt{{AttemptedAt: "2026-10-23T10:00:00Z", SucceededAt: "2026-10-23T10:00:00Z"}}
+		ws.Verifies["appstage"] = []VerifyAttempt{{AttemptedAt: "2026-10-23T10:01:00Z", PassedAt: "2026-10-23T10:01:00Z", Passed: true}}
+		if !EvaluateAutoClose(dir, ws) {
+			t.Errorf("scope %v: still open with the stage deployed and verified", scope)
+		}
+	}
+
+	// A project whose zcp has no pair at all keeps the degraded behaviour:
+	// every required service gates.
+	ws := &WorkSession{Services: []string{"appdev", "appstage"}}
+	if got := ResolvedDeployTargets(t.TempDir(), ws); !equalStringSlices(got, []string{"appdev", "appstage"}) {
+		t.Errorf("no metas: ResolvedDeployTargets = %v, want every required service", got)
+	}
+}
+
+func TestSnapshotsFromMetas_PoolDevHalf_MarkedAndModeless(t *testing.T) {
+	t.Parallel()
+	pair, err := devKeyedPair().keyedOnPool(appPoolMove())
+	if err != nil {
+		t.Fatal(err)
+	}
+	snaps := SnapshotsFromMetas([]*ServiceMeta{pair})
+	if len(snaps) != 2 {
+		t.Fatalf("snapshots = %+v, want the pool half and its stage", snaps)
+	}
+	if pool := snaps[0]; pool.Hostname != "apppool" || !pool.DevIsPool || pool.Mode != "" || pool.StageHostname != "appstage" {
+		t.Errorf("pool half = %+v, want apppool marked, modeless, naming appstage", pool)
+	}
+	if st := snaps[1]; st.Hostname != "appstage" || st.Mode != topology.ModeStage || st.DevIsPool {
+		t.Errorf("stage = %+v, want appstage in stage mode", st)
+	}
+}

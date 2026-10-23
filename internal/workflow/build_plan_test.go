@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -586,5 +587,65 @@ func TestBuildPlan_PerServiceNilOutsideDevelopActive(t *testing.T) {
 				t.Errorf("phase %s: PerService = %+v, want nil", p, plan.PerService)
 			}
 		})
+	}
+}
+
+// TestBuildPlan_PoolDevHalf_NoDeployStep pins the plan of a pair whose dev
+// half is a pool: the pool half is never a deploy or verify step, not even
+// when a session names it, and the stage's deploy runs from a held lease of
+// the pool — or, with none held, the step is acquiring one.
+func TestBuildPlan_PoolDevHalf_NoDeployStep(t *testing.T) {
+	t.Parallel()
+	held := LeaseSnapshot{Alias: "apppool-4", Pool: "apppool", Branch: "feat-x", State: "held"}
+	cases := []struct {
+		name     string
+		leases   *[]LeaseSnapshot
+		wantTool string
+		wantArgs map[string]string
+	}{
+		{"a held lease: deploy the stage from it", &[]LeaseSnapshot{held}, "zerops_deploy",
+			map[string]string{"sourceService": "apppool-4", "targetService": "appstage", "setup": "web"}},
+		{"no lease held: acquire one first", &[]LeaseSnapshot{}, "zerops_lease",
+			map[string]string{"action": "acquire", "pool": "apppool"}},
+		{"leases not read: acquire one first", nil, "zerops_lease",
+			map[string]string{"action": "acquire", "pool": "apppool"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			env := planEnvelope(PhaseDevelopActive)
+			env.Services = poolDevPairServices(topology.CloseModeAuto, topology.GitPushUnconfigured)
+			env.Leases = tc.leases
+			env.WorkSession = &WorkSessionSummary{
+				Intent:   "ship the change",
+				Services: []string{"apppool", "appstage"},
+				Deploys:  map[string][]AttemptInfo{},
+			}
+			plan := BuildPlan(env)
+			if plan.Primary.Tool != tc.wantTool || !reflect.DeepEqual(plan.Primary.Args, tc.wantArgs) {
+				t.Errorf("primary = %s %v, want %s %v", plan.Primary.Tool, plan.Primary.Args, tc.wantTool, tc.wantArgs)
+			}
+			if _, ok := plan.PerService["apppool"]; ok {
+				t.Errorf("the pool half has a step: %+v", plan.PerService["apppool"])
+			}
+			if !strings.Contains(plan.Primary.Rationale, "apppool") {
+				t.Errorf("rationale %q does not name the pool", plan.Primary.Rationale)
+			}
+		})
+	}
+
+	// Once the stage is deployed and verified, nothing is left: the pool
+	// half never holds the session open.
+	env := planEnvelope(PhaseDevelopActive)
+	env.Services = poolDevPairServices(topology.CloseModeAuto, topology.GitPushUnconfigured)
+	at := time.Date(2026, 10, 23, 10, 0, 0, 0, time.UTC)
+	env.WorkSession = &WorkSessionSummary{
+		Intent:   "ship the change",
+		Services: []string{"apppool", "appstage"},
+		Deploys:  map[string][]AttemptInfo{"appstage": {{At: at, Success: true}}},
+		Verifies: map[string][]AttemptInfo{"appstage": {{At: at, Success: true}}},
+	}
+	if plan := BuildPlan(env); plan.Primary.Args["action"] != "close" || plan.PerService != nil {
+		t.Errorf("plan = %+v, want close with nothing per service", plan)
 	}
 }

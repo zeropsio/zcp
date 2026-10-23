@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -1156,5 +1157,78 @@ func TestComputeEnvelope_OrchestratorUnreachable_LeasesUnverified(t *testing.T) 
 	}
 	if strings.Contains(fmt.Sprintf("%+v", env), "SECRET-LEASE-VALUE") {
 		t.Error("the lease string reached the envelope")
+	}
+}
+
+// TestComputeEnvelope_PoolDevHalf_CarriesStages pins the envelope of a pair
+// keyed by its dev pool: the pool's snapshot keys the pair — it carries the
+// pair's stages (stageHostname today, stages[] from the field order's step 3)
+// and HQ record, and is marked a pool dev half for pure readers (off the
+// wire) — while it stays a pool for atom matching: no mode, so no dev-runtime
+// guidance lands on it. The stage keeps its stage mode.
+func TestComputeEnvelope_PoolDevHalf_CarriesStages(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	pair, err := devKeyedPair().keyedOnPool(appPoolMove())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteServiceMeta(dir, pair); err != nil {
+		t.Fatal(err)
+	}
+	stage := platform.ServiceStack{
+		ID: "s2", Name: "appstage", Status: "ACTIVE",
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"},
+	}
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{poolService("apppool"), stage}).
+		WithProject(&platform.Project{ID: "p1", Name: "demo"})
+	env, err := ComputeEnvelope(context.Background(), mock, dir, "p1", runtime.Info{InContainer: true, ServiceName: "zcp"}, fixedTime)
+	if err != nil {
+		t.Fatalf("ComputeEnvelope: %v", err)
+	}
+	if len(env.Services) != 2 {
+		t.Fatalf("services = %+v, want apppool and appstage", env.Services)
+	}
+	pool, st := env.Services[0], env.Services[1]
+	if pool.Hostname != "apppool" || pool.RuntimeClass != topology.RuntimePool {
+		t.Fatalf("services[0] = %+v, want the pool", pool)
+	}
+	if !pool.DevIsPool || !pool.Bootstrapped || pool.Mode != "" {
+		t.Errorf("pool snapshot DevIsPool=%v Bootstrapped=%v Mode=%q, want a marked, tracked, modeless pool", pool.DevIsPool, pool.Bootstrapped, pool.Mode)
+	}
+	if pool.StageHostname != "appstage" || pool.StageSetupName != "prod" ||
+		!reflect.DeepEqual(pool.Stages, []topology.StageRef{{Hostname: "appstage", SetupName: "prod"}}) {
+		t.Errorf("pool snapshot stages = %q/%q %+v, want appstage/prod", pool.StageHostname, pool.StageSetupName, pool.Stages)
+	}
+	if pool.HQRepo != "appdev" || pool.HQChange != 7 || pool.HQBranch != "feat-x" {
+		t.Errorf("pool snapshot HQ = %q #%d %q, want the pair's HQ record", pool.HQRepo, pool.HQChange, pool.HQBranch)
+	}
+	if pool.SetupName != "pool" || pool.GitPushState != topology.GitPushConfigured {
+		t.Errorf("pool snapshot setup=%q gitPush=%q, want the pool setup and the pair's git-push state", pool.SetupName, pool.GitPushState)
+	}
+	if st.Mode != topology.ModeStage || st.DevIsPool || st.StageHostname != "" || st.SetupName != "prod" {
+		t.Errorf("stage snapshot = %+v, want the stage half, unmarked", st)
+	}
+
+	wire, err := json.Marshal(env.WithParts(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		Services []map[string]json.RawMessage `json:"services"`
+	}
+	if err := json.Unmarshal(wire, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(decoded.Services[0]["stages"]); got != `[{"hostname":"appstage","setup":"prod"}]` {
+		t.Errorf("the pool's wire stages = %s, want [{appstage prod}]", got)
+	}
+	if _, ok := decoded.Services[1]["stages"]; ok {
+		t.Error("the stage's snapshot carries stages[]")
+	}
+	if strings.Contains(string(wire), "devIsPool") || strings.Contains(string(wire), "DevIsPool") {
+		t.Errorf("the marker rode the wire: %s", wire)
 	}
 }

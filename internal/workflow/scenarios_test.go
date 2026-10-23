@@ -9,6 +9,7 @@
 package workflow
 
 import (
+	"fmt"
 	"slices"
 	"sort"
 	"strings"
@@ -1763,4 +1764,96 @@ func TestScenario_DevPool_FiresOnlyWhenTheProjectHoldsAPool(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestScenario_PoolDevPair_RendersNoContainerWorkOnThePool pins what a pair
+// keyed by its dev pool renders, across idle and develop, both close modes
+// that drive a deploy, both git-push states and a stage deployed or not: no
+// atom binds to the pool except one about pools, no rendered guidance or plan
+// step addresses the pool as a container (deploy, verify, dev server, ssh),
+// the develop session carries the lease guidance, and the stage's deploy
+// step runs from a lease.
+func TestScenario_PoolDevPair_RendersNoContainerWorkOnThePool(t *testing.T) {
+	t.Parallel()
+
+	corpus, err := LoadAtomCorpus()
+	if err != nil {
+		t.Fatalf("LoadAtomCorpus: %v", err)
+	}
+	byID := make(map[string]KnowledgeAtom, len(corpus))
+	for _, a := range corpus {
+		byID[a.ID] = a
+	}
+	containerWork := []string{
+		`targetService="apppool"`, `sourceService="apppool"`, `serviceHostname="apppool"`,
+		`hostname="apppool"`, `ssh apppool`, `/var/www/apppool`, `targetService=apppool`, `sourceService=apppool`,
+	}
+	services := func(closeMode topology.CloseDeployMode, gitPush topology.GitPushState, stageDeployed bool) []ServiceSnapshot {
+		s := poolDevPairServices(closeMode, gitPush)
+		s[0].TypeVersion, s[0].Status, s[0].BuildIntegration = "swarm@1", "ACTIVE", topology.BuildIntegrationNone
+		s[1].TypeVersion, s[1].Status, s[1].BuildIntegration = "nodejs@22", "ACTIVE", topology.BuildIntegrationNone
+		s[1].Deployed = stageDeployed
+		return s
+	}
+	held := &[]LeaseSnapshot{{Alias: "apppool-4", Pool: "apppool", Branch: "feat-x", ContainerHostname: "node-id-4.runtime.apppool.zerops", State: "held"}}
+
+	for _, closeMode := range []topology.CloseDeployMode{topology.CloseModeAuto, topology.CloseModeUnset} {
+		for _, gitPush := range []topology.GitPushState{topology.GitPushUnconfigured, topology.GitPushConfigured} {
+			for _, stageDeployed := range []bool{true, false} {
+				envs := map[string]StateEnvelope{
+					"idle": {Phase: PhaseIdle, Environment: EnvContainer, IdleScenario: IdleBootstrapped,
+						Services: services(closeMode, gitPush, stageDeployed), Leases: held},
+					"develop, stage in scope": {Phase: PhaseDevelopActive, Environment: EnvContainer,
+						Services: services(closeMode, gitPush, stageDeployed), Leases: held, WorkSession: fixSession("appstage")},
+					"develop, pool named in scope": {Phase: PhaseDevelopActive, Environment: EnvContainer,
+						Services: services(closeMode, gitPush, stageDeployed), Leases: held, WorkSession: fixSession("apppool", "appstage")},
+				}
+				for label, env := range envs {
+					label = fmt.Sprintf("%s (close=%s gitPush=%s stageDeployed=%v)", label, closeMode, gitPush, stageDeployed)
+					out, err := Synthesize(env, corpus)
+					if err != nil {
+						t.Fatalf("%s: Synthesize: %v", label, err)
+					}
+					for _, m := range out {
+						if m.Service != nil && m.Service.Hostname == "apppool" && !slices.Contains(byID[m.AtomID].Axes.Runtimes, topology.RuntimePool) {
+							t.Errorf("%s: %s bound to the pool", label, m.AtomID)
+						}
+						for _, needle := range containerWork {
+							if strings.Contains(m.Body, needle) {
+								t.Errorf("%s: %s addresses the pool as a container (%s)", label, m.AtomID, needle)
+							}
+						}
+					}
+					if env.Phase == PhaseDevelopActive {
+						requireAtomIDsContain(t, label, out, "develop-dev-pool")
+					}
+					plan := BuildPlan(env)
+					for _, step := range append([]NextAction{plan.Primary}, perServiceActions(plan)...) {
+						for _, k := range []string{"targetService", "sourceService", "serviceHostname", "hostname"} {
+							if step.Args[k] == "apppool" {
+								t.Errorf("%s: plan step %s %v addresses the pool", label, step.Tool, step.Args)
+							}
+						}
+					}
+					if env.Phase == PhaseDevelopActive && plan.Primary.Tool == "zerops_deploy" && plan.Primary.Args["sourceService"] != "apppool-4" {
+						t.Errorf("%s: the stage deploys from %q, want the lease apppool-4", label, plan.Primary.Args["sourceService"])
+					}
+				}
+			}
+		}
+	}
+}
+
+// perServiceActions returns plan.PerService's actions in hostname order.
+func perServiceActions(plan Plan) []NextAction {
+	hosts := make([]string, 0, len(plan.PerService))
+	for h := range plan.PerService {
+		hosts = append(hosts, h)
+	}
+	sort.Strings(hosts)
+	out := make([]NextAction, 0, len(hosts))
+	for _, h := range hosts {
+		out = append(out, plan.PerService[h])
+	}
+	return out
 }
