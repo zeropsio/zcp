@@ -3,8 +3,10 @@ package ops
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"math"
+	"os"
 	"strings"
 	"testing"
 
@@ -810,5 +812,207 @@ func TestReadBackScale_NothingClampedWhenTheServiceTookEveryValue(t *testing.T) 
 	}
 	if len(result.Clamped) != 0 {
 		t.Errorf("clamped = %q, want none", result.Clamped)
+	}
+}
+
+// swarmSchemaContainerBounds reads a type's minContainers/maxContainers
+// bounds straight from the vendored import schema — the independent oracle
+// for what a pool may be scaled to (spec-workflows.md §8 PS-4).
+func swarmSchemaContainerBounds(t *testing.T, typeName string) (lo, hi int) {
+	t.Helper()
+	raw, err := os.ReadFile("../schema/testdata/import_yml_schema.json")
+	if err != nil {
+		t.Fatalf("read schema: %v", err)
+	}
+	var doc struct {
+		Properties struct {
+			Services struct {
+				Items struct {
+					AllOf []struct {
+						If struct {
+							Properties struct {
+								Type struct {
+									Enum []string `json:"enum"`
+								} `json:"type"`
+							} `json:"properties"`
+						} `json:"if"`
+						Then struct {
+							Properties struct {
+								Min json.RawMessage `json:"minContainers"`
+							} `json:"properties"`
+						} `json:"then"`
+					} `json:"allOf"`
+				} `json:"items"`
+			} `json:"services"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("parse schema: %v", err)
+	}
+	for _, rule := range doc.Properties.Services.Items.AllOf {
+		for _, name := range rule.If.Properties.Type.Enum {
+			if name != typeName {
+				continue
+			}
+			// A stanza that forbids the field carries `false`, not bounds.
+			var bounds struct {
+				Minimum *int `json:"minimum"`
+				Maximum *int `json:"maximum"`
+			}
+			if err := json.Unmarshal(rule.Then.Properties.Min, &bounds); err == nil && bounds.Minimum != nil && bounds.Maximum != nil {
+				return *bounds.Minimum, *bounds.Maximum
+			}
+		}
+	}
+	t.Fatalf("schema has no minContainers bounds for %s", typeName)
+	return 0, 0
+}
+
+func TestScale_Pool_ZeroMinContainers_Accepted(t *testing.T) {
+	t.Parallel()
+
+	for _, poolType := range []string{"swarm@1", "swarm-vm@1"} {
+		lo, hi := swarmSchemaContainerBounds(t, poolType)
+		if lo != 0 || hi != 10 {
+			t.Fatalf("%s schema bounds = %d..%d, spec PS-4 expects 0..10", poolType, lo, hi)
+		}
+		tests := []struct {
+			name     string
+			params   ScaleParams
+			wantSent [2]*int32 // min, max
+			wantErr  bool
+		}{
+			{"zero min", ScaleParams{MinContainers: scaleIntPtr(lo)}, [2]*int32{int32Ptr(int32(lo)), nil}, false},
+			{"zero min, top max", ScaleParams{MinContainers: scaleIntPtr(lo), MaxContainers: scaleIntPtr(hi)}, [2]*int32{int32Ptr(int32(lo)), int32Ptr(int32(hi))}, false},
+			{"max above schema", ScaleParams{MaxContainers: scaleIntPtr(hi + 1)}, [2]*int32{}, true},
+			{"min below schema", ScaleParams{MinContainers: scaleIntPtr(lo - 1)}, [2]*int32{}, true},
+		}
+		for _, tt := range tests {
+			t.Run(poolType+"/"+tt.name, func(t *testing.T) {
+				t.Parallel()
+				client := &scaleCaptureClient{Mock: platform.NewMock().
+					WithServices([]platform.ServiceStack{{
+						ID: "svc-pool", Name: "pool", ProjectID: "proj-1", Status: "RUNNING",
+						ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: poolType},
+					}})}
+
+				res, err := Scale(context.Background(), client, "proj-1", "pool", tt.params)
+				if tt.wantErr {
+					var pe *platform.PlatformError
+					if !errors.As(err, &pe) || pe.Code != platform.ErrInvalidScaling {
+						t.Fatalf("err = %v, want an %s PlatformError", err, platform.ErrInvalidScaling)
+					}
+					if client.sent != nil {
+						t.Errorf("a refused scale reached the platform: %+v", client.sent)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				got := [2]*int32{client.sent.HorizontalMinCount, client.sent.HorizontalMaxCount}
+				for i, name := range []string{"minContainers", "maxContainers"} {
+					switch {
+					case tt.wantSent[i] == nil && got[i] != nil:
+						t.Errorf("%s sent = %d, want it left out", name, *got[i])
+					case tt.wantSent[i] != nil && (got[i] == nil || *got[i] != *tt.wantSent[i]):
+						t.Errorf("%s sent = %v, want %d", name, got[i], *tt.wantSent[i])
+					}
+				}
+				for _, want := range []string{"orchestrator", "maxContainers"} {
+					if !strings.Contains(res.Notice, want) {
+						t.Errorf("notice = %q, want it to contain %q", res.Notice, want)
+					}
+				}
+			})
+		}
+	}
+}
+
+func int32Ptr(v int32) *int32 { return &v }
+
+func TestScale_Box_ContainerCounts_Refused(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		params    ScaleParams
+		wantFirst string
+	}{
+		{"min only", ScaleParams{MinContainers: scaleIntPtr(1)}, "minContainers"},
+		{"max only", ScaleParams{MaxContainers: scaleIntPtr(2)}, "maxContainers"},
+		{"both with vertical", ScaleParams{MinContainers: scaleIntPtr(1), MaxContainers: scaleIntPtr(1), MaxRAM: scaleFloatPtr(4)}, "minContainers"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			client := &scaleCaptureClient{Mock: platform.NewMock().
+				WithServices([]platform.ServiceStack{{
+					ID: "svc-box", Name: "box", ProjectID: "proj-1", Status: "RUNNING",
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/zbox@1"},
+				}})}
+
+			_, err := Scale(context.Background(), client, "proj-1", "box", tt.params)
+			var pe *platform.PlatformError
+			if !errors.As(err, &pe) || pe.Code != platform.ErrInvalidScaling {
+				t.Fatalf("err = %v, want an %s PlatformError", err, platform.ErrInvalidScaling)
+			}
+			for _, want := range []string{"Zerops Box", tt.wantFirst, "single container"} {
+				if !strings.Contains(pe.Message, want) {
+					t.Errorf("message = %q, want it to contain %q", pe.Message, want)
+				}
+			}
+			if client.sent != nil {
+				t.Errorf("a refused scale reached the platform: %+v", client.sent)
+			}
+		})
+	}
+}
+
+func TestScale_Box_VerticalScaling_StillAllowed(t *testing.T) {
+	t.Parallel()
+
+	client := &scaleCaptureClient{Mock: platform.NewMock().
+		WithServices([]platform.ServiceStack{{
+			ID: "svc-box", Name: "box", ProjectID: "proj-1", Status: "RUNNING",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/zbox@1"},
+			CustomAutoscaling: &platform.CustomAutoscaling{
+				MinCPU: 2, MaxCPU: 2, MinRAM: 2, MaxRAM: 2, MinDisk: 10, MaxDisk: 10,
+				HorizontalMinCount: 1, HorizontalMaxCount: 1,
+			},
+		}})}
+
+	if _, err := Scale(context.Background(), client, "proj-1", "box", ScaleParams{MaxRAM: scaleFloatPtr(8)}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if client.sent.VerticalMaxRAM == nil || *client.sent.VerticalMaxRAM != 8 {
+		t.Errorf("maxRam sent = %v, want 8", client.sent.VerticalMaxRAM)
+	}
+	if client.sent.HorizontalMinCount != nil || client.sent.HorizontalMaxCount != nil {
+		t.Errorf("container count sent for a Box: min=%v max=%v", client.sent.HorizontalMinCount, client.sent.HorizontalMaxCount)
+	}
+}
+
+func TestScale_Pool_PartialScaleKeepsZeroMinContainers(t *testing.T) {
+	t.Parallel()
+
+	client := &scaleCaptureClient{Mock: platform.NewMock().
+		WithServices([]platform.ServiceStack{{
+			ID: "svc-pool", Name: "pool", ProjectID: "proj-1", Status: "RUNNING",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1"},
+			CustomAutoscaling: &platform.CustomAutoscaling{
+				MinCPU: 1, MaxCPU: 2, MinRAM: 0.5, MaxRAM: 2,
+				HorizontalMinCount: 0, HorizontalMaxCount: 5,
+			},
+		}})}
+
+	if _, err := Scale(context.Background(), client, "proj-1", "pool", ScaleParams{MaxContainers: scaleIntPtr(3)}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if client.sent.HorizontalMinCount == nil || *client.sent.HorizontalMinCount != 0 {
+		t.Errorf("minContainers sent = %v, want the pool's 0 kept", client.sent.HorizontalMinCount)
+	}
+	if client.sent.HorizontalMaxCount == nil || *client.sent.HorizontalMaxCount != 3 {
+		t.Errorf("maxContainers sent = %v, want 3", client.sent.HorizontalMaxCount)
 	}
 }

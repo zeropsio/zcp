@@ -5,6 +5,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -271,5 +272,64 @@ func TestScaleTool_FinishedScaleReportsTheEffectiveValuesAndNamesTheClamp(t *tes
 	}
 	if len(parsed.Clamped) != 1 || parsed.Clamped[0] != "minRam: asked 8, the platform set 6" {
 		t.Errorf("clamped = %q, want [\"minRam: asked 8, the platform set 6\"]", parsed.Clamped)
+	}
+}
+
+// TestScaleTool_Description_NamesPools: a pool's container counts are not a
+// replica count (they cap what its orchestrator leases out, 0 is valid) and
+// a Box takes none — the description says so before a call is made.
+func TestScaleTool_Description_NamesPools(t *testing.T) {
+	t.Parallel()
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterScale(srv, platform.NewMock(), "proj-1", nil)
+
+	st, ct := mcp.NewInMemoryTransports()
+	ss, err := srv.Connect(t.Context(), st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ss.Close()
+	session, err := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.1"}, nil).Connect(t.Context(), ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	tl, err := session.ListTools(t.Context(), &mcp.ListToolsParams{})
+	if err != nil || len(tl.Tools) != 1 {
+		t.Fatalf("list tools: %v %+v", err, tl)
+	}
+	desc := tl.Tools[0].Description
+	for _, want := range []string{"pool counts (0-10) cap orchestrator leases", "Box takes none"} {
+		if !strings.Contains(desc, want) {
+			t.Errorf("description = %q, want it to contain %q", desc, want)
+		}
+	}
+}
+
+// TestScaleTool_Pool_ResultCarriesTheContainerCountNotice: the result of a
+// pool's container-count change says the count caps the orchestrator and
+// that lowering the maximum can remove containers in use.
+func TestScaleTool_Pool_ResultCarriesTheContainerCountNotice(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{{
+		ID: "svc-pool", Name: "pool", Status: "RUNNING",
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1"},
+	}})
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterScale(srv, mock, "proj-1", nil)
+
+	result := callTool(t, srv, "zerops_scale", map[string]any{"serviceHostname": "pool", "minContainers": 0, "maxContainers": 4})
+	if result.IsError {
+		t.Fatalf("unexpected IsError: %s", getTextContent(t, result))
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &parsed); err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	notice, _ := parsed["notice"].(string)
+	for _, want := range []string{"orchestrator", "Lowering maxContainers below the containers in use can remove them"} {
+		if !strings.Contains(notice, want) {
+			t.Errorf("notice = %q, want it to contain %q", notice, want)
+		}
 	}
 }

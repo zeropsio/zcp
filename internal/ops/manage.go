@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -37,6 +38,7 @@ type ScaleResult struct {
 	Hostname    string            `json:"serviceHostname"`
 	ServiceID   string            `json:"serviceId"`
 	TimedOut    bool              `json:"timedOut,omitempty"`
+	Notice      string            `json:"notice,omitempty"`
 	NextActions string            `json:"nextActions,omitempty"`
 	// Effective is the service's autoscaling read back once the change
 	// landed; Clamped names each requested field the platform set to
@@ -152,9 +154,13 @@ func Scale(ctx context.Context, client platform.Client, projectID, hostname stri
 	if err != nil {
 		return nil, fmt.Errorf("scale: read current autoscaling: %w", err)
 	}
+	serviceType := current.ServiceStackTypeInfo.ServiceStackTypeVersionName
+	if err := validateContainerCounts(serviceType, params); err != nil {
+		return nil, err
+	}
 	apiParams := buildAutoscalingParams(params)
 	fillOmittedAutoscaling(&apiParams, current.CustomAutoscaling,
-		topology.IsManagedService(current.ServiceStackTypeInfo.ServiceStackTypeVersionName))
+		containerCountFixed(serviceType), topology.IsPoolType(serviceType))
 	apiParams.ServiceMode = svc.Mode
 	proc, err := client.SetAutoscaling(ctx, svc.ID, apiParams)
 	if err != nil {
@@ -175,6 +181,9 @@ func Scale(ctx context.Context, client platform.Client, projectID, hostname stri
 	}
 	if proc == nil {
 		result.Message = "Scaling parameters updated"
+	}
+	if topology.IsPoolType(serviceType) && (params.MinContainers != nil || params.MaxContainers != nil) {
+		result.Notice = poolContainerCountNotice
 	}
 
 	return result, nil
@@ -209,8 +218,10 @@ func effectiveAutoscaling(svc *platform.ServiceStack) *platform.CustomAutoscalin
 // the platform default applies. A memory size the platform would refuse as
 // input (more than 3 decimal places) can only be its own default, so it
 // stays out too. A managed service's container count is fixed by its
-// variant, so none is sent for it.
-func fillOmittedAutoscaling(p *platform.AutoscalingParams, cur *platform.CustomAutoscaling, managed bool) {
+// variant, and a Box is a single container, so none is sent for them. A pool
+// may legitimately sit at zero containers, so its zero minimum is sent back
+// whenever the service did return its container counts.
+func fillOmittedAutoscaling(p *platform.AutoscalingParams, cur *platform.CustomAutoscaling, countFixed, pool bool) {
 	if cur == nil {
 		return
 	}
@@ -248,9 +259,13 @@ func fillOmittedAutoscaling(p *platform.AutoscalingParams, cur *platform.CustomA
 		swap := true
 		p.VerticalSwapEnabled = &swap
 	}
-	if !managed {
+	if !countFixed {
 		fillInt(&p.HorizontalMinCount, cur.HorizontalMinCount)
 		fillInt(&p.HorizontalMaxCount, cur.HorizontalMaxCount)
+		if pool && p.HorizontalMinCount == nil && cur.HorizontalMaxCount != 0 {
+			zero := cur.HorizontalMinCount
+			p.HorizontalMinCount = &zero
+		}
 	}
 }
 
@@ -407,6 +422,73 @@ func scaleBoundsConflict(asked ScaleParams, sent platform.AutoscalingParams) err
 		suggestion := fmt.Sprintf("Pass %s no lower than %g, or %s no higher than %g, in the same call.", hi.name, lo.value, lo.name, hi.value)
 		return platform.NewPlatformError(platform.ErrInvalidScaling,
 			fmt.Sprintf("%s is greater than %s", describe(lo), describe(hi)), suggestion)
+	}
+	return nil
+}
+
+// poolContainerCountNotice is what a pool's container counts mean: they are
+// the ceiling of what its orchestrator can lease out, not a replica count.
+const poolContainerCountNotice = "A pool's container count caps how many containers its orchestrator can hand out. " +
+	"Lowering maxContainers below the containers in use can remove them."
+
+// poolContainerBounds is the minContainers..maxContainers range each pool
+// type's own stanza in the import schema allows
+// (internal/schema/testdata/import_yml_schema.json: swarm@1 and swarm-vm@1,
+// separate stanzas). Unlike runtimes, a pool may sit at zero containers.
+// Spec: spec-workflows.md §8 PS-4.
+var poolContainerBounds = map[string][2]int{
+	"swarm":    {0, 10},
+	"swarm-vm": {0, 10},
+}
+
+// poolBaseType is the type name of a pool without its OS prefix and version:
+// `alpine/swarm-vm@1` -> `swarm-vm`.
+func poolBaseType(serviceType string) string {
+	t := strings.ToLower(serviceType)
+	if i := strings.LastIndex(t, "/"); i >= 0 {
+		t = t[i+1:]
+	}
+	base, _, _ := strings.Cut(t, "@")
+	return base
+}
+
+// containerCountFixed reports a service whose container count Scale never
+// sends: a managed service (fixed by its variant) and a Box (one container).
+func containerCountFixed(serviceType string) bool {
+	return topology.IsManagedService(serviceType) || topology.IsSandboxType(serviceType)
+}
+
+// validateContainerCounts applies the type's own container-count rule to
+// what the caller asked for: a Box takes none, a pool stays inside its
+// schema bounds. Every other type is left to the platform, as before.
+func validateContainerCounts(serviceType string, p ScaleParams) error {
+	if p.MinContainers == nil && p.MaxContainers == nil {
+		return nil
+	}
+	switch {
+	case topology.IsSandboxType(serviceType):
+		named := "minContainers"
+		if p.MinContainers == nil {
+			named = "maxContainers"
+		}
+		return platform.NewPlatformError(platform.ErrInvalidScaling,
+			fmt.Sprintf("%s does not apply to a Zerops Box (%s): a Box is a single container", named, serviceType),
+			"Drop minContainers/maxContainers; scale a Box vertically (CPU, RAM, disk) only")
+	case topology.IsPoolType(serviceType):
+		bounds, ok := poolContainerBounds[poolBaseType(serviceType)]
+		if !ok {
+			return nil
+		}
+		for _, f := range []struct {
+			name string
+			v    *int
+		}{{"minContainers", p.MinContainers}, {"maxContainers", p.MaxContainers}} {
+			if f.v != nil && (*f.v < bounds[0] || *f.v > bounds[1]) {
+				return platform.NewPlatformError(platform.ErrInvalidScaling,
+					fmt.Sprintf("%s %d is outside %d..%d, the container range of %s", f.name, *f.v, bounds[0], bounds[1], serviceType),
+					fmt.Sprintf("Use a value from %d to %d (0 is valid for a pool)", bounds[0], bounds[1]))
+			}
+		}
 	}
 	return nil
 }
