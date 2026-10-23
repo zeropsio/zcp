@@ -225,3 +225,36 @@ func TestEnvelopeJSON_NoLeaseString(t *testing.T) {
 		t.Errorf("lease keys = %v, want %v (a lease string has no field)", got, want)
 	}
 }
+
+// TestWithParts_LeaseDevServers: a call that read a lease's supervisor
+// (zerops_dev_server on the alias) carries its servers on that lease —
+// leases[].devServers, keyed by alias — the way a dev service carries its own;
+// a lease the call did not read carries none (no key).
+func TestWithParts_LeaseDevServers(t *testing.T) {
+	t.Parallel()
+
+	env := leasesTestEnvelope(&[]LeaseSnapshot{
+		{Alias: "webpool-3", Pool: "webpool", State: "held"},
+		{Alias: "webpool-4", Pool: "webpool", State: "held"},
+	})
+	read := []topology.DevServerState{{Name: "web", Port: 3000, URL: "https://webpool-29f-8003.ny1.zerops.app", Status: "running"}}
+	out := env.WithParts(map[string][]topology.DevServerState{"webpool-3": read})
+
+	leases := out.LeaseList()
+	if len(leases) != 2 || !slices.Equal(leases[0].DevServers, read) {
+		t.Fatalf("leases = %+v, want webpool-3 carrying the servers read on it", leases)
+	}
+	if leases[1].DevServers != nil {
+		t.Errorf("webpool-4 was not read but carries %+v", leases[1].DevServers)
+	}
+	raw, err := json.Marshal(out)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(raw), `"alias":"webpool-3"`) || !strings.Contains(string(raw), `"devServers":[{"name":"web"`) {
+		t.Errorf("wire lacks leases[].devServers: %s", raw)
+	}
+	if env.LeaseList()[0].DevServers != nil {
+		t.Error("WithParts changed the envelope it was called on")
+	}
+}

@@ -1126,6 +1126,7 @@ The full 1- and 3-part envelopes are the fixtures (§2.8a.7).
 | `alias` | `<pool>-<number>`, the name the lease is addressed by (`zerops_lease`, `zerops_verify`, `zerops_dev_server`, the SSH alias, the mount `/var/www/<pool>-<number>`) |
 | `pool`, `branch` | the pool service's hostname; the branch checked out in the leased container |
 | `containerHostname` | the container's own hostname (`node-id-<n>.runtime.<pool>.zerops`) |
+| `devServers` | present only on a call that read the lease's supervisor (`zerops_dev_server` on the alias): the same `DevServerState` entries a dev service's `devServers[]` carries, the preview server's `url` being the pool's per-port subdomain (`TestWithParts_LeaseDevServers`) |
 | `state` | the reconciled state, verbatim (`held`, `lost`, `unknown-holder`, …) — never enumerated by a reader |
 | `unverified` | `true` when the state is zcp's own last-known record because the pool's orchestrator did not answer |
 
