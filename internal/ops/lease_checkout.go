@@ -480,15 +480,16 @@ func guardLeaseRelease(ctx context.Context, d LeaseDeps, rec leaseRecord) (lease
 // unreachableGuard decides a release whose container ssh could not reach.
 // ssh's 255 does not say the container is gone — an alias that does not
 // resolve, a refused connection and a timeout all read the same — so the
-// orchestrator decides: only a container it no longer holds for this lease is
-// released unchecked (as lost). One it still holds may hold work and is
-// refused, and so is one zcp cannot ask about.
+// orchestrator decides: only a container it no longer holds for this lease —
+// a pool that is gone or being deleted holds none (DP-19) — is released
+// unchecked (as lost); the release then says what became of it. One it still
+// holds may hold work and is refused, and so is one zcp cannot ask about.
 func unreachableGuard(ctx context.Context, d LeaseDeps, rec leaseRecord, sshErr error) (leaseGuardResult, error) {
 	held, err := leaseContainerStillReserved(ctx, d, rec)
 	if err == nil && !held {
 		return leaseGuardResult{
 			unreachable: true,
-			note:        "zcp could not reach the container over ssh and the orchestrator no longer holds it, so it was released without checking for unsaved work",
+			note:        "zcp could not reach the container over ssh and the orchestrator no longer holds it, so it was not checked for unsaved work",
 		}, nil
 	}
 	state := "is still reserved"
@@ -505,8 +506,9 @@ func unreachableGuard(ctx context.Context, d LeaseDeps, rec leaseRecord, sshErr 
 // leaseContainerStillReserved reports whether the pool's orchestrator still
 // lists the record's container as reserved. The pool is read by id — the
 // service search lags writes, and a pool missing from one search is not a
-// pool that is gone; one the direct read no longer finds holds nothing of
-// this lease.
+// pool that is gone; one the direct read no longer finds, or finds being
+// deleted, holds nothing of this lease (leasePoolGoneWhy), and its
+// orchestrator is not asked.
 func leaseContainerStillReserved(ctx context.Context, d LeaseDeps, rec leaseRecord) (bool, error) {
 	svc, err := d.Client.GetService(ctx, rec.PoolServiceID)
 	if err != nil {
@@ -515,6 +517,9 @@ func leaseContainerStillReserved(ctx context.Context, d LeaseDeps, rec leaseReco
 			return false, nil
 		}
 		return false, fmt.Errorf("read pool %s: %w", rec.PoolHostname, err)
+	}
+	if poolDeletionState(svc.Status) != "" {
+		return false, nil
 	}
 	rp, err := orchestratorFor(ctx, d, svc)
 	if err != nil {
@@ -530,6 +535,39 @@ func leaseContainerStillReserved(ctx context.Context, d LeaseDeps, rec leaseReco
 		}
 	}
 	return false, nil
+}
+
+// poolDeletionState names what a pool service's status says of its deletion:
+// "is being deleted" (DELETING), "no longer exists" (DELETED), "" for any
+// status of a pool that is still there. Either way out, its orchestrator
+// holds nothing of a lease any more.
+func poolDeletionState(status string) string {
+	switch status {
+	case "DELETING", "SERVICE_DELETING":
+		return "is being deleted"
+	case "DELETED", "SERVICE_DELETED":
+		return "no longer exists"
+	}
+	return ""
+}
+
+// leasePoolGoneWhy reads the record's pool by id (the service search lags)
+// and says why it holds nothing of the lease any more — the read no longer
+// finds it, or it is deleted or being deleted — or "" when it is still there
+// or the read failed otherwise.
+func leasePoolGoneWhy(ctx context.Context, d LeaseDeps, rec leaseRecord) string {
+	svc, err := d.Client.GetService(ctx, rec.PoolServiceID)
+	if err != nil {
+		var pe *platform.PlatformError
+		if errors.As(err, &pe) && pe.Code == platform.ErrServiceNotFound {
+			return "the pool service no longer exists"
+		}
+		return ""
+	}
+	if state := poolDeletionState(svc.Status); state != "" {
+		return fmt.Sprintf("the pool service %s (status %s)", state, svc.Status)
+	}
+	return ""
 }
 
 // unsavedWorkRefusal refuses the release, naming the work and how to save it.

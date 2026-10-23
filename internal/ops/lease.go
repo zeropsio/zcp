@@ -686,18 +686,30 @@ func joinNotes(notes ...string) string {
 }
 
 // releaseLease releases the container with the orchestrator and drops the
-// record (every successful outcome drops it).
+// record (every successful outcome drops it). A pool that is gone or being
+// deleted holds nothing of the lease: its record is dropped as lost, saying
+// why (DP-19), whichever read tells — the search, or the read by id once the
+// orchestrator could not be reached or asked.
 func releaseLease(ctx context.Context, d LeaseDeps, rec leaseRecord, alias string, reset bool) (LeaseView, error) {
+	gone := func(why string) (LeaseView, error) {
+		return dropLeaseRecord(d.StateDir, rec, LeaseStateLost, why+", so there was nothing to release; the record is dropped")
+	}
 	rp, err := resolvePool(ctx, d, rec.PoolHostname)
 	if err != nil {
 		var pe *platform.PlatformError
 		if errors.As(err, &pe) && pe.Code == platform.ErrServiceNotFound {
-			return dropLeaseRecord(d.StateDir, rec, LeaseStateLost, "the pool service no longer exists, so there was nothing to release; the record is dropped")
+			return gone("the pool service no longer exists")
+		}
+		if why := leasePoolGoneWhy(ctx, d, rec); why != "" {
+			return gone(why)
 		}
 		return LeaseView{}, err
 	}
 	if rp.svc.ID != rec.PoolServiceID {
 		return dropLeaseRecord(d.StateDir, rec, LeaseStateLost, "the pool was re-created since this lease was taken, so there was nothing to release; the record is dropped")
+	}
+	if state := poolDeletionState(rp.svc.Status); state != "" {
+		return gone(fmt.Sprintf("the pool service %s (status %s)", state, rp.svc.Status))
 	}
 	if _, err := rp.api.Release(ctx, rec.ContainerID, rec.Lease, reset); err != nil {
 		var se *platform.SwarmError
@@ -707,6 +719,13 @@ func releaseLease(ctx context.Context, d LeaseDeps, rec leaseRecord, alias strin
 		}
 		if errors.As(err, &se) && (se.Reason == "unknown-lease" || se.Reason == "container-not-found") {
 			return dropLeaseRecord(d.StateDir, rec, LeaseStateLost, "the orchestrator no longer held this container for this lease, so there was nothing to release; the record is dropped")
+		}
+		// An orchestrator that could not be reached may be one of a pool
+		// deleted since the search was read.
+		if !errors.As(err, &se) {
+			if why := leasePoolGoneWhy(ctx, d, rec); why != "" {
+				return gone(why)
+			}
 		}
 		return LeaseView{}, leaseOrchestratorError(ctx, d, rp, "release "+alias, err)
 	}
