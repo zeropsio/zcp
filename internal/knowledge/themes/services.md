@@ -232,6 +232,27 @@ const nc = await connect({ servers: process.env.NATS_URL });
 **SECRETS**: `TYPESENSE_API_KEY: ${typesense_apiKey}`
 **CONN**: `http://typesense:${typesense_port}` with `x-typesense-api-key` header
 
+## Pools and Box
+
+Read this when an app needs a Swarm pool or a Zerops Box. Either is infrastructure the app uses — never the app's own runtime, and neither is a managed database.
+
+### Swarm pool
+
+**Type**: `swarm@1` (also `swarm-vm@1`). A pool is a service of up to 10 containers that its orchestrator hands out.
+**Import**: `minContainers` / `maxContainers` between 0 and 10, plus `verticalAutoscaling`.
+**Image**: comes from the app's zerops.yml setup, deployed with `zcli push`; `run.base` is the language base (e.g. `python@3.12`). A deploy reaches only the containers created after it.
+**Orchestrator**: answers at `http://orch.<pool>.zerops`. An app service authenticates with the env reference `${<pool>_API_TOKEN}`; a call without it gets `401`.
+**Acquire**: `POST /container/acquire` with `start`, `clean`, `leaseTtlSeconds` (`0` = the lease never expires). The lease it returns must accompany every later call for that container — as the `X-Swarm-Lease` header or the `lease` query parameter.
+**Release**: `release` frees the container; `reset=true` also restores the container's primary snapshot. A lease that expires frees its container silently.
+**Exec**: `POST /container/{id}/exec` — the output streams as NDJSON, one command at a time.
+**Clean**: a `clean` acquire resets a container that was used before — its `/var/www` comes back empty. Files the image put elsewhere through `run.prepareCommands` survive.
+**Removals**: container removals run one at a time.
+**Addressing**: each container answers on its own hostname `node-id-<n>.runtime.<pool>.zerops`. SSH into pool containers follows the pool's `sshIsolation`, set as a service env variable. A per-port subdomain routes to the containers listening on that port.
+
+### Zerops Box
+
+**Type**: `ubuntu/zbox@1` — a single container (the import schema takes no container counts for it), in beta. It hosts sandboxes. It is not a zerops.yml `run.base`. Creation can fail on hardware capacity.
+
 ## Common Patterns
 
 - **Deployment variant**: HA vs single is the type variant (`<svc>:ha` / `<svc>:single`), immutable. Legacy `mode: NON_HA`/`HA` still accepted (≡ `:single`/`:ha`) but deprecated.
