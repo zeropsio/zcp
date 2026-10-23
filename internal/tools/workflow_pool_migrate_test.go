@@ -16,6 +16,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/schema"
@@ -23,14 +24,14 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// poolMigrateSSH answers the dev service's worktree list and records every
-// command it is asked to run, so a test can prove the read side ran only
-// read-only git.
+// poolMigrateSSH answers the dev service's census with output and records
+// every command it is asked to run, so a test can prove the read side ran
+// only the read-only census.
 type poolMigrateSSH struct {
-	mu        sync.Mutex
-	worktrees string
-	err       error
-	commands  []string
+	mu       sync.Mutex
+	output   string
+	err      error
+	commands []string
 }
 
 func (s *poolMigrateSSH) ExecSSH(_ context.Context, hostname, command string) ([]byte, error) {
@@ -40,7 +41,7 @@ func (s *poolMigrateSSH) ExecSSH(_ context.Context, hostname, command string) ([
 	if s.err != nil {
 		return nil, s.err
 	}
-	return []byte(s.worktrees), nil
+	return []byte(s.output), nil
 }
 
 func (s *poolMigrateSSH) ExecSSHBackground(_ context.Context, hostname, command string, _ time.Duration) ([]byte, error) {
@@ -56,7 +57,61 @@ func (s *poolMigrateSSH) recorded() []string {
 	return slices.Clone(s.commands)
 }
 
-const poolMigrateMainTreeOnly = "worktree /var/www\nHEAD 1111111111111111111111111111111111111111\nbranch refs/heads/main\n"
+const poolMigrateHead = "1111111111111111111111111111111111111111"
+
+// poolMigrateCensusFor is what the census prints for a dev service whose main
+// checkout at /var/www is on branch (detached for ""), tracking
+// remote/remoteBranch when remote is set, with nothing unsaved; worktrees adds
+// linked worktrees in `git worktree list --porcelain` form and extra adds
+// census lines.
+func poolMigrateCensusFor(branch, remote, remoteBranch, worktrees string, extra ...string) string {
+	var b strings.Builder
+	b.WriteString("zcp-census 1\n")
+	porcelain := "worktree /var/www\nHEAD " + poolMigrateHead + "\n"
+	if branch == "" {
+		porcelain += "detached\n"
+	} else {
+		porcelain += "branch refs/heads/" + branch + "\n"
+	}
+	if worktrees != "" {
+		porcelain += "\n" + worktrees
+	}
+	for line := range strings.SplitSeq(strings.TrimRight(porcelain, "\n"), "\n") {
+		b.WriteString("W " + line + "\n")
+	}
+	head := "(detached)"
+	if branch != "" {
+		head = branch
+		upstream := ""
+		if remote != "" {
+			upstream = remote + "\trefs/heads/" + remoteBranch
+		} else {
+			upstream = "\t"
+		}
+		b.WriteString("B refs/heads/" + branch + "\t" + upstream + "\n")
+		b.WriteString("U refs/heads/" + branch + "\t0\n")
+	} else {
+		b.WriteString("D " + poolMigrateHead + "\t0\n")
+	}
+	b.WriteString("RN 0\n")
+	b.WriteString("T /var/www\nTS # branch.oid " + poolMigrateHead + "\nTS # branch.head " + head + "\n")
+	if remote != "" {
+		b.WriteString("TS # branch.upstream " + remote + "/" + remoteBranch + "\nTS # branch.ab +0 -0\n")
+	}
+	for _, line := range extra {
+		b.WriteString(line + "\n")
+	}
+	b.WriteString("zcp-census-end\n")
+	return b.String()
+}
+
+// poolMigrateCleanCensus is a dev service whose main checkout is on main,
+// pushed, with nothing unsaved and no linked worktree.
+func poolMigrateCleanCensus() string {
+	return poolMigrateCensusFor("main", "origin", "main", "")
+}
+
+const poolMigrateCrewAda = "worktree /var/www/.crew/ada\nHEAD 2222222222222222222222222222222222222222\nbranch refs/heads/crew/ada\n"
 
 func poolMigrateRuntime(hostname, id string) platform.ServiceStack {
 	return platform.ServiceStack{
@@ -117,7 +172,7 @@ func newPoolMigrateFixture() poolMigrateFixture {
 			poolMigrateRuntime("appdev", "svc-dev"),
 			poolMigrateRuntime("appstage", "svc-stage"),
 		},
-		ssh:   &poolMigrateSSH{worktrees: poolMigrateMainTreeOnly},
+		ssh:   &poolMigrateSSH{output: poolMigrateCleanCensus()},
 		rt:    runtime.Info{InContainer: true, ServiceName: "zcp"},
 		input: WorkflowInput{Workflow: "pool-migrate", Service: "appdev"},
 	}
@@ -462,9 +517,9 @@ func TestPoolMigrate_NotACandidate_Refused(t *testing.T) {
 		{
 			name: "crew worktrees",
 			mutate: func(f *poolMigrateFixture) {
-				f.ssh.worktrees = poolMigrateMainTreeOnly +
-					"\nworktree /var/www/.crew/ada\nHEAD 2222222222222222222222222222222222222222\nbranch refs/heads/crew/ada\n" +
-					"\nworktree /var/www/.crew/bob\nHEAD 3333333333333333333333333333333333333333\ndetached\nprunable gitdir file points to non-existent location\n"
+				f.ssh.output = poolMigrateCensusFor("main", "origin", "main", poolMigrateCrewAda+
+					"\nworktree /var/www/.crew/bob\nHEAD 3333333333333333333333333333333333333333\ndetached\nprunable gitdir file points to non-existent location\n",
+					"T /var/www/.crew/ada", "TS # branch.head crew/ada", "T /var/www/.crew/bob", "TM")
 			},
 			wantReason: "crew-worktrees",
 			wantInMsg:  []string{"appdev", "ada", "bob"},
@@ -476,6 +531,14 @@ func TestPoolMigrate_NotACandidate_Refused(t *testing.T) {
 			},
 			wantReason: "dev-unreadable",
 			wantInMsg:  []string{"appdev", "not a git repository"},
+		},
+		{
+			name: "census could not finish",
+			mutate: func(f *poolMigrateFixture) {
+				f.ssh.output = "zcp-census 1\nfatal: index file corrupt\nzcp-census-error status /var/www\nzcp-census-end\n"
+			},
+			wantReason: "dev-unreadable",
+			wantInMsg:  []string{"appdev", "index file corrupt"},
 		},
 		{
 			name:       "not adopted",
@@ -638,7 +701,7 @@ func TestPoolMigrate_ReadSideWritesNothing(t *testing.T) {
 			f.services = append(f.services, poolMigratePool("apppool", "svc-pool"))
 		}},
 		{name: "crew refusal", mutate: func(f *poolMigrateFixture) {
-			f.ssh.worktrees = poolMigrateMainTreeOnly + "\nworktree /var/www/.crew/ada\nHEAD 2222222222222222222222222222222222222222\nbranch refs/heads/crew/ada\n"
+			f.ssh.output = poolMigrateCensusFor("main", "origin", "main", poolMigrateCrewAda, "T /var/www/.crew/ada", "TS # branch.head crew/ada")
 		}},
 	}
 	for _, tt := range tests {
@@ -668,10 +731,10 @@ func TestPoolMigrate_ReadSideWritesNothing(t *testing.T) {
 			}
 			cmds := f.ssh.recorded()
 			if len(cmds) != 1 {
-				t.Fatalf("ssh commands = %v, want exactly the worktree read", cmds)
+				t.Fatalf("ssh commands = %v, want exactly the census", cmds)
 			}
-			if want := "appdev: git -C '/var/www' worktree list --porcelain"; cmds[0] != want {
-				t.Fatalf("ssh command = %q, want %q", cmds[0], want)
+			if want := "appdev: " + ops.PoolMigrateCensusCommand("/var/www"); cmds[0] != want {
+				t.Fatalf("ssh command = %q, want the census %q", cmds[0], want)
 			}
 		})
 	}
@@ -730,5 +793,197 @@ func TestPoolMigrate_Dispatch_ReachesTheFlow(t *testing.T) {
 		if out["workflow"] != "pool-migrate" || out["step"] != "provision" {
 			t.Fatalf("args %v: workflow/step = %v/%v", args, out["workflow"], out["step"])
 		}
+	}
+}
+
+// poolMigrateUnsavedCensus is a dev service holding one of each kind of
+// unsaved work in its main checkout and repository.
+func poolMigrateUnsavedCensus() string {
+	return poolMigrateCensusFor("main", "origin", "main", "",
+		"B refs/heads/feat\t\t",
+		"U refs/heads/feat\t2",
+		"S stash@{0}\t4444444444444444444444444444444444444444\tOn main: wip",
+		"RN 1",
+		"RS 5555555555555555555555555555555555555555\treset away",
+		"X refs/t3/checkpoints/thread-1/turn/1",
+		"TS 1 M. N... 100644 100644 100644 aaaa bbbb lib.txt",
+		"TS 1 .M N... 100644 100644 100644 aaaa cccc app.txt",
+		"TS ? notes/",
+		"TS ? .env.local",
+		"TE .env.local",
+		"TI node_modules/",
+	)
+}
+
+// TestPoolMigrate_Census_Rendered pins that every step of a candidate carries
+// the census of the dev service's unsaved work, each item named, with the move
+// step's guidance on how to move it.
+func TestPoolMigrate_Census_Rendered(t *testing.T) {
+	t.Parallel()
+	for _, step := range []string{"provision", "env"} {
+		t.Run(step, func(t *testing.T) {
+			t.Parallel()
+			f := newPoolMigrateFixture()
+			f.ssh.output = poolMigrateUnsavedCensus()
+			if step == "env" {
+				f.services = append(f.services, poolMigratePool("apppool", "svc-pool"))
+			}
+			out, _ := f.run(t)
+			if out["step"] != step {
+				t.Fatalf("step = %v, want %s; refusals %v", out["step"], step, out["refusals"])
+			}
+			census, ok := out["census"].(map[string]any)
+			if !ok {
+				t.Fatalf("no census in %v", out)
+			}
+			if census["clean"] != false {
+				t.Errorf("census clean = %v, want false", census["clean"])
+			}
+			text, _ := json.Marshal(census)
+			for _, want := range []string{
+				`"path":"/var/www"`, `"branch":"main"`,
+				`"staged":{"count":1,"paths":["lib.txt"]}`,
+				`"modified":{"count":1,"paths":["app.txt"]}`,
+				`"untracked":{"count":1,"paths":["notes/"]}`,
+				`"envFiles":[".env.local"]`,
+				`"ignored":{"count":1,"paths":["node_modules/"]}`,
+				`"branches":[{"name":"feat","unpushed":2}]`,
+				`"ref":"stash@{0}"`, `"message":"On main: wip"`,
+				`"subject":"reset away"`,
+				`"t3Refs":{"checkpoints":1}`,
+			} {
+				if !strings.Contains(string(text), want) {
+					t.Errorf("census lacks %s:\n%s", want, text)
+				}
+			}
+			if reflog, _ := census["reflogOnly"].(map[string]any); reflog["count"] != float64(1) {
+				t.Errorf("reflogOnly = %v, want a count of 1", census["reflogOnly"])
+			}
+			guidance, _ := out["guidance"].(string)
+			if !strings.Contains(guidance, "### Move a part's work") {
+				t.Errorf("guidance does not carry the move step's atom:\n%s", guidance)
+			}
+		})
+	}
+}
+
+func TestPoolMigrate_Census_CleanDevSaysSo(t *testing.T) {
+	t.Parallel()
+	f := newPoolMigrateFixture()
+	out, _ := f.run(t)
+	census, _ := out["census"].(map[string]any)
+	if census["clean"] != true {
+		t.Fatalf("census = %v, want clean", census)
+	}
+}
+
+func TestPoolMigrate_WorkBranch_FromChangeCurrentOrUpstream(t *testing.T) {
+	t.Parallel()
+	inMate := func(f *poolMigrateFixture) {
+		f.rt.MateEnabled = true
+		f.meta.GitPushState = ""
+		f.meta.RemoteURL = ""
+		f.meta.HQ = &workflow.HQRepoRef{AppID: "app-1", Repo: "appdev"}
+	}
+	tests := []struct {
+		name        string
+		mutate      func(*poolMigrateFixture)
+		wantBranch  string
+		wantSource  string
+		wantMissing []string
+	}{
+		{
+			name: "in a Mate, the open change's branch",
+			mutate: func(f *poolMigrateFixture) {
+				inMate(f)
+				f.meta.HQ.Change, f.meta.HQ.Branch = 7, "fix-login"
+				f.ssh.output = poolMigrateCensusFor("feat", "origin", "feat", "")
+			},
+			wantBranch: "fix-login", wantSource: "change",
+		},
+		{
+			name: "in a Mate without a change, the current branch of its own",
+			mutate: func(f *poolMigrateFixture) {
+				inMate(f)
+				f.ssh.output = poolMigrateCensusFor("feat", "", "", "")
+			},
+			wantBranch: "feat", wantSource: "current",
+		},
+		{
+			name: "in a Mate on main",
+			mutate: func(f *poolMigrateFixture) {
+				inMate(f)
+			},
+			wantMissing: []string{`"main"`, "git switch -c"},
+		},
+		{
+			name: "in a Mate on the Mate's own branch",
+			mutate: func(f *poolMigrateFixture) {
+				inMate(f)
+				f.ssh.output = poolMigrateCensusFor("mate/proj-1", "origin", "mate/proj-1", "")
+			},
+			wantMissing: []string{`"mate/proj-1"`, "git switch -c"},
+		},
+		{
+			name: "outside a Mate, the current branch's upstream on origin",
+			mutate: func(f *poolMigrateFixture) {
+				f.ssh.output = poolMigrateCensusFor("work", "origin", "feature-x", "")
+			},
+			wantBranch: "feature-x", wantSource: "upstream",
+		},
+		{
+			name: "outside a Mate, a branch with no upstream",
+			mutate: func(f *poolMigrateFixture) {
+				f.ssh.output = poolMigrateCensusFor("feat", "", "", "")
+			},
+			wantMissing: []string{`"feat"`, "git push -u origin feat"},
+		},
+		{
+			name: "outside a Mate, an upstream on another remote",
+			mutate: func(f *poolMigrateFixture) {
+				f.ssh.output = poolMigrateCensusFor("feat", "fork", "feat", "")
+			},
+			wantMissing: []string{"fork/feat", "origin", "git push -u origin feat"},
+		},
+		{
+			name: "a detached checkout",
+			mutate: func(f *poolMigrateFixture) {
+				f.ssh.output = poolMigrateCensusFor("", "", "", "")
+			},
+			wantMissing: []string{"no branch", "git switch -c"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f := newPoolMigrateFixture()
+			tt.mutate(&f)
+			out, _ := f.run(t)
+			if out["status"] != "step" {
+				t.Fatalf("status = %v, want step; refusals %v", out["status"], out["refusals"])
+			}
+			wb, ok := out["workBranch"].(map[string]any)
+			if !ok {
+				t.Fatalf("no workBranch in %v", out)
+			}
+			if tt.wantBranch != "" {
+				if wb["branch"] != tt.wantBranch || wb["source"] != tt.wantSource {
+					t.Fatalf("workBranch = %v, want %s from %s", wb, tt.wantBranch, tt.wantSource)
+				}
+				if _, has := wb["missing"]; has {
+					t.Errorf("a named work's branch carries missing: %v", wb)
+				}
+				return
+			}
+			if _, has := wb["branch"]; has {
+				t.Fatalf("workBranch = %v, want none named", wb)
+			}
+			missing, _ := wb["missing"].(string)
+			for _, want := range tt.wantMissing {
+				if !strings.Contains(missing, want) {
+					t.Errorf("missing %q does not name %q", missing, want)
+				}
+			}
+		})
 	}
 }

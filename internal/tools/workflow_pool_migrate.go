@@ -88,8 +88,23 @@ const (
 	poolMigrateMaxContainers = 3
 )
 
-// poolMigrateAtomID is the atom carrying the flow's guidance.
-const poolMigrateAtomID = "pool-migrate-plan"
+// The atoms carrying the flow's guidance: the plan on every answer, and the
+// move step's on every answer that carries the census.
+const (
+	poolMigrateAtomID     = "pool-migrate-plan"
+	poolMigrateMoveAtomID = "pool-migrate-move"
+)
+
+// poolMigrateOrigin is the remote a lease of the pool clones: the dev
+// service's origin.
+const poolMigrateOrigin = "origin"
+
+// Where the work's branch comes from (docs/spec-workflows.md §13 PM-2).
+const (
+	poolMigrateWorkFromChange   = "change"
+	poolMigrateWorkFromCurrent  = "current"
+	poolMigrateWorkFromUpstream = "upstream"
+)
 
 // poolMigrateCrewRoot is where a crew lane's linked worktree lives on a dev
 // service: `/var/www/.crew/<handle>`.
@@ -109,11 +124,15 @@ type poolMigrateResponse struct {
 	Steps []poolMigrateStepState `json:"steps,omitempty"`
 	Next  *poolMigrateNext       `json:"next,omitempty"`
 	// NextUnavailable says why a step names no next call.
-	NextUnavailable string               `json:"nextUnavailable,omitempty"`
-	Refusals        []poolMigrateRefusal `json:"refusals,omitempty"`
-	Warnings        []string             `json:"warnings,omitempty"`
-	Guidance        string               `json:"guidance"`
-	Inputs          poolMigrateInputs    `json:"inputs"`
+	NextUnavailable string `json:"nextUnavailable,omitempty"`
+	// Census is the dev service's unsaved work, read on every step.
+	Census *ops.PoolMigrateCensus `json:"census,omitempty"`
+	// WorkBranch is the branch a lease of the pool checks out.
+	WorkBranch *poolMigrateWorkBranch `json:"workBranch,omitempty"`
+	Refusals   []poolMigrateRefusal   `json:"refusals,omitempty"`
+	Warnings   []string               `json:"warnings,omitempty"`
+	Guidance   string                 `json:"guidance"`
+	Inputs     poolMigrateInputs      `json:"inputs"`
 }
 
 type poolMigrateStepState struct {
@@ -133,6 +152,15 @@ type poolMigrateRefusal struct {
 	Recovery *topology.Recovery `json:"recovery,omitempty"`
 }
 
+// poolMigrateWorkBranch is the work's branch: the branch on the origin a lease
+// of the pool checks out, and where it comes from — or, in Missing, why none is
+// named yet and what names one.
+type poolMigrateWorkBranch struct {
+	Branch  string `json:"branch,omitempty"`
+	Source  string `json:"source,omitempty"`
+	Missing string `json:"missing,omitempty"`
+}
+
 // poolMigrateInputs echoes what the next call passes again.
 type poolMigrateInputs struct {
 	Service string `json:"service"`
@@ -142,9 +170,10 @@ type poolMigrateInputs struct {
 // handlePoolMigrate is the read side of workflow="pool-migrate": it names the
 // part's current step from direct reads only — the service list and process
 // list a just-made import cannot be missing from — renders the pool stanza
-// for the provision step, and refuses a non-candidate with every reason it
-// finds. It writes nothing: no state file, no meta, no env, no ref; the one
-// SSH call is a read-only git worktree list on the dev service.
+// for the provision step, carries the census of the dev service's unsaved
+// work and the work's branch on every step, and refuses a non-candidate with
+// every reason it finds. It writes nothing: no state file, no meta, no env, no
+// ref; the one SSH call is the census, read-only git on the dev service.
 func handlePoolMigrate(
 	ctx context.Context,
 	projectID string,
@@ -250,18 +279,24 @@ func handlePoolMigrate(
 		return poolMigrateRefused(resp, refusals...), nil, nil
 	}
 
-	crew, err := readCrewWorktrees(ctx, sshDeployer, dev)
+	census, err := ops.ReadPoolMigrateCensus(ctx, sshDeployer, dev, topology.CodeMountRoot)
 	if err != nil {
 		return poolMigrateRefused(resp, poolMigrateRefusal{
 			Reason:  poolMigrateRefuseDevUnreadable,
-			Message: withSSHStderr("could not read "+dev+"'s git worktrees over SSH", err) + ". A dev service the flow cannot read does not move: what it holds would be unknown.",
+			Message: withSSHStderr("could not read "+dev+"'s repository over SSH", err) + ". A dev service the flow cannot read does not move: what it holds would be unknown.",
 		}), nil, nil
 	}
-	if len(crew) > 0 {
+	if crew := poolMigrateCrewHandles(census); len(crew) > 0 {
 		return poolMigrateRefused(resp, poolMigrateRefusal{
 			Reason:  poolMigrateRefuseCrewWorktrees,
 			Message: fmt.Sprintf("%s holds crew worktrees (%s). Crew lanes stay on a plain dev service until crewmates work on leases of a pool, so it does not move onto one; nothing was changed.", dev, strings.Join(crew, ", ")),
 		}), nil, nil
+	}
+
+	resp.Census = census
+	resp.WorkBranch = poolMigrateWorkBranchOf(meta, census, rt)
+	if move := atomBody(corpus, poolMigrateMoveAtomID); move != "" {
+		resp.Guidance += "\n\n" + move
 	}
 
 	poolSvc, poolLive := byName[pool]
@@ -380,21 +415,13 @@ func poolMigrateDefaultPool(dev string) string {
 	return stem + poolMigratePoolSuffix
 }
 
-// readCrewWorktrees lists the crew lanes a dev service holds: every linked
-// worktree registered under /var/www/.crew/, a missing (prunable) one
-// included, by handle. A read-only git call.
-func readCrewWorktrees(ctx context.Context, sshDeployer ops.SSHDeployer, dev string) ([]string, error) {
-	out, err := sshDeployer.ExecSSH(ctx, dev, "git -C "+ops.ShellQuote(topology.CodeMountRoot)+" worktree list --porcelain")
-	if err != nil {
-		return nil, fmt.Errorf("list worktrees: %w", err)
-	}
+// poolMigrateCrewHandles names the crew lanes a dev service holds: every
+// linked worktree registered under /var/www/.crew/, a missing (prunable) one
+// included, by handle.
+func poolMigrateCrewHandles(census *ops.PoolMigrateCensus) []string {
 	var handles []string
-	for line := range strings.SplitSeq(string(out), "\n") {
-		path, ok := strings.CutPrefix(strings.TrimSpace(line), "worktree ")
-		if !ok {
-			continue
-		}
-		rest, ok := strings.CutPrefix(path, poolMigrateCrewRoot)
+	for _, t := range census.Trees {
+		rest, ok := strings.CutPrefix(t.Path, poolMigrateCrewRoot)
 		if !ok {
 			continue
 		}
@@ -404,7 +431,40 @@ func readCrewWorktrees(ctx context.Context, sshDeployer ops.SSHDeployer, dev str
 		}
 	}
 	sort.Strings(handles)
-	return handles, nil
+	return handles
+}
+
+// poolMigrateWorkBranchOf names the work's branch — what a lease of the pool
+// checks out from the origin (docs/spec-workflows.md §13 PM-2): in a Mate the
+// open change's branch, else the dev checkout's own branch when HQ takes a
+// push to it; outside a Mate the dev checkout's branch's upstream on origin.
+// Where none is named yet, Missing says what names one.
+func poolMigrateWorkBranchOf(meta *workflow.ServiceMeta, census *ops.PoolMigrateCensus, rt runtime.Info) *poolMigrateWorkBranch {
+	if rt.MateEnabled && meta.HQ != nil && meta.HQ.Change != 0 && meta.HQ.Branch != "" {
+		return &poolMigrateWorkBranch{Branch: meta.HQ.Branch, Source: poolMigrateWorkFromChange}
+	}
+	var main ops.PoolMigrateTree
+	if len(census.Trees) > 0 {
+		main = census.Trees[0]
+	}
+	branch := main.Branch
+	if branch == "" {
+		return &poolMigrateWorkBranch{Missing: "the dev service's checkout is on no branch (a detached HEAD), so a lease has none to check out: put the work on a branch of your own (`git switch -c <branch>`) and push it (`git push -u origin <branch>`)."}
+	}
+	if rt.MateEnabled {
+		if branch == hqBase || strings.HasPrefix(branch, "mate/") {
+			return &poolMigrateWorkBranch{Missing: fmt.Sprintf("the dev service's checkout is on %q, a branch HQ takes no push to: %q moves only by a person's merge, and a mate/ branch only as an open change's. Move the work onto a branch of your own (`git switch -c <branch>`) and push it (`git push -u origin <branch>`).", branch, hqBase)}
+		}
+		return &poolMigrateWorkBranch{Branch: branch, Source: poolMigrateWorkFromCurrent}
+	}
+	switch up := main.Upstream; {
+	case up == nil:
+		return &poolMigrateWorkBranch{Missing: fmt.Sprintf("the dev service's checkout is on %q, which tracks no branch on origin, so a lease has none to check out: push it (`git push -u origin %s`).", branch, branch)}
+	case up.Remote != poolMigrateOrigin:
+		return &poolMigrateWorkBranch{Missing: fmt.Sprintf("the dev service's checkout is on %q, which tracks %s/%s, and a lease clones origin: push it there (`git push -u origin %s`).", branch, up.Remote, up.Branch, branch)}
+	default:
+		return &poolMigrateWorkBranch{Branch: up.Branch, Source: poolMigrateWorkFromUpstream}
+	}
 }
 
 // poolStanzaDoc is the provision step's import: the part's pool alone.
