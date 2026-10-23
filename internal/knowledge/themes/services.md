@@ -247,6 +247,7 @@ Read this when an app needs a Swarm pool or a Zerops Box. Either is infrastructu
 **Exec**: `POST /container/{id}/exec` — the output streams as NDJSON, one command at a time.
 **Clean**: a `clean` acquire resets a container that was used before — its `/var/www` comes back empty. Files the image put elsewhere through `run.prepareCommands` survive.
 **Removals**: container removals run one at a time.
+**Env**: env variables set on the pool service reach its containers (a running process keeps the env it started with); the pool's own `API_TOKEN` does not.
 **Addressing**: each container answers on its own hostname `node-id-<n>.runtime.<pool>.zerops`. SSH into pool containers follows the pool's `sshIsolation`, set as a service env variable. A per-port subdomain routes to the containers listening on that port.
 
 ### Zerops Box
