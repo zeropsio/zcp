@@ -239,7 +239,7 @@ Read this when an app needs a Swarm pool or a Zerops Box. Either is infrastructu
 ### Swarm pool
 
 **Type**: `swarm@1` (also `swarm-vm@1`). A pool is a service of up to 10 containers that its orchestrator hands out.
-**Import**: `minContainers` / `maxContainers` between 0 and 10, plus `verticalAutoscaling`.
+**Import**: `minContainers` / `maxContainers` between 0 and 10 (a higher maximum is capped at 10), plus `verticalAutoscaling`.
 **Image**: comes from the app's zerops.yml setup, deployed with `zcli push`; `run.base` is the language base (e.g. `python@3.12`). A deploy reaches only the containers created after it.
 **Orchestrator**: answers at `http://orch.<pool>.zerops`. An app service authenticates with the env reference `${<pool>_API_TOKEN}`; a call without it gets `401`.
 **Tokens**: the pool's `API_TOKEN` (the bearer of every orchestrator call) and `ADMIN_TOKEN` (sent in the `X-Swarm-Admin-Token` header, only to take a container from its holder) are generated with the pool. Both are secrets: an app wires `API_TOKEN` by reference in its `run.envVariables` — `POOL_TOKEN: ${<pool>_API_TOKEN}` — and never copies the value into code, a file or another variable.
@@ -248,8 +248,12 @@ Read this when an app needs a Swarm pool or a Zerops Box. Either is infrastructu
 **Exec**: `POST /container/{id}/exec` — the output streams as NDJSON, one command at a time.
 **Clean**: a `clean` acquire resets a container that was used before — its `/var/www` comes back empty. Files the image put elsewhere through `run.prepareCommands` survive.
 **Removals**: container removals run one at a time.
+**Full pool**: when every container that can serve an acquire is leased and the pool holds its maximum, an acquire (or `POST /container/run`) is refused at once with reason `all-reserved` — nothing is queued and nothing created; it succeeds only after a release. A container freed with `reset=true` is handed out again at once; an empty pool creates one in about 10 s, and simultaneous acquires create one container at a time.
+**Lowering the maximum**: setting `maxContainers` below the containers the pool holds deletes the highest-numbered ones within about 30 s, leased ones included, with their `/var/www`; their leases then answer `container-not-found`.
+**Stop**: a stopped pool's orchestrator does not answer. A restart, or a stop and start, keeps every container's id, number, hostname and lease, its `/var/www` and `/home/zerops`; processes and `/tmp` are lost.
 **Env**: env variables set on the pool service reach its containers, including leased ones for processes started after the change; the pool's own `API_TOKEN` does not.
-**Addressing**: each container answers on its own hostname `node-id-<n>.runtime.<pool>.zerops`. SSH into pool containers follows the pool's `sshIsolation`, set as a service env variable. A per-port subdomain routes to the containers listening on that port.
+**Isolation**: never set `envIsolation: none` on a pool — every service of the project would get its `ADMIN_TOKEN` and `API_TOKEN`. A service that needs the pool's token references it under a different name (`POOL_TOKEN: ${<pool>_API_TOKEN}`). A variable named `<pool>_API_TOKEN` holding `${<pool>_API_TOKEN}` stays the literal text, and while it exists every other reference to that name on the service does too.
+**Addressing**: each container answers on its own hostname `node-id-<n>.runtime.<pool>.zerops`, from anywhere in the project, on every port it listens on; `run.ports` governs only the public subdomain. SSH into pool containers follows the pool's `sshIsolation`, set as a service env variable. A per-port subdomain routes to the containers listening on that port.
 
 ### A part's dev pool
 
@@ -274,6 +278,7 @@ services:
 - `sshIsolation` goes in `envVariables`: a pool container answers SSH only when it is set as a service env variable admitting the zcp service. The top-level import field did not reach pool containers.
 - `GIT_TOKEN` is a secret the user owns: name it in `envSecrets`, never write a value. Acquire clones with the pool's own `GIT_TOKEN`.
 - The service env reaches the pool's containers.
+- zcp calls the orchestrator with the pool's `API_TOKEN`. When zcp's own API token reads the pool's secrets masked, the zcp service takes it by reference under a different name: `<pool>_LEASE_TOKEN: ${<pool>_API_TOKEN}` in its env.
 
 **zerops.yml setup**:
 
