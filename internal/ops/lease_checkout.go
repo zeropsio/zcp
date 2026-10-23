@@ -23,7 +23,7 @@ const leaseWorkDir = "/var/www"
 
 // leaseDefaultBranch is the branch an empty branch means, and the one a new
 // branch is cut from (DP-6).
-const leaseDefaultBranch = "main"
+const leaseDefaultBranch = defaultBranch
 
 // leaseGuardFileLimit is how many unsaved files a refused release names.
 const leaseGuardFileLimit = 20

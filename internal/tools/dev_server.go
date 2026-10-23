@@ -47,7 +47,7 @@ func devServerInputSchema() *jsonschema.Schema {
 		},
 		"hostname": {
 			Type:        "string",
-			Description: "Target dev-container hostname (e.g. apidev, appdev, workerdev). Must exist in the current project. A dev-pool lease is addressed by its alias <pool>-<number> (zerops_lease): the dev servers run in that container, and the result's previewUrl is the pool's subdomain on the lease's preview port.",
+			Description: "Target dev-container hostname (e.g. apidev, appdev, workerdev) in the current project, or a dev-pool lease alias <pool>-<number> from zerops_lease (result carries its previewUrl).",
 		},
 		"name": {
 			Type:        "string",
