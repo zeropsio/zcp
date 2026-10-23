@@ -179,13 +179,14 @@ func resolveGroupPools(ctx context.Context, d LeaseDeps, pools []string) ([]*gro
 	return members, nil
 }
 
-// resolveGroupRepo is the canonical repository a group acquire clones — repo,
-// else the default every pool that has one agrees on — and, per pool, whether
-// the pool has no default yet. One pool is resolveLeaseRepo exactly.
+// resolveGroupRepo is the clone URL a group acquire clones, as it was given
+// (DP-18) — repo, else the default every pool that has one agrees on (agreeing
+// by identity, topology.SameRepoURL) — and, per pool, whether the pool has no
+// default yet. One pool is resolveLeaseRepo exactly.
 func resolveGroupRepo(stateDir string, pools []string, repo string) (string, map[string]bool, error) {
 	if len(pools) == 1 {
-		canonical, becomes, err := resolveLeaseRepo(stateDir, pools[0], repo)
-		return canonical, map[string]bool{pools[0]: becomes}, err
+		cloneURL, becomes, err := resolveLeaseRepo(stateDir, pools[0], repo)
+		return cloneURL, map[string]bool{pools[0]: becomes}, err
 	}
 	defaults := map[string]string{}
 	becomes := map[string]bool{}
@@ -197,8 +198,8 @@ func resolveGroupRepo(stateDir string, pools []string, repo string) (string, map
 		}
 	}
 	if strings.TrimSpace(repo) != "" {
-		canonical, err := validateLeaseRepo(repo)
-		return canonical, becomes, err
+		cloneURL, err := validateLeaseRepo(repo)
+		return cloneURL, becomes, err
 	}
 	var agreed string
 	var named []string
@@ -221,8 +222,8 @@ func resolveGroupRepo(stateDir string, pools []string, repo string) (string, map
 			fmt.Sprintf("acquire needs repo: pools %s have no default repository yet", strings.Join(pools, ", ")),
 			"Pass the clone URL as repo (https://host/owner/repo); the first acquire on a pool stores it as the pool's default")
 	}
-	canonical, err := validateLeaseRepo(agreed)
-	return canonical, becomes, err
+	cloneURL, err := validateLeaseRepo(agreed)
+	return cloneURL, becomes, err
 }
 
 // leaseKeyLockPath is the lock file of one key — the canonical repository
@@ -358,7 +359,7 @@ func reserveMember(ctx context.Context, d LeaseDeps, m *groupMember, repoURL, br
 	rec := leaseRecord{
 		PoolHostname: m.pool, PoolServiceID: rp.svc.ID,
 		ContainerID: got.Container.ID, ContainerNumber: got.Container.Number, ContainerHostname: got.Container.Hostname,
-		Lease: got.Lease.Secret(), Branch: branch, Repo: repoURL, AcquiredAt: time.Now().UTC().Format(time.RFC3339),
+		Lease: got.Lease.Secret(), Branch: branch, Repo: topology.CanonicalRepoURL(repoURL), AcquiredAt: time.Now().UTC().Format(time.RFC3339),
 	}
 	if err := writeLeaseRecord(d.StateDir, rec); err != nil {
 		// Without a record the lease is unusable and, with no expiry, the

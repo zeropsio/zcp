@@ -529,7 +529,7 @@ type leaseRecord struct {
 	ContainerHostname string `json:"containerHostname"`
 	Lease             string `json:"lease"`
 	Branch            string `json:"branch,omitempty"`
-	Repo              string `json:"repo,omitempty"` // canonical clone URL, never a credential; "" in an older record
+	Repo              string `json:"repo,omitempty"` // the repository's identity (topology.CanonicalRepoURL), never cloned from nor a credential; "" in an older record
 	// Base is the main commit the branch was cut from when it was new to
 	// origin, so a lease joining its group later is cut from it too (DP-17);
 	// "" when the branch was tracked from origin, or in an older record.

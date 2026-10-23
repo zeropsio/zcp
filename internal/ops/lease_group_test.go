@@ -265,8 +265,10 @@ func TestLeaseAcquireGroup_OneDefaultRepo_IsTheGroups(t *testing.T) {
 	if len(views) != 2 {
 		t.Fatalf("views = %+v, want two", views)
 	}
-	if got := readPoolDefaultRepo(gf.stateDir, groupWebPool); got != "https://github.com/acme/app" {
-		t.Errorf("webpool's default = %q, want the group's repository", got)
+	// The default is a clone URL: kept as given (DP-18), the record's repo is
+	// the identity.
+	if got := readPoolDefaultRepo(gf.stateDir, groupWebPool); got != testRepo {
+		t.Errorf("webpool's default = %q, want the group's repository as given, %q", got, testRepo)
 	}
 	for alias, r := range gf.records(t) {
 		if r.Repo != "https://github.com/acme/app" {

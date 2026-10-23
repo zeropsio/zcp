@@ -15,7 +15,6 @@ import (
 	"unicode"
 
 	"github.com/zeropsio/zcp/internal/platform"
-	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // leaseWorkDir is where a leased container keeps its code.
@@ -59,11 +58,13 @@ func validateLeaseBranch(branch string) error {
 	return nil
 }
 
-// validateLeaseRepo checks a clone URL and returns its canonical form. Only
-// https URLs without userinfo are taken: the credential reaches git through
-// the session-env helper, never through the URL (DP-6), plain http would send
-// it in clear, and a value that is not a URL could be read by git as an option
-// or a transport.
+// validateLeaseRepo checks a clone URL and returns it as given, only trimmed
+// of surrounding space: git clones exactly that address, and a server that
+// serves `…/repo.git` may not answer `…/repo` (DP-17), so the canonical form
+// (topology.CanonicalRepoURL) is for identity only. Only https URLs without
+// userinfo are taken: the credential reaches git through the session-env
+// helper, never through the URL (DP-6), plain http would send it in clear, and
+// a value that is not a URL could be read by git as an option or a transport.
 func validateLeaseRepo(raw string) (string, error) {
 	bad := platform.NewPlatformError(platform.ErrInvalidParameter,
 		"repo is not a clone URL a lease takes",
@@ -79,11 +80,13 @@ func validateLeaseRepo(raw string) (string, error) {
 	if err != nil || u.Hostname() == "" || u.User != nil {
 		return "", bad
 	}
-	return topology.CanonicalRepoURL(raw), nil
+	return raw, nil
 }
 
 // poolDefault is zcp's record of the repository a pool's leases are for
-// (.zcp/state/leases/pools/<pool>.json). It carries no credential.
+// (.zcp/state/leases/pools/<pool>.json): the clone URL as the first acquire
+// was given it, which a later acquire without repo clones. It carries no
+// credential; compare it through topology.SameRepoURL, never as a string.
 type poolDefault struct {
 	Repo string `json:"repo"`
 }
@@ -145,11 +148,11 @@ func storePoolDefaultRepo(stateDir, pool, repo string) error {
 	return nil
 }
 
-// resolveLeaseRepo is the canonical repository an acquire clones: the one it
-// was given, else the pool's default. It reports whether the pool has no
+// resolveLeaseRepo is the clone URL an acquire clones, as it was given: the
+// acquire's own, else the pool's default. It reports whether the pool has no
 // default yet, so the caller can record the given one once the checkout
 // worked.
-func resolveLeaseRepo(stateDir, pool, repo string) (canonical string, becomesDefault bool, err error) {
+func resolveLeaseRepo(stateDir, pool, repo string) (cloneURL string, becomesDefault bool, err error) {
 	have := readPoolDefaultRepo(stateDir, pool)
 	if strings.TrimSpace(repo) == "" {
 		if have == "" {
@@ -157,14 +160,14 @@ func resolveLeaseRepo(stateDir, pool, repo string) (canonical string, becomesDef
 				fmt.Sprintf("acquire needs repo: pool '%s' has no default repository yet", pool),
 				"Pass the clone URL as repo (https://host/owner/repo); the first acquire on a pool stores it as the pool's default")
 		}
-		canonical, err = validateLeaseRepo(have)
-		return canonical, false, err
+		cloneURL, err = validateLeaseRepo(have)
+		return cloneURL, false, err
 	}
-	canonical, err = validateLeaseRepo(repo)
+	cloneURL, err = validateLeaseRepo(repo)
 	if err != nil {
 		return "", false, err
 	}
-	return canonical, have == "", nil
+	return cloneURL, have == "", nil
 }
 
 // leaseCheckoutCommand is the git script that puts workDir on branch of repo.
