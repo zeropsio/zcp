@@ -11,6 +11,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"sort"
 	"strings"
@@ -985,6 +986,40 @@ func handleListSessions(engine *workflow.Engine) (*mcp.CallToolResult, any, erro
 	return jsonResult(sessions), nil, nil
 }
 
+// leaseStatusTimeout bounds the pool-orchestrator reads a status call makes: a
+// pool's orchestrator answers only inside the project, and status must not
+// hang when it does not.
+const leaseStatusTimeout = 10 * time.Second
+
+// leaseReader is the workflow.LeaseReader of a status call: the project's
+// leases, reconciled by ops.LeaseList against each pool's orchestrator. An
+// error (outside the project, a pool that does not answer) is the reader's
+// "could not ask" signal — ComputeEnvelope then falls back to zcp's own
+// records, marked unverified. Only the lease's non-secret view crosses over;
+// the lease string never leaves ops (DP-3).
+func leaseReader(client platform.Client, projectID, stateDir string) workflow.LeaseReader {
+	swarm := ops.NewSwarmFactory(&http.Client{Timeout: leaseStatusTimeout})
+	return func(ctx context.Context) ([]workflow.LeaseSnapshot, error) {
+		if client == nil || stateDir == "" {
+			return nil, fmt.Errorf("lease reader: no platform client or state directory")
+		}
+		ctx, cancel := context.WithTimeout(ctx, leaseStatusTimeout)
+		defer cancel()
+		views, err := ops.LeaseList(ctx, ops.LeaseDeps{Client: client, ProjectID: projectID, StateDir: stateDir, Swarm: swarm}, "")
+		if err != nil {
+			return nil, fmt.Errorf("list leases: %w", err)
+		}
+		out := make([]workflow.LeaseSnapshot, 0, len(views))
+		for _, v := range views {
+			out = append(out, workflow.LeaseSnapshot{
+				Alias: v.Alias, Pool: v.Pool, Branch: v.Branch,
+				ContainerHostname: v.ContainerHostname, State: v.State,
+			})
+		}
+		return out, nil
+	}
+}
+
 // handleLifecycleStatus returns the canonical orientation block. Used when
 // no bootstrap/recipe session is active — covers both idle and develop phases.
 //
@@ -999,7 +1034,8 @@ func handleListSessions(engine *workflow.Engine) (*mcp.CallToolResult, any, erro
 // so agents notice when `.env` has drifted from sources without having
 // to invoke generate-dotenv preview manually.
 func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, rt runtime.Info, sshDeployer ops.SSHDeployer) (*mcp.CallToolResult, any, error) {
-	envelope, err := workflow.ComputeEnvelope(ctx, client, engine.StateDir(), projectID, rt, time.Now())
+	envelope, err := workflow.ComputeEnvelope(ctx, client, engine.StateDir(), projectID, rt, time.Now(),
+		workflow.WithLeaseReader(leaseReader(client, projectID, engine.StateDir())))
 	if err != nil {
 		return convertError(wrapStageErr("Compute envelope", err), WithRecoveryStatus()), nil, nil
 	}
