@@ -45,9 +45,10 @@ func leaseInputSchema() *jsonschema.Schema {
 
 // leaseDeps wires the lease operations: with a mounter (container mode) a
 // lease gets its ssh alias and mount (ops.NewLeaseHost); without one the host
-// side does nothing.
+// side does nothing. The HQ a repository is recognised on is read from the
+// enrollment at each acquire, as git-push-setup reads it for a dev service.
 func leaseDeps(client platform.Client, projectID, stateDir string, swarm ops.SwarmFactory, mounter ops.Mounter, ssh ops.SSHDeployer) ops.LeaseDeps {
-	deps := ops.LeaseDeps{Client: client, ProjectID: projectID, StateDir: stateDir, Swarm: swarm, SSH: ssh}
+	deps := ops.LeaseDeps{Client: client, ProjectID: projectID, StateDir: stateDir, Swarm: swarm, SSH: ssh, HQAddress: hqAddress}
 	if mounter != nil {
 		deps.Host = ops.NewLeaseHost(mounter)
 	}

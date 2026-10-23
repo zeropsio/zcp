@@ -184,18 +184,31 @@ func gitCredentialHelperConfigFragment(remoteURL, hqURL string) string {
 // gitCredentialHelperWriteFragment is the helper write alone — the no-op `:` when
 // the remote's host is no scope to write it under.
 func gitCredentialHelperWriteFragment(remoteURL, hqURL string) string {
-	scope, ok := gitCredentialScopeHost(remoteURL)
+	scope, helper, ok := persistedHelperScope(remoteURL, hqURL, gitCredentialHelperShell, hqCredentialHelperShell)
 	if !ok {
 		return ":"
-	}
-	helper := gitCredentialHelperShell
-	if hqScope, onHQ := hqCredentialScope(remoteURL, hqURL, scope); onHQ {
-		scope, helper = hqScope, hqCredentialHelperShell
 	}
 	return fmt.Sprintf("git config %s %s",
 		shellQuote("credential.https://"+scope+".helper"),
 		shellQuote(helper),
 	)
+}
+
+// persistedHelperScope is the scope a helper persisted for remoteURL is
+// stored under, and which of the caller's two helpers it is: hq under HQ's
+// scope (hqCredentialScope) for a remote on the Mate's HQ, plain under the
+// remote's host otherwise; ok is false when that host can be no scope
+// (gitCredentialScopeHost). A dev service's checkout and a lease's pass their
+// own pair, so both are scoped by this one rule.
+func persistedHelperScope(remoteURL, hqURL, plain, hq string) (scope, helper string, ok bool) {
+	scope, ok = gitCredentialScopeHost(remoteURL)
+	if !ok {
+		return "", "", false
+	}
+	if hqScope, onHQ := hqCredentialScope(remoteURL, hqURL, scope); onHQ {
+		return hqScope, hq, true
+	}
+	return scope, plain, true
 }
 
 // IsHQRemote reports whether remoteURL is a repository on the Mate's HQ:

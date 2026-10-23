@@ -73,25 +73,30 @@ func TestLeaseHQCredentialHelper_AnswersAsMateFromSessionEnvOnly(t *testing.T) {
 	if want := strings.Replace(leaseCredentialHelperShell, "username=oauth2", "username=mate", 1); leaseHQCredentialHelperShell != want {
 		t.Errorf("the HQ lease helper is\n%s\nwant the lease helper with HQ's user\n%s", leaseHQCredentialHelperShell, want)
 	}
-	marker := filepath.Join(t.TempDir(), "zcp-was-asked")
-	zcpOnPath := fakeZcpPath(t, "touch "+shellQuote(marker)+"; printf 'username=mate\\npassword=from-zcp\\n'")
 	tests := []struct {
 		name     string
-		env      map[string]string
+		token    string
 		wantUser string
 		want     string
 	}{
-		{"the pool's session answers its GIT_TOKEN as mate", map[string]string{"GIT_TOKEN": "the-pool-secret", "PATH": zcpOnPath}, "mate", "the-pool-secret"},
-		{"without GIT_TOKEN it answers nothing and asks no zcp", map[string]string{"PATH": zcpOnPath}, "", ""},
+		{"the pool's session answers its GIT_TOKEN as mate", "the-pool-secret", "mate", "the-pool-secret"},
+		{"without GIT_TOKEN it answers nothing and asks no zcp", "", "", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			// A zcp that would answer — and leaves a mark when asked.
+			marker := filepath.Join(t.TempDir(), "zcp-was-asked")
+			env := map[string]string{"PATH": fakeZcpPath(t, "touch "+shellQuote(marker)+"; printf 'username=mate\\npassword=from-zcp\\n'")}
+			if tt.token != "" {
+				env["GIT_TOKEN"] = tt.token
+			}
 			repo, home := t.TempDir(), t.TempDir()
 			script := "git init -q && " + leaseCredentialHelperConfig(leaseHQRepo, leaseHQURL)
 			if out, err := gitShell(t, repo, home, nil, "", script); err != nil {
 				t.Fatalf("persist the helper: %v\n%s", err, out)
 			}
-			user, got, answered := answeredCredential(t, repo, home, tt.env, leaseHQRepo)
+			user, got, answered := answeredCredential(t, repo, home, env, leaseHQRepo)
 			if got != tt.want || answered != (tt.want != "") {
 				t.Errorf("the helper answered %q (answered=%v), want %q", got, answered, tt.want)
 			}
