@@ -437,6 +437,9 @@ func applyAutoRestart(
 	resp.Readers = plan.readers
 	resp.RestartWarnings = append(resp.RestartWarnings, plan.warnings...)
 	unreadHint := nothingReadsHint(plan.unreadKeys, input)
+	if plan.poolOwner {
+		unreadHint = poolEnvHint(keys, input.ServiceHostname)
+	}
 
 	if input.SkipRestart.Bool() {
 		resp.RestartSkipped = true
@@ -509,6 +512,10 @@ type restartPlan struct {
 	unreadKeys []string
 	warnings   []string
 	uncertain  bool
+	// poolOwner is true when the changed keys are a Swarm pool's own: its
+	// leases read them in their ssh sessions as they are (DP), never
+	// through a restart or a deploy.
+	poolOwner bool
 }
 
 // planRestart finds the readers of the changed keys from the project's
@@ -544,6 +551,9 @@ func planRestart(ctx context.Context, client platform.Client, projectID string, 
 	byName := make(map[string]platform.ServiceStack, len(services))
 	for _, svc := range services {
 		byName[svc.Name] = svc
+	}
+	if svc, ok := byName[owner]; ok && topology.IsPoolType(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) {
+		plan.poolOwner = true
 	}
 	targeted := map[string]bool{}
 	addTarget := func(svc platform.ServiceStack) {
@@ -606,6 +616,18 @@ func nothingReadsHint(keys []string, input EnvInput) string {
 	host := input.ServiceHostname
 	return fmt.Sprintf("Nothing reads %s yet — reference it in %s's run.envVariables (e.g. `NAME: ${%s}`), or from another service as `${%s_%s}`, then deploy.",
 		names, host, keys[0], strings.ReplaceAll(host, "-", "_"), keys[0])
+}
+
+// poolEnvHint is the next action for a pool's own keys: its service env
+// reaches every container's ssh session as it is, so a lease clones and
+// pushes with GIT_TOKEN at once; processes the container started at boot (the
+// dev-server supervisor and its servers) keep the env they started with.
+func poolEnvHint(keys []string, pool string) string {
+	if len(keys) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s is %s's service env, which reaches its containers' ssh sessions as it is: its leases read it now (a lease clones and pushes with GIT_TOKEN), with no restart or deploy. A pool is never restarted for an env change — that would restart containers others hold. Processes a container started at boot — the dev-server supervisor and the servers it runs — keep the env they started with.",
+		strings.Join(keys, ", "), pool)
 }
 
 func targetNames(targets []restartTarget) []string {
@@ -724,6 +746,11 @@ func isAutoRestartEligible(svc platform.ServiceStack, selfHostname string) bool 
 	// messaging) consume their own credentials — user-set project envs do
 	// not affect their operation, so restarting is unnecessary downtime.
 	if topology.IsManagedService(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) {
+		return false
+	}
+	// A Swarm pool is never restarted: that restarts containers others hold,
+	// and its service env reaches their ssh sessions as it is (DP).
+	if topology.IsPoolType(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) {
 		return false
 	}
 	return true

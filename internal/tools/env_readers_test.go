@@ -177,3 +177,44 @@ func TestEnvChange_RestartsOnlyReaders(t *testing.T) {
 		})
 	}
 }
+
+// TestEnvChange_Pool_NeverRestarted_LeasesReadIt — a Swarm pool's service env
+// reaches its containers' ssh sessions as it is (docs/spec-workflows.md §8 DP),
+// which is where a lease clones and pushes with GIT_TOKEN: a set on a pool
+// never restarts it (that would restart containers others hold), and its
+// nextActions say the leases read it, never "reference it and deploy".
+func TestEnvChange_Pool_NeverRestarted_LeasesReadIt(t *testing.T) {
+	t.Parallel()
+	for _, readsIt := range []bool{false, true} {
+		mock := platform.NewMock().
+			WithProject(&platform.Project{ID: "proj-1", Name: "p", Status: statusActive}).
+			WithServices([]platform.ServiceStack{{ID: "svc-pool", Name: "devpool", Status: statusActive,
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"},
+				ActiveAppVersion:     &platform.ActiveAppVersionDigest{ID: "av-pool"}}}).
+			WithProcess(&platform.Process{ID: "proc-envset-svc-pool", Status: statusFinished}).
+			WithProcess(&platform.Process{ID: "proc-restart-svc-pool", Status: statusFinished})
+		if readsIt {
+			mock = mock.WithAppVersionUserData("av-pool", []platform.ServiceEnvVar{{Key: "TOKEN_FOR_APP", Content: "${GIT_TOKEN}"}})
+		}
+		srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+		RegisterEnv(srv, mock, "proj-1", "zcp")
+		result := callTool(t, srv, "zerops_env", map[string]any{"action": "set", "serviceHostname": "devpool", "variables": []any{"GIT_TOKEN=secret-value"}, "sensitive": true})
+		text := getTextContent(t, result)
+		if result.IsError {
+			t.Fatalf("reads %v: set failed: %s", readsIt, text)
+		}
+		var resp envChangeWire
+		if err := json.Unmarshal([]byte(text), &resp); err != nil {
+			t.Fatalf("parse: %v\n%s", err, text)
+		}
+		if len(resp.RestartedServices) != 0 || mock.CallCounts["RestartService"] != 0 {
+			t.Errorf("reads %v: a pool was restarted: %v", readsIt, resp.RestartedServices)
+		}
+		if !strings.Contains(resp.NextActions, "lease") || strings.Contains(resp.NextActions, "then deploy") {
+			t.Errorf("reads %v: nextActions %q should say the pool's leases read it, not ask for a deploy", readsIt, resp.NextActions)
+		}
+		if strings.Contains(text, "secret-value") {
+			t.Errorf("reads %v: the value is echoed: %s", readsIt, text)
+		}
+	}
+}
