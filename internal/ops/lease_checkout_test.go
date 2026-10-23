@@ -917,3 +917,68 @@ func TestLeaseRelease_Unreachable_PoolGoneByID_Lost(t *testing.T) {
 		t.Errorf("state = %q, want lost", view.State)
 	}
 }
+
+// TestLeaseRelease_PoolGoneOrBeingDeleted_DroppedAsLost: a pool service the
+// read by id no longer finds, or one being deleted, holds nothing of the
+// lease, and its orchestrator does not answer. A release — without force or
+// with it — drops the record as lost and says why (live: a release after the
+// pool was deleted was refused "the orchestrator did not answer" until
+// force=true). A pool that exists but whose orchestrator does not answer is
+// still refused (TestLeaseRelease_UnreachableOrchestratorSilent_Refused).
+func TestLeaseRelease_PoolGoneOrBeingDeleted_DroppedAsLost(t *testing.T) {
+	t.Parallel()
+	pool := func(status string) platform.ServiceStack {
+		return platform.ServiceStack{ID: "svc-pool", Name: testPoolHost, Status: status,
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}}
+	}
+	notFound := platform.NewPlatformError(platform.ErrServiceNotFound, "service stack not found", "")
+	tests := []struct {
+		name    string
+		listed  []platform.ServiceStack // what the service search still lists
+		byID    string                  // the status the read by id answers; "" = not found
+		force   bool
+		wantWhy string
+	}{
+		{"deleted, gone from the search", nil, "DELETED", false, "no longer exists"},
+		{"deleted, still in the search", []platform.ServiceStack{pool("DELETED")}, "DELETED", false, "no longer exists"},
+		{"being deleted, still in the search", []platform.ServiceStack{pool("DELETING")}, "DELETING", false, "being deleted"},
+		{"being deleted, the search still says active", []platform.ServiceStack{pool("ACTIVE")}, "DELETING", false, "being deleted"},
+		{"being deleted, forced", []platform.ServiceStack{pool("DELETING")}, "DELETING", true, "being deleted"},
+		{"not found by id, the search still lists it", []platform.ServiceStack{pool("ACTIVE")}, "", false, "no longer exists"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			hf, ssh := unsavedFixture(t, "", 0)
+			ssh.setHandler(func(string, string) ([]byte, error) {
+				out := "ssh: Could not resolve hostname node-id-3.runtime.devpool.zerops: No address associated with hostname"
+				return []byte(out), sshFailure(out, exitError(t, 255))
+			})
+			mock := platform.NewMock().
+				WithProject(&platform.Project{ID: "p1", Name: "proj"}).
+				WithServices(tt.listed).
+				WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{Key: "API_TOKEN", Content: testPoolToken, Sensitive: true}})
+			if tt.byID == "" {
+				mock = mock.WithError("GetService", notFound)
+			} else {
+				byID := pool(tt.byID)
+				mock = mock.WithService(&byID)
+			}
+			hf.deps.Client = mock
+			// The orchestrator of a pool on its way out answers nothing.
+			unanswered := platform.NewPlatformError(platform.ErrNetworkError, "dial tcp: lookup orch.devpool.zerops: no such host", "")
+			hf.swarm.listErr, hf.swarm.releaseErr = unanswered, unanswered
+
+			view, err := LeaseRelease(context.Background(), hf.deps, "devpool-3", tt.force)
+			if err != nil {
+				t.Fatalf("a lease of a pool that is gone or being deleted must be dropped: %v", err)
+			}
+			if view.State != LeaseStateLost || !strings.Contains(view.Note, tt.wantWhy) {
+				t.Errorf("view = %+v, want state lost with a note saying the pool %s", view, tt.wantWhy)
+			}
+			if _, statErr := os.Stat(filepath.Join(hf.stateDir, "leases", "devpool-3.json")); !errors.Is(statErr, os.ErrNotExist) {
+				t.Errorf("record survives: %v", statErr)
+			}
+		})
+	}
+}
