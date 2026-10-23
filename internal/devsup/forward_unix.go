@@ -18,10 +18,12 @@ const forwardDialTimeout = 2 * time.Second
 // forward is the TCP forward from a server's preview port, on every
 // interface, to the port the server listens on at 127.0.0.1: nothing but a
 // byte copy, so any protocol the server speaks (HTTP, a dev server's
-// websocket) passes. It lives and dies with one server's process group.
+// websocket) passes. It lives and dies with one server's process group, and
+// records the connections it takes in the server's previewSeen.
 type forward struct {
 	listenPort, targetPort int
 	ln                     net.Listener
+	seen                   *previewSeen
 
 	mu     sync.Mutex
 	conns  map[net.Conn]struct{}
@@ -29,15 +31,51 @@ type forward struct {
 	wg     sync.WaitGroup
 }
 
+// previewSeen is what a server's preview forwards saw in this supervisor's
+// life: when one last took a connection and how many connections they hold
+// open — the clients, never a forward's own dial to the server. It outlives
+// each forward (a restart of the server opens a new one) and lives in memory
+// only. Its lock guards these two fields and nothing else.
+type previewSeen struct {
+	mu   sync.Mutex
+	last time.Time
+	open int
+}
+
+func (p *previewSeen) opened(at time.Time) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.last = at
+	p.open++
+}
+
+func (p *previewSeen) closed() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.open--
+}
+
+// read is the last connection's time (nil before the first) and the open
+// count.
+func (p *previewSeen) read() (*time.Time, int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.last.IsZero() {
+		return nil, p.open
+	}
+	last := p.last
+	return &last, p.open
+}
+
 // openForward listens on 0.0.0.0:listenPort and forwards each connection to
-// 127.0.0.1:targetPort.
-func openForward(listenPort, targetPort int) (*forward, error) {
+// 127.0.0.1:targetPort, recording each in seen.
+func openForward(listenPort, targetPort int, seen *previewSeen) (*forward, error) {
 	var lc net.ListenConfig
 	ln, err := lc.Listen(context.Background(), "tcp", ":"+strconv.Itoa(listenPort))
 	if err != nil {
 		return nil, err //nolint:wrapcheck // the caller logs it with the ports
 	}
-	f := &forward{listenPort: listenPort, targetPort: targetPort, ln: ln, conns: map[net.Conn]struct{}{}}
+	f := &forward{listenPort: listenPort, targetPort: targetPort, ln: ln, seen: seen, conns: map[net.Conn]struct{}{}}
 	f.wg.Go(f.accept)
 	return f, nil
 }
@@ -48,7 +86,7 @@ func (f *forward) accept() {
 		if err != nil {
 			return
 		}
-		if !f.track(c) {
+		if !f.track(c, true) {
 			_ = c.Close()
 			return
 		}
@@ -56,15 +94,19 @@ func (f *forward) accept() {
 	}
 }
 
-// track records c, or reports false once the forward is closed.
-func (f *forward) track(c net.Conn) bool {
+// track records c — a client is a preview connection, stamped with the time
+// it was taken — or reports false once the forward is closed.
+func (f *forward) track(c net.Conn, client bool) bool {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.closed {
-		return false
+	ok := !f.closed
+	if ok {
+		f.conns[c] = struct{}{}
 	}
-	f.conns[c] = struct{}{}
-	return true
+	f.mu.Unlock()
+	if ok && client {
+		f.seen.opened(time.Now().UTC())
+	}
+	return ok
 }
 
 func (f *forward) serve(client net.Conn) {
@@ -73,13 +115,14 @@ func (f *forward) serve(client net.Conn) {
 		f.mu.Lock()
 		delete(f.conns, client)
 		f.mu.Unlock()
+		f.seen.closed()
 	}()
 	d := net.Dialer{Timeout: forwardDialTimeout}
 	server, err := d.DialContext(context.Background(), "tcp", "127.0.0.1:"+strconv.Itoa(f.targetPort))
 	if err != nil {
 		return
 	}
-	if !f.track(server) {
+	if !f.track(server, false) {
 		_ = server.Close()
 		return
 	}
