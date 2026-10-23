@@ -1054,6 +1054,12 @@ and answers that the supervisor is older than the declaration, naming both.
 
 Both ride the dev service's `ServiceSnapshot` (the snapshot whose `hostname` keys the pair).
 
+A pair whose dev half is a dev pool (`spec-workflows.md` §13 PM-10) is keyed by the pool, so `stages`
+rides the pool's snapshot — `runtimeClass: "pool"`, no `mode` — and `devServers` never does: a pool's
+dev servers run in its leases and ride `leases[]`. A migrated part's tier on `main` still names its
+retired dev service, so this snapshot is where the part's pool shows beside its stages (fixture
+`envelope.pool-pair.json`, §2.8a.7). Additive like `leases[]`: no key is new, no version gate.
+
 ```json
 "stages": [ { "hostname": "webstage", "setup": "web" }, { "hostname": "apistage", "setup": "api" } ]
 ```
@@ -1384,6 +1390,7 @@ on it and never blocks.
 | `envelope.single-pair.today.json` | today's envelope for one pair — the bytes zcp marshals today |
 | `envelope.single-pair.json` | the same pair after step (3): `stages[1]`, one dev server named `appdev` |
 | `envelope.three-parts.json` | `appdev` + `webstage`/`apistage`/`workerstage`, three dev servers, one crashed |
+| `envelope.pool-pair.json` | a pair keyed by its dev pool (`spec-workflows.md` §13 PM-10): `apppool` (a pool, no `mode`) carrying `stages[1]`, the stage `appstage`, the pool's lease in `leases[]`; the bytes zcp computes from the re-keyed pair |
 | `dev-server.one-server.json` | a `zerops_dev_server` result for one server, with its `envelope` key; top-level `running` ≡ the reported entry's `status == "running"` (§2.8a.3) |
 | `dev-server.three-servers-one-crashed.json` | the same for three servers |
 | `dev-server.running-http-404.json` | a running api with no root route: `running` true from the supervisor, its probe's 404 only in `healthStatus`, `reason` and the entry's `verify` |
