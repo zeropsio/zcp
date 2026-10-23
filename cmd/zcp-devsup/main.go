@@ -4,7 +4,8 @@
 //	zcp-devsup run [--root <dir>] [--state <dir>] [--service <hostname>]
 //	zcp-devsup ctl status [name] | start|stop|restart <name> | reload
 //	               | logs <name> [--lines N] | run --name <n> --cwd <d> [--port <p>] -- <command>
-//	               | rm <name> | version          [--json] [--state <dir>]
+//	               | rm <name> | env (--set NAME=VALUE)... | env --clear
+//	               | version          [--json] [--state <dir>]
 //	zcp-devsup version
 //
 // zcp and Mate's engine drive it with `ctl` over SSH. Exit codes: 0 done,
@@ -46,5 +47,6 @@ const usage = `usage:
   zcp-devsup run [--root <dir>] [--state <dir>] [--service <hostname>]
   zcp-devsup ctl <verb> [args] [--json] [--state <dir>]
     status [name] | start <name> | stop <name> | restart <name> | reload
-    logs <name> [--lines N] | run --name <n> --cwd <d> [--port <p>] -- <command> | rm <name> | version
+    logs <name> [--lines N] | run --name <n> --cwd <d> [--port <p>] -- <command> | rm <name>
+    env (--set NAME=VALUE)... | env --clear | version
   zcp-devsup version`

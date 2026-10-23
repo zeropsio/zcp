@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -29,6 +30,15 @@ import (
 // older than the declaration.
 var Formats = []int{1}
 
+// CapabilityEnv names the `ctl env` verb (the lease-wide env overlay).
+const CapabilityEnv = "env"
+
+// Capabilities lists the ctl verbs and flags this supervisor has that an
+// older one lacks; `ctl version` reports them. An older ctl fails on a verb
+// or flag it does not know, so zcp sends one only to a supervisor that lists
+// it.
+var Capabilities = []string{CapabilityEnv}
+
 // DeclarationPath is where a repo declares its dev servers, relative to the
 // repo root.
 const DeclarationPath = ".zcp/dev-servers.json"
@@ -41,8 +51,14 @@ type Declaration struct {
 	// ZEROPS_StableNumber forward PreviewPortBase+ZEROPS_StableNumber to the
 	// preview server's port (PreviewServer): a dev pool's containers each get
 	// a public port of their own. Absent: no forward.
-	PreviewPortBase int      `json:"previewPortBase,omitempty"`
-	Servers         []Server `json:"servers"`
+	PreviewPortBase int `json:"previewPortBase,omitempty"`
+	// SiblingEnv maps an environment variable a part's dev server reads to
+	// the pool whose lease of the same branch it reaches. zcp reads it and
+	// hands the servers that lease's container hostname through `ctl env`;
+	// the supervisor validates it with the rest of the file and never puts it
+	// into any environment itself.
+	SiblingEnv map[string]string `json:"siblingEnv,omitempty"`
+	Servers    []Server          `json:"servers"`
 }
 
 // Server is one named dev server: the shell command, its working directory
@@ -122,6 +138,27 @@ func (d Declaration) ForService(hostname string) []Server {
 
 var serverName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,39}$`)
 
+// envName is an environment variable name a shell can export.
+var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// reservedEnv are names the container's own value must reach every server
+// with: the overlay and siblingEnv never set them, nor any ZEROPS_ name.
+var reservedEnv = []string{"hostname", "serviceId", "projectId", "PATH", "HOME"}
+
+// envNameError says why name cannot be set for the servers, nil when it can.
+func envNameError(name string) error {
+	switch {
+	case !envName.MatchString(name):
+		return fmt.Errorf("%q is not an environment variable name (%s)", name, envName)
+	case strings.HasPrefix(name, "ZEROPS_"), slices.Contains(reservedEnv, name):
+		return fmt.Errorf("%q is reserved: the container's own value reaches every server (reserved: ZEROPS_*, %s)", name, strings.Join(reservedEnv, ", "))
+	}
+	return nil
+}
+
+// siblingPool is a pool's service hostname, as siblingEnv names it.
+var siblingPool = regexp.MustCompile(`^[a-z0-9]{1,40}$`)
+
 // ErrUnsupportedFormat marks a declaration whose version this supervisor does
 // not run.
 var ErrUnsupportedFormat = errors.New("unsupported declaration format")
@@ -149,6 +186,14 @@ func ParseDeclaration(b []byte) (Declaration, error) {
 	}
 	if d.PreviewPortBase < 0 || d.PreviewPortBase > 65535 {
 		return Declaration{}, fmt.Errorf("%s: previewPortBase %d is out of range", DeclarationPath, d.PreviewPortBase)
+	}
+	for _, name := range slices.Sorted(maps.Keys(d.SiblingEnv)) {
+		if err := envNameError(name); err != nil {
+			return Declaration{}, fmt.Errorf("%s: siblingEnv %w", DeclarationPath, err)
+		}
+		if pool := d.SiblingEnv[name]; !siblingPool.MatchString(pool) {
+			return Declaration{}, fmt.Errorf("%s: siblingEnv %q: %q is not a pool hostname (%s)", DeclarationPath, name, pool, siblingPool)
+		}
 	}
 	names, ports, preview := map[string]bool{}, map[int]string{}, ""
 	for i, s := range d.Servers {

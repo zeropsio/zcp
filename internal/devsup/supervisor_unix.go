@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -89,6 +90,9 @@ const (
 	reasonDecl    = "its declaration changed"
 	reasonBoot    = "the supervisor started again"
 	reasonRunSpec = "its run entry changed"
+	// reasonEnv: `ctl env` changed the overlay the server's group started
+	// under (docs/spec-mate.md §2.8a.2).
+	reasonEnv = "env changed"
 	// reasonLimit marks a start after the task limit was met; the recorded
 	// reason is limitReason.
 	reasonLimit = "task limit"
@@ -142,6 +146,8 @@ type server struct {
 	// selfChanged counts the starts in a row that saw one.
 	windowChanged bool
 	selfChanged   int
+	// env is the overlay the live group started under.
+	env map[string]string
 }
 
 // Supervisor holds the dev servers of one repo.
@@ -170,6 +176,11 @@ type Supervisor struct {
 	previewName string
 	// fwdMu serialises syncPreview; it is never held while taking op.
 	fwdMu sync.Mutex
+	// env is the overlay every start adds to cfg.Env (SetEnv); it is
+	// replaced, never changed in place, so a start may keep the map it read.
+	// envRestarting: restartForEnv runs. Both guarded by mu.
+	env           map[string]string
+	envRestarting bool
 }
 
 // New prepares a supervisor and loads the state an earlier instance left in
@@ -207,6 +218,9 @@ func New(cfg Config) (*Supervisor, error) {
 	}
 	s := &Supervisor{cfg: cfg, startedAt: time.Now().UTC(), servers: map[string]*server{}, slot: stableNumber(cfg.Env)}
 	if prev, err := ReadState(cfg.StateDir); err == nil {
+		if checkOverlay(prev.Env) == nil {
+			s.env = prev.Env
+		}
 		for name, p := range prev.Servers {
 			sv := &server{
 				name: name, source: p.Source, desired: p.Desired, exit: p.Exit, startedAt: p.StartedAt,
@@ -490,7 +504,7 @@ func (s *Supervisor) start(name, reason string) {
 		s.mu.Unlock()
 		return
 	}
-	spec := sv.spec
+	spec, env := sv.spec, s.env
 	sv.starting = true
 	sv.retryPending, sv.windowChanged, sv.listened = false, false, false
 	if reason == reasonLimit {
@@ -511,7 +525,7 @@ func (s *Supervisor) start(name, reason string) {
 	s.mu.Unlock()
 
 	before, beforeOK := s.cfg.Tasks()
-	g, failure, err := s.launch(name, spec, starts)
+	g, failure, err := s.launch(name, spec, env, starts)
 	now := time.Now().UTC()
 
 	s.mu.Lock()
@@ -530,7 +544,7 @@ func (s *Supervisor) start(name, reason string) {
 		return
 	}
 	s.logf("started %s pgid=%d start#%d", name, g.pgid, starts)
-	sv.g = g
+	sv.g, sv.env = g, env
 	s.mu.Unlock()
 	go s.watchExit(sv, g)
 	if spec.Port > 0 {
@@ -538,8 +552,9 @@ func (s *Supervisor) start(name, reason string) {
 	}
 }
 
-// launch opens the server's log and starts its group once the port is free.
-func (s *Supervisor) launch(name string, spec Server, starts int) (*group, string, error) {
+// launch opens the server's log and starts its group once the port is free,
+// with the service's environment plus the overlay env.
+func (s *Supervisor) launch(name string, spec Server, env map[string]string, starts int) (*group, string, error) {
 	lp := LogPath(s.cfg.StateDir, name)
 	if fi, err := os.Stat(lp); err == nil && fi.Size() > logRotateSize {
 		_ = os.Rename(lp, lp+".1")
@@ -553,7 +568,7 @@ func (s *Supervisor) launch(name string, spec Server, starts int) (*group, strin
 	if err == nil {
 		fmt.Fprintf(f, "--- zcp-devsup: start #%d at %s: %s\n", starts, time.Now().UTC().Format(time.RFC3339), spec.Command)
 		var g *group
-		if g, err = startGroup(spec.Command, filepath.Join(s.cfg.Root, filepath.FromSlash(spec.Cwd)), s.cfg.Env, f); err == nil {
+		if g, err = startGroup(spec.Command, filepath.Join(s.cfg.Root, filepath.FromSlash(spec.Cwd)), withOverlay(s.cfg.Env, env), f); err == nil {
 			return g, "", nil
 		}
 		signal = ExitStartFailed
@@ -931,6 +946,128 @@ func (s *Supervisor) setDesired(name string, d Desired) error {
 	return nil
 }
 
+// SetEnv replaces the env overlay with env (docs/spec-mate.md §2.8a.2
+// `ctl env`): every server started from now on gets it. It returns once the
+// overlay is stored in state.json; the live servers started under another
+// overlay are then restarted in the supervisor's own goroutine, one at a time
+// a Stagger apart — a stop's grace per server could outlast a ctl call's wait.
+// An identical overlay changes nothing; a refused one changes nothing either.
+func (s *Supervisor) SetEnv(env map[string]string) error {
+	if err := checkOverlay(env); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	if maps.Equal(s.env, env) {
+		s.mu.Unlock()
+		return nil
+	}
+	s.env = overlayCopy(env)
+	run := !s.envRestarting && !s.closed
+	if run {
+		s.envRestarting = true
+	}
+	s.mu.Unlock()
+	s.logf("env overlay set: %s", overlayNames(env))
+	s.persist()
+	if run {
+		go s.restartForEnv()
+	}
+	return nil
+}
+
+// restartForEnv restarts, a Stagger apart, every live server whose group
+// started under another overlay than the current one, until none is left; an
+// overlay set meanwhile is picked up by the same loop.
+func (s *Supervisor) restartForEnv() {
+	for i := 0; ; i++ {
+		if i > 0 {
+			time.Sleep(s.cfg.Stagger)
+		}
+		if !s.restartOneForEnv() {
+			return
+		}
+	}
+}
+
+// restartOneForEnv restarts the first live server, by name, that started
+// under another overlay than the current one. It answers false, and marks the
+// restarts done, when none is left or the supervisor shut down.
+func (s *Supervisor) restartOneForEnv() bool {
+	s.op.Lock()
+	defer s.op.Unlock()
+	s.mu.Lock()
+	name := ""
+	if !s.closed {
+		for _, n := range slices.Sorted(maps.Keys(s.servers)) {
+			if sv := s.servers[n]; sv.g != nil && sv.desired == DesiredRunning && !maps.Equal(sv.env, s.env) {
+				name = n
+				break
+			}
+		}
+	}
+	if name == "" {
+		s.envRestarting = false
+		s.mu.Unlock()
+		return false
+	}
+	s.servers[name].starting = true
+	s.mu.Unlock()
+	s.logf("restart %s: %s", name, reasonEnv)
+	s.stopAll([]string{name})
+	s.start(name, reasonEnv)
+	s.persist()
+	return true
+}
+
+// checkOverlay refuses an overlay that would set a name the container's own
+// value must reach (envNameError) or a value exec cannot carry.
+func checkOverlay(env map[string]string) error {
+	for _, name := range slices.Sorted(maps.Keys(env)) {
+		if err := envNameError(name); err != nil {
+			return fmt.Errorf("env: %w", err)
+		}
+		if strings.ContainsRune(env[name], 0) {
+			return fmt.Errorf("env: %q: its value holds a NUL byte", name)
+		}
+	}
+	return nil
+}
+
+// overlayCopy is a copy of env that is never nil.
+func overlayCopy(env map[string]string) map[string]string {
+	out := make(map[string]string, len(env))
+	maps.Copy(out, env)
+	return out
+}
+
+// withOverlay is base with every overlay entry in place of base's own value
+// of that name, the overlay's entries last and in name order.
+func withOverlay(base []string, env map[string]string) []string {
+	if len(env) == 0 {
+		return base
+	}
+	out := make([]string, 0, len(base)+len(env))
+	for _, kv := range base {
+		name, _, _ := strings.Cut(kv, "=")
+		if _, ok := env[name]; !ok {
+			out = append(out, kv)
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(env)) {
+		out = append(out, name+"="+env[name])
+	}
+	return out
+}
+
+// overlayNames names the overlay's variables for the runtime log, which
+// project members read: a value never goes there.
+func overlayNames(env map[string]string) string {
+	if len(env) == 0 {
+		return "(none)"
+	}
+	return strings.Join(slices.Sorted(maps.Keys(env)), ", ")
+}
+
 // Shutdown stops every server and keeps what each was set to, so the next
 // instance starts the same ones.
 func (s *Supervisor) Shutdown() {
@@ -968,6 +1105,7 @@ func (s *Supervisor) State() State {
 		Format:      StateFormat,
 		Supervisor:  SupervisorInfo{Version: s.cfg.Version, Pid: os.Getpid(), StartedAt: s.startedAt},
 		Declaration: s.decl,
+		Env:         overlayCopy(s.env),
 		Servers:     make(map[string]ServerState, len(rows)),
 	}
 	s.mu.Unlock()
