@@ -1130,7 +1130,7 @@ record (§6.3), never a field here:
 | `containerHostname` | the container's own hostname (`node-id-<n>.runtime.<pool>.zerops`) |
 | `devServers` | present only on a call that read the lease's supervisor (`zerops_dev_server` on the alias): the same `DevServerState` entries a dev service's `devServers[]` carries, the preview server's `url` being the pool's per-port subdomain (`TestWithParts_LeaseDevServers`) |
 | `state` | the reconciled state, verbatim (`held`, `lost`, `unknown-holder`, …) — never enumerated by a reader |
-| `unverified` | `true` when the state is zcp's own last-known record because the pool's orchestrator did not answer |
+| `unverified` | `true` when the state is zcp's own last-known record because the pool's orchestrator did not answer — per pool: a stopped pool marks only its own leases, the others stay confirmed (`TestLeaseTool_Status_OneStoppedPool_OthersStillListed`) |
 
 - **Absent means "not read"; `[]` means "read, none held".** The key is emitted whenever zcp read
   the leases for this envelope — `zerops_workflow action="status"`, every JSON carrier (§1.4, through
