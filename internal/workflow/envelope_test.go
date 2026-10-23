@@ -167,6 +167,33 @@ func TestEnvelopeJSON_LeasesOnWire_CamelCase(t *testing.T) {
 	}
 }
 
+// TestEnvelopeJSON_LeaseAcquiredAt pins leases[].acquiredAt (docs/spec-mate.md
+// §2.8a.3): when the lease was acquired, the key a client rebinds by when a
+// bound lease of a branch ends and another stays held — after unverified,
+// before devServers, and absent when unknown (additive).
+func TestEnvelopeJSON_LeaseAcquiredAt(t *testing.T) {
+	t.Parallel()
+
+	raw, err := json.Marshal(leasesTestEnvelope(&[]LeaseSnapshot{
+		{Alias: "hqpool-3", Pool: "hqpool", Branch: "feat-x", ContainerHostname: "node-id-3.runtime.hqpool.zerops", State: "held", AcquiredAt: "2026-10-23T12:00:01Z"},
+		{Alias: "webpool-7", Pool: "webpool", Branch: "feat-x", ContainerHostname: "node-id-7.runtime.webpool.zerops", State: "unknown-holder"},
+	}))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	const want = `[{"alias":"hqpool-3","pool":"hqpool","branch":"feat-x","containerHostname":"node-id-3.runtime.hqpool.zerops",` +
+		`"state":"held","unverified":false,"acquiredAt":"2026-10-23T12:00:01Z"},` +
+		`{"alias":"webpool-7","pool":"webpool","branch":"feat-x","containerHostname":"node-id-7.runtime.webpool.zerops",` +
+		`"state":"unknown-holder","unverified":false}]`
+	if got := string(doc["leases"]); got != want {
+		t.Errorf("leases =\n%s\nwant\n%s", got, want)
+	}
+}
+
 // TestEnvelopeJSON_LeasesNotRead_NoKey pins that an envelope whose leases were
 // not read carries no leases key — never null, never [].
 func TestEnvelopeJSON_LeasesNotRead_NoKey(t *testing.T) {

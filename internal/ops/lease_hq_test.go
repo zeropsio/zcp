@@ -43,7 +43,7 @@ func TestLeaseCheckoutCommand_HQRepo_AuthenticatesAsMate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			cmd := leaseCheckoutCommand("/var/www", tt.repo, "feat", tt.hqURL)
+			cmd := leaseCheckoutCommand("/var/www", tt.repo, "feat", "", tt.hqURL)
 			fetch := "-c credential.helper= -c credential.helper=" + shellQuote(tt.wantHelper) + " fetch"
 			persisted := "git config --replace-all " + shellQuote("credential.https://"+tt.wantScope+".helper") + " " + shellQuote(tt.wantHelper)
 			for _, want := range []string{fetch, persisted} {

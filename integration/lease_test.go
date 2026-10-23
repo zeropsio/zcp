@@ -382,3 +382,150 @@ func TestLease_Integration_DeployToStage_SaysStageTracksMain(t *testing.T) {
 		}
 	}
 }
+
+// orchestratorRoutes sends every request for one of its hosts to that host's
+// target, leaving other traffic on the original transport (orchestratorRoute
+// for several pools).
+type orchestratorRoutes struct {
+	targets map[string]*url.URL
+	next    http.RoundTripper
+}
+
+func (o orchestratorRoutes) RoundTrip(r *http.Request) (*http.Response, error) {
+	target, ok := o.targets[r.URL.Host]
+	if !ok {
+		return o.next.RoundTrip(r)
+	}
+	c := r.Clone(r.Context())
+	c.URL.Scheme, c.URL.Host = target.Scheme, target.Host
+	return o.next.RoundTrip(c)
+}
+
+// groupPoolOrchestrator is one pool's orchestrator holding one container.
+func groupPoolOrchestrator(t *testing.T, pool, number string) (target *url.URL, acquires func() int) {
+	t.Helper()
+	var mu sync.Mutex
+	reserved, n := false, 0
+	lease := pool + "-" + leaseIntLease
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if r.Header.Get("Authorization") != "Bearer "+leaseIntToken {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":{"code":"notAuthorized","message":"missing or wrong API token"}}`))
+			return
+		}
+		lock := ""
+		if reserved {
+			lock = "reserved"
+		}
+		container := `{"id":"c-` + pool + `","name":"node-id-` + number + `","number":` + number + `,"hostname":"node-id-` + number + `.runtime.` + pool + `.zerops","status":"ACTIVE",` +
+			`"serviceId":"svc-` + pool + `","stackId":"stk","appVersionId":"av","current":true,"lockState":"` + lock + `","dirty":false`
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/container":
+			_, _ = w.Write([]byte(`[` + container + `}]`))
+		case r.Method == http.MethodPost && r.URL.Path == "/container/acquire":
+			reserved, n = true, n+1
+			_, _ = w.Write([]byte(strings.Replace(container, `"lockState":""`, `"lockState":"reserved"`, 1) + `,"lease":"` + lease + `"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	target, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return target, func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return n
+	}
+}
+
+// TestLease_Integration_GroupAcquire_OneLeasePerPoolInPoolsOrder: through the
+// full MCP server, acquire with pools leases one container per pool on the
+// branch, lists them in the pools' order with their acquiredAt, records each
+// with the canonical repository, and an acquire of a pool the branch already
+// holds returns that lease reused (DP-17).
+func TestLease_Integration_GroupAcquire_OneLeasePerPoolInPoolsOrder(t *testing.T) {
+	// Non-parallel: t.Chdir and a swap of http.DefaultTransport, as above.
+	t.Chdir(t.TempDir())
+
+	hqTarget, hqAcquires := groupPoolOrchestrator(t, "hqpool", "3")
+	webTarget, webAcquires := groupPoolOrchestrator(t, "webpool", "7")
+	orig := http.DefaultTransport
+	http.DefaultTransport = orchestratorRoutes{targets: map[string]*url.URL{"orch.hqpool.zerops": hqTarget, "orch.webpool.zerops": webTarget}, next: orig}
+	t.Cleanup(func() { http.DefaultTransport = orig })
+
+	mock := defaultMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-hqpool", Name: "hqpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
+			{ID: "svc-webpool", Name: "webpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
+		}).
+		WithServiceEnv("svc-hqpool", []platform.ServiceEnvVar{{ID: "env-h", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}}).
+		WithServiceEnv("svc-webpool", []platform.ServiceEnvVar{{ID: "env-w", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}})
+	session, cleanup := setupTestServer(t, mock, defaultLogFetcher())
+	defer cleanup()
+
+	type leaseResult struct {
+		Leases []struct {
+			Alias      string `json:"alias"`
+			Pool       string `json:"pool"`
+			Branch     string `json:"branch"`
+			State      string `json:"state"`
+			AcquiredAt string `json:"acquiredAt"`
+			Reused     bool   `json:"reused"`
+		} `json:"leases"`
+	}
+	call := func(args map[string]any) leaseResult {
+		t.Helper()
+		res := callAndGetResult(t, session, "zerops_lease", args)
+		text := getTextContent(t, res)
+		if res.IsError {
+			t.Fatalf("zerops_lease %v failed: %s", args, text)
+		}
+		if strings.Contains(text, leaseIntLease) || strings.Contains(text, leaseIntToken) {
+			t.Fatalf("result carries a secret: %s", text)
+		}
+		var out leaseResult
+		if err := json.Unmarshal([]byte(text), &out); err != nil {
+			t.Fatalf("result is not JSON: %v\n%s", err, text)
+		}
+		return out
+	}
+
+	got := call(map[string]any{"action": "acquire", "pools": []string{"webpool", "hqpool"}, "repo": "https://github.com/acme/app.git", "branch": "feat-x"})
+	if len(got.Leases) != 2 || got.Leases[0].Alias != "webpool-7" || got.Leases[1].Alias != "hqpool-3" {
+		t.Fatalf("acquire = %+v, want webpool-7 then hqpool-3", got.Leases)
+	}
+	for _, l := range got.Leases {
+		if l.State != "held" || l.Branch != "feat-x" || l.AcquiredAt == "" || l.Reused {
+			t.Errorf("lease = %+v, want held on feat-x with its acquiredAt", l)
+		}
+	}
+	for _, alias := range []string{"webpool-7", "hqpool-3"} {
+		raw, err := os.ReadFile(filepath.Join(".zcp", "state", "leases", alias+".json"))
+		if err != nil {
+			t.Fatalf("record %s: %v", alias, err)
+		}
+		var rec struct {
+			Repo   string `json:"repo"`
+			Branch string `json:"branch"`
+		}
+		if err := json.Unmarshal(raw, &rec); err != nil {
+			t.Fatal(err)
+		}
+		if rec.Repo != "https://github.com/acme/app" || rec.Branch != "feat-x" {
+			t.Errorf("%s record = %+v, want the canonical repository on feat-x", alias, rec)
+		}
+	}
+
+	again := call(map[string]any{"action": "acquire", "pool": "webpool", "repo": "https://github.com/acme/app", "branch": "feat-x"})
+	if len(again.Leases) != 1 || again.Leases[0].Alias != "webpool-7" || !again.Leases[0].Reused {
+		t.Errorf("second acquire = %+v, want webpool-7 reused", again.Leases)
+	}
+	if hqAcquires() != 1 || webAcquires() != 1 {
+		t.Errorf("acquires hq=%d web=%d, want one container per pool", hqAcquires(), webAcquires())
+	}
+}

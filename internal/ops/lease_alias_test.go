@@ -323,10 +323,11 @@ func TestLeaseList_MissingMount_Unmounted(t *testing.T) {
 	t.Parallel()
 	hf := newHostFixture(t)
 	ctx := context.Background()
+	// One lease per repository, branch and pool: each lease is of its own branch.
 	for _, n := range []int64{3, 4, 5} {
 		hf.swarm.acquired = acquiredAs(n)
 		hf.swarm.acquired.Container.ID = "c-" + strconv.FormatInt(n, 10)
-		if _, err := LeaseAcquire(ctx, hf.deps, testPoolHost, testRepo, ""); err != nil {
+		if _, err := LeaseAcquire(ctx, hf.deps, testPoolHost, testRepo, "b"+strconv.FormatInt(n, 10)); err != nil {
 			t.Fatalf("acquire #%d: %v", n, err)
 		}
 	}
