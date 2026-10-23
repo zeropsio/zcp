@@ -67,15 +67,10 @@ func attachPartsSignal(ctx context.Context, services []workflow.ServiceSnapshot,
 
 // holdsNoRepo reports a class whose service never holds the app's repo to read:
 // a managed service, an unknown type, a pool (a read by service hostname
-// reaches a random container of it) or a Box (spec-workflows.md §8 PS-3).
+// reaches a random container of it) or a Box (spec-workflows.md §8 PS-3) —
+// every class that is not an app runtime.
 func holdsNoRepo(class topology.RuntimeClass) bool {
-	switch class {
-	case topology.RuntimeManaged, topology.RuntimeUnknown, topology.RuntimePool, topology.RuntimeSandbox:
-		return true
-	case topology.RuntimeDynamic, topology.RuntimeStatic, topology.RuntimeImplicitWeb:
-		return false
-	}
-	return false
+	return !class.IsAppRuntime()
 }
 
 // multiPartRouteNote is the route-menu line that points at the monorepo

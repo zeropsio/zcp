@@ -17,6 +17,21 @@ const (
 	RuntimeUnknown RuntimeClass = "unknown"
 )
 
+// IsAppRuntime reports a class that runs the user's application in one
+// container it can address by service hostname: dynamic, static and
+// implicit-web runtimes. Managed services, pools, Boxes and unknown types
+// are not — a repo, a rollback history or an SSH read by hostname means
+// nothing for them (spec-workflows.md §8 PS-3).
+func (c RuntimeClass) IsAppRuntime() bool {
+	switch c {
+	case RuntimeDynamic, RuntimeStatic, RuntimeImplicitWeb:
+		return true
+	case RuntimeManaged, RuntimePool, RuntimeSandbox, RuntimeUnknown:
+		return false
+	}
+	return false
+}
+
 // Mode is the bootstrapped service's deploy mode in envelope terms.
 // Distinct from the untyped-string meta.Mode ("dev", "standard", "simple"):
 // envelope splits the dev half of a standard pair (ModeStandard) from its

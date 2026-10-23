@@ -197,3 +197,28 @@ func TestIsDeferredStart_Pool_False(t *testing.T) {
 		}
 	}
 }
+
+func TestRuntimeClass_IsAppRuntime(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		class RuntimeClass
+		want  bool
+	}{
+		{RuntimeDynamic, true},
+		{RuntimeStatic, true},
+		{RuntimeImplicitWeb, true},
+		{RuntimeManaged, false},
+		{RuntimePool, false},
+		{RuntimeSandbox, false},
+		{RuntimeUnknown, false},
+		{RuntimeClass(""), false},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.class), func(t *testing.T) {
+			t.Parallel()
+			if got := tc.class.IsAppRuntime(); got != tc.want {
+				t.Fatalf("%q.IsAppRuntime() = %v, want %v", tc.class, got, tc.want)
+			}
+		})
+	}
+}

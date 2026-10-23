@@ -5,6 +5,7 @@ import (
 	"errors"
 	"maps"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -117,5 +118,49 @@ func TestAdoptVolumeSetups_ReadWhetherTheDevSetupsWorkInTheVolumeAndWhatItHolds(
 				}
 			}
 		})
+	}
+}
+
+// hostCatSSH answers the zerops.yaml read like catSSH and records the hosts it
+// is asked to reach.
+type hostCatSSH struct {
+	yaml  string
+	mu    sync.Mutex
+	hosts []string
+}
+
+func (s *hostCatSSH) ExecSSH(_ context.Context, host, _ string) ([]byte, error) {
+	s.mu.Lock()
+	s.hosts = append(s.hosts, host)
+	s.mu.Unlock()
+	return []byte(s.yaml), nil
+}
+
+func (*hostCatSSH) ExecSSHBackground(context.Context, string, string, time.Duration) ([]byte, error) {
+	return nil, nil
+}
+
+// TestAdoptVolumeSetups_SkipsPool: a pool or a Box is never read for the
+// repository's zerops.yaml — by service hostname that reaches a random pool
+// container (docs/spec-workflows.md §8 PS-3) — so the setups come from the
+// first real runtime, even when the pool is listed before it.
+func TestAdoptVolumeSetups_SkipsPool(t *testing.T) {
+	t.Parallel()
+	existing := []platform.ServiceStack{
+		{Name: "vol", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "local-storage:single@1"}},
+		{Name: "swarm", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1"}},
+		{Name: "sandbox", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/zbox@1"}},
+		{Name: "webdev", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "bun@1.3"}},
+	}
+	yml := "zerops:\n  - setup: dev\n    run:\n      base: bun@1.3\n      volume:\n        hostname: vol\n        mountPath: /var/www/ws\n"
+	ssh := &hostCatSSH{yaml: yml}
+	got := adoptVolumeSetups(context.Background(), ssh, existing, t.TempDir()+"/a/b")
+	if len(got) != 1 || got[0].Setup != "dev" {
+		t.Fatalf("got %+v, want the dev setup read from webdev", got)
+	}
+	for _, h := range ssh.hosts {
+		if h == "swarm" || h == "sandbox" {
+			t.Errorf("SSH reached %q, want a pool and a Box never read; hosts = %v", h, ssh.hosts)
+		}
 	}
 }

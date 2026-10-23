@@ -142,7 +142,8 @@ type ServiceInfo struct {
 	// it (platform.ServiceStack.HasDeployedCode): false for a runtime that
 	// holds only the placeholder a startWithoutCode import leaves — ACTIVE,
 	// with a running container and nothing in it — or no app version at all.
-	// Nil for managed services and the control plane, which never take code.
+	// Nil for managed services, the control plane, a Swarm pool and a Zerops
+	// Box, which never take an app's code.
 	Deployed         *bool  `json:"deployed,omitempty"`
 	MountPath        string `json:"mountPath,omitempty"`
 	SubdomainEnabled bool   `json:"subdomainEnabled,omitempty"`
@@ -363,7 +364,7 @@ func buildSummaryServiceInfo(svc *platform.ServiceStack) ServiceInfo {
 	if port, ok := PreferredHTTPPort(svc.Ports); ok {
 		info.subdomainPort = port.Port
 	}
-	if !info.IsInfrastructure && typeVersion != zcpSelfType {
+	if !info.IsInfrastructure && typeVersion != zcpSelfType && !topology.IsPoolOrSandboxType(typeVersion) {
 		deployed := svc.HasDeployedCode()
 		info.Deployed = &deployed
 	}

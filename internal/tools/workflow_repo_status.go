@@ -6,7 +6,6 @@ import (
 
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/runtime"
-	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -16,7 +15,7 @@ import (
 // seconds of SSH latency onto every status call.
 const attachRepoStatusConcurrency = 4
 
-// attachRepoStatus populates services[i].Repo for every non-managed
+// attachRepoStatus populates services[i].Repo for every app-runtime
 // service (docs/spec-workflows.md §8 GLC-7, G1/G2) — the tools-layer half
 // of workflow.ApplyRepoStatus, which stays SSH-free so workflow/ never
 // imports ops/. Present/Head are read fresh over SSH on every call. Baseline and
@@ -43,7 +42,7 @@ func attachRepoStatus(ctx context.Context, services []workflow.ServiceSnapshot, 
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, attachRepoStatusConcurrency)
 	for _, svc := range services {
-		if svc.RuntimeClass == topology.RuntimeManaged || svc.RuntimeClass == topology.RuntimeUnknown {
+		if !svc.RuntimeClass.IsAppRuntime() {
 			continue
 		}
 		wg.Add(1)

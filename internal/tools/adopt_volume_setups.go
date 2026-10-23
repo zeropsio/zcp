@@ -29,7 +29,7 @@ func adoptVolumeSetups(ctx context.Context, ssh ops.SSHDeployer, existing []plat
 	}
 	root := projectRootFromState(stateDir)
 	for _, svc := range existing {
-		if svc.IsSystem() || topology.IsManagedService(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) {
+		if !isAdoptRuntime(svc) {
 			continue
 		}
 		doc := readAdoptZeropsYml(ctx, ssh, svc.Name, filepath.Join(root, svc.Name))
@@ -70,7 +70,7 @@ func probeAdoptVolumes(ctx context.Context, ssh ops.SSHDeployer, existing []plat
 		}
 		setups[i].Content = map[string]topology.VolumeContent{}
 		for _, svc := range existing {
-			if svc.IsSystem() || topology.CanonicalBaseName(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) != topology.CanonicalBaseName(s.RunBase) {
+			if !isAdoptRuntime(svc) || topology.CanonicalBaseName(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) != topology.CanonicalBaseName(s.RunBase) {
 				continue
 			}
 			key := [2]string{svc.Name, s.MountPath}
@@ -84,6 +84,14 @@ func probeAdoptVolumes(ctx context.Context, ssh ops.SSHDeployer, existing []plat
 			}
 		}
 	}
+}
+
+// isAdoptRuntime reports a service that holds the repository's code in one
+// container reachable by its hostname: not a system service, a managed
+// service, a pool (a hostname reaches a random container of it) or a Box
+// (docs/spec-workflows.md §8 PS-3).
+func isAdoptRuntime(svc platform.ServiceStack) bool {
+	return !svc.IsSystem() && topology.RuntimeClassFor(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName).IsAppRuntime()
 }
 
 func readAdoptZeropsYml(ctx context.Context, ssh ops.SSHDeployer, host, mount string) *ops.ZeropsYmlDoc {
