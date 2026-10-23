@@ -250,6 +250,52 @@ Read this when an app needs a Swarm pool or a Zerops Box. Either is infrastructu
 **Env**: env variables set on the pool service reach its containers, including leased ones for processes started after the change; the pool's own `API_TOKEN` does not.
 **Addressing**: each container answers on its own hostname `node-id-<n>.runtime.<pool>.zerops`. SSH into pool containers follows the pool's `sshIsolation`, set as a service env variable. A per-port subdomain routes to the containers listening on that port.
 
+### A part's dev pool
+
+A part's dev environment may be a pool: each branch gets one leased container (`zerops_lease`), and `zerops_dev_server`, `zerops_deploy` and `zerops_verify` take the lease alias `<pool>-<number>` as the hostname.
+
+**Import**:
+
+```yaml
+services:
+  - hostname: devpool
+    type: swarm@1
+    minContainers: <0-10>
+    maxContainers: <0-10>
+    verticalAutoscaling:
+      minRam: <GB>
+    envVariables:
+      sshIsolation: "vpn service@<zcp hostname>"
+    envSecrets:
+      GIT_TOKEN: <the user sets the value>
+```
+
+- `sshIsolation` goes in `envVariables`: a pool container answers SSH only when it is set as a service env variable admitting the zcp service. The top-level import field did not reach pool containers.
+- `GIT_TOKEN` is a secret the user owns: name it in `envSecrets`, never write a value. Acquire clones with the pool's own `GIT_TOKEN`.
+- The service env reaches the pool's containers.
+
+**zerops.yml setup**:
+
+```yaml
+zerops:
+  - setup: devpool
+    run:
+      base: <language base>
+      ports:
+        - port: <previewPortBase>
+          httpSupport: true
+        # ... one entry per preview port, up to previewPortBase + maxContainers - 1
+      prepareCommands:
+        - <install the dependencies outside /var/www, e.g. under /opt>
+        - <install zcp-devsup>
+      start: zcp-devsup run
+```
+
+- Preview ports: with `previewPortBase` in `.zcp/dev-servers.json`, a lease answers on `previewPortBase + ZEROPS_StableNumber`. A per-port subdomain routes only to containers listening on that port, so every port from `previewPortBase` to `previewPortBase + maxContainers - 1` is declared in `run.ports` with `httpSupport: true`.
+- Dependencies: a reused container's `/var/www` comes back empty; files `run.prepareCommands` put outside `/var/www` survive.
+- Supervisor: `start: zcp-devsup run` and the `zcp-devsup` install in `run.prepareCommands` are what `zerops_dev_server` needs on a lease; without them it refuses the lease and names `run.start`. A dev service's setup carries the same two lines (see `zerops_knowledge uri="zerops://themes/dev-servers"`).
+- A deploy of the pool changes only containers created after it; release a lease and acquire a fresh one to run it.
+
 ### Zerops Box
 
 **Type**: `ubuntu/zbox@1` — a single container (the import schema takes no container counts for it), in beta. It hosts sandboxes. It is not a zerops.yml `run.base`. Creation can fail on hardware capacity.

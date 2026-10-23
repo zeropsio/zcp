@@ -1717,3 +1717,41 @@ func TestScenario_S16_ExistingRepoRunsItsOwnDevFlow(t *testing.T) {
 	}
 	requireAtomIDsContain(t, "S16 existing repo", out, "develop-first-deploy-existing-repo")
 }
+
+// TestScenario_DevPool_FiresOnlyWhenTheProjectHoldsAPool pins that the dev-pool
+// guidance reaches a develop session whose project holds a Swarm pool and no
+// other: a project without one never carries it, and a Zerops Box (a sandbox
+// host, not a pool) does not summon it.
+func TestScenario_DevPool_FiresOnlyWhenTheProjectHoldsAPool(t *testing.T) {
+	t.Parallel()
+
+	const atom = "develop-dev-pool"
+	corpus, err := LoadAtomCorpus()
+	if err != nil {
+		t.Fatalf("LoadAtomCorpus: %v", err)
+	}
+	env := func(extra ...ServiceSnapshot) StateEnvelope {
+		return StateEnvelope{Phase: PhaseDevelopActive, Environment: EnvContainer,
+			Services:    append([]ServiceSnapshot{{Hostname: "partdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeDev, Bootstrapped: true, Deployed: true}}, extra...),
+			WorkSession: fixSession("partdev")}
+	}
+
+	withPool, err := Synthesize(env(fixSnapPool("devpool", "swarm@1")), corpus)
+	if err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	requireAtomIDsContain(t, "project holds a pool", withPool, "develop-dev-pool")
+
+	box := ServiceSnapshot{Hostname: "box", TypeVersion: "ubuntu/zbox@1", RuntimeClass: topology.RuntimeSandbox, Status: "ACTIVE"}
+	for label, e := range map[string]StateEnvelope{"no pool": env(), "a Box only": env(box)} {
+		got, err := Synthesize(e, corpus)
+		if err != nil {
+			t.Fatalf("Synthesize(%s): %v", label, err)
+		}
+		for _, m := range got {
+			if m.AtomID == atom {
+				t.Errorf("%s fired for a project with %s", atom, label)
+			}
+		}
+	}
+}
