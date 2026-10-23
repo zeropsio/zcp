@@ -29,7 +29,8 @@ import (
 // every command it is asked to run, so a test can prove the read side ran
 // only the read-only census. The env step's secret read runs for real in a
 // local shell whose environment is env — the dev container's session env —
-// or, with envErr, fails with envOutput as the session's output.
+// or, with envErr, fails with envOutput as the session's output. The image
+// step's read of the commit answers image, or fails with imageErr.
 type poolMigrateSSH struct {
 	mu        sync.Mutex
 	output    string
@@ -37,6 +38,8 @@ type poolMigrateSSH struct {
 	env       map[string]string
 	envErr    error
 	envOutput string
+	image     string
+	imageErr  error
 	commands  []string
 }
 
@@ -48,7 +51,14 @@ func (s *poolMigrateSSH) ExecSSH(ctx context.Context, hostname, command string) 
 	s.commands = append(s.commands, hostname+": "+command)
 	census, censusErr := s.output, s.err
 	env, envErr, envOutput := s.env, s.envErr, s.envOutput
+	image, imageErr := s.image, s.imageErr
 	s.mu.Unlock()
+	if strings.Contains(command, poolMigrateImageReadMarker) {
+		if imageErr != nil {
+			return nil, imageErr
+		}
+		return []byte(image), nil
+	}
 	if !strings.Contains(command, poolMigrateEnvReadMarker) {
 		if censusErr != nil {
 			return nil, censusErr
@@ -205,7 +215,7 @@ func newPoolMigrateFixture() poolMigrateFixture {
 		env: map[string][]platform.ServiceEnvVar{
 			"svc-pool": poolMigratePoolOwnEnv(),
 		},
-		ssh:   &poolMigrateSSH{output: poolMigrateCleanCensus()},
+		ssh:   &poolMigrateSSH{output: poolMigrateCleanCensus(), image: poolMigrateImageReadFor(poolMigrateReadyYAML(), poolMigrateReadyDeclaration)},
 		rt:    runtime.Info{InContainer: true, ServiceName: "zcp"},
 		input: WorkflowInput{Workflow: "pool-migrate", Service: "appdev"},
 	}

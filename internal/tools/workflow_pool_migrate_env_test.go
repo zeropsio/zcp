@@ -99,11 +99,8 @@ func TestPoolMigrate_StepFromLiveState_EnvDone_Image(t *testing.T) {
 	if out["step"] != "image" {
 		t.Fatalf("step = %v, want image once the pool holds the dev's env; env %v", out["step"], out["env"])
 	}
-	if _, has := out["next"]; has {
-		t.Fatalf("the image step is not run by this zcp: %v", out["next"])
-	}
-	if s, _ := out["nextUnavailable"].(string); s == "" {
-		t.Fatal("the image step must say why no next call is named")
+	if next, _ := out["next"].(map[string]any); next["tool"] != "zerops_deploy" {
+		t.Fatalf("next = %v, want the image step's deploy", out["next"])
 	}
 	steps, _ := out["steps"].([]any)
 	for i, want := range []string{"done", "done", "current"} {
@@ -118,8 +115,8 @@ func TestPoolMigrate_StepFromLiveState_EnvDone_Image(t *testing.T) {
 	if n := mock.CallCount("CreateServiceEnvVar") + mock.CallCount("DeleteUserData"); n != 0 {
 		t.Fatalf("the read side wrote env (%d calls)", n)
 	}
-	if cmds := f.ssh.recorded(); len(cmds) != 1 {
-		t.Fatalf("ssh commands = %v, want only the census: the read side reads no secret", cmds)
+	if cmds := f.ssh.recorded(); len(cmds) != 2 || strings.Contains(strings.Join(cmds, "\n"), poolMigrateEnvReadMarker) {
+		t.Fatalf("ssh commands = %v, want the census and the image step's read of the commit: the read side reads no secret", cmds)
 	}
 }
 

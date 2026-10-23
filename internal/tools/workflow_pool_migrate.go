@@ -90,16 +90,22 @@ const (
 )
 
 // The atoms carrying the flow's guidance: the plan on every answer, the move
-// step's on every answer that carries the census, and the env step's on its
-// answers and the step's own.
+// step's on every answer that carries the census, the env step's on its
+// answers and the step's own, and the image step's once the pool holds the
+// dev service's env.
 const (
-	poolMigrateAtomID     = "pool-migrate-plan"
-	poolMigrateMoveAtomID = "pool-migrate-move"
-	poolMigrateEnvAtomID  = "pool-migrate-env"
+	poolMigrateAtomID      = "pool-migrate-plan"
+	poolMigrateMoveAtomID  = "pool-migrate-move"
+	poolMigrateEnvAtomID   = "pool-migrate-env"
+	poolMigrateImageAtomID = "pool-migrate-image"
 )
 
 // envActionRequest is zerops_env's action that asks the person for a value.
 const envActionRequest = "request"
+
+// poolMigrateProcessWait is zerops_process's action that waits for a
+// service's live processes to finish.
+const poolMigrateProcessWait = "wait"
 
 // actionPoolEnv is the env step's own call: zerops_workflow
 // workflow="pool-migrate" action="pool-env" (docs/spec-workflows.md §13 PM-4).
@@ -146,11 +152,15 @@ type poolMigrateResponse struct {
 	Env *ops.PoolMigrateEnv `json:"env,omitempty"`
 	// EnvRequests are the zerops_env action="request" calls for the secrets
 	// zcp could not read on the dev service.
-	EnvRequests []poolMigrateNext    `json:"envRequests,omitempty"`
-	Refusals    []poolMigrateRefusal `json:"refusals,omitempty"`
-	Warnings    []string             `json:"warnings,omitempty"`
-	Guidance    string               `json:"guidance"`
-	Inputs      poolMigrateInputs    `json:"inputs"`
+	EnvRequests []poolMigrateNext `json:"envRequests,omitempty"`
+	// Image is the image step's reading of the pool setup in the commit its
+	// deploy ships and of the app version the pool runs, on every step once
+	// the pool holds the dev service's env.
+	Image    *ops.PoolMigrateImage `json:"image,omitempty"`
+	Refusals []poolMigrateRefusal  `json:"refusals,omitempty"`
+	Warnings []string              `json:"warnings,omitempty"`
+	Guidance string                `json:"guidance"`
+	Inputs   poolMigrateInputs     `json:"inputs"`
 }
 
 type poolMigrateStepState struct {
@@ -240,7 +250,7 @@ func poolMigrateRun(ctx context.Context, d poolMigrateDeps, input WorkflowInput)
 	if err != nil {
 		return convertError(fmt.Errorf("pool-migrate: compare the pool's env: %w", err), WithRecoveryStatus()), nil, nil
 	}
-	return jsonResult(poolMigrateEnvAnswer(call, env)), nil, nil
+	return jsonResult(poolMigrateSettledAnswer(ctx, d, call, env)), nil, nil
 }
 
 // handlePoolMigrateEnv is the env step, zerops_workflow workflow="pool-migrate"
@@ -283,7 +293,7 @@ func poolMigrateEnvRun(ctx context.Context, d poolMigrateDeps, input WorkflowInp
 	if err != nil {
 		return convertError(fmt.Errorf("pool-migrate: copy the env to the pool: %w", err), WithRecoveryStatus()), nil, nil
 	}
-	resp := poolMigrateEnvAnswer(call, env)
+	resp := poolMigrateSettledAnswer(ctx, d, call, env)
 	resp.Action = actionPoolEnv
 	return jsonResult(resp), nil, nil
 }
@@ -432,11 +442,17 @@ func readPoolMigrate(ctx context.Context, d poolMigrateDeps, input WorkflowInput
 	if err != nil {
 		return nil, nil, convertError(fmt.Errorf("pool-migrate: read the project's processes: %w", err), WithRecoveryStatus())
 	}
-	if len(activity[pool]) > 0 {
-		r := poolMigrateAt(resp, poolMigrateStepProvision, &poolMigrateNext{
+	if live := activity[pool]; len(live) > 0 {
+		// A build of the pool is its image step's deploy; any other process
+		// of its own is still the provision step's.
+		step, why := poolMigrateStepProvision, "The pool's own processes are still running; the next step starts once they finish."
+		if _, building := standupBuildOp(live); building {
+			step, why = poolMigrateStepImage, "A build of the pool is running; the image step reads the app version the pool runs once it finishes."
+		}
+		r := poolMigrateAt(resp, step, &poolMigrateNext{
 			Tool: "zerops_process",
-			Args: map[string]string{"action": "wait", "service": pool},
-			Why:  "The pool's own processes are still running; the next step starts once they finish.",
+			Args: map[string]string{"action": poolMigrateProcessWait, "service": pool},
+			Why:  why,
 		}, "")
 		return nil, &r, nil
 	}
@@ -479,9 +495,9 @@ func poolMigrateDevOrigin(meta *workflow.ServiceMeta, d poolMigrateDeps) string 
 	return hq.RepoURLAt(address, meta.HQ.AppID, meta.HQ.Repo)
 }
 
-// poolMigrateEnvAnswer answers a settled pool: the env step while the pool's
-// env is not the dev's, the image step once it is.
-func poolMigrateEnvAnswer(call *poolMigrateCall, env *ops.PoolMigrateEnv) poolMigrateResponse {
+// poolMigrateSettledAnswer answers a settled pool: the env step while the
+// pool's env is not the dev's, the image step once it is.
+func poolMigrateSettledAnswer(ctx context.Context, d poolMigrateDeps, call *poolMigrateCall, env *ops.PoolMigrateEnv) poolMigrateResponse {
 	resp := call.resp
 	shown := *env
 	shown.Requests = nil
@@ -500,8 +516,7 @@ func poolMigrateEnvAnswer(call *poolMigrateCall, env *ops.PoolMigrateEnv) poolMi
 		resp.Guidance += "\n\n" + envAtom
 	}
 	if env.Done {
-		return poolMigrateAt(resp, poolMigrateStepImage, nil,
-			"The image step deploys the part's pool setup to the pool. This zcp names the step but does not run it yet.")
+		return poolMigrateImageAnswer(ctx, d, call, resp)
 	}
 	args := map[string]string{"workflow": workflowPoolMigrate, "action": actionPoolEnv, "service": call.dev.Name, "pool": call.pool.Name}
 	return poolMigrateAt(resp, poolMigrateStepEnv, &poolMigrateNext{
@@ -509,6 +524,71 @@ func poolMigrateEnvAnswer(call *poolMigrateCall, env *ops.PoolMigrateEnv) poolMi
 		Args: args,
 		Why:  "zcp gives the pool the dev service's own env itself, secrets included, writing only what differs; no value passes through you.",
 	}, "")
+}
+
+// poolMigrateImageAnswer answers a pool that holds the dev service's env: the
+// image step, which checks the pool setup in the dev checkout's HEAD commit
+// (ops.ReadPoolMigrateImage — one read-only git round trip on the dev) and
+// names `zerops_deploy ... sha=<commit>` once the commit passes every check,
+// until the pool runs an app version newer than the commit's last change of
+// its config file; then the move step. It writes nothing: the agent commits
+// and deploys.
+func poolMigrateImageAnswer(ctx context.Context, d poolMigrateDeps, call *poolMigrateCall, resp poolMigrateResponse) poolMigrateResponse {
+	var head ops.PoolMigrateTree
+	if resp.Census != nil && len(resp.Census.Trees) > 0 {
+		head = resp.Census.Trees[0]
+	}
+	image, err := ops.ReadPoolMigrateImage(ctx, d.ssh, ops.PoolMigrateImageInput{
+		Dev:                   call.dev.Name,
+		Root:                  topology.CodeMountRoot,
+		Head:                  head,
+		Pool:                  call.pool,
+		DevSetup:              call.meta.PrimarySetupName,
+		FallbackMaxContainers: poolMigrateMaxContainers,
+	})
+	if err != nil {
+		// The census just read the dev, so this is no refusal: the step
+		// stays, and names no deploy until it has checked the commit.
+		return poolMigrateAt(resp, poolMigrateStepImage, nil,
+			withSSHStderr("could not read the pool setup in "+call.dev.Name+"'s commit "+poolMigrateShortCommit(head.Head)+" over SSH", err)+
+				". Call again: the image step names a deploy only once it has checked the commit.")
+	}
+	resp.Image = image
+	if imageAtom := atomBody(call.corpus, poolMigrateImageAtomID); imageAtom != "" {
+		resp.Guidance += "\n\n" + imageAtom
+	}
+	short := poolMigrateShortCommit(image.Commit)
+	switch {
+	case image.Done:
+		return poolMigrateAt(resp, poolMigrateStepMove, nil,
+			fmt.Sprintf("The pool runs an app version created after the last change of %s up to commit %s, so the image step is done. This zcp does not run the move, lease and retire steps yet: census and workBranch say what moving the work means.", image.File, short))
+	case len(image.Missing) > 0:
+		why := "The pool setup is not ready: fix what image.missing names, commit it (zcp never commits), then call again."
+		if image.Commit != "" {
+			why = fmt.Sprintf("The pool setup in commit %s is not ready: fix what image.missing names, commit it (zcp never commits), then call again — the deploy ships a commit, never the working tree.", short)
+		}
+		if len(image.Uncommitted) > 0 {
+			why += fmt.Sprintf(" Your changes to %s are not committed yet.", strings.Join(image.Uncommitted, " and "))
+		}
+		return poolMigrateAt(resp, poolMigrateStepImage, nil, why)
+	}
+	why := fmt.Sprintf("Builds the pool's image from setup %q in commit %s, never the dev service's working tree; it reaches only containers the pool creates after it.", image.Setup, short)
+	if image.Deployed != nil {
+		why += " The app version the pool runs was not created after the last change of " + image.File + " up to that commit."
+	}
+	if len(image.Uncommitted) > 0 {
+		why += fmt.Sprintf(" Your changes to %s are not in that commit: commit them first and call again to ship them.", strings.Join(image.Uncommitted, " and "))
+	}
+	return poolMigrateAt(resp, poolMigrateStepImage, &poolMigrateNext{
+		Tool: "zerops_deploy",
+		Args: map[string]string{"sourceService": call.dev.Name, "targetService": call.pool.Name, "setup": image.Setup, "sha": image.Commit},
+		Why:  why,
+	}, "")
+}
+
+// poolMigrateShortCommit is how much of a commit the flow's messages name.
+func poolMigrateShortCommit(sha string) string {
+	return sha[:min(10, len(sha))]
 }
 
 // poolMigrateMetaRefusals are the refusals the meta alone decides: the mode,
