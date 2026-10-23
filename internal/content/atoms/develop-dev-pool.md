@@ -7,6 +7,7 @@ environments: [container]
 multiService: aggregate
 title: "A part's dev pool — lease a container, work, push, release"
 references-atoms: [develop-dynamic-runtime-start-container]
+references-fields: [ops.DeployResult.Warnings]
 ---
 
 ### A part's dev pool
@@ -43,10 +44,16 @@ answers on `previewPortBase + ZEROPS_StableNumber`, and the dev-server
 result's `previewUrl` is the pool's subdomain on that port. With several
 servers that listen, mark the one the preview reaches with `"preview": true`.
 
-**Stage.** `zerops_deploy sourceService="<alias>" targetService="<stage>"`
-deploys the part's stage from the lease (add `sha` to deploy an exact commit).
-Verify a container with `zerops_verify serviceHostname="<alias>"` — it
-reports SSH reachability, the supervisor and the dev servers.
+**Stage.** The part's stage tracks `main`: review a branch on its lease's
+preview URL, not on the stage. Once the branch is merged, put main on the
+stage from a lease of the part:
+`zerops_deploy sourceService="<alias>" targetService="<stage>" sha="origin/main"`
+— the deploy fetches `main` first, so this ships main as the remote has it now.
+A deploy of a commit that is not on `origin/main`, or of uncommitted changes,
+still runs; its `warnings` say the stage no longer tracks main and name the
+call that puts main back. Verify a container with
+`zerops_verify serviceHostname="<alias>"` — it reports SSH reachability, the
+supervisor and the dev servers.
 
 **Pitfalls**
 
