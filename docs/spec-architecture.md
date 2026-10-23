@@ -59,7 +59,7 @@ not a Zerops API concept.
   `GitPushUnconfigured/Configured/Broken`,
   `BuildIntegrationNone/Webhook/Actions`.
 - Predicates: `IsManagedService`, `ServiceSupportsMode`,
-  `IsRuntimeType`, `IsUtilityType`, `IsPoolType`, `IsSandboxType`
+  `IsRuntimeType`, `IsUtilityType`, `IsPoolType`, `IsSandboxType`, `IsPoolOrSandboxType`, `RuntimeClass.IsAppRuntime`
   (+ supporting maps; pools and Box: `docs/spec-workflows.md` §8 PS).
 - Aliases: `PlanModeStandard/Dev/Simple/LocalStage/LocalOnly`,
   `DeployRoleDev/Stage/Simple` (semantic synonyms for `Mode`
