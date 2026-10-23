@@ -16,10 +16,9 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
 const { EventEmitter } = require("node:events");
-const { loadWelcome, TEST_REGISTRY, TEST_AGENT_IDS } = require("./harness.js");
+const { loadWelcome, TEST_REGISTRY, TEST_AGENT_IDS, tempDir } = require("./harness.js");
 
 function baseDeps(extra) {
   return Object.assign(
@@ -102,7 +101,7 @@ test("a credential dir created after open is detected and pushes local-only", as
   const ATTEMPTS = 5;
   let found;
   for (let attempt = 1; attempt <= ATTEMPTS && !found; attempt++) {
-    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "zcp-welcomejs-home-"));
+    const tmpHome = tempDir("zcp-welcomejs-home-");
     const { panel } = openWelcome({ homeDir: tmpHome, workspaceRoot: null });
 
     panel.webview.__fireMessage({ type: "ready" });
@@ -376,7 +375,7 @@ test("a pack manifest created after open is detected and pushes an installed sta
   const ATTEMPTS = 5;
   let found;
   for (let attempt = 1; attempt <= ATTEMPTS && !found; attempt++) {
-    const tmpWs = fs.mkdtempSync(path.join(os.tmpdir(), "zcp-welcomejs-pack-ws-"));
+    const tmpWs = tempDir("zcp-welcomejs-pack-ws-");
     const manifestPath = path.join(tmpWs, ".zcp", "state", "skill-packs", "superpowers.json");
     const spawn = () => {
       const child = new EventEmitter();

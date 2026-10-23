@@ -10,9 +10,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
-const { loadExtension } = require("./harness.js");
+const { loadExtension, tempDir } = require("./harness.js");
 
 const ZEMBED_ENV_PATH = path.join("/etc/zerops-zembed", "env.json");
 
@@ -96,7 +95,7 @@ test("an explicit empty ZCP_AGENTS opens the launcher with the no-agents-enabled
 });
 
 test("a launch message for a NOT-installed agent does nothing", async () => {
-  const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), "zcp-launcher-empty-"));
+  const emptyDir = tempDir("zcp-launcher-empty-");
   const originalPath = process.env.PATH;
   process.env.PATH = emptyDir; // controlled PATH: guaranteed not to carry a real "codex" binary
   const restoreEnv = withZembedEnv({ ZCP_AGENTS: "codex", ZCP_AGENT_OAUTH_CODEX: "true" });
@@ -114,7 +113,7 @@ test("a launch message for a NOT-installed agent does nothing", async () => {
 });
 
 test("a launch message for an installed + authorized agent opens a terminal running its command", async () => {
-  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "zcp-launcher-bin-"));
+  const binDir = tempDir("zcp-launcher-bin-");
   fs.writeFileSync(path.join(binDir, "codex"), "#!/bin/sh\n");
   fs.chmodSync(path.join(binDir, "codex"), 0o755);
   const originalPath = process.env.PATH;
@@ -135,7 +134,7 @@ test("a launch message for an installed + authorized agent opens a terminal runn
 });
 
 test("a binary reachable only through the store's PATH is actionable (host PATH narrower than the runtime PATH — the 0.1.5 live regression)", async () => {
-  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "zcp-launcher-bin-"));
+  const binDir = tempDir("zcp-launcher-bin-");
   fs.writeFileSync(path.join(binDir, "codex"), "#!/bin/sh\n");
   fs.chmodSync(path.join(binDir, "codex"), 0o755);
   const originalPath = process.env.PATH;

@@ -3,7 +3,7 @@
 // Loads the REAL shipped zcp-bootstrap templates (internal/content/templates)
 // against a fresh vscode-stub.js instance, so this suite proves the actual
 // artifact zcp ships, not a copy. Each call to loadExtension() copies the
-// templates into a brand-new tmp dir under their INSTALLED sibling names
+// templates into a brand-new per-test tmp dir (see tempDir) under their INSTALLED sibling names
 // (mirroring internal/init/adapters/claude.go:installBootstrapExtension) —
 // this gives two things at once: `require("./welcome.js")` resolves exactly
 // as it does once installed, and every test gets an uncached module
@@ -14,6 +14,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const Module = require("module");
+const test = require("node:test");
 const { createVscodeStub } = require("./vscode-stub.js");
 
 const TEMPLATES_DIR = path.join(__dirname, "..", "templates");
@@ -31,6 +32,31 @@ const TEMPLATE_FILES = {
 
 let currentStub = null;
 let hooked = false;
+
+// tempDir is the one way this suite makes a tmp dir, so none outlives the
+// run: a dir made while a test runs is removed when that test ends, passed
+// or failed; one made outside a test (a file's top level) when the file's
+// tests end; process exit sweeps whatever a crash skipped. Registered on
+// node:test's root, so the hooks wrap every test of every file that
+// requires this harness.
+const testDirs = [];
+const fileDirs = [];
+let inTest = false;
+
+function removeDirs(dirs) {
+  for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+}
+
+test.beforeEach(() => { inTest = true; });
+test.afterEach(() => { inTest = false; removeDirs(testDirs); });
+test.after(() => removeDirs(fileDirs));
+process.on("exit", () => { removeDirs(testDirs); removeDirs(fileDirs); });
+
+function tempDir(prefix) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  (inTest ? testDirs : fileDirs).push(dir);
+  return dir;
+}
 
 // installHook redirects every `require("vscode")` to whichever stub
 // loadExtension() most recently created — installed once per process and
@@ -58,7 +84,7 @@ function installHook() {
 // exactly the behavior the dark tests assert.
 function loadExtension() {
   installHook();
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zcp-welcomejs-"));
+  const dir = tempDir("zcp-welcomejs-");
   for (const [tmplName, siblingName] of Object.entries(TEMPLATE_FILES)) {
     const src = path.join(TEMPLATES_DIR, tmplName);
     if (!fs.existsSync(src)) continue;
@@ -77,7 +103,7 @@ function loadExtension() {
 // welcome.open() themselves instead of going through extension.js's handler.
 function loadWelcome() {
   installHook();
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zcp-welcomejs-"));
+  const dir = tempDir("zcp-welcomejs-");
   for (const [tmplName, siblingName] of Object.entries(TEMPLATE_FILES)) {
     if (tmplName === "vscode-bootstrap-extension.js") continue;
     const src = path.join(TEMPLATES_DIR, tmplName);
@@ -118,7 +144,7 @@ const TEST_AGENT_IDS = ["claude-code", "codex", "antigravity", "grok", "cursor"]
 // running the suite (CI has none of them). Returns a restore() that puts the
 // original PATH back; call it from test.after().
 function installFakeAgentBins() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zcp-welcomejs-bins-"));
+  const dir = tempDir("zcp-welcomejs-bins-");
   for (const bin of ["claude", "codex", "agy", "grok", "cursor-agent"]) {
     const p = path.join(dir, bin);
     fs.writeFileSync(p, "#!/bin/sh\nexit 0\n");
@@ -252,5 +278,5 @@ function loadWebviewDom(opts) {
 
 module.exports = {
   loadExtension, loadWelcome, loadWebviewDom, TEMPLATES_DIR, TEST_REGISTRY, TEST_AGENT_IDS,
-  makeFakeTimers, makeFakeClock, installFakeAgentBins,
+  makeFakeTimers, makeFakeClock, installFakeAgentBins, tempDir,
 };

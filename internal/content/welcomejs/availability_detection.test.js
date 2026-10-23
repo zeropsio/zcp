@@ -11,9 +11,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
-const { loadExtension, TEMPLATES_DIR } = require("./harness.js");
+const { loadExtension, TEMPLATES_DIR, tempDir } = require("./harness.js");
 
 const ALL_FIVE = ["claude-code", "codex", "antigravity", "grok", "cursor"];
 
@@ -80,7 +79,7 @@ function makeBin(dir, name, mode) {
 
 test("isAgentInstalled: an executable file on PATH is installed", () => {
   const { extension } = loadExtension();
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zcp-bin-"));
+  const dir = tempDir("zcp-bin-");
   makeBin(dir, "my-agent", 0o755);
   withPath([dir], () => {
     assert.equal(extension.isAgentInstalled("my-agent"), true);
@@ -89,7 +88,7 @@ test("isAgentInstalled: an executable file on PATH is installed", () => {
 
 test("isAgentInstalled: a missing binary is not installed", () => {
   const { extension } = loadExtension();
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zcp-bin-"));
+  const dir = tempDir("zcp-bin-");
   withPath([dir], () => {
     assert.equal(extension.isAgentInstalled("nonexistent-agent"), false);
   });
@@ -97,7 +96,7 @@ test("isAgentInstalled: a missing binary is not installed", () => {
 
 test("isAgentInstalled: a non-executable file (0o644) is not installed", () => {
   const { extension } = loadExtension();
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zcp-bin-"));
+  const dir = tempDir("zcp-bin-");
   makeBin(dir, "my-agent", 0o644);
   withPath([dir], () => {
     assert.equal(extension.isAgentInstalled("my-agent"), false);
@@ -106,7 +105,7 @@ test("isAgentInstalled: a non-executable file (0o644) is not installed", () => {
 
 test("isAgentInstalled: a directory sharing the binary's name is not installed", () => {
   const { extension } = loadExtension();
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zcp-bin-"));
+  const dir = tempDir("zcp-bin-");
   fs.mkdirSync(path.join(dir, "my-agent"));
   withPath([dir], () => {
     assert.equal(extension.isAgentInstalled("my-agent"), false);
@@ -115,7 +114,7 @@ test("isAgentInstalled: a directory sharing the binary's name is not installed",
 
 test("isAgentInstalled: a PATH entry whose directory name has a space still resolves", () => {
   const { extension } = loadExtension();
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zcp bin dir "));
+  const dir = tempDir("zcp bin dir ");
   makeBin(dir, "my-agent", 0o755);
   withPath([dir], () => {
     assert.equal(extension.isAgentInstalled("my-agent"), true);
@@ -139,8 +138,8 @@ test("isAgentInstalled: an empty PATH is never installed", () => {
 
 test("isAgentInstalled: a binary only on the zembed store's PATH is installed", () => {
   const { extension } = loadExtension();
-  const hostDir = fs.mkdtempSync(path.join(os.tmpdir(), "zcp-bin-host-"));
-  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), "zcp-bin-runtime-"));
+  const hostDir = tempDir("zcp-bin-host-");
+  const runtimeDir = tempDir("zcp-bin-runtime-");
   makeBin(runtimeDir, "my-agent", 0o755);
   withPath([hostDir], () => {
     assert.equal(extension.isAgentInstalled("my-agent", { PATH: runtimeDir }), true);
@@ -149,7 +148,7 @@ test("isAgentInstalled: a binary only on the zembed store's PATH is installed", 
 
 test("isAgentInstalled: a null env degrades to the host PATH only", () => {
   const { extension } = loadExtension();
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zcp-bin-"));
+  const dir = tempDir("zcp-bin-");
   makeBin(dir, "my-agent", 0o755);
   withPath([dir], () => {
     assert.equal(extension.isAgentInstalled("my-agent", null), true);
@@ -161,7 +160,7 @@ test("isAgentInstalled: a null env degrades to the host PATH only", () => {
 
 test("isAgentInstalled: a non-string zembed PATH value is ignored", () => {
   const { extension } = loadExtension();
-  const hostDir = fs.mkdtempSync(path.join(os.tmpdir(), "zcp-bin-host-"));
+  const hostDir = tempDir("zcp-bin-host-");
   withPath([hostDir], () => {
     assert.equal(extension.isAgentInstalled("my-agent", { PATH: 12345 }), false);
   });
