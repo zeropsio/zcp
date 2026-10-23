@@ -36,7 +36,7 @@ func (m *SystemMounter) exec(ctx context.Context, timeout time.Duration, name st
 	if m.run != nil {
 		return m.run(ctx, timeout, name, args...)
 	}
-	return m.exec(ctx, timeout, name, args...)
+	return execWithTimeout(ctx, timeout, name, args...)
 }
 
 // CheckMount checks the mount state of a path: active, stale, or not mounted.

@@ -193,3 +193,16 @@ func TestMounter_LeaseAlias_UnitLifecycle(t *testing.T) {
 		}
 	}
 }
+
+// The production mounter (no test seam) must reach the real command runner.
+func TestSystemMounter_NoSeam_RunsRealCommand(t *testing.T) {
+	t.Parallel()
+
+	m := NewSystemMounter()
+	if err := m.exec(context.Background(), time.Second, "true"); err != nil {
+		t.Fatalf("exec(true) = %v, want nil", err)
+	}
+	if err := m.exec(context.Background(), time.Second, "false"); err == nil {
+		t.Fatal("exec(false) = nil, want the command's failure")
+	}
+}
