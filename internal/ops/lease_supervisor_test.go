@@ -112,10 +112,13 @@ func TestDevServer_SupervisorStartedByZcpOnlyInALease(t *testing.T) {
 	tests := []struct {
 		name    string
 		lease   bool
+		running bool // a supervisor answers already
 		action  string
 		wantErr bool
 	}{
 		{name: "lease start", lease: true, action: "start"},
+		// One that answers never gets a second beside it.
+		{name: "lease whose supervisor answers", lease: true, running: true, action: "status"},
 		{name: "lease restart", lease: true, action: "restart"},
 		{name: "lease status", lease: true, action: "status"},
 		{name: "lease stop", lease: true, action: "stop"},
@@ -130,6 +133,9 @@ func TestDevServer_SupervisorStartedByZcpOnlyInALease(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			c := &devservertest.Container{Installed: true, SupervisorVersion: "v9.300.0", Formats: []int{1}, Declaration: previewDeclaration}
+			if tt.running {
+				c = devservertest.NewSupervised(previewDeclaration)
+			}
 			c.Logs = map[string][]string{"web": {"ready"}}
 			p := DevServerParams{Action: tt.action, Hostname: "appdev", Name: "web", Command: "pnpm dev", Port: 3000}
 			client := devPoolProjectClient()
@@ -155,8 +161,12 @@ func TestDevServer_SupervisorStartedByZcpOnlyInALease(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s on a lease whose supervisor is gone: %v", tt.action, err)
 			}
-			if c.SupervisorStarts != 1 {
-				t.Errorf("supervisors started = %d, want exactly one", c.SupervisorStarts)
+			wantStarts := 1
+			if tt.running {
+				wantStarts = 0
+			}
+			if c.SupervisorStarts != wantStarts || sentWith(c, "zcp-devsup run") != wantStarts {
+				t.Errorf("supervisors started = %d (%d start commands), want %d", c.SupervisorStarts, sentWith(c, "zcp-devsup run"), wantStarts)
 			}
 			if result.Reason == reasonNoSupervisor {
 				t.Errorf("result = %+v, want the supervisor's answer after zcp started it", result)
@@ -180,19 +190,6 @@ func devPoolProjectClient() *platform.Mock {
 			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeCategoryName: "USER", ServiceStackTypeVersionName: "nodejs@22"},
 		},
 	})
-}
-
-func TestDevServer_LeaseWithARunningSupervisor_StartsNoSecond(t *testing.T) {
-	t.Parallel()
-	c := devservertest.NewSupervised(previewDeclaration)
-
-	if _, err := ExecuteDevServer(context.Background(), c, poolClient(0), "p1",
-		DevServerParams{Action: "status", Hostname: "devpool-3", StateDir: leaseState(t)}); err != nil {
-		t.Fatalf("status: %v", err)
-	}
-	if c.SupervisorStarts != 0 || sentWith(c, "zcp-devsup run") != 0 {
-		t.Errorf("a supervisor that answers got a second one started: %v", c.Sent())
-	}
 }
 
 func TestDevServer_LeaseSupervisorMissingOrNotComingUp_SaysWhy(t *testing.T) {
