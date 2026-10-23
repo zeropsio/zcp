@@ -270,6 +270,13 @@ func poolTargetDeploy(t *testing.T, ssh ops.SSHDeployer) (*mcp.CallToolResult, s
 // poolTargetDeployIn is poolTargetDeploy over a prepared state directory.
 func poolTargetDeployIn(t *testing.T, ssh ops.SSHDeployer, stateDir string) (*mcp.CallToolResult, string) {
 	t.Helper()
+	return poolDeployCall(t, ssh, stateDir, map[string]any{"sourceService": "appdev", "targetService": "webpool"})
+}
+
+// poolDeployCall runs zerops_deploy with args in a project holding the dev
+// service appdev and the pool webpool.
+func poolDeployCall(t *testing.T, ssh ops.SSHDeployer, stateDir string, args map[string]any) (*mcp.CallToolResult, string) {
+	t.Helper()
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-dev", Name: "appdev", Status: serviceStatusRunning, ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
@@ -281,7 +288,7 @@ func poolTargetDeployIn(t *testing.T, ssh ops.SSHDeployer, stateDir string) (*mc
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{InContainer: true, ServiceName: "zcp"}, stateDir, testDeployEngine(t), nil, DevsupSource{})
-	result := callTool(t, srv, "zerops_deploy", map[string]any{"sourceService": "appdev", "targetService": "webpool"})
+	result := callTool(t, srv, "zerops_deploy", args)
 	return result, getTextContent(t, result)
 }
 
@@ -369,6 +376,42 @@ func TestDeployTool_ToPool_AdoptedProject_NotGated(t *testing.T) {
 		t.Fatalf("parse result: %v", err)
 	}
 	assertPoolDeployResult(t, parsed)
+}
+
+// TestDeployTool_PoolAsSource_Refused: a pool's own hostname reaches a random
+// container (PS-3), so a deploy never runs from it — neither a self-deploy
+// that names only the pool nor one naming it as the source — and nothing
+// reaches the pool over ssh; the refusal points at a lease alias.
+func TestDeployTool_PoolAsSource_Refused(t *testing.T) {
+	t.Parallel()
+	for _, args := range []map[string]any{
+		{"targetService": "webpool"},
+		{"sourceService": "webpool", "targetService": "webpool"},
+		{"sourceService": "webpool", "targetService": "appdev"},
+	} {
+		for _, adopted := range []bool{false, true} {
+			stateDir := filepath.Join(t.TempDir(), ".zcp", "state")
+			if err := os.MkdirAll(stateDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if adopted {
+				if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{Hostname: "appdev", Mode: topology.ModeDev, BootstrappedAt: "2026-10-23T00:00:00Z"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ssh := &leaseSSH{}
+			result, text := poolDeployCall(t, ssh, stateDir, args)
+			if !result.IsError {
+				t.Errorf("%v (adopted %v): a deploy from a pool's hostname ran: %s", args, adopted, text)
+			}
+			if ssh.hosts()["webpool"] {
+				t.Errorf("%v (adopted %v): an ssh call reached the pool by its hostname — a random container (PS-3)", args, adopted)
+			}
+			if !result.IsError || !strings.Contains(text, "zerops_lease") {
+				t.Errorf("%v (adopted %v): the refusal %s should point at a lease alias (zerops_lease)", args, adopted, text)
+			}
+		}
+	}
 }
 
 // TestDeployTool_LeaseToOwnPool_NextActionsNamesRollout: a release and a new

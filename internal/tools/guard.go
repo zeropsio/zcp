@@ -147,6 +147,12 @@ func requireAdoption(stateDir string, rt runtime.Info, recipeProbe RecipeSession
 // leaseOf is the lease host names, when host is the alias of a lease zcp holds
 // a record for. An unreadable record set is no lease: the caller falls back to
 // the service rules it had before leases.
+// isLease reports whether host is an alias of a lease zcp holds.
+func isLease(stateDir, host string) bool {
+	_, ok := leaseOf(stateDir, host)
+	return ok
+}
+
 func leaseOf(stateDir, host string) (ops.LeaseTargetInfo, bool) {
 	lease, ok, err := ops.LeaseTarget(stateDir, host)
 	if err != nil || !ok {

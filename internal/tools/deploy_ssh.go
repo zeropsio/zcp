@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -312,10 +313,20 @@ func RegisterDeploySSH(
 		// Gate: target (and source) must be adopted by ZCP. Recipe-
 		// authoring sessions whose Plan owns the host bypass adoption —
 		// see requireAdoption for the exemption rationale. A pool target
-		// is never adopted, so it is not asked to be (DP-7).
-		gated := append(withoutPoolHosts(ctx, client, projectID, input.TargetService), input.SourceService)
+		// or source is never adopted, so it is not asked to be: a pool
+		// target is deployed to (DP-7), a pool source is refused below (PS-3).
+		gated := withoutPoolHosts(ctx, client, projectID, input.TargetService, input.SourceService)
 		if blocked := requireAdoption(stateDir, rtInfo, recipeProbe, gated...); blocked != nil {
 			return blocked, nil, nil
+		}
+		// Before any read of the source's files: a pool source (named, or a
+		// self-deploy of a pool) is refused, never pushed from (PS-3).
+		if src := cmp.Or(input.SourceService, input.TargetService); !isLease(stateDir, src) {
+			if svc, err := ops.LookupService(ctx, client, projectID, src); err == nil {
+				if refusal := ops.RefusePoolSource(svc, input.TargetService); refusal != nil {
+					return convertError(refusal, WithRecoveryStatus()), nil, nil
+				}
+			}
 		}
 
 		// L1 terminal-act rule (spec-git-delivery-target §2): a pair with

@@ -192,6 +192,20 @@ func DeploySSHWithLeases(
 		sourceService, targetService, setup, workingDir, includeGit, sha, leaseSource)
 }
 
+// RefusePoolSource refuses a deploy whose source service is a Swarm pool: a
+// pool's own hostname reaches a random one of its containers (PS-3), so a
+// push from it would write git state into, and build from, whichever
+// container answered — possibly someone's lease. A lease alias is the source
+// instead; it is never a service, so it never reaches here.
+func RefusePoolSource(source *platform.ServiceStack, targetService string) error {
+	if source == nil || !topology.IsPoolType(source.ServiceStackTypeInfo.ServiceStackTypeVersionName) {
+		return nil
+	}
+	return platform.NewPlatformError(platform.ErrInvalidParameter,
+		fmt.Sprintf("'%s' is a Swarm pool: its hostname reaches a random container, so a deploy never runs from it", source.Name),
+		fmt.Sprintf("Deploy from a lease of the pool: zerops_deploy sourceService=\"<lease alias>\" targetService=%q (zerops_lease action=status lists your leases; zerops_lease action=acquire pool=%q takes one)", targetService, source.Name))
+}
+
 func deploySSH(
 	ctx context.Context,
 	client platform.Client,
@@ -219,6 +233,9 @@ func deploySSH(
 		source, findErr := FindService(services, sourceService)
 		if findErr != nil {
 			return nil, findErr
+		}
+		if err := RefusePoolSource(source, targetService); err != nil {
+			return nil, err
 		}
 		sourceName = source.Name
 	}

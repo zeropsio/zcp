@@ -224,6 +224,32 @@ func TestDeploySSH_NotALease_KeepsTodaysErrors(t *testing.T) {
 	}
 }
 
+// TestDeploySSH_PoolAsSource_Refused: a pool's own hostname reaches a random
+// container (PS-3) — a deploy naming it as the source, or a self-deploy of
+// the pool, is refused before any ssh call, for every caller (single, batch).
+func TestDeploySSH_PoolAsSource_Refused(t *testing.T) {
+	t.Parallel()
+
+	stateDir, _ := leaseDeployState(t, 51)
+	for _, tc := range []struct{ source, target string }{
+		{"", "webpool"},
+		{"webpool", "webpool"},
+		{"webpool", "appstage"},
+	} {
+		mock := platform.NewMock().WithServices(leaseDeployServices())
+		ssh := &mockSSHDeployer{output: []byte("ok")}
+		_, err := DeploySSHWithLeases(context.Background(), mock, "proj-1", ssh, testAuthInfo(),
+			stateDir, tc.source, tc.target, "", "", "")
+		var pe *platform.PlatformError
+		if !errors.As(err, &pe) || pe.Code != platform.ErrInvalidParameter || !strings.Contains(pe.Suggestion, "zerops_lease") {
+			t.Errorf("%q → %q: error = %v, want INVALID_PARAMETER pointing at a lease", tc.source, tc.target, err)
+		}
+		if len(ssh.calls) != 0 {
+			t.Errorf("%q → %q: ssh calls = %d, want 0", tc.source, tc.target, len(ssh.calls))
+		}
+	}
+}
+
 // TestSourceMountDir_LeaseAlias: the zerops.yaml DM-2 validation reads the
 // lease's checkout through its mount /var/www/<alias> (DP-1).
 func TestSourceMountDir_LeaseAlias(t *testing.T) {
