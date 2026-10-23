@@ -99,6 +99,8 @@ func newLeaseFixture(t *testing.T) *leaseFixture {
 			fx.gotURL, fx.gotToken = baseURL, token
 			return fx.swarm
 		},
+		// Hermetic: the machine's own env never supplies a pool token.
+		Env: func(string) (string, bool) { return "", false },
 	}
 	return fx
 }
@@ -492,5 +494,82 @@ func TestLeaseAcquire_Timeout_SaysAContainerMayBeReserved(t *testing.T) {
 	}
 	if strings.Contains(got.Suggestion, "answers only inside the project") {
 		t.Errorf("a timeout is not an outside-the-project error: %q", got.Suggestion)
+	}
+}
+
+// maskedPoolFixture is a lease fixture whose API token sees the pool's
+// API_TOKEN masked — what a Mate's own token gets (live, 2026-10-23).
+func maskedPoolFixture(t *testing.T) *leaseFixture {
+	t.Helper()
+	fx := newLeaseFixture(t)
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "p1", Name: "proj"}).
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-pool", Name: testPoolHost, Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
+		}).
+		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{Key: "API_TOKEN", Sensitive: true, Masked: true}})
+	fx.deps.Client = mock
+	fx.swarm.acquired = acquiredAs(3)
+	return fx
+}
+
+// A Mate's token sees the pool's API_TOKEN masked, but the container's live
+// env carries it as <pool>_API_TOKEN (envIsolation none): the orchestrator is
+// reached with that.
+func TestLeaseAcquire_MaskedToken_UsesTheContainersLiveEnv(t *testing.T) {
+	t.Parallel()
+	fx := maskedPoolFixture(t)
+	fx.deps.Env = func(key string) (string, bool) {
+		if key == testPoolHost+"_API_TOKEN" {
+			return "live-env-token", true
+		}
+		return "", false
+	}
+	if _, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, "feature"); err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	if fx.gotToken != "live-env-token" {
+		t.Errorf("orchestrator bearer = %q, want the live env's %s_API_TOKEN", fx.gotToken, testPoolHost)
+	}
+}
+
+// With neither source the refusal says what to add, never just "masked".
+func TestLeaseAcquire_MaskedTokenNoLiveEnv_SaysWhatToAdd(t *testing.T) {
+	t.Parallel()
+	fx := maskedPoolFixture(t)
+	_, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, "feature")
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) {
+		t.Fatalf("err = %v, want a platform error", err)
+	}
+	for _, want := range []string{testPoolHost + "_API_TOKEN", "${" + testPoolHost + "_API_TOKEN}"} {
+		if !strings.Contains(pe.Message+" "+pe.Suggestion, want) {
+			t.Errorf("refusal %q / %q lacks %q", pe.Message, pe.Suggestion, want)
+		}
+	}
+	if len(fx.swarm.acquireReqs) != 0 {
+		t.Error("acquired without a token")
+	}
+}
+
+// The live env is the container's current one: a file Zerops rewrites as
+// services change, read fresh, so a pool created after zcp started is seen.
+func TestLiveContainerEnv_ReadsTheFileFresh(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "env.json")
+	if err := os.WriteFile(path, []byte(`{"devpool_API_TOKEN":"one"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := liveContainerEnvFrom(path, "devpool_API_TOKEN"); !ok || v != "one" {
+		t.Errorf("first read = %q %v, want one", v, ok)
+	}
+	if err := os.WriteFile(path, []byte(`{"devpool_API_TOKEN":"two"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := liveContainerEnvFrom(path, "devpool_API_TOKEN"); !ok || v != "two" {
+		t.Errorf("second read = %q %v, want two (read fresh)", v, ok)
+	}
+	if _, ok := liveContainerEnvFrom(filepath.Join(t.TempDir(), "absent.json"), "zcp_test_no_such_key_12345"); ok {
+		t.Error("an absent file and an unset process env must read as absent")
 	}
 }

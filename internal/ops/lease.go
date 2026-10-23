@@ -52,6 +52,42 @@ type LeaseDeps struct {
 	// SSH runs git inside a leased container by its alias; nil means no
 	// checkout and no release guard (zcp outside a container).
 	SSH SSHDeployer
+	// Env reads one key of the container's current env; nil means the live
+	// env (liveContainerEnv).
+	Env func(key string) (string, bool)
+}
+
+// env reads key from the container's current env.
+func (d LeaseDeps) env(key string) (string, bool) {
+	if d.Env != nil {
+		return d.Env(key)
+	}
+	return liveContainerEnv(key)
+}
+
+// liveEnvFile is where Zerops keeps a container's current env, rewritten as
+// the project's services change; a process's own environment is a snapshot
+// from its start, so a pool created after zcp started is only seen here.
+const liveEnvFile = "/etc/zerops-zembed/env.json"
+
+// liveContainerEnv reads key from the container's current env.
+func liveContainerEnv(key string) (string, bool) {
+	return liveContainerEnvFrom(liveEnvFile, key)
+}
+
+// liveContainerEnvFrom reads key from the live env file at path, read fresh on
+// every call, and falls back to the process env.
+func liveContainerEnvFrom(path, key string) (string, bool) {
+	if raw, err := os.ReadFile(path); err == nil {
+		var env map[string]any
+		if json.Unmarshal(raw, &env) == nil {
+			if v, ok := env[key].(string); ok && v != "" {
+				return v, true
+			}
+		}
+	}
+	v := os.Getenv(key)
+	return v, v != ""
 }
 
 // Lease states.
@@ -98,7 +134,10 @@ type resolvedPool struct {
 }
 
 // resolvePool finds the pool service by hostname, refuses any other type by
-// name, and reads its API_TOKEN through the ops env read.
+// name, and finds its API_TOKEN: in the container's live env as
+// <pool>_API_TOKEN first (a Mate's own API token sees the pool's secrets
+// masked, while a project with envIsolation none hands every container each
+// service's env), then through the ops env read (a token with full access).
 func resolvePool(ctx context.Context, d LeaseDeps, hostname string) (*resolvedPool, error) {
 	svc, err := LookupService(ctx, d.Client, d.ProjectID, hostname)
 	if err != nil {
@@ -110,6 +149,10 @@ func resolvePool(ctx context.Context, d LeaseDeps, hostname string) (*resolvedPo
 			fmt.Sprintf("Service '%s' is %s, not a Swarm pool", hostname, typ),
 			"zerops_lease leases a container of a pool (swarm@1 or swarm-vm@1); pass the pool's hostname")
 	}
+	liveKey := hostname + "_" + leaseTokenKey
+	if token, ok := d.env(liveKey); ok {
+		return &resolvedPool{svc: svc, api: d.Swarm(orchestratorURL(hostname), token)}, nil
+	}
 	envs, err := FetchServiceEnv(ctx, d.Client, svc.ID)
 	if err != nil {
 		return nil, fmt.Errorf("read %s env: %w", hostname, err)
@@ -120,12 +163,12 @@ func resolvePool(ctx context.Context, d LeaseDeps, hostname string) (*resolvedPo
 		reason := leaseTokenKey + " is not set on the pool"
 		for _, k := range masked {
 			if k == leaseTokenKey {
-				reason = leaseTokenKey + " is masked for this token"
+				reason = leaseTokenKey + " is masked for this zcp's API token"
 			}
 		}
 		return nil, platform.NewPlatformError(platform.ErrPrerequisiteMissing,
-			fmt.Sprintf("Cannot reach pool '%s': %s", hostname, reason),
-			"The orchestrator needs the pool's own "+leaseTokenKey+" as its bearer token")
+			fmt.Sprintf("Cannot reach pool '%s': %s, and this container's env has no %s", hostname, reason, liveKey),
+			fmt.Sprintf("The orchestrator needs the pool's own %s as its bearer token. In a project with envIsolation none every container carries it as %s; otherwise add a service env var %s=${%s} on this zcp service", leaseTokenKey, liveKey, liveKey, liveKey))
 	}
 	return &resolvedPool{svc: svc, api: d.Swarm(orchestratorURL(hostname), token)}, nil
 }
