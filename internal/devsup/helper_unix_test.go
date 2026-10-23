@@ -25,6 +25,8 @@ import (
 //	ignore-term  the same, but ignore SIGTERM so only SIGKILL ends it
 //	echo         accept on $PORT and echo every connection's bytes back
 //	exit         print "line 1".."line 30" and exit with $CODE
+//	env          print "env NAME=value" (or "env NAME unset") for each NAME in
+//	             $PRINT_ENV, then listen as `listen` does
 func TestMain(m *testing.M) {
 	switch os.Getenv("SUPERVISOR_TEST_HELPER") {
 	case "":
@@ -35,6 +37,15 @@ func TestMain(m *testing.M) {
 		os.Exit(helperListen(true))
 	case "echo":
 		os.Exit(helperEcho())
+	case "env":
+		for name := range strings.SplitSeq(os.Getenv("PRINT_ENV"), ",") {
+			if v, ok := os.LookupEnv(name); ok {
+				fmt.Printf("env %s=%s\n", name, v)
+			} else {
+				fmt.Printf("env %s unset\n", name)
+			}
+		}
+		os.Exit(helperListen(false))
 	case "exit":
 		for i := 1; i <= 30; i++ {
 			fmt.Printf("line %d\n", i)

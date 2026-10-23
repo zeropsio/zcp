@@ -3,6 +3,7 @@ package devsup
 import (
 	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -330,6 +331,76 @@ func TestPreviewServer_PicksTheOnlyPortOrTheMarkedOne(t *testing.T) {
 			got, ok := PreviewServer(tt.servers)
 			if ok != (tt.want != "") || got.Name != tt.want {
 				t.Fatalf("PreviewServer = %q, %v; want %q", got.Name, ok, tt.want)
+			}
+		})
+	}
+}
+
+// siblingEnv maps a variable a part's dev server reads to the pool whose
+// lease of the same branch it reaches; zcp reads it, the supervisor validates
+// it with the rest of the file and never acts on it.
+func TestParseDeclaration_SiblingEnv_Shapes(t *testing.T) {
+	t.Parallel()
+	servers := `"servers":[{"name":"web","port":3000,"command":"x"}]`
+	tests := []struct {
+		name    string
+		sibling string // the siblingEnv value; "" leaves the key out
+		want    map[string]string
+		wantErr string
+	}{
+		{name: "an old file has none"},
+		{name: "an empty map", sibling: `{}`, want: map[string]string{}},
+		{
+			name:    "variables naming pools",
+			sibling: `{"HQ_HOST":"hqpool","_api_host2":"api2pool"}`,
+			want:    map[string]string{"HQ_HOST": "hqpool", "_api_host2": "api2pool"},
+		},
+		{name: "a ZEROPS_ variable", sibling: `{"ZEROPS_HQ":"hqpool"}`, wantErr: `siblingEnv "ZEROPS_HQ"`},
+		{name: "hostname", sibling: `{"hostname":"hqpool"}`, wantErr: `siblingEnv "hostname"`},
+		{name: "serviceId", sibling: `{"serviceId":"hqpool"}`, wantErr: `siblingEnv "serviceId"`},
+		{name: "projectId", sibling: `{"projectId":"hqpool"}`, wantErr: `siblingEnv "projectId"`},
+		{name: "PATH", sibling: `{"PATH":"hqpool"}`, wantErr: `siblingEnv "PATH"`},
+		{name: "HOME", sibling: `{"HOME":"hqpool"}`, wantErr: `siblingEnv "HOME"`},
+		{name: "a name starting with a digit", sibling: `{"1HQ":"hqpool"}`, wantErr: `siblingEnv "1HQ"`},
+		{name: "a name with a dash", sibling: `{"HQ-HOST":"hqpool"}`, wantErr: `siblingEnv "HQ-HOST"`},
+		{name: "an empty name", sibling: `{"":"hqpool"}`, wantErr: `siblingEnv ""`},
+		{name: "a pool with a capital", sibling: `{"HQ_HOST":"HQpool"}`, wantErr: `siblingEnv "HQ_HOST": "HQpool"`},
+		{name: "a container hostname, not a pool", sibling: `{"HQ_HOST":"node-id-7.runtime.hqpool.zerops"}`, wantErr: `siblingEnv "HQ_HOST"`},
+		{name: "an empty pool", sibling: `{"HQ_HOST":""}`, wantErr: `siblingEnv "HQ_HOST"`},
+		{name: "a pool over 40 characters", sibling: `{"HQ_HOST":"` + strings.Repeat("a", 41) + `"}`, wantErr: `siblingEnv "HQ_HOST"`},
+		{name: "a pool that is not a string", sibling: `{"HQ_HOST":7}`, wantErr: "parse"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			in := `{"version":1,` + servers + `}`
+			if tt.sibling != "" {
+				in = `{"version":1,"siblingEnv":` + tt.sibling + `,` + servers + `}`
+			}
+			d, err := ParseDeclaration([]byte(in))
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("err = %v, want containing %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !maps.Equal(d.SiblingEnv, tt.want) {
+				t.Fatalf("SiblingEnv = %#v, want %#v", d.SiblingEnv, tt.want)
+			}
+			// Written back, a file keeps its siblingEnv, and an old file gains none.
+			b, err := json.Marshal(d)
+			if err != nil {
+				t.Fatal(err)
+			}
+			again, err := ParseDeclaration(b)
+			if err != nil || !maps.Equal(again.SiblingEnv, tt.want) {
+				t.Fatalf("written back: %s (%v)", b, err)
+			}
+			if tt.sibling == "" && strings.Contains(string(b), "siblingEnv") {
+				t.Fatalf("an old declaration marshals with a siblingEnv key: %s", b)
 			}
 		})
 	}

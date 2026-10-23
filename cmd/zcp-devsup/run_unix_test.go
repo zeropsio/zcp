@@ -28,9 +28,16 @@ func shortDir(t *testing.T) string {
 
 func ctl(t *testing.T, state string, args ...string) (int, string) {
 	t.Helper()
+	code, out, _ := ctlOutputs(t, state, args...)
+	return code, out
+}
+
+// ctlOutputs is ctl with what it wrote to stderr too.
+func ctlOutputs(t *testing.T, state string, args ...string) (int, string, string) {
+	t.Helper()
 	var out, errOut bytes.Buffer
 	code := run(append([]string{"ctl", "--state", state}, args...), &out, &errOut)
-	return code, out.String()
+	return code, out.String(), errOut.String()
 }
 
 func TestCtl_NoSupervisorExitsTwo(t *testing.T) {
@@ -132,13 +139,218 @@ func TestParseCtl_FlagsAnywhereBeforeTheCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := ctlArgs{verb: "run", name: "crew-ada", json: true, lines: 50, cwd: ".crew/ada", port: 4100, command: "bun run dev --port 4100"}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v", got)
 	}
 	for _, bad := range [][]string{{}, {"--json"}, {"start", "a", "b"}, {"logs", "web", "--lines", "x"}, {"status", "--bogus"}} {
 		if _, err := parseCtl(bad); err == nil {
 			t.Errorf("%q parsed", bad)
 		}
+	}
+}
+
+func TestParseCtl_Env_SetPairsAndClear(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		args    []string
+		want    ctlArgs
+		wantErr string
+	}{
+		{
+			name: "pairs, a value holding = and an empty value",
+			args: []string{"env", "--set", "HQ_HOST=node-id-7.runtime.hqpool.zerops", "--json", "--set", "Q=a=b", "--set", "EMPTY="},
+			want: ctlArgs{verb: "env", json: true, lines: 50, env: map[string]string{"HQ_HOST": "node-id-7.runtime.hqpool.zerops", "Q": "a=b", "EMPTY": ""}},
+		},
+		{name: "clear", args: []string{"env", "--clear"}, want: ctlArgs{verb: "env", lines: 50, clear: true}},
+		{name: "a pair without =", args: []string{"env", "--set", "HQ_HOST"}, wantErr: `"HQ_HOST" is not NAME=VALUE`},
+		{name: "a name set twice", args: []string{"env", "--set", "A=1", "--set", "A=2"}, wantErr: "A is set twice"},
+		{name: "--set without a value", args: []string{"env", "--set"}, wantErr: "--set needs a value"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := parseCtl(tt.args)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("err = %v, want containing %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil || !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("got %+v (%v), want %+v", got, err, tt.want)
+			}
+		})
+	}
+}
+
+// runningSupervisor runs a supervisor on decl and returns its state directory
+// once its socket answers.
+func runningSupervisor(t *testing.T, decl string, grace time.Duration) string {
+	t.Helper()
+	root, state := t.TempDir(), shortDir(t)
+	if err := os.MkdirAll(filepath.Join(root, ".zcp"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, devsup.DeclarationPath), []byte(decl), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sup, err := devsup.New(devsup.Config{Root: root, StateDir: state, Env: os.Environ(), Grace: grace})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = sup.Run(ctx); close(done) }()
+	t.Cleanup(func() { cancel(); <-done })
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+		code, _ := ctl(t, state, "status", "--json")
+		if code != devsup.CodeNoSupervisor {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the supervisor's socket never answered")
+		}
+	}
+	return state
+}
+
+// ctlState runs one ctl call with --json and decodes the state it answers.
+func ctlState(t *testing.T, state string, args ...string) (int, devsup.State, string) {
+	t.Helper()
+	code, out := ctl(t, state, append([]string{"--json"}, args...)...)
+	var st devsup.State
+	_ = json.Unmarshal([]byte(out), &st)
+	return code, st, out
+}
+
+// waitFor polls cond for up to 15 s.
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	for deadline := time.Now().Add(15 * time.Second); !cond(); time.Sleep(50 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+	}
+}
+
+// zcp reads `ctl version` before it sends a newer verb: an older ctl fails
+// on a flag it does not know.
+func TestCtl_VersionNamesCapabilities(t *testing.T) {
+	t.Parallel()
+	code, out := ctl(t, shortDir(t), "version", "--json")
+	var got struct {
+		Capabilities []string `json:"capabilities"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); code != 0 || err != nil || !reflect.DeepEqual(got.Capabilities, []string{"env"}) {
+		t.Fatalf("exit %d out %q", code, out)
+	}
+}
+
+func TestCtl_Env_ReplacesTheOverlay(t *testing.T) {
+	t.Parallel()
+	state := runningSupervisor(t, `{"version":1,"servers":[]}`, time.Second)
+	for _, step := range []struct {
+		args []string
+		want map[string]string
+	}{
+		{[]string{"--set", "HQ_HOST=hq1", "--set", "API_HOST=api1"}, map[string]string{"HQ_HOST": "hq1", "API_HOST": "api1"}},
+		{[]string{"--set", "HQ_HOST=hq2"}, map[string]string{"HQ_HOST": "hq2"}},
+		{[]string{"--clear"}, map[string]string{}},
+		{[]string{"--clear", "--set", "HQ_HOST=hq3"}, map[string]string{"HQ_HOST": "hq3"}},
+	} {
+		code, st, out := ctlState(t, state, append([]string{"env"}, step.args...)...)
+		if code != 0 || !reflect.DeepEqual(st.Env, step.want) {
+			t.Fatalf("env %q: exit %d, out %s, want env %v", step.args, code, out, step.want)
+		}
+		if _, st, _ := ctlState(t, state, "status"); !reflect.DeepEqual(st.Env, step.want) {
+			t.Fatalf("status after env %q: env %v", step.args, st.Env)
+		}
+	}
+}
+
+// A stop's grace can outlast ctl's wait: env answers once the overlay is
+// stored and the restarts follow.
+func TestCtl_Env_AnswersBeforeTheRestarts(t *testing.T) {
+	t.Parallel()
+	// web ignores SIGTERM, so its restart cannot finish before its grace ends.
+	const grace = 3 * time.Second
+	state := runningSupervisor(t, `{"version":1,"servers":[{"name":"web","command":"trap '' TERM; echo \"HQ_HOST=${HQ_HOST-unset}\"; exec sleep 300"}]}`, grace)
+	var pid int
+	waitFor(t, "web to run", func() bool {
+		_, st, _ := ctlState(t, state, "status", "web")
+		pid = st.Servers["web"].Pid
+		return st.Servers["web"].Status == devsup.StatusRunning && pid > 0
+	})
+
+	code, st, out := ctlState(t, state, "env", "--set", "HQ_HOST=node-id-7.runtime.hqpool.zerops")
+
+	if code != 0 || st.Env["HQ_HOST"] != "node-id-7.runtime.hqpool.zerops" {
+		t.Fatalf("env: exit %d out %s", code, out)
+	}
+	if sv := st.Servers["web"]; sv.Pid != pid || sv.Restarts != 0 {
+		t.Fatalf("env answered after web's restart: %+v", sv)
+	}
+	waitFor(t, "web to restart under the overlay", func() bool {
+		_, st, _ := ctlState(t, state, "status", "web")
+		sv := st.Servers["web"]
+		return sv.Restarts == 1 && sv.Pid != pid && sv.Pid > 0 && sv.LastRestartReason == "env changed"
+	})
+	waitFor(t, "web to print the overlay", func() bool {
+		_, out := ctl(t, state, "logs", "web", "--lines", "1")
+		return out == "HQ_HOST=node-id-7.runtime.hqpool.zerops\n"
+	})
+}
+
+func TestCtl_Env_RejectsReservedAndMalformedKeys(t *testing.T) {
+	t.Parallel()
+	state := runningSupervisor(t, `{"version":1,"servers":[]}`, time.Second)
+	kept := map[string]string{"HQ_HOST": "node-id-7.runtime.hqpool.zerops"}
+	if code, st, out := ctlState(t, state, "env", "--set", "HQ_HOST="+kept["HQ_HOST"]); code != 0 || !reflect.DeepEqual(st.Env, kept) {
+		t.Fatalf("env: exit %d out %s", code, out)
+	}
+	// The supervisor refuses a name (a JSON answer); ctl refuses a malformed
+	// command line before it calls (on stderr, as for any bad flag).
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--set", "ZEROPS_StableNumber=9"}, `"ZEROPS_StableNumber"`},
+		{[]string{"--set", "hostname=x"}, `"hostname"`},
+		{[]string{"--set", "serviceId=x"}, `"serviceId"`},
+		{[]string{"--set", "projectId=x"}, `"projectId"`},
+		{[]string{"--set", "PATH=/tmp"}, `"PATH"`},
+		{[]string{"--set", "HOME=/tmp"}, `"HOME"`},
+		{[]string{"--set", "1HQ=x"}, `"1HQ"`},
+		{[]string{"--set", "HQ-HOST=x"}, `"HQ-HOST"`},
+		{[]string{"--set", "=x"}, `""`},
+		{[]string{"--set", "API_HOST=fine", "--set", "PATH=/tmp"}, `"PATH"`},
+		{[]string{"--set", "HQ_HOST"}, `"HQ_HOST" is not NAME=VALUE`},
+		{[]string{"--set", "A=1", "--set", "A=2"}, "A is set twice"},
+		{nil, "env needs --set NAME=VALUE or --clear"},
+	} {
+		code, out, errOut := ctlOutputs(t, state, append([]string{"env", "--json"}, tc.args...)...)
+		said := errOut
+		if out != "" {
+			var got struct {
+				Code  int    `json:"code"`
+				Error string `json:"error"`
+			}
+			if err := json.Unmarshal([]byte(out), &got); err != nil || got.Code != devsup.CodeFailed {
+				t.Errorf("env %q: out %q is not a JSON failure", tc.args, out)
+			}
+			said = got.Error
+		}
+		if code != devsup.CodeFailed || !strings.Contains(said, tc.want) {
+			t.Errorf("env %q: exit %d out %q stderr %q, want exit 1 naming %s", tc.args, code, out, errOut, tc.want)
+		}
+	}
+	if code, st, out := ctlState(t, state, "status"); code != 0 || !reflect.DeepEqual(st.Env, kept) {
+		t.Fatalf("a refused env changed the overlay: exit %d out %s", code, out)
+	}
+	// --set and --clear belong to env only.
+	if code, _ := ctl(t, state, "status", "--clear"); code != devsup.CodeFailed {
+		t.Fatalf("status --clear: exit %d", code)
 	}
 }
 
