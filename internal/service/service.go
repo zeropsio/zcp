@@ -495,11 +495,10 @@ func ResetRunFunc() { runFunc = runCommand }
 // tuneFunc raises a systemd unit's TasksMax. Tests override this.
 var tuneFunc = systemdSetTasksMax
 
-// SetTuneFunc overrides the TasksMax tuner for testing.
+// SetTuneFunc overrides the TasksMax tuner for testing. There is deliberately
+// no reset: the package's tests restore an inert tuner, never the real one
+// that shells out to sudo.
 func SetTuneFunc(fn func(string, int) error) { tuneFunc = fn }
-
-// ResetTuneFunc restores the default tuner.
-func ResetTuneFunc() { tuneFunc = systemdSetTasksMax }
 
 // Start runs the named service as a child process and blocks until it exits.
 // Signals (SIGINT, SIGTERM) are forwarded to the child.
