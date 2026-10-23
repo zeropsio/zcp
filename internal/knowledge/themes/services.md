@@ -308,7 +308,7 @@ zerops:
 Every container of a project, a pool's included, gets the project's Shared vault values and its own service's (Zerops still injects unreferenced ones today). In a project with `envIsolation: none` it also gets every other service's values as `<host>_KEY`, secrets included — a pool's `<pool>_API_TOKEN`, a database's password, the zcp service's `ZCP_API_KEY`. Code running in a pool container can read all of them. Where that code is not yours (an agent's experiments, users' submissions):
 
 - Keep the project, and every service whose values the code must not read, on `envIsolation: service` (the default): it stops the `<host>_KEY` copies. A service set to `envIsolation: none` hands its values to every other container. Keep secrets out of the Shared vault, which reaches every container either way.
-- Run code that must read none of the project's values in a Box sandbox: each sandbox is its own microVM and gets only the variables named for it (`--secret`), never a `ZBOX_` one.
+- Run code that must read none of the project's values in a Box sandbox: each sandbox is its own microVM and gets only the variables named for it with `--secret` (`--secrets all` hands it every variable the Box sees, project values included), never a `ZBOX_` one.
 
 ## Common Patterns
 
