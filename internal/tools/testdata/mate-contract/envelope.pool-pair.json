@@ -1,0 +1,46 @@
+{
+  "phase": "idle",
+  "environment": "container",
+  "idleScenario": "bootstrapped",
+  "selfService": { "hostname": "zcp" },
+  "project": { "id": "proj-weather", "name": "weather" },
+  "services": [
+    {
+      "hostname": "apppool",
+      "typeVersion": "swarm@1",
+      "runtimeClass": "pool",
+      "status": "ACTIVE",
+      "bootstrapped": true,
+      "deployed": true,
+      "closeDeployMode": "auto",
+      "gitPushState": "configured",
+      "buildIntegration": "none",
+      "setupName": "pool",
+      "stages": [{ "hostname": "appstage", "setup": "prod" }]
+    },
+    {
+      "hostname": "appstage",
+      "typeVersion": "bun@1.3",
+      "runtimeClass": "dynamic",
+      "status": "ACTIVE",
+      "bootstrapped": true,
+      "deployed": true,
+      "mode": "stage",
+      "closeDeployMode": "auto",
+      "gitPushState": "configured",
+      "buildIntegration": "none",
+      "setupName": "prod"
+    }
+  ],
+  "leases": [
+    {
+      "alias": "apppool-1",
+      "pool": "apppool",
+      "branch": "feat-x",
+      "containerHostname": "node-id-1.runtime.apppool.zerops",
+      "state": "held",
+      "unverified": false
+    }
+  ],
+  "generated": "2026-10-14T21:04:00Z"
+}

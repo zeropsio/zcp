@@ -148,9 +148,13 @@ func ComputeEnvelope(
 	}, nil
 }
 
+// leaseStateHeld is the state of a lease zcp holds — the reader's verbatim
+// state for a reserved container whose record is zcp's own.
+const leaseStateHeld = "held"
+
 // leaseStateRecorded is the state of a lease read from zcp's own record: the record is
 // only written by a successful acquire, so "held" is the last known state.
-const leaseStateRecorded = "held"
+const leaseStateRecorded = leaseStateHeld
 
 // readLeases fills StateEnvelope.Leases (nil: not read). The reader is asked only when the
 // project could hold a lease — it lists a pool, or zcp has a lease record —
@@ -416,6 +420,10 @@ func buildOneSnapshot(svc platform.ServiceStack, meta *ServiceMeta, ws *WorkSess
 		// The dev/primary side of a pair carries its stages; the wire
 		// fields StageHostname/StageSetupName name the first one.
 		snap.SetupName = meta.SetupNameFor(svc.Name)
+		// A pool keying its pair is the pair's dev half (its Mode is "":
+		// ModeFor projects no dev-runtime mode onto a pool); it carries the
+		// stages and the HQ record below like any dev half.
+		snap.DevIsPool = meta.DevIsPool() && svc.Name == meta.Hostname
 		if meta.HQ != nil && svc.Name == meta.Hostname {
 			snap.HQRepo, snap.HQOrigin = meta.HQ.Repo, meta.HQ.Origin
 			snap.HQChange, snap.HQBranch = meta.HQ.Change, meta.HQ.Branch

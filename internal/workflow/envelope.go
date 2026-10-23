@@ -181,6 +181,14 @@ type ServiceSnapshot struct {
 	StageHostname string              `json:"stageHostname,omitempty"`
 	Stages        []topology.StageRef `json:"-"`
 
+	// DevIsPool marks the snapshot of a pool that is a pair's dev half
+	// (ServiceMeta.DevIsPool): it keys the pair, carries its stages and HQ
+	// record, and has no Mode — no dev-runtime guidance applies to a pool.
+	// Pure readers ask it before treating the pair's dev half as a container
+	// (BuildPlan, Resolve). Off the wire: a client tells the pool by its
+	// runtimeClass and the pair by its stages.
+	DevIsPool bool `json:"-"`
+
 	// HQRepo and HQOrigin name, on a wired pair's dev half, its repository in
 	// HQ and how its code is kept (HQRepoRef.Origin, nil until read). Off the
 	// envelope wire: status renders them.
@@ -269,7 +277,8 @@ func (s ServiceSnapshot) PairStageHostnames() []string {
 
 // WithParts is the envelope as zcp sends it from field-order step (3) of
 // docs/spec-mate.md §2.8a.3: every dev half carries stages[] in place of
-// stageHostname/stageSetupName, and devServers[] where this call read its
+// stageHostname/stageSetupName — a pool that is a pair's dev half too, the
+// pool keying the pair — and devServers[] where this call read its
 // supervisor (keyed by dev hostname). The receiver is left as it was; a
 // second application keeps the stages the first one projected.
 func (e StateEnvelope) WithParts(devServers map[string][]topology.DevServerState) StateEnvelope {

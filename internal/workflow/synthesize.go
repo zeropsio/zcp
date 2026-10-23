@@ -90,6 +90,12 @@ func Synthesize(envelope StateEnvelope, corpus []KnowledgeAtom) ([]MatchedRender
 			if scope != nil && !scope[svc.Hostname] && !poolNamedByAtom(svc, atom.Axes) {
 				continue
 			}
+			if svc.DevIsPool && !poolNamedByAtom(svc, atom.Axes) {
+				// A pool keying its pair carries the pair's stamps, but no
+				// guidance written for a container dev half applies to it —
+				// only an atom about pools binds to it.
+				continue
+			}
 			if serviceSatisfiesAxes(svc, atom.Axes, stageScopeOf(svc, envelope.WorkSession)) {
 				idxs = append(idxs, i)
 			}

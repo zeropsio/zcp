@@ -773,8 +773,8 @@ func TestRenderServiceLine_PoolDevHalf_NamesItsPair(t *testing.T) {
 	svc := ServiceSnapshot{
 		Hostname: "apppool", TypeVersion: "swarm@1", RuntimeClass: topology.RuntimePool, Status: "ACTIVE",
 		Bootstrapped: true, Deployed: true, DevIsPool: true, StageHostname: "webstage",
-		Stages:  []topology.StageRef{{Hostname: "webstage"}, {Hostname: "apistage"}},
-		HQRepo:  "appdev",
+		Stages:   []topology.StageRef{{Hostname: "webstage"}, {Hostname: "apistage"}},
+		HQRepo:   "appdev",
 		HQOrigin: &HQOrigin{Mode: HQOriginNone},
 		HQChange: 7, HQBranch: "feat-x",
 	}
