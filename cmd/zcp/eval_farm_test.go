@@ -172,23 +172,47 @@ func TestFarmPush_Candidate_UploadsUnderSha256Key(t *testing.T) {
 	}
 }
 
-// buildVCSFixtureBinary builds internal/eval/farm/testdata/vcsbuildfixture
-// into t.TempDir() and returns its path. It runs the real go toolchain
-// from inside this repo's git working tree so the resulting binary
-// carries genuine vcs.revision/vcs.time/vcs.modified debug/buildinfo
-// settings — a fabricated file body cannot exercise the real
-// debug/buildinfo.ReadFile path at all. Skipped under -short: it shells
-// out to `go build`.
+// buildVCSFixtureBinary builds a trivial main package inside a git
+// repository of its own, made in t.TempDir() with one commit, and returns
+// the binary's path. The real go toolchain stamps it with genuine
+// vcs.revision/vcs.time/vcs.modified debug/buildinfo settings — a
+// fabricated file body cannot exercise the real debug/buildinfo.ReadFile
+// path at all. Its own repository, not this checkout: go stamps VCS only
+// where .git is a directory, so a build from a linked worktree (whose .git
+// is a file) carries none. Skipped under -short: it shells out to git and
+// `go build`.
 func buildVCSFixtureBinary(t *testing.T) string {
 	t.Helper()
 	if testing.Short() {
 		t.Skip("builds a real Go binary via the go toolchain; skipped under -short")
 	}
-	out := filepath.Join(t.TempDir(), "candidate-with-vcs")
-	cmd := exec.CommandContext(t.Context(), "go", "build", "-o", out, "github.com/zeropsio/zcp/internal/eval/farm/testdata/vcsbuildfixture")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("go build fixture: %v\n%s", err, output)
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH: no repository to stamp the fixture from")
 	}
+	src := t.TempDir()
+	files := map[string]string{
+		"go.mod":  "module vcsfixture\n\ngo 1.21\n",
+		"main.go": "package main\n\nfunc main() {}\n",
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(src, name), []byte(body), 0o600); err != nil {
+			t.Fatalf("write fixture %s: %v", name, err)
+		}
+	}
+	run := func(name string, args ...string) {
+		t.Helper()
+		cmd := exec.CommandContext(t.Context(), name, args...)
+		cmd.Dir = src
+		cmd.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-buildvcs=true")
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%s %s: %v\n%s", name, strings.Join(args, " "), err, output)
+		}
+	}
+	run("git", "init", "-q")
+	run("git", "add", ".")
+	run("git", "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "fixture")
+	out := filepath.Join(t.TempDir(), "candidate-with-vcs")
+	run("go", "build", "-o", out, ".")
 	return out
 }
 
