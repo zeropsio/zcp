@@ -103,6 +103,18 @@ func hqAddress() string {
 	return strings.TrimRight(kept.HQ, "/")
 }
 
+// hqCredential is the Mate credential the HQ enrollment holds, read now; false
+// when there is none to read. It goes where git-push-setup puts it — a pool's
+// GIT_TOKEN for a lease of an HQ repository (ops.PoolHQCredential) — and never
+// into a result, a log or a file zcp writes.
+func hqCredential() (string, bool) {
+	kept, found, err := hq.LoadEnrollment(hq.EnrollmentPath())
+	if err != nil || !found || kept.Credential == "" {
+		return "", false
+	}
+	return kept.Credential, true
+}
+
 // hqRepositoryActions are the public zerops_workflow actions that choose a
 // pair's repository, its credential or what builds from it.
 var hqRepositoryActions = map[string]bool{"git-push-setup": true, "build-integration": true}
@@ -157,8 +169,13 @@ func reconcileMateRepositories(
 // yet, HQ refusing or not answering, an SSH hiccup — leaves the pair exactly
 // as it was and returns a line saying so. The next pass tries again.
 //
-// Returns one report line per pair that has something to say, by hostname so
-// the message is stable.
+// Inside a Mate it also renews the credential of every pool an acquire gave
+// it (renewHQPoolCredentials): a lease is held until released, so the next
+// acquire may be far off, while its leases need the new credential from
+// their next fresh session.
+//
+// Returns one report line per pair, then per pool, that has something to say,
+// by hostname so the message is stable.
 func reconcileHQRepositories(
 	ctx context.Context,
 	client platform.Client,
@@ -176,6 +193,39 @@ func reconcileHQRepositories(
 	if !enrolled {
 		return nil
 	}
+	report := reconcileHQPairs(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, pace)
+	return append(report, renewHQPoolCredentials(ctx, client, rt, stateDir, hqc)...)
+}
+
+// renewHQPoolCredentials gives every pool zcp put the Mate credential on the
+// one the enrollment holds now (ops.RenewPoolHQCredentials), inside a Mate
+// only — outside one zcp never writes a pool's GIT_TOKEN. Like a dev service's
+// renewal it needs no backoff: a pool whose record matches costs no call, and
+// one that could not be written is tried again on the next pass. One line per
+// pool that could not be.
+func renewHQPoolCredentials(ctx context.Context, client platform.Client, rt runtime.Info, stateDir string, hqc hq.Client) []string {
+	if !rt.MateEnabled {
+		return nil
+	}
+	var lines []string
+	for _, failure := range ops.RenewPoolHQCredentials(ctx, client, stateDir, hqc.Credential()) {
+		lines = append(lines, fmt.Sprintf("%s: the Mate enrolled with HQ again, and git in the pool's leases cannot reach HQ until its GIT_TOKEN holds the new credential, which could not be written (%v) — retrying on the next pass, and the next acquire of an HQ repository there writes it too.", failure.Pool, failure.Err))
+	}
+	return lines
+}
+
+// reconcileHQPairs is the pairs' half of the repository pass
+// (reconcileHQRepositories), with the HQ client it opened.
+func reconcileHQPairs(
+	ctx context.Context,
+	client platform.Client,
+	httpClient ops.HTTPDoer,
+	sshDeployer ops.SSHDeployer,
+	rt runtime.Info,
+	stateDir string,
+	hqc hq.Client,
+	pace hqPassPace,
+) []string {
 	metas, err := workflow.ListServiceMetas(stateDir)
 	if err != nil || len(metas) == 0 {
 		return nil

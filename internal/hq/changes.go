@@ -122,7 +122,14 @@ func (c Client) Credential() string { return c.enrollment.Credential }
 // record keeps to know which credential a service was given, never the
 // secret itself.
 func (c Client) CredentialFingerprint() string {
-	sum := sha256.Sum256([]byte(c.enrollment.Credential))
+	return CredentialFingerprint(c.enrollment.Credential)
+}
+
+// CredentialFingerprint names credential without carrying it: the first 8
+// bytes of its SHA-256, hex — what a pair's record and a pool's record keep
+// to know which Mate credential its service was given.
+func CredentialFingerprint(credential string) string {
+	sum := sha256.Sum256([]byte(credential))
 	return hex.EncodeToString(sum[:8])
 }
 

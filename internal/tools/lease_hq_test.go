@@ -79,7 +79,7 @@ func TestLeaseTool_HQCheckoutFailure_SaysWhatIsMissing(t *testing.T) {
 			t.Errorf("result %s lacks %q", text, want)
 		}
 	}
-	for _, banned := range []string{"user-held secret", platform.ErrGitTokenMissing, leaseHQCredential, leaseTestLease} {
+	for _, banned := range []string{"user-held secret", platform.ErrGitTokenMissing, leaseHQCredential, leaseTestLease, "no zcp command puts it"} {
 		if strings.Contains(text, banned) {
 			t.Errorf("result %s carries %q", text, banned)
 		}

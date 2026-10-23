@@ -141,12 +141,13 @@ func TestLeaseAcquire_HQRepo_ChecksOutAsMate(t *testing.T) {
 	}
 }
 
-// TestLeaseCheckout_HQCredentialFailure_NamesTheMateCredential: zcp gives the
-// Mate credential to a wired pair's dev service only, never to a pool, so a
-// lease of an HQ repository whose pool GIT_TOKEN is unset or another token
-// fails at checkout. The container goes back and the refusal says what is
-// missing as a prerequisite — not as GIT_TOKEN_*, whose contract asks the user
-// for a token: the Mate credential is no user's token to ask for or make up.
+// TestLeaseCheckout_HQCredentialFailure_NamesTheMateCredential: a lease of an
+// HQ repository whose pool GIT_TOKEN is unset or another token — outside a
+// Mate, or a secret changed or revoked since zcp wrote it (DP-16) — fails at
+// checkout. The container goes back and the refusal says what is missing as a
+// prerequisite — not as GIT_TOKEN_*, whose contract asks the user for a token:
+// the Mate credential is no user's token to ask for or make up — and that an
+// acquire inside a Mate writes it, so the next one is the step to take.
 func TestLeaseCheckout_HQCredentialFailure_NamesTheMateCredential(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -175,10 +176,13 @@ func TestLeaseCheckout_HQCredentialFailure_NamesTheMateCredential(t *testing.T) 
 			if pe.Code != platform.ErrPrerequisiteMissing {
 				t.Errorf("code = %s, want %s (the Mate credential is no user's token)", pe.Code, platform.ErrPrerequisiteMissing)
 			}
-			for _, want := range []string{"`mate`", "HQ credential", "GIT_TOKEN", "pool", tt.want, "never ask"} {
+			for _, want := range []string{"`mate`", "HQ credential", "GIT_TOKEN", "pool", tt.want, "never ask", "inside a Mate", "Acquire again"} {
 				if !strings.Contains(pe.Suggestion, want) {
 					t.Errorf("suggestion %q lacks %q", pe.Suggestion, want)
 				}
+			}
+			if strings.Contains(pe.Suggestion, "no zcp command puts it") {
+				t.Errorf("suggestion %q still says no zcp command puts the credential on a pool", pe.Suggestion)
 			}
 			if len(fx.swarm.releases) != 1 || !fx.swarm.releases[0].reset {
 				t.Errorf("releases = %+v, want the container handed back with a reset", fx.swarm.releases)

@@ -85,6 +85,12 @@ type leaseRolloutToolResult struct {
 // rt is the runtime that envelope is computed for.
 func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir string, swarm ops.SwarmFactory, mounter ops.Mounter, ssh ops.SSHDeployer, rt runtime.Info) {
 	deps := leaseDeps(client, projectID, stateDir, swarm, mounter, ssh)
+	if rt.MateEnabled {
+		// Inside a Mate an acquire of an HQ repository puts the Mate
+		// credential on the pool's GIT_TOKEN, as git-push-setup puts it on a
+		// wired dev service (DP-16); outside one the secret stays the user's.
+		deps.PoolCredential = ops.PoolHQCredential{Read: hqCredential}
+	}
 	envelope := func(ctx context.Context) *workflow.StateEnvelope {
 		var extra []workflow.EnvelopeOption
 		if swarm != nil {

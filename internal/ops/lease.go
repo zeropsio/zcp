@@ -60,6 +60,10 @@ type LeaseDeps struct {
 	// each use ("" — or nil — for none): a repository on it is checked out as
 	// HQ's git user (DP-12).
 	HQAddress func() string
+	// PoolCredential puts the Mate credential on the pool's GIT_TOKEN before a
+	// lease of a repository on HQ takes a container (DP-16); the zero value —
+	// outside a Mate — never writes.
+	PoolCredential PoolHQCredential
 	// ReadTimeout bounds one orchestrator read (a container listing); zero
 	// means leaseReadTimeout. The HTTP client allows minutes, for a start or
 	// a reset; a read that hangs must not hold a status call that long.
@@ -505,6 +509,12 @@ func LeaseAcquire(ctx context.Context, d LeaseDeps, pool, repo, branch string) (
 	if err != nil {
 		return LeaseView{}, err
 	}
+	// A repository on the Mate's HQ is fetched with the Mate credential, which
+	// zcp puts on the pool's GIT_TOKEN before it takes a container (DP-16).
+	poolCredential, err := ensurePoolHQCredential(ctx, d, rp.svc, repoURL)
+	if err != nil {
+		return LeaseView{}, err
+	}
 	// The orchestrator reserves the container before it answers, and an
 	// acquire carries no idempotency key: one cut short by its caller would
 	// leave a container reserved, with no expiry, for a lease zcp never
@@ -539,7 +549,7 @@ func LeaseAcquire(ctx context.Context, d LeaseDeps, pool, repo, branch string) (
 		v.Note = note
 	}
 	if d.SSH != nil {
-		if err := checkoutLease(ctx, d, rec, repoURL, branch); err != nil {
+		if err := poolCredential.checkout(ctx, d, rec, repoURL, branch); err != nil {
 			return LeaseView{}, abandonLease(ctx, d, rec, err)
 		}
 	}
