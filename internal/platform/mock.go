@@ -220,6 +220,15 @@ func (m *Mock) trackCall(method string) {
 	m.mu.Unlock()
 }
 
+// CallCount reads a method's call count under the lock — the safe read
+// while a call may still be in flight on another goroutine (CallCounts
+// itself is only safe to read once every call has returned).
+func (m *Mock) CallCount(method string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.CallCounts[method]
+}
+
 // WithUserInfo sets the user info returned by GetUserInfo.
 func (m *Mock) WithUserInfo(info *UserInfo) *Mock {
 	m.mu.Lock()

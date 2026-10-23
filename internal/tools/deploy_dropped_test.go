@@ -94,10 +94,10 @@ func TestDeployTool_CallerDropsMidBuild_StillEnablesPublicAccess(t *testing.T) {
 	_, _ = session.CallTool(callCtx, &mcp.CallToolParams{Name: "zerops_deploy", Arguments: map[string]any{"targetService": "app"}})
 
 	deadline := time.Now().Add(5 * time.Second)
-	for mock.CallCounts["EnableSubdomainAccess"] == 0 && time.Now().Before(deadline) {
+	for mock.CallCount("EnableSubdomainAccess") == 0 && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
 	}
-	if got := mock.CallCounts["EnableSubdomainAccess"]; got != 1 {
+	if got := mock.CallCount("EnableSubdomainAccess"); got != 1 {
 		t.Fatalf("EnableSubdomainAccess calls after the caller dropped: want 1, got %d", got)
 	}
 }
