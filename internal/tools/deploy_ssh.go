@@ -311,8 +311,10 @@ func RegisterDeploySSH(
 
 		// Gate: target (and source) must be adopted by ZCP. Recipe-
 		// authoring sessions whose Plan owns the host bypass adoption —
-		// see requireAdoption for the exemption rationale.
-		if blocked := requireAdoption(stateDir, rtInfo, recipeProbe, input.TargetService, input.SourceService); blocked != nil {
+		// see requireAdoption for the exemption rationale. A pool target
+		// is never adopted, so it is not asked to be (DP-7).
+		gated := append(withoutPoolHosts(ctx, client, projectID, input.TargetService), input.SourceService)
+		if blocked := requireAdoption(stateDir, rtInfo, recipeProbe, gated...); blocked != nil {
 			return blocked, nil, nil
 		}
 

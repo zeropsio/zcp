@@ -142,7 +142,8 @@ func RegisterDeployLocal(
 		// for the exemption rationale.
 		// deploy_local always runs in local env — pass a zero-value
 		// runtime.Info to surface the adopt-local recovery hint.
-		if blocked := requireAdoption(stateDir, runtime.Info{}, recipeProbe, input.TargetService); blocked != nil {
+		// A pool target is never adopted, so it is not asked to be (DP-7).
+		if blocked := requireAdoption(stateDir, runtime.Info{}, recipeProbe, withoutPoolHosts(ctx, client, projectID, input.TargetService)...); blocked != nil {
 			return blocked, nil, nil
 		}
 

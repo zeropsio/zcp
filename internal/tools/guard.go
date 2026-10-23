@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -155,6 +156,24 @@ func leaseOf(stateDir, host string) (ops.LeaseTargetInfo, bool) {
 }
 
 // leasePoolsAmong is the set of pools whose lease is named in hostnames.
+// withoutPoolHosts drops the hostnames that are Swarm pools: a pool is never
+// adopted (PS-5), so the adoption gate has nothing to ask of a deploy that
+// targets one (DP-7). A hostname the lookup cannot resolve stays, and the
+// gate or the deploy's own lookup answers for it.
+func withoutPoolHosts(ctx context.Context, client platform.Client, projectID string, hostnames ...string) []string {
+	kept := make([]string, 0, len(hostnames))
+	for _, h := range hostnames {
+		if h != "" && client != nil {
+			if svc, err := ops.LookupService(ctx, client, projectID, h); err == nil &&
+				topology.IsPoolType(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) {
+				continue
+			}
+		}
+		kept = append(kept, h)
+	}
+	return kept
+}
+
 func leasePoolsAmong(stateDir string, hostnames []string) map[string]bool {
 	var pools map[string]bool
 	for _, h := range hostnames {

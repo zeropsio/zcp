@@ -264,6 +264,12 @@ func poolTargetDeploy(t *testing.T, ssh ops.SSHDeployer) (*mcp.CallToolResult, s
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	return poolTargetDeployIn(t, ssh, stateDir)
+}
+
+// poolTargetDeployIn is poolTargetDeploy over a prepared state directory.
+func poolTargetDeployIn(t *testing.T, ssh ops.SSHDeployer, stateDir string) (*mcp.CallToolResult, string) {
+	t.Helper()
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-dev", Name: "appdev", Status: serviceStatusRunning, ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
@@ -337,6 +343,32 @@ func TestDeployTool_ToPool_SaysOnlyNewContainers(t *testing.T) {
 	if ssh.hosts()["webpool"] {
 		t.Error("an ssh call reached the pool by service hostname — a random container (PS-3)")
 	}
+}
+
+// TestDeployTool_ToPool_AdoptedProject_NotGated: a pool is never adopted
+// (PS-5), so in a project the gate guards — one bootstrap already ran — a
+// deploy to a pool from an adopted dev service must not be refused with an
+// "adopt it first" no adopt can satisfy.
+func TestDeployTool_ToPool_AdoptedProject_NotGated(t *testing.T) {
+	t.Parallel()
+
+	stateDir := filepath.Join(t.TempDir(), ".zcp", "state")
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname:       "appdev",
+		Mode:           topology.ModeDev,
+		BootstrappedAt: "2026-10-23T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("seed meta: %v", err)
+	}
+	result, text := poolTargetDeployIn(t, &leaseSSH{}, stateDir)
+	if result.IsError {
+		t.Fatalf("a deploy to a pool in an adopted project must run: %s", text)
+	}
+	var parsed ops.DeployResult
+	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	assertPoolDeployResult(t, parsed)
 }
 
 // TestDeployTool_LeaseToOwnPool_NextActionsNamesRollout: a release and a new
