@@ -142,6 +142,11 @@ func TestThemes_Services_PoolSection_FactsPresent(t *testing.T) {
 		"clean", "run.prepareCommands",
 		"node-id-<n>.runtime.<pool>.zerops", "sshIsolation",
 		"subdomain", "beta", "capacity",
+		// Pool and Box credentials are wired by reference, never copied.
+		"ADMIN_TOKEN", "X-Swarm-Admin-Token",
+		"http://<box>:8080", "ZBOX_WORKSPACE_API_KEY", "${<box>_ZBOX_WORKSPACE_API_KEY}", "ZBOX_WORKSPACE_VOLUME_KEY",
+		// Untrusted code: what a container reads, and where such code belongs.
+		"envIsolation: none", "envIsolation: service", "<host>_KEY", "--secret",
 	} {
 		if !strings.Contains(section, fact) {
 			t.Errorf("'Pools and Box' section missing fact %q", fact)
