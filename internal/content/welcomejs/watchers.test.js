@@ -92,6 +92,14 @@ function armedFs(dir) {
   return { fsImpl, armed: () => events > 0 };
 }
 
+// ARM_MS and DETECT_MS bound the two waits. Measured under a loaded run
+// (several suites at once): a fresh watch armed after ~2.7 s or not within
+// 10 s at all, and the push after the real write took about as long again —
+// the old 3 s windows missed by a hair. Both waits return the moment their
+// condition holds, so a passing run pays nothing for the headroom.
+const ARM_MS = 10000;
+const DETECT_MS = 15000;
+
 // whenArmed touches a probe file in dir until one of the panel's watchers on
 // dir has delivered an event: proof the watch is armed before the test
 // creates what it must detect. A probe changes nothing the panel reads — the
@@ -102,7 +110,7 @@ async function whenArmed(dir, armed) {
     if (armed()) return true;
     fs.writeFileSync(probe, String(Date.now()));
     return false;
-  });
+  }, { timeoutMs: ARM_MS });
 }
 
 test("missing ~/.claude and ~/.codex at open falls back to watching HOME, without crashing", () => {
@@ -144,7 +152,7 @@ test("a credential dir created after open is detected and pushes local-only", as
       const msgs = panel.postedMessages.filter((m) => m.type === "state");
       const last = msgs[msgs.length - 1];
       return last && last.payload.agents.some((a) => a.id === "claude-code" && a.state === "local-only");
-    });
+    }, { timeoutMs: DETECT_MS });
     panel.dispose();
   }
   assert.ok(found, `expected a state push showing claude-code as local-only after the cred file appeared (${ATTEMPTS} attempts)`);
@@ -442,7 +450,7 @@ test("a pack manifest created after open is detected and pushes an installed sta
       const msgs = panel.postedMessages.filter((m) => m.type === "state");
       const last = msgs[msgs.length - 1];
       return last && last.payload.packs.some((p) => p.id === "superpowers" && p.state === "installed");
-    });
+    }, { timeoutMs: DETECT_MS });
     panel.dispose();
   }
   assert.ok(found, `expected a state push showing superpowers as installed after the manifest appeared (${ATTEMPTS} attempts)`);
