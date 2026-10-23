@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -46,6 +45,8 @@ type LeaseDeps struct {
 	ProjectID string
 	StateDir  string
 	Swarm     SwarmFactory
+	// Host is the ssh alias and mount side of a lease; the zero value does neither.
+	Host LeaseHost
 }
 
 // Lease states.
@@ -54,6 +55,9 @@ const (
 	LeaseStateLost          = "lost"
 	LeaseStateUnknownHolder = "unknown-holder"
 	LeaseStateReleased      = "released"
+	// LeaseStateUnmounted is a held lease whose ssh alias or mount is missing
+	// on this host.
+	LeaseStateUnmounted = "unmounted"
 )
 
 // LeaseView is a lease as the agent sees it.
@@ -201,6 +205,10 @@ func listPoolLeases(ctx context.Context, d LeaseDeps, pool string, records []lea
 		default:
 			v := r.view(LeaseStateHeld)
 			v.AcquiredAt = r.AcquiredAt
+			if gap := d.Host.gap(ctx, r.alias()); gap != "" {
+				v.State = LeaseStateUnmounted
+				v.Note = gap
+			}
 			views = append(views, v)
 		}
 	}
@@ -305,7 +313,14 @@ func LeaseAcquire(ctx context.Context, d LeaseDeps, pool, branch string) (LeaseV
 		}
 		return LeaseView{}, fmt.Errorf("record lease %s: %w (the container was handed back)", rec.alias(), err)
 	}
-	return rec.view(LeaseStateHeld), nil
+	v := rec.view(LeaseStateHeld)
+	if note := d.Host.attach(ctx, d, rec); note != "" {
+		// The lease is real and stays recorded; zcp init (or the next status)
+		// finds the alias or mount missing and restores it.
+		v.State = LeaseStateUnmounted
+		v.Note = note
+	}
+	return v, nil
 }
 
 // leaseRecord is zcp's own record of a lease it holds
@@ -333,9 +348,10 @@ func (r leaseRecord) view(state string) LeaseView {
 	}
 }
 
-// leaseAliasRe is the shape of an alias (<pool>-<number>); it is also what
-// keeps an alias from naming a path outside the lease directory.
-var leaseAliasRe = regexp.MustCompile(`^[a-z][a-z0-9]{0,39}-[0-9]+$`)
+// isLeaseAliasShape is the shape of an alias (<pool>-<number>), owned by
+// platform.ValidateLeaseAlias; it is also what keeps an alias from naming a
+// path outside the lease directory.
+func isLeaseAliasShape(alias string) bool { return platform.ValidateLeaseAlias(alias) == nil }
 
 func leaseDir(stateDir string) string { return filepath.Join(stateDir, "leases") }
 
@@ -344,7 +360,7 @@ func writeLeaseRecord(stateDir string, rec leaseRecord) error {
 	if stateDir == "" {
 		return errors.New("no state directory")
 	}
-	if !leaseAliasRe.MatchString(rec.alias()) {
+	if !isLeaseAliasShape(rec.alias()) {
 		return fmt.Errorf("alias %q is not <pool>-<number>", rec.alias())
 	}
 	dir := leaseDir(stateDir)
@@ -400,7 +416,7 @@ func readLeaseRecords(stateDir string) ([]leaseRecord, error) {
 			continue
 		}
 		var r leaseRecord
-		if json.Unmarshal(raw, &r) != nil || r.alias()+".json" != e.Name() || !leaseAliasRe.MatchString(r.alias()) {
+		if json.Unmarshal(raw, &r) != nil || r.alias()+".json" != e.Name() || !isLeaseAliasShape(r.alias()) {
 			continue
 		}
 		out = append(out, r)
@@ -419,6 +435,33 @@ func LeaseRelease(ctx context.Context, d LeaseDeps, alias string, reset bool) (L
 	if err != nil {
 		return LeaseView{}, err
 	}
+	// The mount goes first: a reset or a release pulls the container out from
+	// under it. A mount that will not unmount is a note, never a reason to
+	// keep the container reserved.
+	unmountNote := d.Host.detachMount(ctx, d, rec)
+	view, err := releaseLease(ctx, d, rec, alias, reset)
+	if err != nil {
+		return LeaseView{}, err
+	}
+	// The record is gone: take its stanza out of the alias file.
+	view.Note = joinNotes(view.Note, unmountNote, d.Host.refreshAliases(ctx, d))
+	return view, nil
+}
+
+// joinNotes joins the non-empty notes.
+func joinNotes(notes ...string) string {
+	var kept []string
+	for _, n := range notes {
+		if n != "" {
+			kept = append(kept, n)
+		}
+	}
+	return strings.Join(kept, "; ")
+}
+
+// releaseLease releases the container with the orchestrator and drops the
+// record (every successful outcome drops it).
+func releaseLease(ctx context.Context, d LeaseDeps, rec leaseRecord, alias string, reset bool) (LeaseView, error) {
 	rp, err := resolvePool(ctx, d, rec.PoolHostname)
 	if err != nil {
 		var pe *platform.PlatformError
@@ -453,7 +496,7 @@ func dropLeaseRecord(stateDir string, rec leaseRecord, state, note string) (Leas
 
 // loadLeaseRecord reads the record of one alias.
 func loadLeaseRecord(stateDir, alias string) (leaseRecord, error) {
-	if !leaseAliasRe.MatchString(alias) {
+	if !isLeaseAliasShape(alias) {
 		return leaseRecord{}, platform.NewPlatformError(platform.ErrInvalidParameter,
 			fmt.Sprintf("'%s' is not a lease alias", alias),
 			"A lease is addressed by <pool>-<container number>, e.g. devpool-3; zerops_lease action=status lists them")
