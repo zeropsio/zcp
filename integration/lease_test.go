@@ -6,10 +6,12 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -527,5 +529,153 @@ func TestLease_Integration_GroupAcquire_OneLeasePerPoolInPoolsOrder(t *testing.T
 	}
 	if hqAcquires() != 1 || webAcquires() != 1 {
 		t.Errorf("acquires hq=%d web=%d, want one container per pool", hqAcquires(), webAcquires())
+	}
+}
+
+// activityLeaseSSH is the leased container #3 of devpool whose checkout answers
+// zcp's activity read as given (exit 255 — unreachable — when unreachable is
+// set); it records every command and its host.
+type activityLeaseSSH struct {
+	mu          sync.Mutex
+	answer      string
+	unreachable bool
+	calls       []sshCall
+}
+
+func (s *activityLeaseSSH) ExecSSH(ctx context.Context, hostname, command string) ([]byte, error) {
+	s.mu.Lock()
+	s.calls = append(s.calls, sshCall{hostname: hostname, command: command})
+	answer, unreachable := s.answer, s.unreachable
+	s.mu.Unlock()
+	if !strings.Contains(command, "@@zcp-lease activity") {
+		return []byte("ok"), nil
+	}
+	if unreachable {
+		// ssh's own exit status when it cannot reach the host.
+		exit := exec.CommandContext(ctx, "sh", "-c", "exit 255").Run()
+		return nil, &platform.SSHExecError{Hostname: hostname, Output: "ssh: connect to host node-id-3.runtime.devpool.zerops port 22: Connection refused", Err: exit}
+	}
+	return []byte(answer), nil
+}
+
+func (s *activityLeaseSSH) ExecSSHBackground(ctx context.Context, hostname, command string, _ time.Duration) ([]byte, error) {
+	return s.ExecSSH(ctx, hostname, command)
+}
+
+func (s *activityLeaseSSH) reads() []sshCall {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []sshCall
+	for _, c := range s.calls {
+		if strings.Contains(c.command, "@@zcp-lease activity") {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// TestLease_Integration_StatusReportsActivityAndUnsaved: through the full MCP
+// server, zerops_lease action=status reads the held lease's checkout once, on
+// its alias, and reports its activity and unsaved work; a container ssh cannot
+// reach stays held and its activity says why, with no change time and no
+// unsaved work (docs/spec-workflows.md §8 DP-21).
+func TestLease_Integration_StatusReportsActivityAndUnsaved(t *testing.T) {
+	// Non-parallel: t.Chdir and a swap of http.DefaultTransport, as above.
+	t.Chdir(t.TempDir())
+
+	orch := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+leaseIntToken || r.Method != http.MethodGet || r.URL.Path != "/container" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(`[{"id":"c-abc","name":"node-id-3","number":3,"hostname":"node-id-3.runtime.devpool.zerops","status":"ACTIVE",` +
+			`"serviceId":"svc-pool","stackId":"stk","appVersionId":"av","current":true,"lockState":"reserved","dirty":false}]`))
+	}))
+	defer orch.Close()
+	target, err := url.Parse(orch.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := http.DefaultTransport
+	http.DefaultTransport = orchestratorRoute{host: "orch.devpool.zerops", target: target, next: orig}
+	t.Cleanup(func() { http.DefaultTransport = orig })
+
+	if err := os.MkdirAll(filepath.Join(".zcp", "state", "leases"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	record := `{"poolHostname":"devpool","poolServiceId":"svc-pool","containerId":"c-abc","containerNumber":3,` +
+		`"containerHostname":"node-id-3.runtime.devpool.zerops","lease":"` + leaseIntLease + `","branch":"feat-x","acquiredAt":"2026-10-23T12:00:00Z"}`
+	if err := os.WriteFile(filepath.Join(".zcp", "state", "leases", "devpool-3.json"), []byte(record), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	changed := time.Date(2026, 10, 23, 14, 30, 0, 0, time.UTC)
+	ssh := &activityLeaseSSH{answer: fmt.Sprintf("@@zcp-lease activity %d %d\n@@zcp-lease status\n M src/App.tsx\n?? notes.txt\n@@zcp-lease unpushed\n1\n",
+		changed.Add(-time.Hour).Unix(), changed.Unix())}
+	mock := defaultMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-pool", Name: "devpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
+		}).
+		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{ID: "env-t", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}})
+	session, cleanup := setupTestServerWithDeploy(t, mock, defaultLogFetcher(), ssh)
+	defer cleanup()
+
+	type statusResult struct {
+		Leases []struct {
+			Alias    string `json:"alias"`
+			State    string `json:"state"`
+			Activity *struct {
+				LastChangeAt     string `json:"lastChangeAt"`
+				AcquiredAt       string `json:"acquiredAt"`
+				ReadAt           string `json:"readAt"`
+				Note             string `json:"note"`
+				PreviewOpenConns *int   `json:"previewOpenConns"`
+			} `json:"activity"`
+			Unsaved *struct {
+				Files           []string `json:"files"`
+				FileCount       int      `json:"fileCount"`
+				UnpushedCommits int      `json:"unpushedCommits"`
+			} `json:"unsaved"`
+		} `json:"leases"`
+	}
+	status := func() statusResult {
+		t.Helper()
+		res := callAndGetResult(t, session, "zerops_lease", map[string]any{"action": "status"})
+		text := getTextContent(t, res)
+		if res.IsError {
+			t.Fatalf("status failed: %s", text)
+		}
+		if strings.Contains(text, leaseIntLease) || strings.Contains(text, leaseIntToken) {
+			t.Fatalf("status result carries a secret: %s", text)
+		}
+		var out statusResult
+		if err := json.Unmarshal([]byte(text), &out); err != nil {
+			t.Fatalf("result is not JSON: %v\n%s", err, text)
+		}
+		if len(out.Leases) != 1 || out.Leases[0].Alias != "devpool-3" || out.Leases[0].State != "held" || out.Leases[0].Activity == nil {
+			t.Fatalf("status = %s, want the held devpool-3 with its activity", text)
+		}
+		return out
+	}
+
+	got := status().Leases[0]
+	if a := got.Activity; a.LastChangeAt != "2026-10-23T14:30:00Z" || a.AcquiredAt != "2026-10-23T12:00:00Z" || a.ReadAt == "" || a.Note != "" || a.PreviewOpenConns != nil {
+		t.Errorf("activity = %+v, want lastChangeAt 2026-10-23T14:30:00Z, the record's acquiredAt, a readAt, no note and no preview facts", *a)
+	}
+	if u := got.Unsaved; u == nil || strings.Join(u.Files, "|") != " M src/App.tsx|?? notes.txt" || u.FileCount != 2 || u.UnpushedCommits != 1 {
+		t.Errorf("unsaved = %+v, want src/App.tsx and notes.txt, 1 commit", u)
+	}
+	if reads := ssh.reads(); len(reads) != 1 || reads[0].hostname != "devpool-3" {
+		t.Errorf("activity reads = %+v, want one, on devpool-3 (the envelope never reads it)", reads)
+	}
+
+	ssh.mu.Lock()
+	ssh.unreachable = true
+	ssh.mu.Unlock()
+	got = status().Leases[0]
+	if a := got.Activity; a.LastChangeAt != "" || a.AcquiredAt != "2026-10-23T12:00:00Z" || !strings.Contains(a.Note, "could not reach") {
+		t.Errorf("unreachable activity = %+v, want no change time, acquiredAt kept and why in the note", *a)
+	}
+	if got.Unsaved != nil {
+		t.Errorf("unreachable unsaved = %+v, want absent: nothing was read", got.Unsaved)
 	}
 }

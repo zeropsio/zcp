@@ -14,27 +14,40 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/zeropsio/zcp/internal/platform"
 )
 
 // localCheckoutSSH runs the guard's commands in a real checkout the way ssh
-// hands them to the container's shell, with /var/www standing for dir.
+// hands them to the container's shell, with /var/www standing for dir, and
+// answers as SystemSSHDeployer does: stdout and stderr together, a failure as
+// an *SSHExecError carrying them. path, when set, goes first on PATH.
 type localCheckoutSSH struct {
 	dir      string
+	path     string
 	commands []string
 }
 
-func (s *localCheckoutSSH) ExecSSH(ctx context.Context, _, command string) ([]byte, error) {
+func (s *localCheckoutSSH) ExecSSH(ctx context.Context, host, command string) ([]byte, error) {
 	s.commands = append(s.commands, command)
 	local := strings.ReplaceAll(command, shellQuote(leaseWorkDir), shellQuote(s.dir))
 	cmd := exec.CommandContext(ctx, "sh", "-c", local)
 	env := []string{"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null"}
 	for _, kv := range os.Environ() {
-		if !strings.HasPrefix(kv, "GIT_") {
+		switch {
+		case strings.HasPrefix(kv, "GIT_"):
+		case s.path != "" && strings.HasPrefix(kv, "PATH="):
+			env = append(env, "PATH="+s.path+string(os.PathListSeparator)+strings.TrimPrefix(kv, "PATH="))
+		default:
 			env = append(env, kv)
 		}
 	}
 	cmd.Env = env
-	return cmd.Output()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return out, &platform.SSHExecError{Hostname: host, Output: string(out), Err: err}
+	}
+	return out, nil
 }
 
 func (s *localCheckoutSSH) ExecSSHBackground(ctx context.Context, host, command string, _ time.Duration) ([]byte, error) {

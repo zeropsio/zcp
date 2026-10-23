@@ -419,35 +419,66 @@ func (w unsavedWork) any() bool { return len(w.files) > 0 || w.unpushed > 0 }
 // bytes (live, 2026-10-23) — so a read writes nothing there.
 const leaseGitRead = "GIT_OPTIONAL_LOCKS=0 git -C "
 
+// leaseUnsavedFilesCommand is the guard's first read of the container's
+// /var/www: its uncommitted and untracked files git does not ignore, one
+// `git status --porcelain` line each (parseUnsavedFiles). The release guard
+// and the status read (leaseActivityCommand) both run it, so they agree on
+// what is unsaved.
+func leaseUnsavedFilesCommand() string {
+	return leaseGitRead + shellQuote(leaseWorkDir) + " status --porcelain"
+}
+
+// leaseUnpushedCommand is the guard's second read: how many commits are on no
+// remote branch, 0 in a checkout with no commit yet (parseUnpushedCount).
+func leaseUnpushedCommand() string {
+	wd := shellQuote(leaseWorkDir)
+	return "if " + leaseGitRead + wd + " rev-parse -q --verify HEAD >/dev/null 2>&1; then " +
+		leaseGitRead + wd + " rev-list --count HEAD --not --remotes=origin; else echo 0; fi"
+}
+
+// parseUnsavedFiles reads leaseUnsavedFilesCommand's answer: one file per
+// non-empty line.
+func parseUnsavedFiles(out string) []string {
+	var files []string
+	for line := range strings.SplitSeq(out, "\n") {
+		if line = strings.TrimRight(line, "\r "); line != "" {
+			files = append(files, line)
+		}
+	}
+	return files
+}
+
+// parseUnpushedCount reads leaseUnpushedCommand's answer: the count is its
+// last field.
+func parseUnpushedCount(out string) (int, error) {
+	fields := strings.Fields(out)
+	if len(fields) == 0 {
+		return 0, errors.New("git rev-list answered nothing")
+	}
+	n, err := strconv.Atoi(fields[len(fields)-1])
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("git rev-list answered %q", strings.TrimSpace(out))
+	}
+	return n, nil
+}
+
 // readUnsavedWork reads, over ssh, the uncommitted and untracked files and the
 // commits on no remote branch of the container's /var/www, writing nothing
 // into it (leaseGitRead).
 func readUnsavedWork(ctx context.Context, ssh SSHDeployer, alias string) (unsavedWork, error) {
 	var w unsavedWork
-	out, err := ssh.ExecSSH(ctx, alias, leaseGitRead+shellQuote(leaseWorkDir)+" status --porcelain")
+	out, err := ssh.ExecSSH(ctx, alias, leaseUnsavedFilesCommand())
 	if err != nil {
 		return w, fmt.Errorf("git status: %w", err)
 	}
-	for line := range strings.SplitSeq(string(out), "\n") {
-		if line = strings.TrimRight(line, "\r "); line != "" {
-			w.files = append(w.files, line)
-		}
-	}
-	wd := shellQuote(leaseWorkDir)
-	out, err = ssh.ExecSSH(ctx, alias, "if "+leaseGitRead+wd+" rev-parse -q --verify HEAD >/dev/null 2>&1; then "+
-		leaseGitRead+wd+" rev-list --count HEAD --not --remotes=origin; else echo 0; fi")
+	w.files = parseUnsavedFiles(string(out))
+	out, err = ssh.ExecSSH(ctx, alias, leaseUnpushedCommand())
 	if err != nil {
 		return w, fmt.Errorf("git rev-list: %w", err)
 	}
-	fields := strings.Fields(string(out))
-	if len(fields) == 0 {
-		return w, errors.New("git rev-list answered nothing")
+	if w.unpushed, err = parseUnpushedCount(string(out)); err != nil {
+		return w, err
 	}
-	n, convErr := strconv.Atoi(fields[len(fields)-1])
-	if convErr != nil || n < 0 {
-		return w, fmt.Errorf("git rev-list answered %q", strings.TrimSpace(string(out)))
-	}
-	w.unpushed = n
 	return w, nil
 }
 

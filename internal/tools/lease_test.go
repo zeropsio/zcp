@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -523,6 +524,79 @@ func TestLeaseTool_ResultCarriesEnvelope(t *testing.T) {
 			if strings.Contains(text, secret) {
 				t.Errorf("%s: result carries a secret", st.name)
 			}
+		}
+	}
+}
+
+// TestLeaseTool_Status_CarriesActivity: zerops_lease action=status reports,
+// for the held lease, its activity — the checkout's last change, acquiredAt,
+// when it was read, no preview facts yet — and its unsaved work, from one read
+// of its checkout; the result's envelope never repeats that read
+// (docs/spec-workflows.md §8 DP-21).
+func TestLeaseTool_Status_CarriesActivity(t *testing.T) {
+	t.Parallel()
+	changed := time.Date(2026, 10, 23, 13, 0, 0, 0, time.UTC)
+	ssh := &leaseStubSSH{fn: func(command string) ([]byte, error) {
+		if strings.Contains(command, "@@zcp-lease activity") {
+			return fmt.Appendf(nil, "@@zcp-lease activity %d \n@@zcp-lease status\n?? notes.txt\n@@zcp-lease unpushed\n2\n", changed.Unix()), nil
+		}
+		return nil, nil
+	}}
+	srv, _ := leaseToolServerSSH(t, &fakeOrchestrator{}, ssh)
+	if res := callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo, "branch": "feature-x"}); res.IsError {
+		t.Fatalf("acquire failed: %s", getTextContent(t, res))
+	}
+
+	res := callTool(t, srv, "zerops_lease", map[string]any{"action": "status"})
+	text := getTextContent(t, res)
+	if res.IsError {
+		t.Fatalf("status failed: %s", text)
+	}
+	var got struct {
+		Leases []struct {
+			Alias      string          `json:"alias"`
+			State      string          `json:"state"`
+			AcquiredAt string          `json:"acquiredAt"`
+			Activity   json.RawMessage `json:"activity"`
+			Unsaved    json.RawMessage `json:"unsaved"`
+		} `json:"leases"`
+	}
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatalf("result is not JSON: %v\n%s", err, text)
+	}
+	if len(got.Leases) != 1 || got.Leases[0].Alias != "devpool-3" || got.Leases[0].State != "held" {
+		t.Fatalf("leases = %+v, want the held devpool-3", got.Leases)
+	}
+	l := got.Leases[0]
+	var activity map[string]any
+	if err := json.Unmarshal(l.Activity, &activity); err != nil {
+		t.Fatalf("activity is not an object: %v\n%s", err, text)
+	}
+	if activity["lastChangeAt"] != "2026-10-23T13:00:00Z" || activity["acquiredAt"] != l.AcquiredAt || activity["readAt"] == nil {
+		t.Errorf("activity = %v, want lastChangeAt 2026-10-23T13:00:00Z, acquiredAt %s and a readAt", activity, l.AcquiredAt)
+	}
+	for _, absent := range []string{"previewLastConnAt", "previewOpenConns", "note"} {
+		if _, ok := activity[absent]; ok {
+			t.Errorf("activity carries %s: %v", absent, activity)
+		}
+	}
+	if string(l.Unsaved) != `{"files":["?? notes.txt"],"fileCount":1,"unpushedCommits":2}` {
+		t.Errorf("unsaved = %s, want notes.txt and 2 commits", l.Unsaved)
+	}
+	reads := 0
+	ssh.mu.Lock()
+	for _, c := range ssh.calls {
+		if strings.Contains(c, "@@zcp-lease activity") {
+			reads++
+		}
+	}
+	ssh.mu.Unlock()
+	if reads != 1 {
+		t.Errorf("the checkout was read %d times, want once (the envelope never reads it)", reads)
+	}
+	for _, secret := range []string{leaseTestLease, leaseTestToken} {
+		if strings.Contains(text, secret) {
+			t.Errorf("status result carries a secret")
 		}
 	}
 }
