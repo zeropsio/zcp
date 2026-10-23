@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -331,28 +332,91 @@ func TestImport_FileRead(t *testing.T) {
 // catches at import time; field-level detail now reaches the LLM via
 // PlatformError.APIMeta rather than ZCP-side warnings.
 
-func TestImport_EnvVariablesAtServiceLevel_Warning(t *testing.T) {
+// TestImport_ServiceEnvVariables_WarnsPlainNotDropped — a service-level
+// `envVariables` block is deprecated, not dropped: the import creates its
+// values as the service's env, every one plain (docs/spec-zerops-env-lifecycle.md
+// §8b). The warning says exactly that, never that the values are dropped,
+// names the secret-shaped keys it stores readable (a reference-only value
+// holds no secret of its own), and the block reaches the API as written.
+func TestImport_ServiceEnvVariables_WarnsPlainNotDropped(t *testing.T) {
 	t.Parallel()
-	content := `services:
-  - hostname: app
-    type: nodejs@22
-    envVariables:
-      MY_VAR: hello
-`
-	mock := importMock()
-	result, err := Import(context.Background(), mock, "proj-1", content, "", false)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	tests := []struct {
+		name      string
+		block     string
+		wantKeys  []string
+		wantNamed []string
+		notNamed  []string
+	}{
+		{
+			name:     "plain config",
+			block:    "      MY_VAR: hello\n",
+			wantKeys: []string{"MY_VAR"},
+			notNamed: []string{"MY_VAR"},
+		},
+		{
+			name:      "secret-shaped names",
+			block:     "      DB_PASSWORD: pw\n      API_KEY: abc\n      MY_VAR: hello\n",
+			wantKeys:  []string{"API_KEY", "DB_PASSWORD", "MY_VAR"},
+			wantNamed: []string{"API_KEY, DB_PASSWORD"},
+			notNamed:  []string{"MY_VAR"},
+		},
+		{
+			name:     "secret name wired by reference",
+			block:    "      DB_PASSWORD: ${db_password}\n",
+			wantKeys: []string{"DB_PASSWORD"},
+			notNamed: []string{"DB_PASSWORD"},
+		},
 	}
-	found := false
-	for _, w := range result.Warnings {
-		if strings.Contains(w, "envVariables") && strings.Contains(w, "silently dropped") {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("expected envVariables warning, got: %v", result.Warnings)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			content := "services:\n  - hostname: app\n    type: nodejs@22\n    envVariables:\n" + tt.block
+			mock := importMock()
+			result, err := Import(context.Background(), mock, "proj-1", content, "", false)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			var envWarnings []string
+			for _, w := range result.Warnings {
+				if strings.Contains(w, "envVariables") {
+					envWarnings = append(envWarnings, w)
+				}
+			}
+			if len(envWarnings) != 1 {
+				t.Fatalf("want one envVariables warning, got: %v", result.Warnings)
+			}
+			w := envWarnings[0]
+			for _, never := range []string{"dropped", "discard", "ignored"} {
+				if strings.Contains(strings.ToLower(w), never) {
+					t.Errorf("warning claims the values are %s: %q", never, w)
+				}
+			}
+			for _, want := range append([]string{`"app"`, "deprecated", "vault", "plain"}, tt.wantNamed...) {
+				if !strings.Contains(w, want) {
+					t.Errorf("warning lacks %q: %q", want, w)
+				}
+			}
+			for _, key := range tt.notNamed {
+				if strings.Contains(w, key) {
+					t.Errorf("warning names %s, which is not a secret stored readable: %q", key, w)
+				}
+			}
+
+			var sent map[string]any
+			if err := yaml.Unmarshal([]byte(mock.CapturedImportYAML), &sent); err != nil {
+				t.Fatalf("sent YAML: %v", err)
+			}
+			svc := sent["services"].([]any)[0].(map[string]any)
+			block, _ := svc["envVariables"].(map[string]any)
+			var gotKeys []string
+			for key := range block {
+				gotKeys = append(gotKeys, key)
+			}
+			slices.Sort(gotKeys)
+			if !slices.Equal(gotKeys, tt.wantKeys) {
+				t.Errorf("envVariables sent to the API = %v, want %v as written", gotKeys, tt.wantKeys)
+			}
+		})
 	}
 }
 
