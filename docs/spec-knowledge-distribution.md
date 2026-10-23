@@ -165,6 +165,7 @@ The closed value set is `{unset, auto, manual}` (`validAtomEnumValues["closeDepl
 | `static` | Static-content runtime (nginx-static). |
 | `implicit-webserver` | Webserver-native runtime that auto-starts (php-apache, php-nginx). |
 | `managed` | Managed service (PostgreSQL, Valkey, …). No deploy, no ServiceMeta. |
+| `pool` | A Swarm pool (`swarm@1`, `swarm-vm@1`): containers leased per branch, never an app runtime (docs/spec-workflows.md §8 PS, DP). |
 | `unknown` | Runtime class not resolved yet. |
 
 **Empty = any runtime.** Service-scoped axis — see §3.10 for conjunction semantics.
