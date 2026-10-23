@@ -28,6 +28,9 @@ type poolOrchestrator struct {
 	mu       sync.Mutex
 	reserved bool
 	acquires int
+	releases int
+	// busy refuses every release (container-busy, retryable).
+	busy bool
 }
 
 func (o *poolOrchestrator) lease() string { return o.pool + "-lease-0123456789abcdef" }
@@ -62,6 +65,12 @@ func (o *poolOrchestrator) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		o.reserved = true
 		_, _ = w.Write([]byte(container(true)))
 	case r.Method == http.MethodPost && r.URL.Path == "/container/"+id+"/release" && r.Header.Get("X-Swarm-Lease") == o.lease():
+		o.releases++
+		if o.busy {
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"error":{"code":"containerAction","message":"work in progress","meta":[{"metadata":{"reason":["container-busy"],"retryable":["true"]}}]}}`))
+			return
+		}
 		o.reserved = false
 		_, _ = w.Write([]byte(container(false)))
 	default:
@@ -72,6 +81,14 @@ func (o *poolOrchestrator) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // groupLeaseServer is a project holding two pools, hqpool (#3) and webpool
 // (#7), each behind its own orchestrator.
 func groupLeaseServer(t *testing.T) (*mcp.Server, map[string]*poolOrchestrator) {
+	t.Helper()
+	srv, orchs, _ := groupLeaseServerSSH(t, nil)
+	return srv, orchs
+}
+
+// groupLeaseServerSSH is groupLeaseServer with ssh into the leased containers
+// and the state directory the leases are recorded under.
+func groupLeaseServerSSH(t *testing.T, ssh ops.SSHDeployer) (*mcp.Server, map[string]*poolOrchestrator, string) {
 	t.Helper()
 	orchs := map[string]*poolOrchestrator{
 		"hqpool":  {pool: "hqpool", token: "hq-orch-token-0001", number: 3},
@@ -95,8 +112,9 @@ func groupLeaseServer(t *testing.T) (*mcp.Server, map[string]*poolOrchestrator) 
 		return platform.NewSwarmClient(urls[baseURL], token, http.DefaultClient)
 	}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterLease(srv, mock, "proj-1", t.TempDir(), factory, nil, nil, runtime.Info{})
-	return srv, orchs
+	stateDir := t.TempDir()
+	RegisterLease(srv, mock, "proj-1", stateDir, factory, nil, ssh, runtime.Info{})
+	return srv, orchs, stateDir
 }
 
 // TestLeaseTool_GroupAcquire_MembersInPoolsOrder: acquire with pools leases

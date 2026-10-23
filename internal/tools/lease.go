@@ -40,8 +40,8 @@ func leaseInputSchema() *jsonschema.Schema {
 		"action": {Type: "string", Description: "acquire, status, release or rollout."},
 		"pool":   {Type: "string", Description: "Pool service hostname. acquire (or pools), rollout: required. status: optional (default every pool)."},
 		"pools":  {Type: "array", Items: &jsonschema.Schema{Type: "string"}, Description: "acquire: one lease per pool on the branch, all or none."},
-		"branch": {Type: "string", Description: "acquire: branch to check out (default main); a new one is cut from main."},
-		"repo":   {Type: "string", Description: "acquire: https clone URL; the first one on a pool becomes its default."},
+		"branch": {Type: "string", Description: "acquire: branch to check out (default main); a new one is cut from main. release: every lease of it, all or none."},
+		"repo":   {Type: "string", Description: "acquire: https clone URL; the first one on a pool becomes its default. release: the branch's, if several."},
 		"lease":  {Type: "string", Description: "release: the lease alias <pool>-<number> from acquire or status (not a secret)."},
 		"force":  flexBoolSchema("release: discard unpushed commits and uncommitted files (default false: refused while any exist)."),
 	}, "action")
@@ -152,13 +152,25 @@ func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir 
 			}
 			return jsonResult(leaseToolResult{Action: input.Action, Leases: views, UnreadPools: status.Unread, Envelope: envelope(ctx)}), nil, nil
 		case leaseActionRelease:
-			if input.Lease == "" {
-				return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
-					"release needs lease", "Pass the lease alias (<pool>-<number>) as lease; zerops_lease action=status lists them")), nil, nil
-			}
 			force := false
 			if f := input.Force.Ptr(); f != nil {
 				force = *f
+			}
+			switch {
+			case input.Lease != "" && input.Branch != "":
+				return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
+					"release takes lease or branch, not both", "Pass one lease by its alias as lease, or every lease of a branch as branch")), nil, nil
+			case input.Branch != "":
+				views, err := ops.LeaseReleaseGroup(ctx, deps, input.Repo, input.Branch, force)
+				if err != nil {
+					return convertError(withLeaseSSHStderr(err)), nil, nil
+				}
+				return jsonResult(leaseToolResult{
+					Action: input.Action, Leases: views, NextActions: leaseReleaseBranchNext(views, input.Branch, input.Repo, force), Envelope: envelope(ctx),
+				}), nil, nil
+			case input.Lease == "":
+				return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
+					"release needs lease or branch", "Pass the lease alias (<pool>-<number>) as lease, or a branch as branch to release every lease of it; zerops_lease action=status lists them")), nil, nil
 			}
 			view, err := ops.LeaseRelease(ctx, deps, input.Lease, force)
 			if err != nil {
@@ -204,6 +216,27 @@ func leaseAcquireNext(views []ops.LeaseView) string {
 		next += fmt.Sprintf(" %s was already held for this branch (reused): the same container, not a second one.", strings.Join(reused, ", "))
 	}
 	return next + " zerops_lease action=status shows every lease."
+}
+
+// leaseReleaseBranchNext is what a release of a branch tells the agent when
+// a lease of it could not be released: which, and that the same call again
+// releases what is left (a released lease has no record left); "" when every
+// lease went.
+func leaseReleaseBranchNext(views []ops.LeaseView, branch, repo string, force bool) string {
+	var failed []string
+	for _, v := range views {
+		if v.Error != "" {
+			failed = append(failed, v.Alias)
+		}
+	}
+	if len(failed) == 0 {
+		return ""
+	}
+	next := fmt.Sprintf("Not released, still held and recorded (each lease's error says why): %s.", strings.Join(failed, ", "))
+	if len(failed) < len(views) {
+		next += " Every other lease of the branch was released."
+	}
+	return next + " " + ops.LeaseReleaseBranchCall(branch, repo, force) + " again releases what is left of the branch."
 }
 
 // withLeaseSSHStderr puts git's stderr from an ssh failure into the error's

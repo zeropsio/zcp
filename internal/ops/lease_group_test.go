@@ -1,6 +1,8 @@
 // Tests for: ops/lease_group.go — a group acquire leases one container per
 // pool on one branch, all or none, and zcp holds one lease per repository,
-// branch and pool (docs/spec-workflows.md §8 DP-17).
+// branch and pool (docs/spec-workflows.md §8 DP-17); a group release reads
+// every lease of a branch before it releases any, and releases all or none
+// unless forced (DP-23).
 package ops
 
 import (
@@ -9,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -40,6 +43,7 @@ type poolOrch struct {
 	acquireErr error
 	releases   []fakeRelease
 	releaseErr error
+	deletes    []string // container ids deleted (DELETE /container/{id})
 	gate       chan struct{}
 	entered    chan struct{} // receives once per acquire that reached the orchestrator
 }
@@ -106,7 +110,19 @@ func (o *poolOrch) Renew(context.Context, string, string) (platform.SwarmContain
 	return platform.SwarmContainer{}, nil
 }
 
-func (o *poolOrch) Delete(context.Context, string, string) error { return nil }
+func (o *poolOrch) Delete(_ context.Context, id, lease string) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.deletes = append(o.deletes, id)
+	for i, c := range o.containers {
+		if c.ID == id && o.leases[id] == lease {
+			o.containers = append(o.containers[:i], o.containers[i+1:]...)
+			delete(o.leases, id)
+			break
+		}
+	}
+	return nil
+}
 
 func (o *poolOrch) Rollout(context.Context) (platform.SwarmRollout, error) {
 	return platform.SwarmRollout{}, nil
@@ -122,6 +138,12 @@ func (o *poolOrch) releaseLog() []fakeRelease {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	return append([]fakeRelease(nil), o.releases...)
+}
+
+func (o *poolOrch) deleteLog() []string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append([]string(nil), o.deletes...)
 }
 
 // groupFixture is a project holding two pools, hqpool and webpool, each with
@@ -781,5 +803,456 @@ func TestLeaseAcquireGroup_RepoAsGiven_EveryMemberClonesIt(t *testing.T) {
 		if r.Repo != "https://git.example.com/team/repo" {
 			t.Errorf("%s repo = %q, want the canonical identity", alias, r.Repo)
 		}
+	}
+}
+
+// heldGroup leases hqpool-3 and webpool-7 on feat in one call, then makes the
+// containers answer the release guard's reads (answerGuard) — every one
+// clean — and forgets the acquire's commands.
+func (gf *groupFixture) heldGroup(t *testing.T) {
+	t.Helper()
+	if _, err := LeaseAcquireGroup(context.Background(), gf.deps, []string{groupHQPool, groupWebPool}, testRepo, "feat"); err != nil {
+		t.Fatalf("group acquire: %v", err)
+	}
+	gf.answerGuard(nil, nil)
+	gf.ssh.reset()
+}
+
+// answerGuard makes each container answer the release guard's two reads:
+// files are its `git status --porcelain` lines and unpushed its commits on no
+// remote branch, by alias; an alias named in neither is clean.
+func (gf *groupFixture) answerGuard(files map[string]string, unpushed map[string]int) {
+	gf.ssh.setHandler(func(host, command string) ([]byte, error) {
+		switch {
+		case strings.Contains(command, "status --porcelain"):
+			return []byte(files[host]), nil
+		case strings.Contains(command, "rev-list --count"):
+			return []byte(strconv.Itoa(unpushed[host]) + "\n"), nil
+		}
+		return nil, nil
+	})
+}
+
+// guardReadHosts are the aliases the release guard read (git status), sorted.
+func (gf *groupFixture) guardReadHosts() []string {
+	gf.ssh.mu.Lock()
+	defer gf.ssh.mu.Unlock()
+	var hosts []string
+	for _, c := range gf.ssh.calls {
+		if strings.Contains(c.command, "status --porcelain") {
+			hosts = append(hosts, c.hostname)
+		}
+	}
+	slices.Sort(hosts)
+	return hosts
+}
+
+// TestLeaseReleaseGroup_OneMemberUnsaved_ReleasesNone: a release of a branch
+// reads every lease of it first; one lease holding work a release would lose —
+// or one zcp cannot read — refuses the whole branch: nothing is released,
+// every record stays, and the refusal names each lease's own state and the
+// forced release of the branch.
+func TestLeaseReleaseGroup_OneMemberUnsaved_ReleasesNone(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		files    map[string]string
+		unpushed map[string]int
+		readErr  string // the alias whose git status fails (not a git repository)
+		want     []string
+	}{
+		{
+			name:  "uncommitted files in one",
+			files: map[string]string{"webpool-7": "?? notes.txt\n M src/app.ts\n"},
+			want:  []string{"webpool-7", "notes.txt", "src/app.ts", "hqpool-3 holds no unsaved work"},
+		},
+		{
+			name:     "unpushed commits in one",
+			unpushed: map[string]int{"hqpool-3": 2},
+			want:     []string{"hqpool-3", "2 commit(s) on no remote branch", "webpool-7 holds no unsaved work"},
+		},
+		{
+			name:     "work in both",
+			files:    map[string]string{"webpool-7": "?? notes.txt\n"},
+			unpushed: map[string]int{"hqpool-3": 1},
+			want:     []string{"hqpool-3", "1 commit(s)", "webpool-7", "notes.txt"},
+		},
+		{
+			name:    "one cannot be read",
+			readErr: "webpool-7",
+			want:    []string{"webpool-7 could not be checked for unsaved work", "not a git repository", "hqpool-3 holds no unsaved work"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			gf := newGroupFixture(t)
+			gf.heldGroup(t)
+			gf.answerGuard(tt.files, tt.unpushed)
+			if tt.readErr != "" {
+				clean := gf.ssh.fn
+				gf.ssh.setHandler(func(host, command string) ([]byte, error) {
+					if host == tt.readErr && strings.Contains(command, "status --porcelain") {
+						out := "fatal: not a git repository (or any of the parent directories): .git"
+						return []byte(out), sshFailure(out, exitError(t, 128))
+					}
+					return clean(host, command)
+				})
+			}
+
+			views, err := LeaseReleaseGroup(context.Background(), gf.deps, "", "feat", false)
+			var pe *platform.PlatformError
+			if !errors.As(err, &pe) || pe.Code != platform.ErrPrerequisiteMissing {
+				t.Fatalf("views %+v, err = %v; want a PREREQUISITE_MISSING refusal", views, err)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(pe.Message, want) {
+					t.Errorf("message %q lacks %q", pe.Message, want)
+				}
+			}
+			if !strings.Contains(pe.Message, "none") {
+				t.Errorf("message %q should say no lease of the branch was released", pe.Message)
+			}
+			if !strings.Contains(pe.Suggestion, "zerops_lease action=release branch=feat force=true") {
+				t.Errorf("suggestion %q should name the forced release of the branch", pe.Suggestion)
+			}
+			if got := gf.guardReadHosts(); strings.Join(got, ",") != "hqpool-3,webpool-7" {
+				t.Errorf("guard read %v, want every lease of the branch read before anything is released", got)
+			}
+			for name, o := range map[string]*poolOrch{"hqpool": gf.hq, "webpool": gf.web} {
+				if rel := o.releaseLog(); len(rel) != 0 {
+					t.Errorf("%s releases = %+v: a refused branch releases nothing", name, rel)
+				}
+			}
+			if recs := gf.records(t); len(recs) != 2 {
+				t.Errorf("records = %v, want both kept", recs)
+			}
+			if strings.Contains(pe.Message+pe.Suggestion, "-lease-") {
+				t.Errorf("refusal leaks a lease: %q", pe.Message)
+			}
+		})
+	}
+}
+
+// A branch held by one lease refuses its release as that lease's own release
+// refuses it.
+func TestLeaseReleaseGroup_OneMember_RefusedAsItsOwnRelease(t *testing.T) {
+	t.Parallel()
+	gf := newGroupFixture(t)
+	if _, err := LeaseAcquire(context.Background(), gf.deps, groupHQPool, testRepo, "feat"); err != nil {
+		t.Fatal(err)
+	}
+	gf.answerGuard(map[string]string{"hqpool-3": "?? notes.txt\n"}, nil)
+
+	_, groupErr := LeaseReleaseGroup(context.Background(), gf.deps, "", "feat", false)
+	_, ownErr := LeaseRelease(context.Background(), gf.deps, "hqpool-3", false)
+	if groupErr == nil || ownErr == nil || groupErr.Error() != ownErr.Error() {
+		t.Errorf("group refusal %v, want the lease's own %v", groupErr, ownErr)
+	}
+	if rel := gf.hq.releaseLog(); len(rel) != 0 {
+		t.Errorf("releases = %+v, want none", rel)
+	}
+}
+
+// orderedOrch is a poolOrch whose releases are logged beside the guard's reads.
+type orderedOrch struct {
+	*poolOrch
+	log func(string)
+}
+
+func (o orderedOrch) Release(ctx context.Context, id, lease string, reset bool) (platform.SwarmContainer, error) {
+	o.log("release " + id)
+	return o.poolOrch.Release(ctx, id, lease, reset)
+}
+
+// TestLeaseReleaseGroup_ReadsEveryMemberBeforeReleasingAny: a clean branch is
+// released lease by lease only once every lease of it was read; each goes back
+// with a reset, its record dropped, and the views list them earliest acquired
+// first, with their acquiredAt.
+func TestLeaseReleaseGroup_ReadsEveryMemberBeforeReleasingAny(t *testing.T) {
+	t.Parallel()
+	gf := newGroupFixture(t)
+	gf.heldGroup(t)
+	var mu sync.Mutex
+	var events []string
+	logEvent := func(e string) {
+		mu.Lock()
+		defer mu.Unlock()
+		events = append(events, e)
+	}
+	clean := gf.ssh.fn
+	gf.ssh.setHandler(func(host, command string) ([]byte, error) {
+		if strings.Contains(command, "status --porcelain") {
+			logEvent("read " + host)
+		}
+		return clean(host, command)
+	})
+	orchs := map[string]SwarmAPI{
+		orchestratorURL(groupHQPool):  orderedOrch{gf.hq, logEvent},
+		orchestratorURL(groupWebPool): orderedOrch{gf.web, logEvent},
+	}
+	gf.deps.Swarm = func(baseURL, _ string) SwarmAPI { return orchs[baseURL] }
+	recs := gf.records(t)
+
+	views, err := LeaseReleaseGroup(context.Background(), gf.deps, "", "feat", false)
+	if err != nil {
+		t.Fatalf("LeaseReleaseGroup: %v", err)
+	}
+	mu.Lock()
+	got := slices.Clone(events)
+	mu.Unlock()
+	firstRelease, lastRead := -1, -1
+	for i, e := range got {
+		switch {
+		case strings.HasPrefix(e, "read "):
+			lastRead = i
+		case strings.HasPrefix(e, "release ") && firstRelease < 0:
+			firstRelease = i
+		}
+	}
+	if len(got) != 4 || firstRelease < 0 || lastRead > firstRelease {
+		t.Errorf("events = %v, want both reads before the first release", got)
+	}
+	if len(views) != 2 || views[0].Alias != "hqpool-3" || views[1].Alias != "webpool-7" {
+		t.Fatalf("views = %+v, want hqpool-3 then webpool-7", views)
+	}
+	for _, v := range views {
+		if v.State != LeaseStateReleased || v.Branch != "feat" || v.AcquiredAt != recs[v.Alias].AcquiredAt || v.Error != "" {
+			t.Errorf("view = %+v, want released on feat with its acquiredAt", v)
+		}
+	}
+	for name, o := range map[string]*poolOrch{"hqpool": gf.hq, "webpool": gf.web} {
+		if rel := o.releaseLog(); len(rel) != 1 || !rel[0].reset {
+			t.Errorf("%s releases = %+v, want its container released with reset", name, rel)
+		}
+	}
+	if left := gf.records(t); len(left) != 0 {
+		t.Errorf("records left: %v", left)
+	}
+}
+
+// TestLeaseReleaseGroup_Force_ReleasesEvery: force releases every lease of the
+// branch, whatever it holds, reading none of them, each with a reset.
+func TestLeaseReleaseGroup_Force_ReleasesEvery(t *testing.T) {
+	t.Parallel()
+	gf := newGroupFixture(t)
+	gf.heldGroup(t)
+	gf.answerGuard(map[string]string{"hqpool-3": "?? a.txt\n", "webpool-7": " M b.go\n"}, map[string]int{"webpool-7": 3})
+
+	views, err := LeaseReleaseGroup(context.Background(), gf.deps, "", "feat", true)
+	if err != nil {
+		t.Fatalf("a forced release must release every lease: %v", err)
+	}
+	if len(views) != 2 {
+		t.Fatalf("views = %+v, want both leases", views)
+	}
+	for _, v := range views {
+		if v.State != LeaseStateReleased {
+			t.Errorf("view = %+v, want released", v)
+		}
+	}
+	for name, o := range map[string]*poolOrch{"hqpool": gf.hq, "webpool": gf.web} {
+		if rel := o.releaseLog(); len(rel) != 1 || !rel[0].reset {
+			t.Errorf("%s releases = %+v, want its container released with reset", name, rel)
+		}
+	}
+	if cmds := gf.ssh.commands(); len(cmds) != 0 {
+		t.Errorf("a forced release read the containers: %v", cmds)
+	}
+	if left := gf.records(t); len(left) != 0 {
+		t.Errorf("records left: %v", left)
+	}
+}
+
+// TestLeaseReleaseGroup_OrchestratorFailsOne_PerMemberResult: once every lease
+// passed the guard, one the orchestrator will not release stays held and
+// recorded while the others go; the result is per lease — the failed one
+// carries its error and the call that finishes the branch.
+func TestLeaseReleaseGroup_OrchestratorFailsOne_PerMemberResult(t *testing.T) {
+	t.Parallel()
+	gf := newGroupFixture(t)
+	gf.heldGroup(t)
+	gf.web.releaseErr = &platform.SwarmError{Status: 409, Code: "containerAction", Reason: "container-busy", Retryable: true, Message: "work in progress"}
+
+	views, err := LeaseReleaseGroup(context.Background(), gf.deps, "", "feat", false)
+	if err != nil {
+		t.Fatalf("an orchestrator failure on one lease is that lease's result, not the call's: %v", err)
+	}
+	if len(views) != 2 || views[0].Alias != "hqpool-3" || views[1].Alias != "webpool-7" {
+		t.Fatalf("views = %+v, want hqpool-3 then webpool-7", views)
+	}
+	if hq := views[0]; hq.State != LeaseStateReleased || hq.Error != "" {
+		t.Errorf("hqpool-3 = %+v, want released", hq)
+	}
+	web := views[1]
+	if web.State != LeaseStateHeld || !strings.Contains(web.Error, "work in progress") {
+		t.Errorf("webpool-7 = %+v, want held with the orchestrator's refusal as its error", web)
+	}
+	if !strings.Contains(web.Note, "zerops_lease action=release branch=feat") {
+		t.Errorf("webpool-7 note %q should name the call that finishes the branch", web.Note)
+	}
+	recs := gf.records(t)
+	if _, kept := recs["webpool-7"]; !kept || len(recs) != 1 {
+		t.Errorf("records = %v, want webpool-7's alone kept", recs)
+	}
+	if strings.Contains(web.Error+web.Note, "-lease-") {
+		t.Errorf("the result leaks a lease: %+v", web)
+	}
+}
+
+// TestLeaseReleaseGroup_Again_FinishesTheGroup: the same call again releases
+// what is left of the branch — the leases already released have no record
+// left — and once nothing is left it says zcp holds no lease of the branch.
+func TestLeaseReleaseGroup_Again_FinishesTheGroup(t *testing.T) {
+	t.Parallel()
+	gf := newGroupFixture(t)
+	gf.heldGroup(t)
+	gf.web.releaseErr = &platform.SwarmError{Status: 409, Code: "containerAction", Reason: "container-busy", Retryable: true, Message: "work in progress"}
+	if _, err := LeaseReleaseGroup(context.Background(), gf.deps, "", "feat", false); err != nil {
+		t.Fatal(err)
+	}
+	gf.web.mu.Lock()
+	gf.web.releaseErr = nil
+	gf.web.mu.Unlock()
+	gf.ssh.reset()
+
+	views, err := LeaseReleaseGroup(context.Background(), gf.deps, "", "feat", false)
+	if err != nil {
+		t.Fatalf("the second call: %v", err)
+	}
+	if len(views) != 1 || views[0].Alias != "webpool-7" || views[0].State != LeaseStateReleased {
+		t.Errorf("views = %+v, want webpool-7 alone, released", views)
+	}
+	if got := gf.guardReadHosts(); strings.Join(got, ",") != "webpool-7" {
+		t.Errorf("guard read %v, want only what is left of the branch", got)
+	}
+	if rel := gf.hq.releaseLog(); len(rel) != 1 {
+		t.Errorf("hqpool releases = %+v, want only the first call's", rel)
+	}
+	if left := gf.records(t); len(left) != 0 {
+		t.Errorf("records left: %v", left)
+	}
+
+	_, err = LeaseReleaseGroup(context.Background(), gf.deps, "", "feat", false)
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) || pe.Code != platform.ErrInvalidParameter || !strings.Contains(pe.Message, "feat") {
+		t.Errorf("err = %v, want an INVALID_PARAMETER refusal naming the branch zcp holds no lease of", err)
+	}
+}
+
+// TestLeaseReleaseGroup_EachMemberTakesTheOneLeasesPath: each lease of the
+// branch is released as one lease is — a container that cannot be reset is
+// deleted with its lease (DP-15), a lease of a pool being deleted is dropped as
+// lost (DP-20) — never by a second copy of those steps.
+func TestLeaseReleaseGroup_EachMemberTakesTheOneLeasesPath(t *testing.T) {
+	t.Parallel()
+	gf := newGroupFixture(t)
+	gf.heldGroup(t)
+	gf.web.releaseErr = noPrimarySnapshot()
+	deleting := platform.ServiceStack{ID: "svc-hq", Name: groupHQPool, Status: "DELETING", ServiceStackTypeInfo: poolService("svc-hq", groupHQPool).ServiceStackTypeInfo}
+	gf.deps.Client.(*platform.Mock).WithServices([]platform.ServiceStack{deleting, poolService("svc-web", groupWebPool)})
+
+	views, err := LeaseReleaseGroup(context.Background(), gf.deps, "", "feat", true)
+	if err != nil {
+		t.Fatalf("LeaseReleaseGroup: %v", err)
+	}
+	if len(views) != 2 {
+		t.Fatalf("views = %+v, want both leases", views)
+	}
+	if v := views[0]; v.Alias != "hqpool-3" || v.State != LeaseStateLost || !strings.Contains(v.Note, "being deleted") {
+		t.Errorf("hqpool-3 = %+v, want lost: its pool is being deleted", v)
+	}
+	if v := views[1]; v.Alias != "webpool-7" || v.State != LeaseStateReleased || !strings.Contains(v.Note, "could not be reset") {
+		t.Errorf("webpool-7 = %+v, want released by deleting the container it could not reset", v)
+	}
+	if del := gf.web.deleteLog(); len(del) != 1 || del[0] != "c-webpool-7" {
+		t.Errorf("webpool deletes = %v, want c-webpool-7", del)
+	}
+	if rel := gf.hq.releaseLog(); len(rel) != 0 {
+		t.Errorf("hqpool releases = %+v: a pool being deleted is not asked", rel)
+	}
+	if left := gf.records(t); len(left) != 0 {
+		t.Errorf("records left: %v", left)
+	}
+}
+
+// TestLeaseReleaseGroup_SeveralRepositories_RefusedWithoutRepo: a branch zcp
+// leases for two repositories is two groups: a release of it without repo is
+// refused naming each repository's leases; with repo it releases only that
+// repository's.
+func TestLeaseReleaseGroup_SeveralRepositories_RefusedWithoutRepo(t *testing.T) {
+	t.Parallel()
+	const docs = "https://github.com/acme/docs"
+	gf := newGroupFixture(t)
+	if _, err := LeaseAcquire(context.Background(), gf.deps, groupHQPool, testRepo, "feat"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LeaseAcquire(context.Background(), gf.deps, groupWebPool, docs, "feat"); err != nil {
+		t.Fatal(err)
+	}
+	gf.answerGuard(nil, nil)
+
+	_, err := LeaseReleaseGroup(context.Background(), gf.deps, "", "feat", false)
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) || pe.Code != platform.ErrInvalidParameter {
+		t.Fatalf("err = %v, want an INVALID_PARAMETER refusal", err)
+	}
+	for _, want := range []string{"https://github.com/acme/app", "hqpool-3", docs, "webpool-7"} {
+		if !strings.Contains(pe.Message, want) {
+			t.Errorf("message %q lacks %q", pe.Message, want)
+		}
+	}
+	if !strings.Contains(pe.Suggestion, "repo") {
+		t.Errorf("suggestion %q should say to pass repo", pe.Suggestion)
+	}
+	if len(gf.hq.releaseLog())+len(gf.web.releaseLog()) != 0 {
+		t.Error("a refused release reached an orchestrator")
+	}
+
+	views, err := LeaseReleaseGroup(context.Background(), gf.deps, docs+".git", "feat", false)
+	if err != nil {
+		t.Fatalf("release of one repository's branch: %v", err)
+	}
+	if len(views) != 1 || views[0].Alias != "webpool-7" || views[0].State != LeaseStateReleased {
+		t.Errorf("views = %+v, want webpool-7 alone, released", views)
+	}
+	if _, kept := gf.records(t)["hqpool-3"]; !kept {
+		t.Error("the other repository's lease of the branch was released")
+	}
+}
+
+// A branch zcp holds no lease of, a repository it holds none of the branch
+// for, or a branch name a lease never takes, is refused before anything is
+// read or released.
+func TestLeaseReleaseGroup_NothingToRelease_Refused(t *testing.T) {
+	t.Parallel()
+	gf := newGroupFixture(t)
+	gf.heldGroup(t)
+	// Read once every case, run in parallel, has ended.
+	t.Cleanup(func() {
+		if len(gf.hq.releaseLog())+len(gf.web.releaseLog()) != 0 {
+			t.Error("a refused release reached an orchestrator")
+		}
+		if cmds := gf.ssh.commands(); len(cmds) != 0 {
+			t.Errorf("a refused release read the containers: %v", cmds)
+		}
+	})
+	for _, tt := range []struct {
+		name, repo, branch, want string
+	}{
+		{"another branch", "", "other", "other"},
+		{"another repository", "https://github.com/acme/docs", "feat", "https://github.com/acme/docs"},
+		{"a repository that is no clone URL", "git@github.com:acme/app.git", "feat", "clone URL"},
+		{"no branch", "", "", "branch"},
+		{"a branch a lease never takes", "", "../feat", "branch"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := LeaseReleaseGroup(context.Background(), gf.deps, tt.repo, tt.branch, true)
+			var pe *platform.PlatformError
+			if !errors.As(err, &pe) || pe.Code != platform.ErrInvalidParameter || !strings.Contains(pe.Message, tt.want) {
+				t.Errorf("err = %v, want an INVALID_PARAMETER refusal mentioning %q", err, tt.want)
+			}
+		})
 	}
 }

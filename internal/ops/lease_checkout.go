@@ -413,6 +413,25 @@ type unsavedWork struct {
 
 func (w unsavedWork) any() bool { return len(w.files) > 0 || w.unpushed > 0 }
 
+// describe names the work: the files (the first leaseGuardFileLimit of them)
+// and the count of commits on no remote branch.
+func (w unsavedWork) describe() string {
+	var parts []string
+	if n := len(w.files); n > 0 {
+		shown := w.files
+		more := ""
+		if n > leaseGuardFileLimit {
+			shown = shown[:leaseGuardFileLimit]
+			more = fmt.Sprintf(", first %d shown", leaseGuardFileLimit)
+		}
+		parts = append(parts, fmt.Sprintf("%d uncommitted or untracked file(s) (%s%s)", n, strings.Join(shown, ", "), more))
+	}
+	if w.unpushed > 0 {
+		parts = append(parts, fmt.Sprintf("%d commit(s) on no remote branch", w.unpushed))
+	}
+	return strings.Join(parts, " and ")
+}
+
 // leaseGitRead starts a git call that only reads a lease's checkout (DP-4):
 // GIT_OPTIONAL_LOCKS=0 keeps `git status` from refreshing .git/index and
 // writing it back — a new inode and mtime in the person's checkout, same
@@ -491,28 +510,41 @@ type leaseGuardResult struct {
 }
 
 // guardLeaseRelease refuses a release that would lose work (DP-4): commits on
-// no remote branch, or uncommitted/untracked files. A container ssh cannot
-// reach has no work zcp can save, so it is released unchecked; any other
-// failure to read it refuses (zcp cannot tell what would be lost).
+// no remote branch, or uncommitted/untracked files (inspectLeaseRelease).
 func guardLeaseRelease(ctx context.Context, d LeaseDeps, rec leaseRecord) (leaseGuardResult, error) {
+	guard, w, err := inspectLeaseRelease(ctx, d, rec)
+	if err != nil {
+		return leaseGuardResult{}, err
+	}
+	if w.any() {
+		return leaseGuardResult{}, unsavedWorkRefusal(rec.alias(), w, IsHQRemote(rec.Repo, d.hqAddress()))
+	}
+	return guard, nil
+}
+
+// inspectLeaseRelease reads what releasing the lease would lose, changing
+// nothing: the unsaved work it found (none for a release that may go ahead), or
+// an error when zcp cannot tell. A container ssh cannot reach has no work zcp
+// can save, so it passes unchecked when the orchestrator no longer holds it
+// (unreachableGuard); any other failure to read it refuses (zcp cannot tell
+// what would be lost).
+func inspectLeaseRelease(ctx context.Context, d LeaseDeps, rec leaseRecord) (leaseGuardResult, unsavedWork, error) {
 	if d.SSH == nil {
-		return leaseGuardResult{note: "the container was not checked for unsaved work (this zcp has no ssh to it)"}, nil
+		return leaseGuardResult{note: "the container was not checked for unsaved work (this zcp has no ssh to it)"}, unsavedWork{}, nil
 	}
 	w, err := readUnsavedWork(ctx, d.SSH, rec.alias())
 	if err != nil {
 		if exitStatus(err) == leaseSSHUnreachableExit {
-			return unreachableGuard(ctx, d, rec, err)
+			guard, err := unreachableGuard(ctx, d, rec, err)
+			return guard, unsavedWork{}, err
 		}
 		pe := platform.NewPlatformError(platform.ErrPrerequisiteMissing,
 			fmt.Sprintf("Lease %s could not be checked for unsaved work, so it was not released", rec.alias()),
 			"Look at the container's git state (git -C /var/www status) or release with force=true to discard whatever is there")
 		pe.Cause = err
-		return leaseGuardResult{}, pe
+		return leaseGuardResult{}, unsavedWork{}, pe
 	}
-	if !w.any() {
-		return leaseGuardResult{}, nil
-	}
-	return leaseGuardResult{}, unsavedWorkRefusal(rec.alias(), w, IsHQRemote(rec.Repo, d.hqAddress()))
+	return leaseGuardResult{}, w, nil
 }
 
 // unreachableGuard decides a release whose container ssh could not reach.
@@ -609,27 +641,19 @@ func leasePoolGoneWhy(ctx context.Context, d LeaseDeps, rec leaseRecord) string 
 }
 
 // unsavedWorkRefusal refuses the release, naming the work and how to save it.
-// onHQ: the lease's repository is on the Mate's HQ, which takes a push only on
-// a branch of the agent's own, so the push it names keeps HQ's rule.
 func unsavedWorkRefusal(alias string, w unsavedWork, onHQ bool) error {
-	var parts []string
-	if n := len(w.files); n > 0 {
-		shown := w.files
-		more := ""
-		if n > leaseGuardFileLimit {
-			shown = shown[:leaseGuardFileLimit]
-			more = fmt.Sprintf(", first %d shown", leaseGuardFileLimit)
-		}
-		parts = append(parts, fmt.Sprintf("%d uncommitted or untracked file(s) (%s%s)", n, strings.Join(shown, ", "), more))
-	}
-	if w.unpushed > 0 {
-		parts = append(parts, fmt.Sprintf("%d commit(s) on no remote branch", w.unpushed))
-	}
-	save := "Commit and push it from the container (zcp does not commit for you)"
-	if onHQ {
-		save = "Commit it on a branch of your own and push that branch from the container — `git checkout -b <branch>` first if you are on `main`, then `git push -u origin <branch>`; HQ refuses a push of `main`, of a branch another Mate's open change holds, and any force push (zcp does not commit for you)"
-	}
 	return platform.NewPlatformError(platform.ErrPrerequisiteMissing,
-		fmt.Sprintf("Lease %s holds work that releasing would lose: %s", alias, strings.Join(parts, " and ")),
-		fmt.Sprintf("%s, or release with force=true to discard it: zerops_lease action=release lease=%s force=true", save, alias))
+		fmt.Sprintf("Lease %s holds work that releasing would lose: %s", alias, w.describe()),
+		fmt.Sprintf("%s, or release with force=true to discard it: zerops_lease action=release lease=%s force=true", saveWorkHint(onHQ, "the container"), alias))
+}
+
+// saveWorkHint is how to keep a lease's unsaved work: commit and push it from
+// where ("the container", or each of several). onHQ: the lease's repository
+// is on the Mate's HQ, which takes a push only on a branch of the agent's own,
+// so the push it names keeps HQ's rule.
+func saveWorkHint(onHQ bool, where string) string {
+	if onHQ {
+		return "Commit it on a branch of your own and push that branch from " + where + " — `git checkout -b <branch>` first if you are on `main`, then `git push -u origin <branch>`; HQ refuses a push of `main`, of a branch another Mate's open change holds, and any force push (zcp does not commit for you)"
+	}
+	return "Commit and push it from " + where + " (zcp does not commit for you)"
 }
