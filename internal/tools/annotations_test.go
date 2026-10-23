@@ -93,6 +93,7 @@ func TestAnnotations_AllToolsHaveTitleAndAnnotations(t *testing.T) {
 		{name: "zerops_mount", title: "Mount/unmount service filesystems", idempotent: true, destructive: boolPtr(false)},
 		{name: "zerops_dev_server", title: "Manage dev server lifecycle", idempotent: true, destructive: boolPtr(false)},
 		{name: "zerops_deploy_batch", title: "Deploy batch — parallel deploys", destructive: boolPtr(true)},
+		{name: "zerops_lease", title: "Lease a pool container", destructive: boolPtr(true)},
 
 		// Knowledge / workflow-adjacent
 		{name: "zerops_preprocess", title: "Expand Zerops preprocessor expressions", readOnly: true},

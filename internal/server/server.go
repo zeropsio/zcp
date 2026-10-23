@@ -397,6 +397,11 @@ func (s *Server) registerTools() {
 	tools.RegisterDelete(s.server, s.client, projectID, stateDir, s.mounter, s.rtInfo)
 	tools.RegisterSubdomain(s.server, s.client, httpClient, projectID, stateDir)
 	tools.RegisterMount(s.server, s.client, projectID, s.mounter, s.rtInfo, stateDir, wfEngine, recipeProbe)
+	// A dev pool's container is leased through its orchestrator, which answers
+	// only inside the project (docs/spec-workflows.md §8 DP-3/DP-5). A start or
+	// a reset-release restarts the container, so the client outwaits the 15 s
+	// readiness client above.
+	tools.RegisterLease(s.server, s.client, projectID, stateDir, ops.NewSwarmFactory(&http.Client{Timeout: 2 * time.Minute}))
 
 	// Container-only: zerops_browser wraps agent-browser with a guaranteed
 	// open→work→close lifecycle. agent-browser is pre-installed in the ZCP
