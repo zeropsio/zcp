@@ -52,8 +52,9 @@ The lifecycle above is collapsed into a single typed `Phase` field carried in ev
 | `strategy-setup` | Stateless synthesis phase (no session) emitted by `action="git-push-setup"` and `action="build-integration"` — delivers the env-scoped + capability-scoped setup atoms (`setup-git-push-{container,local}`, `setup-build-integration-{webhook,actions}`). | `zerops_workflow action="git-push-setup" service="..."` or `action="build-integration" service="..." integration="..."`. |
 | `export-active` | Stateless immediate workflow returning export guidance. | `zerops_workflow action=start workflow=export`. |
 | `launch-production-active` | Stateless multi-call narrowing for launch-production; the handler emits its own per-status guidance and `BuildPlan` returns an empty Plan (like `export-active`). | `zerops_workflow action=start workflow=launch-production`. |
+| `pool-migrate-active` | Stateless multi-call narrowing that walks a part's dev service onto a dev pool (§13); the handler emits its own per-step guidance and `BuildPlan` returns an empty Plan. | `zerops_workflow workflow=pool-migrate service=<dev>`. |
 
-Invariant: at most one non-idle **stateful** phase per PID at a time. `strategy-setup`/`export-active`/`launch-production-active` are stateless — they synthesize guidance and return without touching session state, so they never conflict with an active bootstrap/develop session. (`recipe-active` is an atom phases-axis value, not a `Phase` constant — bootstrap's recipe route runs under `bootstrap-active`.)
+Invariant: at most one non-idle **stateful** phase per PID at a time. `strategy-setup`/`export-active`/`launch-production-active`/`pool-migrate-active` are stateless — they synthesize guidance and return without touching session state, so they never conflict with an active bootstrap/develop session. (`recipe-active` is an atom phases-axis value, not a `Phase` constant — bootstrap's recipe route runs under `bootstrap-active`.)
 
 `strategy-setup` replaces the retired `cicd-active` phase. Deploy configuration is now three orthogonal operations:
 - `zerops_workflow action="close-mode" closeMode={hostname:auto|manual}` — declares the develop session's done-ness ownership; delivery is derived from `GitPushState` (§4.3). Drives auto-close gating + selects which `develop-close-mode-*` atoms fire. Legacy `git-push` input is accepted but folds to `auto`.
@@ -236,7 +237,7 @@ the full prescription.
 
 | Axis | Values | Emptiness semantic |
 |---|---|---|
-| `phases` | `idle`, `bootstrap-active`, `develop-active`, `develop-closed-auto`, `recipe-active`, `strategy-setup`, `export-active`, `launch-production-active` | MUST be non-empty. |
+| `phases` | `idle`, `bootstrap-active`, `develop-active`, `develop-closed-auto`, `recipe-active`, `strategy-setup`, `export-active`, `launch-production-active`, `pool-migrate-active` | MUST be non-empty. |
 | `modes` | `dev`, `stage`, `simple`, `standard`, `local-stage`, `local-only` | Empty = any mode. |
 | `environments` | `container`, `local` | Empty = either. |
 | `closeDeployModes` | `unset`, `auto`, `manual` | Empty = any close-mode. |
@@ -1668,6 +1669,52 @@ adding code.
 - GF-10 platform-side source evidence — the `--version-name` breadcrumb is built for SSH/local deploys and the `BuildIntegration=actions` template; the §10 launch-production tag-triggered template (`tools/workflow_launch_production.go`) still doesn't pass one, and reading the breadcrumb back via `SearchAppVersions` to correlate a push with its resulting appVersion is not built at all — needs a caller that reads it and treats the mapping as evidence, never proof (GF-5).
 - Mate commit/push through zcp (`spec-mate.md §6.3`) — the fork's side of GF-2.
 - Platform asks (§12.5) — owner sends; each granted ask removes code.
+
+---
+
+## 13. Pool Migration Flow
+
+`zerops_workflow workflow="pool-migrate" service=<dev>` (also accepted with `action="start"`) is a
+stateless multi-call narrowing, the §10 pattern, that walks one part whose dev environment is a
+plain dev service — a dev-only service, or the dev half of a single-part variant-A pair — onto a
+dev pool (§8 DP). Each call reads live state, names the part's current step and the next exact
+call, and carries the guidance of the `pool-migrate-active` atoms. The flow owns two mutations of
+its own, the env copy and the retire; every other step runs through a tool that already carries
+its gates (`zerops_import`, `zerops_deploy`, the agent's own git, `zerops_lease`,
+`zerops_dev_server`, `zerops_verify`). Its read side writes nothing anywhere.
+
+### 13.1 Steps
+
+| Step | Derived from | Next call |
+|---|---|---|
+| `provision` | the pool's hostname absent from the direct service list; or the pool listed with a live process of its own (§3.5) | `zerops_import` with the rendered stanza in `next.args.content`; while the pool's processes run, `zerops_process action="wait" service=<pool>` |
+| `env` | the pool listed and settled | named, not run by the flow yet — `nextUnavailable` says so |
+| `image`, `move`, `lease`, `ready-to-retire`, `retiring`, `retired` | named in `steps`, not derived yet | — |
+
+The pool stanza names one service: hostname `<stem>pool` (the dev hostname without its `dev`
+suffix; `pool=<hostname>` overrides it, on every call; a hostname the platform would refuse is
+`pool-hostname-invalid`, one a non-pool service holds is `pool-hostname-taken`), type `swarm@1`,
+`minContainers: 0`, `maxContainers: 3`, the dev service's own `verticalAutoscaling` (CPU mode and
+the CPU, RAM and disk bounds, read by id), and `vault.sshIsolation: "vpn service@<zcp hostname>"`.
+The pool's own env rides `vault`: the import API drops a service-level `envVariables` block
+(`spec-zerops-env-lifecycle.md`), and `sshIsolation` reaches a pool's containers only as a service
+env variable (§8 DP). The stanza never carries a credential — `GIT_TOKEN` reaches the pool in the
+env step.
+
+A response carries `status` (`step` | `not-a-candidate`), `service` (the pair's dev half when the
+call named its stage), `stages`, `pool`, `step`, `steps` (each `done` | `current` | `pending`),
+`next` `{tool, args, why}` or `nextUnavailable`, `refusals[]` `{reason, message, recovery?}`,
+`warnings`, `guidance` and `inputs` (what the next call passes again).
+
+### 13.2 Invariants
+
+| ID | Invariant |
+|----|-----------|
+| PM-1 | Flow shape. `workflow="pool-migrate"`, with or without `action="start"`, is read-side and writes nothing: no state file, meta, env, ref or crew save. Its one SSH call is `git -C /var/www worktree list --porcelain` on the dev service; its platform calls are the direct reads `ListServicesDirect` and `GetProjectProcessesDirect` and the dev's by-id `GetService`. The step is derived from those direct reads, never an ES search (§3.5), so a call repeated after compaction lands on the same step (P4). Its phase is `pool-migrate-active` and `BuildPlan` returns an empty Plan for it; the typed tool output stays nil. `TestPoolMigrate_ReadSideWritesNothing`, `TestPoolMigrate_StepFromLiveState_NoPool_Provision`, `TestPoolMigrate_StepFromLiveState_PoolPresent_Env`, `TestPoolMigrate_StepFromLiveState_PoolImportInFlight_Provision`, `TestPoolMigrate_StepFromLiveState_DecidesOnDirectReads`, `TestPoolMigrate_RepeatCall_SameStep`, `TestPoolMigrate_Dispatch_ReachesTheFlow`, `TestPoolMigrate_Integration_PairNamesProvisionWithAStanza`. |
+| PM-9 | Not a candidate. The flow refuses, naming every reason it finds and no step or next call: a call from outside a container (`not-in-container`); a pool or Box (`pool-or-box`); a service zcp does not track, or whose bootstrap has not finished (`not-adopted`); simple and local modes (`simple-mode`, `local-mode`); for now a variant-B pair (`variant-b`) and a dev serving several parts (`multi-part`); a dev whose work has no origin to move through (`no-origin` — in a Mate a pair not wired to HQ, elsewhere `GitPushState` not configured or an origin that is not plain https, since a lease clones only https); a dev absent from the direct service list (`dev-not-live`); an invalid or taken pool hostname; a dev it cannot read over SSH (`dev-unreadable`); and a dev holding crew worktrees — any linked worktree registered under `/var/www/.crew/`, a missing (prunable) one included — while crewmates cannot work on leases (`crew-worktrees`: crew lanes stay on plain-dev parts). A refusal the meta decides never reaches the dev over SSH. `TestPoolMigrate_NotACandidate_Refused`, `TestPoolMigrate_NotACandidate_SimpleModeSkipsSSH`, `TestPoolMigrate_Integration_SimpleServiceRefusedByName`, `TestPoolMigrate_Integration_CrewWorktreesRefused`. |
+
+PM-2…PM-8 are OPEN — the unsaved-work census, the bundle, the env copy, the fence, the retire
+order, the resume table and diagnose-before-destruct are not built.
 
 ---
 
