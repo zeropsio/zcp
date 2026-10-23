@@ -5,6 +5,9 @@
 > `spec-env-handling.md` (ZCP's local-`.env` rendering model) is a **map** that
 > MUST conform to this document. ZCP-vs-this-spec conformance is verified
 > separately (not in this doc).
+> **Correction 2026-10-23** (`[LIVE 2026-10-23]`): an import's service-level
+> `envVariables` creates the service's env, every value plain — the earlier
+> "silently dropped by the API" line is refuted (§8b, §10).
 > **Date**: 2026-10-07 (vault model, `[LIVE 2026-10-07]`): Zerops is moving to
 > a **vault** — the project's **Shared** vault and each service's own, import
 > `vault:` at project and service level, `envVariables`/`envSecrets`
@@ -201,7 +204,7 @@ An **observed sample** (~119 bare on ONE no-config alpine — not a guaranteed u
 ## 8b. Adjacent mechanisms (in scope, lightly covered)
 - **build vs run are separate environments** — `build.envVariables` ≠ `run.envVariables`; same names allowed; not auto-shared. Cross-access via `RUNTIME_` (run→build, supported) / `BUILD_` (build→run, **REFUTED** — does not resolve, `[LIVE 2026-06-02]`). `[DOC-A]`
 - **`envReplace`** — deploy-time *file* placeholder substitution (yaml spec), distinct from container env injection. Its own source/precedence are untested → PENDING. `[DOC-A]`
-- **Import-time `services[].envVariables` is SILENTLY DROPPED by the API** — only `vault` (and the deprecated `envSecrets` / `dotEnvSecrets`) / `run.envVariables` create service env. ZCP surfaces a warning (`internal/ops/import.go`). `[LIVE]`
+- **Import-time `services[].envVariables` CREATES service env — every value plain** `[LIVE 2026-10-23]`: through the same project import API ZCP calls (`zcli project service-import`), a `swarm@1` and a `nodejs@22` (`startWithoutCode: true`) imported with `envVariables: {PLAINPROBE: hello}` both read `PLAINPROBE=hello` back through the REST env API right after import, non-sensitive; a `swarm@1` imported with `envVariables: {sshIsolation: "vpn service@zcp"}` and another with `vault: {sshIsolation: …}` both carried `sshIsolation`, the vault one (no flag) not sensitive either (§7). The import schema marks the field deprecated ("use vault instead", values "non-sensitive"), so ZCP never writes it; on an agent's import `internal/ops/import.go` warns that it is deprecated and lands plain, naming the secret-shaped keys — ZCP's name rule marks those sensitive only under `vault` (§7). **REFUTES** the earlier "silently dropped by the API" line (§10).
 
 ---
 
@@ -217,6 +220,7 @@ An **observed sample** (~119 bare on ONE no-config alpine — not a guaranteed u
 - **C1 (isolation auto-inject) — RESOLVED `[LIVE 05-28]`:** default `service` mode **gates** sibling auto-injection (no `<host>_` keys, **including managed `db_*`**); `none` auto-shares (source-side). **DOC-A is correct.** The earlier "auto-inject everywhere" impression came entirely from eval-zcp being `none` (a ZCP container-project choice, §4) — a brand-new project is `service`. **Production-readiness consequence:** ZCP-generated code MUST use explicit `${host_var}` refs (which resolve in BOTH modes); most recipe corpus files already do this (`${db_hostname}` etc.), so the corpus is production-ready. Bare reliance on `<host>_KEY` injection (none-only) would break on user/production projects.
 - **GUI vs API — RESOLVED:** GUI's "from master" yaml-baked vars come from the **`app-version/{id}` userDataList**, not the service-env endpoints — §1/§6, PENDING-4 corrected.
 - **`PROJECT_<KEY>` prefix:** `[LIVE]` real; `[DOC-A]` undocuments it → spec records live truth.
+- **Import service-level `envVariables` — RESOLVED `[LIVE 2026-10-23]`:** they create plain service env (§8b). The earlier "SILENTLY DROPPED by the API" line carried this spec's `[LIVE]` tier from its first revision (2026-05-28) but no probe of its own: it entered ZCP's knowledge 2026-02-16 from a reading of the import schema at the time (service level listed only `envSecrets`/`dotEnvSecrets` — "envVariables is a project-level field only") plus an eval in which an agent's service-level values seemed missing, with no read-back recorded; it became the import warning 2026-04-02 and was carried forward unprobed. `[LIVE 2026-06-02]` (a `zcli` service-import, `internal/knowledge/recipes_live_audit_test.go`) had already seen the endpoint ACCEPT the field. `[DOC-A]` `references/import.mdx` still lists no service-level `envVariables`; the platform import schema (synced 2026-10-06, `internal/schema/testdata/import_yml_schema.json`) lists it, deprecated.
 
 ## 11. Reconciliation with `spec-env-handling.md` (the ZCP map)
 `spec-env-handling.md` has been reconciled against this spec — the items below are now CONFORMANT:
