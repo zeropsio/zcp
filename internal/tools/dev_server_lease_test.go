@@ -8,8 +8,13 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -194,6 +199,93 @@ func TestDevServer_LeaseAlias_StatusReportsThePreviewURLOnlyWhileThePoolSubdomai
 			}
 			if mock.CallCounts["EnableSubdomainAccess"] != 0 {
 				t.Errorf("a status never enables a subdomain")
+			}
+		})
+	}
+}
+
+// previewDoer answers 200 at the one address ok and 502 at every other,
+// recording each address it is asked.
+type previewDoer struct {
+	mu    sync.Mutex
+	ok    string
+	asked []string
+}
+
+func (d *previewDoer) Do(r *http.Request) (*http.Response, error) {
+	d.mu.Lock()
+	d.asked = append(d.asked, r.URL.String())
+	d.mu.Unlock()
+	status := http.StatusBadGateway
+	if r.URL.String() == d.ok {
+		status = http.StatusOK
+	}
+	return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(""))}, nil
+}
+
+func (d *previewDoer) addresses() []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return slices.Clone(d.asked)
+}
+
+// TestDevServer_LeaseStart_ProbesItsOwnPreviewPort: a lease is reached on its
+// own preview port at the pool's subdomain (previewPortBase + its
+// ZEROPS_StableNumber); the pool's first declared port forwards to another
+// container. The readiness probe after a start reaches the lease's own address —
+// the previewUrl the result reports — whether the start enabled the pool's
+// subdomain or found it on, so a lease on 9003 never warns that 9001 is not
+// HTTP-ready (live: an 8002 lease warned about 8001's 502). The pool carries no
+// meta, as a pool is no bootstrapped dev service (DP-18).
+func TestDevServer_LeaseStart_ProbesItsOwnPreviewPort(t *testing.T) {
+	restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 50*time.Millisecond)
+	defer restore()
+
+	const preview = "https://devpool-abc1-9003.prg1.zerops.app"
+	tests := []struct {
+		name        string
+		subdomainOn bool
+	}{
+		{name: "enabled by this start", subdomainOn: false},
+		{name: "already on", subdomainOn: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeDevpoolLeaseFile(t, dir)
+			mock := leasePoolMock(tt.subdomainOn)
+			c := devservertest.NewSupervised(`{"version":1,"previewPortBase":9000,"servers":[{"name":"web","port":3000,"command":"pnpm dev"}]}`)
+			c.Servers["web"].PreviewPort = 9003
+			doer := &previewDoer{ok: preview}
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterDevServer(srv, DevServerDeps{Client: mock, HTTPClient: doer, ProjectID: "proj-1", SSH: c, StateDir: dir})
+
+			result := callTool(t, srv, "zerops_dev_server", map[string]any{"action": "start", "hostname": "devpool-3"})
+			if result.IsError {
+				t.Fatalf("unexpected error: %s", getTextContent(t, result))
+			}
+			var got struct {
+				PreviewURL   string   `json:"previewUrl"`
+				SubdomainURL string   `json:"subdomainUrl"`
+				Warnings     []string `json:"warnings"`
+			}
+			if err := json.Unmarshal([]byte(getTextContent(t, result)), &got); err != nil {
+				t.Fatalf("parse result: %v", err)
+			}
+			if got.PreviewURL != preview || got.SubdomainURL != preview {
+				t.Errorf("previewUrl/subdomainUrl = %q/%q, want %q", got.PreviewURL, got.SubdomainURL, preview)
+			}
+			for _, w := range got.Warnings {
+				if strings.Contains(w, "HTTP-ready") {
+					t.Errorf("warning about another address: %s", w)
+				}
+			}
+			asked := doer.addresses()
+			if len(asked) == 0 {
+				t.Errorf("the lease's own address %s was never probed", preview)
+			}
+			if other := slices.Compact(slices.Sorted(slices.Values(slices.DeleteFunc(asked, func(u string) bool { return u == preview })))); len(other) > 0 {
+				t.Errorf("probed %v, want only the lease's own address %s", other, preview)
 			}
 		})
 	}
