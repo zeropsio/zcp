@@ -1,10 +1,10 @@
 diff --git a/internal/tools/env.go b/internal/tools/env.go
-index 957a5280..033935f3 100644
+index c588391f..585e34f6 100644
 --- a/internal/tools/env.go
 +++ b/internal/tools/env.go
-@@ -353,7 +353,7 @@ func applyAutoRestart(
- 	resp.RestartWarnings = append(resp.RestartWarnings, plan.warnings...)
- 	unreadHint := nothingReadsHint(plan.unreadKeys, input)
+@@ -441,7 +441,7 @@ func applyAutoRestart(
+ 		unreadHint = poolEnvHint(keys, input.ServiceHostname)
+ 	}
  
 -	if input.SkipRestart.Bool() {
 +	if true {
