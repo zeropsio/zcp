@@ -2876,6 +2876,17 @@ hand-written RPC can set anything a mere default would allow:
 | No second commit pipeline (`stackedVcsActionsAllowed:false`) | zcp owns init, identity, the PAT, commit and push; mate owns turn-level history only | `GitManager.runStackedAction` refuses server-side; the `pullRequests`/`vcsStackedActions` capabilities hide the client control too — hiding is presentation, the refusal is the enforcement |
 | No background fetch (`upstreamRefreshAllowed:false`) | a status poll's `fetch` against a PAT-backed origin mate does not own is unwanted network from every mounted service at once | `GitManager.remoteStatus` forces `refreshUpstream:false` |
 
+**The isolation unit is a service or a leased container.** A part's dev pool (`docs/spec-workflows.md`
+§8 "Dev pools (DP)") gives each branch a pool container of its own, leased through `zerops_lease`: one
+`/var/www`, one checkout, its own processes and preview port — the same unit a dev service is, so
+`worktreesAllowed:false` stands. A thread whose agent acquired a lease is bound to it — `thread.lease:
+{alias, pool, branch} | null`, taken from the thread's first `zerops_lease` acquire and kept until that
+lease is released or lost — and works in `/var/www/<alias>`, a repository by §6.1's rule. The binding is
+a field of its own, never `worktreePath`: T3 runs `git worktree remove` on a thread's `worktreePath`
+when the thread goes, and a lease mount is a container zcp holds, not a directory a thread owns —
+nothing removes or releases it with the thread; releasing it is the agent's `zerops_lease
+action=release`.
+
 `zeropsPolicy` reads `ServerConfig` **optionally**: no config in context (most existing tests) reads
 as `UPSTREAM_POLICY`, the same set every one of upstream's own behaviours already has — the policy
 fails toward doing nothing rather than toward silently changing behaviour a test never asked for.
