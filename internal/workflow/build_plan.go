@@ -42,10 +42,10 @@ func BuildPlan(env StateEnvelope) Plan {
 		return planBootstrapActive()
 	case PhaseIdle:
 		return planIdle(env)
-	case PhaseStrategySetup, PhaseExportActive, PhaseLaunchProductionActive:
-		// Strategy-setup, export, and launch-production phases don't drive
-		// a plan — the handlers for those paths emit their own guidance
-		// directly. Fall through to the empty Plan so the caller knows
+	case PhaseStrategySetup, PhaseExportActive, PhaseLaunchProductionActive, PhasePoolMigrateActive:
+		// Strategy-setup, export, launch-production and pool-migrate phases
+		// don't drive a plan — the handlers for those paths emit their own
+		// guidance directly. Fall through to the empty Plan so the caller knows
 		// there's nothing to suggest.
 	}
 	return Plan{}

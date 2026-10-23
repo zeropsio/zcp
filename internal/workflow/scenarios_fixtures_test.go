@@ -36,6 +36,7 @@ func canonicalGoldenScenarios() []goldenScenario {
 	out = append(out, strategySetupGoldenScenarios()...)
 	out = append(out, exportGoldenScenarios()...)
 	out = append(out, launchProductionGoldenScenarios()...)
+	out = append(out, poolMigrateGoldenScenarios()...)
 	return out
 }
 
@@ -665,6 +666,34 @@ func launchProductionGoldenScenarios() []goldenScenario {
 						GitPushState: topology.GitPushConfigured,
 						Bootstrapped: true,
 						Deployed:     true,
+					},
+				},
+			},
+		},
+	}
+}
+
+// poolMigrateGoldenScenarios returns the scenario that pins the
+// pool-migrate-active phase atom fire-set. The handler renders its atom per
+// step; the phase axis alone selects it.
+func poolMigrateGoldenScenarios() []goldenScenario {
+	return []goldenScenario{
+		{
+			id:          "pool-migrate/active",
+			description: "Pool-migrate workflow on a part's dev/stage pair — the read side names the provision step and renders the pool's import stanza.",
+			envelope: StateEnvelope{
+				Phase:       PhasePoolMigrateActive,
+				Environment: EnvContainer,
+				Services: []ServiceSnapshot{
+					{
+						Hostname:      "appdev",
+						TypeVersion:   "nodejs@22",
+						RuntimeClass:  topology.RuntimeDynamic,
+						Mode:          topology.ModeStandard,
+						StageHostname: "appstage",
+						GitPushState:  topology.GitPushConfigured,
+						Bootstrapped:  true,
+						Deployed:      true,
 					},
 				},
 			},

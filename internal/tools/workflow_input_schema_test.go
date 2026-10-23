@@ -110,3 +110,27 @@ func TestWorkflowInputSchema_PublicAccessListsAllowedValues(t *testing.T) {
 		t.Errorf("publicAccess description = %q, want it to explain none", desc)
 	}
 }
+
+// TestWorkflowInputSchema_PoolMigrateNamed pins that the schema an agent reads
+// at discovery names workflow="pool-migrate", the dev service it takes, and
+// the pool hostname it may override.
+func TestWorkflowInputSchema_PoolMigrateNamed(t *testing.T) {
+	t.Parallel()
+	s := workflowInputSchema()
+	if s == nil {
+		t.Fatal("workflowInputSchema returned nil")
+	}
+	for key, want := range map[string]string{
+		"workflow": "pool-migrate",
+		"service":  "pool-migrate",
+		"pool":     "pool-migrate",
+	} {
+		prop, ok := s.Properties[key]
+		if !ok || prop == nil {
+			t.Fatalf("property %q missing from schema", key)
+		}
+		if !strings.Contains(prop.Description, want) {
+			t.Errorf("property %q description %q does not name %q", key, prop.Description, want)
+		}
+	}
+}

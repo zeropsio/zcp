@@ -1410,6 +1410,12 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 			Phase: PhaseLaunchProductionActive, Environment: EnvContainer,
 		}},
 
+		// Pool-migrate active. Its atom gates on `phases:
+		// [pool-migrate-active]` only, like the launch atoms.
+		{"pool-migrate-active", StateEnvelope{
+			Phase: PhasePoolMigrateActive, Environment: EnvContainer,
+		}},
+
 		// Diverse managed deps so every per-managed-type env cheatsheet
 		// (RC-D / F7 split) fires and is pin-covered here. CoverageGate's
 		// canonical fixtures are postgres-focused, so the rare-type
@@ -1560,6 +1566,9 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		"launch-pipeline-configure-dashboard",
 		"launch-pipeline-skipped",
 		"launch-pipeline-configured",
+		// pool-migrate — the flow's atom fires on the PhasePoolMigrateActive
+		// envelope above.
+		"pool-migrate-plan",
 	)
 }
 
