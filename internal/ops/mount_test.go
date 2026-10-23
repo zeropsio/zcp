@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"maps"
+	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -826,5 +827,93 @@ func TestMountStatus_PendingState(t *testing.T) {
 				t.Errorf("hostname %s not found in results", tt.hostname)
 			}
 		})
+	}
+}
+
+func TestMountStatus_LeaseNotOrphan(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().WithServices(testServices())
+	mounter := newMockMounter()
+	mounter.mountDirs = []string{"app", "apppool-3", "deleted"}
+	mounter.states["/var/www/apppool-3"] = platform.MountStateActive
+	mounter.states["/var/www/deleted"] = platform.MountStateStale
+
+	result, err := MountStatus(context.Background(), mock, "proj-1", mounter, "")
+	if err != nil {
+		t.Fatalf("MountStatus: %v", err)
+	}
+	byHost := map[string]MountInfo{}
+	for _, m := range result.Mounts {
+		byHost[m.Hostname] = m
+	}
+	lease, ok := byHost["apppool-3"]
+	if !ok {
+		t.Fatalf("mounts = %+v, want the lease mount apppool-3 reported", result.Mounts)
+	}
+	if lease.Orphan {
+		t.Errorf("lease mount reported as a deleted-service orphan: %+v", lease)
+	}
+	if !lease.Lease || !lease.Mounted {
+		t.Errorf("lease mount = %+v, want Lease and Mounted", lease)
+	}
+	if !strings.Contains(lease.Message, "zerops_lease") {
+		t.Errorf("lease message %q must point at zerops_lease for the lease's state", lease.Message)
+	}
+	if !byHost["deleted"].Orphan {
+		t.Errorf("a stale mount of a deleted service must still be an orphan: %+v", byHost["deleted"])
+	}
+}
+
+func TestMountStatus_LeaseAlias_NoServiceLookup(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().WithServices(testServices())
+	mounter := newMockMounter()
+	mounter.states["/var/www/apppool-3"] = platform.MountStateActive
+
+	result, err := MountStatus(context.Background(), mock, "proj-1", mounter, "apppool-3")
+	if err != nil {
+		t.Fatalf("MountStatus(lease alias): %v", err)
+	}
+	if len(result.Mounts) != 1 || result.Mounts[0].Hostname != "apppool-3" || !result.Mounts[0].Mounted || !result.Mounts[0].Lease || result.Mounts[0].Orphan {
+		t.Errorf("mounts = %+v, want one mounted lease apppool-3", result.Mounts)
+	}
+}
+
+func TestMountService_LeaseAlias_NoServiceLookup(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().WithServices(testServices())
+	mounter := newMockMounter()
+
+	got, err := MountService(context.Background(), mock, "proj-1", mounter, "apppool-3")
+	if err != nil {
+		t.Fatalf("MountService(lease alias) must not look the alias up as a service: %v", err)
+	}
+	if got.Status != "MOUNTED" || got.MountPath != "/var/www/apppool-3" {
+		t.Errorf("result = %+v, want MOUNTED at /var/www/apppool-3", got)
+	}
+	if mounter.states["/var/www/apppool-3"] != platform.MountStateActive {
+		t.Error("the mounter was not asked to mount the alias")
+	}
+}
+
+func TestUnmountService_LeaseAlias_NoServiceLookup(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().WithServices(testServices())
+	mounter := newMockMounter()
+	mounter.states["/var/www/apppool-3"] = platform.MountStateActive
+
+	got, err := UnmountService(context.Background(), mock, "proj-1", mounter, "apppool-3")
+	if err != nil {
+		t.Fatalf("UnmountService(lease alias): %v", err)
+	}
+	if got.Status != "UNMOUNTED" {
+		t.Errorf("status = %q, want UNMOUNTED (a lease is not a service, so it must not take the deleted-service path)", got.Status)
+	}
+	if _, still := mounter.states["/var/www/apppool-3"]; still {
+		t.Error("the alias is still mounted")
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/zeropsio/zcp/internal/mate"
+	"github.com/zeropsio/zcp/internal/ops"
 )
 
 // Command runner overrides.
@@ -40,6 +41,14 @@ func ResetNginxOwner()           { nginxOwnerUID, nginxOwnerGID = zeropsUID, zer
 
 func SetSSHFSMountBase(dir string) { sshfsMountBase = dir }
 func ResetSSHFSMountBase()         { sshfsMountBase = defaultSSHFSMountBase }
+
+// Lease restore overrides.
+
+func SetLeaseStateDir(dir string) { leaseStateDir = func() string { return dir } }
+func ResetLeaseStateDir()         { leaseStateDir = defaultLeaseStateDir }
+
+func SetLeaseAliasFile(path string) { leaseAliasFile = path }
+func ResetLeaseAliasFile()          { leaseAliasFile = ops.DefaultLeaseAliasFile }
 
 // mate step overrides.
 

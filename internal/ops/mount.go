@@ -47,6 +47,7 @@ type MountInfo struct {
 	Pending   bool   `json:"pending,omitempty"`
 	Writable  bool   `json:"writable,omitempty"`
 	Orphan    bool   `json:"orphan,omitempty"`
+	Lease     bool   `json:"lease,omitempty"`
 	Message   string `json:"message,omitempty"`
 }
 
@@ -65,16 +66,19 @@ func MountService(
 			"Provide serviceHostname parameter",
 		)
 	}
-	if err := platform.ValidateHostname(hostname); err != nil {
+	if err := platform.ValidateMountName(hostname); err != nil {
 		return nil, err
 	}
 
-	services, err := client.ListServices(ctx, projectID)
-	if err != nil {
-		return nil, fmt.Errorf("list services: %w", err)
-	}
-	if _, err := FindUserVisibleService(services, hostname); err != nil {
-		return nil, err
+	// A lease alias is not a service: there is nothing to look up.
+	if !isLeaseAlias(hostname) {
+		services, err := client.ListServices(ctx, projectID)
+		if err != nil {
+			return nil, fmt.Errorf("list services: %w", err)
+		}
+		if _, err := FindUserVisibleService(services, hostname); err != nil {
+			return nil, err
+		}
 	}
 
 	mountPath := filepath.Join(mountBase, hostname)
@@ -150,7 +154,7 @@ func UnmountService(
 			"Provide serviceHostname parameter",
 		)
 	}
-	if err := platform.ValidateHostname(hostname); err != nil {
+	if err := platform.ValidateMountName(hostname); err != nil {
 		return nil, err
 	}
 
@@ -212,11 +216,16 @@ func UnmountService(
 	}
 
 	// Active mount — try API lookup, fall back to force unmount if service deleted.
-	services, err := client.ListServices(ctx, projectID)
-	if err != nil {
-		return nil, fmt.Errorf("list services: %w", err)
+	// A lease alias is not a service, so it is never looked up (and never
+	// mistaken for a deleted one).
+	var resolveErr error
+	if !isLeaseAlias(hostname) {
+		services, err := client.ListServices(ctx, projectID)
+		if err != nil {
+			return nil, fmt.Errorf("list services: %w", err)
+		}
+		_, resolveErr = FindService(services, hostname)
 	}
-	_, resolveErr := FindService(services, hostname)
 	if resolveErr != nil {
 		// Service deleted but mount still active — force unmount.
 		var pe *platform.PlatformError
@@ -270,8 +279,11 @@ func MountStatus(
 	}
 
 	if hostname != "" {
-		if err := platform.ValidateHostname(hostname); err != nil {
+		if err := platform.ValidateMountName(hostname); err != nil {
 			return nil, err
+		}
+		if isLeaseAlias(hostname) {
+			return &MountStatusResult{Mounts: []MountInfo{leaseMountInfo(ctx, mounter, hostname)}}, nil
 		}
 		svc, err := FindService(services, hostname)
 		if err != nil {
@@ -293,6 +305,13 @@ func MountStatus(
 	// Plain directories (e.g. .claude, .zcp) are silently skipped.
 	dirs, _ := mounter.ListMountDirs(ctx, mountBase)
 	for _, dir := range dirs {
+		if isLeaseAlias(dir) {
+			// A lease mount, not a deleted service's leftover.
+			if info := leaseMountInfo(ctx, mounter, dir); info.Mounted || info.Stale || info.Pending {
+				mounts = append(mounts, info)
+			}
+			continue
+		}
 		if !serviceNames[dir] {
 			info := checkMountInfo(ctx, mounter, dir, true)
 			if info.Mounted || info.Stale || info.Pending {
@@ -302,6 +321,23 @@ func MountStatus(
 	}
 
 	return &MountStatusResult{Mounts: mounts}, nil
+}
+
+// isLeaseAlias reports whether name is a dev-pool lease alias. An alias carries
+// a hyphen, which no platform hostname may, so it never names a service.
+func isLeaseAlias(name string) bool { return platform.ValidateLeaseAlias(name) == nil }
+
+// leaseMountInfo is the mount state of a lease's directory. It is never an
+// orphan; the lease's own state (held, lost, unmounted) is zerops_lease's.
+func leaseMountInfo(ctx context.Context, mounter Mounter, alias string) MountInfo {
+	info := checkMountInfo(ctx, mounter, alias, false)
+	info.Lease = true
+	lease := "Lease mount; zerops_lease action=status reports the lease's state."
+	if info.Message != "" {
+		lease += " " + info.Message
+	}
+	info.Message = lease
+	return info
 }
 
 func checkMountInfo(ctx context.Context, mounter Mounter, hostname string, orphan bool) MountInfo {
