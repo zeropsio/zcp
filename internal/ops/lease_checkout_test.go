@@ -183,7 +183,7 @@ func TestLeaseAcquire_StoresPoolDefaultRepo(t *testing.T) {
 // `…/repo` is "repository not found" (live Mate run) — so the checkout clones
 // the URL exactly as the caller gave it, an acquire that takes the pool's
 // default clones that same URL, and a failed checkout names it. The
-// canonical form is identity only: the lease record keeps it (DP-17).
+// canonical form is identity only: the lease record keeps it (DP-18).
 func TestLeaseAcquire_RepoAsGiven_ClonedVerbatim(t *testing.T) {
 	t.Parallel()
 	const canonical = "https://git.example.com/team/repo"

@@ -1,6 +1,6 @@
 // Tests for: integration — what the live end-to-end run of dev-pool leases in a
 // Mate found, through the full MCP server against a mock platform and a fake
-// pool orchestrator (docs/spec-workflows.md §8 DP-2, DP-17, DP-18).
+// pool orchestrator (docs/spec-workflows.md §8 DP-2, DP-18, DP-19).
 
 package integration_test
 
@@ -41,7 +41,7 @@ func leaseE2EPoolMock() *platform.Mock {
 
 // TestLease_Integration_RepoAsGiven_ClonedVerbatim: an acquire of `…/repo.git`
 // clones that URL, never its canonical `…/repo`, which a plain git server
-// answers with "repository not found" (DP-17).
+// answers with "repository not found" (DP-18).
 func TestLease_Integration_RepoAsGiven_ClonedVerbatim(t *testing.T) {
 	// Non-parallel: t.Chdir (the state dir) and a swap of
 	// http.DefaultTransport (the orchestrator).
@@ -110,7 +110,7 @@ func (p previewRoute) RoundTrip(r *http.Request) (*http.Response, error) {
 // TestLease_Integration_DevServerStart_ProbesTheLeasesOwnPreview: a start on a
 // lease whose preview port is 9003 probes the pool's subdomain on 9003 — the
 // previewUrl it reports — and never the pool's first declared port, which
-// forwards to another container: no "not HTTP-ready" warning about it (DP-18).
+// forwards to another container: no "not HTTP-ready" warning about it (DP-19).
 func TestLease_Integration_DevServerStart_ProbesTheLeasesOwnPreview(t *testing.T) {
 	// Non-parallel: t.Chdir (the state dir), a swap of http.DefaultTransport
 	// (the subdomains) and the package-level readiness timing.

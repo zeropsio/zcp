@@ -60,7 +60,7 @@ func validateLeaseBranch(branch string) error {
 
 // validateLeaseRepo checks a clone URL and returns it as given, only trimmed
 // of surrounding space: git clones exactly that address, and a server that
-// serves `…/repo.git` may not answer `…/repo` (DP-17), so the canonical form
+// serves `…/repo.git` may not answer `…/repo` (DP-18), so the canonical form
 // (topology.CanonicalRepoURL) is for identity only. Only https URLs without
 // userinfo are taken: the credential reaches git through the session-env
 // helper, never through the URL (DP-6), plain http would send it in clear, and
@@ -488,7 +488,7 @@ func guardLeaseRelease(ctx context.Context, d LeaseDeps, rec leaseRecord) (lease
 // ssh's 255 does not say the container is gone — an alias that does not
 // resolve, a refused connection and a timeout all read the same — so the
 // orchestrator decides: only a container it no longer holds for this lease —
-// a pool that is gone or being deleted holds none (DP-19) — is released
+// a pool that is gone or being deleted holds none (DP-20) — is released
 // unchecked (as lost); the release then says what became of it. One it still
 // holds may hold work and is refused, and so is one zcp cannot ask about.
 func unreachableGuard(ctx context.Context, d LeaseDeps, rec leaseRecord, sshErr error) (leaseGuardResult, error) {

@@ -236,7 +236,7 @@ func (d *previewDoer) addresses() []string {
 // the previewUrl the result reports — whether the start enabled the pool's
 // subdomain or found it on, so a lease on 9003 never warns that 9001 is not
 // HTTP-ready (live: an 8002 lease warned about 8001's 502). The pool carries no
-// meta, as a pool is no bootstrapped dev service (DP-18).
+// meta, as a pool is no bootstrapped dev service (DP-19).
 func TestDevServer_LeaseStart_ProbesItsOwnPreviewPort(t *testing.T) {
 	restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 50*time.Millisecond)
 	defer restore()

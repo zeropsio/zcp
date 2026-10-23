@@ -68,7 +68,7 @@ func ensurePublicAccess(
 // (ops.DevServerSubdomainURL): its port's subdomain on a dev service, and on a
 // lease the lease's preview port at its pool's subdomain — never the
 // service's first HTTP port, which on a pool forwards to another container
-// (DP-18). "" when that server has no public address.
+// (DP-19). "" when that server has no public address.
 func ensureDevServerPublicAccess(
 	ctx context.Context,
 	client platform.Client,

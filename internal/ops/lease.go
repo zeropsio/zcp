@@ -688,7 +688,7 @@ func joinNotes(notes ...string) string {
 // releaseLease releases the container with the orchestrator and drops the
 // record (every successful outcome drops it). A pool that is gone or being
 // deleted holds nothing of the lease: its record is dropped as lost, saying
-// why (DP-19), whichever read tells — the search, or the read by id once the
+// why (DP-20), whichever read tells — the search, or the read by id once the
 // orchestrator could not be reached or asked.
 func releaseLease(ctx context.Context, d LeaseDeps, rec leaseRecord, alias string, reset bool) (LeaseView, error) {
 	gone := func(why string) (LeaseView, error) {
