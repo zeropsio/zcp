@@ -220,7 +220,7 @@ func leasePreview(part string) (lastConnAt string, openConns *int, note string) 
 	const notObserved = "preview not observed: "
 	sections, err := splitDevsupSections(part)
 	if err != nil {
-		return "", nil, notObserved + "the supervisor part answered " + err.Error()
+		return "", nil, fmt.Sprintf(notObserved+"zcp could not read the supervisor's answer (%v)", err)
 	}
 	version, ok := sections["version"]
 	switch {
