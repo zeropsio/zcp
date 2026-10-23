@@ -56,6 +56,10 @@ type LeaseDeps struct {
 	// Env reads one key of the container's current env; nil means the live
 	// env (liveContainerEnv).
 	Env func(key string) (string, bool)
+	// HQAddress is the address of the HQ this Mate enrolled with, read at
+	// each use ("" — or nil — for none): a repository on it is checked out as
+	// HQ's git user (DP-12).
+	HQAddress func() string
 	// ReadTimeout bounds one orchestrator read (a container listing); zero
 	// means leaseReadTimeout. The HTTP client allows minutes, for a start or
 	// a reset; a read that hangs must not hold a status call that long.
@@ -515,7 +519,7 @@ func LeaseAcquire(ctx context.Context, d LeaseDeps, pool, repo, branch string) (
 	rec := leaseRecord{
 		PoolHostname: pool, PoolServiceID: rp.svc.ID,
 		ContainerID: got.Container.ID, ContainerNumber: got.Container.Number, ContainerHostname: got.Container.Hostname,
-		Lease: got.Lease.Secret(), Branch: branch, AcquiredAt: time.Now().UTC().Format(time.RFC3339),
+		Lease: got.Lease.Secret(), Branch: branch, Repo: repoURL, AcquiredAt: time.Now().UTC().Format(time.RFC3339),
 	}
 	if err := writeLeaseRecord(d.StateDir, rec); err != nil {
 		// Without a record the lease is unusable and, with no expiry, the
@@ -559,6 +563,7 @@ type leaseRecord struct {
 	ContainerHostname string `json:"containerHostname"`
 	Lease             string `json:"lease"`
 	Branch            string `json:"branch,omitempty"`
+	Repo              string `json:"repo,omitempty"` // canonical clone URL, never a credential; "" in an older record
 	AcquiredAt        string `json:"acquiredAt"`
 }
 

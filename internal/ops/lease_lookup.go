@@ -9,6 +9,9 @@ type LeaseTargetInfo struct {
 	PoolServiceID     string
 	ContainerHostname string
 	Branch            string
+	// Repo is the canonical repository the lease checked out, "" when its
+	// record predates keeping it.
+	Repo string
 }
 
 // LeaseTarget reports whether host is the alias of a lease zcp holds (a
@@ -31,6 +34,7 @@ func LeaseTarget(stateDir, host string) (LeaseTargetInfo, bool, error) {
 				PoolServiceID:     r.PoolServiceID,
 				ContainerHostname: r.ContainerHostname,
 				Branch:            r.Branch,
+				Repo:              r.Repo,
 			}, true, nil
 		}
 	}

@@ -171,22 +171,24 @@ func resolveLeaseRepo(stateDir, pool, repo string) (canonical string, becomesDef
 // not exist yet is cut from origin/main without tracking it (a push of the new
 // branch must not target main). Files the image left that the branch does not
 // track are removed; ignored files stay (never clean -x). For an https origin
-// the repository keeps leaseCredentialHelperShell, scoped to the origin's
-// host, so the agent's own push authenticates the same way.
-func leaseCheckoutCommand(workDir, repo, branch string) string {
+// the repository keeps the same helper (leaseCredentialHelperConfig), so the
+// agent's own push authenticates the same way. hqURL is the Mate's HQ, "" on
+// a container not enrolled with one: a repository on it is fetched as HQ's
+// git user (leaseCredentialHelperFor).
+func leaseCheckoutCommand(workDir, repo, branch, hqURL string) string {
 	q := shellQuote
 	steps := []string{
 		"cd " + q(workDir),
 		"{ [ -d .git ] || git init -q; }",
 		"{ git remote add origin " + q(repo) + " 2>/dev/null || git remote set-url origin " + q(repo) + "; }",
-		"GIT_TERMINAL_PROMPT=0 git -c credential.helper= -c credential.helper=" + q(leaseCredentialHelperShell) + " fetch -q --prune origin",
+		"GIT_TERMINAL_PROMPT=0 git -c credential.helper= -c credential.helper=" + q(leaseCredentialHelperFor(repo, hqURL)) + " fetch -q --prune origin",
 		"if git rev-parse --verify -q " + q("refs/remotes/origin/"+branch) + " >/dev/null; then " +
 			"git checkout -q -f -B " + q(branch) + " --track " + q("origin/"+branch) + "; else " +
 			"git checkout -q -f -B " + q(branch) + " --no-track origin/" + leaseDefaultBranch + "; fi",
 		"git clean -fd -q",
 	}
-	if scope, ok := gitCredentialScopeHost(repo); ok && strings.HasPrefix(repo, httpsScheme+"://") {
-		steps = append(steps, "git config --replace-all "+q("credential.https://"+scope+".helper")+" "+q(leaseCredentialHelperShell))
+	if persist := leaseCredentialHelperConfig(repo, hqURL); persist != "" {
+		steps = append(steps, persist)
 	}
 	return strings.Join(steps, " && ")
 }
@@ -200,15 +202,57 @@ func leaseCheckoutCommand(workDir, repo, branch string) string {
 // next helper. The reset at release takes it away with /var/www.
 const leaseCredentialHelperShell = `!f() { test "$1" = get || return 0; test -n "$GIT_TOKEN" || return 0; echo username=oauth2; echo "password=$GIT_TOKEN"; }; f`
 
+// leaseHQCredentialHelperShell is leaseCredentialHelperShell for a repository
+// on the Mate's HQ, whose git takes only the user `mate` (as
+// hqCredentialHelperShell answers it). Unlike that helper it never falls back
+// to `zcp hq git-credential`: zcp is not installed in a pool container, so it
+// answers from GIT_TOKEN or not at all.
+const leaseHQCredentialHelperShell = `!f() { test "$1" = get || return 0; test -n "$GIT_TOKEN" || return 0; echo username=mate; echo "password=$GIT_TOKEN"; }; f`
+
+// leaseCredentialHelperFor is the helper a lease of repo authenticates with:
+// HQ's user for a repository on the Mate's HQ (hqURL, "" without one), the
+// lease's oauth2 helper otherwise.
+func leaseCredentialHelperFor(repo, hqURL string) string {
+	if IsHQRemote(repo, hqURL) {
+		return leaseHQCredentialHelperShell
+	}
+	return leaseCredentialHelperShell
+}
+
+// leaseCredentialHelperConfig is the git command that persists the lease's
+// helper for an https repo, scoped by the rule a dev service's checkout is
+// (persistedHelperScope: HQ's scope, its port included, for a repository on
+// the Mate's HQ); "" for any other repo, or a host that can be no scope.
+func leaseCredentialHelperConfig(repo, hqURL string) string {
+	if !strings.HasPrefix(repo, httpsScheme+"://") {
+		return ""
+	}
+	scope, helper, ok := persistedHelperScope(repo, hqURL, leaseCredentialHelperShell, leaseHQCredentialHelperShell)
+	if !ok {
+		return ""
+	}
+	return "git config --replace-all " + shellQuote("credential.https://"+scope+".helper") + " " + shellQuote(helper)
+}
+
+// hqAddress is the address of the HQ this Mate enrolled with, read now; ""
+// when there is none.
+func (d LeaseDeps) hqAddress() string {
+	if d.HQAddress == nil {
+		return ""
+	}
+	return d.HQAddress()
+}
+
 // checkoutLease puts the leased container's /var/www on the branch. A failure
 // carries the ssh error (git's stderr rides in it) and classifies auth
 // failures so the credential contract reaches the agent.
 func checkoutLease(ctx context.Context, d LeaseDeps, rec leaseRecord, repo, branch string) error {
-	_, err := d.SSH.ExecSSH(ctx, rec.alias(), leaseCheckoutCommand(leaseWorkDir, repo, branch))
+	hqURL := d.hqAddress()
+	_, err := d.SSH.ExecSSH(ctx, rec.alias(), leaseCheckoutCommand(leaseWorkDir, repo, branch, hqURL))
 	if err == nil {
 		return nil
 	}
-	code, suggestion := classifyCheckoutFailure(err)
+	code, suggestion := classifyCheckoutFailure(err, IsHQRemote(repo, hqURL))
 	pe := platform.NewPlatformError(code,
 		fmt.Sprintf("Lease %s could not put %s on branch %s of %s", rec.alias(), leaseWorkDir, branch, repo), suggestion)
 	pe.Cause = err
@@ -216,8 +260,9 @@ func checkoutLease(ctx context.Context, d LeaseDeps, rec leaseRecord, repo, bran
 }
 
 // classifyCheckoutFailure maps git's stderr (and ssh's exit status) to an error
-// code and what to do about it.
-func classifyCheckoutFailure(err error) (code, suggestion string) {
+// code and what to do about it. onHQ: the repository is on the Mate's HQ,
+// whose credential is no user's token (hqLeaseCredentialSuggestion).
+func classifyCheckoutFailure(err error, onHQ bool) (code, suggestion string) {
 	var sshErr *platform.SSHExecError
 	out := ""
 	if errors.As(err, &sshErr) {
@@ -225,10 +270,16 @@ func classifyCheckoutFailure(err error) (code, suggestion string) {
 	}
 	switch {
 	case containsAny(out, "could not read username", "could not read password", "terminal prompts disabled"):
+		if onHQ {
+			return platform.ErrPrerequisiteMissing, hqLeaseCredentialSuggestion("the pool's GIT_TOKEN secret is not set (or is empty)")
+		}
 		return platform.ErrGitTokenMissing,
 			"git asked for a credential and the container's session had none: the pool's GIT_TOKEN secret is not set (or is empty). Private repositories need it"
 	case containsAny(out, "authentication failed", "invalid username or password", "invalid credentials",
 		"permission denied", "error: 401", "error: 403", "password authentication was removed"):
+		if onHQ {
+			return platform.ErrPrerequisiteMissing, hqLeaseCredentialSuggestion("HQ refused the pool's GIT_TOKEN for that user: it is not this Mate's HQ credential")
+		}
 		return platform.ErrGitTokenInvalid,
 			"The remote refused the pool's GIT_TOKEN (bad, expired or without access to this repository)"
 	}
@@ -238,6 +289,17 @@ func classifyCheckoutFailure(err error) (code, suggestion string) {
 	}
 	return platform.ErrSSHDeployFailed,
 		"Check the repo URL and that the container can reach the git host; the lease was released, so acquire again once fixed"
+}
+
+// hqLeaseCredentialSuggestion is what a lease of a repository on the Mate's HQ
+// lacks when HQ's git would not take the pool's GIT_TOKEN (why). zcp gives the
+// Mate credential only to the dev service of a pair it wired to HQ — never to
+// a pool — so nothing the agent can call puts it there, and it is no user's
+// token to ask for.
+func hqLeaseCredentialSuggestion(why string) string {
+	return "The repository is on this Mate's HQ, whose git takes only the user `mate` with this Mate's HQ credential, and " + why +
+		". zcp gives that credential only to the dev service of a pair it wired to HQ, never to a pool, and no zcp command puts it on one; it is no user's token, so never ask for one or make one up. " +
+		"Lease the pool for a repository outside HQ, or work on this one in the dev service of the pair wired to it"
 }
 
 func containsAny(s string, subs ...string) bool {
@@ -353,7 +415,7 @@ func guardLeaseRelease(ctx context.Context, d LeaseDeps, rec leaseRecord) (lease
 	if !w.any() {
 		return leaseGuardResult{}, nil
 	}
-	return leaseGuardResult{}, unsavedWorkRefusal(rec.alias(), w)
+	return leaseGuardResult{}, unsavedWorkRefusal(rec.alias(), w, IsHQRemote(rec.Repo, d.hqAddress()))
 }
 
 // unreachableGuard decides a release whose container ssh could not reach.
@@ -411,7 +473,10 @@ func leaseContainerStillReserved(ctx context.Context, d LeaseDeps, rec leaseReco
 	return false, nil
 }
 
-func unsavedWorkRefusal(alias string, w unsavedWork) error {
+// unsavedWorkRefusal refuses the release, naming the work and how to save it.
+// onHQ: the lease's repository is on the Mate's HQ, which takes a push only on
+// a branch of the agent's own, so the push it names keeps HQ's rule.
+func unsavedWorkRefusal(alias string, w unsavedWork, onHQ bool) error {
 	var parts []string
 	if n := len(w.files); n > 0 {
 		shown := w.files
@@ -425,7 +490,11 @@ func unsavedWorkRefusal(alias string, w unsavedWork) error {
 	if w.unpushed > 0 {
 		parts = append(parts, fmt.Sprintf("%d commit(s) on no remote branch", w.unpushed))
 	}
+	save := "Commit and push it from the container (zcp does not commit for you)"
+	if onHQ {
+		save = "Commit it on a branch of your own and push that branch from the container — `git checkout -b <branch>` first if you are on `main`, then `git push -u origin <branch>`; HQ refuses a push of `main`, of a branch another Mate's open change holds, and any force push (zcp does not commit for you)"
+	}
 	return platform.NewPlatformError(platform.ErrPrerequisiteMissing,
 		fmt.Sprintf("Lease %s holds work that releasing would lose: %s", alias, strings.Join(parts, " and ")),
-		fmt.Sprintf("Commit and push it from the container (zcp does not commit for you), or release with force=true to discard it: zerops_lease action=release lease=%s force=true", alias))
+		fmt.Sprintf("%s, or release with force=true to discard it: zerops_lease action=release lease=%s force=true", save, alias))
 }
