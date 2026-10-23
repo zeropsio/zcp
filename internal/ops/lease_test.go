@@ -18,6 +18,7 @@ const (
 	testPoolHost  = "devpool"
 	testPoolToken = "orch-api-token-0001"
 	testLease     = "0123456789abcdef0123456789abcdef"
+	testRepo      = "https://github.com/acme/app.git"
 )
 
 // fakeSwarm is an orchestrator the tests control. It records what it is asked.
@@ -130,7 +131,7 @@ func TestLeaseAcquire_NonPool_Refused(t *testing.T) {
 	t.Parallel()
 	fx := newLeaseFixture(t)
 
-	_, err := LeaseAcquire(context.Background(), fx.deps, "appdev", "feature")
+	_, err := LeaseAcquire(context.Background(), fx.deps, "appdev", testRepo, "feature")
 	var pe *platform.PlatformError
 	if !errors.As(err, &pe) {
 		t.Fatalf("err = %v, want a *PlatformError", err)
@@ -159,7 +160,7 @@ func TestLeaseAcquire_WritesRecord0600(t *testing.T) {
 	fx := newLeaseFixture(t)
 	fx.swarm.acquired = acquiredAs(3)
 
-	view, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, "feature-x")
+	view, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, "feature-x")
 	if err != nil {
 		t.Fatalf("LeaseAcquire: %v", err)
 	}
@@ -217,7 +218,7 @@ func TestLeaseList_MissingContainer_ReportedLost(t *testing.T) {
 	for _, n := range []int64{3, 4, 5} {
 		fx.swarm.acquired = acquiredAs(n)
 		fx.swarm.acquired.Container.ID = "c-" + strconv.FormatInt(n, 10)
-		if _, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, "b"+strconv.FormatInt(n, 10)); err != nil {
+		if _, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, "b"+strconv.FormatInt(n, 10)); err != nil {
 			t.Fatalf("acquire #%d: %v", n, err)
 		}
 	}
@@ -265,22 +266,23 @@ func TestLeaseList_MissingContainer_ReportedLost(t *testing.T) {
 
 func TestLeaseRelease_ResetPassedAndRecordRemoved(t *testing.T) {
 	t.Parallel()
-	for _, reset := range []bool{true, false} {
-		t.Run("reset="+strconv.FormatBool(reset), func(t *testing.T) {
+	// Every release resets the container (DP-4); force only skips the guard.
+	for _, force := range []bool{true, false} {
+		t.Run("force="+strconv.FormatBool(force), func(t *testing.T) {
 			t.Parallel()
 			fx := newLeaseFixture(t)
 			fx.swarm.acquired = acquiredAs(3)
-			if _, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, "feature"); err != nil {
+			if _, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, "feature"); err != nil {
 				t.Fatalf("acquire: %v", err)
 			}
 
-			view, err := LeaseRelease(context.Background(), fx.deps, "devpool-3", reset)
+			view, err := LeaseRelease(context.Background(), fx.deps, "devpool-3", force)
 			if err != nil {
 				t.Fatalf("LeaseRelease: %v", err)
 			}
 
-			if len(fx.swarm.releases) != 1 || fx.swarm.releases[0] != (fakeRelease{id: "c-abc", lease: testLease, reset: reset}) {
-				t.Errorf("releases = %+v, want one {c-abc, the lease, reset=%v}", fx.swarm.releases, reset)
+			if len(fx.swarm.releases) != 1 || fx.swarm.releases[0] != (fakeRelease{id: "c-abc", lease: testLease, reset: true}) {
+				t.Errorf("releases = %+v, want one {c-abc, the lease, reset=true}", fx.swarm.releases)
 			}
 			if _, err := os.Stat(filepath.Join(fx.stateDir, "leases", "devpool-3.json")); !errors.Is(err, os.ErrNotExist) {
 				t.Errorf("record still there after release: %v", err)
@@ -310,7 +312,7 @@ func TestLeaseAcquire_RecordWriteFails_ReleasesContainer(t *testing.T) {
 	}
 	fx.deps.StateDir = blocker
 
-	_, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, "")
+	_, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, "")
 	if err == nil {
 		t.Fatal("want an error when the record cannot be written")
 	}
@@ -359,7 +361,7 @@ func TestLeaseRelease_RefusedOrStale_RecordFate(t *testing.T) {
 			t.Parallel()
 			fx := newLeaseFixture(t)
 			fx.swarm.acquired = acquiredAs(3)
-			if _, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, ""); err != nil {
+			if _, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, ""); err != nil {
 				t.Fatal(err)
 			}
 			fx.swarm.releaseErr = tt.releaseErr
@@ -396,7 +398,7 @@ func TestLeaseList_NoPool_CoversEveryPoolAndRecord(t *testing.T) {
 	t.Parallel()
 	fx := newLeaseFixture(t)
 	fx.swarm.acquired = acquiredAs(3)
-	if _, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, "b"); err != nil {
+	if _, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, "b"); err != nil {
 		t.Fatal(err)
 	}
 	fx.swarm.containers = []platform.SwarmContainer{reservedContainer("c-abc", 3)}

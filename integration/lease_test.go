@@ -122,7 +122,7 @@ func TestLease_Integration_AcquireStatusRelease(t *testing.T) {
 		return out
 	}
 
-	got := call(map[string]any{"action": "acquire", "pool": "devpool", "branch": "feature-x"})
+	got := call(map[string]any{"action": "acquire", "pool": "devpool", "repo": "https://github.com/acme/app", "branch": "feature-x"})
 	if len(got.Leases) != 1 || got.Leases[0].Alias != "devpool-3" || got.Leases[0].State != "held" ||
 		got.Leases[0].ContainerHostname != "node-id-3.runtime.devpool.zerops" || got.Leases[0].Branch != "feature-x" {
 		t.Fatalf("acquire = %+v, want held devpool-3 on node-id-3.runtime.devpool.zerops for feature-x", got.Leases)

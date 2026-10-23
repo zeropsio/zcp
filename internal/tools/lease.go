@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -21,20 +22,33 @@ type LeaseInput struct {
 	Action string    `json:"action"`
 	Pool   string    `json:"pool,omitempty"`
 	Branch string    `json:"branch,omitempty"`
+	Repo   string    `json:"repo,omitempty"`
 	Lease  string    `json:"lease,omitempty"`
-	Reset  *FlexBool `json:"reset,omitempty"`
+	Force  *FlexBool `json:"force,omitempty"`
 }
 
-// leaseInputSchema is explicit because reset is a FlexBool (an agent that
+// leaseInputSchema is explicit because force is a FlexBool (an agent that
 // stringifies booleans must not be bounced by the schema).
 func leaseInputSchema() *jsonschema.Schema {
 	return objectSchema(map[string]*jsonschema.Schema{
 		"action": {Type: "string", Description: "acquire, status or release."},
 		"pool":   {Type: "string", Description: "Pool service hostname. acquire: required. status: optional (default every pool)."},
-		"branch": {Type: "string", Description: "acquire: the branch this container is for; recorded with the lease."},
+		"branch": {Type: "string", Description: "acquire: branch to check out (default main); a new one is cut from main."},
+		"repo":   {Type: "string", Description: "acquire: https clone URL; the first one on a pool becomes its default."},
 		"lease":  {Type: "string", Description: "release: the lease alias <pool>-<number> from acquire or status. It names the lease; it is not a secret."},
-		"reset":  flexBoolSchema("release: restore the clean snapshot first (default true; running processes end)."),
+		"force":  flexBoolSchema("release: discard unpushed commits and uncommitted files (default false: refused while any exist)."),
 	}, "action")
+}
+
+// leaseDeps wires the lease operations: with a mounter (container mode) a
+// lease gets its ssh alias and mount (ops.NewLeaseHost); without one the host
+// side does nothing.
+func leaseDeps(client platform.Client, projectID, stateDir string, swarm ops.SwarmFactory, mounter ops.Mounter, ssh ops.SSHDeployer) ops.LeaseDeps {
+	deps := ops.LeaseDeps{Client: client, ProjectID: projectID, StateDir: stateDir, Swarm: swarm, SSH: ssh}
+	if mounter != nil {
+		deps.Host = ops.NewLeaseHost(mounter)
+	}
+	return deps
 }
 
 // leaseToolResult is what zerops_lease returns. It never carries the lease
@@ -48,13 +62,16 @@ type leaseToolResult struct {
 // RegisterLease registers the zerops_lease tool: acquire, status and release
 // of a container of a Swarm pool, through the pool's orchestrator. swarm
 // builds the orchestrator client (tests inject a fake or a stub transport).
-func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir string, swarm ops.SwarmFactory) {
-	deps := ops.LeaseDeps{Client: client, ProjectID: projectID, StateDir: stateDir, Swarm: swarm}
+// mounter (container mode; nil elsewhere) gives a lease its ssh alias and
+// mount; ssh runs git inside the leased container (nil: no checkout and no
+// release guard).
+func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir string, swarm ops.SwarmFactory, mounter ops.Mounter, ssh ops.SSHDeployer) {
+	deps := leaseDeps(client, projectID, stateDir, swarm, mounter, ssh)
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "zerops_lease",
-		Description: "Lease a container of a Swarm pool (swarm@1) for one branch. acquire takes a clean running container and names it <pool>-<number>; " +
-			"status lists your leases and flags lost or unknown-holder ones; release returns it, restoring the clean snapshot unless reset=false " +
-			"(running processes end). The pool's orchestrator answers only inside the project.",
+		Description: "Lease a container of a Swarm pool (swarm@1) for one branch. acquire takes a clean running container, names it <pool>-<number> and checks the branch out in /var/www; " +
+			"status lists your leases; release resets and returns it, refusing while it holds unpushed commits or uncommitted files unless force=true. " +
+			"The orchestrator answers only inside the project.",
 		InputSchema: leaseInputSchema(),
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Lease a pool container",
@@ -71,9 +88,9 @@ func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir 
 				return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
 					"acquire needs pool", "Pass the pool service's hostname as pool")), nil, nil
 			}
-			view, err := ops.LeaseAcquire(ctx, deps, input.Pool, input.Branch)
+			view, err := ops.LeaseAcquire(ctx, deps, input.Pool, input.Repo, input.Branch)
 			if err != nil {
-				return convertError(err), nil, nil
+				return convertError(withLeaseSSHStderr(err)), nil, nil
 			}
 			return jsonResult(leaseToolResult{
 				Action: input.Action, Leases: []ops.LeaseView{view},
@@ -93,13 +110,13 @@ func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir 
 				return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
 					"release needs lease", "Pass the lease alias (<pool>-<number>) as lease; zerops_lease action=status lists them")), nil, nil
 			}
-			reset := true
-			if r := input.Reset.Ptr(); r != nil {
-				reset = *r
+			force := false
+			if f := input.Force.Ptr(); f != nil {
+				force = *f
 			}
-			view, err := ops.LeaseRelease(ctx, deps, input.Lease, reset)
+			view, err := ops.LeaseRelease(ctx, deps, input.Lease, force)
 			if err != nil {
-				return convertError(err), nil, nil
+				return convertError(withLeaseSSHStderr(err)), nil, nil
 			}
 			return jsonResult(leaseToolResult{Action: input.Action, Leases: []ops.LeaseView{view}}), nil, nil
 		default:
@@ -107,4 +124,18 @@ func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir 
 				fmt.Sprintf("Unknown action %q", input.Action), "action is acquire, status or release")), nil, nil
 		}
 	})
+}
+
+// withLeaseSSHStderr puts git's stderr from an ssh failure into the error's
+// message (withSSHStderr: SSHExecError.Error() drops it). Errors that carry no
+// ssh failure pass through.
+func withLeaseSSHStderr(err error) error {
+	var pe *platform.PlatformError
+	var sshErr *platform.SSHExecError
+	if !errors.As(err, &pe) || !errors.As(err, &sshErr) {
+		return err
+	}
+	out := *pe
+	out.Message = withSSHStderr(pe.Message, sshErr)
+	return &out
 }

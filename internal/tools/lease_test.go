@@ -2,6 +2,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
@@ -21,6 +23,7 @@ import (
 const (
 	leaseTestToken = "orch-api-token-0001"
 	leaseTestLease = "0123456789abcdef0123456789abcdef"
+	leaseTestRepo  = "https://github.com/acme/app"
 )
 
 // fakeOrchestrator is a pool orchestrator speaking the live wire shapes: one
@@ -81,6 +84,45 @@ func (o *fakeOrchestrator) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // the pool's factory, and a state dir.
 func leaseToolServer(t *testing.T, orch http.Handler) (srv *mcp.Server, stateDir string) {
 	t.Helper()
+	return leaseToolServerSSH(t, orch, nil)
+}
+
+// leaseStubSSH answers the commands zerops_lease runs in a leased container.
+type leaseStubSSH struct {
+	mu    sync.Mutex
+	fn    func(command string) ([]byte, error)
+	calls []string
+}
+
+func (s *leaseStubSSH) ExecSSH(_ context.Context, _, command string) ([]byte, error) {
+	s.mu.Lock()
+	s.calls = append(s.calls, command)
+	fn := s.fn
+	s.mu.Unlock()
+	if fn == nil {
+		return nil, nil
+	}
+	return fn(command)
+}
+
+func (s *leaseStubSSH) ExecSSHBackground(ctx context.Context, host, command string, _ time.Duration) ([]byte, error) {
+	return s.ExecSSH(ctx, host, command)
+}
+
+func (s *leaseStubSSH) sawCommand(sub string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, c := range s.calls {
+		if strings.Contains(c, sub) {
+			return true
+		}
+	}
+	return false
+}
+
+// leaseToolServerSSH is leaseToolServer with ssh into the leased containers.
+func leaseToolServerSSH(t *testing.T, orch http.Handler, ssh ops.SSHDeployer) (srv *mcp.Server, stateDir string) {
+	t.Helper()
 	hs := httptest.NewServer(orch)
 	t.Cleanup(hs.Close)
 	stateDir = t.TempDir()
@@ -92,7 +134,7 @@ func leaseToolServer(t *testing.T, orch http.Handler) (srv *mcp.Server, stateDir
 		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{Key: "API_TOKEN", Content: leaseTestToken, Sensitive: true}})
 	factory := func(_, token string) ops.SwarmAPI { return platform.NewSwarmClient(hs.URL, token, hs.Client()) }
 	srv = mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterLease(srv, mock, "proj-1", stateDir, factory)
+	RegisterLease(srv, mock, "proj-1", stateDir, factory, nil, ssh)
 	return srv, stateDir
 }
 
@@ -100,7 +142,7 @@ func TestLeaseTool_ResultNeverCarriesLease(t *testing.T) {
 	t.Parallel()
 	srv, stateDir := leaseToolServer(t, &fakeOrchestrator{})
 
-	acquire := callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "branch": "feature-x"})
+	acquire := callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo, "branch": "feature-x"})
 	status := callTool(t, srv, "zerops_lease", map[string]any{"action": "status"})
 	release := callTool(t, srv, "zerops_lease", map[string]any{"action": "release", "lease": "devpool-3"})
 
@@ -142,7 +184,7 @@ func TestLeaseTool_ResultNeverCarriesLease(t *testing.T) {
 func TestLeaseTool_RefusalNeverCarriesLease(t *testing.T) {
 	t.Parallel()
 	srv, _ := leaseToolServer(t, &fakeOrchestrator{echoLease: true})
-	callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool"})
+	callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo})
 
 	res := callTool(t, srv, "zerops_lease", map[string]any{"action": "release", "lease": "devpool-3"})
 	text := getTextContent(t, res)
@@ -175,10 +217,10 @@ func TestLeaseTool_OrchestratorUnreachable_Explains(t *testing.T) {
 		}).
 		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{Key: "API_TOKEN", Content: leaseTestToken, Sensitive: true}})
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterLease(srv, mock, "proj-1", stateDir, ops.NewSwarmFactory(&http.Client{Transport: dnsFailTransport{}}))
+	RegisterLease(srv, mock, "proj-1", stateDir, ops.NewSwarmFactory(&http.Client{Transport: dnsFailTransport{}}), nil, nil)
 
 	for _, args := range []map[string]any{
-		{"action": "acquire", "pool": "devpool"},
+		{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo},
 		{"action": "status", "pool": "devpool"},
 	} {
 		res := callTool(t, srv, "zerops_lease", args)
@@ -217,6 +259,8 @@ func TestLeaseTool_BadInput_TypedRefusal(t *testing.T) {
 		{"release without lease", map[string]any{"action": "release"}, platform.ErrInvalidParameter, "needs lease"},
 		{"release path-shaped alias", map[string]any{"action": "release", "lease": "../../etc/x"}, platform.ErrInvalidParameter, "not a lease alias"},
 		{"release unrecorded alias", map[string]any{"action": "release", "lease": "devpool-9"}, platform.ErrInvalidParameter, "No lease record"},
+		{"acquire without repo or default", map[string]any{"action": "acquire", "pool": "devpool"}, platform.ErrInvalidParameter, "needs repo"},
+		{"acquire with a credential in the repo", map[string]any{"action": "acquire", "pool": "devpool", "repo": "https://u:tok@github.com/a/b"}, platform.ErrInvalidParameter, "clone URL"},
 		{"acquire a non-pool", map[string]any{"action": "acquire", "pool": "nosuch"}, platform.ErrServiceNotFound, "nosuch"},
 	}
 	for _, tt := range tests {
@@ -234,44 +278,183 @@ func TestLeaseTool_BadInput_TypedRefusal(t *testing.T) {
 	}
 }
 
-func TestLeaseTool_ResetDefaultsTrueAndFlexBool(t *testing.T) {
+func TestLeaseTool_ReleaseForceParam(t *testing.T) {
 	t.Parallel()
+
+	t.Run("schema offers force and no reset", func(t *testing.T) {
+		t.Parallel()
+		srv, _ := leaseToolServer(t, &fakeOrchestrator{})
+		ctx := context.Background()
+		st, ct := mcp.NewInMemoryTransports()
+		ss, err := srv.Connect(ctx, st, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ss.Close()
+		session, err := mcp.NewClient(&mcp.Implementation{Name: "c", Version: "0.1"}, nil).Connect(ctx, ct, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer session.Close()
+		list, err := session.ListTools(ctx, &mcp.ListToolsParams{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, tool := range list.Tools {
+			if tool.Name != "zerops_lease" {
+				continue
+			}
+			raw, _ := json.Marshal(tool.InputSchema)
+			var schema struct {
+				Properties map[string]json.RawMessage `json:"properties"`
+			}
+			if err := json.Unmarshal(raw, &schema); err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []string{"action", "pool", "branch", "repo", "lease", "force"} {
+				if _, ok := schema.Properties[want]; !ok {
+					t.Errorf("schema lacks %q: %s", want, raw)
+				}
+			}
+			if _, ok := schema.Properties["reset"]; ok {
+				t.Errorf("schema still offers reset; every release resets: %s", raw)
+			}
+			return
+		}
+		t.Fatal("zerops_lease is not registered")
+	})
+
 	for _, tt := range []struct {
-		name      string
-		reset     any // absent when nil
-		wantQuery string
+		name        string
+		force       any // absent when nil
+		wantRefused bool
 	}{
-		{"omitted resets", nil, "reset=true"},
-		{"false does not", false, ""},
-		{"string false does not", "false", ""},
+		{"omitted is refused while work is unsaved", nil, true},
+		{"false is refused", false, true},
+		{"string false is refused", "false", true},
+		{"true releases", true, false},
+		{"string true releases", "true", false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			var mu sync.Mutex
 			var releaseQuery string
+			sawRelease := false
 			inner := &fakeOrchestrator{}
-			srv, _ := leaseToolServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ssh := &leaseStubSSH{fn: func(command string) ([]byte, error) {
+				switch {
+				case strings.Contains(command, "status --porcelain"):
+					return []byte("?? notes.txt\n"), nil
+				case strings.Contains(command, "rev-list --count"):
+					return []byte("1\n"), nil
+				}
+				return nil, nil
+			}}
+			srv, stateDir := leaseToolServerSSH(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if strings.HasSuffix(r.URL.Path, "/release") {
 					mu.Lock()
-					releaseQuery = r.URL.RawQuery
+					releaseQuery, sawRelease = r.URL.RawQuery, true
 					mu.Unlock()
 				}
 				inner.ServeHTTP(w, r)
-			}))
-			callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool"})
+			}), ssh)
+			if res := callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo}); res.IsError {
+				t.Fatalf("acquire failed: %s", getTextContent(t, res))
+			}
 			args := map[string]any{"action": "release", "lease": "devpool-3"}
-			if tt.reset != nil {
-				args["reset"] = tt.reset
+			if tt.force != nil {
+				args["force"] = tt.force
 			}
 			res := callTool(t, srv, "zerops_lease", args)
-			if res.IsError {
-				t.Fatalf("release failed: %s", getTextContent(t, res))
-			}
+			text := getTextContent(t, res)
 			mu.Lock()
 			defer mu.Unlock()
-			if releaseQuery != tt.wantQuery {
-				t.Errorf("release query = %q, want %q", releaseQuery, tt.wantQuery)
+			_, recErr := os.Stat(filepath.Join(stateDir, "leases", "devpool-3.json"))
+			if tt.wantRefused {
+				if !res.IsError || !strings.Contains(text, "notes.txt") || !strings.Contains(text, "1 commit") || !strings.Contains(text, "force") {
+					t.Errorf("result = (error %v) %s, want a refusal naming notes.txt, the commit and force", res.IsError, text)
+				}
+				if sawRelease || recErr != nil {
+					t.Errorf("a refused release reached the orchestrator (%v) or dropped the record (%v)", sawRelease, recErr)
+				}
+				return
+			}
+			if res.IsError {
+				t.Fatalf("release failed: %s", text)
+			}
+			if releaseQuery != "reset=true" {
+				t.Errorf("release query = %q, want reset=true (every release resets)", releaseQuery)
+			}
+			if ssh.sawCommand("status --porcelain") {
+				t.Error("force still read the container's git state")
+			}
+			if !errors.Is(recErr, os.ErrNotExist) {
+				t.Errorf("record survives a forced release: %v", recErr)
 			}
 		})
+	}
+}
+
+func TestLeaseTool_CheckoutFailure_SurfacesGitStderrAndContract(t *testing.T) {
+	t.Parallel()
+	ssh := &leaseStubSSH{fn: func(string) ([]byte, error) {
+		return nil, &platform.SSHExecError{
+			Hostname: "devpool-3", Output: "fatal: Authentication failed for 'https://github.com/acme/app/'",
+			Err: errors.New("exit status 128"),
+		}
+	}}
+	var mu sync.Mutex
+	var releaseQuery string
+	inner := &fakeOrchestrator{}
+	srv, stateDir := leaseToolServerSSH(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/release") {
+			mu.Lock()
+			releaseQuery = r.URL.RawQuery
+			mu.Unlock()
+		}
+		inner.ServeHTTP(w, r)
+	}), ssh)
+
+	res := callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo, "branch": "feature"})
+	text := getTextContent(t, res)
+	if !res.IsError {
+		t.Fatalf("want an error result, got: %s", text)
+	}
+	for _, want := range []string{platform.ErrGitTokenInvalid, "git stderr", "Authentication failed", "user-held secret"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("result %q does not mention %q", text, want)
+		}
+	}
+	for _, banned := range []string{leaseTestLease, leaseTestToken} {
+		if strings.Contains(text, banned) {
+			t.Errorf("result carries a secret: %s", text)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if releaseQuery != "reset=true" {
+		t.Errorf("release query = %q, want the failed checkout's container released with reset=true", releaseQuery)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(stateDir, "leases")); len(entries) != 0 {
+		t.Errorf("a failed checkout left %d entr(ies) in the lease directory", len(entries))
+	}
+}
+
+func TestLeaseDeps_Mounter_WiresHostSide(t *testing.T) {
+	t.Parallel()
+	mounter := nopMounterForRegistry{}
+	ssh := &leaseStubSSH{}
+
+	wired := leaseDeps(platform.NewMock(), "proj-1", "/state", nil, mounter, ssh)
+	if wired.Host.Mounter != mounter || wired.Host.Run == nil {
+		t.Errorf("Host = %+v, want the server's mounter and the sudo runner (container mode: aliases and mounts)", wired.Host)
+	}
+	if wired.SSH != ops.SSHDeployer(ssh) {
+		t.Errorf("SSH = %v, want the server's ssh deployer", wired.SSH)
+	}
+
+	bare := leaseDeps(platform.NewMock(), "proj-1", "/state", nil, nil, nil)
+	if bare.Host.Mounter != nil || bare.Host.Run != nil || bare.SSH != nil {
+		t.Errorf("without a mounter the host side must do nothing, got Host %+v SSH %v", bare.Host, bare.SSH)
 	}
 }

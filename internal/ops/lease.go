@@ -47,6 +47,9 @@ type LeaseDeps struct {
 	Swarm     SwarmFactory
 	// Host is the ssh alias and mount side of a lease; the zero value does neither.
 	Host LeaseHost
+	// SSH runs git inside a leased container by its alias; nil means no
+	// checkout and no release guard (zcp outside a container).
+	SSH SSHDeployer
 }
 
 // Lease states.
@@ -285,12 +288,24 @@ func swarmSuggestion(se *platform.SwarmError) string {
 	return ""
 }
 
-// LeaseAcquire leases a container of the pool. It always asks for a clean,
-// started container with no expiry (leaseTtlSeconds 0): an expiring lease
-// frees the container silently and the next clean acquire wipes it, so the
-// lease ends only by an explicit release.
-func LeaseAcquire(ctx context.Context, d LeaseDeps, pool, branch string) (LeaseView, error) {
+// LeaseAcquire leases a container of the pool and puts its /var/www on the
+// branch of repo (DP-6). It always asks for a clean, started container with no
+// expiry (leaseTtlSeconds 0): an expiring lease frees the container silently
+// and the next clean acquire wipes it, so the lease ends only by an explicit
+// release. An empty repo is the pool's default repository (the first acquire
+// with a repo records it); with neither, or with a repo or branch that is not
+// usable, the acquire refuses before it takes a container. A checkout that
+// fails hands the container straight back.
+func LeaseAcquire(ctx context.Context, d LeaseDeps, pool, repo, branch string) (LeaseView, error) {
 	rp, err := resolvePool(ctx, d, pool)
+	if err != nil {
+		return LeaseView{}, err
+	}
+	branch = cmp.Or(branch, leaseDefaultBranch)
+	if err := validateLeaseBranch(branch); err != nil {
+		return LeaseView{}, err
+	}
+	repoURL, becomesDefault, err := resolveLeaseRepo(d.StateDir, pool, repo)
 	if err != nil {
 		return LeaseView{}, err
 	}
@@ -319,6 +334,16 @@ func LeaseAcquire(ctx context.Context, d LeaseDeps, pool, branch string) (LeaseV
 		// finds the alias or mount missing and restores it.
 		v.State = LeaseStateUnmounted
 		v.Note = note
+	}
+	if d.SSH != nil {
+		if err := checkoutLease(ctx, d, rec, repoURL, branch); err != nil {
+			return LeaseView{}, abandonLease(ctx, d, rec, err)
+		}
+	}
+	if becomesDefault {
+		if err := storePoolDefaultRepo(d.StateDir, pool, repoURL); err != nil {
+			v.Note = joinNotes(v.Note, fmt.Sprintf("the repository could not be recorded as the pool's default: %v", err))
+		}
 	}
 	return v, nil
 }
@@ -425,21 +450,44 @@ func readLeaseRecords(stateDir string) ([]leaseRecord, error) {
 }
 
 // LeaseRelease releases the lease addressed by alias and removes its record.
-// With reset the orchestrator restores the container to its primary
-// snapshot first (processes end); if that fails the reservation is kept and
-// so is the record. A lease the orchestrator no longer knows (it ended, or
-// the container is gone) has nothing left to release: the record is dropped
-// and the view says so.
-func LeaseRelease(ctx context.Context, d LeaseDeps, alias string, reset bool) (LeaseView, error) {
+// Unless force is set it first reads the container over ssh and refuses while
+// it holds commits on no remote branch or uncommitted/untracked files (DP-4);
+// the refusal leaves the mount, the record and the lease as they were. Every
+// release resets the container (processes end). A container ssh cannot reach
+// is released as lost, unchecked. If the orchestrator fails the reservation
+// is kept and so is the record. A lease the orchestrator no longer knows (it
+// ended, or the container is gone) has nothing left to release: the record is
+// dropped and the view says so.
+func LeaseRelease(ctx context.Context, d LeaseDeps, alias string, force bool) (LeaseView, error) {
 	rec, err := loadLeaseRecord(d.StateDir, alias)
 	if err != nil {
 		return LeaseView{}, err
 	}
+	var guard leaseGuardResult
+	if !force {
+		if guard, err = guardLeaseRelease(ctx, d, rec); err != nil {
+			return LeaseView{}, err
+		}
+	}
+	view, err := releaseAndDetach(ctx, d, rec, alias)
+	if err != nil {
+		return LeaseView{}, err
+	}
+	if guard.unreachable && view.State == LeaseStateReleased {
+		view.State = LeaseStateLost
+	}
+	view.Note = joinNotes(guard.note, view.Note)
+	return view, nil
+}
+
+// releaseAndDetach unmounts the lease, releases the container with a reset and
+// drops the record and its alias stanza.
+func releaseAndDetach(ctx context.Context, d LeaseDeps, rec leaseRecord, alias string) (LeaseView, error) {
 	// The mount goes first: a reset or a release pulls the container out from
 	// under it. A mount that will not unmount is a note, never a reason to
 	// keep the container reserved.
 	unmountNote := d.Host.detachMount(ctx, d, rec)
-	view, err := releaseLease(ctx, d, rec, alias, reset)
+	view, err := releaseLease(ctx, d, rec, alias, true)
 	if err != nil {
 		return LeaseView{}, err
 	}

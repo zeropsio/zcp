@@ -166,9 +166,12 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		"zerops_subdomain":          393,
 		"zerops_mount":              306,
 		// New tool: acquire / status / release of a dev-pool container
-		// (docs/spec-workflows.md §8 DP-5). Five short fields; reset is a
+		// (docs/spec-workflows.md §8 DP-5). Six short fields; force is a
 		// FlexBool so a stringified boolean is not bounced by the schema.
-		"zerops_lease": 708,
+		// Raised 708 -> 842: repo (the clone URL acquire checks out, DP-6) and
+		// force (release's guard override, DP-4) replace B-S1's reset — two
+		// real inputs of the same call, not description bloat.
+		"zerops_lease": 842,
 		// Raised 266 -> 580: action="wait" added processId/processIds/service
 		// routing fields (block until a process or a whole service settles) — a
 		// deliberate new capability, not description bloat.
