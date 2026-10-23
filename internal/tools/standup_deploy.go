@@ -492,7 +492,7 @@ func (d standupDeps) deployHalves(ctx context.Context, halves []standupHalf, pro
 			progress.st().step(host, mate.StepVerify, mate.StepDone, "", "")
 			continue
 		}
-		if blocked := d.batch.gate([]ops.DeployBatchTarget{h.target}); blocked != nil {
+		if blocked := d.batch.gate(ctx, []ops.DeployBatchTarget{h.target}); blocked != nil {
 			h.record(&standupDeploy{Status: standupDeployFailed, Reason: "refused before the build: " + refusalText(blocked)})
 			progress.st().step(host, mate.StepBuild, mate.StepFailed, "", "refused before the build: "+refusalText(blocked))
 			continue

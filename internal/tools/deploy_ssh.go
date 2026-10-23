@@ -414,7 +414,7 @@ func runDeploySSHZCLIPush(
 
 	// A lease is a pool container, not a dev service: the supervisor in it is
 	// not migrated by this deploy (docs/spec-workflows.md §8 DP).
-	lease, fromLease := leaseOf(stateDir, input.SourceService)
+	_, fromLease := leaseOf(stateDir, input.SourceService)
 	var move devSetupMove
 	var superviseErr error
 	if !fromLease {
@@ -454,20 +454,7 @@ func runDeploySSHZCLIPush(
 	toPool := result.ReachesNewContainersOnly
 	onProgress := buildProgressCallback(ctx, req)
 	ctx = deployFollowUpContext(ctx)
-	pollSSH := sshDeployer
-	if toPool {
-		// No container of the pool is "the" pool: nothing is probed by its
-		// service hostname (PS-3).
-		pollSSH = nil
-	}
-	pollDeployBuild(ctx, client, projectID, result, onProgress, logFetcher, pollSSH, stateDir, configFile)
-	if toPool {
-		var ownLease string
-		if fromLease && lease.Pool == input.TargetService {
-			ownLease = lease.Alias
-		}
-		sayPoolImageOnly(result, input.TargetService, ownLease)
-	}
+	pollTriggeredDeploy(ctx, client, projectID, result, onProgress, logFetcher, sshDeployer, stateDir, configFile)
 	if told := move.told(result); told != "" {
 		result.Message = told + " " + result.Message
 	}
@@ -530,6 +517,34 @@ func runDeploySSHZCLIPush(
 		WorkSessionState: sessionAnnotations(ctx, httpClient, stateDir),
 		Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rtInfo),
 	}), nil, nil
+}
+
+// pollTriggeredDeploy is pollDeployBuild for a triggered SSH deploy, single or
+// batched. A deploy to a pool, whatever its source, reaches only the
+// containers the pool creates later (docs/spec-workflows.md §8 DP-7): no
+// container of the pool is "the" pool, so nothing is probed by its service
+// hostname (PS-3), and the finished result says what the build changed
+// (sayPoolImageOnly), naming the source when it is a lease of that pool.
+func pollTriggeredDeploy(
+	ctx context.Context,
+	client platform.Client,
+	projectID string,
+	result *ops.DeployResult,
+	onProgress ops.ProgressCallback,
+	logFetcher platform.LogFetcher,
+	sshDeployer ops.SSHDeployer,
+	stateDir, configFile string,
+) {
+	if !result.ReachesNewContainersOnly {
+		pollDeployBuild(ctx, client, projectID, result, onProgress, logFetcher, sshDeployer, stateDir, configFile)
+		return
+	}
+	pollDeployBuild(ctx, client, projectID, result, onProgress, logFetcher, nil, stateDir, configFile)
+	var ownLease string
+	if lease, fromLease := leaseOf(stateDir, result.SourceService); fromLease && lease.Pool == result.TargetService {
+		ownLease = lease.Alias
+	}
+	sayPoolImageOnly(result, result.TargetService, ownLease)
 }
 
 // sayPoolImageOnly rewrites what a finished deploy to a pool tells the agent,

@@ -74,7 +74,7 @@ func RegisterDeployBatch(
 			client: client, httpClient: httpClient, projectID: projectID, sshDeployer: sshDeployer,
 			authInfo: authInfo, logFetcher: logFetcher, rtInfo: rtInfo, stateDir: stateDir, recipeProbe: recipeProbe, devsup: devsup,
 		}
-		if blocked := d.gate(input.Targets); blocked != nil {
+		if blocked := d.gate(ctx, input.Targets); blocked != nil {
 			return blocked, nil, nil
 		}
 
@@ -119,16 +119,19 @@ type batchDeployer struct {
 
 // gate applies the adoption gate and the push-delivery redirect to every
 // target; the first refusal is the answer for the whole batch.
-func (d batchDeployer) gate(targets []ops.DeployBatchTarget) *mcp.CallToolResult {
+func (d batchDeployer) gate(ctx context.Context, targets []ops.DeployBatchTarget) *mcp.CallToolResult {
 	// Gate: each target (and its source, when set) must be adopted by
 	// ZCP. Recipe-authoring sessions whose Plan owns the host bypass
-	// adoption — see requireAdoption for the exemption rationale.
+	// adoption — see requireAdoption for the exemption rationale. A pool
+	// target is never adopted, so it is not asked to be (PS-5, DP-7); a
+	// lease source is no service to adopt (DP-1).
 	// Batch deploy is container-only (registered when sshDeployer != nil),
 	// so requireAdoption is called with InContainer=true to surface the
 	// bootstrap recovery hint.
 	containerRT := runtime.Info{InContainer: true}
 	for _, t := range targets {
-		if blocked := requireAdoption(d.stateDir, containerRT, d.recipeProbe, t.TargetService, t.SourceService); blocked != nil {
+		gated := append(withoutPoolHosts(ctx, d.client, d.projectID, t.TargetService), t.SourceService)
+		if blocked := requireAdoption(d.stateDir, containerRT, d.recipeProbe, gated...); blocked != nil {
 			return blocked
 		}
 	}
@@ -202,7 +205,10 @@ func (d batchDeployer) preflight(ctx context.Context, t ops.DeployBatchTarget) (
 
 // deploy runs the targets as one batch and applies each entry's post-deploy
 // steps: its deploy attempt, its supervisor's dev server, its public
-// access.
+// access. An entry whose target is a pool takes none of the last two and says
+// it reaches only containers the pool creates later (pollTriggeredDeploy,
+// docs/spec-workflows.md §8 DP-7); one whose source is a lease alias pushes
+// from that container (ops.DeployBatchSSH, DP-1).
 func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallback, targets []ops.DeployBatchTarget) *ops.DeployBatchResult {
 	ctx = deployFollowUpContext(ctx)
 	configFiles := make(map[string]string, len(targets))
@@ -210,7 +216,7 @@ func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallba
 		configFiles[t.TargetService] = t.ConfigFile
 	}
 	pollFn := func(c context.Context, r *ops.DeployResult, cb ops.ProgressCallback, lf platform.LogFetcher, s ops.SSHDeployer) {
-		pollDeployBuild(c, d.client, d.projectID, r, cb, lf, s, d.stateDir, configFiles[r.TargetService])
+		pollTriggeredDeploy(c, d.client, d.projectID, r, cb, lf, s, d.stateDir, configFiles[r.TargetService])
 	}
 
 	authVal := auth.Info{}
@@ -218,10 +224,15 @@ func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallba
 		authVal = *d.authInfo
 	}
 	// Each self-deployed dev service goes under the supervisor as a single
-	// zerops_deploy puts it there (superviseDevSetup).
+	// zerops_deploy puts it there (superviseDevSetup). A lease is a pool
+	// container, not a dev service: the supervisor in it is not migrated by
+	// this deploy (docs/spec-workflows.md §8 DP).
 	moves := map[string]devSetupMove{}
 	warnings := map[string]string{}
 	for _, t := range targets {
+		if _, fromLease := leaseOf(d.stateDir, t.SourceService); fromLease {
+			continue
+		}
 		move, err := superviseDevSetup(ctx, d.client, d.projectID, d.sshDeployer, d.stateDir, d.devsup, t.SourceService, t.TargetService, t.Setup, t.WorkingDir)
 		moves[t.TargetService] = move
 		if err != nil {
@@ -230,7 +241,7 @@ func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallba
 	}
 
 	result := ops.DeployBatchSSH(
-		ctx, d.client, d.projectID, d.sshDeployer, authVal,
+		ctx, d.client, d.projectID, d.sshDeployer, authVal, d.stateDir,
 		targets, d.logFetcher, onProgress, pollFn,
 	)
 
@@ -255,6 +266,10 @@ func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallba
 			} else {
 				attempt.FailureClass = topology.FailureClassNetwork
 			}
+		case entry.Result != nil && entry.Result.Status == statusDeployed && entry.Result.ReachesNewContainersOnly:
+			// The pool is no app runtime (PS-1/PS-2): no public access is
+			// decided on it and no dev server asked for (DP-7).
+			attempt.SucceededAt = entry.EndedAt
 		case entry.Result != nil && entry.Result.Status == statusDeployed:
 			attempt.SucceededAt = entry.EndedAt
 			// Whether something listens is the dev-server supervisor's
