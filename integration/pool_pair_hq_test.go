@@ -6,6 +6,7 @@ package integration_test
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -44,12 +45,7 @@ func (s *poolPairHostSSH) ExecSSHBackground(_ context.Context, hostname, _ strin
 func (s *poolPairHostSSH) reached(host string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, h := range s.hosts {
-		if h == host {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(s.hosts, host)
 }
 
 // poolPairSession serves zerops_workflow over a project whose wired

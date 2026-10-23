@@ -137,7 +137,7 @@ func poolRecordPath(stateDir string) string {
 // writes a pool's GIT_TOKEN.
 func TestHQPass_PoolDevHalf_RenewsOnPoolNoSSH(t *testing.T) {
 	// Non-parallel: newHQLab sets HOME and package tuning knobs.
-	const renewed = "the-renewed-credential"
+	const renewed = "the-credential-after-the-move"
 	tests := []struct {
 		name      string
 		mate      bool
