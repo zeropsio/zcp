@@ -153,3 +153,24 @@ func TestMultiPartRouteNote_AStageIsNeverNamedAsARepo(t *testing.T) {
 		t.Errorf("read %v, want documensodev only", repos.read)
 	}
 }
+
+// TestMultiPartRouteNote_PoolAndBoxAreNeverRead: a read by service hostname
+// reaches a random pool container, and a Box holds no repo of the app — neither
+// is read for a parts signal nor named (PS-1, PS-3).
+func TestMultiPartRouteNote_PoolAndBoxAreNeverRead(t *testing.T) {
+	t.Parallel()
+	stack := func(name, typ string) platform.ServiceStack {
+		return platform.ServiceStack{Name: name, ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: typ}}
+	}
+	existing := []platform.ServiceStack{stack("appdev", "nodejs@22"), stack("swarmpool", "swarm@1"), stack("box", "ubuntu/zbox@1")}
+	multi := "@@yaml\nzerops:\n  - setup: dev\n  - setup: web\n  - setup: api\n@@declaration\n@@markers\n@@packages\n"
+	repos := &partsRepos{out: map[string]string{"appdev": multi, "swarmpool": multi, "box": multi}}
+
+	got := multiPartRouteNote(context.Background(), existing, repos, runtime.Info{InContainer: true}, nil)
+	if !strings.Contains(got, "`appdev`") || strings.Contains(got, "swarmpool") || strings.Contains(got, "`box`") {
+		t.Errorf("note = %q, want it to name appdev alone", got)
+	}
+	if len(repos.read) != 1 || repos.read[0] != "appdev" {
+		t.Errorf("read %v, want appdev only", repos.read)
+	}
+}

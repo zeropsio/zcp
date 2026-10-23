@@ -997,3 +997,51 @@ func TestComputeEnvelope_UntrackedRuntimeDeployedFromPlatform(t *testing.T) {
 		}
 	}
 }
+
+// A Swarm pool and a Zerops Box come through the envelope as their own
+// classes and never as adoptable runtimes (spec-workflows.md §8 PS-1, PS-2).
+func TestComputeEnvelope_PoolClass(t *testing.T) {
+	t.Parallel()
+
+	pool := platform.ServiceStack{
+		ID: "pool-id", Name: "swarmpool", Status: "ACTIVE",
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{
+			ServiceStackTypeVersionName:  "swarm@1",
+			ServiceStackTypeCategoryName: "USER",
+		},
+	}
+	box := platform.ServiceStack{
+		ID: "box-id", Name: "sandbox", Status: "ACTIVE",
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{
+			ServiceStackTypeVersionName:  "ubuntu/zbox@1",
+			ServiceStackTypeCategoryName: "STANDARD",
+		},
+	}
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{pool, box}).
+		WithProject(&platform.Project{ID: "p1", Name: "demo"})
+
+	env, err := ComputeEnvelope(context.Background(), mock, t.TempDir(), "p1",
+		runtime.Info{InContainer: true, ServiceName: "zcpdev"}, fixedTime)
+	if err != nil {
+		t.Fatalf("ComputeEnvelope: %v", err)
+	}
+
+	want := map[string]topology.RuntimeClass{"swarmpool": "pool", "sandbox": "sandbox"}
+	if len(env.Services) != len(want) {
+		t.Fatalf("services = %+v, want exactly %d", env.Services, len(want))
+	}
+	for _, svc := range env.Services {
+		if svc.RuntimeClass != want[svc.Hostname] {
+			t.Errorf("%s RuntimeClass = %q, want %q", svc.Hostname, svc.RuntimeClass, want[svc.Hostname])
+		}
+		if svc.Bootstrapped || svc.Mode != "" {
+			t.Errorf("%s Bootstrapped=%t Mode=%q, want an unbootstrapped, modeless service", svc.Hostname, svc.Bootstrapped, svc.Mode)
+		}
+	}
+	// Neither is an adoptable runtime: a project holding only a pool and a
+	// Box is an empty project for the bootstrap/adopt routing.
+	if env.IdleScenario != IdleEmpty {
+		t.Errorf("IdleScenario = %q, want %q (pool and Box are not adoptable runtimes)", env.IdleScenario, IdleEmpty)
+	}
+}

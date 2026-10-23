@@ -32,7 +32,7 @@ type HTTPDoer interface {
 // VerifyResult is the verification result for a single service.
 type VerifyResult struct {
 	Hostname string `json:"hostname"`
-	Type     string `json:"type"` // "runtime" or "managed"
+	Type     string `json:"type"` // "runtime", "managed", "pool" or "sandbox"
 	// TypeVersion is the live stack type-version (e.g. "ubuntu/bun@1.3.9",
 	// "php-nginx@8.4"). Carried so callers can classify the RuntimeClass
 	// without a second API read — the verify tool uses it to annotate the
@@ -254,14 +254,26 @@ func verifyService(
 	runtimeMeta RuntimeMeta,
 	publicAccess PublicAccessInput,
 ) (*VerifyResult, error) {
-	managed := isManagedCategory(svc.ServiceStackTypeInfo.ServiceStackTypeCategoryName)
+	typeVersion := svc.ServiceStackTypeInfo.ServiceStackTypeVersionName
+	// A pool or Box is classified by type string, not category: a pool
+	// reports USER like a runtime, Box STANDARD like a database (PS-1).
+	// Both are verified by service_running alone — an HTTP or log probe
+	// addressed to a pool's hostname reaches one random container of up to
+	// ten, so it would answer for none of them (PS-3).
+	leased := topology.IsPoolOrSandboxType(typeVersion)
+	managed := leased || isManagedCategory(svc.ServiceStackTypeInfo.ServiceStackTypeCategoryName)
 
 	result := &VerifyResult{
 		Hostname:    svc.Name,
 		Type:        "runtime",
 		TypeVersion: svc.ServiceStackTypeInfo.ServiceStackTypeVersionName,
 	}
-	if managed {
+	switch {
+	case topology.IsPoolType(typeVersion):
+		result.Type = runtimeClassPool
+	case topology.IsSandboxType(typeVersion):
+		result.Type = runtimeClassSandbox
+	case managed:
 		result.Type = runtimeClassManaged
 	}
 
@@ -269,7 +281,7 @@ func verifyService(
 	runningCheck := checkServiceRunning(ctx, client, fetcher, projectID, svc)
 	result.Checks = append(result.Checks, runningCheck)
 
-	// Managed services: only check service_running.
+	// Managed services, pools and Boxes: only check service_running.
 	if managed {
 		result.Status = aggregateStatus(result.Checks)
 		return result, nil

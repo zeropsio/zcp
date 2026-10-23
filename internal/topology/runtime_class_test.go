@@ -150,3 +150,50 @@ func TestIsDeferredStart(t *testing.T) {
 		})
 	}
 }
+
+func TestRuntimeClassFor_PoolAndSandbox(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		typeVersion string
+		want        RuntimeClass
+	}{
+		// Literals are the spec's PS-1 type strings; the expected class is
+		// the spec's `pool` / `sandbox`, not `dynamic`.
+		{"swarm@1", "pool"},
+		{"swarm-vm@1", "pool"},
+		{"alpine/swarm@1", "pool"},
+		{"SWARM@1", "pool"},
+		{"ubuntu/zbox@1", "sandbox"},
+		{"zbox@1", "sandbox"},
+		{"UBUNTU/ZBOX@1", "sandbox"},
+		// Neighbours stay what they were.
+		{"nodejs@22", RuntimeDynamic},
+		{"postgresql@16", RuntimeManaged},
+	}
+	for _, tc := range cases {
+		t.Run(tc.typeVersion, func(t *testing.T) {
+			t.Parallel()
+			if got := RuntimeClassFor(tc.typeVersion); got != tc.want {
+				t.Errorf("RuntimeClassFor(%q) = %q, want %q", tc.typeVersion, got, tc.want)
+			}
+		})
+	}
+}
+
+// A pool or Box is no dev-server runtime: whatever mode a service carries,
+// the class its type string maps to never defers its start (PS-1).
+func TestIsDeferredStart_Pool_False(t *testing.T) {
+	t.Parallel()
+	types := []string{"swarm@1", "swarm-vm@1", "ubuntu/zbox@1"}
+	modes := []Mode{ModeDev, ModeStandard, ModeStage, ModeSimple, ModeLocalStage, ModeLocalOnly}
+	for _, typ := range types {
+		for _, mode := range modes {
+			t.Run(typ+"/"+string(mode), func(t *testing.T) {
+				t.Parallel()
+				if IsDeferredStart(mode, RuntimeClassFor(typ)) {
+					t.Errorf("IsDeferredStart(%q, RuntimeClassFor(%q)) = true, want false", mode, typ)
+				}
+			})
+		}
+	}
+}

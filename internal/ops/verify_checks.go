@@ -62,13 +62,16 @@ const (
 )
 
 // RuntimeClass canonical display names — the single owner of these strings
-// (VerifyResult.Type reuses runtimeClassManaged for the managed-service case).
+// (VerifyResult.Type reuses runtimeClassManaged, runtimeClassPool and
+// runtimeClassSandbox for the service kinds that get service_running alone).
 const (
 	runtimeClassDynamic  = "dynamic"
 	runtimeClassImplicit = "implicit"
 	runtimeClassStatic   = "static"
 	runtimeClassWorker   = "worker"
 	runtimeClassManaged  = "managed"
+	runtimeClassPool     = "pool"
+	runtimeClassSandbox  = "sandbox"
 	runtimeClassUnknown  = "unknown"
 )
 
