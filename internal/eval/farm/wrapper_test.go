@@ -131,7 +131,7 @@ fi
 
 mkdir -p "results/$ZCP_FARM_SCENARIO" capture
 cat >"results/$ZCP_FARM_SCENARIO/meta.json" <<EOF
-{"scenarioId":"$ZCP_FARM_SCENARIO","secret1":"$CLAUDE_CODE_OAUTH_TOKEN","secret2":"$ZCP_FARM_S3_SECRET","secret3":"${ZCP_API_KEY:-}","secret4":"${ZCP_E2E_LAUNCH_KEY:-}","secret5":"${ZCP_E2E_GITHUB_PAT:-}","secret6":"${ZCP_E2E_GITHUB_PAT_ADMIN:-}"}
+{"scenarioId":"$ZCP_FARM_SCENARIO","secret1":"$CLAUDE_CODE_OAUTH_TOKEN","secret2":"$ZCP_FARM_S3_SECRET","secret3":"${ZCP_API_KEY:-}","secret4":"${ZCP_E2E_LAUNCH_KEY:-}","secret5":"${ZCP_E2E_GITHUB_PAT:-}","secret6":"${ZCP_E2E_GITHUB_PAT_ADMIN:-}","secret7":"${ZCP_E2E_EXISTING_PROD_TOKEN:-}"}
 EOF
 cat >"results/$ZCP_FARM_SCENARIO/verification.json" <<'EOF'
 {"formatVersion":"zcp-eval-verification-2","mode":"required","result":"passed"}
@@ -744,13 +744,14 @@ func TestWrapper_Redaction_NoSecretValueInBundle(t *testing.T) {
 
 	h := newWrapperHarness(t)
 	overrides := map[string]string{
-		"ZCP_FARM_S3_KEY":          "AKIDEXAMPLE-redact-me",
-		"ZCP_FARM_S3_SECRET":       "s3-secret-redact-me",
-		"CLAUDE_CODE_OAUTH_TOKEN":  "oauth-tok-redact-me",
-		"ZCP_API_KEY":              "zcp-api-key-redact-me",
-		"ZCP_E2E_LAUNCH_KEY":       "launch-key-redact-me",
-		"ZCP_E2E_GITHUB_PAT":       "ghp-redact-me",
-		"ZCP_E2E_GITHUB_PAT_ADMIN": "ghp-admin-redact-me",
+		"ZCP_FARM_S3_KEY":             "AKIDEXAMPLE-redact-me",
+		"ZCP_FARM_S3_SECRET":          "s3-secret-redact-me",
+		"CLAUDE_CODE_OAUTH_TOKEN":     "oauth-tok-redact-me",
+		"ZCP_API_KEY":                 "zcp-api-key-redact-me",
+		"ZCP_E2E_LAUNCH_KEY":          "launch-key-redact-me",
+		"ZCP_E2E_GITHUB_PAT":          "ghp-redact-me",
+		"ZCP_E2E_GITHUB_PAT_ADMIN":    "ghp-admin-redact-me",
+		"ZCP_E2E_EXISTING_PROD_TOKEN": "existing-prod-redact-me",
 	}
 	cmd := h.start(t, overrides)
 	if err := cmd.Wait(); err != nil {
@@ -760,7 +761,7 @@ func TestWrapper_Redaction_NoSecretValueInBundle(t *testing.T) {
 	secrets := []string{
 		overrides["ZCP_FARM_S3_KEY"], overrides["ZCP_FARM_S3_SECRET"], overrides["CLAUDE_CODE_OAUTH_TOKEN"],
 		overrides["ZCP_API_KEY"], overrides["ZCP_E2E_LAUNCH_KEY"], overrides["ZCP_E2E_GITHUB_PAT"],
-		overrides["ZCP_E2E_GITHUB_PAT_ADMIN"],
+		overrides["ZCP_E2E_GITHUB_PAT_ADMIN"], overrides["ZCP_E2E_EXISTING_PROD_TOKEN"],
 	}
 
 	// Pristine copy (outside results/capture, so the wrapper never touches

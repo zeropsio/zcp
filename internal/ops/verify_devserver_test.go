@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/devsup"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
 )
@@ -223,5 +224,54 @@ func TestProbeTimedOut(t *testing.T) {
 				t.Errorf("probeTimedOut(%v) = %v, want %v", tt.err, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestVerify_ALoopbackOnlyDevServerIsHealthyWhereItListens: a declared dev
+// server that listens only on loopback by design (the web's proxy reaches
+// it) is judged where it listens — never dialled by hostname, never a
+// failure — while a server beside it on a public address is probed as ever.
+func TestVerify_ALoopbackOnlyDevServerIsHealthyWhereItListens(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{{
+			ID: "svc-1", Name: "appdev", Status: "RUNNING",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"},
+			Ports:                []platform.Port{{Port: 3000, HTTPSupport: true}},
+		}}).
+		WithProject(&platform.Project{ID: "proj-1", SubdomainHost: "1df2.prg1.zerops.app"})
+	doer := hostAnswers{"appdev:13773": 0}
+	input := defaultPublicAccessInput()
+	input.DevPorts = []DevPort{{Name: "server", Port: 13773, Status: devsup.StatusRunning, LoopbackOnly: true}}
+	result, err := VerifyWithMeta(context.Background(), mock, platform.NewMockLogFetcher(), doer, "proj-1", "appdev", RuntimeMeta{}, input)
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	c := findCheck(t, result, checkNameHTTPInternal, CheckInfo)
+	if !strings.Contains(c.Detail, "loopback only") || c.Server != "server" {
+		t.Errorf("check = %+v, want an info naming the loopback-only server", c)
+	}
+	for _, ch := range result.Checks {
+		if ch.Name == checkNameHTTPInternal && ch.Status == CheckFail {
+			t.Errorf("failed check %+v: a loopback-only server is healthy", ch)
+		}
+	}
+}
+
+// TestReadDevServers_ABindOnlyOnLoopbackIsRead: the listening address is read
+// from the container's `ss -ltn`; a port with any non-loopback socket is public.
+func TestReadDevServers_ABindOnlyOnLoopbackIsRead(t *testing.T) {
+	t.Parallel()
+	out := "State Recv-Q Send-Q Local Address:Port Peer Address:Port\n" +
+		"LISTEN 0 511 127.0.0.1:13773 0.0.0.0:*\n" +
+		"LISTEN 0 511 [::1]:4000 [::]:*\n" +
+		"LISTEN 0 511 127.0.0.1:3000 0.0.0.0:*\n" +
+		"LISTEN 0 511 *:3000 *:*\n" +
+		"LISTEN 0 511 0.0.0.0:8080 0.0.0.0:*\n"
+	got := loopbackOnlyPorts(out)
+	for port, want := range map[int]bool{13773: true, 4000: true, 3000: false, 8080: false} {
+		if got[port] != want {
+			t.Errorf("port %d loopback-only = %v, want %v", port, got[port], want)
+		}
 	}
 }

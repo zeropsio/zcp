@@ -2,7 +2,6 @@ package tools
 
 import (
 	"fmt"
-	"slices"
 
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -41,19 +40,11 @@ type GitPushRejectionPayload struct {
 // is a user decision, never zcp's to make.
 const gitPushRejectionMessage = "zcp will not choose for you and will never force-push or merge on your behalf. Read `next` for the three named options (rebase / merge / replace-remote) and their exact commands; surface the choice to the user (replace-remote discards the remote's ahead commits and needs their explicit say-so), then run the one they pick."
 
-// hqPushRejectionMessage is that suggestion for a remote on this Mate's HQ,
-// where replace-remote is never offered.
-const hqPushRejectionMessage = "zcp will not choose for you and will never merge on your behalf. A change's branch in HQ moves only forward and its main only by HQ's merge, so the remote's commits are taken in, never replaced: read `next` for the two named options (rebase / merge) and their exact commands, then run the one the user picks."
-
-// gitPushReplaceRemote names the one option that overwrites the remote.
-const gitPushReplaceRemote = "replace-remote"
-
-// buildGitPushRejectionOptions builds the named options a
-// GIT_PUSH_NON_FAST_FORWARD refusal offers, none of which zcp executes: three,
-// or — on this Mate's HQ, where a branch moves only forward and main only by
-// HQ's merge — the two that take the remote in, never replace-remote.
-func buildGitPushRejectionOptions(ref string, remoteAhead int, hqRemote bool) []GitPushRejectionOption {
-	options := []GitPushRejectionOption{
+// buildGitPushRejectionOptions builds the three named options a
+// GIT_PUSH_NON_FAST_FORWARD refusal offers, none of which zcp executes. A pair
+// wired to this Mate's HQ never gets here: its git-push is refused first.
+func buildGitPushRejectionOptions(ref string, remoteAhead int) []GitPushRejectionOption {
+	return []GitPushRejectionOption{
 		{
 			Name:        "rebase",
 			Description: "Replay your local commits on top of the remote's history, then re-push. Rewrites your local commit SHAs.",
@@ -65,7 +56,7 @@ func buildGitPushRejectionOptions(ref string, remoteAhead int, hqRemote bool) []
 			Command:     fmt.Sprintf("git pull --no-rebase origin %s", ref),
 		},
 		{
-			Name: gitPushReplaceRemote,
+			Name: "replace-remote",
 			Description: fmt.Sprintf(
 				"Discard the remote's %d commit(s) and replace the ref with your local HEAD. Destructive to the remote's history — requires the user's explicit say-so before running.",
 				remoteAhead,
@@ -73,12 +64,6 @@ func buildGitPushRejectionOptions(ref string, remoteAhead int, hqRemote bool) []
 			Command: fmt.Sprintf("git push --force-with-lease origin %s", ref),
 		},
 	}
-	if hqRemote {
-		options = slices.DeleteFunc(options, func(o GitPushRejectionOption) bool {
-			return o.Name == gitPushReplaceRemote
-		})
-	}
-	return options
 }
 
 // classifyGitPushNonFastForward builds the GIT_PUSH_NON_FAST_FORWARD
@@ -98,28 +83,18 @@ func classifyGitPushNonFastForward(run ops.GitRunner, remoteURL, ref string) *Gi
 		payload.LocalAhead = probe.LocalAhead
 		payload.Unrelated = probe.Unrelated
 	}
-	payload.Next = buildGitPushRejectionOptions(ref, payload.RemoteAhead, hqRemoteOfThisMate(remoteURL))
+	payload.Next = buildGitPushRejectionOptions(ref, payload.RemoteAhead)
 	return payload
 }
 
 // newGitPushNonFastForwardError builds the GIT_PUSH_NON_FAST_FORWARD
 // PlatformError. detail carries the real git stderr (non-fast-forward /
 // "fetch first" / "Updates were rejected") so the agent sees the exact
-// rejection text, not just the structured payload; remoteURL picks the
-// suggestion that matches the options classifyGitPushNonFastForward offers.
-func newGitPushNonFastForwardError(hostname, detail, remoteURL string) *platform.PlatformError {
+// rejection text, not just the structured payload.
+func newGitPushNonFastForwardError(hostname, detail string) *platform.PlatformError {
 	return platform.NewPlatformError(
 		platform.ErrGitPushNonFastForward,
 		fmt.Sprintf("git-push from %s was rejected as non-fast-forward: %s", hostname, detail),
-		gitPushRejectionSuggestion(hqRemoteOfThisMate(remoteURL)),
+		gitPushRejectionMessage,
 	)
-}
-
-// gitPushRejectionSuggestion is the suggestion matching the options
-// buildGitPushRejectionOptions offers for the same remote.
-func gitPushRejectionSuggestion(hqRemote bool) string {
-	if hqRemote {
-		return hqPushRejectionMessage
-	}
-	return gitPushRejectionMessage
 }

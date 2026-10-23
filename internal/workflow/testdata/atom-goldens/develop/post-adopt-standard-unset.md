@@ -83,38 +83,25 @@ first moment anyone discovers what wasn't tracked.
 === develop-dynamic-runtime-start-container ===
 ### Dynamic-runtime dev server
 
-Dev-mode dynamic runtime containers run no dev process until you start
-one. It runs under the dev service's supervisor (`zcp-devsup`, the dev
+A dev server runs under the dev service's supervisor (`zcp-devsup`, the dev
 setup's `run.start`); its first start declares it in `.zcp/dev-servers.json`.
 If the dev setup still runs `zsc noop`, that start adds the supervisor's two
-lines and redeploys once (uncommitted work stays) — commit both files. The
-supervisor starts it again after a restart or redeploy (a deploy reports it
-under `devServer`) until you `stop` it; a crash leaves it down. A passing
-verify means "live now", not "durably shipped" — for an always-on service
-use simple mode. Action family on `zerops_dev_server`:
+lines and redeploys once (uncommitted work stays) — commit both files.
+Every deploy starts each `autostart` server (see `devServer`), a restart
+each not `stop`ped; a start crash is retried once, a later one stays down.
+A passing verify means "live now", not "durably shipped" — for an
+always-on service use simple mode.
 
-| Action | Use | Args |
-|---|---|---|
-| `status` | check before `start` (idempotent) | `hostname port healthPath` |
-| `start` | run the dev process | `hostname command port healthPath` |
-| `restart` | after a config/code change | `hostname healthPath` |
-| `logs` | tail its log | `hostname logLines=40` |
-| `stop` | end its process group, free the port | `hostname` |
-
-Args:
-- `command` — the app's dev-server start command (e.g. `npm run dev`),
-  not the dev block's `run.start`.
-- `port` — `run.ports[0].port`; `healthPath` — app-owned or `/`.
-- `name` — when one dev service runs several servers (`web`, `api`);
+- `command` is the app's dev-server command (e.g. `npm run dev`), not the
+  dev setup's `run.start`.
+- `name` each server when one dev service runs several (`web`, `api`);
   stopping one leaves the others running.
-
-Response carries `running`, `healthStatus`, `url` (the hostname-vantage
-address to reach the server — the probe runs localhost inside the
-container, so the app must bind `0.0.0.0`, not loopback), `reason`, and
-`logTail` — read these before making another call.
+- The health probe runs on localhost inside the dev container, so the app
+  must bind `0.0.0.0`, not loopback, for the response's `url` to reach it. Read
+  `running`, `healthStatus`, `reason` and `logTail` before another call.
 
 Don't hand-roll `ssh appdev "cmd &"`: the SSH session ends with
-the call and kills the process. Always go through `zerops_dev_server`.
+the call and kills the process.
 
 ---
 
@@ -167,7 +154,7 @@ so the stage receives a commit: the response then carries `sha` with
 still succeeds, but the response marks `dirty: true` and that stage
 build isn't reproducible from git alone. To ship an exact or older
 commit without touching the dev working tree, add `sha="<commit>"` to
-the cross-deploy — never on a self-deploy. To roll the stage back
+a `zerops_deploy` cross-deploy — never on a self-deploy. To roll the stage back
 without a rebuild, re-activate a recorded build instead: `zerops_deploy
 targetService="appstage" appVersion="<id>"`, with candidate ids
 from the status envelope's `rollback` block or `zerops_events
@@ -199,15 +186,11 @@ before any browser probe.
 
 When `bodyText`/`consoleErrors` are missing, truncated, or the page needs
 interaction / SPA routes / non-root / auth, drive the browser **inline** with
-`zerops_browser` (`screenshot: true` for evidence). Only `wait` polls —
-click/find/get/is look once — so after a click or reload
-`["wait","<sel>"]` or `["wait","--text","<text>"]`, never a fixed time,
-before asserting. Checkbox: `["is","checked","<sel>"]`. `find` actions are
-only click/fill/check/hover/text, `--name` after the action:
-`["find","label","<text>","check"]`,
-`["find","role","button","click","--name","Submit"]`. An `@eN` ref lives only
-after a snapshot in the same call — prefer `find` or CSS.
-Never spawn a sub-agent or call raw `agent-browser`.
+`zerops_browser`; pass `screenshot: true` (`fullPage: true`: whole page) for
+evidence. Only `wait` polls: wait for an element/text, never a fixed time. Use
+`isolation: "fresh-context"` only for the first check after a deploy that
+changed sign-in, storage, a service worker or caches. Never spawn a sub-agent
+or call raw `agent-browser`.
 To make an already-public service internal-only, call `zerops_subdomain action="disable"` — after that, `http_public` reports `skip` on every later verify, same as a `publicAccess: "none"` plan intent.
 
 - **VERDICT: PASS** — healthy + real rendered content; proceed.

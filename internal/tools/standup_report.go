@@ -72,7 +72,6 @@ type standupService struct {
 	Role       string `json:"role"`
 	Pair       string `json:"pair,omitempty"`
 	Repository string `json:"repository,omitempty"`
-	Branch     string `json:"branch,omitempty"`
 	Setup      string `json:"setup,omitempty"`
 	// Status is the platform's, for a service the stand-up leaves as it is.
 	Status    string            `json:"status,omitempty"`
@@ -125,7 +124,7 @@ func buildStandupResponse(src standupSource, pairs []*standupPair, live map[stri
 	switch {
 	case stood == len(pairs):
 		resp.StandUp = standupReady
-		resp.Next = "Every pair stands: each dev half runs main's code on this Mate's branch, and each stage runs main as this Mate's preview. " +
+		resp.Next = "Every pair stands: each dev half runs main's code, and each stage runs main as this Mate's preview. " +
 			"Start each dev half's dev server as its next step says if it is not running yet, verify, then tell the person this Mate's preview is up, with its address — a preview with test data, never \"stage\" or \"online\". " +
 			"Nothing was committed, pushed or proposed."
 	case devs == len(pairs) && stood+queued == len(pairs):
@@ -148,7 +147,7 @@ const standupCallAgain = "Call zerops_standup again."
 
 // standupDevelopmentNext is the model's way on once every dev half stands and
 // the stages are queued: development first, then the stages on a second call.
-const standupDevelopmentNext = "Every dev half runs main's code on this Mate's branch; the stages are queued. " +
+const standupDevelopmentNext = "Every dev half runs main's code; the stages are queued. " +
 	"Start each dev half's dev server with zerops_dev_server as its next step says, verify it, and tell the person development is up, with each dev half's address. " +
 	"Then call zerops_standup again in this turn: it builds the stages — this Mate's preview of main — each after its dev half and what its build reads, and waits for them. " +
 	"Until that call the stages wait for their first deploy (READY_TO_DEPLOY), which breaks nothing. Nothing was committed, pushed or proposed."
@@ -173,7 +172,7 @@ func standupDevService(sp *standupPair) standupService {
 	p := sp.pair
 	s := standupService{
 		Hostname: p.Dev.Hostname, Role: standupRoleDev, Pair: p.FirstStage().Hostname,
-		Repository: sp.repository, Branch: sp.branch, Setup: p.Dev.Setup,
+		Repository: sp.repository, Setup: p.Dev.Setup,
 		Adopted: sp.adopted, Wired: sp.wired, Failed: sp.failed,
 		Deploy: sp.devDeploy, DevServer: sp.devServer, CodeVolume: sp.codeVolume,
 	}
@@ -269,7 +268,7 @@ func standupFurtherDevService(sp *standupPair, ds *standupDevServiceRun) standup
 	dev := sp.pair.Dev.Hostname
 	s := standupService{
 		Hostname: ds.ref.Hostname, Role: standupRoleDev, Pair: dev,
-		Repository: sp.repository, Branch: sp.branch, Setup: ds.ref.SetupName,
+		Repository: sp.repository, Setup: ds.ref.SetupName,
 		Deploy: ds.deploy,
 	}
 	switch d := ds.deploy; {

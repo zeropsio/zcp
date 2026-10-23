@@ -11,6 +11,15 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
+// deployFollowUpContext frees a started deploy from its caller: the build poll
+// and every step after it (public access, supervisor, attempt record) run on a
+// context that outlives the tool call, so a caller that drops mid-build
+// (client tool-call timeout, closed connection) still leaves a stage with its
+// subdomain and a recorded deploy. The poll's own timeout bounds the work.
+func deployFollowUpContext(ctx context.Context) context.Context {
+	return context.WithoutCancel(ctx)
+}
+
 const buildContainerSource = "build_container"
 
 // pollDeployBuild polls build status after deploy trigger and updates result in-place.
@@ -19,7 +28,8 @@ const buildContainerSource = "build_container"
 // next-action pointer can branch on (mode, runtimeClass) — empty stateDir
 // is acceptable (recipe-authoring scaffolds, freshly-imported services
 // without a bootstrap session); next_actions falls back to generic
-// `zerops_verify` guidance in that path.
+// `zerops_verify` guidance in that path. configFile is the repo's config
+// file name the failure classification's text names ("" keeps it).
 func pollDeployBuild(
 	ctx context.Context,
 	client platform.Client,
@@ -28,7 +38,7 @@ func pollDeployBuild(
 	onProgress ops.ProgressCallback,
 	logFetcher platform.LogFetcher,
 	sshDeployer ops.SSHDeployer,
-	stateDir string,
+	stateDir, configFile string,
 ) {
 	if result.TargetServiceID == "" {
 		return
@@ -108,6 +118,11 @@ func pollDeployBuild(
 					fmt.Sprintf("SSH not ready on %s after 30s — deployed but SSH may need more time", result.TargetService))
 			} else {
 				result.SSHReady = true
+				root := ""
+				if meta, _ := workflow.FindServiceMeta(stateDir, result.TargetService); meta != nil {
+					root = meta.WorkingDirFor(result.TargetService)
+				}
+				result.NextActions = deployNextActionsFor(ctx, sshDeployer, root, result, mode, class)
 			}
 		}
 	} else {
@@ -116,7 +131,8 @@ func pollDeployBuild(
 		result.FailedPhase = failedPhaseForStatus(event.Status)
 		if logFetcher != nil {
 			// Fetch logs from the right container based on failure phase.
-			// BUILD_FAILED: build container has the stderr; PREPARING_RUNTIME_FAILED adds the runtime container's.
+			// BUILD_FAILED + PREPARING_RUNTIME_FAILED: the build's log has the
+			// stderr (the prepare phase logs under the build's tag).
 			// DEPLOY_FAILED: runtime container has the initCommand stderr.
 			switch event.Status {
 			case statusDeployFailed:
@@ -135,15 +151,6 @@ func pollDeployBuild(
 				if len(result.BuildLogs) > 0 {
 					result.BuildLogsSource = buildContainerSource
 				}
-				if event.Status == statusPreparingRuntimeFailed {
-					// run.prepareCommands execute in the target's runtime
-					// container, so their stderr is absent from the build
-					// service-stack's log.
-					result.RuntimeLogs = ops.FetchRuntimeLogs(ctx, client, logFetcher, projectID, result.TargetServiceID, containerCreationAnchor(event), 50)
-					if len(result.RuntimeLogs) > 0 {
-						result.RuntimeLogsSource = "runtime_container"
-					}
-				}
 			}
 		}
 		hasLogs := len(result.BuildLogs) > 0 || len(result.RuntimeLogs) > 0
@@ -161,6 +168,7 @@ func pollDeployBuild(
 				Strategy:    "", // strategy already drove which deploy path got us here; classifier only needs it for transport
 				BuildLogs:   result.BuildLogs,
 				RuntimeLogs: result.RuntimeLogs,
+				ConfigFile:  configFile,
 			})
 		}
 		// Suggestion / NextActions are sourced from the classifier owner when

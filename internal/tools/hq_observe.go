@@ -38,7 +38,7 @@ var observationID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 func registerObserve(srv *mcp.Server, httpClient hq.Doer, path, projectID string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_observe",
-		Description: "Observe this project's stage and production through HQ. A stage or production that Mate delivers to a Git repository is not listed here. environments lists project IDs; status reads service IDs, status and active versions; logs reads up to 100 service entries. Read only: no sibling Zerops grants or secrets. Failures say: fix input, retry later, or accept HQ's refusal.",
+		Description: "Observe this project's stage and production through HQ. environments lists project IDs; status reads service IDs, status and active versions; logs reads up to 100 service entries. Read only: no sibling Zerops grants or secrets. Failures say: fix input, retry later, or accept HQ's refusal.",
 		Annotations: &mcp.ToolAnnotations{Title: "Observe stage and production", ReadOnlyHint: true, IdempotentHint: true, DestructiveHint: boolPtr(false)},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in ObserveInput) (*mcp.CallToolResult, any, error) {
 		failure := func(message string) *mcp.CallToolResult {
@@ -50,7 +50,7 @@ func registerObserve(srv *mcp.Server, httpClient hq.Doer, path, projectID string
 		if in.Action != observeEnvironments && in.Action != observeStatus && in.Action != observeLogs {
 			return failure("Unknown observation action"), nil, nil
 		}
-		if in.Action != observeEnvironments && !observationID.MatchString(in.ProjectID) {
+		if (in.Action == observeStatus || in.Action == observeLogs) && !observationID.MatchString(in.ProjectID) {
 			return failure("A valid environment projectId from environments is required"), nil, nil
 		}
 		if in.Action == observeLogs && !observationID.MatchString(in.ServiceID) {

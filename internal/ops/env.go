@@ -165,8 +165,13 @@ type EnvSetResult struct {
 	// letting the caller verify what the platform actually stores — e.g.
 	// catching an unintended base64: prefix or a miscounted byte length
 	// BEFORE the app runtime trips on it.
-	Stored      []StoredEnv `json:"stored,omitempty"`
-	NextActions string      `json:"nextActions,omitempty"`
+	Stored []StoredEnv `json:"stored,omitempty"`
+	// Scope and ServiceHostname name the vault the keys went to, as a
+	// request's answer names the vault it asks for (EnvRequestResult): Mate
+	// closes an open ask for a key the agent stored by those two fields.
+	Scope           EnvRequestScope `json:"scope,omitempty"`
+	ServiceHostname string          `json:"serviceHostname,omitempty"`
+	NextActions     string          `json:"nextActions,omitempty"`
 }
 
 // StoredEnv describes one env var as it now lives in the platform.
@@ -293,7 +298,12 @@ func envSet(
 	}
 
 	if isProject {
-		return setProjectEnvs(ctx, client, projectID, pairs, sensitiveOf)
+		res, err := setProjectEnvs(ctx, client, projectID, pairs, sensitiveOf)
+		if err != nil {
+			return nil, err
+		}
+		res.Scope = EnvRequestScopeShared
+		return res, nil
 	}
 
 	svc, err := resolveService(ctx, client, projectID, hostname)
@@ -348,7 +358,7 @@ func envSet(
 		lastProc = proc
 		stored = append(stored, StoredEnv{Key: p.Key, Value: p.Value, Replaced: replaced, Sensitive: flag})
 	}
-	return &EnvSetResult{Process: lastProc, Stored: stored}, nil
+	return &EnvSetResult{Process: lastProc, Stored: stored, Scope: EnvRequestScopeService, ServiceHostname: svc.Name}, nil
 }
 
 // setProjectEnvs upserts project-level env vars. The platform API only

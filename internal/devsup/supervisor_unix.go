@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"sync"
 	"syscall"
 	"time"
@@ -33,6 +34,24 @@ type Config struct {
 	Grace time.Duration
 	// PortWait bounds the wait for a server's port to be free before it starts.
 	PortWait time.Duration
+	// StartWindow is how long after a start the server is still starting: a
+	// crash within it, or before a server with a port first listens, is
+	// started once more, and a watched change within it may be the server's
+	// own (watchLoopLimit).
+	StartWindow time.Duration
+	// Stagger is the gap between servers started together, so they do not
+	// all fork their toolchains at once.
+	Stagger time.Duration
+	// LimitBackoff is the wait before the first start after a server met the
+	// service's task limit; it doubles with each such start, up to
+	// maxLimitBackoff.
+	LimitBackoff time.Duration
+	// Tasks reads the task budget the servers share; nil is the supervisor's
+	// own cgroup.
+	Tasks func() (Tasks, bool)
+	// PreviousRun reads systemd's result for the previous run of the
+	// supervisor's unit; nil reads the journal.
+	PreviousRun func() (string, bool)
 	// Version is the release reported in the state.
 	Version string
 	// Log receives the supervisor's own lines (the service's runtime log).
@@ -41,8 +60,36 @@ type Config struct {
 
 // Defaults for Config (docs/spec-mate.md §2.8a.2).
 const (
-	DefaultGrace    = 10 * time.Second
-	DefaultPortWait = 10 * time.Second
+	DefaultGrace        = 10 * time.Second
+	DefaultPortWait     = 10 * time.Second
+	DefaultStartWindow  = 10 * time.Second
+	DefaultStagger      = time.Second
+	DefaultLimitBackoff = 2 * time.Second
+)
+
+// maxLimitStarts bounds the starts after a server met the task limit, in a
+// row; maxLimitBackoff caps the wait before one.
+const (
+	maxLimitStarts  = 6
+	maxLimitBackoff = time.Minute
+)
+
+// watchLoopLimit is how many starts in a row may each be restarted by a
+// watched change made within its start window; past it, such a change is the
+// server's own output and restarts nothing.
+const watchLoopLimit = 10
+
+// Restart reasons that name no path.
+const (
+	reasonRetry   = "it crashed within its start window"
+	reasonAsked   = "a restart was asked for"
+	reasonStart   = "a start was asked for"
+	reasonDecl    = "its declaration changed"
+	reasonBoot    = "the supervisor started again"
+	reasonRunSpec = "its run entry changed"
+	// reasonLimit marks a start after the task limit was met; the recorded
+	// reason is limitReason.
+	reasonLimit = "task limit"
 )
 
 // logRotateSize is the size above which a server's log moves to .log.1 when
@@ -68,6 +115,29 @@ type server struct {
 	leftPgid        int
 	leftLeaderStart int64
 	watch           *watcher
+	// retry: this start is the one more start after a start crash;
+	// retryPending: that start is scheduled and has not run yet.
+	retry, retryPending bool
+	// listened: this start's port has accepted once.
+	listened bool
+	// tasks is the task budget read when this start began; tasksOK says it
+	// was read.
+	tasks   Tasks
+	tasksOK bool
+	// limitStarts counts the starts in a row made because the task limit was
+	// met; taskLimit is the budget read when it last was, nil when the last
+	// exit did not meet it.
+	limitStarts int
+	taskLimit   *Tasks
+	// restartReason says why it last restarted, or why a watched change
+	// did not restart it; outOfMemory: that restart is the one after systemd
+	// restarted the service because it ran out of memory.
+	restartReason string
+	outOfMemory   bool
+	// windowChanged: a watched change came within this start's window;
+	// selfChanged counts the starts in a row that saw one.
+	windowChanged bool
+	selfChanged   int
 }
 
 // Supervisor holds the dev servers of one repo.
@@ -82,6 +152,11 @@ type Supervisor struct {
 	decl    DeclarationInfo
 	// persistMu orders state.json writes so the newest snapshot lands last.
 	persistMu sync.Mutex
+	// closed: Shutdown ran; a pending retry starts nothing.
+	closed bool
+	// outOfMemory: systemd restarted the service because it ran out of
+	// memory. Set once, before Boot starts anything.
+	outOfMemory bool
 }
 
 // New prepares a supervisor and loads the state an earlier instance left in
@@ -96,6 +171,21 @@ func New(cfg Config) (*Supervisor, error) {
 	if cfg.PortWait <= 0 {
 		cfg.PortWait = DefaultPortWait
 	}
+	if cfg.StartWindow <= 0 {
+		cfg.StartWindow = DefaultStartWindow
+	}
+	if cfg.Stagger <= 0 {
+		cfg.Stagger = DefaultStagger
+	}
+	if cfg.LimitBackoff <= 0 {
+		cfg.LimitBackoff = DefaultLimitBackoff
+	}
+	if cfg.Tasks == nil {
+		cfg.Tasks = readTasks
+	}
+	if cfg.PreviousRun == nil {
+		cfg.PreviousRun = readPreviousRun
+	}
 	if cfg.Log == nil {
 		cfg.Log = io.Discard
 	}
@@ -107,7 +197,7 @@ func New(cfg Config) (*Supervisor, error) {
 		for name, p := range prev.Servers {
 			sv := &server{
 				name: name, source: p.Source, desired: p.Desired, exit: p.Exit, startedAt: p.StartedAt,
-				leftPgid: p.Pgid, leftLeaderStart: p.LeaderStart,
+				leftPgid: p.Pgid, leftLeaderStart: p.LeaderStart, restartReason: p.LastRestartReason,
 			}
 			if p.StartedAt != nil {
 				sv.starts = p.Restarts + 1
@@ -157,10 +247,17 @@ func (s *Supervisor) Run(ctx context.Context) error {
 
 // Boot is the first reconcile of this instance: it reaps the groups an earlier
 // instance left running, then starts every server whose desired state is
-// running, crashed ones included.
+// running, crashed ones included. When the previous run of the supervisor's
+// unit ended because the kernel's OOM killer killed one of its processes,
+// systemd stopped every server with it (OOMPolicy=stop on the platform's unit)
+// and their restart reason says so.
 func (s *Supervisor) Boot() {
 	s.op.Lock()
 	defer s.op.Unlock()
+	if result, ok := s.cfg.PreviousRun(); ok {
+		s.logf("the previous run of the unit ended: %s", result)
+		s.outOfMemory = result == unitResultOOMKill
+	}
 	s.reapLeft()
 	s.reconcile(true)
 }
@@ -205,8 +302,9 @@ func (s *Supervisor) reapLeft() {
 	wg.Wait()
 }
 
-// reconcile brings the servers to the declaration and the kept state.
-func (s *Supervisor) reconcile(boot bool) {
+// reconcile brings the servers to the declaration and the kept state, and
+// answers what it did to each.
+func (s *Supervisor) reconcile(boot bool) map[string]action {
 	decl, err := LoadDeclaration(s.cfg.Root)
 
 	s.mu.Lock()
@@ -294,9 +392,17 @@ func (s *Supervisor) reconcile(boot bool) {
 		}
 	}
 	s.mu.Unlock()
-	s.startAll(start)
+	reason := reasonDecl
+	switch {
+	case boot && s.outOfMemory:
+		reason = reasonOutOfMemoryRestart
+	case boot:
+		reason = reasonBoot
+	}
+	s.startAll(start, reason)
 	s.syncWatches()
 	s.persist()
+	return acts
 }
 
 // stopAll ends the named servers' groups in parallel and waits for them.
@@ -323,40 +429,79 @@ func (s *Supervisor) stopAll(names []string) {
 	wg.Wait()
 }
 
-// startAll starts the named servers in parallel.
-func (s *Supervisor) startAll(names []string) {
-	var wg sync.WaitGroup
+// startAll starts the named servers in parallel, a Stagger apart: together
+// they share the service's task limit. Each is starting from now on.
+func (s *Supervisor) startAll(names []string, reason string) {
+	slices.Sort(names)
+	s.mu.Lock()
 	for _, name := range names {
-		wg.Go(func() { s.start(name) })
+		if sv := s.servers[name]; sv != nil && sv.g == nil {
+			sv.starting = true
+		}
+	}
+	s.mu.Unlock()
+	var wg sync.WaitGroup
+	for i, name := range names {
+		wg.Go(func() {
+			time.Sleep(time.Duration(i) * s.cfg.Stagger)
+			s.start(name, reason)
+		})
 	}
 	wg.Wait()
 }
 
-// start waits for the server's port and starts it. A failure leaves it
-// crashed with exit {code: -1, signal: port_busy|start_failed} and the reason
-// in its log.
-func (s *Supervisor) start(name string) {
+// start waits for the server's port and starts it; reason is why, recorded
+// when it is a restart. reasonRetry marks the one more start after a crash
+// in the window; reasonLimit a start after the task limit was met, which is
+// not that one more start. A failure leaves it crashed with exit
+// {code: -1, signal: port_busy|start_failed} and the reason in its log; a
+// start the kernel refused at the task limit is started again with backoff.
+func (s *Supervisor) start(name, reason string) {
 	s.mu.Lock()
 	sv := s.servers[name]
 	if sv == nil || sv.g != nil {
+		if sv != nil {
+			sv.starting = false
+		}
 		s.mu.Unlock()
 		return
 	}
 	spec := sv.spec
 	sv.starting = true
+	sv.retryPending, sv.windowChanged, sv.listened = false, false, false
+	if reason == reasonLimit {
+		sv.limitStarts++
+	} else {
+		sv.retry, sv.limitStarts = reason == reasonRetry, 0
+	}
+	sv.outOfMemory = false
+	if sv.starts > 0 {
+		sv.restartReason = reason
+		sv.outOfMemory = reason == reasonOutOfMemoryRestart
+		if reason == reasonLimit {
+			sv.restartReason = limitReason(sv.taskLimit)
+		}
+	}
 	sv.starts++
 	starts := sv.starts
 	s.mu.Unlock()
 
+	before, beforeOK := s.cfg.Tasks()
 	g, failure, err := s.launch(name, spec, starts)
 	now := time.Now().UTC()
 
 	s.mu.Lock()
 	sv.starting = false
 	sv.startedAt = &now
+	sv.tasks, sv.tasksOK = before, beforeOK
 	if err != nil {
 		s.logf("start %s: %v", name, err)
 		sv.exit = &Exit{Code: -1, Signal: failure, At: now}
+		after, ok := s.cfg.Tasks()
+		sv.taskLimit = nil
+		if metTaskLimit(err, before, after, ok && beforeOK) {
+			s.limitStart(sv, after, starts)
+		}
 		s.mu.Unlock()
 		return
 	}
@@ -365,7 +510,7 @@ func (s *Supervisor) start(name string) {
 	s.mu.Unlock()
 	go s.watchExit(sv, g)
 	if spec.Port > 0 {
-		go s.awaitListen(g, spec.Port)
+		go s.awaitListen(sv, g, spec.Port)
 	}
 }
 
@@ -407,7 +552,10 @@ func (s *Supervisor) preflight(spec Server) (string, error) {
 }
 
 // watchExit records a server whose leader exited while the supervisor held it
-// as crashed, and ends what is left of its group.
+// as crashed, and ends what is left of its group. A start crash, unless that
+// start was already the retry, is started once more when the window has
+// passed again and no sibling is still starting: servers that crashed racing
+// each other at start come back one at a time.
 func (s *Supervisor) watchExit(sv *server, g *group) {
 	<-g.done
 	s.mu.Lock()
@@ -417,14 +565,101 @@ func (s *Supervisor) watchExit(sv *server, g *group) {
 	}
 	sv.g = nil
 	sv.exit = exitOf(g.state)
+	starts := sv.starts
 	s.logf("crashed %s: exit %d %s", sv.name, sv.exit.Code, sv.exit.Signal)
+	after, ok := s.cfg.Tasks()
+	sv.taskLimit = nil
+	retry := false
+	if metTaskLimit(nil, sv.tasks, after, ok && sv.tasksOK) {
+		s.limitStart(sv, after, starts)
+	} else {
+		retry = !sv.retry && sv.startCrash(s.cfg.StartWindow)
+		sv.retryPending = retry
+	}
 	s.mu.Unlock()
 	_ = stopGroup(g.pgid, s.cfg.Grace)
 	s.persist()
+	if retry {
+		s.logf("retry %s in %s: it crashed while starting", sv.name, s.cfg.StartWindow)
+		deadline := time.Now().Add(listenWait)
+		time.AfterFunc(s.cfg.StartWindow, func() { s.retryStart(sv, starts, deadline, reasonRetry) })
+	}
+}
+
+// limitStart records that the server's start or run met the task limit and,
+// unless it has had maxLimitStarts such starts in a row, starts it again
+// after backoff — one at a time with its siblings, as a retry does. Callers
+// hold mu.
+func (s *Supervisor) limitStart(sv *server, t Tasks, starts int) {
+	sv.taskLimit = &t
+	if sv.limitStarts >= maxLimitStarts {
+		s.logf("no start of %s: %s on each of its last %d starts", sv.name, limitReason(&t), maxLimitStarts)
+		return
+	}
+	wait := min(s.cfg.LimitBackoff<<sv.limitStarts, maxLimitBackoff)
+	sv.retryPending = true
+	s.logf("start %s again in %s: %s (%d tasks)", sv.name, wait, limitReason(&t), t.Current)
+	deadline := time.Now().Add(wait + listenWait)
+	time.AfterFunc(wait, func() { s.retryStart(sv, starts, deadline, reasonLimit) })
+}
+
+// startCrash: the server's exit came within its start window, or before its
+// port first accepted (a Maven or Gradle start can outlast any fixed window).
+func (sv *server) startCrash(window time.Duration) bool {
+	if sv.startedAt == nil {
+		return false
+	}
+	return sv.exit.At.Sub(*sv.startedAt) < window || (sv.spec.Port > 0 && !sv.listened)
+}
+
+// retryStart starts a server that crashed while starting once more, or one
+// that met the task limit again (reason), unless anything started, stopped or
+// removed it since. While a sibling is still starting it looks again one
+// window later, until deadline.
+func (s *Supervisor) retryStart(sv *server, starts int, deadline time.Time, reason string) {
+	s.op.Lock()
+	defer s.op.Unlock()
+	s.mu.Lock()
+	still := !s.closed && s.servers[sv.name] == sv && sv.desired == DesiredRunning && sv.g == nil && sv.starts == starts
+	wait := still && time.Now().Before(deadline) && s.siblingStarting(sv)
+	if !still && sv.starts == starts {
+		sv.retryPending = false
+	}
+	s.mu.Unlock()
+	if !still {
+		return
+	}
+	if wait {
+		time.AfterFunc(s.cfg.StartWindow, func() { s.retryStart(sv, starts, deadline, reason) })
+		return
+	}
+	s.start(sv.name, reason)
+	s.persist()
+}
+
+// siblingStarting reports whether another server is still starting: its start
+// is under way, or its group lives and has not yet listened (one with a port)
+// or passed its start window (one without). Callers hold mu.
+func (s *Supervisor) siblingStarting(sv *server) bool {
+	for _, o := range s.servers {
+		if o == sv {
+			continue
+		}
+		if o.starting {
+			return true
+		}
+		if o.g == nil || o.startedAt == nil {
+			continue
+		}
+		if (o.spec.Port > 0 && !o.listened) || (o.spec.Port == 0 && time.Since(*o.startedAt) < s.cfg.StartWindow) {
+			return true
+		}
+	}
+	return false
 }
 
 // awaitListen records starting → running once the port accepts.
-func (s *Supervisor) awaitListen(g *group, port int) {
+func (s *Supervisor) awaitListen(sv *server, g *group, port int) {
 	deadline := time.Now().Add(listenWait)
 	for time.Now().Before(deadline) {
 		select {
@@ -433,6 +668,11 @@ func (s *Supervisor) awaitListen(g *group, port int) {
 		default:
 		}
 		if portAccepts(port) {
+			s.mu.Lock()
+			if sv.g == g {
+				sv.listened = true
+			}
+			s.mu.Unlock()
 			s.persist()
 			return
 		}
@@ -489,6 +729,10 @@ func (s *Supervisor) syncWatches() {
 	}
 }
 
+// watchFired restarts a server on a watched change. A change within the
+// start window, after watchLoopLimit starts in a row each saw one, is the
+// server's own output and restarts nothing; a change outside it always
+// restarts, and clears the count when the start before it saw no change.
 func (s *Supervisor) watchFired(name, rel string) {
 	s.op.Lock()
 	defer s.op.Unlock()
@@ -498,11 +742,26 @@ func (s *Supervisor) watchFired(name, rel string) {
 		s.mu.Unlock()
 		return
 	}
+	if sv.startedAt != nil && time.Since(*sv.startedAt) < s.cfg.StartWindow {
+		if !sv.windowChanged {
+			sv.windowChanged = true
+			sv.selfChanged++
+		}
+		if sv.selfChanged > watchLoopLimit {
+			sv.restartReason = fmt.Sprintf("restarts stopped: %s changed during each of its last %d starts; add the path to watch.ignore", rel, watchLoopLimit)
+			s.mu.Unlock()
+			s.logf("no restart of %s: %s changed during its start, as on each of its last %d starts; add the path to watch.ignore", name, rel, watchLoopLimit)
+			s.persist()
+			return
+		}
+	} else if !sv.windowChanged {
+		sv.selfChanged = 0
+	}
 	sv.starting = true
 	s.mu.Unlock()
 	s.logf("restart %s: %s changed", name, rel)
 	s.stopAll([]string{name})
-	s.start(name)
+	s.start(name, rel+" changed")
 	s.persist()
 }
 
@@ -510,10 +769,12 @@ func (s *Supervisor) watchFired(name, rel string) {
 // not hold.
 var ErrUnknownServer = errors.New("unknown server")
 
-// Start sets a server to run and starts it unless it runs.
+// Start re-reads the declaration, sets a server to run and starts it unless it
+// runs.
 func (s *Supervisor) Start(name string) error {
 	s.op.Lock()
 	defer s.op.Unlock()
+	s.reconcile(false)
 	if err := s.setDesired(name, DesiredRunning); err != nil {
 		return err
 	}
@@ -521,7 +782,7 @@ func (s *Supervisor) Start(name string) error {
 	live := s.servers[name].g != nil
 	s.mu.Unlock()
 	if !live {
-		s.start(name)
+		s.start(name, reasonStart)
 	}
 	s.syncWatches()
 	s.persist()
@@ -541,18 +802,23 @@ func (s *Supervisor) Stop(name string) error {
 	return nil
 }
 
-// Restart stops a server if it runs and starts it again.
+// Restart re-reads the declaration, then stops a server if it runs and starts
+// it again, unless the re-read just did.
 func (s *Supervisor) Restart(name string) error {
 	s.op.Lock()
 	defer s.op.Unlock()
+	acts := s.reconcile(false)
 	if err := s.setDesired(name, DesiredRunning); err != nil {
 		return err
+	}
+	if a := acts[name]; a == actRestart || a == actStart {
+		return nil
 	}
 	s.mu.Lock()
 	s.servers[name].starting = true
 	s.mu.Unlock()
 	s.stopAll([]string{name})
-	s.start(name)
+	s.start(name, reasonAsked)
 	s.syncWatches()
 	s.persist()
 	return nil
@@ -591,7 +857,11 @@ func (s *Supervisor) RunEntry(spec Server) error {
 	live := sv.g != nil
 	s.mu.Unlock()
 	if !live {
-		s.start(norm.Name)
+		reason := reasonStart
+		if restart {
+			reason = reasonRunSpec
+		}
+		s.start(norm.Name, reason)
 	}
 	s.persist()
 	return nil
@@ -637,6 +907,7 @@ func (s *Supervisor) Shutdown() {
 	s.op.Lock()
 	defer s.op.Unlock()
 	s.mu.Lock()
+	s.closed = true
 	names := make([]string, 0, len(s.servers))
 	for name, sv := range s.servers {
 		names = append(names, name)
@@ -680,7 +951,7 @@ func (s *Supervisor) State() State {
 func (s *Supervisor) serverState(name string, sv *server) ServerState {
 	ss := ServerState{
 		Source: sv.source, Desired: sv.desired, StartedAt: sv.startedAt, Exit: sv.exit,
-		LogPath: LogPath(s.cfg.StateDir, name),
+		LogPath: LogPath(s.cfg.StateDir, name), LastRestartReason: sv.restartReason, OutOfMemory: sv.outOfMemory,
 	}
 	if sv.starts > 1 {
 		ss.Restarts = sv.starts - 1
@@ -690,6 +961,7 @@ func (s *Supervisor) serverState(name string, sv *server) ServerState {
 	}
 	if sv.g != nil {
 		ss.Pid, ss.Pgid, ss.LeaderStart = sv.g.pgid, sv.g.pgid, sv.g.leaderStart
+		ss.RssKB = groupRSSKB(sv.g.pgid)
 	}
 	switch {
 	case sv.desired == DesiredStopped:
@@ -700,6 +972,14 @@ func (s *Supervisor) serverState(name string, sv *server) ServerState {
 		ss.Status = StatusStarting
 	case sv.g == nil && sv.exit != nil:
 		ss.Status = StatusCrashed
+		ss.RetryPending = sv.retryPending
+		if sv.taskLimit != nil {
+			now, ok := s.cfg.Tasks()
+			if !ok {
+				now = *sv.taskLimit
+			}
+			ss.TaskLimit = &TaskLimit{Max: sv.taskLimit.Max, Current: now.Current}
+		}
 	default:
 		ss.Status = StatusRunning
 	}

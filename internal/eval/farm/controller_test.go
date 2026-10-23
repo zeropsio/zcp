@@ -2995,3 +2995,86 @@ func TestManifest_RecordsMaxConcurrent(t *testing.T) {
 		t.Errorf("manifest.MaxConcurrent = %d, want %d", manifest.MaxConcurrent, 4)
 	}
 }
+
+// TestFarmRun_RequiredExistingProd_MissingBlocksPreparationBeforeAnyProject
+// mirrors the PAT sibling for the standing existing-production token.
+func TestFarmRun_RequiredExistingProd_MissingBlocksPreparationBeforeAnyProject(t *testing.T) {
+	// Not t.Parallel(): captureStderr swaps the process-wide os.Stderr.
+	f := newControllerFixture(t, "client-existing-missing")
+	scenarios := []ScenarioRun{{ID: "recipe-a", RequiredEnvVars: []string{eval.ExistingProjectIDEnvVar, eval.ExistingProdTokenEnvVar}}}
+	opts := RunOptions{
+		Batch: "batch-existing-missing", Set: "gate",
+		CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", WrapperSHA256: "wrap-sha", ScenariosDigest: "scen-sha",
+		Scenarios: scenarios, OAuthToken: "oauth-farm-token",
+		Sink:              Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+		RunBudget:         time.Second,
+		PollInterval:      time.Millisecond,
+		ExistingProjectID: "proj-existing", // the token is missing
+	}
+	var results []RunResult
+	captureStderr(t, func() {
+		var err error
+		results, err = RunBatch(context.Background(), panicClient{t: t}, f.sink, opts)
+		if err != nil {
+			t.Fatalf("RunBatch: %v", err)
+		}
+	})
+	if len(results) != 1 || results[0].Result != ResultBlocked {
+		t.Fatalf("results = %+v, want 1 blocked entry", results)
+	}
+	if want := "resource " + eval.ExistingProdTokenEnvVar + " missing"; !strings.Contains(results[0].Error, want) {
+		t.Errorf("Error = %q, want it to contain %q", results[0].Error, want)
+	}
+	if results[0].ProjectID != "" {
+		t.Errorf("ProjectID = %q, want empty — no project was ever created", results[0].ProjectID)
+	}
+}
+
+// TestFarmRun_RequiredExistingProd_PresentInjectsIntoServiceEnv — the id is
+// a plain env, the token a sensitive one, and a scenario that names neither
+// gets neither.
+func TestFarmRun_RequiredExistingProd_PresentInjectsIntoServiceEnv(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		required []string
+		want     []string
+		absent   []string
+	}{
+		{"required", []string{eval.ExistingProjectIDEnvVar, eval.ExistingProdTokenEnvVar},
+			[]string{`ZCP_E2E_EXISTING_PROJECT_ID: "proj-existing"`, `ZCP_E2E_EXISTING_PROD_TOKEN: {value: "tok-existing", sensitive: true}`}, nil},
+		{"not required", nil, nil, []string{"ZCP_E2E_EXISTING_PROJECT_ID", "ZCP_E2E_EXISTING_PROD_TOKEN"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			const clientID = "client-existing-present"
+			f := newControllerFixture(t, clientID)
+			capture := &capturingImportClient{PlatformClient: f.client}
+			batch := "batch-existing-" + strings.ReplaceAll(tc.name, " ", "-")
+			seedSettledRun(t, f.s3, testRunID(t, batch, "recipe-a"), "recipe-a", ResultPassed)
+			opts := RunOptions{
+				Batch: batch, ClientID: clientID, Set: "gate",
+				CandidateSHA256: "cand-sha", EvaluatorSHA256: "eval-sha", WrapperSHA256: "wrap-sha", ScenariosDigest: "scen-sha",
+				Scenarios: []ScenarioRun{{ID: "recipe-a", RequiredEnvVars: tc.required}}, OAuthToken: "oauth-farm-token",
+				Sink:              Sink{URL: "https://s3.example", Bucket: "zcp-farm", Key: "k", Secret: "s"},
+				RunBudget:         time.Second,
+				PollInterval:      time.Millisecond,
+				ExistingProjectID: "proj-existing",
+				ExistingProdToken: "tok-existing",
+			}
+			if _, err := RunBatch(context.Background(), capture, f.sink, opts); err != nil {
+				t.Fatalf("RunBatch: %v", err)
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(capture.lastYAML(), w) {
+					t.Errorf("service import yaml missing %q:\n%s", w, capture.lastYAML())
+				}
+			}
+			for _, a := range tc.absent {
+				if strings.Contains(capture.lastYAML(), a) {
+					t.Errorf("service import yaml carries %q for a scenario that never declared it", a)
+				}
+			}
+		})
+	}
+}

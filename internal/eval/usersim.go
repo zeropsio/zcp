@@ -119,16 +119,22 @@ func ClassifyTranscriptTail(logFile string) (Verdict, error) {
 		return Verdict{Kind: VerdictWaiting, LastAssistantText: text, Reason: "rule4a_ask_user_question"}, nil
 	}
 
+	tail := textTail(canonicalText, 200)
+	hasQuestionMark := strings.Contains(tail, "?")
+	asksApproval := approvalAskRE.MatchString(canonicalText)
+	hasModalPhrase := asksApproval || modalPhraseRE.MatchString(canonicalText) || modalPhraseCsRE.MatchString(canonicalText)
+
 	// Rule 4 — last tool_use was zerops_verify with success-shaped result.
 	// Checked BEFORE rule 3 because verify-success is a stronger signal than
 	// text markers (covers "verify confirms healthy. anything else?" tail).
-	if lastVerifyOK(events) {
+	// An approval ask in the final text outranks it: a verify success is past
+	// evidence, and an agent that asks the user to approve or confirm before it
+	// acts is waiting, not done (farm mono-farm-final-1: a launch run ended on
+	// "Confirm the scaling … and I'll proceed" right after a healthy verify).
+	// A closing offer ("let me know if…", "anything else?") does not outrank it.
+	if lastVerifyOK(events) && !asksApproval {
 		return Verdict{Kind: VerdictDone, LastAssistantText: canonicalText, Reason: "rule4_verify_success"}, nil
 	}
-
-	tail := textTail(canonicalText, 200)
-	hasQuestionMark := strings.Contains(tail, "?")
-	hasModalPhrase := modalPhraseRE.MatchString(canonicalText) || modalPhraseCsRE.MatchString(canonicalText)
 
 	// Rule 3 — done text markers in the FINAL turn (tail-scoped, the SAME window
 	// as the question check) AND no question / hand-back cue. Tail-scoping stops
@@ -176,7 +182,14 @@ var (
 
 	// modalPhraseRE — English phrases that signal a question even without `?`.
 	// Anchored on word boundaries so "I should I" inside a sentence still hits.
-	modalPhraseRE = regexp.MustCompile(`(?i)\b(should\s+I|do\s+you\s+want|would\s+you\s+(?:prefer|like)|let\s+me\s+know|please\s+confirm|shall\s+I|which\s+would\s+you\s+like|either\s+is\s+fine)\b`)
+	modalPhraseRE = regexp.MustCompile(`(?i)\b(should\s+I|do\s+you\s+want|would\s+you\s+(?:prefer|like)|let\s+me\s+know|please\s+confirm|shall\s+I|which\s+would\s+you\s+like|either\s+is\s+fine|(?:once|until|after|when|if)\s+you\s+(?:confirm|approve|agree))\b`)
+
+	// approvalAskRE — the agent asks the user to approve or confirm before it
+	// acts: a sentence that opens with "Confirm"/"Approve" (markdown emphasis
+	// allowed), "can/could/would/will you confirm/approve", "your
+	// confirmation/approval/go-ahead", or "OK to proceed". A third-person
+	// "verify confirms …" never matches: "confirms" fails the word boundary.
+	approvalAskRE = regexp.MustCompile(`(?im)(?:^|[.!?:]\s+)[*_]*(?:please\s+)?(?:confirm|approve)\b|\b(?:can|could|would|will)\s+you\s+(?:please\s+)?(?:confirm|approve)\b|\byour\s+(?:confirmation|approval|go-ahead)\b|\b(?:ok|okay)\s+to\s+(?:proceed|continue|go\s+ahead)\b`)
 
 	// modalPhraseCsRE — Czech hand-back / waiting cues (most flow-eval prompts
 	// are Czech, so an English-only modal check missed "agent hands back without

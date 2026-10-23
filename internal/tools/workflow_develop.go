@@ -273,12 +273,11 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 // Mate's stand-up leaves as it is (docs/spec-workflows.md §8 D2f): a pair the
 // Mate adopted — every new Mate is born from the recipe, its services
 // imported without code — whose dev half has never been deployed. A stand-up
-// deploys, starts and verifies the dev half; promoting it is a delivery in a
-// Mate delivering through its HQ (a commit, a change and a push), so it waits
-// for the person to ask. That holds whether zcp auto-included the stage
-// or the agent named it. A pair the Mate created for a task (a classic
-// bootstrap), or one whose dev half already runs deployed code, keeps its
-// stage required: that task's delivery goes through its stage.
+// deploys, starts and verifies the dev half; promoting it to the stage is the
+// person's to ask for. That holds whether zcp auto-included the stage or the
+// agent named it. A pair the Mate created for a task (a classic bootstrap),
+// or one whose dev half already runs deployed code, keeps its stage
+// required: that task's work is checked on its stage.
 //
 // Deployed code is read from the direct service list — the only read that
 // sees an import's placeholder version (source NONE) — and only when a pair
@@ -338,7 +337,7 @@ func renderDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 			fmt.Sprintf("Compute envelope: %v", err),
 			""), WithRecoveryStatus()), nil, nil
 	}
-	attachPartsSignal(ctx, envelope.Services, sshDeployer, rt)
+	attachPartsSignal(ctx, envelope.Services, sshDeployer, rt, engine)
 	corpus, err := workflow.LoadAtomCorpus()
 	if err != nil {
 		return convertError(platform.NewPlatformError(
@@ -354,7 +353,7 @@ func renderDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 			""), WithRecoveryStatus()), nil, nil
 	}
 	plan := workflow.BuildPlan(envelope)
-	return statusResult(workflow.Response{
+	return briefingResult(workflow.Response{
 		Envelope: envelope,
 		Guidance: workflow.BodiesOf(matches),
 		Plan:     &plan,

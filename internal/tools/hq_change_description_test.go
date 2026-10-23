@@ -36,15 +36,14 @@ func (l *hqLab) describeTitled(service, title, words string) (text string, isErr
 	return resultText(l.t, res), res.IsError
 }
 
-// deliveredLab is a lab whose pair delivered once: change #1 is open.
-func deliveredLab(t *testing.T) *hqLab {
+// openedLab is a lab whose pair's work is up as change #1, open, and on the
+// pair's record as a describe that found it leaves it.
+func openedLab(t *testing.T) *hqLab {
 	t.Helper()
 	lab := newHQLab(t)
 	lab.wire()
 	lab.write(map[string]string{"index.js": "the app\n"})
-	if d := lab.deliver(); d == nil || d.Change == nil {
-		t.Fatalf("delivery: %+v", d)
-	}
+	recordChange(lab.stateDir, lab.meta(), lab.openChange().Number, "")
 	return lab
 }
 
@@ -60,42 +59,40 @@ func TestDescribeChange(t *testing.T) {
 		wantTitle string
 		wantKept  *workflow.ChangeDescription
 		wantText  []string
-		// wantChange is the change the pair records after; wantLanded whether
-		// a landing is.
+		// wantChange is the change the pair records after.
 		wantChange int
-		wantLanded bool
 	}{
 		{
-			name: "the open change takes the words at once", lab: deliveredLab,
+			name: "the open change takes the words at once", lab: openedLab,
 			wantBody: describedWords, wantChange: 1,
 			wantText: []string{`"described":true`, `"pullRequest":1`, "/changes/app-1/appdev/1", "draft again"},
 		},
 		{
-			name: "the stage half names the pair too", lab: deliveredLab, service: "appstage",
+			name: "the stage half names the pair too", lab: openedLab, service: "appstage",
 			wantBody: describedWords, wantChange: 1, wantText: []string{`"described":true`},
 		},
 		{
-			name: "the words name this repository's change by a title of their own", lab: deliveredLab,
+			name: "the words name this repository's change by a title of their own", lab: openedLab,
 			title: "  Count the open todos above the list  ", wantTitle: "Count the open todos above the list",
 			wantBody: describedWords, wantChange: 1, wantText: []string{`"described":true`},
 		},
 		{
-			// Words describe the work a change carries; the change the next delivery opens carries
+			// Words describe the work a change carries; a change opened later carries
 			// whatever the pair holds then, so nothing is kept for it.
-			name: "no change yet: nothing to describe until the next delivery opens it",
+			name: "no change yet: nothing to describe until one is open",
 			lab: func(t *testing.T) *hqLab {
 				t.Helper()
 				lab := newHQLab(t)
 				lab.wire()
 				return lab
 			},
-			wantText: []string{`"described":false`, "No change is open", "draft", "appstage"},
+			wantText: []string{`"described":false`, "No change of this Mate is open", "nothing to describe yet"},
 		},
 		{
 			name: "an open change missing from the record is found and described",
 			lab: func(t *testing.T) *hqLab {
 				t.Helper()
-				lab := deliveredLab(t)
+				lab := openedLab(t)
 				clearChange(lab.stateDir, lab.meta(), 1)
 				return lab
 			},
@@ -105,18 +102,17 @@ func TestDescribeChange(t *testing.T) {
 			name: "the change merged before the words reached it",
 			lab: func(t *testing.T) *hqLab {
 				t.Helper()
-				lab := deliveredLab(t)
+				lab := openedLab(t)
 				lab.hq.merge()
 				return lab
 			},
-			wantLanded: true,
-			wantText:   []string{`"described":false`, "#1 is merged", "not written", `action=\"describe-change\"`},
+			wantText: []string{`"described":false`, "#1 is merged", "not written"},
 		},
 		{
 			name: "the change was closed without merging",
 			lab: func(t *testing.T) *hqLab {
 				t.Helper()
-				lab := deliveredLab(t)
+				lab := openedLab(t)
 				lab.hq.close(1)
 				return lab
 			},
@@ -126,7 +122,7 @@ func TestDescribeChange(t *testing.T) {
 			name: "HQ does not answer: the words stay kept for that change",
 			lab: func(t *testing.T) *hqLab {
 				t.Helper()
-				lab := deliveredLab(t)
+				lab := openedLab(t)
 				lab.hq.setDown(true)
 				return lab
 			},
@@ -159,87 +155,13 @@ func TestDescribeChange(t *testing.T) {
 			if got := meta.HQ.ChangeDescription; (got == nil) != (tt.wantKept == nil) || got != nil && *got != *tt.wantKept {
 				t.Errorf("kept = %+v, want %+v", got, tt.wantKept)
 			}
-			if meta.HQ.Change != tt.wantChange || (meta.HQ.Landed != nil) != tt.wantLanded {
-				t.Errorf("the pair records change #%d, landed %+v; want #%d, landed=%v", meta.HQ.Change, meta.HQ.Landed, tt.wantChange, tt.wantLanded)
+			if meta.HQ.Change != tt.wantChange {
+				t.Errorf("the pair records change #%d, want #%d", meta.HQ.Change, tt.wantChange)
 			}
 			if lab.hq.change(2) != nil {
 				t.Errorf("describing a change opened one; it must never open one")
 			}
 		})
-	}
-}
-
-// TestDescribeChange_KeptWordsMeetThePushAfterThem: words HQ did not take
-// wait for the change they were written for, and go on with the next push only
-// while that push sends nothing — the change is still what they describe. A
-// push that moves the change past them drops them: they describe it as it
-// was, so it stays a draft and the Mate is asked to describe it again.
-func TestDescribeChange_KeptWordsMeetThePushAfterThem(t *testing.T) {
-	tests := []struct {
-		name      string
-		moreWork  bool
-		wantBody  string
-		wantTitle string
-		wantDraft bool
-		wantLine  []string
-	}{
-		{
-			name: "a push that sends nothing puts them on", wantBody: describedWords, wantTitle: "Count the open todos",
-			wantLine: []string{"carries the description you wrote"},
-		},
-		{
-			name: "a push that moves the change drops them, and the change is a draft again", moreWork: true,
-			wantTitle: "Add index.js", wantDraft: true,
-			wantLine: []string{"before this push", "is a draft", `action="describe-change"`, "title="},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			lab := deliveredLab(t)
-			lab.hq.setDown(true)
-			if text, isError := lab.describeTitled("", "Count the open todos", describedWords); isError || !strings.Contains(text, `"kept":true`) {
-				t.Fatalf("want the words kept while HQ does not answer:\n%s", text)
-			}
-			lab.hq.setDown(false)
-			if tt.moreWork {
-				lab.write(map[string]string{"index.js": "the app, grown\n"})
-			}
-			delivery := lab.deliver()
-			if delivery == nil || delivery.Change == nil {
-				t.Fatalf("delivery: %+v", delivery)
-			}
-			if delivery.Change.Described == tt.wantDraft || delivery.Change.Draft != tt.wantDraft {
-				t.Errorf("described=%v draft=%v, want described=%v draft=%v", delivery.Change.Described, delivery.Change.Draft, !tt.wantDraft, tt.wantDraft)
-			}
-			if change := lab.hq.change(1); change == nil || change.Body != tt.wantBody || change.Title != tt.wantTitle {
-				t.Errorf("change #1 = %+v, want body %q and title %q", change, tt.wantBody, tt.wantTitle)
-			}
-			for _, want := range tt.wantLine {
-				if !strings.Contains(delivery.Line, want) {
-					t.Errorf("the line misses %q:\n%s", want, delivery.Line)
-				}
-			}
-			if kept := lab.meta().HQ.ChangeDescription; kept != nil {
-				t.Errorf("the push met the words, yet they are still kept: %+v", kept)
-			}
-		})
-	}
-}
-
-// TestDelivery_OpensADraft: a change opens as a draft — the person is not
-// asked to review it until the Mate describes it — and the delivery says so.
-func TestDelivery_OpensADraft(t *testing.T) {
-	lab := newHQLab(t)
-	lab.wire()
-	lab.write(map[string]string{"index.js": "the app\n"})
-	delivery := lab.deliver()
-	if delivery == nil || delivery.Change == nil || !delivery.Change.Draft || delivery.Change.Described {
-		t.Fatalf("want a draft change: %+v", delivery)
-	}
-	for _, want := range []string{"is a draft", `action="describe-change"`, "title=", "this repository"} {
-		if !strings.Contains(delivery.Line, want) {
-			t.Errorf("the line misses %q:\n%s", want, delivery.Line)
-		}
 	}
 }
 
@@ -293,7 +215,7 @@ func TestDescribeChange_Refusals(t *testing.T) {
 				if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 					Hostname: dev, Mode: topology.PlanModeStandard, Stages: []topology.StageRef{{Hostname: strings.TrimSuffix(dev, "dev") + "stage"}},
 					BootstrapSession: "test", BootstrappedAt: "2026-10-02", GitPushState: topology.GitPushConfigured,
-					HQ: &workflow.HQRepoRef{AppID: labApp, Repo: dev, Branch: "mate/" + labMate, Change: 1},
+					HQ: &workflow.HQRepoRef{AppID: labApp, Repo: dev, Change: 1},
 				}); err != nil {
 					t.Fatal(err)
 				}
@@ -351,7 +273,7 @@ func TestDescribeChange_MissingPictureNamesWhatIsKept(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			lab := deliveredLab(t)
+			lab := openedLab(t)
 			for i := range tt.takes {
 				keptScreenshot(t, lab.stateDir, fmt.Appendf(nil, "\x89PNG-%d", i), 800, 600)
 			}
@@ -416,7 +338,7 @@ func keptScreenshot(t *testing.T, stateDir string, png []byte, width, height int
 // HQ will not keep publishes nothing: never a body with a broken picture.
 func TestDescribeChange_Pictures(t *testing.T) {
 	t.Run("attached once, published as an img with its size", func(t *testing.T) {
-		lab := deliveredLab(t)
+		lab := openedLab(t)
 		id := keptScreenshot(t, lab.stateDir, []byte("\x89PNG\r\n\x1a\n-a-screenshot"), 1280, 720)
 		words := "## How I checked it\n\n![The count reads \"3 open\" & more](" + id + ")\n"
 		for range 2 {
@@ -435,7 +357,7 @@ func TestDescribeChange_Pictures(t *testing.T) {
 	})
 
 	t.Run("a picture HQ will not keep publishes nothing and drops the words", func(t *testing.T) {
-		lab := deliveredLab(t)
+		lab := openedLab(t)
 		id := keptScreenshot(t, lab.stateDir, []byte("not a png at all"), 800, 600)
 		words := "![The count](" + id + ")"
 		text, isError := lab.describe("", words)

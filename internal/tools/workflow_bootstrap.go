@@ -93,6 +93,9 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 			if len(input.Plan) == 0 {
 				resp, err = engine.BootstrapCompleteAdoptPlan(existing, input.Scope, rt, schemas, adoptVolumeSetups(ctx, sshDeployer, existing, stateDir))
 			} else {
+				if pe := repoPartsPlanError(ctx, client, projectID, input.Plan, sshDeployer, rt); pe != nil {
+					return convertError(pe, WithRecoveryStatus()), nil, nil
+				}
 				resp, err = engine.BootstrapCompletePlan(input.Plan, schemas, existing)
 			}
 			if err != nil {
@@ -141,8 +144,11 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 			return bootstrapResult(ctx, resp, engine, client, projectID, rt), nil, nil
 		}
 		if input.Plan != nil {
-			// A Mate plans pairs only (hq_delivery.go).
+			// A Mate plans pairs only (hq_pair.go).
 			if pe := hqPairPlanError(input.Plan, rt.MateEnabled); pe != nil {
+				return convertError(pe, WithRecoveryStatus()), nil, nil
+			}
+			if pe := repoPartsPlanError(ctx, client, projectID, input.Plan, sshDeployer, rt); pe != nil {
 				return convertError(pe, WithRecoveryStatus()), nil, nil
 			}
 			resp, err := engine.BootstrapCompletePlan(input.Plan, schemas, nil)

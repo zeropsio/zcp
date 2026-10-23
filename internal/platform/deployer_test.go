@@ -2,8 +2,13 @@
 package platform
 
 import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSSHArgs_HostKeyOptions(t *testing.T) {
@@ -104,5 +109,25 @@ func TestSSHArgsBg(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Errorf("sshArgsBg output missing %q\nfull: %s", want, joined)
 		}
+	}
+}
+
+// TestExecSSH_StoppedByItsContext_SaysWhy: an ssh call its context stops —
+// cancelled, or past its ceiling — says so in its error, so the stop is not
+// taken for the remote command being killed.
+//
+// non-parallel: t.Setenv puts a fake ssh first on PATH.
+func TestExecSSH_StoppedByItsContext_SaysWhy(t *testing.T) {
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "ssh"), []byte("#!/bin/sh\nexec sleep 10\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	_, err := NewSystemSSHDeployer().ExecSSH(ctx, "builder", "true")
+	var sshErr *SSHExecError
+	if !errors.As(err, &sshErr) || !errors.Is(sshErr.Err, context.DeadlineExceeded) {
+		t.Errorf("ExecSSH stopped by its deadline = %v, want an SSHExecError carrying context.DeadlineExceeded", err)
 	}
 }

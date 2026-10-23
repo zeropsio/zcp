@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -48,9 +49,12 @@ func sourceWorkingDir(stateDir, source, explicit string) string {
 // ops.DeployLocal will deploy from). On a container source it is the
 // CONTAINER directory the deploy runs in (sourceWorkingDir), read from the
 // same folder below the source's mount.
-func deployPreFlight(ctx context.Context, client platform.Client, projectID, stateDir, sourceHostname, targetHostname, setup, workingDir string, sourceMountReadable bool) (resolvedSetup string, result *workflow.StepCheckResult, err error) {
+//
+// The setup it resolved is returned with the config file a passing
+// pre-flight read (preflightResolved).
+func deployPreFlight(ctx context.Context, client platform.Client, projectID, stateDir, sourceHostname, targetHostname, setup, workingDir string, sourceMountReadable bool) (preflightResolved, *workflow.StepCheckResult, error) {
 	if stateDir == "" {
-		return setup, nil, nil
+		return preflightResolved{setup: setup}, nil, nil
 	}
 
 	// Resolve target ServiceMeta via the pair-aware lookup so a stage
@@ -59,12 +63,12 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 	// keying by m.Hostname alone violates the invariant).
 	meta, err := workflow.FindServiceMeta(stateDir, targetHostname)
 	if err != nil {
-		return setup, nil, fmt.Errorf("preflight find meta: %w", err)
+		return preflightResolved{setup: setup}, nil, fmt.Errorf("preflight find meta: %w", err)
 	}
 	// No meta = not adopted, but requireAdoption handles that gate.
 	// If meta is nil, skip pre-flight (permissive).
 	if meta == nil {
-		return setup, nil, nil
+		return preflightResolved{setup: setup}, nil, nil
 	}
 
 	// Local env + container source: the source service's zerops.yaml lives
@@ -76,11 +80,11 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 	// resolve the setup from the meta cache so zcli gets an explicit
 	// --setup when one is recorded.
 	if sourceHostname != "" && !sourceMountReadable {
-		resolvedSetup = setup
+		resolvedSetup := setup
 		if resolvedSetup == "" {
 			resolvedSetup = meta.SetupNameFor(targetHostname)
 		}
-		return resolvedSetup, &workflow.StepCheckResult{
+		return preflightResolved{setup: resolvedSetup}, &workflow.StepCheckResult{
 			Passed: true,
 			Checks: []workflow.StepCheck{{
 				Name: "zerops_yml_exists", Status: statusPass,
@@ -98,12 +102,18 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 	// contract for the workingDir-vs-projectRoot precedence.
 	doc, parseErr := findAndParseZeropsYml(projectRoot, sourceHostname, workingDir)
 	if parseErr != nil {
+		file, reason := (*ops.ZeropsYmlDoc)(nil).ConfigFileName(), parseErr.Error()
+		var invalid *ops.InvalidZeropsYmlError
+		if errors.As(parseErr, &invalid) {
+			file = invalid.File
+			reason = ops.NameRepoConfigFile(reason, file)
+		}
 		checks = append(checks, workflow.StepCheck{
 			Name: "zerops_yml_exists", Status: statusFail,
-			Detail: fmt.Sprintf("zerops.yaml not found or invalid: %v", parseErr),
+			Detail: fmt.Sprintf("%s not found or invalid: %s", file, reason),
 		})
-		return setup, &workflow.StepCheckResult{
-			Passed: false, Checks: checks, Summary: "zerops.yaml not found or invalid",
+		return preflightResolved{setup: setup}, &workflow.StepCheckResult{
+			Passed: false, Checks: checks, Summary: file + " not found or invalid",
 		}, nil
 	}
 	checks = append(checks, workflow.StepCheck{
@@ -154,9 +164,9 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 			if recorded != "" {
 				// The pair records this half's setup (a stage's in Stages):
 				// it must exist in zerops.yaml, and no convention replaces it.
-				reason = fmt.Sprintf("%s records setup %q, which zerops.yaml does not declare — choose from availableSetups", targetHostname, recorded)
+				reason = fmt.Sprintf("%s records setup %q, which %s does not declare — choose from availableSetups", targetHostname, recorded, doc.ConfigFileName())
 			}
-			return setup, nil, &workflow.ErrRequiresSetupInput{
+			return preflightResolved{setup: setup}, nil, &workflow.ErrRequiresSetupInput{
 				Service:         targetHostname,
 				TargetHostname:  targetHostname,
 				AvailableSetups: availableSetups,
@@ -169,16 +179,16 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 		}
 		checks = append(checks, workflow.StepCheck{
 			Name: targetHostname + "_setup", Status: statusFail,
-			Detail: fmt.Sprintf("no setup entry %q found in zerops.yaml — available setups: [%s]. Pass one explicitly via the `setup` parameter; in recipes setup names differ from hostnames (e.g. hostname=%s → setup=dev), the deploy tool cannot guess when multiple setups are declared.", tried, strings.Join(availableSetups, ", "), targetHostname),
+			Detail: fmt.Sprintf("no setup entry %q found in %s — available setups: [%s]. Pass one explicitly via the `setup` parameter; in recipes setup names differ from hostnames (e.g. hostname=%s → setup=dev), the deploy tool cannot guess when multiple setups are declared.", tried, doc.ConfigFileName(), strings.Join(availableSetups, ", "), targetHostname),
 		})
-		return setup, &workflow.StepCheckResult{
+		return preflightResolved{setup: setup}, &workflow.StepCheckResult{
 			Passed: false, Checks: checks,
 			Summary: fmt.Sprintf("no matching setup entry for %s", targetHostname),
 		}, nil
 	}
 	// Entry resolved. The actual setup name to pass to zcli is entry.Setup —
 	// even when the input was empty and role/hostname fallback found it.
-	resolvedSetup = entry.Setup
+	resolved := preflightResolved{setup: entry.Setup, configFile: doc.File}
 
 	// Gate B — first-deploy write-back. Persist the resolved setup
 	// onto the meta regardless of whether `setup` arrived explicit or
@@ -196,7 +206,7 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 	// adopt-route discovery gap plan §"Gate A items" tracked under
 	// "Container-side adoption: first agent interaction surfaces …".
 	if err := recordResolvedDeploySetupMeta(stateDir, targetHostname, entry.Setup, entry.HasPorts()); err != nil {
-		return setup, nil, fmt.Errorf("preflight record deployed setup metadata: %w", err)
+		return preflightResolved{setup: setup}, nil, fmt.Errorf("preflight record deployed setup metadata: %w", err)
 	}
 	checks = append(checks, workflow.StepCheck{
 		Name: targetHostname + "_setup", Status: statusPass,
@@ -235,9 +245,16 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 	if !allPassed {
 		summary = "pre-flight checks failed — fix issues before deploying"
 	}
-	return resolvedSetup, &workflow.StepCheckResult{
+	return resolved, &workflow.StepCheckResult{
 		Passed: allPassed, Checks: checks, Summary: summary,
 	}, nil
+}
+
+// preflightResolved is what pre-flight resolved for a deploy: the setup it
+// deploys with and the config file it builds from (zerops.yaml or
+// zerops.yml) — "" when pre-flight did not read one.
+type preflightResolved struct {
+	setup, configFile string
 }
 
 // resolveSetupEntry finds the zerops.yaml setup entry using priority:

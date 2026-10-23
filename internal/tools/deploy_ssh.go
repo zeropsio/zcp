@@ -287,7 +287,7 @@ func RegisterDeploySSH(
 				}
 				return jsonResult(deploySSHResponse{
 					DeployResult:     result,
-					WorkSessionState: sessionAnnotations(stateDir),
+					WorkSessionState: sessionAnnotations(ctx, httpClient, stateDir),
 					Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rtInfo),
 				}), nil, nil
 			}
@@ -297,7 +297,7 @@ func RegisterDeploySSH(
 			}
 			return jsonResult(deploySSHResponse{
 				DeployResult:     result,
-				WorkSessionState: sessionAnnotations(stateDir),
+				WorkSessionState: sessionAnnotations(ctx, httpClient, stateDir),
 				Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rtInfo),
 			}), nil, nil
 		}
@@ -339,12 +339,15 @@ func RegisterDeploySSH(
 			sourceForPreflight = input.TargetService
 		}
 		input.WorkingDir = sourceWorkingDir(stateDir, sourceForPreflight, input.WorkingDir)
+		// configFile is the config file the deploy builds from, as pre-flight
+		// read it; its failure classification names that file.
+		var configFile string
 		if input.Strategy != deployStrategyGitPush {
 			// SSH deploy reads yaml from the source SSHFS mount in container
 			// env, below it for a workingDir on a code volume. In LOCAL env
 			// there is no mount: sourceMountReadable=false defers yaml
 			// validation to deploy time.
-			resolvedSetup, pfResult, pfErr := deployPreFlight(ctx, client, projectID, stateDir, sourceForPreflight, input.TargetService, input.Setup, input.WorkingDir, rtInfo.InContainer)
+			resolved, pfResult, pfErr := deployPreFlight(ctx, client, projectID, stateDir, sourceForPreflight, input.TargetService, input.Setup, input.WorkingDir, rtInfo.InContainer)
 			if pfErr != nil {
 				var blocker *workflow.ErrRequiresSetupInput
 				if errors.As(pfErr, &blocker) {
@@ -363,9 +366,10 @@ func RegisterDeploySSH(
 					WithRecoveryStatus(),
 				), nil, nil
 			}
-			if resolvedSetup != "" {
-				input.Setup = resolvedSetup
+			if resolved.setup != "" {
+				input.Setup = resolved.setup
 			}
+			configFile = resolved.configFile
 		}
 
 		// Route: git-push strategy pushes to the external git remote, then
@@ -374,7 +378,7 @@ func RegisterDeploySSH(
 			return handleGitPush(ctx, client, httpClient, projectID, sshDeployer, logFetcher, buildProgressCallback(ctx, req), input, stateDir, rtInfo)
 		}
 
-		return runDeploySSHZCLIPush(ctx, req, client, httpClient, sshDeployer, authInfo, logFetcher, rtInfo, projectID, stateDir, devsup, input)
+		return runDeploySSHZCLIPush(ctx, req, client, httpClient, sshDeployer, authInfo, logFetcher, rtInfo, projectID, stateDir, configFile, devsup, input)
 	})
 }
 
@@ -394,7 +398,7 @@ func runDeploySSHZCLIPush(
 	authInfo *auth.Info,
 	logFetcher platform.LogFetcher,
 	rtInfo runtime.Info,
-	projectID, stateDir string,
+	projectID, stateDir, configFile string,
 	devsup DevsupSource,
 	input DeploySSHInput,
 ) (*mcp.CallToolResult, any, error) {
@@ -414,7 +418,7 @@ func runDeploySSHZCLIPush(
 	if err != nil {
 		attempt.Error = err.Error()
 		// SSH/transport-layer failure — we never reached the build.
-		classification := classifyTransportError(err, deployStrategyZCLILabel)
+		classification := classifyTransportError(err, deployStrategyZCLILabel, configFile)
 		if classification != nil {
 			attempt.FailureClass = classification.Category
 		} else {
@@ -426,13 +430,21 @@ func runDeploySSHZCLIPush(
 		// to source from at all) can never succeed on retry — override
 		// the generic transport suggestion with the in-place redeploy.
 		suggestion := appVersionRedeploySuggestion(ctx, client, projectID, input.SourceService, input.TargetService)
-		return convertError(err, WithRecoveryStatus(), WithFailureClassification(classification), WithSuggestion(suggestion)), nil, nil
+		// The dev setup was rewritten before the push, so a failed deploy
+		// still says so: the diff is never left unexplained.
+		toldMove := func(w *ErrorWire) {
+			if told := move.told(nil); told != "" {
+				w.Suggestion = strings.TrimSpace(w.Suggestion + " " + told)
+			}
+		}
+		return convertError(err, WithRecoveryStatus(), WithFailureClassification(classification), WithSuggestion(suggestion), toldMove), nil, nil
 	}
 
 	onProgress := buildProgressCallback(ctx, req)
-	pollDeployBuild(ctx, client, projectID, result, onProgress, logFetcher, sshDeployer, stateDir)
-	if move.sentence != "" {
-		result.Message = move.sentence + " " + result.Message
+	ctx = deployFollowUpContext(ctx)
+	pollDeployBuild(ctx, client, projectID, result, onProgress, logFetcher, sshDeployer, stateDir, configFile)
+	if told := move.told(result); told != "" {
+		result.Message = told + " " + result.Message
 	}
 	if superviseErr != nil {
 		result.Warnings = append(result.Warnings, superviseErr.Error())
@@ -476,15 +488,6 @@ func runDeploySSHZCLIPush(
 	}
 	_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
 
-	// A wired pair's stage deploy is its delivery (hq_delivery.go).
-	var change *changeRef
-	if result != nil && result.Status == statusDeployed {
-		if delivery := deliverHQPair(ctx, client, httpClient, sshDeployer, rtInfo, stateDir, input.TargetService); delivery != nil {
-			result.NextActions = strings.TrimSpace(result.NextActions + " " + delivery.Line)
-			change = delivery.Change
-		}
-	}
-
 	// F10 fix (round-3 audit): default container SSH zerops_deploy was
 	// the sole deploy path returning raw *ops.DeployResult — the F5
 	// `WorkSessionState` lifecycle signal was already on every other
@@ -495,8 +498,7 @@ func runDeploySSHZCLIPush(
 	// signal inline. Wrap to match.
 	return jsonResult(deploySSHResponse{
 		DeployResult:     result,
-		PullRequest:      change,
-		WorkSessionState: sessionAnnotations(stateDir),
+		WorkSessionState: sessionAnnotations(ctx, httpClient, stateDir),
 		Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rtInfo),
 	}), nil, nil
 }
@@ -506,9 +508,6 @@ func runDeploySSHZCLIPush(
 // container deploys get the same F5 surface local deploys already have.
 type deploySSHResponse struct {
 	*ops.DeployResult
-	// PullRequest is the change in HQ a wired pair's stage deploy delivered
-	// its code through — absent everywhere else. Named as the card decodes it.
-	PullRequest      *changeRef        `json:"pullRequest,omitempty"`
 	WorkSessionState *WorkSessionState `json:"workSessionState,omitempty"`
 	// Envelope is the post-mutation lifecycle state (docs/spec-mate.md §1.3).
 	// Absent when its computation failed — the rest of the response is

@@ -51,31 +51,6 @@ func sshGitRunner(ctx context.Context, sshDeployer ops.SSHDeployer, hostname, wo
 	}
 }
 
-// fetchZeropsYamlOverSSH reads zerops.yaml (or zerops.yml fallback) from
-// the target container via SSH `cat`. Returns ("", nil) when the file is
-// absent so callers can treat "no yaml" the same way the filesystem path
-// does (skip validation). A read error is returned for transport failures
-// so the caller can log; validation itself falls back to the server which
-// will error just the same if the YAML were malformed.
-func fetchZeropsYamlOverSSH(ctx context.Context, sshDeployer ops.SSHDeployer, hostname, workingDir string) (string, error) {
-	if sshDeployer == nil {
-		return "", nil
-	}
-	// Try zerops.yaml then zerops.yml; 2>/dev/null + trailing echo lets us
-	// distinguish "file missing" (nothing in stdout) from "read failed"
-	// (SSH error) without special-casing exit codes.
-	qwd := ops.ShellQuote(workingDir)
-	cmd := fmt.Sprintf(
-		`cat %s/zerops.yaml 2>/dev/null || cat %s/zerops.yml 2>/dev/null || true`,
-		qwd, qwd,
-	)
-	out, err := sshDeployer.ExecSSH(ctx, hostname, cmd)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimRight(string(out), "\n"), nil
-}
-
 // gitPushPrerequisites is a structured response when GIT_TOKEN is missing.
 // Guides the agent through the decision question and setup steps.
 type gitPushPrerequisites struct {
@@ -250,8 +225,7 @@ func trackedRefOrDefault(meta *workflow.ServiceMeta) string {
 // resolveTrackedBranch resolves the branch a container-mode git-push
 // transmits to: an explicit inputBranch always wins (back-compat with the
 // pre-GF-7 `branch` input), else the target's recorded tracked ref (GF-7),
-// else "main". A push to this Mate's HQ goes to its change's branch instead,
-// which zcp picks (handleHQGitPush).
+// else "main". A push to this Mate's HQ never runs here (hqGitPushRefusal).
 func resolveTrackedBranch(stateDir, targetService, inputBranch string) string {
 	if inputBranch != "" {
 		return inputBranch
@@ -260,66 +234,16 @@ func resolveTrackedBranch(stateDir, targetService, inputBranch string) string {
 	return trackedRefOrDefault(meta)
 }
 
-// hqPushGuard decides whether a pair whose remote is this Mate's HQ may push.
-// A pair not yet recorded as wired — its wiring stopped half-way, with the
-// remote stamped and no branch — has its wiring retried once, here, and is refused while it
-// stays incomplete. A refusal the retry cannot change is
-// told its remedy, after which the next push wires the pair. A remote on this
-// HQ that is not the pair's repository is the user's own and pushes as one,
-// without HQ being asked — it would make the pair's repository
-// (hqRemoteIsThePairs). A wired pair is refused a branch of its own choosing:
-// HQ takes its push only on its change's branch, and `main` moves only by
-// HQ's merge. Nil when the push may go ahead.
-func hqPushGuard(
-	ctx context.Context,
-	client platform.Client,
-	httpClient ops.HTTPDoer,
-	sshDeployer ops.SSHDeployer,
-	rt runtime.Info,
-	stateDir, hostname, remote, askedBranch string,
-) *platform.PlatformError {
-	meta, _ := workflow.FindServiceMeta(stateDir, hostname)
-	hqc, enrolled := openHQ(httpClient)
-	if meta == nil || !enrolled {
-		return nil
-	}
-	if !hqPairWired(meta) {
-		if !hqRemoteIsThePairs(remote, hqc.Address(), hostname) {
-			return nil
-		}
-		attempt := rewireHQPair(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, meta, hostname)
-		if attempt.usersOwn {
-			return nil
-		}
-		if !attempt.wired {
-			suggestion := "Do not push to main or force-push. Deploy the pair directly (strategy \"ssh\") to run the code; every git-push retries the wiring, and once it completes the push goes to this Mate's change."
-			if attempt.remedy != "" {
-				suggestion = attempt.remedy + " Do not push to main or force-push; the git-push after the remedy wires the pair and goes to this Mate's change."
-			}
-			return platform.NewPlatformError(
-				platform.ErrPrerequisiteMissing,
-				fmt.Sprintf("git-push from %s did not run: wiring incomplete — %s Nothing was pushed; the repository's main moves only by HQ's merge.", hostname, attempt.line),
-				suggestion,
-			)
-		}
-		if meta, _ = workflow.FindServiceMeta(stateDir, hostname); !hqPairWired(meta) {
-			return nil
-		}
-	}
-	switch askedBranch {
-	case "":
-		return nil
-	case hqBase:
-		return platform.NewPlatformError(
-			platform.ErrInvalidParameter,
-			fmt.Sprintf("git-push from %s to %q did not run: %q of %q moves only by HQ's merge and takes no push.", hostname, hqBase, hqBase, meta.HQ.Repo),
-			fmt.Sprintf("Push without a branch — the push goes to this Mate's change, and the person lands it on %q by merging it.", hqBase),
-		)
-	}
+// hqGitPushRefusal refuses a git-push from a pair wired to this Mate's HQ, or
+// to HQ: a Mate's code reaches HQ by plain git in the checkout, on a branch of
+// the agent's own, and HQ's `main` moves only when a person merges — a deploy
+// strategy that pushes the tracked branch would push `main`, and to another
+// remote it would hand over the HQ credential the dev service holds.
+func hqGitPushRefusal(hostname string) *platform.PlatformError {
 	return platform.NewPlatformError(
-		platform.ErrInvalidParameter,
-		fmt.Sprintf("git-push from %s to %q did not run: HQ takes this Mate's push only on its change's branch, which zcp picks.", hostname, askedBranch),
-		"Push without a branch — the push goes to this Mate's change.",
+		platform.ErrInvalidUsage,
+		fmt.Sprintf("git-push from %s did not run: its code goes to this Mate's HQ by plain git, not by a deploy.", hostname),
+		fmt.Sprintf("In %s's checkout, commit on a branch of your own and run `git push origin <branch>` — never push %q and never force-push: %q moves only when a person merges. Deploy the pair directly (strategy \"ssh\") to run the code.", hostname, hqBase, hqBase),
 	)
 }
 
@@ -445,8 +369,8 @@ func handleGitPush(
 	// (transport-layer failure to reach the remote).
 	//
 	// GF-13, extended to the failure side (judge review, item 5): a
-	// destination nothing can ever resolve — a change in HQ (nothing builds
-	// from a Mate's branch) or no BuildIntegration wired — must not record
+	// destination nothing can ever resolve — a repository in this Mate's HQ
+	// (nothing builds from it) or no BuildIntegration wired — must not record
 	// a FAILED attempt either, for the identical reason GF-13 already
 	// blocked the success side from recording an in-flight one there: no
 	// later pass would EVER record a successful attempt to supersede it, so
@@ -483,15 +407,6 @@ func handleGitPush(
 		)), nil, nil
 	}
 
-	// A wired pair pushes with a copy of this Mate's HQ credential, which a
-	// re-enrollment replaces: bring the copy to the current credential first
-	// — which also heals a pair an earlier refusal marked, before the
-	// pre-flight below would refuse it (hq_push_credential.go).
-	if refusal := hqPushCredentialPreflight(ctx, client, httpClient, sshDeployer, projectID, stateDir, input); refusal != nil {
-		recordAttempt(refusal.Message, topology.FailureClassCredential)
-		return convertError(refusal, WithRecoveryStatus()), nil, nil
-	}
-
 	// Meta-based source-of-push + setup-state pre-flight (deploy-decomp P4).
 	if blocked := gitPushMetaPreflight(stateDir, input.TargetService, recordAttempt); blocked != nil {
 		return blocked, nil, nil
@@ -504,26 +419,12 @@ func handleGitPush(
 	}
 	effectiveRemote := resolveEffectiveRemote(stateDir, input.TargetService, input.RemoteURL)
 
-	// A pair on this Mate's HQ pushes only once it is wired, and only to its
-	// change — refused here, before git runs, so a rejection can never read
-	// as a reason to force-push over it.
-	if hqRemoteOfThisMate(effectiveRemote) {
-		pair := pairKey(stateDir, hostname)
-		release, err := holdPairCheckout(ctx, stateDir, pair)
-		if err != nil {
-			reason := pairHeldReason(pair, err)
-			recordAttempt(reason, topology.FailureClassOther)
-			return convertError(platform.NewPlatformError(
-				platform.ErrSSHDeployFailed,
-				fmt.Sprintf("git-push from %s did not run: %s. Nothing was pushed.", hostname, reason),
-				"Push again once it is done.",
-			), WithRecoveryStatus()), nil, nil
-		}
-		defer release()
-		if refusal := hqPushGuard(ctx, client, httpClient, sshDeployer, rt, stateDir, hostname, effectiveRemote, input.Branch); refusal != nil {
-			recordAttempt(refusal.Message, topology.FailureClassConfig)
-			return convertError(refusal, WithRecoveryStatus()), nil, nil
-		}
+	// A pair wired to HQ holds the Mate's HQ credential as GIT_TOKEN: a push
+	// to any remote would hand it over, so none runs, whatever the remote.
+	if meta, _ := workflow.FindServiceMeta(stateDir, hostname); hqPairWired(meta) || hqRemoteOfThisMate(effectiveRemote) {
+		refusal := hqGitPushRefusal(hostname)
+		recordAttempt(refusal.Message, topology.FailureClassConfig)
+		return convertError(refusal, WithRecoveryStatus()), nil, nil
 	}
 	branch := resolveTrackedBranch(stateDir, input.TargetService, input.Branch)
 
@@ -612,7 +513,8 @@ func handleGitPush(
 	// is about to consume by running the same platform validator now. YAML
 	// lives in the container at workingDir; fetch via SSH cat and pass to
 	// the content-based entry point. Any failure aborts the push.
-	yamlContent, yamlErr := fetchZeropsYamlOverSSH(ctx, sshDeployer, hostname, workingDir)
+	// configFile names the file in the failure classification.
+	configFile, yamlContent, yamlErr := ops.ReadRepoConfigFile(ctx, sshDeployer, hostname, workingDir)
 	if yamlErr == nil && yamlContent != "" {
 		setupName := input.Setup
 		if resolvedSetup, recordErr := recordDeploySetupMetaFromContent(stateDir, hostname, input.Setup, yamlContent); recordErr != nil {
@@ -645,13 +547,6 @@ func handleGitPush(
 		}
 	}
 
-	// A push to this Mate's HQ is a delivery of committed work: its change
-	// opened when there is something to deliver, and HEAD pushed to the
-	// change's branch — the one ref HQ takes from the Mate.
-	if hqRemoteOfThisMate(effectiveRemote) {
-		return handleHQGitPush(ctx, client, httpClient, sshDeployer, rt, projectID, stateDir, hostname, workingDir, effectiveRemote, dirtyWarn, recordAttempt), nil, nil
-	}
-
 	// pushedAt anchors the build-watch discovery: integration builds
 	// created at-or-after this instant belong to THIS push.
 	pushedAt := time.Now().UTC()
@@ -663,7 +558,7 @@ func handleGitPush(
 		// Run the classifier so credential-class git failures land as
 		// FailureClassCredential instead of generic Network — the recovery
 		// (rotate GIT_TOKEN vs check connectivity) differs (E2).
-		classification := classifyTransportError(err, "git-push")
+		classification := classifyTransportError(err, "git-push", configFile)
 		category := topology.FailureClassNetwork
 		if classification != nil {
 			category = classification.Category
@@ -692,7 +587,7 @@ func handleGitPush(
 			rejection := classifyGitPushNonFastForward(sshGitRunner(ctx, sshDeployer, hostname, workingDir), effectiveRemote, branch)
 			recordAttempt(fmt.Sprintf("git-push rejected non-fast-forward: %s", detail), topology.FailureClassConfig)
 			return convertError(
-				newGitPushNonFastForwardError(hostname, detail, effectiveRemote),
+				newGitPushNonFastForwardError(hostname, detail),
 				WithFailureClassification(classification),
 				WithGitPushRejection(rejection),
 				WithRecoveryStatus(),
@@ -741,7 +636,7 @@ func handleGitPush(
 	// push source forever. A git-push that no build follows is delivery, not
 	// a deploy of that service, so those cases record nothing (GF-13,
 	// docs/spec-workflows.md §12.6). A push to this Mate's HQ never reaches
-	// here (handleHQGitPush).
+	// here (hqGitPushRefusal).
 	trackable := result.Status != statusNothingToPush && gitPushBuildIntegrationConfigured(stateDir, input.TargetService)
 	if trackable {
 		_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
@@ -766,7 +661,7 @@ func handleGitPush(
 		// logs + classification on FAILED → auto-record on ACTIVE. The manual
 		// zerops_events + record-deploy bridge survives as the RECOVERY path
 		// (watch timeout, compaction), never the happy path.
-		finishGitPushWithBuildWatch(ctx, client, projectID, logFetcher, onProgress, input, stateDir, pushedAt, result)
+		finishGitPushWithBuildWatch(ctx, client, projectID, logFetcher, onProgress, input, stateDir, configFile, pushedAt, result)
 	}
 
 	// Container-side trackTriggerMissingWarning parity (deploy-decomp P4
@@ -786,7 +681,7 @@ func handleGitPush(
 	return jsonResult(deployGitPushResponse{
 		GitPushResult:    result,
 		Warnings:         warnings,
-		WorkSessionState: sessionAnnotations(stateDir),
+		WorkSessionState: sessionAnnotations(ctx, httpClient, stateDir),
 		Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rt),
 	}), nil, nil
 }
@@ -798,9 +693,6 @@ func handleGitPush(
 // want.
 type deployGitPushResponse struct {
 	*ops.GitPushResult
-	// PullRequest is the change in this Mate's HQ the push's work lands
-	// through — absent everywhere else. Named as the card decodes it.
-	PullRequest      *changeRef        `json:"pullRequest,omitempty"`
 	Warnings         []string          `json:"warnings,omitempty"`
 	WorkSessionState *WorkSessionState `json:"workSessionState,omitempty"`
 	// Envelope is the post-mutation lifecycle state (docs/spec-mate.md §1.3).
@@ -823,7 +715,7 @@ func finishGitPushWithBuildWatch(
 	logFetcher platform.LogFetcher,
 	onProgress ops.ProgressCallback,
 	input DeploySSHInput,
-	stateDir string,
+	stateDir, configFile string,
 	pushedAt time.Time,
 	result *ops.GitPushResult,
 ) {
@@ -865,7 +757,7 @@ func finishGitPushWithBuildWatch(
 		return
 	}
 	if len(builds) == 1 {
-		watchIntegrationBuildOn(ctx, client, projectID, logFetcher, onProgress, input, stateDir, pushedAt, meta, buildHost, manualBridge, result)
+		watchIntegrationBuildOn(ctx, client, projectID, logFetcher, onProgress, input, stateDir, configFile, pushedAt, meta, buildHost, manualBridge, result)
 		return
 	}
 	// One commit, all parts (spec-mate §2.8a): every stage builds from the
@@ -875,7 +767,7 @@ func finishGitPushWithBuildWatch(
 	var pending *ops.GitPushResult
 	for _, b := range builds {
 		one := &ops.GitPushResult{}
-		watchIntegrationBuildOn(ctx, client, projectID, logFetcher, onProgress, input, stateDir, pushedAt, meta, b.Hostname, manualBridge, one)
+		watchIntegrationBuildOn(ctx, client, projectID, logFetcher, onProgress, input, stateDir, configFile, pushedAt, meta, b.Hostname, manualBridge, one)
 		result.Warnings = append(result.Warnings, one.Warnings...)
 		if one.Status == gitPushStatusDelivered {
 			landed = append(landed, b)
@@ -924,7 +816,7 @@ func watchIntegrationBuildOn(
 	logFetcher platform.LogFetcher,
 	onProgress ops.ProgressCallback,
 	input DeploySSHInput,
-	stateDir string,
+	stateDir, configFile string,
 	pushedAt time.Time,
 	meta *workflow.ServiceMeta,
 	buildHost, manualBridge string,
@@ -985,9 +877,10 @@ func watchIntegrationBuildOn(
 			result.BuildLogs = ops.FetchBuildLogs(ctx, client, logFetcher, projectID, watch.Event, 100)
 		}
 		result.FailureClassification = ops.ClassifyDeployFailure(ops.FailureInput{
-			Phase:     ops.PhaseBuild,
-			Strategy:  deployStrategyGitPush,
-			BuildLogs: result.BuildLogs,
+			Phase:      ops.PhaseBuild,
+			Strategy:   deployStrategyGitPush,
+			BuildLogs:  result.BuildLogs,
+			ConfigFile: configFile,
 		})
 		result.NextActions = fmt.Sprintf(
 			"The integration build on %q finished %s. Read failureClassification first; buildLogs carry the diagnostic depth. Fix, commit, and push again.",

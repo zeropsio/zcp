@@ -182,7 +182,7 @@ func TestClassifyTransportError_PromotesPreflightCodes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			pe := platform.NewPlatformError(tc.code, "boom", "fix")
-			got := classifyTransportError(pe, "")
+			got := classifyTransportError(pe, "", "")
 			if got == nil {
 				t.Fatal("expected classification, got nil")
 			}

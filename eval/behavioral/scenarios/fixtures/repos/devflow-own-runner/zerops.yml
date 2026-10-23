@@ -1,0 +1,17 @@
+# Devflow fixture (mono-z-dev-in-place): an existing repository developed by its
+# own runner (README: npm install, npm run dev; loopback unless NOTES_DEV_HOST;
+# host check unless NOTES_DEV_ALLOWED_HOSTS) with a heavy dev install. Only the
+# production setup exists.
+zerops:
+  - setup: prod
+    build:
+      base: nodejs@24
+      buildCommands:
+        - npm install --omit=dev
+      deployFiles: [.]
+    run:
+      base: nodejs@24
+      ports:
+        - port: 8080
+          httpSupport: true
+      start: npm start

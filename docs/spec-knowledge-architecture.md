@@ -103,6 +103,8 @@ list owns it.
 
 **An atom may carry its body inline (PUSH) or as a pointer (PULL).** The `delivery = inline | pointer` attribute (today's `reference:true`) chooses. A pointer-rendered atom is delivered *via the pull tier* — see §3.3 + §4.
 
+**PUSH and PULL name the repo's config file as the repo keeps it.** Content says `zerops.yaml` or `zerops.yml` freely; once zcp has read a dev repo (the parts read, `ops.PartsSignal.ConfigFile`), every `zerops_workflow` and `zerops_knowledge` text names that repo's file, so an agent is never told a name its repo does not use (`TestRepoConfigFile_AnAgentIsOnlyEverToldTheReposOwnConfigFileName`). A deploy reply names it only in the text zcp writes there — the failure classification and the suggestion drawn from it; build logs, platform and zcli errors and URLs keep the name their writer used (`TestRepoConfigFile_ADeployReplyKeepsBuildLogsAndErrorsAsWritten`, `TestClassifyDeployFailure_NamesTheReposConfigFile_QuotedLogTextKeepsItsOwn`).
+
 ### 3.3 REFERENCE — how non-owners point at a fact
 
 A surface that needs a fact it does NOT own must use one of exactly three sanctioned pointer forms — never a hand-copy:

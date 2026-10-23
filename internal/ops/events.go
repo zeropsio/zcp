@@ -126,8 +126,8 @@ var appVersionHintMap = map[string]string{
 	statusBuilding:                "IN_PROGRESS: Build is running. Continue polling.",
 	statusBuildFailed:             "FAILED: Build failed. Read this event's `failureClass` + `failureCause` for the structured diagnosis (populated when LogFetcher is available — same shape as DeployResult.FailureClassification). That IS the build diagnosis — a failed build never started a runtime process, so `zerops_logs` is empty for this service. Don't re-call zerops_deploy until the cause is identified — re-running without a fix loops the failure.",
 	platform.BuildStatusDeploying: "IN_PROGRESS: Deploy is running. Continue polling.",
-	"PREPARING_RUNTIME_FAILED":    "FAILED: run.prepareCommands exited non-zero. Check runtimeLogs for the prepare stderr. Common causes: missing sudo prefix (containers run as zerops user), wrong package name (Alpine PHP: php84-<ext>).",
-	"DEPLOY_FAILED":               "FAILED: run.initCommands crashed the new container on startup (build succeeded). The deploy response 'error' field identifies the failing command. Fetch runtime stderr with zerops_logs serviceHostname={service} severity=ERROR since=5m — NOT buildLogs (that's build container output).",
+	"PREPARING_RUNTIME_FAILED":    "FAILED: run.prepareCommands exited non-zero. The prepare output is at the end of this event's buildLogTail; read this event's `failureClass` + `failureCause` for the diagnosis.",
+	"DEPLOY_FAILED":               "FAILED: the new container failed after the build (a run.initCommand, the start command or the container itself). Read this service's runtime log (zerops_logs for this event's service, since=10m) — NOT buildLogTail (that's build output).",
 	statusCanceled:                "CANCELED: Build was canceled.",
 }
 
@@ -287,8 +287,8 @@ func Events(
 		// need metadata) or when status isn't a failure.
 		if fetcher != nil {
 			if phase := FailurePhaseFromStatus(av.Status); phase != "" {
-				logs := FetchBuildLogs(ctx, client, fetcher, projectID, &av, 200)
-				te.BuildLogTail = tailLines(logs, buildLogTailLines)
+				logs, tail := FetchBuildLogTail(ctx, client, fetcher, projectID, &av, 200, buildLogTailLines)
+				te.BuildLogTail = tail
 				if cls := ClassifyDeployFailure(FailureInput{
 					Phase:     phase,
 					Status:    av.Status,
@@ -328,6 +328,7 @@ func Events(
 	if len(events) > limit {
 		events = events[:limit]
 	}
+	readProcessErrors(ctx, client, events)
 
 	// Compute counts from filtered+trimmed events.
 	processCount := 0
@@ -351,6 +352,25 @@ func Events(
 		},
 		AppVersions: appVersionCandidates,
 	}, nil
+}
+
+// readProcessErrors fills a failed process's FailReason from its by-ID read
+// where the activity search gave none: the search's process carries only
+// publicMeta.failReason, never the process's `error`, so a failed stack.build
+// reached the timeline with no reason at all (verified 2026-10-16 on a
+// BUILD_FAILED Next.js build). Best-effort: a failed read leaves it empty.
+func readProcessErrors(ctx context.Context, client platform.Client, events []TimelineEvent) {
+	for i := range events {
+		e := &events[i]
+		if e.Type != eventTypeProcess || e.Status != statusFailed || e.FailReason != "" || e.ProcessID == "" {
+			continue
+		}
+		proc, err := client.GetProcess(ctx, e.ProcessID)
+		if err != nil || proc.FailReason == nil {
+			continue
+		}
+		e.FailReason = *proc.FailReason
+	}
 }
 
 // resolveAppVersionCandidates is Events' per-service `appVersions`
@@ -461,11 +481,3 @@ func formatDuration(d time.Duration) string {
 // buildLogTailLines bounds TimelineEvent.BuildLogTail: enough to show the
 // failing command and its error, small enough not to swamp the timeline.
 const buildLogTailLines = 40
-
-// tailLines returns the last n entries of lines (all of them when shorter).
-func tailLines(lines []string, n int) []string {
-	if len(lines) <= n {
-		return lines
-	}
-	return lines[len(lines)-n:]
-}

@@ -24,6 +24,10 @@ type DeployBatchTarget struct {
 	// (DeploySSH's deploy-from-commit) instead of its working tree. Not an
 	// input of zerops_deploy_batch: set by callers inside zcp.
 	SHA string `json:"-"`
+	// ConfigFile is the config file pre-flight read from the source's repo
+	// (zerops.yaml or zerops.yml); the target's failure classification
+	// names it. Not an input either.
+	ConfigFile string `json:"-"`
 }
 
 // DeployBatchEntryResult is the outcome for one target inside a batch. The
@@ -67,8 +71,9 @@ type DeployBatchResult struct {
 // for concurrent calls. Deploy fan-out is safe across distinct SOURCE
 // containers; entries sharing a source serialize inside DeploySSH on a
 // per-source git lock because each source container has one shared
-// /var/www/.git tree. The lock covers only the SSH git/push critical section
-// and is released before pollBuild, so build polling remains parallel.
+// /var/www/.git tree. The lock covers only the git round trips and zcli's
+// archive and upload; the wait on each build and pollBuild run outside it,
+// so stages fed from one dev service build in parallel.
 // RecordDeployAttempt is protected by workSessionMu in the workflow layer.
 func DeployBatchSSH(
 	ctx context.Context,

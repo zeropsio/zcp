@@ -2,8 +2,10 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -50,7 +52,7 @@ func RegisterBrowser(srv *mcp.Server, stateDir string) {
 			"[\"wait\",\"<sel>\"] or [\"wait\",\"--text\",\"<text>\"] — never for a fixed time. " +
 			"Only wait polls (up to 25 s, or [\"wait\",\"<sel>\",\"--timeout\",\"<ms>\"]); click, fill, check, find, get and is look once " +
 			"and fail at once on an element that is not there yet. " +
-			"Recipe close-step verification: one call per subdomain (appstage, then appdev). " +
+			"Recipe close step: one call per subdomain (appstage, then appdev). " +
 			"One warm Chrome serves every call: calls take turns (waiting for the browser " +
 			"within timeoutSeconds) and each call's tabs close when it ends. A call that times out, is cancelled " +
 			"or wedges Chrome returns its finished steps and recycles the browser (browserRecycled). " +
@@ -59,11 +61,11 @@ func RegisterBrowser(srv *mcp.Server, stateDir string) {
 			"\"fresh-context\" starts with none of them — only for the first check after a deploy that changed sign-in, storage, " +
 			"a service worker or long-cached assets, or for a signed-out view; it stops Chrome as the call ends, so the next call starts a cold one. " +
 			"Every other call stays on \"tab\". \"new-browser\" also restarts Chrome first, for a page that misbehaves only in the warm browser. " +
-			"freshBrowser: true means the call ran in a Chrome started for it (always after new-browser); " +
-			"browserRecycled: true means the call ended unclean and the browser was stopped (a fresh-context call stops it cleanly, without it). " +
+			"freshBrowser: true means a Chrome started for the call ran it (always after new-browser); " +
+			"browserRecycled: true means the call ended unclean and the browser was stopped (not set by a fresh-context call's clean stop). " +
 			"Each step's errorKind: selector-not-found, not-editable, timeout, wedge, invalid-command " +
 			"(an unknown command, subcommand or find action: fix the command, not the page), " +
-			"stale-ref (an @eN ref no snapshot in this call's tab made) or other failures. " +
+			"stale-ref (an @eN ref, see below) or other failures. " +
 			"commands[] vocabulary (<sel> is a CSS selector): " +
 			"[\"find\",\"role\",\"button\",\"click\",\"--name\",\"Submit\"], [\"find\",\"label\",\"<text>\",\"check\"], " +
 			"[\"find\",\"label\",\"<text>\",\"fill\",\"<value>\"], [\"find\",\"text\",\"<text>\",\"click\"], " +
@@ -86,8 +88,8 @@ func RegisterBrowser(srv *mcp.Server, stateDir string) {
 			"zerops_workflow action=\"describe-change\" description to show it to the person. " +
 			"Returns: steps[], errorsOutput, consoleOutput, " +
 			"networkOutput (4xx/5xx from [network requests], always on; " +
-			"a request with no status — failed at the network layer or still in flight — is not listed), " +
-			"durationMs, freshBrowser, browserRecycled, message. " +
+			"a request with no status — failed or still in flight — is not listed), " +
+			"durationMs, freshBrowser, browserRecycled, message; outputs past 20k chars are cut and fullResult names a file with all of it. " +
 			"To say how a call ran, report the result's durationMs, freshBrowser and browserRecycled; a script that summarises results keeps them.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Drive browser via agent-browser",
@@ -139,7 +141,7 @@ func keepBrowserPicture(stateDir string, result *ops.BrowserBatchResult) {
 // marshals a non-nil typed output into structuredContent and Claude Code
 // replaces the model-facing text with it, stripping every guidance atom.
 func browserToolResult(result *ops.BrowserBatchResult) *mcp.CallToolResult {
-	tr := jsonResult(result)
+	tr := jsonResult(shortBrowserResult(result))
 	if result.Screenshot != nil && len(result.Screenshot.PNG) > 0 {
 		tr.Content = append(tr.Content, &mcp.ImageContent{
 			Data:     result.Screenshot.PNG,
@@ -147,4 +149,75 @@ func browserToolResult(result *ops.BrowserBatchResult) *mcp.CallToolResult {
 		})
 	}
 	return tr
+}
+
+// browserTextCap bounds the result text the model reads: one page snapshot or
+// network tail can run to hundreds of thousands of chars.
+const browserTextCap = 20000
+
+// shortBrowserResult is the result as the model reads it. Within
+// browserTextCap it is the whole result; past it, the whole result goes to a
+// temp file the reply names (fullResult) when it can be written and each step
+// result, errors and console output keeps its head as a string, the network
+// tail its first requests — the longest outputs cut first, as little as fits.
+func shortBrowserResult(result *ops.BrowserBatchResult) any {
+	whole, err := json.Marshal(result)
+	if err != nil || len(whole) <= browserTextCap {
+		return result
+	}
+	short := *result
+	short.FullResult = saveBrowserResult(whole)
+	note := "… (cut)"
+	if short.FullResult != "" {
+		note = "… (cut; the whole result is in fullResult)"
+	}
+	for limit := browserTextCap; ; limit /= 2 {
+		short.Steps = make([]ops.BrowserStepResult, len(result.Steps))
+		for i, step := range result.Steps {
+			step.Result = cutBrowserOutput(step.Result, limit, note)
+			short.Steps[i] = step
+		}
+		short.ErrorsOutput = cutBrowserOutput(result.ErrorsOutput, limit, note)
+		short.ConsoleOutput = cutBrowserOutput(result.ConsoleOutput, limit, note)
+		short.NetworkOutput = result.NetworkOutput[:min(len(result.NetworkOutput), limit/100)]
+		if b, err := json.Marshal(short); limit == 0 || (err == nil && len(b) <= browserTextCap) {
+			return short
+		}
+	}
+}
+
+// saveBrowserResult writes a cut result whole to this process's one file in
+// the temp dir, replacing the previous cut result so they never pile up. It
+// answers the file, "" when it could not be written. The rename replaces the
+// name itself, never following what an existing name points at.
+func saveBrowserResult(whole []byte) string {
+	f, err := os.CreateTemp("", "zerops-browser-*.tmp")
+	if err != nil {
+		return ""
+	}
+	_, werr := f.Write(whole)
+	cerr := f.Close()
+	path := filepath.Join(os.TempDir(), fmt.Sprintf("zerops-browser-%d.json", os.Getpid()))
+	if werr != nil || cerr != nil || os.Rename(f.Name(), path) != nil {
+		_ = os.Remove(f.Name())
+		return ""
+	}
+	return path
+}
+
+// cutBrowserOutput keeps an output within limit chars: its head, as a JSON
+// string ending in note, when it is longer; nothing at limit 0.
+func cutBrowserOutput(raw json.RawMessage, limit int, note string) json.RawMessage {
+	if len(raw) <= limit {
+		return raw
+	}
+	if limit == 0 {
+		return nil
+	}
+	head := []rune(string(raw[:limit]))
+	cut, err := json.Marshal(string(head[:len(head)-1]) + note)
+	if err != nil {
+		return nil
+	}
+	return cut
 }

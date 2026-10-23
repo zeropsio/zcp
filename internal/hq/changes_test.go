@@ -2,7 +2,6 @@ package hq
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -81,7 +80,7 @@ func TestClient_OpenChange_DecodesTheChangeHQOpenedOrHeld(t *testing.T) {
 	t.Parallel()
 	client, calls := answering(t, openSample)
 
-	opened, err := client.OpenChange(context.Background(), "appdev", "Add a todo list")
+	opened, err := client.OpenChange(context.Background(), "appdev", "Add a todo list", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,12 +117,6 @@ func TestClient_EditChange_SendsOnlyWhatChanges(t *testing.T) {
 		{"its words", ChangeEdit{Body: &body}, `{"body":"Adds a list."}`},
 		{"its title", ChangeEdit{Title: &title}, `{"title":"Add a todo list"}`},
 		{"both", ChangeEdit{Title: &title, Body: &body}, `{"title":"Add a todo list","body":"Adds a list."}`},
-		{"its parts' receipt", ChangeEdit{Receipt: &ChangeReceipt{At: "2026-10-14T21:10:00Z", Parts: []ChangeReceiptPart{
-			{Setup: "web", PreviewHostname: "webstage", Deploy: "ok", DeployedAt: "2026-10-14T21:06:00Z", WorkspaceClean: true, DeployedCommit: "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678", Verified: true},
-			{Setup: "worker", PreviewHostname: "workerstage", Deploy: "none"},
-		}}}, `{"receipt":{"at":"2026-10-14T21:10:00Z","parts":[` +
-			`{"setup":"web","previewHostname":"webstage","deploy":"ok","deployedAt":"2026-10-14T21:06:00Z","workspaceClean":true,"deployedCommit":"a1b2c3d4e5f60718293a4b5c6d7e8f9012345678","verified":true},` +
-			`{"setup":"worker","previewHostname":"workerstage","deploy":"none","workspaceClean":false,"verified":false}]}}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -355,63 +348,6 @@ func TestClient_Bounded_EndsATryHQDoesNotAnswer(t *testing.T) {
 	}
 }
 
-// TestClient_Serving_IsAPreflight: before git runs against HQ, one bounded
-// request to its address says whether HQ connects and serves: any answer
-// below 500 is HQ serving; a 5xx, or no connection within the bound — an HQ
-// that never accepts — is HQ not serving, as any call's would be.
-func TestClient_Serving_IsAPreflight(t *testing.T) {
-	t.Parallel()
-	const connect = 200 * time.Millisecond
-	answering := func(status int) func(t *testing.T) (string, Doer) {
-		return func(t *testing.T) (string, Doer) {
-			t.Helper()
-			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(status) }))
-			t.Cleanup(srv.Close)
-			return srv.URL, srv.Client()
-		}
-	}
-	tests := []struct {
-		name    string
-		hq      func(t *testing.T) (string, Doer)
-		wantErr func(error) bool
-	}{
-		{"serving", answering(http.StatusOK), nil},
-		{"serving, asking for a credential", answering(http.StatusUnauthorized), nil},
-		{"the balancer's 502", answering(http.StatusBadGateway), func(err error) bool {
-			var refused *RefusedError
-			return errors.As(err, &refused) && refused.Status == http.StatusBadGateway
-		}},
-		{"a standby", answering(http.StatusServiceUnavailable), IsUnavailable},
-		{"never accepts", neverAccepting, func(err error) bool {
-			var noAnswer *NoAnswerError
-			return IsUnavailable(err) && errors.As(err, &noAnswer) && !noAnswer.Connected && noAnswer.Within == connect
-		}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			address, doer := tt.hq(t)
-			path := filepath.Join(t.TempDir(), "enrollment.json")
-			if err := SaveEnrollment(path, Enrollment{HQ: address, ProjectID: "p-mate", Credential: "good"}); err != nil {
-				t.Fatal(err)
-			}
-			client, err := Open(doer, path)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			start := time.Now()
-			err = client.Bounded(connect, connect).Serving(context.Background())
-			if took := time.Since(start); took > 2*time.Second {
-				t.Errorf("the preflight took %s, want it ended by its bound", took)
-			}
-			if tt.wantErr == nil && err != nil || tt.wantErr != nil && !tt.wantErr(err) {
-				t.Fatalf("err = %v", err)
-			}
-		})
-	}
-}
-
 // neverAccepting is an HQ address whose listener never accepts: the kernel
 // completes the TCP handshake into its backlog, and TLS never starts.
 func neverAccepting(t *testing.T) (string, Doer) {
@@ -469,18 +405,45 @@ func TestClient_Addresses(t *testing.T) {
 	}
 }
 
-func TestClient_OpenChange_KeepsHQsNothingToDeliverVerdict(t *testing.T) {
+// A change's branch is the one HQ names for it — short, or a full ref — and,
+// from an HQ that names none, the one HQ gives a change opened without a
+// branch: the Mate's own default.
+func TestClient_BranchOf_IsTheStoredBranchElseTheDefault(t *testing.T) {
 	t.Parallel()
-	client, _ := answering(t, `{"change":null,"created":false,"reason":"nothing_to_deliver"}`)
-	opened, err := client.OpenChange(t.Context(), "appdev", "Next task")
+	path := filepath.Join(t.TempDir(), "enrollment.json")
+	if err := SaveEnrollment(path, Enrollment{HQ: "https://hq.example", ProjectID: "p-mate", Credential: "good"}); err != nil {
+		t.Fatal(err)
+	}
+	client, err := Open(http.DefaultClient, path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := json.Marshal(opened)
-	if err != nil {
+	for _, tt := range []struct {
+		name   string
+		stored string
+		want   string
+	}{
+		{name: "named by its Mate", stored: "fix-login", want: "fix-login"},
+		{name: "a gone Mate's default", stored: "mate/p-gone/7", want: "mate/p-gone/7"},
+		{name: "as a full ref", stored: "refs/heads/fix-login", want: "fix-login"},
+		{name: "from an HQ that names none", want: "mate/p-mate/7"},
+	} {
+		if got := client.BranchOf(7, tt.stored); got != tt.want {
+			t.Errorf("%s: BranchOf(7, %q) = %q, want %q", tt.name, tt.stored, got, tt.want)
+		}
+	}
+}
+
+// A change opened from the agent's own branch names it to HQ, which binds the
+// change to that branch; with none named, HQ picks the change's branch.
+func TestClient_OpenChange_NamesTheAgentsBranch(t *testing.T) {
+	t.Parallel()
+	client, calls := answering(t, openSample)
+	if _, err := client.OpenChange(t.Context(), "appdev", "Fix the login", "fix-login"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), `"reason":"nothing_to_deliver"`) {
-		t.Fatalf("HQ verdict lost: %s", raw)
+	want := `{"branch":"fix-login","repo":"appdev","title":"Fix the login"}`
+	if len(*calls) != 1 || (*calls)[0].Body != want {
+		t.Errorf("calls = %+v, want one with body %s", *calls, want)
 	}
 }

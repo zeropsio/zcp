@@ -2,6 +2,8 @@ package hq
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,10 +15,11 @@ import (
 
 // A Mate's changes in HQ (@t3tools/shared/hqChanges, which zcp reads as the
 // spec): a change is HQ's record of the Mate's work toward `main` in one
-// repository of its application, on the branch `mate/<project id>/<number>`;
-// a Mate has at most one open change per repository. HQ refuses a push to a
-// branch with no open change of its own, so a change is opened before its
-// branch is pushed.
+// repository of its application, bound to a branch — one of the agent's own,
+// or `mate/<project id>/<number>` when none is named; a Mate has at most one
+// open change per repository. A Mate pushes any branch but `main`, a tag, or
+// another Mate's open change's, so a branch may be pushed before or after its
+// change is opened.
 
 // Doer sends one HTTP request.
 type Doer interface {
@@ -46,7 +49,7 @@ func Open(httpClient Doer, path string) (Client, error) {
 
 // Once is this client sending each call once: a 503 is UnavailableError at
 // once rather than waited out, for a caller that paces its own tries — a
-// delivery, which fails fast rather than waiting HQ out.
+// describe, which waits HQ out on its own pace.
 func (c Client) Once() Client {
 	c.call.once = true
 	return c
@@ -60,32 +63,6 @@ func (c Client) Once() Client {
 func (c Client) Bounded(connect, answer time.Duration) Client {
 	c.call.connect, c.call.answer = connect, answer
 	return c
-}
-
-// Serving asks whether HQ connects and serves at its address now — one HEAD
-// of its root under the client's bounds, the preflight a caller runs before
-// git against HQ, which has no connect bound of its own. Any answer below
-// 500 is HQ serving; a 5xx is a RefusedError (503 an UnavailableError), and
-// no answer an UnavailableError, as any call's would be.
-func (c Client) Serving(ctx context.Context) error {
-	try, connected, release := c.call.bounded(ctx)
-	defer release()
-	req, err := http.NewRequestWithContext(try, http.MethodHead, c.Address()+"/", nil)
-	if err != nil {
-		return fmt.Errorf("hq /: %w", err)
-	}
-	resp, err := c.call.http.Do(req)
-	if err != nil {
-		return &UnavailableError{Err: c.call.unanswered(ctx, try, connected, "/", fmt.Errorf("hq /: %w", err))}
-	}
-	_ = resp.Body.Close()
-	switch {
-	case resp.StatusCode == http.StatusServiceUnavailable:
-		return &UnavailableError{}
-	case resp.StatusCode >= http.StatusInternalServerError:
-		return &RefusedError{Status: resp.StatusCode}
-	}
-	return nil
 }
 
 // Repo is a repository HQ keeps for an application, served at
@@ -141,6 +118,14 @@ func (c Client) ProjectID() string { return c.enrollment.ProjectID }
 // GitUser. Never printed.
 func (c Client) Credential() string { return c.enrollment.Credential }
 
+// CredentialFingerprint names the Mate credential without carrying it: what a
+// record keeps to know which credential a service was given, never the
+// secret itself.
+func (c Client) CredentialFingerprint() string {
+	sum := sha256.Sum256([]byte(c.enrollment.Credential))
+	return hex.EncodeToString(sum[:8])
+}
+
 // RepoURL is where git reaches the repository repo of the application appID.
 func (c Client) RepoURL(appID, repo string) string { return RepoURLAt(c.Address(), appID, repo) }
 
@@ -156,10 +141,20 @@ func (c Client) ChangeURL(appID, repo string, number int) string {
 	return c.Address() + "/changes/" + url.PathEscape(appID) + "/" + url.PathEscape(repo) + "/" + strconv.Itoa(number)
 }
 
-// ChangeBranch is the branch of the Mate's change number: the one ref HQ lets
-// it push, while the change is open, only forward.
+// ChangeBranch is the branch HQ binds the Mate's change number to when it is
+// opened naming none.
 func (c Client) ChangeBranch(number int) string {
 	return "mate/" + c.enrollment.ProjectID + "/" + strconv.Itoa(number)
+}
+
+// BranchOf is the branch of the Mate's change number by its short name: the
+// one HQ names for it, branch — the Mate's own, or, for a change handed to it,
+// the branch it was on — and, from an HQ that names none, ChangeBranch.
+func (c Client) BranchOf(number int, branch string) string {
+	if branch = strings.TrimPrefix(branch, "refs/heads/"); branch != "" {
+		return branch
+	}
+	return c.ChangeBranch(number)
 }
 
 // AttachmentURL is where a picture HQ keeps at path is shown from.
@@ -178,22 +173,25 @@ const (
 // merged, MergedSha is the squash on `main` and LandedHead the head it
 // squashed.
 type Change struct {
-	AppID         string  `json:"appId"`
-	Repo          string  `json:"repo"`
-	Number        int     `json:"number"`
-	MateProjectID string  `json:"mateProjectId"`
-	Title         string  `json:"title"`
-	Body          string  `json:"body"`
-	State         string  `json:"state"`
-	Head          *string `json:"head"`
-	MergedSha     *string `json:"mergedSha"`
-	LandedHead    *string `json:"landedHead"`
-	OpenedAt      string  `json:"openedAt"`
-	MergedAt      *string `json:"mergedAt"`
-	ClosedAt      *string `json:"closedAt"`
-	UpdatedAt     string  `json:"updatedAt"`
-	Mergeability  string  `json:"mergeability"`
-	Behind        bool    `json:"behind"`
+	AppID         string `json:"appId"`
+	Repo          string `json:"repo"`
+	Number        int    `json:"number"`
+	MateProjectID string `json:"mateProjectId"`
+	Title         string `json:"title"`
+	// Branch is the change's branch, a full ref under refs/heads/; "" from
+	// an HQ older than branches of the Mate's own.
+	Branch       string  `json:"branch,omitempty"`
+	Body         string  `json:"body"`
+	State        string  `json:"state"`
+	Head         *string `json:"head"`
+	MergedSha    *string `json:"mergedSha"`
+	LandedHead   *string `json:"landedHead"`
+	OpenedAt     string  `json:"openedAt"`
+	MergedAt     *string `json:"mergedAt"`
+	ClosedAt     *string `json:"closedAt"`
+	UpdatedAt    string  `json:"updatedAt"`
+	Mergeability string  `json:"mergeability"`
+	Behind       bool    `json:"behind"`
 }
 
 // OpenedChange is HQ's answer to opening a change: the Mate's open change in
@@ -201,16 +199,20 @@ type Change struct {
 type OpenedChange struct {
 	Change  Change `json:"change"`
 	Created bool   `json:"created"`
-	Reason  string `json:"reason,omitempty"`
 }
 
 // OpenChange is the Mate's open change in repo, or the next number opened
-// with title. An open change keeps its title: retitling it is EditChange's.
-func (c Client) OpenChange(ctx context.Context, repo, title string, tree ...string) (OpenedChange, error) {
+// with title on branch — a branch of the Mate's own, which HQ binds the
+// change to; "" lets HQ name it. An open change keeps its title and branch:
+// retitling it is EditChange's. HQ refuses a branch another open change
+// holds (409, reason "branch_taken"), one it keeps for itself — `main`, a
+// full ref, its mate/ namespace (409, reason "protected_ref") — and one its
+// git does not take (400, reason "invalid_ref").
+func (c Client) OpenChange(ctx context.Context, repo, title, branch string) (OpenedChange, error) {
 	var opened OpenedChange
 	body := map[string]string{"repo": repo, "title": title}
-	if len(tree) != 0 {
-		body["tree"] = tree[0]
+	if branch != "" {
+		body["branch"] = branch
 	}
 	err := c.call.json(ctx, http.MethodPost, "/api/mate/changes", c.authorization(),
 		body, &opened)
@@ -218,45 +220,13 @@ func (c Client) OpenChange(ctx context.Context, repo, title string, tree ...stri
 }
 
 // ChangeEdit is what an edit of an open change sets: its title, its
-// description (markdown), its parts' receipt, or any of them; a nil field
-// stays as it is.
+// description (markdown), or both; a nil field stays as it is.
 type ChangeEdit struct {
-	Title   *string        `json:"title,omitempty"`
-	Body    *string        `json:"body,omitempty"`
-	Receipt *ChangeReceipt `json:"receipt,omitempty"`
+	Title *string `json:"title,omitempty"`
+	Body  *string `json:"body,omitempty"`
 }
 
-// ChangeReceipt is what zcp says of each part's preview after a push of a
-// change's branch, only for a pair of more than one stage (spec-mate
-// §2.8a.6, hqChanges.ts ChangeReceipt). HQ keeps the last one whole.
-type ChangeReceipt struct {
-	At    string              `json:"at"`
-	Parts []ChangeReceiptPart `json:"parts"`
-}
-
-// ChangeReceiptPart is one part's preview: its last deploy in the work
-// session (ok, failed, or none), and whether a verify passed after it.
-// DeployedCommit is the dev HEAD, only for an ok deploy from a clean
-// workspace; DeployedAt is absent for a preview never deployed.
-type ChangeReceiptPart struct {
-	Setup           string `json:"setup"`
-	PreviewHostname string `json:"previewHostname"`
-	Deploy          string `json:"deploy"`
-	DeployedAt      string `json:"deployedAt,omitempty"`
-	WorkspaceClean  bool   `json:"workspaceClean"`
-	DeployedCommit  string `json:"deployedCommit,omitempty"`
-	Verified        bool   `json:"verified"`
-}
-
-// The deploy a receipt says of a part's preview.
-const (
-	ReceiptDeployOK     = "ok"
-	ReceiptDeployFailed = "failed"
-	ReceiptDeployNone   = "none"
-)
-
-// EditChange retitles, describes or writes the receipt of the Mate's open
-// change number in repo.
+// EditChange retitles or describes the Mate's open change number in repo.
 func (c Client) EditChange(ctx context.Context, repo string, number int, edit ChangeEdit) (Change, error) {
 	var change Change
 	err := c.call.json(ctx, http.MethodPatch, changePath(repo, number), c.authorization(), edit, &change)

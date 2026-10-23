@@ -414,19 +414,24 @@ type EnvAccessor interface {
 	// IsSensitive reports the platform's sensitive flag: a value the person
 	// stored write-only. Presentation sites never echo such a value.
 	IsSensitive() bool
+	// IsSystem reports a var the platform itself injects (type SYSTEM),
+	// never one a person or the yaml set.
+	IsSystem() bool
 }
 
-// GetID, GetKey, GetContent, IsSensitive — ProjectEnvVar implements EnvAccessor.
+// GetID, GetKey, GetContent, IsSensitive, IsSystem — ProjectEnvVar implements EnvAccessor.
 func (p ProjectEnvVar) GetID() string      { return p.ID }
 func (p ProjectEnvVar) GetKey() string     { return p.Key }
 func (p ProjectEnvVar) GetContent() string { return p.Content }
 func (p ProjectEnvVar) IsSensitive() bool  { return p.Sensitive }
+func (p ProjectEnvVar) IsSystem() bool     { return p.Type == ProjectEnvSystem }
 
-// GetID, GetKey, GetContent, IsSensitive — ServiceEnvVar implements EnvAccessor.
+// GetID, GetKey, GetContent, IsSensitive, IsSystem — ServiceEnvVar implements EnvAccessor.
 func (s ServiceEnvVar) GetID() string      { return s.ID }
 func (s ServiceEnvVar) GetKey() string     { return s.Key }
 func (s ServiceEnvVar) GetContent() string { return s.Content }
 func (s ServiceEnvVar) IsSensitive() bool  { return s.Sensitive }
+func (s ServiceEnvVar) IsSystem() bool     { return s.Type == ServiceEnvSystem }
 
 // ImportResult represents the result of an import operation.
 type ImportResult struct {

@@ -1525,7 +1525,7 @@ func TestMergeExistingMetaKeepsThePairsRepositoryRecords(t *testing.T) {
 		Mode:         topology.PlanModeSimple,
 		GitPushState: topology.GitPushConfigured,
 		RemoteURL:    "https://hq.acme.example/git/a1/todoapp.git",
-		HQ:           &HQRepoRef{AppID: "a1", Repo: "todoapp", Branch: "mate/p1", Change: 1},
+		HQ:           &HQRepoRef{AppID: "a1", Repo: "todoapp", Change: 1},
 	}
 	meta := &ServiceMeta{Hostname: "todoapp", Stages: []topology.StageRef{{Hostname: "todoappstage"}}, Mode: topology.PlanModeStandard}
 	mergeExistingMeta(meta, existing)

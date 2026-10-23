@@ -69,6 +69,12 @@ type RunDescriptor struct {
 	// broader-scoped PAT a `gitRepoCreate` scenario's in-run create/delete
 	// needs).
 	GitHubAdminPAT string
+	// ExistingProjectID / ExistingProdToken, when non-empty, are the farm
+	// host's standing existing-production project id and its project-scoped
+	// token — injected only for a run whose scenario declares them in
+	// requiredEnvVars (§2.4, §3.3).
+	ExistingProjectID string
+	ExistingProdToken string
 	// DevsupURL, when non-empty, is the farm host's ZCP_DEVSUP_URL — a dev
 	// build of zcp-devsup the candidate's dev setups install while no
 	// published zcp release ships one (docs/spec-mate.md §2.8a.2).
@@ -213,6 +219,12 @@ func ServiceImportYAML(d RunDescriptor) ([]byte, error) {
 	}
 	if d.GitHubAdminPAT != "" {
 		vault = append(vault, envKV{"ZCP_E2E_GITHUB_PAT_ADMIN", d.GitHubAdminPAT, true})
+	}
+	if d.ExistingProjectID != "" {
+		vault = append(vault, envKV{"ZCP_E2E_EXISTING_PROJECT_ID", d.ExistingProjectID, false})
+	}
+	if d.ExistingProdToken != "" {
+		vault = append(vault, envKV{"ZCP_E2E_EXISTING_PROD_TOKEN", d.ExistingProdToken, true})
 	}
 	if d.DevsupURL != "" {
 		vault = append(vault, envKV{"ZCP_DEVSUP_URL", d.DevsupURL, false})

@@ -826,7 +826,8 @@ func TestScenario_S12_ExportActiveEmptyPlan(t *testing.T) {
 // TestScenario_S13_GitPushDeliveryGating pins the post-ladder gating of
 // the git-push delivery atom pair. Close-mode carries no delivery intent
 // anymore (the legacy git-push value folds to auto); GitPushState alone
-// keys the atoms: configured fires develop-git-push-delivery, broken
+// keys the atoms: configured fires develop-git-push-delivery (with its
+// on-demand develop-git-push-delivery-results), broken
 // fires develop-git-push-broken (capability existed and degraded), and
 // unconfigured fires NEITHER — it is the default of every fresh service,
 // so a needs-setup atom keyed on it would spam every develop session.
@@ -871,19 +872,20 @@ func TestScenario_S13_GitPushDeliveryGating(t *testing.T) {
 	}{
 		{
 			topology.GitPushConfigured,
-			[]string{"develop-git-push-delivery", "develop-git-push-start-from-remote"},
+			[]string{"develop-git-push-delivery", "develop-git-push-delivery-results", "develop-git-push-start-from-remote"},
 			[]string{"develop-git-push-broken"},
 		},
 		{
 			topology.GitPushBroken,
 			[]string{"develop-git-push-broken"},
-			[]string{"develop-git-push-delivery", "develop-git-push-start-from-remote"},
+			[]string{"develop-git-push-delivery", "develop-git-push-delivery-results", "develop-git-push-start-from-remote"},
 		},
 		{
 			topology.GitPushUnconfigured,
 			nil,
 			[]string{
 				"develop-git-push-delivery",
+				"develop-git-push-delivery-results",
 				"develop-git-push-broken",
 				"develop-git-push-start-from-remote",
 			},
@@ -905,6 +907,8 @@ func TestScenario_S13_GitPushDeliveryGating(t *testing.T) {
 				// slice reads as no pin at all.
 				requireAtomIDsContain(t, "S13 start from the remote", matches,
 					"develop-git-push-start-from-remote")
+				requireAtomIDsContain(t, "S13 push results on demand", matches,
+					"develop-git-push-delivery-results")
 			}
 			for _, m := range matches {
 				for _, f := range tc.forbid {
@@ -1562,8 +1566,8 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 // TestScenario_NewPartOfSinglePartPairIsAStageNotABootstrap pins the guidance
 // at the moment a person asks a project with one complete single-part pair
 // for another part: the bootstrap discover step leads to a new setup and
-// stage of the pair. A repo already read as several parts,
-// a pair not yet deployed and a project without a standard pair never see it.
+// stage of the pair, deployed or not yet. A repo already read as several parts
+// and a project without a standard pair never see it.
 func TestScenario_NewPartOfSinglePartPairIsAStageNotABootstrap(t *testing.T) {
 	t.Parallel()
 
@@ -1583,6 +1587,9 @@ func TestScenario_NewPartOfSinglePartPairIsAStageNotABootstrap(t *testing.T) {
 		}
 		for _, m := range out {
 			if m.AtomID == atom {
+				if !strings.Contains(m.Body, ".zcp/dev-servers.json") || !strings.Contains(m.Body, "zerops_dev_server action=start hostname=\"<dev>\" name=<part>") {
+					t.Errorf("%s body does not tell the agent to declare and start the new part's dev server:\n%s", atom, m.Body)
+				}
 				if !strings.Contains(m.Body, "appdev") || !strings.Contains(m.Body, `zerops_knowledge uri="zerops://playbooks/monorepo"`) {
 					t.Errorf("%s body lacks the pair or the playbook:\n%s", atom, m.Body)
 				}
@@ -1602,6 +1609,12 @@ func TestScenario_NewPartOfSinglePartPairIsAStageNotABootstrap(t *testing.T) {
 		t.Errorf("%s did not fire at bootstrap discover with a deployed single-part pair", atom)
 	}
 
+	fresh1 := boot
+	fresh1.Services = fixSnapBootstrappedNeverDeployedPair("appdev", "appstage", "nodejs@22", topology.RuntimeDynamic)
+	if !fires(fresh1) {
+		t.Errorf("%s did not fire for a pair that has not been deployed yet", atom)
+	}
+
 	multi := boot
 	multi.Services = pair()
 	multi.Services[0].MultiPart = true
@@ -1612,4 +1625,95 @@ func TestScenario_NewPartOfSinglePartPairIsAStageNotABootstrap(t *testing.T) {
 	if fires(fresh) {
 		t.Errorf("%s fired in a project without a pair", atom)
 	}
+}
+
+// TestScenario_AdoptingAPairAndAddingAPartNamesTheStageNotANewService pins the
+// moment the sweep's agent chose the wrong shape: a bootstrap adopt discover
+// where the pair is not yet adopted, so the pair carries no mode or deploy
+// state. Adopt discover leads to the pair's own setup and stage; other routes
+// and steps never see it.
+func TestScenario_AdoptingAPairAndAddingAPartNamesTheStageNotANewService(t *testing.T) {
+	t.Parallel()
+
+	corpus, err := LoadAtomCorpus()
+	if err != nil {
+		t.Fatalf("LoadAtomCorpus: %v", err)
+	}
+	const atom = "bootstrap-adopt-new-part"
+	unadopted := []ServiceSnapshot{
+		{Hostname: "appdev", TypeVersion: "bun@1.3", RuntimeClass: topology.RuntimeDynamic, Status: "ACTIVE"},
+		{Hostname: "appstage", TypeVersion: "bun@1.3", RuntimeClass: topology.RuntimeDynamic, Status: "ACTIVE"},
+	}
+	fires := func(route BootstrapRoute, step string) (bool, string) {
+		env := StateEnvelope{
+			Phase: PhaseBootstrapActive, Environment: EnvContainer, Services: unadopted,
+			Bootstrap: &BootstrapSessionSummary{Route: route, Step: step},
+		}
+		out, err := Synthesize(env, corpus)
+		if err != nil {
+			t.Fatalf("Synthesize: %v", err)
+		}
+		for _, m := range out {
+			if m.AtomID == atom {
+				return true, m.Body
+			}
+		}
+		return false, ""
+	}
+
+	adoptEnv := StateEnvelope{
+		Phase: PhaseBootstrapActive, Environment: EnvContainer, Services: unadopted,
+		Bootstrap: &BootstrapSessionSummary{Route: BootstrapRouteAdopt, Step: StepDiscover},
+	}
+	if got, err := Synthesize(adoptEnv, corpus); err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	} else {
+		requireAtomIDsContain(t, "adopt discover with a new part", got, "bootstrap-adopt-new-part")
+	}
+	ok, body := fires(BootstrapRouteAdopt, StepDiscover)
+	if !ok {
+		t.Fatalf("%s did not fire at adopt discover", atom)
+	}
+	if !strings.Contains(body, `zerops_knowledge uri="zerops://playbooks/monorepo"`) {
+		t.Errorf("%s body lacks the monorepo playbook:\n%s", atom, body)
+	}
+	for _, want := range []string{".zcp/dev-servers.json", "zerops_dev_server action=start hostname=\"<dev>\" name=<part>"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("%s body does not tell the agent to declare and start the new part's dev server (%q):\n%s", atom, want, body)
+		}
+	}
+	for _, want := range []string{
+		"An existing setup and its stage keep their names; only the new part gets a new setup",
+		`{"hostname": "appstage", "setupName": "prod"}`,
+	} {
+		if !strings.Contains(strings.Join(strings.Fields(body), " "), want) {
+			t.Errorf("%s body does not tell the agent that the existing setup keeps its name (%q):\n%s", atom, want, body)
+		}
+	}
+	if got, _ := fires(BootstrapRouteAdopt, "provision"); got {
+		t.Errorf("%s fired past the adopt discover step", atom)
+	}
+	if got, _ := fires(BootstrapRouteClassic, StepDiscover); got {
+		t.Errorf("%s fired on the classic route", atom)
+	}
+}
+
+// TestScenario_S16_ExistingRepoRunsItsOwnDevFlow pins that develop starting on
+// a never-deployed dev service in a container carries, without a playbook
+// call, how a repository that already exists runs its own dev flow there.
+func TestScenario_S16_ExistingRepoRunsItsOwnDevFlow(t *testing.T) {
+	t.Parallel()
+
+	corpus, err := LoadAtomCorpus()
+	if err != nil {
+		t.Fatalf("LoadAtomCorpus: %v", err)
+	}
+	env := StateEnvelope{Phase: PhaseDevelopActive, Environment: EnvContainer,
+		Services:    []ServiceSnapshot{fixSnapBootstrappedNeverDeployedUnset("appdev", "nodejs@24", topology.RuntimeDynamic, topology.ModeDev)},
+		WorkSession: fixSession("appdev")}
+	out, err := Synthesize(env, corpus)
+	if err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	requireAtomIDsContain(t, "S16 existing repo", out, "develop-first-deploy-existing-repo")
 }

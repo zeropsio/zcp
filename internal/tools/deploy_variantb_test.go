@@ -162,8 +162,8 @@ func TestDeployPreFlight_FromVariantBDevService_ReadsTheYamlOnTheVolume(t *testi
 	if err != nil || result == nil || !result.Passed {
 		t.Fatalf("preflight = %+v, %v; want it to pass on the volume's yaml", result, err)
 	}
-	if resolved != "dev-api" {
-		t.Errorf("resolved setup = %q, want dev-api", resolved)
+	if resolved.setup != "dev-api" {
+		t.Errorf("resolved setup = %q, want dev-api", resolved.setup)
 	}
 }
 

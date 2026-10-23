@@ -189,7 +189,7 @@ func handleRecordDeploy(
 		resp.Warnings = append(resp.Warnings, dr.Warnings...)
 	}
 
-	resp.WorkSessionState = sessionAnnotations(stateDir)
+	resp.WorkSessionState = sessionAnnotations(ctx, httpClient, stateDir)
 
 	// Typed output stays nil: Claude Code REPLACES the model-facing text
 	// with structuredContent when the SDK marshals one (docs/spec-mate.md).

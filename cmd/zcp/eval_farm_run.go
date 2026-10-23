@@ -167,9 +167,12 @@ func runFarmRun(args []string, envr *farm.EnvResolver) int {
 		// §2.4/§3.3: read from this process's own environment only — the
 		// operator sources it from ~/.zerops-dev/agent-creds/farm.env, never
 		// resolved from the farm service env the way ZCP_FARM_* keys are.
-		GitHubPAT:      os.Getenv(eval.GitHubPATEnvVar),
-		GitHubAdminPAT: os.Getenv(eval.GitHubAdminPATEnvVar),
-		DevsupURL:      os.Getenv("ZCP_DEVSUP_URL"),
+		GitHubPAT:         os.Getenv(eval.GitHubPATEnvVar),
+		GitHubAdminPAT:    os.Getenv(eval.GitHubAdminPATEnvVar),
+		ExistingProjectID: os.Getenv(eval.ExistingProjectIDEnvVar),
+		ExistingProdToken: os.Getenv(eval.ExistingProdTokenEnvVar),
+		ResetExistingProd: farm.NewExistingProdReset(os.Getenv("ZCP_API_HOST")),
+		DevsupURL:         os.Getenv("ZCP_DEVSUP_URL"),
 	}
 	results, err := farm.RunBatch(ctx, client, sink, opts)
 	if err != nil {

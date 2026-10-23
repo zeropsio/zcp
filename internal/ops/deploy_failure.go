@@ -4,6 +4,7 @@ import (
 	"errors"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -78,6 +79,10 @@ type FailureInput struct {
 	// classified by classifySSHError). Carries APICode / APIMeta / raw
 	// SSH output in Diagnostic.
 	APIErr *platform.PlatformError
+	// ConfigFile is the repo's config file name as the repo keeps it
+	// ("zerops.yaml" or "zerops.yml"); the classification's own text names
+	// it. "" keeps the text as written.
+	ConfigFile string
 }
 
 // ClassifyDeployFailure inspects a FailureInput and returns the best matching
@@ -111,12 +116,39 @@ func ClassifyDeployFailure(in FailureInput) *topology.DeployFailureClassificatio
 		if out == nil {
 			continue
 		}
-		return out
+		return nameClassificationConfigFile(out, in.ConfigFile, matched)
 	}
 
 	// No specific signal — fall back to a phase-level baseline so the agent
 	// at least sees the category instead of nothing.
-	return baselineForPhase(in)
+	return nameClassificationConfigFile(baselineForPhase(in), in.ConfigFile, "")
+}
+
+// nameClassificationConfigFile names the repo's config file in the text the
+// classifier wrote (LikelyCause, SuggestedAction). The log or error text a
+// signal quotes (matched, bare or %q-quoted) stays as its writer wrote it.
+func nameClassificationConfigFile(cls *topology.DeployFailureClassification, file, matched string) *topology.DeployFailureClassification {
+	if cls == nil || file == "" {
+		return cls
+	}
+	name := func(text string) string {
+		if matched == "" {
+			return NameRepoConfigFile(text, file)
+		}
+		for _, quoted := range []string{strconv.Quote(matched), matched} {
+			if strings.Contains(text, quoted) {
+				parts := strings.Split(text, quoted)
+				for i := range parts {
+					parts[i] = NameRepoConfigFile(parts[i], file)
+				}
+				return strings.Join(parts, quoted)
+			}
+		}
+		return NameRepoConfigFile(text, file)
+	}
+	cls.LikelyCause = name(cls.LikelyCause)
+	cls.SuggestedAction = name(cls.SuggestedAction)
+	return cls
 }
 
 // baselineForPhase emits a classification when no specific signal matched
@@ -145,7 +177,8 @@ func baselineForPhase(in FailureInput) *topology.DeployFailureClassification {
 		// or another tool bypassed our gate. Name the trap explicitly
 		// instead of pointing the agent at buildCommands bisection.
 		if len(in.BuildLogs) > 0 {
-			cls.SuggestedAction = "Read the build log tail (deploy response `buildLogs`, event `buildLogTail`) for the exact stderr; fix buildCommands or dependencies in zerops.yaml."
+			cls.SuggestedAction = "Read the build log tail (deploy response `buildLogs`, event `buildLogTail`): if it ends on the failing command's output, fix buildCommands or dependencies in zerops.yaml. " +
+				"If it ends without an error line, the platform gave no reason ZCP could read; a build container's caps are 8 GB RAM and 1 hour, the same for every runtime."
 		} else {
 			cls.SuggestedAction = "Build container exited before producing logs (typically <10s). The most common cause is a reserved key in run.envVariables — HOSTNAME, Path, or path — which crashes runtime-init before any build output. Remove that key from zerops.yaml run.envVariables. If those aren't present, re-check buildCommands syntax + manifests. See the develop-reserved-env-names atom for the full reserved-key set."
 		}
@@ -156,27 +189,28 @@ func baselineForPhase(in FailureInput) *topology.DeployFailureClassification {
 			LikelyCause: "run.prepareCommands exited non-zero before deploy files arrived (NOT buildCommands, NOT initCommands).",
 			Signals:     []string{"phase:prepare"},
 		}
-		const prepareCauses = "Common causes: (1) missing sudo — every package install needs sudo " +
-			"(e.g. sudo apk add --no-cache pkg), containers run as the zerops user; " +
-			"(2) wrong package name — Alpine PHP extensions use a version prefix (php84-pdo_pgsql, NOT php-pgsql; " +
-			"php84-ctype, NOT php-ctype); some extensions are built-in since PHP 8.0 (json, tokenizer) — do not install those; " +
-			"(3) referencing /var/www/ paths (empty during prepare — use addToRunPrepare + /home/zerops/ instead)."
+		// The prepare phase logs under the build's tag on its own service
+		// stack, so its output is the end of the build log (FetchBuildLogs).
+		const prepareCauses = "Common causes: a package install without sudo (containers run as the zerops user); " +
+			"a package name that does not exist on the run.os image; " +
+			"reinstalling a tool the base image already provides (e.g. npm EEXIST); " +
+			"a /var/www path, which is empty during prepare (use addToRunPrepare + /home/zerops/ instead)."
 		if len(in.BuildLogs) > 0 {
-			cls.SuggestedAction = "Fix run.prepareCommands (it exited non-zero before deploy files arrived — NOT buildCommands, NOT initCommands). Read the build log tail (deploy response `buildLogs`, event `buildLogTail`) for the exact error. " + prepareCauses
+			cls.SuggestedAction = "Fix run.prepareCommands (it exited non-zero before deploy files arrived — NOT buildCommands, NOT initCommands). Its output is at the end of the build log (deploy response `buildLogs`, event `buildLogTail`). " + prepareCauses
 		} else {
-			cls.SuggestedAction = "Fix run.prepareCommands (it exited non-zero — NOT buildCommands, NOT initCommands). Prepare logs were not captured; fetch via zerops_logs serviceHostname={service} severity=ERROR since=5m. " + prepareCauses
+			cls.SuggestedAction = "Fix run.prepareCommands (it exited non-zero — NOT buildCommands, NOT initCommands). Its output was not captured here; zerops_events shows this deploy's `buildLogTail`, which ends with the prepare output. " + prepareCauses
 		}
 		return cls
 	case PhaseInit:
 		return &topology.DeployFailureClassification{
 			Category: topology.FailureClassStart,
-			LikelyCause: "A run.initCommand exited non-zero, which aborts the deploy — the new appVersion is " +
-				"DEPLOY_FAILED and was not activated; the previous version keeps serving.",
+			LikelyCause: "The new container failed after the build (a run.initCommand, the start command or the container itself), " +
+				"which aborts the deploy — the new appVersion is DEPLOY_FAILED and was not activated; the previous version keeps serving.",
 			SuggestedAction: "Diagnose via appVersion.status (DEPLOY_FAILED) + activationDate (null), NOT service.status " +
-				"(it stays ACTIVE on the old version). The deploy response's 'error' field names the failing command; " +
-				"fetch its stderr from the RUNTIME container (not buildLogs): zerops_logs serviceHostname={service} severity=ERROR since=5m. " +
+				"(it stays ACTIVE on the old version). Read the new container's runtime log (deploy response `runtimeLogs`, " +
+				"else zerops_logs for the deploy target with since=10m), NOT buildLogs. " +
 				"Common causes: a build-time cache that baked /build/source paths (move e.g. `artisan config:cache` from buildCommands to run.initCommands), " +
-				"DB connectivity during migration, or missing env vars at container start.",
+				"DB connectivity during migration, missing env vars at container start, or too little memory to start.",
 			Signals: []string{"phase:init"},
 		}
 	case PhaseTransport:

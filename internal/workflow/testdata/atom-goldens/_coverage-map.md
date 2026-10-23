@@ -8,6 +8,7 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 |---|---|---|
 | `bootstrap-adopt-baseline-commit` | 1 | bootstrap/adopt/provision |
 | `bootstrap-adopt-discover` | 1 | bootstrap/adopt/discover-existing-pair |
+| `bootstrap-adopt-new-part` | 1 | bootstrap/adopt/discover-existing-pair |
 | `bootstrap-classic-plan-dynamic` | 2 | bootstrap/classic/discover-standard-dynamic, bootstrap/classic/new-part-of-pair |
 | `bootstrap-classic-plan-static` | 2 | bootstrap/classic/discover-standard-dynamic, bootstrap/classic/new-part-of-pair |
 | `bootstrap-close` | 1 | bootstrap/recipe/close |
@@ -59,6 +60,7 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 | `develop-first-deploy-asset-pipeline-local` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
 | `develop-first-deploy-env-vars` | 5 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/first-deploy-unset-decision, develop/standup-stage-out-of-scope |
 | `develop-first-deploy-execute` | 5 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/first-deploy-unset-decision, develop/standup-stage-out-of-scope |
+| `develop-first-deploy-existing-repo` | 4 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-unset-decision, develop/standup-stage-out-of-scope |
 | `develop-first-deploy-intro` | 5 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/first-deploy-unset-decision, develop/standup-stage-out-of-scope |
 | `develop-first-deploy-promote-stage` | 1 | develop/first-deploy-recipe-implicit-standard |
 | `develop-first-deploy-scaffold-yaml` | 5 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/first-deploy-unset-decision, develop/standup-stage-out-of-scope |
@@ -66,6 +68,7 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 | `develop-first-deploy-write-app` | 5 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/first-deploy-unset-decision, develop/standup-stage-out-of-scope |
 | `develop-git-push-broken` | 1 | develop/git-push-broken |
 | `develop-git-push-delivery` | 1 | develop/git-push-configured-webhook |
+| `develop-git-push-delivery-results` | 1 | develop/git-push-configured-webhook |
 | `develop-git-push-start-from-remote` | 2 | develop/git-push-configured-webhook, develop/standup-dev-deployed-wired |
 | `develop-http-diagnostic` | 5 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/first-deploy-unset-decision, develop/standup-stage-out-of-scope |
 | `develop-implicit-webserver` | 1 | develop/first-deploy-recipe-implicit-standard |

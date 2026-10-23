@@ -181,7 +181,7 @@ func TestGitPushBuildWatch_PairWithThreeStages_DeliveredOnlyWhenEveryStageLands(
 			}
 			result := &ops.GitPushResult{Status: "PUSHED"}
 			finishGitPushWithBuildWatch(context.Background(), threeStageServices().WithAppVersionEvents(events), "proj-1", nil, nil,
-				DeploySSHInput{TargetService: "appdev", Strategy: "git-push"}, stateDir, pushedAt, result)
+				DeploySSHInput{TargetService: "appdev", Strategy: "git-push"}, stateDir, "", pushedAt, result)
 			if result.Status != tt.wantStatus {
 				t.Errorf("status = %q, want %q", result.Status, tt.wantStatus)
 			}
@@ -215,7 +215,7 @@ func TestGitPushBuildWatch_OneStagePair_AsBefore(t *testing.T) {
 		WithAppVersionEvents([]platform.AppVersionEvent{{ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-stage", Status: "ACTIVE", Created: pushedAt.Add(time.Second).Format(time.RFC3339)}})
 	result := &ops.GitPushResult{Status: "PUSHED"}
 	finishGitPushWithBuildWatch(context.Background(), client, "proj-1", nil, nil,
-		DeploySSHInput{TargetService: "appdev", Strategy: "git-push"}, stateDir, pushedAt, result)
+		DeploySSHInput{TargetService: "appdev", Strategy: "git-push"}, stateDir, "", pushedAt, result)
 	if result.Status != "DELIVERED" || result.BuildTarget != "appstage" || result.VerifyTarget != "appstage" || result.BuildTargets != nil {
 		t.Errorf("result = %+v, want DELIVERED on appstage alone", result)
 	}

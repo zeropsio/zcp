@@ -27,12 +27,10 @@ func TestVerification_LaunchShape_AllRowsFromSnapshot(t *testing.T) {
 				{ID: "svc-app1", ProjectID: "prod-1", Name: "app1", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}},
 				{ID: "svc-app2", ProjectID: "prod-1", Name: "app2", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "go@1", ServiceStackTypeCategoryName: "USER"}},
 			}).
-			WithAppVersionEvents([]platform.AppVersionEvent{
-				{ID: "av1", ProjectID: "prod-1", ServiceStackID: "svc-app1", Source: "NONE", Status: "ACTIVE", Created: "2026-09-10T00:00:00Z"},
-				{ID: "av2", ProjectID: "prod-1", ServiceStackID: "svc-app2", Source: "NONE", Status: "ACTIVE", Created: "2026-09-10T00:00:00Z"},
-			})
+			WithServiceAppVersions("svc-app1", []platform.AppVersionEvent{{ID: "av1", ProjectID: "prod-1", ServiceStackID: "svc-app1", Source: "NONE", Status: "ACTIVE", Created: "2026-09-10T00:00:00Z"}}).
+			WithServiceAppVersions("svc-app2", []platform.AppVersionEvent{{ID: "av2", ProjectID: "prod-1", ServiceStackID: "svc-app2", Source: "NONE", Status: "ACTIVE", Created: "2026-09-10T00:00:00Z"}})
 
-		rows := evaluateLaunchShapeRows(context.Background(), cfg, client, "", nil, "")
+		rows := evaluateLaunchShapeRows(context.Background(), cfg, client, nil, "", nil, "")
 		want := map[string]CheckResult{
 			"launch_shape/project_exists":               CheckPassed,
 			"launch_shape/runtimes_start_without_code":  CheckPassed,
@@ -53,11 +51,9 @@ func TestVerification_LaunchShape_AllRowsFromSnapshot(t *testing.T) {
 			// Source "GIT" (finding E4: the platform's real value, uppercase —
 			// a CLI push's Build alone must NOT fail this row; only an
 			// independent GIT-sourced build does).
-			WithAppVersionEvents([]platform.AppVersionEvent{
-				{ID: "av1", ProjectID: "prod-1", ServiceStackID: "svc-app1", Source: "GIT", Status: "ACTIVE", Created: "2026-09-10T00:00:00Z", Build: &platform.BuildInfo{}},
-			})
+			WithServiceAppVersions("svc-app1", []platform.AppVersionEvent{{ID: "av1", ProjectID: "prod-1", ServiceStackID: "svc-app1", Source: "GIT", Status: "ACTIVE", Created: "2026-09-10T00:00:00Z", Build: &platform.BuildInfo{}}})
 
-		rows := evaluateLaunchShapeRows(context.Background(), cfg, client, "", nil, "")
+		rows := evaluateLaunchShapeRows(context.Background(), cfg, client, nil, "", nil, "")
 		row := findRow(t, rows, "launch_shape/no_build_from_git")
 		if row.Result != CheckFailed {
 			t.Fatalf("expected no_build_from_git to fail, got %+v", row)
@@ -81,11 +77,9 @@ func TestLaunchShape_CliBuild_NoBuildFromGitPasses(t *testing.T) {
 		WithServicesDirect([]platform.ServiceStack{
 			{ID: "svc-app1", ProjectID: "prod-1", Name: "app1", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}},
 		}).
-		WithAppVersionEvents([]platform.AppVersionEvent{
-			{ID: "av1", ProjectID: "prod-1", ServiceStackID: "svc-app1", Source: "CLI", Status: "ACTIVE", Created: "2026-09-10T00:00:00Z", Build: &platform.BuildInfo{}},
-		})
+		WithServiceAppVersions("svc-app1", []platform.AppVersionEvent{{ID: "av1", ProjectID: "prod-1", ServiceStackID: "svc-app1", Source: "CLI", Status: "ACTIVE", Created: "2026-09-10T00:00:00Z", Build: &platform.BuildInfo{}}})
 
-	rows := evaluateLaunchShapeRows(context.Background(), cfg, client, "", nil, "")
+	rows := evaluateLaunchShapeRows(context.Background(), cfg, client, nil, "", nil, "")
 	row := findRow(t, rows, "launch_shape/no_build_from_git")
 	if row.Result != CheckPassed {
 		t.Fatalf("expected no_build_from_git to pass for a CLI-sourced appVersion carrying a Build, got %+v", row)
@@ -163,7 +157,7 @@ func TestVerification_LaunchShape_ListNotPermitted_Blocked(t *testing.T) {
 		WithUserInfo(&platform.UserInfo{Memberships: []platform.ClientMembership{{ClientID: "client-1"}}}).
 		WithError("ListProjects", errors.New("403 forbidden"))
 
-	rows := evaluateLaunchShapeRows(context.Background(), cfg, client, "", nil, "")
+	rows := evaluateLaunchShapeRows(context.Background(), cfg, client, nil, "", nil, "")
 	projectRow := findRow(t, rows, "launch_shape/project_exists")
 	if projectRow.Result != CheckBlocked {
 		t.Fatalf("expected project_exists blocked, got %+v", projectRow)
@@ -189,11 +183,9 @@ func TestLaunchShape_ProdProjectIDEnv_ResolvesByID(t *testing.T) {
 		WithServicesDirect([]platform.ServiceStack{
 			{ID: "svc-app1", ProjectID: "prod-secret-id-1", Name: "app1", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}},
 		}).
-		WithAppVersionEvents([]platform.AppVersionEvent{
-			{ID: "av1", ProjectID: "prod-secret-id-1", ServiceStackID: "svc-app1", Source: "NONE", Status: "ACTIVE", Created: "2026-09-10T00:00:00Z"},
-		})
+		WithServiceAppVersions("svc-app1", []platform.AppVersionEvent{{ID: "av1", ProjectID: "prod-secret-id-1", ServiceStackID: "svc-app1", Source: "NONE", Status: "ACTIVE", Created: "2026-09-10T00:00:00Z"}})
 
-	rows := evaluateLaunchShapeRows(context.Background(), cfg, client, "", nil, "")
+	rows := evaluateLaunchShapeRows(context.Background(), cfg, client, nil, "", nil, "")
 	row := findRow(t, rows, "launch_shape/project_exists")
 	if row.Result != CheckPassed {
 		t.Fatalf("expected project_exists to pass, got %+v", row)
@@ -217,7 +209,7 @@ func TestLaunchShape_ProdProjectIDEnv_Unset_Blocked(t *testing.T) {
 	cfg := &LaunchShapeConfig{ProdProjectIDEnv: envName}
 	client := platform.NewMock()
 
-	rows := evaluateLaunchShapeRows(context.Background(), cfg, client, "", nil, "")
+	rows := evaluateLaunchShapeRows(context.Background(), cfg, client, nil, "", nil, "")
 	row := findRow(t, rows, "launch_shape/project_exists")
 	if row.Result != CheckBlocked {
 		t.Fatalf("expected project_exists blocked when env is unset, got %+v", row)
@@ -227,6 +219,60 @@ func TestLaunchShape_ProdProjectIDEnv_Unset_Blocked(t *testing.T) {
 	}
 	if row.Scope != envName {
 		t.Errorf("Scope = %q, want the env NAME %q", row.Scope, envName)
+	}
+}
+
+// TestLaunchShape_ProdTokenEnv_ReadsWithTheScopedToken pins O6 for a standing
+// prod project outside the run's own token scope: project_exists is read with
+// the client built from launchShape.prodTokenEnv, not the run's client, which
+// is denied.
+func TestLaunchShape_ProdTokenEnv_ReadsWithTheScopedToken(t *testing.T) {
+	const idEnv, tokEnv = "ZCP_E2E_EXISTING_PROJECT_ID", "ZCP_E2E_EXISTING_PROD_TOKEN"
+	t.Setenv(idEnv, "prod-1")
+	t.Setenv(tokEnv, "scoped-token")
+	cfg := &LaunchShapeConfig{ProdProjectIDEnv: idEnv, ProdTokenEnv: tokEnv}
+	runClient := platform.NewMock().
+		WithError("GetProject", errors.New("Insufficient permissions")).
+		WithError("ListServicesDirect", errors.New("Insufficient permissions"))
+	var gotToken string
+	scoped := func(token string) (platform.Client, error) {
+		gotToken = token
+		return platform.NewMock().
+			WithProject(&platform.Project{ID: "prod-1", Name: "prod"}).
+			WithServicesDirect([]platform.ServiceStack{
+				{ID: "svc-app1", ProjectID: "prod-1", Name: "app1", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}},
+			}).
+			WithServiceAppVersions("svc-app1", []platform.AppVersionEvent{{ID: "av1", ProjectID: "prod-1", ServiceStackID: "svc-app1", Source: "NONE", Status: "ACTIVE", Created: "2026-09-10T00:00:00Z"}}), nil
+	}
+
+	rows := evaluateLaunchShapeRows(context.Background(), cfg, runClient, scoped, "", nil, "")
+	row := findRow(t, rows, "launch_shape/project_exists")
+	if row.Result != CheckPassed {
+		t.Fatalf("expected project_exists to pass with the scoped token, got %+v", row)
+	}
+	for _, id := range []string{"runtimes_start_without_code", "no_build_from_git", "first_release_is_first_build"} {
+		if r := findRow(t, rows, "launch_shape/"+id); r.Result != CheckPassed {
+			t.Errorf("%s read with the run's own token instead of the scoped one: %+v", id, r)
+		}
+	}
+	if gotToken != "scoped-token" {
+		t.Errorf("scoped client built with %q, want the prodTokenEnv value", gotToken)
+	}
+}
+
+// TestLaunchShape_ProdTokenEnv_Unset_Blocked pins that a missing scoped token
+// blocks project_exists instead of falling back to the run's client.
+func TestLaunchShape_ProdTokenEnv_Unset_Blocked(t *testing.T) {
+	const idEnv, tokEnv = "ZCP_E2E_EXISTING_PROJECT_ID", "ZCP_E2E_EXISTING_PROD_TOKEN"
+	t.Setenv(idEnv, "prod-1")
+	t.Setenv(tokEnv, "")
+	cfg := &LaunchShapeConfig{ProdProjectIDEnv: idEnv, ProdTokenEnv: tokEnv}
+	runClient := platform.NewMock().WithProject(&platform.Project{ID: "prod-1", Name: "prod"})
+
+	rows := evaluateLaunchShapeRows(context.Background(), cfg, runClient, nil, "", nil, "")
+	row := findRow(t, rows, "launch_shape/project_exists")
+	if row.Result != CheckBlocked || !strings.Contains(row.Message, tokEnv) {
+		t.Fatalf("expected blocked naming %s, got %+v", tokEnv, row)
 	}
 }
 
@@ -249,4 +295,64 @@ func findRow(t *testing.T, rows []RequiredCheck, id string) RequiredCheck {
 	}
 	t.Fatalf("row %s not found in %+v", id, rows)
 	return RequiredCheck{}
+}
+
+// TestLaunchShape_LaunchKey_ReadsTheProjectItCreated pins the standard-pair
+// path: the run's own client lists only the run project, so a prod project
+// the per-run launch key created is read with that key (probe 2026-10-15:
+// the launch key lists and reads it, the run token does not).
+func TestLaunchShape_LaunchKey_ReadsTheProjectItCreated(t *testing.T) {
+	t.Setenv(LaunchKeyEnvVar, "launch-key-value")
+	cfg := &LaunchShapeConfig{ProdProject: "zcp-farm-r1-prod"}
+	runClient := platform.NewMock().
+		WithUserInfo(&platform.UserInfo{Memberships: []platform.ClientMembership{{ClientID: "client-1"}}}).
+		WithProjects([]platform.Project{{ID: "run-1", Name: "zcp-farm-run", ClientID: "client-1"}})
+	var gotToken string
+	keyClient := func(token string) (platform.Client, error) {
+		gotToken = token
+		return platform.NewMock().
+			WithUserInfo(&platform.UserInfo{Memberships: []platform.ClientMembership{{ClientID: "client-1"}}}).
+			WithProjects([]platform.Project{{ID: "prod-1", Name: "zcp-farm-r1-prod", ClientID: "client-1"}}).
+			WithServicesDirect([]platform.ServiceStack{
+				{ID: "svc-app1", ProjectID: "prod-1", Name: "app1", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}},
+			}).
+			WithServiceAppVersions("svc-app1", []platform.AppVersionEvent{
+				{ID: "av1", ProjectID: "prod-1", ServiceStackID: "svc-app1", Source: "NONE", Status: "ACTIVE", Created: "2026-09-10T00:00:00Z"},
+			}), nil
+	}
+
+	rows := evaluateLaunchShapeRows(context.Background(), cfg, runClient, keyClient, "", nil, "")
+	assertRowResults(t, rows, map[string]CheckResult{
+		"launch_shape/project_exists":               CheckPassed,
+		"launch_shape/runtimes_start_without_code":  CheckPassed,
+		"launch_shape/no_build_from_git":            CheckPassed,
+		"launch_shape/first_release_is_first_build": CheckPassed,
+	})
+	if gotToken != "launch-key-value" {
+		t.Errorf("project read with %q, want the launch key", gotToken)
+	}
+}
+
+// TestLaunchShape_RuntimeHistory_ReadsDirectNotSearch pins that the runtime
+// rows read each runtime's appVersion history directly: the ES-backed search
+// answered empty for projects with real history (probe 2026-10-15), which
+// failed a correct launch with "no appVersion history found".
+func TestLaunchShape_RuntimeHistory_ReadsDirectNotSearch(t *testing.T) {
+	t.Parallel()
+	client := platform.NewMock().
+		WithServicesDirect([]platform.ServiceStack{
+			{ID: "svc-app1", ProjectID: "prod-1", Name: "app1", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}},
+		}).
+		WithAppVersionEvents(nil).
+		WithServiceAppVersions("svc-app1", []platform.AppVersionEvent{
+			{ID: "av2", ProjectID: "prod-1", ServiceStackID: "svc-app1", Source: "CLI", Status: "ACTIVE", Created: "2026-09-10T01:00:00Z", Build: &platform.BuildInfo{}},
+			{ID: "av1", ProjectID: "prod-1", ServiceStackID: "svc-app1", Source: "NONE", Status: "SUPERSEDED", Created: "2026-09-10T00:00:00Z"},
+		})
+
+	rows := evaluateLaunchProdRuntimeRows(context.Background(), client, "prod-1")
+	for _, r := range rows {
+		if r.Result != CheckPassed {
+			t.Errorf("%s: %+v", r.ID, r)
+		}
+	}
 }

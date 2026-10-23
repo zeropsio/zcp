@@ -4,18 +4,24 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // partsSignalScript prints, from a dev service's repo root, what the
-// multi-part signal reads: the root zerops.yaml, the dev-server declaration,
+// multi-part signal reads: the root config file's name and content (zerops.yaml,
+// else zerops.yml), the dev-server declaration,
 // the workspace markers present, and the packages with a start or dev script
 // one or two folders down (outside node_modules) — one SSH round trip. Each
 // file is followed by a newline so a file without one cannot swallow the
 // next section's marker.
 const partsSignalScript = `cd ` + defaultWorkingDir + ` 2>/dev/null || exit 0
+echo @@file
+for f in zerops.yaml zerops.yml; do if [ -f "$f" ]; then echo "$f"; break; fi; done
 echo @@yaml
 for f in zerops.yaml zerops.yml; do if [ -f "$f" ]; then cat "$f"; printf '\n'; break; fi; done
 echo @@declaration
@@ -30,24 +36,83 @@ true`
 
 // PartsSignal is what a dev service's repo says about its deployable parts.
 type PartsSignal struct {
-	// YAMLParts counts the root zerops.yaml's setups other than the dev
-	// setup and other than a base only `extends` names.
-	YAMLParts int
-	// DeclaredServers counts the servers in .zcp/dev-servers.json.
-	DeclaredServers int
+	// ConfigFile is the name of the repo's root config file — "zerops.yaml",
+	// else "zerops.yml" — or "" when it has none.
+	ConfigFile string
+	// YAMLParts names the root zerops.yaml's setups other than the dev
+	// setup, other than a base only `extends` names and other than
+	// YAMLEnvironments, in file order.
+	YAMLParts []string
+	// YAMLEnvironments names the setups that build and start the code of an
+	// earlier part (setupCode): that part in another environment — an app's
+	// stage and prod are one part.
+	YAMLEnvironments []string
+	// YAMLSetups names every setup of the root zerops.yaml, in file order.
+	YAMLSetups []string
+	// RunParts names the YAMLParts that run a process: their setup, or a
+	// setup it extends, names a run.start or run.startCommands. A part
+	// without one (a static output) runs no dev server.
+	RunParts []string
+	// DeclaredServers names the servers in .zcp/dev-servers.json, in file
+	// order.
+	DeclaredServers []string
 	// Workspace is true when a workspace marker (pnpm-workspace.yaml,
 	// turbo.json, nx.json, lerna.json, go.work, package.json workspaces) is
 	// present; Packages counts the packages with a start/dev script or a
 	// go.mod one or two folders down.
 	Workspace bool
 	Packages  int
+	// DeclaresBase is true when a setup of the root zerops.yaml names a
+	// build.base or a run.base.
+	DeclaresBase bool
 }
 
 // MultiPart is the mechanical multi-part signal: the repo's zerops.yaml
 // declares more than one part, its declaration lists more than one dev
 // server, or workspace markers name several deployable packages.
 func (s PartsSignal) MultiPart() bool {
-	return s.YAMLParts > 1 || s.DeclaredServers > 1 || (s.Workspace && s.Packages > 1)
+	return len(s.YAMLParts) > 1 || len(s.DeclaredServers) > 1 || (s.Workspace && s.Packages > 1)
+}
+
+// PartsWithoutDevServer names, in stage order, the parts a pair's stages
+// build that run a process and have no dev server declared on the dev service
+// devHostname — nil for a pair with one stage. A part's dev server is declared
+// under the part's name; the pair's first part may also be served by the one
+// named after the dev hostname, which a start without a name declares
+// (docs/spec-mate.md §2.8a.1). A server named after no part may serve any
+// part, so while those are as many as the unnamed parts, none is named.
+func (s PartsSignal) PartsWithoutDevServer(stages []topology.StageRef, devHostname string) []string {
+	if len(stages) < 2 {
+		return nil
+	}
+	declared := map[string]bool{}
+	for _, name := range s.DeclaredServers {
+		declared[name] = true
+	}
+	parts := map[string]bool{}
+	for _, st := range stages {
+		parts[st.SetupName] = true
+	}
+	var missing []string
+	for i, st := range stages {
+		if !slices.Contains(s.RunParts, st.SetupName) || declared[st.SetupName] || slices.Contains(missing, st.SetupName) {
+			continue
+		}
+		if i == 0 && declared[devHostname] {
+			continue
+		}
+		missing = append(missing, st.SetupName)
+	}
+	unattributed := 0
+	for name := range declared {
+		if !parts[name] && name != devHostname {
+			unattributed++
+		}
+	}
+	if len(missing) <= unattributed {
+		return nil
+	}
+	return missing
 }
 
 // ReadPartsSignal reads hostname's repo for the multi-part signal; devSetup
@@ -72,12 +137,22 @@ func parsePartsSignal(out, hostname, devSetup string) PartsSignal {
 		sections[current] = append(sections[current], line)
 	}
 	var sig PartsSignal
-	sig.YAMLParts = yamlParts([]byte(strings.Join(sections["yaml"], "\n")), hostname, devSetup)
+	for _, l := range sections["file"] {
+		if name := strings.TrimSpace(l); name != "" {
+			sig.ConfigFile = name
+		}
+	}
+	yamlDoc := []byte(strings.Join(sections["yaml"], "\n"))
+	readYAMLSetups(yamlDoc, hostname, devSetup, &sig)
 	var decl struct {
-		Servers []json.RawMessage `json:"servers"`
+		Servers []struct {
+			Name string `json:"name"`
+		} `json:"servers"`
 	}
 	if json.Unmarshal([]byte(strings.Join(sections["declaration"], "\n")), &decl) == nil {
-		sig.DeclaredServers = len(decl.Servers)
+		for _, s := range decl.Servers {
+			sig.DeclaredServers = append(sig.DeclaredServers, s.Name)
+		}
 	}
 	for _, l := range sections["markers"] {
 		if strings.TrimSpace(l) != "" {
@@ -92,41 +167,78 @@ func parsePartsSignal(out, hostname, devSetup string) PartsSignal {
 	return sig
 }
 
-// yamlParts counts zerops.yaml's parts (docs/spec-mate.md §2.8a.4): setups
-// other than the dev setup and other than a base only `extends` names.
-func yamlParts(data []byte, hostname, devSetup string) int {
-	var doc struct {
-		Zerops []struct {
-			Setup   string    `yaml:"setup"`
-			Extends yaml.Node `yaml:"extends"`
-		} `yaml:"zerops"`
-	}
+// readYAMLSetups reads zerops.yaml once into sig, with extends resolved as
+// the platform resolves it (decodeResolved): its parts (docs/spec-mate.md
+// §2.8a.4) — setups other than the dev setup, other than a base only `extends`
+// names and other than another environment of an earlier part —, those
+// environments, every setup, the parts that run a process (a run.start or
+// run.startCommands, their own or inherited) and whether a setup names a
+// build.base or a run.base.
+func readYAMLSetups(data []byte, hostname, devSetup string, sig *PartsSignal) {
+	var doc ZeropsYmlDoc
 	if yaml.Unmarshal(data, &doc) != nil {
-		return 0
+		return
 	}
 	extended := map[string]bool{}
 	for _, e := range doc.Zerops {
-		if e.Extends.Kind == yaml.ScalarNode {
-			extended[e.Extends.Value] = true
+		for _, base := range extendsNames(e.Extends) {
+			extended[base] = true
 		}
-		if e.Extends.Kind == yaml.SequenceNode {
-			for _, n := range e.Extends.Content {
-				extended[n.Value] = true
-			}
-		}
+	}
+	if doc.extends() && decodeResolved(data, &doc) != nil {
+		return
 	}
 	isDev := func(setup string) bool {
 		if devSetup != "" {
 			return setup == devSetup
 		}
-		return setup == "dev" || setup == hostname
+		return setup == devSetupName || setup == hostname
 	}
-	parts := 0
+	partCodes := map[string]bool{}
 	for _, e := range doc.Zerops {
-		if e.Setup == "" || isDev(e.Setup) || extended[e.Setup] {
+		if e.Build.Base != nil || e.Run.Base != "" {
+			sig.DeclaresBase = true
+		}
+		if e.Setup == "" {
 			continue
 		}
-		parts++
+		sig.YAMLSetups = append(sig.YAMLSetups, e.Setup)
+		if isDev(e.Setup) || extended[e.Setup] {
+			continue
+		}
+		if code := setupCode(e); code != "" {
+			if partCodes[code] {
+				sig.YAMLEnvironments = append(sig.YAMLEnvironments, e.Setup)
+				continue
+			}
+			partCodes[code] = true
+		}
+		sig.YAMLParts = append(sig.YAMLParts, e.Setup)
+		if strings.TrimSpace(e.Run.Start) != "" || e.Run.StartCommands != nil {
+			sig.RunParts = append(sig.RunParts, e.Setup)
+		}
 	}
-	return parts
+}
+
+// setupCode is what a setup builds and starts — its build commands, deploy
+// files, start and document root —, the code a part is: a setup with the code
+// of an earlier part is that part in another environment, whatever its
+// variables, ports or bases. "" for a setup that names none of them, which
+// nothing shows to be another's environment.
+func setupCode(e ZeropsYmlEntry) string {
+	startCommands := ""
+	if e.Run.StartCommands != nil {
+		startCommands = fmt.Sprint(e.Run.StartCommands)
+	}
+	code := []string{
+		strings.Join(yamlStrings(e.Build.BuildCommands), "\n"),
+		strings.Join(e.DeployFilesList(), "\n"),
+		strings.TrimSpace(e.Run.Start),
+		startCommands,
+		strings.TrimSpace(e.Run.DocumentRoot),
+	}
+	if strings.Join(code, "") == "" {
+		return ""
+	}
+	return strings.Join(code, "\x00")
 }

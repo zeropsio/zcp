@@ -105,8 +105,8 @@ func withSSHStderr(prefix string, err error) string {
 // must return it before the origin sync so the original remote stays intact for
 // manual recovery. Returns nil otherwise (not shallow, auto-unshallowed, or a
 // non-fatal probe transport error — origin sync + push surface those).
-func shallowCloneGuard(ctx context.Context, sshDeployer ops.SSHDeployer, pushHost, gitToken string) *mcp.CallToolResult {
-	shallowOut, shallowErr := sshDeployer.ExecSSH(ctx, pushHost, ops.BuildGitShallowFixCommand("/var/www", gitToken))
+func shallowCloneGuard(ctx context.Context, sshDeployer ops.SSHDeployer, pushHost, workDir, gitToken string) *mcp.CallToolResult {
+	shallowOut, shallowErr := sshDeployer.ExecSSH(ctx, pushHost, ops.BuildGitShallowFixCommand(workDir, gitToken))
 	if shallowErr != nil {
 		return nil
 	}
@@ -118,7 +118,7 @@ func shallowCloneGuard(ctx context.Context, sshDeployer ops.SSHDeployer, pushHos
 	return convertError(platform.NewPlatformError(
 		platform.ErrPrerequisiteMissing,
 		fmt.Sprintf("git-push-setup: %q has a shallow/incomplete git clone (recipe-bootstrapped) that could not be auto-completed from its origin %q — pushing it to a new remote will fail on missing objects.", pushHost, topology.RedactRepoURLCredentials(origURL)),
-		fmt.Sprintf("Recover on the container, then re-call git-push-setup with the SAME inputs (NO remote ref, secret, origin, or meta state was modified; origin still points at the original remote — the local .git may have been self-heal-repaired: init/identity/HEAD only): (a) complete the history if the original remote is reachable — ssh %s \"cd /var/www && git fetch --unshallow\"; or (b) flatten to a self-contained snapshot — ssh %s \"cd /var/www && git checkout --orphan _zcp_flat && git add -A && git commit -m 'flatten for git-push' && git branch -M _zcp_flat main\".", pushHost, pushHost),
+		fmt.Sprintf("Recover on the container, then re-call git-push-setup with the SAME inputs (NO remote ref, secret, origin, or meta state was modified; origin still points at the original remote — the local .git may have been self-heal-repaired: init/identity/HEAD only): (a) complete the history if the original remote is reachable — ssh %s \"cd %s && git fetch --unshallow\"; or (b) flatten to a self-contained snapshot — ssh %s \"cd %s && git checkout --orphan _zcp_flat && git add -A && git commit -m 'flatten for git-push' && git branch -M _zcp_flat main\".", pushHost, workDir, pushHost, workDir),
 	), WithRecoveryStatus())
 }
 
@@ -136,7 +136,7 @@ func shallowCloneGuard(ctx context.Context, sshDeployer ops.SSHDeployer, pushHos
 //   - Confirm (input.RemoteURL set): probe-first verifier. Runs auth probe
 //     against the supplied remoteUrl + gitToken BEFORE writing any project
 //     state. On probe success: writes GIT_TOKEN as a service-scope secret on the
-//     push source, syncs origin in /var/www/.git/config (a fresh SSH session
+//     push source, syncs origin in the pair's working directory (a fresh SSH session
 //     reads the live secret — no restart), then stamps meta.GitPushState=configured +
 //     meta.RemoteURL. On probe failure: returns a structured credential
 //     error with NO project state mutation — agent re-calls with corrected
@@ -303,7 +303,7 @@ func handleGitPushSetup(
 	// 1. Validate URL format (existing).
 	// 2. Container env additionally requires gitToken + HTTPS-only URL.
 	// 3. Run auth probe — if it fails, return error with NO state mutation.
-	// 4. Side effects (in order): SSH sync origin in /var/www/.git/config,
+	// 4. Side effects (in order): SSH sync origin in the pair's working directory,
 	//    write sensitive GIT_TOKEN, stamp meta (no restart — a fresh SSH
 	//    session reads the live secret within seconds).
 	//
@@ -508,7 +508,7 @@ func confirmGitPushSetupLocal(
 	}
 	if remoteState != nil {
 		body["remote"] = remoteState
-		if warn := gitPushRemoteStateWarning(remoteState, false); warn != "" {
+		if warn := gitPushRemoteStateWarning(remoteState); warn != "" {
 			body["remoteStateWarning"] = warn
 		}
 	}
@@ -575,6 +575,7 @@ func confirmGitPushSetupContainer(
 	}
 
 	pushHost := meta.Hostname
+	workDir := hqPairWorkingDir(meta)
 
 	// 1+2. Presence check (captured BEFORE any self-heal) + the conditional
 	// local self-heal itself. Extracted to gitPushSetupPreProbeSelfHeal to
@@ -595,7 +596,7 @@ func confirmGitPushSetupContainer(
 	//    secret is written, so an existing working GIT_TOKEN is never
 	//    clobbered by an unproven replacement (the destruction guard is the
 	//    probe-first structure itself, now that the proof matches the claim).
-	probeCmd := ops.BuildGitWritePushProbeCommand("/var/www", input.RemoteURL, hqURL, input.GitToken)
+	probeCmd := ops.BuildGitWritePushProbeCommand(workDir, input.RemoteURL, hqURL, input.GitToken)
 	if _, probeErr := sshDeployer.ExecSSH(ctx, pushHost, probeCmd); probeErr != nil {
 		// Surface the git stderr the SSHExecError carries (Authentication
 		// failed vs Repository not found vs network) + classify it, so the
@@ -621,10 +622,10 @@ func confirmGitPushSetupContainer(
 	// non-blocking warning; a genuinely custom pre-existing identity is
 	// preserved and reported, never silently left unexplained.
 	identity, emailSeeded, nameSeeded, emailPreserved, namePreserved, identityWarning := gitPushSetupDeriveAndSeedIdentity(
-		ctx, httpClient, sshDeployer, pushHost, input.RemoteURL, input.GitToken, needsReconstruct,
+		ctx, httpClient, sshDeployer, pushHost, workDir, input.RemoteURL, input.GitToken, needsReconstruct,
 	)
 
-	// 4. SSH sync origin + url-scoped credential helper in /var/www/.git
+	// 4. SSH sync origin + url-scoped credential helper in the pair's working directory
 	//    (single assertion owner; also one-way-cleans any stray legacy
 	//    .netrc residue). Skipped when reconstruction will wire origin +
 	//    helper itself (step 6d).
@@ -633,19 +634,19 @@ func confirmGitPushSetupContainer(
 		// pair already synced origin to the user's repo, so there's no recipe
 		// remote to preserve and a token rotation must never be blocked here.
 		if meta.GitPushState != topology.GitPushConfigured {
-			if blocker := shallowCloneGuard(ctx, sshDeployer, pushHost, input.GitToken); blocker != nil {
+			if blocker := shallowCloneGuard(ctx, sshDeployer, pushHost, workDir, input.GitToken); blocker != nil {
 				return blocker, nil, nil
 			}
 		}
 
-		originCmd := ops.BuildGitOriginSyncCommand("/var/www", input.RemoteURL, hqURL)
+		originCmd := ops.BuildGitOriginSyncCommand(workDir, input.RemoteURL, hqURL)
 		if _, originErr := sshDeployer.ExecSSH(ctx, pushHost, originCmd); originErr != nil {
 			// Same stderr swallow lived here (B6-N1) — surface it too, else
 			// shipping the probe fix just re-creates the bug one branch lower.
 			return convertError(platform.NewPlatformError(
 				platform.ErrSSHDeployFailed,
 				withSSHStderr(fmt.Sprintf("git-push-setup probe passed but origin sync on %s failed", pushHost), originErr),
-				"The container's /var/www/.git/config could not be updated. Confirm the container has /var/www/.git initialized (bootstrap runs InitServiceGit) and SSH is healthy, then re-call. NO project env or meta state was modified.",
+				fmt.Sprintf("The container's %[1]s/.git/config could not be updated. Confirm the container has %[1]s/.git initialized (bootstrap runs InitServiceGit) and SSH is healthy, then re-call. NO project env or meta state was modified.", workDir),
 			), WithRecoveryStatus()), nil, nil
 		}
 	}
@@ -696,7 +697,7 @@ func confirmGitPushSetupContainer(
 		), WithRecoveryStatus()), nil, nil
 	}
 
-	// 6d. Reconstruction (configured pair whose /var/www/.git vanished —
+	// 6d. Reconstruction (configured pair whose working directory's .git vanished —
 	// see step 1): rebuild from the recorded remote using the SESSION env
 	// token the loop above just proved live. Non-destructive: mixed reset
 	// aligns HEAD/index to the remote tree, the working tree stays
@@ -704,11 +705,11 @@ func confirmGitPushSetupContainer(
 	reconstructed := false
 	reconstructDivergence := ""
 	if needsReconstruct {
-		divergence, reconErr := gitPushReconstruct(ctx, sshDeployer, pushHost, input.RemoteURL, hqURL, identity)
+		divergence, reconErr := gitPushReconstruct(ctx, sshDeployer, pushHost, workDir, input.RemoteURL, hqURL, identity)
 		if reconErr != nil {
 			return convertError(platform.NewPlatformError(
 				platform.ErrSSHDeployFailed,
-				withSSHStderr(fmt.Sprintf("git-push-setup: token verified but /var/www/.git reconstruction on %q failed", pushHost), reconErr),
+				withSSHStderr(fmt.Sprintf("git-push-setup: token verified but %s/.git reconstruction on %q failed", workDir, pushHost), reconErr),
 				"The secret is stored; only the repo rebuild failed. Re-call git-push-setup with the same inputs to retry the reconstruction.",
 			), WithRecoveryStatus()), nil, nil
 		}
@@ -745,10 +746,10 @@ func confirmGitPushSetupContainer(
 	// remote pre-seeded with commits (or diverged/unrelated history) is
 	// visible BEFORE the first push, not only after a rejected one.
 	// Best-effort — a probe failure just omits the `remote` block.
-	remoteState := probeGitPushRemoteState(sshGitRunner(ctx, sshDeployer, pushHost, "/var/www"), trackedRef)
+	remoteState := probeGitPushRemoteState(sshGitRunner(ctx, sshDeployer, pushHost, workDir), trackedRef)
 
 	return jsonResult(attachWorkSessionState(
-		gitPushContainerConfiguredResponse(input, meta, hqURL, rotation, reconstructed, reconstructDivergence,
+		gitPushContainerConfiguredResponse(input, meta, rotation, reconstructed, reconstructDivergence,
 			identity, emailSeeded, nameSeeded, emailPreserved, namePreserved, identityWarning, remoteState),
 		stateDir)), nil, nil
 }
@@ -800,6 +801,12 @@ func classifyGitIdentitySeedLine(line, seededTok, preservedTok, writeFailedTok s
 	}
 }
 
+// gitRepoPresenceCommand reports whether the pair's working directory still
+// carries its repository: "present" or "absent".
+func gitRepoPresenceCommand(workDir string) string {
+	return "test -d " + ops.ShellQuote(workDir+"/.git") + " && echo present || echo absent"
+}
+
 // gitPushSetupDeriveAndSeedIdentity implements F3 attribution: derives a git
 // identity from the token, by forge (github.com remotes — ops.IsGitHubRemote
 // is the single owner, a strict fail-CLOSED host check deliberately distinct
@@ -832,7 +839,7 @@ func gitPushSetupDeriveAndSeedIdentity(
 	ctx context.Context,
 	httpClient ops.HTTPDoer,
 	sshDeployer ops.SSHDeployer,
-	pushHost, remoteURL, token string,
+	pushHost, workDir, remoteURL, token string,
 	needsReconstruct bool,
 ) (identity ops.GitIdentity, emailSeeded, nameSeeded, emailPreserved, namePreserved bool, warning string) {
 	identity = ops.DeployGitIdentity
@@ -854,7 +861,7 @@ func gitPushSetupDeriveAndSeedIdentity(
 		return identity, false, false, false, false, ""
 	}
 
-	seedOut, seedErr := sshDeployer.ExecSSH(ctx, pushHost, ops.BuildGitIdentitySeedCommand("/var/www", identity))
+	seedOut, seedErr := sshDeployer.ExecSSH(ctx, pushHost, ops.BuildGitIdentitySeedCommand(workDir, identity))
 	if seedErr != nil {
 		return identity, false, false, false, false, fmt.Sprintf("Derived your %s identity (%s <%s>) but could not seed it into the container's git config (%v) — repo-local identity is unchanged; re-run git-push-setup to retry.", forge, identity.Name, identity.Email, seedErr)
 	}
@@ -902,7 +909,7 @@ func resolveContainerTrackedRef(ctx context.Context, sshDeployer ops.SSHDeployer
 	if meta.GitPushState == topology.GitPushConfigured {
 		return meta.TrackedRef
 	}
-	detected, _ := git.CurrentBranch(ctx, git.SSHRunner{Executor: sshDeployer, Hostname: pushHost}, "/var/www", input.RemoteURL)
+	detected, _ := git.CurrentBranch(ctx, git.SSHRunner{Executor: sshDeployer, Hostname: pushHost}, hqPairWorkingDir(meta), input.RemoteURL)
 	if detected != "" {
 		return detected
 	}
@@ -932,8 +939,9 @@ func resolveContainerTrackedRef(ctx context.Context, sshDeployer ops.SSHDeployer
 // and to drive step 6d) and a non-nil blocker only when the self-heal SSH
 // call itself fails transport-wise.
 func gitPushSetupPreProbeSelfHeal(ctx context.Context, sshDeployer ops.SSHDeployer, pushHost string, meta *workflow.ServiceMeta) (needsReconstruct bool, blocker *mcp.CallToolResult) {
+	workDir := hqPairWorkingDir(meta)
 	if meta.GitPushState == topology.GitPushConfigured {
-		presentOut, presentErr := sshDeployer.ExecSSH(ctx, pushHost, "test -d /var/www/.git && echo present || echo absent")
+		presentOut, presentErr := sshDeployer.ExecSSH(ctx, pushHost, gitRepoPresenceCommand(workDir))
 		if presentErr != nil {
 			// Fail CLOSED: with the presence unknown, proceeding would let
 			// the self-heal below create a marker-only repo that masks the
@@ -941,7 +949,7 @@ func gitPushSetupPreProbeSelfHeal(ctx context.Context, sshDeployer ops.SSHDeploy
 			// the pre-probe ordering exists to prevent) — refuse instead.
 			return false, convertError(platform.NewPlatformError(
 				platform.ErrSSHDeployFailed,
-				withSSHStderr(fmt.Sprintf("git-push-setup: could not determine whether %q still carries /var/www/.git", pushHost), presentErr),
+				withSSHStderr(fmt.Sprintf("git-push-setup: could not determine whether %q still carries %s/.git", pushHost, workDir), presentErr),
 				"Verify SSH to the push source is healthy, then re-call. NO remote ref, secret, origin, or meta state was modified.",
 			), WithRecoveryStatus())
 		}
@@ -955,11 +963,11 @@ func gitPushSetupPreProbeSelfHeal(ctx context.Context, sshDeployer ops.SSHDeploy
 		// origin sync, no meta write). That local repair is unconditional
 		// and best-effort; it happens even when the probe that follows
 		// subsequently fails.
-		if _, ensureErr := sshDeployer.ExecSSH(ctx, pushHost, ops.GitEnsureRepoHeadCommand("/var/www")); ensureErr != nil {
+		if _, ensureErr := sshDeployer.ExecSSH(ctx, pushHost, ops.GitEnsureRepoHeadCommand(workDir)); ensureErr != nil {
 			return needsReconstruct, convertError(platform.NewPlatformError(
 				platform.ErrSSHDeployFailed,
 				withSSHStderr(fmt.Sprintf("git-push-setup: could not ensure a commit-ready repo on %q before probing", pushHost), ensureErr),
-				"Verify /var/www is writable and SSH is healthy on the push source, then re-call. NO remote ref, secret, origin, or meta state was modified.",
+				fmt.Sprintf("Verify %s is writable and SSH is healthy on the push source, then re-call. NO remote ref, secret, origin, or meta state was modified.", workDir),
 			), WithRecoveryStatus())
 		}
 	}
@@ -973,7 +981,7 @@ func gitPushSetupPreProbeSelfHeal(ctx context.Context, sshDeployer ops.SSHDeploy
 // from confirmGitPushSetupContainer to keep that probe-orchestration function
 // under the maintainability ceiling.
 func gitPushContainerConfiguredResponse(
-	input WorkflowInput, meta *workflow.ServiceMeta, hqURL string, rotation, reconstructed bool, reconstructDivergence string,
+	input WorkflowInput, meta *workflow.ServiceMeta, rotation, reconstructed bool, reconstructDivergence string,
 	identity ops.GitIdentity, emailSeeded, nameSeeded, emailPreserved, namePreserved bool, identityWarning string,
 	remoteState *gitPushRemoteStateWire,
 ) map[string]any {
@@ -986,11 +994,11 @@ func gitPushContainerConfiguredResponse(
 		"trackedRef":                meta.TrackedRef,
 		"recommendedIntegration":    string(delivery.Recommended),
 		"recommendedIntegrationWhy": delivery.Why,
-		"nextStep":                  fmt.Sprintf("git-push wiring verified: the token passed the push auth probe (`git push --dry-run`; on a repo with no commit yet it falls back to read reachability and the first push proves write), origin + credential helper synced on /var/www/.git, and a FRESH session authenticated with the stored secret (rotation needs no restart — fresh sessions read the live value). A non-fast-forward (the remote branch has commits yours doesn't) still surfaces at the first real push, not here. Wire CI (integration=\"actions\" recommended for GitHub; \"webhook\" for GitLab; \"none\" for external CI/CD): zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\". Then push via: zerops_deploy targetService=%q strategy=\"git-push\".", input.Service, input.Service),
+		"nextStep":                  fmt.Sprintf("git-push wiring verified: the token passed the push auth probe (`git push --dry-run`; on a repo with no commit yet it falls back to read reachability and the first push proves write), origin + credential helper synced on %s/.git, and a FRESH session authenticated with the stored secret (rotation needs no restart — fresh sessions read the live value). A non-fast-forward (the remote branch has commits yours doesn't) still surfaces at the first real push, not here. Wire CI (integration=\"actions\" recommended for GitHub; \"webhook\" for GitLab; \"none\" for external CI/CD): zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\". Then push via: zerops_deploy targetService=%q strategy=\"git-push\".", hqPairWorkingDir(meta), input.Service, input.Service),
 	}
 	if remoteState != nil {
 		resp["remote"] = remoteState
-		if warn := gitPushRemoteStateWarning(remoteState, ops.IsHQRemote(meta.RemoteURL, hqURL)); warn != "" {
+		if warn := gitPushRemoteStateWarning(remoteState); warn != "" {
 			resp["remoteStateWarning"] = warn
 		}
 	}
@@ -1015,7 +1023,7 @@ func gitPushContainerConfiguredResponse(
 			gitPushIdentityAttributedSuffix(emailSeeded, nameSeeded, reconstructed))
 	}
 	if emailPreserved || namePreserved {
-		resp["identityPreservedNote"] = gitPushIdentityPreservedNote(identity, meta.Hostname, emailPreserved, namePreserved)
+		resp["identityPreservedNote"] = gitPushIdentityPreservedNote(identity, meta.Hostname, hqPairWorkingDir(meta), emailPreserved, namePreserved)
 	}
 	if identityWarning != "" {
 		resp["identityWarning"] = identityWarning
@@ -1049,7 +1057,7 @@ func gitPushIdentityAttributedSuffix(emailSeeded, nameSeeded, reconstructed bool
 // name/email containing an apostrophe or shell metacharacters, since
 // GitHub account names/emails are attacker-adjacent input (the PAT's
 // owner controls their own GitHub profile, not ZCP).
-func gitPushIdentityPreservedNote(identity ops.GitIdentity, hostname string, emailPreserved, namePreserved bool) string {
+func gitPushIdentityPreservedNote(identity ops.GitIdentity, hostname, workDir string, emailPreserved, namePreserved bool) string {
 	which := "identity"
 	switch {
 	case emailPreserved && namePreserved:
@@ -1059,8 +1067,8 @@ func gitPushIdentityPreservedNote(identity ops.GitIdentity, hostname string, ema
 	case namePreserved:
 		which = "name"
 	}
-	remoteScript := fmt.Sprintf("cd /var/www && git config user.name %s && git config user.email %s",
-		ops.ShellQuote(identity.Name), ops.ShellQuote(identity.Email))
+	remoteScript := fmt.Sprintf("cd %s && git config user.name %s && git config user.email %s",
+		ops.ShellQuote(workDir), ops.ShellQuote(identity.Name), ops.ShellQuote(identity.Email))
 	return fmt.Sprintf(
 		"Repo-local git %s differs from your GitHub account (%s <%s>) — preserved, not overwritten. To attribute future commits to your GitHub account instead, set it yourself: ssh %s %s.",
 		which, identity.Name, identity.Email, hostname, ops.ShellQuote(remoteScript),
@@ -1070,8 +1078,8 @@ func gitPushIdentityPreservedNote(identity ops.GitIdentity, hostname string, ema
 // gitPushPorcelainSummary best-effort reads `git status --porcelain` on
 // the push source after a reconstruction, truncated for the response.
 // Empty string = clean tree (or unreadable — the gate re-checks later).
-func gitPushPorcelainSummary(ctx context.Context, sshDeployer ops.SSHDeployer, pushHost string) string {
-	out, err := sshDeployer.ExecSSH(ctx, pushHost, "cd /var/www && git status --porcelain 2>/dev/null | head -20")
+func gitPushPorcelainSummary(ctx context.Context, sshDeployer ops.SSHDeployer, pushHost, workDir string) string {
+	out, err := sshDeployer.ExecSSH(ctx, pushHost, "cd "+ops.ShellQuote(workDir)+" && git status --porcelain 2>/dev/null | head -20")
 	if err != nil {
 		return ""
 	}
@@ -1108,18 +1116,18 @@ func gitPushSessionAuthVerify(ctx context.Context, sshDeployer ops.SSHDeployer, 
 // summary ("" = clean). identity is the identity to fill (set-if-absent)
 // during the reconstruction's init — a GitHub-derived identity when the
 // caller has one (F3), or ops.DeployGitIdentity as the robot fallback.
-func gitPushReconstruct(ctx context.Context, sshDeployer ops.SSHDeployer, pushHost, remoteURL, hqURL string, identity ops.GitIdentity) (string, error) {
-	reconCmd := ops.BuildGitReconstructCommand("/var/www", remoteURL, hqURL, identity)
+func gitPushReconstruct(ctx context.Context, sshDeployer ops.SSHDeployer, pushHost, workDir, remoteURL, hqURL string, identity ops.GitIdentity) (string, error) {
+	reconCmd := ops.BuildGitReconstructCommand(workDir, remoteURL, hqURL, identity)
 	if _, reconErr := sshDeployer.ExecSSH(ctx, pushHost, reconCmd); reconErr != nil {
 		return "", reconErr
 	}
-	return gitPushPorcelainSummary(ctx, sshDeployer, pushHost), nil
+	return gitPushPorcelainSummary(ctx, sshDeployer, pushHost, workDir), nil
 }
 
 // gitPushConfiguredRecall handles the token-less confirm re-call on an
 // already-configured pair (O3 check-before-mutate, B6c/GPS-5).
 // Check-before-claim: "already-configured" promises working wiring, so
-// the branch first verifies /var/www/.git exists. A container whose repo
+// the branch first verifies the working directory's .git exists. A container whose repo
 // vanished (artifact deploy without -g; container replacement — the
 // gate's git-state-missing state) still has its service secret, so the
 // token-less re-call becomes the RECONSTRUCTION path: rebuild the repo
@@ -1128,23 +1136,24 @@ func gitPushReconstruct(ctx context.Context, sshDeployer ops.SSHDeployer, pushHo
 // makes it "token-less"), so reconstruction always falls back to the
 // robot identity — deriving from GitHub needs a PAT (F3 item 4).
 func gitPushConfiguredRecall(ctx context.Context, sshDeployer ops.SSHDeployer, hqURL string, input WorkflowInput, meta *workflow.ServiceMeta) *mcp.CallToolResult {
-	presentOut, presentErr := sshDeployer.ExecSSH(ctx, meta.Hostname, "test -d /var/www/.git && echo present || echo absent")
+	workDir := hqPairWorkingDir(meta)
+	presentOut, presentErr := sshDeployer.ExecSSH(ctx, meta.Hostname, gitRepoPresenceCommand(workDir))
 	if presentErr != nil {
 		// Fail CLOSED: "already-configured" promises working wiring; with
 		// the presence read failing we cannot make that claim, and a
 		// vanished .git would silently skip its reconstruction.
 		return convertError(platform.NewPlatformError(
 			platform.ErrSSHDeployFailed,
-			withSSHStderr(fmt.Sprintf("git-push-setup: could not verify /var/www/.git still exists on %q", meta.Hostname), presentErr),
+			withSSHStderr(fmt.Sprintf("git-push-setup: could not verify %s/.git still exists on %q", workDir, meta.Hostname), presentErr),
 			"Verify SSH to the push source is healthy, then re-call. NO remote ref, secret, origin, or meta state was modified.",
 		), WithRecoveryStatus())
 	}
 	if strings.Contains(string(presentOut), "absent") {
-		divergence, reconErr := gitPushReconstruct(ctx, sshDeployer, meta.Hostname, meta.RemoteURL, hqURL, ops.DeployGitIdentity)
+		divergence, reconErr := gitPushReconstruct(ctx, sshDeployer, meta.Hostname, workDir, meta.RemoteURL, hqURL, ops.DeployGitIdentity)
 		if reconErr != nil {
 			return convertError(platform.NewPlatformError(
 				platform.ErrSSHDeployFailed,
-				withSSHStderr(fmt.Sprintf("git-push-setup: /var/www/.git missing on %q and reconstruction from %s failed", meta.Hostname, topology.RedactRepoURLCredentials(meta.RemoteURL)), reconErr),
+				withSSHStderr(fmt.Sprintf("git-push-setup: %s/.git missing on %q and reconstruction from %s failed", workDir, meta.Hostname, topology.RedactRepoURLCredentials(meta.RemoteURL)), reconErr),
 				"The repo could not be rebuilt from the recorded remote (auth or network). Verify the service env still carries GIT_TOKEN (re-call with gitToken to rotate it), then re-call.",
 			), WithRecoveryStatus())
 		}
@@ -1155,7 +1164,7 @@ func gitPushConfiguredRecall(ctx context.Context, sshDeployer ops.SSHDeployer, h
 			"pushSource":    meta.Hostname,
 			"remoteUrl":     topology.RedactRepoURLCredentials(meta.RemoteURL),
 			"gitPushState":  meta.GitPushState,
-			"note":          "/var/www/.git was missing (a deploy replaced the container with a git-less artifact) and has been RECONSTRUCTED from the recorded remote: init + fetch + mixed reset — the working tree was not modified.",
+			"note":          workDir + "/.git was missing (a deploy replaced the container with a git-less artifact) and has been RECONSTRUCTED from the recorded remote: init + fetch + mixed reset — the working tree was not modified.",
 		}
 		if divergence != "" {
 			resp["divergence"] = "After reconstruction the working tree differs from the remote HEAD:\n" + divergence + "\nReview: build artifacts are expected noise; real edits need commit + zerops_deploy strategy=\"git-push\"."
@@ -1192,7 +1201,7 @@ func gitPushIdentityMigrationNote(ctx context.Context, sshDeployer ops.SSHDeploy
 	if !ops.IsGitHubRemote(meta.RemoteURL) {
 		return ""
 	}
-	out, err := sshDeployer.ExecSSH(ctx, meta.Hostname, ops.BuildGitIdentityReadCommand("/var/www"))
+	out, err := sshDeployer.ExecSSH(ctx, meta.Hostname, ops.BuildGitIdentityReadCommand(hqPairWorkingDir(meta)))
 	if err != nil {
 		return ""
 	}

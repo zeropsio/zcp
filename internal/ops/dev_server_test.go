@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/devsup"
 	"github.com/zeropsio/zcp/internal/ops/devservertest"
@@ -470,6 +471,96 @@ func TestDevServer_Status_Crashed(t *testing.T) {
 	}
 }
 
+// A restart reply that sees its server crashed while starting, with the
+// supervisor's one more start pending, says the server comes back and when to
+// look again — not that the supervisor leaves it down to be fixed.
+func TestDevServer_ARestartThatCrashedWithItsOneMoreStartPendingSaysItComesBack(t *testing.T) {
+	t.Parallel()
+	c := devservertest.NewSupervised(twoServers)
+	c.Crash = map[string]bool{"api": true}
+	c.RetryPending = map[string]bool{"api": true}
+
+	result := runDevServer(t, c, DevServerParams{Action: "restart", Hostname: "appdev", Name: "api"})
+
+	want := `Dev server api on appdev crashed while starting (exit 1); the supervisor starts it once more after its siblings settle. Check api again in about 30 s with zerops_dev_server action=status hostname="appdev" name="api".`
+	if result.Reason != reasonCrashed || !strings.Contains(result.Message, want) {
+		t.Errorf("result = %+v, want reason crashed and message containing %q", result, want)
+	}
+	if strings.Contains(result.Message, "leaves it down") {
+		t.Errorf("message = %q, says the supervisor leaves down a server it starts once more", result.Message)
+	}
+}
+
+// A server that crashed because the service's task limit was reached says
+// so, with the limit and the tasks running now — coming back while the
+// supervisor starts it again after a backoff, and what frees tasks once it
+// stopped trying — instead of an exit to fix in the server's code.
+func TestDevServer_AServerThatCrashedOnTheServicesTaskLimitNamesTheLimitAndTheTasksRunningNow(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name    string
+		pending bool
+		want    string
+	}{
+		{"coming back", true, `Dev server api on appdev crashed (exit 1): the service's task limit (300) was reached, 297 tasks run now; the supervisor starts it again after a backoff, one server at a time. Check api again in about 30 s with zerops_dev_server action=status hostname="appdev" name="api".`},
+		{"stopped trying", false, `Dev server api on appdev crashed (exit 1): the service's task limit (300) was reached, 297 tasks run now; the supervisor stopped starting it. Free tasks — stop a server you do not need, or cap the threads its tools start (RAYON_NUM_THREADS, UV_CONCURRENT_BUILDS, UV_CONCURRENT_INSTALLS) — then start it again.`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			c := devservertest.NewSupervised(twoServers)
+			c.Crash = map[string]bool{"api": true}
+			c.RetryPending = map[string]bool{"api": tt.pending}
+			c.TaskLimit = map[string]*devsup.TaskLimit{"api": {Max: 300, Current: 297}}
+
+			result := runDevServer(t, c, DevServerParams{Action: "restart", Hostname: "appdev", Name: "api"})
+
+			if result.Reason != reasonCrashed || !strings.Contains(result.Message, tt.want) {
+				t.Errorf("result = %+v, want reason crashed and message containing %q", result, tt.want)
+			}
+		})
+	}
+}
+
+// vinext bound to 127.0.0.1 was reported "slow" with a public URL that
+// answered 502: the probe inside the container reaches a loopback listener,
+// nothing outside it does. A start or status of a server that listens on
+// loopback only says so and to bind 0.0.0.0, and gives no address.
+func TestDevServer_AServerThatListensOnLoopbackOnlyIsNamedSoWithoutAnAddress(t *testing.T) {
+	t.Parallel()
+	for _, action := range []string{"start", "restart", "status"} {
+		t.Run(action, func(t *testing.T) {
+			t.Parallel()
+			c := devservertest.NewSupervised(twoServers)
+			c.Loopback = map[int]bool{8080: true}
+
+			result := runDevServer(t, c, DevServerParams{Action: action, Hostname: "appdev", Name: "api"})
+
+			want := "Dev server api on appdev listens on loopback only (127.0.0.1:8080): neither http://appdev:8080 nor its subdomain reaches it. Make it bind 0.0.0.0 (for example --host 0.0.0.0) and restart it, unless a web server in front of it proxies to it."
+			if result.Reason != ReasonLoopbackOnly || !strings.Contains(result.Message, want) {
+				t.Errorf("reason/message = %q/%q, want %q and %q", result.Reason, result.Message, ReasonLoopbackOnly, want)
+			}
+			if result.URL != "" {
+				t.Errorf("url = %q, want none for a server nothing outside the container reaches", result.URL)
+			}
+		})
+	}
+}
+
+// A restart whose health probe ends while the supervisor still reports the
+// server starting names it as still starting and says when to look again.
+func TestDevServer_ARestartStillStartingWhenItsProbeEndsSaysWhenToCheckItAgain(t *testing.T) {
+	t.Parallel()
+	c := devservertest.NewSupervised(twoServers)
+	c.HTTP = map[int]int{8080: 0}
+
+	result := runDevServer(t, c, DevServerParams{Action: "restart", Hostname: "appdev", Name: "api", WaitSeconds: 1})
+
+	want := `Check api again in about 30 s with zerops_dev_server action=status hostname="appdev" name="api".`
+	if !strings.Contains(result.Message, "the supervisor reports it starting") || !strings.Contains(result.Message, want) {
+		t.Errorf("message = %q, want it still starting and %q", result.Message, want)
+	}
+}
+
 func TestDevServer_Logs_ReturnsTail(t *testing.T) {
 	t.Parallel()
 	c := devservertest.NewSupervised(oneServer)
@@ -669,6 +760,191 @@ func TestDevServer_NoSupervisor(t *testing.T) {
 	}
 }
 
+// A supervisor that is running but does not answer in time (a thrashing
+// container) is reported unresponsive, not missing: every action changes
+// nothing, says to check the container's load and memory and retry, and a
+// start never takes the move onto the supervisor (no redeploy).
+func TestDevServer_ASupervisorThatDoesNotAnswerInTimeIsReportedUnresponsiveNotMissing(t *testing.T) {
+	t.Parallel()
+	for _, action := range []string{"stop", "status", "logs", "start", "restart"} {
+		c := devservertest.NewSupervised(`{"version":1,"servers":[{"name":"web","port":3000,"command":"next dev","cwd":"."}]}`)
+		c.Unresponsive = true
+		decl := c.Declaration
+		result, err := ExecuteDevServer(context.Background(), c, mockClientWithServices("difydev"), "p1",
+			DevServerParams{Action: action, Hostname: "difydev", Name: "web"})
+		if err != nil {
+			t.Fatalf("%s: err = %v, want an unresponsive result", action, err)
+		}
+		if result.Reason != reasonSupervisorUnresponsive || result.Running ||
+			!strings.Contains(result.Message, "running but did not answer") || !strings.Contains(result.Message, "zerops_scale") ||
+			strings.Contains(result.Message, "redeploy") || strings.Contains(result.Message, "sets it up") {
+			t.Errorf("%s: result = %+v, want supervisor_unresponsive naming load/memory and no redeploy", action, result)
+		}
+		if n := len(c.Sent()); n != 1 || c.Declaration != decl || c.Deploys != 0 {
+			t.Errorf("%s: sent %d commands, declaration %q, deploys %d — want only the read, nothing changed", action, n, c.Declaration, c.Deploys)
+		}
+	}
+}
+
+// A dev container that does not answer over SSH in time (out of memory or
+// CPU) is reported not answering, never an unknown ssh error: every action
+// changes nothing and says to check its load and memory, scale it or restart it.
+func TestDevServer_AContainerThatDoesNotAnswerSSHInTimeIsReportedNotAnsweringWithItsRecovery(t *testing.T) {
+	t.Parallel()
+	for _, action := range []string{"stop", "status", "logs", "start", "restart"} {
+		c := devservertest.NewSupervised(`{"version":1,"servers":[{"name":"web","port":3000,"command":"next dev","cwd":"."}]}`)
+		c.Silent = true
+		decl := c.Declaration
+		result, err := ExecuteDevServer(context.Background(), c, mockClientWithServices("difydev"), "p1",
+			DevServerParams{Action: action, Hostname: "difydev", Name: "web"})
+		if err != nil {
+			t.Fatalf("%s: err = %v, want a not-answering result", action, err)
+		}
+		want := "difydev did not answer over SSH in time — the container may be out of memory or CPU. Check its load and memory (zerops_logs, zerops_scale) or restart it (zerops_manage action=restart), then retry."
+		if result.Reason != reasonSupervisorUnresponsive || result.Running || result.Message != want {
+			t.Errorf("%s: result = %+v, want supervisor_unresponsive saying %q", action, result, want)
+		}
+		if n := len(c.Sent()); n != 1 || c.Declaration != decl || c.Deploys != 0 {
+			t.Errorf("%s: sent %d commands, declaration %q, deploys %d — want only the read, nothing changed", action, n, c.Declaration, c.Deploys)
+		}
+	}
+}
+
+// An entry removed from the declaration by hand leaves its server running
+// until the supervisor re-reads the file: the next zerops_dev_server call has
+// it re-read, which stops and drops that server, and the reply names it.
+func TestDevServer_AServerRemovedFromTheDeclarationIsStoppedAndTheReplySaysSo(t *testing.T) {
+	t.Parallel()
+	const both = `{"version":1,"servers":[{"name":"web","port":3000,"command":"next dev","cwd":"."},{"name":"lo","port":5999,"command":"python3 -m http.server 5999","cwd":"."}]}`
+	const removed = "Dev server lo on difydev is no longer declared in .zcp/dev-servers.json, so the supervisor stopped it."
+	for _, tc := range []struct{ action, name string }{{"status", ""}, {"logs", "web"}, {"stop", "lo"}, {"status", "lo"}} {
+		c := devservertest.NewSupervised(both)
+		c.Declaration = `{"version":1,"servers":[{"name":"web","port":3000,"command":"next dev","cwd":"."}]}`
+		result, err := ExecuteDevServer(context.Background(), c, mockClientWithServices("difydev"), "p1",
+			DevServerParams{Action: tc.action, Hostname: "difydev", Name: tc.name})
+		if err != nil {
+			t.Fatalf("%s %s: err = %v, want a reply naming lo as stopped", tc.action, tc.name, err)
+		}
+		if _, held := c.Servers["lo"]; held {
+			t.Errorf("%s %s: the supervisor still holds lo, want it stopped and dropped", tc.action, tc.name)
+		}
+		if c.Status("web") != devsup.StatusRunning {
+			t.Errorf("%s %s: web is %q, want it left running", tc.action, tc.name, c.Status("web"))
+		}
+		if !strings.Contains(result.Message, removed) {
+			t.Errorf("%s %s: message = %q, want it to contain %q", tc.action, tc.name, result.Message, removed)
+		}
+	}
+	c := devservertest.NewSupervised(both)
+	if _, err := ExecuteDevServer(context.Background(), c, mockClientWithServices("difydev"), "p1",
+		DevServerParams{Action: "status", Hostname: "difydev"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, cmd := range c.Sent() {
+		if strings.Contains(cmd, "ctl 'reload'") {
+			t.Errorf("sent %q with both servers still declared, want no reload", cmd)
+		}
+	}
+}
+
+// A declaration missing from the checkout (never committed, stashed away or
+// absent from a checked-out commit) is not a declaration that removed every
+// server: status and logs leave the running servers alone and send no reload.
+func TestDevServer_StatusAndLogsWithoutADeclarationFileLeaveTheRunningServersAlone(t *testing.T) {
+	t.Parallel()
+	const both = `{"version":1,"servers":[{"name":"web","port":3000,"command":"next dev","cwd":"."},{"name":"lo","port":5999,"command":"python3 -m http.server 5999","cwd":"."}]}`
+	for _, tc := range []struct{ action, name string }{{"status", "web"}, {"logs", "web"}} {
+		c := devservertest.NewSupervised(both)
+		c.Logs = map[string][]string{"web": {"ready"}}
+		c.Declaration = ""
+		result, err := ExecuteDevServer(context.Background(), c, mockClientWithServices("difydev"), "p1",
+			DevServerParams{Action: tc.action, Hostname: "difydev", Name: tc.name})
+		if err != nil {
+			t.Fatalf("%s %s: err = %v, want a read-only reply", tc.action, tc.name, err)
+		}
+		for _, name := range []string{"web", "lo"} {
+			if c.Status(name) != devsup.StatusRunning {
+				t.Errorf("%s %s: %s is %q, want it left running", tc.action, tc.name, name, c.Status(name))
+			}
+		}
+		for _, cmd := range c.Sent() {
+			if strings.Contains(cmd, "ctl 'reload'") {
+				t.Errorf("%s %s: sent %q without a declaration file, want no reload", tc.action, tc.name, cmd)
+			}
+		}
+		if strings.Contains(result.Message, "no longer declared") {
+			t.Errorf("%s %s: message = %q, want no server reported stopped", tc.action, tc.name, result.Message)
+		}
+	}
+}
+
+// Without a declaration file zcp knows the servers only from the supervisor:
+// a status without a name reports each server it runs and says how to declare
+// them, never a start that would run a duplicate beside them; a call that
+// names no server it runs says the same.
+func TestDevServer_StatusWithoutADeclarationFileReportsTheServersTheSupervisorRunsAndSuggestsNoDuplicateStart(t *testing.T) {
+	t.Parallel()
+	const both = `{"version":1,"servers":[{"name":"web","port":3000,"command":"next dev","cwd":"."},{"name":"lo","port":5999,"command":"python3 -m http.server 5999","cwd":"."}]}`
+	c := devservertest.NewSupervised(both)
+	c.Declaration = ""
+	result, err := ExecuteDevServer(context.Background(), c, mockClientWithServices("difydev"), "p1",
+		DevServerParams{Action: "status", Hostname: "difydev"})
+	if err != nil {
+		t.Fatalf("err = %v, want a status of the servers the supervisor runs", err)
+	}
+	for _, want := range []string{
+		"difydev has no .zcp/dev-servers.json; its supervisor runs 2 dev servers:",
+		"Dev server lo on difydev is running",
+		"Dev server web on difydev is running",
+	} {
+		if !strings.Contains(result.Message, want) {
+			t.Errorf("message = %q, want it to contain %q", result.Message, want)
+		}
+	}
+	if strings.Contains(result.Message, "action=start") {
+		t.Errorf("message = %q, want no start beside the running servers", result.Message)
+	}
+	if !result.Unreported {
+		t.Errorf("Unreported = false, want a status of several servers that reports none alone")
+	}
+	_, err = ExecuteDevServer(context.Background(), c, mockClientWithServices("difydev"), "p1",
+		DevServerParams{Action: "logs", Hostname: "difydev"})
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) {
+		t.Fatalf("logs without a name: err = %v, want a platform error naming the running servers", err)
+	}
+	if want := "difydev has no .zcp/dev-servers.json and its supervisor runs no dev server named \"difydev\""; pe.Message != want {
+		t.Errorf("logs without a name: message = %q, want %q", pe.Message, want)
+	}
+	if want := "Its supervisor runs lo (running), web (running): pass name="; !strings.HasPrefix(pe.Suggestion, want) || strings.Contains(pe.Suggestion, "action=start") {
+		t.Errorf("logs without a name: suggestion = %q, want it to start %q and suggest no start", pe.Suggestion, want)
+	}
+	for _, name := range []string{"web", "lo"} {
+		if c.Status(name) != devsup.StatusRunning {
+			t.Errorf("%s is %q, want it left running", name, c.Status(name))
+		}
+	}
+}
+
+// A server the declaration does not name has no port zcp knows: its status
+// says so instead of reporting it has no HTTP port. A server declared without
+// a port has none.
+func TestDevServer_StatusOfARunningServerWhosePortZcpDoesNotKnowNeverSaysItHasNoHTTPPort(t *testing.T) {
+	t.Parallel()
+	const both = `{"version":1,"servers":[{"name":"web","port":3000,"command":"next dev","cwd":"."},{"name":"worker","command":"node worker.js","cwd":"."}]}`
+	c := devservertest.NewSupervised(both)
+	c.Declaration = ""
+	result := runDevServer(t, c, DevServerParams{Action: "status", Hostname: "difydev", Name: "web"})
+	if want := "Dev server web on difydev is running; zcp does not know its port, since .zcp/dev-servers.json is missing."; result.Message != want {
+		t.Errorf("undeclared: message = %q, want %q", result.Message, want)
+	}
+	declared := devservertest.NewSupervised(both)
+	result = runDevServer(t, declared, DevServerParams{Action: "status", Hostname: "difydev", Name: "worker"})
+	if want := "Dev server worker on difydev is running (declared without an HTTP port)."; result.Message != want {
+		t.Errorf("declared without a port: message = %q, want %q", result.Message, want)
+	}
+}
+
 // TestDevServer_NoProcessPatternMatching (TEST-PLAN E1 #3, #14): no
 // dev-server path finds processes by name or command pattern, and the
 // keeper, the zcp-side dev-servers.json and the SSH start are gone. One
@@ -830,5 +1106,208 @@ func TestDevServer_Running_IsTheSupervisorsStatus(t *testing.T) {
 				t.Errorf("verify = %+v, want ok=%v", api.Verify, *tt.verify)
 			}
 		})
+	}
+}
+
+const gib64 = int64(1) << 30
+
+func memoryContainer(maxGiB, usedGiB int64, rssGiB map[string]float64) *devservertest.Container {
+	c := devservertest.NewSupervised(twoServers)
+	c.MemMaxB, c.MemCurrentB = maxGiB*gib64, usedGiB*gib64
+	c.Servers["api"].Status, c.Servers["api"].Desired = devsup.StatusStopped, devsup.DesiredStopped
+	for n, g := range rssGiB {
+		c.Servers[n].RssKB = int64(g * 1024 * 1024)
+	}
+	return c
+}
+
+func TestDevServer_StartThatWouldLeaveLessHeadroomThanTheLargestRunningServer_IsRefusedWithNumbersAndTwoWaysOut(t *testing.T) {
+	t.Parallel()
+	c := memoryContainer(6, 5, map[string]float64{"web": 2.5})
+	_, err := ExecuteDevServer(context.Background(), c, mockClientWithServices("appdev"), "p1",
+		DevServerParams{Action: "start", Hostname: "appdev", Name: "api"})
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) {
+		t.Fatalf("want a refusal, got %v", err)
+	}
+	for _, want := range []string{"Not starting api on appdev", "5.0 GiB", "6.0 GiB", "1.0 GiB", "2.5 GiB", "web 2.5 GiB"} {
+		if !strings.Contains(pe.Message, want) {
+			t.Errorf("message %q lacks %q", pe.Message, want)
+		}
+	}
+	if !strings.Contains(pe.Suggestion, "action=stop") || !strings.Contains(pe.Suggestion, "zerops_scale") {
+		t.Errorf("suggestion %q must name stopping another server and scaling max RAM", pe.Suggestion)
+	}
+	if sentWith(c, "ctl 'start' 'api'") != 0 {
+		t.Errorf("a refused start must not reach the supervisor")
+	}
+	if c.Status("web") != devsup.StatusRunning {
+		t.Errorf("the running server must stay running, got %s", c.Status("web"))
+	}
+}
+
+func TestDevServer_StartThatFitsTheHeadroom_Starts(t *testing.T) {
+	t.Parallel()
+	c := memoryContainer(6, 3, map[string]float64{"web": 2.5})
+	result := runDevServer(t, c, DevServerParams{Action: "start", Hostname: "appdev", Name: "api"})
+	if result.Name != "api" || sentWith(c, "ctl 'start' 'api'") != 1 {
+		t.Errorf("api must start, got %+v", result)
+	}
+}
+
+func TestDevServer_StartWhenTheServiceMaxRamIsAboveTheGrantedRam_JudgesAgainstTheMaxRam(t *testing.T) {
+	t.Parallel()
+	c := memoryContainer(4, 3, map[string]float64{"web": 2.5})
+	client := platform.NewMock().
+		WithProject(&platform.Project{ID: "p1", Name: "test"}).
+		WithServices([]platform.ServiceStack{{ID: "svc-appdev", Name: "appdev", ProjectID: "p1", Status: "ACTIVE",
+			CustomAutoscaling: &platform.CustomAutoscaling{MaxRAM: 8}}})
+	if _, err := ExecuteDevServer(context.Background(), c, client, "p1",
+		DevServerParams{Action: "start", Hostname: "appdev", Name: "api"}); err != nil {
+		t.Fatalf("8 GiB ceiling with 3 GiB used leaves 5 GiB, enough for another 2.5 GiB server: %v", err)
+	}
+}
+
+func TestDevServer_StartOfASecondNamedServerOnAOneGiBService_IsNotRefusedWhileNothingHeavyRuns(t *testing.T) {
+	t.Parallel()
+	c := devservertest.NewSupervised(twoServers)
+	c.MemMaxB, c.MemCurrentB = gib64, gib64/10
+	c.Servers["api"].Status, c.Servers["api"].Desired = devsup.StatusStopped, devsup.DesiredStopped
+	result := runDevServer(t, c, DevServerParams{Action: "start", Hostname: "appdev", Name: "api"})
+	if result.Name != "api" || sentWith(c, "ctl 'start' 'api'") != 1 {
+		t.Errorf("api must start on a 1 GiB service with 0.9 GiB free, got %+v", result)
+	}
+}
+
+func TestDevServer_AFirstDevServerStartWithNoServerRunning_IsNeverRefusedOnMemory(t *testing.T) {
+	t.Parallel()
+	// A single-part app on a 0.5 GiB grant with 400 MiB in use: nothing runs
+	// to measure one more server by, and the autoscaler grows the grant.
+	c := memoryContainer(0, 0, nil)
+	c.MemMaxB, c.MemCurrentB = gib64/2, 400<<20
+	c.Servers["web"].Status, c.Servers["web"].Desired = devsup.StatusStopped, devsup.DesiredStopped
+	result := runDevServer(t, c, DevServerParams{Action: "start", Hostname: "appdev", Name: "api"})
+	if result.Name != "api" || sentWith(c, "ctl 'start' 'api'") != 1 {
+		t.Errorf("api must start, got %+v", result)
+	}
+}
+
+func TestDevServer_ADefaultAutoscaledService_IsJudgedAgainstItsAutoscalingMaxNotItsCurrentGrant(t *testing.T) {
+	t.Parallel()
+	// 2 GiB granted, 1.6 GiB used, web holds 0.5 GiB: against the grant 0.4
+	// GiB is left, against the 6 GiB the service can grow to 4.4 GiB.
+	c := memoryContainer(2, 0, map[string]float64{"web": 0.5})
+	c.MemCurrentB = gib64 * 16 / 10
+	// The project's service list carries no currentAutoscaling; only the
+	// service's own detail does, and a default-autoscaled service has no
+	// customAutoscaling.
+	client := platform.NewMock().
+		WithProject(&platform.Project{ID: "p1", Name: "test"}).
+		WithServices([]platform.ServiceStack{{ID: "svc-appdev", Name: "appdev", ProjectID: "p1", Status: "ACTIVE"}}).
+		WithService(&platform.ServiceStack{ID: "svc-appdev", Name: "appdev", ProjectID: "p1", Status: "ACTIVE",
+			CurrentAutoscaling: &platform.CustomAutoscaling{MinRAM: 0.5, MaxRAM: 6}})
+	if _, err := ExecuteDevServer(context.Background(), c, client, "p1",
+		DevServerParams{Action: "start", Hostname: "appdev", Name: "api"}); err != nil {
+		t.Fatalf("6 GiB autoscaling max with 1.6 GiB used leaves 4.4 GiB, enough for another 0.5 GiB server: %v", err)
+	}
+	if sentWith(c, "ctl 'start' 'api'") != 1 {
+		t.Errorf("api must reach the supervisor")
+	}
+}
+
+func TestDevServer_PageCache_DoesNotCountAsUsedMemory(t *testing.T) {
+	t.Parallel()
+	// 5.5 GiB charged of 6, of it 2.5 GiB file cache the kernel reclaims:
+	// 3 GiB is in use, and another 2.5 GiB server fits.
+	c := memoryContainer(6, 0, map[string]float64{"web": 2.5})
+	c.MemCurrentB, c.MemActiveB = gib64*55/10, gib64*25/10
+	result := runDevServer(t, c, DevServerParams{Action: "start", Hostname: "appdev", Name: "api"})
+	if result.Name != "api" || sentWith(c, "ctl 'start' 'api'") != 1 {
+		t.Errorf("api must start, got %+v", result)
+	}
+}
+
+// TestDevServer_StartingAServerBesideAnotherRunningOne_TellsTheAgentToCapEachHeapToFitTheSharedCeiling:
+// two dev servers compiling at once ran a 6 GiB service out of memory twice
+// although the start fitted, so a start beside another running declared
+// server adds one line naming the ceiling they share and asking for a heap
+// cap on each. A start with no other server running, and a restart of a
+// running one, add nothing.
+func TestDevServer_StartingAServerBesideAnotherRunningOne_TellsTheAgentToCapEachHeapToFitTheSharedCeiling(t *testing.T) {
+	t.Parallel()
+	const heapLine = "NODE_OPTIONS=--max-old-space-size"
+
+	beside := runDevServer(t, memoryContainer(6, 3, map[string]float64{"web": 2.5}),
+		DevServerParams{Action: "start", Hostname: "appdev", Name: "api"})
+	var lines []string
+	for line := range strings.SplitSeq(beside.Message, "\n") {
+		if strings.Contains(line, heapLine) {
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) != 1 {
+		t.Fatalf("want one heap-cap line, got %d in %q", len(lines), beside.Message)
+	}
+	for _, want := range []string{"api and web", "appdev's 6.0 GiB RAM ceiling", "side by side"} {
+		if !strings.Contains(lines[0], want) {
+			t.Errorf("heap-cap line %q lacks %q", lines[0], want)
+		}
+	}
+
+	alone := memoryContainer(6, 0, nil)
+	alone.Servers["web"].Status, alone.Servers["web"].Desired = devsup.StatusStopped, devsup.DesiredStopped
+	if msg := runDevServer(t, alone, DevServerParams{Action: "start", Hostname: "appdev", Name: "api"}).Message; strings.Contains(msg, heapLine) {
+		t.Errorf("a start with no other server running must add no heap-cap line: %q", msg)
+	}
+	if msg := runDevServer(t, memoryContainer(6, 3, map[string]float64{"web": 2.5}),
+		DevServerParams{Action: "restart", Hostname: "appdev", Name: "web"}).Message; strings.Contains(msg, heapLine) {
+		t.Errorf("a restart of a running server must add no heap-cap line: %q", msg)
+	}
+}
+
+func TestDevServer_RestartOfARunningServer_IsNeverRefusedOnMemory(t *testing.T) {
+	t.Parallel()
+	c := memoryContainer(6, 5, map[string]float64{"web": 2.5})
+	runDevServer(t, c, DevServerParams{Action: "restart", Hostname: "appdev", Name: "web"})
+}
+
+func TestDevServer_StartWhenTheCgroupIsUnreadable_StartsAsBefore(t *testing.T) {
+	t.Parallel()
+	c := memoryContainer(0, 0, nil)
+	runDevServer(t, c, DevServerParams{Action: "start", Hostname: "appdev", Name: "api"})
+}
+
+// TestDevServer_StartBesideARunningServerWhenTheCgroupIsUnreadable_AddsNoHeapCapLine:
+// with the service's RAM ceiling unknown, a start beside another running
+// server names no shared ceiling and asks for no heap cap.
+func TestDevServer_StartBesideARunningServerWhenTheCgroupIsUnreadable_AddsNoHeapCapLine(t *testing.T) {
+	t.Parallel()
+	c := memoryContainer(0, 0, map[string]float64{"web": 2.5})
+	if c.Status("web") != devsup.StatusRunning {
+		t.Fatalf("web must be running beside the start, got %s", c.Status("web"))
+	}
+	if msg := runDevServer(t, c, DevServerParams{Action: "start", Hostname: "appdev", Name: "api"}).Message; strings.Contains(msg, "NODE_OPTIONS=--max-old-space-size") || strings.Contains(msg, "RAM ceiling") {
+		t.Errorf("an unreadable cgroup must add no heap-cap line: %q", msg)
+	}
+}
+
+// The settled read waits for starting servers only within its budget: a
+// server still starting when the budget ends is read as starting.
+func TestReadDevServersSettled_AServerStillStartingWhenTheBudgetEndsIsReadStarting(t *testing.T) {
+	t.Parallel()
+	c := devservertest.NewSupervised(`{"version":1,"servers":[{"name":"vets","port":8083,"command":"b","cwd":"."}]}`)
+	c.Settle = map[string]int{"vets": 1000}
+	c.Redeploy()
+
+	start := time.Now()
+	ds, err := readDevServersSettled(t.Context(), c, "petclinicdev", "/var/www", 100*time.Millisecond, 10*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(start); took > time.Second {
+		t.Fatalf("the read took %s past a 100ms budget", took)
+	}
+	if got := ds.State.Servers["vets"].Status; got != devsup.StatusStarting {
+		t.Fatalf("vets = %q, want starting", got)
 	}
 }

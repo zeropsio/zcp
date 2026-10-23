@@ -98,7 +98,7 @@ func TestAdoptPair_KeepsWhatAnEarlierPassRecorded(t *testing.T) {
 		BootstrappedAt:   "2026-09-30",
 		FirstDeployedAt:  "2026-09-30T10:00:00Z",
 		PrimarySetupName: "chosen",
-		HQ:               &HQRepoRef{AppID: "a1", Repo: "medusadev", Branch: "mate/p1"},
+		HQ:               &HQRepoRef{AppID: "a1", Repo: "medusadev"},
 	}
 	if err := WriteServiceMeta(stateDir, earlier); err != nil {
 		t.Fatalf("seed: %v", err)

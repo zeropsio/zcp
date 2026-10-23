@@ -95,6 +95,10 @@ func (d *SystemSSHDeployer) ExecSSH(ctx context.Context, hostname, command strin
 	cmd := exec.CommandContext(ctx, "ssh", sshArgs(hostname, command)...) //nolint:gosec // hostname and command from trusted internal callers
 	output, err := cmd.CombinedOutput()
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			// The client was killed for its context, not the remote command.
+			err = fmt.Errorf("ssh stopped: %w (%w)", ctxErr, err)
+		}
 		return output, &SSHExecError{Hostname: hostname, Output: string(output), Err: err}
 	}
 	return output, nil

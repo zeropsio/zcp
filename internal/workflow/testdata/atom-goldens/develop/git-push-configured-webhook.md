@@ -1,6 +1,6 @@
 ---
 id: develop/git-push-configured-webhook
-atomIds: [develop-intro, develop-git-push-start-from-remote, develop-change-drives-deploy, develop-git-push-delivery, develop-self-deploy-reproducibility, develop-dynamic-runtime-start-container, develop-knowledge-pointers, develop-auto-close-semantics, develop-verify-matrix, develop-build-observe, develop-strategy-awareness]
+atomIds: [develop-intro, develop-git-push-start-from-remote, develop-change-drives-deploy, develop-git-push-delivery, develop-git-push-delivery-results, develop-self-deploy-reproducibility, develop-dynamic-runtime-start-container, develop-knowledge-pointers, develop-auto-close-semantics, develop-verify-matrix, develop-build-observe, develop-strategy-awareness]
 description: "Standard pair, GitPushState configured (push is the delivery), BuildIntegration webhook."
 ---
 === develop-intro ===
@@ -15,7 +15,7 @@ the current state, implement the user's request, redeploy, verify.
 === develop-git-push-start-from-remote ===
 The repo is the source of truth here, and this working copy is not it. A container's `/var/www` survives every session: it can still be sitting on a topic branch that was merged and deleted weeks ago, or on a `main` that is behind by everything anyone else has landed since. Writing code on top of that produces a diff against the wrong base, and the mistake only surfaces at the push — as a conflict, or worse, as a silent revert of someone else's work.
 
-Sync before the first edit, not after — the command depends on whether this pair is wired to this Mate's HQ (a repository HQ gave it; its branch is never `main`, which moves there only by a person's merge).
+Sync before the first edit, not after — the command depends on whether this pair is wired to this Mate's HQ (a repository HQ gave it, whose `main` moves only by a person's merge).
 
 Not wired to this Mate's HQ — sync by moving the working copy onto whatever the remote's default branch now is:
 
@@ -25,11 +25,17 @@ ssh <push-source-host> "cd /var/www && git fetch origin && git checkout <default
 
 Read the default branch from the remote rather than assuming `main` — `git remote show origin` names it, and a repo created before that convention may still be on `master`. Uncommitted changes in the working copy are the one thing this destroys, so look before resetting (`git status --short`). Local edits that survived a previous session are almost always leftovers from work that already landed; if they are not, commit them to a branch first and say so, rather than carrying them silently into new work.
 
-Wired to this Mate's HQ — there is no command to run here, on purpose: the working copy stays on this Mate's own branch always, and neither checking it out to the base, resetting it, nor merging the base in by hand is the sync. A plain `git merge origin/<base>` run by hand can fail on a false conflict — the base can carry a squash of THIS Mate's own earlier work, which shares no history with the branch it came from, so an ordinary merge reads it as two histories that both add the same files even though nothing really collides. When a change of this Mate's own is recorded as merged, zcp folds that landing in for you: the moment a pass learns of the merge, and again before whatever push follows it needs a landing absorbed — a delivery's own commit+push, or an ordinary `strategy="git-push"`. Usually that keeps the false conflict from ever reaching you or the change it pushes to; an old container git, or a landing zcp cannot prove lossless, can still leave it unabsorbed, and the ordinary step can then hit that same shape for real.
+Wired to this Mate's HQ — take `main` in and start the work on a branch of your own cut from it; `main` itself is never pushed. Run it in your own shell on the mounted checkout (`/var/www/<push-source-host>`, a code-volume pair's folder below it), never over ssh: whether the checkout's origin is HQ or GitHub, git asks `zcp hq git-credential`, which only your own shell has:
 
-Either way, every conflict zcp reports here — from the absorb step itself, or the ordinary step behind an unabsorbed landing — names the exact commands in its own message: never a plain reset, and never the plain `git fetch origin && git merge origin/<base>` on its own, which would only repeat the same conflict. Run what the message says, in the checkout it names, then push or deploy again — that is what resolves it.
+```
+cd /var/www/<push-source-host> && git fetch origin && git checkout main && git merge --ff-only origin/main && git checkout -b <your-branch>
+```
 
-Where the remote later refuses the branch you push, the ref is protected: the answer is a change a person merges, never a fresh token. The transport classifier names that case directly when it happens.
+While status names `change=<n>` on the dev service, that change is open and the work goes on its branch, `changeBranch`, never on one cut from `main` — HQ refuses that push, as it is no fast-forward of the change's branch; develop's start says how to take it.
+
+A `main` that will not fast-forward carries local commits that never landed: put them on a branch of their own (`git branch <name>`), then `git reset --keep origin/main`, and say so rather than carrying them silently into new work.
+
+Where the remote later refuses the branch you push, the ref is protected — on this Mate's HQ that is `main`, a tag, or a branch another open change holds: push a branch of your own and open its change with `zerops_workflow action="open-change"`, never a fresh token. The transport classifier names that case directly when it happens.
 
 ---
 
@@ -60,31 +66,18 @@ Git push is configured for this service (`gitPush=configured`), so the repo is t
 zerops_deploy targetService="appdev" setup="<source-setup>" strategy="git-push"
 ```
 
-`targetService` is the PUSH SOURCE hostname (dev half of a standard pair, or the service itself for simple modes). Leave `branch` unset: it defaults to `main`, except on this Mate's HQ, where the push goes to the branch of the pair's change — HQ takes a Mate's push only there, and `main` moves only when a person merges the change. The call refuses an empty tree or uncommitted changes — commit first (`ssh <host> "cd /var/www && git add -A && git commit -m '<msg>'"` for the runtime container, `git -C <workingDir> add -A && git commit -m '<msg>'` on a dev machine). It pushes HEAD to the configured remote and then follows the integration build on the build target until it settles:
-
-| Response `status` | Meaning |
-|---|---|
-| `"DELIVERED"` | Push landed AND the integration build reached an active app version. The response carries `buildTarget` + `buildStatus`, and `autoRecorded: true` means the session already counts this as the build target's deploy evidence — no follow-up call needed. |
-| `"PUSHED"` + failed `buildStatus` | The push landed but the build failed. The same response carries `failureClassification` (category + cause + suggested action) and `buildLogs` — read the classification first, fix, commit, push again. |
-| `"PUSHED"` + build not observed | No integration build appeared inside the watch window. Either `buildIntegration=none` (see below) or the CI is slow — check `zerops_events serviceHostname="<build-target>"` later. |
+`targetService` is the PUSH SOURCE hostname (dev half of a standard pair, or the service itself for simple modes). Leave `branch` unset: it defaults to `main`. On this Mate's HQ the call does not run: code goes there by plain git on a branch of your own, and `main` moves only when a person merges a change. The call refuses an empty tree or uncommitted changes — commit first (`ssh <host> "cd <repo dir> && git add -A && git commit -m '<msg>'"` for the runtime container (`/var/www`, or the code volume's `mountPath`) `git -C <workingDir> add -A && git commit -m '<msg>'` on a dev machine). It pushes HEAD to the configured remote and then follows the integration build on the build target until it settles.
 
 **Setup parameter:** `setup=<name>` MUST match a `setup:` block name in the project's `zerops.yaml` (the push pre-flight validates the SOURCE setup; the remote build consumes its own setup name — for standard pairs typically `prod`). Read the project's `zerops.yaml` first and pass the matching name explicitly; an `INVALID_ZEROPS_YML` error response carries `attemptedSetup` + `availableSetups` for a one-round-trip recovery.
 
-## What runs the build depends on `buildIntegration`
-
-| `buildIntegration` | What happens after the push |
-|---|---|
-| `webhook` | Zerops pulls the repo and runs the build pipeline on the build target. |
-| `actions` | A workflow in the repository runs the build from CI. On GitHub that is `.github/workflows/`, running `zcli push` with a CI token; the build lands on the build target. |
-| `none` | The push is archived at the remote; no watched build fires. The push response offers the choice: wire an integration via `zerops_workflow action="build-integration"`, keep your independent CI, or stay archive-only. Until one is wired, a direct `zerops_deploy` is what puts code on the service — including the dev→stage promotion of a standard pair — and the push still matters as the durable copy. |
-
-## After "DELIVERED"
-
-Verify the build target: `zerops_verify serviceHostname="<build-target>"`. Deploy evidence for the session is already in place when the response said `autoRecorded: true`; `zerops_workflow action="record-deploy" targetService="<build-target>"` is only the recovery call for a build that landed OUTSIDE the watch window (confirm the app version via `zerops_events` first, then record).
-
-If the push fails with a credential cause, the token was rotated or revoked upstream — ask the user for a fresh token and re-run `zerops_workflow action="git-push-setup" service="appdev" remoteUrl="..." gitToken="<fresh PAT>"`. Never invent or reuse a token the user didn't supply. On a remote on this Mate's HQ there is no user to ask: the credential is the Mate's own, kept by its enrollment with HQ, and ZCP brings the push source's copy to it before every push — never ask for a token there.
+If the push fails with a credential cause, the token was rotated or revoked upstream — ask the user for a fresh token and re-run `zerops_workflow action="git-push-setup" service="appdev" remoteUrl="..." gitToken="<fresh PAT>"`. Never invent or reuse a token the user didn't supply.
 
 A push rejected because the remote carries commits yours doesn't returns `GIT_PUSH_NON_FAST_FORWARD` with a `next` block naming exactly three options (rebase / merge / replace-remote) and their exact commands — that decision belongs to the user; never run `git push --force` or merge on their behalf without asking first.
+
+---
+
+=== develop-git-push-delivery-results ===
+**Git-push results — response status, what runs the build, after DELIVERED** — pull on demand: `zerops_knowledge uri="zerops://atoms/develop-git-push-delivery-results"`
 
 ---
 
@@ -124,38 +117,25 @@ first moment anyone discovers what wasn't tracked.
 === develop-dynamic-runtime-start-container ===
 ### Dynamic-runtime dev server
 
-Dev-mode dynamic runtime containers run no dev process until you start
-one. It runs under the dev service's supervisor (`zcp-devsup`, the dev
+A dev server runs under the dev service's supervisor (`zcp-devsup`, the dev
 setup's `run.start`); its first start declares it in `.zcp/dev-servers.json`.
 If the dev setup still runs `zsc noop`, that start adds the supervisor's two
-lines and redeploys once (uncommitted work stays) — commit both files. The
-supervisor starts it again after a restart or redeploy (a deploy reports it
-under `devServer`) until you `stop` it; a crash leaves it down. A passing
-verify means "live now", not "durably shipped" — for an always-on service
-use simple mode. Action family on `zerops_dev_server`:
+lines and redeploys once (uncommitted work stays) — commit both files.
+Every deploy starts each `autostart` server (see `devServer`), a restart
+each not `stop`ped; a start crash is retried once, a later one stays down.
+A passing verify means "live now", not "durably shipped" — for an
+always-on service use simple mode.
 
-| Action | Use | Args |
-|---|---|---|
-| `status` | check before `start` (idempotent) | `hostname port healthPath` |
-| `start` | run the dev process | `hostname command port healthPath` |
-| `restart` | after a config/code change | `hostname healthPath` |
-| `logs` | tail its log | `hostname logLines=40` |
-| `stop` | end its process group, free the port | `hostname` |
-
-Args:
-- `command` — the app's dev-server start command (e.g. `npm run dev`),
-  not the dev block's `run.start`.
-- `port` — `run.ports[0].port`; `healthPath` — app-owned or `/`.
-- `name` — when one dev service runs several servers (`web`, `api`);
+- `command` is the app's dev-server command (e.g. `npm run dev`), not the
+  dev setup's `run.start`.
+- `name` each server when one dev service runs several (`web`, `api`);
   stopping one leaves the others running.
-
-Response carries `running`, `healthStatus`, `url` (the hostname-vantage
-address to reach the server — the probe runs localhost inside the
-container, so the app must bind `0.0.0.0`, not loopback), `reason`, and
-`logTail` — read these before making another call.
+- The health probe runs on localhost inside the dev container, so the app
+  must bind `0.0.0.0`, not loopback, for the response's `url` to reach it. Read
+  `running`, `healthStatus`, `reason` and `logTail` before another call.
 
 Don't hand-roll `ssh appdev "cmd &"`: the SSH session ends with
-the call and kills the process. Always go through `zerops_dev_server`.
+the call and kills the process.
 
 ---
 
@@ -199,15 +179,11 @@ before any browser probe.
 
 When `bodyText`/`consoleErrors` are missing, truncated, or the page needs
 interaction / SPA routes / non-root / auth, drive the browser **inline** with
-`zerops_browser` (`screenshot: true` for evidence). Only `wait` polls —
-click/find/get/is look once — so after a click or reload
-`["wait","<sel>"]` or `["wait","--text","<text>"]`, never a fixed time,
-before asserting. Checkbox: `["is","checked","<sel>"]`. `find` actions are
-only click/fill/check/hover/text, `--name` after the action:
-`["find","label","<text>","check"]`,
-`["find","role","button","click","--name","Submit"]`. An `@eN` ref lives only
-after a snapshot in the same call — prefer `find` or CSS.
-Never spawn a sub-agent or call raw `agent-browser`.
+`zerops_browser`; pass `screenshot: true` (`fullPage: true`: whole page) for
+evidence. Only `wait` polls: wait for an element/text, never a fixed time. Use
+`isolation: "fresh-context"` only for the first check after a deploy that
+changed sign-in, storage, a service worker or caches. Never spawn a sub-agent
+or call raw `agent-browser`.
 To make an already-public service internal-only, call `zerops_subdomain action="disable"` — after that, `http_public` reports `skip` on every later verify, same as a `publicAccess: "none"` plan intent.
 
 - **VERDICT: PASS** — healthy + real rendered content; proceed.
@@ -240,49 +216,4 @@ fresh push.
 ---
 
 === develop-strategy-awareness ===
-### Deploy config — recorded dimensions + how delivery derives
-
-Each runtime service records three deploy-config dimensions — the
-rendered Services block shows them as
-`closeMode=auto|manual|unset gitPush=unconfigured|configured|broken buildIntegration=none|webhook|actions`:
-
-- `closeMode` — who owns "done". `auto` lets the work session close
-  itself once every in-scope service has a successful deploy + passing
-  verify; `manual` yields close decisions to you / external
-  orchestration. `unset` is the bootstrap-written placeholder that
-  develop converts on first use.
-- `gitPush` — capability state for push delivery. `configured`
-  means the last `git-push-setup` probe **proved end-to-end auth**: the
-  supplied token authenticates against the remote URL, the push source carries
-  `GIT_TOKEN` (sensitive), and the working tree's git config has its
-  `origin` synced. `broken` means a previously-configured token stopped
-  working (e.g. PAT rotation) — re-run setup before pushing.
-- `buildIntegration` — the ZCP-managed CI shape that was picked. `actions`
-  (GitHub Actions workflow + secrets), `webhook` (Zerops dashboard OAuth),
-  or `none`. Requires `gitPush=configured`. The flag records the choice
-  and the handoff shape (workflow YAML body / dashboard URL); workflow
-  commit, secrets landing, and OAuth completion happen outside ZCP's
-  reach and are not verified by this flag. Treat as "this is the
-  integration shape we wired", not "the build trigger is confirmed live".
-
-**The delivery mechanism is DERIVED, not chosen separately:** when
-`gitPush=configured` (and closeMode is not `manual`), delivery is
-commit + git push — direct `zerops_deploy` self/cross calls on that pair
-answer `push-delivery-required` with the recommended push call. Otherwise
-delivery is the direct `zerops_deploy` path. Want push delivery? Configure
-the capability; there is no separate mode switch.
-
-Change any dimension without closing the session:
-
-- `close-mode` is **per-pair** under the hood (one record per dev/stage pair) but accepts a multi-entry map: one call sets close-mode for any subset of services. Passing both halves of a pair with the SAME value is accepted (canonical write once). Passing both halves with DIFFERENT values is rejected with an explicit conflict diagnostic — pick one value for the pair.
-- `git-push-setup` and `build-integration` are **per-pair**: capability is stamped on the dev half's record and shared by both halves. `git-push-setup` rejects stage-half input with `INVALID_PARAMETER` (it mutates push-side state — would write to the wrong target). `build-integration` is permissive: pair-keyed lookup resolves either half to the dev record and the response carries `pushSource`/`buildTarget`/`topologyNote` so the redirect is visible. Either way: prefer passing the dev half directly.
-
-```
-zerops_workflow action="close-mode" closeMode={"appdev":"auto"}
-zerops_workflow action="git-push-setup" service="appdev" remoteUrl="..."
-zerops_workflow action="build-integration" service="appdev" integration="actions"
-```
-
-Substitute `appdev` with the dev-half hostname (or single-runtime hostname). For a multi-service project, repeat each call once per dev-half service — never per stage-half.
-
-Mixed config across services in one project is fine — each service's dimensions are independent in the envelope.
+**Deploy config — recorded dimensions + how delivery derives** — pull on demand: `zerops_knowledge uri="zerops://atoms/develop-strategy-awareness"`

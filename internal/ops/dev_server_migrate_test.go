@@ -1,6 +1,8 @@
 package ops
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -390,5 +392,119 @@ func TestDevsupPrepareCommand_FallsBackToWgetWhenCurlIsAbsent(t *testing.T) {
 	want := `sudo sh -c 'u=` + testDevsupURL + `; f=/usr/local/bin/zcp-devsup; if command -v curl >/dev/null; then curl -fsSL "$u" -o "$f"; else wget -qO "$f" "$u"; fi && chmod 0755 "$f"'`
 	if got != want {
 		t.Errorf("DevsupPrepareCommand = %q, want %q", got, want)
+	}
+}
+
+func TestAdoptSupervisorInDevSetup_ZeropsYmlRepo_ErrorNamesZeropsYmlNeverZeropsYaml(t *testing.T) {
+	t.Parallel()
+	ssh := &mockSSHDeployer{output: []byte("@@zcp-file zerops.yml\nzerops:\n  - setup: a\n    run: {}\n  - setup: b\n    run: {}\n")}
+	file, _, _, err := AdoptSupervisorInDevSetup(context.Background(), ssh, "appdev", "", "http://x", "", "")
+	if file != "zerops.yml" {
+		t.Fatalf("file = %q", file)
+	}
+	if err == nil {
+		t.Fatal("expected an error: several setups, none the dev one")
+	}
+	if !strings.Contains(err.Error(), "zerops.yml") || strings.Contains(err.Error(), "zerops.yaml") {
+		t.Fatalf("error must name the repo's zerops.yml and never zerops.yaml: %v", err)
+	}
+	if errors.Unwrap(err) == nil {
+		t.Fatalf("the named error must still wrap the setup error: %v", err)
+	}
+}
+
+// TestReadRepoConfigFile_NamesTheFileItRead: the repo config file read —
+// zerops.yaml first, else zerops.yml — names the file it read, run by a real
+// shell; a folder with neither reads as no file.
+func TestReadRepoConfigFile_NamesTheFileItRead(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name                  string
+		files                 []string
+		wantFile, wantContent string
+	}{
+		{name: "zerops.yaml", files: []string{"zerops.yaml"}, wantFile: "zerops.yaml", wantContent: "zerops: # zerops.yaml\n"},
+		{name: "zerops.yml", files: []string{"zerops.yml"}, wantFile: "zerops.yml", wantContent: "zerops: # zerops.yml\n"},
+		{name: "both", files: []string{"zerops.yaml", "zerops.yml"}, wantFile: "zerops.yaml", wantContent: "zerops: # zerops.yaml\n"},
+		{name: "neither"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			for _, f := range tc.files {
+				if err := os.WriteFile(filepath.Join(dir, f), []byte("zerops: # "+f+"\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			file, content, err := ReadRepoConfigFile(context.Background(), localShell{root: dir}, "app", dir)
+			if err != nil {
+				t.Fatalf("read: %v", err)
+			}
+			if file != tc.wantFile || content != tc.wantContent {
+				t.Errorf("read = (%q, %q), want (%q, %q)", file, content, tc.wantFile, tc.wantContent)
+			}
+		})
+	}
+}
+
+func TestAdoptSupervisorYAML_WritesNoEnvVariableNeverAZeropsPrefixedOne(t *testing.T) {
+	t.Parallel()
+	in := "zerops:\n  - setup: dev\n    run:\n      base: nodejs@24\n      envVariables:\n        NODE_ENV: development\n      start: npm run dev\n"
+	out, _, changed, err := AdoptSupervisorYAML([]byte(in), "dev", "appdev", testDevsupURL, "")
+	if err != nil || !changed {
+		t.Fatalf("AdoptSupervisorYAML: changed=%v err=%v", changed, err)
+	}
+	if strings.Contains(string(out), "ZEROPS_") {
+		t.Errorf("the supervisor wiring wrote a ZEROPS_ name, which the platform refuses on deploy:\n%s", out)
+	}
+	_, added := lineDiff(strings.Split(in, "\n"), strings.Split(string(out), "\n"))
+	for _, l := range added {
+		if strings.Contains(l, "envVariables") || strings.Contains(l, ": ") && !strings.Contains(l, "start:") && !strings.Contains(l, "prepare") && !strings.HasPrefix(strings.TrimSpace(l), "- ") {
+			t.Errorf("wiring added an env-like line %q", l)
+		}
+	}
+}
+
+// TestRepinSupervisorYAML_ReplacesOnlyTheInstallLineTheDevSetupCarries
+// (docs/spec-mate.md §2.8a.2): re-pinning swaps the zcp-devsup line of the dev
+// setup for the newest one and names the download it replaced; the rest of
+// the file, other setups and run.start stay as written, and a setup without
+// the line or already on the newest pin is not touched.
+func TestRepinSupervisorYAML_ReplacesOnlyTheInstallLineTheDevSetupCarries(t *testing.T) {
+	t.Parallel()
+	const older = "https://github.com/zeropsio/zcp/releases/download/v9.200.0/zcp-devsup-linux-amd64"
+	setups := func(devURL, prodURL string) string {
+		return `zerops:
+  - setup: dev
+    run:
+      base: bun@1.3
+      prepareCommands:
+        - echo before   # kept
+        - ` + yamlQuote(DevsupPrepareCommand(devURL)) + `
+      start: zcp-devsup run --root /var/www/ws
+  - setup: prod
+    run:
+      prepareCommands: [` + yamlQuote(DevsupPrepareCommand(prodURL)) + `]
+      start: bun index.ts
+`
+	}
+	tests := []struct {
+		name, yaml, want, wantFrom string
+	}{
+		{name: "an older pin", yaml: setups(older, older), want: setups(testDevsupURL, older), wantFrom: older},
+		{name: "the newest pin", yaml: setups(testDevsupURL, older), want: setups(testDevsupURL, older)},
+		{name: "no supervisor line", yaml: "zerops:\n  - setup: dev\n    run:\n      start: bun index.ts\n", want: "zerops:\n  - setup: dev\n    run:\n      start: bun index.ts\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			out, used, from, err := RepinSupervisorYAML([]byte(tt.yaml), "dev", "appdev", testDevsupURL)
+			if err != nil {
+				t.Fatalf("RepinSupervisorYAML: %v", err)
+			}
+			if string(out) != tt.want || from != tt.wantFrom || used != "dev" {
+				t.Errorf("RepinSupervisorYAML = from %q, setup %q:\n%s\nwant from %q:\n%s", from, used, out, tt.wantFrom, tt.want)
+			}
+		})
 	}
 }

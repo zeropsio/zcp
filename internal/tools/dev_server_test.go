@@ -279,6 +279,60 @@ func TestDevServer_FirstStartWithoutSupervisor_MigratesIt(t *testing.T) {
 	}
 }
 
+// A start on a dev service whose supervisor runs but does not answer in time
+// is reported unresponsive and never moves the dev setup: no zerops.yaml
+// rewrite, no redeploy while the stalled supervisor lives.
+func TestDevServer_AStartOnASupervisorThatDoesNotAnswerIsReportedUnresponsiveAndDoesNotRedeploy(t *testing.T) {
+	t.Parallel()
+	c := devservertest.NewSupervised(`{"version":1,"servers":[{"name":"appdev","port":3000,"command":"next dev","cwd":"."}]}`)
+	c.Unresponsive = true
+	yaml := c.YAML
+	srv, _ := migrationToolServer(t, c, statusActive)
+
+	a := callDevServer(t, srv, map[string]any{"action": "start", "hostname": "appdev"})
+	if a.Reason != "supervisor_unresponsive" || a.Running || a.MigratedToSupervisor != nil {
+		t.Errorf("start = %+v, want supervisor_unresponsive with no move", a)
+	}
+	if c.Deploys != 0 || c.YAML != yaml {
+		t.Errorf("a start on a stalled supervisor redeployed %d time(s) or rewrote zerops.yaml:\n%s", c.Deploys, c.YAML)
+	}
+}
+
+// A dev-server call on a dev container that does not answer over SSH in time
+// answers not answering with its recovery, never an UNKNOWN error.
+func TestDevServer_ACallOnAContainerThatDoesNotAnswerSSHAnswersNotAnsweringNeverUnknown(t *testing.T) {
+	t.Parallel()
+	c := devservertest.NewSupervised(`{"version":1,"servers":[{"name":"appdev","port":3000,"command":"next dev","cwd":"."}]}`)
+	c.Silent = true
+	srv, _ := migrationToolServer(t, c, statusActive)
+
+	a := callDevServer(t, srv, map[string]any{"action": "status", "hostname": "appdev"})
+	if a.Reason != "supervisor_unresponsive" || !strings.Contains(a.Message, "appdev did not answer over SSH in time") ||
+		!strings.Contains(a.Message, "zerops_scale") || !strings.Contains(a.Message, "zerops_manage action=restart") {
+		t.Errorf("status = %+v, want supervisor_unresponsive naming the host, zerops_scale and a restart", a)
+	}
+}
+
+// The move's final start passes the start's memory rule: when the server the
+// redeploy brought up has ended, a single-part app on a nearly full 0.5 GiB
+// grant has no server running, so its start reaches the supervisor and answers
+// how the server ended, never a memory refusal.
+func TestDevServer_MigrationsFinalStartWithNoServerRunning_IsNotRefusedOnMemory(t *testing.T) {
+	t.Parallel()
+	c := &devservertest.Container{YAMLFile: "zerops.yml", YAML: todaysDevSetup,
+		MemMaxB: 512 << 20, MemCurrentB: 400 << 20, Crash: map[string]bool{"appdev": true}}
+	srv, _ := migrationToolServer(t, c, statusActive)
+
+	result := callTool(t, srv, "zerops_dev_server", map[string]any{"action": "start", "hostname": "appdev", "command": "bun --watch index.ts", "port": 3000})
+	if text := getTextContent(t, result); strings.Contains(text, "Not starting") {
+		t.Fatalf("the move's final start was refused on memory: %s", text)
+	}
+	finalStart := slices.ContainsFunc(c.Sent(), func(cmd string) bool { return strings.Contains(cmd, "ctl 'start' 'appdev'") })
+	if c.Deploys != 1 || !finalStart {
+		t.Errorf("the final start must reach the supervisor after the one redeploy (deploys %d)", c.Deploys)
+	}
+}
+
 // slowContainer is a dev container whose zcli push and supervisor calls after
 // it take a while, as a real container's do.
 type slowContainer struct {
@@ -868,5 +922,160 @@ func TestDeploy_NewDevSetup_GetsTheSupervisorLines(t *testing.T) {
 				t.Errorf("first start after the first deploy: %+v, deploys = %d; want it running with no redeploy", a, c.Deploys)
 			}
 		})
+	}
+}
+
+// TestDeploy_ADeployedDevSetupPinnedToAnOlderSupervisor_InstallsTheNewestInTheSameDeploy
+// (docs/spec-mate.md §2.8a.2): a dev service whose dev setup an older zcp
+// pinned to an older zcp-devsup gets its install line re-pinned to the newest
+// release before a deploy the agent asked for, so that deploy installs it and
+// nothing redeploys on its own. A pin that is already the newest stays as
+// written and the deploy says nothing about it.
+func TestDeploy_ADeployedDevSetupPinnedToAnOlderSupervisor_InstallsTheNewestInTheSameDeploy(t *testing.T) {
+	t.Parallel()
+	const older = "https://github.com/zeropsio/zcp/releases/download/v9.200.0/zcp-devsup-linux-amd64"
+	tests := []struct {
+		name    string
+		pinned  string
+		wantNew bool
+	}{
+		{name: "pinned to an older release", pinned: older, wantNew: true},
+		{name: "pinned to the newest release", pinned: testDevsupURL},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+				Hostname: "appdev", Mode: topology.PlanModeDev, BootstrapSession: "sess1",
+				BootstrappedAt: "2026-10-14", PrimarySetupName: "dev", FirstDeployedAt: "2026-10-14T20:00:00Z",
+			}); err != nil {
+				t.Fatalf("WriteServiceMeta: %v", err)
+			}
+			mock := platform.NewMock().
+				WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "appdev", ProjectID: "proj-1", Status: serviceStatusRunning,
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "bun@1.3"}}}).
+				WithAppVersionEvents([]platform.AppVersionEvent{{ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-1", Status: statusActive, Sequence: 1}})
+			pinnedSetup, _, _, err := ops.AdoptSupervisorYAML([]byte(todaysDevSetup), "dev", "appdev", tt.pinned, "")
+			if err != nil {
+				t.Fatalf("AdoptSupervisorYAML: %v", err)
+			}
+			c := &devservertest.Container{YAMLFile: "zerops.yml", YAML: string(pinnedSetup)}
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterDeploySSH(srv, mock, okHTTP, "proj-1", c, &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
+				nil, runtime.Info{}, dir, testDeployEngine(t), nil, DevsupSource{Latest: func(context.Context) (string, error) { return testDevsupURL, nil }})
+
+			result := callTool(t, srv, "zerops_deploy", map[string]any{"targetService": "appdev", "setup": "dev"})
+			text := getTextContent(t, result)
+			if result.IsError {
+				t.Fatalf("zerops_deploy: %s", text)
+			}
+			if c.Deploys != 1 {
+				t.Errorf("deploys = %d, want 1: the re-pin rides the deploy the agent asked for", c.Deploys)
+			}
+			if !tt.wantNew {
+				if c.YAML != string(pinnedSetup) || strings.Contains(text, "re-pinned") {
+					t.Errorf("a newest pin changed:\n%s\n%s", c.YAML, text)
+				}
+				return
+			}
+			want, _, _, err := ops.AdoptSupervisorYAML([]byte(todaysDevSetup), "dev", "appdev", testDevsupURL, "")
+			if err != nil {
+				t.Fatalf("AdoptSupervisorYAML: %v", err)
+			}
+			if c.YAML != string(want) {
+				t.Errorf("zerops.yml after the deploy:\n%s\nwant the newest pin and nothing else changed:\n%s", c.YAML, want)
+			}
+			if !strings.Contains(text, `zcp re-pinned zcp-devsup in setup \"dev\" of zerops.yml from v9.200.0 to v9.300.0, so this deploy installs it`) {
+				t.Errorf("the deploy does not say what changed: %s", text)
+			}
+		})
+	}
+}
+
+// pushFails is a dev container whose zcli push fails before the build starts.
+type pushFails struct{ *devservertest.Container }
+
+func (c pushFails) ExecSSH(ctx context.Context, hostname, command string) ([]byte, error) {
+	if strings.Contains(command, "zcli push") {
+		return nil, &platform.SSHExecError{Hostname: hostname, Output: "connection reset", Err: errors.New("exit status 255")}
+	}
+	return c.Container.ExecSSH(ctx, hostname, command)
+}
+
+// The re-pin rewrites the dev setup before the deploy runs, so a deploy that
+// then fails still says zcp changed the file: the agent never meets an
+// unexplained zerops.yaml diff.
+func TestDeploy_ADeployThatFailsAfterTheSupervisorRePinStillSaysTheDevSetupChanged(t *testing.T) {
+	t.Parallel()
+	const older = "https://github.com/zeropsio/zcp/releases/download/v9.200.0/zcp-devsup-linux-amd64"
+	dir := t.TempDir()
+	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+		Hostname: "appdev", Mode: topology.PlanModeDev, BootstrapSession: "sess1",
+		BootstrappedAt: "2026-10-14", PrimarySetupName: "dev", FirstDeployedAt: "2026-10-14T20:00:00Z",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "appdev", ProjectID: "proj-1", Status: serviceStatusRunning,
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "bun@1.3"}}}).
+		WithAppVersionEvents([]platform.AppVersionEvent{{ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-1", Status: statusActive, Sequence: 1}})
+	pinnedSetup, _, _, err := ops.AdoptSupervisorYAML([]byte(todaysDevSetup), "dev", "appdev", older, "")
+	if err != nil {
+		t.Fatalf("AdoptSupervisorYAML: %v", err)
+	}
+	c := &devservertest.Container{YAMLFile: "zerops.yml", YAML: string(pinnedSetup)}
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", pushFails{c}, &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
+		nil, runtime.Info{}, dir, testDeployEngine(t), nil, DevsupSource{Latest: func(context.Context) (string, error) { return testDevsupURL, nil }})
+
+	result := callTool(t, srv, "zerops_deploy", map[string]any{"targetService": "appdev", "setup": "dev"})
+	text := getTextContent(t, result)
+	if !result.IsError {
+		t.Fatalf("zerops_deploy with a failing push = %s, want an error", text)
+	}
+	if c.YAML == string(pinnedSetup) {
+		t.Fatalf("the re-pin did not rewrite zerops.yml before the deploy: %s", c.YAML)
+	}
+	if !strings.Contains(text, `zcp re-pinned zcp-devsup in setup \"dev\" of zerops.yml from v9.200.0 to v9.300.0`) {
+		t.Errorf("the failed deploy does not say zcp changed zerops.yml: %s", text)
+	}
+}
+
+// A build that fails after the re-pin installed nothing: the deploy says the
+// next successful deploy installs the re-pinned supervisor, never this one.
+func TestDeploy_ABuildThatFailsAfterTheSupervisorRePinSaysTheNextSuccessfulDeployInstallsIt(t *testing.T) {
+	t.Parallel()
+	const older = "https://github.com/zeropsio/zcp/releases/download/v9.200.0/zcp-devsup-linux-amd64"
+	dir := t.TempDir()
+	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+		Hostname: "appdev", Mode: topology.PlanModeDev, BootstrapSession: "sess1",
+		BootstrappedAt: "2026-10-14", PrimarySetupName: "dev", FirstDeployedAt: "2026-10-14T20:00:00Z",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "appdev", ProjectID: "proj-1", Status: serviceStatusRunning,
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "bun@1.3"}}}).
+		WithAppVersionEvents([]platform.AppVersionEvent{{ID: "av-2", ProjectID: "proj-1", ServiceStackID: "svc-1", Status: statusBuildFailed, Sequence: 2}})
+	pinnedSetup, _, _, err := ops.AdoptSupervisorYAML([]byte(todaysDevSetup), "dev", "appdev", older, "")
+	if err != nil {
+		t.Fatalf("AdoptSupervisorYAML: %v", err)
+	}
+	c := &devservertest.Container{YAMLFile: "zerops.yml", YAML: string(pinnedSetup)}
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", c, &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
+		nil, runtime.Info{}, dir, testDeployEngine(t), nil, DevsupSource{Latest: func(context.Context) (string, error) { return testDevsupURL, nil }})
+
+	text := getTextContent(t, callTool(t, srv, "zerops_deploy", map[string]any{"targetService": "appdev", "setup": "dev"}))
+	var parsed ops.DeployResult
+	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
+		t.Fatalf("parse %s: %v", text, err)
+	}
+	if parsed.Status != statusBuildFailed {
+		t.Fatalf("status = %s, want BUILD_FAILED: %s", parsed.Status, text)
+	}
+	if want := `Before this deploy zcp re-pinned zcp-devsup in setup "dev" of zerops.yml from v9.200.0 to v9.300.0; this deploy failed, so the next successful deploy of appdev installs it — commit it with your next change.`; !strings.HasPrefix(parsed.Message, want) {
+		t.Errorf("message = %q, want it to start %q", parsed.Message, want)
 	}
 }

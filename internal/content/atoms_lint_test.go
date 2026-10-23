@@ -138,6 +138,18 @@ func TestAtomAuthoringLint_FiresOnKnownViolations(t *testing.T) {
 			wantPattern: "toolsearch-select-missing-mcp-prefix",
 			wantCat:     "tool-call-shape",
 		},
+		{
+			name:        "dev-server-call-without-hostname",
+			body:        "Then run `zerops_dev_server action=start name=<part>`.\n",
+			wantPattern: "dev-server-call-missing-hostname",
+			wantCat:     "tool-call-shape",
+		},
+		{
+			name:        "dev-server-call-without-action-or-hostname",
+			body:        "Start it with `zerops_dev_server name=<part>`.\n",
+			wantPattern: "dev-server-call-missing-hostname",
+			wantCat:     "tool-call-shape",
+		},
 		// axis-L (HARD-FORBID env-only title qualifiers) -----------------
 		{
 			name:        "axis-l-title-em-dash-container",
@@ -430,7 +442,8 @@ func TestAtomAuthoringLint_CleanFixtureYieldsZero(t *testing.T) {
 		Content: "---\nphases: [idle]\nenvironments: [container, local]\ntitle: \"Clean fixture\"\n---\n" +
 			"You observe the project state and choose the next action.\n" +
 			"Service status transitions from PENDING to RUNNING after the first deploy.\n" +
-			"Use zerops_workflow action=start to begin a develop session.\n",
+			"Use zerops_workflow action=start to begin a develop session.\n" +
+			"Start it with `zerops_dev_server action=start hostname=\"appdev\" name=\"web\"`; `zerops_dev_server action=start` names the action.\n",
 	}
 	violations := lintAtomCorpus([]AtomFile{atom})
 	if len(violations) != 0 {

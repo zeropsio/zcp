@@ -80,6 +80,10 @@ func BuildGitWritePushProbeCommand(workingDir, remoteURL, hqURL, token string) s
 //
 // Caller passes workingDir absolute path (e.g. /var/www). remoteURL is
 // shell-quoted.
+// KeptOriginRemote is the remote BuildGitOriginSyncCommand keeps the origin it
+// replaces under.
+const KeptOriginRemote = "zerops-original-origin"
+
 func BuildGitOriginSyncCommand(workingDir, remoteURL, hqURL string) string {
 	quoted := shellQuote(remoteURL)
 	// Non-destructive (F1b): before pointing origin at the user's repo,
@@ -89,8 +93,8 @@ func BuildGitOriginSyncCommand(workingDir, remoteURL, hqURL string) string {
 	// recover from. Best-effort; the backup add is idempotent (remove-then-add)
 	// and a no-op when origin is absent or already equals the target.
 	preserve := fmt.Sprintf(
-		`{ cur=$(git remote get-url origin 2>/dev/null || true); if [ -n "$cur" ] && [ "$cur" != %s ]; then git remote remove zerops-original-origin 2>/dev/null || true; git remote add zerops-original-origin "$cur" 2>/dev/null || true; fi; }`,
-		quoted,
+		`{ cur=$(git remote get-url origin 2>/dev/null || true); if [ -n "$cur" ] && [ "$cur" != %s ]; then git remote remove %s 2>/dev/null || true; git remote add %s "$cur" 2>/dev/null || true; fi; }`,
+		quoted, KeptOriginRemote, KeptOriginRemote,
 	)
 	return fmt.Sprintf(
 		`cd %s && (test -d .git || git init -q -b main) && %s && %s && (git remote add origin %s 2>/dev/null || git remote set-url origin %s) && %s`,

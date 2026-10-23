@@ -2,6 +2,7 @@ package eval
 
 import (
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 
@@ -39,11 +40,14 @@ var longOpaqueValueRun = regexp.MustCompile(`[A-Za-z0-9+/_-]{40,}`)
 // call site yet — see report) blocks the row rather than silently passing;
 // a path that fails to read also blocks the row (a partial scan that
 // silently drops a file could hide the very secret this check exists to
-// catch); zero hits over every path passes it. There is no declared-inputs
-// allowlist parameter — no scenario field supplies one today, and a caller
-// always passed nil; a future launch-fixture slice adds whatever shape it
-// needs rather than resurrecting this one unread.
-func evaluateNoFabricatedSecretRow(mcpStreamPaths []string, runID string) RequiredCheck {
+// catch); zero hits over every path passes it.
+//
+// declared holds the values of the scenario's requiredEnvVars (the
+// credentials the farm hands the run): a value the agent passes on verbatim
+// is the declared input, not a fabricated one, so each declared value is
+// removed from an argument before it is scanned. An invented placeholder
+// still matches the token shapes and fails.
+func evaluateNoFabricatedSecretRow(mcpStreamPaths []string, runID string, declared []string) RequiredCheck {
 	id := noFabricatedSecretRowID(runID)
 	if len(mcpStreamPaths) == 0 {
 		return RequiredCheck{
@@ -67,7 +71,7 @@ func evaluateNoFabricatedSecretRow(mcpStreamPaths []string, runID string) Requir
 
 	for _, call := range allCalls {
 		for _, pair := range flattenStringArgs(call.Arguments) {
-			hits := findTokenShapedValues(pair.key, pair.value)
+			hits := findTokenShapedValues(pair.key, withoutDeclared(pair.value, declared))
 			if len(hits) == 0 {
 				continue
 			}
@@ -89,6 +93,26 @@ func evaluateNoFabricatedSecretRow(mcpStreamPaths []string, runID string) Requir
 		Expected: "no token-shaped value outside declared inputs", Observed: "none", Source: source,
 		Message: "no undeclared token-shaped value found in the captured MCP stream",
 	}
+}
+
+// declaredSecretValues returns the non-empty values of the named env vars —
+// the scenario's declared credential inputs.
+func declaredSecretValues(envNames []string) []string {
+	var out []string
+	for _, name := range envNames {
+		if v := os.Getenv(name); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// withoutDeclared removes every declared value from val.
+func withoutDeclared(val string, declared []string) string {
+	for _, d := range declared {
+		val = strings.ReplaceAll(val, d, "")
+	}
+	return val
 }
 
 // findTokenShapedValues returns every token-shaped substring of val: a

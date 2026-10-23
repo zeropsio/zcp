@@ -4,7 +4,8 @@
 // group with its own log, and keeps the start/stop state in $HOME so it
 // survives a container restart while a redeploy (a fresh $HOME) starts every
 // declared server again. A server that exits on its own stays down and is
-// reported as crashed with its exit.
+// reported as crashed with its exit; one that crashes within its start window
+// is started once more first.
 //
 // The package imports the standard library and golang.org/x/sys only: zcp's
 // dev-server tool reads its declaration and state types, and the binary runs
@@ -41,16 +42,18 @@ type Declaration struct {
 
 // Server is one named dev server: the shell command, its working directory
 // relative to the repo root, the port it listens on (0 when it has none), the
-// paths whose change restarts it, the dev service that runs it (variant B) and
-// whether it starts before anyone asks (absent: it does).
+// HTTP path its health probe reads on that port (absent: /), the paths whose
+// change restarts it, the dev service that runs it (variant B) and whether it
+// starts before anyone asks (absent: it does).
 type Server struct {
-	Name      string `json:"name"`
-	Port      int    `json:"port,omitempty"`
-	Command   string `json:"command"`
-	Cwd       string `json:"cwd,omitempty"`
-	Watch     *Watch `json:"watch,omitempty"`
-	Service   string `json:"service,omitempty"`
-	Autostart *bool  `json:"autostart,omitempty"`
+	Name       string `json:"name"`
+	Port       int    `json:"port,omitempty"`
+	HealthPath string `json:"healthPath,omitempty"`
+	Command    string `json:"command"`
+	Cwd        string `json:"cwd,omitempty"`
+	Watch      *Watch `json:"watch,omitempty"`
+	Service    string `json:"service,omitempty"`
+	Autostart  *bool  `json:"autostart,omitempty"`
 }
 
 // FirstDesired is the desired state of a name the state file does not hold
@@ -189,6 +192,9 @@ func normalizeServer(s Server) (Server, error) {
 	if s.Port < 0 || s.Port > 65535 {
 		return Server{}, fmt.Errorf("%q: port %d is out of range", s.Name, s.Port)
 	}
+	if s.HealthPath != "" && !strings.HasPrefix(s.HealthPath, "/") {
+		return Server{}, fmt.Errorf("%q: healthPath %q must start with /", s.Name, s.HealthPath)
+	}
 	cwd, err := cleanRel(s.Cwd)
 	if err != nil {
 		return Server{}, fmt.Errorf("%q: cwd: %w", s.Name, err)
@@ -233,24 +239,44 @@ func cleanRel(p string) (string, error) {
 
 // ignored reports whether a change at rel (repo-relative, slash-separated)
 // must not restart a server watching with w: anything under .git or
-// node_modules, or matching an ignore entry as a path, a parent directory or
-// a glob.
+// node_modules, or at or under a path an ignore entry matches. An entry is
+// matched segment by segment with path.Match, and a `**` segment matches any
+// number of directories.
 func (w *Watch) ignored(rel string) bool {
-	for seg := range strings.SplitSeq(rel, "/") {
+	segs := strings.Split(rel, "/")
+	for _, seg := range segs {
 		if seg == ".git" || seg == "node_modules" {
 			return true
 		}
 	}
 	for _, ig := range w.Ignore {
-		ig = strings.TrimSuffix(path.Clean(ig), "/")
-		if rel == ig || strings.HasPrefix(rel, ig+"/") {
-			return true
-		}
-		if ok, _ := path.Match(ig, rel); ok {
+		if matchesLeading(strings.Split(path.Clean(ig), "/"), segs) {
 			return true
 		}
 	}
 	return false
+}
+
+// matchesLeading reports whether the pattern segments match the leading
+// segments of a path: the path is what the pattern names or lies under it.
+func matchesLeading(pat, segs []string) bool {
+	for ; len(pat) > 0; pat, segs = pat[1:], segs[1:] {
+		if pat[0] == "**" {
+			for i := range len(segs) + 1 {
+				if matchesLeading(pat[1:], segs[i:]) {
+					return true
+				}
+			}
+			return false
+		}
+		if len(segs) == 0 {
+			return false
+		}
+		if ok, _ := path.Match(pat[0], segs[0]); !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // covers reports whether rel lies under one of the watched paths.

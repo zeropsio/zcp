@@ -56,7 +56,7 @@ type EnvInput struct {
 // orgAIKey adds the ai-key action, which only a Mate has (WithOrgAIKey).
 func envInputSchema(orgAIKey bool) *jsonschema.Schema {
 	actions := []any{"get", "set", "delete", "request", "generate-dotenv"}
-	actionDescription := "get: keys + ${host_var} refs — reference a value as $VAR by name, never paste it. set: upsert KEY=VALUE pairs. delete: remove keys. request: ask the person for a value only they have; it goes to the vault, never the chat. generate-dotenv: writes a resolved .env from a local zerops.yaml."
+	actionDescription := "get: keys + ${host_var} refs — reference a value as $VAR by name, never paste it. set: upsert KEY=VALUE pairs. delete: remove keys. request: ask the person, when the feature using it is being built, for a value only they have; it goes to the vault, never the chat. generate-dotenv: writes a resolved .env from a local zerops.yaml."
 	if orgAIKey {
 		actions = append(actions, "ai-key")
 		actionDescription += " ai-key: the organization's AI key into the Shared vault, unseen (NEBIUS_API_KEY sensitive, NEBIUS_BASE_URL), for an AI feature in the app; skipRestart as set."
@@ -213,6 +213,8 @@ func projectEnvGetResponse(result *ops.DiscoverResult, projectScope bool) *EnvGe
 type envChangeResult struct {
 	Process            *platform.Process   `json:"process,omitempty"`
 	Stored             []ops.StoredEnv     `json:"stored,omitempty"`
+	Scope              ops.EnvRequestScope `json:"scope,omitempty"`
+	ServiceHostname    string              `json:"serviceHostname,omitempty"`
 	TimedOut           bool                `json:"timedOut,omitempty"`
 	Readers            map[string][]string `json:"readers,omitempty"`
 	RestartedServices  []string            `json:"restartedServices,omitempty"`
@@ -314,7 +316,7 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 					storedEcho[i].Value = masked
 				}
 			}
-			resp := envChangeResult{Process: setResult.Process, Stored: storedEcho, TimedOut: setTimedOut}
+			resp := envChangeResult{Process: setResult.Process, Stored: storedEcho, Scope: setResult.Scope, ServiceHostname: setResult.ServiceHostname, TimedOut: setTimedOut}
 			resp.ShadowWarnings, resp.ShadowUnverified = detectSetShadows(ctx, client, projectID, input, selfHostname, setResult.Stored)
 			setKeys := make([]string, 0, len(setResult.Stored))
 			for _, st := range setResult.Stored {

@@ -61,3 +61,11 @@ func CanonicalRepoURL(remote string) string {
 	remote = strings.TrimSuffix(remote, "/")
 	return remote
 }
+
+// SameRepoURL reports whether two addresses name the same repository: equal
+// in canonical form (CanonicalRepoURL) but for case, which hosts like GitHub
+// ignore in the host, owner and name.
+func SameRepoURL(a, b string) bool {
+	a = CanonicalRepoURL(a)
+	return a != "" && strings.EqualFold(a, CanonicalRepoURL(b))
+}

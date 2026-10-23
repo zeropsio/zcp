@@ -5,6 +5,7 @@ package ops
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -119,6 +120,32 @@ func TestRedeployLastAppVersion_NoYaml_Errors(t *testing.T) {
 	}
 	if len(client.CapturedRedeployAppVersion) != 0 {
 		t.Errorf("RedeployAppVersion was called with no yaml resolved: %+v", client.CapturedRedeployAppVersion)
+	}
+}
+
+// An appVersion with no stored zerops.yaml (an SSH push stores none) cannot
+// be redeployed in place: the refusal is a coded "rebuild required" that names
+// the rebuild, not an UNKNOWN error the agent retries.
+func TestRedeployLastAppVersion_AVersionWithNoStoredYamlIsACodedRebuildRequired(t *testing.T) {
+	t.Parallel()
+
+	client := platform.NewMock().
+		WithServices([]platform.ServiceStack{{ID: "s1", Name: "api", Status: platform.ServiceStatusActive}}).
+		WithServiceAppVersions("s1", []platform.AppVersionEvent{
+			{ID: "av-2", ServiceStackID: "s1", Status: platform.BuildStatusDeployFailed, Source: "CLI", Sequence: 2},
+		})
+
+	_, err := RedeployLastAppVersion(context.Background(), client, "p-1", "api", "")
+
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) {
+		t.Fatalf("err = %v, want a coded platform error", err)
+	}
+	if pe.Code != platform.ErrPrerequisiteMissing || !strings.Contains(pe.Message, "rebuild required") {
+		t.Errorf("code %s message %q, want %s naming a rebuild", pe.Code, pe.Message, platform.ErrPrerequisiteMissing)
+	}
+	if !strings.Contains(pe.Suggestion, "zerops_deploy") || !strings.Contains(pe.Suggestion, "without appVersion") {
+		t.Errorf("suggestion %q, want the rebuild command: zerops_deploy without appVersion", pe.Suggestion)
 	}
 }
 

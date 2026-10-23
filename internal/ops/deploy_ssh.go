@@ -2,11 +2,14 @@ package ops
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/ops/git"
@@ -228,14 +231,19 @@ func deploySSH(
 	}
 
 	// Every git round trip against the source's shared /var/www tree —
-	// resolve/validate/record reads as well as the final push — is
-	// serialized per source so a concurrent batch deploy sharing a
-	// source cannot interleave git operations against the same repo
-	// (deploySourceGitLocks; TestDeployBatchSSH_SerializesPerSource).
+	// resolve/validate/record reads, the repo/HEAD ensure, the crew save and
+	// zcli's archive and upload — is serialized per source so a concurrent
+	// batch deploy sharing a source cannot interleave git operations against
+	// the same repo: zcli's archiver writes a stash commit and then runs
+	// `git prune`, which would drop another archiver's unreferenced commit
+	// mid-archive. The wait on the build holds no git state and runs
+	// outside the lock (deploySourceGitLocks;
+	// TestDeployBatchSSH_SameSourceBuildsOverlap_GitSectionExclusive).
 	unlockGit, lockErr := deploySourceGitLocks.lock(ctx, source.Name)
 	if lockErr != nil {
 		return nil, lockErr
 	}
+	unlockGit = sync.OnceFunc(unlockGit)
 	defer unlockGit()
 
 	// Deploy-from-commit (docs/spec-workflows.md §4.9): sha is resolved and
@@ -297,24 +305,39 @@ func deploySSH(
 		defer cleanupTemp()
 	}
 
-	var cmd string
 	var versionName string
+	// uploaded is the push's output up to its upload, when the build is
+	// awaited in a call of its own; output is the call that ends with the build.
+	var uploaded, output []byte
 	if sha != "" {
 		headSHA, headBranch, _, _, _ := git.HeadStatus(ctx, gitRunner, sourceWorkingDir)
 		versionName = commitVersionName(resolvedSHA, headSHA, headBranch)
-		cmd = buildSSHCommandSHA(authInfo, target.ID, workingDir, setup, versionName)
+		// The commit's tree is already extracted and the push reads no git.
+		unlockGit()
+		output, err = sshDeployer.ExecSSH(ctx, source.Name, buildSSHCommandSHA(authInfo, target.ID, workingDir, setup, versionName))
 	} else {
 		// GF-10: a plain working-tree deploy also passes --version-name
 		// when the source has a reachable HEAD — its branch and short
 		// sha, with a "-dirty" suffix on top of an uncommitted working
 		// tree (versionNameFor).
 		versionName = versionNameFor(branch, resolvedSHA, dirty)
-		cmd = buildSSHCommand(authInfo, target.ID, workingDir, setup, includeGit, versionName)
+		pushDir := "/tmp/zcp-push-" + rand.Text()
+		output, err = sshDeployer.ExecSSH(ctx, source.Name, buildSSHCommand(authInfo, target.ID, workingDir, setup, includeGit, versionName, pushDir))
+		if err != nil && !isSSHBuildTriggered(string(output)) {
+			// The detached zcli outlives the failed call and would still
+			// ask for the build; the git lock is held until it is stopped.
+			output = append(output, stopPush(ctx, sshDeployer, source.Name, pushDir)...)
+		}
+		unlockGit()
+		if err == nil {
+			uploaded = output
+			output, err = sshDeployer.ExecSSH(ctx, source.Name, buildWaitCommand(pushDir))
+		}
 	}
-
-	output, err := sshDeployer.ExecSSH(ctx, source.Name, cmd)
 	if err != nil {
-		if isSSHBuildTriggered(string(output)) {
+		// A self-deploy's build replaces the source, dropping the wait's
+		// session: the upload's output still says the build started.
+		if isSSHBuildTriggered(string(uploaded) + string(output)) {
 			// SSH connection dropped after successful zcli push (common exit 255).
 			// Build was submitted — let pollDeployBuild take over.
 			return &DeployResult{
@@ -395,9 +418,37 @@ func readWorkingTreeHead(ctx context.Context, gitRunner git.SSHRunner, workingDi
 	// git alone — say so where the agent will see it. Self-deploy is
 	// excluded by construction; the explicit-sha path never reaches here.
 	if dirty {
-		head.warnings = append(head.warnings, dirtyCrossDeployWarning(targetName, sourceName, sha))
+		head.warnings = append(head.warnings,
+			dirtyCrossDeployWarning(targetName, sourceName, sha)+" "+uncommittedIn(ctx, gitRunner, workingDir, sourceName))
 	}
 	return head, nil
+}
+
+// uncommittedShown is how many uncommitted paths a dirty warning names.
+const uncommittedShown = 10
+
+// uncommittedIn names what made a cross-deploy dirty and the directory it was
+// read in: the agent's own `git status` may have run in another tree — the
+// deploy copy beside a code volume — and found it clean.
+func uncommittedIn(ctx context.Context, gitRunner git.SSHRunner, workingDir, sourceName string) string {
+	where := fmt.Sprintf("Uncommitted in %s on %s", workingDir, sourceName)
+	out, _, err := gitRunner.Run(ctx, workingDir, fmt.Sprintf("git status --porcelain | head -n %d", uncommittedShown+1))
+	if err != nil {
+		return where + "."
+	}
+	var paths []string
+	for line := range strings.Lines(out) {
+		if line = strings.TrimRight(line, "\r\n"); len(line) > 3 {
+			paths = append(paths, line[3:])
+		}
+	}
+	switch {
+	case len(paths) == 0:
+		return where + "."
+	case len(paths) > uncommittedShown:
+		paths = append(paths[:uncommittedShown], "and more")
+	}
+	return fmt.Sprintf("%s: %s.", where, strings.Join(paths, ", "))
 }
 
 // selfDeployPreflightFacts runs the combined GF-12 self-deploy preflight
@@ -485,9 +536,11 @@ func deployFromCommitPrep(
 
 	// Same file-name fallback as ParseZeropsYml/DeployLocal: a pre-rename
 	// repo carries zerops.yml, and a working-tree deploy accepts it.
-	content, showErr := git.ReadFileAtCommit(ctx, gitRunner, workingDir, resolvedSHA, "zerops.yaml")
+	source := zeropsYmlPrimary
+	content, showErr := git.ReadFileAtCommit(ctx, gitRunner, workingDir, resolvedSHA, source)
 	if showErr != nil {
-		content, showErr = git.ReadFileAtCommit(ctx, gitRunner, workingDir, resolvedSHA, "zerops.yml")
+		source = zeropsYmlFallback
+		content, showErr = git.ReadFileAtCommit(ctx, gitRunner, workingDir, resolvedSHA, source)
 	}
 	if showErr != nil {
 		return "", nil, "", nil, platform.NewPlatformError(
@@ -497,7 +550,7 @@ func deployFromCommitPrep(
 		)
 	}
 	var vErr error
-	warnings, vErr = ValidateZeropsYmlContent([]byte(content), setupName, serviceType, class)
+	warnings, vErr = ValidateZeropsYmlContent([]byte(content), source, setupName, serviceType, class)
 	// DM-2 violation is a hard error — deploy aborts, warnings (if any)
 	// travel with the error for visibility but the caller won't issue a
 	// push.
@@ -578,7 +631,7 @@ func shortSHA(sha string) string {
 	return sha[:min(versionNameShort, len(sha))]
 }
 
-func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup string, includeGit bool, versionName string) string {
+func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup string, includeGit bool, versionName, pushDir string) string {
 	// .git lifecycle (GLC-2 / GLC-3). Direct deploy is an ARTIFACT
 	// operation — it must reach a state where zcli's `--workspace-state
 	// all` archiver can snapshot the (possibly dirty) working tree, without
@@ -625,7 +678,62 @@ func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup stri
 		pushArgs += " -g"
 	}
 
-	return fmt.Sprintf("%s && %s && %s", gitEnsure, crewSaveCommand, pushArgs)
+	// zcli push returns only when the build ends, but its git work — the
+	// archive, then the archiver's cleanup — is done once it says it is
+	// deploying. It runs detached into pushDir, and this command returns at
+	// that line (or zcli's exit) with the output so far; buildWaitCommand
+	// awaits the rest outside the source's git lock. With its output and
+	// input redirected the background job outlives this session (a
+	// non-pty session signals nothing on close). The push rides as the
+	// wrapper's arguments, so its words keep the quoting above.
+	// zcli's PID lands in pushDir for pushStopCommand. Run directories a
+	// wait never removed — it lost its session or hit its ceiling — go once
+	// their push has been finished for an hour, when no wait reads them.
+	q := shellQuote(pushDir)
+	sweep := fmt.Sprintf(`for f in %s/zcp-push-*/rc; do [ -z "$(find "$f" -mmin +60 2>/dev/null)" ] || rm -rf "${f%%/rc}"; done`,
+		shellQuote(path.Dir(pushDir)))
+	spawn := fmt.Sprintf(`{ %s; mkdir %s; } && { sh -c 'd=$1; shift; "$@" & echo $! > "$d/pid"; wait $!; echo $? > "$d/rc.tmp" && mv "$d/rc.tmp" "$d/rc"' zcp-push %s env %s > %s/log 2>&1 < /dev/null & }`,
+		sweep, q, q, pushArgs, q)
+	waitUpload := fmt.Sprintf("{ until [ -e %s/rc ] || grep -qF %s %s/log 2>/dev/null; do sleep 1; done; cat %s/log; }",
+		q, shellQuote(zcliDeployingLine), q, q)
+	return fmt.Sprintf("%s && %s && %s && %s", gitEnsure, crewSaveCommand, spawn, waitUpload)
+}
+
+// buildWaitCommand awaits the push buildSSHCommand started in pushDir: it
+// prints zcli's whole output and exits with zcli's status, as the push
+// itself would have, and removes pushDir. Without pushDir — the call reached
+// another container of the source, or a replaced one — it exits 254 at once.
+func buildWaitCommand(pushDir string) string {
+	q := shellQuote(pushDir)
+	return fmt.Sprintf("until [ -e %s/rc ]; do [ -d %s ] || exit 254; sleep 1; done; cat %s/log; rc=$(cat %s/rc); rm -rf %s; exit \"$rc\"", q, q, q, q, q)
+}
+
+// pushStopTimeout bounds stopPush's call: zcli ends on SIGTERM, and
+// pushStopCommand sends SIGKILL after ten seconds.
+const pushStopTimeout = 30 * time.Second
+
+// stopPush stops the push buildSSHCommand started in pushDir after its call
+// failed before zcli said it was deploying, so zcli never asks for the
+// build. The call outlives ctx — a cancelled deploy is the case it serves —
+// and returns pushStopCommand's output; a failed stop is not reported, as
+// the deploy already failed.
+func stopPush(ctx context.Context, sshDeployer SSHDeployer, hostname, pushDir string) []byte {
+	stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), pushStopTimeout)
+	defer cancel()
+	out, _ := sshDeployer.ExecSSH(stopCtx, hostname, pushStopCommand(pushDir))
+	return out
+}
+
+// pushStopCommand ends the push in pushDir unless zcli already said it is
+// deploying: it kills zcli, waits for its exit, prints its output and
+// removes pushDir. A push past that line keeps running to its build, and
+// the printed output says the build started.
+func pushStopCommand(pushDir string) string {
+	q := shellQuote(pushDir)
+	deploying := fmt.Sprintf("grep -qF %s %s/log", shellQuote(zcliDeployingLine), q)
+	return fmt.Sprintf(`[ -d %[1]s ] || exit 0; until [ -e %[1]s/pid ]; do sleep 1; done; `+
+		`%[2]s || { kill "$(cat %[1]s/pid)" 2>/dev/null; i=0; until [ -e %[1]s/rc ]; do i=$((i+1)); [ $i -ne 10 ] || kill -9 "$(cat %[1]s/pid)" 2>/dev/null; sleep 1; done; }; `+
+		`cat %[1]s/log; %[2]s || rm -rf %[1]s`, q, deploying)
 }
 
 // crewSaveCommand runs the Mate crew's save before the push, when the Mate

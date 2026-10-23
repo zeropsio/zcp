@@ -118,7 +118,7 @@ func buildSignalLibrary() []failureSignal {
 		{
 			id:         "build:oom-killed",
 			phases:     []DeployFailurePhase{PhaseBuild},
-			logRegex:   regexp.MustCompile(`(?:Killed\b|Out of memory|OOMKilled)`),
+			logRegex:   regexp.MustCompile(`(?:OOM Alert: Process '[^']*' terminated|Killed\b|Out of memory|OOMKilled)`),
 			requireLog: true,
 			build:      buildOOMKilled,
 		},
@@ -217,7 +217,7 @@ func buildSignalLibrary() []failureSignal {
 		{
 			id:         "init:oom-killed",
 			phases:     []DeployFailurePhase{PhaseInit},
-			logRegex:   regexp.MustCompile(`(?:OOMKilled|Killed\s+(?:node|python|ruby|php|java)|JavaScript heap out of memory)`),
+			logRegex:   regexp.MustCompile(`(?:OOMKilled|OOM Alert|Killed\s+(?:node|python|ruby|php|java)|JavaScript heap out of memory)`),
 			requireLog: true,
 			build:      initOOMKilled,
 		},
@@ -275,6 +275,18 @@ func buildSignalLibrary() []failureSignal {
 			logRegex:   regexp.MustCompile(`(?i)zcli[^\n]*(?:cannot execute|required file not found|No such file or directory)`),
 			requireLog: true,
 			build:      transportZCLIBinaryBroken,
+		},
+		{
+			// Live incident (mono-z-dev-in-place): zcli packed /var/www while
+			// git repacked it; a file grew between the tar header and its
+			// body and zcli aborted with "archive/tar: write too long". No
+			// build was triggered and the network is fine — the source
+			// changed under the archive. Fires before the network baseline.
+			id:            "transport:zcli-archive-source-changed",
+			phases:        []DeployFailurePhase{PhaseTransport},
+			logSubstrings: []string{"archive/tar: write too long"},
+			requireLog:    true,
+			build:         transportArchiveSourceChanged,
 		},
 		{
 			id:         "transport:zcli-tty-required",
@@ -483,12 +495,17 @@ func buildComposerMissing(_ string) *topology.DeployFailureClassification {
 	}
 }
 
-func buildOOMKilled(_ string) *topology.DeployFailureClassification {
+// buildOOMKilled: the platform reports a build container out of memory as
+// "OOM Alert: Process '…' terminated" on the build's service stack. Build
+// containers get the same resources for every runtime, 8 GB RAM at most
+// (zerops-docs features/pipeline.mdx, "Build hardware resources").
+func buildOOMKilled(match string) *topology.DeployFailureClassification {
 	return &topology.DeployFailureClassification{
-		Category:        topology.FailureClassBuild,
-		LikelyCause:     "Build container OOM-killed during compile/install.",
-		SuggestedAction: "Increase build container RAM via zerops.yaml `build.containerOptions` or split heavy install steps. Webpack/Vite builds frequently need 2-4 GB.",
-		Signals:         []string{"build:oom-killed"},
+		Category:    topology.FailureClassBuild,
+		LikelyCause: fmt.Sprintf("The build container ran out of memory (the log says %q).", match),
+		SuggestedAction: "A build container gets at most 8 GB RAM, the same for every runtime; scaling the service does not raise it. " +
+			"Lower the peak memory of the build step that was running (e.g. fewer parallel build workers), or split it into smaller steps.",
+		Signals: []string{"build:oom-killed"},
 	}
 }
 
@@ -654,6 +671,15 @@ func transportZCLIBinaryBroken(_ string) *topology.DeployFailureClassification {
 		LikelyCause:     "The platform-provided zcli binary on the source container (/opt/zerops/bin/zcli) is broken — it cannot execute (missing/incompatible interpreter, or the file is absent). This is the platform-owned tooling mount, not an app or ZCP configuration fault.",
 		SuggestedAction: "Do NOT attempt to repair or replace anything under /opt/zerops/** — no compat shims (e.g. gcompat), no manual reinstall. It's platform-owned; a broken binary there is report-not-repair. Surface the exact SSH stderr to the user and record it via zerops_workflow action=\"status\" so the incident is visible for platform-side follow-up.",
 		Signals:         []string{"transport:zcli-binary-broken"},
+	}
+}
+
+func transportArchiveSourceChanged(_ string) *topology.DeployFailureClassification {
+	return &topology.DeployFailureClassification{
+		Category:        topology.FailureClassOther,
+		LikelyCause:     "The source changed while zcli was packing it (archive/tar: write too long) — typically git repacking or a build/watch process writing into the tree. Not a network failure; no build was triggered.",
+		SuggestedAction: "Let the writer settle (wait for git gc/repack or stop the process writing into the source tree), then retry the same deploy unchanged.",
+		Signals:         []string{"transport:zcli-archive-source-changed"},
 	}
 }
 

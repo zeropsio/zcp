@@ -3,6 +3,7 @@ package eval
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -637,6 +638,108 @@ func TestVerification_UnchangedRow_PerHostname(t *testing.T) {
 			t.Fatalf("expected single passed unrelated_artifact row, got %+v", rows)
 		}
 	})
+}
+
+// TestVerification_UnchangedRow_SupervisorMigration pins the one redeploy an
+// unchanged host may take: the zerops_dev_server start that moves the host
+// onto the dev-server supervisor redeploys it once and says so in the
+// structured migratedToSupervisor field (farm mono-farm-final-1:
+// resume-after-compaction failed unrelated_artifact/appdev on exactly that).
+// The row accepts that one migration and nothing else — not the message
+// sentence, not a second redeploy, not another host's migration.
+func TestVerification_UnchangedRow_SupervisorMigration(t *testing.T) {
+	t.Parallel()
+	migrated := mcpCallFixture{"zerops_dev_server", map[string]any{"action": "start", "hostname": "appdev"},
+		`{"action":"start","hostname":"appdev","running":true,"message":"appdev was redeployed once.","migratedToSupervisor":true}`}
+	tests := []struct {
+		name  string
+		calls []mcpCallFixture
+		want  CheckResult
+	}{
+		{"one migration of the host — passed", []mcpCallFixture{migrated}, CheckPassed},
+		{"no captured migration — failed", nil, CheckFailed},
+		{"migration sentence without the structured field — failed", []mcpCallFixture{
+			{"zerops_dev_server", map[string]any{"action": "start", "hostname": "appdev"},
+				`{"action":"start","hostname":"appdev","running":true,"message":"appdev moved onto the supervisor; appdev was redeployed once."}`},
+		}, CheckFailed},
+		{"migration plus a deploy of the host — failed", []mcpCallFixture{
+			migrated,
+			{"zerops_deploy", map[string]any{"targetService": "appdev"}, `{"status":"DEPLOYED"}`},
+		}, CheckFailed},
+		{"migration of another host — failed", []mcpCallFixture{
+			{"zerops_dev_server", map[string]any{"action": "start", "hostname": "workerdev"},
+				`{"action":"start","hostname":"workerdev","running":true,"migratedToSupervisor":true}`},
+		}, CheckFailed},
+		{"two migrations of the host — failed", []mcpCallFixture{migrated, migrated}, CheckFailed},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			sc := &Scenario{Verification: &VerificationConfig{Unchanged: []string{"appdev"}}}
+			client := platform.NewMock().WithServicesDirect([]platform.ServiceStack{
+				{Name: "appdev", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "av-2"}},
+			})
+			observation := collectPlatformObservation(context.Background(), client, "p1", true, false)
+			baseline := &ScenarioBaseline{AppVersions: map[string]string{"appdev": "av-1"}}
+			runtime := RuntimeInputs{MCPStreamPaths: []string{writeMCPCallsFixture(t, tt.calls)}}
+			rows := generateRequiredChecks(context.Background(), sc, observation, nil, time.Time{}, "p1", client, false, baseline, runtime)
+			if len(rows) != 1 || rows[0].ID != "unrelated_artifact/appdev/unchanged" {
+				t.Fatalf("expected one unrelated_artifact/appdev row, got %+v", rows)
+			}
+			if rows[0].Result != tt.want {
+				t.Errorf("result = %v (%s), want %v", rows[0].Result, rows[0].Message, tt.want)
+			}
+		})
+	}
+}
+
+// mcpCallFixture is one captured tools/call: tool name, arguments and the
+// result's text content.
+type mcpCallFixture struct {
+	tool   string
+	args   map[string]any
+	result string
+}
+
+// writeMCPCallsFixture writes calls as a capture MCP stream (one stdin
+// request and one stdout response record per call) and returns its path.
+func writeMCPCallsFixture(t *testing.T, calls []mcpCallFixture) string {
+	t.Helper()
+	var b strings.Builder
+	seq := 0
+	record := func(kind, direction string, body any) {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw = append(raw, '\n')
+		seq++
+		line, err := json.Marshal(map[string]any{
+			"seq": seq, "time": time.Date(2026, 10, 15, 0, 0, seq, 0, time.UTC).Format(time.RFC3339),
+			"sessionId": "capture-test", "processId": 1, "kind": kind, "direction": direction,
+			"bodyBase64": base64.StdEncoding.EncodeToString(raw), "bodyBytes": len(raw),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		b.Write(line)
+		b.WriteByte('\n')
+	}
+	for i, c := range calls {
+		record("mcp.stdin.chunk", "client_to_zcp", map[string]any{
+			"jsonrpc": "2.0", "id": i + 1, "method": "tools/call",
+			"params": map[string]any{"name": c.tool, "arguments": c.args},
+		})
+		record("mcp.stdout.chunk", "zcp_to_client", map[string]any{
+			"jsonrpc": "2.0", "id": i + 1,
+			"result": map[string]any{"content": []map[string]any{{"type": "text", "text": c.result}}, "isError": false},
+		})
+	}
+	path := filepath.Join(t.TempDir(), "zcp-1.jsonl")
+	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 // TestVerification_UnchangedRow_MissingBaseline_Blocked pins FM-29's

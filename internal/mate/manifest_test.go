@@ -26,9 +26,9 @@ import (
 func validManifestJSON(t *testing.T, overrides map[string]any) []byte {
 	t.Helper()
 	body := map[string]any{
-		"version":     "0.15.119",
-		"asset":       "zerops-mate-0.15.119.tgz",
-		"url":         "https://github.com/zeropsio/mate/releases/download/v0.15.119/zerops-mate-0.15.119.tgz",
+		"version":     "0.15.153",
+		"asset":       "zerops-mate-0.15.153.tgz",
+		"url":         "https://github.com/zeropsio/mate/releases/download/v0.15.153/zerops-mate-0.15.153.tgz",
 		"sha256":      strings.Repeat("a", 64),
 		"size":        21690443,
 		"contract":    mate.SupportedContract,
@@ -64,8 +64,8 @@ func TestDesiredRelease_FetchesValidManifest_AndCaches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DesiredRelease(): %v", err)
 	}
-	if got.Version != "0.15.119" || got.Contract != mate.SupportedContract {
-		t.Errorf("DesiredRelease() = %+v, want version 0.15.119 contract %d", got, mate.SupportedContract)
+	if got.Version != "0.15.153" || got.Contract != mate.SupportedContract {
+		t.Errorf("DesiredRelease() = %+v, want version 0.15.153 contract %d", got, mate.SupportedContract)
 	}
 	if requests != 1 {
 		t.Fatalf("expected exactly one fetch, got %d", requests)
@@ -175,13 +175,20 @@ func TestDesiredRelease_RefusesInvalidManifest(t *testing.T) {
 			wantIn:    "0.13.11",
 		},
 		{
+			// 0.15.153 is the first release that draws zerops_origin's ask:
+			// one before it shows a plain call and never says how it ended.
+			name:      "a release before the origin ask",
+			overrides: map[string]any{"version": "0.15.152"},
+			wantIn:    "0.15.152",
+		},
+		{
 			name:      "sha256 not 64 hex characters",
 			overrides: map[string]any{"sha256": "not-a-digest"},
 			wantIn:    "sha256",
 		},
 		{
 			name:      "url is not https",
-			overrides: map[string]any{"url": "http://github.com/zeropsio/mate/releases/download/v0.15.119/zerops-mate-0.15.119.tgz"},
+			overrides: map[string]any{"url": "http://github.com/zeropsio/mate/releases/download/v0.15.153/zerops-mate-0.15.153.tgz"},
 			wantIn:    "https",
 		},
 	}
@@ -243,8 +250,8 @@ func TestDesiredRelease_CacheBelowTheMinimumIsNotTrusted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DesiredRelease(): %v", err)
 	}
-	if got.Version != "0.15.119" || requests != 2 {
-		t.Errorf("DesiredRelease() = %s after %d requests, want the fetched 0.15.119, never the cached 0.12.3", got.Version, requests)
+	if got.Version != "0.15.153" || requests != 2 {
+		t.Errorf("DesiredRelease() = %s after %d requests, want the fetched 0.15.153, never the cached 0.12.3", got.Version, requests)
 	}
 }
 

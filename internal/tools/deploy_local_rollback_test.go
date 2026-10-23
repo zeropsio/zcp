@@ -147,3 +147,30 @@ func TestDeployLocal_AppVersionID_ActiveRefuses(t *testing.T) {
 		t.Errorf("RedeployAppVersion must not be called on the active id: %+v", mock.CapturedRedeployAppVersion)
 	}
 }
+
+// A deploy of the newest appVersion that is already active answers the same
+// code whether it names the version "latest" or by its id: INVALID_PARAMETER
+// naming the version, nothing redeployed.
+func TestDeploy_AnAlreadyActiveNewestVersionAnswersTheSameCodeAsLatestOrByID(t *testing.T) {
+	t.Parallel()
+	for _, appVersion := range []string{"latest", "av-new"} {
+		mock := platform.NewMock().
+			WithServices([]platform.ServiceStack{{ID: "s1", Name: "appstage", Status: platform.ServiceStatusActive}}).
+			WithServiceAppVersions("s1", []platform.AppVersionEvent{
+				{ID: "av-new", ServiceStackID: "s1", Status: platform.ServiceStatusActive, Sequence: 2},
+				{ID: "av-old", ServiceStackID: "s1", Status: platform.BuildStatusBackup, Sequence: 1},
+			})
+		authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+		srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+		RegisterDeployLocal(srv, mock, okHTTP, "proj-1", authInfo, nil, t.TempDir(), testDeployEngine(t), nil)
+
+		result := callTool(t, srv, "zerops_deploy", map[string]any{"targetService": "appstage", "appVersion": appVersion})
+		text := getTextContent(t, result)
+		if !result.IsError || !strings.Contains(text, `"code":"`+platform.ErrInvalidParameter+`"`) || !strings.Contains(text, "av-new") {
+			t.Errorf("appVersion=%s: answer = %s, want code %s naming av-new", appVersion, text, platform.ErrInvalidParameter)
+		}
+		if len(mock.CapturedRedeployAppVersion) != 0 {
+			t.Errorf("appVersion=%s: RedeployAppVersion called on the active version: %+v", appVersion, mock.CapturedRedeployAppVersion)
+		}
+	}
+}

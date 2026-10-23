@@ -44,3 +44,89 @@ func TestClient_Self_CarriesTheMatesApplicationAndItsChanges(t *testing.T) {
 		t.Errorf("calls = %+v, want [%+v]", *calls, wantCall)
 	}
 }
+
+// A Mate's state carries every repository of its application, with the
+// address of its connected origin and which way the code is kept, and an
+// older HQ that omits them (nil, not empty; no way, not one guessed).
+func TestClient_Self_Repos_DecodesOriginsAndOlderHQ(t *testing.T) {
+	t.Parallel()
+	const repos = `{"projectId":"p-mate","name":"Ada","face":"face-1","standupRequestedBy":null,"appId":"a1","changes":[],` +
+		`"repos":[{"name":"appdev","origin":{"url":"https://github.com/acme/app","mode":"github"}},{"name":"api","origin":{"url":"https://github.com/acme/api"}},{"name":"web"}]}`
+	client, _ := answering(t, repos)
+	state, err := client.Self(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []MateRepo{
+		{Name: "appdev", Origin: &RepoOrigin{URL: "https://github.com/acme/app", Mode: OriginOnGitHub}},
+		{Name: "api", Origin: &RepoOrigin{URL: "https://github.com/acme/api"}},
+		{Name: "web"},
+	}
+	if !reflect.DeepEqual(state.Repos, want) {
+		t.Errorf("repos = %+v\nwant %+v", state.Repos, want)
+	}
+
+	older, _ := answering(t, selfSample)
+	state, err = older.Self(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Repos != nil {
+		t.Errorf("repos from an HQ that omits them = %+v, want nil", state.Repos)
+	}
+}
+
+// HQ says whether the Mate's application has a production; an older HQ says
+// nothing, which decodes as nil, never as none.
+func TestClient_Self_Production_DecodesAndOlderHQ(t *testing.T) {
+	t.Parallel()
+	client, _ := answering(t, `{"projectId":"p-mate","name":"Ada","face":"face-1","standupRequestedBy":null,"appId":"a1","changes":[],"production":true}`)
+	state, err := client.Self(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Production == nil || !*state.Production {
+		t.Errorf("production = %v, want true", state.Production)
+	}
+
+	older, _ := answering(t, selfSample)
+	state, err = older.Self(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Production != nil {
+		t.Errorf("production from an HQ that omits it = %v, want nil", *state.Production)
+	}
+}
+
+// A change in the Mate's state names the branch it is bound to, as HQ stores
+// it, and whether a person handed it this Mate from a Mate that is gone; an
+// older HQ names neither.
+func TestClient_Self_Changes_DecodeBranchAndHandOver(t *testing.T) {
+	t.Parallel()
+	const handed = `{"projectId":"p-mate","name":"Ada","face":"face-1","standupRequestedBy":null,"appId":"a1","changes":[` +
+		`{"repo":"appdev","number":7,"title":"Fix the login","state":"open","head":null,"mergedSha":null,"landedHead":null,"branch":"mate/p-gone/7","handed":true},` +
+		`{"repo":"appdev","number":5,"title":"Add a list","state":"merged","head":null,"mergedSha":null,"landedHead":null,"branch":"add-list"}]}`
+	client, _ := answering(t, handed)
+	state, err := client.Self(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make([][2]any, 0, len(state.Changes))
+	for _, c := range state.Changes {
+		got = append(got, [2]any{c.Branch, c.Handed})
+	}
+	if want := [][2]any{{"mate/p-gone/7", true}, {"add-list", false}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("branch and hand-over = %v, want %v", got, want)
+	}
+
+	older, _ := answering(t, selfSample)
+	if state, err = older.Self(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range state.Changes {
+		if c.Branch != "" || c.Handed {
+			t.Errorf("change #%d from an HQ older than branches = %+v, want no branch and not handed", c.Number, c)
+		}
+	}
+}

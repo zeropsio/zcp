@@ -3,9 +3,11 @@ package platform
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -378,6 +380,44 @@ func TestFetchLogs_SearchClientSide(t *testing.T) {
 	want := []string{"1", "2"}
 	if !equalStrings(ids, want) {
 		t.Errorf("Search-filtered ids = %v, want %v", ids, want)
+	}
+}
+
+// serveNewest returns an httptest server that behaves like the log backend:
+// it ignores search= and serves only the newest `limit` items, newest first.
+func serveNewest(t *testing.T, items []logAPIItem) *LogAccess {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		limit, err := strconv.Atoi(r.URL.Query().Get("limit"))
+		if err != nil {
+			t.Errorf("limit query = %q: %v", r.URL.Query().Get("limit"), err)
+		}
+		newest := make([]logAPIItem, 0, limit)
+		for i := len(items) - 1; i >= 0 && len(newest) < limit; i-- {
+			newest = append(newest, items[i])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(logAPIResponse{Items: newest})
+	}))
+	t.Cleanup(srv.Close)
+	return &LogAccess{URL: srv.URL}
+}
+
+func TestFetchLogs_SearchFindsAMatchOlderThanTheNewestLimitLines(t *testing.T) {
+	t.Parallel()
+
+	items := []logAPIItem{{ID: "match", Timestamp: "2026-01-01T00:00:00Z", Message: `Migrating schema "PUBLIC"`, SeverityLabel: "info"}}
+	for i := 1; i <= 30; i++ {
+		items = append(items, logAPIItem{ID: strconv.Itoa(i), Timestamp: fmt.Sprintf("2026-01-01T00:00:%02dZ", i), Message: "request served", SeverityLabel: "info"})
+	}
+	f := NewLogFetcher()
+
+	entries, err := f.FetchLogs(context.Background(), serveNewest(t, items), LogFetchParams{Search: "Migrat", Limit: 11})
+	if err != nil {
+		t.Fatalf("FetchLogs: %v", err)
+	}
+	if len(entries) != 1 || entries[0].ID != "match" {
+		t.Errorf("entries = %v, want the one Migrating line", msgs(entries))
 	}
 }
 

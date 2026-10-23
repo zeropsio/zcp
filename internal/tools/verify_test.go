@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -346,6 +347,123 @@ func TestVerifyTool_PassesIntentFromMeta(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("http_public check not found in %+v", vr.Checks)
+	}
+}
+
+// verify marked a healthy worker stage degraded on "subdomain access not
+// enabled": the pair's dev half serves HTTP, the worker declares no port. A
+// service that declares no port gets no HTTP check, so nothing about HTTP
+// degrades it.
+func TestVerifyTool_AServiceThatDeclaresNoPortIsNotDegradedOnHTTP(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+		Hostname: "difydev", Mode: topology.ModeDev,
+		BootstrapSession: "s", BootstrappedAt: "2026-10-16",
+		PrimarySetupName: "dev",
+		Stages:           []topology.StageRef{{Hostname: "apistage", SetupName: "api"}, {Hostname: "workerstage", SetupName: "worker"}},
+		ServesHTTPByHost: map[string]bool{"difydev": true},
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-w", Name: "workerstage", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/python@3.14", ServiceStackTypeCategoryName: "USER"}, Status: serviceStatusRunning, SubdomainAccess: false},
+		}).
+		WithLogAccess(&platform.LogAccess{URL: "http://logs.test"})
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterVerify(srv, mock, platform.NewMockLogFetcher(), "proj-1", dir, runtime.Info{}, nil)
+
+	result := callTool(t, srv, "zerops_verify", map[string]any{"serviceHostname": "workerstage"})
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", getTextContent(t, result))
+	}
+	var vr ops.VerifyResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &vr); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if vr.Status != ops.StatusHealthy {
+		t.Errorf("status = %q, want %q; checks: %+v", vr.Status, ops.StatusHealthy, vr.Checks)
+	}
+	for _, c := range vr.Checks {
+		if c.Name == "http_public" || c.Name == "http_internal" {
+			t.Errorf("a service that declares no port got %s %s: %q", c.Name, c.Status, c.Detail)
+		}
+	}
+}
+
+// A pair recorded one "serves HTTP" for all its hosts, so the last deploy won:
+// a worker stage deployed after the API stage turned the API stage into a
+// worker, and a broken API read healthy with no HTTP check at all.
+func TestVerifyTool_AStageThatServesHTTPKeepsItsHTTPCheckAfterAPortlessSiblingStageDeploys(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	scaffoldServiceYaml(t, dir, "difydev", `zerops:
+  - setup: api
+    build:
+      base: python@3.14
+      deployFiles: [.]
+    run:
+      ports:
+        - port: 5001
+          httpSupport: true
+      start: gunicorn app:app
+  - setup: worker
+    build:
+      base: python@3.14
+      deployFiles: [.]
+    run:
+      start: celery worker
+`)
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname: "difydev", Mode: topology.ModeStandard,
+		BootstrapSession: "s", BootstrappedAt: "2026-10-16",
+		Stages: []topology.StageRef{{Hostname: "apistage", SetupName: "api"}, {Hostname: "workerstage", SetupName: "worker"}},
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+	for _, stage := range []struct{ host, setup string }{{"apistage", "api"}, {"workerstage", "worker"}} {
+		if _, result, err := deployPreFlight(context.Background(), platform.NewMock(), "proj-1", stateDir, "difydev", stage.host, stage.setup, "", true); err != nil || result == nil || !result.Passed {
+			t.Fatalf("deployPreFlight %s: err=%v result=%+v", stage.host, err, result)
+		}
+	}
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-a", Name: "apistage", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/python@3.14", ServiceStackTypeCategoryName: "USER"}, Status: platform.ServiceStatusStopped, Ports: []platform.Port{{Port: 5001}}},
+		}).
+		WithLogAccess(&platform.LogAccess{URL: "http://logs.test"})
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterVerify(srv, mock, platform.NewMockLogFetcher(), "proj-1", stateDir, runtime.Info{}, nil)
+
+	result := callTool(t, srv, "zerops_verify", map[string]any{"serviceHostname": "apistage"})
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", getTextContent(t, result))
+	}
+	var vr ops.VerifyResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &vr); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if vr.RuntimeClass != "dynamic" {
+		t.Errorf("runtimeClass = %q, want %q (%s)", vr.RuntimeClass, "dynamic", vr.RuntimeClassification)
+	}
+	var httpChecks []string
+	for _, c := range vr.Checks {
+		if c.Name == "http_public" || c.Name == "http_internal" {
+			httpChecks = append(httpChecks, c.Name)
+		}
+	}
+	if len(httpChecks) != 2 {
+		t.Errorf("http checks = %v, want http_internal and http_public; checks: %+v", httpChecks, vr.Checks)
 	}
 }
 
@@ -716,7 +834,7 @@ func TestVerifyTool_EveryDeclaredPort(t *testing.T) {
 				if ch.Server != "" && ch.Port != map[string]int{"web": 3000, "api": 8080}[ch.Server] {
 					t.Errorf("check %+v names the wrong port", ch)
 				}
-				if ch.Server == "api" && ch.Status == ops.CheckSkip && !strings.Contains(ch.Detail, "start it with zerops_dev_server name=api") {
+				if ch.Server == "api" && ch.Status == ops.CheckSkip && !strings.Contains(ch.Detail, `start it with zerops_dev_server action=start hostname="appdev" name="api"`) {
 					t.Errorf("stopped server's check = %q, want the way to start it", ch.Detail)
 				}
 			}
@@ -727,6 +845,81 @@ func TestVerifyTool_EveryDeclaredPort(t *testing.T) {
 				if got[server] != want {
 					t.Errorf("server %q: %s, want %s (all: %v)", server, got[server], want, got)
 				}
+			}
+		})
+	}
+}
+
+// TestVerifyTool_APartWithoutADevServer_NamesTheStartCall: verifying the dev
+// service of a pair whose stages build the app and an added worker, while the
+// supervisor declares only the app's server, says that the worker runs no dev
+// server and gives the exact start call — and never fails the verify. The same
+// repo with one stage, or outside a container, says nothing (the single-part
+// reply stays as it is).
+func TestVerifyTool_APartWithoutADevServer_NamesTheStartCall(t *testing.T) {
+	t.Parallel()
+	const appAndWorker = "zerops:\n  - setup: dev\n    run:\n      start: zcp-devsup run\n  - setup: prod\n    run:\n      start: bun index.ts\n  - setup: worker\n    run:\n      start: bun worker.ts\n"
+	const startWorker = `zerops_dev_server action=start hostname="appdev" name="worker"`
+	tests := []struct {
+		name        string
+		stages      []topology.StageRef
+		inContainer bool
+		all         bool
+		wantNote    bool
+	}{
+		{name: "an added worker without a dev server is named with its start call", inContainer: true, wantNote: true,
+			stages: []topology.StageRef{{Hostname: "appstage", SetupName: "prod"}, {Hostname: "workerstage", SetupName: "worker"}}},
+		{name: "verifying every service names the worker too", inContainer: true, all: true, wantNote: true,
+			stages: []topology.StageRef{{Hostname: "appstage", SetupName: "prod"}, {Hostname: "workerstage", SetupName: "worker"}}},
+		{name: "a pair with one stage says nothing", inContainer: true,
+			stages: []topology.StageRef{{Hostname: "appstage", SetupName: "prod"}}},
+		{name: "outside a container says nothing",
+			stages: []topology.StageRef{{Hostname: "appstage", SetupName: "prod"}, {Hostname: "workerstage", SetupName: "worker"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+				Hostname: "appdev", Mode: topology.PlanModeStandard, PrimarySetupName: "dev", Stages: tt.stages,
+				CloseDeployMode: topology.CloseModeAuto, BootstrapSession: "s", BootstrappedAt: "2026-06-01",
+			}); err != nil {
+				t.Fatalf("WriteServiceMeta: %v", err)
+			}
+			mock := platform.NewMock().
+				WithServices([]platform.ServiceStack{
+					{ID: "svc-1", Name: "appdev", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/bun@1.3.9", ServiceStackTypeCategoryName: "USER"}, Status: serviceStatusRunning, Ports: []platform.Port{{Port: 3000}}},
+				})
+			ssh := devservertest.NewSupervised(`{"version":1,"servers":[{"name":"appdev","port":3000,"command":"bun --watch index.ts","cwd":"."}]}`)
+			ssh.YAMLFile, ssh.YAML = "zerops.yml", appAndWorker
+
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterVerify(srv, mock, platform.NewMockLogFetcher(), "proj-1", dir, runtime.Info{InContainer: tt.inContainer}, ssh)
+			args := map[string]any{"serviceHostname": "appdev"}
+			if tt.all {
+				args = map[string]any{}
+			}
+			result := callTool(t, srv, "zerops_verify", args)
+			if result.IsError {
+				t.Fatalf("unexpected error: %s", getTextContent(t, result))
+			}
+			var resp struct {
+				Note string `json:"note"`
+			}
+			if err := json.Unmarshal([]byte(getTextContent(t, result)), &resp); err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if !tt.wantNote {
+				if strings.Contains(resp.Note, "zerops_dev_server") {
+					t.Errorf("note = %q, want no dev-server fact", resp.Note)
+				}
+				return
+			}
+			if !strings.Contains(resp.Note, `part "worker"`) || !strings.Contains(resp.Note, startWorker) {
+				t.Errorf("note = %q, want the worker part named with %s", resp.Note, startWorker)
+			}
+			if strings.Contains(resp.Note, `"prod"`) {
+				t.Errorf("note = %q, names the app part its server under the dev hostname serves", resp.Note)
 			}
 		})
 	}

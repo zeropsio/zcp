@@ -919,3 +919,70 @@ func TestEnvTool_Request_StaleSchema(t *testing.T) {
 		}
 	}
 }
+
+// Mate opens an ask on a request's answer, keyed by the key and its vault; a
+// set of that key must name the same vault so the open ask can close — the
+// person who pasted the key in the chat must not decline a card for a value
+// the agent already stored.
+func TestEnvSet_AStoredKeysAnswerNamesTheVaultItsRequestNamed(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		vault map[string]any
+	}{
+		{name: "Shared vault", vault: map[string]any{"project": true}},
+		{name: "a service's own vault", vault: map[string]any{"serviceHostname": "api"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mock := platform.NewMock().
+				WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: statusActive}}).
+				WithProcess(&platform.Process{ID: "proc-1", Status: statusFinished})
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterEnv(srv, mock, "proj-1", "")
+
+			call := func(args map[string]any) map[string]any {
+				t.Helper()
+				maps.Copy(args, tt.vault)
+				result := callTool(t, srv, "zerops_env", args)
+				text := getTextContent(t, result)
+				if result.IsError {
+					t.Fatalf("%s: %s", args["action"], text)
+				}
+				var parsed map[string]any
+				if err := json.Unmarshal([]byte(text), &parsed); err != nil {
+					t.Fatalf("parse: %v", err)
+				}
+				return parsed
+			}
+			asked, ok := call(map[string]any{"action": "request", "key": "MASSIVE_KEY", "label": "Massive API key", "why": "for market data"})["requested"].(map[string]any)
+			if !ok {
+				t.Fatal("the request asked nothing")
+			}
+			set := call(map[string]any{"action": "set", "variables": []any{"MASSIVE_KEY=" + "person-secret"}, "skipRestart": true})
+
+			for _, field := range []string{"scope", "serviceHostname"} {
+				if set[field] != asked[field] {
+					t.Errorf("set answer %s = %v, want the request's %v", field, set[field], asked[field])
+				}
+			}
+			stored, _ := set["stored"].([]any)
+			if len(stored) != 1 || stored[0].(map[string]any)["key"] != "MASSIVE_KEY" {
+				t.Errorf("set answer stored = %v, want MASSIVE_KEY", stored)
+			}
+		})
+	}
+}
+
+// A value only the person has was asked for after the first deploy, where the
+// env model's when-to-ask lines no longer render. The request action itself
+// says to ask when the feature using the value is being built.
+func TestEnvSchema_RequestAsksWhenTheFeatureUsingTheValueIsBeingBuilt(t *testing.T) {
+	t.Parallel()
+	action := envInputSchema(false).Properties["action"].Description
+	if !strings.Contains(action, "request: ask the person, when the feature using it is being built, for a value only they have") {
+		t.Errorf("action description = %q, want request to say to ask when the feature using it is being built", action)
+	}
+}

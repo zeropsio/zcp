@@ -320,7 +320,7 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 	return jsonResult(localGitPushResponse{
 		GitPushResult:    result,
 		Warnings:         warnings,
-		WorkSessionState: sessionAnnotations(stateDir),
+		WorkSessionState: sessionAnnotations(ctx, nil, stateDir),
 		Envelope:         freshEnvelope(ctx, stateDir, client, projectID, runtime.Info{}),
 	}), nil, nil
 }
@@ -353,7 +353,7 @@ func handleLocalGitPushFailure(
 	// same text the tools.withSSHStderr discipline expects elsewhere.
 	detail := truncateStderr(pushErr.Error())
 	gitWrap := &platform.SSHExecError{Hostname: "local-git", Output: detail, Err: pushErr}
-	classification := classifyTransportError(gitWrap, "git-push")
+	classification := classifyTransportError(gitWrap, "git-push", "")
 	category := topology.FailureClassNetwork
 	if classification != nil {
 		category = classification.Category
@@ -367,7 +367,7 @@ func handleLocalGitPushFailure(
 		rejection := classifyGitPushNonFastForward(localGitRunner(ctx, workingDir), effectiveRemote, branch)
 		record(fmt.Sprintf("git push rejected non-fast-forward: %s", detail), topology.FailureClassConfig)
 		return convertError(
-			newGitPushNonFastForwardError(hostname, detail, effectiveRemote),
+			newGitPushNonFastForwardError(hostname, detail),
 			WithFailureClassification(classification),
 			WithGitPushRejection(rejection),
 			WithRecoveryStatus(),

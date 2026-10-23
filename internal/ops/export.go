@@ -30,10 +30,7 @@ func FetchServiceScaling(ctx context.Context, client platform.Client, serviceID 
 // scalingFromStack maps a service's resolved autoscaling onto the bundle's
 // Scaling, nil when the service exposes none.
 func scalingFromStack(detail *platform.ServiceStack) *bundle.Scaling {
-	a := detail.CurrentAutoscaling
-	if a == nil {
-		a = detail.CustomAutoscaling
-	}
+	a := effectiveAutoscaling(detail)
 	if a == nil {
 		return nil
 	}

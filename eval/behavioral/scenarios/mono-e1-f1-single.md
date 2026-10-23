@@ -37,7 +37,7 @@ verification:
     - {hostname: appdev, field: stages.0.hostname, expect: "appstage"}
     - {hostname: appdev, field: stages.0.setupName, expect: "prod"}
   containerCheck:
-    - {service: appdev, cmd: "grep -qE 'start: *zcp-devsup run' /var/www/zerops.yml && echo supervised", match: "^supervised"}
+    - {service: appdev, cmd: "grep -qE 'start: *zcp-devsup run' /var/www/zerops.y*ml && echo supervised", match: "^supervised"}
     - {service: appdev, cmd: "grep -c '\"name\"' /var/www/.zcp/dev-servers.json", match: "^1\\s*$"}
     - {service: appdev, cmd: "grep -q '\"name\": *\"appdev\"' /var/www/.zcp/dev-servers.json && echo named-after-host", match: "^named-after-host"}
     - {service: appdev, cmd: "zcp-devsup ctl status --json | grep -qE '\"status\": *\"running\"' && echo running", match: "^running"}

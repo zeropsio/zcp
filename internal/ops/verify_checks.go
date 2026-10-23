@@ -32,7 +32,7 @@ const (
 	// the rename needed no other reader updated.
 	checkNameHTTPRoot = "http_public"
 	// checkNameHTTPInternal names the project-network reachability probe
-	// (GET http://<hostname>:<port>/) — independent of public-access intent
+	// (GET http://<hostname>:<port><health path>) — independent of public-access intent
 	// (docs/spec-workflows.md §8 O3 PA-4).
 	checkNameHTTPInternal = "http_internal"
 	// checkNamePublicDomain names one custom-domain reachability probe
@@ -97,12 +97,13 @@ func (rc RuntimeClass) String() string {
 // `topology.CanonicalBareForm` before the switch so the bare-name cases
 // (`runtimePHPNginx`, `runtimeNginx`, etc.) match regardless of which
 // shape the API returns.
+//
+// A recorded "serves HTTP" never stands in for ports the service does not
+// declare: the record is what the host last deployed through ZCP, the ports
+// are what it declares now.
 func classifyRuntime(serviceType string, hasPorts bool, recordedServesHTTP *bool) RuntimeClass {
-	if recordedServesHTTP != nil {
-		if !*recordedServesHTTP {
-			return RuntimeWorker
-		}
-		hasPorts = true
+	if recordedServesHTTP != nil && !*recordedServesHTTP {
+		return RuntimeWorker
 	}
 	canonical := topology.CanonicalBareForm(serviceType)
 	base, _, _ := strings.Cut(canonical, "@")
@@ -220,7 +221,7 @@ func checkHTTPRoot(ctx context.Context, httpClient HTTPDoer, url string) CheckRe
 
 // checkHTTPInternal probes the runtime directly over the project network
 // (container mode) or the VPN it already needs (local mode) at
-// http://<hostname>:<port>/ — independent of subdomain/domain public-access
+// http://<hostname>:<port><health path> — independent of subdomain/domain public-access
 // state (docs/spec-workflows.md §8 O3 PA-4).
 //
 // deferredStart skips the probe with a "start the dev server first" hint
@@ -240,17 +241,26 @@ func checkHTTPRoot(ctx context.Context, httpClient HTTPDoer, url string) CheckRe
 // observed subdomain state (on/enabling) — not Listener — drives its
 // branch, so a running dev server is reflected there regardless of this
 // limitation.
-func checkHTTPInternal(ctx context.Context, probe httpProbe, svc *platform.ServiceStack, deferredStart bool) CheckResult {
+func checkHTTPInternal(ctx context.Context, probe httpProbe, svc *platform.ServiceStack, deferredStart bool, healthPath string) CheckResult {
 	name := checkNameHTTPInternal
 	if deferredStart {
-		return CheckResult{Name: name, Status: CheckSkip, Detail: "dev runtime has no process yet — start it with zerops_dev_server, then verify"}
+		return CheckResult{Name: name, Status: CheckSkip, Detail: fmt.Sprintf("dev runtime has no process yet — start it with zerops_dev_server action=start hostname=%q, then verify", svc.Name)}
 	}
 	port, ok := PreferredHTTPPort(svc.Ports)
 	if !ok {
 		return CheckResult{Name: name, Status: CheckSkip, Detail: "no HTTP port configured"}
 	}
-	url := "http://" + net.JoinHostPort(svc.Name, strconv.Itoa(port.Port)) + "/"
+	url := "http://" + net.JoinHostPort(svc.Name, strconv.Itoa(port.Port)) + probePath(healthPath)
 	return probe.probe(ctx, url, name)
+}
+
+// probePath is the path an HTTP check requests: the declared health path, or
+// `/` when none is declared.
+func probePath(healthPath string) string {
+	if healthPath == "" {
+		return "/"
+	}
+	return healthPath
 }
 
 // devPortInternalChecks probes each declared dev server's port over the
@@ -263,18 +273,23 @@ func devPortInternalChecks(ctx context.Context, probe httpProbe, svc *platform.S
 		var check CheckResult
 		switch d.Status {
 		case devsup.StatusRunning, devsup.StatusStarting:
-			url := "http://" + net.JoinHostPort(svc.Name, strconv.Itoa(d.Port)) + "/"
+			if d.LoopbackOnly {
+				check = CheckResult{Name: checkNameHTTPInternal, Status: CheckInfo,
+					Detail: fmt.Sprintf("dev server %s listens on loopback only (127.0.0.1:%d) — by design not reachable by hostname; its supervisor sees it accept there, and the web server in front of it reaches it if proxied", d.Name, d.Port)}
+				break
+			}
+			url := "http://" + net.JoinHostPort(svc.Name, strconv.Itoa(d.Port)) + probePath(d.HealthPath)
 			check = probe.probe(ctx, url, checkNameHTTPInternal)
 			check.URL = url
 		case devsup.StatusCrashed:
 			check = CheckResult{Name: checkNameHTTPInternal, Status: CheckFail,
-				Detail: fmt.Sprintf("dev server %s crashed — read zerops_dev_server action=logs name=%s, fix it, start it again", d.Name, d.Name)}
+				Detail: fmt.Sprintf("dev server %s crashed — read zerops_dev_server action=logs hostname=%q name=%q, fix it, start it again", d.Name, svc.Name, d.Name)}
 		case devsup.StatusStopped:
 			check = CheckResult{Name: checkNameHTTPInternal, Status: CheckSkip,
-				Detail: fmt.Sprintf("dev server %s is stopped — start it with zerops_dev_server name=%s to check it", d.Name, d.Name)}
+				Detail: fmt.Sprintf("dev server %s is stopped — start it with zerops_dev_server action=start hostname=%q name=%q to check it", d.Name, svc.Name, d.Name)}
 		default:
 			check = CheckResult{Name: checkNameHTTPInternal, Status: CheckSkip,
-				Detail: fmt.Sprintf("dev server %s is not started — start it with zerops_dev_server name=%s to check it", d.Name, d.Name)}
+				Detail: fmt.Sprintf("dev server %s is not started — start it with zerops_dev_server action=start hostname=%q name=%q to check it", d.Name, svc.Name, d.Name)}
 		}
 		check.Server, check.Port = d.Name, d.Port
 		checks = append(checks, check)
@@ -300,8 +315,8 @@ func devPortPublicChecks(ctx context.Context, client platform.Client, probe http
 		}
 		check := CheckResult{Name: checkNameHTTPRoot, Status: CheckSkip, Detail: "cannot resolve subdomain URL"}
 		if url := subdomainURLForPort(ctx, client, proj.SubdomainHost, svc, d.Port, nil); url != "" {
-			check = probe.probe(ctx, url+"/", checkNameHTTPRoot)
-			check.URL = url + "/"
+			check = probe.probe(ctx, url+probePath(d.HealthPath), checkNameHTTPRoot)
+			check.URL = url + probePath(d.HealthPath)
 		}
 		check.Server, check.Port = d.Name, d.Port
 		checks = append(checks, check)
@@ -315,7 +330,7 @@ func devPortPublicChecks(ctx context.Context, client platform.Client, probe http
 // suppressed by a stale intent), then domains-present, then the off-state
 // rule keyed by intent. listener is !DeferredStart (see checkHTTPInternal's
 // doc-comment for the caveat on how DeferredStart is computed).
-func buildHTTPPublicChecks(ctx context.Context, client platform.Client, probe httpProbe, projectID string, svc *platform.ServiceStack, intent topology.PublicAccessIntent, obs PublicAccessObservation, listener bool) []CheckResult {
+func buildHTTPPublicChecks(ctx context.Context, client platform.Client, probe httpProbe, projectID string, svc *platform.ServiceStack, intent topology.PublicAccessIntent, obs PublicAccessObservation, listener bool, healthPath string) []CheckResult {
 	name := checkNameHTTPRoot
 	switch {
 	case obs.Observed.Subdomain == topology.SubdomainOn:
@@ -326,9 +341,10 @@ func buildHTTPPublicChecks(ctx context.Context, client platform.Client, probe ht
 		if probeURL == "" {
 			return []CheckResult{{Name: name, Status: CheckSkip, Detail: "cannot resolve subdomain URL"}}
 		}
-		check := probe.probe(ctx, probeURL+"/", checkNameHTTPRoot)
+		probeURL += probePath(healthPath)
+		check := probe.probe(ctx, probeURL, checkNameHTTPRoot)
 		if check.HTTPStatus > 0 {
-			bodyText, consoleErrors := renderHTTPRoot(ctx, probeURL+"/")
+			bodyText, consoleErrors := renderHTTPRoot(ctx, probeURL)
 			check.BodyText = bodyText
 			check.ConsoleErrors = consoleErrors
 		}
@@ -434,6 +450,7 @@ func probeHTTPWithin(ctx context.Context, httpClient HTTPDoer, url, name string,
 	if err != nil {
 		return CheckResult{Name: name, Status: CheckFail, Detail: fmt.Sprintf("request failed: %v", err)}, false
 	}
+	probed := req.URL.RequestURI()
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return CheckResult{Name: name, Status: CheckFail, Detail: fmt.Sprintf("request failed: %v", err)}, probeTimedOut(err)
@@ -446,16 +463,17 @@ func probeHTTPWithin(ctx context.Context, httpClient HTTPDoer, url, name string,
 
 	// 2xx / 3xx — root path serves a real response. Pass.
 	if resp.StatusCode < 400 {
-		// http_root probes GET / ONLY. A / pass does NOT prove a specific
-		// route the agent just added works — without this caveat the agent
-		// generalized a / 200 into "the new endpoint works" and reported an
-		// unprobed route as healthy (Wave-3 develop-loop: "/version works" off
-		// a / 200, never fetched). Nudge the agent to probe added routes itself.
+		// The check probes the one path it names (`/` or the service's health
+		// path) ONLY. A pass does NOT prove a specific route the agent just
+		// added works — without this caveat the agent generalized a / 200 into
+		// "the new endpoint works" and reported an unprobed route as healthy
+		// (Wave-3 develop-loop: "/version works" off a / 200, never fetched).
+		// Nudge the agent to probe added routes itself.
 		return CheckResult{
 			Name:       name,
 			Status:     CheckPass,
 			HTTPStatus: resp.StatusCode,
-			Detail:     "GET / probed only — a specific route you added (e.g. a new endpoint) is NOT covered by this check; curl it to confirm before reporting it works",
+			Detail:     "GET " + probed + " probed only — a specific route you added (e.g. a new endpoint) is NOT covered by this check; curl it to confirm before reporting it works",
 		}, false
 	}
 	// 4xx — server reachable but root path not served (404), auth-gated
@@ -468,7 +486,7 @@ func probeHTTPWithin(ctx context.Context, httpClient HTTPDoer, url, name string,
 		detail += ": " + truncateBody(body, 200)
 	}
 	if resp.StatusCode < 500 {
-		detail += " (server reachable but root path not serving a 2xx/3xx — verify a real endpoint or accept as cosmetic)"
+		detail += " (server reachable but " + probed + " not serving a 2xx/3xx — verify a real endpoint or accept as cosmetic)"
 	}
 	return CheckResult{Name: name, Status: CheckFail, Detail: detail, HTTPStatus: resp.StatusCode}, false
 }
@@ -547,18 +565,14 @@ func truncateBody(b []byte, limit int) string {
 // 2-port service reports scheme "http" on the httpSupport port and "tcp" on the
 // other BEFORE subdomain enable — so no network probe is needed to pick it.
 func ResolveSubdomainURL(ctx context.Context, client platform.Client, projectID string, svc *platform.ServiceStack) string {
-	if !svc.SubdomainAccess || len(svc.Ports) == 0 {
-		return ""
-	}
-	proj, err := client.GetProject(ctx, projectID)
-	if err != nil || proj.SubdomainHost == "" {
+	if !svc.SubdomainAccess {
 		return ""
 	}
 	port, ok := PreferredHTTPPort(svc.Ports)
 	if !ok {
 		return ""
 	}
-	return subdomainURLForPort(ctx, client, proj.SubdomainHost, svc, port.Port, nil)
+	return SubdomainURLForPort(ctx, client, projectID, svc, port.Port)
 }
 
 // aggregateStatus computes overall status from checks.

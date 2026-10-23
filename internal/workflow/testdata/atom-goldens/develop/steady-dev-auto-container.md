@@ -54,7 +54,7 @@ in the envelope:
 
 Only `runtimeClass: dynamic` + `mode: dev` needs a manual dev-server
 action — its idle runtime container (`run.start: zsc noop --silent`) waits
-for `zerops_dev_server action=start`. Implicit-webserver, static, and
+for `zerops_dev_server action=start hostname="<dev>"`. Implicit-webserver, static, and
 dynamic + simple/stage are platform-owned post-deploy; triage ends there.
 
 **Step 2 — Check current state** for dev-mode dynamic:
@@ -141,7 +141,7 @@ runtimes the web server auto-starts and this checklist does not apply.
 
 - Dev setup block in `zerops.yaml`: **`run.start: zsc noop --silent`**
   (a no-op keepalive), **no** `healthCheck`. You start the real dev
-  process yourself via `zerops_dev_server action=start`; its supervisor
+  process yourself via `zerops_dev_server action=start hostname="<dev>"`; its supervisor
   starts it again after later redeploys and restarts, until `action=stop`.
 - Stage setup block (if a dev+stage pair exists): real `start:`
   command **plus** a `healthCheck`. Stage auto-starts on deploy and
@@ -203,38 +203,25 @@ zerops_dev_server action=logs hostname="appdev" logLines=60
 === develop-dynamic-runtime-start-container ===
 ### Dynamic-runtime dev server
 
-Dev-mode dynamic runtime containers run no dev process until you start
-one. It runs under the dev service's supervisor (`zcp-devsup`, the dev
+A dev server runs under the dev service's supervisor (`zcp-devsup`, the dev
 setup's `run.start`); its first start declares it in `.zcp/dev-servers.json`.
 If the dev setup still runs `zsc noop`, that start adds the supervisor's two
-lines and redeploys once (uncommitted work stays) — commit both files. The
-supervisor starts it again after a restart or redeploy (a deploy reports it
-under `devServer`) until you `stop` it; a crash leaves it down. A passing
-verify means "live now", not "durably shipped" — for an always-on service
-use simple mode. Action family on `zerops_dev_server`:
+lines and redeploys once (uncommitted work stays) — commit both files.
+Every deploy starts each `autostart` server (see `devServer`), a restart
+each not `stop`ped; a start crash is retried once, a later one stays down.
+A passing verify means "live now", not "durably shipped" — for an
+always-on service use simple mode.
 
-| Action | Use | Args |
-|---|---|---|
-| `status` | check before `start` (idempotent) | `hostname port healthPath` |
-| `start` | run the dev process | `hostname command port healthPath` |
-| `restart` | after a config/code change | `hostname healthPath` |
-| `logs` | tail its log | `hostname logLines=40` |
-| `stop` | end its process group, free the port | `hostname` |
-
-Args:
-- `command` — the app's dev-server start command (e.g. `npm run dev`),
-  not the dev block's `run.start`.
-- `port` — `run.ports[0].port`; `healthPath` — app-owned or `/`.
-- `name` — when one dev service runs several servers (`web`, `api`);
+- `command` is the app's dev-server command (e.g. `npm run dev`), not the
+  dev setup's `run.start`.
+- `name` each server when one dev service runs several (`web`, `api`);
   stopping one leaves the others running.
-
-Response carries `running`, `healthStatus`, `url` (the hostname-vantage
-address to reach the server — the probe runs localhost inside the
-container, so the app must bind `0.0.0.0`, not loopback), `reason`, and
-`logTail` — read these before making another call.
+- The health probe runs on localhost inside the dev container, so the app
+  must bind `0.0.0.0`, not loopback, for the response's `url` to reach it. Read
+  `running`, `healthStatus`, `reason` and `logTail` before another call.
 
 Don't hand-roll `ssh appdev "cmd &"`: the SSH session ends with
-the call and kills the process. Always go through `zerops_dev_server`.
+the call and kills the process.
 
 ---
 
@@ -300,15 +287,11 @@ before any browser probe.
 
 When `bodyText`/`consoleErrors` are missing, truncated, or the page needs
 interaction / SPA routes / non-root / auth, drive the browser **inline** with
-`zerops_browser` (`screenshot: true` for evidence). Only `wait` polls —
-click/find/get/is look once — so after a click or reload
-`["wait","<sel>"]` or `["wait","--text","<text>"]`, never a fixed time,
-before asserting. Checkbox: `["is","checked","<sel>"]`. `find` actions are
-only click/fill/check/hover/text, `--name` after the action:
-`["find","label","<text>","check"]`,
-`["find","role","button","click","--name","Submit"]`. An `@eN` ref lives only
-after a snapshot in the same call — prefer `find` or CSS.
-Never spawn a sub-agent or call raw `agent-browser`.
+`zerops_browser`; pass `screenshot: true` (`fullPage: true`: whole page) for
+evidence. Only `wait` polls: wait for an element/text, never a fixed time. Use
+`isolation: "fresh-context"` only for the first check after a deploy that
+changed sign-in, storage, a service worker or caches. Never spawn a sub-agent
+or call raw `agent-browser`.
 To make an already-public service internal-only, call `zerops_subdomain action="disable"` — after that, `http_public` reports `skip` on every later verify, same as a `publicAccess: "none"` plan intent.
 
 - **VERDICT: PASS** — healthy + real rendered content; proceed.
@@ -318,52 +301,7 @@ To make an already-public service internal-only, call `zerops_subdomain action="
 ---
 
 === develop-strategy-awareness ===
-### Deploy config — recorded dimensions + how delivery derives
-
-Each runtime service records three deploy-config dimensions — the
-rendered Services block shows them as
-`closeMode=auto|manual|unset gitPush=unconfigured|configured|broken buildIntegration=none|webhook|actions`:
-
-- `closeMode` — who owns "done". `auto` lets the work session close
-  itself once every in-scope service has a successful deploy + passing
-  verify; `manual` yields close decisions to you / external
-  orchestration. `unset` is the bootstrap-written placeholder that
-  develop converts on first use.
-- `gitPush` — capability state for push delivery. `configured`
-  means the last `git-push-setup` probe **proved end-to-end auth**: the
-  supplied token authenticates against the remote URL, the push source carries
-  `GIT_TOKEN` (sensitive), and the working tree's git config has its
-  `origin` synced. `broken` means a previously-configured token stopped
-  working (e.g. PAT rotation) — re-run setup before pushing.
-- `buildIntegration` — the ZCP-managed CI shape that was picked. `actions`
-  (GitHub Actions workflow + secrets), `webhook` (Zerops dashboard OAuth),
-  or `none`. Requires `gitPush=configured`. The flag records the choice
-  and the handoff shape (workflow YAML body / dashboard URL); workflow
-  commit, secrets landing, and OAuth completion happen outside ZCP's
-  reach and are not verified by this flag. Treat as "this is the
-  integration shape we wired", not "the build trigger is confirmed live".
-
-**The delivery mechanism is DERIVED, not chosen separately:** when
-`gitPush=configured` (and closeMode is not `manual`), delivery is
-commit + git push — direct `zerops_deploy` self/cross calls on that pair
-answer `push-delivery-required` with the recommended push call. Otherwise
-delivery is the direct `zerops_deploy` path. Want push delivery? Configure
-the capability; there is no separate mode switch.
-
-Change any dimension without closing the session:
-
-- `close-mode` is **per-pair** under the hood (one record per dev/stage pair) but accepts a multi-entry map: one call sets close-mode for any subset of services. Passing both halves of a pair with the SAME value is accepted (canonical write once). Passing both halves with DIFFERENT values is rejected with an explicit conflict diagnostic — pick one value for the pair.
-- `git-push-setup` and `build-integration` are **per-pair**: capability is stamped on the dev half's record and shared by both halves. `git-push-setup` rejects stage-half input with `INVALID_PARAMETER` (it mutates push-side state — would write to the wrong target). `build-integration` is permissive: pair-keyed lookup resolves either half to the dev record and the response carries `pushSource`/`buildTarget`/`topologyNote` so the redirect is visible. Either way: prefer passing the dev half directly.
-
-```
-zerops_workflow action="close-mode" closeMode={"appdev":"auto"}
-zerops_workflow action="git-push-setup" service="appdev" remoteUrl="..."
-zerops_workflow action="build-integration" service="appdev" integration="actions"
-```
-
-Substitute `appdev` with the dev-half hostname (or single-runtime hostname). For a multi-service project, repeat each call once per dev-half service — never per stage-half.
-
-Mixed config across services in one project is fine — each service's dimensions are independent in the envelope.
+**Deploy config — recorded dimensions + how delivery derives** — pull on demand: `zerops_knowledge uri="zerops://atoms/develop-strategy-awareness"`
 
 ---
 

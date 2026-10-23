@@ -40,6 +40,11 @@ If the plan you're about to submit includes a dynamic runtime (Node, Go, Python,
 ]
 ```
 
+A repo with several deployable parts: read
+`zerops_knowledge uri="zerops://playbooks/monorepo"` before you submit — the
+plan then names one stage per part with its setup in `stages` instead of
+`stageHostname`.
+
 Confirm dev/stage pairing with the user before submitting the plan. Mode + close-mode + git-push capability decisions all happen later in develop, not here.
 
 Add `"publicAccess": "none"` inside `runtime` when the user wants this runtime kept internal-only (no public subdomain ever) — omit the field entirely for the default (a public subdomain switches on automatically the first time it can).
@@ -69,7 +74,8 @@ submitting the plan.
 - **dev** — single mutable dev container, SSHFS-mountable, no stage pair.
   The app runs ONLY as the dev server you start with `zerops_dev_server`
   (no supervised `run.start`); zcp starts it again after a container
-  cycle, but a crash leaves it down and the URL answers 502 while it is.
+  cycle, and a crash while starting is retried once, but a crash after it
+  listened leaves it down and the URL answers 502 while it is.
   Pick dev for hands-on iteration with no durable end-state — never as the
   final state of a service the user wants to stay reachable.
 - **standard** — dev + stage pair. The envelope reports `stageHostname`

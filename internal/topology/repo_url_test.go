@@ -76,3 +76,30 @@ func TestCanonicalRepoURL_Idempotent(t *testing.T) {
 		}
 	}
 }
+
+// Two addresses name the same repository regardless of the case of its host,
+// owner and name, a trailing ".git" or a trailing slash.
+func TestSameRepoURL(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		a, b string
+		want bool
+	}{
+		{"identical", "https://github.com/acme/app", "https://github.com/acme/app", true},
+		{"case of host, owner and name", "https://GitHub.com/Acme/App", "https://github.com/acme/app", true},
+		{"trailing .git and slash", "https://github.com/acme/app.git/", "https://github.com/acme/app", true},
+		{"another repository", "https://github.com/acme/app", "https://github.com/acme/api", false},
+		{"another owner", "https://github.com/acme/app", "https://github.com/other/app", false},
+		{"another host", "https://github.com/acme/app", "https://gitlab.com/acme/app", false},
+		{"empty", "", "https://github.com/acme/app", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := SameRepoURL(tt.a, tt.b); got != tt.want {
+				t.Errorf("SameRepoURL(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.want)
+			}
+		})
+	}
+}

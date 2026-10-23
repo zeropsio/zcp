@@ -174,7 +174,7 @@ type RuntimeTarget struct {
 	// ServesHTTP records whether this runtime serves HTTP, known from the
 	// recipe shape's RoleKind at parse time (false for a zeropsSetup:worker).
 	// nil = unknown (agent-authored / adopt plans leave it nil and let deploy
-	// discover it from HasPorts). Derive-only; flows to ServiceMeta.ServesHTTP
+	// discover it from HasPorts). Derive-only; flows to ServiceMeta.ServesHTTPByHost
 	// so verify classifies a worker correctly on the first call. (R3-P4)
 	ServesHTTP *bool `json:"servesHttp,omitempty"`
 	// PrimarySetupName / StageSetupName carry the recipe runtime's LITERAL

@@ -121,6 +121,30 @@ func TestCore_GenerateRules_ContainsDeployFilesAndTilde(t *testing.T) {
 	}
 }
 
+// TestCore_ZscInstall_NeedsSudo: the core reference writes the runtime-side
+// `zsc install` the way run.prepareCommands accepts it — under sudo, since
+// the runtime container runs as the zerops user (without it the deploy ends
+// PREPARING_RUNTIME_FAILED).
+func TestCore_ZscInstall_NeedsSudo(t *testing.T) {
+	t.Parallel()
+	store, err := GetEmbeddedStore()
+	if err != nil {
+		t.Fatalf("GetEmbeddedStore: %v", err)
+	}
+	doc, err := store.Get("zerops://themes/core")
+	if err != nil {
+		t.Fatalf("Get core: %v", err)
+	}
+	for line := range strings.SplitSeq(doc.Content, "\n") {
+		if strings.Contains(line, "zsc install") && !strings.Contains(line, "sudo zsc install") {
+			t.Errorf("core reference names `zsc install` without sudo: %q", line)
+		}
+	}
+	if !strings.Contains(doc.Content, "sudo zsc install") {
+		t.Error("core reference never shows `sudo zsc install`")
+	}
+}
+
 func TestRuntimeNormalizer_AllMapped_GuideResolvable(t *testing.T) {
 	t.Parallel()
 	store, err := GetEmbeddedStore()

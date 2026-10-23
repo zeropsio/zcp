@@ -28,7 +28,36 @@ type MateState struct {
 	// Changes are, in each of that application's repositories, the Mate's
 	// latest changes, newest first: its open one, if any, is the newest.
 	Changes []MateChange `json:"changes"`
+	// Repos are the application's repositories in HQ, by name. nil from an HQ
+	// older than repositories in the Mate's state.
+	Repos []MateRepo `json:"repos"`
+	// Production is whether that application has a production, of any
+	// target, released or not. nil from an HQ older than it.
+	Production *bool `json:"production"`
 }
+
+// MateRepo is one of the application's repositories in HQ, with the origin
+// connected to it, nil while none is.
+type MateRepo struct {
+	Name   string      `json:"name"`
+	Origin *RepoOrigin `json:"origin"`
+}
+
+// RepoOrigin is a connected origin: its https address as HQ stores it, which
+// never carries a credential, and which way the person keeps the code.
+type RepoOrigin struct {
+	URL string `json:"url"`
+	// Mode is OriginOnGitHub or OriginFollowed; "" from an HQ older than it.
+	Mode string `json:"mode,omitempty"`
+}
+
+// The ways a person keeps a repository's code: on GitHub, GitHub being the
+// checkout's origin; or in Mate, HQ the origin and GitHub only followed as a
+// fetch-only upstream.
+const (
+	OriginOnGitHub = "github"
+	OriginFollowed = "follow"
+)
 
 // MateChange is one of the Mate's own changes, as it reads its outcome.
 type MateChange struct {
@@ -41,6 +70,13 @@ type MateChange struct {
 	Head       *string `json:"head"`
 	MergedSha  *string `json:"mergedSha"`
 	LandedHead *string `json:"landedHead"`
+	// Branch is the branch the change is bound to, by its short name: one
+	// its Mate named, or `mate/<project id>/<number>` of the Mate that opened
+	// it. "" from an HQ older than branches in the Mate's state.
+	Branch string `json:"branch,omitempty"`
+	// Handed is a change a person handed this Mate from a Mate that is gone:
+	// the Mate's own now, on the branch it was on.
+	Handed bool `json:"handed,omitempty"`
 }
 
 // Self reads this Mate's state from its HQ.

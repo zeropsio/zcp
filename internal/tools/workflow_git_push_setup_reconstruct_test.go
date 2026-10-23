@@ -42,7 +42,7 @@ func TestGitPushSetupContainer_ReconstructsMissingGit(t *testing.T) {
 
 	ssh := &containerSSHStub{
 		dispatch: func(cmd string) ([]byte, error) {
-			if strings.Contains(cmd, "test -d /var/www/.git") {
+			if strings.Contains(cmd, "test -d '/var/www/.git'") {
 				return []byte("absent"), nil
 			}
 			if strings.Contains(cmd, "git status --porcelain") {
@@ -114,7 +114,7 @@ func TestGitPushSetupContainer_Reconstruct_ReportsDivergence(t *testing.T) {
 
 	ssh := &containerSSHStub{
 		dispatch: func(cmd string) ([]byte, error) {
-			if strings.Contains(cmd, "test -d /var/www/.git") {
+			if strings.Contains(cmd, "test -d '/var/www/.git'") {
 				return []byte("absent"), nil
 			}
 			if strings.Contains(cmd, "git status --porcelain") {

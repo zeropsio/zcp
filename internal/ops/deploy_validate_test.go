@@ -4,6 +4,7 @@ package ops
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -26,13 +27,43 @@ func TestValidateZeropsYmlContent_SameFindingsAsPathBased(t *testing.T) {
 	}
 
 	pathWarnings, pathErr := ValidateZeropsYml(dir, "app", "", DeployClassCross)
-	contentWarnings, contentErr := ValidateZeropsYmlContent(content, "app", "", DeployClassCross)
+	contentWarnings, contentErr := ValidateZeropsYmlContent(content, "zerops.yaml", "app", "", DeployClassCross)
 
 	if pathErr != nil || contentErr != nil {
 		t.Fatalf("unexpected errors: path=%v content=%v", pathErr, contentErr)
 	}
 	if strings.Join(pathWarnings, "|") != strings.Join(contentWarnings, "|") {
 		t.Errorf("path-based warnings = %v, content-based = %v, want identical", pathWarnings, contentWarnings)
+	}
+}
+
+// A setup that starts its processes with run.startCommands starts the app
+// after deploy, so it gets no "run.start is empty" warning.
+func TestValidateZeropsYmlContent_ASetupWithStartCommandsIsNotWarnedThatRunStartIsEmpty(t *testing.T) {
+	t.Parallel()
+
+	content := []byte(`zerops:
+  - setup: api
+    build:
+      deployFiles: ./
+    run:
+      base: python@3.12
+      ports:
+        - port: 5001
+      startCommands:
+        - command: uv run python -m app
+          name: api
+        - command: uv run celery worker
+          name: worker
+`)
+	warnings, err := ValidateZeropsYmlContent(content, "zerops.yaml", "api", "python@3.12", DeployClassCross)
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	for _, w := range warnings {
+		if strings.Contains(w, "run.start is empty") {
+			t.Errorf("warnings = %q, want no run.start warning for a startCommands setup", warnings)
+		}
 	}
 }
 
@@ -43,7 +74,7 @@ func TestValidateZeropsYmlContent_DM2SelfDeployViolation_ReturnsError(t *testing
 	t.Parallel()
 
 	content := []byte("zerops:\n  - setup: app\n    build:\n      deployFiles: dist\n")
-	_, err := ValidateZeropsYmlContent(content, "app", "", DeployClassSelf)
+	_, err := ValidateZeropsYmlContent(content, "zerops.yaml", "app", "", DeployClassSelf)
 	if err == nil {
 		t.Fatal("expected a DM-2 error for self-deploy with narrower-than-[.] deployFiles")
 	}
@@ -1637,5 +1668,115 @@ func TestReservedEnvNames_AtomCoverage(t *testing.T) {
 		if !strings.Contains(atomText, "`"+key+"`") {
 			t.Errorf("runScopeReservedEnvKeys has %q but develop-reserved-env-names.md doesn't cite it (expected `%s` in backticks)", key, key)
 		}
+	}
+}
+
+// TestValidateZeropsYmlContent_ZeropsYmlRepo_NamesZeropsYml proves a repo that
+// keeps zerops.yml sees that name in the content-path findings, never zerops.yaml.
+func TestValidateZeropsYmlContent_ZeropsYmlRepo_NamesZeropsYml(t *testing.T) {
+	t.Parallel()
+	empty, _ := ValidateZeropsYmlContent([]byte("zerops: []\n"), "zerops.yml", "app", "", DeployClassCross)
+	missing, _ := ValidateZeropsYmlContent([]byte("zerops:\n  - setup: other\n"), "zerops.yml", "app", "", DeployClassCross)
+	bad, _ := ValidateZeropsYmlContent([]byte("zerops: [\n"), "zerops.yml", "app", "", DeployClassCross)
+	for _, w := range [][]string{empty, missing, bad} {
+		if len(w) != 1 || !strings.Contains(w[0], "zerops.yml") || strings.Contains(w[0], "zerops.yaml") {
+			t.Errorf("warnings = %q, want one naming zerops.yml only", w)
+		}
+	}
+}
+
+// A deploy of setups written as `extends: base` warned "build.deployFiles is
+// empty" though base held them: the platform resolves extends before it
+// builds, so the warnings read the setup as the platform resolves it —
+// recursive key by key, lists replaced whole, a null key removed, chains and
+// lists of parents in order.
+func TestValidateZeropsYml_ASetupThatExtendsABaseIsCheckedAsThePlatformResolvesIt(t *testing.T) {
+	t.Parallel()
+	const yml = `zerops:
+  - setup: base
+    build:
+      base: python@3.12
+      buildCommands: [uv sync]
+      deployFiles: ./
+    run:
+      base: python@3.12
+      start: uv run app
+      ports:
+        - port: 8000
+      envVariables:
+        LOG_LEVEL: info
+  - setup: logging
+    run:
+      envVariables:
+        LOG_STYLE: json
+  - setup: apidev
+    extends: base
+    run:
+      start: zcp-devsup run
+  - setup: apistage
+    extends: [base, logging]
+    build:
+      deployFiles: [dist]
+  - setup: workerstage
+    extends: apistage
+    run:
+      ports: null
+`
+	tests := []struct {
+		setup string
+		class DeployClass
+		want  []string
+	}{
+		{setup: "apidev", class: DeployClassSelf, want: nil},
+		{setup: "apistage", class: DeployClassCross, want: nil},
+		{setup: "workerstage", class: DeployClassCross, want: []string{"run.ports is empty — the service runs as a worker: no port is exposed and verify runs no HTTP check; declare run.ports if it serves HTTP"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.setup, func(t *testing.T) {
+			t.Parallel()
+			warnings, err := ValidateZeropsYmlContent([]byte(yml), "zerops.yaml", tt.setup, "python@3.12", tt.class)
+			if err != nil {
+				t.Fatalf("err = %v", err)
+			}
+			if !slices.Equal(warnings, tt.want) {
+				t.Fatalf("warnings = %q, want %q", warnings, tt.want)
+			}
+		})
+	}
+
+	doc, err := ParseZeropsYmlContent([]byte(yml), "zerops.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage := doc.FindEntry("apistage")
+	if got := stage.DeployFilesList(); !slices.Equal(got, []string{"dist"}) {
+		t.Errorf("apistage deployFiles = %q, want its own list replacing base's", got)
+	}
+	if stage.Run.Start != "uv run app" || stage.Run.EnvVariables["LOG_LEVEL"] != "info" || stage.Run.EnvVariables["LOG_STYLE"] != "json" {
+		t.Errorf("apistage run = %+v, want base's start and both parents' env merged", stage.Run)
+	}
+	if dev := doc.FindEntry("apidev"); dev.Run.Start != "zcp-devsup run" || len(dev.Run.Ports) != 1 {
+		t.Errorf("apidev run = %+v, want its own start over base's ports", dev.Run)
+	}
+}
+
+// extends that loops back on itself still parses, as far as it resolves: the
+// platform's own validation names the cycle.
+func TestParseZeropsYml_AnExtendsCycleResolvesWhatItCanAndEnds(t *testing.T) {
+	t.Parallel()
+	const yml = `zerops:
+  - setup: a
+    extends: [b, a]
+    run: {start: a}
+  - setup: b
+    extends: a
+    build: {deployFiles: ./}
+`
+	doc, err := ParseZeropsYmlContent([]byte(yml), "zerops.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := doc.FindEntry("a"); a.Run.Start != "a" || !slices.Equal(a.DeployFilesList(), []string{"./"}) {
+		t.Errorf("a = %+v, want its own start and b's deployFiles", *a)
 	}
 }

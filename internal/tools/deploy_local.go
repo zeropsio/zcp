@@ -115,7 +115,7 @@ func RegisterDeployLocal(
 				}
 				return jsonResult(deployLocalResponse{
 					DeployResult:     result,
-					WorkSessionState: sessionAnnotations(stateDir),
+					WorkSessionState: sessionAnnotations(ctx, httpClient, stateDir),
 					Envelope:         freshEnvelope(ctx, stateDir, client, projectID, runtime.Info{}),
 				}), nil, nil
 			}
@@ -125,7 +125,7 @@ func RegisterDeployLocal(
 			}
 			return jsonResult(deployLocalResponse{
 				DeployResult:     result,
-				WorkSessionState: sessionAnnotations(stateDir),
+				WorkSessionState: sessionAnnotations(ctx, httpClient, stateDir),
 				Envelope:         freshEnvelope(ctx, stateDir, client, projectID, runtime.Info{}),
 			}), nil, nil
 		}
@@ -170,7 +170,7 @@ func RegisterDeployLocal(
 		// Local mode: yaml lives at the project root (the user's working
 		// directory), so sourceHostname is empty — there are no per-service
 		// SSHFS mounts on a developer's local box.
-		resolvedSetup, pfResult, pfErr := deployPreFlight(ctx, client, projectID, stateDir, "", input.TargetService, input.Setup, input.WorkingDir, true)
+		resolved, pfResult, pfErr := deployPreFlight(ctx, client, projectID, stateDir, "", input.TargetService, input.Setup, input.WorkingDir, true)
 		if pfErr != nil {
 			var blocker *workflow.ErrRequiresSetupInput
 			if errors.As(pfErr, &blocker) {
@@ -189,8 +189,8 @@ func RegisterDeployLocal(
 				WithRecoveryStatus(),
 			), nil, nil
 		}
-		if resolvedSetup != "" {
-			input.Setup = resolvedSetup
+		if resolved.setup != "" {
+			input.Setup = resolved.setup
 		}
 
 		// Strategy on the local deploy path is "zcli" (zcli push from the
@@ -209,7 +209,7 @@ func RegisterDeployLocal(
 			attempt.Error = err.Error()
 			// Local push failed before reaching the platform — transport-
 			// layer error (e.g. zcli auth, connection).
-			classification := classifyTransportError(err, deployStrategyZCLILabel)
+			classification := classifyTransportError(err, deployStrategyZCLILabel, "")
 			if classification != nil {
 				attempt.FailureClass = classification.Category
 			} else {
@@ -220,7 +220,8 @@ func RegisterDeployLocal(
 		}
 
 		onProgress := buildProgressCallback(ctx, req)
-		pollDeployBuild(ctx, client, projectID, result, onProgress, logFetcher, nil, stateDir)
+		ctx = deployFollowUpContext(ctx)
+		pollDeployBuild(ctx, client, projectID, result, onProgress, logFetcher, nil, stateDir, "")
 
 		// L1 break-glass aftermath: a direct deploy on a push-delivering
 		// pair leaves the container ahead of the repo — flag the standing
@@ -253,7 +254,7 @@ func RegisterDeployLocal(
 		// environment derives from a zero-value runtime.Info.
 		return jsonResult(deployLocalResponse{
 			DeployResult:     result,
-			WorkSessionState: sessionAnnotations(stateDir),
+			WorkSessionState: sessionAnnotations(ctx, httpClient, stateDir),
 			Envelope:         freshEnvelope(ctx, stateDir, client, projectID, runtime.Info{}),
 		}), nil, nil
 	})
@@ -317,7 +318,17 @@ type WorkSessionState struct {
 // annotation agrees with the envelope phase + summary at every response surface
 // WITHOUT a lazy stamp. The trigger-vs-state asymmetry the old MaybeFireAutoClose
 // papered over is gone — there is no event to fire, the state is recomputed.
-func sessionAnnotations(stateDir string) *WorkSessionState {
+//
+// httpClient reaches HQ only for the closing note of a session that hands
+// over a change; nil where the caller holds none.
+func sessionAnnotations(ctx context.Context, httpClient ops.HTTPDoer, stateDir string) *WorkSessionState {
+	return sessionStateOf(stateDir, func() bool { return hqHasProduction(ctx, httpClient) })
+}
+
+// sessionStateOf is sessionAnnotations with how it learns whether the
+// application has a production, asked only for a closing note that hands
+// over a change.
+func sessionStateOf(stateDir string, hasProduction func() bool) *WorkSessionState {
 	ws, err := workflow.CurrentWorkSession(stateDir)
 	if err != nil || ws == nil {
 		return &WorkSessionState{
@@ -327,12 +338,12 @@ func sessionAnnotations(stateDir string) *WorkSessionState {
 	}
 	if closed, closedAt, reason := workflow.DeriveCloseState(stateDir, ws); closed {
 		note := closedSessionNote(closedAt, reason)
-		// The person's next step is theirs to know (hq_delivery.go) once the
-		// session delivered a pair whose HQ repository is on record and a
-		// change remains open to hand over. A stand-up or an empty delivery
-		// has none.
+		// The person's next step is theirs to know (hq_pair.go) once the
+		// session deployed the stage of a pair whose HQ repository is on
+		// record and a change remains open to hand over. A stand-up, or a
+		// pair with no change open, has none.
 		if sessionHandsOverAChange(stateDir, ws) {
-			note += " " + hqHandoffNote
+			note += " " + hqHandoffNote(hasProduction())
 		}
 		return &WorkSessionState{
 			Status:      "auto-closed",
@@ -388,7 +399,7 @@ const noActiveSessionNote = "No active develop session — deploy not tracked. S
 // across mutation handlers means the agent reads one lifecycle signal,
 // not three different ones.
 func attachWorkSessionState(body map[string]any, stateDir string) map[string]any {
-	if state := sessionAnnotations(stateDir); state != nil {
+	if state := sessionStateOf(stateDir, func() bool { return false }); state != nil {
 		body["workSessionState"] = state
 	}
 	return body

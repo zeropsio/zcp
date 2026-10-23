@@ -1,6 +1,7 @@
 package ops
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -53,8 +54,10 @@ func ValidateZeropsYml(workingDir, targetHostname, serviceType string, class Dep
 // ship. Same contract as ValidateZeropsYml (see its doc-comment);
 // ValidateZeropsYml itself delegates here after reading the file from
 // disk, so the two stay behaviorally identical for the same content.
-func ValidateZeropsYmlContent(content []byte, targetHostname, serviceType string, class DeployClass, roles ...topology.DeployRole) ([]string, error) {
-	doc, err := ParseZeropsYmlContent(content, "")
+// source is the file name the content was read from (zerops.yaml or
+// zerops.yml); the findings name it.
+func ValidateZeropsYmlContent(content []byte, source, targetHostname, serviceType string, class DeployClass, roles ...topology.DeployRole) ([]string, error) {
+	doc, err := ParseZeropsYmlContent(content, source)
 	if err != nil {
 		return []string{err.Error()}, nil //nolint:nilerr // parse error demoted to warning; authoritative validation is API-side
 	}
@@ -68,24 +71,24 @@ func validateZeropsYmlDoc(doc *ZeropsYmlDoc, targetHostname, serviceType string,
 	var warnings []string
 
 	if len(doc.Zerops) == 0 {
-		return []string{"zerops.yaml has no setup entries under 'zerops:' key"}, nil
+		return []string{doc.ConfigFileName() + " has no setup entries under 'zerops:' key"}, nil
 	}
 
 	// Find matching setup entry.
 	entry := doc.FindEntry(targetHostname)
 	if entry == nil {
-		warnings = append(warnings, fmt.Sprintf("no setup entry for hostname %q in zerops.yaml", targetHostname))
+		warnings = append(warnings, fmt.Sprintf("no setup entry for hostname %q in %s", targetHostname, doc.ConfigFileName()))
 		return warnings, nil
 	}
 
 	implicitWS := hasImplicitWebServer(entry.Run.Base, entry.Build.BaseStrings()) || IsImplicitWebServerType(serviceType)
 	if !implicitWS {
-		if entry.Run.Start == "" {
+		if entry.Run.Start == "" && entry.Run.StartCommands == nil {
 			warnings = append(warnings, "run.start is empty — app will not start after deploy")
 		}
 
 		if len(entry.Run.Ports) == 0 {
-			warnings = append(warnings, "run.ports is empty — no ports exposed, HTTP checks will fail")
+			warnings = append(warnings, "run.ports is empty — the service runs as a worker: no port is exposed and verify runs no HTTP check; declare run.ports if it serves HTTP")
 		}
 	}
 
@@ -148,6 +151,10 @@ func validateZeropsYmlDoc(doc *ZeropsYmlDoc, targetHostname, serviceType string,
 	}
 
 	if err := CheckReservedEnvNames(entry); err != nil {
+		var pe *platform.PlatformError
+		if errors.As(err, &pe) && doc.File != "" {
+			pe.Message = NameRepoConfigFile(pe.Message, doc.File)
+		}
 		return warnings, err
 	}
 
@@ -227,14 +234,43 @@ func CheckReservedEnvNames(entry *ZeropsYmlEntry) error {
 // ZeropsYmlDoc is the top-level zerops.yaml structure (minimal for validation).
 type ZeropsYmlDoc struct {
 	Zerops []ZeropsYmlEntry `yaml:"zerops"`
+
+	// File is the name the repo keeps the document under (zerops.yaml or
+	// zerops.yml); "" when the caller did not say.
+	File string `yaml:"-"`
 }
+
+// ConfigFileName is the file name zcp's own texts use for the document: the
+// repo's own name, else the primary one.
+func (d *ZeropsYmlDoc) ConfigFileName() string {
+	if d == nil || d.File == "" {
+		return zeropsYmlPrimary
+	}
+	return d.File
+}
+
+// InvalidZeropsYmlError is a config file that does not parse; File is the
+// name the repo keeps it under.
+type InvalidZeropsYmlError struct {
+	File string
+	Err  error
+}
+
+func (e *InvalidZeropsYmlError) Error() string {
+	return fmt.Sprintf("%s invalid YAML: %v", e.File, e.Err)
+}
+
+func (e *InvalidZeropsYmlError) Unwrap() error { return e.Err }
 
 // ZeropsYmlEntry represents a single setup entry in zerops.yaml.
 type ZeropsYmlEntry struct {
-	Setup  string          `yaml:"setup"`
-	Build  zeropsYmlBuild  `yaml:"build"`
-	Deploy zeropsYmlDeploy `yaml:"deploy"`
-	Run    zeropsYmlRun    `yaml:"run"`
+	Setup string `yaml:"setup"`
+	// Extends names the setups this one extends; a parsed document holds it
+	// resolved (ParseZeropsYmlContent), so it is nil there.
+	Extends any             `yaml:"extends"`
+	Build   zeropsYmlBuild  `yaml:"build"`
+	Deploy  zeropsYmlDeploy `yaml:"deploy"`
+	Run     zeropsYmlRun    `yaml:"run"`
 }
 
 // HasPorts returns true when the setup declares an HTTP-serving runtime.
@@ -368,14 +404,21 @@ func ParseZeropsYml(workingDir string) (*ZeropsYmlDoc, error) {
 // error message so a malformed YAML hauled in over SSH still names the right
 // file. Used by the git-push pre-flight (deploy-decomp P4): yaml content is
 // fetched from the container via SSH cat, parsed here, then env-var refs are
-// validated against live API state.
+// validated against live API state. Each setup is read as the platform
+// resolves it: `extends` merged in (resolveExtends).
 func ParseZeropsYmlContent(data []byte, source string) (*ZeropsYmlDoc, error) {
-	if source == "" {
-		source = zeropsYmlPrimary
+	file := source
+	if file == "" {
+		file = zeropsYmlPrimary
 	}
-	var doc ZeropsYmlDoc
+	doc := ZeropsYmlDoc{File: source}
 	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return nil, fmt.Errorf("%s invalid YAML: %w", source, err)
+		return nil, &InvalidZeropsYmlError{File: file, Err: err}
+	}
+	if doc.extends() {
+		if err := decodeResolved(data, &doc); err != nil {
+			return nil, &InvalidZeropsYmlError{File: file, Err: err}
+		}
 	}
 	return &doc, nil
 }
@@ -393,6 +436,16 @@ func ReadZeropsYmlRaw(workingDir string) ([]byte, error) {
 		}
 	}
 	return data, nil
+}
+
+// extends reports whether a setup extends another.
+func (d *ZeropsYmlDoc) extends() bool {
+	for _, e := range d.Zerops {
+		if e.Extends != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // FindEntry returns the entry matching hostname, or nil if not found.
@@ -442,6 +495,7 @@ func (b zeropsYmlBuild) deployFilesList() []string {
 type zeropsYmlRun struct {
 	Base            string            `yaml:"base"`
 	Start           string            `yaml:"start"`
+	StartCommands   any               `yaml:"startCommands"` // the multi-process alternative to start
 	Ports           []zeropsYmlPort   `yaml:"ports"`
 	HealthCheck     any               `yaml:"healthCheck"`
 	DeployFiles     any               `yaml:"deployFiles"`     // catch misplaced field (belongs under build:)

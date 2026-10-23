@@ -7,6 +7,7 @@ package ops
 
 import (
 	"context"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -246,8 +247,8 @@ func TestDeploySSH_NoSHA_SourceHasNoRepo_UnaffectedByRecording(t *testing.T) {
 	if result.VersionName != "" {
 		t.Errorf("result.VersionName = %q, want empty (no repo ⇒ no reachable HEAD ⇒ no flag, GF-10)", result.VersionName)
 	}
-	if len(ssh.calls) != 2 {
-		t.Fatalf("ssh calls = %d, want 2 (HeadStatus, push): %+v", len(ssh.calls), ssh.calls)
+	if len(ssh.calls) != 3 {
+		t.Fatalf("ssh calls = %d, want 3 (HeadStatus, push, build wait): %+v", len(ssh.calls), ssh.calls)
 	}
 	if !strings.Contains(ssh.calls[0].command, "rev-parse --verify HEAD") {
 		t.Errorf("call[0] = %q, want the HeadStatus check", ssh.calls[0].command)
@@ -298,16 +299,20 @@ func TestDeploySSH_NoSHA_SourceHasCleanRepo_RecordsHEADAndPassesVersionName(t *t
 	if result.NotCarried != nil {
 		t.Errorf("result.NotCarried = %+v, want nil (no ignored paths reported)", result.NotCarried)
 	}
-	if len(ssh.calls) != 2 {
-		t.Fatalf("ssh calls = %d, want 2 (self-deploy preflight, push): %+v", len(ssh.calls), ssh.calls)
+	if len(ssh.calls) != 3 {
+		t.Fatalf("ssh calls = %d, want 3 (self-deploy preflight, push, build wait): %+v", len(ssh.calls), ssh.calls)
 	}
 
 	// The push command must be EXACTLY what buildSSHCommand produces for
 	// a plain self-deploy carrying this versionName — recording HEAD must
 	// never perturb anything else.
-	want := buildSSHCommand(authInfo, "svc-1", defaultWorkingDir, "", true, "HEAD fullhea")
-	if ssh.calls[1].command != want {
+	pushDir := regexp.MustCompile(`/tmp/zcp-push-[A-Z2-7]+`).FindString(ssh.calls[1].command)
+	want := buildSSHCommand(authInfo, "svc-1", defaultWorkingDir, "", true, "HEAD fullhea", pushDir)
+	if pushDir == "" || ssh.calls[1].command != want {
 		t.Errorf("push command = %q, want byte-identical to buildSSHCommand's output %q", ssh.calls[1].command, want)
+	}
+	if want := buildWaitCommand(pushDir); ssh.calls[2].command != want {
+		t.Errorf("build wait command = %q, want %q", ssh.calls[2].command, want)
 	}
 	if !strings.Contains(ssh.calls[1].command, "--version-name 'HEAD fullhea'") {
 		t.Errorf("push command must carry --version-name 'HEAD fullhea': %s", ssh.calls[1].command)

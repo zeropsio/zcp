@@ -112,7 +112,11 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// Raised +143 (19604→19747) for the plan runtime's `publicAccess`
 		// enum (auto|subdomain|none) and one-line description: the agent
 		// reads the allowed values instead of guessing.
-		"zerops_workflow":    19747,
+		// Raised +257 (19747→20004) for action="open-change" and its one new
+		// input, `branch`: a Mate opens the change of a branch of its own
+		// (HQ's change-is-a-branch contract); `title` and `service` name the
+		// action they now also serve.
+		"zerops_workflow":    20004,
 		"zerops_record_fact": 3299,
 		"zerops_dev_server":  3220,
 		// Raised +28 (2945→2973) for the OS-axis migration: the runtime/services
@@ -147,7 +151,10 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// action description had to state the new keys+refs contract — the old
 		// "keys and values" wording drifted from the new behavior, so this is a
 		// correctness fix (tell == behavior), not surface bloat.
-		"zerops_env":                2546,
+		// Raised +39 (2546→2585): request says to ask when the feature using
+		// the value is being built — the env model's when-to-ask lines render
+		// only before the first deploy, so a later request never saw them.
+		"zerops_env":                2585,
 		"zerops_scale":              2242,
 		"zerops_import":             1910,
 		"zerops_discover":           879,

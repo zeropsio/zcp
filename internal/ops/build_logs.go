@@ -2,17 +2,19 @@ package ops
 
 import (
 	"context"
+	"sort"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
 // buildTagForEvent returns the exact log tag the Zerops builder emits for a
-// given app-version event. Every entry on the build service-stack carries
-// this tag (verified 2026-04-23 against api.app-prg1.zerops.io).
-// Scoping a log query by this tag is the canonical way to surface only the
-// current build's entries, bypassing the stale-warning leak that would occur
-// if we queried the persistent build service-stack without identity.
+// given app-version event. Every entry of the build carries this tag
+// (verified 2026-04-23 against api.app-prg1.zerops.io), and so does the
+// runtime prepare phase's output, which is logged on its own prepare service
+// stack, not on the build stack (verified 2026-10-16 on a
+// PREPARING_RUNTIME_FAILED appVersion). Scoping a log query by this tag, and
+// not by a service stack, surfaces exactly this build's entries from both.
 func buildTagForEvent(event *platform.AppVersionEvent) string {
 	if event == nil || event.ID == "" {
 		return ""
@@ -21,8 +23,10 @@ func buildTagForEvent(event *platform.AppVersionEvent) string {
 }
 
 // FetchBuildLogs fetches the last N lines of build pipeline output for the
-// given app-version event. Scoped to this build via tag identity and the
-// application facility so daemon noise is excluded.
+// given app-version event, the runtime prepare phase's included. Scoped to
+// this build via tag identity and the application facility so daemon noise is
+// excluded; the build container's own error lines the platform logs without
+// the tag (fetchBuildContainerAlerts) are merged in, in time order.
 // Best-effort: returns nil on any error.
 func FetchBuildLogs(
 	ctx context.Context,
@@ -32,27 +36,125 @@ func FetchBuildLogs(
 	event *platform.AppVersionEvent,
 	limit int,
 ) []string {
-	if event == nil || event.Build == nil || event.Build.ServiceStackID == nil {
+	entries, _ := fetchBuildLog(ctx, client, fetcher, projectID, event, limit)
+	if entries == nil {
 		return nil
+	}
+	return messagesOf(entries)
+}
+
+// FetchBuildLogTail returns the build log FetchBuildLogs returns and its last
+// n lines, with the build container's alerts kept even when they come earlier:
+// a builder the platform stopped for memory starts again in the same container,
+// and that second run's output fills the tail after the alert that says why.
+func FetchBuildLogTail(
+	ctx context.Context,
+	client platform.Client,
+	fetcher platform.LogFetcher,
+	projectID string,
+	event *platform.AppVersionEvent,
+	limit int,
+	n int,
+) (logs, tail []string) {
+	entries, tag := fetchBuildLog(ctx, client, fetcher, projectID, event, limit)
+	if entries == nil {
+		return nil, nil
+	}
+	start := max(0, len(entries)-n)
+	for i, e := range entries {
+		if i >= start || e.Tag != tag {
+			tail = append(tail, e.Message)
+		}
+	}
+	return messagesOf(entries), tail
+}
+
+// fetchBuildLog is FetchBuildLogs' entries in time order, with the build's tag:
+// an entry without it is one of the build container's alerts.
+func fetchBuildLog(
+	ctx context.Context,
+	client platform.Client,
+	fetcher platform.LogFetcher,
+	projectID string,
+	event *platform.AppVersionEvent,
+	limit int,
+) ([]platform.LogEntry, string) {
+	if event == nil || event.Build == nil {
+		return nil, ""
 	}
 	tag := buildTagForEvent(event)
 	if tag == "" {
-		return nil
+		return nil, ""
 	}
 	logAccess, err := client.GetProjectLog(ctx, projectID)
+	if err != nil {
+		return nil, ""
+	}
+	entries, err := fetcher.FetchLogs(ctx, logAccess, platform.LogFetchParams{
+		Facility: "application",
+		Tags:     []string{tag},
+		Limit:    limit,
+	})
+	if err != nil {
+		return nil, ""
+	}
+	entries = append(entries, fetchBuildContainerAlerts(ctx, fetcher, logAccess, event, tag, limit)...)
+	sortByTime(entries)
+	return entries, tag
+}
+
+// fetchBuildContainerAlerts fetches the error lines the platform logs on the
+// build's service stack without the build's tag: a build container that runs
+// out of memory is reported as "granted 8.00GB, max: 8.00GB, …" and "OOM
+// Alert: Process '…' terminated - memory limit exceeded", while the build's
+// tagged output just stops (verified 2026-10-16 on a BUILD_FAILED Next.js
+// build). Lines with the build's tag come from the tagged query; anchoring at
+// the pipeline start keeps an earlier build's alerts out, so without that
+// anchor nothing is fetched.
+func fetchBuildContainerAlerts(
+	ctx context.Context,
+	fetcher platform.LogFetcher,
+	logAccess *platform.LogAccess,
+	event *platform.AppVersionEvent,
+	tag string,
+	limit int,
+) []platform.LogEntry {
+	if event.Build.ServiceStackID == nil || *event.Build.ServiceStackID == "" || event.Build.PipelineStart == nil {
+		return nil
+	}
+	since, err := time.Parse(time.RFC3339, *event.Build.PipelineStart)
 	if err != nil {
 		return nil
 	}
 	entries, err := fetcher.FetchLogs(ctx, logAccess, platform.LogFetchParams{
 		ServiceID: *event.Build.ServiceStackID,
+		Severity:  "error",
 		Facility:  "application",
-		Tags:      []string{tag},
+		Since:     since,
 		Limit:     limit,
 	})
 	if err != nil {
 		return nil
 	}
-	return messagesOf(entries)
+	alerts := make([]platform.LogEntry, 0, len(entries))
+	for _, e := range entries {
+		if e.Tag != tag {
+			alerts = append(alerts, e)
+		}
+	}
+	return alerts
+}
+
+// sortByTime orders entries by their parsed timestamp, keeping the order of
+// entries with the same instant.
+func sortByTime(entries []platform.LogEntry) {
+	at := make(map[string]time.Time, len(entries))
+	for _, e := range entries {
+		at[e.Timestamp], _ = time.Parse(time.RFC3339, e.Timestamp)
+	}
+	sort.SliceStable(entries, func(i, j int) bool {
+		return at[entries[i].Timestamp].Before(at[entries[j].Timestamp])
+	})
 }
 
 // FetchBuildWarnings fetches only warning-and-above lines from the build
@@ -68,7 +170,7 @@ func FetchBuildWarnings(
 	event *platform.AppVersionEvent,
 	limit int,
 ) []string {
-	if event == nil || event.Build == nil || event.Build.ServiceStackID == nil {
+	if event == nil || event.Build == nil {
 		return nil
 	}
 	tag := buildTagForEvent(event)
@@ -80,11 +182,10 @@ func FetchBuildWarnings(
 		return nil
 	}
 	entries, err := fetcher.FetchLogs(ctx, logAccess, platform.LogFetchParams{
-		ServiceID: *event.Build.ServiceStackID,
-		Severity:  "warning",
-		Facility:  "application",
-		Tags:      []string{tag},
-		Limit:     limit,
+		Severity: "warning",
+		Facility: "application",
+		Tags:     []string{tag},
+		Limit:    limit,
 	})
 	if err != nil {
 		return nil

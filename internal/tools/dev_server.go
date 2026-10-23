@@ -43,7 +43,7 @@ func devServerInputSchema() *jsonschema.Schema {
 	return objectSchema(map[string]*jsonschema.Schema{
 		"action": {
 			Type:        "string",
-			Description: "Action to perform: start, stop, status, logs, restart. start has the dev service's supervisor run the named server (declaring it in the repo's .zcp/dev-servers.json the first time) and waits for the health endpoint to return 2xx. stop ends the server's whole process group and frees its port. status reports the supervisor's state and probes the port. logs tails the server's own log. restart is stop+start.",
+			Description: "Action to perform: start, stop, status, logs, restart. start has the dev service's supervisor run the named server (declaring it in the repo's .zcp/dev-servers.json the first time) and waits for the health endpoint to return 2xx. stop ends the server's whole process group and frees its port. status reports the supervisor's state and probes the port — without name on a dev service with several servers, each of them. logs tails the server's own log. restart is stop+start.",
 		},
 		"hostname": {
 			Type:        "string",
@@ -63,7 +63,7 @@ func devServerInputSchema() *jsonschema.Schema {
 		},
 		"healthPath": {
 			Type:        "string",
-			Description: "HTTP path to probe for readiness. Defaults to '/' if omitted. Example: '/api/health', '/health', '/'. Must return 2xx or 3xx to count as ready. Ignored when noHttpProbe=true.",
+			Description: "HTTP path to probe for readiness. A start declares it for the server, so later calls probe it without passing it again; defaults to '/' when none is declared. Example: '/api/health', '/health', '/'. Must return 2xx or 3xx to count as ready. Ignored when noHttpProbe=true.",
 		},
 		"waitSeconds": {
 			Type:        "integer",
@@ -120,9 +120,9 @@ func RegisterDevServer(srv *mcp.Server, d DevServerDeps) {
 			"The dev servers run under the dev service's supervisor (zcp-devsup, the dev setup's run.start) and are declared in the repo's .zcp/dev-servers.json: " +
 			"the first start of a server declares it (command, port, working directory), later starts need only its name. " +
 			"Each server is its own process group with its own log; stop ends the whole group and frees the port, and the other servers keep running. " +
-			"A declared server comes back by itself after its container restarts or is redeployed; one that crashes stays down (status says crashed, with its exit) until you start it again. " +
+			"A declared server comes back by itself after its container restarts or is redeployed; one that crashes while starting is started once more after its siblings settle (status says so); any other crash stays down (status says crashed, with its exit) until you start it again. " +
 			"On a dev service whose dev setup does not run the supervisor yet, the first start moves it there: zcp adds two lines to the dev setup in zerops.yaml, declares the server, and redeploys the dev service once (uncommitted work stays) — commit both files with your next change. " +
-			"Results are structured {running, startMillis, healthStatus, url, logTail, reason} with a reason code on failure (crashed, port_in_use, health_probe_*) so the agent can diagnose without a follow-up call. " +
+			"Results are structured {running, startMillis, healthStatus, url, logTail, reason} with a reason code on failure (crashed, port_in_use, supervisor_unresponsive, health_probe_*) so the agent can diagnose without a follow-up call. " +
 			"For worker services with no HTTP port (NATS/queue consumers, cron runners), pass noHttpProbe=true. " +
 			"Prefer this tool over raw Bash + ssh for every dev-server lifecycle operation.",
 		InputSchema: devServerInputSchema(),
@@ -158,13 +158,20 @@ func RegisterDevServer(srv *mcp.Server, d DevServerDeps) {
 		// the supervisor reports running just proved a live listener — its
 		// status is running only once the port accepts connections — so force
 		// listener=true regardless of the runtime's static deferred-start
-		// classification.
-		if result.Running && isDevServerStartAction(input.Action) {
+		// classification. The address it reports is the started server's own
+		// port's, not the service's first HTTP port's. A server listening on
+		// loopback only has no public address.
+		if result.Running && isDevServerStartAction(input.Action) && result.Reason != ops.ReasonLoopbackOnly {
 			scratch := &ops.DeployResult{}
 			ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, input.Hostname, scratch, true)
-			resp.SubdomainURL = scratch.SubdomainURL
+			if scratch.SubdomainURL != "" {
+				resp.SubdomainURL = ops.DevServerSubdomainURL(ctx, client, projectID, result)
+			}
+			if pa := scratch.PublicAccess; pa != nil {
+				pa.URL = resp.SubdomainURL
+				resp.PublicAccess = pa
+			}
 			resp.Warnings = append(resp.Warnings, scratch.Warnings...)
-			resp.PublicAccess = scratch.PublicAccess
 		}
 		if d.CarriesParts {
 			if env := freshEnvelope(ctx, stateDir, client, projectID, d.RtInfo); env != nil {
@@ -173,7 +180,7 @@ func RegisterDevServer(srv *mcp.Server, d DevServerDeps) {
 				resp.Envelope = &withServers
 			}
 		}
-		if input.Action == "logs" {
+		if input.Action == "logs" || result.Unreported {
 			return jsonResult(devServerLogRead{devServerToolResult: resp}), nil, nil
 		}
 		return jsonResult(resp), nil, nil
@@ -235,9 +242,10 @@ type devServerToolResult struct {
 	Envelope *workflow.StateEnvelope `json:"envelope,omitempty"`
 }
 
-// devServerLogRead is a log read's answer. A log read checks nothing, so it
-// says nothing of whether the server runs: Running, always nil, shadows the
-// embedded result's `running`, which a reader would take for "it stopped".
+// devServerLogRead is the answer of a call that reports no one server's
+// running — a log read, which checks nothing, or a status of several servers
+// (ops.DevServerResult.Unreported): Running, always nil, shadows the embedded
+// result's `running`, which a reader would take for "it stopped".
 type devServerLogRead struct {
 	*devServerToolResult
 	Running *bool `json:"running,omitempty"`

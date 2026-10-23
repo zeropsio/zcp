@@ -41,7 +41,7 @@ func TestDescribeChange_PicturePrunedAfterItWentOn(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			lab := deliveredLab(t)
+			lab := openedLab(t)
 			id := keptScreenshot(t, lab.stateDir, []byte("\x89PNG\r\n\x1a\n-a-before"), 1280, 720)
 			words := "## Before\n\n![The old home page](" + id + ")\n"
 			if tt.attachedTo == "" {
@@ -81,9 +81,9 @@ func TestDescribeChange_PicturePrunedAfterItWentOn(t *testing.T) {
 // helper's screenshot pruned the picture before the words went on. The Mate
 // is told plainly which picture is gone, nothing is written, and the words
 // are not kept — kept, they would protect their other pictures and fail on
-// every later delivery.
+// every later describe.
 func TestDescribeChange_PicturePrunedWhileDescribing(t *testing.T) {
-	lab := deliveredLab(t)
+	lab := openedLab(t)
 	kept := keptScreenshot(t, lab.stateDir, []byte("\x89PNG\r\n\x1a\n-kept"), 800, 600)
 	gone := keptScreenshot(t, lab.stateDir, []byte("\x89PNG\r\n\x1a\n-pruned"), 800, 600)
 	// The fake HQ's failOn sees every request: here it only prunes, at the
@@ -117,38 +117,12 @@ func TestDescribeChange_PicturePrunedWhileDescribing(t *testing.T) {
 	}
 }
 
-// TestDescribeChange_KeptWordsMeetAGonePicture: words kept while HQ did not
-// answer, whose picture's file is lost before the delivery that would put
-// them on, are dropped with a line naming the picture — never kept to fail
-// again on every delivery.
-func TestDescribeChange_KeptWordsMeetAGonePicture(t *testing.T) {
-	lab := deliveredLab(t)
-	id := keptScreenshot(t, lab.stateDir, []byte("\x89PNG\r\n\x1a\n-a-picture"), 800, 600)
-	lab.hq.setDown(true)
-	if text, isError := lab.describeTitled("", "", "![The count]("+id+")"); isError || !strings.Contains(text, `"kept":true`) {
-		t.Fatalf("want the words kept while HQ does not answer:\n%s", text)
-	}
-	lab.hq.setDown(false)
-	prunePictureFile(t, lab.stateDir, id)
-
-	delivery := lab.deliver()
-	if delivery == nil || delivery.Change == nil {
-		t.Fatalf("delivery: %+v", delivery)
-	}
-	if !strings.Contains(delivery.Line, id) || !strings.Contains(delivery.Line, "no longer kept") {
-		t.Errorf("the line does not say %s is gone:\n%s", id, delivery.Line)
-	}
-	if words := lab.meta().HQ.ChangeDescription; words != nil {
-		t.Errorf("the words are still kept: %+v", words)
-	}
-}
-
 // TestDescribeChange_RefusalListsWhatThisChangeCanShow: a picture whose file
 // is gone, kept only as the address of another change's attachment, is not
 // one this change can show — the quick check refuses it, and the list of
 // kept pictures leaves it out.
 func TestDescribeChange_RefusalListsWhatThisChangeCanShow(t *testing.T) {
-	lab := deliveredLab(t)
+	lab := openedLab(t)
 	for range 3 {
 		keptScreenshot(t, lab.stateDir, []byte("\x89PNG\r\n\x1a\n-a-page"), 800, 600)
 	}
@@ -174,7 +148,7 @@ func TestDescribeChange_RefusalListsWhatThisChangeCanShow(t *testing.T) {
 
 // TestDescribeChange_PictureStoreUnreadable: a store that cannot be read is
 // not a picture gone. The describe says what failed instead of "no longer
-// kept", and words kept for a delivery stay kept.
+// kept".
 func TestDescribeChange_PictureStoreUnreadable(t *testing.T) {
 	spoil := func(t *testing.T, stateDir string) {
 		t.Helper()
@@ -183,7 +157,7 @@ func TestDescribeChange_PictureStoreUnreadable(t *testing.T) {
 		}
 	}
 	t.Run("the describe says what failed", func(t *testing.T) {
-		lab := deliveredLab(t)
+		lab := openedLab(t)
 		id := keptScreenshot(t, lab.stateDir, []byte("\x89PNG\r\n\x1a\n-a-page"), 800, 600)
 		spoil(t, lab.stateDir)
 		text, isError := lab.describeTitled("", "", "![The page]("+id+")")
@@ -191,32 +165,11 @@ func TestDescribeChange_PictureStoreUnreadable(t *testing.T) {
 			t.Errorf("want an error naming the unreadable store, got:\n%s", text)
 		}
 	})
-	t.Run("kept words stay kept", func(t *testing.T) {
-		lab := deliveredLab(t)
-		id := keptScreenshot(t, lab.stateDir, []byte("\x89PNG\r\n\x1a\n-a-page"), 800, 600)
-		lab.hq.setDown(true)
-		words := "![The page](" + id + ")"
-		if text, isError := lab.describeTitled("", "", words); isError || !strings.Contains(text, `"kept":true`) {
-			t.Fatalf("want the words kept while HQ does not answer:\n%s", text)
-		}
-		lab.hq.setDown(false)
-		spoil(t, lab.stateDir)
-		delivery := lab.deliver()
-		if delivery == nil || delivery.Change == nil {
-			t.Fatalf("delivery: %+v", delivery)
-		}
-		if strings.Contains(delivery.Line, "dropped") {
-			t.Errorf("the line drops the words over an unreadable store:\n%s", delivery.Line)
-		}
-		if kept := lab.meta().HQ.ChangeDescription; kept == nil || kept.Text != words {
-			t.Errorf("kept = %+v, want the words still kept", kept)
-		}
-	})
 }
 
 // TestDescribeChange_AttachRefusedForNow: HQ refusing an attachment for now
 // (429, a 5xx) is not a picture it will never take: the words are kept for
-// the next delivery, as when HQ does not answer — or, for a 502 a rolling
+// the next describe, as when HQ does not answer — or, for a 502 a rolling
 // deploy answers, the describe tries again and they land.
 func TestDescribeChange_AttachRefusedForNow(t *testing.T) {
 	tests := []struct {
@@ -229,7 +182,7 @@ func TestDescribeChange_AttachRefusedForNow(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			lab := deliveredLab(t)
+			lab := openedLab(t)
 			id := keptScreenshot(t, lab.stateDir, []byte("\x89PNG\r\n\x1a\n-a-page"), 800, 600)
 			lab.hq.mu.Lock()
 			lab.hq.failing, lab.hq.failStatus, lab.hq.failCode = 1, tt.status, "busy"
@@ -243,40 +196,12 @@ func TestDescribeChange_AttachRefusedForNow(t *testing.T) {
 				}
 				return
 			}
-			if !strings.Contains(text, `"kept":true`) || !strings.Contains(text, "goes onto #1") {
-				t.Errorf("want the words kept for the next delivery, got:\n%s", text)
+			if !strings.Contains(text, `"kept":true`) || !strings.Contains(text, "put it on #1") {
+				t.Errorf("want the words kept for the next describe, got:\n%s", text)
 			}
 			if kept := lab.meta().HQ.ChangeDescription; kept == nil || kept.Text != words {
 				t.Errorf("kept = %+v, want the words kept", kept)
 			}
 		})
-	}
-}
-
-// TestDescribeChange_KeptWordsMeetARefusedPicture: words kept for a delivery
-// whose picture HQ will never take are dropped with a line that says so,
-// as whole sentences, never promised again.
-func TestDescribeChange_KeptWordsMeetARefusedPicture(t *testing.T) {
-	lab := deliveredLab(t)
-	id := keptScreenshot(t, lab.stateDir, []byte("not a png at all"), 800, 600)
-	lab.hq.setDown(true)
-	if text, isError := lab.describeTitled("", "", "![The count]("+id+")"); isError || !strings.Contains(text, `"kept":true`) {
-		t.Fatalf("want the words kept while HQ does not answer:\n%s", text)
-	}
-	lab.hq.setDown(false)
-	delivery := lab.deliver()
-	if delivery == nil || delivery.Change == nil {
-		t.Fatalf("delivery: %+v", delivery)
-	}
-	for _, want := range []string{"dropped", "not_png", `action="describe-change"`} {
-		if !strings.Contains(delivery.Line, want) {
-			t.Errorf("the line misses %q:\n%s", want, delivery.Line)
-		}
-	}
-	if strings.Contains(delivery.Line, ",.") || strings.Contains(delivery.Line, ", with zerops_workflow") {
-		t.Errorf("the line reads as a fragment:\n%s", delivery.Line)
-	}
-	if words := lab.meta().HQ.ChangeDescription; words != nil {
-		t.Errorf("the words are still kept: %+v", words)
 	}
 }

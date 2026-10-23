@@ -216,7 +216,7 @@ func writeHQWiredPairMeta(t *testing.T, stateDir string) {
 		PrimarySetupName: "api",
 		// Both halves deployed: the group tiers build the stage half's setup,
 		// and a stage setup nothing records is withheld rather than guessed.
-		HQ: &workflow.HQRepoRef{AppID: labApp, Repo: "appdev", Branch: "mate/" + labMate},
+		HQ: &workflow.HQRepoRef{AppID: labApp, Repo: "appdev"},
 	}); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
@@ -261,7 +261,7 @@ func TestComposeGroupRecipeInputs_WaitsOnlyForWhatALaterPassBrings(t *testing.T)
 			wantWait: []string{`"workerdev"`, "repository pass"}},
 		{name: "a pair wired in another application", meta: func() *workflow.ServiceMeta {
 			m := workerPair("2026-09-30", testHQAddress+"/git/app-0/workerdev.git")
-			m.HQ = &workflow.HQRepoRef{AppID: "app-0", Repo: "workerdev", Branch: "mate/" + labMate}
+			m.HQ = &workflow.HQRepoRef{AppID: "app-0", Repo: "workerdev"}
 			return m
 		}(), extra: workers, wantWait: []string{`"workerdev"`, "another application"}},
 		{name: "a pair named after the recipe repository is left out", meta: &workflow.ServiceMeta{Hostname: "group", Stages: []topology.StageRef{{Hostname: "groupstage"}},

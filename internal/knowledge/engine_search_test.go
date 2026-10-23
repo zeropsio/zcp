@@ -279,3 +279,21 @@ func urisFromResults(results []SearchResult) []string {
 	}
 	return uris
 }
+
+// An agent asked how to keep a dev server from restarting on its own build
+// output; the query answered object storage, and the agent ran `strings` on
+// zcp-devsup to find the declaration's keys. A query about the dev-server
+// declaration answers with the document that describes it first.
+func TestSearch_ADevServerDeclarationQueryAnswersWithTheDeclarationReference(t *testing.T) {
+	store := newTestStore(t)
+	for _, query := range []string{
+		"dev-servers.json watch paths ignore autostart supervisor",
+		"dev server watch ignore",
+		"zcp-devsup",
+	} {
+		results := store.Search(query, 3)
+		if len(results) == 0 || results[0].URI != "zerops://themes/dev-servers" {
+			t.Errorf("Search(%q) top hits = %v, want zerops://themes/dev-servers first", query, urisFromResults(results))
+		}
+	}
+}

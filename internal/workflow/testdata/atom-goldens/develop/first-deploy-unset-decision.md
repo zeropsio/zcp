@@ -1,6 +1,6 @@
 ---
 id: develop/first-deploy-unset-decision
-atomIds: [develop-first-deploy-intro, develop-env-var-model, develop-strategy-review, develop-change-drives-deploy, develop-deploy-modes, develop-env-var-channels, develop-first-deploy-env-vars, develop-first-deploy-scaffold-yaml, develop-http-diagnostic, develop-nodejs-greenfield-buildhint, develop-platform-rules-common, develop-reserved-env-names, develop-self-deploy-reproducibility, develop-checklist-dev-mode, develop-deploy-files-self-deploy, develop-dynamic-runtime-start-container, develop-first-deploy-write-app, develop-knowledge-pointers, develop-auto-close-semantics, develop-first-deploy-execute, develop-verify-matrix, develop-first-deploy-verify, develop-platform-rules-container]
+atomIds: [develop-first-deploy-intro, develop-env-var-model, develop-first-deploy-existing-repo, develop-strategy-review, develop-change-drives-deploy, develop-deploy-modes, develop-env-var-channels, develop-first-deploy-env-vars, develop-first-deploy-scaffold-yaml, develop-http-diagnostic, develop-nodejs-greenfield-buildhint, develop-platform-rules-common, develop-reserved-env-names, develop-self-deploy-reproducibility, develop-checklist-dev-mode, develop-deploy-files-self-deploy, develop-dynamic-runtime-start-container, develop-first-deploy-write-app, develop-knowledge-pointers, develop-auto-close-semantics, develop-first-deploy-execute, develop-verify-matrix, develop-first-deploy-verify, develop-platform-rules-container]
 description: "develop-active, dev mode, never-deployed dynamic runtime, close-mode UNSET — the dominant first-develop-start state. The DECISION atom must fire here (B5: deployStates axis removed)."
 ---
 === develop-first-deploy-intro ===
@@ -12,8 +12,7 @@ here: establish `zerops.yaml` and the app, deploy, verify.
 
 That includes an adopted service imported without code: ACTIVE, maybe
 with the repository's source already in its working directory, but
-with nothing built, installed or started — its dependencies arrive
-with this first deploy's build.
+with nothing built, installed or started.
 
 Flow for each never-deployed runtime:
 
@@ -81,18 +80,62 @@ literal `${APP_KEY}`, and so does every other line referencing
 Store a secret with `zerops_env action="set" … sensitive=true`; a
 secret-shaped key defaults to it (not a `PUBLIC`/`PUBLISHABLE` one),
 and reads mask it. Point the person to it in the vault ("Vault → Admin
-sign-in → Password, press Show"), never the value.
+sign-in → Password, press Show"), never the value. Test with the
+stored name (`$API_KEY` on the service), never a literal in a command.
 
 A value only the person has (an API key, a password, a webhook secret)
 is never asked for in the chat: call `zerops_env action="request"
 key="STRIPE_SECRET_KEY" project=true reason="…"` — one sentence on what
-it is for and where to find it. The person types it into Mate, which
+it is for and where to find it. Request it when the feature using it is
+built, and only if that feature is on the chosen path. The person types it into Mate, which
 writes it to the vault; their next message notes it is set. Until then continue with what does not need it, or end the
 turn. A key already in that vault is answered `alreadySet` — reference
 it by name.
 
 A set restarts the services whose deployed lines read the key
 (`readers`); nothing reads it → add the line, then deploy.
+
+---
+
+=== develop-first-deploy-existing-repo ===
+### A repository that already exists
+
+A repository you did not write — in the working directory, or one the
+person asks to run or develop here — runs in the dev service as its
+developers run it locally. Scaffold nothing for it.
+
+1. **Given its address, ask first** with `zerops_origin` if you have
+   it. Never ask for a token.
+2. **Read how the repo is developed before you write any setup:**
+   `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, README, package scripts,
+   `Makefile`, `.devcontainer/`, `Procfile`, a compose file — the
+   install and dev commands, ports, system packages, host setting.
+3. **The dev setup stays minimal:** base, system packages in
+   `run.prepareCommands`, `run.ports` with every port a dev server will
+   listen on (a port added later takes a redeploy), `deployFiles: [.]`, no dependency install in
+   `buildCommands`; the first deploy puts its `run.start` under the
+   dev-server supervisor. A package manager the run image
+   already ships is used as it stands: installing it again globally fails
+   with `EEXIST`.
+4. **Size it before the first install** from the repo's own hints, else
+   for a JavaScript workspace with several apps
+   `zerops_scale serviceHostname="appdev" minRam=8 minCpu=2`.
+5. **Install as its docs say, in the running container:**
+   `ssh appdev "cd <repo dir> && <the repo's install command>"`
+   (`/var/www`, or the code volume's `mountPath`).
+   Nothing answers a prompt over SSH: prefix the command with `CI=true`
+   and end it with `</dev/null`. A restart keeps the installed dependencies; a redeploy replaces the
+   container with what git carries (`notCarried` lists what is gone), so
+   install again after one.
+6. **Start each dev command as a named dev server**, the command exactly
+   as the repo runs it:
+   `zerops_dev_server action=start hostname="appdev" name="<name>" command="<the repo's dev command>" port=<port>`.
+7. **The subdomain reaches a dev server only beyond loopback:** use the
+   repo's own host or allowed-hosts setting, or a dev mode the repo
+   documents for remote use. Never put your own proxy (socat, a Node
+   pipe) in front of a dev server or edit the repo's config to widen its
+   bind. Without such a setting, tell the person plainly that it listens
+   only on loopback — do not improvise.
 
 ---
 
@@ -170,14 +213,15 @@ empty logs (they're fine in `build.envVariables`). Rename (`APP_HOSTNAME`).
 ### Establish `zerops.yaml`
 
 Scaffold `zerops.yaml` if absent or refine it in place if already
-present. The file lives at the repo root; `setup:` matches the runtime
-hostname (one `zerops:` entry per in-scope runtime).
+present. The file lives at the repo root and holds `setup: dev` for a
+dev service plus one setup per deployable part (`prod` when the repo has
+one part); a stage deploys the setup its plan names.
 
-**Shape (one `zerops:` block per targeted runtime hostname):**
+**Shape (one `zerops:` entry per setup):**
 
 ```yaml
 zerops:
-  - setup: <hostname>
+  - setup: <dev or the part's name>
     build:
       base: <os>/<runtime>@<ver>   # same OS prefix as the service type from discover, e.g. ubuntu/nodejs@22; php builds with <os>/php@8.4
       buildCommands: [...]       # optional for pre-built artefacts
@@ -196,8 +240,7 @@ zerops:
 the placeholder at deploy time from the named service's catalog. Wrong
 spelling stays literal and the app fails at connect.
 
-**Mode-aware tips:** emit separate setup entries per targeted hostname.
-`deployFiles` selects which build-container files land in the runtime:
+**Mode-aware tips:** `deployFiles` selects which build-container files land in the runtime:
 - **Self-deploy** (single service, `sourceService == targetService`): MUST be
   `[.]` — narrower patterns overwrite and destroy the target's own source.
 - **Cross-deploy** (dev → stage, `sourceService != targetService`): cherry-pick
@@ -298,7 +341,7 @@ runtimes the web server auto-starts and this checklist does not apply.
 
 - Dev setup block in `zerops.yaml`: **`run.start: zsc noop --silent`**
   (a no-op keepalive), **no** `healthCheck`. You start the real dev
-  process yourself via `zerops_dev_server action=start`; its supervisor
+  process yourself via `zerops_dev_server action=start hostname="<dev>"`; its supervisor
   starts it again after later redeploys and restarts, until `action=stop`.
 - Stage setup block (if a dev+stage pair exists): real `start:`
   command **plus** a `healthCheck`. Stage auto-starts on deploy and
@@ -328,38 +371,25 @@ Client-side pre-flight rejects this with `INVALID_ZEROPS_YML` before any build t
 === develop-dynamic-runtime-start-container ===
 ### Dynamic-runtime dev server
 
-Dev-mode dynamic runtime containers run no dev process until you start
-one. It runs under the dev service's supervisor (`zcp-devsup`, the dev
+A dev server runs under the dev service's supervisor (`zcp-devsup`, the dev
 setup's `run.start`); its first start declares it in `.zcp/dev-servers.json`.
 If the dev setup still runs `zsc noop`, that start adds the supervisor's two
-lines and redeploys once (uncommitted work stays) — commit both files. The
-supervisor starts it again after a restart or redeploy (a deploy reports it
-under `devServer`) until you `stop` it; a crash leaves it down. A passing
-verify means "live now", not "durably shipped" — for an always-on service
-use simple mode. Action family on `zerops_dev_server`:
+lines and redeploys once (uncommitted work stays) — commit both files.
+Every deploy starts each `autostart` server (see `devServer`), a restart
+each not `stop`ped; a start crash is retried once, a later one stays down.
+A passing verify means "live now", not "durably shipped" — for an
+always-on service use simple mode.
 
-| Action | Use | Args |
-|---|---|---|
-| `status` | check before `start` (idempotent) | `hostname port healthPath` |
-| `start` | run the dev process | `hostname command port healthPath` |
-| `restart` | after a config/code change | `hostname healthPath` |
-| `logs` | tail its log | `hostname logLines=40` |
-| `stop` | end its process group, free the port | `hostname` |
-
-Args:
-- `command` — the app's dev-server start command (e.g. `npm run dev`),
-  not the dev block's `run.start`.
-- `port` — `run.ports[0].port`; `healthPath` — app-owned or `/`.
-- `name` — when one dev service runs several servers (`web`, `api`);
+- `command` is the app's dev-server command (e.g. `npm run dev`), not the
+  dev setup's `run.start`.
+- `name` each server when one dev service runs several (`web`, `api`);
   stopping one leaves the others running.
-
-Response carries `running`, `healthStatus`, `url` (the hostname-vantage
-address to reach the server — the probe runs localhost inside the
-container, so the app must bind `0.0.0.0`, not loopback), `reason`, and
-`logTail` — read these before making another call.
+- The health probe runs on localhost inside the dev container, so the app
+  must bind `0.0.0.0`, not loopback, for the response's `url` to reach it. Read
+  `running`, `healthStatus`, `reason` and `logTail` before another call.
 
 Don't hand-roll `ssh appdev "cmd &"`: the SSH session ends with
-the call and kills the process. Always go through `zerops_dev_server`.
+the call and kills the process.
 
 ---
 
@@ -372,7 +402,8 @@ If empty — scaffold from scratch using the runtime + env-var catalog.
 If `ls` errors (stale SSHFS), run `zerops_mount action="mount"` to recover
 before deciding.
 
-**Checklist before deploying:**
+**Checklist for code you write** (a repo you did not write follows
+*A repository that already exists*):
 
 | Check | Requirement |
 |---|---|
@@ -472,15 +503,11 @@ before any browser probe.
 
 When `bodyText`/`consoleErrors` are missing, truncated, or the page needs
 interaction / SPA routes / non-root / auth, drive the browser **inline** with
-`zerops_browser` (`screenshot: true` for evidence). Only `wait` polls —
-click/find/get/is look once — so after a click or reload
-`["wait","<sel>"]` or `["wait","--text","<text>"]`, never a fixed time,
-before asserting. Checkbox: `["is","checked","<sel>"]`. `find` actions are
-only click/fill/check/hover/text, `--name` after the action:
-`["find","label","<text>","check"]`,
-`["find","role","button","click","--name","Submit"]`. An `@eN` ref lives only
-after a snapshot in the same call — prefer `find` or CSS.
-Never spawn a sub-agent or call raw `agent-browser`.
+`zerops_browser`; pass `screenshot: true` (`fullPage: true`: whole page) for
+evidence. Only `wait` polls: wait for an element/text, never a fixed time. Use
+`isolation: "fresh-context"` only for the first check after a deploy that
+changed sign-in, storage, a service worker or caches. Never spawn a sub-agent
+or call raw `agent-browser`.
 To make an already-public service internal-only, call `zerops_subdomain action="disable"` — after that, `http_public` reports `skip` on every later verify, same as a `publicAccess: "none"` plan intent.
 
 - **VERDICT: PASS** — healthy + real rendered content; proceed.
@@ -494,9 +521,9 @@ To make an already-public service internal-only, call `zerops_subdomain action="
 
 Dev-mode dynamic runtimes deploy with `start: zsc noop --silent` (a
 no-op keepalive) — nothing is listening yet. `zerops_verify` reports
-`http_internal` and `http_public` as `skip` ("start it with
-zerops_dev_server") and that is NOT a deploy failure. Start the dev
-process via `zerops_dev_server action=start` first, then verify.
+`http_internal` and `http_public` as `skip`, and that is NOT a deploy
+failure: start the dev process with the call the `http_internal`
+`detail` names, then verify.
 
 For simple-mode and standard-mode runtimes the runtime starts on
 deploy; verify directly.

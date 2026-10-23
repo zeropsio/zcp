@@ -396,7 +396,7 @@ func TestEnvVarsToMaps_PlatformInjected(t *testing.T) {
 			name: "zeropsSubdomain annotated as platform-injected",
 			envs: []platform.ServiceEnvVar{
 				{ID: "e1", Key: "PORT", Content: "3000"},
-				{ID: "e2", Key: "zeropsSubdomain", Content: "https://app-1df2-3000.prg1.zerops.app"},
+				{ID: "e2", Key: "zeropsSubdomain", Content: "https://app-1df2-3000.prg1.zerops.app", Type: platform.ServiceEnvSystem},
 				{ID: "e3", Key: "HOST", Content: "0.0.0.0"},
 			},
 			wantKeys:            []string{"PORT", "zeropsSubdomain", "HOST"},
@@ -420,7 +420,7 @@ func TestEnvVarsToMaps_PlatformInjected(t *testing.T) {
 		{
 			name: "only zeropsSubdomain",
 			envs: []platform.ServiceEnvVar{
-				{ID: "e1", Key: "zeropsSubdomain", Content: "https://app-1df2.prg1.zerops.app"},
+				{ID: "e1", Key: "zeropsSubdomain", Content: "https://app-1df2.prg1.zerops.app", Type: platform.ServiceEnvSystem},
 			},
 			wantKeys:         []string{"zeropsSubdomain"},
 			wantPlatformKeys: []string{"zeropsSubdomain"},
@@ -429,7 +429,7 @@ func TestEnvVarsToMaps_PlatformInjected(t *testing.T) {
 			name: "platform-injected with isReference interaction",
 			envs: []platform.ServiceEnvVar{
 				{ID: "e1", Key: "DB_URL", Content: "${db_connectionString}"},
-				{ID: "e2", Key: "zeropsSubdomain", Content: "https://app-1df2.prg1.zerops.app"},
+				{ID: "e2", Key: "zeropsSubdomain", Content: "https://app-1df2.prg1.zerops.app", Type: platform.ServiceEnvSystem},
 			},
 			wantKeys:            []string{"DB_URL", "zeropsSubdomain"},
 			wantPlatformKeys:    []string{"zeropsSubdomain"},
@@ -488,7 +488,7 @@ func TestEnvVarsToMaps_KeysOnly(t *testing.T) {
 	envs := []platform.ServiceEnvVar{
 		{ID: "e1", Key: "PORT", Content: "3000"},
 		{ID: "e2", Key: "DB_URL", Content: "${db_connectionString}"},
-		{ID: "e3", Key: "zeropsSubdomain", Content: "https://app-1df2-3000.prg1.zerops.app"},
+		{ID: "e3", Key: "zeropsSubdomain", Content: "https://app-1df2-3000.prg1.zerops.app", Type: platform.ServiceEnvSystem},
 	}
 
 	result := envVarsToMaps(envs, false, "")

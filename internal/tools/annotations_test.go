@@ -675,6 +675,22 @@ func TestAnnotations_ObserveTool(t *testing.T) {
 	}
 }
 
+func TestAnnotations_OriginTool(t *testing.T) {
+	t.Chdir(t.TempDir())
+	tool := listAllTools(t, runtime.Info{InContainer: true, MateEnabled: true})["zerops_origin"]
+	if tool == nil {
+		t.Fatal("zerops_origin should be registered in a Mate")
+	}
+	ann := tool.Annotations
+	if ann == nil || ann.Title != "Ask where a repository's code is kept" || !ann.ReadOnlyHint || !ann.IdempotentHint ||
+		ann.DestructiveHint == nil || *ann.DestructiveHint || ann.OpenWorldHint == nil || *ann.OpenWorldHint {
+		t.Fatalf("annotations = %+v", ann)
+	}
+	if words := len(strings.Fields(tool.Description)); words > 60 {
+		t.Fatalf("description has %d words (max 60)", words)
+	}
+}
+
 func TestAnnotations_PublishPageTool(t *testing.T) {
 	t.Chdir(t.TempDir())
 	tool := listAllTools(t, runtime.Info{InContainer: true, MateEnabled: true})["zerops_publish_page"]
@@ -736,5 +752,22 @@ func TestAnnotations_AskChiefTool(t *testing.T) {
 		if !strings.Contains(string(schema), field) {
 			t.Errorf("input schema lacks %s: %s", field, schema)
 		}
+	}
+}
+
+// A 3-part repo promoted its stages one cross-deploy after another while the
+// batch description spoke only of "3-deploy clusters". It says that the
+// stages fed from one dev service build in parallel in one batch.
+func TestAnnotations_DeployBatchSaysTheStagesOfOneDevServiceBuildInParallel(t *testing.T) {
+	t.Chdir(t.TempDir())
+	tool := listAllTools(t, runtime.Info{InContainer: true})["zerops_deploy_batch"]
+	if tool == nil {
+		t.Fatal("zerops_deploy_batch should be registered in a container")
+	}
+	if !strings.Contains(tool.Description, "stages fed from one dev service build in parallel") {
+		t.Errorf("description = %q, want it to say the stages fed from one dev service build in parallel", tool.Description)
+	}
+	if strings.Contains(tool.Description, "3-deploy cluster") {
+		t.Errorf("description = %q, still speaks of 3-deploy clusters", tool.Description)
 	}
 }

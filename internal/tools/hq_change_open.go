@@ -1,0 +1,208 @@
+package tools
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/platform"
+)
+
+// changeOpenResult is open-change's answer.
+type changeOpenResult struct {
+	Service        string `json:"service"`
+	Branch         string `json:"branch,omitempty"`
+	PullRequest    int    `json:"pullRequest"`
+	PullRequestURL string `json:"pullRequestUrl"`
+	Created        bool   `json:"created"`
+	Message        string `json:"message"`
+}
+
+// handleOpenChange is zerops_workflow action="open-change": the agent opens
+// the change that takes a branch of its own to `main`, in the pair's
+// repository in HQ. HQ binds the change to the branch, which may be pushed
+// before or after; the pair records the change, which describe-change then
+// describes. A Mate has one open change per repository: HQ answers the open
+// one rather than opening a second, and a change a person handed the Mate
+// there is answered without asking HQ to open one. In a repository whose
+// code is kept on GitHub, the branch is GitHub's and the change's pull
+// request is HQ's to open there; the person merges it in Mate.
+func handleOpenChange(
+	ctx context.Context,
+	httpClient ops.HTTPDoer,
+	stateDir string,
+	input WorkflowInput,
+) (*mcp.CallToolResult, any, error) {
+	hqc, enrolled := openHQ(httpClient)
+	if !enrolled {
+		return convertError(platform.NewPlatformError(
+			platform.ErrPrerequisiteMissing,
+			"open-change opens a change in this Mate's HQ, and this Mate is not enrolled with one yet.",
+			"Say what the work does in your answer instead.",
+		), WithRecoveryStatus()), nil, nil
+	}
+	branch, refusal := changeBranchOf(input.Branch)
+	if refusal != nil {
+		return convertError(refusal, WithRecoveryStatus()), nil, nil
+	}
+	title := strings.TrimSpace(input.Title)
+	if title == "" {
+		return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
+			`open-change needs the change's title: pass title="…".`,
+			"Say what this repository's change does in a few words."), WithRecoveryStatus()), nil, nil
+	}
+	if refusal := describeTitleRefusal(title); refusal != nil {
+		return convertError(refusal, WithRecoveryStatus()), nil, nil
+	}
+	meta, noPair := pairOfChange(stateDir, input.Service, "open")
+	if noPair != nil {
+		return noPair, nil, nil
+	}
+
+	// The Mate's own state says how the repository's code is kept, and names
+	// a change handed to the Mate there: that one is its change, and HQ is
+	// not asked to open another. A state that cannot be read leaves both to
+	// the pair's record and HQ's answer.
+	callCtx, cancel := context.WithTimeout(ctx, hqCallTimeout)
+	state, stateErr := hqc.Once().Self(callCtx)
+	cancel()
+	if stateErr == nil {
+		recordHQOrigin(stateDir, meta, state)
+		if handed := handedChangeIn(state, meta.HQ); handed != nil {
+			held := hqc.BranchOf(handed.Number, handed.Branch)
+			recordChange(stateDir, meta, handed.Number, held)
+			return jsonResult(changeOpenResult{
+				Service: meta.Hostname, Branch: held, PullRequest: handed.Number,
+				PullRequestURL: hqc.ChangeURL(meta.HQ.AppID, meta.HQ.Repo, handed.Number),
+				Message: sentenceOf(handedWork(handed, meta.HQ.Repo, held)) +
+					` Nothing else was opened: a Mate has one open change per repository. Write what it does and how you checked it with zerops_workflow action="describe-change"; the person reviews it by that.`,
+			}), nil, nil
+		}
+	}
+
+	callCtx, cancel = context.WithTimeout(ctx, hqCallTimeout)
+	opened, err := hqc.OpenChange(callCtx, meta.HQ.Repo, title, branch)
+	cancel()
+	// HQ refuses a branch as {code, reason}: the reason names which refusal.
+	var refused *hq.RefusedError
+	switch {
+	case errors.As(err, &refused) && refused.Reason == "branch_taken":
+		return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
+			fmt.Sprintf("Nothing was opened: another open change holds the branch %q in %q.", branch, meta.HQ.Repo),
+			"Push this work to a branch of your own under another name and open its change from that."), WithRecoveryStatus()), nil, nil
+	case errors.As(err, &refused) && refused.Reason == "protected_ref":
+		return convertError(branchNotOwn(branch), WithRecoveryStatus()), nil, nil
+	case errors.As(err, &refused) && refused.Reason == "invalid_ref":
+		return convertError(notABranchName(branch), WithRecoveryStatus()), nil, nil
+	case err != nil:
+		return convertError(platform.NewPlatformError(platform.ErrAPIError,
+			fmt.Sprintf("Nothing was opened: HQ did not open a change in %q (%v).", meta.HQ.Repo, err),
+			`Call zerops_workflow action="open-change" again; the branch you pushed stays as it is.`), WithRecoveryStatus()), nil, nil
+	}
+	number := opened.Change.Number
+	result := changeOpenResult{
+		Service: meta.Hostname, PullRequest: number,
+		PullRequestURL: hqc.ChangeURL(meta.HQ.AppID, meta.HQ.Repo, number), Created: opened.Created,
+	}
+	// The change's branch is the one HQ names. An HQ from before changes
+	// were bound to a branch they name ignores the one asked for and binds
+	// a change it opens to the Mate's own (ChangeBranch); an open change it
+	// answers without naming one is never on the one asked for, and stays
+	// unnamed.
+	held := strings.TrimPrefix(opened.Change.Branch, "refs/heads/")
+	switch {
+	case held != "":
+		result.Branch = held
+	case opened.Created:
+		result.Branch = hqc.ChangeBranch(number)
+	}
+	recordChange(stateDir, meta, number, result.Branch)
+	if !opened.Created {
+		if held == "" {
+			result.Message = fmt.Sprintf("Change #%d is already open in %q, and a Mate has one open change per repository: it stays. Push this work to its branch, or open its change once #%d is merged or closed.",
+				number, meta.HQ.Repo, number)
+			return jsonResult(result), nil, nil
+		}
+		// Work cut from main is no fast-forward of the open change's branch:
+		// it goes onto that branch, or HQ refuses its push.
+		result.Message = fmt.Sprintf("Change #%d is already open in %q on the branch %q, and a Mate has one open change per repository: it stays, and this work goes on its branch — %s, bring this work onto it (`git merge %s`) and push it (`git push origin %s`), never force-pushing; or open this work's change once #%d is merged or closed.",
+			number, meta.HQ.Repo, held, takeChangeBranch(hqc, held), branch, held, number)
+		return jsonResult(result), nil, nil
+	}
+	if meta.HQ.Origin != nil && meta.HQ.Origin.Mode == hq.OriginOnGitHub {
+		result.Message = fmt.Sprintf("Change #%d is open in %q for the branch %q, whose code is kept on GitHub: HQ opens its pull request on GitHub from that branch, so open none of your own, and the person merges it in Mate. Push the work there (`git push origin %s`, origin being GitHub) — never force-push — and write what it does and how you checked it with zerops_workflow action=\"describe-change\"; the person reviews it by that.",
+			number, meta.HQ.Repo, result.Branch, result.Branch)
+		return jsonResult(result), nil, nil
+	}
+	push, bound := result.Branch, ""
+	if result.Branch != branch {
+		push = branch + ":" + result.Branch
+		bound = fmt.Sprintf(", not %q — this HQ binds a change to a branch of its own, as HQ did before changes were bound to the branch they name —", branch)
+	}
+	result.Message = fmt.Sprintf("Change #%d is open in %q for the branch %q%s: push the work there (`git push origin %s`) — never force-push — and write what it does and how you checked it with zerops_workflow action=\"describe-change\"; the person reviews it by that.",
+		number, meta.HQ.Repo, result.Branch, bound, push)
+	return jsonResult(result), nil, nil
+}
+
+// changeBranchOf is the branch a change is opened from, as its short name:
+// refs/heads/ dropped. It refuses no branch, one git cannot name, and one HQ
+// keeps for itself — `main` and the tags.
+func changeBranchOf(input string) (string, *platform.PlatformError) {
+	name := strings.TrimSpace(input)
+	if name == "" {
+		return "", platform.NewPlatformError(platform.ErrInvalidParameter,
+			`open-change opens the change of a branch of your own: pass branch="<branch>".`,
+			"Cut a branch from main, commit, push it, and name it here.")
+	}
+	if strings.HasPrefix(name, "refs/") && !strings.HasPrefix(name, "refs/heads/") {
+		return "", branchNotOwn(name)
+	}
+	name = strings.TrimPrefix(name, "refs/heads/")
+	if !gitBranchName(name) {
+		return "", notABranchName(name)
+	}
+	if name == hqBase {
+		return "", branchNotOwn(name)
+	}
+	return name, nil
+}
+
+// branchNotOwn refuses a ref HQ keeps for itself.
+func branchNotOwn(ref string) *platform.PlatformError {
+	return platform.NewPlatformError(platform.ErrInvalidParameter,
+		fmt.Sprintf("Nothing was opened: %q is HQ's — `main` moves only by a merge, and tags and the mate/ branches are HQ's.", ref),
+		"Cut a branch of your own from main, push it, and open its change from that.")
+}
+
+// notABranchName refuses a name git, or HQ's git, does not take as a branch.
+func notABranchName(name string) *platform.PlatformError {
+	return platform.NewPlatformError(platform.ErrInvalidParameter,
+		fmt.Sprintf("Nothing was opened: %q is not a branch name git takes.", name),
+		"Name the branch with letters, digits, - _ . and /, as you pushed it.")
+}
+
+// gitBranchName reports whether git takes name as a branch name
+// (git-check-ref-format): no control character, space or ~^:?*[\, no "..",
+// "@{" or "//", and no part starting or ending in a dot or ending in .lock.
+func gitBranchName(name string) bool {
+	if name == "" || name == "@" || strings.HasPrefix(name, "-") || strings.HasPrefix(name, "/") || strings.HasSuffix(name, "/") ||
+		strings.ContainsAny(name, " ~^:?*[\\\x7f") || strings.Contains(name, "..") || strings.Contains(name, "@{") || strings.Contains(name, "//") {
+		return false
+	}
+	for _, r := range name {
+		if r < 0x20 {
+			return false
+		}
+	}
+	for part := range strings.SplitSeq(name, "/") {
+		if strings.HasPrefix(part, ".") || strings.HasSuffix(part, ".") || strings.HasSuffix(part, ".lock") {
+			return false
+		}
+	}
+	return true
+}

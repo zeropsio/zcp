@@ -45,6 +45,7 @@ func evaluateLaunchShapeRows(
 	ctx context.Context,
 	cfg *LaunchShapeConfig,
 	client platform.Client,
+	scopedClient func(token string) (platform.Client, error),
 	transcriptText string,
 	toolCallTexts []string,
 	launchTokenSHA256 string,
@@ -55,7 +56,26 @@ func evaluateLaunchShapeRows(
 	var rows []RequiredCheck
 
 	scope := launchShapeScope(cfg)
-	prodProject, projectRow := resolveLaunchProdProject(ctx, client, cfg)
+	prodClient := client
+	// The standing prod project (by id) is read with its own scoped token;
+	// a project the launch created (by name) is read with the launch key
+	// that created it — the run's own token cannot see either.
+	tokenEnv := cfg.ProdTokenEnv
+	if cfg.ProdProjectIDEnv == "" && cfg.ProdProject != "" && os.Getenv(LaunchKeyEnvVar) != "" {
+		tokenEnv = LaunchKeyEnvVar
+	}
+	if tokenEnv != "" {
+		scoped, row := prodTokenClient(tokenEnv, scope, scopedClient)
+		if scoped == nil {
+			return append(rows, row,
+				notRunLaunchShapeRow("runtimes_start_without_code", scope, row.Message),
+				notRunLaunchShapeRow("no_build_from_git", scope, row.Message),
+				notRunLaunchShapeRow("first_release_is_first_build", scope, row.Message),
+				evaluateTokenNotInTranscriptRow(transcriptText, toolCallTexts, launchTokenSHA256))
+		}
+		prodClient = scoped
+	}
+	prodProject, projectRow := resolveLaunchProdProject(ctx, prodClient, cfg)
 	rows = append(rows, projectRow)
 	if prodProject == nil {
 		reason := "prod project not found or not resolvable: " + projectRow.Message
@@ -65,7 +85,7 @@ func evaluateLaunchShapeRows(
 			notRunLaunchShapeRow("first_release_is_first_build", scope, reason),
 		)
 	} else {
-		rows = append(rows, evaluateLaunchProdRuntimeRows(ctx, client, prodProject.ID)...)
+		rows = append(rows, evaluateLaunchProdRuntimeRows(ctx, prodClient, prodProject.ID)...)
 	}
 
 	rows = append(rows, evaluateTokenNotInTranscriptRow(transcriptText, toolCallTexts, launchTokenSHA256))
@@ -100,6 +120,39 @@ func resolveLaunchProdProject(ctx context.Context, client platform.Client, cfg *
 		return findLaunchProdProjectByIDEnv(ctx, client, cfg.ProdProjectIDEnv)
 	}
 	return findLaunchProdProject(ctx, client, cfg.ProdProject)
+}
+
+// LaunchKeyEnvVar names the per-run launch key the farm injects into a
+// launch scenario's run (ZCP_E2E_LAUNCH_KEY).
+const LaunchKeyEnvVar = "ZCP_E2E_LAUNCH_KEY"
+
+// prodTokenClient builds the client that reads the prod project with the
+// token in tokenEnv — launchShape.prodTokenEnv for the standing project, the
+// launch key for a project the launch created: both are outside the run's
+// own token scope. A missing token or a failed client build blocks
+// project_exists — the project was never read.
+func prodTokenClient(tokenEnv, scope string, scopedClient func(token string) (platform.Client, error)) (platform.Client, RequiredCheck) {
+	id := launchShapeRowID("project_exists")
+	token := os.Getenv(tokenEnv)
+	if token == "" {
+		return nil, RequiredCheck{
+			ID: id, Check: "launch_shape", Scope: scope, Result: CheckBlocked,
+			Message: fmt.Sprintf("resource %s missing", tokenEnv),
+		}
+	}
+	if scopedClient == nil {
+		scopedClient = func(token string) (platform.Client, error) {
+			return platform.NewZeropsClient(token, os.Getenv("ZCP_API_HOST"))
+		}
+	}
+	c, err := scopedClient(token)
+	if err != nil {
+		return nil, RequiredCheck{
+			ID: id, Check: "launch_shape", Scope: scope, Result: CheckBlocked,
+			Message: fmt.Sprintf("client for %s failed: %v", tokenEnv, err),
+		}
+	}
+	return c, RequiredCheck{}
 }
 
 // findLaunchProdProjectByIDEnv resolves launchShape.prodProjectIdEnv
@@ -178,11 +231,10 @@ func findLaunchProdProject(ctx context.Context, client platform.Client, name str
 // evaluateLaunchProdRuntimeRows evaluates the three runtime-shape rows
 // (runtimes_start_without_code, no_build_from_git,
 // first_release_is_first_build) against the prod project's runtime
-// services and their appVersion history. Uses ListServicesDirect (lag-free)
-// plus SearchAppVersions (ES-backed; only read after ListServicesDirect
-// resolved the project, and only to classify history — CLAUDE.md's ES-lag
-// caveat applies, so an appVersion for a just-created service may be
-// briefly absent).
+// services and their appVersion history. Both reads are direct (lag-free,
+// readable with a project-scoped token): ListServicesDirect, then
+// ListServiceAppVersions per runtime. The ES-backed SearchAppVersions is not
+// used — it answered empty for projects with real history.
 func evaluateLaunchProdRuntimeRows(ctx context.Context, client platform.Client, projectID string) []RequiredCheck {
 	services, err := client.ListServicesDirect(ctx, projectID)
 	if err != nil {
@@ -212,16 +264,19 @@ func evaluateLaunchProdRuntimeRows(ctx context.Context, client platform.Client, 
 		}
 	}
 
-	appVersions, err := client.SearchAppVersions(ctx, projectID, 0)
-	if err != nil {
-		msg := fmt.Sprintf("SearchAppVersions failed: %v", err)
-		return []RequiredCheck{
-			blockedLaunchShapeRow("runtimes_start_without_code", projectID, "SearchAppVersions", msg),
-			blockedLaunchShapeRow("no_build_from_git", projectID, "SearchAppVersions", msg),
-			blockedLaunchShapeRow("first_release_is_first_build", projectID, "SearchAppVersions", msg),
+	byService := map[string][]platform.AppVersionEvent{}
+	for _, svc := range runtimes {
+		history, err := client.ListServiceAppVersions(ctx, svc.ID)
+		if err != nil {
+			msg := fmt.Sprintf("ListServiceAppVersions %s failed: %v", svc.Name, err)
+			return []RequiredCheck{
+				blockedLaunchShapeRow("runtimes_start_without_code", projectID, "ListServiceAppVersions", msg),
+				blockedLaunchShapeRow("no_build_from_git", projectID, "ListServiceAppVersions", msg),
+				blockedLaunchShapeRow("first_release_is_first_build", projectID, "ListServiceAppVersions", msg),
+			}
 		}
+		byService[svc.ID] = history
 	}
-	byService := groupAppVersionsByService(appVersions)
 
 	var noCodeFails, buildFails []string
 	for _, svc := range runtimes {
@@ -288,14 +343,6 @@ func firstReleaseNotFirstBuildFails(runtimes []platform.ServiceStack, byService 
 	return fails
 }
 
-func groupAppVersionsByService(events []platform.AppVersionEvent) map[string][]platform.AppVersionEvent {
-	out := map[string][]platform.AppVersionEvent{}
-	for _, e := range events {
-		out[e.ServiceStackID] = append(out[e.ServiceStackID], e)
-	}
-	return out
-}
-
 func blockedLaunchShapeRow(field, scope, source, message string) RequiredCheck {
 	return RequiredCheck{ID: launchShapeRowID(field), Check: "launch_shape", Scope: scope, Result: CheckBlocked, Source: source, Message: message}
 }
@@ -324,6 +371,11 @@ func launchShapeRuntimeRow(field, scope string, fails []string, expected string)
 // whitespace never isolates the token from its surrounding quotes/`=`/`,`,
 // so the digest never matched and a leak silently passed. launchTokenTokens
 // splits on every character outside [A-Za-z0-9_-] instead.
+//
+// On the manual launch path the persona's key stands for a value the user
+// pastes in, so the token is accepted in exactly two places: the agent's one
+// read of $ZCP_E2E_LAUNCH_KEY and the zerops_workflow launchKey argument
+// (scrubAllowedLaunchKeyPlaces); anywhere else it fails the row.
 func evaluateTokenNotInTranscriptRow(transcriptText string, toolCallTexts []string, launchTokenSHA256 string) RequiredCheck {
 	id := launchShapeRowID("token_not_in_transcript")
 	if launchTokenSHA256 == "" {
@@ -334,7 +386,7 @@ func evaluateTokenNotInTranscriptRow(transcriptText string, toolCallTexts []stri
 	}
 	texts := make([]string, 0, len(toolCallTexts)+1)
 	if transcriptText != "" {
-		texts = append(texts, transcriptText)
+		texts = append(texts, scrubAllowedLaunchKeyPlaces(transcriptText, launchTokenSHA256))
 	}
 	texts = append(texts, toolCallTexts...)
 

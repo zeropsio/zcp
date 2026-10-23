@@ -227,8 +227,8 @@ func TestRenderStatus_IdleRenders(t *testing.T) {
 func TestRenderServiceLine_BasePrefixHint(t *testing.T) {
 	t.Parallel()
 
-	const ubuntuHint = "base prefix ubuntu/ — write it on BOTH zerops.yaml build.base and run.base (legacy nodejs@22 + os: ubuntu ≡ ubuntu/nodejs@22; run.base rewrites the service OS on every deploy)"
-	const alpineHint = "base prefix alpine/ — write it on BOTH zerops.yaml build.base and run.base (legacy php-nginx@8.4 + os: alpine ≡ alpine/php-nginx@8.4; run.base rewrites the service OS on every deploy)"
+	const ubuntuHint = "base prefix ubuntu/ — a zerops.yaml base you add takes it on BOTH build.base and run.base (legacy nodejs@22 + os: ubuntu ≡ ubuntu/nodejs@22); run.base sets the service OS on every deploy, so bases that already deploy stay as they are"
+	const alpineHint = "base prefix alpine/ — a zerops.yaml base you add takes it on BOTH build.base and run.base (legacy php-nginx@8.4 + os: alpine ≡ alpine/php-nginx@8.4); run.base sets the service OS on every deploy, so bases that already deploy stay as they are"
 
 	tests := []struct {
 		name    string
@@ -272,6 +272,24 @@ func TestRenderServiceLine_BasePrefixHint(t *testing.T) {
 			svc: ServiceSnapshot{
 				Hostname: "db", TypeVersion: "postgresql:single@18",
 				RuntimeClass: topology.RuntimeManaged,
+			},
+			wantHas: "",
+		},
+		{
+			name: "a zerops.yaml whose bases are declared is never told to change its base prefix",
+			svc: ServiceSnapshot{
+				Hostname: "appdev", TypeVersion: "ubuntu/nodejs@22",
+				RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Mode: topology.ModeStandard,
+				DeclaresBase: true,
+			},
+			wantHas: "",
+		},
+		{
+			name: "a stage of a repo whose bases are declared is never told to change its base prefix",
+			svc: ServiceSnapshot{
+				Hostname: "webstage", TypeVersion: "ubuntu/nodejs@22",
+				RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Mode: topology.ModeStage,
+				DeclaresBase: true,
 			},
 			wantHas: "",
 		},

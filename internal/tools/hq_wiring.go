@@ -23,10 +23,11 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// A Mate's pairs deliver their code to HQ (SPEC §3.2a): each dev/stage pair
-// has a repository in the application HQ holds the Mate in, named after its
-// dev hostname, and the Mate works on a branch of its own that descends from
-// the repository's `main`. HQ makes the repository on the Mate's asking
+// A Mate's pairs keep their code in HQ (SPEC §3.2a): each dev/stage pair has
+// a repository in the application HQ holds the Mate in, named after its dev
+// hostname, and the pair's checkout descends from the repository's `main`.
+// The agent works there with plain git — a branch of its own, pushed, landed
+// on `main` by a person's merge. HQ makes the repository on the Mate's asking
 // (ensure repo), and every Mate of the application reaches all of its
 // repositories over git at `/git/<appId>/<repo>.git`.
 
@@ -36,9 +37,15 @@ import (
 // configured) lives on the ServiceMeta, where the rest of ZCP can see it.
 const hqStateDir = "hq"
 
-// hqPairWorkingDir is where a Zerops runtime's code lives, and so where the
-// pair's git repository is — the same default the git-push deploy uses.
-const hqPairWorkingDir = "/var/www"
+// hqPairWorkingDir is where the pair's git repository is: the directory its
+// dev half deploys from (ServiceMeta.WorkingDirFor) — the code volume's mount
+// for a variant-B pair — else where a Zerops runtime's code lives.
+func hqPairWorkingDir(m *workflow.ServiceMeta) string {
+	if dir := m.WorkingDirFor(m.Hostname); dir != "" {
+		return dir
+	}
+	return topology.CodeMountRoot
+}
 
 // hqWaitBackoff is how long a pass waits after an unproductive attempt before
 // trying again, doubling to hqWaitBackoffMax. The passes that drive this step
@@ -102,9 +109,8 @@ var hqRepositoryActions = map[string]bool{"git-push-setup": true, "build-integra
 
 // hqRepositoryActionRefusal is a Mate's answer to hqRepositoryActions: in a
 // Mate all three are HQ's. zcp
-// wires each pair to its repository in HQ itself (wireHQPair), keeps the
-// push credential current from the enrollment (hqEnsurePushCredential), and
-// Core deploys the application's environments from the repository's commits
+// wires each pair to its repository in HQ itself (wireHQPair), git reaches it
+// with this Mate's own HQ credential, and Core deploys the application's environments from the repository's commits
 // — so a remote, a token or a CI chosen here would only diverge from HQ's
 // record. A remote of the user's own a pair already pushes to is left alone
 // (hqPairNeedsRepository); this action does not move it either.
@@ -112,14 +118,9 @@ func hqRepositoryActionRefusal(action string) *mcp.CallToolResult {
 	return convertError(platform.NewPlatformError(
 		platform.ErrInvalidUsage,
 		fmt.Sprintf("%s does not run in a Mate: each pair's repository in HQ, the credential it pushes with and what builds from it are HQ's, and nothing here chooses them.", action),
-		"ZCP wires a bootstrapped pair to its repository in HQ on the next bootstrap or adopt pass, and deploying the pair's stage half delivers its work. A push that HQ refuses is checked against this Mate's current HQ credential again on the next push — no token is to be asked for or made up. A pair already pushing to a remote of the user's own keeps it; moving it is the person's call, not this action's.",
+		"ZCP wires a bootstrapped pair to its repository in HQ on the next bootstrap or adopt pass; work reaches it by plain git from the pair's checkout — a branch of your own, pushed, never `main` and never forced; no token is to be asked for or made up: git answers HQ with this Mate's own credential. A pair already pushing to a remote of the user's own keeps it; moving it is the person's call, not this action's.",
 	), WithRecoveryStatus())
 }
-
-// hqMateBranch is the Mate's local branch in a pair's checkout: mate/<its
-// project id>. Each change's own branch at HQ is cut from it at its push
-// (hq.Client.ChangeBranch).
-func hqMateBranch(client hq.Client) string { return "mate/" + client.ProjectID() }
 
 // reconcileMateRepositories runs both repository reconciles in the one order
 // that works: a pair gets its repository in HQ, and only then can the group
@@ -135,7 +136,7 @@ func reconcileMateRepositories(
 	stateDir string,
 ) []string {
 	rebuildMateStages(ctx, httpClient, rt, stateDir, recipePairMountRoot)
-	lines := reconcileHQRepositories(ctx, client, httpClient, sshDeployer, rt, stateDir)
+	lines := reconcileHQRepositories(ctx, client, httpClient, sshDeployer, rt, stateDir, hqPassBackedOff)
 	if line := reconcileGroupRecipe(ctx, client, httpClient, rt, stateDir); line != "" {
 		lines = append(lines, "the group's recipe: "+line)
 	}
@@ -143,12 +144,14 @@ func reconcileMateRepositories(
 }
 
 // reconcileHQRepositories gives every bootstrapped pair on this Mate its
-// repository in HQ and its own branch to work on, and keeps every wired pair
-// current: the change on record is asked what became of it, and a pair whose
-// Mate HQ now holds in another application is wired there. It delivers
-// nothing: a delivery is the agent's call, and fails within it. It is a RECONCILE, not a one-shot step:
-// it runs on every bootstrap and adopt pass, does nothing for a pair with
-// nothing to do, and backs off per pair.
+// repository in HQ with a checkout on its `main`, and keeps every wired pair
+// current: the dev service holds the Mate credential as it is now, the change
+// on record is asked what became of it, and a pair whose Mate HQ now holds in
+// another application is wired there. It pushes nothing: what goes to HQ is
+// the agent's git. It is a RECONCILE, not a one-shot step: it runs on every
+// bootstrap, adopt and develop start, does nothing for a pair with nothing
+// to do, and backs off per pair (pace) — except a credential to renew, which
+// git in the dev service cannot do without.
 //
 // It NEVER blocks bootstrap. Every failure it can meet — a Mate not enrolled
 // yet, HQ refusing or not answering, an SSH hiccup — leaves the pair exactly
@@ -163,6 +166,7 @@ func reconcileHQRepositories(
 	sshDeployer ops.SSHDeployer,
 	rt runtime.Info,
 	stateDir string,
+	pace hqPassPace,
 ) []string {
 	// Local mode holds no Mate and no container to push from.
 	if !rt.InContainer || sshDeployer == nil {
@@ -193,7 +197,7 @@ func reconcileHQRepositories(
 	var report []string
 	for _, m := range pending {
 		state := readHQPairState(stateDir, m.Hostname)
-		if !hqAttemptDue(state, now) {
+		if pace == hqPassBackedOff && !hqAttemptDue(state, now) && !hqPairCredentialStale(m, hqc) {
 			continue
 		}
 		// A pair another process runs git on is left to it, and no attempt
@@ -215,6 +219,18 @@ func reconcileHQRepositories(
 	return report
 }
 
+// hqPassPace is whether a pass keeps each pair's backoff.
+type hqPassPace int
+
+const (
+	// hqPassBackedOff: a pair is taken only once its backoff is over — the
+	// pace of passes that agent tool calls drive in bursts.
+	hqPassBackedOff hqPassPace = iota
+	// hqPassNow: every pair is taken — develop's start, after which the agent
+	// works on the checkout.
+	hqPassNow
+)
+
 // passHQPair is one pair's turn of a pass, on its record as it is once the
 // pass holds its checkout: wired, or kept current.
 func passHQPair(
@@ -232,12 +248,50 @@ func passHQPair(
 	m, _ := workflow.FindServiceMeta(stateDir, hostname)
 	switch {
 	case hqPairNeedsRepository(m, address):
-		attempt := wireHQPair(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, m, hqRepoNameOf(m))
+		attempt := wireHQPair(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, self, m, hqRepoNameOf(m))
 		return attempt.line, attempt.wired
 	case hqPairWired(m):
+		if hqPairCredentialStale(m, hqc) {
+			if line := renewHQPairCredential(ctx, client, rt.ProjectID, stateDir, hqc, m); line != "" {
+				return line, false
+			}
+		}
 		return keepHQPairCurrent(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, self, m)
 	}
 	return "", false
+}
+
+// hqPairCredentialStale reports whether a wired pair's dev service holds
+// another Mate credential than the enrollment's: the Mate enrolled again —
+// a redeployed zcp does — and HQ revoked the one it holds. A pair wired before
+// its record named the credential is renewed once.
+func hqPairCredentialStale(m *workflow.ServiceMeta, hqc hq.Client) bool {
+	return hqPairWired(m) && m.GitPushState == topology.GitPushConfigured &&
+		m.HQ.CredentialFingerprint != hqc.CredentialFingerprint()
+}
+
+// renewHQPairCredential gives a wired pair's dev service the Mate credential
+// as it is now, as the service secret its sessions' git reads, and records
+// which one it holds. Only the secret: the checkout's branch, origin and
+// helper stay as the agent left them. "" once renewed, else the line saying
+// it was not.
+func renewHQPairCredential(ctx context.Context, client platform.Client, projectID, stateDir string, hqc hq.Client, m *workflow.ServiceMeta) string {
+	svc, err := ops.LookupService(ctx, client, projectID, m.Hostname)
+	if err == nil {
+		_, err = ops.EnvSetService(ctx, client, svc.ID, ops.GitTokenEnvKey, hqc.Credential(), true)
+	}
+	if err != nil {
+		return fmt.Sprintf("the Mate enrolled with HQ again, and git in %s's sessions cannot reach HQ until it holds the new credential, which could not be written (%v) — retrying on the next pass; your own shell's git is unaffected.", m.Hostname, err)
+	}
+	fingerprint := hqc.CredentialFingerprint()
+	_ = workflow.UpsertServiceMeta(stateDir, m.Hostname, func(meta *workflow.ServiceMeta, existed bool) error {
+		if existed && meta.HQ != nil {
+			meta.HQ.CredentialFingerprint = fingerprint
+		}
+		return nil
+	})
+	m.HQ.CredentialFingerprint = fingerprint
+	return ""
 }
 
 // lazySelf reads the Mate's own state from HQ at most once, when first asked:
@@ -258,8 +312,11 @@ func lazySelf(ctx context.Context, hqc hq.Client) func() (hq.MateState, error) {
 }
 
 // keepHQPairCurrent is one wired pair's turn of a pass: wired again in the
-// application HQ holds the Mate in now, if that moved, and what became of its
-// change on record. wired is whether the pass wired it again.
+// application HQ holds the Mate in now, if that moved, what became of its
+// change on record, a change handed to the Mate there (hqTakeHanded) or the
+// one still open (hqOpenChangeWork), how its code is kept (recordHQOrigin)
+// and so where its checkout's origin points (hqPairOrigin), and its `main`
+// against HQ's (hqPairMain). wired is whether the pass wired it again.
 func keepHQPairCurrent(
 	ctx context.Context,
 	client platform.Client,
@@ -280,17 +337,53 @@ func keepHQPairCurrent(
 		return "HQ holds this Mate in no application now, so its repository takes nothing from it — it will once the Mate is in one; nothing else is blocked.", false
 	}
 	if *state.AppID != m.HQ.AppID {
-		attempt := wireHQPair(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, m, m.HQ.Repo)
+		attempt := wireHQPair(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, self, m, m.HQ.Repo)
 		return attempt.line, attempt.wired
 	}
-	return hqLearnLanding(stateDir, m, state), false
+	recordHQOrigin(stateDir, m, state)
+	upgradeReleasedBranch(stateDir, hqc, m)
+	lines := []string{}
+	// What became of the change on record is learned before a handed one
+	// takes its place; a change still open says where the work goes.
+	landed := hqLearnLanding(stateDir, m, state)
+	work := hqTakeHanded(stateDir, hqc, m, state)
+	if work == "" {
+		work = hqOpenChangeWork(hqc, m)
+	}
+	for _, line := range []string{hqPairOrigin(ctx, sshDeployer, hqc, m), landed, work, hqPairMain(ctx, sshDeployer, hqc, m)} {
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return strings.Join(lines, "; "), false
+}
+
+// hqPairMain checks a wired pair's local `main` against HQ's
+// (ops.BuildMainSyncCommand): a `main` that is only zcp's empty seed is put on
+// HQ's; one with commits HQ's lacks is left, with the step that keeps them.
+// "" when there is nothing to say — a check that could not run among it: the
+// next pass runs it again.
+func hqPairMain(ctx context.Context, sshDeployer ops.SSHDeployer, hqc hq.Client, m *workflow.ServiceMeta) string {
+	dir := hqPairWorkingDir(m)
+	out, err := sshDeployer.ExecSSH(ctx, m.Hostname, ops.BuildMainSyncCommand(dir, hqc.RepoURL(m.HQ.AppID, m.HQ.Repo)))
+	if err != nil {
+		return ""
+	}
+	state, detail := ops.MainSync(string(out))
+	switch state {
+	case ops.MainFromSeed:
+		return fmt.Sprintf("its %q held only zcp's empty seed and nothing of yours, so it is HQ's %q now (%.12s) and takes HQ's work by fast-forward", hqBase, hqBase, detail)
+	case ops.MainSeedInTheWay:
+		return fmt.Sprintf("its %q holds only zcp's empty seed, and files the working copy holds uncommitted stand where HQ's %q puts its own: in your own shell on the mounted checkout, commit them on a branch of your own (`git checkout -b <branch> && git add -A && git commit`); the next develop start then puts %q on HQ's", hqBase, hqBase, hqBase)
+	case ops.MainOwnCommits:
+		return fmt.Sprintf("its %q holds %s commit(s) HQ's %q does not, and %q moves only by a merge: in your own shell on the mounted checkout, keep them on a branch (`git branch <name> main`), put %q on HQ's (`git checkout main && git fetch origin && git reset --keep origin/main`), and carry what they need onto a branch cut from it with `git cherry-pick`", hqBase, detail, hqBase, hqBase, hqBase)
+	}
+	return ""
 }
 
 // rewireHQPair runs the wiring for one pair now, outside the backoff, and
-// records the attempt the way a pass does. It is the trigger a session has
-// after bootstrap: a git-push of a pair whose remote is this Mate's HQ but
-// which was never recorded as wired (handleGitPush), and a stand-up adopting
-// a pair from the group recipe.
+// records the attempt the way a pass does: a stand-up adopting a pair from
+// the group recipe wires it at once.
 func rewireHQPair(
 	ctx context.Context,
 	client platform.Client,
@@ -302,7 +395,7 @@ func rewireHQPair(
 	m *workflow.ServiceMeta,
 	repoName string,
 ) hqWiringOutcome {
-	attempt := wireHQPair(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, m, repoName)
+	attempt := wireHQPair(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, lazySelf(ctx, hqc), m, repoName)
 	recordHQAttempt(stateDir, m.Hostname, readHQPairState(stateDir, m.Hostname), time.Now().UTC(), attempt.line, attempt.wired)
 	return attempt
 }
@@ -331,8 +424,8 @@ func hqRepoNameOf(m *workflow.ServiceMeta) string {
 	return m.Hostname
 }
 
-// hqPairWired reports whether a pair delivers to HQ: it has its repository
-// there, and its stage deploy delivers by itself.
+// hqPairWired reports whether a pair keeps its code in HQ: it has its
+// repository there.
 func hqPairWired(m *workflow.ServiceMeta) bool {
 	return m != nil && m.HQ != nil && m.HQ.Repo != ""
 }
@@ -389,9 +482,10 @@ type hqWiringOutcome struct {
 	usersOwn bool
 }
 
-// wireHQPair gives one pair its repository in HQ and its own branch: the
-// repository repoName in the application HQ holds the Mate in (made if new),
-// git-push to it, the Mate's branch cut from its `main`, and the HQ record —
+// wireHQPair gives one pair its repository in HQ: the repository repoName in
+// the application HQ holds the Mate in (made if new), git-push to it, the
+// checkout on a `main` descending from the repository's, the HQ record, and
+// the checkout's origin where the person keeps the code (hqPairOrigin) —
 // nothing builds from the repository on the Mate's side: Core deploys the
 // application's environments from its commits. repoName is the pair's dev
 // hostname for a pair zcp
@@ -407,6 +501,7 @@ func wireHQPair(
 	rt runtime.Info,
 	stateDir string,
 	hqc hq.Client,
+	self func() (hq.MateState, error),
 	m *workflow.ServiceMeta,
 	repoName string,
 ) hqWiringOutcome {
@@ -451,23 +546,21 @@ func wireHQPair(
 		return hqWiringOutcome{line: fmt.Sprintf("repository %q is ready in HQ but wiring git-push to it failed — retrying on the next pass.", repo.Name)}
 	}
 
-	// The push source works ON the Mate's branch from now on, and the branch
-	// has to DESCEND from the repository's `main`: the pair was
-	// git-initialised with a history of its own, and a change unrelated to
-	// `main` cannot be squashed onto it. Best-effort: a container that
+	// The push source's checkout has to DESCEND from the repository's `main`:
+	// the pair was git-initialised with a history of its own, and a branch
+	// unrelated to `main` cannot land on it. Best-effort: a container that
 	// refuses still has its repository, and the next pass tries again.
-	branch := hqMateBranch(hqc)
 	if out, branchErr := sshDeployer.ExecSSH(ctx, m.Hostname,
-		ops.BuildMateBranchCommand(hqPairWorkingDir, branch)); branchErr != nil {
-		prefix := fmt.Sprintf("repository %q is ready in HQ, but %s could not be put on %q branched off \"main\"", repo.Name, m.Hostname, branch)
-		refusal := ops.MateBranchRefusal(string(out))
-		if remedy := ops.MateBranchRefusalRemedy(refusal, branch); remedy != "" {
+		ops.BuildBaseBranchCommand(hqPairWorkingDir(m))); branchErr != nil {
+		prefix := fmt.Sprintf("repository %q is ready in HQ, but %s could not be put on %q", repo.Name, m.Hostname, hqBase)
+		refusal := ops.BaseBranchRefusal(string(out))
+		if remedy := ops.BaseBranchRefusalRemedy(refusal); remedy != "" {
 			return hqWiringOutcome{
-				line:   fmt.Sprintf("%s (%s): in %s on %s, %s", prefix, refusal, hqPairWorkingDir, m.Hostname, remedy),
-				remedy: fmt.Sprintf("In %s on %s, %s", hqPairWorkingDir, m.Hostname, remedy),
+				line:   fmt.Sprintf("%s (%s): in %s on %s, %s", prefix, refusal, hqPairWorkingDir(m), m.Hostname, remedy),
+				remedy: fmt.Sprintf("In %s on %s, %s", hqPairWorkingDir(m), m.Hostname, remedy),
 			}
 		}
-		return hqWiringOutcome{line: fmt.Sprintf("%s (%v) — a push would have nothing to send, or nothing HQ could merge; retrying on the next pass.", prefix, branchErr)}
+		return hqWiringOutcome{line: fmt.Sprintf("%s (%v) — a branch cut from it could not land on %q; retrying on the next pass.", prefix, branchErr, hqBase)}
 	}
 	var (
 		left     int
@@ -477,17 +570,25 @@ func wireHQPair(
 		if !existed {
 			return fmt.Errorf("meta for %q vanished", m.Hostname)
 		}
-		meta.HQ, left = wiredHQRecord(meta.HQ, repo, branch)
+		meta.HQ, left = wiredHQRecord(meta.HQ, repo, hqc.CredentialFingerprint())
 		recorded = meta.HQ
 		return nil
 	}); err != nil {
 		return hqWiringOutcome{line: fmt.Sprintf("repository %q is wired but recording it failed (%v) — the next pass re-reads it.", repo.Name, err)}
 	}
 	m.HQ = recorded
+	// git-push-setup pointed origin at HQ; where the person keeps the code on
+	// GitHub, the wiring points it there last.
+	if state, err := self(); err == nil {
+		recordHQOrigin(stateDir, m, state)
+	}
 
-	line := fmt.Sprintf("repository %q wired in HQ; this Mate works on %q and lands on \"main\" through a change (never pushing main directly)", repo.Name, branch)
+	line := fmt.Sprintf("repository %q wired in HQ; work goes on branches cut from %q and lands on it by a person's merge, never by pushing %q", repo.Name, hqBase, hqBase)
 	if left != 0 {
 		line += fmt.Sprintf("; this Mate moved to another application, and its change #%d stays in the one it was opened in", left)
+	}
+	if kept := hqPairOrigin(ctx, sshDeployer, hqc, m); kept != "" {
+		line += "; " + kept
 	}
 	return hqWiringOutcome{line: line, wired: true}
 }
@@ -509,24 +610,21 @@ func reservedRepository(hostname, repoName string) (line, remedy string) {
 	return fmt.Sprintf("%s gets no repository in HQ: %q is the application's recipe repository. %s", hostname, hq.RecipeRepo, remedy), remedy
 }
 
-// wiredHQRecord is the pair's HQ record once it is wired to repo on branch.
-// Wired again to the same repository it keeps everything; wired to another —
-// the Mate moved to another application — its change and the landing of one
-// stay with the old application (left is the change left there, 0 for none),
-// while words kept for the next change come along.
-func wiredHQRecord(prior *workflow.HQRepoRef, repo hq.Repo, branch string) (record *workflow.HQRepoRef, left int) {
+// wiredHQRecord is the pair's HQ record once it is wired to repo, its dev
+// service given the credential fingerprint names. Wired again to the same
+// repository it keeps everything else; wired to another — the Mate moved to
+// another application — its change stays with the old application (left is
+// the change left there, 0 for none).
+func wiredHQRecord(prior *workflow.HQRepoRef, repo hq.Repo, fingerprint string) (record *workflow.HQRepoRef, left int) {
 	wiredAt := time.Now().UTC().Format(time.RFC3339)
 	if prior != nil && prior.AppID == repo.AppID && prior.Repo == repo.Name {
 		kept := *prior
-		kept.Branch, kept.WiredAt = branch, wiredAt
+		kept.WiredAt, kept.CredentialFingerprint = wiredAt, fingerprint
 		return &kept, 0
 	}
-	record = &workflow.HQRepoRef{AppID: repo.AppID, Repo: repo.Name, Branch: branch, WiredAt: wiredAt}
+	record = &workflow.HQRepoRef{AppID: repo.AppID, Repo: repo.Name, WiredAt: wiredAt, CredentialFingerprint: fingerprint}
 	if prior != nil {
 		left = prior.Change
-		if prior.ChangeDescription != nil && prior.ChangeDescription.Change == 0 {
-			record.ChangeDescription = prior.ChangeDescription
-		}
 	}
 	return record, left
 }
@@ -613,6 +711,16 @@ func appendRepositoryReport(resp *workflow.BootstrapResponse, lines []string) {
 		return
 	}
 	resp.Message += " HQ — " + strings.Join(lines, "; ") + "."
+}
+
+// withRepositoryReport adds the reconcile's lines to a tool result as one
+// more text block; a result with nothing to add is returned as it is.
+func withRepositoryReport(result *mcp.CallToolResult, lines []string) *mcp.CallToolResult {
+	if result == nil || len(lines) == 0 {
+		return result
+	}
+	result.Content = append(result.Content, &mcp.TextContent{Text: "HQ — " + strings.Join(lines, "; ") + "."})
+	return result
 }
 
 // sameGitRepository reports whether two remote URLs name one repository:

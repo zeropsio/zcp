@@ -133,7 +133,7 @@ func setupRealisticServer(t *testing.T, mock *platform.Mock) (*mcp.ClientSession
 	logFetcher := defaultLogFetcher()
 
 	tools.RegisterWorkflow(mcpSrv, mock, nil, projectID, nil, engine, nil, "", "", nil, nil, runtime.Info{}, "")
-	tools.RegisterDiscover(mcpSrv, mock, projectID, "")
+	tools.RegisterDiscover(mcpSrv, mock, projectID, "", nil)
 	tools.RegisterKnowledge(mcpSrv, store, mock, nil, nil, nil)
 	tools.RegisterImport(mcpSrv, mock, projectID, engine, "", nil, runtime.Info{})
 	tools.RegisterProcess(mcpSrv, mock, projectID)

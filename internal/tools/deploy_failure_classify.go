@@ -14,18 +14,20 @@ import (
 // any wrapped *platform.PlatformError to emit a structured next-step.
 //
 // strategy is the active deploy strategy (push-dev / push-git / manual) so
-// the classifier scopes credential-class signals correctly.
+// the classifier scopes credential-class signals correctly. configFile is
+// the repo's config file name the classification's text names ("" keeps it).
 //
 // Returns nil when the error doesn't fit any known transport-phase signal
 // AND no baseline applies (currently rare — the transport baseline is
 // always emitted for transport-phase failures).
-func classifyTransportError(err error, strategy string) *topology.DeployFailureClassification {
+func classifyTransportError(err error, strategy, configFile string) *topology.DeployFailureClassification {
 	if err == nil {
 		return nil
 	}
 	in := ops.FailureInput{
-		Strategy: strategy,
-		Phase:    ops.PhaseTransport,
+		Strategy:   strategy,
+		Phase:      ops.PhaseTransport,
+		ConfigFile: configFile,
 	}
 	var pe *platform.PlatformError
 	if errors.As(err, &pe) {

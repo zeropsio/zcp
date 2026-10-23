@@ -11,8 +11,11 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// inotifyMask holds the events a content change makes. IN_ATTRIB is not one:
+// a read over the zcp mount moves the access time, and that must never
+// restart a server; a write, a create and a rename are all here.
 const inotifyMask = unix.IN_MODIFY | unix.IN_CLOSE_WRITE | unix.IN_CREATE | unix.IN_DELETE |
-	unix.IN_MOVED_FROM | unix.IN_MOVED_TO | unix.IN_ATTRIB
+	unix.IN_MOVED_FROM | unix.IN_MOVED_TO
 
 // watcher reports changes under a server's watch paths through inotify. It
 // watches directories, not files, so a file a git checkout renames over keeps

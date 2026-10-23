@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/zeropsio/zcp/internal/devsup"
+	"github.com/zeropsio/zcp/internal/platform"
 )
 
 // Container is one dev container. Zero value: no zcp-devsup, no files.
@@ -27,6 +28,12 @@ type Container struct {
 	// Installed: the zcp-devsup binary is in the image. Running: its
 	// supervisor answers the control socket (run.start is `zcp-devsup run`).
 	Installed, Running bool
+	// Unresponsive: the supervisor runs but does not answer its control
+	// socket in time (a thrashing container); `ctl` exits 5.
+	Unresponsive bool
+	// Silent: the container itself does not answer over SSH in time (out of
+	// memory or CPU); every command ends at the ssh deadline.
+	Silent bool
 	// SupervisorVersion and Formats answer `ctl version`.
 	SupervisorVersion string
 	Formats           []int
@@ -42,8 +49,19 @@ type Container struct {
 	// no running server holds it, and a server started on it finds the port
 	// busy. Any other port refuses the connection.
 	HTTP, Foreign map[int]int
-	// Crash names servers that end on their own right after they start.
-	Crash map[string]bool
+	// Loopback names the ports a running server listens on only at
+	// 127.0.0.1; every other running server's port listens on all addresses.
+	Loopback map[int]bool
+	// Crash names servers that end on their own right after they start;
+	// RetryPending names those of them the supervisor starts once more.
+	Crash, RetryPending map[string]bool
+	// TaskLimit names those of them that crashed because the service's task
+	// limit was reached, with the limit the supervisor reports.
+	TaskLimit map[string]*devsup.TaskLimit
+	// Settle names servers that answer starting for that many reads of the
+	// state after they start, and only then as running or as Crash says.
+	Settle   map[string]int
+	settling map[string]int
 	// Logs is each server's log.
 	Logs map[string][]string
 	// Commands records every command, in order.
@@ -53,7 +71,11 @@ type Container struct {
 	// DirtyCrew names the crew copies (.crew/<name>) with uncommitted or
 	// untracked changes.
 	DirtyCrew []string
-	pid       int
+	// MemMaxB, MemCurrentB, MemInactiveB and MemActiveB (memory.stat's
+	// inactive_file and active_file) answer the cgroup memory probe in bytes;
+	// MemMaxB 0 means the cgroup files are unreadable.
+	MemMaxB, MemCurrentB, MemInactiveB, MemActiveB int64
+	pid                                            int
 }
 
 // SupervisedYAML is a zerops.yaml whose dev setup runs the supervisor.
@@ -74,10 +96,13 @@ func NewSupervised(decl string) *Container {
 }
 
 // ExecSSH answers one command.
-func (c *Container) ExecSSH(_ context.Context, _ string, command string) ([]byte, error) {
+func (c *Container) ExecSSH(_ context.Context, hostname string, command string) ([]byte, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.Commands = append(c.Commands, command)
+	if c.Silent {
+		return nil, &platform.SSHExecError{Hostname: hostname, Err: fmt.Errorf("ssh stopped: %w (signal: killed)", context.DeadlineExceeded)}
+	}
 	switch {
 	case strings.Contains(command, "@@zcp-devsup version"):
 		return []byte(c.read()), nil
@@ -88,6 +113,11 @@ func (c *Container) ExecSSH(_ context.Context, _ string, command string) ([]byte
 	case strings.Contains(command, "dev-servers.json.tmp"):
 		c.Declaration = strings.TrimSuffix(firstQuoted(command, "printf '%s\\n' "), "\n")
 		return nil, nil
+	case strings.Contains(command, "@@zcp-memory"):
+		if c.MemMaxB == 0 {
+			return nil, errors.New("exit status 1")
+		}
+		return fmt.Appendf(nil, "@@zcp-memory %d %d %d %d\n", c.MemMaxB, c.MemCurrentB, c.MemInactiveB, c.MemActiveB), nil
 	case strings.Contains(command, "@@zcp-crew-dirty"):
 		var out strings.Builder
 		for _, name := range c.DirtyCrew {
@@ -99,6 +129,14 @@ func (c *Container) ExecSSH(_ context.Context, _ string, command string) ([]byte
 			return []byte("@@zcp-file -\n"), nil
 		}
 		return []byte("@@zcp-file " + c.YAMLFile + "\n" + c.YAML), nil
+	case strings.Contains(command, "echo @@yaml"):
+		// The parts read (ops.ReadPartsSignal): the repo's zerops.yaml and
+		// declaration; no workspace markers or packages.
+		file := ""
+		if c.YAML != "" {
+			file = c.YAMLFile
+		}
+		return []byte("@@file\n" + file + "\n@@yaml\n" + c.YAML + "\n@@declaration\n" + c.Declaration + "\n@@markers\n@@packages\n"), nil
 	case strings.Contains(command, ".zcp-tmp"):
 		c.YAML = firstQuoted(command, "printf '%s' ")
 		return nil, nil
@@ -108,6 +146,8 @@ func (c *Container) ExecSSH(_ context.Context, _ string, command string) ([]byte
 			return fmt.Appendf(nil, "OK %d 123", code), nil // 123: the probe's own in-container measure
 		}
 		return fmt.Appendf(nil, "FAIL %03d", code), errors.New("exit status 1")
+	case strings.HasPrefix(command, "ss -ltn"):
+		return []byte(c.listen()), nil
 	case strings.Contains(command, "curl -s -o /dev/null"):
 		return fmt.Appendf(nil, "%03d", c.httpCode(command)), nil
 	case strings.Contains(command, "rev-parse --verify HEAD") && strings.Contains(command, "git status --porcelain"):
@@ -198,18 +238,24 @@ func (c *Container) start(name string, restart bool) {
 		return
 	}
 	st.Desired = devsup.DesiredRunning
+	if n := c.Settle[name]; n > 0 {
+		if c.settling == nil {
+			c.settling = map[string]int{}
+		}
+		c.settling[name] = n
+	}
 	now := time.Date(2026, 10, 14, 21, 0, 0, 0, time.UTC)
 	st.StartedAt = &now
 	switch {
 	case c.Foreign[c.declaredPort(name)] != 0:
 		st.Status, st.Pid, st.Pgid = devsup.StatusCrashed, 0, 0
-		st.Exit = &devsup.Exit{Code: -1, Signal: devsup.ExitPortBusy, At: now}
+		st.Exit, st.RetryPending, st.TaskLimit = &devsup.Exit{Code: -1, Signal: devsup.ExitPortBusy, At: now}, false, nil
 	case c.Crash[name]:
 		st.Status, st.Pid, st.Pgid = devsup.StatusCrashed, 0, 0
-		st.Exit = &devsup.Exit{Code: 1, At: now}
+		st.Exit, st.RetryPending, st.TaskLimit = &devsup.Exit{Code: 1, At: now}, c.RetryPending[name], c.TaskLimit[name]
 	default:
 		c.pid += 100
-		st.Status, st.Pid, st.Pgid, st.Exit = devsup.StatusRunning, 700+c.pid, 700+c.pid, nil
+		st.Status, st.Pid, st.Pgid, st.Exit, st.RetryPending, st.TaskLimit = devsup.StatusRunning, 700+c.pid, 700+c.pid, nil, false, nil
 	}
 }
 
@@ -227,6 +273,10 @@ func (c *Container) state(only string) devsup.State {
 			if code, ok := c.HTTP[c.declaredPort(n)]; ok && code == 0 && server.Status == devsup.StatusRunning && c.declaredPort(n) != 0 {
 				server.Status = devsup.StatusStarting
 			}
+			if c.settling[n] > 0 {
+				c.settling[n]--
+				server.Status, server.Exit, server.RetryPending, server.TaskLimit = devsup.StatusStarting, nil, false, nil
+			}
 			st.Servers[n] = server
 		}
 	}
@@ -237,14 +287,18 @@ func (c *Container) read() string {
 	var b strings.Builder
 	if c.Installed {
 		fmt.Fprintf(&b, "%s\n@@zcp-devsup version 0\n", encode(map[string]any{"version": c.SupervisorVersion, "formats": c.Formats}))
-		if c.Running {
+		switch {
+		case c.Unresponsive:
+			fmt.Fprintf(&b, "{\"code\":5,\"error\":\"zcp-devsup is running here but did not answer\"}\n@@zcp-devsup status 5\n")
+		case c.Running:
 			fmt.Fprintf(&b, "%s\n@@zcp-devsup status 0\n", encode(c.state("")))
-		} else {
+		default:
 			fmt.Fprintf(&b, "{\"code\":2,\"error\":\"no zcp-devsup is running here\"}\n@@zcp-devsup status 2\n")
 		}
 	} else {
 		b.WriteString("@@zcp-devsup version 127\n")
 	}
+	fmt.Fprintf(&b, "%s@@zcp-devsup listen 0\n", c.listen())
 	if c.Declaration != "" {
 		fmt.Fprintf(&b, "%s\n@@zcp-devsup declaration 0\n", c.Declaration)
 	} else {
@@ -253,9 +307,29 @@ func (c *Container) read() string {
 	return b.String()
 }
 
+// listen is `ss -ltn` of the running servers' ports.
+func (c *Container) listen() string {
+	var b strings.Builder
+	b.WriteString("State  Recv-Q Send-Q Local Address:Port Peer Address:Port\n")
+	for name, s := range c.Servers {
+		port := c.declaredPort(name)
+		switch {
+		case port == 0 || s.Status != devsup.StatusRunning:
+		case c.Loopback[port]:
+			fmt.Fprintf(&b, "LISTEN 0      511        127.0.0.1:%d      0.0.0.0:*\n", port)
+		default:
+			fmt.Fprintf(&b, "LISTEN 0      4096               *:%d            *:*\n", port)
+		}
+	}
+	return b.String()
+}
+
 func (c *Container) ctl(command string) string {
 	if !c.Installed {
 		return "@@zcp-devsup ctl 127\n"
+	}
+	if c.Unresponsive {
+		return "{\"code\":5,\"error\":\"zcp-devsup is running here but did not answer\"}\n@@zcp-devsup ctl 5\n"
 	}
 	if !c.Running {
 		return "{\"code\":2,\"error\":\"no zcp-devsup is running here\"}\n@@zcp-devsup ctl 2\n"
@@ -292,7 +366,8 @@ func (c *Container) ctl(command string) string {
 		}
 		st.Desired, st.Status, st.Pid, st.Pgid = devsup.DesiredStopped, devsup.StatusStopped, 0, 0
 	case "reload":
-		if derr != nil {
+		// A missing file is an empty declaration, as devsup.LoadDeclaration reads it.
+		if c.Declaration != "" && derr != nil {
 			return fail(4, derr.Error())
 		}
 		for n := range maps.Clone(c.Servers) {

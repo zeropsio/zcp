@@ -20,6 +20,16 @@ type rig struct {
 	t     *testing.T
 	root  string
 	state string
+	// window is the supervisors' start window; zero is the default.
+	window time.Duration
+	// stagger is the gap between servers started together; zero is 1 ms, so
+	// tests that start several servers do not wait the default gap.
+	stagger time.Duration
+	// tasks, when set, is the supervisors' reading of the service's task limit.
+	tasks func() (Tasks, bool)
+	// previousRun, when set, is the supervisors' reading of systemd's result
+	// for the previous run of their unit.
+	previousRun func() (string, bool)
 }
 
 // newRig makes a repo root and a short state directory (a unix socket path
@@ -66,7 +76,14 @@ func (r *rig) write(rel, s string) {
 
 func (r *rig) supervisorWith(service string, portWait time.Duration) *Supervisor {
 	r.t.Helper()
-	s, err := New(Config{Root: r.root, StateDir: r.state, Service: service, Env: os.Environ(), Grace: time.Second, PortWait: portWait, Version: "v-test"})
+	stagger := r.stagger
+	if stagger == 0 {
+		stagger = time.Millisecond
+	}
+	s, err := New(Config{
+		Root: r.root, StateDir: r.state, Service: service, Env: os.Environ(), Grace: time.Second, PortWait: portWait,
+		StartWindow: r.window, Stagger: stagger, LimitBackoff: 50 * time.Millisecond, Tasks: r.tasks, PreviousRun: r.previousRun, Version: "v-test",
+	})
 	if err != nil {
 		r.t.Fatal(err)
 	}
@@ -167,13 +184,16 @@ func TestSupervisor_StoppingOneNamedServerLeavesItsSiblingsRunning(t *testing.T)
 func TestSupervisor_AServerThatExitsStaysDownAndVisible(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
-	r.declare(Server{Name: "api", Command: helperCmd(t, "exit", "CODE=3")})
+	r.window = 300 * time.Millisecond
+	// It exits after its start window: a crash within it is started once more.
+	r.declare(Server{Name: "api", Command: "sleep 1; " + helperCmd(t, "exit", "CODE=3")})
 	s := r.supervisor()
 	s.Boot()
 
 	eventually(t, "api to be recorded as crashed", func() bool {
 		return mustServer(t, s.State(), "api").Status == StatusCrashed
 	})
+	time.Sleep(3 * r.window) // a restart that should not happen has no event to wait on
 	s.Reload()
 	sv := mustServer(t, s.State(), "api")
 	if sv.Status != StatusCrashed || sv.Restarts != 0 || sv.Pid != 0 {
@@ -336,6 +356,52 @@ func TestSupervisor_ReloadRestartsOnlyTheChangedServerAndDropsARemovedOne(t *tes
 	eventually(t, "api to listen again", func() bool { return listening(api) })
 }
 
+// An agent edits .zcp/dev-servers.json and asks for a restart or a start; it
+// never has to know about `ctl reload`.
+func TestSupervisor_StartAndRestartRunTheDeclarationAsEditedWithoutAReload(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	web := freePort(t)
+	srv := r.listener("web", web)
+	r.declare(srv)
+	s := r.supervisor()
+	s.Boot()
+	eventually(t, "web to listen", func() bool { return listening(web) })
+
+	ranLast := func(marker string) bool {
+		b, _ := os.ReadFile(LogPath(r.state, "web"))
+		starts := strings.Split(string(b), "--- zcp-devsup: start #")
+		return strings.Contains(starts[len(starts)-1], marker)
+	}
+	v2 := srv
+	v2.Command += " # v2"
+	r.declare(v2)
+	if err := s.Restart("web"); err != nil {
+		t.Fatal(err)
+	}
+	if !ranLast("# v2") {
+		t.Fatal("restart ran the command from before the edit")
+	}
+	if sv := mustServer(t, s.State(), "web"); sv.Restarts != 1 {
+		t.Fatalf("the edit restarted web twice: %+v", sv)
+	}
+
+	if err := s.Stop("web"); err != nil {
+		t.Fatal(err)
+	}
+	released(t, web)
+	v3 := srv
+	v3.Command += " # v3"
+	r.declare(v3)
+	if err := s.Start("web"); err != nil {
+		t.Fatal(err)
+	}
+	if !ranLast("# v3") {
+		t.Fatal("start ran the command from before the edit")
+	}
+	eventually(t, "web to listen again", func() bool { return listening(web) })
+}
+
 func TestSupervisor_AnInvalidOrNewerDeclarationChangesNothingAndIsReported(t *testing.T) {
 	t.Parallel()
 	r := newRig(t)
@@ -409,6 +475,85 @@ func TestSupervisor_AWatchedChangeRestartsTheServerAndIgnoredOutputDoesNot(t *te
 		return sv.Pid != first && sv.Pid != 0 && sv.Restarts == 1
 	})
 	eventually(t, "api to listen again", func() bool { return listening(api) })
+}
+
+// An agent reading the repo over the zcp mount restarted the server it read:
+// the read moved the file's access time. Reading a watched file never
+// restarts its server; writing one does.
+func TestSupervisor_ReadingAWatchedFileNeverRestartsItsServerAndWritingOneDoes(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	api := freePort(t)
+	r.write("apps/api/Main.java", "class Main {}")
+	srv := r.listener("api", api)
+	srv.Watch = &Watch{Paths: []string{"apps/api"}}
+	r.declare(srv)
+	s := r.supervisor()
+	s.Boot()
+	eventually(t, "api to listen", func() bool { return listening(api) })
+	first := mustServer(t, s.State(), "api").Pid
+
+	// A read: the content, the directory listing and the access time it moves.
+	p := filepath.Join(r.root, "apps/api/Main.java")
+	if _, err := os.ReadFile(p); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.ReadDir(filepath.Dir(p)); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(p, time.Now().Add(time.Hour), fi.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(4 * watchSettle) // a restart that should not happen has no event to wait on
+	if sv := mustServer(t, s.State(), "api"); sv.Pid != first || sv.Restarts != 0 {
+		t.Fatalf("reading Main.java restarted api: %+v, reason %q", sv, sv.LastRestartReason)
+	}
+
+	r.write("apps/api/Main.java", "class Main { int v2; }")
+	eventually(t, "the write to restart api", func() bool {
+		sv := mustServer(t, s.State(), "api")
+		return sv.Restarts == 1 && sv.LastRestartReason == "apps/api/Main.java changed"
+	})
+}
+
+func TestSupervisor_StateSaysWhyTheSupervisorLastRestartedAServer(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	api := freePort(t)
+	r.write("apps/api/main.go", "package main")
+	srv := r.listener("api", api)
+	srv.Watch = &Watch{Paths: []string{"apps/api"}}
+	r.declare(srv)
+	s := r.supervisor()
+	s.Boot()
+	eventually(t, "api to listen", func() bool { return listening(api) })
+	if sv := mustServer(t, s.State(), "api"); sv.LastRestartReason != "" {
+		t.Fatalf("a first start has a restart reason: %q", sv.LastRestartReason)
+	}
+
+	r.write("apps/api/main.go", "package main // v2")
+	eventually(t, "api to restart on the change", func() bool {
+		return mustServer(t, s.State(), "api").LastRestartReason == "apps/api/main.go changed"
+	})
+	eventually(t, "api to listen again", func() bool { return listening(api) })
+
+	if err := s.Restart("api"); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustServer(t, s.State(), "api").LastRestartReason; got != "a restart was asked for" {
+		t.Fatalf("reason after ctl restart = %q", got)
+	}
+	st, err := ReadState(r.state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := mustServer(t, st, "api").LastRestartReason; got != "a restart was asked for" {
+		t.Fatalf("state.json reason = %q", got)
+	}
 }
 
 func TestSupervisor_ControlSocketDrivesTheServers(t *testing.T) {
@@ -586,5 +731,347 @@ func TestSupervisor_EachDevServicesSupervisorStartsOnlyTheServersAssignedToIt(t 
 		if !slices.Equal(got, want) {
 			t.Errorf("supervisor runs %v, want %v", got, want)
 		}
+	}
+}
+
+// After a container replacement every server starts at once; two Maven
+// wrappers unpacking one distribution race and the loser dies within seconds.
+// One more start after its siblings settle brings it up; a server that keeps
+// crashing at start stays down and visible.
+func TestSupervisor_AServerThatCrashesInItsStartWindowIsStartedOnceMoreThenStaysDown(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.window = 300 * time.Millisecond
+	port := freePort(t)
+	flaky := r.listener("flaky", port)
+	flaky.Command = "if [ -f .tried ]; then " + flaky.Command + "; else touch .tried; exit 1; fi"
+	r.declare(flaky, Server{Name: "broken", Command: helperCmd(t, "exit", "CODE=3")})
+	s := r.supervisor()
+	s.Boot()
+
+	eventually(t, "flaky to run after one more start", func() bool {
+		sv := mustServer(t, s.State(), "flaky")
+		return sv.Status == StatusRunning && sv.Restarts == 1 && listening(port)
+	})
+	if sv := mustServer(t, s.State(), "flaky"); sv.Exit == nil || sv.Exit.Code != 1 {
+		t.Fatalf("the first crash is not visible: %+v", sv.Exit)
+	}
+	if got := mustServer(t, s.State(), "flaky").LastRestartReason; got != "it crashed within its start window" {
+		t.Fatalf("flaky restart reason = %q", got)
+	}
+	eventually(t, "broken to crash on its second start too", func() bool {
+		sv := mustServer(t, s.State(), "broken")
+		return sv.Status == StatusCrashed && sv.Restarts == 1
+	})
+	time.Sleep(3 * r.window) // a third start that should not happen has no event to wait on
+	if sv := mustServer(t, s.State(), "broken"); sv.Status != StatusCrashed || sv.Restarts != 1 || sv.Exit == nil || sv.Exit.Code != 3 {
+		t.Fatalf("broken = %+v exit %+v, want crashed after one more start", sv, sv.Exit)
+	}
+}
+
+// Four Spring services started at once; each Maven wrapper unpacked the same
+// distribution for longer than the start window, all four crashed before they
+// ever listened, and none came back. A crash before the server first answers
+// on its port is a start crash however long the start took: it is started
+// once more, one server at a time while a sibling is still starting. A server
+// that crashed after it listened stays down.
+func TestSupervisor_AServerThatCrashesBeforeItFirstListensIsStartedOnceMoreOneAtATime(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.window = 300 * time.Millisecond
+	vets, visits, late := freePort(t), freePort(t), freePort(t)
+	// The first start unpacks past the window and dies; a later start that
+	// meets a sibling still unpacking (.unpack held) dies of the race again.
+	maven := func(name string, port int) Server {
+		srv := r.listener(name, port)
+		srv.Command = "if [ -f .tried-" + name + " ]; then mkdir .unpack || exit 9; sleep 0.4; rmdir .unpack; " + srv.Command +
+			"; else touch .tried-" + name + "; sleep 0.6; exit 1; fi"
+		return srv
+	}
+	// It listens, then dies: no longer starting.
+	crashLate := r.listener("late", late)
+	crashLate.Command = "if [ -f .tried-late ]; then exit 4; fi; touch .tried-late; (sleep 1; kill $$) & " + crashLate.Command
+	r.declare(maven("vets", vets), maven("visits", visits), crashLate)
+	s := r.supervisor()
+	s.Boot()
+
+	for name, port := range map[string]int{"vets": vets, "visits": visits} {
+		eventually(t, name+" to run after one more start", func() bool {
+			sv := mustServer(t, s.State(), name)
+			return sv.Status == StatusRunning && sv.Restarts == 1 && listening(port)
+		})
+		sv := mustServer(t, s.State(), name)
+		if sv.Exit == nil || sv.Exit.Code != 1 || sv.LastRestartReason != "it crashed within its start window" {
+			t.Fatalf("%s = %+v exit %+v, want its first crash visible and the retry named", name, sv, sv.Exit)
+		}
+	}
+	eventually(t, "late to crash after it listened", func() bool {
+		return mustServer(t, s.State(), "late").Status == StatusCrashed
+	})
+	time.Sleep(3 * r.window) // a start that should not happen has no event to wait on
+	if sv := mustServer(t, s.State(), "late"); sv.Status != StatusCrashed || sv.Restarts != 0 {
+		t.Fatalf("late = %+v, want it down: it crashed after it listened", sv)
+	}
+}
+
+// A deploy reply called a server crashed and told the agent to fix it while
+// the supervisor had already scheduled its one more start. While that start
+// is pending — waiting for its window and for a sibling still starting — the
+// state says so; once it starts, or when the retry was the start that crashed,
+// it says nothing.
+func TestSupervisor_AServerThatCrashedWhileStartingSaysItsOneMoreStartIsPendingUntilItStarts(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.window = 300 * time.Millisecond
+	flakyPort, slowPort := freePort(t), freePort(t)
+	flaky := r.listener("flaky", flakyPort)
+	flaky.Command = "if [ -f .tried ]; then " + flaky.Command + "; else touch .tried; exit 1; fi"
+	slow := r.listener("slow", slowPort)
+	slow.Command = "sleep 2; " + slow.Command
+	r.declare(flaky, slow, Server{Name: "broken", Command: helperCmd(t, "exit", "CODE=3")})
+	s := r.supervisor()
+	s.Boot()
+
+	eventually(t, "flaky to be crashed with its one more start pending", func() bool {
+		sv := mustServer(t, s.State(), "flaky")
+		return sv.Status == StatusCrashed && sv.RetryPending
+	})
+	eventually(t, "flaky to run after its one more start", func() bool {
+		sv := mustServer(t, s.State(), "flaky")
+		return sv.Status == StatusRunning && sv.Restarts == 1 && listening(flakyPort)
+	})
+	if sv := mustServer(t, s.State(), "flaky"); sv.RetryPending {
+		t.Fatalf("flaky = %+v, still says a start is pending after it started", sv)
+	}
+	eventually(t, "broken to crash on its one more start too", func() bool {
+		sv := mustServer(t, s.State(), "broken")
+		return sv.Status == StatusCrashed && sv.Restarts == 1
+	})
+	if sv := mustServer(t, s.State(), "broken"); sv.RetryPending {
+		t.Fatalf("broken = %+v, says a start is pending after its one more start crashed", sv)
+	}
+	eventually(t, "state.json to hold broken crashed with nothing pending", func() bool {
+		kept, err := ReadState(r.state)
+		sv, ok := kept.Servers["broken"]
+		return err == nil && ok && sv.Status == StatusCrashed && !sv.RetryPending
+	})
+}
+
+// `uv run` rebuilds the repo's local packages, writing into the watched tree,
+// on every start: each start restarted the server again, 900 times. A server
+// whose every recent start changed its own watched files is no longer
+// restarted by a change made during its start; a change after it still is.
+func TestSupervisor_AServerThatChangesItsWatchedFilesOnEveryStartIsNotRestartedByThemForever(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.window = 2 * time.Second // a start, its write, the poll and the settle fit in it under -race
+	r.write("apps/api/main.py", "v1")
+	r.write("apps/api/pkg/PKG-INFO", "")
+	srv := Server{Name: "api", Command: "sleep 0.2; echo $$ > apps/api/pkg/PKG-INFO; exec sleep 300", Watch: &Watch{Paths: []string{"apps/api"}}}
+	r.declare(srv)
+	s := r.supervisor()
+	s.Boot()
+
+	eventually(t, "the self-caused restarts to stop", func() bool {
+		return mustServer(t, s.State(), "api").Restarts == watchLoopLimit
+	})
+	time.Sleep(r.window + 4*watchSettle) // a restart that should not happen has no event to wait on
+	sv := mustServer(t, s.State(), "api")
+	if sv.Restarts != watchLoopLimit || sv.Status != StatusRunning || sv.Pid == 0 {
+		t.Fatalf("api = %+v, want running after %d restarts", sv, watchLoopLimit)
+	}
+	if want := "restarts stopped: apps/api/pkg/PKG-INFO changed during each of its last 10 starts; add the path to watch.ignore"; sv.LastRestartReason != want {
+		t.Fatalf("reason = %q, want %q", sv.LastRestartReason, want)
+	}
+
+	r.write("apps/api/main.py", "v2")
+	eventually(t, "a change after the start window to restart api", func() bool {
+		return mustServer(t, s.State(), "api").Restarts == watchLoopLimit+1
+	})
+	time.Sleep(r.window + 4*watchSettle)
+	if sv := mustServer(t, s.State(), "api"); sv.Restarts != watchLoopLimit+1 || sv.Status != StatusRunning {
+		t.Fatalf("api = %+v, want one restart for the edit", sv)
+	}
+}
+
+// limitRig is a rig whose service's task limit (300) is reached each time a
+// server appends a line to .limit in the repo root: the kernel's pids.events
+// "max" count, which grows each time a fork is refused at pids.max.
+func limitRig(t *testing.T) *rig {
+	t.Helper()
+	r := newRig(t)
+	r.tasks = func() (Tasks, bool) {
+		b, _ := os.ReadFile(filepath.Join(r.root, ".limit"))
+		return Tasks{Max: 300, Current: 297, Refused: int64(strings.Count(string(b), "\n"))}, true
+	}
+	return r
+}
+
+// After a deploy every dev server crashed at once with EAGAIN — uv's rayon
+// pool, pnpm, fork/exec of /bin/sh — because together they reached the
+// service's task limit, and each stayed down: its one more start crashed the
+// same way. A server whose crash came with the limit reached is started again
+// with backoff, one at a time, and that is not its one more start; while it
+// waits the state names the limit and the tasks running now.
+func TestSupervisor_AServerThatCrashedWhenTheServicesTaskLimitWasReachedIsStartedAgainWithBackoffWithoutSpendingItsOneMoreStart(t *testing.T) {
+	t.Parallel()
+	r := limitRig(t)
+	r.window = 300 * time.Millisecond
+	port := freePort(t)
+	api := r.listener("api", port)
+	// Three starts meet the limit, the fourth runs.
+	api.Command = "n=$(cat .starts 2>/dev/null | wc -l); echo s >> .starts; if [ $n -lt 3 ]; then echo refused >> .limit; exit 1; fi; " + api.Command
+	r.declare(api)
+	s := r.supervisor()
+	s.Boot()
+
+	eventually(t, "api to be crashed on the task limit with a start pending", func() bool {
+		sv := mustServer(t, s.State(), "api")
+		return sv.Status == StatusCrashed && sv.RetryPending && sv.TaskLimit != nil
+	})
+	if sv := mustServer(t, s.State(), "api"); *sv.TaskLimit != (TaskLimit{Max: 300, Current: 297}) {
+		t.Fatalf("api taskLimit = %+v, want the limit 300 and the 297 tasks running now", *sv.TaskLimit)
+	}
+	eventually(t, "api to run after its starts on the task limit", func() bool {
+		sv := mustServer(t, s.State(), "api")
+		return sv.Status == StatusRunning && sv.Restarts == 3 && listening(port)
+	})
+	sv := mustServer(t, s.State(), "api")
+	if sv.TaskLimit != nil || sv.RetryPending {
+		t.Fatalf("api = %+v, still names the task limit or a pending start while it runs", sv)
+	}
+	if sv.LastRestartReason != "the service's task limit (300) was reached" {
+		t.Fatalf("api lastRestartReason = %q, want the task limit named", sv.LastRestartReason)
+	}
+}
+
+// The backoff is bounded: a server that meets the task limit on every start
+// stops being started again and stays down, still naming the limit.
+func TestSupervisor_AServerThatMeetsTheTaskLimitOnEveryStartStopsBeingStartedAndNamesTheLimit(t *testing.T) {
+	t.Parallel()
+	r := limitRig(t)
+	r.window = 300 * time.Millisecond
+	r.declare(Server{Name: "worker", Command: "echo refused >> .limit; exit 1"})
+	s := r.supervisor()
+	s.Boot()
+
+	eventually(t, "worker to stay down after its bounded starts", func() bool {
+		sv := mustServer(t, s.State(), "worker")
+		return sv.Status == StatusCrashed && !sv.RetryPending && sv.Restarts == maxLimitStarts
+	})
+	time.Sleep(time.Second) // a start that should not happen has no event to wait on
+	sv := mustServer(t, s.State(), "worker")
+	if sv.Restarts != maxLimitStarts || sv.TaskLimit == nil || sv.TaskLimit.Max != 300 {
+		t.Fatalf("worker = %+v, want %d restarts and the task limit named", sv, maxLimitStarts)
+	}
+}
+
+// Servers started together are started a gap apart, so N servers do not fork
+// their toolchains at the same moment.
+func TestSupervisor_ServersStartedTogetherStartAGapApart(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.stagger = 400 * time.Millisecond
+	r.declare(
+		Server{Name: "a", Command: "sleep 300"},
+		Server{Name: "b", Command: "sleep 300"},
+		Server{Name: "c", Command: "sleep 300"},
+	)
+	s := r.supervisor()
+	s.Boot()
+
+	st := s.State()
+	at := make([]time.Time, 0, 3)
+	for _, name := range []string{"a", "b", "c"} {
+		sv := mustServer(t, st, name)
+		if sv.StartedAt == nil || sv.Status != StatusRunning {
+			t.Fatalf("%s = %+v, want it started", name, sv)
+		}
+		at = append(at, *sv.StartedAt)
+	}
+	slices.SortFunc(at, func(x, y time.Time) int { return x.Compare(y) })
+	for i := 1; i < len(at); i++ {
+		if gap := at[i].Sub(at[i-1]); gap < 350*time.Millisecond {
+			t.Fatalf("starts %v apart, want at least the 400 ms gap: %v", gap, at)
+		}
+	}
+}
+
+// The kernel's OOM killer killed a dev server's process; the platform unit's
+// OOMPolicy=stop made systemd stop the unit, every dev server with it, and
+// start it again, and each server's restart reason said only "the supervisor
+// started again". The new supervisor reads how the previous run of its unit
+// ended and says on every server it started that the service ran out of
+// memory and systemd restarted them all, until that server starts again for
+// another reason.
+func TestSupervisor_AfterSystemdRestartedTheServiceBecauseItRanOutOfMemoryEachServerSaysSo(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	web, api := freePort(t), freePort(t)
+	r.declare(r.listener("web", web), r.listener("api", api))
+	s1 := r.supervisor()
+	s1.Boot()
+	eventually(t, "both to listen", func() bool { return listening(web) && listening(api) })
+	s1.Shutdown() // systemd stops the unit on the OOM kill
+
+	r.previousRun = func() (string, bool) { return "oom-kill", true }
+	s2 := r.supervisor()
+	s2.Boot()
+	eventually(t, "both to listen again", func() bool { return listening(web) && listening(api) })
+
+	const want = "the service ran out of memory: the kernel killed one of its processes and systemd restarted every dev server"
+	st, err := ReadState(r.state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"web", "api"} {
+		if sv := mustServer(t, st, name); sv.LastRestartReason != want || !sv.OutOfMemory {
+			t.Fatalf("%s lastRestartReason/outOfMemory = %q/%v, want %q/true", name, sv.LastRestartReason, sv.OutOfMemory, want)
+		}
+	}
+
+	if err := s2.Restart("api"); err != nil {
+		t.Fatal(err)
+	}
+	st = s2.State()
+	if sv := mustServer(t, st, "api"); sv.OutOfMemory || sv.LastRestartReason != "a restart was asked for" {
+		t.Fatalf("api after ctl restart = %q/%v, want the asked restart and no out-of-memory mark", sv.LastRestartReason, sv.OutOfMemory)
+	}
+	if sv := mustServer(t, st, "web"); !sv.OutOfMemory || sv.LastRestartReason != want {
+		t.Fatalf("web = %q/%v, lost the out-of-memory restart when api restarted", sv.LastRestartReason, sv.OutOfMemory)
+	}
+}
+
+// A previous run that ended for any other reason, or one the journal does not
+// tell, is no out-of-memory restart.
+func TestSupervisor_AfterAnyOtherEndOfThePreviousRunTheSupervisorStartedAgain(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		result string
+		ok     bool
+	}{
+		{"its main process exited with an error", "exit-code", true},
+		{"the journal cannot be read", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t)
+			api := freePort(t)
+			r.declare(r.listener("api", api))
+			s1 := r.supervisor()
+			s1.Boot()
+			eventually(t, "api to listen", func() bool { return listening(api) })
+			s1.Shutdown()
+
+			r.previousRun = func() (string, bool) { return tt.result, tt.ok }
+			s2 := r.supervisor()
+			s2.Boot()
+			eventually(t, "api to listen again", func() bool { return listening(api) })
+			if sv := mustServer(t, s2.State(), "api"); sv.OutOfMemory || sv.LastRestartReason != "the supervisor started again" {
+				t.Fatalf("api = %q/%v, want the supervisor started again and no out-of-memory mark", sv.LastRestartReason, sv.OutOfMemory)
+			}
+		})
 	}
 }

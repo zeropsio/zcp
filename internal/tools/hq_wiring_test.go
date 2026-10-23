@@ -6,11 +6,13 @@ package tools
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -18,28 +20,28 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// TestReconcileHQRepositories_GivesThePairItsRepositoryAndBranch: the pass
-// asks HQ for the repository named after the dev half, points the checkout's
+// TestReconcileHQRepositories_GivesThePairItsRepositoryOnMain: the pass asks
+// HQ for the repository named after the dev half, points the checkout's
 // origin at it with the Mate credential where git-push-setup keeps it — a
 // sensitive service env on the push source, never a file zcp writes — and
-// puts the checkout on the Mate's branch, cut from HQ's main.
-func TestReconcileHQRepositories_GivesThePairItsRepositoryAndBranch(t *testing.T) {
+// puts the checkout on `main`, descending from HQ's main.
+func TestReconcileHQRepositories_GivesThePairItsRepositoryOnMain(t *testing.T) {
 	lab := newHQLab(t)
 
 	report := lab.wire()
 
-	if len(report) != 1 || !strings.Contains(report[0], `repository "appdev" wired in HQ`) || !strings.Contains(report[0], `"mate/p-mate"`) {
+	if len(report) != 1 || !strings.Contains(report[0], `repository "appdev" wired in HQ`) || !strings.Contains(report[0], `branches cut from "main"`) {
 		t.Fatalf("report = %q", report)
 	}
 	meta := lab.meta()
-	if meta.HQ == nil || meta.HQ.AppID != labApp || meta.HQ.Repo != "appdev" || meta.HQ.Branch != "mate/p-mate" {
+	if meta.HQ == nil || meta.HQ.AppID != labApp || meta.HQ.Repo != "appdev" {
 		t.Fatalf("the pair's HQ record = %+v", meta.HQ)
 	}
 	if meta.GitPushState != topology.GitPushConfigured || meta.RemoteURL != lab.hq.srv.URL+"/git/"+labApp+"/appdev.git" {
 		t.Errorf("git-push = %s to %q", meta.GitPushState, meta.RemoteURL)
 	}
-	if got := lab.git("rev-parse", "--abbrev-ref", "HEAD"); got != "mate/p-mate" {
-		t.Errorf("the checkout is on %q, want the Mate's branch", got)
+	if got := lab.git("rev-parse", "--abbrev-ref", "HEAD"); got != "main" {
+		t.Errorf("the checkout is on %q, want main", got)
 	}
 	if got := lab.git("remote", "get-url", "origin"); got != meta.RemoteURL {
 		t.Errorf("origin = %q, want the repository in HQ", got)
@@ -77,7 +79,7 @@ func TestReconcileHQRepositories_RewiresAPairToTheRepositoryItsRecordNames(t *te
 	lab := newHQLab(t)
 	if err := workflow.UpdateServiceMeta(lab.stateDir, "appdev", func(m *workflow.ServiceMeta) error {
 		m.GitPushState = topology.GitPushBroken
-		m.HQ = &workflow.HQRepoRef{AppID: labApp, Repo: "medusa", Branch: "mate/" + labMate}
+		m.HQ = &workflow.HQRepoRef{AppID: labApp, Repo: "medusa"}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -178,7 +180,7 @@ func TestReconcileHQRepositories_ARefusalNamesItsRemedy(t *testing.T) {
 	lab.git("-c", "user.name=mate", "-c", "user.email=mate@example.invalid", "commit", "-qm", "own history")
 
 	report := lab.wire()
-	if len(report) != 1 || !strings.Contains(report[0], "ZCP_BASE_NOT_SEED") || !strings.Contains(report[0], "git merge --allow-unrelated-histories") {
+	if len(report) != 1 || !strings.Contains(report[0], "ZCP_BASE_NOT_SEED") || !strings.Contains(report[0], "git reset --keep FETCH_HEAD") {
 		t.Fatalf("report = %q, want the refusal and its remedy", report)
 	}
 	if lab.meta().HQ != nil {
@@ -200,22 +202,23 @@ func TestReconcileHQRepositories_AWiredPairsTrackedRefStaysMain(t *testing.T) {
 // TestReconcileHQRepositories_TellsTheMateWhatBecameOfItsChange: nothing
 // pushes a merge at the Mate — a person merges in the app — so a pass asks
 // the Mate's own state what became of the change on record, says so once,
-// and forgets the number so the next delivery opens the next change.
+// and forgets the number: a later change is another one.
 func TestReconcileHQRepositories_TellsTheMateWhatBecameOfItsChange(t *testing.T) {
 	for _, tt := range []struct {
-		name       string
-		settle     func(*fakeHQ)
-		want       string
-		wantLanded bool
+		name   string
+		settle func(*fakeHQ)
+		want   []string
 	}{
-		{name: "merged", settle: func(f *fakeHQ) { f.merge() }, want: "change #1 is merged", wantLanded: true},
-		{name: "closed without merging", settle: func(f *fakeHQ) { f.close(1) }, want: "change #1 was closed without merging"},
+		// The checkout is brought up to date where git can ask zcp, whether its
+		// origin is HQ or GitHub.
+		{name: "merged", settle: func(f *fakeHQ) { f.merge() }, want: []string{"change #1 is merged", "in your own shell on the mounted checkout, never over ssh"}},
+		{name: "closed without merging", settle: func(f *fakeHQ) { f.close(1) }, want: []string{"change #1 was closed without merging"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			lab := newHQLab(t)
 			lab.wire()
 			lab.write(map[string]string{"index.js": "the app\n"})
-			lab.deliver()
+			recordChange(lab.stateDir, lab.meta(), lab.openChange().Number, "")
 			elapseHQBackoff(t, lab.stateDir)
 			if report := lab.wire(); len(report) != 0 {
 				t.Fatalf("an open change says nothing, got %q", report)
@@ -223,46 +226,35 @@ func TestReconcileHQRepositories_TellsTheMateWhatBecameOfItsChange(t *testing.T)
 			tt.settle(lab.hq)
 			elapseHQBackoff(t, lab.stateDir)
 			report := lab.wire()
-			if len(report) != 1 || !strings.Contains(report[0], tt.want) {
-				t.Fatalf("report = %q, want %q", report, tt.want)
+			if len(report) != 1 {
+				t.Fatalf("report = %q, want one line", report)
 			}
-			meta := lab.meta()
-			if meta.HQ.Change != 0 || (meta.HQ.Landed != nil) != tt.wantLanded {
+			for _, want := range tt.want {
+				if !strings.Contains(report[0], want) {
+					t.Errorf("report = %q, want %q", report[0], want)
+				}
+			}
+			if meta := lab.meta(); meta.HQ.Change != 0 {
 				t.Errorf("the pair's record = %+v", meta.HQ)
-			}
-			// A pass records the landing; the explicit delivery moves the checkout.
-			if tt.wantLanded && strings.Contains(lab.git("log", "--format=%H"), *lab.hq.change(1).MergedSha) {
-				t.Errorf("the pass must leave the checkout unchanged")
 			}
 		})
 	}
 }
 
-// TestRecordLandingAndClearChange_SkipAStaleNumber: a pass that read change
-// #3's outcome never writes over a pair a concurrent delivery already moved
-// on to #4.
-func TestRecordLandingAndClearChange_SkipAStaleNumber(t *testing.T) {
+// TestClearChange_SkipsAStaleNumber: a pass that read change #3's outcome
+// never writes over a pair a concurrent describe already moved on to #4.
+func TestClearChange_SkipsAStaleNumber(t *testing.T) {
 	t.Parallel()
-	for name, write := range map[string]func(string, *workflow.ServiceMeta){
-		"record a landing": func(stateDir string, m *workflow.ServiceMeta) { recordLanding(stateDir, m, 3, "s", "h") },
-		"clear the change": func(stateDir string, m *workflow.ServiceMeta) { clearChange(stateDir, m, 3) },
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			stateDir := t.TempDir()
-			if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
-				Hostname: "appdev", BootstrapSession: "test", BootstrappedAt: "2026-10-02",
-				HQ: &workflow.HQRepoRef{AppID: labApp, Repo: "appdev", Branch: "mate/p1", Change: 4},
-			}); err != nil {
-				t.Fatal(err)
-			}
-			stale := &workflow.ServiceMeta{Hostname: "appdev", HQ: &workflow.HQRepoRef{AppID: labApp, Repo: "appdev", Change: 3}}
-			write(stateDir, stale)
-			fresh, _ := workflow.FindServiceMeta(stateDir, "appdev")
-			if fresh.HQ.Change != 4 || fresh.HQ.Landed != nil {
-				t.Errorf("a stale read wrote over the newer change: %+v", fresh.HQ)
-			}
-		})
+	stateDir := t.TempDir()
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname: "appdev", BootstrapSession: "test", BootstrappedAt: "2026-10-02",
+		HQ: &workflow.HQRepoRef{AppID: labApp, Repo: "appdev", Change: 4},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	clearChange(stateDir, &workflow.ServiceMeta{Hostname: "appdev", HQ: &workflow.HQRepoRef{AppID: labApp, Repo: "appdev", Change: 3}}, 3)
+	if fresh, _ := workflow.FindServiceMeta(stateDir, "appdev"); fresh.HQ.Change != 4 {
+		t.Errorf("a stale read wrote over the newer change: %+v", fresh.HQ)
 	}
 }
 
@@ -335,9 +327,9 @@ func TestBootstrapClose_WiresTheRepository(t *testing.T) {
 	assertNoSecretOnDisk(t, stateDir, labCredential)
 }
 
-// A pass records a landing without changing even a clean checkout.
-// Only an explicit delivery starts the next change from main and reports it.
-func TestHQPass_RecordsALandingWithoutChangingTheCheckout(t *testing.T) {
+// A pass learns a merge without changing even a clean checkout: taking main
+// in is the agent's git.
+func TestHQPass_LearnsAMergeWithoutChangingTheCheckout(t *testing.T) {
 	for _, tt := range []struct {
 		name  string
 		upset func(*hqLab)
@@ -350,7 +342,7 @@ func TestHQPass_RecordsALandingWithoutChangingTheCheckout(t *testing.T) {
 			lab := newHQLab(t)
 			lab.wire()
 			lab.write(map[string]string{"index.js": "the app\n"})
-			lab.deliver()
+			recordChange(lab.stateDir, lab.meta(), lab.openChange().Number, "")
 			squash := lab.hq.merge()
 			tt.upset(lab)
 			head := lab.git("rev-parse", "HEAD")
@@ -361,9 +353,6 @@ func TestHQPass_RecordsALandingWithoutChangingTheCheckout(t *testing.T) {
 			}
 			if lab.git("rev-parse", "HEAD") != head {
 				t.Errorf("the checkout must be left exactly as it was, not take %s in", squash)
-			}
-			if lab.meta().HQ.Landed == nil {
-				t.Errorf("the landing must stay recorded for the next delivery")
 			}
 		})
 	}
@@ -407,5 +396,507 @@ func TestWireHQPair_TheRecipeRepositoryIsNoServicesRepository(t *testing.T) {
 				t.Errorf("the pair was recorded wired: %+v", meta.HQ)
 			}
 		})
+	}
+}
+
+// TestReconcileHQRepositories_RenewsTheDevServicesCredentialAfterTheMateEnrollsAgain:
+// a redeployed zcp enrolls the Mate again and HQ revokes the credential the
+// dev service holds. The next pass gives the dev service the new one at once,
+// backoff or not, so git in its sessions keeps reaching HQ — and leaves the
+// checkout's branch and origin as the agent left them.
+func TestReconcileHQRepositories_RenewsTheDevServicesCredentialAfterTheMateEnrollsAgain(t *testing.T) {
+	const renewed = "the-renewed-credential"
+	lab := newHQLab(t)
+	lab.wire()
+	lab.git("checkout", "-q", "-b", "fix-login")
+	origin := lab.git("remote", "get-url", "origin")
+	lab.reenroll(renewed)
+	if _, err := lab.ssh.ExecSSH(t.Context(), "appdev", "cd /var/www && git fetch -q origin"); err == nil {
+		t.Fatal("the revoked credential still reaches HQ; the lab does not revoke it")
+	}
+
+	lab.wire()
+
+	if held := lab.ssh.gitToken(t.Context(), "svc-appdev"); held != renewed {
+		t.Errorf("the dev service holds %q, want the renewed credential", held)
+	}
+	if out, err := lab.ssh.ExecSSH(t.Context(), "appdev", "cd /var/www && git fetch -q origin"); err != nil {
+		t.Errorf("git in a dev service session cannot reach HQ: %v\n%s", err, out)
+	}
+	if got := lab.git("branch", "--show-current"); got != "fix-login" {
+		t.Errorf("the checkout is on %q, want the agent's branch kept", got)
+	}
+	if got := lab.git("remote", "get-url", "origin"); got != origin {
+		t.Errorf("origin = %q, want %q kept", got, origin)
+	}
+	assertNoSecretOnDisk(t, lab.stateDir, renewed)
+}
+
+// TestDevelopStart_RenewsTheDevServicesCredential: work starts at develop,
+// so its start runs the repository pass that renews a revoked credential.
+func TestDevelopStart_RenewsTheDevServicesCredential(t *testing.T) {
+	const renewed = "the-renewed-credential"
+	lab := newHQLab(t)
+	lab.wire()
+	lab.reenroll(renewed)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, lab.mock, lab.hq.srv.Client(), labMate, nil,
+		workflow.NewEngine(lab.stateDir, workflow.EnvContainer, nil), nil, lab.stateDir, "", nil, lab.ssh, lab.rt, "")
+
+	callTool(t, srv, "zerops_workflow", map[string]any{
+		"action": "start", "workflow": "develop", "intent": "fix the login", "scope": []string{"appdev"},
+	})
+
+	if held := lab.ssh.gitToken(t.Context(), "svc-appdev"); held != renewed {
+		t.Errorf("after develop's start the dev service holds %q, want the renewed credential", held)
+	}
+}
+
+// developStart starts develop on appdev through zerops_workflow, as the agent
+// does, and answers every text block of its result.
+func (l *hqLab) developStart() string {
+	l.t.Helper()
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, l.mock, l.hq.srv.Client(), labMate, nil,
+		workflow.NewEngine(l.stateDir, workflow.EnvContainer, nil), nil, l.stateDir, "", nil, l.ssh, l.rt, "")
+	result := callTool(l.t, srv, "zerops_workflow", map[string]any{
+		"action": "start", "workflow": "develop", "intent": "fix the login", "scope": []string{"appdev"},
+	})
+	var text strings.Builder
+	for _, content := range result.Content {
+		if block, ok := content.(*mcp.TextContent); ok {
+			text.WriteString(block.Text + "\n")
+		}
+	}
+	return text.String()
+}
+
+// TestDevelopStart_AMainThatIsOnlyZcpsSeedTakesHQsMain: a checkout wired
+// before branches of the agent's own kept zcp's empty seed as `main`, the
+// work on the Mate's branch, so `git merge --ff-only origin/main` failed on
+// it. Develop's start puts that `main` on HQ's — within the backoff of the
+// pass before it too — and the agent's branch and its commit stay as they are.
+func TestDevelopStart_AMainThatIsOnlyZcpsSeedTakesHQsMain(t *testing.T) {
+	lab := newHQLab(t)
+	lab.wire()
+	lab.hq.landOnMain("appdev", map[string]string{"app.js": "landed\n"})
+	lab.git("checkout", "-q", "-b", "mate/"+labMate)
+	lab.write(map[string]string{"work.txt": "the agent's work\n"})
+	lab.commit("the agent's work")
+	work := lab.git("rev-parse", "HEAD")
+	lab.git("update-ref", "refs/heads/main",
+		lab.git("-c", "user.name=zcp", "-c", "user.email=zcp@example.invalid", "commit-tree", lab.git("mktree"), "-m", "zcp init"))
+
+	text := lab.developStart()
+
+	if got, want := lab.git("rev-parse", "main"), lab.remoteHead("main"); got != want {
+		t.Errorf("main is %s, want HQ's main %s", got, want)
+	}
+	if got := lab.git("branch", "--show-current"); got != "mate/"+labMate {
+		t.Errorf("the checkout is on %q, want the agent's branch kept", got)
+	}
+	if got := lab.git("rev-parse", "HEAD"); got != work {
+		t.Errorf("the agent's branch moved: %s → %s", work, got)
+	}
+	if !strings.Contains(text, "zcp's empty seed") {
+		t.Errorf("develop's start does not say main was put on HQ's:\n%s", text)
+	}
+}
+
+// TestDevelopStart_AMainWithCommitsOfItsOwnIsLeftWithItsStepNamed: a `main`
+// carrying commits HQ's does not is never moved — main moves only by a
+// merge, and nothing of the agent's is discarded — and develop's start names
+// the one step that keeps them and puts main on HQ's.
+func TestDevelopStart_AMainWithCommitsOfItsOwnIsLeftWithItsStepNamed(t *testing.T) {
+	lab := newHQLab(t)
+	lab.wire()
+	lab.write(map[string]string{"own.txt": "committed on main\n"})
+	lab.commit("on main")
+	own := lab.git("rev-parse", "main")
+
+	text := lab.developStart()
+
+	if got := lab.git("rev-parse", "main"); got != own {
+		t.Errorf("main moved: %s → %s", own, got)
+	}
+	for _, step := range []string{"git branch <name> main", "git reset --keep origin/main"} {
+		if !strings.Contains(text, step) {
+			t.Errorf("develop's start does not name %q:\n%s", step, text)
+		}
+	}
+}
+
+// TestDevelopStart_SaysHowEachRepositorysCodeIsKept: develop's start reads
+// from HQ how each wired pair's repository's code is kept and records it, so
+// status names it (origin.mode). A repository kept on GitHub is worked on
+// through its checkout's origin, which is GitHub — set there, never a second
+// remote — and its change is opened after the push: HQ opens its pull request
+// and the person merges it in Mate. A repository HQ alone keeps is worked on
+// as before.
+func TestDevelopStart_SaysHowEachRepositorysCodeIsKept(t *testing.T) {
+	const github = "https://github.com/acme/app"
+	for _, tc := range []struct {
+		name   string
+		origin *hq.RepoOrigin
+		record workflow.HQOrigin
+		want   []string
+		never  []string
+	}{
+		{
+			name: "kept on GitHub", origin: &hq.RepoOrigin{URL: github, Mode: hq.OriginOnGitHub},
+			record: workflow.HQOrigin{Mode: hq.OriginOnGitHub, URL: github},
+			want: []string{
+				"origin.mode=github", "origin=" + github, "its checkout's origin is GitHub",
+				"git push origin <branch>", `action="open-change"`, "HQ opens its pull request", "merges it in Mate",
+			},
+			never: []string{"remote add", "set-url origin", "--fill"},
+		},
+		{
+			name: "followed", origin: &hq.RepoOrigin{URL: github, Mode: hq.OriginFollowed},
+			record: workflow.HQOrigin{Mode: hq.OriginFollowed, URL: github},
+			want:   []string{"origin.mode=follow", "origin=" + github},
+			never:  []string{"set-url origin"},
+		},
+		{
+			name:   "in HQ alone",
+			record: workflow.HQOrigin{Mode: workflow.HQOriginNone},
+			want:   []string{"origin.mode=none"},
+			never:  []string{"set-url origin", "origin=https"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lab := newHQLab(t)
+			lab.wire()
+			lab.mock.WithServices([]platform.ServiceStack{
+				{ID: "svc-appdev", Name: "appdev", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+				{ID: "svc-appstage", Name: "appstage", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+			})
+			if tc.origin != nil {
+				lab.hq.keepOn(*tc.origin)
+			}
+
+			text := lab.developStart()
+
+			if got := lab.meta().HQ.Origin; got == nil || *got != tc.record {
+				t.Errorf("the pair's record of how its code is kept = %+v, want %+v", got, tc.record)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(text, want) {
+					t.Errorf("develop's start lacks %q:\n%s", want, text)
+				}
+			}
+			for _, never := range tc.never {
+				if strings.Contains(text, never) {
+					t.Errorf("develop's start says %q:\n%s", never, text)
+				}
+			}
+		})
+	}
+}
+
+// TestRepositoryPass_TheCheckoutsOriginIsWhereItsCodeIsKept: the wiring is
+// the one writer of a wired pair's `origin`. Kept on GitHub, origin is the
+// GitHub repository, git asking only zcp for it; kept in HQ or followed, it
+// is HQ's repository — and it follows the person's pick when it changes.
+// There is never a second remote, and HQ is still reached at its own address.
+func TestRepositoryPass_TheCheckoutsOriginIsWhereItsCodeIsKept(t *testing.T) {
+	const github = "https://github.com/acme/app"
+	lab := newHQLab(t)
+	lab.wire()
+	hqOrigin := lab.git("remote", "get-url", "origin")
+	lab.hq.keepOn(hq.RepoOrigin{URL: github, Mode: hq.OriginOnGitHub})
+	lab.hq.landOnMain("appdev", map[string]string{"app.js": "landed\n"})
+	lab.git("checkout", "-q", "-b", "fix-login")
+	lab.git("update-ref", "refs/heads/main",
+		lab.git("-c", "user.name=zcp", "-c", "user.email=zcp@example.invalid", "commit-tree", lab.git("mktree"), "-m", "zcp init"))
+
+	lab.developStart()
+
+	if got := lab.git("remote", "get-url", "origin"); got != github {
+		t.Errorf("kept on GitHub, origin = %q, want %q", got, github)
+	}
+	if got := lab.git("config", "--get-all", "credential.https://github.com.helper"); !strings.Contains(got, "!zcp hq git-credential") {
+		t.Errorf("git does not ask zcp for GitHub: %q", got)
+	}
+	if got := lab.git("remote"); got != "origin" {
+		t.Errorf("remotes = %q, want origin alone", got)
+	}
+	if got, want := lab.git("rev-parse", "main"), lab.remoteHead("main"); got != want {
+		t.Errorf("HQ was not reached at its own address: main is %s, want HQ's %s", got, want)
+	}
+
+	lab.hq.keepInHQ()
+	lab.developStart()
+
+	if got := lab.git("remote", "get-url", "origin"); got != hqOrigin {
+		t.Errorf("kept in HQ again, origin = %q, want HQ's %q", got, hqOrigin)
+	}
+	if got := lab.git("branch", "--show-current"); got != "fix-login" {
+		t.Errorf("the checkout is on %q, want the agent's branch kept", got)
+	}
+}
+
+// TestStatus_SaysWhatTheCheckoutsOriginIsNow: status names the wired pair's
+// checkout's origin as it is now, read from the checkout, beside how HQ says
+// its code is kept. While the wiring has not pointed origin where HQ's way
+// keeps it — a pair wired before zcp moved origin — status says the move is
+// pending and where develop's start points it; once moved, it says none.
+func TestStatus_SaysWhatTheCheckoutsOriginIsNow(t *testing.T) {
+	const github = "https://github.com/acme/app"
+	for _, tc := range []struct {
+		name    string
+		keep    hq.RepoOrigin
+		started bool
+		want    func(hqOrigin string) []string
+		never   []string
+	}{
+		{
+			name: "kept on GitHub before develop's start moves origin", keep: hq.RepoOrigin{URL: github, Mode: hq.OriginOnGitHub},
+			want: func(hqOrigin string) []string {
+				return []string{"origin.mode=github", "checkoutOrigin=" + hqOrigin + " (pending: develop's start points it at " + github + ")"}
+			},
+		},
+		{
+			name: "kept on GitHub once develop's start moved origin", keep: hq.RepoOrigin{URL: github, Mode: hq.OriginOnGitHub}, started: true,
+			want:  func(string) []string { return []string{"origin.mode=github", "checkoutOrigin=" + github} },
+			never: []string{"(pending: develop's start points it at"},
+		},
+		{
+			name: "followed, HQ the origin", keep: hq.RepoOrigin{URL: github, Mode: hq.OriginFollowed},
+			want:  func(hqOrigin string) []string { return []string{"origin.mode=follow", "checkoutOrigin=" + hqOrigin} },
+			never: []string{"(pending: develop's start points it at"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lab := newHQLab(t)
+			lab.wire()
+			hqOrigin := lab.git("remote", "get-url", "origin")
+			lab.mock.WithServices([]platform.ServiceStack{
+				{ID: "svc-appdev", Name: "appdev", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+				{ID: "svc-appstage", Name: "appstage", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+			})
+			if err := workflow.UpsertServiceMeta(lab.stateDir, "appdev", func(meta *workflow.ServiceMeta, _ bool) error {
+				meta.HQ.Origin = nil
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			lab.hq.keepOn(tc.keep)
+			if tc.started {
+				lab.developStart()
+			}
+
+			text := lab.status()
+
+			for _, want := range tc.want(hqOrigin) {
+				if !strings.Contains(text, want) {
+					t.Errorf("status lacks %q:\n%s", want, text)
+				}
+			}
+			for _, never := range tc.never {
+				if strings.Contains(text, never) {
+					t.Errorf("status says %q:\n%s", never, text)
+				}
+			}
+		})
+	}
+}
+
+// TestStatus_AWiredPairNotReadYetAsksHQHowItsCodeIsKept: status names how a
+// wired pair's code is kept from its record; a pair with none yet — wired
+// before zcp recorded it — is asked of HQ once, bounded, and recorded. When
+// HQ does not answer, status says the way is unknown.
+func TestStatus_AWiredPairNotReadYetAsksHQHowItsCodeIsKept(t *testing.T) {
+	const github = "https://github.com/acme/app"
+	for _, tc := range []struct {
+		name string
+		down bool
+		want string
+	}{
+		{name: "HQ answers", want: "origin.mode=github"},
+		{name: "HQ does not answer", down: true, want: "origin.mode=unknown"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lab := newHQLab(t)
+			lab.wire()
+			lab.mock.WithServices([]platform.ServiceStack{
+				{ID: "svc-appdev", Name: "appdev", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+				{ID: "svc-appstage", Name: "appstage", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+			})
+			if err := workflow.UpsertServiceMeta(lab.stateDir, "appdev", func(meta *workflow.ServiceMeta, _ bool) error {
+				meta.HQ.Origin = nil
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			lab.hq.keepOn(hq.RepoOrigin{URL: github, Mode: hq.OriginOnGitHub})
+			lab.hq.setDown(tc.down)
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterWorkflow(srv, lab.mock, lab.hq.srv.Client(), labMate, nil,
+				workflow.NewEngine(lab.stateDir, workflow.EnvContainer, nil), nil, lab.stateDir, "", nil, lab.ssh, lab.rt, "")
+
+			text := getTextContent(t, callTool(t, srv, "zerops_workflow", map[string]any{"action": "status"}))
+
+			if !strings.Contains(text, tc.want) {
+				t.Errorf("status lacks %q:\n%s", tc.want, text)
+			}
+			if got := lab.meta().HQ.Origin; !tc.down && (got == nil || got.Mode != hq.OriginOnGitHub) {
+				t.Errorf("the pair's record = %+v, want github recorded", got)
+			}
+		})
+	}
+}
+
+// TestRepositoryPass_ARewiredPairKeptOnGitHubHasNoSecondRemote: a pair kept on
+// GitHub whose git-push an older zcp left broken is wired again; the wiring
+// keeps the origin it replaces as a remote of its own, which here is GitHub's
+// — the very origin the pass points the checkout back at. The pass leaves
+// origin alone, never a second remote naming GitHub.
+func TestRepositoryPass_ARewiredPairKeptOnGitHubHasNoSecondRemote(t *testing.T) {
+	const github = "https://github.com/acme/app"
+	lab := newHQLab(t)
+	lab.wire()
+	lab.hq.keepOn(hq.RepoOrigin{URL: github, Mode: hq.OriginOnGitHub})
+	lab.developStart()
+	if got := lab.git("remote", "get-url", "origin"); got != github {
+		t.Fatalf("kept on GitHub, origin = %q, want %q", got, github)
+	}
+	if err := workflow.UpsertServiceMeta(lab.stateDir, "appdev", func(meta *workflow.ServiceMeta, _ bool) error {
+		meta.GitPushState = topology.GitPushBroken
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	lab.developStart()
+
+	if got := lab.meta().GitPushState; got != topology.GitPushConfigured {
+		t.Fatalf("the pair was not wired again: git-push %q", got)
+	}
+	if got := lab.git("remote", "get-url", "origin"); got != github {
+		t.Errorf("origin = %q, want %q", got, github)
+	}
+	if got := lab.git("remote"); got != "origin" {
+		t.Errorf("remotes = %q, want origin alone", got)
+	}
+}
+
+// TestStatus_AnHQOlderThanRepositoriesIsAskedOnce: an HQ whose Mate state
+// names no repositories cannot say how a pair's code is kept. Status says
+// unknown and records that this HQ cannot say, rather than asking it on
+// every call; develop's start asks again.
+func TestStatus_AnHQOlderThanRepositoriesIsAskedOnce(t *testing.T) {
+	lab := newHQLab(t)
+	lab.wire()
+	lab.mock.WithServices([]platform.ServiceStack{
+		{ID: "svc-appdev", Name: "appdev", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		{ID: "svc-appstage", Name: "appstage", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+	})
+	if err := workflow.UpsertServiceMeta(lab.stateDir, "appdev", func(meta *workflow.ServiceMeta, _ bool) error {
+		meta.HQ.Origin = nil
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	lab.hq.mu.Lock()
+	lab.hq.reposless = true
+	lab.hq.mu.Unlock()
+
+	asked := lab.hq.callCount("GET /api/mate/self")
+
+	first, second := lab.status(), lab.status()
+
+	for _, text := range []string{first, second} {
+		if !strings.Contains(text, "origin.mode=unknown") {
+			t.Errorf("status lacks origin.mode=unknown:\n%s", text)
+		}
+	}
+	if n := lab.hq.callCount("GET /api/mate/self") - asked; n != 1 {
+		t.Errorf("two statuses asked HQ %d time(s), want once", n)
+	}
+}
+
+// TestStatus_NamesNoCredentialOfTheCheckoutsOrigin: a checkout whose origin a
+// person set with a token in it — the habit `gh` and personal tokens teach —
+// is named in status without the token.
+func TestStatus_NamesNoCredentialOfTheCheckoutsOrigin(t *testing.T) {
+	const secret = "ghp_theSecretToken"
+	lab := newHQLab(t)
+	lab.wire()
+	lab.mock.WithServices([]platform.ServiceStack{
+		{ID: "svc-appdev", Name: "appdev", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		{ID: "svc-appstage", Name: "appstage", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+	})
+	lab.git("remote", "set-url", "origin", "https://x-access-token:"+secret+"@github.com/acme/app")
+
+	text := lab.status()
+
+	if strings.Contains(text, secret) {
+		t.Errorf("status names the token:\n%s", text)
+	}
+	if want := "checkoutOrigin=https://***@github.com/acme/app"; !strings.Contains(text, want) {
+		t.Errorf("status lacks %q:\n%s", want, text)
+	}
+}
+
+// deadlineSSH is the lab's SSH, recording the time the checkout's origin read
+// was given and whether the repository's own read began before it ended.
+type deadlineSSH struct {
+	*labSSH
+	once    sync.Once
+	started chan struct{}
+	mu      sync.Mutex
+	bound   time.Duration
+	bounded bool
+	waited  bool
+}
+
+func (s *deadlineSSH) ExecSSH(ctx context.Context, hostname, command string) ([]byte, error) {
+	if strings.Contains(command, "git remote get-url origin") {
+		deadline, ok := ctx.Deadline()
+		s.mu.Lock()
+		s.bounded, s.bound = ok, time.Until(deadline)
+		s.mu.Unlock()
+		s.once.Do(func() { close(s.started) })
+	} else {
+		select {
+		case <-s.started:
+		case <-time.After(3 * time.Second):
+			s.mu.Lock()
+			s.waited = true
+			s.mu.Unlock()
+		}
+	}
+	return s.labSSH.ExecSSH(ctx, hostname, command)
+}
+
+// TestStatus_TheCheckoutsOriginIsReadBoundedBesideTheRepository: status reads
+// a wired pair's checkout's origin within a short bound, beside the read of
+// its repository rather than after it, so a dev service that does not answer
+// costs status no more than it did before.
+func TestStatus_TheCheckoutsOriginIsReadBoundedBesideTheRepository(t *testing.T) {
+	lab := newHQLab(t)
+	lab.wire()
+	lab.mock.WithServices([]platform.ServiceStack{
+		{ID: "svc-appdev", Name: "appdev", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		{ID: "svc-appstage", Name: "appstage", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+	})
+	ssh := &deadlineSSH{labSSH: lab.ssh, started: make(chan struct{})}
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, lab.mock, lab.hq.srv.Client(), labMate, nil,
+		workflow.NewEngine(lab.stateDir, workflow.EnvContainer, nil), nil, lab.stateDir, "", nil, ssh, lab.rt, "")
+
+	text := getTextContent(t, callTool(t, srv, "zerops_workflow", map[string]any{"action": "status"}))
+
+	if !strings.Contains(text, "checkoutOrigin=") {
+		t.Fatalf("status names no checkout origin:\n%s", text)
+	}
+	ssh.mu.Lock()
+	defer ssh.mu.Unlock()
+	if !ssh.bounded || ssh.bound > 10*time.Second {
+		t.Errorf("the origin read is bounded=%v by %s, want at most 10s", ssh.bounded, ssh.bound)
+	}
+	if ssh.waited {
+		t.Error("the repository's read waited out the origin read: they run one after the other")
 	}
 }

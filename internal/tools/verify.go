@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -48,9 +49,16 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 				return convertError(err, WithRecoveryStatus()), nil, nil
 			}
 			recordVerifyAllToWorkSession(stateDir, result)
+			var notes []string
+			for i := range result.Services {
+				if note := partsWithoutDevServerNote(ctx, ssh, rt, stateDir, result.Services[i].Hostname, &result.Services[i]); note != "" {
+					notes = append(notes, note)
+				}
+			}
 			return jsonResult(verifyAllResponse{
 				VerifyAllResult:  result,
-				WorkSessionState: sessionAnnotations(stateDir),
+				Note:             strings.Join(notes, " "),
+				WorkSessionState: sessionAnnotations(ctx, httpClient, stateDir),
 				Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rt),
 			}), nil, nil
 		}
@@ -77,7 +85,7 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 		recordVerifyToWorkSession(stateDir, result)
 		resp := verifyResponse{
 			VerifyResult:     result,
-			WorkSessionState: sessionAnnotations(stateDir),
+			WorkSessionState: sessionAnnotations(ctx, httpClient, stateDir),
 			Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rt),
 		}
 		if redirectedFrom != "" {
@@ -88,7 +96,10 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 		// start — kept across restarts and redeploys, down after a crash.
 		// Annotate so the agent does not report it as an always-on service
 		// (the e2 failure).
-		if note := deferredStartDurabilityNote(stateDir, host, result); note != "" {
+		for _, note := range []string{deferredStartDurabilityNote(stateDir, host, result), partsWithoutDevServerNote(ctx, ssh, rt, stateDir, host, result)} {
+			if note == "" {
+				continue
+			}
 			if resp.Note != "" {
 				resp.Note += " "
 			}
@@ -138,6 +149,7 @@ type verifyResponse struct {
 // snapshot at the response root reflects the whole scope.
 type verifyAllResponse struct {
 	*ops.VerifyAllResult
+	Note             string            `json:"note,omitempty"`
 	WorkSessionState *WorkSessionState `json:"workSessionState,omitempty"`
 	// Envelope is the post-mutation lifecycle state (docs/spec-mate.md §1.3).
 	// Absent when its computation failed — the rest of the response is
@@ -171,11 +183,12 @@ func runtimeMetaForHost(stateDir, host string) ops.RuntimeMeta {
 }
 
 func runtimeMetaFromServiceMeta(meta *workflow.ServiceMeta, host string) ops.RuntimeMeta {
-	if meta == nil || meta.ServesHTTP == nil {
+	serves := meta.ServesHTTPFor(host)
+	if serves == nil {
 		return ops.RuntimeMeta{}
 	}
 	return ops.RuntimeMeta{
-		ServesHTTP: *meta.ServesHTTP,
+		ServesHTTP: *serves,
 		Recorded:   true,
 		Setup:      meta.SetupNameFor(host),
 	}
@@ -287,6 +300,43 @@ func deferredStartDurabilityNote(stateDir, host string, result *ops.VerifyResult
 		return ""
 	}
 	return fmt.Sprintf("Durability: %q is dev-mode — this 200 is served by the zerops_dev_server process, not the app's own start. Its supervisor starts the dev server again after a restart or redeploy, but a crash leaves the URL down until you start it again. For an always-on service switch to simple mode; this is not a production deployment.", host)
+}
+
+// partsWithoutDevServerNote states, on a verify of a container dev service
+// whose pair's stages build several parts, each part that runs a process but
+// has no dev server declared on it (ops.PartsSignal.PartsWithoutDevServer),
+// with the call that starts it. Develop can close with a part's stage deployed
+// and verified while the dev service never runs that part; every auto-close
+// passes a verify of the dev service, so the fact lands where the agent checks
+// that dev works. A pair with one stage, local mode or a failed read: "" and
+// no read.
+func partsWithoutDevServerNote(ctx context.Context, ssh ops.SSHDeployer, rt runtime.Info, stateDir, host string, result *ops.VerifyResult) string {
+	if !rt.InContainer || ssh == nil || result == nil {
+		return ""
+	}
+	meta, err := workflow.FindServiceMeta(stateDir, host)
+	if err != nil || meta == nil || meta.Hostname != host || len(meta.Stages) < 2 ||
+		!topology.IsDeferredStart(meta.ModeFor(host), topology.RuntimeClassFor(result.TypeVersion)) {
+		return ""
+	}
+	sig, err := ops.ReadPartsSignal(ctx, ssh, host, meta.PrimarySetupName)
+	if err != nil {
+		return ""
+	}
+	missing := sig.PartsWithoutDevServer(meta.Stages, host)
+	if len(missing) == 0 {
+		return ""
+	}
+	calls := make([]string, 0, len(missing))
+	for _, part := range missing {
+		calls = append(calls, fmt.Sprintf(`zerops_dev_server action=start hostname=%q name=%q command="<its dev command>"`, host, part))
+	}
+	subject := fmt.Sprintf("part %q runs", missing[0])
+	if len(missing) > 1 {
+		subject = "parts " + quoteAll(missing) + " run"
+	}
+	return fmt.Sprintf("Dev servers: %s's %s no dev server on %q — none is declared under its name. Start it (port=<its port> when it listens, else noHttpProbe=true): %s.",
+		sig.ConfigFile, subject, host, strings.Join(calls, "; "))
 }
 
 // recordVerifyToWorkSession records one service verify result as a WorkSession attempt.

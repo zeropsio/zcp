@@ -923,3 +923,173 @@ func assertClassification(t *testing.T, got *topology.DeployFailureClassificatio
 		t.Errorf("SuggestedAction empty for %v", got.Signals)
 	}
 }
+
+// TestClassifyDeployFailure_NamesTheReposConfigFile_QuotedLogTextKeepsItsOwn:
+// in a repo that keeps zerops.yml, the cause and the next step the classifier
+// writes name zerops.yml, while the log text a cause quotes keeps the name
+// the log wrote. An unknown name keeps today's text.
+func TestClassifyDeployFailure_NamesTheReposConfigFile_QuotedLogTextKeepsItsOwn(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		in         FailureInput
+		wantCause  string
+		wantAction string
+	}{
+		{
+			name:       "build baseline",
+			in:         FailureInput{Phase: PhaseBuild, BuildLogs: []string{"something unusual"}, ConfigFile: "zerops.yml"},
+			wantCause:  "Build pipeline failed; no recognized log pattern matched.",
+			wantAction: "fix buildCommands or dependencies in zerops.yml.",
+		},
+		{
+			name: "zcli setup mismatch",
+			in: FailureInput{Phase: PhaseTransport, ConfigFile: "zerops.yml",
+				TransportErr: errors.New("Cannot find corresponding setup in zerops.yml")},
+			wantCause:  "zerops.yml has multiple setup blocks",
+			wantAction: "setup keys declared in zerops.yml (one block",
+		},
+		{
+			name: "quoted runtime log",
+			in: FailureInput{Phase: PhaseInit, ConfigFile: "zerops.yml",
+				RuntimeLogs: []string{"open /build/source/zerops.yaml: no such file"}},
+			wantCause:  "(/build/source/zerops.yaml:)",
+			wantAction: "from buildCommands to run.initCommands",
+		},
+		{
+			name:       "name unknown",
+			in:         FailureInput{Phase: PhaseBuild, BuildLogs: []string{"something unusual"}},
+			wantCause:  "Build pipeline failed; no recognized log pattern matched.",
+			wantAction: "fix buildCommands or dependencies in zerops.yaml.",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := ClassifyDeployFailure(tt.in)
+			if got == nil {
+				t.Fatal("no classification")
+			}
+			if !strings.Contains(got.LikelyCause, tt.wantCause) {
+				t.Errorf("likelyCause = %q, want it to contain %q", got.LikelyCause, tt.wantCause)
+			}
+			if !strings.Contains(got.SuggestedAction, tt.wantAction) {
+				t.Errorf("suggestedAction = %q, want it to contain %q", got.SuggestedAction, tt.wantAction)
+			}
+		})
+	}
+}
+
+func TestClassifyDeployFailure_ArchiveWriteTooLong_SourceChangedNotNetwork(t *testing.T) {
+	t.Parallel()
+	got := ClassifyDeployFailure(FailureInput{
+		Phase: PhaseTransport,
+		TransportErr: &platform.SSHExecError{
+			Hostname: "src",
+			Output:   "➤ INFO Creating package\n➤ INFO Uploading package\n✗ ERR archive/tar: write too long",
+			Err:      errors.New("exit status 1"),
+		},
+	})
+	if got == nil || got.Category == topology.FailureClassNetwork || !slices.Contains(got.Signals, "transport:zcli-archive-source-changed") {
+		t.Fatalf("classification = %+v, want source-changed signal, not network", got)
+	}
+}
+
+// A failed prepare's output ends the build log (the prepare phase logs under
+// the build's tag on its own stack), whatever the runtime: the baseline points
+// there, names no PHP/Alpine package for a Node or Python service, and leaves
+// no unfilled placeholder.
+func TestAFailedPrepareReadsItsOutputAtTheEndOfTheBuildLogForEveryRuntime(t *testing.T) {
+	t.Parallel()
+
+	withLogs := ClassifyDeployFailure(FailureInput{Phase: PhasePrepare, BuildLogs: []string{"npm error code EEXIST"}})
+	if withLogs == nil || !strings.Contains(withLogs.SuggestedAction, "end of the build log") {
+		t.Fatalf("SuggestedAction = %+v, want it to point at the end of the build log", withLogs)
+	}
+	noLogs := ClassifyDeployFailure(FailureInput{Phase: PhasePrepare})
+	if noLogs == nil || !strings.Contains(noLogs.SuggestedAction, "zerops_events") {
+		t.Fatalf("SuggestedAction = %+v, want it to point at zerops_events, whose buildLogTail carries the prepare output", noLogs)
+	}
+	for _, cls := range []*topology.DeployFailureClassification{withLogs, noLogs} {
+		for _, foreign := range []string{"php84", "Alpine PHP", "{service}", "zerops_logs"} {
+			if strings.Contains(cls.SuggestedAction, foreign) {
+				t.Errorf("SuggestedAction %q contains %q", cls.SuggestedAction, foreign)
+			}
+		}
+	}
+}
+
+// A deploy that failed after its container started names what is known — the
+// new container failed — and claims neither that a run.initCommand failed nor
+// that some response field names the failing command; it leaves no unfilled
+// placeholder either.
+func TestAFailedDeployWithNoKnownSignalSaysTheNewContainerFailedAfterStart(t *testing.T) {
+	t.Parallel()
+
+	got := ClassifyDeployFailure(FailureInput{Phase: PhaseInit, RuntimeLogs: []string{"some unrecognized output"}})
+	if got == nil || !strings.Contains(got.LikelyCause, "new container failed") {
+		t.Fatalf("LikelyCause = %+v, want it to say the new container failed", got)
+	}
+	for _, claim := range []string{"A run.initCommand exited non-zero", "'error' field", "{service}"} {
+		if strings.Contains(got.LikelyCause+" "+got.SuggestedAction, claim) {
+			t.Errorf("classification %q / %q contains %q", got.LikelyCause, got.SuggestedAction, claim)
+		}
+	}
+}
+
+// The platform's OOM alert for a build container names the cause: the build
+// ran out of memory at the build container's cap, which is 8 GB for every
+// runtime, so the next step lowers the build's memory instead of pointing at
+// a build setting that does not exist.
+func TestABuildContainerOutOfMemoryAlertNamesTheAlertAndTheFixedBuildMemoryCap(t *testing.T) {
+	t.Parallel()
+
+	got := ClassifyDeployFailure(FailureInput{
+		Phase: PhaseBuild,
+		BuildLogs: []string{
+			"Creating an optimized production build ...",
+			"granted 8.00GB, max: 8.00GB, minFree: 1.00GB",
+			"OOM Alert: Process 'next-build (v16' terminated - memory limit exceeded. Consider increasing the memory limits (min or minFree) in the service configuration.",
+			"┃   ZEROPS BUILD CONTAINER STARTED   ┃",
+		},
+	})
+	assertClassification(t, got, topology.FailureClassBuild, "build:oom-killed", "OOM Alert: Process 'next-build (v16' terminated")
+	if !strings.Contains(got.SuggestedAction, "8 GB") {
+		t.Errorf("SuggestedAction = %q, want it to name the build container's 8 GB cap", got.SuggestedAction)
+	}
+	if strings.Contains(got.SuggestedAction, "containerOptions") {
+		t.Errorf("SuggestedAction = %q names build.containerOptions, which zerops.yaml does not have", got.SuggestedAction)
+	}
+}
+
+// A build that failed with no known signal does not claim its log tail holds
+// the failing stderr: the tail may end mid-build with no error line. The
+// reply says so and names what is established — the build container's caps.
+func TestABuildFailureWithNoKnownSignalSaysTheTailMayHoldNoErrorLine(t *testing.T) {
+	t.Parallel()
+
+	got := ClassifyDeployFailure(FailureInput{Phase: PhaseBuild, BuildLogs: []string{"Creating an optimized production build ..."}})
+	if got == nil {
+		t.Fatal("no classification")
+	}
+	if strings.Contains(got.SuggestedAction, "for the exact stderr") {
+		t.Errorf("SuggestedAction = %q claims the tail holds the exact stderr", got.SuggestedAction)
+	}
+	for _, want := range []string{"without an error line", "no reason", "8 GB RAM and 1 hour"} {
+		if !strings.Contains(got.SuggestedAction, want) {
+			t.Errorf("SuggestedAction = %q, want it to contain %q", got.SuggestedAction, want)
+		}
+	}
+}
+
+// The platform reports a container that ran out of memory at start as
+// "OOM Alert: Process '…' terminated" (turbo stage at the 0.12 GB default).
+func TestAnOOMAlertInTheRuntimeLogIsClassifiedAsOutOfMemory(t *testing.T) {
+	t.Parallel()
+
+	got := ClassifyDeployFailure(FailureInput{
+		Phase:       PhaseInit,
+		RuntimeLogs: []string{"OOM Alert: Process 'zerops-zembed' terminated - memory limit exceeded. Consider increasing the memory limits (min or minFree) in the service configuration."},
+	})
+	assertClassification(t, got, topology.FailureClassStart, "init:oom-killed", "")
+}

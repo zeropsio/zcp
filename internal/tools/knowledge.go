@@ -90,7 +90,7 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 			ReadOnlyHint:   true,
 			IdempotentHint: true,
 		},
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, input KnowledgeInput) (*mcp.CallToolResult, any, error) {
+	}, namingRepoConfigFile(engine, func(ctx context.Context, _ *mcp.CallToolRequest, input KnowledgeInput) (*mcp.CallToolResult, any, error) {
 		// Validate: at least one mode specified
 		hasQuery := input.Query != ""
 		hasBriefing := input.Runtime != "" || len(input.Services) > 0
@@ -242,7 +242,7 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 		// Should never reach here
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidUsage, "Invalid mode routing", ""), WithRecoveryStatus()), nil, nil
-	})
+	}))
 }
 
 // searchHit is the AGENT-FACING shape of a knowledge search result. It replaces

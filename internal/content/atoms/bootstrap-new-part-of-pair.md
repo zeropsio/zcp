@@ -5,7 +5,6 @@ phases: [bootstrap-active]
 routes: [classic]
 steps: [discover]
 modes: [standard]
-deployStates: [deployed]
 parts: [single]
 title: "A new part of this repo is a stage of the pair, not a new service"
 ---
@@ -17,9 +16,18 @@ below, it is a second part of that app, never a second bootstrap:
 
 {services-list:- `{hostname}`}
 
-1. Add a `setup:` for the part to the repo's `zerops.yaml`.
-2. Declare a named dev server for it in the same declaration.
-3. Append its stage to the pair's stages.
+1. Import the part's stage service (`zerops_import`) under its own
+   hostname, such as `workerstage`, without `startWithoutCode`: like every
+   stage it waits at READY_TO_DEPLOY for its first deploy.
+2. Plan the pair as the one runtime it is: its dev hostname with
+   `isExisting: true` and `stages` listing every stage with its setup, the
+   new one included (`{"hostname": "workerstage", "setupName": "worker"}`).
+   Never a second runtime for the part.
+3. In develop, add the part's `setup:` to the repo's `zerops.yaml`, then in
+   the same step give the part its own entry in `.zcp/dev-servers.json`
+   (autostart, unless the dev service's RAM is short) and run
+   `zerops_dev_server action=start hostname="<dev>" name=<part>`. A worker without a port is
+   still a named server. Every part on the dev service runs as one.
 
 Read `zerops_knowledge uri="zerops://playbooks/monorepo"` first. Bootstrap a
-new service only for a different repo.
+new runtime only for a different repo.

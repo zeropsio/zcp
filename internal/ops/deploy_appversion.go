@@ -25,9 +25,8 @@ import (
 // The newest appVersion (by Sequence, via the DIRECT ListServiceAppVersions
 // — never the ES-backed SearchAppVersions, so a just-settled status is
 // never missed) must be DEPLOY_FAILED (the artifact-redeploy shape R2
-// names) or ACTIVE (a repeat call against an already-recovered service) —
-// any other status errors naming it, since no other status names a built,
-// redeployable artifact.
+// names) — any other status, ACTIVE included, is refused INVALID_PARAMETER
+// naming it, since no other status names a built, redeployable artifact.
 //
 // zerops.yaml text cascade — first hit wins:
 //  1. The appVersion's own ZEROPS_YAML user-data blob (GetAppVersionZeropsYaml).
@@ -76,18 +75,28 @@ func RedeployLastAppVersion(
 	// against the platform. Rolling an ACTIVE service's older BACKUP
 	// appVersion back into place is ops.ReactivateAppVersion's job
 	// (deploy_rollback.go), not this newest-only recovery path.
+	// A refused status is the caller's parameter, coded like
+	// ReactivateAppVersion's refusal of the same id.
 	switch newest.Status {
 	case platform.BuildStatusDeployFailed:
 	default:
-		return nil, fmt.Errorf(
-			"redeploy last app version: newest appVersion %s status is %s, want %s",
-			newest.ID, newest.Status, platform.BuildStatusDeployFailed,
-		)
+		return nil, fmt.Errorf("redeploy last app version: %w", platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("newest appVersion %s status is %s, want %s", newest.ID, newest.Status, platform.BuildStatusDeployFailed),
+			"",
+		))
 	}
 
 	yaml, err := resolveRedeployYaml(ctx, client, newest)
 	if err != nil {
-		return nil, fmt.Errorf("redeploy last app version: %w", err)
+		// No stored yaml (an SSH push stores none) means no redeploy of
+		// this version can ever succeed: say so with a code, and name the
+		// rebuild, so the agent does not retry it.
+		return nil, fmt.Errorf("redeploy last app version: %w", platform.NewPlatformError(
+			platform.ErrPrerequisiteMissing,
+			"rebuild required: "+err.Error(),
+			fmt.Sprintf("This appVersion cannot be redeployed in place. Rebuild it: run the usual zerops_deploy to %s without appVersion.", hostname),
+		))
 	}
 
 	effectiveSetup, err := resolveRedeploySetup(setup, hostname, yaml)

@@ -138,6 +138,21 @@ type ServiceSnapshot struct {
 	StageHostname string              `json:"stageHostname,omitempty"`
 	Stages        []topology.StageRef `json:"-"`
 
+	// HQRepo and HQOrigin name, on a wired pair's dev half, its repository in
+	// HQ and how its code is kept (HQRepoRef.Origin, nil until read). Off the
+	// envelope wire: status renders them.
+	HQRepo   string    `json:"-"`
+	HQOrigin *HQOrigin `json:"-"`
+	// HQCheckoutOrigin is that half's checkout's origin as status read it
+	// (HQOriginNone for none; "" unread), and HQOriginPending where the
+	// wiring points it when that differs — the move develop's start makes.
+	HQCheckoutOrigin string `json:"-"`
+	HQOriginPending  string `json:"-"`
+	// HQChange and HQBranch name, there, the change the pair records and the
+	// branch it is bound to (HQRepoRef.Change, .Branch); off the wire too.
+	HQChange int    `json:"-"`
+	HQBranch string `json:"-"`
+
 	// Setup-name projection from ServiceMeta (canonical store on disk).
 	// SetupName mirrors meta.SetupNameFor(Hostname) for this half;
 	// StageSetupName mirrors the first stage's setup on the dev half's
@@ -164,6 +179,13 @@ type ServiceSnapshot struct {
 	// name several deployable packages. Read by the `parts:` atom axis; off
 	// the wire. False when not read.
 	MultiPart bool `json:"-"`
+
+	// DeclaresBase is true when the zerops.yaml this service deploys from
+	// already declares a build.base or run.base (ops.PartsSignal, read on the
+	// dev half and carried to each stage of its pair). The repo has chosen
+	// its OS then, and the envelope never asks to change it. Off the wire;
+	// false when not read.
+	DeclaresBase bool `json:"-"`
 
 	// Repo is the live repo state for this service (docs/spec-workflows.md
 	// §8 GLC-7, G1/G2) — nil for managed/unknown-class services (they never

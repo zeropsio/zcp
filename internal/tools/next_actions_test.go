@@ -2,10 +2,15 @@
 package tools
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/zeropsio/zcp/internal/devsup"
 	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/ops/devservertest"
+	"github.com/zeropsio/zcp/internal/ops/git"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -189,5 +194,296 @@ func TestDeploySuccessNextActions(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestDeployNextActions_NamesTheDevServersTheSupervisorStarted: a dev setup
+// under the supervisor starts its declared servers itself, so a deploy's reply
+// names them and never calls the container idle.
+func TestDeployNextActions_NamesTheDevServersTheSupervisorStarted(t *testing.T) {
+	t.Parallel()
+	decl := `{"version":1,"servers":[{"name":"server","port":3000,"command":"a","cwd":"."},{"name":"web","port":5173,"command":"b","cwd":"."}]}`
+	c := devservertest.NewSupervised(decl)
+	got := deployNextActionsFor(t.Context(), c, "/root", &ops.DeployResult{TargetService: "matedev"}, topology.ModeDev, topology.RuntimeDynamic)
+	for _, want := range []string{"server", "web", "zerops_verify"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("nextActions = %q, want it to name %q", got, want)
+		}
+	}
+	if strings.Contains(got, "idle") || strings.Contains(got, "action=start") {
+		t.Errorf("nextActions = %q, must not call a supervised container idle", got)
+	}
+
+	idle := deployNextActionsFor(t.Context(), &devservertest.Container{}, "/root", &ops.DeployResult{TargetService: "matedev"}, topology.ModeDev, topology.RuntimeDynamic)
+	if !strings.Contains(idle, "idle") {
+		t.Errorf("a container without the supervisor keeps today's pointer, got %q", idle)
+	}
+}
+
+// A deploy's reply on a dev service whose supervisor runs but does not answer
+// says so — check the container's load and memory, then look again — instead
+// of pointing at a start.
+func TestDeployNextActions_ASupervisorThatDoesNotAnswerIsNamedUnresponsive(t *testing.T) {
+	t.Parallel()
+	c := devservertest.NewSupervised(`{"version":1,"servers":[{"name":"web","port":3000,"command":"a","cwd":"."}]}`)
+	c.Unresponsive = true
+	got := deployNextActionsFor(t.Context(), c, "/var/www", &ops.DeployResult{TargetService: "appdev"}, topology.ModeDev, topology.RuntimeDynamic)
+	for _, want := range []string{"running but did not answer", "zerops_scale", "zerops_verify"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("nextActions = %q, want it to contain %q", got, want)
+		}
+	}
+	if strings.Contains(got, "idle") || strings.Contains(got, "action=start") {
+		t.Errorf("nextActions = %q, must not point a stalled supervisor at a start", got)
+	}
+}
+
+// A deploy's reply names every declared dev server with its status — a server
+// that crashed after the container was replaced too, with its exit and how
+// to get it back — and, when the deploy did not carry git-ignored paths, says
+// to reinstall them. It never calls a container with declared servers idle.
+func TestDeployNextActions_NamesEveryDeclaredDevServerACrashedOneWithItsExit(t *testing.T) {
+	t.Parallel()
+	decl := `{"version":1,"servers":[{"name":"web","port":3000,"command":"a","cwd":"."},{"name":"lingui","port":3001,"command":"b","cwd":"."}]}`
+	c := devservertest.NewSupervised(decl)
+	c.Crash = map[string]bool{"lingui": true}
+	c.Redeploy()
+	result := &ops.DeployResult{TargetService: "appdev", NotCarried: &git.NotCarried{Count: 1, Sample: []string{"node_modules"}}}
+
+	got := deployNextActionsFor(t.Context(), c, "/var/www", result, topology.ModeDev, topology.RuntimeDynamic)
+
+	for _, want := range []string{"web running", "lingui crashed (exit 1)", "node_modules", "action=logs", `name="lingui"`, "zerops_verify"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("nextActions = %q, want it to contain %q", got, want)
+		}
+	}
+
+	c.Crash = map[string]bool{"web": true, "lingui": true}
+	c.Redeploy()
+	allDown := deployNextActionsFor(t.Context(), c, "/var/www", &ops.DeployResult{TargetService: "appdev"}, topology.ModeDev, topology.RuntimeDynamic)
+	if strings.Contains(allDown, "idle") || !strings.Contains(allDown, "web crashed") {
+		t.Errorf("nextActions = %q, want both crashed servers named, never 'idle'", allDown)
+	}
+}
+
+// The deploy reply named a crashed server and the way back, and the agent's
+// paste of that call was refused: zerops_dev_server requires hostname. The
+// logs and start calls of the way back name the dev service the deploy
+// targeted, so each is accepted as written.
+func TestDeployNextActions_TheWayBackForACrashedServerNamesItsDevServiceSoTheCallIsAccepted(t *testing.T) {
+	t.Parallel()
+	decl := `{"version":1,"servers":[{"name":"web","port":3000,"command":"a","cwd":"."},{"name":"lingui","port":3001,"command":"b","cwd":"."}]}`
+	c := devservertest.NewSupervised(decl)
+	c.Crash = map[string]bool{"lingui": true}
+	c.Redeploy()
+
+	got := deployNextActionsFor(t.Context(), c, "/var/www", &ops.DeployResult{TargetService: "appdev"}, topology.ModeDev, topology.RuntimeDynamic)
+
+	for _, want := range []string{
+		`zerops_dev_server action=logs hostname="appdev" name="lingui"`,
+		`zerops_dev_server action=start hostname="appdev" name="lingui"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("nextActions = %q, want the call %q", got, want)
+		}
+	}
+}
+
+// The agent stopped beat on purpose, and the next deploy's reply listed beat
+// under the servers to read, fix and start. A server whose desired state is
+// stopped is named as stopped and is never one to fix.
+func TestDeployNextActions_AServerStoppedOnPurposeIsNamedStoppedNotAsOneToFix(t *testing.T) {
+	t.Parallel()
+	decl := `{"version":1,"servers":[{"name":"api","port":8080,"command":"a","cwd":"."},{"name":"beat","command":"b","cwd":"."}]}`
+	c := devservertest.NewSupervised(decl)
+	c.Redeploy()
+	c.Servers["beat"].Desired, c.Servers["beat"].Status = devsup.DesiredStopped, devsup.StatusStopped
+
+	got := deployNextActionsFor(t.Context(), c, "/var/www", &ops.DeployResult{TargetService: "difydev"}, topology.ModeDev, topology.RuntimeDynamic)
+
+	for _, want := range []string{"api running", "beat stopped", "zerops_verify"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("nextActions = %q, want it to contain %q", got, want)
+		}
+	}
+	for _, never := range []string{"For each server that is down", "action=logs", "action=start"} {
+		if strings.Contains(got, never) {
+			t.Errorf("nextActions = %q, asks to fix a server stopped on purpose (%q)", got, never)
+		}
+	}
+}
+
+// Four Spring servers answered "starting" in the deploy reply; one crashed a
+// minute later and nobody was told. The reply waits, within the start budget,
+// for each starting server's first running or crashed answer and names the
+// crashed one with its exit and the way back.
+func TestDeployNextActions_WaitsForEachStartingDevServerAndNamesOneThatCrashes(t *testing.T) {
+	t.Parallel()
+	decl := `{"version":1,"servers":[{"name":"gateway","port":8080,"command":"a","cwd":"."},{"name":"vets","port":8083,"command":"b","cwd":"."}]}`
+	c := devservertest.NewSupervised(decl)
+	c.Crash = map[string]bool{"vets": true}
+	c.Settle = map[string]int{"gateway": 1, "vets": 2}
+	c.Redeploy()
+
+	got := deployNextActionsFor(t.Context(), c, "/var/www", &ops.DeployResult{TargetService: "petclinicdev"}, topology.ModeDev, topology.RuntimeDynamic)
+
+	for _, want := range []string{"gateway running", "vets crashed (exit 1)", "action=logs", `name="vets"`, "zerops_verify"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("nextActions = %q, want it to contain %q", got, want)
+		}
+	}
+	if strings.Contains(got, "starting") {
+		t.Errorf("nextActions = %q, says starting for a server that answered within the budget", got)
+	}
+}
+
+// After a deploy every dev server crashed at once with EAGAIN because
+// together they reached the service's task limit, and the reply named them as
+// crashed to be fixed. A server that crashed on the task limit is named with
+// the limit and the tasks running now: as coming back while the supervisor
+// starts it again, as down once it stopped trying.
+func TestDeployNextActions_AServerThatCrashedOnTheServicesTaskLimitIsNamedWithTheLimit(t *testing.T) {
+	t.Parallel()
+	decl := `{"version":1,"servers":[{"name":"api","port":8080,"command":"a","cwd":"."},{"name":"web","port":3000,"command":"b","cwd":"."}]}`
+	c := devservertest.NewSupervised(decl)
+	c.Crash = map[string]bool{"api": true, "web": true}
+	c.RetryPending = map[string]bool{"api": true}
+	c.TaskLimit = map[string]*devsup.TaskLimit{"api": {Max: 300, Current: 297}, "web": {Max: 300, Current: 297}}
+	c.Redeploy()
+
+	got := deployNextActionsFor(t.Context(), c, "/var/www", &ops.DeployResult{TargetService: "difydev"}, topology.ModeDev, topology.RuntimeDynamic)
+
+	for _, want := range []string{
+		"api crashed (exit 1): the service's task limit (300) was reached, 297 tasks run now; the supervisor starts it again after a backoff, one server at a time",
+		"web crashed (exit 1): the service's task limit (300) was reached, 297 tasks run now; the supervisor stopped starting it.",
+		`Check api again in about 30 s with zerops_dev_server action=status hostname="difydev".`,
+		`zerops_dev_server action=start hostname="difydev" name="web"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("nextActions = %q, want it to contain %q", got, want)
+		}
+	}
+}
+
+// The kernel's OOM killer made systemd restart every dev server while they
+// settled after a deploy; the reply named them running and the agent never
+// learned why they had all restarted. The reply says the service ran out of
+// memory, once, and points to the service's RAM.
+func TestDeployNextActions_DevServersSystemdRestartedWhenTheServiceRanOutOfMemorySayWhyOnce(t *testing.T) {
+	t.Parallel()
+	decl := `{"version":1,"servers":[{"name":"api","port":8080,"command":"a","cwd":"."},{"name":"web","port":3000,"command":"b","cwd":"."}]}`
+	c := devservertest.NewSupervised(decl)
+	c.Redeploy()
+	for _, name := range []string{"api", "web"} {
+		c.Servers[name].Restarts = 1
+		c.Servers[name].LastRestartReason = "the service ran out of memory: the kernel killed one of its processes and systemd restarted every dev server"
+		c.Servers[name].OutOfMemory = true
+	}
+
+	got := deployNextActionsFor(t.Context(), c, "/var/www", &ops.DeployResult{TargetService: "difydev"}, topology.ModeDev, topology.RuntimeDynamic)
+
+	want := "Dev servers on difydev after the deploy: api running, web running. " +
+		"The service ran out of memory: the kernel killed one of its processes and systemd restarted every dev server. " +
+		"If it runs out of memory again, raise the service's max RAM with zerops_scale or stop a dev server you are not working on."
+	if !strings.Contains(got, want) || strings.Count(got, "ran out of memory") != 1 {
+		t.Errorf("nextActions = %q, want it to contain %q once", got, want)
+	}
+}
+
+// A deploy reply told the agent to read vets' logs, fix it and start it while
+// the supervisor had already scheduled its one more start; the agent built its
+// own workaround. A server that crashed while starting with that start pending
+// is named as coming back, with when to look again — never as one to fix.
+func TestDeployNextActions_AServerThatCrashedWhileStartingWithItsOneMoreStartPendingIsNamedAsComingBack(t *testing.T) {
+	t.Parallel()
+	decl := `{"version":1,"servers":[{"name":"gateway","port":8080,"command":"a","cwd":"."},{"name":"vets","port":8083,"command":"b","cwd":"."}]}`
+	c := devservertest.NewSupervised(decl)
+	c.Crash = map[string]bool{"vets": true}
+	c.RetryPending = map[string]bool{"vets": true}
+	c.Redeploy()
+
+	got := deployNextActionsFor(t.Context(), c, "/var/www", &ops.DeployResult{TargetService: "petclinicdev"}, topology.ModeDev, topology.RuntimeDynamic)
+
+	for _, want := range []string{
+		"gateway running",
+		"vets crashed while starting (exit 1); the supervisor starts it once more after its siblings settle",
+		`Check vets again in about 30 s with zerops_dev_server action=status hostname="petclinicdev".`,
+		"zerops_verify",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("nextActions = %q, want it to contain %q", got, want)
+		}
+	}
+	if strings.Contains(got, "fix it") || strings.Contains(got, "action=start") {
+		t.Errorf("nextActions = %q, tells the agent to fix and start a server the supervisor brings back", got)
+	}
+}
+
+// A server still starting when the reply's wait ends was reported "starting"
+// as if that were fine; it crashed a minute later and nobody looked again.
+// The reply names each server still starting and when to check it again.
+func TestDeployNextActions_AServerStillStartingWhenTheWaitEndsIsNamedWithWhenToCheckItAgain(t *testing.T) {
+	t.Parallel()
+	decl := `{"version":1,"servers":[{"name":"gateway","port":8080,"command":"a","cwd":"."},{"name":"customers","port":8081,"command":"b","cwd":"."}]}`
+	c := devservertest.NewSupervised(decl)
+	c.Settle = map[string]int{"customers": 1000}
+	c.Redeploy()
+	ctx, cancel := context.WithTimeout(t.Context(), 1500*time.Millisecond) // the wait ends before customers settles
+	defer cancel()
+
+	got := deployNextActionsFor(ctx, c, "/var/www", &ops.DeployResult{TargetService: "petclinicdev"}, topology.ModeDev, topology.RuntimeDynamic)
+
+	for _, want := range []string{
+		"gateway running",
+		"customers still starting",
+		`Check customers again in about 30 s with zerops_dev_server action=status hostname="petclinicdev".`,
+		"zerops_verify",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("nextActions = %q, want it to contain %q", got, want)
+		}
+	}
+}
+
+// In variant B the code volume's declaration also holds the other dev
+// services' servers: a deploy's reply names only the deployed service's.
+func TestDeployNextActions_AVariantBDeploy_NamesOnlyThatDevServicesServers(t *testing.T) {
+	t.Parallel()
+	decl := `{"version":1,"servers":[` +
+		`{"name":"web","port":3000,"command":"a","cwd":"apps/web","service":"webdev"},` +
+		`{"name":"api","port":8080,"command":"b","cwd":"apps/api","service":"apidev"}]}`
+	c := devservertest.NewSupervised(decl)
+	delete(c.Servers, "api")
+
+	got := deployNextActionsFor(t.Context(), c, "/var/www/ws", &ops.DeployResult{TargetService: "webdev"}, topology.ModeDev, topology.RuntimeDynamic)
+
+	if want := "Dev servers on webdev after the deploy: web running."; !strings.Contains(got, want) {
+		t.Errorf("nextActions = %q, want it to contain %q", got, want)
+	}
+	if strings.Contains(got, "api") {
+		t.Errorf("nextActions = %q, names apidev's api on webdev", got)
+	}
+}
+
+// A server that could not start because something outside the supervisor
+// holds its port is named in the deploy reply as zerops_dev_server names it —
+// its port stayed busy — never as a crash with a made-up exit, and is one the
+// agent gets back.
+func TestDeployNextActions_AServerWhosePortStayedBusyIsNamedAsZeropsDevServerNamesIt(t *testing.T) {
+	t.Parallel()
+	decl := `{"version":1,"servers":[{"name":"web","port":3000,"command":"a","cwd":"."},{"name":"api","port":3001,"command":"b","cwd":"."}]}`
+	c := devservertest.NewSupervised(decl)
+	c.Foreign = map[int]int{3001: 900}
+	c.Redeploy()
+
+	got := deployNextActionsFor(t.Context(), c, "/var/www", &ops.DeployResult{TargetService: "appdev"}, topology.ModeDev, topology.RuntimeDynamic)
+
+	for _, want := range []string{"web running", "api could not start: its port stayed busy", `name="api"`, "zerops_verify"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("nextActions = %q, want it to contain %q", got, want)
+		}
+	}
+	if strings.Contains(got, "port_busy") {
+		t.Errorf("nextActions = %q, names the supervisor's internal exit marker", got)
 	}
 }

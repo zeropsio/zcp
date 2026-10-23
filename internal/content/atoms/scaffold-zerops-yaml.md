@@ -76,7 +76,7 @@ The handler chains here on an empty yaml, but the underlying problem may be a wr
 
 ```
 ssh {targetHostname} "ls -la /var/www/"
-ssh {targetHostname} "find /var/www -maxdepth 3 -name zerops.yaml -o -name zerops.yml"
+ssh {targetHostname} "find /var/www -maxdepth 3 -name 'zerops.y*ml'"
 ```
 
 If a yaml exists at a non-standard path, copy or symlink it to `/var/www/zerops.yaml` rather than scaffolding a duplicate.

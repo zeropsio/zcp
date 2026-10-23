@@ -321,7 +321,7 @@ func (s *Server) registerTools() {
 
 	// Read-only tools
 	tools.RegisterWorkflow(s.server, s.client, httpClient, projectID, schemaCache, wfEngine, s.logFetcher, stateDir, s.rtInfo.ServiceName, s.mounter, s.sshDeployer, s.rtInfo, s.authInfo.APIHost)
-	tools.RegisterDiscover(s.server, s.client, projectID, stateDir)
+	tools.RegisterDiscover(s.server, s.client, projectID, stateDir, wfEngine)
 	tools.RegisterKnowledge(s.server, s.store, s.client, schemaCache, knowledgeTracker, wfEngine)
 	tools.RegisterRecordFact(s.server, wfEngine, recipeProbe)
 	tools.RegisterWorkspaceManifest(s.server, wfEngine, recipeProbe)
@@ -371,6 +371,10 @@ func (s *Server) registerTools() {
 	}
 	if s.rtInfo.InContainer && s.rtInfo.MateEnabled {
 		tools.RegisterObserve(s.server, httpClient, projectID)
+		// A Mate's agent asks where the code of the repository it came from
+		// is kept (docs/spec-mate.md §5.10); a Mate's client
+		// draws the card, so it is Mate-gated like every mate-shaped effect.
+		tools.RegisterOrigin(s.server, httpClient, projectID, stateDir)
 		// A Mate asks its person's Chief for what lies outside its project
 		// (docs/spec-mate.md §2.11); the card it proposes is drawn by a
 		// Mate's client, so the tool is Mate-gated like every mate-shaped

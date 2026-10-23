@@ -649,6 +649,50 @@ func TestDeployTool_BuildFailed_WithBuildLogs(t *testing.T) {
 	}
 }
 
+// A build the platform stopped for memory says so in the deploy reply: the
+// platform's OOM alert for the build container (logged without the build's
+// tag) reaches buildLogs and failureClassification, so the agent does not
+// rebuild on its dev container to find a cause the log tail never showed.
+func TestAFailedBuildStoppedForMemorySaysSoInTheDeployReply(t *testing.T) {
+	t.Parallel()
+
+	const oom = "OOM Alert: Process 'next-build (v16' terminated - memory limit exceeded. Consider increasing the memory limits (min or minFree) in the service configuration."
+	buildSvcID := "build-svc-99"
+	pipelineStart := "2026-10-16T03:51:33.711080515Z"
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "webstage"}}).
+		WithAppVersionEvents([]platform.AppVersionEvent{{
+			ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-1", Status: statusBuildFailed, Sequence: 1,
+			Build: &platform.BuildInfo{ServiceStackID: &buildSvcID, PipelineStart: &pipelineStart},
+		}}).
+		WithLogAccess(&platform.LogAccess{URL: "https://log.example.com/logs"})
+	logFetcher := platform.NewMockLogFetcher().WithEntries([]platform.LogEntry{
+		{Timestamp: "2026-10-16T03:53:17Z", Facility: "local0", Severity: "Informational", Tag: "zbuilder@av-1", Message: "Creating an optimized production build ..."},
+		{Timestamp: "2026-10-16T03:59:55.737026329Z", Facility: "local0", Severity: "Error", Message: oom},
+		{Timestamp: "2026-10-16T03:59:59.1957Z", Facility: "local0", Severity: "Informational", Tag: "zbuilder@av-1", Message: "┃   ZEROPS BUILD CONTAINER STARTED   ┃"},
+	})
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", &stubSSH{output: []byte("ok")}, authInfo, logFetcher, runtime.Info{}, "", testDeployEngine(t), nil, DevsupSource{})
+
+	result := callTool(t, srv, "zerops_deploy", map[string]any{"targetService": "webstage"})
+
+	var parsed ops.DeployResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &parsed); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if !slices.Contains(parsed.BuildLogs, oom) {
+		t.Errorf("buildLogs = %q, want the platform's OOM alert", parsed.BuildLogs)
+	}
+	cls := parsed.FailureClassification
+	if cls == nil || !slices.Contains(cls.Signals, "build:oom-killed") || !strings.Contains(cls.LikelyCause, "next-build") {
+		t.Fatalf("failureClassification = %+v, want build:oom-killed naming the killed next-build", cls)
+	}
+	if !strings.Contains(parsed.Suggestion, "8 GB") {
+		t.Errorf("suggestion = %q, want the build container's 8 GB cap", parsed.Suggestion)
+	}
+}
+
 type stubSSHWithReadiness struct {
 	deployOutput []byte
 	deployErr    error
@@ -1052,9 +1096,12 @@ func TestDeployTool_PreparingRuntimeFailed_CarriesPrepareStderr(t *testing.T) {
 			Build: &platform.BuildInfo{ServiceStackID: &buildSvcID, ContainerCreationStart: &created},
 		}}).
 		WithLogAccess(&platform.LogAccess{URL: "https://log.example.com/logs"})
+	// The prepare phase logs under the build's tag; the runtime container
+	// holds only its own SSH/sudo lines (live, appVersion KP0LkKL6QvensaDAsu0uEw).
 	logFetcher := platform.NewMockLogFetcher().WithEntries([]platform.LogEntry{
-		{Facility: "local0", Tag: "zbuilder@av-1", Message: "downloading source"},
-		{Facility: "local0", Tag: "zsc", Timestamp: "2026-10-15T01:00:05Z", Message: "Error: unknown command \"add\" for \"zsc\""},
+		{Facility: "local0", Tag: "zbuilder@av-1", Timestamp: "2026-10-15T01:00:01Z", Message: "downloading source"},
+		{Facility: "local0", Tag: "zbuilder@av-1", Timestamp: "2026-10-15T01:00:05Z", Message: "Error: unknown command \"add\" for \"zsc\""},
+		{Facility: "local0", Tag: "sudo", Timestamp: "2026-10-15T01:00:06Z", Message: "pam_unix(sudo:session): session opened for user root"},
 	})
 	ssh := &stubSSH{output: []byte("ok")}
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
@@ -1068,8 +1115,11 @@ func TestDeployTool_PreparingRuntimeFailed_CarriesPrepareStderr(t *testing.T) {
 	if err := json.Unmarshal([]byte(getTextContent(t, result)), &parsed); err != nil {
 		t.Fatalf("failed to parse result: %v", err)
 	}
-	if !slices.ContainsFunc(parsed.RuntimeLogs, func(l string) bool { return strings.Contains(l, "unknown command") }) {
-		t.Errorf("runtimeLogs = %v, want the prepare phase's stderr line", parsed.RuntimeLogs)
+	if !slices.ContainsFunc(parsed.BuildLogs, func(l string) bool { return strings.Contains(l, "unknown command") }) {
+		t.Errorf("buildLogs = %v, want the prepare phase's stderr line", parsed.BuildLogs)
+	}
+	if len(parsed.RuntimeLogs) != 0 {
+		t.Errorf("runtimeLogs = %v, want none: the prepare phase does not run in the runtime container", parsed.RuntimeLogs)
 	}
 }
 
@@ -1431,7 +1481,11 @@ func (s *stubSSHWithCommands) ExecSSH(_ context.Context, _ string, command strin
 	}
 	if strings.Contains(command, "zerops.yaml") || strings.Contains(command, "zerops.yml") {
 		s.yamlCalls++
-		return s.yamlContent, s.yamlErr
+		if len(s.yamlContent) == 0 {
+			return s.yamlContent, s.yamlErr
+		}
+		// The read names the file it found on its first line.
+		return append([]byte("@@zcp-file zerops.yaml\n"), s.yamlContent...), s.yamlErr
 	}
 	// Dirty-tree probe (`git status --porcelain`) — MUST precede the push
 	// fallthrough, else the porcelain command mis-routes to the push branch
@@ -1758,10 +1812,11 @@ func TestDeployTool_GitPush_RecordsServesHTTPFromSetup(t *testing.T) {
 	if meta.PrimarySetupName != "worker" {
 		t.Errorf("PrimarySetupName = %q, want worker", meta.PrimarySetupName)
 	}
-	if meta.ServesHTTP == nil {
+	serves := meta.ServesHTTPFor("appdev")
+	if serves == nil {
 		t.Fatal("ServesHTTP = nil, want recorded bool")
 	}
-	if *meta.ServesHTTP {
+	if *serves {
 		t.Errorf("ServesHTTP = true, want false for worker setup without ports")
 	}
 }

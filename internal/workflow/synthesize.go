@@ -252,6 +252,10 @@ func referenceStub(atom KnowledgeAtom) string {
 // can carry placeholders without escape characters: `{` increments depth,
 // `}` decrements, and the directive ends when depth returns to zero.
 //
+// Inside TEMPLATE, `{each-stage:STAGE}` renders STAGE once per stage of the
+// service's pair (expandEachStage), so a command that names a stage covers
+// every part of a multi-part pair while the dev half's own lines render once.
+//
 // Empty service list collapses the directive to "" (no error). Unbalanced
 // directives — opening prefix without a matching close — return an error
 // so the build fails loudly instead of silently emitting raw template text.
@@ -261,7 +265,79 @@ func referenceStub(atom KnowledgeAtom) string {
 // atoms (execute, verify, promote-stage, dynamic-runtime-start-container)
 // are the initial consumers; further atoms migrate as the corpus drift.
 func expandServicesListDirectives(body string, services []ServiceSnapshot) (string, error) {
-	const prefix = "{services-list:"
+	return expandDirective(body, "{services-list:", func(template string) (string, error) {
+		var out strings.Builder
+		for k, svc := range services {
+			if k > 0 {
+				out.WriteByte('\n')
+			}
+			perService, err := expandEachStage(template, svc)
+			if err != nil {
+				return "", err
+			}
+			out.WriteString(strings.NewReplacer(
+				"{hostname}", svc.Hostname,
+				"{stage-hostname}", svc.StageHostname,
+			).Replace(perService))
+		}
+		return out.String(), nil
+	})
+}
+
+// expandEachStage replaces each `{each-stage:TEMPLATE}` directive with one
+// rendering of TEMPLATE per stage of svc's pair, joined with newlines:
+// `{stage-hostname}` is the stage, `{stage-setup}` the zerops.yml setup it
+// is built with — the recorded one, else the recipe convention "prod".
+// A service with no stage collapses the directive to "".
+//
+// `{one-stage:TEMPLATE}` keeps TEMPLATE for a pair with at most one stage and
+// `{many-stages:TEMPLATE}` for a pair with several (a multi-part pair), so an
+// atom renders the commands that fit the pair's shape. `{stage-targets}` is
+// the zerops_deploy_batch targets array cross-deploying svc to every stage.
+func expandEachStage(template string, svc ServiceSnapshot) (string, error) {
+	stages := svc.Stages
+	if len(stages) == 0 && svc.StageHostname != "" {
+		stages = []topology.StageRef{{Hostname: svc.StageHostname, SetupName: svc.StageSetupName}}
+	}
+	keepIf := func(keep bool) func(string) (string, error) {
+		return func(inner string) (string, error) {
+			if keep {
+				return inner, nil
+			}
+			return "", nil
+		}
+	}
+	template, err := expandDirective(template, "{one-stage:", keepIf(len(stages) <= 1))
+	if err != nil {
+		return "", err
+	}
+	template, err = expandDirective(template, "{many-stages:", keepIf(len(stages) > 1))
+	if err != nil {
+		return "", err
+	}
+	targets := make([]string, 0, len(stages))
+	for _, stage := range stages {
+		targets = append(targets, fmt.Sprintf(`{"sourceService":%q,"targetService":%q,"setup":%q}`,
+			svc.Hostname, stage.Hostname, setupOrDefault(stage.SetupName, RecipeSetupProd)))
+	}
+	template = strings.ReplaceAll(template, "{stage-targets}", "["+strings.Join(targets, ",")+"]")
+	return expandDirective(template, "{each-stage:", func(inner string) (string, error) {
+		rendered := make([]string, 0, len(stages))
+		for _, stage := range stages {
+			rendered = append(rendered, strings.NewReplacer(
+				"{stage-hostname}", stage.Hostname,
+				"{stage-setup}", setupOrDefault(stage.SetupName, RecipeSetupProd),
+			).Replace(inner))
+		}
+		return strings.Join(rendered, "\n"), nil
+	})
+}
+
+// expandDirective replaces each `PREFIX TEMPLATE}` directive in body (prefix
+// includes the opening brace) with render(TEMPLATE). The directive's end is
+// found by brace depth, so TEMPLATE may hold placeholders and nested
+// directives; an unterminated directive is an error.
+func expandDirective(body, prefix string, render func(template string) (string, error)) (string, error) {
 	var out strings.Builder
 	i := 0
 	for i < len(body) {
@@ -274,34 +350,25 @@ func expandServicesListDirectives(body string, services []ServiceSnapshot) (stri
 		start := i + idx + len(prefix)
 		depth := 1
 		j := start
-		for j < len(body) && depth > 0 {
+		for ; j < len(body); j++ {
 			switch body[j] {
 			case '{':
 				depth++
 			case '}':
 				depth--
-				if depth == 0 {
-					break
-				}
 			}
 			if depth == 0 {
 				break
 			}
-			j++
 		}
 		if depth != 0 {
-			return "", fmt.Errorf("services-list directive starting at offset %d is unterminated", i+idx)
+			return "", fmt.Errorf("%s directive starting at offset %d is unterminated", strings.Trim(prefix, "{:"), i+idx)
 		}
-		template := body[start:j]
-		for k, svc := range services {
-			if k > 0 {
-				out.WriteByte('\n')
-			}
-			out.WriteString(strings.NewReplacer(
-				"{hostname}", svc.Hostname,
-				"{stage-hostname}", svc.StageHostname,
-			).Replace(template))
+		rendered, err := render(body[start:j])
+		if err != nil {
+			return "", err
 		}
+		out.WriteString(rendered)
 		i = j + 1
 	}
 	return out.String(), nil

@@ -216,6 +216,27 @@ func scenarioRequiresGitHubAdminPAT(names []string) bool {
 	return slices.Contains(names, eval.GitHubAdminPATEnvVar)
 }
 
+// existingProdEnv resolves the controller's value for each of the
+// existing-production env vars r's scenario names, in a fixed order. A named
+// var the controller does not hold blocks the run in createRun before any
+// project exists, like the GitHub PATs.
+func existingProdEnv(opts RunOptions, names []string) (vals map[string]string, missing string) {
+	vals = map[string]string{}
+	for _, e := range []struct{ name, value string }{
+		{eval.ExistingProjectIDEnvVar, opts.ExistingProjectID},
+		{eval.ExistingProdTokenEnvVar, opts.ExistingProdToken},
+	} {
+		if !slices.Contains(names, e.name) {
+			continue
+		}
+		if e.value == "" {
+			return nil, e.name
+		}
+		vals[e.name] = e.value
+	}
+	return vals, ""
+}
+
 // RunOptions is the input to RunBatch (§3.3 FM-21/FM-22).
 type RunOptions struct {
 	Batch    string
@@ -248,6 +269,15 @@ type RunOptions struct {
 	// injected only for a run whose scenario requires it, blocks the run
 	// in createRun before a project is created when absent).
 	GitHubAdminPAT string
+	// ExistingProjectID / ExistingProdToken are the controller's own
+	// ZCP_E2E_EXISTING_PROJECT_ID / ZCP_E2E_EXISTING_PROD_TOKEN (the standing
+	// existing-production project and its project-scoped token), same
+	// pass-through discipline as GitHubPAT.
+	ExistingProjectID string
+	ExistingProdToken string
+	// ResetExistingProd empties the standing existing-prod project after a
+	// run whose scenario declared it in requiredEnvVars; nil skips.
+	ResetExistingProd ExistingProdResetFunc
 	// DevsupURL is the controller's own ZCP_DEVSUP_URL, passed to every run
 	// project's zcp service when set (RunDescriptor.DevsupURL).
 	DevsupURL string
@@ -368,6 +398,12 @@ func createRun(ctx context.Context, client PlatformClient, opts RunOptions, r sc
 		}
 	}
 
+	existingProd, missingExisting := existingProdEnv(opts, r.RequiredEnvVars)
+	if missingExisting != "" {
+		rr := recordBlocked(r.RunID, r.ID, r.ProductionProjectName, fmt.Errorf("preparation: resource %s missing", missingExisting))
+		return nil, &rr, nil
+	}
+
 	var launchTokenID, launchKeyValue string
 	if r.Launch {
 		minted, err := client.MintDelegatedLaunchToken(ctx, opts.ClientID, "farm-"+r.RunID)
@@ -384,19 +420,21 @@ func createRun(ctx context.Context, client PlatformClient, opts RunOptions, r sc
 	}
 
 	desc := RunDescriptor{
-		BatchID:         opts.Batch,
-		RunID:           r.RunID,
-		ScenarioID:      r.ID,
-		EvaluatorSHA256: opts.EvaluatorSHA256,
-		WrapperSHA256:   opts.WrapperSHA256,
-		CandidateSHA256: opts.CandidateSHA256,
-		ScenariosDigest: opts.ScenariosDigest,
-		Sink:            opts.Sink,
-		OAuthToken:      opts.OAuthToken,
-		LaunchKey:       launchKeyValue,
-		GitHubPAT:       githubPAT,
-		GitHubAdminPAT:  githubAdminPAT,
-		DevsupURL:       opts.DevsupURL,
+		BatchID:           opts.Batch,
+		RunID:             r.RunID,
+		ScenarioID:        r.ID,
+		EvaluatorSHA256:   opts.EvaluatorSHA256,
+		WrapperSHA256:     opts.WrapperSHA256,
+		CandidateSHA256:   opts.CandidateSHA256,
+		ScenariosDigest:   opts.ScenariosDigest,
+		Sink:              opts.Sink,
+		OAuthToken:        opts.OAuthToken,
+		LaunchKey:         launchKeyValue,
+		GitHubPAT:         githubPAT,
+		GitHubAdminPAT:    githubAdminPAT,
+		ExistingProjectID: existingProd[eval.ExistingProjectIDEnvVar],
+		ExistingProdToken: existingProd[eval.ExistingProdTokenEnvVar],
+		DevsupURL:         opts.DevsupURL,
 	}
 
 	// §2.1 step 1: create the empty project shell. The REST import route
@@ -848,6 +886,11 @@ func finalizeActiveRun(ctx context.Context, client PlatformClient, sink *SinkCli
 	} else {
 		cleanupErrs = append(cleanupErrs, fmt.Errorf("farm run: cleanup project %s: %w", a.RunID, err))
 	}
+	if opts.ResetExistingProd != nil && scenarioRequiresExistingProd(a.RequiredEnvVars) {
+		if err := opts.ResetExistingProd(ctx, opts.ExistingProjectID, opts.ExistingProdToken); err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("farm run: reset existing prod project %s: %w", a.RunID, err))
+		}
+	}
 	if a.Launch {
 		if a.ProductionProjectName != "" {
 			prodID, ok, err := findProjectByName(ctx, client, opts.ClientID, a.ProductionProjectName)
@@ -868,6 +911,12 @@ func finalizeActiveRun(ctx context.Context, client PlatformClient, sink *SinkCli
 		}
 	}
 	return rr, false, false, errors.Join(cleanupErrs...)
+}
+
+// scenarioRequiresExistingProd reports whether names declares the standing
+// existing-prod project id.
+func scenarioRequiresExistingProd(names []string) bool {
+	return slices.Contains(names, eval.ExistingProjectIDEnvVar)
 }
 
 // recordBlocked is D10's single call site for a creation-phase run

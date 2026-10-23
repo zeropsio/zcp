@@ -49,7 +49,7 @@ type atomLintRule struct {
 var AcceptedWorkflowActions = []string{
 	"start", "reset", "iterate", "complete",
 	"skip", "status", "close", "resume", "list", "route",
-	"close-mode", "git-push-setup", "build-integration", "group-recipe", "describe-change", "mac-pair", "prod-ops",
+	"close-mode", "git-push-setup", "build-integration", "group-recipe", "open-change", "describe-change", "mac-pair", "prod-ops",
 	"confirm-production", "adopt-local", "set-default-setup",
 	"record-deploy", "release",
 }
@@ -141,6 +141,15 @@ var atomLintRules = []atomLintRule{
 		name:     "toolsearch-select-missing-mcp-prefix",
 		category: "tool-call-shape",
 		pattern:  regexp.MustCompile(`\bselect:zerops_`),
+	},
+	// zerops_dev_server requires hostname: a call that names arguments but
+	// not hostname first (after its action, when it names one) is refused as
+	// the agent pastes it. A bare `zerops_dev_server action=start` names the
+	// action, not a call.
+	{
+		name:     "dev-server-call-missing-hostname",
+		category: "tool-call-shape",
+		pattern:  regexp.MustCompile(`zerops_dev_server (action=[a-z]+ [a-gi-zA-Z]|[b-gi-zA-Z])[a-zA-Z]*=`),
 	},
 }
 

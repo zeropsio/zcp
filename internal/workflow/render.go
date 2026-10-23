@@ -3,6 +3,7 @@ package workflow
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/topology"
@@ -389,17 +390,25 @@ func renderServiceLine(svc ServiceSnapshot) string {
 // unlike a first-deploy-only atom gated on never-deployed, which an adopted
 // service already running deployed code never sees.
 //
+// The rule is for a base the agent adds. zcp needs no particular OS (its
+// zcp-devsup binary is static), and a base a zerops.yaml already declares
+// is the repo's choice: run.base sets the service OS on each deploy, so an
+// import-time ubuntu/ type beside a bare nodejs@22 (alpine) is not a
+// conflict, and switching it changes the build image (ubuntu's global npm
+// directory needs sudo). So the rule is withheld when the repo declares its
+// bases (ServiceSnapshot.DeclaresBase).
+//
 // Excluded on purpose: static runtimes (`run.base` is the bare special
 // token `static`, not an OS-prefixed base — the build base OS is the
 // builder's choice) and managed services (never carry an OS prefix).
 func renderBasePrefixHint(svc ServiceSnapshot) string {
 	prefix := topology.OSPrefix(svc.TypeVersion)
-	if prefix == "" {
+	if prefix == "" || svc.DeclaresBase {
 		return ""
 	}
 	bare := topology.CanonicalBareForm(svc.TypeVersion)
 	return fmt.Sprintf(
-		"base prefix %s/ — write it on BOTH zerops.yaml build.base and run.base (legacy %s + os: %s ≡ %s; run.base rewrites the service OS on every deploy)",
+		"base prefix %s/ — a zerops.yaml base you add takes it on BOTH build.base and run.base (legacy %s + os: %s ≡ %s); run.base sets the service OS on every deploy, so bases that already deploy stay as they are",
 		prefix, bare, prefix, svc.TypeVersion,
 	)
 }
@@ -429,8 +438,36 @@ func renderBootstrappedFields(svc ServiceSnapshot) string {
 	} else {
 		fields = append(fields, "deployed=false")
 	}
+	// Every remote is named without the credentials a URL may carry.
 	if svc.RemoteURL != "" {
-		fields = append(fields, "remoteUrl="+svc.RemoteURL)
+		fields = append(fields, "remoteUrl="+topology.RedactRepoURLCredentials(svc.RemoteURL))
+	}
+	if svc.HQRepo != "" {
+		fields = append(fields, "hqRepo="+svc.HQRepo)
+	}
+	switch {
+	case svc.HQRepo == "":
+	case svc.HQOrigin != nil && svc.HQOrigin.Mode != "":
+		fields = append(fields, "origin.mode="+svc.HQOrigin.Mode)
+	default:
+		// Not read yet, or from an HQ older than modes.
+		fields = append(fields, "origin.mode=unknown")
+	}
+	if svc.HQOrigin != nil && svc.HQOrigin.URL != "" {
+		fields = append(fields, "origin="+topology.RedactRepoURLCredentials(svc.HQOrigin.URL))
+	}
+	if svc.HQCheckoutOrigin != "" {
+		checkout := "checkoutOrigin=" + topology.RedactRepoURLCredentials(svc.HQCheckoutOrigin)
+		if svc.HQOriginPending != "" {
+			checkout += " (pending: develop's start points it at " + topology.RedactRepoURLCredentials(svc.HQOriginPending) + ")"
+		}
+		fields = append(fields, checkout)
+	}
+	if svc.HQChange != 0 {
+		fields = append(fields, "change="+strconv.Itoa(svc.HQChange))
+	}
+	if svc.HQChange != 0 && svc.HQBranch != "" {
+		fields = append(fields, "changeBranch="+svc.HQBranch)
 	}
 	if len(svc.FeedsProduction) > 0 {
 		fields = append(fields, "feedsProduction="+strings.Join(svc.FeedsProduction, "; "))

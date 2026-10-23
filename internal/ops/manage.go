@@ -2,9 +2,12 @@ package ops
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"math"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // ScaleParams holds scaling configuration for a service.
@@ -35,6 +38,13 @@ type ScaleResult struct {
 	ServiceID   string            `json:"serviceId"`
 	TimedOut    bool              `json:"timedOut,omitempty"`
 	NextActions string            `json:"nextActions,omitempty"`
+	// Effective is the service's autoscaling read back once the change
+	// landed; Clamped names each requested field the platform set to
+	// another value.
+	Effective *platform.CustomAutoscaling `json:"effective,omitempty"`
+	Clamped   []string                    `json:"clamped,omitempty"`
+
+	requested ScaleParams
 }
 
 // Start starts a stopped service.
@@ -114,7 +124,15 @@ func DisconnectStorage(ctx context.Context, client platform.Client, projectID, h
 	return client.DisconnectSharedStorage(ctx, svc.ID, storage.ID)
 }
 
-// Scale updates the autoscaling parameters for a service.
+// apiCodeInvalidAutoscaling is the platform's code for autoscaling values it
+// refuses, e.g. a minRam above maxRam (seen live 2026-10-16).
+const apiCodeInvalidAutoscaling = "invalidCustomAutoscalingValue"
+
+// Scale updates the autoscaling parameters for a service. The platform
+// replaces the whole autoscaling with the body it gets, so every field the
+// caller leaves out is filled from the service's customAutoscaling — a
+// RAM-only call keeps the CPU and container bounds it had. A field the
+// service never set stays out and keeps its platform default.
 func Scale(ctx context.Context, client platform.Client, projectID, hostname string, params ScaleParams) (*ScaleResult, error) {
 	if err := validateScaleParams(params); err != nil {
 		return nil, err
@@ -125,10 +143,27 @@ func Scale(ctx context.Context, client platform.Client, projectID, hostname stri
 		return nil, err
 	}
 
+	// The search behind resolveUserVisibleService lags writes; the direct
+	// read carries the autoscaling a previous scale just set. Its
+	// currentAutoscaling also carries platform defaults, which the platform
+	// refuses as input (minFreeRamGB 0.0625), so the fill reads only the
+	// user's own values.
+	current, err := client.GetService(ctx, svc.ID)
+	if err != nil {
+		return nil, fmt.Errorf("scale: read current autoscaling: %w", err)
+	}
 	apiParams := buildAutoscalingParams(params)
+	fillOmittedAutoscaling(&apiParams, current.CustomAutoscaling,
+		topology.IsManagedService(current.ServiceStackTypeInfo.ServiceStackTypeVersionName))
 	apiParams.ServiceMode = svc.Mode
 	proc, err := client.SetAutoscaling(ctx, svc.ID, apiParams)
 	if err != nil {
+		var pe *platform.PlatformError
+		if errors.As(err, &pe) && pe.APICode == apiCodeInvalidAutoscaling {
+			if conflict := scaleBoundsConflict(params, apiParams); conflict != nil {
+				return nil, conflict
+			}
+		}
 		return nil, err
 	}
 
@@ -136,12 +171,134 @@ func Scale(ctx context.Context, client platform.Client, projectID, hostname stri
 		Process:   proc,
 		Hostname:  svc.Name,
 		ServiceID: svc.ID,
+		requested: params,
 	}
 	if proc == nil {
 		result.Message = "Scaling parameters updated"
 	}
 
 	return result, nil
+}
+
+// ReadBackScale reads the service once a scale landed: Effective is what
+// the service runs with, Clamped names each requested field the platform set
+// to another value (an account or plan ceiling).
+func ReadBackScale(ctx context.Context, client platform.Client, result *ScaleResult) error {
+	svc, err := client.GetService(ctx, result.ServiceID)
+	if err != nil {
+		return fmt.Errorf("read back scaling of %s: %w", result.Hostname, err)
+	}
+	result.Effective = effectiveAutoscaling(svc)
+	if result.Effective != nil {
+		result.Clamped = clampedFields(result.requested, result.Effective)
+	}
+	return nil
+}
+
+// effectiveAutoscaling is the active config (CurrentAutoscaling) over the
+// user overrides (CustomAutoscaling) — the same preference discover shows.
+func effectiveAutoscaling(svc *platform.ServiceStack) *platform.CustomAutoscaling {
+	if svc.CurrentAutoscaling != nil {
+		return svc.CurrentAutoscaling
+	}
+	return svc.CustomAutoscaling
+}
+
+// fillOmittedAutoscaling fills each field the request leaves out from cur.
+// A zero in cur is a field the platform did not return, so it stays out and
+// the platform default applies. A memory size the platform would refuse as
+// input (more than 3 decimal places) can only be its own default, so it
+// stays out too. A managed service's container count is fixed by its
+// variant, so none is sent for it.
+func fillOmittedAutoscaling(p *platform.AutoscalingParams, cur *platform.CustomAutoscaling, managed bool) {
+	if cur == nil {
+		return
+	}
+	fillInt := func(dst **int32, v int32) {
+		if *dst == nil && v != 0 {
+			*dst = &v
+		}
+	}
+	fillFloat := func(dst **float64, v float64) {
+		if *dst == nil && v != 0 {
+			*dst = &v
+		}
+	}
+	if p.VerticalCPUMode == nil && cur.CPUMode != "" {
+		mode := cur.CPUMode
+		p.VerticalCPUMode = &mode
+	}
+	fillInt(&p.VerticalMinCPU, cur.MinCPU)
+	fillInt(&p.VerticalMaxCPU, cur.MaxCPU)
+	fillInt(&p.VerticalStartCPU, cur.StartCPUCoreCount)
+	fillMemoryGB := func(dst **float64, v float64) {
+		if math.Abs(v*1000-math.Round(v*1000)) < 1e-9 {
+			fillFloat(dst, v)
+		}
+	}
+	fillMemoryGB(&p.VerticalMinRAM, cur.MinRAM)
+	fillMemoryGB(&p.VerticalMaxRAM, cur.MaxRAM)
+	fillFloat(&p.VerticalMinDisk, cur.MinDisk)
+	fillFloat(&p.VerticalMaxDisk, cur.MaxDisk)
+	fillMemoryGB(&p.VerticalMinFreeRAMGB, cur.MinFreeRAMGB)
+	fillFloat(&p.VerticalMinFreeRAMPct, cur.MinFreeRAMPercent)
+	fillFloat(&p.VerticalMinFreeCPUCores, cur.MinFreeCPUCores)
+	fillFloat(&p.VerticalMinFreeCPUPct, cur.MinFreeCPUPercent)
+	if p.VerticalSwapEnabled == nil && cur.SwapEnabled {
+		swap := true
+		p.VerticalSwapEnabled = &swap
+	}
+	if !managed {
+		fillInt(&p.HorizontalMinCount, cur.HorizontalMinCount)
+		fillInt(&p.HorizontalMaxCount, cur.HorizontalMaxCount)
+	}
+}
+
+// clampedFields names each requested field whose effective value differs.
+func clampedFields(p ScaleParams, eff *platform.CustomAutoscaling) []string {
+	var out []string
+	note := func(name string, asked, got any) {
+		out = append(out, fmt.Sprintf("%s: asked %v, the platform set %v", name, asked, got))
+	}
+	if p.CPUMode != nil && *p.CPUMode != eff.CPUMode {
+		note("cpuMode", *p.CPUMode, eff.CPUMode)
+	}
+	ints := []struct {
+		name  string
+		asked *int
+		got   int32
+	}{
+		{"minCpu", p.MinCPU, eff.MinCPU},
+		{"maxCpu", p.MaxCPU, eff.MaxCPU},
+		{"startCpu", p.StartCPU, eff.StartCPUCoreCount},
+		{"minContainers", p.MinContainers, eff.HorizontalMinCount},
+		{"maxContainers", p.MaxContainers, eff.HorizontalMaxCount},
+	}
+	for _, f := range ints {
+		if f.asked != nil && int32(*f.asked) != f.got {
+			note(f.name, *f.asked, f.got)
+		}
+	}
+	floats := []struct {
+		name  string
+		asked *float64
+		got   float64
+	}{
+		{"minRam", p.MinRAM, eff.MinRAM},
+		{"maxRam", p.MaxRAM, eff.MaxRAM},
+		{"minDisk", p.MinDisk, eff.MinDisk},
+		{"maxDisk", p.MaxDisk, eff.MaxDisk},
+		{"minFreeRamGB", p.MinFreeRAMGB, eff.MinFreeRAMGB},
+		{"minFreeRamPercent", p.MinFreeRAMPercent, eff.MinFreeRAMPercent},
+		{"minFreeCpuCores", p.MinFreeCPUCores, eff.MinFreeCPUCores},
+		{"minFreeCpuPercent", p.MinFreeCPUPercent, eff.MinFreeCPUPercent},
+	}
+	for _, f := range floats {
+		if f.asked != nil && *f.asked != f.got {
+			note(f.name, *f.asked, f.got)
+		}
+	}
+	return out
 }
 
 // resolveService is a convenience wrapper that fetches services and resolves
@@ -197,6 +354,60 @@ func validateScaleParams(p ScaleParams) error {
 			"minContainers must be <= maxContainers", "")
 	}
 
+	return nil
+}
+
+// scaleBoundsConflict names a minimum above its maximum in what Scale sent
+// — the call's values over the service's current ones — with both values and
+// the one the call did not set, so a platform rejection of a partial call
+// reads as the conflict it is, not as a field error to fix in YAML. nil when
+// no pair conflicts. a minimum above its maximum in what Scale would
+// send — the call's values over the service's current ones — naming both
+// values and the one the call did not set, so the agent sees the conflict a
+// partial call creates instead of the platform's field error.
+func scaleBoundsConflict(asked ScaleParams, sent platform.AutoscalingParams) error {
+	type bound struct {
+		name             string
+		value            float64
+		set, asked, isGB bool
+	}
+	ofInt := func(name string, v *int32, a *int) bound {
+		if v == nil {
+			return bound{name: name}
+		}
+		return bound{name: name, value: float64(*v), set: true, asked: a != nil}
+	}
+	ofGB := func(name string, v *float64, a *float64) bound {
+		if v == nil {
+			return bound{name: name}
+		}
+		return bound{name: name, value: *v, set: true, asked: a != nil, isGB: true}
+	}
+	pairs := [][2]bound{
+		{ofInt("minCpu", sent.VerticalMinCPU, asked.MinCPU), ofInt("maxCpu", sent.VerticalMaxCPU, asked.MaxCPU)},
+		{ofGB("minRam", sent.VerticalMinRAM, asked.MinRAM), ofGB("maxRam", sent.VerticalMaxRAM, asked.MaxRAM)},
+		{ofGB("minDisk", sent.VerticalMinDisk, asked.MinDisk), ofGB("maxDisk", sent.VerticalMaxDisk, asked.MaxDisk)},
+		{ofInt("minContainers", sent.HorizontalMinCount, asked.MinContainers), ofInt("maxContainers", sent.HorizontalMaxCount, asked.MaxContainers)},
+	}
+	describe := func(b bound) string {
+		text := fmt.Sprintf("%s %g", b.name, b.value)
+		if b.isGB {
+			text += " GB"
+		}
+		if !b.asked {
+			text += " (the service's current value; this call did not set it)"
+		}
+		return text
+	}
+	for _, pair := range pairs {
+		lo, hi := pair[0], pair[1]
+		if !lo.set || !hi.set || lo.value <= hi.value {
+			continue
+		}
+		suggestion := fmt.Sprintf("Pass %s no lower than %g, or %s no higher than %g, in the same call.", hi.name, lo.value, lo.name, hi.value)
+		return platform.NewPlatformError(platform.ErrInvalidScaling,
+			fmt.Sprintf("%s is greater than %s", describe(lo), describe(hi)), suggestion)
+	}
 	return nil
 }
 

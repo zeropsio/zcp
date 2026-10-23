@@ -1,6 +1,6 @@
 ---
 id: bootstrap/adopt/discover-existing-pair
-atomIds: [bootstrap-intro, bootstrap-adopt-discover]
+atomIds: [bootstrap-intro, bootstrap-adopt-discover, bootstrap-adopt-new-part]
 description: "Adopt route, discover step — pre-existing dev/stage pair present in the project, agent adopting."
 ---
 === bootstrap-intro ===
@@ -54,3 +54,32 @@ plan=[{"runtime": {"devHostname": "appdev", "stageHostname": "appstage", "type":
 For two independent devs, emit two entries each with its own `runtime` and no `stageHostname`. In every other case (one runtime, or runtimes of different stacks), `scope` is enough: you do not hand-write the plan — `scope` is just the hostname list and the plan is derived for you.
 
 Each named service becomes a tracked runtime target; `adoptionState="managed-dep"` services attach as shared dependencies. Naming the services keeps adoption scoped to YOUR task: in a project with other live work (or another agent session), an empty scope is ambiguous, so it returns the adoptable candidate list for you to pick from rather than silently adopting everything. The control-plane (`zcp-self` / `zcp@*`), already-`adopted`, and `resumable` (mid-bootstrap, owned by a prior session → use `resume`) services are never adopt targets. Hostnames stay verbatim — never rename an adopted service.
+
+---
+
+=== bootstrap-adopt-new-part ===
+### A new part next to the adopted pair
+
+If the task also asks for another piece (a worker, an api) built from the
+repo of the pair you adopt, it is a second part of that app, never a second
+runtime of the plan:
+
+1. Import the part's stage service (`zerops_import`) under its own
+   hostname, such as `workerstage`, without `startWithoutCode`: like every
+   stage it waits at READY_TO_DEPLOY for its first deploy.
+2. Plan the pair as the one runtime it is: its dev hostname with
+   `isExisting: true` and `stages` listing every stage with its setup, the
+   new one included (`{"hostname": "workerstage", "setupName": "worker"}`).
+   Never a second runtime for the part.
+   An existing setup and its stage keep their names; only the new part gets
+   a new setup. A stage that deploys `setup: prod` stays
+   `{"hostname": "appstage", "setupName": "prod"}` — never rename a `setup:`
+   the repo already has.
+3. In develop, add the part's `setup:` to the repo's `zerops.yaml`, then in
+   the same step give the part its own entry in `.zcp/dev-servers.json`
+   (autostart, unless the dev service's RAM is short) and run
+   `zerops_dev_server action=start hostname="<dev>" name=<part>`. A worker without a port is
+   still a named server. Every part on the dev service runs as one.
+
+Read `zerops_knowledge uri="zerops://playbooks/monorepo"` first. Plan a new
+runtime only for a different repo.

@@ -56,11 +56,13 @@ type ServiceMeta struct {
 	// GitPushState is whether git-push capability is set up;
 	// BuildIntegration is which ZCP-managed CI integration responds to
 	// remote git pushes.
-	CloseDeployMode          topology.CloseDeployMode  `json:"closeDeployMode,omitempty"`
-	CloseDeployModeConfirmed bool                      `json:"closeDeployModeConfirmed,omitempty"` // true after user explicitly confirms/sets close mode
-	GitPushState             topology.GitPushState     `json:"gitPushState,omitempty"`
-	RemoteURL                string                    `json:"remoteUrl,omitempty"` // cache; runtime source of truth = `git remote get-url origin`
-	BuildIntegration         topology.BuildIntegration `json:"buildIntegration,omitempty"`
+	CloseDeployMode          topology.CloseDeployMode `json:"closeDeployMode,omitempty"`
+	CloseDeployModeConfirmed bool                     `json:"closeDeployModeConfirmed,omitempty"` // true after user explicitly confirms/sets close mode
+	GitPushState             topology.GitPushState    `json:"gitPushState,omitempty"`
+	// RemoteURL caches `git remote get-url origin`; a pair wired to HQ keeps
+	// its repository in HQ here even while origin is GitHub (HQ.Origin).
+	RemoteURL        string                    `json:"remoteUrl,omitempty"`
+	BuildIntegration topology.BuildIntegration `json:"buildIntegration,omitempty"`
 	// TrackedRef is the ref a target consumes — what stage or prod is built
 	// from (GF-7, docs/spec-workflows.md §12.6). Recorded ONCE by
 	// git-push-setup's confirm step: an explicit trackedRef input always
@@ -112,10 +114,12 @@ type ServiceMeta struct {
 	// the literal "prod" tail). F4 ledger completion.
 	ProdSetupName string `json:"prodSetupName,omitempty"`
 
-	// ServesHTTP records whether the last ZCP-driven deploy setup for this
-	// pair declares an HTTP surface. Pointer because absent means "unknown" for
-	// adopted or externally deployed services; false means a known worker setup.
-	ServesHTTP *bool `json:"servesHttp,omitempty"`
+	// ServesHTTPByHost records, per host of this meta — Hostname and each
+	// stage — whether the setup that host last deployed through ZCP declares
+	// an HTTP surface; false is a known worker setup. A host without an entry
+	// is unknown (adopted, externally deployed, not deployed yet): readers
+	// fall back to its declared ports, never to another host's entry.
+	ServesHTTPByHost map[string]bool `json:"servesHttpByHost,omitempty"`
 	// ProvisionedFromGit marks a recipe-route runtime the platform cloned,
 	// built, and DEPLOYED from buildFromGit at import — so the service is
 	// already serving curated code when it reaches ACTIVE, NOT awaiting a first
@@ -167,10 +171,9 @@ func (m *ServiceMeta) SetRepoBaseline(appVersionID string, provenance topology.R
 }
 
 // HQRepoRef is what a pair needs to keep working on its repository in HQ
-// across sessions: which repository it is, which local branch this Mate works
-// on, and its change toward `main`. `main` moves only by HQ's merge, so the
-// Mate's work lands through a change: HQ takes the Mate's push only on the
-// branch of its own open change (`mate/<project id>/<number>`).
+// across sessions: which repository it is, and its change toward `main`.
+// `main` moves only by a person's merge, so the Mate's work lands through a
+// change.
 type HQRepoRef struct {
 	// AppID is the HQ application the repository belongs to — the one HQ held
 	// the Mate in when it was wired. A Mate moved to another application is
@@ -179,70 +182,52 @@ type HQRepoRef struct {
 	// Repo is the repository's name in that application: the pair's dev
 	// hostname, or the one a recipe names.
 	Repo string `json:"repo"`
-	// Branch is the Mate's local branch in the pair's checkout, mate/<project
-	// id> — never main. Each change's own branch is cut from it at its push.
-	Branch string `json:"branch"`
 	// WiredAt is when the repository was wired, RFC3339.
 	WiredAt string `json:"wiredAt,omitempty"`
-	// Change is the number of the Mate's open change in Repo, 0 until a
-	// delivery opens one. Recorded rather than re-derived: a pass reads what
-	// became of it from the Mate's own state in HQ.
+	// CredentialFingerprint names the Mate credential the dev service holds
+	// as GIT_TOKEN (hq.Client.CredentialFingerprint), never the credential:
+	// the Mate enrolling again revokes it, and a pass renews what differs.
+	CredentialFingerprint string `json:"credentialFingerprint,omitempty"`
+	// Change is the number of the Mate's open change in Repo as the Mate's
+	// own state in HQ last named it, 0 for none. Recorded rather than
+	// re-derived: a pass reads what became of it from that state.
 	Change int `json:"change,omitempty"`
-	// Landed is the squash that merged the recorded change, recorded the
-	// moment a pass reads it merged — nil until then, and cleared once a
-	// delivery has absorbed it (or proven it needed no absorbing) by pushing
-	// successfully. A squash shares no history with the branch that became
-	// it, so the ordinary take-`main`-in merge alone reads it as two
-	// histories that both add the same files (MB-26).
-	Landed *LandedChange `json:"landed,omitempty"`
-	// ChangeDescription is what the Mate wrote about its change while no
-	// change could take it yet — none was open, or HQ did not take the edit.
-	// It is there only until a change carries it, and never longer than the
-	// change it was written for: the next change is another change, and
-	// inheriting the last one's words would tell the person about work that
-	// is not in it.
+	// Branch is the branch Change is bound to, by its short name, as HQ named
+	// it — the work's place, a handed change's included; "" for none, or a
+	// change recorded before branches were.
+	Branch string `json:"branch,omitempty"`
+	// ChangeDescription is what the Mate wrote about its change while HQ did
+	// not take the edit: there only until the change carries it, and never
+	// longer than the change it was written for.
 	ChangeDescription *ChangeDescription `json:"changeDescription,omitempty"`
-	// ZcpTitle is the title zcp last gave a change of the pair — it opened
-	// it with it, or retitled it to it — while that title is zcp's: a
-	// delivery retitles the change only while HQ still holds it. Dropped once
-	// the Mate names the change.
-	ZcpTitle *ZcpTitle `json:"zcpTitle,omitempty"`
-	// CredentialRenewedAt is when zcp last wrote the Mate's current HQ
-	// credential onto the push source, RFC3339 with nanoseconds — kept until a
-	// fresh session proves it, or the wait for it to reach the sessions has
-	// passed — so a delivery right after a renewal waits for it to take
-	// effect rather than read the old one's refusal as HQ's.
-	CredentialRenewedAt string `json:"credentialRenewedAt,omitempty"`
+	// Origin is how the Mate's own state in HQ last said Repo's code is
+	// kept; nil until zcp read it from an HQ that names its repositories.
+	// Recorded so status names it without asking HQ.
+	Origin *HQOrigin `json:"origin,omitempty"`
 }
 
-// ChangeDescription is a Mate's description of its change, kept for the
-// change that will carry it.
+// HQOrigin is how a repository's code is kept: Mode is the origin's mode as
+// HQ names it (hq.OriginOnGitHub, hq.OriginFollowed), HQOriginNone for no
+// origin — HQ alone keeps the code — or "" from an HQ older than modes. URL
+// is the origin's address, "" for none.
+type HQOrigin struct {
+	Mode string `json:"mode,omitempty"`
+	URL  string `json:"url,omitempty"`
+}
+
+// HQOriginNone is HQOrigin.Mode for a repository with no origin: zcp's own
+// word, HQ sends no origin at all.
+const HQOriginNone = "none"
+
+// ChangeDescription is a Mate's description of its change, kept until HQ
+// takes it.
 type ChangeDescription struct {
 	// Text is the description, in markdown.
 	Text string `json:"text"`
 	// Title is the change's title the Mate gave with it, "" for none.
 	Title string `json:"title,omitempty"`
-	// Change is the change it was written for; 0 when it waits for whichever
-	// change the pair opens next.
+	// Change is the change it was written for.
 	Change int `json:"change,omitempty"`
-}
-
-// ZcpTitle is a title zcp gave the pair's change number Change.
-type ZcpTitle struct {
-	Change int    `json:"change"`
-	Title  string `json:"title"`
-}
-
-// LandedChange is what a change's merge needs recorded before a delivery can
-// absorb it losslessly, straight from the Mate's own state in HQ.
-type LandedChange struct {
-	// Commit is the squash on `main` (mergedSha) — S in
-	// BuildAbsorbLandedChangeCommand.
-	Commit string `json:"commit"`
-	// Head is the change's head HQ squashed (landedHead) — H in
-	// BuildAbsorbLandedChangeCommand, i.e. what this Mate's own checkout was
-	// at the moment of the landing.
-	Head string `json:"head"`
 }
 
 // PublicAccessFor returns the persisted public-access record for hostname —
@@ -375,6 +360,32 @@ func (m *ServiceMeta) SetStageSetup(hostname, setup string) bool {
 		}
 	}
 	return false
+}
+
+// ServesHTTPFor is host's own record of whether its deployed setup declares an
+// HTTP surface; nil when host has none.
+func (m *ServiceMeta) ServesHTTPFor(host string) *bool {
+	if m == nil {
+		return nil
+	}
+	serves, ok := m.ServesHTTPByHost[host]
+	if !ok {
+		return nil
+	}
+	return &serves
+}
+
+// SetServesHTTP records serves as host's own. Reports whether the meta
+// changed: false when host already records that value.
+func (m *ServiceMeta) SetServesHTTP(host string, serves bool) bool {
+	if old, ok := m.ServesHTTPByHost[host]; ok && old == serves {
+		return false
+	}
+	if m.ServesHTTPByHost == nil {
+		m.ServesHTTPByHost = map[string]bool{}
+	}
+	m.ServesHTTPByHost[host] = serves
+	return true
 }
 
 // IsComplete returns true if bootstrap finished for this service.
@@ -778,6 +789,9 @@ func parseMeta(data []byte) (*ServiceMeta, error) {
 	if err := foldLegacyStage(data, &meta); err != nil {
 		return nil, err
 	}
+	if err := foldLegacyServesHTTP(data, &meta); err != nil {
+		return nil, err
+	}
 	foldLegacyCloseMode(&meta)
 	return &meta, nil
 }
@@ -815,6 +829,30 @@ func foldLegacyStage(data []byte, meta *ServiceMeta) error {
 	}
 	if legacy.StageHostname != "" {
 		meta.Stages = []topology.StageRef{{Hostname: legacy.StageHostname, SetupName: legacy.StageSetupName}}
+	}
+	return nil
+}
+
+// legacyServesHTTP is the single serves-HTTP key a meta carried before
+// ServesHTTPByHost: the answer of the meta's last deploy, whichever host ran it.
+type legacyServesHTTP struct {
+	ServesHTTP *bool `json:"servesHttp,omitempty"`
+}
+
+// foldLegacyServesHTTP is the one-way lazy migration of that key, applied
+// after foldLegacyStage. A meta without stages wrote it only for Hostname, so
+// it becomes Hostname's entry; a pair's names no host and is not read — each
+// of its hosts falls back to its declared ports until it deploys again.
+func foldLegacyServesHTTP(data []byte, meta *ServiceMeta) error {
+	if meta.ServesHTTPByHost != nil || meta.HasStage() {
+		return nil
+	}
+	var legacy legacyServesHTTP
+	if err := json.Unmarshal(data, &legacy); err != nil {
+		return err
+	}
+	if legacy.ServesHTTP != nil {
+		meta.SetServesHTTP(meta.Hostname, *legacy.ServesHTTP)
 	}
 	return nil
 }

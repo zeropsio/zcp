@@ -16,7 +16,7 @@ import (
 )
 
 // A describe is the Mate's own call, and the change stays a draft until it
-// lands, so — unlike a delivery, which fails fast (hq_retry.go) — it waits out
+// lands, so it waits out
 // an HQ that is only away for a moment: HQ's Core rolls for about 20 s, and a
 // describe that met the roll once left the change a draft. Its calls to HQ
 // are tried again, a growing wait apart for about a minute in all, while HQ
@@ -48,9 +48,9 @@ const (
 
 // describeClient is hqc as a describe calls HQ: each call sent once — no 503
 // wait of the client's own stacks beneath describeRetry's tries — and
-// bounded by deliveryBounds' connect and hqCallTimeout's answer.
+// bounded by hqConnectBound and hqCallTimeout's answer.
 func describeClient(hqc hq.Client) hq.Client {
-	return hqc.Once().Bounded(deliveryBounds.connect, hqCallTimeout)
+	return hqc.Once().Bounded(hqConnectBound, hqCallTimeout)
 }
 
 // putDescriptionRetried is putChangeDescription as describe-change calls it:
@@ -166,11 +166,11 @@ func describeStateUnknown(address, hostname string, err error) string {
 		hostname, address, hqNotServingWords(err))
 }
 
-// holdPairToDescribe holds the pair's checkout for a describe as a delivery
-// holds it (holdPairCheckout), so a describe from one chat and a delivery
-// from another never interleave: a delivery reads whether the change's title
-// is still zcp's and then retitles it, and puts the words the pair keeps, and
-// a describe landing in between would be written over or lost. It answers the
+// holdPairToDescribe holds the pair's checkout for a describe as a stand-up
+// or a pass holds it (holdPairCheckout), so a describe never interleaves with
+// a pass learning what became of the pair's change: a pass clearing the
+// change while a describe writes onto it would leave the words on a change
+// the pair no longer holds, or lose them. It answers the
 // pair's record as the holder left it, or — the pair held past the wait —
 // the refusal that says nothing was written.
 func holdPairToDescribe(ctx context.Context, stateDir string, meta *workflow.ServiceMeta) (*workflow.ServiceMeta, func(), *mcp.CallToolResult) {
@@ -179,7 +179,7 @@ func holdPairToDescribe(ctx context.Context, stateDir string, meta *workflow.Ser
 		return nil, nil, convertError(platform.NewPlatformError(
 			platform.ErrPrerequisiteMissing,
 			fmt.Sprintf("Nothing was written onto %s's change: %s.", meta.Hostname, pairHeldReason(meta.Hostname, err)),
-			fmt.Sprintf(`Call zerops_workflow action="describe-change" service=%q again once that delivery is done.`, meta.Hostname),
+			fmt.Sprintf(`Call zerops_workflow action="describe-change" service=%q again once that is done.`, meta.Hostname),
 		), WithRecoveryStatus())
 	}
 	if fresh, _ := workflow.FindServiceMeta(stateDir, meta.Hostname); hqPairWired(fresh) {

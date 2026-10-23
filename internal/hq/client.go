@@ -70,8 +70,8 @@ func (e *NoAnswerError) Words() string {
 	return fmt.Sprintf("no answer within %s", e.Within)
 }
 
-// IsUnavailable reports whether err is HQ not serving now: a delivery it
-// stopped waits for the next pass rather than failing.
+// IsUnavailable reports whether err is HQ not serving now: a call it stopped
+// may be tried again rather than read as HQ's refusal.
 func IsUnavailable(err error) bool {
 	var unavailable *UnavailableError
 	return errors.As(err, &unavailable)

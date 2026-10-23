@@ -385,112 +385,13 @@ func TestPersistedCredentialHelper_TheMatesShellAsksZcp(t *testing.T) {
 	}
 }
 
-// TestBuildGitCredentialHelperAssertCommand heals a repository whose helper
-// was persisted before the Mate's shell could authenticate, and leaves a
-// service with no repository alone.
-func TestBuildGitCredentialHelperAssertCommand(t *testing.T) {
-	t.Parallel()
-	requireGit(t)
-
-	t.Run("an old helper on the HQ host answers the Mate's shell again", func(t *testing.T) {
-		t.Parallel()
-		repo, home := t.TempDir(), t.TempDir()
-		if out, err := gitShell(t, repo, home, nil, "",
-			"git init -q && git config 'credential.https://hq.example.invalid.helper' "+shellQuote(helperOldHelper)); err != nil {
-			t.Fatalf("seed: %v\n%s", err, out)
-		}
-		mateShell := map[string]string{"PATH": fakeZcpPath(t, zcpAnswering)}
-		if _, got, _ := answeredCredential(t, repo, home, mateShell, helperHQRepo); got != "" {
-			t.Fatalf("the old helper answered %q; the seed does not reproduce the failure", got)
-		}
-		if out, err := gitShell(t, repo, home, nil, "", BuildGitCredentialHelperAssertCommand(repo, helperHQRepo, helperHQURL)); err != nil {
-			t.Fatalf("assert: %v\n%s", err, out)
-		}
-		if _, got, _ := answeredCredential(t, repo, home, mateShell, helperHQRepo); got != helperCredential {
-			t.Errorf("after the assert the helper answered %q, want the Mate credential", got)
-		}
-	})
-
-	t.Run("the user's own ~/.netrc survives", func(t *testing.T) {
-		t.Parallel()
-		repo, home := t.TempDir(), t.TempDir()
-		netrc := filepath.Join(home, ".netrc")
-		if err := os.WriteFile(netrc, []byte("machine proxy.golang.example login me password mine\n"), 0o600); err != nil {
-			t.Fatalf("seed .netrc: %v", err)
-		}
-		if out, err := gitShell(t, repo, home, nil, "", "git init -q"); err != nil {
-			t.Fatalf("seed: %v\n%s", err, out)
-		}
-		if out, err := gitShell(t, repo, home, nil, "", BuildGitCredentialHelperAssertCommand(repo, helperHQRepo, helperHQURL)); err != nil {
-			t.Fatalf("assert: %v\n%s", err, out)
-		}
-		if _, err := os.Stat(netrc); err != nil {
-			t.Errorf("the assert deleted the user's ~/.netrc: %v", err)
-		}
-	})
-
-	t.Run("a service with no repository is left alone", func(t *testing.T) {
-		t.Parallel()
-		dir, home := t.TempDir(), t.TempDir()
-		if out, err := gitShell(t, dir, home, nil, "", BuildGitCredentialHelperAssertCommand(dir, helperHQRepo, helperHQURL)); err != nil {
-			t.Fatalf("assert on a service with no repository failed: %v\n%s", err, out)
-		}
-		if _, err := os.Stat(filepath.Join(dir, ".git")); !os.IsNotExist(err) {
-			t.Errorf("the assert made a repository where there was none (stat err %v)", err)
-		}
-	})
-}
-
-// TestSessionGitTokenDigest_IsGitsBlobHash: the digest a fresh session prints
-// of its GIT_TOKEN is git's blob hash of it, which SecretDigest computes the
-// same — so a credential's arrival is checked without it on any command line.
-func TestSessionGitTokenDigest_IsGitsBlobHash(t *testing.T) {
-	t.Parallel()
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git is not installed")
-	}
-	for _, token := range []string{"the-mate-credential", "", "with spaces and ünïcode"} {
-		cmd := exec.CommandContext(t.Context(), "sh", "-c", BuildSessionGitTokenDigestCommand()) //nolint:gosec // G204: the command under test
-		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "GIT_TOKEN=" + token}
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("%v\n%s", err, out)
-		}
-		if got := strings.TrimSpace(string(out)); got != SecretDigest(token) {
-			t.Errorf("session digest of %q = %q, want %q", token, got, SecretDigest(token))
-		}
-	}
-	if strings.Contains(BuildSessionGitTokenDigestCommand(), "the-mate-credential") {
-		t.Error("the command must not carry the credential")
-	}
-}
-
-// TestGitCredentialRefused: a remote refusing the credential — git's own
-// "Authentication failed" for a 401, or a 401/403 status — and nothing else.
-func TestGitCredentialRefused(t *testing.T) {
-	t.Parallel()
-	for output, want := range map[string]bool{
-		"fatal: Authentication failed for 'https://hq.example/git/a1/appdev.git/'":                                  true,
-		"fatal: unable to access 'https://hq.example/git/a1/appdev.git/': The requested URL returned error: 403":    true,
-		"fatal: unable to access 'https://hq.example/git/a1/appdev.git/': The requested URL returned error: 401":    true,
-		"fatal: unable to access 'https://hq.example/git/a1/appdev.git/': The requested URL returned error: 502":    false,
-		"fatal: unable to access 'https://hq.example/git/a1/appdev.git/': Failed to connect to hq.example port 443": false,
-		"ZCP_HQ_NO_ANSWER: no answer within 15s":                                                                    false,
-		"remote: Repository not found.\nfatal: repository 'https://hq.example/git/a1/appdev.git/' not found":        false,
-	} {
-		if got := GitCredentialRefused(output); got != want {
-			t.Errorf("GitCredentialRefused(%q) = %v, want %v", output, got, want)
-		}
-	}
-}
-
 // TestBuildGitSessionAuthProbeCommand_BoundedAgainstHQ: the probe of a remote
 // on this Mate's HQ runs under the bound every git against HQ runs under; a
 // remote of the user's own is probed as before.
 func TestBuildGitSessionAuthProbeCommand_BoundedAgainstHQ(t *testing.T) {
 	t.Parallel()
 	const hq = "https://hq.example"
-	if got := BuildGitSessionAuthProbeCommand(hq+"/git/a1/appdev.git", hq); !strings.Contains(got, "http.lowSpeedTime=10") || !strings.Contains(got, hqNoAnswerMarker) {
+	if got := BuildGitSessionAuthProbeCommand(hq+"/git/a1/appdev.git", hq); !strings.Contains(got, "http.lowSpeedTime=10") {
 		t.Errorf("the probe against HQ is not bounded:\n%s", got)
 	}
 	if got := BuildGitSessionAuthProbeCommand("https://github.com/o/r.git", hq); strings.Contains(got, "lowSpeed") {

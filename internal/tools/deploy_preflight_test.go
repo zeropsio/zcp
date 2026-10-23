@@ -759,8 +759,8 @@ func TestDeployPreFlight_ResolvedSetupEchoedBack(t *testing.T) {
 	if !result.Passed {
 		t.Fatalf("expected pre-flight to pass; got failures: %+v", result.Checks)
 	}
-	if resolved != "dev" {
-		t.Errorf("expected resolvedSetup=\"dev\" (role-based fallback for hostname=apidev); got %q", resolved)
+	if resolved.setup != "dev" {
+		t.Errorf("expected resolvedSetup=\"dev\" (role-based fallback for hostname=apidev); got %q", resolved.setup)
 	}
 }
 
@@ -828,8 +828,8 @@ func TestDeployRecordsServesHTTP(t *testing.T) {
 			if result == nil || !result.Passed {
 				t.Fatalf("expected pre-flight to pass; result=%+v", result)
 			}
-			if resolved != tt.setup {
-				t.Errorf("resolved setup = %q, want %q", resolved, tt.setup)
+			if resolved.setup != tt.setup {
+				t.Errorf("resolved setup = %q, want %q", resolved.setup, tt.setup)
 			}
 
 			meta, err := workflow.FindServiceMeta(stateDir, "appdev")
@@ -839,11 +839,12 @@ func TestDeployRecordsServesHTTP(t *testing.T) {
 			if meta == nil {
 				t.Fatal("expected service meta")
 			}
-			if meta.ServesHTTP == nil {
+			serves := meta.ServesHTTPFor("appdev")
+			if serves == nil {
 				t.Fatal("ServesHTTP = nil, want recorded bool")
 			}
-			if *meta.ServesHTTP != tt.wantServe {
-				t.Errorf("ServesHTTP = %v, want %v", *meta.ServesHTTP, tt.wantServe)
+			if *serves != tt.wantServe {
+				t.Errorf("ServesHTTP = %v, want %v", *serves, tt.wantServe)
 			}
 		})
 	}
@@ -1060,8 +1061,8 @@ func TestDeployPreFlight_PairAwareStageMetaLookup(t *testing.T) {
 	// Empty input setup + stage role must resolve to "prod" — proves
 	// RoleFor(target) is being used, not PrimaryRole() (which would have
 	// returned dev role and resolved to "dev").
-	if resolved != "prod" {
-		t.Errorf("expected resolvedSetup=\"prod\" via DeployRoleStage; got %q (RoleFor likely not consulted)", resolved)
+	if resolved.setup != "prod" {
+		t.Errorf("expected resolvedSetup=\"prod\" via DeployRoleStage; got %q (RoleFor likely not consulted)", resolved.setup)
 	}
 }
 
@@ -1235,8 +1236,8 @@ func TestDeployPreFlight_SourceWinsOverProjectRoot(t *testing.T) {
 	// Empty input setup + DeployRoleDev would resolve to "dev". The source
 	// yaml has "dev"; the root yaml does not. Resolved="dev" proves source
 	// won; resolved="" or anything else means root yaml was read.
-	if resolved != "dev" {
-		t.Errorf("resolvedSetup=%q, want %q — preflight likely read project-root yaml instead of source mount", resolved, "dev")
+	if resolved.setup != "dev" {
+		t.Errorf("resolvedSetup=%q, want %q — preflight likely read project-root yaml instead of source mount", resolved.setup, "dev")
 	}
 }
 

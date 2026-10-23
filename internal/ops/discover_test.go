@@ -1647,3 +1647,56 @@ func TestDiscover_IncludeEnvValues_SensitiveMasked(t *testing.T) {
 		}
 	}
 }
+
+// TestDiscover_ThePlatformsOwnSystemVars_AreMarkedPlatformInjected: every
+// env var the platform types SYSTEM — ZEROPS_DEBUG_BUILD and
+// ZEROPS_DEBUG_RUNTIME_PREPARE sit on every service — is listed with
+// isPlatformInjected, so an agent never takes it for something to copy into
+// its own setup (the API refuses a deploy that sets a ZEROPS_ name). A var a
+// person set or the yaml bakes stays unmarked, whatever its name.
+func TestDiscover_ThePlatformsOwnSystemVars_AreMarkedPlatformInjected(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "p1", Name: "p", Status: statusActive}).
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-api", Name: "api", Status: statusActive,
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+				ActiveAppVersion:     &platform.ActiveAppVersionDigest{ID: "av-api"}},
+		}).
+		WithServiceEnv("svc-api", []platform.ServiceEnvVar{
+			{Key: "ZEROPS_DEBUG_BUILD", Content: "false", Type: platform.ServiceEnvSystem},
+			{Key: "ZEROPS_DEBUG_RUNTIME_PREPARE", Content: "false", Type: platform.ServiceEnvSystem},
+			{Key: "zeropsSubdomain", Content: "https://api-1df2.prg1.zerops.app", Type: platform.ServiceEnvSystem},
+			{Key: "API_KEY", Content: "x", Type: platform.ServiceEnvUser},
+		}).
+		WithAppVersionUserData("av-api", []platform.ServiceEnvVar{
+			{Key: "ZEROPS_LIKE_NAME", Content: "fromyaml", Type: platform.ServiceEnvUser},
+		}).
+		WithProjectEnv([]platform.ProjectEnvVar{
+			{Key: "envIsolation", Content: "service", Type: platform.ProjectEnvSystem},
+			{Key: "APP_SECRET", Content: "y", Type: platform.ProjectEnvUser},
+		})
+
+	result, err := Discover(context.Background(), mock, "p1", "api", true, false, true)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	marked := map[string]bool{}
+	for _, e := range append(result.Services[0].Envs, result.Project.Envs...) {
+		marked[e["key"].(string)] = e["isPlatformInjected"] == true
+	}
+	want := map[string]bool{
+		"ZEROPS_DEBUG_BUILD": true, "ZEROPS_DEBUG_RUNTIME_PREPARE": true, "zeropsSubdomain": true, "envIsolation": true,
+		"API_KEY": false, "ZEROPS_LIKE_NAME": false, "APP_SECRET": false,
+	}
+	for key, platformInjected := range want {
+		got, listed := marked[key]
+		if !listed {
+			t.Errorf("%s is not listed: %v", key, marked)
+			continue
+		}
+		if got != platformInjected {
+			t.Errorf("%s isPlatformInjected = %v, want %v", key, got, platformInjected)
+		}
+	}
+}

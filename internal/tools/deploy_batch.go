@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
@@ -20,10 +19,11 @@ import (
 // serialization penalty that causes "Not connected" errors when an agent
 // calls zerops_deploy three times in parallel from the client side.
 //
-// Use for every 3-deploy cluster in a recipe run: initial dev, snapshot-dev,
-// stage cross-deploy, close redeploys. Single-target redeploys (e.g. a
-// worker redeploy after a fix) still use zerops_deploy directly — batch is
-// only worth the overhead at two-plus targets.
+// Use whenever two or more deploys go together — every stage of a pair
+// (stages fed from one dev service build in parallel), several dev services,
+// close redeploys. Single-target redeploys (e.g. a worker redeploy after a
+// fix) still use zerops_deploy directly — batch is only worth the overhead at
+// two-plus targets.
 type DeployBatchInput struct {
 	Targets []ops.DeployBatchTarget `json:"targets" jsonschema:"required,Array of deploy targets. Each target is one sourceService+targetService+setup combination. Minimum 1; recommend 2-3 for parallelism gains. Values beyond 5 may hit build-queue limits and fall back to serial scheduling on the platform side."`
 }
@@ -51,7 +51,7 @@ func RegisterDeployBatch(
 ) {
 	desc := "Deploy multiple services in parallel — single MCP call kicks off N builds server-side. " +
 		"Closes the MCP STDIO serialization penalty (calling zerops_deploy multiple times in parallel returns 'Not connected'). " +
-		"Use for every 3-deploy cluster: initial dev, snapshot-dev, cross-stage, close redeploy. " +
+		"Use whenever two or more deploys go together: every stage of a pair in one call (stages fed from one dev service build in parallel), several dev services, a close redeploy. " +
 		"Per-target failures do NOT cancel siblings — each target runs to completion independently. " +
 		"Response aggregates per-target results so you can apply targeted fixes without rolling back the cluster."
 
@@ -91,11 +91,10 @@ func RegisterDeployBatch(
 			input.Targets[i] = resolved
 		}
 
-		_ = engine // engine is unused; per-entry DeployAttempt recording uses stateDir directly.
-		result := d.deploy(ctx, buildProgressCallback(ctx, req), input.Targets, true)
+		result := d.deploy(ctx, buildProgressCallback(ctx, req), input.Targets)
 		return jsonResult(deployBatchResponse{
 			DeployBatchResult: result,
-			WorkSessionState:  sessionAnnotations(stateDir),
+			WorkSessionState:  sessionAnnotations(ctx, httpClient, stateDir),
 		}), nil, nil
 	})
 }
@@ -173,7 +172,7 @@ func (r *batchPreflightRefusal) result() *mcp.CallToolResult {
 }
 
 // preflight checks one target before any build burns time and resolves the
-// setup it deploys with.
+// setup it deploys with and the config file it builds from.
 func (d batchDeployer) preflight(ctx context.Context, t ops.DeployBatchTarget) (ops.DeployBatchTarget, *batchPreflightRefusal) {
 	// Source defaults to target for self-deploy (mirrors
 	// ops.DeploySSH auto-infer). Pre-flight reads yaml from the
@@ -183,7 +182,7 @@ func (d batchDeployer) preflight(ctx context.Context, t ops.DeployBatchTarget) (
 		sourceForPreflight = t.TargetService
 	}
 	t.WorkingDir = sourceWorkingDir(d.stateDir, sourceForPreflight, t.WorkingDir)
-	resolvedSetup, pfResult, pfErr := deployPreFlight(ctx, d.client, d.projectID, d.stateDir, sourceForPreflight, t.TargetService, t.Setup, t.WorkingDir, d.rtInfo.InContainer)
+	resolved, pfResult, pfErr := deployPreFlight(ctx, d.client, d.projectID, d.stateDir, sourceForPreflight, t.TargetService, t.Setup, t.WorkingDir, d.rtInfo.InContainer)
 	if pfErr != nil {
 		var blocker *workflow.ErrRequiresSetupInput
 		if errors.As(pfErr, &blocker) {
@@ -194,20 +193,24 @@ func (d batchDeployer) preflight(ctx context.Context, t ops.DeployBatchTarget) (
 	if pfResult != nil && !pfResult.Passed {
 		return t, &batchPreflightRefusal{target: t.TargetService, checks: pfResult}
 	}
-	if resolvedSetup != "" {
-		t.Setup = resolvedSetup
+	if resolved.setup != "" {
+		t.Setup = resolved.setup
 	}
+	t.ConfigFile = resolved.configFile
 	return t, nil
 }
 
 // deploy runs the targets as one batch and applies each entry's post-deploy
 // steps: its deploy attempt, its supervisor's dev server, its public
-// access. deliver adds the HQ delivery of a wired pair's stage half
-// (hq_delivery.go) — the stand-up's first stage deploy builds `main` as it
-// is and has nothing to deliver.
-func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallback, targets []ops.DeployBatchTarget, deliver bool) *ops.DeployBatchResult {
+// access.
+func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallback, targets []ops.DeployBatchTarget) *ops.DeployBatchResult {
+	ctx = deployFollowUpContext(ctx)
+	configFiles := make(map[string]string, len(targets))
+	for _, t := range targets {
+		configFiles[t.TargetService] = t.ConfigFile
+	}
 	pollFn := func(c context.Context, r *ops.DeployResult, cb ops.ProgressCallback, lf platform.LogFetcher, s ops.SSHDeployer) {
-		pollDeployBuild(c, d.client, d.projectID, r, cb, lf, s, d.stateDir)
+		pollDeployBuild(c, d.client, d.projectID, r, cb, lf, s, d.stateDir, configFiles[r.TargetService])
 	}
 
 	authVal := auth.Info{}
@@ -246,7 +249,7 @@ func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallba
 		case entry.Error != "":
 			// Kickoff/transport failure (build never started).
 			attempt.Error = entry.Error
-			classification := classifyTransportError(errors.New(entry.Error), deployStrategyZCLILabel)
+			classification := classifyTransportError(errors.New(entry.Error), deployStrategyZCLILabel, entry.Target.ConfigFile)
 			if classification != nil {
 				attempt.FailureClass = classification.Category
 			} else {
@@ -269,8 +272,8 @@ func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallba
 			attempt.FailureClass = classifyDeployStatus(entry.Result.Status)
 		}
 		if entry.Result != nil {
-			if move := moves[entry.Target.TargetService]; move.sentence != "" {
-				entry.Result.Message = move.sentence + " " + entry.Result.Message
+			if told := moves[entry.Target.TargetService].told(entry.Result); told != "" {
+				entry.Result.Message = told + " " + entry.Result.Message
 			}
 			if w := warnings[entry.Target.TargetService]; w != "" {
 				entry.Result.Warnings = append(entry.Result.Warnings, w)
@@ -282,20 +285,6 @@ func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallba
 		_ = workflow.RecordDeployAttempt(d.stateDir, entry.Target.TargetService, attempt)
 	}
 
-	if !deliver {
-		return result
-	}
-	// A wired pair's stage deploy is its delivery (hq_delivery.go), after
-	// the attempts are recorded.
-	for i := range result.Entries {
-		entry := &result.Entries[i]
-		if entry.Result == nil || entry.Result.Status != statusDeployed {
-			continue
-		}
-		if delivery := deliverHQPair(ctx, d.client, d.httpClient, d.sshDeployer, d.rtInfo, d.stateDir, entry.Target.TargetService); delivery != nil {
-			entry.Result.NextActions = strings.TrimSpace(entry.Result.NextActions + " " + delivery.Line)
-		}
-	}
 	return result
 }
 

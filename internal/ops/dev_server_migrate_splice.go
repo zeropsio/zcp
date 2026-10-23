@@ -324,7 +324,8 @@ func startSplice(src *yamlSource, run, start *yaml.Node, flow bool, setup, line 
 }
 
 // spliceVerified reports whether out decodes to data with exactly setup's
-// supervisor values set — the splice changed nothing else.
+// supervisor values set — the splice changed nothing else; an empty
+// want.start leaves run.start as written.
 func spliceVerified(data, out []byte, setup string, want supervisorLines) error {
 	var before, after any
 	if err := yaml.Unmarshal(data, &before); err != nil {
@@ -355,7 +356,10 @@ func spliceVerified(data, out []byte, setup string, want supervisorLines) error 
 		if !placed {
 			prepare = append(prepare, want.prepare)
 		}
-		run["prepareCommands"], run["start"] = prepare, want.start
+		run["prepareCommands"] = prepare
+		if want.start != "" {
+			run["start"] = want.start
+		}
 	}
 	if !reflect.DeepEqual(before, after) {
 		return errors.New("zcp cannot add the supervisor lines to this zerops.yaml without changing what else it says")

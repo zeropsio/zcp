@@ -48,7 +48,7 @@ func discoverInputSchema() *jsonschema.Schema {
 }
 
 // RegisterDiscover registers the zerops_discover tool.
-func RegisterDiscover(srv *mcp.Server, client platform.Client, projectID, stateDir string) {
+func RegisterDiscover(srv *mcp.Server, client platform.Client, projectID, stateDir string, engine *workflow.Engine) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_discover",
 		Description: "Discover project and service information. Filter by service hostname or list all. Use includeEnvs=true to read env var keys. Add includeEnvValues=true only when you need actual values (troubleshooting); sensitive values are never shown.",
@@ -76,6 +76,7 @@ func RegisterDiscover(srv *mcp.Server, client platform.Client, projectID, stateD
 		// behavior.
 		activity := fetchProjectActivity(ctx, client, projectID, result)
 		enrichWithMetaStatus(result, stateDir, activity)
+		nameYamlBakedSource(result, engine.RepoConfigFile())
 		return jsonResult(result), nil, nil
 	})
 }

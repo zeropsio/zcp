@@ -115,12 +115,18 @@ func (f *ZeropsLogFetcher) FetchLogs(ctx context.Context, access *LogAccess, par
 	}
 
 	effectiveLimit := clampLimit(params.Limit)
+	// The backend serves only the newest `limit` lines, so a client-side
+	// search reads the widest window it serves and trims after filtering.
+	backendLimit := effectiveLimit
+	if params.Search != "" {
+		backendLimit = LogLimitMax
+	}
 
 	q := logURL.Query()
 	if params.ServiceID != "" {
 		q.Set("serviceStackId", params.ServiceID)
 	}
-	q.Set("limit", fmt.Sprintf("%d", effectiveLimit))
+	q.Set("limit", fmt.Sprintf("%d", backendLimit))
 	q.Set("desc", "1")
 	if params.Severity != "" && params.Severity != "all" {
 		q.Set("minimumSeverity", mapSeverityToNumeric(params.Severity))
@@ -136,7 +142,8 @@ func (f *ZeropsLogFetcher) FetchLogs(ctx context.Context, access *LogAccess, par
 	}
 	// params.Search is kept out of the query string — the Zerops log backend
 	// silently ignores `search=` (verified 2026-04-23 via live probes). We
-	// apply it client-side in filterEntries below instead.
+	// apply it client-side in filterEntries below instead, over at most the
+	// newest LogLimitMax lines.
 	logURL.RawQuery = q.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, logURL.String(), nil)
@@ -234,16 +241,29 @@ func filterEntries(entries []LogEntry, params LogFetchParams, effectiveLimit int
 				continue
 			}
 		}
-		if params.Search != "" && !strings.Contains(d.e.Message, params.Search) {
-			continue
-		}
 		out = append(out, d.e)
 	}
+	out = SearchLogs(out, params.Search)
 
 	if effectiveLimit > 0 && len(out) > effectiveLimit {
 		out = out[len(out)-effectiveLimit:]
 	}
 
+	return out
+}
+
+// SearchLogs keeps the entries whose message contains search (case-sensitive).
+// The backend ignores `search=`, so every log search is this client-side match.
+func SearchLogs(entries []LogEntry, search string) []LogEntry {
+	if search == "" {
+		return entries
+	}
+	out := make([]LogEntry, 0, len(entries))
+	for _, e := range entries {
+		if strings.Contains(e.Message, search) {
+			out = append(out, e)
+		}
+	}
 	return out
 }
 

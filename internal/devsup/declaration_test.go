@@ -43,6 +43,12 @@ func TestParseDeclaration_Shapes(t *testing.T) {
 			in:   `{"version":1,"servers":[{"name":"app","port":3000,"command":"x","later":true}],"later":1}`,
 			want: []Server{{Name: "app", Port: 3000, Command: "x", Cwd: "."}},
 		},
+		{
+			name: "an API part that 404s on / declares the path its health probe reads",
+			in:   `{"version":1,"servers":[{"name":"api","port":8080,"command":"x","healthPath":"/actuator/health"}]}`,
+			want: []Server{{Name: "api", Port: 8080, Command: "x", Cwd: ".", HealthPath: "/actuator/health"}},
+		},
+		{name: "a health path that is not absolute", in: `{"version":1,"servers":[{"name":"api","port":8080,"command":"x","healthPath":"health"}]}`, wantErr: `"api": healthPath "health" must start with /`},
 		{name: "no servers", in: `{"version":1,"servers":[]}`, want: []Server{}},
 		{name: "missing version", in: `{"servers":[{"name":"app","command":"x"}]}`, wantErr: "version is missing"},
 		{name: "newer format with another shape", in: `{"version":2,"servers":{"app":{}}}`, wantErr: "format 2 is not one this supervisor runs ([1])"},
@@ -184,6 +190,34 @@ func TestWatch_IgnoredPaths(t *testing.T) {
 		}
 		if got := w.ignored(tt.rel); got != tt.ignore {
 			t.Errorf("ignored(%q) = %v", tt.rel, got)
+		}
+	}
+}
+
+// A `**` segment matches any number of directories, and a glob that matches a
+// directory ignores everything under it: `uv run` rewrites
+// src/<pkg>.egg-info deep in a watched tree on every start.
+func TestWatch_AnIgnoreGlobMatchesAtAnyDepthWithDoubleStar(t *testing.T) {
+	t.Parallel()
+	w := &Watch{Paths: []string{"api"}, Ignore: []string{"**/*.egg-info", "**/__pycache__/**", "api/**/*.pyc", "*.log"}}
+	tests := []struct {
+		rel    string
+		ignore bool
+	}{
+		{"api/providers/trace/trace-opik/src/dify_trace_opik.egg-info", true},
+		{"api/providers/trace/trace-opik/src/dify_trace_opik.egg-info/PKG-INFO", true},
+		{"top.egg-info/PKG-INFO", true},
+		{"api/core/__pycache__/app.cpython-312.pyc", true},
+		{"api/core/deep/x.pyc", true},
+		{"api/x.pyc", true},
+		{"server.log", true},
+		{"api/core/app.py", false},
+		{"api/logs/server.log", false},
+		{"api/egg-info.py", false},
+	}
+	for _, tt := range tests {
+		if got := w.ignored(tt.rel); got != tt.ignore {
+			t.Errorf("ignored(%q) = %v, want %v", tt.rel, got, tt.ignore)
 		}
 	}
 }
