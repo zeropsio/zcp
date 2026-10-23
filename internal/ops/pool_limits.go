@@ -70,7 +70,6 @@ func poolNotRunningError(pool, op, status string, cause error) error {
 type poolUsage struct {
 	listed bool // the containers were listed
 	max    int  // the pool's maximum; 0 when the limits were not read
-	total  int  // containers listed
 	leased int  // containers reserved
 	yours  []string
 }
@@ -97,7 +96,7 @@ func readPoolUsage(ctx context.Context, d LeaseDeps, rp *resolvedPool) poolUsage
 			u.yours = append(u.yours, r.alias())
 		}
 	} else {
-		u.listed, u.total = true, len(containers)
+		u.listed = true
 		for _, c := range containers {
 			if c.LockState != leaseLockReserved {
 				continue
