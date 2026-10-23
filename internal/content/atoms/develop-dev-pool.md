@@ -79,11 +79,14 @@ its own.
 - A container answers SSH only when the pool's `sshIsolation` is set as a
   service env variable admitting the zcp service. The top-level import field
   did not reach pool containers.
-- A dev server needs the supervisor: the pool's setup must set
-  `run.start: zcp-devsup run` and install `zcp-devsup` in
-  `run.prepareCommands`. Without it the dev-server tool refuses the lease;
-  fix the pool's `zerops.yaml`, deploy the pool, release the lease, roll the
-  pool out, then acquire again.
+- A dev server needs the supervisor, `zcp-devsup`, in the pool's image:
+  install it in `run.prepareCommands` and set `run.start: zcp-devsup run`. A
+  reused container starts clean — nothing survives its reset but the image,
+  not a single process — and `run.start` never runs in it again, so
+  `zerops_lease` and `zerops_dev_server` start the supervisor in a lease
+  themselves. A pool whose image lacks it is no dev pool: acquire says so and
+  `zerops_dev_server` refuses its leases; fix the pool's `zerops.yaml`,
+  deploy the pool, release the lease, roll the pool out, then acquire again.
 - A per-port subdomain routes only to containers listening on that port. A
   container's `ZEROPS_StableNumber` starts at 1, so the preview ports
   `previewPortBase + 1` through `previewPortBase + maxContainers` must be
