@@ -292,6 +292,13 @@ now-off flag has to remove — so a container that never had mate prints not one
 2. **Bundle** — `mate.EnsureInstalled` (below) in full.
 3. **Environment.** `~/.zcp/mate.env` rewritten (mode 0600) every boot — §2.3.
 4. **Unit.** `mate.UnitFilePath` absent ⇒ `sudo -E zsc unit create mate "zcp service start mate"`.
+   Then, when systemd says the unit's file changed on disk since it loaded it
+   (`systemctl show --property=NeedDaemonReload --value zerops@mate.service` answers `yes` — what it
+   warns "run 'systemctl daemon-reload'" about), `sudo systemctl daemon-reload` before any restart
+   (step 7), whether or not one follows, so this restart and every later one runs the definition on
+   disk; an unchanged unit is never reloaded, and a reload that fails is a named line, not a degrade.
+   `eval/scripts/mate-dev-push.sh` reloads by the same rule before its own restart
+   (`TestRun_Mate_UnitFileChangedOnDisk_ReloadsSystemd`).
 
 The step is **best-effort** (`step.degraded`): a release 404, an unset/mismatched digest, or an npm
 dependency failure names the cause but `zcp init` still exits successfully — it is a `run.init`
@@ -1144,7 +1151,7 @@ record (§6.3), never a field here:
 | `pool`, `branch` | the pool service's hostname; the branch checked out in the leased container |
 | `containerHostname` | the container's own hostname (`node-id-<n>.runtime.<pool>.zerops`) |
 | `devServers` | present only on a call that read the lease's supervisor (`zerops_dev_server` on the alias): the same `DevServerState` entries a dev service's `devServers[]` carries, the preview server's `url` being the pool's per-port subdomain (`TestWithParts_LeaseDevServers`) |
-| `state` | the reconciled state, verbatim (`held`, `lost`, `unknown-holder`, …) — never enumerated by a reader |
+| `state` | the reconciled state, verbatim (`held`, `lost`, `unknown-holder`, `unmounted`, …) — the one `zerops_lease action=status` reports (`spec-workflows.md` §8 DP-2), never enumerated by a reader |
 | `unverified` | `true` when the state is zcp's own last-known record because the pool's orchestrator did not answer — per pool: a stopped pool marks only its own leases, the others stay confirmed (`TestLeaseTool_Status_OneStoppedPool_OthersStillListed`) |
 | `acquiredAt` | when zcp acquired the lease (RFC 3339, UTC), from its record — also when the record stands in, unverified; absent for a lease zcp has no record of (`unknown-holder`). The leases of one branch are one group (`spec-workflows.md` §8 DP-17): it is the key a client can rebind by when the bound lease ends while others of its branch stay held (the earliest acquired). Additive (`TestEnvelopeJSON_LeaseAcquiredAt`, `TestComputeEnvelope_OrchestratorUnreachable_LeasesUnverified`) |
 

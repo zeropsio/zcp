@@ -15,7 +15,6 @@ import (
 	"unicode"
 
 	"github.com/zeropsio/zcp/internal/platform"
-	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // leaseWorkDir is where a leased container keeps its code.
@@ -59,11 +58,13 @@ func validateLeaseBranch(branch string) error {
 	return nil
 }
 
-// validateLeaseRepo checks a clone URL and returns its canonical form. Only
-// https URLs without userinfo are taken: the credential reaches git through
-// the session-env helper, never through the URL (DP-6), plain http would send
-// it in clear, and a value that is not a URL could be read by git as an option
-// or a transport.
+// validateLeaseRepo checks a clone URL and returns it as given, only trimmed
+// of surrounding space: git clones exactly that address, and a server that
+// serves `…/repo.git` may not answer `…/repo` (DP-18), so the canonical form
+// (topology.CanonicalRepoURL) is for identity only. Only https URLs without
+// userinfo are taken: the credential reaches git through the session-env
+// helper, never through the URL (DP-6), plain http would send it in clear, and
+// a value that is not a URL could be read by git as an option or a transport.
 func validateLeaseRepo(raw string) (string, error) {
 	bad := platform.NewPlatformError(platform.ErrInvalidParameter,
 		"repo is not a clone URL a lease takes",
@@ -79,11 +80,13 @@ func validateLeaseRepo(raw string) (string, error) {
 	if err != nil || u.Hostname() == "" || u.User != nil {
 		return "", bad
 	}
-	return topology.CanonicalRepoURL(raw), nil
+	return raw, nil
 }
 
 // poolDefault is zcp's record of the repository a pool's leases are for
-// (.zcp/state/leases/pools/<pool>.json). It carries no credential.
+// (.zcp/state/leases/pools/<pool>.json): the clone URL as the first acquire
+// was given it, which a later acquire without repo clones. It carries no
+// credential; compare it through topology.SameRepoURL, never as a string.
 type poolDefault struct {
 	Repo string `json:"repo"`
 }
@@ -145,11 +148,11 @@ func storePoolDefaultRepo(stateDir, pool, repo string) error {
 	return nil
 }
 
-// resolveLeaseRepo is the canonical repository an acquire clones: the one it
-// was given, else the pool's default. It reports whether the pool has no
+// resolveLeaseRepo is the clone URL an acquire clones, as it was given: the
+// acquire's own, else the pool's default. It reports whether the pool has no
 // default yet, so the caller can record the given one once the checkout
 // worked.
-func resolveLeaseRepo(stateDir, pool, repo string) (canonical string, becomesDefault bool, err error) {
+func resolveLeaseRepo(stateDir, pool, repo string) (cloneURL string, becomesDefault bool, err error) {
 	have := readPoolDefaultRepo(stateDir, pool)
 	if strings.TrimSpace(repo) == "" {
 		if have == "" {
@@ -157,14 +160,14 @@ func resolveLeaseRepo(stateDir, pool, repo string) (canonical string, becomesDef
 				fmt.Sprintf("acquire needs repo: pool '%s' has no default repository yet", pool),
 				"Pass the clone URL as repo (https://host/owner/repo); the first acquire on a pool stores it as the pool's default")
 		}
-		canonical, err = validateLeaseRepo(have)
-		return canonical, false, err
+		cloneURL, err = validateLeaseRepo(have)
+		return cloneURL, false, err
 	}
-	canonical, err = validateLeaseRepo(repo)
+	cloneURL, err = validateLeaseRepo(repo)
 	if err != nil {
 		return "", false, err
 	}
-	return canonical, have == "", nil
+	return cloneURL, have == "", nil
 }
 
 // leaseCheckoutCommand is the git script that puts workDir on branch of repo.
@@ -410,11 +413,18 @@ type unsavedWork struct {
 
 func (w unsavedWork) any() bool { return len(w.files) > 0 || w.unpushed > 0 }
 
+// leaseGitRead starts a git call that only reads a lease's checkout (DP-4):
+// GIT_OPTIONAL_LOCKS=0 keeps `git status` from refreshing .git/index and
+// writing it back — a new inode and mtime in the person's checkout, same
+// bytes (live, 2026-10-23) — so a read writes nothing there.
+const leaseGitRead = "GIT_OPTIONAL_LOCKS=0 git -C "
+
 // readUnsavedWork reads, over ssh, the uncommitted and untracked files and the
-// commits on no remote branch of the container's /var/www.
+// commits on no remote branch of the container's /var/www, writing nothing
+// into it (leaseGitRead).
 func readUnsavedWork(ctx context.Context, ssh SSHDeployer, alias string) (unsavedWork, error) {
 	var w unsavedWork
-	out, err := ssh.ExecSSH(ctx, alias, "git -C "+shellQuote(leaseWorkDir)+" status --porcelain")
+	out, err := ssh.ExecSSH(ctx, alias, leaseGitRead+shellQuote(leaseWorkDir)+" status --porcelain")
 	if err != nil {
 		return w, fmt.Errorf("git status: %w", err)
 	}
@@ -424,8 +434,8 @@ func readUnsavedWork(ctx context.Context, ssh SSHDeployer, alias string) (unsave
 		}
 	}
 	wd := shellQuote(leaseWorkDir)
-	out, err = ssh.ExecSSH(ctx, alias, "if git -C "+wd+" rev-parse -q --verify HEAD >/dev/null 2>&1; then "+
-		"git -C "+wd+" rev-list --count HEAD --not --remotes=origin; else echo 0; fi")
+	out, err = ssh.ExecSSH(ctx, alias, "if "+leaseGitRead+wd+" rev-parse -q --verify HEAD >/dev/null 2>&1; then "+
+		leaseGitRead+wd+" rev-list --count HEAD --not --remotes=origin; else echo 0; fi")
 	if err != nil {
 		return w, fmt.Errorf("git rev-list: %w", err)
 	}
@@ -477,15 +487,16 @@ func guardLeaseRelease(ctx context.Context, d LeaseDeps, rec leaseRecord) (lease
 // unreachableGuard decides a release whose container ssh could not reach.
 // ssh's 255 does not say the container is gone — an alias that does not
 // resolve, a refused connection and a timeout all read the same — so the
-// orchestrator decides: only a container it no longer holds for this lease is
-// released unchecked (as lost). One it still holds may hold work and is
-// refused, and so is one zcp cannot ask about.
+// orchestrator decides: only a container it no longer holds for this lease —
+// a pool that is gone or being deleted holds none (DP-20) — is released
+// unchecked (as lost); the release then says what became of it. One it still
+// holds may hold work and is refused, and so is one zcp cannot ask about.
 func unreachableGuard(ctx context.Context, d LeaseDeps, rec leaseRecord, sshErr error) (leaseGuardResult, error) {
 	held, err := leaseContainerStillReserved(ctx, d, rec)
 	if err == nil && !held {
 		return leaseGuardResult{
 			unreachable: true,
-			note:        "zcp could not reach the container over ssh and the orchestrator no longer holds it, so it was released without checking for unsaved work",
+			note:        "zcp could not reach the container over ssh and the orchestrator no longer holds it, so it was not checked for unsaved work",
 		}, nil
 	}
 	state := "is still reserved"
@@ -502,8 +513,9 @@ func unreachableGuard(ctx context.Context, d LeaseDeps, rec leaseRecord, sshErr 
 // leaseContainerStillReserved reports whether the pool's orchestrator still
 // lists the record's container as reserved. The pool is read by id — the
 // service search lags writes, and a pool missing from one search is not a
-// pool that is gone; one the direct read no longer finds holds nothing of
-// this lease.
+// pool that is gone; one the direct read no longer finds, or finds being
+// deleted, holds nothing of this lease (leasePoolGoneWhy), and its
+// orchestrator is not asked.
 func leaseContainerStillReserved(ctx context.Context, d LeaseDeps, rec leaseRecord) (bool, error) {
 	svc, err := d.Client.GetService(ctx, rec.PoolServiceID)
 	if err != nil {
@@ -512,6 +524,9 @@ func leaseContainerStillReserved(ctx context.Context, d LeaseDeps, rec leaseReco
 			return false, nil
 		}
 		return false, fmt.Errorf("read pool %s: %w", rec.PoolHostname, err)
+	}
+	if poolDeletionState(svc.Status) != "" {
+		return false, nil
 	}
 	rp, err := orchestratorFor(ctx, d, svc)
 	if err != nil {
@@ -527,6 +542,39 @@ func leaseContainerStillReserved(ctx context.Context, d LeaseDeps, rec leaseReco
 		}
 	}
 	return false, nil
+}
+
+// poolDeletionState names what a pool service's status says of its deletion:
+// "is being deleted" (DELETING), "no longer exists" (DELETED), "" for any
+// status of a pool that is still there. Either way out, its orchestrator
+// holds nothing of a lease any more.
+func poolDeletionState(status string) string {
+	switch status {
+	case "DELETING", "SERVICE_DELETING":
+		return "is being deleted"
+	case "DELETED", "SERVICE_DELETED":
+		return "no longer exists"
+	}
+	return ""
+}
+
+// leasePoolGoneWhy reads the record's pool by id (the service search lags)
+// and says why it holds nothing of the lease any more — the read no longer
+// finds it, or it is deleted or being deleted — or "" when it is still there
+// or the read failed otherwise.
+func leasePoolGoneWhy(ctx context.Context, d LeaseDeps, rec leaseRecord) string {
+	svc, err := d.Client.GetService(ctx, rec.PoolServiceID)
+	if err != nil {
+		var pe *platform.PlatformError
+		if errors.As(err, &pe) && pe.Code == platform.ErrServiceNotFound {
+			return "the pool service no longer exists"
+		}
+		return ""
+	}
+	if state := poolDeletionState(svc.Status); state != "" {
+		return fmt.Sprintf("the pool service %s (status %s)", state, svc.Status)
+	}
+	return ""
 }
 
 // unsavedWorkRefusal refuses the release, naming the work and how to save it.

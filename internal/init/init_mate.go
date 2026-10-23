@@ -157,6 +157,7 @@ func enableMate(rt runtime.Info) error {
 	if err := ensureMateUnit(); err != nil {
 		return err
 	}
+	reloadMateUnitIfChanged()
 
 	// A unit that was ALREADY running is serving whatever was on disk when it
 	// started — and it starts at boot on its own, from `WantedBy=multi-user
@@ -254,6 +255,25 @@ func writeMateEnv(rt runtime.Info) (bool, error) {
 		return false, fmt.Errorf("write %s: %w", path, err)
 	}
 	return changed, nil
+}
+
+// reloadMateUnitIfChanged reloads systemd's units when systemd says the mate
+// unit's file changed on disk since it loaded it (NeedDaemonReload) — what it
+// warns "run 'systemctl daemon-reload'" about. Until then a restart, this
+// step's or a later one, may run the old definition. Asked of systemd, not
+// guessed from the file: `zsc unit create` writes the file, and whatever
+// rewrote it, systemd's view is the one a restart uses. Best-effort like the
+// restart: a reload that fails is named and the step goes on.
+func reloadMateUnitIfChanged() {
+	unit := "zerops@" + mate.UnitName + ".service"
+	out, err := commandOutput("systemctl", "show", "--property=NeedDaemonReload", "--value", unit)
+	if err != nil || strings.TrimSpace(string(out)) != "yes" {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "    → the unit file of %s changed on disk; reloading systemd units\n", unit)
+	if err := commandRunner("sudo", "systemctl", "daemon-reload"); err != nil {
+		fmt.Fprintf(os.Stderr, "    ! systemctl daemon-reload failed (a restart of %s may run its old definition): %v\n", unit, err)
+	}
 }
 
 // ensureMateUnit registers the supervised unit when it is not there yet.

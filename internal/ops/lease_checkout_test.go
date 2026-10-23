@@ -142,9 +142,10 @@ func TestLeaseAcquire_StoresPoolDefaultRepo(t *testing.T) {
 	if !ok {
 		t.Fatal("the first acquire with a repo must store it as the pool's default")
 	}
-	canonical := "https://github.com/acme/app"
-	if !strings.Contains(stored, canonical) || strings.Contains(stored, ".git\"") {
-		t.Errorf("stored default = %s, want the canonical form %s", stored, canonical)
+	// The default is a clone URL a later acquire clones: kept as given
+	// (testRepo ends in .git), never its canonical form.
+	if !strings.Contains(stored, `"`+testRepo+`"`) {
+		t.Errorf("stored default = %s, want the URL as given, %s", stored, testRepo)
 	}
 	if info, err := os.Stat(filepath.Join(fx.stateDir, "leases", "pools", testPoolHost+".json")); err != nil || info.Mode().Perm() != 0o600 {
 		t.Errorf("default record stat = %v, %v; want mode 600", info, err)
@@ -166,14 +167,81 @@ func TestLeaseAcquire_StoresPoolDefaultRepo(t *testing.T) {
 	if len(cmds) != 3 {
 		t.Fatalf("checkouts = %d, want one per acquire", len(cmds))
 	}
-	if !strings.Contains(cmds[1].command, shellQuote(canonical)) {
-		t.Errorf("second checkout does not use the pool default %s:\n%s", canonical, cmds[1].command)
+	if !strings.Contains(cmds[1].command, shellQuote(testRepo)) {
+		t.Errorf("second checkout does not use the pool default %s:\n%s", testRepo, cmds[1].command)
 	}
 	if !strings.Contains(cmds[2].command, shellQuote("https://github.com/acme/other")) {
 		t.Errorf("third checkout does not use the repo it was given:\n%s", cmds[2].command)
 	}
 	if again, _ := readPoolDefault(t, fx.stateDir, testPoolHost); again != stored {
 		t.Errorf("an acquire with another repo changed the default:\n%s\nto\n%s", stored, again)
+	}
+}
+
+// TestLeaseAcquire_RepoAsGiven_ClonedVerbatim: a plain git server answers a
+// repository only at the address it serves it under — `…/repo.git` clones,
+// `…/repo` is "repository not found" (live Mate run) — so the checkout clones
+// the URL exactly as the caller gave it, an acquire that takes the pool's
+// default clones that same URL, and a failed checkout names it. The
+// canonical form is identity only: the lease record keeps it (DP-18).
+func TestLeaseAcquire_RepoAsGiven_ClonedVerbatim(t *testing.T) {
+	t.Parallel()
+	const canonical = "https://git.example.com/team/repo"
+	tests := []struct{ name, given string }{
+		{".git suffix", canonical + ".git"},
+		{"trailing slash", canonical + "/"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			fx := newLeaseFixture(t)
+			ssh := &leaseSSH{}
+			fx.deps.SSH = ssh
+			fx.swarm.acquired = acquiredAs(3)
+			ctx := context.Background()
+
+			if _, err := LeaseAcquire(ctx, fx.deps, testPoolHost, tt.given, "feature"); err != nil {
+				t.Fatalf("acquire with repo: %v", err)
+			}
+			fx.swarm.acquired = acquiredAs(4)
+			fx.swarm.acquired.Container.ID = "c-def"
+			if _, err := LeaseAcquire(ctx, fx.deps, testPoolHost, "", "other"); err != nil {
+				t.Fatalf("acquire with the pool's default: %v", err)
+			}
+			cmds := ssh.checkouts()
+			if len(cmds) != 2 {
+				t.Fatalf("checkouts = %d, want one per acquire", len(cmds))
+			}
+			for i, c := range cmds {
+				if !strings.Contains(c.command, "git remote add origin "+shellQuote(tt.given)) ||
+					!strings.Contains(c.command, "git remote set-url origin "+shellQuote(tt.given)) {
+					t.Errorf("checkout %d does not clone the URL as given (%s):\n%s", i+1, tt.given, c.command)
+				}
+				if strings.Contains(c.command, shellQuote(canonical)) {
+					t.Errorf("checkout %d clones the canonical form %s instead of %s:\n%s", i+1, canonical, tt.given, c.command)
+				}
+			}
+			rec, err := loadLeaseRecord(fx.stateDir, "devpool-3")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rec.Repo != canonical {
+				t.Errorf("record repo = %q, want the canonical identity %q", rec.Repo, canonical)
+			}
+
+			// A failed checkout names the URL it tried, as given.
+			fail := newLeaseFixture(t)
+			fail.swarm.acquired = acquiredAs(5)
+			fail.deps.SSH = &leaseSSH{fn: func(string, string) ([]byte, error) {
+				out := "fatal: repository '" + canonical + "/' not found"
+				return []byte(out), sshFailure(out, exitError(t, 128))
+			}}
+			_, err = LeaseAcquire(ctx, fail.deps, testPoolHost, tt.given, "feature")
+			var pe *platform.PlatformError
+			if !errors.As(err, &pe) || !strings.Contains(pe.Message, " of "+tt.given) {
+				t.Errorf("failed checkout = %v, want its message to name %s", err, tt.given)
+			}
+		})
 	}
 }
 
@@ -383,7 +451,7 @@ func TestLeaseCheckout_CredentialNeverInCommand(t *testing.T) {
 	}
 	for _, want := range []string{
 		"-c credential.helper= -c credential.helper=" + shellQuote(leaseCredentialHelperShell), "GIT_TERMINAL_PROMPT=0",
-		shellQuote("feature/x-1.2"), shellQuote("https://github.com/acme/app"), "cd '/var/www'", "git clean -fd",
+		shellQuote("feature/x-1.2"), shellQuote(testRepo), "cd '/var/www'", "git clean -fd",
 	} {
 		if !strings.Contains(cmd, want) {
 			t.Errorf("command lacks %q:\n%s", want, cmd)
@@ -847,5 +915,70 @@ func TestLeaseRelease_Unreachable_PoolGoneByID_Lost(t *testing.T) {
 	}
 	if view.State != LeaseStateLost {
 		t.Errorf("state = %q, want lost", view.State)
+	}
+}
+
+// TestLeaseRelease_PoolGoneOrBeingDeleted_DroppedAsLost: a pool service the
+// read by id no longer finds, or one being deleted, holds nothing of the
+// lease, and its orchestrator does not answer. A release — without force or
+// with it — drops the record as lost and says why (live: a release after the
+// pool was deleted was refused "the orchestrator did not answer" until
+// force=true). A pool that exists but whose orchestrator does not answer is
+// still refused (TestLeaseRelease_UnreachableOrchestratorSilent_Refused).
+func TestLeaseRelease_PoolGoneOrBeingDeleted_DroppedAsLost(t *testing.T) {
+	t.Parallel()
+	pool := func(status string) platform.ServiceStack {
+		return platform.ServiceStack{ID: "svc-pool", Name: testPoolHost, Status: status,
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}}
+	}
+	notFound := platform.NewPlatformError(platform.ErrServiceNotFound, "service stack not found", "")
+	tests := []struct {
+		name    string
+		listed  []platform.ServiceStack // what the service search still lists
+		byID    string                  // the status the read by id answers; "" = not found
+		force   bool
+		wantWhy string
+	}{
+		{"deleted, gone from the search", nil, "DELETED", false, "no longer exists"},
+		{"deleted, still in the search", []platform.ServiceStack{pool("DELETED")}, "DELETED", false, "no longer exists"},
+		{"being deleted, still in the search", []platform.ServiceStack{pool("DELETING")}, "DELETING", false, "being deleted"},
+		{"being deleted, the search still says active", []platform.ServiceStack{pool("ACTIVE")}, "DELETING", false, "being deleted"},
+		{"being deleted, forced", []platform.ServiceStack{pool("DELETING")}, "DELETING", true, "being deleted"},
+		{"not found by id, the search still lists it", []platform.ServiceStack{pool("ACTIVE")}, "", false, "no longer exists"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			hf, ssh := unsavedFixture(t, "", 0)
+			ssh.setHandler(func(string, string) ([]byte, error) {
+				out := "ssh: Could not resolve hostname node-id-3.runtime.devpool.zerops: No address associated with hostname"
+				return []byte(out), sshFailure(out, exitError(t, 255))
+			})
+			mock := platform.NewMock().
+				WithProject(&platform.Project{ID: "p1", Name: "proj"}).
+				WithServices(tt.listed).
+				WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{Key: "API_TOKEN", Content: testPoolToken, Sensitive: true}})
+			if tt.byID == "" {
+				mock = mock.WithError("GetService", notFound)
+			} else {
+				byID := pool(tt.byID)
+				mock = mock.WithService(&byID)
+			}
+			hf.deps.Client = mock
+			// The orchestrator of a pool on its way out answers nothing.
+			unanswered := platform.NewPlatformError(platform.ErrNetworkError, "dial tcp: lookup orch.devpool.zerops: no such host", "")
+			hf.swarm.listErr, hf.swarm.releaseErr = unanswered, unanswered
+
+			view, err := LeaseRelease(context.Background(), hf.deps, "devpool-3", tt.force)
+			if err != nil {
+				t.Fatalf("a lease of a pool that is gone or being deleted must be dropped: %v", err)
+			}
+			if view.State != LeaseStateLost || !strings.Contains(view.Note, tt.wantWhy) {
+				t.Errorf("view = %+v, want state lost with a note saying the pool %s", view, tt.wantWhy)
+			}
+			if _, statErr := os.Stat(filepath.Join(hf.stateDir, "leases", "devpool-3.json")); !errors.Is(statErr, os.ErrNotExist) {
+				t.Errorf("record survives: %v", statErr)
+			}
+		})
 	}
 }

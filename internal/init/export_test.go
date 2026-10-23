@@ -14,6 +14,9 @@ import (
 func SetCommandRunner(fn func(string, ...string) error) { commandRunner = fn }
 func ResetCommandRunner()                               { commandRunner = defaultCommandRunner }
 
+func SetCommandOutput(fn func(string, ...string) ([]byte, error)) { commandOutput = fn }
+func ResetCommandOutput()                                         { commandOutput = defaultCommandOutput }
+
 // VS Code workspace directory overrides.
 
 func SetVSCodeWorkDir(dir string) { vsCodeWorkDir = dir }

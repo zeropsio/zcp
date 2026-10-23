@@ -42,9 +42,10 @@ const apiCodeServiceStackIsNotHTTP = "serviceStackIsNotHttp"
 // dev-mode dynamic runtime idling on `zsc noop --silent` has none until
 // `zerops_dev_server action=start` runs, so the deploy hook correctly does
 // NOT auto-enable there (PA-1's first hook only fires when a listener
-// already exists). The dev-server-start hook passes true explicitly — a
-// passing health probe just proved a live listener regardless of that
-// static classification, which is what fires PA-1's second hook.
+// already exists). The dev-server-start hook (ensureDevServerPublicAccess)
+// sets it true — a passing health probe just proved a live listener
+// regardless of that static classification, which is what fires PA-1's
+// second hook.
 func ensurePublicAccess(
 	ctx context.Context,
 	client platform.Client,
@@ -52,6 +53,49 @@ func ensurePublicAccess(
 	projectID, stateDir, hostname string,
 	result *ops.DeployResult,
 	listenerOverride ...bool,
+) {
+	var listener *bool
+	if len(listenerOverride) > 0 {
+		listener = &listenerOverride[0]
+	}
+	ensurePublicAccessAt(ctx, client, httpClient, projectID, stateDir, hostname, result, listener, nil)
+}
+
+// ensureDevServerPublicAccess is PA-1's second hook (docs/spec-workflows.md
+// §8 O3): a start or restart the supervisor reports running has just proved a
+// live listener, whatever the runtime's static deferred-start classification.
+// The address it reports and probes for readiness is the started server's own
+// (ops.DevServerSubdomainURL): its port's subdomain on a dev service, and on a
+// lease the lease's preview port at its pool's subdomain — never the
+// service's first HTTP port, which on a pool forwards to another container
+// (DP-19). "" when that server has no public address.
+func ensureDevServerPublicAccess(
+	ctx context.Context,
+	client platform.Client,
+	httpClient ops.HTTPDoer,
+	projectID, stateDir, hostname string,
+	server *ops.DevServerResult,
+) *ops.DeployResult {
+	result := &ops.DeployResult{}
+	listener := true
+	ensurePublicAccessAt(ctx, client, httpClient, projectID, stateDir, hostname, result, &listener, func() string {
+		return ops.DevServerSubdomainURL(ctx, client, projectID, server)
+	})
+	return result
+}
+
+// ensurePublicAccessAt is ensurePublicAccess's body. listener nil derives
+// "is a listener up now" from the runtime's deferred-start classification.
+// address nil makes the reported (and probed) address the service's preferred
+// HTTP port's; otherwise address names it, read once the route is on.
+func ensurePublicAccessAt(
+	ctx context.Context,
+	client platform.Client,
+	httpClient ops.HTTPDoer,
+	projectID, stateDir, hostname string,
+	result *ops.DeployResult,
+	listenerOverride *bool,
+	address func() string,
 ) {
 	// A dev-pool lease is a container of its pool: the pool is the service
 	// that has a subdomain, an intent and a stamp (PA-1/PA-2 act on it, never
@@ -67,8 +111,8 @@ func ensurePublicAccess(
 
 	deferredStart := isDeferredStartTarget(meta, svc, hostname)
 	listener := !deferredStart
-	if len(listenerOverride) > 0 {
-		listener = listenerOverride[0]
+	if listenerOverride != nil {
+		listener = *listenerOverride
 	}
 
 	obs, err := ops.ObservePublicAccess(ctx, client, projectID, svc)
@@ -99,7 +143,9 @@ func ensurePublicAccess(
 			// service (mailpit: SMTP 1025 + HTTP UI 8025) serves each port
 			// at its own one. Ports are read by ID: svc comes from a
 			// search, which can lag the deploy that declared them.
-			if fresh, getErr := client.GetService(ctx, svc.ID); getErr == nil {
+			if address != nil {
+				result.SubdomainURL = address()
+			} else if fresh, getErr := client.GetService(ctx, svc.ID); getErr == nil {
 				if port, ok := ops.PreferredHTTPPort(fresh.Ports); ok {
 					result.SubdomainURL = ops.SubdomainURLForPort(ctx, client, projectID, fresh, port.Port)
 				}
@@ -123,6 +169,9 @@ func ensurePublicAccess(
 		// it so the deploy result stays accurate.
 		result.SubdomainAccessEnabled = true
 		result.SubdomainURL = obs.URL
+		if address != nil {
+			result.SubdomainURL = address()
+		}
 	}
 
 	// PA-5 (docs/spec-workflows.md §8 O3): fill the structured summary
