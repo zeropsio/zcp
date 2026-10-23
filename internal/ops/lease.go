@@ -465,9 +465,13 @@ func LeaseRelease(ctx context.Context, d LeaseDeps, alias string, force bool) (L
 	}
 	var guard leaseGuardResult
 	if !force {
+		// The guard reaches the container through its alias: put back a
+		// stanza another call or a redeploy lost before it runs.
+		restoreNote := d.Host.refreshAliases(ctx, d)
 		if guard, err = guardLeaseRelease(ctx, d, rec); err != nil {
 			return LeaseView{}, err
 		}
+		guard.note = joinNotes(restoreNote, guard.note)
 	}
 	view, err := releaseAndDetach(ctx, d, rec, alias)
 	if err != nil {

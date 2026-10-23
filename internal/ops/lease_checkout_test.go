@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -367,7 +368,7 @@ func TestLeaseCheckout_CredentialNeverInCommand(t *testing.T) {
 		t.Errorf("command ran on %q, want the alias devpool-3", ssh.calls[0].hostname)
 	}
 	for _, want := range []string{
-		gitCredentialHelperArgs(), "GIT_TERMINAL_PROMPT=0",
+		"-c credential.helper= -c credential.helper=" + shellQuote(leaseCredentialHelperShell), "GIT_TERMINAL_PROMPT=0",
 		shellQuote("feature/x-1.2"), shellQuote("https://github.com/acme/app"), "cd '/var/www'", "git clean -fd",
 	} {
 		if !strings.Contains(cmd, want) {
@@ -414,7 +415,7 @@ func TestLeaseCheckout_Failure_ReleasesWithResetAndCleansUp(t *testing.T) {
 		wantCode string
 	}{
 		{"rejected token", "fatal: Authentication failed for 'https://github.com/acme/app/'", platform.ErrGitTokenInvalid},
-		{"no token in the session", "fatal: could not read Password for 'https://oauth2@github.com': terminal prompts disabled", platform.ErrGitTokenMissing},
+		{"no token in the session", "fatal: could not read Username for 'https://github.com': terminal prompts disabled", platform.ErrGitTokenMissing},
 		{"repository missing", "fatal: repository 'https://github.com/acme/app/' not found", platform.ErrSSHDeployFailed},
 		{"network", "fatal: unable to access 'https://github.com/acme/app/': Could not resolve host: github.com", platform.ErrSSHDeployFailed},
 	}
@@ -528,8 +529,10 @@ func assertRefusedAndKept(t *testing.T, hf *hostFixture, err error) *platform.Pl
 	if len(hf.swarm.releases) != 0 {
 		t.Errorf("a refused release reached the orchestrator: %+v", hf.swarm.releases)
 	}
-	if len(hf.events) != 0 {
-		t.Errorf("a refused release touched the host (%v); the mount must stay", hf.events)
+	// Re-rendering the alias file from the records (the lease's own stanza
+	// included) is the guard's preparation; nothing else may touch the host.
+	if touched := slices.DeleteFunc(slices.Clone(hf.events), func(e string) bool { return e == "install-aliases" }); len(touched) != 0 {
+		t.Errorf("a refused release touched the host (%v); the mount must stay", touched)
 	}
 	if _, statErr := os.Stat(filepath.Join(hf.stateDir, "leases", "devpool-3.json")); statErr != nil {
 		t.Errorf("record gone after a refused release: %v", statErr)
@@ -706,5 +709,85 @@ func TestLeaseCredentialHelper_AnswersFromSessionEnvOnly(t *testing.T) {
 		if got := run("tok-1", action); got != "" {
 			t.Errorf("%s = %q, want nothing", action, got)
 		}
+	}
+}
+
+// A container that ssh cannot reach is released unchecked only when the
+// orchestrator no longer holds it for this lease: a reserved container may
+// hold work, and an alias that does not resolve is not a gone container.
+func TestLeaseRelease_UnreachableButReserved_Refused(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		output string
+	}{
+		{"alias not resolvable", "ssh: Could not resolve hostname devpool-3: Name or service not known"},
+		{"connection timed out", "ssh: connect to host node-id-3.runtime.devpool.zerops port 22: Connection timed out"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			hf, ssh := unsavedFixture(t, "", 0)
+			hf.swarm.containers = []platform.SwarmContainer{{ID: "c-abc", Number: 3, LockState: leaseLockReserved}}
+			ssh.setHandler(func(string, string) ([]byte, error) {
+				return []byte(tt.output), sshFailure(tt.output, exitError(t, 255))
+			})
+			_, err := LeaseRelease(context.Background(), hf.deps, "devpool-3", false)
+			pe := assertRefusedAndKept(t, hf, err)
+			if !strings.Contains(pe.Message, "still reserved") {
+				t.Errorf("refusal %q should say the container is still reserved", pe.Message)
+			}
+		})
+	}
+}
+
+func TestLeaseRelease_UnreachableOrchestratorSilent_Refused(t *testing.T) {
+	t.Parallel()
+	hf, ssh := unsavedFixture(t, "", 0)
+	hf.swarm.listErr = errors.New("dial tcp: i/o timeout")
+	ssh.setHandler(func(string, string) ([]byte, error) {
+		return nil, sshFailure("ssh: connect to host ... Connection timed out", exitError(t, 255))
+	})
+	_, err := LeaseRelease(context.Background(), hf.deps, "devpool-3", false)
+	_ = assertRefusedAndKept(t, hf, err)
+}
+
+// The guard reaches the container through its alias, so the alias file is
+// re-rendered from the records first: a stanza another call dropped, or one
+// a redeploy lost, is back before the check runs.
+func TestLeaseRelease_RestoresAliasesBeforeTheGuard(t *testing.T) {
+	t.Parallel()
+	hf, ssh := unsavedFixture(t, "", 0)
+	if err := os.WriteFile(hf.aliasFile, []byte(leaseAliasFileHeader), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stanzaAtCheck bool
+	ssh.setHandler(func(_, command string) ([]byte, error) {
+		raw, _ := os.ReadFile(hf.aliasFile)
+		stanzaAtCheck = strings.Contains(string(raw), "Host devpool-3\n")
+		if strings.Contains(command, "rev-list --count") {
+			return []byte("0\n"), nil
+		}
+		return nil, nil
+	})
+	if _, err := LeaseRelease(context.Background(), hf.deps, "devpool-3", false); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	if !stanzaAtCheck {
+		t.Error("the guard ran while the alias file lacked the lease's stanza")
+	}
+}
+
+// The checkout's fetch answers git only from a session that holds GIT_TOKEN,
+// so a missing token surfaces as git's own "terminal prompts disabled" (the
+// credential contract's missing case), never as a rejected empty password.
+func TestLeaseCheckoutCommand_FetchHelperAnswersNothingWithoutToken(t *testing.T) {
+	t.Parallel()
+	cmd := leaseCheckoutCommand("/var/www", "https://github.com/acme/app", "main")
+	if want := "-c credential.helper= -c credential.helper=" + shellQuote(leaseCredentialHelperShell) + " fetch"; !strings.Contains(cmd, want) {
+		t.Errorf("fetch does not use the token-guarded helper %q:\n%s", want, cmd)
+	}
+	if strings.Contains(cmd, gitCredentialHelperArgs()) {
+		t.Errorf("fetch still uses the helper that sends an empty password:\n%s", cmd)
 	}
 }

@@ -161,10 +161,11 @@ func resolveLeaseRepo(stateDir, pool, repo string) (canonical string, becomesDef
 
 // leaseCheckoutCommand is the git script that puts workDir on branch of repo.
 // It runs in the leased container over ssh. The credential is never composed
-// into it: fetch authenticates through the inline session-env helper, which
+// into it: fetch authenticates through leaseCredentialHelperShell inline, which
 // reads $GIT_TOKEN at request time (the pool's own env reaches its
-// containers). repo and branch are shell-quoted; the caller has validated
-// both.
+// containers) and answers nothing without it, so a missing token reads as
+// git's "terminal prompts disabled", not as a rejected empty password. repo
+// and branch are shell-quoted; the caller has validated both.
 //
 // An existing origin/<branch> is checked out tracking it; a branch that does
 // not exist yet is cut from origin/main without tracking it (a push of the new
@@ -178,7 +179,7 @@ func leaseCheckoutCommand(workDir, repo, branch string) string {
 		"cd " + q(workDir),
 		"{ [ -d .git ] || git init -q; }",
 		"{ git remote add origin " + q(repo) + " 2>/dev/null || git remote set-url origin " + q(repo) + "; }",
-		"GIT_TERMINAL_PROMPT=0 git " + gitCredentialHelperArgs() + " fetch -q --prune origin",
+		"GIT_TERMINAL_PROMPT=0 git -c credential.helper= -c credential.helper=" + q(leaseCredentialHelperShell) + " fetch -q --prune origin",
 		"if git rev-parse --verify -q " + q("refs/remotes/origin/"+branch) + " >/dev/null; then " +
 			"git checkout -q -f -B " + q(branch) + " --track " + q("origin/"+branch) + "; else " +
 			"git checkout -q -f -B " + q(branch) + " --no-track origin/" + leaseDefaultBranch + "; fi",
@@ -341,10 +342,7 @@ func guardLeaseRelease(ctx context.Context, d LeaseDeps, rec leaseRecord) (lease
 	w, err := readUnsavedWork(ctx, d.SSH, rec.alias())
 	if err != nil {
 		if exitStatus(err) == leaseSSHUnreachableExit {
-			return leaseGuardResult{
-				unreachable: true,
-				note:        "zcp could not reach the container over ssh, so it was released without checking for unsaved work",
-			}, nil
+			return unreachableGuard(ctx, d, rec, err)
 		}
 		pe := platform.NewPlatformError(platform.ErrPrerequisiteMissing,
 			fmt.Sprintf("Lease %s could not be checked for unsaved work, so it was not released", rec.alias()),
@@ -356,6 +354,58 @@ func guardLeaseRelease(ctx context.Context, d LeaseDeps, rec leaseRecord) (lease
 		return leaseGuardResult{}, nil
 	}
 	return leaseGuardResult{}, unsavedWorkRefusal(rec.alias(), w)
+}
+
+// unreachableGuard decides a release whose container ssh could not reach.
+// ssh's 255 does not say the container is gone — an alias that does not
+// resolve, a refused connection and a timeout all read the same — so the
+// orchestrator decides: only a container it no longer holds for this lease is
+// released unchecked (as lost). One it still holds may hold work and is
+// refused, and so is one zcp cannot ask about.
+func unreachableGuard(ctx context.Context, d LeaseDeps, rec leaseRecord, sshErr error) (leaseGuardResult, error) {
+	held, err := leaseContainerStillReserved(ctx, d, rec)
+	if err == nil && !held {
+		return leaseGuardResult{
+			unreachable: true,
+			note:        "zcp could not reach the container over ssh and the orchestrator no longer holds it, so it was released without checking for unsaved work",
+		}, nil
+	}
+	state := "is still reserved"
+	if err != nil {
+		state = "may still be reserved (the orchestrator did not answer)"
+	}
+	pe := platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+		fmt.Sprintf("Lease %s could not be reached over ssh to check for unsaved work and %s, so it was not released", rec.alias(), state),
+		fmt.Sprintf("zerops_lease action=status shows whether its alias and mount are in place; release with force=true to discard whatever it holds: zerops_lease action=release lease=%s force=true", rec.alias()))
+	pe.Cause = sshErr
+	return leaseGuardResult{}, pe
+}
+
+// leaseContainerStillReserved reports whether the pool's orchestrator still
+// lists the record's container as reserved. A pool that is gone or was
+// re-created holds nothing of this lease.
+func leaseContainerStillReserved(ctx context.Context, d LeaseDeps, rec leaseRecord) (bool, error) {
+	rp, err := resolvePool(ctx, d, rec.PoolHostname)
+	if err != nil {
+		var pe *platform.PlatformError
+		if errors.As(err, &pe) && pe.Code == platform.ErrServiceNotFound {
+			return false, nil
+		}
+		return false, err
+	}
+	if rp.svc.ID != rec.PoolServiceID {
+		return false, nil
+	}
+	containers, err := rp.api.Containers(ctx)
+	if err != nil {
+		return false, fmt.Errorf("list pool containers: %w", err)
+	}
+	for _, c := range containers {
+		if c.ID == rec.ContainerID {
+			return c.LockState == leaseLockReserved, nil
+		}
+	}
+	return false, nil
 }
 
 func unsavedWorkRefusal(alias string, w unsavedWork) error {
