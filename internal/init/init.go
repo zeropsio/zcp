@@ -77,6 +77,11 @@ func Run(baseDir string, rt runtime.Info) error {
 	if rt.InContainer {
 		// Container: SSH config + per-agent adapter dispatch.
 		steps = append(steps, step{"SSH config", generateSSHConfig, "SSH into project services needs a hand-written config entry"})
+		// A redeploy replaces the container: the lease aliases and mounts
+		// are gone while the records and reservations live on. This is the
+		// boot step that runs (`zcp init sshfs` is not in the boot
+		// sequence), so it puts them back (docs/spec-workflows.md §8 DP-2).
+		steps = append(steps, step{"Dev-pool leases", restoreLeaseStep, "leased pool containers stay without their ssh alias and mount; zerops_lease action=status reports them unmounted"})
 		// The mate step is registered only when there is something to
 		// reconcile: the flag asks for it enabled, OR a previous `zcp init`
 		// left a unit registered that a now-off flag must remove. A

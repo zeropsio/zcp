@@ -3,6 +3,7 @@ package init_test
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -1729,5 +1730,61 @@ func TestRun_RequiredStepFailure_Aborts(t *testing.T) {
 
 	if err := zcpinit.Run(dir, runtime.Info{}); err == nil {
 		t.Fatal("a required step failure must abort init")
+	}
+}
+
+// TestRun_Container_RestoresLeases: `zcp init` is the boot step a zcp@1
+// container runs (`zcp init sshfs` is not in its boot sequence), so it is
+// what must put the lease aliases and mounts back after a redeploy (DP-2).
+func TestRun_Container_RestoresLeases(t *testing.T) {
+	// Not parallel — mutates HOME, commandRunner and the lease package vars.
+	t.Setenv("HOME", t.TempDir())
+	stubContainerCommands(t)
+	stateDir := t.TempDir()
+	aliasFile := filepath.Join(t.TempDir(), "zcp-leases.conf")
+	zcpinit.SetSSHFSMountBase(t.TempDir())
+	zcpinit.SetLeaseStateDir(stateDir)
+	zcpinit.SetLeaseAliasFile(aliasFile)
+	t.Cleanup(func() { zcpinit.ResetSSHFSMountBase(); zcpinit.ResetLeaseStateDir(); zcpinit.ResetLeaseAliasFile() })
+	writeLeaseRecordFile(t, stateDir, "apppool", 3, "node-id-3.runtime.apppool.zerops")
+
+	var executed []string
+	zcpinit.SetCommandRunner(func(name string, args ...string) error {
+		executed = append(executed, strings.Join(append([]string{name}, args...), " "))
+		return nil
+	})
+
+	if err := zcpinit.Run(t.TempDir(), runtime.Info{InContainer: true}); err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+	all := strings.Join(executed, "\n")
+	if !strings.Contains(all, "sudo -n install") || !strings.Contains(all, aliasFile) {
+		t.Errorf("zcp init did not reinstall the lease aliases:\n%s", all)
+	}
+	if !strings.Contains(all, "unit create sshfs-apppool-3") {
+		t.Errorf("zcp init did not remount the lease:\n%s", all)
+	}
+}
+
+// A lease that cannot be restored never fails the boot step.
+func TestRun_Container_LeaseRestoreFailure_DegradesNotFatal(t *testing.T) {
+	// Not parallel — mutates HOME, commandRunner and the lease package vars.
+	t.Setenv("HOME", t.TempDir())
+	stubContainerCommands(t)
+	stateDir := t.TempDir()
+	zcpinit.SetSSHFSMountBase(t.TempDir())
+	zcpinit.SetLeaseStateDir(stateDir)
+	zcpinit.SetLeaseAliasFile(filepath.Join(t.TempDir(), "zcp-leases.conf"))
+	t.Cleanup(func() { zcpinit.ResetSSHFSMountBase(); zcpinit.ResetLeaseStateDir(); zcpinit.ResetLeaseAliasFile() })
+	writeLeaseRecordFile(t, stateDir, "apppool", 3, "node-id-3.runtime.apppool.zerops")
+	zcpinit.SetCommandRunner(func(name string, args ...string) error {
+		if name == "sudo" {
+			return errors.New("sudo: a password is required")
+		}
+		return nil
+	})
+
+	if err := zcpinit.Run(t.TempDir(), runtime.Info{InContainer: true}); err != nil {
+		t.Fatalf("a lease restore failure failed zcp init: %v", err)
 	}
 }

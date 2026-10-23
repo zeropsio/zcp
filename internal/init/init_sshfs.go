@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/runtime"
 )
 
 const defaultSSHFSMountBase = "/var/www"
@@ -57,6 +58,13 @@ func RunSSHFS() error {
 	}
 	restoreLeases()
 	fmt.Fprintln(os.Stderr, "  ✓ SSHFS init complete")
+	return nil
+}
+
+// restoreLeaseStep is restoreLeases as a `zcp init` step; it prints what it
+// could not restore and never fails.
+func restoreLeaseStep(string, runtime.Info) error {
+	restoreLeases()
 	return nil
 }
 
