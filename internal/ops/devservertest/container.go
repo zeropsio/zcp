@@ -37,8 +37,14 @@ type Container struct {
 	// output is StartOutput.
 	FailStart   bool
 	StartOutput string
-	// SupervisorStarts counts the supervisors zcp started in the container.
-	SupervisorStarts int
+	// SupervisorStarts counts the supervisors zcp started in the container;
+	// SupervisorReloads the reloads of a running one zcp asked for with them.
+	SupervisorStarts, SupervisorReloads int
+	// Prepared are the repository's prepare commands zcp ran, in order; with
+	// PrepareFails each fails (exit 1) with PrepareOutput.
+	Prepared      []string
+	PrepareFails  bool
+	PrepareOutput string
 	// Silent: the container itself does not answer over SSH in time (out of
 	// memory or CPU); every command ends at the ssh deadline.
 	Silent bool
@@ -113,7 +119,18 @@ func (c *Container) ExecSSH(_ context.Context, hostname string, command string) 
 	}
 	switch {
 	case strings.Contains(command, "@@zcp-devsup check"):
-		return []byte(c.ensure()), nil
+		return []byte(c.ensure(strings.Contains(command, "zcp-devsup ctl reload"))), nil
+	case strings.Contains(command, "@@zcp-devsup declaration") && !strings.Contains(command, "@@zcp-devsup version"):
+		if c.Declaration == "" {
+			return []byte("@@zcp-devsup declaration 1\n"), nil
+		}
+		return []byte(c.Declaration + "\n@@zcp-devsup declaration 0\n"), nil
+	case strings.Contains(command, "/bin/sh -c "):
+		c.Prepared = append(c.Prepared, firstQuoted(command, "/bin/sh -c "))
+		if c.PrepareFails {
+			return []byte(c.PrepareOutput), &platform.SSHExecError{Hostname: hostname, Output: c.PrepareOutput, Err: errors.New("exit status 1")}
+		}
+		return []byte(c.PrepareOutput), nil
 	case strings.Contains(command, "@@zcp-devsup version"):
 		return []byte(c.read()), nil
 	case strings.Contains(command, "zcp-devsup ctl logs"):
@@ -216,14 +233,24 @@ func (c *Container) redeploy() {
 }
 
 // ensure answers zcp's start of a lease's supervisor: nothing is started
-// without the binary or while a supervisor holds the control socket; otherwise
-// one starts and boots the declaration, unless FailStart.
-func (c *Container) ensure() string {
+// without the binary or while a supervisor holds the control socket — one
+// that answers is reloaded when zcp asks — otherwise one starts and boots the
+// declaration, unless FailStart.
+func (c *Container) ensure(reload bool) string {
 	switch {
 	case !c.Installed:
 		return "@@zcp-devsup check 127\n"
 	case c.Unresponsive:
 		return "@@zcp-devsup check 5\n"
+	case c.Running && reload:
+		c.SupervisorReloads++
+		out := strings.TrimSpace(c.ctl("zcp-devsup ctl 'reload' --json"))
+		i := strings.LastIndex(out, "@@zcp-devsup ctl ")
+		code := strings.TrimSpace(out[i+len("@@zcp-devsup ctl "):])
+		if code == "0" {
+			return "@@zcp-devsup check 0\n@@zcp-devsup reloaded 0\n"
+		}
+		return "@@zcp-devsup check 0\n" + strings.TrimSpace(out[:i]) + "\n@@zcp-devsup reloaded " + code + "\n"
 	case c.Running:
 		return "@@zcp-devsup check 0\n"
 	}

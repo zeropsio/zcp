@@ -147,6 +147,9 @@ type LeaseView struct {
 	Unverified bool   `json:"unverified,omitempty"`
 	AcquiredAt string `json:"acquiredAt,omitempty"`
 	Note       string `json:"note,omitempty"`
+	// Prepare is what the repository's prepare command did after an
+	// acquire's checkout (DP-14); nil when none ran.
+	Prepare *LeasePrepare `json:"prepare,omitempty"`
 }
 
 // leaseTokenKey is the pool service's own env var that its orchestrator takes
@@ -552,9 +555,9 @@ func LeaseAcquire(ctx context.Context, d LeaseDeps, pool, repo, branch string) (
 		if err := poolCredential.checkout(ctx, d, rec, repoURL, branch); err != nil {
 			return LeaseView{}, abandonLease(ctx, d, rec, err)
 		}
-		// A reused container was reset to its image and its run.start never
-		// runs again: zcp starts the supervisor itself (DP-13).
-		v.Note = joinNotes(v.Note, leaseSupervisorNote(ensureLeaseSupervisor(ctx, d.SSH, rec.alias())))
+		// The repository's prepare (DP-14), then the supervisor, which a reused
+		// container's run.start never starts again (DP-13).
+		afterLeaseCheckout(ctx, d.SSH, rec.alias(), &v)
 	}
 	if becomesDefault {
 		if err := storePoolDefaultRepo(d.StateDir, pool, repoURL); err != nil {

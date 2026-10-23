@@ -405,3 +405,47 @@ func TestParseDeclaration_SiblingEnv_Shapes(t *testing.T) {
 		})
 	}
 }
+
+func TestDeclaration_Prepare_ParsesAndRoundTrips(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		in      string
+		want    string
+		wantErr bool
+	}{
+		{name: "absent", in: `{"version":1,"servers":[]}`},
+		{name: "a command", in: `{"version":1,"prepare":"npm install --prefer-offline","servers":[]}`, want: "npm install --prefer-offline"},
+		{name: "not a string", in: `{"version":1,"prepare":5,"servers":[]}`, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			d, err := ParseDeclaration([]byte(tt.in))
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("parsed %+v, want an error", d)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if d.Prepare != tt.want {
+				t.Errorf("prepare = %q, want %q", d.Prepare, tt.want)
+			}
+			// zcp rewrites the declaration when the set of servers changes;
+			// the repository's prepare survives that, and an absent one stays absent.
+			b, err := json.Marshal(d)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if again, err := ParseDeclaration(b); err != nil || again.Prepare != tt.want {
+				t.Errorf("round trip = %+v, %v; want prepare %q", again, err, tt.want)
+			}
+			if tt.want == "" && strings.Contains(string(b), "prepare") {
+				t.Errorf("an absent prepare is written: %s", b)
+			}
+		})
+	}
+}

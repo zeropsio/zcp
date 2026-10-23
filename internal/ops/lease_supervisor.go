@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/devsup"
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
@@ -55,6 +56,9 @@ type leaseSupervisorResult struct {
 	outcome leaseSupervisorOutcome
 	// log is the tail of a failed supervisor's own output.
 	log string
+	// reloadErr is a running supervisor's refusal of the reload an acquire
+	// asked for (an invalid declaration, say).
+	reloadErr error
 }
 
 // leaseSupervisorLog is where a supervisor zcp starts writes its own output,
@@ -64,10 +68,12 @@ const leaseSupervisorLog = "~/.zcp/devsup/supervisor.log"
 
 // leaseSupervisorCommand starts `zcp-devsup run` in workDir unless a
 // supervisor already holds the control socket, and waits up to waitSeconds
-// for the one it started to answer. It answers in devsup sections: "check"
-// carries `ctl status`'s exit code before anything is started (127 without
-// the binary); "started" the code after the start; "log" the tail of the
-// started supervisor's output when it does not answer.
+// for the one it started to answer; with reload, a supervisor that answers is
+// reloaded instead, so it takes the declaration a checkout just put there. It
+// answers in devsup sections: "check" carries `ctl status`'s exit code before
+// anything is started (127 without the binary); "reloaded" the reload's code
+// (its JSON refusal above it); "started" the code after the start; "log" the
+// tail of the started supervisor's output when it does not answer.
 //
 // Only `ctl status` exit 2 (no supervisor: the socket is absent or refused)
 // starts one: 0 answers, and 5 holds the socket unanswering, so a second would
@@ -77,38 +83,53 @@ const leaseSupervisorLog = "~/.zcp/devsup/supervisor.log"
 // none), stdin from /dev/null, its output appended to leaseSupervisorLog and
 // the lock's descriptor closed, so it holds nothing of the ssh session and
 // outlives it. workDir is shell-quoted; nothing else is composed in.
-func leaseSupervisorCommand(workDir string, waitSeconds int) string {
+func leaseSupervisorCommand(workDir string, waitSeconds int, reload bool) string {
 	status := `zcp-devsup ctl status --json >/dev/null 2>&1`
 	run := `zcp-devsup run </dev/null >>"$d/supervisor.log" 2>&1 9>&-`
-	return strings.Join([]string{
+	lines := []string{
 		`if ! command -v zcp-devsup >/dev/null 2>&1; then echo '@@zcp-devsup check 127'; exit 0; fi`,
 		`d="$HOME/.zcp/devsup"`,
 		`mkdir -p "$d" || exit 1`,
 		`if command -v flock >/dev/null 2>&1; then exec 9>>"$d/ensure.lock"; flock -w 60 9 || :; fi`,
 		status + `; c=$?`,
 		`echo "@@zcp-devsup check $c"`,
+	}
+	if reload {
+		lines = append(lines, `if [ "$c" -eq 0 ]; then r=$(zcp-devsup ctl reload --json 2>/dev/null); rc=$?; if [ "$rc" -ne 0 ]; then printf '%s\n' "$r"; fi; echo "@@zcp-devsup reloaded $rc"; fi`)
+	}
+	return strings.Join(append(lines,
 		`if [ "$c" -ne 2 ]; then exit 0; fi`,
-		`cd ` + shellQuote(workDir) + ` || exit 1`,
-		`if command -v setsid >/dev/null 2>&1; then setsid ` + run + ` & else nohup ` + run + ` & fi`,
-		`end=$(( $(date +%s) + ` + strconv.Itoa(waitSeconds) + ` ))`,
-		`while :; do ` + status + `; c=$?; if [ "$c" -ne 2 ] || [ "$(date +%s)" -ge "$end" ]; then break; fi; sleep 0.2 2>/dev/null || sleep 1; done`,
+		`cd `+shellQuote(workDir)+` || exit 1`,
+		`if command -v setsid >/dev/null 2>&1; then setsid `+run+` & else nohup `+run+` & fi`,
+		`end=$(( $(date +%s) + `+strconv.Itoa(waitSeconds)+` ))`,
+		`while :; do `+status+`; c=$?; if [ "$c" -ne 2 ] || [ "$(date +%s)" -ge "$end" ]; then break; fi; sleep 0.2 2>/dev/null || sleep 1; done`,
 		`echo "@@zcp-devsup started $c"`,
 		`if [ "$c" -ne 0 ]; then tail -n 20 "$d/supervisor.log" 2>/dev/null; echo '@@zcp-devsup log 0'; fi`,
-	}, "\n")
+	), "\n")
 }
 
 // ensureLeaseSupervisor makes sure zcp-devsup runs in the leased container
-// behind alias.
+// behind alias, leaving one that answers alone: a dev-server call never
+// reloads (with the declaration missing from a checkout a reload would stop
+// every server).
 func ensureLeaseSupervisor(ctx context.Context, ssh SSHDeployer, alias string) (leaseSupervisorResult, error) {
-	return ensureSupervisorIn(ctx, ssh, alias, leaseWorkDir, leaseSupervisorWait)
+	return ensureSupervisorIn(ctx, ssh, alias, leaseWorkDir, leaseSupervisorWait, false)
 }
 
-// ensureSupervisorIn is ensureLeaseSupervisor with the work dir and the wait
-// given.
-func ensureSupervisorIn(ctx context.Context, ssh SSHDeployer, alias, workDir string, waitSeconds int) (leaseSupervisorResult, error) {
+// ensureLeaseSupervisorAfterCheckout is ensureLeaseSupervisor for an acquire:
+// a supervisor that answers — run.start's in a container the platform just
+// created, which booted on an empty /var/www — is reloaded, so the declared
+// servers start as they do in a reused container.
+func ensureLeaseSupervisorAfterCheckout(ctx context.Context, ssh SSHDeployer, alias string) (leaseSupervisorResult, error) {
+	return ensureSupervisorIn(ctx, ssh, alias, leaseWorkDir, leaseSupervisorWait, true)
+}
+
+// ensureSupervisorIn is ensureLeaseSupervisor with the work dir, the wait and
+// the reload given.
+func ensureSupervisorIn(ctx context.Context, ssh SSHDeployer, alias, workDir string, waitSeconds int, reload bool) (leaseSupervisorResult, error) {
 	callCtx, cancel := context.WithTimeout(ctx, leaseSupervisorTimeout)
 	defer cancel()
-	out, err := ssh.ExecSSH(callCtx, alias, leaseSupervisorCommand(workDir, waitSeconds))
+	out, err := ssh.ExecSSH(callCtx, alias, leaseSupervisorCommand(workDir, waitSeconds, reload))
 	if err != nil {
 		return leaseSupervisorResult{}, fmt.Errorf("start zcp-devsup on %s: %w", alias, err)
 	}
@@ -124,7 +145,7 @@ func ensureSupervisorIn(ctx context.Context, ssh SSHDeployer, alias, workDir str
 	case devsupCodeAbsent:
 		return leaseSupervisorResult{outcome: leaseSupervisorAbsent}, nil
 	case devsupCodeOK:
-		return leaseSupervisorResult{outcome: leaseSupervisorRunning}, nil
+		return runningSupervisor(alias, sections, reload)
 	case devsupCodeUnresponsive:
 		return leaseSupervisorResult{outcome: leaseSupervisorUnresponsive}, nil
 	case devsupCodeNoSupervisor:
@@ -144,6 +165,23 @@ func ensureSupervisorIn(ctx context.Context, ssh SSHDeployer, alias, workDir str
 	return leaseSupervisorResult{outcome: leaseSupervisorFailed, log: sections["log"].body}, nil
 }
 
+// runningSupervisor reads the answer about a supervisor that answered: with
+// reload, the reload's own answer.
+func runningSupervisor(alias string, sections map[string]devsupAnswer, reload bool) (leaseSupervisorResult, error) {
+	r := leaseSupervisorResult{outcome: leaseSupervisorRunning}
+	if !reload {
+		return r, nil
+	}
+	reloaded, ok := sections["reloaded"]
+	if !ok {
+		return leaseSupervisorResult{}, fmt.Errorf("reload zcp-devsup on %s: no answer", alias)
+	}
+	if reloaded.code != devsupCodeOK {
+		r.reloadErr = ctlFailure(reloaded)
+	}
+	return r, nil
+}
+
 // leaseSupervisorNote is what an acquire says about the lease's supervisor:
 // nothing when one answers. A supervisor that is missing or will not start
 // never fails the acquire; the lease holds code either way.
@@ -153,6 +191,9 @@ func leaseSupervisorNote(r leaseSupervisorResult, err error) string {
 	}
 	switch r.outcome {
 	case leaseSupervisorRunning, leaseSupervisorStarted:
+		if r.reloadErr != nil {
+			return fmt.Sprintf("the dev-server supervisor did not take the checked-out %s (%v); zerops_dev_server action=status names what is wrong with it", devsup.DeclarationPath, r.reloadErr)
+		}
 		return ""
 	case leaseSupervisorAbsent:
 		return leaseNoDevsupSentence
@@ -183,7 +224,7 @@ func supervisorOutputClause(log string) string {
 	if log = strings.TrimSpace(log); log == "" {
 		return ""
 	}
-	return ". Its output: " + boundedText(log)
+	return ". Its output: " + boundedTail(log)
 }
 
 // sshFailureText is err with the remote output an *SSHExecError keeps apart
@@ -199,12 +240,24 @@ func sshFailureText(err error) string {
 	return msg
 }
 
-// boundedText trims s to what a note carries.
+// noteTextLimit is how much of an output a note carries.
+const noteTextLimit = 600
+
+// boundedText trims s to what a note carries, keeping its start.
 func boundedText(s string) string {
-	const limit = 600
 	s = strings.TrimSpace(s)
-	if len(s) > limit {
-		return s[:limit] + "…"
+	if len(s) > noteTextLimit {
+		return s[:noteTextLimit] + "…"
+	}
+	return s
+}
+
+// boundedTail trims an output to what a note carries, keeping its end (where
+// a failure says why).
+func boundedTail(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) > noteTextLimit {
+		return "…" + s[len(s)-noteTextLimit:]
 	}
 	return s
 }

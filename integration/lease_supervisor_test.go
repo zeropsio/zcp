@@ -69,9 +69,13 @@ func supervisorPoolMock() *platform.Mock {
 
 type supervisorLeaseResult struct {
 	Leases []struct {
-		Alias string `json:"alias"`
-		State string `json:"state"`
-		Note  string `json:"note"`
+		Alias   string `json:"alias"`
+		State   string `json:"state"`
+		Note    string `json:"note"`
+		Prepare *struct {
+			Command string `json:"command"`
+			OK      bool   `json:"ok"`
+		} `json:"prepare"`
 	} `json:"leases"`
 }
 
@@ -81,8 +85,9 @@ func TestLease_Integration_ReusedContainerGetsItsSupervisor(t *testing.T) {
 	t.Chdir(t.TempDir())
 	supervisorPoolOrchestrator(t)
 	// A reused container: zcp-devsup is in the image, nothing runs it.
+	// Its branch declares the incremental install its lockfile needs.
 	c := &devservertest.Container{Installed: true, SupervisorVersion: "v9.300.0", Formats: []int{1},
-		Declaration: `{"version":1,"servers":[{"name":"web","port":3000,"command":"pnpm dev"}]}`}
+		Declaration: `{"version":1,"prepare":"npm install --prefer-offline","servers":[{"name":"web","port":3000,"command":"pnpm dev"}]}`}
 	session, cleanup := setupTestServerWithDeploy(t, supervisorPoolMock(), defaultLogFetcher(), c)
 	defer cleanup()
 
@@ -100,6 +105,22 @@ func TestLease_Integration_ReusedContainerGetsItsSupervisor(t *testing.T) {
 	}
 	if c.SupervisorStarts != 1 {
 		t.Fatalf("supervisors started at acquire = %d, want one", c.SupervisorStarts)
+	}
+	// The prepare ran once, before the supervisor started the declared servers.
+	if p := acquired.Leases[0].Prepare; p == nil || !p.OK || p.Command != "npm install --prefer-offline" || len(c.Prepared) != 1 {
+		t.Fatalf("prepare = %+v (ran %v), want the declared command run once, ok", p, c.Prepared)
+	}
+	prepare, start := -1, -1
+	for i, cmd := range c.Sent() {
+		switch {
+		case strings.Contains(cmd, "/bin/sh -c ") && prepare < 0:
+			prepare = i
+		case strings.Contains(cmd, "zcp-devsup run") && start < 0:
+			start = i
+		}
+	}
+	if prepare < 0 || start < prepare {
+		t.Errorf("the prepare (%d) did not run before the supervisor started (%d)", prepare, start)
 	}
 
 	status := func() map[string]any {

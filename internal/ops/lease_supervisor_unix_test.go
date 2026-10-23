@@ -24,8 +24,9 @@ import (
 
 // stubDevsupScript stands in for zcp-devsup: `ctl status` exits $STUB_STATUS
 // (2, no supervisor, when unset) until a supervisor it started has bound,
-// then 0; `run` records its pid, cwd and ZEROPS_StableNumber, binds and stays
-// up — or, with STUB_RUN_FAILS set, says why on stderr and exits.
+// then 0; `ctl reload` is recorded and exits $STUB_RELOAD (0 when unset);
+// `run` records its pid, cwd and ZEROPS_StableNumber, binds and stays up — or,
+// with STUB_RUN_FAILS set, says why on stderr and exits.
 const stubDevsupScript = `#!/bin/sh
 s="$STUB_DIR"
 case "$1" in
@@ -36,6 +37,7 @@ run)
   exec sleep 30
   ;;
 ctl)
+  if [ "$2" = reload ]; then echo reload >> "$s/reloads"; exit "${STUB_RELOAD:-0}"; fi
   if [ -f "$s/bound" ]; then exit 0; fi
   exit "${STUB_STATUS:-2}"
   ;;
@@ -191,7 +193,7 @@ func TestEnsureLeaseSupervisor_StartsOneOnlyWhenNoneAnswers(t *testing.T) {
 				t.Parallel()
 				h := newDevsupHarness(t, shell, tt.installed, tt.env...)
 
-				got, err := ensureSupervisorIn(context.Background(), h.container, "devpool-3", h.workDir, 2)
+				got, err := ensureSupervisorIn(context.Background(), h.container, "devpool-3", h.workDir, 2, false)
 				if err != nil {
 					t.Fatalf("ensure: %v", err)
 				}
@@ -224,7 +226,7 @@ func testStartsItAsRunStartWould(t *testing.T, shell string) {
 	h := newDevsupHarness(t, shell, true)
 
 	begun := time.Now()
-	got, err := ensureSupervisorIn(context.Background(), h.container, "devpool-3", h.workDir, 5)
+	got, err := ensureSupervisorIn(context.Background(), h.container, "devpool-3", h.workDir, 5, false)
 	if err != nil {
 		t.Fatalf("ensure: %v", err)
 	}
@@ -255,7 +257,7 @@ func testStartsItAsRunStartWould(t *testing.T, shell string) {
 	}
 
 	// Asked again, it finds the one it started and starts no second.
-	again, err := ensureSupervisorIn(context.Background(), h.container, "devpool-3", h.workDir, 5)
+	again, err := ensureSupervisorIn(context.Background(), h.container, "devpool-3", h.workDir, 5, false)
 	if err != nil || again.outcome != leaseSupervisorRunning {
 		t.Errorf("second ensure = %+v, %v; want running", again, err)
 	}
@@ -274,7 +276,7 @@ func TestEnsureLeaseSupervisor_ConcurrentCallsStartOne(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 3 {
 		wg.Go(func() {
-			if _, err := ensureSupervisorIn(context.Background(), h.container, "devpool-3", h.workDir, 5); err != nil {
+			if _, err := ensureSupervisorIn(context.Background(), h.container, "devpool-3", h.workDir, 5, false); err != nil {
 				t.Errorf("ensure: %v", err)
 			}
 		})
@@ -287,7 +289,7 @@ func TestEnsureLeaseSupervisor_ConcurrentCallsStartOne(t *testing.T) {
 
 func TestEnsureLeaseSupervisor_CommandQuotesItsWorkDir(t *testing.T) {
 	t.Parallel()
-	cmd := leaseSupervisorCommand("/var/www/it's; touch x", 10)
+	cmd := leaseSupervisorCommand("/var/www/it's; touch x", 10, true)
 	if !strings.Contains(cmd, "cd "+shellQuote("/var/www/it's; touch x")) {
 		t.Errorf("the work dir is not shell-quoted:\n%s", cmd)
 	}
@@ -295,5 +297,47 @@ func TestEnsureLeaseSupervisor_CommandQuotesItsWorkDir(t *testing.T) {
 		if strings.Contains(cmd, banned) {
 			t.Errorf("command contains %q:\n%s", banned, cmd)
 		}
+	}
+}
+
+func TestEnsureLeaseSupervisor_ReloadsARunningOneOnlyWhenAsked(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		reload      bool
+		env         []string
+		wantReloads int
+		wantErr     string
+	}{
+		// After a checkout the running supervisor takes the new declaration.
+		{name: "asked (acquire): reloaded", reload: true, wantReloads: 1},
+		{name: "asked, refused: the result says so", reload: true, env: []string{"STUB_RELOAD=4"}, wantReloads: 1, wantErr: "4"},
+		// A dev-server call never reloads: with the declaration missing from a
+		// checkout, a reload would stop every server.
+		{name: "not asked (a dev-server call): left alone", reload: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			h := newDevsupHarness(t, "sh", true, append([]string{"STUB_STATUS=0"}, tt.env...)...)
+
+			got, err := ensureSupervisorIn(context.Background(), h.container, "devpool-3", h.workDir, 2, tt.reload)
+			if err != nil {
+				t.Fatalf("ensure: %v", err)
+			}
+			if got.outcome != leaseSupervisorRunning || len(h.runs(t)) != 0 {
+				t.Errorf("outcome = %q, runs %v; want the running one kept, none started", got.outcome, h.runs(t))
+			}
+			raw, _ := os.ReadFile(filepath.Join(h.stubDir, "reloads"))
+			if n := strings.Count(string(raw), "reload"); n != tt.wantReloads {
+				t.Errorf("reloads = %d, want %d", n, tt.wantReloads)
+			}
+			if tt.wantErr == "" && got.reloadErr != nil {
+				t.Errorf("reload error = %v, want none", got.reloadErr)
+			}
+			if tt.wantErr != "" && (got.reloadErr == nil || !strings.Contains(got.reloadErr.Error(), tt.wantErr)) {
+				t.Errorf("reload error = %v, want one naming %q", got.reloadErr, tt.wantErr)
+			}
+		})
 	}
 }

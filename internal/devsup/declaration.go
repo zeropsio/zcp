@@ -58,7 +58,13 @@ type Declaration struct {
 	// the supervisor validates it with the rest of the file and never puts it
 	// into any environment itself.
 	SiblingEnv map[string]string `json:"siblingEnv,omitempty"`
-	Servers    []Server          `json:"servers"`
+	// Prepare, when set, is the shell command a dev pool's lease runs in the
+	// repo root after its checkout and before the supervisor starts or
+	// reloads (docs/spec-mate.md §2.8a.1): what a branch's own lockfile needs
+	// on top of the dependencies the pool's image baked into it. zcp runs it;
+	// the supervisor never does.
+	Prepare string   `json:"prepare,omitempty"`
+	Servers []Server `json:"servers"`
 }
 
 // Server is one named dev server: the shell command, its working directory

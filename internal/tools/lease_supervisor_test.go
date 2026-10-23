@@ -5,10 +5,12 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -18,6 +20,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/ops/devservertest"
+	"github.com/zeropsio/zcp/internal/platform"
 )
 
 func TestLeaseTool_Acquire_EnsuresTheSupervisor(t *testing.T) {
@@ -34,8 +37,11 @@ func TestLeaseTool_Acquire_EnsuresTheSupervisor(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			ssh := &leaseStubSSH{fn: func(command string) ([]byte, error) {
-				if strings.Contains(command, "zcp-devsup run") {
+				switch {
+				case strings.Contains(command, "zcp-devsup run"):
 					return []byte(tt.answer), nil
+				case strings.Contains(command, "@@zcp-devsup declaration"):
+					return []byte("@@zcp-devsup declaration 1\n"), nil
 				}
 				return nil, nil
 			}}
@@ -174,5 +180,58 @@ func TestLeaseTool_Release_Unresettable_DeletesWithTheLease(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(stateDir, "leases", "devpool-3.json")); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("the record survives the deleted container: %v", err)
+	}
+}
+
+// TestLeaseTool_Acquire_ReportsTheRepositorysPrepare: the repository's prepare
+// command runs after the checkout, and its failure is reported on a lease that
+// stays held (docs/spec-workflows.md §8 DP-14).
+func TestLeaseTool_Acquire_ReportsTheRepositorysPrepare(t *testing.T) {
+	t.Parallel()
+	const out = "npm ERR! code ERESOLVE"
+	// What SystemSSHDeployer returns for a remote command that exits 1.
+	exit1 := exec.CommandContext(context.Background(), "sh", "-c", "exit 1").Run()
+	ssh := &leaseStubSSH{fn: func(command string) ([]byte, error) {
+		switch {
+		case strings.Contains(command, "@@zcp-devsup declaration"):
+			return []byte(`{"version":1,"prepare":"npm install --prefer-offline","servers":[]}` + "\n@@zcp-devsup declaration 0\n"), nil
+		case strings.Contains(command, "/bin/sh -c "):
+			return []byte(out), &platform.SSHExecError{Hostname: "devpool-3", Output: out, Err: exit1}
+		case strings.Contains(command, "zcp-devsup run"):
+			return []byte("@@zcp-devsup check 2\n@@zcp-devsup started 0\n"), nil
+		}
+		return nil, nil
+	}}
+	srv, _ := leaseToolServerSSH(t, &fakeOrchestrator{}, ssh)
+
+	res := callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo, "branch": "feature"})
+	text := getTextContent(t, res)
+	if res.IsError {
+		t.Fatalf("acquire failed: %s (a failed prepare never fails the acquire)", text)
+	}
+	var got struct {
+		Leases []struct {
+			State   string `json:"state"`
+			Note    string `json:"note"`
+			Prepare *struct {
+				Command  string `json:"command"`
+				OK       bool   `json:"ok"`
+				ExitCode int    `json:"exitCode"`
+				Output   string `json:"output"`
+			} `json:"prepare"`
+		} `json:"leases"`
+	}
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatalf("result is not JSON: %v\n%s", err, text)
+	}
+	if len(got.Leases) != 1 || got.Leases[0].State != ops.LeaseStateHeld {
+		t.Fatalf("leases = %+v, want one held", got.Leases)
+	}
+	p := got.Leases[0].Prepare
+	if p == nil || p.Command != "npm install --prefer-offline" || p.OK || p.ExitCode != 1 || !strings.Contains(p.Output, "ERESOLVE") {
+		t.Errorf("prepare = %+v, want the failed command with its exit and output", p)
+	}
+	if !strings.Contains(got.Leases[0].Note, "prepare") {
+		t.Errorf("note %q does not say the prepare failed", got.Leases[0].Note)
 	}
 }

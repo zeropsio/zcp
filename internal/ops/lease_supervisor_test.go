@@ -17,11 +17,15 @@ import (
 )
 
 // supervisorAnswer is a leaseSSH handler: the start of the supervisor answers
-// answer (or fails with err); every other command (the checkout) succeeds.
+// answer (or fails with err), the declaration read finds no file, and every
+// other command (the checkout) succeeds.
 func supervisorAnswer(answer string, err error) func(host, command string) ([]byte, error) {
 	return func(_, command string) ([]byte, error) {
-		if strings.Contains(command, "zcp-devsup run") {
+		switch {
+		case strings.Contains(command, "zcp-devsup run"):
 			return []byte(answer), err
+		case strings.Contains(command, "@@zcp-devsup declaration"):
+			return []byte("@@zcp-devsup declaration 1\n"), nil
 		}
 		return nil, nil
 	}
@@ -36,7 +40,7 @@ func TestLeaseAcquire_EnsuresTheSupervisorAfterTheCheckout(t *testing.T) {
 		wantNote []string // empty: no note
 	}{
 		{name: "a reused container: none runs, zcp starts it", answer: "@@zcp-devsup check 2\n@@zcp-devsup started 0\n"},
-		{name: "a fresh container: run.start's supervisor answers", answer: "@@zcp-devsup check 0\n"},
+		{name: "a fresh container: run.start's supervisor answers and is reloaded", answer: "@@zcp-devsup check 0\n@@zcp-devsup reloaded 0\n"},
 		{
 			name: "no zcp-devsup in the pool's image: not a dev pool", answer: "@@zcp-devsup check 127\n",
 			wantNote: []string{"zcp-devsup", "not a dev pool", "no dev servers"},
