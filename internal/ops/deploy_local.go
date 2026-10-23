@@ -265,10 +265,18 @@ func DeployLocal(
 		)
 	}
 
+	return localTriggeredResult(target, targetService, sha, resolvedSHA, versionName, dirty, warnings), nil
+}
+
+// localTriggeredResult is the BUILD_TRIGGERED result of a local push. A
+// deploy whose target is a pool says it changes only the containers the pool
+// creates after it (docs/spec-workflows.md §8 DP-7).
+func localTriggeredResult(target *platform.ServiceStack, targetService, sha, resolvedSHA, versionName string, dirty bool, warnings []string) *DeployResult {
 	message := fmt.Sprintf("Build triggered for %s via zcli push", targetService)
 	if sha != "" {
 		message = fmt.Sprintf("Build triggered for %s via zcli push (commit %s)", targetService, resolvedSHA)
 	}
+	serviceType := target.ServiceStackTypeInfo.ServiceStackTypeVersionName
 	toPool := topology.IsPoolType(serviceType)
 	if toPool {
 		message += PoolDeployNote(targetService, "")
@@ -278,7 +286,7 @@ func DeployLocal(
 		Mode:              "local",
 		TargetService:     targetService,
 		TargetServiceID:   target.ID,
-		TargetServiceType: target.ServiceStackTypeInfo.ServiceStackTypeVersionName,
+		TargetServiceType: serviceType,
 		Message:           message,
 		MonitorHint:       "Build runs asynchronously. Poll zerops_events for build/deploy FINISHED status.",
 		Warnings:          warnings,
@@ -287,7 +295,7 @@ func DeployLocal(
 		VersionName:       versionName,
 
 		ReachesNewContainersOnly: toPool,
-	}, nil
+	}
 }
 
 // deployLocalFromCommitPrep resolves sha and extracts the commit's tree into a fresh temp dir

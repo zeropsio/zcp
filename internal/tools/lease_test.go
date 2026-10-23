@@ -546,10 +546,17 @@ func TestLeaseTool_Rollout_ResultCarriesEnvelope(t *testing.T) {
 	var got struct {
 		Action  string `json:"action"`
 		Rollout struct {
-			Pool                                 string `json:"pool"`
-			Replaced, Created, Retiring, Skipped int
-			Skips                                []struct{ ContainerID, Lease, Reason string }
-			Note                                 string `json:"note"`
+			Pool     string `json:"pool"`
+			Replaced int    `json:"replaced"`
+			Created  int    `json:"created"`
+			Retiring int    `json:"retiring"`
+			Skipped  int    `json:"skipped"`
+			Skips    []struct {
+				ContainerID string `json:"containerId"`
+				Lease       string `json:"lease"`
+				Reason      string `json:"reason"`
+			} `json:"skips"`
+			Note string `json:"note"`
 		} `json:"rollout"`
 	}
 	if err := json.Unmarshal([]byte(text), &got); err != nil {

@@ -221,44 +221,7 @@ func RegisterDeployLocal(
 
 		onProgress := buildProgressCallback(ctx, req)
 		ctx = deployFollowUpContext(ctx)
-		pollDeployBuild(ctx, client, projectID, result, onProgress, logFetcher, nil, stateDir, "")
-		// A deploy to a pool reaches only the containers the pool creates
-		// later (docs/spec-workflows.md §8 DP-7).
-		toPool := result.ReachesNewContainersOnly
-		if toPool {
-			sayPoolImageOnly(result, input.TargetService, "")
-		}
-
-		// L1 break-glass aftermath: a direct deploy on a push-delivering
-		// pair leaves the container ahead of the repo — flag the standing
-		// reconcile push (spec-git-delivery-target §1.1).
-		if result.Status == statusDeployed && !toPool {
-			if warn := repoDeliveryDivergenceWarning(stateDir, input.TargetService); warn != "" {
-				result.Warnings = append(result.Warnings, warn)
-			}
-		}
-
-		switch {
-		case result != nil && result.Status == statusDeployed && toPool:
-			// The pool is no app runtime (PS-1/PS-2): no public access is
-			// decided on it.
-			attempt.SucceededAt = time.Now().UTC().Format(time.RFC3339)
-		case result != nil && result.Status == statusDeployed:
-			attempt.SucceededAt = time.Now().UTC().Format(time.RFC3339)
-			ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, input.TargetService, result)
-		case result != nil && result.TimedOut:
-			// In-flight (B23): build still running at poll timeout, not failed.
-			attempt.Error = deployBuildInFlightMsg
-		case result != nil:
-			attempt.Error = fmt.Sprintf("deploy status %s", result.Status)
-			attempt.FailureClass = classifyDeployStatus(result.Status)
-		}
-		if result != nil {
-			attempt.SHA = result.SHA
-			attempt.AppVersionID = result.AppVersionID
-			attempt.Dirty = result.Dirty
-		}
-		_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
+		settleLocalDeploy(ctx, client, httpClient, logFetcher, onProgress, projectID, stateDir, input.TargetService, attempt, result)
 
 		// deploy_local always runs on a developer box, so the envelope's
 		// environment derives from a zero-value runtime.Info.
@@ -268,6 +231,58 @@ func RegisterDeployLocal(
 			Envelope:         freshEnvelope(ctx, stateDir, client, projectID, runtime.Info{}),
 		}), nil, nil
 	})
+}
+
+// settleLocalDeploy follows a triggered local push to its end and applies its
+// post-deploy steps — split out of RegisterDeployLocal's closure to keep it
+// under the maintainability-index ceiling: a deploy to a pool says it reaches
+// only the containers the pool creates later and decides no public access on
+// it (docs/spec-workflows.md §8 DP-7), the break-glass warning, public access,
+// and the recorded deploy attempt.
+func settleLocalDeploy(
+	ctx context.Context,
+	client platform.Client,
+	httpClient ops.HTTPDoer,
+	logFetcher platform.LogFetcher,
+	onProgress ops.ProgressCallback,
+	projectID, stateDir, target string,
+	attempt workflow.DeployAttempt,
+	result *ops.DeployResult,
+) {
+	pollDeployBuild(ctx, client, projectID, result, onProgress, logFetcher, nil, stateDir, "")
+	toPool := result.ReachesNewContainersOnly
+	if toPool {
+		sayPoolImageOnly(result, target, "")
+	}
+
+	// L1 break-glass aftermath: a direct deploy on a push-delivering
+	// pair leaves the container ahead of the repo — flag the standing
+	// reconcile push (spec-git-delivery-target §1.1).
+	if result.Status == statusDeployed && !toPool {
+		if warn := repoDeliveryDivergenceWarning(stateDir, target); warn != "" {
+			result.Warnings = append(result.Warnings, warn)
+		}
+	}
+
+	switch {
+	case result.Status == statusDeployed && toPool:
+		// The pool is no app runtime (PS-1/PS-2): no public access is
+		// decided on it.
+		attempt.SucceededAt = time.Now().UTC().Format(time.RFC3339)
+	case result.Status == statusDeployed:
+		attempt.SucceededAt = time.Now().UTC().Format(time.RFC3339)
+		ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, target, result)
+	case result.TimedOut:
+		// In-flight (B23): build still running at poll timeout, not failed.
+		attempt.Error = deployBuildInFlightMsg
+	default:
+		attempt.Error = fmt.Sprintf("deploy status %s", result.Status)
+		attempt.FailureClass = classifyDeployStatus(result.Status)
+	}
+	attempt.SHA = result.SHA
+	attempt.AppVersionID = result.AppVersionID
+	attempt.Dirty = result.Dirty
+	_ = workflow.RecordDeployAttempt(stateDir, target, attempt)
 }
 
 // deployLocalResponse wraps the local-mode deploy result with the
