@@ -336,7 +336,7 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 			resp := envChangeResult{Process: delResult.Process, TimedOut: delTimedOut}
 			applyAutoRestart(ctx, client, projectID, input, selfHostname, input.Variables, true, &resp, onProgress)
 			return jsonResult(resp), nil, nil
-		case "request":
+		case envActionRequest:
 			// A request writes nothing: Mate draws a field for the person,
 			// whose value goes straight to the vault — it never enters the
 			// conversation, this result, or any log.

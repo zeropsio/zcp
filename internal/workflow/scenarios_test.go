@@ -1571,6 +1571,7 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		// envelope above.
 		"pool-migrate-plan",
 		"pool-migrate-move",
+		"pool-migrate-env",
 	)
 }
 

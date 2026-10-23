@@ -39,10 +39,10 @@ the dev service's own `verticalAutoscaling`, and `sshIsolation` in the pool's
 It holds no `GIT_TOKEN` — a credential is never written into an import. While
 the pool's import still runs, `next` waits on it.
 
-**Env and after.** Once the pool exists the step is `env`. Where the answer
-names no `next`, `nextUnavailable` says why; nothing changes the pool's env
-meanwhile. Never copy the dev service's env by hand: a secret value must not
-pass through you.
+**Env and after.** Once the pool exists and its import has finished, the
+step is `env` until the pool holds the dev service's env, then `image`. Where
+the answer names no `next`, `nextUnavailable` says why. Never copy the dev
+service's env by hand: a secret value must not pass through you.
 
 **Refusals.** `status: "not-a-candidate"` lists every reason in `refusals`,
 each message naming what it needs:

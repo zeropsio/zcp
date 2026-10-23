@@ -12,6 +12,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"gopkg.in/yaml.v3"
 
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -88,12 +89,21 @@ const (
 	poolMigrateMaxContainers = 3
 )
 
-// The atoms carrying the flow's guidance: the plan on every answer, and the
-// move step's on every answer that carries the census.
+// The atoms carrying the flow's guidance: the plan on every answer, the move
+// step's on every answer that carries the census, and the env step's on its
+// answers and the step's own.
 const (
 	poolMigrateAtomID     = "pool-migrate-plan"
 	poolMigrateMoveAtomID = "pool-migrate-move"
+	poolMigrateEnvAtomID  = "pool-migrate-env"
 )
+
+// envActionRequest is zerops_env's action that asks the person for a value.
+const envActionRequest = "request"
+
+// actionPoolEnv is the env step's own call: zerops_workflow
+// workflow="pool-migrate" action="pool-env" (docs/spec-workflows.md §13 PM-4).
+const actionPoolEnv = "pool-env"
 
 // poolMigrateOrigin is the remote a lease of the pool clones: the dev
 // service's origin.
@@ -129,10 +139,18 @@ type poolMigrateResponse struct {
 	Census *ops.PoolMigrateCensus `json:"census,omitempty"`
 	// WorkBranch is the branch a lease of the pool checks out.
 	WorkBranch *poolMigrateWorkBranch `json:"workBranch,omitempty"`
-	Refusals   []poolMigrateRefusal   `json:"refusals,omitempty"`
-	Warnings   []string               `json:"warnings,omitempty"`
-	Guidance   string                 `json:"guidance"`
-	Inputs     poolMigrateInputs      `json:"inputs"`
+	// Action is "pool-env" on the answer of the env step's own call.
+	Action string `json:"action,omitempty"`
+	// Env is the pool's env against the dev's, on every step once the pool
+	// is settled; after action="pool-env", what the step did.
+	Env *ops.PoolMigrateEnv `json:"env,omitempty"`
+	// EnvRequests are the zerops_env action="request" calls for the secrets
+	// zcp could not read on the dev service.
+	EnvRequests []poolMigrateNext    `json:"envRequests,omitempty"`
+	Refusals    []poolMigrateRefusal `json:"refusals,omitempty"`
+	Warnings    []string             `json:"warnings,omitempty"`
+	Guidance    string               `json:"guidance"`
+	Inputs      poolMigrateInputs    `json:"inputs"`
 }
 
 type poolMigrateStepState struct {
@@ -167,13 +185,37 @@ type poolMigrateInputs struct {
 	Pool    string `json:"pool,omitempty"`
 }
 
+// poolMigrateDeps is what a pool-migrate call works with.
+type poolMigrateDeps struct {
+	projectID string
+	client    platform.Client
+	ssh       ops.SSHDeployer
+	stateDir  string
+	rt        runtime.Info
+	// hqAddress is the address of this Mate's HQ, "" without one: where the
+	// dev service's origin is in a Mate.
+	hqAddress func() string
+}
+
+// poolMigrateCall is what a call read before it acts on a settled pool.
+type poolMigrateCall struct {
+	resp   poolMigrateResponse
+	corpus []workflow.KnowledgeAtom
+	meta   *workflow.ServiceMeta
+	dev    platform.ServiceStack
+	pool   platform.ServiceStack
+	stages []platform.ServiceStack
+}
+
 // handlePoolMigrate is the read side of workflow="pool-migrate": it names the
 // part's current step from direct reads only — the service list and process
 // list a just-made import cannot be missing from — renders the pool stanza
 // for the provision step, carries the census of the dev service's unsaved
-// work and the work's branch on every step, and refuses a non-candidate with
-// every reason it finds. It writes nothing: no state file, no meta, no env, no
-// ref; the one SSH call is the census, read-only git on the dev service.
+// work and the work's branch on every step, compares the pool's env with the
+// dev's once the pool is settled, and refuses a non-candidate with every
+// reason it finds. It writes nothing: no state file, no meta, no env, no
+// ref; the one SSH call is the census, read-only git on the dev service, and
+// the env comparison reads no secret.
 func handlePoolMigrate(
 	ctx context.Context,
 	projectID string,
@@ -183,18 +225,86 @@ func handlePoolMigrate(
 	stateDir string,
 	rt runtime.Info,
 ) (*mcp.CallToolResult, any, error) {
+	return poolMigrateRun(ctx, poolMigrateDeps{projectID: projectID, client: client, ssh: sshDeployer, stateDir: stateDir, rt: rt, hqAddress: hqAddress}, input)
+}
+
+func poolMigrateRun(ctx context.Context, d poolMigrateDeps, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+	call, final, failed := readPoolMigrate(ctx, d, input)
+	switch {
+	case failed != nil:
+		return failed, nil, nil
+	case final != nil:
+		return jsonResult(*final), nil, nil
+	}
+	env, err := ops.ReadPoolMigrateEnv(ctx, d.client, call.envInput(d, input))
+	if err != nil {
+		return convertError(fmt.Errorf("pool-migrate: compare the pool's env: %w", err), WithRecoveryStatus()), nil, nil
+	}
+	return jsonResult(poolMigrateEnvAnswer(call, env)), nil, nil
+}
+
+// handlePoolMigrateEnv is the env step, zerops_workflow workflow="pool-migrate"
+// action="pool-env": it re-runs every check of the read side, then gives the
+// settled pool the dev service's own env (ops.ApplyPoolMigrateEnv) — secrets
+// read on the dev and written by zcp, so no value passes through the agent —
+// and answers what it did with the step that follows.
+func handlePoolMigrateEnv(
+	ctx context.Context,
+	projectID string,
+	client platform.Client,
+	sshDeployer ops.SSHDeployer,
+	input WorkflowInput,
+	stateDir string,
+	rt runtime.Info,
+) (*mcp.CallToolResult, any, error) {
+	return poolMigrateEnvRun(ctx, poolMigrateDeps{projectID: projectID, client: client, ssh: sshDeployer, stateDir: stateDir, rt: rt, hqAddress: hqAddress}, input)
+}
+
+func poolMigrateEnvRun(ctx context.Context, d poolMigrateDeps, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+	if wf := strings.TrimSpace(input.Workflow); wf != "" && wf != workflowPoolMigrate {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf(`action="pool-env" belongs to workflow="pool-migrate", not %q`, wf),
+			`Call zerops_workflow workflow="pool-migrate" action="pool-env" service="<dev>".`,
+		), WithRecoveryStatus()), nil, nil
+	}
+	call, final, failed := readPoolMigrate(ctx, d, input)
+	switch {
+	case failed != nil:
+		return failed, nil, nil
+	case final != nil:
+		final.Action = actionPoolEnv
+		if final.Status == poolMigrateStatusStep {
+			final.Warnings = append(final.Warnings, "Nothing was written: the pool's env is copied once the pool exists and its own processes have finished.")
+		}
+		return jsonResult(*final), nil, nil
+	}
+	env, err := ops.ApplyPoolMigrateEnv(ctx, d.client, d.ssh, call.envInput(d, input))
+	if err != nil {
+		return convertError(fmt.Errorf("pool-migrate: copy the env to the pool: %w", err), WithRecoveryStatus()), nil, nil
+	}
+	resp := poolMigrateEnvAnswer(call, env)
+	resp.Action = actionPoolEnv
+	return jsonResult(resp), nil, nil
+}
+
+// readPoolMigrate runs every check a call makes before the pool is settled.
+// It answers a final response (a refusal, the provision step), an error
+// result, or the call to go on with.
+func readPoolMigrate(ctx context.Context, d poolMigrateDeps, input WorkflowInput) (*poolMigrateCall, *poolMigrateResponse, *mcp.CallToolResult) {
+	client, sshDeployer, rt, stateDir, projectID := d.client, d.ssh, d.rt, d.stateDir, d.projectID
 	service := strings.TrimSpace(input.Service)
 	poolInput := strings.TrimSpace(input.Pool)
 	if service == "" {
-		return convertError(platform.NewPlatformError(
+		return nil, nil, convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			`workflow="pool-migrate" needs service: the dev service to move onto a dev pool`,
 			poolMigrateCandidatesHint(stateDir),
-		), WithRecoveryStatus()), nil, nil
+		), WithRecoveryStatus())
 	}
 	corpus, err := workflow.LoadAtomCorpus()
 	if err != nil {
-		return convertError(err, WithRecoveryStatus()), nil, nil
+		return nil, nil, convertError(err, WithRecoveryStatus())
 	}
 	resp := poolMigrateResponse{
 		Workflow: workflowPoolMigrate,
@@ -203,47 +313,51 @@ func handlePoolMigrate(
 		Guidance: atomBody(corpus, poolMigrateAtomID),
 		Inputs:   poolMigrateInputs{Service: service, Pool: poolInput},
 	}
+	refused := func(refusals ...poolMigrateRefusal) (*poolMigrateCall, *poolMigrateResponse, *mcp.CallToolResult) {
+		r := poolMigrateRefused(resp, refusals...)
+		return nil, &r, nil
+	}
 
 	if !rt.InContainer || sshDeployer == nil {
-		return poolMigrateRefused(resp, poolMigrateRefusal{
+		return refused(poolMigrateRefusal{
 			Reason:  poolMigrateRefuseNotInContainer,
 			Message: "pool-migrate runs from the zcp service inside the project: it reads the dev service over SSH, and a pool's containers answer only there. Nothing was read or changed.",
-		}), nil, nil
+		})
 	}
 	if client == nil {
-		return convertError(platform.NewPlatformError(
+		return nil, nil, convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"Platform client unavailable — pool-migrate reads the project's services",
 			"Ensure ZCP is configured with a Zerops API key (ZCP_API_KEY).",
-		), WithRecoveryStatus()), nil, nil
+		), WithRecoveryStatus())
 	}
 
 	// The direct read, never the ES search: a pool imported a moment ago is
 	// absent from the search for seconds (docs/spec-workflows.md §3.5).
 	live, err := client.ListServicesDirect(ctx, projectID)
 	if err != nil {
-		return convertError(fmt.Errorf("pool-migrate: list services: %w", err), WithRecoveryStatus()), nil, nil
+		return nil, nil, convertError(fmt.Errorf("pool-migrate: list services: %w", err), WithRecoveryStatus())
 	}
 	byName := make(map[string]platform.ServiceStack, len(live))
 	for _, svc := range live {
 		byName[svc.Name] = svc
 	}
 	if svc, ok := byName[service]; ok && topology.IsPoolOrSandboxType(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) {
-		return poolMigrateRefused(resp, poolMigrateRefusal{
+		return refused(poolMigrateRefusal{
 			Reason:  poolMigrateRefusePoolOrBox,
 			Message: fmt.Sprintf("%s is a %s service: already a pool or a Box, not a dev service to move onto one.", service, svc.ServiceStackTypeInfo.ServiceStackTypeVersionName),
-		}), nil, nil
+		})
 	}
 
 	meta, err := workflow.FindServiceMeta(stateDir, service)
 	if err != nil {
-		return convertError(fmt.Errorf("pool-migrate: read the service's meta: %w", err), WithRecoveryStatus()), nil, nil
+		return nil, nil, convertError(fmt.Errorf("pool-migrate: read the service's meta: %w", err), WithRecoveryStatus())
 	}
 	if meta == nil || !meta.IsComplete() {
-		return poolMigrateRefused(resp, poolMigrateRefusal{
+		return refused(poolMigrateRefusal{
 			Reason:  poolMigrateRefuseNotAdopted,
 			Message: fmt.Sprintf("%s is not a dev service zcp tracks, or its bootstrap has not finished. Adopt it with zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"adopt\" (or finish the bootstrap), then call again.", service),
-		}), nil, nil
+		})
 	}
 	dev := meta.Hostname
 	resp.Service = dev
@@ -276,21 +390,21 @@ func handlePoolMigrate(
 	}
 	resp.Pool = pool
 	if len(refusals) > 0 {
-		return poolMigrateRefused(resp, refusals...), nil, nil
+		return refused(refusals...)
 	}
 
 	census, err := ops.ReadPoolMigrateCensus(ctx, sshDeployer, dev, topology.CodeMountRoot)
 	if err != nil {
-		return poolMigrateRefused(resp, poolMigrateRefusal{
+		return refused(poolMigrateRefusal{
 			Reason:  poolMigrateRefuseDevUnreadable,
 			Message: withSSHStderr("could not read "+dev+"'s repository over SSH", err) + ". A dev service the flow cannot read does not move: what it holds would be unknown.",
-		}), nil, nil
+		})
 	}
 	if crew := poolMigrateCrewHandles(census); len(crew) > 0 {
-		return poolMigrateRefused(resp, poolMigrateRefusal{
+		return refused(poolMigrateRefusal{
 			Reason:  poolMigrateRefuseCrewWorktrees,
 			Message: fmt.Sprintf("%s holds crew worktrees (%s). Crew lanes stay on a plain dev service until crewmates work on leases of a pool, so it does not move onto one; nothing was changed.", dev, strings.Join(crew, ", ")),
-		}), nil, nil
+		})
 	}
 
 	resp.Census = census
@@ -303,29 +417,98 @@ func handlePoolMigrate(
 	if !poolLive {
 		stanza, warnings, err := renderPoolStanza(ctx, client, devSvc, pool, rt.ServiceName)
 		if err != nil {
-			return convertError(fmt.Errorf("pool-migrate: render the pool stanza: %w", err), WithRecoveryStatus()), nil, nil
+			return nil, nil, convertError(fmt.Errorf("pool-migrate: render the pool stanza: %w", err), WithRecoveryStatus())
 		}
 		resp.Warnings = warnings
-		return poolMigrateAt(resp, poolMigrateStepProvision, &poolMigrateNext{
+		r := poolMigrateAt(resp, poolMigrateStepProvision, &poolMigrateNext{
 			Tool: "zerops_import",
 			Args: map[string]string{"content": stanza},
 			Why:  "Imports the part's pool. An import runs inside a develop task.",
-		}, ""), nil, nil
+		}, "")
+		return nil, &r, nil
 	}
 
 	activity, err := ops.ProjectActivity(ctx, client, projectID, map[string]string{poolSvc.ID: pool})
 	if err != nil {
-		return convertError(fmt.Errorf("pool-migrate: read the project's processes: %w", err), WithRecoveryStatus()), nil, nil
+		return nil, nil, convertError(fmt.Errorf("pool-migrate: read the project's processes: %w", err), WithRecoveryStatus())
 	}
 	if len(activity[pool]) > 0 {
-		return poolMigrateAt(resp, poolMigrateStepProvision, &poolMigrateNext{
+		r := poolMigrateAt(resp, poolMigrateStepProvision, &poolMigrateNext{
 			Tool: "zerops_process",
 			Args: map[string]string{"action": "wait", "service": pool},
 			Why:  "The pool's own processes are still running; the next step starts once they finish.",
-		}, ""), nil, nil
+		}, "")
+		return nil, &r, nil
 	}
-	return poolMigrateAt(resp, poolMigrateStepEnv, nil,
-		"The env step gives the pool the dev service's own env, secrets included, with no value passing through you. This zcp names the step but does not run it yet; nothing changes the pool's env meanwhile."), nil, nil
+	var stages []platform.ServiceStack
+	for _, stage := range meta.StageHostnames() {
+		if svc, ok := byName[stage]; ok {
+			stages = append(stages, svc)
+		}
+	}
+	return &poolMigrateCall{resp: resp, corpus: corpus, meta: meta, dev: devSvc, pool: poolSvc, stages: stages}, nil, nil
+}
+
+// envInput is what the env step reads for this call.
+func (c *poolMigrateCall) envInput(d poolMigrateDeps, input WorkflowInput) ops.PoolMigrateEnvInput {
+	return ops.PoolMigrateEnvInput{
+		Dev:          c.dev,
+		Pool:         c.pool,
+		Stages:       c.stages,
+		InMate:       d.rt.MateEnabled,
+		CopyGitToken: input.CopyGitToken.Bool(),
+		Origin:       poolMigrateDevOrigin(c.meta, d),
+		StateDir:     d.stateDir,
+	}
+}
+
+// poolMigrateDevOrigin is the repository the dev service's work moves
+// through, the one a lease of the pool clones: in a Mate the pair's HQ
+// repository, elsewhere its git-push remote. "" when zcp cannot name it.
+func poolMigrateDevOrigin(meta *workflow.ServiceMeta, d poolMigrateDeps) string {
+	if !d.rt.MateEnabled {
+		return meta.RemoteURL
+	}
+	if meta.HQ == nil || meta.HQ.Repo == "" || d.hqAddress == nil {
+		return ""
+	}
+	address := d.hqAddress()
+	if address == "" {
+		return ""
+	}
+	return hq.RepoURLAt(address, meta.HQ.AppID, meta.HQ.Repo)
+}
+
+// poolMigrateEnvAnswer answers a settled pool: the env step while the pool's
+// env is not the dev's, the image step once it is.
+func poolMigrateEnvAnswer(call *poolMigrateCall, env *ops.PoolMigrateEnv) poolMigrateResponse {
+	resp := call.resp
+	shown := *env
+	shown.Requests = nil
+	resp.Env = &shown
+	for _, req := range env.Requests {
+		resp.EnvRequests = append(resp.EnvRequests, poolMigrateNext{
+			Tool: "zerops_env",
+			Args: map[string]string{
+				"action": envActionRequest, "serviceHostname": call.pool.Name,
+				"key": req.Key, "label": req.Label, "why": req.Why, "sensitive": "true",
+			},
+			Why: fmt.Sprintf("zcp could not read %s on %s, so the person gives the pool its value.", req.Key, call.dev.Name),
+		})
+	}
+	if envAtom := atomBody(call.corpus, poolMigrateEnvAtomID); envAtom != "" {
+		resp.Guidance += "\n\n" + envAtom
+	}
+	if env.Done {
+		return poolMigrateAt(resp, poolMigrateStepImage, nil,
+			"The image step deploys the part's pool setup to the pool. This zcp names the step but does not run it yet.")
+	}
+	args := map[string]string{"workflow": workflowPoolMigrate, "action": actionPoolEnv, "service": call.dev.Name, "pool": call.pool.Name}
+	return poolMigrateAt(resp, poolMigrateStepEnv, &poolMigrateNext{
+		Tool: "zerops_workflow",
+		Args: args,
+		Why:  "zcp gives the pool the dev service's own env itself, secrets included, writing only what differs; no value passes through you.",
+	}, "")
 }
 
 // poolMigrateMetaRefusals are the refusals the meta alone decides: the mode,
@@ -536,7 +719,7 @@ func renderPoolStanza(ctx context.Context, client platform.Client, dev platform.
 }
 
 // poolMigrateAt answers a candidate's current step.
-func poolMigrateAt(resp poolMigrateResponse, step string, next *poolMigrateNext, nextUnavailable string) *mcp.CallToolResult {
+func poolMigrateAt(resp poolMigrateResponse, step string, next *poolMigrateNext, nextUnavailable string) poolMigrateResponse {
 	resp.Status = poolMigrateStatusStep
 	resp.Step = step
 	resp.Next = next
@@ -553,15 +736,15 @@ func poolMigrateAt(resp poolMigrateResponse, step string, next *poolMigrateNext,
 		}
 		resp.Steps = append(resp.Steps, poolMigrateStepState{Step: s, State: state})
 	}
-	return jsonResult(resp)
+	return resp
 }
 
 // poolMigrateRefused answers a non-candidate: every reason found, no step and
 // no next call.
-func poolMigrateRefused(resp poolMigrateResponse, refusals ...poolMigrateRefusal) *mcp.CallToolResult {
+func poolMigrateRefused(resp poolMigrateResponse, refusals ...poolMigrateRefusal) poolMigrateResponse {
 	resp.Status = poolMigrateStatusNotCandidate
 	resp.Refusals = refusals
-	return jsonResult(resp)
+	return resp
 }
 
 // poolMigrateCandidatesHint names the dev services this project tracks, for a
