@@ -19,9 +19,13 @@ type ObservedEnvironments struct {
 	AppID        string                `json:"appId"`
 	Environments []ObservedEnvironment `json:"environments"`
 }
+
+// ActiveVersion is a service's running version as HQ answers it: Zerops'
+// `GET /app-version/{id}` names no version, and activatedAt stays null until
+// the version is activated.
 type ActiveVersion struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID          string  `json:"id"`
+	ActivatedAt *string `json:"activatedAt"`
 }
 type ObservedService struct {
 	ID            string         `json:"id"`
