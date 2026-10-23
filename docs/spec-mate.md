@@ -1735,9 +1735,10 @@ sequenceDiagram
   the balancer's IPv4 cut and lets the old one go only once HQ answered on the new one; the Mate
   treats `superseded` as expected, never as a failure that triggers backoff. Links are held by HQ's
   leader only; no registry spans instances.
-- Liveness is the connection: a transport ping about every 30 s. HQ writes only connect and
-  disconnect transitions. A Mate reconnects with random backoff. No periodic re-proof: it would couple
-  every Mate's availability to the Zerops API and expire the fleet at once.
+- Liveness is the connection: a transport ping at HQ's period (mate-hq `spec/protocol.md`, Mate
+  link). HQ writes only connect and disconnect transitions. A Mate reconnects with random backoff.
+  No periodic re-proof: it would couple every Mate's availability to the Zerops API and expire the
+  fleet at once.
 - On every link HQ sends the Mate's state, then the full access snapshot, then versioned deltas
   (§3.9), and the Mate's Git credential whenever HQ issues a new one.
 
