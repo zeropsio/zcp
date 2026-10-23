@@ -998,7 +998,12 @@ const leaseStatusTimeout = 10 * time.Second
 // records, marked unverified. Only the lease's non-secret view crosses over;
 // the lease string never leaves ops (DP-3).
 func leaseReader(client platform.Client, projectID, stateDir string) workflow.LeaseReader {
-	swarm := ops.NewSwarmFactory(&http.Client{Timeout: leaseStatusTimeout})
+	return leaseReaderWith(client, projectID, stateDir, ops.NewSwarmFactory(&http.Client{Timeout: leaseStatusTimeout}))
+}
+
+// leaseReaderWith is leaseReader over a given orchestrator factory (the lease
+// tool reads through the one it was registered with).
+func leaseReaderWith(client platform.Client, projectID, stateDir string, swarm ops.SwarmFactory) workflow.LeaseReader {
 	return func(ctx context.Context) ([]workflow.LeaseSnapshot, error) {
 		if client == nil || stateDir == "" {
 			return nil, fmt.Errorf("lease reader: no platform client or state directory")

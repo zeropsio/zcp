@@ -363,11 +363,12 @@ func renderServices(b *strings.Builder, env StateEnvelope) {
 // orchestrator did not answer is marked unverified. A lease string has no
 // field in LeaseSnapshot, so it cannot appear here (DP-3).
 func renderLeases(b *strings.Builder, env StateEnvelope) {
-	if len(env.Leases) == 0 {
+	leases := env.LeaseList()
+	if len(leases) == 0 {
 		return
 	}
 	fmt.Fprintln(b, "Leases:")
-	for _, l := range env.Leases {
+	for _, l := range leases {
 		branch := l.Branch
 		if branch == "" {
 			branch = "-"

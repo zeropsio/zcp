@@ -190,6 +190,7 @@ One reducer reads both carriers, in this order:
 | `zerops_verify` (single and all-services) | JSON | `envelope` key |
 | `zerops_import` | JSON | `envelope` key |
 | `zerops_mount` (mount, unmount, status) | JSON | `envelope` key |
+| `zerops_lease` (acquire, status, release) | JSON | `envelope` key — built after the operation, so the reducer sees the new lease set at once |
 | `zerops_workflow` bootstrap `start`/`complete`/`skip`/`status` | JSON | `envelope` key |
 | `zerops_standup` | JSON | `envelope` key |
 
@@ -223,7 +224,8 @@ state costs ~1.2 KB (no fence, no markdown) — a deploy response measured 119 B
 The synthesized guidance a prose result carries is held under `workflow.ComposeBodyBudget`
 (24 KB), which sits below the 28 KB soft cap and the **32 KB MCP tool-response cap** precisely
 to leave room for the scaffold `RenderStatus` adds — so the envelope fits inside existing
-headroom and needs no budget of its own. `TestAppendEnvelope_BlockSizeBudget` pins it. JSON
+headroom and needs no budget of its own. `TestAppendEnvelope_BlockSizeBudget` pins it, with eight
+leases (§2.8a.3) on top of the four-service fixture (~3.1 KB fenced). JSON
 results are far smaller than the prose ones and are nowhere near the cap.
 
 ### 1.6 Why not `structuredContent`
@@ -1108,6 +1110,33 @@ Single-part, today and after (3) — the same pair, the same meaning:
 ```
 
 The full 1- and 3-part envelopes are the fixtures (§2.8a.7).
+
+**`leases[]` — a lease is per thread, not per service.** It is a top-level key of the envelope, beside
+`services`, not a field of a `ServiceSnapshot`:
+
+```json
+"leases": [ { "alias": "webpool-3", "pool": "webpool", "branch": "feat-x",
+              "containerHostname": "node-id-3.runtime.webpool.zerops", "state": "held", "unverified": false } ]
+```
+
+| Key | Meaning |
+|---|---|
+| `alias` | `<pool>-<number>`, the name the lease is addressed by (`zerops_lease`, `zerops_verify`, `zerops_dev_server`, the SSH alias, the mount `/var/www/<pool>-<number>`) |
+| `pool`, `branch` | the pool service's hostname; the branch checked out in the leased container |
+| `containerHostname` | the container's own hostname (`node-id-<n>.runtime.<pool>.zerops`) |
+| `state` | the reconciled state, verbatim (`held`, `lost`, `unknown-holder`, …) — never enumerated by a reader |
+| `unverified` | `true` when the state is zcp's own last-known record because the pool's orchestrator did not answer |
+
+- **Absent means "not read"; `[]` means "read, none held".** The key is emitted whenever zcp read
+  the leases for this envelope — `zerops_workflow action="status"`, every JSON carrier (§1.4, through
+  `tools.freshEnvelope`) and `zerops_lease` — and left out when it did not (no reader, or a project that
+  lists no pool and has no lease record). Never `null`. A client keeps the last list it read until a
+  newer envelope carries the key (`TestEnvelopeJSON_LeasesNotRead_NoKey`,
+  `TestEnvelopeJSON_LeasesReadNone_EmptyArray`).
+- **Additive: no version gate.** Mate decodes the envelope forward-compatibly, so the key needs no
+  `SupportedContract` bump and no `MinimumMateVersion` raise; a Mate that does not know it ignores it.
+- **The lease string never appears** (`spec-workflows.md` §8 DP-3): a lease has no field that could
+  carry it (`TestEnvelopeJSON_NoLeaseString`).
 
 #### 2.8a.4 `ServiceMeta.Stages[]` (zcp-internal)
 
@@ -2777,6 +2806,11 @@ Three outcomes, deliberately distinct — a caller must never read one as anothe
 | `disabled` | not a Zerops environment | nothing — the mount table is never read |
 | `unavailable` | Zerops, but the mount table could not be read at all | degrades, names the reason, warns once (cleared by the next successful read); never empties the set on this path |
 | `available` | the answer, possibly `[]` | `[]` renders "no repositories yet" — a fact, not an error |
+
+A repository may also be a **lease mount**: `/var/www/<pool>-<number>` (mount source `<alias>:/var/www`,
+`<alias>` the lease alias of §2.8a.3 `leases[]`) is a direct child of `/var/www` like any dev mount, so it
+is a repository by the same rule and the same bounded probe; it drops out of the set when its lease is
+released and the mount goes.
 
 The set is cached for 30 s (`REPOSITORY_CACHE_TTL`) and unconditionally re-read by `refresh`, which
 a turn start calls explicitly. `ZeropsRepositories` consumers — the git spawner (§6.2), the

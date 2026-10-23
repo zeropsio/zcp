@@ -87,6 +87,11 @@ func TestJSONCarriers_WireContract(t *testing.T) {
 			bootstrapResponse{BootstrapResponse: &workflow.BootstrapResponse{}},
 		},
 		{
+			"leaseToolResult",
+			leaseToolResult{Action: "status", Leases: []ops.LeaseView{}, Envelope: &env},
+			leaseToolResult{Action: "status", Leases: []ops.LeaseView{}},
+		},
+		{
 			"bootstrapDiscoveryResponse",
 			bootstrapDiscoveryResponse{BootstrapDiscoveryResponse: &workflow.BootstrapDiscoveryResponse{}, Envelope: &env},
 			bootstrapDiscoveryResponse{BootstrapDiscoveryResponse: &workflow.BootstrapDiscoveryResponse{}},

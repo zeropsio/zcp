@@ -401,7 +401,7 @@ func (s *Server) registerTools() {
 	// only inside the project (docs/spec-workflows.md §8 DP-3/DP-5). A start or
 	// a reset-release restarts the container, so the client outwaits the 15 s
 	// readiness client above.
-	tools.RegisterLease(s.server, s.client, projectID, stateDir, ops.NewSwarmFactory(&http.Client{Timeout: 2 * time.Minute}), s.mounter, s.sshDeployer)
+	tools.RegisterLease(s.server, s.client, projectID, stateDir, ops.NewSwarmFactory(&http.Client{Timeout: 2 * time.Minute}), s.mounter, s.sshDeployer, s.rtInfo)
 
 	// Container-only: zerops_browser wraps agent-browser with a guaranteed
 	// open→work→close lifecycle. agent-browser is pre-installed in the ZCP

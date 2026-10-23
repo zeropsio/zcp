@@ -18,6 +18,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 const (
@@ -134,7 +136,7 @@ func leaseToolServerSSH(t *testing.T, orch http.Handler, ssh ops.SSHDeployer) (s
 		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{Key: "API_TOKEN", Content: leaseTestToken, Sensitive: true}})
 	factory := func(_, token string) ops.SwarmAPI { return platform.NewSwarmClient(hs.URL, token, hs.Client()) }
 	srv = mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterLease(srv, mock, "proj-1", stateDir, factory, nil, ssh)
+	RegisterLease(srv, mock, "proj-1", stateDir, factory, nil, ssh, runtime.Info{})
 	return srv, stateDir
 }
 
@@ -217,7 +219,7 @@ func TestLeaseTool_OrchestratorUnreachable_Explains(t *testing.T) {
 		}).
 		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{Key: "API_TOKEN", Content: leaseTestToken, Sensitive: true}})
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterLease(srv, mock, "proj-1", stateDir, ops.NewSwarmFactory(&http.Client{Transport: dnsFailTransport{}}), nil, nil)
+	RegisterLease(srv, mock, "proj-1", stateDir, ops.NewSwarmFactory(&http.Client{Transport: dnsFailTransport{}}), nil, nil, runtime.Info{})
 
 	for _, args := range []map[string]any{
 		{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo},
@@ -456,5 +458,52 @@ func TestLeaseDeps_Mounter_WiresHostSide(t *testing.T) {
 	bare := leaseDeps(platform.NewMock(), "proj-1", "/state", nil, nil, nil)
 	if bare.Host.Mounter != nil || bare.Host.Run != nil || bare.SSH != nil {
 		t.Errorf("without a mounter the host side must do nothing, got Host %+v SSH %v", bare.Host, bare.SSH)
+	}
+}
+
+// TestLeaseTool_ResultCarriesEnvelope pins that acquire, status and release each
+// answer with the lifecycle envelope under the top-level `envelope` key, built
+// after the operation: acquire lists the new lease, release no longer does.
+func TestLeaseTool_ResultCarriesEnvelope(t *testing.T) {
+	t.Parallel()
+	srv, _ := leaseToolServer(t, &fakeOrchestrator{})
+
+	steps := []struct {
+		name string
+		args map[string]any
+		want []string // aliases the envelope lists afterwards
+	}{
+		{"acquire", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo, "branch": "feature-x"}, []string{"devpool-3"}},
+		{"status", map[string]any{"action": "status"}, []string{"devpool-3"}},
+		{"release", map[string]any{"action": "release", "lease": "devpool-3"}, nil},
+	}
+	for _, st := range steps {
+		res := callTool(t, srv, "zerops_lease", st.args)
+		text := getTextContent(t, res)
+		if res.IsError {
+			t.Fatalf("%s: unexpected error: %s", st.name, text)
+		}
+		env, ok := workflow.ExtractEnvelope(text)
+		if !ok {
+			t.Fatalf("%s: no top-level envelope in\n%s", st.name, text)
+		}
+		if env.Leases == nil {
+			t.Fatalf("%s: envelope did not read the leases: %s", st.name, text)
+		}
+		got := make([]string, 0, len(env.LeaseList()))
+		for _, l := range env.LeaseList() {
+			got = append(got, l.Alias)
+		}
+		if strings.Join(got, ",") != strings.Join(st.want, ",") {
+			t.Errorf("%s: envelope leases = %v, want %v", st.name, got, st.want)
+		}
+		if st.want == nil && !strings.Contains(text, `"leases":[]`) {
+			t.Errorf("%s: a read-none envelope must carry \"leases\":[]\n%s", st.name, text)
+		}
+		for _, secret := range []string{leaseTestLease, leaseTestToken} {
+			if strings.Contains(text, secret) {
+				t.Errorf("%s: result carries a secret", st.name)
+			}
+		}
 	}
 }

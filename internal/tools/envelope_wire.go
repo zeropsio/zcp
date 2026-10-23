@@ -129,6 +129,11 @@ func withFreshEnvelope(
 // answer is never altered by an envelope problem; the reason goes to stderr
 // (JSON-only stdout).
 //
+// The envelope carries the project's pool-container leases (leases[], docs/spec-mate.md
+// §2.8a.3) like action="status" does: the default lease reader asks the pool
+// orchestrators, an extra option (the lease tool's own orchestrator factory)
+// replaces it.
+//
 // Call it only after a SUCCESSFUL mutation — the point is to describe the
 // state the mutation produced.
 func freshEnvelope(
@@ -137,8 +142,10 @@ func freshEnvelope(
 	client platform.Client,
 	projectID string,
 	rt runtime.Info,
+	extra ...workflow.EnvelopeOption,
 ) *workflow.StateEnvelope {
-	envelope, err := workflow.ComputeEnvelope(ctx, client, stateDir, projectID, rt, time.Now())
+	opts := append([]workflow.EnvelopeOption{workflow.WithLeaseReader(leaseReader(client, projectID, stateDir))}, extra...)
+	envelope, err := workflow.ComputeEnvelope(ctx, client, stateDir, projectID, rt, time.Now(), opts...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "zcp: compute envelope for tool result: %v\n", err)
 		return nil

@@ -733,7 +733,7 @@ func TestRenderStatus_LeasesBlock(t *testing.T) {
 
 	resp := Response{Envelope: StateEnvelope{
 		Phase: PhaseIdle,
-		Leases: []LeaseSnapshot{
+		Leases: &[]LeaseSnapshot{
 			{Alias: "devpool-3", Pool: "devpool", Branch: "feat-x", ContainerHostname: "node-id-3.runtime.devpool.zerops", State: "held"},
 			{Alias: "devpool-12", Pool: "devpool", State: "lost"},
 			{Alias: "apool-1", Pool: "apool", Branch: "main", State: "held", Unverified: true},
