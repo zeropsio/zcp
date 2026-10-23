@@ -429,7 +429,7 @@ func scaleBoundsConflict(asked ScaleParams, sent platform.AutoscalingParams) err
 // poolContainerCountNotice is what a pool's container counts mean: they are
 // the ceiling of what its orchestrator can lease out, not a replica count.
 const poolContainerCountNotice = "A pool's container count caps how many containers its orchestrator can hand out. " +
-	"Lowering maxContainers below the containers in use can remove them."
+	"Check zerops_lease status before lowering maxContainers below the containers in use."
 
 // poolContainerBounds is the minContainers..maxContainers range each pool
 // type's own stanza in the import schema allows

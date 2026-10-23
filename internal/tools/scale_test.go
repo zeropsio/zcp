@@ -327,7 +327,7 @@ func TestScaleTool_Pool_ResultCarriesTheContainerCountNotice(t *testing.T) {
 		t.Fatalf("parse result: %v", err)
 	}
 	notice, _ := parsed["notice"].(string)
-	for _, want := range []string{"orchestrator", "Lowering maxContainers below the containers in use can remove them"} {
+	for _, want := range []string{"orchestrator", "Check zerops_lease status before lowering maxContainers below the containers in use"} {
 		if !strings.Contains(notice, want) {
 			t.Errorf("notice = %q, want it to contain %q", notice, want)
 		}
