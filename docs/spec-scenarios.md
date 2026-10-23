@@ -140,7 +140,7 @@ Edge case: plan generates `[postgresql@16]` with no runtimes.
 
 ### 2.3 Route `adopt` — Adopt existing
 
-**Precondition**: ≥1 non-system, non-managed service without complete ServiceMeta.
+**Precondition**: ≥1 non-system app runtime without complete ServiceMeta — managed services, Swarm pools and Zerops Boxes are never adopt candidates (`spec-workflows.md §8 PS-2`).
 
 | Step | Envelope | Plan.Primary | Atoms |
 |---|---|---|---|
@@ -630,6 +630,7 @@ Legend: ↑ existing scenario to promote · ✚ scenario to write.
 | A10 ↑ | `existing-simple-mode-node-add-endpoint` | unmanaged simple svc · adopt · simple | add an endpoint | liveness meta never | gate |
 | A11 ✚ | `bootstrap-managed-only-target` | brand-new · classic · plan = db only | just a Postgres for now | expectedServices meta never | promote: meta |
 | A12 ✚ | `classic-code-runner-sandbox` | brand-new · classic · simple · node + Swarm pool (infrastructure, never the runtime) | API that runs people's Python snippets in throwaway containers | expectedServices containerCheck(snippet ran in a container of the pool; `${sandbox_API_TOKEN}` reference in zerops.yaml) noFabricatedSecret noFailedProcesses toolArg(no literal TOKEN value in an env set or import) never(dev server or lease on the pool) | gate |
+| A13 ✚ | `adopt-app-with-existing-pool` | unmanaged app + Swarm pool (preseed) · adopt · single runtime · node + pool | connect to what I have, add a health endpoint | expectedServices internalLiveness unchanged(the pool) meta(app adopted) noFailedProcesses toolArg(max 0 zerops_import) never(pool in an adopt or develop scope or plan; deploy, dev server or lease on the pool) | gate |
 
 #### B. Developing (seed: deployed fixture)
 
