@@ -756,3 +756,30 @@ func TestLeaseAcquire_StateDirUnwritable_TakesNoContainer(t *testing.T) {
 		t.Errorf("the orchestrator reserved %d container(s) for an acquire that could not record one", n)
 	}
 }
+
+// TestLeaseAcquireGroup_RepoAsGiven_EveryMemberClonesIt: a group acquire of
+// `…/repo.git` clones that URL in every member's container, never its
+// canonical `…/repo`, which a plain git server refuses; every member's record
+// keeps the canonical identity (DP-18).
+func TestLeaseAcquireGroup_RepoAsGiven_EveryMemberClonesIt(t *testing.T) {
+	t.Parallel()
+	const given = "https://git.example.com/team/repo.git"
+	gf := newGroupFixture(t)
+	if _, err := LeaseAcquireGroup(context.Background(), gf.deps, []string{groupHQPool, groupWebPool}, given, "feat"); err != nil {
+		t.Fatalf("LeaseAcquireGroup: %v", err)
+	}
+	cmds := gf.ssh.checkouts()
+	if len(cmds) != 2 {
+		t.Fatalf("checkouts = %d, want one per member", len(cmds))
+	}
+	for _, c := range cmds {
+		if !strings.Contains(c.command, "git remote add origin "+shellQuote(given)) || strings.Contains(c.command, shellQuote("https://git.example.com/team/repo")) {
+			t.Errorf("%s does not clone %s as given:\n%s", c.hostname, given, c.command)
+		}
+	}
+	for alias, r := range gf.records(t) {
+		if r.Repo != "https://git.example.com/team/repo" {
+			t.Errorf("%s repo = %q, want the canonical identity", alias, r.Repo)
+		}
+	}
+}
