@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -26,22 +27,47 @@ import (
 
 // poolMigrateSSH answers the dev service's census with output and records
 // every command it is asked to run, so a test can prove the read side ran
-// only the read-only census.
+// only the read-only census. The env step's secret read runs for real in a
+// local shell whose environment is env — the dev container's session env —
+// or, with envErr, fails with envOutput as the session's output.
 type poolMigrateSSH struct {
-	mu       sync.Mutex
-	output   string
-	err      error
-	commands []string
+	mu        sync.Mutex
+	output    string
+	err       error
+	env       map[string]string
+	envErr    error
+	envOutput string
+	commands  []string
 }
 
-func (s *poolMigrateSSH) ExecSSH(_ context.Context, hostname, command string) ([]byte, error) {
+// poolMigrateEnvReadMarker starts the env step's secret read.
+const poolMigrateEnvReadMarker = "'zcp-env 1'"
+
+func (s *poolMigrateSSH) ExecSSH(ctx context.Context, hostname, command string) ([]byte, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.commands = append(s.commands, hostname+": "+command)
-	if s.err != nil {
-		return nil, s.err
+	census, censusErr := s.output, s.err
+	env, envErr, envOutput := s.env, s.envErr, s.envOutput
+	s.mu.Unlock()
+	if !strings.Contains(command, poolMigrateEnvReadMarker) {
+		if censusErr != nil {
+			return nil, censusErr
+		}
+		return []byte(census), nil
 	}
-	return []byte(s.output), nil
+	if envErr != nil {
+		return []byte(envOutput), &platform.SSHExecError{Hostname: hostname, Output: envOutput, Err: envErr}
+	}
+	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
+	for k, v := range env {
+		cmd.Env = append(cmd.Env, k+"="+v)
+	}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return out, &platform.SSHExecError{Hostname: hostname, Output: string(out), Err: err}
+	}
+	return out, nil
 }
 
 func (s *poolMigrateSSH) ExecSSHBackground(_ context.Context, hostname, command string, _ time.Duration) ([]byte, error) {
@@ -82,11 +108,9 @@ func poolMigrateCensusFor(branch, remote, remoteBranch, worktrees string, extra 
 	head := "(detached)"
 	if branch != "" {
 		head = branch
-		upstream := ""
+		upstream := "\t"
 		if remote != "" {
 			upstream = remote + "\trefs/heads/" + remoteBranch
-		} else {
-			upstream = "\t"
 		}
 		b.WriteString("B refs/heads/" + branch + "\t" + upstream + "\n")
 		b.WriteString("U refs/heads/" + branch + "\t0\n")
@@ -160,9 +184,15 @@ type poolMigrateFixture struct {
 	// search, when set, is what the lagging ES search returns.
 	search    []platform.ServiceStack
 	processes []platform.Process
+	// env holds each service's service env rows, by service id.
+	env       map[string][]platform.ServiceEnvVar
 	ssh       *poolMigrateSSH
 	rt        runtime.Info
 	input     WorkflowInput
+	hqAddress func() string
+	// stateDir and mock persist across the fixture's calls once built.
+	stateDir string
+	mock     *platform.Mock
 }
 
 func newPoolMigrateFixture() poolMigrateFixture {
@@ -172,29 +202,76 @@ func newPoolMigrateFixture() poolMigrateFixture {
 			poolMigrateRuntime("appdev", "svc-dev"),
 			poolMigrateRuntime("appstage", "svc-stage"),
 		},
+		env: map[string][]platform.ServiceEnvVar{
+			"svc-pool": poolMigratePoolOwnEnv(),
+		},
 		ssh:   &poolMigrateSSH{output: poolMigrateCleanCensus()},
 		rt:    runtime.Info{InContainer: true, ServiceName: "zcp"},
 		input: WorkflowInput{Workflow: "pool-migrate", Service: "appdev"},
 	}
 }
 
-func (f poolMigrateFixture) run(t *testing.T) (map[string]any, *platform.Mock) {
+// poolMigratePoolOwnEnv is what a freshly imported pool holds: its own
+// orchestrator tokens (read masked) and its sshIsolation.
+func poolMigratePoolOwnEnv() []platform.ServiceEnvVar {
+	return []platform.ServiceEnvVar{
+		{ID: "p-api", Key: "API_TOKEN", Content: platform.MaskedEnvValue, Type: platform.ServiceEnvUser, Sensitive: true},
+		{ID: "p-admin", Key: "ADMIN_TOKEN", Content: platform.MaskedEnvValue, Type: platform.ServiceEnvUser, Sensitive: true},
+		{ID: "p-ssh", Key: "sshIsolation", Content: "vpn service@zcp", Type: platform.ServiceEnvUser},
+	}
+}
+
+// build seeds the state dir and the mock the fixture describes, once.
+func (f *poolMigrateFixture) build(t *testing.T) {
 	t.Helper()
-	stateDir := t.TempDir()
-	if f.meta != nil {
-		if err := workflow.WriteServiceMeta(stateDir, f.meta); err != nil {
-			t.Fatalf("seed meta: %v", err)
+	if f.stateDir == "" {
+		f.stateDir = t.TempDir()
+		if f.meta != nil {
+			if err := workflow.WriteServiceMeta(f.stateDir, f.meta); err != nil {
+				t.Fatalf("seed meta: %v", err)
+			}
 		}
 	}
-	mock := platform.NewMock().WithServicesDirect(f.services).WithProjectProcesses(f.processes)
-	if f.search != nil {
-		mock.WithServices(f.search)
-	} else {
-		mock.WithServices(f.services)
+	if f.mock != nil {
+		return
 	}
-	result, typed, err := handlePoolMigrate(context.Background(), "proj-1", mock, f.ssh, f.input, stateDir, f.rt)
+	f.mock = platform.NewMock().WithServicesDirect(f.services).WithProjectProcesses(f.processes)
+	if f.search != nil {
+		f.mock.WithServices(f.search)
+	} else {
+		f.mock.WithServices(f.services)
+	}
+	for id, rows := range f.env {
+		f.mock.WithServiceEnv(id, rows)
+		f.mock.WithProcess(&platform.Process{ID: "proc-envset-" + id, Status: platform.ProcessStatusFinished})
+		for _, row := range rows {
+			f.mock.WithProcess(&platform.Process{ID: "proc-envdel-" + row.ID, Status: platform.ProcessStatusFinished})
+		}
+	}
+}
+
+func (f *poolMigrateFixture) deps() poolMigrateDeps {
+	return poolMigrateDeps{projectID: "proj-1", client: f.mock, ssh: f.ssh, stateDir: f.stateDir, rt: f.rt, hqAddress: f.hqAddress}
+}
+
+// run is the read side's call; runEnv is action="pool-env".
+func (f *poolMigrateFixture) run(t *testing.T) (map[string]any, *platform.Mock) {
+	t.Helper()
+	return f.call(t, poolMigrateRun)
+}
+
+func (f *poolMigrateFixture) runEnv(t *testing.T) (map[string]any, *platform.Mock) {
+	t.Helper()
+	return f.call(t, poolMigrateEnvRun)
+}
+
+func (f *poolMigrateFixture) call(t *testing.T, handler func(context.Context, poolMigrateDeps, WorkflowInput) (*mcp.CallToolResult, any, error)) (map[string]any, *platform.Mock) {
+	t.Helper()
+	f.build(t)
+	mock := f.mock
+	result, typed, err := handler(context.Background(), f.deps(), f.input)
 	if err != nil {
-		t.Fatalf("handlePoolMigrate: %v", err)
+		t.Fatalf("pool-migrate: %v", err)
 	}
 	if typed != nil {
 		t.Fatalf("typed output must stay nil, got %T", typed)
@@ -392,11 +469,17 @@ func TestPoolMigrate_StepFromLiveState_PoolPresent_Env(t *testing.T) {
 	if out["status"] != "step" || out["step"] != "env" {
 		t.Fatalf("status/step = %v/%v, want step/env", out["status"], out["step"])
 	}
-	if _, has := out["next"]; has {
-		t.Fatalf("the env step is not run by this zcp, so no next call is named: %v", out["next"])
+	next, _ := out["next"].(map[string]any)
+	args, _ := next["args"].(map[string]any)
+	want := map[string]any{"workflow": "pool-migrate", "action": "pool-env", "service": "appdev", "pool": "apppool"}
+	if next["tool"] != "zerops_workflow" || !reflect.DeepEqual(args, want) {
+		t.Fatalf("next = %v, want zerops_workflow %v", next, want)
 	}
-	if s, _ := out["nextUnavailable"].(string); s == "" {
-		t.Fatal("the env step must say why no next call is named")
+	if _, has := out["nextUnavailable"]; has {
+		t.Fatalf("the env step names its call: %v", out["nextUnavailable"])
+	}
+	if g, _ := out["guidance"].(string); !strings.Contains(g, "### Give a part's pool the dev service's env") {
+		t.Errorf("guidance does not carry the env step's atom")
 	}
 	steps, _ := out["steps"].([]any)
 	if first := steps[0].(map[string]any); first["state"] != "done" {
@@ -659,6 +742,7 @@ var poolMigrateReadOnlyCalls = map[string]bool{
 	"ListServicesDirect":        true,
 	"GetProjectProcessesDirect": true,
 	"GetService":                true,
+	"GetAppVersionUserData":     true,
 }
 
 func snapshotTree(t *testing.T, root string) map[string]string {

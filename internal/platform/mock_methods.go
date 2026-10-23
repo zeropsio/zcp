@@ -256,6 +256,13 @@ func (m *Mock) GetService(_ context.Context, serviceID string) (*ServiceStack, e
 			return &m.services[i], nil
 		}
 	}
+	// A by-id read is direct, like ListServicesDirect: it sees a service the
+	// lagging search has not indexed yet.
+	for i := range m.servicesDirect {
+		if m.servicesDirect[i].ID == serviceID {
+			return &m.servicesDirect[i], nil
+		}
+	}
 	// Return the same typed error the real client maps a 404 to (C4), so
 	// production code that does errors.As(*PlatformError) + code switches is
 	// exercised against a shape the platform can actually produce.

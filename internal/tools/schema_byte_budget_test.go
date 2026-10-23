@@ -120,7 +120,12 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// new input, `pool` (docs/spec-workflows.md §13): the workflow enum
 		// and `service` name the flow, `pool` overrides the part's pool
 		// hostname; the steps and refusals live in the flow's atom.
-		"zerops_workflow":    20219,
+		// Raised +295 (20219→20514) for action="pool-env", the pool-migrate
+		// env step zcp runs itself, and its one new input, `copyGitToken`
+		// (the person's yes to the pool getting the dev's GIT_TOKEN, a
+		// FlexBool published as oneOf[boolean,string]); what the step copies
+		// and never copies lives in the flow's env atom.
+		"zerops_workflow":    20514,
 		"zerops_record_fact": 3299,
 		"zerops_dev_server":  3220,
 		// Raised +28 (2945→2973) for the OS-axis migration: the runtime/services

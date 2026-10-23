@@ -79,34 +79,57 @@ func EnvScalars(envs []platform.ServiceEnvVar) (scalars map[string]string, maske
 // every USER/empty-typed slim entry passes through untouched. Never logs
 // values.
 func FetchServiceUserEnvs(ctx context.Context, client platform.Client, serviceID string) ([]platform.ServiceEnvVar, error) {
+	layers, err := fetchServiceEnvLayers(ctx, client, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	return layers.user(), nil
+}
+
+// serviceEnvLayers is a service's slim env read (masked rows marked, as
+// FetchServiceEnv leaves them) beside the keys its active app-version's
+// zerops.yaml owns.
+type serviceEnvLayers struct {
+	all       []platform.ServiceEnvVar
+	yamlOwned map[string]struct{}
+}
+
+// fetchServiceEnvLayers reads the two surfaces FetchServiceUserEnvs
+// subtracts. A failed yaml-baked read is an error, never an empty layer.
+func fetchServiceEnvLayers(ctx context.Context, client platform.Client, serviceID string) (serviceEnvLayers, error) {
 	all, err := FetchServiceEnv(ctx, client, serviceID)
 	if err != nil {
-		return nil, fmt.Errorf("fetch service env %s: %w", serviceID, err)
+		return serviceEnvLayers{}, fmt.Errorf("fetch service env %s: %w", serviceID, err)
 	}
 
 	svc, err := client.GetService(ctx, serviceID)
 	if err != nil {
-		return nil, fmt.Errorf("get service %s: %w", serviceID, err)
+		return serviceEnvLayers{}, fmt.Errorf("get service %s: %w", serviceID, err)
 	}
 
 	yamlBaked, err := AppVersionEnvVars(ctx, client, *svc)
 	if err != nil {
-		return nil, fmt.Errorf("yaml-baked env vars for %s: %w", serviceID, err)
+		return serviceEnvLayers{}, fmt.Errorf("yaml-baked env vars for %s: %w", serviceID, err)
 	}
 	yamlKeys := make(map[string]struct{}, len(yamlBaked))
 	for _, v := range yamlBaked {
 		yamlKeys[v.Key] = struct{}{}
 	}
+	return serviceEnvLayers{all: all, yamlOwned: yamlKeys}, nil
+}
 
-	out := make([]platform.ServiceEnvVar, 0, len(all))
-	for _, e := range all {
+// user is the user-set layer: USER (or untyped) rows whose key the
+// zerops.yaml does not own.
+func (l serviceEnvLayers) user() []platform.ServiceEnvVar {
+	out := make([]platform.ServiceEnvVar, 0, len(l.all))
+	for _, e := range l.all {
 		if e.Type != platform.ServiceEnvUser && e.Type != "" {
 			continue
 		}
-		if _, isYamlBaked := yamlKeys[e.Key]; isYamlBaked {
+		if _, isYamlBaked := l.yamlOwned[e.Key]; isYamlBaked {
 			continue
 		}
 		out = append(out, e)
 	}
-	return out, nil
+	return out
 }
