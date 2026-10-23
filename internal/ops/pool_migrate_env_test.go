@@ -833,14 +833,14 @@ func TestSeedPoolDefaultRepo_CheckBeforeWrite(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	const origin = "https://github.com/example/app.git"
-	if got := poolDefaultRepoState(dir, "apppool", origin); got.State != PoolDefaultRepoPending || got.Repo != "https://github.com/example/app" {
+	if got := poolDefaultRepoState(dir, "apppool", origin); got.State != PoolDefaultRepoPending || got.Repo != origin {
 		t.Fatalf("state before = %+v", got)
 	}
 	if got := SeedPoolDefaultRepo(dir, "apppool", origin); got.State != PoolDefaultRepoSeeded || got.Previous != "" {
 		t.Fatalf("first seed = %+v", got)
 	}
-	if got := readPoolDefaultRepo(dir, "apppool"); got != "https://github.com/example/app" {
-		t.Fatalf("the lease's record names %q, want the canonical origin", got)
+	if got := readPoolDefaultRepo(dir, "apppool"); got != origin {
+		t.Fatalf("the lease's record names %q, want the origin as given (DP-18)", got)
 	}
 	if got := SeedPoolDefaultRepo(dir, "apppool", origin+"/"); got.State != PoolDefaultRepoUnchanged {
 		t.Fatalf("second seed = %+v, want unchanged", got)

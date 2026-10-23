@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // The env step of workflow="pool-migrate" (docs/spec-workflows.md §13 PM-4)
@@ -937,42 +938,43 @@ func savePoolEnvRecord(stateDir, pool string, rec poolEnvRecord) error {
 // poolDefaultRepoState is the pool's default repository against the dev's
 // origin, read only.
 func poolDefaultRepoState(stateDir, pool, origin string) PoolMigrateDefaultRepo {
-	canonical, reason := poolDefaultRepoOrigin(origin)
+	repo, reason := poolDefaultRepoOrigin(origin)
 	if reason != "" {
 		return PoolMigrateDefaultRepo{State: PoolDefaultRepoUnavailable, Reason: reason}
 	}
-	if readPoolDefaultRepo(stateDir, pool) == canonical {
-		return PoolMigrateDefaultRepo{Repo: canonical, State: PoolDefaultRepoUnchanged}
+	if topology.SameRepoURL(readPoolDefaultRepo(stateDir, pool), repo) {
+		return PoolMigrateDefaultRepo{Repo: repo, State: PoolDefaultRepoUnchanged}
 	}
-	return PoolMigrateDefaultRepo{Repo: canonical, State: PoolDefaultRepoPending}
+	return PoolMigrateDefaultRepo{Repo: repo, State: PoolDefaultRepoPending}
 }
 
 // SeedPoolDefaultRepo makes the dev's origin the repository the pool's leases
 // clone when an acquire names none (zcp's per-pool record, DP-5), writing only
 // when the record names another repository or none.
 func SeedPoolDefaultRepo(stateDir, pool, origin string) PoolMigrateDefaultRepo {
-	canonical, reason := poolDefaultRepoOrigin(origin)
+	repo, reason := poolDefaultRepoOrigin(origin)
 	if reason != "" {
 		return PoolMigrateDefaultRepo{State: PoolDefaultRepoUnavailable, Reason: reason}
 	}
 	have := readPoolDefaultRepo(stateDir, pool)
-	if have == canonical {
-		return PoolMigrateDefaultRepo{Repo: canonical, State: PoolDefaultRepoUnchanged}
+	if topology.SameRepoURL(have, repo) {
+		return PoolMigrateDefaultRepo{Repo: repo, State: PoolDefaultRepoUnchanged}
 	}
-	if err := storePoolDefaultRepo(stateDir, pool, canonical); err != nil {
-		return PoolMigrateDefaultRepo{Repo: canonical, State: PoolDefaultRepoFailed, Reason: err.Error()}
+	if err := storePoolDefaultRepo(stateDir, pool, repo); err != nil {
+		return PoolMigrateDefaultRepo{Repo: repo, State: PoolDefaultRepoFailed, Reason: err.Error()}
 	}
-	return PoolMigrateDefaultRepo{Repo: canonical, State: PoolDefaultRepoSeeded, Previous: have}
+	return PoolMigrateDefaultRepo{Repo: repo, State: PoolDefaultRepoSeeded, Previous: have}
 }
 
-// poolDefaultRepoOrigin is origin as a lease takes it, or why it cannot be.
+// poolDefaultRepoOrigin is origin as a lease takes it — as given, since a
+// lease clones the remembered URL verbatim (DP-18) — or why it cannot be.
 func poolDefaultRepoOrigin(origin string) (string, string) {
 	if strings.TrimSpace(origin) == "" {
 		return "", "zcp cannot name the dev service's origin here; name repo on the first acquire"
 	}
-	canonical, err := validateLeaseRepo(origin)
+	repo, err := validateLeaseRepo(origin)
 	if err != nil {
 		return "", "the dev service's origin is not an https URL a lease clones; name repo on the first acquire"
 	}
-	return canonical, ""
+	return repo, ""
 }

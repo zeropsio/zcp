@@ -143,7 +143,7 @@ func TestPoolMigrateEnv_ActionCopiesThenTheFlowNamesImage(t *testing.T) {
 	if r := rows["STRIPE_SECRET"]; r.Content != poolEnvSecret || !r.Sensitive {
 		t.Errorf("STRIPE_SECRET on the pool: sensitive=%v exact=%v", r.Sensitive, r.Content == poolEnvSecret)
 	}
-	if repo, _ := env["defaultRepo"].(map[string]any); repo["state"] != ops.PoolDefaultRepoSeeded || repo["repo"] != "https://github.com/example/app" {
+	if repo, _ := env["defaultRepo"].(map[string]any); repo["state"] != ops.PoolDefaultRepoSeeded || repo["repo"] != "https://github.com/example/app.git" {
 		t.Errorf("defaultRepo = %v, want the dev's origin seeded", env["defaultRepo"])
 	}
 	diff, _ := env["stageDiff"].([]any)
@@ -261,7 +261,7 @@ func TestPoolMigrateEnv_InAMate_GitTokenNeverCopied_DefaultRepoIsHQ(t *testing.T
 			t.Fatalf("in a Mate the dev's GIT_TOKEN was read: %s", cmd)
 		}
 	}
-	if repo, _ := env["defaultRepo"].(map[string]any); repo["repo"] != "https://hq.example/git/app-1/appdev" || repo["state"] != ops.PoolDefaultRepoSeeded {
+	if repo, _ := env["defaultRepo"].(map[string]any); repo["repo"] != "https://hq.example/git/app-1/appdev.git" || repo["state"] != ops.PoolDefaultRepoSeeded {
 		t.Errorf("defaultRepo = %v, want the pair's HQ repository", repo)
 	}
 }
