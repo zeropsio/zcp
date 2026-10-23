@@ -623,3 +623,31 @@ func TestLeaseList_HangingOrchestrator_BoundedByTheReadBudget(t *testing.T) {
 		t.Fatal("status still waiting on the orchestrator after 5s")
 	}
 }
+
+// TestPoolOrchestratorCheck: a pool is never probed by its hostname (PS-3);
+// its verify reaches what it serves through the orchestrator — with the
+// bearer zcp finds — and counts the containers leased.
+func TestPoolOrchestratorCheck(t *testing.T) {
+	t.Parallel()
+
+	fx := newLeaseFixture(t)
+	fx.swarm.containers = []platform.SwarmContainer{reservedContainer("c-1", 1), {ID: "c-2", Number: 2}}
+	got := PoolOrchestratorCheck(context.Background(), fx.deps, testPoolHost)
+	if got.Name != "orchestrator" || got.Status != "pass" || !strings.Contains(got.Detail, "2 container") || !strings.Contains(got.Detail, "1 leased") {
+		t.Errorf("check = %+v, want orchestrator pass naming 2 containers, 1 leased", got)
+	}
+
+	masked := maskedPoolFixture(t)
+	got = PoolOrchestratorCheck(context.Background(), masked.deps, testPoolHost)
+	if got.Status != "fail" || !strings.Contains(got.Detail, testPoolHost+"_API_TOKEN") {
+		t.Errorf("check = %+v, want a failure naming %s_API_TOKEN", got, testPoolHost)
+	}
+	if strings.Contains(got.Detail, testPoolToken) {
+		t.Errorf("the check leaks the pool token: %s", got.Detail)
+	}
+
+	fx.swarm.listErr = errors.New("dial tcp: i/o timeout")
+	if got = PoolOrchestratorCheck(context.Background(), fx.deps, testPoolHost); got.Status != "fail" {
+		t.Errorf("an orchestrator that does not answer reads %+v, want fail", got)
+	}
+}

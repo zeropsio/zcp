@@ -328,7 +328,8 @@ func (s *Server) registerTools() {
 	tools.RegisterLogs(s.server, s.client, s.logFetcher, projectID)
 	tools.RegisterEvents(s.server, s.client, s.logFetcher, projectID)
 	tools.RegisterProcess(s.server, s.client, projectID)
-	tools.RegisterVerify(s.server, s.client, s.logFetcher, projectID, stateDir, s.rtInfo, s.sshDeployer)
+	tools.RegisterVerify(s.server, s.client, s.logFetcher, projectID, stateDir, s.rtInfo, s.sshDeployer,
+		tools.WithPoolOrchestrators(ops.NewSwarmFactory(&http.Client{Timeout: ops.LeaseCallTimeout})))
 	tools.RegisterPreprocess(s.server)
 
 	// Mutating tools — deploy registration routes by environment.

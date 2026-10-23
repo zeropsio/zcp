@@ -598,3 +598,9 @@ func aggregateStatus(checks []CheckResult) string {
 	}
 	return StatusHealthy
 }
+
+// AddCheck appends c to the result's checks and recomputes its status.
+func (r *VerifyResult) AddCheck(c CheckResult) {
+	r.Checks = append(r.Checks, c)
+	r.Status = aggregateStatus(r.Checks)
+}

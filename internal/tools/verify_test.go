@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -989,5 +991,50 @@ func TestVerify_Pool_NotProbedAsSingleRuntime(t *testing.T) {
 				t.Errorf("checks = %+v, want the one passing service_running check (no http_internal/http_public/error_logs probe of the service hostname)", vr.Checks)
 			}
 		})
+	}
+}
+
+// TestVerify_Pool_OrchestratorCheck_InContainer: in a container, verify of a
+// pool also asks its orchestrator — with the bearer zcp finds — and reports
+// how many containers are leased (it is never probed by hostname, PS-3);
+// without the option (local, tests) the pool keeps service_running alone.
+func TestVerify_Pool_OrchestratorCheck_InContainer(t *testing.T) {
+	t.Parallel()
+
+	var gotBearer string
+	hs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBearer = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"id":"c-1","number":1,"lockState":"reserved"},{"id":"c-2","number":2,"lockState":""}]`))
+	}))
+	t.Cleanup(hs.Close)
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "proj"}).
+		WithServices([]platform.ServiceStack{{ID: "svc-pool", Name: "devpool", Status: serviceStatusRunning,
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}}}).
+		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{Key: "API_TOKEN", Content: "orch-token-1", Sensitive: true}})
+	factory := func(_, token string) ops.SwarmAPI { return platform.NewSwarmClient(hs.URL, token, hs.Client()) }
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterVerify(srv, mock, platform.NewMockLogFetcher(), "proj-1", t.TempDir(), runtime.Info{InContainer: true, ServiceName: "zcp"}, nil, WithPoolOrchestrators(factory))
+
+	text := getTextContent(t, callTool(t, srv, "zerops_verify", map[string]any{"serviceHostname": "devpool"}))
+	var vr ops.VerifyResult
+	if err := json.Unmarshal([]byte(text), &vr); err != nil {
+		t.Fatalf("parse: %v\n%s", err, text)
+	}
+	var orch *ops.CheckResult
+	for i := range vr.Checks {
+		if vr.Checks[i].Name == "orchestrator" {
+			orch = &vr.Checks[i]
+		}
+	}
+	if orch == nil || orch.Status != ops.CheckPass || !strings.Contains(orch.Detail, "1 leased") {
+		t.Fatalf("checks = %+v, want an orchestrator pass naming 1 leased", vr.Checks)
+	}
+	if gotBearer != "Bearer orch-token-1" {
+		t.Errorf("orchestrator bearer = %q, want the pool's API_TOKEN", gotBearer)
+	}
+	if strings.Contains(text, "orch-token-1") {
+		t.Errorf("the verify result leaks the pool token: %s", text)
 	}
 }

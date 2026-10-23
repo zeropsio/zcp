@@ -26,7 +26,33 @@ type VerifyInput struct {
 // a live dev-server liveness read (ops.DevServerRunning, §8 O3 PA-4) — nil
 // is accepted (local-only mode has no SSH deployer) and degrades to the
 // static (mode, class) classification.
-func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.LogFetcher, projectID, stateDir string, rt runtime.Info, ssh ops.SSHDeployer) {
+// VerifyOption configures RegisterVerify.
+type VerifyOption func(*verifyConfig)
+
+type verifyConfig struct {
+	swarm ops.SwarmFactory
+}
+
+// WithPoolOrchestrators lets verify of a pool, in a container, also ask the
+// pool's orchestrator (ops.PoolOrchestratorCheck) through swarm. Without it
+// a pool is verified by service_running alone.
+func WithPoolOrchestrators(swarm ops.SwarmFactory) VerifyOption {
+	return func(c *verifyConfig) { c.swarm = swarm }
+}
+
+func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.LogFetcher, projectID, stateDir string, rt runtime.Info, ssh ops.SSHDeployer, opts ...VerifyOption) {
+	var cfg verifyConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	// checkPool adds the orchestrator check to a pool's result; the
+	// orchestrator answers only inside the project.
+	checkPool := func(ctx context.Context, r *ops.VerifyResult) {
+		if cfg.swarm == nil || !rt.InContainer || r == nil || r.Type != string(topology.RuntimePool) {
+			return
+		}
+		r.AddCheck(ops.PoolOrchestratorCheck(ctx, ops.LeaseDeps{Client: client, ProjectID: projectID, StateDir: stateDir, Swarm: cfg.swarm}, r.Hostname))
+	}
 	httpClient := &http.Client{
 		Timeout: 15 * time.Second,
 		Transport: &http.Transport{
@@ -47,6 +73,9 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 			result, err := ops.VerifyAllWithMeta(ctx, client, fetcher, httpClient, projectID, runtimeMetaResolver(stateDir), publicAccessResolver(stateDir))
 			if err != nil {
 				return convertError(err, WithRecoveryStatus()), nil, nil
+			}
+			for i := range result.Services {
+				checkPool(ctx, &result.Services[i])
 			}
 			recordVerifyAllToWorkSession(stateDir, result)
 			var notes []string
@@ -87,6 +116,7 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 		if err != nil {
 			return convertError(err, WithRecoveryStatus()), nil, nil
 		}
+		checkPool(ctx, result)
 		recordVerifyToWorkSession(stateDir, result)
 		resp := verifyResponse{
 			VerifyResult:     result,

@@ -114,3 +114,35 @@ func rolloutView(pool string, got platform.SwarmRollout, aliases map[string]stri
 	v.Note = strings.Join(notes, " ")
 	return v
 }
+
+// PoolOrchestratorCheck is a pool's "orchestrator" verify check. A pool is
+// never probed by its hostname (PS-3), so this is the check that reaches what
+// it serves: whether its orchestrator answers with the bearer zcp finds for
+// it (DP-3), and how many of its containers are leased. Its detail never
+// carries the token.
+func PoolOrchestratorCheck(ctx context.Context, d LeaseDeps, pool string) CheckResult {
+	check := CheckResult{Name: "orchestrator"}
+	rp, err := resolvePool(ctx, d, pool)
+	if err == nil {
+		var containers []platform.SwarmContainer
+		if containers, err = d.containers(ctx, rp); err == nil {
+			leased := 0
+			for _, c := range containers {
+				if c.LockState == leaseLockReserved {
+					leased++
+				}
+			}
+			check.Status = CheckPass
+			check.Detail = fmt.Sprintf("answers: %d container(s), %d leased", len(containers), leased)
+			return check
+		}
+		err = leaseOrchestratorError(pool, "list containers", err)
+	}
+	check.Status = CheckFail
+	check.Detail = err.Error()
+	var pe *platform.PlatformError
+	if errors.As(err, &pe) && pe.Suggestion != "" {
+		check.Detail = pe.Message + " — " + pe.Suggestion
+	}
+	return check
+}
