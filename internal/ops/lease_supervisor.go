@@ -11,7 +11,7 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
-// A lease always has its supervisor (docs/spec-workflows.md §8 DP-12). A pool
+// A lease always has its supervisor (docs/spec-workflows.md §8 DP-13). A pool
 // container released with reset=true comes back as its image and Zerops never
 // runs its run.start again, and zcp releases every lease with a reset (DP-4),
 // so a reused container runs no zcp-devsup unless zcp starts it: after an

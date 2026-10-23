@@ -125,12 +125,12 @@ func TestLeaseAcquire_HQRepo_ChecksOutAsMate(t *testing.T) {
 	if _, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, leaseHQRepo+".git", "feat"); err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
-	cmds := ssh.commands()
+	cmds := ssh.checkouts()
 	if len(cmds) != 1 {
-		t.Fatalf("ssh commands = %v, want the one checkout", cmds)
+		t.Fatalf("checkouts = %v, want the one checkout", cmds)
 	}
-	if !strings.Contains(cmds[0], shellQuote(leaseHQCredentialHelperShell)) || strings.Contains(cmds[0], "username=oauth2") {
-		t.Errorf("the checkout of a repository on HQ does not authenticate as mate:\n%s", cmds[0])
+	if !strings.Contains(cmds[0].command, shellQuote(leaseHQCredentialHelperShell)) || strings.Contains(cmds[0].command, "username=oauth2") {
+		t.Errorf("the checkout of a repository on HQ does not authenticate as mate:\n%s", cmds[0].command)
 	}
 	info, ok, err := LeaseTarget(fx.stateDir, "devpool-3")
 	if err != nil || !ok {

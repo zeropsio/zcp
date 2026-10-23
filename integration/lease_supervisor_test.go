@@ -1,5 +1,5 @@
 // Tests for: integration — a lease always has its supervisor
-// (docs/spec-workflows.md §8 DP-12), through the full MCP server against a mock
+// (docs/spec-workflows.md §8 DP-13), through the full MCP server against a mock
 // platform, a fake pool orchestrator and a fake leased container: a reused
 // container (reset at its last release, so its run.start never runs again)
 // gets zcp-devsup started at acquire, and again by zerops_dev_server after it

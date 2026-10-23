@@ -270,7 +270,7 @@ func ExecuteDevServer(
 	why := ""
 	if p.lease != nil {
 		// A lease's supervisor is zcp's to start: its container's run.start
-		// never runs again after the reset of an earlier release (DP-12).
+		// never runs again after the reset of an earlier release (DP-13).
 		ds, why, err = recoverLeaseSupervisor(ctx, ssh, p.Hostname, p.Root, ds, err)
 	}
 	var noSup *NoSupervisorError

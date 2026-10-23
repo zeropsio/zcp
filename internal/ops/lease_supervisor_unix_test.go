@@ -2,7 +2,7 @@
 
 // Tests for: ops/lease_supervisor.go — the command that starts a lease's
 // supervisor, run by a local sh against a stub zcp-devsup (docs/spec-workflows.md
-// §8 DP-12): it starts one only when none answers, as run.start would (in the
+// §8 DP-13): it starts one only when none answers, as run.start would (in the
 // work dir, with the session's env), detached, and never two at once.
 package ops
 

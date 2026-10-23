@@ -553,7 +553,7 @@ func LeaseAcquire(ctx context.Context, d LeaseDeps, pool, repo, branch string) (
 			return LeaseView{}, abandonLease(ctx, d, rec, err)
 		}
 		// A reused container was reset to its image and its run.start never
-		// runs again: zcp starts the supervisor itself (DP-12).
+		// runs again: zcp starts the supervisor itself (DP-13).
 		v.Note = joinNotes(v.Note, leaseSupervisorNote(ensureLeaseSupervisor(ctx, d.SSH, rec.alias())))
 	}
 	if becomesDefault {
