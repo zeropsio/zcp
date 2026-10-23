@@ -304,6 +304,19 @@ func developGoldenScenarios() []goldenScenario {
 			},
 		},
 		{
+			id:          "develop/dev-pool-dev-service",
+			description: "A deployed dev-mode service whose project also holds a Swarm pool the part's dev servers run in by lease. The dev-pool guidance fires only because a pool is present.",
+			envelope: StateEnvelope{
+				Phase:       PhaseDevelopActive,
+				Environment: EnvContainer,
+				Services: []ServiceSnapshot{
+					{Hostname: "partdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeDev, Bootstrapped: true, Deployed: true},
+					fixSnapPool("devpool", "swarm@1"),
+				},
+				WorkSession: fixSession("partdev"),
+			},
+		},
+		{
 			id:          "develop/post-adopt-standard-unset",
 			description: "Adopted standard pair, both halves running, close-mode never picked.",
 			envelope: StateEnvelope{
@@ -909,6 +922,17 @@ func fixSnapManaged(hostname, typeVersion string) ServiceSnapshot {
 		TypeVersion:  typeVersion,
 		RuntimeClass: topology.RuntimeManaged,
 		Bootstrapped: true,
+	}
+}
+
+// fixSnapPool returns a Swarm pool snapshot: a pool is infrastructure the
+// project holds (never bootstrapped or adopted as an app runtime).
+func fixSnapPool(hostname, typeVersion string) ServiceSnapshot {
+	return ServiceSnapshot{
+		Hostname:     hostname,
+		TypeVersion:  typeVersion,
+		RuntimeClass: topology.RuntimePool,
+		Status:       "ACTIVE",
 	}
 }
 

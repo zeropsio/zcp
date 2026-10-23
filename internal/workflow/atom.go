@@ -359,6 +359,7 @@ var validAtomEnumValues = map[string]map[string]struct{}{
 		"static":             {},
 		"implicit-webserver": {},
 		"managed":            {},
+		"pool":               {},
 		"unknown":            {},
 	},
 	"routes": {
