@@ -152,13 +152,13 @@ func ComputeEnvelope(
 // only written by a successful acquire, so "held" is the last known state.
 const leaseStateRecorded = "held"
 
-// readLeases fills StateEnvelope.Leases. The reader is asked only when the
+// readLeases fills StateEnvelope.Leases (nil: not read). The reader is asked only when the
 // project could hold a lease — it lists a pool, or zcp has a lease record —
 // so a project without either costs nothing. When the reader cannot answer
 // (the orchestrator answers only inside the project), the records' last known
 // state is reported, marked unverified; an envelope never fails over it.
 // Only the non-secret fields of a record are ever decoded (DP-3).
-func readLeases(ctx context.Context, reader LeaseReader, stateDir string, services []platform.ServiceStack) []LeaseSnapshot {
+func readLeases(ctx context.Context, reader LeaseReader, stateDir string, services []platform.ServiceStack) *[]LeaseSnapshot {
 	if reader == nil {
 		return nil
 	}
@@ -172,17 +172,16 @@ func readLeases(ctx context.Context, reader LeaseReader, stateDir string, servic
 	if err != nil {
 		leases = records
 	}
-	if len(leases) == 0 {
-		return nil
-	}
-	leases = slices.Clone(leases)
+	// Read: a reader that answered (or records that stood in) with nothing is
+	// the empty array on the wire, never an absent key.
+	leases = append([]LeaseSnapshot{}, leases...)
 	slices.SortStableFunc(leases, func(a, b LeaseSnapshot) int {
 		if c := cmp.Compare(a.Pool, b.Pool); c != 0 {
 			return c
 		}
 		return cmp.Compare(leaseNumber(a.Alias), leaseNumber(b.Alias))
 	})
-	return leases
+	return &leases
 }
 
 // leaseNumber is the container number at the end of an alias (<pool>-<n>).

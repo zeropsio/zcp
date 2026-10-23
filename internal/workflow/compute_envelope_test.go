@@ -1088,14 +1088,15 @@ func TestComputeEnvelope_LeasesFromReader(t *testing.T) {
 		reader     LeaseReader
 		wantCalled bool
 		want       []LeaseSnapshot
+		wantRead   bool
 	}{
 		{"reader snapshots reach the envelope, sorted by pool then container number", []platform.ServiceStack{poolService("devpool")},
 			func(context.Context) ([]LeaseSnapshot, error) { return []LeaseSnapshot{lost, other, held}, nil },
-			true, []LeaseSnapshot{other, held, lost}},
+			true, []LeaseSnapshot{other, held, lost}, true},
 		{"project without a pool or a record never asks the reader", nil,
 			func(context.Context) ([]LeaseSnapshot, error) { return []LeaseSnapshot{held}, nil },
-			false, nil},
-		{"no reader injected leaves the leases empty", []platform.ServiceStack{poolService("devpool")}, nil, false, nil},
+			false, nil, false},
+		{"no reader injected leaves the leases empty", []platform.ServiceStack{poolService("devpool")}, nil, false, nil, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1117,8 +1118,11 @@ func TestComputeEnvelope_LeasesFromReader(t *testing.T) {
 			if called != tt.wantCalled {
 				t.Errorf("reader called = %v, want %v", called, tt.wantCalled)
 			}
-			if fmt.Sprintf("%+v", env.Leases) != fmt.Sprintf("%+v", tt.want) {
-				t.Errorf("Leases = %+v, want %+v", env.Leases, tt.want)
+			if (env.Leases != nil) != tt.wantRead {
+				t.Errorf("leases read = %v, want %v", env.Leases != nil, tt.wantRead)
+			}
+			if fmt.Sprintf("%+v", env.LeaseList()) != fmt.Sprintf("%+v", tt.want) {
+				t.Errorf("Leases = %+v, want %+v", env.LeaseList(), tt.want)
 			}
 		})
 	}
@@ -1147,8 +1151,8 @@ func TestComputeEnvelope_OrchestratorUnreachable_LeasesUnverified(t *testing.T) 
 		Alias: "devpool-3", Pool: "devpool", Branch: "feat-x",
 		ContainerHostname: "node-id-3.runtime.devpool.zerops", State: "held", Unverified: true,
 	}}
-	if fmt.Sprintf("%+v", env.Leases) != fmt.Sprintf("%+v", want) {
-		t.Errorf("Leases = %+v, want %+v", env.Leases, want)
+	if fmt.Sprintf("%+v", env.LeaseList()) != fmt.Sprintf("%+v", want) {
+		t.Errorf("Leases = %+v, want %+v", env.LeaseList(), want)
 	}
 	if strings.Contains(fmt.Sprintf("%+v", env), "SECRET-LEASE-VALUE") {
 		t.Error("the lease string reached the envelope")

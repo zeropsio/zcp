@@ -9,6 +9,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 const (
@@ -54,9 +56,10 @@ func leaseDeps(client platform.Client, projectID, stateDir string, swarm ops.Swa
 // leaseToolResult is what zerops_lease returns. It never carries the lease
 // string itself.
 type leaseToolResult struct {
-	Action      string          `json:"action"`
-	Leases      []ops.LeaseView `json:"leases"`
-	NextActions string          `json:"nextActions,omitempty"`
+	Action      string                  `json:"action"`
+	Leases      []ops.LeaseView         `json:"leases"`
+	NextActions string                  `json:"nextActions,omitempty"`
+	Envelope    *workflow.StateEnvelope `json:"envelope,omitempty"`
 }
 
 // RegisterLease registers the zerops_lease tool: acquire, status and release
@@ -64,9 +67,18 @@ type leaseToolResult struct {
 // builds the orchestrator client (tests inject a fake or a stub transport).
 // mounter (container mode; nil elsewhere) gives a lease its ssh alias and
 // mount; ssh runs git inside the leased container (nil: no checkout and no
-// release guard).
-func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir string, swarm ops.SwarmFactory, mounter ops.Mounter, ssh ops.SSHDeployer) {
+// release guard). Every successful result carries the lifecycle envelope,
+// computed after the operation so it lists the new lease set (spec-mate §1.3);
+// rt is the runtime that envelope is computed for.
+func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir string, swarm ops.SwarmFactory, mounter ops.Mounter, ssh ops.SSHDeployer, rt runtime.Info) {
 	deps := leaseDeps(client, projectID, stateDir, swarm, mounter, ssh)
+	envelope := func(ctx context.Context) *workflow.StateEnvelope {
+		var extra []workflow.EnvelopeOption
+		if swarm != nil {
+			extra = append(extra, workflow.WithLeaseReader(leaseReaderWith(client, projectID, stateDir, swarm)))
+		}
+		return freshEnvelope(ctx, stateDir, client, projectID, rt, extra...)
+	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "zerops_lease",
 		Description: "Lease a container of a Swarm pool (swarm@1) for one branch. acquire takes a clean running container, names it <pool>-<number> and checks the branch out in /var/www; " +
@@ -95,6 +107,7 @@ func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir 
 			return jsonResult(leaseToolResult{
 				Action: input.Action, Leases: []ops.LeaseView{view},
 				NextActions: fmt.Sprintf("The container is yours until you release it: zerops_lease action=release lease=%s. zerops_lease action=status shows every lease.", view.Alias),
+				Envelope:    envelope(ctx),
 			}), nil, nil
 		case leaseActionStatus:
 			views, err := ops.LeaseList(ctx, deps, input.Pool)
@@ -104,7 +117,7 @@ func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir 
 			if views == nil {
 				views = []ops.LeaseView{}
 			}
-			return jsonResult(leaseToolResult{Action: input.Action, Leases: views}), nil, nil
+			return jsonResult(leaseToolResult{Action: input.Action, Leases: views, Envelope: envelope(ctx)}), nil, nil
 		case leaseActionRelease:
 			if input.Lease == "" {
 				return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
@@ -118,7 +131,7 @@ func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir 
 			if err != nil {
 				return convertError(withLeaseSSHStderr(err)), nil, nil
 			}
-			return jsonResult(leaseToolResult{Action: input.Action, Leases: []ops.LeaseView{view}}), nil, nil
+			return jsonResult(leaseToolResult{Action: input.Action, Leases: []ops.LeaseView{view}, Envelope: envelope(ctx)}), nil, nil
 		default:
 			return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
 				fmt.Sprintf("Unknown action %q", input.Action), "action is acquire, status or release")), nil, nil

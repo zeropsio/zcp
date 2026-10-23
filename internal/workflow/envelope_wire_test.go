@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -247,11 +248,25 @@ func TestAppendEnvelope_BlockSizeBudget(t *testing.T) {
 	}
 	four.WorkSession.Services = []string{"apidev", "webdev", "workerdev"}
 	full := len(AppendEnvelope("", four))
-	t.Logf("envelope block bytes: idle=%d fixture(4 services + work session)=%d", idle, full)
+
+	// Eight leases on top of that: the per-thread leases[] list (spec-mate
+	// §2.8a.3) stays inside the same headroom.
+	leases := make([]LeaseSnapshot, 0, 8)
+	for i := 1; i <= 8; i++ {
+		leases = append(leases, LeaseSnapshot{
+			Alias: fmt.Sprintf("webpool-%d", i), Pool: "webpool", Branch: "feature/a-fairly-long-branch-name",
+			ContainerHostname: fmt.Sprintf("node-id-%d.runtime.webpool.zerops", i), State: "held",
+		})
+	}
+	four.Leases = &leases
+	withLeases := len(AppendEnvelope("", four))
+	t.Logf("envelope block bytes: idle=%d fixture(4 services + work session)=%d +8 leases=%d", idle, full, withLeases)
 
 	const headroom = 32*1024 - ComposeBodyBudget // 8 KB of scaffold room
-	if full >= headroom {
-		t.Errorf("fixture envelope block %d B exceeds the %d B scaffold headroom", full, headroom)
+	for name, size := range map[string]int{"fixture": full, "fixture with 8 leases": withLeases} {
+		if size >= headroom {
+			t.Errorf("%s envelope block %d B exceeds the %d B scaffold headroom", name, size, headroom)
+		}
 	}
 }
 

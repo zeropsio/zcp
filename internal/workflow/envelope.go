@@ -30,12 +30,15 @@ type StateEnvelope struct {
 	SelfService  *SelfService          `json:"selfService,omitempty"`
 	Project      ProjectSummary        `json:"project"`
 	Services     []ServiceSnapshot     `json:"services"`
-	// Leases are the pool containers this project's zcp holds a lease on.
-	// Off the wire (`json:"-"`): Mate's envelope contract (docs/spec-mate.md
-	// §2.8) names no such key until an on-wire one is added behind a Mate
-	// version gate. DP-3 (docs/spec-workflows.md §8): a lease SECRET is never
-	// in the envelope — a snapshot carries the alias, never the lease string.
-	Leases      []LeaseSnapshot          `json:"-"`
+	// Leases are the pool containers this project's zcp holds a lease on,
+	// at the envelope's top level (a lease is per thread, not per service).
+	// A pointer keeps "read" apart from "not read": nil — no reader, or a
+	// project that could not hold a lease — drops the key; a pointer to an
+	// empty slice is `"leases":[]` (read, none held). Additive to Mate's
+	// contract (docs/spec-mate.md §2.8a.3). DP-3 (docs/spec-workflows.md §8):
+	// a lease SECRET is never in the envelope — a snapshot carries the alias,
+	// never the lease string.
+	Leases      *[]LeaseSnapshot         `json:"leases,omitempty"`
 	WorkSession *WorkSessionSummary      `json:"workSession,omitempty"`
 	Bootstrap   *BootstrapSessionSummary `json:"bootstrap,omitempty"`
 	Generated   time.Time                `json:"generated"`
@@ -45,16 +48,25 @@ type StateEnvelope struct {
 // agent needs to address the container (alias, pool, branch, container
 // hostname) and its reconciled state. It never carries the lease string.
 type LeaseSnapshot struct {
-	Alias             string
-	Pool              string
-	Branch            string
-	ContainerHostname string
+	Alias             string `json:"alias"`
+	Pool              string `json:"pool"`
+	Branch            string `json:"branch"`
+	ContainerHostname string `json:"containerHostname"`
 	// State is the reconciled state the lease reader reports (held, lost,
 	// unknown-holder, … — rendered verbatim, never enumerated here).
-	State string
+	State string `json:"state"`
 	// Unverified marks a state read from zcp's own record because the pool's
 	// orchestrator did not answer: last known, not confirmed.
-	Unverified bool
+	Unverified bool `json:"unverified"`
+}
+
+// LeaseList is the leases the envelope carries, nil when none were read or
+// none are held.
+func (e StateEnvelope) LeaseList() []LeaseSnapshot {
+	if e.Leases == nil {
+		return nil
+	}
+	return *e.Leases
 }
 
 // IdleScenario discriminates the sub-cases of PhaseIdle so atoms can

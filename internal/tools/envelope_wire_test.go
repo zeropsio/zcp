@@ -8,6 +8,10 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -243,5 +247,64 @@ func TestConvertError_CarriesNoEnvelope(t *testing.T) {
 		platform.ErrNotImplemented, "boom", ""), WithRecoveryStatus())
 	if _, ok := workflow.ExtractEnvelope(getTextContent(t, result)); ok {
 		t.Errorf("error results must not carry an envelope block")
+	}
+}
+
+// TestFreshEnvelope_CarriesLeases pins that the envelope a JSON tool carries
+// reads the project's leases like action="status" does: a project that lists a
+// pool reads them (none held is `"leases":[]`), a project that cannot hold a
+// lease leaves the key absent.
+func TestFreshEnvelope_CarriesLeases(t *testing.T) {
+	t.Parallel()
+
+	pool := platform.ServiceStack{ID: "svc-pool", Name: "devpool", Status: "ACTIVE",
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}}
+	tests := []struct {
+		name     string
+		services []platform.ServiceStack
+		stateDir func(t *testing.T) string
+		wantRead bool
+		want     []string
+	}{
+		{"a pool and a lease record", []platform.ServiceStack{pool}, func(t *testing.T) string {
+			t.Helper()
+			dir := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(dir, "leases"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			rec := `{"poolHostname":"devpool","containerNumber":3,"containerHostname":"node-id-3.runtime.devpool.zerops","branch":"feat-x","lease":"SECRET"}`
+			if err := os.WriteFile(filepath.Join(dir, "leases", "devpool-3.json"), []byte(rec), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			return dir
+		}, true, []string{"devpool-3"}},
+		{"no pool and no record", nil, func(t *testing.T) string { t.Helper(); return t.TempDir() }, false, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mock := platform.NewMock().WithServices(tt.services).WithProject(&platform.Project{ID: "proj-l", Name: "p"})
+			env := freshEnvelope(context.Background(), tt.stateDir(t), mock, "proj-l", runtime.Info{})
+			if env == nil {
+				t.Fatal("freshEnvelope: nil")
+			}
+			if (env.Leases != nil) != tt.wantRead {
+				t.Fatalf("leases read = %v, want %v", env.Leases != nil, tt.wantRead)
+			}
+			got := make([]string, 0, len(env.LeaseList()))
+			for _, l := range env.LeaseList() {
+				got = append(got, l.Alias)
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("leases = %v, want %v", got, tt.want)
+			}
+			raw, err := json.Marshal(env)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(raw), "SECRET") {
+				t.Errorf("the lease string reached the envelope: %s", raw)
+			}
+		})
 	}
 }
