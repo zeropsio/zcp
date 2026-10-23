@@ -1338,6 +1338,23 @@ repo `zerops.yaml`) stay resolvable.
 | P8 | `strategy-setup` is a stateless phase: it synthesizes guidance from the atom corpus and returns without touching session state. The `export-active` phase still has stateless atom rendering (six topic-scoped atoms compose the agent-facing guide), BUT the underlying handler does multi-call narrowing through the `WorkflowInput.{TargetService, Variant, EnvClassifications}` per-request inputs — see §9 Export-for-buildFromGit Flow. |
 | P9 | Recipe authoring is the maintainer-only `zerops_recipe` v3 engine (`internal/authoring/recipe/`, ZCP_AUTHORING-gated) with its own embedded brief substrate, NOT the atom synthesizer. The pipelines are intentionally independent — see `docs/spec-authoring-boundary.md`. |
 
+### Pools and sandboxes (PS)
+
+A Zerops Swarm pool (`swarm@1`, `swarm-vm@1`) runs the user's deployed code but is not an app
+runtime: it holds up to ten containers that its orchestrator (`http://orch.<pool>.zerops`, bearer
+`${<pool>_API_TOKEN}`) hands out by lease, and a deploy reaches only the containers created after it.
+A Zerops Box (`ubuntu/zbox@1`, beta) hosts sandboxes. The platform's category does not tell them
+apart — pools report `USER` like any runtime, Box reports `STANDARD` like a database (live-verified
+2026-10-23) — so ZCP classifies them by type string.
+
+| ID | Invariant |
+|----|-----------|
+| PS-1 | `topology.IsPoolType` / `topology.IsSandboxType` classify by the type string (a known OS prefix stripped, any case); `IsRuntimeType` is false for both; `RuntimeClassFor` returns `pool` / `sandbox`, never `dynamic`, so no deferred-start, dev-server or `zsc noop` guidance applies to them. `TestIsPoolType_TypeStrings`, `TestIsSandboxType_TypeStrings`, `TestRuntimeClassFor_PoolAndSandbox`. |
+| PS-2 | Adopt — the engine, the tool route and adopt-local — never makes a pool or Box a dev, stage or local-stage target, never lists it as a managed dependency, and never counts it toward the dev/stage pair question; discover reports adoption state `pool` / `sandbox` with a one-line reason. `TestInferServicePairing_PoolAndSandbox_NotTargets`, `TestClassifyAdoptionState_PoolAndSandbox`. |
+| PS-3 | Export and launch-production refuse a pool or Box as the app's runtime or source before any read of its files (a read by service hostname reaches a random pool container); launch names a pool or Box the project holds but the bundle does not carry, rather than dropping it silently. Verify never HTTP-probes a pool by service hostname as one container. `TestExport_PoolAsRuntime_Refused`, `TestBuildLaunchBundle_PoolInProject_NamedNotCarried`, `TestVerify_Pool_NotProbedAsSingleRuntime`. |
+| PS-4 | Scale applies each type's own import-schema bounds: a pool's container counts may be 0; a Box takes no container counts (single container) and refuses them by name. `TestScale_Pool_ZeroMinContainers_Accepted`, `TestScale_Box_ContainerCounts_Refused`. |
+| PS-5 | A bootstrap plan naming a pool or Box as a runtime target is refused with guidance (it is infrastructure an app uses, not the app); `ubuntu/zbox@1` passes the type check whenever the live schema lists it ACTIVE, and the embedded seed schema knows it. `TestValidateBootstrapTargets_PoolAsRuntime_Refused`, `TestCatalogTypeErrors_ZboxActive_Accepted`. |
+
 ---
 
 ## 9. Export-for-buildFromGit Flow

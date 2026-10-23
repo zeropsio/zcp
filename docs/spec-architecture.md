@@ -54,12 +54,13 @@ not a Zerops API concept.
 - Types: `Mode`, `RuntimeClass`, `CloseDeployMode`, `GitPushState`,
   `BuildIntegration`, `FailureClass`.
 - Constants: `ModeDev/Standard/Stage/Simple/LocalStage/LocalOnly`,
-  `RuntimeDynamic/Static/ImplicitWeb/Managed/Unknown`,
+  `RuntimeDynamic/Static/ImplicitWeb/Managed/Pool/Sandbox/Unknown`,
   `CloseModeUnset/Auto/GitPush/Manual`,
   `GitPushUnconfigured/Configured/Broken`,
   `BuildIntegrationNone/Webhook/Actions`.
 - Predicates: `IsManagedService`, `ServiceSupportsMode`,
-  `IsRuntimeType`, `IsUtilityType` (+ supporting maps).
+  `IsRuntimeType`, `IsUtilityType`, `IsPoolType`, `IsSandboxType`
+  (+ supporting maps; pools and Box: `docs/spec-workflows.md` §8 PS).
 - Aliases: `PlanModeStandard/Dev/Simple/LocalStage/LocalOnly`,
   `DeployRoleDev/Stage/Simple` (semantic synonyms for `Mode`
   constants used by the bootstrap planner; kept as aliases until call
