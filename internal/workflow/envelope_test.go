@@ -194,6 +194,53 @@ func TestEnvelopeJSON_LeaseAcquiredAt(t *testing.T) {
 	}
 }
 
+// TestEnvelopeJSON_LeaseActivity pins leases[].activity and leases[].unsaved
+// (docs/spec-mate.md §2.8a.3): additive keys after devServers, the facts
+// inside them camelCase, a fact not read absent and never zero; a lease whose
+// checkout the call did not read carries neither key.
+func TestEnvelopeJSON_LeaseActivity(t *testing.T) {
+	t.Parallel()
+
+	open := 0
+	raw, err := json.Marshal(leasesTestEnvelope(&[]LeaseSnapshot{
+		{
+			Alias: "webpool-3", Pool: "webpool", Branch: "feat-x", ContainerHostname: "node-id-3.runtime.webpool.zerops",
+			State: "held", AcquiredAt: "2026-10-23T12:00:01Z",
+			Activity: &topology.LeaseActivity{
+				LastChangeAt: "2026-10-23T13:00:00Z", PreviewLastConnAt: "2026-10-23T13:05:00Z", PreviewOpenConns: &open,
+				AcquiredAt: "2026-10-23T12:00:01Z", ReadAt: "2026-10-23T14:00:00Z",
+			},
+			Unsaved: &topology.LeaseUnsaved{Files: []string{"?? notes.txt"}, FileCount: 1, UnpushedCommits: 2},
+		},
+		{
+			Alias: "webpool-4", Pool: "webpool", Branch: "feat-y", ContainerHostname: "node-id-4.runtime.webpool.zerops",
+			State: "held", Unverified: true, AcquiredAt: "2026-10-23T12:30:00Z",
+			Activity: &topology.LeaseActivity{AcquiredAt: "2026-10-23T12:30:00Z", Note: "not read: the pool's orchestrator did not confirm this lease"},
+		},
+		{Alias: "webpool-7", Pool: "webpool", ContainerHostname: "node-id-7.runtime.webpool.zerops", State: "unknown-holder"},
+	}))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	const want = `[{"alias":"webpool-3","pool":"webpool","branch":"feat-x","containerHostname":"node-id-3.runtime.webpool.zerops",` +
+		`"state":"held","unverified":false,"acquiredAt":"2026-10-23T12:00:01Z",` +
+		`"activity":{"lastChangeAt":"2026-10-23T13:00:00Z","previewLastConnAt":"2026-10-23T13:05:00Z","previewOpenConns":0,` +
+		`"acquiredAt":"2026-10-23T12:00:01Z","readAt":"2026-10-23T14:00:00Z"},` +
+		`"unsaved":{"files":["?? notes.txt"],"fileCount":1,"unpushedCommits":2}},` +
+		`{"alias":"webpool-4","pool":"webpool","branch":"feat-y","containerHostname":"node-id-4.runtime.webpool.zerops",` +
+		`"state":"held","unverified":true,"acquiredAt":"2026-10-23T12:30:00Z",` +
+		`"activity":{"acquiredAt":"2026-10-23T12:30:00Z","note":"not read: the pool's orchestrator did not confirm this lease"}},` +
+		`{"alias":"webpool-7","pool":"webpool","branch":"","containerHostname":"node-id-7.runtime.webpool.zerops",` +
+		`"state":"unknown-holder","unverified":false}]`
+	if got := string(doc["leases"]); got != want {
+		t.Errorf("leases =\n%s\nwant\n%s", got, want)
+	}
+}
+
 // TestEnvelopeJSON_LeasesNotRead_NoKey pins that an envelope whose leases were
 // not read carries no leases key — never null, never [].
 func TestEnvelopeJSON_LeasesNotRead_NoKey(t *testing.T) {
@@ -283,5 +330,20 @@ func TestWithParts_LeaseDevServers(t *testing.T) {
 	}
 	if env.LeaseList()[0].DevServers != nil {
 		t.Error("WithParts changed the envelope it was called on")
+	}
+}
+
+// TestWithParts_KeepsLeaseActivity: the parts projection every reply passes
+// through (wireEnvelope) keeps what the call read of a lease's checkout.
+func TestWithParts_KeepsLeaseActivity(t *testing.T) {
+	t.Parallel()
+
+	activity := &topology.LeaseActivity{LastChangeAt: "2026-10-23T13:00:00Z", ReadAt: "2026-10-23T14:00:00Z"}
+	unsaved := &topology.LeaseUnsaved{FileCount: 0, UnpushedCommits: 1}
+	env := leasesTestEnvelope(&[]LeaseSnapshot{{Alias: "webpool-3", Pool: "webpool", State: "held", Activity: activity, Unsaved: unsaved}})
+
+	leases := env.WithParts(nil).LeaseList()
+	if len(leases) != 1 || leases[0].Activity != activity || leases[0].Unsaved != unsaved {
+		t.Errorf("leases = %+v, want webpool-3 keeping its activity and unsaved", leases)
 	}
 }

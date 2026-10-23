@@ -1129,6 +1129,93 @@ func TestComputeEnvelope_LeasesFromReader(t *testing.T) {
 	}
 }
 
+// TestComputeEnvelope_WithLeaseActivity_LaysTheCallsReadsByAlias: the reads a
+// zerops_lease call made of its leases' checkouts ride leases[] keyed by alias
+// (docs/spec-mate.md §2.8a.3): a lease the call read carries its activity and
+// unsaved work, a lease it did not read carries neither, and a read of an
+// alias the envelope does not list adds no lease.
+func TestComputeEnvelope_WithLeaseActivity_LaysTheCallsReadsByAlias(t *testing.T) {
+	t.Parallel()
+
+	read := &topology.LeaseActivity{LastChangeAt: "2026-10-23T13:00:00Z", AcquiredAt: "2026-10-23T12:00:00Z", ReadAt: "2026-10-23T14:00:00Z"}
+	unsaved := &topology.LeaseUnsaved{Files: []string{" M src/app.ts"}, FileCount: 1, UnpushedCommits: 0}
+	gone := &topology.LeaseActivity{Note: "not read"}
+	reader := WithLeaseReader(func(context.Context) ([]LeaseSnapshot, error) {
+		return []LeaseSnapshot{
+			{Alias: "devpool-3", Pool: "devpool", State: "held"},
+			{Alias: "devpool-4", Pool: "devpool", State: "unknown-holder"},
+		}, nil
+	})
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{poolService("devpool")}).WithProject(&platform.Project{ID: "p1", Name: "demo"})
+	env, err := ComputeEnvelope(context.Background(), mock, t.TempDir(), "p1", runtime.Info{}, fixedTime, reader,
+		WithLeaseActivity(map[string]LeaseRead{
+			"devpool-3": {Activity: read, Unsaved: unsaved},
+			"devpool-9": {Activity: gone},
+		}))
+	if err != nil {
+		t.Fatalf("ComputeEnvelope: %v", err)
+	}
+	leases := env.LeaseList()
+	if len(leases) != 2 {
+		t.Fatalf("leases = %+v, want the reader's two and no lease for the read of devpool-9", leases)
+	}
+	if leases[0].Alias != "devpool-3" || !reflect.DeepEqual(leases[0].Activity, read) || !reflect.DeepEqual(leases[0].Unsaved, unsaved) {
+		t.Errorf("devpool-3 = %+v, want the activity and unsaved work the call read", leases[0])
+	}
+	if leases[1].Activity != nil || leases[1].Unsaved != nil {
+		t.Errorf("devpool-4 was not read but carries activity %+v unsaved %+v", leases[1].Activity, leases[1].Unsaved)
+	}
+}
+
+// TestComputeEnvelope_LeaseActivity_NeverFromTheReader: a lease reader reports
+// reconciled state only — activity and unsaved reach leases[] through
+// WithLeaseActivity alone, so an envelope without it (every tool but
+// zerops_lease) never carries them, whatever a reader returns, and the
+// records that stand in for an unreachable orchestrator carry none either.
+func TestComputeEnvelope_LeaseActivity_NeverFromTheReader(t *testing.T) {
+	t.Parallel()
+
+	derived := LeaseSnapshot{
+		Alias: "devpool-3", Pool: "devpool", State: "held",
+		Activity: &topology.LeaseActivity{LastChangeAt: "2026-10-23T13:00:00Z"},
+		Unsaved:  &topology.LeaseUnsaved{UnpushedCommits: 3},
+	}
+	tests := []struct {
+		name   string
+		reader LeaseReader
+	}{
+		{"a reader that sets them", func(context.Context) ([]LeaseSnapshot, error) { return []LeaseSnapshot{derived}, nil }},
+		{"the records standing in", func(context.Context) ([]LeaseSnapshot, error) { return nil, errors.New("orchestrator unreachable") }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			writeLeaseRecordFile(t, dir, "devpool-3", `{"poolHostname":"devpool","containerNumber":3,`+
+				`"containerHostname":"node-id-3.runtime.devpool.zerops","branch":"feat-x","acquiredAt":"2026-10-23T10:00:00Z"}`)
+			mock := platform.NewMock().WithServices([]platform.ServiceStack{poolService("devpool")}).WithProject(&platform.Project{ID: "p1", Name: "demo"})
+			env, err := ComputeEnvelope(context.Background(), mock, dir, "p1", runtime.Info{}, fixedTime, WithLeaseReader(tt.reader))
+			if err != nil {
+				t.Fatalf("ComputeEnvelope: %v", err)
+			}
+			leases := env.LeaseList()
+			if len(leases) != 1 || leases[0].Alias != "devpool-3" {
+				t.Fatalf("leases = %+v, want devpool-3", leases)
+			}
+			if leases[0].Activity != nil || leases[0].Unsaved != nil {
+				t.Errorf("devpool-3 carries activity %+v unsaved %+v without WithLeaseActivity", leases[0].Activity, leases[0].Unsaved)
+			}
+			raw, err := json.Marshal(env)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if strings.Contains(string(raw), `"activity"`) || strings.Contains(string(raw), `"unsaved"`) {
+				t.Errorf("the wire carries lease activity: %s", raw)
+			}
+		})
+	}
+}
+
 func TestComputeEnvelope_OrchestratorUnreachable_LeasesUnverified(t *testing.T) {
 	t.Parallel()
 
