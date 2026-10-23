@@ -76,6 +76,35 @@ function waitFor(predicate, { timeoutMs = 3000, intervalMs = 50 } = {}) {
   });
 }
 
+// armedFs is the real fs with one seam: it counts the events the panel's own
+// watchers on dir deliver, so a test can tell when FSEvents has armed them.
+// Every other call — and every watch — is the real one.
+function armedFs(dir) {
+  let events = 0;
+  const fsImpl = Object.create(fs);
+  fsImpl.watch = (target, ...rest) => {
+    const listener = rest.pop();
+    return fs.watch(target, ...rest, (...args) => {
+      if (target === dir) events++;
+      return listener(...args);
+    });
+  };
+  return { fsImpl, armed: () => events > 0 };
+}
+
+// whenArmed touches a probe file in dir until one of the panel's watchers on
+// dir has delivered an event: proof the watch is armed before the test
+// creates what it must detect. A probe changes nothing the panel reads — the
+// fallback ignores any event while its target is still missing.
+async function whenArmed(dir, armed) {
+  const probe = path.join(dir, ".zcp-welcomejs-probe");
+  return waitFor(() => {
+    if (armed()) return true;
+    fs.writeFileSync(probe, String(Date.now()));
+    return false;
+  });
+}
+
 test("missing ~/.claude and ~/.codex at open falls back to watching HOME, without crashing", () => {
   const { fsImpl, watches } = makeCountingFs({ existsSync: () => false });
   const homeDir = "/tmp/zcp-welcomejs-missing-home";
@@ -87,25 +116,26 @@ test("missing ~/.claude and ~/.codex at open falls back to watching HOME, withou
 });
 
 // This exercises a REAL fs.watch registration against a REAL tmp HOME, which
-// makes it hostage to a genuine macOS FSEvents reliability gap: under heavy
-// CONCURRENT watch registration (many welcomejs test files opening panels —
-// each with their own watchers — in parallel processes), a freshly
-// registered watch occasionally never delivers a single event, verified by
-// direct instrumentation (this is not a debounce/timing issue — waiting
-// longer doesn't help a watch that FSEvents never armed). A fresh watch
-// registration on a fresh path is independent of any previous attempt, so a
-// bounded retry — each against its own new tmp dir and panel — reliably
-// absorbs this without weakening what the test proves (the watcher path
-// genuinely detects a dir created after open and pushes local-only).
+// makes it hostage to a genuine macOS FSEvents gap: a freshly registered
+// watch is armed asynchronously, and while many welcomejs files open panels
+// in parallel processes the arming routinely lands after a dir created
+// straight after open — so the creation was never seen, on every retry.
+// The test therefore waits until the panel's own watcher on HOME has
+// delivered an event (whenArmed) before it creates the dir; a watch that
+// never arms is a fresh attempt, not a detection failure. What it proves is
+// unchanged: the real watcher detects a dir created after open and pushes
+// local-only.
 test("a credential dir created after open is detected and pushes local-only", async () => {
   const ATTEMPTS = 5;
   let found;
   for (let attempt = 1; attempt <= ATTEMPTS && !found; attempt++) {
     const tmpHome = tempDir("zcp-welcomejs-home-");
-    const { panel } = openWelcome({ homeDir: tmpHome, workspaceRoot: null });
+    const { fsImpl, armed } = armedFs(tmpHome);
+    const { panel } = openWelcome({ fs: fsImpl, homeDir: tmpHome, workspaceRoot: null });
 
     panel.webview.__fireMessage({ type: "ready" });
     assert.equal(panel.postedMessages.filter((m) => m.type === "state").length, 1);
+    if (!(await whenArmed(tmpHome, armed))) { panel.dispose(); continue; }
 
     fs.mkdirSync(path.join(tmpHome, ".claude"));
     fs.writeFileSync(path.join(tmpHome, ".claude", ".credentials.json"), "{}");
@@ -359,8 +389,8 @@ test("a burst of pack-manifest watcher events collapses into exactly one debounc
 });
 
 // Real-fs integration proof (mirrors "a credential dir created after open is
-// detected and pushes local-only" above, including its bounded-retry
-// treatment for the same genuine macOS FSEvents reliability gap under heavy
+// detected and pushes local-only" above, including waiting for the watcher
+// to arm before the write, for the same macOS FSEvents gap under heavy
 // concurrent watch registration): a pack manifest written entirely OUTSIDE
 // this panel (an external `zcp skills pack-add` run in a terminal) must
 // still surface as a state delta, without the user ever having to
@@ -387,7 +417,8 @@ test("a pack manifest created after open is detected and pushes an installed sta
       });
       return child;
     };
-    const { panel } = openWelcome({ homeDir: "/nonexistent/zcp-welcomejs-home", workspaceRoot: tmpWs, spawn });
+    const { fsImpl, armed } = armedFs(tmpWs);
+    const { panel } = openWelcome({ fs: fsImpl, homeDir: "/nonexistent/zcp-welcomejs-home", workspaceRoot: tmpWs, spawn });
 
     panel.webview.__fireMessage({ type: "ready" }); // triggers the FIRST pack-status run (spec §4) — manifest doesn't exist yet
     // Wait for that first run to actually settle showing "absent" BEFORE
@@ -401,6 +432,7 @@ test("a pack manifest created after open is detected and pushes an installed sta
       return last && last.payload.packs.some((p) => p.id === "superpowers" && p.state === "absent");
     });
     if (!settledAbsent) { panel.dispose(); continue; }
+    if (!(await whenArmed(tmpWs, armed))) { panel.dispose(); continue; }
 
     const skillPacksDir = path.join(tmpWs, ".zcp", "state", "skill-packs");
     fs.mkdirSync(skillPacksDir, { recursive: true });
