@@ -588,3 +588,68 @@ func TestLeaseTool_Rollout_ResultCarriesEnvelope(t *testing.T) {
 		}
 	}
 }
+
+// TestLeaseTool_UnmountedLease_EnvelopeSaysWhatStatusSays: a held lease whose
+// mount at /var/www/<alias> is gone reads `unmounted` in action=status, and
+// the envelope's leases[] carries that same state, never `held` (DP-2; live: a
+// lease with no mount read held in the envelope, docs/spec-mate.md §2.8a.3).
+func TestLeaseTool_UnmountedLease_EnvelopeSaysWhatStatusSays(t *testing.T) {
+	t.Parallel()
+	hs := httptest.NewServer(&fakeOrchestrator{reserved: true})
+	t.Cleanup(hs.Close)
+	stateDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(stateDir, "leases"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	rec := `{"poolHostname":"devpool","poolServiceId":"svc-pool","containerId":"c-abc","containerNumber":3,` +
+		`"containerHostname":"node-id-3.runtime.devpool.zerops","lease":"` + leaseTestLease + `","branch":"feature-x","acquiredAt":"2026-10-23T12:00:00Z"}`
+	if err := os.WriteFile(filepath.Join(stateDir, "leases", "devpool-3.json"), []byte(rec), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "proj"}).
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-pool", Name: "devpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
+		}).
+		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{Key: "API_TOKEN", Content: leaseTestToken, Sensitive: true}})
+	factory := func(_, token string) ops.SwarmAPI { return platform.NewSwarmClient(hs.URL, token, hs.Client()) }
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	// The stub mounter finds nothing mounted at /var/www/devpool-3.
+	RegisterLease(srv, mock, "proj-1", stateDir, factory, newStubMounter(), nil, runtime.Info{})
+
+	res := callTool(t, srv, "zerops_lease", map[string]any{"action": "status"})
+	text := getTextContent(t, res)
+	if res.IsError {
+		t.Fatalf("status: %s", text)
+	}
+	var got leaseToolResult
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatalf("parse: %v\n%s", err, text)
+	}
+	if len(got.Leases) != 1 || got.Leases[0].State != ops.LeaseStateUnmounted {
+		t.Fatalf("status leases = %+v, want devpool-3 unmounted", got.Leases)
+	}
+	env, ok := workflow.ExtractEnvelope(text)
+	if !ok || len(env.LeaseList()) != 1 {
+		t.Fatalf("envelope leases missing in\n%s", text)
+	}
+	if l := env.LeaseList()[0]; l.Alias != "devpool-3" || l.State != ops.LeaseStateUnmounted {
+		t.Errorf("envelope lease = %+v, want devpool-3 %s as status reports it", l, ops.LeaseStateUnmounted)
+	}
+}
+
+// TestEnvelopeLeaseHost_ChecksTheHostSideInsideAContainerOnly: the envelope
+// every JSON tool result carries checks a held lease's alias and mount on the
+// host side zerops_lease status checks them on — inside a container the
+// system mounter and the alias file, elsewhere nothing (where a lease has
+// neither).
+func TestEnvelopeLeaseHost_ChecksTheHostSideInsideAContainerOnly(t *testing.T) {
+	t.Parallel()
+	in := envelopeLeaseHost(runtime.Info{InContainer: true})
+	if _, ok := in.Mounter.(*platform.SystemMounter); !ok || in.Run == nil {
+		t.Errorf("in a container: host = %+v, want the system mounter and the alias-file runner", in)
+	}
+	if out := envelopeLeaseHost(runtime.Info{}); out.Mounter != nil || out.Run != nil {
+		t.Errorf("outside a container: host = %+v, want none", out)
+	}
+}

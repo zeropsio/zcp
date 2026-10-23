@@ -5,10 +5,13 @@
 package integration_test
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"maps"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -17,9 +20,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/zeropsio/zcp/internal/auth"
+	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/ops/devservertest"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/server"
 )
 
 // leaseE2EPoolMock is a project holding the pool devpool, its API_TOKEN set.
@@ -163,5 +171,89 @@ func TestLease_Integration_DevServerStart_ProbesTheLeasesOwnPreview(t *testing.T
 	}
 	if !seen[preview] || len(seen) != 1 {
 		t.Errorf("probed %v, want only the lease's own address %s", slices.Sorted(maps.Keys(seen)), preview)
+	}
+}
+
+// routeReservedOrchestrator answers devpool's orchestrator with container #3
+// reserved — the lease writeLeaseE2ERecord records.
+func routeReservedOrchestrator(t *testing.T) {
+	t.Helper()
+	orch := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+leaseIntToken {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/container" {
+			_, _ = w.Write([]byte(`[{"id":"c-abc","name":"node-id-3","number":3,"hostname":"node-id-3.runtime.devpool.zerops","status":"ACTIVE",` +
+				`"serviceId":"svc-pool","stackId":"stk","appVersionId":"av","current":true,"lockState":"reserved","dirty":false}]`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(orch.Close)
+	target, err := url.Parse(orch.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := http.DefaultTransport
+	http.DefaultTransport = orchestratorRoute{host: "orch.devpool.zerops", target: target, next: orig}
+	t.Cleanup(func() { http.DefaultTransport = orig })
+}
+
+// TestLease_Integration_UnmountedLease_EnvelopeSaysWhatStatusSays: in a
+// container whose mount of a held lease is gone, zerops_lease action=status
+// reads it `unmounted`, and so does the envelope's leases[] — the same state,
+// never `held` (DP-2, docs/spec-mate.md §2.8a.3).
+func TestLease_Integration_UnmountedLease_EnvelopeSaysWhatStatusSays(t *testing.T) {
+	// Non-parallel: t.Chdir (the state dir) and a swap of
+	// http.DefaultTransport (the orchestrator).
+	t.Chdir(t.TempDir())
+	routeReservedOrchestrator(t)
+	writeLeaseE2ERecord(t)
+
+	store, err := knowledge.GetEmbeddedStore()
+	if err != nil {
+		t.Fatalf("knowledge store: %v", err)
+	}
+	authInfo := &auth.Info{ProjectID: "proj-1", Token: "test-token", APIHost: "localhost", Region: "prg1", ClientID: "client-1", ProjectName: "test-project"}
+	// nopMounter finds nothing mounted: /var/www/devpool-3 is gone.
+	srv := server.New(context.Background(), leaseE2EPoolMock(), authInfo, store, defaultLogFetcher(), nil, &nopMounter{}, runtime.Info{}, nil)
+	st, ct := mcp.NewInMemoryTransports()
+	ss, err := srv.MCPServer().Connect(context.Background(), st, nil)
+	if err != nil {
+		t.Fatalf("server connect: %v", err)
+	}
+	defer ss.Close()
+	session, err := mcp.NewClient(&mcp.Implementation{Name: "integration-test", Version: "0.1"}, nil).Connect(context.Background(), ct, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	defer session.Close()
+
+	res := callAndGetResult(t, session, "zerops_lease", map[string]any{"action": "status"})
+	text := getTextContent(t, res)
+	if res.IsError {
+		t.Fatalf("status: %s", text)
+	}
+	var got struct {
+		Leases []struct {
+			Alias string `json:"alias"`
+			State string `json:"state"`
+		} `json:"leases"`
+		Envelope struct {
+			Leases []struct {
+				Alias string `json:"alias"`
+				State string `json:"state"`
+			} `json:"leases"`
+		} `json:"envelope"`
+	}
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatalf("result is not JSON: %v\n%s", err, text)
+	}
+	if len(got.Leases) != 1 || got.Leases[0].State != "unmounted" {
+		t.Fatalf("status leases = %+v, want devpool-3 unmounted", got.Leases)
+	}
+	if len(got.Envelope.Leases) != 1 || got.Envelope.Leases[0].Alias != "devpool-3" || got.Envelope.Leases[0].State != "unmounted" {
+		t.Errorf("envelope leases = %+v, want devpool-3 unmounted as status reports it", got.Envelope.Leases)
 	}
 }
