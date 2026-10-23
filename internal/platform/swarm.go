@@ -294,6 +294,7 @@ func (c *SwarmClient) do(ctx context.Context, method, path string, body []byte, 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		se := parseSwarmError(resp.StatusCode, raw)
 		se.Message = c.scrub(se.Message, lease)
+		se.Cause = c.scrub(se.Cause, lease)
 		return se
 	}
 	if out == nil || len(bytes.TrimSpace(raw)) == 0 {
@@ -306,7 +307,7 @@ func (c *SwarmClient) do(ctx context.Context, method, path string, body []byte, 
 }
 
 // SwarmError is an orchestrator refusal: its error envelope
-// {"error":{"code","message","meta":[{"metadata":{"reason","retryable"}}]}}.
+// {"error":{"code","message","meta":[{"metadata":{"reason","retryable","message"}}]}}.
 // Reason and Retryable come from the orchestrator's own metadata (an error
 // passed on from the platform carries neither, and reads Reason "" and
 // Retryable false); match on Reason, never on Message.
@@ -316,6 +317,27 @@ type SwarmError struct {
 	Message   string
 	Reason    string // unknown-lease, all-reserved, ...; empty when the orchestrator named none
 	Retryable bool
+	// Cause is the platform's own refusal the orchestrator passed on
+	// (metadata.message), verbatim — e.g. why no container could be created
+	// for an all-reserved acquire. Empty when the orchestrator passed none.
+	Cause string
+}
+
+// SwarmReasonAllReserved is the SwarmError.Reason of an acquire refused
+// because every container that could serve it is reserved and another could
+// not be created. The orchestrator queues nothing: it answers at once.
+const SwarmReasonAllReserved = "all-reserved"
+
+// swarmCauseServiceMaximum is how the platform words a refusal to create a
+// container for a service that already holds its maximum (live, 2026-10-23:
+// "[containerAction] Service is already at maximum number of containers").
+const swarmCauseServiceMaximum = "maximum number of containers"
+
+// AtServiceMaximum reports a refusal whose platform cause is the pool service
+// holding its maximum number of containers — the one cause raising the
+// service's maximum can lift. Any other cause (or none) reads false.
+func (e *SwarmError) AtServiceMaximum() bool {
+	return strings.Contains(strings.ToLower(e.Cause), swarmCauseServiceMaximum)
 }
 
 // Error implements error. It carries no request URL and no lease.
@@ -364,6 +386,9 @@ func parseSwarmError(status int, raw []byte) *SwarmError {
 		}
 		if r := m.Metadata["retryable"]; len(r) > 0 && r[0] == "true" {
 			se.Retryable = true
+		}
+		if c := m.Metadata["message"]; len(c) > 0 && se.Cause == "" {
+			se.Cause = c[0]
 		}
 	}
 	return se

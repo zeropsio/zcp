@@ -307,13 +307,16 @@ func TestScaleTool_Description_NamesPools(t *testing.T) {
 }
 
 // TestScaleTool_Pool_ResultCarriesTheContainerCountNotice: the result of a
-// pool's container-count change says the count caps the orchestrator and
-// that lowering the maximum can remove containers in use.
+// pool's container-count change says the count caps the orchestrator, at
+// most 10 per pool, and that lowering the maximum deletes containers, leased
+// ones included. (The change keeps the maximum, so nothing is deleted and no
+// acknowledgment is asked.)
 func TestScaleTool_Pool_ResultCarriesTheContainerCountNotice(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{{
 		ID: "svc-pool", Name: "pool", Status: "RUNNING",
 		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1"},
+		CustomAutoscaling:    &platform.CustomAutoscaling{HorizontalMinCount: 1, HorizontalMaxCount: 4},
 	}})
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterScale(srv, mock, "proj-1", nil)
@@ -327,7 +330,7 @@ func TestScaleTool_Pool_ResultCarriesTheContainerCountNotice(t *testing.T) {
 		t.Fatalf("parse result: %v", err)
 	}
 	notice, _ := parsed["notice"].(string)
-	for _, want := range []string{"orchestrator", "Check zerops_lease status before lowering maxContainers below the containers in use"} {
+	for _, want := range []string{"orchestrator", "at most 10 per pool", "deletes the highest-numbered ones", "leased ones included"} {
 		if !strings.Contains(notice, want) {
 			t.Errorf("notice = %q, want it to contain %q", notice, want)
 		}

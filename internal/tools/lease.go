@@ -57,8 +57,11 @@ func leaseDeps(client platform.Client, projectID, stateDir string, swarm ops.Swa
 // leaseToolResult is what zerops_lease returns. It never carries the lease
 // string itself.
 type leaseToolResult struct {
-	Action      string                  `json:"action"`
-	Leases      []ops.LeaseView         `json:"leases"`
+	Action string          `json:"action"`
+	Leases []ops.LeaseView `json:"leases"`
+	// UnreadPools are the pools a status of every pool could not read, each
+	// with why; their leases are listed from zcp's records, unverified.
+	UnreadPools []ops.LeasePoolUnread   `json:"unreadPools,omitempty"`
 	NextActions string                  `json:"nextActions,omitempty"`
 	Envelope    *workflow.StateEnvelope `json:"envelope,omitempty"`
 }
@@ -119,14 +122,15 @@ func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir 
 				Envelope:    envelope(ctx),
 			}), nil, nil
 		case leaseActionStatus:
-			views, err := ops.LeaseList(ctx, deps, input.Pool)
+			status, err := ops.LeaseStatus(ctx, deps, input.Pool)
 			if err != nil {
 				return convertError(err), nil, nil
 			}
+			views := status.Leases
 			if views == nil {
 				views = []ops.LeaseView{}
 			}
-			return jsonResult(leaseToolResult{Action: input.Action, Leases: views, Envelope: envelope(ctx)}), nil, nil
+			return jsonResult(leaseToolResult{Action: input.Action, Leases: views, UnreadPools: status.Unread, Envelope: envelope(ctx)}), nil, nil
 		case leaseActionRelease:
 			if input.Lease == "" {
 				return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,

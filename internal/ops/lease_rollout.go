@@ -48,7 +48,7 @@ func LeaseRollout(ctx context.Context, d LeaseDeps, pool string) (LeaseRolloutVi
 	}
 	got, err := rp.api.Rollout(ctx)
 	if err != nil {
-		return LeaseRolloutView{}, rolloutError(pool, err)
+		return LeaseRolloutView{}, rolloutError(ctx, d, rp, err)
 	}
 	return rolloutView(pool, got, ownLeaseAliases(d.StateDir, pool, rp.svc.ID)), nil
 }
@@ -56,10 +56,11 @@ func LeaseRollout(ctx context.Context, d LeaseDeps, pool string) (LeaseRolloutVi
 // rolloutError is a failed rollout as the agent reads it. A pool whose
 // minimum container count equals its maximum has no room to replace anything
 // (matched on the orchestrator's reason, never its message).
-func rolloutError(pool string, err error) error {
+func rolloutError(ctx context.Context, d LeaseDeps, rp *resolvedPool, err error) error {
+	pool := rp.svc.Name
 	var se *platform.SwarmError
 	if !errors.As(err, &se) || se.Reason != platform.SwarmReasonPoolFixedSize {
-		return leaseOrchestratorError(pool, "roll out", err)
+		return leaseOrchestratorError(ctx, d, rp, "roll out", err)
 	}
 	out := platform.NewPlatformError(platform.ErrAPIError,
 		fmt.Sprintf("Pool '%s' cannot be rolled out: its minimum container count equals its maximum, and a rollout needs room between them to replace a container", pool),
@@ -136,7 +137,7 @@ func PoolOrchestratorCheck(ctx context.Context, d LeaseDeps, pool string) CheckR
 			check.Detail = fmt.Sprintf("answers: %d container(s), %d leased", len(containers), leased)
 			return check
 		}
-		err = leaseOrchestratorError(pool, "list containers", err)
+		err = leaseOrchestratorError(ctx, d, rp, "list containers", err)
 	}
 	check.Status = CheckFail
 	check.Detail = err.Error()

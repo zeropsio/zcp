@@ -998,11 +998,14 @@ const leaseStatusTimeout = 10 * time.Second
 const envelopeLeaseTimeout = 3 * time.Second
 
 // leaseReader is the workflow.LeaseReader of a status call: the project's
-// leases, reconciled by ops.LeaseList against each pool's orchestrator. An
-// error (outside the project, a pool that does not answer) is the reader's
-// "could not ask" signal — ComputeEnvelope then falls back to zcp's own
-// records, marked unverified. Only the lease's non-secret view crosses over;
-// the lease string never leaves ops (DP-3).
+// leases, reconciled by ops.LeaseList against each pool's orchestrator. A
+// pool whose orchestrator does not answer (stopped, outside the project)
+// marks only its own leases unverified — zcp's records stand in for them —
+// while every other pool's are confirmed. An error (the services or the
+// records could not be read) is the reader's "could not ask" signal —
+// ComputeEnvelope then falls back to zcp's own records, all unverified. Only
+// the lease's non-secret view crosses over; the lease string never leaves ops
+// (DP-3).
 func leaseReader(client platform.Client, projectID, stateDir string, timeout time.Duration) workflow.LeaseReader {
 	return leaseReaderWith(client, projectID, stateDir, ops.NewSwarmFactory(&http.Client{Timeout: timeout}), timeout)
 }
@@ -1024,7 +1027,7 @@ func leaseReaderWith(client platform.Client, projectID, stateDir string, swarm o
 		for _, v := range views {
 			out = append(out, workflow.LeaseSnapshot{
 				Alias: v.Alias, Pool: v.Pool, Branch: v.Branch,
-				ContainerHostname: v.ContainerHostname, State: v.State,
+				ContainerHostname: v.ContainerHostname, State: v.State, Unverified: v.Unverified,
 			})
 		}
 		return out, nil

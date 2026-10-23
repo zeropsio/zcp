@@ -90,6 +90,22 @@ its own.
   declared in `run.ports` with `httpSupport: true`.
 - The pool's service env reaches its containers. The orchestrator answers
   only inside the project.
+- A full pool refuses an acquire at once and queues nothing: an acquire
+  succeeds only after a lease is released. A pool holds at most ten
+  containers — a higher `maxContainers` is capped at ten.
+- Lowering the pool's `maxContainers` below the containers it holds deletes
+  the highest-numbered ones, leased ones included, each with its `/var/www`.
+- A stopped pool's orchestrator does not answer. A restart, or a stop and
+  start, keeps each container's number, hostname, lease, `/var/www` and
+  `/home/zerops`; its processes and `/tmp` are gone.
+- Never set `envIsolation: none` on the pool: every service of the project
+  would get its `ADMIN_TOKEN` and `API_TOKEN`. A service that needs the
+  pool's token references it under another name — this zcp service as
+  `<pool>_LEASE_TOKEN: ${<pool>_API_TOKEN}`. A variable named
+  `<pool>_API_TOKEN` holding `${<pool>_API_TOKEN}` stays the literal text.
+- A container answers from anywhere in the project on every port it listens
+  on, at `node-id-<n>.runtime.<pool>.zerops`; `run.ports` governs only the
+  public subdomain.
 - Code in a leased container reads the project's Shared vault values and the
   pool's own; in a project with `envIsolation: none` it also reads every
   other service's values as `<host>_KEY`, the zcp service's `ZCP_API_KEY`

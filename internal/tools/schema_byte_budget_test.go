@@ -154,8 +154,12 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// Raised +39 (2546→2585): request says to ask when the feature using
 		// the value is being built — the env model's when-to-ask lines render
 		// only before the first deploy, so a later request never saw them.
-		"zerops_env":                2585,
-		"zerops_scale":              2242,
+		"zerops_env": 2585,
+		// Raised +421 (2242→2663): confirmDestructive, the diagnose-before-
+		// destruct ack a lowering of a pool's maxContainers over a lease needs
+		// (the lowering deletes the leased container with its /var/www); the
+		// ack is the shared DestructiveAck shape, its description one line.
+		"zerops_scale":              2663,
 		"zerops_import":             1910,
 		"zerops_discover":           879,
 		"zerops_preprocess":         811,

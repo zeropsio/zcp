@@ -30,6 +30,11 @@ type fakeSwarm struct {
 	acquireErr error
 	listErr    error
 	releaseErr error
+	// limits is what GET /pool answers (a maximum of 4 when unset);
+	// limitsErr fails it.
+	limits    platform.SwarmPool
+	limitsErr error
+	lists     int // container listings asked for
 
 	acquireReqs []platform.SwarmAcquireRequest
 	releases    []fakeRelease
@@ -45,10 +50,17 @@ type fakeRelease struct {
 }
 
 func (f *fakeSwarm) Pool(context.Context) (platform.SwarmPool, error) {
-	return platform.SwarmPool{MaximumContainerCount: 4}, nil
+	if f.limitsErr != nil {
+		return platform.SwarmPool{}, f.limitsErr
+	}
+	if f.limits.MaximumContainerCount == 0 {
+		return platform.SwarmPool{MaximumContainerCount: 4}, nil
+	}
+	return f.limits, nil
 }
 
 func (f *fakeSwarm) Containers(context.Context) ([]platform.SwarmContainer, error) {
+	f.lists++
 	return f.containers, f.listErr
 }
 
@@ -549,6 +561,110 @@ func TestLeaseAcquire_MaskedTokenNoLiveEnv_SaysWhatToAdd(t *testing.T) {
 	}
 	if len(fx.swarm.acquireReqs) != 0 {
 		t.Error("acquired without a token")
+	}
+}
+
+// TestLeaseAcquire_PoolBearer_LiveEnvSources: the orchestrator's bearer
+// comes from the container's live env as <pool>_API_TOKEN, else as the
+// different-name <pool>_LEASE_TOKEN (a service variable
+// `<pool>_LEASE_TOKEN=${<pool>_API_TOKEN}` resolves under every isolation),
+// else from the env API. A value that is still the unresolved text of a
+// reference (`${...}`) is never a bearer (live, 2026-10-23: a variable named
+// like the reference it holds stays literal, and turns every other reference
+// to that name on the service literal too).
+func TestLeaseAcquire_PoolBearer_LiveEnvSources(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		live      map[string]string
+		masked    bool // the env API reads the pool's API_TOKEN masked
+		wantToken string
+	}{
+		{name: "the API token name", live: map[string]string{"devpool_API_TOKEN": "live-api"}, masked: true, wantToken: "live-api"},
+		{name: "the different-name lease token", live: map[string]string{"devpool_LEASE_TOKEN": "live-lease"}, masked: true, wantToken: "live-lease"},
+		{name: "an unresolved API token name falls through to the lease token",
+			live: map[string]string{"devpool_API_TOKEN": "${devpool_API_TOKEN}", "devpool_LEASE_TOKEN": "live-lease"}, masked: true, wantToken: "live-lease"},
+		{name: "unresolved live values fall through to the env API",
+			live: map[string]string{"devpool_API_TOKEN": "${devpool_API_TOKEN}", "devpool_LEASE_TOKEN": "${devpool_API_TOKEN}"}, wantToken: testPoolToken},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			fx := newLeaseFixture(t)
+			if tt.masked {
+				fx = maskedPoolFixture(t)
+			}
+			fx.swarm.acquired = acquiredAs(3)
+			fx.deps.Env = func(key string) (string, bool) {
+				v, ok := tt.live[key]
+				return v, ok
+			}
+			if _, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, "feature"); err != nil {
+				t.Fatalf("acquire: %v", err)
+			}
+			if fx.gotToken != tt.wantToken {
+				t.Errorf("orchestrator bearer = %q, want %q", fx.gotToken, tt.wantToken)
+			}
+		})
+	}
+}
+
+// TestLeaseAcquire_NoUsableBearer_SaysAddADifferentNameReference: with no
+// usable bearer the refusal tells the person to add the different-name
+// reference and never to name it like the reference it holds; a live value
+// that is an unresolved reference is named as such, and the same-name
+// variable as the thing to delete.
+func TestLeaseAcquire_NoUsableBearer_SaysAddADifferentNameReference(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		live   map[string]string
+		want   []string
+		banned []string
+	}{
+		{
+			name: "nothing in the live env",
+			want: []string{"devpool_LEASE_TOKEN=${devpool_API_TOKEN}", "Never name it devpool_API_TOKEN"},
+		},
+		{
+			name: "the same-name variable left the API token name unresolved",
+			live: map[string]string{"devpool_API_TOKEN": "${devpool_API_TOKEN}"},
+			want: []string{"devpool_API_TOKEN is the unresolved text ${devpool_API_TOKEN}", "delete", "devpool_LEASE_TOKEN=${devpool_API_TOKEN}"},
+		},
+		{
+			name: "the lease token's reference did not resolve",
+			live: map[string]string{"devpool_LEASE_TOKEN": "${devpool_API_TOKEN}"},
+			want: []string{"devpool_LEASE_TOKEN is the unresolved text ${devpool_API_TOKEN}"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			fx := maskedPoolFixture(t)
+			fx.deps.Env = func(key string) (string, bool) {
+				v, ok := tt.live[key]
+				return v, ok
+			}
+			_, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, "feature")
+			var pe *platform.PlatformError
+			if !errors.As(err, &pe) || pe.Code != platform.ErrPrerequisiteMissing {
+				t.Fatalf("err = %v, want a %s refusal", err, platform.ErrPrerequisiteMissing)
+			}
+			text := pe.Message + " " + pe.Suggestion
+			for _, want := range tt.want {
+				if !strings.Contains(text, want) {
+					t.Errorf("refusal %q lacks %q", text, want)
+				}
+			}
+			if strings.Contains(text, "devpool_API_TOKEN=${devpool_API_TOKEN}") {
+				t.Errorf("refusal still advises the same-name reference, which never resolves: %q", text)
+			}
+			if fx.gotToken != "" || len(fx.swarm.acquireReqs) != 0 {
+				t.Errorf("the orchestrator was reached with bearer %q (%d acquires): an unresolved reference is no bearer", fx.gotToken, len(fx.swarm.acquireReqs))
+			}
+		})
 	}
 }
 

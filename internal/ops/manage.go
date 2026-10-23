@@ -130,12 +130,34 @@ func DisconnectStorage(ctx context.Context, client platform.Client, projectID, h
 // refuses, e.g. a minRam above maxRam (seen live 2026-10-16).
 const apiCodeInvalidAutoscaling = "invalidCustomAutoscalingValue"
 
+// ScaleOption tunes Scale.
+type ScaleOption func(*scaleConfig)
+
+type scaleConfig struct {
+	shrinkDeps    LeaseDeps
+	approveShrink func(PoolShrink) error
+}
+
+// WithPoolShrinkGuard makes Scale check, before it lowers a pool's
+// maxContainers, which containers the lowering deletes (the pool deletes its
+// highest-numbered ones, leased ones included): it lists them through the
+// pool's orchestrator via d. A lowering that would delete a leased container,
+// or whose deletions cannot be checked, is put to approve first; an error
+// from approve refuses the scale before anything is sent.
+func WithPoolShrinkGuard(d LeaseDeps, approve func(PoolShrink) error) ScaleOption {
+	return func(c *scaleConfig) { c.shrinkDeps, c.approveShrink = d, approve }
+}
+
 // Scale updates the autoscaling parameters for a service. The platform
 // replaces the whole autoscaling with the body it gets, so every field the
 // caller leaves out is filled from the service's customAutoscaling — a
 // RAM-only call keeps the CPU and container bounds it had. A field the
 // service never set stays out and keeps its platform default.
-func Scale(ctx context.Context, client platform.Client, projectID, hostname string, params ScaleParams) (*ScaleResult, error) {
+func Scale(ctx context.Context, client platform.Client, projectID, hostname string, params ScaleParams, opts ...ScaleOption) (*ScaleResult, error) {
+	var cfg scaleConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
 	if err := validateScaleParams(params); err != nil {
 		return nil, err
 	}
@@ -162,6 +184,18 @@ func Scale(ctx context.Context, client platform.Client, projectID, hostname stri
 	fillOmittedAutoscaling(&apiParams, current.CustomAutoscaling,
 		containerCountFixed(serviceType), topology.IsPoolType(serviceType))
 	apiParams.ServiceMode = svc.Mode
+	// Check-before-mutate (spec-workflows §8 O3): what a lowering of a pool's
+	// maximum deletes is read before the change is sent.
+	var shrink *PoolShrink
+	if cfg.approveShrink != nil && topology.IsPoolType(serviceType) && params.MaxContainers != nil {
+		plan := planPoolShrink(ctx, cfg.shrinkDeps, svc, current, *params.MaxContainers)
+		if plan.NeedsApproval() {
+			if err := cfg.approveShrink(plan); err != nil {
+				return nil, err
+			}
+		}
+		shrink = &plan
+	}
 	proc, err := client.SetAutoscaling(ctx, svc.ID, apiParams)
 	if err != nil {
 		var pe *platform.PlatformError
@@ -184,6 +218,11 @@ func Scale(ctx context.Context, client platform.Client, projectID, hostname stri
 	}
 	if topology.IsPoolType(serviceType) && (params.MinContainers != nil || params.MaxContainers != nil) {
 		result.Notice = poolContainerCountNotice
+		if shrink != nil {
+			if n := shrink.notice(); n != "" {
+				result.Notice += " " + n
+			}
+		}
 	}
 
 	return result, nil
@@ -427,9 +466,10 @@ func scaleBoundsConflict(asked ScaleParams, sent platform.AutoscalingParams) err
 }
 
 // poolContainerCountNotice is what a pool's container counts mean: they are
-// the ceiling of what its orchestrator can lease out, not a replica count.
-const poolContainerCountNotice = "A pool's container count caps how many containers its orchestrator can hand out. " +
-	"Check zerops_lease status before lowering maxContainers below the containers in use."
+// the ceiling of what its orchestrator holds and leases out, not a replica
+// count, and lowering the maximum deletes containers (live, 2026-10-23).
+const poolContainerCountNotice = "A pool's maxContainers caps how many containers its orchestrator holds and hands out — at most 10 per pool (a higher value is capped). " +
+	"Lowering it below the containers the pool holds deletes the highest-numbered ones within about 30 s, leased ones included, with their /var/www."
 
 // poolContainerBounds is the minContainers..maxContainers range each pool
 // type's own stanza in the import schema allows
