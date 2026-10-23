@@ -126,7 +126,7 @@ func LeaseAcquireGroup(ctx context.Context, d LeaseDeps, pools []string, repo, b
 	unlock()
 	locked = false
 	if d.SSH != nil {
-		runMembers(fresh, func(m *groupMember) { afterLeaseCheckout(ctx, d.SSH, m.rec.alias(), &m.view) })
+		runMembers(fresh, func(m *groupMember) { afterLeaseCheckout(ctx, d.SSH, d.StateDir, m.rec.alias(), &m.view) })
 	}
 	views := make([]LeaseView, 0, len(members))
 	for _, m := range members {

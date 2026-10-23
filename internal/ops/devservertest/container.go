@@ -509,11 +509,11 @@ func (c *Container) ctl(command string) string {
 
 // envArgs reads `env`'s flags: the --set pairs, or --clear alone.
 func envArgs(args []string) (map[string]string, error) {
-	env, clear := map[string]string{}, false
+	env, cleared := map[string]string{}, false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--clear":
-			clear = true
+			cleared = true
 		case "--set":
 			if i+1 >= len(args) {
 				return nil, errors.New("--set needs a value")
@@ -528,7 +528,7 @@ func envArgs(args []string) (map[string]string, error) {
 			return nil, fmt.Errorf("env: unexpected %q", args[i])
 		}
 	}
-	if !clear && len(env) == 0 {
+	if !cleared && len(env) == 0 {
 		return nil, errors.New("env needs --set NAME=VALUE or --clear")
 	}
 	return env, nil
