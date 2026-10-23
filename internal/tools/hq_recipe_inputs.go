@@ -130,6 +130,14 @@ func composeGroupRecipeInputs(
 	known := workflow.ManagedRuntimeIndex(metas)
 	for _, svc := range discovered.Services {
 		switch {
+		case topology.IsPoolOrSandboxType(svc.Type):
+			// A Swarm pool reports the runtime category and a Zerops Box the
+			// database one, so only the type tells them apart: neither is a
+			// runtime, a utility or a managed dependency of the recipe. Left
+			// out and said, as launch does. Spec: spec-workflows.md §8 PS-3.
+			warnings = append(warnings, fmt.Sprintf(
+				"%s %q (%s) is not carried in the recipe: it is no application runtime or managed dependency, so the recipe never declares it",
+				notCarriedPoolKind(svc.Type), svc.Hostname, svc.Type))
 		case svc.IsInfrastructure && topology.IsManagedService(svc.Type):
 			entry, entryWarnings, err := groupRecipeManaged(ctx, client, svc)
 			if err != nil {
@@ -158,6 +166,15 @@ func composeGroupRecipeInputs(
 	return inputs, warnings, nil
 }
 
+// notCarriedPoolKind is the human name of a pool or Box the recipe does not
+// carry, worded as the launch bundle words it.
+func notCarriedPoolKind(serviceType string) string {
+	if topology.IsPoolType(serviceType) {
+		return "Swarm pool"
+	}
+	return "Zerops Box"
+}
+
 // groupRecipeWaits sorts the live runtimes no wired pair holds. The recipe
 // waits for what a later pass brings — a finished pair the repository pass
 // will still wire (hqPairNeedsRepository) — but never one named after the
@@ -179,7 +196,7 @@ func groupRecipeWaits(services []ops.ServiceInfo, metas, wired []*workflow.Servi
 	live := map[string]bool{}
 	var runtimes []string
 	for _, svc := range services {
-		if svc.IsInfrastructure || strings.HasPrefix(svc.Type, "zcp@") {
+		if svc.IsInfrastructure || strings.HasPrefix(svc.Type, "zcp@") || topology.IsPoolOrSandboxType(svc.Type) {
 			continue
 		}
 		live[svc.Hostname] = true
