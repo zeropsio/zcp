@@ -1102,3 +1102,104 @@ func TestValidatePlan_PublicAccess_Table(t *testing.T) {
 		})
 	}
 }
+
+// Spec: spec-workflows.md §8 PS-5. A pool is infrastructure an app uses, not
+// the app; the refusal comes before the catalog check so it holds whether or
+// not the live catalog lists the type.
+func TestValidateBootstrapTargets_PoolAsRuntime_Refused(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		target  RuntimeTarget
+		schemas *schema.Schemas
+	}{
+		{"swarm dev type", RuntimeTarget{DevHostname: "pool", Type: "swarm@1", BootstrapMode: "simple"}, testSchemas},
+		{"swarm-vm dev type", RuntimeTarget{DevHostname: "pool", Type: "swarm-vm@1", BootstrapMode: "simple"}, testSchemas},
+		{"swarm with nil catalog", RuntimeTarget{DevHostname: "pool", Type: "swarm@1", BootstrapMode: "simple"}, nil},
+		{"swarm as stage type", RuntimeTarget{DevHostname: "app", Type: "nodejs@22", StageType: "swarm@1", BootstrapMode: "standard", ExplicitStage: "appstage"}, testSchemas},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := ValidateBootstrapTargets([]BootstrapTarget{{Runtime: tt.target}}, tt.schemas, nil)
+			if err == nil {
+				t.Fatal("a Swarm pool as a bootstrap runtime target must be refused")
+			}
+			for _, want := range []string{"Swarm pool", "not an app runtime", "infrastructure"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q missing guidance %q", err.Error(), want)
+				}
+			}
+		})
+	}
+}
+
+// Spec: spec-workflows.md §8 PS-5. A Zerops Box hosts sandboxes; like a pool
+// it is infrastructure an app uses, never the app's runtime.
+func TestValidateBootstrapTargets_SandboxAsRuntime_Refused(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		target  RuntimeTarget
+		schemas *schema.Schemas
+	}{
+		{"zbox dev type", RuntimeTarget{DevHostname: "box", Type: "ubuntu/zbox@1", BootstrapMode: "simple"}, testSchemas},
+		{"bare zbox dev type", RuntimeTarget{DevHostname: "box", Type: "zbox@1", BootstrapMode: "simple"}, testSchemas},
+		{"zbox with nil catalog", RuntimeTarget{DevHostname: "box", Type: "ubuntu/zbox@1", BootstrapMode: "simple"}, nil},
+		{"zbox as stage type", RuntimeTarget{DevHostname: "app", Type: "nodejs@22", StageType: "ubuntu/zbox@1", BootstrapMode: "standard", ExplicitStage: "appstage"}, testSchemas},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := ValidateBootstrapTargets([]BootstrapTarget{{Runtime: tt.target}}, tt.schemas, nil)
+			if err == nil {
+				t.Fatal("a Zerops Box as a bootstrap runtime target must be refused")
+			}
+			for _, want := range []string{"Zerops Box", "not an app runtime", "infrastructure"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q missing guidance %q", err.Error(), want)
+				}
+			}
+		})
+	}
+}
+
+// Spec: spec-workflows.md §8 PS-5. A Zerops Box passes the type check whenever
+// the schema lists it ACTIVE — as infrastructure the app uses (a dependency),
+// since the runtime-target slot refuses it. The "embedded seed" case runs the
+// committed seed through the same ACTIVE overlay the server applies, so it
+// fails until the seed knows `ubuntu/zbox@1`.
+func TestCatalogTypeErrors_ZboxActive_Accepted(t *testing.T) {
+	t.Parallel()
+	fixture := &schema.Schemas{ImportYml: &schema.ImportYmlSchema{ServiceTypes: []string{
+		"alpine/nodejs@22", "ubuntu/zbox@1",
+	}}}
+	tests := []struct {
+		name     string
+		schemas  *schema.Schemas
+		wantErr  bool
+		wantText string
+	}{
+		{"fixture lists zbox ACTIVE", schema.FilterToActive(fixture, []string{"alpine/nodejs@22", "ubuntu/zbox@1"}), false, ""},
+		{"embedded seed knows zbox ACTIVE", schema.FilterToActive(testSchemas, []string{"alpine/nodejs@22", "ubuntu/zbox@1"}), false, ""},
+		{"fixture lists zbox but not ACTIVE", schema.FilterToActive(fixture, []string{"alpine/nodejs@22"}), true, "not found in available service types"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			targets := []BootstrapTarget{{
+				Runtime:      RuntimeTarget{DevHostname: "app", Type: "alpine/nodejs@22", BootstrapMode: "simple"},
+				Dependencies: []Dependency{{Hostname: "sandbox", Type: "ubuntu/zbox@1", Resolution: "CREATE"}},
+			}}
+			_, err := ValidateBootstrapTargets(targets, tt.schemas, nil)
+			switch {
+			case tt.wantErr && err == nil:
+				t.Fatal("a Box the schema does not list ACTIVE must fail the type check")
+			case tt.wantErr && !strings.Contains(err.Error(), tt.wantText):
+				t.Fatalf("error %q missing %q", err.Error(), tt.wantText)
+			case !tt.wantErr && err != nil:
+				t.Fatalf("a Box the schema lists ACTIVE must pass the type check: %v", err)
+			}
+		})
+	}
+}

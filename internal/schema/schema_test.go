@@ -117,3 +117,15 @@ func TestParseInvalidJSON(t *testing.T) {
 		t.Error("expected error for invalid JSON")
 	}
 }
+
+// Spec: spec-workflows.md §8 PS-5. The committed seed schema must know the
+// Zerops Box type so a cold-start catalog (and the ACTIVE overlay on top of
+// it) can admit it; pools were already listed.
+func TestEmbeddedSchema_KnowsZbox(t *testing.T) {
+	t.Parallel()
+	for _, serviceType := range []string{"ubuntu/zbox@1", "swarm@1", "swarm-vm@1"} {
+		if !Embedded().HasServiceType(serviceType) {
+			t.Errorf("embedded import schema is missing public %s", serviceType)
+		}
+	}
+}
