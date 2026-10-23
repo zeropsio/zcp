@@ -15,7 +15,7 @@ import (
 
 // A branch that spans several app parts holds one lease per part's pool
 // (DP-17), and each part's dev servers reach the same branch's sibling
-// workspaces by container hostname (docs/spec-workflows.md §8 DP-21). The
+// workspaces by container hostname (docs/spec-workflows.md §8 DP-22). The
 // repository's declaration names, in siblingEnv, the variable a part's servers
 // read and the pool it reaches. A dev server is the supervisor's child, never
 // zcp's, so zcp hands the value to the supervisor as its env overlay

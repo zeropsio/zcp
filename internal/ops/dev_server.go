@@ -122,7 +122,7 @@ type DevServerResult struct {
 	// names siblingEnv, the overlay zcp set on its supervisor before it: each
 	// variable set to the container hostname of the branch's lease on the
 	// pool it names, and each left to the container's own env
-	// (docs/spec-workflows.md §8 DP-21).
+	// (docs/spec-workflows.md §8 DP-22).
 	SiblingEnv *LeaseSiblingEnv `json:"siblingEnv,omitempty"`
 	// Unreported: the call read several servers and reports none of them
 	// alone (a status of a dev service with several), so it says nothing of
@@ -755,7 +755,7 @@ func startDevServer(ctx context.Context, ssh SSHDeployer, client platform.Client
 		return nil, err
 	}
 	// A lease's servers get the branch's sibling hostnames through the
-	// supervisor's overlay before anything starts or reloads them (DP-21).
+	// supervisor's overlay before anything starts or reloads them (DP-22).
 	var wiring *leaseWiring
 	if p.lease != nil {
 		w, err := wireLeaseServers(ctx, ssh, p, ds)
