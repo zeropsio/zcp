@@ -169,7 +169,9 @@ func resolveLeaseRepo(stateDir, pool, repo string) (canonical string, becomesDef
 // An existing origin/<branch> is checked out tracking it; a branch that does
 // not exist yet is cut from origin/main without tracking it (a push of the new
 // branch must not target main). Files the image left that the branch does not
-// track are removed; ignored files stay (never clean -x).
+// track are removed; ignored files stay (never clean -x). For an https origin
+// the repository keeps leaseCredentialHelperShell, scoped to the origin's
+// host, so the agent's own push authenticates the same way.
 func leaseCheckoutCommand(workDir, repo, branch string) string {
 	q := shellQuote
 	steps := []string{
@@ -182,8 +184,20 @@ func leaseCheckoutCommand(workDir, repo, branch string) string {
 			"git checkout -q -f -B " + q(branch) + " --no-track origin/" + leaseDefaultBranch + "; fi",
 		"git clean -fd -q",
 	}
+	if u, err := url.Parse(repo); err == nil && u.Scheme == httpsScheme && u.Host != "" {
+		steps = append(steps, "git config --replace-all "+q("credential.https://"+u.Host+".helper")+" "+q(leaseCredentialHelperShell))
+	}
 	return strings.Join(steps, " && ")
 }
+
+// leaseCredentialHelperShell is the helper a lease's repository keeps for its
+// origin's host: it answers a get from the invoking session's $GIT_TOKEN (the
+// pool's secret reaches every ssh session in its containers), so the agent's
+// own push over the alias needs no credential typed or stored; the config holds
+// only this script. Without GIT_TOKEN — git run through the mount on the zcp
+// side — it answers nothing, never an empty password, so git goes on to its
+// next helper. The reset at release takes it away with /var/www.
+const leaseCredentialHelperShell = `!f() { test "$1" = get || return 0; test -n "$GIT_TOKEN" || return 0; echo username=oauth2; echo "password=$GIT_TOKEN"; }; f`
 
 // checkoutLease puts the leased container's /var/www on the branch. A failure
 // carries the ssh error (git's stderr rides in it) and classifies auth

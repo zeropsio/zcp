@@ -379,8 +379,10 @@ func TestLeaseCheckout_CredentialNeverInCommand(t *testing.T) {
 			t.Errorf("command contains %q:\n%s", banned, cmd)
 		}
 	}
-	// The only credential reference is the helper reading the session env.
-	if n := strings.Count(cmd, "GIT_TOKEN"); n != strings.Count(cmd, gitCredentialHelperArgs())*strings.Count(gitCredentialHelperArgs(), "GIT_TOKEN") {
+	// The only credential references are the helpers reading the session env.
+	inHelpers := strings.Count(cmd, gitCredentialHelperArgs())*strings.Count(gitCredentialHelperArgs(), "GIT_TOKEN") +
+		strings.Count(cmd, shellQuote(leaseCredentialHelperShell))*strings.Count(leaseCredentialHelperShell, "GIT_TOKEN")
+	if n := strings.Count(cmd, "GIT_TOKEN"); n != inHelpers {
 		t.Errorf("GIT_TOKEN appears %d times, want only inside credential helpers:\n%s", n, cmd)
 	}
 }
@@ -660,5 +662,49 @@ func TestLeaseRelease_NoSSH_ReleasesWithNote(t *testing.T) {
 	}
 	if view.State != LeaseStateReleased || !strings.Contains(view.Note, "not checked") {
 		t.Errorf("view = %+v, want released with a note that the container was not checked for unsaved work", view)
+	}
+}
+
+// The checkout leaves a credential helper in the repository, scoped to the
+// clone's host, so the agent's own `git push` over the alias authenticates
+// from the session's GIT_TOKEN without a credential ever being stored.
+func TestLeaseCheckoutCommand_PersistsHostScopedHelper(t *testing.T) {
+	t.Parallel()
+	want := "git config --replace-all " + shellQuote("credential.https://github.com.helper") + " " + shellQuote(leaseCredentialHelperShell)
+	if cmd := leaseCheckoutCommand("/var/www", "https://github.com/acme/app", "main"); !strings.Contains(cmd, want) {
+		t.Errorf("command lacks the persisted helper %q:\n%s", want, cmd)
+	}
+	if cmd := leaseCheckoutCommand("/var/www", "/srv/origin.git", "main"); strings.Contains(cmd, "credential.") && strings.Contains(cmd, "git config") {
+		t.Errorf("a non-https origin got a persisted helper:\n%s", cmd)
+	}
+}
+
+// The persisted helper answers only a get, and only from a session that holds
+// GIT_TOKEN: git run where there is none (the zcp side of the mount) goes on to
+// its next helper instead of sending an empty password.
+func TestLeaseCredentialHelper_AnswersFromSessionEnvOnly(t *testing.T) {
+	t.Parallel()
+	body := strings.TrimPrefix(leaseCredentialHelperShell, "!")
+	run := func(token, action string) string {
+		t.Helper()
+		// git runs a "!" helper as: sh -c '<helper> "$@"' <helper> <action>
+		cmd := exec.CommandContext(context.Background(), "sh", "-c", body+` "$@"`, body, action) //nolint:gosec // running the helper is the test
+		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "GIT_TOKEN=" + token}
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("helper %s (token %t): %v\n%s", action, token != "", err, out)
+		}
+		return string(out)
+	}
+	if got := run("tok-1", "get"); got != "username=oauth2\npassword=tok-1\n" {
+		t.Errorf("get with GIT_TOKEN = %q, want the oauth2 credential", got)
+	}
+	if got := run("", "get"); got != "" {
+		t.Errorf("get without GIT_TOKEN = %q, want nothing", got)
+	}
+	for _, action := range []string{"store", "erase"} {
+		if got := run("tok-1", action); got != "" {
+			t.Errorf("%s = %q, want nothing", action, got)
+		}
 	}
 }
