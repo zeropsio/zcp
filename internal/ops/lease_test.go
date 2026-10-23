@@ -30,6 +30,11 @@ type fakeSwarm struct {
 	acquireErr error
 	listErr    error
 	releaseErr error
+	// limits is what GET /pool answers (a maximum of 4 when unset);
+	// limitsErr fails it.
+	limits    platform.SwarmPool
+	limitsErr error
+	lists     int // container listings asked for
 
 	acquireReqs []platform.SwarmAcquireRequest
 	releases    []fakeRelease
@@ -45,10 +50,17 @@ type fakeRelease struct {
 }
 
 func (f *fakeSwarm) Pool(context.Context) (platform.SwarmPool, error) {
-	return platform.SwarmPool{MaximumContainerCount: 4}, nil
+	if f.limitsErr != nil {
+		return platform.SwarmPool{}, f.limitsErr
+	}
+	if f.limits.MaximumContainerCount == 0 {
+		return platform.SwarmPool{MaximumContainerCount: 4}, nil
+	}
+	return f.limits, nil
 }
 
 func (f *fakeSwarm) Containers(context.Context) ([]platform.SwarmContainer, error) {
+	f.lists++
 	return f.containers, f.listErr
 }
 

@@ -133,8 +133,11 @@ type LeaseView struct {
 	ContainerHostname string `json:"containerHostname"`
 	Branch            string `json:"branch,omitempty"`
 	State             string `json:"state"`
-	AcquiredAt        string `json:"acquiredAt,omitempty"`
-	Note              string `json:"note,omitempty"`
+	// Unverified marks a state read from zcp's own record because the pool's
+	// orchestrator could not be asked (LeaseStatus of every pool).
+	Unverified bool   `json:"unverified,omitempty"`
+	AcquiredAt string `json:"acquiredAt,omitempty"`
+	Note       string `json:"note,omitempty"`
 }
 
 // leaseTokenKey is the pool service's own env var that its orchestrator takes
@@ -206,22 +209,40 @@ func orchestratorFor(ctx context.Context, d LeaseDeps, svc *platform.ServiceStac
 }
 
 // LeaseList reports the leases of one pool, or of every pool the project
+// holds or zcp has a record for when none is named (LeaseStatus without the
+// pools it could not read).
+func LeaseList(ctx context.Context, d LeaseDeps, pool string) ([]LeaseView, error) {
+	status, err := LeaseStatus(ctx, d, pool)
+	if err != nil {
+		return nil, err
+	}
+	return status.Leases, nil
+}
+
+// LeaseStatus reports the leases of one pool, or of every pool the project
 // holds or zcp has a record for when none is named. The orchestrator is the
 // truth: a record whose container is missing or not reserved is lost (never
 // re-leased), and a reserved container with no record is an unknown holder
 // (acquire has no idempotency key, so a lost response would otherwise leak a
-// container forever).
-func LeaseList(ctx context.Context, d LeaseDeps, pool string) ([]LeaseView, error) {
+// container forever). A named pool that cannot be read is an error; when
+// every pool is listed, one that cannot be read (stopped, unreachable) never
+// fails the rest: its leases are zcp's records, marked unverified with why,
+// and the pool is named in Unread.
+func LeaseStatus(ctx context.Context, d LeaseDeps, pool string) (LeaseStatusView, error) {
 	records, err := readLeaseRecords(d.StateDir)
 	if err != nil {
-		return nil, err
+		return LeaseStatusView{}, err
 	}
 	byPool := map[string][]leaseRecord{}
 	for _, r := range records {
 		byPool[r.PoolHostname] = append(byPool[r.PoolHostname], r)
 	}
 	if pool != "" {
-		return listPoolLeases(ctx, d, pool, byPool[pool], true)
+		views, err := listPoolLeases(ctx, d, pool, byPool[pool], true)
+		if err != nil {
+			return LeaseStatusView{}, err
+		}
+		return LeaseStatusView{Leases: views}, nil
 	}
 	names := map[string]bool{}
 	for name := range byPool {
@@ -229,22 +250,25 @@ func LeaseList(ctx context.Context, d LeaseDeps, pool string) ([]LeaseView, erro
 	}
 	services, err := ListProjectServices(ctx, d.Client, d.ProjectID)
 	if err != nil {
-		return nil, fmt.Errorf("list services: %w", err)
+		return LeaseStatusView{}, fmt.Errorf("list services: %w", err)
 	}
 	for _, svc := range services {
 		if topology.IsPoolType(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) {
 			names[svc.Name] = true
 		}
 	}
-	var views []LeaseView
+	var status LeaseStatusView
 	for _, name := range slices.Sorted(maps.Keys(names)) {
 		got, err := listPoolLeases(ctx, d, name, byPool[name], false)
 		if err != nil {
-			return nil, err
+			note := errorNote(err)
+			status.Leases = append(status.Leases, unverifiedViews(byPool[name], note)...)
+			status.Unread = append(status.Unread, LeasePoolUnread{Pool: name, Note: note})
+			continue
 		}
-		views = append(views, got...)
+		status.Leases = append(status.Leases, got...)
 	}
-	return views, nil
+	return status, nil
 }
 
 // listPoolLeases reconciles one pool's records against its orchestrator.
@@ -264,7 +288,7 @@ func listPoolLeases(ctx context.Context, d LeaseDeps, pool string, records []lea
 	}
 	containers, err := d.containers(ctx, rp)
 	if err != nil {
-		return nil, leaseOrchestratorError(pool, "list containers", err)
+		return nil, leaseOrchestratorError(ctx, d, rp, "list containers", err)
 	}
 	byID := make(map[string]platform.SwarmContainer, len(containers))
 	for _, c := range containers {
@@ -333,20 +357,29 @@ func leaseNumber(alias string) int64 {
 	return n
 }
 
-// leaseOrchestratorError says what a failed orchestrator call means to the
-// agent: a transport failure is the "outside the project" case, a refusal is
-// the orchestrator's own answer.
-func leaseOrchestratorError(pool, op string, err error) error {
+// leaseOrchestratorError says what a failed orchestrator call on the pool
+// means to the agent: a transport failure is a pool that is not running
+// (its status, read by id, says so) or the "outside the project" case; a
+// refusal is the orchestrator's own answer, with the platform's cause when it
+// passed one on.
+func leaseOrchestratorError(ctx context.Context, d LeaseDeps, rp *resolvedPool, op string, err error) error {
+	pool := rp.svc.Name
 	var pe *platform.PlatformError
 	if errors.As(err, &pe) && pe.Code == platform.ErrNetworkError {
+		if status, running := poolRunStatus(ctx, d, rp); !running {
+			return poolNotRunningError(pool, op, status, err)
+		}
 		return platform.NewPlatformError(platform.ErrNetworkError,
 			fmt.Sprintf("Cannot %s on pool '%s': %s", op, pool, pe.Message),
 			fmt.Sprintf("The orchestrator (%s) answers only inside the project: run zcp in the project's container, or connect the project VPN", orchestratorURL(pool)))
 	}
 	var se *platform.SwarmError
 	if errors.As(err, &se) {
-		out := platform.NewPlatformError(platform.ErrAPIError,
-			fmt.Sprintf("Pool '%s' orchestrator refused (%s): %s", pool, op, se.Message), swarmSuggestion(se))
+		msg := fmt.Sprintf("Pool '%s' orchestrator refused (%s): %s", pool, op, se.Message)
+		if se.Cause != "" && se.Cause != se.Message {
+			msg += " (platform: " + se.Cause + ")"
+		}
+		out := platform.NewPlatformError(platform.ErrAPIError, msg, swarmSuggestion(se))
 		out.APICode = se.Reason
 		out.Cause = err
 		return out
@@ -360,26 +393,39 @@ func leaseOrchestratorError(pool, op string, err error) error {
 const LeaseCallTimeout = 10 * time.Minute
 
 // leaseAcquireError is leaseOrchestratorError for an acquire, except a
-// timeout: the orchestrator may have reserved a container before the answer
-// was lost, so the agent learns where it shows up, not that zcp runs outside
-// the project.
-func leaseAcquireError(pool string, err error) error {
+// timeout and a full pool. A timeout on a running pool may have reserved a
+// container before the answer was lost, so the agent learns where it shows
+// up, not that zcp runs outside the project. A full pool (all-reserved) says
+// how full it is and what frees a container (leasePoolFullError).
+func leaseAcquireError(ctx context.Context, d LeaseDeps, rp *resolvedPool, err error) error {
+	pool := rp.svc.Name
 	var ne net.Error
 	if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout()) {
+		if status, running := poolRunStatus(ctx, d, rp); !running {
+			return poolNotRunningError(pool, "acquire", status, err)
+		}
 		out := platform.NewPlatformError(platform.ErrNetworkError,
 			fmt.Sprintf("The orchestrator of pool '%s' did not answer the acquire in time; it may have reserved a container whose lease zcp never received", pool),
 			"zerops_lease action=status lists such a container as unknown-holder; it stays reserved until a pool admin releases it. Acquire again for a container of your own")
 		out.Cause = err
 		return out
 	}
-	return leaseOrchestratorError(pool, "acquire", err)
+	var se *platform.SwarmError
+	if errors.As(err, &se) && se.Reason == platform.SwarmReasonAllReserved {
+		return leasePoolFullError(ctx, d, rp, se)
+	}
+	return leaseOrchestratorError(ctx, d, rp, "acquire", err)
 }
 
-// swarmSuggestion is what to do about an orchestrator refusal.
+// swarmSuggestion is what to do about an orchestrator refusal. A full pool
+// (all-reserved) is retryable on the orchestrator's word but frees up only
+// on a release, so it never reads "in a moment" (leasePoolFullError).
 func swarmSuggestion(se *platform.SwarmError) string {
 	switch {
 	case se.Status == http.StatusUnauthorized || se.Code == "notAuthorized":
 		return "The pool's API_TOKEN was refused; re-read it with zerops_env get on the pool"
+	case se.Reason == platform.SwarmReasonAllReserved:
+		return "Every container that can serve the call is leased and the orchestrator queues nothing: release a lease you no longer need (zerops_lease action=status lists them)"
 	case se.Retryable:
 		return "The orchestrator marks this retryable: the same call may succeed in a moment"
 	}
@@ -416,7 +462,7 @@ func LeaseAcquire(ctx context.Context, d LeaseDeps, pool, repo, branch string) (
 	got, err := rp.api.Acquire(acqCtx, platform.SwarmAcquireRequest{Start: true, Clean: true, LeaseTTLSeconds: 0})
 	cancel()
 	if err != nil {
-		return LeaseView{}, leaseAcquireError(pool, err)
+		return LeaseView{}, leaseAcquireError(ctx, d, rp, err)
 	}
 	rec := leaseRecord{
 		PoolHostname: pool, PoolServiceID: rp.svc.ID,
@@ -635,7 +681,7 @@ func releaseLease(ctx context.Context, d LeaseDeps, rec leaseRecord, alias strin
 		if errors.As(err, &se) && (se.Reason == "unknown-lease" || se.Reason == "container-not-found") {
 			return dropLeaseRecord(d.StateDir, rec, LeaseStateLost, "the orchestrator no longer held this container for this lease, so there was nothing to release; the record is dropped")
 		}
-		return LeaseView{}, leaseOrchestratorError(rec.PoolHostname, "release "+alias, err)
+		return LeaseView{}, leaseOrchestratorError(ctx, d, rp, "release "+alias, err)
 	}
 	return dropLeaseRecord(d.StateDir, rec, LeaseStateReleased, "")
 }
