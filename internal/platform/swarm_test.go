@@ -148,6 +148,82 @@ func TestSwarmClient_ErrorEnvelope_TypedReasonRetryable(t *testing.T) {
 	}
 }
 
+// TestSwarmClient_ErrorEnvelope_KeepsThePlatformCause: an orchestrator that
+// passes on the platform's own refusal (meta[].metadata.message) keeps it as
+// Cause, so a caller tells a service at its maximum from any other refusal
+// that leaves the pool without a free container. Bodies are the live ones
+// (an 11th acquire on a pool of 10, a POST /container on a full pool).
+func TestSwarmClient_ErrorEnvelope_KeepsThePlatformCause(t *testing.T) {
+	t.Parallel()
+
+	const fullMessage = "all 10 container(s) of the pool that can serve the request are taken and another could not be created - retry once one is released"
+	tests := []struct {
+		name       string
+		body       string
+		wantReason string
+		wantCause  string
+		wantAtMax  bool
+	}{
+		{
+			name: "acquire on a full pool: the service is at its maximum",
+			body: `{"error":{"code":"containerAction","message":"` + fullMessage + `","meta":[{"error":"` + fullMessage + `","code":"containerAction",` +
+				`"metadata":{"message":["[containerAction] Service is already at maximum number of containers"],"reason":["all-reserved"],"retryable":["true"]}}]}}`,
+			wantReason: "all-reserved",
+			wantCause:  "[containerAction] Service is already at maximum number of containers",
+			wantAtMax:  true,
+		},
+		{
+			name: "acquire refused for another platform cause",
+			body: `{"error":{"code":"containerAction","message":"` + fullMessage + `","meta":[{"error":"x","code":"containerAction",` +
+				`"metadata":{"message":["[containerAction] There is not enough free capacity on the hardware"],"reason":["all-reserved"],"retryable":["true"]}}]}}`,
+			wantReason: "all-reserved",
+			wantCause:  "[containerAction] There is not enough free capacity on the hardware",
+			wantAtMax:  false,
+		},
+		{
+			name: "create on a full pool: the orchestrator's own refusal, no platform cause",
+			body: `{"error":{"code":"containerAction","message":"the pool holds 10 of at most 10 containers, so 1 more cannot be created - raise the service's maximum first","meta":[` +
+				`{"error":"x","code":"containerAction","metadata":{"reason":["pool-capacity-exceeded"],"retryable":["false"]}}]}}`,
+			wantReason: "pool-capacity-exceeded",
+			wantCause:  "",
+			wantAtMax:  false,
+		},
+		{
+			name:       "a cause echoing the bearer is scrubbed",
+			body:       `{"error":{"code":"containerAction","message":"refused","meta":[{"metadata":{"message":["bad token orch-api-token-0001"],"reason":["all-reserved"]}}]}}`,
+			wantReason: "all-reserved",
+			wantCause:  "bad token [redacted]",
+			wantAtMax:  false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer srv.Close()
+
+			c := NewSwarmClient(srv.URL, "orch-api-token-0001", srv.Client())
+			_, err := c.Acquire(context.Background(), SwarmAcquireRequest{Start: true, Clean: true})
+			var se *SwarmError
+			if !errors.As(err, &se) {
+				t.Fatalf("err = %v (%T), want a *SwarmError", err, err)
+			}
+			if se.Reason != tt.wantReason {
+				t.Errorf("Reason = %q, want %q", se.Reason, tt.wantReason)
+			}
+			if se.Cause != tt.wantCause {
+				t.Errorf("Cause = %q, want %q", se.Cause, tt.wantCause)
+			}
+			if got := se.AtServiceMaximum(); got != tt.wantAtMax {
+				t.Errorf("AtServiceMaximum() = %v, want %v", got, tt.wantAtMax)
+			}
+		})
+	}
+}
+
 func TestSwarmClient_LeaseNeverInErrorText(t *testing.T) {
 	t.Parallel()
 
