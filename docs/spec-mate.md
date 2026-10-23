@@ -11,8 +11,8 @@ report. That reading contract is what this spec owns.
   list of mate↔zcp touchpoints — §0.
 - Delivery — how the mate bundle gets into the container, the supervised process, nginx, the
   `/mate/` base path, readiness — §2.
-- The door — the Zerops-identity bootstrap a project member uses to reach a hosted mate server,
-  with no pairing code and no shared container secret — §3.
+- Trust and credentials — the four links (HQ↔Zerops, Mate↔HQ, person↔HQ, person↔Mate), every
+  credential, the flows, the Chief, the residual risks and the Zerops asks — §3.
 - Client flow — how a browser reaches a hosted mate: session/candidates, registration, the
   birth, the readiness probe, identity connect, new project, first prompt — §4.
 - Zerops-aware client — the service map as a client projection of the Zerops API, maintained by
@@ -40,9 +40,10 @@ by the ownership table below.
 
 1. **Identity is the client's.** The user's Zerops token exists only in the client. The client
    reads and writes the platform with it: organizations, projects, services, processes, subdomains,
-   user-data, and the platform's push channel. The mate server sees the token once, at the door
-   (§3.2), for two reads, and discards it. The container's project token belongs to zcp: mate never
-   reads it, never forwards it, and never calls the platform with it.
+   user-data, and the platform's push channel. HQ sees the access token once per HQ session, for one
+   identity read, and keeps nothing (§3.7); a Mate's server never sees it. The container's project
+   key is the project's: zcp operates the project with it, and the mate server uses it for its own
+   flag write (§8.1) and presents it only to HQ, in its link's first frame (§3.5).
 2. **Mate's clients reach the container only through the mate server.** Threads, the agent, git,
    the browser viewport. code-server and SSH are the platform's own doors and stay outside mate.
 3. **zcp does not distinguish its caller.** Two entry points, stdio MCP and CLI. No layer exists for
@@ -67,7 +68,8 @@ Every fact has one owner and one path to the client:
 
 | Fact | Owner | Path to the client |
 |---|---|---|
-| identity, membership | Zerops API, user token | client; once through the door (§3) |
+| identity | Zerops API, user token | client; HQ once per HQ session (§3.7) |
+| membership, roles | Zerops API, HQ's organisation key | HQ; to a Mate as its access list (§3.9) |
 | what exists in the project, its status, its subdomains | Zerops API, user token | client projection (§5.1) |
 | live platform observations | native platform websocket plus direct bootstrap/repair, user token | shared client read model (§5.1) |
 | what the platform is doing now | Zerops API, user token | client overlay (§5.4) |
@@ -86,9 +88,10 @@ Touchpoints between mate and zcp, closed list:
 - `zcp init` installing and supervising the mate unit, and the contract that goes with it (§2.8);
 - the agent-browser daemon's published stream port, `~/.agent-browser/default.stream`, on
   localhost — read by the mate server, never written by it, unknown to zcp as a mate concern;
-- two conventions mate reads: the `ZCP_AGENT_OAUTH_*` / `ZCP_AGENT_TOKEN_*` flags in the platform
-  env store (§8.1; those keys only, never another value in that file) and the `/var/www/<host>`
-  sshfs layout (§6.1).
+- two conventions mate reads: the `ZCP_AGENT_OAUTH_*` / `ZCP_AGENT_TOKEN_*` flags and `ZCP_API_KEY`
+  in the platform env store (§8.1, §3.5; those keys only, never another value in that file) and the
+  `/var/www/<host>` sshfs layout (§6.1);
+- the Mate's Git credential file the mate server writes and zcp reads (§3.3, §10.10).
 
 Anything else is a violation and needs this section changed first.
 
@@ -97,7 +100,7 @@ Anything else is a violation and needs this section changed first.
 | ID | Invariant |
 |---|---|
 | MA-6 | `apps/server/src/zerops/**` spawns `zcp` with no argv outside the closed list `mate status`, `mate update` (§2.9 MU-2) and `studio console serve`. `scripts/mate-boundaries.test.ts`. |
-| MA-7 | The env-store reader keeps only the `ZCP_AGENT_OAUTH_*` and `ZCP_AGENT_TOKEN_*` keys; a store carrying `ZCP_API_KEY` and `VSCODE_PASSWORD` yields neither. `ZeropsAgentAuth.test.ts` — "keeps only the agent flag keys". |
+| MA-7 | The Mate server presents `ZCP_API_KEY` only to HQ, in the first frame of its link; it never forwards it anywhere else. Test to be written (`ZeropsHqLink`). |
 
 ## 1. Envelope on the wire
 
@@ -368,7 +371,7 @@ web client's "Update" verb ends in (§2.9). **`zcp mate status --json`** answers
 `{installed, latest, contract, updateAvailable}` from the same resolver, using the manifest cache
 (§2.1c) — the one reader of "is there a newer mate" in the whole product. It also reports the
 completed sign-in seed as `signIns: {state, input?, at, error?}` (§10.5); `input` is an opaque
-enrollment fingerprint, never the credential. The text status names the same state and reason.
+fingerprint of HQ's origin and the project key, never the key. The text status names the same state and reason.
 
 ### 2.1b Disabling — the reverse direction
 
@@ -526,7 +529,7 @@ Every launch adds three more on top (`mate.LaunchEnvLines`), whatever init wrote
 |---|---|
 | `T3CODE_BASE_PATH` | `mate.BasePath` (§2.7) |
 | `ZCP_STATUS_FILE` | the status file a new Mate's setup is read from (`mate.DefaultStatusFilePath`) |
-| `T3CODE_ZEROPS_HQ_ENROLLMENT` | the file zcp keeps the Mate's HQ enrollment in (`hq.EnrollmentPath`, `~/.zcp/hq/enrollment.json`, mode 0600): the HQ address and the credential the server opens its link to HQ with. It names a path, never the credential. zcp enrolls by itself in a Mate container and keeps enrolling, retrying whatever is not possible yet (`hq.Keep`); until the file exists the server's link stays quiet and its HQ state is unknown |
+| `T3CODE_ZEROPS_HQ_GIT_CREDENTIAL` | the file the server keeps the Mate's Git credential in (mode 0600), written when HQ sends one down the link and read by zcp to set the dev service's `GIT_TOKEN` (§3.3, §10.10). It names a path, never the credential |
 
 ### 2.4 nginx — locations outside the cookie gate, behind the Mate gate
 
@@ -552,7 +555,7 @@ Both readiness branches (marker-present and the uninitialized fallback) also sen
 `Access-Control-Allow-Origin: *` — a hosted mate web client (§4) reads its own container's origin
 before it holds any credential, so the response has to survive a cross-origin `fetch` even though
 its body is only two non-secret fields. `/mate/` and the cookie-gated `location /` stay CORS-less:
-`/mate/` inherits mate's own allowlist (§3.4), and code-server's location is never fetched
+`/mate/` inherits mate's own origin rule (§3.13), and code-server's location is never fetched
 cross-origin. `TestRunNginx_HealthzHasCORSForCrossOriginProbe`.
 
 With the flag off the render is **byte-for-byte identical** to the pre-mate one, with and without a
@@ -720,11 +723,11 @@ environment instead, never a probed flag (§2.2).
 |---|---|---|
 | C-1 | The artifact is `zerops-mate-<version>.tgz`, a GitHub release asset on `zeropsio/mate`, whose npm `bin` entry is `mate` at `node_modules/.bin/mate` (`mate.BinName`), and whose release publishes `stable.json` beside it (§2.1c) | fork's `cli.ts pack` + release workflow |
 | C-2 | `serve` accepts `--mode web --host --port --base-path --base-dir --no-browser --auto-bootstrap-project-from-cwd` with the working directory as a trailing **positional**. **An unknown flag is fatal**, so zcp passes only flags every release it drives accepts; it sets the prefix through `T3CODE_BASE_PATH`, not `--base-path` (§2.2) | fork's `cli/config.ts` |
-| C-3 | `T3CODE_ZEROPS_{PROJECT_ID,API_HOST,ALLOWED_ORIGINS}` keep their meaning, and a non-empty `PROJECT_ID` remains the sole Zerops-environment signal (§2.3, §3.1). `T3CODE_ZEROPS_HQ_ENROLLMENT` names the HQ enrollment file and nothing else; it is additive — an older mate ignores it, and a launch without it leaves the server's link to HQ quiet | fork's `ZeropsEnvironment` |
+| C-3 | `T3CODE_ZEROPS_{PROJECT_ID,API_HOST,ALLOWED_ORIGINS}` keep their meaning, and a non-empty `PROJECT_ID` remains the sole Zerops-environment signal (§2.3, §3.1). `T3CODE_ZEROPS_HQ_GIT_CREDENTIAL` names the Mate's Git credential file and nothing else; the server links to HQ with the project key it reads from the env store (§3.5) | fork's `ZeropsEnvironment` |
 | C-4 | Liveness is `GET {basePath}/.well-known/t3/environment` → `200 application/json` carrying `basePath` (§2.5) | fork's environment descriptor |
 | C-5 | The server binds loopback only and never claims a declared platform port (§2.4) | zcp's `ServeArgv`, fork's `--host` |
 | C-6 | **`/mate` is baked into the released artifact, not chosen by zcp.** The release workflow builds the bundled web client with `VITE_BASE_PATH=/mate`, and `pack` refuses a tarball without `dist/client/index.html`. `mate.BasePath` must equal it; moving the prefix is a coordinated two-repo change | fork's release workflow + `mate.BasePath` |
-| C-7 | `~/.zcp/hq/outcome.json`, beside the HQ enrollment, is zcp's last word on enrolling: `{state: enrolled\|no_hq\|refused, code?, at}`, written by its keep loop in a single rename after every attempt that says something about this Mate (HQ or Zerops not answering leaves it as it was). The enrollment is there only while zcp holds a credential HQ has not refused: when HQ answers the kept one `401 mate_credential_required` (revoked) or names another project for it, zcp removes the enrollment with that answer and enrolls anew, so a server re-reading the enrollment reads a Mate not enrolled until a new one is written — never a revoked credential. The server reads the outcome from the directory `T3CODE_ZEROPS_HQ_ENROLLMENT` names, only to say why a new Mate's stand-up waits (`/setup.json`: `no_hq`, `not_enrolled` with HQ's `code`); a missing, unreadable or unknown document is plain `not_enrolled`. Additive: an older zcp writes none | zcp's `hq.SaveOutcome`, fork's `ZeropsHqLink` |
+| C-7 | The Mate's Git credential file (C-3) holds one credential, written by the server in a single rename whenever HQ sends a new one and removed when HQ revokes it; zcp reads it at each repository pass and never writes it. Why a new Mate's stand-up waits is the server's own word from its link (`/setup.json`: `not_linked` with the link's reason, §3.12) | fork's `ZeropsHqLink`, zcp's repository pass |
 
 The monorepo facts C-8…C-12 continue this table in §2.8a.
 
@@ -1365,7 +1368,7 @@ on it and never blocks.
 ### 2.9 Updates in the product — one reader, one verb
 
 The web client knows **nothing about versions** except the floor it needs to sign in
-(`MINIMUM_MATE_SERVER_VERSION`, the identity-exchange "Update required" door, unchanged). Everything
+(`MINIMUM_MATE_SERVER_VERSION`, the "Update required" refusal; _The sign-in floor_ below). Everything
 else about "is there a newer Mate" is answered by zcp and merely displayed:
 
 1. **zcp reads.** `zcp mate status --json` (§2.1a) is the only place that compares an installed
@@ -1404,6 +1407,18 @@ else about "is there a newer Mate" is answered by zcp and merely displayed:
    version-skew rule the thread commands already follow. The data console is `capabilities.dataConsole`;
    without it the Data surface shows one line ("This Mate doesn't include the data console yet")
    with the update line and verb from step 3–4 beside it, instead of a defect from an older server.
+
+**The sign-in floor.** The GUI's minimum supported Mate server version (`MINIMUM_MATE_SERVER_VERSION`) is explicit and independent of its own package version.
+**Release rule:** the hosted client's floor never exceeds the Mate version the fork's published
+release manifest serves (`stable.json`, §2.1c), the version a pre-connection restart installs; a
+floor is raised only after the release carrying that version is published as the latest one. Every
+floor verdict — below the floor, and whether a restart helps because the descriptor's
+`update.latest` reaches the floor — comes from `serverCompatibility.ts`, the client's one version
+comparison (MU-1); below the floor with no restart that reaches it, the Mate is shown as needing a
+newer zcp and no verb is offered (the restart verdict from slice 0.9a). Version mismatches show both
+the actual server version and the required minimum. Restart uses the platform service restart API
+with the user's current account, sends one confirmed request, and then checks the server version; it
+never repeatedly restarts on an uncertain response. No manually paired fallback exists.
 
 ### Invariants
 
@@ -1451,63 +1466,34 @@ off it refuses and never runs `mac` (§2.0).
 
 ### 2.11 Org mode — the Chief
 
-A **Chief** is a person's Mate for the whole organization, one per person (it spends that
-person's agent subscription). It lives in its own otherwise empty project, which the client
-recognises by the project tag `chief`. zcp serves it in **org mode**.
+A **Chief** is a Mate for the whole organization. It lives in its own otherwise empty project, which
+an `OWNER` or `ADMIN` marks as the organization's Chief in HQ; how it links, what the mark is and
+what it may read are §3.11's. zcp serves it in **org mode**.
 
-**Switching it on.** Service variables of that project's `zcp` service:
+**Switching it on.** `zcp serve` reads the Mate's state from HQ at start (`GET /api/mate/self`, the
+project key in the header, §3.6); a state carrying the Chief mark turns org mode on
+(`runtime.Info.Chief`). A mark set or removed later takes effect at zcp's next start; HQ refuses the
+overview at once to a project the mark no longer names. No service variable switches it and no
+credential of its own exists.
 
-| Key | Meaning |
-|---|---|
-| `ZCP_CHIEF` | `1`/`true` turns org mode on (`runtime.Info.Chief`, read like `ZCP_MATE_ENABLED`) |
-| `ZCP_ORG_TOKEN` | secret — the bearer of every read: the organization's token, meant to be read only (as HQ's own), or with `ZCP_ORG_API` the Chief credential HQ issued. Never the project's `ZCP_API_KEY` |
-| `ZCP_ORG_ID` | the organization to read; may be left out when the token reaches exactly one. A token reaching several with none named, or not reaching the named one, refuses to start. Required with `ZCP_ORG_API` |
-| `ZCP_ORG_API` | optional — a base URL org mode reads from instead of the region's API: HQ's Chief proxy, `<HQ origin>/api/chief/zerops`, which mirrors `https://api.<region>.zerops.io/api/rest/public` and answers only what the Chief's person may see. Set, nothing resolves the token's organization (the proxy serves no `/user/info`), so `ZCP_ORG_ID` must name it or zcp refuses to start; every search still pins its `clientId` |
-
-`zcp serve` reads the four through the live env store (§2.3's source, `mate.LiveLookup`), so a
-driver whose MCP launcher strips the environment still gets org mode; outside a container the
-process environment.
-
-**No write, ever.** Org mode's only door to the Zerops API is `platform.OrgReader`: reads only, its
+**No write, ever.** Org mode's only door to the organization is `platform.OrgReader`: reads only, its
 method set pinned name by name, every request through a transport that refuses anything but a GET
-or a search POST before the network, every search filtered by the org's `clientId`. No
-write-capable client exists in org mode. `platform.OrgReads()` is the exact set of reads it makes
-— the allowlist HQ's proxy forwards, paths under the public API root:
+or a search POST before the network. No write-capable client exists in org mode. Every read goes to
+HQ's Chief overview with the project key in the header, and HQ answers it from its organization view
+with the allowlist of §3.11 — projects, services and their state, members with their roles — and
+nothing else: never a variable, a log, a token list, a cost or any other read the organization's key
+could make. `platform.OrgReads()` is exactly that set. Every change is the person's: their client
+makes it with their own Zerops token after their click.
 
-- `POST /project/search`, `POST /service-stack/search`, `POST /process/search`,
-  `POST /app-version/search`, `POST /public-port-routing/search` — each filtered by the org's
-  `clientId`;
-- `POST /transaction-debit/cost-search` (the org's, each project's and each service's cost over the
-  platform's periods), `POST /transaction-debit/group-by-search` (a range a `1d` step at a time, per project, or per
-  service of one project — only a line per service says what its cost is made of), `POST /stats-history/group-by-search` (a project's services' CPU, RAM and
-  disk against their limits, `1h` or `1d`; the API takes one project at a time, and a range aligned
-  to its step) — each filtered by the org's `clientId`;
-- `POST /service-stack-type/search` — the platform's service-type catalogue, no organization's;
-- `GET /service-stack/{id}/env`, `GET /project/{id}/log`, `GET /project/{id}/public-http-routing`;
-- `GET /chief/person` — HQ's own answer, no Zerops read: the person the Chief acts for, as
-  `{name, roleCode, canViewFinances, canEditFinances, canCreateProjects}`. HQ keeps every answer to
-  the projects that person reads, and costs to their projects unless `canViewFinances`.
-
-Through the region's API it also reads `GET /user/info`: once at start, to resolve the token's
-organization, and for the person (the token's membership in it); through `ZCP_ORG_API` it does not. A
-person or public ports an HQ does not yet forward are left out of the overview and the services list
-rather than failing them. Every change is the person's: their client makes it with their own Zerops
-token after their click.
-
-**Tool surface.** Look: `zerops_org_overview` (`actsFor`, the person; every project, grouped as
-`mate`, `hq`, `production`, `stage`, `other`, `chief`), `zerops_org_services` (with public ports),
-`zerops_org_logs` (runtime, or the newest build's), `zerops_org_failures` (spent build containers and
-system services left out), `zerops_org_env` (values masked unless a key is named in `reveal`; the
-result lists what was revealed), `zerops_org_processes`, `zerops_org_costs` (the periods per project,
-or per service of one project; with `from`/`till`, at most 31 days, a range's total and days, and
-one project's services' parts;
-a `note` when the answer is only the person's projects), `zerops_org_usage` (hourly up to 48 h,
-whole UTC days past that, at most 31 d). Act: `zerops_org_propose_service` (`restart` | `start` |
-`stop`), `zerops_org_propose_env`, `zerops_org_propose_message`, `zerops_org_propose_domain`, `zerops_org_propose_access`. Also `zerops_knowledge`, and in a
-Mate's container `zerops_publish_page` (§5.9). The single-project surface acts on the empty own
-project and is not registered. A project's kind: tag `chief`; a Mate is tagged `mate` and runs
-a `zcp@*` service, its name the part of the project name after the last `" - "`; HQ runs a service
-named `hq`; production and stage are named `"<application> - production"` / `"- stage"`. Org results
+**Tool surface.** Look: `zerops_org_overview` (every project, grouped as `mate`, `hq`, `production`,
+`stage`, `other`, `chief`, and the members with their roles), `zerops_org_services` (each project's
+services and their state). Act: `zerops_org_propose_service` (`restart` |
+`start` | `stop`), `zerops_org_propose_env`, `zerops_org_propose_message`,
+`zerops_org_propose_domain`, `zerops_org_propose_access`. Also `zerops_knowledge`, and in a Mate's
+container `zerops_publish_page` (§5.9). The single-project surface acts on the empty own project and
+is not registered. A project's kind: the Chief mark; a Mate is tagged `mate` and runs a `zcp@*`
+service, its name the part of the project name after the last `" - "`; HQ runs a service named
+`hq`; production and stage are named `"<application> - production"` / `"- stage"`. Org results
 carry no envelope (§1.4): they describe the organization, not this project's lifecycle.
 
 **The proposal contract.** An act tool runs nothing. Its result is one JSON document; the client
@@ -1547,26 +1533,22 @@ card then prints the DNS records the domains need, as their addresses do (a wild
 `_acme-challenge` CNAME), for the person to add at their DNS provider. `access.set` →
 `{"projects": [{"id", "name"}], "people": [{"person", "level"}]}`: the project named, or every
 production, stage and Mate of the application named (an application's People in Mate change them
-at once; never the Chief's own project), and each person once as the person named them — an address
-or a name, since org mode reads no member list — at `full` (`ADMIN`), `read` (`READ_ONLY`), `none`
+at once; never the Chief's own project), and each person once, as one of the overview's members, at `full` (`ADMIN`), `read` (`READ_ONLY`), `none`
 (`NO_ACCESS`, hidden) or `remove` (their own grant dropped, their organization role decides),
-summarised "Access to <place>: <person> <level>, …". It is refused for a person whose role
-`chief/person` names and who is not an `OWNER` or `ADMIN`. An approved `access.set` is the client's
-own `set-project-access` as the person, written on each member's own list
-(`PUT /client-user/{id}/roles`), the Mates a member owns left theirs; the card finds each person
-among the organization's members and holds Approve while a name finds nobody or several. There is
+summarised "Access to <place>: <person> <level>, …". An approved `access.set` is the client's
+own `set-project-access` as the approving person, written on each member's own list
+(`PUT /client-user/{id}/roles`), the Mates a member owns left theirs; Zerops refuses it, in its own
+words, to a person who may not change access. There is
 no delete, no token, no invitation and no scaling kind.
 
-**The reverse direction — a Mate asks the person's Chief.** In project mode, in a Mate's container
-(`ZCP_MATE_ENABLED`), `zerops_propose_ask_chief {words, attachmentTitle?, attachmentText?, reason}`
-proposes the one kind a project makes outside itself, `chief.message`, only when HQ identifies
-a current Chief for the source Mate's person. Enrollment authenticates `GET /api/mate/chief`;
-an unavailable or refused identity read offers no tool. `POST /api/mate/chief/proposals` rechecks
-that identity and returns the offer id, binding the source project, person and Chief at HQ.
-The client reads the same identity from HQ navigation; only that person sees decision controls.
-HQ rechecks the binding when accepting a decision, including after ownership or Chief changes.
-The reader's own Chief grants no authority over another person's offer. It sends nothing; org mode
-never registers it (the Chief does not ask itself). Its result has the same shape, from this
+**The reverse direction — a Mate asks the organization's Chief.** In project mode, in a Mate's
+container (`ZCP_MATE_ENABLED`), `zerops_propose_ask_chief {words, attachmentTitle?, attachmentText?,
+reason}` proposes the one kind a project makes outside itself, `chief.message`, only when HQ names
+the organization's Chief. `GET /api/mate/chief` (the project key in the header, §3.6) answers it; an
+unavailable or refused read offers no tool. `POST /api/mate/chief/proposals` reads it again and
+returns the offer id, binding the source project and the Chief at HQ. A person who may open the
+source Mate decides it; HQ rechecks the binding when accepting a decision, including after the mark
+moved. It sends nothing; org mode never registers it (the Chief does not ask itself). Its result has the same shape, from this
 project:
 
 ```json
@@ -1585,7 +1567,7 @@ project:
 
 `attachment` is absent or complete (it has text); words and reason are non-empty; an attachment
 holds at most 64 Ki characters — the same checks as `mate.message`. On approval the client hands it
-to the person's Chief, where it arrives as "From <Mate> in <project>: …"; the Chief answers by
+to the organization's Chief, where it arrives as "From <Mate> in <project>: …"; the Chief answers by
 proposing a `mate.message` back.
 
 **Agent context.** In org mode the managed `AGENTS.md` section is the Chief's
@@ -1600,77 +1582,26 @@ names `zerops_propose_ask_chief` for what neither its project nor `zerops_observ
 | OM-1 | Org mode makes no write call to the Zerops API: `OrgReader` exposes reads only and its transport refuses writes. `TestOrgReader_ExposesNoWriteMethod`, `TestReadOnlyTransport_RefusesWrites`, `TestOrgReader_EveryCallReadsInsideTheOrg`. |
 | OM-2 | An act tool returns a proposal of the shape above, validated against the organization, and changes nothing. `TestProposeOrgAction_Shape`, `TestProposeOrgAction_ValidatesAgainstTheOrg`. |
 | OM-3 | Org mode registers the org surface only, and its `AGENTS.md` section is the Chief's. `TestNewOrg_RegistersTheOrgSurfaceOnly`, `TestBuildAgentsMD_Chief`. |
-| OM-4 | `OrgReads()` is exactly what org mode reads; with `ZCP_ORG_API` every read goes there with the credential as the bearer, `/user/info` is never read and `ZCP_ORG_ID` is required. `TestOrgReads_AreExactlyWhatOrgModeReads`, `TestOpenOrgReader_ThroughOrgAPI`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
+| OM-4 | `OrgReads()` is exactly what org mode reads — the allowlisted overview of §3.11 — every read goes to HQ with the project key in the header, and nothing in org mode reads the Zerops API directly. Test to be written (`TestOrgReads_AreExactlyWhatOrgModeReads` today pins the wider set). |
 | OM-5 | A Mate's `zerops_propose_ask_chief` returns a `chief.message` proposal of the shape above from its own project and sends nothing; only a Mate's project mode registers it. `TestProposeAskChief_Shape`, `TestProposeAskChief_Validates`, `TestServer_AskChiefToolGating`, `TestAskChief_OverMCP_ProposesFromThisProjectAndSendsNothing`. |
 | OM-6 | `zerops_org_propose_domain` returns a `domain.add` proposal of the shape above for the organization's project, onto one of its service's web ports, naming only domains the project does not hold, and changes nothing. `TestProposeOrgAction_DomainAdd_Shape`, `TestProposeOrgAction_DomainAdd_RefusesWhatCannotGoLive`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
-| OM-7 | `zerops_org_propose_access` returns an `access.set` proposal of the shape above for the organization's project or application, each person once at a level Mate gives, refused for a person who may not change access, and changes nothing. `TestProposeOrgAction_AccessSet_Shape`, `TestProposeOrgAction_AccessSet_RefusesWhatCannotBeGiven`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
+| OM-7 | `zerops_org_propose_access` returns an `access.set` proposal of the shape above for the organization's project or application, each person once, a member of the overview, at a level Mate gives, and changes nothing. `TestProposeOrgAction_AccessSet_Shape`, `TestProposeOrgAction_AccessSet_RefusesWhatCannotBeGiven`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
 
-## Current account contract — Mate 0.11.0
+## 3. Trust and credentials
 
-Mate 0.11.0 supersedes the historical S1/S4 pairing and account behavior below. Every product client
-requires verified Zerops identity; manual pairing, startup credentials and cookie sessions are
-removed, including standalone entry. Effective project roles (including overrides that lower
-organization permissions) determine operation access. Sessions come from the throwaway door (§10.4),
-use `zerops-user:<id>` subjects, and revoke themselves via `POST /api/auth/logout` without
-administrative scopes. A session holds no credential of the person's and has no membership window:
-the server asks who the project lets in — HQ's relay while it holds, else the member list and the
-project's `userRoles` read with its own key (§10.4) — every `T3CODE_ZEROPS_ROLE_RECHECK_SECONDS`
-(default 300 s; from the fork's server slice S.0 a configured value above 300 s is clamped to 300 s)
-and when HQ relays a different answer, ends every session whose answer is no longer `open` (§3.3),
-ends every Zerops session once it has not known for two intervals, and ends any session older than
-24 hours. Ending a session closes its sockets.
+**This section is the target design (the owner, 2026-10-24). Today's code differs;** §3.17 lists
+what exists today and what replaces it. Every other section that names a credential, a sign-in or a
+Mate's reach to HQ follows this one and points here. Its invariants name the test that will hold
+them; a row whose test is not written yet says so.
 
-**Entering a Mate recovers by itself, and a refusal ends it (2026-10-05, §0 rule 4).** A connect —
-the throwaway, the exchange, the socket — that fails transiently (the network, a timeout, a 5xx, a
-rejected socket) is tried again automatically, bounded in rate rather than in count: 2, 4, 8, 15 and
-30 s apart, then steady at the cap — 60 s for the Mate the person has open, 5 min for a Mate in the
-background. Meanwhile the Mate reads "Reconnecting — next try in …" with _Try again now_. The
-retries pause while the tab is hidden or nothing needs that Mate; a wake or the network coming back
-releases the wait at once, and so does a change of presence, descriptor or role, or the container
-turning ready. Only a definitive refusal — the door saying the person may not enter, a server
-below the floor — ends it: never retried, it ends visibly, with why, and offers _Try again_. Setup that cannot be read inside
-Zerops reads as unavailable, refused or invalid, never as absent. From mate 0.11.81 the client keeps a Mate's session per account across loads and presents it again only where a fresh one would go, once the Mate confirms it still holds it with every scope the client asks for (D33). The client's
-credential renewer (`credentialRenewal.ts`) is reserved for a door that re-presents a credential;
-the throwaway door does not, so nothing renews a Zerops session. The GUI closes connections and
-clears account memory immediately on logout, retaining only account-scoped personal context for
-revalidated restoration. A removed project cannot return from an old local catalog.
-
-The GUI's minimum supported Mate server version (`MINIMUM_MATE_SERVER_VERSION`, 0.11.0: the first
-server whose only door is the throwaway one) is explicit and independent of its own package version.
-**Release rule:** the hosted client's floor never exceeds the Mate version the fork's published
-release manifest serves (`stable.json`, §2.1c), the version a pre-connection restart installs; a
-floor is raised only after the release carrying that version is published as the latest one. Every
-floor verdict — below the floor, and whether a restart helps because the descriptor's
-`update.latest` reaches the floor — comes from `serverCompatibility.ts`, the client's one version
-comparison (MU-1); below the floor with no restart that reaches it, the Mate is shown as needing a
-newer zcp and no verb is offered (the restart verdict from slice 0.9a). Version mismatches show both
-the actual server version and the required minimum. Restart uses the platform service restart API
-with the user's current account, sends one confirmed request, and then checks the server version; it
-never repeatedly restarts on an uncertain response. No manually paired fallback exists.
-
-A rule the fork's client makes true in a later slice names that slice; the fork's
-`docs/internals/zerops/client-state-model.md` lists every slice and what it lands.
-
-The complete contract and recovery procedure are maintained in
-[Mate account lifecycle](https://github.com/zeropsio/mate/blob/main/docs/internals/zerops/account-lifecycle.md)
-and [Mate release recovery](https://github.com/zeropsio/mate/blob/main/docs/operations/account-lifecycle-release.md).
-zcp's launch arguments, proxy, supervision, environment variables and persistent container state
-are unchanged. Only the selected Mate version, its verified digest and contract golden change.
-
-## 3. The door (S1, historical baseline)
-
-**Superseded 2026-09-16 (mate 0.11.0):** the raw-token door of §3.2 is gone — a person's Zerops
-token no longer reaches a container at all — and with it the membership window and the client's
-re-mint (MS1-3, MS1-4b). In Zerops mode the server offers `zerops-throwaway` only, reads the
-caller's role with its own key and ends sessions itself (§10.4). §3.3 states the session rule that
-replaced the window. §3.1 and §3.3–3.6 stand.
-
-
-A mate server running inside a Zerops project lets a member in on their own Zerops identity — no
-pairing code, no shared container secret, no second session model. The mechanism lives in
-`apps/server/src/zerops/`: one detection rule, one endpoint exchanging a Zerops access token for
-the ordinary pairing grant every other bootstrap method produces, and upstream seams (CORS, WS
-upgrade, session descriptor, admin link) narrowed for a server on the public internet.
+The model in one paragraph: HQ is the only party that talks to Zerops about who may do what, with
+the organisation's read-only key. A Mate proves itself to HQ with the Zerops key its project already
+gave it, on a connection it dials out; the connection is the proof, and nothing HQ mints is stored
+on the Mate. A person proves themselves to HQ once per HQ session with their own Zerops access token,
+which HQ uses for one identity read and keeps nowhere. A person reaches a Mate directly, at the
+Mate's container origin, with a single-use ticket HQ hands to both sides; the open connection is the
+person's session there. Zerops stays the authority on roles; HQ reads them and pushes them to each
+Mate; the Mate only enforces.
 
 ### 3.1 The environment rule
 
@@ -1680,124 +1611,396 @@ One explicit signal: `T3CODE_ZEROPS_PROJECT_ID` set and non-empty ⇒ Zerops mod
 sets it from `runtime.Info.ProjectID` (§2.3); a laptop, a desktop build or a plain `mate serve` never
 has it and keeps every upstream behaviour untouched.
 
-### 3.2 Identity bootstrap: `POST /api/auth/zerops-identity`
+### 3.2 The four links
 
-The client presents its own Zerops access token; the server proves membership with two reads
-against the public Zerops REST API, **using the caller's token, never the container's**:
+| Link | Who dials | Proof | Carries |
+|---|---|---|---|
+| HQ ↔ Zerops | HQ | the organisation's key (§3.3) | members, their roles and project grants, projects, service state — every authorization HQ makes |
+| Mate ↔ HQ | the Mate (its server's link; zcp's calls; git) | the project's `ZCP_API_KEY` on the link and on zcp's calls; the Mate's Git credential for the dev service's git | the access list, tickets, sign-outs, the Mate's state and overview; zcp's Mate API; git |
+| person ↔ HQ | the browser | the person's Zerops access token once per HQ session, then the HQ session | the structure, changes, releases, tickets |
+| person ↔ Mate | the browser, to the Mate's container origin | a ticket HQ issued, then the open connection | every Mate RPC: threads, terminals, files, the agent's sign-in |
 
-1. `GET {apiBase}/project/{projectId}` — membership: `200` member, `403 insufficientPermissions`
-   not a member, `401 notAuthorized` invalid token, `400`/`404` unknown project.
-2. `GET {apiBase}/user/info` — the caller's user id, and the role from the `clientUserList` entry
-   whose `clientId` matches the *project's* (never "has any org" — a user can sit in several).
+The data path stays direct: the browser talks to the Mate's own server at the container origin
+(`/mate/`), never through HQ. HQ never dials a Mate; a Mate never dials Zerops on a person's behalf.
 
-On success the server mints the ordinary pairing grant (`createPairingLink`), scoped to
-`zeropsGrantScopes` (§3.6), `subject = <Zerops userId>`, a 2-minute redeem window, label
-`"Zerops <role>"`. The token is a parameter and a request header only — never stored, logged, or
-carried in a failure payload. A DPoP-bound caller proves its key in the same request and the grant
-carries that thumbprint, redeemable only with the matching proof.
+### 3.3 Credentials
 
-| Upstream membership result | Client response |
-|---|---|
-| Member (`200`) | `200` — ordinary `{id, credential, expiresAt}` |
-| Not a member (`403`) | `403 operation_forbidden` `zerops_project_membership_required` — no grant |
-| Invalid token (`401`) | `401 auth_invalid` `invalid_credential` |
-| Unknown project (`400`/`404`) | `404 not_found` `zerops_project_not_found` |
-| Zerops mode off / unresolved / platform unreachable | `404 not_found` `zerops_identity_unavailable` — or `500 internal` `zerops_membership_check_failed` on a transport failure |
+Each credential below is the only one of its kind. None is written to a log, a URL, an error body or
+a span attribute.
 
-### 3.3 Session lifetime — no membership window
+- **The organisation's key** — a Zerops integration token, organisation role `READ_ONLY`, no project
+  grant, no flag. The client of an `OWNER` or `ADMIN` mints it at the organisation's first sign-in
+  and hands it to HQ in that sign-in's body (§3.7); HQ checks its shape and the person's role, seals
+  it and serves the organisation. Held by HQ only, sealed at rest. Lives until an Owner or Admin
+  replaces it or Zerops refuses it. Reaches every read HQ needs: members and roles, projects, service
+  state (the "stopped" against "not connected" reason of §3.12 needs `READ_ONLY`; `NO_ACCESS` would
+  not read it). It also reads every non-sensitive variable of the organisation in clear, which is why
+  §3.11's Chief overview is an allowlist and why a project key must be a sensitive variable.
+  Ends when replaced or when Zerops refuses it (deleted, or its creator removed with it).
+- **The project key, `ZCP_API_KEY`** — Zerops' own integration token on the project's `zcp` service,
+  a sensitive service variable (`envIsolation: service`, §10.7). Held by Zerops and the `zcp`
+  container; zcp and the Mate's server read it there. Lives as the platform keeps it; a regenerate
+  changes its value. Reaches the Zerops API for its project (zcp's work, §8.1's flag write) and,
+  presented to HQ, proves "the Mate of project P in organisation O". HQ links only a key scoped to
+  exactly one project: organisation role `NO_ACCESS`, one project grant at `BASIC_USER` or `ADMIN`,
+  `sudo` false; any other key names no single project and is refused `key_too_wide` ("narrow the
+  key"). The key passes HQ in memory at each first use — the link's first frame, a zcp call's header —
+  for at most the two Zerops reads that resolve it, and is then dropped; HQ never stores it.
+- **HQ's key entry** — not a credential HQ issues: `hash(key) → project`, one entry per project, kept
+  so a known key is admitted without a Zerops read (reconnect storms after an HQ deploy, a Zerops
+  outage). A new hash for the project replaces the entry once verified. The entry is a fallback,
+  never the proof: every admission from it is verified again in the background through the gate
+  (§3.4), and only a definite refusal drops it — Zerops refusing the key as unknown or unauthorized,
+  or the key no longer naming that one project — never a timeout, a `5xx` or a not-found about
+  something else; the drop tests the refusal's reason, never its error class. The entry also goes
+  when HQ's organisation read no longer holds the project, or when a person disconnects the Mate in
+  HQ (a block on the same row). The table leaks project ids and link history only: a plain SHA-256
+  of a high-entropy platform token is not invertible.
+- **The Mate's Git credential** — HQ-issued, for git over HTTPS from the dev service only. HQ sends it
+  down the Mate's link; the Mate's server keeps it in the file `T3CODE_ZEROPS_HQ_GIT_CREDENTIAL`
+  names (mode 0600); zcp reads that file and writes the value as the dev service's `GIT_TOKEN`
+  secret (§10.10). It reaches HQ's git for the applications that hold the Mate's project, fetch,
+  and push only to the project's own change branches (the rules of §10.10, *A Mate's git*); no HQ
+  API, no Zerops. Lives until HQ revokes it — a person in HQ, the Mate's key entry dropped, the
+  project leaving its application — or replaces it with a new one over the link. Why not the project
+  key: the dev service runs the application's code and its dependencies, and `ZCP_API_KEY` there
+  would give a malicious dependency project-wide Zerops write.
+- **The person's Zerops session** — Zerops' access token (about 6 h) and refresh token, held by the
+  browser exactly as today (where it is stored is decided separately; memory only would cost a fresh
+  sign-in on every reload). The client uses it for its own Zerops reads and writes (§4, §5). The
+  access token alone, never the refresh token, goes to HQ: once at sign-in and at each HQ session
+  renewal, in a request body over TLS, never a URL or a header.
+- **The HQ session** — HQ's bearer for one person in one organisation, 12 h, held by the browser,
+  hash stored at HQ. Reaches HQ's person API (the structure, changes, releases, tickets). Ends at its
+  expiry, at sign-out, or when HQ's view stops listing the person as an `ACTIVE` member. Its expiry
+  only stops new tickets; open Mate connections do not end with it (§3.8).
+- **The ticket** — `{ticket, person, HQ session id}`, issued by HQ for one Mate, single use, 60 s,
+  sent to the Mate down its link and to the browser only after the Mate acknowledged it. The Mate
+  trusts it because HQ sent it over the authenticated link; there is no signing key anywhere. It
+  carries no role: the Mate takes the person's role from the access list (§3.9).
+- **The Mate connection** — the browser's WebSocket to the Mate, opened with a ticket in its first
+  frame. It is the person's session on that Mate; one per tab. The Mate tags it with the person, the
+  HQ session id and the role the access list gives the person now.
+- **A person's Git password** — HQ-issued, one application, 12 h, for a person's own git client
+  (HQ `spec/protocol.md`). Unchanged by this model.
+- **An environment's deploy token** — `NO_ACCESS` in the organisation, `BASIC_USER` on one stage or
+  production project, minted by the attaching person's client and kept by HQ (§10.8). Unchanged.
+- **The organisation's AI keys** reach every Mate of the organisation by design for now (Settings);
+  they are outside this model, and the open point is HQ's `hq-keys` note on them.
 
-A session from the throwaway door (§10.4) holds no credential of the person's, so nothing about it
-expires with a Zerops token and there is nothing to re-present. Its validity is the server's own
-re-check, `ZeropsMembershipWatch`: every `T3CODE_ZEROPS_ROLE_RECHECK_SECONDS` (default 30 s; a
-configured value above 300 s is clamped to 300 s), and at once when HQ relays a different answer, it asks who the project
-lets in — HQ's relay while it holds (§10.4), else the org's member list and the project's
-`userRoles` read with the Mate's key — by the role function (§10.3), and ends every Zerops session
-whose answer is no longer `open`. One pass asks once however many people are connected. A pass that
-cannot say changes nothing while Zerops's last answer is under five minutes old (`ACCESS_HOLDS`, the
-same hold a scheduled turn follows); past that it ends every Zerops session, because by then the
-server has not known who belongs for five minutes. HQ's relay is trusted 30 s from HQ's read. A session older than
-`T3CODE_ZEROPS_SESSION_MAX_AGE_SECONDS` (default 24 hours) ends at the next pass whatever the read
-said. A removed member or a lowered role
-loses access within one window of at most 60 s while Zerops answers.
+### 3.4 HQ's Zerops gate
 
-The end reaches open sockets. `/ws` verifies the session once at the upgrade; for the socket's
-life the upgrade races its handler against the session's own end — its deadline, and a
-`clientRemoved` change naming it — and ends the connection when either arrives (MS1-4a). A session
-with no stored deadline is left alone rather than closed on a guess.
+Every call HQ makes to Zerops goes through one named gate with a rate and concurrency budget:
+Zerops does not answer `429`, it queues, and an unbounded storm turns into "Zerops unavailable" for
+every organisation. Key resolutions for new hashes, background verifications of cached entries,
+organisation reads and sign-in identity reads all queue there. The organisation read's interval is
+whatever the budget leaves after sign-in-driven reads, never a fixed short period: a person's
+sign-in refreshes their organisation's view, and a removal made through HQ refreshes that
+organisation's view at once.
 
-The client does not renew. When its socket is rejected it mints a fresh throwaway and exchanges
-again, and the door answers with the current role — retried at a bounded rate while the failure is
-transient, ending visibly with _Try again_ only on a refusal (see _Entering a Mate
-recovers by itself_ in the current account contract). `credentialRenewal.ts` keeps its contract for a door that re-presents a
-credential; the throwaway door does not, so nothing renews a Zerops session (MB-3).
-`revokeBySubject(userId)` revokes every live session for one user immediately (an ops-path
-primitive) — a no-op on an unknown subject, counted once per session however often it is called.
+### 3.5 A Mate starts and links
 
-### 3.4 Origin and CORS allowlist
+```mermaid
+sequenceDiagram
+  participant M as Mate server
+  participant H as HQ (leader)
+  participant Z as Zerops
+  M->>H: TLS WebSocket to HQ's link route (nothing in the URL)
+  M->>H: first frame {key, serviceId}
+  alt hash(key) known
+    H-->>M: state, then access snapshot
+    H->>Z: (background, through the gate) verify key
+  else unknown
+    H->>Z: /user/info as the key → one organisation
+    H->>Z: the key's own record → NO_ACCESS + one project + sudo false
+    H-->>M: state, then access snapshot
+  end
+  Note over H: key dropped from memory; connection holds the hash
+  H-->>M: deltas, tickets, sign-outs, Git credential
+```
 
-Upstream leaves CORS at a wildcard and puts no `Origin` check on the WS upgrade — survivable on
-loopback, not for a server nginx publishes on the public internet. In Zerops mode both close over
-one allowlist (`makeZeropsOriginAllowlist`): the container's own origin (matched per request
-against `Host`/`X-Forwarded-Host`, never configured — same-origin under `/mate/` never reaches CORS
-at all, only the WS upgrade); `localhost` on any port/scheme, matched on **hostname** never a
-suffix, not extended to `127.0.0.1`; the two desktop shell origins (`t3code://app`,
-`t3code-dev://app`); anything in `T3CODE_ZEROPS_ALLOWED_ORIGINS`, matched exactly.
+- The Mate's server dials out; HQ never dials in. HQ's origin is the server's production default,
+  overridden in development by `T3CODE_ZEROPS_HQ_ORIGIN`; nothing discovers HQ. The server re-reads
+  `ZCP_API_KEY` from the live env store before every connect, so a regenerated key is presented on
+  the next one.
+- The key travels in the first frame after the TLS upgrade, never in the URL or a header, so no
+  balancer or access log sees it. HQ's first-frame handler runs outside any request logger.
+- HQ links only a project it holds as a Mate in a started organisation; otherwise it closes the link
+  with the reason (`not_a_mate`, `org_not_started`, `key_refused`, `key_too_wide`). The service id
+  the Mate names is a label: the key carries no service, and two Mates in one project would be one
+  trust zone anyway.
+- **One link per project, newest wins.** A new link for the project closes the older one with a
+  distinct close code (`superseded`), and HQ shows "replaced at T", so a flapping pair of links is
+  visible. This is what the Mate's own rotation needs: it opens a successor beside the old link before
+  the balancer's IPv4 cut and lets the old one go only once HQ answered on the new one; the Mate
+  treats `superseded` as expected, never as a failure that triggers backoff. Links are held by HQ's
+  leader only; no registry spans instances.
+- Liveness is the connection: a transport ping about every 30 s. HQ writes only connect and
+  disconnect transitions. A Mate reconnects with random backoff. No periodic re-proof: it would couple
+  every Mate's availability to the Zerops API and expire the fleet at once.
+- On every link HQ sends the Mate's state, then the full access snapshot, then versioned deltas
+  (§3.9), and the Mate's Git credential whenever HQ issues a new one.
 
-A request with **no** `Origin` is allowed to upgrade — a non-browser caller cannot be forged. A
-foreign `Origin` is refused `403 operation_forbidden` `origin_not_allowed` **before** the ticket is
-read; no `Origin` falls through to fail on the credential instead (`401`), as outside Zerops mode.
+### 3.6 zcp's calls and git
 
-### 3.5 Sessions: bearer/DPoP only, no admin link
+- zcp's HTTP calls to HQ's Mate API — its state, repositories, changes, the recipe, observation,
+  the AI key, GitHub tokens per call, the Chief's overview — present `ZCP_API_KEY` in a header on
+  every call. HQ recognises the key by its hash exactly as on the link (§3.3): Zerops is asked only
+  the first time a hash is seen, then in the background. A refusal is the same `{code}` as the link's.
+- git from the `zcp` container (zcp's scratch repository for a recipe proposal) presents the key the
+  same way, as a header scoped to HQ's host, never stored in a git config or a URL.
+- git from the dev service presents the Mate's Git credential (§3.3), never the project key.
+- `zcli push` of a self-deploy on the dev service runs over SSH with the key only in that command's
+  environment, never `zcli login` (§10.10). The key is sent over SSH's standard input
+  (`IFS= read -r ZEROPS_TOKEN && export ZEROPS_TOKEN && exec zcli push …`), so it is on no command
+  line; it sits in zcli's environment, readable by the same user, for the push's duration (§3.14).
 
-In Zerops mode the descriptor drops `browser-session-cookie` from `sessionMethods`
-(`["bearer-access-token","dpop-access-token"]`) and puts `zerops-identity` ahead of
-`one-time-token` in `bootstrapMethods` — a signed-in member can still pair a second device the
-ordinary way. `POST /api/auth/browser-session` refuses outright (`403 operation_forbidden`
-`browser_session_unsupported`, credential never consumed): a cookie is the one credential a browser
-attaches on its own, and a server on the public internet issues none, closing the CSRF surface the
-wildcard CORS would otherwise open.
+### 3.7 A person signs in to HQ
 
-Upstream mints an `administrative-bootstrap` credential — wider-scoped than an ordinary grant — on
-every boot, printed to stdout or turned into a `/pair#token=` link (measured, see the ledger). In
-Zerops mode `resolveStartupAccessMode` resolves to `"zerops"` instead of `"headless"`/`"browser"`:
-nothing is minted at startup, and the boot output names the identity door as the way in instead.
+```mermaid
+sequenceDiagram
+  participant B as Browser
+  participant H as HQ
+  participant Z as Zerops
+  B->>Z: Zerops sign-in (device login) → access + refresh token, kept in the browser
+  B->>H: POST sign-in {access token} (body, TLS)
+  H->>Z: /user/info as the person → id, organisations
+  Note over H: token dropped; integration-token identities refused
+  H-->>B: HQ session (12 h) per organisation HQ serves
+  Note over B,H: renewal: the same request with a current access token
+```
 
-### 3.6 Exec RPC and scopes
+- The web sends the Zerops **access token only** — never the refresh token — once at sign-in and at
+  each HQ session renewal. HQ makes one identity read with it, keeps nothing (memory only, never
+  logged, dropped after the read) and issues its own session. The person's role comes from HQ's
+  organisation view, never from the token's own claim.
+- The door refuses an integration token's identity: a token is not a person. HQ tells them apart by
+  the synthetic address Zerops gives an integration token in place of a person's e-mail (unverified
+  for `/user/info`, §3.16).
+- The organisation's first sign-in by an `OWNER` or `ADMIN` carries the organisation's key (§3.3);
+  an organisation without a key answers `org_not_started` to everyone else.
+- Renewal is silent: the browser renews the HQ session from its current Zerops access token,
+  refreshing that with Zerops first when it has expired.
+- Sign-out ends the HQ session and every Mate connection carrying its session id (§3.9).
 
-`exec.run` — one command, one result, no session, no pty (the terminal RPCs already cover
-interactive work) — runs over the same authenticated WS as the rest of the RPC surface, returning
-the result directly rather than streaming output frames. `args` is a list handed straight to the
-process spawner: no command-line composition, no shell to interpret metacharacters. A non-zero
-exit is a **successful RPC** — `{exitCode, stdout, stderr, timedOut, stdoutTruncated,
-stderrTruncated}` — never an RPC-level failure; only "could not run at all" (bad timeout, spawn
-failure) fails the call. Default timeout 60s, capped at 600s, each stream truncated past 1 MiB.
+### 3.8 A person opens a Mate
 
-`exec:operate` gates the RPC (`RPC_REQUIRED_SCOPES`) and is granted by `zeropsGrantScopes` — the
-identity door's own set, never the plain client scopes an ordinary pairing carries. A project
-member can already open a shell here through code-server and the coding agent, so the scope adds no
-reach beyond what the door already proved.
+```mermaid
+sequenceDiagram
+  participant B as Browser
+  participant H as HQ (leader)
+  participant M as Mate server
+  B->>H: ticket for project P (HQ session)
+  H->>H: person's role on P from the organisation view (open?)
+  H->>M: ticket {T, person, HQ session id} (link)
+  M-->>H: ack T
+  H-->>B: T
+  B->>M: WebSocket to the container origin, first frame {T}
+  M->>M: consume T; role from the access list
+  M-->>B: connection open = the person's session on this Mate
+```
 
-### Outside a Zerops project, nothing changes
+- HQ issues a ticket only to a person the Mate's project opens for (`BASIC_USER` or above there,
+  effective role, overrides included); a person the project only lists (`READ_ONLY`) sees the Mate
+  and opens none (D5). No link, no ticket: "Mate not connected".
+- HQ answers the browser only after the Mate acknowledged the ticket on the link, so the browser
+  never arrives first. No acknowledgement within a bounded wait (HQ's launch environment, 5 s) is
+  "Mate not connected", which is also the honest state.
+- The Mate consumes the ticket once; unknown, used, expired or bound to another Mate is a refusal and
+  the browser asks HQ for a new one. **Reconnect is a new ticket**, retried at a bounded rate (§0
+  rule 4): 2, 4, 8, 15 and 30 s apart, then steady at 60 s for the Mate on screen and 5 min for one in
+  the background, paused while the tab is hidden, released at once by a wake, the network or a
+  change of the Mate's state; "Reconnecting — next try in …" with _Try again now_. Only a definitive
+  refusal — HQ saying the person may not open the Mate, a server below the floor — ends it, visibly,
+  with _Try again_.
+- **Many tabs, many people.** Every tab is its own connection with its own ticket. The Mate enforces
+  the role per connection and attributes every action to its connection's person (the agent's
+  signer, §10.5; `startedBy`, §8.2). Inside the container people are not separated (one OS user);
+  who gets a terminal belongs to the permissions work, not to credentials.
+- A ticket costs one HQ read and one link frame; no Zerops call. Every ready Mate in the menu may
+  connect on its own.
 
-Every seam above is gated on `config.zerops !== undefined`. With the variable unset, the descriptor
-reports `bootstrapMethods: ["one-time-token"]` (or the desktop set), CORS stays wildcard, the WS
-upgrade takes no `Origin` at all, the admin-bootstrap link mints every boot as before, and
-`exec.run` is unreachable — a plain `mate serve` run outside `zcp` is unchanged from upstream.
+### 3.9 Access: the list, sign-out, removal, role change
+
+- **The access list.** HQ computes, per Mate, whom the project opens for and whom it lists, by the
+  role function (§10.3) over its organisation view, and pushes it down the link: a full snapshot on
+  every connect, then deltas each carrying a version; the Mate discards anything older than its
+  snapshot. The Mate never reads Zerops for access and never runs the role function.
+- **Role change and removal.** On a new list the Mate re-evaluates every connection: a person whose
+  role narrowed keeps the connection at the new role; a person no longer open is disconnected. A
+  removal made through HQ refreshes that organisation's view at once; one made in Zerops arrives with
+  the next organisation read (§3.4) or the next sign-in of anyone in that organisation.
+- **Sign-out.** HQ revokes the HQ session and tells every Mate to close each connection carrying
+  that session id: all tabs of that browser; the person's other devices stay.
+- **HQ session expiry** stops new tickets only. Open connections end only on sign-out, removed
+  access, or the link-down cap (§3.10).
+
+### 3.10 When something fails
+
+- **Link down — the 15 min cap.** No tickets, so nobody new. Connected people stay at their last
+  known role for at most 15 min counted from the last live link (longer than an HQ deploy); past it
+  the Mate closes every person connection it can no longer vouch for — all of them. A removed member
+  never stays for long after a flap.
+- **HQ deploy or restart.** HQ's leader goes away (`1001`), every link and person socket closes and
+  reconnects with random backoff to the new leader; known keys link from the hash cache without a
+  Zerops call; each link gets a fresh snapshot. Opening a Mate (a new ticket) waits for the deploy;
+  open Mate connections stay within the cap. A follower asked for a ticket answers "connecting",
+  never a `5xx`.
+- **Zerops outage.** Known Mates link from the cache; unknown ones show "connecting". Sign-in waits
+  for Zerops. Access decisions follow HQ's outage window (HQ `spec/protocol.md`).
+- **Project deleted.** The container dies with it and the link drops by transport. HQ's organisation
+  read notices the project gone and drops the key entry and the Mate's Git credential; until then the
+  Mate reads "not connected since T".
+- **Key regenerated or deleted.** A regenerated key is a new hash: the Mate presents it at its next
+  connect, the gate verifies it and the entry is replaced; the old value is refused by Zerops at once
+  and dropped at its next verification. A deleted key is refused at the next verification and the
+  link closes `key_refused`.
+- **Key in a non-sensitive variable.** Any organisation reader (the organisation's key included)
+  reads it in clear and with it holds the project. A project key must be a sensitive service
+  variable before it links; the legacy project-level keys are moved or deleted (§3.17).
+
+### 3.11 The Chief
+
+- A Chief is an ordinary Mate, linked by its own `ZCP_API_KEY` like any other. `ZCP_ORG_TOKEN` and
+  every Chief credential go.
+- An `OWNER` or `ADMIN` marks one project of the organisation as its Chief in HQ — an ordinary
+  organisation setting, not bound to the person who set it, valid until an Owner or Admin removes it.
+  The mark carries no key.
+- zcp reads the mark from its Mate state in HQ at start and serves org mode (§2.11). Its reads go to
+  HQ like zcp's other calls (key in the header), and HQ answers each only while the mark names the
+  caller's project.
+- HQ answers from its organisation view, cut by **kind of data**, not by person: the allowlist is the
+  organisation overview — projects, services and their state, members with their roles. Never
+  environment variables, token lists or anything else the organisation's key could read (it reads
+  non-sensitive variables in clear, other Mates' keys among them). A read joins the allowlist only by
+  the owner's decision written here.
+- Everyone with access to the Chief's project sees that overview; the marking UI says so before the
+  mark is set.
+- Every change stays the person's: the Chief proposes, and the person's client acts with the
+  person's own Zerops token after their click (§2.11).
+
+### 3.12 What a Mate shows
+
+- **Connected** — the link is up.
+- **Connecting** — the Mate's server is dialling, or HQ does not know its key yet and Zerops has not
+  answered.
+- **Not connected since T**, with the reason HQ can read from Zerops: the container is stopped; the
+  container runs but its server does not connect (a fault: the server, its key, or HQ's refusal —
+  `key_too_wide`, `key_refused`, `not_a_mate` — named); the project is gone.
+- **Replaced at T** — a newer link for the project superseded this one.
+- A person's connection additionally reads **Reconnecting** while it waits for a new ticket (§3.8).
+
+### 3.13 The Mate server in Zerops mode
+
+- **No door of its own.** `bootstrapMethods` is the ticket only; no pairing, no Zerops token, no
+  throwaway, no startup credential: nothing is minted at boot and the boot output names HQ as the
+  way in. Outside a Zerops project every upstream seam stays as it was (§3.1).
+- **No cookie.** No browser-session cookie is ever issued; `POST /api/auth/browser-session` refuses
+  (`403 operation_forbidden` `browser_session_unsupported`).
+- **One origin.** The WebSocket upgrade accepts the hosted client's origin, and in development the
+  exact origins `T3CODE_ZEROPS_ALLOWED_ORIGINS` names (§2.3); a foreign `Origin` is refused before the
+  ticket is read. The container no longer serves a client bundle or a
+  sign-in page at `/mate/`.
+- **Scopes.** A connection whose person the access list opens for gets the standard client scopes
+  plus `exec:operate` (`exec.run`: one command, `args` handed to the spawner, no shell, a non-zero
+  exit a successful RPC; default timeout 60 s, cap 600 s, each stream truncated past 1 MiB). A
+  project member already reaches a shell through code-server and the agent, so the scope adds no
+  reach.
+- **What the server holds.** No session store, no HMAC key, no Zerops person token, no member read:
+  the access list from HQ, the open connections, the tickets acknowledged and not yet used (60 s),
+  the project key read from the env store at each connect, and the Git credential file.
+
+### 3.14 Accepted residual risks
+
+- **A compromised HQ** holds, as Mates connect and zcp calls, the key of every Mate project
+  (`BASIC_USER` or `ADMIN` on it, enough to read every secret of the project), admits anyone to any
+  Mate (it issues the tickets and the access lists), and **can act as each signing-in person, with
+  their full write in every organisation they belong to — organisations without Mate included — for
+  the life of the access token they sent (up to 6 h), at each sign-in and each renewal.** The Zerops
+  ask for an identity-only credential (§3.16) removes the last part.
+- **A project member who reads the key** (SSH, a deploy) already holds `BASIC_USER` on the project;
+  the link adds the Mate's HQ identity, and the organisation's AI keys reach every Mate by design.
+- **`zcli push` on the dev service**: the key is in zcli's environment, readable by the same user,
+  for the push's duration (§3.6).
+- **The 15 min cap**: a member removed in Zerops while the link is down keeps open connections up to
+  the cap.
+- **An HQ deploy** blocks opening Mates for its duration.
+
+### 3.15 Removed
+
+- The Mate's own door: the per-Mate `mate-door` throwaway, `ZeropsThrowawayIdentity`, the Mate's
+  member read and `ZeropsMembershipWatch`, the 24 h Mate session, its HMAC signing key, kept Mate
+  sessions in the browser, the per-Mate origin allowlist, and the container's `/mate/` client
+  bundle and sign-in page.
+- HQ's throwaway door for people; the anchor token.
+- zcp's enrolment: the challenge nonce in the project's environment, `POST /api/mate/challenge` and
+  `/credential`, the HQ-issued Mate credential, `~/.zcp/hq/enrollment.json`, `outcome.json`, the
+  keep loop and its recheck, `T3CODE_ZEROPS_HQ_ENROLLMENT`, the link's own ticket, and the key-id
+  routes (`PUT /api/mate/key`, key-check).
+- The plain-zcp project credential and its challenge: plain zcp presents its key in the header too.
+- `ZCP_ORG_TOKEN`, `ZCP_ORG_ID`, `ZCP_ORG_API`, the Chief credential, its Zerops proxy and
+  `chief/person`.
+
+### 3.16 Zerops asks and unverified points
+
+Zerops asks:
+
+- An identity-only credential — an OIDC id token with an audience, or an identity-only token scope.
+  When it exists, sign-in sends it in place of the access token and nothing else changes.
+- A platform-issued read credential per organisation for HQ, in place of a person-minted key.
+- A deploy-only, short-lived grant, in place of per-environment deploy tokens.
+- Membership change events, in place of organisation reads for removals.
+- Workload identity for a service ("service S of project P of organisation O"), in place of the
+  project key as the Mate's proof.
+
+To verify live before building on them:
+
+- A legacy key with `ADMIN` on its project reads its own record.
+- `/user/info` for an integration token carries the synthetic address; whether it carries role and
+  status for a person.
+- The Mate's server sees a regenerated key without a container restart.
+- `/user/info` and the own record for a key whose project was deleted.
+- About 10 000 idle WebSockets through the balancer to one HQ container.
+- Whether a project can move between organisations (a question to Zerops).
+- Whether anything but the hosted web origin connects to a Mate's WebSocket once the container
+  bundle goes (desktop, mobile, code-server).
+
+### 3.17 Migration from today
+
+- Throwaway door per Mate, 24 h HMAC session, kept sessions, `ZeropsMembershipWatch` → tickets over
+  the link, the connection as the session, the pushed access list.
+- HQ's throwaway door (`POST /api/door` with a throwaway) → sign-in with the access token.
+- zcp enrolment (nonce in env, Mate credential, `enrollment.json`, `outcome.json`, keep loop) → the
+  key in the link's first frame and in zcp's header; the contract (§2.8) bumps with that change on
+  both sides.
+- The Mate credential as the dev service's `GIT_TOKEN` → the Mate's Git credential.
+- `ZCP_ORG_TOKEN` and the Chief proxy → the Chief mark and the allowlisted overview.
+- The relay's 30 s / 5 min trust window and the Mate's own Zerops read → the access list only, and
+  the 15 min link-down cap.
+- The container-served `/mate/` client and sign-in → the hosted client only.
+- `zcli push`'s key on the remote command line → the key over SSH standard input.
+- Project-level `ZCP_API_KEY` variables → sensitive service variables, or deleted.
 
 ### Invariants
 
 | ID | Invariant |
 |---|---|
-| MS1-1 | `T3CODE_ZEROPS_PROJECT_ID` set and non-empty is the ONLY signal for Zerops mode; nothing else votes, and the token is never stored, logged, or carried in an error payload. `ZeropsEnvironment.test.ts`, `ZeropsIdentity.test.ts`. |
-| MS1-2 | A non-member gets `403` and no grant; an invalid token gets `401` and no grant. `ZeropsIdentityGate.test.ts` — "refuses a non-member and leaves no grant behind", "refuses an invalid token and leaves no grant behind". |
-| MS1-3 | *(historical — the door of §10.4 has no window and nothing renews; MB-3)* The membership window caps a session iff its grant came from the `zerops-identity` door, including a DPoP one that would otherwise default to one hour; a `one-time-token` pairing keeps upstream's lifetime, because it holds no Zerops token to re-mint with. `EnvironmentAuth.test.ts` — "caps a session from the identity door at the membership window", "leaves a one-time-token pairing on the ordinary session lifetime", "keeps DPoP's own lifetime for a one-time-token pairing", "caps a DPoP session from the identity door at the window, not the hour". |
-| MS1-4 | `revokeBySubject` revokes exactly one user's sessions, is a no-op on an unknown subject, and counts each session once. `EnvironmentAuth.test.ts` — "revokes every session belonging to one subject and leaves the rest", "counts each session once, however often the subject is revoked". |
-| MS1-4a | A live websocket ends when its session expires or is revoked; a session carrying no deadline is left open, and a changes stream that merely ENDS is not a revocation. `sessionLifetime.test.ts` — "reports the deadline once the session's own lifetime elapses", "reports a revocation that lands while the session is still young", "ignores a revocation aimed at a different session", "waits indefinitely for a session that carries no deadline". |
-| MS1-4b | *(historical — the door of §10.4 has no window and nothing renews; MB-3)* The client rotates a `zerops-identity` bearer at 80% of its window through the credential store, never by re-registering, and never rotates one that carries no deadline. `credentialRenewal.test.ts`; `registry.test.ts` — "renews a Zerops bearer before its membership window lapses", "never renews a credential that carries no deadline". |
-| MS1-5 | A foreign `Origin` is refused on the WS upgrade before the ticket is read; no `Origin` falls through to fail on the credential. `origin.test.ts`; `server.test.ts` — "refuses a websocket upgrade from a foreign origin, before authenticating". |
-| MS1-6 | In Zerops mode no browser-session cookie is ever issued, and the credential is not consumed trying. `server.test.ts` — "refuses to open a cookie session inside a Zerops project". |
-| MS1-7 | `exec:operate` is granted only by the identity door, never the standard client scope set, and a failing command is a successful RPC. `ExecService.test.ts`; `RpcAuthorization.ts` wiring. |
+| MS1-1 | `T3CODE_ZEROPS_PROJECT_ID` set and non-empty is the only signal for Zerops mode; nothing else votes. `ZeropsEnvironment.test.ts`. |
+| MS1-5 | A foreign `Origin` is refused on the WS upgrade before the ticket is read. `origin.test.ts`; `server.test.ts` — "refuses a websocket upgrade from a foreign origin, before authenticating". |
+| MS1-6 | In Zerops mode no browser-session cookie is ever issued. `server.test.ts` — "refuses to open a cookie session inside a Zerops project". |
+| MS1-7 | `exec:operate` is granted only to a connection the access list opens for, and a failing command is a successful RPC. `ExecService.test.ts`; `RpcAuthorization.ts` wiring. |
 | MS1-8 | Outside a Zerops project every seam above is inert. `server.test.ts` — "leaves the websocket upgrade alone outside a Zerops project"; `ExecService.test.ts` — "is not offered outside a Zerops project". |
+| TC-1 | HQ links only a key of exactly one project (`NO_ACCESS` in the organisation, one grant at `BASIC_USER` or `ADMIN`, `sudo` false), learns project and organisation from Zerops and never from the Mate's claim, and keeps only the key's hash. Test to be written (HQ link). |
+| TC-2 | A cached key entry admits at once and is verified in the background; only a definite refusal of the key drops it, never a timeout, a `5xx` or another resource's not-found. Test to be written (HQ link). |
+| TC-3 | The key travels only in the link's first frame or zcp's header, never in a URL, and no log line carries it. Test to be written (HQ link, zcp client). |
+| TC-4 | One link per project: a newer link supersedes the older with `superseded`, and the Mate does not treat it as a failure. Test to be written (HQ link, `ZeropsHqLink`). |
+| TC-5 | Sign-in takes the access token only, refuses an integration token's identity, and stores nothing of the token. Test to be written (HQ sign-in). |
+| TC-6 | HQ returns a ticket to the browser only after the Mate acknowledged it; a ticket opens one connection once within 60 s and carries no role. Test to be written (HQ, Mate server). |
+| TC-7 | The Mate takes every connection's role from the latest access list: a full snapshot per link, older deltas discarded, a narrowed role applied and a removed person disconnected. Test to be written (Mate server). |
+| TC-8 | Sign-out closes every connection carrying that HQ session id and no other. Test to be written (Mate server). |
+| TC-9 | Past 15 min from the last live link the Mate closes every person connection. Test to be written (Mate server, injected clock). |
+| TC-10 | The dev service's git presents only the Mate's Git credential, which pushes only the project's change branches; the project key is never written into the dev service. Test to be written (zcp wiring, HQ git). |
+| TC-11 | The Chief's reads answer only the allowlisted overview, only while the mark names the caller's project. Test to be written (HQ). |
 
 ---
 
@@ -1805,9 +2008,9 @@ upgrade takes no `Origin` at all, the admin-bootstrap link mints every boot as b
 
 The mate web client — hosted separately, not built into the container — is how a browser reaches a
 project's mate server without a pairing code: it signs the user into their own Zerops account, finds
-or creates the `zcp` container that runs mate, and drives the door (§3) to land in a thread. Every
-call targets the public Zerops API directly except the identity exchange and mate's own endpoints
-(§3.2); every *mutating* call is user-initiated — the client never calls one on its own.
+or creates the `zcp` container that runs mate, signs in to HQ and opens the Mate with HQ's ticket
+(§3.7, §3.8) to land in a thread. Every call targets the public Zerops API directly except HQ's and
+mate's own endpoints; every *mutating* call is user-initiated — the client never calls one on its own.
 
 ### 4.1 Session client
 
@@ -1829,8 +2032,8 @@ Zerops account sign-in surface on every ordinary route: routed product content, 
 command palette, environment bootstrap/repair and renderer background hosts do not mount. Only
 `signed-in` mounts the product. The `/zerops_/authorized` identity handover remains a bare route so
 its credential fragment can be consumed, and the account gate never redirects it through login.
-The exclusive signed-out surface does not offer manual backend pairing; `/pair` remains governed by
-the separate door contract (§3).
+The exclusive signed-out surface does not offer manual backend pairing; a Mate in Zerops mode takes
+HQ's tickets only (§3.13).
 
 ### 4.2 Reaching a container: candidates and the picker
 
@@ -1936,9 +2139,9 @@ project or at a services import is not resumed — a second import is refused fo
 first made — and offers _Remove_ instead (`runEnvironmentCreation.ts:204-220`,
 `matePress.ts:812-824`, `mateComing.ts:18-20`).
 
-**After the press the container does the rest**, with a browser open or none: zcp enrolls the Mate
-with its HQ, which is its Git access, from its boot on (zcp `internal/service/service.go:256-259`,
-`internal/hq/enroll.go:62-67`), imports the tier's runtimes only once Zerops reads the project
+**After the press the container does the rest**, with a browser open or none: the Mate's server
+links to HQ with the project key from its boot on, which brings the dev service its Git credential
+(§3.5); zcp imports the tier's runtimes only once Zerops reads the project
 closed off — HQ's mark is a receipt (`internal/ops/closed_off.go`, `internal/matesetup/runtimes.go`
 `awaitClosedOff`), and the Mate's server starts the stand-up once HQ's record names who asked, or
 settles it as none at once where it names nobody (`ZeropsSetup.ts`). Any browser reads where that
@@ -1991,13 +2194,10 @@ switched off", "writes nothing when the flag already reads as on, and still rest
 
 ### 4.6 Identity connect
 
-`connectZeropsIdentity` presents the Zerops access token in exactly **one** place across the whole
-flow: the `token` field of the identity request's **body** — never a header. A non-member gets the
-same generic `ConnectionBlockedError{reason:"permission"}` every other environment-auth failure
-maps to — there is no Zerops-specific error type, and the mapping depends on the platform's `403`
-body being contract-shaped.
-`onboarding.zerops.test.ts` — "puts the Zerops token in the identity request and nowhere else",
-"fails without registering anything when the account is not a member".
+The client presents the person's Zerops access token in exactly **one** place: the body of HQ's
+sign-in and renewal request (§3.7) — never a header, never a URL, never to a Mate, and never the
+refresh token. A Mate is opened with HQ's ticket (§3.8). Refusals map to the same generic
+`ConnectionBlockedError{reason:"permission"}` every other environment-auth failure maps to.
 
 ### 4.7 New project
 
@@ -2109,7 +2309,7 @@ told apart; the self-hosted web client reads `Zerops Mate Web`.
 | MC-3 | Registration never sends without a Turnstile token; the platform's captcha refusal and Cloudflare's own domain-binding error both render the same "sign up at app.zerops.io" fallback. `api.test.ts` — "refuses to send a registration with no captcha token"; `turnstile.test.ts` — "names the domain refusal the way a person can act on". |
 | MC-4 | A birth's wait reads only direct endpoints, never `/project/search`; an empty read is never a "does not exist" verdict. `provisioning.test.ts` — "never concludes 'no container' from one read of a fresh project"; `birthWorker.test.ts` — "reads its own project until the container's boot is over, then hardens it once". |
 | MC-5 | The mate descriptor is the readiness authority; a 5xx on either probe is always `unreachable`, never `predates-mate`; a pre-mate and an unreachable container get the same "Enable Zerops Mate" offer. `containerHealth.test.ts` — "treats the mate descriptor as the authority, and asks nothing else once it answers", "never reads a 5xx as a container that predates Zerops Mate". |
-| MC-6 | The Zerops access token appears in exactly one request body field during identity connect, never a header. `onboarding.zerops.test.ts` — "puts the Zerops token in the identity request and nowhere else". |
+| MC-6 | The Zerops access token appears in exactly one request body field, HQ's sign-in or renewal, never a header, a URL or a Mate request, and the refresh token never leaves the browser. Test to be written (today's `onboarding.zerops.test.ts` — "puts the Zerops token in the identity request and nowhere else" pins the Mate exchange). |
 | MC-7 | `VSCODE_PASSWORD` is generated client-side, sent once, and never read back; a container with a public subdomain always carries one. `newProject.test.ts` — "generates the container password, sends it, and forgets it", "never emits a container with a public subdomain and no password". |
 | MC-8 | A conversation nobody has spoken into starts with an empty composer: the client composes no opening message and sends nothing on the person's behalf when an environment is connected, created or reconnected. `useHandleNewThread.test.tsx` — "opens a Mate's conversation nobody has spoken into on an empty composer". |
 | MC-9 | "Enable Zerops Mate" WRITES `ZCP_MATE_ENABLED` and then restarts — a restart alone returns the container to the identical state, because `zcp init` registers no mate step without the flag (§2.0). The write is an upsert (delete-then-create, `sensitive` required, never the bulk env-file PUT), and a flag already reading as on is left untouched rather than rewritten. `api.test.ts` — "writes the Zerops Mate flag before restarting a container that lacks it", "replaces a Zerops Mate flag that is present but switched off", "writes nothing when the flag already reads as on, and still restarts". |
@@ -2167,7 +2367,7 @@ the prefix check. A service is **transient** while its status is unsettled or an
 in-flight process names it. `data/runtime.test.ts`; `topology.test.ts`.
 
 **Which project an environment is** is remembered by the client, not asked of the server: the
-candidate connected at the door carries its project and organization ids, stored per environment
+candidate connected carries its project and organization ids, stored per environment
 id (`environmentProjectRef.ts`, source `connect`); an environment connected before this design gets
 one origin match through the candidate loader (source `match`, never repeated on a miss for the
 same instance); the descriptor's optional `zerops.projectId` (§6.1, S4) is a third source. Sign-out
@@ -2566,7 +2766,7 @@ the values those entries reference.
   its base URL plain beside it (`NEBIUS_BASE_URL`), restarting their readers unless `skipRestart`.
   It answers the provider and the names only; the key never enters the answer, an error, a log or
   the agent's context. HQ's `404 no_key` answers that an org Owner or Admin sets it in Mate under
-  Settings › Zerops › HQ; no enrollment, HQ not answering or refusing set nothing and say so.
+  Settings › Zerops › HQ; HQ not answering or refusing the key sets nothing and says so.
   Outside a Mate the action does not exist. A Mate's AGENTS.md has an AI feature read the two as
   `OPENAI_API_KEY: ${NEBIUS_API_KEY}` and `OPENAI_BASE_URL: ${NEBIUS_BASE_URL}`.
 
@@ -2682,8 +2882,8 @@ themselves; no token crosses the conversation.
   `TestStatus_SaysWhatTheCheckoutsOriginIsNow`, `TestStatus_NamesNoCredentialOfTheCheckoutsOrigin`,
   `TestStatus_TheCheckoutsOriginIsReadBoundedBesideTheRepository`,
   `TestStatus_AnHQOlderThanRepositoriesIsAskedOnce`.
-- **The helper.** `zcp hq git-credential get` answers HQ's own host with the Mate credential under
-  the user `mate`, as §6 has it, and `https://github.com` with what `GET
+- **The helper.** `zcp hq git-credential get` answers HQ's own host with the Mate's Git credential
+  (§3.3) under the user `mate`, and `https://github.com` with what `GET
   /api/mate/git-credential?host=github.com&path=<owner>/<repo>[.git]` (as the Mate) answers at
   that call — a write token for a repository HQ mounts, a read-only one for a followed repository
   HQ holds one for — written to git's pipe only: never cached, never logged, never on disk. HQ's
@@ -2896,48 +3096,28 @@ S3 tries to watch the mount for git state.
 | MG-5 | Worktrees, the stacked commit→push→PR action, and background fetch are off on Zerops, enforced at the decider / `GitManager` — never left to a default a client or a `.t3/project` file could override. `ZeropsPolicy.test.ts` — "thread.create persists a null worktree path on Zerops", "project.meta.update forces the default thread env mode to local", "refuses the stacked commit/push/PR action server-side", "never lets a status read fetch from a remote". |
 | MG-6 | Diff reads what each repository has beyond `main` with the dev service's own git; nothing per turn is captured, reverted or kept as a ref, and a start deletes the `refs/t3/checkpoints/` refs the removed capture left in every mounted checkout. `ZeropsGitCommitDiff.test.ts` — "are read by the dev service's own git, over ssh, never by git here"; `checkpointRefsSweep.test.ts` — "a start deletes the snapshot refs the removed workspace capture left in a Mate's checkouts, and nothing else". |
 
-### 6.6 A Mate's HQ access is its enrollment (2026-10-02; D20 superseded)
+### 6.6 A Mate's HQ access is its project key
 
-A Mate reaches its HQ with the credential its enrollment holds, and nothing else: `zcp service
-mate` keeps it enrolled (`hq.Keep`, C-7), and zcp opens the enrollment at each use, so a
-re-enrollment's credential is the one it uses. Kept enrolled is the kept HQ asked alone every 10 min
-whether it still knows the credential (`Enroller.Recheck`). It enrolls anew only with no
-enrollment kept, when HQ refuses the credential (`401 mate_credential_required`, or names another
-project for it) — removing the refused enrollment at once, so zcp, the Mate server and git all say
-the Mate is not enrolled while HQ refuses it, and HQ revoking a Mate's credential when its project's
-access is lost needs nothing from zcp but this recheck — or when the org's member list names an official HQ other than the kept one
-(`Enroller.Moved`). That list is read while the kept HQ does not answer, on the retry's backoff
-(5 s doubling to 5 min): an HQ that lost the anchor answers `503 not_active` for good, a deploy's
-handover for seconds, and only the anchor tells the two apart — never how long the silence lasted
-(R6). While the anchor still names the kept HQ, the kept HQ is asked again on that backoff however
-long its outage, and its credential is never re-issued; an enrollment the HQ the anchor names cannot
-serve yet, or refuses (`not_a_mate`, `project_gone`, `project_not_in_org`), is tried again on the
-same backoff, each refusal recorded as the outcome (C-7) and said once, and a Mate HQ takes again is
-enrolled with a new credential without zcp starting anew. A new Mate's, with nothing kept, is tried again on the
-backoff capped at 60 s, so a Mate born in an outage enrolls within a minute of HQ answering.
-Everything zcp does with HQ goes through it — a pair wired to its repository (§10.10, *A Mate's git*), a change described, a GitHub token minted for git (§5.10), the recipe proposed and its AI Agent
-tier read for the stand-up, a repository the tier names checked before HQ is asked for it — over
-HQ's Mate API (`Authorization: Mate <credential>`) and git over HTTPS as the user `mate`. The dev
-container now holds the Mate's HQ credential as its `GIT_TOKEN`, as it held the Gitea bot token
-before.
+A Mate reaches its HQ with the project's `ZCP_API_KEY` and nothing else (§3.3, §3.5, §3.6): the
+server's link presents it in its first frame, and zcp presents it in a header on every call — a pair
+wired to its repository (§10.10, *A Mate's git*), a change described, a GitHub token minted for git
+(§5.10), the recipe proposed and its AI Agent tier read for the stand-up, a repository the tier
+names checked before HQ is asked for it, the Chief's overview (§2.11). zcp reads the key from the
+live env store at each call, so a regenerated key is the one it presents. A refusal is HQ's word on
+the key (`key_refused`, `key_too_wide`, `not_a_mate`, `org_not_started`), said once and asked again
+on the bounded backoff of §0 rule 4; a call HQ or Zerops does not answer is retried the same way.
+The dev service's git presents the Mate's Git credential, never the key (§3.3, §10.10).
 
 **One Mate per project (audit D2, 2026-10-03).** A Mate is a `zcp@1` service, and HQ keys a Mate
-by its project — its record, its credential, its overview — so a project holds one. The Mate's
-record at HQ names its zcp service: the one the client that set it up found there already (*Set up
-Mate*, *Finish setup*), else the first that enrolls naming itself. zcp names its own service with
-each enrollment (`hq.Enroller.ServiceID`, the container's `serviceId`). HQ refuses any other zcp
-service of the project `409 not_this_projects_mate` and never revokes the Mate's credential for it;
-a named service Zerops no longer has gives its place to the next. zcp records the refusal as its
-outcome (C-7), says it once, and stops enrolling until it starts anew (`hq.Keep`). An older zcp
-that names no service is enrolled as before, unless it would revoke the credential of the Mate the
-record names. The client refuses *Set up Mate* and *Finish setup* on a project holding several zcp
-services, naming them, and a Mate's tier that declares one; inside a Mate's container
-`zerops_import` refuses a document that declares a `zcp@` service, naming it, and imports nothing.
+by its project — its record, its link, its key entry, its overview — so a project holds one. The
+service a link names is a label (§3.5): a project key carries no service, and a second `zcp`
+service of the project would only supersede the first's link, visibly. So the client refuses *Set up
+Mate* and *Finish setup* on a project holding several zcp services, naming them, and a Mate's tier
+that declares one; inside a Mate's container `zerops_import` refuses a document that declares a
+`zcp@` service, naming it, and imports nothing.
 
-Until 2026-10-02 a Mate's Gitea bot token reached its container through the org's broker, as
-`GITEA_URL`, `MATE_BROKER_URL` and `GITEA_TOKEN` on its `zcp` service (D20). zcp reads none of them
-now; `GITEA_TOKEN` stays masked on every value dump and out of every recipe tier while a container
-still carries one.
+`GITEA_TOKEN`, a variable older containers may still carry, stays masked on every value dump and out
+of every recipe tier; zcp reads no Gitea variable.
 
 ## 7. The fork
 
@@ -3070,7 +3250,7 @@ URL anchors, OSC 8, DEC graphics, paste/success/failure patterns, Y/N confirm, a
 presses Enter through any unrecognized screen (Claude's login-method menu). The parsed prompt rides
 the feed as `login.phase` (`starting | menu | awaiting-browser | awaiting-code | succeeded | failed |
 verifying-code | cancelled`) with `url`, `code` (Codex's device code), `message`, `terminalId` and
-`startedBy` (the Zerops user id of the session that started it, from the grant — never from input;
+`startedBy` (the Zerops user id of the connection that started it, from its ticket (§3.8) — never from input;
 optional on the wire: a Mate keeps its installed version while the hosted client moves on, and a
 required field an older server does not send fails the whole snapshot).
 The card renders the URL as an "Open sign-in link" action (+ copy link / copy code).
@@ -3180,7 +3360,7 @@ project is created only on the owner's go.
 ### 9.3 What left with T3 Connect
 The relay-discovered environment list, managed endpoints/tunnels, the connect/status client groups,
 the web "cloud connect" vertical, the mobile cloud-environment list and Connect onboarding sheet, and
-Tailscale. Reach is the identity door (§3–§4) everywhere; mobile keeps the pairing-code screen as the
+Tailscale. Reach is HQ's sign-in and ticket (§3) everywhere; mobile keeps the pairing-code screen as the
 fallback until its Zerops session lands (S5-3).
 
 ### Invariants
@@ -3200,8 +3380,8 @@ deletion (S5-5).
 ## 10. The auth backbone — Zerops roles as the one source, HQ per org
 
 **Since 2026-10-02 the org's HQ carries what an org's Gitea and its broker carried** (§10.1). Zerops
-roles stay the one source (§10.3), a Mate's own door and its signer stay as they are (§10.4, §10.5),
-and zcp reaches HQ with its enrollment (§6.6, §10.10). What HQ already holds: the structure
+roles stay the one source (§10.3), a Mate's signer stays as it is (§10.5), and every credential
+between a person, a Mate, HQ and Zerops is §3's. What HQ already holds: the structure
 (applications and the projects attached to them), the repositories, a Mate's changes, their review,
 merge and close, the recipe and its landing, an application's environments, their deploy tokens and
 the stages' deploys (§10.8). What moves to it next: production and the release, and the client
@@ -3214,15 +3394,11 @@ nothing here renames what those decide.
 
 ### 10.1 The shape
 
-**Since 2026-10-02:** an org that uses Mate has one **HQ project** — Core, its Postgres and a volume
-for the bare repositories — set up by an admin or owner of the org (_Set up HQ_ on the projects
-page). HQ's address is the project's own domain; it is known as the org's official HQ by an anchor,
-an org `ADMIN` integration token named `mate-hq:<project id>:<address>` whose value is dropped, which
-every member, a Mate's key included, finds in the org's member list (`internal/hq/official.go`). An
-app is an **application** in HQ's structure, and a project is attached to it as a Mate, a stage or a
-production. A Mate's zcp enrolls with the official HQ without handing over its key — HQ's challenge
-written into the Mate project's env and read back by HQ — and gets a Mate credential for HQ's API and
-git (§6.6); a person comes in through HQ's door with a throwaway (§10.4). An application's
+**Since 2026-10-02:** HQ — Core, its Postgres and the bare repositories — serves the organizations
+that use Mate; its address is configuration, and nothing discovers it (§3.5). An app is an
+**application** in HQ's structure, and a project is attached to it as a Mate, a stage or a
+production. A Mate links to HQ with its project key and a person signs in with their Zerops access
+token (§3). An application's
 repositories, its recipe repository `group` among them, a Mate's changes and their merge are HQ's
 (§10.10).
 
@@ -3239,11 +3415,11 @@ that only the broker deploys to.
 
 | Id  | Decision                                                                                                                                                                                                                                                                                                                      |
 | --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D1  | A Mate learns who you are from a **throwaway token per session** (§10.4; a session outlives the load, D33); Gitea from the broker's OIDC provider fed the same way (§10.9). A person's Zerops token reaches the Zerops API and nothing else. Holds in HQ: HQ learns who a person is the same way, through its own door (§10.4); the Gitea sign-in is retired with the Gitea. |
+| D1  | HQ learns who a person is from their Zerops access token, once per HQ session, and a Mate learns it from HQ's ticket (§3.7, §3.8). A person's Zerops token reaches the Zerops API and HQ's one identity read, nothing else. |
 | D3  | Group membership is authoritative in **tags on the org's Gitea project**, which only `OWNER`/`ADMIN` can write — the platform enforces it. Superseded 2026-10-02: HQ's structure holds which projects an application's Mates, stages and productions are (§10.1, §10.6). |
 | D4  | The broker is **its own repository and Go module**, `zeropsio/gitea-mate`, with its own Zerops client; the plan's `zcp gitea broker` was not built. The recipe composer lives in zcp and runs inside a Mate (§10.10). Superseded 2026-10-02: the broker is retired; HQ's Core holds what it did, and the recipe composer proposes to HQ (§10.10). |
-| D5  | A `READ_ONLY` person **sees every Mate listed and opens none**: the door refuses with `zerops_read_only`. Opening needs `BASIC_USER` or above on the Mate's project.                                                                                                                                                             |
-| D6  | **Only the person who signed an agent in runs it** (§10.5), recorded by the Mate's server as the person whose session started the sign-in it saw succeed; no backward compatibility for unrecorded logins.                                                                                                                       |
+| D5  | A `READ_ONLY` person **sees every Mate listed and opens none**: HQ issues them no ticket (§3.8). Opening needs `BASIC_USER` or above on the Mate's project.                                                                                                                                                             |
+| D6  | **Only the person who signed an agent in runs it** (§10.5), recorded by the Mate's server as the person whose connection started the sign-in it saw succeed; no backward compatibility for unrecorded logins.                                                                                                                       |
 | D8  | A Mate releases only while its group's **release switch** is on — a registry flag, owner-only, off by default; the broker checks it for a tag a bot pushed. Superseded 2026-10-02: the broker that checked it is retired; release moves to HQ next. |
 | D10 | Gitea site admin = org `OWNER` only; `ADMIN`s get teams by role. Retired with the Gitea on 2026-10-02. |
 | D11 | The creator of a Mate is its project's `OWNER`; org owners and admins keep their reach; _Assign_ (a project-role override to `OWNER`) hands a Mate over.                                                                                                                                                                       |
@@ -3254,9 +3430,6 @@ that only the broker deploys to.
 | D17 | **No brief.** _New project_ asks for the name and nothing else; a new conversation starts with an empty composer, with no opening message composed or sent for the person. |
 | D18 | Gitea is made **with the org's first _New project_**, in the same run as the first Mate; nothing happens at sign-up and there is no pool. Superseded 2026-10-02: the org's HQ takes the Gitea project's place, set up by an admin or owner (§10.1). |
 | D19 | The account's Gitea is the only forge Mate drives. Superseded 2026-10-02: the org's HQ is where a Mate delivers (§10.10); a remote of the user's own stays theirs. |
-| D20 | **A Mate's Gitea access is delivered by the broker's rights loop** into its `zcp` service's variables; the app grants the broker the Mate's project at registration and asks for nothing. Superseded 2026-10-02: a Mate reaches HQ with its enrollment, and zcp reads none of the variables (§6.6).                                                                                                                                 |
-| D21 | **A person signed in to Mate is signed in to Gitea** (2026-09-17, the owner: "it should use the same login I have"). The app proves the person to the broker with a throwaway, as at the door, and the broker — Gitea's site admin — makes their account exist, bound to the OIDC source, and mints a token that acts as them (§10.9). No Gitea screen, no button; the OAuth2 client, the PKCE flow and the callback route are gone. Retired with the Gitea on 2026-10-02: a person reaches HQ through its door (§10.4). |
-| D22 | **A Gitea serves every app origin** (2026-09-17, the owner: "didn't you just make it use Mate's logged-in user's token?"). Under D21 every browser call carries a bearer in a header and no cookie, so an origin allowlist proves nothing and only pinned a Gitea to the origin that made it. Gitea's `[cors]` and the broker's `POST /person/token` answer `*` (credentials off); the import sends no origin list; one Gitea serves mate.zerops.io, a developer's localhost and the shells. Gitea's own-page sign-in is untouched, its consent page on the origin that made the Gitea (`MATE_APP_URL`, a redirect target). Retired with the Gitea on 2026-10-02. |
 | D23 | **The group repo takes merges from anyone with write, and a Mate's recipe proposal lands by itself** (2026-09-17, the owner, on a first recipe that sat as PR #1 waiting for a releaser: "they all should be able to merge on the import yaml repo"). `main` on the group repo keeps no merge whitelist — the `write` and `release` teams merge — and the broker merges a pull request a registered Mate's bot opened against it on the next pass, nudged by the hook that announces it. What sets the releasers apart is the `v*` tag protection; a person's pull request stays theirs to merge. **Narrowed by D30:** the broker lands a Mate's proposal by itself only when it only adds files, and a Mate proposes only the tiers `main` lacks. **Narrowed by D31:** every registered Mate writes the group repo too, so a person's pull request, like a Mate's change to a file `main` carries, is merged by a person with write or by a Mate its person asks. Superseded 2026-10-02: in HQ a person merges a change, and Core lands a Mate's recipe change by itself when it only adds files and closes one that adds nothing (§10.10). |
 | D24 | **A group's Mates share its service repositories** (2026-09-17, the owner asking for a run that ends with two Mates, a stage and a production, all wired). The AI Agent tier's `buildFromGit` names the same repository for every Mate the recipe creates, and the broker's `POST /mate/repository` answered `409 taken` to every bot but the one that made it, so no second Mate could push. A registered Mate of the group asking for a service repository that exists is made a collaborator with write — its own branch, its own pull requests, `main` behind them; the group repository stays refused by name, made yet or not. An owner's _Add Mate_ registers the Mate at birth, as _New project_ does. **Narrowed by D31:** the refusal stands but no longer keeps a Mate off the group repository — every registered Mate writes it as a collaborator the rights loop makes, and `POST /mate/repository` only refuses to make or join it as a service repository. Holds in HQ: every Mate of an application reaches all of its repositories, each pushing only its own change's branch (§10.10). |
 | D26 | **The Git tab is the Mate's; the project's flow is the left menu's and the projects screen's; Gitea's overview is the footer's** (2026-09-17, the owner: "this seems like git for the whole project, shouldn't it be git for this Mate and have project git somewhere else … the left menu … a list of open PRs of each Mate between mates and the stage/prod", and earlier "at the bar down I imagine a 'gitea' button, where I'll see overview of all repos I have access to and their open PR; in the menu I imagine each group as a timeline: mates, their open PRs, stage, production"). One provider reads every project's flow for the account; a Mate's tab shows its own branch and pull request and nothing of the project's. Since 2026-10-02 the Git tab reads the Mate's change from HQ, and the footer's Gitea overview is the account menu's Git page (`/git`), every application's repositories and open changes as HQ holds them (§10.11). |
@@ -3266,7 +3439,6 @@ that only the broker deploys to.
 | D30 | **A Mate's recipe proposal only adds** (2026-09-26: the medusa group's second Mate, which had joined the group's existing repositories, proposed its own composition of every tier over the hand-written ones — project env, secrets and the storage policy dropped, a `mailpit` added, production naming the dev setups — the broker merged it, and the next release built production's storefront with the dev setup, a 502; the first Mate had done the same the day before). Every Mate composes the whole app from its own project, so a proposal over a tier `main` carries is one Mate's view replacing the group's. zcp proposes only the tiers `main` lacks, from a branch cut at `main`'s tip, so its pull request only ever adds files, and closes its bot's proposals once `main` has every tier; the broker merges a Mate's proposal by itself only when every file it changes is added, and one that modifies, removes or renames a file `main` carries waits for a person with write. A tier on `main` changes only through a person's pull request. §10.10. **Narrowed by D31:** a tier on `main` still changes only through a pull request, and a registered Mate may open one and merge it when its person asks; the automation stays additive and withdraws only its own proposals. Holds in HQ: zcp proposes only the tiers `main` lacks as the Mate's change, which only adds, and Core lands it (§10.10). |
 | D31 | **Every registered Mate writes its group repo** (2026-09-30, the owner, after a person asked their Mate to add a service to two tiers and merge the group's open pull requests, and the Mate could open the pull request and not merge it: "mate should have write right to groups" · "the first mate ever has to stand up the group, every new one should be able to change it as well"). The broker's rights loop makes every registered Mate's bot a collaborator with `write` on `{slug}/group`, a planned action of every pass: a Mate registered before the rule gains it on its next pass with no token minted, a new one on the pass that makes its bot; a bot whose Mate leaves the group's registry loses it, as it loses its `read` team, and a deleted Mate's bot is retired and keeps it, as it keeps its team. `main` keeps its protection exactly — no direct push from anyone, merges from anyone with write, no merge whitelist; `env/*` stays the broker's and `v*` tags the release team's. So a Mate still changes the recipe only through a pull request, now one it may merge itself when its person asks, and its merge does what a person's does: the services a changed tier adds are imported into every environment built from that tier, with no production guard. The automation stays as D30 has it: zcp proposes only the tiers `main` lacks, from the bot's fork, and withdraws only the proposals it opened, never a pull request the Mate opened itself; the broker lands a Mate's pull request by itself only when it only adds files. `POST /mate/repository` still refuses `group`: the write is the rights loop's, never an answer there. §10.8, §10.10. Superseded 2026-10-02: in HQ a Mate writes only its own change; it proposes the recipe through it, and a change to a tier `main` carries is a person's to merge. |
 | D32 | **A new Mate stands up from its recipe in one zcp call** (2026-09-30, the owner confirming how a Mate is added, after the Beviro trial: without it the model improvised an adopt and four deploys one after another — mailpit 1:55, medusadev 5:49, nextstoredev 4:39 — could not place the stage half, and took sixteen minutes). The person's browser builds the project from the group's AI Agent tier, the Mate reaches HQ with its enrollment (§6.6), and the first turn's one call, `zerops_standup`, adopts every pair, checks `main` out, deploys every dev half at once and answers once they stand, then, on the model's second call, each stage after its dev half and the stages above it by the tier's priority, and reports each service with the model's next step. It delivers nothing — no commit, push or pull request — and touches the Mate's own project only. The model is the backup: whatever fails, it carries on in the same turn with zcp's own tools. §10.10. |
-| D33 | **A Mate's session outlives the load** (2026-10-02, the owner, on the per-load throwaway: it "feels like it's making the system brittle"). The session a throwaway opened is kept per account in the browser and presented again on a later load only where the door would present a fresh one — the descriptor names the expected project and the environment it was kept for — and only once the Mate answers `GET /api/auth/session` with `authenticated` and every scope the client asks for; a kept session spends no mint and waits on no mint pace. Every way out of a login ends the kept sessions at their Mates: the account's close, a stored login the platform refuses, and a session displaced from the store. With reconnects free, every ready Mate in the menu connects on its own (a bound of 48). Why: memory-only sessions (2026-09-07) were free while the door took the person's own token; once it took a throwaway every load minted and deleted one per Mate, waited on the mint pace and the Zerops API, and left each dropped session live on its Mate for a day — while the same storage keeps the Zerops token that can open every Mate. |
 | D34 | **A group recipe gives a search engine room to reindex, and keeps what a Mate learns** (2026-10-02, the owner: "while creating the recipe it should think about minimal viable resources (but not go overboard either)"). zcp writes Meilisearch, Elasticsearch and Typesense at no less than 2 GB `minRam` with 0.5 GB `minFreeRamGB` on every tier, each the max of the live value and the floor; every other service keeps the numbers it runs with. The recipe carries the free-memory buffer and a managed service's `profileOverrides` (Valkey's `maxmemory-policy`). A scale change or import override that leaves the recipe behind answers with each tier's old and new values, and `group-recipe scaling=<host>` proposes only that host's `verticalAutoscaling` into the tiers on `main`, for Review; a block it cannot rewrite safely is refused, never duplicated. Why: a new Mate's catalog import ran Meilisearch out of memory at the recipe's 1 GB, and the fix its agent made stopped at that one Mate. In HQ (2026-10-02): the proposal is the Mate's change in the recipe repository, titled `Mate: <host>'s scale in the group recipe`, for a person to merge; HQ keeps one open change per Mate per repository, so a scaling proposal and the additive one (D30) never write over each other — whichever finds the other open leaves it as it is and says so (§10.10). |
 | D35 | **A delivery to HQ fails fast** (2026-10-04, the owner: "a relatively short interval with at most three tries — in general fail fast here and say so, so it gets dealt with, rather than wait five minutes for something or mask that HQ works badly; it should simply always be available, and when it is not, the problem is bigger, somewhere in Zerops"). A delivery step HQ cannot serve — not reached, or a 5xx — is tried three times, 1 s and 3 s apart; a refusal fails at once. Then the delivery fails within the agent's call, naming the step, HQ's address and the last error: nothing is recorded as owed and nothing tries again in the background, the work stays committed in the checkout, and the next delivery sends it. Supersedes the pending delivery `zcp service mate` finished once HQ answered (every 30 s, and 5 s doubling to 5 min while one was owed, for as long as it took). The enrollment's keep (`hq.Keep`) is the connection's and still self-heals. §10.10. Superseded 2026-10-21 for deliveries: zcp delivers nothing (§10.10, *A Mate's git*); the bound holds for the HQ calls and git zcp still makes. |
 | —   | D2 (a relay), D7 (stage deploys), D9 (integration tokens at the door) and D14's build (adoption) are closed, superseded or not built; D14 stands as the design: adoption is the new-app flow with existing source, nothing adopted in place.                                                                                    |
@@ -3281,8 +3453,8 @@ gitea-mate's `internal/roles/fixtures.json` that both suites replay whole. Input
 `read`/`write`/`release` (`write` = `BASIC_USER` or above on **any** of the group's projects, since
 a Mate's creator owns only their Mate; `release` = `BASIC_USER` on production, or org `ADMIN`/`OWNER`
 until production exists, because the recipe is merged before it), per Mate `open`/`listed`/`hidden`,
-and the OIDC `groups` claim (`org:owner`, `g:{slug}:read|write|release`). Consumers: the door
-(§10.4), the broker's teams, admin flag and claims. A change to the rule is a change to the fixture
+and the OIDC `groups` claim (`org:owner`, `g:{slug}:read|write|release`). Consumers: HQ's access lists
+(§3.9), the broker's teams, admin flag and claims. A change to the rule is a change to the fixture
 first, in both repositories. Since 2026-10-02 HQ's Core is a consumer too (who may do what in HQ,
 `can`); gitea-mate's copy, the broker's teams and the OIDC claims retire with the Gitea.
 
@@ -3294,78 +3466,8 @@ _Offers_), and the client draws that. It keeps two predicates over Zerops' own f
 moments before HQ can answer: `mayBearHq` (org role `ADMIN` or above — who may make the org's HQ)
 and `mayCreateProjects` (Zerops' own flag), both in `zeropsRoles.ts`. A Zerops service operation —
 start, stop, restart, remove — gets no client verdict: it is offered where HQ says `observe_mate`,
-and Zerops' refusal is shown in its own words. The Mate server's door still reads the role function
-itself (`zeropsRoleAnswer`, §10.4); one shared table pins that HQ's `observe_mate` and the door
-agree on who opens a Mate.
-
-### 10.4 The door: `POST /api/auth/zerops-throwaway`
-
-Replaces §3.2–3.3. In Zerops mode `bootstrapMethods` is `["zerops-throwaway"]` and nothing else
-(`EnvironmentAuthPolicy.ts`). The client (`authorization/zerops.ts`, `doorThrowaway.ts`) mints an
-integration token as the person — `roleCode: NO_ACCESS`, no project grants, no flags, named
-`mate-door:{projectId}:{nonce}` — presents its value once, and deletes it whether the door admitted
-or refused; on start it sweeps its stale `mate-door:*` tokens, and nothing else — a token merely
-named like the retired Gitea sign-in is somebody's to keep (`planThrowawaySweep`). The server
-(`ZeropsThrowawayIdentity.ts`) reads `/user/info` as the token for its id, reads the token's own
-record from **this** org, and refuses anything but `NO_ACCESS`, empty `projects`, every flag false,
-the name for this project, and a `created` within five minutes of the Zerops API's own `Date`
-header — never the container's clock. The caller is `createdByUser`; with the Mate's own key the
-server reads the member list and the project's `userRoles`, and the role function answers `open`
-(the standard client scopes plus `exec:operate`), `listed` (`403 zerops_read_only`) or `hidden`
-(`403 zerops_project_membership_required`). The flag check is load-bearing: a token minted through a
-delegation names the delegating person, so a flagged token is never a throwaway, whoever made it.
-
-**Who the project lets in, relayed (R6).** HQ relays Zerops's access, aged; a Mate trusts it at most
-5 min from HQ's Zerops read, then reads Zerops itself. HQ reads the org's member list and its
-projects' `userRoles` for its own roles anyway, and sends down each Mate's link `access`: whom the
-Mate's project opens for and whom it lists, by the same role function over every row of the member
-list (`@t3tools/shared/mateAccess`), and how long before it was sent Zerops answered that view —
-whole after every view it reads, nothing for a project its view lacks, nothing past the link's
-64 KiB frame bound (logged once per Mate) (`apps/hq/src/mateAccess.ts`). While the relay holds, the
-door lets in a creator it opens for without reading the member list; whomever it lists or leaves
-out, the Mate's own read decides, with the refusals above. With no relay that holds — before HQ
-links, under an HQ older than the relay, in an org with no official HQ — the Mate reads the member
-list itself, as it always did (`ZeropsProjectAccess.ts`).
-
-**HQ's door** (since 2026-10-02) takes the same throwaway, named for HQ — `mate-door:{HQ project id}:{nonce}`
-— at `POST /api/door` and answers a session for HQ's API; the client deletes the throwaway after. The
-Gitea sign-in this section budgets (§10.9) retires with the Gitea.
-
-**No membership window.** `ZeropsMembershipWatch` asks who the project lets in — HQ's relay while it
-holds, else the member list and `userRoles` read with the Mate's key — on a timer and at once when
-HQ relays a different answer, and ends the sessions whose answer changed; a pass that cannot say
-keeps them while the last answer is under two intervals old, and ends them at once once a relay
-lapsed, which held one interval already. Nothing renews (`credentialRenewal.ts` keeps the contract,
-no client supplies a
-Zerops credential); the client opens a new session with a fresh throwaway when it holds no kept session its Mate still confirms (D33). The
-minimum server a client connects to is 0.11.0 (`serverCompatibility.ts`).
-
-**Minting and deleting a throwaway** (from the fork's slice 0.7; its admission from slice 2.4).
-A mint of `roleCode: NO_ACCESS` with `projects: []` and every flag false, here and for Gitea
-(§10.9), is an `account-write`: the client mints one only once the sign-in's first access grant is
-admitted, because nothing that exchanges or signs in to Gitea runs before it, and a verification
-window that has closed since does not hold it up. Any mint that grants a project, or an organization
-role above `NO_ACCESS`, stays a `project-write` and is refused while the window is closed. The
-client checks no organization or project role for the throwaway — the door and the broker decide —
-so a `BASIC_USER`, or a `READ_ONLY` member with a project override, mints like anyone else.
-
-Why a closed window does not hold up the throwaway: the window guards against a person whose access
-lapsed acting on the platform past it. A token with no organization role, no project grant and no
-flag carries no rights, so minting one while project writes are closed cannot grant anything. What
-it opens is decided when it is presented, by the door and the broker, which re-derive the person's
-role from the member list and the project's `userRoles` with their own keys — a fresher check than
-the client's window — and refuse a token that carries a grant or a flag. A mint that grants a
-project would add authority, so it keeps the window.
-
-The delete is `deleteThrowaway({clientId, tokenId, name}, {token})`, an
-`account-write` call that refuses any name failing `isThrowawayName`, sends the minting token
-explicitly, never clears or refreshes the session, and carries its own 15 s timeout; it runs in a
-finalizer that neither the exchange's abort nor the account's close cancels, and retries once after
-5 s. A `401` or `403` there leaves the token to the sweep and never reaches the session, so a
-delete can neither run under another account nor sign anyone out. The sweep, under the same
-principal, uses the same call; `deleteIntegrationToken` stays `project-write` for every other
-caller (deploy tokens, grants). Deleting a throwaway only removes authority, and the name check
-keeps real tokens off this path. Door mints are paced per tab (`DOOR_MINT_PACE`, `doorThrowaway.ts`).
+and Zerops' refusal is shown in its own words. The Mate server reads no role: HQ's access list says
+whom its project opens for (§3.9), computed by the same `can` that answers `observe_mate`.
 
 ### 10.5 Who runs an agent (D6)
 
@@ -3375,30 +3477,27 @@ retaining only that marker and reporting that dropped facts must be stored in HQ
 transport decoding remains native.
 
 When a sign-in the Mate's server walked succeeds, the server keeps who started it — the Zerops user
-behind that door session — before anything else hears of the success, in `~/.mate/signed-in.json`
+behind that connection (§3.8) — before anything else hears of the success, in `~/.mate/signed-in.json`
 beside the logins' homes (`zeropsSignIns.ts`). The document is read once, at start: a restart keeps
 the record, and a rewrite under a running server changes nothing. A Mate migrated from main, whose
-signer facts have been ported to HQ and which has no document, gets it written from the enrolled
-HQ's `GET /api/mate/self` signer map by `zcp service mate` before its server first starts — once,
-each sign-in dated by the seed (`mate.SeedSignInsForEnrollment`). Launch makes one enrollment
-attempt before the signer read; each has a bounded request context. Failure of either always
-continues to the server's start and its independent link to HQ. No seed attempt is spent without
-an enrollment. Both the enrollment and HQ's answer must name the container's project id. An
-existing document is preserved without asking HQ, including one written while HQ was answering.
-A completed seed is never repeated, even after its store disappears. An absent HQ answer leaves
-the store untouched, logs the reason, and records `failed` with the enrollment's opaque input
-fingerprint in `~/.zcp/state/mate-sign-ins-seeded`; `zcp mate status --json` reports that outcome.
-The same failed input is not retried on a launch or enrollment recheck. A successful enrollment
-with a changed HQ, project or credential permits one new attempt; naming its key is not a change.
-A legacy failure marker has no enrolled input and permits one enrolled attempt. To ask again
-explicitly, remove the marker and start the Mate service again. A seed completed after the server
-has started is read on its next manual restart, since the server reads its store only at startup.
-HQ omits the signer map when its ported record is empty. An API key login has no sign-in
-to walk: the session that stores its key signs it in, and its stored key is its credential. That
+signer facts have been ported to HQ and which has no document, gets it written from HQ's
+`GET /api/mate/self` signer map (the project key in the header, §3.6) by `zcp service mate` before
+its server first starts — once, each sign-in dated by the seed (`mate.SeedSignInsForEnrollment`).
+The read has a bounded request context, and its failure always continues to the server's start and
+its own link to HQ. HQ's answer must name the container's project id. An existing document is
+preserved without asking HQ, including one written while HQ was answering. A completed seed is
+never repeated, even after its store disappears. An absent HQ answer leaves the store untouched,
+logs the reason, and records `failed` with an opaque fingerprint of HQ's origin and the project key
+in `~/.zcp/state/mate-sign-ins-seeded`; `zcp mate status --json` reports that outcome. The same
+failed input is not retried on a launch; a changed HQ origin or project key permits one new attempt.
+To ask again explicitly, remove the marker and start the Mate service again. A seed completed after
+the server has started is read on its next manual restart, since the server reads its store only at
+startup. HQ omits the signer map when its ported record is empty. An API key login has no sign-in
+to walk: the connection that stores its key signs it in, and its stored key is its credential. That
 record is the gate's (`ZeropsProjectSigners.ts`): the server refuses
-`orchestration.dispatchCommand`'s turn-starting commands from any session but the signer's, holds a
-turn while a code being checked would change the answer (up to 30 s), and signs the agent out when
-its signer is no longer an `ACTIVE` member — a member list it cannot read signs nobody out. A credential that goes takes its record with it once
+`orchestration.dispatchCommand`'s turn-starting commands from any connection but the signer's, holds
+a turn while a code being checked would change the answer (up to 30 s), and signs the agent out when
+HQ's access list no longer holds its signer (§3.9) — a Mate whose link is down signs nobody out. A credential that goes takes its record with it once
 its absence lasts (`CREDENTIAL_GONE_AFTER`, 10 s), never on a moment's: a CLI that removes its
 credential before it writes the new one reads absent for an instant. A login with no record —
 signed in before the record existed, from a terminal, or copied in — runs for nobody until somebody
@@ -3458,8 +3557,7 @@ project's own domain. Only the leading Core answers; a standby, or a Zerops HQ c
 its contracts are the fork's `@t3tools/shared` (`hqChanges`, `hqRecipe`, `mateLink`), and who may do
 what is `zeropsPermissions.ts`'s `can` over the role function (§10.3).
 
-**A Mate's side** (`Authorization: Mate <credential>`, §6.6): its enrollment (`POST
-/api/mate/challenge`, `POST /api/mate/credential`), its own state (`GET /api/mate/self`: its record,
+**A Mate's side** (the project key in a header, §3.6, §6.6): its own state (`GET /api/mate/self`: its record,
 the application HQ holds it in and that application's name, its changes there, its repositories
 with each one's origin address, `repos`, and whether that application has a production of any
 target, released or not, `production` — both of which an older HQ omits; zcp reads no Git
@@ -3469,14 +3567,14 @@ its application, made or joined (`POST /api/mate/repos`); its change in a reposi
 time (`POST /api/mate/changes`, `PATCH …/:repo/:n`, `POST …/attachments`); a tier of the recipe
 (`GET /api/mate/recipe/:tier`); the organization's AI key (`POST /api/mate/ai-key`, §5.8); a token
 for a GitHub repository at that call (`GET /api/mate/git-credential?host=github.com&path=…`, §5.10);
-git over HTTPS at `/git/<appId>/<repo>.git` as the user `mate`, which today takes a Mate's push only
+git over HTTPS at `/git/<appId>/<repo>.git` with the Mate's Git credential (§3.3), which today takes a Mate's push only
 on the branch of its own open change, only forward — zcp's guidance already pushes a branch of the
 agent's own, which takes design B's relaxed rule (any branch name; `main` and tags HQ's) on HQ's
 side. §10.10 is what zcp does with it.
 
 **A Mate's environment observation** (ADR 0003; parity 84, 260, 275). `zerops_observe` is
-registered only in a Mate's container, with no SSH requirement. It uses the enrollment's Mate
-credential: `action="environments"` reads `GET /api/mate/environments`; `action="status"` reads
+registered only in a Mate's container, with no SSH requirement. It presents the project key
+(§3.6): `action="environments"` reads `GET /api/mate/environments`; `action="status"` reads
 `GET /api/mate/environments/:projectId`; `action="logs"` reads
 `GET /api/mate/environments/:projectId/services/:serviceId/logs?limit=`, 1–100 entries (default
 100), each message at most 4,096 characters. It reads no CI: a Git environment's push and its CI
@@ -3498,7 +3596,7 @@ Tests: the fork's `observation.test.ts`, `zerops/observationHttp.test.ts`; zcp `
 `TestServer_ObserveToolGating`, `TestAnnotations_ObserveTool`,
 `TestBuildAgentsMD_Container_GroupAndGitHost`.
 
-**A person's side** (`Authorization: Bearer <session>`, from the door, §10.4): the structure
+**A person's side** (`Authorization: Bearer <session>`, from sign-in, §3.7): the structure
 (`GET /api/structure`, and its stream over a WebSocket ticket) — applications, the projects attached
 to them as Mates, stages and productions, each application's changes and environments, as the
 reader sees them in Zerops; an application made (`POST /api/apps`) and a project attached (`POST
@@ -3535,7 +3633,7 @@ carries every entity's `can` and `rolesAnsweredAt`; an `org` message moves the o
 offers when they change, an application's and its environments' move with the application, and a
 `roles` message moves `rolesAnsweredAt` with every view. Unknown never takes a Zerops-executed verb
 away: against a Core from before its offers, or before HQ answered, a Mate's _Open_, _Start_,
-_Restart_ and _Remove_ stay — the door's and Zerops' to refuse, in their own words — and are hidden
+_Restart_ and _Remove_ stay — HQ's ticket's and Zerops' to refuse, in their own words — and are hidden
 only where HQ refuses following the Mate; HQ's own verbs (a Mate's face, move and leave, renaming and
 deleting a project, an application's change verbs and release) are drawn not pressable, "HQ has not
 said yet", until it does. A held verb holds through the stream reconnecting, and HQ's offers stand
@@ -3599,10 +3697,9 @@ service's newest live one past them) go to whoever reads its changes. Live on 20
 
 ### 10.9 A person in HQ
 
-A person comes into HQ through its door with a throwaway, as into a Mate (§10.4): `mate-door:{HQ
-project id}:{nonce}` at `POST /api/door`, answered with a session for HQ's API, the throwaway deleted
-after. There is no Gitea account and no Gitea sign-in: what the client reads of a Mate's changes —
-the rows, the review's detail, the comments, the pictures — is HQ's, as the person (§5.4, §10.11).
+A person signs in to HQ with their Zerops access token (§3.7). There is no Gitea account and no
+Gitea sign-in: what the client reads of a Mate's changes — the rows, the review's detail, the
+comments, the pictures — is HQ's, as the person (§5.4, §10.11).
 
 ### 10.10 zcp inside a Mate
 
@@ -3638,7 +3735,8 @@ repository of that name with the recipe repository whoever asks, so zcp wires no
 half named `group` is told to rename the service, a recipe naming it to fix the recipe — and the
 recipe leaves such a pair out rather than wait on it. zcp's own key is never handed out: no `ZCP_API_KEY` in a
 build-integration secret, `GITEA_TOKEN` masked on every value dump, the one `zcli push` of a
-self-deploy given the key through its environment and never `zcli login`. `hq_recipe.go`,
+self-deploy given the key through its environment, over SSH standard input (§3.6), and never
+`zcli login`. `hq_recipe.go`,
 `hq_recipe_inputs.go`, `internal/hq/scratch.go`, `internal/hq/recipe.go`;
 `TestGroupRecipe_ProposedAsTheMatesChange`, `TestGroupRecipe_ProposesOnlyWhatMainLacks`,
 `TestGroupRecipe_FollowsTheProjectOnTheSameChange`, `TestGroupRecipe_MainMovedUnderAnOpenProposal`,
@@ -3681,7 +3779,7 @@ group's to edit. The project block carries the recipe's name (the AI Agent tier 
 own), the live `corePackage`, and the project's user-set variables in its `vault:` — and each
 runtime its own in its `vault:`; a secret-shaped name and a generated secret written
 `{value, sensitive: true}`; the platform's own and the control plane's (zcp's key and agents, the git token — on
-a dev half, the Mate's HQ credential — the launch token and a Gitea token) are never written. The composer decides each variable
+a dev half, the Mate's Git credential — the launch token and a Gitea token) are never written. The composer decides each variable
 unattended and fails closed: a value of `${name}` references alone is wiring, kept as written, and
 any other value is kept only when no signal marks it secret — the platform's flag, a masked read, a
 credential's name (a PIN, a seed, a passphrase and a webhook's address included, since no shape
@@ -3730,10 +3828,10 @@ dev/stage pair can be a Mate's: the dev half is the checkout, the stage half the
 production is promoted from. So zcp's classic route refuses a plan that gives a Mate a runtime with
 no stage half (`bootstrapMode` simple or dev), naming the standard pair to re-submit.
 
-**A Mate is HQ's by what it is, not by its enrollment (2026-10-05).** Being a Mate
-(`runtime.Info.MateEnabled`) is what makes HQ the authority; the enrollment is only how zcp reaches
-it. A Mate with no enrollment yet, or one it cannot read, plans the same pairs, refuses
-launch-production and hands its release to the person, as an enrolled one does — it never falls back
+**A Mate is HQ's by what it is, not by whether HQ answers (2026-10-05).** Being a Mate
+(`runtime.Info.MateEnabled`) is what makes HQ the authority; the project key is only how zcp reaches
+it. A Mate whose HQ does not answer yet, or refuses its key, plans the same pairs, refuses
+launch-production and hands its release to the person, as one HQ answers does — it never falls back
 to classic simple plans, a production project of its own or a pushed tag. Whatever needs HQ to
 answer says it cannot reach HQ and why (`hqEnrollmentProblem`), and launch-production's next step
 says whether the work reached `main` is HQ's to say. A pair whose HQ repository is on record keeps
@@ -3751,7 +3849,7 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
 - **The repository** is `<appId>/<name>` in the application HQ holds the Mate in, the name the dev
   hostname (or the one a recipe names). zcp asks for it — `POST /api/mate/repos {name}`, idempotent,
   `main` born with one commit of the empty tree — and wires the pair: `git-push-setup` to
-  `https://<HQ>/git/<appId>/<repo>.git` with the Mate credential, the checkout put on a `main` that
+  `https://<HQ>/git/<appId>/<repo>.git` with the Mate's Git credential, the checkout put on a `main` that
   descends from HQ's (`ops.BuildBaseBranchCommand`: a pair fresh from `zcp init` takes `main`'s
   tree, a pair with history of its own is joined onto HQ's empty seed, anything else is refused
   with its remedy — two unrelated histories of code are never joined, the pair's own is kept on a
@@ -3833,16 +3931,17 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
 - **A Mate HQ now holds in another application** is wired there on its next pass: the repository of
   the same name in the new application, made if new, `origin` pointed at it and the checkout put on
   its `main`; its change in the old application stays where it is.
-- **The credential.** The dev service holds the Mate credential as its `GIT_TOKEN` service secret,
-  written by the wiring's `git-push-setup`, which the per-command credential helper presents as the
-  user `mate`. The enrollment is the credential's one home: the pair's record keeps only a
-  fingerprint of the copy the dev service holds (`HQRepoRef.credentialFingerprint`), and the
-  repository pass — bootstrap, adopt and every develop start — rewrites only that secret when the
-  fingerprint differs from the enrollment's, as after a re-enrollment, outside its backoff and
-  leaving the checkout's branch and origin alone. The helper persisted in `.git/config` for HQ's host answers the dev service from
-  `GIT_TOKEN` and the Mate's own shell from `zcp hq git-credential`, which reads the enrollment at
-  each request and answers for the enrolled HQ only — and, for github.com, with HQ's per-call token
-  (§5.10).
+- **The credential.** The dev service holds the Mate's Git credential (§3.3) as its `GIT_TOKEN`
+  service secret, written by the wiring's `git-push-setup`, which the per-command credential helper
+  presents as the user `mate`. The file the server keeps it in (C-3) is the credential's one home:
+  the pair's record keeps only a fingerprint of the copy the dev service holds
+  (`HQRepoRef.credentialFingerprint`), and the repository pass — bootstrap, adopt and every develop
+  start — rewrites only that secret when the fingerprint differs from the file's, as after HQ issued
+  a new one, outside its backoff and leaving the checkout's branch and origin alone. The project key
+  is never written into the dev service: it runs the application's code and its dependencies. The
+  helper persisted in `.git/config` for HQ's host answers the dev service from `GIT_TOKEN` and the
+  Mate's own shell from `zcp hq git-credential`, which reads the file at each request and answers
+  for HQ's host only — and, for github.com, with HQ's per-call token (§5.10).
 - A push to HQ is watched for no build and offers no integration, and a wired pair's direct deploys
   are never redirected to a push. The develop session's auto-close note hands the person the open
   change's link and the next step while the pair has one; a stand-up's closes without it.
@@ -3872,8 +3971,8 @@ Who holds what:
   `zcp` answers (per-service env isolation, `ZCP_API_KEY` a sensitive variable on `zcp`), and
   imports the runtimes.
 - **HQ** keeps the recipe on `main` of the recipe repository and gives each pair its repository;
-  the Mate reaches both with its enrollment (§6.6).
-- **zcp**, with its lowered token and its enrollment, stands the Mate's development up in its own
+  the Mate reaches both with its project key (§6.6).
+- **zcp**, with its lowered key, stands the Mate's development up in its own
   project and nowhere else — the group's stage and production are not its, and it reads no tier but
   `0 — AI Agent`.
 - **The model** acts only on its signer's message, and is the backup.
@@ -3893,18 +3992,17 @@ The order:
 6. It imports the runtimes in one wave: dev halves `startWithoutCode: true` (running and empty, the
    checkout target), stage halves with no build (`READY_TO_DEPLOY`), public-build utilities with
    their build, which the platform runs.
-7. `zcp service mate` enrolls the Mate with its HQ (`hq.Keep`): the enrollment is what the stand-up
-   reads the recipe and the recipe's repositories with.
+7. The Mate's server links to HQ with the project key (§3.5); the key in zcp's header is what the
+   stand-up reads the recipe and the recipe's repositories with (§3.6).
 8. The person signs the agent in meanwhile; the Mate's server keeps who did (§10.5).
 9. The Mate's server sends "Stand up development of the project." into the main conversation as
    the person its HQ names as the stand-up's asker (`standupRequestedBy`, written in the same write
    as the Mate's record), once that person signed an agent in here (`ZeropsSetup.ts`). Until the
    link to HQ brings the Mate nobody is known to have asked, and nothing is settled on that; HQ's
    record naming nobody settles it as none at once. No client sends it. While it waits,
-   `/setup.json` says why where the server knows: `no_hq`, `not_enrolled` (with HQ's refusal
-   `code`), `not_linked` (C-7). The Mate's AGENTS.md sends that message to `zerops_standup` first.
+   `/setup.json` says why where the server knows: `not_linked`, with the link's reason (§3.12, C-7). The Mate's AGENTS.md sends that message to `zerops_standup` first.
    The tool:
-   - waits, bounded, for the Mate's enrollment with HQ (3 min) and for the runtimes (5 min: every dev half
+   - waits, bounded, for HQ to answer the Mate's key (3 min) and for the runtimes (5 min: every dev half
      running and answering SSH, every stage half created), and for whatever the import still has in
      flight on them and on the managed services;
    - reads the tier from `main` of the recipe repository of the application HQ holds the Mate in
@@ -3971,7 +4069,7 @@ that builds them moves the section on, its own `done` or `failed` again zcp's wo
 
 The model is the backup:
 
-- A refusal before anything is touched — no enrollment with HQ, no application (HQ's state saying
+- A refusal before anything is touched — HQ refusing the key or not answering it, no application (HQ's state saying
   none, or HQ refusing the tier `mate_not_in_app`), no tier on `main`, a tier past HQ's read bound
   (`413 too_large`), a tier that does not read or holds no pair — is an error result naming the
   adopt route.
@@ -4109,14 +4207,14 @@ its group already had a production with `055a7e8 Mate: weatherdev (#4)` merged a
 _Release_. launch-production creates its own production project on a user-owned remote and stages
 its own token; it has no case for a group's production, which the person adds from the projects page
 and which runs what a release tag on the group repo lists (D16, D27, D28). So in a Mate
-(`runtime.Info.MateEnabled`), enrolled yet or not, `handleLaunchProduction` refuses before scope,
+(`runtime.Info.MateEnabled`), HQ answering or not, `handleLaunchProduction` refuses before scope,
 state or any mutation, with the blocker `wired_mate_production_is_the_groups` and a next step that says what is
 true of this Mate's own pairs — never "nothing open" read as "merged": every recorded change is first
 read fresh from the Mate's own state in HQ, then one still open is named (even if its local
 number was lost) — "merge `<host>`'s change #N on `<repo>` first" — a merge HQ holds points at
 the projects page, and no change at all or one closed without merging says the work goes to `main`
-first, a branch of the agent's own pushed and merged; with no enrollment, or
-one it cannot read, it says so and that the answer is HQ's, to ask again once enrolled. A container
+first, a branch of the agent's own pushed and merged; with HQ not answering or refusing the key, it
+says so and that the answer is HQ's, to ask again once HQ answers. A container
 that is not a Mate keeps the classic route. The `idle-launch-entry` atom branches on "keeps its code in HQ" the same way and
 tells the agent not to start the workflow. `hq_pair.go`;
 `TestHandleLaunchProduction_AMateRefusesBeforeAnyStep`,
@@ -4126,7 +4224,7 @@ tells the agent not to start the workflow. `hq_pair.go`;
 Outside HQ, `action="release"` keeps tagging the pair's own checkout remote.
 
 **An agent's release request in HQ.** `zerops_workflow action="release"` returns
-`status="release-person-required"` when this Mate is enrolled with HQ, or the named pair has a
+`status="release-person-required"` when this container is a Mate, or the named pair has a
 recorded HQ repository. This happens before service/bootstrap requirements, git-push prerequisites,
 freshness checks, tag reads or tag writes; `releaseVersion` does not authorize an agent to tag HQ.
 The result tells the agent to ask the person to open this Mate's application on Mate's projects
@@ -4256,11 +4354,8 @@ merge/release targets, not an arbitrary ref supplied by the client.
 
 | ID    | Invariant                                                                                                                                                                                                                                                                                                                                                                                         |
 | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| MB-1  | The door takes a throwaway and nothing else: any grant, any flag, another name, another org, a stale `created` or an inactive creator is refused, and the role comes from the role function with the Mate's own key. `ZeropsThrowawayIdentity.test.ts`, `ZeropsIdentityGate.test.ts`; `EnvironmentAuthPolicy.ts` offers `zerops-throwaway` only.                                                   |
-| MB-2  | The client mints, connects and deletes in that order, and deletes even when the connect threw; the mint carries no grants and no flags. From the fork's slice 0.7 the mint checks no role, and the delete is `deleteThrowaway` with the minting token: not cancelled by the exchange's abort, never clearing, refreshing or borrowing the current session, refusing any name that is not a throwaway's. From slice 2.4 that mint is an `account-write` that a closed verification window does not hold up, and a mint that grants a project stays a `project-write`. `doorThrowaway.test.ts` — "mints, connects and deletes, in that order", "deletes even when the connect threw, and re-throws what threw", "sweeps every stale throwaway in one pass"; `zeropsThrowaway.test.ts` — "mints with no grants and no flags, under the name it was given"; slice 0.7 adds a mint during a renewal proceeding, an abort after the mint still deleting, a delete's `401` after sign-out and a new sign-in leaving the new session alone, and a `BASIC_USER` and an overridden `READ_ONLY` member minting; slice 2.4 adds "a door throwaway mints while project writes are closed; a project-granting mint is refused" and a rights-less mint whose answer is lost reading as uncertain. |
-| MB-3  | A session ends when the Mate's own re-check says so, and nothing renews a Zerops session. `ZeropsMembershipWatch.test.ts` — "leaves sessions that did not come from the Zerops door alone"; `credentialRenewal.ts`.                                                                                                                                                                                 |
 | MB-4  | The two role functions answer every fixture identically, and the fixture covers every outcome. `zeropsRoles.test.ts` — "carries every case the Go twin replays"; gitea-mate `TestComputeAgainstFixtures`, `TestFixturesCoverEveryOutcome`, `TestReleaseWithoutProduction`.                                                                                                                         |
-| MB-5  | Only the recorded signer's session starts a turn on an OAuth-signed agent; a signer the org no longer knows is signed out; an unreadable member list signs nobody out. `ZeropsProjectSigners.test.ts` — "goes by who this server saw sign the login in, and nobody else", "signs out the agent whose signer the org no longer knows", "signs nobody out when the member list could not be read"; `agentOwnership.test.ts` — "says only the signer runs somebody else's agent". |
+| MB-5  | Only the recorded signer's connection starts a turn on an OAuth-signed agent; a signer HQ's access list no longer holds is signed out; a link that is down signs nobody out. `ZeropsProjectSigners.test.ts` — "goes by who this server saw sign the login in, and nobody else", "signs out the agent whose signer the org no longer knows", "signs nobody out when the member list could not be read"; `agentOwnership.test.ts` — "says only the signer runs somebody else's agent". |
 | MB-6  | The registry round-trips and is stable, and registering a Mate writes the registry entry first and then the broker's grant — a failed registry write gives the broker nothing. `groupRegistry.test.ts` — "round-trips a registry it read", "is stable, so a registry that has not moved writes the same document"; `brokerGrant.test.ts` — "writes the registry entry, then gives the broker the Mate's project", "stops at a registry write that failed and gives the broker nothing". |
 | MB-7  | Isolation moves the key onto the container and never deletes an entry without re-reading its id; a project with no container loses the key outright. `projectIsolation.test.ts` — "closes a Mate's project and moves its key onto the container", "never deletes without re-reading the entry's id first", "drops the key outright where there is no container to move it to".                     |
 | MB-8  | A registered Mate's access is delivered by a pass, once, with no restart; older token generations wait for the grace and one generation is never revoked; there is no credential route. gitea-mate `TestPassDeliversAMatesAccessOnceAndNeverRestarts`, `TestOlderTokenGenerationsWaitForTheGrace`, `TestOneGenerationIsNeverRevoked`, `TestThereIsNoCredentialRoute`.                                 |
@@ -4270,7 +4365,6 @@ merge/release targets, not an arbitrary ref supplied by the client.
 | MB-12 | The Git tab offers one verb per block from the checkout's facts and never answers with the production; an open pull request's verb is _Review_, whatever Gitea says of it — the review, never the tab, merges (§5.4). `gitTab.test.ts` — "a dev pair with no repository yet says so, and offers nothing", "an unpushed branch offers Push, and only Push", "never answers with the production, whose source is a release", "offers the review of an open pull request whatever Gitea says of it (%s)". Since 2026-10-02 the block reads the Mate's newest change in the repository from HQ, open or landed last, and offers no _Open pull request_: a Mate's push opens its change. |
 | MB-13 | The Gitea import document the app sends is gitea-mate's, byte for byte. `giteaRecipe.test.ts`. Retiring with the Gitea (2026-10-02). |
 | MB-14 | zcp hands its key to no forge and no app container, and writes no workflow into a Mate's repositories in HQ (2026-10-02: the `.gitea` workflow and its refresh are gone; deploys from HQ are HQ's). zcp `workflow_build_integration_citoken_test.go`, `deploy_ssh_test.go`.                                                                                                                                             |
-| MB-16 | The app's Gitea session is acquired from the broker by a throwaway named for that Gitea, once per Gitea however many surfaces ask, kept in memory for one account lifetime and forgotten when the account closes (the fork's slice 0.1). From slice 0.13: a `401` re-acquires, and a third `401` in 10 minutes refuses; a refusal is asked again every 5 minutes while the tab is visible and a surface wants it; "Gitea still setting up" and "broker unreachable" are separate waits, each re-mint preceded by a credential-less request to the broker, and nothing is minted while the broker does not answer; `expiresIn` is honoured and the token renewed only while wanted; dependent facts keep their values through a `401` and show the cause after two failed acquisitions. Refusal retries stay at or under 12 an hour and Gitea mints at or under 4 a minute per tab. `giteaSession.test.ts` — "acquires a token from the broker by throwaway, once, and keeps it for the tab", "sign-out, another person signs in on the same tab: no Gitea request carries the first person's token" (slice 0.1), and until slice 0.13 replaces them, "says what Gitea refused, in Gitea's words, and does not retry it", "names a refusal in the person's terms and does not retry it by itself" and "forgets the session on the first 401 Gitea answers, so the surface acquires again", which pin today's no-retry and forget-on-first-`401` behaviour; `forge/giteaSession.test.ts` (slice 0.13) — the session machine's transition table in the fork's `docs/internals/zerops/client-state-model.md`; `giteaBroker.test.ts` — "asks the broker with the throwaway as the bearer, and keeps what it answers"; gitea-mate `TestAPersonGetsATokenThatActsAsThemAndAnAccountBoundToTheSource`, `TestAPersonWhoIsNotAnActiveMemberGetsNothing`, `TestStaleAppTokensAreRetiredAndNeverCounted`, `TestAGiteaRefusalIsAnsweredInItsWordsNotAsStillSettingUp`. Retiring with the Gitea (2026-10-02): a person reaches HQ through its door (§10.4). |
 | MB-18 | Gitea serves only with its `zerops` login source; a boot that cannot add it is re-run, never served. gitea-mate `TestStartRefusesToServeWithoutTheZeropsSource`. Retiring with the Gitea (2026-10-02). |
 | MB-19 | A recipe pull request a registered Mate's bot opened on the group repo is merged by the rights loop when every file it changes is added — one that modifies, removes or renames a file `main` carries waits for a person with write, who merges it or asks a Mate to (D30, D31) — and nobody else's is; `main` on the group repo keeps no merge whitelist and takes no direct push. Every registered Mate's bot is a collaborator with write on the group repo from the pass that makes it, a Mate registered before D31 from its next pass with no token minted; a bot whose Mate leaves the group loses it, and a deleted Mate's bot keeps it, retired (D31). gitea-mate `TestAMatesRecipePullRequestIsMergedAndNobodyElses`, `TestAMatesRecipePullRequestIsMergedByThePass`, `TestAMatesRecipePullRequestNudgesTheLoop`, `TestAMatesRecipeMergesOnlyWhenItAddsFiles`, `TestAMatesRecipeThatRewritesATierWaitsForAPerson`, `TestGroupRepoProtections`, `TestEveryRegisteredMateWritesItsGroupRepo`, `TestPlanBuildsAGroupFromNothing`, `TestPassBuildsAndThenChangesNothing`, `TestAMateServedBeforeD31WritesItsGroupRepoOnTheNextPass`, `TestABotWhoseMateLeftTheGroupLosesItsWriteOnTheGroupRepo`, `TestAProjectMissingFromSearchAndNotFoundTwiceIsExcludedAndItsBotRetired`, `TestCollaborators`. Superseded 2026-10-02: in HQ Core lands a Mate's recipe change by itself when it only adds files, a person merges one that changes a file, and Core closes one that adds nothing; live 2026-10-02, `group` #1 landed by Core right after the adopt pass proposed it. |
 | MB-20 | A re-read of the inventory keeps what the reads hold: no published state loses a member or goes back to unread, and the page paints from the list already read. `runtime.test.ts` "re-reads an organization's inventory on a fresh receiver and keeps what it holds"; `ZeropsProjectsPage.test.ts` "keeps an empty organization's invitation up while its list is re-read". |
@@ -4282,12 +4376,11 @@ merge/release targets, not an arbitrary ref supplied by the client.
 | MB-26 | A Mate's code reaches HQ by plain git on a branch of the agent's own, never a push of `main` and never a force; a stage deploy of a wired pair deploys and delivers nothing — no commit, change or push — a `strategy="git-push"` deploy from a pair wired to HQ, to any remote, refuses before git runs, and a wired pair's direct deploys are never redirected to a push; a pair's checkout is put on a `main` that descends from HQ's, and two unrelated histories of code are never joined (the pair's own is kept on a branch); a group's stage and production build the stage half's setup — the one a deploy of the stage half recorded, else the one setup the pair's zerops.yaml declares beside the dev one, else its only setup — and a tier that would build a stage setup nothing names is withheld until one does, never given the dev setup (a joining Mate records no stage setup, and production built the dev loop's `zsc noop`, 2026-09-26); zcp writes no workflow file — Core deploys the application's environments from the repository's commits (§10.8). zcp `TestAWiredPairDeploysDirectlyAndIsNeverSentToPush`, `TestGitPushToHQ_RefusedForPlainGitOnABranch`, `TestGitPushFromAPairWiredToHQ_RefusedWhateverTheRemote`, `TestBuildBaseBranchCommand_DescendsFromMain`, `TestBaseBranchRefusalRemedy_TheNextAttemptWires`, `TestBuildGroupRecipe_GroupEnvironmentsBuildTheStageHalfsSetup`, `TestBuildGroupRecipe_StageSetup_ResolvedOrWithheld`, `TestComposeGroupRecipeInputs_JoinerWithoutStageSetup_BuildsTheYAMLsOtherSetup`. |
 | MB-27 | A second Mate joins its group's service repository and works from `main` (live, 2026-09-17); a recipe pull request is opened only for a branch ahead of `main`, and one Gitea calls empty is closed by the broker, never retried; a job's deploy takes a tier's name for the group's only environment of that tier; _Add Mate_ begins the Mate's birth as soon as the project exists, a failed later step included. zcp `TestGroupRecipe_OpensNothingMainAlreadyHas` (in HQ: a landed proposal leaves nothing to open); gitea-mate `TestAnEmptyRecipePullRequestIsClosedNotRetried`, `TestDeployTakesATiersNameForItsOnlyEnvironment`; `brokerGrant.test.ts` "registerMateInGroup"; ledger _The whole chain through the UI, from a wiped org_. |
 | MB-30 | A release lists what each production repository's `main` holds, stage or no stage, and shows the commits it would carry; the offer carries the entries the tag will list, and no refusal names a stage at all (D28). A Mate's open change is offered in its own conversation, as _Review_ at the composer's top, and merging from its review is HQ's, as the person, onto the head the review showed, a squash onto `main` (§10.8); the agent brings `main` up to date by a fast-forward and cuts its next branch from it (MB-26) — a pass never changes the checkout. `release.test.ts` — "a release lists what is merged", "carries the entries the tag would list, so the verb tags what the offer showed"; `groupDeploys.test.ts` — "what a release has to read"; `mateNextStep.test.ts` — "$case" (its cases include "its own change, waiting for the person's review", "the newest where it has two, so the strip is stable"); `ZeropsNextStepBanner.test.tsx` — "opens the change's review from the button that was pressed"; HQ client `client.test.ts` — "merges a change as the person, with the head they were shown", "says why HQ did not merge in words of its own"; HQ `merge.test.ts` — "a change merged into main, or closed". |
-| MB-31 | In a Mate, enrolled yet or not, launch-production refuses before it reads a scope or writes anything, and its next step names only a change the Mate's fresh state says is still open; a merged one points at the projects page, and none, or one closed without merging, says the work goes to `main` first by a branch of the agent's own; with no readable enrollment it says the answer is HQ's. A container that is not a Mate keeps its route, an enrollment file on its disk notwithstanding. zcp `TestHandleLaunchProduction_AMateRefusesBeforeAnyStep` (the handler, Mate and not, enrolled and not: no SSH read, admin client, staged token or state file before the refusal), `TestLaunchProduction_AMateKeepingItsCodeInHQRefusesAndSaysWhatIsTrue`, `TestLaunchProduction_AMateWithoutItsEnrollmentSaysSo` (the next step). |
+| MB-31 | In a Mate, HQ answering or not, launch-production refuses before it reads a scope or writes anything, and its next step names only a change the Mate's fresh state says is still open; a merged one points at the projects page, and none, or one closed without merging, says the work goes to `main` first by a branch of the agent's own; with HQ not answering or refusing the key it says the answer is HQ's. A container that is not a Mate keeps its route. zcp `TestHandleLaunchProduction_AMateRefusesBeforeAnyStep` (the handler, Mate and not, enrolled and not: no SSH read, admin client, staged token or state file before the refusal), `TestLaunchProduction_AMateKeepingItsCodeInHQRefusesAndSaysWhatIsTrue`, `TestLaunchProduction_AMateWithoutItsEnrollmentSaysSo` (the next step). |
 | MB-32 | A project's flow and its one next step are one derivation the projects page, the left menu and a Mate's conversation all draw (D29): worst first, a failed deploy the next step — production's before a stage's — a failed stage never hiding a release, and a failed production keeping the release that might clear it; production "After the first merge" with nothing to press while `main` is empty; a preview only the stage half beside its own dev half; a group stage drawn only where one exists; the conversation's step from the flow — its own mergeable change, as _Review_ at the composer's top, and nothing of the project's. The page lays it out one way: a _Next steps_ item carries its row's own verb (_Review_, _Review release_, _+ Add production_), a _Review_ opening the review and nothing merging or releasing from the page, and a step with no verb to press is not listed; a cell holds at most two lines, a row one verb at the end of the cell it acts on (and _Review release_ beside a failed production); an empty step is a muted word, never a dashed place; _Add stage_ and _Add production_ are the project menu's, never a footer link; a Mate opens from its chip, its tile or its card. The left menu draws production as one chip on the project's heading, a stage only where there is no production, and dots no heading — a folded one shows its busy Mates' faces. `groupFlow.test.ts` — "takes the worst step first: $case", "reads production as $case", "offers Add production only where $case → $addable", "still ranks a failed production above the release", "names production's failure before a stage's, and keeps the release a failed stage does not block", `pairPreviewRoute` "is $case"; `mateNextStep.test.ts` — "$case" (its cases include "its own change, waiting for the person's review", "another Mate's change", "its own change that does not merge"); `OverviewView.test.tsx` — "carries the step's verb %s on each strip item, the row's own verb", "leaves a step with no verb to press out of the strip", "never holds more than two lines in a cell: %s", "puts the verb in the cell it belongs to", "still offers the release beside a broken production, not just the build (D28)", "draws a group stage under main only where one exists — never an empty slot", "reads production as coming after the first merge, with nothing to press", "opens any Mate a row names into its conversation, by a real button in reading order", "opens a tile's Mate from the whole tile, with no Open button beside it"; `ProjectsView.test.tsx` — "names the next step in its header, without the verb", "keeps Add stage and Add production in the group menu: no footer links", "draws each Mate as a row that carries its Preview on its first line"; `flowSteps.test.tsx` — "says its word in the muted hand, never dashed: %s", "holds its verbs at the cell's end, in order"; `projectsView.logic.test.ts` — "says %s awaits somebody: %s"; `SidebarZeropsTree.test.tsx` — "never dots a project for the production it does not have"; `SidebarProductionChip.logic.test.ts` — "$state" (its cases include "no production, only stage"), "draws no chip where there is neither a production nor a stage"; `SidebarProjects.logic.test.ts` — "headingFaces — who a folded project's heading shows (M15)"; `ZeropsReviewDoors.test.tsx` — "every door opens the review and never acts itself (R1)". |
 | MB-33 | A Mate proposes only the recipe tiers `main` of the application's recipe repository in HQ lacks (D30): a tier directory `main` has any file in is left whole, the group's first recipe lands whole, a top-level file `main` has is never proposed. The proposal is the Mate's own change in `group`, titled exactly "Mate: the group's import files" with no description, its branch `main`'s tree with the missing files written over it, so it only adds; it moves forward only — a changed composition on its head, with `main` as a second parent once `main` moved — and one `main` has overtaken is brought to `main`'s tree and adds nothing. A group whose `main` has every tier gets no change opened, and the agent's `group-recipe` answers that `main` already carries every tier. Every `buildFromGit` is the pair's repository in HQ. zcp `TestMissing_ATierTheRepositoryHas_IsLeftWhole`, `TestGroupRecipe_ProposedAsTheMatesChange`, `TestGroupRecipe_ProposesOnlyWhatMainLacks`, `TestGroupRecipe_FollowsTheProjectOnTheSameChange`, `TestGroupRecipe_MainMovedUnderAnOpenProposal`, `TestGroupRecipe_AProposalMainOvertookAddsNothing`, `TestGroupRecipe_OpensNothingMainAlreadyHas`, `TestHandleGroupRecipe_Table`. |
 | MB-34 | A Mate's description of its change is its change's body in HQ: set on the pair's open change — on record or named by the Mate's state, never opened by describing — kept on the pair while HQ does not answer, with an ask to describe again, and never put on a change it was not written for (one that merged or closed first is named to the Mate and nothing is kept; words kept for a change that is gone are dropped). The pictures it names are the Mate's own kept screenshots, attached to the change once each and published as `<img alt width height src>` at HQ's address; a picture not kept for that change is refused before anything is written, and one HQ will never take writes nothing and drops the words (HQ refusing for now keeps them). zcp `TestDescribeChange`, `TestDescribeChange_WaitsWhileItsPairIsHeld`, `TestDescribeChange_Refusals`, `TestWorkflowTool_DescribeChangeReachesItsHandler`, `TestDescribeChange_Pictures`, `TestKeepBrowserPicture`. |
 | MB-35 | A new Mate stands up from its application's AI Agent tier, read from HQ, in one call (D32): every pair built from the application's repositories in HQ is read by zcp's naming, not its setups' names, adopted as the adopt route records it with the tier's setups, its checkout put on `main` of the repository the tier names (never one HQ would have to make), and deployed every dev half at once, the first call answering once they stand with the stages queued, and on the second call each stage from its dev half once what its build reads stands (with no reads, every stage above it by priority); a stage never called for stays `READY_TO_DEPLOY` — with nothing committed, pushed or proposed; the runtimes the browser is still importing are waited for, bounded; a refusal before anything is touched names the adopt route, a pair that fails stops alone with the model's next step and holds only the halves whose builds read it, which say what they waited for, and a second call skips what is done. Registered in a Mate only, and a Mate's AGENTS.md sends "Stand up development of the project." to it first. zcp `TestStandup_StandsUpEveryPairFromTheRecipe`, `TestStandupAfter_EveryDevHalfStartsAtOnce`, `TestStandupReads_FromTheRecipe`, `TestStandupReads_EveryRouteTheWriterCounts`, `TestStandup_ReturnsOnceDevelopmentIsUp`, `TestStandup_ASecondCallContinuesAndSkipsWhatIsDone`, `TestStandup_TheModelIsTheBackup`, `TestStandup_WaitsForTheRuntimesTheBrowserIsImporting`, `TestParseMateTier`, `TestParseMateTier_PairsOnlyRepositoriesOfThisApplication`, `TestParseRecipeImportShape_RolesFollowTheHostnameConvention`, `TestAdoptPair_RecordsWhatTheAdoptRouteRecords`, `TestServer_StandupToolGating`, `TestBuildAgentsMD_Container_StandUpRoutesToTheTool`; integration `TestStandup_OverMCP_AMateInNoApplicationIsRefusedAndNothingIsTouched`. |
-| MB-36 | A kept Mate session is presented only after the descriptor names the expected project and its environment and the Mate confirms it with every scope the client asks for; one the Mate ended or one short of a scope is forgotten and a throwaway opens a new one; no word keeps it and mints; it never waits on the mint pace; the account's close, a refused stored login and a displaced session each end it at its Mate (D33). `keptSessions.test.ts` (client runtime and web), `identityExchange.test.ts`, `exchangeDriver.test.ts`, `signIn.guards.test.tsx`. |
 | MB-37 | A group recipe writes each search engine at no less than 2 GB `minRam` and 0.5 GB `minFreeRamGB` on every tier and never lowers a value; an unread scale writes no block; `profileOverrides` and the free-memory buffer are carried; a scaling proposal is the Mate's change in the recipe repository in HQ, written over `main`, rewriting only that host's block in every tier naming it; it refuses a block it cannot splice safely, moves forward on the same change for the same host, brings a stale one to `main`'s tree when nothing differs, and is refused while the Mate's additive proposal is open there, which in turn leaves an open scaling proposal alone; the steer speaks only after a change that finished (D34). `group_floors_test.go`, `host_scaling_test.go`, `group_profile_overrides_test.go`, `scale_test.go`; zcp `TestGroupRecipeScaling_SteersAndProposesOneHostsBlock`, `TestGroupRecipeScaling_ProposesFromMainsHeadEveryTierFresh`, `TestGroupRecipeScaling_OneOpenChangeInTheRecipeRepository`, `TestScratch_File`. |
 | MB-38 | A Mate reads from its first turn, even on an empty project, that its code and changes live in its application's HQ, bootstrap comes first and ZCP wires the pair's repository once the service stands, Core deploys the application's environments, and the person is never asked for a GitHub or other repository, URL or token. The block is Mate-only; a plain container or local install reads none of it. This keeps upstream's repository-first guidance while replacing its Gitea workflow with HQ's jobs (§10.8). zcp `TestBuildAgentsMD_Container_GitHostSaysWhereTheCodeLives`. |
 | MB-39 | A person may merge an open HQ change while the agent works; a pass tells the agent what became of it — merged, bring `main` up to date and cut the next branch from it; closed, nothing of it is on `main` — and never changes the checkout; a closing session hands over only an open change; production guidance reads merged history from HQ, and a failed read stays unknown with a manual ask again (§10.10). zcp `TestReconcileHQRepositories_TellsTheMateWhatBecameOfItsChange`, `TestHQPass_LearnsAMergeWithoutChangingTheCheckout`, `TestSessionAnnotations_HandoffOnlyWithAnOpenChange`, `TestProductionKnowsMergedWorkThePairHoldsNoRecordOf`, `TestProductionGuidance_HQUnavailableIsUnknown`. |

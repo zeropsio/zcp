@@ -32,7 +32,7 @@ Read the home before changes:
 - `docs/spec-oss-port-flow.md` — foreign OSS porting gate.
 - `docs/spec-dataconsole.md` — data surfaces/write authority/families/fidelity/install.
 - `docs/spec-dataconsole-testing.md` — proof coverage/matrix/live lanes/versions.
-- `docs/spec-mate.md` — envelopes/install/identity/client/lifecycle/SSH git/fork; org mode, the Chief (§2.11); fork rules → `../z3/docs/internals/zerops/`.
+- `docs/spec-mate.md` — envelopes/install/client/lifecycle/SSH git/fork; trust and credentials (§3); org mode, the Chief (§2.11); fork rules → `../z3/docs/internals/zerops/`.
 - `docs/spec-telemetry.md` — ingest/trusted IP.
 - `schema.URLs` — ZCP_API_HOST-derived live schemas (`schema.CanonicalAPIHost` for dev); `internal/platform/errors.go` — error catalog.
 

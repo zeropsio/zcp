@@ -221,7 +221,7 @@ func logMateEnsureResult(result mate.Result) {
 // server no other way.
 //
 // ZCP_MATE_ALLOWED_ORIGINS goes through mate.ValidateAllowedOrigins first: a
-// malformed value (a bare host, a path, a wildcard — see spec-mate.md §3.4)
+// malformed value (a bare host, a path, a wildcard — see spec-mate.md §3.13)
 // can never match a real Origin header, so writing it would silently
 // configure an allowlist entry that does nothing. Best-effort like the rest
 // of this step: one diagnostic line names the bad entry and the key is left
