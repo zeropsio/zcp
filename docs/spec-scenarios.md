@@ -140,7 +140,7 @@ Edge case: plan generates `[postgresql@16]` with no runtimes.
 
 ### 2.3 Route `adopt` — Adopt existing
 
-**Precondition**: ≥1 non-system, non-managed service without complete ServiceMeta.
+**Precondition**: ≥1 non-system app runtime without complete ServiceMeta — managed services, Swarm pools and Zerops Boxes are never adopt candidates (`spec-workflows.md §8 PS-2`).
 
 | Step | Envelope | Plan.Primary | Atoms |
 |---|---|---|---|
@@ -538,9 +538,10 @@ table are inspiration, not corpus.
 ### 9.1 Axes
 
 What actually varies for a user of zcp. Every value appears in at least one cell;
-every pair the code branches on (route × topology, delivery × close-mode,
-env-channel × topology, access × verify, runtime-class × develop) appears in at
-least one cell. The matrix is a covering set, not the full product.
+every pair the code branches on (route × topology, route × infrastructure,
+delivery × close-mode, env-channel × topology, access × verify, runtime-class ×
+develop) appears in at least one cell. The matrix is a covering set, not the
+full product.
 
 | Axis | Values | Home |
 |---|---|---|
@@ -549,6 +550,7 @@ least one cell. The matrix is a covering set, not the full product.
 | Topology | simple · dev-only · standard-pair · (local-stage · local-only: deferred) | spec-workflows §4 |
 | Runtime class | dynamic · static · implicit-webserver | §3.2 |
 | Managed deps | none · db · db+cache+storage | platform |
+| Infrastructure the app uses | none · Swarm pool (runs untrusted code) · (Zerops Box: deferred — beta, creation can fail on capacity) | spec-workflows §8 PS |
 | Repo shape | monorepo multi-`setup:` (platform default) · one repo per service | platform |
 | Access | public subdomain · internal-only (worker/backend, `http://host:port`) | platform |
 | Delivery | zcli push (auto) · git-push configured · GitHub Actions · webhook · manual | spec-workflows §4.3, §11 |
@@ -627,6 +629,8 @@ Legend: ↑ existing scenario to promote · ✚ scenario to write.
 | A9 ✚ | `managed-only-add-runtime` | managed-only · classic · dev-only | I have a DB, add an app | expectedServices unchanged nodePostgresRecord never | pending: scenario |
 | A10 ↑ | `existing-simple-mode-node-add-endpoint` | unmanaged simple svc · adopt · simple | add an endpoint | liveness meta never | gate |
 | A11 ✚ | `bootstrap-managed-only-target` | brand-new · classic · plan = db only | just a Postgres for now | expectedServices meta never | promote: meta |
+| A12 ✚ | `classic-code-runner-sandbox` | brand-new · classic · simple · node + Swarm pool (infrastructure, never the runtime) | API that runs people's Python snippets in throwaway containers | expectedServices containerCheck(snippet ran in a container of the pool; `${sandbox_API_TOKEN}` reference in zerops.yaml) noFabricatedSecret noFailedProcesses toolArg(no literal TOKEN value in an env set or import) never(dev server or lease on the pool) | gate |
+| A13 ✚ | `adopt-app-with-existing-pool` | unmanaged app + Swarm pool (preseed) · adopt · single runtime · node + pool | connect to what I have, add a health endpoint | expectedServices internalLiveness unchanged(the pool) meta(app adopted) noFailedProcesses toolArg(max 0 zerops_import) never(pool in an adopt or develop scope or plan; deploy, dev server or lease on the pool) | gate |
 
 #### B. Developing (seed: deployed fixture)
 
@@ -689,6 +693,7 @@ no buildFromGit), so the agent has a place to fix source. `allowFailed` explicit
 | F1 | multi-repo: web + api, each its own repo, each pair its own `RemoteURL`, both git-push | pending: scenario (baseline batch first) |
 | F2 | monorepo multi-`setup:` from the classic route | pending: scenario (baseline batch first) |
 | F3 | service deleted externally (§6.5 known gap) | pending: scenario |
+| F4 | an app whose sandboxes run on a Zerops Box (`ubuntu/zbox@1`) instead of a Swarm pool | pending: scenario (Box is beta; creation can fail on hardware capacity) |
 | L1-L3 | local-stage first deploy · local + managed over VPN · local-only adopt | pending: local mode in farm |
 
 #### G. Git foundation (docs/spec-workflows.md §4.9, §12, Git Lifecycle §8 GLC; a row enters the gate set once its scenario carries every family it names)
