@@ -1340,3 +1340,28 @@ func checkServiceField(t *testing.T, svc map[string]any, key string, want any) {
 		t.Errorf("service[%q] = %v, want %v", key, got, want)
 	}
 }
+
+// TestBuildExport_PoolOrSandboxRuntime_Refused pins PS-3 at the export
+// composer: a pool or Box is never the exported runtime, whatever the caller
+// resolved.
+func TestBuildExport_PoolOrSandboxRuntime_Refused(t *testing.T) {
+	t.Parallel()
+	for _, typ := range []string{"swarm@1", "swarm-vm@1", "ubuntu/zbox@1"} {
+		t.Run(typ, func(t *testing.T) {
+			t.Parallel()
+			_, err := BuildExport(BundleInputs{
+				TargetHostname: "fleet",
+				ServiceType:    typ,
+				RepoURL:        "https://github.com/example/app.git",
+				SetupName:      "app",
+				ZeropsYAMLBody: launchYAMLNoDBRef,
+			}, nil)
+			if err == nil {
+				t.Fatalf("a %s export target must be refused", typ)
+			}
+			if !strings.Contains(err.Error(), "fleet") || !strings.Contains(err.Error(), "not an app runtime") {
+				t.Errorf("refusal must name the service and say it is not an app runtime, got: %v", err)
+			}
+		})
+	}
+}

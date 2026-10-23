@@ -1469,3 +1469,142 @@ func TestPickSetupName(t *testing.T) {
 		})
 	}
 }
+
+// exportCallLogSSH counts every command an export handler sends, so a test can
+// prove a refusal happened before any container was reached.
+type exportCallLogSSH struct {
+	commands []string
+}
+
+func (s *exportCallLogSSH) ExecSSH(_ context.Context, _ string, command string) ([]byte, error) {
+	s.commands = append(s.commands, command)
+	return nil, nil
+}
+
+func (s *exportCallLogSSH) ExecSSHBackground(_ context.Context, _, command string, _ time.Duration) ([]byte, error) {
+	s.commands = append(s.commands, command)
+	return nil, nil
+}
+
+// TestExport_PoolAsRuntime_Refused pins spec-workflows.md §8 PS-3: a Swarm
+// pool named as the export target is refused with a reason that names it
+// before any SSH read — a read by pool hostname reaches a random container.
+func TestExport_PoolAsRuntime_Refused(t *testing.T) {
+	t.Parallel()
+
+	for _, poolType := range []string{"swarm@1", "swarm-vm@1"} {
+		t.Run(poolType, func(t *testing.T) {
+			t.Parallel()
+			mock := newExportMock([]platform.ServiceStack{
+				runtimeService("appdev", "php-apache@8.4", false),
+				runtimeService("workers", poolType, false),
+			}, nil)
+
+			dir := t.TempDir()
+			// A complete meta under the pool's hostname: nothing but the pool
+			// check may stop the handler before it reaches SSH.
+			if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+				Hostname:                 "workers",
+				Mode:                     topology.ModeDev,
+				BootstrapSession:         "test-session",
+				BootstrappedAt:           time.Now().UTC().Format(time.RFC3339),
+				FirstDeployedAt:          time.Now().UTC().Format(time.RFC3339),
+				CloseDeployMode:          topology.CloseModeManual,
+				CloseDeployModeConfirmed: true,
+				GitPushState:             topology.GitPushConfigured,
+			}); err != nil {
+				t.Fatalf("WriteServiceMeta: %v", err)
+			}
+
+			ssh := &exportCallLogSSH{}
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true}, "")
+
+			result := callTool(t, srv, "zerops_workflow", map[string]any{
+				"workflow":      "export",
+				"targetService": "workers",
+			})
+			if !result.IsError {
+				t.Fatalf("a pool as export target must be refused, got: %s", getTextContent(t, result))
+			}
+			text := getTextContent(t, result)
+			if !strings.Contains(text, "workers") || !strings.Contains(text, "Swarm pool") {
+				t.Errorf("refusal must name the service and say it is a Swarm pool, got: %s", text)
+			}
+			if len(ssh.commands) != 0 {
+				t.Errorf("no SSH command may run before the pool refusal, got: %v", ssh.commands)
+			}
+		})
+	}
+}
+
+// TestExport_SandboxAsRuntime_Refused pins the Box half of PS-3: a Zerops
+// Box named as the export target is refused by name before any SSH read.
+func TestExport_SandboxAsRuntime_Refused(t *testing.T) {
+	t.Parallel()
+
+	for _, boxType := range []string{"ubuntu/zbox@1", "zbox@1"} {
+		t.Run(boxType, func(t *testing.T) {
+			t.Parallel()
+			mock := newExportMock([]platform.ServiceStack{
+				runtimeService("appdev", "php-apache@8.4", false),
+				runtimeService("sandbox", boxType, false),
+			}, nil)
+
+			dir := t.TempDir()
+			if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+				Hostname:                 "sandbox",
+				Mode:                     topology.ModeDev,
+				BootstrapSession:         "test-session",
+				BootstrappedAt:           time.Now().UTC().Format(time.RFC3339),
+				FirstDeployedAt:          time.Now().UTC().Format(time.RFC3339),
+				CloseDeployMode:          topology.CloseModeManual,
+				CloseDeployModeConfirmed: true,
+				GitPushState:             topology.GitPushConfigured,
+			}); err != nil {
+				t.Fatalf("WriteServiceMeta: %v", err)
+			}
+
+			ssh := &exportCallLogSSH{}
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true}, "")
+
+			result := callTool(t, srv, "zerops_workflow", map[string]any{
+				"workflow":      "export",
+				"targetService": "sandbox",
+			})
+			if !result.IsError {
+				t.Fatalf("a Box as export target must be refused, got: %.300s", getTextContent(t, result))
+			}
+			text := getTextContent(t, result)
+			if !strings.Contains(text, "sandbox") || !strings.Contains(text, "Zerops Box") {
+				t.Errorf("refusal must name the service and say it is a Zerops Box, got: %s", text)
+			}
+			if len(ssh.commands) != 0 {
+				t.Errorf("no SSH command may run before the Box refusal, got: %v", ssh.commands)
+			}
+		})
+	}
+}
+
+// TestExport_ScopePrompt_PoolAndSandbox_NotListedAsRuntimes pins that the
+// "pick a runtime" list never offers a pool or Box (PS-3).
+func TestExport_ScopePrompt_PoolAndSandbox_NotListedAsRuntimes(t *testing.T) {
+	t.Parallel()
+	mock := newExportMock([]platform.ServiceStack{
+		runtimeService("appdev", "php-apache@8.4", false),
+		runtimeService("workers", "swarm@1", false),
+		runtimeService("box", "ubuntu/zbox@1", false),
+		managedService(),
+	}, nil)
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, t.TempDir(), "", nil, nil, runtime.Info{InContainer: true}, "")
+
+	result := callTool(t, srv, "zerops_workflow", map[string]any{"workflow": "export"})
+	doc := decodeExportJSON(t, result)
+	got, _ := doc["runtimes"].([]any)
+	if len(got) != 1 || got[0] != "appdev" {
+		t.Errorf("scope prompt runtimes = %v, want [appdev]", got)
+	}
+}

@@ -133,6 +133,12 @@ func composeLaunchBundleInputs(
 		}
 	}
 
+	// PS-3: a pool or Box the project holds is neither the app nor a managed
+	// dependency the bundle can promote. Hand them to the composer in
+	// ManagedServices anyway — it never emits them and names each as "not
+	// carried" in the bundle warnings, so they are not dropped silently.
+	managed = append(managed, poolAndSandboxEntries(discover)...)
+
 	return bundle.LaunchBundleInputs{
 		SourceProjectID:   sourceProjectID,
 		TargetProjectName: productionProjectName,
@@ -176,7 +182,8 @@ func findRuntimeServiceByHostname(d *ops.DiscoverResult, hostname string) *ops.S
 		return nil
 	}
 	for i := range d.Services {
-		if d.Services[i].Hostname == hostname && !d.Services[i].IsInfrastructure {
+		if d.Services[i].Hostname == hostname && !d.Services[i].IsInfrastructure &&
+			!topology.IsPoolOrSandboxType(d.Services[i].Type) {
 			return &d.Services[i]
 		}
 	}
@@ -208,6 +215,22 @@ func collectManagedServicesExcluding(discover *ops.DiscoverResult, excludeHostna
 			Type:     svc.Type,
 			Mode:     svc.Mode,
 		})
+	}
+	return out
+}
+
+// poolAndSandboxEntries lists every Swarm pool and Zerops Box in the source
+// project as composer entries. The composer (bundle.BuildLaunch) is the single
+// owner of what "not carried" means for them.
+func poolAndSandboxEntries(discover *ops.DiscoverResult) []ops.ManagedServiceEntry {
+	if discover == nil {
+		return nil
+	}
+	var out []ops.ManagedServiceEntry
+	for _, svc := range discover.Services {
+		if topology.IsPoolOrSandboxType(svc.Type) {
+			out = append(out, ops.ManagedServiceEntry{Hostname: svc.Hostname, Type: svc.Type})
+		}
 	}
 	return out
 }

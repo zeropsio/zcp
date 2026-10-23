@@ -356,3 +356,46 @@ func TestLaunchShape_RuntimeHistory_ReadsDirectNotSearch(t *testing.T) {
 		}
 	}
 }
+
+// TestVerificationLaunch_PoolNotRuntime pins that a Swarm pool or Zerops Box
+// in the prod project is not counted as a runtime by the launch-shape rows
+// (spec-workflows.md §8 PS-3): it has no appVersion history of its own to
+// hold to the pipeline-first shape, so counting it would fail a correct
+// launch — and a project holding only a pool has no runtime at all.
+func TestVerificationLaunch_PoolNotRuntime(t *testing.T) {
+	t.Parallel()
+	app := platform.ServiceStack{ID: "svc-app1", ProjectID: "prod-1", Name: "app1", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}}
+	appHistory := []platform.AppVersionEvent{{ID: "av1", ProjectID: "prod-1", ServiceStackID: "svc-app1", Source: "NONE", Status: "ACTIVE", Created: "2026-09-10T00:00:00Z"}}
+	nonRuntimes := []platform.ServiceStack{
+		{ID: "svc-fleet", ProjectID: "prod-1", Name: "fleet", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
+		{ID: "svc-fleetvm", ProjectID: "prod-1", Name: "fleetvm", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm-vm@1", ServiceStackTypeCategoryName: "USER"}},
+		{ID: "svc-lab", ProjectID: "prod-1", Name: "lab", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/zbox@1", ServiceStackTypeCategoryName: "STANDARD"}},
+	}
+
+	t.Run("app plus pool and box, only the app is held to the shape", func(t *testing.T) {
+		t.Parallel()
+		client := platform.NewMock().
+			WithServicesDirect(append([]platform.ServiceStack{app}, nonRuntimes...)).
+			WithServiceAppVersions("svc-app1", appHistory)
+		rows := evaluateLaunchProdRuntimeRows(context.Background(), client, "prod-1")
+		for _, r := range rows {
+			if r.Result != CheckPassed {
+				t.Errorf("%s: %+v", r.ID, r)
+			}
+		}
+	})
+
+	t.Run("only pool and box, no runtime services", func(t *testing.T) {
+		t.Parallel()
+		client := platform.NewMock().WithServicesDirect(nonRuntimes)
+		rows := evaluateLaunchProdRuntimeRows(context.Background(), client, "prod-1")
+		if len(rows) == 0 {
+			t.Fatal("no rows")
+		}
+		for _, r := range rows {
+			if r.Result != CheckBlocked || !strings.Contains(r.Message, "no runtime services") {
+				t.Errorf("%s: want blocked with \"no runtime services\", got %+v", r.ID, r)
+			}
+		}
+	})
+}

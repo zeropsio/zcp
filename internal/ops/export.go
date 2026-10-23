@@ -10,6 +10,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/ops/bundle"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // FetchServiceScaling reads the live autoscaling shape of a service and maps it
@@ -266,11 +267,13 @@ func ExportService(
 	return yaml, nil
 }
 
-// RuntimeServices returns only the non-infrastructure services from an export result.
+// RuntimeServices returns the app-runtime services from an export result:
+// neither managed (infrastructure) nor a Swarm pool / Zerops Box, which
+// host or lease containers rather than run the app (spec-workflows.md §8 PS-3).
 func (r *ExportResult) RuntimeServices() []ExportedService {
 	var runtimes []ExportedService
 	for _, svc := range r.Services {
-		if !svc.IsInfrastructure {
+		if !svc.IsInfrastructure && !topology.IsPoolOrSandboxType(svc.Type) {
 			runtimes = append(runtimes, svc)
 		}
 	}
