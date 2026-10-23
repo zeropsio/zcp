@@ -1544,7 +1544,7 @@ no delete, no token, no invitation and no scaling kind.
 **The reverse direction — a Mate asks the organization's Chief.** In project mode, in a Mate's
 container (`ZCP_MATE_ENABLED`), `zerops_propose_ask_chief {words, attachmentTitle?, attachmentText?,
 reason}` proposes the one kind a project makes outside itself, `chief.message`, only when HQ names
-the organization's Chief. `GET /api/mate/chief` (the project key in the header, §3.6) answers it; an
+the organization's Chief. The `chief` of `GET /api/mate/self` (the project key in the header, §3.6) answers it; an
 unavailable or refused read offers no tool. `POST /api/mate/chief/proposals` reads it again and
 returns the offer id, binding the source project and the Chief at HQ. A person who may open the
 source Mate decides it; HQ rechecks the binding when accepting a decision, including after the mark
