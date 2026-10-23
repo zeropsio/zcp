@@ -67,9 +67,10 @@ reports SSH reachability, the supervisor and the dev servers.
   `run.prepareCommands`. Without it the dev-server tool refuses the lease;
   fix the pool's `zerops.yaml`, deploy the pool, release the lease, roll the
   pool out, then acquire again.
-- A per-port subdomain routes only to containers listening on that port: the
-  preview ports (`previewPortBase` through `previewPortBase + maxContainers
-  - 1`) must be declared in `run.ports` with `httpSupport: true`.
+- A per-port subdomain routes only to containers listening on that port. A
+  container's `ZEROPS_StableNumber` starts at 1, so the preview ports
+  `previewPortBase + 1` through `previewPortBase + maxContainers` must be
+  declared in `run.ports` with `httpSupport: true`.
 - The pool's service env reaches its containers. The orchestrator answers
   only inside the project.
 

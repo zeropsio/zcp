@@ -282,16 +282,16 @@ zerops:
     run:
       base: <language base>
       ports:
-        - port: <previewPortBase>
+        - port: <previewPortBase + 1>
           httpSupport: true
-        # ... one entry per preview port, up to previewPortBase + maxContainers - 1
+        # ... one entry per preview port, up to previewPortBase + maxContainers
       prepareCommands:
         - <install the dependencies outside /var/www, e.g. under /opt>
         - <install zcp-devsup>
       start: zcp-devsup run
 ```
 
-- Preview ports: with `previewPortBase` in `.zcp/dev-servers.json`, a lease answers on `previewPortBase + ZEROPS_StableNumber`. A per-port subdomain routes only to containers listening on that port, so every port from `previewPortBase` to `previewPortBase + maxContainers - 1` is declared in `run.ports` with `httpSupport: true`.
+- Preview ports: with `previewPortBase` in `.zcp/dev-servers.json`, a lease answers on `previewPortBase + ZEROPS_StableNumber`. A per-port subdomain routes only to containers listening on that port, and a container's `ZEROPS_StableNumber` starts at 1, so every port from `previewPortBase + 1` to `previewPortBase + maxContainers` is declared in `run.ports` with `httpSupport: true`.
 - Dependencies: a reused container's `/var/www` comes back empty; files `run.prepareCommands` put outside `/var/www` survive.
 - Supervisor: `start: zcp-devsup run` and the `zcp-devsup` install in `run.prepareCommands` are what `zerops_dev_server` needs on a lease; without them it refuses the lease and names `run.start`. A dev service's setup carries the same two lines (see `zerops_knowledge uri="zerops://themes/dev-servers"`).
 - A deploy of the pool changes only containers created after it; existing containers, leased or free, keep their version until `zerops_lease action=rollout pool="<pool>"` replaces the free outdated ones. A lease is skipped and keeps its version until it is released and the pool is rolled out again.
