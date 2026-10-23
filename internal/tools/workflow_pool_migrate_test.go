@@ -298,7 +298,7 @@ func TestPoolMigrate_StepFromLiveState_NoPool_Provision(t *testing.T) {
 					t.Errorf("stanza lacks %q:\n%s", want, content)
 				}
 			}
-			// The API drops a service-level envVariables block, so the pool's
+			// A service-level envVariables block is deprecated, so the pool's
 			// own env rides its vault; a credential never rides the stanza.
 			for _, never := range []string{"envVariables", "envSecrets", "GIT_TOKEN"} {
 				if strings.Contains(content, never) {

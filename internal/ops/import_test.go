@@ -3,6 +3,7 @@ package ops
 
 import (
 	"context"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -408,12 +409,7 @@ func TestImport_ServiceEnvVariables_WarnsPlainNotDropped(t *testing.T) {
 			}
 			svc := sent["services"].([]any)[0].(map[string]any)
 			block, _ := svc["envVariables"].(map[string]any)
-			var gotKeys []string
-			for key := range block {
-				gotKeys = append(gotKeys, key)
-			}
-			slices.Sort(gotKeys)
-			if !slices.Equal(gotKeys, tt.wantKeys) {
+			if gotKeys := slices.Sorted(maps.Keys(block)); !slices.Equal(gotKeys, tt.wantKeys) {
 				t.Errorf("envVariables sent to the API = %v, want %v as written", gotKeys, tt.wantKeys)
 			}
 		})
