@@ -124,6 +124,11 @@ stays unleased.
   so). The pool's warm container takes their place: after each acquire or
   release one is kept or created through the orchestrator, ready for the
   next acquire at once.
+- A lease's dev servers and every command you run in it share its
+  container's RAM. An SSH command that ends with exit 255 and no output was
+  most likely killed for memory: run heavy checks one at a time and
+  single-threaded where a check allows it, or size the pool's `minRam` for
+  the dev server plus the heaviest check.
 - A container answers SSH only when the pool's `sshIsolation` is set as a
   service env variable admitting the zcp service. The top-level import field
   did not reach pool containers.
