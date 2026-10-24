@@ -542,6 +542,73 @@ func TestPoolMigrateEnv_GitTokenRule(t *testing.T) {
 	}
 }
 
+// TestPoolMigrateEnv_GitTokenZcpCopied_NotOfferedAgain: once zcp copied the
+// dev's GIT_TOKEN to the pool — its record fingerprints the value it wrote
+// on that pool service — the read side, and a later step without
+// copyGitToken, answer that the pool holds the dev's: neither asks for the
+// person's yes again, and the record keeps the fingerprint. A GIT_TOKEN that
+// is not the one zcp wrote is the pool's own (on-pool), and is offered as
+// before.
+func TestPoolMigrateEnv_GitTokenZcpCopied_NotOfferedAgain(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		mask      bool   // the pool's GIT_TOKEN reads masked for zcp's token from now on
+		replaced  string // the person put this GIT_TOKEN on the pool after the copy
+		wantState string
+	}{
+		{name: "the pool shows the value zcp wrote", wantState: PoolGitTokenUnchanged},
+		{name: "the pool's value is masked", mask: true, wantState: PoolGitTokenUnchanged},
+		{name: "the person replaced it since", replaced: "pool-own-token", wantState: PoolGitTokenOnPool},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f := newEnvFixture(t)
+			f.dev = append(f.dev, envMasked("d-git", GitTokenEnvKey))
+			f.container[GitTokenEnvKey] = envGitToken
+			f.in.CopyGitToken = true
+			if out := f.apply(t); out.GitToken.State != PoolGitTokenCopied {
+				t.Fatalf("gitToken on yes = %+v, want copied", out.GitToken)
+			}
+			f.in.CopyGitToken = false
+			rows := f.poolRows(t)
+			if tt.replaced != "" {
+				row := rows[GitTokenEnvKey]
+				row.Content = tt.replaced
+				rows[GitTokenEnvKey] = row
+			}
+			pool := make([]platform.ServiceEnvVar, 0, len(rows))
+			for _, r := range rows {
+				pool = append(pool, r)
+			}
+			if tt.mask {
+				pool = maskSensitive(rows)
+			}
+			f.mock.WithServiceEnv(envPoolID, pool)
+
+			check := func(t *testing.T, side string, got PoolMigrateGitToken) {
+				t.Helper()
+				if got.State != tt.wantState || got.Message == "" {
+					t.Fatalf("%s: gitToken = %+v, want %s", side, got, tt.wantState)
+				}
+				if offers := strings.Contains(got.Message, "copyGitToken=true"); offers != (tt.wantState == PoolGitTokenOnPool) {
+					t.Errorf("%s: message %q offers the copy = %v", side, got.Message, offers)
+				}
+			}
+			check(t, "the read side", f.read(t).GitToken)
+			before := len(f.ssh.recorded())
+			check(t, "a step without copyGitToken", f.apply(t).GitToken)
+			for _, call := range f.ssh.recorded()[before:] {
+				if strings.Contains(call, "'"+GitTokenEnvKey+"'") {
+					t.Fatalf("GIT_TOKEN was read without the person's yes: %s", call)
+				}
+			}
+			check(t, "the read side after that step", f.read(t).GitToken)
+		})
+	}
+}
+
 func TestPoolMigrateEnv_StageKeyDiff(t *testing.T) {
 	t.Parallel()
 	f := newEnvFixture(t)

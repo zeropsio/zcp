@@ -145,14 +145,25 @@ func freshEnvelope(
 	rt runtime.Info,
 	extra ...workflow.EnvelopeOption,
 ) *workflow.StateEnvelope {
-	opts := append([]workflow.EnvelopeOption{workflow.WithLeaseReader(leaseReader(client, projectID, stateDir, envelopeLeaseHost(rt), envelopeLeaseTimeout))}, extra...)
-	envelope, err := workflow.ComputeEnvelope(ctx, client, stateDir, projectID, rt, time.Now(), opts...)
+	envelope, err := workflow.ComputeEnvelope(ctx, client, stateDir, projectID, rt, time.Now(),
+		leaseEnvelopeOptions(client, projectID, stateDir, rt, envelopeLeaseTimeout, extra...)...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "zcp: compute envelope for tool result: %v\n", err)
 		return nil
 	}
 	envelope = replyEnvelope(envelope)
 	return &envelope
+}
+
+// leaseEnvelopeOptions are the options every envelope zcp computes starts
+// from: the default lease reader — the project's leases reconciled against
+// the pool orchestrators within timeout, a held lease's alias and mount
+// checked on this host (envelopeLeaseHost) — then extra, a later reader
+// replacing it. A stage whose pair's dev half is a pool deploys from a held
+// lease of it, so an envelope without the leases plans a lease that is
+// already held (docs/spec-workflows.md §13 PM-10).
+func leaseEnvelopeOptions(client platform.Client, projectID, stateDir string, rt runtime.Info, timeout time.Duration, extra ...workflow.EnvelopeOption) []workflow.EnvelopeOption {
+	return append([]workflow.EnvelopeOption{workflow.WithLeaseReader(leaseReader(client, projectID, stateDir, envelopeLeaseHost(rt), timeout))}, extra...)
 }
 
 // envelopeLeaseHost is the host side an envelope's lease reader checks a held
