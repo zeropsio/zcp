@@ -28,7 +28,7 @@ import (
 // as the record files are.
 func previewWiringState(t *testing.T, hqStable, webStable int) string {
 	t.Helper()
-	dir := filepath.Join(t.TempDir())
+	dir := t.TempDir()
 	leases := filepath.Join(dir, "leases")
 	if err := os.MkdirAll(leases, 0o700); err != nil {
 		t.Fatal(err)

@@ -279,6 +279,7 @@ func leaseDevServersNext(views []ops.LeaseView) string {
 				starting = append(starting, fmt.Sprintf("zerops_dev_server action=status hostname=%q name=%q", v.Alias, s.Name))
 			case devsup.StatusCrashed:
 				crashed = append(crashed, fmt.Sprintf("zerops_dev_server action=logs hostname=%q name=%q", v.Alias, s.Name))
+			case devsup.StatusRunning, devsup.StatusStopped:
 			}
 		}
 	}

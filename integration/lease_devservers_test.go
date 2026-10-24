@@ -60,8 +60,8 @@ func (s *previewLeaseSSH) ExecSSHBackground(ctx context.Context, host, command s
 // previewGroupServer is the full MCP server over hqpool #3 (stable number 1)
 // and webpool #7 (stable number 2), each container running zcp-devsup with
 // decl(server, port); it answers acquire and release through each pool's
-// orchestrator.
-func previewGroupServer(t *testing.T, decl func(server, port string) string) (call func(map[string]any) string, hq, web *devservertest.Container) {
+// orchestrator, and hands back webpool's container.
+func previewGroupServer(t *testing.T, decl func(server, port string) string) (call func(map[string]any) string, web *devservertest.Container) {
 	t.Helper()
 	hqTarget, _, _ := groupPoolOrchestratorReleasing(t, "hqpool", "3")
 	webTarget, _, _ := groupPoolOrchestratorReleasing(t, "webpool", "7")
@@ -73,7 +73,7 @@ func previewGroupServer(t *testing.T, decl func(server, port string) string) (ca
 		WithServices([]platform.ServiceStack{previewPool("svc-hqpool", "hqpool"), previewPool("svc-webpool", "webpool")}).
 		WithServiceEnv("svc-hqpool", []platform.ServiceEnvVar{{ID: "env-h", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}}).
 		WithServiceEnv("svc-webpool", []platform.ServiceEnvVar{{ID: "env-w", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}})
-	hq, web = devservertest.NewSupervised(decl("api", "8080")), devservertest.NewSupervised(decl("web", "3000"))
+	hq, web := devservertest.NewSupervised(decl("api", "8080")), devservertest.NewSupervised(decl("web", "3000"))
 	hq.StableNumber, web.StableNumber = 1, 2
 	ssh := &previewLeaseSSH{
 		rewireLeaseSSH: rewireLeaseSSH{containers: map[string]*devservertest.Container{"hqpool-3": hq, "webpool-7": web}},
@@ -92,7 +92,7 @@ func previewGroupServer(t *testing.T, decl func(server, port string) string) (ca
 			t.Fatalf("result carries a secret: %s", text)
 		}
 		return text
-	}, hq, web
+	}, web
 }
 
 // acquiredLeases is an acquire's result as the agent reads it.
@@ -128,7 +128,7 @@ func readAcquired(t *testing.T, text string) acquiredLeases {
 func TestLease_Integration_Acquire_CarriesEachLeasesDevServers(t *testing.T) {
 	// Non-parallel: t.Chdir and a swap of http.DefaultTransport, as in lease_test.go.
 	t.Chdir(t.TempDir())
-	call, _, web := previewGroupServer(t, func(server, port string) string {
+	call, web := previewGroupServer(t, func(server, port string) string {
 		return `{"version":1,"previewPortBase":8000,"siblingEnv":{"HQ_HOST":"hqpool","WEB_HOST":"webpool"},"servers":[{"name":"` + server + `","port":` + port + `,"command":"run ` + server + `"}]}`
 	})
 	// webpool-7 is a reused container: zcp starts its supervisor, and web is
@@ -168,7 +168,7 @@ func TestLease_Integration_Acquire_CarriesEachLeasesDevServers(t *testing.T) {
 func TestLease_Integration_SiblingPreviewEnv_FollowsTheSiblingsContainer(t *testing.T) {
 	// Non-parallel: t.Chdir and a swap of http.DefaultTransport, as in lease_test.go.
 	t.Chdir(t.TempDir())
-	call, _, web := previewGroupServer(t, func(server, port string) string {
+	call, web := previewGroupServer(t, func(server, port string) string {
 		return `{"version":1,"previewPortBase":8000,"siblingEnv":{"HQ_HOST":"hqpool"},"siblingPreviewEnv":{"HQ_URL":"hqpool"},` +
 			`"servers":[{"name":"` + server + `","port":` + port + `,"command":"run ` + server + `"}]}`
 	})
