@@ -1175,11 +1175,12 @@ record (§6.3), never a field here:
 | `unsaved` | on the same calls, what releasing the lease would lose, read with the release guard's own reads (`spec-workflows.md` §8 DP-4): `files` (the first 20 `git status --porcelain` lines), `fileCount` (all of them), `unpushedCommits`. A clean checkout is `{"fileCount":0,"unpushedCommits":0}`; absent when either read did not answer. Files git ignores and stashes are never in it, and a release loses them too (`TestEnvelopeJSON_LeaseActivity`, `TestLeaseTool_EnvelopeCarriesActivityOnStatus`) |
 
 - **Absent means "not read"; `[]` means "read, none held".** The key is emitted whenever zcp read
-  the leases for this envelope — `zerops_workflow action="status"`, every JSON carrier (§1.4, through
-  `tools.freshEnvelope`) and `zerops_lease` — and left out when it did not (no reader, or a project that
+  the leases for this envelope — `zerops_workflow action="status"`, the develop briefing
+  (`action="start" workflow="develop"`), every JSON carrier (§1.4, through `tools.freshEnvelope`) and
+  `zerops_lease`, all from `tools.leaseEnvelopeOptions` — and left out when it did not (no reader, or a project that
   lists no pool and has no lease record). Never `null`. A client keeps the last list it read until a
   newer envelope carries the key (`TestEnvelopeJSON_LeasesNotRead_NoKey`,
-  `TestEnvelopeJSON_LeasesReadNone_EmptyArray`).
+  `TestEnvelopeJSON_LeasesReadNone_EmptyArray`, `TestDevelopBriefing_PoolPairStage_HeldLease_DeploysFromTheLease`).
 - **Additive: no version gate.** Mate decodes the envelope forward-compatibly, so the key needs no
   `SupportedContract` bump and no `MinimumMateVersion` raise; a Mate that does not know it ignores it.
   The same holds for `activity` and `unsaved`.
