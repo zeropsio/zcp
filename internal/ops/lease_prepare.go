@@ -50,13 +50,13 @@ type LeasePrepare struct {
 // took and the notes, and answers whether a supervisor answers on the lease
 // now — one zcp found or started — whose dev servers the acquire then reads;
 // nothing in it fails the acquire.
-func afterLeaseCheckout(ctx context.Context, ssh SSHDeployer, stateDir, alias string, v *LeaseView) bool {
-	read, note := readLeaseCheckout(ctx, ssh, alias, "so no prepare command ran")
+func afterLeaseCheckout(ctx context.Context, d LeaseDeps, alias string, v *LeaseView) bool {
+	read, note := readLeaseCheckout(ctx, d.SSH, alias, "so no prepare command ran")
 	if read.declaration != nil && strings.TrimSpace(read.declaration.Prepare) != "" {
-		v.Prepare, note = runLeasePrepare(ctx, ssh, alias, read.declaration.Prepare)
+		v.Prepare, note = runLeasePrepare(ctx, d.SSH, alias, read.declaration.Prepare)
 	}
-	env, envArgs, wireNote := checkoutOverlay(stateDir, alias, read)
-	r, err := ensureLeaseSupervisorAfterCheckout(ctx, ssh, alias, envArgs)
+	env, envArgs, wireNote := checkoutOverlay(d.StateDir, alias, read, d.previewURLs(ctx))
+	r, err := ensureLeaseSupervisorAfterCheckout(ctx, d.SSH, alias, envArgs)
 	supervised := err == nil && (r.outcome == leaseSupervisorRunning || r.outcome == leaseSupervisorStarted)
 	refused := ""
 	switch {

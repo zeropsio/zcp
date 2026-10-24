@@ -214,6 +214,9 @@ func leaseCheckoutCommand(workDir, repo, branch, base, hqURL string) string {
 	if persist := leaseCredentialHelperConfig(repo, hqURL); persist != "" {
 		steps = append(steps, persist)
 	}
+	// The container's stable number, which its preview port follows; only
+	// the container knows it (leaseSlotMarker).
+	steps = append(steps, `printf '`+leaseSlotMarker+`%s\n' "${ZEROPS_StableNumber:-}"`)
 	return strings.Join(steps, " && ")
 }
 
@@ -267,23 +270,48 @@ func (d LeaseDeps) hqAddress() string {
 	return d.HQAddress()
 }
 
+// leaseCheckedOut is what a checkout answers: the main commit it cut a new
+// branch from ("" when it tracked the branch origin has) and the container's
+// stable number (0 when its session had none).
+type leaseCheckedOut struct {
+	base         string
+	stableNumber int
+}
+
 // checkoutLease puts the leased container's /var/www on the branch, a new one
 // cut from base (leaseCheckoutCommand), and returns the main commit it cut a
-// new branch from — "" when it tracked the branch origin has. A failure
-// carries the ssh error (git's stderr rides in it) and classifies auth
-// failures so the credential contract reaches the agent.
-func checkoutLease(ctx context.Context, d LeaseDeps, rec leaseRecord, repo, branch, base string) (string, error) {
+// new branch from and the container's stable number. A failure carries the
+// ssh error (git's stderr rides in it) and classifies auth failures so the
+// credential contract reaches the agent.
+func checkoutLease(ctx context.Context, d LeaseDeps, rec leaseRecord, repo, branch, base string) (leaseCheckedOut, error) {
 	hqURL := d.hqAddress()
 	out, err := d.SSH.ExecSSH(ctx, rec.alias(), leaseCheckoutCommand(leaseWorkDir, repo, branch, base, hqURL))
 	if err == nil {
 		cut, _ := checkoutBase(string(out))
-		return cut, nil
+		return leaseCheckedOut{base: cut, stableNumber: checkoutSlot(string(out))}, nil
 	}
 	code, suggestion := classifyCheckoutFailure(err, IsHQRemote(repo, hqURL))
 	pe := platform.NewPlatformError(code,
 		fmt.Sprintf("Lease %s could not put %s on branch %s of %s", rec.alias(), leaseWorkDir, branch, repo), suggestion)
 	pe.Cause = err
-	return "", pe
+	return leaseCheckedOut{}, pe
+}
+
+// leaseSlotMarker opens the line a checkout answers the container's stable
+// number on (ZEROPS_StableNumber, empty when the session has none).
+const leaseSlotMarker = "@@zcp-lease slot "
+
+// checkoutSlot is the stable number a checkout's answer names, 0 when it
+// names none.
+func checkoutSlot(out string) int {
+	for line := range strings.SplitSeq(out, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line)+" ", leaseSlotMarker); ok {
+			if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+				return n
+			}
+		}
+	}
+	return 0
 }
 
 // checkoutBase is the commit a checkout's answer says it cut a new branch

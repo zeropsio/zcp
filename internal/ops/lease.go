@@ -685,6 +685,13 @@ type leaseRecord struct {
 	// "" when the branch was tracked from origin, or in an older record.
 	Base       string `json:"base,omitempty"`
 	AcquiredAt string `json:"acquiredAt"`
+	// StableNumber is the container's ZEROPS_StableNumber as its checkout
+	// read it in the container: the lease's preview port is previewPortBase +
+	// it, so a sibling's preview URL is built from it (siblingPreviewEnv).
+	// The platform reuses the slot after deletions, so it can differ from
+	// the container number; 0 when the session had none, or in an older
+	// record.
+	StableNumber int `json:"stableNumber,omitempty"`
 	// Parked: zcp stopped the lease's container with its lease and keeps it
 	// (DP-28), since ParkedAt (RFC 3339, UTC). Dev servers, deploy, verify,
 	// sync and zcp init read only records, so the record says it.

@@ -23,6 +23,9 @@ type LeaseTargetInfo struct {
 	// Parked: zcp's record says the lease is parked — its container stopped
 	// and kept (DP-28) — so nothing answers on it until an unpark.
 	Parked bool
+	// StableNumber is the container's ZEROPS_StableNumber as the checkout
+	// read it, 0 when the record does not know it.
+	StableNumber int
 }
 
 // targetInfo is the record as a lease target: never the lease.
@@ -35,6 +38,7 @@ func (r leaseRecord) targetInfo() LeaseTargetInfo {
 		Branch:            r.Branch,
 		Repo:              r.Repo,
 		Parked:            r.Parked,
+		StableNumber:      r.StableNumber,
 	}
 }
 

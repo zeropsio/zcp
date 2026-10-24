@@ -552,7 +552,8 @@ func WriteDevDeclaration(ctx context.Context, ssh SSHDeployer, hostname, root st
 // whether the file needs writing. The repository's own top-level keys —
 // previewPortBase, siblingEnv, prepare — are kept as they are.
 func DeclareDevServer(d devsup.Declaration, s devsup.Server) (devsup.Declaration, bool) {
-	out := devsup.Declaration{Version: d.Version, PreviewPortBase: d.PreviewPortBase, SiblingEnv: maps.Clone(d.SiblingEnv), Prepare: d.Prepare, Servers: slices.Clone(d.Servers)}
+	out := devsup.Declaration{Version: d.Version, PreviewPortBase: d.PreviewPortBase, SiblingEnv: maps.Clone(d.SiblingEnv),
+		SiblingPreviewEnv: maps.Clone(d.SiblingPreviewEnv), Prepare: d.Prepare, Servers: slices.Clone(d.Servers)}
 	if out.Version == 0 {
 		out.Version = devsupFormat
 	}

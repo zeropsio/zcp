@@ -606,7 +606,7 @@ func takeMemberDeclaration(ctx context.Context, d LeaseDeps, alias, pool string)
 	before := ds.State
 	var did []string
 	lease := rec.targetInfo()
-	env, err := leaseSiblingEnv(d.StateDir, lease, ds.Declared.SiblingEnv)
+	env, err := leaseSiblingEnv(d.StateDir, lease, siblingWiringOf(&ds.Declared), d.previewURLs(ctx))
 	switch {
 	case err != nil:
 		did = append(did, fmt.Sprintf("sent no sibling overlay (%v)", err))
