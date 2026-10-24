@@ -123,48 +123,12 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 			})), nil, nil
 	}
 
-	// Build deployable-runtime meta index for scope validation, honoring the
-	// pair-keyed invariant (spec-workflows.md §8 E8): both halves of a
-	// container+standard pair resolve to the single meta file. Without this,
-	// scope=[devhost, stagehost] was silently rejecting stage despite the
-	// atom telling the agent to include it.
-	//
-	// Local-mode metas are project-keyed (m.Hostname = project.Name set by
-	// LocalAutoAdopt), not service-keyed. Two consequences for runtimeMetas:
-	//   - PlanModeLocalOnly metas have no deployable runtime — surfacing
-	//     them as scope candidates sent agents chasing the project name as
-	//     if it were a service.
-	//   - PlanModeLocalStage metas index under both project name (m.Hostname)
-	//     and stage hostname (m.StageHostname) via ManagedRuntimeIndex; only
-	//     the stage hostname is a deployable scope target. The project-name
-	//     key must be filtered out.
-	//   - A pool keying its pair (DevIsPool) is no runtime develop deploys or
-	//     verifies — its containers are leased, one per branch, and its stage
-	//     deploys from a lease of it (docs/spec-workflows.md §13 PM-10). Its
-	//     key is filtered out; a scope naming it is refused by name below.
-	allRuntimes := workflow.ManagedRuntimeIndex(metas)
-	runtimeMetas := make(map[string]*workflow.ServiceMeta, len(allRuntimes))
-	devPools := map[string]*workflow.ServiceMeta{}
-	hasLocalOnly := false
-	for h, m := range allRuntimes {
-		if m.Mode == topology.PlanModeLocalOnly {
-			hasLocalOnly = true
-			continue
-		}
-		if m.Mode == topology.PlanModeLocalStage && h == m.Hostname {
-			continue // skip the project-name key; the stage-hostname key remains
-		}
-		if m.DevIsPool() && h == m.Hostname {
-			devPools[h] = m
-			continue
-		}
-		if !m.IsComplete() {
-			continue
-		}
-		if m.Mode == "" && !m.HasStage() {
-			continue
-		}
-		runtimeMetas[h] = m
+	runtimes := developRuntimes(metas)
+	runtimeMetas, hasLocalOnly := runtimes.metas, runtimes.hasLocalOnly
+	// Before any other answer about the runtimes: a scope naming the pool is
+	// refused by name, even where the pool's pair is all there is.
+	if refusal := devPoolInScope(input.Scope, runtimes.devPools); refusal != nil {
+		return convertError(refusal, WithRecoveryStatus()), nil, nil
 	}
 	if len(runtimeMetas) == 0 {
 		if hasLocalOnly {
@@ -240,9 +204,6 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 	// no "latest bootstrap targets", no fallback. Agent names the services
 	// this task works on — the invariant CLAUDE.md promises: "auto-closes
 	// once the services you're working on are deployed and verified."
-	if refusal := devPoolInScope(input.Scope, devPools); refusal != nil {
-		return convertError(refusal, WithRecoveryStatus()), nil, nil
-	}
 	scope, err := validateDevelopScope(input.Scope, runtimeMetas, liveHostnames)
 	if err != nil {
 		if errors.Is(err, errStandardPairStageMissing) {
@@ -279,6 +240,58 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 	}
 
 	return renderDevelopBriefing(ctx, engine, client, projectID, rt, sshDeployer)
+}
+
+// developRuntimeList is develop's runtime list: the services a scope may
+// name, each with its pair's meta.
+type developRuntimeList struct {
+	metas map[string]*workflow.ServiceMeta
+	// devPools are the pools keying their pairs, left out of metas.
+	devPools map[string]*workflow.ServiceMeta
+	// hasLocalOnly: a local-only meta exists (it names no runtime).
+	hasLocalOnly bool
+}
+
+// developRuntimes builds the deployable-runtime meta index for scope
+// validation, honoring the pair-keyed invariant (spec-workflows.md §8 E8):
+// both halves of a container+standard pair resolve to the single meta file.
+// Without this, scope=[devhost, stagehost] was silently rejecting stage
+// despite the atom telling the agent to include it.
+//
+// Local-mode metas are project-keyed (m.Hostname = project.Name set by
+// LocalAutoAdopt), not service-keyed. Two consequences:
+//   - PlanModeLocalOnly metas have no deployable runtime — surfacing
+//     them as scope candidates sent agents chasing the project name as
+//     if it were a service.
+//   - PlanModeLocalStage metas index under both project name (m.Hostname)
+//     and stage hostname (m.StageHostname) via ManagedRuntimeIndex; only
+//     the stage hostname is a deployable scope target. The project-name
+//     key must be filtered out.
+//
+// A pool keying its pair (DevIsPool) is no runtime develop deploys or
+// verifies — its containers are leased, one per branch, and its stage
+// deploys from a lease of it (docs/spec-workflows.md §13 PM-10). Its key
+// goes to devPools; a scope naming it is refused by name.
+func developRuntimes(metas []*workflow.ServiceMeta) developRuntimeList {
+	allRuntimes := workflow.ManagedRuntimeIndex(metas)
+	out := developRuntimeList{
+		metas:    make(map[string]*workflow.ServiceMeta, len(allRuntimes)),
+		devPools: map[string]*workflow.ServiceMeta{},
+	}
+	for h, m := range allRuntimes {
+		switch {
+		case m.Mode == topology.PlanModeLocalOnly:
+			out.hasLocalOnly = true
+		case m.Mode == topology.PlanModeLocalStage && h == m.Hostname:
+			// the project-name key; the stage-hostname key remains
+		case m.DevIsPool() && h == m.Hostname:
+			out.devPools[h] = m
+		case !m.IsComplete(), m.Mode == "" && !m.HasStage():
+		default:
+			out.metas[h] = m
+		}
+	}
+	return out
 }
 
 // devPoolInScope refuses a develop scope naming a pool its pair is keyed by

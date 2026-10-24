@@ -190,7 +190,7 @@ func inner(ctx context.Context, ssh SSHDeployer, h string) {
 	tools := parsePoolGuardSource(t, "fixture_tools.go", toolsSrc)
 	ops := parsePoolGuardSource(t, "fixture_ops.go", opsSrc)
 	got := poolDevHalfViolations(tools, ops)
-	var funcs []string
+	funcs := make([]string, 0, len(got))
 	for _, v := range got {
 		funcs = append(funcs, v[strings.LastIndex(v, "(in ")+4:len(v)-1])
 	}
