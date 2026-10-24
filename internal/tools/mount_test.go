@@ -551,3 +551,28 @@ func TestMountTool_ParkedLease_RefusedWithUnpark(t *testing.T) {
 		t.Errorf("mounted a parked lease: %v", mounter.states)
 	}
 }
+
+// TestMountTool_ParkedLease_NoWorkflow_StillNamesUnpark pins that the parked
+// refusal comes before the workflow gate (DP-28): a mount of a parked lease
+// outside any workflow names the unpark, not WORKFLOW_REQUIRED (live: the gate
+// answered first and never named the unpark).
+func TestMountTool_ParkedLease_NoWorkflow_StillNamesUnpark(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	writeLeaseFile(t, stateDir)
+	parkLeaseFile(t, stateDir, "webpool-3")
+	mounter := newStubMounter()
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterMount(srv, platform.NewMock(), "proj-1", mounter, runtime.Info{}, stateDir, nil, nil)
+
+	result := callTool(t, srv, "zerops_mount", map[string]any{"action": "mount", "serviceHostname": "webpool-3"})
+
+	text := getTextContent(t, result)
+	if !result.IsError || !strings.Contains(text, "webpool-3 is parked") || !strings.Contains(text, "zerops_lease action=unpark lease=webpool-3") {
+		t.Fatalf("result = (error %v) %s, want the parked refusal naming the unpark", result.IsError, text)
+	}
+	if strings.Contains(text, platform.ErrWorkflowRequired) {
+		t.Errorf("the workflow gate answered before the parked refusal: %s", text)
+	}
+}

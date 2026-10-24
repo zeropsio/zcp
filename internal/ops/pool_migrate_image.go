@@ -403,7 +403,7 @@ func poolMigrateInstallMessage(setup string, doc *ZeropsYmlDoc, in PoolMigrateIm
 // naming what is missing; ok is false when there is none to check the ports
 // against.
 func poolMigratePreviewBase(read poolMigrateCommitRead, short string, maxContainers int, miss func(check, msg string)) (base int, ok bool) {
-	const how = "a lease answers its preview on previewPortBase + its container's number, 1 … maxContainers"
+	const how = "a lease answers its preview on previewPortBase + its container's stable number (ZEROPS_StableNumber), 1 … maxContainers"
 	if !read.hasDeclaration {
 		miss(PoolMigrateImagePreviewBase, fmt.Sprintf("Commit %s carries no %s, so no previewPortBase is set: declare the part's dev servers there with `\"previewPortBase\": <port>` (%s) and commit it.", short, devsup.DeclarationPath, how))
 		return 0, false
@@ -451,7 +451,7 @@ func poolMigratePreviewPortsMessage(entry *ZeropsYmlEntry, setup string, base, m
 	if len(plain) > 0 {
 		gaps = append(gaps, "declares "+strings.Join(plain, ", ")+" without httpSupport: true")
 	}
-	return fmt.Sprintf("Setup %q's run.ports %s. A lease answers its preview on previewPortBase + its container's number, 1 … %d (the pool's maxContainers), and a per-port subdomain routes only to a port declared with httpSupport: true, so ports %d to %d each need one.",
+	return fmt.Sprintf("Setup %q's run.ports %s. A lease answers its preview on previewPortBase + its container's stable number (ZEROPS_StableNumber), 1 … %d (the pool's maxContainers), and a per-port subdomain routes only to a port declared with httpSupport: true, so ports %d to %d each need one.",
 		setup, strings.Join(gaps, " and "), maxContainers, base+1, base+maxContainers)
 }
 
