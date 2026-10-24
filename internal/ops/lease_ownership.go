@@ -263,21 +263,28 @@ func leaseEnded(err error) (why string, ok bool) {
 	return "", false
 }
 
-// heldByOtherEnded is why the lease ended once the orchestrator refused its
-// stop, start or delete (err) held-by-other and a renew of the lease agrees
-// that it holds the container no more; "" for any other error, and while the
-// renew still gives the container to the lease or does not answer.
-// held-by-other is live-verified on a release only, and what the orchestrator
-// answers its own holder while it stops or starts the container is not
-// known, so it alone never drops a record (DP-2).
-func heldByOtherEnded(ctx context.Context, d LeaseDeps, rp *resolvedPool, rec leaseRecord, err error) string {
+// heldByOtherAsked is, for a stop, start or delete the orchestrator refused
+// (err), whether it refused it held-by-other (held) and, then, what a renew
+// of the lease answers (v). held-by-other is live-verified on a release only,
+// and what the orchestrator answers its own holder while it stops or starts
+// the container is not known, so it alone never drops a record (DP-2): a
+// renew that agrees the lease ended does; one that does not answer leaves the
+// container maybe another holder's — nothing more is sent to it, mounted or
+// written (heldByOtherUnverifiedRefusal); one that gives the container to the
+// lease makes the refusal an orchestrator failure like any other.
+func heldByOtherAsked(ctx context.Context, d LeaseDeps, rp *resolvedPool, rec leaseRecord, err error) (v leaseVerdict, held bool) {
 	if !isHeldByOther(err) {
-		return ""
+		return leaseVerdict{}, false
 	}
-	if v := renewOwnership(ctx, d, rp, rec); v.own.lost() {
-		return v.why
-	}
-	return ""
+	return renewOwnership(ctx, d, rp, rec), true
+}
+
+// heldByOtherUnverifiedRefusal refuses what (a park, an unpark, a release) of
+// a lease whose call the orchestrator refused held-by-other and whose renew
+// went unanswered (v): the container may be another holder's, so zcp left it,
+// its mount and the record as they were.
+func heldByOtherUnverifiedRefusal(alias, what string, v leaseVerdict) error {
+	return unverifiedRefusal(fmt.Sprintf("Lease %s was not %s: the orchestrator refused zcp's call on its container, saying another holder reserves it, and did not answer whether this lease still holds it, so zcp mounted nothing, sent nothing more and left the record as it was", alias, what), v)
 }
 
 // lostDropNote is what a view of a dropped lost record says: why the lease is
@@ -316,7 +323,13 @@ const unverifiedRemedy = "zerops_lease action=status asks again once the pool's 
 // or sent to it. It keeps the code and suggestion of the orchestrator's own
 // failure (a stopped pool says to start it, DP-10).
 func unverifiedLeaseRefusal(alias, what string, v leaseVerdict) error {
-	msg := fmt.Sprintf("Lease %s was not %s: zcp could not ask the pool's orchestrator whether its container is still this lease's, so it read nothing from it and sent nothing to it", alias, what)
+	return unverifiedRefusal(fmt.Sprintf("Lease %s was not %s: zcp could not ask the pool's orchestrator whether its container is still this lease's, so it read nothing from it and sent nothing to it", alias, what), v)
+}
+
+// unverifiedRefusal is a refusal saying msg of a lease the orchestrator did
+// not answer about (v), keeping the code and suggestion of the
+// orchestrator's own failure and naming the status that asks again.
+func unverifiedRefusal(msg string, v leaseVerdict) error {
 	var pe *platform.PlatformError
 	if errors.As(v.err, &pe) {
 		out := *pe

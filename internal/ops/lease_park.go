@@ -206,8 +206,12 @@ func LeasePark(ctx context.Context, d LeaseDeps, alias string) (LeaseView, error
 			return LeaseView{}, remounted(unverifiedLeaseRefusal(alias, "parked", fresh))
 		}
 		if _, err := rp.api.Stop(ctx, rec.ContainerID, rec.Lease); err != nil {
-			if why := heldByOtherEnded(ctx, d, rp, rec, err); why != "" {
-				return leaseLostOnCall(ctx, d, rec, "park", why)
+			switch v, held := heldByOtherAsked(ctx, d, rp, rec, err); {
+			case held && v.own.lost():
+				return leaseLostOnCall(ctx, d, rec, "park", v.why)
+			case held && v.own == leaseUnverified:
+				// Maybe another holder's: never mounted again.
+				return LeaseView{}, heldByOtherUnverifiedRefusal(alias, "parked", v)
 			}
 			return LeaseView{}, remounted(leaseOrchestratorError(ctx, d, rp, "park "+alias, err))
 		}
@@ -250,8 +254,11 @@ func LeaseUnpark(ctx context.Context, d LeaseDeps, alias string) (LeaseView, err
 			notes = append(notes, "its container was running already, so zcp started nothing")
 		}
 	} else if _, err := rp.api.Start(ctx, rec.ContainerID, rec.Lease); err != nil {
-		if why := heldByOtherEnded(ctx, d, rp, rec, err); why != "" {
-			return leaseLostOnCall(ctx, d, rec, "unpark", why)
+		switch v, held := heldByOtherAsked(ctx, d, rp, rec, err); {
+		case held && v.own.lost():
+			return leaseLostOnCall(ctx, d, rec, "unpark", v.why)
+		case held && v.own == leaseUnverified:
+			return LeaseView{}, heldByOtherUnverifiedRefusal(alias, "unparked", v)
 		}
 		return LeaseView{}, leaseOrchestratorError(ctx, d, rp, "unpark "+alias, err)
 	}
@@ -362,8 +369,11 @@ func wakeParkedForGuard(ctx context.Context, d LeaseDeps, rec leaseRecord, v lea
 	}
 	alias := rec.alias()
 	if _, err := v.rp.api.Start(ctx, rec.ContainerID, rec.Lease); err != nil {
-		if why := heldByOtherEnded(ctx, d, v.rp, rec, err); why != "" {
-			return w, &leaseEndedError{why: why}
+		switch hv, held := heldByOtherAsked(ctx, d, v.rp, rec, err); {
+		case held && hv.own.lost():
+			return w, &leaseEndedError{why: hv.why}
+		case held && hv.own == leaseUnverified:
+			return w, heldByOtherUnverifiedRefusal(alias, "released", hv)
 		}
 		return w, parkedReleaseRefusal(alias, "zcp could not start its container to check it for unsaved work ("+errorNote(leaseOrchestratorError(ctx, d, v.rp, "start "+alias, err))+")")
 	}
@@ -444,8 +454,12 @@ func repark(ctx context.Context, d LeaseDeps, rec leaseRecord) (text string, par
 		if serr == nil {
 			return "zcp stopped its container again, so it stays parked", true
 		}
-		if why := heldByOtherEnded(ctx, d, v.rp, rec, serr); why != "" {
-			return reparkDropped(ctx, d, rec, why), false
+		switch hv, held := heldByOtherAsked(ctx, d, v.rp, rec, serr); {
+		case held && hv.own.lost():
+			return reparkDropped(ctx, d, rec, hv.why), false
+		case held && hv.own == leaseUnverified:
+			// Maybe another holder's: nothing more sent, nothing written.
+			return fmt.Sprintf("the orchestrator refused to stop its container again, saying another holder reserves it, and did not answer whether this lease still holds it (%s), so zcp left the container and the record as they were: %s", errorNote(hv.err), unverifiedRemedy), false
 		}
 		err = leaseOrchestratorError(ctx, d, v.rp, "stop "+alias, serr)
 	}

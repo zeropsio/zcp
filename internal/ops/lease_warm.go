@@ -404,8 +404,8 @@ func (w *LeaseWarm) decideRelease(ctx context.Context, d LeaseDeps, rp *resolved
 		view, dropErr := dropLeaseRecord(d.StateDir, rec, LeaseStateLost, "the orchestrator no longer held this container for this lease, so there was nothing to release; the record is dropped")
 		return view, false, dropErr
 	}
-	if why := heldByOtherEnded(ctx, d, rp, rec, err); why != "" {
-		view, dropErr := dropLeaseRecord(d.StateDir, rec, LeaseStateLost, lostDropNote(why))
+	if v, held := heldByOtherAsked(ctx, d, rp, rec, err); held && v.own.lost() {
+		view, dropErr := dropLeaseRecord(d.StateDir, rec, LeaseStateLost, lostDropNote(v.why))
 		return view, false, dropErr
 	}
 	view, rerr := reset()
