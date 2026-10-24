@@ -145,7 +145,7 @@ func TestPoolMigrate_Integration_VariantBRetireDeletesEveryDevServiceThenTheVolu
 	poolRetireIntGit(t, repo, "commit", "-q", "-m", "c1")
 
 	client := &poolMigrateIntVolumeClient{&poolRetireIntClient{Mock: mock}}
-	ssh := &poolMigrateIntVolumeSSH{poolMigrateIntPartsSSH{poolRetireIntSSH{repo: repo}}}
+	ssh := &poolMigrateIntVolumeSSH{poolMigrateIntPartsSSH{poolRetireIntSSH{repo: repo, work: filepath.Join(t.TempDir(), "zcp-pool-migrate")}}}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "zcp-test", Version: "0.1"}, nil)
 	engine := workflow.NewEngine(stateDir, workflow.EnvContainer, nil)
 	swarm := tools.WithPoolOrchestratorsForWorkflow(func(baseURL, _ string) ops.SwarmAPI {
