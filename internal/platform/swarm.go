@@ -509,11 +509,12 @@ func parseSwarmError(status int, raw []byte) *SwarmError {
 			se.Cause = c[0]
 		}
 	}
-	if se.Reason == "" && se.Code == swarmCodeContainerAction && strings.EqualFold(strings.TrimSpace(se.Message), swarmMessageContainerNotFound) {
+	if se.Reason == "" && status == http.StatusBadRequest && se.Code == swarmCodeContainerAction && strings.EqualFold(strings.TrimSpace(se.Message), swarmMessageContainerNotFound) {
 		// A container deleted a moment ago: until a listing catches up, the
-		// orchestrator passes the platform's bare refusal through, with no
-		// reason (live, 2026-10-24); it is the same fact as the
-		// container-not-found it names afterwards.
+		// orchestrator passes the platform's bare refusal through as a 400,
+		// with no reason (live, 2026-10-24); it is the same fact as the
+		// container-not-found it names afterwards. Only that 400 was seen:
+		// the same words with any other status say nothing of the container.
 		se.Reason = SwarmReasonContainerNotFound
 	}
 	return se
