@@ -446,7 +446,7 @@ func TestThemes_Services_BoxFromTheApp_FactsPresent(t *testing.T) {
 		"never inside the app's own container", "share the container's kernel", "its own microVM",
 		"a dependency of the runtime", "never a runtime target",
 		// Env wiring by reference: the key never passes through the agent.
-		"ZBOX_URL: http://<box>:8080", "ZBOX_KEY: ${<box>_ZBOX_WORKSPACE_API_KEY}", "run.envVariables",
+		"BOX_API_URL: http://<box>:8080", "BOX_API_KEY: ${<box>_ZBOX_WORKSPACE_API_KEY}", "run.envVariables",
 		// The base digest, looked up, never the name.
 		"GET /api/rest/base-list", "`default`", "`READY`", "`digest`", "404 baseNotFound",
 		// Create.

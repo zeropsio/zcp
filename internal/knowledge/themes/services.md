@@ -360,7 +360,7 @@ zerops:
 ### Zerops Box
 
 **Type**: `ubuntu/zbox@1` (an import may write `zbox@1`, stored as `ubuntu/zbox@1`), in beta. A Box is a single Ubuntu VM, not a container, that runs sandboxes as microVMs. It is not a zerops.yml `run.base`: no build, no deploy, no container counts.
-**Region**: a Box can be created only in a project in region prg1. In any other region its create fails with the platform's "not enough hardware capacity to run your container" message — `zerops_import` shows it as given — and the platform removes the service.
+**Region**: a Box can be created only in a project in region prg1. In any other region its create fails with the platform's "not enough hardware capacity to run your container" message and the platform removes the service, so `zerops_import` refuses a Box there before it creates anything, and so does a bootstrap plan that would create one.
 **After import**: a Box created by import or in the GUI starts empty — no base and no domain, so a sandbox has nothing to boot from and its ports get no URL. `zerops_import` finishes the setup of each Box it creates before it returns — the `default` base pulled, and the 8081 subdomain added as a sandbox domain when subdomain access is on — and answers one `boxSetup` block per Box; `zerops_box action=setup serviceHostname=<box>` finishes it later (a pull still running, subdomain access turned on afterwards). Outside zcp, `zbox setup` does both (by hand: `zbox base add <image> --name default`, then `zbox workspace domain add <its 8081 subdomain> --form dash`).
 **Lifecycle**: a reload restarts only the orchestrator and keeps running sandboxes. A restart, a stop and every resize (CPU and RAM as well as disk) stop the VM: running sandboxes come back `PARKED` without their memory — park the ones to keep first. Disk can only grow. zcp never restarts a Box for an env change.
 **Ports**: 8080 serves the API and the web console, 8081 the sandbox ingress. Sandbox port URLs need subdomain access (`enableSubdomainAccess: true`; the GUI form leaves it off) and the 8081 subdomain among the workspace's domains. A project service reaches a sandbox's `project` port at `http://<box>.zerops:8081` with the port's host in the `Host` header.
@@ -378,11 +378,11 @@ Code the app does not control — a playground's snippets, a grader's submission
 ```yaml
 run:
   envVariables:
-    ZBOX_URL: http://<box>:8080
-    ZBOX_KEY: ${<box>_ZBOX_WORKSPACE_API_KEY}
+    BOX_API_URL: http://<box>:8080
+    BOX_API_KEY: ${<box>_ZBOX_WORKSPACE_API_KEY}
 ```
 
-Every call below goes to `$ZBOX_URL` with `Authorization: Bearer $ZBOX_KEY`; a wrong key answers `401 unauthorized`.
+Every call below goes to `$BOX_API_URL` with `Authorization: Bearer $BOX_API_KEY`; a wrong key answers `401 unauthorized`.
 
 **Base**: a create names its base by digest. `GET /api/rest/base-list` answers `{"items": [...]}`: take the `digest` of the item named `default` whose `status` is `READY`. The name in place of the digest answers `404 baseNotFound`. Read it when the app starts rather than writing it into code: a base pulled again gets a new digest.
 
