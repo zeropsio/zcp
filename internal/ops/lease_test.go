@@ -159,8 +159,8 @@ func (f *fakeSwarm) setStatus(id, status string) platform.SwarmContainer {
 	return platform.SwarmContainer{ID: id, Status: status}
 }
 
-// Container reads one listed container by id — else one an acquire reserved
-// that the test did not list; the fake counts no snapshots.
+// Container reads one listed container by id — or, when the test set no
+// listing, one an acquire reserved; the fake counts no snapshots.
 func (f *fakeSwarm) Container(_ context.Context, id string) (platform.SwarmContainer, error) {
 	if f.listErr != nil {
 		// An orchestrator whose listing fails answers no read.
