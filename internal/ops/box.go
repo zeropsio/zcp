@@ -441,7 +441,10 @@ func boxErrText(err error) string {
 // ensureBoxBase makes sure the Box has a READY base: one that is READY
 // already; else the pull that is running, polled; else a new pull of the
 // default image, polled. A base on its way with no operation to follow is
-// left alone. Read before write: a re-run never pulls twice.
+// left alone. Read before write: a re-run never pulls twice. The running
+// pull is found in operation-list, not base-list: base-list lists a pulled
+// base only once it is READY (live, 2026-10-24: 30 reads during a 28 s pull
+// listed no base, while operation-list showed the PULL_BASE RUNNING).
 func ensureBoxBase(ctx context.Context, d BoxDeps, api BoxAPI, t BoxTiming, host string, r *BoxSetupResult) *BoxBaseView {
 	setup := boxSetupCall(host)
 	bases, err := api.Bases(ctx)
