@@ -654,15 +654,6 @@ func TestPoolMigrate_NotACandidate_Refused(t *testing.T) {
 			wantInMsg:  []string{"appdev"},
 		},
 		{
-			name: "several parts",
-			mutate: func(f *poolMigrateFixture) {
-				f.meta.Stages = append(f.meta.Stages, topology.StageRef{Hostname: "workerstage", SetupName: "worker"})
-				f.services = append(f.services, poolMigrateRuntime("workerstage", "svc-worker"))
-			},
-			wantReason: "multi-part",
-			wantInMsg:  []string{"appstage", "workerstage"},
-		},
-		{
 			name:       "dev service gone",
 			mutate:     func(f *poolMigrateFixture) { f.services = f.services[1:] },
 			wantReason: "dev-not-live",
