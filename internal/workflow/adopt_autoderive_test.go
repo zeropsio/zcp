@@ -700,6 +700,61 @@ func TestBootstrapCompleteAdoptPlan_VariantBBesideItsStages_IsOneStandardPair(t 
 	}
 }
 
+// s2Mounts are the live S2 variant-B repository's dev setups: lvmwebdev and
+// lvmapidev mounting lvmvol at /var/www/ws, both dev services holding the
+// checkout there, and the file naming a setup after each stage.
+func s2Mounts() []AdoptVolumeSetup {
+	files := []string{"lvmwebdev", "lvmapidev", "lvmwebstage", "lvmapistage"}
+	content := map[string]topology.VolumeContent{"lvmwebdev": topology.VolumeCheckout, "lvmapidev": topology.VolumeCheckout}
+	return []AdoptVolumeSetup{
+		{Setup: "lvmwebdev", RunBase: "python@3.12", Volume: "lvmvol", MountPath: "/var/www/ws", WorksIn: true, Content: content, FileSetups: files},
+		{Setup: "lvmapidev", RunBase: "python@3.12", Volume: "lvmvol", MountPath: "/var/www/ws", WorksIn: true, Content: content, FileSetups: files},
+	}
+}
+
+// s2Services are the live S2 project's lvm services: the variant-B pair, its
+// stages and its volume.
+func s2Services() []platform.ServiceStack {
+	py := func(name string) platform.ServiceStack { return userSvc(name, "ubuntu/python@3.12") }
+	return []platform.ServiceStack{py("lvmapidev"), py("lvmapistage"), userSvc("lvmvol", "local-storage:single@1"), py("lvmwebdev"), py("lvmwebstage")}
+}
+
+// TestBootstrapCompleteAdoptPlan_VariantBPair_TheAnswerNamesWhatItRecorded:
+// the adopt answer names a variant-B pair with what it holds besides its dev
+// half — the code volume, its further dev services and its stages — so the
+// agent sees the whole pair it recorded, not one dev service.
+func TestBootstrapCompleteAdoptPlan_VariantBPair_TheAnswerNamesWhatItRecorded(t *testing.T) {
+	t.Parallel()
+	eng := startAdopt(t, t.TempDir())
+	resp, err := eng.BootstrapCompleteAdoptPlan(s2Services(), []string{"lvmwebdev", "lvmapidev", "lvmwebstage", "lvmapistage"}, runtime.Info{}, nil, s2Mounts())
+	if err != nil {
+		t.Fatalf("BootstrapCompleteAdoptPlan: %v", err)
+	}
+	if want := "adopted lvmwebdev (the code volume lvmvol shared with lvmapidev; stages lvmwebstage, lvmapistage)"; !strings.Contains(resp.Message, want) {
+		t.Errorf("answer misses %q; got:\n%s", want, resp.Message)
+	}
+}
+
+// TestBootstrapCompleteAdoptPlan_VariantBBesideAPairingQuestion_NamesThePairScopeOnly:
+// a variant-B pair is recorded only from a scope — no plan carries a code
+// volume — so when the runtimes scoped beside it raise the pairing question,
+// the refusal names the pair and the scope that adopts it alone, before the
+// plan the agent picks for the rest.
+func TestBootstrapCompleteAdoptPlan_VariantBBesideAPairingQuestion_NamesThePairScopeOnly(t *testing.T) {
+	t.Parallel()
+	existing := append(s2Services(), userSvc("appdev", "alpine/nodejs@24"), userSvc("appstage", "alpine/nodejs@24"))
+	eng := startAdopt(t, t.TempDir())
+	_, err := eng.BootstrapCompleteAdoptPlan(existing, []string{"lvmwebdev", "lvmapidev", "lvmwebstage", "lvmapistage", "appdev", "appstage"}, runtime.Info{}, nil, s2Mounts())
+	if !errors.Is(err, ErrAdoptPairingChoice) {
+		t.Fatalf("want ErrAdoptPairingChoice for appdev and appstage, got %v", err)
+	}
+	for _, want := range []string{`"appdev"`, `"appstage"`, "the code volume lvmvol", `scope=["lvmwebdev", "lvmapidev", "lvmwebstage", "lvmapistage"]`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal misses %s; got:\n%s", want, err)
+		}
+	}
+}
+
 // TestInferServicePairing_TwoPools_NoPairQuestion — two Swarm pools of one type
 // are not a dev/stage pair (spec-workflows.md §8 PS-2): the adopt completion
 // path never asks the pairing question for them, and an app next to them
