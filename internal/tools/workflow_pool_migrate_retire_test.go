@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -234,7 +235,14 @@ func (m *retireMounter) HasUnit(context.Context, string) (bool, error)          
 func (m *retireMounter) CleanupUnit(context.Context, string) error               { return nil }
 
 // retireSwarm is the pool's orchestrator: it lists its containers.
-type retireSwarm struct{ containers []platform.SwarmContainer }
+// retireSwarm is the pool's orchestrator as the retire reads it: its listing,
+// a read by id, and the renew of a lease — answered as live (2026-10-24): a
+// container listed reserved renews, a free one is refused unknown-lease, a
+// missing one container-not-found; renewErr, when set, answers every renew.
+type retireSwarm struct {
+	containers []platform.SwarmContainer
+	renewErr   error
+}
 
 var errRetireSwarmUnused = errors.New("the retire only lists the pool's containers")
 
@@ -250,8 +258,19 @@ func (s retireSwarm) Acquire(context.Context, platform.SwarmAcquireRequest) (pla
 func (s retireSwarm) Release(context.Context, string, string, bool) (platform.SwarmContainer, error) {
 	return platform.SwarmContainer{}, errRetireSwarmUnused
 }
-func (s retireSwarm) Renew(context.Context, string, string) (platform.SwarmContainer, error) {
-	return platform.SwarmContainer{}, errRetireSwarmUnused
+func (s retireSwarm) Renew(ctx context.Context, id, _ string) (platform.SwarmContainer, error) {
+	if s.renewErr != nil {
+		return platform.SwarmContainer{}, s.renewErr
+	}
+	c, err := s.Container(ctx, id)
+	if err != nil {
+		return platform.SwarmContainer{}, err
+	}
+	if c.LockState != "reserved" {
+		return platform.SwarmContainer{}, &platform.SwarmError{Status: http.StatusBadRequest, Code: "containerAction", Reason: platform.SwarmReasonUnknownLease,
+			Message: "no reservation of this container is held by that lease - acquire it again"}
+	}
+	return c, nil
 }
 func (s retireSwarm) Delete(context.Context, string, string) error { return errRetireSwarmUnused }
 func (s retireSwarm) Rollout(context.Context) (platform.SwarmRollout, error) {
@@ -260,8 +279,14 @@ func (s retireSwarm) Rollout(context.Context) (platform.SwarmRollout, error) {
 func (s retireSwarm) Create(context.Context, int) ([]platform.SwarmContainer, error) {
 	return nil, errRetireSwarmUnused
 }
-func (s retireSwarm) Container(context.Context, string) (platform.SwarmContainer, error) {
-	return platform.SwarmContainer{}, errRetireSwarmUnused
+func (s retireSwarm) Container(_ context.Context, id string) (platform.SwarmContainer, error) {
+	for _, c := range s.containers {
+		if c.ID == id {
+			return c, nil
+		}
+	}
+	return platform.SwarmContainer{}, &platform.SwarmError{Status: http.StatusBadRequest, Code: "containerAction", Reason: platform.SwarmReasonContainerNotFound,
+		Message: "container not found"}
 }
 func (s retireSwarm) Stop(context.Context, string, string) (platform.SwarmContainer, error) {
 	return platform.SwarmContainer{}, errRetireSwarmUnused
@@ -766,6 +791,38 @@ func TestPoolMigrateRetire_GuardFails_Refused(t *testing.T) {
 			r.assertNothingRetired(t)
 		})
 	}
+}
+
+// TestPoolMigrateRetire_LeaseUnverified_RefusedNeverReached: the orchestrator
+// does not answer whether the lease is still zcp's (docs/spec-workflows.md §8
+// DP-2): the container may be another holder's by now, so the retire refuses
+// before it reaches the lease over ssh — the probe would read, and the retire
+// would rely on, a container zcp cannot vouch for.
+func TestPoolMigrateRetire_LeaseUnverified_RefusedNeverReached(t *testing.T) {
+	t.Parallel()
+	r := newRetireRig(t, nil)
+	r.swarm = func(string, string) ops.SwarmAPI {
+		return retireSwarm{
+			containers: []platform.SwarmContainer{{ID: "c-1", Number: 1, Hostname: "node-id-1.runtime.apppool.zerops", LockState: "reserved"}},
+			renewErr:   &platform.SwarmError{Status: http.StatusBadGateway, Message: "bad gateway"},
+		}
+	}
+	out, isErr := r.retire(t, retireInput(true, true))
+	if isErr || out["status"] != "retire-refused" {
+		t.Fatalf("retire = %v, want retire-refused", out)
+	}
+	if !slices.Contains(poolMigrateReasons(out), poolRetireRefuseLeaseUnreadable) {
+		t.Fatalf("reasons = %q, want %q", poolMigrateReasons(out), poolRetireRefuseLeaseUnreadable)
+	}
+	if msg := poolMigrateRefusalMessage(out, poolRetireRefuseLeaseUnreadable); !strings.Contains(msg, retireLeaseAlias) {
+		t.Errorf("message = %q, want %s named", msg, retireLeaseAlias)
+	}
+	for _, e := range r.events.all() {
+		if strings.HasPrefix(e, "ssh lease") {
+			t.Errorf("the retire reached a lease zcp cannot verify over ssh: %q", e)
+		}
+	}
+	r.assertNothingRetired(t)
 }
 
 func TestPoolMigrateRetire_UnmountFails_AbortsAndRestores(t *testing.T) {
