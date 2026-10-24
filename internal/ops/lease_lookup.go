@@ -53,6 +53,13 @@ func LeaseTarget(stateDir, host string) (LeaseTargetInfo, bool, error) {
 // orchestrator. A record older than keeping its repository is of its pool's
 // default; a lease whose repository zcp knows neither way is a group of one.
 func LeaseGroup(stateDir, alias string) ([]LeaseTargetInfo, error) {
+	return leaseGroupWithout(stateDir, alias, nil)
+}
+
+// leaseGroupWithout is LeaseGroup as it will be once the leases in leaving
+// (aliases) have left: a rewire computes the overlay of a release's other
+// leases before the release drops its record (DP-25).
+func leaseGroupWithout(stateDir, alias string, leaving map[string]bool) ([]LeaseTargetInfo, error) {
 	rec, err := loadLeaseRecord(stateDir, alias)
 	if err != nil {
 		return nil, err
@@ -70,7 +77,7 @@ func LeaseGroup(stateDir, alias string) ([]LeaseTargetInfo, error) {
 	for _, r := range group {
 		switch {
 		case r.alias() == alias:
-		case taken[r.PoolHostname]:
+		case leaving[r.alias()] || taken[r.PoolHostname]:
 			continue
 		default:
 			taken[r.PoolHostname] = true

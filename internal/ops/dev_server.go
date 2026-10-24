@@ -124,6 +124,10 @@ type DevServerResult struct {
 	// pool it names, and each left to the container's own env
 	// (docs/spec-workflows.md §8 DP-22).
 	SiblingEnv *LeaseSiblingEnv `json:"siblingEnv,omitempty"`
+	// Wiring is LeaseWiringStale on a status of a lease whose servers run with
+	// an overlay naming a container no lease of its group holds by zcp's
+	// records; the message says which and the call that fixes it (DP-25).
+	Wiring string `json:"wiring,omitempty"`
 	// Unreported: the call read several servers and reports none of them
 	// alone (a status of a dev service with several), so it says nothing of
 	// whether "the" server runs.
@@ -334,6 +338,9 @@ func ExecuteDevServer(
 	}
 	result.settle(ds)
 	if p.lease != nil {
+		if action == devServerActionStatus {
+			result.applyStaleWiring(p.StateDir, *p.lease, ds.State)
+		}
 		result.applyLease(*p.lease)
 	}
 	return result, nil

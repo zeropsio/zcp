@@ -65,6 +65,9 @@ func leaseDeps(client platform.Client, projectID, stateDir string, swarm ops.Swa
 type leaseToolResult struct {
 	Action string          `json:"action"`
 	Leases []ops.LeaseView `json:"leases"`
+	// Rewired are the other leases of the branch an acquire or a release
+	// handed the recomputed sibling overlay (DP-25).
+	Rewired []ops.LeaseRewire `json:"rewired,omitempty"`
 	// UnreadPools are the pools a status of every pool could not read, each
 	// with why; their leases are listed from zcp's records, unverified.
 	UnreadPools []ops.LeasePoolUnread   `json:"unreadPools,omitempty"`
@@ -142,12 +145,13 @@ func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir 
 				return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
 					"acquire needs pool", "Pass the pool service's hostname as pool, or several as pools")), nil, nil
 			}
-			views, err := ops.LeaseAcquireGroup(ctx, deps, pools, input.Repo, input.Branch)
+			change, err := ops.LeaseAcquireGroupChange(ctx, deps, pools, input.Repo, input.Branch)
 			if err != nil {
 				return convertError(withLeaseSSHStderr(err)), nil, nil
 			}
 			return jsonResult(leaseToolResult{
-				Action: input.Action, Leases: views, NextActions: leaseAcquireNext(views), Envelope: envelope(ctx),
+				Action: input.Action, Leases: change.Leases, Rewired: change.Rewired,
+				NextActions: joinNext(leaseAcquireNext(change.Leases), leaseRewireNext(change.Rewired)), Envelope: envelope(ctx),
 			}), nil, nil
 		case leaseActionStatus:
 			status, err := ops.LeaseStatus(ctx, deps, input.Pool)
@@ -171,22 +175,25 @@ func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir 
 				return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
 					"release takes lease or branch, not both", "Pass one lease by its alias as lease, or every lease of a branch as branch")), nil, nil
 			case input.Branch != "":
-				views, err := ops.LeaseReleaseGroup(ctx, deps, input.Repo, input.Branch, force)
+				change, err := ops.LeaseReleaseGroupChange(ctx, deps, input.Repo, input.Branch, force)
 				if err != nil {
 					return convertError(withLeaseSSHStderr(err)), nil, nil
 				}
 				return jsonResult(leaseToolResult{
-					Action: input.Action, Leases: views, NextActions: leaseReleaseBranchNext(views, input.Branch, input.Repo, force), Envelope: envelope(ctx),
+					Action: input.Action, Leases: change.Leases, Rewired: change.Rewired,
+					NextActions: joinNext(leaseReleaseBranchNext(change.Leases, input.Branch, input.Repo, force), leaseRewireNext(change.Rewired)), Envelope: envelope(ctx),
 				}), nil, nil
 			case input.Lease == "":
 				return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
 					"release needs lease or branch", "Pass the lease alias (<pool>-<number>) as lease, or a branch as branch to release every lease of it; zerops_lease action=status lists them")), nil, nil
 			}
-			view, err := ops.LeaseRelease(ctx, deps, input.Lease, force)
+			change, err := ops.LeaseReleaseChange(ctx, deps, input.Lease, force)
 			if err != nil {
 				return convertError(withLeaseSSHStderr(err)), nil, nil
 			}
-			return jsonResult(leaseToolResult{Action: input.Action, Leases: []ops.LeaseView{view}, Envelope: envelope(ctx)}), nil, nil
+			return jsonResult(leaseToolResult{
+				Action: input.Action, Leases: change.Leases, Rewired: change.Rewired, NextActions: leaseRewireNext(change.Rewired), Envelope: envelope(ctx),
+			}), nil, nil
 		case leaseActionSync:
 			if refusal := leaseSyncInputRefusal(input); refusal != nil {
 				return convertError(refusal), nil, nil
@@ -274,6 +281,34 @@ func leaseReleaseBranchNext(views []ops.LeaseView, branch, repo string, force bo
 		next += " Every other lease of the branch was released."
 	}
 	return next + " " + ops.LeaseReleaseBranchCall(branch, repo, force) + " again releases what is left of the branch."
+}
+
+// leaseRewireNext is what the rewire of a branch's other leases tells the
+// agent: the note of each lease it could not hand the new overlay, or whose
+// servers had not yet restarted under it — each naming the lease and the call
+// that sends the overlay again; "" when every one took it.
+func leaseRewireNext(rewired []ops.LeaseRewire) string {
+	var notes []string
+	for _, r := range rewired {
+		if r.Note != "" {
+			notes = append(notes, r.Note)
+		}
+	}
+	if len(notes) == 0 {
+		return ""
+	}
+	return "Sibling wiring of the branch's other leases needs a look (a release or acquire never waits on it): " + strings.Join(notes, "; ") + "."
+}
+
+// joinNext joins the non-empty next-action sentences.
+func joinNext(parts ...string) string {
+	var kept []string
+	for _, p := range parts {
+		if p != "" {
+			kept = append(kept, p)
+		}
+	}
+	return strings.Join(kept, " ")
 }
 
 // leaseReads is what a call read of each lease's checkout, keyed by alias, for

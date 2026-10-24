@@ -103,7 +103,7 @@ func readLeaseActivities(ctx context.Context, d LeaseDeps, records []leaseRecord
 		}
 		reads.Go(func() {
 			r := readLeaseFacts(ctx, d, rec)
-			v.Activity, v.Unsaved, v.noPreview = r.activity, r.unsaved, r.noPreview
+			v.Activity, v.Unsaved, v.noPreview, v.overlay = r.activity, r.unsaved, r.noPreview, r.overlay
 		})
 	}
 	reads.Wait()
@@ -133,17 +133,19 @@ func readLeaseActivity(ctx context.Context, d LeaseDeps, rec leaseRecord) (*topo
 }
 
 // leaseFacts is what one read of a lease's checkout found
-// (readLeaseActivity), and whether the container has no preview to observe:
-// a supervisor that lists activity runs no dev server on a preview port, so no
-// preview connection can be in use (markIdleLeases).
+// (readLeaseActivity); whether the container has no preview to observe — a
+// supervisor that lists activity runs no dev server on a preview port, so no
+// preview connection can be in use (markIdleLeases); and the supervisor's
+// overlay its supervisor part carried (overlayOf, DP-25).
 type leaseFacts struct {
 	activity  *topology.LeaseActivity
 	unsaved   *topology.LeaseUnsaved
 	noPreview bool
+	overlay   *leaseOverlay
 }
 
 // readLeaseFacts is readLeaseActivity with whether the container has no
-// preview to observe.
+// preview to observe and its overlay.
 func readLeaseFacts(ctx context.Context, d LeaseDeps, rec leaseRecord) leaseFacts {
 	budget := d.ActivityTimeout
 	if budget <= 0 {
@@ -161,6 +163,7 @@ func readLeaseFacts(ctx context.Context, d LeaseDeps, rec leaseRecord) leaseFact
 	r := splitCheckoutRead(answer)
 
 	var notes []string
+	var overlay *leaseOverlay
 	if r.activity {
 		change, note := lastChangeAt(r.activityFields)
 		act.LastChangeAt = change
@@ -171,6 +174,7 @@ func readLeaseFacts(ctx context.Context, d LeaseDeps, rec leaseRecord) leaseFact
 		var note string
 		act.PreviewLastConnAt, act.PreviewOpenConns, noPreview, note = leasePreview(r.preview)
 		notes = append(notes, note)
+		overlay = overlayOf(r.preview)
 	}
 	var unsaved *topology.LeaseUnsaved
 	switch {
@@ -189,7 +193,7 @@ func readLeaseFacts(ctx context.Context, d LeaseDeps, rec leaseRecord) leaseFact
 		unsaved = unsavedWork{files: parseUnsavedFiles(r.status), unpushed: n}.view()
 	}
 	act.Note = joinNotes(notes...)
-	return leaseFacts{activity: act, unsaved: unsaved, noPreview: noPreview}
+	return leaseFacts{activity: act, unsaved: unsaved, noPreview: noPreview, overlay: overlay}
 }
 
 // checkoutRead is the read's answer split at its markers.
