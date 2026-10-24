@@ -402,6 +402,13 @@ func TestDeployIntent_StageOfPoolDevPair_SourceIsLease(t *testing.T) {
 				DeployArgs:    map[string]string{"sourceService": "apppool-4", "targetService": "appstage", "setup": "web"},
 				EventsService: "appstage", VerifyTarget: "appstage",
 			}},
+		{"an unverified held lease is never the source: maybe another holder's", topology.CloseModeAuto, topology.GitPushUnconfigured,
+			[]LeaseSnapshot{{Alias: "apppool-4", Pool: "apppool", State: "held", Unverified: true}},
+			DeployIntent{
+				Delivery: DeployDeliveryDirect, SourcePool: "apppool",
+				BuildTarget: "appstage", BuildSetup: "web",
+				EventsService: "appstage", VerifyTarget: "appstage",
+			}},
 		{"no held lease: lease first, no deploy", topology.CloseModeAuto, topology.GitPushUnconfigured,
 			[]LeaseSnapshot{{Alias: "apppool-2", Pool: "apppool", State: "lost"}},
 			DeployIntent{
