@@ -1862,7 +1862,7 @@ sequenceDiagram
   the browser asks HQ for a new one. **Reconnect is a new ticket**, retried at a bounded rate (§0
   rule 4): 2, 4, 8, 15 and 30 s apart, then steady at 60 s for the Mate on screen and 5 min for one in
   the background, paused while the tab is hidden, released at once by a wake, the network or a
-  change of the Mate's state; "Reconnecting — next try in …" with _Try again now_. Only a definitive
+  change of the Mate's state; "Reconnecting — next try in …" with _Try now_. Only a definitive
   refusal — HQ saying the person may not open the Mate, a server below the floor — ends it, visibly,
   with _Try again_.
 - **Many tabs, many people.** Every tab is its own connection with its own ticket. The Mate enforces
