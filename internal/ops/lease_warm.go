@@ -28,7 +28,9 @@ import (
 // outside it (another container's zcp, another consumer) can overshoot the
 // target by one, which a later release removes. zcp deletes only the container
 // it is releasing, with that lease — never a batch, never force, never by
-// lowering maxContainers (docs/spec-workflows.md §8 DP-27).
+// lowering maxContainers (docs/spec-workflows.md §8 DP-27). Each warm
+// container gets the pool's repository cloned into it (lease_warm_clone.go,
+// DP-32).
 
 // LeaseWarmTarget is how many warm containers each pool keeps (the owner's
 // answer: one per pool).
@@ -112,7 +114,10 @@ type LeasePoolWarm struct {
 	Preparing int `json:"preparing,omitempty"`
 	// Last is what zcp last did for the pool; nil when it never did anything.
 	Last *LeaseWarmOutcome `json:"last,omitempty"`
-	Note string            `json:"note,omitempty"`
+	// Clone is what zcp last did to clone the pool's repository into a warm
+	// container (DP-32); nil when it never did.
+	Clone *LeaseWarmClone `json:"clone,omitempty"`
+	Note  string          `json:"note,omitempty"`
 }
 
 // Notes a release or an acquire carries.
@@ -232,6 +237,8 @@ func isWarm(c platform.SwarmContainer) bool { return warmCandidate(c) && c.Snaps
 type poolWarmRead struct {
 	total int // containers in every state, deleting ones included
 	ready int // warm containers, the released one aside
+	// warm are the ids of the warm containers counted in ready.
+	warm []string
 	// mine is the released container as listed (nil when it is not), and
 	// mineCounted that its snapshots were read by id.
 	mine        *platform.SwarmContainer
@@ -265,6 +272,7 @@ func (d LeaseDeps) readPoolWarm(ctx context.Context, rp *resolvedPool, mineID st
 		}
 		if got, err := d.containerByID(ctx, rp, c.ID); err == nil && isWarm(got) {
 			read.ready++
+			read.warm = append(read.warm, c.ID)
 		}
 	}
 	if read.mine != nil {
@@ -300,7 +308,7 @@ func (w *LeaseWarm) keepOrRemove(ctx context.Context, d LeaseDeps, rp *resolvedP
 		if errors.Is(err, errWarmLockBusy) {
 			why = "another zcp call was still deciding or creating the pool's warm container"
 		}
-		return keptWithReset(reset, why)
+		return w.keptWithClone(ctx, d, rp, rec, reset, why)
 	}
 	handed := false
 	defer func() {
@@ -310,19 +318,34 @@ func (w *LeaseWarm) keepOrRemove(ctx context.Context, d LeaseDeps, rp *resolvedP
 	}()
 	read, err := d.readPoolWarm(ctx, rp, rec.ContainerID, w.Target)
 	if err != nil {
-		return keptWithReset(reset, "the pool's containers could not be read ("+err.Error()+")")
+		return w.keptWithClone(ctx, d, rp, rec, reset, "the pool's containers could not be read ("+err.Error()+")")
 	}
 	view, kept, err := w.decideRelease(ctx, d, rp, rec, read, reset)
 	if err != nil {
 		return LeaseView{}, err
 	}
+	// The pool's warm container gets the pool's repository (DP-32): the one
+	// just kept, its reset done, or the ones it already had.
+	clone := read.warm
 	if kept {
 		read.ready++
+		clone = []string{rec.ContainerID}
 	}
 	var note string
 	note, handed = w.topUp(ctx, d, rp, read, unlock)
 	view.Note = joinNotes(view.Note, note)
+	w.cloneLater(ctx, d, rp, clone)
 	return view, nil
+}
+
+// keptWithClone is keptWithReset, then the clone of the pool's repository into
+// the container it kept (DP-32).
+func (w *LeaseWarm) keptWithClone(ctx context.Context, d LeaseDeps, rp *resolvedPool, rec leaseRecord, reset func() (LeaseView, error), why string) (LeaseView, error) {
+	view, err := keptWithReset(reset, why)
+	if err == nil && view.keptWarm {
+		w.cloneLater(ctx, d, rp, []string{rec.ContainerID})
+	}
+	return view, err
 }
 
 // keptWithReset releases with the reset when the warm decision could not be
@@ -465,7 +488,8 @@ func (w *LeaseWarm) afterAcquire(ctx context.Context, d LeaseDeps, rp *resolvedP
 }
 
 // topUpRead reads the pool and tops it up, under the warm lock unlock
-// releases.
+// releases, and starts the clone of the pool's repository in the warm
+// containers it found (DP-32).
 func (w *LeaseWarm) topUpRead(ctx context.Context, d LeaseDeps, rp *resolvedPool, unlock func()) string {
 	read, err := d.readPoolWarm(ctx, rp, "", w.Target)
 	if err != nil {
@@ -477,6 +501,7 @@ func (w *LeaseWarm) topUpRead(ctx context.Context, d LeaseDeps, rp *resolvedPool
 	if !handed {
 		unlock()
 	}
+	w.cloneLater(ctx, d, rp, read.warm)
 	return note
 }
 
@@ -485,7 +510,8 @@ func (w *LeaseWarm) topUpRead(ctx context.Context, d LeaseDeps, rp *resolvedPool
 // the background, and records what it did. read is the pool as read under the
 // warm lock, which unlock releases: when a create starts, the background
 // create takes the lock over (handed) and releases it once the orchestrator
-// answered, so no other decision reads the pool meanwhile.
+// answered, so no other decision reads the pool meanwhile; then it starts the
+// clone of the pool's repository in each container it created (DP-32).
 func (w *LeaseWarm) topUp(ctx context.Context, d LeaseDeps, rp *resolvedPool, read poolWarmRead, unlock func()) (note string, handed bool) {
 	pool := rp.svc.Name
 	short := w.Target - read.ready
@@ -505,23 +531,37 @@ func (w *LeaseWarm) topUp(ctx context.Context, d LeaseDeps, rp *resolvedPool, re
 	}
 	w.record(d, pool, LeaseWarmCreating, n, "")
 	w.spawn(func() {
-		defer unlock()
 		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), LeaseCallTimeout)
 		defer cancel()
 		created, err := rp.api.Create(cctx, n)
-		var se *platform.SwarmError
-		switch {
-		case err == nil:
-			w.record(d, pool, LeaseWarmCreated, len(created), "an acquire may take it at once; zcp never treats it as its own")
-		case errors.As(err, &se) && se.Reason == platform.SwarmReasonPoolCapacityExceeded:
-			w.record(d, pool, LeaseWarmFull, 0, "the orchestrator refused the create: "+se.Message)
-		case errors.As(err, &se) && se.Message != "":
-			w.record(d, pool, LeaseWarmFailed, 0, "the orchestrator refused the create: "+se.Message)
-		default:
-			w.record(d, pool, LeaseWarmFailed, 0, "the create failed: "+err.Error())
+		w.recordCreate(d, pool, created, err)
+		unlock()
+		if err == nil {
+			// Each created container gets the pool's repository (DP-32);
+			// one an acquire took meanwhile is read as taken, never written.
+			ids := make([]string, 0, len(created))
+			for _, c := range created {
+				ids = append(ids, c.ID)
+			}
+			w.cloneInto(cctx, d, rp, ids)
 		}
 	})
 	return warmPreparingNote, true
+}
+
+// recordCreate records how the pool's create ended.
+func (w *LeaseWarm) recordCreate(d LeaseDeps, pool string, created []platform.SwarmContainer, err error) {
+	var se *platform.SwarmError
+	switch {
+	case err == nil:
+		w.record(d, pool, LeaseWarmCreated, len(created), "an acquire may take it at once; zcp never treats it as its own")
+	case errors.As(err, &se) && se.Reason == platform.SwarmReasonPoolCapacityExceeded:
+		w.record(d, pool, LeaseWarmFull, 0, "the orchestrator refused the create: "+se.Message)
+	case errors.As(err, &se) && se.Message != "":
+		w.record(d, pool, LeaseWarmFailed, 0, "the orchestrator refused the create: "+se.Message)
+	default:
+		w.record(d, pool, LeaseWarmFailed, 0, "the create failed: "+err.Error())
+	}
 }
 
 // acquireThroughPreparing is the acquire of a container, retried while the
@@ -579,7 +619,7 @@ func (d LeaseDeps) leaseStatusWarm(ctx context.Context, pools []string) []LeaseP
 		if err != nil {
 			continue // gone: it keeps nothing warm
 		}
-		pw := LeasePoolWarm{Pool: name, Target: d.Warm.Target}
+		pw := LeasePoolWarm{Pool: name, Target: d.Warm.Target, Clone: readWarmClone(d.StateDir, name)}
 		pw.Last, pw.Preparing = d.warmOutcomeView(name)
 		rp, err := orchestratorFor(ctx, d, svc)
 		if err == nil {
