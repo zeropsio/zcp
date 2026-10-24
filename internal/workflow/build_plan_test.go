@@ -86,9 +86,10 @@ func TestBuildPlan_IdleOnlyUnmanagedRuntimes(t *testing.T) {
 
 // TestCountIdleServices_PoolNotAdoptable pins, through the idle plan, that a
 // pool or a Box counts as neither bootstrapped nor adoptable
-// (docs/spec-workflows.md §8 PS-2): alone they leave the project empty for
-// plan purposes, and next to a bootstrapped runtime they offer no adopt
-// alternative.
+// (docs/spec-workflows.md §8 PS-2): alone they are never adopted — a Box
+// alone leaves the project empty for plan purposes, a pool alone is leased
+// (TestBuildPlan_IdleDevPool_LeasesAContainer) — and next to a bootstrapped
+// runtime they offer no adopt alternative.
 func TestCountIdleServices_PoolNotAdoptable(t *testing.T) {
 	t.Parallel()
 
@@ -98,8 +99,11 @@ func TestCountIdleServices_PoolNotAdoptable(t *testing.T) {
 			env := planEnvelope(PhaseIdle)
 			env.Services = []ServiceSnapshot{{Hostname: "swarm", RuntimeClass: class}}
 			plan := BuildPlan(env)
-			if plan.Primary.Args["workflow"] != "bootstrap" || plan.Primary.Args["route"] == "adopt" {
-				t.Errorf("primary = %v, want a plain bootstrap start, never route=adopt", plan.Primary.Args)
+			if plan.Primary.Args["route"] == "adopt" {
+				t.Errorf("primary = %v, never route=adopt", plan.Primary.Args)
+			}
+			if class == topology.RuntimeSandbox && plan.Primary.Args["workflow"] != "bootstrap" {
+				t.Errorf("primary = %v, want a plain bootstrap start", plan.Primary.Args)
 			}
 		})
 		t.Run(string(class)+"_beside_bootstrapped", func(t *testing.T) {
@@ -117,6 +121,56 @@ func TestCountIdleServices_PoolNotAdoptable(t *testing.T) {
 				if alt.Args["route"] == "adopt" {
 					t.Errorf("alternatives offer adopt: %v, want none for a %s", alt.Args, class)
 				}
+			}
+		})
+	}
+}
+
+// TestBuildPlan_IdleDevPool_LeasesAContainer pins the idle plan of a project
+// whose only runtimes are Swarm pools (docs/spec-workflows.md §8 DP-29): its
+// work is a lease, so the primary step acquires one — `pool` for one pool,
+// `pools` (rendered as a list) for several — with adding services the
+// alternative. A pool beside an app runtime may be infrastructure that app
+// uses, so there no plan step names a lease at all.
+func TestBuildPlan_IdleDevPool_LeasesAContainer(t *testing.T) {
+	t.Parallel()
+
+	pool := func(h string) ServiceSnapshot { return ServiceSnapshot{Hostname: h, RuntimeClass: topology.RuntimePool} }
+	tests := []struct {
+		name     string
+		services []ServiceSnapshot
+		wantArgs map[string]string // nil: no plan step names zerops_lease
+	}{
+		{"one pool", []ServiceSnapshot{pool("webpool"), {Hostname: "db", RuntimeClass: topology.RuntimeManaged}},
+			map[string]string{"action": "acquire", "pool": "webpool"}},
+		{"two pools, sorted", []ServiceSnapshot{pool("webpool"), pool("hqpool")},
+			map[string]string{"action": "acquire", "pools": `["hqpool","webpool"]`}},
+		{"a pool beside an unmanaged runtime", []ServiceSnapshot{{Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic}, pool("webpool")}, nil},
+		{"a pool beside a bootstrapped runtime", []ServiceSnapshot{{Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Mode: topology.ModeDev}, pool("webpool")}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			env := planEnvelope(PhaseIdle)
+			env.Services = tt.services
+			plan := BuildPlan(env)
+			steps := append([]NextAction{plan.Primary}, plan.Alternatives...)
+			if plan.Secondary != nil {
+				steps = append(steps, *plan.Secondary)
+			}
+			if tt.wantArgs == nil {
+				for _, s := range steps {
+					if s.Tool == "zerops_lease" {
+						t.Errorf("plan step %+v leases a pool beside an app runtime", s)
+					}
+				}
+				return
+			}
+			if plan.Primary.Tool != "zerops_lease" || !reflect.DeepEqual(plan.Primary.Args, tt.wantArgs) {
+				t.Errorf("primary = %s %v, want zerops_lease %v", plan.Primary.Tool, plan.Primary.Args, tt.wantArgs)
+			}
+			if len(plan.Alternatives) != 1 || plan.Alternatives[0].Args["workflow"] != "bootstrap" || plan.Alternatives[0].Args["route"] != "" {
+				t.Errorf("alternatives = %+v, want adding services only", plan.Alternatives)
 			}
 		})
 	}

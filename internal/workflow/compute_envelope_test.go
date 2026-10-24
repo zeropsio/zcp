@@ -1046,9 +1046,54 @@ func TestComputeEnvelope_PoolClass(t *testing.T) {
 		}
 	}
 	// Neither is an adoptable runtime: a project holding only a pool and a
-	// Box is an empty project for the bootstrap/adopt routing.
-	if env.IdleScenario != IdleEmpty {
-		t.Errorf("IdleScenario = %q, want %q (pool and Box are not adoptable runtimes)", env.IdleScenario, IdleEmpty)
+	// Box has nothing to bootstrap or adopt, and its pool is worked on
+	// through a lease (docs/spec-workflows.md §8 DP-29).
+	if env.IdleScenario != IdleScenario("dev-pool") {
+		t.Errorf("IdleScenario = %q, want dev-pool (pool and Box are not adoptable runtimes; the pool is leased)", env.IdleScenario)
+	}
+}
+
+// TestComputeEnvelope_IdleScenario_Pools pins where a Swarm pool puts an idle
+// project (docs/spec-workflows.md §8 DP-29): a project whose only runtimes
+// are pools is `dev-pool` — its work is a lease, nothing is bootstrapped or
+// adopted — while a pool beside an unmanaged runtime leaves that runtime's
+// adopt scenario as it was, and a Box alone is no pool.
+func TestComputeEnvelope_IdleScenario_Pools(t *testing.T) {
+	t.Parallel()
+
+	svc := func(name, typeVersion, category string) platform.ServiceStack {
+		return platform.ServiceStack{ID: name + "-id", Name: name, Status: "ACTIVE",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: typeVersion, ServiceStackTypeCategoryName: category}}
+	}
+	pool := poolService("webpool")
+	box := svc("box", "ubuntu/zbox@1", "STANDARD")
+	db := svc("db", "postgresql@16", "STANDARD")
+	app := svc("appdev", "nodejs@22", "USER")
+
+	tests := []struct {
+		name     string
+		services []platform.ServiceStack
+		want     IdleScenario
+	}{
+		{"a pool alone", []platform.ServiceStack{pool}, IdleScenario("dev-pool")},
+		{"pools, a Box and a database", []platform.ServiceStack{box, db, pool, poolService("hqpool")}, IdleScenario("dev-pool")},
+		{"a Box alone", []platform.ServiceStack{box}, IdleEmpty},
+		{"nothing", nil, IdleEmpty},
+		{"a pool beside an unmanaged runtime", []platform.ServiceStack{app, pool}, IdleAdopt},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mock := platform.NewMock().WithServices(tt.services).WithProject(&platform.Project{ID: "p1", Name: "demo"})
+			env, err := ComputeEnvelope(context.Background(), mock, t.TempDir(), "p1",
+				runtime.Info{InContainer: true, ServiceName: "zcp"}, fixedTime)
+			if err != nil {
+				t.Fatalf("ComputeEnvelope: %v", err)
+			}
+			if env.IdleScenario != tt.want {
+				t.Errorf("IdleScenario = %q, want %q", env.IdleScenario, tt.want)
+			}
+		})
 	}
 }
 

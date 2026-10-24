@@ -1770,6 +1770,67 @@ func TestScenario_DevPool_FiresOnlyWhenTheProjectHoldsAPool(t *testing.T) {
 	}
 }
 
+// TestScenario_IdleDevPool_NamesTheLease pins that idle status names the
+// lease as the way to work on a project's Swarm pool (docs/spec-workflows.md
+// §8 DP-29): whenever an idle project holds a pool — alone, or beside a
+// runtime still to adopt or one already bootstrapped — the guidance carries
+// zerops_lease's status and acquire, and a project holding only pools is not
+// told it is empty. A project without a pool, a Box alone, or a local zcp
+// (where no lease is taken) hears nothing of it.
+func TestScenario_IdleDevPool_NamesTheLease(t *testing.T) {
+	t.Parallel()
+
+	const atom = "idle-dev-pool-entry"
+	corpus, err := LoadAtomCorpus()
+	if err != nil {
+		t.Fatalf("LoadAtomCorpus: %v", err)
+	}
+	pool := fixSnapPool("webpool", "swarm@1")
+	unmanaged := ServiceSnapshot{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Status: "ACTIVE"}
+	box := ServiceSnapshot{Hostname: "box", TypeVersion: "ubuntu/zbox@1", RuntimeClass: topology.RuntimeSandbox, Status: "ACTIVE"}
+
+	poolsOnly, err := Synthesize(StateEnvelope{Phase: PhaseIdle, Environment: EnvContainer, IdleScenario: IdleScenario("dev-pool"),
+		Services: []ServiceSnapshot{pool, fixSnapPool("hqpool", "swarm@1")}}, corpus)
+	if err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	requireAtomIDsContain(t, "a project holding only pools", poolsOnly, "idle-dev-pool-entry")
+	body := strings.Join(BodiesOf(poolsOnly), "\n")
+	for _, want := range []string{`zerops_lease action=status`, `zerops_lease action=acquire`, `workflow="develop"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("a project holding only pools: guidance lacks %q:\n%s", want, body)
+		}
+	}
+	for _, m := range poolsOnly {
+		if m.AtomID == "idle-bootstrap-entry" {
+			t.Errorf("a project holding only pools is told it is empty (%s)", m.AtomID)
+		}
+	}
+
+	beside, err := Synthesize(StateEnvelope{Phase: PhaseIdle, Environment: EnvContainer, IdleScenario: IdleAdopt,
+		Services: []ServiceSnapshot{unmanaged, pool}}, corpus)
+	if err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	requireAtomIDsContain(t, "a pool beside a runtime to adopt", beside, "idle-adopt-entry", "idle-dev-pool-entry")
+
+	for label, env := range map[string]StateEnvelope{
+		"no pool":     {Phase: PhaseIdle, Environment: EnvContainer, IdleScenario: IdleAdopt, Services: []ServiceSnapshot{unmanaged}},
+		"a Box alone": {Phase: PhaseIdle, Environment: EnvContainer, IdleScenario: IdleEmpty, Services: []ServiceSnapshot{box}},
+		"local zcp":   {Phase: PhaseIdle, Environment: EnvLocal, IdleScenario: IdleScenario("dev-pool"), Services: []ServiceSnapshot{pool}},
+	} {
+		got, err := Synthesize(env, corpus)
+		if err != nil {
+			t.Fatalf("Synthesize(%s): %v", label, err)
+		}
+		for _, m := range got {
+			if m.AtomID == atom {
+				t.Errorf("%s fired for %s", atom, label)
+			}
+		}
+	}
+}
+
 // TestScenario_PoolDevPair_RendersNoContainerWorkOnThePool pins what a pair
 // keyed by its dev pool renders, across idle and develop, both close modes
 // that drive a deploy, both git-push states and a stage deployed or not: no
