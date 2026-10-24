@@ -234,7 +234,7 @@ func reconcileHQPairs(
 	address := hqc.Address()
 	pending := make([]*workflow.ServiceMeta, 0, len(metas))
 	for _, m := range metas {
-		if hqPairNeedsRepository(m, address) || hqPairWired(m) {
+		if hqPairGetsRepository(m, address, rt) || hqPairWired(m) {
 			pending = append(pending, m)
 		}
 	}
@@ -298,7 +298,7 @@ func passHQPair(
 ) (string, bool) {
 	m, _ := workflow.FindServiceMeta(stateDir, hostname)
 	switch {
-	case hqPairNeedsRepository(m, address):
+	case hqPairGetsRepository(m, address, rt):
 		attempt := wireHQPair(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, self, m, hqRepoNameOf(m))
 		return attempt.line, attempt.wired
 	case hqPairWired(m):
@@ -585,6 +585,15 @@ func hqPairWired(m *workflow.ServiceMeta) bool {
 // the dev service's checkout and puts it on `main`, and a pool holds no
 // checkout of its own. The pool migration moves only a pair that already has
 // its origin.
+// hqPairGetsRepository is hqPairNeedsRepository for this container: being a
+// Mate (runtime.Info.MateEnabled), not holding an enrollment, is what makes HQ
+// the authority (docs/spec-mate.md, "A Mate is HQ's by what it is"), so a pair
+// with no HQ record is given a repository only inside a Mate. A pair whose
+// record already names one stays HQ's outside a Mate too.
+func hqPairGetsRepository(m *workflow.ServiceMeta, address string, rt runtime.Info) bool {
+	return hqPairNeedsRepository(m, address) && (rt.MateEnabled || (m != nil && m.HQ != nil))
+}
+
 func hqPairNeedsRepository(m *workflow.ServiceMeta, address string) bool {
 	if m == nil || !m.IsComplete() || m.DevIsPool() {
 		return false
