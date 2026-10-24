@@ -181,6 +181,13 @@ func validateLaunchSourceControl(
 			},
 		}}, nil
 	}
+	// A pair keyed by its dev pool has no push-source checkout: every check
+	// below reads one over ssh, and the pool's hostname reaches a random one
+	// of its containers (docs/spec-workflows.md §10, §13 PM-10). Refused by
+	// name before any read.
+	if meta.DevIsPool() {
+		return nil, []topology.Blocker{poolDevPairLaunchBlocker(meta.Hostname, meta.StageHostnames())}, nil
+	}
 	// LP-5: a mode that can NEVER act as a push source fails with the
 	// honest mode-unsupported blocker (the old git-push-unconfigured
 	// chain bounced into a handler that refuses those modes — the

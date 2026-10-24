@@ -82,6 +82,17 @@ func gitPushMetaPreflight(
 	if meta == nil {
 		return nil
 	}
+	// Either hostname of a pair keyed by its dev pool: the push source would
+	// be the pool's hostname, a random one of its containers, and a lease
+	// pushes its own branch itself (docs/spec-workflows.md §13 PM-10, §8 DP-6).
+	// PushSourceCheckFor reads the pair's mode and would pass the pool.
+	if meta.DevIsPool() {
+		refusal := poolPairRefusal("git-push from "+targetService, targetService, meta, fmt.Sprintf(
+			"A lease pushes its own branch itself: %s checks the branch out, then commit and `git push -u origin <branch>` over ssh to the lease's alias yourself. The stage deploys from the lease: zerops_deploy sourceService=\"<alias>\" targetService=%q.",
+			poolPairLeaseAcquire(meta, "<branch>"), meta.FirstStage().Hostname))
+		recordAttempt(refusal.Message, topology.FailureClassConfig)
+		return convertError(refusal, WithRecoveryStatus())
+	}
 	switch meta.PushSourceCheckFor(targetService) {
 	case topology.PushSourceOK:
 		// proceed to GitPushState check below

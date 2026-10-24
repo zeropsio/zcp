@@ -80,8 +80,9 @@ type PoolPairMove struct {
 // (moved under the pool's key, its stamp cleared) — and sets aside under
 // DevPool.MigratedFrom what was the dev service's own container's: its setup
 // (the pool's replaces it), its adopt-time baseline, its serves-HTTP record
-// and the fingerprint of the credential it held (the next HQ pass writes the
-// pool's afresh).
+// and the fingerprint of the credential it held (the next HQ pass renews the
+// pool, taking over DP-16's per-pool record of it when that record names
+// DevPool.ServiceID).
 //
 // It refuses a pair it cannot move — none keyed by move.Dev, a simple or local
 // mode, a variant-B pair, an unfinished bootstrap, a pair already keyed by a

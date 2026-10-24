@@ -56,6 +56,14 @@ func repoDeliveryRedirect(stateDir, targetService, strategy string, breakGlass b
 	if hqPairWired(meta) {
 		return nil // nothing builds a Mate's services from its change
 	}
+	if meta.DevIsPool() {
+		// A pair keyed by its dev pool: the stage deploys from a lease of the
+		// pool, a cross-deploy whatever the git-push state — a git-push from a
+		// lease is refused (DP-6) — and a deploy to the pool is its image
+		// (DP-7). The direct deploy IS the delivery; a redirect would name the
+		// pool as the push source (docs/spec-workflows.md §13 PM-10).
+		return nil
+	}
 	if meta.GitPushState != topology.GitPushConfigured || meta.FirstDeployedAt == "" {
 		return nil // L0 artifact flow or first-deploy bypass (D2a)
 	}
@@ -130,6 +138,9 @@ func repoDeliveryDivergenceWarning(stateDir, targetService string) string {
 	meta, err := workflow.FindServiceMeta(stateDir, targetService)
 	if err != nil || meta == nil || hqPairWired(meta) {
 		return "" // a wired pair's stage deploy pushes by itself
+	}
+	if meta.DevIsPool() {
+		return "" // the stage's deploy from a lease is its delivery; no push from the pool reconciles it
 	}
 	if meta.GitPushState != topology.GitPushConfigured || meta.FirstDeployedAt == "" {
 		return ""

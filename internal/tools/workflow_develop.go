@@ -138,8 +138,13 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 	//     and stage hostname (m.StageHostname) via ManagedRuntimeIndex; only
 	//     the stage hostname is a deployable scope target. The project-name
 	//     key must be filtered out.
+	//   - A pool keying its pair (DevIsPool) is no runtime develop deploys or
+	//     verifies — its containers are leased, one per branch, and its stage
+	//     deploys from a lease of it (docs/spec-workflows.md §13 PM-10). Its
+	//     key is filtered out; a scope naming it is refused by name below.
 	allRuntimes := workflow.ManagedRuntimeIndex(metas)
 	runtimeMetas := make(map[string]*workflow.ServiceMeta, len(allRuntimes))
+	devPools := map[string]*workflow.ServiceMeta{}
 	hasLocalOnly := false
 	for h, m := range allRuntimes {
 		if m.Mode == topology.PlanModeLocalOnly {
@@ -148,6 +153,10 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 		}
 		if m.Mode == topology.PlanModeLocalStage && h == m.Hostname {
 			continue // skip the project-name key; the stage-hostname key remains
+		}
+		if m.DevIsPool() && h == m.Hostname {
+			devPools[h] = m
+			continue
 		}
 		if !m.IsComplete() {
 			continue
@@ -231,6 +240,9 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 	// no "latest bootstrap targets", no fallback. Agent names the services
 	// this task works on — the invariant CLAUDE.md promises: "auto-closes
 	// once the services you're working on are deployed and verified."
+	if refusal := devPoolInScope(input.Scope, devPools); refusal != nil {
+		return convertError(refusal, WithRecoveryStatus()), nil, nil
+	}
 	scope, err := validateDevelopScope(input.Scope, runtimeMetas, liveHostnames)
 	if err != nil {
 		if errors.Is(err, errStandardPairStageMissing) {
@@ -269,6 +281,28 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 	return renderDevelopBriefing(ctx, engine, client, projectID, rt, sshDeployer)
 }
 
+// devPoolInScope refuses a develop scope naming a pool its pair is keyed by
+// (docs/spec-workflows.md §13 PM-10): develop deploys and verifies the
+// services it names, and nothing deploys from or verifies the pool itself —
+// its stage deploys from a lease of it. Nil when the scope names none.
+func devPoolInScope(scope []string, devPools map[string]*workflow.ServiceMeta) *platform.PlatformError {
+	for _, h := range scope {
+		m := devPools[h]
+		if m == nil {
+			continue
+		}
+		stages := m.StageHostnames()
+		stagePart := "it keys no stage, so the pair has nothing develop deploys: its work is the lease's"
+		if len(stages) > 0 {
+			stagePart = fmt.Sprintf("scope the pair's stage instead — scope=[%q] — which deploys from the lease: zerops_deploy sourceService=\"<alias>\" targetService=%q", strings.Join(stages, `","`), stages[0])
+		}
+		return platform.NewPlatformError(platform.ErrInvalidParameter,
+			fmt.Sprintf("scope names %s, the dev pool its pair is keyed by: develop deploys and verifies no pool — its containers are leased, one per branch", h),
+			fmt.Sprintf("Work in a lease of it (%s), and %s.", poolPairLeaseAcquire(m, "<branch>"), stagePart))
+	}
+	return nil
+}
+
 // mateStandUpStages is the stage half of every standard pair in scope that a
 // Mate's stand-up leaves as it is (docs/spec-workflows.md §8 D2f): a pair the
 // Mate adopted — every new Mate is born from the recipe, its services
@@ -287,7 +321,7 @@ func mateStandUpStages(ctx context.Context, client platform.Client, projectID st
 	var candidates []*workflow.ServiceMeta
 	for _, h := range scope {
 		m := runtimeMetas[h]
-		if m == nil || m.Mode != topology.PlanModeStandard || m.Hostname != h || !m.HasStage() {
+		if m == nil || m.ModeFor(h) != topology.ModeStandard || m.Hostname != h || !m.HasStage() {
 			continue
 		}
 		if !m.IsAdopted() || m.IsDeployed() {
@@ -494,7 +528,9 @@ func validateDevelopScope(requested []string, runtimeMetas map[string]*workflow.
 	// agent already named a stage directly.
 	for _, h := range append([]string(nil), scope...) {
 		m := runtimeMetas[h]
-		if m == nil || m.Mode != topology.PlanModeStandard || h != m.Hostname {
+		// ModeFor, not m.Mode: a pool keying its pair is modeless — never a
+		// standard dev half whose stages develop adds.
+		if m == nil || m.ModeFor(h) != topology.ModeStandard || h != m.Hostname {
 			continue
 		}
 		for _, stage := range m.StageHostnames() {
