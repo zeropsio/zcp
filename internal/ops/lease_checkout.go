@@ -401,7 +401,7 @@ func handBackOutcome(alias string, view LeaseView, err error) (what, next string
 			fmt.Sprintf("Release it before acquiring again: zerops_lease action=release lease=%s force=true", alias)
 	case view.containerDeleted:
 		return "the container could not be reset (the platform created it for the pool's minContainers, so it has no primary snapshot), so it was deleted and the lease dropped",
-			"This lease is gone; acquire again for another (the pool creates a fresh container). Set the pool's minContainers to 0 and pre-warm containers through the orchestrator"
+			leaseGoneNext + ". " + unresettableAdvice
 	case view.containerRemoved:
 		return "the container was removed with the lease (the pool already had its warm container, or the container ran an outdated version) and the lease dropped",
 			leaseGoneNext

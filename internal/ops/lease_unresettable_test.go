@@ -72,10 +72,15 @@ func TestLeaseRelease_Unresettable_DeletesTheContainer(t *testing.T) {
 			if view.State != LeaseStateReleased {
 				t.Errorf("state = %q, want released", view.State)
 			}
-			for _, want := range []string{"could not be reset", "deleted", "minContainers", "0"} {
+			for _, want := range []string{"could not be reset", "deleted", "minContainers", "0", "warm container"} {
 				if !strings.Contains(view.Note, want) {
 					t.Errorf("note %q lacks %q", view.Note, want)
 				}
+			}
+			// zcp keeps the pool's warm container itself (DP-27): a container
+			// the agent creates by hand only competes with it.
+			if strings.Contains(strings.ToLower(view.Note), "pre-warm") {
+				t.Errorf("note tells the agent to pre-warm containers itself: %q", view.Note)
 			}
 			if strings.Contains(view.Note, testLease) {
 				t.Errorf("note leaks the lease: %q", view.Note)

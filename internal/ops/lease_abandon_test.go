@@ -37,8 +37,8 @@ func TestAbandonLease_MessageAndSuggestionSayWhereTheContainerWent(t *testing.T)
 		{
 			name:       "could not be reset: deleted",
 			releaseErr: noPrimarySnapshot(),
-			wantMsg:    []string{"could not be reset", "deleted"}, wantSug: []string{"acquire again", "minContainers"},
-			bannedBoth: []string{"stays reserved", "released with a reset", "force=true"},
+			wantMsg:    []string{"could not be reset", "deleted"}, wantSug: []string{"acquire again", "minContainers", "warm container"},
+			bannedBoth: []string{"stays reserved", "released with a reset", "force=true", "pre-warm"},
 		},
 		{
 			name:       "the orchestrator no longer held it",

@@ -17,8 +17,13 @@ import (
 // release guard passed (or force); the pool creates fresh containers — with a
 // snapshot — on later acquires (docs/spec-workflows.md §8 DP-15).
 
+// unresettableAdvice is what to do about a pool whose containers cannot be
+// reset: zcp keeps the pool's warm container itself (DP-27), so a container
+// the agent creates by hand only competes with it.
+const unresettableAdvice = "Set the pool's minContainers to 0: zcp keeps the pool's warm container itself, one the orchestrator creates and can reset"
+
 // unresettableNote is what a release that deleted its container says.
-const unresettableNote = "the container could not be reset (the platform created it for the pool's minContainers, so it has no primary snapshot), so it was deleted rather than handed to the next holder with this lease's files; the pool creates a fresh one on a later acquire. Set the pool's minContainers to 0 and pre-warm containers through the orchestrator instead"
+const unresettableNote = "the container could not be reset (the platform created it for the pool's minContainers, so it has no primary snapshot), so it was deleted rather than handed to the next holder with this lease's files. " + unresettableAdvice
 
 // deleteUnresettable deletes the leased container whose reset the
 // orchestrator refused and drops the record. A delete the orchestrator refuses
