@@ -68,6 +68,7 @@ func (m *Mock) ListProjects(_ context.Context, clientID string) ([]Project, erro
 }
 
 func (m *Mock) GetProject(_ context.Context, _ string) (*Project, error) {
+	m.trackCall("GetProject")
 	if err := m.getError("GetProject"); err != nil {
 		return nil, err
 	}

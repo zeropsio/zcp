@@ -96,6 +96,9 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 				if pe := repoPartsPlanError(ctx, client, projectID, input.Plan, sshDeployer, rt); pe != nil {
 					return convertError(pe, WithRecoveryStatus()), nil, nil
 				}
+				if pe := boxRegionPlanError(ctx, client, projectID, input.Plan); pe != nil {
+					return convertError(pe, WithRecoveryStatus()), nil, nil
+				}
 				resp, err = engine.BootstrapCompletePlan(input.Plan, schemas, existing)
 			}
 			if err != nil {
@@ -149,6 +152,9 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 				return convertError(pe, WithRecoveryStatus()), nil, nil
 			}
 			if pe := repoPartsPlanError(ctx, client, projectID, input.Plan, sshDeployer, rt); pe != nil {
+				return convertError(pe, WithRecoveryStatus()), nil, nil
+			}
+			if pe := boxRegionPlanError(ctx, client, projectID, input.Plan); pe != nil {
 				return convertError(pe, WithRecoveryStatus()), nil, nil
 			}
 			resp, err := engine.BootstrapCompletePlan(input.Plan, schemas, nil)

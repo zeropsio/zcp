@@ -130,6 +130,9 @@ func registerImport(srv *mcp.Server, client platform.Client, projectID string, e
 		if blocked := refuseSecondMate(rt, input); blocked != nil {
 			return blocked, nil, nil
 		}
+		if blocked := refuseBoxOutsideItsRegion(ctx, client, projectID, input); blocked != nil {
+			return blocked, nil, nil
+		}
 		if input.Override.Bool() {
 			if blocked, gateErr := gateOverrideOnFailedHistory(ctx, client, projectID, input); gateErr != nil {
 				return convertError(gateErr, WithRecoveryStatus()), nil, nil

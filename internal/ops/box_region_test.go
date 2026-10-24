@@ -1,4 +1,4 @@
-// Tests for: ops/import_targets.go — the region pre-check a Zerops Box's
+// Tests for: ops/box_region.go — the region pre-check a Zerops Box's
 // import and a bootstrap plan carrying one pass before anything is created
 // (docs/spec-workflows.md §8 PS-16).
 package ops

@@ -70,35 +70,31 @@ func TestImportTool_BoxOutsidePrg1_RefusedBeforeImport(t *testing.T) {
 	}
 }
 
+// TestImportTool_BoxRegion_ReadOnlyWithABoxAndPassesInPrg1: an import with no
+// Box never reads the project's region, even outside prg1, and a Box in prg1
+// imports after exactly one read. The result's envelope reads the project
+// too, so the region read is what a Box import reads beyond the same import
+// without one.
 func TestImportTool_BoxRegion_ReadOnlyWithABoxAndPassesInPrg1(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name      string
-		region    string
-		yaml      string
-		wantReads int
-	}{
-		{"no Box, even outside prg1: no read", "ny1", "services:\n  - hostname: api\n    type: nodejs@22\n", 0},
-		{"a Box in prg1 imports", "prg1", "services:\n  - hostname: box\n    type: ubuntu/zbox@1\n  - hostname: api\n    type: nodejs@22\n", 1},
+	importIn := func(region, yaml string) int {
+		t.Helper()
+		mock := regionImportMock(region)
+		srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+		RegisterImport(srv, mock, "proj-1", testEngine(t), "", nil, runtime.Info{})
+		result := callTool(t, srv, "zerops_import", map[string]any{"content": yaml})
+		if result.IsError {
+			t.Fatalf("import in %s must proceed: %s", region, getTextContent(t, result))
+		}
+		if n := mock.CallCount("ImportServices"); n != 1 {
+			t.Errorf("ImportServices called %d times, want 1", n)
+		}
+		return mock.CallCount("GetProject")
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			mock := regionImportMock(tt.region)
-			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-			RegisterImport(srv, mock, "proj-1", testEngine(t), "", nil, runtime.Info{})
-
-			result := callTool(t, srv, "zerops_import", map[string]any{"content": tt.yaml})
-			if result.IsError {
-				t.Fatalf("import must proceed: %s", getTextContent(t, result))
-			}
-			if n := mock.CallCount("GetProject"); n != tt.wantReads {
-				t.Errorf("GetProject reads = %d, want %d", n, tt.wantReads)
-			}
-			if n := mock.CallCount("ImportServices"); n != 1 {
-				t.Errorf("ImportServices called %d times, want 1", n)
-			}
-		})
+	withoutBox := importIn("ny1", "services:\n  - hostname: api\n    type: nodejs@22\n")
+	withBox := importIn("prg1", "services:\n  - hostname: box\n    type: ubuntu/zbox@1\n  - hostname: api\n    type: nodejs@22\n")
+	if withBox != withoutBox+1 {
+		t.Errorf("GetProject reads: %d with a Box in prg1, %d without one; want exactly one region read, and only with a Box", withBox, withoutBox)
 	}
 }
 
@@ -153,43 +149,37 @@ func TestBootstrapPlan_BoxDependencyOutsidePrg1_RefusedBeforePlanning(t *testing
 	}
 }
 
+// TestBootstrapPlan_BoxDependency_AcceptedWhereItCanExist: a plan creating a
+// Box in prg1 is taken after one region read, a plan naming a Box that exists
+// is never region-checked — even outside prg1 — and either stores the Box as
+// the runtime's dependency, with no mode. The response's envelope reads the
+// project too, so the region read is what the CREATE plan reads beyond the
+// EXISTS one.
 func TestBootstrapPlan_BoxDependency_AcceptedWhereItCanExist(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name       string
-		region     string
-		resolution string
-		wantReads  int
-	}{
-		{"a Box created in prg1", "prg1", "CREATE", 1},
-		{"a Box that already exists is never region-checked", "ny1", "EXISTS", 0},
+	planIn := func(region, resolution string) int {
+		t.Helper()
+		srv, engine, mock := classicPlanHarness(t, region)
+		result := callTool(t, srv, "zerops_workflow", map[string]any{"action": "complete", "step": "discover", "plan": boxPlan(resolution)})
+		if result.IsError {
+			t.Fatalf("a %s Box plan in %s must be taken: %s", resolution, region, getTextContent(t, result))
+		}
+		state, err := engine.GetState()
+		if err != nil {
+			t.Fatalf("GetState: %v", err)
+		}
+		plan := state.Bootstrap.Plan
+		if plan == nil || len(plan.Targets) != 1 || len(plan.Targets[0].Dependencies) != 1 {
+			t.Fatalf("plan not stored with the Box as its dependency: %+v", plan)
+		}
+		if dep := plan.Targets[0].Dependencies[0]; dep.Hostname != "sandbox" || dep.Mode != "" {
+			t.Errorf("Box dependency stored as %+v; a Box takes no mode", dep)
+		}
+		return mock.CallCount("GetProject")
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			srv, engine, mock := classicPlanHarness(t, tt.region)
-			if tt.resolution == "EXISTS" {
-				mock.WithServices([]platform.ServiceStack{{ID: "svc-sandbox", Name: "sandbox", Status: "ACTIVE",
-					ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/zbox@1"}}})
-			}
-			result := callTool(t, srv, "zerops_workflow", map[string]any{"action": "complete", "step": "discover", "plan": boxPlan(tt.resolution)})
-			if result.IsError {
-				t.Fatalf("plan must be accepted: %s", getTextContent(t, result))
-			}
-			if n := mock.CallCount("GetProject"); n != tt.wantReads {
-				t.Errorf("GetProject reads = %d, want %d", n, tt.wantReads)
-			}
-			state, err := engine.GetState()
-			if err != nil {
-				t.Fatalf("GetState: %v", err)
-			}
-			plan := state.Bootstrap.Plan
-			if plan == nil || len(plan.Targets) != 1 || len(plan.Targets[0].Dependencies) != 1 {
-				t.Fatalf("plan not stored with the Box as its dependency: %+v", plan)
-			}
-			if dep := plan.Targets[0].Dependencies[0]; dep.Hostname != "sandbox" || dep.Mode != "" {
-				t.Errorf("Box dependency stored as %+v; a Box takes no mode", dep)
-			}
-		})
+	existing := planIn("ny1", "EXISTS")
+	created := planIn("prg1", "CREATE")
+	if created != existing+1 {
+		t.Errorf("GetProject reads: %d for a Box created in prg1, %d for one that exists; want exactly one region read, and only for a Box the plan creates", created, existing)
 	}
 }
