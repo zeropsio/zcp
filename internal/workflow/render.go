@@ -212,7 +212,7 @@ func renderProgressAndBlockers(b *strings.Builder, env StateEnvelope) {
 		fmt.Fprintf(b, "→ Auto-close blocked: %d/%d ready, pending %s. %s\n",
 			ready, required,
 			strings.Join(pending, ", "),
-			blockerNextAction(pending[0], needsDeploy, needsVerify))
+			blockerNextAction(pending[0], needsDeploy, needsVerify, env))
 	}
 	// Close-mode is the gate's third input — surface it in the HEAD too, not
 	// just the guidance wall (B5). It fires even when pending==0 (deploy+verify
@@ -290,9 +290,14 @@ func lastAttemptText(attempts []AttemptInfo, kind string) (string, bool) {
 // first blocker. Deploy always precedes verify (no point verifying an
 // un-deployed service), so the suggestion order follows that. The
 // default branch is unreachable while callers gate on len(pending) > 0.
-func blockerNextAction(host string, needsDeploy, needsVerify bool) string {
+// A stage whose pair's dev half is a pool gets the call the plan names for
+// it (poolStageDeployNext), never a deploy with no source.
+func blockerNextAction(host string, needsDeploy, needsVerify bool, env StateEnvelope) string {
 	switch {
 	case needsDeploy:
+		if next := poolStageDeployNext(host, env); next != "" {
+			return next
+		}
 		// RC-A′ / F8: state WHY deploy is needed. A live SSHFS/dev-server edit
 		// is visible now but is NOT in the deployed artefact — it reverts on the
 		// next container cycle. Deploy is what makes the change durable, even
@@ -304,6 +309,23 @@ func blockerNextAction(host string, needsDeploy, needsVerify bool) string {
 	default:
 		return ""
 	}
+}
+
+// poolStageDeployNext is the auto-close line's deploy call for host when its
+// pair's dev half is a pool, resolved as deployActionFor resolves the plan's:
+// the cross-deploy from a held lease of the pool, else acquiring one first
+// (docs/spec-workflows.md §13 PM-10). "" for any other host, and for a manual
+// close-mode, which the generic line covers.
+func poolStageDeployNext(host string, env StateEnvelope) string {
+	intent := ResolveWithLeases(snapshotByHostname(env.Services, host), env.Services, env.LeaseList())
+	switch {
+	case intent.SourcePool == "" || intent.Delivery == DeployDeliveryManual:
+		return ""
+	case intent.PushSource == "":
+		return fmt.Sprintf("Next: zerops_lease action=\"acquire\" pool=%q (%s deploys from a lease of its dev pool, never from the pool itself)", intent.SourcePool, host)
+	}
+	return fmt.Sprintf("Next: zerops_deploy sourceService=%q targetService=%q setup=%q (un-deployed edits revert on a container cycle — deploy makes the change durable)",
+		intent.PushSource, host, intent.BuildSetup)
 }
 
 // renderPhase is one line: the phase identifier plus the work session intent

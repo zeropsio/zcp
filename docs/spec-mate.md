@@ -1175,11 +1175,12 @@ record (§6.3), never a field here:
 | `unsaved` | on the same calls, what releasing the lease would lose, read with the release guard's own reads (`spec-workflows.md` §8 DP-4): `files` (the first 20 `git status --porcelain` lines), `fileCount` (all of them), `unpushedCommits`. A clean checkout is `{"fileCount":0,"unpushedCommits":0}`; absent when either read did not answer. Files git ignores and stashes are never in it, and a release loses them too (`TestEnvelopeJSON_LeaseActivity`, `TestLeaseTool_EnvelopeCarriesActivityOnStatus`) |
 
 - **Absent means "not read"; `[]` means "read, none held".** The key is emitted whenever zcp read
-  the leases for this envelope — `zerops_workflow action="status"`, every JSON carrier (§1.4, through
-  `tools.freshEnvelope`) and `zerops_lease` — and left out when it did not (no reader, or a project that
+  the leases for this envelope — `zerops_workflow action="status"`, the develop briefing
+  (`action="start" workflow="develop"`), every JSON carrier (§1.4, through `tools.freshEnvelope`) and
+  `zerops_lease`, all from `tools.leaseEnvelopeOptions` — and left out when it did not (no reader, or a project that
   lists no pool and has no lease record). Never `null`. A client keeps the last list it read until a
   newer envelope carries the key (`TestEnvelopeJSON_LeasesNotRead_NoKey`,
-  `TestEnvelopeJSON_LeasesReadNone_EmptyArray`).
+  `TestEnvelopeJSON_LeasesReadNone_EmptyArray`, `TestDevelopBriefing_PoolPairStage_HeldLease_DeploysFromTheLease`).
 - **Additive: no version gate.** Mate decodes the envelope forward-compatibly, so the key needs no
   `SupportedContract` bump and no `MinimumMateVersion` raise; a Mate that does not know it ignores it.
   The same holds for `activity` and `unsaved`.
@@ -1295,7 +1296,26 @@ up exactly as before.
     variant-B project whose record was lost, recorded again so pool migration can move it. Dev
     services whose volume holds nothing yet or an empty folder adopt as separate services, as a
     data volume's do: adopting them as a pair would make the volume a code volume, its first deploy
-    filling it.
+    filling it. Only a scope records such a pair, never a plan: its setups are read through the
+    runtimes the adopt scope names, each from its own `zerops.yaml` (`/var/www` over SSH, else its
+    mount) — never from whichever runtime of the project sorts first — and the mount is probed only
+    on the runtimes whose own file declares the setup, so the project's other runtimes are neither
+    read nor reached, wherever they sort
+    (`TestAdoptVolumeSetups_ReadsTheScopedRuntimesNotTheProjectsFirstRuntime`). A setup mounting
+    the volume runs on an adoptable runtime of its `run.base` that finds the checkout at the mount:
+    the one named after the setup (a service's default setup is its hostname), else the only one no
+    other setup takes — stages and other runtimes of the same base hold no checkout there, so they
+    never make the choice ambiguous. The pair's stages are the scoped stage hostnames (ending in
+    `stage`) named like one of its dev services (`apistage` → `apidev` or `api`, as the stand-up
+    pairs them) or whose setup the repository's `zerops.yaml` declares, each recorded with the
+    setup named after it when declared, the one named like the dev half first; with stages the
+    pair is standard. The adopt answer names the code volume, further dev services and stages
+    (`TestBootstrapCompleteAdoptPlan_VariantBBesideItsStages_IsOneStandardPair`,
+    `TestBootstrapCompleteAdoptPlan_VariantBPair_TheAnswerNamesWhatItRecorded`,
+    `TestHandleBootstrapComplete_AdoptVariantBBesideAnotherRepository_OnePairWithItsStages`).
+    Runtimes scoped beside the pair still face the adopt pairing question (docs/spec-workflows.md
+    §3.2), whose refusal names the scope that adopts the pair alone
+    (`TestBootstrapCompleteAdoptPlan_VariantBBesideAPairingQuestion_NamesThePairScopeOnly`).
   - Stand-up reads a tier's local-storage service as a managed service it leaves as it is: per
     repository, one runtime that is no stage is the dev half of every stage the repository builds
     (variant A, a stage per part), and otherwise each stage pairs with the runtime named like it,

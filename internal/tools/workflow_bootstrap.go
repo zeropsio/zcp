@@ -91,7 +91,7 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 			var resp *workflow.BootstrapResponse
 			var err error
 			if len(input.Plan) == 0 {
-				resp, err = engine.BootstrapCompleteAdoptPlan(existing, input.Scope, rt, schemas, adoptVolumeSetups(ctx, sshDeployer, existing, stateDir))
+				resp, err = engine.BootstrapCompleteAdoptPlan(existing, input.Scope, rt, schemas, adoptVolumeSetups(ctx, sshDeployer, existing, input.Scope, stateDir))
 			} else {
 				if pe := repoPartsPlanError(ctx, client, projectID, input.Plan, sshDeployer, rt); pe != nil {
 					return convertError(pe, WithRecoveryStatus()), nil, nil

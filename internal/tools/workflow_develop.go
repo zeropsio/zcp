@@ -376,8 +376,14 @@ func appendMissing(list []string, add ...string) []string {
 // renderDevelopBriefing runs the atom pipeline and returns the rendered status
 // block. Extracted so the idempotent-restart path in handleDevelopBriefing can
 // skip session mutation but still return fresh guidance.
-func renderDevelopBriefing(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, rt runtime.Info, sshDeployer ops.SSHDeployer) (*mcp.CallToolResult, any, error) {
-	envelope, err := workflow.ComputeEnvelope(ctx, client, engine.StateDir(), projectID, rt, time.Now())
+//
+// Its envelope reads the project's leases as action="status" does — the
+// default lease reader within the status budget, an extra option replacing
+// it — so develop's start and the next status plan a pool-keyed pair's stage
+// alike: the deploy from a held lease of the pool, else its acquire.
+func renderDevelopBriefing(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, rt runtime.Info, sshDeployer ops.SSHDeployer, extra ...workflow.EnvelopeOption) (*mcp.CallToolResult, any, error) {
+	envelope, err := workflow.ComputeEnvelope(ctx, client, engine.StateDir(), projectID, rt, time.Now(),
+		leaseEnvelopeOptions(client, projectID, engine.StateDir(), rt, leaseStatusTimeout, extra...)...)
 	if err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrNotImplemented,

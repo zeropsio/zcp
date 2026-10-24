@@ -414,6 +414,57 @@ func TestPoolMigrateBundle_SourceUntouched(t *testing.T) {
 	}
 }
 
+// TestPoolMigrateBundle_MirrorSharesNoFileWithTheRepository: the mirror the
+// bundle streams from copies the repository's objects — the WIP and untracked
+// commits no ref names among them — and hard-links none of them. A repository
+// on a code volume is a filesystem of its own, so a hard link from the
+// scratch directory in /tmp into it fails (EXDEV), and a clone told --local
+// dies on that instead of copying (PM-3, PM-13).
+func TestPoolMigrateBundle_MirrorSharesNoFileWithTheRepository(t *testing.T) {
+	t.Parallel()
+	_, root, _ := bundleFixture(t)
+	work := filepath.Join(t.TempDir(), "zcp-pool-migrate")
+	out, err := (&bundleLocalSSH{}).ExecSSH(context.Background(), "appdev", PoolMigrateBundleCommand(root, work))
+	if err != nil {
+		t.Fatalf("the bundle script: %v\n%s", err, out)
+	}
+	if _, err := parsePoolMigrateBundle(string(out)); err != nil {
+		t.Fatalf("the bundle script's answer: %v", err)
+	}
+	objectFiles := func(dir string) map[string]os.FileInfo {
+		t.Helper()
+		files := map[string]os.FileInfo{}
+		err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+			if err != nil || !d.Type().IsRegular() {
+				return err
+			}
+			info, err := d.Info()
+			if err != nil {
+				return err
+			}
+			files[path] = info
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walk %s: %v", dir, err)
+		}
+		return files
+	}
+	source := objectFiles(filepath.Join(root, ".git", "objects"))
+	mirror := objectFiles(filepath.Join(work, "mirror.git", "objects"))
+	if len(source) == 0 || len(mirror) == 0 {
+		t.Fatalf("object files: %d in the repository, %d in the mirror; want both", len(source), len(mirror))
+	}
+	for path, info := range mirror {
+		for from, src := range source {
+			if os.SameFile(info, src) {
+				t.Fatalf("the mirror's %s is a hard link to the repository's %s: across a code volume's filesystem that link fails",
+					strings.TrimPrefix(path, work), strings.TrimPrefix(from, root))
+			}
+		}
+	}
+}
+
 // TestPoolMigrateBundle_RestoresEveryItem runs the restore steps the bundle
 // names in a fresh directory and finds every item where the source held it:
 // each branch at its commit, the stash list in order, each tree's HEAD, index,

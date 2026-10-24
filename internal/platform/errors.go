@@ -168,8 +168,8 @@ const (
 // middleware peeks it exactly like Code (spec §5.3).
 const (
 	// SubcodeAmbiguousScope narrows ErrInvalidParameter for the bootstrap
-	// adopt route's dev/stage pairing refusal — two same-type adoptable
-	// runtimes with no explicit plan to disambiguate them
+	// adopt route's dev/stage pairing refusal — two or more scoped adoptable
+	// runtimes sharing a runtime base, with no explicit plan to disambiguate them
 	// (workflow.ErrAdoptPairingChoice). The agent must re-call with an
 	// explicit plan choosing pair-vs-independent, not just retry the same
 	// input.

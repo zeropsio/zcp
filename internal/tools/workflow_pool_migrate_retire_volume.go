@@ -352,8 +352,8 @@ func (r *poolRetireRun) deleteDevs(ctx context.Context) *mcp.CallToolResult {
 		if err := r.fence(ctx); err != nil {
 			return r.abort(ctx, poolRetireAbortFence, fmt.Sprintf("a dev service's mount could not be taken down again: %v.", err))
 		}
-		if r.rec.Bundle == nil {
-			return r.abort(ctx, poolRetireAbortUnreadable, "the record holds no bundle to check the repository against.")
+		if !r.rec.holdsBundle() {
+			return r.abort(ctx, poolRetireAbortUnreadable, "the record holds no bundle on this container to check the repository against.")
 		}
 		now, err := ops.ReadPoolMigrateFingerprint(ctx, r.d.ssh, r.rec.Dev, r.rec.root(), r.workDir())
 		if err != nil {
@@ -650,7 +650,7 @@ func (r *poolRetireRun) resumeCodeVolume(ctx context.Context, input WorkflowInpu
 		if err := r.rekey(); err != nil && !errors.Is(err, workflow.ErrServiceMetaNotFound) {
 			return r.callAgain(fmt.Sprintf("%s is gone, and the pair could not be %s yet: %v", rec.Dev, rec.keyedBy(), err))
 		}
-		if rec.Bundle == nil {
+		if !rec.holdsBundle() {
 			if result := r.bundleFromVolume(ctx); result != nil {
 				return result
 			}
