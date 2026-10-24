@@ -34,7 +34,7 @@ func TestCommitOnRemoteBranch_ReadsTheCheckoutsOwnRemoteTrackingRef(t *testing.T
 		return strings.TrimSpace(string(out))
 	}
 	git("init", "-q", "-b", "main")
-	var commits []string
+	commits := make([]string, 0, 3)
 	for i := range 3 {
 		git("commit", "-q", "--allow-empty", "-m", fmt.Sprintf("c%d", i))
 		commits = append(commits, git("rev-parse", "HEAD"))
