@@ -776,6 +776,10 @@ func TestInitSSHFS_LeaseChecks_AskedAtOnce(t *testing.T) {
 	// Not parallel — mutates env, commandRunner, os.Stderr and the sshfs/lease package vars.
 	fx := newLeaseRestoreFixture(t)
 	writeLeaseRecordFile(t, fx.stateDir, "apppool", 4, "node-id-4.runtime.apppool.zerops")
+	// A restore that asks one lease after another fails fast, not after the
+	// boot's whole budget.
+	zcpinit.SetLeaseCheckTimeout(2 * time.Second)
+	t.Cleanup(zcpinit.ResetLeaseCheckTimeout)
 	var arrived sync.WaitGroup
 	arrived.Add(2)
 	both := make(chan struct{})

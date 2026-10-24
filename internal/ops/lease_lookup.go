@@ -2,6 +2,7 @@ package ops
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -59,11 +60,12 @@ func LeaseTarget(stateDir, host string) (LeaseTargetInfo, bool, error) {
 
 // LeaseTargetChecked is LeaseTarget for a call that reaches the lease's
 // container over ssh or sshfs — a dev server, a verify, a deploy from it, a
-// mount (docs/spec-workflows.md §8 DP-2): it asks the pool's orchestrator,
-// once, with the record's own lease, whether the container is still this
-// lease's (readLeaseOwnership). One that is not — gone, being deleted, free,
-// another holder's — is refused naming the release that drops its record;
-// one the orchestrator does not answer about, or that this zcp cannot ask (no
+// mount, zcp init's remount (docs/spec-workflows.md §8 DP-2): it asks the
+// pool's orchestrator, once, with the record's own lease, whether the
+// container is still this lease's (readLeaseOwnership). One that is not —
+// gone, being deleted, free, another holder's — is refused as lost
+// (IsLeaseLost) naming the release that drops its record; one the
+// orchestrator does not answer about, or that this zcp cannot ask (no
 // orchestrator wired), is refused with why; either way nothing reaches the
 // container. what is what the call would have done with it ("verified",
 // "deployed from", …). A lease the orchestrator gives zcp is returned parked
@@ -90,9 +92,11 @@ func LeaseTargetChecked(ctx context.Context, d LeaseDeps, host, what string) (Le
 		v := readLeaseOwnership(ctx, d, rec)
 		switch {
 		case v.own.lost():
-			return info, true, platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+			refusal := platform.NewPlatformError(platform.ErrPrerequisiteMissing,
 				fmt.Sprintf("Lease %s cannot be %s: %s; zcp does not re-lease it, and nothing reached its container", host, what, v.why),
 				"zerops_lease action=release lease="+host+" drops the record")
+			refusal.Cause = &leaseLostError{why: v.why}
+			return info, true, refusal
 		case v.own == leaseUnverified:
 			return info, true, unverifiedLeaseRefusal(host, what, v)
 		}
@@ -100,6 +104,23 @@ func LeaseTargetChecked(ctx context.Context, d LeaseDeps, host, what string) (Le
 		return info, true, nil
 	}
 	return LeaseTargetInfo{}, false, nil
+}
+
+// leaseLostError is the cause LeaseTargetChecked's refusal of a lost lease
+// carries, so a caller tells it apart from one of a lease the orchestrator
+// did not answer about (IsLeaseLost).
+type leaseLostError struct{ why string }
+
+func (e *leaseLostError) Error() string { return "the lease is lost: " + e.why }
+
+// IsLeaseLost reports whether err is LeaseTargetChecked's refusal of a lease
+// that is no longer zcp's — its container gone, being deleted, free or another
+// holder's — whose record only its release drops; false for any other error,
+// the refusal of a lease the orchestrator did not answer about, or that this
+// zcp cannot ask, among them (docs/spec-workflows.md §8 DP-2).
+func IsLeaseLost(err error) bool {
+	var lost *leaseLostError
+	return errors.As(err, &lost)
 }
 
 // LeaseGroup is the group of the lease addressed by alias: the leases zcp
