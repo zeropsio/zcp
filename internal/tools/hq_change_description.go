@@ -88,11 +88,11 @@ func handleDescribeChange(
 	stateDir string,
 	input WorkflowInput,
 ) (*mcp.CallToolResult, any, error) {
-	hqc, enrolled := openHQ(httpClient)
-	if !enrolled {
+	hqc, linked := openHQ(httpClient)
+	if !linked {
 		return convertError(platform.NewPlatformError(
 			platform.ErrPrerequisiteMissing,
-			"describe-change writes a change's description in this Mate's HQ, and this Mate is not enrolled with one yet.",
+			"describe-change writes a change's description in this Mate's HQ, and this Mate is not linked to one yet.",
 			"Without a change there is nothing to describe: say what the change does in your answer instead.",
 		), WithRecoveryStatus()), nil, nil
 	}

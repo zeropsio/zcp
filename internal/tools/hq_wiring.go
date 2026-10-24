@@ -161,8 +161,8 @@ func reconcileHQRepositories(
 	if !rt.InContainer || sshDeployer == nil {
 		return nil
 	}
-	hqc, enrolled := openHQ(httpClient)
-	if !enrolled {
+	hqc, linked := openHQ(httpClient)
+	if !linked {
 		return nil
 	}
 	metas, err := workflow.ListServiceMetas(stateDir)

@@ -265,9 +265,9 @@ func composeGroupRecipe(
 	if !rt.InContainer || client == nil || httpClient == nil {
 		return groupRecipeComposition{}, recipeOutcome{Blocked: "the group recipe is a Mate's act — there is no Mate environment here"}, false
 	}
-	hqc, enrolled := openHQ(httpClient)
-	if !enrolled {
-		return groupRecipeComposition{}, recipeOutcome{Blocked: "this Mate is not enrolled with its HQ yet, so there is no recipe repository to propose to"}, false
+	hqc, linked := openHQ(httpClient)
+	if !linked {
+		return groupRecipeComposition{}, recipeOutcome{Blocked: "this Mate is not linked to its HQ yet, so there is no recipe repository to propose to"}, false
 	}
 	metas, err := workflow.ListServiceMetas(stateDir)
 	if err != nil || len(metas) == 0 {

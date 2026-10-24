@@ -208,8 +208,8 @@ func recordMissingHQOrigins(ctx context.Context, httpClient ops.HTTPDoer, stateD
 	if len(missing) == 0 {
 		return
 	}
-	hqc, enrolled := openHQ(httpClient)
-	if !enrolled {
+	hqc, linked := openHQ(httpClient)
+	if !linked {
 		return
 	}
 	ctx, cancel := context.WithTimeout(ctx, hqStatusOriginBound)

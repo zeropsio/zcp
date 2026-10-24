@@ -32,7 +32,7 @@ func isStageOf(m *workflow.ServiceMeta, hostname string) bool {
 }
 
 // hqPairPlanError refuses a classic-route plan that gives a Mate a runtime
-// with no stage half — enrolled with its HQ or not yet: the pairs it plans now
+// with no stage half — linked to its HQ or not yet: the pairs it plans now
 // are the pairs it keeps its code in. mate is runtime.Info.MateEnabled. Nil
 // outside a Mate, or when every runtime is a standard pair.
 func hqPairPlanError(plan []workflow.BootstrapTarget, mate bool) *platform.PlatformError {
@@ -54,7 +54,7 @@ func hqPairPlanError(plan []workflow.BootstrapTarget, mate bool) *platform.Platf
 }
 
 // hqLaunchProductionRefusal refuses the whole launch-production workflow in a
-// Mate, enrolled with its HQ or not yet: launch-production creates and
+// Mate, linked to its HQ or not yet: launch-production creates and
 // imports its OWN production project on a user-owned remote
 // (workflow_launch_production.go) — it has no case for an application's
 // production, which can be a Zerops project or a Git repository branch
@@ -92,7 +92,7 @@ func hqLaunchProductionNextStep(ctx context.Context, httpClient ops.HTTPDoer, st
 	merged := false
 	if metas, err := workflow.ListServiceMetas(stateDir); err == nil {
 		self := func() (hq.MateState, error) { return hq.MateState{}, hq.ErrNoIdentity }
-		if hqc, enrolled := openHQ(httpClient); enrolled {
+		if hqc, linked := openHQ(httpClient); linked {
 			self = lazySelf(ctx, hqc)
 		}
 		for _, m := range metas {
@@ -177,8 +177,8 @@ func hqHandoffNote(hasProduction bool) string {
 // production; false where it says none, cannot be read, or is older than
 // the answer.
 func hqHasProduction(ctx context.Context, httpClient ops.HTTPDoer) bool {
-	hqc, enrolled := openHQ(httpClient)
-	if !enrolled {
+	hqc, linked := openHQ(httpClient)
+	if !linked {
 		return false
 	}
 	state, err := hqc.Self(ctx)

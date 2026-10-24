@@ -386,7 +386,7 @@ func (s *Server) registerTools() {
 	tools.RegisterScale(s.server, s.client, projectID, recipeSteer)
 	// A Mate puts its organization's AI key in the Shared vault for an app
 	// (zerops_env action=ai-key, docs/spec-mate.md §5.8): Mate-gated like every
-	// Mate effect (§2.0), its key asked of HQ with the enrollment.
+	// Mate effect (§2.0), its key asked of HQ under the project key.
 	var envOpts []tools.EnvOption
 	if s.rtInfo.InContainer && s.rtInfo.MateEnabled {
 		envOpts = append(envOpts, tools.WithOrgAIKey(httpClient))

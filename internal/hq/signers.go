@@ -12,7 +12,7 @@ import (
 // beside a failed seed, never the key.
 func (c Client) SignersInput() string { return c.id.Fingerprint() }
 
-// Signers reads the enrolled project's signer metadata from HQ once, without
+// Signers reads the linked project's signer metadata from HQ once, without
 // retrying an unavailable answer. HQ omits signers when its record is empty.
 func (c Client) Signers(ctx context.Context, projectID string) (map[string]string, error) {
 	if projectID == "" || c.id.ProjectID != projectID {

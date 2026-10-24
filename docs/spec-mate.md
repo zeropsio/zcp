@@ -1748,6 +1748,9 @@ sequenceDiagram
   overridden in development by `T3CODE_ZEROPS_HQ_ORIGIN`; nothing discovers HQ. The server re-reads
   `ZCP_API_KEY` from the live env store before every connect, so a regenerated key is presented on
   the next one.
+- zcp has no HQ default of its own: it reads `T3CODE_ZEROPS_HQ_ORIGIN` and nothing else. The
+  server holds the single production default and puts the resolved origin into the environment of
+  every process it starts.
 - The key travels in the link's first frame after the TLS upgrade and in zcp's header (§3.6), never
   in a URL. HQ's logger strips the header, and its first-frame handler runs outside any request
   logger.
@@ -1993,7 +1996,7 @@ sequenceDiagram
 - HQ's throwaway door for people; the anchor token.
 - zcp's enrolment: the challenge nonce in the project's environment, `POST /api/mate/challenge` and
   `/credential`, the HQ-issued Mate credential, `~/.zcp/hq/enrollment.json`, `outcome.json`, the
-  keep loop and its recheck, `T3CODE_ZEROPS_HQ_ENROLLMENT`, the link's own ticket, and the key-id
+  keep loop and its recheck, the link's own ticket, and the key-id
   routes (`PUT /api/mate/key`, key-check).
 - The plain-zcp project credential and its challenge: plain zcp presents its key in the header too.
 - `ZCP_ORG_TOKEN`, `ZCP_ORG_ID`, `ZCP_ORG_API`, the Chief credential, its Zerops proxy and
@@ -2054,9 +2057,6 @@ What replaces what:
   `/mate/` serves the server's API and WebSocket only (§2.4, §2.7).
 - `zcli push`'s key on the remote command line → the key over SSH standard input.
 - Project-level `ZCP_API_KEY` variables → sensitive service variables, or deleted.
-- Test sentences that name the enrolment (`TestLaunchProduction_AMateWithoutItsEnrollmentSaysSo`,
-  cited by MB-31 and §10.10, among them) are dropped or renamed when it goes; a dropped one carries
-  a `Drops-test:` trailer then.
 
 The cutover, in this order (HQ keeps no old route, HQ `spec/protocol.md` *Compatibility*):
 
@@ -3936,7 +3936,7 @@ no stage half (`bootstrapMode` simple or dev), naming the standard pair to re-su
 it. A Mate whose HQ does not answer yet, or refuses its key, plans the same pairs, refuses
 launch-production and hands its release to the person, as one HQ answers does — it never falls back
 to classic simple plans, a production project of its own or a pushed tag. Whatever needs HQ to
-answer says it cannot reach HQ and why (`hqEnrollmentProblem`), and launch-production's next step
+answer says it cannot reach HQ and why (`hq.ErrNoIdentity`), and launch-production's next step
 says whether the work reached `main` is HQ's to say. A pair whose HQ repository is on record keeps
 its release and its closing hand-off HQ's outside a Mate too. A container that is not a Mate keeps
 zcp's own route whatever files it holds. And in a Mate the repository, its credential and what

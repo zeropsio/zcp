@@ -6,7 +6,7 @@ import (
 	"net/http"
 )
 
-// MateChief is HQ's canonical person and Chief for this enrolled Mate.
+// MateChief is HQ's canonical person and Chief for this linked Mate.
 type MateChief struct {
 	OwnerUserID string `json:"ownerUserId"`
 	ProjectID   string `json:"projectId"`
