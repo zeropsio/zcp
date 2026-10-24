@@ -14,6 +14,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -246,6 +247,58 @@ func TestLeaseWarmClone_LaunchAnswers_RecordedAsTheyAre(t *testing.T) {
 			clone := warmCloneOf(t, wf)
 			if clone == nil || clone.Outcome != tt.outcome || !strings.Contains(clone.Note, tt.note) {
 				t.Errorf("status clone = %+v, want %s noting %q", clone, tt.outcome, tt.note)
+			}
+		})
+	}
+}
+
+// TestLeaseWarmClone_SSHFailingAsTheAliasFileIsRewritten_TriedAgain: ssh
+// itself failing (exit 255) — as it does for every call while a lease's
+// release or acquire reinstalls the ssh alias file, which the release that
+// keeps a warm container does right beside the clone (live, 2026-10-24: "Can't
+// open user config file /etc/ssh/ssh_config.d/zcp-leases.conf: Permission
+// denied") — is tried again: the launch changes nothing until it runs. A
+// remote command's own failure is not retried, and the tries are bounded.
+func TestLeaseWarmClone_SSHFailingAsTheAliasFileIsRewritten_TriedAgain(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		failures  int
+		code      int
+		wantTries int
+		outcome   string
+	}{
+		{"ssh fails once", 1, 255, 2, LeaseWarmCloneStarted},
+		{"ssh keeps failing", 99, 255, 3, LeaseWarmCloneFailed},
+		{"the remote command fails", 99, 1, 1, LeaseWarmCloneFailed},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			orch := newWarmOrch(4)
+			orch.add(3, "", true, false, 1)
+			wf, ssh := newWarmCloneFixture(t, orch)
+			wf.deps.Warm.LaunchRetry = time.Millisecond
+			failure := sshFailure("Can't open user config file /etc/ssh/ssh_config.d/zcp-leases.conf: Permission denied", exitError(t, tt.code))
+			tries := 0
+			base := ssh.fn
+			ssh.setHandler(func(host, command string) ([]byte, error) {
+				if isWarmCloneLaunch(command) {
+					tries++
+					if tries <= tt.failures {
+						return nil, failure
+					}
+				}
+				return base(host, command)
+			})
+
+			wf.acquire(t, "feat-a")
+
+			if tries != tt.wantTries {
+				t.Errorf("launch tries = %d, want %d", tries, tt.wantTries)
+			}
+			if clone := warmCloneOf(t, wf); clone == nil || clone.Outcome != tt.outcome {
+				t.Errorf("status clone = %+v, want %s", clone, tt.outcome)
 			}
 		})
 	}
