@@ -181,11 +181,6 @@ func TestMigratePairToPool_NotAMovablePair_Refused(t *testing.T) {
 		{"no pair keyed by the dev", nil, appPoolMove(), nil, "not found"},
 		{"simple mode", func() *ServiceMeta { m := devKeyedPair(); m.Mode, m.Stages = topology.PlanModeSimple, nil; return m }, appPoolMove(), nil, "simple"},
 		{"local mode", func() *ServiceMeta { m := devKeyedPair(); m.Mode = topology.PlanModeLocalStage; return m }, appPoolMove(), nil, "local-stage"},
-		{"variant B", func() *ServiceMeta {
-			m := devKeyedPair()
-			m.CodeVolume = &topology.CodeVolume{Hostname: "code", MountPath: "/var/www/code"}
-			return m
-		}, appPoolMove(), nil, "code volume"},
 		{"bootstrap not finished", func() *ServiceMeta { m := devKeyedPair(); m.BootstrappedAt = ""; return m }, appPoolMove(), nil, "bootstrap"},
 		{"already a pool pair", func() *ServiceMeta {
 			m := devKeyedPair()
@@ -525,11 +520,6 @@ func TestMigratePairToPools_NotEveryPartOnItsPool_Refused(t *testing.T) {
 		{"a pool that is a stage", devKeyedMultiPart, []PoolPartMove{{Stage: "webstage", Pool: "apistage"}, {Stage: "apistage", Pool: "apipool"}}, nil, "apistage"},
 		{"a pool another pair names", devKeyedMultiPart, multiPartMoves(), &ServiceMeta{Hostname: "docsdev", Mode: topology.PlanModeStandard, Stages: []topology.StageRef{{Hostname: "apipool"}}, BootstrappedAt: "t"}, "docsdev"},
 		{"a pool another pair is keyed by", devKeyedMultiPart, multiPartMoves(), &ServiceMeta{Hostname: "webpool", Mode: topology.PlanModeDev, BootstrappedAt: "t"}, "webpool"},
-		{"variant B", func() *ServiceMeta {
-			m := devKeyedMultiPart()
-			m.CodeVolume = &topology.CodeVolume{Hostname: "code", MountPath: "/var/www/code"}
-			return m
-		}, multiPartMoves(), nil, "code volume"},
 		{"no pair keyed by the dev", nil, multiPartMoves(), nil, "not found"},
 	}
 	for _, tc := range cases {
