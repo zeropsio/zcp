@@ -99,6 +99,9 @@ func TestLease_Integration_Acquire_CarriesEachLeasesDevServers(t *testing.T) {
 	call, _, web := previewGroupServer(t, func(server, port string) string {
 		return `{"version":1,"previewPortBase":8000,"siblingEnv":{"HQ_HOST":"hqpool","WEB_HOST":"webpool"},"servers":[{"name":"` + server + `","port":` + port + `,"command":"run ` + server + `"}]}`
 	})
+	// webpool-7 is a reused container: zcp starts its supervisor, and web is
+	// still compiling its first answer when the acquire ends.
+	web.Running, web.Servers = false, nil
 	web.Settle = map[string]int{"web": 100}
 
 	got := readAcquired(t, call(map[string]any{"action": "acquire", "pools": []string{"hqpool", "webpool"}, "repo": "https://github.com/acme/app", "branch": "feat-x"}))

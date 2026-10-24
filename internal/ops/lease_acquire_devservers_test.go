@@ -147,7 +147,10 @@ func TestLeaseAcquire_ResultCarriesEachDevServerAsTheAcquireLeftIt(t *testing.T)
 			rf.hq = devservertest.NewSupervised(acquirePreviewDeclaration("api", "8080"))
 			rf.web = devservertest.NewSupervised(acquirePreviewDeclaration("web", "3000"))
 			rf.hq.StableNumber, rf.web.StableNumber = 1, 2
-			rf.web.Settle = map[string]int{"web": 100} // still compiling its first answer
+			// webpool-7 is a reused container, which runs no supervisor until
+			// zcp starts one, and web is still compiling its first answer then.
+			rf.web.Running, rf.web.Servers = false, nil
+			rf.web.Settle = map[string]int{"web": 100}
 			if tt.noDevsup {
 				rf.hq = &devservertest.Container{Declaration: acquirePreviewDeclaration("api", "8080")}
 			}
@@ -197,6 +200,8 @@ func TestLeaseAcquire_DevServerNotAnsweringYet_NamedForTheStatusCall(t *testing.
 	rf := newRewireFixture(t)
 	rf.deps.Client = previewMock()
 	rf.hq = devservertest.NewSupervised(`{"version":1,"servers":[{"name":"api","port":8080,"command":"run api"},{"name":"worker","command":"run worker"}]}`)
+	// A reused container: zcp starts its supervisor, which starts both.
+	rf.hq.Running, rf.hq.Servers = false, nil
 	rf.hq.Crash = map[string]bool{"worker": true}
 	rf.hq.Settle = map[string]int{"api": 100}
 	rf.ssh.containers = map[string]*devservertest.Container{"hqpool-3": rf.hq}

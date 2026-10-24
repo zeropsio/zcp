@@ -19,6 +19,9 @@ import (
 func TestLeaseTool_Acquire_CarriesEachLeasesDevServers(t *testing.T) {
 	t.Parallel()
 	ssh, _, web := newRewireToolSSH()
+	// webpool-7 is a reused container: zcp starts its supervisor, and web is
+	// still compiling its first answer when the acquire ends.
+	web.Running, web.Servers = false, nil
 	web.Settle = map[string]int{"web": 100}
 	srv, orchs, _ := groupLeaseServerSSH(t, ssh)
 
