@@ -816,3 +816,131 @@ func TestLease_Integration_ReleaseBranch_OneDirtyLeaseRefusesThenForceReleasesEv
 		t.Errorf("records left after the forced release: %v", left)
 	}
 }
+
+// idleLeaseSSH is devpool's leased containers as zcp reads them: each alias's
+// checkout answers the activity read from answers; anything else is "ok".
+type idleLeaseSSH struct {
+	answers map[string]string
+}
+
+func (s idleLeaseSSH) ExecSSH(_ context.Context, hostname, command string) ([]byte, error) {
+	if a, ok := s.answers[hostname]; ok && strings.Contains(command, "@@zcp-lease activity") {
+		return []byte(a), nil
+	}
+	return []byte("ok"), nil
+}
+
+func (s idleLeaseSSH) ExecSSHBackground(ctx context.Context, hostname, command string, _ time.Duration) ([]byte, error) {
+	return s.ExecSSH(ctx, hostname, command)
+}
+
+// wholeCheckoutRead is a checkout's whole answer to zcp's read: last changed
+// changed, porcelain ("" for none) and unpushed commits, its supervisor
+// listing activity and running no dev server on a preview port.
+func wholeCheckoutRead(changed time.Time, porcelain string, unpushed int) string {
+	if porcelain != "" {
+		porcelain += "\n"
+	}
+	return fmt.Sprintf("@@zcp-lease activity %d \n@@zcp-lease status\n%s@@zcp-lease unpushed\n%d\n", changed.Unix(), porcelain, unpushed) +
+		"@@zcp-lease preview\n" + `{"version":"v9.500.0","formats":[1],"capabilities":["env","activity"]}` + "\n@@zcp-devsup version 0\n" +
+		`{"format":1,"servers":{"worker":{"status":"running"}}}` + "\n@@zcp-devsup status 0\n"
+}
+
+// TestLease_Integration_IdleStatusAndFullPoolByActivity: through the full MCP
+// server, zerops_lease action=status marks the leases nothing has happened in
+// for 24 h or more idle — the clean one with its release, the one with unsaved
+// work with what it holds and never force — and a full pool's refusal lists
+// zcp's leases oldest activity first, naming the release of the oldest clean
+// one; neither changes anything on the pool (docs/spec-workflows.md §8 DP-25,
+// DP-9).
+func TestLease_Integration_IdleStatusAndFullPoolByActivity(t *testing.T) {
+	// Non-parallel: t.Chdir and a swap of http.DefaultTransport, as above.
+	t.Chdir(t.TempDir())
+	var mutations []string
+	var mu sync.Mutex
+	full := poolOrchestrator(4, 4, map[int]bool{1: true, 2: true, 3: true, 4: true})
+	routePools(t, map[string]http.Handler{"orch.devpool.zerops": http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.URL.Path != "/container/acquire" {
+			mu.Lock()
+			mutations = append(mutations, r.Method+" "+r.URL.Path)
+			mu.Unlock()
+		}
+		full.ServeHTTP(w, r)
+	})})
+	now := time.Now()
+	acquired := now.Add(-200 * time.Hour).UTC().Format(time.RFC3339)
+	if err := os.MkdirAll(filepath.Join(".zcp", "state", "leases"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for n := 1; n <= 3; n++ {
+		record := fmt.Sprintf(`{"poolHostname":"devpool","poolServiceId":"svc-pool","containerId":"c-%d","containerNumber":%d,`+
+			`"containerHostname":"node-id-%d.runtime.devpool.zerops","lease":"%s","branch":"feat-%d","acquiredAt":"%s"}`, n, n, n, leaseIntLease, n, acquired)
+		if err := os.WriteFile(filepath.Join(".zcp", "state", "leases", fmt.Sprintf("devpool-%d.json", n)), []byte(record), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ssh := idleLeaseSSH{answers: map[string]string{
+		"devpool-1": wholeCheckoutRead(now.Add(-72*time.Hour), "", 0),
+		"devpool-2": wholeCheckoutRead(now.Add(-time.Hour), "", 1),
+		"devpool-3": wholeCheckoutRead(now.Add(-50*time.Hour), "?? notes.txt", 0),
+	}}
+	mock := defaultMock().
+		WithServices([]platform.ServiceStack{intPool("svc-pool", "devpool", "ACTIVE", 4)}).
+		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{ID: "env-t", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}})
+	session, cleanup := setupTestServerWithDeploy(t, mock, defaultLogFetcher(), ssh)
+	defer cleanup()
+
+	res := callAndGetResult(t, session, "zerops_lease", map[string]any{"action": "status"})
+	text := getTextContent(t, res)
+	if res.IsError {
+		t.Fatalf("status failed: %s", text)
+	}
+	var got struct {
+		Leases []struct {
+			Alias string `json:"alias"`
+			Idle  *struct {
+				Since string `json:"since"`
+				Next  string `json:"next"`
+			} `json:"idle"`
+		} `json:"leases"`
+		NextActions string `json:"nextActions"`
+	}
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatalf("status is not JSON: %v\n%s", err, text)
+	}
+	idle := map[string]string{}
+	for _, l := range got.Leases {
+		if l.Idle != nil {
+			idle[l.Alias] = l.Idle.Next
+		}
+	}
+	if len(idle) != 2 || !strings.Contains(idle["devpool-1"], "zerops_lease action=release lease=devpool-1") ||
+		!strings.Contains(idle["devpool-3"], "?? notes.txt") || strings.Contains(idle["devpool-3"], "force") || strings.Contains(idle["devpool-3"], "action=release") {
+		t.Errorf("idle = %v, want devpool-1 with its release and devpool-3 with its unsaved file, never a release", idle)
+	}
+	if !strings.Contains(got.NextActions, "devpool-1") || !strings.Contains(got.NextActions, "devpool-3") || !strings.Contains(got.NextActions, "ask the person") {
+		t.Errorf("nextActions = %q, want the idle leases and to ask the person", got.NextActions)
+	}
+
+	res = callAndGetResult(t, session, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": "https://github.com/acme/app", "branch": "feat-9"})
+	text = getTextContent(t, res)
+	if !res.IsError {
+		t.Fatalf("an acquire on a full pool succeeded: %s", text)
+	}
+	at := -1
+	for _, want := range []string{"devpool-1 — idle, last active 3 d ago, nothing unsaved", "devpool-3 — idle, last active 2 d ago, 1 uncommitted or untracked file(s)", "devpool-2 — last active 1 h ago, 1 commit(s) on no remote branch"} {
+		i := strings.Index(text, want)
+		if i < at || i < 0 {
+			t.Errorf("refusal does not list %q in oldest-activity order:\n%s", want, text)
+		}
+		at = i
+	}
+	if !strings.Contains(text, "zerops_lease action=release lease=devpool-1") || strings.Contains(text, "force") {
+		t.Errorf("refusal should name devpool-1's release and never force:\n%s", text)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(mutations) != 0 {
+		t.Errorf("status and the refusal changed the pool: %v", mutations)
+	}
+}

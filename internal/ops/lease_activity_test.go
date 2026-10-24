@@ -7,8 +7,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -705,5 +708,431 @@ func TestLeaseActivity_ContextGone_SaysCancelled(t *testing.T) {
 	}
 	if !errors.Is(ctx.Err(), context.Canceled) {
 		t.Fatal("the caller's context was not cancelled")
+	}
+}
+
+// idleNow is the clock the idle tests read: 2026-10-24 12:00 UTC.
+var idleNow = time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
+
+// before is the time h hours before idleNow.
+func before(h float64) time.Time { return idleNow.Add(-time.Duration(h * float64(time.Hour))) }
+
+// noPreviewServer is a capable supervisor's status with no dev server on a
+// preview port: the container has no preview to observe.
+const noPreviewServer = `{"format":1,"servers":{"worker":{"status":"running"}}}`
+
+// recordLeaseAt writes zcp's record of a lease of repo on pool's container
+// c-<number>, acquired at acquired.
+func recordLeaseAt(t *testing.T, stateDir, pool, poolServiceID string, number int64, branch, repo string, acquired time.Time) {
+	t.Helper()
+	rec := leaseRecord{
+		PoolHostname: pool, PoolServiceID: poolServiceID,
+		ContainerID: "c-" + strconv.FormatInt(number, 10), ContainerNumber: number,
+		ContainerHostname: "node-id-" + strconv.FormatInt(number, 10) + ".runtime." + pool + ".zerops",
+		Lease:             testLease, Branch: branch, Repo: topology.CanonicalRepoURL(repo), AcquiredAt: acquired.UTC().Format(time.RFC3339),
+	}
+	if err := writeLeaseRecord(stateDir, rec); err != nil {
+		t.Fatalf("write record %s: %v", rec.alias(), err)
+	}
+}
+
+// idleAnswer is a whole read of a checkout: last changed changed, holding
+// porcelain and unpushed commits, its supervisor reporting the preview
+// server's last connection (none when lastConn is zero) and open count.
+func idleAnswer(changed time.Time, porcelain []string, unpushed int, lastConn time.Time, open int) string {
+	last := ""
+	if !lastConn.IsZero() {
+		last = lastConn.UTC().Format(time.RFC3339)
+	}
+	return string(checkoutAnswer(changed.Unix(), "", porcelain, unpushed)) + previewPart(capableVersion, 0, previewState(last, intPtr(open)), 0)
+}
+
+// idleFixture is devpool holding lease #3 of testRepo's feat-a, acquired at
+// acquired, whose checkout answers answer, read at idleNow.
+func idleFixture(t *testing.T, acquired time.Time, answer string) *leaseFixture {
+	t.Helper()
+	fx := newLeaseFixture(t)
+	recordLeaseAt(t, fx.stateDir, testPoolHost, "svc-pool", 3, "feat-a", testRepo, acquired)
+	fx.swarm.containers = []platform.SwarmContainer{reservedContainer("c-3", 3)}
+	fx.deps.Now = func() time.Time { return idleNow }
+	fx.deps.SSH = &ctxSSH{fn: func(context.Context, string, string) ([]byte, error) { return []byte(answer), nil }}
+	return fx
+}
+
+// statusLease is the lease alias of one status of fx's pool.
+func statusLease(t *testing.T, fx *leaseFixture, pool, alias string) LeaseView {
+	t.Helper()
+	status, err := LeaseStatus(context.Background(), fx.deps, pool)
+	if err != nil {
+		t.Fatalf("LeaseStatus: %v", err)
+	}
+	for _, v := range status.Leases {
+		if v.Alias == alias {
+			return v
+		}
+	}
+	t.Fatalf("leases = %+v, want %s", status.Leases, alias)
+	return LeaseView{}
+}
+
+// TestLeaseStatus_IdleNothingUnsaved_NamesTheRelease: a lease zcp holds that
+// nothing has happened in for 24 h or more — no checkout change, no preview
+// connection, no acquire, and no preview connection open — is marked idle
+// since its newest activity, and with nothing a release would lose it names
+// the release call. A capable supervisor with no dev server on a preview port
+// leaves the checkout to decide.
+func TestLeaseStatus_IdleNothingUnsaved_NamesTheRelease(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name      string
+		answer    string
+		wantSince time.Time
+		wantFor   string
+	}{
+		{name: "checkout 30 h ago, the preview's last connection 40 h ago, none open",
+			answer: idleAnswer(before(30), nil, 0, before(40), 0), wantSince: before(30), wantFor: "for 30 h"},
+		{name: "the preview's last connection is the newest fact",
+			answer: idleAnswer(before(72), nil, 0, before(25), 0), wantSince: before(25), wantFor: "for 25 h"},
+		{name: "exactly 24 h", answer: idleAnswer(before(24), nil, 0, time.Time{}, 0), wantSince: before(24), wantFor: "for 24 h"},
+		{name: "no dev server on a preview port: the checkout decides",
+			answer:    string(checkoutAnswer(before(80).Unix(), "", nil, 0)) + previewPart(capableVersion, 0, noPreviewServer, 0),
+			wantSince: before(80), wantFor: "for 3 d"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			fx := idleFixture(t, before(200), tt.answer)
+
+			v := statusLease(t, fx, testPoolHost, "devpool-3")
+
+			if v.Idle == nil {
+				t.Fatalf("devpool-3 = %+v / %+v, want it marked idle", v, v.Activity)
+			}
+			if v.Idle.Since != tt.wantSince.UTC().Format(time.RFC3339) {
+				t.Errorf("idle since %s, want %s", v.Idle.Since, tt.wantSince.UTC().Format(time.RFC3339))
+			}
+			for _, want := range []string{tt.wantFor, "no uncommitted, untracked or unpushed work", "zerops_lease action=release lease=devpool-3", "ignores and stashes"} {
+				if !strings.Contains(v.Idle.Next, want) {
+					t.Errorf("idle next %q lacks %q", v.Idle.Next, want)
+				}
+			}
+			for _, banned := range []string{"force", "branch="} {
+				if strings.Contains(v.Idle.Next, banned) {
+					t.Errorf("idle next %q carries %q", v.Idle.Next, banned)
+				}
+			}
+		})
+	}
+}
+
+// TestLeaseStatus_ActiveOrUnread_NeverIdle: a lease with activity within the
+// last 24 h — a checkout change, a preview connection, its acquire — or a
+// preview connection open now (in use, however old the connection) is never
+// idle, and neither is one whose facts were not all read: a missing fact is
+// never no activity. Its activity is still reported.
+func TestLeaseStatus_ActiveOrUnread_NeverIdle(t *testing.T) {
+	t.Parallel()
+	old := before(72)
+	checkout := string(checkoutAnswer(old.Unix(), "", nil, 0))
+	for _, tt := range []struct {
+		name     string
+		acquired time.Time
+		answer   string
+	}{
+		{name: "a checkout change 23 h 59 min ago", acquired: before(200), answer: idleAnswer(idleNow.Add(-24*time.Hour+time.Minute), nil, 0, time.Time{}, 0)},
+		{name: "a preview connection open now, opened days ago", acquired: before(200), answer: idleAnswer(old, nil, 0, before(100), 1)},
+		{name: "a preview connection 2 h ago", acquired: before(200), answer: idleAnswer(old, nil, 0, before(2), 0)},
+		{name: "acquired an hour ago", acquired: before(1), answer: idleAnswer(old, nil, 0, time.Time{}, 0)},
+		{name: "an older supervisor: the preview not observed", acquired: before(200), answer: checkout + previewPart(olderVersion, 0, previewState("", intPtr(0)), 0)},
+		{name: "the supervisor did not answer", acquired: before(200), answer: checkout + previewPart(capableVersion, 0, "", 124)},
+		{name: "no supervisor runs", acquired: before(200), answer: checkout + previewPart(capableVersion, 0, `{"code":2,"error":"no zcp-devsup is running here"}`, 2)},
+		{name: "no supervisor part", acquired: before(200), answer: checkout},
+		{name: "the checkout's last change unknown", acquired: before(200),
+			answer: "@@zcp-lease activity 0 \n@@zcp-lease status\n@@zcp-lease unpushed\n0\n" + previewPart(capableVersion, 0, noPreviewServer, 0)},
+		{name: "the unsaved work not read", acquired: before(200),
+			answer: fmt.Sprintf("@@zcp-lease activity %d \n@@zcp-lease status\n", old.Unix()) + previewPart(capableVersion, 0, noPreviewServer, 0)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			fx := idleFixture(t, tt.acquired, tt.answer)
+
+			v := statusLease(t, fx, testPoolHost, "devpool-3")
+
+			if v.Idle != nil {
+				t.Errorf("devpool-3 marked idle %+v, from activity %+v / unsaved %+v", *v.Idle, v.Activity, v.Unsaved)
+			}
+			if v.Activity == nil || v.Activity.AcquiredAt == "" {
+				t.Errorf("activity = %+v, want it still reported", v.Activity)
+			}
+		})
+	}
+}
+
+// TestLeaseStatus_IdleWithUnsaved_NamesWhatAndNeverForce: an idle lease
+// holding work a release would lose is marked idle with what it holds — the
+// files (the first 20 by name, all counted) and the commits on no remote
+// branch — and how to keep it, HQ's push rule on an HQ repository. It never
+// names a release, forced or not.
+func TestLeaseStatus_IdleWithUnsaved_NamesWhatAndNeverForce(t *testing.T) {
+	t.Parallel()
+	var many []string
+	for i := 1; i <= 25; i++ {
+		many = append(many, fmt.Sprintf("?? file%02d.txt", i))
+	}
+	for _, tt := range []struct {
+		name   string
+		repo   string
+		answer string
+		want   []string
+	}{
+		{name: "files and commits", repo: testRepo, answer: idleAnswer(before(50), []string{" M src/App.tsx", "?? notes.txt"}, 2, time.Time{}, 0),
+			want: []string{"for 2 d", "2 uncommitted or untracked file(s) ( M src/App.tsx, ?? notes.txt)", "2 commit(s) on no remote branch", "Commit and push it from the container"}},
+		{name: "more files than a release names", repo: testRepo, answer: idleAnswer(before(30), many, 0, time.Time{}, 0),
+			want: []string{"25 uncommitted or untracked file(s)", "?? file20.txt, first 20 shown"}},
+		{name: "a repository on HQ", repo: leaseHQRepo, answer: idleAnswer(before(30), nil, 1, time.Time{}, 0),
+			want: []string{"1 commit(s) on no remote branch", "a branch of your own", "HQ refuses a push of `main`"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			fx := newLeaseFixture(t)
+			recordLeaseAt(t, fx.stateDir, testPoolHost, "svc-pool", 3, "feat-a", tt.repo, before(200))
+			fx.swarm.containers = []platform.SwarmContainer{reservedContainer("c-3", 3)}
+			fx.deps.Now = func() time.Time { return idleNow }
+			fx.deps.HQAddress = func() string { return leaseHQURL }
+			fx.deps.SSH = &ctxSSH{fn: func(context.Context, string, string) ([]byte, error) { return []byte(tt.answer), nil }}
+
+			v := statusLease(t, fx, testPoolHost, "devpool-3")
+
+			if v.Idle == nil {
+				t.Fatalf("devpool-3 = %+v / %+v / %+v, want it marked idle", v, v.Activity, v.Unsaved)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(v.Idle.Next, want) {
+					t.Errorf("idle next %q lacks %q", v.Idle.Next, want)
+				}
+			}
+			for _, banned := range []string{"force", "action=release"} {
+				if strings.Contains(v.Idle.Next, banned) {
+					t.Errorf("idle next %q carries %q: a lease with unsaved work is never offered a release", v.Idle.Next, banned)
+				}
+			}
+		})
+	}
+}
+
+// idleGroupFixture is devpool and webpool, each with its orchestrator, holding a
+// lease of testRepo's feat-x on each (devpool-3, webpool-5), every checkout
+// answering by its alias from answers, read at idleNow.
+func idleGroupFixture(t *testing.T, answers map[string]string) *leaseFixture {
+	t.Helper()
+	fx := newLeaseFixture(t)
+	pool := func(id, name string) platform.ServiceStack {
+		return platform.ServiceStack{ID: id, Name: name, Status: "ACTIVE",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}}
+	}
+	token := []platform.ServiceEnvVar{{Key: "API_TOKEN", Content: testPoolToken, Sensitive: true}}
+	fx.deps.Client = platform.NewMock().
+		WithProject(&platform.Project{ID: "p1", Name: "proj"}).
+		WithServices([]platform.ServiceStack{pool("svc-pool", testPoolHost), pool("svc-web", "webpool")}).
+		WithServiceEnv("svc-pool", token).WithServiceEnv("svc-web", token)
+	web := &fakeSwarm{containers: []platform.SwarmContainer{{ID: "c-5", Number: 5, Hostname: "node-id-5.runtime.webpool.zerops", Status: "ACTIVE", ServiceID: "svc-web", LockState: "reserved"}}}
+	fx.deps.Swarm = func(baseURL, _ string) SwarmAPI {
+		if baseURL == orchestratorURL("webpool") {
+			return web
+		}
+		return fx.swarm
+	}
+	fx.swarm.containers = []platform.SwarmContainer{reservedContainer("c-3", 3), reservedContainer("c-4", 4)}
+	recordLeaseAt(t, fx.stateDir, testPoolHost, "svc-pool", 3, "feat-x", testRepo, before(200))
+	recordLeaseAt(t, fx.stateDir, "webpool", "svc-web", 5, "feat-x", testRepo, before(190))
+	fx.deps.Now = func() time.Time { return idleNow }
+	fx.deps.SSH = &ctxSSH{fn: func(_ context.Context, host, _ string) ([]byte, error) {
+		answer, ok := answers[host]
+		if !ok {
+			return nil, fmt.Errorf("no container answers as %s", host)
+		}
+		return []byte(answer), nil
+	}}
+	return fx
+}
+
+// TestLeaseStatus_GroupIdle_NamesTheBranchRelease: the leases of one branch
+// on several pools (a group) are idle together or not at all: only when every
+// one of them was read and is idle, since the newest activity of any. With
+// nothing any of them would lose, each names the branch's release (with repo
+// when zcp leases the branch for several repositories); with unsaved work,
+// what each holds, never a release. A status of one pool reads none of the
+// group's other leases, so it marks none of them idle.
+func TestLeaseStatus_GroupIdle_NamesTheBranchRelease(t *testing.T) {
+	t.Parallel()
+	clean30, clean26 := idleAnswer(before(30), nil, 0, time.Time{}, 0), idleAnswer(before(26), nil, 0, time.Time{}, 0)
+	for _, tt := range []struct {
+		name      string
+		answers   map[string]string
+		pool      string
+		otherRepo bool     // devpool-4 holds feat-x of another repository
+		wantIdle  []string // aliases marked idle
+		want      map[string][]string
+		banned    []string
+	}{
+		{name: "every lease idle and clean", answers: map[string]string{"devpool-3": clean30, "webpool-5": clean26},
+			wantIdle: []string{"devpool-3", "webpool-5"},
+			want: map[string][]string{
+				"devpool-3": {"for 26 h", "devpool-3 and webpool-5", "zerops_lease action=release branch=feat-x releases them all"},
+				"webpool-5": {"zerops_lease action=release branch=feat-x releases them all"},
+			},
+			banned: []string{"force", "lease=", "repo="}},
+		{name: "one lease in use now", answers: map[string]string{"devpool-3": clean30, "webpool-5": idleAnswer(before(26), nil, 0, before(50), 1)}},
+		{name: "one lease changed an hour ago", answers: map[string]string{"devpool-3": clean30, "webpool-5": idleAnswer(before(1), nil, 0, time.Time{}, 0)}},
+		{name: "one lease not read", answers: map[string]string{"devpool-3": clean30}},
+		{name: "one lease holds unsaved work", answers: map[string]string{"devpool-3": idleAnswer(before(30), nil, 1, time.Time{}, 0), "webpool-5": clean26},
+			wantIdle: []string{"devpool-3", "webpool-5"},
+			want: map[string][]string{
+				"devpool-3": {"devpool-3 holds 1 commit(s) on no remote branch", "webpool-5 holds no unsaved work", "each container that holds it"},
+				"webpool-5": {"devpool-3 holds 1 commit(s) on no remote branch"},
+			},
+			banned: []string{"force", "action=release"}},
+		{name: "a status of one pool", pool: testPoolHost, answers: map[string]string{"devpool-3": clean30, "webpool-5": clean26}},
+		{name: "the branch leased for two repositories", otherRepo: true,
+			answers:  map[string]string{"devpool-3": clean30, "webpool-5": clean26, "devpool-4": clean30},
+			wantIdle: []string{"devpool-3", "devpool-4", "webpool-5"},
+			want: map[string][]string{
+				"devpool-3": {"zerops_lease action=release branch=feat-x repo=https://github.com/acme/app releases them all"},
+				"devpool-4": {"zerops_lease action=release lease=devpool-4"},
+			}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			fx := idleGroupFixture(t, tt.answers)
+			if tt.otherRepo {
+				recordLeaseAt(t, fx.stateDir, testPoolHost, "svc-pool", 4, "feat-x", "https://github.com/acme/other", before(200))
+			}
+
+			status, err := LeaseStatus(context.Background(), fx.deps, tt.pool)
+			if err != nil {
+				t.Fatalf("LeaseStatus: %v", err)
+			}
+
+			var idle []string
+			for _, v := range status.Leases {
+				if v.Idle == nil {
+					continue
+				}
+				idle = append(idle, v.Alias)
+				for _, want := range tt.want[v.Alias] {
+					if !strings.Contains(v.Idle.Next, want) {
+						t.Errorf("%s idle next %q lacks %q", v.Alias, v.Idle.Next, want)
+					}
+				}
+				for _, banned := range tt.banned {
+					if strings.Contains(v.Idle.Next, banned) {
+						t.Errorf("%s idle next %q carries %q", v.Alias, v.Idle.Next, banned)
+					}
+				}
+				if v.Alias != "devpool-4" && v.Idle.Since != before(26).Format(time.RFC3339) {
+					t.Errorf("%s idle since %s, want the group's newest activity %s", v.Alias, v.Idle.Since, before(26).Format(time.RFC3339))
+				}
+			}
+			slices.Sort(idle)
+			if !slices.Equal(idle, tt.wantIdle) {
+				t.Errorf("idle = %v, want %v", idle, tt.wantIdle)
+			}
+		})
+	}
+}
+
+// TestLeaseStatus_NeverMutates: a status that marks leases idle — one with
+// nothing unsaved, one with unsaved work — beside a lost lease and another
+// holder's container changes nothing anywhere: the orchestrator is only
+// listed (no release, delete, acquire or rollout), no record or alias is
+// written, no host command runs, and the only ssh is each held lease's
+// read-only checkout read.
+func TestLeaseStatus_NeverMutates(t *testing.T) {
+	t.Parallel()
+	answers := map[string]string{
+		"devpool-3": idleAnswer(before(30), nil, 0, time.Time{}, 0),
+		"devpool-4": idleAnswer(before(30), []string{" M src/App.tsx"}, 1, time.Time{}, 0),
+	}
+	ssh := &ctxSSH{fn: func(_ context.Context, host, _ string) ([]byte, error) {
+		if a, ok := answers[host]; ok {
+			return []byte(a), nil
+		}
+		return nil, fmt.Errorf("no container answers as %s", host)
+	}}
+	fx := newLeaseFixture(t)
+	recordLeaseAt(t, fx.stateDir, testPoolHost, "svc-pool", 3, "feat-a", testRepo, before(200))
+	recordLeaseAt(t, fx.stateDir, testPoolHost, "svc-pool", 4, "feat-b", testRepo, before(200))
+	recordLeaseAt(t, fx.stateDir, testPoolHost, "svc-pool", 6, "feat-c", testRepo, before(200)) // its container is gone: lost
+	fx.swarm.containers = []platform.SwarmContainer{reservedContainer("c-3", 3), reservedContainer("c-4", 4), reservedContainer("c-7", 7)}
+	fx.deps.Now = func() time.Time { return idleNow }
+	fx.deps.SSH = ssh
+	aliasFile := filepath.Join(t.TempDir(), "zcp-leases.conf")
+	if err := os.WriteFile(aliasFile, []byte("Host devpool-3\nHost devpool-4\nHost devpool-6\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var hostCommands []string
+	var hostMu sync.Mutex
+	fx.deps.Host = LeaseHost{AliasFile: aliasFile, Run: func(_ context.Context, name string, args ...string) error {
+		hostMu.Lock()
+		defer hostMu.Unlock()
+		hostCommands = append(hostCommands, name+" "+strings.Join(args, " "))
+		return nil
+	}}
+	snapshot := func() map[string]string {
+		files := map[string]string{}
+		for _, dir := range []string{leaseDir(fx.stateDir), filepath.Dir(aliasFile)} {
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, e := range entries {
+				if e.IsDir() {
+					continue
+				}
+				p := filepath.Join(dir, e.Name())
+				raw, err := os.ReadFile(p)
+				if err != nil {
+					t.Fatal(err)
+				}
+				info, err := e.Info()
+				if err != nil {
+					t.Fatal(err)
+				}
+				files[p] = string(raw) + "@" + info.ModTime().String()
+			}
+		}
+		return files
+	}
+	was := snapshot()
+
+	for _, pool := range []string{testPoolHost, ""} {
+		status, err := LeaseStatus(context.Background(), fx.deps, pool)
+		if err != nil {
+			t.Fatalf("LeaseStatus(%q): %v", pool, err)
+		}
+		idle := map[string]bool{}
+		for _, v := range status.Leases {
+			idle[v.Alias] = v.Idle != nil
+		}
+		if !idle["devpool-3"] || !idle["devpool-4"] || idle["devpool-6"] || idle["devpool-7"] {
+			t.Errorf("status(%q) idle = %v, want devpool-3 and devpool-4 only", pool, idle)
+		}
+	}
+
+	if len(fx.swarm.releases)+len(fx.swarm.deletes)+len(fx.swarm.acquireReqs)+fx.swarm.rollouts != 0 {
+		t.Errorf("status changed the pool: releases %v, deletes %v, acquires %v, rollouts %d",
+			fx.swarm.releases, fx.swarm.deletes, fx.swarm.acquireReqs, fx.swarm.rollouts)
+	}
+	if hostCommands != nil {
+		t.Errorf("status ran host commands %q", hostCommands)
+	}
+	if now := snapshot(); !maps.Equal(now, was) {
+		t.Errorf("status wrote files:\nbefore %v\nafter  %v", was, now)
+	}
+	ssh.mu.Lock()
+	defer ssh.mu.Unlock()
+	for _, c := range ssh.calls {
+		if c.command != leaseActivityCommand() {
+			t.Errorf("ssh on %s ran %q, want only the read-only checkout read", c.hostname, c.command)
+		}
 	}
 }

@@ -543,3 +543,78 @@ func TestScale_PoolLowering_ReadsTheOrchestratorFirst(t *testing.T) {
 		})
 	}
 }
+
+// TestLeaseAcquire_FullPool_ListsYourLeasesOldestActivityFirst: a full pool's
+// refusal reads zcp's own leases on it and lists them oldest activity first —
+// idle ones marked so, then the more recent, then those in use now, then those
+// whose activity could not be read — each with what a release would lose. The
+// release it names is the oldest lease holding nothing unsaved and not in use,
+// after asking the person when this conversation did not take it; it never
+// names a forced release, and the refusal changes nothing.
+func TestLeaseAcquire_FullPool_ListsYourLeasesOldestActivityFirst(t *testing.T) {
+	t.Parallel()
+	answers := map[string]string{
+		"devpool-1": idleAnswer(before(2), nil, 0, time.Time{}, 0),
+		"devpool-2": idleAnswer(before(72), nil, 1, time.Time{}, 0),
+		"devpool-3": idleAnswer(before(120), nil, 0, before(120), 1),
+		"devpool-6": idleAnswer(before(30), []string{" M a.txt", "?? b.txt"}, 0, time.Time{}, 0),
+		"devpool-7": idleAnswer(before(40), nil, 0, before(40), 0),
+	}
+	fx := newLeaseFixture(t)
+	for _, n := range []int64{1, 2, 3, 5, 6, 7} {
+		recordLeaseAt(t, fx.stateDir, testPoolHost, "svc-pool", n, "b"+strconv.FormatInt(n, 10), testRepo, before(200))
+	}
+	fx.swarm.containers = reservedRange(8)
+	fx.swarm.limits = platform.SwarmPool{MaximumContainerCount: 8}
+	fx.swarm.acquireErr = allReserved(causeAtMaximum)
+	fx.deps.Now = func() time.Time { return idleNow }
+	fx.deps.SSH = &ctxSSH{fn: func(_ context.Context, host, _ string) ([]byte, error) {
+		if a, ok := answers[host]; ok {
+			return []byte(a), nil
+		}
+		return nil, sshFailure("ssh: connect to host "+host+" port 22: Connection refused", exitError(t, 255))
+	}}
+
+	_, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, "feature")
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) || pe.APICode != platform.SwarmReasonAllReserved {
+		t.Fatalf("err = %v, want the full pool's refusal", err)
+	}
+
+	order := []string{
+		"devpool-2 — idle, last active 3 d ago, 1 commit(s) on no remote branch",
+		"devpool-7 — idle, last active 40 h ago, nothing unsaved",
+		"devpool-6 — idle, last active 30 h ago, 2 uncommitted or untracked file(s)",
+		"devpool-1 — last active 2 h ago, nothing unsaved",
+		"devpool-3 — in use now (a preview connection is open), nothing unsaved",
+		"devpool-5 — activity not read",
+	}
+	at := -1
+	for _, want := range order {
+		i := strings.Index(pe.Message, want)
+		if i < 0 {
+			t.Errorf("message %q lacks %q", pe.Message, want)
+			continue
+		}
+		if i < at {
+			t.Errorf("message %q lists %q out of order: oldest activity first", pe.Message, want)
+		}
+		at = i
+	}
+	for _, want := range []string{"Pool 'devpool' is full", "8 of at most 8", "2 held by other holders"} {
+		if !strings.Contains(pe.Message, want) {
+			t.Errorf("message %q lacks %q", pe.Message, want)
+		}
+	}
+	for _, want := range []string{"zerops_lease action=release lease=devpool-7", "ask the person"} {
+		if !strings.Contains(pe.Suggestion, want) {
+			t.Errorf("suggestion %q lacks %q", pe.Suggestion, want)
+		}
+	}
+	if strings.Contains(pe.Message+" "+pe.Suggestion, "force") {
+		t.Errorf("refusal %q / %q offers force", pe.Message, pe.Suggestion)
+	}
+	if len(fx.swarm.acquireReqs) != 1 || len(fx.swarm.releases)+len(fx.swarm.deletes) != 0 {
+		t.Errorf("acquires %d, releases %v, deletes %v: want the one acquire and nothing else", len(fx.swarm.acquireReqs), fx.swarm.releases, fx.swarm.deletes)
+	}
+}

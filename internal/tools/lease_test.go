@@ -1105,3 +1105,111 @@ func TestLeaseTool_ReleaseBranch_BadInput_TypedRefusal(t *testing.T) {
 		})
 	}
 }
+
+// idleCheckout is a whole read of a leased checkout: last changed changed,
+// porcelain ("" for none) as its git status, unpushed commits, and a
+// supervisor that lists activity running no dev server on a preview port.
+func idleCheckout(changed time.Time, porcelain string, unpushed int) string {
+	if porcelain != "" {
+		porcelain += "\n"
+	}
+	return fmt.Sprintf("@@zcp-lease activity %d \n@@zcp-lease status\n%s@@zcp-lease unpushed\n%d\n", changed.Unix(), porcelain, unpushed) +
+		"@@zcp-lease preview\n" + `{"version":"v9.500.0","formats":[1],"capabilities":["env","activity"]}` + "\n@@zcp-devsup version 0\n" +
+		`{"format":1,"servers":{"worker":{"status":"running"}}}` + "\n@@zcp-devsup status 0\n"
+}
+
+// TestLeaseTool_Status_IdleLease_NamesWhatFreesIt: zerops_lease
+// action=status marks a lease nothing has happened in for 24 h or more idle,
+// since its last activity: with nothing a release would lose, its idle.next
+// names the release; with unsaved work, what it holds and how to keep it,
+// never a release or force. nextActions names the idle leases and to ask the
+// person before releasing one this conversation did not take. The label stays
+// in the result: the envelope's leases[] never carries it. A lease changed an
+// hour ago is not idle, and its status says nothing about idleness.
+func TestLeaseTool_Status_IdleLease_NamesWhatFreesIt(t *testing.T) {
+	t.Parallel()
+	now := time.Now()
+	changed := now.Add(-72 * time.Hour)
+	for _, tt := range []struct {
+		name       string
+		answer     string
+		wantIdle   bool
+		wantNext   []string
+		bannedNext []string
+	}{
+		{name: "idle, nothing unsaved", answer: idleCheckout(changed, "", 0), wantIdle: true,
+			wantNext: []string{"for 3 d", "zerops_lease action=release lease=devpool-3"}, bannedNext: []string{"force"}},
+		{name: "idle with unsaved work", answer: idleCheckout(changed, "?? notes.txt", 2), wantIdle: true,
+			wantNext: []string{"1 uncommitted or untracked file(s) (?? notes.txt)", "2 commit(s) on no remote branch", "Commit and push"}, bannedNext: []string{"force", "action=release"}},
+		{name: "changed an hour ago", answer: idleCheckout(now.Add(-time.Hour), "", 0)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ssh := &leaseStubSSH{fn: func(command string) ([]byte, error) {
+				if strings.Contains(command, "@@zcp-lease activity") {
+					return []byte(tt.answer), nil
+				}
+				return nil, nil
+			}}
+			srv, stateDir := leaseToolServerSSH(t, &fakeOrchestrator{reserved: true}, ssh)
+			writeLeaseRecordFileAt(t, stateDir, "devpool", "svc-pool", "c-abc", 3, "feat-a", now.Add(-200*time.Hour).UTC().Format(time.RFC3339))
+
+			res := callTool(t, srv, "zerops_lease", map[string]any{"action": "status"})
+			text := getTextContent(t, res)
+			if res.IsError {
+				t.Fatalf("status failed: %s", text)
+			}
+			var got struct {
+				Leases []struct {
+					Alias string `json:"alias"`
+					Idle  *struct {
+						Since string `json:"since"`
+						Next  string `json:"next"`
+					} `json:"idle"`
+				} `json:"leases"`
+				NextActions string          `json:"nextActions"`
+				Envelope    json.RawMessage `json:"envelope"`
+			}
+			if err := json.Unmarshal([]byte(text), &got); err != nil {
+				t.Fatalf("result is not JSON: %v\n%s", err, text)
+			}
+			if len(got.Leases) != 1 || got.Leases[0].Alias != "devpool-3" {
+				t.Fatalf("leases = %+v, want devpool-3", got.Leases)
+			}
+			idle := got.Leases[0].Idle
+			if !tt.wantIdle {
+				if idle != nil || strings.Contains(got.NextActions, "Idle") {
+					t.Errorf("a lease changed an hour ago is marked idle: %+v / %q", idle, got.NextActions)
+				}
+				return
+			}
+			if idle == nil {
+				t.Fatalf("devpool-3 is not marked idle:\n%s", text)
+			}
+			if idle.Since != changed.UTC().Format(time.RFC3339) {
+				t.Errorf("idle since %s, want %s", idle.Since, changed.UTC().Format(time.RFC3339))
+			}
+			for _, want := range tt.wantNext {
+				if !strings.Contains(idle.Next, want) {
+					t.Errorf("idle next %q lacks %q", idle.Next, want)
+				}
+			}
+			for _, banned := range tt.bannedNext {
+				if strings.Contains(idle.Next, banned) {
+					t.Errorf("idle next %q carries %q", idle.Next, banned)
+				}
+			}
+			for _, want := range []string{"devpool-3", "ask the person"} {
+				if !strings.Contains(got.NextActions, want) {
+					t.Errorf("nextActions %q lacks %q", got.NextActions, want)
+				}
+			}
+			if strings.Contains(got.NextActions, "force") {
+				t.Errorf("nextActions %q offers force", got.NextActions)
+			}
+			if len(got.Envelope) == 0 || strings.Contains(string(got.Envelope), `"idle"`) {
+				t.Errorf("envelope = %s, want one whose leases[] carries no idle label", got.Envelope)
+			}
+		})
+	}
+}

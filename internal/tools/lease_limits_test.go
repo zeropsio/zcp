@@ -3,7 +3,9 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
@@ -23,6 +26,13 @@ import (
 // acquire leaves it (.zcp/state/leases/<alias>.json, mode 0600).
 func writeLeaseRecordFile(t *testing.T, stateDir, pool, poolServiceID, containerID string, number int, branch string) {
 	t.Helper()
+	writeLeaseRecordFileAt(t, stateDir, pool, poolServiceID, containerID, number, branch, "2026-10-23T18:00:00Z")
+}
+
+// writeLeaseRecordFileAt is writeLeaseRecordFile for a lease acquired at
+// acquiredAt (RFC 3339).
+func writeLeaseRecordFileAt(t *testing.T, stateDir, pool, poolServiceID, containerID string, number int, branch, acquiredAt string) {
+	t.Helper()
 	dir := filepath.Join(stateDir, "leases")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
@@ -30,7 +40,7 @@ func writeLeaseRecordFile(t *testing.T, stateDir, pool, poolServiceID, container
 	rec := map[string]any{
 		"poolHostname": pool, "poolServiceId": poolServiceID, "containerId": containerID,
 		"containerNumber": number, "containerHostname": fmt.Sprintf("node-id-%d.runtime.%s.zerops", number, pool),
-		"lease": leaseTestLease, "branch": branch, "acquiredAt": "2026-10-23T18:00:00Z",
+		"lease": leaseTestLease, "branch": branch, "acquiredAt": acquiredAt,
 	}
 	raw, err := json.Marshal(rec)
 	if err != nil {
@@ -216,6 +226,61 @@ func TestLeaseTool_StoppedPool_SaysStartIt(t *testing.T) {
 		}
 		if strings.Contains(text, "only inside the project") {
 			t.Errorf("%v: a stopped pool is not an outside-the-project error:\n%s", args["action"], text)
+		}
+	}
+}
+
+// hostStubSSH answers zcp's read of a leased checkout by the container's
+// alias, from answers; a host it has no answer for cannot be reached.
+type hostStubSSH struct {
+	answers map[string]string
+}
+
+func (s hostStubSSH) ExecSSH(_ context.Context, host, command string) ([]byte, error) {
+	if a, ok := s.answers[host]; ok && strings.Contains(command, "@@zcp-lease activity") {
+		return []byte(a), nil
+	}
+	return nil, &platform.SSHExecError{Hostname: host, Output: "ssh: connect to host " + host + " port 22: Connection refused", Err: errors.New("exit status 255")}
+}
+
+func (s hostStubSSH) ExecSSHBackground(ctx context.Context, host, command string, _ time.Duration) ([]byte, error) {
+	return s.ExecSSH(ctx, host, command)
+}
+
+// TestLeaseTool_Acquire_FullPool_ListsYourLeasesOldestActivityFirst: a full
+// pool's refusal through the tool lists zcp's own leases on it oldest activity
+// first, each with what a release would lose, and names the release of the
+// oldest one holding nothing unsaved, after asking the person — never force.
+func TestLeaseTool_Acquire_FullPool_ListsYourLeasesOldestActivityFirst(t *testing.T) {
+	t.Parallel()
+	now := time.Now()
+	acquired := now.Add(-200 * time.Hour).UTC().Format(time.RFC3339)
+	ssh := hostStubSSH{answers: map[string]string{
+		"devpool-4": idleCheckout(now.Add(-2*time.Hour), "", 0),
+		"devpool-7": idleCheckout(now.Add(-72*time.Hour), "", 0),
+	}}
+	srv, stateDir := leaseToolServerSSH(t, fullPoolOrchestrator{}, ssh)
+	writeLeaseRecordFileAt(t, stateDir, "devpool", "svc-pool", "c-4", 4, "feat-a", acquired)
+	writeLeaseRecordFileAt(t, stateDir, "devpool", "svc-pool", "c-7", 7, "feat-b", acquired)
+
+	res := callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo, "branch": "feat-c"})
+	text := getTextContent(t, res)
+	if !res.IsError {
+		t.Fatalf("an acquire on a full pool succeeded: %s", text)
+	}
+	older := strings.Index(text, "devpool-7 — idle, last active 3 d ago, nothing unsaved")
+	newer := strings.Index(text, "devpool-4 — last active 2 h ago, nothing unsaved")
+	if older < 0 || newer < 0 || older > newer {
+		t.Errorf("refusal does not list devpool-7 (3 d) before devpool-4 (2 h):\n%s", text)
+	}
+	for _, want := range []string{"is full", "10 of at most 10", "zerops_lease action=release lease=devpool-7", "ask the person"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("refusal lacks %q:\n%s", want, text)
+		}
+	}
+	for _, banned := range []string{"force", leaseTestToken, leaseTestLease} {
+		if strings.Contains(text, banned) {
+			t.Errorf("refusal carries %q:\n%s", banned, text)
 		}
 	}
 }
