@@ -31,8 +31,8 @@ func RegisterAskChief(ctx context.Context, srv *mcp.Server, httpClient hq.Doer, 
 		return
 	}
 	client = client.Once().Bounded(3*time.Second, 3*time.Second)
-	chief, err := client.Chief(ctx)
-	if err != nil || chief == nil {
+	state, err := client.Self(ctx)
+	if err != nil || state.Chief == nil || state.Chief.ProjectID == projectID {
 		return
 	}
 	mcp.AddTool(srv, &mcp.Tool{

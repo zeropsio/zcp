@@ -30,6 +30,15 @@ type MateState struct {
 	// Production is whether that application has a production, of any
 	// target, released or not. nil from an HQ older than it.
 	Production *bool `json:"production"`
+	// Chief is the organisation's Chief mark, nil while it has none.
+	Chief *ChiefMark `json:"chief"`
+}
+
+// ChiefMark is the project the organisation's Chief mark names: an Owner or
+// Admin sets it in HQ, and a Mate compares it with its own project
+// (docs/spec-mate.md §3.11).
+type ChiefMark struct {
+	ProjectID string `json:"projectId"`
 }
 
 // MateRepo is one of the application's repositories in HQ, with the origin
@@ -82,4 +91,14 @@ func (c Client) Self(ctx context.Context) (MateState, error) {
 		return MateState{}, fmt.Errorf("mate state: %w", err)
 	}
 	return state, nil
+}
+
+// IsChief reports whether the organisation's Chief mark names this Mate's own
+// project: the Mate then serves org mode (docs/spec-mate.md §2.11).
+func (c Client) IsChief(ctx context.Context) (bool, error) {
+	state, err := c.Self(ctx)
+	if err != nil {
+		return false, err
+	}
+	return state.Chief != nil && state.Chief.ProjectID == c.id.ProjectID, nil
 }
