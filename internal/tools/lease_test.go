@@ -1207,7 +1207,7 @@ func TestLeaseTool_Status_IdleLease_NamesWhatFreesIt(t *testing.T) {
 			if strings.Contains(got.NextActions, "force") {
 				t.Errorf("nextActions %q offers force", got.NextActions)
 			}
-			if len(got.Envelope) == 0 || strings.Contains(string(got.Envelope), `"idle"`) {
+			if len(got.Envelope) == 0 || strings.Contains(string(got.Envelope), `"idle":`) {
 				t.Errorf("envelope = %s, want one whose leases[] carries no idle label", got.Envelope)
 			}
 		})

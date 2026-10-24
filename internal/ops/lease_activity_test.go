@@ -910,7 +910,8 @@ func TestLeaseStatus_IdleWithUnsaved_NamesWhatAndNeverForce(t *testing.T) {
 					t.Errorf("idle next %q lacks %q", v.Idle.Next, want)
 				}
 			}
-			for _, banned := range []string{"force", "action=release"} {
+			// HQ's own rule names "any force push"; a release's force is force=true.
+			for _, banned := range []string{"force=true", "action=release"} {
 				if strings.Contains(v.Idle.Next, banned) {
 					t.Errorf("idle next %q carries %q: a lease with unsaved work is never offered a release", v.Idle.Next, banned)
 				}

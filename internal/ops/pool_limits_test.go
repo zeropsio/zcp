@@ -568,11 +568,12 @@ func TestLeaseAcquire_FullPool_ListsYourLeasesOldestActivityFirst(t *testing.T) 
 	fx.swarm.limits = platform.SwarmPool{MaximumContainerCount: 8}
 	fx.swarm.acquireErr = allReserved(causeAtMaximum)
 	fx.deps.Now = func() time.Time { return idleNow }
+	unreachable := exitError(t, 255)
 	fx.deps.SSH = &ctxSSH{fn: func(_ context.Context, host, _ string) ([]byte, error) {
 		if a, ok := answers[host]; ok {
 			return []byte(a), nil
 		}
-		return nil, sshFailure("ssh: connect to host "+host+" port 22: Connection refused", exitError(t, 255))
+		return nil, sshFailure("ssh: connect to host "+host+" port 22: Connection refused", unreachable)
 	}}
 
 	_, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, "feature")
