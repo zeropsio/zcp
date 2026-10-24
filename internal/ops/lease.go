@@ -810,8 +810,9 @@ func LeaseReleaseChange(ctx context.Context, d LeaseDeps, alias string, force bo
 		// stanza another call or a redeploy lost before it runs.
 		restoreNote := d.Host.refreshAliases(ctx, d)
 		if wake, err = wakeParkedForGuard(ctx, d, rec, verdict); err != nil {
-			if isHeldByOther(err) {
-				return releaseLost(ctx, d, rec, heldByOtherWhy)
+			if why, ended := leaseEnded(err); ended {
+				// Another holder's container now, or none: never re-parked.
+				return releaseLost(ctx, d, rec, why)
 			}
 			return LeaseChange{}, reparkAfterRefusal(ctx, d, rec, wake, err)
 		}

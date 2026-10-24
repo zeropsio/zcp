@@ -590,11 +590,12 @@ type releaseMember struct {
 	wake leaseWake
 	// verdict is whose its container is, as the orchestrator answered before
 	// anything else (readLeaseOwnership). lost is why the lease is no longer
-	// zcp's — its verdict, or a start the orchestrator refused held-by-other
-	// (heldByOther) — "" while it may still be.
+	// zcp's — its verdict, or what the release's own steps found (endedOnCall:
+	// a start refused held-by-other that a renew confirms, or the renew right
+	// before its guard) — "" while it may still be.
 	verdict     leaseVerdict
 	lost        string
-	heldByOther bool
+	endedOnCall bool
 }
 
 // LeaseReleaseGroup releases every lease zcp holds of one repository and
@@ -658,8 +659,9 @@ func LeaseReleaseGroupChange(ctx context.Context, d LeaseDeps, repo, branch stri
 			// A parked lease is started first so its guard can read it
 			// (DP-28).
 			if m.wake, m.err = wakeParkedForGuard(ctx, d, m.rec, m.verdict); m.err != nil {
-				if isHeldByOther(m.err) {
-					m.lost, m.heldByOther, m.err = heldByOtherWhy, true, nil
+				if why, ended := leaseEnded(m.err); ended {
+					// Not zcp's container any more: never re-parked.
+					m.lost, m.endedOnCall, m.err, m.wake = why, true, nil, leaseWake{}
 				}
 				return
 			}
@@ -714,7 +716,7 @@ func LeaseReleaseGroupChange(ctx context.Context, d LeaseDeps, repo, branch stri
 func dropHeldByOther(ctx context.Context, d LeaseDeps, members []*releaseMember, cause error) error {
 	var failed []string
 	for _, m := range members {
-		if !m.heldByOther {
+		if !m.endedOnCall {
 			continue
 		}
 		if _, err := dropLostLease(context.WithoutCancel(ctx), d, m.rec, m.lost); err != nil {
@@ -839,7 +841,7 @@ func branchReleaseRefusal(d LeaseDeps, members []*releaseMember, repo, branch st
 	for _, m := range members {
 		alias := m.rec.alias()
 		switch {
-		case m.heldByOther:
+		case m.endedOnCall:
 			states = append(states, alias+" is no longer zcp's ("+m.lost+"), so its record is dropped now")
 		case m.lost != "":
 			states = append(states, alias+" is no longer zcp's ("+m.lost+") and goes with the branch's release, unread")

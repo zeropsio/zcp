@@ -336,11 +336,15 @@ func (w leaseWake) note() string {
 // asked of the orchestrator right before (readLeaseOwnership): only a
 // container it gives the lease, stopped, is started. A lease that is not
 // parked by its record and a zcp without ssh (it checks nothing) start
-// nothing either: the guard and the release then say what became of it. A
-// start refused held-by-other is returned as it is (the lease ended outside
-// zcp; the caller drops it as lost); any other start the orchestrator will not
-// make refuses the release; one whose ssh does not answer refuses it too, with
-// the container started (the caller stops it again, reparkAfterRefusal).
+// nothing either: the guard and the release then say what became of it. Once
+// its ssh answers the orchestrator is asked again, right before the guard
+// reads it. A lease found ended — a start refused held-by-other that a renew
+// confirms, or that last renew — is a *leaseEndedError with no wake (the
+// caller drops it as lost and stops nothing: the container is not the
+// lease's); any other start the orchestrator will not make refuses the
+// release; one whose ssh does not answer, or that the last renew does not
+// answer about, refuses it too, with the container started (the caller stops
+// it again, reparkAfterRefusal).
 func wakeParkedForGuard(ctx context.Context, d LeaseDeps, rec leaseRecord, v leaseVerdict) (leaseWake, error) {
 	var w leaseWake
 	c := v.container
@@ -349,14 +353,22 @@ func wakeParkedForGuard(ctx context.Context, d LeaseDeps, rec leaseRecord, v lea
 	}
 	alias := rec.alias()
 	if _, err := v.rp.api.Start(ctx, rec.ContainerID, rec.Lease); err != nil {
-		if heldByOtherEnded(ctx, d, v.rp, rec, err) != "" {
-			return w, err
+		if why := heldByOtherEnded(ctx, d, v.rp, rec, err); why != "" {
+			return w, &leaseEndedError{why: why}
 		}
 		return w, parkedReleaseRefusal(alias, "zcp could not start its container to check it for unsaved work ("+errorNote(leaseOrchestratorError(ctx, d, v.rp, "start "+alias, err))+")")
 	}
 	w.started = true
 	if err := waitStartedLease(ctx, d, alias); err != nil {
 		return w, parkedReleaseRefusal(alias, fmt.Sprintf("zcp started its container to check it for unsaved work, but it did not answer ssh within %s (%v)", d.startedSSHWait(), err))
+	}
+	// Asked again right before the guard reads it (DP-2): the ssh wait can
+	// outlast the lease, and another holder's container is never read.
+	switch fresh := renewOwnership(ctx, d, v.rp, rec); {
+	case fresh.own.lost():
+		return leaseWake{}, &leaseEndedError{why: fresh.why}
+	case fresh.own == leaseUnverified:
+		return w, unverifiedLeaseRefusal(alias, "released", fresh)
 	}
 	return w, nil
 }

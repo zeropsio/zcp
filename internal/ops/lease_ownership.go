@@ -246,6 +246,23 @@ func isHeldByOther(err error) bool {
 	return errors.As(err, &se) && se.Reason == platform.SwarmReasonHeldByOther
 }
 
+// leaseEndedError is a step that found, while it ran, that the lease had
+// ended outside zcp (why): its caller drops the record as lost and sends the
+// container nothing more.
+type leaseEndedError struct{ why string }
+
+func (e *leaseEndedError) Error() string { return "the lease ended outside zcp: " + e.why }
+
+// leaseEnded is why err says the lease ended outside zcp; ok is false for any
+// other error.
+func leaseEnded(err error) (why string, ok bool) {
+	var e *leaseEndedError
+	if errors.As(err, &e) {
+		return e.why, true
+	}
+	return "", false
+}
+
 // heldByOtherEnded is why the lease ended once the orchestrator refused its
 // stop, start or delete (err) held-by-other and a renew of the lease agrees
 // that it holds the container no more; "" for any other error, and while the
