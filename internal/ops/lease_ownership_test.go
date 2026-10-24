@@ -135,14 +135,10 @@ func newOwnFixture(t *testing.T) *ownFixture {
 	gf.deps.Host = LeaseHost{
 		Mounter:   of.mounter,
 		AliasFile: of.aliasFile,
-		Run: func(_ context.Context, _ string, args ...string) error {
+		Run: func(ctx context.Context, name string, args ...string) error {
 			runMu.Lock()
 			defer runMu.Unlock()
-			raw, err := os.ReadFile(args[len(args)-2])
-			if err != nil {
-				return err
-			}
-			return os.WriteFile(args[len(args)-1], raw, 0o644)
+			return fakeAliasSudo(ctx, name, args...)
 		},
 	}
 	return of
