@@ -65,9 +65,6 @@ type poolOrch struct {
 	// freeResets are the free containers a release reset, whatever lease it
 	// carried.
 	freeResets []string
-	// bareAcquire: an acquire answers its container without lockSince (a
-	// read by id still gives it).
-	bareAcquire bool
 	// powerCut: a holder's stop or start takes effect, but its answer is lost
 	// (the caller reads a transport failure).
 	powerCut bool
@@ -219,9 +216,6 @@ func (o *poolOrch) Acquire(context.Context, platform.SwarmAcquireRequest) (platf
 	lease := fmt.Sprintf("%s-lease-%d-0123456789abcdef", o.pool, n)
 	o.containers = append(o.containers, c)
 	o.leases[c.ID] = lease
-	if o.bareAcquire {
-		c.LockSince = ""
-	}
 	return platform.SwarmAcquired{Container: c, Lease: platform.SwarmLease(lease)}, nil
 }
 

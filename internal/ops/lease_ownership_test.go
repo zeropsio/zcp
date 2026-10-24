@@ -172,8 +172,7 @@ func (of *ownFixture) reached(host string) bool {
 }
 
 // writeRecord writes a record of pool's container #number as zcp writes it,
-// with fields replacing or adding to its keys (raw JSON: a record written
-// before zcp kept the reservation's lockSince has no such key).
+// with fields replacing or adding to its keys (raw JSON, as any zcp wrote it).
 func (of *ownFixture) writeRecord(t *testing.T, pool, svcID string, number int64, fields map[string]any) {
 	t.Helper()
 	rec := map[string]any{
@@ -270,8 +269,8 @@ func (of *ownFixture) writeHQ(t *testing.T, fields map[string]any, lease, lockSi
 	}
 }
 
-// writeOtherSoon is writeHQ for a record older than any lockSince keeping,
-// whose container another consumer reserved 20 s after the acquire.
+// writeOtherSoon is writeHQ for a record whose container another consumer
+// reserved 20 s after the acquire.
 func (of *ownFixture) writeOtherSoon(t *testing.T, fields map[string]any, status string) {
 	t.Helper()
 	of.writeHQ(t, fields, ownOtherLease, ownSoonSince, status)
@@ -369,12 +368,12 @@ func TestLeaseOwnership_Status_RenewDecides(t *testing.T) {
 	}{
 		{
 			name:   "renewed, its lockSince moved by a stop and start outside zcp: held",
-			record: map[string]any{"lockSince": ownLockSince}, container: ptrTo(hqContainer(leaseLockReserved, ownOtherSince, "")),
+			record: map[string]any{}, container: ptrTo(hqContainer(leaseLockReserved, ownOtherSince, "")),
 			lease: ownHQLease, wantState: LeaseStateHeld,
 		},
 		{
 			name:   "renewed and stopped: parked, whatever its lockSince",
-			record: map[string]any{"lockSince": ownLockSince, "parked": true, "parkedAt": "2026-10-24T11:01:30Z"}, container: ptrTo(hqContainer(leaseLockReserved, ownOtherSince, platform.SwarmContainerStopped)),
+			record: map[string]any{"parked": true, "parkedAt": "2026-10-24T11:01:30Z"}, container: ptrTo(hqContainer(leaseLockReserved, ownOtherSince, platform.SwarmContainerStopped)),
 			lease: ownHQLease, wantState: LeaseStateParked,
 		},
 		{
@@ -444,8 +443,12 @@ func TestLeaseOwnership_Status_RenewDecides(t *testing.T) {
 // TestLeaseOwnership_StopStartOutsideZcp_StaysOurs: a stop of zcp's lease made
 // outside zcp — an older zcp sharing the state directory, anyone holding the
 // lease — restarts the reservation's lockSince but leaves it zcp's: status
-// reads it parked, and a release goes to the orchestrator with the lease; the
-// record is never dropped while the lease still reserves the container.
+// reads it parked. Its record does not say parked, so a plain release's guard
+// reaches for it over ssh, which a stopped container does not answer (255):
+// asked again, the orchestrator still gives it the lease, so the release is
+// refused as unchecked and the record kept; a forced release goes to the
+// orchestrator with the lease. The record is never dropped while the lease
+// still reserves the container.
 func TestLeaseOwnership_StopStartOutsideZcp_StaysOurs(t *testing.T) {
 	t.Parallel()
 	of := newOwnFixture(t)
@@ -460,14 +463,26 @@ func TestLeaseOwnership_StopStartOutsideZcp_StaysOurs(t *testing.T) {
 	if len(of.hq.renewLog()) == 0 {
 		t.Error("status never asked the orchestrator with the lease")
 	}
-	change, err := LeaseReleaseChange(context.Background(), of.deps, ownHQAlias, false)
-	if of.rawRecord(t, ownHQAlias) == nil && of.hq.leaseOf(ownHQContainer) == lease {
-		t.Fatalf("release (%+v, %v) dropped the record while zcp's own lease still reserves the container", change.Leases, err)
-	}
-	if err == nil {
-		if got := of.hq.releaseLog(); len(got) != 1 || got[0].lease != lease {
-			t.Errorf("releases = %+v, want the one release with zcp's lease", got)
+	of.ssh.setHandler(func(host, _ string) ([]byte, error) {
+		if host == ownHQAlias && of.hq.get(ownHQContainer).Status == platform.SwarmContainerStopped {
+			return nil, &platform.SSHExecError{Hostname: host, Output: "ssh: connect to host " + host + " port 22: No route to host", Err: exitError(t, 255)}
 		}
+		return nil, nil
+	})
+
+	change, err := LeaseReleaseChange(context.Background(), of.deps, ownHQAlias, false)
+	if err == nil {
+		t.Fatalf("release = %+v, want it refused: the stopped container could not be checked and is still zcp's", change.Leases)
+	}
+	if of.rawRecord(t, ownHQAlias) == nil || len(of.hq.releaseLog()) != 0 {
+		t.Fatalf("record %v, releases %+v: want the record kept and nothing released", of.rawRecord(t, ownHQAlias), of.hq.releaseLog())
+	}
+	v, err := LeaseRelease(context.Background(), of.deps, ownHQAlias, true)
+	if err != nil || v.State != LeaseStateReleased {
+		t.Fatalf("forced release = %+v, %v; want it released", v, err)
+	}
+	if got := of.hq.releaseLog(); len(got) != 1 || got[0].lease != lease {
+		t.Errorf("releases = %+v, want the one release with zcp's lease", got)
 	}
 }
 
