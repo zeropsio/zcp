@@ -538,7 +538,7 @@ locations and the upstream render only inside `{{- if .MateEnabled}}` regions.
 
 | Location | Behaviour |
 |---|---|
-| `{BasePath}/` (`/mate/`) | Proxies through `mate_backend` to `127.0.0.1:3773` — **trailing slash strips the prefix**, so mate's routes stay at the loopback root and only URLs it *emits* (`T3CODE_BASE_PATH`) carry it. The upstream keeps 16 idle connections per worker; HTTP/1.1 and an empty Connection header allow reuse. Outside the cookie gate: mate owns its own auth (§3). |
+| `{BasePath}/` (`/mate/`) | Proxies through `mate_backend` to `127.0.0.1:3773` — **trailing slash strips the prefix**, so mate's routes stay at the loopback root and only URLs it *emits* (`T3CODE_BASE_PATH`) carry it. The upstream keeps 16 idle connections per worker; HTTP/1.1 and an empty Connection header allow reuse. Only the server's HTTP API and WebSocket answer here; the container serves no client bundle and no sign-in page (§3.13). Outside the cookie gate: mate owns its own auth (§3). |
 | `= {BasePath}/ws` | Proxies through the same upstream to `/ws`, retaining query parameters, websocket upgrade headers and `proxy_read_timeout 86400s`. |
 | `~ ^/(abs)?proxy/3773(/|$)` | `return 404`. code-server's `/proxy/<port>/`/`/absproxy/<port>/` reach any loopback port for whoever holds the container cookie — a second door, closed; evaluated before `location /`. Closed **only while mate is enabled**: with the flag off nothing of ours listens on 3773 and the port is an ordinary user port. |
 | `= {BasePath}/healthz` | Serves `mate.InitMarkerPath` verbatim, `application/json`, `no-store`; falls back to `{"initComplete":false,"initAt":null}` with no marker yet. No proxy, no process — answers even when nginx is all that's up. |
@@ -593,7 +593,7 @@ restart re-initialized the container.
 
 **`GET {BasePath}/.well-known/t3/environment`** → mate's own liveness: `200` **and**
 `content-type: application/json` **and** a body carrying `"basePath":"/mate"` — never the status
-code alone, since a stripped or mis-proxied prefix answers `200 text/html` from the SPA catch-all.
+code alone, since a mis-proxied prefix can reach something else that answers `200`.
 `mateUp` is the **client-side conjunction of both**: stock nginx cannot branch a response body on a
 subrequest, so folding both fields into the readiness route would need the sidecar process this
 design removes. A client must also read a `404` on `{BasePath}/healthz` as its own third state —
@@ -695,19 +695,18 @@ lifetimes are outside this service.
 ### 2.7 Base path on the mate side
 
 nginx strips the prefix (§2.4); the server learns its **public** prefix from `T3CODE_BASE_PATH`
-(zcp passes no `--base-path`, §2.2) and joins it onto every absolute URL it emits (assets, `/ws`, well-known,
-`pairUrl`). The web bundle bakes the same prefix at build time (`VITE_BASE_PATH`) into
-`index.html`, the manifest, and the router's `basepath` — a default build is byte-shape identical
-to upstream. `ExecutionEnvironmentDescriptor.basePath` is **optional**: an older server stating
-none is still accepted, so a client built for one prefix pointed at a server published under
-another reaches a descriptor that disagrees — a mismatch a status code alone cannot see.
+(zcp passes no `--base-path`, §2.2) and joins it onto every absolute URL it emits (`/ws`,
+well-known). The container serves no web client: only the hosted client is released (§3.13), and
+it addresses a Mate at `<container origin>/mate/`. `ExecutionEnvironmentDescriptor.basePath` is
+**optional**: an older server stating none is still accepted, so a client pointed at a server
+published under another prefix reaches a descriptor that disagrees — a mismatch a status code alone
+cannot see.
 
 A request still carrying the configured prefix past nginx (a `proxy_pass` missing its trailing
-slash) gets a **loud `404 application/json`** naming the mistake, not the SPA catch-all's silent
-`200 text/html`. A tolerant ingress-side strip was dropped — any middleware passed to Effect's
-`HttpRouter.serve` leaves its `R` type parameter unsolvable, a structural dead end. Consequence:
-code-server's `/proxy/3773/` door and direct-to-3773 browsing do not work with a `/mate/`-built
-bundle; `/mate/` is the only supported origin.
+slash) gets a **loud `404 application/json`** naming the mistake. A tolerant ingress-side strip was
+dropped — any middleware passed to Effect's `HttpRouter.serve` leaves its `R` type parameter
+unsolvable, a structural dead end. Consequence: code-server's `/proxy/3773/` door and
+direct-to-3773 access do not work; `/mate/` is the only supported origin.
 
 ### 2.8 The zcp↔mate contract
 
@@ -726,7 +725,7 @@ environment instead, never a probed flag (§2.2).
 | C-3 | `T3CODE_ZEROPS_{PROJECT_ID,API_HOST,ALLOWED_ORIGINS}` keep their meaning, and a non-empty `PROJECT_ID` remains the sole Zerops-environment signal (§2.3, §3.1). `T3CODE_ZEROPS_HQ_GIT_CREDENTIAL` names the Mate's Git credential file and nothing else; the server links to HQ with the project key it reads from the env store (§3.5) | fork's `ZeropsEnvironment` |
 | C-4 | Liveness is `GET {basePath}/.well-known/t3/environment` → `200 application/json` carrying `basePath` (§2.5) | fork's environment descriptor |
 | C-5 | The server binds loopback only and never claims a declared platform port (§2.4) | zcp's `ServeArgv`, fork's `--host` |
-| C-6 | **`/mate` is baked into the released artifact, not chosen by zcp.** The release workflow builds the bundled web client with `VITE_BASE_PATH=/mate`, and `pack` refuses a tarball without `dist/client/index.html`. `mate.BasePath` must equal it; moving the prefix is a coordinated two-repo change | fork's release workflow + `mate.BasePath` |
+| C-6 | **`/mate` is the server's public prefix, and the hosted client addresses it.** zcp sets it through `T3CODE_BASE_PATH` from `mate.BasePath` (§2.2) and nginx serves only the server's API and WebSocket there (§2.4). The released artifact carries no web client and `pack` requires none; moving the prefix is a coordinated two-repo change (zcp, the hosted client) | zcp's `mate.BasePath` + the hosted client |
 | C-7 | The Mate's Git credential file (C-3) holds one credential, written by the server in a single rename whenever HQ sends a new one and removed when HQ revokes it; zcp reads it at each repository pass and never writes it. Why a new Mate's stand-up waits is the server's own word from its link (`/setup.json`: `not_linked` with the link's reason, §3.12) | fork's `ZeropsHqLink`, zcp's repository pass |
 
 The monorepo facts C-8…C-12 continue this table in §2.8a.
@@ -2019,7 +2018,9 @@ To verify live before building on them:
 - `ZCP_ORG_TOKEN` and the Chief proxy → the Chief mark and the allowlisted overview.
 - The relay's 30 s / 5 min trust window and the Mate's own Zerops read → the access list only, and
   the 15 min link-down cap.
-- The container-served `/mate/` client and sign-in → the hosted client only.
+- The container-served `/mate/` client and sign-in → the hosted client only: the release stops
+  building a client into the artifact, `pack` stops requiring `dist/client/index.html` (C-6), and
+  `/mate/` serves the server's API and WebSocket only (§2.4, §2.7).
 - `zcli push`'s key on the remote command line → the key over SSH standard input.
 - Project-level `ZCP_API_KEY` variables → sensitive service variables, or deleted.
 
