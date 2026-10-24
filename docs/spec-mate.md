@@ -1671,7 +1671,9 @@ a span attribute.
   access token alone, never the refresh token, goes to HQ: once at sign-in and at each HQ session
   renewal, in a request body over TLS, never a URL or a header.
 - **The HQ session** — HQ's bearer for one person in one organisation, 12 h, held by the browser,
-  hash stored at HQ. Reaches HQ's person API (the structure, changes, releases, tickets). Ends at its
+  hash stored at HQ. Reaches HQ's person API (the structure, changes, releases, tickets). Its id is
+  stable for its whole life: a renewal extends the same session to a new expiry and never mints a
+  new id, so the id every ticket carried names each Mate connection opened through it. Ends at its
   expiry, at sign-out, or when HQ's view stops listing the person as an `ACTIVE` member. Its expiry
   only stops new tickets; open Mate connections do not end with it (§3.8).
 - **The ticket** — `{ticket, person, HQ session id}`, issued by HQ for one Mate, single use, 60 s,
@@ -1764,11 +1766,11 @@ sequenceDiagram
   participant H as HQ
   participant Z as Zerops
   B->>Z: Zerops sign-in (device login) → access + refresh token, kept in the browser
-  B->>H: POST sign-in {access token} (body, TLS)
+  B->>H: POST sign-in {access token, organisation} (body, TLS)
   H->>Z: /user/info as the person → id, organisations
   Note over H: token dropped; integration-token identities refused
-  H-->>B: HQ session (12 h) per organisation HQ serves
-  Note over B,H: renewal: the same request with a current access token
+  H-->>B: HQ session (12 h) for the organisation the request names
+  Note over B,H: renewal: the same request with a current access token and the session, same id
 ```
 
 - The web sends the Zerops **access token only** — never the refresh token — once at sign-in and at
@@ -1780,9 +1782,12 @@ sequenceDiagram
   for `/user/info`, §3.16).
 - The organisation's first sign-in by an `OWNER` or `ADMIN` carries the organisation's key (§3.3);
   an organisation without a key answers `org_not_started` to everyone else.
+- One request names one organisation; a person in several signs in to each separately.
 - Renewal is silent: the browser renews the HQ session from its current Zerops access token,
-  refreshing that with Zerops first when it has expired.
-- Sign-out ends the HQ session and every Mate connection carrying its session id (§3.9).
+  refreshing that with Zerops first when it has expired. Renewal extends the session it presents and
+  keeps its id (§3.3).
+- Sign-out ends the HQ session and every Mate connection carrying its session id, those opened
+  before any renewal included (§3.9).
 
 ### 3.8 A person opens a Mate
 
@@ -1806,7 +1811,9 @@ sequenceDiagram
   and opens none (D5). No link, no ticket: "Mate not connected".
 - HQ answers the browser only after the Mate acknowledged the ticket on the link, so the browser
   never arrives first. No acknowledgement within a bounded wait (HQ's launch environment, 5 s) is
-  "Mate not connected", which is also the honest state.
+  "Mate not connected", which is also the honest state. HQ matches the acknowledgement by the
+  project and the ticket, not by the link it sent the ticket on, so a ticket sent just before the
+  Mate's rotation (§3.5) is acknowledged on the successor.
 - The Mate consumes the ticket once; unknown, used, expired or bound to another Mate is a refusal and
   the browser asks HQ for a new one. **Reconnect is a new ticket**, retried at a bounded rate (§0
   rule 4): 2, 4, 8, 15 and 30 s apart, then steady at 60 s for the Mate on screen and 5 min for one in
@@ -1832,7 +1839,8 @@ sequenceDiagram
   removal made through HQ refreshes that organisation's view at once; one made in Zerops arrives with
   the next organisation read (§3.4) or the next sign-in of anyone in that organisation.
 - **Sign-out.** HQ revokes the HQ session and tells every Mate to close each connection carrying
-  that session id: all tabs of that browser; the person's other devices stay.
+  that session id: all tabs of that browser, whenever they opened, since the id survives renewals;
+  the person's other devices stay.
 - **HQ session expiry** stops new tickets only. Open connections end only on sign-out, removed
   access, or the link-down cap (§3.10).
 
@@ -2002,6 +2010,7 @@ To verify live before building on them:
 | TC-9 | Past 15 min from the last live link the Mate closes every person connection. Test to be written (Mate server, injected clock). |
 | TC-10 | The dev service's git presents only the Mate's Git credential, which pushes only the project's change branches; the project key is never written into the dev service. Test to be written (zcp wiring, HQ git). |
 | TC-11 | The Chief's reads answer only the allowlisted overview, only while the mark names the caller's project. Test to be written (HQ). |
+| TC-12 | An HQ session keeps its id across renewals, and sign-out closes a Mate connection opened before the last renewal. Test to be written (HQ sign-in, Mate server). |
 
 ---
 
@@ -2310,7 +2319,7 @@ told apart; the self-hosted web client reads `Zerops Mate Web`.
 | MC-3 | Registration never sends without a Turnstile token; the platform's captcha refusal and Cloudflare's own domain-binding error both render the same "sign up at app.zerops.io" fallback. `api.test.ts` — "refuses to send a registration with no captcha token"; `turnstile.test.ts` — "names the domain refusal the way a person can act on". |
 | MC-4 | A birth's wait reads only direct endpoints, never `/project/search`; an empty read is never a "does not exist" verdict. `provisioning.test.ts` — "never concludes 'no container' from one read of a fresh project"; `birthWorker.test.ts` — "reads its own project until the container's boot is over, then hardens it once". |
 | MC-5 | The mate descriptor is the readiness authority; a 5xx on either probe is always `unreachable`, never `predates-mate`; a pre-mate and an unreachable container get the same "Enable Zerops Mate" offer. `containerHealth.test.ts` — "treats the mate descriptor as the authority, and asks nothing else once it answers", "never reads a 5xx as a container that predates Zerops Mate". |
-| MC-6 | The Zerops access token appears in exactly one request body field, HQ's sign-in or renewal, never a header, a URL or a Mate request, and the refresh token never leaves the browser. Test to be written (today's `onboarding.zerops.test.ts` — "puts the Zerops token in the identity request and nowhere else" pins the Mate exchange). |
+| MC-6 | Toward HQ the Zerops access token appears in exactly one request body field, HQ's sign-in or renewal, never a header, a URL or a Mate request, and the refresh token reaches Zerops only. Test to be written (today's `onboarding.zerops.test.ts` — "puts the Zerops token in the identity request and nowhere else" pins the Mate exchange). |
 | MC-7 | `VSCODE_PASSWORD` is generated client-side, sent once, and never read back; a container with a public subdomain always carries one. `newProject.test.ts` — "generates the container password, sends it, and forgets it", "never emits a container with a public subdomain and no password". |
 | MC-8 | A conversation nobody has spoken into starts with an empty composer: the client composes no opening message and sends nothing on the person's behalf when an environment is connected, created or reconnected. `useHandleNewThread.test.tsx` — "opens a Mate's conversation nobody has spoken into on an empty composer". |
 | MC-9 | "Enable Zerops Mate" WRITES `ZCP_MATE_ENABLED` and then restarts — a restart alone returns the container to the identical state, because `zcp init` registers no mate step without the flag (§2.0). The write is an upsert (delete-then-create, `sensitive` required, never the bulk env-file PUT), and a flag already reading as on is left untouched rather than rewritten. `api.test.ts` — "writes the Zerops Mate flag before restarting a container that lacks it", "replaces a Zerops Mate flag that is present but switched off", "writes nothing when the flag already reads as on, and still restarts". |
