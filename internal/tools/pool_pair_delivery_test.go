@@ -492,3 +492,30 @@ func TestPoolMigrate_StageOfPoolDevPair_RefusedWithoutSSH(t *testing.T) {
 		t.Errorf("the refusal came after ssh: %v", cmds)
 	}
 }
+
+// TestDevelop_StagelessPoolDevHalf_RefusedNamingTheLease: a dev-mode pair
+// moved onto its dev pool keeps no stage, so nothing in it is a runtime of
+// develop's; a scope naming the pool is refused by name pointing at a lease,
+// never answered as a project with nothing bootstrapped.
+func TestDevelop_StagelessPoolDevHalf_RefusedNamingTheLease(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname: "appdev", Mode: topology.PlanModeDev, BootstrapSession: "test", BootstrappedAt: "2026-10-01T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("seed meta: %v", err)
+	}
+	keyOnPool(t, stateDir)
+	engine := workflow.NewEngine(stateDir, workflow.EnvContainer, nil)
+	t.Cleanup(func() { _ = workflow.DeleteWorkSession(stateDir, os.Getpid()) })
+
+	result, _, err := handleDevelopBriefing(context.Background(), engine, platform.NewMock().WithServices(poolPairServices()[:1]), "proj-1",
+		WorkflowInput{Intent: "fix the header", Scope: []string{testPool}}, runtime.Info{InContainer: true}, nil)
+	if err != nil {
+		t.Fatalf("handleDevelopBriefing: %v", err)
+	}
+	text := extractText(result)
+	if !result.IsError || !strings.Contains(text, testPool) || !strings.Contains(text, "zerops_lease") {
+		t.Fatalf("scope naming the stageless pool was not refused naming its lease: %s", text)
+	}
+}
