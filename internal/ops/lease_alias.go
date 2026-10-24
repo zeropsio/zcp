@@ -32,7 +32,8 @@ type CommandRunner func(ctx context.Context, name string, args ...string) error
 type LeaseHost struct {
 	// Mounter mounts and checks /var/www/<alias>; nil means no mounts.
 	Mounter Mounter
-	// Run runs the sudo install of the alias file; nil means no alias file.
+	// Run runs the sudo calls that install the alias file; nil means no alias
+	// file.
 	Run CommandRunner
 	// AliasFile overrides DefaultLeaseAliasFile (tests).
 	AliasFile string
@@ -83,12 +84,20 @@ func renderLeaseAliases(records []leaseRecord) (string, error) {
 	return b.String(), nil
 }
 
+// leaseAliasStagingSuffix names the file the alias file is installed to before
+// it is renamed into place: `install` creates its target before it sets the
+// mode, so a file ssh reads must never be its target, and <dest>.new is not
+// matched by ssh's ssh_config.d/*.conf include.
+const leaseAliasStagingSuffix = ".new"
+
 // InstallLeaseAliases renders the alias file from the lease records in
-// stateDir and installs it at dest with an argv `sudo -n install` call. The
-// content is written to a private file in the lease directory first (sudo is
-// handed paths, never content), and only after every stanza passed both
-// validators. With no records the file is the bare header, which removes every
-// alias.
+// stateDir and installs it at dest with argv sudo calls: `sudo -n install` to
+// a staging file beside dest, then `sudo -n mv -f` over dest, a rename within
+// one directory, so a reader (any ssh, through its include) sees the old file
+// or the new one, never one still being made. The content is written to a
+// private file in the lease directory first (sudo is handed paths, never
+// content), and only after every stanza passed both validators. With no
+// records the file is the bare header, which removes every alias.
 func InstallLeaseAliases(ctx context.Context, run CommandRunner, stateDir, dest string) error {
 	if run == nil {
 		return errors.New("no command runner")
@@ -124,8 +133,13 @@ func InstallLeaseAliases(ctx context.Context, run CommandRunner, stateDir, dest 
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close %s: %w", tmp.Name(), err)
 	}
-	if err := run(ctx, "sudo", "-n", "install", "-m", "0644", "-o", "root", "-g", "root", tmp.Name(), dest); err != nil {
-		return fmt.Errorf("install %s: %w", dest, err)
+	staging := dest + leaseAliasStagingSuffix
+	if err := run(ctx, "sudo", "-n", "install", "-m", "0644", "-o", "root", "-g", "root", tmp.Name(), staging); err != nil {
+		return fmt.Errorf("install %s: %w", staging, err)
+	}
+	if err := run(ctx, "sudo", "-n", "mv", "-f", staging, dest); err != nil {
+		_ = run(ctx, "sudo", "-n", "rm", "-f", staging) // best effort: the include never reads it
+		return fmt.Errorf("move %s over %s (it is unchanged): %w", staging, dest, err)
 	}
 	return nil
 }

@@ -283,15 +283,20 @@ func TestInitSSHFS_RemountsLeases(t *testing.T) {
 		t.Fatalf("RunSSHFS() error: %v", err)
 	}
 
-	if len(executed) != 4 {
-		t.Fatalf("commands = %q, want service mount, alias install, two lease mounts", executed)
+	if len(executed) != 5 {
+		t.Fatalf("commands = %q, want service mount, alias install, its rename into place, two lease mounts", executed)
 	}
 	if !strings.Contains(strings.Join(executed[0], " "), "unit create sshfs-appdev") {
 		t.Errorf("first command = %q, want the service mount before any lease work", executed[0])
 	}
+	// The alias file is installed beside its place under a name ssh's
+	// ssh_config.d/*.conf include does not match, then renamed over it.
 	inst := executed[1]
-	if inst[0] != "sudo" || inst[1] != "-n" || inst[2] != "install" || inst[len(inst)-1] != aliasFile {
-		t.Errorf("second command = %q, want sudo -n install ... %s", inst, aliasFile)
+	if inst[0] != "sudo" || inst[1] != "-n" || inst[2] != "install" || inst[len(inst)-1] != aliasFile+".new" {
+		t.Errorf("second command = %q, want sudo -n install ... %s.new", inst, aliasFile)
+	}
+	if mv := executed[2]; !slices.Equal(mv, []string{"sudo", "-n", "mv", "-f", aliasFile + ".new", aliasFile}) {
+		t.Errorf("third command = %q, want sudo -n mv -f %s.new %s", mv, aliasFile, aliasFile)
 	}
 	for _, want := range []string{"Host apppool-3\n    HostName node-id-3.runtime.apppool.zerops\n    User zerops\n", "Host webpool-12\n    HostName node-id-12.runtime.webpool.zerops\n    User zerops\n"} {
 		if !strings.Contains(installedFile, want) {
@@ -299,7 +304,7 @@ func TestInitSSHFS_RemountsLeases(t *testing.T) {
 		}
 	}
 	for i, alias := range []string{"apppool-3", "webpool-12"} {
-		cmd := executed[2+i]
+		cmd := executed[3+i]
 		joined := strings.Join(cmd, " ")
 		if cmd[0] != "sudo" || cmd[5] != "sshfs-"+alias || !strings.Contains(joined, " "+alias+":/var/www "+filepath.Join(mountBase, alias)) {
 			t.Errorf("lease mount %d = %q, want unit sshfs-%s of %s:/var/www at %s", i, cmd, alias, alias, filepath.Join(mountBase, alias))

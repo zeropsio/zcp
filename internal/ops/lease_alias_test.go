@@ -141,6 +141,9 @@ func TestLeaseAliasInstall_UsesArgvSudoNoShell(t *testing.T) {
 	run := func(_ context.Context, name string, args ...string) error {
 		argv := append([]string{name}, args...)
 		ran = append(ran, argv)
+		if sudoVerb(args) != "install" {
+			return nil
+		}
 		// The runner stands in for sudo: read the source file now, as it is
 		// gone once the call returns.
 		src := args[len(args)-2]
@@ -155,16 +158,17 @@ func TestLeaseAliasInstall_UsesArgvSudoNoShell(t *testing.T) {
 		t.Fatalf("InstallLeaseAliases: %v", err)
 	}
 
-	if len(ran) != 1 {
-		t.Fatalf("commands = %v, want exactly one sudo install", ran)
+	if len(ran) != 2 {
+		t.Fatalf("commands = %v, want a sudo install then a sudo mv", ran)
 	}
-	argv := ran[0]
-	if argv[0] != "sudo" || !slices.Contains(argv, "-n") || !slices.Contains(argv, "install") || argv[len(argv)-1] != dest {
-		t.Errorf("argv = %q, want sudo -n install ... %s", argv, dest)
-	}
-	for _, a := range argv {
-		if a == "sh" || a == "bash" || a == "-c" || strings.ContainsAny(a, ";|&$`\n") {
-			t.Errorf("argv %q carries a shell or shell metacharacters (%q)", argv, a)
+	for _, argv := range ran {
+		if argv[0] != "sudo" || argv[1] != "-n" {
+			t.Errorf("argv = %q, want sudo -n ...", argv)
+		}
+		for _, a := range argv {
+			if a == "sh" || a == "bash" || a == "-c" || strings.ContainsAny(a, ";|&$`\n") {
+				t.Errorf("argv %q carries a shell or shell metacharacters (%q)", argv, a)
+			}
 		}
 	}
 	if want := aliasFileHeader + "\n" + stanzaFor("apppool-3", "node-id-3.runtime.apppool.zerops"); installed != want {
@@ -174,6 +178,135 @@ func TestLeaseAliasInstall_UsesArgvSudoNoShell(t *testing.T) {
 	if len(left) != 0 {
 		t.Errorf("temp files left behind: %v", left)
 	}
+}
+
+// TestLeaseAliasInstall_StagesThenRenamesIntoPlace: ssh reads the alias file
+// through its ssh_config.d/*.conf include, and `install` creates its target
+// before it sets the mode, so an ssh started in between failed on the file
+// ("Can't open user config file …/zcp-leases.conf: Permission denied", live
+// 2026-10-24). The file is installed beside the alias file under a name the
+// include does not match, then renamed over it: a rename within one directory
+// is atomic, so a reader sees the old file or the new one.
+func TestLeaseAliasInstall_StagesThenRenamesIntoPlace(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	if err := writeLeaseRecord(stateDir, aliasRecord("apppool", 3, "node-id-3.runtime.apppool.zerops")); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(t.TempDir(), "zcp-leases.conf")
+	if err := os.WriteFile(dest, []byte(aliasFileHeader), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	staging := dest + ".new"
+
+	var ran [][]string
+	run := func(ctx context.Context, name string, args ...string) error {
+		ran = append(ran, append([]string{name}, args...))
+		return fakeAliasSudo(ctx, name, args...)
+	}
+	if err := InstallLeaseAliases(context.Background(), run, stateDir, dest); err != nil {
+		t.Fatalf("InstallLeaseAliases: %v", err)
+	}
+
+	if len(ran) != 2 {
+		t.Fatalf("commands = %q, want the install to a staging file, then its rename over the alias file", ran)
+	}
+	install := ran[0]
+	if want := []string{"sudo", "-n", "install", "-m", "0644", "-o", "root", "-g", "root"}; len(install) != len(want)+2 || !slices.Equal(install[:len(want)], want) || install[len(install)-1] != staging {
+		t.Errorf("first command = %q, want sudo -n install -m 0644 -o root -g root <tmp> %s", install, staging)
+	}
+	if want := []string{"sudo", "-n", "mv", "-f", staging, dest}; !slices.Equal(ran[1], want) {
+		t.Errorf("second command = %q, want %q", ran[1], want)
+	}
+	if matched, _ := filepath.Match("*.conf", filepath.Base(staging)); matched {
+		t.Errorf("staging file %s matches ssh's ssh_config.d/*.conf include", staging)
+	}
+	got, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := aliasFileHeader + "\n" + stanzaFor("apppool-3", "node-id-3.runtime.apppool.zerops"); string(got) != want {
+		t.Errorf("alias file differs.\n got:\n%s\nwant:\n%s", got, want)
+	}
+	if _, err := os.Stat(staging); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("staging file left behind: %v", err)
+	}
+}
+
+// TestLeaseAliasInstall_RenameFails_SaysSoAndRemovesStaging: a rename that
+// fails leaves the alias file as it was; the error says the rename failed, and
+// the staging file is removed (best effort) rather than left beside it.
+func TestLeaseAliasInstall_RenameFails_SaysSoAndRemovesStaging(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	if err := writeLeaseRecord(stateDir, aliasRecord("apppool", 3, "node-id-3.runtime.apppool.zerops")); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(t.TempDir(), "zcp-leases.conf")
+	if err := os.WriteFile(dest, []byte(aliasFileHeader), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	staging := dest + ".new"
+
+	var ran [][]string
+	run := func(ctx context.Context, name string, args ...string) error {
+		ran = append(ran, append([]string{name}, args...))
+		if sudoVerb(args) == "mv" {
+			return errors.New("mv: cannot move: Read-only file system")
+		}
+		return fakeAliasSudo(ctx, name, args...)
+	}
+	err := InstallLeaseAliases(context.Background(), run, stateDir, dest)
+	if err == nil {
+		t.Fatal("InstallLeaseAliases succeeded although the rename failed")
+	}
+	if !strings.Contains(err.Error(), "move "+staging) || !strings.Contains(err.Error(), "Read-only file system") {
+		t.Errorf("error %q does not say the rename of %s failed", err, staging)
+	}
+	if len(ran) != 3 || !slices.Equal(ran[2], []string{"sudo", "-n", "rm", "-f", staging}) {
+		t.Errorf("commands = %q, want install, mv, then sudo -n rm -f %s", ran, staging)
+	}
+	if _, err := os.Stat(staging); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("staging file left behind: %v", err)
+	}
+	if got, _ := os.ReadFile(dest); string(got) != aliasFileHeader {
+		t.Errorf("alias file changed by a failed rename:\n%s", got)
+	}
+}
+
+// sudoVerb is the command a sudo argv runs: its first argument that is not a
+// sudo flag.
+func sudoVerb(args []string) string {
+	for _, a := range args {
+		if !strings.HasPrefix(a, "-") {
+			return a
+		}
+	}
+	return ""
+}
+
+// fakeAliasSudo stands in for the sudo calls InstallLeaseAliases makes, on
+// real files: install copies its source to the path it names, mv renames, rm
+// -f removes. A fixture that only needs the alias file to land uses it as is.
+func fakeAliasSudo(_ context.Context, _ string, args ...string) error {
+	switch sudoVerb(args) {
+	case "install":
+		raw, err := os.ReadFile(args[len(args)-2])
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(args[len(args)-1], raw, 0o644)
+	case "mv":
+		return os.Rename(args[len(args)-2], args[len(args)-1])
+	case "rm":
+		if err := os.Remove(args[len(args)-1]); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
+	return errors.New("unexpected sudo command " + strings.Join(args, " "))
 }
 
 // hostFixture is a lease fixture whose host side is fake: the install runner
@@ -221,14 +354,12 @@ func newHostFixture(t *testing.T) *hostFixture {
 	hf.deps.Host = LeaseHost{
 		Mounter:   eventMounter{mockMounter: hf.mounter, events: &hf.events},
 		AliasFile: hf.aliasFile,
-		Run: func(_ context.Context, name string, args ...string) error {
-			hf.events = append(hf.events, "install-aliases")
-			hf.installs = append(hf.installs, append([]string{name}, args...))
-			raw, err := os.ReadFile(args[len(args)-2])
-			if err != nil {
-				return err
+		Run: func(ctx context.Context, name string, args ...string) error {
+			if sudoVerb(args) == "install" {
+				hf.events = append(hf.events, "install-aliases")
 			}
-			return os.WriteFile(args[len(args)-1], raw, 0o644)
+			hf.installs = append(hf.installs, append([]string{name}, args...))
+			return fakeAliasSudo(ctx, name, args...)
 		},
 	}
 	return hf
@@ -372,17 +503,13 @@ func TestInstallLeaseAliases_Overlapping_LastInstallHasEveryRecord(t *testing.T)
 	if err := writeLeaseRecord(stateDir, aliasRecord("devpool", 1, "node-id-1.runtime.devpool.zerops")); err != nil {
 		t.Fatal(err)
 	}
-	copyInstall := func(_ context.Context, _ string, args ...string) error {
-		raw, err := os.ReadFile(args[len(args)-2])
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(args[len(args)-1], raw, 0o644)
-	}
+	copyInstall := fakeAliasSudo
 	inInstall, releaseA := make(chan struct{}), make(chan struct{})
 	slowA := func(ctx context.Context, name string, args ...string) error {
-		close(inInstall)
-		<-releaseA
+		if sudoVerb(args) == "install" {
+			close(inInstall)
+			<-releaseA
+		}
 		return copyInstall(ctx, name, args...)
 	}
 	errA := make(chan error, 1)
