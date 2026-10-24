@@ -1658,9 +1658,15 @@ a span attribute.
   something else; the drop tests the refusal's reason, never its error class. An entry whose last
   verification is older than 1 h (HQ's launch environment, the bound the gate's budget is sized to)
   is verified again while its link stays up; a definite refusal then drops it, closes the link
-  `key_refused` and refuses the key's header calls. The recheck exists because HQ never uses a
-  Mate's key against Zerops and cannot see its revocation in the organisation's token list (§3.16),
-  so the hourly `/user/info` with the key is the only way HQ learns a key was deleted.
+  `key_refused` and refuses the key's header calls. The natural signal comes first: when Zerops
+  definitely refuses the key (`401`/`403`) to the Mate's server, the server re-reads `ZCP_API_KEY`
+  from its env store; an unchanged value is reported to HQ in one link frame (`key-refused`), and HQ
+  at once closes the link `key_refused`, revokes the project's Git credential and refuses header
+  calls with that key; a changed value is a reconnect with the new key (newest wins, §3.5). The
+  hourly recheck stays as the backstop because HQ never uses a Mate's key against Zerops and cannot
+  see its revocation in the organisation's token list (§3.16), and the natural signal comes only
+  from an honest holder: a leaked key held by someone else, or a compromised Mate, never reports
+  itself.
   Disconnecting the Mate in HQ is the immediate way to cut it off. The entry also goes
   when HQ's organisation read no longer holds the project, or when a person disconnects the Mate in
   HQ (a block on the same row). The table leaks project ids and link history only: a plain SHA-256
@@ -1899,7 +1905,8 @@ sequenceDiagram
 - **Key regenerated or deleted.** A regenerated key is a new hash: the Mate presents it at its next
   connect, the gate verifies it and the entry is replaced; the old value is refused by Zerops at once
   and dropped at its next verification, at the latest within the 1 h recheck (§3.3). A deleted key
-  is refused at the next verification and the link closes `key_refused`.
+  is cut off as soon as the Mate's server meets Zerops' refusal and reports it (§3.3), otherwise at
+  the next verification; the link closes `key_refused`.
 - **Key in a non-sensitive variable.** Any organisation reader (the organisation's key included)
   reads it in clear and with it holds the project. HQ refuses such a key `key_not_sensitive` (§3.3);
   the legacy project-level keys are moved before the cutover (§3.17).
@@ -2092,6 +2099,7 @@ The cutover, in this order (HQ keeps no old route, HQ `spec/protocol.md` *Compat
 | TC-18 | When the `chief` of the link's `state` frame changes, the Mate's server restarts zcp. Test to be written (Mate server). |
 | TC-19 | A refused organisation key closes every person's connection to that organisation's Mates at once. Test to be written (HQ link, Mate server). |
 | TC-20 | A Zerops outage keeps people connected until the cap. Test to be written (Mate server, injected clock). |
+| TC-21 | A Mate whose key Zerops refuses is cut off from HQ at once. Test to be written (Mate server, HQ link). |
 
 ---
 
