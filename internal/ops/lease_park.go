@@ -456,10 +456,15 @@ func repark(ctx context.Context, d LeaseDeps, rec leaseRecord) (text string, par
 // lease's — why says so — with its alias and mount, and says so.
 func reparkDropped(ctx context.Context, d LeaseDeps, rec leaseRecord, why string) string {
 	text := "its lease ended outside zcp meanwhile — " + why + " — so zcp dropped its record, ssh alias and mount"
-	if _, err := dropLostLease(ctx, d, rec, why); err != nil {
+	switch v, err := dropLostLease(ctx, d, rec, why); {
+	case err != nil:
 		text = "its lease ended outside zcp meanwhile — " + why + " — but its record could not be dropped: " + err.Error()
+	case v.aliasReused:
+		text = "its lease ended outside zcp meanwhile — " + why + " — and " + aliasReusedNote(rec.alias())
 	}
-	return text
+	// No release rewires the branch here: name what may still be wired to
+	// the container (DP-26).
+	return joinNotes(text, siblingsMayBeWired(d.StateDir, rec))
 }
 
 // releasedParkedNote is what a release says of a parked lease it did not

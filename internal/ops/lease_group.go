@@ -672,7 +672,7 @@ func LeaseReleaseGroupChange(ctx context.Context, d LeaseDeps, repo, branch stri
 		if err := branchReleaseRefusal(d, members, repo, branch); err != nil {
 			// The orchestrator's held-by-other is final whatever becomes of
 			// the branch: those records go now, with their alias and mount.
-			return LeaseChange{}, dropHeldByOther(ctx, d, members, reparkMembers(ctx, d, members, err))
+			return LeaseChange{}, dropEndedOnCall(ctx, d, members, reparkMembers(ctx, d, members, err))
 		}
 	}
 	again := LeaseReleaseBranchCall(branch, repo, force)
@@ -709,21 +709,30 @@ func LeaseReleaseGroupChange(ctx context.Context, d LeaseDeps, repo, branch stri
 	return LeaseChange{Leases: views, Rewired: rewireLeftHeld(ctx, d, members)}, nil
 }
 
-// dropHeldByOther drops, with its alias and mount, the record of every member
-// of a refused branch release whose start the orchestrator refused
-// held-by-other (its lease ended outside zcp: final whatever becomes of the
-// branch), and adds to cause what failed to go.
-func dropHeldByOther(ctx context.Context, d LeaseDeps, members []*releaseMember, cause error) error {
-	var failed []string
+// dropEndedOnCall drops, with its alias and mount, the record of every member
+// of a refused branch release whose lease the release's own steps found ended
+// outside zcp (endedOnCall: final whatever becomes of the branch), and adds to
+// cause what failed to go, an alias that names another lease by now, and —
+// since no release rewires the branch — the leases of the branch that may
+// still run wired to the dropped container (DP-26).
+func dropEndedOnCall(ctx context.Context, d LeaseDeps, members []*releaseMember, cause error) error {
+	var notes []string
 	for _, m := range members {
 		if !m.endedOnCall {
 			continue
 		}
-		if _, err := dropLostLease(context.WithoutCancel(ctx), d, m.rec, m.lost); err != nil {
-			failed = append(failed, fmt.Sprintf("%s's record could not be dropped: %v", m.rec.alias(), err))
+		alias := m.rec.alias()
+		switch v, err := dropLostLease(context.WithoutCancel(ctx), d, m.rec, m.lost); {
+		case err != nil:
+			notes = append(notes, fmt.Sprintf("%s's record could not be dropped: %v", alias, err))
+		case v.aliasReused:
+			notes = append(notes, aliasReusedNote(alias))
+		}
+		if wired := siblingsMayBeWired(d.StateDir, m.rec); wired != "" {
+			notes = append(notes, alias+": "+wired)
 		}
 	}
-	return withNote(cause, strings.Join(failed, "; "))
+	return withNote(cause, strings.Join(notes, "; "))
 }
 
 // rewireLeftHeld hands every lease a branch's release could not release the
