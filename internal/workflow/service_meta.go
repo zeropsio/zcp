@@ -829,6 +829,58 @@ func rekeyServiceMeta(stateDir, from, to string, rekey func(fromMeta, toMeta *Se
 	return out, err
 }
 
+// rekeyServiceMetas is rekeyServiceMeta over several files at once, for a
+// pair split into one pair per part or merged back: inside one
+// .services.lock it reads the files keyed by hosts as they are now (any may
+// be absent, nil in the map), asks rekey for the metas to keep, writes each,
+// then removes every file of hosts that no kept meta is keyed by. Writing
+// before removing means a cut leaves the old files beside the new, never a
+// pair without its record, and the next call finishes the move. A kept meta
+// keyed by a hostname hosts does not name is refused before anything is
+// written. The caller holds whatever pair locks fence the pairs' other
+// writers.
+func rekeyServiceMetas(stateDir string, hosts []string, rekey func(read map[string]*ServiceMeta) ([]*ServiceMeta, error)) ([]*ServiceMeta, error) {
+	var out []*ServiceMeta
+	err := withFileLock(filepath.Join(stateDir, serviceMetaLockName), func() error {
+		read := make(map[string]*ServiceMeta, len(hosts))
+		for _, host := range hosts {
+			m, err := ReadServiceMeta(stateDir, host)
+			if err != nil {
+				return fmt.Errorf("rekey service metas: read %q: %w", host, err)
+			}
+			read[host] = m
+		}
+		keep, err := rekey(read)
+		if err != nil {
+			return err
+		}
+		kept := make(map[string]bool, len(keep))
+		for _, m := range keep {
+			if m == nil || !slices.Contains(hosts, m.Hostname) {
+				return fmt.Errorf("rekey service metas: a pair to keep is keyed by none of %v", hosts)
+			}
+			kept[m.Hostname] = true
+		}
+		for _, m := range keep {
+			if err := WriteServiceMeta(stateDir, m); err != nil {
+				return err
+			}
+		}
+		for _, host := range hosts {
+			if kept[host] {
+				continue
+			}
+			// Not DeleteServiceMeta: it takes the lock this function holds.
+			if err := os.Remove(filepath.Join(stateDir, "services", host+".json")); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return fmt.Errorf("rekey service metas: remove %q: %w", host, err)
+			}
+		}
+		out = keep
+		return nil
+	})
+	return out, err
+}
+
 // parseMeta deserializes a ServiceMeta from JSON.
 // Single deserialization path — both ReadServiceMeta and ListServiceMetas
 // route through this so any future field-level invariants land at one

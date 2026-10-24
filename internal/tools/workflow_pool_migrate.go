@@ -70,7 +70,7 @@ const (
 	poolMigrateRefuseLocalMode       = "local-mode"
 	poolMigrateRefuseUnsupportedMode = "unsupported-mode"
 	poolMigrateRefuseVariantB        = "variant-b"
-	poolMigrateRefuseMultiPart       = "multi-part"
+	poolMigrateRefusePoolNotAPart    = "pool-not-a-part"
 	poolMigrateRefuseNoOrigin        = "no-origin"
 	poolMigrateRefuseDevNotLive      = "dev-not-live"
 	poolMigrateRefusePoolInvalid     = "pool-hostname-invalid"
@@ -135,7 +135,11 @@ type poolMigrateResponse struct {
 	Service string   `json:"service"`
 	Stages  []string `json:"stages,omitempty"`
 	Pool    string   `json:"pool,omitempty"`
-	Step    string   `json:"step,omitempty"`
+	// Part is the stage of the part the answer walks, when the dev serves
+	// several; Parts lists every one of them with its pool and step.
+	Part  string                 `json:"part,omitempty"`
+	Parts []poolMigratePartState `json:"parts,omitempty"`
+	Step  string                 `json:"step,omitempty"`
 	// Steps marks every step done, current or pending.
 	Steps []poolMigrateStepState `json:"steps,omitempty"`
 	Next  *poolMigrateNext       `json:"next,omitempty"`
@@ -220,6 +224,9 @@ type poolMigrateCall struct {
 	stages []platform.ServiceStack
 	// services is the project's every service by the direct list.
 	services []platform.ServiceStack
+	// partPools are every part's pool when the dev serves several, nil for
+	// a single part: the image step checks the declaration names them.
+	partPools []string
 }
 
 // handlePoolMigrate is the read side of workflow="pool-migrate": it names the
@@ -244,18 +251,18 @@ func handlePoolMigrate(
 }
 
 func poolMigrateRun(ctx context.Context, d poolMigrateDeps, input WorkflowInput) (*mcp.CallToolResult, any, error) {
-	call, final, failed := readPoolMigrate(ctx, d, input)
+	dr, final, failed := readPoolMigrate(ctx, d, input)
 	switch {
 	case failed != nil:
 		return failed, nil, nil
 	case final != nil:
 		return jsonResult(*final), nil, nil
 	}
-	env, err := ops.ReadPoolMigrateEnv(ctx, d.client, call.envInput(d, input))
-	if err != nil {
-		return convertError(fmt.Errorf("pool-migrate: compare the pool's env: %w", err), WithRecoveryStatus()), nil, nil
+	resp, failed := dr.answer(ctx, d)
+	if failed != nil {
+		return failed, nil, nil
 	}
-	return jsonResult(poolMigrateSettledAnswer(ctx, d, call, env)), nil, nil
+	return jsonResult(resp), nil, nil
 }
 
 // handlePoolMigrateEnv is the env step, zerops_workflow workflow="pool-migrate"
@@ -283,31 +290,57 @@ func poolMigrateEnvRun(ctx context.Context, d poolMigrateDeps, input WorkflowInp
 			`Call zerops_workflow workflow="pool-migrate" action="pool-env" service="<dev>".`,
 		), WithRecoveryStatus()), nil, nil
 	}
-	call, final, failed := readPoolMigrate(ctx, d, input)
+	dr, final, failed := readPoolMigrate(ctx, d, input)
 	switch {
 	case failed != nil:
 		return failed, nil, nil
 	case final != nil:
 		final.Action = actionPoolEnv
+		return jsonResult(*final), nil, nil
+	}
+	// A dev serving several parts reads every part first: the answer lists
+	// them, and a call naming none copies the env of the part the read side
+	// walks.
+	part := dr.selected
+	var answers []poolMigrateResponse
+	if dr.multiPart() {
+		if answers, failed = dr.partAnswers(ctx, d); failed != nil {
+			return failed, nil, nil
+		}
+		if part < 0 {
+			part = max(dr.current(answers), 0)
+		}
+	}
+	answered := func(resp poolMigrateResponse) (*mcp.CallToolResult, any, error) {
+		if dr.multiPart() {
+			answers[part] = resp
+			resp = dr.partsAnswer(answers, part)
+		}
+		resp.Action = actionPoolEnv
+		return jsonResult(resp), nil, nil
+	}
+	call, final, failed := dr.partRead(ctx, d, part)
+	switch {
+	case failed != nil:
+		return failed, nil, nil
+	case final != nil:
 		if final.Status == poolMigrateStatusStep {
 			final.Warnings = append(final.Warnings, "Nothing was written: the pool's env is copied once the pool exists and its own processes have finished.")
 		}
-		return jsonResult(*final), nil, nil
+		return answered(*final)
 	}
 	env, err := ops.ApplyPoolMigrateEnv(ctx, d.client, d.ssh, call.envInput(d, input))
 	if err != nil {
 		return convertError(fmt.Errorf("pool-migrate: copy the env to the pool: %w", err), WithRecoveryStatus()), nil, nil
 	}
-	resp := poolMigrateSettledAnswer(ctx, d, call, env)
-	resp.Action = actionPoolEnv
-	return jsonResult(resp), nil, nil
+	return answered(poolMigrateSettledAnswer(ctx, d, call, env))
 }
 
 // readPoolMigrate answers a part whose retire started from the retire's
 // record — retiring while it is in flight, retired once done — and runs every
-// other call's checks (readPoolMigrateChecks). Reading the record writes
-// nothing and reaches no service.
-func readPoolMigrate(ctx context.Context, d poolMigrateDeps, input WorkflowInput) (*poolMigrateCall, *poolMigrateResponse, *mcp.CallToolResult) {
+// other call's checks of the dev service (readPoolMigrateDev). Reading the
+// record writes nothing and reaches no service.
+func readPoolMigrate(ctx context.Context, d poolMigrateDeps, input WorkflowInput) (*poolMigrateDevRead, *poolMigrateResponse, *mcp.CallToolResult) {
 	if service := strings.TrimSpace(input.Service); service != "" {
 		rec, err := findPoolRetireRecord(d.stateDir, service)
 		if err != nil {
@@ -322,14 +355,16 @@ func readPoolMigrate(ctx context.Context, d poolMigrateDeps, input WorkflowInput
 			return nil, &resp, nil
 		}
 	}
-	return readPoolMigrateChecks(ctx, d, input)
+	return readPoolMigrateDev(ctx, d, input)
 }
 
-// readPoolMigrateChecks runs every check a call makes before the pool is
-// settled. It answers a final response (a refusal, the provision step), an
-// error result, or the call to go on with.
-func readPoolMigrateChecks(ctx context.Context, d poolMigrateDeps, input WorkflowInput) (*poolMigrateCall, *poolMigrateResponse, *mcp.CallToolResult) {
-	client, sshDeployer, rt, stateDir, projectID := d.client, d.ssh, d.rt, d.stateDir, d.projectID
+// readPoolMigrateDev runs every check a call makes of the dev service before
+// any part's pool: the meta, the direct service list, the parts and their
+// pools' hostnames, the census and the work's branch. It answers a final
+// response (a refusal), an error result, or the dev read the parts go on
+// from.
+func readPoolMigrateDev(ctx context.Context, d poolMigrateDeps, input WorkflowInput) (*poolMigrateDevRead, *poolMigrateResponse, *mcp.CallToolResult) {
+	client, sshDeployer, rt, stateDir := d.client, d.ssh, d.rt, d.stateDir
 	service := strings.TrimSpace(input.Service)
 	poolInput := strings.TrimSpace(input.Pool)
 	if service == "" {
@@ -350,7 +385,7 @@ func readPoolMigrateChecks(ctx context.Context, d poolMigrateDeps, input Workflo
 		Guidance: atomBody(corpus, poolMigrateAtomID),
 		Inputs:   poolMigrateInputs{Service: service, Pool: poolInput},
 	}
-	refused := func(refusals ...poolMigrateRefusal) (*poolMigrateCall, *poolMigrateResponse, *mcp.CallToolResult) {
+	refused := func(refusals ...poolMigrateRefusal) (*poolMigrateDevRead, *poolMigrateResponse, *mcp.CallToolResult) {
 		r := poolMigrateRefused(resp, refusals...)
 		return nil, &r, nil
 	}
@@ -371,7 +406,7 @@ func readPoolMigrateChecks(ctx context.Context, d poolMigrateDeps, input Workflo
 
 	// The direct read, never the ES search: a pool imported a moment ago is
 	// absent from the search for seconds (docs/spec-workflows.md §3.5).
-	live, err := client.ListServicesDirect(ctx, projectID)
+	live, err := client.ListServicesDirect(ctx, d.projectID)
 	if err != nil {
 		return nil, nil, convertError(fmt.Errorf("pool-migrate: list services: %w", err), WithRecoveryStatus())
 	}
@@ -409,23 +444,14 @@ func readPoolMigrateChecks(ctx context.Context, d poolMigrateDeps, input Workflo
 			Message: fmt.Sprintf("%s is not among the project's services (read directly); there is no dev service to move.", dev),
 		})
 	}
-	pool := poolInput
-	if pool == "" {
-		pool = poolMigrateDefaultPool(dev)
+	parts, selected, partRefusals := poolMigrateParts(meta, service, poolInput, byName)
+	refusals = append(refusals, partRefusals...)
+	switch {
+	case len(parts) == 1:
+		resp.Pool = parts[0].pool
+	case selected >= 0:
+		resp.Pool, resp.Part = parts[selected].pool, parts[selected].stage
 	}
-	if perr := platform.ValidateHostname(pool); perr != nil {
-		refusals = append(refusals, poolMigrateRefusal{
-			Reason:  poolMigrateRefusePoolInvalid,
-			Message: fmt.Sprintf("The pool hostname %q cannot be a service hostname: %s. %s", pool, perr.Message, perr.Suggestion),
-		})
-		pool = ""
-	} else if svc, ok := byName[pool]; ok && !topology.IsPoolType(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) {
-		refusals = append(refusals, poolMigrateRefusal{
-			Reason:  poolMigrateRefusePoolTaken,
-			Message: fmt.Sprintf("%s is already a %s service in this project, not a pool. Pass pool=\"<free hostname>\" to name the part's pool otherwise, and the same pool on every later call.", pool, svc.ServiceStackTypeInfo.ServiceStackTypeVersionName),
-		})
-	}
-	resp.Pool = pool
 	if len(refusals) > 0 {
 		return refused(refusals...)
 	}
@@ -449,10 +475,27 @@ func readPoolMigrateChecks(ctx context.Context, d poolMigrateDeps, input Workflo
 	if move := atomBody(corpus, poolMigrateMoveAtomID); move != "" {
 		resp.Guidance += "\n\n" + move
 	}
+	return &poolMigrateDevRead{
+		input: input, resp: resp, corpus: corpus, meta: meta, dev: devSvc,
+		byName: byName, services: live, parts: parts, selected: selected,
+	}, nil, nil
+}
 
-	poolSvc, poolLive := byName[pool]
+// partRead runs every check of part i before its pool is settled: it answers
+// the part's provision step — the pool absent — or a wait on the pool's own
+// processes, an error result, or the call to go on with on the settled pool.
+func (dr *poolMigrateDevRead) partRead(ctx context.Context, d poolMigrateDeps, i int) (*poolMigrateCall, *poolMigrateResponse, *mcp.CallToolResult) {
+	part := dr.parts[i]
+	resp := dr.resp
+	resp.Pool = part.pool
+	if dr.multiPart() {
+		resp.Part = part.stage
+		resp.Inputs.Pool = part.pool
+	}
+	pool := part.pool
+	poolSvc, poolLive := dr.byName[pool]
 	if !poolLive {
-		stanza, warnings, err := renderPoolStanza(ctx, client, devSvc, pool, rt.ServiceName)
+		stanza, warnings, err := renderPoolStanza(ctx, d.client, dr.dev, pool, d.rt.ServiceName)
 		if err != nil {
 			return nil, nil, convertError(fmt.Errorf("pool-migrate: render the pool stanza: %w", err), WithRecoveryStatus())
 		}
@@ -465,7 +508,7 @@ func readPoolMigrateChecks(ctx context.Context, d poolMigrateDeps, input Workflo
 		return nil, &r, nil
 	}
 
-	activity, err := ops.ProjectActivity(ctx, client, projectID, map[string]string{poolSvc.ID: pool})
+	activity, err := ops.ProjectActivity(ctx, d.client, d.projectID, map[string]string{poolSvc.ID: pool})
 	if err != nil {
 		return nil, nil, convertError(fmt.Errorf("pool-migrate: read the project's processes: %w", err), WithRecoveryStatus())
 	}
@@ -483,13 +526,53 @@ func readPoolMigrateChecks(ctx context.Context, d poolMigrateDeps, input Workflo
 		}, "")
 		return nil, &r, nil
 	}
+	// A part of several compares its pool with its own stage only.
+	stageNames := dr.meta.StageHostnames()
+	var partPools []string
+	if dr.multiPart() {
+		stageNames = []string{part.stage}
+		partPools = dr.partPools()
+	}
 	var stages []platform.ServiceStack
-	for _, stage := range meta.StageHostnames() {
-		if svc, ok := byName[stage]; ok {
+	for _, stage := range stageNames {
+		if svc, ok := dr.byName[stage]; ok {
 			stages = append(stages, svc)
 		}
 	}
-	return &poolMigrateCall{resp: resp, corpus: corpus, meta: meta, dev: devSvc, pool: poolSvc, stages: stages, services: live}, nil, nil
+	return &poolMigrateCall{resp: resp, corpus: dr.corpus, meta: dr.meta, dev: dr.dev, pool: poolSvc, stages: stages, services: dr.services, partPools: partPools}, nil, nil
+}
+
+// partAnswer is the read side's answer for part i: its provision or wait
+// step, or — its pool settled — the step the pool's env, image and zcp's
+// lease records name, with the call on the settled pool.
+func (dr *poolMigrateDevRead) partAnswer(ctx context.Context, d poolMigrateDeps, i int) (poolMigrateResponse, *poolMigrateCall, *mcp.CallToolResult) {
+	call, final, failed := dr.partRead(ctx, d, i)
+	switch {
+	case failed != nil:
+		return poolMigrateResponse{}, nil, failed
+	case final != nil:
+		return *final, nil, nil
+	}
+	env, err := ops.ReadPoolMigrateEnv(ctx, d.client, call.envInput(d, dr.input))
+	if err != nil {
+		return poolMigrateResponse{}, nil, convertError(fmt.Errorf("pool-migrate: compare the pool's env: %w", err), WithRecoveryStatus())
+	}
+	return poolMigrateSettledAnswer(ctx, d, call, env), call, nil
+}
+
+// answer is the read side's answer: the one part's, or — for a dev serving
+// several — the part the call named or the first not yet ready to retire,
+// with every part listed.
+func (dr *poolMigrateDevRead) answer(ctx context.Context, d poolMigrateDeps) (poolMigrateResponse, *mcp.CallToolResult) {
+	if !dr.multiPart() {
+		resp, _, failed := dr.partAnswer(ctx, d, 0)
+		return resp, failed
+	}
+	answers, failed := dr.partAnswers(ctx, d)
+	if failed != nil {
+		return poolMigrateResponse{}, failed
+	}
+	return dr.partsAnswer(answers, dr.current(answers)), nil
 }
 
 // envInput is what the env step reads for this call.
@@ -572,6 +655,7 @@ func poolMigrateImageAnswer(ctx context.Context, d poolMigrateDeps, call *poolMi
 		Pool:                  call.pool,
 		DevSetup:              call.meta.PrimarySetupName,
 		FallbackMaxContainers: poolMigrateMaxContainers,
+		PartPools:             call.partPools,
 	})
 	if err != nil {
 		// The census just read the dev, so this is no refusal: the step
@@ -665,7 +749,7 @@ func poolMigrateShortCommit(sha string) string {
 }
 
 // poolMigrateMetaRefusals are the refusals the meta alone decides: the mode,
-// a shared code volume, several parts, and an origin to move the work through.
+// a shared code volume, and an origin to move the work through.
 func poolMigrateMetaRefusals(meta *workflow.ServiceMeta, rt runtime.Info) []poolMigrateRefusal {
 	dev := meta.Hostname
 	// A pair already keyed by its dev pool, named by its stage: its dev half
@@ -703,12 +787,6 @@ func poolMigrateMetaRefusals(meta *workflow.ServiceMeta, rt runtime.Info) []pool
 		out = append(out, poolMigrateRefusal{
 			Reason:  poolMigrateRefuseVariantB,
 			Message: fmt.Sprintf("%s shares the code volume %s with other dev services; a dev service on a code volume does not move onto a pool yet.", dev, meta.CodeVolume.Hostname),
-		})
-	}
-	if stages := meta.StageHostnames(); len(stages) > 1 {
-		out = append(out, poolMigrateRefusal{
-			Reason:  poolMigrateRefuseMultiPart,
-			Message: fmt.Sprintf("%s serves several parts (stages %s); a dev service serving several parts does not move onto a pool yet.", dev, strings.Join(stages, ", ")),
 		})
 	}
 	if r := poolMigrateOriginRefusal(meta, rt); r != nil {

@@ -346,6 +346,79 @@ func TestPoolMigrateImage_SetupChecks_PreviewPortsFollowMaxContainers(t *testing
 // image step is done: the pool runs an app version with code, created at or
 // after the commit's last change of its config file, and the setup passes
 // every check.
+// TestPoolMigrateImage_SetupChecks_SeveralParts_DeclarationNamesEachPartsPool
+// pins the multi-part check: in a repository whose parts each move onto a
+// pool of their own, a pool container's supervisor runs the entries naming
+// its pool and those naming none, so the commit's declaration must give the
+// part's dev servers its pool as `service` and leave no entry to every part's
+// leases or to a service no part's pool is. A single part is not checked: its
+// pool runs every entry that names no service.
+func TestPoolMigrateImage_SetupChecks_SeveralParts_DeclarationNamesEachPartsPool(t *testing.T) {
+	t.Parallel()
+	parts := []string{"apppool", "apipool"}
+	decl := func(servers string) string {
+		return `{"version": 1, "previewPortBase": 4000, "servers": [` + servers + `]}`
+	}
+	tests := []struct {
+		name   string
+		parts  []string
+		decl   string
+		wantIn []string // empty: no service check missing
+	}{
+		{
+			name:  "every entry names its part's pool",
+			parts: parts,
+			decl:  decl(`{"name": "web", "port": 3000, "command": "npm run dev", "service": "apppool"}, {"name": "api", "port": 8080, "command": "go run .", "service": "apipool"}`),
+		},
+		{
+			name:   "no entry names this part's pool",
+			parts:  parts,
+			decl:   decl(`{"name": "api", "port": 8080, "command": "go run .", "service": "apipool"}`),
+			wantIn: []string{`"service": "apppool"`, "runs none"},
+		},
+		{
+			name:   "an entry names no service",
+			parts:  parts,
+			decl:   decl(`{"name": "web", "port": 3000, "command": "npm run dev", "service": "apppool"}, {"name": "docs", "port": 3001, "command": "npm run docs"}`),
+			wantIn: []string{"docs", "every part's"},
+		},
+		{
+			name:   "an entry names a service no part's pool is",
+			parts:  parts,
+			decl:   decl(`{"name": "web", "port": 3000, "command": "npm run dev", "service": "apppool"}, {"name": "api", "port": 8080, "command": "go run .", "service": "appdev"}`),
+			wantIn: []string{"api", "appdev", "apppool, apipool"},
+		},
+		{
+			name:  "a single part runs every entry naming no service",
+			parts: nil,
+			decl:  decl(`{"name": "web", "port": 3000, "command": "npm run dev"}`),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			in := imageInput(imagePool(3, nil))
+			in.PartPools = tt.parts
+			got := checkPoolMigrateImage(in, imageRead("zerops.yaml", imageReadyYAML(), tt.decl, "2026-10-24T10:00:00+02:00"))
+			msg := imageMessage(got.Missing, PoolMigrateImageService)
+			if len(tt.wantIn) == 0 {
+				if len(got.Missing) != 0 {
+					t.Fatalf("missing %v, want none", got.Missing)
+				}
+				return
+			}
+			if checks := imageChecks(got.Missing); !slices.Equal(checks, []string{PoolMigrateImageService}) {
+				t.Fatalf("missing %v, want only the service check", checks)
+			}
+			for _, want := range tt.wantIn {
+				if !strings.Contains(msg, want) {
+					t.Errorf("message %q does not name %q", msg, want)
+				}
+			}
+		})
+	}
+}
+
 func TestPoolMigrateImage_Done_PoolRunsAnImageNewerThanTheSetup(t *testing.T) {
 	t.Parallel()
 	placeholder := &platform.ActiveAppVersionDigest{ID: "av-0", Created: "2026-10-24T09:00:00Z", Source: platform.AppVersionSourceNone}

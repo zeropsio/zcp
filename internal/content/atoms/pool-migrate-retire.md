@@ -22,7 +22,7 @@ runs with `zerops_verify serviceHostname="<alias>"`. Whatever you did not
 push is visibly absent from it.
 
 **Ready to retire.** Once this zcp holds a lease of the pool on the work's
-branch, `next` is
+branch — of every part's pool, for several parts — `next` is
 `zerops_workflow workflow="pool-migrate" action="retire" service="<dev>"`.
 Deleting a service is permanent, so the retire takes two calls:
 
@@ -57,8 +57,9 @@ this container down, then writes a verified bundle of its repository —
 every branch, every stash entry, every commit a reflog reaches, each
 worktree's HEAD, its staged and unstaged edits and its untracked files —
 to this container, never a `.env` file or an ignored file. It keys the
-pair on the pool, checks right before the delete that the repository did
-not move since the bundle, and deletes the dev service by its id. The
+pair on the pool — for several parts, one pair per part, each keyed by its
+pool — checks right before the delete that the repository did not move
+since the bundle, and deletes the dev service by its id. The
 answer's `retire` names the bundle and `retire.restore`, the commands that
 put everything back in an empty directory.
 

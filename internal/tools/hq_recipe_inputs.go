@@ -72,7 +72,7 @@ func composeGroupRecipeInputs(
 		ProjectEnvs:     groupRecipeProjectEnvs(projectEnvs),
 	}
 	warnings := leftOut
-	for _, m := range wired {
+	for _, m := range groupRecipePairs(wired) {
 		dev, ok, why := groupRecipeDevHalf(m, live)
 		if why != "" {
 			warnings = append(warnings, why)
@@ -172,6 +172,48 @@ func composeGroupRecipeInputs(
 		}
 	}
 	return inputs, warnings, nil
+}
+
+// groupRecipePairs are the wired pairs as the recipe carries them: a dev
+// service serving several parts that moved onto one pool per part left one
+// pool-keyed pair per part, each naming the dev service it was moved from
+// and every part's pool (devPool.migratedFrom.parts); the recipe carries that
+// dev service once, so those pairs fold into the first of them, holding every
+// part's stage in the order the split names the parts.
+func groupRecipePairs(wired []*workflow.ServiceMeta) []*workflow.ServiceMeta {
+	split := func(m *workflow.ServiceMeta) bool {
+		return m.DevIsPool() && m.DevPool.MigratedFrom != nil && len(m.DevPool.MigratedFrom.Parts) > 1
+	}
+	byPool := map[string]*workflow.ServiceMeta{}
+	for _, m := range wired {
+		if split(m) {
+			byPool[m.Hostname] = m
+		}
+	}
+	out := make([]*workflow.ServiceMeta, 0, len(wired))
+	carried := map[string]bool{}
+	for _, m := range wired {
+		if !split(m) {
+			out = append(out, m)
+			continue
+		}
+		from := m.DevPool.MigratedFrom
+		if carried[from.Hostname] {
+			continue
+		}
+		carried[from.Hostname] = true
+		// The part met first carries the dev service: its pair-wide records
+		// are every part's.
+		one := *m
+		one.Stages = nil
+		for _, pool := range from.Parts {
+			if part, ok := byPool[pool]; ok && part.DevPool.MigratedFrom.Hostname == from.Hostname {
+				one.Stages = append(one.Stages, part.Stages...)
+			}
+		}
+		out = append(out, &one)
+	}
+	return out
 }
 
 // groupDevHalf is the dev service the recipe carries for a wired pair: the

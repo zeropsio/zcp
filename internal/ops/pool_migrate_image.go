@@ -33,6 +33,7 @@ const (
 	PoolMigrateImageInstall      = "install"
 	PoolMigrateImagePreviewBase  = "preview-port-base"
 	PoolMigrateImagePreviewPorts = "preview-ports"
+	PoolMigrateImageService      = "service"
 	PoolMigrateImageDepsLockfile = "deps-lockfile"
 	PoolMigrateImageDepsBaked    = "deps-baked"
 )
@@ -114,6 +115,11 @@ type PoolMigrateImageInput struct {
 	DevSetup string
 	// FallbackMaxContainers stands in for a pool that reads no maxContainers.
 	FallbackMaxContainers int
+	// PartPools are the pools of every part, Pool's among them, when the
+	// repository serves several parts — each moving onto a pool of its own —
+	// and nil for a single part. With them the declaration is checked to name
+	// each part's pool as its servers' service.
+	PartPools []string
 }
 
 // poolMigrateCommitRead is what the read found at the commit.
@@ -333,6 +339,9 @@ func checkPoolMigrateImage(in PoolMigrateImageInput, read poolMigrateCommitRead)
 			miss(PoolMigrateImagePreviewPorts, msg)
 		}
 	}
+	if msg := poolMigrateServiceMessage(read, img.Setup, in.PartPools, short); msg != "" {
+		miss(PoolMigrateImageService, msg)
+	}
 	if entry != nil {
 		img.Findings = poolMigrateDependencyFindings(entry, img.Setup, read)
 	}
@@ -444,6 +453,50 @@ func poolMigratePreviewPortsMessage(entry *ZeropsYmlEntry, setup string, base, m
 	}
 	return fmt.Sprintf("Setup %q's run.ports %s. A lease answers its preview on previewPortBase + its container's number, 1 … %d (the pool's maxContainers), and a per-port subdomain routes only to a port declared with httpSupport: true, so ports %d to %d each need one.",
 		setup, strings.Join(gaps, " and "), maxContainers, base+1, base+maxContainers)
+}
+
+// poolMigrateServiceMessage says how the commit's declaration fails a
+// repository of several parts, "" when it does not or the repository is one
+// part (parts nil). A pool container's supervisor runs the entries naming its
+// pool and those naming none (devsup.Declaration.ForService): the part's
+// servers must name pool, an entry naming no service would run in every
+// part's leases, and one naming a service no part's pool is would run in
+// none. A declaration missing or not parsing is the preview-port-base check's.
+func poolMigrateServiceMessage(read poolMigrateCommitRead, pool string, parts []string, short string) string {
+	if len(parts) == 0 || !read.hasDeclaration {
+		return ""
+	}
+	decl, err := devsup.ParseDeclaration([]byte(read.declaration))
+	if err != nil {
+		return ""
+	}
+	var own bool
+	var unnamed, stray []string
+	for _, s := range decl.Servers {
+		switch {
+		case s.Service == pool:
+			own = true
+		case s.Service == "":
+			unnamed = append(unnamed, s.Name)
+		case !slices.Contains(parts, s.Service):
+			stray = append(stray, fmt.Sprintf("%s (service %s)", s.Name, s.Service))
+		}
+	}
+	var gaps []string
+	if !own {
+		gaps = append(gaps, fmt.Sprintf("no server names %q as its service, so a lease of the part runs none of its dev servers: give each of them `\"service\": \"%s\"`", pool, pool))
+	}
+	if len(unnamed) > 0 {
+		gaps = append(gaps, fmt.Sprintf("%s name no service, so every part's leases run them: give each the pool of its part", strings.Join(unnamed, ", ")))
+	}
+	if len(stray) > 0 {
+		gaps = append(gaps, fmt.Sprintf("%s name a service no part's pool is (%s), so no lease runs them", strings.Join(stray, ", "), strings.Join(parts, ", ")))
+	}
+	if len(gaps) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("In %s at %s, %s. Each part moves onto a pool of its own, and a pool's container runs the servers naming its pool and those naming none.",
+		devsup.DeclarationPath, short, strings.Join(gaps, "; "))
 }
 
 // poolMigrateDependencyFindings names where the setup departs from the

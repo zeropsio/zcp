@@ -55,9 +55,13 @@ func (e *retireEvents) index(prefix string) int {
 // runs when the bundle script starts.
 type retireSSH struct {
 	*poolMigrateSSH
-	repo        string
-	events      *retireEvents
-	leaseDown   bool
+	repo      string
+	events    *retireEvents
+	leaseDown bool
+	// leases are the aliases of further leases that answer like apppool-1,
+	// down those that do not.
+	leases      []string
+	down        map[string]bool
 	afterStream func()
 	onBundle    func()
 	// onLeaseProbe runs when the lease's probe does: while the guards read.
@@ -75,10 +79,11 @@ func (s *retireSSH) local(ctx context.Context, command string) *exec.Cmd {
 
 func (s *retireSSH) ExecSSH(ctx context.Context, hostname, command string) ([]byte, error) {
 	switch {
-	case hostname == retireLeaseAlias:
+	case hostname == retireLeaseAlias || slices.Contains(s.leases, hostname):
 		s.events.add("ssh lease: " + command)
-		if s.leaseDown {
-			return []byte("ssh: connect to host apppool-1 port 22: Connection refused"), &platform.SSHExecError{Hostname: hostname, Output: "ssh: connect to host apppool-1 port 22: Connection refused", Err: errors.New("exit status 255")}
+		if s.leaseDown || s.down[hostname] {
+			refused := "ssh: connect to host " + hostname + " port 22: Connection refused"
+			return []byte(refused), &platform.SSHExecError{Hostname: hostname, Output: refused, Err: errors.New("exit status 255")}
 		}
 		if command == "true" {
 			if s.onLeaseProbe != nil {

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -617,5 +618,61 @@ func TestGroupRecipeInputs_PoolDevHalf_NothingToCarryIsSaid(t *testing.T) {
 				t.Errorf("warnings %v do not say why the pair is left out", warnings)
 			}
 		})
+	}
+}
+
+// TestGroupRecipeInputs_SplitPoolPairs_CarryOneDevServiceWithEveryPart: a dev
+// service serving several parts, moved onto one pool per part, leaves one
+// pool-keyed pair per part, each naming the dev service it was moved from.
+// The recipe carries that dev service once, with every part's stage in the
+// order the split names them — never twice under one hostname.
+func TestGroupRecipeInputs_SplitPoolPairs_CarryOneDevServiceWithEveryPart(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname: "appdev", Mode: topology.PlanModeStandard,
+		Stages:           []topology.StageRef{{Hostname: "webstage", SetupName: "web"}, {Hostname: "apistage", SetupName: "api"}},
+		BootstrapSession: "test", BootstrappedAt: "2026-09-16",
+		GitPushState: topology.GitPushConfigured, RemoteURL: testHQAddress + "/git/" + labApp + "/appdev.git",
+		PrimarySetupName: "dev",
+		HQ:               &workflow.HQRepoRef{AppID: labApp, Repo: "appdev"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := workflow.MigratePairToPools(stateDir, "appdev", []workflow.PoolPartMove{
+		{Stage: "webstage", Pool: "webpool", PoolServiceID: "svc-webpool", PoolSetup: "webpool"},
+		{Stage: "apistage", Pool: "apipool", PoolServiceID: "svc-apipool", PoolSetup: "apipool"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	metas, err := workflow.ListServiceMetas(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	services := []platform.ServiceStack{
+		liveRuntime("svc-apipool", "apipool", "swarm@1"),
+		liveRuntime("svc-webpool", "webpool", "swarm@1"),
+		liveRuntime("svc-webstage", "webstage", "nodejs@22"),
+		liveRuntime("svc-apistage", "apistage", "nodejs@22"),
+		liveRuntime("svc-zcp", "zcp", "zcp@1"),
+	}
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "p1", Name: "acme-mate-1", Status: "ACTIVE", Mode: "SERIOUS"}).
+		WithServicesDirect(services).WithServices(services)
+
+	inputs, warnings, err := composeGroupRecipeInputs(t.Context(), mock, "p1", "acme", t.TempDir(), testHQAddress, labApp, metas, metas)
+	if err != nil {
+		t.Fatalf("composeGroupRecipeInputs: %v (warnings %v)", err, warnings)
+	}
+	if len(inputs.Runtimes) != 1 {
+		t.Fatalf("runtimes = %+v, want the dev service once", inputs.Runtimes)
+	}
+	got := inputs.Runtimes[0]
+	stages := make([]string, 0, len(got.Stages))
+	for _, s := range got.Stages {
+		stages = append(stages, s.Hostname+":"+s.SetupName)
+	}
+	if got.DevHostname != "appdev" || got.SetupName != "dev" || !slices.Equal(stages, []string{"webstage:web", "apistage:api"}) {
+		t.Errorf("runtime = %q setup %q stages %v, want appdev (dev) with webstage:web and apistage:api", got.DevHostname, got.SetupName, stages)
 	}
 }

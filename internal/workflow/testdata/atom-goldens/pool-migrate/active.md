@@ -37,6 +37,14 @@ the dev service's own `verticalAutoscaling`, and `sshIsolation` in the pool's
 It holds no `GIT_TOKEN` — a credential is never written into an import. While
 the pool's import still runs, `next` waits on it.
 
+**Several parts.** A dev service serving several parts — one stage per
+part — moves each part onto a pool of its own, named after its stage
+(`webstage` → `webpool`). `parts` lists every part with its pool and step;
+each answer walks one part (`part`, its stage): the one you name with
+`service="<its stage>"` or `pool="<its pool>"`, else the first part not yet
+ready to retire. Every part walks the steps below on its own pool; the
+retire waits for all of them and deletes the dev service once.
+
 **Env and after.** Once the pool exists and its import has finished, the
 step is `env` until the pool holds the dev service's env, then `image` until
 the pool runs the part's pool setup from a commit, then `move`, `lease` and
@@ -53,8 +61,9 @@ each message naming what it needs:
 | `pool-or-box` | the service already is a pool or a Box |
 | `no-origin` | work moves by git through an https origin; outside a Mate set it up with `zerops_workflow action="git-push-setup" service="<dev>"`, in a Mate a develop task wires the pair to HQ |
 | `crew-worktrees` | crew lanes stay on a plain dev service, so a dev service holding crew worktrees does not move |
-| `variant-b`, `multi-part` | a dev service sharing a code volume, or serving several parts, does not move yet |
-| `pool-hostname-taken`, `pool-hostname-invalid` | pass `pool="<free hostname>"` |
+| `variant-b` | a dev service sharing a code volume does not move yet |
+| `pool-hostname-taken`, `pool-hostname-invalid` | pass `pool="<free hostname>"`; for several parts each pool is named after its stage |
+| `pool-not-a-part` | pass the pool of one of the parts `parts` lists |
 | `not-adopted`, `dev-not-live`, `dev-unreadable`, `not-in-container` | the dev service must be adopted and running, and its git readable from the zcp service in the project |
 
 ---
@@ -150,6 +159,11 @@ carries `image`: the checks of the setup in the checkout's latest commit
 | `install` | a `run.prepareCommands` line installing `zcp-devsup` — take the one the dev setup carries |
 | `preview-port-base` | `previewPortBase` in `.zcp/dev-servers.json`: a lease answers its preview on `previewPortBase` + its container's number |
 | `preview-ports` | every port from `previewPortBase + 1` to `previewPortBase + maxContainers` in `run.ports`, each with `httpSupport: true` |
+| `service` | with several parts, each dev server in `.zcp/dev-servers.json` names its part's pool as `"service"`: a pool's container runs the servers naming its pool and those naming none |
+
+Once the declaration names the pools, the dev service's own supervisor runs
+none of those servers after its next reload or restart: run them on the
+parts' leases from then on.
 
 While `image.missing` names anything there is no `next`, and
 `nextUnavailable` says what to change. Once nothing is missing, `next` is
@@ -235,7 +249,7 @@ runs with `zerops_verify serviceHostname="<alias>"`. Whatever you did not
 push is visibly absent from it.
 
 **Ready to retire.** Once this zcp holds a lease of the pool on the work's
-branch, `next` is
+branch — of every part's pool, for several parts — `next` is
 `zerops_workflow workflow="pool-migrate" action="retire" service="<dev>"`.
 Deleting a service is permanent, so the retire takes two calls:
 
@@ -270,8 +284,9 @@ this container down, then writes a verified bundle of its repository —
 every branch, every stash entry, every commit a reflog reaches, each
 worktree's HEAD, its staged and unstaged edits and its untracked files —
 to this container, never a `.env` file or an ignored file. It keys the
-pair on the pool, checks right before the delete that the repository did
-not move since the bundle, and deletes the dev service by its id. The
+pair on the pool — for several parts, one pair per part, each keyed by its
+pool — checks right before the delete that the repository did not move
+since the bundle, and deletes the dev service by its id. The
 answer's `retire` names the bundle and `retire.restore`, the commands that
 put everything back in an empty directory.
 

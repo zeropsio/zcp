@@ -565,3 +565,205 @@ func TestPoolMigrate_Integration_RetireWithoutOrchestratorRefused(t *testing.T) 
 		t.Errorf("a refused retire wrote its record: %v", err)
 	}
 }
+
+// poolMigrateIntPartsYAML is a zerops.yaml whose two pool setups — webpool and
+// apipool — each pass every image check.
+func poolMigrateIntPartsYAML() string {
+	_, setup, _ := strings.Cut(poolRetireIntReadyYAML, "  - setup: apppool\n")
+	return "zerops:\n  - setup: webpool\n" + setup + "  - setup: apipool\n" + setup
+}
+
+// poolMigrateIntPartsDeclaration gives each part's dev server its pool.
+const poolMigrateIntPartsDeclaration = `{"version": 1, "previewPortBase": 4000, "servers": [` +
+	`{"name": "web", "port": 3000, "command": "npm run dev", "service": "webpool"},` +
+	`{"name": "api", "port": 8080, "command": "go run .", "service": "apipool"}]}`
+
+// poolMigrateIntPartsSSH is a dev service serving the web and api parts and
+// their pools' leases: the census and the image read answer canned, the
+// retire's own scripts run against repo.
+type poolMigrateIntPartsSSH struct {
+	poolRetireIntSSH
+}
+
+func (s *poolMigrateIntPartsSSH) ExecSSH(ctx context.Context, hostname, command string) ([]byte, error) {
+	switch {
+	case (hostname == "webpool-1" || hostname == "apipool-1") && command == "true":
+		s.record(hostname + ": " + command)
+		return nil, nil
+	case hostname == "webpool-1" || hostname == "apipool-1":
+		s.record(hostname + ": " + command)
+		return nil, errors.New("no supervisor answer here")
+	case strings.Contains(command, "'zcp-image 1'"):
+		s.record(hostname + ": " + command)
+		yaml := poolMigrateIntPartsYAML()
+		return fmt.Appendf(nil, "zcp-image 1\nF %d zerops.yaml\n%s\nF %d .zcp/dev-servers.json\n%s\nC 2026-10-24T10:00:00+02:00\nzcp-image-end\n",
+			len(yaml), yaml, len(poolMigrateIntPartsDeclaration), poolMigrateIntPartsDeclaration), nil
+	}
+	return s.poolRetireIntSSH.ExecSSH(ctx, hostname, command)
+}
+
+// poolRetireIntPartsSwarm is one pool's orchestrator: it lists zcp's lease
+// <pool>-1 held.
+type poolRetireIntPartsSwarm struct {
+	poolRetireIntSwarm
+	pool string
+}
+
+func (s poolRetireIntPartsSwarm) Containers(context.Context) ([]platform.SwarmContainer, error) {
+	return []platform.SwarmContainer{{ID: "c-" + s.pool, Number: 1, Hostname: "node-id-1.runtime." + s.pool + ".zerops", LockState: "reserved"}}, nil
+}
+
+// poolMigrateIntPartsRig is appdev serving web and api behind the full MCP
+// server; with ready, both parts' pools hold the dev's env, run the commit's
+// pool setups and are leased on main — otherwise no pool exists yet.
+func poolMigrateIntPartsRig(t *testing.T, ready bool) (*mcp.ClientSession, *poolRetireIntClient, string) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	stateDir := t.TempDir()
+	const origin = "https://github.com/example/app.git"
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname: "appdev", Mode: topology.PlanModeStandard,
+		Stages:       []topology.StageRef{{Hostname: "webstage", SetupName: "web"}, {Hostname: "apistage", SetupName: "api"}},
+		GitPushState: topology.GitPushConfigured, RemoteURL: origin, BootstrappedAt: "2026-10-01T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	services := []platform.ServiceStack{
+		poolMigrateIntService("appdev", "svc-dev", "nodejs@22"),
+		poolMigrateIntService("webstage", "svc-webstage", "nodejs@22"),
+		poolMigrateIntService("apistage", "svc-apistage", "nodejs@22"),
+	}
+	mock := platform.NewMock().WithProcess(&platform.Process{ID: "proc-delete-svc-dev", Status: platform.ProcessStatusFinished})
+	if ready {
+		leases := filepath.Join(stateDir, "leases")
+		if err := os.MkdirAll(leases, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		for _, pool := range []string{"webpool", "apipool"} {
+			if got := ops.SeedPoolDefaultRepo(stateDir, pool, origin); got.State != ops.PoolDefaultRepoSeeded {
+				t.Fatalf("seed %s: %+v", pool, got)
+			}
+			record := `{"poolHostname":"` + pool + `","poolServiceId":"svc-` + pool + `","containerId":"c-` + pool + `","containerNumber":1,"containerHostname":"node-id-1.runtime.` + pool + `.zerops","lease":"l","branch":"main","repo":"` + origin + `","acquiredAt":"2026-10-24T09:30:00Z"}`
+			if err := os.WriteFile(filepath.Join(leases, pool+"-1.json"), []byte(record), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			svc := poolMigrateIntService(pool, "svc-"+pool, "swarm@1")
+			svc.ActiveAppVersion = &platform.ActiveAppVersionDigest{ID: "av-" + pool, Created: "2026-10-24T09:00:00Z", Source: "CLI", Built: true}
+			services = append(services, svc)
+			mock.WithServiceEnv("svc-"+pool, []platform.ServiceEnvVar{
+				{ID: "p-api", Key: "API_TOKEN", Content: "pool-api-token", Type: platform.ServiceEnvUser},
+				{ID: "p-ssh", Key: "sshIsolation", Content: "vpn service@zcp", Type: platform.ServiceEnvUser},
+			})
+		}
+	}
+	mock.WithServices(services).WithServicesDirect(services)
+
+	repo := filepath.Join(t.TempDir(), "www")
+	if err := os.Mkdir(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	poolRetireIntGit(t, repo, "init", "-q", "-b", "main")
+	if err := os.WriteFile(filepath.Join(repo, "app.txt"), []byte("v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	poolRetireIntGit(t, repo, "add", "-A")
+	poolRetireIntGit(t, repo, "commit", "-q", "-m", "c1")
+
+	client := &poolRetireIntClient{Mock: mock}
+	ssh := &poolMigrateIntPartsSSH{poolRetireIntSSH{repo: repo}}
+	srv := mcp.NewServer(&mcp.Implementation{Name: "zcp-test", Version: "0.1"}, nil)
+	engine := workflow.NewEngine(stateDir, workflow.EnvContainer, nil)
+	swarm := tools.WithPoolOrchestratorsForWorkflow(func(baseURL, _ string) ops.SwarmAPI {
+		for _, pool := range []string{"webpool", "apipool"} {
+			if strings.Contains(baseURL, "."+pool+".") {
+				return poolRetireIntPartsSwarm{pool: pool}
+			}
+		}
+		return poolRetireIntSwarm{}
+	})
+	tools.RegisterWorkflow(srv, client, nil, "proj-1", nil, engine, nil, stateDir, "zcp", nil, ssh, runtime.Info{InContainer: true, ServiceName: "zcp"}, "", swarm)
+	ctx := context.Background()
+	st, ct := mcp.NewInMemoryTransports()
+	ss, err := srv.Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ss.Close() })
+	session, err := mcp.NewClient(&mcp.Implementation{Name: "integration-test", Version: "0.1"}, nil).Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+	return session, client, stateDir
+}
+
+// TestPoolMigrate_Integration_MultiPart_OnePoolPerPart: through the full MCP
+// server a dev serving several parts is a candidate: each part gets a pool
+// named after its stage, the answer lists the parts and walks the first.
+func TestPoolMigrate_Integration_MultiPart_OnePoolPerPart(t *testing.T) {
+	t.Parallel()
+	session, _, stateDir := poolMigrateIntPartsRig(t, false)
+	before := poolMigrateIntTree(t, stateDir)
+
+	out, isErr := poolRetireIntCall(t, session, map[string]any{"workflow": "pool-migrate", "service": "appdev"})
+	if isErr || out["status"] != "step" || out["step"] != "provision" || out["pool"] != "webpool" || out["part"] != "webstage" {
+		t.Fatalf("out = %v, want the web part's provision", out)
+	}
+	next, _ := out["next"].(map[string]any)
+	args, _ := next["args"].(map[string]any)
+	content, _ := args["content"].(string)
+	if !strings.Contains(content, "hostname: webpool") {
+		t.Fatalf("stanza = %s", content)
+	}
+	if errs := schema.ValidateImportYAML(content); len(errs) > 0 {
+		t.Fatalf("stanza fails the import schema: %v", errs)
+	}
+	parts, _ := out["parts"].([]any)
+	pools := make([]string, 0, len(parts))
+	for _, p := range parts {
+		pools = append(pools, p.(map[string]any)["pool"].(string))
+	}
+	if !slices.Equal(pools, []string{"webpool", "apipool"}) {
+		t.Fatalf("parts' pools = %v", pools)
+	}
+	if !reflect.DeepEqual(before, poolMigrateIntTree(t, stateDir)) {
+		t.Fatal("the read side changed the state dir")
+	}
+}
+
+// TestPoolMigrate_Integration_MultiPartRetireSplitsThePair: once every part's
+// pool is leased, the retire diagnoses, then deletes the dev by its id and
+// leaves one pool-keyed pair per part.
+//
+// non-parallel: the retire builds its bundle in the dev's default scratch
+// directory, which the fake dev resolves on this machine — the directory
+// TestPoolMigrate_Integration_RetireDiagnoseConfirmDeletesByRecordedID's
+// retire builds in too.
+func TestPoolMigrate_Integration_MultiPartRetireSplitsThePair(t *testing.T) {
+	session, client, stateDir := poolMigrateIntPartsRig(t, true)
+
+	out, _ := poolRetireIntCall(t, session, map[string]any{"workflow": "pool-migrate", "service": "appdev"})
+	if out["step"] != "ready-to-retire" {
+		t.Fatalf("read side = %v, want ready-to-retire", out)
+	}
+	retire := map[string]any{"workflow": "pool-migrate", "action": "retire", "service": "appdev"}
+	if out, isErr := poolRetireIntCall(t, session, retire); !isErr || out["code"] != platform.ErrDiagnosisRequired {
+		t.Fatalf("diagnose = %v", out)
+	}
+	retire["confirmDestructive"] = map[string]any{"operation": "pool-retire", "acknowledgedTargets": []string{"appdev"}}
+	out, isErr := poolRetireIntCall(t, session, retire)
+	if isErr || out["step"] != "retired" {
+		t.Fatalf("confirmed = %v, want retired", out)
+	}
+	if !slices.Equal(client.deleted, []string{"svc-dev"}) {
+		t.Fatalf("deleted %q, want svc-dev by its id", client.deleted)
+	}
+	for stage, pool := range map[string]string{"webstage": "webpool", "apistage": "apipool"} {
+		meta, err := workflow.FindServiceMeta(stateDir, stage)
+		if err != nil || meta == nil || meta.Hostname != pool || !meta.DevIsPool() || !slices.Equal(meta.StageHostnames(), []string{stage}) {
+			t.Fatalf("%s's pair = %+v, want it keyed by %s alone", stage, meta, pool)
+		}
+	}
+}
