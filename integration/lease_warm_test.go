@@ -86,6 +86,18 @@ func (o *warmIntOrchestrator) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		o.refuse(w, "pool-capacity-exceeded", "the requested containers do not fit under the pool maximum")
 	case r.Method == http.MethodPost && path == "/container/acquire":
 		o.acquire(w)
+	case r.Method == http.MethodPost && strings.HasSuffix(path, "/renew"):
+		b := o.find(strings.TrimSuffix(strings.TrimPrefix(path, "/container/"), "/renew"))
+		switch {
+		case b == nil:
+			o.refuse(w, "container-not-found", "no such container")
+		case b.lock == "deleting":
+			_, _ = w.Write([]byte(o.render(b, false, false)))
+		case b.lock == "" || b.lease != lease:
+			o.refuse(w, "unknown-lease", "no reservation of this container is held by that lease - acquire it again")
+		default:
+			_, _ = w.Write([]byte(o.render(b, false, false)))
+		}
 	case r.Method == http.MethodPost && strings.HasSuffix(path, "/release"):
 		b := o.find(id)
 		if b == nil || b.lease != lease {

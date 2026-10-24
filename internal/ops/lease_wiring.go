@@ -363,26 +363,23 @@ func rewireLeases(ctx context.Context, d LeaseDeps, members []leaseRecord, leavi
 		idx[i] = i
 	}
 	verdicts := make([]leaseVerdict, len(members))
-	readErrs := make([]error, len(members))
-	runMembers(idx, func(i int) { verdicts[i], readErrs[i] = readLeaseOwnership(ctx, d, members[i]) })
+	runMembers(idx, func(i int) { verdicts[i] = readLeaseOwnership(ctx, d, members[i]) })
 	without := maps.Clone(leaving)
 	if without == nil {
 		without = map[string]bool{}
 	}
 	for i, v := range verdicts {
-		if readErrs[i] == nil && v.own.lost() {
+		if v.own.lost() {
 			without[members[i].alias()] = true
 		}
 	}
 	runMembers(idx, func(i int) {
 		rec, v, alias := members[i], verdicts[i], members[i].alias()
 		switch {
-		case readErrs[i] != nil:
-			outcomes[i].r, outcomes[i].kept = LeaseRewire{Alias: alias, Note: fmt.Sprintf("zcp could not ask whether %s's container is still its lease's (%s), so it sent it no overlay %s; %s sends it once it can", alias, errorNote(readErrs[i]), why, resendCall(alias, nil))}, true
 		case v.own.lost():
 			outcomes[i].r, outcomes[i].kept = LeaseRewire{Alias: alias, Note: lostLeaseNote(alias, v.why, "sent it no overlay "+why)}, true
 		case v.own == leaseUnverified:
-			outcomes[i].r, outcomes[i].kept = LeaseRewire{Alias: alias, Note: fmt.Sprintf("zcp sent %s no overlay %s: %s. %s", alias, why, v.why, unverifiedRemedy(alias, v.container))}, true
+			outcomes[i].r, outcomes[i].kept = LeaseRewire{Alias: alias, Note: fmt.Sprintf("zcp sent %s no overlay %s: %s; %s sends it once its pool's orchestrator answers", alias, why, v.why, resendCall(alias, nil))}, true
 		default:
 			outcomes[i].r, outcomes[i].kept = rewireLease(ctx, d.SSH, d.StateDir, rec, without, why)
 		}
@@ -537,14 +534,10 @@ func handBackOverlay(ctx context.Context, d LeaseDeps, rec leaseRecord, siblings
 	}
 	ctx = context.WithoutCancel(ctx)
 	text := fmt.Sprintf("zcp had handed %s the sibling overlay without %s before asking for the release", strings.Join(aliasesOf(back), ", "), alias)
-	v, err := readLeaseOwnership(ctx, d, rec)
-	switch {
-	case err != nil || v.own != leaseOurs:
+	switch v := readLeaseOwnership(ctx, d, rec); v.own {
+	case leaseUnverified, leaseGone, leaseFree, leaseOther:
 		why := alias + "'s container is no longer its lease's (" + v.why + ")"
-		switch {
-		case err != nil:
-			why = fmt.Sprintf("zcp could not tell whether the orchestrator still reserves %s's container (%v)", alias, err)
-		case v.own == leaseUnverified:
+		if v.own == leaseUnverified {
 			why = fmt.Sprintf("zcp could not tell whether %s's container is still its lease's (%s)", alias, v.why)
 		}
 		calls := make([]string, 0, len(back))
@@ -552,7 +545,7 @@ func handBackOverlay(ctx context.Context, d LeaseDeps, rec leaseRecord, siblings
 			calls = append(calls, resendCall(r.alias(), changed[r.alias()].Restarted))
 		}
 		text += fmt.Sprintf("; %s, so they stay without it — once %s is held again, %s wires them to it", why, alias, strings.Join(calls, "; "))
-	default:
+	case leaseOurs:
 		var ok, failed []string
 		for _, r := range rewireLeases(ctx, d, back, nil, "with "+alias+" back in") {
 			if r.Note == "" {

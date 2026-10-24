@@ -255,7 +255,14 @@ func (c *SwarmClient) Release(ctx context.Context, id, lease string, reset bool)
 }
 
 // Renew extends a reservation by the TTL it was acquired with (POST
-// /container/{id}/renew).
+// /container/{id}/renew). For a lease with no expiry (TTL 0, every lease zcp
+// takes) it changes nothing — not lockSince, dirty, the status, processes or
+// files; it never starts a stopped container — and answers the container as it
+// stands: the holder's own lease on its reserved container 200 (running or
+// stopped, and lockState deleting while the holder's delete runs), any other
+// lease, or any lease on a free container, 400 unknown-lease, and a container
+// that is gone container-not-found (live, 2026-10-24: ~36 ms). So it is the
+// exact "does this lease still hold this container" question.
 func (c *SwarmClient) Renew(ctx context.Context, id, lease string) (SwarmContainer, error) {
 	var out SwarmContainer
 	if err := c.do(ctx, http.MethodPost, "/container/"+url.PathEscape(id)+"/renew", nil, lease, &out); err != nil {
@@ -394,7 +401,11 @@ const SwarmReasonAllReserved = "all-reserved"
 
 // SwarmReasonUnknownLease and SwarmReasonContainerNotFound are the
 // SwarmError.Reason of a call whose lease the orchestrator no longer holds, or
-// whose container is gone: nothing of the lease is left to release.
+// whose container is gone: nothing of the lease is left to release. A renew
+// answers unknown-lease for any lease that does not hold the reserved
+// container and for any lease on a free container (live, 2026-10-24), where a
+// release with the same lease says held-by-other: the vocabulary is per
+// endpoint.
 const (
 	SwarmReasonUnknownLease      = "unknown-lease"
 	SwarmReasonContainerNotFound = "container-not-found"
@@ -498,5 +509,21 @@ func parseSwarmError(status int, raw []byte) *SwarmError {
 			se.Cause = c[0]
 		}
 	}
+	if se.Reason == "" && se.Code == swarmCodeContainerAction && strings.EqualFold(strings.TrimSpace(se.Message), swarmMessageContainerNotFound) {
+		// A container deleted a moment ago: until a listing catches up, the
+		// orchestrator passes the platform's bare refusal through, with no
+		// reason (live, 2026-10-24); it is the same fact as the
+		// container-not-found it names afterwards.
+		se.Reason = SwarmReasonContainerNotFound
+	}
 	return se
 }
+
+// swarmCodeContainerAction is the orchestrator's error code of a refused
+// container call; swarmMessageContainerNotFound the platform's bare message
+// for a container that is gone, which the orchestrator passes through without
+// a reason right after a delete.
+const (
+	swarmCodeContainerAction      = "containerAction"
+	swarmMessageContainerNotFound = "Container not found"
+)

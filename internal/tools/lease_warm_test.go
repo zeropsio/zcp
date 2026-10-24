@@ -111,6 +111,18 @@ func (o *warmPoolOrchestrator) ServeHTTP(w http.ResponseWriter, r *http.Request)
 			}
 		}
 		refuse("all-reserved", "all taken")
+	case strings.HasPrefix(path, "/container/") && strings.HasSuffix(path, "/renew") && r.Method == http.MethodPost:
+		c := o.find(strings.TrimSuffix(strings.TrimPrefix(path, "/container/"), "/renew"))
+		switch {
+		case c == nil:
+			refuse("container-not-found", "no such container")
+		case c.lock == "deleting":
+			_, _ = w.Write([]byte(c.json(false, false)))
+		case c.lock == "" || c.lease != lease:
+			refuse("unknown-lease", "no reservation of this container is held by that lease - acquire it again")
+		default:
+			_, _ = w.Write([]byte(c.json(false, false)))
+		}
 	case strings.HasPrefix(path, "/container/") && strings.HasSuffix(path, "/release") && r.Method == http.MethodPost:
 		c := o.find(strings.TrimSuffix(strings.TrimPrefix(path, "/container/"), "/release"))
 		if c == nil || c.lease != lease {

@@ -44,6 +44,12 @@ func TestLease_Integration_UnresettableContainerIsDeletedNotReleasedUnreset(t *t
 			_, _ = w.Write([]byte(`[` + container + `}]`))
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/container/"):
 			_, _ = w.Write([]byte(container + `}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/renew"):
+			if !reserved || r.Header.Get("X-Swarm-Lease") != leaseIntLease {
+				writeIntUnknownLease(w)
+				return
+			}
+			_, _ = w.Write([]byte(container + `}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/container/acquire":
 			reserved = true
 			_, _ = w.Write([]byte(strings.Replace(container, `"lockState":""`, `"lockState":"reserved"`, 1) + `,"lease":"` + leaseIntLease + `"}`))

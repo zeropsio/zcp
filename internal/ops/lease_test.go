@@ -171,6 +171,10 @@ func (f *fakeSwarm) Container(_ context.Context, id string) (platform.SwarmConta
 			return c, nil
 		}
 	}
+	if f.containers != nil {
+		// A test that set the listing set the whole pool.
+		return platform.SwarmContainer{}, &platform.SwarmError{Status: 404, Code: "containerAction", Message: "no such container", Reason: "container-not-found"}
+	}
 	for i := len(f.reserved) - 1; i >= 0; i-- {
 		if f.reserved[i].ID == id {
 			return f.reserved[i], nil

@@ -164,10 +164,8 @@ func LeaseSync(ctx context.Context, d LeaseDeps, alias string) (LeaseSyncView, e
 	}
 	// A sync pushes from the source and fast-forwards its siblings over ssh:
 	// never into a container that is no longer its lease's (DP-2).
-	verdict, err := readLeaseOwnership(ctx, d, rec)
+	verdict := readLeaseOwnership(ctx, d, rec)
 	switch {
-	case err != nil:
-		return LeaseSyncView{}, err
 	case verdict.own.lost():
 		return LeaseSyncView{}, lostLeaseRefusal(alias, "sync", verdict.why)
 	case verdict.own == leaseUnverified:
@@ -459,26 +457,23 @@ func hasMark(a leaseSyncAnswer, key string) bool {
 	return ok
 }
 
-// memberStillHeld reads whose a member's container is (readLeaseOwnership)
-// and reports whether it is its lease's; one that is not — lost, unverified,
-// or one zcp could not ask about — is recorded so, nothing sent to it.
+// memberStillHeld asks the orchestrator whose a member's container is
+// (readLeaseOwnership) and reports whether it is its lease's; one that is not
+// — lost, or one the orchestrator did not answer about — is recorded so,
+// nothing sent to it.
 func memberStillHeld(ctx context.Context, d LeaseDeps, m *LeaseSyncMember, source string) bool {
 	rec, err := loadLeaseRecord(d.StateDir, m.Alias)
 	if err != nil {
 		m.Outcome, m.Note = LeaseSyncFailed, fmt.Sprintf("%s's record could not be read (%s), so zcp did not fast-forward it", m.Alias, errorNote(err))
 		return false
 	}
-	v, err := readLeaseOwnership(ctx, d, rec)
-	switch {
-	case err != nil:
-		m.Outcome = LeaseSyncUnverified
-		m.Note = fmt.Sprintf("zcp could not ask whether %s's container is still its lease's (%s), so it did not fast-forward it; sync again once its pool answers: %s", m.Alias, errorNote(err), LeaseSyncCall(source))
+	switch v := readLeaseOwnership(ctx, d, rec); {
 	case v.own.lost():
 		m.Outcome = LeaseSyncLost
 		m.Note = lostLeaseNote(m.Alias, v.why, "did not fast-forward it")
 	case v.own == leaseUnverified:
 		m.Outcome = LeaseSyncUnverified
-		m.Note = fmt.Sprintf("%s: %s, so zcp did not fast-forward it. %s; then sync again: %s", m.Alias, v.why, unverifiedRemedy(m.Alias, v.container), LeaseSyncCall(source))
+		m.Note = fmt.Sprintf("%s: %s, so zcp did not fast-forward it; sync again once its pool's orchestrator answers: %s", m.Alias, v.why, LeaseSyncCall(source))
 	default:
 		return true
 	}

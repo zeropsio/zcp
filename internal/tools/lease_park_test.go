@@ -53,6 +53,12 @@ func (o *parkOrchestrator) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`[` + container(false) + `]`))
 	case r.Method == http.MethodGet && r.URL.Path == "/container/c-abc":
 		_, _ = w.Write([]byte(container(false)))
+	case r.Method == http.MethodPost && r.URL.Path == "/container/c-abc/renew":
+		if !o.reserved || !held {
+			writeUnknownLease(w)
+			return
+		}
+		_, _ = w.Write([]byte(container(false)))
 	case r.Method == http.MethodPost && r.URL.Path == "/container/acquire":
 		o.reserved, lock = true, "reserved"
 		_, _ = w.Write([]byte(container(true)))

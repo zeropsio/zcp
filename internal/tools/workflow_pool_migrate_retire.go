@@ -757,9 +757,14 @@ func (g *poolRetireGuards) readLease(ctx context.Context, d poolRetireDeps, part
 		g.refuse(poolRetireRefuseLeaseUnreadable, fmt.Sprintf("the orchestrator of %s could not be asked about its leases: %v. Call again.", pool, err))
 		return
 	}
-	var lost, failed []string
+	var lost, failed, unverified []string
 	for _, rec := range records {
 		i := slices.IndexFunc(views, func(v ops.LeaseView) bool { return v.Alias == rec.Alias })
+		if i >= 0 && views[i].Unverified {
+			// Maybe another holder's container by now (DP-2): never reached.
+			unverified = append(unverified, rec.Alias+" ("+views[i].Note+")")
+			continue
+		}
 		if i < 0 || (views[i].State != ops.LeaseStateHeld && views[i].State != ops.LeaseStateUnmounted) {
 			note := "the orchestrator does not list it"
 			if i >= 0 {
@@ -773,6 +778,10 @@ func (g *poolRetireGuards) readLease(ctx context.Context, d poolRetireDeps, part
 			continue
 		}
 		part.lease = rec.Alias
+		return
+	}
+	if len(unverified) > 0 {
+		g.refuse(poolRetireRefuseLeaseUnreadable, fmt.Sprintf("the orchestrator of %s did not answer whether zcp's lease on %s is still zcp's — %s — and the retire relies on no lease it cannot check. Call again once it answers.", pool, branch, strings.Join(unverified, "; ")))
 		return
 	}
 	if len(failed) > 0 {

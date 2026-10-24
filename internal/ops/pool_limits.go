@@ -109,6 +109,10 @@ func readPoolUsage(ctx context.Context, d LeaseDeps, rp *resolvedPool) poolUsage
 		}
 	} else {
 		u.listed = true
+		// Yours only while the orchestrator still renews the record's lease:
+		// a container another holder took is theirs, never read or named as
+		// yours; one it does not answer about is named, never read (DP-2).
+		owned := reservedOwnership(ctx, d, rp, own, containers)
 		for _, c := range containers {
 			if c.LockState != leaseLockReserved {
 				continue
@@ -118,10 +122,7 @@ func readPoolUsage(ctx context.Context, d LeaseDeps, rp *resolvedPool) poolUsage
 			if !ok {
 				continue
 			}
-			// Yours only while it is still this record's reservation: one
-			// another holder took is theirs, never read or named as yours;
-			// one zcp cannot verify is named, never read.
-			switch o, _ := leaseOwnershipOf(r, rp.svc.ID, &c); o {
+			switch owned[c.ID] {
 			case leaseOurs:
 				mine = append(mine, r)
 			case leaseUnverified:
@@ -401,13 +402,6 @@ func (c PoolShrinkContainer) Whose() string {
 	return "free"
 }
 
-// yoursStill: the reserved container c is still the reservation of zcp's
-// record r — or may be (unverified) — rather than another holder's.
-func yoursStill(r leaseRecord, poolServiceID string, c platform.SwarmContainer) bool {
-	o, _ := leaseOwnershipOf(r, poolServiceID, &c)
-	return o == leaseOurs || o == leaseUnverified
-}
-
 // joinAnd joins names as "a", "a and b", "a, b and c".
 func joinAnd(names []string) string {
 	if len(names) < 2 {
@@ -449,6 +443,9 @@ func planPoolShrink(ctx context.Context, d LeaseDeps, svc, current *platform.Ser
 			own[r.ContainerID] = r
 		}
 	}
+	// Yours while the orchestrator renews the record's lease, or does not
+	// answer about it (DP-2): another holder's is theirs.
+	owned := reservedOwnership(ctx, d, rp, own, containers)
 	for i, c := range sorted {
 		leased := c.LockState == leaseLockReserved
 		if leased && s.LowestSafe == 0 {
@@ -458,7 +455,7 @@ func planPoolShrink(ctx context.Context, d LeaseDeps, svc, current *platform.Ser
 			continue
 		}
 		pc := PoolShrinkContainer{Alias: leaseAlias(svc.Name, c.Number), Leased: leased}
-		if r, ok := own[c.ID]; ok && leased && yoursStill(r, svc.ID, c) {
+		if r, ok := own[c.ID]; ok && leased && (owned[c.ID] == leaseOurs || owned[c.ID] == leaseUnverified) {
 			pc.Yours, pc.Branch = true, r.Branch
 		}
 		s.Deletes = append(s.Deletes, pc)

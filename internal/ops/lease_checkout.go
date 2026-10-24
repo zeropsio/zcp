@@ -582,19 +582,16 @@ func inspectLeaseRelease(ctx context.Context, d LeaseDeps, rec leaseRecord) (lea
 // became of it. One still this lease's may hold work and is refused, and so is
 // one zcp cannot verify or ask about.
 func unreachableGuard(ctx context.Context, d LeaseDeps, rec leaseRecord, sshErr error) (leaseGuardResult, error) {
-	v, err := readLeaseOwnership(ctx, d, rec)
-	if err == nil && v.own.lost() {
+	v := readLeaseOwnership(ctx, d, rec)
+	if v.own.lost() {
 		return leaseGuardResult{
 			lost: v.why,
-			note: "zcp could not reach the container over ssh and the orchestrator no longer holds it, so it was not checked for unsaved work",
+			note: "zcp could not reach the container over ssh and the orchestrator no longer holds it for this lease, so it was not checked for unsaved work",
 		}, nil
 	}
 	state := "is still reserved"
-	switch {
-	case err != nil:
-		state = "may still be reserved (the orchestrator did not answer)"
-	case v.own == leaseUnverified:
-		state = "may still be this lease's (" + v.why + ")"
+	if v.own == leaseUnverified {
+		state = "may still be reserved (the orchestrator did not answer: " + errorNote(v.err) + ")"
 	}
 	pe := platform.NewPlatformError(platform.ErrPrerequisiteMissing,
 		fmt.Sprintf("Lease %s could not be reached over ssh to check for unsaved work and %s, so it was not released", rec.alias(), state),

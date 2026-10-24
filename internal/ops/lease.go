@@ -437,20 +437,48 @@ func listPoolLeases(ctx context.Context, d LeaseDeps, pool string, records []lea
 	for _, c := range containers {
 		byID[c.ID] = c
 	}
-	var views []LeaseView
+	// Whose each recorded container is: the renew of the record's own lease,
+	// all at once (DP-2) — the listing only tells a lease the orchestrator
+	// holds no reservation of apart, free or another holder's. A lease taken
+	// on a pool since re-created is lost without asking.
+	type entry struct {
+		rec       leaseRecord
+		own       leaseOwnership
+		why       string
+		other     reservedNow
+		container platform.SwarmContainer
+	}
+	entries := make([]*entry, 0, len(records))
+	var renews []*entry
 	recorded := map[string]bool{}
 	for _, r := range records {
 		recorded[r.ContainerID] = true
+		e := &entry{rec: r}
 		var listed *platform.SwarmContainer
 		if c, present := byID[r.ContainerID]; present {
-			listed = &c
+			listed, e.container = &c, c
 		}
-		own, why := leaseOwnershipOf(r, rp.svc.ID, listed)
-		if own.lost() {
-			views = append(views, lostView(r, why))
+		if r.PoolServiceID != rp.svc.ID {
+			e.own, e.why = leaseGone, recreatedWhy
+		} else {
+			e.other = listedReserved(listed)
+			renews = append(renews, e)
+		}
+		entries = append(entries, e)
+	}
+	runMembers(renews, func(e *entry) {
+		c, err := d.renewLease(ctx, rp, e.rec)
+		if e.own, e.why = renewedOwnership(c, err, e.other); e.own == leaseOurs {
+			e.container = c
+		}
+	})
+	var views []LeaseView
+	for _, e := range entries {
+		r, c := e.rec, e.container
+		if e.own.lost() {
+			views = append(views, lostView(r, e.why))
 			continue
 		}
-		c := *listed
 		var v LeaseView
 		if parkedContainer(c) {
 			// Parked comes before unmounted: a parked lease's mount is
@@ -466,11 +494,11 @@ func listPoolLeases(ctx context.Context, d LeaseDeps, pool string, records []lea
 				v.Note = joinNotes(v.Note, startedSinceParkedNote(r.alias()))
 			}
 		}
-		if own == leaseUnverified {
-			// Reserved, maybe by another holder: nothing is read from it
-			// (readLeaseActivities skips an unverified view).
+		if e.own == leaseUnverified {
+			// The orchestrator did not answer whose it is: nothing is read
+			// from it (readLeaseActivities skips an unverified view).
 			v.Unverified = true
-			v.Note = joinNotes(why+"; status reads nothing from it. "+unverifiedRemedy(r.alias(), c), v.Note)
+			v.Note = joinNotes(e.why+". "+unverifiedRemedy, v.Note)
 		}
 		views = append(views, v)
 	}
@@ -634,17 +662,6 @@ type leaseRecord struct {
 	// sync and zcp init read only records, so the record says it.
 	Parked   bool   `json:"parked,omitempty"`
 	ParkedAt string `json:"parkedAt,omitempty"`
-	// LockSince is the reservation's lockSince as the orchestrator last
-	// answered a call zcp made with the lease — the acquire, a stop, a start,
-	// each of which restarts it — verbatim: how zcp tells its own reservation
-	// from another holder's (leaseOwnershipOf). "" in an older record.
-	LockSince string `json:"lockSince,omitempty"`
-	// LockChanging is when zcp sent a stop or a start with the lease whose
-	// new lockSince it has not recorded (RFC 3339, UTC): set before the call,
-	// cleared once the orchestrator answered. While it is set a lockSince
-	// other than LockSince may be zcp's own, so it reads unverified, never
-	// another holder's.
-	LockChanging string `json:"lockChanging,omitempty"`
 }
 
 func (r leaseRecord) alias() string { return leaseAlias(r.PoolHostname, r.ContainerNumber) }
@@ -774,16 +791,13 @@ func LeaseReleaseChange(ctx context.Context, d LeaseDeps, alias string, force bo
 		return LeaseChange{}, err
 	}
 	// Check before mutate (O3): a container that is no longer this lease's is
-	// neither read nor released, and one zcp cannot verify is only asked
-	// about with force.
-	verdict, err := readLeaseOwnership(ctx, d, rec)
-	if err != nil {
-		return LeaseChange{}, err
-	}
+	// neither read nor released, and one the orchestrator does not answer
+	// about is not touched, forced or not.
+	verdict := readLeaseOwnership(ctx, d, rec)
 	switch {
 	case verdict.own.lost():
 		return releaseLost(ctx, d, rec, verdict.why)
-	case verdict.own == leaseUnverified && !force:
+	case verdict.own == leaseUnverified:
 		return LeaseChange{}, unverifiedLeaseRefusal(alias, "released", verdict)
 	}
 	var guard leaseGuardResult
@@ -792,7 +806,7 @@ func LeaseReleaseChange(ctx context.Context, d LeaseDeps, alias string, force bo
 		// The guard reaches the container through its alias: put back a
 		// stanza another call or a redeploy lost before it runs.
 		restoreNote := d.Host.refreshAliases(ctx, d)
-		if wake, err = wakeParkedForGuard(ctx, d, &rec, verdict); err != nil {
+		if wake, err = wakeParkedForGuard(ctx, d, rec, verdict); err != nil {
 			if isHeldByOther(err) {
 				return releaseLost(ctx, d, rec, heldByOtherWhy)
 			}
@@ -928,6 +942,15 @@ func dropGoneRecord(stateDir string, rec leaseRecord, why string) (LeaseView, er
 // record; a lease the orchestrator no longer knows, or a pool deleted since,
 // is dropped as lost.
 func releaseOnOrchestrator(ctx context.Context, d LeaseDeps, rp *resolvedPool, rec leaseRecord, alias string, reset bool) (LeaseView, error) {
+	// Asked right before the release: the orchestrator checks no lease on a
+	// free container, so a release of one this lease no longer holds would
+	// reset it under whoever acquires it next (DP-2).
+	switch v := renewOwnership(ctx, d, rp, rec); {
+	case v.own.lost():
+		return dropLeaseRecord(d.StateDir, rec, LeaseStateLost, lostDropNote(v.why))
+	case v.own == leaseUnverified:
+		return LeaseView{}, unverifiedLeaseRefusal(alias, "released", v)
+	}
 	if _, err := rp.api.Release(ctx, rec.ContainerID, rec.Lease, reset); err != nil {
 		var se *platform.SwarmError
 		if reset && errors.As(err, &se) && se.Reason == platform.SwarmReasonNoPrimarySnapshot {

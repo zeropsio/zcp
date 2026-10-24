@@ -293,13 +293,9 @@ func releasedReset(v LeaseView) bool {
 func (w *LeaseWarm) keepOrRemove(ctx context.Context, d LeaseDeps, rp *resolvedPool, rec leaseRecord, reset func() (LeaseView, error)) (LeaseView, error) {
 	unlock, err := lockPoolWarm(ctx, d.StateDir, rp.svc.Name, cmp.Or(w.LockWait, leaseWarmLockWait))
 	if err != nil {
-		// The wait may have outlasted the lease: a container released
-		// outside zcp meanwhile is free, and its reset would take it from
-		// under the pool's next acquire (DP-2). A read that fails keeps the
-		// verdict the release began with.
-		if v, rerr := readLeaseOwnership(ctx, d, rec); rerr == nil && v.own.lost() {
-			return dropLeaseRecord(d.StateDir, rec, LeaseStateLost, lostDropNote(v.why))
-		}
+		// The wait may outlast the lease; the reset release asks the
+		// orchestrator right before it (releaseOnOrchestrator), so a
+		// container released outside zcp meanwhile is dropped, never reset.
 		why := fmt.Sprintf("the pool's warm container could not be decided (%v)", err)
 		if errors.Is(err, errWarmLockBusy) {
 			why = "another zcp call was still deciding or creating the pool's warm container"
@@ -345,14 +341,28 @@ func keptWithReset(reset func() (LeaseView, error), why string) (LeaseView, erro
 
 // decideRelease keeps the released container (the reset release) or removes it
 // with its own lease, reporting whether it stays in the pool as a warm one. A
-// container that is not this lease's by the read under the warm lock — gone,
-// free, another holder's (leaseOwnershipOf) — is neither reset nor deleted:
-// the orchestrator checks no lease on a free container, so the reset would
-// take the pool's warm container from under another acquire; the record is
-// dropped as lost. A delete refused held-by-other drops it too.
+// container the renew of its lease, under the warm lock, says is not this
+// lease's (DP-2) is neither reset nor deleted: the orchestrator checks no
+// lease on a free container, so the reset would take the pool's warm
+// container from under another acquire; the record is dropped as lost. One
+// the orchestrator does not answer about is left alone, the record kept. A
+// delete refused held-by-other drops the record too.
 func (w *LeaseWarm) decideRelease(ctx context.Context, d LeaseDeps, rp *resolvedPool, rec leaseRecord, read poolWarmRead, reset func() (LeaseView, error)) (LeaseView, bool, error) {
+	own, why := leaseGone, recreatedWhy
 	mine := read.mine
-	if own, why := leaseOwnershipOf(rec, rp.svc.ID, mine); own.lost() {
+	if rec.PoolServiceID == rp.svc.ID {
+		v := renewOwnership(ctx, d, rp, rec)
+		if v.own == leaseUnverified {
+			return LeaseView{}, false, unverifiedLeaseRefusal(rec.alias(), "released", v)
+		}
+		own, why = v.own, v.why
+		if mine == nil {
+			// The listing lacked the container the renew answered for:
+			// decide on the renew's answer, its snapshots unread.
+			mine = &v.container
+		}
+	}
+	if own.lost() {
 		view, err := dropLeaseRecord(d.StateDir, rec, LeaseStateLost, lostDropNote(why))
 		return view, false, err
 	}
@@ -382,7 +392,7 @@ func (w *LeaseWarm) decideRelease(ctx context.Context, d LeaseDeps, rp *resolved
 		view.Note = joinNotes(view.Note, keptWarmNote)
 		return view, true, nil
 	}
-	why := removeWhy(mine.Current, w.Target)
+	why = removeWhy(mine.Current, w.Target)
 	err := rp.api.Delete(ctx, rec.ContainerID, rec.Lease)
 	if err == nil {
 		view, dropErr := dropLeaseRecord(d.StateDir, rec, LeaseStateReleased, "the container was removed with this lease rather than reset: "+why)

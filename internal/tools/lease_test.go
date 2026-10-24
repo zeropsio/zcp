@@ -67,6 +67,12 @@ func (o *fakeOrchestrator) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`[` + container(false) + `]`))
 	case r.Method == http.MethodGet && r.URL.Path == "/container/c-abc":
 		_, _ = w.Write([]byte(container(false)))
+	case r.Method == http.MethodPost && r.URL.Path == "/container/c-abc/renew":
+		if !o.reserved || r.Header.Get("X-Swarm-Lease") != leaseTestLease {
+			writeUnknownLease(w)
+			return
+		}
+		_, _ = w.Write([]byte(container(false)))
 	case r.Method == http.MethodPost && r.URL.Path == "/container/acquire":
 		o.reserved = true
 		_, _ = w.Write([]byte(container(true)))
@@ -102,6 +108,13 @@ func (o *fakeOrchestrator) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.WriteHeader(http.StatusNotFound)
 	}
+}
+
+// writeUnknownLease answers a renew as the live orchestrator does when the
+// lease holds no reservation of the container (2026-10-24).
+func writeUnknownLease(w http.ResponseWriter) {
+	w.WriteHeader(http.StatusBadRequest)
+	_, _ = w.Write([]byte(`{"error":{"code":"containerAction","message":"no reservation of this container is held by that lease - acquire it again","meta":[{"metadata":{"reason":["unknown-lease"],"retryable":["false"]}}]}}`))
 }
 
 // leaseToolServer is a project holding one swarm pool, an orchestrator behind

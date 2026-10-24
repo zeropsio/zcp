@@ -156,6 +156,14 @@ func (fullPoolOrchestrator) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			parts = append(parts, fmt.Sprintf(`{"id":"c-%d","number":%d,"hostname":"node-id-%d.runtime.devpool.zerops","status":"ACTIVE","lockState":"reserved","dirty":false,"current":true}`, n, n, n))
 		}
 		_, _ = w.Write([]byte("[" + strings.Join(parts, ",") + "]"))
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/container/c-") && strings.HasSuffix(r.URL.Path, "/renew"):
+		// Every container is reserved; the test's record holds its lease.
+		if r.Header.Get("X-Swarm-Lease") != leaseTestLease {
+			writeUnknownLease(w)
+			return
+		}
+		n := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/container/c-"), "/renew")
+		_, _ = fmt.Fprintf(w, `{"id":"c-%s","number":%s,"hostname":"node-id-%s.runtime.devpool.zerops","status":"ACTIVE","lockState":"reserved","dirty":false,"current":true}`, n, n, n)
 	case r.Method == http.MethodPost && r.URL.Path == "/container/acquire":
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`{"error":{"code":"containerAction","message":"` + full + `","meta":[{"error":"` + full + `","code":"containerAction",` +
