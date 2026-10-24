@@ -243,14 +243,19 @@ func TestPoolMigrateImageStep_DependencyFindings_DeployStillNamed(t *testing.T) 
 
 func TestPoolMigrateImageStep_PoolRunsTheCommitsSetup_StepIsMove(t *testing.T) {
 	t.Parallel()
-	f := poolImageFixture(t, poolImageRunning("2026-10-24T09:00:00Z"))
+	// The dev holds work its origin lacks: the move step follows the image
+	// step (with nothing left to move, the lease step does).
+	f := poolImageFixture(t, func(f *poolMigrateFixture) {
+		poolImageRunning("2026-10-24T09:00:00Z")(f)
+		f.ssh.output = poolMigrateUnsavedCensus()
+	})
 	out, _ := f.run(t)
 
 	if out["step"] != "move" {
 		t.Fatalf("step = %v, want move once the pool runs an image of the commit's setup; image %v", out["step"], out["image"])
 	}
 	if _, has := out["next"]; has {
-		t.Fatalf("the move step is not run by this zcp: %v", out["next"])
+		t.Fatalf("the move step is the agent's own git, no call: %v", out["next"])
 	}
 	if why, _ := out["nextUnavailable"].(string); why == "" {
 		t.Fatal("the move step must say why no next call is named")

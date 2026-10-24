@@ -1573,6 +1573,7 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		"pool-migrate-move",
 		"pool-migrate-env",
 		"pool-migrate-image",
+		"pool-migrate-retire",
 	)
 }
 
