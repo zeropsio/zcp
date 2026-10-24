@@ -1,7 +1,6 @@
 package ops
 
 import (
-	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -25,14 +24,9 @@ var accessLevelWords = map[string]string{
 	AccessLevelRemove: "back to their organization role",
 }
 
-// accessChangers are the organization roles Zerops lets change who reaches a
-// project.
-var accessChangers = []string{"OWNER", "ADMIN"}
-
 // OrgAccessPerson is one person's access to propose. Person is how the
-// person deciding named them — an address or a name; org mode reads no
-// member list, so the client finds them among the organization's members on
-// the card.
+// person deciding named them — an address or a name; the client finds them
+// among the organization's members on the card.
 type OrgAccessPerson struct {
 	Person string `json:"person" jsonschema:"The person: their email address, or their name as the organization's members list shows it."`
 	Level  string `json:"level"  jsonschema:"full (works on it), read (only looks), none (hidden from them) or remove (their own grant dropped: their organization role decides)."`
@@ -64,16 +58,11 @@ type accessProposal struct {
 // accessKindOrder is the order an application's projects are listed in.
 var accessKindOrder = []OrgProjectKind{OrgKindProduction, OrgKindStage, OrgKindMate}
 
-// proposeAccess validates access.set: a person whose role may change access
-// (when HQ says who they are), the organization's project or application,
-// and each named person once at a level Mate gives.
-func proposeAccess(ctx context.Context, src OrgSource, snap *orgSnapshot, in OrgActionInput) (*accessProposal, error) {
-	// A person HQ does not describe, or names no role of, is not refused here: Zerops refuses the
-	// write on Approve, and the card says so.
-	if person, err := src.GetPerson(ctx); err == nil && person.Role != "" && !slices.Contains(accessChangers, strings.ToUpper(person.Role)) {
-		return nil, invalid(fmt.Sprintf("only an organization owner or admin can change who has access; %s's role is %s", person.Name, person.Role),
-			"Tell the person who in the organization can do it: an owner or an admin")
-	}
+// proposeAccess validates access.set: the organization's project or
+// application, and each named person once at a level Mate gives. Whether the
+// approving person may change access is Zerops's to say when they approve: it
+// refuses the write in its own words and the card shows them.
+func proposeAccess(snap *orgSnapshot, in OrgActionInput) (*accessProposal, error) {
 	places, name, err := snap.accessPlaces(in.Project)
 	if err != nil {
 		return nil, err

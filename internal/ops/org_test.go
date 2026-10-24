@@ -4,35 +4,20 @@ package ops
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
 // fakeOrg is an organization held in memory, read the way OrgReader reads.
 type fakeOrg struct {
-	orgID       string
-	projects    []platform.Project
-	services    []platform.ServiceStack
-	projectEnv  map[string][]platform.ProjectEnvVar
-	serviceEnv  map[string][]platform.ServiceEnvVar
-	routings    map[string][]platform.PublicHTTPRouting
-	processes   []platform.ProcessEvent
-	appVersions []platform.AppVersionEvent
-	person      *platform.OrgPerson
-	ports       map[string][]platform.OrgPortRouting
-	costs       *platform.OrgCosts
-	costLines   []platform.OrgCostLine
-	use         []platform.OrgResourceUse
-	// asked records the reads that take a range, as their arguments.
-	asked []any
+	projects []platform.Project
+	services []platform.ServiceStack
+	members  []platform.OverviewMember
 }
 
-func (f *fakeOrg) OrgID() string { return f.orgID }
 func (f *fakeOrg) ListProjects(context.Context) ([]platform.Project, error) {
 	return f.projects, nil
 }
@@ -45,85 +30,8 @@ func (f *fakeOrg) ListServices(_ context.Context, projectID string) ([]platform.
 	}
 	return out, nil
 }
-func (f *fakeOrg) GetProjectEnv(_ context.Context, projectID string) ([]platform.ProjectEnvVar, error) {
-	return f.projectEnv[projectID], nil
-}
-func (f *fakeOrg) GetServiceEnv(_ context.Context, serviceID string) ([]platform.ServiceEnvVar, error) {
-	return f.serviceEnv[serviceID], nil
-}
-func (f *fakeOrg) GetProjectLog(_ context.Context, projectID string) (*platform.LogAccess, error) {
-	return &platform.LogAccess{URL: "https://logs.example/" + projectID}, nil
-}
-func (f *fakeOrg) ListPublicHTTPRoutings(_ context.Context, projectID string) ([]platform.PublicHTTPRouting, error) {
-	return f.routings[projectID], nil
-}
-func (f *fakeOrg) SearchProcesses(_ context.Context, projectID string, limit int) ([]platform.ProcessEvent, error) {
-	var out []platform.ProcessEvent
-	for _, p := range f.processes {
-		if (projectID == "" || p.ProjectID == projectID) && len(out) < limit {
-			out = append(out, p)
-		}
-	}
-	return out, nil
-}
-func (f *fakeOrg) SearchAppVersions(_ context.Context, projectID string, limit int) ([]platform.AppVersionEvent, error) {
-	var out []platform.AppVersionEvent
-	for _, a := range f.appVersions {
-		if (projectID == "" || a.ProjectID == projectID) && len(out) < limit {
-			out = append(out, a)
-		}
-	}
-	return out, nil
-}
-
-func (f *fakeOrg) GetPerson(context.Context) (platform.OrgPerson, error) {
-	if f.person == nil {
-		return platform.OrgPerson{}, errors.New("chief/person: not a read this HQ forwards")
-	}
-	return *f.person, nil
-}
-func (f *fakeOrg) ListPortRoutings(_ context.Context, projectID string) ([]platform.OrgPortRouting, error) {
-	if f.ports == nil {
-		return nil, errors.New("public-port-routing/search: not a read this HQ forwards")
-	}
-	return f.ports[projectID], nil
-}
-func (f *fakeOrg) SearchCosts(context.Context) (*platform.OrgCosts, error) {
-	if f.costs == nil {
-		return &platform.OrgCosts{}, nil
-	}
-	return f.costs, nil
-}
-func (f *fakeOrg) SearchCostBreakdown(_ context.Context, q platform.OrgCostQuery) ([]platform.OrgCostLine, error) {
-	f.asked = append(f.asked, q)
-	var out []platform.OrgCostLine
-	for _, l := range f.costLines {
-		if (q.ProjectID != "") == (l.ServiceID != "") && (q.ProjectID == "" || l.ProjectID == q.ProjectID) {
-			out = append(out, l)
-		}
-	}
-	return out, nil
-}
-func (f *fakeOrg) SearchResourceUse(_ context.Context, projectID string, from, till time.Time, step string) ([]platform.OrgResourceUse, error) {
-	f.asked = append(f.asked, []any{projectID, from, till, step})
-	var out []platform.OrgResourceUse
-	for _, u := range f.use {
-		if u.ProjectID == projectID {
-			out = append(out, u)
-		}
-	}
-	return out, nil
-}
-
-// fakeLogs records what was asked of the log backend.
-type fakeLogs struct {
-	asked   []platform.LogFetchParams
-	entries []platform.LogEntry
-}
-
-func (f *fakeLogs) FetchLogs(_ context.Context, _ *platform.LogAccess, p platform.LogFetchParams) ([]platform.LogEntry, error) {
-	f.asked = append(f.asked, p)
-	return f.entries, nil
+func (f *fakeOrg) ListMembers(context.Context) ([]platform.OverviewMember, error) {
+	return f.members, nil
 }
 
 func svc(id, project, name, typ, category, status string) platform.ServiceStack {
@@ -136,7 +44,10 @@ func svc(id, project, name, typ, category, status string) platform.ServiceStack 
 // testOrg is a small organization with one of every kind of project.
 func testOrg() *fakeOrg {
 	return &fakeOrg{
-		orgID: "org1",
+		members: []platform.OverviewMember{
+			{UserID: "u1", FullName: "Dana", Role: "ADMIN", Status: "ACTIVE"},
+			{UserID: "u2", FullName: "Eli", Role: "READ_ONLY", Status: "ACTIVE"},
+		},
 		projects: []platform.Project{
 			{ID: "pMM", Name: "Chief - Chief", Status: "ACTIVE", Tags: []string{"mate", "chief"}},
 			{ID: "pRossy", Name: "Northwind Shop - Rossy", Status: "ACTIVE", Tags: []string{"mate"}},
@@ -203,8 +114,11 @@ func TestOrgOverview_GroupsEveryProjectByKind(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Org != "org1" || got.Projects != 7 {
-		t.Fatalf("org=%q projects=%d", got.Org, got.Projects)
+	if got.Projects != 7 {
+		t.Fatalf("projects=%d, want 7", got.Projects)
+	}
+	if len(got.Members) != 2 || got.Members[0].Role != "ADMIN" {
+		t.Errorf("members = %+v, want the organization's two people with their roles", got.Members)
 	}
 	count := map[OrgProjectKind]int{}
 	for _, g := range got.Groups {
@@ -266,18 +180,11 @@ func TestResolveOrgProject(t *testing.T) {
 	}
 }
 
-func TestOrgServices_StatusTypePortsDomains(t *testing.T) {
+func TestOrgServices_StatusTypePorts(t *testing.T) {
 	t.Parallel()
 	org := testOrg()
 	org.services[5].SubdomainAccess = true
 	org.services[5].Ports = []platform.Port{{Port: 9000, Protocol: "tcp", Scheme: "http"}}
-	org.serviceEnv = map[string][]platform.ServiceEnvVar{"sMedusa": {{Key: "zeropsSubdomain", Content: "https://medusa-1df2-9000.prg1.zerops.app"}}}
-	// The platform lists the subdomain among the routing's domains too; it
-	// is one domain, named once.
-	org.routings = map[string][]platform.PublicHTTPRouting{"pProd": {{
-		Domains:   []platform.PublicHTTPDomain{{Name: "medusa-1df2-9000.prg1.zerops.app"}, {Name: "shop.example.com"}},
-		Locations: []platform.PublicHTTPLocation{{Path: "/", Port: 9000, ServiceID: "sMedusa"}},
-	}}}
 	got, err := OrgServices(context.Background(), org, "Contoso - production")
 	if err != nil {
 		t.Fatal(err)
@@ -291,184 +198,6 @@ func TestOrgServices_StatusTypePortsDomains(t *testing.T) {
 	}
 	if medusa.Type != "nodejs@22" || medusa.Status != "ACTIVE" || len(medusa.Ports) != 1 || medusa.Ports[0].Port != 9000 {
 		t.Errorf("medusa = %+v", medusa)
-	}
-	wantDomains := []string{"https://medusa-1df2-9000.prg1.zerops.app", "shop.example.com"}
-	if strings.Join(medusa.Domains, ",") != strings.Join(wantDomains, ",") {
-		t.Errorf("domains = %v, want %v", medusa.Domains, wantDomains)
-	}
-}
-
-func TestOrgFailures_LeavesOutSpentBuildContainersAndOldFailures(t *testing.T) {
-	t.Parallel()
-	org := testOrg()
-	now := time.Now().UTC()
-	at := func(ago time.Duration) string { return now.Add(-ago).Format(time.RFC3339Nano) }
-	reason := "exit 1"
-	org.appVersions = []platform.AppVersionEvent{
-		{ID: "av1", ProjectID: "pProd", ServiceStackID: "sMedusa", Status: "BUILD_FAILED", Created: at(time.Hour)},
-		{ID: "av2", ProjectID: "pStage", ServiceStackID: "sStage", Status: "DEPLOY_FAILED", Created: at(2 * time.Hour)},
-		{ID: "av3", ProjectID: "pProd", ServiceStackID: "sMedusa", Status: "ACTIVE", Created: at(time.Hour)},
-		{ID: "avOld", ProjectID: "pProd", ServiceStackID: "sMedusa", Status: "BUILD_FAILED", Created: at(72 * time.Hour)},
-	}
-	org.processes = []platform.ProcessEvent{
-		{ID: "pr1", ProjectID: "pRossy", ActionName: "stack.restart", Status: "FAILED", Created: at(30 * time.Minute), FailReason: &reason,
-			ServiceStacks: []platform.ServiceStackRef{{ID: "sRossyApp", Name: "appdev"}}},
-		{ID: "pr2", ProjectID: "pRossy", ActionName: "stack.restart", Status: "FINISHED", Created: at(30 * time.Minute)},
-		{ID: "prOld", ProjectID: "pRossy", ActionName: "stack.restart", Status: "FAILED", Created: at(72 * time.Hour)},
-	}
-	got, err := OrgFailures(context.Background(), org, "24h")
-	if err != nil {
-		t.Fatal(err)
-	}
-	keys := make([]string, 0, len(got.Failures))
-	for _, f := range got.Failures {
-		keys = append(keys, string(f.Kind)+":"+f.Project.Name+":"+f.Service+":"+f.Status)
-	}
-	want := []string{
-		"process:Northwind Shop - Rossy:appdev:FAILED",
-		"build:Contoso - production:medusa:BUILD_FAILED",
-		"deploy:ZIT - stage:app:DEPLOY_FAILED",
-		"service:Contoso - production:db:FAILED",
-		"service:Headquarters:runnerzit:STOPPED",
-	}
-	if strings.Join(keys, "\n") != strings.Join(want, "\n") {
-		t.Errorf("failures:\n%s\nwant:\n%s", strings.Join(keys, "\n"), strings.Join(want, "\n"))
-	}
-	if got.Failures[0].Reason != "exit 1" {
-		t.Errorf("process reason = %q", got.Failures[0].Reason)
-	}
-}
-
-func TestOrgEnv_MasksUnlessRevealed(t *testing.T) {
-	t.Parallel()
-	org := testOrg()
-	org.projectEnv = map[string][]platform.ProjectEnvVar{"pProd": {
-		{Key: "STRIPE_KEY", Content: "sk_live_secret", Sensitive: true},
-		{Key: "APP_URL", Content: "https://shop.example.com"},
-		{Key: "EMPTY", Content: ""},
-	}}
-	org.serviceEnv = map[string][]platform.ServiceEnvVar{"sMedusa": {{Key: "DB_PASS", Content: "hunter2"}}}
-	tests := []struct {
-		name         string
-		service      string
-		reveal       []string
-		wantShown    map[string]string
-		wantHidden   []string
-		wantRevealed []string
-		wantErr      string
-	}{
-		{name: "project, masked by default", wantHidden: []string{"STRIPE_KEY", "APP_URL"}},
-		{name: "project, one revealed", reveal: []string{"APP_URL"}, wantShown: map[string]string{"APP_URL": "https://shop.example.com"}, wantHidden: []string{"STRIPE_KEY"}, wantRevealed: []string{"APP_URL"}},
-		{name: "service, masked by default", service: "medusa", wantHidden: []string{"DB_PASS"}},
-		{name: "a reveal of a key that is not there", reveal: []string{"NOPE"}, wantErr: "NOPE"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got, err := OrgEnv(context.Background(), org, "pProd", tt.service, tt.reveal)
-			if tt.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
-					t.Fatalf("err = %v, want it to name %q", err, tt.wantErr)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			raw, _ := json.Marshal(got)
-			for _, secret := range []string{"sk_live_secret", "hunter2"} {
-				if strings.Contains(string(raw), secret) {
-					t.Errorf("result carries an unrevealed value: %s", raw)
-				}
-			}
-			byKey := map[string]OrgEnvVar{}
-			for _, v := range got.Vars {
-				byKey[v.Key] = v
-			}
-			for k, want := range tt.wantShown {
-				if v := byKey[k]; v.Value != want || !v.Revealed {
-					t.Errorf("%s = %+v, want revealed %q", k, v, want)
-				}
-			}
-			for _, k := range tt.wantHidden {
-				if v := byKey[k]; v.Value != "" || !v.Masked {
-					t.Errorf("%s = %+v, want masked", k, v)
-				}
-			}
-			if strings.Join(got.Revealed, ",") != strings.Join(tt.wantRevealed, ",") {
-				t.Errorf("revealed = %v, want %v", got.Revealed, tt.wantRevealed)
-			}
-		})
-	}
-}
-
-func TestOrgLogs_RuntimeAndBuild(t *testing.T) {
-	t.Parallel()
-	org := testOrg()
-	buildStack := "sBuild"
-	org.appVersions = []platform.AppVersionEvent{
-		{ID: "avNew", ProjectID: "pProd", ServiceStackID: "sMedusa", Status: "BUILD_FAILED", Created: time.Now().Format(time.RFC3339Nano), Build: &platform.BuildInfo{ServiceStackID: &buildStack}},
-	}
-	tests := []struct {
-		name      string
-		in        OrgLogsInput
-		wantSvc   string
-		wantTags  []string
-		wantBuild string
-		wantErr   string
-	}{
-		{name: "runtime logs of a service", in: OrgLogsInput{Project: "pProd", Service: "medusa", Severity: "error", Search: "panic", Limit: 5}, wantSvc: "sMedusa"},
-		{name: "build logs read the newest build", in: OrgLogsInput{Project: "pProd", Service: "medusa", Kind: "build"}, wantSvc: "sBuild", wantTags: []string{"zbuilder@avNew"}, wantBuild: "avNew"},
-		{name: "a service the project does not have", in: OrgLogsInput{Project: "pProd", Service: "nope"}, wantErr: "nope"},
-		{name: "an unknown kind", in: OrgLogsInput{Project: "pProd", Service: "medusa", Kind: "audit"}, wantErr: "kind"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			logs := &fakeLogs{entries: []platform.LogEntry{{Timestamp: "t1", Severity: "Error", Message: "boom"}}}
-			got, err := OrgLogs(context.Background(), org, logs, tt.in)
-			if tt.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
-					t.Fatalf("err = %v, want it to mention %q", err, tt.wantErr)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(logs.asked) != 1 || logs.asked[0].ServiceID != tt.wantSvc || strings.Join(logs.asked[0].Tags, ",") != strings.Join(tt.wantTags, ",") {
-				t.Fatalf("asked %+v, want service %s tags %v", logs.asked, tt.wantSvc, tt.wantTags)
-			}
-			if tt.in.Search != "" && (logs.asked[0].Search != tt.in.Search || logs.asked[0].Severity != tt.in.Severity) {
-				t.Errorf("search/severity not passed: %+v", logs.asked[0])
-			}
-			if len(got.Entries) != 1 || got.Entries[0].Message != "boom" {
-				t.Errorf("entries = %+v", got.Entries)
-			}
-			if tt.wantBuild != "" && (got.Build == nil || got.Build.AppVersionID != tt.wantBuild) {
-				t.Errorf("build = %+v, want %s", got.Build, tt.wantBuild)
-			}
-		})
-	}
-}
-
-func TestOrgProcesses_OrgWideOrOneProject(t *testing.T) {
-	t.Parallel()
-	org := testOrg()
-	org.processes = []platform.ProcessEvent{
-		{ID: "a", ProjectID: "pProd", ActionName: "stack.restart", Status: "FINISHED", Created: "t2"},
-		{ID: "b", ProjectID: "pRossy", ActionName: "stack.build", Status: "RUNNING", Created: "t1"},
-	}
-	all, err := OrgProcesses(context.Background(), org, "", 0)
-	if err != nil || len(all.Processes) != 2 || all.Processes[0].Project.Name != "Contoso - production" {
-		t.Fatalf("org-wide = %+v, %v", all, err)
-	}
-	one, err := OrgProcesses(context.Background(), org, "Rossy", 0)
-	if err != nil || len(one.Processes) != 1 || one.Processes[0].ID != "b" {
-		t.Fatalf("one project = %+v, %v", one, err)
-	}
-	if _, err := OrgProcesses(context.Background(), org, "pElsewhere", 0); err == nil {
-		t.Fatal("a project outside the org was read")
 	}
 }
 

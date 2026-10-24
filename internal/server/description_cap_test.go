@@ -39,12 +39,12 @@ func TestServer_EveryToolDescriptionReachesClaudeCodeWhole(t *testing.T) {
 
 	// A Mate whose person has a Chief offers to ask it.
 	chiefHQ := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/mate/chief" {
+		if r.URL.Path != "/api/mate/self" {
 			http.NotFound(w, r)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"chief":{"ownerUserId":"owner","projectId":"chief"}}`))
+		_, _ = w.Write([]byte(`{"projectId":"p1","name":"Rossy","face":"f","changes":[],"chief":{"projectId":"chief"}}`))
 	}))
 	t.Cleanup(chiefHQ.Close)
 	t.Setenv("HOME", t.TempDir())
@@ -60,7 +60,7 @@ func TestServer_EveryToolDescriptionReachesClaudeCodeWhole(t *testing.T) {
 			store, platform.NewMockLogFetcher(), ssh, nil, rt, nil)
 	}
 	org := func(rt runtime.Info) *Server {
-		return NewOrg(context.Background(), emptyOrg{}, "localhost", store, platform.NewMockLogFetcher(), rt, nil)
+		return NewOrg(context.Background(), emptyOrg{}, store, rt, nil)
 	}
 	container := runtime.Info{InContainer: true, ServiceID: "s1"}
 	mate := runtime.Info{InContainer: true, ServiceID: "s1", MateEnabled: true}

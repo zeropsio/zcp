@@ -23,7 +23,6 @@ func TestClient_EveryCallPresentsTheKeyInTheHeaderAndNeverInTheURL(t *testing.T)
 		{"open change", func(c Client) { _, _ = c.OpenChange(ctx, "appdev", "t", "b") }},
 		{"edit change", func(c Client) { _, _ = c.EditChange(ctx, "appdev", 3, ChangeEdit{}) }},
 		{"attach", func(c Client) { _, _ = c.Attach(ctx, "appdev", 3, []byte("png")) }},
-		{"chief", func(c Client) { _, _ = c.Chief(ctx) }},
 		{"propose chief", func(c Client) { _, _ = c.ProposeChief(ctx) }},
 		{"ai key", func(c Client) { _, _ = c.AIKey(ctx) }},
 		{"GitHub credential", func(c Client) { _, _ = c.GitHubCredential(ctx, "acme/shop.git") }},

@@ -224,14 +224,11 @@ func ProposeOrgAction(ctx context.Context, src OrgSource, newID func() string, i
 		if err != nil {
 			return nil, err
 		}
-		if err := domainsAreNew(ctx, src, p, domains); err != nil {
-			return nil, err
-		}
 		summary = fmt.Sprintf("Put %s on %s", p.Name, domainList(domains))
 		params = OrgDomainAddParams{Domains: domains, Port: in.Port}
 
 	case ProposalAccessSet:
-		access, err := proposeAccess(ctx, src, snap, in)
+		access, err := proposeAccess(snap, in)
 		if err != nil {
 			return nil, err
 		}

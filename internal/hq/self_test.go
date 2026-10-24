@@ -3,6 +3,7 @@ package hq
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"testing"
 )
@@ -128,5 +129,49 @@ func TestClient_Self_Changes_DecodeBranchAndHandOver(t *testing.T) {
 		if c.Branch != "" || c.Handed {
 			t.Errorf("change #%d from an HQ older than branches = %+v, want no branch and not handed", c.Number, c)
 		}
+	}
+}
+
+// The organisation's Chief mark rides on the Mate's state as the project it
+// names, which a Mate compares with its own; no mark is null.
+func TestClient_IsChief_IsTheMarkNamingThisMatesProject(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		chief string
+		want  bool
+	}{
+		{name: "the mark names this project", chief: `{"projectId":"p-mate"}`, want: true},
+		{name: "the mark names another project", chief: `{"projectId":"p-other"}`},
+		{name: "no mark", chief: `null`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			client, calls := answering(t, `{"projectId":"p-mate","name":"Ada","face":"f","changes":[],"chief":`+tt.chief+`}`)
+			got, err := client.IsChief(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Errorf("IsChief = %v, want %v", got, tt.want)
+			}
+			if len(*calls) != 1 || (*calls)[0].Path != "/api/mate/self" {
+				t.Errorf("calls = %+v, want one GET /api/mate/self", *calls)
+			}
+		})
+	}
+}
+
+// An HQ that does not answer is not a verdict: org mode must not guess.
+func TestClient_IsChief_AnUnansweredHQIsAnError(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(srv.Close)
+	client := keyedClient(t, srv)
+	if _, err := client.Once().IsChief(context.Background()); !IsUnavailable(err) {
+		t.Errorf("err = %v, want HQ unavailable", err)
 	}
 }

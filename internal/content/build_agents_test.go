@@ -932,8 +932,7 @@ func TestBuildAgentsMD_Chief(t *testing.T) {
 			}
 			for _, want := range []string{
 				"You are the **Chief**", "whole organization", "HQ",
-				"`zerops_org_overview`", "`zerops_org_services`", "`zerops_org_logs`", "`zerops_org_failures`",
-				"`zerops_org_env`", "`zerops_org_processes`",
+				"`zerops_org_overview`", "`zerops_org_services`", "`members`",
 				"`zerops_org_propose_service`", "`zerops_org_propose_env`", "`zerops_org_propose_message`",
 				"`zerops_org_propose_domain`", "DNS records",
 				"`zerops_org_propose_access`", "who has access",
@@ -944,7 +943,7 @@ func TestBuildAgentsMD_Chief(t *testing.T) {
 					t.Errorf("Chief section lacks %q", want)
 				}
 			}
-			for _, leak := range []string{"zerops_workflow", "workflow=\"develop\"", "workflow=\"bootstrap\"", "zerops_deploy", "zerops_standup", "zerops_discover", "zcli", "zerops_propose_ask_chief"} {
+			for _, leak := range []string{"zerops_workflow", "workflow=\"develop\"", "workflow=\"bootstrap\"", "zerops_deploy", "zerops_standup", "zerops_discover", "zcli", "zerops_propose_ask_chief", "zerops_org_logs", "zerops_org_env", "zerops_org_costs", "zerops_org_usage", "zerops_org_failures", "zerops_org_processes"} {
 				if strings.Contains(out, leak) {
 					t.Errorf("Chief section carries single-project doctrine %q", leak)
 				}

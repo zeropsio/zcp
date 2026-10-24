@@ -332,12 +332,16 @@ func runServe() int {
 }
 
 func runServer(mcpStdout io.Writer, tel telemetry.Emitter) (*server.Server, error) {
-	// Org mode (docs/spec-mate.md §2.11) reads its gate and credentials
-	// through the container's live env store, so an agent whose MCP launcher
-	// strips the environment still gets the Chief; outside a container
-	// the lookup falls back to this process's environment.
-	if getenv := mate.LiveLookup(mate.LiveEnvStorePath); runtime.DetectFrom(getenv).Chief {
-		return runOrgServer(mcpStdout, tel, getenv)
+	// Org mode (docs/spec-mate.md §2.11, §3.11): HQ's Chief mark names the
+	// project this serve belongs to. The identity is read through the
+	// container's live env store, so an agent whose MCP launcher strips the
+	// environment still reaches HQ.
+	getenv := mate.LiveLookup(mate.LiveEnvStorePath)
+	if rt := runtime.DetectFrom(getenv); rt.MateEnabled {
+		if access, ok := chiefAccess(context.Background(), &http.Client{Timeout: chiefMarkTimeout}, hq.IdentityFrom(getenv), os.Stderr); ok {
+			rt.Chief = true
+			return runOrgServer(mcpStdout, tel, access, rt)
+		}
 	}
 
 	// Bootstrap: resolve credentials (env var or zcli) to create platform client.
@@ -414,22 +418,36 @@ func runServer(mcpStdout io.Writer, tel telemetry.Emitter) (*server.Server, erro
 	return srv, err
 }
 
-// runOrgServer serves org mode: the organization read through the org's
-// read-only token (ZCP_ORG_TOKEN), scoped to ZCP_ORG_ID or the one org the
-// token reaches — or, with ZCP_ORG_API, through HQ's Chief proxy, scoped to
-// ZCP_ORG_ID. It refuses to start rather than guess the organization, and
-// never builds a client that could write.
-func runOrgServer(mcpStdout io.Writer, tel telemetry.Emitter, getenv func(string) string) (*server.Server, error) {
-	creds, err := auth.ResolveOrgCredentials(getenv)
+// chiefMarkTimeout bounds the one read of the Chief mark at start, so an HQ
+// that does not answer delays the single-project surface by seconds, not
+// minutes.
+const chiefMarkTimeout = 5 * time.Second
+
+// chiefAccess reads the Chief mark from HQ (GET /api/mate/self) and, when it
+// names this identity's project, returns what the org reader opens with. A
+// Mate whose HQ cannot be reached or asked serves the single-project surface
+// and says so on stderr; a container with no identity to present is no Chief
+// and says nothing.
+func chiefAccess(ctx context.Context, httpClient hq.Doer, id hq.Identity, stderr io.Writer) (platform.OrgAccess, bool) {
+	client, err := hq.Open(httpClient, id)
 	if err != nil {
-		return nil, fmt.Errorf("org mode: %w", err)
+		return platform.OrgAccess{}, false
 	}
+	chief, err := client.Once().Bounded(chiefMarkTimeout, chiefMarkTimeout).IsChief(ctx)
+	if err != nil {
+		fmt.Fprintf(stderr, "zcp: HQ did not say whether this project is the Chief (%v); serving the single-project surface\n", err)
+		return platform.OrgAccess{}, false
+	}
+	return platform.OrgAccess{Origin: id.Origin, Key: id.Key}, chief
+}
+
+// runOrgServer serves org mode: the organization read through HQ's overview
+// with the project's key. It never builds a client that could write.
+func runOrgServer(mcpStdout io.Writer, tel telemetry.Emitter, access platform.OrgAccess, rtInfo runtime.Info) (*server.Server, error) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	org, err := platform.OpenOrgReader(ctx, platform.OrgAccess{
-		Token: creds.Token, APIHost: creds.APIHost, OrgAPI: creds.OrgAPI, OrgID: creds.OrgID,
-	})
+	org, err := platform.OpenOrgReader(access)
 	if err != nil {
 		return nil, fmt.Errorf("org mode: %w", err)
 	}
@@ -440,9 +458,9 @@ func runOrgServer(mcpStdout io.Writer, tel telemetry.Emitter, getenv func(string
 	if cwd, cwdErr := os.Getwd(); cwdErr == nil {
 		zcpinit.WarnMissingAgentContext(cwd, os.Stderr)
 	}
-	fmt.Fprintf(os.Stderr, "zcp: org mode for organization %s\n", org.OrgID())
+	fmt.Fprintln(os.Stderr, "zcp: org mode: this project is the Chief")
 
-	srv := server.NewOrg(ctx, org, creds.APIHost, store, platform.NewLogFetcher(), runtime.DetectFrom(getenv), tel)
+	srv := server.NewOrg(ctx, org, store, rtInfo, tel)
 	if os.Getenv("ZCP_AUTO_UPDATE") != "0" {
 		go update.Once(ctx, server.Version, os.Stderr)
 	}

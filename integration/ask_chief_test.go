@@ -29,8 +29,8 @@ func TestAskChief_OverMCP_ProposesFromThisProjectAndSendsNothing(t *testing.T) {
 	chiefHQ := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/api/mate/chief":
-			_, _ = w.Write([]byte(`{"chief":{"ownerUserId":"owner","projectId":"chief"}}`))
+		case "/api/mate/self":
+			_, _ = w.Write([]byte(`{"projectId":"proj-1","name":"Rossy","face":"f","changes":[],"chief":{"projectId":"chief"}}`))
 		case "/api/mate/chief/proposals":
 			if !chiefAvailable {
 				w.WriteHeader(http.StatusForbidden)
