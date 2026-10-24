@@ -90,6 +90,11 @@ type Container struct {
 	// state after they start, and only then as running or as Crash says.
 	Settle   map[string]int
 	settling map[string]int
+	// StableNumber is the container's ZEROPS_StableNumber (a pool
+	// container's slot; 0: none). With the declaration's previewPortBase the
+	// preview server's state carries its preview port, base + StableNumber,
+	// as the supervisor's forward does.
+	StableNumber int
 	// Logs is each server's log.
 	Logs map[string][]string
 	// Commands records every command, in order.
@@ -391,10 +396,14 @@ func (c *Container) start(name string, restart bool) {
 
 func (c *Container) state(only string) devsup.State {
 	st := devsup.State{Format: 1, Supervisor: devsup.SupervisorInfo{Version: c.SupervisorVersion, Pid: 412}, Env: maps.Clone(c.Env), Servers: map[string]devsup.ServerState{}}
+	preview, previewPort := "", 0
 	if d, err := devsup.ParseDeclaration([]byte(c.Declaration)); c.Declaration != "" {
 		st.Declaration.Version = d.Version
 		if err != nil {
 			st.Declaration.Error = err.Error()
+		}
+		if ps, ok := devsup.PreviewServer(d.Servers); ok && err == nil && d.PreviewPortBase > 0 && c.StableNumber > 0 {
+			preview, previewPort = ps.Name, d.PreviewPortBase+c.StableNumber
 		}
 	}
 	for n, s := range c.Servers {
@@ -406,6 +415,9 @@ func (c *Container) state(only string) devsup.State {
 			if c.settling[n] > 0 {
 				c.settling[n]--
 				server.Status, server.Exit, server.RetryPending, server.TaskLimit = devsup.StatusStarting, nil, false, nil
+			}
+			if n == preview {
+				server.PreviewPort = previewPort
 			}
 			st.Servers[n] = server
 		}
