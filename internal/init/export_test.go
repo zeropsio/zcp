@@ -53,6 +53,9 @@ func ResetLeaseStateDir()         { leaseStateDir = defaultLeaseStateDir }
 func SetLeaseAliasFile(path string) { leaseAliasFile = path }
 func ResetLeaseAliasFile()          { leaseAliasFile = ops.DefaultLeaseAliasFile }
 
+func SetLeaseCheckTimeout(d time.Duration) { leaseCheckTimeout = d }
+func ResetLeaseCheckTimeout()              { leaseCheckTimeout = defaultLeaseCheckTimeout }
+
 // mate step overrides.
 
 func SetMateEnsureInstalled(fn func(mate.EnsureOptions) (mate.Result, error)) {

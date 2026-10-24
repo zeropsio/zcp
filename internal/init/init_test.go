@@ -14,6 +14,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/content"
 	zcpinit "github.com/zeropsio/zcp/internal/init"
+	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 )
 
@@ -1754,7 +1755,7 @@ func TestRun_Container_RestoresLeases(t *testing.T) {
 		return nil
 	})
 
-	if err := zcpinit.Run(t.TempDir(), runtime.Info{InContainer: true}); err != nil {
+	if err := zcpinit.Run(t.TempDir(), runtime.Info{InContainer: true}, zcpinit.WithLeaseCheck(leaseCheckOurs)); err != nil {
 		t.Fatalf("Run() error: %v", err)
 	}
 	all := strings.Join(executed, "\n")
@@ -1763,6 +1764,60 @@ func TestRun_Container_RestoresLeases(t *testing.T) {
 	}
 	if !strings.Contains(all, "unit create sshfs-apppool-3") {
 		t.Errorf("zcp init did not remount the lease:\n%s", all)
+	}
+}
+
+// TestRun_Container_LeaseRestoreAsksFirst: the boot step remounts a lease only
+// once its orchestrator vouches for the container (docs/spec-workflows.md §8
+// DP-2) — a lease another holder took is not mounted and is printed with the
+// release that drops it — and a zcp init handed no way to ask mounts no lease,
+// says why, and still completes.
+func TestRun_Container_LeaseRestoreAsksFirst(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		opts func() []zcpinit.Option
+		want string
+	}{
+		{name: "another holder took it", want: "zerops_lease action=release lease=apppool-3", opts: func() []zcpinit.Option {
+			orch := newBootOrch(map[string]platform.SwarmContainer{"c-3": {ID: "c-3", Number: 3, Status: platform.SwarmContainerActive, LockState: "reserved"}})
+			orch.foreign["c-3"] = true
+			return []zcpinit.Option{zcpinit.WithLeaseCheck(orchestratorCheck(orch))}
+		}},
+		{name: "no way to ask", want: "zerops_mount action=mount serviceHostname=apppool-3", opts: func() []zcpinit.Option { return nil }},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			// Not parallel — mutates HOME, commandRunner, os.Stderr and the lease package vars.
+			t.Setenv("HOME", t.TempDir())
+			stubContainerCommands(t)
+			stateDir := t.TempDir()
+			zcpinit.SetSSHFSMountBase(t.TempDir())
+			zcpinit.SetLeaseStateDir(stateDir)
+			zcpinit.SetLeaseAliasFile(filepath.Join(t.TempDir(), "zcp-leases.conf"))
+			t.Cleanup(func() { zcpinit.ResetSSHFSMountBase(); zcpinit.ResetLeaseStateDir(); zcpinit.ResetLeaseAliasFile() })
+			writeLeaseRecordFile(t, stateDir, "apppool", 3, "node-id-3.runtime.apppool.zerops")
+			var executed []string
+			zcpinit.SetCommandRunner(func(name string, args ...string) error {
+				executed = append(executed, strings.Join(append([]string{name}, args...), " "))
+				return nil
+			})
+
+			out := captureStderr(t, func() {
+				if err := zcpinit.Run(t.TempDir(), runtime.Info{InContainer: true}, tt.opts()...); err != nil {
+					t.Errorf("Run() = %v: a lease that is not restored never fails the boot", err)
+				}
+			})
+
+			all := strings.Join(executed, "\n")
+			if !strings.Contains(all, "sudo -n install") {
+				t.Errorf("zcp init did not reinstall the lease aliases:\n%s", all)
+			}
+			if strings.Contains(all, "sshfs-apppool-3") {
+				t.Errorf("zcp init mounted a lease no orchestrator vouched for:\n%s", all)
+			}
+			if !strings.Contains(out, tt.want) || !strings.Contains(out, "Init complete") {
+				t.Errorf("output lacks %q or the completed init:\n%s", tt.want, out)
+			}
+		})
 	}
 }
 

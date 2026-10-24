@@ -2067,12 +2067,13 @@ func TestLeaseOwnership_ParkedWake_RenewUnanswered_RefusalSaysItStartedIt(t *tes
 
 // TestLeaseTargetChecked_TheOrchestratorVouchesOnce: a call that reaches a
 // lease's container over ssh or sshfs (a dev server, a verify, a deploy from
-// it, a mount) asks the pool's orchestrator once whether the container is
-// still the lease's (DP-2): ours is returned — parked when its container is
-// stopped, recorded so or not (DP-28); another holder's is refused naming the
+// it, a mount, zcp init's remount) asks the pool's orchestrator once whether
+// the container is still the lease's (DP-2): ours is returned — parked when
+// its container is stopped, recorded so or not (DP-28); another holder's, a
+// freed one and a gone one are refused as lost (IsLeaseLost), naming the
 // release that drops the record; one the orchestrator does not answer about,
-// or that this zcp cannot ask, is refused naming the status that asks again;
-// a host that is no lease asks nothing.
+// or that this zcp cannot ask, is refused naming the status that asks again,
+// and is not lost; a host that is no lease asks nothing.
 func TestLeaseTargetChecked_TheOrchestratorVouchesOnce(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct {
@@ -2082,7 +2083,10 @@ func TestLeaseTargetChecked_TheOrchestratorVouchesOnce(t *testing.T) {
 		wantLease  bool
 		wantParked bool
 		wantErr    string
-		renews     int
+		// wantLost: the refusal is of a lease that is no longer zcp's
+		// (IsLeaseLost), not of one the orchestrator did not answer about.
+		wantLost bool
+		renews   int
 	}{
 		{name: "ours, running", host: ownHQAlias, wantLease: true, renews: 1},
 		{name: "ours, stopped outside zcp", host: ownHQAlias, wantLease: true, wantParked: true, renews: 1, setup: func(t *testing.T, of *ownFixture) {
@@ -2091,8 +2095,12 @@ func TestLeaseTargetChecked_TheOrchestratorVouchesOnce(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
-		{name: "another holder's", host: ownHQAlias, wantLease: true, wantErr: "zerops_lease action=release lease=" + ownHQAlias, renews: 1,
+		{name: "another holder's", host: ownHQAlias, wantLease: true, wantErr: "zerops_lease action=release lease=" + ownHQAlias, wantLost: true, renews: 1,
 			setup: func(_ *testing.T, of *ownFixture) { of.hq.takeOver(ownHQContainer) }},
+		{name: "released elsewhere", host: ownHQAlias, wantLease: true, wantErr: "zerops_lease action=release lease=" + ownHQAlias, wantLost: true, renews: 1,
+			setup: func(_ *testing.T, of *ownFixture) { of.hq.releaseOutside(ownHQContainer) }},
+		{name: "gone", host: ownHQAlias, wantLease: true, wantErr: "zerops_lease action=release lease=" + ownHQAlias, wantLost: true, renews: 1,
+			setup: func(_ *testing.T, of *ownFixture) { of.hq.remove(ownHQContainer) }},
 		{name: "not answered", host: ownHQAlias, wantLease: true, wantErr: "zerops_lease action=status", renews: 1,
 			setup: func(_ *testing.T, of *ownFixture) { of.hqRenewFails(orchFailure()) }},
 		{name: "no orchestrator to ask", host: ownHQAlias, wantLease: true, wantErr: "zerops_lease action=status",
@@ -2119,6 +2127,9 @@ func TestLeaseTargetChecked_TheOrchestratorVouchesOnce(t *testing.T) {
 				t.Errorf("err = %v, want the lease", err)
 			case tt.wantErr == "" && ok && (lease.Alias != ownHQAlias || lease.Parked != tt.wantParked):
 				t.Errorf("lease = %+v, want %s, parked %v", lease, ownHQAlias, tt.wantParked)
+			}
+			if got := IsLeaseLost(err); got != tt.wantLost {
+				t.Errorf("IsLeaseLost(%v) = %v, want %v", err, got, tt.wantLost)
 			}
 			if got := len(of.hq.renewLog()) - before; got != tt.renews {
 				t.Errorf("renews = %d, want %d: one per call", got, tt.renews)
