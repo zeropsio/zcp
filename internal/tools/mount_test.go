@@ -523,3 +523,31 @@ func TestMountTool_SelfStatus_Allowed(t *testing.T) {
 		t.Errorf("self-status should be allowed, got: %s", getTextContent(t, result))
 	}
 }
+
+// TestMountTool_ParkedLease_RefusedWithUnpark pins that zerops_mount refuses a
+// parked lease and names its unpark (docs/spec-workflows.md §8 DP-28): its
+// container is stopped, so an sshfs mount would block for about 42 s and fail.
+func TestMountTool_ParkedLease_RefusedWithUnpark(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	ws := workflow.NewWorkSession("proj-1", "container", "test", []string{"appdev"})
+	if err := workflow.SaveWorkSession(stateDir, ws); err != nil {
+		t.Fatalf("save work session: %v", err)
+	}
+	writeLeaseFile(t, stateDir)
+	parkLeaseFile(t, stateDir, "webpool-3")
+	mounter := newStubMounter()
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterMount(srv, platform.NewMock(), "proj-1", mounter, runtime.Info{}, stateDir, nil, nil)
+
+	result := callTool(t, srv, "zerops_mount", map[string]any{"action": "mount", "serviceHostname": "webpool-3"})
+
+	text := getTextContent(t, result)
+	if !result.IsError || !strings.Contains(text, "webpool-3 is parked") || !strings.Contains(text, "zerops_lease action=unpark lease=webpool-3") {
+		t.Fatalf("result = (error %v) %s, want a refusal naming the parked lease and its unpark", result.IsError, text)
+	}
+	if len(mounter.states) != 0 {
+		t.Errorf("mounted a parked lease: %v", mounter.states)
+	}
+}
