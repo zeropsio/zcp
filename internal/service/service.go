@@ -368,16 +368,6 @@ func Start(name string) error {
 		}
 	}
 
-	// A Chief is a Mate for the whole organization: it edits no code here, so it runs no
-	// code-server. The unit stays up, idle, so the platform does not restart it in a loop.
-	if name == "vscode" && chiefContainer(mateStorePath) {
-		fmt.Fprintln(os.Stderr, "[zcp] service vscode: a Chief runs no code-server; idle until stopped")
-		stop := make(chan os.Signal, 1)
-		signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-		<-stop
-		return nil
-	}
-
 	if cfg.prepare != nil {
 		cfg.prepare()
 	}
@@ -481,19 +471,4 @@ func sortedNames(all map[string]execConfig) []string {
 	}
 	sort.Strings(names)
 	return names
-}
-
-// chiefContainer reports whether this container is a Chief's: its live env store sets
-// ZCP_CHIEF on. A missing or unreadable store is no Chief.
-func chiefContainer(storePath string) bool {
-	store, err := mate.LoadLiveEnv(storePath)
-	if err != nil {
-		return false
-	}
-	for _, line := range store {
-		if key, value, ok := strings.Cut(line, "="); ok && key == "ZCP_CHIEF" {
-			return runtime.EnvEnabled(value)
-		}
-	}
-	return false
 }

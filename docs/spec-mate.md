@@ -1527,13 +1527,13 @@ non-system service, a state the action fits, a valid key, a real Mate other than
 domain, a port of the service that serves the web — routed HTTP or an `http`/`https` scheme, never
 a Mate's own `zcp@` container, the ports Mate's addresses sheet offers — and names that are
 lowercase fully qualified domain names, a leading `*.` allowed for every subdomain of one, each
-once, without scheme, port or path, none already one of the project's domains) and refused with a
+once, without scheme, port or path) and refused with a
 plain error otherwise. An approved `domain.add` is the client's own add-domain as the person; its
 card then prints the DNS records the domains need, as their addresses do (a wildcard's beside its
 `_acme-challenge` CNAME), for the person to add at their DNS provider. `access.set` →
 `{"projects": [{"id", "name"}], "people": [{"person", "level"}]}`: the project named, or every
 production, stage and Mate of the application named (an application's People in Mate change them
-at once; never the Chief's own project), and each person once, as one of the overview's members, at `full` (`ADMIN`), `read` (`READ_ONLY`), `none`
+at once; never the Chief's own project), and each person once, at `full` (`ADMIN`), `read` (`READ_ONLY`), `none`
 (`NO_ACCESS`, hidden) or `remove` (their own grant dropped, their organization role decides),
 summarised "Access to <place>: <person> <level>, …". An approved `access.set` is the client's
 own `set-project-access` as the approving person, written on each member's own list
@@ -1579,13 +1579,13 @@ names `zerops_propose_ask_chief` for what neither its project nor `zerops_observ
 
 | ID | Invariant |
 |---|---|
-| OM-1 | Org mode makes no write call to the Zerops API: `OrgReader` exposes reads only and its transport refuses writes. `TestOrgReader_ExposesNoWriteMethod`, `TestReadOnlyTransport_RefusesWrites`, `TestOrgReader_EveryCallReadsInsideTheOrg`. |
+| OM-1 | Org mode makes no write call to the Zerops API: `OrgReader` exposes reads only and its transport refuses writes. `TestOrgReader_ExposesNoWriteMethod`, `TestReadOnlyTransport_RefusesWrites`, `TestOrgReader_EveryReadPresentsTheProjectKeyInTheHeaderOnly`. |
 | OM-2 | An act tool returns a proposal of the shape above, validated against the organization, and changes nothing. `TestProposeOrgAction_Shape`, `TestProposeOrgAction_ValidatesAgainstTheOrg`. |
 | OM-3 | Org mode registers the org surface only, and its `AGENTS.md` section is the Chief's. `TestNewOrg_RegistersTheOrgSurfaceOnly`, `TestBuildAgentsMD_Chief`. |
-| OM-4 | `OrgReads()` is exactly what org mode reads — the allowlisted overview of §3.11 — every read goes to HQ with the project key in the header, and nothing in org mode reads the Zerops API directly. Test to be written (`TestOrgReads_AreExactlyWhatOrgModeReads` today pins the wider set). |
+| OM-4 | `OrgReads()` is exactly what org mode reads — the allowlisted overview of §3.11 — every read goes to HQ with the project key in the header, and nothing in org mode reads the Zerops API directly. `TestOrgReads_AreExactlyWhatOrgModeReads`, `TestOrgReader_ReadsTheOverviewAsHQAnswersIt`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
 | OM-5 | A Mate's `zerops_propose_ask_chief` returns a `chief.message` proposal of the shape above from its own project and sends nothing; only a Mate's project mode registers it. `TestProposeAskChief_Shape`, `TestProposeAskChief_Validates`, `TestServer_AskChiefToolGating`, `TestAskChief_OverMCP_ProposesFromThisProjectAndSendsNothing`. |
-| OM-6 | `zerops_org_propose_domain` returns a `domain.add` proposal of the shape above for the organization's project, onto one of its service's web ports, naming only domains the project does not hold, and changes nothing. `TestProposeOrgAction_DomainAdd_Shape`, `TestProposeOrgAction_DomainAdd_RefusesWhatCannotGoLive`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
-| OM-7 | `zerops_org_propose_access` returns an `access.set` proposal of the shape above for the organization's project or application, each person once, a member of the overview, at a level Mate gives, and changes nothing. `TestProposeOrgAction_AccessSet_Shape`, `TestProposeOrgAction_AccessSet_RefusesWhatCannotBeGiven`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
+| OM-6 | `zerops_org_propose_domain` returns a `domain.add` proposal of the shape above for the organization's project, onto one of its service's web ports, and changes nothing. `TestProposeOrgAction_DomainAdd_Shape`, `TestProposeOrgAction_DomainAdd_RefusesWhatCannotGoLive`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
+| OM-7 | `zerops_org_propose_access` returns an `access.set` proposal of the shape above for the organization's project or application, each person once, at a level Mate gives, and changes nothing. `TestProposeOrgAction_AccessSet_Shape`, `TestProposeOrgAction_AccessSet_RefusesWhatCannotBeGiven`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
 
 ## 3. Trust and credentials
 

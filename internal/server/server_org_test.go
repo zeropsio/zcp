@@ -8,7 +8,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/knowledge"
@@ -19,50 +18,15 @@ import (
 // emptyOrg is an organization with nothing in it.
 type emptyOrg struct{}
 
-func (emptyOrg) OrgID() string                                            { return "org1" }
 func (emptyOrg) ListProjects(context.Context) ([]platform.Project, error) { return nil, nil }
 func (emptyOrg) ListServices(context.Context, string) ([]platform.ServiceStack, error) {
 	return nil, nil
 }
-func (emptyOrg) GetProjectEnv(context.Context, string) ([]platform.ProjectEnvVar, error) {
-	return nil, nil
-}
-func (emptyOrg) GetServiceEnv(context.Context, string) ([]platform.ServiceEnvVar, error) {
-	return nil, nil
-}
-func (emptyOrg) GetProjectLog(context.Context, string) (*platform.LogAccess, error) {
-	return &platform.LogAccess{}, nil
-}
-func (emptyOrg) ListPublicHTTPRoutings(context.Context, string) ([]platform.PublicHTTPRouting, error) {
-	return nil, nil
-}
-func (emptyOrg) SearchProcesses(context.Context, string, int) ([]platform.ProcessEvent, error) {
-	return nil, nil
-}
-func (emptyOrg) SearchAppVersions(context.Context, string, int) ([]platform.AppVersionEvent, error) {
-	return nil, nil
-}
-func (emptyOrg) ListActiveServiceTypeVersions(context.Context) ([]string, error) { return nil, nil }
-func (emptyOrg) GetPerson(context.Context) (platform.OrgPerson, error) {
-	return platform.OrgPerson{}, nil
-}
-func (emptyOrg) ListPortRoutings(context.Context, string) ([]platform.OrgPortRouting, error) {
-	return nil, nil
-}
-func (emptyOrg) SearchCosts(context.Context) (*platform.OrgCosts, error) {
-	return &platform.OrgCosts{}, nil
-}
-func (emptyOrg) SearchCostBreakdown(context.Context, platform.OrgCostQuery) ([]platform.OrgCostLine, error) {
-	return nil, nil
-}
-func (emptyOrg) SearchResourceUse(context.Context, string, time.Time, time.Time, string) ([]platform.OrgResourceUse, error) {
-	return nil, nil
-}
+func (emptyOrg) ListMembers(context.Context) ([]platform.OverviewMember, error) { return nil, nil }
 
 // orgTools is org mode's own surface.
 var orgTools = []string{
-	"zerops_org_overview", "zerops_org_services", "zerops_org_logs", "zerops_org_failures",
-	"zerops_org_env", "zerops_org_processes", "zerops_org_costs", "zerops_org_usage",
+	"zerops_org_overview", "zerops_org_services",
 	"zerops_org_propose_service", "zerops_org_propose_env", "zerops_org_propose_message",
 	"zerops_org_propose_domain", "zerops_org_propose_access",
 }
@@ -73,7 +37,7 @@ func listOrgServerTools(t *testing.T, rt runtime.Info) []string {
 	if err != nil {
 		t.Fatalf("knowledge store: %v", err)
 	}
-	srv := NewOrg(context.Background(), emptyOrg{}, "localhost", store, platform.NewMockLogFetcher(), rt, nil)
+	srv := NewOrg(context.Background(), emptyOrg{}, store, rt, nil)
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()
 	if _, err := srv.MCPServer().Connect(ctx, st, nil); err != nil {

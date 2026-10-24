@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
@@ -18,7 +17,6 @@ import (
 // Mate.
 type orgFake struct{}
 
-func (orgFake) OrgID() string { return "org1" }
 func (orgFake) ListProjects(context.Context) ([]platform.Project, error) {
 	return []platform.Project{
 		{ID: "pProd", Name: "Contoso - production", Status: "ACTIVE"},
@@ -38,50 +36,15 @@ func (orgFake) ListServices(_ context.Context, projectID string) ([]platform.Ser
 	}
 	return out, nil
 }
-func (orgFake) GetProjectEnv(context.Context, string) ([]platform.ProjectEnvVar, error) {
-	return []platform.ProjectEnvVar{{Key: "STRIPE_KEY", Content: "sk_live_secret", Sensitive: true}}, nil
-}
-func (orgFake) GetServiceEnv(context.Context, string) ([]platform.ServiceEnvVar, error) {
-	return nil, nil
-}
-func (orgFake) GetProjectLog(context.Context, string) (*platform.LogAccess, error) {
-	return &platform.LogAccess{URL: "https://logs.example"}, nil
-}
-func (orgFake) ListPublicHTTPRoutings(context.Context, string) ([]platform.PublicHTTPRouting, error) {
-	return nil, nil
-}
-func (orgFake) SearchProcesses(context.Context, string, int) ([]platform.ProcessEvent, error) {
-	return []platform.ProcessEvent{{ID: "pr1", ProjectID: "pProd", ActionName: "stack.restart", Status: "FINISHED"}}, nil
-}
-func (orgFake) SearchAppVersions(context.Context, string, int) ([]platform.AppVersionEvent, error) {
-	return nil, nil
-}
-
-func (orgFake) GetPerson(context.Context) (platform.OrgPerson, error) {
-	return platform.OrgPerson{Name: "Dana", Role: "ADMIN"}, nil
-}
-func (orgFake) ListPortRoutings(context.Context, string) ([]platform.OrgPortRouting, error) {
-	return []platform.OrgPortRouting{{ServiceID: "sMedusa", IPType: "IP_V4", PublicPort: 9000, InternalPort: 9000, Protocol: "tcp", FirewallPolicy: "BLACKLIST", Synced: true}}, nil
-}
-func (orgFake) SearchCosts(context.Context) (*platform.OrgCosts, error) {
-	return &platform.OrgCosts{
-		Org:      platform.OrgPeriodCost{ThisMonth: 12.5},
-		Projects: []platform.OrgCostItem{{ID: "pProd", Cost: platform.OrgPeriodCost{ThisMonth: 12.5}}},
-	}, nil
-}
-func (orgFake) SearchCostBreakdown(context.Context, platform.OrgCostQuery) ([]platform.OrgCostLine, error) {
-	return nil, nil
-}
-func (orgFake) SearchResourceUse(_ context.Context, projectID string, from, _ time.Time, _ string) ([]platform.OrgResourceUse, error) {
-	return []platform.OrgResourceUse{{ProjectID: projectID, ServiceID: "sMedusa", From: from, Containers: 1, VCPUUsed: 0.1, VCPULimit: 2, RAMUsed: 1, RAMLimit: 3}}, nil
+func (orgFake) ListMembers(context.Context) ([]platform.OverviewMember, error) {
+	return []platform.OverviewMember{{UserID: "u1", FullName: "Dana", Role: "ADMIN", Status: "ACTIVE"}}, nil
 }
 
 var _ ops.OrgSource = orgFake{}
 
 func orgServer() *mcp.Server {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	logs := platform.NewMockLogFetcher()
-	RegisterOrg(srv, orgFake{}, logs, func() string { return "id-1" })
+	RegisterOrg(srv, orgFake{}, func() string { return "id-1" })
 	return srv
 }
 
@@ -97,16 +60,8 @@ func TestOrgTools_EachAnswersWithItsDocument(t *testing.T) {
 		notIn   string
 	}{
 		{tool: "zerops_org_overview", args: map[string]any{}, wantKey: "groups", wantIn: `"mate":"Rossy"`},
+		{tool: "zerops_org_overview", args: map[string]any{}, wantKey: "members", wantIn: `"role":"ADMIN"`},
 		{tool: "zerops_org_services", args: map[string]any{"project": "Contoso - production"}, wantKey: "services", wantIn: `"hostname":"medusa"`},
-		{tool: "zerops_org_logs", args: map[string]any{"project": "pProd", "service": "medusa"}, wantKey: "entries", wantIn: `"kind":"runtime"`},
-		{tool: "zerops_org_failures", args: map[string]any{"since": "24h"}, wantKey: "failures", wantIn: `"scanned"`},
-		{tool: "zerops_org_env", args: map[string]any{"project": "pProd"}, wantKey: "vars", wantIn: `"masked":true`, notIn: "sk_live_secret"},
-		{tool: "zerops_org_env", args: map[string]any{"project": "pProd", "reveal": []string{"STRIPE_KEY"}}, wantKey: "revealed", wantIn: "sk_live_secret"},
-		{tool: "zerops_org_processes", args: map[string]any{}, wantKey: "processes", wantIn: `"action":"stack.restart"`},
-		{tool: "zerops_org_overview", args: map[string]any{}, wantKey: "actsFor", wantIn: `"roleCode":"ADMIN"`},
-		{tool: "zerops_org_services", args: map[string]any{"project": "pProd"}, wantKey: "services", wantIn: `"publicPort":9000`},
-		{tool: "zerops_org_costs", args: map[string]any{}, wantKey: "projects", wantIn: `"thisMonth":12.5`},
-		{tool: "zerops_org_usage", args: map[string]any{"project": "pProd"}, wantKey: "services", wantIn: `"vCpu":{"last":0.1`},
 		{tool: "zerops_org_propose_service", args: map[string]any{"action": "restart", "project": "pProd", "service": "medusa", "reason": "stuck"}, wantKey: "proposal", wantIn: `"kind":"service.restart"`},
 		{tool: "zerops_org_propose_env", args: map[string]any{"project": "pProd", "scope": "project", "key": "APP_URL", "value": "https://x", "reason": "domain"}, wantKey: "proposal", wantIn: `"kind":"env.set"`},
 		{tool: "zerops_org_propose_message", args: map[string]any{"to": "Rossy", "words": "debug this", "reason": "Rossy's code"}, wantKey: "proposal", wantIn: `"mateName":"Rossy"`},
@@ -180,9 +135,7 @@ func TestOrgTools_Annotations(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]bool{
-		"zerops_org_overview": true, "zerops_org_services": true, "zerops_org_logs": true,
-		"zerops_org_failures": true, "zerops_org_env": true, "zerops_org_processes": true,
-		"zerops_org_costs": true, "zerops_org_usage": true,
+		"zerops_org_overview": true, "zerops_org_services": true,
 		"zerops_org_propose_service": false, "zerops_org_propose_env": false, "zerops_org_propose_message": false,
 		"zerops_org_propose_domain": false, "zerops_org_propose_access": false,
 	}
