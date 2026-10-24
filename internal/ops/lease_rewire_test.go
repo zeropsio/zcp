@@ -8,12 +8,14 @@
 package ops
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"maps"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -41,23 +43,30 @@ const (
 // checkout (a new branch, cut from groupBase) and the release guard's reads (a
 // clean checkout) are answered here; an unreachable alias fails every command
 // as ssh does. log keeps every command, "host: command", in the order sent.
+// slots is each container's stable number, which the checkout answers as the
+// container's ZEROPS_StableNumber; a host without one answers none.
 type rewireSSH struct {
 	mu          sync.Mutex
 	containers  map[string]*devservertest.Container
 	unreachable map[string]error
+	slots       map[string]int
 	log         []string
 }
 
 func (s *rewireSSH) ExecSSH(ctx context.Context, host, command string) ([]byte, error) {
 	s.mu.Lock()
 	s.log = append(s.log, host+": "+command)
-	c, down := s.containers[host], s.unreachable[host]
+	c, down, slot := s.containers[host], s.unreachable[host], s.slots[host]
 	s.mu.Unlock()
 	switch {
 	case down != nil:
 		return nil, &platform.SSHExecError{Hostname: host, Output: "ssh: connect to host " + host + " port 22: Connection refused", Err: down}
 	case strings.Contains(command, "fetch -q --prune origin"):
-		return []byte("@@zcp-lease base " + groupBase + "\n"), nil
+		answer := "@@zcp-lease base " + groupBase + "\n"
+		if slot > 0 {
+			answer += "@@zcp-lease slot " + strconv.Itoa(slot) + "\n"
+		}
+		return []byte(answer), nil
 	case strings.Contains(command, "status --porcelain"):
 		return nil, nil
 	case strings.Contains(command, "rev-list --count"):
@@ -469,17 +478,24 @@ func overlayState(env string, live bool) string {
 func TestLeaseStatus_StaleWiring_NamedNotFixed(t *testing.T) {
 	t.Parallel()
 	hq7 := `{"HQ_HOST":"` + nodeHostnameOf(groupHQPool, 7) + `","WEB_HOST":"` + nodeHostnameOf(groupWebPool, 3) + `"}`
+	hqURL7 := `{"HQ_URL":"https://hqpool-abc1-8001.prg1.zerops.app","WEB_URL":"https://webpool-abc1-8002.prg1.zerops.app"}`
 	tests := []struct {
 		name      string
 		hqLost    bool
 		preview   string
 		wantStale bool
+		// wantVar is the variable a stale note names; "" is HQ_HOST.
+		wantVar string
 	}{
 		{name: "hqpool-7 lost: stale", hqLost: true, preview: previewPart(envOnlyVersion, 0, overlayState(hq7, true), 0), wantStale: true},
 		{name: "hqpool-7 held: wired", preview: previewPart(envOnlyVersion, 0, overlayState(hq7, true), 0)},
 		{name: "a container no lease of the group ever was: stale", preview: previewPart(envOnlyVersion, 0,
 			overlayState(`{"HQ_HOST":"`+nodeHostnameOf(groupHQPool, 9)+`"}`, true), 0), wantStale: true},
 		{name: "no server runs under it", hqLost: true, preview: previewPart(envOnlyVersion, 0, overlayState(hq7, false), 0)},
+		// A preview URL names its pool: wired while the group holds a lease
+		// there, stale once that lease ended outside zcp.
+		{name: "hqpool-7's preview URL, hqpool-7 held: wired", preview: previewPart(envOnlyVersion, 0, overlayState(hqURL7, true), 0)},
+		{name: "hqpool-7's preview URL, hqpool-7 lost: stale", hqLost: true, preview: previewPart(envOnlyVersion, 0, overlayState(hqURL7, true), 0), wantStale: true, wantVar: "HQ_URL"},
 		{name: "a supervisor without the overlay", hqLost: true, preview: previewPart(olderVersion, 0, overlayState(hq7, true), 0)},
 	}
 	for _, tt := range tests {
@@ -509,7 +525,7 @@ func TestLeaseStatus_StaleWiring_NamedNotFixed(t *testing.T) {
 					t.Errorf("pool=%q: wiring = %q, want stale=%v (note %q)", pool, web.Wiring, wantStale, web.Note)
 				}
 				if wantStale {
-					for _, want := range []string{"HQ_HOST", "web", `zerops_dev_server action=restart hostname="webpool-3" name="web"`} {
+					for _, want := range []string{cmp.Or(tt.wantVar, "HQ_HOST"), "web", `zerops_dev_server action=restart hostname="webpool-3" name="web"`} {
 						if !strings.Contains(web.Note, want) {
 							t.Errorf("pool=%q: note %q lacks %q", pool, web.Note, want)
 						}

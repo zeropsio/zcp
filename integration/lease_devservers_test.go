@@ -6,12 +6,17 @@
 package integration_test
 
 import (
+	"context"
 	"encoding/json"
 	"maps"
 	"net/http"
 	"net/url"
+	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/ops/devservertest"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -26,6 +31,30 @@ func previewPool(id, name string) platform.ServiceStack {
 		svc.Ports = append(svc.Ports, platform.Port{Port: p, Protocol: "tcp", HTTPSupport: true})
 	}
 	return svc
+}
+
+// previewLeaseSSH is rewireLeaseSSH whose checkout answers each container's
+// stable number (its ZEROPS_StableNumber) from slots.
+type previewLeaseSSH struct {
+	rewireLeaseSSH
+	mu    sync.Mutex
+	slots map[string]int
+}
+
+func (s *previewLeaseSSH) ExecSSH(ctx context.Context, host, command string) ([]byte, error) {
+	out, err := s.rewireLeaseSSH.ExecSSH(ctx, host, command)
+	if strings.Contains(command, "fetch -q --prune origin") {
+		s.mu.Lock()
+		if n := s.slots[host]; n > 0 {
+			out = append(out, []byte("@@zcp-lease slot "+strconv.Itoa(n)+"\n")...)
+		}
+		s.mu.Unlock()
+	}
+	return out, err
+}
+
+func (s *previewLeaseSSH) ExecSSHBackground(ctx context.Context, host, command string, _ time.Duration) ([]byte, error) {
+	return s.ExecSSH(ctx, host, command)
 }
 
 // previewGroupServer is the full MCP server over hqpool #3 (stable number 1)
@@ -46,7 +75,10 @@ func previewGroupServer(t *testing.T, decl func(server, port string) string) (ca
 		WithServiceEnv("svc-webpool", []platform.ServiceEnvVar{{ID: "env-w", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}})
 	hq, web = devservertest.NewSupervised(decl("api", "8080")), devservertest.NewSupervised(decl("web", "3000"))
 	hq.StableNumber, web.StableNumber = 1, 2
-	ssh := &rewireLeaseSSH{containers: map[string]*devservertest.Container{"hqpool-3": hq, "webpool-7": web}}
+	ssh := &previewLeaseSSH{
+		rewireLeaseSSH: rewireLeaseSSH{containers: map[string]*devservertest.Container{"hqpool-3": hq, "webpool-7": web}},
+		slots:          map[string]int{"hqpool-3": 1, "webpool-7": 2},
+	}
 	session, cleanup := setupTestServerWithDeploy(t, mock, defaultLogFetcher(), ssh)
 	t.Cleanup(cleanup)
 	return func(args map[string]any) string {
@@ -124,5 +156,53 @@ func TestLease_Integration_Acquire_CarriesEachLeasesDevServers(t *testing.T) {
 	}
 	if !strings.Contains(got.NextActions, `zerops_dev_server action=status hostname="webpool-7" name="web"`) {
 		t.Errorf("nextActions %q should name the status call for web", got.NextActions)
+	}
+}
+
+// TestLease_Integration_SiblingPreviewEnv_FollowsTheSiblingsContainer: through
+// the full MCP server, a declaration's siblingPreviewEnv hands web's servers
+// hq's preview URL — the address a browser reaches it on — beside the
+// container hostname siblingEnv hands them: the acquire names both per lease;
+// when hqpool-3 leaves the branch, web is rewired without either and
+// restarted, and the result says so.
+func TestLease_Integration_SiblingPreviewEnv_FollowsTheSiblingsContainer(t *testing.T) {
+	// Non-parallel: t.Chdir and a swap of http.DefaultTransport, as in lease_test.go.
+	t.Chdir(t.TempDir())
+	call, _, web := previewGroupServer(t, func(server, port string) string {
+		return `{"version":1,"previewPortBase":8000,"siblingEnv":{"HQ_HOST":"hqpool"},"siblingPreviewEnv":{"HQ_URL":"hqpool"},` +
+			`"servers":[{"name":"` + server + `","port":` + port + `,"command":"run ` + server + `"}]}`
+	})
+	acquire := map[string]any{"action": "acquire", "pools": []string{"hqpool", "webpool"}, "repo": "https://github.com/acme/app", "branch": "feat-x"}
+
+	got := readAcquired(t, call(acquire))
+	want := map[string]string{"HQ_HOST": "node-id-3.runtime.hqpool.zerops", "HQ_URL": "https://hqpool-abc1-8001.prg1.zerops.app"}
+	for _, l := range got.Leases {
+		if l.SiblingEnv == nil || !maps.Equal(l.SiblingEnv.Set, want) {
+			t.Errorf("%s siblingEnv = %+v, want %v", l.Alias, l.SiblingEnv, want)
+		}
+	}
+	if !maps.Equal(web.Overlay(), want) {
+		t.Errorf("webpool-7's overlay = %v, want %v", web.Overlay(), want)
+	}
+
+	var released struct {
+		Rewired []struct {
+			Alias      string `json:"alias"`
+			SiblingEnv struct {
+				LeftToContainerEnv []string `json:"leftToContainerEnv"`
+			} `json:"siblingEnv"`
+			Restarted []string `json:"restarted"`
+		} `json:"rewired"`
+	}
+	text := call(map[string]any{"action": "release", "lease": "hqpool-3"})
+	if err := json.Unmarshal([]byte(text), &released); err != nil {
+		t.Fatalf("result is not JSON: %v\n%s", err, text)
+	}
+	if len(released.Rewired) != 1 || released.Rewired[0].Alias != "webpool-7" ||
+		!slices.Equal(released.Rewired[0].SiblingEnv.LeftToContainerEnv, []string{"HQ_HOST", "HQ_URL"}) || !slices.Equal(released.Rewired[0].Restarted, []string{"web"}) {
+		t.Errorf("release rewired = %+v, want webpool-7 with HQ_HOST and HQ_URL left to its container's env and web restarted", released.Rewired)
+	}
+	if len(web.Overlay()) != 0 {
+		t.Errorf("webpool-7's overlay = %v, want none once hqpool-3 left", web.Overlay())
 	}
 }

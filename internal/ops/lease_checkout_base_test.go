@@ -113,3 +113,37 @@ func TestLeaseCheckoutCommand_BaseIsACommitID(t *testing.T) {
 		t.Errorf("a base that is no commit id reached the command:\n%s", got)
 	}
 }
+
+// TestLeaseCheckout_AnswersTheContainersStableNumber: a lease's preview port
+// follows its container's stable number, which only the container knows
+// (ZEROPS_StableNumber in its sessions' env), so the checkout answers it on a
+// line of its own — tracked branch or new — for the record to keep; a session
+// without one answers an empty number.
+func TestLeaseCheckout_AnswersTheContainersStableNumber(t *testing.T) {
+	t.Parallel()
+	origin, _, _ := originWithBranches(t)
+	tests := []struct {
+		name, branch, env, want string
+	}{
+		{name: "a branch origin has", branch: "feat", env: "ZEROPS_StableNumber=2", want: "@@zcp-lease slot 2\n"},
+		{name: "a branch new to origin", branch: "brand-new", env: "ZEROPS_StableNumber=7", want: "@@zcp-lease slot 7\n"},
+		{name: "a session without a stable number", branch: "feat", want: "@@zcp-lease slot \n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cmd := exec.CommandContext(context.Background(), "sh", "-c", leaseCheckoutCommand(imageLeftovers(t), origin, tt.branch, "", "")) //nolint:gosec // running the composed command is the test
+			cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null", "ZEROPS_StableNumber=")
+			if tt.env != "" {
+				cmd.Env = append(cmd.Env, tt.env)
+			}
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("checkout: %v\n%s", err, out)
+			}
+			if !strings.Contains(string(out), tt.want) {
+				t.Errorf("answer %q lacks %q", out, tt.want)
+			}
+		})
+	}
+}
