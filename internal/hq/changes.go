@@ -2,8 +2,6 @@ package hq
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -26,25 +24,21 @@ type Doer interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
-// Client speaks HQ's Mate API as the Mate the enrollment it was opened with
-// holds: `Authorization: Mate <credential>`, always within the application
+// Client speaks HQ's Mate API as the project whose key it was opened with:
+// `Authorization: Project <key>` on every call, always within the application
 // HQ holds the Mate in.
 type Client struct {
-	call       hqClient
-	enrollment Enrollment
+	call hqClient
+	id   Identity
 }
 
-// Open is a client of the HQ the enrollment at path names, with its
-// credential; ErrNotEnrolled when there is no enrollment yet.
-func Open(httpClient Doer, path string) (Client, error) {
-	kept, found, err := LoadEnrollment(path)
-	if err != nil {
+// Open is a client of the HQ id names, presenting id's key; ErrNoIdentity
+// when id lacks the key, the project or HQ's origin.
+func Open(httpClient Doer, id Identity) (Client, error) {
+	if err := id.check(); err != nil {
 		return Client{}, err
 	}
-	if !found {
-		return Client{}, ErrNotEnrolled
-	}
-	return Client{call: hqClient{http: httpClient, address: kept.HQ}, enrollment: kept}, nil
+	return Client{call: hqClient{http: httpClient, address: id.Origin}, id: id}, nil
 }
 
 // Once is this client sending each call once: a 503 is UnavailableError at
@@ -88,7 +82,7 @@ func (c Client) RepoExists(ctx context.Context, appID, repo string) (bool, error
 	if err != nil {
 		return false, fmt.Errorf("hq git %s: %w", repo, err)
 	}
-	req.SetBasicAuth(GitUser, c.Credential())
+	req.Header.Set("Authorization", c.authorization())
 	resp, err := c.call.http.Do(req)
 	if err != nil {
 		return false, &UnavailableError{Err: fmt.Errorf("hq git %s: %w", repo, err)}
@@ -106,25 +100,15 @@ func (c Client) RepoExists(ctx context.Context, appID, repo string) (bool, error
 	return false, fmt.Errorf("hq git %s: HQ answered %d", repo, resp.StatusCode)
 }
 
-func (c Client) authorization() string { return "Mate " + c.enrollment.Credential }
+// authorization is the key as every call and zcp's own git presents it. The
+// header is the only place it travels: never a URL, a log line or a file.
+func (c Client) authorization() string { return "Project " + c.id.Key }
 
 // Address is the HQ's own address, without a trailing slash.
-func (c Client) Address() string { return strings.TrimRight(c.enrollment.HQ, "/") }
+func (c Client) Address() string { return strings.TrimRight(c.id.Origin, "/") }
 
 // ProjectID is the Mate's own project: HQ's id of the Mate.
-func (c Client) ProjectID() string { return c.enrollment.ProjectID }
-
-// Credential is the Mate credential, the password git presents to HQ as
-// GitUser. Never printed.
-func (c Client) Credential() string { return c.enrollment.Credential }
-
-// CredentialFingerprint names the Mate credential without carrying it: what a
-// record keeps to know which credential a service was given, never the
-// secret itself.
-func (c Client) CredentialFingerprint() string {
-	sum := sha256.Sum256([]byte(c.enrollment.Credential))
-	return hex.EncodeToString(sum[:8])
-}
+func (c Client) ProjectID() string { return c.id.ProjectID }
 
 // RepoURL is where git reaches the repository repo of the application appID.
 func (c Client) RepoURL(appID, repo string) string { return RepoURLAt(c.Address(), appID, repo) }
@@ -144,7 +128,7 @@ func (c Client) ChangeURL(appID, repo string, number int) string {
 // ChangeBranch is the branch HQ binds the Mate's change number to when it is
 // opened naming none.
 func (c Client) ChangeBranch(number int) string {
-	return "mate/" + c.enrollment.ProjectID + "/" + strconv.Itoa(number)
+	return "mate/" + c.id.ProjectID + "/" + strconv.Itoa(number)
 }
 
 // BranchOf is the branch of the Mate's change number by its short name: the

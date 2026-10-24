@@ -85,16 +85,13 @@ func hqLaunchProductionRefusal(ctx context.Context, httpClient ops.HTTPDoer, sta
 //   - no change at all, or one closed without merging → nothing of this
 //     pair's work has reached main; it has to be pushed and merged first.
 //
-// A Mate that cannot reach HQ at all — no enrollment yet, or one it cannot
-// read — knows none of the three, and says so.
+// A Mate that cannot reach HQ at all — no key or HQ origin in its container —
+// knows none of the three, and says so.
 func hqLaunchProductionNextStep(ctx context.Context, httpClient ops.HTTPDoer, stateDir string) string {
-	if problem := hqEnrollmentProblem(); problem != "" {
-		return fmt.Sprintf("Whether this Mate's work reached main is HQ's to say, and %s. Ask again once it is enrolled; production is added with Put it live and released with Release, both offered in this conversation and on the project's card in Mate.", problem)
-	}
 	var open []string
 	merged := false
 	if metas, err := workflow.ListServiceMetas(stateDir); err == nil {
-		self := func() (hq.MateState, error) { return hq.MateState{}, hq.ErrNotEnrolled }
+		self := func() (hq.MateState, error) { return hq.MateState{}, hq.ErrNoIdentity }
 		if hqc, enrolled := openHQ(httpClient); enrolled {
 			self = lazySelf(ctx, hqc)
 		}

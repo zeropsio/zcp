@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -23,7 +22,7 @@ type hqCall struct {
 }
 
 // answering is a fake HQ that answers every request with body, recording
-// what it was asked; the client it returns holds the credential "good".
+// what it was asked; the client it returns presents the key "good".
 func answering(t *testing.T, body string) (Client, *[]hqCall) {
 	t.Helper()
 	var calls []hqCall
@@ -34,18 +33,14 @@ func answering(t *testing.T, body string) (Client, *[]hqCall) {
 		_, _ = io.WriteString(w, body)
 	}))
 	t.Cleanup(srv.Close)
-	return enrolledClient(t, srv), &calls
+	return keyedClient(t, srv), &calls
 }
 
-// enrolledClient is a client of srv, enrolled as the Mate "p-mate" with the
-// credential "good".
-func enrolledClient(t *testing.T, srv *httptest.Server) Client {
+// keyedClient is a client of srv for the Mate "p-mate" presenting the key
+// "good".
+func keyedClient(t *testing.T, srv *httptest.Server) Client {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "enrollment.json")
-	if err := SaveEnrollment(path, Enrollment{HQ: srv.URL, HQProjectID: "hq1", ProjectID: "p-mate", Credential: "good"}); err != nil {
-		t.Fatal(err)
-	}
-	client, err := Open(srv.Client(), path)
+	client, err := Open(srv.Client(), Identity{Origin: srv.URL, Key: "good", ProjectID: "p-mate"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +58,7 @@ func TestClient_EnsureRepo_AsksHQForTheRepositoryInTheMatesApplication(t *testin
 	if repo != (Repo{AppID: "0b6e7c1e-8f7a-4a52-9d1c-2f1f5d0a3c11", Name: "appdev"}) {
 		t.Errorf("repo = %+v", repo)
 	}
-	want := hqCall{http.MethodPost, "/api/mate/repos", "Mate good", "application/json", `{"name":"appdev"}`}
+	want := hqCall{http.MethodPost, "/api/mate/repos", "Project good", "application/json", `{"name":"appdev"}`}
 	if len(*calls) != 1 || (*calls)[0] != want {
 		t.Errorf("calls = %+v, want [%+v]", *calls, want)
 	}
@@ -92,7 +87,7 @@ func TestClient_OpenChange_DecodesTheChangeHQOpenedOrHeld(t *testing.T) {
 	if !reflect.DeepEqual(opened, want) {
 		t.Errorf("opened = %+v\nwant %+v", opened, want)
 	}
-	wantCall := hqCall{http.MethodPost, "/api/mate/changes", "Mate good", "application/json", `{"repo":"appdev","title":"Add a todo list"}`}
+	wantCall := hqCall{http.MethodPost, "/api/mate/changes", "Project good", "application/json", `{"repo":"appdev","title":"Add a todo list"}`}
 	if len(*calls) != 1 || (*calls)[0] != wantCall {
 		t.Errorf("calls = %+v, want [%+v]", *calls, wantCall)
 	}
@@ -129,7 +124,7 @@ func TestClient_EditChange_SendsOnlyWhatChanges(t *testing.T) {
 			if change.Number != 3 || change.Head == nil || *change.Head != "4b825dc642cb6eb9a060e54bf8d69288fbee4904" || change.Mergeability != "clean" {
 				t.Errorf("change = %+v", change)
 			}
-			want := hqCall{http.MethodPatch, "/api/mate/changes/appdev/3", "Mate good", "application/json", tt.wantBody}
+			want := hqCall{http.MethodPatch, "/api/mate/changes/appdev/3", "Project good", "application/json", tt.wantBody}
 			if len(*calls) != 1 || (*calls)[0] != want {
 				t.Errorf("calls = %+v, want [%+v]", *calls, want)
 			}
@@ -154,7 +149,7 @@ func TestClient_Attach_SendsThePictureItselfAsAPNG(t *testing.T) {
 	if got != want {
 		t.Errorf("attachment = %+v, want %+v", got, want)
 	}
-	wantCall := hqCall{http.MethodPost, "/api/mate/changes/appdev/3/attachments", "Mate good", "image/png", png}
+	wantCall := hqCall{http.MethodPost, "/api/mate/changes/appdev/3/attachments", "Project good", "image/png", png}
 	if len(*calls) != 1 || (*calls)[0] != wantCall {
 		t.Errorf("calls = %+v, want [%+v]", *calls, wantCall)
 	}
@@ -214,7 +209,7 @@ func TestClient_Unavailable_IsTryAgain(t *testing.T) {
 				_, _ = io.WriteString(w, body)
 			}))
 			t.Cleanup(srv.Close)
-			client := enrolledClient(t, srv)
+			client := keyedClient(t, srv)
 			var pauses []time.Duration
 			client.call.pause = func(_ context.Context, d time.Duration) error {
 				pauses = append(pauses, d)
@@ -267,7 +262,7 @@ func TestClient_Once_LeavesTheWaitToTheCaller(t *testing.T) {
 				_, _ = io.WriteString(w, tt.body)
 			}))
 			t.Cleanup(srv.Close)
-			client := enrolledClient(t, srv).Once()
+			client := keyedClient(t, srv).Once()
 			client.call.pause = func(context.Context, time.Duration) error {
 				t.Error("a client that tries once waits for nothing")
 				return nil
@@ -320,11 +315,7 @@ func TestClient_Bounded_EndsATryHQDoesNotAnswer(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			address, doer := tt.hq(t)
-			path := filepath.Join(t.TempDir(), "enrollment.json")
-			if err := SaveEnrollment(path, Enrollment{HQ: address, ProjectID: "p-mate", Credential: "good"}); err != nil {
-				t.Fatal(err)
-			}
-			client, err := Open(doer, path)
+			client, err := Open(doer, Identity{Origin: address, Key: "good", ProjectID: "p-mate"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -363,7 +354,7 @@ func neverAccepting(t *testing.T) (string, Doer) {
 func TestClient_Unreachable_IsUnavailableAtOnce(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.NotFoundHandler())
-	client := enrolledClient(t, srv)
+	client := keyedClient(t, srv)
 	srv.Close()
 	client.call.pause = func(context.Context, time.Duration) error {
 		t.Error("an HQ that does not answer is not waited for")
@@ -379,15 +370,11 @@ func TestClient_Unreachable_IsUnavailableAtOnce(t *testing.T) {
 
 // TestClient_Addresses: what zcp hands git and a person is HQ's own address
 // followed by the contract's paths (hqChanges.ts changeUrl, attachmentPath),
-// whether or not the enrollment kept a trailing slash.
+// whether or not the configured origin carries a trailing slash.
 func TestClient_Addresses(t *testing.T) {
 	t.Parallel()
 	for _, address := range []string{"https://hq.example", "https://hq.example/"} {
-		path := filepath.Join(t.TempDir(), "enrollment.json")
-		if err := SaveEnrollment(path, Enrollment{HQ: address, ProjectID: "p-mate", Credential: "good"}); err != nil {
-			t.Fatal(err)
-		}
-		client, err := Open(http.DefaultClient, path)
+		client, err := Open(http.DefaultClient, Identity{Origin: address, Key: "good", ProjectID: "p-mate"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -410,11 +397,7 @@ func TestClient_Addresses(t *testing.T) {
 // branch: the Mate's own default.
 func TestClient_BranchOf_IsTheStoredBranchElseTheDefault(t *testing.T) {
 	t.Parallel()
-	path := filepath.Join(t.TempDir(), "enrollment.json")
-	if err := SaveEnrollment(path, Enrollment{HQ: "https://hq.example", ProjectID: "p-mate", Credential: "good"}); err != nil {
-		t.Fatal(err)
-	}
-	client, err := Open(http.DefaultClient, path)
+	client, err := Open(http.DefaultClient, Identity{Origin: "https://hq.example", Key: "good", ProjectID: "p-mate"})
 	if err != nil {
 		t.Fatal(err)
 	}

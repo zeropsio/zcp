@@ -25,7 +25,7 @@ func TestClient_AIKey_HandsTheMateTheOrganizationsKey(t *testing.T) {
 	if key != want {
 		t.Errorf("key = %+v, want %+v", key, want)
 	}
-	wantCall := hqCall{http.MethodPost, "/api/mate/ai-key", "Mate good", "application/json", `{}`}
+	wantCall := hqCall{http.MethodPost, "/api/mate/ai-key", "Project good", "application/json", `{}`}
 	if len(*calls) != 1 || (*calls)[0] != wantCall {
 		t.Errorf("calls = %+v, want [%+v]", *calls, wantCall)
 	}
@@ -55,7 +55,7 @@ func TestClient_AIKey_RefusalsAndIncompleteAnswersNeverCarryTheKey(t *testing.T)
 			}))
 			t.Cleanup(srv.Close)
 
-			key, err := enrolledClient(t, srv).AIKey(context.Background())
+			key, err := keyedClient(t, srv).AIKey(context.Background())
 			if err == nil {
 				t.Fatalf("AIKey = %+v, want an error", key)
 			}

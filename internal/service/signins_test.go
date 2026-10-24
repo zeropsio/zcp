@@ -14,17 +14,33 @@ import (
 	"github.com/zeropsio/zcp/internal/mate"
 )
 
+// identityEnv is the live env a linked container's seed reads: HQ's origin,
+// the project and its key.
+func identityEnv(origin, key string) func(string) string {
+	return func(name string) string {
+		switch name {
+		case hq.EnvOrigin:
+			return origin
+		case hq.EnvKey:
+			return key
+		case hq.EnvProjectID:
+			return "p-mate"
+		}
+		return ""
+	}
+}
+
 func TestSeedSignIns_ReadsHQAndLeavesAnAbsentAnswerVisible(t *testing.T) {
 	// non-parallel: HOME and stderr are process-wide.
 	tests := []struct {
 		name, answer, store, wantReason string
 		status                          int
-		enrolled                        bool
+		keyed                           bool
 		wantCalls                       int
 	}{
 		{"HQ signer", `{"projectId":"p-mate","signers":{"codex":"u-bo"}}`, "", "", 200, true, 1},
 		{"existing store", `{"projectId":"p-mate","signers":{"codex":"u-bo"}}`, `{"codex":{"by":"u-own","at":1}}`, "", 200, true, 0},
-		{"not enrolled", "", "", "not enrolled", 200, false, 0},
+		{"no key", "", "", "ZCP_API_KEY", 200, false, 0},
 		{"HQ unavailable", `{"code":"not_active"}`, "", "unavailable", 503, true, 1},
 		{"HQ record absent", `{"code":"mate_not_found"}`, "", "mate_not_found", 404, true, 1},
 		{"other project", `{"projectId":"p-other","signers":{"codex":"u-bo"}}`, "", "project", 200, true, 1},
@@ -35,17 +51,16 @@ func TestSeedSignIns_ReadsHQAndLeavesAnAbsentAnswerVisible(t *testing.T) {
 			calls := 0
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls++
-				if r.Method != http.MethodGet || r.URL.Path != "/api/mate/self" || r.Header.Get("Authorization") != "Mate test-credential" {
+				if r.Method != http.MethodGet || r.URL.Path != "/api/mate/self" || r.Header.Get("Authorization") != "Project test-key" {
 					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 				}
 				w.WriteHeader(tt.status)
 				_, _ = w.Write([]byte(tt.answer))
 			}))
 			defer srv.Close()
-			if tt.enrolled {
-				if err := hq.SaveEnrollment(hq.EnrollmentPath(), hq.Enrollment{HQ: srv.URL, ProjectID: "p-mate", Credential: "test-credential"}); err != nil {
-					t.Fatal(err)
-				}
+			key := ""
+			if tt.keyed {
+				key = "test-key"
 			}
 			if tt.store != "" {
 				if err := os.MkdirAll(filepath.Dir(mate.SignInsPath()), 0o700); err != nil {
@@ -62,12 +77,7 @@ func TestSeedSignIns_ReadsHQAndLeavesAnAbsentAnswerVisible(t *testing.T) {
 			old := os.Stderr
 			os.Stderr = log
 			defer func() { os.Stderr = old; _ = log.Close() }()
-			lookup := func(key string) string {
-				if key == "projectId" {
-					return "p-mate"
-				}
-				return ""
-			}
+			lookup := identityEnv(srv.URL, key)
 			seedSignIns(context.Background(), lookup)
 			seedSignIns(context.Background(), lookup)
 			if calls != tt.wantCalls {
@@ -87,7 +97,7 @@ func TestSeedSignIns_ReadsHQAndLeavesAnAbsentAnswerVisible(t *testing.T) {
 				if !os.IsNotExist(readErr) {
 					t.Errorf("absent HQ answer wrote store: %s, %v", raw, readErr)
 				}
-				if !strings.Contains(string(output), tt.wantReason) || (tt.enrolled && (!strings.Contains(string(output), "remove") || !strings.Contains(string(output), mate.SignInsSeededPath()))) {
+				if !strings.Contains(string(output), tt.wantReason) || (tt.keyed && (!strings.Contains(string(output), "remove") || !strings.Contains(string(output), mate.SignInsSeededPath()))) {
 					t.Errorf("failure needs its reason and manual again: %s", output)
 				}
 			default:
@@ -103,15 +113,15 @@ func TestSeedSignIns_ReadsHQAndLeavesAnAbsentAnswerVisible(t *testing.T) {
 	}
 }
 
-func TestSeedSignIns_ChangedEnrollmentRetriesOnlyTheFailedInput(t *testing.T) {
+func TestSeedSignIns_ChangedKeyRetriesOnlyTheFailedInput(t *testing.T) {
 	// non-parallel: HOME is process-wide.
 	for _, legacy := range []bool{false, true} {
-		t.Run(map[bool]string{false: "credential changes", true: "legacy failed marker"}[legacy], func(t *testing.T) {
+		t.Run(map[bool]string{false: "key changes", true: "legacy failed marker"}[legacy], func(t *testing.T) {
 			t.Setenv("HOME", t.TempDir())
 			calls := 0
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls++
-				if r.Header.Get("Authorization") == "Mate first" {
+				if r.Header.Get("Authorization") == "Project first" {
 					w.WriteHeader(http.StatusServiceUnavailable)
 					_, _ = w.Write([]byte(`{"code":"not_active"}`))
 					return
@@ -119,13 +129,6 @@ func TestSeedSignIns_ChangedEnrollmentRetriesOnlyTheFailedInput(t *testing.T) {
 				_, _ = w.Write([]byte(`{"projectId":"p-mate","signers":{"codex":"u-bo"}}`))
 			}))
 			defer srv.Close()
-			save := func(credential string) {
-				t.Helper()
-				if err := hq.SaveEnrollment(hq.EnrollmentPath(), hq.Enrollment{HQ: srv.URL, ProjectID: "p-mate", Credential: credential}); err != nil {
-					t.Fatal(err)
-				}
-			}
-			lookup := func(string) string { return "p-mate" }
 			if legacy {
 				if err := os.MkdirAll(filepath.Dir(mate.SignInsSeededPath()), 0o700); err != nil {
 					t.Fatal(err)
@@ -134,19 +137,19 @@ func TestSeedSignIns_ChangedEnrollmentRetriesOnlyTheFailedInput(t *testing.T) {
 					t.Fatal(err)
 				}
 			} else {
-				save("first")
-				seedSignIns(context.Background(), lookup)
-				seedSignIns(context.Background(), lookup)
+				first := identityEnv(srv.URL, "first")
+				seedSignIns(context.Background(), first)
+				seedSignIns(context.Background(), first)
 				if calls != 1 {
-					t.Fatalf("same failed enrollment made %d calls, want 1", calls)
+					t.Fatalf("same failed key made %d calls, want 1", calls)
 				}
 			}
-			save("second")
-			seedSignIns(context.Background(), lookup)
-			seedSignIns(context.Background(), lookup)
+			second := identityEnv(srv.URL, "second")
+			seedSignIns(context.Background(), second)
+			seedSignIns(context.Background(), second)
 			raw, err := os.ReadFile(mate.SignInsPath())
 			if err != nil {
-				t.Fatalf("fresh enrolled input did not recover the seed: %v", err)
+				t.Fatalf("fresh key input did not recover the seed: %v", err)
 			}
 			if !strings.Contains(string(raw), "u-bo") {
 				t.Errorf("store = %s", raw)
@@ -162,12 +165,12 @@ func TestSeedSignIns_ChangedEnrollmentRetriesOnlyTheFailedInput(t *testing.T) {
 	}
 }
 
-func TestSeedSignIns_NoEnrollmentLeavesTheAttemptUnspent(t *testing.T) {
+func TestSeedSignIns_NoKeyLeavesTheAttemptUnspent(t *testing.T) {
 	// non-parallel: HOME is process-wide.
 	t.Setenv("HOME", t.TempDir())
-	seedSignIns(context.Background(), func(string) string { return "p-mate" })
+	seedSignIns(context.Background(), identityEnv("https://hq.test", ""))
 	if _, err := os.Stat(mate.SignInsSeededPath()); !os.IsNotExist(err) {
-		t.Fatalf("an unenrolled launch spent the seed attempt: %v", err)
+		t.Fatalf("a launch without a key spent the seed attempt: %v", err)
 	}
 }
 
@@ -177,15 +180,11 @@ func TestMateLaunchSetup_UnenrolledDoesNotSeed(t *testing.T) {
 	t.Setenv("ZCP_API_KEY", "")
 	t.Setenv("projectId", "")
 	old := mateSeedSignIns
+	mateSeedSignIns = seedSignIns
 	t.Cleanup(func() { mateSeedSignIns = old })
-	oldPrepare := mateHQPrepare
-	mateHQPrepare = prepareEnrollment
-	t.Cleanup(func() { mateHQPrepare = oldPrepare })
-	calls := 0
-	mateSeedSignIns = func(context.Context, func(string) string) { calls++ }
 	mateLaunchSetup()
-	if calls != 0 {
-		t.Fatalf("seed ran %d times before enrollment", calls)
+	if _, err := os.Stat(mate.SignInsSeededPath()); !os.IsNotExist(err) {
+		t.Fatalf("a launch without a key spent the seed attempt: %v", err)
 	}
 }
 
@@ -200,10 +199,7 @@ func TestSeedSignIns_EmptyAnswerReadsHQOncePerStart(t *testing.T) {
 		_, _ = w.Write([]byte(`{"projectId":"p-mate"}`))
 	}))
 	defer srv.Close()
-	if err := hq.SaveEnrollment(hq.EnrollmentPath(), hq.Enrollment{HQ: srv.URL, ProjectID: "p-mate", Credential: "test-credential"}); err != nil {
-		t.Fatal(err)
-	}
-	lookup := func(string) string { return "p-mate" }
+	lookup := identityEnv(srv.URL, "test-key")
 	seedSignIns(context.Background(), lookup)
 	seedSignIns(context.Background(), lookup)
 	if calls != 1 {

@@ -16,6 +16,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -67,40 +68,28 @@ type hqPairState struct {
 // top (hq.Client).
 const hqCallTimeout = 30 * time.Second
 
-// openHQ is a client of the HQ this Mate enrolled with (hq.EnrollmentPath),
-// over httpClient; false when the Mate is not enrolled yet, or its enrollment
-// cannot be read (hqEnrollmentProblem says which).
+// hqIdentity is this container's identity toward HQ — its origin, project
+// and key — as the live env store holds it now, so a regenerated key is the
+// one presented.
+func hqIdentity() hq.Identity {
+	return hq.IdentityFrom(mate.LiveLookup(mate.LiveEnvStorePath))
+}
+
+// openHQ is a client of this Mate's HQ under its project key, over
+// httpClient; false when the container has no key, project or HQ origin to
+// present.
 func openHQ(httpClient ops.HTTPDoer) (hq.Client, bool) {
 	if httpClient == nil {
 		return hq.Client{}, false
 	}
-	client, err := hq.Open(httpClient, hq.EnrollmentPath())
+	client, err := hq.Open(httpClient, hqIdentity())
 	return client, err == nil
 }
 
-// hqEnrollmentProblem says why this Mate cannot speak to its HQ, "" when it
-// holds an enrollment it can read. Being a Mate (runtime.Info.MateEnabled) is
-// what makes HQ the authority; the enrollment is only how zcp reaches it, so
-// work that needs HQ says this rather than taking zcp's standalone path.
-func hqEnrollmentProblem() string {
-	_, found, err := hq.LoadEnrollment(hq.EnrollmentPath())
-	switch {
-	case err != nil:
-		return fmt.Sprintf("this Mate's HQ enrollment cannot be read (%v)", err)
-	case !found:
-		return "this Mate holds no HQ enrollment yet — its own service (zcp service mate) keeps enrolling it"
-	}
-	return ""
-}
-
-// hqAddress is the address of the HQ this Mate enrolled with, "" when it has
+// hqAddress is the address of this Mate's HQ, "" when the container names
 // none: what makes a remote recognisable as this Mate's HQ (ops.IsHQRemote).
 func hqAddress() string {
-	kept, found, err := hq.LoadEnrollment(hq.EnrollmentPath())
-	if err != nil || !found {
-		return ""
-	}
-	return strings.TrimRight(kept.HQ, "/")
+	return hqIdentity().Origin
 }
 
 // hqRepositoryActions are the public zerops_workflow actions that choose a
@@ -145,7 +134,7 @@ func reconcileMateRepositories(
 
 // reconcileHQRepositories gives every bootstrapped pair on this Mate its
 // repository in HQ with a checkout on its `main`, and keeps every wired pair
-// current: the dev service holds the Mate credential as it is now, the change
+// current: the dev service holds the Git credential as the Mate's file has it now, the change
 // on record is asked what became of it, and a pair whose Mate HQ now holds in
 // another application is wired there. It pushes nothing: what goes to HQ is
 // the agent's git. It is a RECONCILE, not a one-shot step: it runs on every
@@ -153,7 +142,7 @@ func reconcileMateRepositories(
 // to do, and backs off per pair (pace) — except a credential to renew, which
 // git in the dev service cannot do without.
 //
-// It NEVER blocks bootstrap. Every failure it can meet — a Mate not enrolled
+// It NEVER blocks bootstrap. Every failure it can meet — a Mate not linked
 // yet, HQ refusing or not answering, an SSH hiccup — leaves the pair exactly
 // as it was and returns a line saying so. The next pass tries again.
 //
@@ -262,28 +251,34 @@ func passHQPair(
 }
 
 // hqPairCredentialStale reports whether a wired pair's dev service holds
-// another Mate credential than the enrollment's: the Mate enrolled again —
-// a redeployed zcp does — and HQ revoked the one it holds. A pair wired before
-// its record named the credential is renewed once.
+// another Git credential than the one in the Mate's file: HQ replaced it over
+// the link. A pair wired before its record named the credential is renewed
+// once. A Mate with no credential in its file has nothing to renew with.
 func hqPairCredentialStale(m *workflow.ServiceMeta, hqc hq.Client) bool {
-	return hqPairWired(m) && m.GitPushState == topology.GitPushConfigured &&
-		m.HQ.CredentialFingerprint != hqc.CredentialFingerprint()
+	if !hqPairWired(m) || m.GitPushState != topology.GitPushConfigured {
+		return false
+	}
+	_, fingerprint, err := hqc.GitCredential()
+	return err == nil && m.HQ.CredentialFingerprint != fingerprint
 }
 
-// renewHQPairCredential gives a wired pair's dev service the Mate credential
-// as it is now, as the service secret its sessions' git reads, and records
-// which one it holds. Only the secret: the checkout's branch, origin and
-// helper stay as the agent left them. "" once renewed, else the line saying
-// it was not.
+// renewHQPairCredential gives a wired pair's dev service the Git credential as
+// the Mate's file holds it now, as the service secret its sessions' git reads,
+// and records which one it holds. Only the secret: the checkout's branch,
+// origin and helper stay as the agent left them. "" once renewed, else the
+// line saying it was not.
 func renewHQPairCredential(ctx context.Context, client platform.Client, projectID, stateDir string, hqc hq.Client, m *workflow.ServiceMeta) string {
+	credential, fingerprint, err := hqc.GitCredential()
+	if err != nil {
+		return fmt.Sprintf("git in %s's sessions cannot reach HQ: %v — retrying on the next pass.", m.Hostname, err)
+	}
 	svc, err := ops.LookupService(ctx, client, projectID, m.Hostname)
 	if err == nil {
-		_, err = ops.EnvSetService(ctx, client, svc.ID, ops.GitTokenEnvKey, hqc.Credential(), true)
+		_, err = ops.EnvSetService(ctx, client, svc.ID, ops.GitTokenEnvKey, credential, true)
 	}
 	if err != nil {
-		return fmt.Sprintf("the Mate enrolled with HQ again, and git in %s's sessions cannot reach HQ until it holds the new credential, which could not be written (%v) — retrying on the next pass; your own shell's git is unaffected.", m.Hostname, err)
+		return fmt.Sprintf("HQ sent the Mate a new Git credential, and git in %s's sessions cannot reach HQ until it holds it, which could not be written (%v) — retrying on the next pass; your own shell's git is unaffected.", m.Hostname, err)
 	}
-	fingerprint := hqc.CredentialFingerprint()
 	_ = workflow.UpsertServiceMeta(stateDir, m.Hostname, func(meta *workflow.ServiceMeta, existed bool) error {
 		if existed && meta.HQ != nil {
 			meta.HQ.CredentialFingerprint = fingerprint
@@ -520,6 +515,10 @@ func wireHQPair(
 	case err != nil:
 		return hqWiringOutcome{line: fmt.Sprintf("could not reach HQ for a repository (%v) — retrying on the next pass.", err)}
 	}
+	credential, fingerprint, err := hqc.GitCredential()
+	if err != nil {
+		return hqWiringOutcome{line: fmt.Sprintf("repository %q is ready in HQ but git cannot reach it: %v — retrying on the next pass.", repo.Name, err)}
+	}
 	remote := hqc.RepoURL(repo.AppID, repo.Name)
 	// A remote on this Mate's HQ is ours to point again — a wiring that
 	// stopped half-way, or the application the Mate left; any other one the
@@ -539,7 +538,7 @@ func wireHQPair(
 	// helper, exactly as a user-driven setup does.
 	result, _, _ := confirmGitPushSetupContainer(
 		ctx, client, httpClient, sshDeployer, rt.ProjectID, stateDir, hqc.Address(),
-		WorkflowInput{Service: m.Hostname, RemoteURL: remote, GitToken: hqc.Credential()},
+		WorkflowInput{Service: m.Hostname, RemoteURL: remote, GitToken: credential},
 		m,
 	)
 	if result != nil && result.IsError {
@@ -570,7 +569,7 @@ func wireHQPair(
 		if !existed {
 			return fmt.Errorf("meta for %q vanished", m.Hostname)
 		}
-		meta.HQ, left = wiredHQRecord(meta.HQ, repo, hqc.CredentialFingerprint())
+		meta.HQ, left = wiredHQRecord(meta.HQ, repo, fingerprint)
 		recorded = meta.HQ
 		return nil
 	}); err != nil {

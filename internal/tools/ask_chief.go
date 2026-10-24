@@ -26,7 +26,7 @@ func RegisterAskChief(ctx context.Context, srv *mcp.Server, httpClient hq.Doer, 
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	client, err := hq.Open(httpClient, hq.EnrollmentPath())
+	client, err := hq.Open(httpClient, hqIdentity())
 	if err != nil || client.ProjectID() != projectID {
 		return
 	}

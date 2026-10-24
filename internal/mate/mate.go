@@ -724,21 +724,22 @@ func ServeArgv(bin string) []string {
 // arrived in one mate release, before v0.1.0.
 const EnvBasePath = "T3CODE_BASE_PATH"
 
-// EnvHQEnrollment names, to the server, the file the Mate's HQ enrollment is
-// kept in (hq.EnrollmentPath): the HQ address and the credential it opens
-// its link to HQ with. The file may not exist yet; zcp keeps enrolling.
-const EnvHQEnrollment = "T3CODE_ZEROPS_HQ_ENROLLMENT"
+// EnvHQGitCredential names, to the server, the file it writes the Git
+// credential HQ sends it over the link to (hq.GitCredentialPath). zcp reads
+// the file and never writes it; the file may not exist until the Mate is
+// linked.
+const EnvHQGitCredential = hq.EnvGitCredential
 
 // LaunchEnvLines is what a mate launch adds to the server's environment on
 // top of the live env store and the identity contract: its public prefix, the
-// status file it reads a new Mate's setup from (status.go), and its HQ
-// enrollment.
+// status file it reads a new Mate's setup from (status.go), and the file it
+// keeps its Git credential in.
 func LaunchEnvLines() []string {
 	return []string{
 		EnvBasePath + "=" + BasePath,
 		"ZCP_MATE_UPDATE_STATE_FILE=" + UpdateStatePath(),
 		EnvStatusFile + "=" + DefaultStatusFilePath(),
-		EnvHQEnrollment + "=" + hq.EnrollmentPath(),
+		EnvHQGitCredential + "=" + hq.GitCredentialPath(),
 	}
 }
 

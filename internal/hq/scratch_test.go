@@ -3,7 +3,6 @@
 package hq
 
 import (
-	"encoding/base64"
 	"os/exec"
 	"slices"
 	"strings"
@@ -26,12 +25,12 @@ func TestGitEnv_CarriesTheCredentialScopedToHQ(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			c := Client{enrollment: Enrollment{HQ: tt.address, Credential: "the-credential"}}
+			c := Client{id: Identity{Origin: tt.address, Key: "the-key"}}
 			env := c.gitEnv()
 			want := []string{
 				"GIT_CONFIG_COUNT=1",
 				"GIT_CONFIG_KEY_0=" + tt.wantKey,
-				"GIT_CONFIG_VALUE_0=Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte(GitUser+":the-credential")),
+				"GIT_CONFIG_VALUE_0=Authorization: Project the-key",
 				"GIT_TERMINAL_PROMPT=0",
 			}
 			for _, w := range want {
@@ -39,8 +38,8 @@ func TestGitEnv_CarriesTheCredentialScopedToHQ(t *testing.T) {
 					t.Errorf("env lacks %q", w)
 				}
 			}
-			if url := c.RepoURL("app-1", "group"); strings.Contains(url, "the-credential") {
-				t.Errorf("the repository's URL %q carries the credential", url)
+			if url := c.RepoURL("app-1", "group"); strings.Contains(url, "the-key") {
+				t.Errorf("the repository's URL %q carries the key", url)
 			}
 		})
 	}
@@ -54,7 +53,7 @@ func TestScratch_File(t *testing.T) {
 		t.Skip("git is not installed")
 	}
 	ctx := t.Context()
-	c := Client{enrollment: Enrollment{HQ: "https://hq.example.com", Credential: "the-credential"}}
+	c := Client{id: Identity{Origin: "https://hq.example.com", Key: "the-key"}}
 	scratch, err := c.OpenScratch(ctx, "app-1", RecipeRepo)
 	if err != nil {
 		t.Fatal(err)

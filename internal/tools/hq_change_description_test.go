@@ -9,7 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/hq/hqtest"
+
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -205,10 +206,11 @@ func TestDescribeChange_Refusals(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			fake := newFakeHQ(t)
 			t.Setenv("HOME", t.TempDir())
-			if !tt.notEnrolled {
-				if err := hq.SaveEnrollment(hq.EnrollmentPath(), hq.Enrollment{HQ: fake.srv.URL, ProjectID: labMate, Credential: labCredential}); err != nil {
-					t.Fatal(err)
-				}
+			if tt.notEnrolled {
+				hqtest.Link(t, "", "", "")
+			} else {
+				hqtest.Link(t, fake.srv.URL, labMate, labKey)
+				hqtest.GitCredential(t, labCredential)
 			}
 			stateDir := t.TempDir()
 			for _, dev := range tt.pairs {

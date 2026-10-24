@@ -70,13 +70,13 @@ func TestHandleRelease_PromptSuggestsNextVersion(t *testing.T) {
 	}
 }
 
-// TestHandleRelease_AnEnrollmentOutsideAMateKeepsTheSourceRelease: being a
-// Mate is what hands a release to the person, never an enrollment file — a
+// TestHandleRelease_AKeyOutsideAMateKeepsTheSourceRelease: being a Mate is
+// what hands a release to the person, never a key in the environment — a
 // container that is not a Mate tags its pushed source as before.
-func TestHandleRelease_AnEnrollmentOutsideAMateKeepsTheSourceRelease(t *testing.T) {
+func TestHandleRelease_AKeyOutsideAMateKeepsTheSourceRelease(t *testing.T) {
 	// non-parallel: redirects HOME and stubs the package-level push-proof reader.
 	t.Setenv("HOME", t.TempDir())
-	enrollAs(t, "kept")
+	linkAs(t, "kept")
 	stateDir := t.TempDir()
 	seedReleaseMeta(t, stateDir, nil)
 	stubPushProof(t, LaunchPushProofResult{LocalHead: "abc123def456", RemoteHead: "abc123def456"})
@@ -203,31 +203,30 @@ func TestHandleRelease_TagsAndPushes(t *testing.T) {
 	}
 }
 
-// A Mate's release is the person's, enrolled with its HQ or not yet; a pair
+// A Mate's release is the person's, keyed for its HQ or not yet; a pair
 // whose HQ repository is on record stays HQ's outside a Mate too.
 //
-// Non-parallel: isolates enrollment with HOME and stubs the push-proof reader.
+// Non-parallel: isolates the identity with HOME and the environment and stubs the push-proof reader.
 func TestHandleRelease_HQHandsOffBeforeLegacyPreflight(t *testing.T) {
 	tests := []struct {
 		name         string
 		mate         bool
-		enrollment   string
+		link         string
 		pairRecorded bool
 		input        WorkflowInput
 	}{
-		{name: "a Mate without service", mate: true, enrollment: "kept"},
-		{name: "a Mate without bootstrap", mate: true, enrollment: "kept", input: WorkflowInput{Service: "missing"}},
-		{name: "a Mate's prompt", mate: true, enrollment: "kept", input: WorkflowInput{Service: "weather"}},
-		{name: "a Mate's version confirmed", mate: true, enrollment: "kept", input: WorkflowInput{Service: "weather", ReleaseVersion: "v1.0.1"}},
-		{name: "a Mate's legacy version invalid", mate: true, enrollment: "kept", input: WorkflowInput{Service: "weather", ReleaseVersion: "invalid"}},
-		{name: "a Mate not enrolled yet", mate: true, enrollment: "missing", input: WorkflowInput{Service: "weather", ReleaseVersion: "v1.0.1"}},
-		{name: "a Mate whose enrollment cannot be read", mate: true, enrollment: "unreadable", input: WorkflowInput{Service: "weather"}},
-		{name: "a recorded HQ pair outside a Mate", enrollment: "missing", pairRecorded: true, input: WorkflowInput{Service: "weather", ReleaseVersion: "v1.0.1"}},
+		{name: "a Mate without service", mate: true, link: "kept"},
+		{name: "a Mate without bootstrap", mate: true, link: "kept", input: WorkflowInput{Service: "missing"}},
+		{name: "a Mate's prompt", mate: true, link: "kept", input: WorkflowInput{Service: "weather"}},
+		{name: "a Mate's version confirmed", mate: true, link: "kept", input: WorkflowInput{Service: "weather", ReleaseVersion: "v1.0.1"}},
+		{name: "a Mate's legacy version invalid", mate: true, link: "kept", input: WorkflowInput{Service: "weather", ReleaseVersion: "invalid"}},
+		{name: "a Mate without a key yet", mate: true, link: "missing", input: WorkflowInput{Service: "weather", ReleaseVersion: "v1.0.1"}},
+		{name: "a recorded HQ pair outside a Mate", link: "missing", pairRecorded: true, input: WorkflowInput{Service: "weather", ReleaseVersion: "v1.0.1"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("HOME", t.TempDir())
-			enrollAs(t, tt.enrollment)
+			linkAs(t, tt.link)
 			stateDir := t.TempDir()
 			seedReleaseMeta(t, stateDir, nil)
 			if tt.pairRecorded {

@@ -617,19 +617,19 @@ func (s *countingLaunchSSH) ExecSSHStdin(ctx context.Context, hostname, command 
 // Not parallel: the enrollment is read from the process's HOME (t.Setenv).
 func TestHandleLaunchProduction_AMateRefusesBeforeAnyStep(t *testing.T) {
 	tests := []struct {
-		name       string
-		mate       bool
-		enrollment string
+		name string
+		mate bool
+		link string
 	}{
-		{name: "an enrolled Mate refuses", mate: true, enrollment: "kept"},
-		{name: "a Mate not enrolled yet refuses", mate: true, enrollment: "missing"},
-		{name: "a container that is not a Mate launches", enrollment: "missing"},
-		{name: "a container that is not a Mate launches whatever is on its disk", enrollment: "kept"},
+		{name: "a keyed Mate refuses", mate: true, link: "kept"},
+		{name: "a Mate without a key yet refuses", mate: true, link: "missing"},
+		{name: "a container that is not a Mate launches", link: "missing"},
+		{name: "a container that is not a Mate launches whatever key is in its environment", link: "kept"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("HOME", t.TempDir())
-			enrollAs(t, tt.enrollment)
+			linkAs(t, tt.link)
 
 			stateDir := withTempState(t)
 			installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)

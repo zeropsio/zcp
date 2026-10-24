@@ -5,6 +5,7 @@ package tools
 
 import (
 	"context"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/hq/hqtest"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -399,18 +401,18 @@ func TestWireHQPair_TheRecipeRepositoryIsNoServicesRepository(t *testing.T) {
 	}
 }
 
-// TestReconcileHQRepositories_RenewsTheDevServicesCredentialAfterTheMateEnrollsAgain:
-// a redeployed zcp enrolls the Mate again and HQ revokes the credential the
-// dev service holds. The next pass gives the dev service the new one at once,
+// TestReconcileHQRepositories_RenewsTheDevServicesCredentialAfterHQSendsANewOne:
+// HQ sends the Mate a new Git credential and revokes the one the dev service
+// holds. The next pass gives the dev service the new one at once,
 // backoff or not, so git in its sessions keeps reaching HQ — and leaves the
 // checkout's branch and origin as the agent left them.
-func TestReconcileHQRepositories_RenewsTheDevServicesCredentialAfterTheMateEnrollsAgain(t *testing.T) {
+func TestReconcileHQRepositories_RenewsTheDevServicesCredentialAfterHQSendsANewOne(t *testing.T) {
 	const renewed = "the-renewed-credential"
 	lab := newHQLab(t)
 	lab.wire()
 	lab.git("checkout", "-q", "-b", "fix-login")
 	origin := lab.git("remote", "get-url", "origin")
-	lab.reenroll(renewed)
+	lab.relink(renewed)
 	if _, err := lab.ssh.ExecSSH(t.Context(), "appdev", "cd /var/www && git fetch -q origin"); err == nil {
 		t.Fatal("the revoked credential still reaches HQ; the lab does not revoke it")
 	}
@@ -432,13 +434,69 @@ func TestReconcileHQRepositories_RenewsTheDevServicesCredentialAfterTheMateEnrol
 	assertNoSecretOnDisk(t, lab.stateDir, renewed)
 }
 
+// TestReconcileHQRepositories_TheDevServiceHoldsOnlyTheGitCredential: the
+// dev service's git presents the Mate's Git credential and nothing else; the
+// project key never appears in anything written to either half of the pair.
+func TestReconcileHQRepositories_TheDevServiceHoldsOnlyTheGitCredential(t *testing.T) {
+	lab := newHQLab(t)
+
+	lab.wire()
+
+	if held := lab.ssh.gitToken(t.Context(), "svc-appdev"); held != labCredential {
+		t.Errorf("the dev service holds %q, want the Git credential", held)
+	}
+	for _, id := range []string{"svc-appdev", "svc-appstage"} {
+		envs, _ := lab.mock.GetServiceEnv(t.Context(), id)
+		for _, env := range envs {
+			if strings.Contains(env.Content, labKey) {
+				t.Errorf("%s carries the project key in %s", id, env.Key)
+			}
+		}
+	}
+}
+
+// TestReconcileHQRepositories_TheDevServiceTokenIsTheFilesContent: the Git
+// credential is whatever the file the server keeps holds at the pass, not
+// something zcp remembers or derives from the key.
+func TestReconcileHQRepositories_TheDevServiceTokenIsTheFilesContent(t *testing.T) {
+	const fromFile = "what-the-file-holds"
+	lab := newHQLab(t)
+	lab.wire()
+	hqtest.GitCredential(t, fromFile)
+
+	lab.wire()
+
+	if held := lab.ssh.gitToken(t.Context(), "svc-appdev"); held != fromFile {
+		t.Errorf("the dev service holds %q, want the file's content", held)
+	}
+}
+
+// TestReconcileHQRepositories_AMateWithoutAGitCredentialFileIsNotLinked: no
+// file, no credential to hand a dev service — the pass says the Mate is not
+// linked and writes no token.
+func TestReconcileHQRepositories_AMateWithoutAGitCredentialFileIsNotLinked(t *testing.T) {
+	lab := newHQLab(t)
+	if err := os.Remove(hq.GitCredentialPath()); err != nil {
+		t.Fatal(err)
+	}
+
+	lines := lab.wire()
+
+	if !strings.Contains(strings.Join(lines, "\n"), "not linked") {
+		t.Errorf("the pass says %q, want it to say the Mate is not linked", lines)
+	}
+	if held := lab.ssh.gitToken(t.Context(), "svc-appdev"); held != "" {
+		t.Errorf("the dev service holds %q, want no token", held)
+	}
+}
+
 // TestDevelopStart_RenewsTheDevServicesCredential: work starts at develop,
 // so its start runs the repository pass that renews a revoked credential.
 func TestDevelopStart_RenewsTheDevServicesCredential(t *testing.T) {
 	const renewed = "the-renewed-credential"
 	lab := newHQLab(t)
 	lab.wire()
-	lab.reenroll(renewed)
+	lab.relink(renewed)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, lab.mock, lab.hq.srv.Client(), labMate, nil,
 		workflow.NewEngine(lab.stateDir, workflow.EnvContainer, nil), nil, lab.stateDir, "", nil, lab.ssh, lab.rt, "")

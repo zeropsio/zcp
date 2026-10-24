@@ -52,7 +52,7 @@ func main() {
 // unrecognized first argument still starts the MCP server.
 func run(args []string) int {
 	if isHQGitCredential(args) {
-		return runHQGitCredential(args[2:], os.Stdin, os.Stdout, os.Stderr, hq.EnrollmentPath(), &http.Client{})
+		return runHQGitCredential(args[2:], os.Stdin, os.Stdout, os.Stderr, hq.IdentityFrom(mate.LiveLookup(mate.LiveEnvStorePath)), &http.Client{})
 	}
 	if len(args) > 0 {
 		if dispatch, ok := cliDispatch()[args[0]]; ok {

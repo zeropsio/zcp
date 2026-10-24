@@ -2,13 +2,9 @@ package hq
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 )
-
-// ErrNotEnrolled is a Mate holding no enrollment yet: nothing to ask HQ with.
-var ErrNotEnrolled = errors.New("not enrolled with HQ yet")
 
 // MateState is the Mate as HQ holds it (GET /api/mate/self): its record, its
 // birth, written by the client that set it up, and the application HQ holds

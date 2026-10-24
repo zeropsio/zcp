@@ -156,13 +156,20 @@ func TestDesiredRelease_RefusesInvalidManifest(t *testing.T) {
 			wantIn:    "contract",
 		},
 		{
+			// Contract 1 is the enrollment Mate: it links to HQ with a
+			// credential this zcp no longer issues.
+			name:      "the enrollment contract",
+			overrides: map[string]any{"contract": 1},
+			wantIn:    "contract",
+		},
+		{
 			name:      "version below the minimum",
 			overrides: map[string]any{"version": "0.0.1"},
 			wantIn:    "0.0.1",
 		},
 		{
 			// 0.13.0 is the first release that keeps a link to HQ
-			// (T3CODE_ZEROPS_HQ_ENROLLMENT): one before it cannot be a Mate.
+			// (HQ): one before it cannot be a Mate.
 			name:      "a release before HQ",
 			overrides: map[string]any{"version": "0.12.3"},
 			wantIn:    "0.12.3",
@@ -258,7 +265,7 @@ func TestDesiredRelease_CacheBelowTheMinimumIsNotTrusted(t *testing.T) {
 func TestDesiredRelease_ContractMismatch_NamesBothNumbers(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	client := manifestServer(t, func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write(validManifestJSON(t, map[string]any{"contract": 2}))
+		_, _ = w.Write(validManifestJSON(t, map[string]any{"contract": 1}))
 	})
 
 	_, err := mate.DesiredRelease(context.Background(), client, mate.ManifestOptions{})
@@ -269,8 +276,8 @@ func TestDesiredRelease_ContractMismatch_NamesBothNumbers(t *testing.T) {
 	if !errors.As(err, &mismatch) {
 		t.Fatalf("DesiredRelease() error = %v, want a *mate.ContractMismatchError", err)
 	}
-	if mismatch.Manifest != 2 || mismatch.Supported != mate.SupportedContract {
-		t.Errorf("ContractMismatchError = %+v, want Manifest=2 Supported=%d", mismatch, mate.SupportedContract)
+	if mismatch.Manifest != 1 || mismatch.Supported != mate.SupportedContract {
+		t.Errorf("ContractMismatchError = %+v, want Manifest=1 Supported=%d", mismatch, mate.SupportedContract)
 	}
 }
 
