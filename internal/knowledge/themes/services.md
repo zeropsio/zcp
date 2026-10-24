@@ -346,7 +346,7 @@ zerops:
 - The leases of one branch across several pools are idle together or not at all, and `next` names the branch's release, or what each lease holds.
 - A full pool's refusal lists the leases zcp holds the same way, oldest activity first, each with what a release would lose.
 
-**Parking**: a lease you will come back to need not run meanwhile. `zerops_lease action=park lease="<alias>"` unmounts it, then stops its container and keeps it reserved with its `/var/www`, `$HOME` and `/tmp`; every process ends, its dev servers and supervisor included. A stopped container still counts toward the pool's maximum.
+**Parking**: a lease you will come back to need not run meanwhile. `zerops_lease action=park lease="<alias>"` unmounts it, then stops its container and keeps it reserved with its `/var/www` and `$HOME` (an Ubuntu base empties `/tmp` at every start); every process ends, its dev servers and supervisor included. A stopped container still counts toward the pool's maximum.
 
 - While parked, nothing answers on it: status lists it `parked` with `parkedAt`; `zerops_dev_server`, `zerops_deploy` and `zerops_verify` refuse it, naming the unpark; a sync from it is refused, and a sync from another lease of the branch skips it (`parked`). It keeps its hostname, so the branch's other leases stay wired to it and reach nothing there until it runs again.
 - `zerops_lease action=unpark lease="<alias>"` starts the container, waits for SSH, mounts `/var/www/<alias>` and starts the supervisor when none runs, with the branch's sibling values as they now stand; the declared servers start again.

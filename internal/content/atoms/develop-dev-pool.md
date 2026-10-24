@@ -140,7 +140,8 @@ stays unleased.
   containers — a higher `maxContainers` is capped at ten.
 - A lease you will come back to can be parked instead of released:
   `zerops_lease action=park lease="<alias>"` stops its container and keeps
-  `/var/www`, `$HOME` and `/tmp`; nothing reaches it, and it still counts
+  `/var/www` and `$HOME` (an Ubuntu base empties `/tmp` at every start);
+  nothing reaches it, and it still counts
   toward the pool's ten, until `action=unpark` starts it again.
 - Nothing releases a lease by itself, however long it sits idle. Status
   and a full pool's refusal list every lease this zcp service holds, other
