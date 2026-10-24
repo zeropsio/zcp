@@ -276,10 +276,13 @@ const poolRetireIntDeclaration = `{"version": 1, "previewPortBase": 4000, "serve
 
 // poolRetireIntSSH is the dev service and the pool's lease: the census and
 // the image read answer canned; the retire's own scripts run in a local shell
-// against repo, a real repository standing for /var/www.
+// against repo, a real repository standing for /var/www, with work standing
+// for the scratch directory ops.PoolMigrateWorkDir — one per test, since the
+// scripts remove theirs and tests run in parallel.
 type poolRetireIntSSH struct {
 	mu       sync.Mutex
 	repo     string
+	work     string
 	commands []string
 }
 
@@ -291,6 +294,7 @@ func (s *poolRetireIntSSH) record(c string) {
 
 func (s *poolRetireIntSSH) local(ctx context.Context, command string) *exec.Cmd {
 	command = strings.ReplaceAll(command, "'/var/www'", "'"+s.repo+"'")
+	command = strings.ReplaceAll(command, ops.PoolMigrateWorkDir, s.work)
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)
 	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
 	return cmd
@@ -461,7 +465,7 @@ func poolRetireIntRig(t *testing.T, withOrchestrator bool) (*mcp.ClientSession, 
 		}).
 		WithProcess(&platform.Process{ID: "proc-delete-svc-dev", Status: platform.ProcessStatusFinished})
 	client := &poolRetireIntClient{Mock: mock}
-	ssh := &poolRetireIntSSH{repo: repo}
+	ssh := &poolRetireIntSSH{repo: repo, work: filepath.Join(t.TempDir(), "zcp-pool-migrate")}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "zcp-test", Version: "0.1"}, nil)
 	engine := workflow.NewEngine(stateDir, workflow.EnvContainer, nil)
@@ -678,7 +682,7 @@ func poolMigrateIntPartsRig(t *testing.T, ready bool) (*mcp.ClientSession, *pool
 	poolRetireIntGit(t, repo, "commit", "-q", "-m", "c1")
 
 	client := &poolRetireIntClient{Mock: mock}
-	ssh := &poolMigrateIntPartsSSH{poolRetireIntSSH{repo: repo}}
+	ssh := &poolMigrateIntPartsSSH{poolRetireIntSSH{repo: repo, work: filepath.Join(t.TempDir(), "zcp-pool-migrate")}}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "zcp-test", Version: "0.1"}, nil)
 	engine := workflow.NewEngine(stateDir, workflow.EnvContainer, nil)
 	swarm := tools.WithPoolOrchestratorsForWorkflow(func(baseURL, _ string) ops.SwarmAPI {
