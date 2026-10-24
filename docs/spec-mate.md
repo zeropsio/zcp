@@ -2969,6 +2969,16 @@ binding is a field of its own, never `worktreePath`: T3 runs `git worktree remov
 thread owns — nothing removes or releases it with the thread; releasing it is the agent's
 `zerops_lease action=release`.
 
+**Asking to release.** Mate never releases a lease and runs no `zcp` for it (§0 rule 4, MA-6). When the
+person archives a conversation bound to a lease, or presses Release beside that conversation's
+workspace chip, Mate asks whether to release the workspace, naming it and showing what it knows of it
+(last activity, unsaved work, idle; §2.8a.3). The archive is never held for the answer, and no timer
+asks, answers or dismisses the question. Only the person's Release sends anything: one visible user
+message, a normal turn of the bound conversation, asking its agent to run `zerops_lease action=release
+lease=<alias>` and to stop and say so rather than force when work is unpushed. An archived conversation
+is un-archived first, since the engine takes no message there; the agent's release, zcp's guard and the
+unbind fan-out above do the rest.
+
 **A branch across parts** (`docs/spec-workflows.md` §8 DP-17, DP-23): one `zerops_lease action=acquire
 pools=[…]` leases a container per pool for the same branch, and `action=release branch=…` releases
 them together. A group acquire binds the conversation to the **first newly acquired** lease of the
