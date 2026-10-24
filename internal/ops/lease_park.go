@@ -430,6 +430,10 @@ func repark(ctx context.Context, d LeaseDeps, rec leaseRecord) (text string, par
 	}
 	text = fmt.Sprintf("zcp could not stop its container again (%s), so it runs now: %s parks it again", errorNote(err), LeaseParkCall(alias))
 	rec.Parked, rec.ParkedAt = false, ""
+	if leaseRecordReplaced(d.StateDir, rec) {
+		// Another lease's record by now: never written over.
+		return text + "; " + aliasReusedNote(alias), false
+	}
 	if werr := writeLeaseRecord(d.StateDir, rec); werr != nil {
 		text += fmt.Sprintf(" (its record still says parked: %v)", werr)
 	}

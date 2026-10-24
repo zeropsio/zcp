@@ -254,8 +254,14 @@ func lostDropNote(why string) string {
 // so — with what the record kept on this host: its mount first, then (the
 // record gone) its alias stanza. Nothing is read from or sent to the
 // container, and the orchestrator is not called: a release of a free
-// container resets it whatever lease it carries.
+// container resets it whatever lease it carries. A record at the alias that
+// names another lease by now — a zcp sharing the state directory took the
+// container again — is that lease's, with its mount and stanza: all left
+// alone (dropLeaseRecord).
 func dropLostLease(ctx context.Context, d LeaseDeps, rec leaseRecord, why string) (LeaseView, error) {
+	if leaseRecordReplaced(d.StateDir, rec) {
+		return dropLeaseRecord(d.StateDir, rec, LeaseStateLost, lostDropNote(why))
+	}
 	unmountNote := d.Host.detachMount(ctx, d, rec)
 	view, err := dropLeaseRecord(d.StateDir, rec, LeaseStateLost, lostDropNote(why))
 	if err != nil {

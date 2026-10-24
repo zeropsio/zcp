@@ -218,6 +218,9 @@ type LeaseView struct {
 	// a release reset it and it stays in the pool as a warm one (DP-27).
 	containerRemoved bool
 	keptWarm         bool
+	// aliasReused: the record at the lease's alias names another lease by
+	// the time zcp would drop it, so zcp left it alone (dropLeaseRecord).
+	aliasReused bool
 }
 
 // leaseTokenKey is the pool service's own env var that its orchestrator takes
@@ -975,15 +978,49 @@ func releaseOnOrchestrator(ctx context.Context, d LeaseDeps, rp *resolvedPool, r
 	return dropLeaseRecord(d.StateDir, rec, LeaseStateReleased, "")
 }
 
-// dropLeaseRecord removes the record and returns its view in the given state.
+// dropLeaseRecord removes rec's record and returns its view in the given
+// state — only while the record at its alias is still rec's lease (DP-2).
+// Another zcp process sharing the state directory may have released the
+// container and taken it again under the same alias meanwhile (a released
+// container stays in the pool as its warm one, DP-27): that record, its ssh
+// stanza and its mount are another lease's, so they are left alone and the
+// view says so (aliasReused).
 func dropLeaseRecord(stateDir string, rec leaseRecord, state, note string) (LeaseView, error) {
+	v := rec.view(state)
+	if leaseRecordReplaced(stateDir, rec) {
+		v.Note, v.aliasReused = joinNotes(strings.TrimSuffix(note, recordDroppedTail), aliasReusedNote(rec.alias())), true
+		return v, nil
+	}
 	path := filepath.Join(leaseDir(stateDir), rec.alias()+".json")
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return LeaseView{}, fmt.Errorf("remove lease record %s: %w", rec.alias(), err)
 	}
-	v := rec.view(state)
 	v.Note = note
 	return v, nil
+}
+
+// recordDroppedTail ends a view's note on a dropped record.
+const recordDroppedTail = "; the record is dropped"
+
+// leaseRecordReplaced reports whether the record at rec's alias now names
+// another lease than rec — another lease string, or another container. A
+// missing or unreadable record names none.
+func leaseRecordReplaced(stateDir string, rec leaseRecord) bool {
+	raw, err := os.ReadFile(filepath.Join(leaseDir(stateDir), rec.alias()+".json"))
+	if err != nil {
+		return false
+	}
+	var cur leaseRecord
+	if json.Unmarshal(raw, &cur) != nil {
+		return false
+	}
+	return cur.Lease != rec.Lease || cur.ContainerID != rec.ContainerID
+}
+
+// aliasReusedNote is what a view says of a lease whose alias names another
+// lease by the time zcp would drop its record.
+func aliasReusedNote(alias string) string {
+	return alias + " now names another lease — a zcp sharing this state directory took the pool's container again under it — so zcp left that lease's record, ssh alias and mount alone"
 }
 
 // loadLeaseRecord reads the record of one alias.
