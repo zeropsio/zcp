@@ -2949,7 +2949,7 @@ themselves; no token crosses the conversation.
   `repos`, or else of another repository of the application, which the answer names as where the
   code comes from: in that repository's own working copy when it is one of this project's
   services (`FindServiceMeta`), else fetched into `repo`'s — from GitHub when the person keeps that
-  repository's code there, else from HQ's `/git/<app>/<name>.git` — since an application's
+  repository's code there, else from HQ's `/git/<orgId>/<appId>/<name>.git` — since an application's
   repository can be a sibling Mate's and name no host here — compared by
   `topology.SameRepoURL` (canonical form, any case). Otherwise, and from an HQ older than `repos`,
   `requested` (`origin`: `url`, `repo`, `why`), telling the agent to say only why, in one sentence,
@@ -3682,7 +3682,7 @@ its application, made or joined (`POST /api/mate/repos`); its change in a reposi
 time (`POST /api/mate/changes`, `PATCH …/:repo/:n`, `POST …/attachments`); a tier of the recipe
 (`GET /api/mate/recipe/:tier`); the organization's AI key (`POST /api/mate/ai-key`, §5.8); a token
 for a GitHub repository at that call (`GET /api/mate/git-credential?host=github.com&path=…`, §5.10);
-git over HTTPS at `/git/<appId>/<repo>.git` with the Mate's Git credential (§3.3), which today takes a Mate's push only
+git over HTTPS at `/git/<orgId>/<appId>/<repo>.git` (the organisation is the project's Zerops `clientId`; HQ's named difference 3 — the address without it answers 404) with the Mate's Git credential (§3.3), which today takes a Mate's push only
 on the branch of its own open change, only forward — zcp's guidance already pushes a branch of the
 agent's own, which takes design B's relaxed rule (any branch name; `main` and tags HQ's) on HQ's
 side. §10.10 is what zcp does with it.
@@ -3823,7 +3823,7 @@ puts the pair's checkout on a `main` that descends from that repository's `main`
 cannot merge into the seeded one); a pair's work reaches `main` by plain git on a branch of the
 agent's own, landed by a merge (*A Mate's git*, below). It proposes the application's recipe — the whole app as the three tiers, composed by
 one policy table (`bundle`), every runtime keeping its `buildFromGit` and `zeropsSetup` pair, its
-`buildFromGit` the pair's repository in HQ (`https://<HQ>/git/<appId>/<repo>.git`; the stand-up
+`buildFromGit` the pair's repository in HQ (`https://<HQ>/git/<orgId>/<appId>/<repo>.git`; the stand-up
 reads the repository's name from its last segment), no secret's value in any file — to the
 application's recipe repository in HQ, `group`, and only what its `main` lacks, a tier directory at
 a time (D30): a group's first recipe whole, a tier `main` lacks on any later pass, and nothing once
@@ -3964,7 +3964,7 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
 - **The repository** is `<appId>/<name>` in the application HQ holds the Mate in, the name the dev
   hostname (or the one a recipe names). zcp asks for it — `POST /api/mate/repos {name}`, idempotent,
   `main` born with one commit of the empty tree — and wires the pair: `git-push-setup` to
-  `https://<HQ>/git/<appId>/<repo>.git` with the Mate's Git credential, the checkout put on a `main` that
+  `https://<HQ>/git/<orgId>/<appId>/<repo>.git` with the Mate's Git credential, the checkout put on a `main` that
   descends from HQ's (`ops.BuildBaseBranchCommand`: a pair fresh from `zcp init` takes `main`'s
   tree, a pair with history of its own is joined onto HQ's empty seed, anything else is refused
   with its remedy — two unrelated histories of code are never joined, the pair's own is kept on a
@@ -4123,7 +4123,7 @@ The order:
    - reads the tier from `main` of the recipe repository of the application HQ holds the Mate in
      (`GET /api/mate/self` for the application, `GET /api/mate/recipe/mate` for the tier);
    - pairs the runtimes that build from the application's repositories in HQ
-     (`<HQ>/git/<appId>/<repo>`), per repository, by zcp's naming —
+     (`<HQ>/git/<orgId>/<appId>/<repo>`), per repository, by zcp's naming —
      the stage half ends in `stage`, its dev half is the repository's other runtime or the one named
      like it — with each half's `zeropsSetup` (else its hostname) and the pair's priority, the
      higher of its halves'; managed services and public builds are skipped, and so, by name, is a

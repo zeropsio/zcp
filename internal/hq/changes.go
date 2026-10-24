@@ -2,6 +2,7 @@ package hq
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -60,7 +61,7 @@ func (c Client) Bounded(connect, answer time.Duration) Client {
 }
 
 // Repo is a repository HQ keeps for an application, served at
-// `/git/<appId>/<name>.git`.
+// `/git/<orgId>/<appId>/<name>.git`.
 type Repo struct {
 	AppID string `json:"appId"`
 	Name  string `json:"name"`
@@ -78,7 +79,11 @@ func (c Client) EnsureRepo(ctx context.Context, name string) (Repo, error) {
 // appID, without making it: git's own first ask of a clone, as the Mate —
 // found, or not found. Any other answer is an error, never "absent".
 func (c Client) RepoExists(ctx context.Context, appID, repo string) (bool, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.RepoURL(appID, repo)+"/info/refs?service=git-upload-pack", nil)
+	repoURL, err := c.RepoURL(appID, repo)
+	if err != nil {
+		return false, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, repoURL+"/info/refs?service=git-upload-pack", nil)
 	if err != nil {
 		return false, fmt.Errorf("hq git %s: %w", repo, err)
 	}
@@ -111,12 +116,23 @@ func (c Client) Address() string { return strings.TrimRight(c.id.Origin, "/") }
 func (c Client) ProjectID() string { return c.id.ProjectID }
 
 // RepoURL is where git reaches the repository repo of the application appID.
-func (c Client) RepoURL(appID, repo string) string { return RepoURLAt(c.Address(), appID, repo) }
+func (c Client) RepoURL(appID, repo string) (string, error) {
+	return RepoURLAt(c.Address(), c.id.OrgID, appID, repo)
+}
+
+// ErrNoOrganisation is an address HQ would answer 404: it names the
+// organisation, and the caller has none.
+var ErrNoOrganisation = errors.New("hq repository address needs the Zerops organisation, and this container has none")
 
 // RepoURLAt is where git reaches the repository repo of the application
-// appID at the HQ whose address is address.
-func RepoURLAt(address, appID, repo string) string {
-	return strings.TrimRight(address, "/") + "/git/" + url.PathEscape(appID) + "/" + url.PathEscape(repo) + ".git"
+// appID of the organisation orgID at the HQ whose address is address:
+// `/git/<orgId>/<appId>/<repo>.git` (HQ's named difference 3). ErrNoOrganisation
+// when orgID is empty — never an address without it.
+func RepoURLAt(address, orgID, appID, repo string) (string, error) {
+	if orgID == "" {
+		return "", ErrNoOrganisation
+	}
+	return strings.TrimRight(address, "/") + "/git/" + url.PathEscape(orgID) + "/" + url.PathEscape(appID) + "/" + url.PathEscape(repo) + ".git", nil
 }
 
 // ChangeURL is a change's own address at HQ, which HQ leads into the client:

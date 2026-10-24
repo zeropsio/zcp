@@ -136,7 +136,7 @@ func (g *standupHQ) start(t *testing.T) *httptest.Server {
 			_ = json.NewEncoder(w).Encode(body)
 		}
 		path := r.URL.Path
-		if repo, ok := strings.CutPrefix(path, "/git/"+g.appID+"/"); ok && g.appID != "" {
+		if repo, ok := strings.CutPrefix(path, "/git/"+labOrg+"/"+g.appID+"/"); ok && g.appID != "" {
 			// zcp's own reads present the key; the dev service's git, only the
 			// Mate's Git credential.
 			if user, password, basic := r.BasicAuth(); r.Header.Get("Authorization") != "Project "+standupKey &&
@@ -486,7 +486,7 @@ func newStandupFixture(t *testing.T) *standupFixture {
 	if err := os.WriteFile(credentialPath, []byte(standupCredential), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	f.identity = hq.Identity{Origin: f.srv.URL, ProjectID: "p1", Key: standupKey, GitCredentialPath: credentialPath}
+	f.identity = hq.Identity{Origin: f.srv.URL, OrgID: labOrg, ProjectID: "p1", Key: standupKey, GitCredentialPath: credentialPath}
 	// The branch cut puts main's files in each dev half; the mount shows them.
 	for _, pair := range []string{"medusa", "nextstore"} {
 		dir := filepath.Join(f.root, pair+"dev")

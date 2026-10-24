@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -72,7 +73,27 @@ const hqCallTimeout = 30 * time.Second
 // and key — as the live env store holds it now, so a regenerated key is the
 // one presented.
 func hqIdentity() hq.Identity {
-	return hq.IdentityFrom(mate.LiveLookup(mate.LiveEnvStorePath))
+	id := hq.IdentityFrom(mate.LiveLookup(mate.LiveEnvStorePath))
+	id.OrgID = hqOrganisation()
+	return id
+}
+
+// hqOrg is the Zerops organisation (clientId) that owns this Mate's project,
+// resolved once at start from the API key (auth.Info.ClientID): the
+// container's environment does not carry it, and HQ's repository addresses
+// name it.
+var hqOrg atomic.Pointer[string]
+
+// UseHQOrganisation records the organisation the server resolved, for the
+// repository addresses HQ serves.
+func UseHQOrganisation(orgID string) { hqOrg.Store(&orgID) }
+
+// hqOrganisation is the organisation UseHQOrganisation recorded, "" before.
+func hqOrganisation() string {
+	if org := hqOrg.Load(); org != nil {
+		return *org
+	}
+	return ""
 }
 
 // openHQ is a client of this Mate's HQ under its project key, over
@@ -360,7 +381,11 @@ func keepHQPairCurrent(
 // next pass runs it again.
 func hqPairMain(ctx context.Context, sshDeployer ops.SSHDeployer, hqc hq.Client, m *workflow.ServiceMeta) string {
 	dir := hqPairWorkingDir(m)
-	out, err := sshDeployer.ExecSSH(ctx, m.Hostname, ops.BuildMainSyncCommand(dir, hqc.RepoURL(m.HQ.AppID, m.HQ.Repo)))
+	remote, err := hqc.RepoURL(m.HQ.AppID, m.HQ.Repo)
+	if err != nil {
+		return ""
+	}
+	out, err := sshDeployer.ExecSSH(ctx, m.Hostname, ops.BuildMainSyncCommand(dir, remote))
 	if err != nil {
 		return ""
 	}
@@ -519,7 +544,10 @@ func wireHQPair(
 	if err != nil {
 		return hqWiringOutcome{line: fmt.Sprintf("repository %q is ready in HQ but git cannot reach it: %v — retrying on the next pass.", repo.Name, err)}
 	}
-	remote := hqc.RepoURL(repo.AppID, repo.Name)
+	remote, err := hqc.RepoURL(repo.AppID, repo.Name)
+	if err != nil {
+		return hqWiringOutcome{line: fmt.Sprintf("repository %q is ready in HQ but git cannot be pointed at it: %v — retrying on the next pass.", repo.Name, err)}
+	}
 	// A remote on this Mate's HQ is ours to point again — a wiring that
 	// stopped half-way, or the application the Mate left; any other one the
 	// user chose, and git-push-setup would rewrite it.

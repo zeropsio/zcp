@@ -101,6 +101,7 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 	}
 
 	refreshAgentContext(stateDir, rtInfo, logger)
+	tools.UseHQOrganisation(authInfo.ClientID)
 
 	rc := RuntimeContext{
 		AdoptionNote: adoptionNote,

@@ -41,6 +41,12 @@ type Identity struct {
 	Origin    string
 	Key       string
 	ProjectID string
+	// OrgID is the Zerops organisation (clientId) that owns the project: the
+	// first path segment of every repository address in HQ (RepoURLAt). It is
+	// not in the environment, so IdentityFrom leaves it empty and the caller
+	// that resolved the project sets it; nothing else needs it, so check()
+	// does not.
+	OrgID string
 	// GitCredentialPath is the file the Mate's server keeps its Git
 	// credential in (GitCredentialPath): not part of what is presented, but
 	// of where this Mate's HQ lives on its disk.

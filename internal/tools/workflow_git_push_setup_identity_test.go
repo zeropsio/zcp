@@ -348,7 +348,7 @@ func TestGitPushSetupContainer_NonGitHubHost_SkipsDerivation(t *testing.T) {
 // enrollment's.
 func TestGitPushSetupContainer_HQRemote_PersistsTheHelperTheMatesShellAnswers(t *testing.T) {
 	const hqURL = "https://hq-30db-8080.prg1.zerops.app"
-	const remote = hqURL + "/git/a1/api.git"
+	const remote = hqURL + "/git/org-1/a1/api.git"
 	for _, tt := range []struct {
 		name     string
 		enrolled bool

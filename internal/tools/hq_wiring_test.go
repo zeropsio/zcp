@@ -39,7 +39,7 @@ func TestReconcileHQRepositories_GivesThePairItsRepositoryOnMain(t *testing.T) {
 	if meta.HQ == nil || meta.HQ.AppID != labApp || meta.HQ.Repo != "appdev" {
 		t.Fatalf("the pair's HQ record = %+v", meta.HQ)
 	}
-	if meta.GitPushState != topology.GitPushConfigured || meta.RemoteURL != lab.hq.srv.URL+"/git/"+labApp+"/appdev.git" {
+	if meta.GitPushState != topology.GitPushConfigured || meta.RemoteURL != lab.hq.srv.URL+"/git/"+labOrg+"/"+labApp+"/appdev.git" {
 		t.Errorf("git-push = %s to %q", meta.GitPushState, meta.RemoteURL)
 	}
 	if got := lab.git("rev-parse", "--abbrev-ref", "HEAD"); got != "main" {
@@ -90,11 +90,11 @@ func TestReconcileHQRepositories_RewiresAPairToTheRepositoryItsRecordNames(t *te
 	lab.wire()
 
 	meta := lab.meta()
-	if meta.HQ == nil || meta.HQ.Repo != "medusa" || !strings.HasSuffix(meta.RemoteURL, "/git/"+labApp+"/medusa.git") {
+	if meta.HQ == nil || meta.HQ.Repo != "medusa" || !strings.HasSuffix(meta.RemoteURL, "/git/"+labOrg+"/"+labApp+"/medusa.git") {
 		t.Fatalf("the pair is wired to %+v at %q, want the repository its record names", meta.HQ, meta.RemoteURL)
 	}
 	for _, call := range lab.hq.calls {
-		if strings.Contains(call, "/git/"+labApp+"/appdev.git") {
+		if strings.Contains(call, "/git/"+labOrg+"/"+labApp+"/appdev.git") {
 			t.Errorf("the pass reached a repository named after the hostname: %s", call)
 		}
 	}

@@ -36,11 +36,11 @@ func answering(t *testing.T, body string) (Client, *[]hqCall) {
 	return keyedClient(t, srv), &calls
 }
 
-// keyedClient is a client of srv for the Mate "p-mate" presenting the key
-// "good".
+// keyedClient is a client of srv for the Mate "p-mate" of the organisation
+// "org-1" presenting the key "good".
 func keyedClient(t *testing.T, srv *httptest.Server) Client {
 	t.Helper()
-	client, err := Open(srv.Client(), Identity{Origin: srv.URL, Key: "good", ProjectID: "p-mate"})
+	client, err := Open(srv.Client(), Identity{Origin: srv.URL, Key: "good", ProjectID: "p-mate", OrgID: "org-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -380,7 +380,6 @@ func TestClient_Addresses(t *testing.T) {
 		}
 		for got, want := range map[string]string{
 			client.Address():                    "https://hq.example",
-			client.RepoURL("a1", "appdev"):      "https://hq.example/git/a1/appdev.git",
 			client.ChangeURL("a1", "appdev", 3): "https://hq.example/changes/a1/appdev/3",
 			client.ChangeBranch(3):              "mate/p-mate/3",
 			client.AttachmentURL("/api/apps/a1/changes/appdev/3/attachments/x"): "https://hq.example/api/apps/a1/changes/appdev/3/attachments/x",
@@ -389,6 +388,38 @@ func TestClient_Addresses(t *testing.T) {
 				t.Errorf("%s: got %q, want %q", address, got, want)
 			}
 		}
+	}
+}
+
+// TestRepoURL_NamesTheOrganisation: a Mate's repository address is
+// /git/<orgId>/<appId>/<repo>.git (HQ's named difference 3), whether or not
+// the configured origin carries a trailing slash; with no organisation there
+// is no address, never one without it.
+func TestRepoURL_NamesTheOrganisation(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, address, org, want string
+		wantErr                  bool
+	}{
+		{name: "plain origin", address: "https://hq.example", org: "org-1", want: "https://hq.example/git/org-1/a1/appdev.git"},
+		{name: "trailing slash", address: "https://hq.example/", org: "org-1", want: "https://hq.example/git/org-1/a1/appdev.git"},
+		{name: "no organisation", address: "https://hq.example", org: "", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			client, err := Open(http.DefaultClient, Identity{Origin: tt.address, Key: "good", ProjectID: "p-mate", OrgID: tt.org})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := client.RepoURL("a1", "appdev")
+			if (err != nil) != tt.wantErr || got != tt.want {
+				t.Errorf("RepoURL = %q, %v; want %q, error %v", got, err, tt.want, tt.wantErr)
+			}
+			if got, err := RepoURLAt(tt.address, tt.org, "a1", "appdev"); (err != nil) != tt.wantErr || got != tt.want {
+				t.Errorf("RepoURLAt = %q, %v; want %q, error %v", got, err, tt.want, tt.wantErr)
+			}
+		})
 	}
 }
 

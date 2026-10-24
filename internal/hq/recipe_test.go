@@ -71,9 +71,34 @@ func TestClient_RepoExists_AsksGitWithoutMakingIt(t *testing.T) {
 			if got != tt.want || (err != nil) != tt.wantErr {
 				t.Errorf("RepoExists = %v, %v; want %v, error %v", got, err, tt.want, tt.wantErr)
 			}
-			if want := "GET /git/app-1/web.git/info/refs?service=git-upload-pack Project good"; asked != want {
+			if want := "GET /git/org-1/app-1/web.git/info/refs?service=git-upload-pack Project good"; asked != want {
 				t.Errorf("asked %q, want %q", asked, want)
 			}
 		})
+	}
+}
+
+// TestRepoExists_AsksTheOrganisationNamedAddress: the ask goes to
+// /git/<orgId>/<appId>/<repo>.git; a Mate with no organisation asks nothing.
+func TestRepoExists_AsksTheOrganisationNamedAddress(t *testing.T) {
+	t.Parallel()
+	var asked []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked = append(asked, r.URL.Path)
+	}))
+	t.Cleanup(srv.Close)
+
+	if _, err := keyedClient(t, srv).RepoExists(context.Background(), "app-1", "web"); err != nil {
+		t.Fatal(err)
+	}
+	orgless, err := Open(srv.Client(), Identity{Origin: srv.URL, Key: "good", ProjectID: "p-mate"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := orgless.RepoExists(context.Background(), "app-1", "web"); err == nil {
+		t.Error("RepoExists with no organisation answered without an error")
+	}
+	if want := []string{"/git/org-1/app-1/web.git/info/refs"}; !reflect.DeepEqual(asked, want) {
+		t.Errorf("asked %v, want %v", asked, want)
 	}
 }

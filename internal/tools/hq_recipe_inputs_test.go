@@ -95,7 +95,7 @@ func TestComposeGroupRecipeInputs_ReadsTheLiveProject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListServiceMetas: %v", err)
 	}
-	inputs, warnings, err := composeGroupRecipeInputs(context.Background(), medusaLikeProject(), "p1", "acme", t.TempDir(), testHQAddress, labApp, metas, metas)
+	inputs, warnings, err := composeGroupRecipeInputs(context.Background(), medusaLikeProject(), "p1", "acme", t.TempDir(), testHQAddress, testHQOrg, labApp, metas, metas)
 	if err != nil {
 		t.Fatalf("composeGroupRecipeInputs: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestComposeGroupRecipeInputs_ReadFailures(t *testing.T) {
 			writeHQWiredPairMeta(t, stateDir)
 			metas, _ := workflow.ListServiceMetas(stateDir)
 			client := medusaLikeProject().WithError(tt.method, errors.New("upstream timeout"))
-			_, warnings, err := composeGroupRecipeInputs(context.Background(), client, "p1", "acme", t.TempDir(), testHQAddress, labApp, metas, metas)
+			_, warnings, err := composeGroupRecipeInputs(context.Background(), client, "p1", "acme", t.TempDir(), testHQAddress, testHQOrg, labApp, metas, metas)
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("err = %v, want one naming %q", err, tt.wantErr)
@@ -199,7 +199,10 @@ func TestComposeGroupRecipeInputs_ReadFailures(t *testing.T) {
 
 // testHQAddress is the Mate's HQ in these tests: the wired pair's
 // repository is there.
-const testHQAddress = "https://hq.example"
+const (
+	testHQAddress = "https://hq.example"
+	testHQOrg     = "org-1"
+)
 
 // writeHQWiredPairMeta seeds a pair the repository pass has already given its
 // repository in HQ, both halves deployed: the state the recipe starts from.
@@ -212,7 +215,7 @@ func writeHQWiredPairMeta(t *testing.T, stateDir string) {
 		BootstrapSession: "test",
 		BootstrappedAt:   "2026-09-16",
 		GitPushState:     topology.GitPushConfigured,
-		RemoteURL:        testHQAddress + "/git/" + labApp + "/appdev.git",
+		RemoteURL:        testHQAddress + "/git/" + testHQOrg + "/" + labApp + "/appdev.git",
 		PrimarySetupName: "api",
 		// Both halves deployed: the group tiers build the stage half's setup,
 		// and a stage setup nothing records is withheld rather than guessed.
@@ -260,7 +263,7 @@ func TestComposeGroupRecipeInputs_WaitsOnlyForWhatALaterPassBrings(t *testing.T)
 		{name: "a finished pair the repository pass will wire", meta: workerPair("2026-09-30", ""), extra: workers,
 			wantWait: []string{`"workerdev"`, "repository pass"}},
 		{name: "a pair wired in another application", meta: func() *workflow.ServiceMeta {
-			m := workerPair("2026-09-30", testHQAddress+"/git/app-0/workerdev.git")
+			m := workerPair("2026-09-30", testHQAddress+"/git/"+testHQOrg+"/app-0/workerdev.git")
 			m.HQ = &workflow.HQRepoRef{AppID: "app-0", Repo: "workerdev"}
 			return m
 		}(), extra: workers, wantWait: []string{`"workerdev"`, "another application"}},
@@ -293,7 +296,7 @@ func TestComposeGroupRecipeInputs_WaitsOnlyForWhatALaterPassBrings(t *testing.T)
 			if tt.meta != nil {
 				metas = append(slices.Clone(wired), tt.meta)
 			}
-			inputs, warnings, err := composeGroupRecipeInputs(context.Background(), medusaLikeProject(tt.extra...), "p1", "acme", t.TempDir(), testHQAddress, labApp, metas, wired)
+			inputs, warnings, err := composeGroupRecipeInputs(context.Background(), medusaLikeProject(tt.extra...), "p1", "acme", t.TempDir(), testHQAddress, testHQOrg, labApp, metas, wired)
 			if len(tt.wantWait) > 0 {
 				if err == nil {
 					t.Fatalf("composed while a pair waits: utilities %+v", inputs.Utilities)

@@ -65,7 +65,7 @@ func hqOriginIn(state hq.MateState, ref *workflow.HQRepoRef) (workflow.HQOrigin,
 // HQ's own address (ops.BuildMainSyncCommand). The line says a move, "" for
 // none.
 func hqPairOrigin(ctx context.Context, sshDeployer ops.SSHDeployer, hqc hq.Client, m *workflow.ServiceMeta) string {
-	url := hqPairOriginTarget(hqc.Address(), m)
+	url := hqPairOriginTarget(hqc.Address(), hqOrganisation(), m)
 	if url == "" {
 		return ""
 	}
@@ -95,7 +95,7 @@ func hqPairOrigin(ctx context.Context, sshDeployer ops.SSHDeployer, hqc hq.Clien
 // origin (hqPairOrigin) by its record of how the code is kept: on GitHub, the
 // GitHub repository; in HQ or followed, its repository at the HQ at address.
 // "" when the record does not say, or HQ's address is unknown.
-func hqPairOriginTarget(address string, m *workflow.ServiceMeta) string {
+func hqPairOriginTarget(address, orgID string, m *workflow.ServiceMeta) string {
 	if m.HQ.Origin == nil {
 		return ""
 	}
@@ -106,7 +106,11 @@ func hqPairOriginTarget(address string, m *workflow.ServiceMeta) string {
 		if address == "" {
 			return ""
 		}
-		return hq.RepoURLAt(address, m.HQ.AppID, m.HQ.Repo)
+		target, err := hq.RepoURLAt(address, orgID, m.HQ.AppID, m.HQ.Repo)
+		if err != nil {
+			return ""
+		}
+		return target
 	}
 	return ""
 }
@@ -125,7 +129,7 @@ func attachHQCheckoutOrigin(ctx context.Context, services []workflow.ServiceSnap
 	if !rt.InContainer || ssh == nil {
 		return
 	}
-	address := hqAddress()
+	address, orgID := hqAddress(), hqOrganisation()
 	ctx, cancel := context.WithTimeout(ctx, hqCheckoutOriginBound)
 	defer cancel()
 	var wg sync.WaitGroup
@@ -153,7 +157,7 @@ func attachHQCheckoutOrigin(ctx context.Context, services []workflow.ServiceSnap
 			}
 			// Each goroutine writes only its own index.
 			services[i].HQCheckoutOrigin = now
-			if target := hqPairOriginTarget(address, m); target != "" && target != now {
+			if target := hqPairOriginTarget(address, orgID, m); target != "" && target != now {
 				services[i].HQOriginPending = target
 			}
 		}(i, m)

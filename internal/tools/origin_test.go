@@ -29,6 +29,7 @@ func originHQ(t *testing.T, repos string) (srv *mcp.Server, others func() []stri
 // it also returns the fake HQ's address.
 func originHQIn(t *testing.T, stateDir, repos string) (srv *mcp.Server, others func() []string, address string) {
 	t.Helper()
+	useHQOrg(t, labOrg)
 	body := `{"projectId":"P_MATE","name":"Ada","face":"f","standupRequestedBy":null,"appId":"a1","changes":[]`
 	if repos != "" {
 		body += `,"repos":` + repos
@@ -326,7 +327,7 @@ func TestOriginRequest_OriginConnectedUnderAnotherProjectsRepository_FetchesItFr
 	if strings.Contains(answer.NextActions, "ssh web") {
 		t.Errorf("nextActions names web, no service of this project, as a host: %s", answer.NextActions)
 	}
-	want := originTake("/var/www/appdev", "git fetch "+address+"/git/a1/web.git main")
+	want := originTake("/var/www/appdev", "git fetch "+address+"/git/"+labOrg+"/a1/web.git main")
 	if !strings.Contains(answer.NextActions, want) {
 		t.Errorf("nextActions lacks the fetch from HQ %s: %s", want, answer.NextActions)
 	}

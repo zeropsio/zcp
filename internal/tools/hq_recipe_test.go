@@ -178,7 +178,7 @@ func TestGroupRecipe_ProposedAsTheMatesChange(t *testing.T) {
 		t.Errorf("the proposal adds %v, want %v", got, want)
 	}
 	for _, path := range hq.RecipeTierPaths {
-		if repo := lab.hq.srv.URL + "/git/" + labApp + "/appdev"; !strings.Contains(branch[path], "buildFromGit: "+repo) {
+		if repo := lab.hq.srv.URL + "/git/" + labOrg + "/" + labApp + "/appdev"; !strings.Contains(branch[path], "buildFromGit: "+repo) {
 			t.Errorf("%s builds the pair from somewhere else than %s:\n%s", path, repo, branch[path])
 		}
 	}

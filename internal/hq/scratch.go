@@ -50,11 +50,15 @@ func (c Client) gitEnv() []string {
 // OpenScratch is an empty scratch repository for the repository repo of the
 // application appID. Close removes it.
 func (c Client) OpenScratch(ctx context.Context, appID, repo string) (*Scratch, error) {
+	repoURL, err := c.RepoURL(appID, repo)
+	if err != nil {
+		return nil, err
+	}
 	dir, err := os.MkdirTemp("", "zcp-hq-")
 	if err != nil {
 		return nil, fmt.Errorf("scratch repository: %w", err)
 	}
-	s := &Scratch{dir: dir, url: c.RepoURL(appID, repo), env: c.gitEnv()}
+	s := &Scratch{dir: dir, url: repoURL, env: c.gitEnv()}
 	if _, err := s.git(ctx, nil, "init", "--bare", "-q"); err != nil {
 		s.Close()
 		return nil, err

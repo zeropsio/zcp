@@ -38,6 +38,7 @@ const (
 	labCredential = "the-mate-credential"
 	labMate       = "p-mate"
 	labApp        = "app-1"
+	labOrg        = "org-1"
 )
 
 // fakeHQ is HQ as a Mate meets it. A Mate pushes only to the branch of its
@@ -103,7 +104,7 @@ func newFakeHQ(t *testing.T) *fakeHQ {
 		t.Fatal(err)
 	}
 	backend := &cgi.Handler{
-		Path: gitPath, Args: []string{"http-backend"}, Root: "/git",
+		Path: gitPath, Args: []string{"http-backend"}, Root: "/git/" + labOrg,
 		Env: []string{
 			"GIT_PROJECT_ROOT=" + f.root, "GIT_HTTP_EXPORT_ALL=1", "FAKE_HQ_REFS=" + f.refsFile,
 			"HOME=" + t.TempDir(), "GIT_CONFIG_NOSYSTEM=1",
@@ -156,7 +157,7 @@ func (f *fakeHQ) serve(w http.ResponseWriter, r *http.Request, backend http.Hand
 		f.mu.Lock()
 		app := f.appID
 		f.mu.Unlock()
-		if !strings.HasPrefix(r.URL.Path, "/git/"+app+"/") || app == "" {
+		if !strings.HasPrefix(r.URL.Path, "/git/"+labOrg+"/"+app+"/") || app == "" {
 			http.Error(w, "App read access refused", http.StatusForbidden)
 			return
 		}
@@ -758,6 +759,7 @@ func newHQLab(t *testing.T) *hqLab {
 	t.Setenv("HOME", t.TempDir())
 	// zcp's own git against HQ trusts the fake's certificate.
 	t.Setenv("GIT_SSL_CAINFO", fake.caFile)
+	useHQOrg(t, labOrg)
 	hqtest.Link(t, fake.srv.URL, labMate, labKey)
 	hqtest.GitCredential(t, labCredential)
 	lab := &hqLab{t: t, hq: fake, stateDir: t.TempDir(), pair: t.TempDir(),
@@ -899,4 +901,12 @@ func (f *fakeHQ) landOnMain(repo string, files map[string]string) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		f.t.Fatalf("land on main: %v\n%s", err, out)
 	}
+}
+
+// useHQOrg is the organisation this test's server resolved
+// (UseHQOrganisation). Every test names the same one and none is restored:
+// the setting is process-wide and tests run in parallel.
+func useHQOrg(t *testing.T, orgID string) {
+	t.Helper()
+	UseHQOrganisation(orgID)
 }

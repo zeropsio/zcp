@@ -25,7 +25,7 @@ func TestGitEnv_CarriesTheCredentialScopedToHQ(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			c := Client{id: Identity{Origin: tt.address, Key: "the-key"}}
+			c := Client{id: Identity{Origin: tt.address, Key: "the-key", OrgID: "org-1"}}
 			env := c.gitEnv()
 			want := []string{
 				"GIT_CONFIG_COUNT=1",
@@ -38,8 +38,8 @@ func TestGitEnv_CarriesTheCredentialScopedToHQ(t *testing.T) {
 					t.Errorf("env lacks %q", w)
 				}
 			}
-			if url := c.RepoURL("app-1", "group"); strings.Contains(url, "the-key") {
-				t.Errorf("the repository's URL %q carries the key", url)
+			if url, err := c.RepoURL("app-1", "group"); err != nil || strings.Contains(url, "the-key") {
+				t.Errorf("the repository's URL %q (%v) is missing or carries the key", url, err)
 			}
 		})
 	}
@@ -53,7 +53,7 @@ func TestScratch_File(t *testing.T) {
 		t.Skip("git is not installed")
 	}
 	ctx := t.Context()
-	c := Client{id: Identity{Origin: "https://hq.example.com", Key: "the-key"}}
+	c := Client{id: Identity{Origin: "https://hq.example.com", Key: "the-key", OrgID: "org-1"}}
 	scratch, err := c.OpenScratch(ctx, "app-1", RecipeRepo)
 	if err != nil {
 		t.Fatal(err)

@@ -40,7 +40,7 @@ import (
 func composeGroupRecipeInputs(
 	ctx context.Context,
 	client platform.Client,
-	projectID, group, mountRoot, address, appID string,
+	projectID, group, mountRoot, address, orgID, appID string,
 	metas, wired []*workflow.ServiceMeta,
 ) (bundle.GroupRecipeInputs, []string, error) {
 	discovered, err := ops.Discover(ctx, client, projectID, "", false, false, false)
@@ -105,11 +105,15 @@ func composeGroupRecipeInputs(
 		// there on the mount: reading it lets the composer VERIFY the block
 		// rather than warn that it could not.
 		yamlBody, _ := readLocalZeropsYAML(filepath.Join(mountRoot, m.Hostname))
+		repoURL, err := hq.RepoURLAt(address, orgID, appID, m.HQ.Repo)
+		if err != nil {
+			return bundle.GroupRecipeInputs{}, nil, err
+		}
 		inputs.Runtimes = append(inputs.Runtimes, bundle.GroupRuntime{
 			DevHostname:      m.Hostname,
 			Stages:           stages,
 			ServiceType:      svc.Type,
-			RepoURL:          hq.RepoURLAt(address, appID, m.HQ.Repo),
+			RepoURL:          repoURL,
 			SetupName:        firstNonEmptySetup(m.PrimarySetupName, m.FirstStage().SetupName, m.Hostname),
 			ZeropsYAMLBody:   yamlBody,
 			SubdomainEnabled: svc.SubdomainEnabled,

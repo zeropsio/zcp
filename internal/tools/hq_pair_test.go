@@ -42,7 +42,7 @@ func TestAWiredPairDeploysDirectlyAndIsNeverSentToPush(t *testing.T) {
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname: "appdev", Mode: topology.PlanModeStandard, Stages: []topology.StageRef{{Hostname: "appstage"}},
 		BootstrapSession: "test", BootstrappedAt: "2026-10-02", FirstDeployedAt: "2026-10-02T09:00:00Z",
-		GitPushState: topology.GitPushConfigured, RemoteURL: "https://hq.example/git/a1/appdev.git",
+		GitPushState: topology.GitPushConfigured, RemoteURL: "https://hq.example/git/org-1/a1/appdev.git",
 		BuildIntegration: topology.BuildIntegrationActions,
 		HQ:               &workflow.HQRepoRef{AppID: "a1", Repo: "appdev"},
 	}); err != nil {
