@@ -351,11 +351,11 @@ func LeaseList(ctx context.Context, d LeaseDeps, pool string) ([]LeaseView, erro
 
 // LeaseStatus reports the leases of one pool, or of every pool the project
 // holds or zcp has a record for when none is named. The orchestrator is the
-// truth: a record whose container is gone, free or another holder's
-// reservation (leaseOwnershipOf) is lost (never re-leased), one whose
-// reservation zcp cannot place is unverified — its state as the orchestrator
-// gives it, nothing read from it — and a reserved container with no record is
-// an unknown holder (acquire has no idempotency key, so a lost response would
+// truth, asked with each record's own lease (the renew, all at once, DP-2): a
+// record whose container is gone, being deleted, free or another holder's is
+// lost (never re-leased), one whose renew is not answered is unverified — its
+// state as the pool's listing gives it, nothing read from it — and a reserved
+// container with no record is an unknown holder (acquire has no idempotency key, so a lost response would
 // otherwise leak a container forever). A named pool that cannot be read is an error; when
 // every pool is listed, one that cannot be read (stopped, unreachable) never
 // fails the rest: its leases are zcp's records, marked unverified with why,
@@ -763,22 +763,22 @@ func LeaseRelease(ctx context.Context, d LeaseDeps, alias string, force bool) (L
 }
 
 // LeaseReleaseChange releases the lease addressed by alias and removes its
-// record. It first reads, by id, whose the container is (readLeaseOwnership,
-// DP-2): one that is no longer this lease's — gone, free, another holder's —
-// is dropped as lost with its mount and alias stanza (releaseLost), never read
-// over ssh and never released or deleted, since the orchestrator resets a
-// free container whatever lease the release carries; one zcp cannot verify is
-// refused without force, read from nothing, and with force asked about with
-// the lease, a held-by-other answer dropping it as lost; an orchestrator that
-// does not answer refuses the release. Unless force is set it then reads the
-// container over ssh and
-// refuses while it holds commits on no remote branch or uncommitted/untracked
-// files (DP-4); the refusal leaves the mount, the record and the lease as they
-// were. Every release resets the container (processes end) — or, under the
-// warm policy, removes it with its lease when the pool already has its warm
-// container or it runs an outdated version (DP-27). A container ssh cannot
-// reach is released as lost, unchecked. If the orchestrator fails the
-// reservation is kept and so is the record. A lease the orchestrator no longer
+// record. It first asks the orchestrator whose the container is, with the
+// lease (readLeaseOwnership, DP-2): one that is no longer this lease's —
+// gone, being deleted, free, another holder's — is dropped as lost with its
+// mount and alias stanza (releaseLost), never read over ssh and never released
+// or deleted, since the orchestrator resets a free container whatever lease
+// the release carries; one the orchestrator does not answer about is refused,
+// forced or not, read from nothing and sent nothing. Unless force is set it
+// then reads the container over ssh and refuses while it holds commits on no
+// remote branch or uncommitted/untracked files (DP-4); the refusal leaves the
+// mount, the record and the lease as they were. Every release resets the
+// container (processes end) — or, under the warm policy, removes it with its
+// lease when the pool already has its warm container or it runs an outdated
+// version (DP-27) — and asks the orchestrator again right before it is sent.
+// A container ssh cannot reach is asked about again: no longer the lease's,
+// it is dropped as lost, unchecked; still the lease's, the release is refused.
+// If the orchestrator fails the reservation is kept and so is the record. A lease the orchestrator no longer
 // knows (it ended, or the container is gone) has nothing left to release: the
 // record is dropped and the view says so. Before the orchestrator is asked,
 // every other lease of its branch is handed the sibling overlay without it —

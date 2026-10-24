@@ -602,9 +602,9 @@ type releaseMember struct {
 // branch — the group (DP-17) — all or none unless forced (docs/spec-workflows.md
 // §8 DP-23). It first reads whose each container is (readLeaseOwnership,
 // DP-2): a lease that is no longer zcp's is dropped as lost, never read and
-// never released, and holds nothing back; one zcp cannot verify, or cannot
-// ask about, refuses the branch unless forced, and is not released even then
-// when zcp could not ask. Unless force is set it reads every lease first,
+// never released, and holds nothing back; one the orchestrator does not
+// answer about refuses the branch unless forced, and is not released even
+// then. Unless force is set it reads every lease first,
 // changing nothing, and refuses the whole branch when any one holds work a
 // release would lose or cannot be read, naming each lease's own state;
 // nothing is released, no record dropped. Then each lease goes through the one lease's release step

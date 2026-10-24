@@ -348,7 +348,7 @@ type LeaseRewire struct {
 // longer its lease's is sent nothing — ssh would reach whoever holds it now —
 // and is a note naming the release that drops its record, and it leaves the
 // overlay the others get, since its hostname now names someone else's
-// workspace; one zcp cannot verify, or cannot ask about, is sent nothing and
+// workspace; one the orchestrator does not answer about is sent nothing and
 // is a note, while it stays in the others' overlay (it may still be this
 // lease's). A lease whose image carries no zcp-devsup runs no dev server and
 // is left out. Nothing here fails the caller.
