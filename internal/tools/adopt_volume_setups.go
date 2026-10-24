@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"path/filepath"
+	"slices"
 
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -10,13 +11,16 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// adoptVolumeSetups are the setups of the repository's zerops.yaml that mount
-// a local-storage volume of the project, with whether each works in the mount
-// and what the runtimes find there — what the adopt route recognises variant
-// B from (docs/spec-mate.md §2.8a). The discover step runs before the
-// runtimes are mounted, so the file is read from the first runtime container
-// that holds one (/var/www), and from its mount when the container is out of
-// reach; none yields nothing.
+// adoptVolumeSetups are the setups that mount a local-storage volume of the
+// project, read through the runtimes the adopt scope names — each from its
+// own repository's zerops.yaml, never from whichever runtime of the project
+// sorts first — with whether each works in the mount, the setups its file
+// declares, and what the runtimes holding it find there: what the adopt route
+// recognises variant B from (docs/spec-mate.md §2.8a.4a). The discover step
+// runs before the runtimes are mounted, so each file is read from the runtime
+// container (/var/www), and from its mount when the container is out of
+// reach; a runtime holding none adds nothing. A setup the files of several
+// runtimes declare alike is one setup, held by each of them.
 func adoptVolumeSetups(ctx context.Context, ssh ops.SSHDeployer, existing []platform.ServiceStack, scope []string, stateDir string) []workflow.AdoptVolumeSetup {
 	volumes := map[string]bool{}
 	for _, svc := range existing {
@@ -27,33 +31,65 @@ func adoptVolumeSetups(ctx context.Context, ssh ops.SSHDeployer, existing []plat
 	if len(volumes) == 0 {
 		return nil
 	}
+	scoped := make(map[string]bool, len(scope))
+	for _, h := range scope {
+		scoped[h] = true
+	}
 	root := projectRootFromState(stateDir)
+	var out []workflow.AdoptVolumeSetup
+	var holders [][]string
+	index := map[adoptSetupKey]int{}
 	for _, svc := range existing {
-		if !isAdoptRuntime(svc) {
+		if !scoped[svc.Name] || !isAdoptRuntime(svc) {
 			continue
 		}
 		doc := readAdoptZeropsYml(ctx, ssh, svc.Name, filepath.Join(root, svc.Name))
 		if doc == nil {
 			continue
 		}
-		var out []workflow.AdoptVolumeSetup
+		files := doc.SetupNames()
 		for _, entry := range doc.Zerops {
-			if v := entry.Run.Volume; volumes[v.Hostname] {
-				out = append(out, workflow.AdoptVolumeSetup{Setup: entry.Setup, RunBase: entry.Run.Base, Volume: v.Hostname, MountPath: v.MountPath,
-					WorksIn: entry.WorksIn(v.MountPath)})
+			v := entry.Run.Volume
+			if !volumes[v.Hostname] {
+				continue
+			}
+			key := adoptSetupKey{setup: entry.Setup, runBase: entry.Run.Base, volume: v.Hostname, mountPath: v.MountPath, worksIn: entry.WorksIn(v.MountPath)}
+			i, seen := index[key]
+			if !seen {
+				i = len(out)
+				index[key] = i
+				out = append(out, workflow.AdoptVolumeSetup{Setup: key.setup, RunBase: key.runBase, Volume: key.volume, MountPath: key.mountPath, WorksIn: key.worksIn})
+				holders = append(holders, nil)
+			}
+			holders[i] = append(holders[i], svc.Name)
+			for _, f := range files {
+				if !slices.Contains(out[i].FileSetups, f) {
+					out[i].FileSetups = append(out[i].FileSetups, f)
+				}
 			}
 		}
-		probeAdoptVolumes(ctx, ssh, existing, out)
-		return out
 	}
-	return nil
+	typeByHost := make(map[string]string, len(existing))
+	for _, svc := range existing {
+		typeByHost[svc.Name] = svc.ServiceStackTypeInfo.ServiceStackTypeVersionName
+	}
+	probeAdoptVolumes(ctx, ssh, typeByHost, out, holders)
+	return out
 }
 
-// probeAdoptVolumes reads what each runtime of a setup's run.base finds at
-// the mount of a volume that ≥2 setups work in — the content proof adopt
-// needs before it takes the volume for a code volume. A runtime that cannot
-// be read proves nothing and stays out of Content.
-func probeAdoptVolumes(ctx context.Context, ssh ops.SSHDeployer, existing []platform.ServiceStack, setups []workflow.AdoptVolumeSetup) {
+// adoptSetupKey is what makes two runtimes' setups one: the same name, base
+// and mount, worked in alike.
+type adoptSetupKey struct {
+	setup, runBase, volume, mountPath string
+	worksIn                           bool
+}
+
+// probeAdoptVolumes reads what each runtime holding a setup — its own file
+// declares it — of the setup's run.base finds at the mount of a volume that
+// ≥2 setups work in: the content proof adopt needs before it takes the
+// volume for a code volume. A runtime that cannot be read proves nothing and
+// stays out of Content.
+func probeAdoptVolumes(ctx context.Context, ssh ops.SSHDeployer, typeByHost map[string]string, setups []workflow.AdoptVolumeSetup, holders [][]string) {
 	if ssh == nil {
 		return
 	}
@@ -69,18 +105,18 @@ func probeAdoptVolumes(ctx context.Context, ssh ops.SSHDeployer, existing []plat
 			continue
 		}
 		setups[i].Content = map[string]topology.VolumeContent{}
-		for _, svc := range existing {
-			if !isAdoptRuntime(svc) || topology.CanonicalBaseName(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) != topology.CanonicalBaseName(s.RunBase) {
+		for _, host := range holders[i] {
+			if topology.CanonicalBaseName(typeByHost[host]) != topology.CanonicalBaseName(s.RunBase) {
 				continue
 			}
-			key := [2]string{svc.Name, s.MountPath}
+			key := [2]string{host, s.MountPath}
 			content, done := seen[key]
 			if !done {
-				content, _ = ops.CodeVolumeContent(ctx, ssh, svc.Name, s.MountPath)
+				content, _ = ops.CodeVolumeContent(ctx, ssh, host, s.MountPath)
 				seen[key] = content
 			}
 			if content != "" {
-				setups[i].Content[svc.Name] = content
+				setups[i].Content[host] = content
 			}
 		}
 	}
