@@ -361,3 +361,44 @@ func TestThemes_Services_DevPool_WorkspaceDependencies_FactsPresent(t *testing.T
 		}
 	}
 }
+
+// TestThemes_Services_DevPool_Memory_FactsPresent pins that the services
+// theme's "A part's dev pool" subsection says a lease's dev servers and every
+// check run in it share one container's RAM (measured live 2026-10-24: a dev
+// server of 1.3–3.0 GB RSS plus a parallel typecheck overflowed a 4 GB pool
+// container and the typecheck was killed with no message): size minRam for
+// the dev server plus the heaviest check, run heavy checks one at a time and
+// single-threaded, and read an ssh exit 255 with no output as the kill.
+func TestThemes_Services_DevPool_Memory_FactsPresent(t *testing.T) {
+	t.Parallel()
+
+	store, err := GetEmbeddedStore()
+	if err != nil {
+		t.Fatalf("GetEmbeddedStore: %v", err)
+	}
+	doc, err := store.Get("zerops://themes/services")
+	if err != nil {
+		t.Fatalf("Get services: %v", err)
+	}
+	section, ok := doc.H2Sections()["Pools and Box"]
+	if !ok {
+		t.Fatal("services.md missing H2 section 'Pools and Box'")
+	}
+	const heading = "### A part's dev pool"
+	_, sub, found := strings.Cut(section, heading)
+	if !found {
+		t.Fatalf("'Pools and Box' section missing %q", heading)
+	}
+	sub, _, _ = strings.Cut(sub, "\n### ")
+	sub = strings.Join(strings.Fields(sub), " ")
+	for _, fact := range []string{
+		"share the container's RAM",
+		"size `minRam` for the dev server plus the heaviest check",
+		"one at a time", "single-threaded",
+		"exit 255", "no output", "killed for memory",
+	} {
+		if !strings.Contains(sub, fact) {
+			t.Errorf("%q subsection missing fact %q", heading, fact)
+		}
+	}
+}
