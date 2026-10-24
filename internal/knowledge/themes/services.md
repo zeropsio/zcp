@@ -234,7 +234,7 @@ const nc = await connect({ servers: process.env.NATS_URL });
 
 ## Pools and Box
 
-Read this when an app needs a Swarm pool or a Zerops Box. Either is infrastructure the app uses — never the app's own runtime, and neither is a managed database.
+Read this when an app needs a Swarm pool or a Zerops Box. Either is infrastructure the app uses — never the app's own runtime, and neither is a managed database. Code the app's users send runs in a Box sandbox, never in the app's container: *Running code the app's users send* below.
 
 ### Swarm pool
 
@@ -361,13 +361,52 @@ zerops:
 
 **Type**: `ubuntu/zbox@1` (an import may write `zbox@1`, stored as `ubuntu/zbox@1`), in beta. A Box is a single Ubuntu VM, not a container, that runs sandboxes as microVMs. It is not a zerops.yml `run.base`: no build, no deploy, no container counts.
 **Region**: a Box can be created only in a project in region prg1. In any other region its create fails with the platform's "not enough hardware capacity to run your container" message — `zerops_import` shows it as given — and the platform removes the service.
-**After import**: a Box created by import or in the GUI starts empty — no base and no domain, so a sandbox has nothing to boot from and its ports get no URL. zcp does not set it up yet; `zbox setup` does both (by hand: `zbox base add <image> --name default`, then `zbox workspace domain add <its 8081 subdomain> --form dash`).
+**After import**: a Box created by import or in the GUI starts empty — no base and no domain, so a sandbox has nothing to boot from and its ports get no URL. `zerops_import` finishes the setup of each Box it creates before it returns — the `default` base pulled, and the 8081 subdomain added as a sandbox domain when subdomain access is on — and answers one `boxSetup` block per Box; `zerops_box action=setup serviceHostname=<box>` finishes it later (a pull still running, subdomain access turned on afterwards). Outside zcp, `zbox setup` does both (by hand: `zbox base add <image> --name default`, then `zbox workspace domain add <its 8081 subdomain> --form dash`).
 **Lifecycle**: a reload restarts only the orchestrator and keeps running sandboxes. A restart, a stop and every resize (CPU and RAM as well as disk) stop the VM: running sandboxes come back `PARKED` without their memory — park the ones to keep first. Disk can only grow. zcp never restarts a Box for an env change.
 **Ports**: 8080 serves the API and the web console, 8081 the sandbox ingress. Sandbox port URLs need subdomain access (`enableSubdomainAccess: true`; the GUI form leaves it off) and the 8081 subdomain among the workspace's domains. A project service reaches a sandbox's `project` port at `http://<box>.zerops:8081` with the port's host in the `Host` header.
 **API**: other services reach the workspace API at `http://<box>:8080` with the workspace API key as the bearer token. Every route is under `/api/rest/`; only `GET /api/rest/ping` answers without the key, and a key in the query string is refused. Requests that consume capacity — create, fork, park, wake, snapshot, restore or terminate a sandbox, pull a base, create a template — need an `Idempotency-Key` header and answer with an operation: long-poll it with `GET /api/rest/operation/{id}?waitSeconds=30`. A sandbox create requires `networkMode`. Errors carry the HTTP status and `{"error":{"code","message","meta"}}`, e.g. `401 unauthorized`, `409 workspaceFull`. The OpenAPI document is at `/api/rest/swagger/openapi.yml`.
 **Limits**: through the public API URL the Zerops edge ends a request after 60 s and refuses uploads over 50 MiB. An exec runs 60 s by default and 10 min at most, with 4 MiB each of stdout and stderr in its answer — start a background process for longer work.
 **Keys**: the API key is the Box's `ZBOX_WORKSPACE_API_KEY` — the whole authority over the workspace, with no scopes. An app wires it by reference in its `run.envVariables` — `BOX_API_KEY: ${<box>_ZBOX_WORKSPACE_API_KEY}` — and never copies the value. Editing it rotates it: the new key applies on the Box's next reload (`zerops_manage action=reload`), and until then only the old key works. `ZBOX_WORKSPACE_VOLUME_KEY` unlocks the Box's encrypted data disk and cannot be changed; no app needs it. The Box's other variables (sandbox secrets, integration credentials) apply at once. Box never delivers a `ZBOX_` variable into a sandbox.
 **Sandboxes**: no Docker yet; images must be `linux/amd64`; inside a sandbox a project service resolves only as `<host>.zerops`, never by its bare hostname.
+
+### Running code the app's users send
+
+Code the app does not control — a playground's snippets, a grader's submissions, a notebook's cells, an agent's tool calls, plugins — runs in a Box sandbox, never inside the app's own container: namespaces, chroot or a subprocess there still share the container's kernel, its files and its project network. Each sandbox is its own microVM, reads none of the project's values unless they are named for it (*Untrusted code* below), and its network mode decides what it reaches. Import the Box (`ubuntu/zbox@1`) beside the runtime — in a bootstrap plan as a dependency of the runtime (`"resolution": "CREATE"`), or in its own `zerops_import`. It is never a runtime target, and it exists only in a project in region prg1. Every shape below is the workspace API as an app in the project met it (OpenAPI document and live, 2026-10-24).
+
+**Wiring**: the app's zerops.yaml names the API and the key by reference in `run.envVariables`, so the key reaches only the app's process — never copy its value:
+
+```yaml
+run:
+  envVariables:
+    ZBOX_URL: http://<box>:8080
+    ZBOX_KEY: ${<box>_ZBOX_WORKSPACE_API_KEY}
+```
+
+Every call below goes to `$ZBOX_URL` with `Authorization: Bearer $ZBOX_KEY`; a wrong key answers `401 unauthorized`.
+
+**Base**: a create names its base by digest. `GET /api/rest/base-list` answers `{"items": [...]}`: take the `digest` of the item named `default` whose `status` is `READY`. The name in place of the digest answers `404 baseNotFound`. Read it when the app starts rather than writing it into code: a base pulled again gets a new digest.
+
+**Create**: `POST /api/rest/sandbox` with a new `Idempotency-Key` header and
+
+```json
+{"baseDigest": "<digest>", "networkMode": "AIRGAPPED", "integrations": [], "waitSeconds": 30}
+```
+
+A missing `Idempotency-Key` or `networkMode` answers `400`. `AIRGAPPED` gives the sandbox no network interface at all — the mode for strangers' code, and exec still works; `INTERNET` adds the internet and no project service. With `waitSeconds` the answer holds the finished operation and the sandbox: `operation.status` is `FINISHED`, `sandboxes[0].id` is the sandbox and `sandboxes[0].status` is `RUNNING`. A sandbox gets 1 vCPU and 512 MiB unless the body sets `cpus` and `memoryBytes` (a multiple of 16 MiB, at least 64 MiB). The same key with the same body replays the first answer; with another body it answers `409 idempotencyKeyConflict`.
+
+**Exec**: `POST /api/rest/sandbox/{id}/exec` with
+
+```json
+{"command": ["python3", "-c", "<source>"], "timeoutSeconds": 10, "workingDir": "/workspace"}
+```
+
+`command` is argv, run with no shell (wrap pipes and redirects in `sh -c`), and there is no stdin — larger input goes in a file first (`PUT /api/rest/sandbox/{id}/file?path=<path>`, the bytes as the body). It runs as root, in `/` unless `workingDir` names another directory. The answer is `{"sessionId": "…", "exitCode": 0, "stdout": "42\n", "stderr": "", "timedOut": false, "stdoutTruncated": false, "stderrTruncated": false}`. A command past its `timeoutSeconds` is killed and keeps what it printed: `timedOut` is true and `exitCode` is null. A program that does not exist exits `127`. Each of `stdout` and `stderr` is cut at 4 MiB, with `stdoutTruncated` / `stderrTruncated` set. The timeout is 60 s by default and 10 min at most. The `default` base is Ubuntu with Python 3, Node.js, gcc and git; in any sandbox `uname -r` reads 6.18.53 and the hostname is the sandbox's id.
+
+**Terminate**: `DELETE /api/rest/sandbox/{id}` with an `Idempotency-Key` answers its `TERMINATE` operation, which finishes within milliseconds: `GET /api/rest/operation/{id}?waitSeconds=30` returns it `FINISHED`, and the sandbox then reads `TERMINATED`. Terminate in a `finally`: idle and absolute TTLs are not enforced yet, so a sandbox the app forgets keeps running and holds its share of the Box.
+
+**Per run**: for strangers' code, create one sandbox per run and terminate it afterwards — no file or process of one run reaches the next. From an app in the project a create took about 250 ms, an exec tens of milliseconds and a terminate about 10 ms: about 0.3 s a run. A Box as imported (2 CPUs, about 3.25 GiB for sandboxes) holds six default sandboxes at once; the next create answers `409 workspaceFull`, its `metadata` naming the `resource`, `requested` and `free` — tell the user to try again, or give each sandbox less `memoryBytes`.
+
+**Duration**: the 60 s and 50 MiB caps of the Zerops edge apply only through the Box's public API URL. Inside the project, at `http://<box>:8080`, a request lasts as long as its exec: a 70 s exec answered after 70 s.
 
 ### Untrusted code
 

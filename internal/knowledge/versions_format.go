@@ -111,7 +111,7 @@ const (
 	poolsGroupHeader = "Pools and sandboxes (infrastructure an app uses, not app runtimes; " +
 		"no alpine/ and ubuntu/ pair — write each type exactly as listed):"
 	poolPurpose    = "Swarm pool: up to 10 containers its orchestrator hands out (leases, exec, snapshots)"
-	sandboxPurpose = "Zerops Box: hosts sandboxes (beta)"
+	sandboxPurpose = "Zerops Box: microVM sandboxes that run code the app's users send, apart from the app (beta; projects in prg1 only)"
 )
 
 // poolLines renders Swarm pools and Zerops Box as their own group, apart from

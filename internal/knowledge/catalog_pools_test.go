@@ -156,7 +156,7 @@ func TestThemes_Services_PoolSection_FactsPresent(t *testing.T) {
 		"8081", "enableSubdomainAccess", "http://<box>.zerops:8081", "`Host`",
 		"/api/rest/", "GET /api/rest/ping", "Idempotency-Key", "waitSeconds", "networkMode", "/api/rest/swagger/openapi.yml", "workspaceFull",
 		"60 s", "50 MiB", "10 min", "4 MiB",
-		"starts empty", "no base and no domain", "zerops_import finishes", "boxSetup", "zerops_box action=setup", "zbox setup",
+		"starts empty", "no base and no domain", "`zerops_import` finishes the setup of each Box", "boxSetup", "zerops_box action=setup", "zbox setup",
 		"rotates", "cannot be changed", "apply at once",
 		"PROJECT_INTERNET", "the database included", "`INTERNET`", "`AIRGAPPED`", "allowedNetworkModes", "credentials proxy", "Dockerfiles you trust",
 		"no Docker", "linux/amd64", "<host>.zerops",
