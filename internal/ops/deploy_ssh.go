@@ -529,9 +529,9 @@ const uncommittedShown = 10
 // uncommittedIn names what made a cross-deploy dirty and the directory it was
 // read in: the agent's own `git status` may have run in another tree — the
 // deploy copy beside a code volume — and found it clean.
-func uncommittedIn(ctx context.Context, gitRunner git.SSHRunner, workingDir, sourceName string) string {
+func uncommittedIn(ctx context.Context, gitRunner git.Runner, workingDir, sourceName string) string {
 	where := fmt.Sprintf("Uncommitted in %s on %s", workingDir, sourceName)
-	out, _, err := gitRunner.Run(ctx, workingDir, fmt.Sprintf("git status --porcelain | head -n %d", uncommittedShown+1))
+	out, _, err := gitRunner.Run(ctx, workingDir, fmt.Sprintf("GIT_OPTIONAL_LOCKS=0 git status --porcelain | head -n %d", uncommittedShown+1))
 	if err != nil {
 		return where + "."
 	}
