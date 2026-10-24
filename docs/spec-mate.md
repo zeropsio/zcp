@@ -1471,8 +1471,9 @@ what it may read are §3.11's. zcp serves it in **org mode**.
 
 **Switching it on.** `zcp serve` reads the Mate's state from HQ at start (`GET /api/mate/self`, the
 project key in the header, §3.6); a state carrying the Chief mark turns org mode on
-(`runtime.Info.Chief`). A mark set or removed later takes effect at zcp's next start; HQ refuses the
-overview at once to a project the mark no longer names. No service variable switches it and no
+(`runtime.Info.Chief`). A mark set or removed later restarts zcp: the Mate's server restarts it when
+the `chief` of its link's `state` frame changes (§3.11), so org mode follows the mark both ways; HQ
+refuses the overview at once to a project the mark no longer names. No service variable switches it and no
 credential of its own exists.
 
 **No write, ever.** Org mode's only door to the organization is `platform.OrgReader`: reads only, its
@@ -1905,7 +1906,9 @@ sequenceDiagram
 - An `OWNER` or `ADMIN` marks one project of the organisation as its Chief in HQ — an ordinary
   organisation setting, not bound to the person who set it, valid until an Owner or Admin removes it.
   The mark carries no key.
-- zcp reads the mark from its Mate state in HQ at start and serves org mode (§2.11). Its reads go to
+- zcp reads the mark from its Mate state in HQ at start and serves org mode (§2.11). HQ sends the
+  Mate a new `state` when the mark changes, and the Mate's server restarts zcp when its `chief`
+  changes, so a de-marked Chief leaves org mode and a newly marked one enters it. Its reads go to
   HQ like zcp's other calls (key in the header), and HQ answers each only while the mark names the
   caller's project.
 - HQ answers from its organisation view, cut by **kind of data**, not by person: the allowlist is the
@@ -2050,6 +2053,7 @@ To verify live before building on them:
 | TC-15 | A new HQ leader marks every link disconnected at its start. Test to be written (HQ link). |
 | TC-16 | HQ refuses `key_not_sensitive` a project key it can read in clear with the organisation's key. Test to be written (HQ link). |
 | TC-17 | HQ sends a Git credential on a link where none is live for the project and when the project enters an application, and `null` when it leaves. Test to be written (HQ link). |
+| TC-18 | When the `chief` of the link's `state` frame changes, the Mate's server restarts zcp. Test to be written (Mate server). |
 
 ---
 
