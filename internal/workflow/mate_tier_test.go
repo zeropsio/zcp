@@ -265,15 +265,10 @@ func TestParseMateTier_OneDevHalfTakesEveryStageOfItsRepository(t *testing.T) {
 	}
 }
 
-// TestParseMateTier_VariantB_SeveralDevServicesOfOneRepositoryAndACodeVolumeAreOnePair
-// (docs/spec-mate.md §2.8a.4a; Decision: B is recognised from the tier the
-// same way A is): F2's tier — webdev and apidev from one repository, a stage
-// per part and the local-storage service vol — is one variant-B pair, the
-// first dev runtime its dev half. Without exactly one local-storage service
-// the same runtimes pair by name, as before.
-func TestParseMateTier_VariantB_SeveralDevServicesOfOneRepositoryAndACodeVolumeAreOnePair(t *testing.T) {
-	t.Parallel()
-	const runtimes = `  - hostname: webdev
+// variantBTierRuntimes is F2's tier — webdev and apidev from one
+// repository, a stage per part — whose dev setups share a code volume when
+// the tier also holds the local-storage service vol.
+const variantBTierRuntimes = `  - hostname: webdev
     type: bun@1.3
     buildFromGit: https://hq.acme.example/git/app-1/mono
     zeropsSetup: dev
@@ -294,42 +289,28 @@ func TestParseMateTier_VariantB_SeveralDevServicesOfOneRepositoryAndACodeVolumeA
     buildFromGit: https://hq.acme.example/git/app-1/mono
     zeropsSetup: worker
 `
-	tier, err := ParseMateTier("services:\n"+runtimes+"  - hostname: vol\n    type: local-storage:single@1\n", tierHQ, tierApp)
-	if err != nil {
-		t.Fatalf("ParseMateTier: %v", err)
-	}
-	if len(tier.Pairs) != 1 {
-		t.Fatalf("pairs = %+v, want one variant-B pair", tier.Pairs)
-	}
-	p := tier.Pairs[0]
-	stages := make([]string, 0, len(p.Stages))
-	devs := make([]string, 0, len(p.DevServices))
-	for _, s := range p.Stages {
-		stages = append(stages, s.Hostname+"/"+s.Setup)
-	}
-	for _, d := range p.DevServices {
-		devs = append(devs, d.Hostname+"/"+d.Setup)
-	}
-	if p.Dev.Hostname != "webdev" || p.Dev.Setup != "dev" || p.CodeVolume != "vol" || strings.Join(devs, " ") != "apidev/dev-api" ||
-		strings.Join(stages, " ") != "webstage/web apistage/api workerstage/worker" {
-		t.Errorf("pair = %s/%s on %q, dev services %v, stages %v", p.Dev.Hostname, p.Dev.Setup, p.CodeVolume, devs, stages)
-	}
-	if len(tier.Skipped) != 1 || tier.Skipped[0].Hostname != "vol" || tier.Skipped[0].Reason != MateTierSkipManaged {
-		t.Errorf("skipped = %+v, want vol as managed", tier.Skipped)
-	}
 
+// TestParseMateTier_SeveralDevServicesBesideALocalStorageService_PairByName
+// (docs/spec-mate.md §2.8a.4a): zcp sets up no new code volume, so a tier
+// whose repository builds several dev services beside a local-storage
+// service is read like any other — each stage pairs with the runtime named
+// like it, no pair holds a code volume, and the volume is a managed service
+// the stand-up leaves as it is.
+func TestParseMateTier_SeveralDevServicesBesideALocalStorageService_PairByName(t *testing.T) {
+	t.Parallel()
 	for name, rest := range map[string]string{
+		"one local-storage service":  "  - hostname: vol\n    type: local-storage:single@1\n",
 		"no local-storage service":   "",
 		"two local-storage services": "  - hostname: vol\n    type: local-storage:single@1\n  - hostname: data\n    type: local-storage:single@1\n",
 	} {
-		tier, err := ParseMateTier("services:\n"+runtimes+rest, tierHQ, tierApp)
+		tier, err := ParseMateTier("services:\n"+variantBTierRuntimes+rest, tierHQ, tierApp)
 		if err != nil {
 			t.Fatalf("%s: ParseMateTier: %v", name, err)
 		}
 		pairs := make([]string, 0, len(tier.Pairs))
 		for _, p := range tier.Pairs {
 			if p.CodeVolume != "" || len(p.DevServices) != 0 || len(p.Stages) != 1 {
-				t.Errorf("%s: pair %+v is not variant A", name, p)
+				t.Errorf("%s: pair %+v holds a code volume", name, p)
 			}
 			pairs = append(pairs, p.Dev.Hostname+"→"+p.FirstStage().Hostname)
 		}

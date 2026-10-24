@@ -95,6 +95,45 @@ func TestValidateBootstrapTargets_PlanB_MountsTheCodeVolumeUnderVarWwwNeverAtIt(
 	}
 }
 
+// TestBootstrapCompletePlan_PlanCarryingCodeVolume_RefusedNamingPools
+// (docs/spec-mate.md §2.8a.4a): zcp sets up no new code volume, so a plan an
+// agent submits never carries one — on a new pair or one it adopts. The
+// refusal names the field, what replaces it and how an existing variant-B
+// pair moves, and nothing is planned.
+func TestBootstrapCompletePlan_PlanCarryingCodeVolume_RefusedNamingPools(t *testing.T) {
+	t.Parallel()
+	for name, existing := range map[string]bool{"a new pair": false, "an adopted pair": true} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			eng := NewEngine(t.TempDir(), EnvContainer, nil)
+			if _, err := eng.BootstrapStart("proj-1", "web and api in one repository"); err != nil {
+				t.Fatalf("BootstrapStart: %v", err)
+			}
+			targets := planB("/var/www/ws", func(rt *RuntimeTarget) { rt.IsExisting = existing })
+			var live []platform.ServiceStack
+			if existing {
+				live = []platform.ServiceStack{{Name: "webdev"}, {Name: "apidev"}, {Name: "webstage"}, {Name: "apistage"}, {Name: "vol"}}
+			}
+			_, err := eng.BootstrapCompletePlan(targets, nil, live)
+			if err == nil {
+				t.Fatal("a plan carrying codeVolume was accepted")
+			}
+			for _, want := range []string{"codeVolume", "dev pool", `workflow="pool-migrate"`} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("err = %v, want it to say %q", err, want)
+				}
+			}
+			state, err := eng.GetState()
+			if err != nil {
+				t.Fatalf("GetState: %v", err)
+			}
+			if state.Bootstrap.Plan != nil {
+				t.Errorf("a refused plan was stored: %+v", state.Bootstrap.Plan)
+			}
+		})
+	}
+}
+
 func TestValidateBootstrapTargets_PlanWithoutCodeVolume_ValidatesAsToday(t *testing.T) {
 	t.Parallel()
 	targets := planB("", func(rt *RuntimeTarget) { rt.CodeVolume = nil })
@@ -139,6 +178,48 @@ func TestAdoptPair_VariantB_DevServiceAlreadyItsOwnService_Refused(t *testing.T)
 	err := AdoptPair(stateDir, planB("/var/www/ws", nil)[0], "2026-10-15")
 	if err == nil || !strings.Contains(err.Error(), "apidev") {
 		t.Fatalf("err = %v, want apidev named", err)
+	}
+}
+
+// TestAdoptPair_AServiceAnotherPairAlreadyNames_Refused (docs/spec-workflows.md
+// §8 E8): one meta per pair. A target whose dev half or stage another pair
+// already names — a further dev service of a variant-B pair, or that pair's
+// stage — is refused, and nothing is written under its hostname.
+func TestAdoptPair_AServiceAnotherPairAlreadyNames_Refused(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		target BootstrapTarget
+		named  string
+	}{
+		{
+			name: "a further dev service of a variant-B pair adopted as a pair of its own",
+			target: BootstrapTarget{Runtime: RuntimeTarget{DevHostname: "apidev", Type: "go@1", BootstrapMode: topology.PlanModeStandard,
+				Stages: []topology.StageRef{{Hostname: "apiprod", SetupName: "api"}}}},
+			named: "apidev",
+		},
+		{
+			name: "a stage of a variant-B pair adopted under another dev half",
+			target: BootstrapTarget{Runtime: RuntimeTarget{DevHostname: "workerdev", Type: "go@1", BootstrapMode: topology.PlanModeStandard,
+				Stages: []topology.StageRef{{Hostname: "apistage", SetupName: "api"}}}},
+			named: "apistage",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			stateDir := t.TempDir()
+			if err := AdoptPair(stateDir, planB("/var/www/ws", nil)[0], "2026-10-15"); err != nil {
+				t.Fatalf("seed the variant-B pair: %v", err)
+			}
+			err := AdoptPair(stateDir, tt.target, "2026-10-24")
+			if err == nil || !strings.Contains(err.Error(), tt.named) || !strings.Contains(err.Error(), "webdev") {
+				t.Fatalf("err = %v, want %s named as webdev's", err, tt.named)
+			}
+			if own, _ := ReadServiceMeta(stateDir, tt.target.Runtime.DevHostname); own != nil {
+				t.Errorf("a second meta was written: %+v", own)
+			}
+		})
 	}
 }
 
