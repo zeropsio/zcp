@@ -416,3 +416,20 @@ func TestInstallLeaseAliases_Overlapping_LastInstallHasEveryRecord(t *testing.T)
 		}
 	}
 }
+
+// TestDetachMount_FailedUnmount_NamesTheUnitNotFusermountAlone: a lease mount
+// is a supervised unit (zerops@sshfs-<alias>.service) that restarts sshfs after
+// a fusermount, so the advice names the unit's removal first.
+func TestDetachMount_FailedUnmount_NamesTheUnitNotFusermountAlone(t *testing.T) {
+	t.Parallel()
+	m := newMockMounter()
+	m.states["/var/www/devpool-3"] = platform.MountStateActive
+	m.umountErr = errors.New("zsc unit remove: exit status 1")
+	rec := leaseRecord{PoolHostname: "devpool", ContainerNumber: 3}
+
+	note := LeaseHost{Mounter: m}.detachMount(context.Background(), LeaseDeps{}, rec)
+
+	if !strings.Contains(note, "sudo zsc unit remove sshfs-devpool-3") {
+		t.Errorf("note %q does not name the unit's removal", note)
+	}
+}
