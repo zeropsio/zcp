@@ -42,6 +42,8 @@ func TestLease_Integration_UnresettableContainerIsDeletedNotReleasedUnreset(t *t
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/container":
 			_, _ = w.Write([]byte(`[` + container + `}]`))
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/container/"):
+			_, _ = w.Write([]byte(container + `}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/container/acquire":
 			reserved = true
 			_, _ = w.Write([]byte(strings.Replace(container, `"lockState":""`, `"lockState":"reserved"`, 1) + `,"lease":"` + leaseIntLease + `"}`))

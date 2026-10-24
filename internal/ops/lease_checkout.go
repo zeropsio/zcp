@@ -523,8 +523,10 @@ func readUnsavedWork(ctx context.Context, ssh SSHDeployer, alias string) (unsave
 type leaseGuardResult struct {
 	// note is said to the agent on a release that went ahead unchecked.
 	note string
-	// unreachable: ssh could not reach the container, so nothing was checked.
-	unreachable bool
+	// lost: ssh could not reach the container, and the orchestrator says it
+	// is no longer this lease's — why — so nothing was checked and nothing is
+	// released (releaseGuarded drops the record as lost).
+	lost string
 	// woken: the release started the parked lease's container to check it
 	// (wakeParkedForGuard, DP-28).
 	woken bool
@@ -571,60 +573,31 @@ func inspectLeaseRelease(ctx context.Context, d LeaseDeps, rec leaseRecord) (lea
 // unreachableGuard decides a release whose container ssh could not reach.
 // ssh's 255 does not say the container is gone — an alias that does not
 // resolve, a refused connection and a timeout all read the same — so the
-// orchestrator decides: only a container it no longer holds for this lease —
-// a pool that is gone or being deleted holds none (DP-20) — is released
-// unchecked (as lost); the release then says what became of it. One it still
-// holds may hold work and is refused, and so is one zcp cannot ask about.
+// orchestrator decides (readLeaseOwnership): only a container that is no
+// longer this lease's — a pool that is gone or being deleted holds none
+// (DP-20) — is released unchecked (as lost); the release then says what
+// became of it. One still this lease's may hold work and is refused, and so is
+// one zcp cannot verify or ask about.
 func unreachableGuard(ctx context.Context, d LeaseDeps, rec leaseRecord, sshErr error) (leaseGuardResult, error) {
-	held, err := leaseContainerStillReserved(ctx, d, rec)
-	if err == nil && !held {
+	v, err := readLeaseOwnership(ctx, d, rec)
+	if err == nil && v.own.lost() {
 		return leaseGuardResult{
-			unreachable: true,
-			note:        "zcp could not reach the container over ssh and the orchestrator no longer holds it, so it was not checked for unsaved work",
+			lost: v.why,
+			note: "zcp could not reach the container over ssh and the orchestrator no longer holds it, so it was not checked for unsaved work",
 		}, nil
 	}
 	state := "is still reserved"
-	if err != nil {
+	switch {
+	case err != nil:
 		state = "may still be reserved (the orchestrator did not answer)"
+	case v.own == leaseUnverified:
+		state = "may still be this lease's (" + v.why + ")"
 	}
 	pe := platform.NewPlatformError(platform.ErrPrerequisiteMissing,
 		fmt.Sprintf("Lease %s could not be reached over ssh to check for unsaved work and %s, so it was not released", rec.alias(), state),
 		fmt.Sprintf("zerops_lease action=status shows whether its alias and mount are in place; release with force=true to discard whatever it holds: zerops_lease action=release lease=%s force=true", rec.alias()))
 	pe.Cause = sshErr
 	return leaseGuardResult{}, pe
-}
-
-// leaseContainerStillReserved reports whether the pool's orchestrator still
-// lists the record's container as reserved. The pool is read by id — the
-// service search lags writes, and a pool missing from one search is not a
-// pool that is gone; one the direct read no longer finds, or finds being
-// deleted, holds nothing of this lease (leasePoolGoneWhy), and its
-// orchestrator is not asked.
-func leaseContainerStillReserved(ctx context.Context, d LeaseDeps, rec leaseRecord) (bool, error) {
-	svc, err := d.Client.GetService(ctx, rec.PoolServiceID)
-	if err != nil {
-		if IsServiceGone(err) {
-			return false, nil
-		}
-		return false, fmt.Errorf("read pool %s: %w", rec.PoolHostname, err)
-	}
-	if poolDeletionState(svc.Status) != "" {
-		return false, nil
-	}
-	rp, err := orchestratorFor(ctx, d, svc)
-	if err != nil {
-		return false, err
-	}
-	containers, err := d.containers(ctx, rp)
-	if err != nil {
-		return false, fmt.Errorf("list pool containers: %w", err)
-	}
-	for _, c := range containers {
-		if c.ID == rec.ContainerID {
-			return c.LockState == leaseLockReserved, nil
-		}
-	}
-	return false, nil
 }
 
 // poolDeletionState names what a pool service's status says of its deletion:

@@ -152,7 +152,47 @@ func newSyncFixture(t *testing.T, branch string, extra ...leaseRecord) (*groupFi
 			t.Fatal(err)
 		}
 	}
+	holdSyncLeases(t, gf, recs)
 	return gf, remote
+}
+
+// holdSyncLeases lists each record's container on its pool's orchestrator,
+// reserved by the record's lease — a sync reads whose each container is
+// before it reaches it over ssh (DP-2). A pool the group fixture lacks gets a
+// service and an orchestrator of its own.
+func holdSyncLeases(t *testing.T, gf *groupFixture, recs []leaseRecord) {
+	t.Helper()
+	mock, ok := gf.deps.Client.(*platform.Mock)
+	if !ok {
+		t.Fatal("holdSyncLeases: the fixture's client is not a *platform.Mock")
+	}
+	services, err := mock.ListServices(context.Background(), "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	orchs := map[string]*poolOrch{groupHQPool: gf.hq, groupWebPool: gf.web}
+	for _, r := range recs {
+		o, known := orchs[r.PoolHostname]
+		if !known {
+			o = newPoolOrch(r.PoolHostname, r.PoolServiceID, r.ContainerNumber)
+			orchs[r.PoolHostname] = o
+			services = append(services, poolService(r.PoolServiceID, r.PoolHostname))
+			mock.WithServiceEnv(r.PoolServiceID, []platform.ServiceEnvVar{{Key: "API_TOKEN", Content: r.PoolHostname + "-token", Sensitive: true}})
+		}
+		o.put(platform.SwarmContainer{
+			ID: r.ContainerID, Number: r.ContainerNumber, Hostname: r.ContainerHostname,
+			Status: platform.SwarmContainerActive, LockState: leaseLockReserved,
+		}, r.Lease)
+	}
+	mock.WithServices(services)
+	gf.deps.Swarm = func(baseURL, _ string) SwarmAPI {
+		for pool, o := range orchs {
+			if orchestratorURL(pool) == baseURL {
+				return o
+			}
+		}
+		return nil
+	}
 }
 
 func syncMemberOf(t *testing.T, v LeaseSyncView, alias string) LeaseSyncMember {

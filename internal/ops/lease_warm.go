@@ -337,15 +337,19 @@ func keptWithReset(reset func() (LeaseView, error), why string) (LeaseView, erro
 }
 
 // decideRelease keeps the released container (the reset release) or removes it
-// with its own lease, reporting whether it stays in the pool as a warm one.
+// with its own lease, reporting whether it stays in the pool as a warm one. A
+// container that is not this lease's by the read under the warm lock — gone,
+// free, another holder's (leaseOwnershipOf) — is neither reset nor deleted:
+// the orchestrator checks no lease on a free container, so the reset would
+// take the pool's warm container from under another acquire; the record is
+// dropped as lost. A delete refused held-by-other drops it too.
 func (w *LeaseWarm) decideRelease(ctx context.Context, d LeaseDeps, rp *resolvedPool, rec leaseRecord, read poolWarmRead, reset func() (LeaseView, error)) (LeaseView, bool, error) {
 	mine := read.mine
-	switch {
-	case mine == nil || mine.LockState != leaseLockReserved:
-		// The orchestrator no longer reserves it: the reset release says what
-		// is left of the lease.
-		view, err := reset()
+	if own, why := leaseOwnershipOf(rec, rp.svc.ID, mine); own.lost() {
+		view, err := dropLeaseRecord(d.StateDir, rec, LeaseStateLost, lostDropNote(why))
 		return view, false, err
+	}
+	switch {
 	case read.mineCounted && mine.Snapshots == 0:
 		// No primary snapshot: the reset is refused and the container deleted
 		// the DP-15 way, with its own wording, before any warm decision.
@@ -381,6 +385,10 @@ func (w *LeaseWarm) decideRelease(ctx context.Context, d LeaseDeps, rp *resolved
 	var se *platform.SwarmError
 	if errors.As(err, &se) && (se.Reason == platform.SwarmReasonUnknownLease || se.Reason == platform.SwarmReasonContainerNotFound) {
 		view, dropErr := dropLeaseRecord(d.StateDir, rec, LeaseStateLost, "the orchestrator no longer held this container for this lease, so there was nothing to release; the record is dropped")
+		return view, false, dropErr
+	}
+	if isHeldByOther(err) {
+		view, dropErr := dropLeaseRecord(d.StateDir, rec, LeaseStateLost, lostDropNote(heldByOtherWhy))
 		return view, false, dropErr
 	}
 	view, rerr := reset()

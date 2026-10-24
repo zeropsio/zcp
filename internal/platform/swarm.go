@@ -400,6 +400,16 @@ const (
 	SwarmReasonContainerNotFound = "container-not-found"
 )
 
+// SwarmReasonHeldByOther is the SwarmError.Reason of a call whose lease does
+// not hold the reserved container it names: another holder reserves it. The
+// orchestrator answers it at once (400 containerAction, retryable:"true",
+// "container is reserved by another consumer - pass its lease, or ?force=true
+// to take it over") and changes nothing (live, 2026-10-24). A free container
+// is another matter: the orchestrator checks no lease on it, so a release of
+// one resets it whatever lease it carries, a lease never issued included
+// (live, 2026-10-24: 200 after ~9.5 s, the container reset).
+const SwarmReasonHeldByOther = "held-by-other"
+
 // SwarmContainerActive is the status of a running container
 // (SwarmContainer.Status), the platform's own ACTIVE.
 const SwarmContainerActive = ServiceStatusActive

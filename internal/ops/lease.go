@@ -348,10 +348,12 @@ func LeaseList(ctx context.Context, d LeaseDeps, pool string) ([]LeaseView, erro
 
 // LeaseStatus reports the leases of one pool, or of every pool the project
 // holds or zcp has a record for when none is named. The orchestrator is the
-// truth: a record whose container is missing or not reserved is lost (never
-// re-leased), and a reserved container with no record is an unknown holder
-// (acquire has no idempotency key, so a lost response would otherwise leak a
-// container forever). A named pool that cannot be read is an error; when
+// truth: a record whose container is gone, free or another holder's
+// reservation (leaseOwnershipOf) is lost (never re-leased), one whose
+// reservation zcp cannot place is unverified — its state as the orchestrator
+// gives it, nothing read from it — and a reserved container with no record is
+// an unknown holder (acquire has no idempotency key, so a lost response would
+// otherwise leak a container forever). A named pool that cannot be read is an error; when
 // every pool is listed, one that cannot be read (stopped, unreachable) never
 // fails the rest: its leases are zcp's records, marked unverified with why,
 // and the pool is named in Unread. With ssh, each lease zcp holds also
@@ -439,21 +441,23 @@ func listPoolLeases(ctx context.Context, d LeaseDeps, pool string, records []lea
 	recorded := map[string]bool{}
 	for _, r := range records {
 		recorded[r.ContainerID] = true
-		c, present := byID[r.ContainerID]
-		switch {
-		case r.PoolServiceID != rp.svc.ID:
-			views = append(views, lostView(r, "the pool was re-created since this lease was taken"))
-		case !present:
-			views = append(views, lostView(r, "the container is gone from the pool"))
-		case c.LockState != leaseLockReserved && !powerTransition(c):
-			views = append(views, lostView(r, "the orchestrator no longer reserves this container (the lease ended or was released elsewhere)"))
-		case parkedContainer(c):
+		var listed *platform.SwarmContainer
+		if c, present := byID[r.ContainerID]; present {
+			listed = &c
+		}
+		own, why := leaseOwnershipOf(r, rp.svc.ID, listed)
+		if own.lost() {
+			views = append(views, lostView(r, why))
+			continue
+		}
+		c := *listed
+		var v LeaseView
+		if parkedContainer(c) {
 			// Parked comes before unmounted: a parked lease's mount is
 			// gone on purpose (DP-28).
-			views = append(views, parkedView(r, c))
-		default:
-			v := r.view(LeaseStateHeld)
-			v.AcquiredAt = r.AcquiredAt
+			v = parkedView(r, c)
+		} else {
+			v = r.view(LeaseStateHeld)
 			if gap := d.Host.gap(ctx, r.alias()); gap != "" {
 				v.State = LeaseStateUnmounted
 				v.Note = gap
@@ -461,8 +465,14 @@ func listPoolLeases(ctx context.Context, d LeaseDeps, pool string, records []lea
 			if r.Parked {
 				v.Note = joinNotes(v.Note, startedSinceParkedNote(r.alias()))
 			}
-			views = append(views, v)
 		}
+		if own == leaseUnverified {
+			// Reserved, maybe by another holder: nothing is read from it
+			// (readLeaseActivities skips an unverified view).
+			v.Unverified = true
+			v.Note = joinNotes(why+"; status reads nothing from it. "+unverifiedRemedy(r.alias(), c), v.Note)
+		}
+		views = append(views, v)
 	}
 	for _, c := range containers {
 		if c.LockState != leaseLockReserved || recorded[c.ID] {
@@ -624,6 +634,17 @@ type leaseRecord struct {
 	// sync and zcp init read only records, so the record says it.
 	Parked   bool   `json:"parked,omitempty"`
 	ParkedAt string `json:"parkedAt,omitempty"`
+	// LockSince is the reservation's lockSince as the orchestrator last
+	// answered a call zcp made with the lease — the acquire, a stop, a start,
+	// each of which restarts it — verbatim: how zcp tells its own reservation
+	// from another holder's (leaseOwnershipOf). "" in an older record.
+	LockSince string `json:"lockSince,omitempty"`
+	// LockChanging is when zcp sent a stop or a start with the lease whose
+	// new lockSince it has not recorded (RFC 3339, UTC): set before the call,
+	// cleared once the orchestrator answered. While it is set a lockSince
+	// other than LockSince may be zcp's own, so it reads unverified, never
+	// another holder's.
+	LockChanging string `json:"lockChanging,omitempty"`
 }
 
 func (r leaseRecord) alias() string { return leaseAlias(r.PoolHostname, r.ContainerNumber) }
@@ -722,7 +743,15 @@ func LeaseRelease(ctx context.Context, d LeaseDeps, alias string, force bool) (L
 }
 
 // LeaseReleaseChange releases the lease addressed by alias and removes its
-// record. Unless force is set it first reads the container over ssh and
+// record. It first reads, by id, whose the container is (readLeaseOwnership,
+// DP-2): one that is no longer this lease's — gone, free, another holder's —
+// is dropped as lost with its mount and alias stanza (releaseLost), never read
+// over ssh and never released or deleted, since the orchestrator resets a
+// free container whatever lease the release carries; one zcp cannot verify is
+// refused without force, read from nothing, and with force asked about with
+// the lease, a held-by-other answer dropping it as lost; an orchestrator that
+// does not answer refuses the release. Unless force is set it then reads the
+// container over ssh and
 // refuses while it holds commits on no remote branch or uncommitted/untracked
 // files (DP-4); the refusal leaves the mount, the record and the lease as they
 // were. Every release resets the container (processes end) — or, under the
@@ -744,13 +773,29 @@ func LeaseReleaseChange(ctx context.Context, d LeaseDeps, alias string, force bo
 	if err != nil {
 		return LeaseChange{}, err
 	}
+	// Check before mutate (O3): a container that is no longer this lease's is
+	// neither read nor released, and one zcp cannot verify is only asked
+	// about with force.
+	verdict, err := readLeaseOwnership(ctx, d, rec)
+	if err != nil {
+		return LeaseChange{}, err
+	}
+	switch {
+	case verdict.own.lost():
+		return releaseLost(ctx, d, rec, verdict.why)
+	case verdict.own == leaseUnverified && !force:
+		return LeaseChange{}, unverifiedLeaseRefusal(alias, "released", verdict)
+	}
 	var guard leaseGuardResult
 	var wake leaseWake
 	if !force {
 		// The guard reaches the container through its alias: put back a
 		// stanza another call or a redeploy lost before it runs.
 		restoreNote := d.Host.refreshAliases(ctx, d)
-		if wake, err = wakeParkedForGuard(ctx, d, rec); err != nil {
+		if wake, err = wakeParkedForGuard(ctx, d, &rec, verdict); err != nil {
+			if isHeldByOther(err) {
+				return releaseLost(ctx, d, rec, heldByOtherWhy)
+			}
 			return LeaseChange{}, reparkAfterRefusal(ctx, d, rec, wake, err)
 		}
 		if guard, err = guardLeaseRelease(ctx, d, rec); err != nil {
@@ -763,7 +808,7 @@ func LeaseReleaseChange(ctx context.Context, d LeaseDeps, alias string, force bo
 	var rewired []LeaseRewire
 	if d.SSH != nil {
 		siblings = siblingRecords(d.StateDir, rec)
-		rewired = rewireLeases(ctx, d.SSH, d.StateDir, siblings, map[string]bool{alias: true}, "without "+alias)
+		rewired = rewireLeases(ctx, d, siblings, map[string]bool{alias: true}, "without "+alias)
 	}
 	view, err := releaseGuarded(ctx, d, rec, guard)
 	if err != nil {
@@ -772,19 +817,41 @@ func LeaseReleaseChange(ctx context.Context, d LeaseDeps, alias string, force bo
 	return LeaseChange{Leases: []LeaseView{view}, Rewired: rewired}, nil
 }
 
+// releaseLost is the release of a lease whose container is no longer its own
+// (gone, free, another holder's — why says which): the branch's other leases
+// get the overlay without it, as before any release (DP-26), and the record
+// is dropped as lost with its mount and alias stanza. Nothing is read from
+// the container and the orchestrator releases and deletes nothing: a free
+// container is reset by a release whatever lease it carries.
+func releaseLost(ctx context.Context, d LeaseDeps, rec leaseRecord, why string) (LeaseChange, error) {
+	var rewired []LeaseRewire
+	if d.SSH != nil {
+		rewired = rewireLeases(ctx, d, siblingRecords(d.StateDir, rec), map[string]bool{rec.alias(): true}, "without "+rec.alias())
+	}
+	view, err := dropLostLease(ctx, d, rec, why)
+	if err != nil {
+		return LeaseChange{}, err
+	}
+	return LeaseChange{Leases: []LeaseView{view}, Rewired: rewired}, nil
+}
+
 // releaseGuarded releases a lease whose guard passed (or was skipped by
 // force): unmount, release with a reset — or delete the container when it
 // cannot be reset (DP-15) — and drop the record and its alias stanza; a
-// container the guard could not reach is reported lost, and the guard's note
-// leads the view's. It is the one release step of a lease, alone or as a
-// member of its branch's release (DP-23).
+// container the guard could not reach and the orchestrator no longer gives
+// this lease is dropped as lost, released nothing (dropLostLease). The
+// guard's note leads the view's. It is the one release step of a lease, alone
+// or as a member of its branch's release (DP-23).
 func releaseGuarded(ctx context.Context, d LeaseDeps, rec leaseRecord, guard leaseGuardResult) (LeaseView, error) {
-	view, err := releaseAndDetach(ctx, d, rec, rec.alias())
+	var view LeaseView
+	var err error
+	if guard.lost != "" {
+		view, err = dropLostLease(ctx, d, rec, guard.lost)
+	} else {
+		view, err = releaseAndDetach(ctx, d, rec, rec.alias())
+	}
 	if err != nil {
 		return LeaseView{}, err
-	}
-	if guard.unreachable && view.State == LeaseStateReleased {
-		view.State = LeaseStateLost
 	}
 	view.Note = joinNotes(guard.note, view.Note, releasedParkedNote(rec, guard, view))
 	return view, nil
@@ -869,6 +936,9 @@ func releaseOnOrchestrator(ctx context.Context, d LeaseDeps, rp *resolvedPool, r
 		}
 		if errors.As(err, &se) && (se.Reason == platform.SwarmReasonUnknownLease || se.Reason == platform.SwarmReasonContainerNotFound) {
 			return dropLeaseRecord(d.StateDir, rec, LeaseStateLost, "the orchestrator no longer held this container for this lease, so there was nothing to release; the record is dropped")
+		}
+		if isHeldByOther(err) {
+			return dropLeaseRecord(d.StateDir, rec, LeaseStateLost, lostDropNote(heldByOtherWhy))
 		}
 		// An orchestrator that could not be reached may be one of a pool
 		// deleted since the search was read.

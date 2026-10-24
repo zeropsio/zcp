@@ -101,6 +101,7 @@ func readPoolUsage(ctx context.Context, d LeaseDeps, rp *resolvedPool) poolUsage
 		}
 	}
 	var mine []leaseRecord
+	unverified := map[string]bool{}
 	containers, err := d.containers(ctx, rp)
 	if err != nil {
 		for _, r := range own {
@@ -113,13 +114,27 @@ func readPoolUsage(ctx context.Context, d LeaseDeps, rp *resolvedPool) poolUsage
 				continue
 			}
 			u.leased++
-			if r, ok := own[c.ID]; ok {
+			r, ok := own[c.ID]
+			if !ok {
+				continue
+			}
+			// Yours only while it is still this record's reservation: one
+			// another holder took is theirs, never read or named as yours;
+			// one zcp cannot verify is named, never read.
+			switch o, _ := leaseOwnershipOf(r, rp.svc.ID, &c); o {
+			case leaseOurs:
 				mine = append(mine, r)
+			case leaseUnverified:
+				mine = append(mine, r)
+				unverified[r.alias()] = true
+			case leaseGone, leaseFree, leaseOther:
 			}
 		}
 	}
 	for _, r := range mine {
-		u.yours = append(u.yours, r.view(LeaseStateHeld))
+		v := r.view(LeaseStateHeld)
+		v.Unverified = unverified[r.alias()]
+		u.yours = append(u.yours, v)
 	}
 	slices.SortFunc(u.yours, func(a, b LeaseView) int { return cmp.Compare(leaseNumber(a.Alias), leaseNumber(b.Alias)) })
 	if d.SSH != nil && u.listed && len(u.yours) > 0 {
@@ -386,6 +401,13 @@ func (c PoolShrinkContainer) Whose() string {
 	return "free"
 }
 
+// yoursStill: the reserved container c is still the reservation of zcp's
+// record r — or may be (unverified) — rather than another holder's.
+func yoursStill(r leaseRecord, poolServiceID string, c platform.SwarmContainer) bool {
+	o, _ := leaseOwnershipOf(r, poolServiceID, &c)
+	return o == leaseOurs || o == leaseUnverified
+}
+
 // joinAnd joins names as "a", "a and b", "a, b and c".
 func joinAnd(names []string) string {
 	if len(names) < 2 {
@@ -436,7 +458,7 @@ func planPoolShrink(ctx context.Context, d LeaseDeps, svc, current *platform.Ser
 			continue
 		}
 		pc := PoolShrinkContainer{Alias: leaseAlias(svc.Name, c.Number), Leased: leased}
-		if r, ok := own[c.ID]; ok && leased {
+		if r, ok := own[c.ID]; ok && leased && yoursStill(r, svc.ID, c) {
 			pc.Yours, pc.Branch = true, r.Branch
 		}
 		s.Deletes = append(s.Deletes, pc)

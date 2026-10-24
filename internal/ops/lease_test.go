@@ -52,6 +52,10 @@ type fakeSwarm struct {
 	// the listed container's status.
 	stops, starts     []fakeRelease
 	stopErr, startErr error
+
+	// reserved are the containers an acquire reserved: a read by id finds one
+	// the test did not list, as the orchestrator does.
+	reserved []platform.SwarmContainer
 }
 
 type fakeRelease struct {
@@ -76,6 +80,9 @@ func (f *fakeSwarm) Containers(context.Context) ([]platform.SwarmContainer, erro
 
 func (f *fakeSwarm) Acquire(_ context.Context, req platform.SwarmAcquireRequest) (platform.SwarmAcquired, error) {
 	f.acquireReqs = append(f.acquireReqs, req)
+	if f.acquireErr == nil {
+		f.reserved = append(f.reserved, f.acquired.Container)
+	}
 	return f.acquired, f.acquireErr
 }
 
@@ -132,11 +139,21 @@ func (f *fakeSwarm) setStatus(id, status string) platform.SwarmContainer {
 	return platform.SwarmContainer{ID: id, Status: status}
 }
 
-// Container reads one listed container by id; the fake counts no snapshots.
+// Container reads one listed container by id — else one an acquire reserved
+// that the test did not list; the fake counts no snapshots.
 func (f *fakeSwarm) Container(_ context.Context, id string) (platform.SwarmContainer, error) {
+	if f.listErr != nil {
+		// An orchestrator whose listing fails answers no read.
+		return platform.SwarmContainer{}, f.listErr
+	}
 	for _, c := range f.containers {
 		if c.ID == id {
 			return c, nil
+		}
+	}
+	for i := len(f.reserved) - 1; i >= 0; i-- {
+		if f.reserved[i].ID == id {
+			return f.reserved[i], nil
 		}
 	}
 	return platform.SwarmContainer{}, &platform.SwarmError{Status: 404, Code: "containerAction", Message: "no such container", Reason: "container-not-found"}

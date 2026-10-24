@@ -65,6 +65,8 @@ func (o *fakeOrchestrator) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/container":
 		_, _ = w.Write([]byte(`[` + container(false) + `]`))
+	case r.Method == http.MethodGet && r.URL.Path == "/container/c-abc":
+		_, _ = w.Write([]byte(container(false)))
 	case r.Method == http.MethodPost && r.URL.Path == "/container/acquire":
 		o.reserved = true
 		_, _ = w.Write([]byte(container(true)))

@@ -701,23 +701,29 @@ func TestLeaseRelease_Force_Resets(t *testing.T) {
 	}
 }
 
+// TestLeaseRelease_Unreachable_Lost: a container ssh cannot reach is asked
+// about again; once the orchestrator no longer reserves it — the lease ended
+// while the guard ran — the record is dropped as lost, unchecked, and nothing
+// is released: a release of a free container resets it whatever the lease.
 func TestLeaseRelease_Unreachable_Lost(t *testing.T) {
 	t.Parallel()
 	hf, ssh := unsavedFixture(t, "", 0)
+	hf.swarm.containers = []platform.SwarmContainer{reservedContainer("c-abc", 3)}
 	ssh.setHandler(func(string, string) ([]byte, error) {
+		hf.swarm.containers[0].LockState = "" // released outside zcp meanwhile
 		return []byte("ssh: connect to host node-id-3.runtime.devpool.zerops port 22: Connection timed out"),
 			sshFailure("ssh: connect to host ... Connection timed out", exitError(t, 255))
 	})
 
 	view, err := LeaseRelease(context.Background(), hf.deps, "devpool-3", false)
 	if err != nil {
-		t.Fatalf("an unreachable container cannot be checked, but must still be released: %v", err)
+		t.Fatalf("an unreachable container the orchestrator no longer holds must be dropped: %v", err)
 	}
-	if view.State != LeaseStateLost || !strings.Contains(view.Note, "reach") {
-		t.Errorf("view = %+v, want state lost with a note that the container could not be reached", view)
+	if view.State != LeaseStateLost || !strings.Contains(view.Note, "reach") || !strings.Contains(view.Note, "record is dropped") {
+		t.Errorf("view = %+v, want state lost with a note that the container could not be reached and the record is dropped", view)
 	}
-	if len(hf.swarm.releases) != 1 || !hf.swarm.releases[0].reset {
-		t.Errorf("releases = %+v, want one with reset=true", hf.swarm.releases)
+	if len(hf.swarm.releases) != 0 {
+		t.Errorf("releases = %+v, want none: the container is free", hf.swarm.releases)
 	}
 	if _, statErr := os.Stat(filepath.Join(hf.stateDir, "leases", "devpool-3.json")); !errors.Is(statErr, os.ErrNotExist) {
 		t.Errorf("record survives: %v", statErr)
@@ -824,15 +830,33 @@ func TestLeaseRelease_UnreachableButReserved_Refused(t *testing.T) {
 	}
 }
 
+// TestLeaseRelease_UnreachableOrchestratorSilent_Refused: whose the
+// container is comes first (check before mutate); an orchestrator that does
+// not answer while its pool is still there refuses the release — plain or
+// forced — nothing read over ssh, released or dropped (DP-20).
 func TestLeaseRelease_UnreachableOrchestratorSilent_Refused(t *testing.T) {
 	t.Parallel()
-	hf, ssh := unsavedFixture(t, "", 0)
-	hf.swarm.listErr = errors.New("dial tcp: i/o timeout")
-	ssh.setHandler(func(string, string) ([]byte, error) {
-		return nil, sshFailure("ssh: connect to host ... Connection timed out", exitError(t, 255))
-	})
-	_, err := LeaseRelease(context.Background(), hf.deps, "devpool-3", false)
-	_ = assertRefusedAndKept(t, hf, err)
+	for _, force := range []bool{false, true} {
+		t.Run(fmt.Sprintf("force=%v", force), func(t *testing.T) {
+			t.Parallel()
+			hf, ssh := unsavedFixture(t, "", 0)
+			hf.swarm.listErr = platform.NewPlatformError(platform.ErrNetworkError, "dial tcp: i/o timeout", "")
+			_, err := LeaseRelease(context.Background(), hf.deps, "devpool-3", force)
+			var pe *platform.PlatformError
+			if !errors.As(err, &pe) || !strings.Contains(pe.Message, "devpool-3") {
+				t.Fatalf("err = %v, want a refusal naming the lease", err)
+			}
+			if len(hf.swarm.releases) != 0 || len(hf.swarm.deletes) != 0 {
+				t.Errorf("a refused release reached the orchestrator: releases %+v, deletes %+v", hf.swarm.releases, hf.swarm.deletes)
+			}
+			if cmds := ssh.commands(); len(cmds) != 0 {
+				t.Errorf("a release zcp could not check read the container: %v", cmds)
+			}
+			if _, statErr := os.Stat(filepath.Join(hf.stateDir, "leases", "devpool-3.json")); statErr != nil {
+				t.Errorf("record gone after a refused release: %v", statErr)
+			}
+		})
+	}
 }
 
 // The guard reaches the container through its alias, so the alias file is

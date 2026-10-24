@@ -71,6 +71,8 @@ func TestLease_Integration_AcquireStatusRelease(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/container":
 			_, _ = w.Write([]byte(`[` + container + `}]`))
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/container/"):
+			_, _ = w.Write([]byte(container + `}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/container/acquire":
 			reserved = true
 			_, _ = w.Write([]byte(strings.Replace(container, `"lockState":""`, `"lockState":"reserved"`, 1) + `,"lease":"` + leaseIntLease + `"}`))
@@ -192,6 +194,8 @@ func TestLease_Integration_RolloutSkipsTheLease(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/container":
 			_, _ = w.Write([]byte(`[` + container + `}]`))
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/container/"):
+			_, _ = w.Write([]byte(container + `}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/container/acquire":
 			reserved = true
 			_, _ = w.Write([]byte(strings.Replace(container, `"lockState":""`, `"lockState":"reserved"`, 1) + `,"lease":"` + leaseIntLease + `"}`))
@@ -436,6 +440,8 @@ func groupPoolOrchestratorReleasing(t *testing.T, pool, number string) (target *
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/container":
 			_, _ = w.Write([]byte(`[` + container + `}]`))
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/container/"):
+			_, _ = w.Write([]byte(container + `}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/container/acquire":
 			reserved, n = true, n+1
 			_, _ = w.Write([]byte(strings.Replace(container, `"lockState":""`, `"lockState":"reserved"`, 1) + `,"lease":"` + lease + `"}`))

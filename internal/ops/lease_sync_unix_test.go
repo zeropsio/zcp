@@ -58,11 +58,13 @@ func newSyncClones(t *testing.T) *syncClones {
 	sc := &syncClones{origin: origin, mainSHA: mainSHA, dirs: map[string]string{}}
 	ssh := &localLeasesSSH{hosts: map[string]*localCheckoutSSH{}, unreachable: exitError(t, 255)}
 	gf := newGroupFixture(t)
-	for i, r := range []leaseRecord{
+	recs := []leaseRecord{
 		syncRecord(groupHQPool, "svc-hq", 3, syncNewBranch, "2026-10-24T10:00:00Z"),
 		syncRecord(groupWebPool, "svc-web", 7, syncNewBranch, "2026-10-24T10:00:01Z"),
 		syncRecord("apipool", "svc-api", 2, syncNewBranch, "2026-10-24T10:00:02Z"),
-	} {
+	}
+	holdSyncLeases(t, gf, recs)
+	for i, r := range recs {
 		dir := t.TempDir()
 		base := ""
 		if i > 0 {
