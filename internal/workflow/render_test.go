@@ -696,6 +696,47 @@ func TestRenderStatus_BlockersLineWhenPending(t *testing.T) {
 	}
 }
 
+// TestRenderStatus_BlockersLine_PoolPairStage_NamesThePlansDeploy: the
+// auto-close line of a pending stage whose pair's dev half is a pool names
+// what the plan names — the deploy from a held lease of the pool, else the
+// acquire of one — never a deploy of the stage with no source (PM-10).
+func TestRenderStatus_BlockersLine_PoolPairStage_NamesThePlansDeploy(t *testing.T) {
+	t.Parallel()
+	held := LeaseSnapshot{Alias: "apppool-4", Pool: "apppool", Branch: "feat-x", State: "held"}
+	cases := []struct {
+		name   string
+		leases *[]LeaseSnapshot
+		want   string
+	}{
+		{"a held lease", &[]LeaseSnapshot{held}, `Next: zerops_deploy sourceService="apppool-4" targetService="appstage"`},
+		{"no lease held", &[]LeaseSnapshot{}, `Next: zerops_lease action="acquire" pool="apppool"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			env := StateEnvelope{
+				Phase:       PhaseDevelopActive,
+				Services:    poolDevPairServices(topology.CloseModeAuto, topology.GitPushUnconfigured),
+				Leases:      tc.leases,
+				WorkSession: &WorkSessionSummary{Intent: "ship the change", Services: []string{"appstage"}},
+			}
+			out := RenderStatus(Response{Envelope: env})
+			var line string
+			for l := range strings.SplitSeq(out, "\n") {
+				if strings.Contains(l, "Auto-close blocked") {
+					line = l
+				}
+			}
+			if !strings.Contains(line, tc.want) {
+				t.Errorf("auto-close line %q, want it to name %s", line, tc.want)
+			}
+			if strings.Contains(line, `Next: zerops_deploy targetService="appstage"`) {
+				t.Errorf("auto-close line %q names a deploy of the stage with no source", line)
+			}
+		})
+	}
+}
+
 // A pool or Box is neither a bootstrapped runtime nor an adoption candidate:
 // its status line names the kind and carries no deployed/bootstrapped claim
 // and no zerops.yaml base-prefix hint (PS-1).

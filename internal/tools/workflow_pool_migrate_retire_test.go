@@ -812,11 +812,22 @@ func TestPoolMigrateRetire_DeleteNotTaken_CallAgain(t *testing.T) {
 // keyed by the pool as the retire leaves it.
 func (r *retireRig) seedRetireRecord(t *testing.T, phase string) {
 	t.Helper()
-	b, err := ops.BuildPoolMigrateBundle(context.Background(), r.ssh, ops.PoolMigrateBundleInput{
-		Dev: "appdev", Root: topology.CodeMountRoot, WorkDir: r.work, Path: poolRetireBundlePath(r.f.stateDir, "appdev"),
-	})
-	if err != nil {
-		t.Fatalf("seed bundle: %v", err)
+	r.seedRetireRecordBundle(t, phase, true)
+}
+
+// seedRetireRecordBundle is seedRetireRecord with the bundle or without one:
+// a record whose bundle was cut short, or never recorded, holds none.
+func (r *retireRig) seedRetireRecordBundle(t *testing.T, phase string, withBundle bool) {
+	t.Helper()
+	var b *ops.PoolMigrateBundle
+	if withBundle {
+		var err error
+		b, err = ops.BuildPoolMigrateBundle(context.Background(), r.ssh, ops.PoolMigrateBundleInput{
+			Dev: "appdev", Root: topology.CodeMountRoot, WorkDir: r.work, Path: poolRetireBundlePath(r.f.stateDir, "appdev"),
+		})
+		if err != nil {
+			t.Fatalf("seed bundle: %v", err)
+		}
 	}
 	rec := &poolRetireRecord{
 		Dev: "appdev", DevServiceID: "svc-dev", Pool: "apppool", PoolServiceID: "svc-pool", PoolSetup: "apppool",
@@ -873,6 +884,13 @@ func TestPoolMigrateRetire_ResumeTable(t *testing.T) {
 					if r.events.index("ssh fingerprint") < 0 {
 						t.Errorf("no fingerprint re-check before the delete: %q", r.events.all())
 					}
+					// From started, fenced or bundled the phase is done
+					// again — a new bundle; past bundled the recorded
+					// bundle stands, checked by the fingerprint.
+					rebundled := r.events.index("ssh bundle") >= 0
+					if want := phase == poolRetireStarted || phase == poolRetireFenced || phase == poolRetireBundled; rebundled != want {
+						t.Errorf("a new bundle on the resume from %s = %v, want %v: %q", phase, rebundled, want, r.events.all())
+					}
 				}
 				if isErr || out["step"] != "retired" || rec.Phase != poolRetireRetired {
 					t.Fatalf("out %v, record %+v; want retired", out, rec)
@@ -883,6 +901,114 @@ func TestPoolMigrateRetire_ResumeTable(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestPoolMigrateRetire_CutWhileBundling_ResumeBundlesAgain replays a retire
+// cut while its bundle ran: each phase is saved before its work, so the
+// record reads bundled and holds no bundle. The acknowledged resume does the
+// phase again — a new bundle — and retires the dev, never aborting on the
+// bundle the cut left unwritten (PM-7).
+func TestPoolMigrateRetire_CutWhileBundling_ResumeBundlesAgain(t *testing.T) {
+	t.Parallel()
+	first := newRetireRig(t, nil)
+	var cut []byte
+	first.ssh.onBundle = func() {
+		if cut == nil {
+			cut, _ = os.ReadFile(poolRetireRecordPath(first.f.stateDir, "appdev"))
+		}
+	}
+	if out, isErr := first.retire(t, retireInput(true, false)); isErr || out["step"] != "retired" {
+		t.Fatalf("retire = %v", out)
+	}
+	var atCut poolRetireRecord
+	if err := json.Unmarshal(cut, &atCut); err != nil {
+		t.Fatalf("the record while the bundle ran: %v\n%s", err, cut)
+	}
+	if atCut.Phase != poolRetireBundled || atCut.Bundle != nil {
+		t.Fatalf("the record while the bundle ran = phase %s, bundle %+v; want bundled and no bundle yet", atCut.Phase, atCut.Bundle)
+	}
+
+	r := newRetireRig(t, nil)
+	path := poolRetireRecordPath(r.f.stateDir, "appdev")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, cut, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, isErr := r.retire(t, retireInput(true, false))
+	rec := retireRecordOf(t, r.f.stateDir)
+	if isErr || out["step"] != "retired" || rec.Phase != poolRetireRetired {
+		t.Fatalf("resume = %v, record phase %s (%s); want retired from a new bundle", out, rec.Phase, rec.AbortReason)
+	}
+	if rec.Bundle == nil {
+		t.Fatal("the retired record names no bundle")
+	}
+	if info, err := os.Stat(rec.Bundle.Path); err != nil || info.Size() != rec.Bundle.Bytes {
+		t.Fatalf("bundle %s: %v %v, want the file the record names", rec.Bundle.Path, info, err)
+	}
+	order := []string{"unmount appdev", "ssh bundle", "ssh stream", "ssh fingerprint", "delete svc-dev"}
+	last := -1
+	for _, e := range order {
+		i := r.events.index(e)
+		if i < 0 || i < last {
+			t.Fatalf("events = %q, want %q in that order", r.events.all(), order)
+		}
+		last = i
+	}
+	if got := r.client.deletes(); !slices.Equal(got, []string{"svc-dev"}) {
+		t.Errorf("deletes = %q, want the recorded id once", got)
+	}
+}
+
+// TestPoolMigrateRetire_ResumeWithoutAVerifiedBundle_BundlesAgain: a resume
+// whose record holds no verified bundle — none recorded, or its file gone —
+// takes one again before anything is deleted, whatever phase the record
+// reads; nothing is deleted that no bundle on this container holds (PM-3,
+// PM-7).
+func TestPoolMigrateRetire_ResumeWithoutAVerifiedBundle_BundlesAgain(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		phase      string
+		withBundle bool // a bundle recorded, its file then removed
+	}{
+		{name: "bundled, none recorded", phase: poolRetireBundled},
+		{name: "rewritten, none recorded", phase: poolRetireRewritten},
+		{name: "deleting, none recorded", phase: poolRetireDeleting},
+		{name: "deleting, the recorded bundle's file gone", phase: poolRetireDeleting, withBundle: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			r := newRetireRig(t, nil)
+			r.seedRetireRecordBundle(t, tt.phase, tt.withBundle)
+			if tt.withBundle {
+				if err := os.Remove(poolRetireBundlePath(r.f.stateDir, "appdev")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			out, isErr := r.retire(t, retireInput(true, false))
+			rec := retireRecordOf(t, r.f.stateDir)
+			if isErr || out["step"] != "retired" || rec.Phase != poolRetireRetired {
+				t.Fatalf("resume = %v, record phase %s (%s); want retired from a new bundle", out, rec.Phase, rec.AbortReason)
+			}
+			bundled, deleted := r.events.index("ssh stream"), r.events.index("delete svc-dev")
+			if bundled < 0 || deleted < bundled {
+				t.Fatalf("events = %q, want a new bundle streamed before the delete", r.events.all())
+			}
+			if rec.Bundle == nil {
+				t.Fatal("the retired record names no bundle")
+			}
+			if info, err := os.Stat(rec.Bundle.Path); err != nil || info.Size() != rec.Bundle.Bytes {
+				t.Fatalf("bundle %s: %v %v, want the file the record names", rec.Bundle.Path, info, err)
+			}
+			meta, _ := workflow.FindServiceMeta(r.f.stateDir, "appstage")
+			if meta == nil || meta.Hostname != "apppool" || !meta.DevIsPool() {
+				t.Fatalf("the stage's pair = %+v, want it keyed by the pool", meta)
+			}
+		})
 	}
 }
 

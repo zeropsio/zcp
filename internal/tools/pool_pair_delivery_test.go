@@ -282,6 +282,49 @@ func TestDevelop_PoolDevHalf_NotARuntimeOfTheScope(t *testing.T) {
 	}
 }
 
+// TestDevelopBriefing_PoolPairStage_HeldLease_DeploysFromTheLease: with
+// zcp holding a lease of the pool, develop's start names the stage's deploy
+// from that lease — as action="status" does in the same session — never
+// leasing a container first (PM-10). The briefing reads the project's leases
+// as status does: here the pool's orchestrator cannot be asked (the pool
+// holds no bearer), so zcp's own record stands in for it.
+func TestDevelopBriefing_PoolPairStage_HeldLease_DeploysFromTheLease(t *testing.T) {
+	t.Parallel()
+	stateDir := poolDeliveryPair(t)
+	writePoolLeaseFile(t, stateDir)
+	engine := workflow.NewEngine(stateDir, workflow.EnvContainer, nil)
+	mock := platform.NewMock().WithServices(poolPairServices())
+	t.Cleanup(func() { _ = workflow.DeleteWorkSession(stateDir, os.Getpid()) })
+
+	result, _, err := handleDevelopBriefing(context.Background(), engine, mock, "proj-1",
+		WorkflowInput{Intent: "fix the header", Scope: []string{"appstage"}}, runtime.Info{InContainer: true}, nil)
+	if err != nil {
+		t.Fatalf("handleDevelopBriefing: %v", err)
+	}
+	text := extractText(result)
+	if result.IsError {
+		t.Fatalf("develop start refused: %s", text)
+	}
+	var primary string
+	for line := range strings.SplitSeq(text, "\n") {
+		if strings.Contains(line, "▸ Primary:") {
+			primary = line
+		}
+	}
+	for _, want := range []string{"zerops_deploy", `sourceService="` + testPool + `-3"`, `targetService="appstage"`} {
+		if !strings.Contains(primary, want) {
+			t.Errorf("primary %q does not name %s: the stage deploys from the held lease", primary, want)
+		}
+	}
+	if strings.Contains(text, "Lease a container") || strings.Contains(text, `zerops_lease action="acquire"`) {
+		t.Errorf("the briefing names a new lease while one is held:\n%s", text)
+	}
+	env, ok := workflow.ExtractEnvelope(text)
+	if !ok || !slices.ContainsFunc(env.LeaseList(), func(l workflow.LeaseSnapshot) bool { return l.Alias == testPool+"-3" }) {
+		t.Errorf("the briefing's envelope carries no lease %s-3: %+v", testPool, env.Leases)
+	}
+}
+
 // writePoolLeaseFile records lease apppool-3 of the pool apppool the way
 // zerops_lease does.
 func writePoolLeaseFile(t *testing.T, stateDir string) {
