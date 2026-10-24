@@ -630,10 +630,10 @@ func leaseContainerStillReserved(ctx context.Context, d LeaseDeps, rec leaseReco
 // status of a pool that is still there. Either way out, its orchestrator
 // holds nothing of a lease any more.
 func poolDeletionState(status string) string {
-	switch status {
-	case "DELETING", "SERVICE_DELETING":
+	switch {
+	case platform.ServiceDeleting(status):
 		return "is being deleted"
-	case "DELETED", "SERVICE_DELETED":
+	case platform.ServiceDeleted(status):
 		return "no longer exists"
 	}
 	return ""

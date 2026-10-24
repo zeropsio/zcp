@@ -848,10 +848,10 @@ func poolRetireDevState(ctx context.Context, client platform.Client, id string) 
 		}
 		return "", fmt.Errorf("read service %s: %w", id, err)
 	}
-	switch svc.Status {
-	case "DELETING", "SERVICE_DELETING":
+	switch {
+	case platform.ServiceDeleting(svc.Status):
 		return poolRetireDevDeleting, nil
-	case "DELETED":
+	case platform.ServiceDeleted(svc.Status):
 		return poolRetireDevGone, nil
 	}
 	return poolRetireDevLive, nil
