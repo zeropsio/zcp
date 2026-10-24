@@ -30,7 +30,10 @@ import (
 // in clear, no restart). zcp writes it to the pool with its own key, sensitive,
 // through the hand-rolled userData writer. The value stays inside zcp's
 // process: no result, error, log, state file or session command carries it;
-// zcp compares secrets by fingerprint only. Nothing restarts.
+// zcp compares secrets by fingerprint only. Nothing restarts. GIT_TOKEN is the
+// pair's, not the part's: a variant-B part runs on a dev service of its own,
+// but the pair is one repository whose one GIT_TOKEN sits on the service it
+// pushes from (GitTokenFrom), so every part's pool is offered that one.
 
 // PoolMigrateEnvInput is what the env step reads.
 type PoolMigrateEnvInput struct {
@@ -42,13 +45,32 @@ type PoolMigrateEnvInput struct {
 	// InMate: zcp runs inside a Mate, where the pool's GIT_TOKEN is the Mate
 	// credential an acquire puts there, never the dev's.
 	InMate bool
-	// CopyGitToken: the person said yes to the pool getting the dev service's
-	// GIT_TOKEN. Outside a Mate only.
+	// CopyGitToken: the person said yes to the pool getting the pair's
+	// GIT_TOKEN (gitTokenSource's). Outside a Mate only.
 	CopyGitToken bool
+	// GitTokenFrom is the service holding the pair's GIT_TOKEN — the dev half,
+	// which the pair pushes from — when it is not Dev: a variant-B part runs
+	// on a dev service of its own, whose env the pool takes, but the pair is
+	// one repository with one GIT_TOKEN. Zero means Dev.
+	GitTokenFrom platform.ServiceStack
 	// Origin is the dev service's origin, which the pool's leases default to;
 	// "" when zcp cannot name it.
 	Origin   string
 	StateDir string
+}
+
+// gitTokenElsewhere reports a pair whose GIT_TOKEN sits on another service
+// than the part's dev service.
+func (in PoolMigrateEnvInput) gitTokenElsewhere() bool {
+	return in.GitTokenFrom.ID != "" && in.GitTokenFrom.ID != in.Dev.ID
+}
+
+// gitTokenSource is the service whose GIT_TOKEN the pool is offered.
+func (in PoolMigrateEnvInput) gitTokenSource() platform.ServiceStack {
+	if in.gitTokenElsewhere() {
+		return in.GitTokenFrom
+	}
+	return in.Dev
 }
 
 // PoolMigrateEnv is the env step's state: read (ReadPoolMigrateEnv), or after
@@ -206,9 +228,13 @@ func poolEnvNeverCopied(key string) string {
 }
 
 // poolEnvSides is what both sides of the step read: the dev's user layer, the
-// pool's rows by kind, each stage's user keys and zcp's record of the pool.
+// pool's rows by kind, each stage's user keys, zcp's record of the pool and
+// the pair's GIT_TOKEN row where it sits on another service.
 type poolEnvSides struct {
-	dev        []platform.ServiceEnvVar
+	dev []platform.ServiceEnvVar
+	// gitSource is the pair's GIT_TOKEN row when it sits on another service
+	// than the part's dev service (gitTokenElsewhere), nil without one.
+	gitSource  *platform.ServiceEnvVar
 	poolUser   map[string]platform.ServiceEnvVar
 	poolYaml   map[string]bool
 	poolSystem map[string]bool
@@ -258,6 +284,18 @@ func readPoolEnvSides(ctx context.Context, client platform.Client, in PoolMigrat
 		}
 		sides.stages = append(sides.stages, poolEnvStage{name: stage.Name, keys: keys})
 	}
+	if in.gitTokenElsewhere() {
+		rows, err := FetchServiceUserEnvs(ctx, client, in.GitTokenFrom.ID)
+		if err != nil {
+			return nil, fmt.Errorf("read %s's env: %w", in.GitTokenFrom.Name, err)
+		}
+		for i := range rows {
+			if rows[i].Key == GitTokenEnvKey {
+				row := rows[i]
+				sides.gitSource = &row
+			}
+		}
+	}
 	if rec, found := readPoolEnvRecord(in.StateDir, in.Pool.Name); found && rec.PoolServiceID == in.Pool.ID {
 		sides.record = rec
 	}
@@ -274,17 +312,24 @@ func poolEnvSecret(row platform.ServiceEnvVar) bool { return row.Sensitive || ro
 type poolEnvPlan struct {
 	plain   []platform.ServiceEnvVar // copyable plain dev rows
 	secrets []platform.ServiceEnvVar // copyable secret dev rows
-	gitDev  *platform.ServiceEnvVar  // the dev's GIT_TOKEN, nil without one
+	gitDev  *platform.ServiceEnvVar  // the pair's GIT_TOKEN, nil without one
 	never   []PoolMigrateEnvSkip
 	warns   []string
 }
 
 func planPoolEnv(sides *poolEnvSides, in PoolMigrateEnvInput) poolEnvPlan {
 	var plan poolEnvPlan
+	if in.gitTokenElsewhere() {
+		// The part's own dev service holds no GIT_TOKEN of the pair's: one it
+		// holds is neither offered nor copied.
+		plan.gitDev = sides.gitSource
+	}
 	for i := range sides.dev {
 		row := sides.dev[i]
 		if row.Key == GitTokenEnvKey {
-			plan.gitDev = &row
+			if !in.gitTokenElsewhere() {
+				plan.gitDev = &row
+			}
 			continue
 		}
 		reason := poolEnvNeverCopied(row.Key)
@@ -405,9 +450,10 @@ func (sides *poolEnvSides) gitTokenZcpCopied(poolID string) (string, bool) {
 	return fp, true
 }
 
-// gitTokenState words a GIT_TOKEN state for the agent.
+// gitTokenState words a GIT_TOKEN state for the agent, naming the service
+// that holds the pair's GIT_TOKEN.
 func gitTokenState(state string, in PoolMigrateEnvInput) PoolMigrateGitToken {
-	pool, dev := in.Pool.Name, in.Dev.Name
+	pool, dev := in.Pool.Name, in.gitTokenSource().Name
 	var msg string
 	switch state {
 	case PoolGitTokenMateCredential:
@@ -546,7 +592,10 @@ type poolEnvStep struct {
 	rec     poolEnvRecord
 	values  map[string]string
 	readErr error
-	writes  []poolEnvWrite
+	// gitReadErr is why the pair's GIT_TOKEN could not be read on its own
+	// service, when that is not the part's dev service (gitTokenElsewhere).
+	gitReadErr error
+	writes     []poolEnvWrite
 }
 
 // planPlain decides each plain key from the API read alone.
@@ -562,22 +611,49 @@ func (s *poolEnvStep) planPlain(rows []platform.ServiceEnvVar) {
 }
 
 // readSecrets reads every secret to copy — and GIT_TOKEN after the person's
-// yes outside a Mate — in one fresh session on the dev.
+// yes outside a Mate — in one fresh session on the dev; the pair's GIT_TOKEN
+// on another service is read in a fresh session there, and a read of it that
+// does not answer fails the GIT_TOKEN alone.
 func (s *poolEnvStep) readSecrets(ctx context.Context, ssh SSHDeployer, plan poolEnvPlan) {
 	keys := make([]string, 0, len(plan.secrets)+1)
 	for _, row := range plan.secrets {
 		keys = append(keys, row.Key)
 	}
-	if s.copiesGitToken(plan.gitDev) {
+	gitToken := s.copiesGitToken(plan.gitDev)
+	if gitToken && !s.in.gitTokenElsewhere() {
 		keys = append(keys, GitTokenEnvKey)
 	}
-	if len(keys) == 0 {
+	if len(keys) > 0 {
+		s.values, s.readErr = readDevEnvValues(ctx, ssh, s.in.Dev.Name, keys)
+		if s.readErr != nil {
+			s.out.Warnings = append(s.out.Warnings, s.readErr.Error()+"; its secrets were not copied — call the step again.")
+		}
+	}
+	if !gitToken || !s.in.gitTokenElsewhere() {
 		return
 	}
-	s.values, s.readErr = readDevEnvValues(ctx, ssh, s.in.Dev.Name, keys)
-	if s.readErr != nil {
-		s.out.Warnings = append(s.out.Warnings, s.readErr.Error()+"; its secrets were not copied — call the step again.")
+	values, err := readDevEnvValues(ctx, ssh, s.in.GitTokenFrom.Name, []string{GitTokenEnvKey})
+	if err != nil {
+		s.gitReadErr = err
+		s.out.Warnings = append(s.out.Warnings, err.Error()+"; its GIT_TOKEN was not copied — call the step again with copyGitToken=true.")
+		return
 	}
+	if value, ok := values[GitTokenEnvKey]; ok {
+		if s.values == nil {
+			s.values = map[string]string{}
+		}
+		s.values[GitTokenEnvKey] = value
+	}
+	clear(values)
+}
+
+// readErrFor is why key could not be read, nil when it was: the pair's
+// GIT_TOKEN on another service has a read of its own.
+func (s *poolEnvStep) readErrFor(key string) error {
+	if key == GitTokenEnvKey && s.in.gitTokenElsewhere() {
+		return s.gitReadErr
+	}
+	return s.readErr
 }
 
 func (s *poolEnvStep) copiesGitToken(dev *platform.ServiceEnvVar) bool {
@@ -590,7 +666,11 @@ func (s *poolEnvStep) decideSecret(key string) (*poolEnvWrite, poolSecretDecisio
 	have, onPool := s.sides.poolUser[key]
 	value, read := s.values[key]
 	switch {
-	case s.readErr != nil:
+	case s.readErrFor(key) != nil:
+		// The record keeps what it knew of a key this run could not read.
+		if fp, kept := s.sides.record.Fingerprints[key]; kept {
+			s.rec.Fingerprints[key] = fp
+		}
 		return nil, poolSecretNotRead
 	case !read && onPool:
 		if fp, kept := s.sides.record.Fingerprints[key]; kept {

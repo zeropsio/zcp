@@ -996,7 +996,8 @@ func TestPoolMigrateEnv_GitTokenFromThePairsPushSource(t *testing.T) {
 				sourceRows = append(sourceRows, envMasked("w-git", GitTokenEnvKey))
 			}
 			f.build()
-			f.mock.WithServiceEnv(webdev.ID, sourceRows)
+			f.mock.WithServices([]platform.ServiceStack{f.in.Dev, f.in.Pool, envStageService(), webdev}).
+				WithServiceEnv(webdev.ID, sourceRows)
 			source := &envLocalSSH{env: map[string]string{GitTokenEnvKey: envGitToken}}
 			if tt.sourceFails {
 				source.err = errors.New("exit status 255")

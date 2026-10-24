@@ -593,10 +593,15 @@ func (dr *poolMigrateDevRead) answer(ctx context.Context, d poolMigrateDeps) (po
 	return dr.partsAnswer(answers, dr.current(answers)), nil
 }
 
-// envInput is what the env step reads for this call.
+// envInput is what the env step reads for this call: the env of the dev
+// service the part runs on, and the pair's GIT_TOKEN from its dev half — the
+// service the pair pushes from, where git-push-setup writes it — since every
+// part of a variant-B pair is one repository (docs/spec-workflows.md §13
+// PM-13).
 func (c *poolMigrateCall) envInput(d poolMigrateDeps, input WorkflowInput) ops.PoolMigrateEnvInput {
 	return ops.PoolMigrateEnvInput{
 		Dev:          c.partDev,
+		GitTokenFrom: c.dev,
 		Pool:         c.pool,
 		Stages:       c.stages,
 		InMate:       d.rt.MateEnabled,
