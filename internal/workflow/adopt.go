@@ -86,11 +86,12 @@ func InferServicePairing(candidates []AdoptCandidate, liveManaged map[string]boo
 	return targets
 }
 
-// ErrAdoptPairingChoice is returned by BootstrapCompleteAdoptPlan when exactly two
-// adoptable runtimes share a type — the canonical dev/stage shape ZCP refuses to
-// guess. The error message carries copy-pasteable standard-pair and independent-dev
-// plan templates so the agent resubmits one as an explicit plan in a single
-// round-trip (never the schema-fuzzing it would otherwise do).
+// ErrAdoptPairingChoice is returned by BootstrapCompleteAdoptPlan when two or
+// more scoped adoptable runtimes share a runtime base — the dev/stage shape ZCP
+// refuses to guess. The error message carries copy-pasteable dev/stage-pair and
+// independent-dev plan templates covering every scoped runtime, so the agent
+// resubmits one as an explicit plan in a single round-trip (never the
+// schema-fuzzing it would otherwise do).
 var ErrAdoptPairingChoice = errors.New("adopt: ambiguous dev/stage pairing")
 
 // BootstrapCompleteAdoptPlan derives and commits the discover-step plan for
@@ -99,12 +100,13 @@ var ErrAdoptPairingChoice = errors.New("adopt: ambiguous dev/stage pairing")
 // shared EXISTS dependency. Empty scope returns a candidate-list diagnostic
 // instead of treating the whole project as implicit scope.
 //
-// It refuses to guess a dev/stage pairing — exactly two same-type adoptable
-// runtimes return ErrAdoptPairingChoice with both plan templates instead of
-// silently committing two independent dev containers (which would drop the
-// dev→stage relationship later promote/launch flows depend on). One named
-// runtime, or multiple named runtimes of mixed types, commit frictionlessly as
-// independent dev containers.
+// It refuses to guess a dev/stage pairing — any two scoped adoptable runtimes
+// sharing a runtime base return ErrAdoptPairingChoice with plan templates
+// instead of silently committing independent dev containers (which would drop
+// the dev→stage relationship later promote/launch flows depend on). One named
+// runtime, or named runtimes of different bases, commit frictionlessly as
+// independent dev containers. A variant-B pair is derived with its stages
+// before the question is asked (adoptVariantB).
 func (e *Engine) BootstrapCompleteAdoptPlan(existing []platform.ServiceStack, scope []string, self runtime.Info, schemas *schema.Schemas, volumeSetups []AdoptVolumeSetup) (*BootstrapResponse, error) {
 	state, err := e.loadState()
 	if err != nil {
@@ -154,18 +156,12 @@ func (e *Engine) BootstrapCompleteAdoptPlan(existing []platform.ServiceStack, sc
 		}
 	}
 
-	// Pairing guard: two same-type adoptable runtimes are the canonical dev/stage
-	// shape. ZCP refuses to commit a guess — surface both plan shapes to choose.
-	// Compare CANONICAL BARE FORM, not the raw composite name: the common
-	// dev/stage pair is ubuntu/<rt> (dev) + alpine/<rt> (prod) — same bare type,
-	// different OS base. Raw equality missed it and silently committed two
-	// independent dev containers, which then dead-ended launch's git-push gate
-	// (Wave-1 finding). CanonicalBareForm keeps the version, so different
-	// versions (nodejs@22 vs nodejs@20) correctly stay unpaired. Honors the
-	// composite-aware invariant (CLAUDE.md).
-	if len(adoptable) == 2 &&
-		topology.CanonicalBareForm(typeByHost[adoptable[0]]) == topology.CanonicalBareForm(typeByHost[adoptable[1]]) {
-		return nil, adoptPairingChoice(adoptable[0], adoptable[1], typeByHost[adoptable[0]], typeByHost[adoptable[1]], deps)
+	// Pairing guard: any two adoptable runtimes sharing a runtime base may be a
+	// dev service and its stage. ZCP refuses to commit a guess — two independent
+	// dev services, or a stage recorded as a dev service of its own outside its
+	// pair (§8 E8) — and surfaces the plan shapes to choose from.
+	if err := adoptPairingQuestion(adoptable, typeByHost, deps, variantB); err != nil {
+		return nil, err
 	}
 
 	candidates := make([]AdoptCandidate, 0, len(adoptable)+len(deps))
@@ -195,7 +191,15 @@ func (e *Engine) BootstrapCompleteAdoptPlan(existing []platform.ServiceStack, sc
 
 	names := make([]string, 0, len(targets))
 	for _, tgt := range targets {
-		names = append(names, tgt.Runtime.DevHostname)
+		name := tgt.Runtime.DevHostname
+		if cv := tgt.Runtime.CodeVolume; cv != nil {
+			name += " (the code volume " + cv.Hostname + " shared with " + strings.Join(cv.DevServiceHostnames(), ", ")
+			if stages := tgt.Runtime.StageHostnames(); len(stages) > 0 {
+				name += "; stages " + strings.Join(stages, ", ")
+			}
+			name += ")"
+		}
+		names = append(names, name)
 	}
 	msg := "Auto-derived adoption plan from discovery: adopted " + strings.Join(names, ", ") + " (isExisting)"
 	if len(deps) > 0 {
@@ -277,6 +281,112 @@ func (e *Engine) aliveSessionIDs() map[string]bool {
 		}
 	}
 	return alive
+}
+
+// adoptPairingQuestion refuses the adoptable runtimes left for the ordinary
+// derivation when any two of them share a runtime base, compared in
+// canonical bare form: the common dev/stage pair is ubuntu/<rt> (dev) +
+// alpine/<rt> (prod) — same bare type, different OS base — while different
+// versions (nodejs@22 vs nodejs@20) stay apart. Exactly two runtimes get
+// adoptPairingChoice, more get adoptPairingChoices, each with plan templates
+// covering every runtime; a variant-B pair derived beside them is named, as
+// no plan can record it. Nil when no two share a base.
+func adoptPairingQuestion(adoptable []string, typeByHost map[string]string, deps []Dependency, variantB *BootstrapTarget) error {
+	bases := map[string]int{}
+	shared := false
+	for _, h := range adoptable {
+		base := topology.CanonicalBareForm(typeByHost[h])
+		bases[base]++
+		shared = shared || bases[base] > 1
+	}
+	if !shared {
+		return nil
+	}
+	var err error
+	if len(adoptable) == 2 {
+		err = adoptPairingChoice(adoptable[0], adoptable[1], typeByHost[adoptable[0]], typeByHost[adoptable[1]], deps)
+	} else {
+		err = adoptPairingChoices(adoptable, typeByHost, deps)
+	}
+	if variantB == nil {
+		return err
+	}
+	rt := variantB.Runtime
+	pair := append(append([]string{rt.DevHostname}, rt.CodeVolume.DevServiceHostnames()...), rt.StageHostnames()...)
+	return fmt.Errorf("%w\n\n%s and the code volume %s are one pair, which only a scope records, never a plan: adopt them first with scope=[%s] alone, then the runtimes above with the plan you choose",
+		err, strings.Join(pair, ", "), rt.CodeVolume.Hostname, quotedList(pair))
+}
+
+// adoptPairingChoices renders the ErrAdoptPairingChoice diagnostic for more
+// than two runtimes, some of which share a runtime base: two schema-valid,
+// copy-pasteable plan templates covering every runtime. The pairs template
+// pairs, within one base, each stage hostname with the runtime named like it
+// (`apistage` → `apidev` or `api`), and a base of exactly two runtimes named
+// alike by neither in discovery order; every other runtime is a dev
+// container of its own, as every runtime is in the independent template.
+func adoptPairingChoices(adoptable []string, typeByHost map[string]string, deps []Dependency) error {
+	stageOf := map[string]string{}
+	paired := map[string]bool{}
+	byBase := map[string][]string{}
+	var bases []string
+	for _, h := range adoptable {
+		base := topology.CanonicalBareForm(typeByHost[h])
+		if _, seen := byBase[base]; !seen {
+			bases = append(bases, base)
+		}
+		byBase[base] = append(byBase[base], h)
+	}
+	for _, base := range bases {
+		group := byBase[base]
+		for _, stage := range group {
+			if !IsStageHostname(stage) || paired[stage] {
+				continue
+			}
+			stem := strings.TrimSuffix(stage, stageHostnameSuffix)
+			for _, dev := range group {
+				if dev != stage && !paired[dev] && (dev == stem+devHostnameSuffix || dev == stem) {
+					stageOf[dev], paired[dev], paired[stage] = stage, true, true
+					break
+				}
+			}
+		}
+		if len(group) == 2 && !paired[group[0]] && !paired[group[1]] {
+			stageOf[group[0]], paired[group[0]], paired[group[1]] = group[1], true, true
+		}
+	}
+	var pairs, indep []BootstrapTarget
+	var shared []string
+	for _, base := range bases {
+		if group := byBase[base]; len(group) > 1 {
+			shared = append(shared, quotedList(group)+" share runtime base "+base)
+		}
+	}
+	for _, h := range adoptable {
+		indep = append(indep, BootstrapTarget{Runtime: RuntimeTarget{DevHostname: h, Type: typeByHost[h], BootstrapMode: topology.PlanModeDev, IsExisting: true}, Dependencies: deps})
+		if stage, ok := stageOf[h]; ok {
+			pairs = append(pairs, BootstrapTarget{Runtime: RuntimeTarget{DevHostname: h, ExplicitStage: stage, Type: typeByHost[h], BootstrapMode: topology.PlanModeStandard, IsExisting: true}, Dependencies: deps})
+			continue
+		}
+		if !paired[h] {
+			pairs = append(pairs, BootstrapTarget{Runtime: RuntimeTarget{DevHostname: h, Type: typeByHost[h], BootstrapMode: topology.PlanModeDev, IsExisting: true}, Dependencies: deps})
+		}
+	}
+	pairsJSON, perr := json.Marshal(pairs)
+	indepJSON, ierr := json.Marshal(indep)
+	if perr != nil || ierr != nil {
+		return fmt.Errorf("%w: %s — any two of one base may be a dev service and its stage, which ZCP will not guess; resubmit an explicit plan naming each pair (bootstrapMode=standard, stageHostname) and each independent dev container (bootstrapMode=dev), isExisting=true", ErrAdoptPairingChoice, strings.Join(shared, "; "))
+	}
+	return fmt.Errorf("%w: %s — any two of one base may be a dev service and its stage, which ZCP will not guess. Resubmit action=complete step=discover with ONE of these as an explicit plan, its pairs adjusted to what deploys to what:\n\n• dev/stage pairs (cross-deploy promote — each stage paired with the runtime named like it):\nplan=%s\n\n• independent dev containers:\nplan=%s",
+		ErrAdoptPairingChoice, strings.Join(shared, "; "), string(pairsJSON), string(indepJSON))
+}
+
+// quotedList is hostnames quoted and comma-separated.
+func quotedList(hosts []string) string {
+	quoted := make([]string, len(hosts))
+	for i, h := range hosts {
+		quoted[i] = fmt.Sprintf("%q", h)
+	}
+	return strings.Join(quoted, ", ")
 }
 
 // adoptPairingChoice renders the ErrAdoptPairingChoice diagnostic with two
@@ -362,8 +472,9 @@ func AdoptPair(stateDir string, target BootstrapTarget, date string) error {
 	return nil
 }
 
-// AdoptVolumeSetup is a dev setup of the repository's zerops.yaml that mounts
-// a local-storage volume (run.volume), in file order.
+// AdoptVolumeSetup is a setup of a repository's zerops.yaml that mounts a
+// local-storage volume of the project (run.volume), read through the scoped
+// runtimes holding that file, in file order.
 type AdoptVolumeSetup struct {
 	Setup     string
 	RunBase   string
@@ -372,25 +483,31 @@ type AdoptVolumeSetup struct {
 	// WorksIn says the setup's run works in MountPath rather than in /var/www
 	// (ops.ZeropsYmlEntry.WorksIn).
 	WorksIn bool
-	// Content is what each runtime finds at MountPath, by hostname
-	// (ops.CodeVolumeContent); a runtime absent from it proved nothing.
+	// Content is what each runtime holding the file finds at MountPath, by
+	// hostname, for the runtimes of RunBase (ops.CodeVolumeContent); a
+	// runtime absent from it proved nothing.
 	Content map[string]topology.VolumeContent
+	// FileSetups are every setup the zerops.yaml declaring this one declares —
+	// the repository's other setups, its stages' among them.
+	FileSetups []string
 }
 
 // adoptVariantB recognises a variant-B project (docs/spec-mate.md §2.8a.4a)
 // among the adoptable runtimes: several dev services of one repository
 // mounting one local-storage volume that already holds that repository are
 // one pair, recorded with its code volume again — a project whose record was
-// lost, which pool migration then moves onto one dev pool per part. A setup
-// that mounts the volume belongs to the one adoptable runtime of its
-// run.base; a setup no runtime matches uniquely leaves the topology alone.
-// The volume is a code volume only when proven: every setup works in the
-// mount, and every runtime finds this repository's checkout there. zcp sets
-// up no new code volume, so a volume holding nothing yet or an empty folder
-// — which adopting would make one, its first deploy filling it — is no code
-// volume, and neither is a data volume (a Laravel app and worker sharing
-// storage): those dev services adopt as separate services. It returns the
-// dev-mode target holding the code volume (nil when there is none) and the
+// lost, which pool migration then moves onto one dev pool per part. Each
+// setup that mounts the volume runs on one adoptable runtime
+// (adoptVolumeDevServices); a setup no runtime takes leaves the topology
+// alone. The volume is a code volume only when proven: every setup works in
+// the mount, and every one of those runtimes finds this repository's
+// checkout there. zcp sets up no new code volume, so a volume holding nothing
+// yet or an empty folder — which adopting would make one, its first deploy
+// filling it — is no code volume, and neither is a data volume (a Laravel app
+// and worker sharing storage): those dev services adopt as separate services.
+// The pair's stages are the adoptable stages of its repository
+// (adoptVariantBStages); with any it is a standard pair, else a dev one. It
+// returns the target holding the code volume (nil when there is none) and the
 // adoptable runtimes left for the ordinary derivation.
 func adoptVariantB(adoptable []string, typeByHost map[string]string, setups []AdoptVolumeSetup) (*BootstrapTarget, []string) {
 	byVolume := map[string][]AdoptVolumeSetup{}
@@ -406,49 +523,120 @@ func adoptVariantB(adoptable []string, typeByHost map[string]string, setups []Ad
 	}
 	for _, volume := range order {
 		mounts := byVolume[volume]
-		if len(mounts) < 2 || topology.CodeVolumeMountPathError(mounts[0].MountPath) != "" {
+		mountPath := mounts[0].MountPath
+		if len(mounts) < 2 || topology.CodeVolumeMountPathError(mountPath) != "" ||
+			slices.ContainsFunc(mounts, func(m AdoptVolumeSetup) bool { return m.MountPath != mountPath || !m.WorksIn }) {
 			continue
 		}
-		var hosts []string
-		var refs []topology.DevServiceRef
-		taken := map[string]bool{}
-		for _, m := range mounts {
-			host := ""
-			for _, h := range adoptable {
-				if taken[h] || topology.CanonicalBaseName(typeByHost[h]) != topology.CanonicalBaseName(m.RunBase) {
-					continue
-				}
-				if host != "" {
-					host = ""
-					break
-				}
-				host = h
-			}
-			if host == "" || m.MountPath != mounts[0].MountPath || !m.WorksIn || m.Content[host] != topology.VolumeCheckout {
-				hosts = nil
-				break
-			}
-			taken[host] = true
-			hosts = append(hosts, host)
-			refs = append(refs, topology.DevServiceRef{Hostname: host, SetupName: m.Setup})
-		}
-		if len(hosts) < 2 {
+		hosts := adoptVolumeDevServices(mounts, adoptable, typeByHost)
+		if hosts == nil {
 			continue
 		}
-		rest := make([]string, 0, len(adoptable))
+		refs := make([]topology.DevServiceRef, len(mounts))
+		for i, m := range mounts {
+			refs[i] = topology.DevServiceRef{Hostname: hosts[i], SetupName: m.Setup}
+		}
+		var rest []string
 		for _, h := range adoptable {
-			if !taken[h] {
+			if !slices.Contains(hosts, h) {
 				rest = append(rest, h)
 			}
 		}
-		return &BootstrapTarget{Runtime: RuntimeTarget{
+		stages, rest := adoptVariantBStages(rest, hosts, mounts)
+		rt := RuntimeTarget{
 			DevHostname:      hosts[0],
 			Type:             typeByHost[hosts[0]],
 			IsExisting:       true,
 			BootstrapMode:    topology.PlanModeDev,
 			PrimarySetupName: refs[0].SetupName,
-			CodeVolume:       &topology.CodeVolume{Hostname: volume, MountPath: mounts[0].MountPath, DevServices: refs[1:]},
-		}}, rest
+			CodeVolume:       &topology.CodeVolume{Hostname: volume, MountPath: mountPath, DevServices: refs[1:]},
+		}
+		switch {
+		case len(stages) == 1:
+			rt.BootstrapMode = topology.PlanModeStandard
+			rt.ExplicitStage, rt.StageSetupName = stages[0].Hostname, stages[0].SetupName
+		case len(stages) > 1:
+			rt.BootstrapMode = topology.PlanModeStandard
+			rt.Stages = stages
+		}
+		return &BootstrapTarget{Runtime: rt}, rest
 	}
 	return nil, adoptable
+}
+
+// adoptVolumeDevServices is the runtime each setup mounting a volume runs on,
+// in the setups' order: an adoptable runtime of the setup's run.base finding
+// the repository's checkout at the mount — the one named after the setup (the
+// platform's default setup of a service is its hostname), else the only one
+// no other setup takes. A base the stages or other runtimes share never makes
+// the choice ambiguous, as they hold no checkout there. Nil when a setup has
+// no such runtime, or more than one with none named after it.
+func adoptVolumeDevServices(mounts []AdoptVolumeSetup, adoptable []string, typeByHost map[string]string) []string {
+	hosts := make([]string, len(mounts))
+	taken := map[string]bool{}
+	holding := func(m AdoptVolumeSetup) []string {
+		var out []string
+		for _, h := range adoptable {
+			if !taken[h] && m.Content[h] == topology.VolumeCheckout &&
+				topology.CanonicalBaseName(typeByHost[h]) == topology.CanonicalBaseName(m.RunBase) {
+				out = append(out, h)
+			}
+		}
+		return out
+	}
+	for i, m := range mounts {
+		if slices.Contains(holding(m), m.Setup) {
+			hosts[i], taken[m.Setup] = m.Setup, true
+		}
+	}
+	for progress := true; progress; {
+		progress = false
+		for i, m := range mounts {
+			if hosts[i] != "" {
+				continue
+			}
+			if c := holding(m); len(c) == 1 {
+				hosts[i], taken[c[0]], progress = c[0], true, true
+			}
+		}
+	}
+	if slices.Contains(hosts, "") {
+		return nil
+	}
+	return hosts
+}
+
+// adoptVariantBStages takes the variant-B pair's stages from the adoptable
+// runtimes left: every stage hostname (IsStageHostname) named like one of the
+// pair's dev services (`apistage` → `apidev` or `api`, as the stand-up pairs
+// them), or one the repository's zerops.yaml declares a setup named after —
+// the setup it records then. The one named like the dev half comes first,
+// then the scope's order. It returns the stages and the runtimes left.
+func adoptVariantBStages(rest, devServices []string, mounts []AdoptVolumeSetup) ([]topology.StageRef, []string) {
+	declared := map[string]bool{}
+	for _, m := range mounts {
+		for _, f := range m.FileSetups {
+			declared[f] = true
+		}
+	}
+	var stages []topology.StageRef
+	var left []string
+	for _, h := range rest {
+		stem := strings.TrimSuffix(h, stageHostnameSuffix)
+		if !IsStageHostname(h) || !declared[h] && !slices.Contains(devServices, stem+devHostnameSuffix) && !slices.Contains(devServices, stem) {
+			left = append(left, h)
+			continue
+		}
+		ref := topology.StageRef{Hostname: h}
+		if declared[h] {
+			ref.SetupName = h
+		}
+		stages = append(stages, ref)
+	}
+	named := strings.TrimSuffix(devServices[0], devHostnameSuffix) + stageHostnameSuffix
+	if i := slices.IndexFunc(stages, func(s topology.StageRef) bool { return s.Hostname == named }); i > 0 {
+		first := stages[i]
+		stages = append([]topology.StageRef{first}, slices.Delete(stages, i, i+1)...)
+	}
+	return stages, left
 }
