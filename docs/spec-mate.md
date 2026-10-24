@@ -1636,7 +1636,7 @@ a span attribute.
   state (the "stopped" against "not connected" reason of §3.12 needs `READ_ONLY`; `NO_ACCESS` would
   not read it). It also reads every non-sensitive variable of the organisation in clear, which is why
   §3.11's Chief overview is an allowlist and why a project key must be a sensitive variable.
-  Ends when replaced or when Zerops refuses it (deleted, or its creator removed with it).
+  Ends when replaced or when Zerops refuses it (deleted; §3.10 says what people see).
 - **The project key, `ZCP_API_KEY`** — Zerops' own integration token on the project's `zcp` service,
   a sensitive service variable (`envIsolation: service`, §10.7). Held by Zerops and the `zcp`
   container; zcp and the Mate's server read it there. Lives as the platform keeps it; a regenerate
@@ -1695,10 +1695,11 @@ a span attribute.
 Every call HQ makes to Zerops goes through one named gate with a rate and concurrency budget:
 Zerops does not answer `429`, it queues, and an unbounded storm turns into "Zerops unavailable" for
 every organisation. Key resolutions for new hashes, background verifications of cached entries,
-organisation reads and sign-in identity reads all queue there. The organisation read's interval is
-whatever the budget leaves after sign-in-driven reads, never a fixed short period: a person's
-sign-in refreshes their organisation's view, and a removal made through HQ refreshes that
-organisation's view at once.
+organisation reads and sign-in identity reads all queue there. HQ reads each started organisation
+again at least every 5 min (HQ's launch environment) — the ceiling the gate's budget is sized to —
+and sooner as the budget allows; a person's sign-in refreshes their organisation's view, and a
+removal made through HQ refreshes it at once. A removal made in Zerops therefore reaches every Mate
+within that ceiling, and wherever the GUI explains a removal it shows the view's age.
 
 ### 3.5 A Mate starts and links
 
@@ -1738,7 +1739,9 @@ sequenceDiagram
   treats `superseded` as expected, never as a failure that triggers backoff. Links are held by HQ's
   leader only; no registry spans instances.
 - Liveness is the connection: a transport ping at HQ's period (mate-hq `spec/protocol.md`, Mate
-  link). HQ writes only connect and disconnect transitions. A Mate reconnects with random backoff.
+  link). HQ writes only connect and disconnect transitions; a new leader marks every link
+  disconnected at its start, so a crashed leader leaves no Mate reading "connected", and each Mate's
+  reconnect marks it connected again. A Mate reconnects with random backoff.
   No periodic re-proof: it would couple every Mate's availability to the Zerops API and expire the
   fleet at once.
 - On every link HQ sends the Mate's state, then the full access snapshot, then versioned deltas
@@ -1832,12 +1835,16 @@ sequenceDiagram
 
 - **The access list.** HQ computes, per Mate, whom the project opens for and whom it lists, by the
   role function (§10.3) over its organisation view, and pushes it down the link: a full snapshot on
-  every connect, then deltas each carrying a version; the Mate discards anything older than its
-  snapshot. The Mate never reads Zerops for access and never runs the role function.
+  every connect, then deltas each carrying a version. A full snapshot always resets the Mate's
+  baseline, whatever its version (a redeployed HQ numbers afresh); only deltas are compared by
+  version, and one not above the last is discarded. Every frame carries the time of the
+  organisation view it was computed from, and HQ sends one after every fresh view, changed or not.
+  The Mate never reads Zerops for access and never runs the role function.
 - **Role change and removal.** On a new list the Mate re-evaluates every connection: a person whose
   role narrowed keeps the connection at the new role; a person no longer open is disconnected. A
   removal made through HQ refreshes that organisation's view at once; one made in Zerops arrives with
-  the next organisation read (§3.4) or the next sign-in of anyone in that organisation.
+  the next organisation read, within its 5 min ceiling (§3.4), or sooner with the next sign-in of
+  anyone in that organisation.
 - **Sign-out.** HQ revokes the HQ session and tells every Mate to close each connection carrying
   that session id: all tabs of that browser, whenever they opened, since the id survives renewals;
   the person's other devices stay.
@@ -1846,17 +1853,26 @@ sequenceDiagram
 
 ### 3.10 When something fails
 
-- **Link down — the 15 min cap.** No tickets, so nobody new. Connected people stay at their last
-  known role for at most 15 min counted from the last live link (longer than an HQ deploy); past it
-  the Mate closes every person connection it can no longer vouch for — all of them. A removed member
-  never stays for long after a flap.
+- **Stale access — the 15 min cap.** Connected people stay at their last known role for at most
+  15 min counted from the organisation view the Mate's latest access list was computed from (each
+  frame carries its time, §3.9); past it the Mate closes every person connection it can no longer
+  vouch for — all of them. HQ sends a list from a fresh view at least every 5 min (§3.4), so the cap
+  is reached only while the link is down (no tickets either, so nobody new), Zerops does not answer
+  HQ, or HQ can no longer read the organisation. 15 min outlasts an HQ deploy; a removed member never
+  stays for long after a flap.
 - **HQ deploy or restart.** HQ's leader goes away (`1001`), every link and person socket closes and
   reconnects with random backoff to the new leader; known keys link from the hash cache without a
   Zerops call; each link gets a fresh snapshot. Opening a Mate (a new ticket) waits for the deploy;
-  open Mate connections stay within the cap. A follower asked for a ticket answers "connecting",
-  never a `5xx`.
+  open Mate connections stay within the cap. A follower asked for a ticket answers `503 not_active`,
+  which the GUI shows as connecting. The new leader marks every link disconnected at its start
+  (§3.5).
 - **Zerops outage.** Known Mates link from the cache; unknown ones show "connecting". Sign-in waits
-  for Zerops. Access decisions follow HQ's outage window (HQ `spec/protocol.md`).
+  for Zerops. Access decisions follow HQ's outage window (HQ `spec/protocol.md`); an outage longer
+  than the cap closes open Mate connections, since no fresh view reaches them.
+- **Organisation key refused.** HQ can no longer read the organisation: its view stops refreshing,
+  every Mate's access list ages toward the cap, and HQ issues no tickets. An Owner or Admin sees a
+  prompt to sign in again to restart the organisation (that sign-in hands HQ a new key, §3.7);
+  everyone else sees that an Owner or Admin must.
 - **Project deleted.** The container dies with it and the link drops by transport. HQ's organisation
   read notices the project gone and drops the key entry and the Mate's Git credential; until then the
   Mate reads "not connected since T".
@@ -1969,6 +1985,8 @@ To verify live before building on them:
   status for a person.
 - The Mate's server sees a regenerated key without a container restart.
 - `/user/info` and the own record for a key whose project was deleted.
+- Whether removing the member who created an integration token ends the token with them (the
+  organisation's key included).
 - About 10 000 idle WebSockets through the balancer to one HQ container.
 - Whether a project can move between organisations (a question to Zerops).
 - Whether anything but the hosted web origin connects to a Mate's WebSocket once the container
@@ -2007,10 +2025,13 @@ To verify live before building on them:
 | TC-6 | HQ returns a ticket to the browser only after the Mate acknowledged it; a ticket opens one connection once within 60 s and carries no role. Test to be written (HQ, Mate server). |
 | TC-7 | The Mate takes every connection's role from the latest access list: a full snapshot per link, older deltas discarded, a narrowed role applied and a removed person disconnected. Test to be written (Mate server). |
 | TC-8 | Sign-out closes every connection carrying that HQ session id and no other. Test to be written (Mate server). |
-| TC-9 | Past 15 min from the last live link the Mate closes every person connection. Test to be written (Mate server, injected clock). |
+| TC-9 | Past the 15 min cap (TC-13) the Mate closes every person connection. Test to be written (Mate server, injected clock). |
 | TC-10 | The dev service's git presents only the Mate's Git credential, which pushes only the project's change branches; the project key is never written into the dev service. Test to be written (zcp wiring, HQ git). |
 | TC-11 | The Chief's reads answer only the allowlisted overview, only while the mark names the caller's project. Test to be written (HQ). |
 | TC-12 | An HQ session keeps its id across renewals, and sign-out closes a Mate connection opened before the last renewal. Test to be written (HQ sign-in, Mate server). |
+| TC-13 | The Mate's 15 min cap counts from the organisation view its latest access list was computed from, not from the link. Test to be written (Mate server, injected clock). |
+| TC-14 | A full access frame resets the Mate's baseline whatever its version; only deltas are compared by version. Test to be written (Mate server). |
+| TC-15 | A new HQ leader marks every link disconnected at its start. Test to be written (HQ link). |
 
 ---
 
