@@ -186,7 +186,10 @@ func resolveLeaseRepo(stateDir, pool, repo string) (cloneURL string, becomesDefa
 // (checkoutBase). A base origin does not have fails the command naming it:
 // the branch is never cut from another commit than its group's. Files the
 // image left that the branch does not track are removed; ignored files stay
-// (never clean -x). For an https origin the repository keeps the same helper
+// (never clean -x). Before any of it the checkout settles a clone zcp started
+// while the container was warm (leaseWarmCheckoutSteps, DP-32): it takes a
+// finished one of repo, so the fetch and the checkout move only what changed,
+// and removes any other. For an https origin the repository keeps the same helper
 // (leaseCredentialHelperConfig), so the agent's own push authenticates the
 // same way. hqURL is the Mate's HQ, "" on a container not enrolled with one: a
 // repository on it is fetched as HQ's git user (leaseCredentialHelperFor).
@@ -199,8 +202,11 @@ func leaseCheckoutCommand(workDir, repo, branch, base, hqURL string) string {
 			q("the branch's base commit "+base+" is not on origin") + " >&2; exit 3; }; } && " +
 			"git checkout -q -f -B " + q(branch) + " --no-track " + q(base) + " && echo " + q(leaseBaseMarker+base)
 	}
+	lockWarm, settleWarm := leaseWarmCheckoutSteps(repo)
 	steps := []string{
 		"cd " + q(workDir),
+		lockWarm,
+		settleWarm,
 		"{ [ -d .git ] || git init -q; }",
 		"{ git remote add origin " + q(repo) + " 2>/dev/null || git remote set-url origin " + q(repo) + "; }",
 		"GIT_TERMINAL_PROMPT=0 git -c credential.helper= -c credential.helper=" + q(leaseCredentialHelperFor(repo, hqURL)) + " fetch -q --prune origin",
@@ -271,11 +277,14 @@ func (d LeaseDeps) hqAddress() string {
 }
 
 // leaseCheckedOut is what a checkout answers: the main commit it cut a new
-// branch from ("" when it tracked the branch origin has) and the container's
-// stable number (0 when its session had none).
+// branch from ("" when it tracked the branch origin has), the container's
+// stable number (0 when its session had none), and what it did with a clone
+// zcp started while the container was warm (checkoutWarm: used, discarded, ""
+// for none).
 type leaseCheckedOut struct {
 	base         string
 	stableNumber int
+	warm         string
 }
 
 // checkoutLease puts the leased container's /var/www on the branch, a new one
@@ -288,7 +297,7 @@ func checkoutLease(ctx context.Context, d LeaseDeps, rec leaseRecord, repo, bran
 	out, err := d.SSH.ExecSSH(ctx, rec.alias(), leaseCheckoutCommand(leaseWorkDir, repo, branch, base, hqURL))
 	if err == nil {
 		cut, _ := checkoutBase(string(out))
-		return leaseCheckedOut{base: cut, stableNumber: checkoutSlot(string(out))}, nil
+		return leaseCheckedOut{base: cut, stableNumber: checkoutSlot(string(out)), warm: checkoutWarm(string(out))}, nil
 	}
 	code, suggestion := classifyCheckoutFailure(err, IsHQRemote(repo, hqURL))
 	pe := platform.NewPlatformError(code,
@@ -348,6 +357,10 @@ func classifyCheckoutFailure(err error, onHQ bool) (code, suggestion string) {
 		}
 		return platform.ErrGitTokenInvalid,
 			"The remote refused the pool's GIT_TOKEN (bad, expired or without access to this repository)"
+	}
+	if strings.Contains(out, "while it was warm") {
+		return platform.ErrSSHDeployFailed,
+			"A clone zcp started in the container while it was warm would not stop or could not be removed, so nothing was checked out on top of it. The container went back with a reset, which takes the clone away: acquire again"
 	}
 	if exitStatus(err) == leaseSSHUnreachableExit {
 		return platform.ErrSSHDeployFailed,

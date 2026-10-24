@@ -106,7 +106,7 @@ func storePoolCredential(stateDir, pool string, rec poolCredentialRecord) error 
 	if err != nil {
 		return fmt.Errorf("marshal: %w", err)
 	}
-	if err := atomicWriteFile(poolCredentialPath(stateDir, pool), data, 0o600); err != nil {
+	if err := atomicWriteFile(poolCredentialPath(stateDir, pool), data); err != nil {
 		return fmt.Errorf("pool credential record %s: %w", pool, err)
 	}
 	return nil

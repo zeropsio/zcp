@@ -2,10 +2,12 @@
 // (docs/spec-workflows.md §8 DP-27): a release keeps its container as the warm
 // one or removes it with its own lease, an acquire that takes the warm one
 // has another prepared in the background, and status reports each pool's
-// warm containers.
+// warm containers; the warm container gets the pool's repository cloned into
+// it (DP-32).
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -272,5 +274,70 @@ func TestLeaseTool_Acquire_TakesTheWarmOne_PreparesAnother(t *testing.T) {
 	}
 	if len(auth) != 1 || auth[0] != "Bearer "+leaseTestToken+"|" {
 		t.Errorf("create headers = %q, want the bearer and no lease", auth)
+	}
+}
+
+// warmCloneHostSSH answers a warm clone's launch started, recording the host
+// it went to, and every other command with nothing.
+type warmCloneHostSSH struct {
+	mu       sync.Mutex
+	launches []string // "<host> <command>"
+}
+
+func (s *warmCloneHostSSH) ExecSSH(_ context.Context, host, command string) ([]byte, error) {
+	if !strings.Contains(command, "@@zcp-warm started") {
+		return nil, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.launches = append(s.launches, host+" "+command)
+	return []byte("@@zcp-warm started\n"), nil
+}
+
+func (s *warmCloneHostSSH) ExecSSHBackground(ctx context.Context, host, command string, _ time.Duration) ([]byte, error) {
+	return s.ExecSSH(ctx, host, command)
+}
+
+// TestLeaseTool_Acquire_NewWarmContainerGetsTheRepository: the warm container
+// the background create makes after an acquire gets the clone of the
+// repository the acquire checked out, over ssh to its own hostname, and
+// status reports it started there; no result carries a secret (DP-32).
+func TestLeaseTool_Acquire_NewWarmContainerGetsTheRepository(t *testing.T) {
+	t.Parallel()
+	orch := &warmPoolOrchestrator{max: 3}
+	orch.add(1)
+	ssh := &warmCloneHostSSH{}
+	srv, _ := leaseToolServerSSH(t, orch, ssh)
+
+	res := callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo, "branch": "feat-a"})
+	if text := getTextContent(t, res); res.IsError {
+		t.Fatalf("acquire: %s", text)
+	}
+
+	var warm ops.LeasePoolWarm
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		text := getTextContent(t, callTool(t, srv, "zerops_lease", map[string]any{"action": "status"}))
+		if strings.Contains(text, leaseTestToken) {
+			t.Fatalf("status carries the pool's bearer:\n%s", text)
+		}
+		got := warmLeaseResultOf(t, text)
+		if len(got.Warm) == 1 && got.Warm[0].Clone != nil {
+			warm = got.Warm[0]
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("status never reported the warm clone: %+v", got.Warm)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if warm.Clone.Outcome != ops.LeaseWarmCloneStarted || warm.Clone.Container != "node-id-2.runtime.devpool.zerops" {
+		t.Errorf("clone = %+v, want started in the created node-id-2", warm.Clone)
+	}
+	ssh.mu.Lock()
+	launches := append([]string(nil), ssh.launches...)
+	ssh.mu.Unlock()
+	if len(launches) != 1 || !strings.HasPrefix(launches[0], "node-id-2.runtime.devpool.zerops ") || !strings.Contains(launches[0], leaseTestRepo) {
+		t.Errorf("launches = %q, want one to node-id-2 cloning the acquired repository", launches)
 	}
 }

@@ -138,6 +138,13 @@ func LeaseAcquireGroupChange(ctx context.Context, d LeaseDeps, pools []string, r
 	if failed() {
 		return LeaseChange{}, groupRefusal(ctx, d, members)
 	}
+	if d.Warm != nil {
+		// The repository a pool's warm containers get is the one its last
+		// lease checked out, as given (DP-32), recorded before the top-up.
+		for _, m := range fresh {
+			_ = storeWarmCloneRepo(d.StateDir, m.pool, repoURL)
+		}
+	}
 	// Every member holds the branch: a concurrent acquire of these keys now
 	// finds them, while the prepare and the supervisor run.
 	unlock()
@@ -470,6 +477,9 @@ func checkoutMembers(ctx context.Context, d LeaseDeps, fresh []*groupMember, rep
 			m.err = abandonLease(ctx, d, m.rec, err)
 			m.reserved = false
 			return ""
+		}
+		if got.warm == leaseWarmDiscarded {
+			m.view.Note = joinNotes(m.view.Note, discardedWarmNote)
 		}
 		if got.base != "" || got.stableNumber != 0 {
 			// Recorded before the keys are let go and before any rewire, so

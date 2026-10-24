@@ -1036,7 +1036,7 @@ func savePoolEnvRecord(stateDir, pool string, rec poolEnvRecord) error {
 	if err != nil {
 		return fmt.Errorf("marshal: %w", err)
 	}
-	if err := atomicWriteFile(path, data, 0o600); err != nil {
+	if err := atomicWriteFile(path, data); err != nil {
 		return fmt.Errorf("pool env record %s: %w", pool, err)
 	}
 	return nil
