@@ -11,6 +11,8 @@ import (
 	"context"
 	"errors"
 	"maps"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -570,5 +572,38 @@ func TestLeaseAcquire_JoiningGroup_SupervisorWithoutEnv_NotedNotSent(t *testing.
 		if !strings.Contains(r.Note, want) {
 			t.Errorf("rewire note %q lacks %q", r.Note, want)
 		}
+	}
+}
+
+// TestLeaseRelease_ReleasedButRecordKept_NoHandBack: a release that fails
+// after the orchestrator let the container go — the record could not be
+// removed — must not hand the siblings the overlay back: the pool may give
+// that container to its next holder. zcp asks the orchestrator first, and the
+// refusal says the siblings stay without the lease.
+func TestLeaseRelease_ReleasedButRecordKept_NoHandBack(t *testing.T) {
+	t.Parallel()
+	if os.Geteuid() <= 0 {
+		t.Skip("needs a user whose writes a directory's mode can refuse")
+	}
+	rf := newRewireFixture(t)
+	rf.acquire(t, groupHQPool, groupWebPool)
+	leases := filepath.Join(rf.stateDir, "leases")
+	t.Cleanup(func() { _ = os.Chmod(leases, 0o700) })
+	rf.onHQRelease(func() {
+		if err := os.Chmod(leases, 0o500); err != nil {
+			t.Error(err)
+		}
+	})
+
+	_, err := LeaseReleaseChange(context.Background(), rf.deps, "hqpool-3", true)
+
+	if err == nil {
+		t.Fatal("want the failure to remove the record")
+	}
+	if got, want := rf.web.Overlay(), map[string]string{"WEB_HOST": rewireWebHost}; !maps.Equal(got, want) {
+		t.Errorf("webpool-7's overlay = %v, want %v: hqpool-3's container is no longer reserved", got, want)
+	}
+	if !strings.Contains(err.Error(), "webpool-7") || !strings.Contains(err.Error(), "no longer reserve") {
+		t.Errorf("error %q should say webpool-7 stays without hqpool-3, whose container is no longer reserved", err)
 	}
 }
