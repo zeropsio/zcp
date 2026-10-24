@@ -94,6 +94,7 @@ func TestAnnotations_AllToolsHaveTitleAndAnnotations(t *testing.T) {
 		{name: "zerops_dev_server", title: "Manage dev server lifecycle", idempotent: true, destructive: boolPtr(false)},
 		{name: "zerops_deploy_batch", title: "Deploy batch — parallel deploys", destructive: boolPtr(true)},
 		{name: "zerops_lease", title: "Lease a pool container", destructive: boolPtr(true)},
+		{name: "zerops_box", title: "Set up a Zerops Box", idempotent: true, destructive: boolPtr(false)},
 
 		// Knowledge / workflow-adjacent
 		{name: "zerops_preprocess", title: "Expand Zerops preprocessor expressions", readOnly: true},
@@ -250,6 +251,7 @@ func TestAnnotations_DescriptionKeywords(t *testing.T) {
 		{name: "zerops_verify", keywords: []string{"health", "pass", "fail", "info"}},
 		{name: "zerops_process", keywords: []string{"wait", "cancel", "status"}},
 		{name: "zerops_export", keywords: []string{"export", "yaml", "service"}},
+		{name: "zerops_box", keywords: []string{"setup", "status", "base", "domain", "zerops_import"}},
 		// E2E F15: an agent asked to carry a scale into the group recipe read
 		// group-recipe as tiers-only and called the change blocked.
 		{name: "zerops_workflow", keywords: []string{`action="group-recipe" scaling=`, `action="mac-pair"`}},

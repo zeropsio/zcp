@@ -14,7 +14,7 @@ func TestMutatingToolNames_MatchesKnownMutatingSet(t *testing.T) {
 	want := []string{
 		"zerops_process", "zerops_manage", "zerops_scale", "zerops_delete",
 		"zerops_subdomain", "zerops_deploy", "zerops_env", "zerops_import",
-		"zerops_mount", "zerops_dev_server", "zerops_deploy_batch", "zerops_lease",
+		"zerops_mount", "zerops_dev_server", "zerops_deploy_batch", "zerops_lease", "zerops_box",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("MutatingToolNames() = %v (%d), want exactly %v (%d)", got, len(got), want, len(want))
