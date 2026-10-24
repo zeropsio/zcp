@@ -389,7 +389,7 @@ func (w *LeaseWarm) launchClone(ctx context.Context, d LeaseDeps, rp *resolvedPo
 	case warmLaunchStarted:
 		out.Outcome = LeaseWarmCloneStarted
 	case warmLaunchPresent:
-		out.Outcome, out.Note = LeaseWarmCloneSkipped, "the container's /var/www already holds a repository"
+		out.Outcome, out.Note = LeaseWarmCloneSkipped, "the container's /var/www already holds a repository (a clone zcp started there before, or a checkout)"
 	case warmLaunchTools:
 		out.Outcome, out.Note = LeaseWarmCloneSkipped, "the pool's image lacks git, flock or setsid, which the clone needs"
 	default:
