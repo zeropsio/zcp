@@ -1318,6 +1318,15 @@ CodeVolume *CodeVolume `json:"codeVolume,omitempty"`
   `TestCodeVolume_OnlyAnEmptyVolumeIsFilledAndOnlyThisRepositoryCountsAsItsCheckout`).
 - Stand-up builds every stage of a pair, variant A or B, each cross-deployed from the dev half with
   its own setup (`TestStandup_DeploysEveryStageOfAPair`).
+- A pool migration clears `codeVolume` (docs/spec-workflows.md §13 PM-13). A variant-B pair moves
+  one pool per part; its census and bundle read the volume's checkout. Its retire deletes every dev
+  service — each delete keeps the volume and its files — then the volume last, the only step that
+  loses the checkout; the platform refuses that delete while any service still mounts the volume.
+  `codeVolume` rides the pool-keyed pair until the volume reads gone, then leaves it, so no migrated
+  pair names a code volume. Once every variant-B pair has migrated, nothing reads `codeVolume`, which
+  is what p4-remove-volume waits for to take variant B out
+  (`TestPoolMigrateRetire_VariantB_DeletesEveryDevServiceThenTheVolumeLast`,
+  `TestPoolMigrateRetire_VariantB_VolumeStillMounted_KeepsTheCodeVolume`).
 
 #### 2.8a.5 Tier: hostname → `zeropsSetup`
 
