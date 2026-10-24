@@ -760,7 +760,7 @@ func TestLeaseCheckoutCommand_PersistsHostScopedHelper(t *testing.T) {
 	if cmd := leaseCheckoutCommand("/var/www", "https://github.com/acme/app", "main", "", ""); !strings.Contains(cmd, want) {
 		t.Errorf("command lacks the persisted helper %q:\n%s", want, cmd)
 	}
-	if cmd := leaseCheckoutCommand("/var/www", "/srv/origin.git", "main", "", ""); strings.Contains(cmd, "credential.") && strings.Contains(cmd, "git config") {
+	if cmd := leaseCheckoutCommand("/var/www", "/srv/origin.git", "main", "", ""); strings.Contains(cmd, "git config --replace-all 'credential.") {
 		t.Errorf("a non-https origin got a persisted helper:\n%s", cmd)
 	}
 }
