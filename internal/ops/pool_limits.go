@@ -270,6 +270,9 @@ type LeasePoolUnread struct {
 type LeaseStatusView struct {
 	Leases []LeaseView
 	Unread []LeasePoolUnread
+	// Warm is each pool's warm containers, for a zcp under the warm policy
+	// (DP-27); nil without it.
+	Warm []LeasePoolWarm
 }
 
 // unverifiedViews are zcp's records of a pool its orchestrator could not

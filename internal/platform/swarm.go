@@ -57,6 +57,10 @@ type SwarmContainer struct {
 	Dirty            bool   `json:"dirty"`
 	UnreachableSince string `json:"unreachableSince,omitempty"`
 	Created          string `json:"created,omitempty"`
+	// Snapshots is how many snapshots the container has. Only a read by id
+	// (Container) counts them: a list omits the field and a create answers it
+	// null, so both read 0 here (live, 2026-10-23).
+	Snapshots int `json:"snapshots,omitempty"`
 }
 
 // SwarmPool is the limits of a pool (GET /pool).
@@ -204,6 +208,37 @@ func (c *SwarmClient) Containers(ctx context.Context) ([]SwarmContainer, error) 
 	return list, nil
 }
 
+// Container reads one container by id (GET /container/{id}) — the one read
+// that counts its snapshots.
+func (c *SwarmClient) Container(ctx context.Context, id string) (SwarmContainer, error) {
+	var out SwarmContainer
+	if err := c.do(ctx, http.MethodGet, "/container/"+url.PathEscape(id), nil, "", &out); err != nil {
+		return SwarmContainer{}, fmt.Errorf("swarm container: %w", err)
+	}
+	return out, nil
+}
+
+// Create creates count containers (POST /container {"count":n}) and answers
+// once they exist — about 16 s each on a container pool (live, 2026-10-23),
+// minutes on a VM pool — each with its zerops-primary snapshot. Meanwhile an
+// acquire that finds no other free container is refused containers-preparing,
+// and one can take a container this call creates before the call answers: a
+// container this returns is not the caller's. More than fits under the pool's
+// maximum is refused pool-capacity-exceeded. The call carries no lease.
+func (c *SwarmClient) Create(ctx context.Context, count int) ([]SwarmContainer, error) {
+	body, err := json.Marshal(struct {
+		Count int `json:"count"`
+	}{count})
+	if err != nil {
+		return nil, fmt.Errorf("swarm create: marshal: %w", err)
+	}
+	var out []SwarmContainer
+	if err := c.do(ctx, http.MethodPost, "/container", body, "", &out); err != nil {
+		return nil, fmt.Errorf("swarm create: %w", err)
+	}
+	return out, nil
+}
+
 // Release returns a reserved container to the pool (POST
 // /container/{id}/release). With reset the container is restored to its
 // primary snapshot first (stopped, restored, started: its processes end).
@@ -230,8 +265,11 @@ func (c *SwarmClient) Renew(ctx context.Context, id, lease string) (SwarmContain
 }
 
 // Delete removes a container its holder leases (DELETE /container/{id}); the
-// orchestrator answers 202 and removes it in the background. Removals run
-// one at a time per service: a concurrent one is refused as retryable.
+// orchestrator answers 202 and removes it in the background (gone in 7–24 s,
+// listed as deleting meanwhile). It never sends force. The platform runs one
+// removal per pool at a time and keeps the pool at its minimum: it refuses a
+// second removal, and one below the minimum, with no reason (live,
+// 2026-10-23: 400, metadata null, only the message tells them apart).
 func (c *SwarmClient) Delete(ctx context.Context, id, lease string) error {
 	if err := c.do(ctx, http.MethodDelete, "/container/"+url.PathEscape(id), nil, lease, nil); err != nil {
 		return fmt.Errorf("swarm delete: %w", err)
@@ -327,6 +365,28 @@ type SwarmError struct {
 // because every container that could serve it is reserved and another could
 // not be created. The orchestrator queues nothing: it answers at once.
 const SwarmReasonAllReserved = "all-reserved"
+
+// SwarmReasonUnknownLease and SwarmReasonContainerNotFound are the
+// SwarmError.Reason of a call whose lease the orchestrator no longer holds, or
+// whose container is gone: nothing of the lease is left to release.
+const (
+	SwarmReasonUnknownLease      = "unknown-lease"
+	SwarmReasonContainerNotFound = "container-not-found"
+)
+
+// SwarmContainerActive is the status of a running container
+// (SwarmContainer.Status), the platform's own ACTIVE.
+const SwarmContainerActive = ServiceStatusActive
+
+// SwarmReasonContainersPreparing is the SwarmError.Reason of an acquire
+// refused because free containers are still being created (a create in
+// progress): retryable, answered at once, and it reserved nothing (live,
+// 2026-10-23).
+const SwarmReasonContainersPreparing = "containers-preparing"
+
+// SwarmReasonPoolCapacityExceeded is the SwarmError.Reason of a create asking
+// for more containers than fit under the pool's maximum. Not retryable.
+const SwarmReasonPoolCapacityExceeded = "pool-capacity-exceeded"
 
 // SwarmReasonNoPrimarySnapshot is the SwarmError.Reason of a release with
 // reset refused because the container has no primary snapshot — the ones the

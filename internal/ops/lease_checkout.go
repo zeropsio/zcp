@@ -386,8 +386,12 @@ func abandonLease(ctx context.Context, d LeaseDeps, rec leaseRecord, cause error
 	return &out
 }
 
+// leaseGoneNext is what to do once a hand-back left no lease.
+const leaseGoneNext = "This lease is gone; acquire again for another"
+
 // handBackOutcome says where a failed checkout's container went — released,
-// deleted because it could not be reset, gone already, or still reserved —
+// deleted because it could not be reset, removed or kept warm (DP-27), gone
+// already, or still reserved —
 // once for the message (what) and once as what to do (next), so the two never
 // disagree.
 func handBackOutcome(alias string, view LeaseView, err error) (what, next string) {
@@ -398,11 +402,17 @@ func handBackOutcome(alias string, view LeaseView, err error) (what, next string
 	case view.containerDeleted:
 		return "the container could not be reset (the platform created it for the pool's minContainers, so it has no primary snapshot), so it was deleted and the lease dropped",
 			"This lease is gone; acquire again for another (the pool creates a fresh container). Set the pool's minContainers to 0 and pre-warm containers through the orchestrator"
+	case view.containerRemoved:
+		return "the container was removed with the lease (the pool already had its warm container, or the container ran an outdated version) and the lease dropped",
+			leaseGoneNext
+	case view.keptWarm:
+		return "the container was released with a reset, kept as the pool's warm container, and the lease dropped",
+			leaseGoneNext
 	case view.State == LeaseStateLost:
 		return "the orchestrator no longer held the container for this lease, so nothing was left to hand back and the record was dropped",
-			"This lease is gone; acquire again for another"
+			leaseGoneNext
 	}
-	return "the container was released with a reset and the lease dropped", "This lease is gone; acquire again for another"
+	return "the container was released with a reset and the lease dropped", leaseGoneNext
 }
 
 // unsavedWork is what a release would lose from a container.

@@ -383,6 +383,12 @@ func (poolRetireIntSwarm) Delete(context.Context, string, string) error { return
 func (poolRetireIntSwarm) Rollout(context.Context) (platform.SwarmRollout, error) {
 	return platform.SwarmRollout{}, errPoolRetireIntSwarm
 }
+func (poolRetireIntSwarm) Create(context.Context, int) ([]platform.SwarmContainer, error) {
+	return nil, errPoolRetireIntSwarm
+}
+func (poolRetireIntSwarm) Container(context.Context, string) (platform.SwarmContainer, error) {
+	return platform.SwarmContainer{}, errPoolRetireIntSwarm
+}
 
 func poolRetireIntGit(t *testing.T, dir string, args ...string) {
 	t.Helper()

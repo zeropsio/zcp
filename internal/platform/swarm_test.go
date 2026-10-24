@@ -558,3 +558,73 @@ func TestSwarmClient_Rollout_OutlivesClientTimeout(t *testing.T) {
 		t.Error("Pool outlived the client's budget too: only the rollout gets the long one")
 	}
 }
+
+// TestSwarmClient_Create_SendsCountAndBearerOnly: a create (POST /container)
+// carries the count and the bearer, never a lease or a query, and decodes the
+// containers it answers with — their snapshots reported null, as the live
+// create does (only a read by id counts them).
+func TestSwarmClient_Create_SendsCountAndBearerOnly(t *testing.T) {
+	t.Parallel()
+
+	var gotMethod, gotPath, gotQuery, gotAuth, gotLease, gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath, gotQuery = r.Method, r.URL.Path, r.URL.RawQuery
+		gotAuth, gotLease = r.Header.Get("Authorization"), r.Header.Get("X-Swarm-Lease")
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		_, _ = w.Write([]byte(`[{"id":"c-new","number":5,"hostname":"node-id-5.runtime.pool.zerops","status":"ACTIVE","lockState":"","dirty":false,"current":true,"snapshots":null,"appVersionId":"av-1"}]`))
+	}))
+	defer srv.Close()
+
+	c := NewSwarmClient(srv.URL, "api-token-xyz", srv.Client())
+	got, err := c.Create(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if gotMethod != http.MethodPost || gotPath != "/container" || gotQuery != "" {
+		t.Errorf("request = %s %s?%s, want POST /container with no query", gotMethod, gotPath, gotQuery)
+	}
+	if gotAuth != "Bearer api-token-xyz" || gotLease != "" {
+		t.Errorf("Authorization = %q, X-Swarm-Lease = %q: want the bearer only", gotAuth, gotLease)
+	}
+	var body map[string]any
+	if err := json.Unmarshal([]byte(gotBody), &body); err != nil {
+		t.Fatalf("body %q is not JSON: %v", gotBody, err)
+	}
+	if len(body) != 1 || body["count"] != float64(1) {
+		t.Errorf("body = %v, want exactly {count: 1}", body)
+	}
+	if len(got) != 1 || got[0].ID != "c-new" || got[0].Number != 5 || got[0].LockState != "" || !got[0].Current || got[0].Snapshots != 0 {
+		t.Errorf("created = %+v, want the free current c-new #5 with no snapshot count", got)
+	}
+}
+
+// TestSwarmClient_Container_ReadsSnapshotsByID: the read by id (GET
+// /container/{id}, the id path-escaped) is the one that counts a container's
+// snapshots; it carries the bearer and no lease.
+func TestSwarmClient_Container_ReadsSnapshotsByID(t *testing.T) {
+	t.Parallel()
+
+	var gotPath, gotLease string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotLease = r.URL.EscapedPath(), r.Header.Get("X-Swarm-Lease")
+		if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer api-token-xyz" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":"c/1","number":5,"status":"ACTIVE","lockState":"","lockSince":null,"dirty":false,"current":true,"snapshots":1}`))
+	}))
+	defer srv.Close()
+
+	c := NewSwarmClient(srv.URL, "api-token-xyz", srv.Client())
+	got, err := c.Container(context.Background(), "c/1")
+	if err != nil {
+		t.Fatalf("Container: %v", err)
+	}
+	if gotPath != "/container/c%2F1" || gotLease != "" {
+		t.Errorf("path = %q, lease = %q: want /container/c%%2F1 and no lease", gotPath, gotLease)
+	}
+	if got.ID != "c/1" || got.Snapshots != 1 || !got.Current || got.LockState != "" {
+		t.Errorf("container = %+v, want the free current c/1 with 1 snapshot", got)
+	}
+}

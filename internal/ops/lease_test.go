@@ -92,6 +92,22 @@ func (f *fakeSwarm) Rollout(context.Context) (platform.SwarmRollout, error) {
 	return f.rollout, f.rolloutErr
 }
 
+// Create answers like a pool whose create the platform refuses: the fake
+// models no containers coming into being (lease_warm_test.go's warmOrch does).
+func (f *fakeSwarm) Create(context.Context, int) ([]platform.SwarmContainer, error) {
+	return nil, &platform.SwarmError{Status: 400, Code: "containerAction", Message: "the fake orchestrator creates no containers"}
+}
+
+// Container reads one listed container by id; the fake counts no snapshots.
+func (f *fakeSwarm) Container(_ context.Context, id string) (platform.SwarmContainer, error) {
+	for _, c := range f.containers {
+		if c.ID == id {
+			return c, nil
+		}
+	}
+	return platform.SwarmContainer{}, &platform.SwarmError{Status: 404, Code: "containerAction", Message: "no such container", Reason: "container-not-found"}
+}
+
 // leaseFixture is a project holding one swarm pool, a plain runtime, and a
 // state dir, with the fake orchestrator behind the factory.
 type leaseFixture struct {

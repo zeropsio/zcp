@@ -128,6 +128,21 @@ func (o *poolOrch) Rollout(context.Context) (platform.SwarmRollout, error) {
 	return platform.SwarmRollout{}, nil
 }
 
+func (o *poolOrch) Create(context.Context, int) ([]platform.SwarmContainer, error) {
+	return nil, &platform.SwarmError{Status: 400, Code: "containerAction", Message: "the fake orchestrator creates no containers"}
+}
+
+func (o *poolOrch) Container(_ context.Context, id string) (platform.SwarmContainer, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	for _, c := range o.containers {
+		if c.ID == id {
+			return c, nil
+		}
+	}
+	return platform.SwarmContainer{}, &platform.SwarmError{Status: 404, Code: "containerAction", Message: "no such container", Reason: "container-not-found"}
+}
+
 func (o *poolOrch) acquireCount() int {
 	o.mu.Lock()
 	defer o.mu.Unlock()

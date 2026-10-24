@@ -139,6 +139,11 @@ func LeaseAcquireGroupChange(ctx context.Context, d LeaseDeps, pools []string, r
 	// finds them, while the prepare and the supervisor run.
 	unlock()
 	locked = false
+	if d.Warm != nil {
+		// Each pool an acquire took a container of is topped up to its warm
+		// target, the create in the background (DP-27).
+		runMembers(fresh, func(m *groupMember) { m.view.Note = joinNotes(m.view.Note, d.Warm.afterAcquire(ctx, d, m.rp)) })
+	}
 	var rewired []LeaseRewire
 	if d.SSH != nil {
 		var rewire sync.WaitGroup
@@ -391,8 +396,10 @@ func reserveMember(ctx context.Context, d LeaseDeps, m *groupMember, repoURL, br
 	// leave a container reserved, with no expiry, for a lease zcp never
 	// received. The request runs to its own deadline instead; a caller gone
 	// meanwhile makes the steps below fail, which hands the container back.
+	// A create in progress refuses it containers-preparing, reserving nothing:
+	// it is retried within its own deadline (DP-27).
 	acqCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), LeaseCallTimeout)
-	got, err := rp.api.Acquire(acqCtx, platform.SwarmAcquireRequest{Start: true, Clean: true, LeaseTTLSeconds: 0})
+	got, waitNote, err := acquireThroughPreparing(acqCtx, d, rp)
 	cancel()
 	if err != nil {
 		m.err = leaseAcquireError(ctx, d, rp, err)
@@ -416,11 +423,12 @@ func reserveMember(ctx context.Context, d LeaseDeps, m *groupMember, repoURL, br
 	}
 	m.rec, m.reserved = rec, true
 	m.view = rec.view(LeaseStateHeld)
+	m.view.Note = waitNote
 	if note := d.Host.attach(ctx, d, rec); note != "" {
 		// The lease is real and stays recorded; zcp init (or the next status)
 		// finds the alias or mount missing and restores it.
 		m.view.State = LeaseStateUnmounted
-		m.view.Note = note
+		m.view.Note = joinNotes(m.view.Note, note)
 	}
 }
 
