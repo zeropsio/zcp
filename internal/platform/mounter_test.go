@@ -154,6 +154,7 @@ func TestForceUnmount_LeaseAlias_RemovesUnit(t *testing.T) {
 	}
 	want := []recordedCommand{
 		{"sudo", "-E", "zsc", "unit", "remove", "sshfs-apppool-3"},
+		{"sudo", "systemctl", "reset-failed", "zerops@sshfs-apppool-3.service"},
 		{"fusermount", "-uz", "/var/www/apppool-3"},
 	}
 	if len(*got) != len(want) {
@@ -186,6 +187,7 @@ func TestMounter_LeaseAlias_UnitLifecycle(t *testing.T) {
 		{"sudo", "-E", "zsc", "unit", "remove", "sshfs-apppool-3"},
 		{"sudo", "systemctl", "reset-failed", "zerops@sshfs-apppool-3.service"},
 		{"sudo", "-E", "zsc", "unit", "remove", "sshfs-apppool-3"},
+		{"sudo", "systemctl", "reset-failed", "zerops@sshfs-apppool-3.service"},
 		{"fusermount", "-u", "/var/www/apppool-3"},
 	}
 	if len(*got) != len(want) {
@@ -244,9 +246,12 @@ func TestUnmount_GoneOnceTheUnitStops_NoFusermount(t *testing.T) {
 		if err != nil {
 			t.Fatalf("force=%v: %v", force, err)
 		}
-		want := recordedCommand{"sudo", "-E", "zsc", "unit", "remove", "sshfs-apppool-3"}
-		if len(*got) != 1 || !slices.Equal((*got)[0], want) {
-			t.Errorf("force=%v: commands = %q, want only %q", force, *got, want)
+		// The unit removed, then its instance's failed state cleared: zsc unit remove
+		// leaves the instance listed failed until reset-failed (live 2026-10-24).
+		remove := recordedCommand{"sudo", "-E", "zsc", "unit", "remove", "sshfs-apppool-3"}
+		reset := recordedCommand{"sudo", "systemctl", "reset-failed", "zerops@sshfs-apppool-3.service"}
+		if len(*got) != 2 || !slices.Equal((*got)[0], remove) || !slices.Equal((*got)[1], reset) {
+			t.Errorf("force=%v: commands = %q, want only %q then %q", force, *got, remove, reset)
 		}
 	}
 }
