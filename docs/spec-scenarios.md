@@ -565,7 +565,7 @@ full product.
 | Topology | simple · dev-only · standard-pair · (local-stage · local-only: deferred) | spec-workflows §4 |
 | Runtime class | dynamic · static · implicit-webserver | §3.2 |
 | Managed deps | none · db · db+cache+storage | platform |
-| Infrastructure the app uses | none · Swarm pool (runs untrusted code) · (Zerops Box: deferred — beta, creation can fail on capacity) | spec-workflows §8 PS |
+| Infrastructure the app uses | none · Swarm pool (runs untrusted code) · (Zerops Box: deferred — beta, prg1 projects only) | spec-workflows §8 PS |
 | Repo shape | monorepo multi-`setup:` (platform default) · one repo per service | platform |
 | Access | public subdomain · internal-only (worker/backend, `http://host:port`) | platform |
 | Delivery | zcli push (auto) · git-push configured · GitHub Actions · webhook · manual | spec-workflows §4.3, §11 |
@@ -708,7 +708,7 @@ no buildFromGit), so the agent has a place to fix source. `allowFailed` explicit
 | F1 | multi-repo: web + api, each its own repo, each pair its own `RemoteURL`, both git-push | pending: scenario (baseline batch first) |
 | F2 | monorepo multi-`setup:` from the classic route | pending: scenario (baseline batch first) |
 | F3 | service deleted externally (§6.5 known gap) | pending: scenario |
-| F4 | an app whose sandboxes run on a Zerops Box (`ubuntu/zbox@1`) instead of a Swarm pool | pending: scenario (Box is beta; creation can fail on hardware capacity) |
+| F4 | an app whose sandboxes run on a Zerops Box (`ubuntu/zbox@1`) instead of a Swarm pool | pending: scenario (Box is beta and can be created only in a prg1 project — `spec-workflows.md §8 PS-10`) |
 | L1-L3 | local-stage first deploy · local + managed over VPN · local-only adopt | pending: local mode in farm |
 
 #### G. Git foundation (docs/spec-workflows.md §4.9, §12, Git Lifecycle §8 GLC; a row enters the gate set once its scenario carries every family it names)
