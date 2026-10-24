@@ -48,11 +48,18 @@ func nodeHostnameOf(pool string, number int64) string {
 type syncRemote struct {
 	mu     sync.Mutex
 	dirty  map[string]string
-	push   func() ([]byte, error)
-	member map[string]func() ([]byte, error)
+	push   *syncAnswer
+	member map[string]syncAnswer
 	devsup map[string]string
 	delay  time.Duration
 	calls  []sshCall
+}
+
+// syncAnswer is what a scripted remote command answers: its output and, for a
+// command that failed, the error ssh returns.
+type syncAnswer struct {
+	out string
+	err error
 }
 
 func (r *syncRemote) ExecSSH(_ context.Context, host, command string) ([]byte, error) {
@@ -72,10 +79,10 @@ func (r *syncRemote) ExecSSH(_ context.Context, host, command string) ([]byte, e
 		if r.push == nil {
 			return []byte(syncPushed(syncBranch, syncTo)), nil
 		}
-		return r.push()
+		return []byte(r.push.out), r.push.err
 	case strings.Contains(command, "merge --ff-only"):
-		if f, ok := r.member[host]; ok {
-			return f()
+		if a, ok := r.member[host]; ok {
+			return []byte(a.out), a.err
 		}
 		return []byte(syncMemberFastForwarded(syncFrom, syncTo)), nil
 	case strings.Contains(command, "@@zcp-devsup status"):
@@ -130,7 +137,7 @@ func syncMemberFastForwarded(from, to string) string {
 func newSyncFixture(t *testing.T, branch string, extra ...leaseRecord) (*groupFixture, *syncRemote) {
 	t.Helper()
 	gf := newGroupFixture(t)
-	remote := &syncRemote{dirty: map[string]string{}, member: map[string]func() ([]byte, error){}, devsup: map[string]string{}}
+	remote := &syncRemote{dirty: map[string]string{}, member: map[string]syncAnswer{}, devsup: map[string]string{}}
 	gf.deps.SSH = remote
 	recs := append([]leaseRecord{
 		syncRecord(groupHQPool, "svc-hq", 3, branch, "2026-10-24T10:00:00Z"),
@@ -330,9 +337,7 @@ func TestLeaseSync_ReadOnlyGitCallsTakeNoOptionalLocks(t *testing.T) {
 func TestLeaseSync_MemberWithOwnCommits_LeftUntouched(t *testing.T) {
 	t.Parallel()
 	gf, remote := newSyncFixture(t, syncBranch)
-	remote.member["webpool-7"] = func() ([]byte, error) {
-		return []byte("@@zcp-sync from " + syncOwn + "\n@@zcp-sync origin " + syncTo + "\n@@zcp-sync own 2\n"), nil
-	}
+	remote.member["webpool-7"] = syncAnswer{out: "@@zcp-sync from " + syncOwn + "\n@@zcp-sync origin " + syncTo + "\n@@zcp-sync own 2\n"}
 
 	v, err := LeaseSync(context.Background(), gf.deps, "hqpool-3")
 	if err != nil {
@@ -360,10 +365,8 @@ func TestLeaseSync_MemberWithOwnCommits_LeftUntouched(t *testing.T) {
 func TestLeaseSync_LocalChangesInTheWay_LeftUntouched(t *testing.T) {
 	t.Parallel()
 	gf, remote := newSyncFixture(t, syncBranch)
-	remote.member["webpool-7"] = func() ([]byte, error) {
-		return []byte("@@zcp-sync from " + syncFrom + "\n@@zcp-sync origin " + syncTo + "\n" +
-			"error: Your local changes to the following files would be overwritten by merge:\n\tapp.txt\nPlease commit your changes or stash them before you merge.\nAborting\n@@zcp-sync blocked 1\n"), nil
-	}
+	remote.member["webpool-7"] = syncAnswer{out: "@@zcp-sync from " + syncFrom + "\n@@zcp-sync origin " + syncTo + "\n" +
+		"error: Your local changes to the following files would be overwritten by merge:\n\tapp.txt\nPlease commit your changes or stash them before you merge.\nAborting\n@@zcp-sync blocked 1\n"}
 	remote.dirty["webpool-7"] = " M app.txt\n"
 
 	v, err := LeaseSync(context.Background(), gf.deps, "hqpool-3")
@@ -395,10 +398,8 @@ func TestLeaseSync_LocalChangesInTheWay_LeftUntouched(t *testing.T) {
 func TestLeaseSync_MemberFastForwardFailsOtherwise_NamedWithGitsWords(t *testing.T) {
 	t.Parallel()
 	gf, remote := newSyncFixture(t, syncBranch)
-	remote.member["webpool-7"] = func() ([]byte, error) {
-		return []byte("@@zcp-sync from " + syncFrom + "\n@@zcp-sync origin " + syncTo + "\n" +
-			"fatal: Unable to create '/var/www/.git/index.lock': File exists.\n@@zcp-sync blocked 128\n"), nil
-	}
+	remote.member["webpool-7"] = syncAnswer{out: "@@zcp-sync from " + syncFrom + "\n@@zcp-sync origin " + syncTo + "\n" +
+		"fatal: Unable to create '/var/www/.git/index.lock': File exists.\n@@zcp-sync blocked 128\n"}
 	v, err := LeaseSync(context.Background(), gf.deps, "hqpool-3")
 	if err != nil {
 		t.Fatalf("LeaseSync: %v", err)
@@ -416,29 +417,31 @@ func TestLeaseSync_MemberNotFastForwarded_NamedNotFailed(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name     string
-		answer   func(t *testing.T) ([]byte, error)
+		answer   func(t *testing.T) syncAnswer
 		outcome  string
 		code     string
 		wantNote []string
 	}{
 		{
 			name: "unreachable",
-			answer: func(t *testing.T) ([]byte, error) {
-				return nil, sshFailure("ssh: connect to host webpool-7: Connection refused", exitError(t, 255))
+			answer: func(t *testing.T) syncAnswer {
+				t.Helper()
+				return syncAnswer{err: sshFailure("ssh: connect to host webpool-7: Connection refused", exitError(t, 255))}
 			},
 			outcome:  LeaseSyncUnreachable,
 			wantNote: []string{"over ssh", "zerops_lease action=status"},
 		},
 		{
 			name:     "on another branch",
-			answer:   func(*testing.T) ([]byte, error) { return []byte("@@zcp-sync head other\n"), nil },
+			answer:   func(*testing.T) syncAnswer { return syncAnswer{out: "@@zcp-sync head other\n"} },
 			outcome:  LeaseSyncOnAnotherBranch,
 			wantNote: []string{"other", syncBranch, "zerops_lease action=sync lease=hqpool-3"},
 		},
 		{
 			name: "fetch without a credential",
-			answer: func(t *testing.T) ([]byte, error) {
-				return nil, sshFailure("fatal: could not read Username for 'https://github.com': terminal prompts disabled", exitError(t, 128))
+			answer: func(t *testing.T) syncAnswer {
+				t.Helper()
+				return syncAnswer{err: sshFailure("fatal: could not read Username for 'https://github.com': terminal prompts disabled", exitError(t, 128))}
 			},
 			outcome:  LeaseSyncFailed,
 			code:     platform.ErrGitTokenMissing,
@@ -449,7 +452,7 @@ func TestLeaseSync_MemberNotFastForwarded_NamedNotFailed(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			gf, remote := newSyncFixture(t, syncBranch)
-			remote.member["webpool-7"] = func() ([]byte, error) { return tt.answer(t) }
+			remote.member["webpool-7"] = tt.answer(t)
 			v, err := LeaseSync(context.Background(), gf.deps, "hqpool-3")
 			if err != nil {
 				t.Fatalf("LeaseSync: %v", err)
@@ -480,7 +483,7 @@ func TestLeaseSync_PushRefused_NothingFastForwarded(t *testing.T) {
 	tests := []struct {
 		name      string
 		repo      string
-		answer    func(t *testing.T) ([]byte, error)
+		answer    func(t *testing.T) syncAnswer
 		code      string
 		wantMsg   []string
 		wantSugg  []string
@@ -488,9 +491,10 @@ func TestLeaseSync_PushRefused_NothingFastForwarded(t *testing.T) {
 	}{
 		{
 			name: "origin moved on",
-			answer: func(t *testing.T) ([]byte, error) {
+			answer: func(t *testing.T) syncAnswer {
+				t.Helper()
 				out := "@@zcp-sync commit " + syncTo + "\nTo " + syncRepo + "\n!\t" + ref + "\t[rejected] (fetch first)\nDone\n"
-				return []byte(out), sshFailure(out, exitError(t, 1))
+				return syncAnswer{out: out, err: sshFailure(out, exitError(t, 1))}
 			},
 			code:      platform.ErrGitPushNonFastForward,
 			wantMsg:   []string{"hqpool-3", syncBranch, "fetch first"},
@@ -500,9 +504,10 @@ func TestLeaseSync_PushRefused_NothingFastForwarded(t *testing.T) {
 		{
 			name: "HQ's rule refused the branch",
 			repo: leaseHQRepo,
-			answer: func(t *testing.T) ([]byte, error) {
+			answer: func(t *testing.T) syncAnswer {
+				t.Helper()
 				out := "@@zcp-sync commit " + syncTo + "\nTo " + leaseHQRepo + "\n!\t" + ref + "\t[remote rejected] (pre-receive hook declined)\nDone\n"
-				return []byte(out), sshFailure(out, exitError(t, 1))
+				return syncAnswer{out: out, err: sshFailure(out, exitError(t, 1))}
 			},
 			code:     platform.ErrPermissionDenied,
 			wantMsg:  []string{"hqpool-3", "pre-receive hook declined"},
@@ -510,8 +515,9 @@ func TestLeaseSync_PushRefused_NothingFastForwarded(t *testing.T) {
 		},
 		{
 			name: "the source does not answer ssh",
-			answer: func(t *testing.T) ([]byte, error) {
-				return nil, sshFailure("ssh: Could not resolve hostname hqpool-3", exitError(t, 255))
+			answer: func(t *testing.T) syncAnswer {
+				t.Helper()
+				return syncAnswer{err: sshFailure("ssh: Could not resolve hostname hqpool-3", exitError(t, 255))}
 			},
 			code:     platform.ErrSSHDeployFailed,
 			wantMsg:  []string{"hqpool-3"},
@@ -535,7 +541,8 @@ func TestLeaseSync_PushRefused_NothingFastForwarded(t *testing.T) {
 					}
 				}
 			}
-			remote.push = func() ([]byte, error) { return tt.answer(t) }
+			a := tt.answer(t)
+			remote.push = &a
 			_, err := LeaseSync(context.Background(), gf.deps, "hqpool-3")
 			var pe *platform.PlatformError
 			if !errors.As(err, &pe) || pe.Code != tt.code {
@@ -566,7 +573,7 @@ func TestLeaseSync_PushRefused_NothingFastForwarded(t *testing.T) {
 func TestLeaseSync_SourceNotOnItsBranch_Refused(t *testing.T) {
 	t.Parallel()
 	gf, remote := newSyncFixture(t, syncBranch)
-	remote.push = func() ([]byte, error) { return []byte("@@zcp-sync head other\n"), nil }
+	remote.push = &syncAnswer{out: "@@zcp-sync head other\n"}
 	_, err := LeaseSync(context.Background(), gf.deps, "hqpool-3")
 	var pe *platform.PlatformError
 	if !errors.As(err, &pe) || pe.Code != platform.ErrPrerequisiteMissing {
@@ -620,9 +627,7 @@ func TestLeaseSync_FastForwardedMember_NamesServersWithoutAWatch(t *testing.T) {
 	gf, remote := newSyncFixture(t, syncBranch, syncRecord("apipool", "svc-api", 2, syncBranch, "2026-10-24T10:00:02Z"))
 	remote.devsup["webpool-7"] = syncDevServers
 	remote.devsup["apipool-2"] = syncDevServers
-	remote.member["apipool-2"] = func() ([]byte, error) {
-		return []byte("@@zcp-sync from " + syncTo + "\n@@zcp-sync origin " + syncTo + "\n@@zcp-sync up-to-date\n"), nil
-	}
+	remote.member["apipool-2"] = syncAnswer{out: "@@zcp-sync from " + syncTo + "\n@@zcp-sync origin " + syncTo + "\n@@zcp-sync up-to-date\n"}
 
 	v, err := LeaseSync(context.Background(), gf.deps, "hqpool-3")
 	if err != nil {

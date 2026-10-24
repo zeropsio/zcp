@@ -121,11 +121,12 @@ func (sc *syncClones) originHas(t *testing.T) string {
 	return strings.Fields(out)[0]
 }
 
-func (sc *syncClones) sync(t *testing.T, alias string) LeaseSyncView {
+// syncFromHQ syncs from hqpool-3, the lease the agent commits in.
+func (sc *syncClones) syncFromHQ(t *testing.T) LeaseSyncView {
 	t.Helper()
-	v, err := LeaseSync(context.Background(), sc.deps, alias)
+	v, err := LeaseSync(context.Background(), sc.deps, "hqpool-3")
 	if err != nil {
-		t.Fatalf("LeaseSync %s: %v", alias, err)
+		t.Fatalf("LeaseSync hqpool-3: %v", err)
 	}
 	return v
 }
@@ -140,7 +141,7 @@ func TestLeaseSyncScript_RealGit_FastForwardsTwoClones(t *testing.T) {
 	sc := newSyncClones(t)
 
 	c1 := sc.commit(t, "hqpool-3", "one.txt", "1")
-	v := sc.sync(t, "hqpool-3")
+	v := sc.syncFromHQ(t)
 	if v.Push.Outcome != LeaseSyncNewBranch || !v.Push.SetUpstream || v.Commit != c1 {
 		t.Errorf("first push = %+v (commit %s), want new-branch, upstream set, at %s", v.Push, v.Commit, c1)
 	}
@@ -163,7 +164,7 @@ func TestLeaseSyncScript_RealGit_FastForwardsTwoClones(t *testing.T) {
 	}
 
 	c2 := sc.commit(t, "hqpool-3", "two.txt", "2")
-	v = sc.sync(t, "hqpool-3")
+	v = sc.syncFromHQ(t)
 	if v.Push.Outcome != LeaseSyncPushed || v.Push.SetUpstream {
 		t.Errorf("second push = %+v, want pushed, no upstream to set", v.Push)
 	}
@@ -176,7 +177,7 @@ func TestLeaseSyncScript_RealGit_FastForwardsTwoClones(t *testing.T) {
 		t.Errorf("webpool-7's working tree lacks the pushed file: %v", err)
 	}
 
-	v = sc.sync(t, "hqpool-3")
+	v = sc.syncFromHQ(t)
 	if v.Push.Outcome != LeaseSyncUpToDate {
 		t.Errorf("third push = %+v, want up-to-date", v.Push)
 	}
@@ -196,7 +197,7 @@ func TestLeaseSyncScript_RealGit_MemberWithOwnCommits_LeftUntouched(t *testing.T
 	own := sc.commit(t, "webpool-7", "mine.txt", "web's own")
 	c1 := sc.commit(t, "hqpool-3", "one.txt", "1")
 
-	v := sc.sync(t, "hqpool-3")
+	v := sc.syncFromHQ(t)
 	m := syncMemberOf(t, v, "webpool-7")
 	if m.Outcome != LeaseSyncHasOwnCommits || m.OwnCommits != 1 || m.From != own {
 		t.Errorf("webpool-7 = %+v, want has-own-commits (1) at %s", m, own)
@@ -232,7 +233,7 @@ func TestLeaseSyncScript_RealGit_LocalChangesInTheWay_LeftUntouched(t *testing.T
 	}
 	c1 := sc.commit(t, "hqpool-3", "app.txt", "hq's change")
 
-	v := sc.sync(t, "hqpool-3")
+	v := sc.syncFromHQ(t)
 	m := syncMemberOf(t, v, "webpool-7")
 	if m.Outcome != LeaseSyncLocalChangesInTheWay || m.From != sc.mainSHA {
 		t.Errorf("webpool-7 = %+v, want local-changes-in-the-way at %s", m, sc.mainSHA)
@@ -258,7 +259,7 @@ func TestLeaseSyncScript_RealGit_LocalChangesInTheWay_LeftUntouched(t *testing.T
 		t.Fatal(err)
 	}
 	sc.commit(t, "hqpool-3", "three.txt", "3")
-	v = sc.sync(t, "hqpool-3")
+	v = sc.syncFromHQ(t)
 	if a := syncMemberOf(t, v, "apipool-2"); a.Outcome != LeaseSyncLocalChangesInTheWay || !strings.Contains(a.Note, "three.txt") || sc.head(t, "apipool-2") != c1 {
 		t.Errorf("apipool-2 = %+v (HEAD %s), want local-changes-in-the-way naming three.txt at %s", a, sc.head(t, "apipool-2"), c1)
 	}
@@ -319,7 +320,7 @@ func TestLeaseSyncScript_RealGit_GroupOfOne_PushesOnly(t *testing.T) {
 		}
 	}
 	c1 := sc.commit(t, "hqpool-3", "one.txt", "1")
-	v := sc.sync(t, "hqpool-3")
+	v := sc.syncFromHQ(t)
 	if len(v.Members) != 0 || v.Members == nil || sc.originHas(t) != c1 {
 		t.Errorf("sync = %+v (origin at %s), want no member and origin at %s", v, sc.originHas(t), c1)
 	}
