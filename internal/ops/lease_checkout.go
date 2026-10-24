@@ -603,8 +603,7 @@ func unreachableGuard(ctx context.Context, d LeaseDeps, rec leaseRecord, sshErr 
 func leaseContainerStillReserved(ctx context.Context, d LeaseDeps, rec leaseRecord) (bool, error) {
 	svc, err := d.Client.GetService(ctx, rec.PoolServiceID)
 	if err != nil {
-		var pe *platform.PlatformError
-		if errors.As(err, &pe) && pe.Code == platform.ErrServiceNotFound {
+		if IsServiceGone(err) {
 			return false, nil
 		}
 		return false, fmt.Errorf("read pool %s: %w", rec.PoolHostname, err)
@@ -649,8 +648,7 @@ func poolDeletionState(status string) string {
 func leasePoolGoneWhy(ctx context.Context, d LeaseDeps, rec leaseRecord) string {
 	svc, err := d.Client.GetService(ctx, rec.PoolServiceID)
 	if err != nil {
-		var pe *platform.PlatformError
-		if errors.As(err, &pe) && pe.Code == platform.ErrServiceNotFound {
+		if IsServiceGone(err) {
 			return "the pool service no longer exists"
 		}
 		return ""
