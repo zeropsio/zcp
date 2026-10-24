@@ -825,7 +825,7 @@ func LeaseReleaseChange(ctx context.Context, d LeaseDeps, alias string, force bo
 	}
 	var siblings []leaseRecord
 	var rewired []LeaseRewire
-	if d.SSH != nil {
+	if d.SSH != nil && !leaseRecordReplaced(d.StateDir, rec) {
 		siblings = siblingRecords(d.StateDir, rec)
 		rewired = rewireLeases(ctx, d, siblings, map[string]bool{alias: true}, "without "+alias)
 	}
@@ -844,7 +844,9 @@ func LeaseReleaseChange(ctx context.Context, d LeaseDeps, alias string, force bo
 // container is reset by a release whatever lease it carries.
 func releaseLost(ctx context.Context, d LeaseDeps, rec leaseRecord, why string) (LeaseChange, error) {
 	var rewired []LeaseRewire
-	if d.SSH != nil {
+	// An alias another zcp took again — maybe for a lease of this branch —
+	// still names a lease: the siblings are not handed an overlay without it.
+	if d.SSH != nil && !leaseRecordReplaced(d.StateDir, rec) {
 		rewired = rewireLeases(ctx, d, siblingRecords(d.StateDir, rec), map[string]bool{rec.alias(): true}, "without "+rec.alias())
 	}
 	view, err := dropLostLease(ctx, d, rec, why)
