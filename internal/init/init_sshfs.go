@@ -206,11 +206,21 @@ const serviceMountOptions = "StrictHostKeyChecking=no,ServerAliveInterval=15,Ser
 
 // mountSSHFS creates a directory and a zsc unit for one SSHFS mount.
 //
+// The hostname is composed into the unit command zsc runs and into the mount
+// path, so it is held first to what platform.SystemMounter holds it to: a
+// service hostname or a lease alias, [a-z0-9] and a hyphen only. A name no
+// service can have — ZCP_SSHFS_HOSTNAMES is read unchecked — creates nothing.
+// The values are not shell-quoted: the command is zsc's unit command, whose
+// quoting zsc defines, and a validated name carries nothing to quote.
+//
 // A mount left behind by a service that is now stopped answers stat with
 // "transport endpoint is not connected", so MkdirAll fails with "file exists".
 // That mount point is lazily unmounted and the mkdir retried once. sshfs runs
 // as root under `sudo zsc`, so the unmount needs sudo too.
 func mountSSHFS(hostname, options string) error {
+	if err := platform.ValidateMountName(hostname); err != nil {
+		return err
+	}
 	mountPath := filepath.Join(sshfsMountBase, hostname)
 	if err := os.MkdirAll(mountPath, 0755); err != nil {
 		if umountErr := commandRunner("sudo", "umount", "-l", mountPath); umountErr != nil {
