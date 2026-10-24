@@ -730,3 +730,35 @@ func TestSwarmClient_StopStart_RefusalNeverCarriesTheLease(t *testing.T) {
 		}
 	}
 }
+
+// TestSwarmClient_HeldByOther_EveryLeaseCallReadsTheLiveRefusal: a call
+// carrying a lease that does not hold the reserved container — release,
+// delete, stop, start — is refused with the live body (2026-10-24, the
+// release of a lease another consumer took over): 400 containerAction,
+// reason held-by-other, retryable "true". Every lease call reads it as
+// SwarmReasonHeldByOther, which zcp takes for "another holder has it", never
+// for "retry in a moment".
+func TestSwarmClient_HeldByOther_EveryLeaseCallReadsTheLiveRefusal(t *testing.T) {
+	t.Parallel()
+
+	const lease = "feedfacefeedfacefeedfacefeedface"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"code":"containerAction","message":"container is reserved by another consumer - pass its lease, or ?force=true to take it over",` +
+			`"meta":[{"error":"container is reserved by another consumer - pass its lease, or ?force=true to take it over","code":"containerAction",` +
+			`"metadata":{"reason":["held-by-other"],"retryable":["true"]}}]}}`))
+	}))
+	defer srv.Close()
+	c := NewSwarmClient(srv.URL, "api-token", srv.Client())
+	for name, call := range map[string]func() error{
+		"release": func() error { _, e := c.Release(context.Background(), "c-abc", lease, true); return e },
+		"delete":  func() error { return c.Delete(context.Background(), "c-abc", lease) },
+		"stop":    func() error { _, e := c.Stop(context.Background(), "c-abc", lease); return e },
+		"start":   func() error { _, e := c.Start(context.Background(), "c-abc", lease); return e },
+	} {
+		var se *SwarmError
+		if err := call(); !errors.As(err, &se) || se.Reason != SwarmReasonHeldByOther || !se.Retryable || se.Status != http.StatusBadRequest || se.Code != "containerAction" {
+			t.Errorf("%s: err = %v, want a 400 containerAction *SwarmError, reason %s, retryable", name, err, SwarmReasonHeldByOther)
+		}
+	}
+}
