@@ -130,19 +130,25 @@ func InstallLeaseAliases(ctx context.Context, run CommandRunner, stateDir, dest 
 	return nil
 }
 
-// LeaseAliases lists the aliases of the lease records in stateDir, for
-// `zcp init` to remount after a redeploy.
-func LeaseAliases(stateDir string) ([]string, error) {
+// LeaseMounts lists, sorted, the aliases of the lease records in stateDir
+// that `zcp init` remounts after a redeploy, and apart the parked ones it
+// leaves unmounted: a parked lease's container is stopped, and a mount of it
+// would hang whatever reads it (DP-28).
+func LeaseMounts(stateDir string) (mount, parked []string, err error) {
 	records, err := readLeaseRecords(stateDir)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	aliases := make([]string, 0, len(records))
 	for _, r := range records {
-		aliases = append(aliases, r.alias())
+		if r.Parked {
+			parked = append(parked, r.alias())
+			continue
+		}
+		mount = append(mount, r.alias())
 	}
-	slices.Sort(aliases)
-	return aliases, nil
+	slices.Sort(mount)
+	slices.Sort(parked)
+	return mount, parked, nil
 }
 
 // aliasInstalled reports whether the alias file holds a stanza for alias.
@@ -188,10 +194,17 @@ func (h LeaseHost) attach(ctx context.Context, d LeaseDeps, rec leaseRecord) str
 			return fmt.Sprintf("the lease is held but its ssh alias could not be installed: %v", err)
 		}
 	}
-	if h.Mounter != nil {
-		if _, err := MountService(ctx, d.Client, d.ProjectID, h.Mounter, rec.alias()); err != nil {
-			return fmt.Sprintf("the lease is held but %s could not be mounted: %v", filepath.Join(mountBase, rec.alias()), err)
-		}
+	return h.mountLease(ctx, d, rec)
+}
+
+// mountLease mounts the lease, whose alias is installed. It returns a note
+// when the mount failed, "" when it worked or the host mounts nothing.
+func (h LeaseHost) mountLease(ctx context.Context, d LeaseDeps, rec leaseRecord) string {
+	if h.Mounter == nil {
+		return ""
+	}
+	if _, err := MountService(ctx, d.Client, d.ProjectID, h.Mounter, rec.alias()); err != nil {
+		return fmt.Sprintf("the lease is held but %s could not be mounted: %v", filepath.Join(mountBase, rec.alias()), err)
 	}
 	return ""
 }
@@ -199,13 +212,22 @@ func (h LeaseHost) attach(ctx context.Context, d LeaseDeps, rec leaseRecord) str
 // detachMount unmounts the lease before it is released. A failure is a note,
 // not an error: the lease must still be released.
 func (h LeaseHost) detachMount(ctx context.Context, d LeaseDeps, rec leaseRecord) string {
-	if h.Mounter == nil {
-		return ""
-	}
-	if _, err := UnmountService(ctx, d.Client, d.ProjectID, h.Mounter, rec.alias()); err != nil {
-		return fmt.Sprintf("%s could not be unmounted first (%v); unmount it with fusermount -uz", filepath.Join(mountBase, rec.alias()), err)
+	if err := h.unmountLease(ctx, d, rec); err != nil {
+		return fmt.Sprintf("the lease could not be unmounted first (%v); unmount it with fusermount -uz", err)
 	}
 	return ""
+}
+
+// unmountLease unmounts the lease; nil when it is not mounted, or the host
+// mounts nothing.
+func (h LeaseHost) unmountLease(ctx context.Context, d LeaseDeps, rec leaseRecord) error {
+	if h.Mounter == nil {
+		return nil
+	}
+	if _, err := UnmountService(ctx, d.Client, d.ProjectID, h.Mounter, rec.alias()); err != nil {
+		return fmt.Errorf("unmount %s: %w", filepath.Join(mountBase, rec.alias()), err)
+	}
+	return nil
 }
 
 // refreshAliases re-renders the alias file from the records that remain.

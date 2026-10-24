@@ -20,6 +20,8 @@ const (
 	leaseActionRelease = "release"
 	leaseActionRollout = "rollout"
 	leaseActionSync    = "sync"
+	leaseActionPark    = "park"
+	leaseActionUnpark  = "unpark"
 )
 
 // LeaseInput is the input type for zerops_lease.
@@ -38,12 +40,12 @@ type LeaseInput struct {
 // stringifies booleans must not be bounced by the schema).
 func leaseInputSchema() *jsonschema.Schema {
 	return objectSchema(map[string]*jsonschema.Schema{
-		"action": {Type: "string", Description: "acquire, status, release, rollout or sync."},
+		"action": {Type: "string", Description: "acquire, status, release, rollout, sync, park or unpark."},
 		"pool":   {Type: "string", Description: "Pool service hostname. acquire (or pools), rollout: required. status: optional (default every pool)."},
 		"pools":  {Type: "array", Items: &jsonschema.Schema{Type: "string"}, Description: "acquire: one lease per pool on the branch, all or none."},
 		"branch": {Type: "string", Description: "acquire: branch to check out (default main); a new one is cut from main. release: every lease of it, all or none."},
 		"repo":   {Type: "string", Description: "acquire: https clone URL; the first one on a pool becomes its default. release: the branch's, if several."},
-		"lease":  {Type: "string", Description: "release, sync: the lease alias <pool>-<number> from acquire or status (not a secret)."},
+		"lease":  {Type: "string", Description: "release, sync, park, unpark: the lease alias <pool>-<number> from acquire or status (not a secret)."},
 		"force":  flexBoolSchema("release: discard unpushed commits and uncommitted files (default false: refused while any exist)."),
 	}, "action")
 }
@@ -87,9 +89,9 @@ type leaseRolloutToolResult struct {
 }
 
 // RegisterLease registers the zerops_lease tool: acquire, status and release
-// of a container of a Swarm pool, and rollout of the pool, through the pool's
-// orchestrator, and sync of a lease's branch to the branch's other leases
-// (DP-24). swarm
+// of a container of a Swarm pool, park and unpark of a lease (DP-28), and
+// rollout of the pool, through the pool's orchestrator, and sync of a lease's
+// branch to the branch's other leases (DP-24). swarm
 // builds the orchestrator client (tests inject a fake or a stub transport).
 // mounter (container mode; nil elsewhere) gives a lease its ssh alias and
 // mount; ssh runs git inside the leased container (nil: no checkout, no
@@ -119,9 +121,9 @@ func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir 
 	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "zerops_lease",
-		Description: "Lease a Swarm pool (swarm@1) container for one branch. acquire takes a clean running container named <pool>-<number> with the branch checked out in /var/www; " +
-			"status lists your leases; release resets or removes it, refusing on unpushed commits or uncommitted files unless force=true; " +
-			"sync pushes a lease's commits and fast-forwards the branch's other leases; rollout replaces free outdated containers. In-project only.",
+		Description: "Lease a Swarm pool (swarm@1) container per branch. acquire checks the branch out into /var/www of a clean container <pool>-<number>; " +
+			"status lists leases; release resets or removes it, refusing on unpushed or uncommitted work unless force=true; " +
+			"sync pushes a lease's commits to the branch's other leases; park/unpark stops/starts it, keeping its files; rollout replaces free outdated containers. In-project only.",
 		InputSchema: leaseInputSchema(),
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Lease a pool container",
@@ -207,6 +209,21 @@ func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir 
 				return convertError(withLeaseSSHStderr(err)), nil, nil
 			}
 			return jsonResult(leaseSyncToolResult{Action: input.Action, Sync: view, NextActions: leaseSyncNext(view), Envelope: envelope(ctx)}), nil, nil
+		case leaseActionPark, leaseActionUnpark:
+			if refusal := leaseParkInputRefusal(input); refusal != nil {
+				return convertError(refusal), nil, nil
+			}
+			step := ops.LeasePark
+			if input.Action == leaseActionUnpark {
+				step = ops.LeaseUnpark
+			}
+			view, err := step(ctx, deps, input.Lease)
+			if err != nil {
+				return convertError(withLeaseSSHStderr(err)), nil, nil
+			}
+			return jsonResult(leaseToolResult{
+				Action: input.Action, Leases: []ops.LeaseView{view}, NextActions: leaseParkNext(input.Action, view), Envelope: envelope(ctx),
+			}), nil, nil
 		case leaseActionRollout:
 			if input.Pool == "" {
 				return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
@@ -219,7 +236,7 @@ func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir 
 			return jsonResult(leaseRolloutToolResult{Action: input.Action, Rollout: view, Envelope: envelope(ctx)}), nil, nil
 		default:
 			return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
-				fmt.Sprintf("Unknown action %q", input.Action), "action is acquire, status, release, rollout or sync")), nil, nil
+				fmt.Sprintf("Unknown action %q", input.Action), "action is acquire, status, release, rollout, sync, park or unpark")), nil, nil
 		}
 	})
 }
@@ -245,13 +262,55 @@ func leaseAcquireNext(views []ops.LeaseView) string {
 	if len(reused) > 0 {
 		next += fmt.Sprintf(" %s was already held for this branch (reused): the same container, not a second one.", strings.Join(reused, ", "))
 	}
-	return next + " zerops_lease action=status shows every lease."
+	return next + leaseParkedNext(views) + " zerops_lease action=status shows every lease."
+}
+
+// leaseParkedNext names the parked leases among views and the call that
+// starts one (DP-28), "" when none is parked.
+func leaseParkedNext(views []ops.LeaseView) string {
+	var parked []string
+	for _, v := range views {
+		if v.State == ops.LeaseStateParked {
+			parked = append(parked, v.Alias)
+		}
+	}
+	if len(parked) == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" Parked — its container stopped, its files kept: %s; %s starts one.", strings.Join(parked, ", "), ops.LeaseUnparkCall("<alias>"))
+}
+
+// leaseParkInputRefusal refuses a park or unpark that does not name exactly
+// one lease by its alias, and nil otherwise.
+func leaseParkInputRefusal(input LeaseInput) error {
+	switch {
+	case input.Lease == "":
+		return platform.NewPlatformError(platform.ErrInvalidParameter,
+			input.Action+" needs lease", "Pass the lease alias (<pool>-<number>) as lease; zerops_lease action=status lists them")
+	case input.Pool != "" || input.Branch != "" || input.Repo != "" || input.Force != nil:
+		return platform.NewPlatformError(platform.ErrInvalidParameter,
+			input.Action+" takes lease alone", "Pass only the lease alias as lease: one lease is parked or unparked at a time")
+	}
+	return nil
+}
+
+// leaseParkNext is what a park or an unpark tells the agent next (DP-28).
+func leaseParkNext(action string, v ops.LeaseView) string {
+	if action == leaseActionPark {
+		return fmt.Sprintf("%s is parked: still yours, its files kept and nothing running. zerops_dev_server, zerops_deploy and zerops_verify refuse it until %s. "+
+			"A release still frees it: it starts the container first to check for unsaved work.", v.Alias, ops.LeaseUnparkCall(v.Alias))
+	}
+	if v.State != ops.LeaseStateHeld {
+		return fmt.Sprintf("%s runs again, but not everything came back (its note says what): %s again finishes it.", v.Alias, ops.LeaseUnparkCall(v.Alias))
+	}
+	return fmt.Sprintf("%s runs again with its files, mounted at /var/www/%s; its supervisor starts the declared dev servers — zerops_dev_server action=status hostname=%q shows them.", v.Alias, v.Alias, v.Alias)
 }
 
 // leaseStatusNext is what a status tells the agent of its idle leases (DP-25):
 // which they are, that each one's idle says what frees it or what a release
 // would lose, that nothing frees a lease by itself, and to ask the person
-// before releasing one this conversation did not take; "" when none is idle.
+// before releasing one this conversation did not take — and of its parked
+// ones, with the call that starts one (DP-28); "" when none is either.
 func leaseStatusNext(views []ops.LeaseView) string {
 	var idle []string
 	for _, v := range views {
@@ -259,11 +318,12 @@ func leaseStatusNext(views []ops.LeaseView) string {
 			idle = append(idle, v.Alias)
 		}
 	}
+	parked := strings.TrimSpace(leaseParkedNext(views))
 	if len(idle) == 0 {
-		return ""
+		return parked
 	}
-	return fmt.Sprintf("Idle — nothing has happened in it for a day or more: %s. Each one's idle.next names the release that frees it, or what a release would lose and how to keep it. "+
-		"Nothing releases a lease by itself: ask the person before releasing one this conversation did not take.", strings.Join(idle, ", "))
+	return joinNext(fmt.Sprintf("Idle — nothing has happened in it for a day or more: %s. Each one's idle.next names the release that frees it, or what a release would lose and how to keep it. "+
+		"Nothing releases a lease by itself: ask the person before releasing one this conversation did not take.", strings.Join(idle, ", ")), parked)
 }
 
 // leaseReleaseBranchNext is what a release of a branch tells the agent when

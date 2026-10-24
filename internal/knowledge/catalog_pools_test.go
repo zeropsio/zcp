@@ -249,3 +249,47 @@ func TestThemes_Services_DevPool_WarmAndIdle_FactsPresent(t *testing.T) {
 		}
 	}
 }
+
+// TestThemes_Services_DevPool_Park_FactsPresent pins that the services theme's
+// "A part's dev pool" subsection carries park and unpark (spec-workflows.md §8
+// DP-28): what a park keeps and ends, that nothing answers on a parked lease
+// and which tools refuse it, what an unpark brings back, how a release treats
+// a parked lease, and that idleness offers the park and never parks.
+func TestThemes_Services_DevPool_Park_FactsPresent(t *testing.T) {
+	t.Parallel()
+
+	store, err := GetEmbeddedStore()
+	if err != nil {
+		t.Fatalf("GetEmbeddedStore: %v", err)
+	}
+	doc, err := store.Get("zerops://themes/services")
+	if err != nil {
+		t.Fatalf("Get services: %v", err)
+	}
+	section, ok := doc.H2Sections()["Pools and Box"]
+	if !ok {
+		t.Fatal("services.md missing H2 section 'Pools and Box'")
+	}
+	const heading = "### A part's dev pool"
+	_, sub, found := strings.Cut(section, heading)
+	if !found {
+		t.Fatalf("'Pools and Box' section missing %q", heading)
+	}
+	sub, _, _ = strings.Cut(sub, "\n### ")
+	for _, fact := range []string{
+		// Park: what it keeps and ends, and that the slot stays taken.
+		`zerops_lease action=park lease="<alias>"`, "`/var/www`, `$HOME` and `/tmp`", "every process ends", "maximum",
+		// Parked: nothing answers on it, what refuses it, the wiring.
+		"`parked`", "`parkedAt`", "refuse it", "skips it",
+		// Unpark: what comes back.
+		`zerops_lease action=unpark lease="<alias>"`, "waits for SSH", "starts the supervisor when none runs",
+		// Release: started first, stopped again when refused, forced as it stands.
+		"starts it first", "stops it again", "as it stands, stopped",
+		// Idleness offers it and never parks.
+		"or park it", "Nothing parks a lease by itself",
+	} {
+		if !strings.Contains(sub, fact) {
+			t.Errorf("%q subsection missing fact %q", heading, fact)
+		}
+	}
+}

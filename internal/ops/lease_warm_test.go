@@ -222,6 +222,27 @@ func (o *warmOrch) Create(_ context.Context, count int) ([]platform.SwarmContain
 	return out, nil
 }
 
+// Stop and Start are a holder's: the container takes the status, its
+// reservation kept; another lease is refused.
+func (o *warmOrch) Stop(_ context.Context, id, lease string) (platform.SwarmContainer, error) {
+	return o.power(id, lease, platform.SwarmContainerStopped)
+}
+
+func (o *warmOrch) Start(_ context.Context, id, lease string) (platform.SwarmContainer, error) {
+	return o.power(id, lease, platform.SwarmContainerActive)
+}
+
+func (o *warmOrch) power(id, lease, status string) (platform.SwarmContainer, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	b := o.find(id)
+	if b == nil || b.lease != lease {
+		return platform.SwarmContainer{}, &platform.SwarmError{Status: http.StatusConflict, Code: "containerAction", Message: "unknown lease", Reason: platform.SwarmReasonUnknownLease}
+	}
+	b.c.Status = status
+	return b.c, nil
+}
+
 func (o *warmOrch) Rollout(context.Context) (platform.SwarmRollout, error) {
 	return platform.SwarmRollout{}, nil
 }

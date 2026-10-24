@@ -37,12 +37,13 @@ own hostname reaches a random container — address a leased one by its alias.
    commits on no remote branch or uncommitted files, naming them;
    `force=true` discards them. Files git ignores and stashes go either way.
 
-`zerops_lease action=status` lists your leases: `held`, `unmounted` (the
-record has no alias or mount), `lost` (its container is gone or no longer
-reserved) or `unknown-holder` (reserved, but no record of yours). It reads
-each one's activity and unsaved work, changing nothing: a lease untouched
-for a day is `idle`, its `idle.next` naming the release or what a release
-would lose. `warm` shows each pool's warm container.
+`zerops_lease action=status` lists your leases: `held`, `parked` (stopped
+and kept), `unmounted` (the record has no alias or mount), `lost` (its
+container is gone or no longer reserved) or `unknown-holder` (reserved, but
+no record of yours). It reads each one's activity and unsaved work, changing
+nothing: a lease untouched for a day is `idle`, its `idle.next` naming the
+release or what a release would lose. `warm` shows each pool's warm
+container.
 
 **Preview.** With `previewPortBase` in `.zcp/dev-servers.json`, a lease
 answers on `previewPortBase + ZEROPS_StableNumber`, and the dev-server
@@ -137,6 +138,10 @@ stays unleased.
 - A full pool refuses an acquire at once and queues nothing: an acquire
   succeeds only after a lease is released. A pool holds at most ten
   containers — a higher `maxContainers` is capped at ten.
+- A lease you will come back to can be parked instead of released:
+  `zerops_lease action=park lease="<alias>"` stops its container and keeps
+  `/var/www`, `$HOME` and `/tmp`; nothing reaches it, and it still counts
+  toward the pool's ten, until `action=unpark` starts it again.
 - Nothing releases a lease by itself, however long it sits idle. Status
   and a full pool's refusal list every lease this zcp service holds, other
   conversations' too: ask the person before releasing one this

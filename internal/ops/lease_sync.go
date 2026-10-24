@@ -59,6 +59,9 @@ const (
 	LeaseSyncOnAnotherBranch = "on-another-branch"
 	// LeaseSyncUnreachable: ssh could not reach the member.
 	LeaseSyncUnreachable = "unreachable"
+	// LeaseSyncParked: the member is parked (DP-28) — its container stopped —
+	// so zcp did not try it.
+	LeaseSyncParked = "parked"
 	// LeaseSyncFailed: the member's fetch or fast-forward failed otherwise.
 	LeaseSyncFailed = "failed"
 )
@@ -147,6 +150,9 @@ func LeaseSync(ctx context.Context, d LeaseDeps, alias string) (LeaseSyncView, e
 			fmt.Sprintf("Lease %s cannot be synced: this zcp has no ssh into its leases", alias),
 			"Run zcp in the project's container, where it reaches each lease over its ssh alias")
 	}
+	if rec.Parked {
+		return LeaseSyncView{}, LeaseParkedError(rec.targetInfo(), "a sync")
+	}
 	group, err := LeaseGroup(d.StateDir, alias)
 	if err != nil {
 		return LeaseSyncView{}, err
@@ -167,12 +173,20 @@ func LeaseSync(ctx context.Context, d LeaseDeps, alias string) (LeaseSyncView, e
 	}
 	view.Push.Millis = time.Since(pushStart).Milliseconds()
 	var members []*LeaseSyncMember
+	parked := map[string]bool{}
 	for _, m := range group {
 		if m.Alias != alias {
 			members = append(members, &LeaseSyncMember{Alias: m.Alias, Pool: m.Pool})
+			parked[m.Alias] = m.Parked
 		}
 	}
-	runMembers(members, func(m *LeaseSyncMember) { fastForwardMember(ctx, d, m, branch, alias, onHQ) })
+	runMembers(members, func(m *LeaseSyncMember) {
+		if parked[m.Alias] {
+			parkedMember(m, alias)
+			return
+		}
+		fastForwardMember(ctx, d, m, branch, alias, onHQ)
+	})
 	for _, m := range members {
 		view.Members = append(view.Members, *m)
 	}
@@ -420,6 +434,15 @@ func fastForwardMember(ctx context.Context, d LeaseDeps, m *LeaseSyncMember, bra
 func hasMark(a leaseSyncAnswer, key string) bool {
 	_, ok := a.marks[key]
 	return ok
+}
+
+// parkedMember records a member that is parked: its container is stopped, so
+// zcp tried nothing; once it is unparked, the same sync from source again
+// fast-forwards it.
+func parkedMember(m *LeaseSyncMember, source string) {
+	m.Outcome = LeaseSyncParked
+	m.Note = fmt.Sprintf("%s is parked (its container is stopped), so zcp did not fast-forward it; %s starts it, then sync again: %s",
+		m.Alias, LeaseUnparkCall(m.Alias), LeaseSyncCall(source))
 }
 
 // memberFailure records a member step ssh or git failed: unreachable when ssh

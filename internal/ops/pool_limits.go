@@ -282,6 +282,9 @@ func unverifiedViews(records []leaseRecord, why string) []LeaseView {
 	views := make([]LeaseView, 0, len(records))
 	for _, r := range records {
 		v := r.view(LeaseStateHeld)
+		if r.Parked {
+			v.State, v.ParkedAt = LeaseStateParked, r.ParkedAt
+		}
 		v.AcquiredAt = r.AcquiredAt
 		v.Unverified = true
 		v.Note = "zcp's own record, unconfirmed: " + why

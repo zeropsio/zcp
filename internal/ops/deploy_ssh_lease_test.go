@@ -292,3 +292,33 @@ func TestDeploySSH_DevSourceToPool_NoteAndFlag(t *testing.T) {
 		}
 	}
 }
+
+// TestDeploySSH_ParkedLeaseSource_Refused: a deploy whose source is a lease
+// its record says is parked is refused before anything is sent, naming the
+// unpark.
+func TestDeploySSH_ParkedLeaseSource_Refused(t *testing.T) {
+	t.Parallel()
+	stateDir, alias := leaseDeployState(t, 31)
+	rec, err := loadLeaseRecord(stateDir, alias)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec.Parked, rec.ParkedAt = true, "2026-10-24T09:00:00Z"
+	if err := writeLeaseRecord(stateDir, rec); err != nil {
+		t.Fatal(err)
+	}
+	mock := platform.NewMock().WithServices(leaseDeployServices())
+	ssh := &mockSSHDeployer{output: []byte("ok")}
+
+	_, err = DeploySSHWithLeases(context.Background(), mock, "proj-1", ssh, testAuthInfo(), stateDir, alias, "appstage", "app", "", "")
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) || pe.Code != platform.ErrPrerequisiteMissing {
+		t.Fatalf("err = %v, want a PREREQUISITE_MISSING refusal", err)
+	}
+	if !strings.Contains(pe.Message, alias+" is parked") || !strings.Contains(pe.Suggestion, "zerops_lease action=unpark lease="+alias) {
+		t.Errorf("refusal = %q / %q, want it to say the lease is parked and name the unpark", pe.Message, pe.Suggestion)
+	}
+	if len(ssh.calls) != 0 {
+		t.Errorf("ssh calls = %+v, want none", ssh.calls)
+	}
+}

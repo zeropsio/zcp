@@ -549,8 +549,8 @@ func idleNext(d LeaseDeps, g leaseGroup, views []LeaseView, held []int, quiet ti
 	if len(held) == 1 {
 		v := views[held[0]]
 		if u := v.Unsaved; u.FileCount > 0 || u.UnpushedCommits > 0 {
-			return fmt.Sprintf("Nothing has happened in %s for %s, but a release would lose %s. %s.",
-				v.Alias, ago, describeUnsaved(u.Files, u.FileCount, u.UnpushedCommits), saveWorkHint(onHQ, "the container"))
+			return fmt.Sprintf("Nothing has happened in %s for %s, but a release would lose %s. %s. Or park it, to stop its container and keep everything in it: %s.",
+				v.Alias, ago, describeUnsaved(u.Files, u.FileCount, u.UnpushedCommits), saveWorkHint(onHQ, "the container"), LeaseParkCall(v.Alias))
 		}
 		return fmt.Sprintf("Nothing has happened in %s for %s and it holds no uncommitted, untracked or unpushed work: zerops_lease action=release lease=%s frees its container. %s",
 			v.Alias, ago, v.Alias, leaseReleaseTakes)
@@ -569,8 +569,8 @@ func idleNext(d LeaseDeps, g leaseGroup, views []LeaseView, held []int, quiet ti
 		states = append(states, v.Alias+" holds no unsaved work")
 	}
 	if unsaved {
-		return fmt.Sprintf("Nothing has happened in branch %s's leases (%s) for %s, but a release would lose what they hold: %s. %s.",
-			g.branch, joinAnd(aliases), ago, strings.Join(states, "; "), saveWorkHint(onHQ, "each container that holds it"))
+		return fmt.Sprintf("Nothing has happened in branch %s's leases (%s) for %s, but a release would lose what they hold: %s. %s. Or park each, to stop its container and keep everything in it: %s for each of them.",
+			g.branch, joinAnd(aliases), ago, strings.Join(states, "; "), saveWorkHint(onHQ, "each container that holds it"), LeaseParkCall("<alias>"))
 	}
 	repo := ""
 	if g.ambiguous {

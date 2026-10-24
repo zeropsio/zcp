@@ -74,18 +74,19 @@ func restoreLeaseStep(string, runtime.Info) error {
 // container, so its /etc and its mounts are gone while the records (and the
 // orchestrator's reservations) live on. Nothing here fails the command (DP-2):
 // a lease that cannot be restored is printed and skipped, and `zerops_lease
-// action=status` then reports it unmounted.
+// action=status` then reports it unmounted. A parked lease keeps its alias and
+// is not mounted (DP-28): its container is stopped, and its unpark mounts it.
 func restoreLeases() {
 	stateDir := leaseStateDir()
 	if stateDir == "" {
 		return
 	}
-	aliases, err := ops.LeaseAliases(stateDir)
+	aliases, parked, err := ops.LeaseMounts(stateDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  ! lease records: %v\n    (continuing — leases stay unmounted)\n", err)
 		return
 	}
-	if len(aliases) == 0 {
+	if len(aliases) == 0 && len(parked) == 0 {
 		return
 	}
 	run := func(_ context.Context, name string, args ...string) error { return commandRunner(name, args...) }
@@ -93,6 +94,9 @@ func restoreLeases() {
 		// A mount whose alias does not resolve cannot work: skip them all.
 		fmt.Fprintf(os.Stderr, "  ! lease aliases: %v\n    (continuing — leases stay unmounted)\n", err)
 		return
+	}
+	for _, alias := range parked {
+		fmt.Fprintf(os.Stderr, "  → lease %s is parked: not mounted (%s starts and mounts it)\n", alias, ops.LeaseUnparkCall(alias))
 	}
 	for _, alias := range aliases {
 		fmt.Fprintf(os.Stderr, "  → SSHFS mount: lease %s\n", alias)
