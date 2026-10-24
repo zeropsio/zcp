@@ -226,7 +226,7 @@ func TestBoxTool_Status_ReadsOnly(t *testing.T) {
 		t.Fatalf("result is not JSON: %v", err)
 	}
 	if got.Action != "status" || got.BoxStatus == nil || len(got.BoxStatus.Bases) != 1 || !got.BoxStatus.Subdomain.Access || got.BoxStatus.Subdomain.Registered {
-		t.Errorf("result = %s, want status with the base, subdomain access on, the ingress host not registered", text)
+		t.Fatalf("result = %s, want status with the base, subdomain access on, the ingress host not registered", text)
 	}
 	if !strings.Contains(got.BoxStatus.Next, "zerops_box action=setup serviceHostname=box1") {
 		t.Errorf("next = %q, want the setup call for the missing domain", got.BoxStatus.Next)

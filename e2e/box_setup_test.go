@@ -220,7 +220,7 @@ func TestE2E_Import_Box_FinishesSetup(t *testing.T) {
 	ingress := ingressFromEnv(t, h, ctx, serviceID)
 	if block.Status != ops.BoxSetupReady || block.Base == nil || block.Base.Name != "default" || block.Base.Status != platform.BoxBaseStatusReady ||
 		!strings.HasPrefix(block.Base.Digest, "sha256:") || !block.Base.Pulled {
-		t.Errorf("block = %+v / base %+v, want READY with a pulled default base", block, block.Base)
+		t.Fatalf("block = %+v / base %+v, want READY with a pulled default base", block, block.Base)
 	}
 	if block.Domain == nil || block.Domain.Domain != ingress || block.Domain.Form != platform.BoxDomainFormDash || block.Domain.State != ops.BoxDomainAdded {
 		t.Errorf("domain = %+v, want %s DASH added (line 2 of zeropsSubdomain)", block.Domain, ingress)

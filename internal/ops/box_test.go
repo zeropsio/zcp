@@ -146,6 +146,9 @@ func (f *fakeBox) Operation(ctx context.Context, id string, _ time.Duration) (pl
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.polled = append(f.polled, id)
+	if len(f.opAnswers) == 0 {
+		return platform.BoxOperation{ID: id, Status: platform.BoxOperationFailed, Error: "fakeBox: no poll was expected"}, nil
+	}
 	op := f.opAnswers[0]
 	if len(f.opAnswers) > 1 {
 		f.opAnswers = f.opAnswers[1:]
@@ -252,7 +255,7 @@ func TestBoxSetup_FreshWorkspace_PullsBaseThenAddsDomain(t *testing.T) {
 	if len(fake.pullReqs) != 1 || fake.pullReqs[0] != (platform.BoxPullBaseRequest{ImageRef: BoxDefaultBaseImageRef, Name: BoxDefaultBaseName}) {
 		t.Errorf("pull = %+v, want the default image named default", fake.pullReqs)
 	}
-	if fake.pullKeys[0] == "" {
+	if len(fake.pullKeys) == 0 || fake.pullKeys[0] == "" {
 		t.Error("the pull carries no Idempotency-Key")
 	}
 	wantPut := []platform.BoxDomain{{Domain: testBoxIngress, Form: platform.BoxDomainFormDash}}
