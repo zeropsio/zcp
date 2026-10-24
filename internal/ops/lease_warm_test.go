@@ -5,7 +5,7 @@
 // acquire or a release tops the pool up through the orchestrator's create,
 // in the background, under one flock per pool; status reports each pool's
 // warm containers and what zcp last did for them; an acquire waits out a
-// create in progress (docs/spec-workflows.md §8 DP-26).
+// create in progress (docs/spec-workflows.md §8 DP-27).
 package ops
 
 import (

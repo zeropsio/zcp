@@ -28,7 +28,7 @@ import (
 // outside it (another container's zcp, another consumer) can overshoot the
 // target by one, which a later release removes. zcp deletes only the container
 // it is releasing, with that lease — never a batch, never force, never by
-// lowering maxContainers (docs/spec-workflows.md §8 DP-26).
+// lowering maxContainers (docs/spec-workflows.md §8 DP-27).
 
 // LeaseWarmTarget is how many warm containers each pool keeps (the owner's
 // answer: one per pool).

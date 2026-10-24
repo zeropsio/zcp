@@ -52,7 +52,7 @@ func leaseInputSchema() *jsonschema.Schema {
 // lease gets its ssh alias and mount (ops.NewLeaseHost); without one the host
 // side does nothing. The HQ a repository is recognised on is read from the
 // enrollment at each acquire, as git-push-setup reads it for a dev service.
-// Each pool keeps ops.LeaseWarmTarget warm containers (DP-26).
+// Each pool keeps ops.LeaseWarmTarget warm containers (DP-27).
 func leaseDeps(client platform.Client, projectID, stateDir string, swarm ops.SwarmFactory, mounter ops.Mounter, ssh ops.SSHDeployer) ops.LeaseDeps {
 	deps := ops.LeaseDeps{Client: client, ProjectID: projectID, StateDir: stateDir, Swarm: swarm, SSH: ssh, HQAddress: hqAddress,
 		Warm: &ops.LeaseWarm{Target: ops.LeaseWarmTarget}}
@@ -73,7 +73,7 @@ type leaseToolResult struct {
 	// UnreadPools are the pools a status of every pool could not read, each
 	// with why; their leases are listed from zcp's records, unverified.
 	UnreadPools []ops.LeasePoolUnread `json:"unreadPools,omitempty"`
-	// Warm is each pool's warm containers on a status (DP-26).
+	// Warm is each pool's warm containers on a status (DP-27).
 	Warm        []ops.LeasePoolWarm     `json:"warm,omitempty"`
 	NextActions string                  `json:"nextActions,omitempty"`
 	Envelope    *workflow.StateEnvelope `json:"envelope,omitempty"`

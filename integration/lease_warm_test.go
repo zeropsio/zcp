@@ -1,5 +1,5 @@
 // Tests for: integration — zerops_lease keeps each pool's warm container
-// through the full MCP server (docs/spec-workflows.md §8 DP-26).
+// through the full MCP server (docs/spec-workflows.md §8 DP-27).
 
 package integration_test
 

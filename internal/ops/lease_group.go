@@ -141,7 +141,7 @@ func LeaseAcquireGroupChange(ctx context.Context, d LeaseDeps, pools []string, r
 	locked = false
 	if d.Warm != nil {
 		// Each pool an acquire took a container of is topped up to its warm
-		// target, the create in the background (DP-26).
+		// target, the create in the background (DP-27).
 		runMembers(fresh, func(m *groupMember) { m.view.Note = joinNotes(m.view.Note, d.Warm.afterAcquire(ctx, d, m.rp)) })
 	}
 	var rewired []LeaseRewire
@@ -397,7 +397,7 @@ func reserveMember(ctx context.Context, d LeaseDeps, m *groupMember, repoURL, br
 	// received. The request runs to its own deadline instead; a caller gone
 	// meanwhile makes the steps below fail, which hands the container back.
 	// A create in progress refuses it containers-preparing, reserving nothing:
-	// it is retried within its own deadline (DP-26).
+	// it is retried within its own deadline (DP-27).
 	acqCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), LeaseCallTimeout)
 	got, waitNote, err := acquireThroughPreparing(acqCtx, d, rp)
 	cancel()

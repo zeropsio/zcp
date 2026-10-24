@@ -1,5 +1,5 @@
 // Tests for: tools/lease.go — zerops_lease keeps each pool's warm container
-// (docs/spec-workflows.md §8 DP-26): a release keeps its container as the warm
+// (docs/spec-workflows.md §8 DP-27): a release keeps its container as the warm
 // one or removes it with its own lease, an acquire that takes the warm one
 // has another prepared in the background, and status reports each pool's
 // warm containers.

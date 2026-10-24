@@ -390,7 +390,7 @@ func abandonLease(ctx context.Context, d LeaseDeps, rec leaseRecord, cause error
 const leaseGoneNext = "This lease is gone; acquire again for another"
 
 // handBackOutcome says where a failed checkout's container went — released,
-// deleted because it could not be reset, removed or kept warm (DP-26), gone
+// deleted because it could not be reset, removed or kept warm (DP-27), gone
 // already, or still reserved —
 // once for the message (what) and once as what to do (next), so the two never
 // disagree.

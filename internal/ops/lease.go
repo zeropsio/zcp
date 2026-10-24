@@ -76,7 +76,7 @@ type LeaseDeps struct {
 	// Now is zcp's clock (nil: time.Now): when a lease's checkout was read,
 	// and how long ago its last activity was (DP-25).
 	Now func() time.Time
-	// Warm keeps each pool's warm container (DP-26, lease_warm.go): a release
+	// Warm keeps each pool's warm container (DP-27, lease_warm.go): a release
 	// keeps its container or removes it, an acquire or a release tops the pool
 	// up. nil keeps none: every release resets, nothing is created.
 	Warm *LeaseWarm
@@ -206,7 +206,7 @@ type LeaseView struct {
 	containerDeleted bool
 	// containerRemoved: a release removed the container with its lease, the
 	// pool having its warm containers or the container being outdated; keptWarm:
-	// a release reset it and it stays in the pool as a warm one (DP-26).
+	// a release reset it and it stays in the pool as a warm one (DP-27).
 	containerRemoved bool
 	keptWarm         bool
 }
@@ -706,7 +706,7 @@ func LeaseRelease(ctx context.Context, d LeaseDeps, alias string, force bool) (L
 // files (DP-4); the refusal leaves the mount, the record and the lease as they
 // were. Every release resets the container (processes end) — or, under the
 // warm policy, removes it with its lease when the pool already has its warm
-// container or it runs an outdated version (DP-26). A container ssh cannot
+// container or it runs an outdated version (DP-27). A container ssh cannot
 // reach is released as lost, unchecked. If the orchestrator fails the
 // reservation is kept and so is the record. A lease the orchestrator no longer
 // knows (it ended, or the container is gone) has nothing left to release: the
@@ -815,7 +815,7 @@ func releaseLease(ctx context.Context, d LeaseDeps, rec leaseRecord, alias strin
 	release := func() (LeaseView, error) { return releaseOnOrchestrator(ctx, d, rp, rec, alias, reset) }
 	if reset && d.Warm != nil {
 		// The pool keeps its warm container: this one is kept, reset, or
-		// removed with its own lease (DP-26).
+		// removed with its own lease (DP-27).
 		return d.Warm.keepOrRemove(ctx, d, rp, rec, release)
 	}
 	return release()
