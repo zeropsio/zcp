@@ -377,6 +377,42 @@ func TestLeaseAcquire_HQRepo_RefusedCheckout_WritesAfreshNextTime(t *testing.T) 
 	}
 }
 
+// goneByIDClient answers the by-id read of the service gone the way the
+// platform answers a deleted service's (live-verified): HTTP 400
+// serviceStackNotFound, not a 404.
+type goneByIDClient struct {
+	*platform.Mock
+	gone string
+}
+
+func (c goneByIDClient) GetService(ctx context.Context, id string) (*platform.ServiceStack, error) {
+	if id == c.gone {
+		pe := platform.NewPlatformError(platform.ErrAPIError, "Service stack not found.", "")
+		pe.APICode = "serviceStackNotFound"
+		return nil, pe
+	}
+	return c.Mock.GetService(ctx, id)
+}
+
+// TestRenewPoolHQCredentials_PoolGoneBy400_RecordDropped: a pool whose by-id
+// read answers 400 serviceStackNotFound is gone like one answering 404 — its
+// record is dropped, never reported as a failure retried at every pass.
+func TestRenewPoolHQCredentials_PoolGoneBy400_RecordDropped(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	writePoolCredentialRecord(t, stateDir, "gonepool", "svc-gone", hq.CredentialFingerprint(poolOldCredential))
+	client := goneByIDClient{Mock: platform.NewMock(), gone: "svc-gone"}
+
+	failures := RenewPoolHQCredentials(context.Background(), client, stateDir, poolMateCredential)
+
+	if len(failures) != 0 {
+		t.Errorf("failures = %+v, want none: the pool is gone", failures)
+	}
+	if _, _, ok := readPoolCredentialRecord(t, stateDir, "gonepool"); ok {
+		t.Error("the record of a pool whose by-id read answers 400 serviceStackNotFound survives the renewal")
+	}
+}
+
 // TestRenewPoolHQCredentials_RewritesEveryPoolWhoseFingerprintDiffers: after
 // the Mate enrolls again, HQ revokes the credential every pool zcp gave it,
 // and a lease already held there keeps working only once its pool's GIT_TOKEN
