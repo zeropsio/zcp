@@ -25,7 +25,7 @@ call commits nothing):
 | `trees[].detachedCommits` | commits only a detached HEAD holds | `git switch -c <branch>` in that checkout, then push it |
 | `branches[]` | a local branch's commits on no remote branch | `git push -u origin <branch>` |
 | `stashes[]` | stash entries | `git stash branch <branch> <ref>` with the entry's `ref`, then commit and push; drop the ones you do not keep |
-| `reflogOnly` | commits only a reflog still reaches: reset, amended or rebased away | `git branch <branch> <commit>` and push the ones you keep |
+| `reflogOnly` | commits only a reflog still reaches: reset, amended or rebased away | the retire's bundle keeps each one, so they never hold it; `git branch <branch> <commit>` and push the ones you want on the origin |
 | `trees[].envFiles` | `.env` files, which git does not carry | move each value into the pool's service env with `zerops_env`, then delete the file |
 
 `trees[].ignored` and `t3Refs` are named for the record, not moved: ignored

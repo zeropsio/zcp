@@ -125,7 +125,11 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// (the person's yes to the pool getting the dev's GIT_TOKEN, a
 		// FlexBool published as oneOf[boolean,string]); what the step copies
 		// and never copies lives in the flow's env atom.
-		"zerops_workflow":    20514,
+		// Raised +192 (20514→20706) for action="retire", pool-migrate's
+		// retire of the old dev service: the action list names it, force
+		// and confirmDestructive name what they mean for it; no new field —
+		// the phases, refusals and the bundle live in the flow's retire atom.
+		"zerops_workflow":    20706,
 		"zerops_record_fact": 3299,
 		"zerops_dev_server":  3220,
 		// Raised +28 (2945→2973) for the OS-axis migration: the runtime/services

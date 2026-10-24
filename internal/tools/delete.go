@@ -56,6 +56,18 @@ func RegisterDelete(srv *mcp.Server, client platform.Client, projectID string, s
 			), WithRecoveryStatus()), nil, nil
 		}
 
+		// A dev service the pool migration is retiring is deleted there, by
+		// the id the retire recorded and after its bundle: a delete here
+		// would drop its pair's meta mid-move (docs/spec-workflows.md §13
+		// PM-7).
+		if rec, _ := readPoolRetireRecord(stateDir, input.ServiceHostname); rec != nil && poolRetireInFlight(rec.Phase) {
+			return convertError(platform.NewPlatformError(
+				platform.ErrInvalidUsage,
+				fmt.Sprintf("%q is being retired by the pool migration (phase %s): its delete runs there, by the id the retire read, after the bundle of its repository", input.ServiceHostname, rec.Phase),
+				fmt.Sprintf(`Call zerops_workflow workflow="pool-migrate" action="retire" service=%q to resume it.`, input.ServiceHostname),
+			), WithRecoveryStatus()), nil, nil
+		}
+
 		// zcp never deletes a service without the person's explicit consent
 		// to deleting that service by name.
 		if input.Consent != input.ServiceHostname {

@@ -51,7 +51,7 @@ var AcceptedWorkflowActions = []string{
 	"skip", "status", "close", "resume", "list", "route",
 	"close-mode", "git-push-setup", "build-integration", "group-recipe", "open-change", "describe-change", "mac-pair", "prod-ops",
 	"confirm-production", "adopt-local", "set-default-setup",
-	"record-deploy", "release", "pool-env",
+	"record-deploy", "release", "pool-env", "retire",
 }
 
 // AcceptedDeployStrategies lists every `strategy="X"` value that

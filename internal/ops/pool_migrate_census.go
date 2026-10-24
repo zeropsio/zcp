@@ -308,18 +308,18 @@ func (p *poolMigrateCensusParse) worktrees(lines []string) {
 	for _, l := range lines {
 		key, val, _ := strings.Cut(l, " ")
 		switch key {
-		case "worktree":
+		case porcelainWorktree:
 			cur = byPath[val]
 			if cur == nil {
 				cur = &PoolMigrateTree{Path: val}
 			}
 			p.trees = append(p.trees, cur)
 			p.byPath[val] = cur
-		case "HEAD":
+		case porcelainHead:
 			if cur != nil {
 				cur.Head = val
 			}
-		case "branch":
+		case porcelainBranch:
 			if cur != nil {
 				cur.Branch = strings.TrimPrefix(val, "refs/heads/")
 			}

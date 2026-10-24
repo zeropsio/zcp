@@ -156,11 +156,14 @@ type poolMigrateResponse struct {
 	// Image is the image step's reading of the pool setup in the commit its
 	// deploy ships and of the app version the pool runs, on every step once
 	// the pool holds the dev service's env.
-	Image    *ops.PoolMigrateImage `json:"image,omitempty"`
-	Refusals []poolMigrateRefusal  `json:"refusals,omitempty"`
-	Warnings []string              `json:"warnings,omitempty"`
-	Guidance string                `json:"guidance"`
-	Inputs   poolMigrateInputs     `json:"inputs"`
+	Image *ops.PoolMigrateImage `json:"image,omitempty"`
+	// Retire is the retire's record — its phase, the bundle of the dev's
+	// repository and what it kept — on every answer once a retire started.
+	Retire   *poolRetireView      `json:"retire,omitempty"`
+	Refusals []poolMigrateRefusal `json:"refusals,omitempty"`
+	Warnings []string             `json:"warnings,omitempty"`
+	Guidance string               `json:"guidance"`
+	Inputs   poolMigrateInputs    `json:"inputs"`
 }
 
 type poolMigrateStepState struct {
@@ -215,6 +218,8 @@ type poolMigrateCall struct {
 	dev    platform.ServiceStack
 	pool   platform.ServiceStack
 	stages []platform.ServiceStack
+	// services is the project's every service by the direct list.
+	services []platform.ServiceStack
 }
 
 // handlePoolMigrate is the read side of workflow="pool-migrate": it names the
@@ -298,10 +303,32 @@ func poolMigrateEnvRun(ctx context.Context, d poolMigrateDeps, input WorkflowInp
 	return jsonResult(resp), nil, nil
 }
 
-// readPoolMigrate runs every check a call makes before the pool is settled.
-// It answers a final response (a refusal, the provision step), an error
-// result, or the call to go on with.
+// readPoolMigrate answers a part whose retire started from the retire's
+// record — retiring while it is in flight, retired once done — and runs every
+// other call's checks (readPoolMigrateChecks). Reading the record writes
+// nothing and reaches no service.
 func readPoolMigrate(ctx context.Context, d poolMigrateDeps, input WorkflowInput) (*poolMigrateCall, *poolMigrateResponse, *mcp.CallToolResult) {
+	if service := strings.TrimSpace(input.Service); service != "" {
+		rec, err := findPoolRetireRecord(d.stateDir, service)
+		if err != nil {
+			return nil, nil, convertError(fmt.Errorf("pool-migrate: %w", err), WithRecoveryStatus())
+		}
+		if rec != nil && (poolRetireInFlight(rec.Phase) || (rec.Phase == poolRetireRetired && !poolRetireNameRetaken(ctx, d, rec))) {
+			corpus, err := workflow.LoadAtomCorpus()
+			if err != nil {
+				return nil, nil, convertError(err, WithRecoveryStatus())
+			}
+			resp := poolRetireRecordAnswer(poolRetireBase(corpus, rec), rec)
+			return nil, &resp, nil
+		}
+	}
+	return readPoolMigrateChecks(ctx, d, input)
+}
+
+// readPoolMigrateChecks runs every check a call makes before the pool is
+// settled. It answers a final response (a refusal, the provision step), an
+// error result, or the call to go on with.
+func readPoolMigrateChecks(ctx context.Context, d poolMigrateDeps, input WorkflowInput) (*poolMigrateCall, *poolMigrateResponse, *mcp.CallToolResult) {
 	client, sshDeployer, rt, stateDir, projectID := d.client, d.ssh, d.rt, d.stateDir, d.projectID
 	service := strings.TrimSpace(input.Service)
 	poolInput := strings.TrimSpace(input.Pool)
@@ -462,7 +489,7 @@ func readPoolMigrate(ctx context.Context, d poolMigrateDeps, input WorkflowInput
 			stages = append(stages, svc)
 		}
 	}
-	return &poolMigrateCall{resp: resp, corpus: corpus, meta: meta, dev: devSvc, pool: poolSvc, stages: stages}, nil, nil
+	return &poolMigrateCall{resp: resp, corpus: corpus, meta: meta, dev: devSvc, pool: poolSvc, stages: stages, services: live}, nil, nil
 }
 
 // envInput is what the env step reads for this call.
@@ -560,8 +587,7 @@ func poolMigrateImageAnswer(ctx context.Context, d poolMigrateDeps, call *poolMi
 	short := poolMigrateShortCommit(image.Commit)
 	switch {
 	case image.Done:
-		return poolMigrateAt(resp, poolMigrateStepMove, nil,
-			fmt.Sprintf("The pool runs an app version created after the last change of %s up to commit %s, so the image step is done. This zcp does not run the move, lease and retire steps yet: census and workBranch say what moving the work means.", image.File, short))
+		return poolMigrateAfterImage(d, call, resp)
 	case len(image.Missing) > 0:
 		why := "The pool setup is not ready: fix what image.missing names, commit it (zcp never commits), then call again."
 		if image.Commit != "" {
@@ -583,6 +609,53 @@ func poolMigrateImageAnswer(ctx context.Context, d poolMigrateDeps, call *poolMi
 		Tool: "zerops_deploy",
 		Args: map[string]string{"sourceService": call.dev.Name, "targetService": call.pool.Name, "setup": image.Setup, "sha": image.Commit},
 		Why:  why,
+	}, "")
+}
+
+// poolMigrateAfterImage answers a part whose pool runs the commit's pool
+// setup: move while the dev holds work its origin lacks and zcp holds no lease
+// of the pool on the work's branch; lease, naming the acquire, once nothing is
+// left to move; ready-to-retire, naming the retire's diagnosis, once zcp holds
+// such a lease by its own records. The retire itself asks the pool's
+// orchestrator and verifies the lease; this reads neither, and writes nothing.
+func poolMigrateAfterImage(d poolMigrateDeps, call *poolMigrateCall, resp poolMigrateResponse) poolMigrateResponse {
+	if retire := atomBody(call.corpus, poolRetireAtomID); retire != "" {
+		resp.Guidance += "\n\n" + retire
+	}
+	dev, pool := call.dev.Name, call.pool.Name
+	wb := resp.WorkBranch
+	if wb == nil || wb.Branch == "" {
+		missing := "zcp names none yet"
+		if wb != nil && wb.Missing != "" {
+			missing = wb.Missing
+		}
+		return poolMigrateAt(resp, poolMigrateStepMove, nil, "The image step is done. A lease of the pool needs the work's branch: "+missing)
+	}
+	branch := wb.Branch
+	leases, err := ops.PoolMigrateLeases(d.stateDir, pool, poolMigrateDevOrigin(call.meta, d), branch)
+	if err != nil {
+		resp.Warnings = append(resp.Warnings, fmt.Sprintf("zcp's lease records could not be read: %v.", err))
+	}
+	unsaved := poolRetireBlocking(resp.Census)
+	switch {
+	case len(leases) > 0:
+		if len(unsaved) > 0 {
+			resp.Warnings = append(resp.Warnings, fmt.Sprintf("%s still holds work its origin lacks (census): the retire refuses until you push it, or until the person agrees to leaving it (force); a verified bundle keeps a copy either way.", dev))
+		}
+		return poolMigrateAt(resp, poolMigrateStepReadyToRetire, &poolMigrateNext{
+			Tool: "zerops_workflow",
+			Args: map[string]string{"workflow": workflowPoolMigrate, "action": actionRetire, "service": dev, "pool": pool},
+			Why: fmt.Sprintf("zcp holds %s, a lease of %s on %s. The retire's first call reads every guard again and names in wouldDestroy what deleting %s erases, changing nothing; ask the person, and only once they agreed by name send the acknowledged call it names.",
+				leases[0].Alias, pool, branch, dev),
+		}, "")
+	case len(unsaved) > 0:
+		return poolMigrateAt(resp, poolMigrateStepMove, nil,
+			fmt.Sprintf("The image step is done. %s holds work its origin lacks (census): push each branch you keep, then call again. Once it is moved — or the person chose to leave the rest — lease the pool on the work's branch: zerops_lease action=%q pool=%q branch=%q.", dev, leaseProbeAction, pool, branch))
+	}
+	return poolMigrateAt(resp, poolMigrateStepLease, &poolMigrateNext{
+		Tool: "zerops_lease",
+		Args: map[string]string{"action": leaseProbeAction, "pool": pool, "branch": branch},
+		Why:  fmt.Sprintf("Leases a container of %s on %s from the dev's origin; start its dev servers (zerops_dev_server hostname=\"<alias>\") and prove it runs with zerops_verify serviceHostname=\"<alias>\" — the retire verifies it again.", pool, branch),
 	}, "")
 }
 
@@ -812,6 +885,7 @@ func poolMigrateAt(resp poolMigrateResponse, step string, next *poolMigrateNext,
 	resp.Step = step
 	resp.Next = next
 	resp.NextUnavailable = nextUnavailable
+	resp.Steps = nil
 	order := poolMigrateStepOrder()
 	current := slices.Index(order, step)
 	for i, s := range order {

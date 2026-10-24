@@ -21,6 +21,8 @@ type DiagnosedDestruction struct {
 	//   "import-override" — import with override=true tears down matching
 	//                       service stacks (containers, deployed code,
 	//                       env vars, SSHFS mounts).
+	//   "pool-retire"     — the pool migration deletes a part's old dev
+	//                       service, by the id it read, after its bundle.
 	// Future: "env-set", "env-delete", "generate-dotenv".
 	Operation string `json:"operation"`
 	// Targets are the service hostnames whose state would be erased.
@@ -94,6 +96,15 @@ type DestructionLoss struct {
 	// Containers are pool containers a destructive op deletes, by lease
 	// alias, each with its /var/www (lowering a pool's maxContainers).
 	Containers []string `json:"containers,omitempty"`
+	// ServiceIDs are the ids ServiceStacks are deleted by, read directly —
+	// never resolved from a hostname through the lagging search (pool-retire).
+	ServiceIDs []string `json:"serviceIds,omitempty"`
+	// UnsavedWork names the work on a service its origin lacks, whose only
+	// copy afterwards is the bundle the op writes first (pool-retire).
+	UnsavedWork []string `json:"unsavedWork,omitempty"`
+	// NotKept names what no copy keeps (pool-retire: .env files, the
+	// service's own URLs, ignored files, git config and hooks).
+	NotKept []string `json:"notKept,omitempty"`
 }
 
 // DestructiveAck is the agent-supplied acknowledgment that a destructive
@@ -207,8 +218,11 @@ func (d DiagnosedDestruction) JoinTargets() string {
 // stays in sync with the actual handler signature.
 func suggestionForFirstCallRefusal(expected DiagnosedDestruction) string {
 	const fallback = "Read zerops_events for the targets (failed/never-started services have no runtime logs), then re-call with confirmDestructive matching wouldDestroy."
-	if expected.Operation == poolShrinkOperation {
+	switch expected.Operation {
+	case poolShrinkOperation:
 		return poolShrinkSuggestion(expected)
+	case poolRetireOperation:
+		return poolRetireSuggestion(expected)
 	}
 	if expected.Retry == nil {
 		// A failed-*/stuck-building target (R2): no ready-made re-import —
