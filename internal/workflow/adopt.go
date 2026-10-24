@@ -159,7 +159,7 @@ func (e *Engine) BootstrapCompleteAdoptPlan(existing []platform.ServiceStack, sc
 	// dev service and its stage. ZCP refuses to commit a guess — two independent
 	// dev services, or a stage recorded as a dev service of its own outside its
 	// pair (§8 E8) — and surfaces the plan shapes to choose from.
-	if err := adoptPairingQuestion(adoptable, typeByHost, deps); err != nil {
+	if err := adoptPairingQuestion(adoptable, typeByHost, deps, variantB); err != nil {
 		return nil, err
 	}
 
@@ -190,7 +190,15 @@ func (e *Engine) BootstrapCompleteAdoptPlan(existing []platform.ServiceStack, sc
 
 	names := make([]string, 0, len(targets))
 	for _, tgt := range targets {
-		names = append(names, tgt.Runtime.DevHostname)
+		name := tgt.Runtime.DevHostname
+		if cv := tgt.Runtime.CodeVolume; cv != nil {
+			name += " (the code volume " + cv.Hostname + " shared with " + strings.Join(cv.DevServiceHostnames(), ", ")
+			if stages := tgt.Runtime.StageHostnames(); len(stages) > 0 {
+				name += "; stages " + strings.Join(stages, ", ")
+			}
+			name += ")"
+		}
+		names = append(names, name)
 	}
 	msg := "Auto-derived adoption plan from discovery: adopted " + strings.Join(names, ", ") + " (isExisting)"
 	if len(deps) > 0 {
@@ -280,8 +288,9 @@ func (e *Engine) aliveSessionIDs() map[string]bool {
 // alpine/<rt> (prod) — same bare type, different OS base — while different
 // versions (nodejs@22 vs nodejs@20) stay apart. Exactly two runtimes get
 // adoptPairingChoice, more get adoptPairingChoices, each with plan templates
-// covering every runtime. Nil when no two share a base.
-func adoptPairingQuestion(adoptable []string, typeByHost map[string]string, deps []Dependency) error {
+// covering every runtime; a variant-B pair derived beside them is named, as
+// no plan can record it. Nil when no two share a base.
+func adoptPairingQuestion(adoptable []string, typeByHost map[string]string, deps []Dependency, variantB *BootstrapTarget) error {
 	bases := map[string]int{}
 	shared := false
 	for _, h := range adoptable {
@@ -292,10 +301,19 @@ func adoptPairingQuestion(adoptable []string, typeByHost map[string]string, deps
 	if !shared {
 		return nil
 	}
+	var err error
 	if len(adoptable) == 2 {
-		return adoptPairingChoice(adoptable[0], adoptable[1], typeByHost[adoptable[0]], typeByHost[adoptable[1]], deps)
+		err = adoptPairingChoice(adoptable[0], adoptable[1], typeByHost[adoptable[0]], typeByHost[adoptable[1]], deps)
+	} else {
+		err = adoptPairingChoices(adoptable, typeByHost, deps)
 	}
-	return adoptPairingChoices(adoptable, typeByHost, deps)
+	if variantB == nil {
+		return err
+	}
+	rt := variantB.Runtime
+	pair := append(append([]string{rt.DevHostname}, rt.CodeVolume.DevServiceHostnames()...), rt.StageHostnames()...)
+	return fmt.Errorf("%w\n\n%s and the code volume %s are one pair, which only a scope records, never a plan: adopt them first with scope=[%s] alone, then the runtimes above with the plan you choose",
+		err, strings.Join(pair, ", "), rt.CodeVolume.Hostname, quotedList(pair))
 }
 
 // adoptPairingChoices renders the ErrAdoptPairingChoice diagnostic for more
