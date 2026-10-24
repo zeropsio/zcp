@@ -387,7 +387,7 @@ func wakeParkedForGuard(ctx context.Context, d LeaseDeps, rec leaseRecord, v lea
 	case fresh.own.lost():
 		return leaseWake{}, &leaseEndedError{why: fresh.why}
 	case fresh.own == leaseUnverified:
-		return w, unverifiedLeaseRefusal(alias, "released", fresh)
+		return w, unverifiedRefusal(fmt.Sprintf("Lease %s was not released: zcp started its parked container to check it for unsaved work, then could not ask the pool's orchestrator whether it is still this lease's, so it read nothing from it", alias), fresh)
 	}
 	return w, nil
 }
