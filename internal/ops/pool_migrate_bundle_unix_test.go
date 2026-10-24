@@ -19,23 +19,16 @@ import (
 // offers none (a tmpfs at /dev/shm is one on most Linux hosts).
 func otherFilesystemDir(t *testing.T, path string) string {
 	t.Helper()
-	device := func(p string) (uint64, bool) {
-		var st syscall.Stat_t
-		if err := syscall.Stat(p, &st); err != nil {
-			return 0, false
-		}
-		return uint64(st.Dev), true //nolint:unconvert // Dev is int32 on darwin, uint64 on linux
-	}
-	here, ok := device(path)
-	if !ok {
-		t.Fatalf("stat %s", path)
+	var here syscall.Stat_t
+	if err := syscall.Stat(path, &here); err != nil {
+		t.Fatalf("stat %s: %v", path, err)
 	}
 	for _, candidate := range []string{"/dev/shm"} {
-		there, ok := device(candidate)
-		if !ok || there == here {
+		var there syscall.Stat_t
+		if err := syscall.Stat(candidate, &there); err != nil || there.Dev == here.Dev {
 			continue
 		}
-		dir, err := os.MkdirTemp(candidate, "zcp-bundle-test-")
+		dir, err := os.MkdirTemp(candidate, "zcp-bundle-test-") //nolint:usetesting // it must lie on another filesystem than t.TempDir's
 		if err != nil {
 			continue
 		}
