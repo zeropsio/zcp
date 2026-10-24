@@ -158,7 +158,9 @@ func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir 
 			if views == nil {
 				views = []ops.LeaseView{}
 			}
-			return jsonResult(leaseToolResult{Action: input.Action, Leases: views, UnreadPools: status.Unread, Envelope: envelope(ctx, views...)}), nil, nil
+			return jsonResult(leaseToolResult{
+				Action: input.Action, Leases: views, UnreadPools: status.Unread, NextActions: leaseStatusNext(views), Envelope: envelope(ctx, views...),
+			}), nil, nil
 		case leaseActionRelease:
 			force := false
 			if f := input.Force.Ptr(); f != nil {
@@ -233,6 +235,24 @@ func leaseAcquireNext(views []ops.LeaseView) string {
 		next += fmt.Sprintf(" %s was already held for this branch (reused): the same container, not a second one.", strings.Join(reused, ", "))
 	}
 	return next + " zerops_lease action=status shows every lease."
+}
+
+// leaseStatusNext is what a status tells the agent of its idle leases (DP-25):
+// which they are, that each one's idle says what frees it or what a release
+// would lose, that nothing frees a lease by itself, and to ask the person
+// before releasing one this conversation did not take; "" when none is idle.
+func leaseStatusNext(views []ops.LeaseView) string {
+	var idle []string
+	for _, v := range views {
+		if v.Idle != nil {
+			idle = append(idle, v.Alias)
+		}
+	}
+	if len(idle) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("Idle — nothing has happened in it for a day or more: %s. Each one's idle.next names the release that frees it, or what a release would lose and how to keep it. "+
+		"Nothing releases a lease by itself: ask the person before releasing one this conversation did not take.", strings.Join(idle, ", "))
 }
 
 // leaseReleaseBranchNext is what a release of a branch tells the agent when

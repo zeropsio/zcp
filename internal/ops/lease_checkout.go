@@ -416,18 +416,26 @@ func (w unsavedWork) any() bool { return len(w.files) > 0 || w.unpushed > 0 }
 // describe names the work: the files (the first leaseGuardFileLimit of them)
 // and the count of commits on no remote branch.
 func (w unsavedWork) describe() string {
+	return describeUnsaved(w.files, len(w.files), w.unpushed)
+}
+
+// describeUnsaved names unsaved work as a refused release does: count files —
+// the first leaseGuardFileLimit of files by name — and unpushed commits.
+func describeUnsaved(files []string, count, unpushed int) string {
 	var parts []string
-	if n := len(w.files); n > 0 {
-		shown := w.files
-		more := ""
-		if n > leaseGuardFileLimit {
+	if count > 0 {
+		shown := files
+		if len(shown) > leaseGuardFileLimit {
 			shown = shown[:leaseGuardFileLimit]
-			more = fmt.Sprintf(", first %d shown", leaseGuardFileLimit)
 		}
-		parts = append(parts, fmt.Sprintf("%d uncommitted or untracked file(s) (%s%s)", n, strings.Join(shown, ", "), more))
+		more := ""
+		if count > len(shown) {
+			more = fmt.Sprintf(", first %d shown", len(shown))
+		}
+		parts = append(parts, fmt.Sprintf("%d uncommitted or untracked file(s) (%s%s)", count, strings.Join(shown, ", "), more))
 	}
-	if w.unpushed > 0 {
-		parts = append(parts, fmt.Sprintf("%d commit(s) on no remote branch", w.unpushed))
+	if unpushed > 0 {
+		parts = append(parts, fmt.Sprintf("%d commit(s) on no remote branch", unpushed))
 	}
 	return strings.Join(parts, " and ")
 }
