@@ -1872,9 +1872,10 @@ sequenceDiagram
   15 min counted from the organisation view the Mate's latest access list was computed from (each
   frame carries its time, §3.9); past it the Mate closes every person connection it can no longer
   vouch for — all of them. HQ sends a list from a fresh view at least every 5 min (§3.4), so the cap
-  is reached only while the link is down (no tickets either, so nobody new), Zerops does not answer
-  HQ, or HQ can no longer read the organisation. 15 min outlasts an HQ deploy; a removed member never
-  stays for long after a flap.
+  is reached only while the link is down (no tickets either, so nobody new) or Zerops fails
+  transiently (a timeout, a `5xx`, a `429`). A definite refusal of the organisation's key does not
+  wait for it (below). 15 min outlasts an HQ deploy; a removed member never stays for long after a
+  flap.
 - **HQ deploy or restart.** HQ's leader goes away (`1001`), every link and person socket closes and
   reconnects with random backoff to the new leader; known keys link from the hash cache without a
   Zerops call; each link gets a fresh snapshot. Opening a Mate (a new ticket) waits for the deploy;
@@ -1884,10 +1885,12 @@ sequenceDiagram
 - **Zerops outage.** Known Mates link from the cache; unknown ones show "connecting". Sign-in waits
   for Zerops. Access decisions follow HQ's outage window (HQ `spec/protocol.md`); an outage longer
   than the cap closes open Mate connections, since no fresh view reaches them.
-- **Organisation key refused.** HQ can no longer read the organisation: its view stops refreshing,
-  every Mate's access list ages toward the cap, and HQ issues no tickets. An Owner or Admin sees a
-  prompt to sign in again to restart the organisation (that sign-in hands HQ a new key, §3.7);
-  everyone else sees that an Owner or Admin must.
+- **Organisation key refused** (Zerops answers `401`/`403` on HQ's read) acts at once, not after the
+  cap. HQ sends every linked Mate of the organisation an access frame saying the organisation's
+  access is refused; each Mate closes every person connection and admits no new one, while work
+  already running in its container goes on. HQ issues no tickets. Owners and Admins see "Sign in to
+  restore access"; their next sign-in hands HQ a new key (§3.7), after which HQ sends a full access
+  frame and the Mates admit people again. Everyone else sees that an Owner or Admin must sign in.
 - **Project deleted.** The container dies with it and the link drops by transport. HQ's organisation
   read notices the project gone and drops the key entry and the Mate's Git credential; until then the
   Mate reads "not connected since T".
@@ -2075,6 +2078,8 @@ The cutover, in this order (HQ keeps no old route, HQ `spec/protocol.md` *Compat
 | TC-16 | HQ refuses `key_not_sensitive` a project key it can read in clear with the organisation's key. Test to be written (HQ link). |
 | TC-17 | HQ sends a Git credential on a link where none is live for the project and when the project enters an application, and `null` when it leaves. Test to be written (HQ link). |
 | TC-18 | When the `chief` of the link's `state` frame changes, the Mate's server restarts zcp. Test to be written (Mate server). |
+| TC-19 | A refused organisation key closes every person's connection to that organisation's Mates at once. Test to be written (HQ link, Mate server). |
+| TC-20 | A Zerops outage keeps people connected until the cap. Test to be written (Mate server, injected clock). |
 
 ---
 
