@@ -917,3 +917,27 @@ func TestUnmountService_LeaseAlias_NoServiceLookup(t *testing.T) {
 		t.Error("the alias is still mounted")
 	}
 }
+
+// TestMountService_AliasShapedName_LookedUpLikeAnyName: MountService decides
+// nothing by a name's shape — a name shaped like a lease alias is looked up
+// as a service like any other, and one no service has is refused before the
+// mounter is asked (a lease is mounted through MountLease, by the holder of
+// its record).
+func TestMountService_AliasShapedName_LookedUpLikeAnyName(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().WithServices(testServices())
+	mounter := newMockMounter()
+
+	_, err := MountService(context.Background(), mock, "proj-1", mounter, "devpool-31")
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) || pe.Code != platform.ErrServiceNotFound {
+		t.Fatalf("err = %v, want SERVICE_NOT_FOUND: no service is named devpool-31", err)
+	}
+	if len(mounter.states) != 0 {
+		t.Errorf("the mounter was asked to mount a host nothing resolves: %v", mounter.states)
+	}
+	if n := mock.CallCount("ListServices"); n != 1 {
+		t.Errorf("ListServices calls = %d, want the one lookup", n)
+	}
+}

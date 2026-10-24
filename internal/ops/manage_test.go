@@ -1103,3 +1103,30 @@ func TestScale_Box_ResizeNotice(t *testing.T) {
 		})
 	}
 }
+
+// TestScale_PoolNotice_SaysWhatScaleDoesWithAHigherMax: the pool notice says
+// what zerops_scale does with a maxContainers above a pool's 10: it refuses
+// it before anything is sent (the platform itself would silently cap it at
+// 10, but zcp never sends one) — never that it is capped.
+func TestScale_PoolNotice_SaysWhatScaleDoesWithAHigherMax(t *testing.T) {
+	t.Parallel()
+	client := &scaleCaptureClient{Mock: platform.NewMock().
+		WithServices([]platform.ServiceStack{{
+			ID: "svc-pool", Name: "pool", ProjectID: "proj-1", Status: "RUNNING",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1"},
+			CustomAutoscaling:    &platform.CustomAutoscaling{HorizontalMinCount: 0, HorizontalMaxCount: 4},
+		}})}
+
+	res, err := Scale(context.Background(), client, "proj-1", "pool", ScaleParams{MaxContainers: scaleIntPtr(6)})
+	if err != nil {
+		t.Fatalf("scale to 6: %v", err)
+	}
+	if strings.Contains(res.Notice, "capped") || !strings.Contains(res.Notice, "at most 10 per pool") || !strings.Contains(res.Notice, "refuses a higher value") {
+		t.Errorf("notice = %q, want at most 10 per pool and that a higher value is refused, never capped", res.Notice)
+	}
+	_, err = Scale(context.Background(), client, "proj-1", "pool", ScaleParams{MaxContainers: scaleIntPtr(11)})
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) || pe.Code != platform.ErrInvalidScaling {
+		t.Fatalf("scale to 11: err = %v, want INVALID_SCALING before anything is sent", err)
+	}
+}

@@ -1059,3 +1059,45 @@ func TestPoolMigrateEnv_GitTokenFromThePairsPushSource(t *testing.T) {
 		})
 	}
 }
+
+// TestPoolMigrateEnv_DevReadFails_GitTokenCopiedFromElsewhereIsRecorded: the
+// pair's GIT_TOKEN lives on another service, which is read on its own. When
+// the dev's secret read fails but that read works, the GIT_TOKEN this run
+// copied is still recorded as zcp's copy — keeping what the record knew of
+// the dev's unread secrets — so the read side calls it zcp's copy (never the
+// pool's own) and a later run does not write it again.
+func TestPoolMigrateEnv_DevReadFails_GitTokenCopiedFromElsewhereIsRecorded(t *testing.T) {
+	t.Parallel()
+	webdev := platform.ServiceStack{ID: "svc-webdev", Name: "webdev", Status: "ACTIVE",
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}}
+	f := newEnvFixture(t)
+	f.in.GitTokenFrom, f.in.CopyGitToken = webdev, true
+	if err := savePoolEnvRecord(f.in.StateDir, f.in.Pool.Name, poolEnvRecord{
+		PoolServiceID: envPoolID, Fingerprints: map[string]string{"STRIPE_SECRET": "fp-of-an-earlier-copy"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	f.build()
+	f.mock.WithServices([]platform.ServiceStack{f.in.Dev, f.in.Pool, envStageService(), webdev}).
+		WithServiceEnv(webdev.ID, []platform.ServiceEnvVar{envMasked("w-git", GitTokenEnvKey)})
+	dev := &envLocalSSH{env: f.container, err: errors.New("exit status 255")}
+	ssh := &hostEnvSSH{hosts: map[string]*envLocalSSH{"appdev": dev, "webdev": {env: map[string]string{GitTokenEnvKey: envGitToken}}}}
+
+	out, err := ApplyPoolMigrateEnv(context.Background(), f.mock, ssh, f.in)
+	if err != nil {
+		t.Fatalf("ApplyPoolMigrateEnv: %v", err)
+	}
+	if out.GitToken.State != PoolGitTokenCopied {
+		t.Fatalf("gitToken = %+v, want copied from webdev", out.GitToken)
+	}
+	rec, ok := readPoolEnvRecord(f.in.StateDir, f.in.Pool.Name)
+	if !ok || rec.Fingerprints[GitTokenEnvKey] == "" {
+		t.Fatalf("record = %+v, want the GIT_TOKEN this run copied fingerprinted", rec)
+	}
+	if rec.Fingerprints["STRIPE_SECRET"] != "fp-of-an-earlier-copy" {
+		t.Errorf("record = %+v, want what it knew of the unread STRIPE_SECRET kept", rec)
+	}
+	if got := f.read(t).GitToken; got.State != PoolGitTokenUnchanged {
+		t.Errorf("read side = %+v, want unchanged: the pool's GIT_TOKEN is zcp's copy, not the pool's own", got)
+	}
+}

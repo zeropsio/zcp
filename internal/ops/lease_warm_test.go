@@ -995,3 +995,83 @@ func TestHandBackOutcome_WarmKeptOrRemoved(t *testing.T) {
 		})
 	}
 }
+
+// TestLeaseStatus_ListsTheServicesOnce: status — the envelope's lease reader
+// too, after every tool result in a project with a pool — lists the
+// project's services once (an ES-backed search) and resolves every pool, and
+// the warm counts, from that one list: never a search per pool.
+func TestLeaseStatus_ListsTheServicesOnce(t *testing.T) {
+	t.Parallel()
+	for _, named := range []string{"", testPoolHost} {
+		t.Run("pool="+named, func(t *testing.T) {
+			t.Parallel()
+			orch := newWarmOrch(4)
+			orch.add(3, "", true, false, 1)
+			wf := newWarmFixture(t, orch)
+			mock, ok := wf.deps.Client.(*platform.Mock)
+			if !ok {
+				t.Fatalf("client %T is not the mock", wf.deps.Client)
+			}
+			mock.WithServices([]platform.ServiceStack{
+				{ID: "svc-pool", Name: testPoolHost, Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
+				{ID: "svc-web", Name: "webpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
+				{ID: "svc-app", Name: "appdev", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}},
+			}).WithServiceEnv("svc-web", []platform.ServiceEnvVar{{Key: "API_TOKEN", Content: testPoolToken, Sensitive: true}})
+			wf.hold(t, 5, true)
+			before := mock.CallCount("ListServices")
+
+			status, err := LeaseStatus(context.Background(), wf.deps, named)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(status.Leases) == 0 || len(status.Warm) == 0 {
+				t.Fatalf("status = %+v, want the lease and the warm counts read", status)
+			}
+			if n := mock.CallCount("ListServices") - before; n != 1 {
+				t.Errorf("ListServices calls = %d, want 1: every pool resolved from the one list", n)
+			}
+		})
+	}
+}
+
+// TestLeaseRelease_ParkedForce_StoppedContainerNeverKeptWarm: a forced
+// release of a parked lease sends the container back as it stands, stopped,
+// and a reset leaves a stopped container stopped — while a warm container is
+// an ACTIVE one an acquire can take at once. So the stopped container is not
+// kept as the pool's warm one: it is removed with its own lease and the pool
+// is topped up with a container that runs, and status reads that one ready.
+func TestLeaseRelease_ParkedForce_StoppedContainerNeverKeptWarm(t *testing.T) {
+	t.Parallel()
+	orch := newWarmOrch(4)
+	wf := newWarmFixture(t, orch)
+	wf.hold(t, 5, true)
+	orch.mu.Lock()
+	orch.find("c-5").c.Status = platform.SwarmContainerStopped // parked
+	orch.mu.Unlock()
+
+	view, err := LeaseRelease(context.Background(), wf.deps, "devpool-5", true)
+	if err != nil {
+		t.Fatalf("release: %v", err)
+	}
+
+	releases, deletes, creates := orch.log()
+	if len(deletes) != 1 || deletes[0] != (fakeRelease{id: "c-5", lease: warmLeaseOf("c-5")}) {
+		t.Errorf("deletes = %+v, want the stopped c-5 removed with its own lease", deletes)
+	}
+	if len(releases) != 0 {
+		t.Errorf("releases = %+v, want none: a stopped container is not reset and kept", releases)
+	}
+	if !slices.Equal(creates, []int{1}) {
+		t.Errorf("creates = %v, want one container created: the pool has no warm one that runs", creates)
+	}
+	if view.State != LeaseStateReleased || strings.Contains(view.Note, "kept as the pool's warm container") || !strings.Contains(view.Note, "stopped") {
+		t.Errorf("view = %+v, want released, removed because it is stopped, never kept warm", view)
+	}
+	status, err := LeaseStatus(context.Background(), wf.deps, testPoolHost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := poolWarmOf(t, status); w.Ready == nil || *w.Ready != 1 {
+		t.Errorf("warm = %+v, want 1 ready: the created container", w)
+	}
+}

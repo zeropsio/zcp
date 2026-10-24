@@ -836,3 +836,48 @@ func TestInitSSHFS_LeaseCheckHangs_Bounded(t *testing.T) {
 		}
 	}
 }
+
+// TestRunSSHFS_NameNoServiceCanHave_NeverReachesTheUnitCommand: the unit
+// command zsc runs is composed from the hostname, so a ZCP_SSHFS_HOSTNAMES
+// entry no platform service can have — one carrying shell syntax — creates no
+// unit and no directory; it is named and skipped, the valid names around it
+// are mounted, and the command never fails (it gates the container start).
+func TestRunSSHFS_NameNoServiceCanHave_NeverReachesTheUnitCommand(t *testing.T) {
+	// Not parallel — mutates env and commandRunner.
+	mountBase := t.TempDir()
+	zcpinit.SetSSHFSMountBase(mountBase)
+	t.Cleanup(func() { zcpinit.ResetSSHFSMountBase() })
+	t.Setenv("ZCP_SSHFS_HOSTNAMES", "workerdev,app;touch /tmp/pwned,$(id),../etc,apidev")
+
+	var executed []string
+	zcpinit.SetCommandRunner(func(name string, args ...string) error {
+		executed = append(executed, strings.Join(append([]string{name}, args...), " "))
+		return nil
+	})
+	t.Cleanup(func() { zcpinit.ResetCommandRunner() })
+
+	if err := zcpinit.RunSSHFS(); err != nil {
+		t.Fatalf("RunSSHFS() error: %v", err)
+	}
+	if len(executed) != 2 || !strings.Contains(executed[0], "sshfs-workerdev ") || !strings.Contains(executed[1], "sshfs-apidev ") {
+		t.Fatalf("commands = %q, want the units of workerdev and apidev only", executed)
+	}
+	for _, cmd := range executed {
+		for _, bad := range []string{";", "$(", "..", "pwned"} {
+			if strings.Contains(cmd, bad) {
+				t.Errorf("command %q carries %q from a name no service can have", cmd, bad)
+			}
+		}
+	}
+	entries, err := os.ReadDir(mountBase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dirs []string
+	for _, e := range entries {
+		dirs = append(dirs, e.Name())
+	}
+	if !slices.Equal(dirs, []string{"apidev", "workerdev"}) {
+		t.Errorf("mount dirs = %q, want apidev and workerdev only", dirs)
+	}
+}
