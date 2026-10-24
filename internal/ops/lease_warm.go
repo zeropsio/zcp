@@ -83,6 +83,9 @@ type LeaseWarm struct {
 	// LockWait bounds a release's wait for its pool's warm lock; zero means
 	// leaseWarmLockWait.
 	LockWait time.Duration
+	// LaunchRetry is the pause before a warm clone's launch is tried again
+	// after ssh itself failed; zero means leaseWarmLaunchRetry.
+	LaunchRetry time.Duration
 }
 
 func (w *LeaseWarm) spawn(fn func()) {

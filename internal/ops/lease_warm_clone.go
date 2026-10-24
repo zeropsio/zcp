@@ -59,6 +59,17 @@ const leaseWarmCloneWait = 3 * time.Minute
 // as the clone is detached.
 const leaseWarmCloneLaunchTimeout = 30 * time.Second
 
+// A launch ssh itself could not run (exit 255) is tried again, up to
+// leaseWarmLaunchTries times leaseWarmLaunchRetry apart: ssh refuses to start
+// while a release or an acquire reinstalls the ssh alias file it includes
+// (live, 2026-10-24: "Can't open user config file …/zcp-leases.conf:
+// Permission denied"), and the release that keeps a warm container does that
+// right beside the clone it starts. The launch changes nothing until it runs.
+const (
+	leaseWarmLaunchTries = 3
+	leaseWarmLaunchRetry = time.Second
+)
+
 // leaseWarmLaunchMarker opens the launch's answer; leaseWarmCheckoutMarker the
 // line a checkout says what it did with a clone on.
 const (
@@ -323,7 +334,7 @@ func (w *LeaseWarm) cloneLater(ctx context.Context, d LeaseDeps, rp *resolvedPoo
 		return
 	}
 	w.spawn(func() {
-		bctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), leaseWarmCloneLaunchTimeout*time.Duration(len(ids)+1))
+		bctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Duration(len(ids))*(leaseReadTimeout+leaseWarmLaunchTries*(leaseWarmCloneLaunchTimeout+leaseWarmLaunchRetry)))
 		defer cancel()
 		w.cloneInto(bctx, d, rp, ids)
 	})
@@ -369,9 +380,7 @@ func (w *LeaseWarm) launchClone(ctx context.Context, d LeaseDeps, rp *resolvedPo
 		out.Outcome, out.Note = LeaseWarmCloneSkipped, "the container's hostname is not a pool container's, so nothing was written into it"
 		return out
 	}
-	lctx, cancel := context.WithTimeout(ctx, leaseWarmCloneLaunchTimeout)
-	defer cancel()
-	answer, err := d.SSH.ExecSSH(lctx, c.Hostname, leaseWarmCloneCommand(leaseWorkDir, repo, d.hqAddress()))
+	answer, err := w.runLaunch(ctx, d, c.Hostname, leaseWarmCloneCommand(leaseWorkDir, repo, d.hqAddress()))
 	if err != nil {
 		out.Outcome, out.Note = LeaseWarmCloneFailed, "the clone could not be started over ssh: "+sshFailureText(err)
 		return out
@@ -387,6 +396,28 @@ func (w *LeaseWarm) launchClone(ctx context.Context, d LeaseDeps, rp *resolvedPo
 		out.Outcome, out.Note = LeaseWarmCloneFailed, fmt.Sprintf("the clone's launch answered %q", boundedText(string(answer)))
 	}
 	return out
+}
+
+// runLaunch runs the launch over ssh to host, again while ssh itself fails
+// (leaseWarmLaunchTries).
+func (w *LeaseWarm) runLaunch(ctx context.Context, d LeaseDeps, host, command string) ([]byte, error) {
+	pause := w.LaunchRetry
+	if pause == 0 {
+		pause = leaseWarmLaunchRetry
+	}
+	for try := 1; ; try++ {
+		lctx, cancel := context.WithTimeout(ctx, leaseWarmCloneLaunchTimeout)
+		answer, err := d.SSH.ExecSSH(lctx, host, command)
+		cancel()
+		if err == nil || exitStatus(err) != leaseSSHUnreachableExit || try == leaseWarmLaunchTries {
+			return answer, err
+		}
+		select {
+		case <-ctx.Done():
+			return answer, err
+		case <-time.After(pause):
+		}
+	}
 }
 
 // warmLaunchAnswer is what a launch answered on its marker line, "" when none.
