@@ -1,6 +1,7 @@
 package ops
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"strings"
@@ -158,13 +159,15 @@ func (m *leaseStageMain) withNote(warnings []string, shipped string, dirty bool)
 // ships is not a commit on origin/main, or when zcp could not tell; "" when it
 // ships a commit on origin/main. shipped is the deploy's version name — a
 // label and the commit's short sha — and dirty marks uncommitted changes on
-// top. It speaks of what the deploy ships, never of what the stage runs: the
-// build may still fail (GF-5).
+// top: of a commit on origin/main only those changes are off main, and the
+// note says so. It speaks of what the deploy ships, never of what the stage
+// runs: the build may still fail (GF-5).
 func (m *leaseStageMain) note(shipped string, dirty bool) string {
 	if m.state == leaseMainOn && !dirty {
 		return ""
 	}
-	what := strings.TrimSuffix(shipped, "-dirty")
+	commit := strings.TrimSuffix(shipped, "-dirty")
+	what := commit
 	if what == "" {
 		what = "the working tree"
 	}
@@ -173,10 +176,14 @@ func (m *leaseStageMain) note(shipped string, dirty bool) string {
 	}
 	var b strings.Builder
 	b.WriteString("Stage tracks main: ")
-	if m.state == leaseMainUnknown {
+	switch {
+	case m.state == leaseMainUnknown:
 		fmt.Fprintf(&b, "this deploy ships %s from %s to %s, and zcp could not tell whether it is on origin/%s (%s).",
 			what, m.alias, m.stage, leaseDefaultBranch, m.unknown)
-	} else {
+	case m.state == leaseMainOn:
+		fmt.Fprintf(&b, "this deploy ships %s from %s to %s: %s is on origin/%s (at %s), the uncommitted changes are not.",
+			what, m.alias, m.stage, cmp.Or(commit, "its commit"), leaseDefaultBranch, shortSHA(m.main))
+	default:
 		fmt.Fprintf(&b, "this deploy ships %s from %s to %s, which is not on origin/%s (at %s).",
 			what, m.alias, m.stage, leaseDefaultBranch, shortSHA(m.main))
 	}

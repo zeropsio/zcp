@@ -290,7 +290,9 @@ type poolResolver func(ctx context.Context, hostname string) (*resolvedPool, err
 
 // listingResolver is resolvePool: one service listing per pool.
 func listingResolver(d LeaseDeps) poolResolver {
-	return func(ctx context.Context, hostname string) (*resolvedPool, error) { return resolvePool(ctx, d, hostname) }
+	return func(ctx context.Context, hostname string) (*resolvedPool, error) {
+		return resolvePool(ctx, d, hostname)
+	}
 }
 
 // resolverFrom resolves pools from services, the project's services as one
