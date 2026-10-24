@@ -192,7 +192,7 @@ func LeasePark(ctx context.Context, d LeaseDeps, alias string) (LeaseView, error
 	default:
 		remounted := func(out error) error {
 			remount := "its mount is back"
-			if note := d.Host.mountLease(ctx, d, rec); note != "" {
+			if note := d.Host.mountLease(ctx, rec); note != "" {
 				remount = note
 			}
 			return withNote(out, "the lease stays held and running; "+remount)
@@ -280,7 +280,7 @@ func LeaseUnpark(ctx context.Context, d LeaseDeps, alias string) (LeaseView, err
 			return v, nil
 		}
 	}
-	if note := d.Host.mountLease(ctx, d, rec); note != "" {
+	if note := d.Host.mountLease(ctx, rec); note != "" {
 		v.State = LeaseStateUnmounted
 		notes = append(notes, note)
 	}

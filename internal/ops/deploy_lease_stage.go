@@ -176,14 +176,14 @@ func (m *leaseStageMain) note(shipped string, dirty bool) string {
 	}
 	var b strings.Builder
 	b.WriteString("Stage tracks main: ")
-	switch {
-	case m.state == leaseMainUnknown:
+	switch m.state {
+	case leaseMainUnknown:
 		fmt.Fprintf(&b, "this deploy ships %s from %s to %s, and zcp could not tell whether it is on origin/%s (%s).",
 			what, m.alias, m.stage, leaseDefaultBranch, m.unknown)
-	case m.state == leaseMainOn:
+	case leaseMainOn:
 		fmt.Fprintf(&b, "this deploy ships %s from %s to %s: %s is on origin/%s (at %s), the uncommitted changes are not.",
 			what, m.alias, m.stage, cmp.Or(commit, "its commit"), leaseDefaultBranch, shortSHA(m.main))
-	default:
+	case leaseMainOff:
 		fmt.Fprintf(&b, "this deploy ships %s from %s to %s, which is not on origin/%s (at %s).",
 			what, m.alias, m.stage, leaseDefaultBranch, shortSHA(m.main))
 	}

@@ -873,7 +873,7 @@ func TestRunSSHFS_NameNoServiceCanHave_NeverReachesTheUnitCommand(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	var dirs []string
+	dirs := make([]string, 0, len(entries))
 	for _, e := range entries {
 		dirs = append(dirs, e.Name())
 	}
