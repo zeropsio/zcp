@@ -881,15 +881,14 @@ func TestMountStatus_LeaseAlias_NoServiceLookup(t *testing.T) {
 	}
 }
 
-func TestMountService_LeaseAlias_NoServiceLookup(t *testing.T) {
+func TestMountLease_NoServiceLookup(t *testing.T) {
 	t.Parallel()
 
-	mock := platform.NewMock().WithServices(testServices())
 	mounter := newMockMounter()
 
-	got, err := MountService(context.Background(), mock, "proj-1", mounter, "apppool-3")
+	got, err := MountLease(context.Background(), mounter, "apppool-3")
 	if err != nil {
-		t.Fatalf("MountService(lease alias) must not look the alias up as a service: %v", err)
+		t.Fatalf("MountLease: %v", err)
 	}
 	if got.Status != "MOUNTED" || got.MountPath != "/var/www/apppool-3" {
 		t.Errorf("result = %+v, want MOUNTED at /var/www/apppool-3", got)

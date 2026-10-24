@@ -217,7 +217,7 @@ func (h LeaseHost) mountLease(ctx context.Context, d LeaseDeps, rec leaseRecord)
 	if h.Mounter == nil {
 		return ""
 	}
-	if _, err := MountService(ctx, d.Client, d.ProjectID, h.Mounter, rec.alias()); err != nil {
+	if _, err := MountLease(ctx, h.Mounter, rec.alias()); err != nil {
 		return fmt.Sprintf("the lease is held but %s could not be mounted: %v", filepath.Join(mountBase, rec.alias()), err)
 	}
 	return ""
