@@ -169,6 +169,15 @@ func LeasePark(ctx context.Context, d LeaseDeps, alias string) (LeaseView, error
 		return LeaseView{}, err
 	}
 	rp, c := verdict.rp, verdict.container
+	if kept := keptRecordNote(d.StateDir, rec); kept != "" {
+		// The alias's record — and its mount — are not this lease's by now:
+		// nothing is unmounted, and the orchestrator is asked again.
+		if fresh := renewOwnership(ctx, d, rp, rec); fresh.own.lost() {
+			return leaseLostOnCall(ctx, d, rec, "park", fresh.why)
+		}
+		return LeaseView{}, platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+			fmt.Sprintf("Lease %s was not parked: %s", alias, kept), "zerops_lease action=status shows which lease the alias names now")
+	}
 	if err := d.Host.unmountLease(ctx, d, rec); err != nil {
 		return LeaseView{}, platform.NewPlatformError(platform.ErrUnmountFailed,
 			fmt.Sprintf("Lease %s was not parked: zcp unmounts it before it stops its container, and the unmount failed (%v)", alias, err),

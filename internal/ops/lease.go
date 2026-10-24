@@ -881,8 +881,14 @@ func releaseGuarded(ctx context.Context, d LeaseDeps, rec leaseRecord, guard lea
 func releaseAndDetach(ctx context.Context, d LeaseDeps, rec leaseRecord, alias string) (LeaseView, error) {
 	// The mount goes first: a reset or a release pulls the container out from
 	// under it. A mount that will not unmount is a note, never a reason to
-	// keep the container reserved.
-	unmountNote := d.Host.detachMount(ctx, d, rec)
+	// keep the container reserved. A record at the alias that is not this
+	// lease's by now (another zcp took the container again under it) comes
+	// with that lease's mount: it stays, and the release says so when it
+	// finds the record kept.
+	unmountNote := ""
+	if !leaseRecordReplaced(d.StateDir, rec) {
+		unmountNote = d.Host.detachMount(ctx, d, rec)
+	}
 	view, err := releaseLease(ctx, d, rec, alias, true)
 	if err != nil {
 		return LeaseView{}, err
