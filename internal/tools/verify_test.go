@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -930,7 +931,9 @@ func TestVerifyTool_APartWithoutADevServer_NamesTheStartCall(t *testing.T) {
 // A Swarm pool is a service of up to ten containers its orchestrator hands
 // out: an HTTP probe addressed to the service hostname reaches one random
 // container, so verify reports the pool and its Box by service_running alone
-// and never probes either as one runtime (spec-workflows.md §8 PS-3).
+// and never probes either as one runtime (spec-workflows.md §8 PS-3). Outside
+// the project a Box adds only its orchestrator check, skipped: the workspace
+// API answers only inside the project (PS-9).
 func TestVerify_Pool_NotProbedAsSingleRuntime(t *testing.T) {
 	t.Parallel()
 
@@ -987,8 +990,15 @@ func TestVerify_Pool_NotProbedAsSingleRuntime(t *testing.T) {
 			if vr.Status != ops.StatusHealthy {
 				t.Errorf("Status = %q, want healthy; checks: %+v", vr.Status, vr.Checks)
 			}
-			if len(vr.Checks) != 1 || vr.Checks[0].Status != ops.CheckPass {
-				t.Errorf("checks = %+v, want the one passing service_running check (no http_internal/http_public/error_logs probe of the service hostname)", vr.Checks)
+			wantChecks := 1
+			if tc.wantType == "sandbox" {
+				wantChecks = 2
+				if last := vr.Checks[len(vr.Checks)-1]; last.Name != "orchestrator" || last.Status != ops.CheckSkip {
+					t.Errorf("checks = %+v, want the Box's orchestrator check skipped outside the project", vr.Checks)
+				}
+			}
+			if len(vr.Checks) != wantChecks || vr.Checks[0].Name != "service_running" || vr.Checks[0].Status != ops.CheckPass {
+				t.Errorf("checks = %+v, want the passing service_running check (no http_internal/http_public/error_logs probe of the service hostname)", vr.Checks)
 			}
 		})
 	}
@@ -1036,5 +1046,93 @@ func TestVerify_Pool_OrchestratorCheck_InContainer(t *testing.T) {
 	}
 	if strings.Contains(text, "orch-token-1") {
 		t.Errorf("the verify result leaks the pool token: %s", text)
+	}
+}
+
+// verifyBoxHTTP gives zerops_verify d for its Box orchestrator checks.
+func verifyBoxHTTP(d ops.HTTPDoer) VerifyOption { return func(c *verifyConfig) { c.boxHTTP = d } }
+
+// boxPingAnswer answers every request with the Box's ping and records the
+// requests.
+type boxPingAnswer struct {
+	urls []string
+	auth []string
+}
+
+func (b *boxPingAnswer) Do(req *http.Request) (*http.Response, error) {
+	b.urls = append(b.urls, req.URL.String())
+	b.auth = append(b.auth, req.Header.Get("Authorization"))
+	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{},
+		Body: io.NopCloser(strings.NewReader(`{"time":"2026-10-24T10:00:00Z","version":"v1.4.2"}`))}, nil
+}
+
+// TestVerify_Box_OrchestratorCheck — verify of a Zerops Box asks its
+// workspace API's keyless GET /api/rest/ping at http://<box>:8080 when zcp
+// runs in the project's container, by hostname and in the all-services scan;
+// outside the project it says the API answers only inside, asking nothing
+// (spec-workflows.md §8 PS-9).
+func TestVerify_Box_OrchestratorCheck(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		rt          runtime.Info
+		all         bool
+		wantStatus  string
+		wantDetail  string
+		wantRequest bool
+	}{
+		{"in the project, by hostname", runtime.Info{InContainer: true, ServiceName: "zcp"}, false, ops.CheckPass, "v1.4.2", true},
+		{"in the project, every service", runtime.Info{InContainer: true, ServiceName: "zcp"}, true, ops.CheckPass, "v1.4.2", true},
+		{"outside the project", runtime.Info{}, false, ops.CheckSkip, "only inside the project", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mock := platform.NewMock().
+				WithProject(&platform.Project{ID: "proj-1", Name: "proj"}).
+				WithServices([]platform.ServiceStack{{ID: "svc-box", Name: "box", Status: serviceStatusRunning,
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/zbox@1", ServiceStackTypeCategoryName: "STANDARD"}}})
+			doer := &boxPingAnswer{}
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterVerify(srv, mock, platform.NewMockLogFetcher(), "proj-1", t.TempDir(), tt.rt, nil, verifyBoxHTTP(doer))
+
+			args := map[string]any{"serviceHostname": "box"}
+			if tt.all {
+				args = map[string]any{}
+			}
+			text := getTextContent(t, callTool(t, srv, "zerops_verify", args))
+			var checks []ops.CheckResult
+			if tt.all {
+				var all ops.VerifyAllResult
+				if err := json.Unmarshal([]byte(text), &all); err != nil || len(all.Services) != 1 {
+					t.Fatalf("parse: %v\n%s", err, text)
+				}
+				checks = all.Services[0].Checks
+			} else {
+				var vr ops.VerifyResult
+				if err := json.Unmarshal([]byte(text), &vr); err != nil {
+					t.Fatalf("parse: %v\n%s", err, text)
+				}
+				checks = vr.Checks
+				if vr.Status != ops.StatusHealthy {
+					t.Errorf("status = %q, want healthy: %+v", vr.Status, checks)
+				}
+			}
+			var orch *ops.CheckResult
+			for i := range checks {
+				if checks[i].Name == "orchestrator" {
+					orch = &checks[i]
+				}
+			}
+			if orch == nil || orch.Status != tt.wantStatus || !strings.Contains(orch.Detail, tt.wantDetail) {
+				t.Fatalf("checks = %+v, want an orchestrator %s naming %q", checks, tt.wantStatus, tt.wantDetail)
+			}
+			if asked := len(doer.urls) > 0; asked != tt.wantRequest {
+				t.Fatalf("asked %v, want a request = %v", doer.urls, tt.wantRequest)
+			}
+			if tt.wantRequest && (doer.urls[0] != "http://box:8080/api/rest/ping" || doer.auth[0] != "") {
+				t.Errorf("asked %q with Authorization %q, want the keyless http://box:8080/api/rest/ping", doer.urls[0], doer.auth[0])
+			}
+		})
 	}
 }

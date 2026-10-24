@@ -1064,3 +1064,42 @@ func TestScale_Pool_PartialScaleKeepsZeroMinContainers(t *testing.T) {
 		t.Errorf("maxContainers sent = %v, want 3", client.sent.HorizontalMaxCount)
 	}
 }
+
+// TestScale_Box_ResizeNotice — a Box is one VM: every resize stops and starts
+// it, CPU and RAM as well as disk, so its running sandboxes come back PARKED
+// without their memory, and its disk can only grow (zerops-docs
+// zbox/workspace-service.mdx, Resizing). A Box scale carries that notice; a
+// runtime's carries none (spec-workflows.md §8 PS-8).
+func TestScale_Box_ResizeNotice(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		typeName   string
+		params     ScaleParams
+		wantNotice bool
+	}{
+		{"Box RAM", "ubuntu/zbox@1", ScaleParams{MaxRAM: scaleFloatPtr(8)}, true},
+		{"Box disk, bare type", "zbox@1", ScaleParams{MaxDisk: scaleFloatPtr(20)}, true},
+		{"runtime RAM", "nodejs@22", ScaleParams{MaxRAM: scaleFloatPtr(8)}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			client := &scaleCaptureClient{Mock: platform.NewMock().
+				WithServices([]platform.ServiceStack{{
+					ID: "svc-1", Name: "svc", ProjectID: "proj-1", Status: "RUNNING",
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: tt.typeName},
+				}})}
+			result, err := Scale(context.Background(), client, "proj-1", "svc", tt.params)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			for _, want := range []string{"single VM", "every resize", "PARKED", "without their memory", "park", "disk can only grow"} {
+				if got := strings.Contains(result.Notice, want); got != tt.wantNotice {
+					t.Errorf("notice contains %q = %v, want %v: %q", want, got, tt.wantNotice, result.Notice)
+				}
+			}
+		})
+	}
+}
