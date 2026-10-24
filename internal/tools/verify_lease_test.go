@@ -55,7 +55,7 @@ func verifyLeaseCall(t *testing.T, stateDir string, ssh ops.SSHDeployer, host st
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{{ID: "svc-pool", Name: "webpool", Status: serviceStatusRunning,
 		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1"}}})
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterVerify(srv, mock, platform.NewMockLogFetcher(), "proj-1", stateDir, runtime.Info{InContainer: true}, ssh)
+	RegisterVerify(srv, mock, platform.NewMockLogFetcher(), "proj-1", stateDir, runtime.Info{InContainer: true}, ssh, verifyVouchHeld())
 	result := callTool(t, srv, "zerops_verify", map[string]any{"serviceHostname": host})
 	return result, getTextContent(t, result)
 }

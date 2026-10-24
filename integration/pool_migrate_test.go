@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -364,15 +365,19 @@ func (c *poolRetireIntClient) DeleteService(ctx context.Context, id string) (*pl
 	return c.Mock.DeleteService(ctx, id)
 }
 
+// poolRetireIntSwarm is the pool's orchestrator holding zcp's lease of
+// container #1: listed, read by id and renewed as live (2026-10-24).
 type poolRetireIntSwarm struct{}
 
 var errPoolRetireIntSwarm = errors.New("only listed here")
+
+var poolRetireIntContainer = platform.SwarmContainer{ID: "c-1", Number: 1, Hostname: "node-id-1.runtime.apppool.zerops", LockState: "reserved"}
 
 func (poolRetireIntSwarm) Pool(context.Context) (platform.SwarmPool, error) {
 	return platform.SwarmPool{}, errPoolRetireIntSwarm
 }
 func (poolRetireIntSwarm) Containers(context.Context) ([]platform.SwarmContainer, error) {
-	return []platform.SwarmContainer{{ID: "c-1", Number: 1, Hostname: "node-id-1.runtime.apppool.zerops", LockState: "reserved"}}, nil
+	return []platform.SwarmContainer{poolRetireIntContainer}, nil
 }
 func (poolRetireIntSwarm) Acquire(context.Context, platform.SwarmAcquireRequest) (platform.SwarmAcquired, error) {
 	return platform.SwarmAcquired{}, errPoolRetireIntSwarm
@@ -380,8 +385,8 @@ func (poolRetireIntSwarm) Acquire(context.Context, platform.SwarmAcquireRequest)
 func (poolRetireIntSwarm) Release(context.Context, string, string, bool) (platform.SwarmContainer, error) {
 	return platform.SwarmContainer{}, errPoolRetireIntSwarm
 }
-func (poolRetireIntSwarm) Renew(context.Context, string, string) (platform.SwarmContainer, error) {
-	return platform.SwarmContainer{}, errPoolRetireIntSwarm
+func (s poolRetireIntSwarm) Renew(ctx context.Context, id, _ string) (platform.SwarmContainer, error) {
+	return s.Container(ctx, id)
 }
 func (poolRetireIntSwarm) Delete(context.Context, string, string) error { return errPoolRetireIntSwarm }
 func (poolRetireIntSwarm) Rollout(context.Context) (platform.SwarmRollout, error) {
@@ -390,8 +395,11 @@ func (poolRetireIntSwarm) Rollout(context.Context) (platform.SwarmRollout, error
 func (poolRetireIntSwarm) Create(context.Context, int) ([]platform.SwarmContainer, error) {
 	return nil, errPoolRetireIntSwarm
 }
-func (poolRetireIntSwarm) Container(context.Context, string) (platform.SwarmContainer, error) {
-	return platform.SwarmContainer{}, errPoolRetireIntSwarm
+func (poolRetireIntSwarm) Container(_ context.Context, id string) (platform.SwarmContainer, error) {
+	if id != poolRetireIntContainer.ID {
+		return platform.SwarmContainer{}, &platform.SwarmError{Status: http.StatusBadRequest, Code: "containerAction", Reason: platform.SwarmReasonContainerNotFound, Message: "container not found"}
+	}
+	return poolRetireIntContainer, nil
 }
 func (poolRetireIntSwarm) Stop(context.Context, string, string) (platform.SwarmContainer, error) {
 	return platform.SwarmContainer{}, errPoolRetireIntSwarm
@@ -612,15 +620,30 @@ func (s *poolMigrateIntPartsSSH) ExecSSH(ctx context.Context, hostname, command 
 	return s.poolRetireIntSSH.ExecSSH(ctx, hostname, command)
 }
 
-// poolRetireIntPartsSwarm is one pool's orchestrator: it lists zcp's lease
-// <pool>-1 held.
+// poolRetireIntPartsSwarm is one pool's orchestrator: it lists, reads by id
+// and renews zcp's lease <pool>-1 held.
 type poolRetireIntPartsSwarm struct {
 	poolRetireIntSwarm
 	pool string
 }
 
+func (s poolRetireIntPartsSwarm) held() platform.SwarmContainer {
+	return platform.SwarmContainer{ID: "c-" + s.pool, Number: 1, Hostname: "node-id-1.runtime." + s.pool + ".zerops", LockState: "reserved"}
+}
+
 func (s poolRetireIntPartsSwarm) Containers(context.Context) ([]platform.SwarmContainer, error) {
-	return []platform.SwarmContainer{{ID: "c-" + s.pool, Number: 1, Hostname: "node-id-1.runtime." + s.pool + ".zerops", LockState: "reserved"}}, nil
+	return []platform.SwarmContainer{s.held()}, nil
+}
+
+func (s poolRetireIntPartsSwarm) Container(_ context.Context, id string) (platform.SwarmContainer, error) {
+	if id != s.held().ID {
+		return platform.SwarmContainer{}, &platform.SwarmError{Status: http.StatusBadRequest, Code: "containerAction", Reason: platform.SwarmReasonContainerNotFound, Message: "container not found"}
+	}
+	return s.held(), nil
+}
+
+func (s poolRetireIntPartsSwarm) Renew(ctx context.Context, id, _ string) (platform.SwarmContainer, error) {
+	return s.Container(ctx, id)
 }
 
 // poolMigrateIntPartsRig is appdev serving web and api behind the full MCP

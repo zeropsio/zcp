@@ -343,10 +343,16 @@ type LeaseRewire struct {
 // rewireLeases hands every lease of members the overlay recomputed from zcp's
 // records without the leases in leaving (aliases; nil: as the records stand),
 // all at once, each with its own read, send and wait (rewireLease). why says
-// in the notes what the change is ("without hqpool-3"). A lease whose image
-// carries no zcp-devsup runs no dev server and is left out. Nothing here fails
-// the caller.
-func rewireLeases(ctx context.Context, ssh SSHDeployer, stateDir string, members []leaseRecord, leaving map[string]bool, why string) []LeaseRewire {
+// in the notes what the change is ("without hqpool-3"). Each member's
+// container is read first (readLeaseOwnership), all at once: one that is no
+// longer its lease's is sent nothing — ssh would reach whoever holds it now —
+// and is a note naming the release that drops its record, and it leaves the
+// overlay the others get, since its hostname now names someone else's
+// workspace; one the orchestrator does not answer about is sent nothing and
+// is a note, while it stays in the others' overlay (it may still be this
+// lease's). A lease whose image carries no zcp-devsup runs no dev server and
+// is left out. Nothing here fails the caller.
+func rewireLeases(ctx context.Context, d LeaseDeps, members []leaseRecord, leaving map[string]bool, why string) []LeaseRewire {
 	type outcome struct {
 		r    LeaseRewire
 		kept bool
@@ -356,8 +362,27 @@ func rewireLeases(ctx context.Context, ssh SSHDeployer, stateDir string, members
 	for i := range idx {
 		idx[i] = i
 	}
+	verdicts := make([]leaseVerdict, len(members))
+	runMembers(idx, func(i int) { verdicts[i] = readLeaseOwnership(ctx, d, members[i]) })
+	without := maps.Clone(leaving)
+	if without == nil {
+		without = map[string]bool{}
+	}
+	for i, v := range verdicts {
+		if v.own.lost() {
+			without[members[i].alias()] = true
+		}
+	}
 	runMembers(idx, func(i int) {
-		outcomes[i].r, outcomes[i].kept = rewireLease(ctx, ssh, stateDir, members[i], leaving, why)
+		rec, v, alias := members[i], verdicts[i], members[i].alias()
+		switch {
+		case v.own.lost():
+			outcomes[i].r, outcomes[i].kept = LeaseRewire{Alias: alias, Note: lostLeaseNote(alias, v.why, "sent it no overlay "+why)}, true
+		case v.own == leaseUnverified:
+			outcomes[i].r, outcomes[i].kept = LeaseRewire{Alias: alias, Note: fmt.Sprintf("zcp sent %s no overlay %s: %s; %s sends it once its pool's orchestrator answers", alias, why, v.why, resendCall(alias, nil))}, true
+		default:
+			outcomes[i].r, outcomes[i].kept = rewireLease(ctx, d.SSH, d.StateDir, rec, without, why)
+		}
 	})
 	var out []LeaseRewire
 	for _, o := range outcomes {
@@ -509,21 +534,20 @@ func handBackOverlay(ctx context.Context, d LeaseDeps, rec leaseRecord, siblings
 	}
 	ctx = context.WithoutCancel(ctx)
 	text := fmt.Sprintf("zcp had handed %s the sibling overlay without %s before asking for the release", strings.Join(aliasesOf(back), ", "), alias)
-	reserved, err := leaseContainerStillReserved(ctx, d, rec)
-	switch {
-	case err != nil || !reserved:
-		why := "the orchestrator no longer reserves " + alias + "'s container"
-		if err != nil {
-			why = fmt.Sprintf("zcp could not tell whether the orchestrator still reserves %s's container (%v)", alias, err)
+	switch v := readLeaseOwnership(ctx, d, rec); v.own {
+	case leaseUnverified, leaseGone, leaseFree, leaseOther:
+		why := alias + "'s container is no longer its lease's (" + v.why + ")"
+		if v.own == leaseUnverified {
+			why = fmt.Sprintf("zcp could not tell whether %s's container is still its lease's (%s)", alias, v.why)
 		}
 		calls := make([]string, 0, len(back))
 		for _, r := range back {
 			calls = append(calls, resendCall(r.alias(), changed[r.alias()].Restarted))
 		}
 		text += fmt.Sprintf("; %s, so they stay without it — once %s is held again, %s wires them to it", why, alias, strings.Join(calls, "; "))
-	default:
+	case leaseOurs:
 		var ok, failed []string
-		for _, r := range rewireLeases(ctx, d.SSH, d.StateDir, back, nil, "with "+alias+" back in") {
+		for _, r := range rewireLeases(ctx, d, back, nil, "with "+alias+" back in") {
 			if r.Note == "" {
 				ok = append(ok, r.Alias)
 			} else {

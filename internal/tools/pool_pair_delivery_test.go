@@ -282,13 +282,15 @@ func TestDevelop_PoolDevHalf_NotARuntimeOfTheScope(t *testing.T) {
 	}
 }
 
-// TestDevelopBriefing_PoolPairStage_HeldLease_DeploysFromTheLease: with
-// zcp holding a lease of the pool, develop's start names the stage's deploy
-// from that lease — as action="status" does in the same session — never
-// leasing a container first (PM-10). The briefing reads the project's leases
-// as status does: here the pool's orchestrator cannot be asked (the pool
-// holds no bearer), so zcp's own record stands in for it.
-func TestDevelopBriefing_PoolPairStage_HeldLease_DeploysFromTheLease(t *testing.T) {
+// TestDevelopBriefing_PoolPairStage_LeaseNoOrchestratorVouchesFor_NeverTheSource:
+// develop's start reads the project's leases as status does (PM-10). Here the
+// pool's orchestrator cannot be asked (the pool holds no bearer), so zcp's own
+// record stands in for the lease, unverified — maybe another holder's
+// container by now (docs/spec-workflows.md §8 DP-2) — and the stage's step
+// never names a deploy from it; the envelope still carries the lease. A
+// verified held lease is the stage's source
+// (TestRenderDevelopBriefing_LeaseReaderOption_ReplacesTheDefault).
+func TestDevelopBriefing_PoolPairStage_LeaseNoOrchestratorVouchesFor_NeverTheSource(t *testing.T) {
 	t.Parallel()
 	stateDir := poolDeliveryPair(t)
 	writePoolLeaseFile(t, stateDir)
@@ -305,19 +307,8 @@ func TestDevelopBriefing_PoolPairStage_HeldLease_DeploysFromTheLease(t *testing.
 	if result.IsError {
 		t.Fatalf("develop start refused: %s", text)
 	}
-	var primary string
-	for line := range strings.SplitSeq(text, "\n") {
-		if strings.Contains(line, "▸ Primary:") {
-			primary = line
-		}
-	}
-	for _, want := range []string{"zerops_deploy", `sourceService="` + testPool + `-3"`, `targetService="appstage"`} {
-		if !strings.Contains(primary, want) {
-			t.Errorf("primary %q does not name %s: the stage deploys from the held lease", primary, want)
-		}
-	}
-	if strings.Contains(text, "Lease a container") || strings.Contains(text, `zerops_lease action="acquire"`) {
-		t.Errorf("the briefing names a new lease while one is held:\n%s", text)
+	if strings.Contains(text, `sourceService="`+testPool+`-3"`) {
+		t.Errorf("the briefing names a deploy from a lease no orchestrator vouched for:\n%s", text)
 	}
 	env, ok := workflow.ExtractEnvelope(text)
 	if !ok || !slices.ContainsFunc(env.LeaseList(), func(l workflow.LeaseSnapshot) bool { return l.Alias == testPool+"-3" }) {
@@ -339,6 +330,8 @@ func TestRenderDevelopBriefing_LeaseReaderOption_ReplacesTheDefault(t *testing.T
 	}{
 		{name: "a held lease", leases: []workflow.LeaseSnapshot{held}, want: []string{"zerops_deploy", `sourceService="` + held.Alias + `"`, `targetService="appstage"`}},
 		{name: "none held", want: []string{"zerops_lease", `action="acquire"`, `pool="` + testPool + `"`}},
+		{name: "held but unverified: never the source", leases: []workflow.LeaseSnapshot{{Alias: held.Alias, Pool: testPool, Branch: "feat-y", State: "held", Unverified: true}},
+			want: []string{"zerops_lease", `pool="` + testPool + `"`}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

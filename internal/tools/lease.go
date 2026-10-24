@@ -294,8 +294,15 @@ func leaseParkInputRefusal(input LeaseInput) error {
 	return nil
 }
 
-// leaseParkNext is what a park or an unpark tells the agent next (DP-28).
+// leaseParkNext is what a park or an unpark tells the agent next (DP-28). One
+// that found the lease no longer zcp's — the container gone, being deleted,
+// free, or another holder's — says the lease ended outside zcp; its note says
+// how, and what became of its record, ssh alias and mount (DP-2).
 func leaseParkNext(action string, v ops.LeaseView) string {
+	if v.State == ops.LeaseStateLost {
+		return fmt.Sprintf("%s was not %sed: its lease had ended outside zcp — its note says how, and what zcp did with its record, ssh alias and mount. "+
+			"zerops_lease action=acquire takes a container of your own.", v.Alias, action)
+	}
 	if action == leaseActionPark {
 		return fmt.Sprintf("%s is parked: still yours, its files kept and nothing running. zerops_dev_server, zerops_deploy and zerops_verify refuse it until %s. "+
 			"A release still frees it: it starts the container first to check for unsaved work.", v.Alias, ops.LeaseUnparkCall(v.Alias))

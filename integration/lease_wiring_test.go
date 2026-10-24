@@ -51,6 +51,7 @@ func TestLease_Integration_DevServerStart_SendsTheSiblingOverlay(t *testing.T) {
 	// Non-parallel: t.Chdir (the state dir the server resolves from the cwd).
 	t.Chdir(t.TempDir())
 	writeWiringRecords(t)
+	vouchFor(t, "webpool") // the pool's orchestrator gives zcp its lease (DP-2)
 	pool := platform.ServiceStack{
 		ID: "svc-web", Name: "webpool", ProjectID: "proj-1", Status: "ACTIVE",
 		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeCategoryName: "USER", ServiceStackTypeVersionName: "swarm@1"},
@@ -58,7 +59,8 @@ func TestLease_Integration_DevServerStart_SendsTheSiblingOverlay(t *testing.T) {
 	mock := platform.NewMock().
 		WithProject(&platform.Project{ID: "proj-1", Name: "test-project", Status: "ACTIVE", SubdomainHost: "abc1.prg1.zerops.app"}).
 		WithServices([]platform.ServiceStack{pool}).
-		WithService(&pool)
+		WithService(&pool).
+		WithServiceEnv("svc-web", []platform.ServiceEnvVar{{ID: "env-t", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}})
 	c := devservertest.NewSupervised(`{"version":1,"siblingEnv":{"HQ_HOST":"hqpool","API_HOST":"apipool"},"servers":[{"name":"web","port":3000,"command":"pnpm dev"}]}`)
 	session, cleanup := setupTestServerWithDeploy(t, mock, defaultLogFetcher(), c)
 	defer cleanup()

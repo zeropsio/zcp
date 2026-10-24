@@ -47,6 +47,13 @@ func (o orchestratorRoute) RoundTrip(r *http.Request) (*http.Response, error) {
 	return o.next.RoundTrip(c)
 }
 
+// writeIntUnknownLease answers a renew as the live orchestrator does when the
+// lease holds no reservation of the container (2026-10-24).
+func writeIntUnknownLease(w http.ResponseWriter) {
+	w.WriteHeader(http.StatusBadRequest)
+	_, _ = w.Write([]byte(`{"error":{"code":"containerAction","message":"no reservation of this container is held by that lease - acquire it again","meta":[{"metadata":{"reason":["unknown-lease"],"retryable":["false"]}}]}}`))
+}
+
 func TestLease_Integration_AcquireStatusRelease(t *testing.T) {
 	// Non-parallel: t.Chdir (the state dir the server resolves from the cwd)
 	// and a swap of http.DefaultTransport (the seam to the orchestrator host).
@@ -71,6 +78,14 @@ func TestLease_Integration_AcquireStatusRelease(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/container":
 			_, _ = w.Write([]byte(`[` + container + `}]`))
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/container/"):
+			_, _ = w.Write([]byte(container + `}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/renew"):
+			if !reserved || r.Header.Get("X-Swarm-Lease") != leaseIntLease {
+				writeIntUnknownLease(w)
+				return
+			}
+			_, _ = w.Write([]byte(container + `}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/container/acquire":
 			reserved = true
 			_, _ = w.Write([]byte(strings.Replace(container, `"lockState":""`, `"lockState":"reserved"`, 1) + `,"lease":"` + leaseIntLease + `"}`))
@@ -192,6 +207,14 @@ func TestLease_Integration_RolloutSkipsTheLease(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/container":
 			_, _ = w.Write([]byte(`[` + container + `}]`))
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/container/"):
+			_, _ = w.Write([]byte(container + `}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/renew"):
+			if !reserved || r.Header.Get("X-Swarm-Lease") != leaseIntLease {
+				writeIntUnknownLease(w)
+				return
+			}
+			_, _ = w.Write([]byte(container + `}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/container/acquire":
 			reserved = true
 			_, _ = w.Write([]byte(strings.Replace(container, `"lockState":""`, `"lockState":"reserved"`, 1) + `,"lease":"` + leaseIntLease + `"}`))
@@ -330,11 +353,13 @@ func TestLease_Integration_DeployToStage_SaysStageTracksMain(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	vouchFor(t, "webpool") // the pool's orchestrator gives zcp its lease (DP-2)
 	mock := defaultMock().
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-stage", Name: "appstage", Status: "RUNNING", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
 			{ID: "svc-pool", Name: "webpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
 		}).
+		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{ID: "env-t", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}}).
 		WithAppVersionEvents([]platform.AppVersionEvent{
 			{ID: "av-stage", ProjectID: "proj-1", ServiceStackID: "svc-stage", Source: "CLI", Status: "ACTIVE", Sequence: 1, Build: &platform.BuildInfo{}},
 		})
@@ -436,6 +461,14 @@ func groupPoolOrchestratorReleasing(t *testing.T, pool, number string) (target *
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/container":
 			_, _ = w.Write([]byte(`[` + container + `}]`))
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/container/"):
+			_, _ = w.Write([]byte(container + `}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/renew"):
+			if !reserved || r.Header.Get("X-Swarm-Lease") != lease {
+				writeIntUnknownLease(w)
+				return
+			}
+			_, _ = w.Write([]byte(container + `}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/container/acquire":
 			reserved, n = true, n+1
 			_, _ = w.Write([]byte(strings.Replace(container, `"lockState":""`, `"lockState":"reserved"`, 1) + `,"lease":"` + lease + `"}`))
@@ -602,12 +635,19 @@ func TestLease_Integration_StatusReportsActivityAndUnsaved(t *testing.T) {
 	t.Chdir(t.TempDir())
 
 	orch := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer "+leaseIntToken || r.Method != http.MethodGet || r.URL.Path != "/container" {
+		const container = `{"id":"c-abc","name":"node-id-3","number":3,"hostname":"node-id-3.runtime.devpool.zerops","status":"ACTIVE",` +
+			`"serviceId":"svc-pool","stackId":"stk","appVersionId":"av","current":true,"lockState":"reserved","dirty":false}`
+		switch {
+		case r.Header.Get("Authorization") != "Bearer "+leaseIntToken:
 			w.WriteHeader(http.StatusNotFound)
-			return
+		case r.Method == http.MethodGet && r.URL.Path == "/container":
+			_, _ = w.Write([]byte(`[` + container + `]`))
+		case r.Method == http.MethodPost && r.URL.Path == "/container/c-abc/renew" && r.Header.Get("X-Swarm-Lease") == leaseIntLease:
+			// The record's lease still holds it (DP-2).
+			_, _ = w.Write([]byte(container))
+		default:
+			w.WriteHeader(http.StatusNotFound)
 		}
-		_, _ = w.Write([]byte(`[{"id":"c-abc","name":"node-id-3","number":3,"hostname":"node-id-3.runtime.devpool.zerops","status":"ACTIVE",` +
-			`"serviceId":"svc-pool","stackId":"stk","appVersionId":"av","current":true,"lockState":"reserved","dirty":false}]`))
 	}))
 	defer orch.Close()
 	target, err := url.Parse(orch.URL)
@@ -860,7 +900,9 @@ func TestLease_Integration_IdleStatusAndFullPoolByActivity(t *testing.T) {
 	var mu sync.Mutex
 	full := poolOrchestrator(4, 4, map[int]bool{1: true, 2: true, 3: true, 4: true})
 	routePools(t, map[string]http.Handler{"orch.devpool.zerops": http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet && r.URL.Path != "/container/acquire" {
+		// A renew of a lease with no expiry changes nothing (live,
+		// 2026-10-24): it is how status asks whose a container is (DP-2).
+		if r.Method != http.MethodGet && r.URL.Path != "/container/acquire" && !strings.HasSuffix(r.URL.Path, "/renew") {
 			mu.Lock()
 			mutations = append(mutations, r.Method+" "+r.URL.Path)
 			mu.Unlock()

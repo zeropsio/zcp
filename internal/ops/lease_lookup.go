@@ -1,5 +1,12 @@
 package ops
 
+import (
+	"context"
+	"fmt"
+
+	"github.com/zeropsio/zcp/internal/platform"
+)
+
 // LeaseTargetInfo names the container a lease alias reaches: what deploy, dev
 // servers and verify need to address a lease instead of a service. It never
 // carries the lease string.
@@ -46,6 +53,51 @@ func LeaseTarget(stateDir, host string) (LeaseTargetInfo, bool, error) {
 		if r.alias() == host {
 			return r.targetInfo(), true, nil
 		}
+	}
+	return LeaseTargetInfo{}, false, nil
+}
+
+// LeaseTargetChecked is LeaseTarget for a call that reaches the lease's
+// container over ssh or sshfs — a dev server, a verify, a deploy from it, a
+// mount (docs/spec-workflows.md §8 DP-2): it asks the pool's orchestrator,
+// once, with the record's own lease, whether the container is still this
+// lease's (readLeaseOwnership). One that is not — gone, being deleted, free,
+// another holder's — is refused naming the release that drops its record;
+// one the orchestrator does not answer about, or that this zcp cannot ask (no
+// orchestrator wired), is refused with why; either way nothing reaches the
+// container. what is what the call would have done with it ("verified",
+// "deployed from", …). A lease the orchestrator gives zcp is returned parked
+// when its record says so or its container is stopped (DP-28). ok is false
+// when host is no lease zcp holds.
+func LeaseTargetChecked(ctx context.Context, d LeaseDeps, host, what string) (LeaseTargetInfo, bool, error) {
+	if d.StateDir == "" || !isLeaseAliasShape(host) {
+		return LeaseTargetInfo{}, false, nil
+	}
+	records, err := readLeaseRecords(d.StateDir)
+	if err != nil {
+		return LeaseTargetInfo{}, false, err
+	}
+	for _, rec := range records {
+		if rec.alias() != host {
+			continue
+		}
+		info := rec.targetInfo()
+		if d.Swarm == nil {
+			return info, true, platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+				fmt.Sprintf("Lease %s was not %s: this zcp cannot ask the pool's orchestrator whether its container is still this lease's, so it read nothing from it and sent nothing to it", host, what),
+				unverifiedRemedy)
+		}
+		v := readLeaseOwnership(ctx, d, rec)
+		switch {
+		case v.own.lost():
+			return info, true, platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+				fmt.Sprintf("Lease %s cannot be %s: %s; zcp does not re-lease it, and nothing reached its container", host, what, v.why),
+				"zerops_lease action=release lease="+host+" drops the record")
+		case v.own == leaseUnverified:
+			return info, true, unverifiedLeaseRefusal(host, what, v)
+		}
+		info.Parked = info.Parked || parkedContainer(v.container)
+		return info, true, nil
 	}
 	return LeaseTargetInfo{}, false, nil
 }

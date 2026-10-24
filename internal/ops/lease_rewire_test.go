@@ -432,9 +432,11 @@ func staleStatusFixture(t *testing.T, hqLost bool, preview string) (*groupFixtur
 			t.Fatal(err)
 		}
 	}
-	gf.web.containers = []platform.SwarmContainer{{ID: "c-webpool", Number: 3, Hostname: nodeHostnameOf(groupWebPool, 3), LockState: leaseLockReserved}}
+	// Each container reserved by its record's lease, as the orchestrator
+	// renews it.
+	gf.web.put(platform.SwarmContainer{ID: "c-webpool", Number: 3, Hostname: nodeHostnameOf(groupWebPool, 3), LockState: leaseLockReserved}, groupWebPool+"-lease-0123456789abcdef")
 	if !hqLost {
-		gf.hq.containers = []platform.SwarmContainer{{ID: "c-hqpool", Number: 7, Hostname: nodeHostnameOf(groupHQPool, 7), LockState: leaseLockReserved}}
+		gf.hq.put(platform.SwarmContainer{ID: "c-hqpool", Number: 7, Hostname: nodeHostnameOf(groupHQPool, 7), LockState: leaseLockReserved}, groupHQPool+"-lease-0123456789abcdef")
 	}
 	ssh := &ctxSSH{fn: func(_ context.Context, host, _ string) ([]byte, error) {
 		answer := string(checkoutAnswer(1792756800, "", nil, 0))

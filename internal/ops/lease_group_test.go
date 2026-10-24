@@ -32,6 +32,18 @@ const (
 // poolOrch is a pool orchestrator the group tests control: every acquire
 // reserves a fresh container, a release frees it. It is safe for concurrent
 // use, and gate (when set) holds every acquire until it is closed.
+//
+// It keeps the live orchestrator's lock facts (2026-10-24): every change of a
+// reservation — an acquire, a holder's stop or start — restarts its lockSince;
+// a release, delete, stop or start carrying another lease on a reserved
+// container is refused held-by-other, changing nothing; a release of a free
+// container checks no lease at all and resets it (freeResets); a renew
+// answers the holder's own lease on its reserved container unchanged (200,
+// lockState deleting while a delete runs), refuses any other lease, and any
+// lease on a free container, unknown-lease, and a container that is gone
+// container-not-found — it changes nothing. A stop or start of a free
+// container is not live-verified: the fake does it whatever the lease, as a
+// release does, and logs it (freePowers), so zcp is caught sending one.
 type poolOrch struct {
 	pool, svcID string
 
@@ -47,6 +59,122 @@ type poolOrch struct {
 	powers     []string // "<status> <container id>" per holder's stop or start
 	gate       chan struct{}
 	entered    chan struct{} // receives once per acquire that reached the orchestrator
+
+	// stamps counts the lockSince values handed out (stamp).
+	stamps int
+	// freeResets are the free containers a release reset, whatever lease it
+	// carried.
+	freeResets []string
+	// powerCut: a holder's stop or start takes effect, but its answer is lost
+	// (the caller reads a transport failure).
+	powerCut bool
+	// renewErr fails every renew (the orchestrator's own failure); renews
+	// are the container ids renewed; freePowers the free containers a stop
+	// or start went through on.
+	renewErr   error
+	renews     []string
+	freePowers []string
+}
+
+// orchLockBase is when the first reservation a poolOrch hands out starts.
+var orchLockBase = time.Date(2026, 10, 24, 11, 0, 0, 0, time.UTC)
+
+// stamp is the next lockSince, as the live orchestrator writes it (RFC 3339
+// with nanoseconds), a minute and more after the one before. Callers hold mu.
+func (o *poolOrch) stamp() string {
+	o.stamps++
+	return orchLockBase.Add(time.Duration(o.stamps)*61*time.Second + 123456789).Format(time.RFC3339Nano)
+}
+
+// heldByOther is the live refusal of a call carrying a lease that does not
+// hold the reserved container (2026-10-24).
+func heldByOther() error {
+	return &platform.SwarmError{
+		Status: 400, Code: "containerAction", Reason: "held-by-other", Retryable: true,
+		Message: "container is reserved by another consumer - pass its lease, or ?force=true to take it over",
+	}
+}
+
+// put lists c on the pool, held by lease ("" for none).
+func (o *poolOrch) put(c platform.SwarmContainer, lease string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if c.ServiceID == "" {
+		c.ServiceID = o.svcID
+	}
+	o.containers = slices.DeleteFunc(o.containers, func(x platform.SwarmContainer) bool { return x.ID == c.ID })
+	o.containers = append(o.containers, c)
+	if lease == "" {
+		delete(o.leases, c.ID)
+	} else {
+		o.leases[c.ID] = lease
+	}
+}
+
+// releaseOutside frees id as a release outside zcp does: reset, its lease
+// gone.
+func (o *poolOrch) releaseOutside(id string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	for i := range o.containers {
+		if o.containers[i].ID == id {
+			o.containers[i].LockState, o.containers[i].LockSince, o.containers[i].Status = "", "", platform.SwarmContainerActive
+			delete(o.leases, id)
+		}
+	}
+}
+
+// takeOver frees id outside zcp, and another consumer reserves it with a
+// lease of its own.
+func (o *poolOrch) takeOver(id string) {
+	o.releaseOutside(id)
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	for i := range o.containers {
+		if o.containers[i].ID == id {
+			o.containers[i].LockState, o.containers[i].LockSince = leaseLockReserved, o.stamp()
+			o.leases[id] = "another-consumers-lease-0123456789"
+		}
+	}
+}
+
+// remove drops id from the pool, as a delete outside zcp does.
+func (o *poolOrch) remove(id string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.containers = slices.DeleteFunc(o.containers, func(c platform.SwarmContainer) bool { return c.ID == id })
+	delete(o.leases, id)
+}
+
+// get is id as listed (the zero container when it is not).
+func (o *poolOrch) get(id string) platform.SwarmContainer {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	for _, c := range o.containers {
+		if c.ID == id {
+			return c
+		}
+	}
+	return platform.SwarmContainer{}
+}
+
+// leaseOf is the lease holding id ("" for none).
+func (o *poolOrch) leaseOf(id string) string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.leases[id]
+}
+
+func (o *poolOrch) freeResetLog() []string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append([]string(nil), o.freeResets...)
+}
+
+func (o *poolOrch) powerLog() []string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append([]string(nil), o.powers...)
 }
 
 func newPoolOrch(pool, svcID string, first int64) *poolOrch {
@@ -83,7 +211,7 @@ func (o *poolOrch) Acquire(context.Context, platform.SwarmAcquireRequest) (platf
 	o.next++
 	c := platform.SwarmContainer{
 		ID: fmt.Sprintf("c-%s-%d", o.pool, n), Number: n, Status: "ACTIVE", ServiceID: o.svcID, LockState: leaseLockReserved,
-		Hostname: "node-id-" + strconv.FormatInt(n, 10) + ".runtime." + o.pool + ".zerops",
+		Hostname: "node-id-" + strconv.FormatInt(n, 10) + ".runtime." + o.pool + ".zerops", LockSince: o.stamp(),
 	}
 	lease := fmt.Sprintf("%s-lease-%d-0123456789abcdef", o.pool, n)
 	o.containers = append(o.containers, c)
@@ -99,16 +227,60 @@ func (o *poolOrch) Release(_ context.Context, id, lease string, reset bool) (pla
 		return platform.SwarmContainer{}, o.releaseErr
 	}
 	for i, c := range o.containers {
-		if c.ID == id && o.leases[id] == lease {
-			o.containers[i].LockState = ""
+		switch {
+		case c.ID != id:
+		case c.LockState == "":
+			// A free container: the live orchestrator checks no lease and
+			// resets it.
+			if reset {
+				o.freeResets = append(o.freeResets, id)
+			}
+		case o.leases[id] != lease:
+			return platform.SwarmContainer{}, heldByOther()
+		default:
+			o.containers[i].LockState, o.containers[i].LockSince = "", ""
 			delete(o.leases, id)
 		}
 	}
 	return platform.SwarmContainer{ID: id}, nil
 }
 
-func (o *poolOrch) Renew(context.Context, string, string) (platform.SwarmContainer, error) {
-	return platform.SwarmContainer{}, nil
+func (o *poolOrch) Renew(_ context.Context, id, lease string) (platform.SwarmContainer, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.renews = append(o.renews, id)
+	if o.renewErr != nil {
+		return platform.SwarmContainer{}, o.renewErr
+	}
+	for _, c := range o.containers {
+		if c.ID != id {
+			continue
+		}
+		if c.LockState == "" || o.leases[id] != lease {
+			return platform.SwarmContainer{}, unknownLeaseErr()
+		}
+		return c, nil
+	}
+	return platform.SwarmContainer{}, &platform.SwarmError{Status: 400, Code: "containerAction", Message: "no container " + id + " in the pool", Reason: platform.SwarmReasonContainerNotFound}
+}
+
+// unknownLeaseErr is the live refusal of a renew whose lease holds no
+// reservation of the container (2026-10-24).
+func unknownLeaseErr() error {
+	return &platform.SwarmError{Status: 400, Code: "containerAction", Reason: platform.SwarmReasonUnknownLease,
+		Message: "no reservation of this container is held by that lease - acquire it again"}
+}
+
+func (o *poolOrch) renewLog() []string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append([]string(nil), o.renews...)
+}
+
+func (o *poolOrch) freePowerLog() []string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append([]string(nil), o.freePowers...)
 }
 
 func (o *poolOrch) Delete(_ context.Context, id, lease string) error {
@@ -116,6 +288,9 @@ func (o *poolOrch) Delete(_ context.Context, id, lease string) error {
 	defer o.mu.Unlock()
 	o.deletes = append(o.deletes, id)
 	for i, c := range o.containers {
+		if c.ID == id && c.LockState == leaseLockReserved && o.leases[id] != lease {
+			return heldByOther()
+		}
 		if c.ID == id && o.leases[id] == lease {
 			o.containers = append(o.containers[:i], o.containers[i+1:]...)
 			delete(o.leases, id)
@@ -134,7 +309,8 @@ func (o *poolOrch) Start(_ context.Context, id, lease string) (platform.SwarmCon
 }
 
 // power is a holder's stop or start: the container takes status, its
-// reservation kept; another lease is refused.
+// reservation kept and its lockSince restarted; another lease is refused
+// held-by-other on a reserved container.
 func (o *poolOrch) power(id, lease, status string) (platform.SwarmContainer, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -142,10 +318,22 @@ func (o *poolOrch) power(id, lease, status string) (platform.SwarmContainer, err
 	for i, c := range o.containers {
 		if c.ID == id && o.leases[id] == lease {
 			o.containers[i].Status = status
+			o.containers[i].LockSince = o.stamp()
+			if o.powerCut {
+				return platform.SwarmContainer{}, platform.NewPlatformError(platform.ErrNetworkError, "the orchestrator at http://orch."+o.pool+".zerops did not answer: connection reset by peer", "")
+			}
+			return o.containers[i], nil
+		}
+		if c.ID == id && c.LockState == leaseLockReserved {
+			return platform.SwarmContainer{}, heldByOther()
+		}
+		if c.ID == id && c.LockState == "" {
+			o.freePowers = append(o.freePowers, status+" "+id)
+			o.containers[i].Status = status
 			return o.containers[i], nil
 		}
 	}
-	return platform.SwarmContainer{}, &platform.SwarmError{Status: 409, Code: "containerAction", Message: "unknown lease", Reason: platform.SwarmReasonUnknownLease}
+	return platform.SwarmContainer{}, &platform.SwarmError{Status: 400, Code: "containerAction", Message: "no container " + id + " in the pool", Reason: platform.SwarmReasonContainerNotFound}
 }
 
 func (o *poolOrch) Rollout(context.Context) (platform.SwarmRollout, error) {

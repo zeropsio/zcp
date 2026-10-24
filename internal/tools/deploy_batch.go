@@ -48,7 +48,9 @@ func RegisterDeployBatch(
 	engine *workflow.Engine,
 	recipeProbe RecipeSessionProbe,
 	devsup DevsupSource,
+	opts ...DeployOption,
 ) {
+	vouch := deployConfigOf(opts).leaseVouch(client, projectID, stateDir)
 	desc := "Deploy multiple services in parallel — single MCP call kicks off N builds server-side. " +
 		"Closes the MCP STDIO serialization penalty (calling zerops_deploy multiple times in parallel returns 'Not connected'). " +
 		"Use whenever two or more deploys go together: every stage of a pair in one call (stages fed from one dev service build in parallel), several dev services, a close redeploy. " +
@@ -73,6 +75,7 @@ func RegisterDeployBatch(
 		d := batchDeployer{
 			client: client, httpClient: httpClient, projectID: projectID, sshDeployer: sshDeployer,
 			authInfo: authInfo, logFetcher: logFetcher, rtInfo: rtInfo, stateDir: stateDir, recipeProbe: recipeProbe, devsup: devsup,
+			vouch: vouch,
 		}
 		if blocked := d.gate(ctx, input.Targets); blocked != nil {
 			return blocked, nil, nil
@@ -115,6 +118,9 @@ type batchDeployer struct {
 	// devsup finds the zcp-devsup a deploy putting a dev setup under the
 	// supervisor installs.
 	devsup DevsupSource
+	// vouch asks a lease source's orchestrator whose its container is
+	// before anything reads it (DP-2).
+	vouch leaseVouch
 }
 
 // gate applies the adoption gate and the push-delivery redirect to every
@@ -188,8 +194,13 @@ func (d batchDeployer) preflight(ctx context.Context, t ops.DeployBatchTarget) (
 	if sourceForPreflight == "" {
 		sourceForPreflight = t.TargetService
 	}
+	// A lease source is asked about first (DP-2): one that is no longer the
+	// lease's, or that the orchestrator does not answer about, is never read.
 	// A parked lease answers nothing and its mount is gone (DP-28).
-	if lease, ok := leaseOf(d.stateDir, sourceForPreflight); ok && lease.Parked {
+	switch lease, ok, err := checkedLeaseOf(ctx, d.stateDir, d.vouch, sourceForPreflight, "deployed from"); {
+	case err != nil:
+		return t, &batchPreflightRefusal{target: t.TargetService, refusal: err}
+	case ok && lease.Parked:
 		return t, &batchPreflightRefusal{target: t.TargetService, refusal: ops.LeaseParkedError(lease, "a deploy from it")}
 	}
 	t.WorkingDir = sourceWorkingDir(d.stateDir, sourceForPreflight, t.WorkingDir)

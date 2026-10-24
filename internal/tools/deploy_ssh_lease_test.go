@@ -133,7 +133,7 @@ func (r leaseDeployRig) deploy(t *testing.T, ssh ops.SSHDeployer, args map[strin
 	t.Helper()
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploySSH(srv, r.mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{InContainer: true, ServiceName: "zcp"}, r.stateDir, testDeployEngine(t), nil, DevsupSource{})
+	RegisterDeploySSH(srv, r.mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{InContainer: true, ServiceName: "zcp"}, r.stateDir, testDeployEngine(t), nil, DevsupSource{}, withVouchHeld())
 	result := callTool(t, srv, "zerops_deploy", args)
 	return result, getTextContent(t, result)
 }
@@ -287,7 +287,7 @@ func poolDeployCall(t *testing.T, ssh ops.SSHDeployer, stateDir string, args map
 		})
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{InContainer: true, ServiceName: "zcp"}, stateDir, testDeployEngine(t), nil, DevsupSource{})
+	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{InContainer: true, ServiceName: "zcp"}, stateDir, testDeployEngine(t), nil, DevsupSource{}, withVouchHeld())
 	result := callTool(t, srv, "zerops_deploy", args)
 	return result, getTextContent(t, result)
 }

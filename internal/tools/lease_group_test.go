@@ -60,6 +60,14 @@ func (o *poolOrchestrator) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/container":
 		_, _ = w.Write([]byte(`[` + container(false) + `]`))
+	case r.Method == http.MethodGet && r.URL.Path == "/container/"+id:
+		_, _ = w.Write([]byte(container(false)))
+	case r.Method == http.MethodPost && r.URL.Path == "/container/"+id+"/renew":
+		if !o.reserved || r.Header.Get("X-Swarm-Lease") != o.lease() {
+			writeUnknownLease(w)
+			return
+		}
+		_, _ = w.Write([]byte(container(false)))
 	case r.Method == http.MethodPost && r.URL.Path == "/container/acquire":
 		o.acquires++
 		o.reserved = true

@@ -324,11 +324,14 @@ func resolvePoolPair(target ServiceSnapshot, services []ServiceSnapshot, leases 
 	return intent, true
 }
 
-// heldLeaseOf is the alias of the first lease of pool zcp holds, in the
-// envelope's order (by container number); "" for none.
+// heldLeaseOf is the alias of the first lease of pool zcp holds, verified as
+// its own by the pool's orchestrator, in the envelope's order (by container
+// number); "" for none.
 func heldLeaseOf(pool string, leases []LeaseSnapshot) string {
 	for _, l := range leases {
-		if l.Pool == pool && l.State == leaseStateHeld {
+		// An unverified lease may be another holder's container by now: never
+		// a deploy's source (docs/spec-workflows.md §8 DP-2).
+		if l.Pool == pool && l.State == leaseStateHeld && !l.Unverified {
 			return l.Alias
 		}
 	}

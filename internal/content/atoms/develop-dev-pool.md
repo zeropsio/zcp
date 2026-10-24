@@ -39,8 +39,12 @@ own hostname reaches a random container — address a leased one by its alias.
 
 `zerops_lease action=status` lists your leases: `held`, `parked` (stopped
 and kept), `unmounted` (the record has no alias or mount), `lost` (its
-container is gone or no longer reserved) or `unknown-holder` (reserved, but
-no record of yours). It reads each one's activity and unsaved work, changing
+container is gone, free, or another holder's now; a plain release drops the
+record and touches nothing else) or `unknown-holder` (reserved, but no
+record of yours). A lease marked `unverified` is one its pool's orchestrator
+did not answer about: it may be another holder's, so nothing reads it and
+every call that would change it is refused; a later status asks again. It
+reads each other lease's activity and unsaved work, changing
 nothing: a lease untouched for a day is `idle`, its `idle.next` naming the
 release or what a release would lose. `warm` shows each pool's warm
 container.

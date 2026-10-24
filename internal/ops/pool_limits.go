@@ -101,6 +101,7 @@ func readPoolUsage(ctx context.Context, d LeaseDeps, rp *resolvedPool) poolUsage
 		}
 	}
 	var mine []leaseRecord
+	unverified := map[string]bool{}
 	containers, err := d.containers(ctx, rp)
 	if err != nil {
 		for _, r := range own {
@@ -108,18 +109,33 @@ func readPoolUsage(ctx context.Context, d LeaseDeps, rp *resolvedPool) poolUsage
 		}
 	} else {
 		u.listed = true
+		// Yours only while the orchestrator still renews the record's lease:
+		// a container another holder took is theirs, never read or named as
+		// yours; one it does not answer about is named, never read (DP-2).
+		owned := reservedOwnership(ctx, d, rp, own, containers)
 		for _, c := range containers {
 			if c.LockState != leaseLockReserved {
 				continue
 			}
 			u.leased++
-			if r, ok := own[c.ID]; ok {
+			r, ok := own[c.ID]
+			if !ok {
+				continue
+			}
+			switch owned[c.ID] {
+			case leaseOurs:
 				mine = append(mine, r)
+			case leaseUnverified:
+				mine = append(mine, r)
+				unverified[r.alias()] = true
+			case leaseGone, leaseFree, leaseOther:
 			}
 		}
 	}
 	for _, r := range mine {
-		u.yours = append(u.yours, r.view(LeaseStateHeld))
+		v := r.view(LeaseStateHeld)
+		v.Unverified = unverified[r.alias()]
+		u.yours = append(u.yours, v)
 	}
 	slices.SortFunc(u.yours, func(a, b LeaseView) int { return cmp.Compare(leaseNumber(a.Alias), leaseNumber(b.Alias)) })
 	if d.SSH != nil && u.listed && len(u.yours) > 0 {
@@ -427,6 +443,9 @@ func planPoolShrink(ctx context.Context, d LeaseDeps, svc, current *platform.Ser
 			own[r.ContainerID] = r
 		}
 	}
+	// Yours while the orchestrator renews the record's lease, or does not
+	// answer about it (DP-2): another holder's is theirs.
+	owned := reservedOwnership(ctx, d, rp, own, containers)
 	for i, c := range sorted {
 		leased := c.LockState == leaseLockReserved
 		if leased && s.LowestSafe == 0 {
@@ -436,7 +455,7 @@ func planPoolShrink(ctx context.Context, d LeaseDeps, svc, current *platform.Ser
 			continue
 		}
 		pc := PoolShrinkContainer{Alias: leaseAlias(svc.Name, c.Number), Leased: leased}
-		if r, ok := own[c.ID]; ok && leased {
+		if r, ok := own[c.ID]; ok && leased && (owned[c.ID] == leaseOurs || owned[c.ID] == leaseUnverified) {
 			pc.Yours, pc.Branch = true, r.Branch
 		}
 		s.Deletes = append(s.Deletes, pc)

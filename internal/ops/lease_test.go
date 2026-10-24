@@ -52,6 +52,14 @@ type fakeSwarm struct {
 	// the listed container's status.
 	stops, starts     []fakeRelease
 	stopErr, startErr error
+
+	// reserved are the containers an acquire reserved: a read by id finds one
+	// the test did not list, as the orchestrator does.
+	reserved []platform.SwarmContainer
+	// foreign marks reserved containers another holder holds (a renew with
+	// zcp's lease is refused); renewErr fails every renew.
+	foreign  map[string]bool
+	renewErr error
 }
 
 type fakeRelease struct {
@@ -76,6 +84,9 @@ func (f *fakeSwarm) Containers(context.Context) ([]platform.SwarmContainer, erro
 
 func (f *fakeSwarm) Acquire(_ context.Context, req platform.SwarmAcquireRequest) (platform.SwarmAcquired, error) {
 	f.acquireReqs = append(f.acquireReqs, req)
+	if f.acquireErr == nil {
+		f.reserved = append(f.reserved, f.acquired.Container)
+	}
 	return f.acquired, f.acquireErr
 }
 
@@ -84,8 +95,24 @@ func (f *fakeSwarm) Release(_ context.Context, id, lease string, reset bool) (pl
 	return platform.SwarmContainer{ID: id}, f.releaseErr
 }
 
-func (f *fakeSwarm) Renew(context.Context, string, string) (platform.SwarmContainer, error) {
-	return platform.SwarmContainer{}, nil
+// Renew answers as the live orchestrator renews a TTL-0 lease: a reserved
+// container (listed, or one an acquire reserved) answers unchanged — the fake
+// keeps no lease per container, so a test marks one another holder's in
+// foreign — a free one, or a foreign one, is refused unknown-lease, and one it
+// does not know container-not-found. renewErr fails every renew.
+func (f *fakeSwarm) Renew(ctx context.Context, id, _ string) (platform.SwarmContainer, error) {
+	if f.renewErr != nil {
+		return platform.SwarmContainer{}, f.renewErr
+	}
+	c, err := f.Container(ctx, id)
+	if err != nil {
+		return platform.SwarmContainer{}, err
+	}
+	if c.LockState == "" || f.foreign[id] {
+		return platform.SwarmContainer{}, &platform.SwarmError{Status: 400, Code: "containerAction", Reason: platform.SwarmReasonUnknownLease,
+			Message: "no reservation of this container is held by that lease - acquire it again"}
+	}
+	return c, nil
 }
 
 func (f *fakeSwarm) Delete(_ context.Context, id, lease string) error {
@@ -132,11 +159,25 @@ func (f *fakeSwarm) setStatus(id, status string) platform.SwarmContainer {
 	return platform.SwarmContainer{ID: id, Status: status}
 }
 
-// Container reads one listed container by id; the fake counts no snapshots.
+// Container reads one listed container by id — or, when the test set no
+// listing, one an acquire reserved; the fake counts no snapshots.
 func (f *fakeSwarm) Container(_ context.Context, id string) (platform.SwarmContainer, error) {
+	if f.listErr != nil {
+		// An orchestrator whose listing fails answers no read.
+		return platform.SwarmContainer{}, f.listErr
+	}
 	for _, c := range f.containers {
 		if c.ID == id {
 			return c, nil
+		}
+	}
+	if f.containers != nil {
+		// A test that set the listing set the whole pool.
+		return platform.SwarmContainer{}, &platform.SwarmError{Status: 404, Code: "containerAction", Message: "no such container", Reason: "container-not-found"}
+	}
+	for i := len(f.reserved) - 1; i >= 0; i-- {
+		if f.reserved[i].ID == id {
+			return f.reserved[i], nil
 		}
 	}
 	return platform.SwarmContainer{}, &platform.SwarmError{Status: 404, Code: "containerAction", Message: "no such container", Reason: "container-not-found"}

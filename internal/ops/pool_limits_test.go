@@ -233,7 +233,8 @@ func TestLeaseOps_PoolNotRunning_SaysStartIt(t *testing.T) {
 		{"release", func(t *testing.T, fx *leaseFixture) error {
 			t.Helper()
 			recordLease(t, fx.stateDir, testPoolHost, "svc-pool", 3, "b")
-			fx.swarm.releaseErr = noRouteToHost()
+			// An orchestrator with no route answers no read either.
+			fx.swarm.listErr, fx.swarm.releaseErr = noRouteToHost(), noRouteToHost()
 			_, err := LeaseRelease(context.Background(), fx.deps, "devpool-3", true)
 			return err
 		}},

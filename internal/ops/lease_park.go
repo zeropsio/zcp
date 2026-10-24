@@ -108,40 +108,41 @@ func LeaseParkedError(lease LeaseTargetInfo, what string) error {
 		fmt.Sprintf("Start it first: %s (it keeps its /var/www and $HOME)", LeaseUnparkCall(lease.Alias)))
 }
 
-// leaseContainerFor reads, by id, the container of the lease rec records for a
-// park or an unpark (verb), refusing a lease zcp no longer holds — named with
-// the release that drops its record — and one whose container the
-// orchestrator is stopping or starting right now.
-func leaseContainerFor(ctx context.Context, d LeaseDeps, rec leaseRecord, verb string) (*resolvedPool, platform.SwarmContainer, error) {
+// leaseContainerFor asks the orchestrator, with the lease, whose the
+// container rec records is (readLeaseOwnership) for a park or an unpark
+// (verb), refusing — nothing changed — a lease zcp no longer holds (gone,
+// free, another holder's), named with the release that drops its record; one
+// the orchestrator does not answer about; and one whose container it is
+// stopping or starting right now. Only a container the orchestrator gives the
+// lease is parked or unparked, so neither ever touches another holder's
+// workspace.
+func leaseContainerFor(ctx context.Context, d LeaseDeps, rec leaseRecord, verb string) (leaseVerdict, error) {
 	alias := rec.alias()
-	rp, err := resolvePool(ctx, d, rec.PoolHostname)
-	if err != nil {
-		var pe *platform.PlatformError
-		if errors.As(err, &pe) && pe.Code == platform.ErrServiceNotFound {
-			return nil, platform.SwarmContainer{}, lostLeaseRefusal(alias, verb, "the pool service no longer exists")
-		}
-		return nil, platform.SwarmContainer{}, err
-	}
-	if rp.svc.ID != rec.PoolServiceID {
-		return nil, platform.SwarmContainer{}, lostLeaseRefusal(alias, verb, "the pool was re-created since this lease was taken")
-	}
-	c, err := d.containerByID(ctx, rp, rec.ContainerID)
-	if err != nil {
-		var se *platform.SwarmError
-		if errors.As(err, &se) && se.Reason == platform.SwarmReasonContainerNotFound {
-			return nil, platform.SwarmContainer{}, lostLeaseRefusal(alias, verb, "the container is gone from the pool")
-		}
-		return nil, platform.SwarmContainer{}, leaseOrchestratorError(ctx, d, rp, verb+" "+alias, err)
-	}
+	v := readLeaseOwnership(ctx, d, rec)
 	switch {
-	case powerTransition(c):
-		return nil, platform.SwarmContainer{}, platform.NewPlatformError(platform.ErrPrerequisiteMissing,
-			fmt.Sprintf("Lease %s was not %sed: the orchestrator is %s its container right now", alias, verb, c.LockState),
+	case v.own == leaseUnverified:
+		return leaseVerdict{}, unverifiedLeaseRefusal(alias, verb+"ed", v)
+	case v.own.lost():
+		return leaseVerdict{}, lostLeaseRefusal(alias, verb, v.why)
+	case powerTransition(v.container):
+		return leaseVerdict{}, platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+			fmt.Sprintf("Lease %s was not %sed: the orchestrator is %s its container right now", alias, verb, v.container.LockState),
 			fmt.Sprintf("zerops_lease action=status shows it once that is done; %s it then if it still needs it", verb))
-	case c.LockState != leaseLockReserved:
-		return nil, platform.SwarmContainer{}, lostLeaseRefusal(alias, verb, "the orchestrator no longer reserves this container (the lease ended or was released elsewhere)")
 	}
-	return rp, c, nil
+	return v, nil
+}
+
+// leaseLostOnCall is a park or an unpark (verb) that found, right before its
+// stop or start or in a held-by-other answer to it that a renew confirmed,
+// that the lease ended outside zcp (why): its record is dropped as lost with its mount
+// and alias stanza, and the view says so — never "retry in a moment".
+func leaseLostOnCall(ctx context.Context, d LeaseDeps, rec leaseRecord, verb, why string) (LeaseView, error) {
+	v, err := dropLostLease(ctx, d, rec, why)
+	if err != nil {
+		return LeaseView{}, fmt.Errorf("%s %s: %w", verb, rec.alias(), err)
+	}
+	v.Note = joinNotes(fmt.Sprintf("not %sed", verb), v.Note, siblingsMayBeWired(d.StateDir, rec))
+	return v, nil
 }
 
 // lostLeaseRefusal refuses a park or an unpark (verb) of a lease zcp no longer
@@ -163,9 +164,19 @@ func LeasePark(ctx context.Context, d LeaseDeps, alias string) (LeaseView, error
 	if err != nil {
 		return LeaseView{}, err
 	}
-	rp, c, err := leaseContainerFor(ctx, d, rec, "park")
+	verdict, err := leaseContainerFor(ctx, d, rec, "park")
 	if err != nil {
 		return LeaseView{}, err
+	}
+	rp, c := verdict.rp, verdict.container
+	if kept := keptRecordNote(d.StateDir, rec); kept != "" {
+		// The alias's record — and its mount — are not this lease's by now:
+		// nothing is unmounted, and the orchestrator is asked again.
+		if fresh := renewOwnership(ctx, d, rp, rec); fresh.own.lost() {
+			return leaseLostOnCall(ctx, d, rec, "park", fresh.why)
+		}
+		return LeaseView{}, platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+			fmt.Sprintf("Lease %s was not parked: %s", alias, kept), "zerops_lease action=status shows which lease the alias names now")
 	}
 	if err := d.Host.unmountLease(ctx, d, rec); err != nil {
 		return LeaseView{}, platform.NewPlatformError(platform.ErrUnmountFailed,
@@ -179,13 +190,30 @@ func LeasePark(ctx context.Context, d LeaseDeps, alias string) (LeaseView, error
 	case c.Status == platform.SwarmContainerStopped:
 		notes = append(notes, "its container was stopped already (outside zcp), so zcp stopped nothing and recorded it parked")
 	default:
-		if _, err := rp.api.Stop(ctx, rec.ContainerID, rec.Lease); err != nil {
-			out := leaseOrchestratorError(ctx, d, rp, "park "+alias, err)
+		remounted := func(out error) error {
 			remount := "its mount is back"
 			if note := d.Host.mountLease(ctx, d, rec); note != "" {
 				remount = note
 			}
-			return LeaseView{}, withNote(out, "the lease stays held and running; "+remount)
+			return withNote(out, "the lease stays held and running; "+remount)
+		}
+		// Asked again right before the stop (DP-2): the unmount took a
+		// while, and a lease that ended meanwhile is never stopped.
+		switch fresh := renewOwnership(ctx, d, rp, rec); {
+		case fresh.own.lost():
+			return leaseLostOnCall(ctx, d, rec, "park", fresh.why)
+		case fresh.own == leaseUnverified:
+			return LeaseView{}, remounted(unverifiedLeaseRefusal(alias, "parked", fresh))
+		}
+		if _, err := rp.api.Stop(ctx, rec.ContainerID, rec.Lease); err != nil {
+			switch v, held := heldByOtherAsked(ctx, d, rp, rec, err); {
+			case held && v.own.lost():
+				return leaseLostOnCall(ctx, d, rec, "park", v.why)
+			case held && v.own == leaseUnverified:
+				// Maybe another holder's: never mounted again.
+				return LeaseView{}, heldByOtherUnverifiedRefusal(alias, "parked", v)
+			}
+			return LeaseView{}, remounted(leaseOrchestratorError(ctx, d, rp, "park "+alias, err))
 		}
 	}
 	if !rec.Parked {
@@ -215,16 +243,23 @@ func LeaseUnpark(ctx context.Context, d LeaseDeps, alias string) (LeaseView, err
 	if err != nil {
 		return LeaseView{}, err
 	}
-	rp, c, err := leaseContainerFor(ctx, d, rec, "unpark")
+	verdict, err := leaseContainerFor(ctx, d, rec, "unpark")
 	if err != nil {
 		return LeaseView{}, err
 	}
+	rp, c := verdict.rp, verdict.container
 	var notes []string
 	if c.Status == platform.SwarmContainerActive {
 		if !rec.Parked {
 			notes = append(notes, "its container was running already, so zcp started nothing")
 		}
 	} else if _, err := rp.api.Start(ctx, rec.ContainerID, rec.Lease); err != nil {
+		switch v, held := heldByOtherAsked(ctx, d, rp, rec, err); {
+		case held && v.own.lost():
+			return leaseLostOnCall(ctx, d, rec, "unpark", v.why)
+		case held && v.own == leaseUnverified:
+			return LeaseView{}, heldByOtherUnverifiedRefusal(alias, "unparked", v)
+		}
 		return LeaseView{}, leaseOrchestratorError(ctx, d, rp, "unpark "+alias, err)
 	}
 	if rec.Parked {
@@ -313,46 +348,48 @@ func (w leaseWake) note() string {
 }
 
 // wakeParkedForGuard starts the container of a parked lease so the release
-// guard can read it, and waits for its ssh. A lease that is not parked by its
-// record, a zcp without ssh (it checks nothing), and a container the
-// orchestrator does not list reserved and stopped — or that zcp cannot read —
-// start nothing: the guard and the release then say what became of it. A
-// start the orchestrator will not make refuses the release; one whose ssh
-// does not answer refuses it too, with the container started (the caller
-// stops it again, reparkAfterRefusal).
-func wakeParkedForGuard(ctx context.Context, d LeaseDeps, rec leaseRecord) (leaseWake, error) {
+// guard can read it, and waits for its ssh. v is the release's own verdict,
+// asked of the orchestrator right before (readLeaseOwnership): only a
+// container it gives the lease, stopped, is started. A lease that is not
+// parked by its record and a zcp without ssh (it checks nothing) start
+// nothing either: the guard and the release then say what became of it. Once
+// its ssh answers the orchestrator is asked again, right before the guard
+// reads it. A lease found ended — a start refused held-by-other that a renew
+// confirms, or that last renew — is a *leaseEndedError with no wake (the
+// caller drops it as lost and stops nothing: the container is not the
+// lease's); any other start the orchestrator will not make refuses the
+// release; one whose ssh does not answer, or that the last renew does not
+// answer about, refuses it too, with the container started (the caller stops
+// it again, reparkAfterRefusal).
+func wakeParkedForGuard(ctx context.Context, d LeaseDeps, rec leaseRecord, v leaseVerdict) (leaseWake, error) {
 	var w leaseWake
-	if !rec.Parked || d.SSH == nil {
-		return w, nil
-	}
-	rp, stopped := stoppedHeldContainer(ctx, d, rec)
-	if !stopped {
+	c := v.container
+	if !rec.Parked || d.SSH == nil || v.own != leaseOurs || c.LockState != leaseLockReserved || c.Status == platform.SwarmContainerActive {
 		return w, nil
 	}
 	alias := rec.alias()
-	if _, err := rp.api.Start(ctx, rec.ContainerID, rec.Lease); err != nil {
-		return w, parkedReleaseRefusal(alias, "zcp could not start its container to check it for unsaved work ("+errorNote(leaseOrchestratorError(ctx, d, rp, "start "+alias, err))+")")
+	if _, err := v.rp.api.Start(ctx, rec.ContainerID, rec.Lease); err != nil {
+		switch hv, held := heldByOtherAsked(ctx, d, v.rp, rec, err); {
+		case held && hv.own.lost():
+			return w, &leaseEndedError{why: hv.why}
+		case held && hv.own == leaseUnverified:
+			return w, heldByOtherUnverifiedRefusal(alias, "released", hv)
+		}
+		return w, parkedReleaseRefusal(alias, "zcp could not start its container to check it for unsaved work ("+errorNote(leaseOrchestratorError(ctx, d, v.rp, "start "+alias, err))+")")
 	}
 	w.started = true
 	if err := waitStartedLease(ctx, d, alias); err != nil {
 		return w, parkedReleaseRefusal(alias, fmt.Sprintf("zcp started its container to check it for unsaved work, but it did not answer ssh within %s (%v)", d.startedSSHWait(), err))
 	}
+	// Asked again right before the guard reads it (DP-2): the ssh wait can
+	// outlast the lease, and another holder's container is never read.
+	switch fresh := renewOwnership(ctx, d, v.rp, rec); {
+	case fresh.own.lost():
+		return leaseWake{}, &leaseEndedError{why: fresh.why}
+	case fresh.own == leaseUnverified:
+		return w, unverifiedRefusal(fmt.Sprintf("Lease %s was not released: zcp started its parked container to check it for unsaved work, then could not ask the pool's orchestrator whether it is still this lease's, so it read nothing from it", alias), fresh)
+	}
 	return w, nil
-}
-
-// stoppedHeldContainer reads the record's container by id and reports whether
-// the orchestrator lists it reserved and not running, with its pool; any read
-// that fails reports false.
-func stoppedHeldContainer(ctx context.Context, d LeaseDeps, rec leaseRecord) (*resolvedPool, bool) {
-	rp, err := resolvePool(ctx, d, rec.PoolHostname)
-	if err != nil || rp.svc.ID != rec.PoolServiceID {
-		return nil, false
-	}
-	c, err := d.containerByID(ctx, rp, rec.ContainerID)
-	if err != nil {
-		return nil, false
-	}
-	return rp, c.LockState == leaseLockReserved && c.Status != platform.SwarmContainerActive
 }
 
 // parkedReleaseRefusal refuses the release of a parked lease zcp could not
@@ -394,57 +431,65 @@ func reparkMembers(ctx context.Context, d LeaseDeps, members []*releaseMember, c
 
 // repark stops again the container of a parked lease that a release started
 // and did not release, and says what became of it; parked reports that the
-// lease stays parked. A container the orchestrator no longer lists reserved
-// is left alone, and nothing is said of it.
+// lease stays parked. It asks the orchestrator first, fresh
+// (readLeaseOwnership): a container that is no longer this lease's — or whose
+// stop it refuses held-by-other with a renew agreeing — means the lease ended
+// outside zcp meanwhile, and its record is dropped with its alias and mount,
+// saying so; one whose held-by-other the renew does not answer is left, with
+// its record, as it was; one it is stopping or starting right now is left
+// alone, and nothing is said of it.
 func repark(ctx context.Context, d LeaseDeps, rec leaseRecord) (text string, parked bool) {
 	alias := rec.alias()
-	err := stopHeldContainer(ctx, d, rec)
-	if err == nil {
-		return "zcp stopped its container again, so it stays parked", true
-	}
-	if errors.Is(err, errLeaseNotHeld) {
+	v := readLeaseOwnership(ctx, d, rec)
+	var err error
+	switch {
+	case v.own.lost():
+		return reparkDropped(ctx, d, rec, v.why), false
+	case v.own == leaseUnverified:
+		err = v.err
+	case powerTransition(v.container):
 		return "", false
+	case v.container.Status == platform.SwarmContainerStopped:
+		return "zcp stopped its container again, so it stays parked", true
+	default:
+		_, serr := v.rp.api.Stop(ctx, rec.ContainerID, rec.Lease)
+		if serr == nil {
+			return "zcp stopped its container again, so it stays parked", true
+		}
+		switch hv, held := heldByOtherAsked(ctx, d, v.rp, rec, serr); {
+		case held && hv.own.lost():
+			return reparkDropped(ctx, d, rec, hv.why), false
+		case held && hv.own == leaseUnverified:
+			// Maybe another holder's: nothing more sent, nothing written.
+			return fmt.Sprintf("the orchestrator refused to stop its container again, saying another holder reserves it, and did not answer whether this lease still holds it (%s), so zcp left the container and the record as they were: %s", errorNote(hv.err), unverifiedRemedy), false
+		}
+		err = leaseOrchestratorError(ctx, d, v.rp, "stop "+alias, serr)
 	}
 	text = fmt.Sprintf("zcp could not stop its container again (%s), so it runs now: %s parks it again", errorNote(err), LeaseParkCall(alias))
 	rec.Parked, rec.ParkedAt = false, ""
+	if kept := keptRecordNote(d.StateDir, rec); kept != "" {
+		// Not this lease's record to write over.
+		return text + "; " + kept, false
+	}
 	if werr := writeLeaseRecord(d.StateDir, rec); werr != nil {
 		text += fmt.Sprintf(" (its record still says parked: %v)", werr)
 	}
 	return text, false
 }
 
-// errLeaseNotHeld: the orchestrator no longer lists the container reserved.
-var errLeaseNotHeld = errors.New("the orchestrator no longer reserves the container")
-
-// stopHeldContainer stops the record's container with its lease when the
-// orchestrator still lists it reserved and running; one it lists stopped is
-// left as it is.
-func stopHeldContainer(ctx context.Context, d LeaseDeps, rec leaseRecord) error {
-	rp, err := resolvePool(ctx, d, rec.PoolHostname)
-	if err != nil {
-		return fmt.Errorf("resolve pool %s: %w", rec.PoolHostname, err)
+// reparkDropped drops the record of a lease a re-park found no longer this
+// lease's — why says so — with its alias and mount, and says so.
+func reparkDropped(ctx context.Context, d LeaseDeps, rec leaseRecord, why string) string {
+	text := "its lease ended outside zcp meanwhile — " + why + " — so zcp dropped its record, ssh alias and mount"
+	switch v, err := dropLostLease(ctx, d, rec, why); {
+	case err != nil:
+		text = "its lease ended outside zcp meanwhile — " + why + " — but its record could not be dropped: " + err.Error()
+	case v.recordKept != "":
+		text = "its lease ended outside zcp meanwhile — " + why + " — and " + v.recordKept
 	}
-	if rp.svc.ID != rec.PoolServiceID {
-		return errLeaseNotHeld
-	}
-	c, err := d.containerByID(ctx, rp, rec.ContainerID)
-	if err != nil {
-		var se *platform.SwarmError
-		if errors.As(err, &se) && se.Reason == platform.SwarmReasonContainerNotFound {
-			return errLeaseNotHeld
-		}
-		return leaseOrchestratorError(ctx, d, rp, "read "+rec.alias(), err)
-	}
-	switch {
-	case c.LockState != leaseLockReserved:
-		return errLeaseNotHeld
-	case c.Status == platform.SwarmContainerStopped:
-		return nil
-	}
-	if _, err := rp.api.Stop(ctx, rec.ContainerID, rec.Lease); err != nil {
-		return leaseOrchestratorError(ctx, d, rp, "stop "+rec.alias(), err)
-	}
-	return nil
+	// No release rewires the branch here: name what may still be wired to
+	// the container (DP-26).
+	return joinNotes(text, siblingsMayBeWired(d.StateDir, rec))
 }
 
 // releasedParkedNote is what a release says of a parked lease it did not

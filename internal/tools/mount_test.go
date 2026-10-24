@@ -539,7 +539,7 @@ func TestMountTool_ParkedLease_RefusedWithUnpark(t *testing.T) {
 	parkLeaseFile(t, stateDir, "webpool-3")
 	mounter := newStubMounter()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterMount(srv, platform.NewMock(), "proj-1", mounter, runtime.Info{}, stateDir, nil, nil)
+	RegisterMount(srv, platform.NewMock(), "proj-1", mounter, runtime.Info{}, stateDir, nil, nil, mountVouchHeld())
 
 	result := callTool(t, srv, "zerops_mount", map[string]any{"action": "mount", "serviceHostname": "webpool-3"})
 
@@ -549,6 +549,34 @@ func TestMountTool_ParkedLease_RefusedWithUnpark(t *testing.T) {
 	}
 	if len(mounter.states) != 0 {
 		t.Errorf("mounted a parked lease: %v", mounter.states)
+	}
+}
+
+// TestMountTool_LeaseNoOneVouchesFor_NeverMounted: a mount of a lease reaches
+// its container over sshfs, so it asks the pool's orchestrator first whose the
+// container is (docs/spec-workflows.md §8 DP-2); a zcp that cannot ask — no
+// orchestrator wired here — mounts nothing and says why.
+func TestMountTool_LeaseNoOneVouchesFor_NeverMounted(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	ws := workflow.NewWorkSession("proj-1", "container", "test", []string{"appdev"})
+	if err := workflow.SaveWorkSession(stateDir, ws); err != nil {
+		t.Fatalf("save work session: %v", err)
+	}
+	writeLeaseFile(t, stateDir)
+	mounter := newStubMounter()
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterMount(srv, platform.NewMock(), "proj-1", mounter, runtime.Info{}, stateDir, nil, nil)
+
+	result := callTool(t, srv, "zerops_mount", map[string]any{"action": "mount", "serviceHostname": "webpool-3"})
+
+	text := getTextContent(t, result)
+	if !result.IsError || !strings.Contains(text, "webpool-3") || !strings.Contains(text, "orchestrator") {
+		t.Fatalf("result = (error %v) %s, want a refusal: zcp cannot ask whose the container is", result.IsError, text)
+	}
+	if len(mounter.states) != 0 {
+		t.Errorf("mounted a lease no orchestrator vouched for: %v", mounter.states)
 	}
 }
 
@@ -564,7 +592,7 @@ func TestMountTool_ParkedLease_NoWorkflow_StillNamesUnpark(t *testing.T) {
 	parkLeaseFile(t, stateDir, "webpool-3")
 	mounter := newStubMounter()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterMount(srv, platform.NewMock(), "proj-1", mounter, runtime.Info{}, stateDir, nil, nil)
+	RegisterMount(srv, platform.NewMock(), "proj-1", mounter, runtime.Info{}, stateDir, nil, nil, mountVouchHeld())
 
 	result := callTool(t, srv, "zerops_mount", map[string]any{"action": "mount", "serviceHostname": "webpool-3"})
 

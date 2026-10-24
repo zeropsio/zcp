@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -88,6 +89,14 @@ func poolOrchestrator(count, maxContainers int, reserved map[int]bool) http.Hand
 				parts = append(parts, fmt.Sprintf(`{"id":"c-%d","number":%d,"hostname":"node-id-%d.runtime.devpool.zerops","status":"ACTIVE","lockState":%q,"dirty":false,"current":true}`, n, n, n, lock))
 			}
 			_, _ = w.Write([]byte("[" + strings.Join(parts, ",") + "]"))
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/container/c-") && strings.HasSuffix(r.URL.Path, "/renew"):
+			// A reserved container the test's record names holds its lease.
+			n, err := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/container/c-"), "/renew"))
+			if err != nil || !reserved[n] || r.Header.Get("X-Swarm-Lease") != leaseIntLease {
+				writeIntUnknownLease(w)
+				return
+			}
+			_, _ = fmt.Fprintf(w, `{"id":"c-%d","number":%d,"hostname":"node-id-%d.runtime.devpool.zerops","status":"ACTIVE","lockState":"reserved","dirty":false,"current":true}`, n, n, n)
 		case r.Method == http.MethodPost && r.URL.Path == "/container/acquire":
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte(`{"error":{"code":"containerAction","message":"` + full + `","meta":[{"error":"` + full + `","code":"containerAction",` +

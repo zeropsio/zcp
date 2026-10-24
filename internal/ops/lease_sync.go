@@ -62,6 +62,12 @@ const (
 	// LeaseSyncParked: the member is parked (DP-28) — its container stopped —
 	// so zcp did not try it.
 	LeaseSyncParked = "parked"
+	// LeaseSyncLost: the member's container is no longer its lease's — gone,
+	// free or another holder's (DP-2) — so zcp sent it nothing.
+	LeaseSyncLost = "lost"
+	// LeaseSyncUnverified: zcp cannot verify the member's container is still
+	// its lease's, or could not ask, so it sent it nothing.
+	LeaseSyncUnverified = "unverified"
 	// LeaseSyncFailed: the member's fetch or fast-forward failed otherwise.
 	LeaseSyncFailed = "failed"
 )
@@ -128,11 +134,14 @@ func LeaseSyncCall(alias string) string { return "zerops_lease action=sync lease
 // LeaseSync pushes the branch of the lease addressed by alias to origin and
 // fast-forwards every other lease of its group (DP-17) to it. It refuses,
 // changing nothing anywhere, a lease of main, a zcp without ssh into its
-// leases, a source checkout holding uncommitted or untracked files (named, read
+// leases, a source whose container is no longer its lease's or that zcp
+// cannot verify or ask about (readLeaseOwnership, DP-2), a source checkout
+// holding uncommitted or untracked files (named, read
 // with the release guard's own read) or on another branch, and a push origin
 // refuses (moved on, or its rules) or that cannot reach the source. Once the
 // push went, every other lease's outcome is in the view, the ones zcp could not
-// fast-forward named with why; none fails the sync.
+// fast-forward named with why — a member no longer its lease's is lost, one
+// zcp cannot verify unverified, neither reached over ssh; none fails the sync.
 func LeaseSync(ctx context.Context, d LeaseDeps, alias string) (LeaseSyncView, error) {
 	start := time.Now()
 	rec, err := loadLeaseRecord(d.StateDir, alias)
@@ -152,6 +161,15 @@ func LeaseSync(ctx context.Context, d LeaseDeps, alias string) (LeaseSyncView, e
 	}
 	if rec.Parked {
 		return LeaseSyncView{}, LeaseParkedError(rec.targetInfo(), "a sync")
+	}
+	// A sync pushes from the source and fast-forwards its siblings over ssh:
+	// never into a container that is no longer its lease's (DP-2).
+	verdict := readLeaseOwnership(ctx, d, rec)
+	switch {
+	case verdict.own.lost():
+		return LeaseSyncView{}, lostLeaseRefusal(alias, "sync", verdict.why)
+	case verdict.own == leaseUnverified:
+		return LeaseSyncView{}, unverifiedLeaseRefusal(alias, "synced", verdict)
 	}
 	group, err := LeaseGroup(d.StateDir, alias)
 	if err != nil {
@@ -181,6 +199,9 @@ func LeaseSync(ctx context.Context, d LeaseDeps, alias string) (LeaseSyncView, e
 		}
 	}
 	runMembers(members, func(m *LeaseSyncMember) {
+		if !memberStillHeld(ctx, d, m, alias) {
+			return
+		}
 		if parked[m.Alias] {
 			parkedMember(m, alias)
 			return
@@ -434,6 +455,29 @@ func fastForwardMember(ctx context.Context, d LeaseDeps, m *LeaseSyncMember, bra
 func hasMark(a leaseSyncAnswer, key string) bool {
 	_, ok := a.marks[key]
 	return ok
+}
+
+// memberStillHeld asks the orchestrator whose a member's container is
+// (readLeaseOwnership) and reports whether it is its lease's; one that is not
+// — lost, or one the orchestrator did not answer about — is recorded so,
+// nothing sent to it.
+func memberStillHeld(ctx context.Context, d LeaseDeps, m *LeaseSyncMember, source string) bool {
+	rec, err := loadLeaseRecord(d.StateDir, m.Alias)
+	if err != nil {
+		m.Outcome, m.Note = LeaseSyncFailed, fmt.Sprintf("%s's record could not be read (%s), so zcp did not fast-forward it", m.Alias, errorNote(err))
+		return false
+	}
+	switch v := readLeaseOwnership(ctx, d, rec); {
+	case v.own.lost():
+		m.Outcome = LeaseSyncLost
+		m.Note = lostLeaseNote(m.Alias, v.why, "did not fast-forward it")
+	case v.own == leaseUnverified:
+		m.Outcome = LeaseSyncUnverified
+		m.Note = fmt.Sprintf("%s: %s, so zcp did not fast-forward it; sync again once its pool's orchestrator answers: %s", m.Alias, v.why, LeaseSyncCall(source))
+	default:
+		return true
+	}
+	return false
 }
 
 // parkedMember records a member that is parked: its container is stopped, so

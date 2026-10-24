@@ -226,6 +226,39 @@ func deploySSHInputSchema() *jsonschema.Schema {
 	}, "targetService")
 }
 
+// DeployOption configures RegisterDeploySSH and RegisterDeployBatch.
+type DeployOption func(*deployConfig)
+
+type deployConfig struct {
+	swarm ops.SwarmFactory
+	// vouch replaces the orchestrator's answer (tests).
+	vouch leaseVouch
+}
+
+// leaseVouch is how the deploy tools ask whose a lease source's container is.
+func (c deployConfig) leaseVouch(client platform.Client, projectID, stateDir string) leaseVouch {
+	if c.vouch != nil {
+		return c.vouch
+	}
+	return orchestratorVouch(client, projectID, stateDir, c.swarm)
+}
+
+// WithPoolOrchestratorsForDeploy lets a deploy from a lease ask the pool's
+// orchestrator, through swarm, whether the lease's container is still the
+// lease's before anything reads it (docs/spec-workflows.md §8 DP-2). Without
+// it a deploy from a lease is refused: zcp cannot vouch for the container.
+func WithPoolOrchestratorsForDeploy(swarm ops.SwarmFactory) DeployOption {
+	return func(c *deployConfig) { c.swarm = swarm }
+}
+
+func deployConfigOf(opts []DeployOption) deployConfig {
+	var cfg deployConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	return cfg
+}
+
 // RegisterDeploySSH registers the zerops_deploy tool for SSH (container) mode.
 // httpClient is used by the post-success subdomain auto-enable hook to probe
 // L7 readiness before returning — empirically the L7 route takes 440ms-1.3s
@@ -249,7 +282,9 @@ func RegisterDeploySSH(
 	engine *workflow.Engine,
 	recipeProbe RecipeSessionProbe,
 	devsup DevsupSource,
+	opts ...DeployOption,
 ) {
+	vouch := deployConfigOf(opts).leaseVouch(client, projectID, stateDir)
 	desc := "Deploy code via SSH — blocks until build completes. "
 	if rtInfo.InContainer {
 		desc += "Omit workingDir — container path is always /var/www. "
@@ -319,6 +354,14 @@ func RegisterDeploySSH(
 		if blocked := requireAdoption(stateDir, rtInfo, recipeProbe, gated...); blocked != nil {
 			return blocked, nil, nil
 		}
+		// A lease's container is asked about once, before anything reads it
+		// (DP-2): one that is no longer the lease's — maybe another holder's
+		// — or that the orchestrator does not answer about is never read or
+		// pushed from.
+		srcLease, fromLease, leaseErr := checkedLeaseOf(ctx, stateDir, vouch, cmp.Or(input.SourceService, input.TargetService), "deployed from")
+		if leaseErr != nil {
+			return convertError(leaseErr, WithRecoveryStatus()), nil, nil
+		}
 		// A lease pushes its own branch itself; git-push pushes the target's
 		// tracked branch (main by default), so from a lease it would put the
 		// feature branch on the stage's delivery branch (DP-6). A branch is
@@ -330,8 +373,8 @@ func RegisterDeploySSH(
 		}
 		// Before any read of the source's files: a parked lease answers
 		// nothing and its mount is gone (DP-28).
-		if lease, ok := leaseOf(stateDir, cmp.Or(input.SourceService, input.TargetService)); ok && lease.Parked {
-			return convertError(ops.LeaseParkedError(lease, "a deploy from it"), WithRecoveryStatus()), nil, nil
+		if fromLease && srcLease.Parked {
+			return convertError(ops.LeaseParkedError(srcLease, "a deploy from it"), WithRecoveryStatus()), nil, nil
 		}
 		// Before any read of the source's files: a pool source (named, or a
 		// self-deploy of a pool) is refused, never pushed from (PS-3).

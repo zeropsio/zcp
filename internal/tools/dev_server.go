@@ -107,6 +107,12 @@ type DevServerDeps struct {
 	// envelope with the dev service's devServers[] only when every mate
 	// this zcp drives accepts it (docs/spec-mate.md §2.8a.3).
 	CarriesParts bool
+	// Swarm reaches the pools' orchestrators: a lease's container is asked
+	// about before anything reaches it (docs/spec-workflows.md §8 DP-2); nil
+	// refuses every lease.
+	Swarm ops.SwarmFactory
+	// vouch replaces the orchestrator's answer for a lease (tests).
+	vouch leaseVouch
 }
 
 // RegisterDevServer registers the zerops_dev_server tool. The tool is
@@ -114,6 +120,10 @@ type DevServerDeps struct {
 // container) installs skip registration.
 func RegisterDevServer(srv *mcp.Server, d DevServerDeps) {
 	client, httpClient, projectID, ssh, stateDir := d.Client, d.HTTPClient, d.ProjectID, d.SSH, d.StateDir
+	vouch := d.vouch
+	if vouch == nil {
+		vouch = orchestratorVouch(client, projectID, stateDir, d.Swarm)
+	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "zerops_dev_server",
 		Description: "Start, stop, probe, tail, or restart a named development server on a Zerops dev container. " +
@@ -133,6 +143,17 @@ func RegisterDevServer(srv *mcp.Server, d DevServerDeps) {
 		},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input DevServerInput) (*mcp.CallToolResult, any, error) {
 		params := devServerParams(input)
+		// A lease's container is asked about once, before anything reaches
+		// it (docs/spec-workflows.md §8 DP-2): one that is no longer the
+		// lease's — maybe another holder's — or that the orchestrator does not
+		// answer about is never reached over ssh, nor a supervisor started in
+		// it. Nothing answers on a parked one (DP-28).
+		switch lease, isLease, err := checkedLeaseOf(ctx, stateDir, vouch, input.Hostname, "reached by zerops_dev_server"); {
+		case err != nil:
+			return convertError(err), nil, nil
+		case isLease && lease.Parked:
+			return convertError(ops.LeaseParkedError(lease, "zerops_dev_server")), nil, nil
+		}
 		params.Root = supervisorRoot(stateDir, input.Hostname)
 		params.StateDir = stateDir
 		result, err := ops.ExecuteDevServer(ctx, ssh, client, projectID, params)

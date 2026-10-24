@@ -188,7 +188,7 @@ func rewireJoined(ctx context.Context, d LeaseDeps, repoURL, branch string, fres
 	if len(others) == 0 {
 		return nil
 	}
-	return rewireLeases(ctx, d.SSH, d.StateDir, others, nil, "with "+strings.Join(names, ", "))
+	return rewireLeases(ctx, d, others, nil, "with "+strings.Join(names, ", "))
 }
 
 // resolveGroupPools finds every pool (one service listing), refusing an empty
@@ -334,14 +334,19 @@ func heldLease(ctx context.Context, d LeaseDeps, pool, branch string, group []le
 	if err != nil {
 		return LeaseView{}, false, err
 	}
-	var held, lost *LeaseView
+	var held, unverified, lost *LeaseView
 	for _, v := range views {
 		if !own[v.Alias] {
 			continue
 		}
 		switch v.State {
 		case LeaseStateHeld, LeaseStateUnmounted, LeaseStateParked:
-			if held == nil || v.AcquiredAt < held.AcquiredAt {
+			switch {
+			case v.Unverified:
+				if unverified == nil {
+					unverified = &v
+				}
+			case held == nil || v.AcquiredAt < held.AcquiredAt:
 				held = &v
 			}
 		case LeaseStateLost:
@@ -354,6 +359,11 @@ func heldLease(ctx context.Context, d LeaseDeps, pool, branch string, group []le
 	case held != nil:
 		held.Reused = true
 		return *held, true, nil
+	case unverified != nil:
+		// Maybe another holder's container: never handed back reused.
+		return LeaseView{}, false, platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+			fmt.Sprintf("zcp's lease of branch %s on pool '%s', %s, cannot be verified as still zcp's (%s), and zcp keeps one lease per repository, branch and pool", branch, pool, unverified.Alias, unverified.Note),
+			fmt.Sprintf("Acquire again once the pool's orchestrator answers: zerops_lease action=status pool=%s asks it again — a lease that is still zcp's is reused, one that is not is reported lost", pool))
 	case lost != nil:
 		return LeaseView{}, false, platform.NewPlatformError(platform.ErrPrerequisiteMissing,
 			fmt.Sprintf("zcp's lease of branch %s on pool '%s', %s, is lost (%s), and zcp keeps one lease per repository, branch and pool", branch, pool, lost.Alias, lost.Note),
@@ -578,14 +588,26 @@ type releaseMember struct {
 	view LeaseView
 	// wake is what the release did to read a parked lease (DP-28).
 	wake leaseWake
+	// verdict is whose its container is, as the orchestrator answered before
+	// anything else (readLeaseOwnership). lost is why the lease is no longer
+	// zcp's — its verdict, or what the release's own steps found (endedOnCall:
+	// a start refused held-by-other that a renew confirms, or the renew right
+	// before its guard) — "" while it may still be.
+	verdict     leaseVerdict
+	lost        string
+	endedOnCall bool
 }
 
 // LeaseReleaseGroup releases every lease zcp holds of one repository and
 // branch — the group (DP-17) — all or none unless forced (docs/spec-workflows.md
-// §8 DP-23). Unless force is set it reads every lease first, changing nothing,
-// and refuses the whole branch when any one holds work a release would lose or
-// cannot be read, naming each lease's own state; nothing is released, no record
-// dropped. Then each lease goes through the one lease's release step
+// §8 DP-23). It first reads whose each container is (readLeaseOwnership,
+// DP-2): a lease that is no longer zcp's is dropped as lost, never read and
+// never released, and holds nothing back; one the orchestrator does not
+// answer about refuses the branch unless forced, and is not released even
+// then. Unless force is set it reads every lease first,
+// changing nothing, and refuses the whole branch when any one holds work a
+// release would lose or cannot be read, naming each lease's own state;
+// nothing is released, no record dropped. Then each lease goes through the one lease's release step
 // (releaseGuarded: a reset, or the container deleted when it cannot be reset,
 // DP-15; a lease of a pool that is gone dropped as lost, DP-20). A lease the
 // orchestrator will not release stays held and recorded and its view carries
@@ -613,14 +635,34 @@ func LeaseReleaseGroupChange(ctx context.Context, d LeaseDeps, repo, branch stri
 	for _, r := range group {
 		members = append(members, &releaseMember{rec: r})
 	}
+	// Check before mutate (O3): whose each container is, all at once, before
+	// any is read or released. A lease that is no longer zcp's is dropped
+	// below as lost — never read, never released — and does not hold the
+	// branch back.
+	runMembers(members, func(m *releaseMember) {
+		if m.verdict = readLeaseOwnership(ctx, d, m.rec); m.verdict.own.lost() {
+			m.lost = m.verdict.why
+		}
+	})
 	if !force {
 		// The guards reach each container through its alias: put back a
 		// stanza another call or a redeploy lost before any of them runs.
 		restoreNote := d.Host.refreshAliases(ctx, d)
 		runMembers(members, func(m *releaseMember) {
+			switch {
+			case m.lost != "":
+				return
+			case m.verdict.own == leaseUnverified:
+				m.err = unverifiedLeaseRefusal(m.rec.alias(), "released", m.verdict)
+				return
+			}
 			// A parked lease is started first so its guard can read it
 			// (DP-28).
-			if m.wake, m.err = wakeParkedForGuard(ctx, d, m.rec); m.err != nil {
+			if m.wake, m.err = wakeParkedForGuard(ctx, d, m.rec, m.verdict); m.err != nil {
+				if why, ended := leaseEnded(m.err); ended {
+					// Not zcp's container any more: never re-parked.
+					m.lost, m.endedOnCall, m.err, m.wake = why, true, nil, leaseWake{}
+				}
 				return
 			}
 			m.guard, m.work, m.err = inspectLeaseRelease(ctx, d, m.rec)
@@ -628,12 +670,26 @@ func LeaseReleaseGroupChange(ctx context.Context, d LeaseDeps, repo, branch stri
 			m.guard.woken = m.wake.started
 		})
 		if err := branchReleaseRefusal(d, members, repo, branch); err != nil {
-			return LeaseChange{}, reparkMembers(ctx, d, members, err)
+			// A lease the release's own steps found ended is lost whatever
+			// becomes of the branch: those records go now, with their alias
+			// and mount.
+			return LeaseChange{}, dropEndedOnCall(ctx, d, members, reparkMembers(ctx, d, members, err))
 		}
 	}
 	again := LeaseReleaseBranchCall(branch, repo, force)
 	runMembers(members, func(m *releaseMember) {
-		view, err := releaseGuarded(ctx, d, m.rec, m.guard)
+		var view LeaseView
+		var err error
+		switch {
+		case m.verdict.own == leaseUnverified:
+			// Forced, but the orchestrator did not say whose the container
+			// is: nothing is released (a free container's release resets it).
+			err = unverifiedLeaseRefusal(m.rec.alias(), "released", m.verdict)
+		case m.lost != "":
+			view, err = dropLostLease(ctx, d, m.rec, m.lost)
+		default:
+			view, err = releaseGuarded(ctx, d, m.rec, m.guard)
+		}
 		if err != nil {
 			view = unreleasedView(ctx, d, m.rec, m.guard, err, again)
 			if m.wake.started {
@@ -654,6 +710,32 @@ func LeaseReleaseGroupChange(ctx context.Context, d LeaseDeps, repo, branch stri
 	return LeaseChange{Leases: views, Rewired: rewireLeftHeld(ctx, d, members)}, nil
 }
 
+// dropEndedOnCall drops, with its alias and mount, the record of every member
+// of a refused branch release whose lease the release's own steps found ended
+// outside zcp (endedOnCall: final whatever becomes of the branch), and adds to
+// cause what failed to go, an alias that names another lease by now, and —
+// since no release rewires the branch — the leases of the branch that may
+// still run wired to the dropped container (DP-26).
+func dropEndedOnCall(ctx context.Context, d LeaseDeps, members []*releaseMember, cause error) error {
+	var notes []string
+	for _, m := range members {
+		if !m.endedOnCall {
+			continue
+		}
+		alias := m.rec.alias()
+		switch v, err := dropLostLease(context.WithoutCancel(ctx), d, m.rec, m.lost); {
+		case err != nil:
+			notes = append(notes, fmt.Sprintf("%s's record could not be dropped: %v", alias, err))
+		case v.recordKept != "":
+			notes = append(notes, v.recordKept)
+		}
+		if wired := siblingsMayBeWired(d.StateDir, m.rec); wired != "" {
+			notes = append(notes, alias+": "+wired)
+		}
+	}
+	return withNote(cause, strings.Join(notes, "; "))
+}
+
 // rewireLeftHeld hands every lease a branch's release could not release the
 // overlay without the leases that went (their records are gone); nil when
 // every lease went or none did. The caller's context may be what failed the
@@ -671,7 +753,7 @@ func rewireLeftHeld(ctx context.Context, d LeaseDeps, members []*releaseMember) 
 	if d.SSH == nil || len(held) == 0 || len(gone) == 0 {
 		return nil
 	}
-	return rewireLeases(context.WithoutCancel(ctx), d.SSH, d.StateDir, held, nil, "without "+strings.Join(gone, ", "))
+	return rewireLeases(context.WithoutCancel(ctx), d, held, nil, "without "+strings.Join(gone, ", "))
 }
 
 // branchLeaseRecords is what a release of branch releases: zcp's records of
@@ -769,6 +851,10 @@ func branchReleaseRefusal(d LeaseDeps, members []*releaseMember, repo, branch st
 	for _, m := range members {
 		alias := m.rec.alias()
 		switch {
+		case m.endedOnCall:
+			states = append(states, alias+" is no longer zcp's ("+m.lost+"), so its record is dropped now")
+		case m.lost != "":
+			states = append(states, alias+" is no longer zcp's ("+m.lost+") and goes with the branch's release, unread")
 		case m.err != nil:
 			unchecked = true
 			states = append(states, guardFailureText(m.err))

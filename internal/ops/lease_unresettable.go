@@ -28,7 +28,8 @@ const unresettableNote = "the container could not be reset (the platform created
 // deleteUnresettable deletes the leased container whose reset the
 // orchestrator refused and drops the record. A delete the orchestrator refuses
 // keeps the reservation and the record; a lease it no longer knows has nothing
-// left to delete.
+// left to delete, and neither has one whose delete it refuses held-by-other
+// once a renew agrees the lease ended (heldByOtherAsked).
 func deleteUnresettable(ctx context.Context, d LeaseDeps, rp *resolvedPool, rec leaseRecord, alias string) (LeaseView, error) {
 	err := rp.api.Delete(ctx, rec.ContainerID, rec.Lease)
 	if err == nil {
@@ -39,6 +40,9 @@ func deleteUnresettable(ctx context.Context, d LeaseDeps, rp *resolvedPool, rec 
 	var se *platform.SwarmError
 	if errors.As(err, &se) && (se.Reason == platform.SwarmReasonUnknownLease || se.Reason == platform.SwarmReasonContainerNotFound) {
 		return dropLeaseRecord(d.StateDir, rec, LeaseStateLost, "the orchestrator no longer held this container for this lease, so there was nothing to release; the record is dropped")
+	}
+	if v, held := heldByOtherAsked(ctx, d, rp, rec, err); held && v.own.lost() {
+		return dropLeaseRecord(d.StateDir, rec, LeaseStateLost, lostDropNote(v.why))
 	}
 	failed := leaseOrchestratorError(ctx, d, rp, "delete "+alias, err)
 	var pe *platform.PlatformError
