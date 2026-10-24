@@ -156,7 +156,11 @@ func leaseWarmCloneCommand(workDir, repo, hqURL string) string {
 			"git -c credential.helper= -c credential.helper=" + q(leaseCredentialHelperFor(repo, hqURL)) + " fetch -q --prune origin && " +
 			"c=$(git rev-parse -q --verify " + q("refs/remotes/origin/"+leaseDefaultBranch+"^{commit}") + ") && " +
 			`printf 'commit %s\n' "$c" >> ` + state + " && " +
-			`git checkout -q -f --detach "$c" && echo done >> ` + state,
+			`git checkout -q -f --detach "$c" && ` +
+			// A second later the refresh rewrites the index, so no file is in
+			// its second: git, comparing whole seconds, would read every such
+			// file again at the checkout that takes the clone.
+			"sleep 1 && { git update-index -q --refresh >/dev/null 2>&1 || :; } && echo done >> " + state,
 	}, "\n")
 	return strings.Join([]string{
 		"if ! command -v git >/dev/null 2>&1 || ! command -v flock >/dev/null 2>&1 || ! command -v setsid >/dev/null 2>&1; then echo " + q(leaseWarmLaunchMarker+warmLaunchTools) + "; exit 0; fi",
