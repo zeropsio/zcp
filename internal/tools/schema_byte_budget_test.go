@@ -190,7 +190,10 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// Raised 969 -> 1045: release by branch (DP-23) — every lease of a
 		// branch, all or none — gives branch and repo a release role, one
 		// clause each; no new field.
-		"zerops_lease": 1045,
+		// Raised 1045 -> 1057: action=sync (DP-24) — push a lease's branch,
+		// fast-forward the branch's other leases — names sync in action and
+		// gives lease a sync role; no new field.
+		"zerops_lease": 1057,
 		// Raised 266 -> 580: action="wait" added processId/processIds/service
 		// routing fields (block until a process or a whole service settles) — a
 		// deliberate new capability, not description bloat.

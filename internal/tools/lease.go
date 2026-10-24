@@ -19,6 +19,7 @@ const (
 	leaseActionStatus  = "status"
 	leaseActionRelease = "release"
 	leaseActionRollout = "rollout"
+	leaseActionSync    = "sync"
 )
 
 // LeaseInput is the input type for zerops_lease.
@@ -37,12 +38,12 @@ type LeaseInput struct {
 // stringifies booleans must not be bounced by the schema).
 func leaseInputSchema() *jsonschema.Schema {
 	return objectSchema(map[string]*jsonschema.Schema{
-		"action": {Type: "string", Description: "acquire, status, release or rollout."},
+		"action": {Type: "string", Description: "acquire, status, release, rollout or sync."},
 		"pool":   {Type: "string", Description: "Pool service hostname. acquire (or pools), rollout: required. status: optional (default every pool)."},
 		"pools":  {Type: "array", Items: &jsonschema.Schema{Type: "string"}, Description: "acquire: one lease per pool on the branch, all or none."},
 		"branch": {Type: "string", Description: "acquire: branch to check out (default main); a new one is cut from main. release: every lease of it, all or none."},
 		"repo":   {Type: "string", Description: "acquire: https clone URL; the first one on a pool becomes its default. release: the branch's, if several."},
-		"lease":  {Type: "string", Description: "release: the lease alias <pool>-<number> from acquire or status (not a secret)."},
+		"lease":  {Type: "string", Description: "release, sync: the lease alias <pool>-<number> from acquire or status (not a secret)."},
 		"force":  flexBoolSchema("release: discard unpushed commits and uncommitted files (default false: refused while any exist)."),
 	}, "action")
 }
@@ -80,11 +81,12 @@ type leaseRolloutToolResult struct {
 
 // RegisterLease registers the zerops_lease tool: acquire, status and release
 // of a container of a Swarm pool, and rollout of the pool, through the pool's
-// orchestrator. swarm
+// orchestrator, and sync of a lease's branch to the branch's other leases
+// (DP-24). swarm
 // builds the orchestrator client (tests inject a fake or a stub transport).
 // mounter (container mode; nil elsewhere) gives a lease its ssh alias and
-// mount; ssh runs git inside the leased container (nil: no checkout and no
-// release guard). Every successful result carries the lifecycle envelope,
+// mount; ssh runs git inside the leased container (nil: no checkout, no
+// release guard and no sync). Every successful result carries the lifecycle envelope,
 // computed after the operation so it lists the new lease set (spec-mate §1.3);
 // rt is the runtime that envelope is computed for.
 func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir string, swarm ops.SwarmFactory, mounter ops.Mounter, ssh ops.SSHDeployer, rt runtime.Info) {
@@ -110,9 +112,9 @@ func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir 
 	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "zerops_lease",
-		Description: "Lease a Swarm pool (swarm@1) container for one branch. acquire takes a clean running container, names it <pool>-<number>, checks the branch out in /var/www; " +
+		Description: "Lease a Swarm pool (swarm@1) container for one branch. acquire takes a clean running container named <pool>-<number> with the branch checked out in /var/www; " +
 			"status lists your leases; release resets and returns it, refusing on unpushed commits or uncommitted files unless force=true; " +
-			"rollout replaces the pool's free outdated containers (leases keep their version). The orchestrator answers only inside the project.",
+			"sync pushes a lease's commits and fast-forwards the branch's other leases; rollout replaces free outdated containers. In-project only.",
 		InputSchema: leaseInputSchema(),
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Lease a pool container",
@@ -183,6 +185,15 @@ func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir 
 				return convertError(withLeaseSSHStderr(err)), nil, nil
 			}
 			return jsonResult(leaseToolResult{Action: input.Action, Leases: []ops.LeaseView{view}, Envelope: envelope(ctx)}), nil, nil
+		case leaseActionSync:
+			if refusal := leaseSyncInputRefusal(input); refusal != nil {
+				return convertError(refusal), nil, nil
+			}
+			view, err := ops.LeaseSync(ctx, deps, input.Lease)
+			if err != nil {
+				return convertError(withLeaseSSHStderr(err)), nil, nil
+			}
+			return jsonResult(leaseSyncToolResult{Action: input.Action, Sync: view, NextActions: leaseSyncNext(view), Envelope: envelope(ctx)}), nil, nil
 		case leaseActionRollout:
 			if input.Pool == "" {
 				return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
@@ -195,7 +206,7 @@ func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir 
 			return jsonResult(leaseRolloutToolResult{Action: input.Action, Rollout: view, Envelope: envelope(ctx)}), nil, nil
 		default:
 			return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
-				fmt.Sprintf("Unknown action %q", input.Action), "action is acquire, status, release or rollout")), nil, nil
+				fmt.Sprintf("Unknown action %q", input.Action), "action is acquire, status, release, rollout or sync")), nil, nil
 		}
 	})
 }
