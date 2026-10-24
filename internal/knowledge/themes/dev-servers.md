@@ -27,7 +27,7 @@ The dev servers of a dev service run under `zcp-devsup`, the supervisor its dev 
 | `servers[].cwd` | optional, default `.`; relative to the repo root and must stay inside it |
 | `servers[].watch` | optional `{"paths": [...], "ignore": [...]}`: the supervisor restarts the server on a change under `paths` (relative to the repo root). Absent: the command's own watcher (`--watch`, vite) does it |
 | `servers[].healthPath` | optional, default `/`; the HTTP path a health probe of `port` reads — set it for an API that answers 404 on `/` |
-| `servers[].service` | only when several dev services share one code volume: the dev service whose supervisor runs this server |
+| `servers[].service` | optional; whose supervisor runs this server: in a repository whose parts are each a dev pool, the part's pool (an entry naming none runs in every part's lease); when several dev services share one code volume, the dev service |
 | `servers[].autostart` | optional, default `true`; `false` keeps a declared server stopped until you start it |
 
 A dev service with more than one heavy server (Angular, Analog, Next) declares the ones not being worked on `"autostart": false`; two such servers plus a deploy can exhaust the service's RAM and wedge it. `zerops_dev_server action=start hostname=... name=...` refuses a server that would not fit and names the numbers.

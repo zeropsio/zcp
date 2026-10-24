@@ -63,7 +63,6 @@ each message naming what it needs:
 | `pool-or-box` | the service already is a pool or a Box |
 | `no-origin` | work moves by git through an https origin; outside a Mate set it up with `zerops_workflow action="git-push-setup" service="<dev>"`, in a Mate a develop task wires the pair to HQ |
 | `crew-worktrees` | crew lanes stay on a plain dev service, so a dev service holding crew worktrees does not move |
-| `variant-b` | a dev service sharing a code volume does not move yet |
 | `pool-hostname-taken`, `pool-hostname-invalid` | pass `pool="<free hostname>"`; for several parts each pool is named after its stage |
 | `pool-not-a-part` | pass the pool of one of the parts `parts` lists |
 | `not-adopted`, `dev-not-live`, `dev-unreadable`, `not-in-container` | the dev service must be adopted and running, and its git readable from the zcp service in the project |
