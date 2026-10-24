@@ -341,10 +341,17 @@ zerops:
 
 - `activity`: `lastChangeAt` is the checkout's last change — the newest of HEAD's last move (a commit, a checkout) and any modified or untracked file git does not ignore; a deleted tracked file or a rename does not move it. `previewLastConnAt` and `previewOpenConns` are the preview's last connection and the connections open now, from a `zcp-devsup` new enough to report them. `acquiredAt` is when the lease was taken.
 - `unsaved`: the release's own check — uncommitted and untracked files (the first 20, all counted) and commits on no remote branch.
-- A lease with no activity for 24 h — no change, no preview connection, no acquire — is marked `idle` with `since` (its last activity) and `next`: with nothing unsaved, `zerops_lease action=release lease="<alias>"`; with unsaved work, what it holds and how to keep it (commit and push), never `force`.
+- A lease with no activity for 24 h — no change, no preview connection, no acquire — is marked `idle` with `since` (its last activity) and `next`: with nothing unsaved, `zerops_lease action=release lease="<alias>"`; with unsaved work, what it holds and how to keep it (commit and push, or park it), never `force`.
 - A preview connection open now is in use, however long ago it opened, so that lease is never idle. A fact that could not be read — an older `zcp-devsup`, an unreachable container — leaves the lease unmarked, never idle.
 - The leases of one branch across several pools are idle together or not at all, and `next` names the branch's release, or what each lease holds.
 - A full pool's refusal lists the leases zcp holds the same way, oldest activity first, each with what a release would lose.
+
+**Parking**: a lease you will come back to need not run meanwhile. `zerops_lease action=park lease="<alias>"` unmounts it, then stops its container and keeps it reserved with its `/var/www`, `$HOME` and `/tmp`; every process ends, its dev servers and supervisor included. A stopped container still counts toward the pool's maximum.
+
+- While parked, nothing answers on it: status lists it `parked` with `parkedAt`; `zerops_dev_server`, `zerops_deploy` and `zerops_verify` refuse it, naming the unpark; a sync from it is refused, and a sync from another lease of the branch skips it (`parked`). It keeps its hostname, so the branch's other leases stay wired to it and reach nothing there until it runs again.
+- `zerops_lease action=unpark lease="<alias>"` starts the container, waits for SSH, mounts `/var/www/<alias>` and starts the supervisor when none runs, with the branch's sibling values as they now stand; the declared servers start again.
+- A release of a parked lease starts it first so its unsaved work can be read, and stops it again when the release is refused. `force=true` releases it as it stands, stopped.
+- Nothing parks a lease by itself: an idle lease with unsaved work is only offered the park.
 
 **Releasing**: Nothing releases, stops or deletes a lease because it is idle — idleness is a label, and a person decides. zcp records no conversation per lease: status and a full pool's refusal list every lease this zcp service holds, other conversations' included. So ask the person before releasing a lease this conversation did not take, and never force one to free a container. Files git ignores (a local `.env`, a SQLite file, build output) and stashes are counted by no release check: they go with any release.
 
