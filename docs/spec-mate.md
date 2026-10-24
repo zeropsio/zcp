@@ -100,7 +100,7 @@ Anything else is a violation and needs this section changed first.
 | ID | Invariant |
 |---|---|
 | MA-6 | `apps/server/src/zerops/**` spawns `zcp` with no argv outside the closed list `mate status`, `mate update` (§2.9 MU-2) and `studio console serve`. `scripts/mate-boundaries.test.ts`. |
-| MA-7 | The Mate server presents `ZCP_API_KEY` only to HQ, in the first frame of its link; it never forwards it anywhere else. Test to be written (`ZeropsHqLink`). |
+| MA-7 | The Mate server sends `ZCP_API_KEY` only to HQ, in the first frame of its link, and to Zerops, for its own flag write (§8.1); it never forwards it anywhere else. Test to be written (`ZeropsHqLink`). |
 
 ## 1. Envelope on the wire
 
@@ -1596,8 +1596,8 @@ them; a row whose test is not written yet says so.
 
 The model in one paragraph: HQ is the only party that talks to Zerops about who may do what, with
 the organisation's read-only key. A Mate proves itself to HQ with the Zerops key its project already
-gave it, on a connection it dials out; the connection is the proof, and nothing HQ mints is stored
-on the Mate. A person proves themselves to HQ once per HQ session with their own Zerops access token,
+gave it, on a connection it dials out; the connection is the proof, and nothing HQ mints is the
+Mate's proof. A person proves themselves to HQ once per HQ session with their own Zerops access token,
 which HQ uses for one identity read and keeps nowhere. A person reaches a Mate directly, at the
 Mate's container origin, with a single-use ticket HQ hands to both sides; the open connection is the
 person's session there. Zerops stays the authority on roles; HQ reads them and pushes them to each
@@ -1644,15 +1644,22 @@ a span attribute.
   presented to HQ, proves "the Mate of project P in organisation O". HQ links only a key scoped to
   exactly one project: organisation role `NO_ACCESS`, one project grant at `BASIC_USER` or `ADMIN`,
   `sudo` false; any other key names no single project and is refused `key_too_wide` ("narrow the
-  key"). The key passes HQ in memory at each first use — the link's first frame, a zcp call's header —
-  for at most the two Zerops reads that resolve it, and is then dropped; HQ never stores it.
+  key"). HQ also refuses a key it can read in clear: it reads the project's and its services'
+  variables with the organisation's key, and a key found there is refused `key_not_sensitive`
+  ("make it a sensitive service variable"). The key passes HQ in memory at each first use — the
+  link's first frame, a zcp call's header — for at most the Zerops reads that resolve it, and is then
+  dropped; HQ never stores it.
 - **HQ's key entry** — not a credential HQ issues: `hash(key) → project`, one entry per project, kept
   so a known key is admitted without a Zerops read (reconnect storms after an HQ deploy, a Zerops
   outage). A new hash for the project replaces the entry once verified. The entry is a fallback,
   never the proof: every admission from it is verified again in the background through the gate
   (§3.4), and only a definite refusal drops it — Zerops refusing the key as unknown or unauthorized,
   or the key no longer naming that one project — never a timeout, a `5xx` or a not-found about
-  something else; the drop tests the refusal's reason, never its error class. The entry also goes
+  something else; the drop tests the refusal's reason, never its error class. An entry whose last
+  verification is older than 1 h (HQ's launch environment, the bound the gate's budget is sized to)
+  is verified again while its link stays up; a definite refusal then drops it, closes the link
+  `key_refused` and refuses the key's header calls. Disconnecting the Mate in HQ is the immediate way
+  to cut it off. The entry also goes
   when HQ's organisation read no longer holds the project, or when a person disconnects the Mate in
   HQ (a block on the same row). The table leaks project ids and link history only: a plain SHA-256
   of a high-entropy platform token is not invertible.
@@ -1726,10 +1733,13 @@ sequenceDiagram
   overridden in development by `T3CODE_ZEROPS_HQ_ORIGIN`; nothing discovers HQ. The server re-reads
   `ZCP_API_KEY` from the live env store before every connect, so a regenerated key is presented on
   the next one.
-- The key travels in the first frame after the TLS upgrade, never in the URL or a header, so no
-  balancer or access log sees it. HQ's first-frame handler runs outside any request logger.
-- HQ links only a project it holds as a Mate in a started organisation; otherwise it closes the link
-  with the reason (`not_a_mate`, `org_not_started`, `key_refused`, `key_too_wide`). The service id
+- The key travels in the link's first frame after the TLS upgrade and in zcp's header (§3.6), never
+  in a URL. HQ's logger strips the header, and its first-frame handler runs outside any request
+  logger.
+- HQ links every project that runs a Mate — one it holds as a Mate or as a devstage — in a started
+  organisation; a plain project (S27) runs no Mate server and only calls. Otherwise HQ closes the
+  link with the reason (`not_a_mate`, `org_not_started`, `key_refused`, `key_too_wide`,
+  `key_not_sensitive`). The service id
   the Mate names is a label: the key carries no service, and two Mates in one project would be one
   trust zone anyway.
 - **One link per project, newest wins.** A new link for the project closes the older one with a
@@ -1752,7 +1762,9 @@ sequenceDiagram
 - zcp's HTTP calls to HQ's Mate API — its state, repositories, changes, the recipe, observation,
   the AI key, GitHub tokens per call, the Chief's overview — present `ZCP_API_KEY` in a header on
   every call. HQ recognises the key by its hash exactly as on the link (§3.3): Zerops is asked only
-  the first time a hash is seen, then in the background. A refusal is the same `{code}` as the link's.
+  the first time a hash is seen, then in the background. A refusal carries the link's code: a key
+  Zerops refuses is `key_refused` on both transports (`401` here, close `4401` on the link); a
+  missing header is `project_key_required`.
 - git from the `zcp` container (zcp's scratch repository for a recipe proposal) presents the key the
   same way, as a header scoped to HQ's host, never stored in a git config or a URL.
 - git from the dev service presents the Mate's Git credential (§3.3), never the project key.
@@ -1878,11 +1890,11 @@ sequenceDiagram
   Mate reads "not connected since T".
 - **Key regenerated or deleted.** A regenerated key is a new hash: the Mate presents it at its next
   connect, the gate verifies it and the entry is replaced; the old value is refused by Zerops at once
-  and dropped at its next verification. A deleted key is refused at the next verification and the
-  link closes `key_refused`.
+  and dropped at its next verification, at the latest within the 1 h recheck (§3.3). A deleted key
+  is refused at the next verification and the link closes `key_refused`.
 - **Key in a non-sensitive variable.** Any organisation reader (the organisation's key included)
-  reads it in clear and with it holds the project. A project key must be a sensitive service
-  variable before it links; the legacy project-level keys are moved or deleted (§3.17).
+  reads it in clear and with it holds the project. HQ refuses such a key `key_not_sensitive` (§3.3);
+  the legacy project-level keys are moved before the cutover (§3.17).
 
 ### 3.11 The Chief
 
@@ -1911,7 +1923,7 @@ sequenceDiagram
   answered.
 - **Not connected since T**, with the reason HQ can read from Zerops: the container is stopped; the
   container runs but its server does not connect (a fault: the server, its key, or HQ's refusal —
-  `key_too_wide`, `key_refused`, `not_a_mate` — named); the project is gone.
+  `key_too_wide`, `key_not_sensitive`, `key_refused`, `not_a_mate` — named); the project is gone.
 - **Replaced at T** — a newer link for the project superseded this one.
 - A person's connection additionally reads **Reconnecting** while it waits for a new ticket (§3.8).
 
@@ -2032,6 +2044,7 @@ To verify live before building on them:
 | TC-13 | The Mate's 15 min cap counts from the organisation view its latest access list was computed from, not from the link. Test to be written (Mate server, injected clock). |
 | TC-14 | A full access frame resets the Mate's baseline whatever its version; only deltas are compared by version. Test to be written (Mate server). |
 | TC-15 | A new HQ leader marks every link disconnected at its start. Test to be written (HQ link). |
+| TC-16 | HQ refuses `key_not_sensitive` a project key it can read in clear with the organisation's key. Test to be written (HQ link). |
 
 ---
 
@@ -3135,7 +3148,7 @@ wired to its repository (§10.10, *A Mate's git*), a change described, a GitHub 
 (§5.10), the recipe proposed and its AI Agent tier read for the stand-up, a repository the tier
 names checked before HQ is asked for it, the Chief's overview (§2.11). zcp reads the key from the
 live env store at each call, so a regenerated key is the one it presents. A refusal is HQ's word on
-the key (`key_refused`, `key_too_wide`, `not_a_mate`, `org_not_started`), said once and asked again
+the key (`key_refused`, `key_too_wide`, `key_not_sensitive`, `not_a_mate`, `org_not_started`), said once and asked again
 on the bounded backoff of §0 rule 4; a call HQ or Zerops does not answer is retried the same way.
 The dev service's git presents the Mate's Git credential, never the key (§3.3, §10.10).
 
