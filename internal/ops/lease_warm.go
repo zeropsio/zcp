@@ -346,7 +346,9 @@ func keptWithReset(reset func() (LeaseView, error), why string) (LeaseView, erro
 // lease on a free container, so the reset would take the pool's warm
 // container from under another acquire; the record is dropped as lost. One
 // the orchestrator does not answer about is left alone, the record kept. A
-// delete refused held-by-other drops the record too.
+// delete refused held-by-other drops the record too once a renew agrees the
+// lease ended (heldByOtherAsked); otherwise it falls back to the reset
+// release like any refused delete.
 func (w *LeaseWarm) decideRelease(ctx context.Context, d LeaseDeps, rp *resolvedPool, rec leaseRecord, read poolWarmRead, reset func() (LeaseView, error)) (LeaseView, bool, error) {
 	own, why := leaseGone, recreatedWhy
 	mine := read.mine

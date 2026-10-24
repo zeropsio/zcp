@@ -38,10 +38,14 @@ import (
 // (DP-20) and is lost without a renew. The record carries nothing but the
 // lease for this: no reservation time to compare, which a stop or start zcp
 // did not record (an older zcp sharing the state directory, anyone holding the
-// lease) would move. The orchestrator's held-by-other answer to a release,
-// delete, stop or start carrying the lease is final too: another holder
-// reserves the container, and the record is dropped as lost (dropLostLease),
-// never retried "in a moment".
+// lease) would move. The orchestrator's held-by-other answer to a release
+// carrying the lease is final too (live-verified): another holder reserves
+// the container, and the record is dropped as lost (dropLostLease), never
+// retried "in a moment". To a delete, stop or start it drops the record only
+// once a renew agrees the lease ended (heldByOtherAsked); a renew that does
+// not answer leaves the container maybe another holder's, sent, mounted and
+// written nothing more. A record is dropped only while it is still the
+// lease's own (dropLeaseRecord).
 
 // leaseOwnership is what the orchestrator says of the container a lease
 // record names.
