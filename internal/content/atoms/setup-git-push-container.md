@@ -22,7 +22,7 @@ The `git-push-setup` walkthrough response carries `inputsRequired` for exactly t
 | GitHub fine-grained (git-push only) | `Contents: Read and write`. |
 | GitHub fine-grained (actions integration) | `Contents: Read and write` + `Workflows: Read and write` (push `.github/workflows/`) + `Secrets: Read and write` (`gh secret set`) + `Actions: Read` and `Checks: Read` (watch the run). Create at <https://github.com/settings/personal-access-tokens>. |
 | GitLab personal access | `write_repository` + `api` (covers push + webhook integration). |
-| This Mate's HQ | Nothing to create. Git signs in as the user `mate` with the Mate's own credential, kept by its enrollment; a person never mints one and there is no settings page to send them to. |
+| This Mate's HQ | Nothing to create. Git signs in as the user `mate` with the Mate's own credential, which HQ gave the Mate's server; a person never mints one and there is no settings page to send them to. |
 
 ## 1. Verify + configure git-push capability in one call
 

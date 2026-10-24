@@ -32,7 +32,7 @@ func isStageOf(m *workflow.ServiceMeta, hostname string) bool {
 }
 
 // hqPairPlanError refuses a classic-route plan that gives a Mate a runtime
-// with no stage half — enrolled with its HQ or not yet: the pairs it plans now
+// with no stage half — linked to its HQ or not yet: the pairs it plans now
 // are the pairs it keeps its code in. mate is runtime.Info.MateEnabled. Nil
 // outside a Mate, or when every runtime is a standard pair.
 func hqPairPlanError(plan []workflow.BootstrapTarget, mate bool) *platform.PlatformError {
@@ -54,7 +54,7 @@ func hqPairPlanError(plan []workflow.BootstrapTarget, mate bool) *platform.Platf
 }
 
 // hqLaunchProductionRefusal refuses the whole launch-production workflow in a
-// Mate, enrolled with its HQ or not yet: launch-production creates and
+// Mate, linked to its HQ or not yet: launch-production creates and
 // imports its OWN production project on a user-owned remote
 // (workflow_launch_production.go) — it has no case for an application's
 // production, which can be a Zerops project or a Git repository branch
@@ -85,17 +85,14 @@ func hqLaunchProductionRefusal(ctx context.Context, httpClient ops.HTTPDoer, sta
 //   - no change at all, or one closed without merging → nothing of this
 //     pair's work has reached main; it has to be pushed and merged first.
 //
-// A Mate that cannot reach HQ at all — no enrollment yet, or one it cannot
-// read — knows none of the three, and says so.
+// A Mate that cannot reach HQ at all — no key or HQ origin in its container —
+// knows none of the three, and says so.
 func hqLaunchProductionNextStep(ctx context.Context, httpClient ops.HTTPDoer, stateDir string) string {
-	if problem := hqEnrollmentProblem(); problem != "" {
-		return fmt.Sprintf("Whether this Mate's work reached main is HQ's to say, and %s. Ask again once it is enrolled; production is added with Put it live and released with Release, both offered in this conversation and on the project's card in Mate.", problem)
-	}
 	var open []string
 	merged := false
 	if metas, err := workflow.ListServiceMetas(stateDir); err == nil {
-		self := func() (hq.MateState, error) { return hq.MateState{}, hq.ErrNotEnrolled }
-		if hqc, enrolled := openHQ(httpClient); enrolled {
+		self := func() (hq.MateState, error) { return hq.MateState{}, hq.ErrNoIdentity }
+		if hqc, linked := openHQ(httpClient); linked {
 			self = lazySelf(ctx, hqc)
 		}
 		for _, m := range metas {
@@ -180,8 +177,8 @@ func hqHandoffNote(hasProduction bool) string {
 // production; false where it says none, cannot be read, or is older than
 // the answer.
 func hqHasProduction(ctx context.Context, httpClient ops.HTTPDoer) bool {
-	hqc, enrolled := openHQ(httpClient)
-	if !enrolled {
+	hqc, linked := openHQ(httpClient)
+	if !linked {
 		return false
 	}
 	state, err := hqc.Self(ctx)

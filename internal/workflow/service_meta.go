@@ -186,7 +186,7 @@ type HQRepoRef struct {
 	WiredAt string `json:"wiredAt,omitempty"`
 	// CredentialFingerprint names the Mate credential the dev service holds
 	// as GIT_TOKEN (hq.Client.CredentialFingerprint), never the credential:
-	// the Mate enrolling again revokes it, and a pass renews what differs.
+	// HQ sending the Mate a new one revokes it, and a pass renews what differs.
 	CredentialFingerprint string `json:"credentialFingerprint,omitempty"`
 	// Change is the number of the Mate's open change in Repo as the Mate's
 	// own state in HQ last named it, 0 for none. Recorded rather than

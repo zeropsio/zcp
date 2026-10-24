@@ -10,9 +10,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zeropsio/zcp/internal/hq/hqtest"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
-	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -31,16 +32,14 @@ func TestStandup_OverMCP_AMateInNoApplicationIsRefusedAndNothingIsTouched(t *tes
 	t.Chdir(dir)
 	t.Setenv("HOME", t.TempDir())
 	fakeHQ := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/mate/self" || r.Header.Get("Authorization") != "Mate the-credential" {
+		if r.URL.Path != "/api/mate/self" || r.Header.Get("Authorization") != "Project fixture" {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
 		_, _ = w.Write([]byte(`{"projectId":"proj-1","name":"Wren","face":"f","standupRequestedBy":null,"closedOff":true,"appId":null,"changes":[]}`))
 	}))
 	defer fakeHQ.Close()
-	if err := hq.SaveEnrollment(hq.EnrollmentPath(), hq.Enrollment{HQ: fakeHQ.URL, HQProjectID: "hq1", ProjectID: "proj-1", Credential: "the-credential"}); err != nil {
-		t.Fatal(err)
-	}
+	hqtest.Link(t, fakeHQ.URL, "proj-1", "fixture")
 
 	mock := platform.NewMock().
 		WithProject(&platform.Project{ID: "proj-1", Name: "beviro-wren"}).

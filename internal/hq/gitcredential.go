@@ -77,21 +77,22 @@ func readGitRequest(request io.Reader) gitRequest {
 }
 
 // AnswerGit answers git's credential request (the attributes git writes to a
-// helper's stdin; `zcp hq git-credential`) as the Mate the enrollment at path
-// holds, read at each request so a credential a re-enrollment rotated is the
-// one used:
-//   - the HQ this Mate enrolled with, by its scheme, host and port, gets the
-//     Mate credential under GitUser;
+// helper's stdin; `zcp hq git-credential`) for the Mate that id names:
+//   - HQ itself, by its scheme, host and port, gets the Mate's Git credential
+//     under GitUser, read from the file id names at each request so
+//     one HQ replaced over the link is the one used. Never the project key;
 //   - a repository on https://github.com gets the token HQ mints for this
 //     Mate and that repository at this moment (Client.GitHubCredential) —
 //     never kept, never written anywhere but git's pipe;
 //   - any other remote is declined.
-func AnswerGit(ctx context.Context, request io.Reader, path string, httpClient Doer) (GitAnswer, error) {
+func AnswerGit(ctx context.Context, request io.Reader, id Identity, httpClient Doer) (GitAnswer, error) {
 	req := readGitRequest(request)
-	kept, found, err := LoadEnrollment(path)
-	enrolled := err == nil && found && kept.Credential != ""
-	if enrolled && isEnrolledHQ(req, kept.HQ) {
-		return GitAnswer{Username: GitUser, Password: kept.Credential}, nil
+	if isHQ(req, id.Origin) {
+		credential, err := ReadGitCredential(id.GitCredentialPath)
+		if err != nil {
+			return GitAnswer{}, &DeclinedError{Reason: err.Error()}
+		}
+		return GitAnswer{Username: GitUser, Password: credential}, nil
 	}
 	if !strings.EqualFold(req.protocol, "https") || hostPort(req.host, "https") != GitHubHost {
 		return GitAnswer{}, &DeclinedError{}
@@ -99,10 +100,10 @@ func AnswerGit(ctx context.Context, request io.Reader, path string, httpClient D
 	if req.path == "" {
 		return GitAnswer{}, &DeclinedError{Reason: "git named no repository on github.com, and HQ answers for one repository at a time: " + GitHubHelperConfig}
 	}
-	if !enrolled {
-		return GitAnswer{}, &DeclinedError{Reason: "this container is not enrolled with an HQ, so nothing mints a token for github.com/" + req.path}
+	client, err := Open(httpClient, id)
+	if err != nil {
+		return GitAnswer{}, &DeclinedError{Reason: fmt.Sprintf("%v, so nothing mints a token for github.com/%s", err, req.path)}
 	}
-	client := Client{call: hqClient{http: httpClient, address: kept.HQ}, enrollment: kept}
 	answer, err := client.Once().Bounded(hqConnectBound, gitHubAnswerBound).GitHubCredential(ctx, req.path)
 	if err != nil {
 		return GitAnswer{}, &DeclinedError{Reason: gitHubRefusal(err, req.path)}
@@ -113,9 +114,9 @@ func AnswerGit(ctx context.Context, request io.Reader, path string, httpClient D
 // hqConnectBound is how long the helper waits for a connection to HQ.
 const hqConnectBound = 5 * time.Second
 
-// isEnrolledHQ reports whether req names the HQ at address by its scheme,
-// host and port.
-func isEnrolledHQ(req gitRequest, address string) bool {
+// isHQ reports whether req names the HQ at address by its scheme, host and
+// port.
+func isHQ(req gitRequest, address string) bool {
 	hq, err := url.Parse(address)
 	if err != nil || hq.Host == "" || req.host == "" {
 		return false

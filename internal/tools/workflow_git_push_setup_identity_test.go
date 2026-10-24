@@ -13,7 +13,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/hq/hqtest"
+
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -352,15 +353,14 @@ func TestGitPushSetupContainer_HQRemote_PersistsTheHelperTheMatesShellAnswers(t 
 		name     string
 		enrolled bool
 	}{
-		{"enrolled with this HQ", true},
-		{"the same host, not enrolled", false},
+		{"linked to this HQ", true},
+		{"the same host, not linked", false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("HOME", t.TempDir())
 			if tt.enrolled {
-				if err := hq.SaveEnrollment(hq.EnrollmentPath(), hq.Enrollment{HQ: hqURL, ProjectID: "p1", Credential: "the-mate-credential"}); err != nil {
-					t.Fatal(err)
-				}
+				hqtest.Link(t, hqURL, "p1", "the-project-key")
+				hqtest.GitCredential(t, "the-mate-credential")
 			}
 			stateDir := t.TempDir()
 			writeFirstTimeConfigMeta(t, stateDir)

@@ -3,7 +3,6 @@ package hq
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -39,7 +38,7 @@ type CommitSpec struct {
 // gitEnv is the environment of git against this HQ: the credential as the
 // Basic Authorization of GitUser, for HQ's address alone, and no prompt.
 func (c Client) gitEnv() []string {
-	header := "Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte(GitUser+":"+c.Credential()))
+	header := "Authorization: " + c.authorization()
 	return append(os.Environ(),
 		"GIT_CONFIG_COUNT=1",
 		"GIT_CONFIG_KEY_0=http."+c.Address()+"/.extraHeader",

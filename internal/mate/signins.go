@@ -15,7 +15,7 @@ import (
 )
 
 // The Mate server keeps each login's signer in ~/.mate/signed-in.json.
-// zcp seeds an absent store after enrollment with HQ: once when HQ names
+// zcp seeds an absent store once the key opens HQ: once when HQ names
 // signers, again on a later start while HQ named none.
 
 // SignIn is one login's sign-in as the server's store keeps it: who, and
@@ -47,7 +47,7 @@ func SignInsSeededPath() string {
 }
 
 // SignInsSeedStatus is one completed seed input. Input is an opaque fingerprint
-// of the enrollment, never its credential. A failed input is not tried again.
+// of the Mate's identity, never the key. A failed input is not tried again.
 // Start names the process start that recorded it; an "empty" answer is final
 // for that start only.
 type SignInsSeedStatus struct {
@@ -72,7 +72,7 @@ func ReadSignInsSeedStatus(path string) (SignInsSeedStatus, error) {
 		return SignInsSeedStatus{State: "seeded"}, nil
 	}
 	if !json.Valid(raw) {
-		// The previous writer kept only a failure's reason, before enrollment.
+		// The previous writer kept only a failure's reason, before the key.
 		return SignInsSeedStatus{State: "failed", Error: string(raw)}, nil
 	}
 	var status SignInsSeedStatus
@@ -85,16 +85,16 @@ func ReadSignInsSeedStatus(path string) (SignInsSeedStatus, error) {
 	return status, nil
 }
 
-// SeedSignIns is the one-time seed without a changing enrollment input.
+// SeedSignIns is the one-time seed without a changing identity input.
 func SeedSignIns(storePath, markPath string, readSigners func() (map[string]string, error), now time.Time) (bool, error) {
 	return SeedSignInsForEnrollment(storePath, markPath, "", readSigners, now)
 }
 
 // SeedSignInsForEnrollment preserves any existing store, reads HQ at most once
-// per failed enrollment input, and retains the outcome. Success remains final
-// even if the store is later removed. A changed enrollment is new input; a
-// restart or recheck of the same credential is not. Legacy failures have no
-// input and therefore permit one attempt with an enrolled credential. HQ
+// per failed identity input, and retains the outcome. Success remains final
+// even if the store is later removed. A changed identity (HQ, project or key) is new input; a
+// restart with the same identity is not. Legacy failures have no
+// input and therefore permit one attempt with an identity. HQ
 // answering without signers is final for this start only: the next start
 // reads HQ once more.
 func SeedSignInsForEnrollment(storePath, markPath, input string, readSigners func() (map[string]string, error), now time.Time) (bool, error) {

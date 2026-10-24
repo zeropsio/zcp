@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/zeropsio/zcp/internal/hq/hqtest"
+
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -38,7 +40,7 @@ func rebuildMate(t *testing.T, zeropsYml string) (stateDir, mountRoot string, ht
 	tierReads = &atomic.Int32{}
 	var tier string
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/mate/recipe/"+hq.RecipeTierMate || r.Header.Get("Authorization") != "Mate "+standupCredential {
+		if r.URL.Path != "/api/mate/recipe/"+hq.RecipeTierMate || r.Header.Get("Authorization") != "Project "+standupKey {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
@@ -48,9 +50,8 @@ func rebuildMate(t *testing.T, zeropsYml string) (stateDir, mountRoot string, ht
 	t.Cleanup(srv.Close)
 	tier = strings.ReplaceAll(rebuildMateTier, "HQ", srv.URL)
 	t.Setenv("HOME", t.TempDir())
-	if err := hq.SaveEnrollment(hq.EnrollmentPath(), hq.Enrollment{HQ: srv.URL, HQProjectID: "hq1", ProjectID: "p1", Credential: standupCredential}); err != nil {
-		t.Fatal(err)
-	}
+	hqtest.Link(t, srv.URL, "p1", standupKey)
+	hqtest.GitCredential(t, standupCredential)
 	stateDir = t.TempDir()
 	if err := os.MkdirAll(filepath.Join(stateDir, "services"), 0o755); err != nil {
 		t.Fatal(err)

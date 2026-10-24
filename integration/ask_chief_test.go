@@ -12,9 +12,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zeropsio/zcp/internal/hq/hqtest"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
-	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -43,9 +44,7 @@ func TestAskChief_OverMCP_ProposesFromThisProjectAndSendsNothing(t *testing.T) {
 		}
 	}))
 	t.Cleanup(chiefHQ.Close)
-	if err := hq.SaveEnrollment(hq.EnrollmentPath(), hq.Enrollment{HQ: chiefHQ.URL, ProjectID: "proj-1", Credential: "fixture"}); err != nil {
-		t.Fatal(err)
-	}
+	hqtest.Link(t, chiefHQ.URL, "proj-1", "fixture")
 
 	// Non-parallel: t.Chdir rebases the state dir server.New derives.
 	t.Chdir(t.TempDir())

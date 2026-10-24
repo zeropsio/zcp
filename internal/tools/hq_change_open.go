@@ -38,11 +38,11 @@ func handleOpenChange(
 	stateDir string,
 	input WorkflowInput,
 ) (*mcp.CallToolResult, any, error) {
-	hqc, enrolled := openHQ(httpClient)
-	if !enrolled {
+	hqc, linked := openHQ(httpClient)
+	if !linked {
 		return convertError(platform.NewPlatformError(
 			platform.ErrPrerequisiteMissing,
-			"open-change opens a change in this Mate's HQ, and this Mate is not enrolled with one yet.",
+			"open-change opens a change in this Mate's HQ, and this Mate is not linked to one yet.",
 			"Say what the work does in your answer instead.",
 		), WithRecoveryStatus()), nil, nil
 	}

@@ -17,15 +17,17 @@ const (
 	// SupportedContract is the zcp<->mate contract number this build drives
 	// (spec-mate.md §2.8, C-1...C-6). A manifest declaring a different
 	// number is refused before any download — the one case where an old zcp
-	// deliberately stays on the mate it has.
-	SupportedContract = 1
+	// deliberately stays on the mate it has. Contract 2 is the project key:
+	// the Mate links to HQ with it and keeps its Git credential in a file
+	// (hq.EnvGitCredential) instead of an enrollment.
+	SupportedContract = 2
 
 	// MinimumMateVersion is the oldest mate release this zcp still drives.
 	// It moves only when a contract fact changes, never for a routine
 	// release. 0.14.0 is the first release that judges a stand-up by its
 	// zcp process (PID + start) instead of the heartbeat this zcp no longer
-	// writes; it also keeps a link to HQ (EnvHQEnrollment), so zcp treats a
-	// Mate as HQ's whatever its enrollment. 0.15.119 is the first release
+	// writes; it also keeps a link to HQ, so zcp treats a Mate as HQ's
+	// whatever its link. 0.15.119 is the first release
 	// that accepts the envelope's stages[] and devServers[] (field-order
 	// step 2, PartsMateVersion). 0.15.153 is the first release that draws
 	// zerops_origin's ask and tells the agent how it ended: an older one

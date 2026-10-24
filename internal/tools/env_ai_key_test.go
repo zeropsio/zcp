@@ -5,7 +5,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -14,7 +13,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/hq/hqtest"
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
@@ -58,15 +57,16 @@ func (f *aiKeyHQ) seen() []string {
 	return slices.Clone(f.calls)
 }
 
-// enrollAt keeps an enrollment of the Mate projectID at hqURL in a fresh
-// directory, answering its path.
-func enrollAt(t *testing.T, hqURL, projectID string) string {
+// linkAt makes the container the Mate projectID, holding a key for the HQ at
+// hqURL; "" for projectID leaves it without a key. The test is not parallel:
+// the identity is the process environment.
+func linkAt(t *testing.T, hqURL, projectID string) {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "enrollment.json")
-	if err := hq.SaveEnrollment(path, hq.Enrollment{HQ: hqURL, ProjectID: projectID, Credential: "mate-cred"}); err != nil {
-		t.Fatal(err)
+	key := "mate-key"
+	if projectID == "" {
+		key = ""
 	}
-	return path
+	hqtest.Link(t, hqURL, projectID, key)
 }
 
 // aiKeyMock is a project whose app reads the key through run.envVariables
@@ -92,11 +92,11 @@ func aiKeyMock() *platform.Mock {
 const aiKeyAnswer = `{"provider":"nebius","env":"NEBIUS_API_KEY","value":"%s","baseUrl":"` + tokenFactoryURL + `"}`
 
 func TestEnvAIKey_PutsTheOrganizationsKeyInTheSharedVaultWithoutShowingIt(t *testing.T) {
-	t.Parallel()
 	fake := newAIKeyHQ(t, http.StatusOK, strings.Replace(aiKeyAnswer, "%s", orgKeyFixture, 1))
 	mock := aiKeyMock()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterEnv(srv, mock, "proj-1", "zcp", withOrgAIKeyAt(fake.srv.Client(), enrollAt(t, fake.srv.URL, "proj-1")))
+	linkAt(t, fake.srv.URL, "proj-1")
+	RegisterEnv(srv, mock, "proj-1", "zcp", WithOrgAIKey(fake.srv.Client()))
 
 	result := callTool(t, srv, "zerops_env", map[string]any{"action": "ai-key"})
 	text := getTextContent(t, result)
@@ -104,8 +104,8 @@ func TestEnvAIKey_PutsTheOrganizationsKeyInTheSharedVaultWithoutShowingIt(t *tes
 		t.Fatalf("ai-key failed: %s", text)
 	}
 
-	if got := fake.seen(); !reflect.DeepEqual(got, []string{"Mate mate-cred"}) {
-		t.Errorf("HQ calls = %v, want one as the Mate", got)
+	if got := fake.seen(); !reflect.DeepEqual(got, []string{"Project mate-key"}) {
+		t.Errorf("HQ calls = %v, want one under the project key", got)
 	}
 	want := []platform.CapturedProjectEnvCreate{
 		{ProjectID: "proj-1", Key: "NEBIUS_API_KEY", Content: orgKeyFixture, Sensitive: true},
@@ -152,7 +152,6 @@ func TestEnvAIKey_PutsTheOrganizationsKeyInTheSharedVaultWithoutShowingIt(t *tes
 }
 
 func TestEnvAIKey_WithoutAKeyItSaysWhoSetsItAndWritesNothing(t *testing.T) {
-	t.Parallel()
 	down := httptest.NewServer(http.NotFoundHandler())
 	downURL := down.URL
 	down.Close()
@@ -163,7 +162,7 @@ func TestEnvAIKey_WithoutAKeyItSaysWhoSetsItAndWritesNothing(t *testing.T) {
 		// does not answer.
 		status int
 		body   string
-		// enrolledAs is the project the enrollment holds; "" is none.
+		// enrolledAs is the project the Mate's key names; "" is no key.
 		enrolledAs string
 		wantWords  []string
 	}{
@@ -173,12 +172,12 @@ func TestEnvAIKey_WithoutAKeyItSaysWhoSetsItAndWritesNothing(t *testing.T) {
 			wantWords: []string{"has no AI key yet", "Owner or Admin", "Settings › Zerops › HQ"},
 		},
 		{
-			name:   "the Mate is not enrolled with HQ",
+			name:   "the Mate holds no key for HQ",
 			status: http.StatusOK, body: strings.Replace(aiKeyAnswer, "%s", orgKeyFixture, 1),
-			wantWords: []string{"no HQ enrollment yet"},
+			wantWords: []string{"cannot address its HQ"},
 		},
 		{
-			name:   "the enrollment is another project's",
+			name:   "the key is another project's",
 			status: http.StatusOK, body: strings.Replace(aiKeyAnswer, "%s", orgKeyFixture, 1), enrolledAs: "proj-other",
 			wantWords: []string{"another project"},
 		},
@@ -204,19 +203,15 @@ func TestEnvAIKey_WithoutAKeyItSaysWhoSetsItAndWritesNothing(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
 			hqURL, httpClient := downURL, http.DefaultClient
 			if tc.status != 0 {
 				fake := newAIKeyHQ(t, tc.status, tc.body)
 				hqURL, httpClient = fake.srv.URL, fake.srv.Client()
 			}
-			path := filepath.Join(t.TempDir(), "enrollment.json")
-			if tc.enrolledAs != "" {
-				path = enrollAt(t, hqURL, tc.enrolledAs)
-			}
+			linkAt(t, hqURL, tc.enrolledAs)
 			mock := aiKeyMock()
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-			RegisterEnv(srv, mock, "proj-1", "zcp", withOrgAIKeyAt(httpClient, path))
+			RegisterEnv(srv, mock, "proj-1", "zcp", WithOrgAIKey(httpClient))
 
 			result := callTool(t, srv, "zerops_env", map[string]any{"action": "ai-key"})
 			text := getTextContent(t, result)

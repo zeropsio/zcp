@@ -172,7 +172,7 @@ func handleGroupRecipeScaling(
 		}
 		return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
 			"The scaling proposal was not made: "+reason,
-			"Retry once this Mate is enrolled with its HQ and a pair has its repository there."), WithRecoveryStatus()), nil, nil
+			"Retry once this Mate is linked to its HQ and a pair has its repository there."), WithRecoveryStatus()), nil, nil
 	}
 	defer comp.close()
 	var tiers []recipeScalingTier

@@ -29,7 +29,7 @@ import (
 // application's AI Agent tier — managed services, then zcp, then the
 // runtimes, every dev half running and empty (startWithoutCode) and every
 // stage half waiting for its first deploy (READY_TO_DEPLOY) — and `zcp
-// service mate` is enrolling the Mate with its HQ. What is left is zcp's:
+// service mate` is linking the Mate to its HQ. What is left is zcp's:
 // read the tier from HQ, adopt each
 // pair, put the repository's main into its dev half,
 // deploy every dev half at once and answer once they stand, then — on the
@@ -47,11 +47,10 @@ import (
 // are HQ's, and the tier read is the Mate's own, `0 — AI Agent`.
 
 const (
-	// standupEnrollWait bounds the wait for the Mate's enrollment with its
-	// HQ, which `zcp service mate` keeps (hq.Keep): a new Mate's first turn
-	// can come before it.
-	standupEnrollWait = 3 * time.Minute
-	standupEnrollPoll = 5 * time.Second
+	// standupHQWait bounds the wait for HQ to answer for the Mate's key: a
+	// new Mate's first turn can come before the link is up.
+	standupHQWait = 3 * time.Minute
+	standupHQPoll = 5 * time.Second
 	// standupRuntimeWait bounds the wait for the runtimes the browser imports
 	// right before the person signs the agent in: the first turn can arrive
 	// while they are still being created.
@@ -75,13 +74,16 @@ type StandupInput struct{}
 
 // standupDeps is what a stand-up needs: the batch deploy it shares with
 // zerops_deploy_batch (and through it the client, SSH, auth and state), the
-// mounter, and how long to wait for the Mate's enrollment.
+// mounter, and how long to wait for HQ to answer for the Mate's key.
 type standupDeps struct {
 	batch       batchDeployer
 	mounter     ops.Mounter
 	liveEnvPath string
-	enrollWait  time.Duration
-	enrollPoll  time.Duration
+	// identity is the Mate's HQ identity: the key it presents, the HQ it
+	// addresses and the file its Git credential is read from.
+	identity    func() hq.Identity
+	hqWait      time.Duration
+	hqPoll      time.Duration
 	runtimeWait time.Duration
 	runtimePoll time.Duration
 	// statusPath is the setup status file the stand-up writes its section of
@@ -92,10 +94,6 @@ type standupDeps struct {
 	bootWait   time.Duration
 	bootPoll   time.Duration
 	trackPoll  time.Duration
-	// enrollmentPath is the Mate's enrollment with its HQ (hq.EnrollmentPath):
-	// where the stand-up reads the tier, and the HQ the pairs it adopts are
-	// wired to.
-	enrollmentPath string
 	// closedOffSeen is a call that read Zerops itself while the import's line
 	// still said it waited for the project to be closed off: that import is
 	// starting, and awaitBootImport waits for it.
@@ -126,17 +124,17 @@ func RegisterStandup(
 			client: client, httpClient: httpClient, projectID: projectID, sshDeployer: sshDeployer,
 			authInfo: authInfo, logFetcher: logFetcher, rtInfo: rtInfo, stateDir: stateDir, devsup: devsup,
 		},
-		mounter:        mounter,
-		liveEnvPath:    mate.LiveEnvStorePath,
-		enrollWait:     standupEnrollWait,
-		enrollPoll:     standupEnrollPoll,
-		runtimeWait:    standupRuntimeWait,
-		runtimePoll:    standupRuntimePoll,
-		statusPath:     mate.StatusFilePath(),
-		enrollmentPath: hq.EnrollmentPath(),
-		bootWait:       standupBootWait,
-		bootPoll:       standupBootPoll,
-		trackPoll:      standupTrackPoll,
+		mounter:     mounter,
+		liveEnvPath: mate.LiveEnvStorePath,
+		identity:    hqIdentity,
+		hqWait:      standupHQWait,
+		hqPoll:      standupHQPoll,
+		runtimeWait: standupRuntimeWait,
+		runtimePoll: standupRuntimePoll,
+		statusPath:  mate.StatusFilePath(),
+		bootWait:    standupBootWait,
+		bootPoll:    standupBootPoll,
+		trackPoll:   standupTrackPoll,
 	})
 }
 
@@ -164,7 +162,7 @@ func registerStandup(srv *mcp.Server, d standupDeps) {
 }
 
 // run is the whole stand-up. A refusal before anything is touched — no
-// enrollment with HQ, no tier, a tier with no pair — is an error result
+// answer from HQ, no tier, a tier with no pair — is an error result
 // naming the fallback; past that, the answer is the per-service report,
 // whatever it holds.
 // A call that stood development up with the stages queued leaves the
@@ -200,11 +198,11 @@ func (d standupDeps) stand(ctx context.Context, progress *standupProgress) (*mcp
 		progress.say("the project is closed off; the container's import of the runtimes is starting")
 		d.closedOffSeen = true
 	}
-	hqc, enrolled := d.awaitEnrollment(ctx, progress)
-	if !enrolled {
+	hqc, answering := d.awaitHQ(ctx, progress)
+	if !answering {
 		return standupRefusal(platform.ErrPrerequisiteMissing,
-			fmt.Sprintf("This Mate is not enrolled with its HQ after %s. zcp enrolls it once HQ answers, and the stand-up needs HQ to read the recipe and to check its repositories out.", d.enrollWait),
-			"Nothing was touched. Call zerops_standup again in a few minutes. To carry on without it, adopt the pairs with zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"adopt\" — their repositories are wired and checked out once the Mate is enrolled, and a first deploy follows."), ""
+			fmt.Sprintf("HQ does not answer for this Mate's key after %s. The Mate's server links to HQ with it, and the stand-up needs HQ to read the recipe and to check its repositories out.", d.hqWait),
+			"Nothing was touched. Call zerops_standup again in a few minutes. To carry on without it, adopt the pairs with zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"adopt\" — their repositories are wired and checked out once HQ answers for the Mate, and a first deploy follows."), ""
 	}
 	src, refusal := d.readTier(ctx, hqc, progress)
 	if refusal != nil {
@@ -220,24 +218,28 @@ func (d standupDeps) stand(ctx context.Context, progress *standupProgress) (*mcp
 	return jsonResult(resp), resp.StandUp
 }
 
-// awaitEnrollment opens the Mate's enrollment with its HQ, which `zcp service
-// mate` writes once HQ answers (hq.Keep), until it is there or the wait is
-// over.
-func (d standupDeps) awaitEnrollment(ctx context.Context, progress *standupProgress) (hq.Client, bool) {
-	deadline := time.Now().Add(d.enrollWait)
+// awaitHQ opens HQ under the Mate's key and waits until HQ answers for it, or
+// the wait is over.
+func (d standupDeps) awaitHQ(ctx context.Context, progress *standupProgress) (hq.Client, bool) {
+	deadline := time.Now().Add(d.hqWait)
 	for {
-		hqc, err := hq.Open(d.batch.httpClient, d.enrollmentPath)
+		hqc, err := hq.Open(d.batch.httpClient, d.identity())
+		if err == nil {
+			callCtx, cancel := context.WithTimeout(ctx, hqCallTimeout)
+			_, err = hqc.Once().Self(callCtx)
+			cancel()
+		}
 		if err == nil {
 			return hqc, true
 		}
 		if !time.Now().Before(deadline) {
 			return hq.Client{}, false
 		}
-		progress.say("waiting for this Mate's enrollment with its HQ")
+		progress.say("waiting for HQ to answer for this Mate's key")
 		select {
 		case <-ctx.Done():
 			return hq.Client{}, false
-		case <-time.After(d.enrollPoll):
+		case <-time.After(d.hqPoll):
 		}
 	}
 }

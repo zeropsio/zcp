@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/hq/hqtest"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -33,6 +34,7 @@ import (
 // checkout is a real repository the SSH stand-in runs every command in.
 
 const (
+	labKey        = "the-project-key"
 	labCredential = "the-mate-credential"
 	labMate       = "p-mate"
 	labApp        = "app-1"
@@ -70,8 +72,9 @@ type fakeHQ struct {
 	// untitled: HQ from before the Mate's state named its changes' titles.
 	untitled bool
 	calls    []string
-	// credential is the one Mate credential HQ takes now: enrolling again
-	// revokes the one before.
+	// credential is the one Git credential HQ takes now from the dev service's
+	// git: a new one sent over the link revokes the one before. The project
+	// key, which the Mate's API and zcp's own git present, does not change.
 	credential string
 	// unnamedBranches: HQ from before changes were bound to a branch they
 	// name — it binds a change to the Mate's own branch whatever is asked,
@@ -145,7 +148,7 @@ func (f *fakeHQ) serve(w http.ResponseWriter, r *http.Request, backend http.Hand
 	f.mu.Unlock()
 	if strings.HasPrefix(r.URL.Path, "/git/") {
 		user, password, ok := r.BasicAuth()
-		if !ok || user != hq.GitUser || password != credential {
+		if keyed := r.Header.Get("Authorization") == "Project "+labKey; !keyed && (!ok || user != hq.GitUser || password != credential) {
 			w.Header().Set("WWW-Authenticate", `Basic realm="HQ"`)
 			http.Error(w, "Authentication required", http.StatusUnauthorized)
 			return
@@ -160,8 +163,8 @@ func (f *fakeHQ) serve(w http.ResponseWriter, r *http.Request, backend http.Hand
 		backend.ServeHTTP(w, r)
 		return
 	}
-	if r.Header.Get("Authorization") != "Mate "+credential {
-		writeHQJSON(w, http.StatusUnauthorized, map[string]string{"code": "mate_credential_required"})
+	if r.Header.Get("Authorization") != "Project "+labKey {
+		writeHQJSON(w, http.StatusUnauthorized, map[string]string{"code": "key_not_recognized"})
 		return
 	}
 	f.mu.Lock()
@@ -539,17 +542,15 @@ func (f *fakeHQ) git(ctx context.Context, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// reenroll is the Mate enrolling again, as it does after zcp is redeployed:
-// HQ takes credential from now on and revokes the one before, and the
-// enrollment on disk holds it.
-func (l *hqLab) reenroll(credential string) {
+// relink is HQ sending the Mate's server a new Git credential over the link:
+// HQ takes credential from now on and revokes the one before, and the file
+// the server keeps holds it.
+func (l *hqLab) relink(credential string) {
 	l.t.Helper()
 	l.hq.mu.Lock()
 	l.hq.credential = credential
 	l.hq.mu.Unlock()
-	if err := hq.SaveEnrollment(hq.EnrollmentPath(), hq.Enrollment{HQ: l.hq.srv.URL, HQProjectID: "hq1", ProjectID: labMate, Credential: credential}); err != nil {
-		l.t.Fatal(err)
-	}
+	hqtest.GitCredential(l.t, credential)
 }
 
 // merge squashes the Mate's change #1 in appdev onto `main`, the way HQ's
@@ -757,9 +758,8 @@ func newHQLab(t *testing.T) *hqLab {
 	t.Setenv("HOME", t.TempDir())
 	// zcp's own git against HQ trusts the fake's certificate.
 	t.Setenv("GIT_SSL_CAINFO", fake.caFile)
-	if err := hq.SaveEnrollment(hq.EnrollmentPath(), hq.Enrollment{HQ: fake.srv.URL, HQProjectID: "hq1", ProjectID: labMate, Credential: labCredential}); err != nil {
-		t.Fatal(err)
-	}
+	hqtest.Link(t, fake.srv.URL, labMate, labKey)
+	hqtest.GitCredential(t, labCredential)
 	lab := &hqLab{t: t, hq: fake, stateDir: t.TempDir(), pair: t.TempDir(),
 		rt: runtime.Info{InContainer: true, ProjectID: labMate}}
 	prevAttempts, prevDelay := gitPushSessionAuthAttempts, gitPushSessionAuthDelay

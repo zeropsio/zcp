@@ -73,10 +73,10 @@ func upgradeReleasedBranch(stateDir string, hqc hq.Client, m *workflow.ServiceMe
 
 // upgradeReleasedBranches upgrades every wired pair's record an older zcp
 // wrote (upgradeReleasedBranch): status renders the records after it. A Mate
-// not enrolled has no record of a change.
+// not linked has no record of a change.
 func upgradeReleasedBranches(httpClient ops.HTTPDoer, stateDir string) {
-	hqc, enrolled := openHQ(httpClient)
-	if !enrolled {
+	hqc, linked := openHQ(httpClient)
+	if !linked {
 		return
 	}
 	metas, err := workflow.ListServiceMetas(stateDir)

@@ -132,7 +132,7 @@ const GitTokenEnvKey = "GIT_TOKEN"
 
 // GiteaTokenEnvKey is the single owner of the retired Gitea bot-token env-var
 // name. Nothing writes or reads it as a credential any more — a Mate reaches
-// its HQ with its enrollment — but Mates made before HQ still carry the
+// its HQ with the project key — but Mates made before HQ still carry the
 // variable on their `zcp` service. So it stays a credential in
 // credentialValueKeys, its value masked at every echo site, and out of every
 // group recipe (hq_recipe_inputs.go), until no Mate carries it.

@@ -14,9 +14,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/hq/hqtest"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
-	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -864,9 +865,7 @@ func TestServer_AskChiefToolGating(t *testing.T) {
 				}
 			}))
 			t.Cleanup(chiefHQ.Close)
-			if err := hq.SaveEnrollment(hq.EnrollmentPath(), hq.Enrollment{HQ: chiefHQ.URL, ProjectID: "p1", Credential: "fixture"}); err != nil {
-				t.Fatal(err)
-			}
+			hqtest.Link(t, chiefHQ.URL, "p1", "fixture")
 			mock := platform.NewMock().WithProject(&platform.Project{ID: "p1", Name: "test"}).WithServices(nil)
 			store, err := knowledge.GetEmbeddedStore()
 			if err != nil {

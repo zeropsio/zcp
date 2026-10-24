@@ -46,10 +46,6 @@ type originAnswer struct {
 // repository only followed. Like zerops_env action="request" it writes
 // nothing; Mate draws the card and the person picks in HQ.
 func RegisterOrigin(srv *mcp.Server, httpClient hq.Doer, projectID, stateDir string) {
-	registerOrigin(srv, httpClient, hq.EnrollmentPath(), projectID, stateDir)
-}
-
-func registerOrigin(srv *mcp.Server, httpClient hq.Doer, path, projectID, stateDir string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_origin",
 		Description: "Ask the person where a repository's code is kept: on GitHub, mounted in HQ as the checkout's origin, or in Mate, only following it; one outside GitHub is only followed. Writes nothing: Mate shows a card for repo, the dev hostname the pair will wire. A message of its own tells you their pick. Never ask for a token.",
@@ -63,12 +59,12 @@ func registerOrigin(srv *mcp.Server, httpClient hq.Doer, path, projectID, stateD
 		if err != nil {
 			return convertError(err), nil, nil
 		}
-		client, err := hq.Open(httpClient, path)
+		client, err := hq.Open(httpClient, hqIdentity())
 		if err != nil {
-			return observeFailure(fmt.Sprintf("HQ enrollment could not be opened, so nothing was asked: %v", err)), nil, nil
+			return observeFailure(fmt.Sprintf("HQ could not be addressed, so nothing was asked: %v", err)), nil, nil
 		}
 		if client.ProjectID() != projectID {
-			return observeFailure("HQ enrollment belongs to another project, so nothing was asked."), nil, nil
+			return observeFailure("This Mate's key belongs to another project, so nothing was asked."), nil, nil
 		}
 		ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 		defer cancel()

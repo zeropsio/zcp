@@ -7,10 +7,11 @@ package tools
 import (
 	"fmt"
 	"maps"
-	"os"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/hq/hqtest"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -387,9 +388,7 @@ func TestHandleGroupRecipe_Table(t *testing.T) {
 		{
 			name: "not enrolled with HQ",
 			setup: func(l *hqLab) {
-				if err := os.Remove(hq.EnrollmentPath()); err != nil {
-					l.t.Fatal(err)
-				}
+				hqtest.Link(l.t, "", "", "")
 			},
 			wantErr:  true,
 			wantText: []string{"was not proposed", "not enrolled"},

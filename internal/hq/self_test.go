@@ -39,7 +39,7 @@ func TestClient_Self_CarriesTheMatesApplicationAndItsChanges(t *testing.T) {
 	if !reflect.DeepEqual(state, want) {
 		t.Errorf("state = %+v\nwant %+v", state, want)
 	}
-	wantCall := hqCall{Method: http.MethodGet, Path: "/api/mate/self", Authorization: "Mate good"}
+	wantCall := hqCall{Method: http.MethodGet, Path: "/api/mate/self", Authorization: "Project good"}
 	if len(*calls) != 1 || (*calls)[0] != wantCall {
 		t.Errorf("calls = %+v, want [%+v]", *calls, wantCall)
 	}

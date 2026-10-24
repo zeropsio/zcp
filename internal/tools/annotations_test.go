@@ -10,9 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/hq/hqtest"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
-	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -730,9 +731,7 @@ func TestAnnotations_AskChiefTool(t *testing.T) {
 		}
 	}))
 	t.Cleanup(chiefHQ.Close)
-	if err := hq.SaveEnrollment(hq.EnrollmentPath(), hq.Enrollment{HQ: chiefHQ.URL, ProjectID: "p1", Credential: "fixture"}); err != nil {
-		t.Fatal(err)
-	}
+	hqtest.Link(t, chiefHQ.URL, "p1", "fixture")
 
 	t.Chdir(t.TempDir())
 	tool := listAllTools(t, runtime.Info{InContainer: true, MateEnabled: true})["zerops_propose_ask_chief"]

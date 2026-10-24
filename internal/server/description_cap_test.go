@@ -9,9 +9,10 @@ import (
 	"testing"
 	"unicode/utf16"
 
+	"github.com/zeropsio/zcp/internal/hq/hqtest"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
-	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -47,9 +48,7 @@ func TestServer_EveryToolDescriptionReachesClaudeCodeWhole(t *testing.T) {
 	}))
 	t.Cleanup(chiefHQ.Close)
 	t.Setenv("HOME", t.TempDir())
-	if err := hq.SaveEnrollment(hq.EnrollmentPath(), hq.Enrollment{HQ: chiefHQ.URL, ProjectID: "p1", Credential: "fixture"}); err != nil {
-		t.Fatal(err)
-	}
+	hqtest.Link(t, chiefHQ.URL, "p1", "fixture")
 
 	store, err := knowledge.GetEmbeddedStore()
 	if err != nil {
