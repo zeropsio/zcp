@@ -160,7 +160,9 @@ func TestThemes_Services_PoolSection_FactsPresent(t *testing.T) {
 		"rotates", "cannot be changed", "apply at once",
 		"PROJECT_INTERNET", "the database included", "`INTERNET`", "`AIRGAPPED`", "allowedNetworkModes", "credentials proxy", "Dockerfiles you trust",
 		"no Docker", "linux/amd64", "<host>.zerops",
-		"not enough hardware capacity",
+		// Region: a Box exists only in prg1 (owner-stated, 2026-10-24); the
+		// capacity message is how another region refuses it.
+		"only in a project in region prg1", "not enough hardware capacity",
 	} {
 		if !strings.Contains(section, fact) {
 			t.Errorf("'Pools and Box' section missing fact %q", fact)
