@@ -46,8 +46,8 @@ type MateTierRuntime struct {
 
 // MateTierPair is a dev/stage pair built from one of the application's
 // repositories: one dev half and a stage per part (docs/spec-mate.md
-// §2.8a.4) — for variant B also the further dev services that share its
-// code volume (§2.8a.4a).
+// §2.8a.4) — for a pair zcp already records as variant B also the further
+// dev services that share its code volume (§2.8a.4a).
 type MateTierPair struct {
 	// Repository is the halves' buildFromGit, canonical
 	// (topology.CanonicalRepoURL).
@@ -59,11 +59,11 @@ type MateTierPair struct {
 	// Stages are the pair's stages, never empty: the one named like the dev
 	// half first, then the tier's order.
 	Stages []MateTierRuntime
-	// CodeVolume is the tier's local-storage service a variant-B pair keeps
-	// its repository on, "" for variant A.
+	// CodeVolume is the tier's local-storage service a recorded variant-B
+	// pair keeps its repository on, "" for any other pair.
 	CodeVolume string
-	// DevServices are a variant-B pair's further dev services, in the tier's
-	// order.
+	// DevServices are a recorded variant-B pair's further dev services, in
+	// the tier's order.
 	DevServices []MateTierRuntime
 }
 
@@ -133,17 +133,23 @@ type MateTier struct {
 // `medusaprod`). A stage is a runtime whose hostname ends in `stage`
 // (IsStageHostname). A repository with one other runtime is one pair: that
 // runtime is the dev half and every stage is one of its stages, a part each
-// (docs/spec-mate.md §2.8a.4). A repository with several others is variant B
-// when the tier holds exactly one local-storage service: one pair, the first
-// of them the dev half, the rest further dev services sharing that volume
-// (§2.8a.4a). Otherwise each stage pairs with the runtime named like it
-// (`apistage` → `apidev` or `api`). A runtime that fits no pair is skipped
-// by name, never guessed at.
+// (docs/spec-mate.md §2.8a.4). Otherwise each stage pairs with the runtime
+// named like it (`apistage` → `apidev` or `api`). A runtime that fits no pair
+// is skipped by name, never guessed at.
+//
+// zcp sets up no new code volume (§2.8a.4a), so a tier's local-storage
+// service is a managed service like any other. recorded are the metas zcp
+// holds: a repository with several other runtimes is read as one variant-B
+// pair only when one of them is the dev half of a recorded pair keeping its
+// repository on the tier's only local-storage service — that runtime the dev
+// half, the rest its further dev services, every stage of the repository its
+// stage. A stand-up called again on such a project thus adopts the pair it
+// recorded, never a second pair for one of its services.
 //
 // An error only when the document is not a services list, or when it names
 // no pair at all (ErrMateTierNoPairs, with Skipped still filled so the caller
 // can say what the tier holds instead).
-func ParseMateTier(importYAML, address, appID string) (MateTier, error) {
+func ParseMateTier(importYAML, address, appID string, recorded ...*ServiceMeta) (MateTier, error) {
 	var doc recipeImportDoc
 	if err := yaml.Unmarshal([]byte(importYAML), &doc); err != nil {
 		return MateTier{}, fmt.Errorf("%w: %w", ErrMateTierUnreadable, err)
@@ -168,9 +174,9 @@ func ParseMateTier(importYAML, address, appID string) (MateTier, error) {
 			volumes = append(volumes, strings.TrimSpace(svc.Hostname))
 		}
 	}
-	volume := ""
+	keep := codeVolumeKept{}
 	if len(volumes) == 1 {
-		volume = volumes[0]
+		keep = recordedCodeVolume(recorded, volumes[0])
 	}
 	for i, svc := range doc.Services {
 		hostname := strings.TrimSpace(svc.Hostname)
@@ -210,14 +216,14 @@ func ParseMateTier(importYAML, address, appID string) (MateTier, error) {
 		for i, m := range members {
 			runtimes[i] = m.svc
 		}
-		pairs, unpaired := pairRepositoryRuntimes(runtimes, volume)
+		pairs, unpaired := pairRepositoryRuntimes(runtimes, keep)
 		for _, p := range pairs {
 			pair := MateTierPair{Repository: repo, RepoName: name, Dev: mateTierRuntime(p.dev)}
 			for _, stage := range p.stages {
 				pair.Stages = append(pair.Stages, mateTierRuntime(stage))
 			}
 			if len(p.devServices) > 0 {
-				pair.CodeVolume = volume
+				pair.CodeVolume = keep.volume
 			}
 			for _, ds := range p.devServices {
 				pair.DevServices = append(pair.DevServices, mateTierRuntime(ds))
@@ -264,13 +270,31 @@ type repositoryPair struct {
 	stages      []recipeImportService
 }
 
+// codeVolumeKept is the variant-B pair a tier keeps: the local-storage
+// service a recorded pair keeps its repository on and that pair's dev half,
+// both "" when the tier keeps none.
+type codeVolumeKept struct {
+	volume, dev string
+}
+
+// recordedCodeVolume is the recorded variant-B pair keeping its repository on
+// volume — never a pair already moved onto a dev pool.
+func recordedCodeVolume(recorded []*ServiceMeta, volume string) codeVolumeKept {
+	for _, m := range recorded {
+		if m != nil && m.CodeVolume != nil && !m.DevIsPool() && m.CodeVolume.Hostname == volume {
+			return codeVolumeKept{volume: volume, dev: m.Hostname}
+		}
+	}
+	return codeVolumeKept{}
+}
+
 // pairRepositoryRuntimes pairs the runtimes one repository builds (see
 // ParseMateTier): every stage (IsStageHostname) belongs to the only other
-// runtime; with several others and the tier's one local-storage service
-// volume, to one variant-B pair of all of them; else each stage takes the
+// runtime; with several others, one of them the dev half of the variant-B
+// pair the tier keeps, to that pair of all of them; else each stage takes the
 // runtime named like it (`apistage` → `apidev` or `api`). unpaired names
 // every runtime left over.
-func pairRepositoryRuntimes(runtimes []recipeImportService, volume string) (pairs []repositoryPair, unpaired map[string]bool) {
+func pairRepositoryRuntimes(runtimes []recipeImportService, keep codeVolumeKept) (pairs []repositoryPair, unpaired map[string]bool) {
 	unpaired = map[string]bool{}
 	var stages, others []recipeImportService
 	for _, r := range runtimes {
@@ -280,11 +304,14 @@ func pairRepositoryRuntimes(runtimes []recipeImportService, volume string) (pair
 			others = append(others, r)
 		}
 	}
+	devAt := slices.IndexFunc(others, func(r recipeImportService) bool { return keep.dev != "" && r.Hostname == keep.dev })
 	switch {
 	case len(stages) > 0 && len(others) == 1:
 		return []repositoryPair{{dev: others[0], stages: stagesOf(others[0], stages)}}, unpaired
-	case len(stages) > 0 && len(others) > 1 && volume != "":
-		return []repositoryPair{{dev: others[0], devServices: others[1:], stages: stagesOf(others[0], stages)}}, unpaired
+	case len(stages) > 0 && len(others) > 1 && devAt >= 0:
+		dev := others[devAt]
+		devServices := slices.Delete(slices.Clone(others), devAt, devAt+1)
+		return []repositoryPair{{dev: dev, devServices: devServices, stages: stagesOf(dev, stages)}}, unpaired
 	}
 	taken := map[string]bool{}
 	for _, stage := range stages {

@@ -12,9 +12,10 @@ import (
 // fillCodeVolumeAfterDeploy puts the repository onto a variant-B pair's code
 // volume once its dev half deployed — the deploy is what mounts the volume
 // there (docs/spec-mate.md §2.8a) — and reloads every dev service's
-// supervisor, which read a missing declaration until then. The stand-up does
-// the same through fillAndReload; on the adopt route this is the only place
-// the pair's volume ever gets its repository, so nobody copies it by hand.
+// supervisor, which read a missing declaration until then. zcp sets up no new
+// code volume (§2.8a.4a), so only a pair recorded before can still find its
+// volume empty; this keeps it working, so nobody copies the repository on by
+// hand. The stand-up does the same through fillAndReload.
 // Other targets, pairs without a code volume and a volume that already holds
 // the repository change nothing — and so does a pair keyed by its dev pool,
 // which still names its code volume until the pool migration's retire has

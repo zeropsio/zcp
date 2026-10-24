@@ -214,7 +214,8 @@ type devServerAnswer struct {
 	Message string `json:"message"`
 	URL     string `json:"url"`
 
-	MigratedToSupervisor *bool `json:"migratedToSupervisor"`
+	MigratedToSupervisor *bool    `json:"migratedToSupervisor"`
+	Warnings             []string `json:"warnings"`
 }
 
 func callDevServer(t *testing.T, srv *mcp.Server, args map[string]any) devServerAnswer {
@@ -495,6 +496,39 @@ func TestDevServer_FirstStartOnAVariantBDevService_RunsTheSupervisorOnTheCodeVol
 	}
 	if !read || !wrote || !pushed {
 		t.Errorf("the dev setup is read %v, written %v and redeployed %v on the code volume, want all three:\n%s", read, wrote, pushed, strings.Join(c.Sent(), "\n"))
+	}
+}
+
+// TestDevServer_VariantBDevService_WarnsThatPoolMigrateMovesItsPair
+// (docs/spec-mate.md §2.8a.4a): a variant-B dev service's dev servers keep
+// running from the code volume, and the answer says that zcp sets up no
+// shared code volume any more and names the pool migration that moves the
+// pair onto one dev pool per part.
+func TestDevServer_VariantBDevService_WarnsThatPoolMigrateMovesItsPair(t *testing.T) {
+	t.Parallel()
+	c := &devservertest.Container{YAMLFile: "zerops.yml", YAML: variantBDevSetup}
+	dir := t.TempDir()
+	if err := workflow.WriteServiceMeta(dir, variantBDevMeta()); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-api", Name: "apidev", ProjectID: "proj-1", Status: serviceStatusRunning,
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "go@1"}},
+			{ID: "svc-vol", Name: "vol", ProjectID: "proj-1", Status: "RUNNING",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "local-storage:single@1", ServiceStackTypeCategoryName: "STANDARD"}},
+		}).
+		WithAppVersionEvents([]platform.AppVersionEvent{{ID: "av-2", ProjectID: "proj-1", ServiceStackID: "svc-api", Status: statusActive, Sequence: 2}})
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDevServer(srv, DevServerDeps{
+		Client: mock, ProjectID: "proj-1", SSH: c, StateDir: dir,
+		AuthInfo: &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"},
+		Devsup:   DevsupSource{Latest: func(context.Context) (string, error) { return testDevsupURL, nil }},
+	})
+
+	a := callDevServer(t, srv, map[string]any{"action": "start", "hostname": "apidev", "command": "go run ./apps/api", "port": 8080})
+	if !steersToPoolMigrate(a.Warnings) {
+		t.Errorf("warnings = %q, want the pool-migrate steer", a.Warnings)
 	}
 }
 

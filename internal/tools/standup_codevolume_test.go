@@ -70,7 +70,8 @@ func variantBTierFixture(t *testing.T) *standupFixture {
 }
 
 // variantBStandupFixture is variantBTierFixture with medusadev's pair already
-// recorded as variant B, as the plan route records it.
+// recorded as variant B — a project set up before zcp stopped setting up code
+// volumes, stood up again: the record is kept and still works.
 func variantBStandupFixture(t *testing.T) *standupFixture {
 	t.Helper()
 	f := variantBTierFixture(t)
@@ -174,63 +175,57 @@ func TestStandup_VariantB_FillsTheVolumeOnceAndEveryDevServiceDeploysItsOwnDevSe
 	}
 }
 
-// TestStandup_VariantBFromAFreshTier_StandsUpAsOnePair (docs/spec-mate.md
-// §2.8a.4a; Decision: B is recognised from the tier the same way A is): a
-// fresh tier whose repository builds two dev services and two stages beside a
-// local-storage service is one variant-B pair — the code volume and its mount
-// read from the dev setups, every dev service and every stage stood up —
-// never two variant-A pairs.
-func TestStandup_VariantBFromAFreshTier_StandsUpAsOnePair(t *testing.T) {
+// TestStandup_FreshTierWithALocalStorageService_SetsUpNoCodeVolume
+// (docs/spec-mate.md §2.8a.4a): zcp sets up no new code volume. A fresh tier
+// whose repository builds two dev services and two stages beside a
+// local-storage service stands up as two ordinary pairs, each stage with the
+// dev service named like it and each dev service holding its own checkout:
+// no pair records a code volume, nothing is filled, and the volume stays a
+// managed service of the project.
+func TestStandup_FreshTierWithALocalStorageService_SetsUpNoCodeVolume(t *testing.T) {
 	t.Parallel()
 	f := variantBTierFixture(t)
+	// apidev is a dev half of its own now: the branch cut puts main's files
+	// in it too, and its mount shows them.
+	body := f.ssh.zeropsYAML["medusadev"]
+	if err := os.MkdirAll(filepath.Join(f.root, "apidev"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.root, "apidev", "zerops.yaml"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.ssh.zeropsYAML["apidev"] = body
 
-	result, body := f.run(t)
-	if result.IsError || body.StandUp != standupDevelopment {
+	result, report := f.run(t)
+	if result.IsError || report.StandUp != standupDevelopment {
 		t.Fatalf("first call: %s", getTextContent(t, result))
 	}
-	meta, _ := workflow.ReadServiceMeta(f.stateDir, "medusadev")
-	if meta == nil || meta.CodeVolume == nil {
-		t.Fatalf("medusadev is not recorded as a variant-B pair: %+v", meta)
+	metas, err := workflow.ListServiceMetas(f.stateDir)
+	if err != nil {
+		t.Fatalf("ListServiceMetas: %v", err)
 	}
-	want := topology.CodeVolume{Hostname: "vol", MountPath: "/var/www/ws", DevServices: []topology.DevServiceRef{{Hostname: "apidev", SetupName: "dev-api"}}}
-	if got := *meta.CodeVolume; got.Hostname != want.Hostname || got.MountPath != want.MountPath || !slices.Equal(got.DevServices, want.DevServices) {
-		t.Errorf("code volume = %+v, want %+v", got, want)
+	for _, m := range metas {
+		if m.CodeVolume != nil {
+			t.Errorf("%s records a code volume: %+v", m.Hostname, m.CodeVolume)
+		}
 	}
-	if got := meta.StageHostnames(); !slices.Equal(got, []string{"medusastage", "apistage"}) {
-		t.Errorf("stages = %v, want medusastage and apistage", got)
+	for dev, stage := range map[string]string{"medusadev": "medusastage", "apidev": "apistage"} {
+		meta, _ := workflow.ReadServiceMeta(f.stateDir, dev)
+		if meta == nil || !slices.Equal(meta.StageHostnames(), []string{stage}) {
+			t.Errorf("%s = %+v, want a pair of its own with the stage %s", dev, meta, stage)
+		}
 	}
-	if own, _ := workflow.ReadServiceMeta(f.stateDir, "apidev"); own != nil {
-		t.Errorf("apidev recorded as a pair of its own: %+v", own)
+	if n := len(f.ssh.commandsFor("@@zcp code-volume")); n != 0 {
+		t.Errorf("the volume was filled %d times, want never", n)
 	}
 	pushes := f.ssh.pushes()
-	for _, wantPush := range []string{"medusadev → svc-medusadev (medusadev)", "medusadev → svc-apidev (dev-api)"} {
+	for _, wantPush := range []string{"medusadev → svc-medusadev (medusadev)", "apidev → svc-apidev (dev-api)"} {
 		if !slices.Contains(pushes, wantPush) {
 			t.Errorf("deploys = %v, want %q", pushes, wantPush)
 		}
 	}
-	if n := len(f.ssh.commandsFor("@@zcp code-volume")); n != 1 {
-		t.Errorf("the volume was filled %d times, want once", n)
-	}
-	if api := body.service(t, "apidev"); api.Role != standupRoleDev || api.Pair != "medusadev" {
-		t.Errorf("apidev = %+v, want a dev service of medusadev's pair", api)
-	}
-
-	if err := os.MkdirAll(filepath.Join(f.root, "medusadev", "ws"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(f.root, "medusadev", "ws", "zerops.yaml"), []byte(f.ssh.zeropsYAML["medusadev"]), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	f.deployed("medusadev", "nextstoredev", "apidev")
-	result, body = f.run(t)
-	if result.IsError || body.StandUp != standupReady {
-		t.Fatalf("second call: %s", getTextContent(t, result))
-	}
-	pushes = f.ssh.pushes()
-	for _, wantPush := range []string{"medusadev → svc-medusastage (medusaprod)", "medusadev → svc-apistage (api)"} {
-		if !slices.Contains(pushes, wantPush) {
-			t.Errorf("second call: deploys = %v, want %q", pushes, wantPush)
-		}
+	if s := report.service(t, "vol"); s.Role != standupRoleManaged {
+		t.Errorf("vol = %+v, want a managed service the stand-up leaves as it is", s)
 	}
 }
 

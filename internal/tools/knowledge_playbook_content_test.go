@@ -248,11 +248,10 @@ func TestPlaybookMonorepo_ContentPins_PartRules(t *testing.T) {
 		{"workspace markers", "`pnpm-workspace.yaml`, `workspaces` in `package.json`, `nx.json`, `turbo.json`"},
 		{"propose parts once", "Propose the parts to the person once"},
 		{"variant A is the default", "**one dev service holds the whole repo** (default)"},
-		{"variant B on a local storage volume", "**one dev service per part on one shared Local Storage volume**"},
-		{"exact deploy of the dev half of a variant-B pair", `zerops_deploy targetService="webdev" setup="dev" workingDir="/var/www"`},
-		{"exact deploy of a further dev service from the volume", `zerops_deploy sourceService="webdev" targetService="apidev" setup="dev-api"`},
-		{"never copy onto the volume by hand", "Never copy files onto the volume by hand"},
-		{"mountPath is a subfolder", "`mountPath` is a subfolder of `/var/www`"},
+		{"parts that cannot share a container each get a dev pool", "**one dev pool per part**"},
+		{"a part's dev pool is set up from the services theme", `zerops_knowledge uri="zerops://themes/services"`},
+		{"no shared code volume is set up any more", "zcp no longer sets up a shared code volume"},
+		{"an existing shared code volume moves onto pools", `zerops_workflow workflow="pool-migrate" service="<dev>"`},
 		{"more people means more Mates", "More people on the repo means more Mates, never more dev services"},
 		{"pnpm via prepareCommands", "install it in `build.prepareCommands`"},
 		{"extends replaces lists", "`extends` replaces lists whole"},
@@ -277,11 +276,17 @@ func TestPlaybookMonorepo_ContentPins_PartRules(t *testing.T) {
 		{"heavy build scaling", "`zsc scale cpu max 10m`"},
 		{"a build killed out of memory scales its RAM for the build", "`zsc scale ram max 10m`"},
 		{"the Node run image's own pnpm is used as it stands", "never `npm i -g pnpm` in `run.prepareCommands`"},
-		{"a variant-B plan names its code volume, mount folder and further dev services", `"codeVolume": {"hostname": "code", "mountPath": "/var/www/ws", "devServices": [{"hostname": "apidev", "setupName": "dev-api"}]}`},
 		{"a dev server with very many unbundled modules is opened in its bundled or preview mode", "the repo's bundled or preview mode"},
 	} {
 		if !strings.Contains(body, tt.needle) {
 			t.Errorf("%s: monorepo playbook missing %q", tt.name, tt.needle)
+		}
+	}
+	// zcp sets up no new code volume (docs/spec-mate.md §2.8a.4a): the
+	// playbook never plans one or tells the agent to deploy onto one.
+	for _, gone := range []string{`"codeVolume"`, "one dev service per part on one shared Local Storage volume", `workingDir="/var/www"`} {
+		if strings.Contains(body, gone) {
+			t.Errorf("monorepo playbook still sets up a shared code volume: %q", gone)
 		}
 	}
 }

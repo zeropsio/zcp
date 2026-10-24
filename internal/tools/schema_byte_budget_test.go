@@ -129,7 +129,11 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// retire of the old dev service: the action list names it, force
 		// and confirmDestructive name what they mean for it; no new field —
 		// the phases, refusals and the bundle live in the flow's retire atom.
-		"zerops_workflow":    20706,
+		// Lowered -386 (20706→20320): the plan runtime publishes no
+		// `codeVolume` any more — zcp sets up no new code volume
+		// (docs/spec-mate.md §2.8a.4a), and a plan still carrying one is
+		// refused by the schema, naming the field.
+		"zerops_workflow":    20320,
 		"zerops_record_fact": 3299,
 		"zerops_dev_server":  3220,
 		// Raised +28 (2945→2973) for the OS-axis migration: the runtime/services
