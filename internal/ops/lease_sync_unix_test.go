@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -323,5 +324,57 @@ func TestLeaseSyncScript_RealGit_GroupOfOne_PushesOnly(t *testing.T) {
 	v := sc.syncFromHQ(t)
 	if len(v.Members) != 0 || v.Members == nil || sc.originHas(t) != c1 {
 		t.Errorf("sync = %+v (origin at %s), want no member and origin at %s", v, sc.originHas(t), c1)
+	}
+}
+
+// memberAnswers records what each member's sync step answered.
+type memberAnswers struct {
+	SSHDeployer
+	mu  sync.Mutex
+	got map[string]string
+}
+
+func (m *memberAnswers) ExecSSH(ctx context.Context, host, command string) ([]byte, error) {
+	out, err := m.SSHDeployer.ExecSSH(ctx, host, command)
+	if strings.Contains(command, "merge --ff-only") {
+		m.mu.Lock()
+		m.got[host] = string(out)
+		m.mu.Unlock()
+	}
+	return out, err
+}
+
+func (m *memberAnswers) answer(host string) leaseSyncAnswer {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return parseLeaseSyncAnswer(m.got[host])
+}
+
+// TestLeaseSyncScript_RealGit_DeclarationChange_Marked: a member's step says
+// when the fast-forward changed .zcp/dev-servers.json — and only then — so
+// zcp has its supervisor take the new one.
+func TestLeaseSyncScript_RealGit_DeclarationChange_Marked(t *testing.T) {
+	t.Parallel()
+	sc := newSyncClones(t)
+	answers := &memberAnswers{SSHDeployer: sc.deps.SSH, got: map[string]string{}}
+	sc.deps.SSH = answers
+	if err := os.MkdirAll(filepath.Join(sc.dirs["hqpool-3"], ".zcp"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sc.commit(t, "hqpool-3", ".zcp/dev-servers.json", `{"version":1,"servers":[]}`+"\n")
+
+	sc.syncFromHQ(t)
+	for _, alias := range []string{"webpool-7", "apipool-2"} {
+		if a := answers.answer(alias); !hasMark(a, "to") || !hasMark(a, "declaration") {
+			t.Errorf("%s answered %v, want fast-forwarded with the declaration changed", alias, a.marks)
+		}
+	}
+
+	sc.commit(t, "hqpool-3", "README.md", "readme\n")
+	sc.syncFromHQ(t)
+	for _, alias := range []string{"webpool-7", "apipool-2"} {
+		if a := answers.answer(alias); !hasMark(a, "to") || hasMark(a, "declaration") {
+			t.Errorf("%s answered %v, want fast-forwarded with the declaration left alone", alias, a.marks)
+		}
 	}
 }

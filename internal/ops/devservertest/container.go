@@ -60,8 +60,11 @@ type Container struct {
 	// after EnvRestartReads more answers.
 	Env             map[string]string
 	EnvRestartReads int
-	envRestarts     []string
-	envReads        int
+	// EnvRefusal, when set, is the error the supervisor refuses `ctl env`
+	// with (a state directory it cannot write, say); the overlay stays.
+	EnvRefusal  string
+	envRestarts []string
+	envReads    int
 	// Declaration is .zcp/dev-servers.json; "" when absent.
 	Declaration string
 	// YAMLFile and YAML are the repo's zerops.yaml; "" when absent.
@@ -219,6 +222,23 @@ func (c *Container) Status(name string) devsup.Status {
 		return s.Status
 	}
 	return ""
+}
+
+// Overlay is a copy of the overlay `ctl env` last set.
+func (c *Container) Overlay() map[string]string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return maps.Clone(c.Env)
+}
+
+// Restarts is how often the supervisor restarted name, and why it last did.
+func (c *Container) Restarts(name string) (int, string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if s, ok := c.Servers[name]; ok {
+		return s.Restarts, s.LastRestartReason
+	}
+	return 0, ""
 }
 
 // Redeploy replaces the container as a deploy does.
@@ -491,6 +511,9 @@ func (c *Container) ctl(command string) string {
 	case "env":
 		if !slices.Contains(c.Capabilities, devsup.CapabilityEnv) {
 			return fail(1, "unknown verb env")
+		}
+		if c.EnvRefusal != "" {
+			return fail(1, c.EnvRefusal)
 		}
 		env, err := envArgs(args[1:])
 		if err != nil {

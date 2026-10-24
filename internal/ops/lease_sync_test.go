@@ -7,13 +7,17 @@ package ops
 import (
 	"context"
 	"errors"
+	"maps"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/devsup"
+	"github.com/zeropsio/zcp/internal/ops/devservertest"
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
@@ -671,5 +675,105 @@ func TestLeaseSync_ReportsEachStepsMilliseconds(t *testing.T) {
 	}
 	if v.Millis < v.CheckMillis+v.Push.Millis+m.Millis {
 		t.Errorf("total %d ms is less than its steps (%d + %d + %d)", v.Millis, v.CheckMillis, v.Push.Millis, m.Millis)
+	}
+}
+
+// syncDevsupRemote is a syncRemote whose leases in containers run zcp-devsup:
+// their supervisor's commands go to the container, every git command to the
+// script.
+type syncDevsupRemote struct {
+	*syncRemote
+	containers map[string]*devservertest.Container
+}
+
+func (r syncDevsupRemote) ExecSSH(ctx context.Context, host, command string) ([]byte, error) {
+	if c, ok := r.containers[host]; ok && strings.Contains(command, "@@zcp-devsup") {
+		return c.ExecSSH(ctx, host, command)
+	}
+	return r.syncRemote.ExecSSH(ctx, host, command)
+}
+
+func (r syncDevsupRemote) ExecSSHBackground(ctx context.Context, host, command string, _ time.Duration) ([]byte, error) {
+	return r.ExecSSH(ctx, host, command)
+}
+
+// TestLeaseSync_FastForwardChangedDeclaration_SendsOverlayThenReloads: a
+// fast-forward is zcp's own change to a lease's checkout, as an acquire's
+// checkout is, so when it changes .zcp/dev-servers.json zcp has the lease's
+// supervisor take it in the same call — the sibling overlay first, when it
+// changed, then a reload, which starts an added server — and says so. The
+// servers that started or restarted on the new code are not named as keeping
+// the old one; a declaration the fast-forward left alone reloads nothing, and
+// one that cannot be read is named, never reloaded.
+func TestLeaseSync_FastForwardChangedDeclaration_SendsOverlayThenReloads(t *testing.T) {
+	t.Parallel()
+	const servers = `"servers":[{"name":"web","port":3000,"command":"pnpm dev"},{"name":"admin","port":4200,"command":"pnpm admin"}]}`
+	tests := []struct {
+		name          string
+		decl          string
+		changed       bool // the fast-forward changed the declaration
+		wantEnv       map[string]string
+		wantReloaded  bool
+		wantUnwatched []string
+		wantNote      []string
+	}{
+		{name: "siblingEnv and a server added", decl: `{"version":1,"siblingEnv":{"HQ_HOST":"hqpool"},` + servers, changed: true,
+			wantEnv: map[string]string{"HQ_HOST": nodeHostnameOf(groupHQPool, 3)}, wantReloaded: true, wantNote: []string{".zcp/dev-servers.json", "HQ_HOST", "admin"}},
+		{name: "a server added", decl: `{"version":1,` + servers, changed: true,
+			wantReloaded: true, wantUnwatched: []string{"web"}, wantNote: []string{".zcp/dev-servers.json", "admin"}},
+		{name: "the declaration left alone", decl: `{"version":1,` + servers, wantUnwatched: []string{"web"}},
+		{name: "a declaration that cannot be read", decl: `{"version":1,"servers":[{"name":"web","port":3000}]}`, changed: true,
+			wantUnwatched: []string{"web"}, wantNote: []string{".zcp/dev-servers.json", "cannot"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			gf, remote := newSyncFixture(t, syncBranch)
+			c := devservertest.NewSupervised(tt.decl)
+			delete(c.Servers, "admin") // the supervisor still runs the declaration from before the fast-forward
+			if c.Servers["web"] == nil {
+				c.Servers["web"] = &devsup.ServerState{Source: devsup.SourceDeclared, Desired: devsup.DesiredRunning, Status: devsup.StatusRunning, Pid: 801}
+			}
+			gf.deps.SSH = syncDevsupRemote{syncRemote: remote, containers: map[string]*devservertest.Container{"webpool-7": c}}
+			if tt.changed {
+				remote.member["webpool-7"] = syncAnswer{out: syncMemberFastForwarded(syncFrom, syncTo) + "@@zcp-sync declaration\n"}
+			}
+
+			v, err := LeaseSync(context.Background(), gf.deps, "hqpool-3")
+			if err != nil {
+				t.Fatalf("LeaseSync: %v", err)
+			}
+
+			m := syncMemberOf(t, v, "webpool-7")
+			if m.Outcome != LeaseSyncFastForwarded || m.Reloaded != tt.wantReloaded {
+				t.Errorf("member = %+v, want fast-forwarded, reloaded=%v", m, tt.wantReloaded)
+			}
+			cmds := c.Sent()
+			env, reload := firstSent(cmds, "zcp-devsup ctl 'env'"), firstSent(cmds, "zcp-devsup ctl 'reload'")
+			switch {
+			case tt.wantReloaded && reload < 0:
+				t.Errorf("no reload was sent: %v", cmds)
+			case !tt.wantReloaded && reload >= 0:
+				t.Errorf("a reload was sent: %v", cmds)
+			case tt.wantEnv != nil && (env < 0 || env > reload):
+				t.Errorf("ctl env (%d) must come before the reload (%d): %v", env, reload, cmds)
+			case tt.wantEnv == nil && env >= 0:
+				t.Errorf("ctl env was sent with no overlay change: %v", cmds)
+			}
+			if tt.wantEnv != nil && !maps.Equal(c.Overlay(), tt.wantEnv) {
+				t.Errorf("overlay = %v, want %v", c.Overlay(), tt.wantEnv)
+			}
+			if tt.wantReloaded && c.Status("admin") != devsup.StatusRunning {
+				t.Errorf("admin = %q, want started by the reload", c.Status("admin"))
+			}
+			if !slices.Equal(m.UnwatchedServers, tt.wantUnwatched) {
+				t.Errorf("unwatched = %v, want %v", m.UnwatchedServers, tt.wantUnwatched)
+			}
+			for _, want := range tt.wantNote {
+				if !strings.Contains(m.Note, want) {
+					t.Errorf("note %q lacks %q", m.Note, want)
+				}
+			}
+		})
 	}
 }

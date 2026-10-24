@@ -621,3 +621,61 @@ func TestDeclareDevServer_KeepsTheSiblingEnv(t *testing.T) {
 		t.Error("the rewritten declaration shares its siblingEnv map with the one read")
 	}
 }
+
+// TestDevServerStatus_StaleWiring_Named: a status of a lease whose servers run
+// with an overlay naming a container no lease of its group holds — one whose
+// lease zcp released while this lease could not be reached, or another
+// branch's — says wiring: stale, names the variable and the call that sends the
+// overlay again, and sends nothing. Wiring naming the group's own leases is
+// not stale, nor an overlay no server runs under.
+func TestDevServerStatus_StaleWiring_Named(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		env       map[string]string
+		stopped   bool
+		wantStale bool
+	}{
+		{name: "a container no lease of the group holds", env: map[string]string{"HQ_HOST": "node-id-9.runtime.hqpool.zerops", "SELF_HOST": "node-id-3.runtime.webpool.zerops"}, wantStale: true},
+		{name: "another branch's lease", env: map[string]string{"API_HOST": "node-id-2.runtime.apipool.zerops"}, wantStale: true},
+		{name: "the group's own leases", env: wantWebOverlay},
+		{name: "no server runs under it", env: map[string]string{"HQ_HOST": "node-id-9.runtime.hqpool.zerops"}, stopped: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			c := devservertest.NewSupervised(siblingDeclaration)
+			c.Env = tt.env
+			if tt.stopped {
+				c.Servers["web"].Status, c.Servers["web"].Desired = devsup.StatusStopped, devsup.DesiredStopped
+			}
+
+			result, err := ExecuteDevServer(context.Background(), c, poolClient(0), "p1",
+				DevServerParams{Action: "status", Hostname: "webpool-3", Name: "web", StateDir: wiringState(t)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := result.Wiring == LeaseWiringStale; got != tt.wantStale {
+				t.Errorf("wiring = %q, want stale=%v (message %q)", result.Wiring, tt.wantStale, result.Message)
+			}
+			if tt.wantStale {
+				for name := range tt.env {
+					if tt.env[name] != wantWebOverlay[name] && !strings.Contains(result.Message, name) {
+						t.Errorf("message %q does not name %s", result.Message, name)
+					}
+				}
+				if !strings.Contains(result.Message, `zerops_dev_server action=restart hostname="webpool-3" name="web"`) {
+					t.Errorf("message %q does not name the call that sends the overlay again", result.Message)
+				}
+			}
+			for _, banned := range []string{"zcp-devsup ctl 'env'", "zcp-devsup ctl 'reload'", "zcp-devsup ctl 'restart'"} {
+				if n := sentWith(c, banned); n != 0 {
+					t.Errorf("status sent %q: %v", banned, c.Sent())
+				}
+			}
+			if !maps.Equal(c.Env, tt.env) {
+				t.Errorf("the overlay = %v after a status, want %v untouched", c.Env, tt.env)
+			}
+		})
+	}
+}
