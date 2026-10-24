@@ -52,8 +52,10 @@ func leaseInputSchema() *jsonschema.Schema {
 // lease gets its ssh alias and mount (ops.NewLeaseHost); without one the host
 // side does nothing. The HQ a repository is recognised on is read from the
 // enrollment at each acquire, as git-push-setup reads it for a dev service.
+// Each pool keeps ops.LeaseWarmTarget warm containers (DP-26).
 func leaseDeps(client platform.Client, projectID, stateDir string, swarm ops.SwarmFactory, mounter ops.Mounter, ssh ops.SSHDeployer) ops.LeaseDeps {
-	deps := ops.LeaseDeps{Client: client, ProjectID: projectID, StateDir: stateDir, Swarm: swarm, SSH: ssh, HQAddress: hqAddress}
+	deps := ops.LeaseDeps{Client: client, ProjectID: projectID, StateDir: stateDir, Swarm: swarm, SSH: ssh, HQAddress: hqAddress,
+		Warm: &ops.LeaseWarm{Target: ops.LeaseWarmTarget}}
 	if mounter != nil {
 		deps.Host = ops.NewLeaseHost(mounter)
 	}
@@ -70,7 +72,9 @@ type leaseToolResult struct {
 	Rewired []ops.LeaseRewire `json:"rewired,omitempty"`
 	// UnreadPools are the pools a status of every pool could not read, each
 	// with why; their leases are listed from zcp's records, unverified.
-	UnreadPools []ops.LeasePoolUnread   `json:"unreadPools,omitempty"`
+	UnreadPools []ops.LeasePoolUnread `json:"unreadPools,omitempty"`
+	// Warm is each pool's warm containers on a status (DP-26).
+	Warm        []ops.LeasePoolWarm     `json:"warm,omitempty"`
 	NextActions string                  `json:"nextActions,omitempty"`
 	Envelope    *workflow.StateEnvelope `json:"envelope,omitempty"`
 }
@@ -116,7 +120,7 @@ func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "zerops_lease",
 		Description: "Lease a Swarm pool (swarm@1) container for one branch. acquire takes a clean running container named <pool>-<number> with the branch checked out in /var/www; " +
-			"status lists your leases; release resets and returns it, refusing on unpushed commits or uncommitted files unless force=true; " +
+			"status lists your leases; release resets or removes it, refusing on unpushed commits or uncommitted files unless force=true; " +
 			"sync pushes a lease's commits and fast-forwards the branch's other leases; rollout replaces free outdated containers. In-project only.",
 		InputSchema: leaseInputSchema(),
 		Annotations: &mcp.ToolAnnotations{
@@ -163,7 +167,7 @@ func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir 
 				views = []ops.LeaseView{}
 			}
 			return jsonResult(leaseToolResult{
-				Action: input.Action, Leases: views, UnreadPools: status.Unread, NextActions: leaseStatusNext(views), Envelope: envelope(ctx, views...),
+				Action: input.Action, Leases: views, UnreadPools: status.Unread, Warm: status.Warm, NextActions: leaseStatusNext(views), Envelope: envelope(ctx, views...),
 			}), nil, nil
 		case leaseActionRelease:
 			force := false

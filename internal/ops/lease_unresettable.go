@@ -32,7 +32,7 @@ func deleteUnresettable(ctx context.Context, d LeaseDeps, rp *resolvedPool, rec 
 		return v, dropErr
 	}
 	var se *platform.SwarmError
-	if errors.As(err, &se) && (se.Reason == "unknown-lease" || se.Reason == "container-not-found") {
+	if errors.As(err, &se) && (se.Reason == platform.SwarmReasonUnknownLease || se.Reason == platform.SwarmReasonContainerNotFound) {
 		return dropLeaseRecord(d.StateDir, rec, LeaseStateLost, "the orchestrator no longer held this container for this lease, so there was nothing to release; the record is dropped")
 	}
 	failed := leaseOrchestratorError(ctx, d, rp, "delete "+alias, err)

@@ -36,6 +36,14 @@ func IsPoolType(serviceType string) bool {
 	return false
 }
 
+// IsPoolVMType reports whether serviceType names a Swarm pool of virtual
+// machines (`swarm-vm@1`), whose containers take minutes to create where a
+// container pool's take seconds. Case-insensitive; a known OS prefix is
+// ignored.
+func IsPoolVMType(serviceType string) bool {
+	return typeBase(serviceType) == basePoolVM
+}
+
 // IsSandboxType reports whether serviceType names a Zerops Box
 // (`ubuntu/zbox@1`, `zbox@1`): a service that hosts sandboxes, not an app
 // runtime. Case-insensitive; a known OS prefix is ignored. Spec:

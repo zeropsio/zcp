@@ -30,6 +30,8 @@ type SwarmAPI interface {
 	Renew(ctx context.Context, id, lease string) (platform.SwarmContainer, error)
 	Delete(ctx context.Context, id, lease string) error
 	Rollout(ctx context.Context) (platform.SwarmRollout, error)
+	Create(ctx context.Context, count int) ([]platform.SwarmContainer, error)
+	Container(ctx context.Context, id string) (platform.SwarmContainer, error)
 }
 
 // SwarmFactory builds an orchestrator client.
@@ -74,6 +76,13 @@ type LeaseDeps struct {
 	// Now is zcp's clock (nil: time.Now): when a lease's checkout was read,
 	// and how long ago its last activity was (DP-25).
 	Now func() time.Time
+	// Warm keeps each pool's warm container (DP-26, lease_warm.go): a release
+	// keeps its container or removes it, an acquire or a release tops the pool
+	// up. nil keeps none: every release resets, nothing is created.
+	Warm *LeaseWarm
+	// PreparingRetry is how often an acquire refused containers-preparing is
+	// retried; zero means leasePreparingRetry.
+	PreparingRetry time.Duration
 }
 
 // now reads zcp's clock.
@@ -195,6 +204,11 @@ type LeaseView struct {
 	// containerDeleted: a release deleted the container because it could not
 	// be reset (DP-15).
 	containerDeleted bool
+	// containerRemoved: a release removed the container with its lease, the
+	// pool having its warm containers or the container being outdated; keptWarm:
+	// a release reset it and it stays in the pool as a warm one (DP-26).
+	containerRemoved bool
+	keptWarm         bool
 }
 
 // leaseTokenKey is the pool service's own env var that its orchestrator takes
@@ -354,7 +368,7 @@ func LeaseStatus(ctx context.Context, d LeaseDeps, pool string) (LeaseStatusView
 		readLeaseActivities(ctx, d, records, views)
 		markIdleLeases(d, records, views)
 		markStaleWiring(d.StateDir, records, views)
-		return LeaseStatusView{Leases: views}, nil
+		return LeaseStatusView{Leases: views, Warm: d.leaseStatusWarm(ctx, []string{pool})}, nil
 	}
 	names := map[string]bool{}
 	for name := range byPool {
@@ -370,6 +384,7 @@ func LeaseStatus(ctx context.Context, d LeaseDeps, pool string) (LeaseStatusView
 		}
 	}
 	var status LeaseStatusView
+	var read []string
 	for _, name := range slices.Sorted(maps.Keys(names)) {
 		got, err := listPoolLeases(ctx, d, name, byPool[name], false)
 		if err != nil {
@@ -379,10 +394,12 @@ func LeaseStatus(ctx context.Context, d LeaseDeps, pool string) (LeaseStatusView
 			continue
 		}
 		status.Leases = append(status.Leases, got...)
+		read = append(read, name)
 	}
 	readLeaseActivities(ctx, d, records, status.Leases)
 	markIdleLeases(d, records, status.Leases)
 	markStaleWiring(d.StateDir, records, status.Leases)
+	status.Warm = d.leaseStatusWarm(ctx, read)
 	return status, nil
 }
 
@@ -541,6 +558,8 @@ func swarmSuggestion(se *platform.SwarmError) string {
 		return "The pool's API_TOKEN was refused; re-read it with zerops_env get on the pool"
 	case se.Reason == platform.SwarmReasonAllReserved:
 		return "Every container that can serve the call is leased and the orchestrator queues nothing: release a lease you no longer need (zerops_lease action=status lists them)"
+	case se.Reason == platform.SwarmReasonContainersPreparing:
+		return leasePreparingSuggestion
 	case se.Retryable:
 		return "The orchestrator marks this retryable: the same call may succeed in a moment"
 	}
@@ -685,8 +704,10 @@ func LeaseRelease(ctx context.Context, d LeaseDeps, alias string, force bool) (L
 // record. Unless force is set it first reads the container over ssh and
 // refuses while it holds commits on no remote branch or uncommitted/untracked
 // files (DP-4); the refusal leaves the mount, the record and the lease as they
-// were. Every release resets the container (processes end). A container ssh
-// cannot reach is released as lost, unchecked. If the orchestrator fails the
+// were. Every release resets the container (processes end) — or, under the
+// warm policy, removes it with its lease when the pool already has its warm
+// container or it runs an outdated version (DP-26). A container ssh cannot
+// reach is released as lost, unchecked. If the orchestrator fails the
 // reservation is kept and so is the record. A lease the orchestrator no longer
 // knows (it ended, or the container is gone) has nothing left to release: the
 // record is dropped and the view says so. Before the orchestrator is asked,
@@ -773,9 +794,7 @@ func joinNotes(notes ...string) string {
 // why (DP-20), whichever read tells — the search, or the read by id once the
 // orchestrator could not be reached or asked.
 func releaseLease(ctx context.Context, d LeaseDeps, rec leaseRecord, alias string, reset bool) (LeaseView, error) {
-	gone := func(why string) (LeaseView, error) {
-		return dropLeaseRecord(d.StateDir, rec, LeaseStateLost, why+", so there was nothing to release; the record is dropped")
-	}
+	gone := func(why string) (LeaseView, error) { return dropGoneRecord(d.StateDir, rec, why) }
 	rp, err := resolvePool(ctx, d, rec.PoolHostname)
 	if err != nil {
 		var pe *platform.PlatformError
@@ -793,20 +812,40 @@ func releaseLease(ctx context.Context, d LeaseDeps, rec leaseRecord, alias strin
 	if state := poolDeletionState(rp.svc.Status); state != "" {
 		return gone(fmt.Sprintf("the pool service %s (status %s)", state, rp.svc.Status))
 	}
+	release := func() (LeaseView, error) { return releaseOnOrchestrator(ctx, d, rp, rec, alias, reset) }
+	if reset && d.Warm != nil {
+		// The pool keeps its warm container: this one is kept, reset, or
+		// removed with its own lease (DP-26).
+		return d.Warm.keepOrRemove(ctx, d, rp, rec, release)
+	}
+	return release()
+}
+
+// dropGoneRecord drops the record of a lease its pool holds nothing of any
+// more, saying why (DP-20).
+func dropGoneRecord(stateDir string, rec leaseRecord, why string) (LeaseView, error) {
+	return dropLeaseRecord(stateDir, rec, LeaseStateLost, why+", so there was nothing to release; the record is dropped")
+}
+
+// releaseOnOrchestrator releases the container with the orchestrator — with
+// a reset, or deleting it when it cannot be reset (DP-15) — and drops the
+// record; a lease the orchestrator no longer knows, or a pool deleted since,
+// is dropped as lost.
+func releaseOnOrchestrator(ctx context.Context, d LeaseDeps, rp *resolvedPool, rec leaseRecord, alias string, reset bool) (LeaseView, error) {
 	if _, err := rp.api.Release(ctx, rec.ContainerID, rec.Lease, reset); err != nil {
 		var se *platform.SwarmError
 		if reset && errors.As(err, &se) && se.Reason == platform.SwarmReasonNoPrimarySnapshot {
 			// Never released unreset: the next holder would get its files (DP-15).
 			return deleteUnresettable(ctx, d, rp, rec, alias)
 		}
-		if errors.As(err, &se) && (se.Reason == "unknown-lease" || se.Reason == "container-not-found") {
+		if errors.As(err, &se) && (se.Reason == platform.SwarmReasonUnknownLease || se.Reason == platform.SwarmReasonContainerNotFound) {
 			return dropLeaseRecord(d.StateDir, rec, LeaseStateLost, "the orchestrator no longer held this container for this lease, so there was nothing to release; the record is dropped")
 		}
 		// An orchestrator that could not be reached may be one of a pool
 		// deleted since the search was read.
 		if !errors.As(err, &se) {
 			if why := leasePoolGoneWhy(ctx, d, rec); why != "" {
-				return gone(why)
+				return dropGoneRecord(d.StateDir, rec, why)
 			}
 		}
 		return LeaseView{}, leaseOrchestratorError(ctx, d, rp, "release "+alias, err)
