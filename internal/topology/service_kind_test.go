@@ -87,3 +87,27 @@ func TestIsRuntimeType_PoolAndSandbox_False(t *testing.T) {
 		})
 	}
 }
+
+func TestIsPoolVMType_TypeStrings(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		in   string
+		want bool
+	}{
+		{"swarm-vm@1", true},
+		{"Swarm-VM@1", true},
+		{"alpine/swarm-vm@1", true},
+		{"swarm@1", false},
+		{"ubuntu/swarm@1", false},
+		{"nodejs@22", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			t.Parallel()
+			if got := IsPoolVMType(tt.in); got != tt.want {
+				t.Errorf("IsPoolVMType(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
