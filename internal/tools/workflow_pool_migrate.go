@@ -69,7 +69,6 @@ const (
 	poolMigrateRefuseSimpleMode      = "simple-mode"
 	poolMigrateRefuseLocalMode       = "local-mode"
 	poolMigrateRefuseUnsupportedMode = "unsupported-mode"
-	poolMigrateRefuseVariantB        = "variant-b"
 	poolMigrateRefusePoolNotAPart    = "pool-not-a-part"
 	poolMigrateRefuseNoOrigin        = "no-origin"
 	poolMigrateRefuseDevNotLive      = "dev-not-live"
@@ -122,9 +121,13 @@ const (
 	poolMigrateWorkFromUpstream = "upstream"
 )
 
-// poolMigrateCrewRoot is where a crew lane's linked worktree lives on a dev
-// service: `/var/www/.crew/<handle>`.
-const poolMigrateCrewRoot = topology.CodeMountRoot + "/.crew/"
+// poolMigrateCrewDir is the folder a crew lane's linked worktree lives in,
+// below /var/www or below the repository's root: `/var/www/.crew/<handle>`.
+const poolMigrateCrewDir = "/.crew/"
+
+// poolMigrateDevSuffix is the suffix a dev hostname drops to name its stem:
+// `apidev` → `api`.
+const poolMigrateDevSuffix = "dev"
 
 type poolMigrateResponse struct {
 	Workflow string         `json:"workflow"`
@@ -220,8 +223,12 @@ type poolMigrateCall struct {
 	corpus []workflow.KnowledgeAtom
 	meta   *workflow.ServiceMeta
 	dev    platform.ServiceStack
-	pool   platform.ServiceStack
-	stages []platform.ServiceStack
+	// partDev is the dev service the part runs on — the dev, or for a
+	// variant-B pair the dev service of the part — whose env and scale the
+	// part's pool takes.
+	partDev platform.ServiceStack
+	pool    platform.ServiceStack
+	stages  []platform.ServiceStack
 	// services is the project's every service by the direct list.
 	services []platform.ServiceStack
 	// partPools are every part's pool when the dev serves several, nil for
@@ -456,14 +463,17 @@ func readPoolMigrateDev(ctx context.Context, d poolMigrateDeps, input WorkflowIn
 		return refused(refusals...)
 	}
 
-	census, err := ops.ReadPoolMigrateCensus(ctx, sshDeployer, dev, topology.CodeMountRoot)
+	// A variant-B pair's repository is the code volume's checkout, read
+	// through the dev's mount of it.
+	root := poolMigrateCodeRoot(meta)
+	census, err := ops.ReadPoolMigrateCensus(ctx, sshDeployer, dev, root)
 	if err != nil {
 		return refused(poolMigrateRefusal{
 			Reason:  poolMigrateRefuseDevUnreadable,
-			Message: withSSHStderr("could not read "+dev+"'s repository over SSH", err) + ". A dev service the flow cannot read does not move: what it holds would be unknown.",
+			Message: withSSHStderr("could not read "+dev+"'s repository at "+root+" over SSH", err) + ". A dev service the flow cannot read does not move: what it holds would be unknown.",
 		})
 	}
-	if crew := poolMigrateCrewHandles(census); len(crew) > 0 {
+	if crew := poolMigrateCrewHandles(census, root); len(crew) > 0 {
 		return refused(poolMigrateRefusal{
 			Reason:  poolMigrateRefuseCrewWorktrees,
 			Message: fmt.Sprintf("%s holds crew worktrees (%s). Crew lanes stay on a plain dev service until crewmates work on leases of a pool, so it does not move onto one; nothing was changed.", dev, strings.Join(crew, ", ")),
@@ -494,12 +504,20 @@ func (dr *poolMigrateDevRead) partRead(ctx context.Context, d poolMigrateDeps, i
 	}
 	pool := part.pool
 	poolSvc, poolLive := dr.byName[pool]
+	partDev := dr.dev
+	if part.dev != "" && part.dev != dr.dev.Name {
+		if svc, ok := dr.byName[part.dev]; ok {
+			partDev = svc
+		} else {
+			resp.Warnings = append(resp.Warnings, fmt.Sprintf("%s, the dev service the part of %s runs on, is not among the project's services (read directly): the part's pool takes %s's env and scale.", part.dev, part.stage, dr.dev.Name))
+		}
+	}
 	if !poolLive {
-		stanza, warnings, err := renderPoolStanza(ctx, d.client, dr.dev, pool, d.rt.ServiceName)
+		stanza, warnings, err := renderPoolStanza(ctx, d.client, partDev, pool, d.rt.ServiceName)
 		if err != nil {
 			return nil, nil, convertError(fmt.Errorf("pool-migrate: render the pool stanza: %w", err), WithRecoveryStatus())
 		}
-		resp.Warnings = warnings
+		resp.Warnings = append(resp.Warnings, warnings...)
 		r := poolMigrateAt(resp, poolMigrateStepProvision, &poolMigrateNext{
 			Tool: "zerops_import",
 			Args: map[string]string{"content": stanza},
@@ -539,7 +557,7 @@ func (dr *poolMigrateDevRead) partRead(ctx context.Context, d poolMigrateDeps, i
 			stages = append(stages, svc)
 		}
 	}
-	return &poolMigrateCall{resp: resp, corpus: dr.corpus, meta: dr.meta, dev: dr.dev, pool: poolSvc, stages: stages, services: dr.services, partPools: partPools}, nil, nil
+	return &poolMigrateCall{resp: resp, corpus: dr.corpus, meta: dr.meta, dev: dr.dev, partDev: partDev, pool: poolSvc, stages: stages, services: dr.services, partPools: partPools}, nil, nil
 }
 
 // partAnswer is the read side's answer for part i: its provision or wait
@@ -578,7 +596,7 @@ func (dr *poolMigrateDevRead) answer(ctx context.Context, d poolMigrateDeps) (po
 // envInput is what the env step reads for this call.
 func (c *poolMigrateCall) envInput(d poolMigrateDeps, input WorkflowInput) ops.PoolMigrateEnvInput {
 	return ops.PoolMigrateEnvInput{
-		Dev:          c.dev,
+		Dev:          c.partDev,
 		Pool:         c.pool,
 		Stages:       c.stages,
 		InMate:       d.rt.MateEnabled,
@@ -619,7 +637,7 @@ func poolMigrateSettledAnswer(ctx context.Context, d poolMigrateDeps, call *pool
 				"action": envActionRequest, "serviceHostname": call.pool.Name,
 				"key": req.Key, "label": req.Label, "why": req.Why, "sensitive": "true",
 			},
-			Why: fmt.Sprintf("zcp could not read %s on %s, so the person gives the pool its value.", req.Key, call.dev.Name),
+			Why: fmt.Sprintf("zcp could not read %s on %s, so the person gives the pool its value.", req.Key, call.partDev.Name),
 		})
 	}
 	if envAtom := atomBody(call.corpus, poolMigrateEnvAtomID); envAtom != "" {
@@ -650,7 +668,7 @@ func poolMigrateImageAnswer(ctx context.Context, d poolMigrateDeps, call *poolMi
 	}
 	image, err := ops.ReadPoolMigrateImage(ctx, d.ssh, ops.PoolMigrateImageInput{
 		Dev:                   call.dev.Name,
-		Root:                  topology.CodeMountRoot,
+		Root:                  poolMigrateCodeRoot(call.meta),
 		Head:                  head,
 		Pool:                  call.pool,
 		DevSetup:              call.meta.PrimarySetupName,
@@ -749,7 +767,9 @@ func poolMigrateShortCommit(sha string) string {
 }
 
 // poolMigrateMetaRefusals are the refusals the meta alone decides: the mode,
-// a shared code volume, and an origin to move the work through.
+// and an origin to move the work through. A variant-B pair moves like a dev
+// serving several parts: its repository is the code volume's checkout, and
+// the retire deletes every dev service, then the volume (PM-13).
 func poolMigrateMetaRefusals(meta *workflow.ServiceMeta, rt runtime.Info) []poolMigrateRefusal {
 	dev := meta.Hostname
 	// A pair already keyed by its dev pool, named by its stage: its dev half
@@ -781,12 +801,6 @@ func poolMigrateMetaRefusals(meta *workflow.ServiceMeta, rt runtime.Info) []pool
 		out = append(out, poolMigrateRefusal{
 			Reason:  poolMigrateRefuseUnsupportedMode,
 			Message: fmt.Sprintf("%s is tracked in %s mode; only a dev service moves onto a pool.", dev, mode),
-		})
-	}
-	if meta.CodeVolume != nil {
-		out = append(out, poolMigrateRefusal{
-			Reason:  poolMigrateRefuseVariantB,
-			Message: fmt.Sprintf("%s shares the code volume %s with other dev services; a dev service on a code volume does not move onto a pool yet.", dev, meta.CodeVolume.Hostname),
 		})
 	}
 	if r := poolMigrateOriginRefusal(meta, rt); r != nil {
@@ -827,10 +841,20 @@ func poolMigrateOriginRefusal(meta *workflow.ServiceMeta, rt runtime.Info) *pool
 	return nil
 }
 
+// poolMigrateCodeRoot is where the dev service's repository lives: /var/www,
+// or for a variant-B pair the code volume's mount every dev service of the
+// pair shares (docs/spec-mate.md §2.8a.4a).
+func poolMigrateCodeRoot(meta *workflow.ServiceMeta) string {
+	if meta != nil && meta.CodeVolume != nil && meta.CodeVolume.MountPath != "" {
+		return meta.CodeVolume.MountPath
+	}
+	return topology.CodeMountRoot
+}
+
 // poolMigrateDefaultPool is the part's pool hostname: the dev hostname without
 // its `dev` suffix, then `pool` (`appdev` → `apppool`, `web` → `webpool`).
 func poolMigrateDefaultPool(dev string) string {
-	stem := strings.TrimSuffix(dev, "dev")
+	stem := strings.TrimSuffix(dev, poolMigrateDevSuffix)
 	if stem == "" {
 		stem = dev
 	}
@@ -838,12 +862,16 @@ func poolMigrateDefaultPool(dev string) string {
 }
 
 // poolMigrateCrewHandles names the crew lanes a dev service holds: every
-// linked worktree registered under /var/www/.crew/, a missing (prunable) one
-// included, by handle.
-func poolMigrateCrewHandles(census *ops.PoolMigrateCensus) []string {
+// linked worktree registered under /var/www/.crew/ — or under .crew/ of the
+// repository's root, a variant-B pair's code volume — a missing (prunable)
+// one included, by handle.
+func poolMigrateCrewHandles(census *ops.PoolMigrateCensus, root string) []string {
 	var handles []string
 	for _, t := range census.Trees {
-		rest, ok := strings.CutPrefix(t.Path, poolMigrateCrewRoot)
+		rest, ok := strings.CutPrefix(t.Path, topology.CodeMountRoot+poolMigrateCrewDir)
+		if !ok {
+			rest, ok = strings.CutPrefix(t.Path, strings.TrimSuffix(root, "/")+poolMigrateCrewDir)
+		}
 		if !ok {
 			continue
 		}

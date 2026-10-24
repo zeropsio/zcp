@@ -90,9 +90,13 @@ type PoolPairMove struct {
 // pool, taking over DP-16's per-pool record of it when that record names
 // DevPool.ServiceID).
 //
+// A variant-B pair's code volume rides the pool-keyed pair as a pair-wide fact
+// until the volume reads gone (SettleMigratedCodeVolume): the retire deletes
+// every dev service first and the volume last.
+//
 // It refuses a pair it cannot move — none keyed by move.Dev, a simple or local
-// mode, a variant-B pair, an unfinished bootstrap, a pair already keyed by a
-// pool — and a pool hostname another pair names, and changes nothing then. A
+// mode, an unfinished bootstrap, a pair already keyed by a pool — and a pool
+// hostname another pair names, and changes nothing then. A
 // move already done is a no-op returning the pool-keyed pair as it is now; a
 // move cut between its write and its removal is finished. The caller holds
 // the pair locks of both hostnames (docs/spec-workflows.md §13).
@@ -212,8 +216,6 @@ func (m *ServiceMeta) movable(pools ...string) error {
 		return fmt.Errorf("%w: %q is already keyed by a pool", errNotMovable, m.Hostname)
 	case m.Mode != topology.PlanModeStandard && m.Mode != topology.PlanModeDev:
 		return fmt.Errorf("%w: %q is in %s mode; only a dev service in standard or dev mode moves", errNotMovable, m.Hostname, m.Mode)
-	case m.CodeVolume != nil:
-		return fmt.Errorf("%w: %q keeps its code on a code volume (variant B), which does not move yet", errNotMovable, m.Hostname)
 	case !m.IsComplete():
 		return fmt.Errorf("%w: %q has not finished its bootstrap", errNotMovable, m.Hostname)
 	}
@@ -312,6 +314,11 @@ func (m *ServiceMeta) clone() *ServiceMeta {
 			dp.MigratedFrom = &from
 		}
 		out.DevPool = &dp
+	}
+	if m.CodeVolume != nil {
+		v := *m.CodeVolume
+		v.DevServices = slices.Clone(m.CodeVolume.DevServices)
+		out.CodeVolume = &v
 	}
 	return &out
 }
@@ -493,11 +500,16 @@ func (m *ServiceMeta) coveredBy(parts []PoolPartMove) error {
 
 // partOnPool is m's part of p.Stage keyed by p.Pool: m on the pool, holding
 // only that stage and that stage's records beside the pool's own; a copy, m
-// untouched. pools are every part's pool, which the marker names.
+// untouched. pools are every part's pool, which the marker names. A
+// variant-B pair's code volume rides the first part's pair alone, so each of
+// its dev services resolves to one pair until it is gone.
 func (m *ServiceMeta) partOnPool(dev string, p PoolPartMove, pools []string) *ServiceMeta {
 	out := m.onPool(p.move(dev))
 	stage, _ := m.StageFor(p.Stage)
 	out.Stages = []topology.StageRef{stage}
+	if len(pools) > 0 && p.Pool != pools[0] {
+		out.CodeVolume = nil
+	}
 	for h := range out.ServesHTTPByHost {
 		if h != p.Stage {
 			delete(out.ServesHTTPByHost, h)
@@ -572,4 +584,36 @@ func mergeParts(partMetas []*ServiceMeta) (*ServiceMeta, error) {
 		}
 	}
 	return out, nil
+}
+
+// SettleMigratedCodeVolume forgets a variant-B pair's code on the pool-keyed
+// pairs moved from dev, inside one .services.lock, as the retire's deletes
+// take it away (docs/spec-workflows.md §13 PM-13): once every dev service of
+// the pair reads gone the pairs name none of them — the volume still
+// recorded, its delete still to come — and with volumeGone, once the volume
+// reads gone too, CodeVolume is cleared. A pool with no pair, or one moved
+// from another dev, is left as it is.
+func SettleMigratedCodeVolume(stateDir, dev string, pools []string, volumeGone bool) error {
+	_, err := rekeyServiceMetas(stateDir, pools, func(read map[string]*ServiceMeta) ([]*ServiceMeta, error) {
+		var keep []*ServiceMeta
+		for _, pool := range pools {
+			m := read[pool]
+			if m == nil || slices.Contains(keep, m) {
+				continue
+			}
+			if m.migratedFrom(dev) && m.CodeVolume != nil {
+				m = m.clone()
+				m.CodeVolume.DevServices = nil
+				if volumeGone {
+					m.CodeVolume = nil
+				}
+			}
+			keep = append(keep, m)
+		}
+		return keep, nil
+	})
+	if err != nil {
+		return fmt.Errorf("settle the code volume moved from %s: %w", dev, err)
+	}
+	return nil
 }

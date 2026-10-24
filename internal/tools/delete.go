@@ -60,11 +60,17 @@ func RegisterDelete(srv *mcp.Server, client platform.Client, projectID string, s
 		// the id the retire recorded and after its bundle: a delete here
 		// would drop its pair's meta mid-move (docs/spec-workflows.md §13
 		// PM-7).
-		if rec, _ := readPoolRetireRecord(stateDir, input.ServiceHostname); rec != nil && poolRetireInFlight(rec.Phase) {
+		// A variant-B pair's further dev services and its code volume go
+		// with it, the volume last.
+		rec, _ := readPoolRetireRecord(stateDir, input.ServiceHostname)
+		if rec == nil || !poolRetireInFlight(rec.Phase) {
+			rec = poolRetireRecordNaming(stateDir, input.ServiceHostname)
+		}
+		if rec != nil && poolRetireInFlight(rec.Phase) {
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidUsage,
-				fmt.Sprintf("%q is being retired by the pool migration (phase %s): its delete runs there, by the id the retire read, after the bundle of its repository", input.ServiceHostname, rec.Phase),
-				fmt.Sprintf(`Call zerops_workflow workflow="pool-migrate" action="retire" service=%q to resume it.`, input.ServiceHostname),
+				fmt.Sprintf("%q is being retired by the pool migration of %s (phase %s): its delete runs there, by the id the retire read, after the bundle of its repository", input.ServiceHostname, rec.Dev, rec.Phase),
+				fmt.Sprintf(`Call zerops_workflow workflow="pool-migrate" action="retire" service=%q to resume it.`, rec.Dev),
 			), WithRecoveryStatus()), nil, nil
 		}
 

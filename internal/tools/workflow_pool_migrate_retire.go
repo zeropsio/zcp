@@ -32,7 +32,9 @@ import (
 // repository on this container, the fingerprint taken with it), rewritten (the
 // pair re-keyed onto the pool), deleting (the fingerprint re-read equal, then
 // the delete by the id read directly), retired. Every later call resumes from
-// the record against the dev's state by id: live, DELETING or gone.
+// the record against the dev's state by id: live, DELETING or gone. A
+// variant-B pair's retire deletes every dev service at deleting and its code
+// volume last, at deleting-volume (workflow_pool_migrate_retire_volume.go).
 
 // poolRetireOperation names the retire's destructive operation
 // (DiagnosedDestruction.Operation, confirmDestructive.operation).
@@ -49,8 +51,11 @@ const (
 	poolRetireBundled   = "bundled"
 	poolRetireRewritten = "rewritten"
 	poolRetireDeleting  = "deleting"
-	poolRetireRetired   = "retired"
-	poolRetireAborted   = "aborted"
+	// poolRetireDeletingVolume is a variant-B retire whose dev services are
+	// gone: its code volume is deleted last (PM-13).
+	poolRetireDeletingVolume = "deleting-volume"
+	poolRetireRetired        = "retired"
+	poolRetireAborted        = "aborted"
 )
 
 // Response statuses of the retire beside the flow's own.
@@ -72,6 +77,8 @@ const (
 	poolRetireRefuseLeaseUnreadable = "lease-unreadable"
 	poolRetireRefuseUnsaved         = "unsaved-work"
 	poolRetireRefusePairBusy        = "pair-busy"
+	poolRetireRefuseVolumeMounted   = "volume-mounted"
+	poolRetireRefuseVolumeNotLive   = "volume-not-live"
 	poolRetireAbortFence            = "fence-failed"
 	poolRetireAbortBundle           = "bundle-failed"
 	poolRetireAbortRekey            = "rekey-failed"
@@ -106,6 +113,11 @@ type poolRetireRecord struct {
 	// the retire splits the pair into one pool-keyed pair per part. Empty for
 	// a single part, whose pool Pool, PoolServiceID and PoolSetup name.
 	Parts []poolRetirePart `json:"parts,omitempty"`
+	// DevServices are a variant-B pair's further dev services, by the ids read
+	// directly: the retire deletes each after the dev. CodeVolume is its code
+	// volume, deleted last (PM-13). Both absent for variant A.
+	DevServices []poolRetireService `json:"devServices,omitempty"`
+	CodeVolume  *poolRetireVolume   `json:"codeVolume,omitempty"`
 	// Origin is the repository the dev's work moved through: the bundle
 	// carries no remote URL.
 	Origin    string `json:"origin,omitempty"`
@@ -189,6 +201,9 @@ type poolRetireView struct {
 	KeptInBundle []string              `json:"keptInBundle,omitempty"`
 	NotKept      []string              `json:"notKept,omitempty"`
 	AbortReason  string                `json:"abortReason,omitempty"`
+	// CodeVolume is a variant-B pair's code volume: what the retire knows of
+	// its delete.
+	CodeVolume *poolRetireVolumeView `json:"codeVolume,omitempty"`
 	// Gaps are what a migrated part does not have yet.
 	Gaps []string `json:"gaps,omitempty"`
 }
@@ -223,6 +238,7 @@ func (rec *poolRetireRecord) view() *poolRetireView {
 		}
 		v.Bundle = bv
 	}
+	v.CodeVolume = rec.CodeVolume.view()
 	if rec.Phase == poolRetireRetired {
 		v.Gaps = poolRetireGaps()
 	}
@@ -232,7 +248,7 @@ func (rec *poolRetireRecord) view() *poolRetireView {
 // poolRetireInFlight reports a phase a retire resumes from.
 func poolRetireInFlight(phase string) bool {
 	switch phase {
-	case poolRetireStarted, poolRetireFenced, poolRetireBundled, poolRetireRewritten, poolRetireDeleting:
+	case poolRetireStarted, poolRetireFenced, poolRetireBundled, poolRetireRewritten, poolRetireDeleting, poolRetireDeletingVolume:
 		return true
 	}
 	return false
@@ -307,13 +323,17 @@ func savePoolRetireRecord(stateDir string, rec *poolRetireRecord) error {
 
 // findPoolRetireRecord is the retire record a call naming service means: the
 // dev's own, or — named by a stage — the record of the dev its pair is keyed
-// by, or was moved from.
+// by, or was moved from; or one in flight deleting service as a variant-B
+// pair's further dev service or code volume, which no pair names any more.
 func findPoolRetireRecord(stateDir, service string) (*poolRetireRecord, error) {
 	if rec, err := readPoolRetireRecord(stateDir, service); rec != nil || err != nil {
 		return rec, err
 	}
 	meta, err := workflow.FindServiceMeta(stateDir, service)
-	if err != nil || meta == nil {
+	if err == nil && meta == nil {
+		return poolRetireRecordNaming(stateDir, service), nil
+	}
+	if err != nil {
 		return nil, nil //nolint:nilerr,nilnil // an unreadable meta names no record; the read side answers for it
 	}
 	if meta.DevIsPool() && meta.DevPool.MigratedFrom != nil {
@@ -338,6 +358,11 @@ type poolRetireDeps struct {
 	// workDir is the scratch directory on the dev service; "" means
 	// ops.PoolMigrateWorkDir.
 	workDir string
+	// goneWait is how long a delete whose process finished waits for the
+	// service to read gone by id (DELETING lingers a few seconds); goneEvery
+	// how often it reads. Zero means poolRetireGoneWait and
+	// poolRetireGoneEvery.
+	goneWait, goneEvery time.Duration
 }
 
 // handlePoolMigrateRetire is zerops_workflow workflow="pool-migrate"
@@ -447,6 +472,8 @@ func poolRetireFresh(ctx context.Context, d poolRetireDeps, input WorkflowInput)
 		Phase:        poolRetireStarted,
 		Forced:       force && len(g.unsaved) > 0,
 		StartedAt:    time.Now().UTC().Format(time.RFC3339),
+		DevServices:  g.devServices,
+		CodeVolume:   g.volume,
 	}
 	if len(g.parts) == 1 {
 		rec.Pool, rec.PoolServiceID, rec.PoolSetup = g.parts[0].pool.Name, g.parts[0].pool.ID, g.parts[0].poolSetup
@@ -458,7 +485,7 @@ func poolRetireFresh(ctx context.Context, d poolRetireDeps, input WorkflowInput)
 	if err := savePoolRetireRecord(d.stateDir, rec); err != nil {
 		return convertError(fmt.Errorf("pool-migrate retire: %w", err), WithRecoveryStatus())
 	}
-	run := &poolRetireRun{d: d, rec: rec, resp: g.resp, force: force}
+	run := &poolRetireRun{d: d, rec: rec, resp: g.resp, force: force, forceNow: force}
 	return run.advance(ctx)
 }
 
@@ -478,6 +505,20 @@ type poolRetireGuards struct {
 	// unread are the env variables zcp could not read for a reference to
 	// the dev (masked from its token).
 	unread []string
+	// devServices and volume are a variant-B pair's further dev services
+	// and code volume, each by the id read directly; nil for variant A.
+	devServices []poolRetireService
+	volume      *poolRetireVolume
+}
+
+// targets are what the retire deletes, in order: the dev, a variant-B pair's
+// further dev services, then its code volume.
+func (g *poolRetireGuards) targets() []poolRetireService {
+	out := append([]poolRetireService{{Hostname: g.call.dev.Name, ServiceID: g.devID}}, g.devServices...)
+	if g.volume != nil {
+		out = append(out, poolRetireService{Hostname: g.volume.Hostname, ServiceID: g.volume.ServiceID})
+	}
+	return out
 }
 
 // poolRetirePartGuard is one part as the retire's guards read it: its stage,
@@ -557,6 +598,10 @@ func poolRetireRead(ctx context.Context, d poolRetireDeps, input WorkflowInput) 
 	g.unsaved = poolRetireBlocking(resp.Census)
 	g.notKept = poolRetireNotKept(g.call.dev.Name, resp.Census, nil)
 	g.readDev(ctx, d)
+	if g.call.meta.CodeVolume != nil {
+		g.readCodeVolume(ctx, d, dr.byName)
+		g.notKept = append(g.notKept, poolRetireCodeVolumeNotKept(g.devServices, g.call.meta.CodeVolume.Hostname)...)
+	}
 	g.readActivity(ctx, d)
 	g.readLaunches(d)
 	g.readReferences(ctx, d)
@@ -607,17 +652,23 @@ func (g *poolRetireGuards) readDev(ctx context.Context, d poolRetireDeps) {
 
 func (g *poolRetireGuards) readActivity(ctx context.Context, d poolRetireDeps) {
 	dev := g.call.dev
-	activity, err := ops.ProjectActivity(ctx, d.client, d.projectID, map[string]string{dev.ID: dev.Name})
+	ids := map[string]string{dev.ID: dev.Name}
+	for _, s := range g.targets()[1:] {
+		ids[s.ServiceID] = s.Hostname
+	}
+	activity, err := ops.ProjectActivity(ctx, d.client, d.projectID, ids)
 	if err != nil {
 		g.refuse(poolRetireRefuseDevBusy, fmt.Sprintf("the project's processes could not be read: %v. Call again.", err))
 		return
 	}
-	var live []string
-	for _, op := range activity[dev.Name] {
-		live = append(live, fmt.Sprintf("%s (%s, %s)", op.ProcessID, op.Action, op.Status))
-	}
-	if len(live) > 0 {
-		g.refuse(poolRetireRefuseDevBusy, fmt.Sprintf("%s runs %s. Wait for it — zerops_process action=%q service=%q — then call again.", dev.Name, strings.Join(live, ", "), poolMigrateProcessWait, dev.Name))
+	for _, s := range append([]poolRetireService{{Hostname: dev.Name}}, g.targets()[1:]...) {
+		var live []string
+		for _, op := range activity[s.Hostname] {
+			live = append(live, fmt.Sprintf("%s (%s, %s)", op.ProcessID, op.Action, op.Status))
+		}
+		if len(live) > 0 {
+			g.refuse(poolRetireRefuseDevBusy, fmt.Sprintf("%s runs %s. Wait for it — zerops_process action=%q service=%q — then call again.", s.Hostname, strings.Join(live, ", "), poolMigrateProcessWait, s.Hostname))
+		}
 	}
 }
 
@@ -628,6 +679,7 @@ func (g *poolRetireGuards) readLaunches(d poolRetireDeps) {
 		return
 	}
 	names := append([]string{g.call.dev.Name}, g.call.meta.StageHostnames()...)
+	names = append(names, g.call.meta.CodeVolume.DevServiceHostnames()...)
 	for _, l := range active {
 		if l.TargetServiceHostname == "" || slices.Contains(names, l.TargetServiceHostname) {
 			g.refuse(poolRetireRefuseLaunch, fmt.Sprintf("the production launch %q of this project is %s and reads the part's services. Finish it (zerops_workflow workflow=%q action=%q) or reset it first.", l.TargetProjectName, l.Status, workflowLaunchProduction, "status"))
@@ -635,34 +687,48 @@ func (g *poolRetireGuards) readLaunches(d poolRetireDeps) {
 	}
 }
 
+// readReferences refuses while an env variable references a service the
+// retire deletes: the dev, and a variant-B pair's further dev services and
+// code volume.
 func (g *poolRetireGuards) readReferences(ctx context.Context, d poolRetireDeps) {
-	dev := g.call.dev.Name
-	refs, unread, err := ops.PoolMigrateEnvReferences(ctx, d.client, d.projectID, dev, g.call.services)
+	targets := g.targets()
+	retired := make([]string, 0, len(targets))
+	retired = append(retired, g.call.dev.Name)
+	for _, s := range targets[1:] {
+		retired = append(retired, s.Hostname)
+	}
+	refs, unread, err := ops.PoolMigrateEnvReferencesTo(ctx, d.client, d.projectID, retired, g.call.services)
 	if err != nil {
-		g.refuse(poolRetireRefuseEnvReference, fmt.Sprintf("the env variables that could reference %s could not be read: %v. Call again.", dev, err))
+		g.refuse(poolRetireRefuseEnvReference, fmt.Sprintf("the env variables that could reference %s could not be read: %v. Call again.", strings.Join(retired, ", "), err))
 		return
 	}
-	if len(refs) > 0 {
-		g.refuse(poolRetireRefuseEnvReference, fmt.Sprintf("%s reference %s (${%s_…}): a reference to a deleted service stays its literal text once its reader restarts. Point each elsewhere first.", strings.Join(refs, ", "), dev, dev))
+	for _, host := range retired {
+		if len(refs[host]) > 0 {
+			g.refuse(poolRetireRefuseEnvReference, fmt.Sprintf("%s reference %s (${%s_…}): a reference to a deleted service stays its literal text once its reader restarts. Point each elsewhere first.", strings.Join(refs[host], ", "), host, host))
+		}
 	}
 	if len(unread) > 0 {
 		g.unread = unread
-		g.resp.Warnings = append(g.resp.Warnings, poolRetireUnreadNote(unread, dev))
+		g.resp.Warnings = append(g.resp.Warnings, poolRetireUnreadNote(unread, strings.Join(retired, ", ")))
 	}
 }
 
+// readDomains refuses while a domain routes to a dev service the retire
+// deletes — the dev, or a variant-B pair's further dev service.
 func (g *poolRetireGuards) readDomains(ctx context.Context, d poolRetireDeps) {
-	dev := g.call.dev
-	if g.call.meta.PublicAccessFor(dev.Name).Intent == topology.PublicAccessDomain {
-		g.refuse(poolRetireRefuseDomain, fmt.Sprintf("%s's public access is a custom domain: moving a domain to the stage or the pool is the person's dashboard work, before the retire.", dev.Name))
-		return
-	}
-	domains, err := ops.PoolMigrateDevDomains(ctx, d.client, d.projectID, dev.ID)
-	switch {
-	case err != nil:
-		g.refuse(poolRetireRefuseDomain, fmt.Sprintf("the domains routed to %s could not be read: %v. Call again.", dev.Name, err))
-	case len(domains) > 0:
-		g.refuse(poolRetireRefuseDomain, fmt.Sprintf("%s route to %s: moving a domain is the person's dashboard work, before the retire.", strings.Join(domains, ", "), dev.Name))
+	devs := append([]poolRetireService{{Hostname: g.call.dev.Name, ServiceID: g.call.dev.ID}}, g.devServices...)
+	for _, dev := range devs {
+		if g.call.meta.PublicAccessFor(dev.Hostname).Intent == topology.PublicAccessDomain {
+			g.refuse(poolRetireRefuseDomain, fmt.Sprintf("%s's public access is a custom domain: moving a domain to the stage or the pool is the person's dashboard work, before the retire.", dev.Hostname))
+			continue
+		}
+		domains, err := ops.PoolMigrateDevDomains(ctx, d.client, d.projectID, dev.ServiceID)
+		switch {
+		case err != nil:
+			g.refuse(poolRetireRefuseDomain, fmt.Sprintf("the domains routed to %s could not be read: %v. Call again.", dev.Hostname, err))
+		case len(domains) > 0:
+			g.refuse(poolRetireRefuseDomain, fmt.Sprintf("%s route to %s: moving a domain is the person's dashboard work, before the retire.", strings.Join(domains, ", "), dev.Hostname))
+		}
 	}
 }
 
@@ -756,10 +822,13 @@ func (g *poolRetireGuards) destruction(input WorkflowInput) DiagnosedDestruction
 	}
 	cause := fmt.Sprintf("service id %s; %s; a verified bundle of %s's repository is written to this container first",
 		g.devID, takes, dev)
+	if g.volume != nil {
+		cause += "; " + poolRetireCodeVolumeCause(g.devServices, *g.volume)
+	}
 	if len(g.unread) > 0 {
 		cause += "; " + poolRetireUnreadNote(g.unread, dev)
 	}
-	return poolRetireDestructionOf(dev, g.devID, g.unsaved, g.notKept, input, cause)
+	return poolRetireDestructionOf(g.targets(), g.unsaved, g.notKept, input, cause)
 }
 
 // poolRetireUnreadNote names the env variables zcp could not read for a
@@ -768,13 +837,23 @@ func poolRetireUnreadNote(unread []string, dev string) string {
 	return fmt.Sprintf("%s could not be read for a reference to %s (zcp's token reads them masked): check them yourself", strings.Join(unread, ", "), dev)
 }
 
-func poolRetireDestructionOf(dev, devID string, unsaved, notKept []string, input WorkflowInput, cause string) DiagnosedDestruction {
+// poolRetireDestructionOf is the destruction the retire states for targets —
+// the dev first, then a variant-B pair's further dev services and its code
+// volume — each by the id it is deleted by.
+func poolRetireDestructionOf(targets []poolRetireService, unsaved, notKept []string, input WorkflowInput, cause string) DiagnosedDestruction {
+	dev := targets[0].Hostname
+	names := make([]string, 0, len(targets))
+	ids := make([]string, 0, len(targets))
+	for _, s := range targets {
+		names = append(names, s.Hostname)
+		ids = append(ids, s.ServiceID)
+	}
 	d := DiagnosedDestruction{
 		Operation: poolRetireOperation,
-		Targets:   []string{dev},
+		Targets:   names,
 		Loss: DestructionLoss{
-			ServiceStacks:   []string{dev},
-			ServiceIDs:      []string{devID},
+			ServiceStacks:   slices.Clone(names),
+			ServiceIDs:      ids,
 			UncommittedCode: len(unsaved) > 0,
 			UnsavedWork:     unsaved,
 			NotKept:         notKept,
@@ -783,7 +862,7 @@ func poolRetireDestructionOf(dev, devID string, unsaved, notKept []string, input
 	}
 	args := map[string]any{
 		"workflow": workflowPoolMigrate, "action": actionRetire, "service": dev,
-		"confirmDestructive": map[string]any{"operation": poolRetireOperation, "acknowledgedTargets": []string{dev}},
+		"confirmDestructive": map[string]any{"operation": poolRetireOperation, "acknowledgedTargets": slices.Clone(names)},
 	}
 	if pool := strings.TrimSpace(input.Pool); pool != "" {
 		args["pool"] = pool
@@ -973,12 +1052,13 @@ func lockPoolRetirePair(ctx context.Context, stateDir, dev string, pools ...stri
 	return release, nil
 }
 
-// poolRetireDevState reads the dev by id: live, DELETING, or gone.
+// poolRetireDevState reads a service by id: live, DELETING, or gone — a
+// deleted service's by-id read answers HTTP 400 serviceStackNotFound, not
+// only a 404 (ops.IsServiceGone).
 func poolRetireDevState(ctx context.Context, client platform.Client, id string) (string, error) {
 	svc, err := client.GetService(ctx, id)
 	if err != nil {
-		var pe *platform.PlatformError
-		if errors.As(err, &pe) && pe.Code == platform.ErrServiceNotFound {
+		if ops.IsServiceGone(err) {
 			return poolRetireDevGone, nil
 		}
 		return "", fmt.Errorf("read service %s: %w", id, err)
@@ -994,10 +1074,16 @@ func poolRetireDevState(ctx context.Context, client platform.Client, id string) 
 
 // poolRetireRun walks a retire's phases.
 type poolRetireRun struct {
-	d     poolRetireDeps
-	rec   *poolRetireRecord
-	resp  poolMigrateResponse
-	force bool
+	d    poolRetireDeps
+	rec  *poolRetireRecord
+	resp poolMigrateResponse
+	// force is the person's agreement to leaving the census's unsaved work:
+	// on this call, or recorded by the call that started the retire.
+	// forceNow is this call's alone.
+	force, forceNow bool
+	// unmounted are the dev services whose mount this call took down beside
+	// the dev's: an abort puts them back.
+	unmounted []string
 }
 
 func (r *poolRetireRun) move() workflow.PoolPairMove {
@@ -1067,20 +1153,32 @@ func (r *poolRetireRun) advance(ctx context.Context) *mcp.CallToolResult {
 				return r.saveFailed(err)
 			}
 		case poolRetireDeleting:
+			if r.rec.CodeVolume != nil {
+				return r.deleteDevs(ctx)
+			}
 			return r.delete(ctx)
+		case poolRetireDeletingVolume:
+			return r.deleteVolume(ctx)
 		default:
 			return jsonResult(poolRetireRecordAnswer(r.resp, r.rec))
 		}
 	}
 }
 
-// fence takes the dev's mount on this container down.
+// fence takes the dev's mount on this container down — every dev service's,
+// for a variant-B pair, whose mounts all show the volume's checkout.
 func (r *poolRetireRun) fence(ctx context.Context) error {
 	if r.d.mounter == nil {
 		return nil
 	}
-	if _, err := ops.UnmountService(ctx, r.d.client, r.d.projectID, r.d.mounter, r.rec.Dev); err != nil {
-		return fmt.Errorf("unmount %s: %w", r.rec.Dev, err)
+	for _, s := range r.rec.devs() {
+		res, err := ops.UnmountService(ctx, r.d.client, r.d.projectID, r.d.mounter, s.Hostname)
+		if err != nil {
+			return fmt.Errorf("unmount %s: %w", s.Hostname, err)
+		}
+		if s.Hostname != r.rec.Dev && res != nil && res.Status == poolRetireMountTaken && !slices.Contains(r.unmounted, s.Hostname) {
+			r.unmounted = append(r.unmounted, s.Hostname)
+		}
 	}
 	return nil
 }
@@ -1095,27 +1193,38 @@ func (r *poolRetireRun) workDir() string {
 // bundle takes the final census and the verified bundle with its
 // fingerprint; nil once both are recorded.
 func (r *poolRetireRun) bundle(ctx context.Context) *mcp.CallToolResult {
-	dev := r.rec.Dev
-	census, err := ops.ReadPoolMigrateCensus(ctx, r.d.ssh, dev, topology.CodeMountRoot)
+	dev, root := r.rec.Dev, r.rec.root()
+	census, err := ops.ReadPoolMigrateCensus(ctx, r.d.ssh, dev, root)
 	if err != nil {
 		return r.abort(ctx, poolMigrateRefuseDevUnreadable, withSSHStderr("could not read "+dev+"'s repository over SSH", err)+".")
 	}
-	if crew := poolMigrateCrewHandles(census); len(crew) > 0 {
+	if crew := poolMigrateCrewHandles(census, root); len(crew) > 0 {
 		return r.abort(ctx, poolMigrateRefuseCrewWorktrees, fmt.Sprintf("%s holds crew worktrees now (%s); crew lanes stay on a plain dev service.", dev, strings.Join(crew, ", ")))
 	}
 	if blocking := poolRetireBlocking(census); len(blocking) > 0 && !r.force {
 		return r.abort(ctx, poolRetireRefuseUnsaved, poolRetireUnsavedRefusal(dev, blocking).Message)
 	}
 	b, err := ops.BuildPoolMigrateBundle(ctx, r.d.ssh, ops.PoolMigrateBundleInput{
-		Dev: dev, Root: topology.CodeMountRoot, WorkDir: r.workDir(), Path: poolRetireBundlePath(r.d.stateDir, dev),
+		Dev: dev, Root: root, WorkDir: r.workDir(), Path: poolRetireBundlePath(r.d.stateDir, dev),
 	})
 	if err != nil {
 		return r.abort(ctx, poolRetireAbortBundle, withSSHStderr("the bundle of "+dev+"'s repository could not be written and verified", err)+". The retire deletes nothing without one.")
 	}
+	if v := r.rec.CodeVolume; v != nil {
+		// The volume's own reading of its checkout, taken with the bundle:
+		// once every dev service is gone the volume's container is the only
+		// reader left, and its delete is checked against this.
+		fp, err := ops.ReadPoolMigrateFingerprint(ctx, r.d.ssh, v.Hostname, ops.CodeVolumeDataRoot, r.workDir())
+		if err != nil {
+			return r.abort(ctx, poolRetireAbortUnreadable, withSSHStderr("the checkout on the code volume "+v.Hostname+" could not be read in the volume's own container at "+ops.CodeVolumeDataRoot, err)+
+				". The volume is deleted last, once no dev service is left to read it through, so the retire goes no further without that reading.")
+		}
+		v.Fingerprint = &fp
+	}
 	r.rec.Bundle = b
 	r.rec.Restore = ops.PoolMigrateRestoreSteps(b, r.rec.Origin)
 	r.rec.KeptInBundle = poolRetireKeptInBundle(census)
-	r.rec.NotKept = poolRetireNotKept(dev, census, b)
+	r.rec.NotKept = append(poolRetireNotKept(dev, census, b), poolRetireCodeVolumeNotKept(r.rec.DevServices, r.rec.volumeName())...)
 	r.rec.Forced = r.rec.Forced || (r.force && len(poolRetireBlocking(census)) > 0)
 	if err := savePoolRetireRecord(r.d.stateDir, r.rec); err != nil {
 		return r.saveFailed(err)
@@ -1142,7 +1251,7 @@ func (r *poolRetireRun) delete(ctx context.Context) *mcp.CallToolResult {
 	if r.rec.Bundle == nil {
 		return r.abort(ctx, poolRetireAbortUnreadable, "the record holds no bundle to check the repository against.")
 	}
-	now, err := ops.ReadPoolMigrateFingerprint(ctx, r.d.ssh, r.rec.Dev, topology.CodeMountRoot, r.workDir())
+	now, err := ops.ReadPoolMigrateFingerprint(ctx, r.d.ssh, r.rec.Dev, r.rec.root(), r.workDir())
 	if err != nil {
 		return r.abort(ctx, poolRetireAbortUnreadable, withSSHStderr("the repository could not be read again right before the delete", err)+"; nothing is deleted that zcp cannot prove the bundle holds.")
 	}
@@ -1157,7 +1266,7 @@ func (r *poolRetireRun) delete(ctx context.Context) *mcp.CallToolResult {
 		return r.callAgain(fmt.Sprintf("the delete of %s (id %s) failed: %v", r.rec.Dev, r.rec.DevServiceID, err))
 	}
 	pollManageProcess(ctx, r.d.client, proc, nil)
-	state, err = poolRetireDevState(ctx, r.d.client, r.rec.DevServiceID)
+	state, err = r.awaitGone(ctx, r.rec.DevServiceID)
 	switch {
 	case err != nil:
 		return r.callAgain(fmt.Sprintf("%s could not be read by its id after the delete: %v", r.rec.Dev, err))
@@ -1177,11 +1286,20 @@ func (r *poolRetireRun) finish(ctx context.Context) *mcp.CallToolResult {
 	if err := r.rekey(); err != nil && !errors.Is(err, workflow.ErrServiceMetaNotFound) {
 		return r.callAgain(fmt.Sprintf("%s is gone, and the pair could not be %s yet: %v", r.rec.Dev, r.rec.keyedBy(), err))
 	}
+	if r.rec.CodeVolume != nil {
+		// A variant-B retire finishes only once its code volume reads gone:
+		// only now does the pair stop naming it.
+		if err := workflow.SettleMigratedCodeVolume(r.d.stateDir, r.rec.Dev, r.rec.pools(), true); err != nil {
+			return r.callAgain(fmt.Sprintf("the code volume %s is gone, and the pair could not forget it yet: %v", r.rec.CodeVolume.Hostname, err))
+		}
+	}
 	if err := forgetHQPairState(r.d.stateDir, r.rec.Dev); err != nil {
 		r.resp.Warnings = append(r.resp.Warnings, err.Error())
 	}
 	if r.d.mounter != nil {
-		_, _ = ops.UnmountService(ctx, r.d.client, r.d.projectID, r.d.mounter, r.rec.Dev)
+		for _, s := range r.rec.devs() {
+			_, _ = ops.UnmountService(ctx, r.d.client, r.d.projectID, r.d.mounter, s.Hostname)
+		}
 	}
 	r.rec.RetiredAt = time.Now().UTC().Format(time.RFC3339)
 	if err := r.enter(poolRetireRetired); err != nil {
@@ -1206,8 +1324,10 @@ func (r *poolRetireRun) abort(ctx context.Context, reason, message string) *mcp.
 	}
 	resp := r.resp
 	if r.d.mounter != nil {
-		if _, err := ops.MountService(ctx, r.d.client, r.d.projectID, r.d.mounter, r.rec.Dev); err != nil {
-			resp.Warnings = append(resp.Warnings, fmt.Sprintf("%s's mount was not put back: %v; zerops_mount puts it back.", r.rec.Dev, err))
+		for _, host := range append([]string{r.rec.Dev}, r.unmounted...) {
+			if _, err := ops.MountService(ctx, r.d.client, r.d.projectID, r.d.mounter, host); err != nil {
+				resp.Warnings = append(resp.Warnings, fmt.Sprintf("%s's mount was not put back: %v; zerops_mount puts it back.", host, err))
+			}
 		}
 	}
 	r.rec.AbortReason = reason + ": " + message
@@ -1252,7 +1372,7 @@ func (r *poolRetireRun) saveFailed(err error) *mcp.CallToolResult {
 // is re-keyed, and the dev re-fenced.
 func poolRetireResume(ctx context.Context, d poolRetireDeps, input WorkflowInput, rec *poolRetireRecord) *mcp.CallToolResult {
 	corpus, _ := workflow.LoadAtomCorpus()
-	run := &poolRetireRun{d: d, rec: rec, resp: poolRetireBase(corpus, rec), force: input.Force.Bool() || rec.Forced}
+	run := &poolRetireRun{d: d, rec: rec, resp: poolRetireBase(corpus, rec), force: input.Force.Bool() || rec.Forced, forceNow: input.Force.Bool()}
 	run.resp.Action = actionRetire
 	state, err := poolRetireDevState(ctx, d.client, rec.DevServiceID)
 	if err != nil {
@@ -1260,6 +1380,11 @@ func poolRetireResume(ctx context.Context, d poolRetireDeps, input WorkflowInput
 	}
 	if state == poolRetireDevDeleting {
 		return run.callAgain(fmt.Sprintf("%s reads DELETING by its id", rec.Dev))
+	}
+	if rec.CodeVolume != nil && (state == poolRetireDevGone || rec.Phase == poolRetireDeletingVolume) {
+		// The dev is gone: what is left of a variant-B retire — further dev
+		// services, the code volume — resumes from their own states by id.
+		return run.resumeCodeVolume(ctx, input)
 	}
 	if state == poolRetireDevGone {
 		return run.held(ctx, func() *mcp.CallToolResult { return run.finish(ctx) })
@@ -1278,13 +1403,7 @@ func poolRetireResume(ctx context.Context, d poolRetireDeps, input WorkflowInput
 		run.resp = g.resp
 		expected = g.destruction(in)
 	default:
-		expected = poolRetireDestructionOf(rec.Dev, rec.DevServiceID, rec.KeptInBundle, rec.NotKept, input,
-			fmt.Sprintf("service id %s; the retire is at %s: the pair is %s and the bundle %s is written", rec.DevServiceID, rec.Phase, rec.keyedBy(), poolRetireBundleName(rec)))
-		expected.Loss.UncommittedCode = len(rec.KeptInBundle) > 0
-		if expected.Retry != nil {
-			expected.Retry.PatchHints = nil
-		}
-		expected.Then = ""
+		expected = rec.resumedDestruction(input)
 	}
 	if err := ValidateDestructiveAck(input.ConfirmDestructive, expected); err != nil {
 		return convertError(err, WithWouldDestroy(&expected), WithRecoveryStatus())
@@ -1384,9 +1503,13 @@ func poolRetireRecordAnswer(resp poolMigrateResponse, rec *poolRetireRecord) poo
 		if len(rec.Parts) > 0 {
 			deploys = "each stage deploys from a lease of its part's pool"
 		}
+		deleted := fmt.Sprintf("%s (id %s) is deleted", rec.Dev, rec.DevServiceID)
+		if v := rec.CodeVolume; v != nil {
+			deleted = fmt.Sprintf("%s — with %s and, last, the code volume %s (id %s), which the pair no longer names — are deleted", rec.Dev, poolRetireServiceNames(rec.DevServices, "no further dev service"), v.Hostname, v.ServiceID)
+		}
 		resp = poolMigrateAt(resp, poolMigrateStepRetired, nil,
-			fmt.Sprintf("The retire is done: %s (id %s) is deleted and the pair is %s; %s. The bundle of its repository is %s; retire.restore puts it back.",
-				rec.Dev, rec.DevServiceID, rec.keyedBy(), deploys, poolRetireBundleName(rec)))
+			fmt.Sprintf("The retire is done: %s and the pair is %s; %s. The bundle of its repository is %s; retire.restore puts it back.",
+				deleted, rec.keyedBy(), deploys, poolRetireBundleName(rec)))
 	} else {
 		resp = poolMigrateAt(resp, poolMigrateStepRetiring, &poolMigrateNext{
 			Tool: "zerops_workflow",

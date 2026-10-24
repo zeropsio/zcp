@@ -26,9 +26,10 @@ import (
 const poolMigratePartStageSuffix = "stage"
 
 // poolMigratePart is one part a call walks: its stage ("" for a dev-only
-// service), that stage's setup, and the part's pool.
+// service), that stage's setup, the part's pool, and the dev service the part
+// runs on (poolMigratePartDev).
 type poolMigratePart struct {
-	stage, setup, pool string
+	stage, setup, pool, dev string
 }
 
 // poolMigratePartState is one part of a dev serving several, as an answer
@@ -145,7 +146,7 @@ func (dr *poolMigrateDevRead) partsAnswer(answers []poolMigrateResponse, cur int
 // naming no part is refused.
 func poolMigrateParts(meta *workflow.ServiceMeta, service, poolInput string, byName map[string]platform.ServiceStack) ([]poolMigratePart, int, []poolMigrateRefusal) {
 	if len(meta.Stages) <= 1 {
-		part := poolMigratePart{stage: meta.FirstStage().Hostname, setup: meta.FirstStage().SetupName, pool: poolInput}
+		part := poolMigratePart{stage: meta.FirstStage().Hostname, setup: meta.FirstStage().SetupName, pool: poolInput, dev: poolMigratePartDev(meta, meta.FirstStage().Hostname)}
 		if part.pool == "" {
 			part.pool = poolMigrateDefaultPool(meta.Hostname)
 		}
@@ -161,7 +162,7 @@ func poolMigrateParts(meta *workflow.ServiceMeta, service, poolInput string, byN
 	parts := make([]poolMigratePart, 0, len(meta.Stages))
 	owner := map[string]string{}
 	for _, stage := range meta.Stages {
-		part := poolMigratePart{stage: stage.Hostname, setup: stage.SetupName, pool: poolMigratePartPool(stage.Hostname)}
+		part := poolMigratePart{stage: stage.Hostname, setup: stage.SetupName, pool: poolMigratePartPool(stage.Hostname), dev: poolMigratePartDev(meta, stage.Hostname)}
 		if r := poolMigratePoolRefusal(part.pool, byName, stage.Hostname); r != nil {
 			refusals = append(refusals, *r)
 		} else if other, taken := owner[part.pool]; taken {
@@ -229,6 +230,24 @@ func poolMigratePartPool(stage string) string {
 		stem = stage
 	}
 	return stem + poolMigratePoolSuffix
+}
+
+// poolMigratePartDev is the dev service the part of stage runs on, whose env
+// and scale its pool takes: the pair's dev half — or, for a variant-B pair,
+// the dev service of the pair named like the stage (`apistage` → `apidev` or
+// `api`), as the stand-up pairs a stage with its dev service — else the dev
+// half, which serves every part no dev service of its own is named for.
+func poolMigratePartDev(meta *workflow.ServiceMeta, stage string) string {
+	if meta.CodeVolume == nil || stage == "" {
+		return meta.Hostname
+	}
+	stem := strings.TrimSuffix(stage, poolMigratePartStageSuffix)
+	for _, host := range append([]string{meta.Hostname}, meta.CodeVolume.DevServiceHostnames()...) {
+		if host == stem+poolMigrateDevSuffix || host == stem {
+			return host
+		}
+	}
+	return meta.Hostname
 }
 
 // poolMigratePartList names each part's pool beside its stage.
