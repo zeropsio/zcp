@@ -175,39 +175,81 @@ func renewedOwnership(c platform.SwarmContainer, err error, other reservedNow) (
 // by a read of the container by id. A pool or an orchestrator zcp cannot ask
 // is unverified, carrying the error to refuse with.
 func readLeaseOwnership(ctx context.Context, d LeaseDeps, rec leaseRecord) leaseVerdict {
-	gone := func(why string) leaseVerdict { return leaseVerdict{own: leaseGone, why: why} }
-	unverified := func(err error) leaseVerdict {
+	rp, gone, err := recordPool(ctx, d, rec)
+	switch {
+	case gone != "":
+		return leaseVerdict{own: leaseGone, why: gone}
+	case err != nil:
 		return leaseVerdict{own: leaseUnverified, why: unverifiedLead + ": " + errorNote(err), err: err}
 	}
-	rp, err := resolvePool(ctx, d, rec.PoolHostname)
+	return renewOwnership(ctx, d, rp, rec)
+}
+
+// recordPool resolves the pool rec names: through the service search, and —
+// when the search misses it — by id (poolOfRecords), since the search lags
+// writes (§3.5) and its miss is no proof the pool is gone; a search that
+// fails otherwise is followed by a read by id for a pool gone or being
+// deleted (DP-20). gone says why the pool holds nothing of the lease (gone,
+// being deleted, re-created since the lease was taken); err why zcp cannot
+// tell — the read by id's own failure when the search missed.
+func recordPool(ctx context.Context, d LeaseDeps, rec leaseRecord) (rp *resolvedPool, gone string, err error) {
+	rp, err = resolvePool(ctx, d, rec.PoolHostname)
 	if err != nil {
 		var pe *platform.PlatformError
 		if !errors.As(err, &pe) || pe.Code != platform.ErrServiceNotFound {
 			if why := leasePoolGoneWhy(ctx, d, rec); why != "" {
-				return gone(why)
+				return nil, why, nil
 			}
-			return unverified(err)
+			return nil, "", err
 		}
-		svc, gerr := d.Client.GetService(ctx, rec.PoolServiceID)
-		switch {
-		case gerr != nil && IsServiceGone(gerr):
-			return gone("the pool service no longer exists")
-		case gerr != nil:
-			// The search's miss says nothing of the pool (it lags): the
-			// read by id's own failure is why zcp cannot tell.
-			return unverified(gerr)
-		}
-		if rp, err = orchestratorFor(ctx, d, svc); err != nil {
-			return unverified(err)
+		if rp, gone, err = poolOfRecords(ctx, d, []leaseRecord{rec}); rp == nil {
+			return nil, gone, err
 		}
 	}
 	if rp.svc.ID != rec.PoolServiceID {
-		return gone(recreatedWhy)
+		return nil, recreatedWhy, nil
 	}
 	if state := poolDeletionState(rp.svc.Status); state != "" {
-		return gone(fmt.Sprintf("the pool service %s (status %s)", state, rp.svc.Status))
+		return nil, fmt.Sprintf("the pool service %s (status %s)", state, rp.svc.Status), nil
 	}
-	return renewOwnership(ctx, d, rp, rec)
+	return rp, "", nil
+}
+
+// poolOfRecords reads by id the pool service records name, once the service
+// search missed their pool: the first still there (rp), why none is (gone),
+// or a read that failed otherwise and leaves it untold (err, the read's own
+// failure — never the search's "no such service").
+func poolOfRecords(ctx context.Context, d LeaseDeps, records []leaseRecord) (rp *resolvedPool, gone string, err error) {
+	gone = "the pool service no longer exists"
+	seen := map[string]bool{}
+	for _, r := range records {
+		if seen[r.PoolServiceID] {
+			continue
+		}
+		seen[r.PoolServiceID] = true
+		svc, gerr := d.Client.GetService(ctx, r.PoolServiceID)
+		switch {
+		case gerr != nil && IsServiceGone(gerr):
+			continue
+		case gerr != nil:
+			err = gerr
+			continue
+		}
+		if state := poolDeletionState(svc.Status); state != "" {
+			gone = fmt.Sprintf("the pool service %s (status %s)", state, svc.Status)
+			continue
+		}
+		found, oerr := orchestratorFor(ctx, d, svc)
+		if oerr != nil {
+			err = oerr
+			continue
+		}
+		return found, "", nil
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	return nil, gone, nil
 }
 
 // renewOwnership is readLeaseOwnership once the pool is in hand: the renew of

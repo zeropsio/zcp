@@ -425,13 +425,24 @@ func listPoolLeases(ctx context.Context, d LeaseDeps, pool string, records []lea
 	rp, err := resolvePool(ctx, d, pool)
 	if err != nil {
 		var pe *platform.PlatformError
-		if errors.As(err, &pe) && pe.Code == platform.ErrServiceNotFound && len(records) > 0 {
-			return lostViews(records, "the pool service no longer exists"), nil
-		}
-		if !explicit && errors.As(err, &pe) && pe.Code == platform.ErrServiceNotFound {
+		notFound := errors.As(err, &pe) && pe.Code == platform.ErrServiceNotFound
+		switch {
+		case notFound && len(records) > 0:
+			// The search lags writes (§3.5): its miss is decided by the
+			// records' pool read by id — gone, or unread, never lost on
+			// the search's word.
+			var gone string
+			if rp, gone, err = poolOfRecords(ctx, d, records); rp == nil {
+				if gone != "" {
+					return lostViews(records, gone), nil
+				}
+				return nil, err
+			}
+		case notFound && !explicit:
 			return nil, nil
+		default:
+			return nil, err
 		}
-		return nil, err
 	}
 	containers, err := d.containers(ctx, rp)
 	if err != nil {
@@ -917,23 +928,14 @@ func joinNotes(notes ...string) string {
 // why (DP-20), whichever read tells — the search, or the read by id once the
 // orchestrator could not be reached or asked.
 func releaseLease(ctx context.Context, d LeaseDeps, rec leaseRecord, alias string, reset bool) (LeaseView, error) {
-	gone := func(why string) (LeaseView, error) { return dropGoneRecord(d.StateDir, rec, why) }
-	rp, err := resolvePool(ctx, d, rec.PoolHostname)
-	if err != nil {
-		var pe *platform.PlatformError
-		if errors.As(err, &pe) && pe.Code == platform.ErrServiceNotFound {
-			return gone("the pool service no longer exists")
-		}
-		if why := leasePoolGoneWhy(ctx, d, rec); why != "" {
-			return gone(why)
-		}
+	// The pool as the verdict read it: a search that lags is no proof it is
+	// gone, so its miss is decided by the read by id (recordPool).
+	rp, gone, err := recordPool(ctx, d, rec)
+	switch {
+	case gone != "":
+		return dropGoneRecord(d.StateDir, rec, gone)
+	case err != nil:
 		return LeaseView{}, err
-	}
-	if rp.svc.ID != rec.PoolServiceID {
-		return dropLeaseRecord(d.StateDir, rec, LeaseStateLost, "the pool was re-created since this lease was taken, so there was nothing to release; the record is dropped")
-	}
-	if state := poolDeletionState(rp.svc.Status); state != "" {
-		return gone(fmt.Sprintf("the pool service %s (status %s)", state, rp.svc.Status))
 	}
 	release := func() (LeaseView, error) { return releaseOnOrchestrator(ctx, d, rp, rec, alias, reset) }
 	if reset && d.Warm != nil {
