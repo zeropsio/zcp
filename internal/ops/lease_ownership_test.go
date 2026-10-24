@@ -646,6 +646,74 @@ func TestLeaseOwnership_Park_OnlyWhenOurs(t *testing.T) {
 	}
 }
 
+// endsOnUnmount is the fixture's mounter, running end once, as the first
+// unmount goes: a lease that ends while a park unmounts it.
+type endsOnUnmount struct {
+	*lockedMounter
+	once sync.Once
+	end  func()
+}
+
+func (e *endsOnUnmount) Unmount(ctx context.Context, h, p string) error {
+	e.once.Do(e.end)
+	return e.lockedMounter.Unmount(ctx, h, p)
+}
+
+func (e *endsOnUnmount) CleanupUnit(ctx context.Context, h string) error {
+	e.once.Do(e.end)
+	return e.lockedMounter.CleanupUnit(ctx, h)
+}
+
+// TestLeaseOwnership_Park_LeaseEndsDuringTheUnmount_NeverStopped: a park asks
+// whose the container is again right before its stop (DP-2, DP-28) — the
+// unmount before it takes a while, and the orchestrator checks no lease on a
+// free container — so a lease that ended meanwhile sends no stop: its record
+// is dropped as lost, the result saying it was not parked; one the
+// orchestrator then does not answer about is refused, the mount back.
+func TestLeaseOwnership_Park_LeaseEndsDuringTheUnmount_NeverStopped(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name string
+		end  func(of *ownFixture)
+		lost bool
+	}{
+		{name: "released outside zcp, free", lost: true, end: func(of *ownFixture) { of.hq.releaseOutside(ownHQContainer) }},
+		{name: "another holder took it", lost: true, end: func(of *ownFixture) { of.hq.takeOver(ownHQContainer) }},
+		{name: "the orchestrator stops answering", end: func(of *ownFixture) { of.hqRenewFails(orchFailure()) }},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			of := newOwnFixture(t)
+			of.acquire(t, groupHQPool)
+			of.deps.Host.Mounter = &endsOnUnmount{lockedMounter: of.mounter, end: func() { tt.end(of) }}
+
+			v, err := LeasePark(context.Background(), of.deps, ownHQAlias)
+			if got := of.hq.powerLog(); len(got) != 0 {
+				t.Errorf("the park sent %v to a container that is no longer the lease's", got)
+			}
+			if tt.lost {
+				if err != nil || v.State != LeaseStateLost || !strings.Contains(v.Note, "not parked") {
+					t.Fatalf("park = %+v, %v; want lost, not parked", v, err)
+				}
+				if rec := of.rawRecord(t, ownHQAlias); rec != nil {
+					t.Errorf("record = %v, want it dropped", rec)
+				}
+				return
+			}
+			var pe *platform.PlatformError
+			if !errors.As(err, &pe) {
+				t.Fatalf("park = %+v, %v; want a refusal", v, err)
+			}
+			if rec := of.rawRecord(t, ownHQAlias); rec == nil || rec["parked"] != nil {
+				t.Errorf("record = %v, want it as it was", rec)
+			}
+			if !of.mounter.mounted(ownHQAlias) {
+				t.Errorf("the refused park left the lease unmounted")
+			}
+		})
+	}
+}
+
 // TestLeaseOwnership_HeldByOther_DropsTheRecord: the orchestrator's
 // held-by-other answer to any call carrying the lease is final — the record
 // is dropped as lost with its alias stanza and mount, never retried "in a
