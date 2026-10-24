@@ -56,6 +56,10 @@ type fakeSwarm struct {
 	// reserved are the containers an acquire reserved: a read by id finds one
 	// the test did not list, as the orchestrator does.
 	reserved []platform.SwarmContainer
+	// foreign marks reserved containers another holder holds (a renew with
+	// zcp's lease is refused); renewErr fails every renew.
+	foreign  map[string]bool
+	renewErr error
 }
 
 type fakeRelease struct {
@@ -91,8 +95,24 @@ func (f *fakeSwarm) Release(_ context.Context, id, lease string, reset bool) (pl
 	return platform.SwarmContainer{ID: id}, f.releaseErr
 }
 
-func (f *fakeSwarm) Renew(context.Context, string, string) (platform.SwarmContainer, error) {
-	return platform.SwarmContainer{}, nil
+// Renew answers as the live orchestrator renews a TTL-0 lease: a reserved
+// container (listed, or one an acquire reserved) answers unchanged — the fake
+// keeps no lease per container, so a test marks one another holder's in
+// foreign — a free one, or a foreign one, is refused unknown-lease, and one it
+// does not know container-not-found. renewErr fails every renew.
+func (f *fakeSwarm) Renew(ctx context.Context, id, _ string) (platform.SwarmContainer, error) {
+	if f.renewErr != nil {
+		return platform.SwarmContainer{}, f.renewErr
+	}
+	c, err := f.Container(ctx, id)
+	if err != nil {
+		return platform.SwarmContainer{}, err
+	}
+	if c.LockState == "" || f.foreign[id] {
+		return platform.SwarmContainer{}, &platform.SwarmError{Status: 400, Code: "containerAction", Reason: platform.SwarmReasonUnknownLease,
+			Message: "no reservation of this container is held by that lease - acquire it again"}
+	}
+	return c, nil
 }
 
 func (f *fakeSwarm) Delete(_ context.Context, id, lease string) error {

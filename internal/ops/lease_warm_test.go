@@ -172,8 +172,22 @@ func (o *warmOrch) Release(_ context.Context, id, lease string, reset bool) (pla
 	return b.c, nil
 }
 
-func (o *warmOrch) Renew(context.Context, string, string) (platform.SwarmContainer, error) {
-	return platform.SwarmContainer{}, nil
+// Renew is the live renew of a TTL-0 lease: the holder's own lease answers its
+// container unchanged (lockState deleting while a delete runs); any other
+// lease, or any on a free container, is refused unknown-lease.
+func (o *warmOrch) Renew(_ context.Context, id, lease string) (platform.SwarmContainer, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	b := o.find(id)
+	switch {
+	case b == nil:
+		return platform.SwarmContainer{}, &platform.SwarmError{Status: http.StatusBadRequest, Code: "containerAction", Message: "no container " + id + " in the pool", Reason: platform.SwarmReasonContainerNotFound}
+	case b.c.LockState == "deleting":
+		return b.c, nil
+	case b.c.LockState == "" || b.lease != lease:
+		return platform.SwarmContainer{}, &platform.SwarmError{Status: http.StatusBadRequest, Code: "containerAction", Message: "no reservation of this container is held by that lease - acquire it again", Reason: platform.SwarmReasonUnknownLease}
+	}
+	return b.c, nil
 }
 
 func (o *warmOrch) Delete(_ context.Context, id, lease string) error {

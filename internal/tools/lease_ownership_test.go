@@ -18,17 +18,27 @@ import (
 )
 
 // ownershipOrchestrator is one pool container (#3) on the live wire, keeping
-// the live lock facts (2026-10-24): each reservation restarts lockSince; a
-// call carrying another lease on a reserved container is refused
-// held-by-other; a release of a free container resets it whatever lease it
-// carries.
+// the live lock facts (2026-10-24): each reservation change — an acquire, a
+// holder's stop or start — restarts lockSince; a release, stop or start
+// carrying another lease on a reserved container is refused held-by-other; a
+// release of a free container resets it whatever lease it carries (a stop or
+// start of one, never live-verified, goes through as well and is counted); a
+// renew answers the holder's own lease unchanged and refuses any other, and
+// any lease on a free container, unknown-lease.
 type ownershipOrchestrator struct {
 	mu         sync.Mutex
 	lockState  string
 	lockSince  string
 	lease      string
-	releases   int // release calls that reached it
-	freeResets int // free containers a release reset
+	status     string // ACTIVE unless stopped
+	releases   int    // release calls that reached it
+	freeResets int    // free containers a release reset
+	freePowers int    // stops and starts of a free container
+	renews     int
+	// renewFails answers every renew 500; takeOverOnStop lets another
+	// consumer take the container over right before a stop reaches it.
+	renewFails     bool
+	takeOverOnStop bool
 }
 
 const (
@@ -42,7 +52,11 @@ func (o *ownershipOrchestrator) container() string {
 	if o.lockSince != "" {
 		since = `"` + o.lockSince + `"`
 	}
-	return `{"id":"c-abc","name":"node-id-3","number":3,"hostname":"node-id-3.runtime.devpool.zerops","status":"ACTIVE",` +
+	status := o.status
+	if status == "" {
+		status = "ACTIVE"
+	}
+	return `{"id":"c-abc","name":"node-id-3","number":3,"hostname":"node-id-3.runtime.devpool.zerops","status":"` + status + `",` +
 		`"serviceId":"svc-pool","stackId":"stk","appVersionId":"av","current":true,"lockState":"` + o.lockState + `","lockSince":` + since + `,"dirty":false,"snapshots":1}`
 }
 
@@ -66,10 +80,35 @@ func (o *ownershipOrchestrator) ServeHTTP(w http.ResponseWriter, r *http.Request
 		o.lockState, o.lockSince, o.lease = "reserved", ownershipSince, leaseTestLease
 		c := o.container()
 		_, _ = w.Write([]byte(c[:len(c)-1] + `,"lease":"` + leaseTestLease + `"}`))
+	case r.Method == http.MethodPost && r.URL.Path == "/container/c-abc/renew":
+		o.renews++
+		switch {
+		case o.renewFails:
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":{"code":"internalServerError","message":"the orchestrator could not read its reservations"}}`))
+		case o.lockState == "" || r.Header.Get("X-Swarm-Lease") != o.lease:
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"code":"containerAction","message":"no reservation of this container is held by that lease - acquire it again","meta":[{"metadata":{"reason":["unknown-lease"],"retryable":["false"]}}]}}`))
+		default:
+			_, _ = w.Write([]byte(o.container()))
+		}
 	case r.Method == http.MethodPost && (r.URL.Path == "/container/c-abc/stop" || r.URL.Path == "/container/c-abc/start"):
+		if o.takeOverOnStop && strings.HasSuffix(r.URL.Path, "/stop") {
+			o.lockState, o.lockSince, o.lease = "reserved", ownershipOtherSince, ownershipOtherLease
+		}
 		if o.lockState == "reserved" && r.Header.Get("X-Swarm-Lease") != o.lease {
 			heldByOther()
 			return
+		}
+		if o.lockState == "" {
+			o.freePowers++
+		}
+		o.status = "ACTIVE"
+		if strings.HasSuffix(r.URL.Path, "/stop") {
+			o.status = "STOPPED"
+		}
+		if o.lockState == "reserved" {
+			o.lockSince = "2026-10-24T11:05:00.123456789Z"
 		}
 		_, _ = w.Write([]byte(o.container()))
 	case r.Method == http.MethodPost && r.URL.Path == "/container/c-abc/release":
@@ -94,6 +133,21 @@ func (o *ownershipOrchestrator) takeOver() {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.lockState, o.lockSince, o.lease = "reserved", ownershipOtherSince, ownershipOtherLease
+}
+
+// stopOutside stops the container with the holder's own lease outside zcp:
+// still the holder's, its lockSince restarted.
+func (o *ownershipOrchestrator) stopOutside() {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.status, o.lockSince = "STOPPED", "2026-10-24T11:04:00.5Z"
+}
+
+// set runs fn on the orchestrator's state under its lock.
+func (o *ownershipOrchestrator) set(fn func(o *ownershipOrchestrator)) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	fn(o)
 }
 
 // releaseOutside frees the container outside zcp.
@@ -209,24 +263,18 @@ func TestLeaseTool_Ownership_ForcedReleaseOfAFreeContainer_NeverResetsIt(t *test
 	}
 }
 
-// TestLeaseTool_Ownership_ParkHeldByOther_ResultSaysLost: a park of a lease
-// zcp cannot verify (a record older than keeping the reservation's lockSince,
-// reserved a minute after its acquire) stops the container with the lease;
-// the orchestrator's held-by-other answer means another holder has it, so the
-// result says lost and that the record is dropped — never "parked, still
-// yours", never "retry in a moment".
+// TestLeaseTool_Ownership_ParkHeldByOther_ResultSaysLost: a park the
+// orchestrator answers held-by-other — another consumer took the container
+// over right before the stop reached it — says the lease is lost and its
+// record dropped: never "parked, still yours", never "retry in a moment".
 func TestLeaseTool_Ownership_ParkHeldByOther_ResultSaysLost(t *testing.T) {
 	t.Parallel()
-	orch := &ownershipOrchestrator{lockState: "reserved", lockSince: ownershipOtherSince, lease: ownershipOtherLease}
+	orch := &ownershipOrchestrator{}
 	srv, stateDir := leaseToolServerSSH(t, orch, &leaseStubSSH{})
-	rec := `{"poolHostname":"devpool","poolServiceId":"svc-pool","containerId":"c-abc","containerNumber":3,` +
-		`"containerHostname":"node-id-3.runtime.devpool.zerops","lease":"` + leaseTestLease + `","branch":"lv-bogus","acquiredAt":"2026-10-24T11:01:00Z"}`
-	if err := os.MkdirAll(filepath.Join(stateDir, "leases"), 0o700); err != nil {
-		t.Fatal(err)
+	if res := callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo, "branch": "feat-x"}); res.IsError {
+		t.Fatalf("acquire failed: %s", getTextContent(t, res))
 	}
-	if err := os.WriteFile(filepath.Join(stateDir, "leases", "devpool-3.json"), []byte(rec), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	orch.set(func(o *ownershipOrchestrator) { o.takeOverOnStop = true })
 
 	res := callTool(t, srv, "zerops_lease", map[string]any{"action": "park", "lease": "devpool-3"})
 	text := getTextContent(t, res)
@@ -251,5 +299,74 @@ func TestLeaseTool_Ownership_ParkHeldByOther_ResultSaysLost(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(stateDir, "leases", "devpool-3.json")); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("record survives: %v", err)
+	}
+}
+
+// TestLeaseTool_Ownership_StoppedOutsideZcp_StaysParked: a stop of zcp's lease
+// made outside zcp restarts the reservation's lockSince but leaves it zcp's:
+// status and the envelope say parked, and the orchestrator's renew of the
+// lease is what told.
+func TestLeaseTool_Ownership_StoppedOutsideZcp_StaysParked(t *testing.T) {
+	t.Parallel()
+	orch := &ownershipOrchestrator{}
+	srv, _ := leaseToolServerSSH(t, orch, &leaseStubSSH{})
+	if res := callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo, "branch": "feat-x"}); res.IsError {
+		t.Fatalf("acquire failed: %s", getTextContent(t, res))
+	}
+	orch.stopOutside()
+
+	res := callTool(t, srv, "zerops_lease", map[string]any{"action": "status", "pool": "devpool"})
+	text := getTextContent(t, res)
+	if res.IsError {
+		t.Fatalf("status failed: %s", text)
+	}
+	got := decodeOwnership(t, text)
+	if len(got.Leases) != 1 || got.Leases[0].State != ops.LeaseStateParked || got.Leases[0].Unverified {
+		t.Errorf("status leases = %+v, want devpool-3 parked, verified", got.Leases)
+	}
+	if got.Envelope == nil || len(got.Envelope.Leases) == 0 || got.Envelope.Leases[0].State != ops.LeaseStateParked {
+		t.Errorf("envelope leases = %+v, want devpool-3 parked", got.Envelope)
+	}
+	renews := 0
+	orch.set(func(o *ownershipOrchestrator) { renews = o.renews })
+	if renews == 0 {
+		t.Error("status never renewed the lease")
+	}
+}
+
+// TestLeaseTool_Ownership_RenewFails_UnverifiedNeverRead: a renew the
+// orchestrator fails leaves zcp unable to tell whether the container is still
+// the lease's: status keeps it held, unverified, reads nothing from it over
+// ssh, and a release — forced too — is refused, nothing released.
+func TestLeaseTool_Ownership_RenewFails_UnverifiedNeverRead(t *testing.T) {
+	t.Parallel()
+	orch := &ownershipOrchestrator{}
+	ssh := &leaseStubSSH{}
+	srv, stateDir := leaseToolServerSSH(t, orch, ssh)
+	if res := callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo, "branch": "feat-x"}); res.IsError {
+		t.Fatalf("acquire failed: %s", getTextContent(t, res))
+	}
+	orch.set(func(o *ownershipOrchestrator) { o.renewFails = true })
+	ssh.mu.Lock()
+	ssh.calls = nil
+	ssh.mu.Unlock()
+
+	res := callTool(t, srv, "zerops_lease", map[string]any{"action": "status", "pool": "devpool"})
+	got := decodeOwnership(t, getTextContent(t, res))
+	if len(got.Leases) != 1 || got.Leases[0].State != ops.LeaseStateHeld || !got.Leases[0].Unverified {
+		t.Errorf("status leases = %+v, want devpool-3 held, unverified", got.Leases)
+	}
+	if len(ssh.calls) != 0 {
+		t.Errorf("status read a lease it cannot verify over ssh: %v", ssh.calls)
+	}
+	res = callTool(t, srv, "zerops_lease", map[string]any{"action": "release", "lease": "devpool-3", "force": true})
+	if !res.IsError {
+		t.Errorf("forced release of an unverified lease = %s, want a refusal", getTextContent(t, res))
+	}
+	if releases, _ := orch.counts(); releases != 0 {
+		t.Errorf("orchestrator releases = %d, want none", releases)
+	}
+	if _, err := os.Stat(filepath.Join(stateDir, "leases", "devpool-3.json")); err != nil {
+		t.Errorf("record gone after a refused release: %v", err)
 	}
 }
