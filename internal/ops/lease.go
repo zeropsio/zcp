@@ -285,6 +285,27 @@ func resolvePool(ctx context.Context, d LeaseDeps, hostname string) (*resolvedPo
 	return orchestratorFor(ctx, d, svc)
 }
 
+// poolResolver resolves a pool by its hostname.
+type poolResolver func(ctx context.Context, hostname string) (*resolvedPool, error)
+
+// listingResolver is resolvePool: one service listing per pool.
+func listingResolver(d LeaseDeps) poolResolver {
+	return func(ctx context.Context, hostname string) (*resolvedPool, error) { return resolvePool(ctx, d, hostname) }
+}
+
+// resolverFrom resolves pools from services, the project's services as one
+// listing already read — never a listing of its own (each is an ES-backed
+// search, §3.5).
+func resolverFrom(d LeaseDeps, services []platform.ServiceStack) poolResolver {
+	return func(ctx context.Context, hostname string) (*resolvedPool, error) {
+		svc, err := FindService(services, hostname)
+		if err != nil {
+			return nil, err
+		}
+		return orchestratorFor(ctx, d, svc)
+	}
+}
+
 // orchestratorFor checks svc is a pool and builds the client of its orchestrator
 // (resolvePool's work once the service is in hand).
 func orchestratorFor(ctx context.Context, d LeaseDeps, svc *platform.ServiceStack) (*resolvedPool, error) {
@@ -388,23 +409,28 @@ func LeaseStatus(ctx context.Context, d LeaseDeps, pool string) (LeaseStatusView
 	for _, r := range records {
 		byPool[r.PoolHostname] = append(byPool[r.PoolHostname], r)
 	}
+	// One listing of the project's services: every pool, and the warm
+	// counts, resolve from it.
+	services, err := ListProjectServices(ctx, d.Client, d.ProjectID)
 	if pool != "" {
-		views, err := listPoolLeases(ctx, d, pool, byPool[pool], true)
+		if err != nil {
+			return LeaseStatusView{}, err
+		}
+		views, err := listPoolLeases(ctx, d, resolverFrom(d, services), pool, byPool[pool], true)
 		if err != nil {
 			return LeaseStatusView{}, err
 		}
 		readLeaseActivities(ctx, d, records, views)
 		markIdleLeases(d, records, views)
 		markStaleWiring(d.StateDir, records, views)
-		return LeaseStatusView{Leases: views, Warm: d.leaseStatusWarm(ctx, []string{pool})}, nil
+		return LeaseStatusView{Leases: views, Warm: d.leaseStatusWarm(ctx, services, []string{pool})}, nil
+	}
+	if err != nil {
+		return LeaseStatusView{}, fmt.Errorf("list services: %w", err)
 	}
 	names := map[string]bool{}
 	for name := range byPool {
 		names[name] = true
-	}
-	services, err := ListProjectServices(ctx, d.Client, d.ProjectID)
-	if err != nil {
-		return LeaseStatusView{}, fmt.Errorf("list services: %w", err)
 	}
 	for _, svc := range services {
 		if topology.IsPoolType(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) {
@@ -414,7 +440,7 @@ func LeaseStatus(ctx context.Context, d LeaseDeps, pool string) (LeaseStatusView
 	var status LeaseStatusView
 	var read []string
 	for _, name := range slices.Sorted(maps.Keys(names)) {
-		got, err := listPoolLeases(ctx, d, name, byPool[name], false)
+		got, err := listPoolLeases(ctx, d, resolverFrom(d, services), name, byPool[name], false)
 		if err != nil {
 			note := errorNote(err)
 			status.Leases = append(status.Leases, unverifiedViews(byPool[name], note)...)
@@ -427,15 +453,15 @@ func LeaseStatus(ctx context.Context, d LeaseDeps, pool string) (LeaseStatusView
 	readLeaseActivities(ctx, d, records, status.Leases)
 	markIdleLeases(d, records, status.Leases)
 	markStaleWiring(d.StateDir, records, status.Leases)
-	status.Warm = d.leaseStatusWarm(ctx, read)
+	status.Warm = d.leaseStatusWarm(ctx, services, read)
 	return status, nil
 }
 
-// listPoolLeases reconciles one pool's records against its orchestrator.
-// explicit: the caller named the pool, so an unknown pool is an error unless
-// records for it remain to be reported.
-func listPoolLeases(ctx context.Context, d LeaseDeps, pool string, records []leaseRecord, explicit bool) ([]LeaseView, error) {
-	rp, err := resolvePool(ctx, d, pool)
+// listPoolLeases reconciles one pool's records against its orchestrator,
+// the pool resolved through resolve. explicit: the caller named the pool, so
+// an unknown pool is an error unless records for it remain to be reported.
+func listPoolLeases(ctx context.Context, d LeaseDeps, resolve poolResolver, pool string, records []leaseRecord, explicit bool) ([]LeaseView, error) {
+	rp, err := resolve(ctx, pool)
 	if err != nil {
 		var pe *platform.PlatformError
 		notFound := errors.As(err, &pe) && pe.Code == platform.ErrServiceNotFound

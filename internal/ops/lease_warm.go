@@ -608,12 +608,8 @@ func acquireThroughPreparing(ctx context.Context, d LeaseDeps, rp *resolvedPool)
 // warm policy (nil without it): its target, its warm containers counted by id,
 // what a create zcp started is making now, and what zcp last did. It only
 // reads.
-func (d LeaseDeps) leaseStatusWarm(ctx context.Context, pools []string) []LeasePoolWarm {
+func (d LeaseDeps) leaseStatusWarm(ctx context.Context, services []platform.ServiceStack, pools []string) []LeasePoolWarm {
 	if d.Warm == nil || len(pools) == 0 {
-		return nil
-	}
-	services, err := ListProjectServices(ctx, d.Client, d.ProjectID)
-	if err != nil {
 		return nil
 	}
 	out := make([]LeasePoolWarm, 0, len(pools))
