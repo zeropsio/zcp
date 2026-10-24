@@ -58,22 +58,27 @@ func Start(ctx context.Context, client platform.Client, projectID, hostname stri
 	return client.StartService(ctx, svc.ID)
 }
 
-// Stop stops a running service.
-func Stop(ctx context.Context, client platform.Client, projectID, hostname string) (*platform.Process, error) {
+// Stop stops a running service. It answers the service it resolved too, so
+// a caller reads its type (a Box's notice, BoxLifecycleNotice) without a
+// listing of its own.
+func Stop(ctx context.Context, client platform.Client, projectID, hostname string) (*platform.Process, *platform.ServiceStack, error) {
 	svc, err := resolveUserVisibleService(ctx, client, projectID, hostname)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return client.StopService(ctx, svc.ID)
+	proc, err := client.StopService(ctx, svc.ID)
+	return proc, svc, err
 }
 
-// Restart restarts a running service.
-func Restart(ctx context.Context, client platform.Client, projectID, hostname string) (*platform.Process, error) {
+// Restart restarts a running service, answering the service it resolved as
+// Stop does.
+func Restart(ctx context.Context, client platform.Client, projectID, hostname string) (*platform.Process, *platform.ServiceStack, error) {
 	svc, err := resolveUserVisibleService(ctx, client, projectID, hostname)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return client.RestartService(ctx, svc.ID)
+	proc, err := client.RestartService(ctx, svc.ID)
+	return proc, svc, err
 }
 
 // Reload reloads a running service (graceful config/code reload). Faster than

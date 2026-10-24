@@ -71,6 +71,24 @@ func DeployLocal(
 	workingDir string,
 	sha string,
 ) (*DeployResult, error) {
+	return DeployLocalFromListing(ctx, client, projectID, authInfo, nil, targetService, setup, workingDir, sha)
+}
+
+// DeployLocalFromListing is DeployLocal resolving its target from services —
+// the project's services as one listing the caller already read for its own
+// checks — rather than a listing of its own (each is an ES-backed search,
+// docs/spec-workflows.md §3.5). nil services: it lists them.
+func DeployLocalFromListing(
+	ctx context.Context,
+	client platform.Client,
+	projectID string,
+	authInfo auth.Info,
+	services []platform.ServiceStack,
+	targetService string,
+	setup string,
+	workingDir string,
+	sha string,
+) (*DeployResult, error) {
 	// 1. Validate zcli.
 	if _, err := runner.LookPath("zcli"); err != nil {
 		return nil, platform.NewPlatformError(
@@ -89,9 +107,12 @@ func DeployLocal(
 		)
 	}
 
-	services, err := client.ListServices(ctx, projectID)
-	if err != nil {
-		return nil, fmt.Errorf("list services: %w", err)
+	if services == nil {
+		listed, err := client.ListServices(ctx, projectID)
+		if err != nil {
+			return nil, fmt.Errorf("list services: %w", err)
+		}
+		services = listed
 	}
 	target, err := FindService(services, targetService)
 	if err != nil {

@@ -15,7 +15,7 @@ import (
 )
 
 // Listings each call made before the pool and Box checks (measured on
-// origin/main with these same tests).
+// origin/main with these same tests): a call makes no more.
 const (
 	wantSelfDeployListings  = 3
 	wantCrossDeployListings = 3
@@ -65,8 +65,8 @@ func TestDeployTool_NoPoolProject_ListsAsBeforePools(t *testing.T) {
 			if result.IsError {
 				t.Fatalf("deploy: %s", getTextContent(t, result))
 			}
-			if n := mock.CallCount("ListServices"); n != tt.want {
-				t.Errorf("ListServices calls = %d, want %d (the count before the pool checks)", n, tt.want)
+			if n := mock.CallCount("ListServices"); n > tt.want {
+				t.Errorf("ListServices calls = %d, want at most %d (the count before the pool checks)", n, tt.want)
 			}
 		})
 	}
@@ -88,8 +88,8 @@ func TestDeployBatchTool_NoPoolProject_ListsAsBeforePools(t *testing.T) {
 	if result.IsError {
 		t.Fatalf("batch: %s", getTextContent(t, result))
 	}
-	if n := mock.CallCount("ListServices"); n != wantBatchListings {
-		t.Errorf("ListServices calls = %d, want %d (the count before the pool checks)", n, wantBatchListings)
+	if n := mock.CallCount("ListServices"); n > wantBatchListings {
+		t.Errorf("ListServices calls = %d, want at most %d (the count before the pool checks)", n, wantBatchListings)
 	}
 }
 

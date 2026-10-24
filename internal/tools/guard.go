@@ -202,15 +202,33 @@ func checkedLeaseOf(ctx context.Context, stateDir string, vouch leaseVouch, host
 	return checked, true, err
 }
 
-// withoutPoolHosts drops the hostnames that are Swarm pools: a pool is never
-// adopted (PS-5), so the adoption gate has nothing to ask of a deploy that
-// targets one (DP-7). A hostname the lookup cannot resolve stays, and the
-// gate or the deploy's own lookup answers for it.
-func withoutPoolHosts(ctx context.Context, client platform.Client, projectID string, hostnames ...string) []string {
+// deployListing is a deploy call's one listing of the project's services
+// (an ES-backed search, docs/spec-workflows.md §3.5): its pool checks read
+// service types from it, and the deploy resolves its source and target from
+// it, so the call lists no more than it did before pools. A listing that
+// fails reads nil: the pool checks keep every hostname (the gate or the
+// deploy answers for it) and the deploy lists the services itself.
+func deployListing(ctx context.Context, client platform.Client, projectID string) []platform.ServiceStack {
+	if client == nil {
+		return nil
+	}
+	services, err := ops.ListProjectServices(ctx, client, projectID)
+	if err != nil {
+		return nil
+	}
+	return services
+}
+
+// withoutPoolHosts drops the hostnames that are Swarm pools in services (a
+// deployListing): a pool is never adopted (PS-5), so the adoption gate has
+// nothing to ask of a deploy that targets one (DP-7). A hostname the listing
+// does not hold stays, and the gate or the deploy's own lookup answers for
+// it.
+func withoutPoolHosts(services []platform.ServiceStack, hostnames ...string) []string {
 	kept := make([]string, 0, len(hostnames))
 	for _, h := range hostnames {
-		if h != "" && client != nil {
-			if svc, err := ops.LookupService(ctx, client, projectID, h); err == nil &&
+		if h != "" {
+			if svc, err := ops.FindService(services, h); err == nil &&
 				topology.IsPoolType(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) {
 				continue
 			}

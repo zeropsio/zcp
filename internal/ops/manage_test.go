@@ -45,12 +45,15 @@ func TestStop_Success(t *testing.T) {
 			{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING"},
 		})
 
-	proc, err := Stop(context.Background(), mock, "proj-1", "api")
+	proc, svc, err := Stop(context.Background(), mock, "proj-1", "api")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if proc == nil {
 		t.Fatal("expected non-nil process")
+	}
+	if svc == nil || svc.ID != "svc-1" {
+		t.Errorf("service = %+v, want the api it resolved", svc)
 	}
 }
 
@@ -62,12 +65,15 @@ func TestRestart_Success(t *testing.T) {
 			{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING"},
 		})
 
-	proc, err := Restart(context.Background(), mock, "proj-1", "api")
+	proc, svc, err := Restart(context.Background(), mock, "proj-1", "api")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if proc == nil {
 		t.Fatal("expected non-nil process")
+	}
+	if svc == nil || svc.ID != "svc-1" {
+		t.Errorf("service = %+v, want the api it resolved", svc)
 	}
 }
 
