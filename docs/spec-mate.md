@@ -1658,8 +1658,10 @@ a span attribute.
   something else; the drop tests the refusal's reason, never its error class. An entry whose last
   verification is older than 1 h (HQ's launch environment, the bound the gate's budget is sized to)
   is verified again while its link stays up; a definite refusal then drops it, closes the link
-  `key_refused` and refuses the key's header calls. Disconnecting the Mate in HQ is the immediate way
-  to cut it off. The entry also goes
+  `key_refused` and refuses the key's header calls. The recheck exists because HQ never uses a
+  Mate's key against Zerops and cannot see its revocation in the organisation's token list (§3.16),
+  so the hourly `/user/info` with the key is the only way HQ learns a key was deleted.
+  Disconnecting the Mate in HQ is the immediate way to cut it off. The entry also goes
   when HQ's organisation read no longer holds the project, or when a person disconnects the Mate in
   HQ (a block on the same row). The table leaks project ids and link history only: a plain SHA-256
   of a high-entropy platform token is not invertible.
@@ -1986,7 +1988,15 @@ sequenceDiagram
 - `ZCP_ORG_TOKEN`, `ZCP_ORG_ID`, `ZCP_ORG_API`, the Chief credential, its Zerops proxy and
   `chief/person`.
 
-### 3.16 Zerops asks and unverified points
+### 3.16 Zerops facts, asks and unverified points
+
+Verified (2026-10-24, `GET /client/{org}/integration-token/list` and
+`GET /client/{org}/integration-token/{id}` with an organisation `READ_ONLY` integration token):
+
+- The organisation's key lists only the integration tokens its own creator minted; other members'
+  tokens are absent from the list, and reading one by id answers `403 insufficientPermissions`.
+  Its organisation role does not widen this.
+- A token row carries no last-used field: `lastUpdate` stays at `created` while the token is used.
 
 Zerops asks:
 
@@ -1995,6 +2005,8 @@ Zerops asks:
 - A platform-issued read credential per organisation for HQ, in place of a person-minted key.
 - A deploy-only, short-lived grant, in place of per-environment deploy tokens.
 - Membership change events, in place of organisation reads for removals.
+- An event, or a list readable with the organisation's key, when an integration token of the
+  organisation is deleted or regenerated, in place of the hourly key recheck (§3.3).
 - Workload identity for a service ("service S of project P of organisation O"), in place of the
   project key as the Mate's proof.
 
