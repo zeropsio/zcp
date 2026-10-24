@@ -2064,3 +2064,65 @@ func TestLeaseOwnership_ParkedWake_RenewUnanswered_RefusalSaysItStartedIt(t *tes
 		t.Errorf("refusal %q must say zcp started the container, never that it sent it nothing", pe.Message)
 	}
 }
+
+// TestLeaseTargetChecked_TheOrchestratorVouchesOnce: a call that reaches a
+// lease's container over ssh or sshfs (a dev server, a verify, a deploy from
+// it, a mount) asks the pool's orchestrator once whether the container is
+// still the lease's (DP-2): ours is returned — parked when its container is
+// stopped, recorded so or not (DP-28); another holder's is refused naming the
+// release that drops the record; one the orchestrator does not answer about,
+// or that this zcp cannot ask, is refused naming the status that asks again;
+// a host that is no lease asks nothing.
+func TestLeaseTargetChecked_TheOrchestratorVouchesOnce(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name       string
+		host       string
+		setup      func(t *testing.T, of *ownFixture)
+		wantLease  bool
+		wantParked bool
+		wantErr    string
+		renews     int
+	}{
+		{name: "ours, running", host: ownHQAlias, wantLease: true, renews: 1},
+		{name: "ours, stopped outside zcp", host: ownHQAlias, wantLease: true, wantParked: true, renews: 1, setup: func(t *testing.T, of *ownFixture) {
+			t.Helper()
+			if _, err := of.hq.Stop(context.Background(), ownHQContainer, of.hq.leaseOf(ownHQContainer)); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "another holder's", host: ownHQAlias, wantLease: true, wantErr: "zerops_lease action=release lease=" + ownHQAlias, renews: 1,
+			setup: func(_ *testing.T, of *ownFixture) { of.hq.takeOver(ownHQContainer) }},
+		{name: "not answered", host: ownHQAlias, wantLease: true, wantErr: "zerops_lease action=status", renews: 1,
+			setup: func(_ *testing.T, of *ownFixture) { of.hqRenewFails(orchFailure()) }},
+		{name: "no orchestrator to ask", host: ownHQAlias, wantLease: true, wantErr: "zerops_lease action=status",
+			setup: func(_ *testing.T, of *ownFixture) { of.deps.Swarm = nil }},
+		{name: "no lease", host: "appdev"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			of := newOwnFixture(t)
+			of.acquire(t, groupHQPool)
+			before := len(of.hq.renewLog())
+			if tt.setup != nil {
+				tt.setup(t, of)
+			}
+			lease, ok, err := LeaseTargetChecked(context.Background(), of.deps, tt.host, "verified")
+			if ok != tt.wantLease {
+				t.Fatalf("ok = %v, want %v", ok, tt.wantLease)
+			}
+			var pe *platform.PlatformError
+			switch {
+			case tt.wantErr != "" && (!errors.As(err, &pe) || !strings.Contains(pe.Suggestion, tt.wantErr)):
+				t.Errorf("err = %v, want a refusal naming %q", err, tt.wantErr)
+			case tt.wantErr == "" && err != nil:
+				t.Errorf("err = %v, want the lease", err)
+			case tt.wantErr == "" && ok && (lease.Alias != ownHQAlias || lease.Parked != tt.wantParked):
+				t.Errorf("lease = %+v, want %s, parked %v", lease, ownHQAlias, tt.wantParked)
+			}
+			if got := len(of.hq.renewLog()) - before; got != tt.renews {
+				t.Errorf("renews = %d, want %d: one per call", got, tt.renews)
+			}
+		})
+	}
+}

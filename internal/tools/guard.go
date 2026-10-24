@@ -161,6 +161,47 @@ func leaseOf(stateDir, host string) (ops.LeaseTargetInfo, bool) {
 	return lease, true
 }
 
+// leaseVouch asks a lease's pool orchestrator, once, whether the container
+// the lease names is still the lease's (docs/spec-workflows.md §8 DP-2): the
+// lease as it is to be reached (parked when its container is stopped), or the
+// refusal of one that is no longer zcp's or that the orchestrator does not
+// answer about.
+type leaseVouch func(ctx context.Context, lease ops.LeaseTargetInfo, what string) (ops.LeaseTargetInfo, error)
+
+// orchestratorVouch is the leaseVouch that asks through swarm
+// (ops.LeaseTargetChecked); nil swarm vouches for no lease: the call is
+// refused, zcp cannot tell whose the container is.
+func orchestratorVouch(client platform.Client, projectID, stateDir string, swarm ops.SwarmFactory) leaseVouch {
+	return func(ctx context.Context, lease ops.LeaseTargetInfo, what string) (ops.LeaseTargetInfo, error) {
+		checked, ok, err := ops.LeaseTargetChecked(ctx, ops.LeaseDeps{Client: client, ProjectID: projectID, StateDir: stateDir, Swarm: swarm}, lease.Alias, what)
+		if err == nil && !ok {
+			// The record went between the two reads: nothing to vouch for.
+			return lease, platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+				fmt.Sprintf("Lease %s was not %s: its record went while zcp read it", lease.Alias, what),
+				"zerops_lease action=status lists the leases this zcp holds")
+		}
+		return checked, err
+	}
+}
+
+// checkedLeaseOf is the lease host names, vouched for by its pool's
+// orchestrator once (vouch) for a call that reaches its container over ssh or
+// sshfs: err refuses a lease that is no longer zcp's — maybe another holder's
+// — or that the orchestrator does not answer about, before anything reaches
+// it; ok is false when host names no lease (an unreadable record set names
+// none, as leaseOf reads it).
+func checkedLeaseOf(ctx context.Context, stateDir string, vouch leaseVouch, host, what string) (ops.LeaseTargetInfo, bool, error) {
+	lease, ok := leaseOf(stateDir, host)
+	if !ok {
+		return ops.LeaseTargetInfo{}, false, nil
+	}
+	if vouch == nil {
+		vouch = orchestratorVouch(nil, "", stateDir, nil)
+	}
+	checked, err := vouch(ctx, lease, what)
+	return checked, true, err
+}
+
 // withoutPoolHosts drops the hostnames that are Swarm pools: a pool is never
 // adopted (PS-5), so the adoption gate has nothing to ask of a deploy that
 // targets one (DP-7). A hostname the lookup cannot resolve stays, and the

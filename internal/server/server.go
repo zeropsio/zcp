@@ -347,12 +347,14 @@ func (s *Server) registerTools() {
 			},
 			Override: os.Getenv("ZCP_DEVSUP_URL"),
 		}
-		tools.RegisterDeploySSH(s.server, s.client, httpClient, projectID, s.sshDeployer, s.authInfo, s.logFetcher, s.rtInfo, stateDir, wfEngine, recipeProbe, devsup)
+		tools.RegisterDeploySSH(s.server, s.client, httpClient, projectID, s.sshDeployer, s.authInfo, s.logFetcher, s.rtInfo, stateDir, wfEngine, recipeProbe, devsup,
+			tools.WithPoolOrchestratorsForDeploy(ops.NewSwarmFactory(&http.Client{Timeout: ops.LeaseCallTimeout})))
 		// v8.94: batch-deploy keeps multi-target parallelism server-side
 		// so the MCP STDIO channel isn't saturated (v23 "Not connected"
 		// failure class). SSH-only — local deploys don't face the same
 		// parallelism problem.
-		tools.RegisterDeployBatch(s.server, s.client, httpClient, projectID, s.sshDeployer, s.authInfo, s.logFetcher, s.rtInfo, stateDir, wfEngine, recipeProbe, devsup)
+		tools.RegisterDeployBatch(s.server, s.client, httpClient, projectID, s.sshDeployer, s.authInfo, s.logFetcher, s.rtInfo, stateDir, wfEngine, recipeProbe, devsup,
+			tools.WithPoolOrchestratorsForDeploy(ops.NewSwarmFactory(&http.Client{Timeout: ops.LeaseCallTimeout})))
 		// dev_server depends on the SSH deployer — it drives the dev
 		// servers' supervisor on target containers. Skipped in local-only
 		// mode where SSH to Zerops siblings is not available.
@@ -361,6 +363,7 @@ func (s *Server) registerTools() {
 			AuthInfo: s.authInfo, LogFetcher: s.logFetcher, RtInfo: s.rtInfo,
 			Devsup:       devsup,
 			CarriesParts: mate.EnvelopeCarriesParts(),
+			Swarm:        ops.NewSwarmFactory(&http.Client{Timeout: ops.LeaseCallTimeout}),
 		})
 		// A Mate stands up from its group's recipe in one call (docs/spec-mate.md
 		// D32). Mate-gated like every mate-shaped effect (§2.0): a container
@@ -402,7 +405,8 @@ func (s *Server) registerTools() {
 	tools.RegisterImportSteered(s.server, s.client, projectID, wfEngine, stateDir, recipeProbe, s.rtInfo, recipeSteer)
 	tools.RegisterDelete(s.server, s.client, projectID, stateDir, s.mounter, s.rtInfo)
 	tools.RegisterSubdomain(s.server, s.client, httpClient, projectID, stateDir)
-	tools.RegisterMount(s.server, s.client, projectID, s.mounter, s.rtInfo, stateDir, wfEngine, recipeProbe)
+	tools.RegisterMount(s.server, s.client, projectID, s.mounter, s.rtInfo, stateDir, wfEngine, recipeProbe,
+		tools.WithPoolOrchestratorsForMount(ops.NewSwarmFactory(&http.Client{Timeout: ops.LeaseCallTimeout})))
 	// A dev pool's container is leased through its orchestrator, which answers
 	// only inside the project (docs/spec-workflows.md §8 DP-3/DP-5). A start or
 	// a reset-release restarts the container, so the client outwaits the 15 s

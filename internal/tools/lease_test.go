@@ -733,7 +733,7 @@ func TestEnvelope_OtherToolsCarryNoLeaseActivity(t *testing.T) {
 	writeDevpoolLeaseFile(t, dir)
 	c := devservertest.NewSupervised(`{"version":1,"previewPortBase":9000,"servers":[{"name":"web","port":3000,"command":"pnpm dev"}]}`)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDevServer(srv, DevServerDeps{Client: leasePoolMock(false), HTTPClient: okHTTP, ProjectID: "proj-1", SSH: c, StateDir: dir, CarriesParts: true})
+	RegisterDevServer(srv, DevServerDeps{Client: leasePoolMock(false), HTTPClient: okHTTP, ProjectID: "proj-1", SSH: c, StateDir: dir, CarriesParts: true, vouch: vouchHeld})
 
 	res := callTool(t, srv, "zerops_dev_server", map[string]any{"action": "status", "hostname": "devpool-3"})
 	text := getTextContent(t, res)

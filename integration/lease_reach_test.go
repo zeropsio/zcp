@@ -9,9 +9,11 @@ package integration_test
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -74,6 +76,44 @@ func (o *reachOrch) set(fn func(o *reachOrch)) {
 	fn(o)
 }
 
+// vouchRoute answers the orchestrator at host as one that gives every
+// container zcp asks about to the lease asking — what a lease zcp still holds
+// reads (docs/spec-workflows.md §8 DP-2) — and leaves other traffic to next.
+type vouchRoute struct {
+	host string
+	next http.RoundTripper
+}
+
+func (v vouchRoute) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.URL.Host != v.host {
+		return v.next.RoundTrip(r)
+	}
+	id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/container/"), "/renew")
+	body, status := `{"id":"`+id+`","status":"ACTIVE","current":true,"lockState":"reserved","dirty":false}`, http.StatusOK
+	switch {
+	case r.Method == http.MethodGet && r.URL.Path == "/container":
+		body = `[]`
+	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/renew"), r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/container/"):
+	default:
+		body, status = `{"error":{"code":"notFound","message":"not routed in this test"}}`, http.StatusNotFound
+	}
+	return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": {"application/json"}},
+		Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+}
+
+// vouchFor routes the orchestrators of pools through vouchRoute for the
+// test's life (it must not run in parallel).
+func vouchFor(t *testing.T, pools ...string) {
+	t.Helper()
+	orig := http.DefaultTransport
+	next := orig
+	for _, pool := range pools {
+		next = vouchRoute{host: "orch." + pool + ".zerops", next: next}
+	}
+	http.DefaultTransport = next
+	t.Cleanup(func() { http.DefaultTransport = orig })
+}
+
 // reachSSH is a leased container that records every host zcp reaches.
 type reachSSH struct {
 	*devservertest.Container
@@ -104,12 +144,7 @@ func (s *reachSSH) forget() {
 func (s *reachSSH) reached(host string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, h := range s.hosts {
-		if h == host {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(s.hosts, host)
 }
 
 // TestLease_Integration_LeaseNotOurs_ToolsNeverReachIt: the live recheck of

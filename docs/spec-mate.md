@@ -1180,7 +1180,7 @@ record (§6.3), never a field here:
   `zerops_lease`, all from `tools.leaseEnvelopeOptions` — and left out when it did not (no reader, or a project that
   lists no pool and has no lease record). Never `null`. A client keeps the last list it read until a
   newer envelope carries the key (`TestEnvelopeJSON_LeasesNotRead_NoKey`,
-  `TestEnvelopeJSON_LeasesReadNone_EmptyArray`, `TestDevelopBriefing_PoolPairStage_HeldLease_DeploysFromTheLease`).
+  `TestEnvelopeJSON_LeasesReadNone_EmptyArray`, `TestDevelopBriefing_PoolPairStage_LeaseNoOrchestratorVouchesFor_NeverTheSource`).
 - **Additive: no version gate.** Mate decodes the envelope forward-compatibly, so the key needs no
   `SupportedContract` bump and no `MinimumMateVersion` raise; a Mate that does not know it ignores it.
   The same holds for `activity` and `unsaved`.

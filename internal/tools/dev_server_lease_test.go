@@ -127,7 +127,7 @@ func TestDevServer_LeaseAlias_PreviewURLFromPoolSubdomain(t *testing.T) {
 	c := devservertest.NewSupervised(`{"version":1,"previewPortBase":9000,"servers":[{"name":"web","port":3000,"command":"pnpm dev"}]}`)
 	c.Servers["web"].PreviewPort = 9003
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDevServer(srv, DevServerDeps{Client: mock, HTTPClient: okHTTP, ProjectID: "proj-1", SSH: c, StateDir: dir})
+	RegisterDevServer(srv, DevServerDeps{Client: mock, HTTPClient: okHTTP, ProjectID: "proj-1", SSH: c, StateDir: dir, vouch: vouchHeld})
 
 	result := callTool(t, srv, "zerops_dev_server", map[string]any{"action": "start", "hostname": "devpool-3"})
 	if result.IsError {
@@ -182,7 +182,7 @@ func TestDevServer_LeaseAlias_StatusReportsThePreviewURLOnlyWhileThePoolSubdomai
 			c := devservertest.NewSupervised(`{"version":1,"previewPortBase":9000,"servers":[{"name":"web","port":3000,"command":"pnpm dev"}]}`)
 			c.Servers["web"].PreviewPort = 9003
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-			RegisterDevServer(srv, DevServerDeps{Client: mock, HTTPClient: okHTTP, ProjectID: "proj-1", SSH: c, StateDir: dir})
+			RegisterDevServer(srv, DevServerDeps{Client: mock, HTTPClient: okHTTP, ProjectID: "proj-1", SSH: c, StateDir: dir, vouch: vouchHeld})
 
 			result := callTool(t, srv, "zerops_dev_server", map[string]any{"action": "status", "hostname": "devpool-3"})
 			if result.IsError {
@@ -258,7 +258,7 @@ func TestDevServer_LeaseStart_ProbesItsOwnPreviewPort(t *testing.T) {
 			c.Servers["web"].PreviewPort = 9003
 			doer := &previewDoer{ok: preview}
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-			RegisterDevServer(srv, DevServerDeps{Client: mock, HTTPClient: doer, ProjectID: "proj-1", SSH: c, StateDir: dir})
+			RegisterDevServer(srv, DevServerDeps{Client: mock, HTTPClient: doer, ProjectID: "proj-1", SSH: c, StateDir: dir, vouch: vouchHeld})
 
 			result := callTool(t, srv, "zerops_dev_server", map[string]any{"action": "start", "hostname": "devpool-3"})
 			if result.IsError {
@@ -323,7 +323,7 @@ func TestDevServerTool_LeaseSiblingEnv_ResultNamesSetAndLeftVariables(t *testing
 		dir := t.TempDir()
 		writeWiringLeases(t, dir)
 		srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-		RegisterDevServer(srv, DevServerDeps{Client: leasePoolMock(false), HTTPClient: okHTTP, ProjectID: "proj-1", SSH: c, StateDir: dir})
+		RegisterDevServer(srv, DevServerDeps{Client: leasePoolMock(false), HTTPClient: okHTTP, ProjectID: "proj-1", SSH: c, StateDir: dir, vouch: vouchHeld})
 		return callTool(t, srv, "zerops_dev_server", map[string]any{"action": "start", "hostname": "webpool-3", "name": "web"})
 	}
 

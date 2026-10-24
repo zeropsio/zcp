@@ -31,6 +31,8 @@ type VerifyOption func(*verifyConfig)
 
 type verifyConfig struct {
 	swarm ops.SwarmFactory
+	// vouch replaces the orchestrator's answer for a lease (tests).
+	vouch leaseVouch
 }
 
 // WithPoolOrchestrators lets verify of a pool, in a container, also ask the
@@ -44,6 +46,10 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 	var cfg verifyConfig
 	for _, opt := range opts {
 		opt(&cfg)
+	}
+	vouch := cfg.vouch
+	if vouch == nil {
+		vouch = orchestratorVouch(client, projectID, stateDir, cfg.swarm)
 	}
 	// checkPool adds the orchestrator check to a pool's result; the
 	// orchestrator answers only inside the project.
@@ -93,7 +99,13 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 		}
 		// A lease alias names a pool container, not a service: it is read
 		// over SSH and never resolved as a service or a meta (DP-1, PS-3).
-		if lease, ok := leaseOf(stateDir, input.ServiceHostname); ok {
+		// It is asked of its orchestrator first (DP-2): one that is no longer
+		// the lease's — maybe another holder's — or that the orchestrator does
+		// not answer about is never probed, and never called healthy.
+		if lease, ok, err := checkedLeaseOf(ctx, stateDir, vouch, input.ServiceHostname, "verified"); ok {
+			if err != nil {
+				return convertError(err, WithRecoveryStatus()), nil, nil
+			}
 			return verifyLease(ctx, client, httpClient, ssh, projectID, stateDir, rt, lease), nil, nil
 		}
 		// Phase 4: if the input hostname is a push source whose builds land

@@ -122,6 +122,7 @@ func TestLease_Integration_DevServerStart_ProbesTheLeasesOwnPreview(t *testing.T
 	const preview = "https://devpool-abc1-9003.prg1.zerops.app"
 	var mu sync.Mutex
 	var asked []string
+	vouchFor(t, "devpool") // the pool's orchestrator gives zcp its lease (DP-2)
 	orig := http.DefaultTransport
 	http.DefaultTransport = previewRoute{mu: &mu, ok: preview, asked: &asked, next: orig}
 	t.Cleanup(func() { http.DefaultTransport = orig })
@@ -137,7 +138,8 @@ func TestLease_Integration_DevServerStart_ProbesTheLeasesOwnPreview(t *testing.T
 	mock := platform.NewMock().
 		WithProject(&platform.Project{ID: "proj-1", Name: "test-project", Status: "ACTIVE", SubdomainHost: "abc1.prg1.zerops.app"}).
 		WithServices([]platform.ServiceStack{pool}).
-		WithService(&pool)
+		WithService(&pool).
+		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{ID: "env-t", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}})
 	c := devservertest.NewSupervised(`{"version":1,"previewPortBase":9000,"servers":[{"name":"web","port":3000,"command":"pnpm dev"}]}`)
 	c.Servers["web"].PreviewPort = 9003
 	session, cleanup := setupTestServerWithDeploy(t, mock, defaultLogFetcher(), c)

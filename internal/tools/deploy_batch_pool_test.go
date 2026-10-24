@@ -40,7 +40,7 @@ func runPoolBatch(t *testing.T, mock *platform.Mock, ssh ops.SSHDeployer, stateD
 	t.Helper()
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeployBatch(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{InContainer: true, ServiceName: "zcp"}, stateDir, testDeployEngine(t), nil, DevsupSource{})
+	RegisterDeployBatch(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{InContainer: true, ServiceName: "zcp"}, stateDir, testDeployEngine(t), nil, DevsupSource{}, withVouchHeld())
 	result := callTool(t, srv, "zerops_deploy_batch", map[string]any{"targets": targets})
 	text := getTextContent(t, result)
 	var batch ops.DeployBatchResult
@@ -203,5 +203,26 @@ func TestDeployBatch_LeaseSource_ResolvesAlias(t *testing.T) {
 		if c.host == rig.alias && strings.Contains(c.command, "zcp-devsup") {
 			t.Errorf("a lease deploy touched the lease's dev setup: %q", c.command)
 		}
+	}
+}
+
+// TestDeployBatch_LeaseSourceNoOrchestratorVouchesFor_Refused: a batch entry
+// whose source is a lease reads it only once the pool's orchestrator says the
+// container is still the lease's (docs/spec-workflows.md §8 DP-2); a zcp that
+// cannot ask refuses the entry before pre-flight or ssh reaches it.
+func TestDeployBatch_LeaseSourceNoOrchestratorVouchesFor_Refused(t *testing.T) {
+	t.Parallel()
+	rig := newLeaseDeployRig(t)
+	ssh := &leaseSSH{}
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeployBatch(srv, rig.mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{InContainer: true, ServiceName: "zcp"}, rig.stateDir, testDeployEngine(t), nil, DevsupSource{})
+	result := callTool(t, srv, "zerops_deploy_batch", map[string]any{"targets": []map[string]any{{"sourceService": rig.alias, "targetService": "appstage"}}})
+	text := getTextContent(t, result)
+	if !result.IsError || !strings.Contains(text, rig.alias) || !strings.Contains(text, "orchestrator") {
+		t.Fatalf("result = (error %v) %s, want a refusal: zcp cannot ask whose the container is", result.IsError, text)
+	}
+	if len(ssh.hosts()) != 0 {
+		t.Errorf("ssh reached %v before the refusal", ssh.hosts())
 	}
 }

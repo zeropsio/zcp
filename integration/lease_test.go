@@ -353,11 +353,13 @@ func TestLease_Integration_DeployToStage_SaysStageTracksMain(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	vouchFor(t, "webpool") // the pool's orchestrator gives zcp its lease (DP-2)
 	mock := defaultMock().
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-stage", Name: "appstage", Status: "RUNNING", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
 			{ID: "svc-pool", Name: "webpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
 		}).
+		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{ID: "env-t", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}}).
 		WithAppVersionEvents([]platform.AppVersionEvent{
 			{ID: "av-stage", ProjectID: "proj-1", ServiceStackID: "svc-stage", Source: "CLI", Status: "ACTIVE", Sequence: 1, Build: &platform.BuildInfo{}},
 		})

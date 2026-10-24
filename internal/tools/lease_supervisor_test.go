@@ -90,7 +90,7 @@ func TestDevServerTool_LeaseWhoseSupervisorIsGone_StartsIt(t *testing.T) {
 	c := &devservertest.Container{Installed: true, SupervisorVersion: "v9.300.0", Formats: []int{1},
 		Declaration: `{"version":1,"previewPortBase":9000,"servers":[{"name":"web","port":3000,"command":"pnpm dev"}]}`}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDevServer(srv, DevServerDeps{Client: leasePoolMock(true), HTTPClient: okHTTP, ProjectID: "proj-1", SSH: c, StateDir: dir})
+	RegisterDevServer(srv, DevServerDeps{Client: leasePoolMock(true), HTTPClient: okHTTP, ProjectID: "proj-1", SSH: c, StateDir: dir, vouch: vouchHeld})
 
 	result := callTool(t, srv, "zerops_dev_server", map[string]any{"action": "status", "hostname": "devpool-3"})
 	text := getTextContent(t, result)
