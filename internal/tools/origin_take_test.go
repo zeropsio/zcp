@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/ops"
 )
 
 // gitOut runs git in dir and returns its trimmed output; t fails on an error.
@@ -74,6 +76,11 @@ func originFixture(t *testing.T, replaced, own bool) (pair, hqMain, originTip st
 	gitOut(t, pair, "remote", "add", "origin", hqRepo)
 	gitOut(t, pair, "fetch", "-q", "origin", seed)
 	gitOut(t, pair, "checkout", "-q", "-B", "main", seed)
+	// The wiring fills the checkout's own identity when it has none
+	// (ops.BuildBaseBranchCommand), so the take's merge commits as it does,
+	// never as whoever the host's git config names.
+	gitOut(t, pair, "config", "user.email", ops.DeployGitIdentity.Email)
+	gitOut(t, pair, "config", "user.name", ops.DeployGitIdentity.Name)
 	if own {
 		if err := os.WriteFile(filepath.Join(pair, "notes.md"), []byte("the Mate's notes\n"), 0o600); err != nil {
 			t.Fatal(err)
