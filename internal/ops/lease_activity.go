@@ -136,7 +136,7 @@ func readLeaseActivity(ctx context.Context, d LeaseDeps, rec leaseRecord) (*topo
 // (readLeaseActivity); whether the container has no preview to observe — a
 // supervisor that lists activity runs no dev server on a preview port, so no
 // preview connection can be in use (markIdleLeases); and the supervisor's
-// overlay its supervisor part carried (overlayOf, DP-25).
+// overlay its supervisor part carried (overlayOf, DP-26).
 type leaseFacts struct {
 	activity  *topology.LeaseActivity
 	unsaved   *topology.LeaseUnsaved

@@ -36,7 +36,7 @@ import (
 // hostname, so a sibling still wired to it would reach someone else's
 // workspace. Every change zcp makes to a group's membership therefore first
 // hands every other lease of the group the overlay recomputed without (or
-// with) the lease (DP-25): an acquire that adds a lease, after its checkout,
+// with) the lease (DP-26): an acquire that adds a lease, after its checkout,
 // and a release that takes one away, before the orchestrator is asked — a
 // release that then fails hands it back with the lease still in. A lease zcp
 // cannot rewire is a note naming it and the call that sends the overlay
@@ -317,14 +317,14 @@ func overlayRefusedNote(alias string, env LeaseSiblingEnv, err error) string {
 
 // LeaseChange is what an acquire or a release did: the leases it returned,
 // and every other lease of their branch it handed the recomputed sibling
-// overlay (DP-25).
+// overlay (DP-26).
 type LeaseChange struct {
 	Leases  []LeaseView
 	Rewired []LeaseRewire
 }
 
 // LeaseRewire is what handing one lease the sibling overlay recomputed for a
-// change of its group did (DP-25): the overlay — present when its declaration
+// change of its group did (DP-26): the overlay — present when its declaration
 // names siblingEnv — the servers its supervisor restarted under it during the
 // call, read back by the status reads that wait for them, those it had not yet
 // restarted, and how long it took. A lease zcp could not rewire carries a
@@ -551,7 +551,7 @@ func aliasesOf(records []leaseRecord) []string {
 }
 
 // LeaseWiringStale marks a lease whose dev servers run with an overlay naming
-// a container no lease of its group holds (DP-25).
+// a container no lease of its group holds (DP-26).
 const LeaseWiringStale = "stale"
 
 // leaseOverlay is a lease supervisor's overlay as one read found it: the

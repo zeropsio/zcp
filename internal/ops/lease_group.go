@@ -31,7 +31,7 @@ import (
 // repository's prepare and the supervisor (DP-13, DP-14). A group release
 // (DP-23) reads every member before it releases any and releases each through
 // the one lease's release step. A change of a group's membership first hands
-// every other lease of it the recomputed sibling overlay (DP-25).
+// every other lease of it the recomputed sibling overlay (DP-26).
 
 // leaseLocksDir is where the per-key acquire locks live, apart from the lease
 // records (a record is replaced by rename on every write and cannot carry a
@@ -78,7 +78,7 @@ func LeaseAcquireGroup(ctx context.Context, d LeaseDeps, pools []string, repo, b
 // the new leases hold the branch, every lease of the branch's group this call
 // did not take — held before it, reused or not named — is handed the sibling
 // overlay with the new ones in, while the new ones run their own supervisor
-// step, which sends them theirs (DP-25). An acquire that took no lease changes
+// step, which sends them theirs (DP-26). An acquire that took no lease changes
 // no membership and rewires nothing.
 func LeaseAcquireGroupChange(ctx context.Context, d LeaseDeps, pools []string, repo, branch string) (LeaseChange, error) {
 	members, err := resolveGroupPools(ctx, d, pools)
@@ -590,7 +590,7 @@ func LeaseReleaseGroup(ctx context.Context, d LeaseDeps, repo, branch string, fo
 // LeaseReleaseGroupChange is LeaseReleaseGroup with the rewire it did: the
 // release takes every lease of the branch, so no other lease is left to
 // rewire before it; a lease the orchestrator would not release stays held,
-// and it is handed the overlay without the leases that went (DP-25).
+// and it is handed the overlay without the leases that went (DP-26).
 func LeaseReleaseGroupChange(ctx context.Context, d LeaseDeps, repo, branch string, force bool) (LeaseChange, error) {
 	if err := validateLeaseBranch(branch); err != nil {
 		return LeaseChange{}, err

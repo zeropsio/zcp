@@ -66,7 +66,7 @@ type leaseToolResult struct {
 	Action string          `json:"action"`
 	Leases []ops.LeaseView `json:"leases"`
 	// Rewired are the other leases of the branch an acquire or a release
-	// handed the recomputed sibling overlay (DP-25).
+	// handed the recomputed sibling overlay (DP-26).
 	Rewired []ops.LeaseRewire `json:"rewired,omitempty"`
 	// UnreadPools are the pools a status of every pool could not read, each
 	// with why; their leases are listed from zcp's records, unverified.

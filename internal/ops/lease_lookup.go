@@ -58,7 +58,7 @@ func LeaseGroup(stateDir, alias string) ([]LeaseTargetInfo, error) {
 
 // leaseGroupWithout is LeaseGroup as it will be once the leases in leaving
 // (aliases) have left: a rewire computes the overlay of a release's other
-// leases before the release drops its record (DP-25).
+// leases before the release drops its record (DP-26).
 func leaseGroupWithout(stateDir, alias string, leaving map[string]bool) ([]LeaseTargetInfo, error) {
 	rec, err := loadLeaseRecord(stateDir, alias)
 	if err != nil {

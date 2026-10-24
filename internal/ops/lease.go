@@ -187,7 +187,7 @@ type LeaseView struct {
 	noPreview bool
 	// Wiring is LeaseWiringStale on a status view of a lease whose dev servers
 	// run with an overlay naming a container no lease of its group holds, the
-	// note saying which and the call that fixes it (DP-25); "" otherwise.
+	// note saying which and the call that fixes it (DP-26); "" otherwise.
 	Wiring string `json:"wiring,omitempty"`
 	// overlay is what status's read found of the lease's supervisor overlay;
 	// nil when it was not read or the supervisor predates it.
@@ -336,7 +336,7 @@ func LeaseList(ctx context.Context, d LeaseDeps, pool string) ([]LeaseView, erro
 // and one nothing has happened in for leaseIdleAfter is marked idle with what
 // frees it (markIdleLeases, DP-25), and a lease whose servers run wired to a
 // container no lease of its group holds is marked wiring: stale
-// (markStaleWiring, DP-25); status changes nothing anywhere.
+// (markStaleWiring, DP-26); status changes nothing anywhere.
 func LeaseStatus(ctx context.Context, d LeaseDeps, pool string) (LeaseStatusView, error) {
 	records, err := readLeaseRecords(d.StateDir)
 	if err != nil {
@@ -693,7 +693,7 @@ func LeaseRelease(ctx context.Context, d LeaseDeps, alias string, force bool) (L
 // every other lease of its branch is handed the sibling overlay without it —
 // the container goes to the pool's next acquirer under the same hostname — and
 // a release that then fails, the orchestrator still reserving the container,
-// hands it back with the lease still in (DP-25).
+// hands it back with the lease still in (DP-26).
 func LeaseReleaseChange(ctx context.Context, d LeaseDeps, alias string, force bool) (LeaseChange, error) {
 	rec, err := loadLeaseRecord(d.StateDir, alias)
 	if err != nil {

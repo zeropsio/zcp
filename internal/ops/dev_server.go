@@ -126,7 +126,7 @@ type DevServerResult struct {
 	SiblingEnv *LeaseSiblingEnv `json:"siblingEnv,omitempty"`
 	// Wiring is LeaseWiringStale on a status of a lease whose servers run with
 	// an overlay naming a container no lease of its group holds by zcp's
-	// records; the message says which and the call that fixes it (DP-25).
+	// records; the message says which and the call that fixes it (DP-26).
 	Wiring string `json:"wiring,omitempty"`
 	// Unreported: the call read several servers and reports none of them
 	// alone (a status of a dev service with several), so it says nothing of
