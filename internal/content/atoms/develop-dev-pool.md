@@ -41,10 +41,11 @@ own hostname reaches a random container — address a leased one by its alias.
 and kept), `unmounted` (the record has no alias or mount), `lost` (its
 container is gone, free, or another holder's now; a plain release drops the
 record and touches nothing else) or `unknown-holder` (reserved, but no
-record of yours). A lease marked `unverified` may be another holder's: it is
-not read, a plain release refuses it, and its note names the park (or
-unpark) that settles it. It reads each other lease's activity and unsaved
-work, changing nothing: a lease untouched for a day is `idle`, its `idle.next` naming the
+record of yours). A lease marked `unverified` is one its pool's orchestrator
+did not answer about: it may be another holder's, so nothing reads it and
+every call that would change it is refused; a later status asks again. It
+reads each other lease's activity and unsaved work, changing
+nothing: a lease untouched for a day is `idle`, its `idle.next` naming the
 release or what a release would lose. `warm` shows each pool's warm
 container.
 
