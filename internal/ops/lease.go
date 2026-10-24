@@ -185,6 +185,13 @@ type LeaseView struct {
 	// noPreview: the read found no preview to observe — a supervisor that
 	// lists activity runs no dev server on a preview port.
 	noPreview bool
+	// Wiring is LeaseWiringStale on a status view of a lease whose dev servers
+	// run with an overlay naming a container no lease of its group holds, the
+	// note saying which and the call that fixes it (DP-26); "" otherwise.
+	Wiring string `json:"wiring,omitempty"`
+	// overlay is what status's read found of the lease's supervisor overlay;
+	// nil when it was not read or the supervisor predates it.
+	overlay *leaseOverlay
 	// containerDeleted: a release deleted the container because it could not
 	// be reset (DP-15).
 	containerDeleted bool
@@ -327,7 +334,9 @@ func LeaseList(ctx context.Context, d LeaseDeps, pool string) ([]LeaseView, erro
 // and the pool is named in Unread. With ssh, each lease zcp holds also
 // carries what one read of its checkout found (readLeaseActivities, DP-21),
 // and one nothing has happened in for leaseIdleAfter is marked idle with what
-// frees it (markIdleLeases, DP-25); status changes nothing anywhere.
+// frees it (markIdleLeases, DP-25), and a lease whose servers run wired to a
+// container no lease of its group holds is marked wiring: stale
+// (markStaleWiring, DP-26); status changes nothing anywhere.
 func LeaseStatus(ctx context.Context, d LeaseDeps, pool string) (LeaseStatusView, error) {
 	records, err := readLeaseRecords(d.StateDir)
 	if err != nil {
@@ -344,6 +353,7 @@ func LeaseStatus(ctx context.Context, d LeaseDeps, pool string) (LeaseStatusView
 		}
 		readLeaseActivities(ctx, d, records, views)
 		markIdleLeases(d, records, views)
+		markStaleWiring(d.StateDir, records, views)
 		return LeaseStatusView{Leases: views}, nil
 	}
 	names := map[string]bool{}
@@ -372,6 +382,7 @@ func LeaseStatus(ctx context.Context, d LeaseDeps, pool string) (LeaseStatusView
 	}
 	readLeaseActivities(ctx, d, records, status.Leases)
 	markIdleLeases(d, records, status.Leases)
+	markStaleWiring(d.StateDir, records, status.Leases)
 	return status, nil
 }
 
@@ -661,19 +672,32 @@ func readLeaseRecords(stateDir string) ([]leaseRecord, error) {
 	return out, nil
 }
 
-// LeaseRelease releases the lease addressed by alias and removes its record.
-// Unless force is set it first reads the container over ssh and refuses while
-// it holds commits on no remote branch or uncommitted/untracked files (DP-4);
-// the refusal leaves the mount, the record and the lease as they were. Every
-// release resets the container (processes end). A container ssh cannot reach
-// is released as lost, unchecked. If the orchestrator fails the reservation
-// is kept and so is the record. A lease the orchestrator no longer knows (it
-// ended, or the container is gone) has nothing left to release: the record is
-// dropped and the view says so.
+// LeaseRelease is LeaseReleaseChange's one lease.
 func LeaseRelease(ctx context.Context, d LeaseDeps, alias string, force bool) (LeaseView, error) {
-	rec, err := loadLeaseRecord(d.StateDir, alias)
+	change, err := LeaseReleaseChange(ctx, d, alias, force)
 	if err != nil {
 		return LeaseView{}, err
+	}
+	return change.Leases[0], nil
+}
+
+// LeaseReleaseChange releases the lease addressed by alias and removes its
+// record. Unless force is set it first reads the container over ssh and
+// refuses while it holds commits on no remote branch or uncommitted/untracked
+// files (DP-4); the refusal leaves the mount, the record and the lease as they
+// were. Every release resets the container (processes end). A container ssh
+// cannot reach is released as lost, unchecked. If the orchestrator fails the
+// reservation is kept and so is the record. A lease the orchestrator no longer
+// knows (it ended, or the container is gone) has nothing left to release: the
+// record is dropped and the view says so. Before the orchestrator is asked,
+// every other lease of its branch is handed the sibling overlay without it —
+// the container goes to the pool's next acquirer under the same hostname — and
+// a release that then fails, the orchestrator still reserving the container,
+// hands it back with the lease still in (DP-26).
+func LeaseReleaseChange(ctx context.Context, d LeaseDeps, alias string, force bool) (LeaseChange, error) {
+	rec, err := loadLeaseRecord(d.StateDir, alias)
+	if err != nil {
+		return LeaseChange{}, err
 	}
 	var guard leaseGuardResult
 	if !force {
@@ -681,11 +705,21 @@ func LeaseRelease(ctx context.Context, d LeaseDeps, alias string, force bool) (L
 		// stanza another call or a redeploy lost before it runs.
 		restoreNote := d.Host.refreshAliases(ctx, d)
 		if guard, err = guardLeaseRelease(ctx, d, rec); err != nil {
-			return LeaseView{}, err
+			return LeaseChange{}, err
 		}
 		guard.note = joinNotes(restoreNote, guard.note)
 	}
-	return releaseGuarded(ctx, d, rec, guard)
+	var siblings []leaseRecord
+	var rewired []LeaseRewire
+	if d.SSH != nil {
+		siblings = siblingRecords(d.StateDir, rec)
+		rewired = rewireLeases(ctx, d.SSH, d.StateDir, siblings, map[string]bool{alias: true}, "without "+alias)
+	}
+	view, err := releaseGuarded(ctx, d, rec, guard)
+	if err != nil {
+		return LeaseChange{}, handBackOverlay(ctx, d, rec, siblings, rewired, err)
+	}
+	return LeaseChange{Leases: []LeaseView{view}, Rewired: rewired}, nil
 }
 
 // releaseGuarded releases a lease whose guard passed (or was skipped by

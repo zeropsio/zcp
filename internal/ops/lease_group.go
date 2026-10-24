@@ -30,7 +30,8 @@ import (
 // credential (DP-16), the reservation (DP-3), the checkout (DP-6), then the
 // repository's prepare and the supervisor (DP-13, DP-14). A group release
 // (DP-23) reads every member before it releases any and releases each through
-// the one lease's release step.
+// the one lease's release step. A change of a group's membership first hands
+// every other lease of it the recomputed sibling overlay (DP-26).
 
 // leaseLocksDir is where the per-key acquire locks live, apart from the lease
 // records (a record is replaced by rename on every write and cannot carry a
@@ -69,21 +70,32 @@ type groupMember struct {
 // says where each container went. repo empty is the pools' default, which
 // every pool that has one must agree on.
 func LeaseAcquireGroup(ctx context.Context, d LeaseDeps, pools []string, repo, branch string) ([]LeaseView, error) {
+	change, err := LeaseAcquireGroupChange(ctx, d, pools, repo, branch)
+	return change.Leases, err
+}
+
+// LeaseAcquireGroupChange is LeaseAcquireGroup with the rewire it did: once
+// the new leases hold the branch, every lease of the branch's group this call
+// did not take — held before it, reused or not named — is handed the sibling
+// overlay with the new ones in, while the new ones run their own supervisor
+// step, which sends them theirs (DP-26). An acquire that took no lease changes
+// no membership and rewires nothing.
+func LeaseAcquireGroupChange(ctx context.Context, d LeaseDeps, pools []string, repo, branch string) (LeaseChange, error) {
 	members, err := resolveGroupPools(ctx, d, pools)
 	if err != nil {
-		return nil, err
+		return LeaseChange{}, err
 	}
 	branch = cmp.Or(branch, leaseDefaultBranch)
 	if err := validateLeaseBranch(branch); err != nil {
-		return nil, err
+		return LeaseChange{}, err
 	}
 	repoURL, becomesDefault, err := resolveGroupRepo(d.StateDir, pools, repo)
 	if err != nil {
-		return nil, err
+		return LeaseChange{}, err
 	}
 	unlock, err := lockLeaseKeys(ctx, d.StateDir, repoURL, branch, pools)
 	if err != nil {
-		return nil, err
+		return LeaseChange{}, err
 	}
 	locked := true
 	defer func() {
@@ -93,13 +105,13 @@ func LeaseAcquireGroup(ctx context.Context, d LeaseDeps, pools []string, repo, b
 	}()
 	group, err := leaseGroupRecords(d.StateDir, repoURL, branch)
 	if err != nil {
-		return nil, err
+		return LeaseChange{}, err
 	}
 	var fresh []*groupMember
 	for _, m := range members {
 		held, found, err := heldLease(ctx, d, m.pool, branch, group)
 		if err != nil {
-			return nil, err
+			return LeaseChange{}, err
 		}
 		if found {
 			m.held = &held
@@ -112,7 +124,7 @@ func LeaseAcquireGroup(ctx context.Context, d LeaseDeps, pools []string, repo, b
 	// zcp puts on each pool's GIT_TOKEN before any container is taken (DP-16).
 	for _, m := range fresh {
 		if m.cred, err = ensurePoolHQCredential(ctx, d, m.rp.svc, repoURL); err != nil {
-			return nil, err
+			return LeaseChange{}, err
 		}
 	}
 	failed := func() bool { return slices.ContainsFunc(fresh, func(m *groupMember) bool { return m.err != nil }) }
@@ -121,14 +133,18 @@ func LeaseAcquireGroup(ctx context.Context, d LeaseDeps, pools []string, repo, b
 		checkoutMembers(ctx, d, fresh, repoURL, branch, recordedBase(group))
 	}
 	if failed() {
-		return nil, groupRefusal(ctx, d, members)
+		return LeaseChange{}, groupRefusal(ctx, d, members)
 	}
 	// Every member holds the branch: a concurrent acquire of these keys now
 	// finds them, while the prepare and the supervisor run.
 	unlock()
 	locked = false
+	var rewired []LeaseRewire
 	if d.SSH != nil {
+		var rewire sync.WaitGroup
+		rewire.Go(func() { rewired = rewireJoined(ctx, d, repoURL, branch, fresh) })
 		runMembers(fresh, func(m *groupMember) { afterLeaseCheckout(ctx, d.SSH, d.StateDir, m.rec.alias(), &m.view) })
+		rewire.Wait()
 	}
 	views := make([]LeaseView, 0, len(members))
 	for _, m := range members {
@@ -143,7 +159,31 @@ func LeaseAcquireGroup(ctx context.Context, d LeaseDeps, pools []string, repo, b
 		}
 		views = append(views, m.view)
 	}
-	return views, nil
+	return LeaseChange{Leases: views, Rewired: rewired}, nil
+}
+
+// rewireJoined hands every lease of the branch's group but the ones this
+// acquire took (fresh) the overlay with them in; nil when it took none or the
+// group has no other lease.
+func rewireJoined(ctx context.Context, d LeaseDeps, repoURL, branch string, fresh []*groupMember) []LeaseRewire {
+	if len(fresh) == 0 {
+		return nil
+	}
+	group, err := leaseGroupRecords(d.StateDir, repoURL, branch)
+	if err != nil {
+		return nil
+	}
+	joined := map[string]bool{}
+	names := make([]string, 0, len(fresh))
+	for _, m := range fresh {
+		joined[m.rec.alias()] = true
+		names = append(names, m.rec.alias())
+	}
+	others := slices.DeleteFunc(group, func(r leaseRecord) bool { return joined[r.alias()] })
+	if len(others) == 0 {
+		return nil
+	}
+	return rewireLeases(ctx, d.SSH, d.StateDir, others, nil, "with "+strings.Join(names, ", "))
 }
 
 // resolveGroupPools finds every pool (one service listing), refusing an empty
@@ -543,12 +583,21 @@ type releaseMember struct {
 // first, and the same call again releases what is left. repo empty is the one
 // repository zcp leases the branch for.
 func LeaseReleaseGroup(ctx context.Context, d LeaseDeps, repo, branch string, force bool) ([]LeaseView, error) {
+	change, err := LeaseReleaseGroupChange(ctx, d, repo, branch, force)
+	return change.Leases, err
+}
+
+// LeaseReleaseGroupChange is LeaseReleaseGroup with the rewire it did: the
+// release takes every lease of the branch, so no other lease is left to
+// rewire before it; a lease the orchestrator would not release stays held,
+// and it is handed the overlay without the leases that went (DP-26).
+func LeaseReleaseGroupChange(ctx context.Context, d LeaseDeps, repo, branch string, force bool) (LeaseChange, error) {
 	if err := validateLeaseBranch(branch); err != nil {
-		return nil, err
+		return LeaseChange{}, err
 	}
 	group, err := branchLeaseRecords(d.StateDir, repo, branch)
 	if err != nil {
-		return nil, err
+		return LeaseChange{}, err
 	}
 	members := make([]*releaseMember, 0, len(group))
 	for _, r := range group {
@@ -563,7 +612,7 @@ func LeaseReleaseGroup(ctx context.Context, d LeaseDeps, repo, branch string, fo
 			m.guard.note = joinNotes(restoreNote, m.guard.note)
 		})
 		if err := branchReleaseRefusal(d, members, repo, branch); err != nil {
-			return nil, err
+			return LeaseChange{}, err
 		}
 	}
 	again := LeaseReleaseBranchCall(branch, repo, force)
@@ -578,7 +627,27 @@ func LeaseReleaseGroup(ctx context.Context, d LeaseDeps, repo, branch string, fo
 	for _, m := range members {
 		views = append(views, m.view)
 	}
-	return views, nil
+	return LeaseChange{Leases: views, Rewired: rewireLeftHeld(ctx, d, members)}, nil
+}
+
+// rewireLeftHeld hands every lease a branch's release could not release the
+// overlay without the leases that went (their records are gone); nil when
+// every lease went or none did. The caller's context may be what failed the
+// releases; the leases left held are rewired all the same.
+func rewireLeftHeld(ctx context.Context, d LeaseDeps, members []*releaseMember) []LeaseRewire {
+	var held []leaseRecord
+	var gone []string
+	for _, m := range members {
+		if m.view.Error != "" {
+			held = append(held, m.rec)
+		} else {
+			gone = append(gone, m.rec.alias())
+		}
+	}
+	if d.SSH == nil || len(held) == 0 || len(gone) == 0 {
+		return nil
+	}
+	return rewireLeases(context.WithoutCancel(ctx), d.SSH, d.StateDir, held, nil, "without "+strings.Join(gone, ", "))
 }
 
 // branchLeaseRecords is what a release of branch releases: zcp's records of

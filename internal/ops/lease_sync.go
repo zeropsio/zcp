@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -28,7 +29,12 @@ import (
 // left as it was and named. Every read-only git call runs with
 // GIT_OPTIONAL_LOCKS=0 (leaseGitRead), so a read writes nothing into the
 // checkout; only the push, the fetch, the fast-forward and the upstream it
-// sets write.
+// sets write. A fast-forward that changes .zcp/dev-servers.json is zcp's own
+// change to the lease's checkout, as an acquire's checkout is (DP-13), so the
+// lease's supervisor takes it in the same call: the sibling overlay first
+// (DP-22), then a reload. The code a server runs is another matter: a server
+// without a watch keeps the code it started with, and the sync names it with
+// its restart, which stays the agent's to make.
 
 // Push outcomes.
 const (
@@ -100,6 +106,10 @@ type LeaseSyncMember struct {
 	// with no watch: they keep serving the code they started with until
 	// restarted.
 	UnwatchedServers []string `json:"unwatchedServers,omitempty"`
+	// Reloaded: the fast-forward changed the member's .zcp/dev-servers.json
+	// and its supervisor took it — the sibling overlay sent when it changed,
+	// then a reload.
+	Reloaded bool `json:"reloaded,omitempty"`
 	// Code is the error code of a failed member's step.
 	Code   string `json:"code,omitempty"`
 	Note   string `json:"note,omitempty"`
@@ -329,8 +339,9 @@ func syncPushRefusal(err error, alias, branch string, onHQ bool, summary string)
 // `git merge --ff-only` to origin's commit, answering to <commit>, or, when
 // git refuses (it never overwrites a local change), its words and blocked
 // <exit>. Up to date or fast-forwarded, a branch that tracks nothing yet is
-// set to track origin's. A checkout on another branch answers head <branch>
-// and is not touched.
+// set to track origin's; a fast-forward that changed .zcp/dev-servers.json
+// also answers declaration. A checkout on another branch answers head
+// <branch> and is not touched.
 func leaseSyncMemberCommand(branch string) string {
 	q := shellQuote
 	wd := q(leaseWorkDir)
@@ -350,6 +361,7 @@ func leaseSyncMemberCommand(branch string) string {
 		`m=$(LC_ALL=C git -C ` + wd + ` merge --ff-only -q "$t" 2>&1); c=$?`,
 		`if [ "$c" -ne 0 ]; then printf '%s\n' "$m"; ` + mark("blocked $c") + `; exit 0; fi`,
 		"track",
+		"if ! " + read + ` diff --quiet "$h" "$t" -- ` + q(devsup.DeclarationPath) + "; then " + mark("declaration") + "; fi",
 		mark("to $t"),
 	}, "\n")
 }
@@ -392,7 +404,13 @@ func fastForwardMember(ctx context.Context, d LeaseDeps, m *LeaseSyncMember, bra
 		blockedMember(ctx, d.SSH, m, a, again)
 	case hasMark(a, "to"):
 		m.Outcome, m.To = LeaseSyncFastForwarded, a.marks["to"]
-		m.UnwatchedServers, m.Note = unwatchedServers(ctx, d.SSH, m.Alias, m.Pool)
+		var fresh map[string]bool
+		var declared, unwatched string
+		if hasMark(a, "declaration") {
+			m.Reloaded, fresh, declared = takeMemberDeclaration(ctx, d, m.Alias, m.Pool)
+		}
+		m.UnwatchedServers, unwatched = unwatchedServers(ctx, d.SSH, m.Alias, m.Pool, fresh)
+		m.Note = joinNotes(declared, unwatched)
 	default:
 		m.Outcome = LeaseSyncFailed
 		m.Note = fmt.Sprintf("%s answered nothing zcp could read (%q), so it may not have been fast-forwarded; zerops_lease action=status shows its checkout", m.Alias, boundedText(string(out)))
@@ -443,9 +461,11 @@ func blockedMember(ctx context.Context, ssh SSHDeployer, m *LeaseSyncMember, a l
 // unwatchedServers names the dev servers running on a lease that was just
 // fast-forwarded with no watch — the lease's own entries (the pool's or none,
 // DP-22) without one, and any runtime entry — which keep serving the code
-// they started with until restarted, and says how to restart each. A lease
-// without a supervisor runs none; one zcp cannot read is a note.
-func unwatchedServers(ctx context.Context, ssh SSHDeployer, alias, pool string) ([]string, string) {
+// they started with until restarted, and says how to restart each; fresh are
+// the servers that started or restarted since the fast-forward, which run the
+// new code. A lease without a supervisor runs none; one zcp cannot read is a
+// note.
+func unwatchedServers(ctx context.Context, ssh SSHDeployer, alias, pool string, fresh map[string]bool) ([]string, string) {
 	ds, err := ReadDevServers(ctx, ssh, alias, "")
 	if err != nil {
 		var noSup *NoSupervisorError
@@ -461,7 +481,7 @@ func unwatchedServers(ctx context.Context, ssh SSHDeployer, alias, pool string) 
 	}
 	var names []string
 	for name, st := range ds.State.Servers {
-		if !liveServer(st) {
+		if !liveServer(st) || fresh[name] {
 			continue
 		}
 		if s, ok := declared[name]; ok {
@@ -484,4 +504,117 @@ func unwatchedServers(ctx context.Context, ssh SSHDeployer, alias, pool string) 
 	}
 	return names, fmt.Sprintf("%s run(s) on %s without a watch, so it keeps the code it started with until restarted: %s",
 		strings.Join(names, ", "), alias, strings.Join(calls, "; "))
+}
+
+// takeMemberDeclaration has a lease's supervisor take the
+// .zcp/dev-servers.json its fast-forward just changed, as an acquire's has it
+// take the checkout's (DP-13): the sibling overlay first, when it changed
+// (DP-22, waiting for the restarts it sets off), then a reload, which starts
+// an added server, stops a removed one and restarts a changed one. It answers
+// whether the supervisor reloaded, the servers that started or restarted on
+// the new code, and a note saying what changed or why the supervisor did not
+// take it, with the call that makes it. A lease without zcp-devsup has
+// nothing to take; a declaration that cannot be read is never reloaded.
+func takeMemberDeclaration(ctx context.Context, d LeaseDeps, alias, pool string) (bool, map[string]bool, string) {
+	what := "the fast-forward changed " + devsup.DeclarationPath
+	rec, err := loadLeaseRecord(d.StateDir, alias)
+	if err != nil {
+		return false, nil, fmt.Sprintf("%s, but zcp could not read its record of %s (%v), so its supervisor runs the old one until a start: zerops_dev_server action=start hostname=%q name=<server>", what, alias, err, alias)
+	}
+	ds, err := ReadDevServers(ctx, d.SSH, alias, "")
+	var noSup *NoSupervisorError
+	switch {
+	case errors.As(err, &noSup) && !noSup.Installed:
+		return false, nil, ""
+	case errors.As(err, &noSup):
+		return false, nil, fmt.Sprintf("%s, and no zcp-devsup runs on %s: zerops_dev_server action=start hostname=%q name=<server> starts it on the new one", what, alias, alias)
+	case err != nil:
+		return false, nil, fmt.Sprintf("%s, but zcp could not read the supervisor on %s (%s), so it runs the old one until a start: zerops_dev_server action=start hostname=%q name=<server>", what, alias, sshFailureText(err), alias)
+	}
+	ds.Service = pool
+	if ds.DeclarationErr != nil {
+		return false, nil, fmt.Sprintf("%s to one that cannot be read (%v), so the supervisor on %s keeps the old one: fix it in the lease you commit in, commit and sync again", what, ds.DeclarationErr, alias)
+	}
+	before := ds.State
+	var did []string
+	lease := rec.targetInfo()
+	env, err := leaseSiblingEnv(d.StateDir, lease, ds.Declared.SiblingEnv)
+	switch {
+	case err != nil:
+		did = append(did, fmt.Sprintf("sent no sibling overlay (%v)", err))
+	case maps.Equal(ds.State.Env, env.Set):
+	case !ds.Supervisor.Supports(devsup.CapabilityEnv):
+		did = append(did, "sent no sibling overlay: "+olderSupervisorText(lease, ds.Supervisor, env)+". "+olderSupervisorRecovery(lease))
+	default:
+		if _, err := applyLeaseOverlay(ctx, d.SSH, alias, ds, env); err != nil {
+			did = append(did, fmt.Sprintf("the supervisor refused the sibling overlay (%s)", sshFailureText(err)))
+		} else if len(env.Set) == 0 {
+			did = append(did, "cleared the sibling overlay")
+		} else {
+			did = append(did, "sent the sibling overlay ("+env.names()+")")
+		}
+	}
+	st, err := supervisorCtl(ctx, d.SSH, alias, "reload")
+	if err != nil {
+		return false, startedSince(before, ds.State), fmt.Sprintf("%s, but the supervisor on %s did not take it (%s)%s; zerops_dev_server action=status hostname=%q names what is wrong", what, alias, sshFailureText(err), joinedClause(did), alias)
+	}
+	fresh := startedSince(before, st)
+	did = append(did, "reloaded the supervisor on "+alias)
+	if delta := reloadDelta(before, st, fresh); delta != "" {
+		did[len(did)-1] += ", which " + delta
+	}
+	return true, fresh, what + ", so zcp " + strings.Join(did, " and ")
+}
+
+// joinedClause is "; " and the clauses, "" when there are none.
+func joinedClause(clauses []string) string {
+	if len(clauses) == 0 {
+		return ""
+	}
+	return "; zcp " + strings.Join(clauses, " and ")
+}
+
+// startedSince names the servers live in after that were not live in before,
+// or have restarted since (their restart count grew or their process
+// changed): they run the code on disk now.
+func startedSince(before, after devsup.State) map[string]bool {
+	fresh := map[string]bool{}
+	for name, s := range after.Servers {
+		if !liveServer(s) {
+			continue
+		}
+		was, ok := before.Servers[name]
+		if !ok || !liveServer(was) || s.Restarts > was.Restarts || s.Pid != was.Pid {
+			fresh[name] = true
+		}
+	}
+	return fresh
+}
+
+// reloadDelta says what a reload and the overlay before it did to the
+// servers: those started, restarted and stopped, "" when none.
+func reloadDelta(before, after devsup.State, fresh map[string]bool) string {
+	var started, restarted, stopped []string
+	for _, name := range slices.Sorted(maps.Keys(fresh)) {
+		if was, ok := before.Servers[name]; ok && liveServer(was) {
+			restarted = append(restarted, name)
+		} else {
+			started = append(started, name)
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(before.Servers)) {
+		if now, ok := after.Servers[name]; liveServer(before.Servers[name]) && (!ok || !liveServer(now)) {
+			stopped = append(stopped, name)
+		}
+	}
+	var parts []string
+	for _, p := range []struct {
+		verb  string
+		names []string
+	}{{"started", started}, {"restarted", restarted}, {"stopped", stopped}} {
+		if len(p.names) > 0 {
+			parts = append(parts, p.verb+" "+strings.Join(p.names, ", "))
+		}
+	}
+	return strings.Join(parts, ", ")
 }
