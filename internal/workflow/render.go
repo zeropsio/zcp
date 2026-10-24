@@ -612,7 +612,8 @@ func renderPlan(b *strings.Builder, plan *Plan) {
 }
 
 // formatAction renders one NextAction as "Label — tool(args)". Args are
-// sorted for determinism (map iteration would otherwise vary run-to-run).
+// sorted for determinism (map iteration would otherwise vary run-to-run); a
+// list argument (ListArg) is written unquoted, as the tool call takes it.
 func formatAction(a NextAction) string {
 	if len(a.Args) == 0 {
 		return fmt.Sprintf("%s — %s", a.Label, a.Tool)
@@ -624,6 +625,10 @@ func formatAction(a NextAction) string {
 	sort.Strings(keys)
 	pairs := make([]string, 0, len(keys))
 	for _, k := range keys {
+		if isListArg(a.Args[k]) {
+			pairs = append(pairs, k+"="+a.Args[k])
+			continue
+		}
 		pairs = append(pairs, fmt.Sprintf("%s=%q", k, a.Args[k]))
 	}
 	return fmt.Sprintf("%s — %s %s", a.Label, a.Tool, strings.Join(pairs, " "))

@@ -26,7 +26,7 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 | `bootstrap-recipe-import-local` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
 | `bootstrap-recipe-local-clone` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
 | `bootstrap-resume` | 1 | idle/incomplete-resume |
-| `bootstrap-route-options` | 4 | idle/adopt-only, idle/bootstrapped-with-managed, idle/empty, idle/incomplete-resume |
+| `bootstrap-route-options` | 5 | idle/adopt-only, idle/bootstrapped-with-managed, idle/dev-pool-only, idle/empty, idle/incomplete-resume |
 | `bootstrap-runtime-classes` | 2 | bootstrap/classic/discover-standard-dynamic, bootstrap/classic/new-part-of-pair |
 | `bootstrap-verify` | 1 | bootstrap/recipe/close |
 | `bootstrap-wait-active` | 1 | bootstrap/classic/provision-local |
@@ -105,6 +105,7 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 | `export-validate` | 2 | export/classify-prompt, export/validation-failed |
 | `idle-adopt-entry` | 1 | idle/adopt-only |
 | `idle-bootstrap-entry` | 1 | idle/empty |
+| `idle-dev-pool-entry` | 1 | idle/dev-pool-only |
 | `idle-develop-entry` | 1 | idle/bootstrapped-with-managed |
 | `idle-launch-entry` | 1 | idle/bootstrapped-with-managed |
 | `launch-classify-platform-envs` | 1 | launch-production/active |

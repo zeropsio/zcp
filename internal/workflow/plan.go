@@ -1,5 +1,10 @@
 package workflow
 
+import (
+	"encoding/json"
+	"strings"
+)
+
 // Plan is the typed replacement for today's free-form Next section.
 // It is produced by a pure function BuildPlan(envelope) and is the ONLY
 // source of "what should happen next" in any tool response.
@@ -23,7 +28,9 @@ type Plan struct {
 	Alternatives []NextAction          `json:"alternatives,omitempty"`
 }
 
-// NextAction describes one concrete tool call suggested to the LLM.
+// NextAction describes one concrete tool call suggested to the LLM. An Args
+// value is a string; a list-valued tool argument (zerops_lease's `pools`)
+// carries ListArg's encoding.
 type NextAction struct {
 	Label     string            `json:"label"`
 	Tool      string            `json:"tool"`
@@ -35,4 +42,24 @@ type NextAction struct {
 // validators that require Primary to be populated.
 func (a NextAction) IsZero() bool {
 	return a.Label == "" && a.Tool == ""
+}
+
+// ListArg encodes a list-valued tool argument as a NextAction.Args value: a
+// JSON array of strings, which the status render writes unquoted —
+// `pools=["a","b"]` — the way the tool call is written.
+func ListArg(values []string) string {
+	b, err := json.Marshal(values)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// isListArg reports whether an Args value carries ListArg's encoding.
+func isListArg(value string) bool {
+	if !strings.HasPrefix(value, "[") {
+		return false
+	}
+	var values []string
+	return json.Unmarshal([]byte(value), &values) == nil
 }

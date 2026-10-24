@@ -279,15 +279,17 @@ func readLeaseRecordSnapshots(stateDir string) []LeaseSnapshot {
 	return out
 }
 
-// deriveIdleScenario classifies the idle phase into one of four sub-cases
+// deriveIdleScenario classifies the idle phase into one of five sub-cases
 // based on service composition. Returns "" for non-idle phases. Partitions
 // services the same way planIdle does: managed services don't count toward
 // any runtime bucket (they are data stores, not deploy targets).
 //
-// Priority: incomplete > bootstrapped > adopt > empty.
+// Priority: incomplete > bootstrapped > adopt > dev-pool > empty.
 //   - Incomplete wins because a ServiceMeta tagged to a prior session
 //     signals an interrupted bootstrap; atoms gated here surface resume.
 //   - Bootstrapped + adopt continue per the original logic.
+//   - Dev-pool when no app runtime exists but a Swarm pool does: its work is
+//     a lease (docs/spec-workflows.md §8 DP-29), never bootstrap or adopt.
 //   - Empty when no runtime services exist.
 //
 // Stale ServiceMetas (disk records whose live counterpart is gone) used to
@@ -301,10 +303,13 @@ func deriveIdleScenario(phase Phase, services []ServiceSnapshot) IdleScenario {
 	// Managed deps, pools and Boxes don't drive the runtime buckets
 	// (bootstrap/adopt/resume) — the bucket counts only consider runtime
 	// services; a pool or Box is never an adoptable target (PS-2).
-	var bootstrapped, adoptable, resumable int
+	var bootstrapped, adoptable, resumable, pools int
 	for _, svc := range services {
+		if svc.RuntimeClass == topology.RuntimePool {
+			pools++
+			continue
+		}
 		if svc.RuntimeClass == topology.RuntimeManaged ||
-			svc.RuntimeClass == topology.RuntimePool ||
 			svc.RuntimeClass == topology.RuntimeSandbox {
 			continue
 		}
@@ -326,6 +331,9 @@ func deriveIdleScenario(phase Phase, services []ServiceSnapshot) IdleScenario {
 	}
 	if adoptable > 0 {
 		return IdleAdopt
+	}
+	if pools > 0 {
+		return IdleDevPool
 	}
 	return IdleEmpty
 }

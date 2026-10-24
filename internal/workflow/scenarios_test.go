@@ -1790,7 +1790,7 @@ func TestScenario_IdleDevPool_NamesTheLease(t *testing.T) {
 	box := ServiceSnapshot{Hostname: "box", TypeVersion: "ubuntu/zbox@1", RuntimeClass: topology.RuntimeSandbox, Status: "ACTIVE"}
 
 	poolsOnly, err := Synthesize(StateEnvelope{Phase: PhaseIdle, Environment: EnvContainer, IdleScenario: IdleScenario("dev-pool"),
-		Services: []ServiceSnapshot{pool, fixSnapPool("hqpool", "swarm@1")}}, corpus)
+		Services: []ServiceSnapshot{pool, fixSnapPool("hqpool", "swarm-vm@1")}}, corpus)
 	if err != nil {
 		t.Fatalf("Synthesize: %v", err)
 	}
