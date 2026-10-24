@@ -753,7 +753,7 @@ func poolMigrateAfterImage(d poolMigrateDeps, call *poolMigrateCall, resp poolMi
 			Tool: "zerops_workflow",
 			Args: map[string]string{"workflow": workflowPoolMigrate, "action": actionRetire, "service": dev, "pool": pool},
 			Why: fmt.Sprintf("zcp holds %s, a lease of %s on %s. The retire's first call reads every guard again and names in wouldDestroy what deleting %s erases, changing nothing; ask the person, and only once they agreed by name send the acknowledged call it names.",
-				leases[0].Alias, pool, branch, dev),
+				leases[0].Alias, pool, branch, poolMigrateRetireDeletes(call.meta)),
 		}, "")
 	case len(unsaved) > 0:
 		return poolMigrateAt(resp, poolMigrateStepMove, nil,
@@ -764,6 +764,18 @@ func poolMigrateAfterImage(d poolMigrateDeps, call *poolMigrateCall, resp poolMi
 		Args: map[string]string{"action": leaseProbeAction, "pool": pool, "branch": branch},
 		Why:  fmt.Sprintf("Leases a container of %s on %s from the dev's origin; start its dev servers (zerops_dev_server hostname=\"<alias>\") and prove it runs with zerops_verify serviceHostname=\"<alias>\" — the retire verifies it again.", pool, branch),
 	}, "")
+}
+
+// poolMigrateRetireDeletes names what the retire deletes, in its order, as
+// its diagnosis names them: the dev, and for a variant-B pair every further
+// dev service and, last, the code volume (docs/spec-workflows.md §13 PM-13).
+func poolMigrateRetireDeletes(meta *workflow.ServiceMeta) string {
+	names := []string{meta.Hostname}
+	if cv := meta.CodeVolume; cv != nil {
+		names = append(names, cv.DevServiceHostnames()...)
+		names = append(names, "the code volume "+cv.Hostname)
+	}
+	return poolRetireJoinAnd(names)
 }
 
 // poolMigrateShortCommit is how much of a commit the flow's messages name.
