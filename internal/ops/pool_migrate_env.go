@@ -360,7 +360,7 @@ func ReadPoolMigrateEnv(ctx context.Context, client platform.Client, in PoolMigr
 			held[row.Key] = true
 		}
 	}
-	out.GitToken = readGitTokenState(plan.gitDev, sides.poolUser, in)
+	out.GitToken = readGitTokenState(plan.gitDev, sides, in)
 	out.DefaultRepo = poolDefaultRepoState(in.StateDir, in.Pool.Name, in.Origin)
 	out.StageDiff = poolStageDiff(sides.stages, held)
 	out.Done = len(out.ToWrite) == 0 && out.DefaultRepo.State != PoolDefaultRepoPending
@@ -368,18 +368,41 @@ func ReadPoolMigrateEnv(ctx context.Context, client platform.Client, in PoolMigr
 }
 
 // readGitTokenState is the GIT_TOKEN rule on the read side, where no secret is
-// read and nothing is written.
-func readGitTokenState(dev *platform.ServiceEnvVar, pool map[string]platform.ServiceEnvVar, in PoolMigrateEnvInput) PoolMigrateGitToken {
+// read and nothing is written. The pool's GIT_TOKEN that zcp copied from the
+// dev is the dev's (unchanged), never offered again; one zcp did not write is
+// the pool's own (on-pool).
+func readGitTokenState(dev *platform.ServiceEnvVar, sides *poolEnvSides, in PoolMigrateEnvInput) PoolMigrateGitToken {
 	if in.InMate {
 		return gitTokenState(PoolGitTokenMateCredential, in)
 	}
 	if dev == nil {
 		return gitTokenState(PoolGitTokenDevHasNone, in)
 	}
-	if _, ok := pool[GitTokenEnvKey]; ok {
+	if _, ok := sides.poolUser[GitTokenEnvKey]; ok {
+		if _, copied := sides.gitTokenZcpCopied(in.Pool.ID); copied {
+			return gitTokenState(PoolGitTokenUnchanged, in)
+		}
 		return gitTokenState(PoolGitTokenOnPool, in)
 	}
 	return gitTokenState(PoolGitTokenAsk, in)
+}
+
+// gitTokenZcpCopied reports the pool's GIT_TOKEN as the one zcp copied from the
+// dev, with the fingerprint zcp's record of this pool service keeps of it:
+// the pool holds it as a secret, and its value — when the API shows it —
+// fingerprints as the record's; a masked one is taken from the record. A
+// GIT_TOKEN the person put there since reads apart whenever it is shown.
+// Nothing is read on the dev.
+func (sides *poolEnvSides) gitTokenZcpCopied(poolID string) (string, bool) {
+	fp, kept := sides.record.Fingerprints[GitTokenEnvKey]
+	row, onPool := sides.poolUser[GitTokenEnvKey]
+	if !kept || !onPool || !poolEnvSecret(row) {
+		return "", false
+	}
+	if !row.Masked && poolEnvFingerprint(poolID, GitTokenEnvKey, row.Content) != fp {
+		return "", false
+	}
+	return fp, true
 }
 
 // gitTokenState words a GIT_TOKEN state for the agent.
@@ -611,10 +634,14 @@ func (s *poolEnvStep) planSecrets(rows []platform.ServiceEnvVar) {
 }
 
 // planGitToken applies the GIT_TOKEN rule: in a Mate never; outside one only
-// after the person's yes; otherwise as the read side words it.
+// after the person's yes; otherwise as the read side words it, the record
+// keeping the fingerprint of a GIT_TOKEN zcp copied earlier.
 func (s *poolEnvStep) planGitToken(dev *platform.ServiceEnvVar) {
 	if !s.copiesGitToken(dev) {
-		s.out.GitToken = readGitTokenState(dev, s.sides.poolUser, s.in)
+		s.out.GitToken = readGitTokenState(dev, s.sides, s.in)
+		if fp, copied := s.sides.gitTokenZcpCopied(s.in.Pool.ID); copied {
+			s.rec.Fingerprints[GitTokenEnvKey] = fp
+		}
 		return
 	}
 	w, decision := s.decideSecret(GitTokenEnvKey)
