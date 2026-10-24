@@ -190,7 +190,7 @@ func TestRepoDeliveryRedirect_PoolDevHalf_NoRedirect(t *testing.T) {
 		if r := repoDeliveryRedirect(stateDir, target, "", false); r != nil {
 			t.Errorf("deploy to %s redirected: %s", target, extractText(r))
 		}
-		if w := repoDeliveryDivergenceWarning(stateDir, target); w != "" {
+		if w := repoDeliveryDivergenceWarning(context.Background(), stateDir, target, deployShipped{}); w != "" {
 			t.Errorf("deploy to %s warns %q", target, w)
 		}
 	}

@@ -760,3 +760,221 @@ func TestPoolRetireDevState_TheLiveNotFoundShape(t *testing.T) {
 		t.Fatalf("state = %q, err %v; want gone", got, err)
 	}
 }
+
+// TestPoolMigrateEnv_VariantB_EveryPartsPoolGetsThePairsGitToken: a variant-B
+// pair is one repository — the volume's checkout — and git-push-setup writes
+// its one GIT_TOKEN on the dev half, the service it pushes from. The api part
+// takes apidev's env, but its pool is offered appdev's GIT_TOKEN though apidev
+// holds none; on the person's yes zcp reads it in appdev's container and
+// copies it, and the read side then answers that the pool holds it.
+func TestPoolMigrateEnv_VariantB_EveryPartsPoolGetsThePairsGitToken(t *testing.T) {
+	t.Parallel()
+	f := variantBFixture(t, partLeased, partProvisioned, func(f *poolMigrateFixture) {
+		f.env["svc-dev"] = append(f.env["svc-dev"], platform.ServiceEnvVar{ID: "d-git", Key: poolEnvGitTokenKey, Content: platform.MaskedEnvValue, Type: platform.ServiceEnvUser, Sensitive: true})
+	})
+	f.input = WorkflowInput{Workflow: "pool-migrate", Service: "appdev", Pool: "apipool"}
+	read, _ := f.run(t)
+	git, _ := poolEnvBlock(t, read)["gitToken"].(map[string]any)
+	if msg, _ := git["message"].(string); git["state"] != ops.PoolGitTokenAsk || !strings.Contains(msg, "appdev's GIT_TOKEN") {
+		t.Fatalf("api part's gitToken = %v, want the pair's GIT_TOKEN on appdev offered", git)
+	}
+
+	f.input.Action, f.input.CopyGitToken = actionPoolEnv, true
+	out, mock := f.runEnv(t)
+	if git, _ := poolEnvBlock(t, out)["gitToken"].(map[string]any); git["state"] != ops.PoolGitTokenCopied {
+		t.Fatalf("gitToken after yes = %v, want copied", git)
+	}
+	rows, err := mock.GetServiceEnv(context.Background(), "svc-apipool")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var token, secret platform.ServiceEnvVar
+	for _, r := range rows {
+		switch r.Key {
+		case poolEnvGitTokenKey:
+			token = r
+		case "API_SECRET":
+			secret = r
+		}
+	}
+	if token.Content != poolEnvGitToken || !token.Sensitive {
+		t.Errorf("apipool's GIT_TOKEN: sensitive=%v exact=%v", token.Sensitive, token.Content == poolEnvGitToken)
+	}
+	if !secret.Sensitive {
+		t.Errorf("apipool lacks apidev's API_SECRET: %v", rows)
+	}
+	for _, c := range f.ssh.recorded() {
+		if !strings.Contains(c, poolMigrateEnvReadMarker) {
+			continue
+		}
+		readsToken := strings.Contains(c, "'"+poolEnvGitTokenKey+"'")
+		switch {
+		case readsToken && !strings.HasPrefix(c, "appdev: "):
+			t.Errorf("GIT_TOKEN was read as %q, want it read on appdev", c)
+		case strings.Contains(c, "'API_SECRET'") && !strings.HasPrefix(c, "apidev: "):
+			t.Errorf("API_SECRET was read as %q, want it read on apidev", c)
+		}
+	}
+	if strings.Contains(getTextOfJSON(t, out), poolEnvGitToken) {
+		t.Fatal("the GIT_TOKEN's value reached the answer")
+	}
+
+	f.input.Action, f.input.CopyGitToken = "", false
+	again, _ := f.run(t)
+	if git, _ := poolEnvBlock(t, again)["gitToken"].(map[string]any); git["state"] != ops.PoolGitTokenUnchanged {
+		t.Errorf("read side after the copy: gitToken = %v, want unchanged", git)
+	}
+}
+
+// TestPoolRetireRecordAnswer_Retired_NamesTheBundleToRestoreFrom: the retired
+// answer names the bundle holding the newest state of the repository as the
+// one to restore from. A retire forced past a code volume whose checkout moved
+// after the first bundle took a second one from the volume itself: that one
+// holds the late writes, so the answer names it with retire.codeVolume.restore
+// and the first as the older; an agent following the sentence never restores
+// the older checkout.
+func TestPoolRetireRecordAnswer_Retired_NamesTheBundleToRestoreFrom(t *testing.T) {
+	t.Parallel()
+	first := &ops.PoolMigrateBundle{Path: "/state/migrate/appdev.bundle"}
+	volume := &ops.PoolMigrateBundle{Path: "/state/migrate/appdev.volume.bundle"}
+	tests := []struct {
+		name    string
+		volume  *poolRetireVolume
+		want    []string
+		notWant []string
+	}{
+		{name: "a dev service of its own", want: []string{first.Path, "retire.restore"}, notWant: []string{"codeVolume"}},
+		{
+			name:    "a code volume, one bundle",
+			volume:  &poolRetireVolume{Hostname: "vol", ServiceID: "svc-vol", MountPath: variantBMount},
+			want:    []string{first.Path, "retire.restore"},
+			notWant: []string{"volume.bundle", "codeVolume.restore"},
+		},
+		{
+			name:    "a code volume forced past its moved checkout",
+			volume:  &poolRetireVolume{Hostname: "vol", ServiceID: "svc-vol", MountPath: variantBMount, Bundle: volume, Restore: []string{"git init -q ."}},
+			want:    []string{volume.Path, "retire.codeVolume.restore", "newer", first.Path, "older"},
+			notWant: []string{"The bundle of its repository is " + first.Path + "; retire.restore puts it back"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			rec := &poolRetireRecord{
+				Dev: "appdev", DevServiceID: "svc-dev", Stages: []string{"webstage", "apistage"},
+				Parts: []poolRetirePart{
+					{Stage: "webstage", Pool: "webpool", PoolServiceID: "svc-webpool"},
+					{Stage: "apistage", Pool: "apipool", PoolServiceID: "svc-apipool"},
+				},
+				Phase: poolRetireRetired, Forced: tt.volume != nil && tt.volume.Bundle != nil, Bundle: first,
+				Restore: []string{"git init -q ."},
+			}
+			if tt.volume != nil {
+				rec.DevServices = []poolRetireService{{Hostname: "apidev", ServiceID: "svc-api"}}
+				rec.CodeVolume = tt.volume
+			}
+			msg := poolRetireRecordAnswer(poolMigrateResponse{}, rec).NextUnavailable
+			for _, w := range tt.want {
+				if !strings.Contains(msg, w) {
+					t.Errorf("retired answer %q does not say %q", msg, w)
+				}
+			}
+			for _, w := range tt.notWant {
+				if strings.Contains(msg, w) {
+					t.Errorf("retired answer %q says %q", msg, w)
+				}
+			}
+		})
+	}
+}
+
+// TestPoolMigrateRetire_VariantB_VolumeMounted_NamesEachMountingService: the
+// volume-mounted refusal names each stage or pool whose setup in the
+// checkout's zerops.yaml mounts the code volume, and its words agree with how
+// many there are.
+func TestPoolMigrateRetire_VariantB_VolumeMounted_NamesEachMountingService(t *testing.T) {
+	t.Parallel()
+	mountIn := func(config, setup string) string {
+		block := "  - setup: " + setup + "\n    run:\n      base: nodejs@22\n"
+		return strings.Replace(config, block, block+"      volume:\n        hostname: vol\n        mountPath: /var/www/ws\n", 1)
+	}
+	tests := []struct {
+		name   string
+		config string
+		want   []string
+	}{
+		{
+			name:   "one stage",
+			config: mountIn(variantBConfig, "web"),
+			want:   []string{"stage webstage (setup web) mounts the code volume vol", "Remove run.volume from that setup", "deploy the service"},
+		},
+		{
+			name:   "two stages",
+			config: mountIn(mountIn(variantBConfig, "web"), "api"),
+			want:   []string{"stage webstage (setup web) and stage apistage (setup api) mount the code volume vol", "Remove run.volume from those setups", "deploy each service"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			v := newCodeVolumeRig(t, tt.config)
+			out, isErr := v.retire(t, variantBRetireInput(true, true))
+			if isErr || out["status"] != "retire-refused" {
+				t.Fatalf("retire = %v, want retire-refused", out)
+			}
+			msg := poolMigrateRefusalMessage(out, "volume-mounted")
+			for _, w := range tt.want {
+				if !strings.Contains(msg, w) {
+					t.Errorf("message %q does not say %q", msg, w)
+				}
+			}
+		})
+	}
+}
+
+// TestPoolMigrateRetire_VariantB_NotKept_NamesTheBundledPath: the bundle of a
+// variant-B pair reads the checkout at the code volume's mount, so what the
+// dev's delete loses of its container is everything outside that mount —
+// /var/www itself among it — and notKept names the mount the bundle read, in
+// the diagnosis and in the record alike.
+func TestPoolMigrateRetire_VariantB_NotKept_NamesTheBundledPath(t *testing.T) {
+	t.Parallel()
+	v := newCodeVolumeRig(t, variantBConfig)
+	want := "files on appdev's container outside " + variantBMount
+	out, isErr := v.retire(t, variantBRetireInput(false, false))
+	if !isErr || out["code"] != platform.ErrDiagnosisRequired {
+		t.Fatalf("first call = %v, want DIAGNOSIS_REQUIRED", out)
+	}
+	wd, _ := out["wouldDestroy"].(map[string]any)
+	loss, _ := wd["wouldDestroy"].(map[string]any)
+	if notKept := retireStrings(loss["notKept"]); !slices.Contains(notKept, want) {
+		t.Errorf("diagnosis notKept = %q, want %q", notKept, want)
+	}
+	if out, isErr := v.retire(t, variantBRetireInput(true, false)); isErr || out["step"] != "retired" {
+		t.Fatalf("confirmed = %v, want retired", out)
+	}
+	if rec := retireRecordOf(t, v.r.f.stateDir); !slices.Contains(rec.NotKept, want) {
+		t.Errorf("record notKept = %q, want %q", rec.NotKept, want)
+	}
+}
+
+// TestPoolMigrate_VariantB_EveryPartReady_TheRetireCallNamesEveryServiceItDeletes:
+// once every part of a variant-B pair is ready to retire, the retire call's
+// why names what the retire deletes as its diagnosis does — the dev, every
+// further dev service and, last, the code volume — never the dev alone.
+func TestPoolMigrate_VariantB_EveryPartReady_TheRetireCallNamesEveryServiceItDeletes(t *testing.T) {
+	t.Parallel()
+	f := variantBFixture(t, partLeased, partLeased, nil)
+	out, _ := f.run(t)
+	next, _ := out["next"].(map[string]any)
+	args, _ := next["args"].(map[string]any)
+	if out["step"] != poolMigrateStepReadyToRetire || args["action"] != actionRetire {
+		t.Fatalf("answer = %v, want ready-to-retire naming the retire", out)
+	}
+	why, _ := next["why"].(string)
+	for _, w := range []string{"appdev", "apidev", "the code volume vol"} {
+		if !strings.Contains(why, w) {
+			t.Errorf("why %q does not name %q", why, w)
+		}
+	}
+}

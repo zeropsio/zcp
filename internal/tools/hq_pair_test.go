@@ -3,6 +3,7 @@
 package tools
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -52,7 +53,7 @@ func TestAWiredPairDeploysDirectlyAndIsNeverSentToPush(t *testing.T) {
 		if r := repoDeliveryRedirect(stateDir, target, "", false); r != nil {
 			t.Errorf("%s: a wired pair's direct deploy must proceed", target)
 		}
-		if w := repoDeliveryDivergenceWarning(stateDir, target); w != "" {
+		if w := repoDeliveryDivergenceWarning(context.Background(), stateDir, target, deployShipped{}); w != "" {
 			t.Errorf("%s: no push-by-hand warning on a wired pair, got %q", target, w)
 		}
 	}

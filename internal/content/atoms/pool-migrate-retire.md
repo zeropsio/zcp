@@ -79,7 +79,8 @@ mounts the volume, without saying which: the answer reads `retiring` with
 then re-send the acknowledged call. If the checkout changed while the dev
 services were going, nothing on the volume is deleted until the person agrees
 and the call carries `force=true`; a new bundle is taken from the volume
-first.
+first — the newer copy, which the retired answer names with
+`retire.codeVolume.restore`.
 
 If the repository moved meanwhile, or a step fails before the delete, the
 retire stops: `status: "aborted"`, the pair keyed by the dev service again,

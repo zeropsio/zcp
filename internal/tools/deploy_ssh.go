@@ -491,10 +491,10 @@ func runDeploySSHZCLIPush(
 	}
 
 	// L1 break-glass aftermath: a direct deploy on a push-delivering
-	// pair leaves the container ahead of the repo — flag the standing
-	// reconcile push (spec-git-delivery-target §1.1).
+	// pair that shipped what the repo lacks leaves the container ahead of
+	// it — flag the standing reconcile push (spec-git-delivery-target §1.1).
 	if result.Status == statusDeployed && !toPool {
-		if warn := repoDeliveryDivergenceWarning(stateDir, input.TargetService); warn != "" {
+		if warn := repoDeliveryDivergenceWarning(ctx, stateDir, input.TargetService, sshShipped(sshDeployer, input, result)); warn != "" {
 			result.Warnings = append(result.Warnings, warn)
 		}
 	}

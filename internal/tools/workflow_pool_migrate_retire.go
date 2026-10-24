@@ -627,7 +627,7 @@ func poolRetireRead(ctx context.Context, d poolRetireDeps, input WorkflowInput) 
 		g.parts = append(g.parts, part)
 	}
 	g.unsaved = poolRetireBlocking(resp.Census)
-	g.notKept = poolRetireNotKept(g.call.dev.Name, resp.Census, nil)
+	g.notKept = poolRetireNotKept(g.call.dev.Name, poolMigrateCodeRoot(g.call.meta), resp.Census, nil)
 	g.readDev(ctx, d)
 	if g.call.meta.CodeVolume != nil {
 		g.readCodeVolume(ctx, d, dr.byName)
@@ -1040,12 +1040,14 @@ func poolRetireKeptInBundle(c *ops.PoolMigrateCensus) []string {
 	return out
 }
 
-// poolRetireNotKept names what no copy keeps once the dev is deleted.
-func poolRetireNotKept(dev string, c *ops.PoolMigrateCensus, b *ops.PoolMigrateBundle) []string {
+// poolRetireNotKept names what no copy keeps once the dev is deleted; root is
+// where the bundle reads its repository — /var/www, or a variant-B pair's code
+// volume mount — so every file of the dev's container outside it is lost.
+func poolRetireNotKept(dev, root string, c *ops.PoolMigrateCensus, b *ops.PoolMigrateBundle) []string {
 	out := []string{
 		dev + "'s own URLs: its subdomain embeds its hostname, and dies with it",
 		"the repository's reflog history beyond each reflog's tip, its config (remote URLs among it), hooks and info/exclude",
-		"files on " + dev + "'s container outside " + topology.CodeMountRoot,
+		"files on " + dev + "'s container outside " + root,
 	}
 	if c != nil {
 		for _, t := range c.Trees {
@@ -1264,7 +1266,7 @@ func (r *poolRetireRun) bundle(ctx context.Context) *mcp.CallToolResult {
 	r.rec.Bundle = b
 	r.rec.Restore = ops.PoolMigrateRestoreSteps(b, r.rec.Origin)
 	r.rec.KeptInBundle = poolRetireKeptInBundle(census)
-	r.rec.NotKept = append(poolRetireNotKept(dev, census, b), poolRetireCodeVolumeNotKept(r.rec.DevServices, r.rec.volumeName())...)
+	r.rec.NotKept = append(poolRetireNotKept(dev, r.rec.root(), census, b), poolRetireCodeVolumeNotKept(r.rec.DevServices, r.rec.volumeName())...)
 	r.rec.Forced = r.rec.Forced || (r.force && len(poolRetireBlocking(census)) > 0)
 	if err := savePoolRetireRecord(r.d.stateDir, r.rec); err != nil {
 		return r.saveFailed(err)
@@ -1497,6 +1499,19 @@ func poolRetireBundleName(rec *poolRetireRecord) string {
 	return rec.Bundle.Path
 }
 
+// poolRetireRestoreFrom names the bundle a retired answer restores from: the
+// one holding the newest state of the repository. A retire forced past a code
+// volume whose checkout moved after the first bundle took a second one from
+// the volume itself, which holds the late writes; the first is named as the
+// older, so following the sentence never restores the older checkout.
+func poolRetireRestoreFrom(rec *poolRetireRecord) string {
+	if v := rec.CodeVolume; v != nil && v.Bundle != nil {
+		return fmt.Sprintf("The newer bundle of its repository is %s, taken from the code volume %s itself after its checkout moved, so it holds the late writes; retire.codeVolume.restore puts it back. The older one, %s, was taken before the dev services went and lacks them (retire.restore).",
+			v.Bundle.Path, v.Hostname, poolRetireBundleName(rec))
+	}
+	return fmt.Sprintf("The bundle of its repository is %s; retire.restore puts it back.", poolRetireBundleName(rec))
+}
+
 func poolRetireJoinRefusals(refusals []poolMigrateRefusal) string {
 	parts := make([]string, 0, len(refusals))
 	for _, r := range refusals {
@@ -1554,8 +1569,8 @@ func poolRetireRecordAnswer(resp poolMigrateResponse, rec *poolRetireRecord) poo
 			deleted = fmt.Sprintf("%s — with %s and, last, the code volume %s (id %s), which the pair no longer names — are deleted", rec.Dev, poolRetireServiceNames(rec.DevServices, "no further dev service"), v.Hostname, v.ServiceID)
 		}
 		resp = poolMigrateAt(resp, poolMigrateStepRetired, nil,
-			fmt.Sprintf("The retire is done: %s and the pair is %s; %s. The bundle of its repository is %s; retire.restore puts it back.",
-				deleted, rec.keyedBy(), deploys, poolRetireBundleName(rec)))
+			fmt.Sprintf("The retire is done: %s and the pair is %s; %s. %s",
+				deleted, rec.keyedBy(), deploys, poolRetireRestoreFrom(rec)))
 	} else {
 		resp = poolMigrateAt(resp, poolMigrateStepRetiring, &poolMigrateNext{
 			Tool: "zerops_workflow",

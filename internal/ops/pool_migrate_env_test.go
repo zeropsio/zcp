@@ -924,3 +924,128 @@ func TestSeedPoolDefaultRepo_CheckBeforeWrite(t *testing.T) {
 		}
 	}
 }
+
+// hostEnvSSH is envLocalSSH per host: each host's fresh session reads its own
+// environment, and a host it does not know fails.
+type hostEnvSSH struct {
+	mu    sync.Mutex
+	hosts map[string]*envLocalSSH
+	calls []string
+}
+
+func (s *hostEnvSSH) ExecSSH(ctx context.Context, hostname, command string) ([]byte, error) {
+	s.mu.Lock()
+	s.calls = append(s.calls, hostname+": "+command)
+	host := s.hosts[hostname]
+	s.mu.Unlock()
+	if host == nil {
+		return nil, &platform.SSHExecError{Hostname: hostname, Err: errors.New("no such host")}
+	}
+	return host.ExecSSH(ctx, hostname, command)
+}
+
+func (s *hostEnvSSH) ExecSSHBackground(_ context.Context, _, _ string, _ time.Duration) ([]byte, error) {
+	return nil, errors.New("the env step never runs a background command")
+}
+
+func (s *hostEnvSSH) recorded() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.calls)
+}
+
+// TestPoolMigrateEnv_GitTokenFromThePairsPushSource: a variant-B part runs on
+// a dev service of its own, whose env its pool takes, but the pair is one
+// repository whose one GIT_TOKEN sits on the dev half the pair pushes from
+// (GitTokenFrom). The pool is offered that one and, on the person's yes, it
+// is read in that service's container — the part's own dev service is never
+// asked for a GIT_TOKEN, and one it holds is not the pair's — while every
+// other key still comes from the part's dev service. A read of the push
+// source that does not answer fails the GIT_TOKEN alone.
+func TestPoolMigrateEnv_GitTokenFromThePairsPushSource(t *testing.T) {
+	t.Parallel()
+	webdev := platform.ServiceStack{ID: "svc-webdev", Name: "webdev", Status: "ACTIVE",
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}}
+	tests := []struct {
+		name        string
+		sourceHas   bool
+		partHas     bool
+		consent     bool
+		sourceFails bool
+		wantState   string
+		wantNamed   string
+		wantOnPool  string
+		wantRead    bool
+	}{
+		{name: "asked for the push source's", sourceHas: true, wantState: PoolGitTokenAsk, wantNamed: "webdev's GIT_TOKEN"},
+		{name: "copied from the push source on yes", sourceHas: true, consent: true, wantState: PoolGitTokenCopied, wantNamed: "webdev's GIT_TOKEN", wantOnPool: envGitToken, wantRead: true},
+		{name: "the part's own dev service's is not the pair's", partHas: true, consent: true, wantState: PoolGitTokenDevHasNone, wantNamed: "webdev holds no GIT_TOKEN"},
+		{name: "the push source unreadable", sourceHas: true, consent: true, sourceFails: true, wantState: PoolGitTokenFailed, wantNamed: "webdev's GIT_TOKEN", wantRead: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f := newEnvFixture(t)
+			f.in.GitTokenFrom, f.in.CopyGitToken = webdev, tt.consent
+			if tt.partHas {
+				f.dev = append(f.dev, envMasked("d-git", GitTokenEnvKey))
+				f.container[GitTokenEnvKey] = "part-own-token"
+			}
+			var sourceRows []platform.ServiceEnvVar
+			if tt.sourceHas {
+				sourceRows = append(sourceRows, envMasked("w-git", GitTokenEnvKey))
+			}
+			f.build()
+			f.mock.WithServices([]platform.ServiceStack{f.in.Dev, f.in.Pool, envStageService(), webdev}).
+				WithServiceEnv(webdev.ID, sourceRows)
+			source := &envLocalSSH{env: map[string]string{GitTokenEnvKey: envGitToken}}
+			if tt.sourceFails {
+				source.err = errors.New("exit status 255")
+			}
+			ssh := &hostEnvSSH{hosts: map[string]*envLocalSSH{"appdev": {env: f.container}, "webdev": source}}
+
+			out, err := ApplyPoolMigrateEnv(context.Background(), f.mock, ssh, f.in)
+			if err != nil {
+				t.Fatalf("ApplyPoolMigrateEnv: %v", err)
+			}
+			if out.GitToken.State != tt.wantState || !strings.Contains(out.GitToken.Message, tt.wantNamed) {
+				t.Fatalf("gitToken = %+v, want %s naming %q", out.GitToken, tt.wantState, tt.wantNamed)
+			}
+			rows := f.poolRows(t)
+			row, has := rows[GitTokenEnvKey]
+			switch {
+			case tt.wantOnPool == "" && has:
+				t.Errorf("the pool holds a GIT_TOKEN it should not")
+			case tt.wantOnPool != "" && (!has || row.Content != tt.wantOnPool || !row.Sensitive):
+				t.Errorf("the pool's GIT_TOKEN: has=%v exact=%v sensitive=%v", has, row.Content == tt.wantOnPool, row.Sensitive)
+			}
+			if r := rows["STRIPE_SECRET"]; r.Content != envSecretValue || !r.Sensitive {
+				t.Errorf("the part's own secret was not copied from appdev: sensitive=%v exact=%v", r.Sensitive, r.Content == envSecretValue)
+			}
+			read := false
+			for _, call := range ssh.recorded() {
+				if !strings.Contains(call, "'"+GitTokenEnvKey+"'") {
+					continue
+				}
+				read = true
+				if !strings.HasPrefix(call, "webdev: ") {
+					t.Errorf("GIT_TOKEN was read as %q, want it read on webdev only", call)
+				}
+			}
+			if read != tt.wantRead {
+				t.Errorf("GIT_TOKEN read = %v, want %v", read, tt.wantRead)
+			}
+			if rec, ok := readPoolEnvRecord(f.in.StateDir, f.in.Pool.Name); !ok || rec.Fingerprints["STRIPE_SECRET"] == "" {
+				t.Errorf("the record of the part's secret = %+v, want it kept", rec)
+			}
+			assertNoSecret(t, out, f, envGitToken)
+			assertNoSecret(t, out, f, "part-own-token")
+
+			if tt.wantState == PoolGitTokenCopied {
+				if got := f.read(t).GitToken; got.State != PoolGitTokenUnchanged || !strings.Contains(got.Message, "webdev's GIT_TOKEN") {
+					t.Errorf("read side after the copy = %+v, want unchanged naming webdev's", got)
+				}
+			}
+		})
+	}
+}
