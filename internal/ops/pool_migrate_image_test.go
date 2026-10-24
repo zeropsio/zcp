@@ -237,9 +237,10 @@ func TestPoolMigrateImage_SetupChecks_EachGapNamed(t *testing.T) {
 
 // TestPoolMigrateImage_SetupChecks_DependencyRule_FindingsNeverHoldTheDeploy
 // pins the dependency rule as findings: the image bakes the dependencies into
-// /var/www in run.prepareCommands from the files build.addToRunPrepare lists,
-// and what build.deployFiles ships is wiped by every reset — each named, none
-// keeping the deploy from being named.
+// /var/www in run.prepareCommands from the files build.addToRunPrepare lists —
+// every file the install reads, a workspace monorepo's member manifests and
+// workspace definition included — and what build.deployFiles ships is wiped
+// by every reset — each named, none keeping the deploy from being named.
 func TestPoolMigrateImage_SetupChecks_DependencyRule_FindingsNeverHoldTheDeploy(t *testing.T) {
 	t.Parallel()
 	ready := imageReadyYAML()
@@ -257,7 +258,7 @@ func TestPoolMigrateImage_SetupChecks_DependencyRule_FindingsNeverHoldTheDeploy(
 		{
 			name: "no lockfile in addToRunPrepare", config: noLockfile, declaration: imageDeclaration,
 			want:   []string{PoolMigrateImageDepsLockfile},
-			wantIn: map[string][]string{PoolMigrateImageDepsLockfile: {"build.addToRunPrepare", "lockfile"}},
+			wantIn: map[string][]string{PoolMigrateImageDepsLockfile: {"build.addToRunPrepare", "every file the dependency install reads", "lockfile", "every member's manifest", "the workspace definition"}},
 		},
 		{
 			name: "nothing baked into /var/www", config: notBaked, declaration: imageDeclaration,
