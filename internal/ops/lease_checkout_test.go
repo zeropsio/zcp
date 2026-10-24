@@ -990,3 +990,22 @@ func TestLeaseRelease_PoolGoneOrBeingDeleted_DroppedAsLost(t *testing.T) {
 		})
 	}
 }
+
+// TestLeaseCheckoutCommand_SetsACommitIdentityOnlyWhenAbsent pins that a
+// lease's checkout leaves the repository commit-ready (docs/spec-workflows.md
+// §8 DP-6): a fresh pool container carries no git identity, so the agent's
+// first commit failed "Author identity unknown" (live, 2026-10-24). zcp fills
+// the robot identity set-if-absent, after the checkout, as every other site
+// that needs a commit-ready repository does — never over one the image sets.
+func TestLeaseCheckoutCommand_SetsACommitIdentityOnlyWhenAbsent(t *testing.T) {
+	t.Parallel()
+	cmd := leaseCheckoutCommand("/var/www", testRepo, "feature", "", "")
+	identity := gitIdentityEnsureFragment()
+	at := strings.Index(cmd, identity)
+	if at < 0 {
+		t.Fatalf("checkout command sets no commit identity:\n%s", cmd)
+	}
+	if checkout := strings.Index(cmd, "git checkout -q -f -B"); checkout < 0 || checkout > at {
+		t.Errorf("the identity is set before the checkout, in a repository not yet on its branch:\n%s", cmd)
+	}
+}
