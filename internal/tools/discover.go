@@ -296,11 +296,13 @@ func liveActivityWarning(services []ops.ServiceInfo, activity map[string][]ops.L
 //     ADOPT_REQUIRED. An earlier enumerated list dropped launch-production, so an
 //     agent promoting to prod walked into a service-not-bootstrapped bounce with
 //     no up-front warning that launch is adoption-gated too.
-//   - D-fix: when exactly two adoptable runtimes share a deployment stack, a bare
-//     scope=[...] adopt is GUARANTEED to reject — the adopt handler refuses to
-//     guess a standard dev/stage pair vs two independent devs (adopt.go,
+//   - D-fix: when two or more adoptable runtimes share a deployment stack, a bare
+//     scope=[...] naming two of them is GUARANTEED to reject — the adopt handler
+//     refuses to guess a standard dev/stage pair vs independent devs (adopt.go,
 //     topology.CanonicalBareForm equality). Pre-steer to the explicit plan shape
-//     the handler accepts instead of the scope path it will bounce.
+//     the handler accepts instead of the scope path it will bounce — except for
+//     a pair sharing a code volume, which only a scope records, named whenever
+//     the project holds a local-storage service.
 func adoptableServicesWarning(hostnames, types []string, localStorage bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Services with adoptionState=\"adoptable\" (they exist, but ZCP does not track them): %s. ", strings.Join(hostnames, ", "))

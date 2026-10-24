@@ -1295,7 +1295,26 @@ up exactly as before.
     variant-B project whose record was lost, recorded again so pool migration can move it. Dev
     services whose volume holds nothing yet or an empty folder adopt as separate services, as a
     data volume's do: adopting them as a pair would make the volume a code volume, its first deploy
-    filling it.
+    filling it. Only a scope records such a pair, never a plan: its setups are read through the
+    runtimes the adopt scope names, each from its own `zerops.yaml` (`/var/www` over SSH, else its
+    mount) — never from whichever runtime of the project sorts first — and the mount is probed only
+    on the runtimes whose own file declares the setup, so the project's other runtimes are neither
+    read nor reached, wherever they sort
+    (`TestAdoptVolumeSetups_ReadsTheScopedRuntimesNotTheProjectsFirstRuntime`). A setup mounting
+    the volume runs on an adoptable runtime of its `run.base` that finds the checkout at the mount:
+    the one named after the setup (a service's default setup is its hostname), else the only one no
+    other setup takes — stages and other runtimes of the same base hold no checkout there, so they
+    never make the choice ambiguous. The pair's stages are the scoped stage hostnames (ending in
+    `stage`) named like one of its dev services (`apistage` → `apidev` or `api`, as the stand-up
+    pairs them) or whose setup the repository's `zerops.yaml` declares, each recorded with the
+    setup named after it when declared, the one named like the dev half first; with stages the
+    pair is standard. The adopt answer names the code volume, further dev services and stages
+    (`TestBootstrapCompleteAdoptPlan_VariantBBesideItsStages_IsOneStandardPair`,
+    `TestBootstrapCompleteAdoptPlan_VariantBPair_TheAnswerNamesWhatItRecorded`,
+    `TestHandleBootstrapComplete_AdoptVariantBBesideAnotherRepository_OnePairWithItsStages`).
+    Runtimes scoped beside the pair still face the adopt pairing question (docs/spec-workflows.md
+    §3.2), whose refusal names the scope that adopts the pair alone
+    (`TestBootstrapCompleteAdoptPlan_VariantBBesideAPairingQuestion_NamesThePairScopeOnly`).
   - Stand-up reads a tier's local-storage service as a managed service it leaves as it is: per
     repository, one runtime that is no stage is the dev half of every stage the repository builds
     (variant A, a stage per part), and otherwise each stage pairs with the runtime named like it,

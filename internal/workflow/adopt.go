@@ -86,11 +86,12 @@ func InferServicePairing(candidates []AdoptCandidate, liveManaged map[string]boo
 	return targets
 }
 
-// ErrAdoptPairingChoice is returned by BootstrapCompleteAdoptPlan when exactly two
-// adoptable runtimes share a type — the canonical dev/stage shape ZCP refuses to
-// guess. The error message carries copy-pasteable standard-pair and independent-dev
-// plan templates so the agent resubmits one as an explicit plan in a single
-// round-trip (never the schema-fuzzing it would otherwise do).
+// ErrAdoptPairingChoice is returned by BootstrapCompleteAdoptPlan when two or
+// more scoped adoptable runtimes share a runtime base — the dev/stage shape ZCP
+// refuses to guess. The error message carries copy-pasteable dev/stage-pair and
+// independent-dev plan templates covering every scoped runtime, so the agent
+// resubmits one as an explicit plan in a single round-trip (never the
+// schema-fuzzing it would otherwise do).
 var ErrAdoptPairingChoice = errors.New("adopt: ambiguous dev/stage pairing")
 
 // BootstrapCompleteAdoptPlan derives and commits the discover-step plan for
