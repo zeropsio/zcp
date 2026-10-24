@@ -172,11 +172,16 @@ func TestThemes_Services_PoolSection_FactsPresent(t *testing.T) {
 
 // TestThemes_Services_DevPool_MultiPart_FactsPresent pins that the services
 // theme's "A part's dev pool" subsection carries the loop for one branch
-// across several parts (spec-workflows.md §8 DP-17, DP-22…DP-24, DP-26): the
-// acquire of every part's pool in one call, the sibling wiring with its
-// fallback to the part's stage, the 0.0.0.0 bind, each part's own servers in a
-// shared declaration, commit-then-sync with its outcomes, the branch's release
-// and the rewire with the stale-wiring mark.
+// across several parts (spec-workflows.md §8 DP-17, DP-22…DP-24, DP-26,
+// DP-30, DP-31): the acquire of every part's pool in one call, with each
+// lease's dev servers as the acquire left them and the status call for one
+// still starting, the sibling wiring with its fallback to the part's stage,
+// siblingPreviewEnv for a browser — the sibling's preview URL, resolved again
+// at every join or leave and never hand-copied — the 0.0.0.0 bind, each
+// part's own servers in a shared declaration, commit-then-sync with its
+// outcomes and only runtime entries named to restart, since a declared server
+// reloads by itself, the branch's release and the rewire with the
+// stale-wiring mark.
 func TestThemes_Services_DevPool_MultiPart_FactsPresent(t *testing.T) {
 	t.Parallel()
 
@@ -200,10 +205,14 @@ func TestThemes_Services_DevPool_MultiPart_FactsPresent(t *testing.T) {
 	sub, _, _ = strings.Cut(sub, "\n### ")
 	for _, fact := range []string{
 		"action=acquire pools=[", "reused: true",
+		"`devServers`", "`starting` while it still compiles", "the preview server's `url`",
+		`zerops_dev_server action=status hostname="<alias>" name="<server>"`,
 		`"siblingEnv"`, "node-id-<n>.runtime.<pool>.zerops", "leftToContainerEnv", "stage", "0.0.0.0",
+		"`siblingPreviewEnv`", `{"VITE_HQ_URL": "hqpool"}`, "resolved again whenever a lease of the branch joins or leaves", "never copy it by hand",
 		`"service"`, "unique across the whole file",
 		"action=sync lease=", "up-to-date", "fast-forwarded", "has-own-commits", "local-changes-in-the-way",
 		"on-another-branch", "unreachable", "unwatchedServers",
+		"only its runtime entries (`ctl run`)", "a declared server reloads by itself",
 		"action=release branch=", "force=true",
 		"rewired", `wiring: "stale"`,
 	} {
