@@ -197,8 +197,8 @@ func LeasePark(ctx context.Context, d LeaseDeps, alias string) (LeaseView, error
 			return LeaseView{}, remounted(unverifiedLeaseRefusal(alias, "parked", fresh))
 		}
 		if _, err := rp.api.Stop(ctx, rec.ContainerID, rec.Lease); err != nil {
-			if isHeldByOther(err) {
-				return leaseLostOnCall(ctx, d, rec, "park", heldByOtherWhy)
+			if why := heldByOtherEnded(ctx, d, rp, rec, err); why != "" {
+				return leaseLostOnCall(ctx, d, rec, "park", why)
 			}
 			return LeaseView{}, remounted(leaseOrchestratorError(ctx, d, rp, "park "+alias, err))
 		}
@@ -241,8 +241,8 @@ func LeaseUnpark(ctx context.Context, d LeaseDeps, alias string) (LeaseView, err
 			notes = append(notes, "its container was running already, so zcp started nothing")
 		}
 	} else if _, err := rp.api.Start(ctx, rec.ContainerID, rec.Lease); err != nil {
-		if isHeldByOther(err) {
-			return leaseLostOnCall(ctx, d, rec, "unpark", heldByOtherWhy)
+		if why := heldByOtherEnded(ctx, d, rp, rec, err); why != "" {
+			return leaseLostOnCall(ctx, d, rec, "unpark", why)
 		}
 		return LeaseView{}, leaseOrchestratorError(ctx, d, rp, "unpark "+alias, err)
 	}
@@ -349,7 +349,7 @@ func wakeParkedForGuard(ctx context.Context, d LeaseDeps, rec leaseRecord, v lea
 	}
 	alias := rec.alias()
 	if _, err := v.rp.api.Start(ctx, rec.ContainerID, rec.Lease); err != nil {
-		if isHeldByOther(err) {
+		if heldByOtherEnded(ctx, d, v.rp, rec, err) != "" {
 			return w, err
 		}
 		return w, parkedReleaseRefusal(alias, "zcp could not start its container to check it for unsaved work ("+errorNote(leaseOrchestratorError(ctx, d, v.rp, "start "+alias, err))+")")
@@ -420,11 +420,11 @@ func repark(ctx context.Context, d LeaseDeps, rec leaseRecord) (text string, par
 		return "zcp stopped its container again, so it stays parked", true
 	default:
 		_, serr := v.rp.api.Stop(ctx, rec.ContainerID, rec.Lease)
-		switch {
-		case serr == nil:
+		if serr == nil {
 			return "zcp stopped its container again, so it stays parked", true
-		case isHeldByOther(serr):
-			return reparkDropped(ctx, d, rec, heldByOtherWhy), false
+		}
+		if why := heldByOtherEnded(ctx, d, v.rp, rec, serr); why != "" {
+			return reparkDropped(ctx, d, rec, why), false
 		}
 		err = leaseOrchestratorError(ctx, d, v.rp, "stop "+alias, serr)
 	}

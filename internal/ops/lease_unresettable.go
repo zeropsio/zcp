@@ -40,8 +40,8 @@ func deleteUnresettable(ctx context.Context, d LeaseDeps, rp *resolvedPool, rec 
 	if errors.As(err, &se) && (se.Reason == platform.SwarmReasonUnknownLease || se.Reason == platform.SwarmReasonContainerNotFound) {
 		return dropLeaseRecord(d.StateDir, rec, LeaseStateLost, "the orchestrator no longer held this container for this lease, so there was nothing to release; the record is dropped")
 	}
-	if isHeldByOther(err) {
-		return dropLeaseRecord(d.StateDir, rec, LeaseStateLost, lostDropNote(heldByOtherWhy))
+	if why := heldByOtherEnded(ctx, d, rp, rec, err); why != "" {
+		return dropLeaseRecord(d.StateDir, rec, LeaseStateLost, lostDropNote(why))
 	}
 	failed := leaseOrchestratorError(ctx, d, rp, "delete "+alias, err)
 	var pe *platform.PlatformError

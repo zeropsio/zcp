@@ -246,6 +246,23 @@ func isHeldByOther(err error) bool {
 	return errors.As(err, &se) && se.Reason == platform.SwarmReasonHeldByOther
 }
 
+// heldByOtherEnded is why the lease ended once the orchestrator refused its
+// stop, start or delete (err) held-by-other and a renew of the lease agrees
+// that it holds the container no more; "" for any other error, and while the
+// renew still gives the container to the lease or does not answer.
+// held-by-other is live-verified on a release only, and what the orchestrator
+// answers its own holder while it stops or starts the container is not
+// known, so it alone never drops a record (DP-2).
+func heldByOtherEnded(ctx context.Context, d LeaseDeps, rp *resolvedPool, rec leaseRecord, err error) string {
+	if !isHeldByOther(err) {
+		return ""
+	}
+	if v := renewOwnership(ctx, d, rp, rec); v.own.lost() {
+		return v.why
+	}
+	return ""
+}
+
 // lostDropNote is what a view of a dropped lost record says: why the lease is
 // no longer this zcp's, and that nothing was released.
 func lostDropNote(why string) string {
