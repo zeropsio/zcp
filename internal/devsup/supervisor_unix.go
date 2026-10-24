@@ -7,10 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -87,6 +90,9 @@ const (
 	reasonDecl    = "its declaration changed"
 	reasonBoot    = "the supervisor started again"
 	reasonRunSpec = "its run entry changed"
+	// reasonEnv: `ctl env` changed the overlay the server's group started
+	// under (docs/spec-mate.md §2.8a.2).
+	reasonEnv = "env changed"
 	// reasonLimit marks a start after the task limit was met; the recorded
 	// reason is limitReason.
 	reasonLimit = "task limit"
@@ -120,6 +126,11 @@ type server struct {
 	retry, retryPending bool
 	// listened: this start's port has accepted once.
 	listened bool
+	// fwd is the preview forward of the live group, nil when it has none.
+	fwd *forward
+	// preview is what its preview forwards saw, kept across them; nil until
+	// the first opens.
+	preview *previewSeen
 	// tasks is the task budget read when this start began; tasksOK says it
 	// was read.
 	tasks   Tasks
@@ -138,6 +149,11 @@ type server struct {
 	// selfChanged counts the starts in a row that saw one.
 	windowChanged bool
 	selfChanged   int
+	// startBegun is when the latest start began, before its process: a
+	// watched change made before it is on disk when that process starts.
+	startBegun time.Time
+	// env is the overlay the live group started under.
+	env map[string]string
 }
 
 // Supervisor holds the dev servers of one repo.
@@ -157,6 +173,20 @@ type Supervisor struct {
 	// outOfMemory: systemd restarted the service because it ran out of
 	// memory. Set once, before Boot starts anything.
 	outOfMemory bool
+	// slot is the container's ZEROPS_StableNumber, 0 when it has none; with
+	// the declaration's previewPortBase it names the preview port.
+	slot int
+	// previewBase and previewName are the declaration's previewPortBase and
+	// the name of its preview server, as last read; guarded by mu.
+	previewBase int
+	previewName string
+	// fwdMu serialises syncPreview; it is never held while taking op.
+	fwdMu sync.Mutex
+	// env is the overlay every start adds to cfg.Env (SetEnv); it is
+	// replaced, never changed in place, so a start may keep the map it read.
+	// envRestarting: restartForEnv runs. Both guarded by mu.
+	env           map[string]string
+	envRestarting bool
 }
 
 // New prepares a supervisor and loads the state an earlier instance left in
@@ -192,8 +222,11 @@ func New(cfg Config) (*Supervisor, error) {
 	if err := os.MkdirAll(filepath.Join(cfg.StateDir, logsDir), 0o700); err != nil {
 		return nil, fmt.Errorf("devsup state dir: %w", err)
 	}
-	s := &Supervisor{cfg: cfg, startedAt: time.Now().UTC(), servers: map[string]*server{}}
+	s := &Supervisor{cfg: cfg, startedAt: time.Now().UTC(), servers: map[string]*server{}, slot: stableNumber(cfg.Env)}
 	if prev, err := ReadState(cfg.StateDir); err == nil {
+		if checkOverlay(prev.Env) == nil {
+			s.env = prev.Env
+		}
 		for name, p := range prev.Servers {
 			sv := &server{
 				name: name, source: p.Source, desired: p.Desired, exit: p.Exit, startedAt: p.StartedAt,
@@ -322,7 +355,12 @@ func (s *Supervisor) reconcile(boot bool) map[string]action {
 		s.logf("declaration: %v", err)
 	} else {
 		s.decl = DeclarationInfo{Version: decl.Version}
-		for _, spec := range decl.ForService(s.cfg.Service) {
+		mine := decl.ForService(s.cfg.Service)
+		s.previewBase, s.previewName = decl.PreviewPortBase, ""
+		if p, ok := PreviewServer(mine); ok {
+			s.previewName = p.Name
+		}
+		for _, spec := range mine {
 			declared[spec.Name] = true
 			desired := spec.FirstDesired()
 			if sv, ok := s.servers[spec.Name]; ok && sv.desired != "" {
@@ -401,6 +439,7 @@ func (s *Supervisor) reconcile(boot bool) map[string]action {
 	}
 	s.startAll(start, reason)
 	s.syncWatches()
+	s.syncPreview()
 	s.persist()
 	return acts
 }
@@ -411,10 +450,15 @@ func (s *Supervisor) stopAll(names []string) {
 	for _, name := range names {
 		s.mu.Lock()
 		var g *group
+		var fwd *forward
 		if sv := s.servers[name]; sv != nil {
 			g, sv.g = sv.g, nil
+			fwd, sv.fwd = sv.fwd, nil
 		}
 		s.mu.Unlock()
+		if fwd != nil {
+			fwd.close()
+		}
 		if g == nil {
 			continue
 		}
@@ -466,8 +510,8 @@ func (s *Supervisor) start(name, reason string) {
 		s.mu.Unlock()
 		return
 	}
-	spec := sv.spec
-	sv.starting = true
+	spec, env := sv.spec, s.env
+	sv.starting, sv.startBegun = true, time.Now()
 	sv.retryPending, sv.windowChanged, sv.listened = false, false, false
 	if reason == reasonLimit {
 		sv.limitStarts++
@@ -487,7 +531,7 @@ func (s *Supervisor) start(name, reason string) {
 	s.mu.Unlock()
 
 	before, beforeOK := s.cfg.Tasks()
-	g, failure, err := s.launch(name, spec, starts)
+	g, failure, err := s.launch(name, spec, env, starts)
 	now := time.Now().UTC()
 
 	s.mu.Lock()
@@ -506,7 +550,7 @@ func (s *Supervisor) start(name, reason string) {
 		return
 	}
 	s.logf("started %s pgid=%d start#%d", name, g.pgid, starts)
-	sv.g = g
+	sv.g, sv.env = g, env
 	s.mu.Unlock()
 	go s.watchExit(sv, g)
 	if spec.Port > 0 {
@@ -514,8 +558,9 @@ func (s *Supervisor) start(name, reason string) {
 	}
 }
 
-// launch opens the server's log and starts its group once the port is free.
-func (s *Supervisor) launch(name string, spec Server, starts int) (*group, string, error) {
+// launch opens the server's log and starts its group once the port is free,
+// with the service's environment plus the overlay env.
+func (s *Supervisor) launch(name string, spec Server, env map[string]string, starts int) (*group, string, error) {
 	lp := LogPath(s.cfg.StateDir, name)
 	if fi, err := os.Stat(lp); err == nil && fi.Size() > logRotateSize {
 		_ = os.Rename(lp, lp+".1")
@@ -529,7 +574,7 @@ func (s *Supervisor) launch(name string, spec Server, starts int) (*group, strin
 	if err == nil {
 		fmt.Fprintf(f, "--- zcp-devsup: start #%d at %s: %s\n", starts, time.Now().UTC().Format(time.RFC3339), spec.Command)
 		var g *group
-		if g, err = startGroup(spec.Command, filepath.Join(s.cfg.Root, filepath.FromSlash(spec.Cwd)), s.cfg.Env, f); err == nil {
+		if g, err = startGroup(spec.Command, filepath.Join(s.cfg.Root, filepath.FromSlash(spec.Cwd)), withOverlay(s.cfg.Env, env), f); err == nil {
 			return g, "", nil
 		}
 		signal = ExitStartFailed
@@ -564,6 +609,8 @@ func (s *Supervisor) watchExit(sv *server, g *group) {
 		return
 	}
 	sv.g = nil
+	fwd := sv.fwd
+	sv.fwd = nil
 	sv.exit = exitOf(g.state)
 	starts := sv.starts
 	s.logf("crashed %s: exit %d %s", sv.name, sv.exit.Code, sv.exit.Signal)
@@ -577,6 +624,9 @@ func (s *Supervisor) watchExit(sv *server, g *group) {
 		sv.retryPending = retry
 	}
 	s.mu.Unlock()
+	if fwd != nil {
+		fwd.close()
+	}
 	_ = stopGroup(g.pgid, s.cfg.Grace)
 	s.persist()
 	if retry {
@@ -673,6 +723,7 @@ func (s *Supervisor) awaitListen(sv *server, g *group, port int) {
 				sv.listened = true
 			}
 			s.mu.Unlock()
+			s.syncPreview()
 			s.persist()
 			return
 		}
@@ -719,7 +770,7 @@ func (s *Supervisor) syncWatches() {
 			sv.watch = nil
 		}
 		if need && sv.watch == nil {
-			w, err := newWatcher(s.cfg.Root, sv.spec.Watch, func(rel string) { s.watchFired(name, rel) })
+			w, err := newWatcher(s.cfg.Root, sv.spec.Watch, func(rel string, last time.Time) { s.watchFired(name, rel, last) })
 			if err != nil {
 				s.logf("watch %s: %v", name, err)
 				continue
@@ -729,17 +780,28 @@ func (s *Supervisor) syncWatches() {
 	}
 }
 
-// watchFired restarts a server on a watched change. A change within the
-// start window, after watchLoopLimit starts in a row each saw one, is the
-// server's own output and restarts nothing; a change outside it always
-// restarts, and clears the count when the start before it saw no change.
-func (s *Supervisor) watchFired(name, rel string) {
+// watchFired restarts a server on a burst of watched changes that opened with
+// rel and whose last change came at last. A burst that came before the
+// server's latest start began restarts nothing: that start already runs it —
+// a burst that came while a restart waited out the old server's stop grace
+// (up to 10 s for one that does not end on SIGTERM) would restart the new one
+// again. A change within the start window, after watchLoopLimit starts in a
+// row each saw one, is the server's own output and restarts nothing; a change
+// outside it always restarts, and clears the count when the start before it
+// saw no change.
+func (s *Supervisor) watchFired(name, rel string, last time.Time) {
 	s.op.Lock()
 	defer s.op.Unlock()
 	s.mu.Lock()
 	sv := s.servers[name]
 	if sv == nil || sv.desired != DesiredRunning {
 		s.mu.Unlock()
+		return
+	}
+	if last.Before(sv.startBegun) {
+		starts := sv.starts
+		s.mu.Unlock()
+		s.logf("no restart of %s: %s changed before its start #%d began, which runs it", name, rel, starts)
 		return
 	}
 	if sv.startedAt != nil && time.Since(*sv.startedAt) < s.cfg.StartWindow {
@@ -901,6 +963,128 @@ func (s *Supervisor) setDesired(name string, d Desired) error {
 	return nil
 }
 
+// SetEnv replaces the env overlay with env (docs/spec-mate.md §2.8a.2
+// `ctl env`): every server started from now on gets it. It returns once the
+// overlay is stored in state.json; the live servers started under another
+// overlay are then restarted in the supervisor's own goroutine, one at a time
+// a Stagger apart — a stop's grace per server could outlast a ctl call's wait.
+// An identical overlay changes nothing; a refused one changes nothing either.
+func (s *Supervisor) SetEnv(env map[string]string) error {
+	if err := checkOverlay(env); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	if maps.Equal(s.env, env) {
+		s.mu.Unlock()
+		return nil
+	}
+	s.env = overlayCopy(env)
+	run := !s.envRestarting && !s.closed
+	if run {
+		s.envRestarting = true
+	}
+	s.mu.Unlock()
+	s.logf("env overlay set: %s", overlayNames(env))
+	s.persist()
+	if run {
+		go s.restartForEnv()
+	}
+	return nil
+}
+
+// restartForEnv restarts, a Stagger apart, every live server whose group
+// started under another overlay than the current one, until none is left; an
+// overlay set meanwhile is picked up by the same loop.
+func (s *Supervisor) restartForEnv() {
+	for i := 0; ; i++ {
+		if i > 0 {
+			time.Sleep(s.cfg.Stagger)
+		}
+		if !s.restartOneForEnv() {
+			return
+		}
+	}
+}
+
+// restartOneForEnv restarts the first live server, by name, that started
+// under another overlay than the current one. It answers false, and marks the
+// restarts done, when none is left or the supervisor shut down.
+func (s *Supervisor) restartOneForEnv() bool {
+	s.op.Lock()
+	defer s.op.Unlock()
+	s.mu.Lock()
+	name := ""
+	if !s.closed {
+		for _, n := range slices.Sorted(maps.Keys(s.servers)) {
+			if sv := s.servers[n]; sv.g != nil && sv.desired == DesiredRunning && !maps.Equal(sv.env, s.env) {
+				name = n
+				break
+			}
+		}
+	}
+	if name == "" {
+		s.envRestarting = false
+		s.mu.Unlock()
+		return false
+	}
+	s.servers[name].starting = true
+	s.mu.Unlock()
+	s.logf("restart %s: %s", name, reasonEnv)
+	s.stopAll([]string{name})
+	s.start(name, reasonEnv)
+	s.persist()
+	return true
+}
+
+// checkOverlay refuses an overlay that would set a name the container's own
+// value must reach (envNameError) or a value exec cannot carry.
+func checkOverlay(env map[string]string) error {
+	for _, name := range slices.Sorted(maps.Keys(env)) {
+		if err := envNameError(name); err != nil {
+			return fmt.Errorf("env: %w", err)
+		}
+		if strings.ContainsRune(env[name], 0) {
+			return fmt.Errorf("env: %q: its value holds a NUL byte", name)
+		}
+	}
+	return nil
+}
+
+// overlayCopy is a copy of env that is never nil.
+func overlayCopy(env map[string]string) map[string]string {
+	out := make(map[string]string, len(env))
+	maps.Copy(out, env)
+	return out
+}
+
+// withOverlay is base with every overlay entry in place of base's own value
+// of that name, the overlay's entries last and in name order.
+func withOverlay(base []string, env map[string]string) []string {
+	if len(env) == 0 {
+		return base
+	}
+	out := make([]string, 0, len(base)+len(env))
+	for _, kv := range base {
+		name, _, _ := strings.Cut(kv, "=")
+		if _, ok := env[name]; !ok {
+			out = append(out, kv)
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(env)) {
+		out = append(out, name+"="+env[name])
+	}
+	return out
+}
+
+// overlayNames names the overlay's variables for the runtime log, which
+// project members read: a value never goes there.
+func overlayNames(env map[string]string) string {
+	if len(env) == 0 {
+		return "(none)"
+	}
+	return strings.Join(slices.Sorted(maps.Keys(env)), ", ")
+}
+
 // Shutdown stops every server and keeps what each was set to, so the next
 // instance starts the same ones.
 func (s *Supervisor) Shutdown() {
@@ -926,32 +1110,42 @@ func (s *Supervisor) Shutdown() {
 func (s *Supervisor) State() State {
 	s.mu.Lock()
 	type row struct {
-		name string
-		sv   server
+		name    string
+		sv      server
+		preview int
 	}
 	rows := make([]row, 0, len(s.servers))
 	for name, sv := range s.servers {
-		rows = append(rows, row{name, *sv})
+		rows = append(rows, row{name, *sv, s.previewPortLocked(name)})
 	}
 	st := State{
 		Format:      StateFormat,
 		Supervisor:  SupervisorInfo{Version: s.cfg.Version, Pid: os.Getpid(), StartedAt: s.startedAt},
 		Declaration: s.decl,
+		Env:         overlayCopy(s.env),
 		Servers:     make(map[string]ServerState, len(rows)),
 	}
 	s.mu.Unlock()
 	for _, r := range rows {
-		st.Servers[r.name] = s.serverState(r.name, &r.sv)
+		st.Servers[r.name] = s.serverState(r.name, &r.sv, r.preview)
 	}
 	return st
 }
 
 // serverState renders one server; it probes the port of a live group, so it
-// runs outside mu.
-func (s *Supervisor) serverState(name string, sv *server) ServerState {
+// runs outside mu. The preview server's activity is read under its own lock.
+func (s *Supervisor) serverState(name string, sv *server, preview int) ServerState {
 	ss := ServerState{
 		Source: sv.source, Desired: sv.desired, StartedAt: sv.startedAt, Exit: sv.exit,
 		LogPath: LogPath(s.cfg.StateDir, name), LastRestartReason: sv.restartReason, OutOfMemory: sv.outOfMemory,
+		PreviewPort: preview,
+	}
+	if preview != 0 {
+		open := 0
+		if sv.preview != nil {
+			ss.PreviewLastConnAt, open = sv.preview.read()
+		}
+		ss.PreviewOpenConns = &open
 	}
 	if sv.starts > 1 {
 		ss.Restarts = sv.starts - 1
@@ -986,10 +1180,106 @@ func (s *Supervisor) serverState(name string, sv *server) ServerState {
 	return ss
 }
 
+// persist writes the state to state.json, all but the preview activity,
+// which lives in memory only: a file a new supervisor finds never claims
+// connections it does not hold.
 func (s *Supervisor) persist() {
 	s.persistMu.Lock()
 	defer s.persistMu.Unlock()
-	if err := writeState(s.cfg.StateDir, s.State()); err != nil {
+	st := s.State()
+	for name, ss := range st.Servers {
+		ss.PreviewLastConnAt, ss.PreviewOpenConns = nil, nil
+		st.Servers[name] = ss
+	}
+	if err := writeState(s.cfg.StateDir, st); err != nil {
 		s.logf("%v", err)
+	}
+}
+
+// stableNumber is the container's ZEROPS_StableNumber in env (the last entry
+// wins, as for a started process); 0 when it is absent or not a positive
+// number.
+func stableNumber(env []string) int {
+	value := ""
+	for _, kv := range env {
+		if v, ok := strings.CutPrefix(kv, "ZEROPS_StableNumber="); ok {
+			value = v
+		}
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil || n < 1 {
+		return 0
+	}
+	return n
+}
+
+// previewPortLocked is the preview port of server name: previewPortBase plus
+// the container's slot when name is the declaration's preview server; 0 when
+// there is no base, no slot, another server, or a sum past the port range.
+// Callers hold mu.
+func (s *Supervisor) previewPortLocked(name string) int {
+	if s.previewBase <= 0 || s.slot <= 0 || name != s.previewName {
+		return 0
+	}
+	if port := s.previewBase + s.slot; port <= 65535 {
+		return port
+	}
+	return 0
+}
+
+// syncPreview brings the preview forward to what the declaration says: the
+// preview server's live group, once its port has accepted, is forwarded from
+// its preview port; any other forward ends. A forward that cannot listen
+// (its port is busy) is logged and the server runs on without one.
+func (s *Supervisor) syncPreview() {
+	s.fwdMu.Lock()
+	defer s.fwdMu.Unlock()
+	type open struct {
+		sv           *server
+		g            *group
+		listen, port int
+		seen         *previewSeen
+	}
+	var stale []*forward
+	var opens []open
+	s.mu.Lock()
+	for name, sv := range s.servers {
+		want := 0
+		if sv.g != nil && sv.listened && sv.spec.Port > 0 {
+			want = s.previewPortLocked(name)
+		}
+		if sv.fwd != nil && (want == 0 || sv.fwd.listenPort != want || sv.fwd.targetPort != sv.spec.Port) {
+			stale = append(stale, sv.fwd)
+			sv.fwd = nil
+		}
+		if want > 0 && sv.fwd == nil {
+			if sv.preview == nil {
+				sv.preview = &previewSeen{}
+			}
+			opens = append(opens, open{sv, sv.g, want, sv.spec.Port, sv.preview})
+		}
+	}
+	s.mu.Unlock()
+	for _, f := range stale {
+		f.close()
+	}
+	for _, o := range opens {
+		f, err := openForward(o.listen, o.port, o.seen)
+		if err != nil {
+			s.logf("preview %s: cannot listen on :%d: %v", o.sv.name, o.listen, err)
+			continue
+		}
+		s.mu.Lock()
+		// The group may have ended, or been replaced, while the port opened.
+		keep := o.sv.g == o.g && o.sv.fwd == nil
+		if keep {
+			o.sv.fwd = f
+		}
+		s.mu.Unlock()
+		if !keep {
+			f.close()
+			continue
+		}
+		s.logf("preview %s: :%d -> 127.0.0.1:%d", o.sv.name, o.listen, o.port)
 	}
 }

@@ -8,8 +8,30 @@ const (
 	RuntimeStatic      RuntimeClass = "static"
 	RuntimeImplicitWeb RuntimeClass = "implicit-webserver"
 	RuntimeManaged     RuntimeClass = "managed"
-	RuntimeUnknown     RuntimeClass = "unknown"
+	// RuntimePool is a Swarm pool (swarm@1, swarm-vm@1): up to ten containers
+	// its orchestrator hands out by lease — not one app container.
+	RuntimePool RuntimeClass = "pool"
+	// RuntimeSandbox is a Zerops Box (ubuntu/zbox@1): a single Ubuntu VM, not
+	// a container, that runs sandboxes as microVMs — not a zerops.yml
+	// run.base and not an app runtime.
+	RuntimeSandbox RuntimeClass = "sandbox"
+	RuntimeUnknown RuntimeClass = "unknown"
 )
+
+// IsAppRuntime reports a class that runs the user's application in one
+// container it can address by service hostname: dynamic, static and
+// implicit-web runtimes. Managed services, pools, Boxes and unknown types
+// are not — a repo, a rollback history or an SSH read by hostname means
+// nothing for them (spec-workflows.md §8 PS-3).
+func (c RuntimeClass) IsAppRuntime() bool {
+	switch c {
+	case RuntimeDynamic, RuntimeStatic, RuntimeImplicitWeb:
+		return true
+	case RuntimeManaged, RuntimePool, RuntimeSandbox, RuntimeUnknown:
+		return false
+	}
+	return false
+}
 
 // Mode is the bootstrapped service's deploy mode in envelope terms.
 // Distinct from the untyped-string meta.Mode ("dev", "standard", "simple"):

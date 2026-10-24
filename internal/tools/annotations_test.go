@@ -95,6 +95,8 @@ func TestAnnotations_AllToolsHaveTitleAndAnnotations(t *testing.T) {
 		{name: "zerops_mount", title: "Mount/unmount service filesystems", idempotent: true, destructive: boolPtr(false)},
 		{name: "zerops_dev_server", title: "Manage dev server lifecycle", idempotent: true, destructive: boolPtr(false)},
 		{name: "zerops_deploy_batch", title: "Deploy batch — parallel deploys", destructive: boolPtr(true)},
+		{name: "zerops_lease", title: "Lease a pool container", destructive: boolPtr(true)},
+		{name: "zerops_box", title: "Set up a Zerops Box", idempotent: true, destructive: boolPtr(false)},
 
 		// Knowledge / workflow-adjacent
 		{name: "zerops_preprocess", title: "Expand Zerops preprocessor expressions", readOnly: true},
@@ -244,13 +246,16 @@ func TestAnnotations_DescriptionKeywords(t *testing.T) {
 		{name: "zerops_discover", keywords: []string{"env var", "includeEnvs", "includeEnvValues"}},
 		{name: "zerops_deploy", keywords: []string{"SSH", "zerops.yaml", "deployFiles"}},
 		{name: "zerops_import", keywords: []string{"workflow", "YAML"}},
-		{name: "zerops_manage", keywords: []string{"reload", "restart", "connect-storage", "/mnt/"}},
+		// A Zerops Box inverts the env-change rule: reload keeps its sandboxes,
+		// restart and stop kill them (spec-workflows.md §8 PS-8).
+		{name: "zerops_manage", keywords: []string{"reload", "restart", "connect-storage", "/mnt/", "Zerops Box", "sandboxes"}},
 		{name: "zerops_env", keywords: []string{"set", "delete", "restart"}},
 		{name: "zerops_subdomain", keywords: []string{"enable", "disable", "subdomain"}},
 		{name: "zerops_knowledge", keywords: []string{"briefing", "scope", "query", "recipe"}},
 		{name: "zerops_verify", keywords: []string{"health", "pass", "fail", "info"}},
 		{name: "zerops_process", keywords: []string{"wait", "cancel", "status"}},
 		{name: "zerops_export", keywords: []string{"export", "yaml", "service"}},
+		{name: "zerops_box", keywords: []string{"setup", "status", "base", "domain", "zerops_import"}},
 		// E2E F15: an agent asked to carry a scale into the group recipe read
 		// group-recipe as tiers-only and called the change blocked.
 		{name: "zerops_workflow", keywords: []string{`action="group-recipe" scaling=`, `action="mac-pair"`}},

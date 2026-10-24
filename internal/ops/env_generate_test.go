@@ -2,6 +2,7 @@ package ops
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -1430,6 +1431,88 @@ func TestExpandRefs_DepthErrorNamesTheRef(t *testing.T) {
 				t.Errorf("the error does not name the reference it stopped at: %v", err)
 			}
 		})
+	}
+}
+
+// TestGenerateDotenv_PreviewDiff_PoolAndBoxCredentialsMasked: a yaml ref that
+// resolves a Swarm pool's API_TOKEN or ADMIN_TOKEN, or a Zerops Box's ZBOX_
+// variable, carries a credential — the diff masks it on both sides even when
+// the platform reads the row back plain; a pool's other value stays in clear.
+func TestGenerateDotenv_PreviewDiff_PoolAndBoxCredentialsMasked(t *testing.T) {
+	t.Parallel()
+
+	const yaml = `zerops:
+  - setup: app
+    run:
+      envVariables:
+        POOL_TOKEN: ${devpool_API_TOKEN}
+        POOL_ADMIN: ${devpool_ADMIN_TOKEN}
+        BOX_API_KEY: ${box_ZBOX_WORKSPACE_API_KEY}
+        POOL_SSH: ${devpool_sshIsolation}
+`
+	tmpDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpDir, "zerops.yaml"), []byte(yaml), 0644); err != nil {
+		t.Fatalf("write zerops.yaml: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, ".env"), []byte("POOL_TOKEN=old\nPOOL_ADMIN=old\nBOX_API_KEY=old\nPOOL_SSH=old\n"), 0600); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+	const secret = "pool-" + "orchestrator-secret"
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "p1", Name: "test", Status: statusActive}).
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-app", Name: "app", ProjectID: "p1", Status: "RUNNING",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+			{ID: "svc-pool", Name: "devpool", ProjectID: "p1", Status: "RUNNING",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1"}},
+			{ID: "svc-box", Name: "box", ProjectID: "p1", Status: "RUNNING",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/zbox@1"}},
+		}).
+		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{
+			{ID: "e1", Key: "API_TOKEN", Content: secret + "-api"},
+			{ID: "e2", Key: "ADMIN_TOKEN", Content: secret + "-admin"},
+			{ID: "e3", Key: "sshIsolation", Content: "vpn service@zcp"},
+		}).
+		WithServiceEnv("svc-box", []platform.ServiceEnvVar{
+			{ID: "e4", Key: "ZBOX_WORKSPACE_API_KEY", Content: secret + "-box"},
+		})
+
+	result, err := EnvGenerateDotenv(context.Background(), mock, "p1", "app", tmpDir, EnvGenerateDotenvOptions{Preview: true})
+	if err != nil {
+		t.Fatalf("EnvGenerateDotenv: %v", err)
+	}
+	raw, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(raw), secret) {
+		t.Errorf("the generate-dotenv result echoes a pool or Box credential: %s", raw)
+	}
+	modified := make(map[string]DiffModified, len(result.Diff.Modified))
+	for _, m := range result.Diff.Modified {
+		modified[m.Key] = m
+	}
+	tests := []struct {
+		key    string
+		wantTo string
+	}{
+		{"POOL_TOKEN", "<redacted: sensitive>"},
+		{"POOL_ADMIN", "<redacted: sensitive>"},
+		{"BOX_API_KEY", "<redacted: sensitive>"},
+		{"POOL_SSH", "vpn service@zcp"},
+	}
+	for _, tt := range tests {
+		m, ok := modified[tt.key]
+		if !ok {
+			t.Errorf("%s: missing from Diff.Modified %v", tt.key, result.Diff.Modified)
+			continue
+		}
+		if m.To != tt.wantTo {
+			t.Errorf("%s To = %q, want %q", tt.key, m.To, tt.wantTo)
+		}
+		if tt.wantTo == "<redacted: sensitive>" && m.From != tt.wantTo {
+			t.Errorf("%s From = %q, want masked", tt.key, m.From)
+		}
 	}
 }
 

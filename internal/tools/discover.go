@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -112,9 +113,9 @@ func EnrichWithMetaStatus(result *ops.DiscoverResult, stateDir string) {
 	enrichWithMetaStatus(result, stateDir, nil)
 }
 
-// enrichWithMetaStatus classifies each service into one of six
+// enrichWithMetaStatus classifies each service into one of eight
 // AdoptionState values (adopted / resumable / adoptable / managed-dep
-// / zcp-self / bootstrapping), detects SSHFS mount paths, and appends directive
+// / zcp-self / bootstrapping / pool / sandbox), detects SSHFS mount paths, and appends directive
 // warnings to result.Warnings for adoptable and/or resumable services
 // (separate warnings — each points at the correct workflow route).
 //
@@ -184,6 +185,7 @@ func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string, activity 
 		s := &result.Services[i]
 		state, sessionID := classifyAdoptionState(s, idx, inFlight)
 		s.AdoptionState = state
+		s.AdoptionReason = ops.AdoptionReason(state)
 		switch state {
 		case ops.AdoptionAdoptable:
 			adoptCandidates = append(adoptCandidates, s.Hostname)
@@ -193,7 +195,8 @@ func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string, activity 
 				Hostname:  s.Hostname,
 				SessionID: sessionID,
 			})
-		case ops.AdoptionAdopted, ops.AdoptionManagedDep, ops.AdoptionZCPSelf, ops.AdoptionBootstrapping:
+		case ops.AdoptionAdopted, ops.AdoptionManagedDep, ops.AdoptionZCPSelf, ops.AdoptionBootstrapping,
+			ops.AdoptionPool, ops.AdoptionSandbox:
 			// No warning needed; per-service AdoptionState already
 			// carries the agent-actionable signal. AdoptionBootstrapping
 			// is silent on purpose — the agent's own alive session is
@@ -214,7 +217,7 @@ func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string, activity 
 		}
 	}
 	if len(idleAdopt) > 0 {
-		result.Warnings = append(result.Warnings, adoptableServicesWarning(idleAdopt, idleAdoptTypes))
+		result.Warnings = append(result.Warnings, adoptableServicesWarning(idleAdopt, idleAdoptTypes, holdsLocalStorage(result.Services)))
 	}
 	if len(resumeCandidates) > 0 {
 		result.Warnings = append(result.Warnings, formatResumeWarning(resumeCandidates))
@@ -293,20 +296,53 @@ func liveActivityWarning(services []ops.ServiceInfo, activity map[string][]ops.L
 //     ADOPT_REQUIRED. An earlier enumerated list dropped launch-production, so an
 //     agent promoting to prod walked into a service-not-bootstrapped bounce with
 //     no up-front warning that launch is adoption-gated too.
-//   - D-fix: when exactly two adoptable runtimes share a deployment stack, a bare
-//     scope=[...] adopt is GUARANTEED to reject — the adopt handler refuses to
-//     guess a standard dev/stage pair vs two independent devs (adopt.go,
+//   - D-fix: when two or more adoptable runtimes share a deployment stack, a bare
+//     scope=[...] naming two of them is GUARANTEED to reject — the adopt handler
+//     refuses to guess a standard dev/stage pair vs independent devs (adopt.go,
 //     topology.CanonicalBareForm equality). Pre-steer to the explicit plan shape
-//     the handler accepts instead of the scope path it will bounce.
-func adoptableServicesWarning(hostnames, types []string) string {
+//     the handler accepts instead of the scope path it will bounce — except for
+//     a pair sharing a code volume, which only a scope records, named whenever
+//     the project holds a local-storage service.
+func adoptableServicesWarning(hostnames, types []string, localStorage bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Services with adoptionState=\"adoptable\" (they exist, but ZCP does not track them): %s. ", strings.Join(hostnames, ", "))
 	b.WriteString("Run `zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"adopt\"` before any service-scoped MUTATING or PROMOTING call — `zerops_deploy`, the `develop` / `build-integration` workflows, AND `launch-production` (promote-to-prod) all reject with ADOPT_REQUIRED until adoption completes. ")
-	if len(hostnames) == 2 && topology.CanonicalBareForm(types[0]) == topology.CanonicalBareForm(types[1]) {
-		fmt.Fprintf(&b, "NOTE: %s and %s share the same runtime stack (%s) — a bare `scope=[...]` adopt can't tell a standard dev/stage pair from two independent dev containers and WILL reject; on the discover-complete call submit an explicit `plan=[...]` (one entry for a standard pair, two for independent devs), not `scope`. ", hostnames[0], hostnames[1], topology.CanonicalBareForm(types[0]))
+	if shared := sharedStacks(hostnames, types); len(shared) > 0 {
+		fmt.Fprintf(&b, "NOTE: %s — a bare `scope=[...]` adopt naming two or more runtimes of one stack can't tell a standard dev/stage pair from independent dev containers and WILL reject; on the discover-complete call submit an explicit `plan=[...]` (one entry per standard pair, one per independent dev), not `scope`. ", strings.Join(shared, "; "))
+		if localStorage {
+			b.WriteString("The exception is dev services whose zerops.yaml mounts a local-storage service that already holds their repository (a shared code volume): name them and their stages in `scope` — no plan records that pair. ")
+		}
 	}
 	b.WriteString("Read-only diagnostics work pre-adopt — for a reported URL/HTTP problem run `zerops_verify` FIRST (it carries the exact Recovery call), and `zerops_discover` / `zerops_events` / `zerops_logs` are all usable before adopting.")
 	return b.String()
+}
+
+// sharedStacks names each runtime stack two or more of the adoptables share,
+// compared in canonical bare form exactly as the adopt route's pairing
+// question compares them, so the steer never drifts from the refusal.
+func sharedStacks(hostnames, types []string) []string {
+	byStack := map[string][]string{}
+	var stacks []string
+	for i, h := range hostnames {
+		stack := topology.CanonicalBareForm(types[i])
+		if _, seen := byStack[stack]; !seen {
+			stacks = append(stacks, stack)
+		}
+		byStack[stack] = append(byStack[stack], h)
+	}
+	var out []string
+	for _, stack := range stacks {
+		if hosts := byStack[stack]; len(hosts) > 1 {
+			out = append(out, fmt.Sprintf("%s share the same runtime stack (%s)", strings.Join(hosts, ", "), stack))
+		}
+	}
+	return out
+}
+
+// holdsLocalStorage reports a project holding a local-storage service — one
+// a variant-B pair could keep its repository on.
+func holdsLocalStorage(services []ops.ServiceInfo) bool {
+	return slices.ContainsFunc(services, func(s ops.ServiceInfo) bool { return topology.IsLocalStorageType(s.Type) })
 }
 
 // resumeCandidate carries the per-host BootstrapSession ID so the
@@ -323,7 +359,8 @@ type resumeCandidate struct {
 // classifyAdoptionState returns the AdoptionState bucket for a service
 // plus the BootstrapSession ID when the state is Resumable (empty
 // otherwise). Precedence: zcp-self first (USER category, would slip past
-// IsInfrastructure), managed-dep second, complete meta → adopted third,
+// IsInfrastructure), pool then sandbox (type-string kinds that read as a
+// runtime / a database by platform category), managed-dep next, complete meta → adopted third,
 // then `inFlight` (an alive provision-reached session owns this hostname)
 // → bootstrapping — checked BEFORE incomplete-with-session → resumable so an
 // alive session's own service is never sent down the route=resume dead end;
@@ -333,6 +370,14 @@ type resumeCandidate struct {
 func classifyAdoptionState(s *ops.ServiceInfo, idx map[string]*workflow.ServiceMeta, inFlight map[string]bool) (ops.AdoptionState, string) {
 	if s.Type == "zcp@1" {
 		return ops.AdoptionZCPSelf, ""
+	}
+	// A pool or Box reads like a runtime / a database to the platform category,
+	// so the type string decides; neither is ever an adopt target (PS-2).
+	if topology.IsPoolType(s.Type) {
+		return ops.AdoptionPool, ""
+	}
+	if topology.IsSandboxType(s.Type) {
+		return ops.AdoptionSandbox, ""
 	}
 	if s.IsInfrastructure {
 		return ops.AdoptionManagedDep, ""

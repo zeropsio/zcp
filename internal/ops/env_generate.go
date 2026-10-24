@@ -253,6 +253,11 @@ func (r *refExpander) expandRefs(ctx context.Context, value, sourceService strin
 			continue
 		}
 		rawVal, sensitive := row.Content, row.Sensitive
+		if found {
+			// A pool's or a Box's own credential is a secret whatever flag
+			// its row carries.
+			sensitive = sensitive || isPoolOrBoxCredential(varName, r.serviceIndex[svcHost].ServiceStackTypeInfo.ServiceStackTypeVersionName)
+		}
 		if !found && projectFallback {
 			if pv, ok := r.projectEnv[varName]; ok {
 				rawVal, sensitive, found = pv.Content, pv.Sensitive, true
@@ -450,7 +455,7 @@ func EnvGenerateDotenv(
 	if err != nil {
 		return nil, fmt.Errorf("render dotenv: %w", err)
 	}
-	if err := atomicWriteFile(envPath, rendered, 0600); err != nil {
+	if err := atomicWriteFile(envPath, rendered); err != nil {
 		return nil, fmt.Errorf("write .env: %w", err)
 	}
 
@@ -466,12 +471,13 @@ func EnvGenerateDotenv(
 	return result, nil
 }
 
-// atomicWriteFile writes data to path via a temp file + rename. The
-// rename is the atomic step on POSIX filesystems — readers either see
-// the old file or the new one, never a half-written state. Concurrent
+// atomicWriteFile writes data to path via a temp file + rename, readable by
+// its owner only (0600: every file it writes holds a secret or zcp's own
+// state). The rename is the atomic step on POSIX filesystems — readers either
+// see the old file or the new one, never a half-written state. Concurrent
 // regens of the same file still race on read-modify-write semantics;
 // Phase 0E adds an advisory lock for serialization.
-func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
+func atomicWriteFile(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp.*")
 	if err != nil {
@@ -488,7 +494,7 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
 		cleanup()
 		return fmt.Errorf("close temp: %w", err)
 	}
-	if err := os.Chmod(tmpPath, perm); err != nil {
+	if err := os.Chmod(tmpPath, 0o600); err != nil {
 		cleanup()
 		return fmt.Errorf("chmod temp: %w", err)
 	}

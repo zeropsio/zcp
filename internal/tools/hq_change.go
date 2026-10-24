@@ -26,12 +26,13 @@ const changeTitleRunes = 120
 // recordChange stamps the change's number and its branch's short name on the
 // pair, in memory and on disk. Best-effort on disk: a pass that could not
 // write it opens the same change again next time and finds it, which costs a
-// call and nothing else.
+// call and nothing else. A pair gone from disk meanwhile — a pool migration
+// re-keyed it — keeps no stub under the hostname read.
 func recordChange(stateDir string, m *workflow.ServiceMeta, number int, branch string) {
 	m.HQ.Change, m.HQ.Branch = number, branch
 	_ = workflow.UpsertServiceMeta(stateDir, m.Hostname, func(meta *workflow.ServiceMeta, existed bool) error {
 		if !existed || meta.HQ == nil {
-			return nil
+			return workflow.ErrSkipWrite
 		}
 		meta.HQ.Change, meta.HQ.Branch = number, branch
 		return nil
@@ -64,9 +65,10 @@ func upgradeReleasedBranch(stateDir string, hqc hq.Client, m *workflow.ServiceMe
 	}
 	upgrade(m.HQ)
 	_ = workflow.UpsertServiceMeta(stateDir, m.Hostname, func(meta *workflow.ServiceMeta, existed bool) error {
-		if existed && meta.HQ != nil {
-			upgrade(meta.HQ)
+		if !existed || meta.HQ == nil {
+			return workflow.ErrSkipWrite
 		}
+		upgrade(meta.HQ)
 		return nil
 	})
 }
@@ -197,12 +199,13 @@ func hqLearnLanding(stateDir string, m *workflow.ServiceMeta, state hq.MateState
 // HQ says the change is no longer open without merging. number is the change
 // the read was FOR: the disk write applies only while the fresh meta still
 // records it — a concurrent describe may have moved the pair on to a newer
-// change between the read and the write.
+// change between the read and the write — and never on a pair gone from
+// disk meanwhile, which keeps no stub.
 func clearChange(stateDir string, m *workflow.ServiceMeta, number int) {
 	m.HQ.Change, m.HQ.Branch = 0, ""
 	_ = workflow.UpsertServiceMeta(stateDir, m.Hostname, func(meta *workflow.ServiceMeta, existed bool) error {
 		if !existed || meta.HQ == nil || meta.HQ.Change != number {
-			return nil
+			return workflow.ErrSkipWrite
 		}
 		meta.HQ.Change, meta.HQ.Branch = 0, ""
 		return nil

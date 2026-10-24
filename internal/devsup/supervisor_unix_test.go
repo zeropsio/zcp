@@ -30,6 +30,10 @@ type rig struct {
 	// previousRun, when set, is the supervisors' reading of systemd's result
 	// for the previous run of their unit.
 	previousRun func() (string, bool)
+	// env is added to the environment the supervisors start servers with.
+	env []string
+	// grace is how long a stopped group gets before SIGKILL; zero is 1 s.
+	grace time.Duration
 }
 
 // newRig makes a repo root and a short state directory (a unix socket path
@@ -80,8 +84,12 @@ func (r *rig) supervisorWith(service string, portWait time.Duration) *Supervisor
 	if stagger == 0 {
 		stagger = time.Millisecond
 	}
+	grace := r.grace
+	if grace == 0 {
+		grace = time.Second
+	}
 	s, err := New(Config{
-		Root: r.root, StateDir: r.state, Service: service, Env: os.Environ(), Grace: time.Second, PortWait: portWait,
+		Root: r.root, StateDir: r.state, Service: service, Env: append(os.Environ(), r.env...), Grace: grace, PortWait: portWait,
 		StartWindow: r.window, Stagger: stagger, LimitBackoff: 50 * time.Millisecond, Tasks: r.tasks, PreviousRun: r.previousRun, Version: "v-test",
 	})
 	if err != nil {
@@ -517,6 +525,80 @@ func TestSupervisor_ReadingAWatchedFileNeverRestartsItsServerAndWritingOneDoes(t
 	eventually(t, "the write to restart api", func() bool {
 		sv := mustServer(t, s.State(), "api")
 		return sv.Restarts == 1 && sv.LastRestartReason == "apps/api/Main.java changed"
+	})
+}
+
+// One write over sshfs (`cat > file`) restarted a watched server 2–3 times
+// in the same second: the write reached the watch as several changes spread
+// over more than the settle. A burst of changes, each coming before the last
+// settled, restarts the server once, naming the path that started the burst.
+func TestSupervisor_ABurstOfWatchedChangesRestartsTheServerOnce(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	api := freePort(t)
+	r.write("apps/api/main.go", "v1")
+	srv := r.listener("api", api)
+	srv.Watch = &Watch{Paths: []string{"apps/api"}}
+	r.declare(srv)
+	s := r.supervisor()
+	s.Boot()
+	eventually(t, "api to listen", func() bool { return listening(api) })
+
+	// Truncate, then the bytes, then the close: each a change, the gaps
+	// longer than one settle, never as long as the quiet that ends a burst.
+	for i, body := range []string{"", "v2", "v2 done"} {
+		if i > 0 {
+			time.Sleep(300 * time.Millisecond)
+		}
+		r.write("apps/api/main.go", body)
+	}
+	eventually(t, "api to restart", func() bool { return mustServer(t, s.State(), "api").Restarts >= 1 })
+	eventually(t, "api to listen again", func() bool { return listening(api) })
+	time.Sleep(2 * time.Second) // a restart that should not happen has no event to wait on
+	if sv := mustServer(t, s.State(), "api"); sv.Restarts != 1 || sv.LastRestartReason != "apps/api/main.go changed" {
+		t.Fatalf("api = %d restart(s), reason %q; want one restart for the one write, naming apps/api/main.go", sv.Restarts, sv.LastRestartReason)
+	}
+}
+
+// The 8–10 s between a write and the restart was the old server's stop grace:
+// one that does not end on SIGTERM is killed only after it. Every change that
+// came while that restart stopped the server is already on disk when the new
+// one starts, so it restarts nothing again; a change after the start still
+// restarts it, naming its own path.
+func TestSupervisor_AChangeMadeWhileARestartStopsTheServerRestartsNothingMore(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.grace = 3 * time.Second
+	api := freePort(t)
+	r.write("apps/api/main.go", "v1")
+	r.write("apps/api/util.go", "v1")
+	r.write("apps/api/late.go", "v1")
+	srv := Server{Name: "api", Port: api, Command: helperCmd(t, "ignore-term", "PORT="+strconv.Itoa(api)), Watch: &Watch{Paths: []string{"apps/api"}}}
+	r.declare(srv)
+	s := r.supervisor()
+	s.Boot()
+	eventually(t, "api to listen", func() bool { return listening(api) })
+
+	r.write("apps/api/main.go", "v2")
+	// The restart is stopping api, which waits out its grace: two more
+	// changes, each settling on its own, come meanwhile.
+	time.Sleep(time.Second)
+	r.write("apps/api/util.go", "v2")
+	time.Sleep(time.Second)
+	r.write("apps/api/main.go", "v3")
+	eventually(t, "api to restart", func() bool {
+		sv := mustServer(t, s.State(), "api")
+		return sv.Restarts >= 1 && sv.Status == StatusRunning && listening(api)
+	})
+	time.Sleep(r.grace + time.Second) // a second restart would wait out the grace again
+	if sv := mustServer(t, s.State(), "api"); sv.Restarts != 1 || sv.LastRestartReason != "apps/api/main.go changed" {
+		t.Fatalf("api = %d restart(s), reason %q; want one: the start after the stop already runs every change made during it", sv.Restarts, sv.LastRestartReason)
+	}
+
+	r.write("apps/api/late.go", "v2")
+	eventually(t, "a change after the start to restart api", func() bool {
+		sv := mustServer(t, s.State(), "api")
+		return sv.Restarts == 2 && sv.LastRestartReason == "apps/api/late.go changed"
 	})
 }
 

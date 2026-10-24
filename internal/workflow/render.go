@@ -19,7 +19,7 @@ type Response struct {
 }
 
 // RenderStatus produces the markdown status block from a Response. Section
-// order is stable: Phase → Services → Progress → Blockers → Guidance →
+// order is stable: Phase → Services → Leases → Progress → Blockers → Guidance →
 // Next. Each section is skipped when it has no content, keeping the
 // output compact. Blockers is a one-line call-to-action surfaced above
 // the (large) Guidance section so the auto-close gate is visible
@@ -30,6 +30,7 @@ func RenderStatus(resp Response) string {
 
 	renderPhase(&b, resp.Envelope)
 	renderServices(&b, resp.Envelope)
+	renderLeases(&b, resp.Envelope)
 	renderProgressAndBlockers(&b, resp.Envelope)
 	renderProdSourceControlSignpost(&b, resp.Envelope)
 	renderGuidance(&b, resp.Guidance)
@@ -211,7 +212,7 @@ func renderProgressAndBlockers(b *strings.Builder, env StateEnvelope) {
 		fmt.Fprintf(b, "→ Auto-close blocked: %d/%d ready, pending %s. %s\n",
 			ready, required,
 			strings.Join(pending, ", "),
-			blockerNextAction(pending[0], needsDeploy, needsVerify))
+			blockerNextAction(pending[0], needsDeploy, needsVerify, env))
 	}
 	// Close-mode is the gate's third input — surface it in the HEAD too, not
 	// just the guidance wall (B5). It fires even when pending==0 (deploy+verify
@@ -289,9 +290,14 @@ func lastAttemptText(attempts []AttemptInfo, kind string) (string, bool) {
 // first blocker. Deploy always precedes verify (no point verifying an
 // un-deployed service), so the suggestion order follows that. The
 // default branch is unreachable while callers gate on len(pending) > 0.
-func blockerNextAction(host string, needsDeploy, needsVerify bool) string {
+// A stage whose pair's dev half is a pool gets the call the plan names for
+// it (poolStageDeployNext), never a deploy with no source.
+func blockerNextAction(host string, needsDeploy, needsVerify bool, env StateEnvelope) string {
 	switch {
 	case needsDeploy:
+		if next := poolStageDeployNext(host, env); next != "" {
+			return next
+		}
 		// RC-A′ / F8: state WHY deploy is needed. A live SSHFS/dev-server edit
 		// is visible now but is NOT in the deployed artefact — it reverts on the
 		// next container cycle. Deploy is what makes the change durable, even
@@ -303,6 +309,23 @@ func blockerNextAction(host string, needsDeploy, needsVerify bool) string {
 	default:
 		return ""
 	}
+}
+
+// poolStageDeployNext is the auto-close line's deploy call for host when its
+// pair's dev half is a pool, resolved as deployActionFor resolves the plan's:
+// the cross-deploy from a held lease of the pool, else acquiring one first
+// (docs/spec-workflows.md §13 PM-10). "" for any other host, and for a manual
+// close-mode, which the generic line covers.
+func poolStageDeployNext(host string, env StateEnvelope) string {
+	intent := ResolveWithLeases(snapshotByHostname(env.Services, host), env.Services, env.LeaseList())
+	switch {
+	case intent.SourcePool == "" || intent.Delivery == DeployDeliveryManual:
+		return ""
+	case intent.PushSource == "":
+		return fmt.Sprintf("Next: zerops_lease action=\"acquire\" pool=%q (%s deploys from a lease of its dev pool, never from the pool itself)", intent.SourcePool, host)
+	}
+	return fmt.Sprintf("Next: zerops_deploy sourceService=%q targetService=%q setup=%q (un-deployed edits revert on a container cycle — deploy makes the change durable)",
+		intent.PushSource, host, intent.BuildSetup)
 }
 
 // renderPhase is one line: the phase identifier plus the work session intent
@@ -332,7 +355,7 @@ func renderPhase(b *strings.Builder, env StateEnvelope) {
 			return
 		}
 		fmt.Fprintln(b, "Phase: develop-closed-auto")
-	case PhaseIdle, PhaseBootstrapActive, PhaseStrategySetup, PhaseExportActive, PhaseLaunchProductionActive:
+	case PhaseIdle, PhaseBootstrapActive, PhaseStrategySetup, PhaseExportActive, PhaseLaunchProductionActive, PhasePoolMigrateActive:
 		fmt.Fprintf(b, "Phase: %s\n", env.Phase)
 	}
 }
@@ -354,11 +377,44 @@ func renderServices(b *strings.Builder, env StateEnvelope) {
 	}
 }
 
+// renderLeases prints the pool-container leases this project holds, one line
+// each — `<alias> · <pool> · <branch> · <state>` — and nothing at all when
+// there are none, so a lease-less project's status is byte-identical to what
+// it was before leases existed. The state is rendered verbatim (never
+// enumerated here); a state read from zcp's own record because the
+// orchestrator did not answer is marked unverified. A lease string has no
+// field in LeaseSnapshot, so it cannot appear here (DP-3).
+func renderLeases(b *strings.Builder, env StateEnvelope) {
+	leases := env.LeaseList()
+	if len(leases) == 0 {
+		return
+	}
+	fmt.Fprintln(b, "Leases:")
+	for _, l := range leases {
+		branch := l.Branch
+		if branch == "" {
+			branch = "-"
+		}
+		state := l.State
+		if l.Unverified {
+			state += " (unverified)"
+		}
+		fmt.Fprintf(b, "  - %s · %s · %s · %s\n", l.Alias, l.Pool, branch, state)
+	}
+}
+
 func renderServiceLine(svc ServiceSnapshot) string {
 	parts := []string{fmt.Sprintf("%s (%s)", svc.Hostname, svc.TypeVersion)}
 	switch svc.RuntimeClass {
 	case topology.RuntimeManaged:
 		parts = append(parts, "managed")
+	case topology.RuntimePool:
+		parts = append(parts, "pool")
+		if svc.DevIsPool {
+			parts = append(parts, renderDevPoolFields(svc))
+		}
+	case topology.RuntimeSandbox:
+		parts = append(parts, "sandbox")
 	case topology.RuntimeUnknown:
 		parts = append(parts, "unknown runtime")
 	case topology.RuntimeDynamic, topology.RuntimeStatic, topology.RuntimeImplicitWeb:
@@ -376,7 +432,7 @@ func renderServiceLine(svc ServiceSnapshot) string {
 			}
 		}
 	}
-	if svc.Status != "" && svc.Status != "ACTIVE" {
+	if svc.Status != "" && svc.Status != StatusActive {
 		parts = append(parts, "["+svc.Status+"]")
 	}
 	return strings.Join(parts, " — ")
@@ -442,6 +498,28 @@ func renderBootstrappedFields(svc ServiceSnapshot) string {
 	if svc.RemoteURL != "" {
 		fields = append(fields, "remoteUrl="+topology.RedactRepoURLCredentials(svc.RemoteURL))
 	}
+	fields = append(fields, hqFields(svc)...)
+	if len(svc.FeedsProduction) > 0 {
+		fields = append(fields, "feedsProduction="+strings.Join(svc.FeedsProduction, "; "))
+	}
+	return strings.Join(fields, ", ")
+}
+
+// renderDevPoolFields is the line of a pool keying its pair: the pair it is
+// the dev half of — every stage and the HQ record — and no claim of a mode,
+// deploy state or setup of its own (a pool runs leases, not one container).
+func renderDevPoolFields(svc ServiceSnapshot) string {
+	fields := []string{"dev half of a pair"}
+	if stages := svc.PairStageHostnames(); len(stages) > 0 {
+		fields = append(fields, "stage="+strings.Join(stages, ","))
+	}
+	fields = append(fields, hqFields(svc)...)
+	return strings.Join(fields, ", ")
+}
+
+// hqFields are a pair dev half's HQ record fields, none outside HQ.
+func hqFields(svc ServiceSnapshot) []string {
+	var fields []string
 	if svc.HQRepo != "" {
 		fields = append(fields, "hqRepo="+svc.HQRepo)
 	}
@@ -469,10 +547,7 @@ func renderBootstrappedFields(svc ServiceSnapshot) string {
 	if svc.HQChange != 0 && svc.HQBranch != "" {
 		fields = append(fields, "changeBranch="+svc.HQBranch)
 	}
-	if len(svc.FeedsProduction) > 0 {
-		fields = append(fields, "feedsProduction="+strings.Join(svc.FeedsProduction, "; "))
-	}
-	return strings.Join(fields, ", ")
+	return fields
 }
 
 // renderGuidance dumps the synthesized atom bodies as a single section. The
@@ -537,7 +612,8 @@ func renderPlan(b *strings.Builder, plan *Plan) {
 }
 
 // formatAction renders one NextAction as "Label — tool(args)". Args are
-// sorted for determinism (map iteration would otherwise vary run-to-run).
+// sorted for determinism (map iteration would otherwise vary run-to-run); a
+// list argument (ListArg) is written unquoted, as the tool call takes it.
 func formatAction(a NextAction) string {
 	if len(a.Args) == 0 {
 		return fmt.Sprintf("%s — %s", a.Label, a.Tool)
@@ -549,6 +625,10 @@ func formatAction(a NextAction) string {
 	sort.Strings(keys)
 	pairs := make([]string, 0, len(keys))
 	for _, k := range keys {
+		if isListArg(a.Args[k]) {
+			pairs = append(pairs, k+"="+a.Args[k])
+			continue
+		}
 		pairs = append(pairs, fmt.Sprintf("%s=%q", k, a.Args[k]))
 	}
 	return fmt.Sprintf("%s — %s %s", a.Label, a.Tool, strings.Join(pairs, " "))

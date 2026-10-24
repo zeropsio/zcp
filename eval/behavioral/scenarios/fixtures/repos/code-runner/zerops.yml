@@ -1,0 +1,28 @@
+# Fixture repo for adopt-app-with-existing-pool: a code runner. `app` takes a
+# Python snippet on POST /run and runs it in a clean container leased from the
+# `sandbox` Swarm pool's orchestrator — user code never runs in `app` itself.
+# The pool's API_TOKEN reaches `app` by reference; the pool's image is the
+# `sandbox` setup (shape live-verified by a python@3.12 pool push, no start).
+zerops:
+  - setup: app
+    build:
+      base: nodejs@22
+      deployFiles: ./
+    run:
+      base: nodejs@22
+      ports:
+        - port: 3000
+          httpSupport: true
+      envVariables:
+        SANDBOX_URL: http://orch.sandbox.zerops
+        SANDBOX_TOKEN: ${sandbox_API_TOKEN}
+      start: node server.js
+
+  - setup: sandbox
+    build:
+      base: python@3.12
+      os: ubuntu
+      deployFiles: ./sandbox
+    run:
+      base: python@3.12
+      os: ubuntu

@@ -1,6 +1,6 @@
 ---
 id: develop/multi-service-scope-narrow
-atomIds: [develop-intro, develop-change-drives-deploy, develop-close-mode-auto-deploy-container, develop-dev-server-triage, develop-self-deploy-reproducibility, develop-checklist-dev-mode, develop-close-mode-auto, develop-close-mode-auto-workflow-dev, develop-dynamic-runtime-start-container, develop-knowledge-pointers, develop-auto-close-semantics, develop-dev-server-reason-codes, develop-verify-matrix, develop-strategy-awareness, develop-mode-expansion, develop-close-mode-auto-dev]
+atomIds: [develop-intro, develop-change-drives-deploy, develop-close-mode-auto-deploy-container, develop-dev-server-triage, develop-self-deploy-reproducibility, develop-checklist-dev-mode, develop-close-mode-auto, develop-close-mode-auto-workflow-dev, develop-dynamic-runtime-start-container, develop-knowledge-pointers, develop-user-code-box, develop-auto-close-semantics, develop-dev-server-reason-codes, develop-verify-matrix, develop-strategy-awareness, develop-mode-expansion, develop-close-mode-auto-dev]
 description: "Project has multiple runtimes; the active work session scopes to a single hostname so per-service axes only fire on that one."
 ---
 === develop-intro ===
@@ -238,6 +238,13 @@ When the embedded guidance isn't enough, these are the canonical lookups:
   (`includeEnvValues=true` only to troubleshoot).
 - **Deeper platform topics** (infra changes, scaling, status codes,
   managed-service categories) — `zerops_knowledge query="<topic>"`.
+
+---
+
+=== develop-user-code-box ===
+### A feature that runs code the app's users send
+
+A feature that runs code the app does not write itself — users' snippets or submissions, notebook cells, an agent's tool calls, plugins — runs that code in a Zerops Box sandbox beside the app, never in the app's runtime container, where namespaces or a subprocess still share its kernel, files and project network. A project without a Box gets one through `zerops_import` (`type: ubuntu/zbox@1`; a Box exists only in a project in region prg1), and the app calls its workspace API with the key wired by reference: `zerops_knowledge uri="zerops://themes/services"`, section "Running code the app's users send".
 
 ---
 

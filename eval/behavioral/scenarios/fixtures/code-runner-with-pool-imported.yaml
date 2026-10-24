@@ -1,0 +1,33 @@
+# Fixture for adopt-app-with-existing-pool.md: a code runner built by hand,
+# outside ZCP. `app` (Node.js) runs users' Python snippets in containers of
+# the `sandbox` Swarm pool. Both start empty; the preseed
+# (preseed/plant-code-runner-with-pool.sh) plants fixtures/repos/code-runner
+# on `app` and deploys the pool's image and then the app from it with
+# `zcli push`. No buildFromGit: the source travels with the scenario tree,
+# so the fixture needs no pinned remote (docs/spec-eval-farm.md §4.2 FM-62).
+#
+# The pool stanza is the shape a live import accepted (swarm@1,
+# startWithoutCode, 0..N containers, verticalAutoscaling). No sshIsolation:
+# nothing in this cell SSHes into a pool container.
+
+services:
+  - hostname: app
+    type: nodejs@22
+    startWithoutCode: true
+    minContainers: 1
+    maxContainers: 1
+    verticalAutoscaling:
+      minRam: 0.5
+
+  - hostname: sandbox
+    type: swarm@1
+    startWithoutCode: true
+    minContainers: 0
+    maxContainers: 2
+    verticalAutoscaling:
+      minCpu: 1
+      maxCpu: 2
+      minRam: 0.5
+      maxRam: 2
+      minDisk: 1
+      maxDisk: 5

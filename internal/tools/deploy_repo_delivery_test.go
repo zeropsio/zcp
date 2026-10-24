@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -218,11 +219,11 @@ func TestRepoDeliveryDivergenceWarning(t *testing.T) {
 	stateDir := t.TempDir()
 	seedL1Meta(t, stateDir, "weather", topology.PlanModeSimple, "", topology.BuildIntegrationWebhook)
 
-	warn := repoDeliveryDivergenceWarning(stateDir, "weather")
+	warn := repoDeliveryDivergenceWarning(context.Background(), stateDir, "weather", deployShipped{})
 	if !strings.Contains(warn, "AHEAD of the configured repo") || !strings.Contains(warn, `strategy="git-push"`) {
 		t.Errorf("divergence warning must name the reconcile push; got: %q", warn)
 	}
-	if w := repoDeliveryDivergenceWarning(t.TempDir(), "ghost"); w != "" {
+	if w := repoDeliveryDivergenceWarning(context.Background(), t.TempDir(), "ghost", deployShipped{}); w != "" {
 		t.Errorf("no warning without L1 meta; got %q", w)
 	}
 }

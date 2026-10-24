@@ -47,7 +47,7 @@ func devServerInputSchema() *jsonschema.Schema {
 		},
 		"hostname": {
 			Type:        "string",
-			Description: "Target dev-container hostname (e.g. apidev, appdev, workerdev). Must exist in the current project.",
+			Description: "Target dev-container hostname (e.g. apidev, appdev, workerdev) in the current project, or a dev-pool lease alias <pool>-<number> from zerops_lease (result carries its previewUrl).",
 		},
 		"name": {
 			Type:        "string",
@@ -107,6 +107,12 @@ type DevServerDeps struct {
 	// envelope with the dev service's devServers[] only when every mate
 	// this zcp drives accepts it (docs/spec-mate.md §2.8a.3).
 	CarriesParts bool
+	// Swarm reaches the pools' orchestrators: a lease's container is asked
+	// about before anything reaches it (docs/spec-workflows.md §8 DP-2); nil
+	// refuses every lease.
+	Swarm ops.SwarmFactory
+	// vouch replaces the orchestrator's answer for a lease (tests).
+	vouch leaseVouch
 }
 
 // RegisterDevServer registers the zerops_dev_server tool. The tool is
@@ -114,6 +120,10 @@ type DevServerDeps struct {
 // container) installs skip registration.
 func RegisterDevServer(srv *mcp.Server, d DevServerDeps) {
 	client, httpClient, projectID, ssh, stateDir := d.Client, d.HTTPClient, d.ProjectID, d.SSH, d.StateDir
+	vouch := d.vouch
+	if vouch == nil {
+		vouch = orchestratorVouch(client, projectID, stateDir, d.Swarm)
+	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "zerops_dev_server",
 		Description: "Start, stop, probe, tail, or restart a named development server on a Zerops dev container. " +
@@ -133,7 +143,19 @@ func RegisterDevServer(srv *mcp.Server, d DevServerDeps) {
 		},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input DevServerInput) (*mcp.CallToolResult, any, error) {
 		params := devServerParams(input)
+		// A lease's container is asked about once, before anything reaches
+		// it (docs/spec-workflows.md §8 DP-2): one that is no longer the
+		// lease's — maybe another holder's — or that the orchestrator does not
+		// answer about is never reached over ssh, nor a supervisor started in
+		// it. Nothing answers on a parked one (DP-28).
+		switch lease, isLease, err := checkedLeaseOf(ctx, stateDir, vouch, input.Hostname, "reached by zerops_dev_server"); {
+		case err != nil:
+			return convertError(err), nil, nil
+		case isLease && lease.Parked:
+			return convertError(ops.LeaseParkedError(lease, "zerops_dev_server")), nil, nil
+		}
 		params.Root = supervisorRoot(stateDir, input.Hostname)
+		params.StateDir = stateDir
 		result, err := ops.ExecuteDevServer(ctx, ssh, client, projectID, params)
 		var noSup *ops.NoSupervisorError
 		var migration *devServerMigration
@@ -148,6 +170,9 @@ func RegisterDevServer(srv *mcp.Server, d DevServerDeps) {
 		}
 
 		resp := &devServerToolResult{DevServerResult: result}
+		if steer := codeVolumeSteerFor(stateDir, input.Hostname); steer != "" {
+			resp.Warnings = append(resp.Warnings, steer)
+		}
 		if migration != nil {
 			resp.MigratedToSupervisor = true
 			resp.MigrationTimes = &migration.times
@@ -158,20 +183,24 @@ func RegisterDevServer(srv *mcp.Server, d DevServerDeps) {
 		// the supervisor reports running just proved a live listener — its
 		// status is running only once the port accepts connections — so force
 		// listener=true regardless of the runtime's static deferred-start
-		// classification. The address it reports is the started server's own
-		// port's, not the service's first HTTP port's. A server listening on
-		// loopback only has no public address.
+		// classification. The address it reports and probes is the started
+		// server's own port's — a lease's own preview port — never the
+		// service's first HTTP port's. A server listening on loopback only has
+		// no public address.
 		if result.Running && isDevServerStartAction(input.Action) && result.Reason != ops.ReasonLoopbackOnly {
-			scratch := &ops.DeployResult{}
-			ensurePublicAccess(ctx, client, httpClient, projectID, stateDir, input.Hostname, scratch, true)
-			if scratch.SubdomainURL != "" {
-				resp.SubdomainURL = ops.DevServerSubdomainURL(ctx, client, projectID, result)
-			}
-			if pa := scratch.PublicAccess; pa != nil {
-				pa.URL = resp.SubdomainURL
-				resp.PublicAccess = pa
-			}
+			scratch := ensureDevServerPublicAccess(ctx, client, httpClient, projectID, stateDir, input.Hostname, result)
+			resp.SubdomainURL = scratch.SubdomainURL
+			resp.PublicAccess = scratch.PublicAccess
 			resp.Warnings = append(resp.Warnings, scratch.Warnings...)
+		}
+		if result.Pool != "" {
+			// A lease's public address is its pool's subdomain on its preview
+			// port: the one the hook above just enabled, else whatever the
+			// pool's subdomain serves now.
+			result.PreviewURL = resp.SubdomainURL
+			if result.PreviewURL == "" {
+				result.PreviewURL = ops.LeasePreviewURL(ctx, client, projectID, result.Pool, result.PreviewPort)
+			}
 		}
 		if d.CarriesParts {
 			if env := freshEnvelope(ctx, stateDir, client, projectID, d.RtInfo); env != nil {
@@ -234,7 +263,8 @@ type devServerToolResult struct {
 	// non-start action, or a failed start).
 	PublicAccess *ops.PublicAccessSummary `json:"publicAccess,omitempty"`
 	// Warnings carries any non-fatal anomaly: a public-access hook failure,
-	// or what moving the dev setup onto the supervisor could not finish.
+	// or what moving the dev setup onto the supervisor could not finish —
+	// and, for a variant-B dev service, that pool-migrate moves its pair.
 	Warnings []string `json:"warnings,omitempty"`
 	// Envelope is the post-call state envelope with the dev service's
 	// devServers[] (docs/spec-mate.md §2.8a.3) — only from field-order

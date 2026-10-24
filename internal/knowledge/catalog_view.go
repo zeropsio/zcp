@@ -25,6 +25,8 @@ type catalogView struct {
 	localStorage   []string
 	seaweedFS      []string
 	objectStorage  bool
+	pools          []baseVersions // Swarm pools — infrastructure an app uses, never an app runtime
+	sandboxes      []string       // Zerops Box types as the schema spells them (`ubuntu/zbox@1`)
 	buildOnly      []baseVersions // build bases with no matching runtime base
 	buildBaseNames map[string]bool
 	versionsByBase map[string][]string        // base -> full "base@version" names (runtime + managed)
@@ -115,6 +117,7 @@ func buildCatalogView(schemas *schema.Schemas) *catalogView {
 
 	runtime := newGroupAcc()
 	managed := newGroupAcc()
+	pools := newGroupAcc()
 	for _, t := range schemas.ImportYml.ServiceTypes {
 		switch {
 		case topology.IsObjectStorageType(t):
@@ -123,6 +126,14 @@ func buildCatalogView(schemas *schema.Schemas) *catalogView {
 			cv.seaweedFS = appendUnique(cv.seaweedFS, strings.ToLower(t))
 		case topology.IsLocalStorageType(t):
 			cv.localStorage = appendUnique(cv.localStorage, strings.ToLower(t))
+		case topology.IsPoolType(t):
+			base, ver := baseAndVersion(t)
+			pools.add(base, ver)
+			cv.indexPoolOrSandbox(base, ver)
+		case topology.IsSandboxType(t):
+			base, ver := baseAndVersion(t)
+			cv.sandboxes = appendUnique(cv.sandboxes, strings.ToLower(t))
+			cv.indexPoolOrSandbox(base, ver)
 		case topology.IsManagedService(t):
 			base, ver := baseAndVersion(t)
 			managed.add(base, ver)
@@ -142,6 +153,7 @@ func buildCatalogView(schemas *schema.Schemas) *catalogView {
 	}
 	cv.runtime = runtime.materialize()
 	cv.managed = managed.materialize()
+	cv.pools = pools.materialize()
 
 	// Build-base names + a build-only accumulator for bases that have no runtime
 	// service type (e.g. `php` — the runtime is `php-nginx`/`php-apache`).
@@ -172,6 +184,21 @@ func buildCatalogView(schemas *schema.Schemas) *catalogView {
 		}
 	}
 	return cv
+}
+
+// indexPoolOrSandbox records a pool/Box version for the version-check lookup.
+// They are not in cv.runtime (PS-1: neither is an app runtime), so the index
+// the runtime and managed groups feed from their bases is fed here directly;
+// the version-check answer for `swarm@1` / `zbox@1` stays what it was when
+// they were listed among the runtimes.
+func (cv *catalogView) indexPoolOrSandbox(base, version string) {
+	if version == "" {
+		return
+	}
+	name := base + "@" + version
+	if !slices.Contains(cv.versionsByBase[base], name) {
+		cv.versionsByBase[base] = append(cv.versionsByBase[base], name)
+	}
 }
 
 func appendUnique(values []string, value string) []string {

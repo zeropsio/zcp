@@ -7,6 +7,7 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -146,6 +147,14 @@ func gatherLaunchSourceContext(ctx context.Context, client platform.Client, sour
 
 	if services, err := ops.ListProjectServices(ctx, client, sourceProjectID); err == nil {
 		for _, s := range services {
+			// A Swarm pool (USER category) and a Zerops Box (STANDARD) are
+			// told apart from a runtime and a managed dependency by type,
+			// never by category: neither is a promotion target or a
+			// dependency the launch bundle carries. Spec: spec-workflows.md
+			// §8 PS-2/PS-3.
+			if topology.IsPoolOrSandboxType(s.ServiceStackTypeInfo.ServiceStackTypeVersionName) {
+				continue
+			}
 			// USER category = customer runtime services (nodejs, php,
 			// python, etc.). Managed services (postgres, valkey, etc.)
 			// carry non-USER categories and are bundled implicitly by

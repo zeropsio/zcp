@@ -2,7 +2,11 @@ package tools
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -511,4 +515,182 @@ func contractService(t *testing.T, env *contractEnvelope, hostname string) contr
 	}
 	t.Fatalf("the envelope has no %s", hostname)
 	return contractSnapshot{}
+}
+
+// TestMateContractFixtures_PoolPair_StagesRideThePoolSnapshot pins the
+// envelope of a pair keyed by its dev pool (docs/spec-workflows.md §13): the
+// pool's snapshot keys the pair, so stages[] rides it; devServers[] never
+// does (a pool's dev servers run in its leases and ride leases[]); and the
+// bytes are what zcp computes from a dev/stage pair re-keyed onto its pool.
+func TestMateContractFixtures_PoolPair_StagesRideThePoolSnapshot(t *testing.T) {
+	t.Parallel()
+	var fixture contractEnvelope
+	raw := readContractFixture(t, "envelope.pool-pair.json", &fixture)
+
+	dir := t.TempDir()
+	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+		Hostname: "appdev", Mode: topology.PlanModeStandard,
+		Stages:          []topology.StageRef{{Hostname: "appstage", SetupName: "prod"}},
+		CloseDeployMode: topology.CloseModeAuto, GitPushState: topology.GitPushConfigured, BuildIntegration: topology.BuildIntegrationNone,
+		PrimarySetupName: "dev", BootstrappedAt: "2026-10-14T20:00:00Z", FirstDeployedAt: "2026-10-14T20:30:00Z",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+	if _, err := workflow.MigratePairToPool(dir, workflow.PoolPairMove{Dev: "appdev", Pool: "apppool", PoolServiceID: "svc-pool", PoolSetup: "pool"}); err != nil {
+		t.Fatalf("MigratePairToPool: %v", err)
+	}
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-pool", Name: "apppool", ProjectID: "proj-weather", Status: platform.ServiceStatusActive,
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
+			{ID: "svc-appstage", Name: "appstage", ProjectID: "proj-weather", Status: platform.ServiceStatusActive,
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "bun@1.3", ServiceStackTypeCategoryName: "USER"}},
+		}).
+		WithProject(&platform.Project{ID: "proj-weather", Name: "weather"})
+	lease := workflow.LeaseSnapshot{Alias: "apppool-1", Pool: "apppool", Branch: "feat-x", ContainerHostname: "node-id-1.runtime.apppool.zerops", State: "held"}
+	env, err := workflow.ComputeEnvelope(context.Background(), mock, dir, "proj-weather",
+		runtime.Info{InContainer: true, ServiceName: "zcp"}, time.Date(2026, 10, 14, 21, 4, 0, 0, time.UTC),
+		workflow.WithLeaseReader(func(context.Context) ([]workflow.LeaseSnapshot, error) { return []workflow.LeaseSnapshot{lease}, nil }))
+	if err != nil {
+		t.Fatalf("ComputeEnvelope: %v", err)
+	}
+	want, err := json.Marshal(env.WithParts(nil))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got bytes.Buffer
+	if err := json.Compact(&got, raw); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	if got.String() != string(want) {
+		t.Errorf("fixture differs from the envelope zcp computes:\n got %s\nwant %s", got.String(), want)
+	}
+
+	if len(fixture.Services) != 2 {
+		t.Fatalf("services = %d, want the pool and its stage", len(fixture.Services))
+	}
+	pool, stage := fixture.Services[0], fixture.Services[1]
+	if pool.Hostname != "apppool" || pool.RuntimeClass != topology.RuntimePool || pool.Mode != "" {
+		t.Errorf("services[0] = %+v, want the pool, modeless", pool.ServiceSnapshot)
+	}
+	if !reflect.DeepEqual(pool.Stages, []contractStage{{Hostname: "appstage", Setup: "prod"}}) || pool.DevServers != nil {
+		t.Errorf("the pool carries stages %+v and devServers %+v, want [{appstage prod}] and none", pool.Stages, pool.DevServers)
+	}
+	if stage.Stages != nil || stage.Mode != topology.ModeStage {
+		t.Errorf("the stage = %+v stages %+v, want a stage half carrying no stages", stage.ServiceSnapshot, stage.Stages)
+	}
+	if leases := fixture.LeaseList(); len(leases) != 1 || leases[0].Pool != "apppool" {
+		t.Errorf("leases = %+v, want the pool's one lease", leases)
+	}
+}
+
+// TestMateContractFixtures_LeaseStatus_RenderedByTheHandler pins the envelope a
+// zerops_lease action=status result carries (docs/spec-mate.md §2.8a.3): the
+// lease status read carries the activity and unsaved work it read; the lease
+// of a stopped pool, which status did not read, carries activity with only
+// acquiredAt and why in note, and no unsaved. The bytes are what the real
+// handler renders, the read times being the call's own.
+func TestMateContractFixtures_LeaseStatus_RenderedByTheHandler(t *testing.T) {
+	t.Parallel()
+	var fixture contractEnvelope
+	raw := readContractFixture(t, "envelope.lease-status.json", &fixture)
+
+	hs := httptest.NewServer(&fakeOrchestrator{reserved: true})
+	t.Cleanup(hs.Close)
+	stateDir := t.TempDir()
+	writeLeaseRecordFile(t, stateDir, "devpool", "svc-pool", "c-abc", 3, "feat-a")
+	writeLeaseRecordFile(t, stateDir, "stoppool", "svc-stop", "c-2", 2, "feat-b")
+	token := []platform.ServiceEnvVar{{Key: "API_TOKEN", Content: leaseTestToken, Sensitive: true}}
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-weather", Name: "weather"}).
+		WithServices([]platform.ServiceStack{swarmPoolService("svc-pool", "devpool", "ACTIVE"), swarmPoolService("svc-stop", "stoppool", "STOPPED")}).
+		WithServiceEnv("svc-pool", token).WithServiceEnv("svc-stop", token)
+	factory := func(baseURL, tok string) ops.SwarmAPI {
+		if baseURL == "http://orch.devpool.zerops" {
+			return platform.NewSwarmClient(hs.URL, tok, hs.Client())
+		}
+		return platform.NewSwarmClient(baseURL, tok, &http.Client{Transport: dnsFailTransport{}})
+	}
+	changed := time.Date(2026, 10, 23, 19, 12, 40, 0, time.UTC)
+	ssh := &leaseStubSSH{fn: func(command string) ([]byte, error) {
+		if strings.Contains(command, "@@zcp-lease activity") {
+			return fmt.Appendf(nil, "@@zcp-lease activity %d \n@@zcp-lease status\n M src/App.tsx\n?? notes.txt\n@@zcp-lease unpushed\n2\n", changed.Unix()), nil
+		}
+		return nil, nil
+	}}
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterLease(srv, mock, "proj-weather", stateDir, factory, nil, ssh, runtime.Info{InContainer: true, ServiceName: "zcp"})
+
+	before := time.Now().UTC()
+	res := callTool(t, srv, "zerops_lease", map[string]any{"action": "status"})
+	after := time.Now().UTC()
+	text := getTextContent(t, res)
+	if res.IsError {
+		t.Fatalf("status: %s", text)
+	}
+	var result struct {
+		Envelope json.RawMessage `json:"envelope"`
+	}
+	if err := json.Unmarshal([]byte(text), &result); err != nil || result.Envelope == nil {
+		t.Fatalf("no envelope in the status result (%v):\n%s", err, text)
+	}
+	var got contractEnvelope
+	dec := json.NewDecoder(bytes.NewReader(result.Envelope))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&got); err != nil {
+		t.Fatalf("the handler's envelope does not match the contract shape: %v\n%s", err, result.Envelope)
+	}
+
+	// The read times are the call's own: check them against the call, then
+	// put the fixture's in their place.
+	var times struct {
+		Generated string `json:"generated"`
+		Leases    []struct {
+			Activity *struct {
+				ReadAt string `json:"readAt"`
+			} `json:"activity"`
+		} `json:"leases"`
+	}
+	if err := json.Unmarshal(result.Envelope, &times); err != nil {
+		t.Fatalf("times: %v", err)
+	}
+	if got.Generated.Before(before) || got.Generated.After(after) {
+		t.Errorf("generated %v outside the call [%v, %v]", got.Generated, before, after)
+	}
+	rendered := bytes.Replace(result.Envelope, []byte(`"generated":"`+times.Generated+`"`),
+		[]byte(`"generated":"`+fixture.Generated.Format(time.RFC3339Nano)+`"`), 1)
+	for i, l := range times.Leases {
+		if l.Activity == nil || l.Activity.ReadAt == "" {
+			continue
+		}
+		readAt, err := time.Parse(time.RFC3339, l.Activity.ReadAt)
+		if err != nil || readAt.Before(before.Truncate(time.Second)) || readAt.After(after) {
+			t.Errorf("leases[%d] read at %q, outside the call [%v, %v]", i, l.Activity.ReadAt, before, after)
+		}
+		want := fixture.LeaseList()[i].Activity.ReadAt
+		rendered = bytes.Replace(rendered, []byte(`"readAt":"`+l.Activity.ReadAt+`"`), []byte(`"readAt":"`+want+`"`), 1)
+	}
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, raw); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	if compact.String() != string(rendered) {
+		t.Errorf("fixture differs from the envelope zcp renders:\n got %s\nwant %s", compact.String(), rendered)
+	}
+
+	leases := fixture.LeaseList()
+	if len(leases) != 2 || leases[0].Alias != "devpool-3" || leases[1].Alias != "stoppool-2" {
+		t.Fatalf("leases = %+v, want devpool-3 and stoppool-2", leases)
+	}
+	read, unread := leases[0], leases[1]
+	if read.Activity == nil || read.Activity.LastChangeAt != "2026-10-23T19:12:40Z" || read.Activity.AcquiredAt != read.AcquiredAt || read.Activity.Note != "" {
+		t.Errorf("devpool-3 activity = %+v, want lastChangeAt 2026-10-23T19:12:40Z, its acquiredAt and no note", read.Activity)
+	}
+	if !reflect.DeepEqual(read.Unsaved, &topology.LeaseUnsaved{Files: []string{" M src/App.tsx", "?? notes.txt"}, FileCount: 2, UnpushedCommits: 2}) {
+		t.Errorf("devpool-3 unsaved = %+v, want two files and two commits", read.Unsaved)
+	}
+	if !unread.Unverified || unread.Unsaved != nil || unread.Activity == nil ||
+		unread.Activity.LastChangeAt != "" || unread.Activity.ReadAt != "" || unread.Activity.Note == "" {
+		t.Errorf("stoppool-2 = %+v activity %+v, want unverified, no unsaved, activity with only why it was not read", unread, unread.Activity)
+	}
 }

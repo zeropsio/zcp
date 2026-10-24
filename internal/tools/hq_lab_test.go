@@ -761,7 +761,7 @@ func newHQLab(t *testing.T) *hqLab {
 		t.Fatal(err)
 	}
 	lab := &hqLab{t: t, hq: fake, stateDir: t.TempDir(), pair: t.TempDir(),
-		rt: runtime.Info{InContainer: true, ProjectID: labMate}}
+		rt: runtime.Info{InContainer: true, ProjectID: labMate, MateEnabled: true}}
 	prevAttempts, prevDelay := gitPushSessionAuthAttempts, gitPushSessionAuthDelay
 	prevDescribeRetry := describeRetry
 	gitPushSessionAuthAttempts, gitPushSessionAuthDelay = 2, 0

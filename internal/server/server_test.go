@@ -35,7 +35,7 @@ var defaultExpectedTools = []string{
 	"zerops_logs", "zerops_events", "zerops_process", "zerops_verify",
 	"zerops_deploy", "zerops_export",
 	"zerops_manage", "zerops_scale", "zerops_env", "zerops_import", "zerops_delete", "zerops_subdomain",
-	"zerops_mount", "zerops_preprocess",
+	"zerops_mount", "zerops_preprocess", "zerops_lease", "zerops_box",
 }
 
 // authoringExpectedTools is the maintainer surface added on top when

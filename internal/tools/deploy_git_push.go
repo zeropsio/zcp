@@ -82,6 +82,17 @@ func gitPushMetaPreflight(
 	if meta == nil {
 		return nil
 	}
+	// Either hostname of a pair keyed by its dev pool: the push source would
+	// be the pool's hostname, a random one of its containers, and a lease
+	// pushes its own branch itself (docs/spec-workflows.md §13 PM-10, §8 DP-6).
+	// PushSourceCheckFor reads the pair's mode and would pass the pool.
+	if meta.DevIsPool() {
+		refusal := poolPairRefusal("git-push from "+targetService, targetService, meta, fmt.Sprintf(
+			"A lease pushes its own branch itself: %s checks the branch out, then commit and `git push -u origin <branch>` over ssh to the lease's alias yourself. The stage deploys from the lease: zerops_deploy sourceService=\"<alias>\" targetService=%q.",
+			poolPairLeaseAcquire(meta, "<branch>"), meta.FirstStage().Hostname))
+		recordAttempt(refusal.Message, topology.FailureClassConfig)
+		return convertError(refusal, WithRecoveryStatus())
+	}
 	switch meta.PushSourceCheckFor(targetService) {
 	case topology.PushSourceOK:
 		// proceed to GitPushState check below
@@ -245,6 +256,22 @@ func hqGitPushRefusal(hostname string) *platform.PlatformError {
 		fmt.Sprintf("git-push from %s did not run: its code goes to this Mate's HQ by plain git, not by a deploy.", hostname),
 		fmt.Sprintf("In %s's checkout, commit on a branch of your own and run `git push origin <branch>` — never push %q and never force-push: %q moves only when a person merges. Deploy the pair directly (strategy \"ssh\") to run the code.", hostname, hqBase, hqBase),
 	)
+}
+
+// leaseGitPushRefusal refuses a git-push from a lease: the lease pushes its own
+// branch itself (DP-6), and its branch is reviewed on the lease's preview URL
+// while a stage tracks main (DP-8). For a lease of a repository on this Mate's
+// HQ the push it names keeps HQ's rule — a branch of the agent's own, never
+// `main`, never forced (DP-12).
+func leaseGitPushRefusal(lease ops.LeaseTargetInfo) *platform.PlatformError {
+	alias := lease.Alias
+	push := fmt.Sprintf("Commit and `git push -u origin <branch>` over ssh to %s yourself", alias)
+	if hqRemoteOfThisMate(lease.Repo) {
+		push = fmt.Sprintf("Commit on a branch of your own and `git push -u origin <branch>` over ssh to %s yourself — never push %q and never force-push: HQ refuses both, and a branch another Mate's open change holds; %q moves only when a person merges", alias, hqBase, hqBase)
+	}
+	return platform.NewPlatformError(platform.ErrInvalidUsage,
+		fmt.Sprintf("git-push from the lease %s did not run: a lease pushes its own branch, and this strategy pushes the target's tracked branch", alias),
+		fmt.Sprintf("%s, and review the branch on the lease's preview URL (zerops_dev_server action=status hostname=%q names it as previewUrl). A stage tracks main: once the branch is merged, put main on it with zerops_deploy sourceService=%q targetService=<stage> sha=\"origin/main\"", push, alias, alias))
 }
 
 // gitPushEnvRefPreflight validates the run.envVariables refs of the named

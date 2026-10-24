@@ -12,16 +12,18 @@ import (
 )
 
 // A variant-B pair (docs/spec-mate.md §2.8a) keeps its repository on a code
-// volume every dev service of the pair mounts. The stand-up recognises it from
-// the tier as it recognises every pair (workflow.ParseMateTier): one
-// repository building several dev services beside the tier's one
-// local-storage service. It records the pair with its code volume, reads the
-// volume's mount from the dev setups once the repository is checked out, and
-// deploys the dev half from the checkout in /var/www, then every further dev
-// service with its own dev setup from the same checkout, then fills the
-// volume once from it and reloads every dev service's supervisor, which read
-// a missing declaration until then. The pair's stages build from the volume,
-// so they wait for the fill.
+// volume every dev service of the pair mounts. zcp sets up no new one
+// (§2.8a.4a): the stand-up reads a tier's local-storage service as a managed
+// service, and pairs several dev services of one repository as variant B
+// only when zcp already records that pair (workflow.ParseMateTier) — a
+// stand-up called again on a project set up before. For that pair it keeps
+// the record with its code volume, reads the volume's mount from the dev
+// setups once the repository is checked out, and deploys the dev half from
+// the checkout in /var/www, then every further dev service with its own dev
+// setup from the same checkout, then fills the volume once from it (left as
+// it is when it already holds the repository) and reloads every dev
+// service's supervisor. The pair's stages build from the volume, so they
+// wait for the fill.
 
 // standupCodeVolume is a variant-B pair's code volume through the stand-up.
 type standupCodeVolume struct {
@@ -43,10 +45,10 @@ type standupDevServiceRun struct {
 	deploy *standupDeploy
 }
 
-// tierCodeVolume is the code volume a variant-B tier pair is adopted with:
-// the tier's volume and further dev services, and the mount the record
-// already holds for that volume ("" until the dev setups are read,
-// recordCodeVolumeMount). Nil for variant A.
+// tierCodeVolume is the code volume a recorded variant-B pair is adopted
+// with again: the tier's volume and further dev services, and the mount the
+// record already holds for that volume ("" until the dev setups are read,
+// recordCodeVolumeMount). Nil for any other pair.
 func tierCodeVolume(p workflow.MateTierPair, existing *workflow.ServiceMeta) *topology.CodeVolume {
 	if p.CodeVolume == "" {
 		return nil

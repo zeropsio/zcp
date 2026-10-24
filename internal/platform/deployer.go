@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"time"
 )
@@ -19,6 +20,12 @@ const (
 	// well under a second; anything past this ceiling means the remote
 	// shell did not release the channel and the spawn shape is wrong.
 	defaultBgSpawnTimeout = 10 * time.Second
+	// streamExecTimeout bounds a streamed SSH command: a git bundle of a
+	// whole repository crossing it takes as long as the repository is big.
+	streamExecTimeout = 30 * time.Minute
+	// streamStderrKeep is how much of a streamed command's stderr — its
+	// last bytes — a failed run keeps for its error.
+	streamStderrKeep = 64 << 10
 )
 
 // SystemSSHDeployer implements ops.SSHDeployer using SSH to sibling Zerops containers.
@@ -114,6 +121,51 @@ func (d *SystemSSHDeployer) ExecSSHStdin(ctx context.Context, hostname, command 
 	}
 	return output, nil
 }
+
+// sshArgsStream is sshArgs for a command whose stdout carries bytes, not
+// text: `-T` keeps the client from asking for a tty, whose line discipline
+// would rewrite them (CR LF, control bytes).
+func sshArgsStream(hostname, command string) []string {
+	return append([]string{"-T"}, sshArgs(hostname, command)...)
+}
+
+// StreamSSH runs command on hostname and copies its stdout — and only its
+// stdout — to stdout as it arrives, never buffering it: what carries a git
+// bundle of a whole repository off a container. Its stderr is kept apart (the
+// last streamStderrKeep bytes) and rides the *SSHExecError of a failed run,
+// as ExecSSH's output does. A run stopped by its context says so.
+func (d *SystemSSHDeployer) StreamSSH(ctx context.Context, hostname, command string, stdout io.Writer) error {
+	ctx, cancel := context.WithTimeout(ctx, streamExecTimeout)
+	defer cancel()
+	stderr := &tailBuffer{keep: streamStderrKeep}
+	cmd := exec.CommandContext(ctx, "ssh", sshArgsStream(hostname, command)...) //nolint:gosec // hostname and command from trusted internal callers
+	cmd.Stdin = nil
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	if err := cmd.Run(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			err = fmt.Errorf("ssh stopped: %w (%w)", ctxErr, err)
+		}
+		return &SSHExecError{Hostname: hostname, Output: stderr.String(), Err: err}
+	}
+	return nil
+}
+
+// tailBuffer keeps the last keep bytes written to it.
+type tailBuffer struct {
+	keep int
+	buf  []byte
+}
+
+func (b *tailBuffer) Write(p []byte) (int, error) {
+	b.buf = append(b.buf, p...)
+	if over := len(b.buf) - b.keep; over > 0 {
+		b.buf = append(b.buf[:0], b.buf[over:]...)
+	}
+	return len(p), nil
+}
+
+func (b *tailBuffer) String() string { return string(b.buf) }
 
 // ExecSSHBackground runs a fire-and-forget SSH command tuned for
 // detaching a long-running process on the remote host. It enforces a

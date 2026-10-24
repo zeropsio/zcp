@@ -102,6 +102,13 @@ type DeployResult struct {
 	// "detached" (GF-12). Empty when the source has no repo yet, or on a
 	// cross-deploy (preflight is self-deploy only).
 	RepoState string `json:"repoState,omitempty"`
+	// ReachesNewContainersOnly is true for every deploy whose target is a
+	// pool, whatever its source (docs/spec-workflows.md §8 DP-7): the build
+	// sets the image of the containers the pool creates after it, and
+	// updates no container that exists — leased or free, each keeps the
+	// version it runs until the pool is rolled out. Nothing is verified on
+	// the pool by its service hostname (PS-3).
+	ReachesNewContainersOnly bool `json:"reachesNewContainersOnly,omitempty"`
 	// DevServer is the target's one declared dev server as its supervisor
 	// runs it right after this deploy replaced the container (docs/spec-
 	// workflows.md §8 O4) — running or not, with its reason and log tail.
@@ -242,4 +249,16 @@ const deployShaTempCleanupTimeout = 30 * time.Second
 // inside the source container. Callers must invoke the returned cancel.
 func cleanupTempCtx(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(ctx), deployShaTempCleanupTimeout)
+}
+
+// PoolDeployNote is the sentence every deploy whose target is a pool
+// carries: the build changes the image for containers the pool creates after
+// it and updates no container that exists (docs/spec-workflows.md §8 DP-7).
+// lease, when the source is a lease of that pool, names the leased container.
+// Single owner — the triggered message and the success message both append it.
+func PoolDeployNote(pool, lease string) string {
+	if lease != "" {
+		return fmt.Sprintf(" — this changes the image of containers %s creates after it; the leased container %s keeps the version it runs and is not updated", pool, lease)
+	}
+	return fmt.Sprintf(" — this changes the image of containers %s creates after it; the containers it already runs, leased or free, keep their version and are not updated", pool)
 }

@@ -262,7 +262,7 @@ func composeGroupRecipe(
 	rt runtime.Info,
 	stateDir string,
 ) (groupRecipeComposition, recipeOutcome, bool) {
-	if !rt.InContainer || client == nil || httpClient == nil {
+	if !rt.InContainer || !rt.MateEnabled || client == nil || httpClient == nil {
 		return groupRecipeComposition{}, recipeOutcome{Blocked: "the group recipe is a Mate's act — there is no Mate environment here"}, false
 	}
 	hqc, enrolled := openHQ(httpClient)

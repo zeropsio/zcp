@@ -447,3 +447,26 @@ func TestClient_OpenChange_NamesTheAgentsBranch(t *testing.T) {
 		t.Errorf("calls = %+v, want one with body %s", *calls, want)
 	}
 }
+
+// TestCredentialFingerprint_IsTheClientsFingerprint: a record that names the
+// Mate credential a service or a pool was given keeps one fingerprint, so the
+// one zcp computes from a credential it read from the enrollment is the
+// client's — 16 hex characters, never the credential.
+func TestCredentialFingerprint_IsTheClientsFingerprint(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "enrollment.json")
+	if err := SaveEnrollment(path, Enrollment{HQ: "https://hq.example.invalid", ProjectID: "p-mate", Credential: "the-credential"}); err != nil {
+		t.Fatal(err)
+	}
+	client, err := Open(nil, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := CredentialFingerprint("the-credential")
+	if got != client.CredentialFingerprint() {
+		t.Errorf("CredentialFingerprint = %q, want the client's %q", got, client.CredentialFingerprint())
+	}
+	if len(got) != 16 || strings.Contains(got, "the-credential") || got == CredentialFingerprint("another") {
+		t.Errorf("fingerprint %q: want 16 hex characters that tell credentials apart", got)
+	}
+}

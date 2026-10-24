@@ -2,6 +2,7 @@ package tools
 
 import (
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -72,9 +73,48 @@ func TestEnrichWithMetaStatus_AdoptableRuntime_AppendsAdoptWarning(t *testing.T)
 			t.Errorf("adopt warning must name adoption-gated op %q (drift-guard); got: %s", gatedOp, w)
 		}
 	}
-	// 3 same-stack runtimes is NOT the 2-runtime pairing collision — no plan steer.
-	if strings.Contains(w, "submit an explicit `plan=[...]`") {
-		t.Errorf("3-runtime adopt must not emit the 2-runtime pairing steer; got: %s", w)
+	// 3 same-stack runtimes are the pairing question too: a bare scope naming
+	// two or more of them is refused, so the warning steers to the plan.
+	if !strings.Contains(w, "submit an explicit `plan=[...]`") {
+		t.Errorf("3 same-stack runtimes must steer to the explicit plan; got: %s", w)
+	}
+}
+
+// TestEnrichWithMetaStatus_SameStackBesideALocalStorageService_NamesTheCodeVolumeException:
+// a pair of dev services sharing a code volume is recorded only from a scope —
+// no plan carries a code volume — so in a project holding a local-storage
+// service the pairing steer names that exception instead of sending such a
+// pair to a plan; without one it does not.
+func TestEnrichWithMetaStatus_SameStackBesideALocalStorageService_NamesTheCodeVolumeException(t *testing.T) {
+	t.Parallel()
+	runtimes := []ops.ServiceInfo{
+		{Hostname: "webdev", Type: "ubuntu/python@3.12"},
+		{Hostname: "apidev", Type: "ubuntu/python@3.12"},
+		{Hostname: "webstage", Type: "ubuntu/python@3.12"},
+	}
+	for _, tt := range []struct {
+		name     string
+		services []ops.ServiceInfo
+		want     bool
+	}{
+		{name: "with a local-storage service", services: append(slices.Clone(runtimes), ops.ServiceInfo{Hostname: "vol", Type: "local-storage:single@1", IsInfrastructure: true}), want: true},
+		{name: "without one", services: runtimes},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			result := &ops.DiscoverResult{Services: tt.services}
+			enrichWithMetaStatus(result, filepath.Join(t.TempDir(), ".zcp", "state"), nil)
+			if len(result.Warnings) != 1 {
+				t.Fatalf("Warnings: got %d, want 1; full=%v", len(result.Warnings), result.Warnings)
+			}
+			w := result.Warnings[0]
+			if !strings.Contains(w, "submit an explicit `plan=[...]`") {
+				t.Errorf("same-stack runtimes must steer to the explicit plan; got: %s", w)
+			}
+			if got := strings.Contains(w, "shared code volume"); got != tt.want {
+				t.Errorf("names the code-volume exception = %v, want %v; got: %s", got, tt.want, w)
+			}
+		})
 	}
 }
 

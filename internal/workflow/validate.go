@@ -196,12 +196,14 @@ type RuntimeTarget struct {
 	// (adopt sets it from observed custom domains) and is rejected here by
 	// ValidateBootstrapTargets — an agent-authored plan cannot request it.
 	PublicAccess string `json:"publicAccess,omitempty" jsonschema:"auto (default) | subdomain | none = internal-only, never public. Other values are rejected."`
-	// CodeVolume plans the pair as variant B: its repository on a shared
+	// CodeVolume records the pair as variant B: its repository on a shared
 	// local-storage service mounted under /var/www in the dev half and in
-	// every further dev service it names, each deploying its own dev setup.
-	// Only for parts whose runtimes cannot share one container or that one
-	// container cannot hold; absent is the default, one dev service holding
-	// the whole repository.
+	// every further dev service it names. Derive-only and never published:
+	// zcp sets up no new code volume (docs/spec-mate.md §2.8a.4a), so only
+	// adopt sets it, for a volume already holding the repository, and an
+	// agent's plan carrying it is refused (plannedCodeVolumeError). It stays a
+	// field of the plan because the plan is what provision and close write
+	// the pair's meta from.
 	CodeVolume *topology.CodeVolume `json:"codeVolume,omitempty"`
 }
 
@@ -233,6 +235,25 @@ func catalogTypeErrors(rt RuntimeTarget, schemas *schema.Schemas) []string {
 		errs = append(errs, fmt.Sprintf("target %q stage type %q not found in available service types", rt.DevHostname, rt.StageType))
 	}
 	return errs
+}
+
+// infrastructureKindError refuses a pool or Box as a runtime target (either
+// half of the pair): a Swarm pool / Zerops Box is infrastructure an app uses,
+// not the app, so the plan must import it as part of the app's infrastructure
+// instead. It runs
+// before the catalog check so the refusal holds whether or not the catalog
+// lists the type. Returns "" when neither half is such a kind. Spec:
+// spec-workflows.md §8 PS-5.
+func infrastructureKindError(rt RuntimeTarget) string {
+	for _, typ := range []string{rt.Type, rt.StageType} {
+		if topology.IsPoolType(typ) {
+			return fmt.Sprintf("target %q: type %q is a Swarm pool, not an app runtime — import it as part of the app's infrastructure, not as a bootstrap target", rt.DevHostname, typ)
+		}
+		if topology.IsSandboxType(typ) {
+			return fmt.Sprintf("target %q: type %q is a Zerops Box, not an app runtime — import it as part of the app's infrastructure, not as a bootstrap target", rt.DevHostname, typ)
+		}
+	}
+	return ""
 }
 
 // publicAccessPlanError validates a target's publicAccess field (§8 O3
@@ -474,6 +495,10 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, schemas *schema.Schemas
 			errs = append(errs, fmt.Sprintf("target %q has empty type", rt.DevHostname))
 			continue
 		}
+		if err := infrastructureKindError(rt); err != "" {
+			errs = append(errs, err)
+			continue
+		}
 		if typeErrs := catalogTypeErrors(rt, schemas); len(typeErrs) > 0 {
 			errs = append(errs, typeErrs...)
 			continue
@@ -484,10 +509,6 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, schemas *schema.Schemas
 		// dev-hostname structure. Extracted (like catalogTypeErrors) to keep
 		// this loop under the maintainability-index lint threshold.
 		if err := pairStagesError(rt); err != "" {
-			errs = append(errs, err)
-			continue
-		}
-		if err := codeVolumeError(rt); err != "" {
 			errs = append(errs, err)
 			continue
 		}
@@ -694,31 +715,16 @@ func plannedRuntimeHostnames(rt RuntimeTarget) []string {
 	return hosts
 }
 
-// codeVolumeError validates a variant-B plan: a pair (standard or dev) with
-// at least one further dev service, a valid volume hostname, every hostname
-// valid, and the volume mounted under /var/www, never at it. Returns "" when
-// valid or when the target plans no code volume.
-func codeVolumeError(rt RuntimeTarget) string {
-	v := rt.CodeVolume
-	if v == nil {
-		return ""
-	}
-	if mode := rt.EffectiveMode(); mode != topology.PlanModeStandard && mode != topology.PlanModeDev {
-		return fmt.Sprintf("target %q: a code volume (variant B) shares the repository between dev services; bootstrapMode %q has no dev service", rt.DevHostname, mode)
-	}
-	if err := ValidatePlanHostname(v.Hostname); err != nil {
-		return fmt.Sprintf("target %q: code volume hostname %q: %v", rt.DevHostname, v.Hostname, err)
-	}
-	if len(v.DevServices) == 0 {
-		return fmt.Sprintf("target %q: a code volume needs at least one further dev service beside %q — with one dev service, keep the repository in it (no code volume)", rt.DevHostname, rt.DevHostname)
-	}
-	for _, d := range v.DevServices {
-		if err := ValidatePlanHostname(d.Hostname); err != nil {
-			return fmt.Sprintf("target %q: dev service %q: %v", rt.DevHostname, d.Hostname, err)
+// plannedCodeVolumeError refuses an agent's plan whose runtime carries a
+// code volume: zcp sets up no new one (docs/spec-mate.md §2.8a.4a). A part
+// whose runtime cannot share the dev service gets a dev pool of its own; a
+// variant-B pair zcp already records keeps working, and pool-migrate moves
+// it onto one dev pool per part. nil when no target carries one.
+func plannedCodeVolumeError(targets []BootstrapTarget) error {
+	for _, t := range targets {
+		if t.Runtime.CodeVolume != nil {
+			return fmt.Errorf("target %q: codeVolume is not accepted — zcp no longer sets up a shared code volume. Plan the pair without it: one dev service holds the whole repository, and a part whose runtime cannot share it gets a dev pool of its own (zerops_knowledge uri=\"zerops://themes/services\", section \"A part's dev pool\"). A pair already keeping its repository on a code volume keeps working, and zerops_workflow workflow=\"pool-migrate\" service=\"<dev>\" moves it onto one dev pool per part", t.Runtime.DevHostname)
 		}
 	}
-	if err := topology.CodeVolumeMountPathError(v.MountPath); err != "" {
-		return fmt.Sprintf("target %q: %s", rt.DevHostname, err)
-	}
-	return ""
+	return nil
 }

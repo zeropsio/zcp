@@ -59,7 +59,9 @@ type ImportProcessOutput struct {
 // platform concept (service types, modes, field names, cross-field rules,
 // hostname format). ZCP's pre-flight does only the things the API does NOT
 // tell the LLM clearly:
-//  1. `envVariables` at service-level silently drops — surfaced as warning.
+//  1. `envVariables` at service level is deprecated and lands plain, so a
+//     secret written there is stored readable — surfaced as a warning that
+//     names the secret-shaped keys (serviceEnvVariablesWarnings).
 //  2. A 'project:' section — WHITELISTED to `vault` and `envVariables` (Fix B1):
 //     project.vault and project.envVariables are applied via the project-env channel (EnvSet)
 //     before service creation, then stripped from the YAML sent to the
@@ -170,29 +172,7 @@ func Import(
 		yamlContent = preprocessorHeader(yamlContent) + string(remarshaled)
 	}
 
-	// Sole retained client-side warning — K1 in the plan: the API accepts
-	// service-level `envVariables:` then silently discards it, producing
-	// neither an error nor a meta entry. ZCP is the only place this can
-	// surface.
-	var warnings []string
-	if raw, ok := doc["services"]; ok {
-		if servicesList, ok := raw.([]any); ok {
-			for _, svc := range servicesList {
-				svcMap, ok := svc.(map[string]any)
-				if !ok {
-					continue
-				}
-				if _, has := svcMap["envVariables"]; !has {
-					continue
-				}
-				hostname, _ := svcMap["hostname"].(string)
-				warnings = append(warnings, fmt.Sprintf(
-					"service %q: 'envVariables' at service level is silently dropped by the API. Use 'vault' for the service's own values, or zerops.yaml run.envVariables for runtime config.",
-					hostname,
-				))
-			}
-		}
-	}
+	warnings := serviceEnvVariablesWarnings(doc)
 
 	// B10: surface the destructive blast radius of override=true. Replacing
 	// a service stack tears down its container, deployed code, env vars,
@@ -420,6 +400,57 @@ func parseVaultItem(block, key string, raw any) (vaultItem, error) {
 		item.sensitive = &flag
 	}
 	return item, nil
+}
+
+// serviceEnvVariablesWarnings warns about each service carrying a
+// service-level `envVariables` block. The API accepts it and creates its
+// values as the service's env, but the import schema marks it deprecated in
+// favour of `vault`, and every value lands plain: the schema defines them as
+// non-sensitive and zcp's name rule (markServiceSecrets) reads only vault, so
+// a secret written there is stored readable. The warning says so and names
+// the secret-shaped keys (topology.DefaultSensitiveValue); the block itself
+// reaches the API as written (docs/spec-zerops-env-lifecycle.md §8b).
+func serviceEnvVariablesWarnings(doc map[string]any) []string {
+	services, ok := doc["services"].([]any)
+	if !ok {
+		return nil
+	}
+	var warnings []string
+	for _, raw := range services {
+		svc, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		block, has := svc["envVariables"]
+		if !has {
+			continue
+		}
+		hostname, _ := svc["hostname"].(string)
+		warning := fmt.Sprintf(
+			"service %q: 'envVariables' is deprecated — the import schema says use 'vault'. Its values are still created as the service's env, every one plain (not sensitive). Write the service's own values under 'vault' (a secret as {value: …, sensitive: true}), or runtime config in zerops.yaml run.envVariables.",
+			hostname,
+		)
+		values, _ := block.(map[string]any)
+		var secrets []string
+		for key, rawValue := range values {
+			value := ""
+			if rawValue != nil {
+				value = fmt.Sprint(rawValue)
+			}
+			if topology.DefaultSensitiveValue(key, value) {
+				secrets = append(secrets, key)
+			}
+		}
+		if len(secrets) > 0 {
+			sort.Strings(secrets)
+			warning += fmt.Sprintf(
+				" Secret-shaped names stored plain here: %s — under 'vault' they are stored sensitive.",
+				strings.Join(secrets, ", "),
+			)
+		}
+		warnings = append(warnings, warning)
+	}
+	return warnings
 }
 
 // markServiceSecrets writes the name rule into each service's own values:

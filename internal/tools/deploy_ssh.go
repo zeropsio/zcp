@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -225,6 +226,39 @@ func deploySSHInputSchema() *jsonschema.Schema {
 	}, "targetService")
 }
 
+// DeployOption configures RegisterDeploySSH and RegisterDeployBatch.
+type DeployOption func(*deployConfig)
+
+type deployConfig struct {
+	swarm ops.SwarmFactory
+	// vouch replaces the orchestrator's answer (tests).
+	vouch leaseVouch
+}
+
+// leaseVouch is how the deploy tools ask whose a lease source's container is.
+func (c deployConfig) leaseVouch(client platform.Client, projectID, stateDir string) leaseVouch {
+	if c.vouch != nil {
+		return c.vouch
+	}
+	return orchestratorVouch(client, projectID, stateDir, c.swarm)
+}
+
+// WithPoolOrchestratorsForDeploy lets a deploy from a lease ask the pool's
+// orchestrator, through swarm, whether the lease's container is still the
+// lease's before anything reads it (docs/spec-workflows.md §8 DP-2). Without
+// it a deploy from a lease is refused: zcp cannot vouch for the container.
+func WithPoolOrchestratorsForDeploy(swarm ops.SwarmFactory) DeployOption {
+	return func(c *deployConfig) { c.swarm = swarm }
+}
+
+func deployConfigOf(opts []DeployOption) deployConfig {
+	var cfg deployConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	return cfg
+}
+
 // RegisterDeploySSH registers the zerops_deploy tool for SSH (container) mode.
 // httpClient is used by the post-success subdomain auto-enable hook to probe
 // L7 readiness before returning — empirically the L7 route takes 440ms-1.3s
@@ -248,7 +282,9 @@ func RegisterDeploySSH(
 	engine *workflow.Engine,
 	recipeProbe RecipeSessionProbe,
 	devsup DevsupSource,
+	opts ...DeployOption,
 ) {
+	vouch := deployConfigOf(opts).leaseVouch(client, projectID, stateDir)
 	desc := "Deploy code via SSH — blocks until build completes. "
 	if rtInfo.InContainer {
 		desc += "Omit workingDir — container path is always /var/www. "
@@ -311,9 +347,43 @@ func RegisterDeploySSH(
 
 		// Gate: target (and source) must be adopted by ZCP. Recipe-
 		// authoring sessions whose Plan owns the host bypass adoption —
-		// see requireAdoption for the exemption rationale.
-		if blocked := requireAdoption(stateDir, rtInfo, recipeProbe, input.TargetService, input.SourceService); blocked != nil {
+		// see requireAdoption for the exemption rationale. A pool target
+		// or source is never adopted, so it is not asked to be: a pool
+		// target is deployed to (DP-7), a pool source is refused below (PS-3).
+		gated := withoutPoolHosts(ctx, client, projectID, input.TargetService, input.SourceService)
+		if blocked := requireAdoption(stateDir, rtInfo, recipeProbe, gated...); blocked != nil {
 			return blocked, nil, nil
+		}
+		// A lease's container is asked about once, before anything reads it
+		// (DP-2): one that is no longer the lease's — maybe another holder's
+		// — or that the orchestrator does not answer about is never read or
+		// pushed from.
+		srcLease, fromLease, leaseErr := checkedLeaseOf(ctx, stateDir, vouch, cmp.Or(input.SourceService, input.TargetService), "deployed from")
+		if leaseErr != nil {
+			return convertError(leaseErr, WithRecoveryStatus()), nil, nil
+		}
+		// A lease pushes its own branch itself; git-push pushes the target's
+		// tracked branch (main by default), so from a lease it would put the
+		// feature branch on the stage's delivery branch (DP-6). A branch is
+		// reviewed on its lease's preview URL; a stage tracks main (DP-8).
+		if input.Strategy == deployStrategyGitPush {
+			if lease, ok := leaseOf(stateDir, cmp.Or(input.SourceService, input.TargetService)); ok {
+				return convertError(leaseGitPushRefusal(lease), WithRecoveryStatus()), nil, nil
+			}
+		}
+		// Before any read of the source's files: a parked lease answers
+		// nothing and its mount is gone (DP-28).
+		if fromLease && srcLease.Parked {
+			return convertError(ops.LeaseParkedError(srcLease, "a deploy from it"), WithRecoveryStatus()), nil, nil
+		}
+		// Before any read of the source's files: a pool source (named, or a
+		// self-deploy of a pool) is refused, never pushed from (PS-3).
+		if src := cmp.Or(input.SourceService, input.TargetService); !isLease(stateDir, src) {
+			if svc, err := ops.LookupService(ctx, client, projectID, src); err == nil {
+				if refusal := ops.RefusePoolSource(svc, input.TargetService); refusal != nil {
+					return convertError(refusal, WithRecoveryStatus()), nil, nil
+				}
+			}
 		}
 
 		// L1 terminal-act rule (spec-git-delivery-target §2): a pair with
@@ -410,10 +480,17 @@ func runDeploySSHZCLIPush(
 		Strategy:    deployStrategyZCLILabel,
 	}
 
-	move, superviseErr := superviseDevSetup(ctx, client, projectID, sshDeployer, stateDir, devsup, input.SourceService, input.TargetService, input.Setup, input.WorkingDir)
+	// A lease is a pool container, not a dev service: the supervisor in it is
+	// not migrated by this deploy (docs/spec-workflows.md §8 DP).
+	_, fromLease := leaseOf(stateDir, input.SourceService)
+	var move devSetupMove
+	var superviseErr error
+	if !fromLease {
+		move, superviseErr = superviseDevSetup(ctx, client, projectID, sshDeployer, stateDir, devsup, input.SourceService, input.TargetService, input.Setup, input.WorkingDir)
+	}
 
 	// Default: zcli push to Zerops.
-	result, err := ops.DeploySSH(ctx, client, projectID, sshDeployer, *authInfo,
+	result, err := ops.DeploySSHWithLeases(ctx, client, projectID, sshDeployer, *authInfo, stateDir,
 		input.SourceService, input.TargetService, input.Setup, input.WorkingDir, input.SHA)
 	if err != nil {
 		attempt.Error = err.Error()
@@ -440,26 +517,36 @@ func runDeploySSHZCLIPush(
 		return convertError(err, WithRecoveryStatus(), WithFailureClassification(classification), WithSuggestion(suggestion), toldMove), nil, nil
 	}
 
+	// A deploy to a pool, whatever its source, reaches only the containers
+	// the pool creates later (docs/spec-workflows.md §8 DP-7).
+	toPool := result.ReachesNewContainersOnly
 	onProgress := buildProgressCallback(ctx, req)
 	ctx = deployFollowUpContext(ctx)
-	pollDeployBuild(ctx, client, projectID, result, onProgress, logFetcher, sshDeployer, stateDir, configFile)
+	pollTriggeredDeploy(ctx, client, projectID, result, onProgress, logFetcher, sshDeployer, stateDir, configFile)
 	if told := move.told(result); told != "" {
 		result.Message = told + " " + result.Message
 	}
 	if superviseErr != nil {
 		result.Warnings = append(result.Warnings, superviseErr.Error())
 	}
+	if steer := codeVolumeSteerFor(stateDir, input.TargetService); steer != "" {
+		result.Warnings = append(result.Warnings, steer)
+	}
 
 	// L1 break-glass aftermath: a direct deploy on a push-delivering
-	// pair leaves the container ahead of the repo — flag the standing
-	// reconcile push (spec-git-delivery-target §1.1).
-	if result.Status == statusDeployed {
-		if warn := repoDeliveryDivergenceWarning(stateDir, input.TargetService); warn != "" {
+	// pair that shipped what the repo lacks leaves the container ahead of
+	// it — flag the standing reconcile push (spec-git-delivery-target §1.1).
+	if result.Status == statusDeployed && !toPool {
+		if warn := repoDeliveryDivergenceWarning(ctx, stateDir, input.TargetService, sshShipped(sshDeployer, input, result)); warn != "" {
 			result.Warnings = append(result.Warnings, warn)
 		}
 	}
 
 	switch {
+	case result != nil && result.Status == statusDeployed && toPool:
+		// The pool is no app runtime (PS-1/PS-2): no public access is decided
+		// on it, no dev server asked for, no code volume filled.
+		attempt.SucceededAt = time.Now().UTC().Format(time.RFC3339)
 	case result != nil && result.Status == statusDeployed:
 		attempt.SucceededAt = time.Now().UTC().Format(time.RFC3339)
 		// Plan 2: activate L7 subdomain for dev/stage/simple/standard/
@@ -501,6 +588,56 @@ func runDeploySSHZCLIPush(
 		WorkSessionState: sessionAnnotations(ctx, httpClient, stateDir),
 		Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rtInfo),
 	}), nil, nil
+}
+
+// pollTriggeredDeploy is pollDeployBuild for a triggered SSH deploy, single or
+// batched. A deploy to a pool, whatever its source, reaches only the
+// containers the pool creates later (docs/spec-workflows.md §8 DP-7): no
+// container of the pool is "the" pool, so nothing is probed by its service
+// hostname (PS-3), and the finished result says what the build changed
+// (sayPoolImageOnly), naming the source when it is a lease of that pool.
+func pollTriggeredDeploy(
+	ctx context.Context,
+	client platform.Client,
+	projectID string,
+	result *ops.DeployResult,
+	onProgress ops.ProgressCallback,
+	logFetcher platform.LogFetcher,
+	sshDeployer ops.SSHDeployer,
+	stateDir, configFile string,
+) {
+	if !result.ReachesNewContainersOnly {
+		pollDeployBuild(ctx, client, projectID, result, onProgress, logFetcher, sshDeployer, stateDir, configFile)
+		return
+	}
+	pollDeployBuild(ctx, client, projectID, result, onProgress, logFetcher, nil, stateDir, configFile)
+	var ownLease string
+	if lease, fromLease := leaseOf(stateDir, result.SourceService); fromLease && lease.Pool == result.TargetService {
+		ownLease = lease.Alias
+	}
+	sayPoolImageOnly(result, result.TargetService, ownLease)
+}
+
+// sayPoolImageOnly rewrites what a finished deploy to a pool tells the agent,
+// whatever its source: the build changed the pool's image, it updated no
+// container, and existing ones — a lease the deploy came from included
+// (lease, empty for any other source) — keep their version until the pool is
+// rolled out. pollDeployBuild's own wording ("Successfully deployed", a
+// verify pointer) speaks of a running service and does not apply to a pool.
+// Releasing and acquiring again can hand back the same outdated container,
+// so only the rollout puts free containers on this version.
+func sayPoolImageOnly(result *ops.DeployResult, pool, lease string) {
+	if result.Status != statusDeployed {
+		return
+	}
+	result.Message = fmt.Sprintf("Built appVersion %s for pool %s%s.", result.AppVersionID, pool, ops.PoolDeployNote(pool, lease))
+	held := "A held lease keeps its version"
+	if lease != "" {
+		held = fmt.Sprintf("Your lease %s keeps its version", lease)
+	}
+	result.NextActions = fmt.Sprintf("zerops_lease action=rollout pool=%q replaces the pool's free outdated containers with ones on this version. "+
+		"%s until it is released and the pool is rolled out again. "+
+		"Verify a container through its lease alias (zerops_verify serviceHostname=\"<alias>\"), never through the pool's hostname.", pool, held)
 }
 
 // deploySSHResponse mirrors deployLocalResponse — wraps the SSH-mode

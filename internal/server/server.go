@@ -320,7 +320,8 @@ func (s *Server) registerTools() {
 	httpClient := &http.Client{Timeout: 15 * time.Second}
 
 	// Read-only tools
-	tools.RegisterWorkflow(s.server, s.client, httpClient, projectID, schemaCache, wfEngine, s.logFetcher, stateDir, s.rtInfo.ServiceName, s.mounter, s.sshDeployer, s.rtInfo, s.authInfo.APIHost)
+	tools.RegisterWorkflow(s.server, s.client, httpClient, projectID, schemaCache, wfEngine, s.logFetcher, stateDir, s.rtInfo.ServiceName, s.mounter, s.sshDeployer, s.rtInfo, s.authInfo.APIHost,
+		tools.WithPoolOrchestratorsForWorkflow(ops.NewSwarmFactory(&http.Client{Timeout: ops.LeaseCallTimeout})))
 	tools.RegisterDiscover(s.server, s.client, projectID, stateDir, wfEngine)
 	tools.RegisterKnowledge(s.server, s.store, s.client, schemaCache, knowledgeTracker, wfEngine)
 	tools.RegisterRecordFact(s.server, wfEngine, recipeProbe)
@@ -328,7 +329,8 @@ func (s *Server) registerTools() {
 	tools.RegisterLogs(s.server, s.client, s.logFetcher, projectID)
 	tools.RegisterEvents(s.server, s.client, s.logFetcher, projectID)
 	tools.RegisterProcess(s.server, s.client, projectID)
-	tools.RegisterVerify(s.server, s.client, s.logFetcher, projectID, stateDir, s.rtInfo, s.sshDeployer)
+	tools.RegisterVerify(s.server, s.client, s.logFetcher, projectID, stateDir, s.rtInfo, s.sshDeployer,
+		tools.WithPoolOrchestrators(ops.NewSwarmFactory(&http.Client{Timeout: ops.LeaseCallTimeout})))
 	tools.RegisterPreprocess(s.server)
 
 	// Mutating tools — deploy registration routes by environment.
@@ -345,12 +347,14 @@ func (s *Server) registerTools() {
 			},
 			Override: os.Getenv("ZCP_DEVSUP_URL"),
 		}
-		tools.RegisterDeploySSH(s.server, s.client, httpClient, projectID, s.sshDeployer, s.authInfo, s.logFetcher, s.rtInfo, stateDir, wfEngine, recipeProbe, devsup)
+		tools.RegisterDeploySSH(s.server, s.client, httpClient, projectID, s.sshDeployer, s.authInfo, s.logFetcher, s.rtInfo, stateDir, wfEngine, recipeProbe, devsup,
+			tools.WithPoolOrchestratorsForDeploy(ops.NewSwarmFactory(&http.Client{Timeout: ops.LeaseCallTimeout})))
 		// v8.94: batch-deploy keeps multi-target parallelism server-side
 		// so the MCP STDIO channel isn't saturated (v23 "Not connected"
 		// failure class). SSH-only — local deploys don't face the same
 		// parallelism problem.
-		tools.RegisterDeployBatch(s.server, s.client, httpClient, projectID, s.sshDeployer, s.authInfo, s.logFetcher, s.rtInfo, stateDir, wfEngine, recipeProbe, devsup)
+		tools.RegisterDeployBatch(s.server, s.client, httpClient, projectID, s.sshDeployer, s.authInfo, s.logFetcher, s.rtInfo, stateDir, wfEngine, recipeProbe, devsup,
+			tools.WithPoolOrchestratorsForDeploy(ops.NewSwarmFactory(&http.Client{Timeout: ops.LeaseCallTimeout})))
 		// dev_server depends on the SSH deployer — it drives the dev
 		// servers' supervisor on target containers. Skipped in local-only
 		// mode where SSH to Zerops siblings is not available.
@@ -359,6 +363,7 @@ func (s *Server) registerTools() {
 			AuthInfo: s.authInfo, LogFetcher: s.logFetcher, RtInfo: s.rtInfo,
 			Devsup:       devsup,
 			CarriesParts: mate.EnvelopeCarriesParts(),
+			Swarm:        ops.NewSwarmFactory(&http.Client{Timeout: ops.LeaseCallTimeout}),
 		})
 		// A Mate stands up from its group's recipe in one call (docs/spec-mate.md
 		// D32). Mate-gated like every mate-shaped effect (§2.0): a container
@@ -383,7 +388,11 @@ func (s *Server) registerTools() {
 	tools.RegisterExport(s.server, s.client, projectID)
 	tools.RegisterManage(s.server, s.client, projectID)
 	recipeSteer := tools.NewGroupRecipeSteer(s.client, httpClient, s.rtInfo, stateDir)
-	tools.RegisterScale(s.server, s.client, projectID, recipeSteer)
+	// Lowering a pool's maxContainers deletes its highest-numbered containers,
+	// leases included: scale reads the pool's orchestrator first
+	// (docs/spec-workflows.md §8 PS-7).
+	tools.RegisterScale(s.server, s.client, projectID, recipeSteer,
+		tools.WithPoolOrchestratorsForScale(stateDir, ops.NewSwarmFactory(&http.Client{Timeout: ops.LeaseCallTimeout})))
 	// A Mate puts its organization's AI key in the Shared vault for an app
 	// (zerops_env action=ai-key, docs/spec-mate.md §5.8): Mate-gated like every
 	// Mate effect (§2.0), its key asked of HQ with the enrollment.
@@ -393,10 +402,23 @@ func (s *Server) registerTools() {
 	}
 	tools.RegisterEnv(s.server, s.client, projectID, s.rtInfo.ServiceName, envOpts...)
 
-	tools.RegisterImportSteered(s.server, s.client, projectID, wfEngine, stateDir, recipeProbe, s.rtInfo, recipeSteer)
+	// A Zerops Box starts with no base and no sandbox domain: zerops_import
+	// finishes the setup of every Box it creates, and zerops_box re-runs or
+	// reads it, through zproxy with zcp's own Zerops token
+	// (docs/spec-workflows.md §8 PS-11..PS-14). A call outwaits one 30 s
+	// operation long-poll.
+	boxFactory := ops.NewBoxFactory(&http.Client{Timeout: ops.BoxCallTimeout})
+	tools.RegisterImportSteered(s.server, s.client, projectID, wfEngine, stateDir, recipeProbe, s.rtInfo, recipeSteer, tools.WithBoxSetup(boxFactory))
+	tools.RegisterBox(s.server, s.client, projectID, boxFactory)
 	tools.RegisterDelete(s.server, s.client, projectID, stateDir, s.mounter, s.rtInfo)
 	tools.RegisterSubdomain(s.server, s.client, httpClient, projectID, stateDir)
-	tools.RegisterMount(s.server, s.client, projectID, s.mounter, s.rtInfo, stateDir, wfEngine, recipeProbe)
+	tools.RegisterMount(s.server, s.client, projectID, s.mounter, s.rtInfo, stateDir, wfEngine, recipeProbe,
+		tools.WithPoolOrchestratorsForMount(ops.NewSwarmFactory(&http.Client{Timeout: ops.LeaseCallTimeout})))
+	// A dev pool's container is leased through its orchestrator, which answers
+	// only inside the project (docs/spec-workflows.md §8 DP-3/DP-5). A start or
+	// a reset-release restarts the container, so the client outwaits the 15 s
+	// readiness client above.
+	tools.RegisterLease(s.server, s.client, projectID, stateDir, ops.NewSwarmFactory(&http.Client{Timeout: ops.LeaseCallTimeout}), s.mounter, s.sshDeployer, s.rtInfo)
 
 	// Container-only: zerops_browser wraps agent-browser with a guaranteed
 	// open→work→close lifecycle. agent-browser is pre-installed in the ZCP

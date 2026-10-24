@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -29,6 +30,19 @@ import (
 // older than the declaration.
 var Formats = []int{1}
 
+// CapabilityEnv names the `ctl env` verb (the lease-wide env overlay).
+const CapabilityEnv = "env"
+
+// CapabilityActivity names the preview activity `ctl status` reports beside
+// the preview server's port: previewLastConnAt and previewOpenConns.
+const CapabilityActivity = "activity"
+
+// Capabilities lists the ctl verbs, flags and answer fields this supervisor
+// has that an older one lacks; `ctl version` reports them. An older ctl fails
+// on a verb or flag it does not know, so zcp sends one only to a supervisor
+// that lists it, and reads such a field only from one that lists it.
+var Capabilities = []string{CapabilityEnv, CapabilityActivity}
+
 // DeclarationPath is where a repo declares its dev servers, relative to the
 // repo root.
 const DeclarationPath = ".zcp/dev-servers.json"
@@ -36,7 +50,33 @@ const DeclarationPath = ".zcp/dev-servers.json"
 // Declaration is the repo's .zcp/dev-servers.json: the set of named dev
 // servers. It changes only when the set changes; start and stop never write it.
 type Declaration struct {
-	Version int      `json:"version"`
+	Version int `json:"version"`
+	// PreviewPortBase, when set, has a supervisor whose container has a
+	// ZEROPS_StableNumber forward PreviewPortBase+ZEROPS_StableNumber to the
+	// preview server's port (PreviewServer): a dev pool's containers each get
+	// a public port of their own. Absent: no forward.
+	PreviewPortBase int `json:"previewPortBase,omitempty"`
+	// SiblingEnv maps an environment variable a part's dev server reads to
+	// the pool whose lease of the same branch it reaches. zcp reads it and
+	// hands the servers that lease's container hostname through `ctl env`;
+	// the supervisor validates it with the rest of the file and never puts it
+	// into any environment itself.
+	SiblingEnv map[string]string `json:"siblingEnv,omitempty"`
+	// SiblingPreviewEnv maps an environment variable a part's dev server
+	// reads to the pool whose lease of the same branch it reaches from a
+	// browser: zcp hands the servers that lease's preview URL through `ctl
+	// env`, as it hands SiblingEnv's container hostnames, which only
+	// server-side code can resolve. It is a top-level key of its own, so a
+	// supervisor that predates it ignores it; it follows SiblingEnv's rules
+	// and never names a variable SiblingEnv names. The supervisor never puts
+	// it into any environment itself.
+	SiblingPreviewEnv map[string]string `json:"siblingPreviewEnv,omitempty"`
+	// Prepare, when set, is the shell command a dev pool's lease runs in the
+	// repo root after its checkout and before the supervisor starts or
+	// reloads (docs/spec-mate.md §2.8a.1): what a branch's own lockfile needs
+	// on top of the dependencies the pool's image baked into it. zcp runs it;
+	// the supervisor never does.
+	Prepare string   `json:"prepare,omitempty"`
 	Servers []Server `json:"servers"`
 }
 
@@ -44,7 +84,8 @@ type Declaration struct {
 // relative to the repo root, the port it listens on (0 when it has none), the
 // HTTP path its health probe reads on that port (absent: /), the paths whose
 // change restarts it, the dev service that runs it (variant B) and whether it
-// starts before anyone asks (absent: it does).
+// starts before anyone asks (absent: it does). Preview marks the server the
+// preview port reaches when several have a port (PreviewServer).
 type Server struct {
 	Name       string `json:"name"`
 	Port       int    `json:"port,omitempty"`
@@ -54,6 +95,27 @@ type Server struct {
 	Watch      *Watch `json:"watch,omitempty"`
 	Service    string `json:"service,omitempty"`
 	Autostart  *bool  `json:"autostart,omitempty"`
+	Preview    bool   `json:"preview,omitempty"`
+}
+
+// PreviewServer is the server the preview port reaches: the only one with a
+// port, else the one marked preview. ok is false when there is none.
+func PreviewServer(servers []Server) (Server, bool) {
+	var withPort []Server
+	for _, s := range servers {
+		if s.Port != 0 {
+			withPort = append(withPort, s)
+		}
+	}
+	if len(withPort) == 1 {
+		return withPort[0], true
+	}
+	for _, s := range withPort {
+		if s.Preview {
+			return s, true
+		}
+	}
+	return Server{}, false
 }
 
 // FirstDesired is the desired state of a name the state file does not hold
@@ -95,6 +157,42 @@ func (d Declaration) ForService(hostname string) []Server {
 
 var serverName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,39}$`)
 
+// envName is an environment variable name a shell can export.
+var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// reservedEnv are names the container's own value must reach every server
+// with: the overlay and siblingEnv never set them, nor any ZEROPS_ name.
+var reservedEnv = []string{"hostname", "serviceId", "projectId", "PATH", "HOME"}
+
+// envNameError says why name cannot be set for the servers, nil when it can.
+func envNameError(name string) error {
+	switch {
+	case !envName.MatchString(name):
+		return fmt.Errorf("%q is not an environment variable name (%s)", name, envName)
+	case strings.HasPrefix(name, "ZEROPS_"), slices.Contains(reservedEnv, name):
+		return fmt.Errorf("%q is reserved: the container's own value reaches every server (reserved: ZEROPS_*, %s)", name, strings.Join(reservedEnv, ", "))
+	}
+	return nil
+}
+
+// siblingPool is a pool's service hostname, as siblingEnv names it.
+var siblingPool = regexp.MustCompile(`^[a-z0-9]{1,40}$`)
+
+// checkSiblingVars checks the variables a sibling map (key: siblingEnv or
+// siblingPreviewEnv) names: each a name the servers can be given, each naming
+// a pool's hostname.
+func checkSiblingVars(key string, vars map[string]string) error {
+	for _, name := range slices.Sorted(maps.Keys(vars)) {
+		if err := envNameError(name); err != nil {
+			return fmt.Errorf("%s %w", key, err)
+		}
+		if pool := vars[name]; !siblingPool.MatchString(pool) {
+			return fmt.Errorf("%s %q: %q is not a pool hostname (%s)", key, name, pool, siblingPool)
+		}
+	}
+	return nil
+}
+
 // ErrUnsupportedFormat marks a declaration whose version this supervisor does
 // not run.
 var ErrUnsupportedFormat = errors.New("unsupported declaration format")
@@ -120,7 +218,21 @@ func ParseDeclaration(b []byte) (Declaration, error) {
 	if err := json.Unmarshal(b, &d); err != nil {
 		return Declaration{}, fmt.Errorf("parse %s: %w", DeclarationPath, err)
 	}
-	names, ports := map[string]bool{}, map[int]string{}
+	if d.PreviewPortBase < 0 || d.PreviewPortBase > 65535 {
+		return Declaration{}, fmt.Errorf("%s: previewPortBase %d is out of range", DeclarationPath, d.PreviewPortBase)
+	}
+	if err := checkSiblingVars("siblingEnv", d.SiblingEnv); err != nil {
+		return Declaration{}, fmt.Errorf("%s: %w", DeclarationPath, err)
+	}
+	if err := checkSiblingVars("siblingPreviewEnv", d.SiblingPreviewEnv); err != nil {
+		return Declaration{}, fmt.Errorf("%s: %w", DeclarationPath, err)
+	}
+	for _, name := range slices.Sorted(maps.Keys(d.SiblingPreviewEnv)) {
+		if _, both := d.SiblingEnv[name]; both {
+			return Declaration{}, fmt.Errorf("%s: %q is in both siblingEnv and siblingPreviewEnv: a variable gets one value, a container hostname or a preview URL", DeclarationPath, name)
+		}
+	}
+	names, ports, preview := map[string]bool{}, map[int]string{}, ""
 	for i, s := range d.Servers {
 		s, err := normalizeServer(s)
 		if err != nil {
@@ -135,6 +247,12 @@ func ParseDeclaration(b []byte) (Declaration, error) {
 				return Declaration{}, fmt.Errorf("%s: %q and %q both listen on port %d", DeclarationPath, other, s.Name, s.Port)
 			}
 			ports[s.Port] = s.Name
+		}
+		if s.Preview {
+			if preview != "" {
+				return Declaration{}, fmt.Errorf("%s: %q and %q are both marked preview", DeclarationPath, preview, s.Name)
+			}
+			preview = s.Name
 		}
 		d.Servers[i] = s
 	}
@@ -191,6 +309,9 @@ func normalizeServer(s Server) (Server, error) {
 	}
 	if s.Port < 0 || s.Port > 65535 {
 		return Server{}, fmt.Errorf("%q: port %d is out of range", s.Name, s.Port)
+	}
+	if s.Preview && s.Port == 0 {
+		return Server{}, fmt.Errorf("%q: preview needs a port", s.Name)
 	}
 	if s.HealthPath != "" && !strings.HasPrefix(s.HealthPath, "/") {
 		return Server{}, fmt.Errorf("%q: healthPath %q must start with /", s.Name, s.HealthPath)

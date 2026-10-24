@@ -1,0 +1,13 @@
+{
+  "name": "code-runner",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Runs submitted Python snippets in containers of the sandbox Swarm pool",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

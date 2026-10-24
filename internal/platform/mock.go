@@ -96,6 +96,11 @@ type Mock struct {
 	tokenDelegations []TokenDelegation
 	mintedToken      *MintedToken
 
+	// boxAccess backs MintBoxAccess per Box service ID. Seed via
+	// WithBoxAccess; an unseeded ID answers the platform's refusal for a
+	// service that is not there.
+	boxAccess map[string]BoxAccess
+
 	// CallCounts tracks how many times each method was called.
 	CallCounts map[string]int
 
@@ -138,6 +143,7 @@ func NewMock() *Mock {
 		appVersionUserData:   make(map[string][]ServiceEnvVar),
 		appVersionZeropsYaml: make(map[string]string),
 		serviceAppVersions:   make(map[string][]AppVersionEvent),
+		boxAccess:            make(map[string]BoxAccess),
 		CallCounts:           make(map[string]int),
 		errors:               make(map[string]error),
 	}
@@ -213,11 +219,29 @@ func (m *Mock) WithRedeployAppVersionProcess(p *Process) *Mock {
 	return m
 }
 
+// WithBoxAccess seeds the zproxy access MintBoxAccess mints for a Box
+// service ID.
+func (m *Mock) WithBoxAccess(serviceID string, access BoxAccess) *Mock {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.boxAccess[serviceID] = access
+	return m
+}
+
 // trackCall increments the call count for a method.
 func (m *Mock) trackCall(method string) {
 	m.mu.Lock()
 	m.CallCounts[method]++
 	m.mu.Unlock()
+}
+
+// CallCount reads a method's call count under the lock — the safe read
+// while a call may still be in flight on another goroutine (CallCounts
+// itself is only safe to read once every call has returned).
+func (m *Mock) CallCount(method string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.CallCounts[method]
 }
 
 // WithUserInfo sets the user info returned by GetUserInfo.

@@ -94,6 +94,17 @@ type ServerState struct {
 	// the service because it ran out of memory.
 	OutOfMemory bool   `json:"outOfMemory,omitempty"`
 	LogPath     string `json:"logPath"`
+	// PreviewPort is the port the supervisor forwards to this server on every
+	// interface (previewPortBase + the container's ZEROPS_StableNumber); set
+	// only for the server the declaration names the preview server.
+	PreviewPort int `json:"previewPort,omitempty"`
+	// PreviewLastConnAt is when the preview forward last took a connection in
+	// this supervisor's life, absent until one came; PreviewOpenConns is how
+	// many it holds open now, 0 included. Both are set only beside a
+	// PreviewPort (CapabilityActivity) and live in memory: state.json never
+	// holds them, and a new supervisor starts without them.
+	PreviewLastConnAt *time.Time `json:"previewLastConnAt,omitempty"`
+	PreviewOpenConns  *int       `json:"previewOpenConns,omitempty"`
 	// RssKB is the resident memory of the server's whole process group in
 	// KiB, measured when the state is read; 0 when it has no live group.
 	RssKB int64 `json:"rssKb,omitempty"`
@@ -114,12 +125,17 @@ type DeclarationInfo struct {
 }
 
 // State is $HOME/.zcp/devsup/state.json, written only by the supervisor, and
-// the answer of `ctl status`.
+// the answer of `ctl status`, which alone carries the preview activity.
 type State struct {
-	Format      int                    `json:"format"`
-	Supervisor  SupervisorInfo         `json:"supervisor"`
-	Declaration DeclarationInfo        `json:"declaration"`
-	Servers     map[string]ServerState `json:"servers"`
+	Format      int             `json:"format"`
+	Supervisor  SupervisorInfo  `json:"supervisor"`
+	Declaration DeclarationInfo `json:"declaration"`
+	// Env is the lease-wide overlay `ctl env` last set, empty when none is:
+	// every server starts with the service's environment plus these, an
+	// overlay entry winning over the service's value of the same name. It
+	// holds container hostnames, never a secret.
+	Env     map[string]string      `json:"env"`
+	Servers map[string]ServerState `json:"servers"`
 }
 
 // StateFormat is the shape of state.json.

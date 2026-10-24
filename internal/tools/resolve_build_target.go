@@ -40,7 +40,9 @@ func resolveBuildTargetForHost(stateDir, host string) (string, string) {
 		GitPushState:    meta.GitPushState,
 		StageHostname:   meta.FirstStage().Hostname,
 		Stages:          meta.Stages,
-		Deployed:        true,
+		// A pool keying its pair builds nothing (Resolve): no redirect off it.
+		DevIsPool: meta.DevIsPool() && host == meta.Hostname,
+		Deployed:  true,
 	}
 	snaps := workflow.SnapshotsFromMetas([]*workflow.ServiceMeta{meta})
 	intent := workflow.Resolve(snap, snaps)

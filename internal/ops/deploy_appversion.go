@@ -188,7 +188,7 @@ func rawZeropsYamlURL(gitURL, branch string) (string, error) {
 		return "", fmt.Errorf("git source url %q: %w", gitURL, err)
 	}
 	if branch == "" {
-		branch = "main"
+		branch = defaultBranch
 	}
 	repoPath := strings.Trim(u.Path, "/")
 	switch strings.ToLower(u.Host) {

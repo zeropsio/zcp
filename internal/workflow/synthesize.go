@@ -87,7 +87,13 @@ func Synthesize(envelope StateEnvelope, corpus []KnowledgeAtom) ([]MatchedRender
 		}
 		var idxs []int
 		for i, svc := range envelope.Services {
-			if scope != nil && !scope[svc.Hostname] {
+			if scope != nil && !scope[svc.Hostname] && !poolNamedByAtom(svc, atom.Axes) {
+				continue
+			}
+			if svc.DevIsPool && !poolNamedByAtom(svc, atom.Axes) {
+				// A pool keying its pair carries the pair's stamps, but no
+				// guidance written for a container dev half applies to it —
+				// only an atom about pools binds to it.
 				continue
 			}
 			if serviceSatisfiesAxes(svc, atom.Axes, stageScopeOf(svc, envelope.WorkSession)) {
@@ -517,6 +523,15 @@ func workSessionScopeSet(envelope StateEnvelope) map[string]bool {
 		scope[h] = true
 	}
 	return scope
+}
+
+// poolNamedByAtom reports whether svc is a Swarm pool and the atom asks for
+// pools by name (`runtimes: [pool]`). A work session lists the part's app
+// runtimes, never the pool its dev containers are leased from, so the session
+// scope must not hide a pool from an atom that is about pools — and only from
+// such an atom: every other atom keeps the scope exactly as before.
+func poolNamedByAtom(svc ServiceSnapshot, axes AxisVector) bool {
+	return svc.RuntimeClass == topology.RuntimePool && slices.Contains(axes.Runtimes, topology.RuntimePool)
 }
 
 // hasServiceScopedAxes reports whether the atom declares any axis whose

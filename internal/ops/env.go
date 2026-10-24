@@ -83,6 +83,40 @@ var managedCredentialFieldKeys = map[string]bool{
 	"masterKey":                true,
 }
 
+// poolCredentialKeys are a Swarm pool's own env keys that hold its
+// orchestrator's tokens: API_TOKEN, the bearer every orchestrator call
+// carries, and ADMIN_TOKEN, which takes a container from its holder. The
+// platform generates both when it creates the pool.
+var poolCredentialKeys = map[string]bool{
+	leaseTokenKey: true,
+	"ADMIN_TOKEN": true,
+}
+
+// boxCredentialPrefix starts every variable a Zerops Box keeps for itself —
+// ZBOX_WORKSPACE_API_KEY, the whole authority over the workspace, and
+// ZBOX_WORKSPACE_VOLUME_KEY, the key of its encrypted data disk. Box itself
+// never delivers a ZBOX_ variable into a sandbox.
+const boxCredentialPrefix = "ZBOX_"
+
+// isPoolOrBoxCredential reports a key that holds a Swarm pool's or a Zerops
+// Box's own credential on that service — a pool's API_TOKEN or ADMIN_TOKEN, a
+// Box's ZBOX_ variables. serviceType is the OWNING service's type version. An
+// app wires these by reference (`${<pool>_API_TOKEN}`) and never needs the
+// literal, so every presentation site masks them and every zcp write keeps
+// them sensitive, whatever flag the platform reports (the flag is not
+// authoritative — see credentialValueKeys). Keyed on topology.IsPoolType /
+// topology.IsSandboxType, so a runtime's own API_TOKEN stays the agent's
+// value.
+func isPoolOrBoxCredential(key, serviceType string) bool {
+	switch {
+	case topology.IsPoolType(serviceType):
+		return poolCredentialKeys[key]
+	case topology.IsSandboxType(serviceType):
+		return strings.HasPrefix(key, boxCredentialPrefix)
+	}
+	return false
+}
+
 // SensitiveValueMask is what every presentation site shows in place of a
 // value the platform holds with sensitive:true.
 const SensitiveValueMask = "<redacted: sensitive>"
@@ -93,11 +127,14 @@ const SensitiveValueMask = "<redacted: sensitive>"
 // site masks identically (get/discover renderers, set-echo, generate-dotenv
 // preview diff).
 //
-// Three classes mask, the first match naming the mask:
+// Four classes mask, the first match naming the mask:
 //   - ZCP-owned credential keys (GIT_TOKEN, ZCP_API_KEY, ZCP_LAUNCH_TOKEN) —
 //     regardless of serviceType.
 //   - Managed-service credential fields (connectionString, password, …) —
 //     only when serviceType is a managed service.
+//   - A Swarm pool's API_TOKEN / ADMIN_TOKEN and a Zerops Box's ZBOX_
+//     variables — only when serviceType is that pool or Box
+//     (isPoolOrBoxCredential).
 //   - Any row the platform holds with sensitive:true — a person's own
 //     write-only value. The platform reads it back in clear to a full token,
 //     so zcp is what keeps it from the model.
@@ -113,6 +150,9 @@ func RedactEnvValue(key, value, serviceType string, sensitive bool) (string, boo
 	}
 	if managedCredentialFieldKeys[key] && topology.IsManagedService(serviceType) {
 		return "<redacted: managed-service credential>", true
+	}
+	if isPoolOrBoxCredential(key, serviceType) {
+		return "<redacted: pool or Box credential>", true
 	}
 	if sensitive {
 		return SensitiveValueMask, true
@@ -214,7 +254,9 @@ func resolveSensitive(key, value string, sensitive *bool) bool {
 // eliminating projectEnvDuplicateKey errors from the caller's perspective.
 //
 // sensitive is the flag every key is written with; nil picks it per key by
-// name (topology.DefaultSensitive). Every write sends it explicitly — the platform's
+// name (topology.DefaultSensitive). A Swarm pool's or a Zerops Box's own
+// credential (isPoolOrBoxCredential) is written sensitive whatever the flag
+// says. Every write sends it explicitly — the platform's
 // update without the flag turns a sensitive value plain
 // (spec-zerops-env-lifecycle.md §7), and a replace here is a fresh create.
 //
@@ -331,6 +373,7 @@ func envSet(
 
 	var lastProc *platform.Process
 	stored := make([]StoredEnv, 0, len(pairs))
+	serviceType := svc.ServiceStackTypeInfo.ServiceStackTypeVersionName
 	for _, p := range pairs {
 		replaced := false
 		if id := findEnvIDByKey(existing, p.Key); id != "" {
@@ -342,7 +385,9 @@ func envSet(
 			}
 			replaced = true
 		}
-		flag := sensitiveOf(p.Key, p.Value)
+		// A pool's or a Box's own credential stays a secret whatever the
+		// caller said: a plain copy reads back in clear to every token.
+		flag := sensitiveOf(p.Key, p.Value) || isPoolOrBoxCredential(p.Key, serviceType)
 		proc, setErr := client.CreateServiceEnvVar(ctx, svc.ID, p.Key, p.Value, flag)
 		if setErr != nil {
 			if hasAPICode(setErr, apiCodeUserDataDuplicateKey) && !replaced {

@@ -190,6 +190,7 @@ One reducer reads both carriers, in this order:
 | `zerops_verify` (single and all-services) | JSON | `envelope` key |
 | `zerops_import` | JSON | `envelope` key |
 | `zerops_mount` (mount, unmount, status) | JSON | `envelope` key |
+| `zerops_lease` (acquire, status, release) | JSON | `envelope` key — built after the operation, so the reducer sees the new lease set at once |
 | `zerops_workflow` bootstrap `start`/`complete`/`skip`/`status` | JSON | `envelope` key |
 | `zerops_standup` | JSON | `envelope` key |
 
@@ -223,7 +224,8 @@ state costs ~1.2 KB (no fence, no markdown) — a deploy response measured 119 B
 The synthesized guidance a prose result carries is held under `workflow.ComposeBodyBudget`
 (24 KB), which sits below the 28 KB soft cap and the **32 KB MCP tool-response cap** precisely
 to leave room for the scaffold `RenderStatus` adds — so the envelope fits inside existing
-headroom and needs no budget of its own. `TestAppendEnvelope_BlockSizeBudget` pins it. JSON
+headroom and needs no budget of its own. `TestAppendEnvelope_BlockSizeBudget` pins it, with eight
+leases (§2.8a.3) on top of the four-service fixture (~3.1 KB fenced). JSON
 results are far smaller than the prose ones and are nowhere near the cap.
 
 ### 1.6 Why not `structuredContent`
@@ -290,6 +292,13 @@ now-off flag has to remove — so a container that never had mate prints not one
 2. **Bundle** — `mate.EnsureInstalled` (below) in full.
 3. **Environment.** `~/.zcp/mate.env` rewritten (mode 0600) every boot — §2.3.
 4. **Unit.** `mate.UnitFilePath` absent ⇒ `sudo -E zsc unit create mate "zcp service start mate"`.
+   Then, when systemd says the unit's file changed on disk since it loaded it
+   (`systemctl show --property=NeedDaemonReload --value zerops@mate.service` answers `yes` — what it
+   warns "run 'systemctl daemon-reload'" about), `sudo systemctl daemon-reload` before any restart
+   (step 7), whether or not one follows, so this restart and every later one runs the definition on
+   disk; an unchanged unit is never reloaded, and a reload that fails is a named line, not a degrade.
+   `eval/scripts/mate-dev-push.sh` reloads by the same rule before its own restart
+   (`TestRun_Mate_UnitFileChangedOnDisk_ReloadsSystemd`).
 
 The step is **best-effort** (`step.degraded`): a release 404, an unset/mismatched digest, or an npm
 dependency failure names the cause but `zcp init` still exits successfully — it is a `run.init`
@@ -801,11 +810,16 @@ never write it (MODEL §9/1a, REVIEW N5).
 | `version` | required integer, format version; today `1`. A supervisor that does not know it runs nothing new and reports it (§2.8a.2 *Versions*) |
 | `servers[].name` | required, `^[a-z][a-z0-9-]{0,39}$`, unique in the file. It is the key everywhere: state, logs, `ctl`, envelope |
 | `servers[].port` | optional integer 1–65535, unique in the file; absent for a server without a listener (a worker) |
-| `servers[].command` | required, non-empty; run as `/bin/sh -c <command>` in `cwd`, as the leader of its own process group, with the environment `run.start` gave the supervisor (the service's env vars) |
+| `servers[].command` | required, non-empty; run as `/bin/sh -c <command>` in `cwd`, as the leader of its own process group, with the environment `run.start` gave the supervisor (the service's env vars) plus the overlay set with `ctl env` (§2.8a.2), an overlay entry replacing the service's value of the same name |
 | `servers[].cwd` | optional, default `"."`; relative to the repo root; after cleaning and resolving symlinks it stays inside the repo root, otherwise the file is invalid |
-| `servers[].watch` | optional; the supervisor restarts the server's group on a change under `paths` (relative to the repo root), never for paths under `.git`, `node_modules` or matching `ignore` (MODEL §9/1a, P4 H3). An `ignore` entry is matched against a repo-relative path one segment at a time with `path.Match`, a `**` segment matching any number of directories, and ignores the path it names and everything under it; a build output in a watched directory needs its glob — `go build -o app` also writes `app-go-tmp-umask` beside it, hence `apps/api/app*`, and `uv run` rewrites `src/<pkg>.egg-info` at any depth, hence `**/*.egg-info` (`TestWatch_AnIgnoreGlobMatchesAtAnyDepthWithDoubleStar`). Absent: the command's own watcher (`--watch`, vite) does it |
+| `servers[].watch` | optional; the supervisor restarts the server's group on a change under `paths` (relative to the repo root), never for paths under `.git`, `node_modules` or matching `ignore` (MODEL §9/1a, P4 H3). An `ignore` entry is matched against a repo-relative path one segment at a time with `path.Match`, a `**` segment matching any number of directories, and ignores the path it names and everything under it; a build output in a watched directory needs its glob — `go build -o app` also writes `app-go-tmp-umask` beside it, hence `apps/api/app*`, and `uv run` rewrites `src/<pkg>.egg-info` at any depth, hence `**/*.egg-info` (`TestWatch_AnIgnoreGlobMatchesAtAnyDepthWithDoubleStar`). Absent: the command's own watcher (`--watch`, vite) does it — so zcp never names a declared server as keeping the old code after a sync's fast-forward (docs/spec-workflows.md §8 DP-24) |
 | `servers[].healthPath` | optional, default `/`; must start with `/`. The HTTP path a health probe of the server's `port` reads — an API part that answers 404 on `/` names the path it answers on (`TestParseDeclaration_Shapes`) |
-| `servers[].service` | optional; variant B only — the hostname of the dev service whose supervisor runs it (MODEL §4). Absent: run by the one supervisor reading the file (variant A). In variant B every entry carries it |
+| `servers[].service` | optional; the hostname of the dev service whose supervisor runs it — in variant B (MODEL §4) every entry carries it; in a repository whose parts are each a Swarm dev pool it is the part's pool, whose containers' `hostname` is the pool's, and an entry a lease's start adds carries it (docs/spec-workflows.md §8 DP-22), and moving a dev service serving several parts onto one pool per part requires every part's servers to name its pool (docs/spec-workflows.md §13 PM-11, PM-12) — from then on the dev service's own supervisor runs none of them. Absent: run by every supervisor reading the file (variant A: the one) (`TestDevServer_LeaseDeclaresItsPoolAsService`, `TestDevServer_LeaseReadsItsPoolsEntries`) |
+| `previewPortBase` | optional integer, top level; read in a Swarm pool container only (docs/spec-workflows.md §8 DP). The supervisor forwards `previewPortBase + ZEROPS_StableNumber` to the preview server's port, so each lease answers on its own per-port subdomain. `ZEROPS_StableNumber` starts at 1, so the pool's `run.ports` declares `previewPortBase + 1` through `previewPortBase + maxContainers` with `httpSupport: true`. zcp reads it, never writes it (`TestSupervisor_PreviewForward_SlotPort`, `TestDeclaration_PreviewPortBase_*`) |
+| `siblingEnv` | optional object, top level: an environment variable a part's dev server reads → the pool (`^[a-z0-9]{1,40}$`) whose lease of the same branch it reaches, e.g. `{"HQ_HOST": "hqpool"}`; the app keeps reading its own variable. A name matches `^[A-Za-z_][A-Za-z0-9_]*$` and is never `ZEROPS_*`, `hostname`, `serviceId`, `projectId`, `PATH` or `HOME`; a broken rule makes the file invalid like any other. The supervisor never puts it into any environment: what reaches a server is only the overlay set with `ctl env` (§2.8a.2). zcp reads it, keeps it when it rewrites the file and never writes it: before it starts or reloads a lease's servers it sends the full overlay — each name set to the container hostname of the branch's lease on the named pool, a pool the branch holds no lease on left to the container's own value — to a supervisor whose `version` lists `env` (docs/spec-workflows.md §8 DP-22), and hands every other lease of the branch the recomputed overlay when a lease joins or leaves it (DP-26) (`TestParseDeclaration_SiblingEnv_Shapes`, `TestSupervisor_EnvOverlay_DeclaredSiblingEnvNeverReachesAServer`, `TestDeclareDevServer_KeepsTheSiblingEnv`, `TestDevServer_LeaseSiblingEnv_SendsFullOverlayBeforeStart`) |
+| `siblingPreviewEnv` | optional object, top level: an environment variable a part's dev server reads from a browser → the pool (`^[a-z0-9]{1,40}$`) whose lease of the same branch it reaches, e.g. `{"VITE_HQ_URL": "hqpool"}`; the name rule is `siblingEnv`'s, and a name is never in both, or the file is invalid. Where `siblingEnv` hands a container hostname, which only server-side code resolves, zcp sets each name to that lease's preview URL — `https://`, the pool's subdomain on `previewPortBase` + that lease's container's stable number, as `zerops_dev_server action=status` reports it — resolved at every point it resolves `siblingEnv` and never hand-copied, since the preview port follows the container (docs/spec-workflows.md §8 DP-31). A top-level key of its own, so a supervisor that predates it ignores it; the supervisor never puts it into any environment: zcp sends the value through `ctl env` (§2.8a.2). zcp reads it, keeps it when it rewrites the file and never writes it (`TestParseDeclaration_SiblingPreviewEnv_Shapes`, `TestDeclareDevServer_KeepsTheSiblingPreviewEnv`, `TestDevServer_LeaseSiblingPreviewEnv_HandsTheSiblingsPreviewURL`) |
+| `prepare` | optional string, top level; read in a Swarm pool container only (docs/spec-workflows.md §8 DP-14). After a lease's checkout zcp runs it with `/bin/sh -c` in the repo root, before it starts or reloads the supervisor: the incremental install a branch's own lockfile needs on top of the dependencies the pool's image baked into `/var/www`, e.g. `npm install --prefer-offline`. Its failure leaves the lease held and is reported in the acquire result. The supervisor never runs it; zcp keeps it when it rewrites the file and never writes one (`TestDeclaration_Prepare_ParsesAndRoundTrips`, `TestDeclareDevServer_KeepsTheRepositorysPrepare`) |
+| `servers[].preview` | optional bool; the server the preview forward reaches when more than one server listens (with one listening server, that one). zcp reads it, never writes it |
 | `servers[].autostart` | optional bool, default `true`; the server's **first** desired state: `autostart ? running : stopped` (§2.8a.2 *Events*). `false` keeps a declared server down until `ctl start` — a repo with many heavy dev servers (five Angular apps) starts only the ones it marks |
 
 **Unknown keys.** The supervisor ignores a key it does not know, at the top level and in an entry, so
@@ -866,10 +880,12 @@ go on Ubuntu).
 URL in the line zcp writes, so a dev build of the supervisor can be tried before any release. Dev
 loop only; production never sets it.
 
-**Variant B stand-up.** The dev services start before the repo is cloned onto the shared volume, so
-each supervisor first reads a missing file (an empty declaration). After the clone, stand-up runs
-`zcp-devsup ctl reload` on every dev service's supervisor (§2.8a.4a); each starts only the entries
-of its own service (`TestSupervisor_EachDevServicesSupervisorStartsOnlyTheServersAssignedToIt`).
+**Variant B stand-up.** zcp sets up no new code volume; a stand-up called again on a recorded
+variant-B pair (§2.8a.4a) still fills the volume when it is empty. The dev services start before
+the repo is cloned onto the shared volume, so each supervisor first reads a missing file (an empty
+declaration). After the clone, stand-up runs `zcp-devsup ctl reload` on every dev service's
+supervisor; each starts only the entries of its own service
+(`TestSupervisor_EachDevServicesSupervisorStartsOnlyTheServersAssignedToIt`).
 
 **Runtime state.** `$HOME/.zcp/devsup/state.json`, written only by the supervisor (atomic rename),
 beside `logs/<name>.log` and the control socket `sock`. `$HOME` survives a container restart and is
@@ -880,6 +896,7 @@ lost on a redeploy (P1 T7, P2 S4) — which is exactly the start-up rule below.
   "format": 1,
   "supervisor": { "version": "vX.Y.Z", "pid": 412, "startedAt": "2026-10-14T21:00:00Z" },
   "declaration": { "version": 1, "error": "" },
+  "env": { "HQ_HOST": "node-id-7.runtime.hqpool.zerops" },
   "servers": {
     "web":    { "source": "declared", "desired": "running", "status": "running", "pid": 731, "pgid": 731, "leaderStart": 88213,
                 "startedAt": "2026-10-14T21:00:01Z", "restarts": 0, "exit": null, "logPath": "/home/zerops/.zcp/devsup/logs/web.log" },
@@ -934,9 +951,23 @@ lost on a redeploy (P1 T7, P2 S4) — which is exactly the start-up rule below.
   service's max RAM (`zerops_scale`) or stopping a server; a deploy reply says it once for all
   servers (`TestDevServer_StatusOfAServerSystemdRestartedWhenTheServiceRanOutOfMemoryPointsToItsRAM`,
   `TestDeployNextActions_DevServersSystemdRestartedWhenTheServiceRanOutOfMemorySayWhyOnce`).
+- `env` is the overlay `ctl env` last set, `{}` when none is: container hostnames and preview URLs, never a secret. It
+  lives in `$HOME` with the rest of the state, so a container restart starts every server under it
+  again, while a redeploy or a pool container's reset (a fresh `$HOME`) starts without it until it is
+  set again (`TestSupervisor_EnvOverlay_SurvivesRestart`).
 - `source: runtime` entries are not in the declaration: crew apps (MODEL §9/1c). They carry their
   own `command`, `cwd`, `port`, are added and removed only through `ctl`, and are not restored after
   a redeploy — their owner, Mate's engine, adds them again.
+- `previewLastConnAt` and `previewOpenConns` ride on the preview server only, beside its
+  `previewPort` (§2.8a.1), and only in `ctl status`: when its preview forward last took a connection
+  in this supervisor's life (absent until one does) and how many connections the forward holds open
+  now (`0` included). They are counted at the forward without delaying or changing a byte: the
+  clients, never the forward's own dial to the server. A restart of the server cuts its connections
+  and opens a new forward, and the time stays. They live in the supervisor's memory: `state.json`
+  never holds them, and a new supervisor starts without them. `ctl version` lists `activity` for
+  them (`TestForward_RecordsLastConnectionAndOpenCount`,
+  `TestSupervisor_PreviewActivity_KeptAcrossServerRestartsNeverInStateFile`,
+  `TestCtlStatus_PreviewActivity`).
 
 **Control.** zcp (and Mate's engine) run `zcp-devsup ctl <verb> --json` over SSH; `ctl` talks to the
 supervisor over the unix socket and prints one JSON answer. Every process is a child of the
@@ -950,7 +981,8 @@ verb is idempotent, so the caller asks `status` again.
 | `reload` | same as `SIGHUP` |
 | `logs <name> [--lines N]` | the tail of `logs/<name>.log` |
 | `run --name <n> --cwd <d> [--port <p>] -- <command>` / `rm <name>` | add / remove a `runtime` entry |
-| `version` | `{"version":"vX.Y.Z","formats":[1]}` |
+| `env (--set NAME=VALUE)…` / `env --clear` | replaces the env overlay with exactly the `--set` pairs (`--clear` alone: none) — it never merges, so a full set also drops whatever a previous holder left; neither flag is refused (`status` shows the overlay). A name breaking the `siblingEnv` name rule (§2.8a.1) is refused and changes nothing. The answer — the state, `env` included — comes as soon as the overlay is stored in `state.json`; every server started from then on (boot, `start`, `restart`, `reload`, `run`, a watched change, a retry) gets the service's environment plus the overlay. The live servers whose group started under another overlay are then restarted by the supervisor itself, one at a time a stagger apart, each with `lastRestartReason: "env changed"` — a stop's grace of up to 10 s per server could outlast `ctl`'s 60 s wait. A stopped or crashed server is not started by it, and an identical overlay restarts nothing (`TestCtl_Env_AnswersBeforeTheRestarts`, `TestCtl_Env_ReplacesTheOverlay`, `TestCtl_Env_RejectsReservedAndMalformedKeys`, `TestSupervisor_EnvOverlay_AppliedAtEveryStart`, `TestSupervisor_EnvOverlay_ChangeRestartsRunningServersOnce`, `TestSupervisor_EnvOverlay_SameOverlay_NoRestart`) |
+| `version` | `{"version":"vX.Y.Z","formats":[1],"capabilities":["env","activity"]}`; `capabilities` names the verbs, flags and answer fields an older supervisor lacks: `env` the verb, `activity` the preview server's `previewLastConnAt`/`previewOpenConns` in `status`. An older `ctl` fails on a verb or flag it does not know, so a caller sends one only when `version` lists it, and reads such a field only then (`TestCtl_VersionNamesCapabilities`, `TestCapabilities_IncludeActivity`) |
 
 Exit codes: `0` done, `2` no supervisor (socket absent or refused), `3` unknown name, `4` invalid
 declaration, `5` supervisor not answering (the dial timed out or found the backlog full, or no answer
@@ -1027,7 +1059,7 @@ default), else `desired: stopped`. From then on only `ctl start`/`stop`/`restart
 |---|---|
 | A server exits on its own | left down and visible: `status: crashed`, `exit` recorded, **no restart** in this container life except by a watched change (below), seen at the agent's next call (MODEL §11.3). One exception: a server that exits within its **start window** (10 s after a start) or before its port first accepts is started once more, one window later and only once no sibling is still starting (bounded by the listen wait), unless something started, stopped or removed it meanwhile — siblings started beside it (four Maven wrappers unpacking one distribution) come back one at a time; a crash of that second start, or one after the server listened, stays down (`TestSupervisor_AServerThatCrashesInItsStartWindowIsStartedOnceMoreThenStaysDown`, `TestSupervisor_AServerThatCrashesBeforeItFirstListensIsStartedOnceMoreOneAtATime`, `TestSupervisor_AServerThatExitsStaysDownAndVisible`) |
 | A server meets the task limit | every server shares the cgroup of the platform's `zerops@zerops.service` unit, which sets no `TasksMax`: systemd's default, 15 % of the container's `pids.max` 2000, is 300 tasks (processes and threads) for the supervisor and all its servers. The supervisor never raises it. A start refused with `EAGAIN`, or an exit during whose run a fork was refused (`pids.events` `max` grew since the start), is started again after a backoff of 2 s doubling up to 1 min, one server at a time as a retry is, at most 6 times in a row; such a start is not the one more start above, and a start for any other reason resets the count. The server's `lastRestartReason` names the limit; after the sixth it stays down with `taskLimit` set (`TestSupervisor_AServerThatMeetsTheTaskLimitOnEveryStartStopsBeingStartedAndNamesTheLimit`, `TestMetTaskLimit_AnEAGAINStartOrARefusedForkDuringTheRunMetTheLimit`). Servers started together (boot, reload) start 1 s apart (`TestSupervisor_ServersStartedTogetherStartAGapApart`) |
-| A watched path changes | a change is a write, create, delete or move; reading a file or moving only its access time is not (`TestSupervisor_ReadingAWatchedFileNeverRestartsItsServerAndWritingOneDoes`). For a server with `desired: running`: a live group restarts, and no live group (`crashed` — the agent fixed the code) starts; `restarts` + 1 either way. A `stopped` server stays stopped. After 10 starts in a row that each saw a watched change within their own start window, a change within the window is the server's own output and restarts nothing (the supervisor log names the path to add to `ignore`); a change after the window always restarts, and one there after a start that saw none resets the count (`TestSupervisor_AServerThatChangesItsWatchedFilesOnEveryStartIsNotRestartedByThemForever`) |
+| A watched path changes | a change is a write, create, delete or move; reading a file or moving only its access time is not (`TestSupervisor_ReadingAWatchedFileNeverRestartsItsServerAndWritingOneDoes`). For a server with `desired: running`: a live group restarts, and no live group (`crashed` — the agent fixed the code) starts; `restarts` + 1 either way. A `stopped` server stays stopped. After 10 starts in a row that each saw a watched change within their own start window, a change within the window is the server's own output and restarts nothing (the supervisor log names the path to add to `ignore`); a change after the window always restarts, and one there after a start that saw none resets the count (`TestSupervisor_AServerThatChangesItsWatchedFilesOnEveryStartIsNotRestartedByThemForever`). A burst of changes restarts the server once: the supervisor restarts it when no change has come for 500 ms (at most 5 s after the burst's first change), with the reason of the path that opened the burst; a burst whose last change came before the server's latest start began restarts nothing, since that start already runs it. Measured 2026-10-24: one write over sshfs (`cat > file`: truncate, bytes, close) restarted a watched server 2–3 times in the same second, ~10 s after the write — the old server's stop grace (up to 10 s for one that does not end on `SIGTERM`), during which each later change queued another restart of the new one; the watch itself is inotify, no poll (`TestSupervisor_ABurstOfWatchedChangesRestartsTheServerOnce`, `TestSupervisor_AChangeMadeWhileARestartStopsTheServerRestartsNothingMore`) |
 | The kernel's OOM killer kills a process of the service | the platform's `zerops@zerops.service` has `OOMPolicy=stop` and `Restart=always` (`RestartSec=3`): once systemd notices the kill — at once, or only when it next reaps a process of the unit, minutes later — it stops the whole unit, every server with it, logs `Failed with result 'oom-kill'` and starts it again. The supervisor never changes the unit. On boot it reads systemd's result for the previous run of its unit from the journal (`journalctl UNIT=<its cgroup's unit> -o json`, through `sudo -n` for the `zerops` user, as only root and `systemd-journal` read it; the end line before the current start, with no start between); after `oom-kill` every server it starts gets `lastRestartReason` "the service ran out of memory: the kernel killed one of its processes and systemd restarted every dev server" and `outOfMemory` until it starts again for another reason. The container's journal names neither the killed process (the kernel log is not readable there) nor a usable amount: the unit's logged memory peak was measured far below what its processes used (`TestSupervisor_AfterSystemdRestartedTheServiceBecauseItRanOutOfMemoryEachServerSaysSo`, `TestSupervisor_AfterAnyOtherEndOfThePreviousRunTheSupervisorStartedAgain`, `TestPreviousRunResult_ReadsHowSystemdEndedTheRunBeforeTheCurrentOne`) |
 | The supervisor is killed (zenv starts `run.start` again) | the new supervisor stops the groups the old one left (identity-checked), then starts every entry with `desired: running` |
 | Container restart (`$HOME` kept) | every entry with `desired: running` starts, `crashed` ones included; `stopped` stays stopped |
@@ -1042,6 +1074,12 @@ and answers that the supervisor is older than the declaration, naming both.
 
 Both ride the dev service's `ServiceSnapshot` (the snapshot whose `hostname` keys the pair).
 
+A pair whose dev half is a dev pool (`spec-workflows.md` §13 PM-10) is keyed by the pool, so `stages`
+rides the pool's snapshot — `runtimeClass: "pool"`, no `mode` — and `devServers` never does: a pool's
+dev servers run in its leases and ride `leases[]`. A migrated part's tier on `main` still names its
+retired dev service, so this snapshot is where the part's pool shows beside its stages (fixture
+`envelope.pool-pair.json`, §2.8a.7). Additive like `leases[]`: no key is new, no version gate.
+
 ```json
 "stages": [ { "hostname": "webstage", "setup": "web" }, { "hostname": "apistage", "setup": "api" } ]
 ```
@@ -1051,9 +1089,14 @@ Both ride the dev service's `ServiceSnapshot` (the snapshot whose `hostname` key
 - It **replaces** `stageHostname` and `stageSetupName`: one stage ≡
   `[{hostname: stageHostname, setup: stageSetupName}]`. Each snapshot's own `setupName` stays as it
   is — it names that service's setup, not a pair.
-- zcp's synthesis and render read it (the envelope is their input, §1). **Mate never pairs from
-  it**: Mate pairs from the tier on `main`, then an open recipe change, then the hostname stem
-  (MODEL §9/3m, §11.2). A preview's address is its Zerops subdomain and the commit a preview runs is
+- zcp's synthesis and render read it (the envelope is their input, §1). Mate pairs from the tier on
+  `main`, then an open recipe change, then the hostname stem (MODEL §9/3m, §11.2) — **with one
+  exception: a pool-keyed pair** (a part migrated to a dev pool, `docs/spec-workflows.md` §13). A
+  `runtimeClass: "pool"` snapshot carrying `stages[]` (or, before field-order step 3, a single
+  `stageHostname`) pairs those stages with the pool: a tier or recipe naming a dev that still stands
+  wins, then the envelope, then the stem — so a tier naming the retired dev yields to the envelope.
+  Such a stage is never a checkout row, and the pool (no checkout of its own) is not one either; the
+  pairing comes from the thread's own last envelope (z3 `poolPairsIn`, `useThreadPoolPairs`). A preview's address is its Zerops subdomain and the commit a preview runs is
   the receipt's (§2.8a.6), so neither rides here.
 
 ```json
@@ -1108,6 +1151,50 @@ Single-part, today and after (3) — the same pair, the same meaning:
 ```
 
 The full 1- and 3-part envelopes are the fixtures (§2.8a.7).
+
+**`leases[]` — the leases this container's zcp holds, not a service's.** It is a top-level key of the
+envelope, beside `services`, not a field of a `ServiceSnapshot`. It lists every lease zcp holds for the
+container, whichever conversation acquired it; which conversation a lease is bound to is Mate's own
+record (§6.3), never a field here:
+
+```json
+"leases": [ { "alias": "webpool-3", "pool": "webpool", "branch": "feat-x",
+              "containerHostname": "node-id-3.runtime.webpool.zerops", "state": "held", "unverified": false,
+              "acquiredAt": "2026-10-23T12:00:01Z" } ]
+```
+
+| Key | Meaning |
+|---|---|
+| `alias` | `<pool>-<number>`, the name the lease is addressed by (`zerops_lease`, `zerops_verify`, `zerops_dev_server`, the SSH alias, the mount `/var/www/<pool>-<number>`) |
+| `pool`, `branch` | the pool service's hostname; the branch checked out in the leased container |
+| `containerHostname` | the container's own hostname (`node-id-<n>.runtime.<pool>.zerops`) |
+| `devServers` | present only on a call that read the lease's supervisor (`zerops_dev_server` on the alias): the same `DevServerState` entries a dev service's `devServers[]` carries, the preview server's `url` being the pool's per-port subdomain (`TestWithParts_LeaseDevServers`) |
+| `state` | the reconciled state, verbatim (`held`, `lost`, `unknown-holder`, `unmounted`, `parked`, …) — the one `zerops_lease action=status` reports (`spec-workflows.md` §8 DP-2), never enumerated by a reader. `parked` is a lease that is still held whose container is stopped and kept (`spec-workflows.md` §8 DP-28): a client keeps it bound, as it keeps a `held` one (`TestLeaseTool_ParkThenUnpark_StateRidesResultAndEnvelope`). Whose a container is comes from the orchestrator's renew of the record's own lease (`spec-workflows.md` §8 DP-2): a lease whose container is no longer its reservation — gone, being deleted, free, or reserved by another holder since the lease ended outside zcp — is `lost`; one another holder took read `held` before zcp asked the orchestrator and reads `lost` now, so a client unbinds it as it does any lost lease (§6.3), and a lease stopped or started outside zcp stays `parked`/`held`. No state was added (`TestLeaseTool_Ownership_LeaseAnotherHolderTook_LostThenDropped`, `TestLeaseTool_Ownership_StoppedOutsideZcp_StaysParked`) |
+| `unverified` | `true` when the state is zcp's own last-known record because the pool's orchestrator did not answer — per pool: a stopped pool marks only its own leases, the others stay confirmed (`TestLeaseTool_Status_OneStoppedPool_OthersStillListed`) — or when the pool's listing answered but the renew of that lease did not (`spec-workflows.md` §8 DP-2): the state is then the listing's (`held`, `parked`, `unmounted`), never `lost`, so a client keeps the lease bound as that state says, and nothing is read from it (`TestLeaseTool_Ownership_RenewFails_UnverifiedNeverRead`) |
+| `acquiredAt` | when zcp acquired the lease (RFC 3339, UTC), from its record — also when the record stands in, unverified; absent for a lease zcp has no record of (`unknown-holder`). The leases of one branch are one group (`spec-workflows.md` §8 DP-17): it is the key a client can rebind by when the bound lease ends while others of its branch stay held (the earliest acquired). Additive (`TestEnvelopeJSON_LeaseAcquiredAt`, `TestComputeEnvelope_OrchestratorUnreachable_LeasesUnverified`) |
+| `activity` | present only on a `zerops_lease` call that read the lease's checkout — today `action=status`, for each lease zcp holds (`spec-workflows.md` §8 DP-21) — exactly as that result reports it: `lastChangeAt` (the checkout's last change), `previewLastConnAt` and `previewOpenConns` (the preview forward's last connection and open connections, when the lease's supervisor reports them; one that reports them and runs no dev server on a preview port reads `previewOpenConns: 0`, since no preview connection can be open), `acquiredAt`, `readAt` (when zcp read it), all times RFC 3339 UTC, and `note` (what could not be read, and why). Inside it too a fact not read is absent, never zero: a lease status did not read (`unverified`, its ssh alias missing) carries `activity` with only `acquiredAt` and `note`; a read that failed (the container unreachable, the read cut at its budget) carries its `readAt`, keeps what it did read and says what failed in `note`. zcp's own `idle` label (`spec-workflows.md` §8 DP-25) rides the result only, never the envelope: a client draws idleness from these facts (`TestEnvelopeJSON_LeaseActivity`, `TestLeaseTool_EnvelopeCarriesActivityOnStatus`, `TestLeaseTool_Status_IdleLease_NamesWhatFreesIt`) |
+| `unsaved` | on the same calls, what releasing the lease would lose, read with the release guard's own reads (`spec-workflows.md` §8 DP-4): `files` (the first 20 `git status --porcelain` lines), `fileCount` (all of them), `unpushedCommits`. A clean checkout is `{"fileCount":0,"unpushedCommits":0}`; absent when either read did not answer. Files git ignores and stashes are never in it, and a release loses them too (`TestEnvelopeJSON_LeaseActivity`, `TestLeaseTool_EnvelopeCarriesActivityOnStatus`) |
+
+- **Absent means "not read"; `[]` means "read, none held".** The key is emitted whenever zcp read
+  the leases for this envelope — `zerops_workflow action="status"`, the develop briefing
+  (`action="start" workflow="develop"`), every JSON carrier (§1.4, through `tools.freshEnvelope`) and
+  `zerops_lease`, all from `tools.leaseEnvelopeOptions` — and left out when it did not (no reader, or a project that
+  lists no pool and has no lease record). Never `null`. A client keeps the last list it read until a
+  newer envelope carries the key (`TestEnvelopeJSON_LeasesNotRead_NoKey`,
+  `TestEnvelopeJSON_LeasesReadNone_EmptyArray`, `TestDevelopBriefing_PoolPairStage_LeaseNoOrchestratorVouchesFor_NeverTheSource`).
+- **Additive: no version gate.** Mate decodes the envelope forward-compatibly, so the key needs no
+  `SupportedContract` bump and no `MinimumMateVersion` raise; a Mate that does not know it ignores it.
+  The same holds for `activity` and `unsaved`.
+- **Absent `activity` / `unsaved` means "not read in this call"**, never "no activity" or "nothing
+  unsaved", as with `devServers`; a client keeps the last one it read, with its `readAt`. Only the
+  `zerops_lease` call that read a lease's checkout lays them on (`workflow.WithLeaseActivity`, keyed
+  by alias); the lease reader every envelope is filled by asks the pool orchestrators only and runs
+  no ssh, so every other tool's envelope — `zerops_dev_server` on the alias included — carries
+  neither and pays no ssh read, and no envelope reader derives them (`TestLeaseReader_NeverReadsActivity`,
+  `TestComputeEnvelope_LeaseActivity_NeverFromTheReader`, `TestEnvelope_OtherToolsCarryNoLeaseActivity`,
+  `TestJSONCarriers_LeaseActivity_ReadBackVerbatim`; fixture `envelope.lease-status.json`, §2.8a.7).
+- **The lease string never appears** (`spec-workflows.md` §8 DP-3): a lease has no field that could
+  carry it (`TestEnvelopeJSON_NoLeaseString`).
 
 #### 2.8a.4 `ServiceMeta.Stages[]` (zcp-internal)
 
@@ -1187,54 +1274,115 @@ type CodeVolume struct {
 	MountPath   string          `json:"mountPath"`   // e.g. /var/www/ws
 	DevServices []DevServiceRef `json:"devServices"` // {hostname, setupName}
 }
-// on the plan's runtime target and on ServiceMeta:
+// on ServiceMeta, and derive-only on the plan's runtime target (never published):
 CodeVolume *CodeVolume `json:"codeVolume,omitempty"`
 ```
 
-- Variant B (MODEL §4) is chosen only by MODEL §4's rule; a pair without `codeVolume` is variant A
-  and reads, deploys and stands up exactly as before.
+**zcp sets up no new code volume.** Dev pools replace variant B: a part whose runtime cannot share
+the dev service gets a Swarm dev pool of its own (docs/spec-workflows.md §8 DP). A variant-B pair
+recorded before keeps working exactly as below, and pool migration moves it onto one dev pool per
+part (docs/spec-workflows.md §13 PM-13). The record stays, and so does every reader of it: each
+meta write writes the whole struct, pool migration reads it, and zcp cannot know when every
+installation has migrated. A pair without `codeVolume` is variant A and reads, deploys and stands
+up exactly as before.
+
+- No path sets one up:
+  - Plan: the plan runtime publishes no `codeVolume`, so a call still carrying one is refused by
+    the input schema before any handler runs — the agent reads `validating "arguments": … validating
+    /properties/plan/items/properties/runtime: unexpected additional properties ["codeVolume"]` —
+    and a plan reaching the engine with one is refused naming the field, a dev pool per part and
+    pool-migrate, with nothing planned (`TestWorkflowToolSchema_PlanRuntimeCarriesNoCodeVolume`,
+    `TestBootstrapCompletePlan_PlanCarryingCodeVolume_RefusedNamingPools`).
+  - Adopt records a code volume only on a volume already holding the repository (below) — a
+    variant-B project whose record was lost, recorded again so pool migration can move it. Dev
+    services whose volume holds nothing yet or an empty folder adopt as separate services, as a
+    data volume's do: adopting them as a pair would make the volume a code volume, its first deploy
+    filling it. Only a scope records such a pair, never a plan: its setups are read through the
+    runtimes the adopt scope names, each from its own `zerops.yaml` (`/var/www` over SSH, else its
+    mount) — never from whichever runtime of the project sorts first — and the mount is probed only
+    on the runtimes whose own file declares the setup, so the project's other runtimes are neither
+    read nor reached, wherever they sort
+    (`TestAdoptVolumeSetups_ReadsTheScopedRuntimesNotTheProjectsFirstRuntime`). A setup mounting
+    the volume runs on an adoptable runtime of its `run.base` that finds the checkout at the mount:
+    the one named after the setup (a service's default setup is its hostname), else the only one no
+    other setup takes — stages and other runtimes of the same base hold no checkout there, so they
+    never make the choice ambiguous. The pair's stages are the scoped stage hostnames (ending in
+    `stage`) named like one of its dev services (`apistage` → `apidev` or `api`, as the stand-up
+    pairs them) or whose setup the repository's `zerops.yaml` declares, each recorded with the
+    setup named after it when declared, the one named like the dev half first; with stages the
+    pair is standard. The adopt answer names the code volume, further dev services and stages
+    (`TestBootstrapCompleteAdoptPlan_VariantBBesideItsStages_IsOneStandardPair`,
+    `TestBootstrapCompleteAdoptPlan_VariantBPair_TheAnswerNamesWhatItRecorded`,
+    `TestHandleBootstrapComplete_AdoptVariantBBesideAnotherRepository_OnePairWithItsStages`).
+    Runtimes scoped beside the pair still face the adopt pairing question (docs/spec-workflows.md
+    §3.2), whose refusal names the scope that adopts the pair alone
+    (`TestBootstrapCompleteAdoptPlan_VariantBBesideAPairingQuestion_NamesThePairScopeOnly`).
+  - Stand-up reads a tier's local-storage service as a managed service it leaves as it is: per
+    repository, one runtime that is no stage is the dev half of every stage the repository builds
+    (variant A, a stage per part), and otherwise each stage pairs with the runtime named like it,
+    each dev service holding its own checkout. The pair's stages put the one named like the dev half
+    first, then the tier's order (`TestParseMateTier_OneDevHalfTakesEveryStageOfItsRepository`,
+    `TestParseMateTier_SeveralDevServicesBesideALocalStorageService_PairByName`,
+    `TestStandup_FreshTierWithALocalStorageService_SetsUpNoCodeVolume`).
+  - The monorepo playbook gives a part that cannot share the dev service a dev pool and names
+    pool-migrate for a repository already on a code volume (`TestPlaybookMonorepo_ContentPins_PartRules`).
+- Steering: every `zerops_deploy` whose target a variant-B pair names, every `zerops_dev_server`
+  answer for one of its dev services (`warnings`), and lifecycle status (a `### Shared code volume`
+  guidance block) carry one line — `zcp no longer sets up a shared code volume. <dev>'s pair keeps
+  working on the code volume <volume>; zerops_workflow workflow="pool-migrate" service="<dev>" moves
+  it onto one dev pool per part.` — a warning, never a refusal; a pair already keyed by its dev pool
+  carries none (`TestDeployTool_VariantBPair_WarnsThatPoolMigrateMovesIt`,
+  `TestDevServer_VariantBDevService_WarnsThatPoolMigrateMovesItsPair`,
+  `TestHandleLifecycleStatus_VariantBPair_NamesPoolMigrate`).
 - The pair stays one meta, keyed on the dev service the agent edits (`Hostname`). Every
   `DevServices[i]` is a further dev service of the pair with its own dev setup; the pair-keyed
-  lookups resolve it to the pair, `RoleFor` names it a dev half and `SetupNameFor` its setup.
-- Validation, before import: `mountPath` is an absolute folder strictly under `/var/www` — the
-  platform refuses `/var/www` itself as a mount (P4 H3) and zcp's mount `<host>:/var/www` shows the
-  volume as `/var/www/<host>/<folder>` — and the pair needs at least one further dev service. The
-  volume and every dev service are planned once and collide with no live service
-  (`TestValidateBootstrapTargets_PlanB_MountsTheCodeVolumeUnderVarWwwNeverAtIt`).
+  lookups resolve it to the pair, `RoleFor` names it a dev half and `SetupNameFor` its setup. A pair
+  adopted again names the volume and each dev service once, every one of them live
+  (`TestValidateBootstrapTargets_AdoptedCodeVolume_NamesEveryServiceOnce`).
 - Deploy: a deploy from any dev service of the pair runs with `workingDir` = `mountPath` unless the
   caller names one (`ServiceMeta.WorkingDirFor`), and pre-flight reads `zerops.yml` from the same
   folder below the source's mount. In a project holding a local-storage service a `workingDir`
   under `/var/www` is a container path unless its first folder is a service's hostname, which stays
   refused as a local mount path (`TestDeployTool_FromVariantBDevService_RunsWithWorkingDirOnTheVolume`).
-- Stand-up recognises the pair from the tier as it recognises every pair: per repository, one
-  runtime that is no stage is the dev half of every stage the repository builds (variant A, a stage
-  per part); several such runtimes beside the tier's only local-storage service are one variant-B
-  pair — the first in the tier's order the dev half, the rest further dev services — and without
-  exactly one local-storage service each stage pairs with the runtime named like it, as before.
-  The pair's stages put the one named like the dev half first, then the tier's order
-  (`TestParseMateTier_OneDevHalfTakesEveryStageOfItsRepository`,
-  `TestParseMateTier_VariantB_SeveralDevServicesOfOneRepositoryAndACodeVolumeAreOnePair`).
-- Stand-up of a variant-B pair: it is adopted with `codeVolume`, and once the repository is checked
-  out its `mountPath` is read from `run.volume` of every dev setup of the pair in `zerops.yml` — one
-  that does not mount the volume, mounts it elsewhere than the others or outside `/var/www` stops
-  the pair. The dev half deploys from the checkout in `/var/www`, then every further dev service
-  deploys its own dev setup from the same checkout; then the volume is filled once from that
-  checkout (left as it is when it already holds this repository) and `zcp-devsup ctl reload` runs on
-  every dev service; the pair's stages build from the volume after the fill
-  (`TestStandup_VariantBFromAFreshTier_StandsUpAsOnePair`,
-  `TestStandup_VariantB_FillsTheVolumeOnceAndEveryDevServiceDeploysItsOwnDevSetup`).
+  The deploy of the dev half fills a volume the record names that is still empty and reloads every
+  dev service's supervisor (`TestDeployTool_OfAVariantBDevHalf_FillsTheCodeVolumeOnceAndReloadsTheSupervisors`).
+- Stand-up called again on a project holding a recorded variant-B pair reads the tier beside the
+  records: a repository with several runtimes that are no stage, one of them the recorded pair's
+  dev half, beside the tier's only local-storage service the record names, is that pair — the
+  recorded dev half wherever the tier lists it, the others further dev services, every stage of the
+  repository its stage; a record naming another volume, or a pair already keyed by its dev pool,
+  keeps nothing (`TestParseMateTier_ARecordedVariantBPair_IsReadAsThatPair`). The adopt it runs
+  refuses a target naming a service another meta records — a further dev service or stage of
+  another pair — so no second meta is ever written for one runtime (docs/spec-workflows.md §8 E8;
+  `TestAdoptPair_AServiceAnotherPairAlreadyNames_Refused`). The pair is adopted again with
+  `codeVolume`, and once the repository is checked out its `mountPath` is read from `run.volume` of
+  every dev setup of the pair in `zerops.yml` — one that does not mount the volume, mounts it
+  elsewhere than the others or outside `/var/www` stops the pair. The dev half deploys from the
+  checkout in `/var/www`, then every further dev service deploys its own dev setup from the same
+  checkout; then the volume is filled once from that checkout (left as it is when it already holds
+  this repository) and `zcp-devsup ctl reload` runs on every dev service; the pair's stages build
+  from the volume after the fill
+  (`TestStandup_VariantB_FillsTheVolumeOnceAndEveryDevServiceDeploysItsOwnDevSetup`).
 - zcp never writes code into a volume it did not prove is a code volume. Adopt takes a local-storage
   volume that several dev setups mount for a pair's code volume only when every dev setup works in
   the mount — each `run.initCommands`/`run.start` command is a `zsc noop` or names the mount, and a
   built-in web server serves a `documentRoot` inside it (`ops.ZeropsYmlEntry.WorksIn`) — and every
-  matched runtime finds nothing at the mount yet, an empty folder or a git checkout sharing a root
-  commit with its `/var/www`; anything else (a Laravel app and worker sharing `/var/www/storage`)
-  adopts as separate services. The fill writes only into an empty volume and refuses any other
-  content, naming the volume
-  (`TestBootstrapCompleteAdoptPlan_ASharedVolume_IsACodeVolumeOnlyWhenTheDevSetupsWorkInItAndItHoldsNoOtherContent`,
+  matched runtime finds a git checkout there sharing a root commit with its `/var/www`; anything
+  else — nothing at the mount yet, an empty folder, or a Laravel app and worker sharing
+  `/var/www/storage` — adopts as separate services. The fill writes only into an empty volume and
+  refuses any other content, naming the volume
+  (`TestBootstrapCompleteAdoptPlan_ASharedVolume_IsACodeVolumeOnlyWhenTheDevSetupsWorkInItAndItHoldsThisRepository`,
   `TestCodeVolume_OnlyAnEmptyVolumeIsFilledAndOnlyThisRepositoryCountsAsItsCheckout`).
 - Stand-up builds every stage of a pair, variant A or B, each cross-deployed from the dev half with
   its own setup (`TestStandup_DeploysEveryStageOfAPair`).
+- A pool migration clears `codeVolume` (docs/spec-workflows.md §13 PM-13). A variant-B pair moves
+  one pool per part; its census and bundle read the volume's checkout. Its retire deletes every dev
+  service — each delete keeps the volume and its files — then the volume last, the only step that
+  loses the checkout; the platform refuses that delete while any service still mounts the volume.
+  `codeVolume` rides the pool-keyed pair until the volume reads gone, then leaves it, so no migrated
+  pair names a code volume
+  (`TestPoolMigrateRetire_VariantB_DeletesEveryDevServiceThenTheVolumeLast`,
+  `TestPoolMigrateRetire_VariantB_VolumeStillMounted_KeepsTheCodeVolume`).
 
 #### 2.8a.5 Tier: hostname → `zeropsSetup`
 
@@ -1342,6 +1490,8 @@ on it and never blocks.
 | `envelope.single-pair.today.json` | today's envelope for one pair — the bytes zcp marshals today |
 | `envelope.single-pair.json` | the same pair after step (3): `stages[1]`, one dev server named `appdev` |
 | `envelope.three-parts.json` | `appdev` + `webstage`/`apistage`/`workerstage`, three dev servers, one crashed |
+| `envelope.pool-pair.json` | a pair keyed by its dev pool (`spec-workflows.md` §13 PM-10): `apppool` (a pool, no `mode`) carrying `stages[1]`, the stage `appstage`, the pool's lease in `leases[]`; the bytes zcp computes from the re-keyed pair |
+| `envelope.lease-status.json` | the envelope a `zerops_lease action=status` result carries: `devpool-3`, read, with `activity` and `unsaved`; `stoppool-2` of a stopped pool, unverified, its `activity` only `acquiredAt` and why it was not read, no `unsaved`; the bytes the real handler renders, its read times the call's own (`TestMateContractFixtures_LeaseStatus_RenderedByTheHandler`) |
 | `dev-server.one-server.json` | a `zerops_dev_server` result for one server, with its `envelope` key; top-level `running` ≡ the reported entry's `status == "running"` (§2.8a.3) |
 | `dev-server.three-servers-one-crashed.json` | the same for three servers |
 | `dev-server.running-http-404.json` | a running api with no root route: `running` true from the supervisor, its probe's 404 only in `healthStatus`, `reason` and the entry's `verify` |
@@ -2778,6 +2928,15 @@ Three outcomes, deliberately distinct — a caller must never read one as anothe
 | `unavailable` | Zerops, but the mount table could not be read at all | degrades, names the reason, warns once (cleared by the next successful read); never empties the set on this path |
 | `available` | the answer, possibly `[]` | `[]` renders "no repositories yet" — a fact, not an error |
 
+A repository may also be a **lease mount**: `/var/www/<pool>-<number>` (mount source `<alias>:/var/www`,
+`<alias>` the lease alias of §2.8a.3 `leases[]`) is a direct child of `/var/www` like any dev mount, so it
+is a repository by the same rule and the same bounded probe; it drops out of the set when its lease is
+released and the mount goes. **The name alone says it is a lease's** (`kind: "lease"`): a Zerops service
+hostname is lowercase alphanumeric with no dash, and zcp names a lease `<pool>-<number>`
+(`^[a-z][a-z0-9]{0,39}-[0-9]+$`), so no sweep depends on whether the envelope's `leases[]` has been read
+yet — the checkpoint sweep runs at boot before any envelope does. The leases an envelope reported stay a
+second signal, never the only one.
+
 The set is cached for 30 s (`REPOSITORY_CACHE_TTL`) and unconditionally re-read by `refresh`, which
 a turn start calls explicitly. `ZeropsRepositories` consumers — the git spawner (§6.2), the
 checkpoint reactor, the diff query — see the same shape they always did.
@@ -2841,6 +3000,54 @@ hand-written RPC can set anything a mere default would allow:
 | No worktrees (`worktreesAllowed:false`) | the isolation unit on Zerops is a service, not a directory — a dev service has one `/var/www`, one process, one subdomain; a second checkout is a checkout nobody serves | the decider (`thread.create`, `thread.meta.update` persist `worktreePath:null`; `project.meta.update` forces `defaultThreadEnvMode:"local"`) — the sole write chokepoint every command funnels through |
 | No second commit pipeline (`stackedVcsActionsAllowed:false`) | zcp owns init, identity, the PAT, commit and push; mate owns turn-level history only | `GitManager.runStackedAction` refuses server-side; the `pullRequests`/`vcsStackedActions` capabilities hide the client control too — hiding is presentation, the refusal is the enforcement |
 | No background fetch (`upstreamRefreshAllowed:false`) | a status poll's `fetch` against a PAT-backed origin mate does not own is unwanted network from every mounted service at once | `GitManager.remoteStatus` forces `refreshUpstream:false` |
+
+**The isolation unit is a service or a leased container.** A part's dev pool (`docs/spec-workflows.md`
+§8 "Dev pools (DP)") gives each branch a pool container of its own, leased through `zerops_lease`: one
+`/var/www`, one checkout, its own processes and preview port — the same unit a dev service is, so
+`worktreesAllowed:false` stands. A conversation whose agent acquired a lease is bound to it — `lease:
+{alias, pool, branch} | null`, taken from that conversation's own `zerops_lease` acquire. The binding
+decides what a person sees for the conversation — the Git tab, Diff and the terminal's checkout open on
+`/var/www/<alias>`, a repository by §6.1's rule — and **not where its sessions run**: the agent's
+session keeps opening in the Mate workspace, because zcp keeps its state in the session's working
+directory (`.zcp/state`: the lease records, the work session, the ssh aliases it rewrites from them). A
+session opened in the lease mount would lose every lease record ("No lease record" on release), write
+`.zcp/state` into the leased checkout, and rewrite the ssh aliases from an empty set. The agent reaches
+the lease the way it reaches a dev service: files under `/var/www/<alias>`, commands over `ssh <alias>`.
+The media root stays with the session too, since the paths an agent writes are relative to it.
+
+zcp holds one set of leases for every conversation in the container, and a pool hands a released
+container out again under the same alias, so **a binding is (alias, the conversation that acquired it)**
+and unbinding fans out: when a `zerops_lease` result or an envelope's `leases[]` says a lease was
+released, is no longer held (gone, lost, or reserved with no zcp record), or was acquired again by
+another conversation, every conversation bound to it is unbound before the acquiring one is bound. The
+binding is a field of its own, never `worktreePath`: T3 runs `git worktree remove` on a thread's
+`worktreePath` when the thread goes, and a lease mount is a container zcp holds, not a directory a
+thread owns — nothing removes or releases it with the thread; releasing it is the agent's
+`zerops_lease action=release`.
+
+**Asking to release.** Mate never releases a lease and runs no `zcp` for it (§0 rule 4, MA-6). When the
+person archives a conversation bound to a lease, or presses Release beside that conversation's
+workspace chip, Mate asks whether to release the workspace, naming it and showing what it knows of it
+(last activity, unsaved work, idle; §2.8a.3). The archive is never held for the answer, and no timer
+asks, answers or dismisses the question. Only the person's Release sends anything: one visible user
+message, a normal turn of the bound conversation, asking its agent to run `zerops_lease action=release
+lease=<alias>` and to stop and say so rather than force when work is unpushed. An archived conversation
+is un-archived first, since the engine takes no message there; the agent's release, zcp's guard and the
+unbind fan-out above do the rest.
+
+**A branch across parts** (`docs/spec-workflows.md` §8 DP-17, DP-23): one `zerops_lease action=acquire
+pools=[…]` leases a container per pool for the same branch, and `action=release branch=…` releases
+them together. A group acquire binds the conversation to the **first newly acquired** lease of the
+result (zcp lists them in `pools` order); a lease that comes back `reused: true` — the conversation's
+branch already held on that pool — binds nothing and unbinds nothing, so a repeat acquire never steals
+a binding. When the bound lease ends, the conversation is unbound and then bound to the **earliest
+acquired** (`acquiredAt`) lease of its branch that the same call read as still held; with none left it
+stays unbound. A branch release names no single lease, so every lease it lists as released unbinds
+whoever is bound to it. The Git tab, Diff, the terminal's checkouts and the addresses show **every held
+lease of the bound branch** (bound lease first, each named `<pool> · <branch>`), taken from the
+conversation's own last envelope — a member another conversation ended keeps showing until this
+conversation's next Zerops call reads the leases. No new event, command or envelope key carries any of
+this.
 
 `zeropsPolicy` reads `ServerConfig` **optionally**: no config in context (most existing tests) reads
 as `UPSTREAM_POLICY`, the same set every one of upstream's own behaviours already has — the policy
@@ -3732,7 +3939,7 @@ no stage half (`bootstrapMode` simple or dev), naming the standard pair to re-su
 
 **A Mate is HQ's by what it is, not by its enrollment (2026-10-05).** Being a Mate
 (`runtime.Info.MateEnabled`) is what makes HQ the authority; the enrollment is only how zcp reaches
-it. A Mate with no enrollment yet, or one it cannot read, plans the same pairs, refuses
+it — and the converse holds: outside a Mate an enrollment left in `$HOME` gives no pair a new HQ repository and composes no group recipe, while a pair whose record already names one stays HQ's (`TestReconcileHQRepositories_OutsideAMate_GivesNoPairANewRepository`). A Mate with no enrollment yet, or one it cannot read, plans the same pairs, refuses
 launch-production and hands its release to the person, as an enrolled one does — it never falls back
 to classic simple plans, a production project of its own or a pushed tag. Whatever needs HQ to
 answer says it cannot reach HQ and why (`hqEnrollmentProblem`), and launch-production's next step
@@ -3839,7 +4046,12 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   fingerprint of the copy the dev service holds (`HQRepoRef.credentialFingerprint`), and the
   repository pass — bootstrap, adopt and every develop start — rewrites only that secret when the
   fingerprint differs from the enrollment's, as after a re-enrollment, outside its backoff and
-  leaving the checkout's branch and origin alone. The helper persisted in `.git/config` for HQ's host answers the dev service from
+  leaving the checkout's branch and origin alone. A dev pool gets it the same way (`spec-workflows.md` §8 DP-16): inside a
+  Mate an acquire of a repository on HQ writes it to the pool's `GIT_TOKEN` when zcp's fingerprint for that pool — kept in
+  `.zcp/state/leases/credentials/<pool>.json`, a pool having no record of its own — is absent or differs, and the same pass
+  renews every pool holding one. A pool that keys a pair after a pool migration (`spec-workflows.md` §13 PM-10) is renewed
+  with its pair, by the pool service id the pair records and over no ssh: the pair's record takes the per-pool
+  fingerprint over and the per-pool record goes, so the pool is never renewed twice. The helper persisted in `.git/config` for HQ's host answers the dev service from
   `GIT_TOKEN` and the Mate's own shell from `zcp hq git-credential`, which reads the enrollment at
   each request and answers for the enrolled HQ only — and, for github.com, with HQ's per-call token
   (§5.10).
@@ -3849,7 +4061,7 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
 
 `hq_pair.go`, `hq_change.go`, `hq_change_description.go`, `hq_describe_retry.go`, `hq_retry.go`,
 `hq_wiring.go`, `hq_pair_lock.go`, `deploy_git_push.go`, `workflow/pair_lock.go`,
-`ops/hq_base_branch.go`, `internal/hq/changes.go`, `internal/hq/gitcredential.go`;
+`ops/hq_base_branch.go`, `ops/lease_pool_credential.go`, `ops/pool_credential_record.go`, `internal/hq/changes.go`, `internal/hq/gitcredential.go`;
 `TestReconcileHQRepositories_*`, `TestHQPass_LearnsAMergeWithoutChangingTheCheckout`,
 `TestAWiredPairDeploysDirectlyAndIsNeverSentToPush`, `TestGitPushToHQ_RefusedForPlainGitOnABranch`,
 `TestAMateKeepingItsCodeInHQPlansOnlyStandardPairs`, `TestBuildBaseBranchCommand_*`,
@@ -3857,7 +4069,8 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
 `TestHQNotServingWords`, `TestUpsertServiceMeta_LegacyPendingDelivery_IsDropped`,
 `TestClient_Bounded_EndsATryHQDoesNotAnswer`, `TestAPassSkipsAPairHeldElsewhere`, `TestLockPair`,
 `TestDescribeChange_WaitsWhileItsPairIsHeld`, `TestClient_*`, `TestGitCredential_*`,
-`TestPersistedCredentialHelper_*` — against a fake HQ that serves real git with HQ's ref rules.
+`TestPersistedCredentialHelper_*`, `TestReconcileHQRepositories_RenewsThePoolsCredentialAfterTheMateEnrollsAgain`,
+`TestHQPass_PoolDevHalf_RenewsOnPoolNoSSH`, `TestHQPass_PoolDevHalf_TakesOverThePoolsCredentialRecord` — against a fake HQ that serves real git with HQ's ref rules.
 
 **A new Mate stands up from its recipe in one call (D32, 2026-09-30).** Adding Wren to Beviro —
 whose recipe is `0 — AI Agent/import.yaml` on `main` of the application's recipe repository in HQ,

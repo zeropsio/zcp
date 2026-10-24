@@ -248,11 +248,10 @@ func TestPlaybookMonorepo_ContentPins_PartRules(t *testing.T) {
 		{"workspace markers", "`pnpm-workspace.yaml`, `workspaces` in `package.json`, `nx.json`, `turbo.json`"},
 		{"propose parts once", "Propose the parts to the person once"},
 		{"variant A is the default", "**one dev service holds the whole repo** (default)"},
-		{"variant B on a local storage volume", "**one dev service per part on one shared Local Storage volume**"},
-		{"exact deploy of the dev half of a variant-B pair", `zerops_deploy targetService="webdev" setup="dev" workingDir="/var/www"`},
-		{"exact deploy of a further dev service from the volume", `zerops_deploy sourceService="webdev" targetService="apidev" setup="dev-api"`},
-		{"never copy onto the volume by hand", "Never copy files onto the volume by hand"},
-		{"mountPath is a subfolder", "`mountPath` is a subfolder of `/var/www`"},
+		{"parts that cannot share a container each get a dev pool", "**one dev pool per part**"},
+		{"a part's dev pool is set up from the services theme", `zerops_knowledge uri="zerops://themes/services"`},
+		{"no shared code volume is set up any more", "zcp no longer sets up a shared code volume"},
+		{"an existing shared code volume moves onto pools", `zerops_workflow workflow="pool-migrate" service="<dev>"`},
 		{"more people means more Mates", "More people on the repo means more Mates, never more dev services"},
 		{"pnpm via prepareCommands", "install it in `build.prepareCommands`"},
 		{"extends replaces lists", "`extends` replaces lists whole"},
@@ -277,11 +276,79 @@ func TestPlaybookMonorepo_ContentPins_PartRules(t *testing.T) {
 		{"heavy build scaling", "`zsc scale cpu max 10m`"},
 		{"a build killed out of memory scales its RAM for the build", "`zsc scale ram max 10m`"},
 		{"the Node run image's own pnpm is used as it stands", "never `npm i -g pnpm` in `run.prepareCommands`"},
-		{"a variant-B plan names its code volume, mount folder and further dev services", `"codeVolume": {"hostname": "code", "mountPath": "/var/www/ws", "devServices": [{"hostname": "apidev", "setupName": "dev-api"}]}`},
 		{"a dev server with very many unbundled modules is opened in its bundled or preview mode", "the repo's bundled or preview mode"},
 	} {
 		if !strings.Contains(body, tt.needle) {
 			t.Errorf("%s: monorepo playbook missing %q", tt.name, tt.needle)
+		}
+	}
+	// zcp sets up no new code volume (docs/spec-mate.md §2.8a.4a): the
+	// playbook never plans one or tells the agent to deploy onto one.
+	for _, gone := range []string{`"codeVolume"`, "one dev service per part on one shared Local Storage volume", `workingDir="/var/www"`} {
+		if strings.Contains(body, gone) {
+			t.Errorf("monorepo playbook still sets up a shared code volume: %q", gone)
+		}
+	}
+}
+
+// TestThemeDevServers_ContentPins_DeclarationKeys pins that the dev-servers
+// theme's declaration table names every key a dev pool's lease reads
+// (docs/spec-mate.md §2.8a.1; docs/spec-workflows.md §8 DP-14, DP-22, DP-24,
+// DP-26, DP-31): previewPortBase and the per-container port its preview
+// answers on, siblingEnv with its private hostname, server-side only and
+// declared only for a server that reads it (a sibling's leave or join
+// restarts the other leases' servers), a separate line saying a browser
+// cannot resolve that hostname and pointing at siblingPreviewEnv, which
+// hands browser code the sibling lease's https preview URL — resolved again
+// at every join or leave, never hand-copied, a name in one of the two maps
+// only — prepare after the checkout, the preview mark, and a declared server
+// reloading by itself, so a lease sync never asks for its restart.
+func TestThemeDevServers_ContentPins_DeclarationKeys(t *testing.T) {
+	t.Parallel()
+
+	store, err := knowledge.GetEmbeddedStore()
+	if err != nil {
+		t.Fatalf("GetEmbeddedStore: %v", err)
+	}
+	doc, err := store.Get("zerops://themes/dev-servers")
+	if err != nil {
+		t.Fatalf("Get dev-servers theme: %v", err)
+	}
+	section, ok := doc.H2Sections()["The declaration"]
+	if !ok {
+		t.Fatal("dev-servers theme missing H2 section 'The declaration'")
+	}
+	body := strings.Join(strings.Fields(section), " ")
+	for _, tt := range []struct{ name, needle string }{
+		{"previewPortBase has its row", "| `previewPortBase` |"},
+		{"the preview port is the base plus the container's stable number", "`previewPortBase + ZEROPS_StableNumber`"},
+		{"the pool declares every preview port", "`previewPortBase + 1` through `previewPortBase + maxContainers`"},
+		{"the lease's address is the result's previewUrl", "`previewUrl`"},
+		{"a new lease may answer on another port", "a new lease of the part can answer on another port"},
+		{"siblingEnv has its row", "| `siblingEnv` |"},
+		{"siblingEnv gives the private container hostname", "`node-id-<n>.runtime.<pool>.zerops`"},
+		{"siblingEnv is server-side only", "server-side calls only"},
+		{"declare only a variable a server reads", "Declare a variable only when a dev server actually reads it"},
+		{"a sibling's leave or join restarts the other leases' servers", "every lease of that pool that joins or leaves the branch restarts the dev servers running in the branch's other leases"},
+		{"browser clients get their own line", "| `siblingEnv` and a browser client |"},
+		{"a browser cannot resolve the private hostname", "a browser cannot resolve the private hostname"},
+		{"a browser client names its variable in siblingPreviewEnv", "name the variable in `siblingPreviewEnv` instead"},
+		{"siblingPreviewEnv has its row", "| `siblingPreviewEnv` |"},
+		{"siblingPreviewEnv hands the sibling lease's https preview URL", "that lease's preview URL (`https://`"},
+		{"siblingPreviewEnv serves code that runs in the browser", "for code that runs in the browser"},
+		{"siblingEnv gives the container hostname for server-side calls", "`siblingEnv` gives the container hostname, for server-side calls"},
+		{"a name is in one of the two maps, never both", "A name is in one of the two, never both"},
+		{"the preview URL is resolved again at every join or leave", "resolved again whenever a lease of the branch joins or leaves"},
+		{"the preview URL is never hand-copied", "never copy it by hand"},
+		{"a declared server reloads by itself, so a sync never asks for its restart", "Either way the server reloads by itself, so a lease sync never asks you to restart it"},
+		{"prepare has its row", "| `prepare` |"},
+		{"prepare runs after the checkout, before the servers start", "after the checkout, before the declared servers start"},
+		{"a failed prepare leaves the lease held", "leaves the lease held"},
+		{"preview has its row", "| `servers[].preview` |"},
+		{"preview marks the server the preview reaches", "when more than one server listens"},
+	} {
+		if !strings.Contains(body, tt.needle) {
+			t.Errorf("%s: dev-servers declaration section missing %q", tt.name, tt.needle)
 		}
 	}
 }

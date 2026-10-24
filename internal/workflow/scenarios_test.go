@@ -9,6 +9,7 @@
 package workflow
 
 import (
+	"fmt"
 	"slices"
 	"sort"
 	"strings"
@@ -1410,6 +1411,12 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 			Phase: PhaseLaunchProductionActive, Environment: EnvContainer,
 		}},
 
+		// Pool-migrate active. Its atom gates on `phases:
+		// [pool-migrate-active]` only, like the launch atoms.
+		{"pool-migrate-active", StateEnvelope{
+			Phase: PhasePoolMigrateActive, Environment: EnvContainer,
+		}},
+
 		// Diverse managed deps so every per-managed-type env cheatsheet
 		// (RC-D / F7 split) fires and is pin-covered here. CoverageGate's
 		// canonical fixtures are postgres-focused, so the rare-type
@@ -1560,6 +1567,13 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		"launch-pipeline-configure-dashboard",
 		"launch-pipeline-skipped",
 		"launch-pipeline-configured",
+		// pool-migrate — the flow's atoms fire on the PhasePoolMigrateActive
+		// envelope above.
+		"pool-migrate-plan",
+		"pool-migrate-move",
+		"pool-migrate-env",
+		"pool-migrate-image",
+		"pool-migrate-retire",
 	)
 }
 
@@ -1716,4 +1730,271 @@ func TestScenario_S16_ExistingRepoRunsItsOwnDevFlow(t *testing.T) {
 		t.Fatalf("Synthesize: %v", err)
 	}
 	requireAtomIDsContain(t, "S16 existing repo", out, "develop-first-deploy-existing-repo")
+}
+
+// TestScenario_DevPool_FiresOnlyWhenTheProjectHoldsAPool pins that the dev-pool
+// guidance reaches a develop session whose project holds a Swarm pool and no
+// other: a project without one never carries it, and a Zerops Box (a sandbox
+// host, not a pool) does not summon it.
+func TestScenario_DevPool_FiresOnlyWhenTheProjectHoldsAPool(t *testing.T) {
+	t.Parallel()
+
+	const atom = "develop-dev-pool"
+	corpus, err := LoadAtomCorpus()
+	if err != nil {
+		t.Fatalf("LoadAtomCorpus: %v", err)
+	}
+	env := func(extra ...ServiceSnapshot) StateEnvelope {
+		return StateEnvelope{Phase: PhaseDevelopActive, Environment: EnvContainer,
+			Services:    append([]ServiceSnapshot{{Hostname: "partdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeDev, Bootstrapped: true, Deployed: true}}, extra...),
+			WorkSession: fixSession("partdev")}
+	}
+
+	withPool, err := Synthesize(env(fixSnapPool("devpool", "swarm@1")), corpus)
+	if err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	requireAtomIDsContain(t, "project holds a pool", withPool, "develop-dev-pool")
+
+	box := ServiceSnapshot{Hostname: "box", TypeVersion: "ubuntu/zbox@1", RuntimeClass: topology.RuntimeSandbox, Status: "ACTIVE"}
+	for label, e := range map[string]StateEnvelope{"no pool": env(), "a Box only": env(box)} {
+		got, err := Synthesize(e, corpus)
+		if err != nil {
+			t.Fatalf("Synthesize(%s): %v", label, err)
+		}
+		for _, m := range got {
+			if m.AtomID == atom {
+				t.Errorf("%s fired for a project with %s", atom, label)
+			}
+		}
+	}
+}
+
+// TestScenario_IdleDevPool_NamesTheLease pins that idle status names the
+// lease as the way to work on a project's Swarm pool (docs/spec-workflows.md
+// §8 DP-29): whenever an idle project holds a pool — alone, or beside a
+// runtime still to adopt or one already bootstrapped — the guidance carries
+// zerops_lease's status and acquire, and a project holding only pools is not
+// told it is empty. A project without a pool, a Box alone, or a local zcp
+// (where no lease is taken) hears nothing of it.
+func TestScenario_IdleDevPool_NamesTheLease(t *testing.T) {
+	t.Parallel()
+
+	const atom = "idle-dev-pool-entry"
+	corpus, err := LoadAtomCorpus()
+	if err != nil {
+		t.Fatalf("LoadAtomCorpus: %v", err)
+	}
+	pool := fixSnapPool("webpool", "swarm@1")
+	unmanaged := ServiceSnapshot{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Status: "ACTIVE"}
+	box := ServiceSnapshot{Hostname: "box", TypeVersion: "ubuntu/zbox@1", RuntimeClass: topology.RuntimeSandbox, Status: "ACTIVE"}
+
+	poolsOnly, err := Synthesize(StateEnvelope{Phase: PhaseIdle, Environment: EnvContainer, IdleScenario: IdleScenario("dev-pool"),
+		Services: []ServiceSnapshot{pool, fixSnapPool("hqpool", "swarm-vm@1")}}, corpus)
+	if err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	requireAtomIDsContain(t, "a project holding only pools", poolsOnly, "idle-dev-pool-entry")
+	body := strings.Join(BodiesOf(poolsOnly), "\n")
+	for _, want := range []string{`zerops_lease action=status`, `zerops_lease action=acquire`, `workflow="develop"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("a project holding only pools: guidance lacks %q:\n%s", want, body)
+		}
+	}
+	for _, m := range poolsOnly {
+		if m.AtomID == "idle-bootstrap-entry" {
+			t.Errorf("a project holding only pools is told it is empty (%s)", m.AtomID)
+		}
+	}
+
+	beside, err := Synthesize(StateEnvelope{Phase: PhaseIdle, Environment: EnvContainer, IdleScenario: IdleAdopt,
+		Services: []ServiceSnapshot{unmanaged, pool}}, corpus)
+	if err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	requireAtomIDsContain(t, "a pool beside a runtime to adopt", beside, "idle-adopt-entry", "idle-dev-pool-entry")
+
+	for label, env := range map[string]StateEnvelope{
+		"no pool":     {Phase: PhaseIdle, Environment: EnvContainer, IdleScenario: IdleAdopt, Services: []ServiceSnapshot{unmanaged}},
+		"a Box alone": {Phase: PhaseIdle, Environment: EnvContainer, IdleScenario: IdleEmpty, Services: []ServiceSnapshot{box}},
+		"local zcp":   {Phase: PhaseIdle, Environment: EnvLocal, IdleScenario: IdleScenario("dev-pool"), Services: []ServiceSnapshot{pool}},
+	} {
+		got, err := Synthesize(env, corpus)
+		if err != nil {
+			t.Fatalf("Synthesize(%s): %v", label, err)
+		}
+		for _, m := range got {
+			if m.AtomID == atom {
+				t.Errorf("%s fired for %s", atom, label)
+			}
+		}
+	}
+}
+
+// TestScenario_PoolDevPair_RendersNoContainerWorkOnThePool pins what a pair
+// keyed by its dev pool renders, across idle and develop, both close modes
+// that drive a deploy, both git-push states and a stage deployed or not: no
+// atom binds to the pool except one about pools, no rendered guidance or plan
+// step addresses the pool as a container (deploy, verify, dev server, ssh),
+// the develop session carries the lease guidance, and the stage's deploy
+// step runs from a lease.
+func TestScenario_PoolDevPair_RendersNoContainerWorkOnThePool(t *testing.T) {
+	t.Parallel()
+
+	corpus, err := LoadAtomCorpus()
+	if err != nil {
+		t.Fatalf("LoadAtomCorpus: %v", err)
+	}
+	byID := make(map[string]KnowledgeAtom, len(corpus))
+	for _, a := range corpus {
+		byID[a.ID] = a
+	}
+	containerWork := []string{
+		`targetService="apppool"`, `sourceService="apppool"`, `serviceHostname="apppool"`,
+		`hostname="apppool"`, `ssh apppool`, `/var/www/apppool`, `targetService=apppool`, `sourceService=apppool`,
+	}
+	services := func(closeMode topology.CloseDeployMode, gitPush topology.GitPushState, stageDeployed bool) []ServiceSnapshot {
+		s := poolDevPairServices(closeMode, gitPush)
+		s[0].TypeVersion, s[0].Status, s[0].BuildIntegration = "swarm@1", "ACTIVE", topology.BuildIntegrationNone
+		s[1].TypeVersion, s[1].Status, s[1].BuildIntegration = "nodejs@22", "ACTIVE", topology.BuildIntegrationNone
+		s[1].Deployed = stageDeployed
+		return s
+	}
+	held := &[]LeaseSnapshot{{Alias: "apppool-4", Pool: "apppool", Branch: "feat-x", ContainerHostname: "node-id-4.runtime.apppool.zerops", State: "held"}}
+
+	for _, closeMode := range []topology.CloseDeployMode{topology.CloseModeAuto, topology.CloseModeUnset} {
+		for _, gitPush := range []topology.GitPushState{topology.GitPushUnconfigured, topology.GitPushConfigured} {
+			for _, stageDeployed := range []bool{true, false} {
+				envs := map[string]StateEnvelope{
+					"idle": {Phase: PhaseIdle, Environment: EnvContainer, IdleScenario: IdleBootstrapped,
+						Services: services(closeMode, gitPush, stageDeployed), Leases: held},
+					"develop, stage in scope": {Phase: PhaseDevelopActive, Environment: EnvContainer,
+						Services: services(closeMode, gitPush, stageDeployed), Leases: held, WorkSession: fixSession("appstage")},
+					"develop, pool named in scope": {Phase: PhaseDevelopActive, Environment: EnvContainer,
+						Services: services(closeMode, gitPush, stageDeployed), Leases: held, WorkSession: fixSession("apppool", "appstage")},
+				}
+				for label, env := range envs {
+					label = fmt.Sprintf("%s (close=%s gitPush=%s stageDeployed=%v)", label, closeMode, gitPush, stageDeployed)
+					out, err := Synthesize(env, corpus)
+					if err != nil {
+						t.Fatalf("%s: Synthesize: %v", label, err)
+					}
+					for _, m := range out {
+						if m.Service != nil && m.Service.Hostname == "apppool" && !slices.Contains(byID[m.AtomID].Axes.Runtimes, topology.RuntimePool) {
+							t.Errorf("%s: %s bound to the pool", label, m.AtomID)
+						}
+						for _, needle := range containerWork {
+							if strings.Contains(m.Body, needle) {
+								t.Errorf("%s: %s addresses the pool as a container (%s)", label, m.AtomID, needle)
+							}
+						}
+					}
+					if env.Phase == PhaseDevelopActive {
+						requireAtomIDsContain(t, label, out, "develop-dev-pool")
+					}
+					plan := BuildPlan(env)
+					for _, step := range append([]NextAction{plan.Primary}, perServiceActions(plan)...) {
+						for _, k := range []string{"targetService", "sourceService", "serviceHostname", "hostname"} {
+							if step.Args[k] == "apppool" {
+								t.Errorf("%s: plan step %s %v addresses the pool", label, step.Tool, step.Args)
+							}
+						}
+					}
+					if env.Phase == PhaseDevelopActive && plan.Primary.Tool == "zerops_deploy" && plan.Primary.Args["sourceService"] != "apppool-4" {
+						t.Errorf("%s: the stage deploys from %q, want the lease apppool-4", label, plan.Primary.Args["sourceService"])
+					}
+				}
+			}
+		}
+	}
+}
+
+// perServiceActions returns plan.PerService's actions in hostname order.
+func perServiceActions(plan Plan) []NextAction {
+	hosts := make([]string, 0, len(plan.PerService))
+	for h := range plan.PerService {
+		hosts = append(hosts, h)
+	}
+	sort.Strings(hosts)
+	out := make([]NextAction, 0, len(hosts))
+	for _, h := range hosts {
+		out = append(out, plan.PerService[h])
+	}
+	return out
+}
+
+// TestScenario_UserSuppliedCode_PlanningPointsAtABox pins where the rule
+// "code the app's users send runs in a Zerops Box sandbox beside the app"
+// renders (docs/spec-workflows.md §8 PS-15): at the discover step of both
+// routes that plan new services — classic and recipe — where the agent
+// decides what to create, never at an adopt discover (it plans nothing new)
+// or past discover; and in develop once a runtime is deployed, for a feature
+// added to an app that already exists. The first-deploy branch follows the
+// bootstrap that just showed the rule, and its guidance sits at the MCP
+// output cap (TestCorpusCoverage_OutputUnderMCPCap), so it carries none.
+func TestScenario_UserSuppliedCode_PlanningPointsAtABox(t *testing.T) {
+	t.Parallel()
+
+	corpus, err := LoadAtomCorpus()
+	if err != nil {
+		t.Fatalf("LoadAtomCorpus: %v", err)
+	}
+	const atom = "bootstrap-user-code-box"
+	render := func(env StateEnvelope) []MatchedRender {
+		t.Helper()
+		out, err := Synthesize(env, corpus)
+		if err != nil {
+			t.Fatalf("Synthesize: %v", err)
+		}
+		return out
+	}
+	has := func(matches []MatchedRender, id string) (string, bool) {
+		for _, m := range matches {
+			if m.AtomID == id {
+				return m.Body, true
+			}
+		}
+		return "", false
+	}
+	boot := func(route BootstrapRoute, step string) StateEnvelope {
+		return StateEnvelope{Phase: PhaseBootstrapActive, Environment: EnvContainer, Bootstrap: &BootstrapSessionSummary{Route: route, Step: step}}
+	}
+
+	classic := render(boot(BootstrapRouteClassic, StepDiscover))
+	requireAtomIDsContain(t, "classic discover plans a Box for users' code", classic, "bootstrap-user-code-box")
+	body, _ := has(classic, atom)
+	for _, want := range []string{"Zerops Box", "ubuntu/zbox@1", "prg1", `zerops_knowledge uri="zerops://themes/services"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("%s body missing %q:\n%s", atom, want, body)
+		}
+	}
+	requireAtomIDsContain(t, "recipe discover plans a Box for users' code", render(boot(BootstrapRouteRecipe, StepDiscover)), "bootstrap-user-code-box")
+	for _, tc := range []struct {
+		label string
+		env   StateEnvelope
+	}{
+		{"adopt discover plans nothing new", boot(BootstrapRouteAdopt, StepDiscover)},
+		{"classic provision is past the decision", boot(BootstrapRouteClassic, StepProvision)},
+		{"recipe close is past the decision", boot(BootstrapRouteRecipe, StepClose)},
+	} {
+		if _, ok := has(render(tc.env), atom); ok {
+			t.Errorf("%s: %s fired", tc.label, atom)
+		}
+	}
+
+	const developAtom = "develop-user-code-box"
+	deployed := render(StateEnvelope{Phase: PhaseDevelopActive, Environment: EnvContainer,
+		Services: []ServiceSnapshot{fixSnapDeployedDevAuto("webdev")}})
+	requireAtomIDsContain(t, "a deployed app adding a feature that runs users' code", deployed, "develop-user-code-box")
+	feature, _ := has(deployed, developAtom)
+	for _, want := range []string{"Zerops Box", "ubuntu/zbox@1", "prg1", `zerops_knowledge uri="zerops://themes/services"`} {
+		if !strings.Contains(feature, want) {
+			t.Errorf("%s body missing %q:\n%s", developAtom, want, feature)
+		}
+	}
+	firstDeploy := render(StateEnvelope{Phase: PhaseDevelopActive, Environment: EnvContainer,
+		Services: fixSnapBootstrappedNeverDeployedPair("appdev", "appstage", "nodejs@22", topology.RuntimeDynamic)})
+	if _, ok := has(firstDeploy, developAtom); ok {
+		t.Errorf("%s fired in the first-deploy branch", developAtom)
+	}
 }

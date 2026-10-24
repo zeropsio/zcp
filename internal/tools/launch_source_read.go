@@ -91,6 +91,11 @@ func readSourceState(
 		)
 	}
 
+	// PS-3: a pool or Box is not the app — refuse before any SSH read.
+	if err := refuseNonRuntimeKind(targetHostname, runtimeSvc.Type, "launch"); err != nil {
+		return nil, err
+	}
+
 	state := &LaunchSourceState{
 		ServiceType:     runtimeSvc.Type,
 		ManagedServices: collectManagedServices(discover, targetHostname),

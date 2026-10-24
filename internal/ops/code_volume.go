@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/devsup"
+	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -87,4 +88,72 @@ func FillCodeVolume(ctx context.Context, ssh SSHDeployer, hostname, volume, moun
 // §2.8a). A *NoSupervisorError says nothing there answers.
 func ReloadSupervisor(ctx context.Context, ssh SSHDeployer, hostname string) (devsup.State, error) {
 	return supervisorCtl(ctx, ssh, hostname, "reload")
+}
+
+// CodeVolumeDataRoot is where a local-storage service's own container holds
+// the volume: a variant-B pair's checkout reads there once no dev service is
+// left to mount it (zcp's mount of the volume service shows none of it).
+const CodeVolumeDataRoot = "/data"
+
+// codeVolumeConfig frames the config file CodeVolumeMountingSetups reads.
+const codeVolumeConfig = "zcp-code-volume-config 1"
+
+// CodeVolumeMountingSetups names every setup of the checkout's config file at
+// root on hostname — zerops.yaml, else zerops.yml, the working tree's — whose
+// run.volume mounts volume, with the file read. The pool migration's retire
+// reads it before it deletes a variant-B pair's dev services: a service
+// running such a setup still mounts the volume, and the platform refuses the
+// volume's delete until none does (docs/spec-workflows.md §13 PM-13). A file
+// it cannot read or parse is an error, never a volume nothing mounts.
+func CodeVolumeMountingSetups(ctx context.Context, ssh SSHDeployer, hostname, root, volume string) (string, []string, error) {
+	cmd := "cd " + shellQuote(root) + " || exit 3; " +
+		`for f in zerops.yaml zerops.yml; do if [ -f "$f" ]; then printf '%s %s\n' ` + shellQuote(codeVolumeConfig) + ` "$f"; cat "$f"; exit 0; fi; done; ` +
+		"echo " + shellQuote(codeVolumeConfig+" -")
+	out, err := ssh.ExecSSH(ctx, hostname, cmd)
+	if err != nil {
+		return "", nil, fmt.Errorf("read the config file at %s on %s: %w", root, hostname, err)
+	}
+	text := string(out)
+	i := strings.Index(text, codeVolumeConfig+" ")
+	if i < 0 {
+		return "", nil, fmt.Errorf("read the config file at %s on %s: no answer: %s", root, hostname, strings.TrimSpace(text))
+	}
+	header, body, _ := strings.Cut(text[i+len(codeVolumeConfig)+1:], "\n")
+	file := strings.TrimSpace(header)
+	if file == "-" {
+		return "", nil, fmt.Errorf("%s holds no zerops.yaml or zerops.yml at %s", hostname, root)
+	}
+	doc, err := ParseZeropsYmlContent([]byte(body), file)
+	if err != nil {
+		return file, nil, fmt.Errorf("read %s at %s on %s: %w", file, root, hostname, err)
+	}
+	var setups []string
+	for _, e := range doc.Zerops {
+		if e.Setup != "" && e.Run.Volume.Hostname == volume {
+			setups = append(setups, e.Setup)
+		}
+	}
+	return file, setups, nil
+}
+
+// volumeStillMountedCode and volumeStillMountedText are how the platform
+// refuses a local-storage volume's delete while a service still mounts it:
+// the delete answers a process that fails with the error containerAction
+// "This Local Storage volume is still mounted by other services…" — naming no
+// service — which the process read folds into FailReason (live-verified).
+const (
+	volumeStillMountedCode = "containerAction"
+	volumeStillMountedText = "still mounted"
+)
+
+// VolumeStillMounted reports a volume delete's process the platform failed
+// because a service still mounts the volume (some service, it does not say
+// which): the volume stays — FAILED, still working — until a later delete
+// finds nothing mounting it.
+func VolumeStillMounted(proc *platform.Process) bool {
+	if proc == nil || proc.Status != platform.ProcessStatusFailed || proc.FailReason == nil {
+		return false
+	}
+	reason := *proc.FailReason
+	return strings.HasPrefix(reason, volumeStillMountedCode) && strings.Contains(reason, volumeStillMountedText)
 }

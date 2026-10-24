@@ -31,6 +31,11 @@ import (
 // report. The stamp routes through the single owner (workflow.UpdateServiceMeta),
 // the same path git-push-setup writes, so the value the launch gate later reads
 // derives from one owner.
+//
+// A pair keyed by its dev pool is never read: its pool holds no checkout of
+// its own, and the pool's hostname answers from a random container — possibly
+// someone's lease — whose origin says nothing of the pair
+// (docs/spec-workflows.md §13 PM-10).
 func reconcileAdoptedGitPush(ctx context.Context, client platform.Client, sshDeployer ops.SSHDeployer, rt runtime.Info, stateDir string, existing []platform.ServiceStack) []string {
 	if !rt.InContainer || sshDeployer == nil {
 		return nil
@@ -50,7 +55,7 @@ func reconcileAdoptedGitPush(ctx context.Context, client platform.Client, sshDep
 		// dep or any non-runtime has no /var/www/.git origin so the live read
 		// returns empty and it's skipped too. Scoped to the live project by the
 		// idByHost lookup below.
-		if m.GitPushState == topology.GitPushConfigured || !m.IsComplete() {
+		if m.GitPushState == topology.GitPushConfigured || !m.IsComplete() || m.DevIsPool() {
 			continue
 		}
 		pushHost := m.Hostname

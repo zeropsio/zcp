@@ -21,6 +21,8 @@ type DiagnosedDestruction struct {
 	//   "import-override" — import with override=true tears down matching
 	//                       service stacks (containers, deployed code,
 	//                       env vars, SSHFS mounts).
+	//   "pool-retire"     — the pool migration deletes a part's old dev
+	//                       service, by the id it read, after its bundle.
 	// Future: "env-set", "env-delete", "generate-dotenv".
 	Operation string `json:"operation"`
 	// Targets are the service hostnames whose state would be erased.
@@ -91,6 +93,18 @@ type DestructionLoss struct {
 	// (launch-production reset with launchKey deletes the orphan target
 	// project, not just the local state file).
 	Projects []string `json:"projects,omitempty"`
+	// Containers are pool containers a destructive op deletes, by lease
+	// alias, each with its /var/www (lowering a pool's maxContainers).
+	Containers []string `json:"containers,omitempty"`
+	// ServiceIDs are the ids ServiceStacks are deleted by, read directly —
+	// never resolved from a hostname through the lagging search (pool-retire).
+	ServiceIDs []string `json:"serviceIds,omitempty"`
+	// UnsavedWork names the work on a service its origin lacks, whose only
+	// copy afterwards is the bundle the op writes first (pool-retire).
+	UnsavedWork []string `json:"unsavedWork,omitempty"`
+	// NotKept names what no copy keeps (pool-retire: .env files, the
+	// service's own URLs, ignored files, git config and hooks).
+	NotKept []string `json:"notKept,omitempty"`
 }
 
 // DestructiveAck is the agent-supplied acknowledgment that a destructive
@@ -204,6 +218,12 @@ func (d DiagnosedDestruction) JoinTargets() string {
 // stays in sync with the actual handler signature.
 func suggestionForFirstCallRefusal(expected DiagnosedDestruction) string {
 	const fallback = "Read zerops_events for the targets (failed/never-started services have no runtime logs), then re-call with confirmDestructive matching wouldDestroy."
+	switch expected.Operation {
+	case poolShrinkOperation:
+		return poolShrinkSuggestion(expected)
+	case poolRetireOperation:
+		return poolRetireSuggestion(expected)
+	}
 	if expected.Retry == nil {
 		// A failed-*/stuck-building target (R2): no ready-made re-import —
 		// read the timeline first, then the non-gated corrective is Then
@@ -250,4 +270,27 @@ var retryShapes = map[string]struct {
 }{
 	importOverrideOperation: {tool: "zerops_import", paramPrefix: "override=true "},
 	launchResetOperation:    {tool: "zerops_workflow", paramPrefix: `action="reset" workflow="launch-production" productionProjectName="<your-target-name>" `},
+}
+
+// poolShrinkSuggestion is the first-call refusal of lowering a pool's
+// maxContainers over a lease: what goes and whose it is, the corrective that
+// keeps the leases (Then), and the acknowledgment that deletes them anyway.
+func poolShrinkSuggestion(expected DiagnosedDestruction) string {
+	parts := make([]string, 0, len(expected.Diagnoses))
+	for _, d := range expected.Diagnoses {
+		parts = append(parts, d.Hostname+" ("+d.Cause+")")
+	}
+	ack, err := json.Marshal(struct {
+		Operation           string   `json:"operation"`
+		AcknowledgedTargets []string `json:"acknowledgedTargets"`
+	}{expected.Operation, append([]string{}, expected.Targets...)})
+	if err != nil {
+		return "Re-call with confirmDestructive matching wouldDestroy."
+	}
+	text := "Lowering the pool's maxContainers deletes its highest-numbered containers above the new maximum, leased ones included, each with its /var/www: " +
+		strings.Join(parts, ", ") + ". "
+	if expected.Then != "" {
+		text += expected.Then + ". "
+	}
+	return text + "To lower it anyway, re-send the same call with confirmDestructive=" + string(ack) + "."
 }

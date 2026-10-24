@@ -113,7 +113,7 @@ func memoryCeilingKB(mem containerMemory, maxRAMKB int64) int64 {
 // memoryRefusal is the one sentence for a start that would leave less headroom
 // than the largest running server holds; "" when the start fits or no server
 // runs to measure one more by.
-func memoryRefusal(hostname, name string, mem containerMemory, ceiling int64, st devsup.State) string {
+func memoryRefusal(hostname, name string, mem containerMemory, ceiling int64, st devsup.State, raise string) string {
 	if ceiling <= 0 {
 		return ""
 	}
@@ -133,8 +133,8 @@ func memoryRefusal(hostname, name string, mem containerMemory, ceiling int64, st
 		return ""
 	}
 	slices.Sort(running)
-	return fmt.Sprintf("Not starting %s: %s uses %s of its %s RAM ceiling, leaving %s, less than the %s one more server like the largest running one needs (running: %s) — stop another dev server on %s, or raise the service's max RAM with zerops_scale.",
-		serverLabel(hostname, name), hostname, gib(mem.UsedKB), gib(ceiling), gib(max(headroom, 0)), gib(margin), strings.Join(running, ", "), hostname)
+	return fmt.Sprintf("Not starting %s: %s uses %s of its %s RAM ceiling, leaving %s, less than the %s one more server like the largest running one needs (running: %s) — stop another dev server on %s, or %s.",
+		serverLabel(hostname, name), hostname, gib(mem.UsedKB), gib(ceiling), gib(max(headroom, 0)), gib(margin), strings.Join(running, ", "), hostname, raise)
 }
 
 func gib(kb int64) string {
@@ -176,10 +176,18 @@ func guardStartOnMemory(ctx context.Context, ssh SSHDeployer, client platform.Cl
 	if !ok {
 		return "", nil
 	}
-	ceiling := memoryCeilingKB(mem, serviceMaxRAMKB(ctx, client, projectID, p.Hostname))
-	if msg := memoryRefusal(p.Hostname, name, mem, ceiling, ds.State); msg != "" {
+	// A lease's RAM ceiling is its pool's: the pool's autoscaling scales every
+	// container of it, and the alias is no service to scale.
+	ramHost, raise, advice := p.Hostname, "raise the service's max RAM with zerops_scale", "raise the service's max RAM (zerops_scale)"
+	if p.lease != nil {
+		ramHost = p.lease.Pool
+		raise = fmt.Sprintf("raise the max RAM of the pool %s with zerops_scale (it scales every container of the pool, this lease's included)", ramHost)
+		advice = fmt.Sprintf("raise the pool's max RAM (zerops_scale serviceHostname=%q — every container of the pool gets it)", ramHost)
+	}
+	ceiling := memoryCeilingKB(mem, serviceMaxRAMKB(ctx, client, projectID, ramHost))
+	if msg := memoryRefusal(p.Hostname, name, mem, ceiling, ds.State, raise); msg != "" {
 		return "", platform.NewPlatformError(platform.ErrPreflightFailed, msg,
-			fmt.Sprintf("Stop a dev server you are not working on (zerops_dev_server action=stop hostname=%q name=<server>), or raise the service's max RAM (zerops_scale).", p.Hostname))
+			fmt.Sprintf("Stop a dev server you are not working on (zerops_dev_server action=stop hostname=%q name=<server>), or %s.", p.Hostname, advice))
 	}
 	return sharedMemoryNote(p.Hostname, name, ceiling, ds), nil
 }

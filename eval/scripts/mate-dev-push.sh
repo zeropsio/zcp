@@ -85,6 +85,12 @@ node_pty_prebuild() {
 restart_mate_unit() {
   # The unit exists only once `zcp init mate` (stream S2) has created it.
   if remote "systemctl list-units --all --no-legend '$MATE_UNIT.service' 2>/dev/null | grep -q '$MATE_UNIT'"; then
+    # A unit file that changed on disk since systemd loaded it restarts on its
+    # old definition ("run 'systemctl daemon-reload'"): reload first, only then.
+    if [ "$(remote "systemctl show --property=NeedDaemonReload --value '$MATE_UNIT.service'" 2>/dev/null || true)" = "yes" ]; then
+      echo "==> $MATE_UNIT's unit file changed on disk — reloading systemd units..."
+      remote "sudo systemctl daemon-reload"
+    fi
     echo "==> Restarting $MATE_UNIT..."
     remote "sudo systemctl restart '$MATE_UNIT'"
   else

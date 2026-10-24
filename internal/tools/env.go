@@ -336,7 +336,7 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 			resp := envChangeResult{Process: delResult.Process, TimedOut: delTimedOut}
 			applyAutoRestart(ctx, client, projectID, input, selfHostname, input.Variables, true, &resp, onProgress)
 			return jsonResult(resp), nil, nil
-		case "request":
+		case envActionRequest:
 			// A request writes nothing: Mate draws a field for the person,
 			// whose value goes straight to the vault — it never enters the
 			// conversation, this result, or any log.
@@ -437,6 +437,12 @@ func applyAutoRestart(
 	resp.Readers = plan.readers
 	resp.RestartWarnings = append(resp.RestartWarnings, plan.warnings...)
 	unreadHint := nothingReadsHint(plan.unreadKeys, input)
+	switch {
+	case plan.poolOwner:
+		unreadHint = poolEnvHint(keys, input.ServiceHostname)
+	case plan.boxOwner:
+		unreadHint = boxEnvHint(keys, input.ServiceHostname)
+	}
 
 	if input.SkipRestart.Bool() {
 		resp.RestartSkipped = true
@@ -509,6 +515,14 @@ type restartPlan struct {
 	unreadKeys []string
 	warnings   []string
 	uncertain  bool
+	// poolOwner is true when the changed keys are a Swarm pool's own: its
+	// leases read them in their ssh sessions as they are (DP), never
+	// through a restart or a deploy.
+	poolOwner bool
+	// boxOwner is true when the changed keys are a Zerops Box's own: it
+	// applies them at once, or on a reload for its API key, never through a
+	// restart (PS-8).
+	boxOwner bool
 }
 
 // planRestart finds the readers of the changed keys from the project's
@@ -527,6 +541,14 @@ func planRestart(ctx context.Context, client platform.Client, projectID string, 
 	owner := ""
 	if !input.Project.Bool() {
 		owner = input.ServiceHostname
+	}
+	for _, svc := range services {
+		if owner == "" || svc.Name != owner {
+			continue
+		}
+		typeName := svc.ServiceStackTypeInfo.ServiceStackTypeVersionName
+		plan.poolOwner = topology.IsPoolType(typeName)
+		plan.boxOwner = topology.IsSandboxType(typeName)
 	}
 
 	scopes, err := ops.ReadProjectEnvScopes(ctx, client, projectID, services)
@@ -606,6 +628,49 @@ func nothingReadsHint(keys []string, input EnvInput) string {
 	host := input.ServiceHostname
 	return fmt.Sprintf("Nothing reads %s yet — reference it in %s's run.envVariables (e.g. `NAME: ${%s}`), or from another service as `${%s_%s}`, then deploy.",
 		names, host, keys[0], strings.ReplaceAll(host, "-", "_"), keys[0])
+}
+
+// poolEnvHint is the next action for a pool's own keys: its service env
+// reaches every container's ssh session as it is, so a lease clones and
+// pushes with GIT_TOKEN at once; processes the container started at boot (the
+// dev-server supervisor and its servers) keep the env they started with.
+func poolEnvHint(keys []string, pool string) string {
+	if len(keys) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s is %s's service env, which reaches its containers' ssh sessions as it is: its leases read it now (a lease clones and pushes with GIT_TOKEN), with no restart or deploy. A pool is never restarted for an env change — that would restart containers others hold. Processes a container started at boot — the dev-server supervisor and the servers it runs — keep the env they started with.",
+		strings.Join(keys, ", "), pool)
+}
+
+// boxAPIKeyEnv is the Zerops Box variable holding its workspace API key.
+const boxAPIKeyEnv = "ZBOX_WORKSPACE_API_KEY"
+
+// boxEnvHint is the next action for a change to a Zerops Box's own variables
+// (spec-workflows.md §8 PS-8). A Box is never restarted for one: a restart
+// stops its VM, and every running sandbox comes back PARKED without its
+// memory. Its ordinary variables (sandbox secrets, integration credentials)
+// apply at once; ZBOX_WORKSPACE_API_KEY is read by the orchestrator only when
+// it starts, so a reload — which keeps the sandboxes running — applies it.
+func boxEnvHint(keys []string, box string) string {
+	var others []string
+	apiKey := false
+	for _, k := range keys {
+		if k == boxAPIKeyEnv {
+			apiKey = true
+			continue
+		}
+		others = append(others, k)
+	}
+	var parts []string
+	if len(others) > 0 {
+		parts = append(parts, fmt.Sprintf("%s is %s's own variable, which a Zerops Box applies at once — no restart or reload: new sandboxes and integrations use the new value, and a sandbox given the old one as a secret becomes stale.",
+			strings.Join(others, ", "), box))
+	}
+	if apiKey {
+		parts = append(parts, fmt.Sprintf("%s applies when %s reloads: zerops_manage action=reload serviceHostname=%q — a reload keeps its running sandboxes. Until then only the old key works. A Box is never restarted for an env change: a restart or stop brings every running sandbox back PARKED without its memory.",
+			boxAPIKeyEnv, box, box))
+	}
+	return strings.Join(parts, " ")
 }
 
 func targetNames(targets []restartTarget) []string {
@@ -709,7 +774,8 @@ type restartTarget struct {
 }
 
 // isAutoRestartEligible reports whether a service that reads a changed key
-// is restarted: live, a user runtime, not the service running this session.
+// is restarted: live, a user runtime, not the service running this session —
+// never a managed service, a Swarm pool or a Zerops Box.
 func isAutoRestartEligible(svc platform.ServiceStack, selfHostname string) bool {
 	if !svc.IsLive() {
 		return false
@@ -724,6 +790,17 @@ func isAutoRestartEligible(svc platform.ServiceStack, selfHostname string) bool 
 	// messaging) consume their own credentials — user-set project envs do
 	// not affect their operation, so restarting is unnecessary downtime.
 	if topology.IsManagedService(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) {
+		return false
+	}
+	// A Swarm pool is never restarted: that restarts containers others hold,
+	// and its service env reaches their ssh sessions as it is (DP).
+	if topology.IsPoolType(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) {
+		return false
+	}
+	// A Zerops Box is never restarted: its restart stops the VM and every
+	// running sandbox loses its memory, while its own variables apply at
+	// once or on a reload (PS-8).
+	if topology.IsSandboxType(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) {
 		return false
 	}
 	return true

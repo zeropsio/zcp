@@ -70,6 +70,14 @@ func handleRelease(
 			fmt.Sprintf("Service %q is not bootstrapped", input.Service),
 			"Run bootstrap first: zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"adopt\""), WithRecoveryStatus()), nil, nil
 	}
+	// A pair keyed by its dev pool has no checkout to read the pushed HEAD
+	// from or tag (docs/spec-workflows.md §13 PM-10): refused before any read.
+	if meta.DevIsPool() {
+		branch := trackedRefOrDefault(meta)
+		return convertError(poolPairRefusal("release", input.Service, meta, fmt.Sprintf(
+			"Release from a lease of the pool on %s: %s, then in the lease's checkout (ssh to its alias) check the tree is clean and HEAD is on origin, and run `git tag -a vX.Y.Z -m \"release vX.Y.Z\" && git push origin vX.Y.Z` — the tag fires the production pipeline.",
+			branch, poolPairLeaseAcquire(meta, branch))), WithRecoveryStatus()), nil, nil
+	}
 	if meta.GitPushState != topology.GitPushConfigured {
 		return convertError(platform.NewPlatformError(
 			platform.ErrPrerequisiteMissing,

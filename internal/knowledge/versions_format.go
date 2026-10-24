@@ -13,7 +13,7 @@ func FormatStackList(schemas *schema.Schemas) string {
 	if cv == nil {
 		return ""
 	}
-	lines := catalogLines(cv, nil)
+	lines := append(catalogLines(cv, nil), poolLines(cv)...)
 	if len(lines) == 0 {
 		return ""
 	}
@@ -43,6 +43,7 @@ func FormatServiceStacks(schemas *schema.Schemas) string {
 		}
 		lines = append(lines, "Build-only: "+strings.Join(entries, " | "))
 	}
+	lines = append(lines, poolLines(cv)...)
 	if len(lines) == 0 {
 		return ""
 	}
@@ -103,6 +104,35 @@ func catalogLines(cv *catalogView, buildBases map[string]bool) []string {
 		lines = append(lines, "Object storage: object-storage")
 	}
 	return lines
+}
+
+// Header and purpose lines of the pool/sandbox group (spec-workflows.md §8 PS-1).
+const (
+	poolsGroupHeader = "Pools and sandboxes (infrastructure an app uses, not app runtimes; " +
+		"no alpine/ and ubuntu/ pair — write each type exactly as listed):"
+	poolPurpose    = "Swarm pool: up to 10 containers its orchestrator hands out (leases, exec, snapshots)"
+	sandboxPurpose = "Zerops Box: microVM sandboxes that run code the app's users send, apart from the app (beta; projects in prg1 only)"
+)
+
+// poolLines renders Swarm pools and Zerops Box as their own group, apart from
+// the app runtimes: a pool or Box is infrastructure an app uses, never the app.
+// Empty when the schema lists neither.
+func poolLines(cv *catalogView) []string {
+	var entries []string
+	if len(cv.pools) > 0 {
+		names := make([]string, 0, len(cv.pools))
+		for _, bv := range cv.pools {
+			names = append(names, compactBase(bv))
+		}
+		entries = append(entries, "- "+strings.Join(names, " | ")+" — "+poolPurpose)
+	}
+	if boxes := concreteStorageTypes(cv.sandboxes); len(boxes) > 0 {
+		entries = append(entries, "- "+strings.Join(boxes, " | ")+" — "+sandboxPurpose)
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+	return append([]string{poolsGroupHeader}, entries...)
 }
 
 func catalogLine(label string, group []baseVersions, buildBases map[string]bool) string {

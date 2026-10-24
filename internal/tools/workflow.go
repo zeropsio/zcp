@@ -11,7 +11,9 @@ package tools
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -51,10 +53,10 @@ const (
 // WorkflowInput is the input type for zerops_workflow.
 type WorkflowInput struct {
 	// Legacy: workflow name for static guidance (backward compat).
-	Workflow string `json:"workflow,omitempty" jsonschema:"Workflow name: bootstrap, develop, export, or launch-production."`
+	Workflow string `json:"workflow,omitempty" jsonschema:"Workflow name: bootstrap, develop, export, launch-production, or pool-migrate."`
 
 	// Multi-action fields.
-	Action      string                     `json:"action,omitempty"      jsonschema:"Orchestration action: start (workflow=bootstrap is two-phase: first call without route returns kind=\"route-menu\" with ranked options, second call with route=<chosen> commits the session and returns kind=\"session-active\"; agents key off the kind field instead of guessing from field presence), complete, skip, status, close, reset, iterate, resume, list, route, close-mode (set per-pair CloseDeployMode auto/manual), git-push-setup (not in a Mate: verify + configure git-push — pass service + remoteUrl + gitToken in container mode; auth probed BEFORE any state is written), build-integration (not in a Mate: wire ZCP CI — pass service + integration), group-recipe (Mate only: propose the recipe tiers HQ lacks, returning the change), open-change (Mate only: open the change of your pushed branch in HQ — pass branch and title), describe-change (Mate only: set the description of a pair's change in HQ — pass description, and service if several pairs), mac-pair (Mate only: the next step to pair the user's Mac), adopt-local, set-default-setup (write the target service's PrimarySetupName/StageSetupName — resolves requiresSetupInput blockers; pass targetService + setup), record-deploy (stamp FirstDeployedAt for an externally-deployed service — zcli/CI/CD bridge; pass targetService), release (in a Mate: hand off to the person; otherwise: tag + push user-confirmed releaseVersion from a clean, pushed source; pass service and omit releaseVersion for guidance)."`
+	Action      string                     `json:"action,omitempty"      jsonschema:"Orchestration action: start (workflow=bootstrap is two-phase: first call without route returns kind=\"route-menu\" with ranked options, second call with route=<chosen> commits the session and returns kind=\"session-active\"; agents key off the kind field instead of guessing from field presence), complete, skip, status, close, reset, iterate, resume, list, route, close-mode (set per-pair CloseDeployMode auto/manual), git-push-setup (not in a Mate: verify + configure git-push — pass service + remoteUrl + gitToken in container mode; auth probed BEFORE any state is written), build-integration (not in a Mate: wire ZCP CI — pass service + integration), group-recipe (Mate only: propose the recipe tiers HQ lacks, returning the change), open-change (Mate only: open the change of your pushed branch in HQ — pass branch and title), describe-change (Mate only: set the description of a pair's change in HQ — pass description, and service if several pairs), mac-pair (Mate only: the next step to pair the user's Mac), adopt-local, set-default-setup (write the target service's PrimarySetupName/StageSetupName — resolves requiresSetupInput blockers; pass targetService + setup), record-deploy (stamp FirstDeployedAt for an externally-deployed service — zcli/CI/CD bridge; pass targetService), release (in a Mate: hand off to the person; otherwise: tag + push user-confirmed releaseVersion from a clean, pushed source; pass service and omit releaseVersion for guidance), pool-env (pool-migrate's env step: zcp copies the dev's env to its pool), retire (pool-migrate's last step: deletes the old dev service, diagnosed first)."`
 	Intent      string                     `json:"intent,omitempty"      jsonschema:"User intent description for start action (what you want to accomplish)."`
 	Attestation string                     `json:"attestation,omitempty" jsonschema:"Description of what was verified or accomplished (required for complete actions)."`
 	Step        string                     `json:"step,omitempty"        jsonschema:"Bootstrap step name for complete/skip actions (discover, provision, close)."`
@@ -64,7 +66,8 @@ type WorkflowInput struct {
 	CloseModes  map[string]string          `json:"closeMode,omitempty"   jsonschema:"Per-service close-deploy-mode map for action=close-mode (e.g. {\"appdev\":\"auto\"}). Valid values per service: auto (zcli push direct on develop close), manual (ZCP yields close orchestration). Delivery via git push is a separate dimension — run action=git-push-setup (works under either close-mode)."`
 	Integration string                     `json:"integration,omitempty" jsonschema:"ZCP-managed CI integration value for action=build-integration: 'webhook' (Zerops dashboard OAuth — Zerops pulls + builds on git push), 'actions' (GitHub Actions workflow runs zcli push from CI), or 'none' (no ZCP-managed integration; user may have independent CI/CD that ZCP doesn't track)."`
 	RemoteURL   string                     `json:"remoteUrl,omitempty"   jsonschema:"Remote git repository URL for action=git-push-setup confirm step. Passed after the walkthrough atom completes; HTTPS only in container env (https://github.com/owner/repo). Omit on first call to receive env-aware setup atom."`
-	Service     string                     `json:"service,omitempty"     jsonschema:"Single-target runtime service hostname for action=git-push-setup, action=build-integration, action=open-change, action=describe-change and action=group-recipe (propose that service or part in the tiers). Pair-keyed lookup honors stage hostnames (one ServiceMeta per dev/stage pair, indexed by either hostname)."`
+	Service     string                     `json:"service,omitempty"     jsonschema:"Single-target runtime service hostname for action=git-push-setup, action=build-integration, action=open-change, action=describe-change, action=group-recipe (propose that service or part in the tiers) and workflow=pool-migrate (the dev service to move). Pair-keyed lookup honors stage hostnames (one ServiceMeta per dev/stage pair, indexed by either hostname)."`
+	Pool        string                     `json:"pool,omitempty"        jsonschema:"Only for workflow=pool-migrate: the part's pool hostname when not <stem>pool; pass it on every call."`
 	BuildTarget string                     `json:"buildTarget,omitempty" jsonschema:"Optional for action=build-integration: pair hostname CI should build to, overriding the standard-pair default (stage receives builds). Set to the dev/push-source hostname to wire CI directly on it."`
 	GitToken    string                     `json:"gitToken,omitempty"    jsonschema:"Fine-grained PAT for action=git-push-setup confirm step (container env only). Required when remoteUrl is set in container mode. Handler probes the token against the remote BEFORE writing the service-scope secret or restarting — failed probe leaves project state untouched. Never echoed back in any response or state file."`
 	TrackedRef  string                     `json:"trackedRef,omitempty"  jsonschema:"Optional tracked ref for action=git-push-setup confirm (the branch stage/prod builds from). Overrides auto-detection; omit to let ZCP detect it. Recorded once."`
@@ -72,7 +75,12 @@ type WorkflowInput struct {
 	Description string                     `json:"description,omitempty" jsonschema:"Markdown for action=describe-change: what the change does and why, how you checked it, and ![what it shows](shot-N) for a zerops_browser screenshot — the person reviews it by this. Describing asks for their review; a push that moves the change makes it a draft until described again."`
 	Title       string                     `json:"title,omitempty"       jsonschema:"For action=open-change and describe-change: what this repository's change does, one line of a few words (max 120) — its own title, not the whole task."`
 	Branch      string                     `json:"branch,omitempty"      jsonschema:"For action=open-change: your own branch the change takes to main, as you pushed it."`
-	Force       FlexBool                   `json:"force,omitempty"       jsonschema:"Discard-and-replace flag for action=start workflow=develop. Required when the active session's services include a CloseDeployMode ∈ {manual, unset} and the new intent differs — auto-close cannot fire on those services, so the prior session needs an explicit close (or a force-discard via this flag) before a fresh session takes over (deploy-decomp P6 §3.4 Scenario D)."`
+	Force       FlexBool                   `json:"force,omitempty"       jsonschema:"Discard-and-replace flag for action=start workflow=develop. Required when the active session's services include a CloseDeployMode ∈ {manual, unset} and the new intent differs — auto-close cannot fire on those services, so the prior session needs an explicit close (or a force-discard via this flag) before a fresh session takes over (deploy-decomp P6 §3.4 Scenario D). action=retire: leave the unsaved work wouldDestroy names, once the person agreed by name."`
+
+	// CopyGitToken is the person's yes to the pool getting the dev service's
+	// GIT_TOKEN, on the env step outside a Mate (docs/spec-workflows.md §13
+	// PM-4). zcp reads and writes the value itself; it never crosses the call.
+	CopyGitToken FlexBool `json:"copyGitToken,omitempty" jsonschema:"For action=pool-env outside a Mate: true once the person said yes to the pool getting the dev service's GIT_TOKEN; zcp copies it, never you."`
 
 	// Bootstrap route selection. The first call to action=start workflow=bootstrap
 	// omits these — the engine returns a ranked list of route options. The LLM
@@ -138,7 +146,7 @@ type WorkflowInput struct {
 	// `operation="launch-production-reset"` + `acknowledgedTargets=[<targetProjectName>]`.
 	// Same shape as the import-override gate; structure pinned in
 	// internal/tools/destructive_ack.go.
-	ConfirmDestructive *DestructiveAck `json:"confirmDestructive,omitempty" jsonschema:"Diagnose-before-destruct acknowledgment. Required on the second call after action=\"reset\" workflow=\"launch-production\" (also used by zerops_import override). Set operation to the wouldDestroy.operation echoed in the first-call refusal, and acknowledgedTargets to the same hostname / target-project-name set."`
+	ConfirmDestructive *DestructiveAck `json:"confirmDestructive,omitempty" jsonschema:"Diagnose-before-destruct acknowledgment. Required on the second call after action=\"reset\" workflow=\"launch-production\" or action=\"retire\" (also used by zerops_import override). Set operation to the wouldDestroy.operation echoed in the first-call refusal, and acknowledgedTargets to the same hostname / target-project-name set."`
 
 	// Launch-production workflow (Phase D.1 read-side, D.2 mutation).
 	// Per-request inputs threaded across calls — same stateless pattern
@@ -321,8 +329,40 @@ func workflowInputSchema() *jsonschema.Schema {
 	patchFlexBoolProperty(s, "force")
 	patchFlexBoolProperty(s, "skipPipelineSetup")
 	patchFlexBoolProperty(s, "confirmLaunch")
+	patchFlexBoolProperty(s, "copyGitToken")
 	patchEnumProperty(s, "publicAccess", "auto", "subdomain", "none")
+	// The plan runtime's codeVolume is derive-only: zcp sets up no new code
+	// volume (docs/spec-mate.md §2.8a.4a), so it is not published, and a plan
+	// still carrying it is refused by the schema, naming the field.
+	unpublishProperty(s, "codeVolume")
 	return s
+}
+
+// unpublishProperty removes every property named key from the schema tree,
+// wherever the inferred schema nests or references it, so the property is
+// neither published nor accepted.
+func unpublishProperty(s *jsonschema.Schema, key string) {
+	seen := map[*jsonschema.Schema]bool{}
+	var walk func(n *jsonschema.Schema)
+	walk = func(n *jsonschema.Schema) {
+		if n == nil || seen[n] {
+			return
+		}
+		seen[n] = true
+		if _, ok := n.Properties[key]; ok {
+			delete(n.Properties, key)
+			n.PropertyOrder = slices.DeleteFunc(n.PropertyOrder, func(k string) bool { return k == key })
+			n.Required = slices.DeleteFunc(n.Required, func(k string) bool { return k == key })
+		}
+		for _, c := range n.Properties {
+			walk(c)
+		}
+		for _, c := range n.Defs {
+			walk(c)
+		}
+		walk(n.Items)
+	}
+	walk(s)
 }
 
 // patchEnumProperty gives every property named key in the schema tree (the
@@ -387,10 +427,14 @@ func handleDevelopStart(ctx context.Context, projectID string, engine *workflow.
 // sshDeployer enables post-mount git init on each runtime target
 // (ops.InitServiceGit). Nil in local env — the post-mount hook skips naturally
 // because mounter is also nil there (see autoMountTargets).
-func RegisterWorkflow(srv *mcp.Server, client platform.Client, httpClient ops.HTTPDoer, projectID string, schemaCache *schema.Cache, engine *workflow.Engine, logFetcher platform.LogFetcher, stateDir, selfHostname string, mounter ops.Mounter, sshDeployer ops.SSHDeployer, rt runtime.Info, apiHost string) {
+func RegisterWorkflow(srv *mcp.Server, client platform.Client, httpClient ops.HTTPDoer, projectID string, schemaCache *schema.Cache, engine *workflow.Engine, logFetcher platform.LogFetcher, stateDir, selfHostname string, mounter ops.Mounter, sshDeployer ops.SSHDeployer, rt runtime.Info, apiHost string, opts ...WorkflowOption) {
+	var cfg workflowToolConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_workflow",
-		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap (entry point for ANY new or adopted project, INCLUDING projects starting from a Zerops recipe — pass intent describing your stack and the recipe match surfaces as a route option), develop (all development, deployment, fixing, investigating), export (turn a deployed service into a re-importable git repo with import.yaml + buildFromGit), launch-production (PROMOTE an existing working dev/stage Zerops project to a SEPARATE production Zerops project — bundle composition with HA managed deps + production runtime scaling + tag-trigger CD pipeline guidance + delegated-mint-first token trust model (a one-time platform delegation lets ZCP mint the launch token itself with no value crossing the conversation; an explicit launchKey is the fallback); trigger phrases the agent should route here: \"launch production\", \"deploy to prod\", \"promote to production\", \"make a production project\", \"create production environment\", \"transfer to prod\", \"go live\", \"udělej produkční projekt\", \"přesuň to na produkci\", \"nasaď to na prod\" — requires existing source dev/stage, NOT for greenfield-from-scratch which goes through workflow=\"bootstrap\"). Deploy configuration is split into three orthogonal actions: action=\"close-mode\" closeMode={hostname:value} sets the per-pair CloseDeployMode (auto/manual); action=\"git-push-setup\" service=hostname remoteUrl=URL gitToken=PAT (container) probes auth + writes GIT_TOKEN as a service-scope secret on the push source + syncs origin + stamps GitPushState=configured (probe-first: failed probe = NO state mutation); action=\"build-integration\" service=hostname integration=webhook|actions|none wires the ZCP-managed CI integration. Inside a Zerops Mate, action=\"group-recipe\" proposes the recipe tiers the recipe repository's main in HQ lacks, composed from this project (tier directories with a whole-project import.yaml each), and returns the change — or says main already carries every tier; action=\"group-recipe\" scaling=<hostname> proposes that service's current scale into the tiers main already carries, as a change the person reviews; action=\"group-recipe\" service=<hostname> proposes a managed service this project gained (database, cache, storage…) into each tier main carries without it, or a part of the app added or removed, as a change the person reviews; action=\"mac-pair\" says the next step to pair the user's Mac for macOS/iOS app work, or to fix a pairing that stopped working — call it again after the user does each step. After start: action=\"complete|skip|status\" (step progression), action=\"reset|iterate|resume|list|route|close-mode|git-push-setup|build-integration|group-recipe\".",
+		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap (entry point for ANY new or adopted project, INCLUDING projects starting from a Zerops recipe — pass intent describing your stack and the recipe match surfaces as a route option), develop (all development, deployment, fixing, investigating), export (turn a deployed service into a re-importable git repo with import.yaml + buildFromGit), launch-production (PROMOTE an existing working dev/stage Zerops project to a SEPARATE production Zerops project — bundle composition with HA managed deps + production runtime scaling + tag-trigger CD pipeline guidance + delegated-mint-first token trust model (a one-time platform delegation lets ZCP mint the launch token itself with no value crossing the conversation; an explicit launchKey is the fallback); trigger phrases the agent should route here: \"launch production\", \"deploy to prod\", \"promote to production\", \"make a production project\", \"create production environment\", \"transfer to prod\", \"go live\", \"udělej produkční projekt\", \"přesuň to na produkci\", \"nasaď to na prod\" — requires existing source dev/stage, NOT for greenfield-from-scratch which goes through workflow=\"bootstrap\"), pool-migrate (workflow=\"pool-migrate\" service=<dev> moves one part's dev service onto a dev pool: each call names the part's current step and the next call). Deploy configuration is split into three orthogonal actions: action=\"close-mode\" closeMode={hostname:value} sets the per-pair CloseDeployMode (auto/manual); action=\"git-push-setup\" service=hostname remoteUrl=URL gitToken=PAT (container) probes auth + writes GIT_TOKEN as a service-scope secret on the push source + syncs origin + stamps GitPushState=configured (probe-first: failed probe = NO state mutation); action=\"build-integration\" service=hostname integration=webhook|actions|none wires the ZCP-managed CI integration. Inside a Zerops Mate, action=\"group-recipe\" proposes the recipe tiers the recipe repository's main in HQ lacks, composed from this project (tier directories with a whole-project import.yaml each), and returns the change — or says main already carries every tier; action=\"group-recipe\" scaling=<hostname> proposes that service's current scale into the tiers main already carries, as a change the person reviews; action=\"group-recipe\" service=<hostname> proposes a managed service this project gained (database, cache, storage…) into each tier main carries without it, or a part of the app added or removed, as a change the person reviews; action=\"mac-pair\" says the next step to pair the user's Mac for macOS/iOS app work, or to fix a pairing that stopped working — call it again after the user does each step. After start: action=\"complete|skip|status\" (step progression), action=\"reset|iterate|resume|list|route|close-mode|git-push-setup|build-integration|group-recipe\".",
 		Annotations: &mcp.ToolAnnotations{
 			Title:          "Workflow orchestration",
 			ReadOnlyHint:   false,
@@ -399,6 +443,12 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, httpClient ops.HT
 		},
 		InputSchema: workflowInputSchema(),
 	}, namingRepoConfigFile(engine, func(ctx context.Context, _ *mcp.CallToolRequest, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+		// retire is pool-migrate's last step: stateless like the flow, and
+		// it unmounts the dev and asks the pool's orchestrator about its
+		// lease (workflow_pool_migrate_retire.go).
+		if input.Action == "retire" {
+			return handlePoolMigrateRetire(ctx, projectID, client, sshDeployer, mounter, cfg.swarm, input, stateDir, rt)
+		}
 		// New multi-action handler.
 		if input.Action != "" {
 			return handleWorkflowAction(ctx, projectID, engine, client, httpClient, schemaCache, logFetcher, input, stateDir, selfHostname, mounter, sshDeployer, rt, apiHost)
@@ -411,13 +461,18 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, httpClient ops.HT
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				"No workflow or action specified",
-				`Use action="start" workflow="bootstrap|develop" for orchestrated workflows, or workflow="export" / workflow="launch-production" for the multi-call flows. Configure deploy via action="close-mode" / action="git-push-setup" / action="build-integration".`), WithRecoveryStatus()), nil, nil
+				`Use action="start" workflow="bootstrap|develop" for orchestrated workflows, or workflow="export" / workflow="launch-production" / workflow="pool-migrate" for the multi-call flows. Configure deploy via action="close-mode" / action="git-push-setup" / action="build-integration".`), WithRecoveryStatus()), nil, nil
 		}
-		// Export is the only stateless (no-session) workflow and has
-		// handler-side orchestration (probe → generate → publish multi-call
-		// narrowing). Every other workflow requires action="start".
+		// Export and pool-migrate are the stateless (no-session) workflows
+		// reachable without an action, each with handler-side multi-call
+		// narrowing. Every other workflow requires action="start".
 		if input.Workflow == workflowExport {
 			return handleExport(ctx, projectID, engine, client, input, sshDeployer, stateDir, rt)
+		}
+		// pool-migrate is a stateless read-side narrowing like export: every
+		// call re-reads live state and names the part's current step.
+		if input.Workflow == workflowPoolMigrate {
+			return handlePoolMigrate(ctx, projectID, client, sshDeployer, input, stateDir, rt)
 		}
 		// workflow="recipe" without action must not be steered INTO the
 		// hard-blocked start combination — reuse the block's routing.
@@ -435,7 +490,23 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, httpClient ops.HT
 	}))
 }
 
-func handleWorkflowAction(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, httpClient ops.HTTPDoer, schemaCache *schema.Cache, logFetcher platform.LogFetcher, input WorkflowInput, stateDir, selfHostname string, mounter ops.Mounter, sshDeployer ops.SSHDeployer, rt runtime.Info, apiHost string) (*mcp.CallToolResult, any, error) {
+// WorkflowOption configures RegisterWorkflow.
+type WorkflowOption func(*workflowToolConfig)
+
+type workflowToolConfig struct {
+	swarm ops.SwarmFactory
+}
+
+// WithPoolOrchestratorsForWorkflow lets pool-migrate's retire ask a pool's
+// orchestrator whether zcp's lease of it is still held. Without it the retire
+// relies on no lease and refuses.
+func WithPoolOrchestratorsForWorkflow(swarm ops.SwarmFactory) WorkflowOption {
+	return func(c *workflowToolConfig) { c.swarm = swarm }
+}
+
+// handleEngineFreeAction answers the actions that run without the workflow
+// engine; a nil result means input.Action is not one of them.
+func handleEngineFreeAction(ctx context.Context, projectID string, client platform.Client, httpClient ops.HTTPDoer, input WorkflowInput, stateDir string, sshDeployer ops.SSHDeployer, rt runtime.Info) (*mcp.CallToolResult, any, error) {
 	// record-deploy bridges manual deployers (zcli, CI/CD outside MCP) to
 	// MCP-tracked state by stamping FirstDeployedAt on the meta. Workflow-
 	// less — runs without an active session because external deployers may
@@ -447,6 +518,18 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	// (workflow_mac_pair.go), so it needs no engine.
 	if input.Action == "mac-pair" {
 		return handleMacPair(ctx, rt)
+	}
+	// pool-env is the pool-migrate flow's env step: stateless like the flow,
+	// so it needs no engine (workflow_pool_migrate.go).
+	if input.Action == "pool-env" {
+		return handlePoolMigrateEnv(ctx, projectID, client, sshDeployer, input, stateDir, rt)
+	}
+	return nil, nil, nil
+}
+
+func handleWorkflowAction(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, httpClient ops.HTTPDoer, schemaCache *schema.Cache, logFetcher platform.LogFetcher, input WorkflowInput, stateDir, selfHostname string, mounter ops.Mounter, sshDeployer ops.SSHDeployer, rt runtime.Info, apiHost string) (*mcp.CallToolResult, any, error) {
+	if result, _, err := handleEngineFreeAction(ctx, projectID, client, httpClient, input, stateDir, sshDeployer, rt); result != nil || err != nil {
+		return result, nil, err
 	}
 	if rt.MateEnabled && hqRepositoryActions[input.Action] {
 		return hqRepositoryActionRefusal(input.Action), nil, nil
@@ -473,6 +556,9 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		}
 		if input.Workflow == workflowLaunchProduction {
 			return handleLaunchProduction(ctx, projectID, client, httpClient, schemaCache, input, stateDir, rt, sshDeployer, apiHost)
+		}
+		if input.Workflow == workflowPoolMigrate {
+			return handlePoolMigrate(ctx, projectID, client, sshDeployer, input, stateDir, rt)
 		}
 		if input.Workflow == workflowDevelop {
 			return handleDevelopStart(ctx, projectID, engine, client, httpClient, schemaCache, input, stateDir, rt, sshDeployer)
@@ -600,7 +686,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Unknown action %q", input.Action),
-			"Valid actions: start, complete, close, skip, status, reset, iterate, resume, list, route, close-mode, git-push-setup, build-integration, group-recipe, open-change, describe-change, mac-pair, prod-ops, confirm-production, adopt-local, set-default-setup, record-deploy, release"), WithRecoveryStatus()), nil, nil
+			"Valid actions: start, complete, close, skip, status, reset, iterate, resume, list, route, close-mode, git-push-setup, build-integration, group-recipe, open-change, describe-change, mac-pair, prod-ops, confirm-production, adopt-local, set-default-setup, record-deploy, release, pool-env, retire"), WithRecoveryStatus()), nil, nil
 	}
 }
 
@@ -656,7 +742,7 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 	return convertError(platform.NewPlatformError(
 		platform.ErrInvalidParameter,
 		fmt.Sprintf("Unknown orchestrated workflow %q", input.Workflow),
-		"Valid workflows: bootstrap, develop, export, launch-production."), WithRecoveryStatus()), nil, nil
+		"Valid workflows: bootstrap, develop, export, launch-production, pool-migrate."), WithRecoveryStatus()), nil, nil
 }
 
 // isDevelopStep returns true if the step name is a develop workflow step.
@@ -985,6 +1071,61 @@ func handleListSessions(engine *workflow.Engine) (*mcp.CallToolResult, any, erro
 	return jsonResult(sessions), nil, nil
 }
 
+// leaseStatusTimeout bounds the pool-orchestrator reads a status call makes: a
+// pool's orchestrator answers only inside the project, and status must not
+// hang when it does not.
+const leaseStatusTimeout = 10 * time.Second
+
+// envelopeLeaseTimeout bounds the same reads when they only fill the envelope
+// of another tool's result: every JSON tool in a project with a pool pays it,
+// so an orchestrator that does not answer costs seconds, not the status budget,
+// and the records stand in, marked unverified.
+const envelopeLeaseTimeout = 3 * time.Second
+
+// leaseReader is the workflow.LeaseReader of a status call: the project's
+// leases, reconciled by ops.LeaseList against each pool's orchestrator. A
+// pool whose orchestrator does not answer (stopped, outside the project)
+// marks only its own leases unverified — zcp's records stand in for them —
+// while every other pool's are confirmed. An error (the services or the
+// records could not be read) is the reader's "could not ask" signal —
+// ComputeEnvelope then falls back to zcp's own records, all unverified. Only
+// the lease's non-secret view crosses over; the lease string never leaves ops
+// (DP-3). A held lease whose alias or mount is missing on host reads
+// `unmounted`, as action=status reports it (DP-2).
+func leaseReader(client platform.Client, projectID, stateDir string, host ops.LeaseHost, timeout time.Duration) workflow.LeaseReader {
+	return leaseReaderWith(client, projectID, stateDir, ops.NewSwarmFactory(&http.Client{Timeout: timeout}), host, timeout)
+}
+
+// leaseReaderWith is leaseReader over a given orchestrator factory and time
+// budget (the lease tool reads through the factory and host side it was
+// registered with). It asks the orchestrators only: its deps carry no ssh, so
+// it never reads a lease's checkout, and a lease's activity and unsaved work
+// reach leases[] only from the zerops_lease call that read them
+// (workflow.WithLeaseActivity) — every other tool's envelope pays no ssh read
+// (TestLeaseReader_NeverReadsActivity).
+func leaseReaderWith(client platform.Client, projectID, stateDir string, swarm ops.SwarmFactory, host ops.LeaseHost, timeout time.Duration) workflow.LeaseReader {
+	return func(ctx context.Context) ([]workflow.LeaseSnapshot, error) {
+		if client == nil || stateDir == "" {
+			return nil, fmt.Errorf("lease reader: no platform client or state directory")
+		}
+		ctx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		views, err := ops.LeaseList(ctx, ops.LeaseDeps{Client: client, ProjectID: projectID, StateDir: stateDir, Swarm: swarm, Host: host}, "")
+		if err != nil {
+			return nil, fmt.Errorf("list leases: %w", err)
+		}
+		out := make([]workflow.LeaseSnapshot, 0, len(views))
+		for _, v := range views {
+			out = append(out, workflow.LeaseSnapshot{
+				Alias: v.Alias, Pool: v.Pool, Branch: v.Branch,
+				ContainerHostname: v.ContainerHostname, State: v.State, Unverified: v.Unverified,
+				AcquiredAt: v.AcquiredAt,
+			})
+		}
+		return out, nil
+	}
+}
+
 // handleLifecycleStatus returns the canonical orientation block. Used when
 // no bootstrap/recipe session is active — covers both idle and develop phases.
 //
@@ -999,7 +1140,8 @@ func handleListSessions(engine *workflow.Engine) (*mcp.CallToolResult, any, erro
 // so agents notice when `.env` has drifted from sources without having
 // to invoke generate-dotenv preview manually.
 func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, rt runtime.Info, sshDeployer ops.SSHDeployer) (*mcp.CallToolResult, any, error) {
-	envelope, err := workflow.ComputeEnvelope(ctx, client, engine.StateDir(), projectID, rt, time.Now())
+	envelope, err := workflow.ComputeEnvelope(ctx, client, engine.StateDir(), projectID, rt, time.Now(),
+		leaseEnvelopeOptions(client, projectID, engine.StateDir(), rt, leaseStatusTimeout)...)
 	if err != nil {
 		return convertError(wrapStageErr("Compute envelope", err), WithRecoveryStatus()), nil, nil
 	}
@@ -1036,6 +1178,11 @@ func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client 
 	// status so an open work session (FocusWork) no longer hides an in-flight or
 	// terminal launch — the pre-rebuild dispatch surfaced launch unconditionally.
 	if extra := launchOverlayAddendum(engine.StateDir(), projectID); extra != "" {
+		guidance = append(guidance, extra)
+	}
+	// A variant-B pair keeps working; status names the pool migration that
+	// moves it onto one dev pool per part (docs/spec-mate.md §2.8a.4a).
+	if extra := codeVolumeStatusAddendum(engine.StateDir()); extra != "" {
 		guidance = append(guidance, extra)
 	}
 	return statusResult(workflow.Response{

@@ -38,7 +38,7 @@ func TestLiveAllTypesAudit(t *testing.T) {
 	}
 
 	var rejectedTypes, rejectedRun, rejectedBuild, decorated, unclassified []string
-	managed, runtime, objStore, shStore, utility := 0, 0, 0, 0, 0
+	managed, runtime, objStore, shStore, utility, pool, sandbox := 0, 0, 0, 0, 0, 0, 0
 
 	for _, ty := range s.ImportYml.ServiceTypes {
 		if !s.HasServiceType(ty) {
@@ -56,6 +56,10 @@ func TestLiveAllTypesAudit(t *testing.T) {
 			managed++
 		case topology.IsUtilityType(ty):
 			utility++
+		case topology.IsPoolType(ty):
+			pool++
+		case topology.IsSandboxType(ty):
+			sandbox++
 		case topology.IsRuntimeType(ty):
 			runtime++
 		default:
@@ -74,8 +78,8 @@ func TestLiveAllTypesAudit(t *testing.T) {
 	}
 
 	fmt.Printf("\n===== LIVE ALL-TYPES AUDIT (canonical host) =====\n")
-	fmt.Printf("import types: %d  (managed=%d runtime=%d object-storage=%d shared-storage=%d utility=%d)\n",
-		len(s.ImportYml.ServiceTypes), managed, runtime, objStore, shStore, utility)
+	fmt.Printf("import types: %d  (managed=%d runtime=%d object-storage=%d shared-storage=%d utility=%d pool=%d sandbox=%d)\n",
+		len(s.ImportYml.ServiceTypes), managed, runtime, objStore, shStore, utility, pool, sandbox)
 	fmt.Printf("run.base: %d   build.base: %d\n", len(s.ZeropsYml.RunBases), len(s.ZeropsYml.BuildBases))
 
 	report := func(title string, items []string) {
@@ -93,4 +97,10 @@ func TestLiveAllTypesAudit(t *testing.T) {
 	report("REJECTED real build.bases", rejectedBuild)
 	report("CanonicalBaseName left decoration", decorated)
 	report("UNCLASSIFIED types", unclassified)
+	// Pools and Box are real public types classified by type string (spec
+	// §8 PS-1); the audit must reach those branches or "unclassified" is
+	// hiding them again.
+	if pool == 0 || sandbox == 0 {
+		t.Errorf("live schema lists pool=%d sandbox=%d types; the pool/sandbox classification branches went unexercised", pool, sandbox)
+	}
 }

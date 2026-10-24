@@ -20,6 +20,9 @@ const (
 	DeployDeliveryManual  DeployDelivery = "manual"
 )
 
+// deployToolName is the MCP tool a direct or git-push delivery calls.
+const deployToolName = "zerops_deploy"
+
 // DeployIntent is the resolved projection of (ServiceSnapshot, target) onto
 // the concrete deploy command shape. Centralizes the (mode, deploy-class,
 // source, target, setup) inference that was previously scattered across
@@ -42,7 +45,16 @@ type DeployIntent struct {
 	// standard pair, a single-service mode (simple/dev/local-*), or the dev
 	// half found by reverse-lookup when target is a stage half. Empty when
 	// the target is a stage half whose paired dev is missing from services.
+	// For a pair whose dev half is a pool it is a held lease's alias, or empty
+	// while none is held (SourcePool).
 	PushSource string
+
+	// SourcePool is set when the target's pair has a dev pool for its dev
+	// half (ServiceSnapshot.DevIsPool) — on the stage and on the pool half
+	// alike: the deploy's source is a lease of this pool, never the pool
+	// itself (docs/spec-workflows.md §8 PS-3, §13). With PushSource empty
+	// there is no source yet: a lease of it comes first.
+	SourcePool string
 
 	// BuildTarget is the hostname whose runtime actually receives the build:
 	// stage half for a standard pair (cross-deploy), or the same as
@@ -133,9 +145,23 @@ type DeployIntent struct {
 // Phase 1 wires this through build_plan only and preserves today's
 // deployActionFor output 1:1; later phases activate the git-push delivery
 // branch and the paired BuildTarget for standard dev halves.
+//
+// A pair whose dev half is a pool resolves through resolvePoolPair: Resolve
+// knows no leases, so its stage names the pool to lease from
+// (ResolveWithLeases fills the source).
 func Resolve(target ServiceSnapshot, services []ServiceSnapshot) DeployIntent {
+	return ResolveWithLeases(target, services, nil)
+}
+
+// ResolveWithLeases is Resolve knowing the leases zcp holds — the envelope's
+// leases[] — so a stage whose pair's dev half is a pool takes a held lease of
+// that pool as its source. Every other target resolves as Resolve does.
+func ResolveWithLeases(target ServiceSnapshot, services []ServiceSnapshot, leases []LeaseSnapshot) DeployIntent {
+	if intent, ok := resolvePoolPair(target, services, leases); ok {
+		return intent
+	}
 	intent := DeployIntent{
-		DeployTool:        "zerops_deploy",
+		DeployTool:        deployToolName,
 		FirstDeployBypass: !target.Deployed,
 	}
 
@@ -244,6 +270,72 @@ func Resolve(target ServiceSnapshot, services []ServiceSnapshot) DeployIntent {
 	}
 
 	return intent
+}
+
+// resolvePoolPair resolves a target of a pair whose dev half is a pool;
+// false for every other target.
+//
+//   - The pool half builds nothing and is no push source: nothing deploys
+//     from a pool, and a deploy to it (its image) is no develop step.
+//   - The stage builds on itself from a held lease of the pool — a
+//     cross-deploy from the alias — whatever the pair's git-push state: a
+//     git-push from a lease is refused (DP-6), so the lease's cross-deploy is
+//     the stage's deploy, and DP-8 steers it towards main. With no lease held
+//     there is no source: PushSource stays empty and no tool call is rendered.
+//     A manual close mode stays the user's.
+func resolvePoolPair(target ServiceSnapshot, services []ServiceSnapshot, leases []LeaseSnapshot) (DeployIntent, bool) {
+	firstDeployBypass := !target.Deployed
+	if target.DevIsPool {
+		return DeployIntent{
+			Delivery:          resolveDelivery(target, firstDeployBypass),
+			SourcePool:        target.Hostname,
+			FirstDeployBypass: firstDeployBypass,
+		}, true
+	}
+	if target.Mode != topology.ModeStage {
+		return DeployIntent{}, false
+	}
+	dev, ok := pairDevHalf(target.Hostname, services)
+	if !ok || !dev.DevIsPool {
+		return DeployIntent{}, false
+	}
+	intent := DeployIntent{
+		Delivery:          DeployDeliveryDirect,
+		PushSource:        heldLeaseOf(dev.Hostname, leases),
+		SourcePool:        dev.Hostname,
+		BuildTarget:       target.Hostname,
+		BuildSetup:        setupOrDefault(target.SetupName, RecipeSetupProd),
+		EventsService:     target.Hostname,
+		VerifyTarget:      target.Hostname,
+		FirstDeployBypass: firstDeployBypass,
+	}
+	if target.CloseDeployMode == topology.CloseModeManual {
+		intent.Delivery = DeployDeliveryManual
+		return intent, true
+	}
+	if intent.PushSource != "" {
+		intent.DeployTool = deployToolName
+		intent.DeployArgs = map[string]string{
+			"sourceService": intent.PushSource,
+			"targetService": intent.BuildTarget,
+			"setup":         intent.BuildSetup,
+		}
+	}
+	return intent, true
+}
+
+// heldLeaseOf is the alias of the first lease of pool zcp holds, verified as
+// its own by the pool's orchestrator, in the envelope's order (by container
+// number); "" for none.
+func heldLeaseOf(pool string, leases []LeaseSnapshot) string {
+	for _, l := range leases {
+		// An unverified lease may be another holder's container by now: never
+		// a deploy's source (docs/spec-workflows.md §8 DP-2).
+		if l.Pool == pool && l.State == leaseStateHeld && !l.Unverified {
+			return l.Alias
+		}
+	}
+	return ""
 }
 
 // Builds is every runtime the deploy builds, each with its setup: every

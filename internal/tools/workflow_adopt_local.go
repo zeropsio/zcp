@@ -94,6 +94,12 @@ func handleAdoptLocal(ctx context.Context, client platform.Client, projectID, st
 			continue
 		}
 		typeName := s.ServiceStackTypeInfo.ServiceStackTypeVersionName
+		if topology.IsPoolOrSandboxType(typeName) {
+			return convertError(platform.NewPlatformError(
+				platform.ErrInvalidParameter,
+				fmt.Sprintf("%q is %s (%s), not an app runtime — can't be a deploy target", s.Name, poolOrSandboxLabel(typeName), typeName),
+				"Pass an app runtime service hostname; a Swarm pool or Zerops Box is infrastructure an app uses"), WithRecoveryStatus()), nil, nil
+		}
 		if topology.IsManagedService(typeName) {
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
@@ -167,4 +173,12 @@ type adoptLocalResponse struct {
 	Stage     string                   `json:"stage"`
 	Mode      topology.Mode            `json:"mode"`
 	CloseMode topology.CloseDeployMode `json:"closeMode"`
+}
+
+// poolOrSandboxLabel names the kind of a pool or Box type for refusal prose.
+func poolOrSandboxLabel(typeName string) string {
+	if topology.IsPoolType(typeName) {
+		return "a Swarm pool"
+	}
+	return "a Zerops Box"
 }

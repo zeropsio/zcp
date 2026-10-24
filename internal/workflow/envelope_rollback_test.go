@@ -65,3 +65,18 @@ func TestStatusEnvelope_RollbackIds_NoEntry_StaysNil(t *testing.T) {
 		t.Errorf("Rollback = %+v, want nil when no entry was supplied", services[0].Rollback)
 	}
 }
+
+// TestApplyRollbackInfo_SkipsPoolAndSandbox pins that a pool or a Box never
+// gets a rollback block even if the caller supplies one: neither has an
+// app-version history of the app (docs/spec-workflows.md §8 PS-3).
+func TestApplyRollbackInfo_SkipsPoolAndSandbox(t *testing.T) {
+	for _, class := range []topology.RuntimeClass{topology.RuntimePool, topology.RuntimeSandbox} {
+		t.Run(string(class), func(t *testing.T) {
+			services := []ServiceSnapshot{{Hostname: "box", RuntimeClass: class}}
+			ApplyRollbackInfo(services, map[string]RollbackInfo{"box": {Active: "should-never-apply"}})
+			if services[0].Rollback != nil {
+				t.Errorf("Rollback = %+v, want nil for class %q", services[0].Rollback, class)
+			}
+		})
+	}
+}

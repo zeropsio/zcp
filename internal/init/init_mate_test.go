@@ -33,6 +33,11 @@ type mateRig struct {
 	unitPath string
 	commands [][]string
 	installs int
+	// queries are the commands whose output the step read; needReload is
+	// what systemd answers for the unit's NeedDaemonReload ("no" unless a
+	// test says the unit file changed on disk).
+	queries    [][]string
+	needReload string
 }
 
 func newMateRig(t *testing.T) *mateRig {
@@ -49,6 +54,11 @@ func newMateRig(t *testing.T) *mateRig {
 		rig.commands = append(rig.commands, append([]string{name}, args...))
 		return nil
 	})
+	rig.needReload = "no"
+	zcpinit.SetCommandOutput(func(name string, args ...string) ([]byte, error) {
+		rig.queries = append(rig.queries, append([]string{name}, args...))
+		return []byte(rig.needReload + "\n"), nil
+	})
 	zcpinit.SetMateUnitFilePath(rig.unitPath)
 	zcpinit.SetMateEnsureInstalled(func(opts mate.EnsureOptions) (mate.Result, error) {
 		rig.installs++
@@ -62,6 +72,7 @@ func newMateRig(t *testing.T) *mateRig {
 	t.Cleanup(func() {
 		zcpinit.ResetVSCodeWorkDir()
 		zcpinit.ResetCommandRunner()
+		zcpinit.ResetCommandOutput()
 		zcpinit.ResetMateUnitFilePath()
 		zcpinit.ResetMateEnsureInstalled()
 	})
@@ -764,6 +775,77 @@ func TestRun_Mate_InstallsUnderTheSharedLock(t *testing.T) {
 			}
 			if !lockedAway && held() {
 				t.Error("init must release the lock when it is done")
+			}
+		})
+	}
+}
+
+// TestRun_Mate_UnitFileChangedOnDisk_ReloadsSystemd: when systemd says the
+// mate unit's file changed on disk since it loaded it (NeedDaemonReload=yes —
+// what it warns "run 'systemctl daemon-reload'" about, live), the step reloads
+// systemd's units through the same command runner, before any restart it
+// makes, so that restart — and any later one — runs the definition on disk.
+// It reloads whether or not it restarts, and never when the unit is unchanged.
+func TestRun_Mate_UnitFileChangedOnDisk_ReloadsSystemd(t *testing.T) {
+	tests := []struct {
+		name        string
+		needReload  string
+		updated     bool
+		wantReload  bool
+		wantRestart bool
+	}{
+		{"changed on disk, bundle updated", "yes", true, true, true},
+		{"changed on disk, nothing to restart for", "yes", false, true, false},
+		{"unchanged, bundle updated", "no", true, false, true},
+		{"unchanged, nothing to restart for", "no", false, false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rig := newMateRig(t)
+			rig.installBundle(t)
+			if err := os.WriteFile(rig.unitPath, []byte("[Unit]\n"), 0o644); err != nil {
+				t.Fatalf("seed unit file: %v", err)
+			}
+			// Seed the env file as this run writes it: only the bundle
+			// decides the restart.
+			if err := zcpinit.Run(rig.baseDir, containerInfo()); err != nil {
+				t.Fatalf("seed run: %v", err)
+			}
+			rig.commands, rig.queries, rig.needReload = nil, nil, tt.needReload
+			if tt.updated {
+				zcpinit.SetMateEnsureInstalled(func(mate.EnsureOptions) (mate.Result, error) {
+					return mate.Result{Action: mate.ActionUpdated, From: "0.0.9", To: pinnedTestVersion}, nil
+				})
+			}
+
+			if err := zcpinit.Run(rig.baseDir, containerInfo()); err != nil {
+				t.Fatalf("Run(): %v", err)
+			}
+			unit := "zerops@" + mate.UnitName + ".service"
+			asked := false
+			for _, q := range rig.queries {
+				asked = asked || strings.Join(q, " ") == "systemctl show --property=NeedDaemonReload --value "+unit
+			}
+			if !asked {
+				t.Errorf("the step never asked systemd whether %s changed on disk, queries %v", unit, rig.queries)
+			}
+			reload, restart := -1, -1
+			for i, cmd := range rig.commands {
+				switch strings.Join(cmd, " ") {
+				case "sudo systemctl daemon-reload":
+					reload = i
+				case "sudo systemctl restart " + unit:
+					restart = i
+				}
+			}
+			if (reload >= 0) != tt.wantReload {
+				t.Errorf("daemon-reload ran = %v, want %v: %v", reload >= 0, tt.wantReload, rig.commands)
+			}
+			if (restart >= 0) != tt.wantRestart {
+				t.Errorf("restart ran = %v, want %v: %v", restart >= 0, tt.wantRestart, rig.commands)
+			}
+			if reload >= 0 && restart >= 0 && reload > restart {
+				t.Errorf("daemon-reload must precede the restart: %v", rig.commands)
 			}
 		})
 	}

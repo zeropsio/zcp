@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -80,6 +81,100 @@ func TestBuildPlan_IdleOnlyUnmanagedRuntimes(t *testing.T) {
 	plan := BuildPlan(env)
 	if plan.Primary.Args["workflow"] != "bootstrap" || plan.Primary.Args["route"] != "adopt" {
 		t.Errorf("primary = %v, want workflow=bootstrap route=adopt (H2 routing fix)", plan.Primary.Args)
+	}
+}
+
+// TestCountIdleServices_PoolNotAdoptable pins, through the idle plan, that a
+// pool or a Box counts as neither bootstrapped nor adoptable
+// (docs/spec-workflows.md §8 PS-2): alone they are never adopted — a Box
+// alone leaves the project empty for plan purposes, a pool alone is leased
+// (TestBuildPlan_IdleDevPool_LeasesAContainer) — and next to a bootstrapped
+// runtime they offer no adopt alternative.
+func TestCountIdleServices_PoolNotAdoptable(t *testing.T) {
+	t.Parallel()
+
+	for _, class := range []topology.RuntimeClass{topology.RuntimePool, topology.RuntimeSandbox} {
+		t.Run(string(class)+"_alone", func(t *testing.T) {
+			t.Parallel()
+			env := planEnvelope(PhaseIdle)
+			env.Services = []ServiceSnapshot{{Hostname: "swarm", RuntimeClass: class}}
+			plan := BuildPlan(env)
+			if plan.Primary.Args["route"] == "adopt" {
+				t.Errorf("primary = %v, never route=adopt", plan.Primary.Args)
+			}
+			if class == topology.RuntimeSandbox && plan.Primary.Args["workflow"] != "bootstrap" {
+				t.Errorf("primary = %v, want a plain bootstrap start", plan.Primary.Args)
+			}
+		})
+		t.Run(string(class)+"_beside_bootstrapped", func(t *testing.T) {
+			t.Parallel()
+			env := planEnvelope(PhaseIdle)
+			env.Services = []ServiceSnapshot{
+				{Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Mode: topology.ModeDev},
+				{Hostname: "swarm", RuntimeClass: class},
+			}
+			plan := BuildPlan(env)
+			if plan.Primary.Args["workflow"] != "develop" {
+				t.Errorf("primary workflow = %q, want develop", plan.Primary.Args["workflow"])
+			}
+			for _, alt := range plan.Alternatives {
+				if alt.Args["route"] == "adopt" {
+					t.Errorf("alternatives offer adopt: %v, want none for a %s", alt.Args, class)
+				}
+			}
+		})
+	}
+}
+
+// TestBuildPlan_IdleDevPool_LeasesAContainer pins the idle plan of a project
+// whose only runtimes are Swarm pools (docs/spec-workflows.md §8 DP-29): its
+// work is a lease, so the primary step acquires one — `pool` for one pool,
+// `pools` (rendered as a list) for several — with adding services the
+// alternative. A pool beside an app runtime may be infrastructure that app
+// uses, so there no plan step names a lease at all.
+func TestBuildPlan_IdleDevPool_LeasesAContainer(t *testing.T) {
+	t.Parallel()
+
+	pool := func(h string) ServiceSnapshot {
+		return ServiceSnapshot{Hostname: h, RuntimeClass: topology.RuntimePool}
+	}
+	tests := []struct {
+		name     string
+		services []ServiceSnapshot
+		wantArgs map[string]string // nil: no plan step names zerops_lease
+	}{
+		{"one pool", []ServiceSnapshot{pool("webpool"), {Hostname: "db", RuntimeClass: topology.RuntimeManaged}},
+			map[string]string{"action": "acquire", "pool": "webpool"}},
+		{"two pools, sorted", []ServiceSnapshot{pool("webpool"), pool("hqpool")},
+			map[string]string{"action": "acquire", "pools": `["hqpool","webpool"]`}},
+		{"a pool beside an unmanaged runtime", []ServiceSnapshot{{Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic}, pool("webpool")}, nil},
+		{"a pool beside a bootstrapped runtime", []ServiceSnapshot{{Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Mode: topology.ModeDev}, pool("webpool")}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			env := planEnvelope(PhaseIdle)
+			env.Services = tt.services
+			plan := BuildPlan(env)
+			steps := append([]NextAction{plan.Primary}, plan.Alternatives...)
+			if plan.Secondary != nil {
+				steps = append(steps, *plan.Secondary)
+			}
+			if tt.wantArgs == nil {
+				for _, s := range steps {
+					if s.Tool == "zerops_lease" {
+						t.Errorf("plan step %+v leases a pool beside an app runtime", s)
+					}
+				}
+				return
+			}
+			if plan.Primary.Tool != "zerops_lease" || !reflect.DeepEqual(plan.Primary.Args, tt.wantArgs) {
+				t.Errorf("primary = %s %v, want zerops_lease %v", plan.Primary.Tool, plan.Primary.Args, tt.wantArgs)
+			}
+			if len(plan.Alternatives) != 1 || plan.Alternatives[0].Args["workflow"] != "bootstrap" || plan.Alternatives[0].Args["route"] != "" {
+				t.Errorf("alternatives = %+v, want adding services only", plan.Alternatives)
+			}
+		})
 	}
 }
 
@@ -548,5 +643,65 @@ func TestBuildPlan_PerServiceNilOutsideDevelopActive(t *testing.T) {
 				t.Errorf("phase %s: PerService = %+v, want nil", p, plan.PerService)
 			}
 		})
+	}
+}
+
+// TestBuildPlan_PoolDevHalf_NoDeployStep pins the plan of a pair whose dev
+// half is a pool: the pool half is never a deploy or verify step, not even
+// when a session names it, and the stage's deploy runs from a held lease of
+// the pool — or, with none held, the step is acquiring one.
+func TestBuildPlan_PoolDevHalf_NoDeployStep(t *testing.T) {
+	t.Parallel()
+	held := LeaseSnapshot{Alias: "apppool-4", Pool: "apppool", Branch: "feat-x", State: "held"}
+	cases := []struct {
+		name     string
+		leases   *[]LeaseSnapshot
+		wantTool string
+		wantArgs map[string]string
+	}{
+		{"a held lease: deploy the stage from it", &[]LeaseSnapshot{held}, "zerops_deploy",
+			map[string]string{"sourceService": "apppool-4", "targetService": "appstage", "setup": "web"}},
+		{"no lease held: acquire one first", &[]LeaseSnapshot{}, "zerops_lease",
+			map[string]string{"action": "acquire", "pool": "apppool"}},
+		{"leases not read: acquire one first", nil, "zerops_lease",
+			map[string]string{"action": "acquire", "pool": "apppool"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			env := planEnvelope(PhaseDevelopActive)
+			env.Services = poolDevPairServices(topology.CloseModeAuto, topology.GitPushUnconfigured)
+			env.Leases = tc.leases
+			env.WorkSession = &WorkSessionSummary{
+				Intent:   "ship the change",
+				Services: []string{"apppool", "appstage"},
+				Deploys:  map[string][]AttemptInfo{},
+			}
+			plan := BuildPlan(env)
+			if plan.Primary.Tool != tc.wantTool || !reflect.DeepEqual(plan.Primary.Args, tc.wantArgs) {
+				t.Errorf("primary = %s %v, want %s %v", plan.Primary.Tool, plan.Primary.Args, tc.wantTool, tc.wantArgs)
+			}
+			if _, ok := plan.PerService["apppool"]; ok {
+				t.Errorf("the pool half has a step: %+v", plan.PerService["apppool"])
+			}
+			if !strings.Contains(plan.Primary.Rationale, "apppool") {
+				t.Errorf("rationale %q does not name the pool", plan.Primary.Rationale)
+			}
+		})
+	}
+
+	// Once the stage is deployed and verified, nothing is left: the pool
+	// half never holds the session open.
+	env := planEnvelope(PhaseDevelopActive)
+	env.Services = poolDevPairServices(topology.CloseModeAuto, topology.GitPushUnconfigured)
+	at := time.Date(2026, 10, 23, 10, 0, 0, 0, time.UTC)
+	env.WorkSession = &WorkSessionSummary{
+		Intent:   "ship the change",
+		Services: []string{"apppool", "appstage"},
+		Deploys:  map[string][]AttemptInfo{"appstage": {{At: at, Success: true}}},
+		Verifies: map[string][]AttemptInfo{"appstage": {{At: at, Success: true}}},
+	}
+	if plan := BuildPlan(env); plan.Primary.Args["action"] != "close" || plan.PerService != nil {
+		t.Errorf("plan = %+v, want close with nothing per service", plan)
 	}
 }

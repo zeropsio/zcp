@@ -6,7 +6,6 @@ import (
 
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/runtime"
-	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -16,7 +15,7 @@ import (
 // seconds of SSH latency onto every status call.
 const attachRepoStatusConcurrency = 4
 
-// attachRepoStatus populates services[i].Repo for every non-managed
+// attachRepoStatus populates services[i].Repo for every app-runtime
 // service (docs/spec-workflows.md §8 GLC-7, G1/G2) — the tools-layer half
 // of workflow.ApplyRepoStatus, which stays SSH-free so workflow/ never
 // imports ops/. Present/Head are read fresh over SSH on every call. Baseline and
@@ -42,30 +41,34 @@ func attachRepoStatus(ctx context.Context, services []workflow.ServiceSnapshot, 
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, attachRepoStatusConcurrency)
-	for _, svc := range services {
-		if svc.RuntimeClass == topology.RuntimeManaged || svc.RuntimeClass == topology.RuntimeUnknown {
+	// Read each snapshot by index, field by field: attachHQCheckoutOrigin
+	// writes its own fields of the same snapshots meanwhile, so copying a
+	// whole snapshot here would race with it.
+	for i := range services {
+		if !services[i].RuntimeClass.IsAppRuntime() {
 			continue
 		}
+		hostname := services[i].Hostname
 		wg.Add(1)
-		go func(svc workflow.ServiceSnapshot) {
+		go func(hostname string) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			st, err := ops.ReadRepoStatus(ctx, ssh, svc.Hostname)
+			st, err := ops.ReadRepoStatus(ctx, ssh, hostname)
 			if err != nil {
 				return // best-effort — a read failure just leaves this hostname without a repo block
 			}
 			status := workflow.RepoStatus{Present: st.Present, Head: st.Head, RepoState: st.RepoState}
-			if meta, metaErr := workflow.FindServiceMeta(stateDir, svc.Hostname); metaErr == nil && meta != nil && meta.Hostname == svc.Hostname && meta.Repo != nil {
+			if meta, metaErr := workflow.FindServiceMeta(stateDir, hostname); metaErr == nil && meta != nil && meta.Hostname == hostname && meta.Repo != nil {
 				status.Baseline = meta.Repo.BaselineAppVersion
 				status.Provenance = meta.Repo.Provenance
 			}
 
 			mu.Lock()
-			statuses[svc.Hostname] = status
+			statuses[hostname] = status
 			mu.Unlock()
-		}(svc)
+		}(hostname)
 	}
 	wg.Wait()
 	workflow.ApplyRepoStatus(services, statuses)

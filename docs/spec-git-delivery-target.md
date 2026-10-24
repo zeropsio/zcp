@@ -26,7 +26,8 @@ Six intent statements. Everything else in this spec derives from them.
    in git, the baking is unnecessary. Self-redeploy of a git-configured service is reserved for an
    explicit FUNDAMENTAL reason (break-glass: integration outage, recovery) — and when it does
    happen, it MUST preserve everything on the dev service (committed-tree precheck + deployFiles
-   `[.]` + `-g`), and ZCP flags "container now ahead of repo — push to reconcile".
+   `[.]` + `-g`), and ZCP flags "container now ahead of repo — push to reconcile" whenever what it
+   shipped is not already a clean commit on the tracked branch (`docs/spec-workflows.md` §8 S5).
 2. **Builds flow from the repo via integrations.** Dev-only: the push (re)builds the service via
    its integration. Dev+stage: the push builds the STAGE half. Tag push builds PRODUCTION. ZCP
    configures/instructs the integrations and OBSERVES the builds; it does not replace them.
