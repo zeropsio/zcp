@@ -38,7 +38,7 @@ run)
   echo "$$ $(pwd) ${ZEROPS_StableNumber:-none}" >> "$s/runs"
   echo run >> "$s/order"
   : > "$s/bound"
-  exec sleep 30
+  exec sleep 300
   ;;
 ctl)
   if [ "$2" = env ]; then shift 2; echo "env $*" >> "$s/order"; if [ -n "$STUB_ENV" ]; then echo '{"code":1,"error":"env: refused"}'; exit "$STUB_ENV"; fi; exit 0; fi
@@ -238,7 +238,10 @@ func testStartsItAsRunStartWould(t *testing.T, shell string) {
 	if got.outcome != leaseSupervisorStarted {
 		t.Fatalf("outcome = %q, want started (%+v)", got.outcome, got)
 	}
-	if took := time.Since(begun); took > 10*time.Second {
+	// The stub supervisor stays up 300 s and ensure waits at most 5 s for its
+	// socket: a minute tells the two apart even when a loaded machine spawns
+	// the script's shells slowly (seen: 15 s under the full test battery).
+	if took := time.Since(begun); took > time.Minute {
 		t.Errorf("ensure took %s: it must return once the socket answers, not wait for the supervisor to end", took)
 	}
 	runs := h.runs(t)
