@@ -53,9 +53,26 @@ type step struct {
 	degraded string
 }
 
+// Option configures Run and RunSSHFS.
+type Option func(*options)
+
+// options are what the command layer hands init: WithLeaseCheck.
+type options struct {
+	leaseCheck LeaseCheck
+}
+
+func buildOptions(opts []Option) options {
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
+	return o
+}
+
 // Run executes the init subcommand, generating configuration files in baseDir.
 // All steps are idempotent — re-running resets to defaults.
-func Run(baseDir string, rt runtime.Info) error {
+func Run(baseDir string, rt runtime.Info, opts ...Option) error {
+	o := buildOptions(opts)
 	// Ensure HOME is set — many tools (git, ssh) need it but Zerops
 	// containers may start with HOME="" or HOME="/".
 	if home := os.Getenv("HOME"); home == "" || home == "/" {
@@ -80,8 +97,10 @@ func Run(baseDir string, rt runtime.Info) error {
 		// A redeploy replaces the container: the lease aliases and mounts
 		// are gone while the records and reservations live on. This is the
 		// boot step that runs (`zcp init sshfs` is not in the boot
-		// sequence), so it puts them back (docs/spec-workflows.md §8 DP-2).
-		steps = append(steps, step{"Dev-pool leases", restoreLeaseStep, "leased pool containers stay without their ssh alias and mount; zerops_lease action=status reports them unmounted"})
+		// sequence), so it puts them back — a mount only once the lease's
+		// orchestrator vouches for its container (docs/spec-workflows.md §8
+		// DP-2).
+		steps = append(steps, step{"Dev-pool leases", o.restoreLeaseStep, "leased pool containers stay without their ssh alias and mount; zerops_lease action=status reports them unmounted"})
 		// The mate step is registered only when there is something to
 		// reconcile: the flag asks for it enabled, OR a previous `zcp init`
 		// left a unit registered that a now-off flag must remove. A
