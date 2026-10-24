@@ -108,7 +108,7 @@ func MountService(
 			return nil, platform.NewPlatformError(
 				platform.ErrMountFailed,
 				fmt.Sprintf("Failed to clear stale mount for %s: %v", hostname, err),
-				"Try fusermount -uz manually",
+				"Try: sudo zsc unit remove sshfs-"+hostname+" (a fusermount alone is undone: the unit restarts sshfs), then fusermount -uz "+mountPath+" if it is still mounted",
 			)
 		}
 		_ = os.Remove(mountPath)
@@ -203,7 +203,7 @@ func UnmountService(
 			return nil, platform.NewPlatformError(
 				platform.ErrUnmountFailed,
 				fmt.Sprintf("Failed to force unmount stale %s: %v", hostname, err),
-				"Try fusermount -uz manually",
+				"Try: sudo zsc unit remove sshfs-"+hostname+" (a fusermount alone is undone: the unit restarts sshfs), then fusermount -uz "+mountPath+" if it is still mounted",
 			)
 		}
 		_ = os.Remove(mountPath)
@@ -234,7 +234,7 @@ func UnmountService(
 				return nil, platform.NewPlatformError(
 					platform.ErrUnmountFailed,
 					fmt.Sprintf("Failed to force unmount %s: %v", hostname, err),
-					"Try fusermount -uz manually",
+					"Try: sudo zsc unit remove sshfs-"+hostname+" (a fusermount alone is undone: the unit restarts sshfs), then fusermount -uz "+mountPath+" if it is still mounted",
 				)
 			}
 			_ = os.Remove(mountPath)

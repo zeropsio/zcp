@@ -15,7 +15,7 @@ import (
 // A lease holding work that is not pushed need not be released to stop
 // running (docs/spec-workflows.md §8 DP-28): park stops its container through
 // the orchestrator with the lease, which keeps the reservation and the
-// container's disk — /var/www, $HOME and /tmp (a zfs root, not a tmpfs) — and
+// container's disk — /var/www and $HOME; /tmp too, except where the base empties it at boot (an Ubuntu base does) — and
 // ends its processes; unpark starts it again (live-verified 2026-10-23). A
 // stopped container answers nothing: ssh fails (255, no route to host, after
 // ~6 s), the orchestrator's exec is refused container-not-running, and zcp's
@@ -71,7 +71,7 @@ func parkedContainer(c platform.SwarmContainer) bool {
 
 // parkedKeeps is what a parked lease keeps and how it runs again.
 func parkedKeeps(alias string) string {
-	return fmt.Sprintf("it keeps its reservation, /var/www, $HOME and /tmp, nothing runs in it and nothing answers on it; %s starts it again", LeaseUnparkCall(alias))
+	return fmt.Sprintf("it keeps its reservation, /var/www and $HOME (an Ubuntu base empties /tmp at every start), nothing runs in it and nothing answers on it; %s starts it again", LeaseUnparkCall(alias))
 }
 
 // parkedView is the view of a lease whose container its orchestrator lists
@@ -105,7 +105,7 @@ func startedSinceParkedNote(alias string) string {
 func LeaseParkedError(lease LeaseTargetInfo, what string) error {
 	return platform.NewPlatformError(platform.ErrPrerequisiteMissing,
 		fmt.Sprintf("Lease %s is parked: its container is stopped, so %s cannot reach it", lease.Alias, what),
-		fmt.Sprintf("Start it first: %s (it keeps its /var/www, $HOME and /tmp)", LeaseUnparkCall(lease.Alias)))
+		fmt.Sprintf("Start it first: %s (it keeps its /var/www and $HOME)", LeaseUnparkCall(lease.Alias)))
 }
 
 // leaseContainerFor reads, by id, whose the container of the lease rec

@@ -216,10 +216,15 @@ func TestLeasePark_UnmountsThenStopsWithItsLease(t *testing.T) {
 	if v.State != LeaseStateParked || v.ParkedAt != parkNow.Format(time.RFC3339) {
 		t.Errorf("view = %+v, want state parked since %s", v, parkNow.Format(time.RFC3339))
 	}
-	for _, want := range []string{"zerops_lease action=unpark lease=devpool-3", "/var/www, $HOME and /tmp", "unmounted"} {
+	for _, want := range []string{"zerops_lease action=unpark lease=devpool-3", "/var/www and $HOME", "an Ubuntu base empties /tmp", "unmounted"} {
 		if !strings.Contains(v.Note, want) {
 			t.Errorf("note %q lacks %q", v.Note, want)
 		}
+	}
+	// /tmp survives a stop only where the base keeps it: an Ubuntu base
+	// empties it at every start (live-verified 2026-10-24).
+	if strings.Contains(v.Note, "$HOME and /tmp") {
+		t.Errorf("note %q promises /tmp unconditionally", v.Note)
 	}
 	if strings.Contains(v.Note, testLease) {
 		t.Errorf("note leaks the lease: %q", v.Note)

@@ -392,10 +392,11 @@ func TestBootstrapCompleteAdoptPlan_ExcludesConcurrentSessionService(t *testing.
 }
 
 // TestBootstrapCompleteAdoptPlan_DevServicesSharingAVolume_AreOneVariantBPair
-// (docs/spec-mate.md §2.8a, Decision: B is recognised from topology on every
-// route): two dev services whose dev setups mount one local-storage volume
-// are adopted as one pair holding the code volume, the volume is no
-// dependency, and one dev service alone stays an ordinary adopt.
+// (docs/spec-mate.md §2.8a.4a): two dev services whose dev setups mount one
+// local-storage volume already holding their repository — a variant-B
+// project whose record was lost — are adopted as one pair holding the code
+// volume again, so pool migration can move it; the volume is no dependency,
+// and one dev service alone stays an ordinary adopt.
 func TestBootstrapCompleteAdoptPlan_DevServicesSharingAVolume_AreOneVariantBPair(t *testing.T) {
 	t.Parallel()
 	existing := []platform.ServiceStack{
@@ -405,7 +406,7 @@ func TestBootstrapCompleteAdoptPlan_DevServicesSharingAVolume_AreOneVariantBPair
 	}
 	mount := func(setup, base string) AdoptVolumeSetup {
 		return AdoptVolumeSetup{Setup: setup, RunBase: base, Volume: "vol", MountPath: "/var/www/ws", WorksIn: true,
-			Content: map[string]topology.VolumeContent{"webdev": topology.VolumeAbsent, "apidev": topology.VolumeAbsent}}
+			Content: map[string]topology.VolumeContent{"webdev": topology.VolumeCheckout, "apidev": topology.VolumeCheckout}}
 	}
 	eng := startAdopt(t, t.TempDir())
 	if _, err := eng.BootstrapCompleteAdoptPlan(existing, []string{"webdev", "apidev"}, runtime.Info{}, nil,
@@ -440,13 +441,16 @@ func TestBootstrapCompleteAdoptPlan_DevServicesSharingAVolume_AreOneVariantBPair
 	}
 }
 
-// TestBootstrapCompleteAdoptPlan_ASharedVolume_IsACodeVolumeOnlyWhenTheDevSetupsWorkInItAndItHoldsNoOtherContent:
-// zcp never writes code into a volume it did not prove is a code volume.
-// Adopt takes two dev services sharing a local-storage volume for a variant-B
-// pair only when every dev setup works in the mount and every one of them
-// finds nothing there yet, an empty folder or this repository. A Laravel app
-// and worker sharing their storage volume adopt as two services, as before.
-func TestBootstrapCompleteAdoptPlan_ASharedVolume_IsACodeVolumeOnlyWhenTheDevSetupsWorkInItAndItHoldsNoOtherContent(t *testing.T) {
+// TestBootstrapCompleteAdoptPlan_ASharedVolume_IsACodeVolumeOnlyWhenTheDevSetupsWorkInItAndItHoldsThisRepository:
+// zcp sets up no new code volume and never writes code into a volume it did
+// not prove is one. Adopt takes two dev services sharing a local-storage
+// volume for a variant-B pair only when every dev setup works in the mount
+// and every one of them finds this repository there already — a variant-B
+// project recorded again. A volume holding nothing yet or an empty folder
+// would become a code volume only by adopting it, so those dev services adopt
+// as separate services, as a Laravel app and worker sharing their storage
+// volume always have.
+func TestBootstrapCompleteAdoptPlan_ASharedVolume_IsACodeVolumeOnlyWhenTheDevSetupsWorkInItAndItHoldsThisRepository(t *testing.T) {
 	t.Parallel()
 	type seen = map[string]topology.VolumeContent
 	f2 := []platform.ServiceStack{userSvc("webdev", "bun@1.3"), userSvc("apidev", "go@1"), userSvc("vol", "local-storage:single@1")}
@@ -472,9 +476,11 @@ func TestBootstrapCompleteAdoptPlan_ASharedVolume_IsACodeVolumeOnlyWhenTheDevSet
 		wantPair bool
 	}{
 		{name: "F2 before its first deploy mounts the volume", existing: f2, scope: []string{"webdev", "apidev"},
-			mounts: f2Mounts(true, seen{"webdev": topology.VolumeAbsent, "apidev": topology.VolumeAbsent}), wantPair: true},
+			mounts: f2Mounts(true, seen{"webdev": topology.VolumeAbsent, "apidev": topology.VolumeAbsent})},
 		{name: "F2 with an empty volume", existing: f2, scope: []string{"webdev", "apidev"},
-			mounts: f2Mounts(true, seen{"webdev": topology.VolumeEmpty, "apidev": topology.VolumeEmpty}), wantPair: true},
+			mounts: f2Mounts(true, seen{"webdev": topology.VolumeEmpty, "apidev": topology.VolumeEmpty})},
+		{name: "F2 where one dev service finds the repository and the other an empty volume", existing: f2, scope: []string{"webdev", "apidev"},
+			mounts: f2Mounts(true, seen{"webdev": topology.VolumeCheckout, "apidev": topology.VolumeEmpty})},
 		{name: "F2 whose volume already holds the repository", existing: f2, scope: []string{"webdev", "apidev"},
 			mounts: f2Mounts(true, seen{"webdev": topology.VolumeCheckout, "apidev": topology.VolumeCheckout}), wantPair: true},
 		{name: "Laravel app and worker sharing their storage volume", existing: laravel, scope: []string{"app", "worker"},

@@ -879,10 +879,12 @@ go on Ubuntu).
 URL in the line zcp writes, so a dev build of the supervisor can be tried before any release. Dev
 loop only; production never sets it.
 
-**Variant B stand-up.** The dev services start before the repo is cloned onto the shared volume, so
-each supervisor first reads a missing file (an empty declaration). After the clone, stand-up runs
-`zcp-devsup ctl reload` on every dev service's supervisor (§2.8a.4a); each starts only the entries
-of its own service (`TestSupervisor_EachDevServicesSupervisorStartsOnlyTheServersAssignedToIt`).
+**Variant B stand-up.** zcp sets up no new code volume; a stand-up called again on a recorded
+variant-B pair (§2.8a.4a) still fills the volume when it is empty. The dev services start before
+the repo is cloned onto the shared volume, so each supervisor first reads a missing file (an empty
+declaration). After the clone, stand-up runs `zcp-devsup ctl reload` on every dev service's
+supervisor; each starts only the entries of its own service
+(`TestSupervisor_EachDevServicesSupervisorStartsOnlyTheServersAssignedToIt`).
 
 **Runtime state.** `$HOME/.zcp/devsup/state.json`, written only by the supervisor (atomic rename),
 beside `logs/<name>.log` and the control socket `sock`. `$HOME` survives a container restart and is
@@ -1270,51 +1272,85 @@ type CodeVolume struct {
 	MountPath   string          `json:"mountPath"`   // e.g. /var/www/ws
 	DevServices []DevServiceRef `json:"devServices"` // {hostname, setupName}
 }
-// on the plan's runtime target and on ServiceMeta:
+// on ServiceMeta, and derive-only on the plan's runtime target (never published):
 CodeVolume *CodeVolume `json:"codeVolume,omitempty"`
 ```
 
-- Variant B (MODEL §4) is chosen only by MODEL §4's rule; a pair without `codeVolume` is variant A
-  and reads, deploys and stands up exactly as before.
+**zcp sets up no new code volume.** Dev pools replace variant B: a part whose runtime cannot share
+the dev service gets a Swarm dev pool of its own (docs/spec-workflows.md §8 DP). A variant-B pair
+recorded before keeps working exactly as below, and pool migration moves it onto one dev pool per
+part (docs/spec-workflows.md §13 PM-13). The record stays, and so does every reader of it: each
+meta write writes the whole struct, pool migration reads it, and zcp cannot know when every
+installation has migrated. A pair without `codeVolume` is variant A and reads, deploys and stands
+up exactly as before.
+
+- No path sets one up:
+  - Plan: the plan runtime publishes no `codeVolume`, so a call still carrying one is refused by
+    the input schema before any handler runs — the agent reads `validating "arguments": … validating
+    /properties/plan/items/properties/runtime: unexpected additional properties ["codeVolume"]` —
+    and a plan reaching the engine with one is refused naming the field, a dev pool per part and
+    pool-migrate, with nothing planned (`TestWorkflowToolSchema_PlanRuntimeCarriesNoCodeVolume`,
+    `TestBootstrapCompletePlan_PlanCarryingCodeVolume_RefusedNamingPools`).
+  - Adopt records a code volume only on a volume already holding the repository (below) — a
+    variant-B project whose record was lost, recorded again so pool migration can move it. Dev
+    services whose volume holds nothing yet or an empty folder adopt as separate services, as a
+    data volume's do: adopting them as a pair would make the volume a code volume, its first deploy
+    filling it.
+  - Stand-up reads a tier's local-storage service as a managed service it leaves as it is: per
+    repository, one runtime that is no stage is the dev half of every stage the repository builds
+    (variant A, a stage per part), and otherwise each stage pairs with the runtime named like it,
+    each dev service holding its own checkout. The pair's stages put the one named like the dev half
+    first, then the tier's order (`TestParseMateTier_OneDevHalfTakesEveryStageOfItsRepository`,
+    `TestParseMateTier_SeveralDevServicesBesideALocalStorageService_PairByName`,
+    `TestStandup_FreshTierWithALocalStorageService_SetsUpNoCodeVolume`).
+  - The monorepo playbook gives a part that cannot share the dev service a dev pool and names
+    pool-migrate for a repository already on a code volume (`TestPlaybookMonorepo_ContentPins_PartRules`).
+- Steering: every `zerops_deploy` whose target a variant-B pair names, every `zerops_dev_server`
+  answer for one of its dev services (`warnings`), and lifecycle status (a `### Shared code volume`
+  guidance block) carry one line — `zcp no longer sets up a shared code volume. <dev>'s pair keeps
+  working on the code volume <volume>; zerops_workflow workflow="pool-migrate" service="<dev>" moves
+  it onto one dev pool per part.` — a warning, never a refusal; a pair already keyed by its dev pool
+  carries none (`TestDeployTool_VariantBPair_WarnsThatPoolMigrateMovesIt`,
+  `TestDevServer_VariantBDevService_WarnsThatPoolMigrateMovesItsPair`,
+  `TestHandleLifecycleStatus_VariantBPair_NamesPoolMigrate`).
 - The pair stays one meta, keyed on the dev service the agent edits (`Hostname`). Every
   `DevServices[i]` is a further dev service of the pair with its own dev setup; the pair-keyed
-  lookups resolve it to the pair, `RoleFor` names it a dev half and `SetupNameFor` its setup.
-- Validation, before import: `mountPath` is an absolute folder strictly under `/var/www` — the
-  platform refuses `/var/www` itself as a mount (P4 H3) and zcp's mount `<host>:/var/www` shows the
-  volume as `/var/www/<host>/<folder>` — and the pair needs at least one further dev service. The
-  volume and every dev service are planned once and collide with no live service
-  (`TestValidateBootstrapTargets_PlanB_MountsTheCodeVolumeUnderVarWwwNeverAtIt`).
+  lookups resolve it to the pair, `RoleFor` names it a dev half and `SetupNameFor` its setup. A pair
+  adopted again names the volume and each dev service once, every one of them live
+  (`TestValidateBootstrapTargets_AdoptedCodeVolume_NamesEveryServiceOnce`).
 - Deploy: a deploy from any dev service of the pair runs with `workingDir` = `mountPath` unless the
   caller names one (`ServiceMeta.WorkingDirFor`), and pre-flight reads `zerops.yml` from the same
   folder below the source's mount. In a project holding a local-storage service a `workingDir`
   under `/var/www` is a container path unless its first folder is a service's hostname, which stays
   refused as a local mount path (`TestDeployTool_FromVariantBDevService_RunsWithWorkingDirOnTheVolume`).
-- Stand-up recognises the pair from the tier as it recognises every pair: per repository, one
-  runtime that is no stage is the dev half of every stage the repository builds (variant A, a stage
-  per part); several such runtimes beside the tier's only local-storage service are one variant-B
-  pair — the first in the tier's order the dev half, the rest further dev services — and without
-  exactly one local-storage service each stage pairs with the runtime named like it, as before.
-  The pair's stages put the one named like the dev half first, then the tier's order
-  (`TestParseMateTier_OneDevHalfTakesEveryStageOfItsRepository`,
-  `TestParseMateTier_VariantB_SeveralDevServicesOfOneRepositoryAndACodeVolumeAreOnePair`).
-- Stand-up of a variant-B pair: it is adopted with `codeVolume`, and once the repository is checked
-  out its `mountPath` is read from `run.volume` of every dev setup of the pair in `zerops.yml` — one
-  that does not mount the volume, mounts it elsewhere than the others or outside `/var/www` stops
-  the pair. The dev half deploys from the checkout in `/var/www`, then every further dev service
-  deploys its own dev setup from the same checkout; then the volume is filled once from that
-  checkout (left as it is when it already holds this repository) and `zcp-devsup ctl reload` runs on
-  every dev service; the pair's stages build from the volume after the fill
-  (`TestStandup_VariantBFromAFreshTier_StandsUpAsOnePair`,
-  `TestStandup_VariantB_FillsTheVolumeOnceAndEveryDevServiceDeploysItsOwnDevSetup`).
+  The deploy of the dev half fills a volume the record names that is still empty and reloads every
+  dev service's supervisor (`TestDeployTool_OfAVariantBDevHalf_FillsTheCodeVolumeOnceAndReloadsTheSupervisors`).
+- Stand-up called again on a project holding a recorded variant-B pair reads the tier beside the
+  records: a repository with several runtimes that are no stage, one of them the recorded pair's
+  dev half, beside the tier's only local-storage service the record names, is that pair — the
+  recorded dev half wherever the tier lists it, the others further dev services, every stage of the
+  repository its stage; a record naming another volume, or a pair already keyed by its dev pool,
+  keeps nothing (`TestParseMateTier_ARecordedVariantBPair_IsReadAsThatPair`). The adopt it runs
+  refuses a target naming a service another meta records — a further dev service or stage of
+  another pair — so no second meta is ever written for one runtime (docs/spec-workflows.md §8 E8;
+  `TestAdoptPair_AServiceAnotherPairAlreadyNames_Refused`). The pair is adopted again with
+  `codeVolume`, and once the repository is checked out its `mountPath` is read from `run.volume` of
+  every dev setup of the pair in `zerops.yml` — one that does not mount the volume, mounts it
+  elsewhere than the others or outside `/var/www` stops the pair. The dev half deploys from the
+  checkout in `/var/www`, then every further dev service deploys its own dev setup from the same
+  checkout; then the volume is filled once from that checkout (left as it is when it already holds
+  this repository) and `zcp-devsup ctl reload` runs on every dev service; the pair's stages build
+  from the volume after the fill
+  (`TestStandup_VariantB_FillsTheVolumeOnceAndEveryDevServiceDeploysItsOwnDevSetup`).
 - zcp never writes code into a volume it did not prove is a code volume. Adopt takes a local-storage
   volume that several dev setups mount for a pair's code volume only when every dev setup works in
   the mount — each `run.initCommands`/`run.start` command is a `zsc noop` or names the mount, and a
   built-in web server serves a `documentRoot` inside it (`ops.ZeropsYmlEntry.WorksIn`) — and every
-  matched runtime finds nothing at the mount yet, an empty folder or a git checkout sharing a root
-  commit with its `/var/www`; anything else (a Laravel app and worker sharing `/var/www/storage`)
-  adopts as separate services. The fill writes only into an empty volume and refuses any other
-  content, naming the volume
-  (`TestBootstrapCompleteAdoptPlan_ASharedVolume_IsACodeVolumeOnlyWhenTheDevSetupsWorkInItAndItHoldsNoOtherContent`,
+  matched runtime finds a git checkout there sharing a root commit with its `/var/www`; anything
+  else — nothing at the mount yet, an empty folder, or a Laravel app and worker sharing
+  `/var/www/storage` — adopts as separate services. The fill writes only into an empty volume and
+  refuses any other content, naming the volume
+  (`TestBootstrapCompleteAdoptPlan_ASharedVolume_IsACodeVolumeOnlyWhenTheDevSetupsWorkInItAndItHoldsThisRepository`,
   `TestCodeVolume_OnlyAnEmptyVolumeIsFilledAndOnlyThisRepositoryCountsAsItsCheckout`).
 - Stand-up builds every stage of a pair, variant A or B, each cross-deployed from the dev half with
   its own setup (`TestStandup_DeploysEveryStageOfAPair`).
@@ -1323,8 +1359,7 @@ CodeVolume *CodeVolume `json:"codeVolume,omitempty"`
   service — each delete keeps the volume and its files — then the volume last, the only step that
   loses the checkout; the platform refuses that delete while any service still mounts the volume.
   `codeVolume` rides the pool-keyed pair until the volume reads gone, then leaves it, so no migrated
-  pair names a code volume. Once every variant-B pair has migrated, nothing reads `codeVolume`, which
-  is what p4-remove-volume waits for to take variant B out
+  pair names a code volume
   (`TestPoolMigrateRetire_VariantB_DeletesEveryDevServiceThenTheVolumeLast`,
   `TestPoolMigrateRetire_VariantB_VolumeStillMounted_KeepsTheCodeVolume`).
 

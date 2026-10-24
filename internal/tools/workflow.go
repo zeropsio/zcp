@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -330,7 +331,38 @@ func workflowInputSchema() *jsonschema.Schema {
 	patchFlexBoolProperty(s, "confirmLaunch")
 	patchFlexBoolProperty(s, "copyGitToken")
 	patchEnumProperty(s, "publicAccess", "auto", "subdomain", "none")
+	// The plan runtime's codeVolume is derive-only: zcp sets up no new code
+	// volume (docs/spec-mate.md §2.8a.4a), so it is not published, and a plan
+	// still carrying it is refused by the schema, naming the field.
+	unpublishProperty(s, "codeVolume")
 	return s
+}
+
+// unpublishProperty removes every property named key from the schema tree,
+// wherever the inferred schema nests or references it, so the property is
+// neither published nor accepted.
+func unpublishProperty(s *jsonschema.Schema, key string) {
+	seen := map[*jsonschema.Schema]bool{}
+	var walk func(n *jsonschema.Schema)
+	walk = func(n *jsonschema.Schema) {
+		if n == nil || seen[n] {
+			return
+		}
+		seen[n] = true
+		if _, ok := n.Properties[key]; ok {
+			delete(n.Properties, key)
+			n.PropertyOrder = slices.DeleteFunc(n.PropertyOrder, func(k string) bool { return k == key })
+			n.Required = slices.DeleteFunc(n.Required, func(k string) bool { return k == key })
+		}
+		for _, c := range n.Properties {
+			walk(c)
+		}
+		for _, c := range n.Defs {
+			walk(c)
+		}
+		walk(n.Items)
+	}
+	walk(s)
 }
 
 // patchEnumProperty gives every property named key in the schema tree (the
@@ -1146,6 +1178,11 @@ func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client 
 	// status so an open work session (FocusWork) no longer hides an in-flight or
 	// terminal launch — the pre-rebuild dispatch surfaced launch unconditionally.
 	if extra := launchOverlayAddendum(engine.StateDir(), projectID); extra != "" {
+		guidance = append(guidance, extra)
+	}
+	// A variant-B pair keeps working; status names the pool migration that
+	// moves it onto one dev pool per part (docs/spec-mate.md §2.8a.4a).
+	if extra := codeVolumeStatusAddendum(engine.StateDir()); extra != "" {
 		guidance = append(guidance, extra)
 	}
 	return statusResult(workflow.Response{

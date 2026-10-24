@@ -26,11 +26,27 @@ const SSHFSMountOptions = "reconnect,StrictHostKeyChecking=no,ServerAliveInterva
 // SystemMounter implements ops.Mounter using real system commands.
 // Only works on Zerops containers where sshfs, zsc, and /proc/mounts are available.
 type SystemMounter struct {
-	// run and ready are test seams; nil means the real command runner and the
-	// real /proc/mounts readiness wait.
-	run   func(ctx context.Context, timeout time.Duration, name string, args ...string) error
-	ready func(ctx context.Context, path string) error
+	// run, ready and mounted are test seams; nil means the real command
+	// runner, the real /proc/mounts readiness wait and the real /proc/mounts
+	// read.
+	run     func(ctx context.Context, timeout time.Duration, name string, args ...string) error
+	ready   func(ctx context.Context, path string) error
+	mounted func(path string) (bool, error)
 }
+
+// isMounted reports whether path still has an sshfs mount.
+func (m *SystemMounter) isMounted(path string) (bool, error) {
+	if m.mounted != nil {
+		return m.mounted(path)
+	}
+	return isSshfsMount(path)
+}
+
+// mountUnit is the systemd unit `zsc unit create sshfs-<name>` makes. It runs
+// sshfs in the foreground and restarts it when it exits, so a fusermount alone
+// is undone within seconds (live-verified 2026-10-24); removing the unit is
+// what ends a mount.
+func mountUnit(hostname string) string { return "zerops@sshfs-" + hostname + ".service" }
 
 // NewSystemMounter creates a new SystemMounter.
 func NewSystemMounter() *SystemMounter {
@@ -163,24 +179,25 @@ func writeProbe(path string) bool {
 }
 
 // Unmount removes the SSHFS mount and zsc unit.
-// Order: fusermount -u → fallback fusermount -uz → zsc unit remove.
+// Order: zsc unit remove (its sshfs exits and the mount usually goes with
+// it), then — only while the mount is still there — fusermount -u, falling
+// back to fusermount -uz. A unit that cannot be removed fails the unmount
+// before any fusermount, since the unit would restart sshfs after it.
 // This prevents partial failures where the unit is removed but FUSE remains.
 func (m *SystemMounter) Unmount(ctx context.Context, hostname, path string) error {
 	if err := ValidateMountName(hostname); err != nil {
 		return err
 	}
-
-	// Unmount FUSE first; fallback to lazy unmount on failure.
+	if err := m.exec(ctx, unmountTimeout, "sudo", "-E", "zsc", "unit", "remove", "sshfs-"+hostname); err != nil {
+		return fmt.Errorf("zsc unit remove: %w", err)
+	}
+	if still, err := m.isMounted(path); err == nil && !still {
+		return nil
+	}
 	if err := m.exec(ctx, unmountTimeout, "fusermount", "-u", path); err != nil {
 		if fallbackErr := m.exec(ctx, unmountTimeout, "fusermount", "-uz", path); fallbackErr != nil {
 			return fmt.Errorf("fusermount: %w (lazy fallback: %w)", err, fallbackErr)
 		}
-	}
-
-	// Then remove the systemd unit.
-	unitName := "sshfs-" + hostname
-	if err := m.exec(ctx, unmountTimeout, "sudo", "-E", "zsc", "unit", "remove", unitName); err != nil {
-		return fmt.Errorf("zsc unit remove: %w", err)
 	}
 	return nil
 }
@@ -192,6 +209,9 @@ func (m *SystemMounter) ForceUnmount(ctx context.Context, hostname, path string)
 	if ValidateMountName(hostname) == nil {
 		unitName := "sshfs-" + hostname
 		_ = m.exec(ctx, unmountTimeout, "sudo", "-E", "zsc", "unit", "remove", unitName)
+	}
+	if still, err := m.isMounted(path); err == nil && !still {
+		return nil
 	}
 	if err := m.exec(ctx, unmountTimeout, "fusermount", "-uz", path); err != nil {
 		return fmt.Errorf("fusermount lazy unmount: %w", err)
@@ -232,9 +252,12 @@ func (m *SystemMounter) HasUnit(ctx context.Context, hostname string) (bool, err
 	if err := ValidateMountName(hostname); err != nil {
 		return false, err
 	}
-	unitName := "zerops@sshfs-" + hostname + ".service"
-	err := m.exec(ctx, mountCheckTimeout, "systemctl", "cat", unitName)
-	return err == nil, nil
+	if m.exec(ctx, mountCheckTimeout, "systemctl", "cat", mountUnit(hostname)) == nil {
+		return true, nil
+	}
+	// zsc unit remove deletes the unit file, but a failed instance stays
+	// listed until reset-failed.
+	return m.exec(ctx, mountCheckTimeout, "systemctl", "is-failed", "--quiet", mountUnit(hostname)) == nil, nil
 }
 
 // CleanupUnit removes the zsc systemd unit without touching the FUSE mount.
@@ -243,7 +266,15 @@ func (m *SystemMounter) CleanupUnit(ctx context.Context, hostname string) error 
 	if err := ValidateMountName(hostname); err != nil {
 		return err
 	}
-	return m.exec(ctx, unmountTimeout, "sudo", "-E", "zsc", "unit", "remove", "sshfs-"+hostname)
+	removeErr := m.exec(ctx, unmountTimeout, "sudo", "-E", "zsc", "unit", "remove", "sshfs-"+hostname)
+	_ = m.exec(ctx, unmountTimeout, "sudo", "systemctl", "reset-failed", mountUnit(hostname))
+	if removeErr == nil {
+		return nil
+	}
+	if left, _ := m.HasUnit(ctx, hostname); left {
+		return removeErr
+	}
+	return nil
 }
 
 // execWithTimeout runs a command with a timeout derived from the parent

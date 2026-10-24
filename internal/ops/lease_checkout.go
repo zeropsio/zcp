@@ -207,6 +207,9 @@ func leaseCheckoutCommand(workDir, repo, branch, base, hqURL string) string {
 		"if git rev-parse --verify -q " + q("refs/remotes/origin/"+branch) + " >/dev/null; then " +
 			"git checkout -q -f -B " + q(branch) + " --track " + q("origin/"+branch) + "; else " + cut + "; fi",
 		"git clean -fd -q",
+		// A fresh pool container carries no git identity; the agent's
+		// first commit needs one (set-if-absent, never over the image's).
+		gitIdentityEnsureFragment(),
 	}
 	if persist := leaseCredentialHelperConfig(repo, hqURL); persist != "" {
 		steps = append(steps, persist)

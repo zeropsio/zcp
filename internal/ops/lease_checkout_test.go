@@ -766,7 +766,7 @@ func TestLeaseCheckoutCommand_PersistsHostScopedHelper(t *testing.T) {
 	if cmd := leaseCheckoutCommand("/var/www", "https://github.com/acme/app", "main", "", ""); !strings.Contains(cmd, want) {
 		t.Errorf("command lacks the persisted helper %q:\n%s", want, cmd)
 	}
-	if cmd := leaseCheckoutCommand("/var/www", "/srv/origin.git", "main", "", ""); strings.Contains(cmd, "credential.") && strings.Contains(cmd, "git config") {
+	if cmd := leaseCheckoutCommand("/var/www", "/srv/origin.git", "main", "", ""); strings.Contains(cmd, "git config --replace-all 'credential.") {
 		t.Errorf("a non-https origin got a persisted helper:\n%s", cmd)
 	}
 }
@@ -1012,5 +1012,24 @@ func TestLeaseRelease_PoolGoneOrBeingDeleted_DroppedAsLost(t *testing.T) {
 				t.Errorf("record survives: %v", statErr)
 			}
 		})
+	}
+}
+
+// TestLeaseCheckoutCommand_SetsACommitIdentityOnlyWhenAbsent pins that a
+// lease's checkout leaves the repository commit-ready (docs/spec-workflows.md
+// §8 DP-6): a fresh pool container carries no git identity, so the agent's
+// first commit failed "Author identity unknown" (live, 2026-10-24). zcp fills
+// the robot identity set-if-absent, after the checkout, as every other site
+// that needs a commit-ready repository does — never over one the image sets.
+func TestLeaseCheckoutCommand_SetsACommitIdentityOnlyWhenAbsent(t *testing.T) {
+	t.Parallel()
+	cmd := leaseCheckoutCommand("/var/www", testRepo, "feature", "", "")
+	identity := gitIdentityEnsureFragment()
+	at := strings.Index(cmd, identity)
+	if at < 0 {
+		t.Fatalf("checkout command sets no commit identity:\n%s", cmd)
+	}
+	if checkout := strings.Index(cmd, "git checkout -q -f -B"); checkout < 0 || checkout > at {
+		t.Errorf("the identity is set before the checkout, in a repository not yet on its branch:\n%s", cmd)
 	}
 }

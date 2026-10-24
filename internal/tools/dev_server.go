@@ -149,6 +149,9 @@ func RegisterDevServer(srv *mcp.Server, d DevServerDeps) {
 		}
 
 		resp := &devServerToolResult{DevServerResult: result}
+		if steer := codeVolumeSteerFor(stateDir, input.Hostname); steer != "" {
+			resp.Warnings = append(resp.Warnings, steer)
+		}
 		if migration != nil {
 			resp.MigratedToSupervisor = true
 			resp.MigrationTimes = &migration.times
@@ -239,7 +242,8 @@ type devServerToolResult struct {
 	// non-start action, or a failed start).
 	PublicAccess *ops.PublicAccessSummary `json:"publicAccess,omitempty"`
 	// Warnings carries any non-fatal anomaly: a public-access hook failure,
-	// or what moving the dev setup onto the supervisor could not finish.
+	// or what moving the dev setup onto the supervisor could not finish —
+	// and, for a variant-B dev service, that pool-migrate moves its pair.
 	Warnings []string `json:"warnings,omitempty"`
 	// Envelope is the post-call state envelope with the dev service's
 	// devServers[] (docs/spec-mate.md §2.8a.3) — only from field-order
