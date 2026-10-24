@@ -27,6 +27,10 @@ func (s *countingSSH) ExecSSH(_ context.Context, _, _ string) ([]byte, error) {
 	return nil, nil
 }
 
+func (s *countingSSH) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, hostname, command)
+}
+
 func (s *countingSSH) ExecSSHBackground(_ context.Context, _, _ string, _ time.Duration) ([]byte, error) {
 	s.calls++
 	return nil, nil

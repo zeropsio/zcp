@@ -37,6 +37,10 @@ func (s *recordingSSH) ExecSSH(_ context.Context, host, command string) ([]byte,
 	return []byte("ok"), nil
 }
 
+func (s *recordingSSH) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, hostname, command)
+}
+
 func (s *recordingSSH) ExecSSHBackground(ctx context.Context, host, command string, _ time.Duration) ([]byte, error) {
 	return s.ExecSSH(ctx, host, command)
 }
@@ -180,6 +184,10 @@ func (s *fillingSSH) ExecSSH(ctx context.Context, host, command string) ([]byte,
 		return []byte("{}\n@@zcp-devsup ctl 0\n"), nil
 	}
 	return out, err
+}
+
+func (s *fillingSSH) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, hostname, command)
 }
 
 // TestDeployTool_OfAVariantBDevHalf_FillsTheCodeVolumeOnceAndReloadsTheSupervisors

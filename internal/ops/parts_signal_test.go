@@ -22,6 +22,10 @@ func (p partsSSH) ExecSSH(_ context.Context, _, command string) ([]byte, error) 
 	return []byte(p.out), nil
 }
 
+func (p partsSSH) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return p.ExecSSH(ctx, hostname, command)
+}
+
 func (p partsSSH) ExecSSHBackground(context.Context, string, string, time.Duration) ([]byte, error) {
 	return nil, nil
 }

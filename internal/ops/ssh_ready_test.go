@@ -21,6 +21,10 @@ func (s *sequencingSSH) ExecSSH(_ context.Context, _ string, _ string) ([]byte, 
 	return nil, nil
 }
 
+func (s *sequencingSSH) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, hostname, command)
+}
+
 // ExecSSHBackground — waitSSHReady never uses the background variant but
 // the interface requires both methods, so stub it with the same pattern.
 func (s *sequencingSSH) ExecSSHBackground(_ context.Context, _ string, _ string, _ time.Duration) ([]byte, error) {

@@ -46,6 +46,10 @@ func (s *launchDelegationSSHStub) ExecSSH(_ context.Context, _ string, command s
 	return nil, nil
 }
 
+func (s *launchDelegationSSHStub) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, hostname, command)
+}
+
 func (s *launchDelegationSSHStub) ExecSSHBackground(_ context.Context, _, _ string, _ time.Duration) ([]byte, error) {
 	return nil, nil
 }

@@ -45,6 +45,10 @@ func (s *exportSSHStub) ExecSSH(_ context.Context, _ string, command string) ([]
 	return nil, nil
 }
 
+func (s *exportSSHStub) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, hostname, command)
+}
+
 func (s *exportSSHStub) ExecSSHBackground(_ context.Context, _, _ string, _ time.Duration) ([]byte, error) {
 	return nil, nil
 }

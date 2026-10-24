@@ -60,6 +60,10 @@ func (*nopSSH) ExecSSH(_ context.Context, _, _ string) ([]byte, error) {
 	return []byte("push ok"), nil
 }
 
+func (*nopSSH) ExecSSHStdin(_ context.Context, _, _ string, _ []byte) ([]byte, error) {
+	return []byte("push ok"), nil
+}
+
 func (*nopSSH) ExecSSHBackground(_ context.Context, _, _ string, _ time.Duration) ([]byte, error) {
 	return []byte("push ok"), nil
 }

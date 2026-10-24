@@ -187,6 +187,10 @@ func (c *postBuildContainer) ExecSSH(ctx context.Context, host, cmd string) ([]b
 	return c.Container.ExecSSH(ctx, host, cmd)
 }
 
+func (c *postBuildContainer) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return c.ExecSSH(ctx, hostname, command)
+}
+
 // A zerops_dev_server start that moves the dev setup onto the supervisor
 // waits on the new container after its build is live, outside the build
 // poll's own progress; a client that asked for progress hears from zcp each
@@ -287,6 +291,10 @@ func (c *failingDev) ExecSSH(ctx context.Context, host, cmd string) ([]byte, err
 		return []byte("zcp-devsup: no such server"), errors.New("exit status 1")
 	}
 	return c.Container.ExecSSH(ctx, host, cmd)
+}
+
+func (c *failingDev) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return c.ExecSSH(ctx, hostname, command)
 }
 
 // A move onto the supervisor says when its redeploy begins and when the dev

@@ -16,6 +16,10 @@ type catSSH struct{ yaml string }
 
 func (s catSSH) ExecSSH(context.Context, string, string) ([]byte, error) { return []byte(s.yaml), nil }
 
+func (s catSSH) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, hostname, command)
+}
+
 func (s catSSH) ExecSSHBackground(context.Context, string, string, time.Duration) ([]byte, error) {
 	return nil, nil
 }
@@ -52,6 +56,10 @@ func (s volumeSSH) ExecSSH(_ context.Context, host, cmd string) ([]byte, error) 
 		return nil, errors.New("ssh: connect refused")
 	}
 	return []byte("@@zcp code-volume content " + c + "\n"), nil
+}
+
+func (s volumeSSH) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, hostname, command)
 }
 
 func (volumeSSH) ExecSSHBackground(context.Context, string, string, time.Duration) ([]byte, error) {

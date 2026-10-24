@@ -25,7 +25,6 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		authInfo   auth.Info
 		serviceID  string
 		workDir    string
 		includeGit bool
@@ -34,7 +33,6 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 	}{
 		{
 			name:      "basic command with split init/identity-ensure and no auto-commit",
-			authInfo:  testAuthInfo(),
 			serviceID: "svc-123",
 			workDir:   "/var/www",
 			wantParts: []string{
@@ -69,23 +67,17 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 			},
 		},
 		{
-			name: "with different region",
-			authInfo: auth.Info{
-				Token:   "my-token",
-				APIHost: "api.app-fra1.zerops.io",
-				Region:  "fra1",
-			},
+			name:      "with different region",
 			serviceID: "svc-789",
 			workDir:   "/var/www",
 			wantParts: []string{
-				"ZEROPS_TOKEN='my-token' zcli push --service-id svc-789",
+				"zcli push --service-id svc-789",
 				"(test -d .git || git init -q -b main)",
 				"git config user.email 'agent@zerops.io'",
 			},
 		},
 		{
 			name:       "with includeGit flag",
-			authInfo:   testAuthInfo(),
 			serviceID:  "svc-123",
 			workDir:    "/var/www",
 			includeGit: true,
@@ -94,14 +86,7 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 			},
 		},
 		{
-			name: "uses hardcoded deploy identity regardless of auth info",
-			authInfo: auth.Info{
-				Token:    "my-token",
-				APIHost:  "api.app-prg1.zerops.io",
-				Region:   "prg1",
-				Email:    "deploy@company.io",
-				FullName: "Deploy Bot",
-			},
+			name:      "uses hardcoded deploy identity regardless of auth info",
 			serviceID: "svc-100",
 			workDir:   "/var/www",
 			wantParts: []string{
@@ -115,7 +100,7 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			cmd := buildSSHCommand(tt.authInfo, tt.serviceID, tt.workDir, "", tt.includeGit, "", "/tmp/zcp-push-test")
+			cmd := buildSSHCommand(tt.serviceID, tt.workDir, "", tt.includeGit, "", "/tmp/zcp-push-test")
 
 			for _, part := range tt.wantParts {
 				if !contains(cmd, part) {
@@ -134,7 +119,7 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 func TestBuildSSHCommand_FreshInit_BranchMain(t *testing.T) {
 	t.Parallel()
 
-	cmd := buildSSHCommand(testAuthInfo(), "svc-1", "/var/www", "", false, "", "/tmp/zcp-push-test")
+	cmd := buildSSHCommand("svc-1", "/var/www", "", false, "", "/tmp/zcp-push-test")
 
 	if !contains(cmd, "git init -q -b main") {
 		t.Errorf("fresh init must use -b main\ngot: %s", cmd)
@@ -151,7 +136,7 @@ func TestBuildSSHCommand_FreshInit_BranchMain(t *testing.T) {
 func TestBuildSSHCommand_NoAutoCommit_HeadGuardPresent(t *testing.T) {
 	t.Parallel()
 
-	cmd := buildSSHCommand(testAuthInfo(), "svc-1", "/var/www", "", false, "", "/tmp/zcp-push-test")
+	cmd := buildSSHCommand("svc-1", "/var/www", "", false, "", "/tmp/zcp-push-test")
 
 	for _, forbidden := range []string{"git add -A", "git add ", "-m 'deploy'", "git commit"} {
 		if contains(cmd, forbidden) {
@@ -175,7 +160,7 @@ func TestBuildSSHCommand_NoAutoCommit_HeadGuardPresent(t *testing.T) {
 func TestBuildSSHCommand_PreservesRemoteAndGitignore(t *testing.T) {
 	t.Parallel()
 
-	cmd := buildSSHCommand(testAuthInfo(), "svc-1", "/var/www", "", false, "", "/tmp/zcp-push-test")
+	cmd := buildSSHCommand("svc-1", "/var/www", "", false, "", "/tmp/zcp-push-test")
 
 	unwanted := []string{"git remote", ".gitignore"}
 	for _, s := range unwanted {
@@ -189,8 +174,8 @@ func TestBuildSSHCommand_PreservesRemoteAndGitignore(t *testing.T) {
 // must not leave the Mate's Zerops key behind in the app container's zcli
 // config, where the app's own dependencies run. `zcli login` writes the token
 // to ~/.config/zcli — so there is none; the one `zcli push` gets the key
-// through its environment on the command line (zcli reads ZEROPS_TOKEN), and
-// the value is POSIX single-quoted like every other shell composition here.
+// through its environment (zcli reads ZEROPS_TOKEN), read from the push
+// call's stdin and never written into the command, whatever it holds.
 func TestBuildSSHCommand_TokenNeverPersists(t *testing.T) {
 	t.Parallel()
 
@@ -204,19 +189,19 @@ func TestBuildSSHCommand_TokenNeverPersists(t *testing.T) {
 		{
 			name:      "plain push",
 			authInfo:  testAuthInfo(),
-			wantParts: []string{"ZEROPS_TOKEN='test-token' zcli push --service-id svc-1"},
+			wantParts: []string{" && " + pushKeyRead + " && ", "zcli push --service-id svc-1"},
 		},
 		{
 			name:       "push with setup and .git",
 			authInfo:   testAuthInfo(),
 			setup:      "prod",
 			includeGit: true,
-			wantParts:  []string{"ZEROPS_TOKEN='test-token' zcli push --service-id svc-1 --setup 'prod' -g"},
+			wantParts:  []string{" && " + pushKeyRead + " && ", "zcli push --service-id svc-1 --setup 'prod' -g"},
 		},
 		{
 			name:      "token with a shell metacharacter stays quoted",
 			authInfo:  auth.Info{Token: "tok'en; rm -rf /"},
-			wantParts: []string{`ZEROPS_TOKEN='tok'\''en; rm -rf /' zcli push`},
+			wantParts: []string{" && " + pushKeyRead + " && ", "zcli push --service-id svc-1"},
 		},
 	}
 
@@ -224,10 +209,16 @@ func TestBuildSSHCommand_TokenNeverPersists(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			cmd := buildSSHCommand(tt.authInfo, "svc-1", "/var/www", tt.setup, tt.includeGit, "", "/tmp/zcp-push-test")
+			cmd := buildSSHCommand("svc-1", "/var/www", tt.setup, tt.includeGit, "", "/tmp/zcp-push-test")
 
 			if contains(cmd, "zcli login") {
 				t.Errorf("command must NOT log zcli in on the remote host (the token would persist)\ngot: %s", cmd)
+			}
+			if contains(cmd, tt.authInfo.Token) {
+				t.Errorf("command carries the token %q\ngot: %s", tt.authInfo.Token, cmd)
+			}
+			if got := string(pushKeyInput(tt.authInfo)); got != tt.authInfo.Token+"\n" {
+				t.Errorf("push stdin = %q, want the token %q as one line", got, tt.authInfo.Token)
 			}
 			for _, want := range tt.wantParts {
 				if !contains(cmd, want) {
