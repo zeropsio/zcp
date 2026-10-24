@@ -1005,7 +1005,7 @@ func TestScale_Box_ContainerCounts_Refused(t *testing.T) {
 			if !errors.As(err, &pe) || pe.Code != platform.ErrInvalidScaling {
 				t.Fatalf("err = %v, want an %s PlatformError", err, platform.ErrInvalidScaling)
 			}
-			for _, want := range []string{"Zerops Box", tt.wantFirst, "single container"} {
+			for _, want := range []string{"Zerops Box", tt.wantFirst, "single VM"} {
 				if !strings.Contains(pe.Message, want) {
 					t.Errorf("message = %q, want it to contain %q", pe.Message, want)
 				}
