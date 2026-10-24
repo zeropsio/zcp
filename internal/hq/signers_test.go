@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestClient_Signers_UsesOnlyTheKeysProjectAndOneAttempt(t *testing.T) {
+func TestClient_Signers_UsesOnlyTheEnrolledProjectAndOneAttempt(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name, project, answer string
