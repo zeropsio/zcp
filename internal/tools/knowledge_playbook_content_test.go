@@ -291,6 +291,55 @@ func TestPlaybookMonorepo_ContentPins_PartRules(t *testing.T) {
 	}
 }
 
+// TestThemeDevServers_ContentPins_DeclarationKeys pins that the dev-servers
+// theme's declaration table names every key a dev pool's lease reads
+// (docs/spec-mate.md §2.8a.1; docs/spec-workflows.md §8 DP-14, DP-22, DP-26):
+// previewPortBase and the per-container port its preview answers on,
+// siblingEnv with its private hostname, server-side only and declared only
+// for a server that reads it (a sibling's leave or join restarts the other
+// leases' servers), a separate line saying a browser cannot resolve that
+// hostname, prepare after the checkout, and the preview mark.
+func TestThemeDevServers_ContentPins_DeclarationKeys(t *testing.T) {
+	t.Parallel()
+
+	store, err := knowledge.GetEmbeddedStore()
+	if err != nil {
+		t.Fatalf("GetEmbeddedStore: %v", err)
+	}
+	doc, err := store.Get("zerops://themes/dev-servers")
+	if err != nil {
+		t.Fatalf("Get dev-servers theme: %v", err)
+	}
+	section, ok := doc.H2Sections()["The declaration"]
+	if !ok {
+		t.Fatal("dev-servers theme missing H2 section 'The declaration'")
+	}
+	body := strings.Join(strings.Fields(section), " ")
+	for _, tt := range []struct{ name, needle string }{
+		{"previewPortBase has its row", "| `previewPortBase` |"},
+		{"the preview port is the base plus the container's stable number", "`previewPortBase + ZEROPS_StableNumber`"},
+		{"the pool declares every preview port", "`previewPortBase + 1` through `previewPortBase + maxContainers`"},
+		{"the lease's address is the result's previewUrl", "`previewUrl`"},
+		{"a new lease may answer on another port", "a new lease of the part can answer on another port"},
+		{"siblingEnv has its row", "| `siblingEnv` |"},
+		{"siblingEnv gives the private container hostname", "`node-id-<n>.runtime.<pool>.zerops`"},
+		{"siblingEnv is server-side only", "server-side calls only"},
+		{"declare only a variable a server reads", "Declare a variable only when a dev server actually reads it"},
+		{"a sibling's leave or join restarts the other leases' servers", "every lease of that pool that joins or leaves the branch restarts the dev servers running in the branch's other leases"},
+		{"browser clients get their own line", "| `siblingEnv` and a browser client |"},
+		{"a browser cannot resolve the private hostname", "a browser cannot resolve the private hostname"},
+		{"prepare has its row", "| `prepare` |"},
+		{"prepare runs after the checkout, before the servers start", "after the checkout, before the declared servers start"},
+		{"a failed prepare leaves the lease held", "leaves the lease held"},
+		{"preview has its row", "| `servers[].preview` |"},
+		{"preview marks the server the preview reaches", "when more than one server listens"},
+	} {
+		if !strings.Contains(body, tt.needle) {
+			t.Errorf("%s: dev-servers declaration section missing %q", tt.name, tt.needle)
+		}
+	}
+}
+
 // TestThemeDevServers_ContentPins_WatchAndHeavyServers pins the dev-server
 // rules the monorepo playbook points to rather than restates.
 func TestThemeDevServers_ContentPins_WatchAndHeavyServers(t *testing.T) {

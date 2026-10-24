@@ -285,7 +285,7 @@ func LeaseUnpark(ctx context.Context, d LeaseDeps, alias string) (LeaseView, err
 		notes = append(notes, note)
 	}
 	if d.SSH != nil {
-		notes = append(notes, superviseUnparked(ctx, d.SSH, d.StateDir, alias))
+		notes = append(notes, superviseUnparked(ctx, d, alias))
 	}
 	v.Note = joinNotes(notes...)
 	return v, nil
@@ -317,13 +317,14 @@ func waitStartedLease(ctx context.Context, d LeaseDeps, alias string) error {
 // was parked. A declaration zcp cannot read sends no overlay, so the
 // supervisor keeps the one it kept in its state. It answers a note, "" when
 // all went well; nothing in it fails the unpark.
-func superviseUnparked(ctx context.Context, ssh SSHDeployer, stateDir, alias string) string {
+func superviseUnparked(ctx context.Context, d LeaseDeps, alias string) string {
+	ssh := d.SSH
 	read, note := readLeaseCheckout(ctx, ssh, alias, "so zcp sent its supervisor no sibling overlay (it keeps the one it had)")
 	var env LeaseSiblingEnv
 	var envArgs []string
 	wireNote := ""
 	if note == "" {
-		env, envArgs, wireNote = checkoutOverlay(stateDir, alias, read)
+		env, envArgs, wireNote = checkoutOverlay(d.StateDir, alias, read, d.previewURLs(ctx))
 	}
 	r, err := ensureSupervisorIn(ctx, ssh, alias, leaseWorkDir, leaseSupervisorWait, false, envArgs)
 	refused := ""

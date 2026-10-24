@@ -119,6 +119,15 @@ func TestGetProcess_ErrorCodeFoldsIntoFailReason(t *testing.T) {
 			wantFailReason: "serviceStackTypeNotFound: service stack type not found",
 		},
 		{
+			// Live 2026-10-23/24 (ny1): a Zerops Box import that found no
+			// capacity — the reason reaches zerops_import's results as is
+			// (spec-workflows.md §8 PS-10).
+			name:           "Box capacity failure",
+			body:           `{"id":"proc-1","status":"FAILED","actionName":"stack.create","publicMeta":null,"failReason":null,"error":{"code":"containerAction","message":"Sorry, there is currently not enough hardware capacity to run your container. If the issue persists, please contact support."}}`,
+			wantStatus:     "FAILED",
+			wantFailReason: "containerAction: Sorry, there is currently not enough hardware capacity to run your container. If the issue persists, please contact support.",
+		},
+		{
 			name:           "publicMeta reason wins",
 			body:           `{"id":"proc-1","status":"FAILED","actionName":"stack.build","publicMeta":{"failReason":"publicMeta failure"},"error":{"code":"other","message":"ignored"}}`,
 			wantStatus:     "FAILED",

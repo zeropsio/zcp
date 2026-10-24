@@ -383,6 +383,7 @@ var validAtomEnumValues = map[string]map[string]struct{}{
 		"adopt":        {},
 		"incomplete":   {},
 		"orphan":       {},
+		"dev-pool":     {},
 	},
 	"deployStates": {
 		"never-deployed": {},

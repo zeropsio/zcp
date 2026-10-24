@@ -38,7 +38,7 @@ func leaseSyncInputRefusal(input LeaseInput) error {
 }
 
 // leaseSyncNext is what a sync's result tells the agent to do next: restart
-// each server that runs without a watch on a lease that moved, and look at
+// each server nothing reloads (a runtime entry) on a lease that moved, and look at
 // each lease the sync left as it was (its note says why); a credential a
 // lease lacks is the user's to give.
 func leaseSyncNext(v ops.LeaseSyncView) string {
@@ -58,7 +58,7 @@ func leaseSyncNext(v ops.LeaseSyncView) string {
 	}
 	var next []string
 	if len(restarts) > 0 {
-		next = append(next, "These dev servers run without a watch and keep the old code until restarted: "+strings.Join(restarts, "; ")+".")
+		next = append(next, "These dev servers are runtime entries no declared watch covers, so they keep the old code until restarted: "+strings.Join(restarts, "; ")+".")
 	}
 	if len(left) > 0 {
 		next = append(next, "Not fast-forwarded, left as they were (each lease's note says why and what to do): "+strings.Join(left, ", ")+".")

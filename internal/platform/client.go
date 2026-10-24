@@ -183,7 +183,7 @@ type Client interface {
 	// this client's own Zerops token. The access token is a bearer to the
 	// whole workspace for an hour after its last use: BoxAccess formats and
 	// marshals it redacted, and urlUi — which carries it in its path — is
-	// never kept (zbox.go, docs/spec-workflows.md §8 PS-9, PS-11).
+	// never kept (zbox.go, docs/spec-workflows.md §8 PS-12, PS-14).
 	MintBoxAccess(ctx context.Context, serviceID string) (BoxAccess, error)
 }
 

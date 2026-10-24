@@ -60,7 +60,7 @@ func boxActions() map[string]boxAction {
 }
 
 // RegisterBox registers zerops_box: setup and status of a Zerops Box's
-// workspace (docs/spec-workflows.md §8 PS-8..PS-11), reached through zproxy
+// workspace (docs/spec-workflows.md §8 PS-11..PS-14), reached through zproxy
 // with zcp's own Zerops token; box builds the workspace API client.
 func RegisterBox(srv *mcp.Server, client platform.Client, projectID string, box ops.BoxFactory) {
 	registerBox(srv, ops.BoxDeps{Client: client, ProjectID: projectID, Box: box})
@@ -119,7 +119,7 @@ type importConfig struct {
 }
 
 // WithBoxSetup makes zerops_import finish the setup of every Zerops Box it
-// creates before it returns (docs/spec-workflows.md §8 PS-8); box builds the
+// creates before it returns (docs/spec-workflows.md §8 PS-11); box builds the
 // workspace API client.
 func WithBoxSetup(box ops.BoxFactory) ImportOption {
 	return func(c *importConfig) { c.box = &ops.BoxDeps{Box: box} }

@@ -144,11 +144,12 @@ func registerImport(srv *mcp.Server, client platform.Client, projectID string, e
 
 		onProgress := buildProgressCallback(ctx, req)
 		pollImportProcesses(ctx, client, result, onProgress)
+		result.Warnings = append(result.Warnings, ops.BoxRegionWarnings(input.Content, input.FilePath, result.Processes)...)
 
 		resp := importResponse{ImportResult: result}
 		if boxDeps != nil {
 			// A Box starts with no base and no domain: finish its setup
-			// before the call returns (docs/spec-workflows.md §8 PS-8).
+			// before the call returns (docs/spec-workflows.md §8 PS-11).
 			resp.BoxSetup = boxSetupAfterImport(ctx, *boxDeps, input, result)
 		}
 		resp.Envelope = freshEnvelope(ctx, stateDir, client, projectID, rt)
@@ -489,7 +490,7 @@ type importResponse struct {
 	GroupRecipe []string `json:"groupRecipe,omitempty"`
 	// BoxSetup is the setup of each Zerops Box the import created — base,
 	// sandbox domain, every failure with its fix, and what to do next
-	// (docs/spec-workflows.md §8 PS-8); absent when the import created none.
+	// (docs/spec-workflows.md §8 PS-11); absent when the import created none.
 	BoxSetup []ops.BoxSetupResult `json:"boxSetup,omitempty"`
 	// Envelope is the post-mutation lifecycle state (docs/spec-mate.md §1.3).
 	// Absent when its computation failed — the rest of the response is

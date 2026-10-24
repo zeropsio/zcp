@@ -1,7 +1,7 @@
 {
   "phase": "idle",
   "environment": "container",
-  "idleScenario": "empty",
+  "idleScenario": "dev-pool",
   "selfService": { "hostname": "zcp" },
   "project": { "id": "proj-weather", "name": "weather" },
   "services": [

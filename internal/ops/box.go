@@ -225,7 +225,7 @@ func boxEnableCall(host string) string {
 }
 
 // BoxSetup finishes the setup of the Box hostname so a first sandbox can be
-// created (docs/spec-workflows.md §8 PS-8): it waits for the workspace API to
+// created (docs/spec-workflows.md §8 PS-11): it waits for the workspace API to
 // answer, makes sure a READY base exists — pulling the default image only
 // when none is READY and no pull is running — and, when the Box's subdomain
 // access is on, makes its 8081 Zerops subdomain a sandbox domain, keeping

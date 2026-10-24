@@ -206,7 +206,7 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// both in action and gives lease their role; no new field.
 		"zerops_lease": 1085,
 		// New tool: setup / status of a Zerops Box (docs/spec-workflows.md §8
-		// PS-8..PS-11). Two fields: the action and the Box's hostname.
+		// PS-11..PS-14). Two fields: the action and the Box's hostname.
 		"zerops_box": 420,
 		// Raised 266 -> 580: action="wait" added processId/processIds/service
 		// routing fields (block until a process or a whole service settles) — a

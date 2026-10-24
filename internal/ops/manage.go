@@ -216,6 +216,9 @@ func Scale(ctx context.Context, client platform.Client, projectID, hostname stri
 	if proc == nil {
 		result.Message = "Scaling parameters updated"
 	}
+	if topology.IsSandboxType(serviceType) {
+		result.Notice = BoxLifecycleNotice(svc.Name, serviceType, BoxActionResize)
+	}
 	if topology.IsPoolType(serviceType) && (params.MinContainers != nil || params.MaxContainers != nil) {
 		result.Notice = poolContainerCountNotice
 		if params.MinContainers != nil && *params.MinContainers > 0 {
@@ -260,7 +263,7 @@ func effectiveAutoscaling(svc *platform.ServiceStack) *platform.CustomAutoscalin
 // the platform default applies. A memory size the platform would refuse as
 // input (more than 3 decimal places) can only be its own default, so it
 // stays out too. A managed service's container count is fixed by its
-// variant, and a Box is a single container, so none is sent for them. A pool
+// variant, and a Box is a single VM, so none is sent for them. A pool
 // may legitimately sit at zero containers, so its zero minimum is sent back
 // whenever the service did return its container counts.
 func fillOmittedAutoscaling(p *platform.AutoscalingParams, cur *platform.CustomAutoscaling, countFixed, pool bool) {
@@ -468,6 +471,37 @@ func scaleBoundsConflict(asked ScaleParams, sent platform.AutoscalingParams) err
 	return nil
 }
 
+// Lifecycle actions BoxLifecycleNotice describes.
+const (
+	BoxActionRestart = "restart"
+	BoxActionStop    = "stop"
+	BoxActionResize  = "resize"
+)
+
+// BoxLifecycleNotice is what a restart, a stop or a resize does to a Zerops
+// Box's sandboxes, "" for any other service or action (spec-workflows.md §8
+// PS-8). A Box is one VM: each of the three stops it, and its running
+// sandboxes come back PARKED without their memory, while parked ones keep
+// theirs; only a reload, which restarts the orchestrator alone, leaves them
+// running. Every resize stops the VM, CPU and RAM as well as disk, and the
+// disk only grows.
+func BoxLifecycleNotice(hostname, serviceType, action string) string {
+	if !topology.IsSandboxType(serviceType) {
+		return ""
+	}
+	const lost = "its running sandboxes come back PARKED without their memory — their processes are gone, and writes not yet flushed to disk may be lost; parked sandboxes keep theirs"
+	reload := fmt.Sprintf("zerops_manage action=reload serviceHostname=%q restarts only the orchestrator, keeps running sandboxes and applies an API key change", hostname)
+	switch action {
+	case BoxActionRestart:
+		return fmt.Sprintf("%s is a Zerops Box: a restart reboots its VM, so %s. Before the next restart, stop or resize, park the sandboxes to keep; when the VM need not reboot, %s.", hostname, lost, reload)
+	case BoxActionStop:
+		return fmt.Sprintf("%s is a Zerops Box: a stop shuts its VM down — its API, console and every sandbox URL are unreachable until it starts — and %s. Before the next stop, restart or resize, park the sandboxes to keep; when the VM need not stop, %s.", hostname, lost, reload)
+	case BoxActionResize:
+		return fmt.Sprintf("%s is a Zerops Box, a single VM: every resize — CPU and RAM as well as disk — stops and starts it, so %s; park the ones to keep before resizing. Its disk can only grow: the platform refuses a smaller one.", hostname, lost)
+	}
+	return ""
+}
+
 // poolContainerCountNotice is what a pool's container counts mean: they are
 // the ceiling of what its orchestrator holds and leases out, not a replica
 // count, and lowering the maximum deletes containers (live, 2026-10-23).
@@ -506,7 +540,7 @@ func poolBaseType(serviceType string) string {
 }
 
 // containerCountFixed reports a service whose container count Scale never
-// sends: a managed service (fixed by its variant) and a Box (one container).
+// sends: a managed service (fixed by its variant) and a Box (one VM).
 func containerCountFixed(serviceType string) bool {
 	return topology.IsManagedService(serviceType) || topology.IsSandboxType(serviceType)
 }
@@ -525,7 +559,7 @@ func validateContainerCounts(serviceType string, p ScaleParams) error {
 			named = "maxContainers"
 		}
 		return platform.NewPlatformError(platform.ErrInvalidScaling,
-			fmt.Sprintf("%s does not apply to a Zerops Box (%s): a Box is a single container", named, serviceType),
+			fmt.Sprintf("%s does not apply to a Zerops Box (%s): a Box is a single VM", named, serviceType),
 			"Drop minContainers/maxContainers; scale a Box vertically (CPU, RAM, disk) only")
 	case topology.IsPoolType(serviceType):
 		bounds, ok := poolContainerBounds[poolBaseType(serviceType)]

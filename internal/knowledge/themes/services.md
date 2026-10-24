@@ -276,6 +276,7 @@ services:
 ```
 
 - `minContainers: 0`: a container the platform creates for the minimum has no primary snapshot and cannot be reset, so releasing its lease deletes it, and it never counts as the pool's warm container. The pool keeps a warm container through the orchestrator instead (**Warm container** below).
+- `minRam`: a lease's dev servers and every check you run in it (a typecheck, tests, a build) share the container's RAM, so size `minRam` for the dev server plus the heaviest check run beside it, and run heavy checks one at a time and single-threaded where the tool offers it (TypeScript 7's `tsc --singleThreaded`, a test runner's single-worker mode). A check killed for memory ends its SSH call with exit 255 and no output, while the dev server can run on.
 - `sshIsolation` goes in `envVariables`: a pool container answers SSH only when it is set as a service env variable admitting the zcp service. The top-level import field did not reach pool containers.
 - `GIT_TOKEN` is a secret the user owns: name it in `envSecrets`, never write a value. Acquire clones with the pool's own `GIT_TOKEN`.
 - The service env reaches the pool's containers.
@@ -289,7 +290,7 @@ zerops:
     build:
       base: <language base>
       addToRunPrepare:
-        - <the dependency manifest and its lockfile>
+        - <every file the dependency install reads: the manifest and its lockfile — in a workspace monorepo, every member's manifest and the workspace definition too>
     run:
       base: <language base>
       ports:
@@ -298,12 +299,13 @@ zerops:
         # ... one entry per preview port, up to previewPortBase + maxContainers
       prepareCommands:
         - <install zcp-devsup>
-        - <copy the manifest and lockfile into /var/www and install the dependencies there>
+        - <copy them into /var/www, keeping their paths, and install the dependencies there>
       start: zcp-devsup run
 ```
 
 - Preview ports: with `previewPortBase` in `.zcp/dev-servers.json`, a lease answers on `previewPortBase + ZEROPS_StableNumber`. A per-port subdomain routes only to containers listening on that port, and a container's `ZEROPS_StableNumber` starts at 1, so every port from `previewPortBase + 1` to `previewPortBase + maxContainers` is declared in `run.ports` with `httpSupport: true`.
-- Dependencies: bake them into `/var/www` in `run.prepareCommands`, with the lockfile listed in `build.addToRunPrepare` so the image rebuilds when it changes. They survive a reset, and the checkout keeps them (ignored files stay). A branch whose lockfile differs declares its incremental install as `prepare` in `.zcp/dev-servers.json` (e.g. `"prepare": "npm install --prefer-offline"`); acquire runs it in `/var/www` after the checkout, before the supervisor starts the declared servers, and reports it — a failed one leaves the lease held.
+- Dependencies: bake them into `/var/www` in `run.prepareCommands`. `run.prepareCommands` see only what `build.addToRunPrepare` copies — never the repository — so list there every file the install reads; the image rebuilds when one of them changes. They survive a reset, and the checkout keeps them (ignored files stay). A branch whose lockfile differs declares its incremental install as `prepare` in `.zcp/dev-servers.json` (e.g. `"prepare": "npm install --prefer-offline"`); acquire runs it in `/var/www` after the checkout, before the supervisor starts the declared servers, and reports it — a failed one leaves the lease held.
+- Workspace monorepo (a package manager's workspace — pnpm, yarn, npm and the like): the install resolves every member, so `build.addToRunPrepare` lists every member's manifest (each `package.json` under the workspace's folders), the workspace definition (`pnpm-workspace.yaml`, or the root `package.json` whose `workspaces` lists the members), the lockfile (`pnpm-lock.yaml`, `yarn.lock`, `package-lock.json`) and any patch directory the lockfile references (`patches/`). A build command can gather them from the full tree into one folder that `addToRunPrepare` lists; `run.prepareCommands` copy them into `/var/www` keeping their paths and install the whole workspace from the lockfile (`pnpm install --frozen-lockfile`), so the installed tree matches the lockfile: a package manager that checks the tree before it runs a script (pnpm 11) reads a filtered install as stale — a `--filter "<pkg>..."` that keeps the part's whole closure included — and a later `pnpm run` or `pnpm exec` in a lease starts a full install first, heavy enough to run the lease out of memory. An image kept filtered calls the part's tools by path (`./node_modules/.bin/<tool>`), never through the package manager. And a part's checks can reach beyond its own package closure: a test or a typecheck that imports another member's sources needs that member's dependencies baked too, or the errors of the missing packages bury the change's own.
 - Supervisor: the image carries `zcp-devsup` (installed in `run.prepareCommands`) and `start: zcp-devsup run`. `run.start` runs only in a container the pool just created — never again after a reset — so acquire and `zerops_dev_server` start the supervisor in a lease themselves. A pool whose image has no `zcp-devsup` is no dev pool: acquire says so and `zerops_dev_server` refuses its leases. A dev service's setup carries the same two lines (see `zerops_knowledge uri="zerops://themes/dev-servers"`).
 - A deploy of the pool changes only containers created after it; existing containers, leased or free, keep their version until `zerops_lease action=rollout pool="<pool>"` replaces the free outdated ones. A lease is skipped and keeps its version until it is released and the pool is rolled out again.
 
@@ -357,16 +359,22 @@ zerops:
 
 ### Zerops Box
 
-**Type**: `ubuntu/zbox@1` — a single container (the import schema takes no container counts for it), in beta. It hosts sandboxes. It is not a zerops.yml `run.base`. Creation can fail on hardware capacity.
-**API**: other services reach the workspace API at `http://<box>:8080` with the workspace API key as the bearer token.
-**Keys**: the API key is the Box's `ZBOX_WORKSPACE_API_KEY` — the whole authority over the workspace, with no scopes. An app wires it by reference in its `run.envVariables` — `BOX_API_KEY: ${<box>_ZBOX_WORKSPACE_API_KEY}` — and never copies the value. `ZBOX_WORKSPACE_VOLUME_KEY` unlocks the Box's encrypted data disk; no app needs it. Box never delivers a `ZBOX_` variable into a sandbox.
+**Type**: `ubuntu/zbox@1` (an import may write `zbox@1`, stored as `ubuntu/zbox@1`), in beta. A Box is a single Ubuntu VM, not a container, that runs sandboxes as microVMs. It is not a zerops.yml `run.base`: no build, no deploy, no container counts.
+**Region**: a Box can be created only in a project in region prg1. In any other region its create fails with the platform's "not enough hardware capacity to run your container" message — `zerops_import` shows it as given — and the platform removes the service.
+**After import**: a Box created by import or in the GUI starts empty — no base and no domain, so a sandbox has nothing to boot from and its ports get no URL. zcp does not set it up yet; `zbox setup` does both (by hand: `zbox base add <image> --name default`, then `zbox workspace domain add <its 8081 subdomain> --form dash`).
+**Lifecycle**: a reload restarts only the orchestrator and keeps running sandboxes. A restart, a stop and every resize (CPU and RAM as well as disk) stop the VM: running sandboxes come back `PARKED` without their memory — park the ones to keep first. Disk can only grow. zcp never restarts a Box for an env change.
+**Ports**: 8080 serves the API and the web console, 8081 the sandbox ingress. Sandbox port URLs need subdomain access (`enableSubdomainAccess: true`; the GUI form leaves it off) and the 8081 subdomain among the workspace's domains. A project service reaches a sandbox's `project` port at `http://<box>.zerops:8081` with the port's host in the `Host` header.
+**API**: other services reach the workspace API at `http://<box>:8080` with the workspace API key as the bearer token. Every route is under `/api/rest/`; only `GET /api/rest/ping` answers without the key, and a key in the query string is refused. Requests that consume capacity — create, fork, park, wake, snapshot, restore or terminate a sandbox, pull a base, create a template — need an `Idempotency-Key` header and answer with an operation: long-poll it with `GET /api/rest/operation/{id}?waitSeconds=30`. A sandbox create requires `networkMode`. Errors carry the HTTP status and `{"error":{"code","message","meta"}}`, e.g. `401 unauthorized`, `409 workspaceFull`. The OpenAPI document is at `/api/rest/swagger/openapi.yml`.
+**Limits**: through the public API URL the Zerops edge ends a request after 60 s and refuses uploads over 50 MiB. An exec runs 60 s by default and 10 min at most, with 4 MiB each of stdout and stderr in its answer — start a background process for longer work.
+**Keys**: the API key is the Box's `ZBOX_WORKSPACE_API_KEY` — the whole authority over the workspace, with no scopes. An app wires it by reference in its `run.envVariables` — `BOX_API_KEY: ${<box>_ZBOX_WORKSPACE_API_KEY}` — and never copies the value. Editing it rotates it: the new key applies on the Box's next reload (`zerops_manage action=reload`), and until then only the old key works. `ZBOX_WORKSPACE_VOLUME_KEY` unlocks the Box's encrypted data disk and cannot be changed; no app needs it. The Box's other variables (sandbox secrets, integration credentials) apply at once. Box never delivers a `ZBOX_` variable into a sandbox.
+**Sandboxes**: no Docker yet; images must be `linux/amd64`; inside a sandbox a project service resolves only as `<host>.zerops`, never by its bare hostname.
 
 ### Untrusted code
 
 Every container of a project, a pool's included, gets the project's Shared vault values and its own service's (Zerops still injects unreferenced ones today). In a project with `envIsolation: none` it also gets every other service's values as `<host>_KEY`, secrets included — a pool's `<pool>_API_TOKEN`, a database's password, the zcp service's `ZCP_API_KEY`. Code running in a pool container can read all of them. Where that code is not yours (an agent's experiments, users' submissions):
 
 - Keep the project, and every service whose values the code must not read, on `envIsolation: service` (the default): it stops the `<host>_KEY` copies. A service set to `envIsolation: none` hands its values to every other container. Keep secrets out of the Shared vault, which reaches every container either way.
-- Run code that must read none of the project's values in a Box sandbox: each sandbox is its own microVM and gets only the variables named for it with `--secret` (`--secrets all` hands it every variable the Box sees, project values included), never a `ZBOX_` one.
+- Run code that must read none of the project's values in a Box sandbox: each sandbox is its own microVM and gets only the variables named for it with `--secret` (`--secrets all` hands it every variable the Box sees, project values included), never a `ZBOX_` one. Its default network mode, `PROJECT_INTERNET`, still reaches every project service, the database included: give untrusted code `INTERNET` or `AIRGAPPED` (a workspace policy's `allowedNetworkModes` enforces it), and hand it API credentials through the credentials proxy (an integration), which keeps the value out of the sandbox. A base built from a Dockerfile runs its `RUN` steps on the Box VM with the project network — build only Dockerfiles you trust.
 
 ## Common Patterns
 

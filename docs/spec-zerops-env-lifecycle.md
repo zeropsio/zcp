@@ -163,7 +163,7 @@ A service's process reads exactly the entries of its zerops.yaml `run.envVariabl
 | restart service | re-reads merged env.json at boot | yes | yes |
 | sibling change | `<host>_KEY` updates, ~8 s | No | new processes only |
 
-- Platform does NOT auto-restart on env set; ZCP's `zerops_env set` adds the restart — of the services whose deployed entries read the key (§3b). `[DOC-A][LIVE]` A running process keeps its boot env after a write; a restart applies it, and `stack.restart` keeps the container `[LIVE 2026-10-07]`.
+- Platform does NOT auto-restart on env set; ZCP's `zerops_env set` adds the restart — of the services whose deployed entries read the key (§3b), never a managed service, a Swarm pool or a Zerops Box (a Box applies its variables at once and its API key on a reload — `spec-workflows.md §8 PS-8`). `[DOC-A][LIVE]` A running process keeps its boot env after a write; a restart applies it, and `stack.restart` keeps the container `[LIVE 2026-10-07]`.
 - **PHP-FPM caveat — reload does NOT re-read env/config; restart does** `[LIVE 05-28]`: for PHP runtimes, `zerops.yaml`-configured `PHP_INI_*` / `PHP_FPM_*` vars are applied by `zerops-zenv` rewriting the FPM config files on `reload`, but zenv does **not** send the FPM master `SIGUSR2` — so the running master keeps its old config; only a `restart` (or a manual `kill -USR2 <fpm-master-pid>`) re-reads them. `getenv()`-style env likewise stays at the PID1 boot environ until restart. Consequence: for PHP, prefer **restart over reload** when an env or `PHP_*` config change must take effect — which is why `zerops_env set` restarts rather than reloads.
 
 ---

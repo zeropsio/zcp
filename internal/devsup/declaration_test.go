@@ -449,3 +449,67 @@ func TestDeclaration_Prepare_ParsesAndRoundTrips(t *testing.T) {
 		})
 	}
 }
+
+// TestParseDeclaration_SiblingPreviewEnv_Shapes: siblingPreviewEnv names, like
+// siblingEnv, a variable a part's dev server reads and the pool whose lease of
+// the same branch it reaches — from a browser, so zcp hands it that lease's
+// preview URL. It follows siblingEnv's rules, and one variable is never in
+// both. It is a top-level key of its own, so a supervisor that predates it
+// ignores it and keeps running the file. zcp keeps it when it rewrites the
+// file, and siblingEnv's form is unchanged.
+func TestParseDeclaration_SiblingPreviewEnv_Shapes(t *testing.T) {
+	t.Parallel()
+	servers := `"servers":[{"name":"web","port":3000,"command":"x"}]`
+	tests := []struct {
+		name    string
+		preview string // the siblingPreviewEnv value; "" leaves the key out
+		sibling string // the siblingEnv value; "" leaves the key out
+		wantErr string
+	}{
+		{name: "an old file has none"},
+		{name: "variables naming pools", preview: `{"SELF_URL":"webpool","VITE_HQ_URL":"hqpool"}`, sibling: `{"HQ_HOST":"hqpool"}`},
+		{name: "a ZEROPS_ variable", preview: `{"ZEROPS_HQ":"hqpool"}`, wantErr: `siblingPreviewEnv "ZEROPS_HQ"`},
+		{name: "PATH", preview: `{"PATH":"hqpool"}`, wantErr: `siblingPreviewEnv "PATH"`},
+		{name: "a name with a dash", preview: `{"HQ-URL":"hqpool"}`, wantErr: `siblingPreviewEnv "HQ-URL"`},
+		{name: "a pool with a capital", preview: `{"HQ_URL":"HQpool"}`, wantErr: `siblingPreviewEnv "HQ_URL": "HQpool"`},
+		{name: "a URL, not a pool", preview: `{"HQ_URL":"https://hqpool-abc1-8001.prg1.zerops.app"}`, wantErr: `siblingPreviewEnv "HQ_URL"`},
+		{name: "one variable in both", preview: `{"HQ":"hqpool"}`, sibling: `{"HQ":"hqpool"}`, wantErr: `"HQ" is in both siblingEnv and siblingPreviewEnv`},
+		{name: "a pool that is not a string", preview: `{"HQ_URL":7}`, wantErr: "parse"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			in := `{"version":1,`
+			if tt.sibling != "" {
+				in += `"siblingEnv":` + tt.sibling + `,`
+			}
+			if tt.preview != "" {
+				in += `"siblingPreviewEnv":` + tt.preview + `,`
+			}
+			in += servers + `}`
+			d, err := ParseDeclaration([]byte(in))
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("err = %v, want containing %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			out, err := json.Marshal(d)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.preview != "" && !strings.Contains(string(out), `"siblingPreviewEnv":`+tt.preview) {
+				t.Errorf("rewritten = %s, want siblingPreviewEnv %s kept", out, tt.preview)
+			}
+			if tt.preview == "" && strings.Contains(string(out), "siblingPreviewEnv") {
+				t.Errorf("rewritten = %s, want no siblingPreviewEnv in a file that has none", out)
+			}
+			if tt.sibling != "" && !strings.Contains(string(out), `"siblingEnv":`+tt.sibling) {
+				t.Errorf("rewritten = %s, want siblingEnv %s as it was", out, tt.sibling)
+			}
+		})
+	}
+}

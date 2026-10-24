@@ -405,7 +405,7 @@ func (s *Server) registerTools() {
 	// A Zerops Box starts with no base and no sandbox domain: zerops_import
 	// finishes the setup of every Box it creates, and zerops_box re-runs or
 	// reads it, through zproxy with zcp's own Zerops token
-	// (docs/spec-workflows.md §8 PS-8..PS-11). A call outwaits one 30 s
+	// (docs/spec-workflows.md §8 PS-11..PS-14). A call outwaits one 30 s
 	// operation long-poll.
 	boxFactory := ops.NewBoxFactory(&http.Client{Timeout: ops.BoxCallTimeout})
 	tools.RegisterImportSteered(s.server, s.client, projectID, wfEngine, stateDir, recipeProbe, s.rtInfo, recipeSteer, tools.WithBoxSetup(boxFactory))

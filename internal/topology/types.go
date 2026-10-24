@@ -11,8 +11,9 @@ const (
 	// RuntimePool is a Swarm pool (swarm@1, swarm-vm@1): up to ten containers
 	// its orchestrator hands out by lease — not one app container.
 	RuntimePool RuntimeClass = "pool"
-	// RuntimeSandbox is a Zerops Box (ubuntu/zbox@1): a single container that
-	// hosts sandboxes — not a zerops.yml run.base and not an app runtime.
+	// RuntimeSandbox is a Zerops Box (ubuntu/zbox@1): a single Ubuntu VM, not
+	// a container, that runs sandboxes as microVMs — not a zerops.yml
+	// run.base and not an app runtime.
 	RuntimeSandbox RuntimeClass = "sandbox"
 	RuntimeUnknown RuntimeClass = "unknown"
 )

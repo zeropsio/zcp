@@ -33,6 +33,9 @@ type verifyConfig struct {
 	swarm ops.SwarmFactory
 	// vouch replaces the orchestrator's answer for a lease (tests).
 	vouch leaseVouch
+	// boxHTTP replaces the HTTP client a Box's orchestrator check asks
+	// through (tests).
+	boxHTTP ops.HTTPDoer
 }
 
 // WithPoolOrchestrators lets verify of a pool, in a container, also ask the
@@ -65,6 +68,18 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 			TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 		},
 	}
+	var boxHTTP ops.HTTPDoer = httpClient
+	if cfg.boxHTTP != nil {
+		boxHTTP = cfg.boxHTTP
+	}
+	// checkBox adds the orchestrator check to a Box's result: its keyless
+	// ping, which answers only inside the project (PS-9).
+	checkBox := func(ctx context.Context, r *ops.VerifyResult) {
+		if r == nil || r.Type != string(topology.RuntimeSandbox) {
+			return
+		}
+		r.AddCheck(ops.BoxOrchestratorCheck(ctx, boxHTTP, r, rt.InContainer))
+	}
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_verify",
@@ -82,6 +97,7 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 			}
 			for i := range result.Services {
 				checkPool(ctx, &result.Services[i])
+				checkBox(ctx, &result.Services[i])
 			}
 			recordVerifyAllToWorkSession(stateDir, result)
 			var notes []string
@@ -129,6 +145,7 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 			return convertError(err, WithRecoveryStatus()), nil, nil
 		}
 		checkPool(ctx, result)
+		checkBox(ctx, result)
 		recordVerifyToWorkSession(stateDir, result)
 		resp := verifyResponse{
 			VerifyResult:     result,

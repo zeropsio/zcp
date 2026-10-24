@@ -147,6 +147,22 @@ func TestThemes_Services_PoolSection_FactsPresent(t *testing.T) {
 		"http://<box>:8080", "ZBOX_WORKSPACE_API_KEY", "${<box>_ZBOX_WORKSPACE_API_KEY}", "ZBOX_WORKSPACE_VOLUME_KEY",
 		// Untrusted code: what a container reads, and where such code belongs.
 		"envIsolation: none", "envIsolation: service", "<host>_KEY", "--secret",
+		// Box as the merged Box docs describe it (zerops-docs zbox/*.mdx;
+		// spec-workflows.md §8 PS-10): one VM, its lifecycle and ports, the
+		// API's basics and limits, what an imported Box lacks, the network
+		// its sandboxes reach, the keys, and the live type and capacity facts.
+		"zbox@1", "single Ubuntu VM", "not a container", "every resize", "Disk can only grow",
+		"reload", "PARKED", "without their memory", "never restarts a Box",
+		"8081", "enableSubdomainAccess", "http://<box>.zerops:8081", "`Host`",
+		"/api/rest/", "GET /api/rest/ping", "Idempotency-Key", "waitSeconds", "networkMode", "/api/rest/swagger/openapi.yml", "workspaceFull",
+		"60 s", "50 MiB", "10 min", "4 MiB",
+		"starts empty", "no base and no domain", "zcp does not set it up", "zbox setup",
+		"rotates", "cannot be changed", "apply at once",
+		"PROJECT_INTERNET", "the database included", "`INTERNET`", "`AIRGAPPED`", "allowedNetworkModes", "credentials proxy", "Dockerfiles you trust",
+		"no Docker", "linux/amd64", "<host>.zerops",
+		// Region: a Box exists only in prg1 (owner-stated, 2026-10-24); the
+		// capacity message is how another region refuses it.
+		"only in a project in region prg1", "not enough hardware capacity",
 	} {
 		if !strings.Contains(section, fact) {
 			t.Errorf("'Pools and Box' section missing fact %q", fact)
@@ -287,6 +303,99 @@ func TestThemes_Services_DevPool_Park_FactsPresent(t *testing.T) {
 		"starts it first", "stops it again", "as it stands, stopped",
 		// Idleness offers it and never parks.
 		"or park it", "Nothing parks a lease by itself",
+	} {
+		if !strings.Contains(sub, fact) {
+			t.Errorf("%q subsection missing fact %q", heading, fact)
+		}
+	}
+}
+
+// TestThemes_Services_DevPool_WorkspaceDependencies_FactsPresent pins that the
+// services theme's "A part's dev pool" subsection carries how a pool image
+// bakes a package-manager workspace's dependencies (docs/spec-workflows.md §8
+// DP-14; zerops-docs: the prepare runtime container holds only what
+// build.addToRunPrepare copies, and its cache is keyed on those files): every
+// member's manifest, the workspace definition and any patch directory copied
+// with the lockfile before the install, keeping their paths; the whole
+// workspace installed so the installed tree matches the lockfile, since a
+// filtered one is read as stale and a later run or exec in a lease starts a
+// full install; and a part's checks reaching past its own package closure.
+func TestThemes_Services_DevPool_WorkspaceDependencies_FactsPresent(t *testing.T) {
+	t.Parallel()
+
+	store, err := GetEmbeddedStore()
+	if err != nil {
+		t.Fatalf("GetEmbeddedStore: %v", err)
+	}
+	doc, err := store.Get("zerops://themes/services")
+	if err != nil {
+		t.Fatalf("Get services: %v", err)
+	}
+	section, ok := doc.H2Sections()["Pools and Box"]
+	if !ok {
+		t.Fatal("services.md missing H2 section 'Pools and Box'")
+	}
+	const heading = "### A part's dev pool"
+	_, sub, found := strings.Cut(section, heading)
+	if !found {
+		t.Fatalf("'Pools and Box' section missing %q", heading)
+	}
+	sub, _, _ = strings.Cut(sub, "\n### ")
+	sub = strings.Join(strings.Fields(sub), " ")
+	for _, fact := range []string{
+		// The prepare container holds only what addToRunPrepare copies.
+		"`run.prepareCommands` see only what `build.addToRunPrepare` copies",
+		// A workspace install reads every member's manifest, the workspace
+		// definition and any patch directory, beside the lockfile.
+		"Workspace monorepo", "every member's manifest", "the workspace definition", "patch directory", "keeping their paths",
+		// Concrete file names, as examples.
+		"`pnpm-workspace.yaml`", "`patches/`", "`workspaces`", "`yarn.lock`", "`package-lock.json`",
+		// Install the whole workspace; a filtered one reinstalls in the lease.
+		"install the whole workspace", "matches the lockfile", "reads a filtered install as stale", "full install",
+		"`./node_modules/.bin/<tool>`",
+		// A part's checks can need more than its own closure.
+		"a part's checks", "beyond its own package closure",
+	} {
+		if !strings.Contains(sub, fact) {
+			t.Errorf("%q subsection missing fact %q", heading, fact)
+		}
+	}
+}
+
+// TestThemes_Services_DevPool_Memory_FactsPresent pins that the services
+// theme's "A part's dev pool" subsection says a lease's dev servers and every
+// check run in it share one container's RAM (measured live 2026-10-24: a dev
+// server of 1.3–3.0 GB RSS plus a parallel typecheck overflowed a 4 GB pool
+// container and the typecheck was killed with no message): size minRam for
+// the dev server plus the heaviest check, run heavy checks one at a time and
+// single-threaded, and read an ssh exit 255 with no output as the kill.
+func TestThemes_Services_DevPool_Memory_FactsPresent(t *testing.T) {
+	t.Parallel()
+
+	store, err := GetEmbeddedStore()
+	if err != nil {
+		t.Fatalf("GetEmbeddedStore: %v", err)
+	}
+	doc, err := store.Get("zerops://themes/services")
+	if err != nil {
+		t.Fatalf("Get services: %v", err)
+	}
+	section, ok := doc.H2Sections()["Pools and Box"]
+	if !ok {
+		t.Fatal("services.md missing H2 section 'Pools and Box'")
+	}
+	const heading = "### A part's dev pool"
+	_, sub, found := strings.Cut(section, heading)
+	if !found {
+		t.Fatalf("'Pools and Box' section missing %q", heading)
+	}
+	sub, _, _ = strings.Cut(sub, "\n### ")
+	sub = strings.Join(strings.Fields(sub), " ")
+	for _, fact := range []string{
+		"share the container's RAM",
+		"size `minRam` for the dev server plus the heaviest check",
+		"one at a time", "single-threaded",
+		"exit 255", "no output", "killed for memory",
 	} {
 		if !strings.Contains(sub, fact) {
 			t.Errorf("%q subsection missing fact %q", heading, fact)
