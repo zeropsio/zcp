@@ -18,6 +18,7 @@ func TestHasTestPrefix_SafetyGuard(t *testing.T) {
 		"zcpdb1a2b",
 		"lrv0a1b", // laravel_recipe: lrv + 4hex
 		"inc0a1b2",
+		"tmpbox1a2b", // box_setup: tmpbox + 4hex
 	}
 	noMatch := []string{
 		"backend",   // ba + ckend (not 4 hex)

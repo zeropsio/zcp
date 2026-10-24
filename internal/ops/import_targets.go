@@ -142,3 +142,30 @@ func BoxRegionWarnings(content, filePath string, procs []ImportProcessOutput) []
 	}
 	return out
 }
+
+// ImportedBoxServices returns the hostnames of the import YAML's services
+// whose type is a Zerops Box (`ubuntu/zbox@1`, or the bare `zbox@1` the
+// platform stores as it): zerops_import finishes each one's setup once its
+// create finished (docs/spec-workflows.md §8 PS-11). A service whose hostname
+// or type is not a string is none of them.
+func ImportedBoxServices(content, filePath string) ([]string, error) {
+	yamlContent, err := resolveInput(content, filePath)
+	if err != nil {
+		return nil, err
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal([]byte(yamlContent), &doc); err != nil {
+		return nil, platform.NewPlatformError(platform.ErrInvalidImportYml, fmt.Sprintf("invalid YAML: %v", err), "Check YAML syntax")
+	}
+	servicesList, _ := doc["services"].([]any)
+	var out []string
+	for _, svc := range servicesList {
+		svcMap, _ := svc.(map[string]any)
+		hostname, _ := svcMap["hostname"].(string)
+		serviceType, _ := svcMap["type"].(string)
+		if hostname != "" && topology.IsSandboxType(serviceType) {
+			out = append(out, hostname)
+		}
+	}
+	return out, nil
+}

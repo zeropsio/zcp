@@ -96,6 +96,11 @@ type Mock struct {
 	tokenDelegations []TokenDelegation
 	mintedToken      *MintedToken
 
+	// boxAccess backs MintBoxAccess per Box service ID. Seed via
+	// WithBoxAccess; an unseeded ID answers the platform's refusal for a
+	// service that is not there.
+	boxAccess map[string]BoxAccess
+
 	// CallCounts tracks how many times each method was called.
 	CallCounts map[string]int
 
@@ -138,6 +143,7 @@ func NewMock() *Mock {
 		appVersionUserData:   make(map[string][]ServiceEnvVar),
 		appVersionZeropsYaml: make(map[string]string),
 		serviceAppVersions:   make(map[string][]AppVersionEvent),
+		boxAccess:            make(map[string]BoxAccess),
 		CallCounts:           make(map[string]int),
 		errors:               make(map[string]error),
 	}
@@ -210,6 +216,15 @@ func (m *Mock) WithRedeployAppVersionProcess(p *Process) *Mock {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.redeployAppVersionProcess = p
+	return m
+}
+
+// WithBoxAccess seeds the zproxy access MintBoxAccess mints for a Box
+// service ID.
+func (m *Mock) WithBoxAccess(serviceID string, access BoxAccess) *Mock {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.boxAccess[serviceID] = access
 	return m
 }
 

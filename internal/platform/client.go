@@ -177,6 +177,14 @@ type Client interface {
 	// returned Token value is shown by the platform exactly once — the
 	// caller owns the P-LP-14 staging discipline (never persisted here).
 	MintDelegatedLaunchToken(ctx context.Context, name string) (MintedToken, error)
+
+	// MintBoxAccess mints a zproxy access to a Zerops Box's workspace API
+	// (POST /service-stack/{id}/ui-access, hand-rolled: not in the SDK) with
+	// this client's own Zerops token. The access token is a bearer to the
+	// whole workspace for an hour after its last use: BoxAccess formats and
+	// marshals it redacted, and urlUi — which carries it in its path — is
+	// never kept (zbox.go, docs/spec-workflows.md §8 PS-12, PS-14).
+	MintBoxAccess(ctx context.Context, serviceID string) (BoxAccess, error)
 }
 
 // LogFetcher fetches logs from the log backend (step 2).
