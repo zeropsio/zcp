@@ -3,6 +3,7 @@ package eval
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -116,5 +117,72 @@ func TestScenario_ClassicStaticNginxSimple_PromptPinsHostname(t *testing.T) {
 	const want = `Call the service "web".`
 	if !strings.Contains(sc.Prompt, want) {
 		t.Errorf("prompt does not contain %q; got: %q", want, sc.Prompt)
+	}
+}
+
+// TestScenario_ClassicCodeRunnerSandbox_ExpectsABoxSandbox pins A12
+// (docs/spec-scenarios.md §9.3) to a Zerops Box: the farm's run projects are
+// created through the prg1 API with no location, so they are in prg1 — the one
+// region a Box exists in (docs/spec-workflows.md §8 PS-16). The function
+// oracle's snippet prints the hostname and kernel release it ran under; its
+// match accepts a Box sandbox's answer (hostname = the sandbox id, no dots;
+// kernel 6.18.53, zerops-docs zbox/images.mdx — both live-verified
+// 2026-10-24) and refuses what the API's own container or a pool container
+// would print (node-id-<n>.runtime.<service>.zerops on the host's
+// 7.1.8-zabbly+ kernel, live 2026-10-24) — namespaces in the API's container
+// cannot change either. The credential check greps the Box key's reference.
+func TestScenario_ClassicCodeRunnerSandbox_ExpectsABoxSandbox(t *testing.T) {
+	t.Parallel()
+
+	repoRoot := findRepoRootForHostnameTest(t)
+	path := filepath.Join(repoRoot, "eval", "behavioral", "scenarios", "classic-code-runner-sandbox.md")
+	sc, err := ParseScenario(path)
+	if err != nil {
+		t.Fatalf("ParseScenario(%q): %v", path, err)
+	}
+
+	boxExpected := false
+	for _, exp := range sc.Verification.ExpectedServices {
+		if exp.Hostname == "sandbox" {
+			boxExpected = exp.Type == "zbox*"
+		}
+	}
+	if !boxExpected {
+		t.Errorf("expectedServices must name `sandbox` with type zbox*: %+v", sc.Verification.ExpectedServices)
+	}
+
+	var runCheck, keyCheck *ContainerCheckEntry
+	for i := range sc.Verification.ContainerCheck {
+		c := &sc.Verification.ContainerCheck[i]
+		switch {
+		case strings.Contains(c.Cmd, "/run"):
+			runCheck = c
+		case strings.Contains(c.Cmd, "ZBOX_WORKSPACE_API_KEY"):
+			keyCheck = c
+		}
+	}
+	if runCheck == nil || keyCheck == nil {
+		t.Fatalf("want a POST /run check and a Box-key reference check, got %+v", sc.Verification.ContainerCheck)
+	}
+	if !strings.Contains(runCheck.Cmd, "platform.release()") || !strings.Contains(runCheck.Cmd, "socket.gethostname()") {
+		t.Errorf("the snippet must print the hostname and kernel release: %s", runCheck.Cmd)
+	}
+	if !strings.Contains(keyCheck.Cmd, "${sandbox_ZBOX_WORKSPACE_API_KEY}") {
+		t.Errorf("the key check must grep the reference ${sandbox_ZBOX_WORKSPACE_API_KEY}: %s", keyCheck.Cmd)
+	}
+	re, err := regexp.Compile(runCheck.Match)
+	if err != nil {
+		t.Fatalf("match %q: %v", runCheck.Match, err)
+	}
+	for answer, want := range map[string]bool{
+		`{"output":"j1us09qz 6.18.53\n"}`:                       true,
+		`{"output": "iuo80c7f 6.18.53"}`:                        true,
+		`{"output":"node-id-1.runtime.api.zerops 7.1.8-zabbly+\n"}`:     false,
+		`{"output":"node-id-2.runtime.sandbox.zerops 7.1.8-zabbly+\n"}`: false,
+		`{"output":"api 7.1.8-zabbly+\n"}`:                      false,
+	} {
+		if got := re.MatchString(answer); got != want {
+			t.Errorf("match(%s) = %v, want %v", answer, got, want)
+		}
 	}
 }

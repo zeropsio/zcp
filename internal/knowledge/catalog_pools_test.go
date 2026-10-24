@@ -34,7 +34,7 @@ func TestCatalogView_PoolsAndSandboxes_OwnGroup(t *testing.T) {
 	const (
 		wantHeader = "Pools and sandboxes (infrastructure an app uses, not app runtimes; no alpine/ and ubuntu/ pair — write each type exactly as listed):"
 		wantPool   = "- swarm@1 | swarm-vm@1 — Swarm pool: up to 10 containers its orchestrator hands out (leases, exec, snapshots)"
-		wantBox    = "- ubuntu/zbox@1 — Zerops Box: hosts sandboxes (beta)"
+		wantBox    = "- ubuntu/zbox@1 — Zerops Box: microVM sandboxes that run code the app's users send, apart from the app (beta; projects in prg1 only)"
 	)
 	renderers := map[string]func(*schema.Schemas) string{
 		"FormatStackList":     FormatStackList,
@@ -156,7 +156,7 @@ func TestThemes_Services_PoolSection_FactsPresent(t *testing.T) {
 		"8081", "enableSubdomainAccess", "http://<box>.zerops:8081", "`Host`",
 		"/api/rest/", "GET /api/rest/ping", "Idempotency-Key", "waitSeconds", "networkMode", "/api/rest/swagger/openapi.yml", "workspaceFull",
 		"60 s", "50 MiB", "10 min", "4 MiB",
-		"starts empty", "no base and no domain", "zcp does not set it up", "zbox setup",
+		"starts empty", "no base and no domain", "zerops_import finishes", "boxSetup", "zerops_box action=setup", "zbox setup",
 		"rotates", "cannot be changed", "apply at once",
 		"PROJECT_INTERNET", "the database included", "`INTERNET`", "`AIRGAPPED`", "allowedNetworkModes", "credentials proxy", "Dockerfiles you trust",
 		"no Docker", "linux/amd64", "<host>.zerops",
@@ -405,6 +405,64 @@ func TestThemes_Services_DevPool_Memory_FactsPresent(t *testing.T) {
 		"size `minRam` for the dev server plus the heaviest check",
 		"one at a time", "single-threaded",
 		"exit 255", "no output", "killed for memory",
+	} {
+		if !strings.Contains(sub, fact) {
+			t.Errorf("%q subsection missing fact %q", heading, fact)
+		}
+	}
+}
+
+// TestThemes_Services_BoxFromTheApp_FactsPresent pins what an app needs to run
+// code its users send in a Box (spec-workflows.md §8 PS-15), as verified
+// against the workspace's OpenAPI document and live on 2026-10-24 (an app in
+// the project calling http://<box>:8080 with the key wired by reference):
+// where that code runs and why, the env wiring, the base digest a create
+// needs, the create, exec and terminate request and answer shapes, one
+// sandbox per run and its measured cost, a full workspace, and which limits
+// apply where.
+func TestThemes_Services_BoxFromTheApp_FactsPresent(t *testing.T) {
+	t.Parallel()
+
+	store, err := GetEmbeddedStore()
+	if err != nil {
+		t.Fatalf("GetEmbeddedStore: %v", err)
+	}
+	doc, err := store.Get("zerops://themes/services")
+	if err != nil {
+		t.Fatalf("Get services: %v", err)
+	}
+	section, ok := doc.H2Sections()["Pools and Box"]
+	if !ok {
+		t.Fatal("services.md missing H2 section 'Pools and Box'")
+	}
+	const heading = "### Running code the app's users send"
+	_, sub, found := strings.Cut(section, heading)
+	if !found {
+		t.Fatalf("'Pools and Box' section missing %q", heading)
+	}
+	sub, _, _ = strings.Cut(sub, "\n### ")
+	for _, fact := range []string{
+		// Where the code runs, and why not in the app's container.
+		"never inside the app's own container", "share the container's kernel", "its own microVM",
+		"a dependency of the runtime", "never a runtime target",
+		// Env wiring by reference: the key never passes through the agent.
+		"ZBOX_URL: http://<box>:8080", "ZBOX_KEY: ${<box>_ZBOX_WORKSPACE_API_KEY}", "run.envVariables",
+		// The base digest, looked up, never the name.
+		"GET /api/rest/base-list", "`default`", "`READY`", "`digest`", "404 baseNotFound",
+		// Create.
+		"POST /api/rest/sandbox", `"networkMode": "AIRGAPPED"`, `"integrations": []`, `"waitSeconds": 30`,
+		"Idempotency-Key", "`400`", "`sandboxes[0].id`", "`RUNNING`", "memoryBytes",
+		// Exec.
+		"POST /api/rest/sandbox/{id}/exec", `"command"`, `"timeoutSeconds"`, `"workingDir"`,
+		"no shell", "no stdin", "`exitCode`", "`stdout`", "`stderr`", "`timedOut`", "`stdoutTruncated`", "`exitCode` is null",
+		"127", "4 MiB", "`/`",
+		// Terminate.
+		"DELETE /api/rest/sandbox/{id}", "`TERMINATED`", "not enforced yet", "finally",
+		// One sandbox per run, and what it costs.
+		"one sandbox per run", "about 0.3 s", "409 workspaceFull", "six",
+		// Limits by path.
+		"60 s", "public API URL", "70 s",
+		"idempotencyKeyConflict", "6.18.53",
 	} {
 		if !strings.Contains(sub, fact) {
 			t.Errorf("%q subsection missing fact %q", heading, fact)

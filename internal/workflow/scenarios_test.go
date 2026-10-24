@@ -1922,3 +1922,73 @@ func perServiceActions(plan Plan) []NextAction {
 	}
 	return out
 }
+
+// TestScenario_UserSuppliedCode_PlanningPointsAtABox pins where the rule
+// "code the app's users send runs in a Zerops Box sandbox beside the app"
+// renders (docs/spec-workflows.md §8 PS-15): at the discover step of both
+// routes that plan new services — classic and recipe — where the agent
+// decides what to create, never at an adopt discover (it plans nothing new)
+// or past discover; and on every develop render through the knowledge
+// pointers, for a feature added to an app that already exists.
+func TestScenario_UserSuppliedCode_PlanningPointsAtABox(t *testing.T) {
+	t.Parallel()
+
+	corpus, err := LoadAtomCorpus()
+	if err != nil {
+		t.Fatalf("LoadAtomCorpus: %v", err)
+	}
+	const atom = "bootstrap-user-code-box"
+	render := func(env StateEnvelope) []MatchedRender {
+		t.Helper()
+		out, err := Synthesize(env, corpus)
+		if err != nil {
+			t.Fatalf("Synthesize: %v", err)
+		}
+		return out
+	}
+	has := func(matches []MatchedRender, id string) (string, bool) {
+		for _, m := range matches {
+			if m.AtomID == id {
+				return m.Body, true
+			}
+		}
+		return "", false
+	}
+	boot := func(route BootstrapRoute, step string) StateEnvelope {
+		return StateEnvelope{Phase: PhaseBootstrapActive, Environment: EnvContainer, Bootstrap: &BootstrapSessionSummary{Route: route, Step: step}}
+	}
+
+	classic := render(boot(BootstrapRouteClassic, StepDiscover))
+	requireAtomIDsContain(t, "classic discover plans a Box for users' code", classic, atom)
+	body, _ := has(classic, atom)
+	for _, want := range []string{"Zerops Box", "ubuntu/zbox@1", "prg1", `zerops_knowledge uri="zerops://themes/services"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("%s body missing %q:\n%s", atom, want, body)
+		}
+	}
+	requireAtomIDsContain(t, "recipe discover plans a Box for users' code", render(boot(BootstrapRouteRecipe, StepDiscover)), atom)
+	for _, tc := range []struct {
+		label string
+		env   StateEnvelope
+	}{
+		{"adopt discover plans nothing new", boot(BootstrapRouteAdopt, StepDiscover)},
+		{"classic provision is past the decision", boot(BootstrapRouteClassic, StepProvision)},
+		{"recipe close is past the decision", boot(BootstrapRouteRecipe, StepClose)},
+	} {
+		if _, ok := has(render(tc.env), atom); ok {
+			t.Errorf("%s: %s fired", tc.label, atom)
+		}
+	}
+
+	develop := StateEnvelope{Phase: PhaseDevelopActive, Environment: EnvContainer,
+		Services: fixSnapDeployedPairAuto("appdev", "appstage", "nodejs@22", topology.RuntimeDynamic)}
+	pointers, ok := has(render(develop), "develop-knowledge-pointers")
+	if !ok {
+		t.Fatal("develop-knowledge-pointers must render on a develop envelope")
+	}
+	for _, want := range []string{"Zerops Box", `zerops_knowledge uri="zerops://themes/services"`} {
+		if !strings.Contains(pointers, want) {
+			t.Errorf("develop-knowledge-pointers missing %q for a feature that runs users' code:\n%s", want, pointers)
+		}
+	}
+}
