@@ -522,7 +522,7 @@ func TestBoxSetup_Failures(t *testing.T) {
 				}
 			}
 			if tt.wantCalls != nil {
-				if calls := tt.fake.callList(); !slices.Equal(calls, tt.wantCalls) && !(len(calls) == 0 && len(tt.wantCalls) == 0) {
+				if calls := tt.fake.callList(); !slices.Equal(calls, tt.wantCalls) {
 					t.Errorf("calls = %v, want %v", calls, tt.wantCalls)
 				}
 			}

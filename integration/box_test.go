@@ -66,8 +66,7 @@ func (f *fakeBoxAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.ready = true
 		_, _ = w.Write([]byte(`{"id":"op-1","kind":"PULL_BASE","status":"FINISHED","created":"2026-10-24T16:13:22Z","result":{"digest":"` + boxIntDigest + `","name":"default"}}`))
 	case r.URL.Path == "/service-api/api/rest/workspace":
-		b, _ := json.Marshal(map[string]any{"domains": f.domains, "version": "v"})
-		_, _ = w.Write(b)
+		f.writeWorkspace(w)
 	case r.URL.Path == "/service-api/api/rest/workspace/domains" && r.Method == http.MethodPut:
 		var body struct {
 			Domains []platform.BoxDomain `json:"domains"`
@@ -76,11 +75,24 @@ func (f *fakeBoxAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal(raw, &body)
 		f.puts++
 		f.domains = body.Domains
-		b, _ := json.Marshal(map[string]any{"domains": f.domains, "version": "v"})
-		_, _ = w.Write(b)
+		f.writeWorkspace(w)
 	default:
 		w.WriteHeader(http.StatusNotFound)
 	}
+}
+
+// writeWorkspace answers the workspace with its domains (f.mu held).
+func (f *fakeBoxAPI) writeWorkspace(w http.ResponseWriter) {
+	domains := f.domains
+	if domains == nil {
+		domains = []platform.BoxDomain{}
+	}
+	b, err := json.Marshal(platform.BoxWorkspace{Domains: domains, Version: "v"})
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	_, _ = w.Write(b)
 }
 
 func (f *fakeBoxAPI) counts() (pulls, puts int) {
