@@ -325,6 +325,53 @@ func TestDevelopBriefing_PoolPairStage_HeldLease_DeploysFromTheLease(t *testing.
 	}
 }
 
+// TestRenderDevelopBriefing_LeaseReaderOption_ReplacesTheDefault: a lease
+// reader passed to the briefing replaces the default one, as it does for
+// freshEnvelope, and the stage's step follows what it answers: the deploy
+// from the lease it names held, else acquiring one.
+func TestRenderDevelopBriefing_LeaseReaderOption_ReplacesTheDefault(t *testing.T) {
+	t.Parallel()
+	held := workflow.LeaseSnapshot{Alias: testPool + "-7", Pool: testPool, Branch: "feat-y", State: "held"}
+	tests := []struct {
+		name   string
+		leases []workflow.LeaseSnapshot
+		want   []string
+	}{
+		{name: "a held lease", leases: []workflow.LeaseSnapshot{held}, want: []string{"zerops_deploy", `sourceService="` + held.Alias + `"`, `targetService="appstage"`}},
+		{name: "none held", want: []string{"zerops_lease", `action="acquire"`, `pool="` + testPool + `"`}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			stateDir := poolDeliveryPair(t)
+			engine := workflow.NewEngine(stateDir, workflow.EnvContainer, nil)
+			ws := workflow.NewWorkSession("proj-1", string(workflow.EnvContainer), "fix the header", []string{"appstage"})
+			if err := workflow.SaveWorkSession(stateDir, ws); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = workflow.DeleteWorkSession(stateDir, os.Getpid()) })
+			reader := func(context.Context) ([]workflow.LeaseSnapshot, error) { return tt.leases, nil }
+
+			result, _, err := renderDevelopBriefing(context.Background(), engine, platform.NewMock().WithServices(poolPairServices()), "proj-1",
+				runtime.Info{InContainer: true}, nil, workflow.WithLeaseReader(reader))
+			if err != nil {
+				t.Fatalf("renderDevelopBriefing: %v", err)
+			}
+			var primary string
+			for line := range strings.SplitSeq(extractText(result), "\n") {
+				if strings.Contains(line, "▸ Primary:") {
+					primary = line
+				}
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(primary, want) {
+					t.Errorf("primary %q does not name %s", primary, want)
+				}
+			}
+		})
+	}
+}
+
 // writePoolLeaseFile records lease apppool-3 of the pool apppool the way
 // zerops_lease does.
 func writePoolLeaseFile(t *testing.T, stateDir string) {
