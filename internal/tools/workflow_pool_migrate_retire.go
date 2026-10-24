@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -321,7 +322,47 @@ func savePoolRetireRecord(stateDir string, rec *poolRetireRecord) error {
 	if err := platform.ValidateHostname(rec.Dev); err != nil {
 		return fmt.Errorf("save the retire record: %s", err.Message)
 	}
-	path := poolRetireRecordPath(stateDir, rec.Dev)
+	return writePoolRetireRecord(poolRetireRecordPath(stateDir, rec.Dev), rec)
+}
+
+// keepRetiredApart moves a retired record of a dev whose hostname another
+// service holds now out of the way of that service's retire: the record goes
+// to <dev>.<the id it retired>.json and its bundle — the only copy of the old
+// dev's work, at the path the new retire bundles to — to the same name's
+// .bundle, the restore steps naming it where it lies now. No call reads a
+// kept record again; it is there to restore from.
+func keepRetiredApart(stateDir string, rec *poolRetireRecord) error {
+	id := strings.Map(func(r rune) rune {
+		if r == '-' || r == '_' || (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+			return r
+		}
+		return -1
+	}, rec.DevServiceID)
+	base := filepath.Join(stateDir, "migrate", rec.Dev+"."+cmp.Or(id, "unknown"))
+	kept := *rec
+	moved := rec.Bundle != nil && rec.Bundle.Path == poolRetireBundlePath(stateDir, rec.Dev)
+	if moved {
+		b := *rec.Bundle
+		b.Path = base + ".bundle"
+		kept.Bundle = &b
+		kept.Restore = make([]string, len(rec.Restore))
+		for i, step := range rec.Restore {
+			kept.Restore[i] = strings.ReplaceAll(step, rec.Bundle.Path, b.Path)
+		}
+	}
+	if err := writePoolRetireRecord(base+".json", &kept); err != nil {
+		return fmt.Errorf("keep the retired record of %s (%s) apart: %w", rec.Dev, rec.DevServiceID, err)
+	}
+	if moved {
+		if err := os.Rename(rec.Bundle.Path, kept.Bundle.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("keep the bundle of %s (%s) apart: %w", rec.Dev, rec.DevServiceID, err)
+		}
+	}
+	return nil
+}
+
+// writePoolRetireRecord writes rec to path atomically, mode 0600.
+func writePoolRetireRecord(path string, rec *poolRetireRecord) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("save the retire record of %s: %w", rec.Dev, err)
 	}
@@ -486,11 +527,21 @@ func poolRetireFresh(ctx context.Context, d poolRetireDeps, input WorkflowInput)
 	}
 	defer release()
 	// Another call may have started — or finished — this retire while this
-	// one waited for the pair: its record answers, never a second start.
-	if other, err := readPoolRetireRecord(d.stateDir, g.call.dev.Name); err != nil || (other != nil && other.Phase != poolRetireAborted) {
-		if err != nil {
+	// one waited for the pair: its record answers, never a second start. A
+	// retired record of another id is a dev that held the hostname before
+	// (PM-7): it answers nothing for this one, and it and its bundle are
+	// kept apart, never written over.
+	other, err := readPoolRetireRecord(d.stateDir, g.call.dev.Name)
+	if err != nil {
+		return convertError(fmt.Errorf("pool-migrate retire: %w", err), WithRecoveryStatus())
+	}
+	switch {
+	case other == nil, other.Phase == poolRetireAborted:
+	case other.Phase == poolRetireRetired && other.DevServiceID != g.devID:
+		if err := keepRetiredApart(d.stateDir, other); err != nil {
 			return convertError(fmt.Errorf("pool-migrate retire: %w", err), WithRecoveryStatus())
 		}
+	default:
 		resp := poolRetireRecordAnswer(g.resp, other)
 		resp.Action = actionRetire
 		return jsonResult(resp)
