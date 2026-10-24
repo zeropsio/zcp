@@ -213,7 +213,7 @@ func (h LeaseHost) mountLease(ctx context.Context, d LeaseDeps, rec leaseRecord)
 // not an error: the lease must still be released.
 func (h LeaseHost) detachMount(ctx context.Context, d LeaseDeps, rec leaseRecord) string {
 	if err := h.unmountLease(ctx, d, rec); err != nil {
-		return fmt.Sprintf("the lease could not be unmounted first (%v); unmount it with fusermount -uz", err)
+		return fmt.Sprintf("the lease could not be unmounted first (%v); remove its mount unit with sudo zsc unit remove sshfs-%s (a fusermount alone is undone: the unit restarts sshfs), then fusermount -uz %s if it is still mounted", err, rec.alias(), filepath.Join(mountBase, rec.alias()))
 	}
 	return ""
 }

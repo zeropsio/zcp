@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -147,6 +148,7 @@ func TestForceUnmount_LeaseAlias_RemovesUnit(t *testing.T) {
 	t.Parallel()
 
 	m, got := fakeExecMounter()
+	m.mounted = func(string) (bool, error) { return true, nil }
 	if err := m.ForceUnmount(context.Background(), "apppool-3", "/var/www/apppool-3"); err != nil {
 		t.Fatalf("ForceUnmount: %v", err)
 	}
@@ -168,6 +170,7 @@ func TestMounter_LeaseAlias_UnitLifecycle(t *testing.T) {
 	t.Parallel()
 
 	m, got := fakeExecMounter()
+	m.mounted = func(string) (bool, error) { return true, nil }
 	ctx := context.Background()
 	if _, err := m.HasUnit(ctx, "apppool-3"); err != nil {
 		t.Fatalf("HasUnit: %v", err)
@@ -181,8 +184,9 @@ func TestMounter_LeaseAlias_UnitLifecycle(t *testing.T) {
 	want := []recordedCommand{
 		{"systemctl", "cat", "zerops@sshfs-apppool-3.service"},
 		{"sudo", "-E", "zsc", "unit", "remove", "sshfs-apppool-3"},
-		{"fusermount", "-u", "/var/www/apppool-3"},
+		{"sudo", "systemctl", "reset-failed", "zerops@sshfs-apppool-3.service"},
 		{"sudo", "-E", "zsc", "unit", "remove", "sshfs-apppool-3"},
+		{"fusermount", "-u", "/var/www/apppool-3"},
 	}
 	if len(*got) != len(want) {
 		t.Fatalf("commands = %q, want %q", *got, want)
@@ -204,5 +208,102 @@ func TestSystemMounter_NoSeam_RunsRealCommand(t *testing.T) {
 	}
 	if err := m.exec(context.Background(), time.Second, "false"); err == nil {
 		t.Fatal("exec(false) = nil, want the command's failure")
+	}
+}
+
+// failingCommands is a fake runner that fails the commands whose argv starts
+// with one of fail, and records every command.
+func failingCommands(got *[]recordedCommand, fail ...[]string) func(context.Context, time.Duration, string, ...string) error {
+	return func(_ context.Context, _ time.Duration, name string, args ...string) error {
+		argv := append(recordedCommand{name}, args...)
+		*got = append(*got, argv)
+		for _, f := range fail {
+			if len(argv) >= len(f) && slices.Equal(argv[:len(f)], f) {
+				return errors.New("exit status 1")
+			}
+		}
+		return nil
+	}
+}
+
+// TestUnmount_GoneOnceTheUnitStops_NoFusermount: the sshfs mount is the
+// unit's process, so removing the unit first ends the mount; a fusermount of
+// a mount that is gone would fail the unmount (live: the advice and the
+// fallback both ran on a mount already gone).
+func TestUnmount_GoneOnceTheUnitStops_NoFusermount(t *testing.T) {
+	t.Parallel()
+	for _, force := range []bool{false, true} {
+		m, got := fakeExecMounter()
+		m.mounted = func(string) (bool, error) { return false, nil }
+		var err error
+		if force {
+			err = m.ForceUnmount(context.Background(), "apppool-3", "/var/www/apppool-3")
+		} else {
+			err = m.Unmount(context.Background(), "apppool-3", "/var/www/apppool-3")
+		}
+		if err != nil {
+			t.Fatalf("force=%v: %v", force, err)
+		}
+		want := []recordedCommand{{"sudo", "-E", "zsc", "unit", "remove", "sshfs-apppool-3"}}
+		if len(*got) != 1 || !slices.Equal((*got)[0], want[0]) {
+			t.Errorf("force=%v: commands = %q, want only %q", force, *got, want)
+		}
+	}
+}
+
+// TestUnmount_UnitRemoveFails_NoFusermountThatTheUnitWouldUndo: a unit that
+// stays restarts sshfs after any fusermount (live: back within ~12 s), so the
+// unmount fails naming the unit instead of unmounting what comes back.
+func TestUnmount_UnitRemoveFails_NoFusermountThatTheUnitWouldUndo(t *testing.T) {
+	t.Parallel()
+	var got []recordedCommand
+	m := &SystemMounter{run: failingCommands(&got, []string{"sudo", "-E", "zsc", "unit", "remove"})}
+	m.mounted = func(string) (bool, error) { return true, nil }
+	err := m.Unmount(context.Background(), "apppool-3", "/var/www/apppool-3")
+	if err == nil || !strings.Contains(err.Error(), "zsc unit remove") {
+		t.Fatalf("err = %v, want the unit removal's failure", err)
+	}
+	for _, c := range got {
+		if c[0] == "fusermount" {
+			t.Errorf("ran %q although the unit stays", c)
+		}
+	}
+}
+
+// TestHasUnit_FailedInstanceWithoutUnitFile: zsc unit remove deletes the unit
+// file, but a failed instance stays listed until reset-failed (live:
+// zerops@sshfs-<alias>.service left failed) — HasUnit sees it, so the orphan
+// cleanup runs.
+func TestHasUnit_FailedInstanceWithoutUnitFile(t *testing.T) {
+	t.Parallel()
+	var got []recordedCommand
+	m := &SystemMounter{run: failingCommands(&got, []string{"systemctl", "cat"})}
+	has, err := m.HasUnit(context.Background(), "apppool-3")
+	if err != nil || !has {
+		t.Fatalf("HasUnit = %v, %v; want a failed instance found", has, err)
+	}
+	want := recordedCommand{"systemctl", "is-failed", "--quiet", "zerops@sshfs-apppool-3.service"}
+	if len(got) != 2 || !slices.Equal(got[1], want) {
+		t.Errorf("commands = %q, want cat then %q", got, want)
+	}
+}
+
+// TestCleanupUnit_RemoveFailsButNothingIsLeft_Succeeds: a unit whose file is
+// already gone makes zsc unit remove fail; the reset-failed clears the
+// instance, and with no unit left the cleanup succeeded.
+func TestCleanupUnit_RemoveFailsButNothingIsLeft_Succeeds(t *testing.T) {
+	t.Parallel()
+	var got []recordedCommand
+	m := &SystemMounter{run: failingCommands(&got,
+		[]string{"sudo", "-E", "zsc", "unit", "remove"},
+		[]string{"systemctl", "cat"},
+		[]string{"systemctl", "is-failed"},
+	)}
+	if err := m.CleanupUnit(context.Background(), "apppool-3"); err != nil {
+		t.Fatalf("CleanupUnit: %v", err)
+	}
+	want := recordedCommand{"sudo", "systemctl", "reset-failed", "zerops@sshfs-apppool-3.service"}
+	if len(got) < 2 || !slices.Equal(got[1], want) {
+		t.Errorf("commands = %q, want the reset-failed after the remove", got)
 	}
 }
