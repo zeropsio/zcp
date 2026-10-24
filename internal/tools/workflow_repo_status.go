@@ -41,30 +41,34 @@ func attachRepoStatus(ctx context.Context, services []workflow.ServiceSnapshot, 
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, attachRepoStatusConcurrency)
-	for _, svc := range services {
-		if !svc.RuntimeClass.IsAppRuntime() {
+	// Read each snapshot by index, field by field: attachHQCheckoutOrigin
+	// writes its own fields of the same snapshots meanwhile, so copying a
+	// whole snapshot here would race with it.
+	for i := range services {
+		if !services[i].RuntimeClass.IsAppRuntime() {
 			continue
 		}
+		hostname := services[i].Hostname
 		wg.Add(1)
-		go func(svc workflow.ServiceSnapshot) {
+		go func(hostname string) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			st, err := ops.ReadRepoStatus(ctx, ssh, svc.Hostname)
+			st, err := ops.ReadRepoStatus(ctx, ssh, hostname)
 			if err != nil {
 				return // best-effort — a read failure just leaves this hostname without a repo block
 			}
 			status := workflow.RepoStatus{Present: st.Present, Head: st.Head, RepoState: st.RepoState}
-			if meta, metaErr := workflow.FindServiceMeta(stateDir, svc.Hostname); metaErr == nil && meta != nil && meta.Hostname == svc.Hostname && meta.Repo != nil {
+			if meta, metaErr := workflow.FindServiceMeta(stateDir, hostname); metaErr == nil && meta != nil && meta.Hostname == hostname && meta.Repo != nil {
 				status.Baseline = meta.Repo.BaselineAppVersion
 				status.Provenance = meta.Repo.Provenance
 			}
 
 			mu.Lock()
-			statuses[svc.Hostname] = status
+			statuses[hostname] = status
 			mu.Unlock()
-		}(svc)
+		}(hostname)
 	}
 	wg.Wait()
 	workflow.ApplyRepoStatus(services, statuses)
