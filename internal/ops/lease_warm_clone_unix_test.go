@@ -218,7 +218,7 @@ func TestLeaseWarmClone_LeavesNoEntryRacilyClean(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range strings.Fields(b.git(t, "ls-files")) {
+	for name := range strings.FieldsSeq(b.git(t, "ls-files")) {
 		info, err := os.Stat(filepath.Join(b.dir, name))
 		if err != nil {
 			t.Fatal(err)
