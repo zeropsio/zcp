@@ -1668,8 +1668,11 @@ a span attribute.
   names (mode 0600); zcp reads that file and writes the value as the dev service's `GIT_TOKEN`
   secret (§10.10). It reaches HQ's git for the applications that hold the Mate's project, fetch,
   and push only to the project's own change branches (the rules of §10.10, *A Mate's git*); no HQ
-  API, no Zerops. Lives until HQ revokes it — a person in HQ, the Mate's key entry dropped, the
-  project leaving its application — or replaces it with a new one over the link. Why not the project
+  API, no Zerops. HQ sends one on every link where none is live for the project, and whenever the
+  project enters an application; it sends `null` (revoked) when the project leaves it; after an HQ
+  import, which revokes every restored credential, it issues a new one on the next link. Lives until
+  HQ revokes it — a person in HQ, the Mate's key entry dropped, the project leaving its application
+  — or replaces it with a new one over the link. Why not the project
   key: the dev service runs the application's code and its dependencies, and `ZCP_API_KEY` there
   would give a malicious dependency project-wide Zerops write.
 - **The person's Zerops session** — Zerops' access token (about 6 h) and refresh token, held by the
@@ -1755,7 +1758,7 @@ sequenceDiagram
   No periodic re-proof: it would couple every Mate's availability to the Zerops API and expire the
   fleet at once.
 - On every link HQ sends the Mate's state, then the full access snapshot, then versioned deltas
-  (§3.9), and the Mate's Git credential whenever HQ issues a new one.
+  (§3.9), and the Mate's Git credential on the terms of §3.3.
 
 ### 3.6 zcp's calls and git
 
@@ -2045,6 +2048,7 @@ To verify live before building on them:
 | TC-14 | A full access frame resets the Mate's baseline whatever its version; only deltas are compared by version. Test to be written (Mate server). |
 | TC-15 | A new HQ leader marks every link disconnected at its start. Test to be written (HQ link). |
 | TC-16 | HQ refuses `key_not_sensitive` a project key it can read in clear with the organisation's key. Test to be written (HQ link). |
+| TC-17 | HQ sends a Git credential on a link where none is live for the project and when the project enters an application, and `null` when it leaves. Test to be written (HQ link). |
 
 ---
 
