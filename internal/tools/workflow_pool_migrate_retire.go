@@ -627,7 +627,7 @@ func poolRetireRead(ctx context.Context, d poolRetireDeps, input WorkflowInput) 
 		g.parts = append(g.parts, part)
 	}
 	g.unsaved = poolRetireBlocking(resp.Census)
-	g.notKept = poolRetireNotKept(g.call.dev.Name, resp.Census, nil)
+	g.notKept = poolRetireNotKept(g.call.dev.Name, poolMigrateCodeRoot(g.call.meta), resp.Census, nil)
 	g.readDev(ctx, d)
 	if g.call.meta.CodeVolume != nil {
 		g.readCodeVolume(ctx, d, dr.byName)
@@ -1031,12 +1031,14 @@ func poolRetireKeptInBundle(c *ops.PoolMigrateCensus) []string {
 	return out
 }
 
-// poolRetireNotKept names what no copy keeps once the dev is deleted.
-func poolRetireNotKept(dev string, c *ops.PoolMigrateCensus, b *ops.PoolMigrateBundle) []string {
+// poolRetireNotKept names what no copy keeps once the dev is deleted; root is
+// where the bundle reads its repository — /var/www, or a variant-B pair's code
+// volume mount — so every file of the dev's container outside it is lost.
+func poolRetireNotKept(dev, root string, c *ops.PoolMigrateCensus, b *ops.PoolMigrateBundle) []string {
 	out := []string{
 		dev + "'s own URLs: its subdomain embeds its hostname, and dies with it",
 		"the repository's reflog history beyond each reflog's tip, its config (remote URLs among it), hooks and info/exclude",
-		"files on " + dev + "'s container outside " + topology.CodeMountRoot,
+		"files on " + dev + "'s container outside " + root,
 	}
 	if c != nil {
 		for _, t := range c.Trees {
@@ -1255,7 +1257,7 @@ func (r *poolRetireRun) bundle(ctx context.Context) *mcp.CallToolResult {
 	r.rec.Bundle = b
 	r.rec.Restore = ops.PoolMigrateRestoreSteps(b, r.rec.Origin)
 	r.rec.KeptInBundle = poolRetireKeptInBundle(census)
-	r.rec.NotKept = append(poolRetireNotKept(dev, census, b), poolRetireCodeVolumeNotKept(r.rec.DevServices, r.rec.volumeName())...)
+	r.rec.NotKept = append(poolRetireNotKept(dev, r.rec.root(), census, b), poolRetireCodeVolumeNotKept(r.rec.DevServices, r.rec.volumeName())...)
 	r.rec.Forced = r.rec.Forced || (r.force && len(poolRetireBlocking(census)) > 0)
 	if err := savePoolRetireRecord(r.d.stateDir, r.rec); err != nil {
 		return r.saveFailed(err)

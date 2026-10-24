@@ -552,7 +552,7 @@ func (r *poolRetireRun) bundleFromVolume(ctx context.Context) *mcp.CallToolResul
 	r.rec.Bundle = b
 	r.rec.Restore = ops.PoolMigrateRestoreSteps(b, r.rec.Origin)
 	r.rec.KeptInBundle = poolRetireKeptInBundle(census)
-	r.rec.NotKept = append(poolRetireNotKept(r.rec.Dev, census, b), poolRetireCodeVolumeNotKept(r.rec.DevServices, v.Hostname)...)
+	r.rec.NotKept = append(poolRetireNotKept(r.rec.Dev, r.rec.root(), census, b), poolRetireCodeVolumeNotKept(r.rec.DevServices, v.Hostname)...)
 	r.rec.Forced = r.rec.Forced || (r.force && len(poolRetireBlocking(census)) > 0)
 	v.Fingerprint = &b.Fingerprint
 	if err := savePoolRetireRecord(r.d.stateDir, r.rec); err != nil {
