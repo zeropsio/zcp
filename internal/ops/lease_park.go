@@ -442,9 +442,9 @@ func repark(ctx context.Context, d LeaseDeps, rec leaseRecord) (text string, par
 	}
 	text = fmt.Sprintf("zcp could not stop its container again (%s), so it runs now: %s parks it again", errorNote(err), LeaseParkCall(alias))
 	rec.Parked, rec.ParkedAt = false, ""
-	if leaseRecordReplaced(d.StateDir, rec) {
-		// Another lease's record by now: never written over.
-		return text + "; " + aliasReusedNote(alias), false
+	if kept := keptRecordNote(d.StateDir, rec); kept != "" {
+		// Not this lease's record to write over.
+		return text + "; " + kept, false
 	}
 	if werr := writeLeaseRecord(d.StateDir, rec); werr != nil {
 		text += fmt.Sprintf(" (its record still says parked: %v)", werr)
@@ -459,8 +459,8 @@ func reparkDropped(ctx context.Context, d LeaseDeps, rec leaseRecord, why string
 	switch v, err := dropLostLease(ctx, d, rec, why); {
 	case err != nil:
 		text = "its lease ended outside zcp meanwhile — " + why + " — but its record could not be dropped: " + err.Error()
-	case v.aliasReused:
-		text = "its lease ended outside zcp meanwhile — " + why + " — and " + aliasReusedNote(rec.alias())
+	case v.recordKept != "":
+		text = "its lease ended outside zcp meanwhile — " + why + " — and " + v.recordKept
 	}
 	// No release rewires the branch here: name what may still be wired to
 	// the container (DP-26).

@@ -725,8 +725,8 @@ func dropEndedOnCall(ctx context.Context, d LeaseDeps, members []*releaseMember,
 		switch v, err := dropLostLease(context.WithoutCancel(ctx), d, m.rec, m.lost); {
 		case err != nil:
 			notes = append(notes, fmt.Sprintf("%s's record could not be dropped: %v", alias, err))
-		case v.aliasReused:
-			notes = append(notes, aliasReusedNote(alias))
+		case v.recordKept != "":
+			notes = append(notes, v.recordKept)
 		}
 		if wired := siblingsMayBeWired(d.StateDir, m.rec); wired != "" {
 			notes = append(notes, alias+": "+wired)
