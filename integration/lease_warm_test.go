@@ -1,9 +1,11 @@
 // Tests for: integration — zerops_lease keeps each pool's warm container
-// through the full MCP server (docs/spec-workflows.md §8 DP-27).
+// through the full MCP server (docs/spec-workflows.md §8 DP-27), and that
+// container already holds the pool's repository (DP-32).
 
 package integration_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -12,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -225,5 +228,96 @@ func TestLease_Integration_WarmPool_KeepsOneRemovesTheOther(t *testing.T) {
 	status := warmIntCall(t, session, map[string]any{"action": "status"})
 	if len(status.Warm) != 1 || status.Warm[0].Pool != "devpool" || status.Warm[0].Target != 1 || status.Warm[0].Ready == nil || *status.Warm[0].Ready != 1 {
 		t.Errorf("status warm = %+v, want devpool with its one warm container", status.Warm)
+	}
+}
+
+// warmCloneIntSSH is the pool's containers over ssh: a warm clone's launch
+// answers started and is recorded with its host; everything else answers
+// nothing.
+type warmCloneIntSSH struct {
+	mu       sync.Mutex
+	launches []string // "<host> <command>"
+}
+
+func (s *warmCloneIntSSH) ExecSSH(_ context.Context, host, command string) ([]byte, error) {
+	if !strings.Contains(command, "@@zcp-warm started") {
+		return nil, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.launches = append(s.launches, host+" "+command)
+	return []byte("@@zcp-warm started\n"), nil
+}
+
+func (s *warmCloneIntSSH) ExecSSHBackground(ctx context.Context, host, command string, _ time.Duration) ([]byte, error) {
+	return s.ExecSSH(ctx, host, command)
+}
+
+func (s *warmCloneIntSSH) seen() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.launches...)
+}
+
+// TestLease_Integration_WarmContainerGetsTheRepository: an acquire that
+// leaves the pool its warm container starts, in the background, the clone of
+// the repository it checked out in that container — over ssh to the
+// container's own hostname, the URL as it was given — and status reports it
+// (DP-32).
+func TestLease_Integration_WarmContainerGetsTheRepository(t *testing.T) {
+	// Non-parallel: t.Chdir (the state dir the server resolves from the cwd)
+	// and a swap of http.DefaultTransport (the seam to the orchestrator host).
+	t.Chdir(t.TempDir())
+
+	orch := newWarmIntOrchestrator()
+	hs := httptest.NewServer(orch)
+	defer hs.Close()
+	target, err := url.Parse(hs.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := http.DefaultTransport
+	http.DefaultTransport = orchestratorRoute{host: "orch.devpool.zerops", target: target, next: orig}
+	t.Cleanup(func() { http.DefaultTransport = orig })
+
+	mock := defaultMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-pool", Name: "devpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
+		}).
+		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{ID: "env-t", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}})
+	ssh := &warmCloneIntSSH{}
+	session, cleanup := setupTestServerWithDeploy(t, mock, defaultLogFetcher(), ssh)
+	defer cleanup()
+
+	const repo = "https://github.com/acme/app.git"
+	warmIntCall(t, session, map[string]any{"action": "acquire", "pool": "devpool", "repo": repo, "branch": "feat-a"})
+
+	var clone map[string]any
+	deadline := time.Now().Add(10 * time.Second)
+	for clone == nil {
+		res := callAndGetResult(t, session, "zerops_lease", map[string]any{"action": "status"})
+		var out struct {
+			Warm []struct {
+				Clone map[string]any `json:"clone"`
+			} `json:"warm"`
+		}
+		if err := json.Unmarshal([]byte(getTextContent(t, res)), &out); err != nil {
+			t.Fatal(err)
+		}
+		if len(out.Warm) == 1 && out.Warm[0].Clone != nil {
+			clone = out.Warm[0].Clone
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("status never reported the warm clone: %+v", out.Warm)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if clone["outcome"] != "started" || clone["container"] != "node-id-2.runtime.devpool.zerops" {
+		t.Errorf("status clone = %v, want started in the warm node-id-2", clone)
+	}
+	launches := ssh.seen()
+	if len(launches) != 1 || !strings.HasPrefix(launches[0], "node-id-2.runtime.devpool.zerops ") || !strings.Contains(launches[0], repo) {
+		t.Errorf("launches = %q, want one to node-id-2 cloning %s as given", launches, repo)
 	}
 }
