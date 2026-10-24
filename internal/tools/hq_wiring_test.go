@@ -900,3 +900,29 @@ func TestStatus_TheCheckoutsOriginIsReadBoundedBesideTheRepository(t *testing.T)
 		t.Error("the repository's read waited out the origin read: they run one after the other")
 	}
 }
+
+// TestReconcileHQRepositories_OutsideAMate_GivesNoPairANewRepository pins that
+// being a Mate, not holding an enrollment, makes HQ the authority
+// (docs/spec-mate.md, "A Mate is HQ's by what it is"): a container whose
+// ZCP_MATE_ENABLED is off asks HQ for no repository and rewires no checkout,
+// even with an enrollment file left in $HOME (live 2026-10-24: a session with
+// the flag unset still created an HQ repository and rewrote origin).
+func TestReconcileHQRepositories_OutsideAMate_GivesNoPairANewRepository(t *testing.T) {
+	lab := newHQLab(t)
+	lab.rt.MateEnabled = false
+	remotesBefore := lab.git("remote")
+
+	lab.wire()
+
+	for _, call := range lab.hq.calls {
+		if strings.Contains(call, "/api/mate/repos") {
+			t.Errorf("outside a Mate the pass asked HQ for a repository: %v", lab.hq.calls)
+		}
+	}
+	if meta := lab.meta(); meta.HQ != nil {
+		t.Errorf("outside a Mate the pair was given an HQ record: %+v", meta.HQ)
+	}
+	if got := lab.git("remote"); got != remotesBefore {
+		t.Errorf("outside a Mate the checkout's remotes changed from %q to %q", remotesBefore, got)
+	}
+}

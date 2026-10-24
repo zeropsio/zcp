@@ -3938,7 +3938,7 @@ no stage half (`bootstrapMode` simple or dev), naming the standard pair to re-su
 
 **A Mate is HQ's by what it is, not by its enrollment (2026-10-05).** Being a Mate
 (`runtime.Info.MateEnabled`) is what makes HQ the authority; the enrollment is only how zcp reaches
-it. A Mate with no enrollment yet, or one it cannot read, plans the same pairs, refuses
+it — and the converse holds: outside a Mate an enrollment left in `$HOME` gives no pair a new HQ repository and composes no group recipe, while a pair whose record already names one stays HQ's (`TestReconcileHQRepositories_OutsideAMate_GivesNoPairANewRepository`). A Mate with no enrollment yet, or one it cannot read, plans the same pairs, refuses
 launch-production and hands its release to the person, as an enrolled one does — it never falls back
 to classic simple plans, a production project of its own or a pushed tag. Whatever needs HQ to
 answer says it cannot reach HQ and why (`hqEnrollmentProblem`), and launch-production's next step
