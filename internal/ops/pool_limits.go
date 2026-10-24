@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
 )
@@ -71,13 +72,20 @@ type poolUsage struct {
 	listed bool // the containers were listed
 	max    int  // the pool's maximum; 0 when the limits were not read
 	leased int  // containers reserved
-	yours  []string
+	// yours are zcp's own leases among them, oldest activity first when it
+	// was read (byOldestActivity), by container number otherwise.
+	yours []LeaseView
+	// read: zcp read its leases' activity (it reaches them over ssh), at now.
+	read bool
+	now  time.Time
 }
 
 // readPoolUsage reads the pool's limits and containers (both answer at once)
 // and names zcp's own leases among the reserved ones. A read that fails
 // leaves its part unknown; with no listing, zcp's records for the pool stand
-// in for its own leases.
+// in for its own leases. With ssh it reads each of them as status does
+// (readLeaseActivities, DP-21) — all at once, changing nothing — and orders
+// them oldest activity first (DP-9).
 func readPoolUsage(ctx context.Context, d LeaseDeps, rp *resolvedPool) poolUsage {
 	var u poolUsage
 	if limits, err := d.poolLimits(ctx, rp); err == nil {
@@ -90,10 +98,11 @@ func readPoolUsage(ctx context.Context, d LeaseDeps, rp *resolvedPool) poolUsage
 			own[r.ContainerID] = r
 		}
 	}
+	var mine []leaseRecord
 	containers, err := d.containers(ctx, rp)
 	if err != nil {
 		for _, r := range own {
-			u.yours = append(u.yours, r.alias())
+			mine = append(mine, r)
 		}
 	} else {
 		u.listed = true
@@ -103,21 +112,44 @@ func readPoolUsage(ctx context.Context, d LeaseDeps, rp *resolvedPool) poolUsage
 			}
 			u.leased++
 			if r, ok := own[c.ID]; ok {
-				u.yours = append(u.yours, r.alias())
+				mine = append(mine, r)
 			}
 		}
 	}
-	slices.SortFunc(u.yours, func(a, b string) int { return cmp.Compare(leaseNumber(a), leaseNumber(b)) })
+	for _, r := range mine {
+		u.yours = append(u.yours, r.view(LeaseStateHeld))
+	}
+	slices.SortFunc(u.yours, func(a, b LeaseView) int { return cmp.Compare(leaseNumber(a.Alias), leaseNumber(b.Alias)) })
+	if d.SSH != nil && len(u.yours) > 0 {
+		readLeaseActivities(ctx, d, mine, u.yours)
+		u.read, u.now = true, d.now()
+		slices.SortStableFunc(u.yours, byOldestActivity)
+	}
 	return u
+}
+
+// releaseCandidate is the lease of yours a full pool's refusal names the
+// release of: the first, oldest activity first, that a release would free
+// without losing what the guard reads and that is not in use now; the first
+// of all when none is.
+func (u poolUsage) releaseCandidate() string {
+	for _, v := range u.yours {
+		if u.read && releasable(v) {
+			return v.Alias
+		}
+	}
+	return u.yours[0].Alias
 }
 
 // leasePoolFullError is an acquire refused because every container that could
 // serve it is reserved and another could not be created (all-reserved). The
 // orchestrator queues nothing — an acquire succeeds only after a release — so
-// the refusal says how full the pool is, which leases are zcp's own, and what
-// frees a container. Raising the maximum is offered only while the
-// platform's cause is the pool holding its maximum and that maximum is below
-// the per-pool ceiling.
+// the refusal says how full the pool is, which leases are zcp's own — with ssh,
+// oldest activity first, each with what a release would lose — and what frees
+// a container: the release of one of them, after asking the person when this
+// conversation did not take it, never forced. Raising the maximum is offered
+// only while the platform's cause is the pool holding its maximum and that
+// maximum is below the per-pool ceiling.
 func leasePoolFullError(ctx context.Context, d LeaseDeps, rp *resolvedPool, se *platform.SwarmError) error {
 	pool := rp.svc.Name
 	u := readPoolUsage(ctx, d, rp)
@@ -126,7 +158,7 @@ func leasePoolFullError(ctx context.Context, d LeaseDeps, rp *resolvedPool, se *
 	release := ""
 	switch {
 	case len(u.yours) > 0:
-		release = fmt.Sprintf("Release a lease of yours you no longer need (zerops_lease action=release lease=%s)", u.yours[0])
+		release = fmt.Sprintf("Release a lease of yours you no longer need — ask the person first if this conversation did not take it (zerops_lease action=release lease=%s)", u.releaseCandidate())
 	case u.listed:
 		release = "None of these leases is yours: only their holders can release them"
 	}
@@ -174,10 +206,31 @@ func (u poolUsage) leasedNote() string {
 	return fmt.Sprintf("%d containers are leased", u.leased)
 }
 
-// holdersNote names zcp's own leases and counts the others'.
+// holdersNote names zcp's own leases and counts the others'. Once their
+// activity was read it lists them oldest activity first, each with how
+// recently it was active and what a release would lose (activitySummary).
 func (u poolUsage) holdersNote() string {
 	others := u.leased - len(u.yours)
-	yours := strings.Join(u.yours, ", ")
+	names := make([]string, 0, len(u.yours))
+	for _, v := range u.yours {
+		names = append(names, v.Alias)
+	}
+	yours := strings.Join(names, ", ")
+	if u.read {
+		summaries := make([]string, 0, len(u.yours))
+		for _, v := range u.yours {
+			summaries = append(summaries, activitySummary(v, u.now))
+		}
+		yours = strings.Join(summaries, "; ")
+		switch {
+		case !u.listed && len(u.yours) > 0:
+			return " (yours, by zcp's records, oldest activity first: " + yours + ")"
+		case u.listed && len(u.yours) > 0 && others > 0:
+			return fmt.Sprintf(" (%d held by other holders; yours, oldest activity first: %s)", others, yours)
+		case u.listed && len(u.yours) > 0:
+			return " (all yours, oldest activity first: " + yours + ")"
+		}
+	}
 	switch {
 	case !u.listed && len(u.yours) > 0:
 		return " (yours, by zcp's records: " + yours + ")"

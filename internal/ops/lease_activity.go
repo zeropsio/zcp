@@ -1,6 +1,7 @@
 package ops
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -100,7 +101,10 @@ func readLeaseActivities(ctx context.Context, d LeaseDeps, records []leaseRecord
 			v.Activity = &topology.LeaseActivity{AcquiredAt: rec.AcquiredAt, Note: why}
 			continue
 		}
-		reads.Go(func() { v.Activity, v.Unsaved = readLeaseActivity(ctx, d, rec) })
+		reads.Go(func() {
+			r := readLeaseFacts(ctx, d, rec)
+			v.Activity, v.Unsaved, v.noPreview = r.activity, r.unsaved, r.noPreview
+		})
 	}
 	reads.Wait()
 }
@@ -124,6 +128,23 @@ func leaseActivitySkip(d LeaseDeps, v LeaseView) string {
 // unless the guard's two reads both answered. A part that failed keeps what
 // the parts before it read; nothing unread is ever zero.
 func readLeaseActivity(ctx context.Context, d LeaseDeps, rec leaseRecord) (*topology.LeaseActivity, *topology.LeaseUnsaved) {
+	r := readLeaseFacts(ctx, d, rec)
+	return r.activity, r.unsaved
+}
+
+// leaseFacts is what one read of a lease's checkout found
+// (readLeaseActivity), and whether the container has no preview to observe:
+// a supervisor that lists activity runs no dev server on a preview port, so no
+// preview connection can be in use (markIdleLeases).
+type leaseFacts struct {
+	activity  *topology.LeaseActivity
+	unsaved   *topology.LeaseUnsaved
+	noPreview bool
+}
+
+// readLeaseFacts is readLeaseActivity with whether the container has no
+// preview to observe.
+func readLeaseFacts(ctx context.Context, d LeaseDeps, rec leaseRecord) leaseFacts {
 	budget := d.ActivityTimeout
 	if budget <= 0 {
 		budget = leaseActivityReadTimeout
@@ -131,7 +152,7 @@ func readLeaseActivity(ctx context.Context, d LeaseDeps, rec leaseRecord) (*topo
 	readCtx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 	out, err := d.SSH.ExecSSH(readCtx, rec.alias(), leaseActivityCommand())
-	act := &topology.LeaseActivity{AcquiredAt: rec.AcquiredAt, ReadAt: time.Now().UTC().Format(time.RFC3339)}
+	act := &topology.LeaseActivity{AcquiredAt: rec.AcquiredAt, ReadAt: d.now().UTC().Format(time.RFC3339)}
 	answer := string(out)
 	var sshErr *platform.SSHExecError
 	if answer == "" && errors.As(err, &sshErr) {
@@ -145,9 +166,10 @@ func readLeaseActivity(ctx context.Context, d LeaseDeps, rec leaseRecord) (*topo
 		act.LastChangeAt = change
 		notes = append(notes, note)
 	}
+	var noPreview bool
 	if r.previewSeen {
 		var note string
-		act.PreviewLastConnAt, act.PreviewOpenConns, note = leasePreview(r.preview)
+		act.PreviewLastConnAt, act.PreviewOpenConns, noPreview, note = leasePreview(r.preview)
 		notes = append(notes, note)
 	}
 	var unsaved *topology.LeaseUnsaved
@@ -167,7 +189,7 @@ func readLeaseActivity(ctx context.Context, d LeaseDeps, rec leaseRecord) (*topo
 		unsaved = unsavedWork{files: parseUnsavedFiles(r.status), unpushed: n}.view()
 	}
 	act.Note = joinNotes(notes...)
-	return act, unsaved
+	return leaseFacts{activity: act, unsaved: unsaved, noPreview: noPreview}
 }
 
 // checkoutRead is the read's answer split at its markers.
@@ -215,49 +237,51 @@ func splitCheckoutRead(out string) checkoutRead {
 // life) and its open connections, from a supervisor whose `ctl version`
 // lists devsup.CapabilityActivity — from any other, from none, or from one
 // with no preview server, both are absent and note says why the preview was
-// not observed.
-func leasePreview(part string) (lastConnAt string, openConns *int, note string) {
+// not observed. noPreview is the one case where that absence is itself
+// observed: a supervisor that lists activity runs no dev server on a preview
+// port, so the container has no preview forward to be in use.
+func leasePreview(part string) (lastConnAt string, openConns *int, noPreview bool, note string) {
 	const notObserved = "preview not observed: "
 	sections, err := splitDevsupSections(part)
 	if err != nil {
-		return "", nil, fmt.Sprintf(notObserved+"zcp could not read the supervisor's answer (%v)", err)
+		return "", nil, false, fmt.Sprintf(notObserved+"zcp could not read the supervisor's answer (%v)", err)
 	}
 	version, ok := sections["version"]
 	switch {
 	case !ok:
-		return "", nil, fmt.Sprintf(notObserved+"the supervisor part answered %q, with no zcp-devsup version", boundedText(part))
+		return "", nil, false, fmt.Sprintf(notObserved+"the supervisor part answered %q, with no zcp-devsup version", boundedText(part))
 	case version.code == devsupCodeAbsent:
-		return "", nil, notObserved + "zcp-devsup is not installed in the container"
+		return "", nil, false, notObserved + "zcp-devsup is not installed in the container"
 	case version.code != devsupCodeOK:
-		return "", nil, fmt.Sprintf(notObserved+"zcp-devsup ctl version exited %d", version.code)
+		return "", nil, false, fmt.Sprintf(notObserved+"zcp-devsup ctl version exited %d", version.code)
 	}
 	var v SupervisorVersion
 	if err := json.Unmarshal([]byte(version.body), &v); err != nil {
-		return "", nil, fmt.Sprintf(notObserved+"zcp-devsup ctl version answered %q", boundedText(version.body))
+		return "", nil, false, fmt.Sprintf(notObserved+"zcp-devsup ctl version answered %q", boundedText(version.body))
 	}
 	if !v.Supports(devsup.CapabilityActivity) {
-		return "", nil, fmt.Sprintf(notObserved+"the container's zcp-devsup %s predates preview activity (its ctl version lists no %q); one from a newer zcp release reports it",
+		return "", nil, false, fmt.Sprintf(notObserved+"the container's zcp-devsup %s predates preview activity (its ctl version lists no %q); one from a newer zcp release reports it",
 			v.Version, devsup.CapabilityActivity)
 	}
 	status, ok := sections["status"]
 	switch {
 	case !ok:
-		return "", nil, notObserved + "zcp-devsup ctl status did not answer"
+		return "", nil, false, notObserved + "zcp-devsup ctl status did not answer"
 	case status.code == devsupCodeNoSupervisor:
-		return "", nil, notObserved + "no zcp-devsup runs in the container (its dev setup's run.start is something else)"
+		return "", nil, false, notObserved + "no zcp-devsup runs in the container (its dev setup's run.start is something else)"
 	case status.code == devsupCodeUnresponsive || status.code == timeoutExit:
-		return "", nil, fmt.Sprintf(notObserved+"the dev-server supervisor did not answer within %d s (the container may be out of memory or CPU)", leasePreviewReadSeconds)
+		return "", nil, false, fmt.Sprintf(notObserved+"the dev-server supervisor did not answer within %d s (the container may be out of memory or CPU)", leasePreviewReadSeconds)
 	case status.code != devsupCodeOK:
 		note = fmt.Sprintf(notObserved+"zcp-devsup ctl status exited %d", status.code)
 		var failure *SupervisorCtlError
 		if errors.As(ctlFailure(status), &failure) && failure.Message != "" {
 			note += ": " + boundedText(failure.Message)
 		}
-		return "", nil, note
+		return "", nil, false, note
 	}
 	var st devsup.State
 	if err := json.Unmarshal([]byte(status.body), &st); err != nil {
-		return "", nil, fmt.Sprintf(notObserved+"zcp-devsup ctl status answered %q", boundedText(status.body))
+		return "", nil, false, fmt.Sprintf(notObserved+"zcp-devsup ctl status answered %q", boundedText(status.body))
 	}
 	var last time.Time
 	open, found := 0, false
@@ -272,12 +296,12 @@ func leasePreview(part string) (lastConnAt string, openConns *int, note string) 
 		}
 	}
 	if !found {
-		return "", nil, notObserved + "no dev server in the container has a preview port"
+		return "", nil, true, notObserved + "no dev server in the container has a preview port"
 	}
 	if !last.IsZero() {
 		lastConnAt = last.UTC().Format(time.RFC3339)
 	}
-	return lastConnAt, &open, ""
+	return lastConnAt, &open, false, ""
 }
 
 // timeoutExit is the exit status of a command `timeout` ended.
@@ -342,4 +366,282 @@ func (w unsavedWork) view() *topology.LeaseUnsaved {
 		shown = shown[:leaseGuardFileLimit]
 	}
 	return &topology.LeaseUnsaved{Files: slices.Clone(shown), FileCount: len(w.files), UnpushedCommits: w.unpushed}
+}
+
+// leaseIdleAfter is how long a lease zcp holds goes without activity before
+// status marks it idle (DP-25): 24 h, the owner's answer. Idleness is a label:
+// nothing releases, stops or deletes a lease because it is idle
+// (docs/spec-mate.md §0 rule 4).
+const leaseIdleAfter = 24 * time.Hour
+
+// leaseReleaseTakes is what every release takes that no guard reads.
+const leaseReleaseTakes = "Files git ignores and stashes go with any release."
+
+// LeaseIdle marks a lease zcp holds that nothing has happened in for
+// leaseIdleAfter (DP-25).
+type LeaseIdle struct {
+	// Since is the lease's last activity (RFC 3339 UTC): the newest of its
+	// checkout's last change, its preview's last connection and its acquire —
+	// of every lease of its group, for a lease of a group.
+	Since string `json:"since"`
+	// Next is what frees it — the release, when it holds nothing a release
+	// would lose — or what a release would lose and how to keep it. It never
+	// names a forced release.
+	Next string `json:"next"`
+}
+
+// leaseLiveness is what one read of a lease says of its last activity.
+type leaseLiveness struct {
+	// last is its newest activity — the checkout's last change, the
+	// preview's last connection, the acquire — and zero when the checkout's
+	// last change was not read: an acquire alone tells nothing.
+	last time.Time
+	// inUse: the preview holds a connection open now, however long ago it
+	// was opened — someone may be looking at it.
+	inUse bool
+	// previewSeen: the preview was observed, or the container has none.
+	previewSeen bool
+	// unsavedRead: the release guard's reads answered.
+	unsavedRead bool
+}
+
+// livenessOf reads v's activity as its liveness.
+func livenessOf(v LeaseView) leaseLiveness {
+	a := v.Activity
+	if a == nil || a.LastChangeAt == "" {
+		return leaseLiveness{unsavedRead: v.Unsaved != nil}
+	}
+	l := leaseLiveness{
+		inUse:       a.PreviewOpenConns != nil && *a.PreviewOpenConns > 0,
+		previewSeen: a.PreviewOpenConns != nil || v.noPreview,
+		unsavedRead: v.Unsaved != nil,
+	}
+	for _, at := range []string{a.LastChangeAt, a.PreviewLastConnAt, a.AcquiredAt} {
+		if t, err := time.Parse(time.RFC3339, at); err == nil && t.After(l.last) {
+			l.last = t
+		}
+	}
+	return l
+}
+
+// idle reports whether the lease is idle at now: every fact read, no
+// preview connection open, and its last activity leaseIdleAfter or more ago.
+// A fact that was not read is never taken for no activity.
+func (l leaseLiveness) idle(now time.Time) bool {
+	return !l.last.IsZero() && l.previewSeen && l.unsavedRead && !l.inUse && now.Sub(l.last) >= leaseIdleAfter
+}
+
+// leaseGroup is the leases zcp holds of one repository and branch (DP-17),
+// earliest acquired first; a lease whose repository zcp knows neither way is
+// a group of its own.
+type leaseGroup struct {
+	branch, repo string
+	records      []leaseRecord
+	// ambiguous: zcp leases the branch for another repository too, so the
+	// branch's release names repo.
+	ambiguous bool
+}
+
+// leaseGroupsOf groups records as a release of a branch reads them
+// (branchLeaseRecords): by repository identity and branch.
+func leaseGroupsOf(stateDir string, records []leaseRecord) []leaseGroup {
+	var groups []leaseGroup
+	at := map[string]int{}
+	repos := map[string]map[string]bool{} // branch → the repository keys it is leased for
+	for _, r := range records {
+		branch, repo := recordBranch(r), recordRepo(stateDir, r)
+		key := "\x00" + r.alias()
+		if repo != "" {
+			key = strings.ToLower(repo) + "\x00" + branch
+		}
+		if repos[branch] == nil {
+			repos[branch] = map[string]bool{}
+		}
+		repos[branch][key] = true
+		i, seen := at[key]
+		if !seen {
+			i = len(groups)
+			at[key] = i
+			groups = append(groups, leaseGroup{branch: branch, repo: repo})
+		}
+		groups[i].records = append(groups[i].records, r)
+	}
+	for i := range groups {
+		g := &groups[i]
+		g.ambiguous = len(repos[g.branch]) > 1
+		slices.SortFunc(g.records, func(a, b leaseRecord) int {
+			return cmp.Or(cmp.Compare(a.AcquiredAt, b.AcquiredAt), cmp.Compare(a.alias(), b.alias()))
+		})
+	}
+	return groups
+}
+
+// markIdleLeases marks the idle leases among views, which this status call
+// read (DP-25). A lease is idle when every fact of it was read, no preview
+// connection is open, and nothing has happened in it — no checkout change, no
+// preview connection, no acquire — for leaseIdleAfter. The leases of a group
+// (DP-17) are idle together or not at all: only when this call read every
+// lease of the group — a status of one pool reads none of its leases on
+// others — and each held one is idle, since the newest activity of any; they
+// name the branch's release. Without ssh nothing was read and nothing is
+// marked. It changes nothing.
+func markIdleLeases(d LeaseDeps, records []leaseRecord, views []LeaseView) {
+	if d.SSH == nil {
+		return
+	}
+	now := d.now()
+	at := make(map[string]int, len(views))
+	for i, v := range views {
+		at[v.Alias] = i
+	}
+	for _, g := range leaseGroupsOf(d.StateDir, records) {
+		var held []int
+		read := true
+		for _, r := range g.records {
+			i, ok := at[r.alias()]
+			if !ok {
+				read = false
+				break
+			}
+			if s := views[i].State; s == LeaseStateHeld || s == LeaseStateUnmounted {
+				held = append(held, i)
+			}
+		}
+		if !read || len(held) == 0 {
+			continue
+		}
+		var since time.Time
+		idle := true
+		for _, i := range held {
+			l := livenessOf(views[i])
+			if !l.idle(now) {
+				idle = false
+				break
+			}
+			if l.last.After(since) {
+				since = l.last
+			}
+		}
+		if !idle {
+			continue
+		}
+		next := idleNext(d, g, views, held, now.Sub(since))
+		for _, i := range held {
+			views[i].Idle = &LeaseIdle{Since: since.UTC().Format(time.RFC3339), Next: next}
+		}
+	}
+}
+
+// idleNext is what an idle lease — or an idle group, held — names: with
+// nothing any of them would lose, the release (the branch's, for a group of
+// several held leases); otherwise what each holds and how to keep it. Never a
+// forced release.
+func idleNext(d LeaseDeps, g leaseGroup, views []LeaseView, held []int, quiet time.Duration) string {
+	onHQ := false
+	for _, r := range g.records {
+		onHQ = onHQ || IsHQRemote(r.Repo, d.hqAddress())
+	}
+	ago := agoText(quiet)
+	if len(held) == 1 {
+		v := views[held[0]]
+		if u := v.Unsaved; u.FileCount > 0 || u.UnpushedCommits > 0 {
+			return fmt.Sprintf("Nothing has happened in %s for %s, but a release would lose %s. %s.",
+				v.Alias, ago, describeUnsaved(u.Files, u.FileCount, u.UnpushedCommits), saveWorkHint(onHQ, "the container"))
+		}
+		return fmt.Sprintf("Nothing has happened in %s for %s and it holds no uncommitted, untracked or unpushed work: zerops_lease action=release lease=%s frees its container. %s",
+			v.Alias, ago, v.Alias, leaseReleaseTakes)
+	}
+	aliases := make([]string, 0, len(held))
+	states := make([]string, 0, len(held))
+	unsaved := false
+	for _, i := range held {
+		v := views[i]
+		aliases = append(aliases, v.Alias)
+		if u := v.Unsaved; u.FileCount > 0 || u.UnpushedCommits > 0 {
+			unsaved = true
+			states = append(states, v.Alias+" holds "+describeUnsaved(u.Files, u.FileCount, u.UnpushedCommits))
+			continue
+		}
+		states = append(states, v.Alias+" holds no unsaved work")
+	}
+	if unsaved {
+		return fmt.Sprintf("Nothing has happened in branch %s's leases (%s) for %s, but a release would lose what they hold: %s. %s.",
+			g.branch, joinAnd(aliases), ago, strings.Join(states, "; "), saveWorkHint(onHQ, "each container that holds it"))
+	}
+	repo := ""
+	if g.ambiguous {
+		repo = g.repo
+	}
+	return fmt.Sprintf("Nothing has happened in branch %s's leases (%s) for %s and none holds uncommitted, untracked or unpushed work: %s releases them all. %s",
+		g.branch, joinAnd(aliases), ago, LeaseReleaseBranchCall(g.branch, repo, false), leaseReleaseTakes)
+}
+
+// agoText says how long d is: under an hour, whole hours below two days,
+// whole days from then.
+func agoText(d time.Duration) string {
+	switch {
+	case d < time.Hour:
+		return "less than an hour"
+	case d < 48*time.Hour:
+		return fmt.Sprintf("%d h", int(d.Hours()))
+	}
+	return fmt.Sprintf("%d d", int(d.Hours()/24))
+}
+
+// byOldestActivity orders leases oldest activity first: those whose last
+// activity was read, longest ago first; then those in use now; then those
+// whose activity was not read; each by container number on a tie.
+func byOldestActivity(a, b LeaseView) int {
+	la, lb := livenessOf(a), livenessOf(b)
+	return cmp.Or(cmp.Compare(la.rank(), lb.rank()), la.last.Compare(lb.last), cmp.Compare(leaseNumber(a.Alias), leaseNumber(b.Alias)))
+}
+
+// rank is where a lease sorts by its activity (byOldestActivity).
+func (l leaseLiveness) rank() int {
+	switch {
+	case l.last.IsZero():
+		return 2
+	case l.inUse:
+		return 1
+	}
+	return 0
+}
+
+// activitySummary is a lease as a full pool's refusal lists it: how recently
+// it was active — idle, when, in use now, or not read — and what a release
+// would lose.
+func activitySummary(v LeaseView, now time.Time) string {
+	l := livenessOf(v)
+	var when string
+	switch {
+	case l.last.IsZero():
+		when = "activity not read"
+	case l.inUse:
+		when = "in use now (a preview connection is open)"
+	case !l.previewSeen:
+		when = "last checkout change " + agoText(now.Sub(l.last)) + " ago, its preview not observed"
+	case l.idle(now):
+		when = "idle, last active " + agoText(now.Sub(l.last)) + " ago"
+	default:
+		when = "last active " + agoText(now.Sub(l.last)) + " ago"
+	}
+	what := "unsaved work not read"
+	if u := v.Unsaved; u != nil {
+		var parts []string
+		if u.FileCount > 0 {
+			parts = append(parts, fmt.Sprintf("%d uncommitted or untracked file(s)", u.FileCount))
+		}
+		if u.UnpushedCommits > 0 {
+			parts = append(parts, fmt.Sprintf("%d commit(s) on no remote branch", u.UnpushedCommits))
+		}
+		what = cmp.Or(strings.Join(parts, " and "), "nothing unsaved")
+	}
+	return v.Alias + " — " + when + ", " + what
+}
+
+// releasable reports a lease a release would free without losing anything
+// the guard reads: read whole, holding nothing unsaved, not in use now.
+func releasable(v LeaseView) bool {
+	l := livenessOf(v)
+	return !l.last.IsZero() && !l.inUse && v.Unsaved != nil && v.Unsaved.FileCount == 0 && v.Unsaved.UnpushedCommits == 0
 }

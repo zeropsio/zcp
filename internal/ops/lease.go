@@ -71,6 +71,17 @@ type LeaseDeps struct {
 	// ActivityTimeout bounds the one read of a held lease's checkout a status
 	// call makes (readLeaseActivity); zero means leaseActivityReadTimeout.
 	ActivityTimeout time.Duration
+	// Now is zcp's clock (nil: time.Now): when a lease's checkout was read,
+	// and how long ago its last activity was (DP-25).
+	Now func() time.Time
+}
+
+// now reads zcp's clock.
+func (d LeaseDeps) now() time.Time {
+	if d.Now != nil {
+		return d.Now()
+	}
+	return time.Now()
 }
 
 // leaseReadTimeout is the default ReadTimeout.
@@ -166,6 +177,14 @@ type LeaseView struct {
 	// Unsaved is what releasing the lease would lose, read with the release
 	// guard's own reads (DP-4, DP-21); nil when it was not read.
 	Unsaved *topology.LeaseUnsaved `json:"unsaved,omitempty"`
+	// Idle marks a lease nothing has happened in for leaseIdleAfter, by what
+	// this status call read, with what frees it (DP-25); nil otherwise. A
+	// label for the result only: nothing acts on it, and the envelope never
+	// carries it.
+	Idle *LeaseIdle `json:"idle,omitempty"`
+	// noPreview: the read found no preview to observe — a supervisor that
+	// lists activity runs no dev server on a preview port.
+	noPreview bool
 	// containerDeleted: a release deleted the container because it could not
 	// be reset (DP-15).
 	containerDeleted bool
@@ -306,8 +325,9 @@ func LeaseList(ctx context.Context, d LeaseDeps, pool string) ([]LeaseView, erro
 // every pool is listed, one that cannot be read (stopped, unreachable) never
 // fails the rest: its leases are zcp's records, marked unverified with why,
 // and the pool is named in Unread. With ssh, each lease zcp holds also
-// carries what one read of its checkout found (readLeaseActivities, DP-21);
-// status changes nothing anywhere.
+// carries what one read of its checkout found (readLeaseActivities, DP-21),
+// and one nothing has happened in for leaseIdleAfter is marked idle with what
+// frees it (markIdleLeases, DP-25); status changes nothing anywhere.
 func LeaseStatus(ctx context.Context, d LeaseDeps, pool string) (LeaseStatusView, error) {
 	records, err := readLeaseRecords(d.StateDir)
 	if err != nil {
@@ -323,6 +343,7 @@ func LeaseStatus(ctx context.Context, d LeaseDeps, pool string) (LeaseStatusView
 			return LeaseStatusView{}, err
 		}
 		readLeaseActivities(ctx, d, records, views)
+		markIdleLeases(d, records, views)
 		return LeaseStatusView{Leases: views}, nil
 	}
 	names := map[string]bool{}
@@ -350,6 +371,7 @@ func LeaseStatus(ctx context.Context, d LeaseDeps, pool string) (LeaseStatusView
 		status.Leases = append(status.Leases, got...)
 	}
 	readLeaseActivities(ctx, d, records, status.Leases)
+	markIdleLeases(d, records, status.Leases)
 	return status, nil
 }
 
