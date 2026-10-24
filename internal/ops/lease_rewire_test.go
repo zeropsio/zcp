@@ -283,10 +283,13 @@ func TestLeaseRelease_RewireFails_NoteNotBlock(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name     string
-		breakIt   func(t *testing.T, rf *rewireFixture)
+		breakIt  func(t *testing.T, rf *rewireFixture)
 		wantNote []string
 	}{
-		{name: "unreachable", breakIt: func(t *testing.T, rf *rewireFixture) { rf.ssh.setUnreachable("webpool-7", exitError(t, 255)) },
+		{name: "unreachable", breakIt: func(t *testing.T, rf *rewireFixture) {
+			t.Helper()
+			rf.ssh.setUnreachable("webpool-7", exitError(t, 255))
+		},
 			wantNote: []string{"webpool-7", "Connection refused", "hqpool-3", `zerops_dev_server action=restart hostname="webpool-7"`}},
 		{name: "supervisor unresponsive", breakIt: func(_ *testing.T, rf *rewireFixture) { rf.web.Unresponsive = true },
 			wantNote: []string{"webpool-7", "did not answer", `zerops_dev_server action=restart hostname="webpool-7"`}},
@@ -523,5 +526,49 @@ func TestLeaseStatus_StaleWiring_NamedNotFixed(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestLeaseRelease_SiblingDeclarationUnreadable_DropsOnlyTheLeavingContainer:
+// a sibling whose declaration cannot be read still never stays wired to the
+// container that leaves: zcp keeps the variables naming a container of the
+// group and drops the rest, and says why.
+func TestLeaseRelease_SiblingDeclarationUnreadable_DropsOnlyTheLeavingContainer(t *testing.T) {
+	t.Parallel()
+	rf := newRewireFixture(t)
+	rf.acquire(t, groupHQPool, groupWebPool)
+	rf.web.Declaration = `{"version":1,"servers":[{"name":"web","port":3000}]}` // an edit broke it
+
+	change, err := LeaseReleaseChange(context.Background(), rf.deps, "hqpool-3", true)
+	if err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	if got, want := rf.web.Overlay(), map[string]string{"WEB_HOST": rewireWebHost}; !maps.Equal(got, want) {
+		t.Errorf("webpool-7's overlay = %v, want %v: only hqpool-3's container dropped", got, want)
+	}
+	if r := rewireOf(t, change.Rewired, "webpool-7"); !strings.Contains(r.Note, "cannot be read") || !strings.Contains(r.Note, "webpool-7") {
+		t.Errorf("rewire note %q should say webpool-7's declaration cannot be read", r.Note)
+	}
+}
+
+// TestLeaseAcquire_JoiningGroup_SupervisorWithoutEnv_NotedNotSent: a lease
+// whose supervisor does not list env never gets ctl env from a rewire; the
+// rewire notes what it cannot set and the way to a newer supervisor.
+func TestLeaseAcquire_JoiningGroup_SupervisorWithoutEnv_NotedNotSent(t *testing.T) {
+	t.Parallel()
+	rf := newRewireFixture(t)
+	rf.hq.Capabilities, rf.hq.SupervisorVersion = nil, "v9.200.0"
+	rf.acquire(t, groupHQPool)
+
+	change := rf.acquire(t, groupWebPool)
+
+	if sent := rf.ssh.sent("hqpool-3", "ctl 'env'"); len(sent) != 0 {
+		t.Errorf("ctl env sent to a supervisor that does not list it: %v", sent)
+	}
+	r := rewireOf(t, change.Rewired, "hqpool-3")
+	for _, want := range []string{"hqpool-3", "v9.200.0", "WEB_HOST", "zerops_lease action=rollout"} {
+		if !strings.Contains(r.Note, want) {
+			t.Errorf("rewire note %q lacks %q", r.Note, want)
+		}
 	}
 }

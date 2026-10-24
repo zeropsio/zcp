@@ -722,8 +722,10 @@ func TestLeaseSync_FastForwardChangedDeclaration_SendsOverlayThenReloads(t *test
 		{name: "a server added", decl: `{"version":1,` + servers, changed: true,
 			wantReloaded: true, wantUnwatched: []string{"web"}, wantNote: []string{".zcp/dev-servers.json", "admin"}},
 		{name: "the declaration left alone", decl: `{"version":1,` + servers, wantUnwatched: []string{"web"}},
+		// Which servers watch is unknown while the file cannot be read, so
+		// none is named as keeping the old code.
 		{name: "a declaration that cannot be read", decl: `{"version":1,"servers":[{"name":"web","port":3000}]}`, changed: true,
-			wantUnwatched: []string{"web"}, wantNote: []string{".zcp/dev-servers.json", "cannot"}},
+			wantNote: []string{".zcp/dev-servers.json", "cannot"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
