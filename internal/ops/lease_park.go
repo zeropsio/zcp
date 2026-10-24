@@ -132,12 +132,12 @@ func leaseContainerFor(ctx context.Context, d LeaseDeps, rec leaseRecord, verb s
 	return v, nil
 }
 
-// leaseLostOnCall is a park or an unpark (verb) whose stop or start the
-// orchestrator refused held-by-other: the lease ended outside zcp, so its
-// record is dropped as lost with its mount and alias stanza, and the view
-// says so — never "retry in a moment".
-func leaseLostOnCall(ctx context.Context, d LeaseDeps, rec leaseRecord, verb string) (LeaseView, error) {
-	v, err := dropLostLease(ctx, d, rec, heldByOtherWhy)
+// leaseLostOnCall is a park or an unpark (verb) that found, right before its
+// stop or start or in the orchestrator's held-by-other answer to it, that the
+// lease ended outside zcp (why): its record is dropped as lost with its mount
+// and alias stanza, and the view says so — never "retry in a moment".
+func leaseLostOnCall(ctx context.Context, d LeaseDeps, rec leaseRecord, verb, why string) (LeaseView, error) {
+	v, err := dropLostLease(ctx, d, rec, why)
 	if err != nil {
 		return LeaseView{}, fmt.Errorf("%s %s: %w", verb, rec.alias(), err)
 	}
@@ -181,16 +181,26 @@ func LeasePark(ctx context.Context, d LeaseDeps, alias string) (LeaseView, error
 	case c.Status == platform.SwarmContainerStopped:
 		notes = append(notes, "its container was stopped already (outside zcp), so zcp stopped nothing and recorded it parked")
 	default:
-		if _, err := rp.api.Stop(ctx, rec.ContainerID, rec.Lease); err != nil {
-			if isHeldByOther(err) {
-				return leaseLostOnCall(ctx, d, rec, "park")
-			}
-			out := leaseOrchestratorError(ctx, d, rp, "park "+alias, err)
+		remounted := func(out error) error {
 			remount := "its mount is back"
 			if note := d.Host.mountLease(ctx, d, rec); note != "" {
 				remount = note
 			}
-			return LeaseView{}, withNote(out, "the lease stays held and running; "+remount)
+			return withNote(out, "the lease stays held and running; "+remount)
+		}
+		// Asked again right before the stop (DP-2): the unmount took a
+		// while, and a lease that ended meanwhile is never stopped.
+		switch fresh := renewOwnership(ctx, d, rp, rec); {
+		case fresh.own.lost():
+			return leaseLostOnCall(ctx, d, rec, "park", fresh.why)
+		case fresh.own == leaseUnverified:
+			return LeaseView{}, remounted(unverifiedLeaseRefusal(alias, "parked", fresh))
+		}
+		if _, err := rp.api.Stop(ctx, rec.ContainerID, rec.Lease); err != nil {
+			if isHeldByOther(err) {
+				return leaseLostOnCall(ctx, d, rec, "park", heldByOtherWhy)
+			}
+			return LeaseView{}, remounted(leaseOrchestratorError(ctx, d, rp, "park "+alias, err))
 		}
 	}
 	if !rec.Parked {
@@ -232,7 +242,7 @@ func LeaseUnpark(ctx context.Context, d LeaseDeps, alias string) (LeaseView, err
 		}
 	} else if _, err := rp.api.Start(ctx, rec.ContainerID, rec.Lease); err != nil {
 		if isHeldByOther(err) {
-			return leaseLostOnCall(ctx, d, rec, "unpark")
+			return leaseLostOnCall(ctx, d, rec, "unpark", heldByOtherWhy)
 		}
 		return LeaseView{}, leaseOrchestratorError(ctx, d, rp, "unpark "+alias, err)
 	}
