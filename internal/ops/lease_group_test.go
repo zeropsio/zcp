@@ -44,6 +44,7 @@ type poolOrch struct {
 	releases   []fakeRelease
 	releaseErr error
 	deletes    []string // container ids deleted (DELETE /container/{id})
+	powers     []string // "<status> <container id>" per holder's stop or start
 	gate       chan struct{}
 	entered    chan struct{} // receives once per acquire that reached the orchestrator
 }
@@ -122,6 +123,29 @@ func (o *poolOrch) Delete(_ context.Context, id, lease string) error {
 		}
 	}
 	return nil
+}
+
+func (o *poolOrch) Stop(_ context.Context, id, lease string) (platform.SwarmContainer, error) {
+	return o.power(id, lease, platform.SwarmContainerStopped)
+}
+
+func (o *poolOrch) Start(_ context.Context, id, lease string) (platform.SwarmContainer, error) {
+	return o.power(id, lease, platform.SwarmContainerActive)
+}
+
+// power is a holder's stop or start: the container takes status, its
+// reservation kept; another lease is refused.
+func (o *poolOrch) power(id, lease, status string) (platform.SwarmContainer, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.powers = append(o.powers, status+" "+id)
+	for i, c := range o.containers {
+		if c.ID == id && o.leases[id] == lease {
+			o.containers[i].Status = status
+			return o.containers[i], nil
+		}
+	}
+	return platform.SwarmContainer{}, &platform.SwarmError{Status: 409, Code: "containerAction", Message: "unknown lease", Reason: platform.SwarmReasonUnknownLease}
 }
 
 func (o *poolOrch) Rollout(context.Context) (platform.SwarmRollout, error) {

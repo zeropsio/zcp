@@ -197,7 +197,10 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// Raised 1045 -> 1057: action=sync (DP-24) — push a lease's branch,
 		// fast-forward the branch's other leases — names sync in action and
 		// gives lease a sync role; no new field.
-		"zerops_lease": 1057,
+		// Raised 1057 -> 1085: action=park / action=unpark (DP-28) — stop a
+		// held lease's container keeping its files, start it again — names
+		// both in action and gives lease their role; no new field.
+		"zerops_lease": 1085,
 		// Raised 266 -> 580: action="wait" added processId/processIds/service
 		// routing fields (block until a process or a whole service settles) — a
 		// deliberate new capability, not description bloat.

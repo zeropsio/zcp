@@ -46,6 +46,12 @@ type fakeSwarm struct {
 	rollout    platform.SwarmRollout
 	rolloutErr error
 	rollouts   int
+
+	// stops and starts record a holder's stop and start (reset unused);
+	// stopErr and startErr fail them. A stop or start that goes through sets
+	// the listed container's status.
+	stops, starts     []fakeRelease
+	stopErr, startErr error
 }
 
 type fakeRelease struct {
@@ -96,6 +102,34 @@ func (f *fakeSwarm) Rollout(context.Context) (platform.SwarmRollout, error) {
 // models no containers coming into being (lease_warm_test.go's warmOrch does).
 func (f *fakeSwarm) Create(context.Context, int) ([]platform.SwarmContainer, error) {
 	return nil, &platform.SwarmError{Status: 400, Code: "containerAction", Message: "the fake orchestrator creates no containers"}
+}
+
+// Stop stops a listed container as its holder does: STOPPED, still reserved.
+func (f *fakeSwarm) Stop(_ context.Context, id, lease string) (platform.SwarmContainer, error) {
+	f.stops = append(f.stops, fakeRelease{id: id, lease: lease})
+	if f.stopErr != nil {
+		return platform.SwarmContainer{}, f.stopErr
+	}
+	return f.setStatus(id, platform.SwarmContainerStopped), nil
+}
+
+// Start starts a listed container as its holder does: ACTIVE, still reserved.
+func (f *fakeSwarm) Start(_ context.Context, id, lease string) (platform.SwarmContainer, error) {
+	f.starts = append(f.starts, fakeRelease{id: id, lease: lease})
+	if f.startErr != nil {
+		return platform.SwarmContainer{}, f.startErr
+	}
+	return f.setStatus(id, platform.SwarmContainerActive), nil
+}
+
+func (f *fakeSwarm) setStatus(id, status string) platform.SwarmContainer {
+	for i := range f.containers {
+		if f.containers[i].ID == id {
+			f.containers[i].Status = status
+			return f.containers[i]
+		}
+	}
+	return platform.SwarmContainer{ID: id, Status: status}
 }
 
 // Container reads one listed container by id; the fake counts no snapshots.

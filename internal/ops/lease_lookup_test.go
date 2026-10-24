@@ -57,3 +57,30 @@ func TestLeaseTarget_NoStateDir_NotALease(t *testing.T) {
 		t.Fatalf("LeaseTarget with no state dir = ok %v err %v, want not a lease, no error", ok, err)
 	}
 }
+
+// TestLeaseTarget_ParkedRecord_SaysParked: a lease whose record says it is
+// parked (DP-28) resolves as a lease target that says so — dev servers,
+// deploy and verify read only the record.
+func TestLeaseTarget_ParkedRecord_SaysParked(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	for _, rec := range []leaseRecord{
+		{PoolHostname: "webpool", PoolServiceID: "svc-pool", ContainerID: "c-3", ContainerNumber: 3, ContainerHostname: "node-id-3.runtime.webpool.zerops",
+			Lease: "secret-lease-value", Branch: "feat-x", AcquiredAt: "2026-10-23T12:00:00Z", Parked: true, ParkedAt: "2026-10-24T09:00:00Z"},
+		{PoolHostname: "webpool", PoolServiceID: "svc-pool", ContainerID: "c-4", ContainerNumber: 4, ContainerHostname: "node-id-4.runtime.webpool.zerops",
+			Lease: "secret-lease-value", Branch: "feat-y", AcquiredAt: "2026-10-23T12:00:00Z"},
+	} {
+		if err := writeLeaseRecord(stateDir, rec); err != nil {
+			t.Fatalf("write record: %v", err)
+		}
+	}
+	for host, want := range map[string]bool{"webpool-3": true, "webpool-4": false} {
+		got, ok, err := LeaseTarget(stateDir, host)
+		if err != nil || !ok {
+			t.Fatalf("LeaseTarget(%q) = ok %v err %v, want a lease", host, ok, err)
+		}
+		if got.Parked != want {
+			t.Errorf("LeaseTarget(%q).Parked = %v, want %v", host, got.Parked, want)
+		}
+	}
+}

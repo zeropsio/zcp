@@ -679,3 +679,37 @@ func TestDevServerStatus_StaleWiring_Named(t *testing.T) {
 		})
 	}
 }
+
+// TestDevServer_ParkedLease_RefusedWithUnpark: every dev-server action on a
+// lease its record says is parked is refused before anything is sent — its
+// container is stopped, so ssh would only time out — naming the unpark.
+func TestDevServer_ParkedLease_RefusedWithUnpark(t *testing.T) {
+	t.Parallel()
+	stateDir := leaseState(t)
+	rec, err := loadLeaseRecord(stateDir, "devpool-3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec.Parked, rec.ParkedAt = true, "2026-10-24T09:00:00Z"
+	if err := writeLeaseRecord(stateDir, rec); err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range []string{"start", "status", "stop", "logs"} {
+		t.Run(action, func(t *testing.T) {
+			t.Parallel()
+			c := devservertest.NewSupervised(previewDeclaration)
+			_, err := ExecuteDevServer(context.Background(), c, poolClient(0), "p1",
+				DevServerParams{Action: action, Hostname: "devpool-3", StateDir: stateDir})
+			var pe *platform.PlatformError
+			if !errors.As(err, &pe) || pe.Code != platform.ErrPrerequisiteMissing {
+				t.Fatalf("%s on a parked lease: err = %v, want a PREREQUISITE_MISSING refusal", action, err)
+			}
+			if !strings.Contains(pe.Message, "devpool-3 is parked") || !strings.Contains(pe.Suggestion, "zerops_lease action=unpark lease=devpool-3") {
+				t.Errorf("refusal = %q / %q, want it to say the lease is parked and name the unpark", pe.Message, pe.Suggestion)
+			}
+			if sent := c.Sent(); len(sent) != 0 {
+				t.Errorf("sent %v to a parked lease", sent)
+			}
+		})
+	}
+}

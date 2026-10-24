@@ -628,3 +628,105 @@ func TestSwarmClient_Container_ReadsSnapshotsByID(t *testing.T) {
 		t.Errorf("container = %+v, want the free current c/1 with 1 snapshot", got)
 	}
 }
+
+// TestSwarmClient_StopStart_LeaseOnlyInHeader: a holder's stop and start
+// (POST /container/{id}/stop, /start, the id path-escaped) carry the bearer
+// and the lease in X-Swarm-Lease only — never in the URL, never with force —
+// and decode the container as the orchestrator answers it: stopped and still
+// reserved, then running again.
+func TestSwarmClient_StopStart_LeaseOnlyInHeader(t *testing.T) {
+	t.Parallel()
+
+	const lease = "0a1b2c3d4e5f60718293a4b5c6d7e8f9"
+	type seen struct{ method, uri, auth, lease, body string }
+	var got []seen
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		got = append(got, seen{r.Method, r.URL.RequestURI(), r.Header.Get("Authorization"), r.Header.Get("X-Swarm-Lease"), string(b)})
+		mu.Unlock()
+		status := SwarmContainerActive
+		if strings.HasSuffix(r.URL.Path, "/stop") {
+			status = SwarmContainerStopped
+		}
+		_, _ = w.Write([]byte(`{"id":"c/1","number":3,"hostname":"node-id-3.runtime.pool.zerops","status":"` + status +
+			`","lockState":"reserved","lockSince":"2026-10-23T22:00:00Z","dirty":false,"current":true}`))
+	}))
+	defer srv.Close()
+
+	c := NewSwarmClient(srv.URL, "api-token-xyz", srv.Client())
+	stopped, err := c.Stop(context.Background(), "c/1", lease)
+	if err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if stopped.Status != SwarmContainerStopped || stopped.LockState != "reserved" || stopped.Number != 3 {
+		t.Errorf("stopped = %+v, want #3 STOPPED and still reserved", stopped)
+	}
+	started, err := c.Start(context.Background(), "c/1", lease)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if started.Status != SwarmContainerActive || started.LockState != "reserved" {
+		t.Errorf("started = %+v, want ACTIVE and still reserved", started)
+	}
+
+	want := []string{"/container/c%2F1/stop", "/container/c%2F1/start"}
+	if len(got) != len(want) {
+		t.Fatalf("server saw %d requests, want %d", len(got), len(want))
+	}
+	for i, uri := range want {
+		g := got[i]
+		if g.method != http.MethodPost || g.uri != uri {
+			t.Errorf("request %d = %s %s, want POST %s with no query (no force, no lease)", i, g.method, g.uri, uri)
+		}
+		if g.auth != "Bearer api-token-xyz" || g.lease != lease {
+			t.Errorf("request %d: Authorization %q, X-Swarm-Lease %q: want the bearer and the lease", i, g.auth, g.lease)
+		}
+		if strings.Contains(g.body, lease) {
+			t.Errorf("request %d body carries the lease", i)
+		}
+	}
+}
+
+// TestSwarmClient_StopStart_RefusalNeverCarriesTheLease: a refused stop or
+// start keeps the orchestrator's reason and scrubs the lease and the token it
+// may echo, and a transport failure is a NETWORK_ERROR naming neither.
+func TestSwarmClient_StopStart_RefusalNeverCarriesTheLease(t *testing.T) {
+	t.Parallel()
+
+	const lease = "feedfacefeedfacefeedfacefeedface"
+	const token = "api-token-secret-123"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"code":"containerAction","message":"lease ` + lease + ` (token ` + token + `): container busy","meta":[` +
+			`{"metadata":{"reason":["container-busy"],"retryable":["true"]}}]}}`))
+	}))
+	defer srv.Close()
+	down := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	downURL := down.URL
+	down.Close()
+
+	refusing := NewSwarmClient(srv.URL, token, srv.Client())
+	unreachable := NewSwarmClient(downURL, token, http.DefaultClient)
+	for name, call := range map[string]func(*SwarmClient) error{
+		"stop":  func(c *SwarmClient) error { _, e := c.Stop(context.Background(), "c-abc", lease); return e },
+		"start": func(c *SwarmClient) error { _, e := c.Start(context.Background(), "c-abc", lease); return e },
+	} {
+		err := call(refusing)
+		var se *SwarmError
+		if !errors.As(err, &se) || se.Reason != "container-busy" || !se.Retryable {
+			t.Errorf("%s refused: err = %v, want a *SwarmError with reason container-busy, retryable", name, err)
+		}
+		assertNoSecret(t, err, lease, token)
+
+		err = call(unreachable)
+		var pe *PlatformError
+		if !errors.As(err, &pe) || pe.Code != ErrNetworkError {
+			t.Errorf("%s unreachable: err = %v, want a *PlatformError with code %s", name, err, ErrNetworkError)
+		}
+		if err != nil {
+			assertNoSecret(t, err, lease, token)
+		}
+	}
+}

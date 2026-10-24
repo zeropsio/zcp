@@ -394,3 +394,55 @@ func TestInitSSHFS_LeaseMount_SameOptionsAsAcquire(t *testing.T) {
 		t.Errorf("lease mount %q does not use the server mounter's options %q", mountCmd, platform.SSHFSMountOptions)
 	}
 }
+
+// TestInitSSHFS_ParkedLease_SkippedNotFatal: a lease whose record says it is
+// parked (DP-28) keeps its ssh alias — its unpark reaches it — and is not
+// mounted: its container is stopped, and a mount of it would hang whatever
+// reads it. The other leases are restored as before and the step never fails.
+func TestInitSSHFS_ParkedLease_SkippedNotFatal(t *testing.T) {
+	// Not parallel — mutates env, commandRunner and the sshfs/lease package vars.
+	mountBase := t.TempDir()
+	stateDir := t.TempDir()
+	zcpinit.SetSSHFSMountBase(mountBase)
+	zcpinit.SetLeaseStateDir(stateDir)
+	zcpinit.SetLeaseAliasFile(filepath.Join(t.TempDir(), "zcp-leases.conf"))
+	t.Cleanup(func() { zcpinit.ResetSSHFSMountBase(); zcpinit.ResetLeaseStateDir(); zcpinit.ResetLeaseAliasFile() })
+	t.Setenv("ZCP_SSHFS_HOSTNAMES", "")
+	writeLeaseRecordFile(t, stateDir, "apppool", 3, "node-id-3.runtime.apppool.zerops")
+	parked := fmt.Sprintf(`{"poolHostname":"apppool","poolServiceId":"svc-pool","containerId":"c-4","containerNumber":4,"containerHostname":%q,"lease":"0123456789abcdef0123456789abcdef","acquiredAt":"2026-10-23T10:00:00Z","parked":true,"parkedAt":"2026-10-24T09:00:00Z"}`,
+		"node-id-4.runtime.apppool.zerops")
+	if err := os.WriteFile(filepath.Join(stateDir, "leases", "apppool-4.json"), []byte(parked), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var executed []string
+	var installedFile string
+	zcpinit.SetCommandRunner(func(name string, args ...string) error {
+		executed = append(executed, strings.Join(append([]string{name}, args...), " "))
+		if len(args) > 2 && args[1] == "install" {
+			raw, _ := os.ReadFile(args[len(args)-2])
+			installedFile = string(raw)
+		}
+		return nil
+	})
+	t.Cleanup(func() { zcpinit.ResetCommandRunner() })
+
+	if err := zcpinit.RunSSHFS(); err != nil {
+		t.Fatalf("RunSSHFS() error: %v (a parked lease never fails the boot)", err)
+	}
+	if !strings.Contains(installedFile, "Host apppool-4\n") || !strings.Contains(installedFile, "Host apppool-3\n") {
+		t.Errorf("installed alias file lacks a lease's stanza (the parked one keeps its alias):\n%s", installedFile)
+	}
+	var mounts []string
+	for _, cmd := range executed {
+		if strings.Contains(cmd, "unit create sshfs-") {
+			mounts = append(mounts, cmd)
+		}
+	}
+	if len(mounts) != 1 || !strings.Contains(mounts[0], "sshfs-apppool-3 ") {
+		t.Errorf("mounts = %q, want apppool-3 only (apppool-4 is parked)", mounts)
+	}
+	if _, err := os.Stat(filepath.Join(mountBase, "apppool-4")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a mount dir was made for the parked lease: %v", err)
+	}
+}

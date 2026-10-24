@@ -241,6 +241,14 @@ func (c *Container) Restarts(name string) (int, string) {
 	return 0, ""
 }
 
+// Stop ends every process in the container, as a stop of it does: the
+// supervisor and its servers end; its files stay.
+func (c *Container) Stop() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.Running, c.Servers = false, nil
+}
+
 // Redeploy replaces the container as a deploy does.
 func (c *Container) Redeploy() {
 	c.mu.Lock()
@@ -268,8 +276,8 @@ func (c *Container) redeploy() {
 // without the binary or while a supervisor holds the control socket — one
 // that answers is reloaded when zcp asks — otherwise one starts and boots the
 // declaration, unless FailStart. env, when set, is the `ctl env` the command
-// sends: before the reload of one that answers, after the start of one it
-// started.
+// sends: to one that answers (before its reload, when zcp asks for one), after
+// the start of one it started.
 func (c *Container) ensure(reload bool, env string) string {
 	switch {
 	case !c.Installed:
@@ -287,7 +295,7 @@ func (c *Container) ensure(reload bool, env string) string {
 		}
 		return out + strings.TrimSpace(answer[:i]) + "\n@@zcp-devsup reloaded " + code + "\n"
 	case c.Running:
-		return "@@zcp-devsup check 0\n"
+		return "@@zcp-devsup check 0\n" + c.ensureEnv(env)
 	}
 	c.SupervisorStarts++
 	if c.FailStart {

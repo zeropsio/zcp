@@ -277,7 +277,7 @@ func TestLeaseTool_BadInput_TypedRefusal(t *testing.T) {
 		wantCode string
 		wantText string
 	}{
-		{"unknown action", map[string]any{"action": "renew"}, platform.ErrInvalidParameter, "acquire, status, release, rollout or sync"},
+		{"unknown action", map[string]any{"action": "renew"}, platform.ErrInvalidParameter, "acquire, status, release, rollout, sync, park or unpark"},
 		{"rollout without pool", map[string]any{"action": "rollout"}, platform.ErrInvalidParameter, "rollout needs pool"},
 		{"rollout an unknown pool", map[string]any{"action": "rollout", "pool": "nosuch"}, platform.ErrServiceNotFound, "nosuch"},
 		{"acquire without pool", map[string]any{"action": "acquire"}, platform.ErrInvalidParameter, "needs pool"},

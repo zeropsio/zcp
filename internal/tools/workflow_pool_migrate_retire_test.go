@@ -263,6 +263,12 @@ func (s retireSwarm) Create(context.Context, int) ([]platform.SwarmContainer, er
 func (s retireSwarm) Container(context.Context, string) (platform.SwarmContainer, error) {
 	return platform.SwarmContainer{}, errRetireSwarmUnused
 }
+func (s retireSwarm) Stop(context.Context, string, string) (platform.SwarmContainer, error) {
+	return platform.SwarmContainer{}, errRetireSwarmUnused
+}
+func (s retireSwarm) Start(context.Context, string, string) (platform.SwarmContainer, error) {
+	return platform.SwarmContainer{}, errRetireSwarmUnused
+}
 
 // retireGit runs git in dir with a fixed identity and no user config.
 func retireGit(t *testing.T, dir string, args ...string) {
