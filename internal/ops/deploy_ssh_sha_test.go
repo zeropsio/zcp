@@ -307,7 +307,7 @@ func TestDeploySSH_NoSHA_SourceHasCleanRepo_RecordsHEADAndPassesVersionName(t *t
 	// a plain self-deploy carrying this versionName — recording HEAD must
 	// never perturb anything else.
 	pushDir := regexp.MustCompile(`/tmp/zcp-push-[A-Z2-7]+`).FindString(ssh.calls[1].command)
-	want := buildSSHCommand(authInfo, "svc-1", defaultWorkingDir, "", true, "HEAD fullhea", pushDir)
+	want := buildSSHCommand("svc-1", defaultWorkingDir, "", true, "HEAD fullhea", pushDir)
 	if pushDir == "" || ssh.calls[1].command != want {
 		t.Errorf("push command = %q, want byte-identical to buildSSHCommand's output %q", ssh.calls[1].command, want)
 	}

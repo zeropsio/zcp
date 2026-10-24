@@ -30,6 +30,10 @@ func (p *partsRepos) ExecSSH(_ context.Context, host, command string) ([]byte, e
 	return []byte(p.out[host]), nil
 }
 
+func (p *partsRepos) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return p.ExecSSH(ctx, hostname, command)
+}
+
 func (p *partsRepos) ExecSSHBackground(context.Context, string, string, time.Duration) ([]byte, error) {
 	return nil, nil
 }

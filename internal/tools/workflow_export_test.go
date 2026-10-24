@@ -42,6 +42,10 @@ func (s *routedSSH) ExecSSH(_ context.Context, _ string, command string) ([]byte
 	return nil, nil
 }
 
+func (s *routedSSH) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, hostname, command)
+}
+
 func (s *routedSSH) ExecSSHBackground(_ context.Context, _, _ string, _ time.Duration) ([]byte, error) {
 	return nil, nil
 }

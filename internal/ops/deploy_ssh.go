@@ -314,7 +314,7 @@ func deploySSH(
 		versionName = commitVersionName(resolvedSHA, headSHA, headBranch)
 		// The commit's tree is already extracted and the push reads no git.
 		unlockGit()
-		output, err = sshDeployer.ExecSSH(ctx, source.Name, buildSSHCommandSHA(authInfo, target.ID, workingDir, setup, versionName))
+		output, err = sshDeployer.ExecSSHStdin(ctx, source.Name, buildSSHCommandSHA(target.ID, workingDir, setup, versionName), pushKeyInput(authInfo))
 	} else {
 		// GF-10: a plain working-tree deploy also passes --version-name
 		// when the source has a reachable HEAD — its branch and short
@@ -322,7 +322,7 @@ func deploySSH(
 		// tree (versionNameFor).
 		versionName = versionNameFor(branch, resolvedSHA, dirty)
 		pushDir := "/tmp/zcp-push-" + rand.Text()
-		output, err = sshDeployer.ExecSSH(ctx, source.Name, buildSSHCommand(authInfo, target.ID, workingDir, setup, includeGit, versionName, pushDir))
+		output, err = sshDeployer.ExecSSHStdin(ctx, source.Name, buildSSHCommand(target.ID, workingDir, setup, includeGit, versionName, pushDir), pushKeyInput(authInfo))
 		if err != nil && !isSSHBuildTriggered(string(output)) {
 			// The detached zcli outlives the failed call and would still
 			// ask for the build; the git lock is held until it is stopped.
@@ -631,7 +631,7 @@ func shortSHA(sha string) string {
 	return sha[:min(versionNameShort, len(sha))]
 }
 
-func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup string, includeGit bool, versionName, pushDir string) string {
+func buildSSHCommand(targetServiceID, workingDir, setup string, includeGit bool, versionName, pushDir string) string {
 	// .git lifecycle (GLC-2 / GLC-3). Direct deploy is an ARTIFACT
 	// operation — it must reach a state where zcli's `--workspace-state
 	// all` archiver can snapshot the (possibly dirty) working tree, without
@@ -654,20 +654,16 @@ func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup stri
 	// touches the user's repo history on a direct deploy.
 	gitEnsure := GitEnsureRepoHeadCommand(workingDir)
 
-	// Push. The key reaches zcli through the ONE command's environment —
-	// never `zcli login`, which writes it to ~/.config/zcli and leaves the
+	// Push. The key reaches zcli through its environment alone (pushKeyRead)
+	// — never `zcli login`, which writes it to ~/.config/zcli and leaves the
 	// Mate's Zerops key sitting in the app's own container, where the app's
-	// dependencies run (guide 0.9). zcli reads ZEROPS_TOKEN from the
-	// environment and the assignment prefix scopes it to this process only.
-	// setup is an agent-supplied tool input (and recipe-session deploys reach
-	// here with meta=nil, bypassing the tools-layer setup resolution), so it's
-	// shell-quoted — a setup name with whitespace/metacharacters would
-	// otherwise splice the compound command; the token is quoted for the same
-	// reason.
-	pushArgs := fmt.Sprintf(
-		"ZEROPS_TOKEN=%s zcli push --service-id %s",
-		shellQuote(authInfo.Token), targetServiceID,
-	)
+	// dependencies run (guide 0.9). The shell reads it into a variable it
+	// does not export, and the assignment prefix on zcli's wrapper scopes it
+	// to that process only. setup is an agent-supplied tool input (and
+	// recipe-session deploys reach here with meta=nil, bypassing the
+	// tools-layer setup resolution), so it's shell-quoted — a setup name with
+	// whitespace/metacharacters would otherwise splice the compound command.
+	pushArgs := "zcli push --service-id " + targetServiceID
 	if versionName != "" {
 		pushArgs += " --version-name " + shellQuote(versionName)
 	}
@@ -692,11 +688,24 @@ func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup stri
 	q := shellQuote(pushDir)
 	sweep := fmt.Sprintf(`for f in %s/zcp-push-*/rc; do [ -z "$(find "$f" -mmin +60 2>/dev/null)" ] || rm -rf "${f%%/rc}"; done`,
 		shellQuote(path.Dir(pushDir)))
-	spawn := fmt.Sprintf(`{ %s; mkdir %s; } && { sh -c 'd=$1; shift; "$@" & echo $! > "$d/pid"; wait $!; echo $? > "$d/rc.tmp" && mv "$d/rc.tmp" "$d/rc"' zcp-push %s env %s > %s/log 2>&1 < /dev/null & }`,
+	spawn := fmt.Sprintf(`{ %s; mkdir %s; } && { ZEROPS_TOKEN="$ZEROPS_TOKEN" sh -c 'd=$1; shift; "$@" & echo $! > "$d/pid"; wait $!; echo $? > "$d/rc.tmp" && mv "$d/rc.tmp" "$d/rc"' zcp-push %s %s > %s/log 2>&1 < /dev/null & }`,
 		sweep, q, q, pushArgs, q)
 	waitUpload := fmt.Sprintf("{ until [ -e %s/rc ] || grep -qF %s %s/log 2>/dev/null; do sleep 1; done; cat %s/log; }",
 		q, shellQuote(zcliDeployingLine), q, q)
-	return fmt.Sprintf("%s && %s && %s && %s", gitEnsure, crewSaveCommand, spawn, waitUpload)
+	// The key is read after zcp's own git setup, none of which reads stdin,
+	// and before the crew save, which then finds stdin at its end as before.
+	return fmt.Sprintf("%s && %s && %s && %s && %s", gitEnsure, pushKeyRead, crewSaveCommand, spawn, waitUpload)
+}
+
+// pushKeyRead reads the Zerops key, the first line of the push call's stdin
+// (pushKeyInput), into ZEROPS_TOKEN, where zcli reads it: no command line,
+// local ssh's or the remote shell's, ever carries the key, which any process
+// in either container could read for the whole push.
+const pushKeyRead = "IFS= read -r ZEROPS_TOKEN"
+
+// pushKeyInput is the stdin a push call writes for pushKeyRead.
+func pushKeyInput(authInfo auth.Info) []byte {
+	return []byte(authInfo.Token + "\n")
 }
 
 // buildWaitCommand awaits the push buildSSHCommand started in pushDir: it
@@ -754,15 +763,16 @@ const crewSaveFailedMarker = "ZCP_CREW_SAVE_FAILED"
 // GitEnsureRepoHeadCommand step and no -g flag; --no-git is unconditional
 // and --version-name (commitVersionName) records the commit the platform
 // can't otherwise see (docs/spec-workflows.md §4.9, P1).
-func buildSSHCommandSHA(authInfo auth.Info, targetServiceID, extractedDir, setup, versionName string) string {
-	// Same key discipline as buildSSHCommand: the token rides this one
-	// command's environment, never `zcli login` (guide 0.9).
+func buildSSHCommandSHA(targetServiceID, extractedDir, setup, versionName string) string {
+	// Same key discipline as buildSSHCommand: the key arrives on stdin
+	// (pushKeyRead) and reaches only zcli, which replaces the shell, through
+	// its environment — never `zcli login` (guide 0.9).
 	pushArgs := fmt.Sprintf(
-		"ZEROPS_TOKEN=%s zcli push --service-id %s --no-git --version-name %s",
-		shellQuote(authInfo.Token), targetServiceID, shellQuote(versionName),
+		"zcli push --service-id %s --no-git --version-name %s",
+		targetServiceID, shellQuote(versionName),
 	)
 	if setup != "" {
 		pushArgs += " --setup " + shellQuote(setup)
 	}
-	return fmt.Sprintf("cd %s && %s", shellQuote(extractedDir), pushArgs)
+	return fmt.Sprintf("cd %s && %s && export ZEROPS_TOKEN && exec %s", shellQuote(extractedDir), pushKeyRead, pushArgs)
 }

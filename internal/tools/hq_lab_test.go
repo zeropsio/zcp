@@ -718,6 +718,10 @@ func (s *labSSH) ExecSSH(ctx context.Context, hostname, command string) ([]byte,
 	return out, nil
 }
 
+func (s *labSSH) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, hostname, command)
+}
+
 func (s *labSSH) ExecSSHBackground(ctx context.Context, hostname, command string, _ time.Duration) ([]byte, error) {
 	return s.ExecSSH(ctx, hostname, command)
 }

@@ -45,6 +45,10 @@ func (m *mockSSHDeployer) ExecSSH(_ context.Context, hostname, command string) (
 	return m.output, m.err
 }
 
+func (m *mockSSHDeployer) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return m.ExecSSH(ctx, hostname, command)
+}
+
 func (m *mockSSHDeployer) ExecSSHBackground(_ context.Context, hostname, command string, _ time.Duration) ([]byte, error) {
 	m.calls = append(m.calls, sshCall{hostname: hostname, command: command})
 	return m.output, m.err

@@ -107,6 +107,10 @@ func (l localShell) ExecSSH(ctx context.Context, _, command string) ([]byte, err
 	return out, nil
 }
 
+func (l localShell) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return l.ExecSSH(ctx, hostname, command)
+}
+
 func (l localShell) ExecSSHBackground(context.Context, string, string, time.Duration) ([]byte, error) {
 	return nil, nil
 }

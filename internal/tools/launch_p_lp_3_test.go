@@ -58,6 +58,10 @@ func (s *stubSSHDeployer) ExecSSH(_ context.Context, _ string, command string) (
 	return nil, nil
 }
 
+func (s *stubSSHDeployer) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, hostname, command)
+}
+
 func (s *stubSSHDeployer) ExecSSHBackground(ctx context.Context, host, command string, _ time.Duration) ([]byte, error) {
 	return s.ExecSSH(ctx, host, command)
 }

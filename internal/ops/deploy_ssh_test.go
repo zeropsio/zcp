@@ -27,6 +27,8 @@ type sshCall struct {
 	// bgTimeout carries the timeout the caller passed to the background
 	// variant. Zero for foreground calls.
 	bgTimeout time.Duration
+	// stdin is what the call wrote to the session's input (ExecSSHStdin).
+	stdin string
 }
 
 type mockSSHDeployer struct {
@@ -60,6 +62,12 @@ func (m *mockSSHDeployer) ExecSSH(_ context.Context, hostname, command string) (
 		return r.output, r.err
 	}
 	return m.output, m.err
+}
+
+func (m *mockSSHDeployer) ExecSSHStdin(ctx context.Context, hostname, command string, stdin []byte) ([]byte, error) {
+	out, err := m.ExecSSH(ctx, hostname, command)
+	m.calls[len(m.calls)-1].stdin = string(stdin)
+	return out, err
 }
 
 func (m *mockSSHDeployer) ExecSSHBackground(_ context.Context, hostname, command string, timeout time.Duration) ([]byte, error) {
@@ -387,15 +395,15 @@ func TestDeploy_SSHMode_WithRegion(t *testing.T) {
 	if result.Mode != "ssh" {
 		t.Errorf("mode = %s, want ssh", result.Mode)
 	}
-	// Verify the token rides the push's environment, without
-	// --zeropsRegion. 3 calls: the self-deploy preflight read (item 4) +
-	// the push itself + its build wait.
+	// Verify the token rides the push's stdin into its environment,
+	// without --zeropsRegion. 3 calls: the self-deploy preflight read
+	// (item 4) + the push itself + its build wait.
 	if len(ssh.calls) != 3 {
 		t.Fatalf("ssh calls = %d, want 3", len(ssh.calls))
 	}
 	cmd := ssh.calls[1].command
-	if !containsSubstring(cmd, "ZEROPS_TOKEN='test-token' zcli push") {
-		t.Errorf("SSH command should pass the token through the push env, got: %s", cmd)
+	if !containsSubstring(cmd, "zcli push") || ssh.calls[1].stdin != "test-token\n" {
+		t.Errorf("SSH push should read the token from its stdin, got stdin %q, command: %s", ssh.calls[1].stdin, cmd)
 	}
 	if containsSubstring(cmd, "--zeropsRegion") {
 		t.Errorf("SSH command should NOT contain '--zeropsRegion', got: %s", cmd)
@@ -568,15 +576,10 @@ func TestIsSSHBuildTriggered(t *testing.T) {
 func TestBuildSSHCommand_Shape(t *testing.T) {
 	t.Parallel()
 
-	authInfo := auth.Info{
-		Token:   "test-token",
-		APIHost: "api.app-prg1.zerops.io",
-		Region:  "prg1",
-	}
-	cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false, "", "/tmp/zcp-push-test")
+	cmd := buildSSHCommand("svc-target", "/var/www", "", false, "", "/tmp/zcp-push-test")
 
 	wantContains := []string{
-		"ZEROPS_TOKEN='test-token' zcli push --service-id svc-target",
+		"zcli push --service-id svc-target",
 		"cd '/var/www'",
 		"(test -d .git || git init -q -b main)",
 		`(test -n "$(git config user.email)" || git config user.email 'agent@zerops.io') && (test -n "$(git config user.name)" || git config user.name 'Zerops Agent')`,
@@ -616,11 +619,10 @@ func TestBuildSSHCommand_Shape(t *testing.T) {
 // here), and unborn/no-repo (empty versionName ⇒ no flag at all).
 func TestBuildSSHCommand_VersionNameFromHead(t *testing.T) {
 	t.Parallel()
-	authInfo := auth.Info{Token: "test-token"}
 
 	t.Run("clean", func(t *testing.T) {
 		t.Parallel()
-		cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false, "fullhead1234567", "/tmp/zcp-push-test")
+		cmd := buildSSHCommand("svc-target", "/var/www", "", false, "fullhead1234567", "/tmp/zcp-push-test")
 		if !containsSubstring(cmd, "--version-name 'fullhead1234567'") {
 			t.Errorf("command missing --version-name 'fullhead1234567':\n%s", cmd)
 		}
@@ -628,7 +630,7 @@ func TestBuildSSHCommand_VersionNameFromHead(t *testing.T) {
 
 	t.Run("dirty", func(t *testing.T) {
 		t.Parallel()
-		cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false, "fullhead1234567-dirty", "/tmp/zcp-push-test")
+		cmd := buildSSHCommand("svc-target", "/var/www", "", false, "fullhead1234567-dirty", "/tmp/zcp-push-test")
 		if !containsSubstring(cmd, "--version-name 'fullhead1234567-dirty'") {
 			t.Errorf("command missing --version-name 'fullhead1234567-dirty':\n%s", cmd)
 		}
@@ -636,7 +638,7 @@ func TestBuildSSHCommand_VersionNameFromHead(t *testing.T) {
 
 	t.Run("unborn", func(t *testing.T) {
 		t.Parallel()
-		cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false, "", "/tmp/zcp-push-test")
+		cmd := buildSSHCommand("svc-target", "/var/www", "", false, "", "/tmp/zcp-push-test")
 		if containsSubstring(cmd, "--version-name") {
 			t.Errorf("command must NOT carry --version-name when versionName is empty (no reachable HEAD):\n%s", cmd)
 		}
@@ -712,15 +714,14 @@ func TestCommitVersionName(t *testing.T) {
 
 // extractGitEnsureChain pulls the self-heal chain (cd ... init ...
 // identity ... HEAD guarantee) out of buildSSHCommand's full output —
-// everything up to (not including) the crew save and the `zcli push` after
-// it. Running only this piece against a scratch dir is what a cold-path
+// everything up to (not including) the key read, the crew save and the
+// `zcli push` after them. Running only this piece against a scratch dir is what a cold-path
 // deploy would actually execute; the trailing `zcli push` would fail locally
 // against a fake token and isn't the part these tests care about.
 func extractGitEnsureChain(t *testing.T, dir string) string {
 	t.Helper()
-	authInfo := auth.Info{Token: "tok"}
-	full := buildSSHCommand(authInfo, "svc-target", dir, "", false, "", "/tmp/zcp-push-test")
-	chain, _, found := strings.Cut(full, " && "+crewSaveCommand)
+	full := buildSSHCommand("svc-target", dir, "", false, "", "/tmp/zcp-push-test")
+	chain, _, found := strings.Cut(full, " && "+pushKeyRead)
 	if !found {
 		t.Fatalf("command missing `zcli push` anchor, shape drifted:\n%s", full)
 	}
@@ -1402,8 +1403,9 @@ func TestBuildSSHCommand_RunsTheCrewSaveBeforeThePush(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			//nolint:gosec // test-only: buildSSHCommand over t.TempDir paths
-			cmd := exec.CommandContext(ctx, "bash", "-c", buildSSHCommand(auth.Info{Token: "tok"}, "svc-1", dir, "", true, "", filepath.Join(t.TempDir(), "zcp-push-test")))
+			cmd := exec.CommandContext(ctx, "bash", "-c", buildSSHCommand("svc-1", dir, "", true, "", filepath.Join(t.TempDir(), "zcp-push-test")))
 			cmd.Env = env
+			cmd.Stdin = strings.NewReader("tok\n")
 			_ = cmd.Run()
 			pushed, _ := os.ReadFile(filepath.Join(dir, "pushed"))
 			_, savedErr := os.Stat(filepath.Join(dir, "saved"))
@@ -1498,6 +1500,7 @@ func TestBuildSSHCommand_ReturnsOnUpload_BuildWaitReportsTheBuild(t *testing.T) 
 			run := func(script string) (string, int) {
 				cmd := exec.CommandContext(ctx, "bash", "-c", script)
 				cmd.Env = env
+				cmd.Stdin = strings.NewReader("tok\n")
 				out, err := cmd.CombinedOutput()
 				code := 0
 				var exitErr *exec.ExitError
@@ -1509,7 +1512,7 @@ func TestBuildSSHCommand_ReturnsOnUpload_BuildWaitReportsTheBuild(t *testing.T) 
 				return string(out), code
 			}
 
-			pushOut, pushCode := run(buildSSHCommand(auth.Info{Token: "tok"}, "svc-1", dir, "", false, "", pushDir))
+			pushOut, pushCode := run(buildSSHCommand("svc-1", dir, "", false, "", pushDir))
 			if pushCode != 0 {
 				t.Fatalf("push command exit %d, want 0: %s", pushCode, pushOut)
 			}
@@ -1540,6 +1543,8 @@ type pushRig struct {
 	dir     string
 	pushDir string
 	env     []string
+	// stdin is the session's input: the key line a push reads.
+	stdin string
 }
 
 func newPushRig(t *testing.T, zcli string) *pushRig {
@@ -1557,6 +1562,7 @@ func newPushRig(t *testing.T, zcli string) *pushRig {
 		dir:     dir,
 		pushDir: filepath.Join(t.TempDir(), "zcp-push-test"),
 		env:     append(env, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH")),
+		stdin:   "tok\n",
 	}
 }
 
@@ -1565,6 +1571,7 @@ func (r *pushRig) run(ctx context.Context, script string) (string, int) {
 	r.t.Helper()
 	cmd := exec.CommandContext(ctx, "bash", "-c", script)
 	cmd.Env = r.env
+	cmd.Stdin = strings.NewReader(r.stdin)
 	out, err := cmd.CombinedOutput()
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
@@ -1624,7 +1631,7 @@ func TestBuildSSHCommand_PushStoppedBeforeItsUpload_DeploysNothing(t *testing.T)
 			pushed := make(chan struct{})
 			go func() {
 				defer close(pushed)
-				r.run(session, buildSSHCommand(auth.Info{Token: "tok"}, "svc-1", r.dir, "", false, "", r.pushDir))
+				r.run(session, buildSSHCommand("svc-1", r.dir, "", false, "", r.pushDir))
 			}()
 			zcliThere := make(chan error, 1)
 			go func() {
@@ -1693,7 +1700,7 @@ func TestBuildSSHCommand_GitSetupFails_ReportsItsOwnError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	missing := filepath.Join(r.dir, "missing")
-	out, code := r.run(ctx, buildSSHCommand(auth.Info{Token: "tok"}, "svc-1", missing, "", false, "", r.pushDir))
+	out, code := r.run(ctx, buildSSHCommand("svc-1", missing, "", false, "", r.pushDir))
 	last := lastLines(out, 1)
 	if code == 0 || !strings.Contains(last, missing) || strings.Contains(out, "zcp-push") {
 		t.Errorf("failed git setup = exit %d, last line %q, want its own failure as the last line:\n%s", code, last, out)
@@ -1739,7 +1746,7 @@ func TestBuildSSHCommand_NextPush_RemovesOldFinishedRuns(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if out, code := r.run(ctx, buildSSHCommand(auth.Info{Token: "tok"}, "svc-1", r.dir, "", false, "", r.pushDir)); code != 0 {
+	if out, code := r.run(ctx, buildSSHCommand("svc-1", r.dir, "", false, "", r.pushDir)); code != 0 {
 		t.Fatalf("push = exit %d: %s", code, out)
 	}
 	r.run(ctx, buildWaitCommand(r.pushDir))
@@ -1768,6 +1775,10 @@ func (m *stoppedPushSSH) ExecSSH(ctx context.Context, hostname, command string) 
 	m.calls = append(m.calls, sshCall{hostname: hostname, command: command})
 	m.cancel()
 	return []byte("Uploading\n"), &platform.SSHExecError{Hostname: hostname, Output: "Uploading\n", Err: m.stop}
+}
+
+func (m *stoppedPushSSH) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return m.ExecSSH(ctx, hostname, command)
 }
 
 // TestDeploySSH_PushStoppedBeforeItsUpload_StopsZcliAndSaysNoBuild: a deploy

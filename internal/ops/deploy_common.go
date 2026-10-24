@@ -209,20 +209,23 @@ func dirtyCrossDeployWarning(target, source, sha string) string {
 
 // SSHDeployer executes commands on remote Zerops services.
 //
-// Two exec shapes live on this interface intentionally:
+// Three exec shapes live on this interface intentionally:
 //
 //   - ExecSSH is the foreground pattern: synchronous, bounded by a
 //     deployer-wide ceiling (5 min), used for deploys / probes / tails
 //     where the caller cares about exit status and full output.
+//   - ExecSSHStdin is ExecSSH writing stdin to the session's input: the
+//     channel for a secret the remote command reads, which a command line
+//     would show every process on both ends (the push's Zerops key).
 //   - ExecSSHBackground is a fire-and-forget spawn: tighter per-call
 //     timeout, extra ssh flags (-T -n BatchMode) to keep the channel
 //     from lingering after the remote shell exits. Required for
 //     dev-server style "spawn and detach" operations.
 //
-// Every implementation MUST implement both — test doubles in sibling
-// packages embed noopExecSSHBackground to get a compliant stub for free.
+// Every implementation MUST implement all three.
 type SSHDeployer interface {
 	ExecSSH(ctx context.Context, hostname string, command string) ([]byte, error)
+	ExecSSHStdin(ctx context.Context, hostname string, command string, stdin []byte) ([]byte, error)
 	ExecSSHBackground(ctx context.Context, hostname string, command string, timeout time.Duration) ([]byte, error)
 }
 
