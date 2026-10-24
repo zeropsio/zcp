@@ -1141,7 +1141,7 @@ func leaseReaderWith(client platform.Client, projectID, stateDir string, swarm o
 // to invoke generate-dotenv preview manually.
 func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, rt runtime.Info, sshDeployer ops.SSHDeployer) (*mcp.CallToolResult, any, error) {
 	envelope, err := workflow.ComputeEnvelope(ctx, client, engine.StateDir(), projectID, rt, time.Now(),
-		workflow.WithLeaseReader(leaseReader(client, projectID, engine.StateDir(), envelopeLeaseHost(rt), leaseStatusTimeout)))
+		leaseEnvelopeOptions(client, projectID, engine.StateDir(), rt, leaseStatusTimeout)...)
 	if err != nil {
 		return convertError(wrapStageErr("Compute envelope", err), WithRecoveryStatus()), nil, nil
 	}
