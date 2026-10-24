@@ -303,7 +303,7 @@ func rewriteDevSetup(ctx context.Context, ssh SSHDeployer, hostname, dir string,
 // crewDirtyCmd prints a line per crew copy (a git worktree in .crew/<name>)
 // whose uncommitted or untracked changes a redeploy would lose; a copy git
 // cannot read counts as dirty.
-const crewDirtyCmd = `cd '` + DevRepoRoot + `/.crew' 2>/dev/null || exit 0; for d in */; do d=${d%/}; [ -e "$d/.git" ] || continue; out=$(git -C "$d" status --porcelain 2>/dev/null) || out=unreadable; [ -z "$out" ] || echo "@@zcp-crew-dirty $d"; done`
+const crewDirtyCmd = `cd '` + DevRepoRoot + `/.crew' 2>/dev/null || exit 0; for d in */; do d=${d%/}; [ -e "$d/.git" ] || continue; out=$(GIT_OPTIONAL_LOCKS=0 git -C "$d" status --porcelain 2>/dev/null) || out=unreadable; [ -z "$out" ] || echo "@@zcp-crew-dirty $d"; done`
 
 // DirtyCrewCopies names hostname's crew copies (.crew/<name>) that hold
 // uncommitted or untracked work.

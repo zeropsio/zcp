@@ -63,7 +63,7 @@ else
   echo 'ZCP:HASREPO:1'
   echo "ZCP:SHA:$HEAD_SHA"
   echo "ZCP:BRANCH:$(git symbolic-ref -q --short HEAD 2>/dev/null)"
-  if [ -n "$(git status --porcelain | head -c1)" ]; then echo 'ZCP:DIRTY:1'; else echo 'ZCP:DIRTY:0'; fi
+  if [ -n "$(GIT_OPTIONAL_LOCKS=0 git status --porcelain | head -c1)" ]; then echo 'ZCP:DIRTY:1'; else echo 'ZCP:DIRTY:0'; fi
   echo "ZCP:REPOSTATE:$(` + repoStateExpr + `)"
   git ls-files --others --ignored --exclude-standard | while IFS= read -r f; do
     sz=$(wc -c <"$f" 2>/dev/null || echo 0)
