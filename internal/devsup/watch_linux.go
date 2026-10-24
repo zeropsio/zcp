@@ -6,6 +6,7 @@ import (
 	"path"
 	"path/filepath"
 	"sync"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -30,7 +31,7 @@ type watcher struct {
 	dirs map[string]bool
 }
 
-func newWatcher(root string, w *Watch, onChange func(rel string)) (*watcher, error) {
+func newWatcher(root string, w *Watch, onChange func(rel string, last time.Time)) (*watcher, error) {
 	fd, err := unix.InotifyInit1(unix.IN_CLOEXEC | unix.IN_NONBLOCK)
 	if err != nil {
 		return nil, fmt.Errorf("inotify: %w", err)

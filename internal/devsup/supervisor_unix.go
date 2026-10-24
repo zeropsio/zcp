@@ -149,6 +149,9 @@ type server struct {
 	// selfChanged counts the starts in a row that saw one.
 	windowChanged bool
 	selfChanged   int
+	// startBegun is when the latest start began, before its process: a
+	// watched change made before it is on disk when that process starts.
+	startBegun time.Time
 	// env is the overlay the live group started under.
 	env map[string]string
 }
@@ -508,7 +511,7 @@ func (s *Supervisor) start(name, reason string) {
 		return
 	}
 	spec, env := sv.spec, s.env
-	sv.starting = true
+	sv.starting, sv.startBegun = true, time.Now()
 	sv.retryPending, sv.windowChanged, sv.listened = false, false, false
 	if reason == reasonLimit {
 		sv.limitStarts++
@@ -767,7 +770,7 @@ func (s *Supervisor) syncWatches() {
 			sv.watch = nil
 		}
 		if need && sv.watch == nil {
-			w, err := newWatcher(s.cfg.Root, sv.spec.Watch, func(rel string) { s.watchFired(name, rel) })
+			w, err := newWatcher(s.cfg.Root, sv.spec.Watch, func(rel string, last time.Time) { s.watchFired(name, rel, last) })
 			if err != nil {
 				s.logf("watch %s: %v", name, err)
 				continue
@@ -777,17 +780,28 @@ func (s *Supervisor) syncWatches() {
 	}
 }
 
-// watchFired restarts a server on a watched change. A change within the
-// start window, after watchLoopLimit starts in a row each saw one, is the
-// server's own output and restarts nothing; a change outside it always
-// restarts, and clears the count when the start before it saw no change.
-func (s *Supervisor) watchFired(name, rel string) {
+// watchFired restarts a server on a burst of watched changes that opened with
+// rel and whose last change came at last. A burst that came before the
+// server's latest start began restarts nothing: that start already runs it —
+// a burst that came while a restart waited out the old server's stop grace
+// (up to 10 s for one that does not end on SIGTERM) would restart the new one
+// again. A change within the start window, after watchLoopLimit starts in a
+// row each saw one, is the server's own output and restarts nothing; a change
+// outside it always restarts, and clears the count when the start before it
+// saw no change.
+func (s *Supervisor) watchFired(name, rel string, last time.Time) {
 	s.op.Lock()
 	defer s.op.Unlock()
 	s.mu.Lock()
 	sv := s.servers[name]
 	if sv == nil || sv.desired != DesiredRunning {
 		s.mu.Unlock()
+		return
+	}
+	if last.Before(sv.startBegun) {
+		starts := sv.starts
+		s.mu.Unlock()
+		s.logf("no restart of %s: %s changed before its start #%d began, which runs it", name, rel, starts)
 		return
 	}
 	if sv.startedAt != nil && time.Since(*sv.startedAt) < s.cfg.StartWindow {
