@@ -4,6 +4,7 @@ package tools
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -302,5 +303,59 @@ func TestManageTool_InvalidAction(t *testing.T) {
 
 	if !result.IsError {
 		t.Error("expected IsError for invalid action")
+	}
+}
+
+// TestManageTool_Box_RestartStop_WarnSandboxesLoseMemory — a Zerops Box is
+// one VM: a restart or a stop kills its running sandboxes, which come back
+// PARKED without their memory, while a reload restarts only the orchestrator
+// and keeps them (zerops-docs zbox/workspace-service.mdx, Service lifecycle).
+// A restart or stop of a Box says so and points at the reload; a reload and
+// every other service's restart keep their plain next action
+// (spec-workflows.md §8 PS-8).
+func TestManageTool_Box_RestartStop_WarnSandboxesLoseMemory(t *testing.T) {
+	t.Parallel()
+	box := platform.ServiceStack{ID: "svc-box", Name: "box", Status: "ACTIVE",
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/zbox@1", ServiceStackTypeCategoryName: "STANDARD"}}
+	api := platform.ServiceStack{ID: "svc-api", Name: "api", Status: "ACTIVE",
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}}
+	tests := []struct {
+		name     string
+		action   string
+		host     string
+		wantWarn bool
+	}{
+		{"restart of a Box warns", "restart", "box", true},
+		{"stop of a Box warns", "stop", "box", true},
+		{"reload of a Box keeps the plain next action", "reload", "box", false},
+		{"restart of a runtime keeps the plain next action", "restart", "api", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mock := platform.NewMock().
+				WithServices([]platform.ServiceStack{box, api}).
+				WithProcess(&platform.Process{ID: "proc-" + tt.action + "-svc-" + tt.host, Status: statusFinished})
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterManage(srv, mock, "proj-1")
+
+			result := callTool(t, srv, "zerops_manage", map[string]any{"action": tt.action, "serviceHostname": tt.host})
+			text := getTextContent(t, result)
+			if result.IsError {
+				t.Fatalf("unexpected IsError: %s", text)
+			}
+			var parsed struct {
+				NextActions string `json:"nextActions"`
+			}
+			if err := json.Unmarshal([]byte(text), &parsed); err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			warns := []string{"Zerops Box", "PARKED", "without their memory", "park", `zerops_manage action=reload serviceHostname="box"`, "keeps"}
+			for _, want := range warns {
+				if got := strings.Contains(parsed.NextActions, want); got != tt.wantWarn {
+					t.Errorf("nextActions contains %q = %v, want %v: %s", want, got, tt.wantWarn, parsed.NextActions)
+				}
+			}
+		})
 	}
 }

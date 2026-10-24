@@ -8,6 +8,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // IdentifyOverrideTargets returns the subset of import-YAML hostnames that
@@ -94,4 +95,50 @@ func ImportedZcpServices(content, filePath string) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// boxCapacityMessage is the part of the platform's message a Zerops Box's
+// create fails with outside prg1: "Sorry, there is currently not enough
+// hardware capacity to run your container." (live: ny1, 2026-10-23 and
+// 2026-10-24).
+const boxCapacityMessage = "not enough hardware capacity"
+
+// BoxRegionWarnings names the Box region rule for each Zerops Box of the
+// import whose create FAILED with the platform's capacity message: a Box can
+// be created only in a project in region prg1 (owner-stated platform fact,
+// 2026-10-24), and elsewhere the message reads like a passing shortage. The
+// failure reason itself stays as the platform gave it. Pure over the import
+// YAML and the polled processes — zcp reads no project region for it (spec-
+// workflows.md §8 PS-10). A document that does not read yields none.
+func BoxRegionWarnings(content, filePath string, procs []ImportProcessOutput) []string {
+	yamlContent, err := resolveInput(content, filePath)
+	if err != nil {
+		return nil
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal([]byte(yamlContent), &doc); err != nil {
+		return nil
+	}
+	boxes := map[string]bool{}
+	servicesList, _ := doc["services"].([]any)
+	for _, svc := range servicesList {
+		svcMap, _ := svc.(map[string]any)
+		hostname, _ := svcMap["hostname"].(string)
+		serviceType, _ := svcMap["type"].(string)
+		if hostname != "" && topology.IsSandboxType(serviceType) {
+			boxes[hostname] = true
+		}
+	}
+	var out []string
+	warned := map[string]bool{}
+	for _, p := range procs {
+		if !boxes[p.Service] || warned[p.Service] || p.Status != platform.ProcessStatusFailed ||
+			p.FailReason == nil || !strings.Contains(*p.FailReason, boxCapacityMessage) {
+			continue
+		}
+		warned[p.Service] = true
+		out = append(out, fmt.Sprintf("%s is a Zerops Box, and a Box can be created only in a project in region prg1: in any other region its create fails with this %q message. If this project is not in prg1, a retry here fails the same way — import the Box into a project in prg1.",
+			p.Service, boxCapacityMessage))
+	}
+	return out
 }

@@ -396,3 +396,74 @@ func TestOverrideRecipeSteer_AsksOnlyForWhatLanded(t *testing.T) {
 		})
 	}
 }
+
+// TestImportTool_BoxCapacityFailure_NamesTheRegionRule — a Zerops Box can be
+// created only in a project in region prg1 (owner-stated platform fact,
+// 2026-10-24); in any other region its create fails with the platform's "not
+// enough hardware capacity" message (live: ny1, 5 of 5 on 2026-10-24, and on
+// 2026-10-23), which reads like a passing shortage. The import keeps the
+// message as is and adds a warning naming the rule — for a Box failing that
+// way only, read from the import YAML and the polled processes, with no read
+// of the project's region (spec-workflows.md §8 PS-10).
+func TestImportTool_BoxCapacityFailure_NamesTheRegionRule(t *testing.T) {
+	t.Parallel()
+	const capacity = "containerAction: Sorry, there is currently not enough hardware capacity to run your container. If the issue persists, please contact support."
+	tests := []struct {
+		name     string
+		boxType  string
+		boxFail  string
+		apiFail  string
+		wantWarn bool
+	}{
+		{"a Box failing on capacity, bare type", "zbox@1", capacity, "", true},
+		{"a Box failing on capacity, prefixed type", "ubuntu/zbox@1", capacity, "", true},
+		{"a Box failing on something else", "ubuntu/zbox@1", "serviceStackTypeNotFound: service stack type not found", "", false},
+		{"a runtime failing on capacity", "ubuntu/zbox@1", "", capacity, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			proc := func(id, reason string) *platform.Process {
+				if reason == "" {
+					return &platform.Process{ID: id, Status: statusFinished}
+				}
+				r := reason
+				return &platform.Process{ID: id, Status: statusFailed, FailReason: &r}
+			}
+			mock := platform.NewMock().
+				WithImportResult(&platform.ImportResult{
+					ProjectID: "proj-1", ProjectName: "myproject",
+					ServiceStacks: []platform.ImportedServiceStack{
+						{ID: "svc-box", Name: "box", Processes: []platform.Process{{ID: "p-box", ActionName: "stack.create", Status: "PENDING"}}},
+						{ID: "svc-api", Name: "api", Processes: []platform.Process{{ID: "p-api", ActionName: "stack.create", Status: "PENDING"}}},
+					},
+				}).
+				WithProcess(proc("p-box", tt.boxFail)).
+				WithProcess(proc("p-api", tt.apiFail))
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterImport(srv, mock, "proj-1", testEngine(t), "", nil, runtime.Info{})
+
+			yaml := "services:\n  - hostname: box\n    type: " + tt.boxType + "\n  - hostname: api\n    type: nodejs@22\n"
+			result := callTool(t, srv, "zerops_import", map[string]any{"content": yaml})
+			text := getTextContent(t, result)
+			if result.IsError {
+				t.Fatalf("unexpected IsError: %s", text)
+			}
+			var parsed ops.ImportResult
+			if err := json.Unmarshal([]byte(text), &parsed); err != nil {
+				t.Fatalf("parse result: %v", err)
+			}
+			for _, p := range parsed.Processes {
+				want := map[string]string{"box": tt.boxFail, "api": tt.apiFail}[p.Service]
+				if want != "" && (p.FailReason == nil || *p.FailReason != want) {
+					t.Errorf("%s failReason = %v, want the platform's message as is: %q", p.Service, p.FailReason, want)
+				}
+			}
+			warns := strings.Join(parsed.Warnings, "\n")
+			named := strings.Contains(warns, "prg1") && strings.Contains(warns, "box") && strings.Contains(warns, "Zerops Box")
+			if named != tt.wantWarn {
+				t.Errorf("region rule named = %v, want %v; warnings: %v", named, tt.wantWarn, parsed.Warnings)
+			}
+		})
+	}
+}

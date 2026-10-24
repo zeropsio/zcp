@@ -147,6 +147,22 @@ func TestThemes_Services_PoolSection_FactsPresent(t *testing.T) {
 		"http://<box>:8080", "ZBOX_WORKSPACE_API_KEY", "${<box>_ZBOX_WORKSPACE_API_KEY}", "ZBOX_WORKSPACE_VOLUME_KEY",
 		// Untrusted code: what a container reads, and where such code belongs.
 		"envIsolation: none", "envIsolation: service", "<host>_KEY", "--secret",
+		// Box as the merged Box docs describe it (zerops-docs zbox/*.mdx;
+		// spec-workflows.md §8 PS-10): one VM, its lifecycle and ports, the
+		// API's basics and limits, what an imported Box lacks, the network
+		// its sandboxes reach, the keys, and the live type and capacity facts.
+		"zbox@1", "single Ubuntu VM", "not a container", "every resize", "Disk can only grow",
+		"reload", "PARKED", "without their memory", "never restarts a Box",
+		"8081", "enableSubdomainAccess", "http://<box>.zerops:8081", "`Host`",
+		"/api/rest/", "GET /api/rest/ping", "Idempotency-Key", "waitSeconds", "networkMode", "/api/rest/swagger/openapi.yml", "workspaceFull",
+		"60 s", "50 MiB", "10 min", "4 MiB",
+		"starts empty", "no base and no domain", "zcp does not set it up", "zbox setup",
+		"rotates", "cannot be changed", "apply at once",
+		"PROJECT_INTERNET", "the database included", "`INTERNET`", "`AIRGAPPED`", "allowedNetworkModes", "credentials proxy", "Dockerfiles you trust",
+		"no Docker", "linux/amd64", "<host>.zerops",
+		// Region: a Box exists only in prg1 (owner-stated, 2026-10-24); the
+		// capacity message is how another region refuses it.
+		"only in a project in region prg1", "not enough hardware capacity",
 	} {
 		if !strings.Contains(section, fact) {
 			t.Errorf("'Pools and Box' section missing fact %q", fact)

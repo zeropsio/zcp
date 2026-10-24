@@ -243,7 +243,9 @@ func TestAnnotations_DescriptionKeywords(t *testing.T) {
 		{name: "zerops_discover", keywords: []string{"env var", "includeEnvs", "includeEnvValues"}},
 		{name: "zerops_deploy", keywords: []string{"SSH", "zerops.yaml", "deployFiles"}},
 		{name: "zerops_import", keywords: []string{"workflow", "YAML"}},
-		{name: "zerops_manage", keywords: []string{"reload", "restart", "connect-storage", "/mnt/"}},
+		// A Zerops Box inverts the env-change rule: reload keeps its sandboxes,
+		// restart and stop kill them (spec-workflows.md §8 PS-8).
+		{name: "zerops_manage", keywords: []string{"reload", "restart", "connect-storage", "/mnt/", "Zerops Box", "sandboxes"}},
 		{name: "zerops_env", keywords: []string{"set", "delete", "restart"}},
 		{name: "zerops_subdomain", keywords: []string{"enable", "disable", "subdomain"}},
 		{name: "zerops_knowledge", keywords: []string{"briefing", "scope", "query", "recipe"}},

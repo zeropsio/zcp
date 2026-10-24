@@ -437,8 +437,11 @@ func applyAutoRestart(
 	resp.Readers = plan.readers
 	resp.RestartWarnings = append(resp.RestartWarnings, plan.warnings...)
 	unreadHint := nothingReadsHint(plan.unreadKeys, input)
-	if plan.poolOwner {
+	switch {
+	case plan.poolOwner:
 		unreadHint = poolEnvHint(keys, input.ServiceHostname)
+	case plan.boxOwner:
+		unreadHint = boxEnvHint(keys, input.ServiceHostname)
 	}
 
 	if input.SkipRestart.Bool() {
@@ -516,6 +519,10 @@ type restartPlan struct {
 	// leases read them in their ssh sessions as they are (DP), never
 	// through a restart or a deploy.
 	poolOwner bool
+	// boxOwner is true when the changed keys are a Zerops Box's own: it
+	// applies them at once, or on a reload for its API key, never through a
+	// restart (PS-8).
+	boxOwner bool
 }
 
 // planRestart finds the readers of the changed keys from the project's
@@ -535,6 +542,14 @@ func planRestart(ctx context.Context, client platform.Client, projectID string, 
 	if !input.Project.Bool() {
 		owner = input.ServiceHostname
 	}
+	for _, svc := range services {
+		if owner == "" || svc.Name != owner {
+			continue
+		}
+		typeName := svc.ServiceStackTypeInfo.ServiceStackTypeVersionName
+		plan.poolOwner = topology.IsPoolType(typeName)
+		plan.boxOwner = topology.IsSandboxType(typeName)
+	}
 
 	scopes, err := ops.ReadProjectEnvScopes(ctx, client, projectID, services)
 	if err != nil {
@@ -551,9 +566,6 @@ func planRestart(ctx context.Context, client platform.Client, projectID string, 
 	byName := make(map[string]platform.ServiceStack, len(services))
 	for _, svc := range services {
 		byName[svc.Name] = svc
-	}
-	if svc, ok := byName[owner]; ok && topology.IsPoolType(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) {
-		plan.poolOwner = true
 	}
 	targeted := map[string]bool{}
 	addTarget := func(svc platform.ServiceStack) {
@@ -628,6 +640,37 @@ func poolEnvHint(keys []string, pool string) string {
 	}
 	return fmt.Sprintf("%s is %s's service env, which reaches its containers' ssh sessions as it is: its leases read it now (a lease clones and pushes with GIT_TOKEN), with no restart or deploy. A pool is never restarted for an env change — that would restart containers others hold. Processes a container started at boot — the dev-server supervisor and the servers it runs — keep the env they started with.",
 		strings.Join(keys, ", "), pool)
+}
+
+// boxAPIKeyEnv is the Zerops Box variable holding its workspace API key.
+const boxAPIKeyEnv = "ZBOX_WORKSPACE_API_KEY"
+
+// boxEnvHint is the next action for a change to a Zerops Box's own variables
+// (spec-workflows.md §8 PS-8). A Box is never restarted for one: a restart
+// stops its VM, and every running sandbox comes back PARKED without its
+// memory. Its ordinary variables (sandbox secrets, integration credentials)
+// apply at once; ZBOX_WORKSPACE_API_KEY is read by the orchestrator only when
+// it starts, so a reload — which keeps the sandboxes running — applies it.
+func boxEnvHint(keys []string, box string) string {
+	var others []string
+	apiKey := false
+	for _, k := range keys {
+		if k == boxAPIKeyEnv {
+			apiKey = true
+			continue
+		}
+		others = append(others, k)
+	}
+	var parts []string
+	if len(others) > 0 {
+		parts = append(parts, fmt.Sprintf("%s is %s's own variable, which a Zerops Box applies at once — no restart or reload: new sandboxes and integrations use the new value, and a sandbox given the old one as a secret becomes stale.",
+			strings.Join(others, ", "), box))
+	}
+	if apiKey {
+		parts = append(parts, fmt.Sprintf("%s applies when %s reloads: zerops_manage action=reload serviceHostname=%q — a reload keeps its running sandboxes. Until then only the old key works. A Box is never restarted for an env change: a restart or stop brings every running sandbox back PARKED without its memory.",
+			boxAPIKeyEnv, box, box))
+	}
+	return strings.Join(parts, " ")
 }
 
 func targetNames(targets []restartTarget) []string {
@@ -731,7 +774,8 @@ type restartTarget struct {
 }
 
 // isAutoRestartEligible reports whether a service that reads a changed key
-// is restarted: live, a user runtime, not the service running this session.
+// is restarted: live, a user runtime, not the service running this session —
+// never a managed service, a Swarm pool or a Zerops Box.
 func isAutoRestartEligible(svc platform.ServiceStack, selfHostname string) bool {
 	if !svc.IsLive() {
 		return false
@@ -751,6 +795,12 @@ func isAutoRestartEligible(svc platform.ServiceStack, selfHostname string) bool 
 	// A Swarm pool is never restarted: that restarts containers others hold,
 	// and its service env reaches their ssh sessions as it is (DP).
 	if topology.IsPoolType(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) {
+		return false
+	}
+	// A Zerops Box is never restarted: its restart stops the VM and every
+	// running sandbox loses its memory, while its own variables apply at
+	// once or on a reload (PS-8).
+	if topology.IsSandboxType(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) {
 		return false
 	}
 	return true
