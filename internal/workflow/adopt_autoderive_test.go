@@ -3,6 +3,7 @@ package workflow
 import (
 	"errors"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -222,6 +223,70 @@ func TestBootstrapCompleteAdoptPlan_SameBareTypeDifferentOS_RefusesWithTemplates
 		if !strings.Contains(msg, want) {
 			t.Errorf("pairing prompt must name per-host type %q; got:\n%s", want, msg)
 		}
+	}
+}
+
+// TestBootstrapCompleteAdoptPlan_SeveralRuntimesSharingABase_RefusesWithTemplates:
+// zcp never guesses a dev/stage pairing, however many runtimes the scope
+// names. Any two scoped runtimes sharing a runtime base may be a dev and its
+// stage, so a bare scope naming two dev services and their stages, or a
+// dev/stage pair beside a service of another base, is refused with templates
+// covering every scoped runtime — the pairs template pairs a stage with the
+// runtime named like it — instead of adopting each stage as a dev service of
+// its own, a meta outside its pair (docs/spec-workflows.md §3.2, §8 E8).
+// Nothing is committed.
+func TestBootstrapCompleteAdoptPlan_SeveralRuntimesSharingABase_RefusesWithTemplates(t *testing.T) {
+	t.Parallel()
+	py := func(name string) platform.ServiceStack { return userSvc(name, "ubuntu/python@3.12") }
+	tests := []struct {
+		name     string
+		existing []platform.ServiceStack
+		scope    []string
+		want     []string
+	}{
+		{
+			name:     "two dev services and their stages",
+			existing: []platform.ServiceStack{py("webdev"), py("apidev"), py("webstage"), py("apistage"), userSvc("db", "postgresql:single@18")},
+			scope:    []string{"webdev", "apidev", "webstage", "apistage"},
+			want: []string{
+				`"runtime":{"devHostname":"webdev","type":"ubuntu/python@3.12","isExisting":true,"bootstrapMode":"standard","stageHostname":"webstage"}`,
+				`"runtime":{"devHostname":"apidev","type":"ubuntu/python@3.12","isExisting":true,"bootstrapMode":"standard","stageHostname":"apistage"}`,
+				`"runtime":{"devHostname":"webstage","type":"ubuntu/python@3.12","isExisting":true,"bootstrapMode":"dev"}`,
+				`"runtime":{"devHostname":"apistage","type":"ubuntu/python@3.12","isExisting":true,"bootstrapMode":"dev"}`,
+			},
+		},
+		{
+			name:     "a dev/stage pair beside a service of another base",
+			existing: []platform.ServiceStack{userSvc("appdev", "nodejs@22"), userSvc("appstage", "nodejs@22"), userSvc("api", "go@1")},
+			scope:    []string{"appdev", "appstage", "api"},
+			want: []string{
+				`"runtime":{"devHostname":"appdev","type":"nodejs@22","isExisting":true,"bootstrapMode":"standard","stageHostname":"appstage"}`,
+				`"runtime":{"devHostname":"appstage","type":"nodejs@22","isExisting":true,"bootstrapMode":"dev"}`,
+				`"runtime":{"devHostname":"api","type":"go@1","isExisting":true,"bootstrapMode":"dev"}`,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			eng := startAdopt(t, t.TempDir())
+			_, err := eng.BootstrapCompleteAdoptPlan(tt.existing, tt.scope, runtime.Info{}, nil, nil)
+			if !errors.Is(err, ErrAdoptPairingChoice) {
+				t.Fatalf("want ErrAdoptPairingChoice, got %v", err)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("templates miss %s; got:\n%s", want, err)
+				}
+			}
+			state, err := eng.GetState()
+			if err != nil {
+				t.Fatalf("GetState: %v", err)
+			}
+			if state.Bootstrap.Plan != nil || state.Bootstrap.CurrentStepName() != StepDiscover {
+				t.Errorf("nothing may be committed: plan %+v, step %q", state.Bootstrap.Plan, state.Bootstrap.CurrentStepName())
+			}
+		})
 	}
 }
 
@@ -518,6 +583,117 @@ func TestBootstrapCompleteAdoptPlan_ASharedVolume_IsACodeVolumeOnlyWhenTheDevSet
 			for _, target := range targets {
 				if target.Runtime.CodeVolume != nil {
 					t.Errorf("%s holds no code volume, got %+v", target.Runtime.DevHostname, target.Runtime.CodeVolume)
+				}
+			}
+		})
+	}
+}
+
+// TestBootstrapCompleteAdoptPlan_VariantBBesideItsStages_IsOneStandardPair
+// (docs/spec-mate.md §2.8a.4a): a variant-B project recorded again keeps its
+// stages. Its dev services are found by what they run and hold, never by a
+// base only they would share: a setup mounting the volume belongs to the dev
+// service named after it, else to the one runtime of its base finding the
+// repository's checkout at the mount — so stages of the same base never hide
+// the pair. Every scoped stage named like one of the pair's dev services, or
+// whose setup the repository declares, is a stage of the pair with the setup
+// named after it when the repository declares one; the pair is then
+// standard, and the project's other runtimes stay out of it.
+func TestBootstrapCompleteAdoptPlan_VariantBBesideItsStages_IsOneStandardPair(t *testing.T) {
+	t.Parallel()
+	py := func(name string) platform.ServiceStack { return userSvc(name, "ubuntu/python@3.12") }
+	checkout := func(hosts ...string) map[string]topology.VolumeContent {
+		c := map[string]topology.VolumeContent{}
+		for _, h := range hosts {
+			c[h] = topology.VolumeCheckout
+		}
+		return c
+	}
+	mount := func(setup, base, volume string, files []string, content map[string]topology.VolumeContent) AdoptVolumeSetup {
+		return AdoptVolumeSetup{Setup: setup, RunBase: base, Volume: volume, MountPath: "/var/www/ws", WorksIn: true, Content: content, FileSetups: files}
+	}
+	s2Files := []string{"lvmwebdev", "lvmapidev", "lvmwebstage", "lvmapistage"}
+	tests := []struct {
+		name           string
+		existing       []platform.ServiceStack
+		scope          []string
+		mounts         []AdoptVolumeSetup
+		wantDev        string
+		wantSetup      string
+		wantVolume     string
+		wantDevService topology.DevServiceRef
+		wantStages     []topology.StageRef
+	}{
+		{
+			name: "dev services and stages of one base, beside another repository's pair",
+			existing: []platform.ServiceStack{
+				userSvc("appstage", "alpine/nodejs@24"), userSvc("appdev", "alpine/nodejs@24"),
+				userSvc("cache", "valkey:single@7.2"), userSvc("db", "postgresql:single@18"),
+				py("lvmapidev"), py("lvmapistage"), userSvc("lvmvol", "local-storage:single@1"), py("lvmwebdev"), py("lvmwebstage"),
+			},
+			scope: []string{"lvmwebdev", "lvmapidev", "lvmwebstage", "lvmapistage"},
+			mounts: []AdoptVolumeSetup{
+				mount("lvmwebdev", "python@3.12", "lvmvol", s2Files, checkout("lvmwebdev", "lvmapidev")),
+				mount("lvmapidev", "python@3.12", "lvmvol", s2Files, checkout("lvmwebdev", "lvmapidev")),
+			},
+			wantDev: "lvmwebdev", wantSetup: "lvmwebdev", wantVolume: "lvmvol",
+			wantDevService: topology.DevServiceRef{Hostname: "lvmapidev", SetupName: "lvmapidev"},
+			wantStages:     []topology.StageRef{{Hostname: "lvmwebstage", SetupName: "lvmwebstage"}, {Hostname: "lvmapistage", SetupName: "lvmapistage"}},
+		},
+		{
+			name:     "a stage of the dev half's base whose setup the repository does not name",
+			existing: []platform.ServiceStack{userSvc("webdev", "bun@1.3"), userSvc("apidev", "go@1"), userSvc("webstage", "bun@1.3"), userSvc("vol", "local-storage:single@1")},
+			scope:    []string{"webdev", "apidev", "webstage"},
+			mounts: []AdoptVolumeSetup{
+				mount("dev", "bun@1.3", "vol", []string{"dev", "dev-api", "prod"}, checkout("webdev")),
+				mount("dev-api", "go@1", "vol", []string{"dev", "dev-api", "prod"}, checkout("apidev")),
+			},
+			wantDev: "webdev", wantSetup: "dev", wantVolume: "vol",
+			wantDevService: topology.DevServiceRef{Hostname: "apidev", SetupName: "dev-api"},
+			wantStages:     []topology.StageRef{{Hostname: "webstage"}},
+		},
+		{
+			name:     "a stage named like no dev service whose setup the repository declares",
+			existing: []platform.ServiceStack{py("webdev"), py("apidev"), py("adminstage"), userSvc("vol", "local-storage:single@1")},
+			scope:    []string{"webdev", "apidev", "adminstage"},
+			mounts: []AdoptVolumeSetup{
+				mount("webdev", "python@3.12", "vol", []string{"webdev", "apidev", "adminstage"}, checkout("webdev", "apidev")),
+				mount("apidev", "python@3.12", "vol", []string{"webdev", "apidev", "adminstage"}, checkout("webdev", "apidev")),
+			},
+			wantDev: "webdev", wantSetup: "webdev", wantVolume: "vol",
+			wantDevService: topology.DevServiceRef{Hostname: "apidev", SetupName: "apidev"},
+			wantStages:     []topology.StageRef{{Hostname: "adminstage", SetupName: "adminstage"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			eng := startAdopt(t, t.TempDir())
+			if _, err := eng.BootstrapCompleteAdoptPlan(tt.existing, tt.scope, runtime.Info{}, nil, tt.mounts); err != nil {
+				t.Fatalf("BootstrapCompleteAdoptPlan: %v", err)
+			}
+			state, err := eng.GetState()
+			if err != nil {
+				t.Fatalf("GetState: %v", err)
+			}
+			targets := state.Bootstrap.Plan.Targets
+			if len(targets) != 1 {
+				t.Fatalf("want one variant-B pair, got %+v", targets)
+			}
+			rt := targets[0].Runtime
+			cv := rt.CodeVolume
+			if rt.DevHostname != tt.wantDev || rt.PrimarySetupName != tt.wantSetup || rt.EffectiveMode() != topology.PlanModeStandard {
+				t.Errorf("pair = %s setup %q mode %s, want %s setup %q standard", rt.DevHostname, rt.PrimarySetupName, rt.EffectiveMode(), tt.wantDev, tt.wantSetup)
+			}
+			if cv == nil || cv.Hostname != tt.wantVolume || cv.MountPath != "/var/www/ws" || len(cv.DevServices) != 1 || cv.DevServices[0] != tt.wantDevService {
+				t.Errorf("codeVolume = %+v, want %s at /var/www/ws with %+v", cv, tt.wantVolume, tt.wantDevService)
+			}
+			if got := rt.StageRefs(); !slices.Equal(got, tt.wantStages) {
+				t.Errorf("stages = %+v, want %+v", got, tt.wantStages)
+			}
+			for _, d := range targets[0].Dependencies {
+				if d.Hostname == tt.wantVolume {
+					t.Errorf("the code volume is no dependency: %+v", targets[0].Dependencies)
 				}
 			}
 		})

@@ -375,6 +375,8 @@ type AdoptVolumeSetup struct {
 	// Content is what each runtime finds at MountPath, by hostname
 	// (ops.CodeVolumeContent); a runtime absent from it proved nothing.
 	Content map[string]topology.VolumeContent
+	// FileSetups are every setup the zerops.yaml declaring this one declares.
+	FileSetups []string
 }
 
 // adoptVariantB recognises a variant-B project (docs/spec-mate.md §2.8a.4a)

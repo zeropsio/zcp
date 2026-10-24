@@ -1,6 +1,8 @@
 package tools
 
 import (
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -8,6 +10,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -138,5 +141,59 @@ func TestHandleBootstrapComplete_AdoptExplicitPlan_PassesLiveServices(t *testing
 	}
 	if text := getTextContent(t, result); !strings.Contains(text, "appstage") {
 		t.Errorf("rejection should name the missing stage runtime appstage, got: %s", text)
+	}
+}
+
+// TestHandleBootstrapComplete_AdoptVariantBBesideAnotherRepository_OnePairWithItsStages
+// (docs/spec-mate.md §2.8a.4a; live S2): a scope naming a variant-B
+// repository's dev services and stages, in a project whose first runtime is
+// an unrelated app with its own zerops.yaml, is recorded as one standard pair
+// holding the code volume again — the setups read through the scoped dev
+// services, each stage with the setup named after it — never as four
+// independent dev services with the volume a dependency. The owner's app is
+// neither adopted nor reached.
+func TestHandleBootstrapComplete_AdoptVariantBBesideAnotherRepository_OnePairWithItsStages(t *testing.T) {
+	t.Parallel()
+	existing, ssh := s2Project()
+	stateDir := filepath.Join(t.TempDir(), ".zcp", "state")
+	engine := workflow.NewEngine(stateDir, workflow.EnvContainer, nil)
+	if _, err := engine.BootstrapStartWithRoute("proj1", "adopt the code-volume pair", workflow.BootstrapRouteAdopt, ""); err != nil {
+		t.Fatalf("BootstrapStartWithRoute(adopt): %v", err)
+	}
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, platform.NewMock().WithServices(existing), nil, "proj1", nil, engine, nil, stateDir, "", nil, ssh, runtime.Info{}, "")
+
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"action": "complete",
+		"step":   "discover",
+		"scope":  []any{"lvmwebdev", "lvmapidev", "lvmwebstage", "lvmapistage"},
+	})
+	if result.IsError {
+		t.Fatalf("adopt failed: %s", getTextContent(t, result))
+	}
+	state, err := engine.GetState()
+	if err != nil {
+		t.Fatalf("GetState: %v", err)
+	}
+	targets := state.Bootstrap.Plan.Targets
+	if len(targets) != 1 {
+		t.Fatalf("want one variant-B pair, got %+v", targets)
+	}
+	rt := targets[0].Runtime
+	wantStages := []topology.StageRef{{Hostname: "lvmwebstage", SetupName: "lvmwebstage"}, {Hostname: "lvmapistage", SetupName: "lvmapistage"}}
+	wantDevServices := []topology.DevServiceRef{{Hostname: "lvmapidev", SetupName: "lvmapidev"}}
+	if rt.DevHostname != "lvmwebdev" || rt.EffectiveMode() != topology.PlanModeStandard || !slices.Equal(rt.StageRefs(), wantStages) ||
+		rt.CodeVolume == nil || rt.CodeVolume.Hostname != "lvmvol" || rt.CodeVolume.MountPath != "/var/www/ws" || !slices.Equal(rt.CodeVolume.DevServices, wantDevServices) {
+		t.Errorf("pair = %+v codeVolume = %+v", rt, rt.CodeVolume)
+	}
+	for _, d := range targets[0].Dependencies {
+		if d.Hostname == "lvmvol" {
+			t.Errorf("the code volume is no dependency: %+v", targets[0].Dependencies)
+		}
+	}
+	for _, h := range ssh.hosts {
+		if h == "appstage" || h == "appdev" {
+			t.Errorf("SSH reached the owner's %q; hosts = %v", h, ssh.hosts)
+		}
 	}
 }

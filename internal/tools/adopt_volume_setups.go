@@ -17,7 +17,7 @@ import (
 // runtimes are mounted, so the file is read from the first runtime container
 // that holds one (/var/www), and from its mount when the container is out of
 // reach; none yields nothing.
-func adoptVolumeSetups(ctx context.Context, ssh ops.SSHDeployer, existing []platform.ServiceStack, stateDir string) []workflow.AdoptVolumeSetup {
+func adoptVolumeSetups(ctx context.Context, ssh ops.SSHDeployer, existing []platform.ServiceStack, scope []string, stateDir string) []workflow.AdoptVolumeSetup {
 	volumes := map[string]bool{}
 	for _, svc := range existing {
 		if topology.IsLocalStorageType(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) {
