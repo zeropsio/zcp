@@ -103,7 +103,7 @@ func readLeaseActivities(ctx context.Context, d LeaseDeps, records []leaseRecord
 		}
 		reads.Go(func() {
 			r := readLeaseFacts(ctx, d, rec)
-			v.Activity, v.Unsaved, v.noPreview, v.overlay = r.activity, r.unsaved, r.noPreview, r.overlay
+			v.Activity, v.Unsaved, v.overlay = r.activity, r.unsaved, r.overlay
 		})
 	}
 	reads.Wait()
@@ -133,15 +133,12 @@ func readLeaseActivity(ctx context.Context, d LeaseDeps, rec leaseRecord) (*topo
 }
 
 // leaseFacts is what one read of a lease's checkout found
-// (readLeaseActivity); whether the container has no preview to observe — a
-// supervisor that lists activity runs no dev server on a preview port, so no
-// preview connection can be in use (markIdleLeases); and the supervisor's
-// overlay its supervisor part carried (overlayOf, DP-26).
+// (readLeaseActivity) and the overlay its supervisor part carried (overlayOf,
+// DP-26).
 type leaseFacts struct {
-	activity  *topology.LeaseActivity
-	unsaved   *topology.LeaseUnsaved
-	noPreview bool
-	overlay   *leaseOverlay
+	activity *topology.LeaseActivity
+	unsaved  *topology.LeaseUnsaved
+	overlay  *leaseOverlay
 }
 
 // readLeaseFacts is readLeaseActivity with whether the container has no
@@ -169,10 +166,9 @@ func readLeaseFacts(ctx context.Context, d LeaseDeps, rec leaseRecord) leaseFact
 		act.LastChangeAt = change
 		notes = append(notes, note)
 	}
-	var noPreview bool
 	if r.previewSeen {
 		var note string
-		act.PreviewLastConnAt, act.PreviewOpenConns, noPreview, note = leasePreview(r.preview)
+		act.PreviewLastConnAt, act.PreviewOpenConns, note = leasePreview(r.preview)
 		notes = append(notes, note)
 		overlay = overlayOf(r.preview)
 	}
@@ -193,7 +189,7 @@ func readLeaseFacts(ctx context.Context, d LeaseDeps, rec leaseRecord) leaseFact
 		unsaved = unsavedWork{files: parseUnsavedFiles(r.status), unpushed: n}.view()
 	}
 	act.Note = joinNotes(notes...)
-	return leaseFacts{activity: act, unsaved: unsaved, noPreview: noPreview, overlay: overlay}
+	return leaseFacts{activity: act, unsaved: unsaved, overlay: overlay}
 }
 
 // checkoutRead is the read's answer split at its markers.
@@ -239,53 +235,52 @@ func splitCheckoutRead(out string) checkoutRead {
 // leasePreview reads the supervisor part of the read: the preview server's
 // last connection time (RFC 3339 UTC, "" when none came in the supervisor's
 // life) and its open connections, from a supervisor whose `ctl version`
-// lists devsup.CapabilityActivity — from any other, from none, or from one
-// with no preview server, both are absent and note says why the preview was
-// not observed. noPreview is the one case where that absence is itself
-// observed: a supervisor that lists activity runs no dev server on a preview
-// port, so the container has no preview forward to be in use.
-func leasePreview(part string) (lastConnAt string, openConns *int, noPreview bool, note string) {
+// lists devsup.CapabilityActivity — from any other or from none, both are
+// absent and note says why the preview was not observed. One that lists it
+// and runs no dev server on a preview port has no preview forward, so no
+// preview connection can be open: openConns is an observed 0 (DP-21).
+func leasePreview(part string) (lastConnAt string, openConns *int, note string) {
 	const notObserved = "preview not observed: "
 	sections, err := splitDevsupSections(part)
 	if err != nil {
-		return "", nil, false, fmt.Sprintf(notObserved+"zcp could not read the supervisor's answer (%v)", err)
+		return "", nil, fmt.Sprintf(notObserved+"zcp could not read the supervisor's answer (%v)", err)
 	}
 	version, ok := sections["version"]
 	switch {
 	case !ok:
-		return "", nil, false, fmt.Sprintf(notObserved+"the supervisor part answered %q, with no zcp-devsup version", boundedText(part))
+		return "", nil, fmt.Sprintf(notObserved+"the supervisor part answered %q, with no zcp-devsup version", boundedText(part))
 	case version.code == devsupCodeAbsent:
-		return "", nil, false, notObserved + "zcp-devsup is not installed in the container"
+		return "", nil, notObserved + "zcp-devsup is not installed in the container"
 	case version.code != devsupCodeOK:
-		return "", nil, false, fmt.Sprintf(notObserved+"zcp-devsup ctl version exited %d", version.code)
+		return "", nil, fmt.Sprintf(notObserved+"zcp-devsup ctl version exited %d", version.code)
 	}
 	var v SupervisorVersion
 	if err := json.Unmarshal([]byte(version.body), &v); err != nil {
-		return "", nil, false, fmt.Sprintf(notObserved+"zcp-devsup ctl version answered %q", boundedText(version.body))
+		return "", nil, fmt.Sprintf(notObserved+"zcp-devsup ctl version answered %q", boundedText(version.body))
 	}
 	if !v.Supports(devsup.CapabilityActivity) {
-		return "", nil, false, fmt.Sprintf(notObserved+"the container's zcp-devsup %s predates preview activity (its ctl version lists no %q); one from a newer zcp release reports it",
+		return "", nil, fmt.Sprintf(notObserved+"the container's zcp-devsup %s predates preview activity (its ctl version lists no %q); one from a newer zcp release reports it",
 			v.Version, devsup.CapabilityActivity)
 	}
 	status, ok := sections["status"]
 	switch {
 	case !ok:
-		return "", nil, false, notObserved + "zcp-devsup ctl status did not answer"
+		return "", nil, notObserved + "zcp-devsup ctl status did not answer"
 	case status.code == devsupCodeNoSupervisor:
-		return "", nil, false, notObserved + "no zcp-devsup runs in the container (its dev setup's run.start is something else)"
+		return "", nil, notObserved + "no zcp-devsup runs in the container (its dev setup's run.start is something else)"
 	case status.code == devsupCodeUnresponsive || status.code == timeoutExit:
-		return "", nil, false, fmt.Sprintf(notObserved+"the dev-server supervisor did not answer within %d s (the container may be out of memory or CPU)", leasePreviewReadSeconds)
+		return "", nil, fmt.Sprintf(notObserved+"the dev-server supervisor did not answer within %d s (the container may be out of memory or CPU)", leasePreviewReadSeconds)
 	case status.code != devsupCodeOK:
 		note = fmt.Sprintf(notObserved+"zcp-devsup ctl status exited %d", status.code)
 		var failure *SupervisorCtlError
 		if errors.As(ctlFailure(status), &failure) && failure.Message != "" {
 			note += ": " + boundedText(failure.Message)
 		}
-		return "", nil, false, note
+		return "", nil, note
 	}
 	var st devsup.State
 	if err := json.Unmarshal([]byte(status.body), &st); err != nil {
-		return "", nil, false, fmt.Sprintf(notObserved+"zcp-devsup ctl status answered %q", boundedText(status.body))
+		return "", nil, fmt.Sprintf(notObserved+"zcp-devsup ctl status answered %q", boundedText(status.body))
 	}
 	var last time.Time
 	open, found := 0, false
@@ -300,12 +295,12 @@ func leasePreview(part string) (lastConnAt string, openConns *int, noPreview boo
 		}
 	}
 	if !found {
-		return "", nil, true, notObserved + "no dev server in the container has a preview port"
+		return "", &open, ""
 	}
 	if !last.IsZero() {
 		lastConnAt = last.UTC().Format(time.RFC3339)
 	}
-	return lastConnAt, &open, false, ""
+	return lastConnAt, &open, ""
 }
 
 // timeoutExit is the exit status of a command `timeout` ended.
@@ -403,7 +398,8 @@ type leaseLiveness struct {
 	// inUse: the preview holds a connection open now, however long ago it
 	// was opened — someone may be looking at it.
 	inUse bool
-	// previewSeen: the preview was observed, or the container has none.
+	// previewSeen: the preview was observed (a container with no preview
+	// server reads an observed 0 open connections).
 	previewSeen bool
 	// unsavedRead: the release guard's reads answered.
 	unsavedRead bool
@@ -417,7 +413,7 @@ func livenessOf(v LeaseView) leaseLiveness {
 	}
 	l := leaseLiveness{
 		inUse:       a.PreviewOpenConns != nil && *a.PreviewOpenConns > 0,
-		previewSeen: a.PreviewOpenConns != nil || v.noPreview,
+		previewSeen: a.PreviewOpenConns != nil,
 		unsavedRead: v.Unsaved != nil,
 	}
 	for _, at := range []string{a.LastChangeAt, a.PreviewLastConnAt, a.AcquiredAt} {

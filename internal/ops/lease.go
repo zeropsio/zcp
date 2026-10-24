@@ -203,9 +203,6 @@ type LeaseView struct {
 	// label for the result only: nothing acts on it, and the envelope never
 	// carries it.
 	Idle *LeaseIdle `json:"idle,omitempty"`
-	// noPreview: the read found no preview to observe — a supervisor that
-	// lists activity runs no dev server on a preview port.
-	noPreview bool
 	// Wiring is LeaseWiringStale on a status view of a lease whose dev servers
 	// run with an overlay naming a container no lease of its group holds, the
 	// note saying which and the call that fixes it (DP-26); "" otherwise.
