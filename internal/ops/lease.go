@@ -192,6 +192,19 @@ type LeaseView struct {
 	// Prepare is what the repository's prepare command did after an
 	// acquire's checkout (DP-14); nil when none ran.
 	Prepare *LeasePrepare `json:"prepare,omitempty"`
+	// DevServers are the dev servers of a lease this acquire took, as one
+	// read of its supervisor at the end of the acquire found them — nothing
+	// waited for (DP-29): each server's status verbatim — running, or
+	// starting while its port does not answer yet, the status call being the
+	// follow-up — and the preview server's preview URL. nil on every other
+	// view, on a lease returned reused, for a pool whose image carries no
+	// zcp-devsup, and when the read failed.
+	DevServers []topology.DevServerState `json:"devServers,omitempty"`
+	// SiblingEnv is the sibling overlay the acquire handed the supervisor of
+	// a lease it took (DP-22): the values its servers run with, hostnames and
+	// URLs, never a secret. nil when the declaration names no sibling
+	// variable or the supervisor did not take the overlay (the note says why).
+	SiblingEnv *LeaseSiblingEnv `json:"siblingEnv,omitempty"`
 	// Activity is what a status call read of the lease's checkout, or why it
 	// could not (DP-21); nil when it was not read (another action, or no ssh).
 	Activity *topology.LeaseActivity `json:"activity,omitempty"`

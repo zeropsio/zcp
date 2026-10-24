@@ -56,6 +56,9 @@ type groupMember struct {
 	// err is the member's own failure; for a failed checkout it already says
 	// where its container went (abandonLease).
 	err error
+	// supervised: after the checkout a supervisor answers on the lease, so the
+	// acquire reads its dev servers at its end.
+	supervised bool
 }
 
 // LeaseAcquireGroup leases one container per pool, every one on branch of one
@@ -148,8 +151,15 @@ func LeaseAcquireGroupChange(ctx context.Context, d LeaseDeps, pools []string, r
 	if d.SSH != nil {
 		var rewire sync.WaitGroup
 		rewire.Go(func() { rewired = rewireJoined(ctx, d, repoURL, branch, fresh) })
-		runMembers(fresh, func(m *groupMember) { afterLeaseCheckout(ctx, d.SSH, d.StateDir, m.rec.alias(), &m.view) })
+		runMembers(fresh, func(m *groupMember) { m.supervised = afterLeaseCheckout(ctx, d.SSH, d.StateDir, m.rec.alias(), &m.view) })
 		rewire.Wait()
+		// Each lease taken reports its dev servers as the acquire leaves
+		// them: one read, nothing waited for (DP-29).
+		runMembers(fresh, func(m *groupMember) {
+			if m.supervised {
+				m.view.DevServers = acquiredDevServers(ctx, d, m.rec)
+			}
+		})
 	}
 	views := make([]LeaseView, 0, len(members))
 	for _, m := range members {

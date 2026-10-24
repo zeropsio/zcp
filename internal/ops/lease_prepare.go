@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/zeropsio/zcp/internal/devsup"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // A dev pool's image bakes the part's dependencies into /var/www through
@@ -45,20 +46,47 @@ type LeasePrepare struct {
 // afterLeaseCheckout runs what follows a successful checkout: the
 // repository's prepare command, then the supervisor's start or reload, which
 // sends the servers' sibling overlay first when the supervisor takes it
-// (lease_wiring.go). It fills v's prepare report and notes; nothing in it
-// fails the acquire.
-func afterLeaseCheckout(ctx context.Context, ssh SSHDeployer, stateDir, alias string, v *LeaseView) {
+// (lease_wiring.go). It fills v's prepare report, the overlay the supervisor
+// took and the notes, and answers whether a supervisor answers on the lease
+// now — one zcp found or started — whose dev servers the acquire then reads;
+// nothing in it fails the acquire.
+func afterLeaseCheckout(ctx context.Context, ssh SSHDeployer, stateDir, alias string, v *LeaseView) bool {
 	read, note := readLeaseCheckout(ctx, ssh, alias, "so no prepare command ran")
 	if read.declaration != nil && strings.TrimSpace(read.declaration.Prepare) != "" {
 		v.Prepare, note = runLeasePrepare(ctx, ssh, alias, read.declaration.Prepare)
 	}
 	env, envArgs, wireNote := checkoutOverlay(stateDir, alias, read)
 	r, err := ensureLeaseSupervisorAfterCheckout(ctx, ssh, alias, envArgs)
+	supervised := err == nil && (r.outcome == leaseSupervisorRunning || r.outcome == leaseSupervisorStarted)
 	refused := ""
-	if err == nil && r.envErr != nil {
+	switch {
+	case err == nil && r.envErr != nil:
 		refused = overlayRefusedNote(alias, env, r.envErr)
+	case supervised && envArgs != nil && len(env.pools) > 0:
+		v.SiblingEnv = &env
 	}
 	v.Note = joinNotes(v.Note, note, wireNote, leaseSupervisorNote(alias, r, err), refused)
+	return supervised
+}
+
+// acquiredDevServers reads the dev servers of the lease behind rec once, as
+// the acquire left them, and projects them as the envelope does
+// (DevServerStates): each server's status verbatim — a server whose port does
+// not answer yet is starting; nothing here waits for it — and the preview
+// server's preview URL, as zerops_dev_server status reports it. A read that
+// fails leaves them unread (nil): the acquire's notes already say what is
+// wrong with the supervisor, and zerops_dev_server action=status reads it.
+func acquiredDevServers(ctx context.Context, d LeaseDeps, rec leaseRecord) []topology.DevServerState {
+	ds, err := ReadDevServers(ctx, d.SSH, rec.alias(), "")
+	if err != nil {
+		return nil
+	}
+	ds.Service = rec.PoolHostname
+	states := DevServerStates(ctx, d.Client, d.ProjectID, &DevServerResult{Hostname: rec.alias(), Pool: rec.PoolHostname, Read: ds})
+	if len(states) == 0 {
+		return nil
+	}
+	return states
 }
 
 // leaseCheckoutRead is what an acquire reads in the container after its
