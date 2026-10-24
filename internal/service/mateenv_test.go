@@ -67,6 +67,40 @@ func TestMergeMateEnv_OrderAndPrecedence(t *testing.T) {
 	}
 }
 
+// TestMergeMateEnv_StoreNamesTheSubdomain_ServerGetsItsPublicOrigin pins zcp's
+// half of the HQ link: the server presents the platform's zeropsSubdomain as
+// its public origin (spec-mate §2.8), and nothing but this merge carries it
+// into mate's environment — the unit's own carries none.
+func TestMergeMateEnv_StoreNamesTheSubdomain_ServerGetsItsPublicOrigin(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a Mate whose container zcp launched links to HQ without any variable set by hand", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		storePath := filepath.Join(dir, "env.json")
+		storeBody := `{"ZCP_API_KEY":"key-1","zeropsSubdomain":"https://zcp-3199-8080.prg1.zerops.app","zeropsSubdomainString":"https://zcp-3199-${port}.prg1.zerops.app"}`
+		if err := os.WriteFile(storePath, []byte(storeBody), 0o644); err != nil {
+			t.Fatalf("write store: %v", err)
+		}
+		envPath := filepath.Join(dir, "mate.env")
+		if err := os.WriteFile(envPath, []byte("T3CODE_ZEROPS_PROJECT_ID=p-1\n"), 0o600); err != nil {
+			t.Fatalf("write env file: %v", err)
+		}
+
+		got := mergeMateEnv(storePath, envPath)
+
+		for _, want := range []string{
+			"zeropsSubdomain=https://zcp-3199-8080.prg1.zerops.app",
+			"ZCP_API_KEY=key-1",
+			"T3CODE_ZEROPS_PROJECT_ID=p-1",
+		} {
+			if !slices.Contains(got, want) {
+				t.Errorf("mate's environment must carry %q, got %q", want, got)
+			}
+		}
+	})
+}
+
 // TestMergeMateEnv_StoreOnly covers a store with no corresponding env file
 // entries: every store key passes through unchanged.
 func TestMergeMateEnv_StoreOnly(t *testing.T) {

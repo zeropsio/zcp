@@ -733,8 +733,9 @@ The monorepo facts C-8…C-12 continue this table in §2.8a.
 The Mate's hello carries `{type: "hello", key, serviceId, origin}`. `origin` is its public
 origin: HTTPS, a host ending in a Zerops-managed subdomain suffix, no path. HQ validates it,
 keeps it with the link and returns it in the ticket answer; an invalid origin closes the link as
-bad hello. No Zerops read discovers it. Without a public origin the Mate does not link and reports
-`not-linked` / `no_public_origin`.
+bad hello. No Zerops read discovers it: the server takes it from the platform's `zeropsSubdomain`,
+which reaches its environment through the live env store (§2.3, MD-8), so nothing is set by hand.
+Without a public origin the Mate does not link and reports `not-linked` / `no_public_origin`.
 
 The fork's release workflow triggers only on stable `v<major>.<minor>.<patch>` tags, so GitHub's
 "latest release" *is* the stable channel — nightlies never produce one.
@@ -755,7 +756,7 @@ actively refused today (C-1's `pack` assertion), so it would be a fork-side chan
 | MD-5 | `{BasePath}/healthz` answers before AND after the first `zcp init` completes, as parseable JSON, whether or not a step degraded. `TestRunNginx_HealthzServesTheInitMarker`, `TestRunNginx_HealthzFallbackIsValidJSON`, `TestRun_WritesInitCompleteMarker`, `TestRun_Mate_DegradedStepStillMarksInitComplete`. |
 | MD-6 | A local (non-container) `zcp init` installs no bundle, writes no env file, leaves no marker. `TestRun_NoMate_OutsideContainer`. |
 | MD-7 | A request still carrying the base path past the proxy gets a named `404`, never the SPA shell; client-side helpers preserve a URL's prefix. `server.test.ts` — "names a forwarded base path instead of answering with the shell"; `packages/shared/src/basePath.test.ts`. |
-| MD-8 | mate's process environment merges `~/.zcp/mate.env` over the container's live env store, read once at unit start — so `zcp init` restarts the unit itself whenever it rewrote that file or replaced the bundle (MD-15). `TestLoadLiveEnv`, `TestMergeMateEnv_OrderAndPrecedence`. |
+| MD-8 | mate's process environment merges `~/.zcp/mate.env` over the container's live env store, read once at unit start — so `zcp init` restarts the unit itself whenever it rewrote that file or replaced the bundle (MD-15). `TestLoadLiveEnv`, `TestMergeMateEnv_OrderAndPrecedence`, `TestMergeMateEnv_StoreNamesTheSubdomain_ServerGetsItsPublicOrigin`. |
 | MD-9 | `{BasePath}/healthz` carries `Access-Control-Allow-Origin: *` on both branches; `/mate/` and the cookie-gated `location /` carry none. `TestRunNginx_HealthzHasCORSForCrossOriginProbe`. |
 | MD-10 | The desired release comes from `stable.json` and nowhere else: a manifest whose `contract` is not `SupportedContract` or whose `version` is below `MinimumMateVersion` is refused before any download; the tarball must match the manifest's `sha256` before npm runs; there is no registry-package fallback. An unreachable manifest keeps an installed mate serving — one below the floor named so in the warning — and degrades only a first install. Download, integrity, and npm failures register the same degraded init outcome and no unit. `TestDesiredRelease_*`, `TestEnsureInstalled_UnreachableManifest_NamesAnInstalledVersionBelowTheMinimum`, `TestInstallRelease_ChecksumMismatch_RefusesInstall`, `TestInstallRelease_DownloadFailure_RefusesInstall`, `TestRun_Mate_InstallFailures_Degrade`, `TestRun_Mate_ManifestUnreachable_KeepsInstalled`. |
 | MD-11 | **With `ZCP_MATE_ENABLED` unset, a container behaves exactly as one predating mate**: the rendered nginx.conf carries no `/mate`, no `3773`, no `healthz` and no marker path while keeping every non-mate structure; nothing is downloaded or installed; no unit is registered; no readiness marker is written; and `zcp init` prints no extra step line. `TestRunNginx_MateDisabled_RendersNoMateSurface`, `TestRun_MateDisabled_NoUnitFile_NoOp`, `TestDetect_MateDisabled_ByDefault`. |
@@ -3465,7 +3466,7 @@ Zerops identity: a bearer is verified at `/user/info`, the principal is the Zero
 environment link proof must carry `zeropsProjectId` + `endpointOrigin` — the relay verifies the caller's
 membership of that project and that the origin belongs to one of its subdomain-enabled services. The
 mate server stamps both fields (project id from `T3CODE_ZEROPS_PROJECT_ID`; origin from
-`T3CODE_ZEROPS_PUBLIC_ORIGIN` or the linking request, `https://` and never loopback) and refuses
+`zeropsSubdomain` or the linking request, `https://` and never loopback) and refuses
 outside Zerops mode. APNs delivery is a durable job table (unique `job_id`, `SKIP LOCKED` lease,
 backoff, dead-letter at 5 attempts, lease recovery, 24 h expiry). Deployment files
 (`infra/relay/zerops.yml`, `zerops-import.yml`) validate against the platform schema; the `z3-relay`
