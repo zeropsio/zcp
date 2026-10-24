@@ -263,7 +263,7 @@ func effectiveAutoscaling(svc *platform.ServiceStack) *platform.CustomAutoscalin
 // the platform default applies. A memory size the platform would refuse as
 // input (more than 3 decimal places) can only be its own default, so it
 // stays out too. A managed service's container count is fixed by its
-// variant, and a Box is a single container, so none is sent for them. A pool
+// variant, and a Box is a single VM, so none is sent for them. A pool
 // may legitimately sit at zero containers, so its zero minimum is sent back
 // whenever the service did return its container counts.
 func fillOmittedAutoscaling(p *platform.AutoscalingParams, cur *platform.CustomAutoscaling, countFixed, pool bool) {
@@ -540,7 +540,7 @@ func poolBaseType(serviceType string) string {
 }
 
 // containerCountFixed reports a service whose container count Scale never
-// sends: a managed service (fixed by its variant) and a Box (one container).
+// sends: a managed service (fixed by its variant) and a Box (one VM).
 func containerCountFixed(serviceType string) bool {
 	return topology.IsManagedService(serviceType) || topology.IsSandboxType(serviceType)
 }
@@ -559,7 +559,7 @@ func validateContainerCounts(serviceType string, p ScaleParams) error {
 			named = "maxContainers"
 		}
 		return platform.NewPlatformError(platform.ErrInvalidScaling,
-			fmt.Sprintf("%s does not apply to a Zerops Box (%s): a Box is a single container", named, serviceType),
+			fmt.Sprintf("%s does not apply to a Zerops Box (%s): a Box is a single VM", named, serviceType),
 			"Drop minContainers/maxContainers; scale a Box vertically (CPU, RAM, disk) only")
 	case topology.IsPoolType(serviceType):
 		bounds, ok := poolContainerBounds[poolBaseType(serviceType)]
