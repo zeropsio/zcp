@@ -133,8 +133,8 @@ func leaseContainerFor(ctx context.Context, d LeaseDeps, rec leaseRecord, verb s
 }
 
 // leaseLostOnCall is a park or an unpark (verb) that found, right before its
-// stop or start or in the orchestrator's held-by-other answer to it, that the
-// lease ended outside zcp (why): its record is dropped as lost with its mount
+// stop or start or in a held-by-other answer to it that a renew confirmed,
+// that the lease ended outside zcp (why): its record is dropped as lost with its mount
 // and alias stanza, and the view says so — never "retry in a moment".
 func leaseLostOnCall(ctx context.Context, d LeaseDeps, rec leaseRecord, verb, why string) (LeaseView, error) {
 	v, err := dropLostLease(ctx, d, rec, why)
@@ -433,9 +433,11 @@ func reparkMembers(ctx context.Context, d LeaseDeps, members []*releaseMember, c
 // and did not release, and says what became of it; parked reports that the
 // lease stays parked. It asks the orchestrator first, fresh
 // (readLeaseOwnership): a container that is no longer this lease's — or whose
-// stop it refuses held-by-other — means the lease ended outside zcp meanwhile,
-// and its record is dropped with its alias and mount, saying so; one it is
-// stopping or starting right now is left alone, and nothing is said of it.
+// stop it refuses held-by-other with a renew agreeing — means the lease ended
+// outside zcp meanwhile, and its record is dropped with its alias and mount,
+// saying so; one whose held-by-other the renew does not answer is left, with
+// its record, as it was; one it is stopping or starting right now is left
+// alone, and nothing is said of it.
 func repark(ctx context.Context, d LeaseDeps, rec leaseRecord) (text string, parked bool) {
 	alias := rec.alias()
 	v := readLeaseOwnership(ctx, d, rec)

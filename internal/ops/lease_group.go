@@ -670,8 +670,9 @@ func LeaseReleaseGroupChange(ctx context.Context, d LeaseDeps, repo, branch stri
 			m.guard.woken = m.wake.started
 		})
 		if err := branchReleaseRefusal(d, members, repo, branch); err != nil {
-			// The orchestrator's held-by-other is final whatever becomes of
-			// the branch: those records go now, with their alias and mount.
+			// A lease the release's own steps found ended is lost whatever
+			// becomes of the branch: those records go now, with their alias
+			// and mount.
 			return LeaseChange{}, dropEndedOnCall(ctx, d, members, reparkMembers(ctx, d, members, err))
 		}
 	}

@@ -28,7 +28,8 @@ const unresettableNote = "the container could not be reset (the platform created
 // deleteUnresettable deletes the leased container whose reset the
 // orchestrator refused and drops the record. A delete the orchestrator refuses
 // keeps the reservation and the record; a lease it no longer knows has nothing
-// left to delete.
+// left to delete, and neither has one whose delete it refuses held-by-other
+// once a renew agrees the lease ended (heldByOtherAsked).
 func deleteUnresettable(ctx context.Context, d LeaseDeps, rp *resolvedPool, rec leaseRecord, alias string) (LeaseView, error) {
 	err := rp.api.Delete(ctx, rec.ContainerID, rec.Lease)
 	if err == nil {
