@@ -98,6 +98,11 @@ func (r *syncRemote) ExecSSH(_ context.Context, host, command string) ([]byte, e
 	return nil, nil
 }
 
+// ExecSSHStdin answers one command as ExecSSH does; the input is not read.
+func (r *syncRemote) ExecSSHStdin(ctx context.Context, host, command string, _ []byte) ([]byte, error) {
+	return r.ExecSSH(ctx, host, command)
+}
+
 func (r *syncRemote) ExecSSHBackground(ctx context.Context, host, command string, _ time.Duration) ([]byte, error) {
 	return r.ExecSSH(ctx, host, command)
 }

@@ -274,6 +274,10 @@ func (s *standupSSH) ExecSSH(ctx context.Context, host, cmd string) ([]byte, err
 	return []byte("ok"), nil
 }
 
+func (s *standupSSH) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, hostname, command)
+}
+
 func (s *standupSSH) ExecSSHBackground(_ context.Context, _, _ string, _ time.Duration) ([]byte, error) {
 	return []byte("ok"), nil
 }

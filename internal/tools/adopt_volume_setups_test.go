@@ -18,6 +18,10 @@ type catSSH struct{ yaml string }
 
 func (s catSSH) ExecSSH(context.Context, string, string) ([]byte, error) { return []byte(s.yaml), nil }
 
+func (s catSSH) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, hostname, command)
+}
+
 func (s catSSH) ExecSSHBackground(context.Context, string, string, time.Duration) ([]byte, error) {
 	return nil, nil
 }
@@ -54,6 +58,10 @@ func (s volumeSSH) ExecSSH(_ context.Context, host, cmd string) ([]byte, error) 
 		return nil, errors.New("ssh: connect refused")
 	}
 	return []byte("@@zcp code-volume content " + c + "\n"), nil
+}
+
+func (s volumeSSH) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, hostname, command)
 }
 
 func (volumeSSH) ExecSSHBackground(context.Context, string, string, time.Duration) ([]byte, error) {
@@ -137,6 +145,11 @@ func (s *hostCatSSH) ExecSSH(_ context.Context, host, _ string) ([]byte, error) 
 	return []byte(s.yaml), nil
 }
 
+// ExecSSHStdin answers one command as ExecSSH does; the input is not read.
+func (s *hostCatSSH) ExecSSHStdin(ctx context.Context, host, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, host, command)
+}
+
 func (*hostCatSSH) ExecSSHBackground(context.Context, string, string, time.Duration) ([]byte, error) {
 	return nil, nil
 }
@@ -201,6 +214,11 @@ func (s *repoSSH) ExecSSH(_ context.Context, host, cmd string) ([]byte, error) {
 		return nil, errors.New("ssh: unexpected command")
 	}
 	return []byte("@@zcp code-volume content " + c + "\n"), nil
+}
+
+// ExecSSHStdin answers one command as ExecSSH does; the input is not read.
+func (s *repoSSH) ExecSSHStdin(ctx context.Context, host, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, host, command)
 }
 
 func (*repoSSH) ExecSSHBackground(context.Context, string, string, time.Duration) ([]byte, error) {

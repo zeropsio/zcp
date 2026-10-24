@@ -46,6 +46,11 @@ func (s *censusLocalSSH) ExecSSH(ctx context.Context, hostname, command string) 
 	return out, nil
 }
 
+// ExecSSHStdin answers one command as ExecSSH does; the input is not read.
+func (s *censusLocalSSH) ExecSSHStdin(ctx context.Context, host, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, host, command)
+}
+
 func (s *censusLocalSSH) ExecSSHBackground(_ context.Context, _, _ string, _ time.Duration) ([]byte, error) {
 	return nil, errors.New("the census never runs a background command")
 }

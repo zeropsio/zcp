@@ -152,6 +152,10 @@ func (s *stubSSHSlow) ExecSSH(ctx context.Context, _ string, _ string) ([]byte, 
 	return s.output, nil
 }
 
+func (s *stubSSHSlow) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, hostname, command)
+}
+
 func (s *stubSSHSlow) ExecSSHBackground(_ context.Context, _, _ string, _ time.Duration) ([]byte, error) {
 	return s.output, nil
 }

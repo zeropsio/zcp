@@ -79,6 +79,10 @@ func (s *stubSSHSHA) ExecSSH(_ context.Context, _, command string) ([]byte, erro
 	}
 }
 
+func (s *stubSSHSHA) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, hostname, command)
+}
+
 func (s *stubSSHSHA) ExecSSHBackground(_ context.Context, _, _ string, _ time.Duration) ([]byte, error) {
 	return []byte("ok"), nil
 }

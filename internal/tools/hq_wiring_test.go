@@ -870,6 +870,10 @@ func (s *deadlineSSH) ExecSSH(ctx context.Context, hostname, command string) ([]
 	return s.labSSH.ExecSSH(ctx, hostname, command)
 }
 
+func (s *deadlineSSH) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, hostname, command)
+}
+
 // TestStatus_TheCheckoutsOriginIsReadBoundedBesideTheRepository: status reads
 // a wired pair's checkout's origin within a short bound, beside the read of
 // its repository rather than after it, so a dev service that does not answer

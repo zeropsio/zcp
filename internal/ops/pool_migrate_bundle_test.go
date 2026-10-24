@@ -55,6 +55,11 @@ func (s *bundleLocalSSH) ExecSSH(ctx context.Context, hostname, command string) 
 	return out, nil
 }
 
+// ExecSSHStdin answers one command as ExecSSH does; the input is not read.
+func (s *bundleLocalSSH) ExecSSHStdin(ctx context.Context, host, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, host, command)
+}
+
 func (s *bundleLocalSSH) ExecSSHBackground(_ context.Context, _, _ string, _ time.Duration) ([]byte, error) {
 	return nil, errors.New("the bundle never runs a background command")
 }
@@ -85,6 +90,11 @@ type execOnlySSH struct{ calls []string }
 func (s *execOnlySSH) ExecSSH(_ context.Context, hostname, command string) ([]byte, error) {
 	s.calls = append(s.calls, hostname+": "+command)
 	return nil, errors.New("not reached")
+}
+
+// ExecSSHStdin answers one command as ExecSSH does; the input is not read.
+func (s *execOnlySSH) ExecSSHStdin(ctx context.Context, host, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, host, command)
 }
 
 func (s *execOnlySSH) ExecSSHBackground(_ context.Context, hostname, command string, _ time.Duration) ([]byte, error) {

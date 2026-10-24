@@ -145,6 +145,10 @@ func (l *localCurl) ExecSSH(ctx context.Context, hostname, command string) ([]by
 	return out, nil
 }
 
+func (l *localCurl) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return l.ExecSSH(ctx, hostname, command)
+}
+
 // slowServer answers every request with 200 after delay; its port.
 func slowServer(t *testing.T, delay time.Duration) int {
 	t.Helper()

@@ -70,6 +70,11 @@ func (s *syncToolSSH) ExecSSH(_ context.Context, host, command string) ([]byte, 
 	return nil, nil
 }
 
+// ExecSSHStdin answers one command as ExecSSH does; the input is not read.
+func (s *syncToolSSH) ExecSSHStdin(ctx context.Context, host, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, host, command)
+}
+
 func (s *syncToolSSH) ExecSSHBackground(ctx context.Context, host, command string, _ time.Duration) ([]byte, error) {
 	return s.ExecSSH(ctx, host, command)
 }

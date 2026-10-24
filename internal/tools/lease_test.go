@@ -142,6 +142,11 @@ func (s *leaseStubSSH) ExecSSH(_ context.Context, _, command string) ([]byte, er
 	return fn(command)
 }
 
+// ExecSSHStdin answers one command as ExecSSH does; the input is not read.
+func (s *leaseStubSSH) ExecSSHStdin(ctx context.Context, host, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, host, command)
+}
+
 func (s *leaseStubSSH) ExecSSHBackground(ctx context.Context, host, command string, _ time.Duration) ([]byte, error) {
 	return s.ExecSSH(ctx, host, command)
 }
@@ -905,6 +910,11 @@ func (s *guardSSH) ExecSSH(_ context.Context, host, command string) ([]byte, err
 		return []byte("0\n"), nil
 	}
 	return nil, nil
+}
+
+// ExecSSHStdin answers one command as ExecSSH does; the input is not read.
+func (s *guardSSH) ExecSSHStdin(ctx context.Context, host, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, host, command)
 }
 
 func (s *guardSSH) ExecSSHBackground(ctx context.Context, host, command string, _ time.Duration) ([]byte, error) {

@@ -312,6 +312,11 @@ func (s *stageLeaseSSH) ExecSSH(_ context.Context, hostname, command string) ([]
 	return []byte("ok"), nil
 }
 
+// ExecSSHStdin answers one command as ExecSSH does; the input is not read.
+func (s *stageLeaseSSH) ExecSSHStdin(ctx context.Context, host, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, host, command)
+}
+
 func (s *stageLeaseSSH) ExecSSHBackground(ctx context.Context, hostname, command string, _ time.Duration) ([]byte, error) {
 	return s.ExecSSH(ctx, hostname, command)
 }
@@ -609,6 +614,11 @@ func (s *activityLeaseSSH) ExecSSH(ctx context.Context, hostname, command string
 	return []byte(answer), nil
 }
 
+// ExecSSHStdin answers one command as ExecSSH does; the input is not read.
+func (s *activityLeaseSSH) ExecSSHStdin(ctx context.Context, host, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, host, command)
+}
+
 func (s *activityLeaseSSH) ExecSSHBackground(ctx context.Context, hostname, command string, _ time.Duration) ([]byte, error) {
 	return s.ExecSSH(ctx, hostname, command)
 }
@@ -762,6 +772,11 @@ func (s *branchGuardSSH) ExecSSH(_ context.Context, hostname, command string) ([
 	return []byte("ok"), nil
 }
 
+// ExecSSHStdin answers one command as ExecSSH does; the input is not read.
+func (s *branchGuardSSH) ExecSSHStdin(ctx context.Context, host, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, host, command)
+}
+
 func (s *branchGuardSSH) ExecSSHBackground(ctx context.Context, hostname, command string, _ time.Duration) ([]byte, error) {
 	return s.ExecSSH(ctx, hostname, command)
 }
@@ -868,6 +883,11 @@ func (s idleLeaseSSH) ExecSSH(_ context.Context, hostname, command string) ([]by
 		return []byte(a), nil
 	}
 	return []byte("ok"), nil
+}
+
+// ExecSSHStdin answers one command as ExecSSH does; the input is not read.
+func (s idleLeaseSSH) ExecSSHStdin(ctx context.Context, host, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, host, command)
 }
 
 func (s idleLeaseSSH) ExecSSHBackground(ctx context.Context, hostname, command string, _ time.Duration) ([]byte, error) {

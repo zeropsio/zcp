@@ -77,6 +77,11 @@ func (s *rewireSSH) ExecSSH(ctx context.Context, host, command string) ([]byte, 
 	return nil, nil
 }
 
+// ExecSSHStdin answers one command as ExecSSH does; the input is not read.
+func (s *rewireSSH) ExecSSHStdin(ctx context.Context, host, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, host, command)
+}
+
 func (s *rewireSSH) ExecSSHBackground(ctx context.Context, host, command string, _ time.Duration) ([]byte, error) {
 	return s.ExecSSH(ctx, host, command)
 }

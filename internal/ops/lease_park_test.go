@@ -79,6 +79,11 @@ func (s *parkSSH) ExecSSH(ctx context.Context, host, command string) ([]byte, er
 	return s.c.ExecSSH(ctx, host, command)
 }
 
+// ExecSSHStdin answers one command as ExecSSH does; the input is not read.
+func (s *parkSSH) ExecSSHStdin(ctx context.Context, host, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, host, command)
+}
+
 func (s *parkSSH) ExecSSHBackground(ctx context.Context, host, command string, _ time.Duration) ([]byte, error) {
 	return s.ExecSSH(ctx, host, command)
 }

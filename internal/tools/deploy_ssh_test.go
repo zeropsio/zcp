@@ -39,6 +39,10 @@ func (s *stubSSH) ExecSSH(_ context.Context, _ string, command string) ([]byte, 
 	return s.output, s.err
 }
 
+func (s *stubSSH) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, hostname, command)
+}
+
 // errStubSSHNoRepo simulates HeadStatus's `git rev-parse --verify HEAD`
 // failing on a source with no git repo — stubSSH's default assumption.
 var errStubSSHNoRepo = &stubSSHNoRepoError{}
@@ -704,6 +708,10 @@ func (s *stubSSHWithReadiness) ExecSSH(_ context.Context, _ string, command stri
 		return nil, s.readyErr
 	}
 	return s.deployOutput, s.deployErr
+}
+
+func (s *stubSSHWithReadiness) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, hostname, command)
 }
 func (s *stubSSHWithReadiness) ExecSSHBackground(_ context.Context, _, _ string, _ time.Duration) ([]byte, error) {
 	return s.deployOutput, s.deployErr
@@ -1496,6 +1504,10 @@ func (s *stubSSHWithCommands) ExecSSH(_ context.Context, _ string, command strin
 	}
 	s.pushCalls++
 	return s.pushOutput, s.pushErr
+}
+
+func (s *stubSSHWithCommands) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, hostname, command)
 }
 func (s *stubSSHWithCommands) ExecSSHBackground(_ context.Context, _, _ string, _ time.Duration) ([]byte, error) {
 	return s.pushOutput, s.pushErr

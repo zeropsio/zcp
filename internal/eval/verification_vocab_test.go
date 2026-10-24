@@ -264,6 +264,10 @@ func (vocabNopMounter) CleanupUnit(context.Context, string) error     { return n
 type vocabNopSSH struct{}
 
 func (vocabNopSSH) ExecSSH(context.Context, string, string) ([]byte, error) { return nil, nil }
+
+func (vocabNopSSH) ExecSSHStdin(context.Context, string, string, []byte) ([]byte, error) {
+	return nil, nil
+}
 func (vocabNopSSH) ExecSSHBackground(context.Context, string, string, time.Duration) ([]byte, error) {
 	return nil, nil
 }

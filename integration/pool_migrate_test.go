@@ -47,6 +47,11 @@ func (s *poolMigrateDevSSH) ExecSSH(_ context.Context, hostname, command string)
 	return []byte(s.census), nil
 }
 
+// ExecSSHStdin answers one command as ExecSSH does; the input is not read.
+func (s *poolMigrateDevSSH) ExecSSHStdin(ctx context.Context, host, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, host, command)
+}
+
 // poolMigrateIntCensus is what the census prints for a dev service whose main
 // checkout is on main, pushed and clean, beside the linked worktrees given as
 // (path, branch) pairs.
@@ -321,6 +326,11 @@ func (s *poolRetireIntSSH) ExecSSH(ctx context.Context, hostname, command string
 		return out, nil
 	}
 	return []byte(poolMigrateIntCensus()), nil
+}
+
+// ExecSSHStdin answers one command as ExecSSH does; the input is not read.
+func (s *poolRetireIntSSH) ExecSSHStdin(ctx context.Context, host, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, host, command)
 }
 
 func (s *poolRetireIntSSH) ExecSSHBackground(_ context.Context, hostname, command string, _ time.Duration) ([]byte, error) {

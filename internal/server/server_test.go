@@ -667,6 +667,10 @@ func TestObserve_PassesThrough(t *testing.T) {
 type nopStandupSSH struct{}
 
 func (nopStandupSSH) ExecSSH(context.Context, string, string) ([]byte, error) { return nil, nil }
+
+func (nopStandupSSH) ExecSSHStdin(context.Context, string, string, []byte) ([]byte, error) {
+	return nil, nil
+}
 func (nopStandupSSH) ExecSSHBackground(context.Context, string, string, time.Duration) ([]byte, error) {
 	return nil, nil
 }

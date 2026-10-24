@@ -36,6 +36,11 @@ func (s *localLeasesSSH) ExecSSH(ctx context.Context, host, command string) ([]b
 	return c.ExecSSH(ctx, host, command)
 }
 
+// ExecSSHStdin answers one command as ExecSSH does; the input is not read.
+func (s *localLeasesSSH) ExecSSHStdin(ctx context.Context, host, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, host, command)
+}
+
 func (s *localLeasesSSH) ExecSSHBackground(ctx context.Context, host, command string, _ time.Duration) ([]byte, error) {
 	return s.ExecSSH(ctx, host, command)
 }

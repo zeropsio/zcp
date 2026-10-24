@@ -52,6 +52,11 @@ func (s *poolMigrateIntVolumeSSH) ExecSSH(ctx context.Context, hostname, command
 	return s.poolMigrateIntPartsSSH.ExecSSH(ctx, hostname, command)
 }
 
+// ExecSSHStdin answers one command as ExecSSH does; the input is not read.
+func (s *poolMigrateIntVolumeSSH) ExecSSHStdin(ctx context.Context, host, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, host, command)
+}
+
 func (s *poolMigrateIntVolumeSSH) StreamSSH(ctx context.Context, hostname, command string, stdout io.Writer) error {
 	return s.poolRetireIntSSH.StreamSSH(ctx, hostname, s.rooted(command), stdout)
 }

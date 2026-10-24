@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -19,12 +20,17 @@ import (
 )
 
 // dropClient builds like the platform does: the first poll sees BUILDING and
-// the caller drops right then; every later call honours the context it gets,
-// as a real API client does.
+// is held there until the caller's drop has reached the handler; every later
+// call honours the context it gets, as a real API client does. enabled is the
+// receipt of the first EnableSubdomainAccess call.
 type dropClient struct {
 	*platform.Mock
-	polls atomic.Int32
-	drop  func()
+	polls     atomic.Int32
+	drop      func()
+	dropped   <-chan struct{}
+	enables   atomic.Int32
+	enabled   chan struct{}
+	enableOne sync.Once
 }
 
 func (c *dropClient) SearchAppVersions(ctx context.Context, projectID string, limit int) ([]platform.AppVersionEvent, error) {
@@ -33,7 +39,7 @@ func (c *dropClient) SearchAppVersions(ctx context.Context, projectID string, li
 	}
 	if c.polls.Add(1) == 1 {
 		c.drop()
-		time.Sleep(200 * time.Millisecond) // the cancel reaches the handler
+		<-c.dropped
 		return []platform.AppVersionEvent{{ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-1", Status: "BUILDING", Sequence: 1}}, nil
 	}
 	return c.Mock.SearchAppVersions(ctx, projectID, limit)
@@ -43,7 +49,29 @@ func (c *dropClient) EnableSubdomainAccess(ctx context.Context, serviceID string
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	c.enables.Add(1)
+	c.enableOne.Do(func() { close(c.enabled) })
 	return c.Mock.EnableSubdomainAccess(ctx, serviceID)
+}
+
+// watchToolCall reports when the server-side tools/call context is cancelled
+// (the caller's drop has reached the handler) and when the handler returns.
+func watchToolCall(srv *mcp.Server) (dropped, returned <-chan struct{}) {
+	droppedCh, returnedCh := make(chan struct{}), make(chan struct{})
+	srv.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			if method != "tools/call" {
+				return next(ctx, method, req)
+			}
+			go func() {
+				<-ctx.Done()
+				close(droppedCh)
+			}()
+			defer close(returnedCh)
+			return next(ctx, method, req)
+		}
+	})
+	return droppedCh, returnedCh
 }
 
 func TestDeployTool_CallerDropsMidBuild_StillEnablesPublicAccess(t *testing.T) {
@@ -75,8 +103,9 @@ func TestDeployTool_CallerDropsMidBuild_StillEnablesPublicAccess(t *testing.T) {
 		WithProcess(&platform.Process{ID: "proc-subdomain-enable-svc-1", Status: statusFinished})
 
 	callCtx, drop := context.WithCancel(context.Background())
-	client := &dropClient{Mock: mock, drop: drop}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	dropped, returned := watchToolCall(srv)
+	client := &dropClient{Mock: mock, drop: drop, dropped: dropped, enabled: make(chan struct{})}
 	RegisterDeploySSH(srv, client, okHTTP, "proj-1", &stubSSH{output: []byte("ok")},
 		&auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}, nil, runtime.Info{}, stateDir, testDeployEngine(t), nil, DevsupSource{})
 
@@ -93,11 +122,12 @@ func TestDeployTool_CallerDropsMidBuild_StillEnablesPublicAccess(t *testing.T) {
 	defer session.Close()
 	_, _ = session.CallTool(callCtx, &mcp.CallToolParams{Name: "zerops_deploy", Arguments: map[string]any{"targetService": "app"}})
 
-	deadline := time.Now().Add(5 * time.Second)
-	for mock.CallCount("EnableSubdomainAccess") == 0 && time.Now().Before(deadline) {
-		time.Sleep(20 * time.Millisecond)
+	select { // the receipt of the call, or the deploy ended without it
+	case <-client.enabled:
+	case <-returned:
 	}
-	if got := mock.CallCount("EnableSubdomainAccess"); got != 1 {
+	<-returned
+	if got := client.enables.Load(); got != 1 {
 		t.Fatalf("EnableSubdomainAccess calls after the caller dropped: want 1, got %d", got)
 	}
 }

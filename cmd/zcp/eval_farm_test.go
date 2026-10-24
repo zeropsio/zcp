@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/sha256"
+	"debug/buildinfo"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -172,22 +173,18 @@ func TestFarmPush_Candidate_UploadsUnderSha256Key(t *testing.T) {
 	}
 }
 
-// buildVCSFixtureBinary builds a trivial main package inside a git
-// repository of its own, made in t.TempDir() with one commit, and returns
-// the binary's path. The real go toolchain stamps it with genuine
-// vcs.revision/vcs.time/vcs.modified debug/buildinfo settings — a
-// fabricated file body cannot exercise the real debug/buildinfo.ReadFile
-// path at all. Its own repository, not this checkout: go stamps VCS only
-// where .git is a directory, so a build from a linked worktree (whose .git
-// is a file) carries none. Skipped under -short: it shells out to git and
-// `go build`.
+// buildVCSFixtureBinary builds a trivial Go module inside a git repo it
+// creates in t.TempDir() (fixed identity, one commit) and returns the
+// binary's path. The real go toolchain stamps genuine vcs.revision/
+// vcs.time/vcs.modified debug/buildinfo settings — a fabricated file body
+// cannot exercise the real debug/buildinfo.ReadFile path at all — and the
+// stamp depends only on that repo, never on the host checkout (a linked
+// worktree or a dirty tree). Skipped under -short: it shells out to git
+// and `go build`.
 func buildVCSFixtureBinary(t *testing.T) string {
 	t.Helper()
 	if testing.Short() {
 		t.Skip("builds a real Go binary via the go toolchain; skipped under -short")
-	}
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not on PATH: no repository to stamp the fixture from")
 	}
 	src := t.TempDir()
 	files := map[string]string{
@@ -195,25 +192,45 @@ func buildVCSFixtureBinary(t *testing.T) string {
 		"main.go": "package main\n\nfunc main() {}\n",
 	}
 	for name, body := range files {
-		if err := os.WriteFile(filepath.Join(src, name), []byte(body), 0o600); err != nil {
-			t.Fatalf("write fixture %s: %v", name, err)
+		if err := os.WriteFile(filepath.Join(src, name), []byte(body), 0o644); err != nil {
+			t.Fatalf("WriteFile fixture %s: %v", name, err)
 		}
 	}
+	env := append(os.Environ(),
+		"GIT_CONFIG_GLOBAL="+os.DevNull,
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_AUTHOR_NAME=fixture", "GIT_AUTHOR_EMAIL=fixture@example.invalid",
+		"GIT_AUTHOR_DATE=2026-01-01T00:00:00Z",
+		"GIT_COMMITTER_NAME=fixture", "GIT_COMMITTER_EMAIL=fixture@example.invalid",
+		"GIT_COMMITTER_DATE=2026-01-01T00:00:00Z",
+		"GOWORK=off", "GOFLAGS=",
+	)
 	run := func(name string, args ...string) {
 		t.Helper()
 		cmd := exec.CommandContext(t.Context(), name, args...)
 		cmd.Dir = src
-		cmd.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-buildvcs=true")
+		cmd.Env = env
 		if output, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("%s %s: %v\n%s", name, strings.Join(args, " "), err, output)
 		}
 	}
 	run("git", "init", "-q")
-	run("git", "add", ".")
-	run("git", "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "fixture")
+	run("git", "add", "go.mod", "main.go")
+	run("git", "commit", "-q", "-m", "fixture")
 	out := filepath.Join(t.TempDir(), "candidate-with-vcs")
-	run("go", "build", "-o", out, ".")
-	return out
+	run("go", "build", "-buildvcs=true", "-o", out, ".")
+
+	info, err := buildinfo.ReadFile(out)
+	if err != nil {
+		t.Fatalf("buildinfo.ReadFile fixture: %v", err)
+	}
+	for _, s := range info.Settings {
+		if s.Key == "vcs.revision" && s.Value != "" {
+			return out
+		}
+	}
+	t.Fatalf("go build fixture yielded no vcs.revision; settings: %v", info.Settings)
+	return ""
 }
 
 // TestFarmPush_CandidateInfo_UploadsWhenVCSPresent pins docs/spec-eval-farm.md

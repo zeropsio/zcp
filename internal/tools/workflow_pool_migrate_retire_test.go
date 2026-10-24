@@ -114,6 +114,11 @@ func (s *retireSSH) ExecSSH(ctx context.Context, hostname, command string) ([]by
 	return s.poolMigrateSSH.ExecSSH(ctx, hostname, command)
 }
 
+// ExecSSHStdin answers one command as ExecSSH does; the input is not read.
+func (s *retireSSH) ExecSSHStdin(ctx context.Context, host, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, host, command)
+}
+
 func (s *retireSSH) StreamSSH(ctx context.Context, hostname, command string, stdout io.Writer) error {
 	s.events.add("ssh stream")
 	cmd := s.local(ctx, command)

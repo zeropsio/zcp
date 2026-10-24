@@ -211,3 +211,36 @@ func TestSystemSSHDeployer_StreamSSH_StdoutOnly(t *testing.T) {
 		}
 	})
 }
+
+// TestExecSSHStdin_WritesTheSessionInput_NeverTheArgv: ExecSSHStdin hands
+// its input to the ssh session, where the remote command reads it, and the
+// ssh argv carries only the command.
+//
+// non-parallel: t.Setenv puts a fake ssh first on PATH.
+func TestExecSSHStdin_WritesTheSessionInput_NeverTheArgv(t *testing.T) {
+	bin := t.TempDir()
+	argv := filepath.Join(t.TempDir(), "argv")
+	// The fake runs its last argument in sh with its own stdin, as sshd runs
+	// the command, and records its argv.
+	fake := "#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$SSH_ARGV\"\nfor a; do cmd=$a; done\nexec sh -c \"$cmd\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "ssh"), []byte(fake), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("SSH_ARGV", argv)
+	out, err := NewSystemSSHDeployer().ExecSSHStdin(context.Background(), "builder",
+		`IFS= read -r k && printf 'got %s\n' "$k"`, []byte("secret-key\n"))
+	if err != nil {
+		t.Fatalf("ExecSSHStdin: %v: %s", err, out)
+	}
+	if string(out) != "got secret-key\n" {
+		t.Errorf("remote command read %q, want %q", out, "got secret-key\n")
+	}
+	raw, err := os.ReadFile(argv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "secret-key") {
+		t.Errorf("ssh argv carries the input: %s", raw)
+	}
+}

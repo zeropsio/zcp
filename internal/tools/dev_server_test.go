@@ -359,6 +359,10 @@ func (s *slowContainer) ExecSSH(ctx context.Context, host, cmd string) ([]byte, 
 	return s.Container.ExecSSH(ctx, host, cmd)
 }
 
+func (s *slowContainer) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, hostname, command)
+}
+
 // TestDevServer_MigrationSaysEachPhaseAndItsTime: a start that moves the dev
 // setup onto the supervisor tells a client that asked for progress when the
 // redeploy begins and when the dev server's start under the supervisor
@@ -1035,6 +1039,10 @@ func (c pushFails) ExecSSH(ctx context.Context, hostname, command string) ([]byt
 		return nil, &platform.SSHExecError{Hostname: hostname, Output: "connection reset", Err: errors.New("exit status 255")}
 	}
 	return c.Container.ExecSSH(ctx, hostname, command)
+}
+
+func (c pushFails) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return c.ExecSSH(ctx, hostname, command)
 }
 
 // The re-pin rewrites the dev setup before the deploy runs, so a deploy that

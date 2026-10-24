@@ -217,6 +217,11 @@ func (s *codeVolumeSSH) ExecSSH(ctx context.Context, hostname, command string) (
 	return s.retireSSH.ExecSSH(ctx, hostname, s.rooted(command))
 }
 
+// ExecSSHStdin answers one command as ExecSSH does; the input is not read.
+func (s *codeVolumeSSH) ExecSSHStdin(ctx context.Context, host, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, host, command)
+}
+
 func (s *codeVolumeSSH) StreamSSH(ctx context.Context, hostname, command string, stdout io.Writer) error {
 	s.events.add("stream on " + hostname)
 	return s.retireSSH.StreamSSH(ctx, hostname, s.rooted(command), stdout)

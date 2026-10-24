@@ -35,6 +35,11 @@ func (s *poolPairHostSSH) ExecSSH(_ context.Context, hostname, _ string) ([]byte
 	return nil, nil
 }
 
+// ExecSSHStdin answers one command as ExecSSH does; the input is not read.
+func (s *poolPairHostSSH) ExecSSHStdin(ctx context.Context, host, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, host, command)
+}
+
 func (s *poolPairHostSSH) ExecSSHBackground(_ context.Context, hostname, _ string, _ time.Duration) ([]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

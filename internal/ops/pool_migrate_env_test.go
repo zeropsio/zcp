@@ -57,6 +57,11 @@ func (s *envLocalSSH) ExecSSH(ctx context.Context, hostname, command string) ([]
 	return out, nil
 }
 
+// ExecSSHStdin answers one command as ExecSSH does; the input is not read.
+func (s *envLocalSSH) ExecSSHStdin(ctx context.Context, host, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, host, command)
+}
+
 func (s *envLocalSSH) ExecSSHBackground(_ context.Context, _, _ string, _ time.Duration) ([]byte, error) {
 	return nil, errors.New("the env step never runs a background command")
 }
@@ -942,6 +947,11 @@ func (s *hostEnvSSH) ExecSSH(ctx context.Context, hostname, command string) ([]b
 		return nil, &platform.SSHExecError{Hostname: hostname, Err: errors.New("no such host")}
 	}
 	return host.ExecSSH(ctx, hostname, command)
+}
+
+// ExecSSHStdin answers one command as ExecSSH does; the input is not read.
+func (s *hostEnvSSH) ExecSSHStdin(ctx context.Context, host, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, host, command)
 }
 
 func (s *hostEnvSSH) ExecSSHBackground(_ context.Context, _, _ string, _ time.Duration) ([]byte, error) {

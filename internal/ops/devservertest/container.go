@@ -207,6 +207,11 @@ func (c *Container) ExecSSH(_ context.Context, hostname string, command string) 
 	return []byte("ok"), nil
 }
 
+// ExecSSHStdin answers one command as ExecSSH does; the input is not read.
+func (c *Container) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return c.ExecSSH(ctx, hostname, command)
+}
+
 // ExecSSHBackground answers like ExecSSH; zcp's dev-server path never uses it.
 func (c *Container) ExecSSHBackground(ctx context.Context, hostname, command string, _ time.Duration) ([]byte, error) {
 	return c.ExecSSH(ctx, hostname, command)

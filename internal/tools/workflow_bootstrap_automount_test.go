@@ -78,6 +78,10 @@ func (s *sshRecorder) ExecSSH(_ context.Context, hostname, command string) ([]by
 	return nil, nil
 }
 
+func (s *sshRecorder) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, hostname, command)
+}
+
 func (s *sshRecorder) ExecSSHBackground(_ context.Context, _, _ string, _ time.Duration) ([]byte, error) {
 	return nil, nil
 }

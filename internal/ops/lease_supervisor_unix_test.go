@@ -67,6 +67,11 @@ func (l localContainer) ExecSSH(ctx context.Context, host, command string) ([]by
 	return out, nil
 }
 
+// ExecSSHStdin answers one command as ExecSSH does; the input is not read.
+func (l localContainer) ExecSSHStdin(ctx context.Context, host, command string, _ []byte) ([]byte, error) {
+	return l.ExecSSH(ctx, host, command)
+}
+
 func (l localContainer) ExecSSHBackground(ctx context.Context, host, command string, _ time.Duration) ([]byte, error) {
 	return l.ExecSSH(ctx, host, command)
 }

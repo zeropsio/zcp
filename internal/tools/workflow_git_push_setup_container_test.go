@@ -40,6 +40,10 @@ func (s *containerSSHStub) ExecSSH(_ context.Context, _, cmd string) ([]byte, er
 	return []byte("ok"), nil
 }
 
+func (s *containerSSHStub) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, hostname, command)
+}
+
 func (s *containerSSHStub) ExecSSHBackground(_ context.Context, _, _ string, _ time.Duration) ([]byte, error) {
 	return []byte("ok"), nil
 }

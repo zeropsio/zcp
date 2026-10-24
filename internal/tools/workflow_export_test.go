@@ -42,6 +42,10 @@ func (s *routedSSH) ExecSSH(_ context.Context, _ string, command string) ([]byte
 	return nil, nil
 }
 
+func (s *routedSSH) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, hostname, command)
+}
+
 func (s *routedSSH) ExecSSHBackground(_ context.Context, _, _ string, _ time.Duration) ([]byte, error) {
 	return nil, nil
 }
@@ -1479,6 +1483,11 @@ type exportCallLogSSH struct {
 func (s *exportCallLogSSH) ExecSSH(_ context.Context, _ string, command string) ([]byte, error) {
 	s.commands = append(s.commands, command)
 	return nil, nil
+}
+
+// ExecSSHStdin answers one command as ExecSSH does; the input is not read.
+func (s *exportCallLogSSH) ExecSSHStdin(ctx context.Context, host, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, host, command)
 }
 
 func (s *exportCallLogSSH) ExecSSHBackground(_ context.Context, _, command string, _ time.Duration) ([]byte, error) {

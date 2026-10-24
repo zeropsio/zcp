@@ -116,6 +116,10 @@ func (s *stubSSHDivergence) ExecSSH(_ context.Context, _ string, command string)
 	}
 }
 
+func (s *stubSSHDivergence) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, hostname, command)
+}
+
 func (s *stubSSHDivergence) ExecSSHBackground(_ context.Context, _, _ string, _ time.Duration) ([]byte, error) {
 	return nil, nil
 }

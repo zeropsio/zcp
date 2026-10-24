@@ -32,6 +32,10 @@ func (s *launchSSHStub) ExecSSH(_ context.Context, _ string, command string) ([]
 	return nil, nil
 }
 
+func (s *launchSSHStub) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, hostname, command)
+}
+
 func (s *launchSSHStub) ExecSSHBackground(_ context.Context, _, _ string, _ time.Duration) ([]byte, error) {
 	return nil, nil
 }
@@ -595,6 +599,10 @@ type countingLaunchSSH struct {
 func (s *countingLaunchSSH) ExecSSH(ctx context.Context, host, command string) ([]byte, error) {
 	s.calls++
 	return s.launchSSHStub.ExecSSH(ctx, host, command)
+}
+
+func (s *countingLaunchSSH) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, hostname, command)
 }
 
 // TestHandleLaunchProduction_AMateRefusesBeforeAnyStep pins the handler

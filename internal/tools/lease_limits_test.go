@@ -251,6 +251,11 @@ func (s hostStubSSH) ExecSSH(_ context.Context, host, command string) ([]byte, e
 	return nil, &platform.SSHExecError{Hostname: host, Output: "ssh: connect to host " + host + " port 22: Connection refused", Err: errors.New("exit status 255")}
 }
 
+// ExecSSHStdin answers one command as ExecSSH does; the input is not read.
+func (s hostStubSSH) ExecSSHStdin(ctx context.Context, host, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, host, command)
+}
+
 func (s hostStubSSH) ExecSSHBackground(ctx context.Context, host, command string, _ time.Duration) ([]byte, error) {
 	return s.ExecSSH(ctx, host, command)
 }

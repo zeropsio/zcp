@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -97,9 +98,19 @@ func sshArgsBg(hostname, command string) []string {
 // On failure, returns *SSHExecError with structured output and exit error
 // separated — this prevents classifiers from matching on progress output.
 func (d *SystemSSHDeployer) ExecSSH(ctx context.Context, hostname, command string) ([]byte, error) {
+	return d.ExecSSHStdin(ctx, hostname, command, nil)
+}
+
+// ExecSSHStdin is ExecSSH with stdin as the session's input: the remote
+// command reads it, and neither the local ssh argv nor the remote shell's
+// command line carries it.
+func (d *SystemSSHDeployer) ExecSSHStdin(ctx context.Context, hostname, command string, stdin []byte) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, deployExecTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "ssh", sshArgs(hostname, command)...) //nolint:gosec // hostname and command from trusted internal callers
+	if stdin != nil {
+		cmd.Stdin = bytes.NewReader(stdin)
+	}
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {

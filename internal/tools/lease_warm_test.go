@@ -294,6 +294,11 @@ func (s *warmCloneHostSSH) ExecSSH(_ context.Context, host, command string) ([]b
 	return []byte("@@zcp-warm started\n"), nil
 }
 
+// ExecSSHStdin answers one command as ExecSSH does; the input is not read.
+func (s *warmCloneHostSSH) ExecSSHStdin(ctx context.Context, host, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, host, command)
+}
+
 func (s *warmCloneHostSSH) ExecSSHBackground(ctx context.Context, host, command string, _ time.Duration) ([]byte, error) {
 	return s.ExecSSH(ctx, host, command)
 }
