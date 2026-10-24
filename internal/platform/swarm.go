@@ -264,6 +264,32 @@ func (c *SwarmClient) Renew(ctx context.Context, id, lease string) (SwarmContain
 	return out, nil
 }
 
+// Stop stops a container its holder leases (POST /container/{id}/stop) and
+// answers it as it is after the stop: STOPPED and still reserved, so the
+// holder can start it again or release it (live, 2026-10-23: 9.2–9.6 s on a
+// container never reset, whose run.start runs, 4.6–4.7 s on a reset one;
+// /var/www, $HOME and /tmp kept, processes ended). It never sends force,
+// which would clear the reservation.
+func (c *SwarmClient) Stop(ctx context.Context, id, lease string) (SwarmContainer, error) {
+	var out SwarmContainer
+	if err := c.do(ctx, http.MethodPost, "/container/"+url.PathEscape(id)+"/stop", nil, lease, &out); err != nil {
+		return SwarmContainer{}, fmt.Errorf("swarm stop: %w", err)
+	}
+	return out, nil
+}
+
+// Start starts a stopped container its holder leases (POST
+// /container/{id}/start) and answers it as it is after the start; the
+// reservation does not change (live, 2026-10-23: 3.3–4.4 s, ssh answering
+// ~65 ms after). It never sends force.
+func (c *SwarmClient) Start(ctx context.Context, id, lease string) (SwarmContainer, error) {
+	var out SwarmContainer
+	if err := c.do(ctx, http.MethodPost, "/container/"+url.PathEscape(id)+"/start", nil, lease, &out); err != nil {
+		return SwarmContainer{}, fmt.Errorf("swarm start: %w", err)
+	}
+	return out, nil
+}
+
 // Delete removes a container its holder leases (DELETE /container/{id}); the
 // orchestrator answers 202 and removes it in the background (gone in 7–24 s,
 // listed as deleting meanwhile). It never sends force. The platform runs one
@@ -377,6 +403,11 @@ const (
 // SwarmContainerActive is the status of a running container
 // (SwarmContainer.Status), the platform's own ACTIVE.
 const SwarmContainerActive = ServiceStatusActive
+
+// SwarmContainerStopped is the status of a stopped container, the platform's
+// own STOPPED: with lockState reserved it is a container its holder stopped
+// and keeps.
+const SwarmContainerStopped = ServiceStatusStopped
 
 // SwarmReasonContainersPreparing is the SwarmError.Reason of an acquire
 // refused because free containers are still being created (a create in

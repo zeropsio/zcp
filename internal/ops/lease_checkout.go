@@ -525,6 +525,9 @@ type leaseGuardResult struct {
 	note string
 	// unreachable: ssh could not reach the container, so nothing was checked.
 	unreachable bool
+	// woken: the release started the parked lease's container to check it
+	// (wakeParkedForGuard, DP-28).
+	woken bool
 }
 
 // guardLeaseRelease refuses a release that would lose work (DP-4): commits on

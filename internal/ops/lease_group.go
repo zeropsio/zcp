@@ -340,7 +340,7 @@ func heldLease(ctx context.Context, d LeaseDeps, pool, branch string, group []le
 			continue
 		}
 		switch v.State {
-		case LeaseStateHeld, LeaseStateUnmounted:
+		case LeaseStateHeld, LeaseStateUnmounted, LeaseStateParked:
 			if held == nil || v.AcquiredAt < held.AcquiredAt {
 				held = &v
 			}
@@ -576,6 +576,8 @@ type releaseMember struct {
 	work unsavedWork
 	err  error
 	view LeaseView
+	// wake is what the release did to read a parked lease (DP-28).
+	wake leaseWake
 }
 
 // LeaseReleaseGroup releases every lease zcp holds of one repository and
@@ -616,11 +618,17 @@ func LeaseReleaseGroupChange(ctx context.Context, d LeaseDeps, repo, branch stri
 		// stanza another call or a redeploy lost before any of them runs.
 		restoreNote := d.Host.refreshAliases(ctx, d)
 		runMembers(members, func(m *releaseMember) {
+			// A parked lease is started first so its guard can read it
+			// (DP-28).
+			if m.wake, m.err = wakeParkedForGuard(ctx, d, m.rec); m.err != nil {
+				return
+			}
 			m.guard, m.work, m.err = inspectLeaseRelease(ctx, d, m.rec)
-			m.guard.note = joinNotes(restoreNote, m.guard.note)
+			m.guard.note = joinNotes(restoreNote, m.wake.note(), m.guard.note)
+			m.guard.woken = m.wake.started
 		})
 		if err := branchReleaseRefusal(d, members, repo, branch); err != nil {
-			return LeaseChange{}, err
+			return LeaseChange{}, reparkMembers(ctx, d, members, err)
 		}
 	}
 	again := LeaseReleaseBranchCall(branch, repo, force)
@@ -628,6 +636,14 @@ func LeaseReleaseGroupChange(ctx context.Context, d LeaseDeps, repo, branch stri
 		view, err := releaseGuarded(ctx, d, m.rec, m.guard)
 		if err != nil {
 			view = unreleasedView(ctx, d, m.rec, m.guard, err, again)
+			if m.wake.started {
+				// Not released: the lease it started stays parked.
+				text, parked := repark(context.WithoutCancel(ctx), d, m.rec)
+				view.Note = joinNotes(view.Note, text)
+				if parked {
+					view.State, view.ParkedAt = LeaseStateParked, m.rec.ParkedAt
+				}
+			}
 		}
 		m.view = view
 	})
@@ -806,9 +822,16 @@ func guardFailureText(err error) string {
 // left of the branch.
 func unreleasedView(ctx context.Context, d LeaseDeps, rec leaseRecord, guard leaseGuardResult, err error, again string) LeaseView {
 	v := rec.view(LeaseStateHeld)
-	gap := d.Host.gap(ctx, rec.alias())
-	if gap != "" {
-		v.State = LeaseStateUnmounted
+	gap := ""
+	switch {
+	case rec.Parked && !guard.woken:
+		// Released as it stood, stopped, and the release failed: still
+		// parked (DP-28).
+		v.State, v.ParkedAt = LeaseStateParked, rec.ParkedAt
+	default:
+		if gap = d.Host.gap(ctx, rec.alias()); gap != "" {
+			v.State = LeaseStateUnmounted
+		}
 	}
 	v.Error = errorNote(err)
 	v.Note = joinNotes(guard.note, gap,

@@ -12,6 +12,9 @@ type LeaseTargetInfo struct {
 	// Repo is the canonical repository the lease checked out, "" when its
 	// record predates keeping it.
 	Repo string
+	// Parked: zcp's record says the lease is parked — its container stopped
+	// and kept (DP-28) — so nothing answers on it until an unpark.
+	Parked bool
 }
 
 // targetInfo is the record as a lease target: never the lease.
@@ -23,6 +26,7 @@ func (r leaseRecord) targetInfo() LeaseTargetInfo {
 		ContainerHostname: r.ContainerHostname,
 		Branch:            r.Branch,
 		Repo:              r.Repo,
+		Parked:            r.Parked,
 	}
 }
 

@@ -32,6 +32,8 @@ type SwarmAPI interface {
 	Rollout(ctx context.Context) (platform.SwarmRollout, error)
 	Create(ctx context.Context, count int) ([]platform.SwarmContainer, error)
 	Container(ctx context.Context, id string) (platform.SwarmContainer, error)
+	Stop(ctx context.Context, id, lease string) (platform.SwarmContainer, error)
+	Start(ctx context.Context, id, lease string) (platform.SwarmContainer, error)
 }
 
 // SwarmFactory builds an orchestrator client.
@@ -83,6 +85,10 @@ type LeaseDeps struct {
 	// PreparingRetry is how often an acquire refused containers-preparing is
 	// retried; zero means leasePreparingRetry.
 	PreparingRetry time.Duration
+	// SSHReadyEvery is how often a started container's ssh is tried until it
+	// answers (an unpark, a release of a parked lease), for at most
+	// StartedSSHWait; zero means leaseSSHReadyEvery and leaseStartedSSHWait.
+	SSHReadyEvery, StartedSSHWait time.Duration
 }
 
 // now reads zcp's clock.
@@ -156,6 +162,9 @@ const (
 	// LeaseStateUnmounted is a held lease whose ssh alias or mount is missing
 	// on this host.
 	LeaseStateUnmounted = "unmounted"
+	// LeaseStateParked is a held lease whose container is stopped and kept
+	// (DP-28): the orchestrator lists it STOPPED and reserved.
+	LeaseStateParked = "parked"
 )
 
 // LeaseView is a lease as the agent sees it.
@@ -173,7 +182,10 @@ type LeaseView struct {
 	// (DP-17): a client binds nothing to it.
 	Reused     bool   `json:"reused,omitempty"`
 	AcquiredAt string `json:"acquiredAt,omitempty"`
-	Note       string `json:"note,omitempty"`
+	// ParkedAt is when zcp parked the lease (RFC 3339, UTC), on a view in
+	// state parked whose record says so (DP-28).
+	ParkedAt string `json:"parkedAt,omitempty"`
+	Note     string `json:"note,omitempty"`
 	// Error is why a release of the lease's branch could not release this
 	// lease, which stays held and recorded (DP-23); "" on every other view.
 	Error string `json:"error,omitempty"`
@@ -436,14 +448,21 @@ func listPoolLeases(ctx context.Context, d LeaseDeps, pool string, records []lea
 			views = append(views, lostView(r, "the pool was re-created since this lease was taken"))
 		case !present:
 			views = append(views, lostView(r, "the container is gone from the pool"))
-		case c.LockState != leaseLockReserved:
+		case c.LockState != leaseLockReserved && !powerTransition(c):
 			views = append(views, lostView(r, "the orchestrator no longer reserves this container (the lease ended or was released elsewhere)"))
+		case parkedContainer(c):
+			// Parked comes before unmounted: a parked lease's mount is
+			// gone on purpose (DP-28).
+			views = append(views, parkedView(r, c))
 		default:
 			v := r.view(LeaseStateHeld)
 			v.AcquiredAt = r.AcquiredAt
 			if gap := d.Host.gap(ctx, r.alias()); gap != "" {
 				v.State = LeaseStateUnmounted
 				v.Note = gap
+			}
+			if r.Parked {
+				v.Note = joinNotes(v.Note, startedSinceParkedNote(r.alias()))
 			}
 			views = append(views, v)
 		}
@@ -603,6 +622,11 @@ type leaseRecord struct {
 	// "" when the branch was tracked from origin, or in an older record.
 	Base       string `json:"base,omitempty"`
 	AcquiredAt string `json:"acquiredAt"`
+	// Parked: zcp stopped the lease's container with its lease and keeps it
+	// (DP-28), since ParkedAt (RFC 3339, UTC). Dev servers, deploy, verify,
+	// sync and zcp init read only records, so the record says it.
+	Parked   bool   `json:"parked,omitempty"`
+	ParkedAt string `json:"parkedAt,omitempty"`
 }
 
 func (r leaseRecord) alias() string { return leaseAlias(r.PoolHostname, r.ContainerNumber) }
@@ -714,21 +738,29 @@ func LeaseRelease(ctx context.Context, d LeaseDeps, alias string, force bool) (L
 // every other lease of its branch is handed the sibling overlay without it —
 // the container goes to the pool's next acquirer under the same hostname — and
 // a release that then fails, the orchestrator still reserving the container,
-// hands it back with the lease still in (DP-26).
+// hands it back with the lease still in (DP-26). A parked lease (DP-28) is
+// started first so the guard can read it, and a release refused after that
+// stops it again, so it stays parked; a forced one is released as it stands,
+// stopped.
 func LeaseReleaseChange(ctx context.Context, d LeaseDeps, alias string, force bool) (LeaseChange, error) {
 	rec, err := loadLeaseRecord(d.StateDir, alias)
 	if err != nil {
 		return LeaseChange{}, err
 	}
 	var guard leaseGuardResult
+	var wake leaseWake
 	if !force {
 		// The guard reaches the container through its alias: put back a
 		// stanza another call or a redeploy lost before it runs.
 		restoreNote := d.Host.refreshAliases(ctx, d)
-		if guard, err = guardLeaseRelease(ctx, d, rec); err != nil {
-			return LeaseChange{}, err
+		if wake, err = wakeParkedForGuard(ctx, d, rec); err != nil {
+			return LeaseChange{}, reparkAfterRefusal(ctx, d, rec, wake, err)
 		}
-		guard.note = joinNotes(restoreNote, guard.note)
+		if guard, err = guardLeaseRelease(ctx, d, rec); err != nil {
+			return LeaseChange{}, reparkAfterRefusal(ctx, d, rec, wake, err)
+		}
+		guard.note = joinNotes(restoreNote, wake.note(), guard.note)
+		guard.woken = wake.started
 	}
 	var siblings []leaseRecord
 	var rewired []LeaseRewire
@@ -738,7 +770,7 @@ func LeaseReleaseChange(ctx context.Context, d LeaseDeps, alias string, force bo
 	}
 	view, err := releaseGuarded(ctx, d, rec, guard)
 	if err != nil {
-		return LeaseChange{}, handBackOverlay(ctx, d, rec, siblings, rewired, err)
+		return LeaseChange{}, reparkAfterRefusal(ctx, d, rec, wake, handBackOverlay(ctx, d, rec, siblings, rewired, err))
 	}
 	return LeaseChange{Leases: []LeaseView{view}, Rewired: rewired}, nil
 }
@@ -757,7 +789,7 @@ func releaseGuarded(ctx context.Context, d LeaseDeps, rec leaseRecord, guard lea
 	if guard.unreachable && view.State == LeaseStateReleased {
 		view.State = LeaseStateLost
 	}
-	view.Note = joinNotes(guard.note, view.Note)
+	view.Note = joinNotes(guard.note, view.Note, releasedParkedNote(rec, guard, view))
 	return view, nil
 }
 

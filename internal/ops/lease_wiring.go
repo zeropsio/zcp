@@ -380,6 +380,12 @@ func rewireLease(ctx context.Context, ssh SSHDeployer, stateDir string, rec leas
 	alias := rec.alias()
 	r = LeaseRewire{Alias: alias}
 	defer func() { r.Millis = time.Since(start).Milliseconds() }()
+	if rec.Parked {
+		// Nothing answers on a parked lease; its unpark sends it the overlay
+		// the records then give (DP-28).
+		r.Note = fmt.Sprintf("%s is parked, so zcp sent it no overlay %s; %s sends it the branch's overlay as it then stands", alias, why, LeaseUnparkCall(alias))
+		return r, true
+	}
 	ds, err := ReadDevServers(ctx, ssh, alias, "")
 	var noSup *NoSupervisorError
 	var unresponsive *SupervisorUnresponsiveError

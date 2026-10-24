@@ -160,11 +160,16 @@ func verifyLease(ctx context.Context, client platform.Client, httpClient ops.HTT
 		), WithRecoveryStatus())
 	}
 	unreachable := ""
-	probeCtx, cancel := context.WithTimeout(ctx, leaseProbeTimeout)
-	if _, err := ssh.ExecSSH(probeCtx, lease.Alias, "true"); err != nil {
-		unreachable = withSSHStderr("ssh "+lease.Alias, err)
+	if lease.Parked {
+		// Nothing answers on a parked lease (DP-28): no probe to wait out.
+		unreachable = fmt.Sprintf("lease %s is parked: its container is stopped; %s starts it", lease.Alias, ops.LeaseUnparkCall(lease.Alias))
+	} else {
+		probeCtx, cancel := context.WithTimeout(ctx, leaseProbeTimeout)
+		if _, err := ssh.ExecSSH(probeCtx, lease.Alias, "true"); err != nil {
+			unreachable = withSSHStderr("ssh "+lease.Alias, err)
+		}
+		cancel()
 	}
-	cancel()
 	result := ops.VerifyLease(ctx, ssh, lease, unreachable)
 	return jsonResult(verifyResponse{
 		VerifyResult:     result,

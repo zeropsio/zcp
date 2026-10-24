@@ -48,7 +48,7 @@ type LeasePrepare struct {
 // (lease_wiring.go). It fills v's prepare report and notes; nothing in it
 // fails the acquire.
 func afterLeaseCheckout(ctx context.Context, ssh SSHDeployer, stateDir, alias string, v *LeaseView) {
-	read, note := readLeaseCheckout(ctx, ssh, alias)
+	read, note := readLeaseCheckout(ctx, ssh, alias, "so no prepare command ran")
 	if read.declaration != nil && strings.TrimSpace(read.declaration.Prepare) != "" {
 		v.Prepare, note = runLeasePrepare(ctx, ssh, alias, read.declaration.Prepare)
 	}
@@ -87,19 +87,20 @@ func leasePrepareCommand(workDir, prepare string) string {
 }
 
 // readLeaseCheckout reads the checked-out declaration and the supervisor's
-// version. note says why the declaration could not be read (so no prepare
-// command ran), "" when it could or there is none.
-func readLeaseCheckout(ctx context.Context, ssh SSHDeployer, alias string) (leaseCheckoutRead, string) {
+// version. note says why the declaration could not be read, then what that
+// means (unread: "so no prepare command ran"), "" when it could or there is
+// none.
+func readLeaseCheckout(ctx context.Context, ssh SSHDeployer, alias, unread string) (leaseCheckoutRead, string) {
 	readCtx, cancel := context.WithTimeout(ctx, containerIdentityTimeout)
 	out, err := ssh.ExecSSH(readCtx, alias, leaseDeclarationCommand(leaseWorkDir))
 	cancel()
 	if err != nil {
-		return leaseCheckoutRead{}, fmt.Sprintf("zcp could not read the checked-out %s, so no prepare command ran (%s)", devsup.DeclarationPath, sshFailureText(err))
+		return leaseCheckoutRead{}, fmt.Sprintf("zcp could not read the checked-out %s, %s (%s)", devsup.DeclarationPath, unread, sshFailureText(err))
 	}
 	sections, err := splitDevsupSections(string(out))
 	decl, ok := sections["declaration"]
 	if err != nil || !ok {
-		return leaseCheckoutRead{}, fmt.Sprintf("zcp could not read the checked-out %s, so no prepare command ran (unreadable answer %q)", devsup.DeclarationPath, boundedText(string(out)))
+		return leaseCheckoutRead{}, fmt.Sprintf("zcp could not read the checked-out %s, %s (unreadable answer %q)", devsup.DeclarationPath, unread, boundedText(string(out)))
 	}
 	var read leaseCheckoutRead
 	if version, ok := sections["version"]; ok && version.code == devsupCodeOK {
@@ -110,7 +111,7 @@ func readLeaseCheckout(ctx context.Context, ssh SSHDeployer, alias string) (leas
 	}
 	d, err := devsup.ParseDeclaration([]byte(decl.body))
 	if err != nil {
-		return read, fmt.Sprintf("the checked-out %s cannot be read, so its prepare command did not run: %v", devsup.DeclarationPath, err)
+		return read, fmt.Sprintf("the checked-out %s cannot be read, %s: %v", devsup.DeclarationPath, unread, err)
 	}
 	read.declaration = &d
 	return read, ""

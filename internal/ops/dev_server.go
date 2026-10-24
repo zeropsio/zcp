@@ -268,6 +268,10 @@ func ExecuteDevServer(
 	if err != nil {
 		return nil, fmt.Errorf("resolve %s: %w", p.Hostname, err)
 	}
+	if isLease && lease.Parked {
+		// Nothing answers on a parked lease (DP-28).
+		return nil, LeaseParkedError(lease, "zerops_dev_server")
+	}
 	if isLease {
 		// A lease is a pool container, not a service: nothing to look up, and
 		// the container is reached by its alias.

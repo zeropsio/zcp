@@ -328,6 +328,11 @@ func RegisterDeploySSH(
 				return convertError(leaseGitPushRefusal(lease), WithRecoveryStatus()), nil, nil
 			}
 		}
+		// Before any read of the source's files: a parked lease answers
+		// nothing and its mount is gone (DP-28).
+		if lease, ok := leaseOf(stateDir, cmp.Or(input.SourceService, input.TargetService)); ok && lease.Parked {
+			return convertError(ops.LeaseParkedError(lease, "a deploy from it"), WithRecoveryStatus()), nil, nil
+		}
 		// Before any read of the source's files: a pool source (named, or a
 		// self-deploy of a pool) is refused, never pushed from (PS-3).
 		if src := cmp.Or(input.SourceService, input.TargetService); !isLease(stateDir, src) {

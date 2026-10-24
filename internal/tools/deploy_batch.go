@@ -143,10 +143,12 @@ func (d batchDeployer) gate(ctx context.Context, targets []ops.DeployBatchTarget
 }
 
 // batchPreflightRefusal is why one target cannot deploy: the setup cannot be
-// resolved without the agent, pre-flight could not run, or it failed.
+// resolved without the agent, its source is a parked lease, pre-flight could
+// not run, or it failed.
 type batchPreflightRefusal struct {
 	target     string
 	setupInput *workflow.ErrRequiresSetupInput
+	refusal    error
 	err        error
 	checks     *workflow.StepCheckResult
 }
@@ -154,6 +156,8 @@ type batchPreflightRefusal struct {
 // result is the refusal as zerops_deploy_batch answers it.
 func (r *batchPreflightRefusal) result() *mcp.CallToolResult {
 	switch {
+	case r.refusal != nil:
+		return convertError(r.refusal, WithRecoveryStatus())
 	case r.setupInput != nil:
 		return jsonResult(buildRequiresSetupInputResponse(r.target, r.setupInput))
 	case r.err != nil:
@@ -183,6 +187,10 @@ func (d batchDeployer) preflight(ctx context.Context, t ops.DeployBatchTarget) (
 	sourceForPreflight := t.SourceService
 	if sourceForPreflight == "" {
 		sourceForPreflight = t.TargetService
+	}
+	// A parked lease answers nothing and its mount is gone (DP-28).
+	if lease, ok := leaseOf(d.stateDir, sourceForPreflight); ok && lease.Parked {
+		return t, &batchPreflightRefusal{target: t.TargetService, refusal: ops.LeaseParkedError(lease, "a deploy from it")}
 	}
 	t.WorkingDir = sourceWorkingDir(d.stateDir, sourceForPreflight, t.WorkingDir)
 	resolved, pfResult, pfErr := deployPreFlight(ctx, d.client, d.projectID, d.stateDir, sourceForPreflight, t.TargetService, t.Setup, t.WorkingDir, d.rtInfo.InContainer)
