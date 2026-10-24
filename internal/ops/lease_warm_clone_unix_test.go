@@ -200,6 +200,35 @@ func warmOrigin(t *testing.T, files map[string]string) (origin, mainSHA string) 
 // appFiles is a repository that ignores the dependencies the image bakes.
 var appFiles = map[string]string{".gitignore": "node_modules/\n", "README": "r", "app.txt": "a", "src/main.js": "m"}
 
+// TestLeaseWarmClone_LeavesNoEntryRacilyClean: a finished clone's index is
+// written in a later second than every file it checked out, so the checkout
+// that takes it re-hashes nothing (git compares whole seconds: a file whose
+// mtime is the index's own second is racily clean and is read again). Live, on
+// z3's 24k files, the first checkout after a clone spent 2.3 s and its clean
+// 1.3 s re-reading such files for a one-file branch change (2026-10-24).
+func TestLeaseWarmClone_LeavesNoEntryRacilyClean(t *testing.T) {
+	t.Parallel()
+	origin, _ := warmOrigin(t, appFiles)
+	b := newWarmCloneBox(t, "sh")
+
+	b.launch(t, origin, nil)
+	b.cloned(t)
+
+	index, err := os.Stat(filepath.Join(b.dir, ".git", "index"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range strings.Fields(b.git(t, "ls-files")) {
+		info, err := os.Stat(filepath.Join(b.dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.ModTime().Unix() >= index.ModTime().Unix() {
+			t.Errorf("%s was written in the index's second (%s, index %s): racily clean", name, info.ModTime(), index.ModTime())
+		}
+	}
+}
+
 // TestLeaseWarmClone_ThenCheckout_TakesTheClone: the warm clone puts the
 // pool's repository at origin/main into /var/www, detached, leaving the
 // image's baked dependencies; the checkout that follows takes it — it answers
