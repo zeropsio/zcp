@@ -268,12 +268,16 @@ func TestLeaseWarmClone_LaunchAnswers_RecordedAsTheyAre(t *testing.T) {
 func TestLeaseWarmClone_SSHFailingAsTheAliasFileIsRewritten_TriedAgain(t *testing.T) {
 	t.Parallel()
 	refused := func(t *testing.T) error {
+		t.Helper()
 		return sshFailure("Can't open user config file /etc/ssh/ssh_config.d/zcp-leases.conf: Permission denied", exitError(t, 255))
 	}
 	timedOut := func(*testing.T) error {
 		return sshFailure("", fmt.Errorf("ssh stopped: %w (%w)", context.DeadlineExceeded, errors.New("signal: killed")))
 	}
-	remote := func(t *testing.T) error { return sshFailure("mkdir: cannot create directory", exitError(t, 1)) }
+	remote := func(t *testing.T) error {
+		t.Helper()
+		return sshFailure("mkdir: cannot create directory", exitError(t, 1))
+	}
 	tests := []struct {
 		name      string
 		failure   func(*testing.T) error

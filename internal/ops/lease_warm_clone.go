@@ -55,18 +55,22 @@ const leaseWarmStateFile = "zcp-warm"
 // (GIT_HTTP_LOW_SPEED_*).
 const leaseWarmCloneWait = 3 * time.Minute
 
-// leaseWarmCloneLaunchTimeout bounds one launch: the ssh call returns as soon
-// as the clone is detached.
-const leaseWarmCloneLaunchTimeout = 30 * time.Second
+// leaseWarmCloneLaunchTimeout bounds one try of a launch: the ssh call returns
+// as soon as the clone is detached, well under a second.
+const leaseWarmCloneLaunchTimeout = 10 * time.Second
 
-// A launch ssh itself could not run (exit 255) is tried again, up to
-// leaseWarmLaunchTries times leaseWarmLaunchRetry apart: ssh refuses to start
-// while a release or an acquire reinstalls the ssh alias file it includes
-// (live, 2026-10-24: "Can't open user config file …/zcp-leases.conf:
+// A launch ssh could not run is tried again, up to leaseWarmLaunchTries times
+// leaseWarmLaunchRetry apart: ssh itself failing (exit 255) — it refuses to
+// start while a release or an acquire reinstalls the ssh alias file it
+// includes (live, 2026-10-24: "Can't open user config file …/zcp-leases.conf:
 // Permission denied"), and the release that keeps a warm container does that
-// right beside the clone it starts. The launch changes nothing until it runs.
+// right beside the clone it starts — or a try that ran out of time before ssh
+// got in, as the first connection to a container its create had just answered
+// did, dropped until the container admitted zcp a second later (live,
+// 2026-10-24). The launch changes nothing until it runs, and one that ran
+// finds the clone there the second time.
 const (
-	leaseWarmLaunchTries = 3
+	leaseWarmLaunchTries = 4
 	leaseWarmLaunchRetry = time.Second
 )
 
@@ -402,8 +406,8 @@ func (w *LeaseWarm) launchClone(ctx context.Context, d LeaseDeps, rp *resolvedPo
 	return out
 }
 
-// runLaunch runs the launch over ssh to host, again while ssh itself fails
-// (leaseWarmLaunchTries).
+// runLaunch runs the launch over ssh to host, again while ssh could not run
+// it (leaseWarmLaunchTries).
 func (w *LeaseWarm) runLaunch(ctx context.Context, d LeaseDeps, host, command string) ([]byte, error) {
 	pause := w.LaunchRetry
 	if pause == 0 {
@@ -413,7 +417,8 @@ func (w *LeaseWarm) runLaunch(ctx context.Context, d LeaseDeps, host, command st
 		lctx, cancel := context.WithTimeout(ctx, leaseWarmCloneLaunchTimeout)
 		answer, err := d.SSH.ExecSSH(lctx, host, command)
 		cancel()
-		if err == nil || exitStatus(err) != leaseSSHUnreachableExit || try == leaseWarmLaunchTries {
+		sshDidNotRun := exitStatus(err) == leaseSSHUnreachableExit || (errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil)
+		if err == nil || !sshDidNotRun || try == leaseWarmLaunchTries {
 			return answer, err
 		}
 		select {
