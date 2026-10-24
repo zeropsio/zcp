@@ -309,3 +309,55 @@ func TestThemes_Services_DevPool_Park_FactsPresent(t *testing.T) {
 		}
 	}
 }
+
+// TestThemes_Services_DevPool_WorkspaceDependencies_FactsPresent pins that the
+// services theme's "A part's dev pool" subsection carries how a pool image
+// bakes a package-manager workspace's dependencies (docs/spec-workflows.md §8
+// DP-14; zerops-docs: the prepare runtime container holds only what
+// build.addToRunPrepare copies, and its cache is keyed on those files): every
+// member's manifest, the workspace definition and any patch directory copied
+// with the lockfile before the install, keeping their paths; the whole
+// workspace installed so the installed tree matches the lockfile, since a
+// filtered one is read as stale and a later run or exec in a lease starts a
+// full install; and a part's checks reaching past its own package closure.
+func TestThemes_Services_DevPool_WorkspaceDependencies_FactsPresent(t *testing.T) {
+	t.Parallel()
+
+	store, err := GetEmbeddedStore()
+	if err != nil {
+		t.Fatalf("GetEmbeddedStore: %v", err)
+	}
+	doc, err := store.Get("zerops://themes/services")
+	if err != nil {
+		t.Fatalf("Get services: %v", err)
+	}
+	section, ok := doc.H2Sections()["Pools and Box"]
+	if !ok {
+		t.Fatal("services.md missing H2 section 'Pools and Box'")
+	}
+	const heading = "### A part's dev pool"
+	_, sub, found := strings.Cut(section, heading)
+	if !found {
+		t.Fatalf("'Pools and Box' section missing %q", heading)
+	}
+	sub, _, _ = strings.Cut(sub, "\n### ")
+	sub = strings.Join(strings.Fields(sub), " ")
+	for _, fact := range []string{
+		// The prepare container holds only what addToRunPrepare copies.
+		"`run.prepareCommands` see only what `build.addToRunPrepare` copies",
+		// A workspace install reads every member's manifest, the workspace
+		// definition and any patch directory, beside the lockfile.
+		"Workspace monorepo", "every member's manifest", "the workspace definition", "patch directory", "keeping their paths",
+		// Concrete file names, as examples.
+		"`pnpm-workspace.yaml`", "`patches/`", "`workspaces`", "`yarn.lock`", "`package-lock.json`",
+		// Install the whole workspace; a filtered one reinstalls in the lease.
+		"install the whole workspace", "matches the lockfile", "reads a filtered install as stale", "full install",
+		"`./node_modules/.bin/<tool>`",
+		// A part's checks can need more than its own closure.
+		"a part's checks", "beyond its own package closure",
+	} {
+		if !strings.Contains(sub, fact) {
+			t.Errorf("%q subsection missing fact %q", heading, fact)
+		}
+	}
+}
