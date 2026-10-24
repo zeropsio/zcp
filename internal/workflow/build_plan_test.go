@@ -135,7 +135,9 @@ func TestCountIdleServices_PoolNotAdoptable(t *testing.T) {
 func TestBuildPlan_IdleDevPool_LeasesAContainer(t *testing.T) {
 	t.Parallel()
 
-	pool := func(h string) ServiceSnapshot { return ServiceSnapshot{Hostname: h, RuntimeClass: topology.RuntimePool} }
+	pool := func(h string) ServiceSnapshot {
+		return ServiceSnapshot{Hostname: h, RuntimeClass: topology.RuntimePool}
+	}
 	tests := []struct {
 		name     string
 		services []ServiceSnapshot
