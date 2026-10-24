@@ -569,12 +569,13 @@ func TestLeaseAcquire_FullPool_ListsYourLeasesOldestActivityFirst(t *testing.T) 
 	fx.swarm.acquireErr = allReserved(causeAtMaximum)
 	fx.deps.Now = func() time.Time { return idleNow }
 	unreachable := exitError(t, 255)
-	fx.deps.SSH = &ctxSSH{fn: func(_ context.Context, host, _ string) ([]byte, error) {
+	ssh := &ctxSSH{fn: func(_ context.Context, host, _ string) ([]byte, error) {
 		if a, ok := answers[host]; ok {
 			return []byte(a), nil
 		}
 		return nil, sshFailure("ssh: connect to host "+host+" port 22: Connection refused", unreachable)
 	}}
+	fx.deps.SSH = ssh
 
 	_, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, "feature")
 	var pe *platform.PlatformError
@@ -617,5 +618,17 @@ func TestLeaseAcquire_FullPool_ListsYourLeasesOldestActivityFirst(t *testing.T) 
 	}
 	if len(fx.swarm.acquireReqs) != 1 || len(fx.swarm.releases)+len(fx.swarm.deletes) != 0 {
 		t.Errorf("acquires %d, releases %v, deletes %v: want the one acquire and nothing else", len(fx.swarm.acquireReqs), fx.swarm.releases, fx.swarm.deletes)
+	}
+
+	// Leases the listing did not confirm are named from zcp's records and
+	// never read: a container whose lease ended may be another holder's now.
+	fx.swarm.listErr = errors.New("list: i/o timeout")
+	reads := len(ssh.hosts())
+	_, err = LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, "feature")
+	if !errors.As(err, &pe) || !strings.Contains(pe.Message, "yours, by zcp's records: devpool-1, devpool-2, devpool-3, devpool-5, devpool-6, devpool-7") {
+		t.Errorf("err = %v, want zcp's records named by number", err)
+	}
+	if hosts := ssh.hosts(); len(hosts) != reads {
+		t.Errorf("ssh read %v with no listing to confirm them", hosts[reads:])
 	}
 }
