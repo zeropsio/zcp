@@ -657,9 +657,10 @@ func buildSSHCommand(targetServiceID, workingDir, setup string, includeGit bool,
 	// Push. The key reaches zcli through its environment alone (pushKeyRead)
 	// — never `zcli login`, which writes it to ~/.config/zcli and leaves the
 	// Mate's Zerops key sitting in the app's own container, where the app's
-	// dependencies run (guide 0.9). The shell reads it into a variable it
-	// does not export, and the assignment prefix on zcli's wrapper scopes it
-	// to that process only. setup is an agent-supplied tool input (and
+	// dependencies run (guide 0.9). The shell reads it into pushKeyName,
+	// which it does not export; zcli's wrapper gets it for its own process,
+	// drops it from its environment and hands it to zcli alone as
+	// ZEROPS_TOKEN. setup is an agent-supplied tool input (and
 	// recipe-session deploys reach here with meta=nil, bypassing the
 	// tools-layer setup resolution), so it's shell-quoted — a setup name with
 	// whitespace/metacharacters would otherwise splice the compound command.
@@ -688,8 +689,8 @@ func buildSSHCommand(targetServiceID, workingDir, setup string, includeGit bool,
 	q := shellQuote(pushDir)
 	sweep := fmt.Sprintf(`for f in %s/zcp-push-*/rc; do [ -z "$(find "$f" -mmin +60 2>/dev/null)" ] || rm -rf "${f%%/rc}"; done`,
 		shellQuote(path.Dir(pushDir)))
-	spawn := fmt.Sprintf(`{ %s; mkdir %s; } && { ZEROPS_TOKEN="$ZEROPS_TOKEN" sh -c 'd=$1; shift; "$@" & echo $! > "$d/pid"; wait $!; echo $? > "$d/rc.tmp" && mv "$d/rc.tmp" "$d/rc"' zcp-push %s %s > %s/log 2>&1 < /dev/null & }`,
-		sweep, q, q, pushArgs, q)
+	spawn := fmt.Sprintf(`{ %[1]s; mkdir %[2]s; } && { %[3]s="$%[3]s" sh -c 'k=$%[3]s; unset %[3]s; d=$1; shift; ZEROPS_TOKEN="$k" "$@" & echo $! > "$d/pid"; wait $!; echo $? > "$d/rc.tmp" && mv "$d/rc.tmp" "$d/rc"' zcp-push %[2]s %[4]s > %[2]s/log 2>&1 < /dev/null & }`,
+		sweep, q, pushKeyName, pushArgs)
 	waitUpload := fmt.Sprintf("{ until [ -e %s/rc ] || grep -qF %s %s/log 2>/dev/null; do sleep 1; done; cat %s/log; }",
 		q, shellQuote(zcliDeployingLine), q, q)
 	// The key is read after zcp's own git setup, none of which reads stdin,
@@ -698,10 +699,16 @@ func buildSSHCommand(targetServiceID, workingDir, setup string, includeGit bool,
 }
 
 // pushKeyRead reads the Zerops key, the first line of the push call's stdin
-// (pushKeyInput), into ZEROPS_TOKEN, where zcli reads it: no command line,
-// local ssh's or the remote shell's, ever carries the key, which any process
-// in either container could read for the whole push.
-const pushKeyRead = "IFS= read -r ZEROPS_TOKEN"
+// (pushKeyInput), into pushKeyName: no command line, local ssh's or the
+// remote shell's, ever carries the key, which any process in either container
+// could read for the whole push.
+const pushKeyRead = "IFS= read -r " + pushKeyName
+
+// pushKeyName is the remote shell's own, unexported name for the key. zcli
+// alone gets it, as ZEROPS_TOKEN scoped to its process: a ZEROPS_TOKEN the
+// container already exports stays as it is for every other process, and no
+// child of the shell — the crew save, a git hook — sees the key.
+const pushKeyName = "zcp_key"
 
 // pushKeyInput is the stdin a push call writes for pushKeyRead.
 func pushKeyInput(authInfo auth.Info) []byte {
@@ -774,5 +781,5 @@ func buildSSHCommandSHA(targetServiceID, extractedDir, setup, versionName string
 	if setup != "" {
 		pushArgs += " --setup " + shellQuote(setup)
 	}
-	return fmt.Sprintf("cd %s && %s && export ZEROPS_TOKEN && exec %s", shellQuote(extractedDir), pushKeyRead, pushArgs)
+	return fmt.Sprintf(`cd %s && %s && ZEROPS_TOKEN="$%s" exec %s`, shellQuote(extractedDir), pushKeyRead, pushKeyName, pushArgs)
 }

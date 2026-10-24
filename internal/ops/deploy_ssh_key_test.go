@@ -5,6 +5,7 @@ package ops
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -140,5 +141,101 @@ echo 'Deploying service'
 				}
 			}
 		})
+	}
+}
+
+// TestPushCommands_KeyInAPrivateName_OnlyZcliSeesIt runs each push variant in
+// real bash, with the key on stdin and the container's own ZEROPS_TOKEN
+// exported, as a dev container may: zcli gets the key as ZEROPS_TOKEN and
+// under no other name, while the crew save and the push wrapper's own child
+// keep the container's ZEROPS_TOKEN and never see the key; the remote shell
+// exports nothing.
+func TestPushCommands_KeyInAPrivateName_OnlyZcliSeesIt(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("skipping under -short; needs real git binary")
+	}
+	const containerToken = "container-own-token"
+	realMv, err := exec.LookPath("mv")
+	if err != nil {
+		t.Fatalf("mv: %v", err)
+	}
+	tests := []struct {
+		name    string
+		command func(r *pushRig) string
+		tree    bool
+	}{
+		{
+			name:    "working tree with .git",
+			command: func(r *pushRig) string { return buildSSHCommand("svc-1", r.dir, "prod", true, "main abc", r.pushDir) },
+			tree:    true,
+		},
+		{
+			name:    "working tree without .git",
+			command: func(r *pushRig) string { return buildSSHCommand("svc-1", r.dir, "", false, "", r.pushDir) },
+			tree:    true,
+		},
+		{
+			name:    "commit",
+			command: func(r *pushRig) string { return buildSSHCommandSHA("svc-1", r.dir, "prod", "commit abc") },
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			seen := t.TempDir()
+			r := newPushRig(t, "env > \"$SEEN/zcli\"\necho 'Deploying service'\n")
+			bin, _, _ := strings.Cut(strings.TrimPrefix(r.env[len(r.env)-1], "PATH="), string(os.PathListSeparator))
+			if err := os.WriteFile(filepath.Join(bin, "mv"), []byte("#!/bin/sh\nenv > \"$SEEN/mv\"\nexec "+shellQuote(realMv)+" \"$@\"\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(r.dir, ".git", "t3-crew-save"), []byte("#!/bin/sh\nenv > \"$SEEN/save\"\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			r.env = append(r.env, "SEEN="+seen, "ZEROPS_TOKEN="+containerToken)
+			r.stdin = pushKey + "\n"
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			defer cancel()
+			command := tt.command(r)
+			if strings.Contains(command, pushKey) || strings.Contains(command, "export") {
+				t.Errorf("push command carries the key or exports a name:\n%s", command)
+			}
+			if out, code := r.run(ctx, command); code != 0 {
+				t.Fatalf("push = exit %d: %s", code, out)
+			}
+			if tt.tree {
+				if out, code := r.run(ctx, buildWaitCommand(r.pushDir)); code != 0 {
+					t.Fatalf("build wait = exit %d: %s", code, out)
+				}
+			}
+			assertEnvKey(t, filepath.Join(seen, "zcli"), pushKey)
+			if tt.tree {
+				assertEnvKey(t, filepath.Join(seen, "save"), containerToken)
+				assertEnvKey(t, filepath.Join(seen, "mv"), containerToken)
+			}
+		})
+	}
+}
+
+// assertEnvKey reads the `env` a process recorded at file: its ZEROPS_TOKEN
+// is want, and the push key appears in no other variable.
+func assertEnvKey(t *testing.T, file, want string) {
+	t.Helper()
+	raw, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatalf("%s never ran: %v", filepath.Base(file), err)
+	}
+	var token string
+	for line := range strings.SplitSeq(string(raw), "\n") {
+		if v, ok := strings.CutPrefix(line, "ZEROPS_TOKEN="); ok {
+			token = v
+			continue
+		}
+		if strings.Contains(line, pushKey) {
+			t.Errorf("%s sees the key as %q", filepath.Base(file), line)
+		}
+	}
+	if token != want {
+		t.Errorf("%s ZEROPS_TOKEN = %q, want %q", filepath.Base(file), token, want)
 	}
 }
