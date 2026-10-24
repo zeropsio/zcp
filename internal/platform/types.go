@@ -54,6 +54,10 @@ type Project struct {
 	// LocationID is the region code of the primary instance location
 	// (e.g. "eu-central") — read-back counterpart of project.location.
 	LocationID string `json:"locationId,omitempty"`
+	// LocationName is the name the platform gives that location, naming
+	// the region in parentheses: "EU Central (prg1)", "US East (ny1)"
+	// (live-verified 2026-10-24).
+	LocationName string `json:"locationName,omitempty"`
 	// Tags is the project's tag list.
 	Tags []string `json:"tags,omitempty"`
 }

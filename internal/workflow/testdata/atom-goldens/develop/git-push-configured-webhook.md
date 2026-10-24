@@ -1,6 +1,6 @@
 ---
 id: develop/git-push-configured-webhook
-atomIds: [develop-intro, develop-git-push-start-from-remote, develop-change-drives-deploy, develop-git-push-delivery, develop-git-push-delivery-results, develop-self-deploy-reproducibility, develop-dynamic-runtime-start-container, develop-knowledge-pointers, develop-auto-close-semantics, develop-verify-matrix, develop-build-observe, develop-strategy-awareness]
+atomIds: [develop-intro, develop-git-push-start-from-remote, develop-change-drives-deploy, develop-git-push-delivery, develop-git-push-delivery-results, develop-self-deploy-reproducibility, develop-dynamic-runtime-start-container, develop-knowledge-pointers, develop-user-code-box, develop-auto-close-semantics, develop-verify-matrix, develop-build-observe, develop-strategy-awareness]
 description: "Standard pair, GitPushState configured (push is the delivery), BuildIntegration webhook."
 ---
 === develop-intro ===
@@ -152,6 +152,13 @@ When the embedded guidance isn't enough, these are the canonical lookups:
   (`includeEnvValues=true` only to troubleshoot).
 - **Deeper platform topics** (infra changes, scaling, status codes,
   managed-service categories) — `zerops_knowledge query="<topic>"`.
+
+---
+
+=== develop-user-code-box ===
+### A feature that runs code the app's users send
+
+A feature that runs code the app does not write itself — users' snippets or submissions, notebook cells, an agent's tool calls, plugins — runs that code in a Zerops Box sandbox beside the app, never in the app's runtime container, where namespaces or a subprocess still share its kernel, files and project network. A project without a Box gets one through `zerops_import` (`type: ubuntu/zbox@1`; a Box exists only in a project in region prg1), and the app calls its workspace API with the key wired by reference: `zerops_knowledge uri="zerops://themes/services"`, section "Running code the app's users send".
 
 ---
 

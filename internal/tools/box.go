@@ -10,6 +10,9 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 const (
@@ -163,4 +166,49 @@ func boxSetupAfterImport(ctx context.Context, deps ops.BoxDeps, input ImportInpu
 		}
 	}
 	return out
+}
+
+// refuseBoxOutsideItsRegion refuses an import declaring a Zerops Box into a
+// project whose region cannot hold one, before anything is created — a Box
+// exists only in a project in prg1 (docs/spec-workflows.md §8 PS-16). The
+// project is read only when the YAML declares a Box; a document that does
+// not read is left to the import's own error.
+func refuseBoxOutsideItsRegion(ctx context.Context, client platform.Client, projectID string, input ImportInput) *mcp.CallToolResult {
+	boxes, err := ops.ImportedBoxServices(input.Content, input.FilePath)
+	if err != nil {
+		return nil
+	}
+	if pe := ops.BoxRegionRefusal(ctx, client, projectID, boxes, "Nothing was imported."); pe != nil {
+		return convertError(pe)
+	}
+	return nil
+}
+
+// explicitPlanPreflight runs the reads an explicit bootstrap plan passes
+// before the engine validates it: the repository's parts
+// (repoPartsPlanError), then the region of every Box it would create
+// (boxRegionPlanError). The first refusal wins.
+func explicitPlanPreflight(ctx context.Context, client platform.Client, projectID string, plan []workflow.BootstrapTarget, ssh ops.SSHDeployer, rt runtime.Info) *platform.PlatformError {
+	if pe := repoPartsPlanError(ctx, client, projectID, plan, ssh, rt); pe != nil {
+		return pe
+	}
+	return boxRegionPlanError(ctx, client, projectID, plan)
+}
+
+// boxRegionPlanError refuses a bootstrap plan that would create a Zerops Box
+// — a dependency of a Box type with resolution CREATE — in a project whose
+// region cannot hold one, before the plan is taken (docs/spec-workflows.md
+// §8 PS-16). A Box the plan only names (EXISTS, SHARED) is never checked: it
+// exists already.
+func boxRegionPlanError(ctx context.Context, client platform.Client, projectID string, plan []workflow.BootstrapTarget) *platform.PlatformError {
+	var boxes []string
+	for _, target := range plan {
+		for _, dep := range target.Dependencies {
+			if topology.IsSandboxType(dep.Type) && strings.EqualFold(strings.TrimSpace(dep.Resolution), workflow.ResolutionCreate) &&
+				!slices.Contains(boxes, dep.Hostname) {
+				boxes = append(boxes, dep.Hostname)
+			}
+		}
+	}
+	return ops.BoxRegionRefusal(ctx, client, projectID, boxes, "The plan was not taken.")
 }

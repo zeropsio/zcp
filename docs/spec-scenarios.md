@@ -572,7 +572,7 @@ full product.
 | Topology | simple · dev-only · standard-pair · (local-stage · local-only: deferred) | spec-workflows §4 |
 | Runtime class | dynamic · static · implicit-webserver | §3.2 |
 | Managed deps | none · db · db+cache+storage | platform |
-| Infrastructure the app uses | none · Swarm pool (runs untrusted code) · (Zerops Box: deferred — beta, prg1 projects only) | spec-workflows §8 PS |
+| Infrastructure the app uses | none · Zerops Box (runs code the app's users send; a Box exists only in prg1, where the farm's run projects are) · Swarm pool (adopted beside an app) | spec-workflows §8 PS |
 | Repo shape | monorepo multi-`setup:` (platform default) · one repo per service | platform |
 | Access | public subdomain · internal-only (worker/backend, `http://host:port`) | platform |
 | Delivery | zcli push (auto) · git-push configured · GitHub Actions · webhook · manual | spec-workflows §4.3, §11 |
@@ -651,7 +651,7 @@ Legend: ↑ existing scenario to promote · ✚ scenario to write.
 | A9 ✚ | `managed-only-add-runtime` | managed-only · classic · dev-only | I have a DB, add an app | expectedServices unchanged nodePostgresRecord never | pending: scenario |
 | A10 ↑ | `existing-simple-mode-node-add-endpoint` | unmanaged simple svc · adopt · simple | add an endpoint | liveness meta never | gate |
 | A11 ✚ | `bootstrap-managed-only-target` | brand-new · classic · plan = db only | just a Postgres for now | expectedServices meta never | promote: meta |
-| A12 ✚ | `classic-code-runner-sandbox` | brand-new · classic · simple · node + Swarm pool (infrastructure, never the runtime) | API that runs people's Python snippets in throwaway containers | expectedServices containerCheck(snippet ran in a container of the pool; `${sandbox_API_TOKEN}` reference in zerops.yaml) noFabricatedSecret noFailedProcesses toolArg(no literal TOKEN value in an env set or import) never(dev server or lease on the pool) | gate |
+| A12 ✚ | `classic-code-runner-sandbox` | brand-new (prg1, like every farm run project) · classic · simple · node + Zerops Box (infrastructure, never the runtime) | API that runs people's Python snippets in throwaway sandboxes | expectedServices containerCheck(snippet ran in a Box sandbox — a dot-free hostname on a plain kernel version, never the API's or a pool container's `node-id-<n>.runtime.<service>.zerops`; `${sandbox_ZBOX_WORKSPACE_API_KEY}` reference in zerops.yaml) noFabricatedSecret noFailedProcesses toolArg(no literal KEY value in an env set or import) never(dev server or deploy on the Box) | gate |
 | A13 ✚ | `adopt-app-with-existing-pool` | unmanaged app + Swarm pool (preseed) · adopt · single runtime · node + pool | connect to what I have, add a health endpoint | expectedServices internalLiveness unchanged(the pool) meta(app adopted) noFailedProcesses toolArg(max 0 zerops_import) never(pool in an adopt or develop scope or plan; deploy, dev server or lease on the pool) | gate |
 
 #### B. Developing (seed: deployed fixture)
@@ -715,7 +715,6 @@ no buildFromGit), so the agent has a place to fix source. `allowFailed` explicit
 | F1 | multi-repo: web + api, each its own repo, each pair its own `RemoteURL`, both git-push | pending: scenario (baseline batch first) |
 | F2 | monorepo multi-`setup:` from the classic route | pending: scenario (baseline batch first) |
 | F3 | service deleted externally (§6.5 known gap) | pending: scenario |
-| F4 | an app whose sandboxes run on a Zerops Box (`ubuntu/zbox@1`) instead of a Swarm pool | pending: scenario (Box is beta and can be created only in a prg1 project — `spec-workflows.md §8 PS-10`) |
 | L1-L3 | local-stage first deploy · local + managed over VPN · local-only adopt | pending: local mode in farm |
 
 #### G. Git foundation (docs/spec-workflows.md §4.9, §12, Git Lifecycle §8 GLC; a row enters the gate set once its scenario carries every family it names)
