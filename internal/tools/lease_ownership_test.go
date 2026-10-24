@@ -66,6 +66,12 @@ func (o *ownershipOrchestrator) ServeHTTP(w http.ResponseWriter, r *http.Request
 		o.lockState, o.lockSince, o.lease = "reserved", ownershipSince, leaseTestLease
 		c := o.container()
 		_, _ = w.Write([]byte(c[:len(c)-1] + `,"lease":"` + leaseTestLease + `"}`))
+	case r.Method == http.MethodPost && (r.URL.Path == "/container/c-abc/stop" || r.URL.Path == "/container/c-abc/start"):
+		if o.lockState == "reserved" && r.Header.Get("X-Swarm-Lease") != o.lease {
+			heldByOther()
+			return
+		}
+		_, _ = w.Write([]byte(o.container()))
 	case r.Method == http.MethodPost && r.URL.Path == "/container/c-abc/release":
 		o.releases++
 		switch {
@@ -200,5 +206,50 @@ func TestLeaseTool_Ownership_ForcedReleaseOfAFreeContainer_NeverResetsIt(t *test
 	}
 	if releases, resets := orch.counts(); releases != 0 || resets != 0 {
 		t.Errorf("orchestrator releases %d, free containers reset %d: want neither", releases, resets)
+	}
+}
+
+// TestLeaseTool_Ownership_ParkHeldByOther_ResultSaysLost: a park of a lease
+// zcp cannot verify (a record older than keeping the reservation's lockSince,
+// reserved a minute after its acquire) stops the container with the lease;
+// the orchestrator's held-by-other answer means another holder has it, so the
+// result says lost and that the record is dropped — never "parked, still
+// yours", never "retry in a moment".
+func TestLeaseTool_Ownership_ParkHeldByOther_ResultSaysLost(t *testing.T) {
+	t.Parallel()
+	orch := &ownershipOrchestrator{lockState: "reserved", lockSince: ownershipOtherSince, lease: ownershipOtherLease}
+	srv, stateDir := leaseToolServerSSH(t, orch, &leaseStubSSH{})
+	rec := `{"poolHostname":"devpool","poolServiceId":"svc-pool","containerId":"c-abc","containerNumber":3,` +
+		`"containerHostname":"node-id-3.runtime.devpool.zerops","lease":"` + leaseTestLease + `","branch":"lv-bogus","acquiredAt":"2026-10-24T11:01:00Z"}`
+	if err := os.MkdirAll(filepath.Join(stateDir, "leases"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "leases", "devpool-3.json"), []byte(rec), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	res := callTool(t, srv, "zerops_lease", map[string]any{"action": "park", "lease": "devpool-3"})
+	text := getTextContent(t, res)
+	if res.IsError {
+		t.Fatalf("park failed: %s", text)
+	}
+	got := decodeOwnership(t, text)
+	if len(got.Leases) != 1 || got.Leases[0].State != ops.LeaseStateLost || !strings.Contains(got.Leases[0].Note, "another holder") {
+		t.Errorf("park leases = %+v, want devpool-3 lost, naming another holder", got.Leases)
+	}
+	var next struct {
+		NextActions string `json:"nextActions"`
+	}
+	if err := json.Unmarshal([]byte(text), &next); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(next.NextActions, "still yours") || !strings.Contains(next.NextActions, "record") {
+		t.Errorf("nextActions = %q, want the dropped record, never a parked lease", next.NextActions)
+	}
+	if strings.Contains(text, "in a moment") {
+		t.Errorf("result tells the agent to retry: %s", text)
+	}
+	if _, err := os.Stat(filepath.Join(stateDir, "leases", "devpool-3.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("record survives: %v", err)
 	}
 }
