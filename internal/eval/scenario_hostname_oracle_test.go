@@ -175,11 +175,11 @@ func TestScenario_ClassicCodeRunnerSandbox_ExpectsABoxSandbox(t *testing.T) {
 		t.Fatalf("match %q: %v", runCheck.Match, err)
 	}
 	for answer, want := range map[string]bool{
-		`{"output":"j1us09qz 6.18.53\n"}`:                       true,
-		`{"output": "iuo80c7f 6.18.53"}`:                        true,
+		`{"output":"j1us09qz 6.18.53\n"}`:                               true,
+		`{"output": "iuo80c7f 6.18.53"}`:                                true,
 		`{"output":"node-id-1.runtime.api.zerops 7.1.8-zabbly+\n"}`:     false,
 		`{"output":"node-id-2.runtime.sandbox.zerops 7.1.8-zabbly+\n"}`: false,
-		`{"output":"api 7.1.8-zabbly+\n"}`:                      false,
+		`{"output":"api 7.1.8-zabbly+\n"}`:                              false,
 	} {
 		if got := re.MatchString(answer); got != want {
 			t.Errorf("match(%s) = %v, want %v", answer, got, want)

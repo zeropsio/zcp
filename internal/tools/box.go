@@ -10,6 +10,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -181,6 +182,17 @@ func refuseBoxOutsideItsRegion(ctx context.Context, client platform.Client, proj
 		return convertError(pe)
 	}
 	return nil
+}
+
+// explicitPlanPreflight runs the reads an explicit bootstrap plan passes
+// before the engine validates it: the repository's parts
+// (repoPartsPlanError), then the region of every Box it would create
+// (boxRegionPlanError). The first refusal wins.
+func explicitPlanPreflight(ctx context.Context, client platform.Client, projectID string, plan []workflow.BootstrapTarget, ssh ops.SSHDeployer, rt runtime.Info) *platform.PlatformError {
+	if pe := repoPartsPlanError(ctx, client, projectID, plan, ssh, rt); pe != nil {
+		return pe
+	}
+	return boxRegionPlanError(ctx, client, projectID, plan)
 }
 
 // boxRegionPlanError refuses a bootstrap plan that would create a Zerops Box

@@ -24,11 +24,8 @@ func BoxRegionRefusal(ctx context.Context, client platform.Client, projectID str
 	if len(boxes) == 0 {
 		return nil
 	}
-	project, err := client.GetProject(ctx, projectID)
-	if err != nil || project == nil || strings.TrimSpace(project.LocationID) == "" {
-		return nil
-	}
-	if topology.BoxLocationAllowed(project.LocationID) {
+	project, known := projectLocation(ctx, client, projectID)
+	if !known || topology.BoxLocationAllowed(project.LocationID) {
 		return nil
 	}
 	where := project.LocationName
@@ -46,4 +43,15 @@ func BoxRegionRefusal(ctx context.Context, client platform.Client, projectID str
 		fmt.Sprintf("%s %s, and a Box can be created only in a project in region %s. This project is in %s, where a Box's create fails with the platform's %q message and the platform removes the service.",
 			outcome, subject, regions, where, boxCapacityMessage),
 		fmt.Sprintf("Run the app and its Box in a project in region %s. In this project, import what you need without the Box.", regions))
+}
+
+// projectLocation reads the project's record for its location; known is
+// false when the read fails or the record names no location — a region the
+// pre-check cannot judge, so it refuses nothing.
+func projectLocation(ctx context.Context, client platform.Client, projectID string) (platform.Project, bool) {
+	project, err := client.GetProject(ctx, projectID)
+	if err != nil || project == nil || strings.TrimSpace(project.LocationID) == "" {
+		return platform.Project{}, false
+	}
+	return *project, true
 }

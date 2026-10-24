@@ -1984,7 +1984,7 @@ func TestScenario_UserSuppliedCode_PlanningPointsAtABox(t *testing.T) {
 
 	const developAtom = "develop-user-code-box"
 	deployed := render(StateEnvelope{Phase: PhaseDevelopActive, Environment: EnvContainer,
-		Services: fixSnapDeployedPairAuto("appdev", "appstage", "nodejs@22", topology.RuntimeDynamic)})
+		Services: []ServiceSnapshot{fixSnapDeployedDevAuto("webdev")}})
 	requireAtomIDsContain(t, "a deployed app adding a feature that runs users' code", deployed, "develop-user-code-box")
 	feature, _ := has(deployed, developAtom)
 	for _, want := range []string{"Zerops Box", "ubuntu/zbox@1", "prg1", `zerops_knowledge uri="zerops://themes/services"`} {
