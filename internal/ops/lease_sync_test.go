@@ -651,22 +651,29 @@ func TestLeaseSync_NoSSHOrNoRecord_Refused(t *testing.T) {
 	}
 }
 
-// syncDevServers is a member's dev servers: web watches the code, api and
-// worker do not, worker is stopped, and hq belongs to another part.
+// syncDevServers is a member's dev servers: web watches the code through the
+// supervisor, api has no watch — its command's own watcher reloads it, as the
+// declaration's contract says — worker is stopped, hq belongs to another
+// part, and crew-ada is a runtime entry (`ctl run`), which no declaration
+// covers.
 const syncDevServers = `{"version":"v9.400.0","formats":[1],"capabilities":["env"]}
 @@zcp-devsup version 0
-{"format":1,"servers":{"web":{"source":"declared","desired":"running","status":"running"},"api":{"source":"declared","desired":"running","status":"running"},"worker":{"source":"declared","desired":"stopped","status":"stopped"}}}
+{"format":1,"servers":{"web":{"source":"declared","desired":"running","status":"running"},"api":{"source":"declared","desired":"running","status":"running"},"worker":{"source":"declared","desired":"stopped","status":"stopped"},"crew-ada":{"source":"runtime","desired":"running","status":"running","command":"bun run dev","cwd":".","port":4100}}}
 @@zcp-devsup status 0
 @@zcp-devsup listen 0
-{"version":1,"servers":[{"name":"web","port":3000,"command":"npm run dev","watch":{"paths":["src"]}},{"name":"api","port":3001,"command":"node api.js"},{"name":"worker","command":"node worker.js"},{"name":"hq","port":8080,"command":"go run .","service":"hqpool"}]}
+{"version":1,"servers":[{"name":"web","port":3000,"command":"npm run dev","watch":{"paths":["src"]}},{"name":"api","port":3001,"command":"vite --host 0.0.0.0"},{"name":"worker","command":"node worker.js"},{"name":"hq","port":8080,"command":"go run .","service":"hqpool"}]}
 @@zcp-devsup declaration 0
 `
 
-// TestLeaseSync_FastForwardedMember_NamesServersWithoutAWatch: a running
-// server without a watch keeps the old code until restarted, so a member that
-// was fast-forwarded names each, with the restart; a server with a watch sees
-// the change on its own, and a member that did not move reads none.
-func TestLeaseSync_FastForwardedMember_NamesServersWithoutAWatch(t *testing.T) {
+// TestLeaseSync_FastForwardedMember_NamesOnlyServersNothingReloads: a
+// declared server reloads by itself — with a watch the supervisor restarts it
+// on a change under its paths, without one its command's own watcher (vite,
+// --watch) does, as the declaration's contract says — so a fast-forward names
+// none of them as keeping the old code, nor suggests restarting one (a
+// measured sync named a Vite server that had already served the new file). A
+// runtime entry is covered by no declaration: nothing zcp knows of reloads
+// it, so it is named with its restart. A member that did not move reads none.
+func TestLeaseSync_FastForwardedMember_NamesOnlyServersNothingReloads(t *testing.T) {
 	t.Parallel()
 	gf, remote := newSyncFixture(t, syncBranch, syncRecord("apipool", "svc-api", 2, syncBranch, "2026-10-24T10:00:02Z"))
 	remote.devsup["webpool-7"] = syncDevServers
@@ -678,11 +685,16 @@ func TestLeaseSync_FastForwardedMember_NamesServersWithoutAWatch(t *testing.T) {
 		t.Fatalf("LeaseSync: %v", err)
 	}
 	web := syncMemberOf(t, v, "webpool-7")
-	if len(web.UnwatchedServers) != 1 || web.UnwatchedServers[0] != "api" {
-		t.Errorf("webpool-7 unwatched = %v, want [api] (web watches, worker is stopped, hq is hqpool's)", web.UnwatchedServers)
+	if !slices.Equal(web.UnwatchedServers, []string{"crew-ada"}) {
+		t.Errorf("webpool-7 unwatched = %v, want [crew-ada] (web watches, api's own watcher reloads it, worker is stopped, hq is hqpool's)", web.UnwatchedServers)
 	}
-	if !strings.Contains(web.Note, `zerops_dev_server action=restart hostname="webpool-7" name="api"`) {
-		t.Errorf("note %q should name api's restart", web.Note)
+	for _, name := range []string{"api", "web"} {
+		if strings.Contains(web.Note, "name=\""+name+"\"") {
+			t.Errorf("note %q names a restart of %s, which reloads by itself", web.Note, name)
+		}
+	}
+	if !strings.Contains(web.Note, `zerops_dev_server action=restart hostname="webpool-7" name="crew-ada"`) {
+		t.Errorf("note %q should name crew-ada's restart", web.Note)
 	}
 	api := syncMemberOf(t, v, "apipool-2")
 	if api.Outcome != LeaseSyncUpToDate || api.From != syncTo || api.To != syncTo || len(api.UnwatchedServers) != 0 {
@@ -759,9 +771,11 @@ func TestLeaseSync_FastForwardChangedDeclaration_SendsOverlayThenReloads(t *test
 	}{
 		{name: "siblingEnv and a server added", decl: `{"version":1,"siblingEnv":{"HQ_HOST":"hqpool"},` + servers, changed: true,
 			wantEnv: map[string]string{"HQ_HOST": nodeHostnameOf(groupHQPool, 3)}, wantReloaded: true, wantNote: []string{".zcp/dev-servers.json", "HQ_HOST", "admin"}},
+		// web has no watch: its command's own watcher reloads it, so it is
+		// never named as keeping the old code.
 		{name: "a server added", decl: `{"version":1,` + servers, changed: true,
-			wantReloaded: true, wantUnwatched: []string{"web"}, wantNote: []string{".zcp/dev-servers.json", "admin"}},
-		{name: "the declaration left alone", decl: `{"version":1,` + servers, wantUnwatched: []string{"web"}},
+			wantReloaded: true, wantNote: []string{".zcp/dev-servers.json", "admin"}},
+		{name: "the declaration left alone", decl: `{"version":1,` + servers},
 		// Which servers watch is unknown while the file cannot be read, so
 		// none is named as keeping the old code.
 		{name: "a declaration that cannot be read", decl: `{"version":1,"servers":[{"name":"web","port":3000}]}`, changed: true,

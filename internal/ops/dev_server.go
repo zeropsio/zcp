@@ -769,7 +769,7 @@ func startDevServer(ctx context.Context, ssh SSHDeployer, client platform.Client
 	// supervisor's overlay before anything starts or reloads them (DP-22).
 	var wiring *leaseWiring
 	if p.lease != nil {
-		w, err := wireLeaseServers(ctx, ssh, p, ds)
+		w, err := wireLeaseServers(ctx, ssh, leasePreviewURLs(ctx, client, projectID), p, ds)
 		if err != nil {
 			return nil, err
 		}

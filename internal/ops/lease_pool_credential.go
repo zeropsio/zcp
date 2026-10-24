@@ -189,14 +189,14 @@ func ensurePoolHQCredential(ctx context.Context, d LeaseDeps, pool *platform.Ser
 // GIT_TOKEN (a PREREQUISITE_MISSING checkout) means it is not what zcp's
 // record says — the secret changed or HQ revoked it since — so the record
 // goes, and the next acquire writes the credential afresh.
-func (s poolCredentialState) checkout(ctx context.Context, d LeaseDeps, rec leaseRecord, repo, branch, base string) (string, error) {
+func (s poolCredentialState) checkout(ctx context.Context, d LeaseDeps, rec leaseRecord, repo, branch, base string) (leaseCheckedOut, error) {
 	s.awaitSession(ctx, d, rec)
-	cut, err := checkoutLease(ctx, d, rec, repo, branch, base)
+	got, err := checkoutLease(ctx, d, rec, repo, branch, base)
 	var pe *platform.PlatformError
 	if s.pool != "" && errors.As(err, &pe) && pe.Code == platform.ErrPrerequisiteMissing {
 		_ = forgetPoolCredential(d.StateDir, s.pool)
 	}
-	return cut, err
+	return got, err
 }
 
 // awaitSession reads, after a write, the fingerprint of GIT_TOKEN in fresh

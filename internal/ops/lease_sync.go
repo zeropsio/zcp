@@ -32,9 +32,10 @@ import (
 // sets write. A fast-forward that changes .zcp/dev-servers.json is zcp's own
 // change to the lease's checkout, as an acquire's checkout is (DP-13), so the
 // lease's supervisor takes it in the same call: the sibling overlay first
-// (DP-22), then a reload. The code a server runs is another matter: a server
-// without a watch keeps the code it started with, and the sync names it with
-// its restart, which stays the agent's to make.
+// (DP-22), then a reload. The code a server runs is another matter: a
+// declared server reloads by itself (the supervisor's watch, or its command's
+// own watcher), while a runtime entry keeps the code it started with, and the
+// sync names it with its restart, which stays the agent's to make.
 
 // Push outcomes.
 const (
@@ -112,8 +113,9 @@ type LeaseSyncMember struct {
 	// origin's branch lacks.
 	OwnCommits int `json:"ownCommits,omitempty"`
 	// UnwatchedServers are the dev servers running on a fast-forwarded member
-	// with no watch: they keep serving the code they started with until
-	// restarted.
+	// that nothing zcp knows of reloads — runtime entries; a declared server
+	// reloads by itself — so they keep serving the code they started with
+	// until restarted.
 	UnwatchedServers []string `json:"unwatchedServers,omitempty"`
 	// Reloaded: the fast-forward changed the member's .zcp/dev-servers.json
 	// and its supervisor took it — the sibling overlay sent when it changed,
@@ -403,7 +405,7 @@ func leaseSyncMemberCommand(branch string) string {
 
 // fastForwardMember runs one other lease's step (leaseSyncMemberCommand) and
 // records its outcome on m, with how long it took; a member that moved also
-// names its running dev servers without a watch. source is the lease the sync
+// names its running dev servers nothing reloads. source is the lease the sync
 // pushed from, onHQ whether the repository is on the Mate's HQ.
 func fastForwardMember(ctx context.Context, d LeaseDeps, m *LeaseSyncMember, branch, source string, onHQ bool) {
 	start := time.Now()
@@ -444,7 +446,7 @@ func fastForwardMember(ctx context.Context, d LeaseDeps, m *LeaseSyncMember, bra
 		if hasMark(a, "declaration") {
 			m.Reloaded, fresh, declared = takeMemberDeclaration(ctx, d, m.Alias, m.Pool)
 		}
-		m.UnwatchedServers, unwatched = unwatchedServers(ctx, d.SSH, m.Alias, m.Pool, fresh)
+		m.UnwatchedServers, unwatched = unwatchedServers(ctx, d.SSH, m.Alias, fresh)
 		m.Note = joinNotes(declared, unwatched)
 	default:
 		m.Outcome = LeaseSyncFailed
@@ -526,13 +528,18 @@ func blockedMember(ctx context.Context, ssh SSHDeployer, m *LeaseSyncMember, a l
 }
 
 // unwatchedServers names the dev servers running on a lease that was just
-// fast-forwarded with no watch — the lease's own entries (the pool's or none,
-// DP-22) without one, and any runtime entry — which keep serving the code
-// they started with until restarted, and says how to restart each; fresh are
-// the servers that started or restarted since the fast-forward, which run the
-// new code. A lease without a supervisor runs none; one zcp cannot read is a
-// note.
-func unwatchedServers(ctx context.Context, ssh SSHDeployer, alias, pool string, fresh map[string]bool) ([]string, string) {
+// fast-forwarded which nothing zcp knows of reloads, and says how to restart
+// each; fresh are the servers that started or restarted since the
+// fast-forward, which run the new code. Every declared server reloads by
+// itself, by the declaration's contract (docs/spec-mate.md §2.8a.1
+// servers[].watch): with a watch the supervisor restarts it on a change under
+// its paths, and without one its command's own watcher (vite, --watch) does —
+// a sync that named such a server had the agent restart one that already
+// served the new code. A runtime entry (`ctl run`) is covered by no
+// declaration, so nothing reloads it that zcp knows of: it keeps the code it
+// started with until restarted. A lease without a supervisor runs none; one
+// zcp cannot read is a note.
+func unwatchedServers(ctx context.Context, ssh SSHDeployer, alias string, fresh map[string]bool) ([]string, string) {
 	ds, err := ReadDevServers(ctx, ssh, alias, "")
 	if err != nil {
 		var noSup *NoSupervisorError
@@ -541,23 +548,9 @@ func unwatchedServers(ctx context.Context, ssh SSHDeployer, alias, pool string, 
 		}
 		return nil, fmt.Sprintf("zcp could not read the dev servers of %s, so it cannot say which keep the old code until restarted (%s)", alias, sshFailureText(err))
 	}
-	ds.Service = pool
-	declared := map[string]devsup.Server{}
-	for _, s := range ds.Servers() {
-		declared[s.Name] = s
-	}
 	var names []string
 	for name, st := range ds.State.Servers {
-		if !liveServer(st) || fresh[name] {
-			continue
-		}
-		if s, ok := declared[name]; ok {
-			if s.Watch == nil {
-				names = append(names, name)
-			}
-			continue
-		}
-		if st.Source == devsup.SourceRuntime {
+		if liveServer(st) && !fresh[name] && keepsCodeItStartedWith(st) {
 			names = append(names, name)
 		}
 	}
@@ -569,8 +562,16 @@ func unwatchedServers(ctx context.Context, ssh SSHDeployer, alias, pool string, 
 	for _, name := range names {
 		calls = append(calls, fmt.Sprintf("zerops_dev_server action=restart hostname=%q name=%q", alias, name))
 	}
-	return names, fmt.Sprintf("%s run(s) on %s without a watch, so it keeps the code it started with until restarted: %s",
+	return names, fmt.Sprintf("%s run(s) on %s as a runtime entry, which no declared watch covers, so it keeps the code it started with until restarted: %s",
 		strings.Join(names, ", "), alias, strings.Join(calls, "; "))
+}
+
+// keepsCodeItStartedWith reports whether nothing zcp knows of reloads a
+// running server when its checkout changes: true only for a runtime entry. A
+// declared server reloads by itself — through the supervisor's watch, or,
+// with no watch, through its command's own watcher.
+func keepsCodeItStartedWith(st devsup.ServerState) bool {
+	return st.Source == devsup.SourceRuntime
 }
 
 // takeMemberDeclaration has a lease's supervisor take the
@@ -605,7 +606,7 @@ func takeMemberDeclaration(ctx context.Context, d LeaseDeps, alias, pool string)
 	before := ds.State
 	var did []string
 	lease := rec.targetInfo()
-	env, err := leaseSiblingEnv(d.StateDir, lease, ds.Declared.SiblingEnv)
+	env, err := leaseSiblingEnv(d.StateDir, lease, siblingWiringOf(&ds.Declared), d.previewURLs(ctx))
 	switch {
 	case err != nil:
 		did = append(did, fmt.Sprintf("sent no sibling overlay (%v)", err))

@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/zeropsio/zcp/internal/devsup"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -262,7 +263,34 @@ func leaseAcquireNext(views []ops.LeaseView) string {
 	if len(reused) > 0 {
 		next += fmt.Sprintf(" %s was already held for this branch (reused): the same container, not a second one.", strings.Join(reused, ", "))
 	}
-	return next + leaseParkedNext(views) + " zerops_lease action=status shows every lease."
+	return next + leaseDevServersNext(views) + leaseParkedNext(views) + " zerops_lease action=status shows every lease."
+}
+
+// leaseDevServersNext names, among the dev servers an acquire read on the
+// leases it took (DP-30), the status call for each whose port did not answer
+// yet when the acquire ended and the log of each that crashed; "" when every
+// one runs or none was read.
+func leaseDevServersNext(views []ops.LeaseView) string {
+	var starting, crashed []string
+	for _, v := range views {
+		for _, s := range v.DevServers {
+			switch devsup.Status(s.Status) {
+			case devsup.StatusStarting:
+				starting = append(starting, fmt.Sprintf("zerops_dev_server action=status hostname=%q name=%q", v.Alias, s.Name))
+			case devsup.StatusCrashed:
+				crashed = append(crashed, fmt.Sprintf("zerops_dev_server action=logs hostname=%q name=%q", v.Alias, s.Name))
+			case devsup.StatusRunning, devsup.StatusStopped:
+			}
+		}
+	}
+	var next string
+	if len(starting) > 0 {
+		next += " Dev servers whose port did not answer yet when the acquire ended (still starting) — check each again: " + strings.Join(starting, "; ") + "."
+	}
+	if len(crashed) > 0 {
+		next += " Dev servers that crashed — read why: " + strings.Join(crashed, "; ") + "."
+	}
+	return next
 }
 
 // leaseParkedNext names the parked leases among views and the call that

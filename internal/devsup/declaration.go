@@ -62,6 +62,15 @@ type Declaration struct {
 	// the supervisor validates it with the rest of the file and never puts it
 	// into any environment itself.
 	SiblingEnv map[string]string `json:"siblingEnv,omitempty"`
+	// SiblingPreviewEnv maps an environment variable a part's dev server
+	// reads to the pool whose lease of the same branch it reaches from a
+	// browser: zcp hands the servers that lease's preview URL through `ctl
+	// env`, as it hands SiblingEnv's container hostnames, which only
+	// server-side code can resolve. It is a top-level key of its own, so a
+	// supervisor that predates it ignores it; it follows SiblingEnv's rules
+	// and never names a variable SiblingEnv names. The supervisor never puts
+	// it into any environment itself.
+	SiblingPreviewEnv map[string]string `json:"siblingPreviewEnv,omitempty"`
 	// Prepare, when set, is the shell command a dev pool's lease runs in the
 	// repo root after its checkout and before the supervisor starts or
 	// reloads (docs/spec-mate.md §2.8a.1): what a branch's own lockfile needs
@@ -169,6 +178,21 @@ func envNameError(name string) error {
 // siblingPool is a pool's service hostname, as siblingEnv names it.
 var siblingPool = regexp.MustCompile(`^[a-z0-9]{1,40}$`)
 
+// checkSiblingVars checks the variables a sibling map (key: siblingEnv or
+// siblingPreviewEnv) names: each a name the servers can be given, each naming
+// a pool's hostname.
+func checkSiblingVars(key string, vars map[string]string) error {
+	for _, name := range slices.Sorted(maps.Keys(vars)) {
+		if err := envNameError(name); err != nil {
+			return fmt.Errorf("%s %w", key, err)
+		}
+		if pool := vars[name]; !siblingPool.MatchString(pool) {
+			return fmt.Errorf("%s %q: %q is not a pool hostname (%s)", key, name, pool, siblingPool)
+		}
+	}
+	return nil
+}
+
 // ErrUnsupportedFormat marks a declaration whose version this supervisor does
 // not run.
 var ErrUnsupportedFormat = errors.New("unsupported declaration format")
@@ -197,12 +221,15 @@ func ParseDeclaration(b []byte) (Declaration, error) {
 	if d.PreviewPortBase < 0 || d.PreviewPortBase > 65535 {
 		return Declaration{}, fmt.Errorf("%s: previewPortBase %d is out of range", DeclarationPath, d.PreviewPortBase)
 	}
-	for _, name := range slices.Sorted(maps.Keys(d.SiblingEnv)) {
-		if err := envNameError(name); err != nil {
-			return Declaration{}, fmt.Errorf("%s: siblingEnv %w", DeclarationPath, err)
-		}
-		if pool := d.SiblingEnv[name]; !siblingPool.MatchString(pool) {
-			return Declaration{}, fmt.Errorf("%s: siblingEnv %q: %q is not a pool hostname (%s)", DeclarationPath, name, pool, siblingPool)
+	if err := checkSiblingVars("siblingEnv", d.SiblingEnv); err != nil {
+		return Declaration{}, fmt.Errorf("%s: %w", DeclarationPath, err)
+	}
+	if err := checkSiblingVars("siblingPreviewEnv", d.SiblingPreviewEnv); err != nil {
+		return Declaration{}, fmt.Errorf("%s: %w", DeclarationPath, err)
+	}
+	for _, name := range slices.Sorted(maps.Keys(d.SiblingPreviewEnv)) {
+		if _, both := d.SiblingEnv[name]; both {
+			return Declaration{}, fmt.Errorf("%s: %q is in both siblingEnv and siblingPreviewEnv: a variable gets one value, a container hostname or a preview URL", DeclarationPath, name)
 		}
 	}
 	names, ports, preview := map[string]bool{}, map[int]string{}, ""

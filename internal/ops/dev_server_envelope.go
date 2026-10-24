@@ -91,6 +91,9 @@ func DevServerStates(ctx context.Context, client platform.Client, projectID stri
 // devServerPublicURLs maps each declared port to its public subdomain URL —
 // only while the service's subdomain is on and the port has HTTP support.
 func devServerPublicURLs(ctx context.Context, client platform.Client, projectID string, ds *DevServers) map[int]string {
+	if client == nil {
+		return nil
+	}
 	services, err := client.ListServices(ctx, projectID)
 	if err != nil {
 		return nil
@@ -128,7 +131,7 @@ func LeasePreviewURL(ctx context.Context, client platform.Client, projectID, poo
 // detail. requireOn false trusts a caller that has just enabled the subdomain
 // (the flag takes a moment to show).
 func leasePreviewURL(ctx context.Context, client platform.Client, projectID, pool string, port int, requireOn bool) string {
-	if port <= 0 {
+	if port <= 0 || client == nil {
 		return ""
 	}
 	services, err := client.ListServices(ctx, projectID)

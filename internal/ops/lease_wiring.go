@@ -46,50 +46,135 @@ import (
 
 // LeaseSiblingEnv is the env overlay of a lease's dev servers: each variable
 // the declaration's siblingEnv names, set to the container hostname of the
-// branch's lease on the pool it names, or left to the container's own env
-// when the branch holds no lease on that pool.
+// branch's lease on the pool it names, and each variable its
+// siblingPreviewEnv names, set to that lease's preview URL. A variable is left
+// to the container's own env when the branch holds no lease on its pool, or
+// when zcp cannot build that lease's preview URL.
 type LeaseSiblingEnv struct {
-	// Set is the overlay: variable → container hostname.
+	// Set is the overlay: variable → container hostname or preview URL.
 	Set map[string]string `json:"set,omitempty"`
-	// LeftToContainerEnv are the variables whose pool the branch holds no
-	// lease on, sorted.
+	// LeftToContainerEnv are the variables the overlay does not set, sorted.
 	LeftToContainerEnv []string `json:"leftToContainerEnv,omitempty"`
-	// pools is the declaration's siblingEnv (variable → pool), branch the
-	// lease's.
-	pools  map[string]string
-	branch string
+	// pools is every variable the declaration names → the pool it reaches;
+	// preview marks siblingPreviewEnv's; why says, for a preview variable
+	// left out although the branch leases its pool, why zcp could not build
+	// the URL; branch is the lease's.
+	pools   map[string]string
+	preview map[string]bool
+	why     map[string]string
+	branch  string
 }
 
-// leaseSiblingEnv is lease's overlay from the declaration's siblingEnv and
-// zcp's records of the lease's group (LeaseGroup) — never the orchestrator.
-// A variable naming the lease's own pool gets its own container.
-func leaseSiblingEnv(stateDir string, lease LeaseTargetInfo, siblingEnv map[string]string) (LeaseSiblingEnv, error) {
-	return leaseSiblingEnvWithout(stateDir, lease, siblingEnv, nil)
+// siblingWiring is what a declaration asks a lease's servers to be handed:
+// container hostnames (siblingEnv), preview URLs (siblingPreviewEnv), and the
+// preview port base those URLs are on.
+type siblingWiring struct {
+	hosts, previews map[string]string
+	previewBase     int
+}
+
+// siblingWiringOf is d's sibling wiring; none for no declaration.
+func siblingWiringOf(d *devsup.Declaration) siblingWiring {
+	if d == nil {
+		return siblingWiring{}
+	}
+	return siblingWiring{hosts: d.SiblingEnv, previews: d.SiblingPreviewEnv, previewBase: d.PreviewPortBase}
+}
+
+// previewURLFunc is the public address of a pool's preview port as
+// zerops_dev_server status reports a lease's (https, the pool's subdomain on
+// that port), "" when the pool serves none there.
+type previewURLFunc func(pool string, port int) string
+
+// leasePreviewURLs builds preview addresses from the pools' REST-authoritative
+// details, whether or not a pool's subdomain is on yet: the address does not
+// change when it goes on, and a lease's dev-server start turns it on (DP-19).
+// nil without an API client.
+func leasePreviewURLs(ctx context.Context, client platform.Client, projectID string) previewURLFunc {
+	if client == nil {
+		return nil
+	}
+	return func(pool string, port int) string {
+		return leasePreviewURL(ctx, client, projectID, pool, port, false)
+	}
+}
+
+// previewURLs is leasePreviewURLs over d's API client.
+func (d LeaseDeps) previewURLs(ctx context.Context) previewURLFunc {
+	return leasePreviewURLs(ctx, d.Client, d.ProjectID)
+}
+
+// leaseSiblingEnv is lease's overlay from the declaration's sibling wiring and
+// zcp's records of the lease's group (LeaseGroup) — never the orchestrator. A
+// variable naming the lease's own pool gets its own container or preview URL.
+func leaseSiblingEnv(stateDir string, lease LeaseTargetInfo, w siblingWiring, previewURL previewURLFunc) (LeaseSiblingEnv, error) {
+	return leaseSiblingEnvWithout(stateDir, lease, w, previewURL, nil)
 }
 
 // leaseSiblingEnvWithout is leaseSiblingEnv once the leases in leaving
-// (aliases) have left the group.
-func leaseSiblingEnvWithout(stateDir string, lease LeaseTargetInfo, siblingEnv map[string]string, leaving map[string]bool) (LeaseSiblingEnv, error) {
-	w := LeaseSiblingEnv{Set: map[string]string{}, pools: siblingEnv, branch: cmp.Or(lease.Branch, leaseDefaultBranch)}
-	if len(siblingEnv) == 0 {
-		return w, nil
+// (aliases) have left the group. A preview URL is the address of
+// previewPortBase + the sibling container's stable number, which its record
+// keeps from its checkout, at its pool's subdomain (previewURL): the port
+// follows the container, so it moves when the part joins again on another
+// one, and is resolved here every time, never copied.
+func leaseSiblingEnvWithout(stateDir string, lease LeaseTargetInfo, w siblingWiring, previewURL previewURLFunc, leaving map[string]bool) (LeaseSiblingEnv, error) {
+	env := LeaseSiblingEnv{Set: map[string]string{}, pools: map[string]string{}, preview: map[string]bool{}, why: map[string]string{},
+		branch: cmp.Or(lease.Branch, leaseDefaultBranch)}
+	if len(w.hosts) == 0 && len(w.previews) == 0 {
+		return env, nil
 	}
 	group, err := leaseGroupWithout(stateDir, lease.Alias, leaving)
 	if err != nil {
 		return LeaseSiblingEnv{}, fmt.Errorf("read the group of lease %s: %w", lease.Alias, err)
 	}
-	hosts := make(map[string]string, len(group))
+	members := make(map[string]LeaseTargetInfo, len(group))
 	for _, m := range group {
-		hosts[m.Pool] = m.ContainerHostname
+		members[m.Pool] = m
 	}
-	for _, name := range slices.Sorted(maps.Keys(siblingEnv)) {
-		if host, ok := hosts[siblingEnv[name]]; ok {
-			w.Set[name] = host
-		} else {
-			w.LeftToContainerEnv = append(w.LeftToContainerEnv, name)
+	for name, pool := range w.hosts {
+		env.pools[name] = pool
+		if m, ok := members[pool]; ok {
+			env.Set[name] = m.ContainerHostname
 		}
 	}
-	return w, nil
+	for name, pool := range w.previews {
+		env.pools[name], env.preview[name] = pool, true
+		m, ok := members[pool]
+		if !ok {
+			continue
+		}
+		if url, why := siblingPreviewURL(m, w.previewBase, previewURL); url != "" {
+			env.Set[name] = url
+		} else {
+			env.why[name] = why
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(env.pools)) {
+		if _, set := env.Set[name]; !set {
+			env.LeftToContainerEnv = append(env.LeftToContainerEnv, name)
+		}
+	}
+	return env, nil
+}
+
+// siblingPreviewURL is the preview URL of the lease m, or why zcp cannot build
+// it: the declaration names no previewPortBase, m's record predates keeping
+// its container's stable number, or its pool serves no HTTP address on that
+// port.
+func siblingPreviewURL(m LeaseTargetInfo, previewBase int, previewURL previewURLFunc) (string, string) {
+	switch {
+	case previewBase == 0:
+		return "", "the declaration names no previewPortBase, so no lease has a preview port"
+	case m.StableNumber == 0:
+		return "", fmt.Sprintf("zcp's record of %s was written before it kept its container's stable number, which the preview port follows; a lease acquired from now on carries it", m.Alias)
+	}
+	port := previewBase + m.StableNumber
+	if previewURL != nil {
+		if url := previewURL(m.Pool, port); url != "" {
+			return url, ""
+		}
+	}
+	return "", fmt.Sprintf("pool %s serves no HTTP address on %s's preview port %d (a port of the pool's run.ports with httpSupport)", m.Pool, m.Alias, port)
 }
 
 // ctlArgs is the `zcp-devsup ctl` argv that replaces the supervisor's overlay
@@ -118,10 +203,18 @@ func (w LeaseSiblingEnv) sentence(alias string) string {
 	}
 	var set, left []string
 	for _, name := range slices.Sorted(maps.Keys(w.Set)) {
-		set = append(set, fmt.Sprintf("%s=%s (branch %s's lease on %s)", name, w.Set[name], w.branch, w.pools[name]))
+		whose := fmt.Sprintf("branch %s's lease on %s", w.branch, w.pools[name])
+		if w.preview[name] {
+			whose = "the preview URL of " + whose
+		}
+		set = append(set, fmt.Sprintf("%s=%s (%s)", name, w.Set[name], whose))
 	}
 	for _, name := range w.LeftToContainerEnv {
-		left = append(left, fmt.Sprintf("%s keeps the container's own value (branch %s holds no lease on %s)", name, w.branch, w.pools[name]))
+		why := fmt.Sprintf("branch %s holds no lease on %s", w.branch, w.pools[name])
+		if w.why[name] != "" {
+			why = w.why[name]
+		}
+		left = append(left, fmt.Sprintf("%s keeps the container's own value (%s)", name, why))
 	}
 	if len(set) == 0 {
 		return "Dev servers on " + alias + ": " + strings.Join(left, ", ") + "."
@@ -171,8 +264,8 @@ type leaseWiring struct {
 // its running servers after its answer, one at a time, so zcp reads its
 // status until each has been restarted: a start of a server still running
 // under the old overlay would probe the process about to be restarted.
-func wireLeaseServers(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds *DevServers) (leaseWiring, error) {
-	env, err := leaseSiblingEnv(p.StateDir, *p.lease, ds.Declared.SiblingEnv)
+func wireLeaseServers(ctx context.Context, ssh SSHDeployer, previewURL previewURLFunc, p DevServerParams, ds *DevServers) (leaseWiring, error) {
+	env, err := leaseSiblingEnv(p.StateDir, *p.lease, siblingWiringOf(&ds.Declared), previewURL)
 	if err != nil {
 		return leaseWiring{}, err
 	}
@@ -282,17 +375,13 @@ func awaitOverlayRestarts(ctx context.Context, ssh SSHDeployer, hostname string,
 // supervisor cannot take a non-empty one. A pool whose image carries no
 // zcp-devsup gets nothing (the supervisor step names it); nothing here fails
 // the acquire.
-func checkoutOverlay(stateDir, alias string, read leaseCheckoutRead) (LeaseSiblingEnv, []string, string) {
-	var siblingEnv map[string]string
-	if read.declaration != nil {
-		siblingEnv = read.declaration.SiblingEnv
-	}
+func checkoutOverlay(stateDir, alias string, read leaseCheckoutRead, previewURL previewURLFunc) (LeaseSiblingEnv, []string, string) {
 	rec, err := loadLeaseRecord(stateDir, alias)
 	if err != nil {
 		return LeaseSiblingEnv{}, nil, fmt.Sprintf("zcp could not read its record of %s, so it set no sibling overlay for its dev servers (%v)", alias, err)
 	}
 	lease := rec.targetInfo()
-	env, err := leaseSiblingEnv(stateDir, lease, siblingEnv)
+	env, err := leaseSiblingEnv(stateDir, lease, siblingWiringOf(read.declaration), previewURL)
 	if err != nil {
 		return LeaseSiblingEnv{}, nil, fmt.Sprintf("zcp set no sibling overlay for the dev servers: %v", err)
 	}
@@ -381,7 +470,7 @@ func rewireLeases(ctx context.Context, d LeaseDeps, members []leaseRecord, leavi
 		case v.own == leaseUnverified:
 			outcomes[i].r, outcomes[i].kept = LeaseRewire{Alias: alias, Note: fmt.Sprintf("zcp sent %s no overlay %s: %s; %s sends it once its pool's orchestrator answers", alias, why, v.why, resendCall(alias, nil))}, true
 		default:
-			outcomes[i].r, outcomes[i].kept = rewireLease(ctx, d.SSH, d.StateDir, rec, without, why)
+			outcomes[i].r, outcomes[i].kept = rewireLease(ctx, d.SSH, d.StateDir, d.previewURLs(ctx), rec, without, why)
 		}
 	})
 	var out []LeaseRewire
@@ -400,7 +489,7 @@ func rewireLeases(ctx context.Context, d LeaseDeps, members []leaseRecord, leavi
 // declaration that cannot be read keeps only the variables still naming a
 // container of the group, so no server is left wired to one that left. kept is
 // false for a lease without zcp-devsup.
-func rewireLease(ctx context.Context, ssh SSHDeployer, stateDir string, rec leaseRecord, leaving map[string]bool, why string) (r LeaseRewire, kept bool) {
+func rewireLease(ctx context.Context, ssh SSHDeployer, stateDir string, previewURL previewURLFunc, rec leaseRecord, leaving map[string]bool, why string) (r LeaseRewire, kept bool) {
 	start := time.Now()
 	alias := rec.alias()
 	r = LeaseRewire{Alias: alias}
@@ -436,15 +525,15 @@ func rewireLease(ctx context.Context, ssh SSHDeployer, stateDir string, rec leas
 			r.Note = fmt.Sprintf("zcp could not read its records, so it sent %s no overlay %s (%v); %s sends it again", alias, why, err, resendCall(alias, live))
 			return r, true
 		}
-		members := groupContainers(stateDir, rec, records, leaving)
+		reach := groupContainers(stateDir, rec, records, leaving)
 		env = LeaseSiblingEnv{Set: map[string]string{}}
-		for name, host := range ds.State.Env {
-			if members[host] {
-				env.Set[name] = host
+		for name, value := range ds.State.Env {
+			if reach.holds(value) {
+				env.Set[name] = value
 			}
 		}
-		r.Note = fmt.Sprintf("the %s on %s cannot be read (%v), so zcp only dropped from its overlay the variables naming a container no lease of the branch holds then", devsup.DeclarationPath, alias, ds.DeclarationErr)
-	} else if env, err = leaseSiblingEnvWithout(stateDir, rec.targetInfo(), ds.Declared.SiblingEnv, leaving); err != nil {
+		r.Note = fmt.Sprintf("the %s on %s cannot be read (%v), so zcp only dropped from its overlay the variables naming a container, or the preview URL of a pool, no lease of the branch holds then", devsup.DeclarationPath, alias, ds.DeclarationErr)
+	} else if env, err = leaseSiblingEnvWithout(stateDir, rec.targetInfo(), siblingWiringOf(&ds.Declared), previewURL, leaving); err != nil {
 		r.Note = fmt.Sprintf("zcp sent %s no overlay %s: %v; %s sends it again", alias, why, err, resendCall(alias, live))
 		return r, true
 	}
@@ -618,56 +707,107 @@ func overlayOf(part string) *leaseOverlay {
 	return &leaseOverlay{env: st.Env, live: liveServers(st)}
 }
 
-// groupContainers is the container hostnames of the leases of rec's group
-// (DP-17) among records — rec's own always — leaving out the aliases in gone.
-func groupContainers(stateDir string, rec leaseRecord, records []leaseRecord, gone map[string]bool) map[string]bool {
-	members := map[string]bool{rec.ContainerHostname: true}
+// groupReach is what the leases of a group (DP-17) are reached by: their
+// containers' hostnames, and their pools, which a preview URL names.
+type groupReach struct {
+	containers, pools map[string]bool
+}
+
+// holds reports whether an overlay value still names a lease of the group: a
+// preview URL its pool's lease, any other value a container of the group.
+func (g groupReach) holds(value string) bool {
+	if pool, ok := previewURLPool(value); ok {
+		return g.pools[pool]
+	}
+	return g.containers[value]
+}
+
+// previewURLPool is the pool a preview URL zcp hands out names — the first
+// label of its host is `<pool>-<project prefix>-<port>`, and a pool's hostname
+// holds no dash — false for a value that is no https URL.
+func previewURLPool(value string) (string, bool) {
+	rest, ok := strings.CutPrefix(value, httpsScheme+"://")
+	if !ok {
+		return "", false
+	}
+	host, _, _ := strings.Cut(rest, "/")
+	label, _, _ := strings.Cut(host, ".")
+	pool, _, found := strings.Cut(label, "-")
+	if !found || pool == "" {
+		return "", false
+	}
+	return pool, true
+}
+
+// groupContainers is what the leases of rec's group (DP-17) among records —
+// rec's own always — are reached by, leaving out the aliases in gone.
+func groupContainers(stateDir string, rec leaseRecord, records []leaseRecord, gone map[string]bool) groupReach {
+	reach := groupReach{containers: map[string]bool{rec.ContainerHostname: true}, pools: map[string]bool{rec.PoolHostname: true}}
 	repo := recordRepo(stateDir, rec)
 	if repo == "" {
-		return members
+		return reach
 	}
 	branch := recordBranch(rec)
 	for _, r := range records {
 		if !gone[r.alias()] && recordBranch(r) == branch && topology.SameRepoURL(recordRepo(stateDir, r), repo) {
-			members[r.ContainerHostname] = true
+			reach.containers[r.ContainerHostname] = true
+			reach.pools[r.PoolHostname] = true
 		}
 	}
-	return members
+	return reach
 }
 
-// staleWiring says, "" when nothing is stale, that alias's live servers run
-// with an overlay naming a container that is not in members — the containers
-// of its group's leases — each variable with its container and whose it was
-// (owners: container hostname → the record that names it, and whether that
-// lease is lost), and the call that sends the branch's overlay again.
-func staleWiring(rec leaseRecord, o leaseOverlay, members map[string]bool, owners map[string]leaseRecord, lost map[string]bool) string {
+// staleWiring says, "" when nothing is stale, that rec's live servers run with
+// an overlay naming a container, or the preview URL of a pool, that no lease
+// of its group holds — its group among records, less the aliases in lost —
+// each variable with what it names and whose it was, and the call that sends
+// the branch's overlay again.
+func staleWiring(stateDir string, rec leaseRecord, o leaseOverlay, records []leaseRecord, lost map[string]bool) string {
 	if len(o.live) == 0 {
 		return ""
 	}
+	reach := groupContainers(stateDir, rec, records, lost)
+	owners := make(map[string]leaseRecord, len(records))
+	for _, r := range records {
+		owners[r.ContainerHostname] = r
+	}
 	var stale []string
 	for _, name := range slices.Sorted(maps.Keys(o.env)) {
-		host := o.env[name]
-		if members[host] {
+		value := o.env[name]
+		if reach.holds(value) {
 			continue
 		}
-		whose := "a container zcp holds no lease of"
-		if owner, ok := owners[host]; ok {
-			switch {
-			case lost[owner.alias()]:
-				whose = owner.alias() + "'s container, whose lease is lost"
-			case recordBranch(owner) != recordBranch(rec):
-				whose = owner.alias() + "'s container, a lease of branch " + recordBranch(owner)
-			default:
-				whose = owner.alias() + "'s container, a lease of another repository"
-			}
-		}
-		stale = append(stale, fmt.Sprintf("%s=%s (%s)", name, host, whose))
+		stale = append(stale, fmt.Sprintf("%s=%s (%s)", name, value, staleWhose(stateDir, rec, value, records, owners, lost)))
 	}
 	if len(stale) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("its dev servers (%s) run with %s, which no lease of branch %s holds now — the pool hands such a container to its next holder, so they would reach someone else's workspace; %s sends the branch's overlay again",
+	return fmt.Sprintf("its dev servers (%s) run with %s, which no lease of branch %s holds now — the pool hands such a container, and its preview port, to its next holder, so they would reach someone else's workspace; %s sends the branch's overlay again",
 		strings.Join(o.live, ", "), strings.Join(stale, ", "), recordBranch(rec), resendCall(rec.alias(), o.live))
+}
+
+// staleWhose says whose the container, or the preview, a stale overlay value
+// names was: a lease of rec's group lost by this status's word, a lease of
+// another branch or repository, or none zcp holds.
+func staleWhose(stateDir string, rec leaseRecord, value string, records []leaseRecord, owners map[string]leaseRecord, lost map[string]bool) string {
+	if pool, ok := previewURLPool(value); ok {
+		for _, r := range records {
+			if r.PoolHostname == pool && lost[r.alias()] && recordBranch(r) == recordBranch(rec) && topology.SameRepoURL(recordRepo(stateDir, r), recordRepo(stateDir, rec)) {
+				return r.alias() + "'s preview URL, whose lease is lost"
+			}
+		}
+		return fmt.Sprintf("a preview URL of pool %s, where branch %s holds no lease now", pool, recordBranch(rec))
+	}
+	owner, ok := owners[value]
+	switch {
+	case !ok:
+		return "a container zcp holds no lease of"
+	case lost[owner.alias()]:
+		return owner.alias() + "'s container, whose lease is lost"
+	case recordBranch(owner) != recordBranch(rec):
+		return owner.alias() + "'s container, a lease of branch " + recordBranch(owner)
+	}
+	return owner.alias() + "'s container, a lease of another repository"
 }
 
 // markStaleWiring marks each lease of views whose read found its servers
@@ -684,10 +824,8 @@ func markStaleWiring(stateDir string, records []leaseRecord, views []LeaseView) 
 		}
 	}
 	byAlias := make(map[string]leaseRecord, len(records))
-	owners := make(map[string]leaseRecord, len(records))
 	for _, r := range records {
 		byAlias[r.alias()] = r
-		owners[r.ContainerHostname] = r
 	}
 	for i := range views {
 		v := &views[i]
@@ -695,7 +833,7 @@ func markStaleWiring(stateDir string, records []leaseRecord, views []LeaseView) 
 		if v.overlay == nil || !ok {
 			continue
 		}
-		if why := staleWiring(rec, *v.overlay, groupContainers(stateDir, rec, records, lost), owners, lost); why != "" {
+		if why := staleWiring(stateDir, rec, *v.overlay, records, lost); why != "" {
 			v.Wiring = LeaseWiringStale
 			v.Note = joinNotes(v.Note, "wiring stale: "+why+" (status changes nothing)")
 		}
@@ -710,20 +848,12 @@ func (r *DevServerResult) applyStaleWiring(stateDir string, lease LeaseTargetInf
 	if err != nil {
 		return
 	}
-	owners := make(map[string]leaseRecord, len(records))
-	var rec leaseRecord
-	found := false
-	for _, x := range records {
-		owners[x.ContainerHostname] = x
-		if x.alias() == lease.Alias {
-			rec, found = x, true
-		}
-	}
-	if !found {
+	i := slices.IndexFunc(records, func(x leaseRecord) bool { return x.alias() == lease.Alias })
+	if i < 0 {
 		return
 	}
 	o := leaseOverlay{env: st.Env, live: liveServers(st)}
-	if why := staleWiring(rec, o, groupContainers(stateDir, rec, records, nil), owners, nil); why != "" {
+	if why := staleWiring(stateDir, records[i], o, records, nil); why != "" {
 		r.Wiring = LeaseWiringStale
 		r.Message += " Wiring stale: " + why + "."
 	}

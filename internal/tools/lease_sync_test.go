@@ -24,7 +24,8 @@ const (
 // syncToolSSH is the leased containers a sync reaches: dirty names the
 // aliases whose checkout holds uncommitted files, rejected has origin refuse
 // the push, own names the members with commits of their own; every other
-// member fast-forwards, and webpool-7 runs api without a watch.
+// member fast-forwards, and webpool-7 runs api without a watch (its command's
+// own watcher reloads it) and crew-ada, a runtime entry nothing reloads.
 type syncToolSSH struct {
 	mu       sync.Mutex
 	dirty    map[string]string
@@ -59,7 +60,7 @@ func (s *syncToolSSH) ExecSSH(_ context.Context, host, command string) ([]byte, 
 	case strings.Contains(command, "@@zcp-devsup status") && host == "webpool-7":
 		return []byte(`{"version":"v9.400.0","formats":[1],"capabilities":["env"]}
 @@zcp-devsup version 0
-{"format":1,"servers":{"api":{"source":"declared","desired":"running","status":"running"}}}
+{"format":1,"servers":{"api":{"source":"declared","desired":"running","status":"running"},"crew-ada":{"source":"runtime","desired":"running","status":"running","command":"bun run dev","cwd":".","port":4100}}}
 @@zcp-devsup status 0
 @@zcp-devsup listen 0
 {"version":1,"servers":[{"name":"api","port":3001,"command":"node api.js"}]}
@@ -92,8 +93,9 @@ type syncToolResult struct {
 // lease pushes its branch from it and fast-forwards every other lease of the
 // branch, the result naming the branch, the source, the commit, the push and
 // each member's outcome with how long each step took — never a lease or a
-// bearer — and nextActions naming each server that runs without a watch and
-// each lease left as it was.
+// bearer — and nextActions naming each server nothing zcp knows of reloads (a
+// runtime entry), never a declared one, which reloads by itself, and each
+// lease left as it was.
 func TestLeaseTool_Sync_PushesAndFastForwardsTheBranchsOtherLeases(t *testing.T) {
 	t.Parallel()
 	ssh := &syncToolSSH{}
@@ -127,16 +129,19 @@ func TestLeaseTool_Sync_PushesAndFastForwardsTheBranchsOtherLeases(t *testing.T)
 		s.Members[0].From != syncToolFrom || s.Members[0].To != syncToolTo {
 		t.Fatalf("members = %+v, want webpool-7 fast-forwarded", s.Members)
 	}
-	if len(s.Members[0].UnwatchedServers) != 1 || s.Members[0].UnwatchedServers[0] != "api" {
-		t.Errorf("webpool-7 unwatched = %v, want [api]", s.Members[0].UnwatchedServers)
+	if len(s.Members[0].UnwatchedServers) != 1 || s.Members[0].UnwatchedServers[0] != "crew-ada" {
+		t.Errorf("webpool-7 unwatched = %v, want [crew-ada]: api's own watcher reloads it", s.Members[0].UnwatchedServers)
 	}
 	for _, key := range []string{`"checkMs":`, `"ms":`, `"push":{`, `"members":[`} {
 		if !strings.Contains(text, key) {
 			t.Errorf("result lacks %s: %s", key, text)
 		}
 	}
-	if !strings.Contains(got.NextActions, `zerops_dev_server action=restart hostname="webpool-7" name="api"`) {
-		t.Errorf("nextActions %q should name api's restart on webpool-7", got.NextActions)
+	if !strings.Contains(got.NextActions, `zerops_dev_server action=restart hostname="webpool-7" name="crew-ada"`) {
+		t.Errorf("nextActions %q should name crew-ada's restart on webpool-7", got.NextActions)
+	}
+	if strings.Contains(got.NextActions, `name="api"`) {
+		t.Errorf("nextActions %q names a restart of api, which reloads by itself", got.NextActions)
 	}
 	if got.Envelope == nil {
 		t.Errorf("no envelope in %s", text)
