@@ -780,12 +780,17 @@ func TestSwarmClient_Renew_ReadsTheLiveAnswers(t *testing.T) {
 		body       string
 		wantState  string
 		wantReason string
+		// wantNoReason: refused with no reason the caller acts on.
+		wantNoReason bool
 	}{
 		{name: "the holder's lease", status: 200, body: `{"id":"c-abc","number":1,"status":"STOPPED","lockState":"reserved","lockSince":"2026-10-24T12:42:40.306795242Z","dirty":false}`, wantState: "reserved"},
 		{name: "a delete running", status: 200, body: `{"id":"c-abc","number":1,"status":"DELETING","lockState":"deleting","lockSince":"2026-10-24T12:48:45.395604967Z","dirty":false}`, wantState: "deleting"},
 		{name: "another lease, or a free container", status: 400, body: `{"error":{"code":"containerAction","message":"no reservation of this container is held by that lease - acquire it again","meta":[{"error":"no reservation of this container is held by that lease - acquire it again","code":"containerAction","metadata":{"reason":["unknown-lease"],"retryable":["false"]}}]}}`, wantReason: SwarmReasonUnknownLease},
 		{name: "gone, after a listing", status: 400, body: `{"error":{"code":"containerAction","message":"no container c-abc in the pool","meta":[{"error":"no container c-abc in the pool","code":"containerAction","metadata":{"reason":["container-not-found"],"retryable":["false"]}}]}}`, wantReason: SwarmReasonContainerNotFound},
 		{name: "gone, before a listing", status: 400, body: `{"error":{"code":"containerAction","message":"Container not found","meta":[{"error":"Container not found","code":"containerAction","metadata":null}]}}`, wantReason: SwarmReasonContainerNotFound},
+		// Only the 400 a renew answers right after a delete was observed: the
+		// same words in a 5xx say nothing of the container.
+		{name: "the same words in a 5xx", status: 502, body: `{"error":{"code":"containerAction","message":"Container not found","meta":[{"error":"Container not found","code":"containerAction","metadata":null}]}}`, wantNoReason: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -800,6 +805,13 @@ func TestSwarmClient_Renew_ReadsTheLiveAnswers(t *testing.T) {
 			c, err := NewSwarmClient(srv.URL, "api-token", srv.Client()).Renew(context.Background(), "c-abc", lease)
 			if gotPath != "POST /container/c-abc/renew" || gotLease != lease || gotQuery != "" {
 				t.Errorf("request = %s ?%s lease %q, want POST /container/c-abc/renew with the lease only in X-Swarm-Lease", gotPath, gotQuery, gotLease)
+			}
+			if tt.wantNoReason {
+				var se *SwarmError
+				if !errors.As(err, &se) || se.Reason != "" {
+					t.Errorf("err = %v, want a *SwarmError with no reason", err)
+				}
+				return
 			}
 			if tt.wantReason == "" {
 				if err != nil || c.LockState != tt.wantState {

@@ -1305,3 +1305,472 @@ func TestLeaseOwnership_FullPool_NamesNoLeaseAnotherHolderTook(t *testing.T) {
 		t.Error("the refusal read the other holder's container over ssh")
 	}
 }
+
+// hookOrch is a poolOrch that runs before(call) ahead of each call zcp sends
+// it — "renew", "stop", "start", "release", "delete" — and after(call) once
+// one went through.
+type hookOrch struct {
+	*poolOrch
+	before, after func(call string)
+}
+
+func (h hookOrch) hook(f func(string), call string) {
+	if f != nil {
+		f(call)
+	}
+}
+
+func (h hookOrch) Renew(ctx context.Context, id, lease string) (platform.SwarmContainer, error) {
+	h.hook(h.before, "renew")
+	return h.poolOrch.Renew(ctx, id, lease)
+}
+
+func (h hookOrch) Stop(ctx context.Context, id, lease string) (platform.SwarmContainer, error) {
+	h.hook(h.before, "stop")
+	c, err := h.poolOrch.Stop(ctx, id, lease)
+	if err == nil {
+		h.hook(h.after, "stop")
+	}
+	return c, err
+}
+
+func (h hookOrch) Start(ctx context.Context, id, lease string) (platform.SwarmContainer, error) {
+	h.hook(h.before, "start")
+	c, err := h.poolOrch.Start(ctx, id, lease)
+	if err == nil {
+		h.hook(h.after, "start")
+	}
+	return c, err
+}
+
+func (h hookOrch) Release(ctx context.Context, id, lease string, reset bool) (platform.SwarmContainer, error) {
+	h.hook(h.before, "release")
+	c, err := h.poolOrch.Release(ctx, id, lease, reset)
+	if err == nil {
+		h.hook(h.after, "release")
+	}
+	return c, err
+}
+
+func (h hookOrch) Delete(ctx context.Context, id, lease string) error {
+	h.hook(h.before, "delete")
+	err := h.poolOrch.Delete(ctx, id, lease)
+	if err == nil {
+		h.hook(h.after, "delete")
+	}
+	return err
+}
+
+// ownNewLease is the lease another zcp process took hqpool-3 again with.
+const ownNewLease = "hqpool-lease-3-of-another-zcp-process"
+
+// reacquireHQ is another zcp process sharing the state directory (an older
+// zcp, maybe): it releases hqpool-3 — zcp's lease is its lease too — and
+// acquires the container again, which the pool kept warm (DP-27), writing its
+// own record, ssh stanza and mount under the same alias.
+func (of *ownFixture) reacquireHQ(t *testing.T) {
+	t.Helper()
+	c := of.hq.get(ownHQContainer)
+	c.LockState, c.Status = leaseLockReserved, platform.SwarmContainerActive
+	of.hq.put(c, ownNewLease)
+	rec, err := loadLeaseRecord(of.stateDir, ownHQAlias)
+	if err != nil {
+		t.Errorf("the other process reads the record: %v", err)
+		return
+	}
+	rec.Lease, rec.Branch, rec.Parked, rec.ParkedAt = ownNewLease, "feat-b", false, ""
+	if err := writeLeaseRecord(of.stateDir, rec); err != nil {
+		t.Errorf("the other process writes its record: %v", err)
+	}
+	of.mounter.mu.Lock()
+	of.mounter.m.states["/var/www/"+ownHQAlias] = platform.MountStateActive
+	of.mounter.mu.Unlock()
+	if r := of.deps.Host.refreshAliases(context.Background(), of.deps); r != "" {
+		t.Errorf("the other process's alias: %s", r)
+	}
+}
+
+// TestLeaseOwnership_AliasReused_AnotherLeasesRecordLeftAlone: a record is
+// dropped only while it is still the lease's own (DP-2). Another zcp process
+// sharing the state directory can release hqpool-3 and take the container
+// again, kept warm, under the same alias while this one parks or releases the
+// old lease: the old lease is lost (or released), and the new lease's record,
+// ssh stanza and mount stay as the other process left them, the result saying
+// the alias now names another lease.
+func TestLeaseOwnership_AliasReused_AnotherLeasesRecordLeftAlone(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name string
+		// When, in the calls zcp sends, the other process takes the container
+		// again: before the renewN-th renew, before beforeCall, or once
+		// afterCall went through.
+		renewN     int
+		beforeCall string
+		afterCall  string
+		run        func(context.Context, LeaseDeps) (LeaseView, error)
+		want       string
+	}{
+		{name: "a park asking again before its stop", renewN: 2, want: LeaseStateLost,
+			run: func(ctx context.Context, d LeaseDeps) (LeaseView, error) { return LeasePark(ctx, d, ownHQAlias) }},
+		{name: "a park whose stop is refused held-by-other", beforeCall: "stop", want: LeaseStateLost,
+			run: func(ctx context.Context, d LeaseDeps) (LeaseView, error) { return LeasePark(ctx, d, ownHQAlias) }},
+		{name: "a forced release asking again before the release", renewN: 2, want: LeaseStateLost,
+			run: func(ctx context.Context, d LeaseDeps) (LeaseView, error) {
+				return LeaseRelease(ctx, d, ownHQAlias, true)
+			}},
+		{name: "a forced release that went, taken again before the record goes", afterCall: "release", want: LeaseStateReleased,
+			run: func(ctx context.Context, d LeaseDeps) (LeaseView, error) {
+				return LeaseRelease(ctx, d, ownHQAlias, true)
+			}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			of := newOwnFixture(t)
+			of.acquire(t, groupHQPool)
+			var mu sync.Mutex
+			renews, taken := 0, false
+			take := func() {
+				mu.Lock()
+				defer mu.Unlock()
+				if !taken {
+					taken = true
+					of.reacquireHQ(t)
+				}
+			}
+			of.routeHQ(hookOrch{poolOrch: of.hq,
+				before: func(call string) {
+					mu.Lock()
+					if call == "renew" {
+						renews++
+					}
+					now := (call == "renew" && renews == tt.renewN) || (tt.beforeCall != "" && call == tt.beforeCall)
+					mu.Unlock()
+					if now {
+						take()
+					}
+				},
+				after: func(call string) {
+					if call == tt.afterCall {
+						take()
+					}
+				},
+			})
+
+			v, err := tt.run(context.Background(), of.deps)
+			if err != nil {
+				t.Fatalf("err = %v, want the old lease %s", err, tt.want)
+			}
+			if !taken {
+				t.Fatal("the other process never took the container again")
+			}
+			if v.State != tt.want || !strings.Contains(v.Note, "another lease") {
+				t.Errorf("view = %+v, want %s, saying the alias now names another lease", v, tt.want)
+			}
+			if rec := of.rawRecord(t, ownHQAlias); rec == nil || rec["lease"] != ownNewLease {
+				t.Errorf("record = %v, want the other process's, untouched", rec)
+			}
+			if !of.mounter.mounted(ownHQAlias) || !of.aliasStanza(ownHQAlias) {
+				t.Errorf("mount %v, ssh stanza %v: want the other process's left in place", of.mounter.mounted(ownHQAlias), of.aliasStanza(ownHQAlias))
+			}
+			if of.hq.leaseOf(ownHQContainer) != ownNewLease {
+				t.Errorf("the container's lease = %q, want the other process's", of.hq.leaseOf(ownHQContainer))
+			}
+		})
+	}
+}
+
+// laggingSearch is a platform client whose service search does not list the
+// pool yet (the search lags writes, §3.5) and whose read by id fails with
+// byID.
+type laggingSearch struct {
+	platform.Client
+	byID error
+}
+
+func (l laggingSearch) ListServices(ctx context.Context, projectID string) ([]platform.ServiceStack, error) {
+	all, err := l.Client.ListServices(ctx, projectID)
+	return slices.DeleteFunc(all, func(s platform.ServiceStack) bool { return s.Name == groupHQPool }), err
+}
+
+func (l laggingSearch) GetService(context.Context, string) (*platform.ServiceStack, error) {
+	return nil, l.byID
+}
+
+// TestLeaseOwnership_LaggingSearch_ByIDReadFails_RefusalCarriesItsError: a
+// pool the search misses is read by id before it counts as gone (DP-20); a
+// read by id that fails for any other reason leaves the lease unverified, and
+// the refusal carries that read's own failure — never the search's "no such
+// service", which would say the pool is gone.
+func TestLeaseOwnership_LaggingSearch_ByIDReadFails_RefusalCarriesItsError(t *testing.T) {
+	t.Parallel()
+	of := newOwnFixture(t)
+	of.acquire(t, groupHQPool)
+	of.deps.Client = laggingSearch{Client: of.deps.Client, byID: platform.NewPlatformError(platform.ErrNetworkError, "dial tcp api.zerops.io: i/o timeout", "")}
+
+	_, err := LeaseRelease(context.Background(), of.deps, ownHQAlias, true)
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) {
+		t.Fatalf("err = %v, want a refusal", err)
+	}
+	if pe.Code == platform.ErrServiceNotFound || !strings.Contains(pe.Message, "i/o timeout") {
+		t.Errorf("refusal = %s: %s; want the read by id's own failure, never the search's", pe.Code, pe.Message)
+	}
+	if of.rawRecord(t, ownHQAlias) == nil || len(of.hq.releaseLog()) != 0 {
+		t.Errorf("record %v, releases %v: want the record kept and nothing released", of.rawRecord(t, ownHQAlias), of.hq.releaseLog())
+	}
+}
+
+// ownLeaseRefused is a poolOrch that answers zcp's call of kind on
+// held-by-other although zcp's lease still holds the container: what the
+// orchestrator answers its holder during a stop or start is not known, and
+// held-by-other is live-verified on a release only.
+type ownLeaseRefused struct {
+	*poolOrch
+	on string // "stop", "start" or "delete"
+}
+
+func (o ownLeaseRefused) Stop(ctx context.Context, id, lease string) (platform.SwarmContainer, error) {
+	if o.on == "stop" {
+		return platform.SwarmContainer{}, heldByOther()
+	}
+	return o.poolOrch.Stop(ctx, id, lease)
+}
+
+func (o ownLeaseRefused) Start(ctx context.Context, id, lease string) (platform.SwarmContainer, error) {
+	if o.on == "start" {
+		return platform.SwarmContainer{}, heldByOther()
+	}
+	return o.poolOrch.Start(ctx, id, lease)
+}
+
+func (o ownLeaseRefused) Delete(ctx context.Context, id, lease string) error {
+	if o.on == "delete" {
+		return heldByOther()
+	}
+	return o.poolOrch.Delete(ctx, id, lease)
+}
+
+// TestLeaseOwnership_HeldByOtherForItsOwnLease_KeptUnlessTheRenewAgrees: a
+// held-by-other answer to a stop, start or delete drops the record only once
+// a renew of the lease says it ended too (DP-2): while the orchestrator still
+// gives the container to the lease, the call is refused as any other
+// orchestrator failure and the record stays — a delete falls back to the
+// reset release (DP-27).
+func TestLeaseOwnership_HeldByOtherForItsOwnLease_KeptUnlessTheRenewAgrees(t *testing.T) {
+	t.Parallel()
+	unsaved := func(_, command string) ([]byte, error) {
+		switch {
+		case strings.Contains(command, "status --porcelain"):
+			return []byte("?? notes.txt\n"), nil
+		case strings.Contains(command, "rev-list --count"):
+			return []byte("0\n"), nil
+		}
+		return nil, nil
+	}
+	for _, tt := range []struct {
+		name, on   string
+		parked     bool
+		warm       bool
+		ssh        func(host, command string) ([]byte, error)
+		run        func(context.Context, LeaseDeps) (LeaseView, error)
+		wantErr    bool
+		wantParked bool
+	}{
+		{name: "a park's stop", on: "stop", wantErr: true,
+			run: func(ctx context.Context, d LeaseDeps) (LeaseView, error) { return LeasePark(ctx, d, ownHQAlias) }},
+		{name: "an unpark's start", on: "start", parked: true, wantErr: true, wantParked: true,
+			run: func(ctx context.Context, d LeaseDeps) (LeaseView, error) { return LeaseUnpark(ctx, d, ownHQAlias) }},
+		{name: "a release's start of a parked lease for its guard", on: "start", parked: true, wantErr: true, wantParked: true,
+			run: func(ctx context.Context, d LeaseDeps) (LeaseView, error) {
+				return LeaseRelease(ctx, d, ownHQAlias, false)
+			}},
+		{name: "the stop that re-parks a refused release's lease", on: "stop", parked: true, ssh: unsaved, wantErr: true,
+			run: func(ctx context.Context, d LeaseDeps) (LeaseView, error) {
+				return LeaseRelease(ctx, d, ownHQAlias, false)
+			}},
+		{name: "the warm decision's delete", on: "delete", warm: true,
+			run: func(ctx context.Context, d LeaseDeps) (LeaseView, error) {
+				return LeaseRelease(ctx, d, ownHQAlias, true)
+			}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			of := newOwnFixture(t)
+			of.acquire(t, groupHQPool)
+			lease := of.hq.leaseOf(ownHQContainer)
+			if tt.parked {
+				if _, err := LeasePark(context.Background(), of.deps, ownHQAlias); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tt.ssh != nil {
+				of.ssh.setHandler(tt.ssh)
+			}
+			of.deps.SSHReadyEvery, of.deps.StartedSSHWait = time.Millisecond, 200*time.Millisecond
+			if tt.warm {
+				mine := of.hq.get(ownHQContainer)
+				mine.Snapshots, mine.Current = 1, true
+				of.hq.put(mine, lease)
+				of.hq.put(platform.SwarmContainer{ID: "c-hqpool-4", Number: 4, Hostname: nodeHostnameOf(groupHQPool, 4), Status: platform.SwarmContainerActive, Current: true, Snapshots: 1}, "")
+				of.deps.Warm = &LeaseWarm{Target: 1, Go: func(fn func()) { fn() }}
+			}
+			of.routeHQ(ownLeaseRefused{poolOrch: of.hq, on: tt.on})
+
+			v, err := tt.run(context.Background(), of.deps)
+			if v.State == LeaseStateLost {
+				t.Fatalf("view = %+v: a held-by-other the renew does not confirm dropped zcp's own lease", v)
+			}
+			if of.hq.leaseOf(ownHQContainer) == lease && of.rawRecord(t, ownHQAlias) == nil {
+				t.Fatal("the record is gone while zcp's lease still reserves the container")
+			}
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("view = %+v, want the call refused", v)
+				}
+				if rec := of.rawRecord(t, ownHQAlias); (rec["parked"] == true) != tt.wantParked {
+					t.Errorf("record = %v, want parked %v", rec, tt.wantParked)
+				}
+				return
+			}
+			if err != nil || v.State != LeaseStateReleased {
+				t.Fatalf("release = %+v, %v; want it released with the reset instead", v, err)
+			}
+			if got := of.hq.releaseLog(); len(got) != 1 || got[0].lease != lease {
+				t.Errorf("releases = %+v, want the reset release with zcp's lease", got)
+			}
+		})
+	}
+}
+
+// TestLeaseOwnership_ParkedWake_LeaseEndsDuringTheSSHWait_GuardNeverReads: a
+// release starts a parked lease's container and waits for its ssh before the
+// guard reads it (DP-28) — up to a minute — so it asks whose the container is
+// again right before the guard (DP-2): a lease that ended meanwhile is
+// dropped as lost, its container (another holder's now) never read, stopped
+// or released.
+func TestLeaseOwnership_ParkedWake_LeaseEndsDuringTheSSHWait_GuardNeverReads(t *testing.T) {
+	t.Parallel()
+	for _, branch := range []bool{false, true} {
+		t.Run(fmt.Sprintf("branch=%v", branch), func(t *testing.T) {
+			t.Parallel()
+			of := newOwnFixture(t)
+			pools := []string{groupHQPool}
+			if branch {
+				pools = append(pools, groupWebPool)
+			}
+			of.acquire(t, pools...)
+			if _, err := LeasePark(context.Background(), of.deps, ownHQAlias); err != nil {
+				t.Fatal(err)
+			}
+			of.deps.SSHReadyEvery, of.deps.StartedSSHWait = time.Millisecond, 200*time.Millisecond
+			var once sync.Once
+			of.ssh.setHandler(func(host, command string) ([]byte, error) {
+				if host == ownHQAlias && command == "true" {
+					once.Do(func() { of.hq.takeOver(ownHQContainer) })
+				}
+				if strings.Contains(command, "rev-list --count") {
+					return []byte("0\n"), nil
+				}
+				return nil, nil
+			})
+			before := len(of.hq.powerLog())
+			of.forgetSSH()
+
+			var views []LeaseView
+			var err error
+			if branch {
+				var change LeaseChange
+				change, err = LeaseReleaseGroupChange(context.Background(), of.deps, "", "feat-x", false)
+				views = change.Leases
+			} else {
+				var v LeaseView
+				v, err = LeaseRelease(context.Background(), of.deps, ownHQAlias, false)
+				views = []LeaseView{v}
+			}
+			if err != nil {
+				t.Fatalf("release: %v", err)
+			}
+			for _, v := range views {
+				if v.Alias == ownHQAlias && v.State != LeaseStateLost {
+					t.Errorf("%s = %+v, want lost", ownHQAlias, v)
+				}
+			}
+			of.ssh.mu.Lock()
+			for _, c := range of.ssh.calls {
+				if c.hostname == ownHQAlias && strings.Contains(c.command, "status --porcelain") {
+					t.Errorf("the guard read %s, another holder's container now: %q", ownHQAlias, c.command)
+				}
+			}
+			of.ssh.mu.Unlock()
+			if got := of.hq.releaseLog(); len(got) != 0 {
+				t.Errorf("releases = %+v, want none", got)
+			}
+			if got := of.hq.powerLog()[before:]; len(got) != 1 {
+				t.Errorf("powers = %v, want only the wake's start", got)
+			}
+			if of.rawRecord(t, ownHQAlias) != nil {
+				t.Errorf("record survives: %v", of.rawRecord(t, ownHQAlias))
+			}
+		})
+	}
+}
+
+// TestLeaseOwnership_DroppedOutsideARelease_NamesTheSiblingsStillWired: a
+// lease dropped as lost where no release rewires its branch — a refused
+// branch release, the stop that re-parks a refused release's lease — names
+// the branch's other leases that may still run wired to its container, and
+// the status that names the restart (DP-26), as a park's or an unpark's drop
+// does.
+func TestLeaseOwnership_DroppedOutsideARelease_NamesTheSiblingsStillWired(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name    string
+		on      string // the call another holder takes the container over before
+		unsaved string // the alias holding work the release refuses for
+		file    string
+		run     func(context.Context, LeaseDeps) error
+	}{
+		{name: "a branch release refused for another lease's work", on: "start", unsaved: ownWebAlias, file: "scratch.txt",
+			run: func(ctx context.Context, d LeaseDeps) error {
+				_, err := LeaseReleaseGroupChange(ctx, d, "", "feat-x", false)
+				return err
+			}},
+		{name: "the stop that re-parks a refused release's lease", on: "stop", unsaved: ownHQAlias, file: "notes.txt",
+			run: func(ctx context.Context, d LeaseDeps) error {
+				_, err := LeaseReleaseChange(ctx, d, ownHQAlias, false)
+				return err
+			}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			of := newOwnFixture(t)
+			of.acquire(t, groupHQPool, groupWebPool)
+			if _, err := LeasePark(context.Background(), of.deps, ownHQAlias); err != nil {
+				t.Fatal(err)
+			}
+			of.ssh.setHandler(func(host, command string) ([]byte, error) {
+				switch {
+				case strings.Contains(command, "status --porcelain") && host == tt.unsaved:
+					return []byte("?? " + tt.file + "\n"), nil
+				case strings.Contains(command, "rev-list --count"):
+					return []byte("0\n"), nil
+				}
+				return nil, nil
+			})
+			of.deps.SSHReadyEvery, of.deps.StartedSSHWait = time.Millisecond, 200*time.Millisecond
+			of.routeHQ(takeOverFirst{poolOrch: of.hq, on: tt.on})
+
+			err := tt.run(context.Background(), of.deps)
+			var pe *platform.PlatformError
+			if !errors.As(err, &pe) || !strings.Contains(pe.Message, tt.file) {
+				t.Fatalf("err = %v, want the release refused for %s", err, tt.file)
+			}
+			if of.rawRecord(t, ownHQAlias) != nil {
+				t.Fatalf("%s's record survives another holder's reservation", ownHQAlias)
+			}
+			if !strings.Contains(pe.Message, "may still run wired") || !strings.Contains(pe.Message, ownWebAlias) {
+				t.Errorf("refusal %q must name %s, which may still run wired to %s's container", pe.Message, ownWebAlias, ownHQAlias)
+			}
+		})
+	}
+}

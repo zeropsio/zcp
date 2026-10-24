@@ -36,9 +36,12 @@ type ownershipOrchestrator struct {
 	freePowers int    // stops and starts of a free container
 	renews     int
 	// renewFails answers every renew 500; takeOverOnStop lets another
-	// consumer take the container over right before a stop reaches it.
+	// consumer take the container over right before a stop reaches it;
+	// freeAtRenew frees it outside zcp right before the renew of that
+	// number (from 1) is answered.
 	renewFails     bool
 	takeOverOnStop bool
+	freeAtRenew    int
 }
 
 const (
@@ -82,6 +85,9 @@ func (o *ownershipOrchestrator) ServeHTTP(w http.ResponseWriter, r *http.Request
 		_, _ = w.Write([]byte(c[:len(c)-1] + `,"lease":"` + leaseTestLease + `"}`))
 	case r.Method == http.MethodPost && r.URL.Path == "/container/c-abc/renew":
 		o.renews++
+		if o.freeAtRenew > 0 && o.renews == o.freeAtRenew {
+			o.lockState, o.lockSince, o.lease = "", "", ""
+		}
 		switch {
 		case o.renewFails:
 			w.WriteHeader(http.StatusInternalServerError)
@@ -300,6 +306,45 @@ func TestLeaseTool_Ownership_ParkHeldByOther_ResultSaysLost(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(stateDir, "leases", "devpool-3.json")); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("record survives: %v", err)
 	}
+}
+
+// TestLeaseTool_Ownership_ParkFindsTheContainerFreed_NextSaysWhatHappened: a
+// park asks whose the container is again right before its stop (DP-28); one
+// released outside zcp meanwhile is free, not another holder's, and the
+// result's next step says the lease ended outside zcp, pointing at the note
+// for how — never that another holder reserves it.
+func TestLeaseTool_Ownership_ParkFindsTheContainerFreed_NextSaysWhatHappened(t *testing.T) {
+	t.Parallel()
+	orch := &ownershipOrchestrator{}
+	srv, _ := leaseToolServerSSH(t, orch, &leaseStubSSH{})
+	if res := callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo, "branch": "feat-x"}); res.IsError {
+		t.Fatalf("acquire failed: %s", getTextContent(t, res))
+	}
+	orch.set(func(o *ownershipOrchestrator) { o.freeAtRenew = o.renews + 2 })
+
+	res := callTool(t, srv, "zerops_lease", map[string]any{"action": "park", "lease": "devpool-3"})
+	text := getTextContent(t, res)
+	if res.IsError {
+		t.Fatalf("park failed: %s", text)
+	}
+	got := decodeOwnership(t, text)
+	if len(got.Leases) != 1 || got.Leases[0].State != ops.LeaseStateLost || !strings.Contains(got.Leases[0].Note, "no longer reserves") {
+		t.Fatalf("park leases = %+v, want devpool-3 lost, the container free", got.Leases)
+	}
+	var next struct {
+		NextActions string `json:"nextActions"`
+	}
+	if err := json.Unmarshal([]byte(text), &next); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(next.NextActions, "another holder") || !strings.Contains(next.NextActions, "ended outside zcp") {
+		t.Errorf("nextActions = %q, want the lease ended outside zcp, never another holder", next.NextActions)
+	}
+	orch.set(func(o *ownershipOrchestrator) {
+		if o.freePowers != 0 {
+			t.Errorf("the park stopped a free container")
+		}
+	})
 }
 
 // TestLeaseTool_Ownership_StoppedOutsideZcp_StaysParked: a stop of zcp's lease
