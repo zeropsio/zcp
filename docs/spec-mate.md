@@ -1856,7 +1856,7 @@ sequenceDiagram
   `409 mate_not_connected`, reason `no-ack`. HQ matches the acknowledgement by the
   project and the ticket, not by the link it sent the ticket on, so a ticket sent just before the
   Mate's rotation (§3.5) is acknowledged on the successor.
-- Mate HTTP reads carry no credential; the ticket travels only in the first WebSocket frame above.
+- The ticket travels only in the first WebSocket frame above.
 - The Mate consumes the ticket once; unknown, used, expired or bound to another Mate is a refusal and
   the browser asks HQ for a new one. **Reconnect is a new ticket**, retried at a bounded rate (§0
   rule 4): 2, 4, 8, 15 and 30 s apart, then steady at 60 s for the Mate on screen and 5 min for one in
