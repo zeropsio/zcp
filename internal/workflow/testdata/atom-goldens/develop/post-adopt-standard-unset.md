@@ -1,6 +1,6 @@
 ---
 id: develop/post-adopt-standard-unset
-atomIds: [develop-intro, develop-strategy-review, develop-change-drives-deploy, develop-self-deploy-reproducibility, develop-dynamic-runtime-start-container, develop-knowledge-pointers, develop-standard-unset-iterate, develop-standard-unset-promote-stage, develop-auto-close-semantics, develop-verify-matrix]
+atomIds: [develop-intro, develop-strategy-review, develop-change-drives-deploy, develop-self-deploy-reproducibility, develop-dynamic-runtime-start-container, develop-knowledge-pointers, develop-standard-unset-iterate, develop-standard-unset-promote-stage, develop-user-code-box, develop-auto-close-semantics, develop-verify-matrix]
 description: "Adopted standard pair, both halves running, close-mode never picked."
 ---
 === develop-intro ===
@@ -159,6 +159,13 @@ without a rebuild, re-activate a recorded build instead: `zerops_deploy
 targetService="appstage" appVersion="<id>"`, with candidate ids
 from the status envelope's `rollback` block or `zerops_events
 serviceHostname="appstage"`.
+
+---
+
+=== develop-user-code-box ===
+### A feature that runs code the app's users send
+
+A feature that runs code the app does not write itself — users' snippets or submissions, notebook cells, an agent's tool calls, plugins — runs that code in a Zerops Box sandbox beside the app, never in the app's runtime container, where namespaces or a subprocess still share its kernel, files and project network. A project without a Box gets one through `zerops_import` (`type: ubuntu/zbox@1`; a Box exists only in a project in region prg1), and the app calls its workspace API with the key wired by reference: `zerops_knowledge uri="zerops://themes/services"`, section "Running code the app's users send".
 
 ---
 

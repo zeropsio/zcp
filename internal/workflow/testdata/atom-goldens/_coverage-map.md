@@ -28,6 +28,7 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 | `bootstrap-resume` | 1 | idle/incomplete-resume |
 | `bootstrap-route-options` | 5 | idle/adopt-only, idle/bootstrapped-with-managed, idle/dev-pool-only, idle/empty, idle/incomplete-resume |
 | `bootstrap-runtime-classes` | 2 | bootstrap/classic/discover-standard-dynamic, bootstrap/classic/new-part-of-pair |
+| `bootstrap-user-code-box` | 2 | bootstrap/classic/discover-standard-dynamic, bootstrap/classic/new-part-of-pair |
 | `bootstrap-verify` | 1 | bootstrap/recipe/close |
 | `bootstrap-wait-active` | 1 | bootstrap/classic/provision-local |
 | `develop-auto-close-semantics` | 17 | develop/closed-auto-complete, develop/closed-iteration-cap, develop/dev-pool-dev-service, develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/first-deploy-unset-decision, develop/git-push-broken, develop/git-push-configured-webhook, develop/mode-expansion-source, develop/monorepo-three-parts, develop/multi-service-scope-narrow, develop/post-adopt-standard-unset, develop/standard-auto-pair, develop/standup-dev-deployed-wired, develop/standup-stage-out-of-scope, develop/steady-dev-auto-container |
@@ -94,6 +95,7 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 | `develop-static-workflow` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
 | `develop-strategy-awareness` | 11 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/git-push-broken, develop/git-push-configured-webhook, develop/mode-expansion-source, develop/monorepo-three-parts, develop/multi-service-scope-narrow, develop/standard-auto-pair, develop/standup-dev-deployed-wired, develop/steady-dev-auto-container |
 | `develop-strategy-review` | 4 | develop/dev-pool-dev-service, develop/first-deploy-unset-decision, develop/post-adopt-standard-unset, develop/standup-stage-out-of-scope |
+| `develop-user-code-box` | 10 | develop/dev-pool-dev-service, develop/git-push-broken, develop/git-push-configured-webhook, develop/mode-expansion-source, develop/monorepo-three-parts, develop/multi-service-scope-narrow, develop/post-adopt-standard-unset, develop/standard-auto-pair, develop/standup-dev-deployed-wired, develop/steady-dev-auto-container |
 | `develop-verify-matrix` | 15 | develop/dev-pool-dev-service, develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/first-deploy-unset-decision, develop/git-push-broken, develop/git-push-configured-webhook, develop/mode-expansion-source, develop/monorepo-three-parts, develop/multi-service-scope-narrow, develop/post-adopt-standard-unset, develop/standard-auto-pair, develop/standup-dev-deployed-wired, develop/standup-stage-out-of-scope, develop/steady-dev-auto-container |
 | `discover-activity-inflight` | 1 | idle/adopt-only |
 | `export-classify-envs` | 1 | export/classify-prompt |
