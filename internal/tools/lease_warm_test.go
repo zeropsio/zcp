@@ -40,11 +40,9 @@ type warmPoolContainer struct {
 	current                 bool
 }
 
-func (o *warmPoolOrchestrator) add(number int, lock string, snapshots int) {
-	c := &warmPoolContainer{id: fmt.Sprintf("c-%d", number), number: number, status: "ACTIVE", lock: lock, snapshots: snapshots, current: true}
-	if lock == "reserved" {
-		c.lease = fmt.Sprintf("lease-%d-0123456789abcdef0123456789", number)
-	}
+// add puts a free container with its primary snapshot in the pool.
+func (o *warmPoolOrchestrator) add(number int) {
+	c := &warmPoolContainer{id: fmt.Sprintf("c-%d", number), number: number, status: "ACTIVE", snapshots: 1, current: true}
 	o.containers = append(o.containers, c)
 	if number >= o.next {
 		o.next = number + 1
@@ -102,7 +100,7 @@ func (o *warmPoolOrchestrator) ServeHTTP(w http.ResponseWriter, r *http.Request)
 			refuse("pool-capacity-exceeded", "the requested containers do not fit under the pool maximum")
 			return
 		}
-		o.add(o.next, "", 1)
+		o.add(o.next)
 		_, _ = w.Write([]byte("[" + strings.Replace(o.containers[len(o.containers)-1].json(false, false), `"dirty":false`, `"dirty":false,"snapshots":null`, 1) + "]"))
 	case r.Method == http.MethodPost && path == "/container/acquire":
 		for _, c := range o.containers {
@@ -170,8 +168,8 @@ func warmLeaseResultOf(t *testing.T, text string) warmLeaseResult {
 func TestLeaseTool_Release_WarmPool_KeepsThenRemoves(t *testing.T) {
 	t.Parallel()
 	orch := &warmPoolOrchestrator{max: 2}
-	orch.add(1, "", 1)
-	orch.add(2, "", 1)
+	orch.add(1)
+	orch.add(2)
 	srv, _ := leaseToolServer(t, orch)
 
 	for _, branch := range []string{"feat-a", "feat-b"} {
@@ -225,7 +223,7 @@ func TestLeaseTool_Release_WarmPool_KeepsThenRemoves(t *testing.T) {
 func TestLeaseTool_Acquire_TakesTheWarmOne_PreparesAnother(t *testing.T) {
 	t.Parallel()
 	orch := &warmPoolOrchestrator{max: 3}
-	orch.add(1, "", 1)
+	orch.add(1)
 	srv, _ := leaseToolServer(t, orch)
 
 	res := callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo, "branch": "feat-a"})

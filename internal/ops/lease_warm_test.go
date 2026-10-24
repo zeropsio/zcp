@@ -59,8 +59,11 @@ type warmOrch struct {
 	reads    []string // ids read by id
 }
 
-func newWarmOrch(maxContainers int, first int64) *warmOrch {
-	return &warmOrch{max: maxContainers, next: first}
+// warmStatusDeleting is how a list shows a container being removed.
+const warmStatusDeleting = "DELETING"
+
+func newWarmOrch(maxContainers int) *warmOrch {
+	return &warmOrch{max: maxContainers, next: 3}
 }
 
 func warmLeaseOf(id string) string { return "lease-of-" + id + "-0123456789abcdef" }
@@ -76,7 +79,7 @@ func (o *warmOrch) add(number int64, lock string, current, dirty bool, snapshots
 func (o *warmOrch) addLocked(number int64, lock string, current, dirty bool, snapshots int) *warmBox {
 	id := "c-" + strconv.FormatInt(number, 10)
 	b := &warmBox{c: platform.SwarmContainer{
-		ID: id, Number: number, Hostname: nodeHostname(number), Status: "ACTIVE", ServiceID: "svc-pool",
+		ID: id, Number: number, Hostname: nodeHostname(number), Status: platform.SwarmContainerActive, ServiceID: "svc-pool",
 		Current: current, LockState: lock, Dirty: dirty,
 	}, snapshots: snapshots}
 	if lock == leaseLockReserved {
@@ -118,7 +121,7 @@ func (o *warmOrch) Container(_ context.Context, id string) (platform.SwarmContai
 	o.reads = append(o.reads, id)
 	b := o.find(id)
 	if b == nil {
-		return platform.SwarmContainer{}, &platform.SwarmError{Status: http.StatusNotFound, Code: "containerAction", Message: "no such container", Reason: "container-not-found"}
+		return platform.SwarmContainer{}, &platform.SwarmError{Status: http.StatusNotFound, Code: "containerAction", Message: "no such container", Reason: platform.SwarmReasonContainerNotFound}
 	}
 	c := b.c
 	c.Snapshots = b.snapshots
@@ -136,7 +139,7 @@ func (o *warmOrch) Acquire(context.Context, platform.SwarmAcquireRequest) (platf
 	}
 	var got *warmBox
 	for _, b := range o.boxes {
-		if b.c.LockState == "" && b.c.Status == "ACTIVE" {
+		if b.c.LockState == "" && b.c.Status == platform.SwarmContainerActive {
 			got = b
 			break
 		}
@@ -157,7 +160,7 @@ func (o *warmOrch) Release(_ context.Context, id, lease string, reset bool) (pla
 	o.releases = append(o.releases, fakeRelease{id, lease, reset})
 	b := o.find(id)
 	if b == nil || b.lease != lease {
-		return platform.SwarmContainer{}, &platform.SwarmError{Status: http.StatusConflict, Code: "containerAction", Message: "unknown lease", Reason: "unknown-lease"}
+		return platform.SwarmContainer{}, &platform.SwarmError{Status: http.StatusConflict, Code: "containerAction", Message: "unknown lease", Reason: platform.SwarmReasonUnknownLease}
 	}
 	if reset && b.snapshots == 0 {
 		return platform.SwarmContainer{}, noPrimarySnapshot()
@@ -187,7 +190,7 @@ func (o *warmOrch) Delete(_ context.Context, id, lease string) error {
 	if b.lease != lease {
 		return &platform.SwarmError{Status: http.StatusConflict, Code: "containerAction", Message: "held by another", Reason: "held-by-other"}
 	}
-	b.c.Status, b.c.LockState, b.lease = "DELETING", "deleting", ""
+	b.c.Status, b.c.LockState, b.lease = warmStatusDeleting, "deleting", ""
 	return nil
 }
 
@@ -293,9 +296,9 @@ func (wf *warmFixture) acquire(t *testing.T, branch string) LeaseView {
 
 // hold gives zcp a lease of container number, reserved in the pool and
 // recorded, without an acquire (whose own top-up would change the pool).
-func (wf *warmFixture) hold(t *testing.T, number int64, current bool, snapshots int) {
+func (wf *warmFixture) hold(t *testing.T, number int64, current bool) {
 	t.Helper()
-	b := wf.orch.add(number, leaseLockReserved, current, false, snapshots)
+	b := wf.orch.add(number, leaseLockReserved, current, false, 1)
 	if err := writeLeaseRecord(wf.stateDir, leaseRecord{PoolHostname: testPoolHost, PoolServiceID: "svc-pool", ContainerID: b.c.ID,
 		ContainerNumber: number, ContainerHostname: nodeHostname(number), Lease: b.lease, Branch: "b" + strconv.FormatInt(number, 10),
 		AcquiredAt: "2026-10-24T08:00:00Z"}); err != nil {
@@ -324,11 +327,11 @@ func (wf *warmFixture) recordGone(t *testing.T, alias string) {
 // no create — and the result says it was kept warm.
 func TestLeaseRelease_WarmBelowTarget_ResetsAndKeeps(t *testing.T) {
 	t.Parallel()
-	orch := newWarmOrch(4, 3)
+	orch := newWarmOrch(4)
 	orch.add(4, leaseLockReserved, true, false, 1) // another holder's
 	orch.add(6, "", true, false, 0)                // platform-made: never warm
 	wf := newWarmFixture(t, orch)
-	wf.hold(t, 5, true, 1)
+	wf.hold(t, 5, true)
 
 	view := wf.release(t, "devpool-5")
 
@@ -350,9 +353,9 @@ func TestLeaseRelease_WarmBelowTarget_ResetsAndKeeps(t *testing.T) {
 // lease — never a reset, never a create — and the result says it was removed.
 func TestLeaseRelease_WarmAtTarget_DeletesWithItsOwnLease(t *testing.T) {
 	t.Parallel()
-	orch := newWarmOrch(4, 3)
+	orch := newWarmOrch(4)
 	wf := newWarmFixture(t, orch)
-	wf.hold(t, 3, true, 1)
+	wf.hold(t, 3, true)
 	orch.add(6, "", true, false, 1) // the pool's warm container
 
 	view := wf.release(t, "devpool-3")
@@ -381,9 +384,9 @@ func TestLeaseRelease_WarmAtTarget_DeletesWithItsOwnLease(t *testing.T) {
 // replaces a held outdated one), and the pool is topped up with a current one.
 func TestLeaseRelease_Outdated_Deletes(t *testing.T) {
 	t.Parallel()
-	orch := newWarmOrch(4, 3)
+	orch := newWarmOrch(4)
 	wf := newWarmFixture(t, orch)
-	wf.hold(t, 3, false, 1)                        // a deploy since: #3 is outdated
+	wf.hold(t, 3, false)                           // a deploy since: #3 is outdated
 	orch.add(4, leaseLockReserved, true, false, 1) // another holder's
 
 	view := wf.release(t, "devpool-3")
@@ -414,9 +417,9 @@ func TestLeaseRelease_DeleteRefused_FallsBackToReset(t *testing.T) {
 	} {
 		t.Run(msg, func(t *testing.T) {
 			t.Parallel()
-			orch := newWarmOrch(4, 3)
+			orch := newWarmOrch(4)
 			wf := newWarmFixture(t, orch)
-			wf.hold(t, 3, true, 1)
+			wf.hold(t, 3, true)
 			orch.add(6, "", true, false, 1)
 			orch.deleteErr = &platform.SwarmError{Status: http.StatusBadRequest, Code: "containerAction", Message: msg}
 
@@ -444,10 +447,10 @@ func TestLeaseRelease_DeleteRefused_FallsBackToReset(t *testing.T) {
 // released or created.
 func TestLeaseWarm_DeletesOnlyTheReleasedContainer(t *testing.T) {
 	t.Parallel()
-	orch := newWarmOrch(10, 3)
+	orch := newWarmOrch(10)
 	wf := newWarmFixture(t, orch)
-	wf.hold(t, 3, true, 1)
-	wf.hold(t, 4, true, 1)                         // zcp's other lease
+	wf.hold(t, 3, true)
+	wf.hold(t, 4, true)                            // zcp's other lease
 	orch.add(5, "", true, false, 1)                // warm
 	orch.add(10, "", true, false, 1)               // warm, beyond the target
 	orch.add(6, "", true, true, 1)                 // dirty
@@ -465,7 +468,7 @@ func TestLeaseWarm_DeletesOnlyTheReleasedContainer(t *testing.T) {
 		t.Errorf("releases %+v, creates %v: want none", releases, creates)
 	}
 	for _, id := range []string{"c-4", "c-5", "c-6", "c-7", "c-8", "c-9", "c-10"} {
-		if lock, status, present := orch.state(id); !present || status == "DELETING" {
+		if lock, status, present := orch.state(id); !present || status == warmStatusDeleting {
 			t.Errorf("%s is %s/%s (present %v): zcp touched a container it was not releasing", id, status, lock, present)
 		}
 	}
@@ -477,7 +480,7 @@ func TestLeaseWarm_DeletesOnlyTheReleasedContainer(t *testing.T) {
 // warm container leaves one being prepared.
 func TestLeaseWarm_KeepThenRemoveThenPrepare(t *testing.T) {
 	t.Parallel()
-	orch := newWarmOrch(3, 3)
+	orch := newWarmOrch(3)
 	orch.add(3, leaseLockReserved, true, false, 1)
 	orch.add(4, leaseLockReserved, true, false, 1)
 	wf := newWarmFixture(t, orch)
@@ -500,7 +503,7 @@ func TestLeaseWarm_KeepThenRemoveThenPrepare(t *testing.T) {
 	if lock, _, _ := orch.state("c-3"); lock != "" {
 		t.Errorf("c-3 lock = %q, want free (the warm one)", lock)
 	}
-	if _, status, _ := orch.state("c-4"); status != "DELETING" {
+	if _, status, _ := orch.state("c-4"); status != warmStatusDeleting {
 		t.Errorf("c-4 status = %q, want DELETING", status)
 	}
 
@@ -523,7 +526,7 @@ func TestLeaseWarm_KeepThenRemoveThenPrepare(t *testing.T) {
 // pool without a warm container creates one, and records it.
 func TestEnsureWarm_AfterAcquire_CreatesTheShortfall(t *testing.T) {
 	t.Parallel()
-	orch := newWarmOrch(4, 3)
+	orch := newWarmOrch(4)
 	orch.add(3, "", true, false, 1)
 	wf := newWarmFixture(t, orch)
 
@@ -539,20 +542,20 @@ func TestEnsureWarm_AfterAcquire_CreatesTheShortfall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w := poolWarmOf(t, status, testPoolHost)
+	w := poolWarmOf(t, status)
 	if w.Target != 1 || w.Ready == nil || *w.Ready != 1 || w.Last == nil || w.Last.Outcome != LeaseWarmCreated || w.Last.Count != 1 {
 		t.Errorf("warm = %+v (last %+v), want target 1, ready 1, last created 1", w, w.Last)
 	}
 }
 
-func poolWarmOf(t *testing.T, status LeaseStatusView, pool string) LeasePoolWarm {
+func poolWarmOf(t *testing.T, status LeaseStatusView) LeasePoolWarm {
 	t.Helper()
 	for _, w := range status.Warm {
-		if w.Pool == pool {
+		if w.Pool == testPoolHost {
 			return w
 		}
 	}
-	t.Fatalf("status warm = %+v lacks pool %s", status.Warm, pool)
+	t.Fatalf("status warm = %+v lacks pool %s", status.Warm, testPoolHost)
 	return LeasePoolWarm{}
 }
 
@@ -577,7 +580,7 @@ func TestEnsureWarm_WhatCountsWarm(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			orch := newWarmOrch(10, 3)
+			orch := newWarmOrch(10)
 			orch.add(5, "", true, false, 1) // the one the acquire takes
 			tt.setup(orch)
 			wf := newWarmFixture(t, orch)
@@ -597,10 +600,10 @@ func TestEnsureWarm_WhatCountsWarm(t *testing.T) {
 // included; a pool at its maximum creates nothing and records why.
 func TestEnsureWarm_CappedAtThePoolMaximum(t *testing.T) {
 	t.Parallel()
-	orch := newWarmOrch(3, 3)
+	orch := newWarmOrch(3)
 	orch.add(3, "", true, false, 1)
 	orch.add(4, leaseLockReserved, true, false, 1)
-	orch.add(5, "deleting", true, false, 1).c.Status = "DELETING"
+	orch.add(5, "deleting", true, false, 1).c.Status = warmStatusDeleting
 	wf := newWarmFixture(t, orch)
 
 	view := wf.acquire(t, "feat-a") // takes #3: three containers, the maximum
@@ -615,7 +618,7 @@ func TestEnsureWarm_CappedAtThePoolMaximum(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if w := poolWarmOf(t, status, testPoolHost); w.Last == nil || w.Last.Outcome != LeaseWarmFull || !strings.Contains(w.Last.Note, "3") {
+	if w := poolWarmOf(t, status); w.Last == nil || w.Last.Outcome != LeaseWarmFull || !strings.Contains(w.Last.Note, "3") {
 		t.Errorf("warm last = %+v, want full, naming the maximum of 3", w.Last)
 	}
 }
@@ -637,7 +640,7 @@ func TestEnsureWarm_CreateRefused_RecordedAndStatusReportsIt(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			orch := newWarmOrch(4, 3)
+			orch := newWarmOrch(4)
 			orch.createErr = tt.err
 			wf := newWarmFixture(t, orch)
 			wf.acquire(t, "feat-a")
@@ -646,7 +649,7 @@ func TestEnsureWarm_CreateRefused_RecordedAndStatusReportsIt(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			w := poolWarmOf(t, status, testPoolHost)
+			w := poolWarmOf(t, status)
 			if w.Last == nil || w.Last.Outcome != tt.outcome || !strings.Contains(w.Last.Note, tt.want) || w.Last.At == "" {
 				t.Errorf("warm last = %+v, want %s naming %q, with when", w.Last, tt.outcome, tt.want)
 			}
@@ -664,7 +667,7 @@ func TestEnsureWarm_CreateRefused_RecordedAndStatusReportsIt(t *testing.T) {
 // reset and says so.
 func TestEnsureWarm_InTheBackground_UnderThePoolLock(t *testing.T) {
 	t.Parallel()
-	orch := newWarmOrch(4, 3)
+	orch := newWarmOrch(4)
 	orch.add(3, "", true, false, 1)
 	wf := newWarmFixture(t, orch)
 	wf.deps.Warm.LockWait = 50 * time.Millisecond
@@ -681,7 +684,7 @@ func TestEnsureWarm_InTheBackground_UnderThePoolLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if w := poolWarmOf(t, status, testPoolHost); w.Preparing != 1 || w.Last == nil || w.Last.Outcome != LeaseWarmCreating {
+	if w := poolWarmOf(t, status); w.Preparing != 1 || w.Last == nil || w.Last.Outcome != LeaseWarmCreating {
 		t.Errorf("warm = %+v (last %+v) while the create runs, want 1 preparing, last creating", w, w.Last)
 	}
 
@@ -713,7 +716,7 @@ func TestEnsureWarm_InTheBackground_UnderThePoolLock(t *testing.T) {
 // status counts warm containers from the pool, not from the create's answer.
 func TestEnsureWarm_ContainerItCreated_IsNotItsOwn(t *testing.T) {
 	t.Parallel()
-	orch := newWarmOrch(4, 3)
+	orch := newWarmOrch(4)
 	orch.add(3, "", true, false, 1)
 	orch.onCreate = func(o *warmOrch, created []*warmBox) {
 		o.mu.Lock()
@@ -736,7 +739,7 @@ func TestEnsureWarm_ContainerItCreated_IsNotItsOwn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if w := poolWarmOf(t, status, testPoolHost); w.Ready == nil || *w.Ready != 0 || w.Last == nil || w.Last.Outcome != LeaseWarmCreated {
+	if w := poolWarmOf(t, status); w.Ready == nil || *w.Ready != 0 || w.Last == nil || w.Last.Outcome != LeaseWarmCreated {
 		t.Errorf("warm = %+v (last %+v), want 0 ready though the last create made one", w, w.Last)
 	}
 	releases, deletes, _ := orch.log()
@@ -753,7 +756,7 @@ func TestLeaseRelease_Unresettable_DeletedAsDP15BeforeTheWarmDecision(t *testing
 	for _, warm := range []bool{false, true} {
 		t.Run(fmt.Sprintf("warm=%v", warm), func(t *testing.T) {
 			t.Parallel()
-			orch := newWarmOrch(4, 3)
+			orch := newWarmOrch(4)
 			orch.add(3, "", true, false, 0) // platform-made
 			if warm {
 				orch.add(6, "", true, false, 1)
@@ -796,13 +799,13 @@ func TestLeaseAcquire_ContainersPreparing_RetriesWithinDeadline(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			orch := newWarmOrch(4, 3)
+			orch := newWarmOrch(4)
 			for range tt.refusals {
 				orch.acquireErrs = append(orch.acquireErrs, preparing)
 			}
 			wf := newWarmFixture(t, orch)
 			wf.deps.Client.(*platform.Mock).WithServices([]platform.ServiceStack{
-				{ID: "svc-pool", Name: testPoolHost, Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: tt.poolType, ServiceStackTypeCategoryName: "USER"}},
+				{ID: "svc-pool", Name: testPoolHost, Status: platform.SwarmContainerActive, ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: tt.poolType, ServiceStackTypeCategoryName: "USER"}},
 			})
 			var mu sync.Mutex
 			clock := time.Date(2026, 10, 24, 8, 0, 0, 0, time.UTC)
@@ -847,7 +850,7 @@ func TestLeaseAcquire_ContainersPreparing_RetriesWithinDeadline(t *testing.T) {
 // last did — and changes nothing: no orchestrator mutation, no record written.
 func TestLeaseStatus_ReportsEachPoolsWarm(t *testing.T) {
 	t.Parallel()
-	orch := newWarmOrch(10, 3)
+	orch := newWarmOrch(10)
 	orch.add(3, "", true, false, 1)                // warm
 	orch.add(4, "", true, false, 1)                // warm
 	orch.add(5, "", true, false, 0)                // platform-made
@@ -868,7 +871,7 @@ func TestLeaseStatus_ReportsEachPoolsWarm(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	w := poolWarmOf(t, status, testPoolHost)
+	w := poolWarmOf(t, status)
 	if w.Target != 1 || w.Ready == nil || *w.Ready != 2 || w.Preparing != 1 || w.Last == nil || w.Last.Outcome != LeaseWarmCreating || w.Last.At != at {
 		t.Errorf("warm = %+v (last %+v), want target 1, 2 ready, 1 preparing, last creating at %s", w, w.Last, at)
 	}
@@ -887,7 +890,7 @@ func TestLeaseStatus_ReportsEachPoolsWarm(t *testing.T) {
 // says it never reported back.
 func TestLeaseStatus_CreateThatNeverAnswered_SaysSo(t *testing.T) {
 	t.Parallel()
-	orch := newWarmOrch(4, 3)
+	orch := newWarmOrch(4)
 	wf := newWarmFixture(t, orch)
 	at := time.Now().Add(-LeaseCallTimeout - time.Minute).UTC().Format(time.RFC3339)
 	if err := writeWarmOutcome(wf.stateDir, testPoolHost, LeaseWarmOutcome{At: at, Outcome: LeaseWarmCreating, Count: 1}); err != nil {
@@ -898,7 +901,7 @@ func TestLeaseStatus_CreateThatNeverAnswered_SaysSo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w := poolWarmOf(t, status, testPoolHost)
+	w := poolWarmOf(t, status)
 	if w.Preparing != 0 || w.Last == nil || !strings.Contains(w.Last.Note, "never reported back") {
 		t.Errorf("warm = %+v (last %+v), want none preparing and the create named as never answered", w, w.Last)
 	}
@@ -908,7 +911,7 @@ func TestLeaseStatus_CreateThatNeverAnswered_SaysSo(t *testing.T) {
 // policy (the envelope's lease reader, tests) reads no warm containers.
 func TestLeaseStatus_WithoutWarmPolicy_ReportsNoWarm(t *testing.T) {
 	t.Parallel()
-	orch := newWarmOrch(4, 3)
+	orch := newWarmOrch(4)
 	orch.add(3, "", true, false, 1)
 	wf := newWarmFixture(t, orch)
 	wf.deps.Warm = nil
