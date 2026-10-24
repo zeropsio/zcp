@@ -3,6 +3,7 @@
 package ops
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -932,19 +933,26 @@ func TestLeaseRelease_PoolGoneOrBeingDeleted_DroppedAsLost(t *testing.T) {
 			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}}
 	}
 	notFound := platform.NewPlatformError(platform.ErrServiceNotFound, "service stack not found", "")
+	// What the platform answers a by-id read of a deleted service with
+	// (live-verified): HTTP 400 serviceStackNotFound, not a 404.
+	stackNotFound := platform.NewPlatformError(platform.ErrAPIError, "Service stack not found.", "")
+	stackNotFound.APICode = "serviceStackNotFound"
 	tests := []struct {
 		name    string
 		listed  []platform.ServiceStack // what the service search still lists
 		byID    string                  // the status the read by id answers; "" = not found
 		force   bool
 		wantWhy string
+		byIDErr error // the not-found answer of the read by id; nil = notFound
 	}{
-		{"deleted, gone from the search", nil, "DELETED", false, "no longer exists"},
-		{"deleted, still in the search", []platform.ServiceStack{pool("DELETED")}, "DELETED", false, "no longer exists"},
-		{"being deleted, still in the search", []platform.ServiceStack{pool("DELETING")}, "DELETING", false, "being deleted"},
-		{"being deleted, the search still says active", []platform.ServiceStack{pool("ACTIVE")}, "DELETING", false, "being deleted"},
-		{"being deleted, forced", []platform.ServiceStack{pool("DELETING")}, "DELETING", true, "being deleted"},
-		{"not found by id, the search still lists it", []platform.ServiceStack{pool("ACTIVE")}, "", false, "no longer exists"},
+		{"deleted, gone from the search", nil, "DELETED", false, "no longer exists", nil},
+		{"deleted, still in the search", []platform.ServiceStack{pool("DELETED")}, "DELETED", false, "no longer exists", nil},
+		{"being deleted, still in the search", []platform.ServiceStack{pool("DELETING")}, "DELETING", false, "being deleted", nil},
+		{"being deleted, the search still says active", []platform.ServiceStack{pool("ACTIVE")}, "DELETING", false, "being deleted", nil},
+		{"being deleted, forced", []platform.ServiceStack{pool("DELETING")}, "DELETING", true, "being deleted", nil},
+		{"not found by id, the search still lists it", []platform.ServiceStack{pool("ACTIVE")}, "", false, "no longer exists", nil},
+		{"400 serviceStackNotFound by id, the search still lists it", []platform.ServiceStack{pool("ACTIVE")}, "", false, "no longer exists", stackNotFound},
+		{"400 serviceStackNotFound by id, gone from the search", nil, "", false, "no longer exists", stackNotFound},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -959,7 +967,7 @@ func TestLeaseRelease_PoolGoneOrBeingDeleted_DroppedAsLost(t *testing.T) {
 				WithServices(tt.listed).
 				WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{Key: "API_TOKEN", Content: testPoolToken, Sensitive: true}})
 			if tt.byID == "" {
-				mock = mock.WithError("GetService", notFound)
+				mock = mock.WithError("GetService", cmp.Or(tt.byIDErr, error(notFound)))
 			} else {
 				byID := pool(tt.byID)
 				mock = mock.WithService(&byID)

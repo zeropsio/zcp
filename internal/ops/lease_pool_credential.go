@@ -279,8 +279,7 @@ func RenewPoolHQCredentials(ctx context.Context, client platform.Client, stateDi
 		// By id: the record names the pool service zcp wrote, and the service
 		// search lags writes.
 		if _, err := client.GetService(ctx, rec.PoolServiceID); err != nil {
-			var pe *platform.PlatformError
-			if errors.As(err, &pe) && pe.Code == platform.ErrServiceNotFound {
+			if IsServiceGone(err) {
 				_ = forgetPoolCredential(stateDir, pool)
 				continue
 			}
