@@ -1566,7 +1566,8 @@ type laggingSearch struct {
 
 func (l laggingSearch) ListServices(ctx context.Context, projectID string) ([]platform.ServiceStack, error) {
 	all, err := l.Client.ListServices(ctx, projectID)
-	return slices.DeleteFunc(all, func(s platform.ServiceStack) bool { return s.Name == groupHQPool }), err
+	// A copy: the mock answers its own slice.
+	return slices.DeleteFunc(slices.Clone(all), func(s platform.ServiceStack) bool { return s.Name == groupHQPool }), err
 }
 
 func (l laggingSearch) GetService(context.Context, string) (*platform.ServiceStack, error) {
@@ -1932,7 +1933,8 @@ type laggingSearchByID struct{ platform.Client }
 
 func (l laggingSearchByID) ListServices(ctx context.Context, projectID string) ([]platform.ServiceStack, error) {
 	all, err := l.Client.ListServices(ctx, projectID)
-	return slices.DeleteFunc(all, func(s platform.ServiceStack) bool { return s.Name == groupHQPool }), err
+	// A copy: the mock answers its own slice.
+	return slices.DeleteFunc(slices.Clone(all), func(s platform.ServiceStack) bool { return s.Name == groupHQPool }), err
 }
 
 // TestLeaseOwnership_LaggingSearch_TheReadByIDDecides: a search that misses
