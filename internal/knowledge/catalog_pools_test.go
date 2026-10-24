@@ -153,3 +153,46 @@ func TestThemes_Services_PoolSection_FactsPresent(t *testing.T) {
 		}
 	}
 }
+
+// TestThemes_Services_DevPool_MultiPart_FactsPresent pins that the services
+// theme's "A part's dev pool" subsection carries the loop for one branch
+// across several parts (spec-workflows.md §8 DP-17, DP-22…DP-24, DP-26): the
+// acquire of every part's pool in one call, the sibling wiring with its
+// fallback to the part's stage, the 0.0.0.0 bind, each part's own servers in a
+// shared declaration, commit-then-sync with its outcomes, the branch's release
+// and the rewire with the stale-wiring mark.
+func TestThemes_Services_DevPool_MultiPart_FactsPresent(t *testing.T) {
+	t.Parallel()
+
+	store, err := GetEmbeddedStore()
+	if err != nil {
+		t.Fatalf("GetEmbeddedStore: %v", err)
+	}
+	doc, err := store.Get("zerops://themes/services")
+	if err != nil {
+		t.Fatalf("Get services: %v", err)
+	}
+	section, ok := doc.H2Sections()["Pools and Box"]
+	if !ok {
+		t.Fatal("services.md missing H2 section 'Pools and Box'")
+	}
+	const heading = "### A part's dev pool"
+	_, sub, found := strings.Cut(section, heading)
+	if !found {
+		t.Fatalf("'Pools and Box' section missing %q", heading)
+	}
+	sub, _, _ = strings.Cut(sub, "\n### ")
+	for _, fact := range []string{
+		"action=acquire pools=[", "reused: true",
+		`"siblingEnv"`, "node-id-<n>.runtime.<pool>.zerops", "leftToContainerEnv", "stage", "0.0.0.0",
+		`"service"`, "unique across the whole file",
+		"action=sync lease=", "up-to-date", "fast-forwarded", "has-own-commits", "local-changes-in-the-way",
+		"on-another-branch", "unreachable", "unwatchedServers",
+		"action=release branch=", "force=true",
+		"rewired", `wiring: "stale"`,
+	} {
+		if !strings.Contains(sub, fact) {
+			t.Errorf("%q subsection missing fact %q", heading, fact)
+		}
+	}
+}

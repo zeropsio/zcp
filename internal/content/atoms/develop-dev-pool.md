@@ -7,7 +7,7 @@ environments: [container]
 multiService: aggregate
 title: "A part's dev pool — lease a container, work, push, release"
 references-atoms: [develop-dynamic-runtime-start-container]
-references-fields: [ops.DeployResult.Warnings]
+references-fields: [ops.DeployResult.Warnings, ops.LeaseView.Reused, ops.LeaseSyncMember.UnwatchedServers]
 ---
 
 ### A part's dev pool
@@ -64,6 +64,32 @@ columns; nothing renamed or dropped), and agree a destructive one with
 whoever works on the other branches before running it — branches whose
 migrations conflict break each other. No lease gets a database or schema of
 its own.
+
+**A branch across several parts.** Give the branch one lease per part whose
+code the change edits and runs, each part its own pool; a part it only calls
+stays unleased.
+
+1. `zerops_lease action=acquire pools=["<pool>","<pool>"] repo="<https clone url>" branch="<branch>"`
+   leases one container per pool, or none. A part added later joins with
+   `pool="<pool>"` and the same branch; one already held answers
+   `reused: true`.
+2. `"siblingEnv": {"<VAR>": "<pool>"}` in `.zcp/dev-servers.json` gives each
+   server started in a lease `<VAR>` = the hostname of the branch's lease on
+   that pool, for server-side `http://${<VAR>}:<port>` calls (a browser
+   cannot resolve it). Without such a lease `<VAR>` keeps its own env value:
+   set it in the calling part's pool env to the called part's stage
+   hostname, and run the called part's dev server on its stage's port. Bind
+   servers a sibling calls to `0.0.0.0`: a loopback-only one serves its
+   preview, never a sibling. In a declaration several parts share, give each
+   entry `"service": "<its pool>"`, or every part's lease runs it.
+3. Each lease is a full checkout running its own part's servers. Commit in
+   one lease, then `zerops_lease action=sync lease="<alias>"` pushes the
+   branch and fast-forwards the other leases (uncommitted files refuse it).
+   Sync before you commit in another: a lease with commits of its own or
+   changes in the way is left as it was, named. Restart what
+   `unwatchedServers` lists.
+4. `zerops_lease action=release branch="<branch>"` releases every lease of
+   the branch, or none: unsaved work in one refuses them all.
 
 **Pitfalls**
 
@@ -126,5 +152,5 @@ its own.
   included. Run there only code you would trust with them —
   `zerops_knowledge uri="zerops://themes/services"`, section "Untrusted code".
 
-The pool's import stanza and setup shape:
+The pool's import stanza, setup shape and a declaration several parts share:
 `zerops_knowledge uri="zerops://themes/services"`, section "A part's dev pool".
