@@ -193,7 +193,9 @@ func readLeaseOwnership(ctx context.Context, d LeaseDeps, rec leaseRecord) lease
 		case gerr != nil && IsServiceGone(gerr):
 			return gone("the pool service no longer exists")
 		case gerr != nil:
-			return unverified(err)
+			// The search's miss says nothing of the pool (it lags): the
+			// read by id's own failure is why zcp cannot tell.
+			return unverified(gerr)
 		}
 		if rp, err = orchestratorFor(ctx, d, svc); err != nil {
 			return unverified(err)
