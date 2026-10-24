@@ -39,6 +39,9 @@ type ZeropsClient struct {
 	mu            sync.Mutex // guards cachedID/cachedTokenID lazy init with retry on error
 	cachedID      string
 	cachedTokenID string
+
+	// keyRefused hears Zerops refusing the key (OnKeyRefused).
+	keyRefused keyRefusalHook
 }
 
 // NewZeropsClient creates a new ZeropsClient authenticated with the given token.
@@ -69,11 +72,20 @@ func NewProjectClient(ctx context.Context, token, apiHost, projectID string) (*Z
 // newZeropsClientOn builds the client on a given HTTP client — the org
 // reader hands it one whose transport only reads (OpenOrgReader).
 func newZeropsClientOn(token, endpoint string, httpClient *http.Client) *ZeropsClient {
+	z := &ZeropsClient{}
+	base := httpClient.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	watched := *httpClient
+	watched.Transport = keyRefusalTransport{base: base, hook: &z.keyRefused}
+	httpClient = &watched
 	config := sdkBase.DefaultConfig(sdkBase.WithCustomEndpoint(endpoint))
 	handler := sdk.New(config, httpClient)
 	handler = sdk.AuthorizeSdk(handler, token)
 	env := sdkBase.NewEnvironment(config, httpClient).Authorize(token)
-	return &ZeropsClient{handler: handler, env: env}
+	z.handler, z.env = handler, env
+	return z
 }
 
 // resolveEndpoint normalizes the apiHost argument into the SDK endpoint

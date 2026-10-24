@@ -32,6 +32,7 @@ func TestClient_EveryCallPresentsTheKeyInTheHeaderAndNeverInTheURL(t *testing.T)
 		{"environment logs", func(c Client) { _, _ = c.EnvironmentLogs(ctx, "p2", "s1", 10) }},
 		{"recipe tier", func(c Client) { _, _ = c.RecipeTier(ctx, "mate") }},
 		{"self", func(c Client) { _, _ = c.Self(ctx) }},
+		{"key recheck", func(c Client) { _, _ = c.RecheckKey(ctx) }},
 		{"signers", func(c Client) { _, _ = c.Signers(ctx, "p-mate") }},
 	}
 	for _, tt := range routes {

@@ -371,6 +371,9 @@ func runServer(mcpStdout io.Writer, tel telemetry.Emitter) (*server.Server, erro
 
 	// Detect runtime environment (Zerops container vs local dev).
 	rtInfo := runtime.Detect()
+	if rtInfo.MateEnabled {
+		watchLiveKeyRefusal(client)
+	}
 
 	// Headless hygiene: warn when neither AGENTS.md nor CLAUDE.md is
 	// present in cwd. Doctrine lives in AGENTS.md (canonical) + CLAUDE.md
