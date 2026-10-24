@@ -244,8 +244,8 @@ func TestUnmount_GoneOnceTheUnitStops_NoFusermount(t *testing.T) {
 		if err != nil {
 			t.Fatalf("force=%v: %v", force, err)
 		}
-		want := []recordedCommand{{"sudo", "-E", "zsc", "unit", "remove", "sshfs-apppool-3"}}
-		if len(*got) != 1 || !slices.Equal((*got)[0], want[0]) {
+		want := recordedCommand{"sudo", "-E", "zsc", "unit", "remove", "sshfs-apppool-3"}
+		if len(*got) != 1 || !slices.Equal((*got)[0], want) {
 			t.Errorf("force=%v: commands = %q, want only %q", force, *got, want)
 		}
 	}
