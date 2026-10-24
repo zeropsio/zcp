@@ -278,7 +278,7 @@ func TestThemes_Services_DevPool_Park_FactsPresent(t *testing.T) {
 	sub, _, _ = strings.Cut(sub, "\n### ")
 	for _, fact := range []string{
 		// Park: what it keeps and ends, and that the slot stays taken.
-		`zerops_lease action=park lease="<alias>"`, "`/var/www`, `$HOME` and `/tmp`", "every process ends", "maximum",
+		`zerops_lease action=park lease="<alias>"`, "`/var/www` and `$HOME`", "an Ubuntu base empties `/tmp`", "every process ends", "maximum",
 		// Parked: nothing answers on it, what refuses it, the wiring.
 		"`parked`", "`parkedAt`", "refuse it", "skips it",
 		// Unpark: what comes back.
