@@ -559,6 +559,9 @@ func (e *Engine) BootstrapCompletePlan(targets []BootstrapTarget, schemas *schem
 	if state.Bootstrap.CurrentStepName() != StepDiscover {
 		return nil, fmt.Errorf("bootstrap complete plan: current step is %q, not %q", state.Bootstrap.CurrentStepName(), StepDiscover)
 	}
+	if err := plannedCodeVolumeError(targets); err != nil {
+		return nil, fmt.Errorf("bootstrap complete plan: %w: %w", ErrPlanShapeInvalid, err)
+	}
 	return e.completePlanWithTargets(state, targets, schemas, liveServices)
 }
 

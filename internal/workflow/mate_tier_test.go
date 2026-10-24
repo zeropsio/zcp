@@ -5,6 +5,8 @@ import (
 	"maps"
 	"strings"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // tierHQ is the Mate's HQ in these tests, and tierApp the application HQ
@@ -316,6 +318,64 @@ func TestParseMateTier_SeveralDevServicesBesideALocalStorageService_PairByName(t
 		}
 		if strings.Join(pairs, " ") != "apidev→apistage webdev→webstage" {
 			t.Errorf("%s: pairs = %v, want each stage with the runtime named like it", name, pairs)
+		}
+	}
+}
+
+// TestParseMateTier_ARecordedVariantBPair_IsReadAsThatPair (docs/spec-mate.md
+// §2.8a.4a): a variant-B pair zcp already records keeps working, so a tier
+// read beside its record pairs the repository's runtimes as that pair — its
+// recorded dev half, wherever the tier lists it, the others further dev
+// services, every stage of the repository its stage — and never a second
+// pair for one of its services. A record naming another volume, or a pair
+// already keyed by its dev pool, keeps nothing.
+func TestParseMateTier_ARecordedVariantBPair_IsReadAsThatPair(t *testing.T) {
+	t.Parallel()
+	const vol = "  - hostname: vol\n    type: local-storage:single@1\n"
+	recorded := func(volume string, pool bool) *ServiceMeta {
+		m := NewServiceMeta("apidev", topology.PlanModeStandard)
+		m.CodeVolume = &topology.CodeVolume{Hostname: volume, MountPath: "/var/www/ws",
+			DevServices: []topology.DevServiceRef{{Hostname: "webdev", SetupName: "dev"}}}
+		if pool {
+			m.DevPool = &DevPoolRef{ServiceID: "svc-apipool"}
+		}
+		return m
+	}
+
+	tier, err := ParseMateTier("services:\n"+variantBTierRuntimes+vol, tierHQ, tierApp, NewServiceMeta("other", topology.PlanModeDev), recorded("vol", false))
+	if err != nil {
+		t.Fatalf("ParseMateTier: %v", err)
+	}
+	if len(tier.Pairs) != 1 {
+		t.Fatalf("pairs = %+v, want the recorded variant-B pair", tier.Pairs)
+	}
+	p := tier.Pairs[0]
+	stages := make([]string, 0, len(p.Stages))
+	for _, s := range p.Stages {
+		stages = append(stages, s.Hostname+"/"+s.Setup)
+	}
+	devs := make([]string, 0, len(p.DevServices))
+	for _, d := range p.DevServices {
+		devs = append(devs, d.Hostname+"/"+d.Setup)
+	}
+	if p.Dev.Hostname != "apidev" || p.CodeVolume != "vol" || strings.Join(devs, " ") != "webdev/dev" ||
+		strings.Join(stages, " ") != "apistage/api webstage/web workerstage/worker" {
+		t.Errorf("pair = %s on %q, dev services %v, stages %v", p.Dev.Hostname, p.CodeVolume, devs, stages)
+	}
+
+	for name, rec := range map[string]*ServiceMeta{
+		"a record naming another volume":        recorded("data", false),
+		"a pair already keyed by its dev pool":  recorded("vol", true),
+		"a record of a dev half the tier lacks": func() *ServiceMeta { m := recorded("vol", false); m.Hostname = "gonedev"; return m }(),
+	} {
+		tier, err := ParseMateTier("services:\n"+variantBTierRuntimes+vol, tierHQ, tierApp, rec)
+		if err != nil {
+			t.Fatalf("%s: ParseMateTier: %v", name, err)
+		}
+		for _, p := range tier.Pairs {
+			if p.CodeVolume != "" || len(p.DevServices) != 0 {
+				t.Errorf("%s: pair %+v keeps a code volume", name, p)
+			}
 		}
 	}
 }

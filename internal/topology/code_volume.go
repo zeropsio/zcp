@@ -16,9 +16,10 @@ const CodeMountRoot = "/var/www"
 // MountPath, so each part's dev server runs in a container of its own runtime
 // while one checkout serves them all. The pair stays one: Hostname of its meta
 // is the dev service the agent edits and commits from; DevServices are the
-// pair's further dev services, each deploying its own dev setup. Chosen only
-// when the parts' runtimes cannot share one container or one container is
-// not enough — one dev service holding the whole repo is the default.
+// pair's further dev services, each deploying its own dev setup. zcp sets up
+// no new one — a part whose runtime cannot share the dev service gets a dev
+// pool — and keeps an existing one working until pool migration moves the
+// pair onto one dev pool per part (docs/spec-mate.md §2.8a.4a).
 type CodeVolume struct {
 	// Hostname is the local-storage service holding the repository.
 	Hostname string `json:"hostname"`
@@ -47,12 +48,6 @@ const (
 	// VolumeForeign: anything else — data zcp never writes code into.
 	VolumeForeign VolumeContent = "foreign"
 )
-
-// MayHoldCode reports whether the content leaves the volume free to hold the
-// repository: nothing yet, or this repository already.
-func (c VolumeContent) MayHoldCode() bool {
-	return c == VolumeAbsent || c == VolumeEmpty || c == VolumeCheckout
-}
 
 // DevServiceRef is a further dev service of a variant-B pair with the
 // zerops.yml dev setup it deploys (empty until known).

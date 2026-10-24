@@ -486,6 +486,9 @@ func runDeploySSHZCLIPush(
 	if superviseErr != nil {
 		result.Warnings = append(result.Warnings, superviseErr.Error())
 	}
+	if steer := codeVolumeSteerFor(stateDir, input.TargetService); steer != "" {
+		result.Warnings = append(result.Warnings, steer)
+	}
 
 	// L1 break-glass aftermath: a direct deploy on a push-delivering
 	// pair leaves the container ahead of the repo — flag the standing

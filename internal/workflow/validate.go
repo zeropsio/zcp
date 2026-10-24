@@ -196,12 +196,14 @@ type RuntimeTarget struct {
 	// (adopt sets it from observed custom domains) and is rejected here by
 	// ValidateBootstrapTargets — an agent-authored plan cannot request it.
 	PublicAccess string `json:"publicAccess,omitempty" jsonschema:"auto (default) | subdomain | none = internal-only, never public. Other values are rejected."`
-	// CodeVolume plans the pair as variant B: its repository on a shared
+	// CodeVolume records the pair as variant B: its repository on a shared
 	// local-storage service mounted under /var/www in the dev half and in
-	// every further dev service it names, each deploying its own dev setup.
-	// Only for parts whose runtimes cannot share one container or that one
-	// container cannot hold; absent is the default, one dev service holding
-	// the whole repository.
+	// every further dev service it names. Derive-only and never published:
+	// zcp sets up no new code volume (docs/spec-mate.md §2.8a.4a), so only
+	// adopt sets it, for a volume already holding the repository, and an
+	// agent's plan carrying it is refused (plannedCodeVolumeError). It stays a
+	// field of the plan because the plan is what provision and close write
+	// the pair's meta from.
 	CodeVolume *topology.CodeVolume `json:"codeVolume,omitempty"`
 }
 
@@ -510,10 +512,6 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, schemas *schema.Schemas
 			errs = append(errs, err)
 			continue
 		}
-		if err := codeVolumeError(rt); err != "" {
-			errs = append(errs, err)
-			continue
-		}
 		if err := plannedTwiceError(rt, planned); err != "" {
 			errs = append(errs, err)
 			continue
@@ -717,31 +715,16 @@ func plannedRuntimeHostnames(rt RuntimeTarget) []string {
 	return hosts
 }
 
-// codeVolumeError validates a variant-B plan: a pair (standard or dev) with
-// at least one further dev service, a valid volume hostname, every hostname
-// valid, and the volume mounted under /var/www, never at it. Returns "" when
-// valid or when the target plans no code volume.
-func codeVolumeError(rt RuntimeTarget) string {
-	v := rt.CodeVolume
-	if v == nil {
-		return ""
-	}
-	if mode := rt.EffectiveMode(); mode != topology.PlanModeStandard && mode != topology.PlanModeDev {
-		return fmt.Sprintf("target %q: a code volume (variant B) shares the repository between dev services; bootstrapMode %q has no dev service", rt.DevHostname, mode)
-	}
-	if err := ValidatePlanHostname(v.Hostname); err != nil {
-		return fmt.Sprintf("target %q: code volume hostname %q: %v", rt.DevHostname, v.Hostname, err)
-	}
-	if len(v.DevServices) == 0 {
-		return fmt.Sprintf("target %q: a code volume needs at least one further dev service beside %q — with one dev service, keep the repository in it (no code volume)", rt.DevHostname, rt.DevHostname)
-	}
-	for _, d := range v.DevServices {
-		if err := ValidatePlanHostname(d.Hostname); err != nil {
-			return fmt.Sprintf("target %q: dev service %q: %v", rt.DevHostname, d.Hostname, err)
+// plannedCodeVolumeError refuses an agent's plan whose runtime carries a
+// code volume: zcp sets up no new one (docs/spec-mate.md §2.8a.4a). A part
+// whose runtime cannot share the dev service gets a dev pool of its own; a
+// variant-B pair zcp already records keeps working, and pool-migrate moves
+// it onto one dev pool per part. nil when no target carries one.
+func plannedCodeVolumeError(targets []BootstrapTarget) error {
+	for _, t := range targets {
+		if t.Runtime.CodeVolume != nil {
+			return fmt.Errorf("target %q: codeVolume is not accepted — zcp no longer sets up a shared code volume. Plan the pair without it: one dev service holds the whole repository, and a part whose runtime cannot share it gets a dev pool of its own (zerops_knowledge uri=\"zerops://themes/services\", section \"A part's dev pool\"). A pair already keeping its repository on a code volume keeps working, and zerops_workflow workflow=\"pool-migrate\" service=\"<dev>\" moves it onto one dev pool per part", t.Runtime.DevHostname)
 		}
 	}
-	if err := topology.CodeVolumeMountPathError(v.MountPath); err != "" {
-		return fmt.Sprintf("target %q: %s", rt.DevHostname, err)
-	}
-	return ""
+	return nil
 }

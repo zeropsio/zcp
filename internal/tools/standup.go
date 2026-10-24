@@ -284,7 +284,15 @@ func (d standupDeps) readTier(ctx context.Context, hqc hq.Client, progress *stan
 			fmt.Sprintf("%s has no %s on %s: the project's recipe is not merged yet, so there is nothing to stand up from.",
 				src.groupRepo, path, hqBase), fallback)
 	}
-	tier, err := workflow.ParseMateTier(read.ImportYAML, hqc.Address(), src.appID)
+	// The pairs zcp already records: a variant-B pair among them is read as
+	// that pair again, and no other tier sets up a code volume
+	// (docs/spec-mate.md §2.8a.4a). Records that cannot be read keep none;
+	// the adopt, reading them too, then records nothing (workflow.AdoptPair).
+	var recorded []*workflow.ServiceMeta
+	if d.batch.stateDir != "" {
+		recorded, _ = workflow.ListServiceMetas(d.batch.stateDir)
+	}
+	tier, err := workflow.ParseMateTier(read.ImportYAML, hqc.Address(), src.appID, recorded...)
 	if err != nil {
 		return standupSource{}, standupRefusal(platform.ErrInvalidImportYml,
 			fmt.Sprintf("%s@%s:%s cannot be stood up: %v.", src.groupRepo, hqBase, path, err), fallback)

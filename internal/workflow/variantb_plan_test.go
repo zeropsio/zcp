@@ -28,53 +28,47 @@ func planB(mountPath string, edit func(*RuntimeTarget)) []BootstrapTarget {
 	return []BootstrapTarget{{Runtime: rt}}
 }
 
-func TestValidateBootstrapTargets_PlanB_MountsTheCodeVolumeUnderVarWwwNeverAtIt(t *testing.T) {
+// TestValidateBootstrapTargets_AdoptedCodeVolume_NamesEveryServiceOnce: the
+// code volume adopt records again for a variant-B pair (docs/spec-mate.md
+// §2.8a.4a) names each of its services once — no further dev service or
+// volume named like another service of the plan — and every one of them
+// live.
+func TestValidateBootstrapTargets_AdoptedCodeVolume_NamesEveryServiceOnce(t *testing.T) {
 	t.Parallel()
+	live := []platform.ServiceStack{{Name: "webdev"}, {Name: "apidev"}, {Name: "webstage"}, {Name: "apistage"}, {Name: "vol"}}
+	adopted := func(edit func(*RuntimeTarget)) []BootstrapTarget {
+		return planB("/var/www/ws", func(rt *RuntimeTarget) {
+			rt.IsExisting = true
+			if edit != nil {
+				edit(rt)
+			}
+		})
+	}
 	tests := []struct {
 		name    string
 		targets []BootstrapTarget
 		live    []platform.ServiceStack
 		wantErr string
 	}{
-		{name: "a folder under /var/www validates", targets: planB("/var/www/ws", nil)},
-		{name: "a deeper folder under /var/www validates", targets: planB("/var/www/code/repo", nil)},
-		{name: "/var/www itself is refused", targets: planB("/var/www", nil), wantErr: "under /var/www"},
-		{name: "/var/www/ is /var/www itself", targets: planB("/var/www/", nil), wantErr: "under /var/www"},
-		{name: "a path outside /var/www is refused", targets: planB("/mnt/vol", nil), wantErr: "under /var/www"},
-		{name: "a path climbing out of /var/www is refused", targets: planB("/var/www/../vol", nil), wantErr: "under /var/www"},
-		{name: "a relative path is refused", targets: planB("ws", nil), wantErr: "under /var/www"},
-		{name: "a missing mount path is refused", targets: planB("", nil), wantErr: "under /var/www"},
-		{
-			name:    "a code volume without a further dev service is no variant B",
-			targets: planB("/var/www/ws", func(rt *RuntimeTarget) { rt.CodeVolume.DevServices = nil }),
-			wantErr: "further dev service",
-		},
-		{
-			name:    "a simple runtime has no dev service to share code with",
-			targets: planB("/var/www/ws", func(rt *RuntimeTarget) { rt.BootstrapMode = topology.PlanModeSimple; rt.Stages = nil }),
-			wantErr: "variant B",
-		},
+		{name: "the adopted pair validates", targets: adopted(nil), live: live},
 		{
 			name: "a dev service named like the pair's stage is refused",
-			targets: planB("/var/www/ws", func(rt *RuntimeTarget) {
+			targets: adopted(func(rt *RuntimeTarget) {
 				rt.CodeVolume.DevServices = []topology.DevServiceRef{{Hostname: "apistage"}}
 			}),
+			live:    live,
 			wantErr: `"apistage" is planned twice`,
 		},
 		{
 			name:    "the volume named like the dev half is refused",
-			targets: planB("/var/www/ws", func(rt *RuntimeTarget) { rt.CodeVolume.Hostname = "webdev" }),
+			targets: adopted(func(rt *RuntimeTarget) { rt.CodeVolume.Hostname = "webdev" }),
+			live:    live,
 			wantErr: `"webdev" is planned twice`,
 		},
 		{
-			name:    "an invalid volume hostname is refused",
-			targets: planB("/var/www/ws", func(rt *RuntimeTarget) { rt.CodeVolume.Hostname = "code_vol" }),
-			wantErr: `"code_vol"`,
-		},
-		{
-			name:    "a new pair's dev service colliding with a live service is refused",
-			targets: planB("/var/www/ws", nil),
-			live:    []platform.ServiceStack{{Name: "apidev"}},
+			name:    "a further dev service the project does not hold is refused",
+			targets: adopted(nil),
+			live:    []platform.ServiceStack{{Name: "webdev"}, {Name: "webstage"}, {Name: "apistage"}, {Name: "vol"}},
 			wantErr: "apidev",
 		},
 	}

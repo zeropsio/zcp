@@ -139,7 +139,7 @@ func (e *Engine) BootstrapCompleteAdoptPlan(existing []platform.ServiceStack, sc
 	}
 
 	// Variant B: dev services of one repository sharing a local-storage
-	// volume are one pair, recognised from the topology as stand-up does.
+	// volume that already holds it are one pair, recorded again.
 	variantB, adoptable := adoptVariantB(adoptable, typeByHost, volumeSetups)
 
 	// Managed services become shared EXISTS dependencies on every target.
@@ -327,9 +327,11 @@ func adoptPairingChoice(devHost, stageHost, devType, stageType string, deps []De
 // since (mergeExistingMeta) — its wiring, its first deploy, a setup somebody
 // chose. date is the BootstrappedAt a fresh record gets.
 //
-// Refuses a target that is no standard pair, and a stage half already
-// recorded as a service of its own: folding it into the pair would leave two
-// metas for one runtime, which the pair-keyed invariant forbids (E8).
+// Refuses a target that is no standard pair, and one naming a service that
+// another meta already records — a stage half recorded as a service of its
+// own, or a dev half or stage another pair names, a variant-B pair's further
+// dev service among them: folding it into this pair would leave two metas for
+// one runtime, which the pair-keyed invariant forbids (E8).
 func AdoptPair(stateDir string, target BootstrapTarget, date string) error {
 	rt := target.Runtime
 	stages := rt.StageRefs()
@@ -337,13 +339,17 @@ func AdoptPair(stateDir string, target BootstrapTarget, date string) error {
 		return fmt.Errorf("adopt pair: %q is not a dev/stage pair (bootstrapMode %q, stage %q)", rt.DevHostname, rt.EffectiveMode(), rt.ExplicitStage)
 	}
 	halves := append(rt.StageHostnames(), rt.CodeVolume.DevServiceHostnames()...)
-	for _, half := range halves {
-		own, err := ReadServiceMeta(stateDir, half)
+	for _, half := range append([]string{rt.DevHostname}, halves...) {
+		other, err := FindServiceMeta(stateDir, half)
 		if err != nil {
 			return fmt.Errorf("adopt pair %s: %w", rt.DevHostname, err)
 		}
-		if own != nil {
+		switch {
+		case other == nil || other.Hostname == rt.DevHostname:
+		case other.Hostname == half:
 			return fmt.Errorf("adopt pair %s: its half %s is already recorded as a service of its own", rt.DevHostname, half)
+		default:
+			return fmt.Errorf("adopt pair %s: %s is already a service of the pair %s", rt.DevHostname, half, other.Hostname)
 		}
 	}
 	target.Runtime.IsExisting = true
@@ -371,17 +377,21 @@ type AdoptVolumeSetup struct {
 	Content map[string]topology.VolumeContent
 }
 
-// adoptVariantB recognises variant B (docs/spec-mate.md §2.8a) among the
-// adoptable runtimes the way the stand-up does from a tier: several dev
-// services of one repository mounting one local-storage volume are one pair.
-// A setup that mounts the volume belongs to the one adoptable runtime of its
+// adoptVariantB recognises a variant-B project (docs/spec-mate.md §2.8a.4a)
+// among the adoptable runtimes: several dev services of one repository
+// mounting one local-storage volume that already holds that repository are
+// one pair, recorded with its code volume again — a project whose record was
+// lost, which pool migration then moves onto one dev pool per part. A setup
+// that mounts the volume belongs to the one adoptable runtime of its
 // run.base; a setup no runtime matches uniquely leaves the topology alone.
 // The volume is a code volume only when proven: every setup works in the
-// mount, and its runtime finds nothing there yet, an empty folder or this
-// repository — a data volume (a Laravel app and worker sharing storage) is
-// never taken for one, since the pair's deploys and fill write code there.
-// It returns the dev-mode target holding the code volume (nil when there is
-// none) and the adoptable runtimes left for the ordinary derivation.
+// mount, and every runtime finds this repository's checkout there. zcp sets
+// up no new code volume, so a volume holding nothing yet or an empty folder
+// — which adopting would make one, its first deploy filling it — is no code
+// volume, and neither is a data volume (a Laravel app and worker sharing
+// storage): those dev services adopt as separate services. It returns the
+// dev-mode target holding the code volume (nil when there is none) and the
+// adoptable runtimes left for the ordinary derivation.
 func adoptVariantB(adoptable []string, typeByHost map[string]string, setups []AdoptVolumeSetup) (*BootstrapTarget, []string) {
 	byVolume := map[string][]AdoptVolumeSetup{}
 	var order []string
@@ -414,7 +424,7 @@ func adoptVariantB(adoptable []string, typeByHost map[string]string, setups []Ad
 				}
 				host = h
 			}
-			if host == "" || m.MountPath != mounts[0].MountPath || !m.WorksIn || !m.Content[host].MayHoldCode() {
+			if host == "" || m.MountPath != mounts[0].MountPath || !m.WorksIn || m.Content[host] != topology.VolumeCheckout {
 				hosts = nil
 				break
 			}

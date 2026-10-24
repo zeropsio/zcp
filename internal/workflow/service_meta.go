@@ -47,6 +47,9 @@ type ServiceMeta struct {
 	// CodeVolume is a variant-B pair's shared code: the local-storage
 	// service holding the repository, where every dev service mounts it,
 	// and the pair's dev services beside Hostname. nil for every other pair.
+	// zcp sets up no new one, but keeps this record — every meta write
+	// writes the whole struct, and pool migration reads it to move the pair
+	// (docs/spec-mate.md §2.8a.4a).
 	CodeVolume *topology.CodeVolume `json:"codeVolume,omitempty"`
 
 	// Per-pair deploy dimensions (deploy-strategy decomposition; see
