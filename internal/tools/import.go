@@ -128,6 +128,7 @@ func registerImport(srv *mcp.Server, client platform.Client, projectID string, e
 
 		onProgress := buildProgressCallback(ctx, req)
 		pollImportProcesses(ctx, client, result, onProgress)
+		result.Warnings = append(result.Warnings, ops.BoxRegionWarnings(input.Content, input.FilePath, result.Processes)...)
 
 		resp := importResponse{
 			ImportResult: result,
