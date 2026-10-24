@@ -2,6 +2,7 @@ package ops
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -53,4 +54,23 @@ func DeleteByID(ctx context.Context, client platform.Client, serviceID string) (
 		return nil, fmt.Errorf("delete service %s: %w", serviceID, err)
 	}
 	return proc, nil
+}
+
+// The API codes a by-id read of a deleted service answers with: a deleted
+// service stack reads HTTP 400 serviceStackNotFound (live-verified), not a
+// 404.
+const (
+	apiCodeServiceStackNotFound = "serviceStackNotFound"
+	apiCodeServiceNotFound      = "serviceNotFound"
+)
+
+// IsServiceGone reports an error of a by-id read or delete that says the
+// service no longer exists, whichever way the platform spells it: a 404, or a
+// 400 carrying serviceStackNotFound or serviceNotFound.
+func IsServiceGone(err error) bool {
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) {
+		return false
+	}
+	return pe.Code == platform.ErrServiceNotFound || pe.APICode == apiCodeServiceStackNotFound || pe.APICode == apiCodeServiceNotFound
 }

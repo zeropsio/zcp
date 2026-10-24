@@ -16,13 +16,16 @@ import (
 // the same through fillAndReload; on the adopt route this is the only place
 // the pair's volume ever gets its repository, so nobody copies it by hand.
 // Other targets, pairs without a code volume and a volume that already holds
-// the repository change nothing.
+// the repository change nothing — and so does a pair keyed by its dev pool,
+// which still names its code volume until the pool migration's retire has
+// deleted it (docs/spec-workflows.md §13 PM-13): a deploy to the pool fills
+// nothing, since the pool's hostname reaches a random container of it.
 func fillCodeVolumeAfterDeploy(ctx context.Context, ssh ops.SSHDeployer, stateDir, target string, result *ops.DeployResult) {
 	if ssh == nil || stateDir == "" {
 		return
 	}
 	meta, _ := workflow.FindServiceMeta(stateDir, target)
-	if meta == nil || meta.CodeVolume == nil || meta.Hostname != target || meta.CodeVolume.MountPath == "" {
+	if meta == nil || meta.DevIsPool() || meta.CodeVolume == nil || meta.Hostname != target || meta.CodeVolume.MountPath == "" {
 		return
 	}
 	filled, err := ops.FillCodeVolume(ctx, ssh, target, meta.CodeVolume.Hostname, meta.CodeVolume.MountPath)

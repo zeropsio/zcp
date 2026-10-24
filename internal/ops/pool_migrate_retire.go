@@ -16,26 +16,47 @@ import (
 // refuses while one remains. A value the platform withholds from zcp's token
 // cannot be read for one; unread names those.
 func PoolMigrateEnvReferences(ctx context.Context, client platform.Client, projectID, dev string, services []platform.ServiceStack) (refs, unread []string, err error) {
-	needle := "${" + dev + "_"
-	project, err := client.GetProjectEnv(ctx, projectID)
+	byHost, unread, err := PoolMigrateEnvReferencesTo(ctx, client, projectID, []string{dev}, services)
 	if err != nil {
-		return nil, nil, fmt.Errorf("references to %s: project env: %w", dev, err)
+		return nil, nil, err
 	}
-	for _, v := range project {
-		switch {
-		case v.Content == platform.MaskedEnvValue:
-			unread = append(unread, "project "+v.Key)
-		case strings.Contains(v.Content, needle):
-			refs = append(refs, "project "+v.Key)
+	return byHost[dev], unread, nil
+}
+
+// PoolMigrateEnvReferencesTo is PoolMigrateEnvReferences for every service a
+// retire deletes — a variant-B pair's dev services and its code volume — in
+// one read of the project's env and each other service's: by retired
+// hostname, the variables that reference it. The retired services' own env
+// is never read: it goes with them.
+func PoolMigrateEnvReferencesTo(ctx context.Context, client platform.Client, projectID string, retired []string, services []platform.ServiceStack) (map[string][]string, []string, error) {
+	named := strings.Join(retired, ", ")
+	refs := map[string][]string{}
+	var unread []string
+	match := func(name, content string) {
+		for _, host := range retired {
+			if strings.Contains(content, "${"+host+"_") {
+				refs[host] = append(refs[host], name)
+			}
 		}
 	}
+	project, err := client.GetProjectEnv(ctx, projectID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("references to %s: project env: %w", named, err)
+	}
+	for _, v := range project {
+		if v.Content == platform.MaskedEnvValue {
+			unread = append(unread, "project "+v.Key)
+			continue
+		}
+		match("project "+v.Key, v.Content)
+	}
 	for _, svc := range services {
-		if svc.Name == dev {
+		if slices.Contains(retired, svc.Name) {
 			continue
 		}
 		envs, err := FetchServiceEnv(ctx, client, svc.ID)
 		if err != nil {
-			return nil, nil, fmt.Errorf("references to %s: %s env: %w", dev, svc.Name, err)
+			return nil, nil, fmt.Errorf("references to %s: %s env: %w", named, svc.Name, err)
 		}
 		for _, v := range envs {
 			switch {
@@ -44,12 +65,14 @@ func PoolMigrateEnvReferences(ctx context.Context, client platform.Client, proje
 				// reference.
 			case v.Masked:
 				unread = append(unread, svc.Name+" "+v.Key)
-			case strings.Contains(v.Content, needle):
-				refs = append(refs, svc.Name+" "+v.Key)
+			default:
+				match(svc.Name+" "+v.Key, v.Content)
 			}
 		}
 	}
-	slices.Sort(refs)
+	for host := range refs {
+		slices.Sort(refs[host])
+	}
 	slices.Sort(unread)
 	return refs, unread, nil
 }

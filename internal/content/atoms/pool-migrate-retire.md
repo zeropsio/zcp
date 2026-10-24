@@ -51,6 +51,8 @@ each reason:
 | `domain` | the person moves the domain in the dashboard |
 | `unsaved-work` | push the work, or `force=true` after the person agreed |
 | `pair-busy` | another step holds the pair; call again |
+| `volume-mounted` | a stage or pool still mounts the code volume: remove `run.volume` from its setup in `zerops.yaml`, commit, deploy it, call again |
+| `volume-not-live` | the code volume the pair names is gone or unreadable; call again |
 
 **What the acknowledged call does.** It takes the dev service's mount on
 this container down, then writes a verified bundle of its repository —
@@ -62,6 +64,22 @@ pool — checks right before the delete that the repository did not move
 since the bundle, and deletes the dev service by its id. The
 answer's `retire` names the bundle and `retire.restore`, the commands that
 put everything back in an empty directory.
+
+**A repository on a code volume.** When the pair's dev services share their
+repository on a code volume — a local-storage service each mounts through
+`run.volume` — `wouldDestroy` names every dev service and the volume, and the
+acknowledgment names them all. The census and the bundle read the volume's
+checkout. The retire deletes every dev service first: a dev service's delete
+leaves the volume and its files. It deletes the volume last, and only that
+step loses the checkout for good — a volume created later under its hostname
+is new and empty. Zerops refuses that delete while any service still
+mounts the volume, without saying which: the answer reads `retiring` with
+`volume-mounted`. Remove `run.volume` from that service's setup and deploy it
+— a deploy replaces its container without the mount — or delete the service,
+then re-send the acknowledged call. If the checkout changed while the dev
+services were going, nothing on the volume is deleted until the person agrees
+and the call carries `force=true`; a new bundle is taken from the volume
+first.
 
 If the repository moved meanwhile, or a step fails before the delete, the
 retire stops: `status: "aborted"`, the pair keyed by the dev service again,

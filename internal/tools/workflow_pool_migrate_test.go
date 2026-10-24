@@ -646,14 +646,6 @@ func TestPoolMigrate_NotACandidate_Refused(t *testing.T) {
 			wantInMsg:  []string{"appdev", "bootstrap"},
 		},
 		{
-			name: "variant B",
-			mutate: func(f *poolMigrateFixture) {
-				f.meta.CodeVolume = &topology.CodeVolume{Hostname: "code", MountPath: "/var/www/code"}
-			},
-			wantReason: "variant-b",
-			wantInMsg:  []string{"appdev"},
-		},
-		{
 			name:       "dev service gone",
 			mutate:     func(f *poolMigrateFixture) { f.services = f.services[1:] },
 			wantReason: "dev-not-live",
