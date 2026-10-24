@@ -102,6 +102,10 @@ type poolRetireRecord struct {
 	PoolServiceID string   `json:"poolServiceId"`
 	PoolSetup     string   `json:"poolSetup,omitempty"`
 	Stages        []string `json:"stages,omitempty"`
+	// Parts are the parts of a dev serving several, each with its own pool:
+	// the retire splits the pair into one pool-keyed pair per part. Empty for
+	// a single part, whose pool Pool, PoolServiceID and PoolSetup name.
+	Parts []poolRetirePart `json:"parts,omitempty"`
 	// Origin is the repository the dev's work moved through: the bundle
 	// carries no remote URL.
 	Origin    string `json:"origin,omitempty"`
@@ -117,6 +121,62 @@ type poolRetireRecord struct {
 	NotKept      []string               `json:"notKept,omitempty"`
 	AbortReason  string                 `json:"abortReason,omitempty"`
 	RetiredAt    string                 `json:"retiredAt,omitempty"`
+}
+
+// poolRetirePart is one part of a dev serving several in the retire's record:
+// its stage, and the pool keying its pair after the retire, by the id read
+// directly, with the setup the pool's image deploys with.
+type poolRetirePart struct {
+	Stage         string `json:"stage"`
+	Pool          string `json:"pool"`
+	PoolServiceID string `json:"poolServiceId"`
+	PoolSetup     string `json:"poolSetup,omitempty"`
+}
+
+// pools are the pools the retire keys the pair by: the one, or every part's.
+func (rec *poolRetireRecord) pools() []string {
+	if len(rec.Parts) == 0 {
+		return []string{rec.Pool}
+	}
+	out := make([]string, 0, len(rec.Parts))
+	for _, p := range rec.Parts {
+		out = append(out, p.Pool)
+	}
+	return out
+}
+
+// partMoves are the split's parts, for a dev serving several.
+func (rec *poolRetireRecord) partMoves() []workflow.PoolPartMove {
+	out := make([]workflow.PoolPartMove, 0, len(rec.Parts))
+	for _, p := range rec.Parts {
+		out = append(out, workflow.PoolPartMove{Stage: p.Stage, Pool: p.Pool, PoolServiceID: p.PoolServiceID, PoolSetup: p.PoolSetup})
+	}
+	return out
+}
+
+// keyedBy says how the retire keys the pair: "keyed by <pool>", or split into
+// one pair per part, each named.
+func (rec *poolRetireRecord) keyedBy() string {
+	if len(rec.Parts) == 0 {
+		return "keyed by " + rec.Pool
+	}
+	each := make([]string, 0, len(rec.Parts))
+	for _, p := range rec.Parts {
+		each = append(each, p.Stage+"'s keyed by "+p.Pool)
+	}
+	return "split into one pair per part — " + strings.Join(each, ", ")
+}
+
+// partStates lists a record's parts for an answer, each at step.
+func (rec *poolRetireRecord) partStates(step string) []poolMigratePartState {
+	if len(rec.Parts) == 0 {
+		return nil
+	}
+	out := make([]poolMigratePartState, 0, len(rec.Parts))
+	for _, p := range rec.Parts {
+		out = append(out, poolMigratePartState{Stage: p.Stage, Pool: p.Pool, Step: step})
+	}
+	return out
 }
 
 // poolRetireView is the record as an answer carries it.
@@ -364,7 +424,7 @@ func poolRetireFresh(ctx context.Context, d poolRetireDeps, input WorkflowInput)
 	if len(g.unsaved) > 0 && !force {
 		return jsonResult(poolRetireRefused(g.resp, poolRetireUnsavedRefusal(g.call.dev.Name, g.unsaved)))
 	}
-	release, err := lockPoolRetirePair(ctx, d.stateDir, g.call.dev.Name, g.call.pool.Name)
+	release, err := lockPoolRetirePair(ctx, d.stateDir, g.call.dev.Name, g.pools()...)
 	if err != nil {
 		return jsonResult(poolRetireRefused(g.resp, poolMigrateRefusal{Reason: poolRetireRefusePairBusy, Message: "The retire did not start: " + pairHeldReason(g.call.dev.Name, err) + ". Call again."}))
 	}
@@ -380,16 +440,20 @@ func poolRetireFresh(ctx context.Context, d poolRetireDeps, input WorkflowInput)
 		return jsonResult(resp)
 	}
 	rec := &poolRetireRecord{
-		Dev:           g.call.dev.Name,
-		DevServiceID:  g.devID,
-		Pool:          g.call.pool.Name,
-		PoolServiceID: g.call.pool.ID,
-		PoolSetup:     g.poolSetup,
-		Stages:        g.call.meta.StageHostnames(),
-		Origin:        poolMigrateDevOrigin(g.call.meta, d.poolMigrateDeps),
-		Phase:         poolRetireStarted,
-		Forced:        force && len(g.unsaved) > 0,
-		StartedAt:     time.Now().UTC().Format(time.RFC3339),
+		Dev:          g.call.dev.Name,
+		DevServiceID: g.devID,
+		Stages:       g.call.meta.StageHostnames(),
+		Origin:       poolMigrateDevOrigin(g.call.meta, d.poolMigrateDeps),
+		Phase:        poolRetireStarted,
+		Forced:       force && len(g.unsaved) > 0,
+		StartedAt:    time.Now().UTC().Format(time.RFC3339),
+	}
+	if len(g.parts) == 1 {
+		rec.Pool, rec.PoolServiceID, rec.PoolSetup = g.parts[0].pool.Name, g.parts[0].pool.ID, g.parts[0].poolSetup
+	} else {
+		for _, p := range g.parts {
+			rec.Parts = append(rec.Parts, poolRetirePart{Stage: p.stage, Pool: p.pool.Name, PoolServiceID: p.pool.ID, PoolSetup: p.poolSetup})
+		}
 	}
 	if err := savePoolRetireRecord(d.stateDir, rec); err != nil {
 		return convertError(fmt.Errorf("pool-migrate retire: %w", err), WithRecoveryStatus())
@@ -402,63 +466,122 @@ func poolRetireFresh(ctx context.Context, d poolRetireDeps, input WorkflowInput)
 // answer (its step and census), the guards' refusals, and the facts the
 // record takes.
 type poolRetireGuards struct {
-	call      *poolMigrateCall
-	resp      poolMigrateResponse
-	refusals  []poolMigrateRefusal
-	devID     string
-	lease     string
-	poolSetup string
-	unsaved   []string
-	notKept   []string
+	call     *poolMigrateCall
+	resp     poolMigrateResponse
+	refusals []poolMigrateRefusal
+	devID    string
+	// parts are the parts whose pools take the pair: the one, or every part
+	// of a dev serving several.
+	parts   []poolRetirePartGuard
+	unsaved []string
+	notKept []string
 	// unread are the env variables zcp could not read for a reference to
 	// the dev (masked from its token).
 	unread []string
+}
+
+// poolRetirePartGuard is one part as the retire's guards read it: its stage,
+// its pool, the setup the pool runs, the work's branch, and the lease of the
+// pool zcp holds there that passed verify.
+type poolRetirePartGuard struct {
+	stage     string
+	pool      platform.ServiceStack
+	poolSetup string
+	branch    string
+	lease     string
+}
+
+// pools are the guarded parts' pools.
+func (g *poolRetireGuards) pools() []string {
+	out := make([]string, 0, len(g.parts))
+	for _, p := range g.parts {
+		out = append(out, p.pool.Name)
+	}
+	return out
 }
 
 // poolRetireRead re-runs every check of the read side and every guard of the
 // retire (docs/spec-workflows.md §13 PM-6): the dev read by id — its id is
 // the one the delete uses — and not DELETING, no live process referencing
 // it, no active launch naming it, no env variable referencing it, no domain
-// routed to it, the part's pool in place and past its image step, and a held
-// lease of the pool on the work's branch that passes verify. It writes
-// nothing. A result is an answer to give as it is.
+// routed to it, and every part's pool in place and past its image step, with
+// a held lease of the pool on the work's branch that passes verify — a dev
+// serving several parts waits for every one (PM-12). It writes nothing. A
+// result is an answer to give as it is.
 func poolRetireRead(ctx context.Context, d poolRetireDeps, input WorkflowInput) (*poolRetireGuards, *mcp.CallToolResult) {
-	call, final, failed := readPoolMigrateChecks(ctx, d.poolMigrateDeps, input)
+	dr, final, failed := readPoolMigrateDev(ctx, d.poolMigrateDeps, input)
 	switch {
 	case failed != nil:
 		return nil, failed
-	case final != nil && final.Status == poolMigrateStatusStep:
-		final.Action = actionRetire
-		return nil, jsonResult(poolRetireNotReady(*final))
 	case final != nil:
 		final.Action = actionRetire
 		return nil, jsonResult(*final)
 	}
-	env, err := ops.ReadPoolMigrateEnv(ctx, d.client, call.envInput(d.poolMigrateDeps, input))
-	if err != nil {
-		return nil, convertError(fmt.Errorf("pool-migrate retire: compare the pool's env: %w", err), WithRecoveryStatus())
+	answers := make([]poolMigrateResponse, len(dr.parts))
+	calls := make([]*poolMigrateCall, len(dr.parts))
+	var notReady []int
+	for i := range dr.parts {
+		if answers[i], calls[i], failed = dr.partAnswer(ctx, d.poolMigrateDeps, i); failed != nil {
+			return nil, failed
+		}
+		if calls[i] == nil || !slices.Contains([]string{poolMigrateStepMove, poolMigrateStepLease, poolMigrateStepReadyToRetire}, answers[i].Step) ||
+			answers[i].WorkBranch == nil || answers[i].WorkBranch.Branch == "" {
+			notReady = append(notReady, i)
+		}
 	}
-	resp := poolMigrateSettledAnswer(ctx, d.poolMigrateDeps, call, env)
+	resp := answers[0]
+	if dr.multiPart() {
+		first := -1
+		if len(notReady) > 0 {
+			first = notReady[0]
+		}
+		resp = dr.partsAnswer(answers, first)
+	}
 	resp.Action = actionRetire
 	// The read side's warnings speak of its own step; the retire says its own.
 	resp.Warnings = nil
-	if !slices.Contains([]string{poolMigrateStepMove, poolMigrateStepLease, poolMigrateStepReadyToRetire}, resp.Step) ||
-		resp.WorkBranch == nil || resp.WorkBranch.Branch == "" {
+	switch {
+	case len(notReady) > 0 && !dr.multiPart():
 		return nil, jsonResult(poolRetireNotReady(resp))
+	case len(notReady) > 0:
+		return nil, jsonResult(poolRetirePartsNotReady(resp, dr, answers, notReady))
 	}
-	g := &poolRetireGuards{call: call, resp: resp, poolSetup: call.pool.Name}
-	if resp.Image != nil && resp.Image.Setup != "" {
-		g.poolSetup = resp.Image.Setup
+	g := &poolRetireGuards{call: calls[0], resp: resp}
+	for i, call := range calls {
+		part := poolRetirePartGuard{stage: dr.parts[i].stage, pool: call.pool, poolSetup: call.pool.Name, branch: answers[i].WorkBranch.Branch}
+		if img := answers[i].Image; img != nil && img.Setup != "" {
+			part.poolSetup = img.Setup
+		}
+		g.parts = append(g.parts, part)
 	}
 	g.unsaved = poolRetireBlocking(resp.Census)
-	g.notKept = poolRetireNotKept(call.dev.Name, resp.Census, nil)
+	g.notKept = poolRetireNotKept(g.call.dev.Name, resp.Census, nil)
 	g.readDev(ctx, d)
 	g.readActivity(ctx, d)
 	g.readLaunches(d)
 	g.readReferences(ctx, d)
 	g.readDomains(ctx, d)
-	g.readLease(ctx, d)
+	for i := range g.parts {
+		g.readLease(ctx, d, &g.parts[i])
+	}
 	return g, nil
+}
+
+// poolRetirePartsNotReady refuses the retire of a dev serving several parts
+// while a part is not ready: the retire waits for every part, and names each
+// part it waits for with that part's step.
+func poolRetirePartsNotReady(resp poolMigrateResponse, dr *poolMigrateDevRead, answers []poolMigrateResponse, notReady []int) poolMigrateResponse {
+	waits := make([]string, 0, len(notReady))
+	for _, i := range notReady {
+		wait := fmt.Sprintf("the part of %s (pool %s) is at its %s step", dr.parts[i].stage, dr.parts[i].pool, answers[i].Step)
+		if wb := answers[i].WorkBranch; wb != nil && wb.Missing != "" {
+			wait += ", with no work's branch named yet"
+		}
+		waits = append(waits, wait)
+	}
+	why := fmt.Sprintf("The retire deletes %s only once every part it serves runs on its own pool, leased on the work's branch: %s. Walk each with zerops_workflow workflow=%q service=%q pool=\"<its pool>\", then call the retire again.",
+		dr.meta.Hostname, strings.Join(waits, "; "), workflowPoolMigrate, dr.meta.Hostname)
+	return poolRetireRefused(resp, poolMigrateRefusal{Reason: poolRetireRefuseNotReady, Message: why})
 }
 
 func (g *poolRetireGuards) refuse(reason, message string) {
@@ -543,12 +666,12 @@ func (g *poolRetireGuards) readDomains(ctx context.Context, d poolRetireDeps) {
 	}
 }
 
-// readLease finds a lease zcp holds of the pool on the work's branch of the
-// dev's origin — its record, then the pool's orchestrator saying it is still
-// held — and verifies it as zerops_verify does: it answers over SSH and no
-// dev server of it crashed.
-func (g *poolRetireGuards) readLease(ctx context.Context, d poolRetireDeps) {
-	pool, branch := g.call.pool.Name, g.resp.WorkBranch.Branch
+// readLease finds a lease zcp holds of the part's pool on the work's branch of
+// the dev's origin — its record, then the pool's orchestrator saying it is
+// still held — and verifies it as zerops_verify does: it answers over SSH and
+// no dev server of it crashed.
+func (g *poolRetireGuards) readLease(ctx context.Context, d poolRetireDeps, part *poolRetirePartGuard) {
+	pool, branch := part.pool.Name, part.branch
 	acquire := fmt.Sprintf("zerops_lease action=%q pool=%q branch=%q, then zerops_verify serviceHostname=\"<alias>\"", leaseProbeAction, pool, branch)
 	records, err := ops.PoolMigrateLeases(d.stateDir, pool, poolMigrateDevOrigin(g.call.meta, d.poolMigrateDeps), branch)
 	if err != nil {
@@ -583,7 +706,7 @@ func (g *poolRetireGuards) readLease(ctx context.Context, d poolRetireDeps) {
 			failed = append(failed, rec.Alias+": "+why)
 			continue
 		}
-		g.lease = rec.Alias
+		part.lease = rec.Alias
 		return
 	}
 	if len(failed) > 0 {
@@ -620,8 +743,19 @@ func poolRetireVerifyLease(ctx context.Context, ssh ops.SSHDeployer, lease ops.L
 // work only the bundle will keep, and what nothing keeps.
 func (g *poolRetireGuards) destruction(input WorkflowInput) DiagnosedDestruction {
 	dev := g.call.dev.Name
-	cause := fmt.Sprintf("service id %s; %s takes the pair, its lease %s on %s verified; a verified bundle of %s's repository is written to this container first",
-		g.devID, g.call.pool.Name, g.lease, g.resp.WorkBranch.Branch, dev)
+	var takes string
+	if len(g.parts) == 1 {
+		p := g.parts[0]
+		takes = fmt.Sprintf("%s takes the pair, its lease %s on %s verified", p.pool.Name, p.lease, p.branch)
+	} else {
+		each := make([]string, 0, len(g.parts))
+		for _, p := range g.parts {
+			each = append(each, fmt.Sprintf("%s takes the part of %s, its lease %s on %s verified", p.pool.Name, p.stage, p.lease, p.branch))
+		}
+		takes = "the pair splits into one pair per part — " + strings.Join(each, "; ") + " —"
+	}
+	cause := fmt.Sprintf("service id %s; %s; a verified bundle of %s's repository is written to this container first",
+		g.devID, takes, dev)
 	if len(g.unread) > 0 {
 		cause += "; " + poolRetireUnreadNote(g.unread, dev)
 	}
@@ -815,12 +949,13 @@ func poolRetireNotKept(dev string, c *ops.PoolMigrateCensus, b *ops.PoolMigrateB
 	return out
 }
 
-// lockPoolRetirePair holds the pair locks of both the dev and the pool, in a
-// fixed order, so no HQ pass, stand-up or describe of zcp runs git on the
-// pair from the fence through the delete.
-func lockPoolRetirePair(ctx context.Context, stateDir, dev, pool string) (func(), error) {
-	names := []string{dev, pool}
+// lockPoolRetirePair holds the pair locks of the dev and of every pool taking
+// its pair, in a fixed order, so no HQ pass, stand-up or describe of zcp runs
+// git on the pair from the fence through the delete.
+func lockPoolRetirePair(ctx context.Context, stateDir, dev string, pools ...string) (func(), error) {
+	names := append([]string{dev}, pools...)
 	slices.Sort(names)
+	names = slices.Compact(names)
 	var releases []func()
 	release := func() {
 		for i := len(releases) - 1; i >= 0; i-- {
@@ -869,6 +1004,28 @@ func (r *poolRetireRun) move() workflow.PoolPairMove {
 	return workflow.PoolPairMove{Dev: r.rec.Dev, Pool: r.rec.Pool, PoolServiceID: r.rec.PoolServiceID, PoolSetup: r.rec.PoolSetup}
 }
 
+// rekey keys the pair by the pool, or splits it into one pool-keyed pair per
+// part; a re-key already done is a no-op.
+func (r *poolRetireRun) rekey() error {
+	if len(r.rec.Parts) > 0 {
+		_, err := workflow.MigratePairToPools(r.d.stateDir, r.rec.Dev, r.rec.partMoves())
+		return err
+	}
+	_, err := workflow.MigratePairToPool(r.d.stateDir, r.move())
+	return err
+}
+
+// revert keys the pair by the dev again: the inverse of rekey, applied to
+// what the pair's files hold now.
+func (r *poolRetireRun) revert() error {
+	if len(r.rec.Parts) > 0 {
+		_, err := workflow.RevertPoolPairs(r.d.stateDir, r.rec.Dev, r.rec.partMoves())
+		return err
+	}
+	_, err := workflow.RevertPoolPair(r.d.stateDir, r.move())
+	return err
+}
+
 // enter saves the phase before the work it names.
 func (r *poolRetireRun) enter(phase string) error {
 	r.rec.Phase = phase
@@ -897,14 +1054,14 @@ func (r *poolRetireRun) advance(ctx context.Context) *mcp.CallToolResult {
 			if err := r.enter(poolRetireRewritten); err != nil {
 				return r.saveFailed(err)
 			}
-			if _, err := workflow.MigratePairToPool(r.d.stateDir, r.move()); err != nil {
-				return r.abort(ctx, poolRetireAbortRekey, fmt.Sprintf("the pair could not be keyed by %s: %v.", r.rec.Pool, err))
+			if err := r.rekey(); err != nil {
+				return r.abort(ctx, poolRetireAbortRekey, fmt.Sprintf("the pair could not be %s: %v.", r.rec.keyedBy(), err))
 			}
 		case poolRetireRewritten:
 			// A cut between the saved phase and the rename is finished
 			// here: the move is a no-op once done.
-			if _, err := workflow.MigratePairToPool(r.d.stateDir, r.move()); err != nil {
-				return r.abort(ctx, poolRetireAbortRekey, fmt.Sprintf("the pair could not be keyed by %s: %v.", r.rec.Pool, err))
+			if err := r.rekey(); err != nil {
+				return r.abort(ctx, poolRetireAbortRekey, fmt.Sprintf("the pair could not be %s: %v.", r.rec.keyedBy(), err))
 			}
 			if err := r.enter(poolRetireDeleting); err != nil {
 				return r.saveFailed(err)
@@ -1017,8 +1174,8 @@ func (r *poolRetireRun) delete(ctx context.Context) *mcp.CallToolResult {
 // never stays under a dead key), the dev's HQ backoff record dropped, any
 // stale mount cleared.
 func (r *poolRetireRun) finish(ctx context.Context) *mcp.CallToolResult {
-	if _, err := workflow.MigratePairToPool(r.d.stateDir, r.move()); err != nil && !errors.Is(err, workflow.ErrServiceMetaNotFound) {
-		return r.callAgain(fmt.Sprintf("%s is gone, and the pair could not be keyed by %s yet: %v", r.rec.Dev, r.rec.Pool, err))
+	if err := r.rekey(); err != nil && !errors.Is(err, workflow.ErrServiceMetaNotFound) {
+		return r.callAgain(fmt.Sprintf("%s is gone, and the pair could not be %s yet: %v", r.rec.Dev, r.rec.keyedBy(), err))
 	}
 	if err := forgetHQPairState(r.d.stateDir, r.rec.Dev); err != nil {
 		r.resp.Warnings = append(r.resp.Warnings, err.Error())
@@ -1040,7 +1197,7 @@ func (r *poolRetireRun) abort(ctx context.Context, reason, message string) *mcp.
 	if r.rec.Phase == poolRetireRewritten || r.rec.Phase == poolRetireDeleting {
 		// A pair keyed by the dev already — a re-key that never took — has
 		// nothing to revert, whatever else names the pool's hostname.
-		if _, err := workflow.RevertPoolPair(r.d.stateDir, r.move()); err != nil && !poolRetireKeyedByDev(r.d.stateDir, r.rec.Dev) {
+		if err := r.revert(); err != nil && !poolRetireKeyedByDev(r.d.stateDir, r.rec.Dev) {
 			return convertError(platform.NewPlatformError(platform.ErrAPIError,
 				fmt.Sprintf("The retire of %s stopped (%s) and the pair could not be keyed by %s again: %v", r.rec.Dev, message, r.rec.Dev, err),
 				fmt.Sprintf(`Call zerops_workflow workflow="pool-migrate" action="retire" service=%q again: the retire resumes from %s.`, r.rec.Dev, r.rec.Phase),
@@ -1122,7 +1279,7 @@ func poolRetireResume(ctx context.Context, d poolRetireDeps, input WorkflowInput
 		expected = g.destruction(in)
 	default:
 		expected = poolRetireDestructionOf(rec.Dev, rec.DevServiceID, rec.KeptInBundle, rec.NotKept, input,
-			fmt.Sprintf("service id %s; the retire is at %s: the pair is keyed by %s and the bundle %s is written", rec.DevServiceID, rec.Phase, rec.Pool, poolRetireBundleName(rec)))
+			fmt.Sprintf("service id %s; the retire is at %s: the pair is %s and the bundle %s is written", rec.DevServiceID, rec.Phase, rec.keyedBy(), poolRetireBundleName(rec)))
 		expected.Loss.UncommittedCode = len(rec.KeptInBundle) > 0
 		if expected.Retry != nil {
 			expected.Retry.PatchHints = nil
@@ -1149,7 +1306,7 @@ func poolRetireResume(ctx context.Context, d poolRetireDeps, input WorkflowInput
 // held runs act under both pair locks, on the record as it is once they are
 // held: a record another call moved meanwhile answers as it is now instead.
 func (r *poolRetireRun) held(ctx context.Context, act func() *mcp.CallToolResult) *mcp.CallToolResult {
-	release, err := lockPoolRetirePair(ctx, r.d.stateDir, r.rec.Dev, r.rec.Pool)
+	release, err := lockPoolRetirePair(ctx, r.d.stateDir, r.rec.Dev, r.rec.pools()...)
 	if err != nil {
 		return r.callAgain("the pair is held: " + pairHeldReason(r.rec.Dev, err))
 	}
@@ -1183,6 +1340,16 @@ func poolRetireJoinRefusals(refusals []poolMigrateRefusal) string {
 	return strings.Join(parts, " ")
 }
 
+// poolRetireResumeArgs are the retire call that resumes rec: naming the pool
+// of a single part, the dev alone for one serving several.
+func poolRetireResumeArgs(rec *poolRetireRecord) map[string]string {
+	args := map[string]string{"workflow": workflowPoolMigrate, "action": actionRetire, "service": rec.Dev}
+	if rec.Pool != "" {
+		args["pool"] = rec.Pool
+	}
+	return args
+}
+
 // poolRetireBase is the answer frame of a retire named by its record.
 func poolRetireBase(corpus []workflow.KnowledgeAtom, rec *poolRetireRecord) poolMigrateResponse {
 	guidance := atomBody(corpus, poolMigrateAtomID)
@@ -1195,6 +1362,7 @@ func poolRetireBase(corpus []workflow.KnowledgeAtom, rec *poolRetireRecord) pool
 		Service:  rec.Dev,
 		Stages:   rec.Stages,
 		Pool:     rec.Pool,
+		Parts:    rec.partStates(""),
 		Guidance: guidance,
 		Inputs:   poolMigrateInputs{Service: rec.Dev, Pool: rec.Pool},
 	}
@@ -1212,16 +1380,21 @@ func poolRetireRecordAnswer(resp poolMigrateResponse, rec *poolRetireRecord) poo
 		return resp
 	}
 	if rec.Phase == poolRetireRetired {
+		deploys := "the stage deploys from a lease of the pool"
+		if len(rec.Parts) > 0 {
+			deploys = "each stage deploys from a lease of its part's pool"
+		}
 		resp = poolMigrateAt(resp, poolMigrateStepRetired, nil,
-			fmt.Sprintf("The retire is done: %s (id %s) is deleted and the pair is keyed by %s; the stage deploys from a lease of the pool. The bundle of its repository is %s; retire.restore puts it back.",
-				rec.Dev, rec.DevServiceID, rec.Pool, poolRetireBundleName(rec)))
+			fmt.Sprintf("The retire is done: %s (id %s) is deleted and the pair is %s; %s. The bundle of its repository is %s; retire.restore puts it back.",
+				rec.Dev, rec.DevServiceID, rec.keyedBy(), deploys, poolRetireBundleName(rec)))
 	} else {
 		resp = poolMigrateAt(resp, poolMigrateStepRetiring, &poolMigrateNext{
 			Tool: "zerops_workflow",
-			Args: map[string]string{"workflow": workflowPoolMigrate, "action": actionRetire, "service": rec.Dev, "pool": rec.Pool},
+			Args: poolRetireResumeArgs(rec),
 			Why:  fmt.Sprintf("Resumes the retire of %s from %s against its state by id; the call answers the acknowledgment it needs.", rec.Dev, rec.Phase),
 		}, "")
 	}
+	resp.Parts = rec.partStates(resp.Step)
 	resp.Retire = rec.view()
 	return resp
 }

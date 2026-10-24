@@ -28,6 +28,11 @@ carries `image`: the checks of the setup in the checkout's latest commit
 | `install` | a `run.prepareCommands` line installing `zcp-devsup` — take the one the dev setup carries |
 | `preview-port-base` | `previewPortBase` in `.zcp/dev-servers.json`: a lease answers its preview on `previewPortBase` + its container's number |
 | `preview-ports` | every port from `previewPortBase + 1` to `previewPortBase + maxContainers` in `run.ports`, each with `httpSupport: true` |
+| `service` | with several parts, each dev server in `.zcp/dev-servers.json` names its part's pool as `"service"`: a pool's container runs the servers naming its pool and those naming none |
+
+Once the declaration names the pools, the dev service's own supervisor runs
+none of those servers after its next reload or restart: run them on the
+parts' leases from then on.
 
 While `image.missing` names anything there is no `next`, and
 `nextUnavailable` says what to change. Once nothing is missing, `next` is

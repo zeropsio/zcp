@@ -39,6 +39,14 @@ the dev service's own `verticalAutoscaling`, and `sshIsolation` in the pool's
 It holds no `GIT_TOKEN` — a credential is never written into an import. While
 the pool's import still runs, `next` waits on it.
 
+**Several parts.** A dev service serving several parts — one stage per
+part — moves each part onto a pool of its own, named after its stage
+(`webstage` → `webpool`). `parts` lists every part with its pool and step;
+each answer walks one part (`part`, its stage): the one you name with
+`service="<its stage>"` or `pool="<its pool>"`, else the first part not yet
+ready to retire. Every part walks the steps below on its own pool; the
+retire waits for all of them and deletes the dev service once.
+
 **Env and after.** Once the pool exists and its import has finished, the
 step is `env` until the pool holds the dev service's env, then `image` until
 the pool runs the part's pool setup from a commit, then `move`, `lease` and
@@ -55,6 +63,7 @@ each message naming what it needs:
 | `pool-or-box` | the service already is a pool or a Box |
 | `no-origin` | work moves by git through an https origin; outside a Mate set it up with `zerops_workflow action="git-push-setup" service="<dev>"`, in a Mate a develop task wires the pair to HQ |
 | `crew-worktrees` | crew lanes stay on a plain dev service, so a dev service holding crew worktrees does not move |
-| `variant-b`, `multi-part` | a dev service sharing a code volume, or serving several parts, does not move yet |
-| `pool-hostname-taken`, `pool-hostname-invalid` | pass `pool="<free hostname>"` |
+| `variant-b` | a dev service sharing a code volume does not move yet |
+| `pool-hostname-taken`, `pool-hostname-invalid` | pass `pool="<free hostname>"`; for several parts each pool is named after its stage |
+| `pool-not-a-part` | pass the pool of one of the parts `parts` lists |
 | `not-adopted`, `dev-not-live`, `dev-unreadable`, `not-in-container` | the dev service must be adopted and running, and its git readable from the zcp service in the project |
