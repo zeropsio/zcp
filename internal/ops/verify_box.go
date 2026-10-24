@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -29,7 +31,7 @@ const boxPingMaxBody = 64 << 10
 // is read or sent.
 func BoxOrchestratorCheck(ctx context.Context, httpClient HTTPDoer, r *VerifyResult, inProject bool) CheckResult {
 	check := CheckResult{Name: "orchestrator"}
-	base := fmt.Sprintf("http://%s:%d", r.Hostname, boxAPIPort)
+	base := "http://" + net.JoinHostPort(r.Hostname, strconv.Itoa(boxAPIPort))
 	pingURL := base + "/api/rest/ping"
 	switch {
 	case !inProject:
@@ -79,7 +81,7 @@ func BoxOrchestratorCheck(ctx context.Context, httpClient HTTPDoer, r *VerifyRes
 // serviceRunningPassed reports whether r's service_running check passed.
 func serviceRunningPassed(r *VerifyResult) bool {
 	for _, c := range r.Checks {
-		if c.Name == "service_running" {
+		if c.Name == checkNameServiceRunning {
 			return c.Status == CheckPass
 		}
 	}

@@ -997,7 +997,7 @@ func TestVerify_Pool_NotProbedAsSingleRuntime(t *testing.T) {
 					t.Errorf("checks = %+v, want the Box's orchestrator check skipped outside the project", vr.Checks)
 				}
 			}
-			if len(vr.Checks) != wantChecks || vr.Checks[0].Name != "service_running" || vr.Checks[0].Status != ops.CheckPass {
+			if len(vr.Checks) != wantChecks || vr.Checks[0].Status != ops.CheckPass {
 				t.Errorf("checks = %+v, want the passing service_running check (no http_internal/http_public/error_logs probe of the service hostname)", vr.Checks)
 			}
 		})

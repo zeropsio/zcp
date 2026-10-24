@@ -18,7 +18,8 @@ import (
 )
 
 const (
-	checkNameErrorLogs = "error_logs"
+	checkNameServiceRunning = "service_running"
+	checkNameErrorLogs      = "error_logs"
 	// checkNameHTTPRoot names the PUBLIC-reachability check (subdomain URL /
 	// custom domain). The identifier is kept from the pre-PA-4 single-check
 	// design (verify_lifecycle_test.go, outside this slice's write-set,
@@ -125,10 +126,10 @@ func classifyRuntime(serviceType string, hasPorts bool, recordedServesHTTP *bool
 
 func checkServiceRunning(ctx context.Context, client platform.Client, fetcher platform.LogFetcher, projectID string, svc *platform.ServiceStack) CheckResult {
 	if svc.IsLive() {
-		return CheckResult{Name: "service_running", Status: CheckPass}
+		return CheckResult{Name: checkNameServiceRunning, Status: CheckPass}
 	}
 	return CheckResult{
-		Name:     "service_running",
+		Name:     checkNameServiceRunning,
 		Status:   CheckFail,
 		Detail:   fmt.Sprintf("service status: %s", svc.Status),
 		Recovery: NonRunningRecovery(ctx, client, fetcher, projectID, svc.Name, svc.Status),
@@ -585,7 +586,7 @@ func aggregateStatus(checks []CheckResult) string {
 	for _, c := range checks {
 		if c.Status == CheckFail {
 			hasFail = true
-			if c.Name == "service_running" {
+			if c.Name == checkNameServiceRunning {
 				serviceRunningFailed = true
 			}
 		}
