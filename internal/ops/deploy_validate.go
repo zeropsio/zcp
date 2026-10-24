@@ -485,6 +485,7 @@ type zeropsYmlBuild struct {
 	BuildCommands   any               `yaml:"buildCommands"`   // string or []string
 	DeployFiles     any               `yaml:"deployFiles"`     // string or []string — Zerops accepts both
 	EnvVariables    map[string]string `yaml:"envVariables"`    // build-scope env (caught by CheckReservedEnvNames)
+	AddToRunPrepare any               `yaml:"addToRunPrepare"` // string or []string — what reaches run.prepareCommands
 }
 
 // deployFilesList normalizes DeployFiles to []string regardless of YAML format.
@@ -514,7 +515,8 @@ type zeropsYmlVolume struct {
 }
 
 type zeropsYmlPort struct {
-	Port int `yaml:"port"`
+	Port        int  `yaml:"port"`
+	HTTPSupport bool `yaml:"httpSupport"`
 }
 
 // BaseStrings normalizes Base to []string regardless of YAML format (string or []string).

@@ -124,6 +124,7 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 | `launch-status-recovery` | 1 | launch-production/active |
 | `launch-write-prod-setup` | 1 | launch-production/active |
 | `pool-migrate-env` | 1 | pool-migrate/active |
+| `pool-migrate-image` | 1 | pool-migrate/active |
 | `pool-migrate-move` | 1 | pool-migrate/active |
 | `pool-migrate-plan` | 1 | pool-migrate/active |
 | `scaffold-zerops-yaml` | 1 | export/scaffold-required |

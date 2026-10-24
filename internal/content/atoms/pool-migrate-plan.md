@@ -40,8 +40,9 @@ It holds no `GIT_TOKEN` — a credential is never written into an import. While
 the pool's import still runs, `next` waits on it.
 
 **Env and after.** Once the pool exists and its import has finished, the
-step is `env` until the pool holds the dev service's env, then `image`. Where
-the answer names no `next`, `nextUnavailable` says why. Never copy the dev
+step is `env` until the pool holds the dev service's env, then `image` until
+the pool runs the part's pool setup from a commit, then `move`. Where the
+answer names no `next`, `nextUnavailable` says why. Never copy the dev
 service's env by hand: a secret value must not pass through you.
 
 **Refusals.** `status: "not-a-candidate"` lists every reason in `refusals`,
