@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -949,3 +950,62 @@ func TestLeaseOwnership_FullPool_NamesNoLeaseAnotherHolderTook(t *testing.T) {
 
 // ptrTo is a pointer to a copy of v.
 func ptrTo[T any](v T) *T { return &v }
+
+// freedWhileWaiting is a poolOrch whose container is released outside zcp
+// right after zcp's first read of it by id.
+type freedWhileWaiting struct {
+	*poolOrch
+	mu    sync.Mutex
+	reads int
+}
+
+func (f *freedWhileWaiting) Container(ctx context.Context, id string) (platform.SwarmContainer, error) {
+	f.mu.Lock()
+	f.reads++
+	first := f.reads == 1
+	f.mu.Unlock()
+	c, err := f.poolOrch.Container(ctx, id)
+	if first {
+		f.releaseOutside(id)
+	}
+	return c, err
+}
+
+// TestLeaseOwnership_WarmLockBusy_NeverResetsAContainerFreedMeanwhile: a
+// release that waited for the pool's warm lock in vain keeps its container
+// with a reset (DP-27) only once a fresh read still gives the container to
+// the lease: one released outside zcp while the release waited is free, and
+// a reset would take it from under the pool's next acquire.
+func TestLeaseOwnership_WarmLockBusy_NeverResetsAContainerFreedMeanwhile(t *testing.T) {
+	t.Parallel()
+	of := newOwnFixture(t)
+	of.acquire(t, groupHQPool)
+	orch := &freedWhileWaiting{poolOrch: of.hq}
+	web := of.web
+	of.deps.Swarm = func(baseURL, _ string) SwarmAPI {
+		if baseURL == orchestratorURL(groupWebPool) {
+			return web
+		}
+		return orch
+	}
+	of.deps.Warm = &LeaseWarm{Target: 1, LockWait: 20 * time.Millisecond, Go: func(fn func()) { fn() }}
+	unlock, err := lockPoolWarm(context.Background(), of.stateDir, groupHQPool, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+
+	change, err := LeaseReleaseChange(context.Background(), of.deps, ownHQAlias, true)
+	if err != nil {
+		t.Fatalf("LeaseReleaseChange: %v", err)
+	}
+	if v := change.Leases[0]; v.State != LeaseStateLost || !strings.Contains(v.Note, "no longer reserves") {
+		t.Errorf("view = %+v, want lost: the container was released outside zcp meanwhile", v)
+	}
+	if got := of.hq.freeResetLog(); len(got) != 0 {
+		t.Errorf("free containers reset: %v", got)
+	}
+	if got := of.hq.releaseLog(); len(got) != 0 {
+		t.Errorf("releases = %+v, want none", got)
+	}
+}
