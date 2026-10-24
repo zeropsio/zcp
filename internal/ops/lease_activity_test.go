@@ -231,9 +231,9 @@ func TestLeaseActivity_PreviewFromSupervisorWhenCapable(t *testing.T) {
 // TestLeaseActivity_OlderSupervisor_PreviewNotObserved: the preview facts
 // come only from a supervisor whose `ctl version` lists `activity`; from an
 // older one — even one whose status carried such fields — and from a
-// container with no supervisor, one that did not answer, or no preview
-// server, they are absent, never zero, and the note says the preview was not
-// observed and why. The checkout's facts stand.
+// container with no supervisor or one that did not answer, they are absent,
+// never zero, and the note says the preview was not observed and why. The
+// checkout's facts stand.
 func TestLeaseActivity_OlderSupervisor_PreviewNotObserved(t *testing.T) {
 	t.Parallel()
 	const head = int64(1792756800)
@@ -262,8 +262,6 @@ func TestLeaseActivity_OlderSupervisor_PreviewNotObserved(t *testing.T) {
 			wantNote: []string{"ctl status exited 1", "boom"}},
 		{name: "a status that is no state", preview: previewPart(capableVersion, 0, "garbage", 0),
 			wantNote: []string{"garbage"}},
-		{name: "no dev server has a preview port", preview: previewPart(capableVersion, 0, `{"format":1,"servers":{"worker":{"status":"running"}}}`, 0),
-			wantNote: []string{"preview port"}},
 		{name: "an unreadable supervisor part", preview: previewMarker + "\n@@zcp-devsup version soon\n",
 			wantNote: []string{"soon"}},
 	} {
@@ -284,6 +282,45 @@ func TestLeaseActivity_OlderSupervisor_PreviewNotObserved(t *testing.T) {
 			}
 			if act.LastChangeAt != rfc3339(head) || unsaved == nil {
 				t.Errorf("checkout = %q / %+v, want lastChangeAt %s and the unsaved work read", act.LastChangeAt, unsaved, rfc3339(head))
+			}
+		})
+	}
+}
+
+// TestLeaseActivity_NoPreviewServer_ZeroOpen: a supervisor that lists
+// `activity` and runs no dev server on a preview port has no preview forward,
+// so no preview connection can be open: previewOpenConns reads an observed 0,
+// previewLastConnAt stays absent, and no note says the preview was not
+// observed — a client drawing idleness from the envelope (spec-mate §2.8a.3)
+// reads the preview as observed, as zcp's own label does (DP-25).
+func TestLeaseActivity_NoPreviewServer_ZeroOpen(t *testing.T) {
+	t.Parallel()
+	const head = int64(1792756800)
+	clean := string(checkoutAnswer(head, "", nil, 0))
+	for _, tt := range []struct {
+		name  string
+		state string
+	}{
+		{name: "a dev server on no preview port", state: noPreviewServer},
+		{name: "no dev server at all", state: `{"format":1,"servers":{}}`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ssh := &ctxSSH{fn: func(context.Context, string, string) ([]byte, error) {
+				return []byte(clean + previewPart(capableVersion, 0, tt.state, 0)), nil
+			}}
+			rec := leaseRecord{PoolHostname: testPoolHost, ContainerNumber: 3, AcquiredAt: "2026-10-23T11:00:00Z"}
+
+			act, _ := readLeaseActivity(context.Background(), LeaseDeps{SSH: ssh}, rec)
+
+			if act.PreviewOpenConns == nil || *act.PreviewOpenConns != 0 {
+				t.Errorf("previewOpenConns = %v, want an observed 0", act.PreviewOpenConns)
+			}
+			if act.PreviewLastConnAt != "" {
+				t.Errorf("previewLastConnAt = %q, want absent", act.PreviewLastConnAt)
+			}
+			if strings.Contains(act.Note, "preview") {
+				t.Errorf("note %q speaks of the preview, which was observed", act.Note)
 			}
 		})
 	}
