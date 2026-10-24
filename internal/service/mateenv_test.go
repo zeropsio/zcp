@@ -10,7 +10,10 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/mate"
 )
 
 // TestMergeMateEnv_OrderAndPrecedence locks the precedence contract: the
@@ -82,21 +85,26 @@ func TestMergeMateEnv_StoreNamesTheSubdomain_ServerGetsItsPublicOrigin(t *testin
 		if err := os.WriteFile(storePath, []byte(storeBody), 0o644); err != nil {
 			t.Fatalf("write store: %v", err)
 		}
+		// What zcp writes by hand: the env file `zcp init` renders, the launch
+		// lines and the unit's ExecStart. None may name the public origin.
+		handWritten := append(mate.EnvLines("p-1", "api.app-prg1.zerops.io", "https://allowed.example"), mate.LaunchEnvLines()...)
 		envPath := filepath.Join(dir, "mate.env")
-		if err := os.WriteFile(envPath, []byte("T3CODE_ZEROPS_PROJECT_ID=p-1\n"), 0o600); err != nil {
+		if err := os.WriteFile(envPath, []byte(strings.Join(handWritten, "\n")+"\n"), 0o600); err != nil {
 			t.Fatalf("write env file: %v", err)
+		}
+		for _, line := range handWritten {
+			if key, _, _ := strings.Cut(line, "="); strings.Contains(strings.ToLower(key), "subdomain") || strings.Contains(strings.ToLower(key), "public") {
+				t.Errorf("zcp writes %q by hand; the public origin must come from the live env store alone", line)
+			}
+		}
+		if strings.Contains(mate.UnitCommand, "=") || strings.Contains(strings.ToLower(mate.UnitCommand), "subdomain") {
+			t.Errorf("the unit's command %q must carry no environment", mate.UnitCommand)
 		}
 
 		got := mergeMateEnv(storePath, envPath)
 
-		for _, want := range []string{
-			"zeropsSubdomain=https://zcp-3199-8080.prg1.zerops.app",
-			"ZCP_API_KEY=key-1",
-			"T3CODE_ZEROPS_PROJECT_ID=p-1",
-		} {
-			if !slices.Contains(got, want) {
-				t.Errorf("mate's environment must carry %q, got %q", want, got)
-			}
+		if want := "zeropsSubdomain=https://zcp-3199-8080.prg1.zerops.app"; !slices.Contains(got, want) {
+			t.Errorf("mate's launch environment must carry %q from the store, got %q", want, got)
 		}
 	})
 }
