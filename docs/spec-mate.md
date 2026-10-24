@@ -1086,9 +1086,14 @@ retired dev service, so this snapshot is where the part's pool shows beside its 
 - It **replaces** `stageHostname` and `stageSetupName`: one stage ≡
   `[{hostname: stageHostname, setup: stageSetupName}]`. Each snapshot's own `setupName` stays as it
   is — it names that service's setup, not a pair.
-- zcp's synthesis and render read it (the envelope is their input, §1). **Mate never pairs from
-  it**: Mate pairs from the tier on `main`, then an open recipe change, then the hostname stem
-  (MODEL §9/3m, §11.2). A preview's address is its Zerops subdomain and the commit a preview runs is
+- zcp's synthesis and render read it (the envelope is their input, §1). Mate pairs from the tier on
+  `main`, then an open recipe change, then the hostname stem (MODEL §9/3m, §11.2) — **with one
+  exception: a pool-keyed pair** (a part migrated to a dev pool, `docs/spec-workflows.md` §13). A
+  `runtimeClass: "pool"` snapshot carrying `stages[]` (or, before field-order step 3, a single
+  `stageHostname`) pairs those stages with the pool: a tier or recipe naming a dev that still stands
+  wins, then the envelope, then the stem — so a tier naming the retired dev yields to the envelope.
+  Such a stage is never a checkout row, and the pool (no checkout of its own) is not one either; the
+  pairing comes from the thread's own last envelope (z3 `poolPairsIn`, `useThreadPoolPairs`). A preview's address is its Zerops subdomain and the commit a preview runs is
   the receipt's (§2.8a.6), so neither rides here.
 
 ```json
