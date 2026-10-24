@@ -116,11 +116,15 @@ func (dr *poolMigrateDevRead) partsAnswer(answers []poolMigrateResponse, cur int
 			resp.Pool, resp.Part, resp.Inputs.Pool = "", "", ""
 			resp.Env, resp.EnvRequests, resp.Image = nil, nil, nil
 		}
+		once := "It deletes " + dev + " once"
+		if dr.meta.CodeVolume != nil {
+			once = "It deletes each of them once, the code volume last,"
+		}
 		resp.Next = &poolMigrateNext{
 			Tool: "zerops_workflow",
 			Args: map[string]string{"workflow": workflowPoolMigrate, "action": actionRetire, "service": dev},
-			Why: fmt.Sprintf("Every part's pool (%s) is leased on the work's branch. The retire's first call reads every part's guards again and names in wouldDestroy what deleting %s erases, changing nothing; ask the person, and only once they agreed by name send the acknowledged call it names. It deletes %s once and leaves one pair per part, keyed by its pool.",
-				strings.Join(dr.partPools(), ", "), dev, dev),
+			Why: fmt.Sprintf("Every part's pool (%s) is leased on the work's branch. The retire's first call reads every part's guards again and names in wouldDestroy what deleting %s erases, changing nothing; ask the person, and only once they agreed by name send the acknowledged call it names. %s and leaves one pair per part, keyed by its pool.",
+				strings.Join(dr.partPools(), ", "), poolMigrateRetireDeletes(dr.meta), once),
 		}
 		resp.NextUnavailable = ""
 	case resp.Step == poolMigrateStepReadyToRetire:
