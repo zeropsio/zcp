@@ -246,9 +246,21 @@ func (g *poolRetireGuards) readVolumeMounts(ctx context.Context, d poolRetireDep
 		}
 	}
 	if len(mounted) > 0 {
-		g.refuse(poolRetireRefuseVolumeMounted, fmt.Sprintf("%s mount the code volume %s by the checkout's %s (run.volume): the platform refuses to delete a volume while any service still mounts it, and the retire deletes it last, after every dev service. Remove run.volume from those setups, commit, and deploy each service — a deploy replaces its container without the mount — then call the retire again.",
-			strings.Join(mounted, ", "), volume, file))
+		verb, setups, deploy := "mount", "those setups", "each service"
+		if len(mounted) == 1 {
+			verb, setups, deploy = "mounts", "that setup", "the service"
+		}
+		g.refuse(poolRetireRefuseVolumeMounted, fmt.Sprintf("%s %s the code volume %s by the checkout's %s (run.volume): the platform refuses to delete a volume while any service still mounts it, and the retire deletes it last, after every dev service. Remove run.volume from %s, commit, and deploy %s — a deploy replaces its container without the mount — then call the retire again.",
+			poolRetireJoinAnd(mounted), verb, volume, file, setups, deploy))
 	}
+}
+
+// poolRetireJoinAnd joins names as "a", "a and b", "a, b and c".
+func poolRetireJoinAnd(names []string) string {
+	if len(names) < 2 {
+		return strings.Join(names, "")
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
 }
 
 // partSetups are the setups the parts' pools deploy with, by pool.
@@ -604,7 +616,7 @@ func (r *poolRetireRun) volumeMountHint(ctx context.Context) string {
 	if len(named) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("The checkout's %s mounts it in the setup of %s.", file, strings.Join(named, ", "))
+	return fmt.Sprintf("The checkout's %s mounts it in the setup of %s.", file, poolRetireJoinAnd(named))
 }
 
 // resumeCodeVolume resumes a variant-B retire whose dev is gone — deleted by
