@@ -261,6 +261,9 @@ func TestThemes_Services_DevPool_WarmAndIdle_FactsPresent(t *testing.T) {
 		"one warm container", "kept as the pool's warm container", "removed", "outdated",
 		"POST /container", "never through `minContainers`", "`warm`", "`target`", "`ready`", "`preparing`", "`last`",
 		"containers-preparing",
+		// Warm clone: the warm container already holds the repository at main,
+		// so a branch acquire fetches only what changed; status names it.
+		"already holds the pool's repository", "`warm.clone`",
 		// Idleness: what status reads, when it marks a lease idle, what it names.
 		"`activity`", "`lastChangeAt`", "`previewOpenConns`", "`unsaved`", "24 h", "`idle`", "`since`", "`next`",
 		"in use", "never `force`", "a rename",
