@@ -9,6 +9,7 @@ package ops
 
 import (
 	"context"
+	"encoding/json"
 	"maps"
 	"os"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zeropsio/zcp/internal/devsup"
 	"github.com/zeropsio/zcp/internal/ops/devservertest"
 	"github.com/zeropsio/zcp/internal/platform"
 )
@@ -232,5 +234,24 @@ func TestLeaseRelease_SiblingDeclarationUnreadable_KeepsThePreviewURLsOfTheGroup
 	want := map[string]string{"WEB_HOST": rewireWebHost, "WEB_URL": "https://webpool-abc1-8002.prg1.zerops.app"}
 	if got := rf.web.Overlay(); !maps.Equal(got, want) {
 		t.Errorf("webpool-7's overlay = %v, want %v: only hqpool-3's values dropped", got, want)
+	}
+}
+
+// TestDeclareDevServer_KeepsTheSiblingPreviewEnv: a lease's start that adds a
+// server rewrites the declaration and keeps the repository's
+// siblingPreviewEnv as it keeps siblingEnv: zcp reads both and writes neither.
+func TestDeclareDevServer_KeepsTheSiblingPreviewEnv(t *testing.T) {
+	t.Parallel()
+	d, err := devsup.ParseDeclaration([]byte(siblingPreviewDeclaration(`"previewPortBase":8000,`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, changed := DeclareDevServer(d, devsup.Server{Name: "admin", Port: 4200, Command: "pnpm admin"})
+	out, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `"siblingPreviewEnv":{"API_URL":"apipool","HQ_URL":"hqpool","SELF_URL":"webpool"}`; !changed || !strings.Contains(string(out), want) {
+		t.Errorf("declared = %s (changed %v), want the repository's %s kept", out, changed, want)
 	}
 }
