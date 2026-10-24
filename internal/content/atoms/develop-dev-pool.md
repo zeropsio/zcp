@@ -7,7 +7,7 @@ environments: [container]
 multiService: aggregate
 title: "A part's dev pool — lease a container, work, push, release"
 references-atoms: [develop-dynamic-runtime-start-container]
-references-fields: [ops.DeployResult.Warnings, ops.LeaseView.Reused, ops.LeaseSyncMember.UnwatchedServers]
+references-fields: [ops.DeployResult.Warnings, ops.LeaseView.Reused, ops.LeaseSyncMember.UnwatchedServers, ops.LeaseView.Idle, ops.LeaseIdle.Next, tools.leaseToolResult.Warm]
 ---
 
 ### A part's dev pool
@@ -31,13 +31,18 @@ own hostname reaches a random container — address a leased one by its alias.
    `git push -u origin <branch>` (the first push of a new branch sets its
    upstream). The pool's `GIT_TOKEN` authenticates it. A release never commits
    for you.
-4. `zerops_lease action=release lease="<alias>"` resets the leased container
-   and returns it. It refuses while it holds commits on no remote
-   branch or uncommitted files, naming them; `force=true` discards them.
+4. `zerops_lease action=release lease="<alias>"` hands the leased container
+   back: reset, as the pool's warm container, or removed when the pool
+   already has one or it runs an outdated version. It refuses while it holds
+   commits on no remote branch or uncommitted files, naming them;
+   `force=true` discards them. Files git ignores and stashes go either way.
 
 `zerops_lease action=status` lists your leases: `held`, `unmounted` (the
 record has no alias or mount), `lost` (its container is gone or no longer
-reserved) or `unknown-holder` (reserved, but no record of yours).
+reserved) or `unknown-holder` (reserved, but no record of yours). It reads
+each one's activity and unsaved work, changing nothing: a lease untouched
+for a day is `idle`, its `idle.next` naming the release or what a release
+would lose. `warm` shows each pool's warm container.
 
 **Preview.** With `previewPortBase` in `.zcp/dev-servers.json`, a lease
 answers on `previewPortBase + ZEROPS_StableNumber`, and the dev-server
@@ -109,10 +114,9 @@ stays unleased.
   reports it; a failed one leaves the lease held.
 - Import the pool with `minContainers: 0`. Containers Zerops creates for the
   minimum cannot be reset, so releasing one deletes it (the release says
-  so): handed back unreset it would give the next holder your files, as a
-  clean acquire resets only a container marked dirty and SSH writes never
-  mark it. Pre-warm containers through the orchestrator instead
-  (`POST /container` with `{"count": N}`).
+  so). The pool's warm container takes their place: after each acquire or
+  release one is kept or created through the orchestrator, ready for the
+  next acquire at once.
 - A container answers SSH only when the pool's `sshIsolation` is set as a
   service env variable admitting the zcp service. The top-level import field
   did not reach pool containers.
@@ -133,6 +137,10 @@ stays unleased.
 - A full pool refuses an acquire at once and queues nothing: an acquire
   succeeds only after a lease is released. A pool holds at most ten
   containers — a higher `maxContainers` is capped at ten.
+- Nothing releases a lease by itself, however long it sits idle. Status
+  and a full pool's refusal list every lease this zcp service holds, other
+  conversations' too: ask the person before releasing one this
+  conversation did not take.
 - Lowering the pool's `maxContainers` below the containers it holds deletes
   the highest-numbered ones, leased ones included, each with its `/var/www`.
 - A stopped pool's orchestrator does not answer. A restart, or a stop and

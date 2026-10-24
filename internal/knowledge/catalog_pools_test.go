@@ -196,3 +196,56 @@ func TestThemes_Services_DevPool_MultiPart_FactsPresent(t *testing.T) {
 		}
 	}
 }
+
+// TestThemes_Services_DevPool_WarmAndIdle_FactsPresent pins that the services
+// theme's "A part's dev pool" subsection carries the warm container, idleness
+// and releasing etiquette (spec-workflows.md §8 DP-21, DP-25, DP-27, DP-15;
+// docs/spec-mate.md §0 rule 4): the import keeps minContainers at 0 because
+// the platform's containers for the minimum cannot be reset; each pool keeps
+// one warm container, kept or removed at release and topped up through the
+// orchestrator's create, which status reports; status reads activity and
+// unsaved work and marks a lease idle after 24 h without acting on it; and
+// the agent asks the person before releasing a lease this conversation did
+// not take, knowing what no release guard counts.
+func TestThemes_Services_DevPool_WarmAndIdle_FactsPresent(t *testing.T) {
+	t.Parallel()
+
+	store, err := GetEmbeddedStore()
+	if err != nil {
+		t.Fatalf("GetEmbeddedStore: %v", err)
+	}
+	doc, err := store.Get("zerops://themes/services")
+	if err != nil {
+		t.Fatalf("Get services: %v", err)
+	}
+	section, ok := doc.H2Sections()["Pools and Box"]
+	if !ok {
+		t.Fatal("services.md missing H2 section 'Pools and Box'")
+	}
+	const heading = "### A part's dev pool"
+	_, sub, found := strings.Cut(section, heading)
+	if !found {
+		t.Fatalf("'Pools and Box' section missing %q", heading)
+	}
+	sub, _, _ = strings.Cut(sub, "\n### ")
+	for _, fact := range []string{
+		// Import: the minimum stays 0; the warm container replaces it.
+		"minContainers: 0", "cannot be reset", "warm container",
+		// Warm: one per pool, kept or removed at release, topped up by the
+		// orchestrator's create, reported by status.
+		"one warm container", "kept as the pool's warm container", "removed", "outdated",
+		"POST /container", "never through `minContainers`", "`warm`", "`target`", "`ready`", "`preparing`", "`last`",
+		"containers-preparing",
+		// Idleness: what status reads, when it marks a lease idle, what it names.
+		"`activity`", "`lastChangeAt`", "`previewOpenConns`", "`unsaved`", "24 h", "`idle`", "`since`", "`next`",
+		"in use", "never `force`", "a rename",
+		// Releasing: nothing acts on idleness; ask before releasing another
+		// conversation's lease; what no guard counts.
+		"Nothing releases", "ask the person", "this conversation did not take",
+		"Files git ignores", "stashes",
+	} {
+		if !strings.Contains(sub, fact) {
+			t.Errorf("%q subsection missing fact %q", heading, fact)
+		}
+	}
+}

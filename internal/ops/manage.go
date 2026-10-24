@@ -218,6 +218,9 @@ func Scale(ctx context.Context, client platform.Client, projectID, hostname stri
 	}
 	if topology.IsPoolType(serviceType) && (params.MinContainers != nil || params.MaxContainers != nil) {
 		result.Notice = poolContainerCountNotice
+		if params.MinContainers != nil && *params.MinContainers > 0 {
+			result.Notice += " " + poolMinContainersNotice
+		}
 		if shrink != nil {
 			if n := shrink.notice(); n != "" {
 				result.Notice += " " + n
@@ -470,6 +473,16 @@ func scaleBoundsConflict(asked ScaleParams, sent platform.AutoscalingParams) err
 // count, and lowering the maximum deletes containers (live, 2026-10-23).
 const poolContainerCountNotice = "A pool's maxContainers caps how many containers its orchestrator holds and hands out — at most 10 per pool (a higher value is capped). " +
 	"Lowering it below the containers the pool holds deletes the highest-numbered ones within about 30 s, leased ones included, with their /var/www."
+
+// poolMinContainersNotice is what a pool's minContainers above 0 costs: the
+// containers the platform creates for the minimum have no primary snapshot, so
+// a reset release is refused (400 no-primary-snapshot) and zerops_lease
+// deletes such a container at its release rather than hand it on unreset with
+// the holder's files (spec-workflows.md §8 DP-15); a warm container comes from
+// the orchestrator's create instead (DP-27).
+const poolMinContainersNotice = "Containers the platform creates to fill a pool's minContainers have no primary snapshot, so they cannot be reset: a release with reset=true is refused, " +
+	"and zerops_lease deletes such a container when its lease is released rather than hand it on with the holder's files. " +
+	"Keep minContainers at 0 and have a warm container ready through the orchestrator's create (POST /container) — zerops_lease keeps one warm container in each pool it leases from."
 
 // poolContainerBounds is the minContainers..maxContainers range each pool
 // type's own stanza in the import schema allows

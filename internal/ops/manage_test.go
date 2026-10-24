@@ -931,6 +931,54 @@ func TestScale_Pool_ZeroMinContainers_Accepted(t *testing.T) {
 
 func int32Ptr(v int32) *int32 { return &v }
 
+// TestScale_PoolMinContainersAboveZero_NoticeSaysUnresettable: a scale that
+// sets a pool's minContainers above 0 says, in its notice, that the
+// containers the platform creates for that minimum cannot be reset (a
+// release deletes them) and that a warm container through the orchestrator
+// is the way to have one ready (spec-workflows.md §8 DP-15, DP-27). A
+// minimum of 0, or a call that leaves the minimum alone, carries no such
+// sentence.
+func TestScale_PoolMinContainersAboveZero_NoticeSaysUnresettable(t *testing.T) {
+	t.Parallel()
+
+	unresettable := []string{"no primary snapshot", "cannot be reset", "deletes such a container", "minContainers at 0", "warm container", "POST /container"}
+	tests := []struct {
+		name     string
+		poolType string
+		params   ScaleParams
+		want     bool
+	}{
+		{"min raised to 1", "swarm@1", ScaleParams{MinContainers: scaleIntPtr(1)}, true},
+		{"min raised with max", "swarm-vm@1", ScaleParams{MinContainers: scaleIntPtr(2), MaxContainers: scaleIntPtr(4)}, true},
+		{"min kept at 0", "swarm@1", ScaleParams{MinContainers: scaleIntPtr(0), MaxContainers: scaleIntPtr(4)}, false},
+		{"max only", "swarm@1", ScaleParams{MaxContainers: scaleIntPtr(4)}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			client := &scaleCaptureClient{Mock: platform.NewMock().
+				WithServices([]platform.ServiceStack{{
+					ID: "svc-pool", Name: "pool", ProjectID: "proj-1", Status: "RUNNING",
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: tt.poolType},
+					CustomAutoscaling:    &platform.CustomAutoscaling{HorizontalMinCount: 0, HorizontalMaxCount: 4},
+				}})}
+
+			res, err := Scale(context.Background(), client, "proj-1", "pool", tt.params)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !strings.Contains(res.Notice, "maxContainers caps") {
+				t.Errorf("notice = %q, want the container-count notice kept", res.Notice)
+			}
+			for _, want := range unresettable {
+				if got := strings.Contains(res.Notice, want); got != tt.want {
+					t.Errorf("notice contains %q = %v, want %v; notice = %q", want, got, tt.want, res.Notice)
+				}
+			}
+		})
+	}
+}
+
 func TestScale_Box_ContainerCounts_Refused(t *testing.T) {
 	t.Parallel()
 

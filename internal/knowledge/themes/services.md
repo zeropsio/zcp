@@ -275,7 +275,7 @@ services:
       GIT_TOKEN: <the user sets the value>
 ```
 
-- `minContainers: 0`: a container the platform creates for the minimum cannot be reset, so releasing its lease deletes it. Pre-warm through the orchestrator (`POST /container` with `{"count": N}`).
+- `minContainers: 0`: a container the platform creates for the minimum has no primary snapshot and cannot be reset, so releasing its lease deletes it, and it never counts as the pool's warm container. The pool keeps a warm container through the orchestrator instead (**Warm container** below).
 - `sshIsolation` goes in `envVariables`: a pool container answers SSH only when it is set as a service env variable admitting the zcp service. The top-level import field did not reach pool containers.
 - `GIT_TOKEN` is a secret the user owns: name it in `envSecrets`, never write a value. Acquire clones with the pool's own `GIT_TOKEN`.
 - The service env reaches the pool's containers.
@@ -329,6 +329,24 @@ zerops:
 - Sync: commit in one lease over SSH, then `zerops_lease action=sync lease="<alias>"` pushes the branch and fast-forwards every other lease of it. It never forces, and refuses a lease of `main`, uncommitted or untracked files in the source, and a push origin rejects — when origin moved on, integrate `origin/<branch>` there and sync again. Each other lease answers `up-to-date` or `fast-forwarded`; `has-own-commits`, `local-changes-in-the-way`, `on-another-branch`, `unreachable` and `failed` leave it as it was, with a note — so sync before you commit in another lease. A fast-forwarded lease lists in `unwatchedServers` its running servers without a `watch`, which serve the old code until restarted; one whose `.zcp/dev-servers.json` changed has its supervisor reload it (`reloaded`).
 - Release: `zerops_lease action=release branch="<branch>"` (with `repo` when the branch is leased for several repositories) reads every lease's unsaved work first; any found refuses them all, naming each lease's files and commits, and `force=true` releases every lease, discarding it. A lease the orchestrator would not release stays held with an `error`; the same call again finishes the branch.
 - Rewire: an acquire or release that adds or removes a lease of the branch hands every other lease the recomputed values (a release, before its container goes), and their supervisors restart the servers running under the old ones (`rewired`); a lease it cannot reach is a note naming `zerops_dev_server action=restart hostname="<alias>" name="<server>"`. A lease that ends outside zcp is not chased: status marks a lease still wired to its container `wiring: "stale"`, with the restart that fixes it.
+
+**Warm container**: each pool keeps one warm container — free, running, reset, on the pool's current version — that an acquire takes at once, where a create takes about 16 s on a container pool and minutes on a VM pool.
+
+- Release: once its check for unsaved work passes, a release keeps its container as the pool's warm one, reset, when the pool has none besides it and the container runs the pool's current version; otherwise it removes the container with its own lease. The result says which — "kept as the pool's warm container", or removed and why (the pool already had its warm container, or the container ran an outdated version). A removal the platform refuses falls back to the reset and is named.
+- Top-up: after every acquire and release, zcp creates what the pool lacks through the orchestrator's `POST /container`, in the background and within `maxContainers` — never through `minContainers`, whose containers cannot be reset and never count as warm.
+- Status: `zerops_lease action=status` reports each pool's `warm` — `target`, `ready` (absent with a note when it could not be counted), `preparing` and `last`, what the last top-up did, a failed or full one included.
+- An acquire that comes while a container is being created can be refused `containers-preparing`; zcp retries it for up to a minute (on a VM pool, to the acquire's own deadline) and the lease's note names the wait.
+
+**Idleness**: `zerops_lease action=status` reads each held lease in one SSH call that changes nothing.
+
+- `activity`: `lastChangeAt` is the checkout's last change — the newest of HEAD's last move (a commit, a checkout) and any modified or untracked file git does not ignore; a deleted tracked file or a rename does not move it. `previewLastConnAt` and `previewOpenConns` are the preview's last connection and the connections open now, from a `zcp-devsup` new enough to report them. `acquiredAt` is when the lease was taken.
+- `unsaved`: the release's own check — uncommitted and untracked files (the first 20, all counted) and commits on no remote branch.
+- A lease with no activity for 24 h — no change, no preview connection, no acquire — is marked `idle` with `since` (its last activity) and `next`: with nothing unsaved, `zerops_lease action=release lease="<alias>"`; with unsaved work, what it holds and how to keep it (commit and push), never `force`.
+- A preview connection open now is in use, however long ago it opened, so that lease is never idle. A fact that could not be read — an older `zcp-devsup`, an unreachable container — leaves the lease unmarked, never idle.
+- The leases of one branch across several pools are idle together or not at all, and `next` names the branch's release, or what each lease holds.
+- A full pool's refusal lists the leases zcp holds the same way, oldest activity first, each with what a release would lose.
+
+**Releasing**: Nothing releases, stops or deletes a lease because it is idle — idleness is a label, and a person decides. zcp records no conversation per lease: status and a full pool's refusal list every lease this zcp service holds, other conversations' included. So ask the person before releasing a lease this conversation did not take, and never force one to free a container. Files git ignores (a local `.env`, a SQLite file, build output) and stashes are counted by no release check: they go with any release.
 
 ### Zerops Box
 
