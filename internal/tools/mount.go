@@ -52,14 +52,15 @@ func RegisterMount(srv *mcp.Server, client platform.Client, projectID string, mo
 					"Mounting a service into itself is not supported. Mount other services instead.",
 				), WithRecoveryStatus()), nil, nil
 			}
-			if blocked := requireWorkflowContext(engine, stateDir, recipeProbe); blocked != nil {
-				return blocked, nil, nil
-			}
 			// A parked lease's container is stopped (DP-28): an sshfs mount
-			// would block for about 42 s and fail. A record that cannot be
-			// read leaves the mount as it was before parking existed.
+			// would block for about 42 s and fail, so the refusal naming the
+			// unpark comes before any gate. A record that cannot be read
+			// leaves the mount as it was before parking existed.
 			if lease, isLease, err := ops.LeaseTarget(stateDir, input.ServiceHostname); err == nil && isLease && lease.Parked {
 				return convertError(ops.LeaseParkedError(lease, "zerops_mount"), WithRecoveryStatus()), nil, nil
+			}
+			if blocked := requireWorkflowContext(engine, stateDir, recipeProbe); blocked != nil {
+				return blocked, nil, nil
 			}
 			result, err := ops.MountService(ctx, client, projectID, mounter, input.ServiceHostname)
 			if err != nil {
