@@ -1662,7 +1662,11 @@ a span attribute.
   definitely refuses the key (`401`/`403`) to the Mate's server, the server re-reads `ZCP_API_KEY`
   from its env store; an unchanged value is reported to HQ in one link frame (`key-refused`), and HQ
   at once closes the link `key_refused`, revokes the project's Git credential and refuses header
-  calls with that key; a changed value is a reconnect with the new key (newest wins, §3.5). The
+  calls with that key; a changed value is a reconnect with the new key (newest wins, §3.5). zcp
+  passes on a refusal it meets by asking HQ to recheck: `POST /api/mate/key-recheck` with the key in
+  its usual header. HQ does not trust the caller; it runs one `/user/info` with that key at once
+  through the gate (at most one recheck per key per minute) and on a definite refusal acts as for
+  `key-refused`. The
   hourly recheck stays as the backstop because HQ never uses a Mate's key against Zerops and cannot
   see its revocation in the organisation's token list (§3.16), and the natural signal comes only
   from an honest holder: a leaked key held by someone else, or a compromised Mate, never reports
@@ -2099,7 +2103,7 @@ The cutover, in this order (HQ keeps no old route, HQ `spec/protocol.md` *Compat
 | TC-18 | When the `chief` of the link's `state` frame changes, the Mate's server restarts zcp. Test to be written (Mate server). |
 | TC-19 | A refused organisation key closes every person's connection to that organisation's Mates at once. Test to be written (HQ link, Mate server). |
 | TC-20 | A Zerops outage keeps people connected until the cap. Test to be written (Mate server, injected clock). |
-| TC-21 | A Mate whose key Zerops refuses is cut off from HQ at once. Test to be written (Mate server, HQ link). |
+| TC-21 | A Mate whose key Zerops refuses is cut off from HQ at once, whether its server sends `key-refused` or zcp asks `POST /api/mate/key-recheck` (HQ's own `/user/info` decides, at most once per key per minute). Test to be written (Mate server, zcp client, HQ link). |
 
 ---
 
