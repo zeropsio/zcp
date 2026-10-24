@@ -293,6 +293,13 @@ func releasedReset(v LeaseView) bool {
 func (w *LeaseWarm) keepOrRemove(ctx context.Context, d LeaseDeps, rp *resolvedPool, rec leaseRecord, reset func() (LeaseView, error)) (LeaseView, error) {
 	unlock, err := lockPoolWarm(ctx, d.StateDir, rp.svc.Name, cmp.Or(w.LockWait, leaseWarmLockWait))
 	if err != nil {
+		// The wait may have outlasted the lease: a container released
+		// outside zcp meanwhile is free, and its reset would take it from
+		// under the pool's next acquire (DP-2). A read that fails keeps the
+		// verdict the release began with.
+		if v, rerr := readLeaseOwnership(ctx, d, rec); rerr == nil && v.own.lost() {
+			return dropLeaseRecord(d.StateDir, rec, LeaseStateLost, lostDropNote(v.why))
+		}
 		why := fmt.Sprintf("the pool's warm container could not be decided (%v)", err)
 		if errors.Is(err, errWarmLockBusy) {
 			why = "another zcp call was still deciding or creating the pool's warm container"
