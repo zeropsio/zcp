@@ -255,8 +255,10 @@ stays unleased.
   the pool out again.
 - A release resets a container to its image: what `run.prepareCommands`
   wrote survives, `/var/www` included; everything written or started since
-  is gone. Bake the part's dependencies into `/var/www` there, listing the
-  lockfile in `build.addToRunPrepare` so the image rebuilds when it changes.
+  is gone. Bake the part's dependencies into `/var/www` there, listing every
+  file the install reads in `build.addToRunPrepare` — the lockfile, and in a
+  workspace monorepo every member's manifest and the workspace definition —
+  so the image rebuilds when one of them changes.
   A branch whose lockfile differs declares its incremental install as
   `prepare` in `.zcp/dev-servers.json` (e.g. `npm install --prefer-offline`):
   acquire runs it after the checkout, before the dev servers start, and
@@ -314,7 +316,8 @@ stays unleased.
   included. Run there only code you would trust with them —
   `zerops_knowledge uri="zerops://themes/services"`, section "Untrusted code".
 
-The pool's import stanza, setup shape and a declaration several parts share:
+The pool's import stanza, setup shape — a workspace monorepo's dependencies
+included — and a declaration several parts share:
 `zerops_knowledge uri="zerops://themes/services"`, section "A part's dev pool".
 
 ---
