@@ -258,9 +258,12 @@ func verifyService(
 	typeVersion := svc.ServiceStackTypeInfo.ServiceStackTypeVersionName
 	// A pool or Box is classified by type string, not category: a pool
 	// reports USER like a runtime, Box STANDARD like a database (PS-1).
-	// Both are verified by service_running alone — an HTTP or log probe
+	// Both are verified by service_running alone here — an HTTP or log probe
 	// addressed to a pool's hostname reaches one random container of up to
-	// ten, so it would answer for none of them (PS-3).
+	// ten, so it would answer for none of them (PS-3). The tool layer adds
+	// each one's orchestrator check: a pool's through its orchestrator, a
+	// Box's keyless ping of its workspace API (PoolOrchestratorCheck,
+	// BoxOrchestratorCheck; PS-9).
 	leased := topology.IsPoolOrSandboxType(typeVersion)
 	managed := leased || isManagedCategory(svc.ServiceStackTypeInfo.ServiceStackTypeCategoryName)
 
