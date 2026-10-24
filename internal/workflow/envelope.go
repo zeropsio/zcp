@@ -98,6 +98,11 @@ const (
 	// was interrupted before writing BootstrappedAt. Resume takes priority
 	// over adopt because ZCP already owns the service slot via that session.
 	IdleIncomplete IdleScenario = "incomplete"
+	// IdleDevPool fires when no app runtime exists — nothing to bootstrap,
+	// adopt or resume — but at least one Swarm pool does: a part's dev
+	// environment, worked on in a container leased per branch, never through
+	// bootstrap or adopt (docs/spec-workflows.md §8 DP-29).
+	IdleDevPool IdleScenario = "dev-pool"
 )
 
 // DeployState marks a bootstrapped service's deploy progression. The

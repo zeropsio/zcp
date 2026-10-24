@@ -40,7 +40,7 @@ func canonicalGoldenScenarios() []goldenScenario {
 	return out
 }
 
-// idleGoldenScenarios returns the 4 scenarios that pin atoms firing
+// idleGoldenScenarios returns the 5 scenarios that pin atoms firing
 // when no active workflow session exists (PhaseIdle).
 func idleGoldenScenarios() []goldenScenario {
 	return []goldenScenario{
@@ -80,6 +80,20 @@ func idleGoldenScenarios() []goldenScenario {
 						RuntimeClass: topology.RuntimeDynamic,
 						Status:       "ACTIVE",
 					},
+				},
+			},
+		},
+		{
+			id:          "idle/dev-pool-only",
+			description: "Idle project whose only runtimes are two parts' dev pools beside a managed database — nothing to bootstrap or adopt; each part is worked on in a leased container.",
+			envelope: StateEnvelope{
+				Phase:        PhaseIdle,
+				Environment:  EnvContainer,
+				IdleScenario: IdleScenario("dev-pool"),
+				Services: []ServiceSnapshot{
+					fixSnapManaged("db", "postgresql@18"),
+					fixSnapPool("hqpool", "swarm@1"),
+					fixSnapPool("webpool", "swarm@1"),
 				},
 			},
 		},

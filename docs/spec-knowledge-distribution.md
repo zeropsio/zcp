@@ -308,7 +308,7 @@ this boundary; `internal/tools/next_actions.go` owns the next-tool pointer.
 | `runtimeBases` | no | Service-scoped (§3.12). Concrete-base filter; platform strings, not a closed enum. |
 | `routes` | no | Bootstrap-only (§3.6). |
 | `steps` | no | Bootstrap-only (§3.7). |
-| `idleScenarios` | no | Idle-scoped envelope axis (`empty`/`bootstrapped`/`adopt`/`incomplete`/`orphan`). |
+| `idleScenarios` | no | Idle-scoped envelope axis (`empty`/`bootstrapped`/`adopt`/`incomplete`/`dev-pool`/`orphan`). |
 | `deployStates` | no | Service-scoped (§3.8). Combines with other service-scoped axes under §3.10 conjunction. Mutually exclusive per atom with `envelopeDeployStates`. |
 | `envelopeDeployStates` | no | Envelope-scoped (§3.13). Mutually exclusive per atom with `deployStates`. |
 | `serviceStatus` | no | Service-scoped (§3.9). Combines with other service-scoped axes under §3.10 conjunction. |

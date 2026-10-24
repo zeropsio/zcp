@@ -29,6 +29,16 @@ The dev servers of a dev service run under `zcp-devsup`, the supervisor its dev 
 | `servers[].healthPath` | optional, default `/`; the HTTP path a health probe of `port` reads — set it for an API that answers 404 on `/` |
 | `servers[].service` | optional; whose supervisor runs this server: in a repository whose parts are each a dev pool, the part's pool (an entry naming none runs in every part's lease); when several dev services share one code volume, the dev service |
 | `servers[].autostart` | optional, default `true`; `false` keeps a declared server stopped until you start it |
+| `servers[].preview` | optional `true`; marks the server `previewPortBase` forwards to when more than one server listens (with one listening server, that one). It needs a `port`; at most one entry carries it |
+
+The top-level keys below are read in a dev pool's lease only — a dev service ignores them (`zerops_knowledge uri="zerops://themes/services"`, section "A part's dev pool"):
+
+| Key | Meaning |
+|---|---|
+| `previewPortBase` | optional port number. The supervisor forwards `previewPortBase + ZEROPS_StableNumber` to the preview server's port, so each lease answers on its own per-port subdomain — the dev-server result's `previewUrl`. `ZEROPS_StableNumber` starts at 1, so the pool's `run.ports` declares `previewPortBase + 1` through `previewPortBase + maxContainers` with `httpSupport: true`. The number is the container's, not the branch's: a new lease of the part can answer on another port, so read `previewUrl` from each lease |
+| `siblingEnv` | optional `{"<VAR>": "<pool>"}`: a variable a part's dev servers read, and the pool whose lease of the same branch it reaches. Every server started in a lease gets `<VAR>` = that lease's private container hostname, `node-id-<n>.runtime.<pool>.zerops` (its own for its own pool); the app adds `http://` and the port. It serves server-side calls only — a dev proxy, server rendering, one service calling another. A pool the branch holds no lease on leaves `<VAR>` to the container's own env value. Declare a variable only when a dev server actually reads it: every lease of that pool that joins or leaves the branch restarts the dev servers running in the branch's other leases, read or not — each restart leaves a heavy dev server down or slow until it has started again. A name is never `ZEROPS_*`, `hostname`, `serviceId`, `projectId`, `PATH` or `HOME` |
+| `siblingEnv` and a browser client | a browser cannot resolve the private hostname `siblingEnv` hands out: a page that calls a sibling part from the browser gets no address it can use from it |
+| `prepare` | optional shell command: the incremental install a branch's own lockfile needs on top of the dependencies the pool's image baked in (e.g. `npm install --prefer-offline`). An acquire runs it in the repo root after the checkout, before the declared servers start, and reports it; a failed one leaves the lease held. The supervisor never runs it |
 
 A dev service with more than one heavy server (Angular, Analog, Next) declares the ones not being worked on `"autostart": false`; two such servers plus a deploy can exhaust the service's RAM and wedge it. `zerops_dev_server action=start hostname=... name=...` refuses a server that would not fit and names the numbers.
 

@@ -84,9 +84,11 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 	// stage service itself; auto-expanding scope to a dead hostname would
 	// permanently block auto-close).
 	var liveHostnames map[string]bool
+	var liveServices []platform.ServiceStack
 	if client != nil {
 		services, listErr := ops.ListProjectServices(ctx, client, projectID)
 		if listErr == nil {
+			liveServices = services
 			liveHostnames = make(map[string]bool, len(services))
 			for _, svc := range services {
 				liveHostnames[svc.Name] = true
@@ -101,6 +103,19 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 					""), WithRecoveryStatus()), nil, nil
 			}
 		}
+	}
+
+	// A scope naming only Swarm pools, or a project whose only runtimes are
+	// pools, is answered with the dev-pool loop and opens no session; pools
+	// beside other hosts are refused naming the lease (docs/spec-workflows.md
+	// §8 DP-29). Before the no-record check: a project of pools has nothing
+	// to adopt.
+	poolStart := classifyDevPoolStart(input.Scope, liveServices, devPoolSelf(rt), metas)
+	if refusal := poolStart.refusal; refusal != nil {
+		return convertError(refusal, WithRecoveryStatus()), nil, nil
+	}
+	if len(poolStart.pools) > 0 {
+		return renderDevPoolBriefing(ctx, engine, client, projectID, rt, poolStart.pools)
 	}
 
 	if len(metas) == 0 {

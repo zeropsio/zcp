@@ -365,6 +365,26 @@ func TestRenderServiceLine_UntrackedRuntimeSaysWhetherDeployed(t *testing.T) {
 	}
 }
 
+// TestRenderStatus_ListArgRendersAsAList pins that a plan step's list
+// argument — a value holding a JSON array of strings, e.g. zerops_lease's
+// `pools` — renders the way the tool call is written, `pools=["a","b"]`,
+// never as a quoted string, while a plain value keeps its quotes.
+func TestRenderStatus_ListArgRendersAsAList(t *testing.T) {
+	t.Parallel()
+
+	out := RenderStatus(Response{
+		Envelope: StateEnvelope{Phase: PhaseIdle},
+		Plan: &Plan{Primary: NextAction{
+			Label: "Lease",
+			Tool:  "zerops_lease",
+			Args:  map[string]string{"action": "acquire", "pools": `["hqpool","webpool"]`},
+		}},
+	})
+	if want := `zerops_lease action="acquire" pools=["hqpool","webpool"]`; !strings.Contains(out, want) {
+		t.Errorf("render lacks %q:\n%s", want, out)
+	}
+}
+
 func TestRenderStatus_DeterministicArgs(t *testing.T) {
 	t.Parallel()
 

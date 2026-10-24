@@ -89,6 +89,13 @@ User's first action in any session is always `zerops_workflow action=status`. Th
 - **Plan.Primary** = `{adopt unmanaged runtimes, args: {action: start, workflow: develop, intent: "adopt"}, rationale: "Existing runtime services have no bootstrap metadata yet."}`
 - **Plan.Alternatives** = `[]` (adopt is the only viable entry).
 
+### 1.5a Swarm pools only (each part's dev environment is a pool)
+
+- **Envelope**: `Services=[{hqpool, pool}, {webpool, pool}, {db, managed}]`, `IdleScenario=dev-pool`.
+- **Plan.Primary** = `{tool: zerops_lease, args: {action: acquire, pools: ["hqpool","webpool"]}}` (one pool: `pool`).
+- **Plan.Alternatives** = `[{start bootstrap, rationale: "Add more services."}]`.
+- **Atoms**: `idle-dev-pool-entry` (names `zerops_lease` status and acquire, and the develop start that answers with the lease loop) — never `idle-bootstrap-entry`. The same atom joins any other idle scenario whose project holds a pool, with no plan step for the pool (`spec-workflows.md §8 DP-29`).
+
 ### 1.6 Bootstrapped but strategy unset
 
 - **Envelope**: `Services=[{svc, bootstrapped, strategy=unset}]`.

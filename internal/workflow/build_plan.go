@@ -17,6 +17,7 @@ import (
 //  4. develop-active, all green                → close (explicit)
 //  5. bootstrap-active                         → continue-bootstrap (route-specific)
 //  6. idle, no services                        → start-bootstrap
+//     (only Swarm pools as runtimes            → lease a container + add services)
 //  7. idle, bootstrapped services              → start-develop + alternatives
 //  8. idle, only unmanaged services            → adopt-via-develop
 //
@@ -213,8 +214,12 @@ func planBootstrapActive() Plan {
 	}
 }
 
-// planIdle handles the three idle sub-cases:
+// planIdle handles the idle sub-cases:
 //   - no services at all → bootstrap
+//   - no app runtime, but Swarm pools → lease a container of them, adding
+//     services the alternative (docs/spec-workflows.md §8 DP-29). A pool
+//     beside an app runtime may be infrastructure that app uses, so no other
+//     branch names a lease.
 //   - bootstrapped services present → develop (primary) + optional adopt / add
 //   - only unmanaged runtimes → adopt via develop
 //
@@ -226,6 +231,9 @@ func planIdle(env StateEnvelope) Plan {
 	bootstrapped, adoptable := countIdleServices(env)
 
 	if bootstrapped == 0 && adoptable == 0 {
+		if pools := idlePools(env); len(pools) > 0 {
+			return Plan{Primary: LeaseAcquireAction(pools), Alternatives: []NextAction{addServicesAction()}}
+		}
 		return Plan{Primary: startBootstrapAction()}
 	}
 
@@ -262,6 +270,18 @@ func countIdleServices(env StateEnvelope) (bootstrapped, adoptable int) {
 		adoptable++
 	}
 	return bootstrapped, adoptable
+}
+
+// idlePools is the envelope's Swarm pools, by hostname.
+func idlePools(env StateEnvelope) []string {
+	var pools []string
+	for _, svc := range env.Services {
+		if svc.RuntimeClass == topology.RuntimePool {
+			pools = append(pools, svc.Hostname)
+		}
+	}
+	slices.Sort(pools)
+	return pools
 }
 
 // Action constructors — plain constants dressed up as functions so the plan
@@ -467,6 +487,30 @@ func adoptRuntimesAction() NextAction {
 		Tool:      "zerops_workflow",
 		Args:      map[string]string{"action": "start", "workflow": "bootstrap", "route": "adopt"},
 		Rationale: "Existing runtime services have no bootstrap metadata yet.",
+	}
+}
+
+// LeaseAcquireAction is the step that leases a container of pools — Swarm
+// pools whose work is a lease, one container per branch
+// (docs/spec-workflows.md §8 DP-29): `pool` for one, `pools` for several (one
+// acquire, all or none). The branch, and the repository on a pool's first
+// acquire, are the agent's to pass.
+func LeaseAcquireAction(pools []string) NextAction {
+	sorted := slices.Sorted(slices.Values(pools))
+	rationale := "A part's dev pool is worked on in a container leased on the work's branch: pass branch, and repo on a pool's first acquire."
+	if len(sorted) == 1 {
+		return NextAction{
+			Label:     "Lease a container of " + sorted[0],
+			Tool:      "zerops_lease",
+			Args:      map[string]string{"action": "acquire", "pool": sorted[0]},
+			Rationale: rationale,
+		}
+	}
+	return NextAction{
+		Label:     "Lease one container per part the branch edits and runs",
+		Tool:      "zerops_lease",
+		Args:      map[string]string{"action": "acquire", "pools": ListArg(sorted)},
+		Rationale: rationale + " Keep only the pools of the parts the change edits and runs.",
 	}
 }
 

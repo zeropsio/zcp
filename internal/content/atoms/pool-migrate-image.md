@@ -45,7 +45,7 @@ pays for them:
 
 | `image.findings` | what to change |
 |---|---|
-| `deps-lockfile` | list the dependency manifest and its lockfile in `build.addToRunPrepare`, so `run.prepareCommands` installs from them and the image rebuilds when the lockfile changes |
+| `deps-lockfile` | list every file the dependency install reads in `build.addToRunPrepare` — the manifest and its lockfile, and in a workspace monorepo every member's manifest and the workspace definition — so `run.prepareCommands` installs from them and the image rebuilds when one of them changes |
 | `deps-baked` | install the dependencies into `/var/www` in `run.prepareCommands`: what it writes survives every reset of a container, and the checkout keeps it. What `build.deployFiles` ships into `/var/www` is wiped by every reset. A branch whose lockfile differs declares its incremental install as `prepare` in `.zcp/dev-servers.json` |
 
 **Done.** The step is done once nothing is missing and the pool runs an app

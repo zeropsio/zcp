@@ -276,6 +276,7 @@ services:
 ```
 
 - `minContainers: 0`: a container the platform creates for the minimum has no primary snapshot and cannot be reset, so releasing its lease deletes it, and it never counts as the pool's warm container. The pool keeps a warm container through the orchestrator instead (**Warm container** below).
+- `minRam`: a lease's dev servers and every check you run in it (a typecheck, tests, a build) share the container's RAM, so size `minRam` for the dev server plus the heaviest check run beside it, and run heavy checks one at a time and single-threaded where the tool offers it (TypeScript 7's `tsc --singleThreaded`, a test runner's single-worker mode). A check killed for memory ends its SSH call with exit 255 and no output, while the dev server can run on.
 - `sshIsolation` goes in `envVariables`: a pool container answers SSH only when it is set as a service env variable admitting the zcp service. The top-level import field did not reach pool containers.
 - `GIT_TOKEN` is a secret the user owns: name it in `envSecrets`, never write a value. Acquire clones with the pool's own `GIT_TOKEN`.
 - The service env reaches the pool's containers.
@@ -289,7 +290,7 @@ zerops:
     build:
       base: <language base>
       addToRunPrepare:
-        - <the dependency manifest and its lockfile>
+        - <every file the dependency install reads: the manifest and its lockfile — in a workspace monorepo, every member's manifest and the workspace definition too>
     run:
       base: <language base>
       ports:
@@ -298,12 +299,13 @@ zerops:
         # ... one entry per preview port, up to previewPortBase + maxContainers
       prepareCommands:
         - <install zcp-devsup>
-        - <copy the manifest and lockfile into /var/www and install the dependencies there>
+        - <copy them into /var/www, keeping their paths, and install the dependencies there>
       start: zcp-devsup run
 ```
 
 - Preview ports: with `previewPortBase` in `.zcp/dev-servers.json`, a lease answers on `previewPortBase + ZEROPS_StableNumber`. A per-port subdomain routes only to containers listening on that port, and a container's `ZEROPS_StableNumber` starts at 1, so every port from `previewPortBase + 1` to `previewPortBase + maxContainers` is declared in `run.ports` with `httpSupport: true`.
-- Dependencies: bake them into `/var/www` in `run.prepareCommands`, with the lockfile listed in `build.addToRunPrepare` so the image rebuilds when it changes. They survive a reset, and the checkout keeps them (ignored files stay). A branch whose lockfile differs declares its incremental install as `prepare` in `.zcp/dev-servers.json` (e.g. `"prepare": "npm install --prefer-offline"`); acquire runs it in `/var/www` after the checkout, before the supervisor starts the declared servers, and reports it — a failed one leaves the lease held.
+- Dependencies: bake them into `/var/www` in `run.prepareCommands`. `run.prepareCommands` see only what `build.addToRunPrepare` copies — never the repository — so list there every file the install reads; the image rebuilds when one of them changes. They survive a reset, and the checkout keeps them (ignored files stay). A branch whose lockfile differs declares its incremental install as `prepare` in `.zcp/dev-servers.json` (e.g. `"prepare": "npm install --prefer-offline"`); acquire runs it in `/var/www` after the checkout, before the supervisor starts the declared servers, and reports it — a failed one leaves the lease held.
+- Workspace monorepo (a package manager's workspace — pnpm, yarn, npm and the like): the install resolves every member, so `build.addToRunPrepare` lists every member's manifest (each `package.json` under the workspace's folders), the workspace definition (`pnpm-workspace.yaml`, or the root `package.json` whose `workspaces` lists the members), the lockfile (`pnpm-lock.yaml`, `yarn.lock`, `package-lock.json`) and any patch directory the lockfile references (`patches/`). A build command can gather them from the full tree into one folder that `addToRunPrepare` lists; `run.prepareCommands` copy them into `/var/www` keeping their paths and install the whole workspace from the lockfile (`pnpm install --frozen-lockfile`), so the installed tree matches the lockfile: a package manager that checks the tree before it runs a script (pnpm 11) reads a filtered install as stale — a `--filter "<pkg>..."` that keeps the part's whole closure included — and a later `pnpm run` or `pnpm exec` in a lease starts a full install first, heavy enough to run the lease out of memory. An image kept filtered calls the part's tools by path (`./node_modules/.bin/<tool>`), never through the package manager. And a part's checks can reach beyond its own package closure: a test or a typecheck that imports another member's sources needs that member's dependencies baked too, or the errors of the missing packages bury the change's own.
 - Supervisor: the image carries `zcp-devsup` (installed in `run.prepareCommands`) and `start: zcp-devsup run`. `run.start` runs only in a container the pool just created — never again after a reset — so acquire and `zerops_dev_server` start the supervisor in a lease themselves. A pool whose image has no `zcp-devsup` is no dev pool: acquire says so and `zerops_dev_server` refuses its leases. A dev service's setup carries the same two lines (see `zerops_knowledge uri="zerops://themes/dev-servers"`).
 - A deploy of the pool changes only containers created after it; existing containers, leased or free, keep their version until `zerops_lease action=rollout pool="<pool>"` replaces the free outdated ones. A lease is skipped and keeps its version until it is released and the pool is rolled out again.
 

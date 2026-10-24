@@ -111,8 +111,10 @@ stays unleased.
   the pool out again.
 - A release resets a container to its image: what `run.prepareCommands`
   wrote survives, `/var/www` included; everything written or started since
-  is gone. Bake the part's dependencies into `/var/www` there, listing the
-  lockfile in `build.addToRunPrepare` so the image rebuilds when it changes.
+  is gone. Bake the part's dependencies into `/var/www` there, listing every
+  file the install reads in `build.addToRunPrepare` — the lockfile, and in a
+  workspace monorepo every member's manifest and the workspace definition —
+  so the image rebuilds when one of them changes.
   A branch whose lockfile differs declares its incremental install as
   `prepare` in `.zcp/dev-servers.json` (e.g. `npm install --prefer-offline`):
   acquire runs it after the checkout, before the dev servers start, and
@@ -122,6 +124,11 @@ stays unleased.
   so). The pool's warm container takes their place: after each acquire or
   release one is kept or created through the orchestrator, ready for the
   next acquire at once.
+- A lease's dev servers and every command you run in it share its
+  container's RAM. An SSH command that ends with exit 255 and no output was
+  most likely killed for memory: run heavy checks one at a time and
+  single-threaded where a check allows it, or size the pool's `minRam` for
+  the dev server plus the heaviest check.
 - A container answers SSH only when the pool's `sshIsolation` is set as a
   service env variable admitting the zcp service. The top-level import field
   did not reach pool containers.
@@ -170,5 +177,6 @@ stays unleased.
   included. Run there only code you would trust with them —
   `zerops_knowledge uri="zerops://themes/services"`, section "Untrusted code".
 
-The pool's import stanza, setup shape and a declaration several parts share:
+The pool's import stanza, setup shape — a workspace monorepo's dependencies
+included — and a declaration several parts share:
 `zerops_knowledge uri="zerops://themes/services"`, section "A part's dev pool".
