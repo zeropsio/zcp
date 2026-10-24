@@ -121,8 +121,11 @@ E=$(git hash-object -t tree /dev/null) || { echo 'zcp-bundle-error empty tree'; 
 
 // poolMigrateBundleScript builds the mirror the bundle streams from: the
 // fingerprint first, recording each tree's WIP commit and untracked tree (so
-// their objects exist before the clone); then a `git clone --mirror --local`
-// of the repository in the scratch directory — every ref, its objects hard-linked —
+// their objects exist before the clone); then a `git clone --mirror --local
+// --no-hardlinks` of the repository in the scratch directory — every ref, its
+// objects directory copied whole, so the objects no ref names come along, and
+// nothing hard-linked: a repository on a code volume is a filesystem of its
+// own, where a hard link from /tmp fails and a clone told --local dies on it —
 // with a ref for every place work hides that no ref names (each stash entry,
 // each reflog tip, each tree's HEAD, WIP commit and a commit of its untracked
 // files); fsck of the mirror; and the fingerprint again, which must read the
@@ -139,7 +142,7 @@ rm -rf "$Z/mirror.git"
 fp1=$(zfp "$Z/trees") || { printf '%s\n' "$fp1" | grep '^zcp-bundle-error'; exit 4; }
 sed 's/^/W /' "$Z/worktrees"
 printf '%s\n' "$fp1" | sed 's/^/F /'
-git clone -q --mirror --local "$R" "$Z/mirror.git" || { echo 'zcp-bundle-error mirror'; exit 4; }
+git clone -q --mirror --local --no-hardlinks "$R" "$Z/mirror.git" || { echo 'zcp-bundle-error mirror'; exit 4; }
 M=$Z/mirror.git
 st=$(git stash list --format=%H) || { echo 'zcp-bundle-error stash list'; exit 4; }
 rl=$(git rev-list --no-walk --reflog) || { echo 'zcp-bundle-error reflogs'; exit 4; }
