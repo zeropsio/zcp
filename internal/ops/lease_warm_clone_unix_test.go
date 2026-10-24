@@ -75,12 +75,12 @@ func newWarmCloneBox(t *testing.T, shell string) *warmCloneBox {
 // slowGit puts a git whose fetch sleeps for seconds first on PATH (dir).
 func slowGit(t *testing.T) string {
 	t.Helper()
-	real, err := exec.LookPath("git")
+	gitPath, err := exec.LookPath("git")
 	if err != nil {
 		t.Skip("git is not installed")
 	}
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(strings.ReplaceAll(slowGitStub, "REALGIT", shellQuote(real))), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(strings.ReplaceAll(slowGitStub, "REALGIT", shellQuote(gitPath))), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return dir
