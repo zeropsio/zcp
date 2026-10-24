@@ -307,6 +307,29 @@ zerops:
 - Supervisor: the image carries `zcp-devsup` (installed in `run.prepareCommands`) and `start: zcp-devsup run`. `run.start` runs only in a container the pool just created — never again after a reset — so acquire and `zerops_dev_server` start the supervisor in a lease themselves. A pool whose image has no `zcp-devsup` is no dev pool: acquire says so and `zerops_dev_server` refuses its leases. A dev service's setup carries the same two lines (see `zerops_knowledge uri="zerops://themes/dev-servers"`).
 - A deploy of the pool changes only containers created after it; existing containers, leased or free, keep their version until `zerops_lease action=rollout pool="<pool>"` replaces the free outdated ones. A lease is skipped and keeps its version until it is released and the pool is rolled out again.
 
+**Several parts, one branch**: when a change edits and runs code in several parts, each its own dev pool, the branch holds one lease per such part. A part it only calls stays unleased; its callers reach that part's stage, which tracks `main`.
+
+- Acquire: `zerops_lease action=acquire pools=["apipool","webpool"] branch="<branch>"` checks every pool, the branch and one repository before it takes any container, then leases one per pool at once, all or none — a failure hands back every container the call took. A branch new to origin is cut from one `main` commit for every part. A pool the branch already holds answers with that lease and `reused: true` (one lease per repository, branch and pool: another conversation on the branch shares it). A part added later joins with `pool="<pool>"` and the same branch.
+- Wiring: `.zcp/dev-servers.json` names in `siblingEnv` each variable a part's servers read and the pool it reaches, and each entry names its part's pool as `service`:
+
+```json
+{
+  "version": 1,
+  "siblingEnv": { "API_HOST": "apipool" },
+  "servers": [
+    { "name": "api", "port": 8080, "command": "<the api's dev command, listening on 0.0.0.0:8080>", "cwd": "apps/api", "service": "apipool" },
+    { "name": "web", "port": 3000, "command": "<the web's dev command>", "cwd": "apps/web", "service": "webpool" }
+  ]
+}
+```
+
+- Every server started in a lease gets the variable set to the container hostname of the branch's lease on that pool (`node-id-<n>.runtime.<pool>.zerops`, its own for its own pool); the app adds `http://` and the port. It serves server-side calls (a dev proxy, server rendering); a browser cannot resolve it. A pool the branch holds no lease on leaves the variable to the container's own value: set it in the calling part's pool service env to the called part's stage hostname — `API_HOST: <the api's stage hostname>` beside `sshIsolation` in its import, or `zerops_env action=set serviceHostname="webpool" variables=["API_HOST=<the api's stage hostname>"]` — and run the called part's dev server on its stage's port. A supervisor already running keeps the env it started with. The start result's `siblingEnv` names each variable `set` and each `leftToContainerEnv`. A variable's name is never `ZEROPS_*`, `hostname`, `serviceId`, `projectId`, `PATH` or `HOME`; a broken rule invalidates the file. The pool's `zcp-devsup` must be new enough to take the values: on an older one a start that would set one is refused, naming the way to a newer one.
+- A server a sibling calls listens on `0.0.0.0`: the preview reaches a loopback-only server, a sibling does not.
+- `service`: a lease runs the entries naming its pool and those naming none, so an entry without `service` runs in every part's lease. An entry a lease's `zerops_dev_server` start adds names its pool. `port` and `preview: true` stay unique across the whole file.
+- Sync: commit in one lease over SSH, then `zerops_lease action=sync lease="<alias>"` pushes the branch and fast-forwards every other lease of it. It never forces, and refuses a lease of `main`, uncommitted or untracked files in the source, and a push origin rejects — when origin moved on, integrate `origin/<branch>` there and sync again. Each other lease answers `up-to-date` or `fast-forwarded`; `has-own-commits`, `local-changes-in-the-way`, `on-another-branch`, `unreachable` and `failed` leave it as it was, with a note — so sync before you commit in another lease. A fast-forwarded lease lists in `unwatchedServers` its running servers without a `watch`, which serve the old code until restarted; one whose `.zcp/dev-servers.json` changed has its supervisor reload it (`reloaded`).
+- Release: `zerops_lease action=release branch="<branch>"` (with `repo` when the branch is leased for several repositories) reads every lease's unsaved work first; any found refuses them all, naming each lease's files and commits, and `force=true` releases every lease, discarding it. A lease the orchestrator would not release stays held with an `error`; the same call again finishes the branch.
+- Rewire: an acquire or release that adds or removes a lease of the branch hands every other lease the recomputed values (a release, before its container goes), and their supervisors restart the servers running under the old ones (`rewired`); a lease it cannot reach is a note naming `zerops_dev_server action=restart hostname="<alias>" name="<server>"`. A lease that ends outside zcp is not chased: status marks a lease still wired to its container `wiring: "stale"`, with the restart that fixes it.
+
 ### Zerops Box
 
 **Type**: `ubuntu/zbox@1` — a single container (the import schema takes no container counts for it), in beta. It hosts sandboxes. It is not a zerops.yml `run.base`. Creation can fail on hardware capacity.
