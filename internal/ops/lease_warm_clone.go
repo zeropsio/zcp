@@ -60,11 +60,10 @@ const leaseWarmCloneWait = 3 * time.Minute
 const leaseWarmCloneLaunchTimeout = 10 * time.Second
 
 // A launch ssh could not run is tried again, up to leaseWarmLaunchTries times
-// leaseWarmLaunchRetry apart: ssh itself failing (exit 255) — it refuses to
-// start while a release or an acquire reinstalls the ssh alias file it
-// includes (live, 2026-10-24: "Can't open user config file …/zcp-leases.conf:
-// Permission denied"), and the release that keeps a warm container does that
-// right beside the clone it starts — or a try that ran out of time before ssh
+// leaseWarmLaunchRetry apart: ssh itself failing (exit 255) — as it once did
+// while a release reinstalled the alias file beside the clone (live,
+// 2026-10-24: "Permission denied"), which the alias file's rename into place
+// now rules out — or a try that ran out of time before ssh
 // got in, as the first connection to a container its create had just answered
 // did, dropped until the container admitted zcp a second later (live,
 // 2026-10-24). The launch changes nothing until it runs, and one that ran
