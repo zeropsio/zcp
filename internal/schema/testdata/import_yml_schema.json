@@ -395,12 +395,9 @@
                     "alpine/java@latest",
                     "alpine/nginx@1.22",
                     "alpine/nginx@latest",
-                    "alpine/nodejs@20",
                     "alpine/nodejs@22",
                     "alpine/nodejs@24",
                     "alpine/nodejs@latest",
-                    "alpine/php-apache@8.1",
-                    "alpine/php-apache@8.1+2.4",
                     "alpine/php-apache@8.3",
                     "alpine/php-apache@8.3+2.4",
                     "alpine/php-apache@8.4",
@@ -512,12 +509,9 @@
                     "ubuntu/java@latest",
                     "ubuntu/nginx@1.22",
                     "ubuntu/nginx@latest",
-                    "ubuntu/nodejs@20",
                     "ubuntu/nodejs@22",
                     "ubuntu/nodejs@24",
                     "ubuntu/nodejs@latest",
-                    "ubuntu/php-apache@8.1",
-                    "ubuntu/php-apache@8.1+2.4",
                     "ubuntu/php-apache@8.3",
                     "ubuntu/php-apache@8.3+2.4",
                     "ubuntu/php-apache@8.4",
@@ -548,6 +542,8 @@
                     "ubuntu/static",
                     "ubuntu/static@1.0",
                     "ubuntu/static@latest",
+                    "ubuntu/zbox@1",
+                    "ubuntu/zbox@latest",
                     "ubuntu/zero@0.1",
                     "ubuntu/zero@latest",
                     "ubuntu/zero@nightly",
@@ -878,12 +874,9 @@
                     "alpine/java@latest",
                     "alpine/nginx@1.22",
                     "alpine/nginx@latest",
-                    "alpine/nodejs@20",
                     "alpine/nodejs@22",
                     "alpine/nodejs@24",
                     "alpine/nodejs@latest",
-                    "alpine/php-apache@8.1",
-                    "alpine/php-apache@8.1+2.4",
                     "alpine/php-apache@8.3",
                     "alpine/php-apache@8.3+2.4",
                     "alpine/php-apache@8.4",
@@ -956,12 +949,9 @@
                     "ubuntu/java@latest",
                     "ubuntu/nginx@1.22",
                     "ubuntu/nginx@latest",
-                    "ubuntu/nodejs@20",
                     "ubuntu/nodejs@22",
                     "ubuntu/nodejs@24",
                     "ubuntu/nodejs@latest",
-                    "ubuntu/php-apache@8.1",
-                    "ubuntu/php-apache@8.1+2.4",
                     "ubuntu/php-apache@8.3",
                     "ubuntu/php-apache@8.3+2.4",
                     "ubuntu/php-apache@8.4",
@@ -1945,6 +1935,76 @@
                 }
               }
             }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "enum": [
+                    "ubuntu/zbox@1",
+                    "ubuntu/zbox@latest"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "properties": {
+                "maxContainers": false,
+                "minContainers": false,
+                "verticalAutoscaling": {
+                  "properties": {
+                    "cpu": {
+                      "maximum": 8,
+                      "minimum": 2,
+                      "type": "integer"
+                    },
+                    "disk": {
+                      "maximum": 250,
+                      "minimum": 10,
+                      "type": "number"
+                    },
+                    "maxCpu": {
+                      "maximum": 8,
+                      "minimum": 2,
+                      "type": "integer"
+                    },
+                    "maxDisk": {
+                      "maximum": 250,
+                      "minimum": 10,
+                      "type": "number"
+                    },
+                    "maxRam": {
+                      "maximum": 48,
+                      "minimum": 2,
+                      "type": "number"
+                    },
+                    "minCpu": {
+                      "maximum": 8,
+                      "minimum": 2,
+                      "type": "integer"
+                    },
+                    "minDisk": {
+                      "maximum": 250,
+                      "minimum": 10,
+                      "type": "number"
+                    },
+                    "minRam": {
+                      "maximum": 48,
+                      "minimum": 2,
+                      "type": "number"
+                    },
+                    "ram": {
+                      "maximum": 48,
+                      "minimum": 2,
+                      "type": "number"
+                    }
+                  }
+                }
+              }
+            }
           }
         ],
         "properties": {
@@ -2088,12 +2148,9 @@
               "alpine/java@latest",
               "alpine/nginx@1.22",
               "alpine/nginx@latest",
-              "alpine/nodejs@20",
               "alpine/nodejs@22",
               "alpine/nodejs@24",
               "alpine/nodejs@latest",
-              "alpine/php-apache@8.1",
-              "alpine/php-apache@8.1+2.4",
               "alpine/php-apache@8.3",
               "alpine/php-apache@8.3+2.4",
               "alpine/php-apache@8.4",
@@ -2211,12 +2268,9 @@
               "ubuntu/java@latest",
               "ubuntu/nginx@1.22",
               "ubuntu/nginx@latest",
-              "ubuntu/nodejs@20",
               "ubuntu/nodejs@22",
               "ubuntu/nodejs@24",
               "ubuntu/nodejs@latest",
-              "ubuntu/php-apache@8.1",
-              "ubuntu/php-apache@8.1+2.4",
               "ubuntu/php-apache@8.3",
               "ubuntu/php-apache@8.3+2.4",
               "ubuntu/php-apache@8.4",
@@ -2246,6 +2300,8 @@
               "ubuntu/static",
               "ubuntu/static@1.0",
               "ubuntu/static@latest",
+              "ubuntu/zbox@1",
+              "ubuntu/zbox@latest",
               "ubuntu/zero@0.1",
               "ubuntu/zero@latest",
               "ubuntu/zero@nightly",
@@ -2448,7 +2504,6 @@
                                 "alpine/java@17",
                                 "alpine/java@21",
                                 "alpine/java@latest",
-                                "alpine/nodejs@20",
                                 "alpine/nodejs@22",
                                 "alpine/nodejs@24",
                                 "alpine/nodejs@latest",
@@ -2504,7 +2559,6 @@
                                 "ubuntu/java@17",
                                 "ubuntu/java@21",
                                 "ubuntu/java@latest",
-                                "ubuntu/nodejs@20",
                                 "ubuntu/nodejs@22",
                                 "ubuntu/nodejs@24",
                                 "ubuntu/nodejs@latest",
@@ -2562,7 +2616,6 @@
                                   "alpine/java@17",
                                   "alpine/java@21",
                                   "alpine/java@latest",
-                                  "alpine/nodejs@20",
                                   "alpine/nodejs@22",
                                   "alpine/nodejs@24",
                                   "alpine/nodejs@latest",
@@ -2618,7 +2671,6 @@
                                   "ubuntu/java@17",
                                   "ubuntu/java@21",
                                   "ubuntu/java@latest",
-                                  "ubuntu/nodejs@20",
                                   "ubuntu/nodejs@22",
                                   "ubuntu/nodejs@24",
                                   "ubuntu/nodejs@latest",
@@ -2833,6 +2885,31 @@
                             "properties": {
                               "base": {
                                 "enum": [
+                                  "alpine/static",
+                                  "alpine/static@1.0",
+                                  "alpine/static@latest",
+                                  "static",
+                                  "ubuntu/static",
+                                  "ubuntu/static@1.0",
+                                  "ubuntu/static@latest"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "base"
+                            ]
+                          },
+                          "then": {
+                            "properties": {
+                              "documentRoot": false
+                            }
+                          }
+                        },
+                        {
+                          "if": {
+                            "properties": {
+                              "base": {
+                                "enum": [
                                   "alpine/bun@1",
                                   "alpine/bun@1.3",
                                   "alpine/bun@1.4",
@@ -2864,7 +2941,6 @@
                                   "alpine/java@17",
                                   "alpine/java@21",
                                   "alpine/java@latest",
-                                  "alpine/nodejs@20",
                                   "alpine/nodejs@22",
                                   "alpine/nodejs@24",
                                   "alpine/nodejs@latest",
@@ -2920,7 +2996,6 @@
                                   "ubuntu/java@17",
                                   "ubuntu/java@21",
                                   "ubuntu/java@latest",
-                                  "ubuntu/nodejs@20",
                                   "ubuntu/nodejs@22",
                                   "ubuntu/nodejs@24",
                                   "ubuntu/nodejs@latest",
@@ -2965,35 +3040,8 @@
                             "properties": {
                               "base": {
                                 "enum": [
-                                  "alpine/static",
-                                  "alpine/static@1.0",
-                                  "alpine/static@latest",
-                                  "static",
-                                  "ubuntu/static",
-                                  "ubuntu/static@1.0",
-                                  "ubuntu/static@latest"
-                                ]
-                              }
-                            },
-                            "required": [
-                              "base"
-                            ]
-                          },
-                          "then": {
-                            "properties": {
-                              "documentRoot": false
-                            }
-                          }
-                        },
-                        {
-                          "if": {
-                            "properties": {
-                              "base": {
-                                "enum": [
                                   "alpine/nginx@1.22",
                                   "alpine/nginx@latest",
-                                  "alpine/php-apache@8.1",
-                                  "alpine/php-apache@8.1+2.4",
                                   "alpine/php-apache@8.3",
                                   "alpine/php-apache@8.3+2.4",
                                   "alpine/php-apache@8.4",
@@ -3010,8 +3058,6 @@
                                   "alpine/php-nginx@latest",
                                   "ubuntu/nginx@1.22",
                                   "ubuntu/nginx@latest",
-                                  "ubuntu/php-apache@8.1",
-                                  "ubuntu/php-apache@8.1+2.4",
                                   "ubuntu/php-apache@8.3",
                                   "ubuntu/php-apache@8.3+2.4",
                                   "ubuntu/php-apache@8.4",
@@ -3078,12 +3124,9 @@
                             "alpine/java@latest",
                             "alpine/nginx@1.22",
                             "alpine/nginx@latest",
-                            "alpine/nodejs@20",
                             "alpine/nodejs@22",
                             "alpine/nodejs@24",
                             "alpine/nodejs@latest",
-                            "alpine/php-apache@8.1",
-                            "alpine/php-apache@8.1+2.4",
                             "alpine/php-apache@8.3",
                             "alpine/php-apache@8.3+2.4",
                             "alpine/php-apache@8.4",
@@ -3158,12 +3201,9 @@
                             "ubuntu/java@latest",
                             "ubuntu/nginx@1.22",
                             "ubuntu/nginx@latest",
-                            "ubuntu/nodejs@20",
                             "ubuntu/nodejs@22",
                             "ubuntu/nodejs@24",
                             "ubuntu/nodejs@latest",
-                            "ubuntu/php-apache@8.1",
-                            "ubuntu/php-apache@8.1+2.4",
                             "ubuntu/php-apache@8.3",
                             "ubuntu/php-apache@8.3+2.4",
                             "ubuntu/php-apache@8.4",
