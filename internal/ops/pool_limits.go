@@ -75,7 +75,8 @@ type poolUsage struct {
 	// yours are zcp's own leases among them, oldest activity first when it
 	// was read (byOldestActivity), by container number otherwise.
 	yours []LeaseView
-	// read: zcp read its leases' activity (it reaches them over ssh), at now.
+	// read: zcp read its leases' activity (it reaches them over ssh, and the
+	// listing confirmed every one), at now.
 	read bool
 	now  time.Time
 }
@@ -83,9 +84,10 @@ type poolUsage struct {
 // readPoolUsage reads the pool's limits and containers (both answer at once)
 // and names zcp's own leases among the reserved ones. A read that fails
 // leaves its part unknown; with no listing, zcp's records for the pool stand
-// in for its own leases. With ssh it reads each of them as status does
-// (readLeaseActivities, DP-21) — all at once, changing nothing — and orders
-// them oldest activity first (DP-9).
+// in for its own leases. With ssh and the listing it reads each of them as
+// status does (readLeaseActivities, DP-21) — all at once, changing nothing —
+// and orders them oldest activity first (DP-9); a record the listing did not
+// confirm is never read, since its container may be another holder's now.
 func readPoolUsage(ctx context.Context, d LeaseDeps, rp *resolvedPool) poolUsage {
 	var u poolUsage
 	if limits, err := d.poolLimits(ctx, rp); err == nil {
@@ -120,7 +122,7 @@ func readPoolUsage(ctx context.Context, d LeaseDeps, rp *resolvedPool) poolUsage
 		u.yours = append(u.yours, r.view(LeaseStateHeld))
 	}
 	slices.SortFunc(u.yours, func(a, b LeaseView) int { return cmp.Compare(leaseNumber(a.Alias), leaseNumber(b.Alias)) })
-	if d.SSH != nil && len(u.yours) > 0 {
+	if d.SSH != nil && u.listed && len(u.yours) > 0 {
 		readLeaseActivities(ctx, d, mine, u.yours)
 		u.read, u.now = true, d.now()
 		slices.SortStableFunc(u.yours, byOldestActivity)
@@ -222,14 +224,10 @@ func (u poolUsage) holdersNote() string {
 			summaries = append(summaries, activitySummary(v, u.now))
 		}
 		yours = strings.Join(summaries, "; ")
-		switch {
-		case !u.listed && len(u.yours) > 0:
-			return " (yours, by zcp's records, oldest activity first: " + yours + ")"
-		case u.listed && len(u.yours) > 0 && others > 0:
+		if others > 0 {
 			return fmt.Sprintf(" (%d held by other holders; yours, oldest activity first: %s)", others, yours)
-		case u.listed && len(u.yours) > 0:
-			return " (all yours, oldest activity first: " + yours + ")"
 		}
+		return " (all yours, oldest activity first: " + yours + ")"
 	}
 	switch {
 	case !u.listed && len(u.yours) > 0:
