@@ -191,11 +191,11 @@ func leasePoolFullError(ctx context.Context, d LeaseDeps, rp *resolvedPool, se *
 		var raise string
 		switch {
 		case u.max >= poolContainerCeiling:
-			raise = fmt.Sprintf("Raising maxContainers will not help: the pool's maximum is already %d, the most a pool holds (a higher value is capped)", poolContainerCeiling)
+			raise = fmt.Sprintf("Raising maxContainers will not help: the pool's maximum is already %d, the most a pool holds", poolContainerCeiling)
 		case u.max > 0:
-			raise = fmt.Sprintf("raise the pool's maxContainers (zerops_scale serviceHostname=%q maxContainers=<up to %d>): a pool holds at most %d containers, and a higher value is capped at %d", pool, poolContainerCeiling, poolContainerCeiling, poolContainerCeiling)
+			raise = fmt.Sprintf("raise the pool's maxContainers (zerops_scale serviceHostname=%q maxContainers=<up to %d>): a pool holds at most %d containers", pool, poolContainerCeiling, poolContainerCeiling)
 		default:
-			raise = fmt.Sprintf("raise the pool's maxContainers (zerops_scale serviceHostname=%q) if it is below %d, the most a pool holds (a higher value is capped)", pool, poolContainerCeiling)
+			raise = fmt.Sprintf("raise the pool's maxContainers (zerops_scale serviceHostname=%q) if it is below %d, the most a pool holds", pool, poolContainerCeiling)
 		}
 		switch {
 		case len(u.yours) > 0 && u.max < poolContainerCeiling:
