@@ -127,6 +127,7 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 | `pool-migrate-image` | 1 | pool-migrate/active |
 | `pool-migrate-move` | 1 | pool-migrate/active |
 | `pool-migrate-plan` | 1 | pool-migrate/active |
+| `pool-migrate-retire` | 1 | pool-migrate/active |
 | `scaffold-zerops-yaml` | 1 | export/scaffold-required |
 | `setup-build-integration-actions` | 1 | strategy-setup/configured-build-integration |
 | `setup-build-integration-webhook` | 1 | strategy-setup/configured-build-integration |

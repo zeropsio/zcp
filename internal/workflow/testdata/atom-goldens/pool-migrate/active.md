@@ -1,6 +1,6 @@
 ---
 id: pool-migrate/active
-atomIds: [pool-migrate-plan, pool-migrate-env, pool-migrate-image, pool-migrate-move]
+atomIds: [pool-migrate-plan, pool-migrate-env, pool-migrate-image, pool-migrate-move, pool-migrate-retire]
 description: "Pool-migrate workflow on a part's dev/stage pair — the read side names the provision step and renders the pool's import stanza."
 ---
 === pool-migrate-plan ===
@@ -39,8 +39,9 @@ the pool's import still runs, `next` waits on it.
 
 **Env and after.** Once the pool exists and its import has finished, the
 step is `env` until the pool holds the dev service's env, then `image` until
-the pool runs the part's pool setup from a commit, then `move`. Where the
-answer names no `next`, `nextUnavailable` says why. Never copy the dev
+the pool runs the part's pool setup from a commit, then `move`, `lease` and
+`ready-to-retire`. Where the answer names no `next`, `nextUnavailable` says
+why. Never copy the dev
 service's env by hand: a secret value must not pass through you.
 
 **Refusals.** `status: "not-a-candidate"` lists every reason in `refusals`,
@@ -197,7 +198,7 @@ call commits nothing):
 | `trees[].detachedCommits` | commits only a detached HEAD holds | `git switch -c <branch>` in that checkout, then push it |
 | `branches[]` | a local branch's commits on no remote branch | `git push -u origin <branch>` |
 | `stashes[]` | stash entries | `git stash branch <branch> <ref>` with the entry's `ref`, then commit and push; drop the ones you do not keep |
-| `reflogOnly` | commits only a reflog still reaches: reset, amended or rebased away | `git branch <branch> <commit>` and push the ones you keep |
+| `reflogOnly` | commits only a reflog still reaches: reset, amended or rebased away | the retire's bundle keeps each one, so they never hold it; `git branch <branch> <commit>` and push the ones you want on the origin |
 | `trees[].envFiles` | `.env` files, which git does not carry | move each value into the pool's service env with `zerops_env`, then delete the file |
 
 `trees[].ignored` and `t3Refs` are named for the record, not moved: ignored
@@ -214,3 +215,74 @@ open change's.
 
 Call the flow again after moving: each moved item drops out of the census,
 and what it still names is what the old dev service would take with it.
+
+---
+
+=== pool-migrate-retire ===
+### Lease the pool, then retire the old dev service
+
+Once the pool runs the part's pool setup, three steps remain.
+
+**Move.** While `census` names work the origin lacks, the step is `move`:
+push each branch you keep. Commits only a reflog reaches (`reflogOnly`)
+never hold the retire — its bundle keeps every one of them.
+
+**Lease.** With nothing left to move, `next` is
+`zerops_lease action="acquire" pool="<pool>" branch="<work's branch>"`:
+a container of the pool checks the work's branch out from the dev
+service's origin. Start its dev servers on the lease's alias and prove it
+runs with `zerops_verify serviceHostname="<alias>"`. Whatever you did not
+push is visibly absent from it.
+
+**Ready to retire.** Once this zcp holds a lease of the pool on the work's
+branch, `next` is
+`zerops_workflow workflow="pool-migrate" action="retire" service="<dev>"`.
+Deleting a service is permanent, so the retire takes two calls:
+
+1. The first call reads everything again and changes nothing. It answers
+   `DIAGNOSIS_REQUIRED` with `wouldDestroy`: the dev service and the id it
+   is deleted by, `unsavedWork` — what the dev holds that its origin lacks
+   — and `notKept`, what no copy keeps.
+2. Ask the person whether to delete the dev service, by its name. Only once
+   they agreed, re-send the call with
+   `confirmDestructive={"operation":"pool-retire","acknowledgedTargets":["<dev>"]}`
+   (`wouldDestroy.retryCall` is that call). While `unsavedWork` names
+   anything, the call also needs `force=true` — only when the person agreed
+   to leaving that work; otherwise push it and call again.
+
+The retire refuses (`status: "retire-refused"`, nothing changed), naming
+each reason:
+
+| reason | what to do |
+|---|---|
+| `not-ready` | make the step's `next` call first |
+| `no-lease`, `lease-unverified`, `lease-unreadable` | lease the pool on the work's branch and verify the lease |
+| `dev-busy` | wait for the dev service's process to finish |
+| `dev-deleting` | a delete outside the flow runs; call again once it finished |
+| `launch-active` | finish or reset the production launch first |
+| `env-reference` | point every `${<dev>_…}` reference elsewhere |
+| `domain` | the person moves the domain in the dashboard |
+| `unsaved-work` | push the work, or `force=true` after the person agreed |
+| `pair-busy` | another step holds the pair; call again |
+
+**What the acknowledged call does.** It takes the dev service's mount on
+this container down, then writes a verified bundle of its repository —
+every branch, every stash entry, every commit a reflog reaches, each
+worktree's HEAD, its staged and unstaged edits and its untracked files —
+to this container, never a `.env` file or an ignored file. It keys the
+pair on the pool, checks right before the delete that the repository did
+not move since the bundle, and deletes the dev service by its id. The
+answer's `retire` names the bundle and `retire.restore`, the commands that
+put everything back in an empty directory.
+
+If the repository moved meanwhile, or a step fails before the delete, the
+retire stops: `status: "aborted"`, the pair keyed by the dev service again,
+its mount back, nothing deleted. Call the retire again once nothing writes
+to it.
+
+**Retiring.** A retire cut short — a delete still running, a lost call —
+reads `retiring`; re-send the acknowledged call and it resumes from where
+it stopped, never deleting anything twice. **Retired**: the dev service is
+gone, its URL with it; the stage deploys from a lease of the pool
+(`zerops_deploy sourceService="<alias>" targetService="<stage>"`).
+`retire.gaps` names what a migrated part does not have yet.
