@@ -2955,6 +2955,20 @@ binding is a field of its own, never `worktreePath`: T3 runs `git worktree remov
 thread owns — nothing removes or releases it with the thread; releasing it is the agent's
 `zerops_lease action=release`.
 
+**A branch across parts** (`docs/spec-workflows.md` §8 DP-17, DP-23): one `zerops_lease action=acquire
+pools=[…]` leases a container per pool for the same branch, and `action=release branch=…` releases
+them together. A group acquire binds the conversation to the **first newly acquired** lease of the
+result (zcp lists them in `pools` order); a lease that comes back `reused: true` — the conversation's
+branch already held on that pool — binds nothing and unbinds nothing, so a repeat acquire never steals
+a binding. When the bound lease ends, the conversation is unbound and then bound to the **earliest
+acquired** (`acquiredAt`) lease of its branch that the same call read as still held; with none left it
+stays unbound. A branch release names no single lease, so every lease it lists as released unbinds
+whoever is bound to it. The Git tab, Diff, the terminal's checkouts and the addresses show **every held
+lease of the bound branch** (bound lease first, each named `<pool> · <branch>`), taken from the
+conversation's own last envelope — a member another conversation ended keeps showing until this
+conversation's next Zerops call reads the leases. No new event, command or envelope key carries any of
+this.
+
 `zeropsPolicy` reads `ServerConfig` **optionally**: no config in context (most existing tests) reads
 as `UPSTREAM_POLICY`, the same set every one of upstream's own behaviours already has — the policy
 fails toward doing nothing rather than toward silently changing behaviour a test never asked for.
