@@ -48,6 +48,14 @@ func (m *SystemMounter) isMounted(path string) (bool, error) {
 // what ends a mount.
 func mountUnit(hostname string) string { return "zerops@sshfs-" + hostname + ".service" }
 
+// resetFailed clears the failed state zsc unit remove leaves on the unit's
+// instance (live 2026-10-24: every unmount left zerops@sshfs-<name>.service
+// listed failed). Best-effort: an instance that is not failed has nothing to
+// clear.
+func (m *SystemMounter) resetFailed(ctx context.Context, hostname string) {
+	_ = m.exec(ctx, unmountTimeout, "sudo", "systemctl", "reset-failed", mountUnit(hostname))
+}
+
 // NewSystemMounter creates a new SystemMounter.
 func NewSystemMounter() *SystemMounter {
 	return &SystemMounter{}
@@ -191,6 +199,7 @@ func (m *SystemMounter) Unmount(ctx context.Context, hostname, path string) erro
 	if err := m.exec(ctx, unmountTimeout, "sudo", "-E", "zsc", "unit", "remove", "sshfs-"+hostname); err != nil {
 		return fmt.Errorf("zsc unit remove: %w", err)
 	}
+	m.resetFailed(ctx, hostname)
 	if still, err := m.isMounted(path); err == nil && !still {
 		return nil
 	}
@@ -209,6 +218,7 @@ func (m *SystemMounter) ForceUnmount(ctx context.Context, hostname, path string)
 	if ValidateMountName(hostname) == nil {
 		unitName := "sshfs-" + hostname
 		_ = m.exec(ctx, unmountTimeout, "sudo", "-E", "zsc", "unit", "remove", unitName)
+		m.resetFailed(ctx, hostname)
 	}
 	if still, err := m.isMounted(path); err == nil && !still {
 		return nil
@@ -267,7 +277,7 @@ func (m *SystemMounter) CleanupUnit(ctx context.Context, hostname string) error 
 		return err
 	}
 	removeErr := m.exec(ctx, unmountTimeout, "sudo", "-E", "zsc", "unit", "remove", "sshfs-"+hostname)
-	_ = m.exec(ctx, unmountTimeout, "sudo", "systemctl", "reset-failed", mountUnit(hostname))
+	m.resetFailed(ctx, hostname)
 	if removeErr == nil {
 		return nil
 	}
