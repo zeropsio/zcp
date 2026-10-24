@@ -32,7 +32,10 @@ import (
 // repository on this container, the fingerprint taken with it), rewritten (the
 // pair re-keyed onto the pool), deleting (the fingerprint re-read equal, then
 // the delete by the id read directly), retired. Every later call resumes from
-// the record against the dev's state by id: live, DELETING or gone. A
+// the record against the dev's state by id: live, DELETING or gone. A resume
+// does the phase it reads again, so a record at bundled — which holds no
+// bundle when the bundle was cut short — takes a new one, and nothing is
+// deleted on a resume whose record holds no verified bundle. A
 // variant-B pair's retire deletes every dev service at deleting and its code
 // volume last, at deleting-volume (workflow_pool_migrate_retire_volume.go).
 
@@ -243,6 +246,34 @@ func (rec *poolRetireRecord) view() *poolRetireView {
 		v.Gaps = poolRetireGaps()
 	}
 	return v
+}
+
+// holdsBundle reports a record whose verified bundle is on this container:
+// recorded — the bundle step records one only once it is written and
+// verified — and its file there at the size it was verified at; one whose
+// file is gone proves nothing.
+func (rec *poolRetireRecord) holdsBundle() bool {
+	if rec.Bundle == nil {
+		return false
+	}
+	info, err := os.Stat(rec.Bundle.Path)
+	return err == nil && info.Mode().IsRegular() && info.Size() == rec.Bundle.Bytes
+}
+
+// resumeRebundles reports a resume that takes the bundle again before it
+// goes on (PM-7): a record at bundled does that phase again, since the phase
+// is saved before its bundle and one cut short left none; a record past it
+// whose verified bundle is not on this container takes one too, so nothing
+// is deleted that no bundle holds. A record at started or fenced bundles as
+// its phases run.
+func (rec *poolRetireRecord) resumeRebundles() bool {
+	switch rec.Phase {
+	case poolRetireBundled:
+		return true
+	case poolRetireRewritten, poolRetireDeleting:
+		return !rec.holdsBundle()
+	}
+	return false
 }
 
 // poolRetireInFlight reports a phase a retire resumes from.
@@ -1248,8 +1279,8 @@ func (r *poolRetireRun) delete(ctx context.Context) *mcp.CallToolResult {
 	if err := r.fence(ctx); err != nil {
 		return r.abort(ctx, poolRetireAbortFence, fmt.Sprintf("%s's mount could not be taken down again: %v.", r.rec.Dev, err))
 	}
-	if r.rec.Bundle == nil {
-		return r.abort(ctx, poolRetireAbortUnreadable, "the record holds no bundle to check the repository against.")
+	if !r.rec.holdsBundle() {
+		return r.abort(ctx, poolRetireAbortUnreadable, "the record holds no bundle on this container to check the repository against.")
 	}
 	now, err := ops.ReadPoolMigrateFingerprint(ctx, r.d.ssh, r.rec.Dev, r.rec.root(), r.workDir())
 	if err != nil {
@@ -1369,7 +1400,8 @@ func (r *poolRetireRun) saveFailed(err error) *mcp.CallToolResult {
 // dev's state by id (docs/spec-workflows.md §13 PM-7): DELETING keeps the
 // record; gone finishes — the pair re-keyed whatever the phase; live resumes
 // from the phase on the acknowledged call, the guards re-run before the pair
-// is re-keyed, and the dev re-fenced.
+// is re-keyed, the dev re-fenced, and the bundle taken again from bundled or
+// wherever the record holds no verified bundle (resumeRebundles).
 func poolRetireResume(ctx context.Context, d poolRetireDeps, input WorkflowInput, rec *poolRetireRecord) *mcp.CallToolResult {
 	corpus, _ := workflow.LoadAtomCorpus()
 	run := &poolRetireRun{d: d, rec: rec, resp: poolRetireBase(corpus, rec), force: input.Force.Bool() || rec.Forced, forceNow: input.Force.Bool()}
@@ -1417,6 +1449,11 @@ func poolRetireResume(ctx context.Context, d poolRetireDeps, input WorkflowInput
 		}
 		if err := run.fence(ctx); err != nil {
 			return run.abort(ctx, poolRetireAbortFence, fmt.Sprintf("%s's mount could not be taken down: %v.", rec.Dev, err))
+		}
+		if rec.resumeRebundles() {
+			if result := run.bundle(ctx); result != nil {
+				return result
+			}
 		}
 		return run.advance(ctx)
 	})
