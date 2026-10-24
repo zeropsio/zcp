@@ -15,6 +15,11 @@ import (
 // server is on loopback, so a dial that has not finished has no listener.
 const forwardDialTimeout = 2 * time.Second
 
+// forwardHalfCloseWait bounds how long a connection one side has ended (a
+// half-close, passed on to the other side) waits for the other side to end
+// its direction too.
+const forwardHalfCloseWait = 30 * time.Second
+
 // forward is the TCP forward from a server's preview port, on every
 // interface, to the port the server listens on at 127.0.0.1: nothing but a
 // byte copy, so any protocol the server speaks (HTTP, a dev server's
@@ -24,6 +29,9 @@ type forward struct {
 	listenPort, targetPort int
 	ln                     net.Listener
 	seen                   *previewSeen
+
+	// cancel ends a dial to the server still under way (shut).
+	cancel context.CancelFunc
 
 	mu     sync.Mutex
 	conns  map[net.Conn]struct{}
@@ -75,12 +83,15 @@ func openForward(listenPort, targetPort int, seen *previewSeen) (*forward, error
 	if err != nil {
 		return nil, err //nolint:wrapcheck // the caller logs it with the ports
 	}
-	f := &forward{listenPort: listenPort, targetPort: targetPort, ln: ln, seen: seen, conns: map[net.Conn]struct{}{}}
-	f.wg.Go(f.accept)
+	ctx, cancel := context.WithCancel(context.Background())
+	f := &forward{listenPort: listenPort, targetPort: targetPort, ln: ln, seen: seen, cancel: cancel, conns: map[net.Conn]struct{}{}}
+	f.wg.Go(func() { f.accept(ctx) })
 	return f, nil
 }
 
-func (f *forward) accept() {
+// accept serves each connection the preview port takes; ctx ends when the
+// forward is shut.
+func (f *forward) accept(ctx context.Context) {
 	for {
 		c, err := f.ln.Accept()
 		if err != nil {
@@ -90,7 +101,7 @@ func (f *forward) accept() {
 			_ = c.Close()
 			return
 		}
-		f.wg.Go(func() { f.serve(c) })
+		f.wg.Go(func() { f.serve(ctx, c) })
 	}
 }
 
@@ -109,7 +120,7 @@ func (f *forward) track(c net.Conn, client bool) bool {
 	return ok
 }
 
-func (f *forward) serve(client net.Conn) {
+func (f *forward) serve(ctx context.Context, client net.Conn) {
 	defer func() {
 		_ = client.Close()
 		f.mu.Lock()
@@ -118,7 +129,7 @@ func (f *forward) serve(client net.Conn) {
 		f.seen.closed()
 	}()
 	d := net.Dialer{Timeout: forwardDialTimeout}
-	server, err := d.DialContext(context.Background(), "tcp", "127.0.0.1:"+strconv.Itoa(f.targetPort))
+	server, err := d.DialContext(ctx, "tcp", "127.0.0.1:"+strconv.Itoa(f.targetPort))
 	if err != nil {
 		return
 	}
@@ -132,21 +143,42 @@ func (f *forward) serve(client net.Conn) {
 		delete(f.conns, server)
 		f.mu.Unlock()
 	}()
-	// One side ending ends the connection: both are closed on return, which
-	// ends the other copy.
+	// A direction that ends is passed on as a half-close — the other side's
+	// write side is shut — so a client that shut its write side after its
+	// request still reads the whole reply. The connection ends once both
+	// directions have, forwardHalfCloseWait after the first did, or when the
+	// forward is shut: both are closed on return, which ends a copy still
+	// running.
 	done := make(chan struct{}, 2)
 	pipe := func(dst, src net.Conn) {
 		_, _ = io.Copy(dst, src)
+		if hc, ok := dst.(interface{ CloseWrite() error }); ok {
+			_ = hc.CloseWrite()
+		}
 		done <- struct{}{}
 	}
 	f.wg.Go(func() { pipe(server, client) })
 	f.wg.Go(func() { pipe(client, server) })
 	<-done
+	wait := time.NewTimer(forwardHalfCloseWait)
+	defer wait.Stop()
+	select {
+	case <-done:
+	case <-wait.C:
+	case <-ctx.Done():
+	}
 }
 
-// close stops listening, ends every open connection and waits for the copies
-// to finish: the preview port is free when it returns.
+// close shuts the forward and waits for its copies to finish.
 func (f *forward) close() {
+	f.shut()
+	f.wait()
+}
+
+// shut stops listening, ends every open connection and cancels a dial to the
+// server still under way, without waiting for anything: the preview port is
+// free when it returns.
+func (f *forward) shut() {
 	f.mu.Lock()
 	f.closed = true
 	conns := make([]net.Conn, 0, len(f.conns))
@@ -154,9 +186,14 @@ func (f *forward) close() {
 		conns = append(conns, c)
 	}
 	f.mu.Unlock()
+	f.cancel()
 	_ = f.ln.Close()
 	for _, c := range conns {
 		_ = c.Close()
 	}
+}
+
+// wait waits for a shut forward's copies and serves to finish.
+func (f *forward) wait() {
 	f.wg.Wait()
 }

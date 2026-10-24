@@ -180,7 +180,8 @@ type Supervisor struct {
 	// the name of its preview server, as last read; guarded by mu.
 	previewBase int
 	previewName string
-	// fwdMu serialises syncPreview; it is never held while taking op.
+	// fwdMu serialises syncPreview's decisions, shuts and listens; it is
+	// never held while taking op, nor while an ended forward is waited for.
 	fwdMu sync.Mutex
 	// env is the overlay every start adds to cfg.Env (SetEnv); it is
 	// replaced, never changed in place, so a start may keep the map it read.
@@ -1230,8 +1231,21 @@ func (s *Supervisor) previewPortLocked(name string) int {
 // syncPreview brings the preview forward to what the declaration says: the
 // preview server's live group, once its port has accepted, is forwarded from
 // its preview port; any other forward ends. A forward that cannot listen
-// (its port is busy) is logged and the server runs on without one.
+// (its port is busy) is logged and the server runs on without one. The
+// forwards it ended are waited for — their copies, a dial to the server not
+// yet finished — once fwdMu is let go, so another sync never waits on them.
 func (s *Supervisor) syncPreview() {
+	for _, f := range s.syncPreviewLocked() {
+		f.wait()
+	}
+}
+
+// syncPreviewLocked is syncPreview's work under fwdMu, answering the forwards
+// it shut. The listens stay under the lock with the shuts: every forward
+// takes the one preview port, so two syncs must never both open a server's
+// forward, nor open one while an ended one still listens there — a shut and
+// a listen return at once, unlike the wait that follows a shut.
+func (s *Supervisor) syncPreviewLocked() []*forward {
 	s.fwdMu.Lock()
 	defer s.fwdMu.Unlock()
 	type open struct {
@@ -1261,8 +1275,9 @@ func (s *Supervisor) syncPreview() {
 	}
 	s.mu.Unlock()
 	for _, f := range stale {
-		f.close()
+		f.shut()
 	}
+	ended := stale
 	for _, o := range opens {
 		f, err := openForward(o.listen, o.port, o.seen)
 		if err != nil {
@@ -1277,9 +1292,11 @@ func (s *Supervisor) syncPreview() {
 		}
 		s.mu.Unlock()
 		if !keep {
-			f.close()
+			f.shut()
+			ended = append(ended, f)
 			continue
 		}
 		s.logf("preview %s: :%d -> 127.0.0.1:%d", o.sv.name, o.listen, o.port)
 	}
+	return ended
 }
