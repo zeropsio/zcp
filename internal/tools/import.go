@@ -76,26 +76,42 @@ func importInputSchema() *jsonschema.Schema {
 	})
 }
 
-// RegisterImport registers the zerops_import tool.
+// RegisterImport registers the zerops_import tool. WithBoxSetup makes it
+// finish the setup of every Zerops Box it creates.
 //
 // Takes no client-side type catalog — the Zerops API is the single
 // validator for everything the import YAML declares. Field / mode / type
 // errors come back with structured apiMeta via the error surface
 // established by the validation-plumbing plan.
-func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, engine *workflow.Engine, stateDir string, recipeProbe RecipeSessionProbe, rt runtime.Info) {
-	registerImport(srv, client, projectID, engine, stateDir, recipeProbe, rt, mate.LiveEnvStorePath, nil)
+func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, engine *workflow.Engine, stateDir string, recipeProbe RecipeSessionProbe, rt runtime.Info, opts ...ImportOption) {
+	registerImport(srv, client, projectID, engine, stateDir, recipeProbe, rt, mate.LiveEnvStorePath, nil, opts...)
 }
 
 // RegisterImportSteered is RegisterImport for a Mate: steer is asked, for
 // each service an override replaced, once the import landed — an override
 // writes the scale its YAML names (GroupRecipeSteer).
-func RegisterImportSteered(srv *mcp.Server, client platform.Client, projectID string, engine *workflow.Engine, stateDir string, recipeProbe RecipeSessionProbe, rt runtime.Info, steer GroupRecipeSteer) {
-	registerImport(srv, client, projectID, engine, stateDir, recipeProbe, rt, mate.LiveEnvStorePath, steer)
+func RegisterImportSteered(srv *mcp.Server, client platform.Client, projectID string, engine *workflow.Engine, stateDir string, recipeProbe RecipeSessionProbe, rt runtime.Info, steer GroupRecipeSteer, opts ...ImportOption) {
+	registerImport(srv, client, projectID, engine, stateDir, recipeProbe, rt, mate.LiveEnvStorePath, steer, opts...)
 }
 
 // registerImport is RegisterImport reading the container's live env store
 // at liveEnvPath (refuseOpenMate).
-func registerImport(srv *mcp.Server, client platform.Client, projectID string, engine *workflow.Engine, stateDir string, recipeProbe RecipeSessionProbe, rt runtime.Info, liveEnvPath string, steer GroupRecipeSteer) {
+func registerImport(srv *mcp.Server, client platform.Client, projectID string, engine *workflow.Engine, stateDir string, recipeProbe RecipeSessionProbe, rt runtime.Info, liveEnvPath string, steer GroupRecipeSteer, opts ...ImportOption) {
+	var cfg importConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	var boxDeps *ops.BoxDeps
+	if cfg.box != nil && cfg.box.Box != nil {
+		d := *cfg.box
+		if d.Client == nil {
+			d.Client = client
+		}
+		if d.ProjectID == "" {
+			d.ProjectID = projectID
+		}
+		boxDeps = &d
+	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_import",
 		Description: "REQUIRES active workflow context (zerops_workflow bootstrap/develop). Import services from YAML into the project. project.vault applies the project's values first; other project.* fields are rejected. A secret-shaped name without its own `sensitive` goes in sensitive, project and services alike. The API validates server-side and returns apiMeta on errors. Blocks until all processes complete; returns final statuses (FINISHED/FAILED).",
@@ -129,10 +145,13 @@ func registerImport(srv *mcp.Server, client platform.Client, projectID string, e
 		onProgress := buildProgressCallback(ctx, req)
 		pollImportProcesses(ctx, client, result, onProgress)
 
-		resp := importResponse{
-			ImportResult: result,
-			Envelope:     freshEnvelope(ctx, stateDir, client, projectID, rt),
+		resp := importResponse{ImportResult: result}
+		if boxDeps != nil {
+			// A Box starts with no base and no domain: finish its setup
+			// before the call returns (docs/spec-workflows.md §8 PS-8).
+			resp.BoxSetup = boxSetupAfterImport(ctx, *boxDeps, input, result)
 		}
+		resp.Envelope = freshEnvelope(ctx, stateDir, client, projectID, rt)
 		if input.Override.Bool() && steer != nil {
 			resp.GroupRecipe = overrideRecipeSteer(ctx, steer, result)
 		}
@@ -468,6 +487,10 @@ type importResponse struct {
 	// GroupRecipe is the group recipe's steer for each service an override
 	// replaced (GroupRecipeSteer); absent when there is nothing to say.
 	GroupRecipe []string `json:"groupRecipe,omitempty"`
+	// BoxSetup is the setup of each Zerops Box the import created — base,
+	// sandbox domain, every failure with its fix, and what to do next
+	// (docs/spec-workflows.md §8 PS-8); absent when the import created none.
+	BoxSetup []ops.BoxSetupResult `json:"boxSetup,omitempty"`
 	// Envelope is the post-mutation lifecycle state (docs/spec-mate.md §1.3).
 	// Absent when its computation failed — the rest of the response is
 	// unaffected.

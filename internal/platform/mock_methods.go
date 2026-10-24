@@ -690,3 +690,19 @@ func (m *Mock) SearchAppVersions(_ context.Context, projectID string, limit int)
 	}
 	return out, nil
 }
+
+// MintBoxAccess answers the access seeded for serviceID (WithBoxAccess), or
+// the refusal the platform gives for a service that is not there.
+func (m *Mock) MintBoxAccess(_ context.Context, serviceID string) (BoxAccess, error) {
+	m.trackCall("MintBoxAccess")
+	if err := m.getError("MintBoxAccess"); err != nil {
+		return BoxAccess{}, err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	access, ok := m.boxAccess[serviceID]
+	if !ok {
+		return BoxAccess{}, &PlatformError{Code: ErrAPIError, APICode: "serviceStackNotFound", Message: fmt.Sprintf("mock: no Box access for service %s", serviceID)}
+	}
+	return access, nil
+}
