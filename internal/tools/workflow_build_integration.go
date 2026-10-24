@@ -316,6 +316,7 @@ func actionsConfirmResponse(
 	// GF-7: the CI template builds off the recorded tracked ref, falling
 	// back to "main" for a pre-existing meta (docs/spec-workflows.md §12.6).
 	trackedRef := trackedRefOrDefault(meta)
+	tokenHost := ciTokenHost(meta)
 
 	workflowDescription := "Default workflow: installs zcli directly and passes --setup, so it works when zerops.yaml has multiple setups or the setup must be selected explicitly."
 	if selfTarget {
@@ -343,7 +344,7 @@ func actionsConfirmResponse(
 				"mint":   ciTokenMintGuidance,
 				"source": ciTokenSourceHint,
 				"command": ghSecretSetCommand(
-					rt, meta.Hostname,
+					rt, tokenHost,
 					"ZEROPS_TOKEN",
 					ciTokenValueExpr(),
 					ownerRepo,
@@ -352,12 +353,12 @@ func actionsConfirmResponse(
 			{
 				"name":    "ZEROPS_SERVICE_ID",
 				"value":   serviceID,
-				"command": ghSecretSetCommand(rt, meta.Hostname, "ZEROPS_SERVICE_ID", quoteShellLiteral(serviceID), ownerRepo),
+				"command": ghSecretSetCommand(rt, tokenHost, "ZEROPS_SERVICE_ID", quoteShellLiteral(serviceID), ownerRepo),
 			},
 		},
 		"ghTokenConveyance": map[string]any{
-			"description":    ghTokenConveyanceNote(rt, ownerRepo, meta.Hostname),
-			"failureSymptom": ghTokenFailureSymptom(rt, meta.Hostname),
+			"description":    ghTokenConveyanceNote(rt, ownerRepo, tokenHost, meta),
+			"failureSymptom": ghTokenFailureSymptom(rt, tokenHost),
 		},
 		"ghPatRecommendation": "Default to " + ghPATScopeRecommendation(ownerRepo, true) + " Set a calendar reminder to regenerate + re-run `gh secret set` before it lapses.",
 		"nextStep":            "1) Write workflowFile.content at .github/workflows/zerops.yml. 2) Run the two `gh secret set` commands above — each conveys GH_TOKEN per invocation (no login step, no stored gh credential; a stale gh session can never act in place of the current PAT). 3) Push the workflow file. From then on every push to main triggers the GitHub Actions deploy. Keep the default setup-aware zcli workflow unless you are certain the repository has only one setup.",
@@ -367,7 +368,7 @@ func actionsConfirmResponse(
 		secrets = append(secrets, map[string]any{
 			"name":    push.Secret,
 			"value":   push.ServiceID,
-			"command": ghSecretSetCommand(rt, meta.Hostname, push.Secret, quoteShellLiteral(push.ServiceID), ownerRepo),
+			"command": ghSecretSetCommand(rt, tokenHost, push.Secret, quoteShellLiteral(push.ServiceID), ownerRepo),
 		})
 	}
 	body["secrets"] = secrets
@@ -533,6 +534,13 @@ func addTopologyFields(body map[string]any, meta *workflow.ServiceMeta, buildHos
 		return
 	}
 	body["pushSource"] = meta.Hostname
+	if meta.DevIsPool() {
+		body["topologyNote"] = fmt.Sprintf(
+			"Pool-pair build-integration: the pair's dev half is the dev pool %q — its leases push their branches, and nothing builds the pool from a push; CI runs `zcli push --setup %s` so the build lands on the stage %q (build target). %s secrets/deep-links below reflect %q.",
+			meta.Hostname, buildSetup, buildHost, biLabel, buildHost,
+		)
+		return
+	}
 	if meta.Hostname == buildHost {
 		return
 	}
@@ -585,10 +593,26 @@ func anticipatedBuilds(meta *workflow.ServiceMeta) []topology.StageRef {
 		GitPushState:    topology.GitPushConfigured,
 		StageHostname:   meta.FirstStage().Hostname,
 		Stages:          meta.Stages,
+		DevIsPool:       meta.DevIsPool(),
 		Deployed:        true,
 	}
 	snaps := workflow.SnapshotsFromMetas([]*workflow.ServiceMeta{meta})
-	return workflow.Resolve(snap, snaps).Builds()
+	if !snap.DevIsPool {
+		return workflow.Resolve(snap, snaps).Builds()
+	}
+	// A pair keyed by its dev pool: no push builds the pool (its image is a
+	// deploy of its own, DP-7), so the CI builds every stage, each as it
+	// resolves (docs/spec-workflows.md §13 PM-10).
+	var builds []topology.StageRef
+	for _, s := range snaps {
+		if _, ok := meta.StageFor(s.Hostname); ok {
+			s.CloseDeployMode = topology.CloseModeAuto
+			s.GitPushState = topology.GitPushConfigured
+			s.Deployed = true
+			builds = append(builds, workflow.Resolve(s, snaps).Builds()...)
+		}
+	}
+	return builds
 }
 
 // firstBuild is the first runtime of builds and its setup; "" for none.
@@ -623,14 +647,16 @@ func resolveBuildTarget(meta *workflow.ServiceMeta, requestedService, override s
 	if meta == nil {
 		return builds, nil
 	}
-	if ov := strings.TrimSpace(override); ov != "" && (ov == meta.Hostname || isStageOf(meta, ov)) {
+	// A pair keyed by its dev pool builds only its stages: the pool is never
+	// a CI target, so naming it is no override and asks nothing to confirm.
+	if ov := strings.TrimSpace(override); ov != "" && (ov == meta.Hostname && !meta.DevIsPool() || isStageOf(meta, ov)) {
 		s := meta.SetupNameFor(ov)
 		if s == "" {
 			s = conventionSetup
 		}
 		return []topology.StageRef{{Hostname: ov, SetupName: s}}, nil
 	}
-	if requestedService != "" && requestedService == meta.Hostname &&
+	if requestedService != "" && requestedService == meta.Hostname && !meta.DevIsPool() &&
 		isStageOf(meta, conventionHost) && conventionHost != meta.Hostname {
 		decision = map[string]any{
 			"requested": requestedService,
@@ -840,6 +866,18 @@ func ciTokenValueExpr() string {
 	return `"<the CI token the user provides — collect via ` + credentialAskMechanism + `; NEVER generate one and NEVER read it from the container env>"`
 }
 
+// ciTokenHost is the push source whose session env the gh commands read
+// GIT_TOKEN from over ssh, "" when there is none: a pair keyed by its dev
+// pool has no container of its own — the pool's hostname reaches a random
+// one of its containers (docs/spec-workflows.md §8 PS-3, §13 PM-10) — so
+// the person gives the PAT.
+func ciTokenHost(meta *workflow.ServiceMeta) string {
+	if meta.DevIsPool() {
+		return ""
+	}
+	return meta.Hostname
+}
+
 // ghSecretSetCommand assembles a `gh secret set <name> -b <valueExpr> -R
 // <ownerRepo>` invocation with PER-INVOCATION GH_TOKEN conveyance
 // (spec-git-delivery-target §4). GH_TOKEN takes precedence over any
@@ -852,12 +890,13 @@ func ciTokenValueExpr() string {
 // env at command time (fresh sessions read the live platform value —
 // rotation-proof), guarded against the empty-token case (an empty
 // GH_TOKEN would silently fall back to stored credentials/prompt).
-// Local: ZCP holds no GitHub credential — the user-provided PAT is
-// substituted by the agent (collected via AskUserQuestion, NEVER
-// generated).
+// Local, or a container with no push source to read it from (pushHost ""
+// — ciTokenHost): ZCP holds no GitHub credential it can read — the
+// user-provided PAT is substituted by the agent (collected via
+// AskUserQuestion, NEVER generated).
 func ghSecretSetCommand(rt runtime.Info, pushHost, name, valueExpr, ownerRepo string) string {
 	ghCmd := fmt.Sprintf("gh secret set %s -b %s -R %s", name, valueExpr, ownerRepo)
-	if rt.InContainer {
+	if rt.InContainer && pushHost != "" {
 		return fmt.Sprintf(
 			"_t=$(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null %s 'printf %%s \"$%s\"') && [ -n \"$_t\" ] && GH_TOKEN=\"$_t\" %s || echo \"%s empty on %s — re-run git-push-setup first\"",
 			pushHost, ops.GitTokenEnvKey, ghCmd, ops.GitTokenEnvKey, pushHost,
@@ -889,8 +928,13 @@ func ghSecretSetFromStagedSecret(pushHost, name, valueEnvKey, ownerRepo string) 
 }
 
 // ghTokenConveyanceNote explains the per-invocation GH_TOKEN model that
-// replaced the `gh auth login` + hosts.yml step.
-func ghTokenConveyanceNote(rt runtime.Info, ownerRepo, pushHost string) string {
+// replaced the `gh auth login` + hosts.yml step. pushHost "" in a container
+// is a pair keyed by its dev pool (meta), which has no container to read
+// the token from.
+func ghTokenConveyanceNote(rt runtime.Info, ownerRepo, pushHost string, meta *workflow.ServiceMeta) string {
+	if rt.InContainer && pushHost == "" && meta != nil {
+		return "Each `gh secret set` command above conveys GH_TOKEN per invocation. This pair's dev half is the dev pool `" + meta.Hostname + "`, which holds no container of its own to read GIT_TOKEN from over SSH (its hostname reaches a random one of its containers) — substitute the PAT the user provides (same scope as git-push-setup: `Secrets: Read and write` on " + ownerRepo + "). Collect it via " + credentialAskMechanism + "; NEVER generate a token and NEVER read it from a lease's env. No gh login step is needed or wanted."
+	}
 	if rt.InContainer {
 		return "Each `gh secret set` command above conveys GH_TOKEN per invocation, read over SSH from the push-source container `" + pushHost + "`'s live session env at command time. There is NO login step and no stored gh credential — GH_TOKEN takes precedence over any hosts.yml left by earlier sessions, so the command always acts with the CURRENT git-push-setup PAT (needs `Secrets: Read and write` on " + ownerRepo + "; the recommended git-push-setup PAT scope already covers it)."
 	}
@@ -900,7 +944,7 @@ func ghTokenConveyanceNote(rt runtime.Info, ownerRepo, pushHost string) string {
 // ghTokenFailureSymptom names the env-specific failure the agent will
 // actually hit with per-invocation GH_TOKEN conveyance.
 func ghTokenFailureSymptom(rt runtime.Info, pushHost string) string {
-	if rt.InContainer {
+	if rt.InContainer && pushHost != "" {
 		return "If $" + ops.GitTokenEnvKey + " is empty on `" + pushHost + "` the command prints \"" + ops.GitTokenEnvKey + " empty …\" and performs nothing — re-run git-push-setup with the PAT to (re)write the service secret. A 403 from `gh secret set` means the CURRENT PAT lacks `Secrets: Read and write` on the target repo (the command provably used it — there is no stored credential to blame)."
 	}
 	return "An empty GH_TOKEN makes gh fall back to stored credentials or an interactive prompt — always substitute a real PAT collected from the user before running."
@@ -925,7 +969,10 @@ func quoteShellLiteral(s string) string {
 // Read failures return "" (the confirm proceeds on the recorded value —
 // the launch gate re-verifies with a hard block later).
 func buildIntegrationRemoteDrift(ctx context.Context, sshDeployer ops.SSHDeployer, rt runtime.Info, meta *workflow.ServiceMeta) string {
-	if meta.RemoteURL == "" {
+	// A pair keyed by its dev pool has no checkout of its own to read an
+	// origin from (docs/spec-workflows.md §13 PM-10): each lease clones the
+	// recorded remote, which is what the commands are built from.
+	if meta.RemoteURL == "" || meta.DevIsPool() {
 		return ""
 	}
 	if rt.InContainer && sshDeployer == nil {

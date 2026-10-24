@@ -28,11 +28,13 @@ import (
 // zcp cannot compare by reading: it keeps its own record of what it wrote, a
 // fingerprint per pool (hq.CredentialFingerprint, the one a pair's record
 // keeps) in .zcp/state/leases/credentials/<pool>.json, mode 0600 — never the
-// credential. A pool has no ServiceMeta (DP-2); once pools get a pool-keyed
-// meta, that meta takes the record over as its HQ credential fingerprint (the
-// field a pair keeps, HQRepoRef.CredentialFingerprint), the renewal walks those
-// metas instead of this directory, and the first pass that finds both moves the
-// fingerprint across and removes the file.
+// credential. A pool has no ServiceMeta of its own (DP-2); a pool that keys a
+// pair (docs/spec-workflows.md §13 PM-10) is renewed with that pair: the HQ
+// pass takes this record over as the pair's credential fingerprint
+// (HQRepoRef.CredentialFingerprint) when it names the pool service the pair
+// records (devPool.serviceId), and removes the file (PoolCredentialRecord,
+// ForgetPoolCredentialRecord). The walk of this directory still renews every
+// pool that keys no pair.
 
 // PoolHQCredential is how an acquire puts the Mate credential on a pool. The
 // zero value — zcp outside a Mate — never writes.

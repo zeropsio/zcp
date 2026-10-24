@@ -123,39 +123,12 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 			})), nil, nil
 	}
 
-	// Build deployable-runtime meta index for scope validation, honoring the
-	// pair-keyed invariant (spec-workflows.md §8 E8): both halves of a
-	// container+standard pair resolve to the single meta file. Without this,
-	// scope=[devhost, stagehost] was silently rejecting stage despite the
-	// atom telling the agent to include it.
-	//
-	// Local-mode metas are project-keyed (m.Hostname = project.Name set by
-	// LocalAutoAdopt), not service-keyed. Two consequences for runtimeMetas:
-	//   - PlanModeLocalOnly metas have no deployable runtime — surfacing
-	//     them as scope candidates sent agents chasing the project name as
-	//     if it were a service.
-	//   - PlanModeLocalStage metas index under both project name (m.Hostname)
-	//     and stage hostname (m.StageHostname) via ManagedRuntimeIndex; only
-	//     the stage hostname is a deployable scope target. The project-name
-	//     key must be filtered out.
-	allRuntimes := workflow.ManagedRuntimeIndex(metas)
-	runtimeMetas := make(map[string]*workflow.ServiceMeta, len(allRuntimes))
-	hasLocalOnly := false
-	for h, m := range allRuntimes {
-		if m.Mode == topology.PlanModeLocalOnly {
-			hasLocalOnly = true
-			continue
-		}
-		if m.Mode == topology.PlanModeLocalStage && h == m.Hostname {
-			continue // skip the project-name key; the stage-hostname key remains
-		}
-		if !m.IsComplete() {
-			continue
-		}
-		if m.Mode == "" && !m.HasStage() {
-			continue
-		}
-		runtimeMetas[h] = m
+	runtimes := developRuntimes(metas)
+	runtimeMetas, hasLocalOnly := runtimes.metas, runtimes.hasLocalOnly
+	// Before any other answer about the runtimes: a scope naming the pool is
+	// refused by name, even where the pool's pair is all there is.
+	if refusal := devPoolInScope(input.Scope, runtimes.devPools); refusal != nil {
+		return convertError(refusal, WithRecoveryStatus()), nil, nil
 	}
 	if len(runtimeMetas) == 0 {
 		if hasLocalOnly {
@@ -269,6 +242,80 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 	return renderDevelopBriefing(ctx, engine, client, projectID, rt, sshDeployer)
 }
 
+// developRuntimeList is develop's runtime list: the services a scope may
+// name, each with its pair's meta.
+type developRuntimeList struct {
+	metas map[string]*workflow.ServiceMeta
+	// devPools are the pools keying their pairs, left out of metas.
+	devPools map[string]*workflow.ServiceMeta
+	// hasLocalOnly: a local-only meta exists (it names no runtime).
+	hasLocalOnly bool
+}
+
+// developRuntimes builds the deployable-runtime meta index for scope
+// validation, honoring the pair-keyed invariant (spec-workflows.md §8 E8):
+// both halves of a container+standard pair resolve to the single meta file.
+// Without this, scope=[devhost, stagehost] was silently rejecting stage
+// despite the atom telling the agent to include it.
+//
+// Local-mode metas are project-keyed (m.Hostname = project.Name set by
+// LocalAutoAdopt), not service-keyed. Two consequences:
+//   - PlanModeLocalOnly metas have no deployable runtime — surfacing
+//     them as scope candidates sent agents chasing the project name as
+//     if it were a service.
+//   - PlanModeLocalStage metas index under both project name (m.Hostname)
+//     and stage hostname (m.StageHostname) via ManagedRuntimeIndex; only
+//     the stage hostname is a deployable scope target. The project-name
+//     key must be filtered out.
+//
+// A pool keying its pair (DevIsPool) is no runtime develop deploys or
+// verifies — its containers are leased, one per branch, and its stage
+// deploys from a lease of it (docs/spec-workflows.md §13 PM-10). Its key
+// goes to devPools; a scope naming it is refused by name.
+func developRuntimes(metas []*workflow.ServiceMeta) developRuntimeList {
+	allRuntimes := workflow.ManagedRuntimeIndex(metas)
+	out := developRuntimeList{
+		metas:    make(map[string]*workflow.ServiceMeta, len(allRuntimes)),
+		devPools: map[string]*workflow.ServiceMeta{},
+	}
+	for h, m := range allRuntimes {
+		switch {
+		case m.Mode == topology.PlanModeLocalOnly:
+			out.hasLocalOnly = true
+		case m.Mode == topology.PlanModeLocalStage && h == m.Hostname:
+			// the project-name key; the stage-hostname key remains
+		case m.DevIsPool() && h == m.Hostname:
+			out.devPools[h] = m
+		case !m.IsComplete(), m.Mode == "" && !m.HasStage():
+		default:
+			out.metas[h] = m
+		}
+	}
+	return out
+}
+
+// devPoolInScope refuses a develop scope naming a pool its pair is keyed by
+// (docs/spec-workflows.md §13 PM-10): develop deploys and verifies the
+// services it names, and nothing deploys from or verifies the pool itself —
+// its stage deploys from a lease of it. Nil when the scope names none.
+func devPoolInScope(scope []string, devPools map[string]*workflow.ServiceMeta) *platform.PlatformError {
+	for _, h := range scope {
+		m := devPools[h]
+		if m == nil {
+			continue
+		}
+		stages := m.StageHostnames()
+		stagePart := "it keys no stage, so the pair has nothing develop deploys: its work is the lease's"
+		if len(stages) > 0 {
+			stagePart = fmt.Sprintf("scope the pair's stage instead — scope=[%q] — which deploys from the lease: zerops_deploy sourceService=\"<alias>\" targetService=%q", strings.Join(stages, `","`), stages[0])
+		}
+		return platform.NewPlatformError(platform.ErrInvalidParameter,
+			fmt.Sprintf("scope names %s, the dev pool its pair is keyed by: develop deploys and verifies no pool — its containers are leased, one per branch", h),
+			fmt.Sprintf("Work in a lease of it (%s), and %s.", poolPairLeaseAcquire(m, "<branch>"), stagePart))
+	}
+	return nil
+}
+
 // mateStandUpStages is the stage half of every standard pair in scope that a
 // Mate's stand-up leaves as it is (docs/spec-workflows.md §8 D2f): a pair the
 // Mate adopted — every new Mate is born from the recipe, its services
@@ -287,7 +334,7 @@ func mateStandUpStages(ctx context.Context, client platform.Client, projectID st
 	var candidates []*workflow.ServiceMeta
 	for _, h := range scope {
 		m := runtimeMetas[h]
-		if m == nil || m.Mode != topology.PlanModeStandard || m.Hostname != h || !m.HasStage() {
+		if m == nil || m.ModeFor(h) != topology.ModeStandard || m.Hostname != h || !m.HasStage() {
 			continue
 		}
 		if !m.IsAdopted() || m.IsDeployed() {
@@ -494,7 +541,9 @@ func validateDevelopScope(requested []string, runtimeMetas map[string]*workflow.
 	// agent already named a stage directly.
 	for _, h := range append([]string(nil), scope...) {
 		m := runtimeMetas[h]
-		if m == nil || m.Mode != topology.PlanModeStandard || h != m.Hostname {
+		// ModeFor, not m.Mode: a pool keying its pair is modeless — never a
+		// standard dev half whose stages develop adds.
+		if m == nil || m.ModeFor(h) != topology.ModeStandard || h != m.Hostname {
 			continue
 		}
 		for _, stage := range m.StageHostnames() {

@@ -50,6 +50,13 @@ func composeLaunchBundleInputs(
 	if len(runtimes) != len(gateChecks) {
 		return bundle.LaunchBundleInputs{}, nil, fmt.Errorf("composeLaunchBundleInputs: runtimes (%d) and gateChecks (%d) must align 1:1", len(runtimes), len(gateChecks))
 	}
+	// A runtime whose pair is keyed by its dev pool has no checkout to read
+	// (docs/spec-workflows.md §10, §13 PM-10): the flow refuses it first.
+	for _, r := range runtimes {
+		if r.DevIsPool {
+			return bundle.LaunchBundleInputs{}, nil, fmt.Errorf("composeLaunchBundleInputs: runtime %q is the dev pool its pair is keyed by — no checkout to read; launch refuses it before compose", r.PushHostname)
+		}
+	}
 
 	// Discover once — shared across all runtimes for managed-dep
 	// aggregation and per-runtime type lookup.

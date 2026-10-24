@@ -33,6 +33,11 @@ type resolvedLaunchRuntime struct {
 	// ready-to-launch preview surfaces it and raises the confirm hint
 	// for dev-promoted / legacy-default resolutions.
 	SetupProvenance string
+	// DevIsPool marks a runtime whose pair is keyed by its dev pool
+	// (ServiceMeta.DevIsPool): PushHostname then names the pool, which has
+	// no checkout to read — the flow refuses it before any read
+	// (docs/spec-workflows.md §10, §13 PM-10).
+	DevIsPool bool
 }
 
 // promotableHostnameSuffixes is the canonical list of mode suffixes
@@ -136,6 +141,7 @@ func resolveLaunchRuntimes(stateDir string, input WorkflowInput) []resolvedLaunc
 			ProdHostname:    prodHost,
 			SetupName:       setupName,
 			SetupProvenance: setupProvenance,
+			DevIsPool:       meta.DevIsPool(),
 		})
 	}
 	return out

@@ -595,6 +595,14 @@ func poolMigrateShortCommit(sha string) string {
 // a shared code volume, several parts, and an origin to move the work through.
 func poolMigrateMetaRefusals(meta *workflow.ServiceMeta, rt runtime.Info) []poolMigrateRefusal {
 	dev := meta.Hostname
+	// A pair already keyed by its dev pool, named by its stage: its dev half
+	// is the pool, which the census must never reach over ssh (§8 PS-3).
+	if meta.DevIsPool() {
+		return []poolMigrateRefusal{{
+			Reason:  poolMigrateRefusePoolOrBox,
+			Message: fmt.Sprintf("The pair of %s is already keyed by its dev pool %s: its dev half is a pool, with no dev service left to move onto one.", strings.Join(meta.StageHostnames(), ", "), dev),
+		}}
+	}
 	var out []poolMigrateRefusal
 	mode := meta.Mode
 	if mode == "" {
