@@ -282,6 +282,37 @@ func TestDevelop_PoolDevHalf_NotARuntimeOfTheScope(t *testing.T) {
 	}
 }
 
+// TestDevPoolInScope_SeveralStages_ScopeRenderedAsAList: the refusal of a
+// scope naming a pool keyed by a pair of several stages names the stages to
+// scope instead as one list, written the way the tool call takes it.
+func TestDevPoolInScope_SeveralStages_ScopeRenderedAsAList(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		stages []topology.StageRef
+		want   string
+	}{
+		{name: "one stage", stages: []topology.StageRef{{Hostname: "appstage", SetupName: "prod"}}, want: `scope=["appstage"]`},
+		{name: "two stages", stages: []topology.StageRef{{Hostname: "apistage", SetupName: "api"}, {Hostname: "webstage", SetupName: "web"}}, want: `scope=["apistage","webstage"]`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			m := &workflow.ServiceMeta{Hostname: testPool, Stages: tt.stages}
+			perr := devPoolInScope([]string{testPool}, map[string]*workflow.ServiceMeta{testPool: m})
+			if perr == nil {
+				t.Fatal("a scope naming the pool was not refused")
+			}
+			if !strings.Contains(perr.Suggestion, tt.want) {
+				t.Errorf("the refusal does not name %s: %s", tt.want, perr.Suggestion)
+			}
+			if strings.Contains(perr.Suggestion, `\"`) {
+				t.Errorf("the refusal carries an escaped quote: %s", perr.Suggestion)
+			}
+		})
+	}
+}
+
 // TestDevelopBriefing_PoolPairStage_LeaseNoOrchestratorVouchesFor_NeverTheSource:
 // develop's start reads the project's leases as status does (PM-10). Here the
 // pool's orchestrator cannot be asked (the pool holds no bearer), so zcp's own

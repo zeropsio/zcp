@@ -293,12 +293,16 @@ func TestPlaybookMonorepo_ContentPins_PartRules(t *testing.T) {
 
 // TestThemeDevServers_ContentPins_DeclarationKeys pins that the dev-servers
 // theme's declaration table names every key a dev pool's lease reads
-// (docs/spec-mate.md §2.8a.1; docs/spec-workflows.md §8 DP-14, DP-22, DP-26):
-// previewPortBase and the per-container port its preview answers on,
-// siblingEnv with its private hostname, server-side only and declared only
-// for a server that reads it (a sibling's leave or join restarts the other
-// leases' servers), a separate line saying a browser cannot resolve that
-// hostname, prepare after the checkout, and the preview mark.
+// (docs/spec-mate.md §2.8a.1; docs/spec-workflows.md §8 DP-14, DP-22, DP-24,
+// DP-26, DP-31): previewPortBase and the per-container port its preview
+// answers on, siblingEnv with its private hostname, server-side only and
+// declared only for a server that reads it (a sibling's leave or join
+// restarts the other leases' servers), a separate line saying a browser
+// cannot resolve that hostname and pointing at siblingPreviewEnv, which
+// hands browser code the sibling lease's https preview URL — resolved again
+// at every join or leave, never hand-copied, a name in one of the two maps
+// only — prepare after the checkout, the preview mark, and a declared server
+// reloading by itself, so a lease sync never asks for its restart.
 func TestThemeDevServers_ContentPins_DeclarationKeys(t *testing.T) {
 	t.Parallel()
 
@@ -328,6 +332,15 @@ func TestThemeDevServers_ContentPins_DeclarationKeys(t *testing.T) {
 		{"a sibling's leave or join restarts the other leases' servers", "every lease of that pool that joins or leaves the branch restarts the dev servers running in the branch's other leases"},
 		{"browser clients get their own line", "| `siblingEnv` and a browser client |"},
 		{"a browser cannot resolve the private hostname", "a browser cannot resolve the private hostname"},
+		{"a browser client names its variable in siblingPreviewEnv", "name the variable in `siblingPreviewEnv` instead"},
+		{"siblingPreviewEnv has its row", "| `siblingPreviewEnv` |"},
+		{"siblingPreviewEnv hands the sibling lease's https preview URL", "that lease's preview URL (`https://`"},
+		{"siblingPreviewEnv serves code that runs in the browser", "for code that runs in the browser"},
+		{"siblingEnv gives the container hostname for server-side calls", "`siblingEnv` gives the container hostname, for server-side calls"},
+		{"a name is in one of the two maps, never both", "A name is in one of the two, never both"},
+		{"the preview URL is resolved again at every join or leave", "resolved again whenever a lease of the branch joins or leaves"},
+		{"the preview URL is never hand-copied", "never copy it by hand"},
+		{"a declared server reloads by itself, so a sync never asks for its restart", "Either way the server reloads by itself, so a lease sync never asks you to restart it"},
 		{"prepare has its row", "| `prepare` |"},
 		{"prepare runs after the checkout, before the servers start", "after the checkout, before the declared servers start"},
 		{"a failed prepare leaves the lease held", "leaves the lease held"},

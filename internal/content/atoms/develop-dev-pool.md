@@ -7,7 +7,7 @@ environments: [container]
 multiService: aggregate
 title: "A part's dev pool — lease a container, work, push, release"
 references-atoms: [develop-dynamic-runtime-start-container]
-references-fields: [ops.DeployResult.Warnings, ops.LeaseView.Reused, ops.LeaseSyncMember.UnwatchedServers, ops.LeaseView.Idle, ops.LeaseIdle.Next, tools.leaseToolResult.Warm]
+references-fields: [ops.DeployResult.Warnings, ops.LeaseView.Reused, ops.LeaseView.DevServers, ops.LeaseSyncMember.UnwatchedServers, ops.LeaseView.Idle, ops.LeaseIdle.Next, tools.leaseToolResult.Warm]
 ---
 
 ### A part's dev pool
@@ -15,6 +15,13 @@ references-fields: [ops.DeployResult.Warnings, ops.LeaseView.Reused, ops.LeaseSy
 A pool (`swarm@1`) is not an app runtime: it holds up to ten containers that
 its orchestrator hands out by lease, one per branch you work on. The pool's
 own hostname reaches a random container — address a leased one by its alias.
+
+**Which pool.** All of this is for a part's dev pool: its zerops.yaml setup
+starts `zcp-devsup run`, or the repository's `.zcp/dev-servers.json` names it
+as a server's `service`. A pool the app calls through its orchestrator with
+`${<pool>_API_TOKEN}` is infrastructure the app uses: leave it to the app —
+never lease it, run a dev server on it or deploy to it; a lease takes one of
+its containers away from the app.
 
 **The loop**
 
@@ -24,7 +31,10 @@ own hostname reaches a random container — address a leased one by its alias.
    checks the branch out there; a branch that does not exist yet is cut from
    `main`. `repo` is remembered per pool — pass it on the first acquire only.
    The clone uses the pool's own `GIT_TOKEN` service secret; you never type
-   a credential.
+   a credential. Each lease it took carries `devServers`: each server's
+   `status` — `running`, or `starting` while it still compiles — and the
+   preview server's `url`. Check a `starting` one with
+   `zerops_dev_server action=status hostname="<alias>" name="<server>"`.
 2. Work in `/var/www/<alias>`. Run the part's dev servers with
    `zerops_dev_server action=start hostname="<alias>" ...`.
 3. Commit and push from the leased container yourself, over SSH to the alias:
@@ -85,10 +95,15 @@ stays unleased.
    `reused: true`.
 2. `"siblingEnv": {"<VAR>": "<pool>"}` in `.zcp/dev-servers.json` gives each
    server started in a lease `<VAR>` = the hostname of the branch's lease on
-   that pool, for server-side `http://${<VAR>}:<port>` calls (a browser
-   cannot resolve it). Without such a lease `<VAR>` keeps its own env value:
+   that pool, for server-side `http://${<VAR>}:<port>` calls. A browser
+   cannot resolve it: for code that runs in the browser, write
+   `"siblingPreviewEnv": {"<VAR>": "<pool>"}` instead, and `<VAR>` is that
+   lease's preview URL (`https://`), resolved again whenever a lease of the
+   branch joins or leaves — never copy it by hand. A name is in one of the
+   two, never both. Without such a lease `<VAR>` keeps its own env value:
    set it in the calling part's pool env to the called part's stage
-   hostname, and run the called part's dev server on its stage's port. Bind
+   hostname (a browser variable to the stage's public URL), and run the
+   called part's dev server on its stage's port. Bind
    servers a sibling calls to `0.0.0.0`: a loopback-only one serves its
    preview, never a sibling. In a declaration several parts share, give each
    entry `"service": "<its pool>"`, or every part's lease runs it.
@@ -96,8 +111,9 @@ stays unleased.
    one lease, then `zerops_lease action=sync lease="<alias>"` pushes the
    branch and fast-forwards the other leases (uncommitted files refuse it).
    Sync before you commit in another: a lease with commits of its own or
-   changes in the way is left as it was, named. Restart what
-   `unwatchedServers` lists.
+   changes in the way is left as it was, named. Restart only what
+   `unwatchedServers` lists (runtime entries); declared servers reload by
+   themselves.
 4. `zerops_lease action=release branch="<branch>"` releases every lease of
    the branch, or none: unsaved work in one refuses them all.
 

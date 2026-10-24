@@ -322,7 +322,7 @@ func devPoolInScope(scope []string, devPools map[string]*workflow.ServiceMeta) *
 		stages := m.StageHostnames()
 		stagePart := "it keys no stage, so the pair has nothing develop deploys: its work is the lease's"
 		if len(stages) > 0 {
-			stagePart = fmt.Sprintf("scope the pair's stage instead — scope=[%q] — which deploys from the lease: zerops_deploy sourceService=\"<alias>\" targetService=%q", strings.Join(stages, `","`), stages[0])
+			stagePart = fmt.Sprintf("scope the pair's stage instead — scope=%s — which deploys from the lease: zerops_deploy sourceService=\"<alias>\" targetService=%q", workflow.ListArg(stages), stages[0])
 		}
 		return platform.NewPlatformError(platform.ErrInvalidParameter,
 			fmt.Sprintf("scope names %s, the dev pool its pair is keyed by: develop deploys and verifies no pool — its containers are leased, one per branch", h),

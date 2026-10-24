@@ -501,12 +501,12 @@ func poolMigrateServiceMessage(read poolMigrateCommitRead, pool string, parts []
 
 // poolMigrateDependencyFindings names where the setup departs from the
 // dependency rule: the dependencies baked into /var/www by run.prepareCommands,
-// from the manifest and lockfile build.addToRunPrepare carries.
+// from every file the install reads, which build.addToRunPrepare carries.
 func poolMigrateDependencyFindings(entry *ZeropsYmlEntry, setup string, read poolMigrateCommitRead) []PoolMigrateImageCheck {
 	var out []PoolMigrateImageCheck
 	if len(yamlStrings(entry.Build.AddToRunPrepare)) == 0 {
 		out = append(out, PoolMigrateImageCheck{Check: PoolMigrateImageDepsLockfile, Message: fmt.Sprintf(
-			"Setup %q lists nothing in build.addToRunPrepare: list the dependency manifest and its lockfile there, so run.prepareCommands can install from them and the pool's image is rebuilt when the lockfile changes.", setup)})
+			"Setup %q lists nothing in build.addToRunPrepare: list there every file the dependency install reads — the manifest and its lockfile, and in a workspace monorepo every member's manifest and the workspace definition — so run.prepareCommands can install from them and the pool's image is rebuilt when one of them changes.", setup)})
 	}
 	baked := slices.ContainsFunc(yamlStrings(entry.Run.PrepareCommands), func(c string) bool {
 		return !strings.Contains(c, "/"+DevsupAsset) && namesPathWithin(c, defaultWorkingDir)
