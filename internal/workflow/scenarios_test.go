@@ -1963,7 +1963,7 @@ func TestScenario_UserSuppliedCode_PlanningPointsAtABox(t *testing.T) {
 	classic := render(boot(BootstrapRouteClassic, StepDiscover))
 	requireAtomIDsContain(t, "classic discover plans a Box for users' code", classic, "bootstrap-user-code-box")
 	body, _ := has(classic, atom)
-	for _, want := range []string{"Zerops Box", "ubuntu/zbox@1", "prg1", `zerops_knowledge uri="zerops://themes/services"`} {
+	for _, want := range []string{"Zerops Box", "ubuntu/zbox@1", "prg1", `zerops_knowledge uri="zerops://themes/pools-and-box"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("%s body missing %q:\n%s", atom, want, body)
 		}
