@@ -4086,7 +4086,10 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   only the Mate's newest ten in the repository, so one missing while ten newer are listed may be an
   open one that fell out, and stays kept, unknown — only one missing from a window that is not full,
   or newer than its oldest, reads as closed (`TestLearnChangeLanding_ReadsAMissingChangeByTheStatesWindow`). The pass's change turn runs after its pairs', per
-  repository, once a pair's turn read the state (or at develop's start), and holds each change with
+  repository, once a pair's turn read the state (or at develop's start) — and, with no pair to take
+  a turn (work only in leases), at every pass while the ledger or an HQ lease names a repository; it
+  turns to each repository the ledger, a wired pair or an HQ lease names, so a change handed there
+  is taken (`TestHQPass_ChangesTakeTheirTurnWithNoWiredPair`) — and holds each change with
   no wait, leaving one a describe holds to the next pass. A change of another application than the
   one HQ holds the Mate in stays there, said once. A merged change's note names its branch, the
   leases zcp holds on it with the release that frees them (`zerops_lease action=release
