@@ -159,6 +159,7 @@ const evalTimedOut = `{"success":false,"data":null,"error":"CDP command timed ou
 // success; it records the commands it saw and fails the test when the probe
 // runs without a short bound of its own.
 func probedSteps(t *testing.T, probe answer, seen *[][]string) browserStepExec {
+	t.Helper()
 	return func(ctx context.Context, args []string) (string, string, error) {
 		*seen = append(*seen, args)
 		switch {
