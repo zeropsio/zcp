@@ -260,25 +260,43 @@ type leaseWiring struct {
 // reload of its servers. The overlay comes from the declaration zcp read; a
 // supervisor whose `ctl version` does not list env never gets it — a start
 // whose overlay is not empty is refused there with the way to a newer one,
-// an empty one starts as before. A changed overlay has the supervisor restart
-// its running servers after its answer, one at a time, so zcp reads its
-// status until each has been restarted: a start of a server still running
-// under the old overlay would probe the process about to be restarted.
+// an empty one starts as before. The overlay is computed from zcp's records
+// and sent under the group's lock (lockLeaseGroup), so no release of a sibling
+// drops it in between (DP-26); the lock is held for the records' read and the
+// one `ctl env` exchange (devsupCtlTimeout), never for the wait. A changed
+// overlay has the supervisor restart its running servers after its answer,
+// one at a time, so zcp reads its status until each has been restarted: a
+// start of a server still running under the old overlay would probe the
+// process about to be restarted.
 func wireLeaseServers(ctx context.Context, ssh SSHDeployer, previewURL previewURLFunc, p DevServerParams, ds *DevServers) (leaseWiring, error) {
-	env, err := leaseSiblingEnv(p.StateDir, *p.lease, siblingWiringOf(&ds.Declared), previewURL)
-	if err != nil {
-		return leaseWiring{}, err
-	}
-	w := leaseWiring{env: env}
-	if !ds.Supervisor.Supports(devsup.CapabilityEnv) {
-		if len(env.Set) > 0 {
-			return leaseWiring{}, platform.NewPlatformError(platform.ErrPreflightFailed,
-				"Not starting dev servers on "+p.Hostname+": "+olderSupervisorText(*p.lease, ds.Supervisor, env)+" — they would read the container's own values instead.",
-				olderSupervisorRecovery(*p.lease))
+	lease := *p.lease
+	var before devsup.State
+	w, err := func() (leaseWiring, error) {
+		unlock, err := lockLeaseTargetGroup(ctx, p.StateDir, lease)
+		if err != nil {
+			return leaseWiring{}, err
 		}
-		return w, nil
+		defer unlock()
+		env, err := leaseSiblingEnv(p.StateDir, lease, siblingWiringOf(&ds.Declared), previewURL)
+		if err != nil {
+			return leaseWiring{}, err
+		}
+		if !ds.Supervisor.Supports(devsup.CapabilityEnv) {
+			if len(env.Set) > 0 {
+				return leaseWiring{}, platform.NewPlatformError(platform.ErrPreflightFailed,
+					"Not starting dev servers on "+p.Hostname+": "+olderSupervisorText(lease, ds.Supervisor, env)+" — they would read the container's own values instead.",
+					olderSupervisorRecovery(lease))
+			}
+			return leaseWiring{env: env}, nil
+		}
+		var w leaseWiring
+		before, w, err = sendLeaseOverlay(ctx, ssh, p.Hostname, ds, env)
+		return w, err
+	}()
+	if err != nil || !w.changed {
+		return w, err
 	}
-	return applyLeaseOverlay(ctx, ssh, p.Hostname, ds, env)
+	return awaitLeaseOverlay(ctx, ssh, p.Hostname, ds, before, w)
 }
 
 // applyLeaseOverlay hands hostname's supervisor env as its overlay. A changed
@@ -287,22 +305,37 @@ func wireLeaseServers(ctx context.Context, ssh SSHDeployer, previewURL previewUR
 // (awaitOverlayRestarts); the wiring names those restarted and those still to
 // be. ds takes the supervisor's last answer.
 func applyLeaseOverlay(ctx context.Context, ssh SSHDeployer, hostname string, ds *DevServers, env LeaseSiblingEnv) (leaseWiring, error) {
-	w := leaseWiring{env: env}
+	before, w, err := sendLeaseOverlay(ctx, ssh, hostname, ds, env)
+	if err != nil || !w.changed {
+		return w, err
+	}
+	return awaitLeaseOverlay(ctx, ssh, hostname, ds, before, w)
+}
+
+// sendLeaseOverlay sends env to hostname's supervisor as its overlay (`ctl
+// env`, one exchange): before is its state as zcp last read it, and the wiring
+// says whether the overlay changed. ds takes the supervisor's answer.
+func sendLeaseOverlay(ctx context.Context, ssh SSHDeployer, hostname string, ds *DevServers, env LeaseSiblingEnv) (devsup.State, leaseWiring, error) {
 	before := ds.State
 	st, err := supervisorCtl(ctx, ssh, hostname, env.ctlArgs()...)
 	if err != nil {
-		return leaseWiring{}, err
+		return devsup.State{}, leaseWiring{}, err
 	}
 	ds.observe(st)
-	if maps.Equal(before.Env, env.Set) {
-		return w, nil
-	}
-	w.changed = true
-	st, w.pending, err = awaitOverlayRestarts(ctx, ssh, hostname, before, overlayRestartBudget, devServersSettlePoll)
+	return before, leaseWiring{env: env, changed: !maps.Equal(before.Env, env.Set)}, nil
+}
+
+// awaitLeaseOverlay waits, once sendLeaseOverlay changed hostname's overlay
+// (w), for the restarts it set off (awaitOverlayRestarts) and names those
+// restarted and those still to be; before is the state the send started from.
+// ds takes the supervisor's last answer.
+func awaitLeaseOverlay(ctx context.Context, ssh SSHDeployer, hostname string, ds *DevServers, before devsup.State, w leaseWiring) (leaseWiring, error) {
+	st, pending, err := awaitOverlayRestarts(ctx, ssh, hostname, before, overlayRestartBudget, devServersSettlePoll)
 	if err != nil {
 		return leaseWiring{}, err
 	}
 	ds.observe(st)
+	w.pending = pending
 	w.restarted = map[string]bool{}
 	for name, s := range st.Servers {
 		if was, ok := before.Servers[name]; ok && s.Restarts > was.Restarts {

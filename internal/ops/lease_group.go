@@ -379,6 +379,13 @@ func lockRecordGroup(ctx context.Context, stateDir string, rec leaseRecord) (fun
 	return lockLeaseGroup(ctx, stateDir, recordRepo(stateDir, rec), recordBranch(rec))
 }
 
+// lockLeaseTargetGroup is lockLeaseGroup of the group of the lease a target
+// names (its record's repository, or its pool's default, and its branch).
+func lockLeaseTargetGroup(ctx context.Context, stateDir string, lease LeaseTargetInfo) (func(), error) {
+	repo := topology.CanonicalRepoURL(cmp.Or(lease.Repo, readPoolDefaultRepo(stateDir, lease.Pool)))
+	return lockLeaseGroup(ctx, stateDir, repo, cmp.Or(lease.Branch, leaseDefaultBranch))
+}
+
 // heldLease is the lease zcp already holds of branch on pool — one of the
 // group's records there that the orchestrator still reserves, as status
 // reports it (held, or unmounted with what it lacks), the earliest acquired
