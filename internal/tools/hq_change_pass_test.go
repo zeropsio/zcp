@@ -362,7 +362,7 @@ func TestLeaseGroupChanges_NamesEachGroupsChange(t *testing.T) {
 	}
 	views := []ops.LeaseView{{Alias: "hqpool-4", Branch: "mate-test-badge"}, {Alias: "boxpool-6", Branch: "mate-test-badge"}, {Alias: "hqpool-3", Branch: "pool-previews"}}
 
-	got := leaseGroupChanges(stateDir, targetHQ, views)
+	got := leaseGroupChanges(stateDir, targetHQ, views, nil)
 
 	for _, want := range []string{"group appsdev@mate-test-badge: #6 (draft)", "group appsdev@pool-previews: no change yet"} {
 		if !strings.Contains(got, want) {
@@ -371,6 +371,39 @@ func TestLeaseGroupChanges_NamesEachGroupsChange(t *testing.T) {
 	}
 	if strings.Count(got, "mate-test-badge") != 1 {
 		t.Errorf("a group is named once per lease, not once: %s", got)
+	}
+}
+
+// TestLeaseStatus_MergedBranchSaysSo_NotNoChangeYet: a lease on a branch whose
+// change merged is never said to have no change yet, which invites a new
+// change on merged work. Lease status reads the Mate's state once and says
+// the change merged — release the lease, or start new work from main —
+// whether a pass told the merge and forgot the change, or none ran since;
+// status names the merged change on that branch the same way.
+func TestLeaseStatus_MergedBranchSaysSo_NotNoChangeYet(t *testing.T) {
+	lab := twoOpenChanges(t)
+	told := lab.leaseOf("hqpool", 4, "fix-login")
+	unseen := lab.leaseOf("boxpool", 6, "add-signup")
+	lab.hq.mergeChange("appdev", 1)
+	if report := lab.passReport(); !strings.Contains(report, "change #1 is merged") || lab.kept(1) != nil {
+		t.Fatalf("the pass did not tell #1's merge and forget it:\n%s", report)
+	}
+	lab.hq.mergeChange("appdev", 2)
+	views := []ops.LeaseView{{Alias: told, Branch: "fix-login"}, {Alias: unseen, Branch: "add-signup"}}
+
+	got := leaseGroupChanges(lab.stateDir, lab.hq.srv.URL, views, func() *hq.MateState { return hqStateNow(t.Context(), lab.hq.srv.Client()) })
+
+	for _, want := range []string{"group appdev@fix-login: change #1 merged — release this lease", "group appdev@add-signup: change #2 merged — release this lease", "or start new work from main"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("lease status lacks %q: %s", want, got)
+		}
+	}
+	if strings.Contains(got, "no change yet") || strings.Contains(got, "as last read") {
+		t.Errorf("lease status reads a merged branch as having no change, or as last read: %s", got)
+	}
+	status := lab.status()
+	if !strings.Contains(status, "#1 fix-login — leases hqpool-4: merged") || strings.Contains(status, "no change yet") {
+		t.Errorf("status does not name #1 merged on fix-login:\n%s", status)
 	}
 }
 
