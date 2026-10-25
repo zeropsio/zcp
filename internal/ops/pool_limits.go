@@ -82,6 +82,9 @@ type poolUsage struct {
 	// yours are zcp's own leases among them, oldest activity first when it
 	// was read (byOldestActivity), by container number otherwise.
 	yours []LeaseView
+	// stuck are the listed containers no lease holds that no acquire takes,
+	// each still a place of the pool (stuckContainer).
+	stuck []platform.SwarmContainer
 	// read: zcp read its leases' activity (it reaches them over ssh, and the
 	// listing confirmed every one), at now.
 	read bool
@@ -122,6 +125,9 @@ func readPoolUsage(ctx context.Context, d LeaseDeps, rp *resolvedPool) poolUsage
 		owned := reservedOwnership(ctx, d, rp, own, containers)
 		for _, c := range containers {
 			if !leasedContainer(c) {
+				if stuckContainer(c) {
+					u.stuck = append(u.stuck, c)
+				}
 				continue
 			}
 			u.leased++
@@ -194,7 +200,10 @@ func leasePoolFullError(ctx context.Context, d LeaseDeps, rp *resolvedPool, se *
 			advice = append(advice, release+" to free a container")
 		}
 	} else {
-		msg = fmt.Sprintf("Pool '%s' is full: %s%s. The orchestrator does not queue an acquire: one succeeds only after a lease is released", pool, u.leasedNote(), u.holdersNote())
+		msg = fmt.Sprintf("Pool '%s' is full: %s%s%s. The orchestrator does not queue an acquire: one succeeds only after a lease is released", pool, u.leasedNote(), u.holdersNote(), u.stuckNote(pool))
+		if stuck := u.stuckAdvice(pool); stuck != "" {
+			advice = append(advice, stuck)
+		}
 		var raise string
 		switch {
 		case u.max >= poolContainerCeiling:
