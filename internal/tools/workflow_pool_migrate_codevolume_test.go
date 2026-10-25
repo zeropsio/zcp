@@ -765,6 +765,34 @@ func TestPoolMigrateRetire_VariantB_WrittenWhileTheVolumeRebundles_NothingDelete
 	}
 }
 
+// TestPoolMigrateRetire_VariantB_WrittenWhileTheDevBundleStreams_VolumeKept:
+// the volume's own reading — the baseline its delete is checked against — is
+// taken before the dev's bundle streams. A write that lands while the bundle
+// streams is in no bundle; with a further dev service gone outside the retire
+// meanwhile the dev's fingerprint is never re-checked, so only the volume's
+// reading can catch it: the volume is not deleted unforced (PM-13).
+func TestPoolMigrateRetire_VariantB_WrittenWhileTheDevBundleStreams_VolumeKept(t *testing.T) {
+	t.Parallel()
+	v := newCodeVolumeRig(t, variantBConfig)
+	v.r.ssh.afterStream = func() {
+		if err := os.WriteFile(filepath.Join(v.r.ssh.repo, "app.txt"), []byte("v1\nwritten while the dev's bundle streamed\n"), 0o644); err != nil {
+			t.Error(err)
+		}
+		v.client.set("svc-api", devGone) // apidev deleted outside the retire
+	}
+	out, isErr := v.retire(t, variantBRetireInput(true, false))
+	if got := v.client.deletes(); slices.Contains(got, "svc-vol") {
+		t.Fatalf("deletes = %q: the volume was deleted with a write no bundle holds", got)
+	}
+	if isErr || out["step"] != "retiring" || !slices.Equal(poolMigrateReasons(out), []string{"fingerprint-changed"}) {
+		t.Fatalf("retire = %v, want retiring, held by the checkout that moved while the bundle streamed", out)
+	}
+	fp, bundle := v.r.events.index("fingerprint on vol"), v.r.events.index("bundle on appdev")
+	if fp < 0 || bundle < 0 || fp > bundle {
+		t.Fatalf("events = %q, want the volume's reading taken before the dev's bundle", v.r.events.all())
+	}
+}
+
 // TestDeleteTool_RetireRecord_VariantB_DevServiceAndVolumeRefused: while a
 // variant-B retire is in flight, zerops_delete refuses its further dev
 // services and its code volume as it refuses the dev, pointing at the retire.
