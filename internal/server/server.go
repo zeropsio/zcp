@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -60,10 +61,21 @@ type Server struct {
 	// (spec §5.3 workflow-context stamping, S4). Zero value is a legal
 	// empty state (no zerops_workflow call seen yet).
 	wfCtx workflowContext
+	// background is the work tool calls start and return without waiting
+	// for (WaitBackground).
+	background sync.WaitGroup
 }
 
 // CallCount returns the number of tool calls served during this server's lifetime.
 func (s *Server) CallCount() int64 { return s.calls.Load() }
+
+// WaitBackground waits for the work tool calls started and returned without
+// waiting for: zerops_lease's warm creates and clones (DP-27, DP-32), each
+// bounded by its own deadline. zcp itself never waits for it — a process that
+// ends cuts it short, and status says so — but a caller that tears down what
+// that work reads or writes (the state directory, the HTTP transport) waits
+// first.
+func (s *Server) WaitBackground() { s.background.Wait() }
 
 // New creates a new ZCP MCP server with all tools registered.
 //
@@ -418,7 +430,8 @@ func (s *Server) registerTools() {
 	// only inside the project (docs/spec-workflows.md §8 DP-3/DP-5). A start or
 	// a reset-release restarts the container, so the client outwaits the 15 s
 	// readiness client above.
-	tools.RegisterLease(s.server, s.client, projectID, stateDir, ops.NewSwarmFactory(&http.Client{Timeout: ops.LeaseCallTimeout}), s.mounter, s.sshDeployer, s.rtInfo)
+	tools.RegisterLease(s.server, s.client, projectID, stateDir, ops.NewSwarmFactory(&http.Client{Timeout: ops.LeaseCallTimeout}), s.mounter, s.sshDeployer, s.rtInfo,
+		tools.WithLeaseBackground(s.background.Go))
 
 	// Container-only: zerops_browser wraps agent-browser with a guaranteed
 	// open→work→close lifecycle. agent-browser is pre-installed in the ZCP

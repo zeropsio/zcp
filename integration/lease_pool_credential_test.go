@@ -56,6 +56,7 @@ func TestLease_Integration_HQRepoInAMate_PutsTheMateCredentialOnThePool(t *testi
 		&auth.Info{ProjectID: "proj-1", Token: "test-token", APIHost: "localhost", Region: "prg1"},
 		store, platform.NewMockLogFetcher(), ssh, nil,
 		runtime.Info{InContainer: true, ServiceID: "s-zcp", ServiceName: "zcp", ProjectID: "proj-1", MateEnabled: true}, nil)
+	defer srv.WaitBackground()
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()
 	ss, err := srv.MCPServer().Connect(ctx, st, nil)

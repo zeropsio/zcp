@@ -99,8 +99,27 @@ type leaseRolloutToolResult struct {
 // release guard and no sync). Every successful result carries the lifecycle envelope,
 // computed after the operation so it lists the new lease set (spec-mate §1.3);
 // rt is the runtime that envelope is computed for.
-func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir string, swarm ops.SwarmFactory, mounter ops.Mounter, ssh ops.SSHDeployer, rt runtime.Info) {
-	registerLease(srv, leaseDeps(client, projectID, stateDir, swarm, mounter, ssh), rt)
+func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir string, swarm ops.SwarmFactory, mounter ops.Mounter, ssh ops.SSHDeployer, rt runtime.Info, opts ...LeaseOption) {
+	deps := leaseDeps(client, projectID, stateDir, swarm, mounter, ssh)
+	for _, opt := range opts {
+		opt(&deps)
+	}
+	registerLease(srv, deps, rt)
+}
+
+// LeaseOption configures RegisterLease.
+type LeaseOption func(*ops.LeaseDeps)
+
+// WithLeaseBackground runs the warm policy's background work — the creates
+// and clones a call starts and returns without waiting for (DP-27, DP-32) —
+// through spawn, which must run it on a goroutine of its own, so its owner
+// can wait for it (server.Server.WaitBackground).
+func WithLeaseBackground(spawn func(func())) LeaseOption {
+	return func(d *ops.LeaseDeps) {
+		if d.Warm != nil {
+			d.Warm.Go = spawn
+		}
+	}
 }
 
 // registerLease is RegisterLease over deps leaseDeps wired. The warm policy's
