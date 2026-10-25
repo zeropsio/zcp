@@ -3019,7 +3019,9 @@ zcp holds one set of leases for every conversation in the container, and a pool 
 container out again under the same alias, so **a binding is (alias, the conversation that acquired it)**
 and unbinding fans out: when a `zerops_lease` result or an envelope's `leases[]` says a lease was
 released, is no longer held (gone, lost, or reserved with no zcp record), or was acquired again by
-another conversation, every conversation bound to it is unbound before the acquiring one is bound. The
+another conversation — or is held under the same alias with another `acquiredAt`, a container handed
+out again by a holder Mate did not see — every conversation bound to it is unbound before the acquiring
+one is bound; a conversation whose record could not be read at that read is unbound at the next one. The
 binding is a field of its own, never `worktreePath`: T3 runs `git worktree remove` on a thread's
 `worktreePath` when the thread goes, and a lease mount is a container zcp holds, not a directory a
 thread owns — nothing removes or releases it with the thread; releasing it is the agent's
@@ -3044,10 +3046,11 @@ a binding. When the bound lease ends, the conversation is unbound and then bound
 acquired** (`acquiredAt`) lease of its branch that the same call read as still held; with none left it
 stays unbound. A branch release names no single lease, so every lease it lists as released unbinds
 whoever is bound to it. The Git tab, Diff, the terminal's checkouts and the addresses show **every held
-lease of the bound branch** (bound lease first, each named `<pool> · <branch>`), taken from the
-conversation's own last envelope — a member another conversation ended keeps showing until this
-conversation's next Zerops call reads the leases. No new event, command or envelope key carries any of
-this.
+lease of the bound branch** (bound lease first, each named `<pool> · <branch>`), taken from the Mate's
+one set of leases: the latest any conversation's Zerops call read, kept across a restart of the Mate
+server and pushed to every open conversation when it changes — so a member another conversation ended
+leaves every view at that read, never at a conversation's own older envelope. No new event, command or
+envelope key carries any of this.
 
 `zeropsPolicy` reads `ServerConfig` **optionally**: no config in context (most existing tests) reads
 as `UPSTREAM_POLICY`, the same set every one of upstream's own behaviours already has — the policy
