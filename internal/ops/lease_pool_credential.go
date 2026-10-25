@@ -150,6 +150,39 @@ func forgetPoolCredential(stateDir, pool string) error {
 	return nil
 }
 
+// poolCredentialLockWait bounds the wait for a pool's credential lock: its
+// holders read the pool's env and delete and create one variable under it.
+const poolCredentialLockWait = time.Minute
+
+func poolCredentialLockPath(stateDir, pool string) string {
+	return filepath.Join(stateDir, leaseLocksDir, "credential-"+pool+".lock")
+}
+
+// lockPoolCredential takes pool's credential lock (a flock, across this
+// process's calls and every zcp process sharing the state directory), waiting
+// up to poolCredentialLockWait. Every decision to write the pool's HQ
+// credential holds it from the read of zcp's records through the write and the
+// record's store, and so does a drop of the record: a write deletes the
+// variable and creates it anew, so two writers deciding together — acquires of
+// different keys on one pool, an acquire and the repository pass — would each
+// delete the variable under the other's fresh sessions (DP-16). The caller
+// MUST call the returned release function.
+func lockPoolCredential(ctx context.Context, stateDir, pool string) (func(), error) {
+	if stateDir == "" || !leasePoolNameRe.MatchString(pool) {
+		return nil, errors.New("lock pool credential: no state directory or an unusable pool name")
+	}
+	if err := os.MkdirAll(filepath.Join(stateDir, leaseLocksDir), 0o700); err != nil {
+		return nil, fmt.Errorf("create lease lock directory: %w", err)
+	}
+	lctx, cancel := context.WithTimeout(ctx, poolCredentialLockWait)
+	defer cancel()
+	unlock, err := lockLeaseKey(lctx, poolCredentialLockPath(stateDir, pool))
+	if err != nil {
+		return nil, fmt.Errorf("lock the HQ credential of pool %s: %w", pool, err)
+	}
+	return unlock, nil
+}
+
 // writePoolHQCredential puts credential on the pool's PoolHQCredentialEnvKey as
 // a sensitive service secret (EnvSetService: the hand-rolled userData write)
 // and records its fingerprint; the pool's GIT_TOKEN is never touched. The
@@ -170,7 +203,9 @@ type poolCredentialState struct {
 	// pool's GIT_TOKEN — the user's.
 	pool        string
 	fingerprint string
-	// wrote: this acquire wrote it, so a fresh session may not read it yet.
+	// wrote: this acquire wrote it, or found it written by another call while
+	// it waited for the pool's credential lock, so a fresh session may not
+	// read it yet.
 	wrote bool
 }
 
@@ -201,6 +236,20 @@ func ensurePoolHQCredential(ctx context.Context, d LeaseDeps, pool *platform.Ser
 	if d.PoolCredential.holds(d.StateDir, pool, state.fingerprint) {
 		return state, nil
 	}
+	// One decision and write per pool at a time: an acquire of another key on
+	// this pool, or the repository pass, may be deciding now; the records are
+	// read again once the lock is held.
+	unlock, err := lockPoolCredential(ctx, d.StateDir, pool.Name)
+	if err != nil {
+		return poolCredentialState{}, platform.NewPlatformError(platform.ErrAPIError,
+			fmt.Sprintf("Pool '%s' could not be given this Mate's HQ credential as its %s, which a lease of a repository on HQ fetches with: %v", pool.Name, PoolHQCredentialEnvKey, err),
+			"Another zcp call was writing it. No container was taken; acquire again. It is no user's token, so never ask for one or make one up")
+	}
+	defer unlock()
+	if d.PoolCredential.holds(d.StateDir, pool, state.fingerprint) {
+		state.wrote = true
+		return state, nil
+	}
 	if err := writePoolHQCredential(ctx, d.Client, d.StateDir, pool.Name, pool.ID, credential); err != nil {
 		code := platform.ErrAPIError
 		var pe *platform.PlatformError
@@ -228,9 +277,24 @@ func (s poolCredentialState) checkout(ctx context.Context, d LeaseDeps, rec leas
 	got, err := checkoutLease(ctx, d, rec, repo, branch, base, from)
 	var pe *platform.PlatformError
 	if s.pool != "" && errors.As(err, &pe) && pe.Code == platform.ErrPrerequisiteMissing {
-		_ = forgetPoolCredential(d.StateDir, s.pool)
+		s.forget(ctx, d.StateDir)
 	}
 	return got, err
+}
+
+// forget drops the pool's record after HQ refused the credential it names,
+// under the pool's credential lock and only while it still names the
+// credential this acquire checked out with: a record another call wrote since
+// says that call's write, which this refusal says nothing about.
+func (s poolCredentialState) forget(ctx context.Context, stateDir string) {
+	unlock, err := lockPoolCredential(ctx, stateDir, s.pool)
+	if err != nil {
+		return
+	}
+	defer unlock()
+	if rec, found := readPoolCredential(stateDir, s.pool); found && rec.Fingerprint == s.fingerprint {
+		_ = forgetPoolCredential(stateDir, s.pool)
+	}
 }
 
 // awaitSession reads, after a write, the fingerprint of the HQ credential in
@@ -306,23 +370,37 @@ func RenewPoolHQCredentials(ctx context.Context, client platform.Client, stateDi
 		if e.IsDir() || !isRecord {
 			continue
 		}
-		rec, found := readPoolCredential(stateDir, pool)
-		if !found || rec.Fingerprint == fingerprint {
+		if rec, found := readPoolCredential(stateDir, pool); !found || rec.Fingerprint == fingerprint {
 			continue
 		}
-		// By id: the record names the pool service zcp wrote, and the service
-		// search lags writes.
-		if _, err := client.GetService(ctx, rec.PoolServiceID); err != nil {
-			if IsServiceGone(err) {
-				_ = forgetPoolCredential(stateDir, pool)
-				continue
-			}
-			failures = append(failures, PoolCredentialFailure{Pool: pool, Err: fmt.Errorf("read pool %s: %w", pool, err)})
-			continue
-		}
-		if err := writePoolHQCredential(ctx, client, stateDir, pool, rec.PoolServiceID, credential); err != nil {
+		if err := renewPoolHQCredential(ctx, client, stateDir, pool, credential, fingerprint); err != nil {
 			failures = append(failures, PoolCredentialFailure{Pool: pool, Err: err})
 		}
 	}
 	return failures
+}
+
+// renewPoolHQCredential is RenewPoolHQCredentials for one pool, under the
+// pool's credential lock: the record is read again there, so an acquire that
+// wrote the credential meanwhile is never written over.
+func renewPoolHQCredential(ctx context.Context, client platform.Client, stateDir, pool, credential, fingerprint string) error {
+	unlock, err := lockPoolCredential(ctx, stateDir, pool)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	rec, found := readPoolCredential(stateDir, pool)
+	if !found || rec.Fingerprint == fingerprint {
+		return nil
+	}
+	// By id: the record names the pool service zcp wrote, and the service
+	// search lags writes.
+	if _, err := client.GetService(ctx, rec.PoolServiceID); err != nil {
+		if IsServiceGone(err) {
+			_ = forgetPoolCredential(stateDir, pool)
+			return nil
+		}
+		return fmt.Errorf("read pool %s: %w", pool, err)
+	}
+	return writePoolHQCredential(ctx, client, stateDir, pool, rec.PoolServiceID, credential)
 }
