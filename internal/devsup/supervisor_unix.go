@@ -172,7 +172,7 @@ type Supervisor struct {
 	decl    DeclarationInfo
 	// persistMu orders state.json writes so the newest snapshot lands last.
 	persistMu sync.Mutex
-	// closed: Shutdown ran; a pending retry starts nothing.
+	// closed: Shutdown ran; nothing starts, and no watch is set up.
 	closed bool
 	// outOfMemory: systemd restarted the service because it ran out of
 	// memory. Set once, before Boot starts anything.
@@ -508,7 +508,9 @@ func (s *Supervisor) startAll(names []string, reason string) {
 func (s *Supervisor) start(name, reason string) {
 	s.mu.Lock()
 	sv := s.servers[name]
-	if sv == nil || sv.g != nil {
+	// After Shutdown nothing starts: a ctl call or a watched burst that
+	// waited for op would leave a group the supervisor's exit never ends.
+	if sv == nil || sv.g != nil || s.closed {
 		if sv != nil {
 			sv.starting = false
 		}
@@ -772,7 +774,7 @@ func (s *Supervisor) syncWatches() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for name, sv := range s.servers {
-		need := sv.desired == DesiredRunning && sv.spec.Watch != nil
+		need := !s.closed && sv.desired == DesiredRunning && sv.spec.Watch != nil
 		if sv.watch != nil && (!need || !sameWatch(sv.watch.w, sv.spec.Watch)) {
 			sv.watch.close()
 			sv.watch = nil
