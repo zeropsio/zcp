@@ -1033,10 +1033,9 @@ func (l *hqLab) forget(number int) {
 }
 
 // openRecorded opens the pair's work as the Mate's change (openChange) and
-// keeps it in the ledger on the branch HQ bound it to; it answers its number.
-func (l *hqLab) openRecorded() int {
+// keeps it in the ledger on the branch HQ bound it to.
+func (l *hqLab) openRecorded() {
 	l.t.Helper()
 	c := l.openChange()
 	l.record(c.Number, strings.TrimPrefix(c.Branch, "refs/heads/"))
-	return c.Number
 }

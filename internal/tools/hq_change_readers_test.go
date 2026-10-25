@@ -4,6 +4,7 @@
 package tools
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/ops"
@@ -27,7 +28,7 @@ func TestPoolMigrateWorkBranch_TheLedgersOneChangeOfTheRepository(t *testing.T) 
 	if got := poolMigrateWorkBranchOf(meta, census, rt, one); got.Branch != "fix-login" || got.Source != poolMigrateWorkFromChange {
 		t.Errorf("work branch = %+v, want fix-login from the change", got)
 	}
-	several := append(one, workflow.HQChange{AppID: labApp, Repo: "appdev", Number: 8, Branch: "add-signup"})
+	several := append(slices.Clone(one), workflow.HQChange{AppID: labApp, Repo: "appdev", Number: 8, Branch: "add-signup"})
 	if got := poolMigrateWorkBranchOf(meta, census, rt, several); got.Branch != "feat" || got.Source != poolMigrateWorkFromCurrent {
 		t.Errorf("work branch with several changes = %+v, want the checkout's own feat", got)
 	}

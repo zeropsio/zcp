@@ -72,7 +72,7 @@ func hqLaunchProductionRefusal(ctx context.Context, httpClient ops.HTTPDoer, sta
 }
 
 // hqLaunchProductionNextStep says what is true of THIS Mate's own pairs rather
-// than a lecture. A pair's recorded change number is only cleared when a pass
+// than a lecture. A change the ledger keeps is only forgotten when a pass
 // reads HQ, and that pass is backoff-gated — so a change the person already
 // merged can still be sitting here as "open" the moment this runs. The
 // Mate's own state is read fresh first, so "merge #N first" is never said
@@ -109,7 +109,9 @@ func hqLaunchProductionNextStep(ctx context.Context, httpClient ops.HTTPDoer, st
 			if state.AppID == nil || *state.AppID != m.HQ.AppID {
 				continue
 			}
-			hqLearnLanding(stateDir, m, state)
+			for _, c := range changesIn(hqChanges(stateDir), m.HQ.AppID, m.HQ.Repo) {
+				learnChangeLanding(stateDir, c, state)
+			}
 			// HQ keeps the merged history: read it there, rather than keeping
 			// a second last-merge record.
 			for _, change := range state.Changes {

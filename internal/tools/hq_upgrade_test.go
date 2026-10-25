@@ -1,7 +1,7 @@
 // Tests for: a pair that takes this zcp mid-change from the released one —
 // which recorded the Mate's local branch mate/<id> where this zcp records
 // the change's branch, HQ binding the change to mate/<id>/<n>
-// (tools/hq_change.go upgradeReleasedBranch, hqOpenChangeWork), run against a
+// (workflow.ReleasedBranchOf, tools/hq_change.go hqOpenChangeWork), run against a
 // fake HQ that serves real git (hq_lab_test.go).
 package tools
 

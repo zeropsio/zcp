@@ -66,6 +66,9 @@ func TestHQChangeLedger_OneFilePerChange(t *testing.T) {
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("a forgotten change's file stays: %v", err)
 	}
+	if err := ForgetHQChange(t.TempDir(), "app-1", "appsdev", 6); err != nil {
+		t.Errorf("forgetting a change of a repository the ledger never kept: %v", err)
+	}
 }
 
 // TestHQChangeLedger_RefusesANameThatIsNoPathPart: an application or

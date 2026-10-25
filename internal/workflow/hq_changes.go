@@ -171,7 +171,7 @@ func UpsertHQChange(stateDir, appID, repo string, number int, fn func(c *HQChang
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("hq change ledger mkdir: %w", err)
 	}
-	release, err := lockHQChangeFile(context.Background(), hqChangeLockPath(path, "lock"), hqChangeWriteWait)
+	release, err := lockHQChangeFile(hqChangeLockPath(path, "lock"), hqChangeWriteWait, nil)
 	if err != nil {
 		return fmt.Errorf("hq change #%d of %s: %w", number, repo, err)
 	}
@@ -228,7 +228,10 @@ func ForgetHQChange(stateDir, appID, repo string, number int) error {
 	if err != nil {
 		return err
 	}
-	release, err := lockHQChangeFile(context.Background(), hqChangeLockPath(path, "lock"), hqChangeWriteWait)
+	if _, err := os.Stat(filepath.Dir(path)); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	release, err := lockHQChangeFile(hqChangeLockPath(path, "lock"), hqChangeWriteWait, nil)
 	if err != nil {
 		return fmt.Errorf("hq change #%d of %s: %w", number, repo, err)
 	}
@@ -312,7 +315,11 @@ func HoldHQChange(ctx context.Context, stateDir, appID, repo string, number int,
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("hq change ledger mkdir: %w", err)
 	}
-	return lockHQChangeFile(ctx, hqChangeLockPath(path, "hold"), wait)
+	release, err = lockHQChangeFile(hqChangeLockPath(path, "hold"), wait, ctx.Done())
+	if errors.Is(err, errHQChangeLockGivenUp) {
+		return nil, ctx.Err()
+	}
+	return release, err
 }
 
 // hqChangeLockPath is the lock file of kind ("lock", "hold") beside a change's
@@ -321,8 +328,13 @@ func hqChangeLockPath(path, kind string) string {
 	return filepath.Join(filepath.Dir(path), "."+strings.TrimSuffix(filepath.Base(path), ".json")+"."+kind)
 }
 
-// lockHQChangeFile takes an exclusive lock on path, waiting up to wait.
-func lockHQChangeFile(ctx context.Context, path string, wait time.Duration) (func(), error) {
+// errHQChangeLockGivenUp is lockHQChangeFile giving up because done closed.
+var errHQChangeLockGivenUp = errors.New("gave up waiting for the change")
+
+// lockHQChangeFile takes an exclusive lock on path, waiting up to wait, or
+// until done closes (nil: never) — ErrHQChangeBusy past the wait,
+// errHQChangeLockGivenUp once done closed.
+func lockHQChangeFile(path string, wait time.Duration, done <-chan struct{}) (func(), error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("hq change lock open: %w", err)
@@ -346,9 +358,9 @@ func lockHQChangeFile(ctx context.Context, path string, wait time.Duration) (fun
 			return nil, ErrHQChangeBusy
 		}
 		select {
-		case <-ctx.Done():
+		case <-done:
 			_ = f.Close()
-			return nil, ctx.Err()
+			return nil, errHQChangeLockGivenUp
 		case <-time.After(min(flockInterval, left)):
 		}
 	}
@@ -410,4 +422,29 @@ func MovePairChangesToLedger(stateDir string, branchOf func(number int, branch s
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// ReleasedBranchOf is the branch a pair's record names for its change number,
+// as the ledger keeps it: the branch a released zcp kept the work on — the
+// Mate's own, `mate/<project id>`, which HQ binds no change to — is the
+// change's `mate/<project id>/<number>`, as HQ bound that zcp's changes,
+// opened naming no branch; any other is the change's as recorded.
+func ReleasedBranchOf(number int, branch string) string {
+	if rest, ok := strings.CutPrefix(branch, "mate/"); ok && rest != "" && !strings.Contains(rest, "/") {
+		return branch + "/" + strconv.Itoa(number)
+	}
+	return branch
+}
+
+// HQChanges is every change the ledger keeps, the pairs' records moved into it
+// first (MovePairChangesToLedger, ReleasedBranchOf): what every reader of the
+// Mate's changes reads. A pair record that could not move stays for the next
+// read; what moved is listed either way.
+func HQChanges(stateDir string) ([]HQChange, error) {
+	moveErr := MovePairChangesToLedger(stateDir, ReleasedBranchOf)
+	changes, err := ListHQChanges(stateDir)
+	if err != nil {
+		return nil, errors.Join(moveErr, err)
+	}
+	return changes, moveErr
 }

@@ -1,21 +1,26 @@
 package tools
 
 import (
+	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/hq"
-	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // A Mate's change lands its work on its repository's `main` (SPEC §3.2a).
 // `main` moves only by HQ's merge, so the change is not a courtesy — it is
-// the ONLY way the pair's code reaches it. The agent pushes a branch of its
-// own with plain git and opens its change from it (open-change); a Mate has
-// at most one open change per repository: opening answers the open one, or
-// the next number. Its number is recorded on the pair; what became of it is
-// read from the Mate's own state in HQ.
+// the ONLY way the Mate's code reaches it. The agent pushes a branch of its
+// own with plain git and opens that branch's change (open-change): one change
+// per branch, an open change being (application, repository, branch). An HQ
+// that keeps an open change per branch says so in the Mate's state
+// (openPerBranch); an older one keeps one open change per repository and
+// answers it to any opener. zcp keeps each change it knows of in the change
+// ledger (workflow.HQChange), never on a pair: pairs share repositories, and
+// leases have no pair. What became of a change is read from the Mate's own
+// state in HQ.
 
 // hqBase is the branch a change lands on.
 const hqBase = "main"
@@ -23,86 +28,39 @@ const hqBase = "main"
 // changeTitleRunes bounds a title: HQ keeps at most 120 characters.
 const changeTitleRunes = 120
 
-// recordChange stamps the change's number and its branch's short name on the
-// pair, in memory and on disk. Best-effort on disk: a pass that could not
-// write it opens the same change again next time and finds it, which costs a
-// call and nothing else. A pair gone from disk meanwhile — a pool migration
-// re-keyed it — keeps no stub under the hostname read.
-func recordChange(stateDir string, m *workflow.ServiceMeta, number int, branch string) {
-	m.HQ.Change, m.HQ.Branch = number, branch
-	_ = workflow.UpsertServiceMeta(stateDir, m.Hostname, func(meta *workflow.ServiceMeta, existed bool) error {
-		if !existed || meta.HQ == nil {
-			return workflow.ErrSkipWrite
+// hqChanges is every change the ledger keeps, the pairs' records an older zcp
+// wrote moved into it first (workflow.HQChanges). A ledger that cannot be
+// read reads as none: every reader says only what it knows.
+func hqChanges(stateDir string) []workflow.HQChange {
+	changes, _ := workflow.HQChanges(stateDir)
+	return changes
+}
+
+// changesIn is changes of appID's repo, by number.
+func changesIn(changes []workflow.HQChange, appID, repo string) []workflow.HQChange {
+	var out []workflow.HQChange
+	for _, c := range changes {
+		if c.AppID == appID && c.Repo == repo {
+			out = append(out, c)
 		}
-		meta.HQ.Change, meta.HQ.Branch = number, branch
-		return nil
+	}
+	return out
+}
+
+// recordHQChange keeps change number of appID's repo, on branch, in the
+// ledger. Best-effort: a call that could not write it finds the change again
+// in the Mate's state next time, which costs a call and nothing else.
+func recordHQChange(stateDir, appID, repo string, number int, branch, title, source string) {
+	_ = workflow.RecordHQChange(stateDir, workflow.HQChange{
+		AppID: appID, Repo: repo, Number: number, Branch: branch, Title: title, Source: source,
 	})
 }
 
 // hqReleasedBranch is the branch an older zcp kept a wired pair's work on in
-// its checkout, and recorded where the pair now records its change's branch
-// (workflow.HQRepoRef.Branch): the Mate's own, never a change's — HQ bound
-// that zcp's changes, opened naming no branch, to ChangeBranch.
+// its checkout: the Mate's own, never a change's — HQ bound that zcp's
+// changes, opened naming no branch, to ChangeBranch (workflow.ReleasedBranchOf
+// moves such a record into the ledger on the change's branch).
 func hqReleasedBranch(hqc hq.Client) string { return "mate/" + hqc.ProjectID() }
-
-// upgradeReleasedBranch records, on a pair whose record an older zcp wrote,
-// the branch its change is on in place of the Mate's own — ChangeBranch, as
-// HQ bound it, or none without a change — in memory and on disk. Nothing
-// then names the Mate's own branch as the change's: HQ refuses a push to it.
-func upgradeReleasedBranch(stateDir string, hqc hq.Client, m *workflow.ServiceMeta) {
-	released := hqReleasedBranch(hqc)
-	upgrade := func(ref *workflow.HQRepoRef) {
-		if ref.Branch != released {
-			return
-		}
-		ref.Branch = ""
-		if ref.Change != 0 {
-			ref.Branch = hqc.ChangeBranch(ref.Change)
-		}
-	}
-	if m == nil || m.HQ == nil || m.HQ.Branch != released {
-		return
-	}
-	upgrade(m.HQ)
-	_ = workflow.UpsertServiceMeta(stateDir, m.Hostname, func(meta *workflow.ServiceMeta, existed bool) error {
-		if !existed || meta.HQ == nil {
-			return workflow.ErrSkipWrite
-		}
-		upgrade(meta.HQ)
-		return nil
-	})
-}
-
-// upgradeReleasedBranches upgrades every wired pair's record an older zcp
-// wrote (upgradeReleasedBranch): status renders the records after it. A Mate
-// not enrolled has no record of a change.
-func upgradeReleasedBranches(httpClient ops.HTTPDoer, stateDir string) {
-	hqc, enrolled := openHQ(httpClient)
-	if !enrolled {
-		return
-	}
-	metas, err := workflow.ListServiceMetas(stateDir)
-	if err != nil {
-		return
-	}
-	for _, m := range metas {
-		if hqPairWired(m) {
-			upgradeReleasedBranch(stateDir, hqc, m)
-		}
-	}
-}
-
-// hqOpenChangeWork says, while the pair's change is open, that the work goes
-// on its branch and how to take it: work cut from main, as develop's start
-// otherwise has it, is no fast-forward of that branch, and HQ refuses its
-// push. "" for no change, or one whose branch HQ did not name.
-func hqOpenChangeWork(hqc hq.Client, m *workflow.ServiceMeta) string {
-	if m.HQ.Change == 0 || m.HQ.Branch == "" {
-		return ""
-	}
-	return fmt.Sprintf("change #%d in %q is open on the branch %q, so this Mate's work there goes on that branch rather than on a branch cut from %q: %s, carry the work on and push it (`git push origin %s`), never force-pushing; cut the next work's branch from %q once #%d is merged or closed",
-		m.HQ.Change, m.HQ.Repo, m.HQ.Branch, hqBase, takeChangeBranch(hqc, m.HQ.Branch), m.HQ.Branch, hqBase, m.HQ.Change)
-}
 
 // takeChangeBranch says how the agent takes branch, the Mate's open change's,
 // in its own shell on the mounted checkout. A checkout an older zcp kept the
@@ -118,96 +76,244 @@ func takeChangeBranch(hqc hq.Client, branch string) string {
 	return take
 }
 
-// hqTakeHanded records the change a person handed this Mate in the pair's
-// repository, from a Mate that is gone, as the pair's change on the branch
-// it was on, and says so once: the Mate's own state in HQ is the only word
-// of a hand-over. "" when none is handed, or the pair records it already.
-// HQ hands a change only to a Mate holding no open change in the
-// repository, so a change the pair records is replaced only once it is no
-// longer open (hqLearnLanding runs first).
-func hqTakeHanded(stateDir string, hqc hq.Client, m *workflow.ServiceMeta, state hq.MateState) string {
-	handed := handedChangeIn(state, m.HQ)
-	if handed == nil || m.HQ.Change == handed.Number {
+// hqOpenChangeWork says, on an HQ that keeps one open change per repository,
+// that while change c is open this Mate's work in its repository goes on its
+// branch, and how to take it: work cut from main is no fast-forward of that
+// branch, and that HQ opens no second change for it. "" for a change whose
+// branch HQ did not name.
+func hqOpenChangeWork(hqc hq.Client, c workflow.HQChange) string {
+	if c.Branch == "" {
 		return ""
 	}
-	branch := hqc.BranchOf(handed.Number, handed.Branch)
-	recordChange(stateDir, m, handed.Number, branch)
-	return handedWork(handed, m.HQ.Repo, branch)
+	return fmt.Sprintf("change #%d in %q is open on the branch %q, so this Mate's work there goes on that branch rather than on a branch cut from %q: %s, carry the work on and push it (`git push origin %s`), never force-pushing; cut the next work's branch from %q once #%d is merged or closed",
+		c.Number, c.Repo, c.Branch, hqBase, takeChangeBranch(hqc, c.Branch), c.Branch, hqBase, c.Number)
 }
 
-// handedChangeIn is the open change state says a person handed the Mate in
-// the repository ref names, nil for none or a state of another application.
-func handedChangeIn(state hq.MateState, ref *workflow.HQRepoRef) *hq.MateChange {
-	if state.AppID == nil || *state.AppID != ref.AppID {
+// handedChangesIn is the open changes state says a person handed the Mate in
+// appID's repo, by number; none for a state of another application.
+func handedChangesIn(state hq.MateState, appID, repo string) []hq.MateChange {
+	if state.AppID == nil || *state.AppID != appID {
 		return nil
 	}
-	for i := range state.Changes {
-		if c := &state.Changes[i]; c.Repo == ref.Repo && c.State == hq.ChangeOpen && c.Handed {
-			return c
+	var handed []hq.MateChange
+	for _, c := range state.Changes {
+		if c.Repo == repo && c.State == hq.ChangeOpen && c.Handed {
+			handed = append(handed, c)
 		}
 	}
-	return nil
+	slices.SortFunc(handed, func(a, b hq.MateChange) int { return a.Number - b.Number })
+	return handed
 }
 
 // handedWork says a handed change is the Mate's and where its work goes:
 // onto its branch, taken from HQ when its gone Mate pushed to it, cut from
-// main when nothing is there yet.
-func handedWork(change *hq.MateChange, repo, branch string) string {
+// main when nothing is there yet. On an HQ that keeps one open change per
+// repository (onePerRepo) no other change opens there while it is open.
+func handedWork(change hq.MateChange, repo, branch string, onePerRepo bool) string {
 	take := fmt.Sprintf("its work so far is on the branch %q: in your own shell on the mounted checkout take that branch (`git fetch origin %s && git checkout %s`)",
 		branch, branch, branch)
 	if change.Head == nil {
 		take = fmt.Sprintf("nothing is pushed to its branch %q yet: in your own shell on the mounted checkout cut it from %q (`git fetch origin %s && git checkout -b %s origin/%s`)",
 			branch, hqBase, hqBase, branch, hqBase)
 	}
-	return fmt.Sprintf("change #%d in %q was handed to this Mate from a Mate that is gone and is its change now — %s, carry the change on there and push to it (`git push origin %s`), never force-pushing, and open no other change in %q while it is open",
-		change.Number, repo, take, branch, repo)
+	words := fmt.Sprintf("change #%d in %q was handed to this Mate from a Mate that is gone and is its change now — %s, carry the change on there and push to it (`git push origin %s`), never force-pushing",
+		change.Number, repo, take, branch)
+	if onePerRepo {
+		words += fmt.Sprintf(", and open no other change in %q while it is open", repo)
+	}
+	return words
 }
 
-// hqLearnLanding reads what became of the pair's change on record from the
-// Mate's own state in HQ, freshly read, and says so once. Nothing pushes this
-// fact: a person merges in the app's review, and a design that waited to be
-// told would be right for one caller and silently wrong for the rest. Passes,
-// describes and the launch refusal ask, so a merge landed since the last read
-// is known before the caller acts on the pair's change.
-//
-// The recorded number is cleared as soon as the change is no longer open. A
-// change HQ no longer lists for the Mate reads as closed. Returns "" while
-// the change is open, which is the ordinary state and worth no words.
-func hqLearnLanding(stateDir string, m *workflow.ServiceMeta, state hq.MateState) string {
-	if m == nil || m.HQ == nil || m.HQ.Change == 0 {
+// hqTakeHanded keeps every change a person handed this Mate in appID's repo,
+// from a Mate that is gone, in the ledger on the branch it was on, and says
+// each once: the Mate's own state in HQ is the only word of a hand-over. A
+// change the ledger keeps already is said no more.
+func hqTakeHanded(stateDir string, hqc hq.Client, state hq.MateState, appID, repo string, kept []workflow.HQChange) []string {
+	var lines []string
+	for _, handed := range handedChangesIn(state, appID, repo) {
+		if slices.ContainsFunc(kept, func(c workflow.HQChange) bool { return c.Number == handed.Number }) {
+			continue
+		}
+		branch := hqc.BranchOf(handed.Number, handed.Branch)
+		recordHQChange(stateDir, appID, repo, handed.Number, branch, titleOf(handed), workflow.HQChangeFromHanded)
+		lines = append(lines, handedWork(handed, repo, branch, !state.OpenPerBranch))
+	}
+	return lines
+}
+
+// titleOf is a change's title as the Mate's state names it, "" for none.
+func titleOf(c hq.MateChange) string {
+	if c.Title == nil {
 		return ""
 	}
-	number := m.HQ.Change
-	var found *hq.MateChange
+	return *c.Title
+}
+
+// changeOutcome is what the Mate's state says became of a change zcp keeps.
+type changeOutcome int
+
+const (
+	// changeStillOpen: the state names it open.
+	changeStillOpen changeOutcome = iota
+	// changeMerged: the state names it merged.
+	changeMerged
+	// changeClosed: the state names it closed without merging — or, from an
+	// HQ that keeps one open change per repository, lists it no more while
+	// it would still list it.
+	changeClosed
+	// changeUnlisted: an HQ that lists every open change lists it no more —
+	// it settled, and more changes settled since than its state lists, so
+	// whether it merged is its review's to say.
+	changeUnlisted
+	// changeUnknown: an older HQ lists it no more, and lists as many of the
+	// Mate's changes in the repository as it lists at all, each newer: an
+	// open change older than those falls out of that HQ's window (I7), so
+	// it is kept, unknown, never read as closed.
+	changeUnknown
+)
+
+// outcomeOf is what state says became of c, with the change as state names
+// it (nil when it names none).
+func outcomeOf(state hq.MateState, c workflow.HQChange) (changeOutcome, *hq.MateChange) {
+	listed, oldest := 0, 0
 	for i := range state.Changes {
-		if c := state.Changes[i]; c.Repo == m.HQ.Repo && c.Number == number {
-			found = &state.Changes[i]
-			break
+		s := &state.Changes[i]
+		if s.Repo != c.Repo {
+			continue
+		}
+		if s.Number == c.Number {
+			switch s.State {
+			case hq.ChangeOpen:
+				return changeStillOpen, s
+			case hq.ChangeMerged:
+				return changeMerged, s
+			}
+			return changeClosed, s
+		}
+		listed++
+		if oldest == 0 || s.Number < oldest {
+			oldest = s.Number
 		}
 	}
-	if found != nil && found.State == hq.ChangeOpen {
-		return ""
+	switch {
+	case state.OpenPerBranch:
+		return changeUnlisted, nil
+	case listed >= hq.MateChangesPerRepo && c.Number < oldest:
+		return changeUnknown, nil
 	}
-	clearChange(stateDir, m, number)
-	if found != nil && found.State == hq.ChangeMerged {
-		return fmt.Sprintf("change #%d is merged — this Mate's work is on %q now; bring it up to date in your own shell on the mounted checkout, never over ssh (`git checkout %s && git fetch origin && git merge --ff-only origin/%s`), and cut the next work's branch from it", number, hqBase, hqBase, hqBase)
-	}
-	return fmt.Sprintf("change #%d was closed without merging — nothing of it is on %q", number, hqBase)
+	return changeClosed, nil
 }
 
-// clearChange forgets the number a pair recorded, in memory and on disk, once
-// HQ says the change is no longer open without merging. number is the change
-// the read was FOR: the disk write applies only while the fresh meta still
-// records it — a concurrent describe may have moved the pair on to a newer
-// change between the read and the write — and never on a pair gone from
-// disk meanwhile, which keeps no stub.
-func clearChange(stateDir string, m *workflow.ServiceMeta, number int) {
-	m.HQ.Change, m.HQ.Branch = 0, ""
-	_ = workflow.UpsertServiceMeta(stateDir, m.Hostname, func(meta *workflow.ServiceMeta, existed bool) error {
-		if !existed || meta.HQ == nil || meta.HQ.Change != number {
-			return workflow.ErrSkipWrite
-		}
-		meta.HQ.Change, meta.HQ.Branch = 0, ""
+// learnChangeLanding reads what became of c, a change the ledger keeps, from
+// the Mate's own state in HQ, freshly read, and says so once. Nothing pushes
+// this fact: a person merges in the app's review, and a design that waited to
+// be told would be right for one caller and silently wrong for the rest.
+// Passes, describes and the launch refusal ask, so a merge landed since the
+// last read is known before the caller acts on the change.
+//
+// The change is forgotten as soon as it is no longer open. "" while it is
+// open, which is the ordinary state and worth no words — or unknown.
+func learnChangeLanding(stateDir string, c workflow.HQChange, state hq.MateState) string {
+	outcome, _ := outcomeOf(state, c)
+	if outcome == changeStillOpen || outcome == changeUnknown {
+		return ""
+	}
+	_ = workflow.ForgetHQChange(stateDir, c.AppID, c.Repo, c.Number)
+	switch outcome {
+	case changeMerged:
+		return fmt.Sprintf("change #%d is merged — this Mate's work is on %q now; bring it up to date in your own shell on the mounted checkout, never over ssh (`git checkout %s && git fetch origin && git merge --ff-only origin/%s`), and cut the next work's branch from it", c.Number, hqBase, hqBase, hqBase)
+	case changeUnlisted:
+		return fmt.Sprintf("change #%d is no longer open — HQ lists it among this Mate's changes no more, so whether it merged is its review's to say (%s)", c.Number, changeBranchWords(c))
+	case changeStillOpen, changeClosed, changeUnknown:
+	}
+	return fmt.Sprintf("change #%d was closed without merging — nothing of it is on %q", c.Number, hqBase)
+}
+
+// changeBranchWords names c's branch, or that HQ named none.
+func changeBranchWords(c workflow.HQChange) string {
+	if c.Branch == "" {
+		return "a branch HQ did not name"
+	}
+	return fmt.Sprintf("its branch %q", c.Branch)
+}
+
+// hqChangesPass is the changes' turn of a repository pass, after its pairs':
+// per repository of the application HQ holds the Mate in, what became of each
+// change the ledger keeps there (learnChangeLanding), then each change handed
+// to the Mate (hqTakeHanded) — and, at develop's start (atStart), on an HQ
+// that keeps one open change per repository, the change still open, where
+// the work goes (hqOpenChangeWork). A change another step holds (a describe)
+// is left to the next pass. Changes of another application than the one HQ
+// holds the Mate in stay there, said once.
+func hqChangesPass(ctx context.Context, stateDir string, hqc hq.Client, state hq.MateState, atStart bool) []string {
+	if state.AppID == nil {
 		return nil
-	})
+	}
+	app := *state.AppID
+	changes := hqChanges(stateDir)
+	var lines []string
+	for _, c := range changes {
+		if c.AppID != app {
+			_ = workflow.ForgetHQChange(stateDir, c.AppID, c.Repo, c.Number)
+			lines = append(lines, fmt.Sprintf("change #%d in %q stays in the application it was opened in: HQ holds this Mate in another now", c.Number, c.Repo))
+		}
+	}
+	for _, repo := range hqChangeRepos(stateDir, app, changes) {
+		var said []string
+		for _, c := range changesIn(changes, app, repo) {
+			release, err := workflow.HoldHQChange(ctx, stateDir, c.AppID, c.Repo, c.Number, 0)
+			if err != nil {
+				continue
+			}
+			line := learnChangeLanding(stateDir, c, state)
+			release()
+			if line != "" {
+				said = append(said, line)
+			}
+		}
+		kept := changesIn(hqChanges(stateDir), app, repo)
+		handed := hqTakeHanded(stateDir, hqc, state, app, repo, kept)
+		said = append(said, handed...)
+		if atStart && !state.OpenPerBranch && len(handed) == 0 && len(kept) == 1 {
+			if work := hqOpenChangeWork(hqc, kept[0]); work != "" {
+				said = append(said, work)
+			}
+		}
+		for _, line := range said {
+			lines = append(lines, fmt.Sprintf("repository %q: %s", repo, line))
+		}
+	}
+	return lines
+}
+
+// hqChangeRepos is every repository of app a pass turns to for its changes:
+// each one the ledger keeps a change in, and each a wired pair has — a change
+// may be handed there — by name.
+func hqChangeRepos(stateDir, app string, changes []workflow.HQChange) []string {
+	var repos []string
+	for _, c := range changes {
+		if c.AppID == app && !slices.Contains(repos, c.Repo) {
+			repos = append(repos, c.Repo)
+		}
+	}
+	metas, _ := workflow.ListServiceMetas(stateDir)
+	for _, m := range metas {
+		if hqPairWired(m) && m.HQ.AppID == app && !slices.Contains(repos, m.HQ.Repo) {
+			repos = append(repos, m.HQ.Repo)
+		}
+	}
+	slices.Sort(repos)
+	return repos
+}
+
+// trackedSelf is lazySelf with whether a pass read the state at all: the
+// changes' turn runs only once a pair's turn asked HQ, so the pairs' backoff
+// paces it too.
+func trackedSelf(ctx context.Context, hqc hq.Client) (self func() (hq.MateState, error), read func() bool) {
+	lazy := lazySelf(ctx, hqc)
+	asked := false
+	return func() (hq.MateState, error) {
+		asked = true
+		return lazy()
+	}, func() bool { return asked }
 }
