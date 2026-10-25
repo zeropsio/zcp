@@ -264,10 +264,11 @@ func ExecuteDevServer(
 	if err := validateDevServerParams(p); err != nil {
 		return nil, err
 	}
-	lease, isLease, err := LeaseTarget(p.StateDir, p.Hostname)
+	rec, isLease, err := leaseTargetRecord(p.StateDir, p.Hostname)
 	if err != nil {
 		return nil, fmt.Errorf("resolve %s: %w", p.Hostname, err)
 	}
+	lease := rec.targetInfo()
 	if isLease && lease.Parked {
 		// Nothing answers on a parked lease (DP-28).
 		return nil, LeaseParkedError(lease, "zerops_dev_server")
@@ -286,6 +287,7 @@ func ExecuteDevServer(
 		// A lease's supervisor is zcp's to start: its container's run.start
 		// never runs again after the reset of an earlier release (DP-13).
 		ds, why, err = recoverLeaseSupervisor(ctx, ssh, p.Hostname, p.Root, ds, err)
+		noteLeaseAnswer(p.StateDir, rec, err, time.Now())
 		if ds != nil {
 			// It runs the entries naming its pool: the container's hostname
 			// env is the pool's.

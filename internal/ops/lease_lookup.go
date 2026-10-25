@@ -47,19 +47,29 @@ func (r leaseRecord) targetInfo() LeaseTargetInfo {
 // A host with the alias shape but no record is not a lease: only zcp's own
 // records make an alias addressable (DP-1, DP-2).
 func LeaseTarget(stateDir, host string) (LeaseTargetInfo, bool, error) {
+	rec, ok, err := leaseTargetRecord(stateDir, host)
+	if !ok || err != nil {
+		return LeaseTargetInfo{}, false, err
+	}
+	return rec.targetInfo(), true, nil
+}
+
+// leaseTargetRecord is LeaseTarget's record of host, the zero record when
+// host is no lease zcp holds.
+func leaseTargetRecord(stateDir, host string) (leaseRecord, bool, error) {
 	if stateDir == "" || !isLeaseAliasShape(host) {
-		return LeaseTargetInfo{}, false, nil
+		return leaseRecord{}, false, nil
 	}
 	records, err := readLeaseRecords(stateDir)
 	if err != nil {
-		return LeaseTargetInfo{}, false, err
+		return leaseRecord{}, false, err
 	}
 	for _, r := range records {
 		if r.alias() == host {
-			return r.targetInfo(), true, nil
+			return r, true, nil
 		}
 	}
-	return LeaseTargetInfo{}, false, nil
+	return leaseRecord{}, false, nil
 }
 
 // LeaseTargetChecked is LeaseTarget for a call that reaches the lease's

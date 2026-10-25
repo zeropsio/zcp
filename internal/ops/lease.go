@@ -794,6 +794,13 @@ type leaseRecord struct {
 	// sync and zcp init read only records, so the record says it.
 	Parked   bool   `json:"parked,omitempty"`
 	ParkedAt string `json:"parkedAt,omitempty"`
+	// NotAnswering is why the last call that ran a command in the lease's
+	// container over ssh found it not answering (leaseNotAnswering), since
+	// NotAnsweringSince (RFC 3339, UTC); both "" once a later call reached it
+	// again (noteLeaseAnswer). Every envelope's leases[] carries the reason
+	// from here, never from an ssh read of its own (docs/spec-mate.md §2.8a.3).
+	NotAnswering      string `json:"notAnswering,omitempty"`
+	NotAnsweringSince string `json:"notAnsweringSince,omitempty"`
 }
 
 func (r leaseRecord) alias() string { return leaseAlias(r.PoolHostname, r.ContainerNumber) }

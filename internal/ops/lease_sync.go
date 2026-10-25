@@ -182,13 +182,18 @@ func LeaseSync(ctx context.Context, d LeaseDeps, alias string) (LeaseSyncView, e
 	// Every step reaches a container through its alias: put back a stanza
 	// another call or a redeploy lost before any of them runs.
 	view.Note = d.Host.refreshAliases(ctx, d)
-	if err := checkSyncSource(ctx, d.SSH, alias); err != nil {
+	if err := checkSyncSource(ctx, d, rec); err != nil {
 		return LeaseSyncView{}, err
 	}
 	view.CheckMillis = time.Since(start).Milliseconds()
 	pushStart := time.Now()
 	onHQ := IsHQRemote(rec.Repo, d.hqAddress())
 	view.Push, view.Commit, err = pushLeaseBranch(ctx, d.SSH, alias, branch, onHQ)
+	// The check reached the source; a push it does not reach says so
+	// through its refusal's cause.
+	if _, silent := leaseNotAnswering(err); silent {
+		noteLeaseAnswer(d.StateDir, rec, err, d.now())
+	}
 	if err != nil {
 		return LeaseSyncView{}, err
 	}
@@ -202,14 +207,15 @@ func LeaseSync(ctx context.Context, d LeaseDeps, alias string) (LeaseSyncView, e
 		}
 	}
 	runMembers(members, func(m *LeaseSyncMember) {
-		if !memberStillHeld(ctx, d, m, alias, recordRepo(d.StateDir, rec), branch) {
+		mrec, held := memberStillHeld(ctx, d, m, alias, recordRepo(d.StateDir, rec), branch)
+		if !held {
 			return
 		}
 		if parked[m.Alias] {
 			parkedMember(m, alias)
 			return
 		}
-		fastForwardMember(ctx, d, m, branch, alias, onHQ)
+		fastForwardMember(ctx, d, mrec, m, branch, alias, onHQ)
 	})
 	for _, m := range members {
 		view.Members = append(view.Members, *m)
@@ -222,8 +228,10 @@ func LeaseSync(ctx context.Context, d LeaseDeps, alias string) (LeaseSyncView, e
 // untracked files, read with the release guard's own read (readUnsavedWork)
 // and named as it names them: zcp commits nothing (GF-2). Its commits on no
 // remote branch are what the sync pushes.
-func checkSyncSource(ctx context.Context, ssh SSHDeployer, alias string) error {
-	w, err := readUnsavedWork(ctx, ssh, alias)
+func checkSyncSource(ctx context.Context, d LeaseDeps, rec leaseRecord) error {
+	alias := rec.alias()
+	w, err := readUnsavedWork(ctx, d.SSH, alias)
+	noteLeaseAnswer(d.StateDir, rec, err, d.now())
 	if err != nil {
 		if why, ok := leaseNotAnswering(err); ok {
 			return leaseNotAnsweringError(alias, why, "nothing was pushed and no other lease was touched", err)
@@ -402,13 +410,15 @@ func leaseSyncMemberCommand(branch string) string {
 }
 
 // fastForwardMember runs one other lease's step (leaseSyncMemberCommand) and
-// records its outcome on m, with how long it took; a member that moved also
+// records its outcome on m, with how long it took, and in rec, its record,
+// whether the container answered (noteLeaseAnswer); a member that moved also
 // names its running dev servers nothing reloads. source is the lease the sync
 // pushed from, onHQ whether the repository is on the Mate's HQ.
-func fastForwardMember(ctx context.Context, d LeaseDeps, m *LeaseSyncMember, branch, source string, onHQ bool) {
+func fastForwardMember(ctx context.Context, d LeaseDeps, rec leaseRecord, m *LeaseSyncMember, branch, source string, onHQ bool) {
 	start := time.Now()
 	defer func() { m.Millis = time.Since(start).Milliseconds() }()
 	out, err := d.SSH.ExecSSH(ctx, m.Alias, leaseSyncMemberCommand(branch))
+	noteLeaseAnswer(d.StateDir, rec, err, d.now())
 	if err != nil {
 		memberFailure(m, err, onHQ)
 		return
@@ -458,22 +468,22 @@ func hasMark(a leaseSyncAnswer, key string) bool {
 }
 
 // memberStillHeld reports whether a member is still a lease of the sync's
-// group — the record at its alias of repo's branch, read again — and its
-// container its lease's (readLeaseOwnership); one that is not is recorded so,
-// nothing sent to it. The group was read before the push: a member released
+// group — the record at its alias of repo's branch, read again, returned when
+// it is — and its container its lease's (readLeaseOwnership); one that is not
+// is recorded so, nothing sent to it. The group was read before the push: a member released
 // since whose container was taken again under the same alias, for another
 // repository or branch, is lost, whatever the orchestrator answers the lease
 // its alias names now.
-func memberStillHeld(ctx context.Context, d LeaseDeps, m *LeaseSyncMember, source, repo, branch string) bool {
+func memberStillHeld(ctx context.Context, d LeaseDeps, m *LeaseSyncMember, source, repo, branch string) (leaseRecord, bool) {
 	rec, err := loadLeaseRecord(d.StateDir, m.Alias)
 	if err != nil {
 		m.Outcome, m.Note = LeaseSyncFailed, fmt.Sprintf("%s's record could not be read (%s), so zcp did not fast-forward it", m.Alias, errorNote(err))
-		return false
+		return leaseRecord{}, false
 	}
 	if of := recordRepo(d.StateDir, rec); recordBranch(rec) != branch || !topology.SameRepoURL(of, repo) {
 		m.Outcome = LeaseSyncLost
 		m.Note = fmt.Sprintf("%s now names a lease of branch %s of %s: the lease of this branch ended after the sync read the branch's leases and the container was taken again under its alias, so zcp did not fast-forward it", m.Alias, recordBranch(rec), cmp.Or(of, "a repository zcp has no record of"))
-		return false
+		return leaseRecord{}, false
 	}
 	switch v := readLeaseOwnership(ctx, d, rec); {
 	case v.own.lost():
@@ -483,9 +493,9 @@ func memberStillHeld(ctx context.Context, d LeaseDeps, m *LeaseSyncMember, sourc
 		m.Outcome = LeaseSyncUnverified
 		m.Note = fmt.Sprintf("%s: %s, so zcp did not fast-forward it; sync again once its pool's orchestrator answers: %s", m.Alias, v.why, LeaseSyncCall(source))
 	default:
-		return true
+		return rec, true
 	}
-	return false
+	return leaseRecord{}, false
 }
 
 // parkedMember records a member that is parked: its container is stopped, so
