@@ -1584,3 +1584,50 @@ func TestGenerateDotenv_PreviewDiff_SensitiveMasked(t *testing.T) {
 		}
 	}
 }
+
+// TestGenerateDotenv_PreviewDiff_OldSecretNeverEchoed: the existing .env holds
+// the literal a sensitive source rendered there earlier — a Box key a ref used
+// to resolve, a sensitive project var — and carries no word of where a value
+// came from. When the key now takes a plain value, the preview still never
+// echoes the old literal; the new plain value shows in clear.
+func TestGenerateDotenv_PreviewDiff_OldSecretNeverEchoed(t *testing.T) {
+	t.Parallel()
+
+	const yaml = `zerops:
+  - setup: app
+    run:
+      envVariables:
+        BOX_API_KEY: now-a-plain-value
+        STRIPE_KEY: pk_test_plain
+`
+	const secret = "box-" + "workspace-secret"
+	tmpDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpDir, "zerops.yaml"), []byte(yaml), 0644); err != nil {
+		t.Fatalf("write zerops.yaml: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, ".env"), []byte("BOX_API_KEY="+secret+"-box\nSTRIPE_KEY="+secret+"-stripe\n"), 0600); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "p1", Name: "test", Status: statusActive}).
+		WithServices([]platform.ServiceStack{{ID: "svc-app", Name: "app", ProjectID: "p1", Status: "RUNNING"}})
+
+	result, err := EnvGenerateDotenv(context.Background(), mock, "p1", "app", tmpDir, EnvGenerateDotenvOptions{Preview: true})
+	if err != nil {
+		t.Fatalf("EnvGenerateDotenv: %v", err)
+	}
+	raw, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(raw), secret) {
+		t.Errorf("the preview echoes the old .env literal: %s", raw)
+	}
+	to := map[string]string{}
+	for _, m := range result.Diff.Modified {
+		to[m.Key] = m.To
+	}
+	if to["BOX_API_KEY"] != "now-a-plain-value" || to["STRIPE_KEY"] != "pk_test_plain" {
+		t.Errorf("modified to = %v, want the new plain values in clear", to)
+	}
+}

@@ -11,8 +11,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -479,5 +481,167 @@ func TestRenewPoolHQCredentials_RewritesEveryPoolWhoseFingerprintDiffers(t *test
 			}
 			assertNoFileHolds(t, stateDir, poolMateCredential)
 		})
+	}
+}
+
+// poolSession is the env a fresh ssh session in any container of the pool
+// gets: every variable of the pool service (DP-6, live-verified).
+func poolSession(t *testing.T, client platform.Client, serviceID string) map[string]string {
+	t.Helper()
+	envs, err := client.GetServiceEnv(context.Background(), serviceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := make(map[string]string, len(envs))
+	for _, e := range envs {
+		session[e.Key] = e.Content
+	}
+	return session
+}
+
+// inlineHelperRe finds the helper a composed command hands git for one call:
+// `-c credential.helper= -c credential.helper=<shell-quoted helper>`.
+var inlineHelperRe = regexp.MustCompile(`-c credential\.helper= -c credential\.helper=('(?:[^']|'\\'')*')`)
+
+// inlineAnswer asks the helper command hands git inline for a credential to
+// remoteURL, in a session with env, the way that git call would, and returns
+// the user and password it answered and whether it answered one at all. A
+// script the command runs through `sh -c '…'` (the warm clone's) is read one
+// quoting level down, where its git call sits.
+func inlineAnswer(t *testing.T, command string, env map[string]string, remoteURL string) (user, password string, answered bool) {
+	t.Helper()
+	m := inlineHelperRe.FindStringSubmatch(strings.ReplaceAll(command, `'\''`, `'`))
+	if m == nil {
+		t.Fatalf("the command hands git no helper inline:\n%s", command)
+	}
+	u, err := url.Parse(remoteURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, _ := gitShell(t, t.TempDir(), t.TempDir(), env,
+		"protocol="+u.Scheme+"\nhost="+u.Host+"\npath="+strings.TrimPrefix(u.Path, "/")+"\n\n",
+		"git -c credential.helper= -c credential.helper="+m[1]+" credential fill")
+	for line := range strings.SplitSeq(out, "\n") {
+		if v, ok := strings.CutPrefix(line, "username="); ok {
+			user = v
+		}
+		if v, ok := strings.CutPrefix(line, "password="); ok {
+			password, answered = v, true
+		}
+	}
+	return user, password, answered
+}
+
+// persistedAnswer asks the helper a lease's checkout persists for repo for a
+// credential to repo, in a session with env, as the agent's own push does.
+func persistedAnswer(t *testing.T, repo string, env map[string]string) (user, password string, answered bool) {
+	t.Helper()
+	dir, home := t.TempDir(), t.TempDir()
+	if out, err := gitShell(t, dir, home, nil, "", "git init -q && "+leaseCredentialHelperConfig(repo, leaseHQURL)); err != nil {
+		t.Fatalf("persist the helper: %v\n%s", err, out)
+	}
+	return answeredCredential(t, dir, home, env, repo)
+}
+
+// secondContainer is the pool's next container an acquire reserves.
+func secondContainer() platform.SwarmAcquired {
+	return platform.SwarmAcquired{Container: reservedContainer("c-def", 4), Lease: platform.SwarmLease(testLease)}
+}
+
+// TestLeaseAcquire_HQThenOutsideHQ_TheMateCredentialReachesOnlyHQ: inside a
+// Mate an acquire of an HQ repository gives the pool the Mate credential, and
+// every container of the pool reads the pool's service env. A later lease of
+// a repository outside HQ on the same pool fetches at its checkout, in a warm
+// clone and through the helper its repository keeps for the agent's push —
+// none of which may answer the Mate credential to that other host. The HQ
+// lease still fetches as `mate` with it.
+func TestLeaseAcquire_HQThenOutsideHQ_TheMateCredentialReachesOnlyHQ(t *testing.T) {
+	t.Parallel()
+	requireGit(t)
+	fx := newLeaseFixture(t)
+	inAMate(fx)
+	ssh := &leaseSSH{}
+	fx.deps.SSH = ssh
+	fx.swarm.acquired = acquiredAs(3)
+	if _, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, leaseHQRepo, "feat"); err != nil {
+		t.Fatalf("acquire of the HQ repository: %v", err)
+	}
+	fx.swarm.acquired = secondContainer()
+	if _, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, "feat"); err != nil {
+		t.Fatalf("acquire of the repository outside HQ: %v", err)
+	}
+	checkouts := ssh.checkouts()
+	if len(checkouts) != 2 {
+		t.Fatalf("checkouts = %v, want one per lease", checkouts)
+	}
+	session := poolSession(t, fx.deps.Client, "svc-pool")
+
+	if user, password, _ := inlineAnswer(t, checkouts[0].command, session, leaseHQRepo); user != "mate" || password != poolMateCredential {
+		t.Errorf("the HQ lease's fetch answers %q / %q, want mate with the Mate credential", user, password)
+	}
+	outside := map[string]func() (string, string, bool){
+		"the checkout's fetch": func() (string, string, bool) { return inlineAnswer(t, checkouts[1].command, session, testRepo) },
+		"a warm clone of it": func() (string, string, bool) {
+			return inlineAnswer(t, leaseWarmCloneCommand(leaseWorkDir, testRepo, leaseHQURL), session, testRepo)
+		},
+		"its persisted helper": func() (string, string, bool) { return persistedAnswer(t, testRepo, session) },
+	}
+	for what, ask := range outside {
+		if _, password, answered := ask(); answered && strings.Contains(password, poolMateCredential) {
+			t.Errorf("%s answers github.com with the Mate credential", what)
+		}
+	}
+}
+
+// TestLeaseAcquire_HQRepo_TheUsersGitTokenStays: a pool whose GIT_TOKEN the
+// user set — a lease of their GitHub repository held there — and then an
+// acquire of an HQ repository inside a Mate. zcp never writes over the
+// user's GIT_TOKEN: the held lease keeps fetching and pushing with the
+// user's token, and the HQ lease fetches as `mate` with the Mate credential —
+// both kinds of repository on one pool.
+func TestLeaseAcquire_HQRepo_TheUsersGitTokenStays(t *testing.T) {
+	t.Parallel()
+	requireGit(t)
+	const usersToken = "the-users-own-github-token"
+	fx := newLeaseFixture(t)
+	inAMate(fx)
+	mock := fx.deps.Client.(*platform.Mock)
+	mock.WithServiceEnv("svc-pool", []platform.ServiceEnvVar{
+		{ID: "e-api", Key: "API_TOKEN", Content: testPoolToken, Sensitive: true},
+		{ID: "e-git", Key: GitTokenEnvKey, Content: usersToken, Sensitive: true},
+	})
+	ssh := &leaseSSH{}
+	fx.deps.SSH = ssh
+	fx.swarm.acquired = acquiredAs(3)
+	if _, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, "feat"); err != nil {
+		t.Fatalf("acquire of the user's repository: %v", err)
+	}
+	fx.swarm.acquired = secondContainer()
+	if _, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, leaseHQRepo, "feat"); err != nil {
+		t.Fatalf("acquire of the HQ repository: %v", err)
+	}
+	checkouts := ssh.checkouts()
+	if len(checkouts) != 2 {
+		t.Fatalf("checkouts = %v, want one per lease", checkouts)
+	}
+
+	if token, ok := poolGitToken(t, mock, "svc-pool"); !ok || token.Content != usersToken {
+		t.Errorf("the pool's GIT_TOKEN = %+v (held %v), want the user's own token, never written over", token, ok)
+	}
+	session := poolSession(t, mock, "svc-pool")
+	if _, password, _ := inlineAnswer(t, checkouts[0].command, session, testRepo); password != usersToken {
+		t.Errorf("the user's lease fetches with %q, want the user's token", password)
+	}
+	if _, password, _ := persistedAnswer(t, testRepo, session); password != usersToken {
+		t.Errorf("the user's lease pushes with %q, want the user's token", password)
+	}
+	if _, password, _ := inlineAnswer(t, leaseWarmCloneCommand(leaseWorkDir, testRepo, leaseHQURL), session, testRepo); password != usersToken {
+		t.Errorf("a warm clone of the user's repository fetches with %q, want the user's token", password)
+	}
+	if user, password, _ := inlineAnswer(t, checkouts[1].command, session, leaseHQRepo); user != "mate" || password != poolMateCredential {
+		t.Errorf("the HQ lease fetches with %q / %q, want mate with the Mate credential", user, password)
+	}
+	if user, password, _ := persistedAnswer(t, leaseHQRepo, session); user != "mate" || password != poolMateCredential {
+		t.Errorf("the HQ lease pushes with %q / %q, want mate with the Mate credential", user, password)
 	}
 }

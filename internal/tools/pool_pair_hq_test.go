@@ -185,6 +185,41 @@ func TestHQPass_PoolDevHalf_RenewsOnPoolNoSSH(t *testing.T) {
 	}
 }
 
+// TestHQPass_PoolDevHalf_RenewalLeavesThePoolsGitTokenTheUsers: a pool's
+// GIT_TOKEN is the user's — what a lease of a repository outside HQ there
+// authenticates with — and zcp never writes over it. Renewing a pool-keyed
+// pair's Mate credential gives the pool the new credential as a secret of its
+// own and leaves the user's GIT_TOKEN as it was.
+func TestHQPass_PoolDevHalf_RenewalLeavesThePoolsGitTokenTheUsers(t *testing.T) {
+	// Non-parallel: newHQLab sets HOME and package tuning knobs.
+	const (
+		renewed    = "the-credential-after-the-move"
+		usersToken = "the-users-own-github-token"
+	)
+	lab := newHQLab(t)
+	lab.wire()
+	ssh := lab.keyPairOnPool()
+	lab.rt.MateEnabled = true
+	lab.mock.WithServiceEnv(testPoolID, []platform.ServiceEnvVar{{ID: "e-git", Key: ops.GitTokenEnvKey, Content: usersToken, Sensitive: true}})
+	lab.reenroll(renewed)
+
+	lab.poolPass(ssh)
+
+	if token, held := serviceGitToken(t, lab.mock, testPoolID); !held || token.Content != usersToken {
+		t.Errorf("the pool's GIT_TOKEN = %+v (held %v), want the user's own token, never written over", token, held)
+	}
+	envs, err := lab.mock.GetServiceEnv(t.Context(), testPoolID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(envs, func(e platform.ServiceEnvVar) bool { return e.Content == renewed && e.Sensitive }) {
+		t.Errorf("the pool holds no secret with the renewed credential: %+v", envs)
+	}
+	if got, want := lab.poolMeta().HQ.CredentialFingerprint, hq.CredentialFingerprint(renewed); got != want {
+		t.Errorf("the pair records fingerprint %q, want the renewed credential's %q", got, want)
+	}
+}
+
 // TestHQPass_PoolDevHalf_TakesOverThePoolsCredentialRecord: an acquire keeps
 // a fingerprint per pool of the Mate credential it wrote (DP-16); once the
 // pool keys a pair, the pair's record is that fingerprint's one home. The
