@@ -250,6 +250,48 @@ func TestStatus_OneBlockPerRepository(t *testing.T) {
 	}
 }
 
+// TestStatus_ChangesReadFresh_AsLastReadWhileHQIsDown: status reads the
+// Mate's own state once for its Changes section, so a change merged since the
+// last pass reads merged, never open, and another one HQ judged behind main
+// since reads behind — while no pass has run. The read writes nothing: the
+// next pass still says the merge once. HQ not answering leaves the ledger's
+// section, labelled as last read.
+func TestStatus_ChangesReadFresh_AsLastReadWhileHQIsDown(t *testing.T) {
+	lab := describedChanges(t)
+	lab.leaseOf("hqpool", 4, "fix-login")
+	lab.passReport()
+	lab.hq.mergeChange("appdev", 1)
+	reads := lab.hq.callCount("GET /api/mate/self")
+
+	status := lab.status()
+
+	for _, want := range []string{"#1 fix-login — leases hqpool-4: merged", "#2 add-signup (ready · behind main)"} {
+		if !strings.Contains(status, want) {
+			t.Errorf("status lacks %q:\n%s", want, status)
+		}
+	}
+	if strings.Contains(status, "#1 fix-login (") {
+		t.Errorf("status names merged #1 with an open change's standing:\n%s", status)
+	}
+	if n := lab.hq.callCount("GET /api/mate/self") - reads; n != 1 {
+		t.Errorf("status read the Mate's state %d times, want once", n)
+	}
+	if lab.kept(1) == nil {
+		t.Fatal("status forgot change #1: saying the merge, once, is the pass's")
+	}
+	if report := lab.passReport(); !strings.Contains(report, "change #1 is merged") {
+		t.Errorf("the pass after status does not say the merge:\n%s", report)
+	}
+
+	lab.hq.mergeChange("appdev", 2)
+	lab.hq.setDown(true)
+	status = lab.status()
+
+	if !strings.Contains(status, "as last read") || !strings.Contains(status, "#2 add-signup (ready · behind main)") {
+		t.Errorf("with HQ down status does not name the ledger's changes as last read:\n%s", status)
+	}
+}
+
 // TestLaunchProduction_ListsEveryOpenChangeOnce: four pairs on one repository
 // with two open changes: the launch refusal names the repository's changes
 // once each, never once per pair.
