@@ -1490,12 +1490,28 @@ func (r *poolRetireRun) saveFailed(err error) *mcp.CallToolResult {
 	return convertError(fmt.Errorf("pool-migrate retire of %s at %s: %w", r.rec.Dev, r.rec.Phase, err), WithRecoveryStatus())
 }
 
+// rekeyBegun reports a re-key that has begun: a pair keyed by one of the
+// record's pools moved from the dev, or no pair keyed by the dev any more. A
+// record at rewritten whose re-key never began — the phase is saved before
+// its work — is still before the split, and its resume reads the guards. A
+// pair file zcp cannot read counts as begun: the resume finishes the re-key.
+func (rec *poolRetireRecord) rekeyBegun(stateDir string) bool {
+	for _, pool := range rec.pools() {
+		m, err := workflow.ReadServiceMeta(stateDir, pool)
+		if err != nil || (m.DevIsPool() && m.DevPool.MigratedFrom != nil && m.DevPool.MigratedFrom.Hostname == rec.Dev) {
+			return true
+		}
+	}
+	return !poolRetireKeyedByDev(stateDir, rec.Dev)
+}
+
 // poolRetireResume continues a retire in flight from its record, against the
 // dev's state by id (docs/spec-workflows.md §13 PM-7): DELETING keeps the
 // record; gone finishes — the pair re-keyed whatever the phase; live resumes
 // from the phase on the acknowledged call, the guards re-run before the pair
-// is re-keyed, the dev re-fenced, and the bundle taken again from bundled or
-// wherever the record holds no verified bundle (resumeRebundles).
+// is re-keyed (at rewritten too, while its re-key has not begun), the dev
+// re-fenced, and the bundle taken again from bundled or wherever the record
+// holds no verified bundle (resumeRebundles).
 func poolRetireResume(ctx context.Context, d poolRetireDeps, input WorkflowInput, rec *poolRetireRecord) *mcp.CallToolResult {
 	corpus, _ := workflow.LoadAtomCorpus()
 	run := &poolRetireRun{d: d, rec: rec, resp: poolRetireBase(corpus, rec), force: input.Force.Bool() || rec.Forced, forceNow: input.Force.Bool()}
@@ -1518,8 +1534,11 @@ func poolRetireResume(ctx context.Context, d poolRetireDeps, input WorkflowInput
 
 	var g *poolRetireGuards
 	var expected DiagnosedDestruction
-	switch rec.Phase {
-	case poolRetireStarted, poolRetireFenced, poolRetireBundled:
+	switch {
+	case rec.Phase == poolRetireStarted, rec.Phase == poolRetireFenced, rec.Phase == poolRetireBundled,
+		rec.Phase == poolRetireRewritten && !rec.rekeyBegun(d.stateDir):
+		// Still before the split: a record cut between saving rewritten and
+		// the re-key reads every guard again too (PM-12).
 		in := input
 		in.Service, in.Pool = rec.Dev, rec.Pool
 		var result *mcp.CallToolResult
