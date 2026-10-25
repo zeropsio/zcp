@@ -640,10 +640,10 @@ func TestLeaseRelease_Unpushed_Refused(t *testing.T) {
 	var sawStatus, sawRevList bool
 	for _, c := range ssh.commands() {
 		sawStatus = sawStatus || strings.Contains(c, "git -C '/var/www' status --porcelain")
-		sawRevList = sawRevList || strings.Contains(c, "git -C '/var/www' rev-list --count HEAD --not --remotes=origin")
+		sawRevList = sawRevList || strings.Contains(c, "git -C '/var/www' rev-list --count --branches HEAD --not --remotes=origin")
 	}
 	if !sawStatus || !sawRevList {
-		t.Errorf("guard commands = %v, want git status --porcelain and rev-list --count HEAD --not --remotes=origin on /var/www", ssh.commands())
+		t.Errorf("guard commands = %v, want git status --porcelain and rev-list --count --branches HEAD --not --remotes=origin on /var/www", ssh.commands())
 	}
 	if ssh.calls[0].hostname != "devpool-3" {
 		t.Errorf("guard ran on %q, want the alias", ssh.calls[0].hostname)

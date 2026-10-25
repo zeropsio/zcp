@@ -466,7 +466,7 @@ func handBackOutcome(alias string, view LeaseView, err error) (what, next string
 // unsavedWork is what a release would lose from a container.
 type unsavedWork struct {
 	files    []string // git status --porcelain lines
-	unpushed int      // commits on no remote branch
+	unpushed int      // commits on no remote branch, from any local branch or HEAD
 }
 
 func (w unsavedWork) any() bool { return len(w.files) > 0 || w.unpushed > 0 }
@@ -514,11 +514,17 @@ func leaseUnsavedFilesCommand() string {
 }
 
 // leaseUnpushedCommand is the guard's second read: how many commits are on no
-// remote branch, 0 in a checkout with no commit yet (parseUnpushedCount).
+// remote branch (parseUnpushedCount). A reset takes every commit in /var/www,
+// so it counts what every local branch and HEAD reach — work left on a branch
+// HEAD is not on, or on a detached HEAD, included — and none that origin's
+// branches reach. HEAD is named only when it resolves: an unborn one (no
+// commit yet, or an orphan branch) is no revision, while the branches still
+// count — 0 in a checkout with no commit at all.
 func leaseUnpushedCommand() string {
 	wd := shellQuote(leaseWorkDir)
 	return "if " + leaseGitRead + wd + " rev-parse -q --verify HEAD >/dev/null 2>&1; then " +
-		leaseGitRead + wd + " rev-list --count HEAD --not --remotes=origin; else echo 0; fi"
+		leaseGitRead + wd + " rev-list --count --branches HEAD --not --remotes=origin; else " +
+		leaseGitRead + wd + " rev-list --count --branches --not --remotes=origin; fi"
 }
 
 // parseUnsavedFiles reads leaseUnsavedFilesCommand's answer: one file per
