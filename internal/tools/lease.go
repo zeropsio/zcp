@@ -238,6 +238,11 @@ func registerLease(srv *mcp.Server, deps ops.LeaseDeps, rt runtime.Info, hqHTTP 
 				Action: input.Action, Leases: views, UnreadPools: status.Unread, Warm: status.Warm, NextActions: joinNext(leaseStatusNext(views), leaseGroupChanges(stateDir, hqAddress(), views, leaseHQState(ctx, hqHTTP, rt))), Envelope: envelope(ctx, views...),
 			}), nil, nil
 		case leaseActionRelease:
+			// The change on each released branch, as lease status names it
+			// (leaseGroupChanges): the Mate's state read once, inside a Mate.
+			releasedChanges := func(released []ops.LeaseView) string {
+				return leaseReleaseChanges(stateDir, hqAddress(), released, leaseHQState(ctx, hqHTTP, rt))
+			}
 			force := false
 			if f := input.Force.Ptr(); f != nil {
 				force = *f
@@ -253,7 +258,7 @@ func registerLease(srv *mcp.Server, deps ops.LeaseDeps, rt runtime.Info, hqHTTP 
 				}
 				return jsonResult(leaseToolResult{
 					Action: input.Action, Leases: change.Leases, Rewired: change.Rewired,
-					NextActions: joinNext(leaseReleaseBranchNext(change.Leases, input.Branch, input.Repo, force), leaseRewireNext(change.Rewired)), Envelope: envelope(ctx),
+					NextActions: joinNext(leaseReleaseBranchNext(change.Leases, input.Branch, input.Repo, force), leaseRewireNext(change.Rewired), releasedChanges(change.Leases)), Envelope: envelope(ctx),
 				}), nil, nil
 			case input.Lease == "":
 				return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
@@ -264,7 +269,7 @@ func registerLease(srv *mcp.Server, deps ops.LeaseDeps, rt runtime.Info, hqHTTP 
 				return convertError(withLeaseSSHStderr(err)), nil, nil
 			}
 			return jsonResult(leaseToolResult{
-				Action: input.Action, Leases: change.Leases, Rewired: change.Rewired, NextActions: leaseRewireNext(change.Rewired), Envelope: envelope(ctx),
+				Action: input.Action, Leases: change.Leases, Rewired: change.Rewired, NextActions: joinNext(leaseRewireNext(change.Rewired), releasedChanges(change.Leases)), Envelope: envelope(ctx),
 			}), nil, nil
 		case leaseActionSync:
 			if refusal := leaseSyncInputRefusal(input); refusal != nil {
