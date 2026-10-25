@@ -1472,23 +1472,24 @@ off it refuses and never runs `mac` (§2.0).
 
 ### 2.11 Org mode — the Chief
 
-A **Chief** is a Mate for the whole organization. It lives in its own otherwise empty project, which
-an `OWNER` or `ADMIN` marks as the organization's Chief in HQ; how it links, what the mark is and
-what it may read are §3.11's. zcp serves it in **org mode**.
+A **Chief** is a person's Mate across the organization: at most one per person, and an organization
+holds as many as it has people who registered one. It lives in its own otherwise empty project, which
+that person registers as their Chief in HQ; how it links, what the registration is and what it may
+read are §3.11's. zcp serves it in **org mode**.
 
 **Switching it on.** `zcp serve` reads the Mate's state from HQ at start (`GET /api/mate/self`, the
-project key in the header, §3.6); a state carrying the Chief mark turns org mode on
-(`runtime.Info.Chief`). A mark set or removed later restarts zcp: the Mate's server restarts it when
-the `chief` of its link's `state` frame changes (§3.11), so org mode follows the mark both ways; HQ
-refuses the overview at once to a project the mark no longer names. No service variable switches it and no
+project key in the header, §3.6); a state whose `chief` names this Mate's own project turns org mode
+on (`runtime.Info.Chief`). A registration made or lost later restarts zcp: the Mate's server restarts
+it when the `chief` of its link's `state` frame changes (§3.11), so org mode follows the registration
+both ways; HQ refuses the overview at once to a project that no usable Chief registration names. No service variable switches it and no
 credential of its own exists.
 
 **No write, ever.** Org mode's only door to the organization is `platform.OrgReader`: reads only, its
 method set pinned name by name, every request through a transport that refuses anything but a GET
 or a search POST before the network. No write-capable client exists in org mode. Every read goes to
 HQ's Chief overview with the project key in the header, and HQ answers it from its organization view
-with the allowlist of §3.11 — projects, services and their state, members with their roles — and
-nothing else: never a variable, a log, a token list, a cost or any other read the organization's key
+with the allowlist of §3.11, cut to what the Chief's person can reach — projects, services and their
+state, members with their roles — and nothing else: never a variable, a log, a token list, a cost or any other read the organization's key
 could make. `platform.OrgReads()` is exactly that set. Every change is the person's: their client
 makes it with their own Zerops token after their click.
 
@@ -1498,7 +1499,7 @@ services and their state). Act: `zerops_org_propose_service` (`restart` |
 `start` | `stop`), `zerops_org_propose_env`, `zerops_org_propose_message`,
 `zerops_org_propose_domain`, `zerops_org_propose_access`. Also `zerops_knowledge`, and in a Mate's
 container `zerops_publish_page` (§5.9). The single-project surface acts on the empty own project and
-is not registered. A project's kind: the Chief mark; a Mate is tagged `mate` and runs a `zcp@*`
+is not registered. A project's kind: the Chief registration; a Mate is tagged `mate` and runs a `zcp@*`
 service, its name the part of the project name after the last `" - "`; HQ runs a service named
 `hq`; production and stage are named `"<application> - production"` / `"- stage"`. Org results
 carry no envelope (§1.4): they describe the organization, not this project's lifecycle.
@@ -1548,14 +1549,14 @@ own `set-project-access` as the approving person, written on each member's own l
 words, to a person who may not change access. There is
 no delete, no token, no invitation and no scaling kind.
 
-**The reverse direction — a Mate asks the organization's Chief.** In project mode, in a Mate's
+**The reverse direction — a Mate asks its owner's Chief.** In project mode, in a Mate's
 container (`ZCP_MATE_ENABLED`), `zerops_propose_ask_chief {words, attachmentTitle?, attachmentText?,
 reason}` proposes the one kind a project makes outside itself, `chief.message`, only when HQ names
-the organization's Chief. The `chief` of `GET /api/mate/self` (the project key in the header, §3.6) answers it; an
+its owner's Chief. The `chief` of `GET /api/mate/self` (the project key in the header, §3.6) answers it; an
 unavailable or refused read offers no tool. `POST /api/mate/chief/proposals` reads it again and
 returns the offer id, binding the source project and the Chief at HQ. A person who may open the
-source Mate decides it; HQ rechecks the binding when accepting a decision, including after the mark
-moved. It sends nothing; org mode never registers it (the Chief does not ask itself). Its result has the same shape, from this
+source Mate decides it, and only while that Chief is still theirs; HQ rechecks the binding when
+accepting a decision, including after the Chief moved. It sends nothing; org mode never registers it (the Chief does not ask itself). Its result has the same shape, from this
 project:
 
 ```json
@@ -1574,7 +1575,7 @@ project:
 
 `attachment` is absent or complete (it has text); words and reason are non-empty; an attachment
 holds at most 64 Ki characters — the same checks as `mate.message`. On approval the client hands it
-to the organization's Chief, where it arrives as "From <Mate> in <project>: …"; the Chief answers by
+to its owner's Chief, where it arrives as "From <Mate> in <project>: …"; the Chief answers by
 proposing a `mate.message` back.
 
 **Agent context.** In org mode the managed `AGENTS.md` section is the Chief's
@@ -1589,7 +1590,7 @@ names `zerops_propose_ask_chief` for what neither its project nor `zerops_observ
 | OM-1 | Org mode makes no write call to the Zerops API: `OrgReader` exposes reads only and its transport refuses writes. `TestOrgReader_ExposesNoWriteMethod`, `TestReadOnlyTransport_RefusesWrites`, `TestOrgReader_EveryReadPresentsTheProjectKeyInTheHeaderOnly`. |
 | OM-2 | An act tool returns a proposal of the shape above, validated against the organization, and changes nothing. `TestProposeOrgAction_Shape`, `TestProposeOrgAction_ValidatesAgainstTheOrg`. |
 | OM-3 | Org mode registers the org surface only, and its `AGENTS.md` section is the Chief's. `TestNewOrg_RegistersTheOrgSurfaceOnly`, `TestBuildAgentsMD_Chief`. |
-| OM-4 | `OrgReads()` is exactly what org mode reads — the allowlisted overview of §3.11 — every read goes to HQ with the project key in the header, and nothing in org mode reads the Zerops API directly. `TestOrgReads_AreExactlyWhatOrgModeReads`, `TestOrgReader_ReadsTheOverviewAsHQAnswersIt`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
+| OM-4 | `OrgReads()` is exactly what org mode reads — the allowlisted overview of §3.11, cut to its person's reach — every read goes to HQ with the project key in the header, and nothing in org mode reads the Zerops API directly. `TestOrgReads_AreExactlyWhatOrgModeReads`, `TestOrgReader_ReadsTheOverviewAsHQAnswersIt`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
 | OM-5 | A Mate's `zerops_propose_ask_chief` returns a `chief.message` proposal of the shape above from its own project and sends nothing; only a Mate's project mode registers it. `TestProposeAskChief_Shape`, `TestProposeAskChief_Validates`, `TestServer_AskChiefToolGating`, `TestAskChief_OverMCP_ProposesFromThisProjectAndSendsNothing`. |
 | OM-6 | `zerops_org_propose_domain` returns a `domain.add` proposal of the shape above for the organization's project, onto one of its service's web ports, and changes nothing. `TestProposeOrgAction_DomainAdd_Shape`, `TestProposeOrgAction_DomainAdd_RefusesWhatCannotGoLive`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
 | OM-7 | `zerops_org_propose_access` returns an `access.set` proposal of the shape above for the organization's project or application, each person once, at a level Mate gives, and changes nothing. `TestProposeOrgAction_AccessSet_Shape`, `TestProposeOrgAction_AccessSet_RefusesWhatCannotBeGiven`, `TestOrgMode_OverMCP_LooksAndProposesWithoutAWrite`. |
@@ -1933,22 +1934,29 @@ sequenceDiagram
 
 - A Chief is an ordinary Mate, linked by its own `ZCP_API_KEY` like any other. `ZCP_ORG_TOKEN` and
   every Chief credential go.
-- An `OWNER` or `ADMIN` marks one project of the organisation as its Chief in HQ — an ordinary
-  organisation setting, not bound to the person who set it, valid until an Owner or Admin removes it.
-  The mark carries no key.
-- zcp reads the mark from its Mate state in HQ at start and serves org mode (§2.11). HQ sends the
-  Mate a new `state` when the mark changes, and the Mate's server restarts zcp when its `chief`
-  changes, so a de-marked Chief leaves org mode and a newly marked one enters it. Rotation does
-  not wait for background work; work running at rotation is lost. Its reads go to
-  HQ like zcp's other calls (key in the header), and HQ answers each only while the mark names the
-  caller's project.
-- HQ answers from its organisation view, cut by **kind of data**, not by person: the allowlist is the
-  organisation overview — projects, services and their state, members with their roles. Never
-  environment variables, token lists or anything else the organisation's key could read (it reads
-  non-sensitive variables in clear, other Mates' keys among them). A read joins the allowlist only by
-  the owner's decision written here.
-- Everyone with access to the Chief's project sees that overview; the marking UI says so before the
-  mark is set.
+- A Chief is personal: a person registers one project of the organisation, tagged `chief`, where they
+  are Basic user or higher, as their Chief in HQ, signed in as themselves. At most one per person per
+  organisation; registering another project moves it, and another person's live Chief cannot be
+  registered. The organisation holds as many Chiefs as it has people who registered one, each project
+  one person's. The registration carries no key and no person travels in the Mate's header: HQ finds
+  the live registration by the Mate's project key, and its person is the person the Chief belongs to.
+- zcp reads its Chief from its Mate state in HQ at start and serves org mode (§2.11). HQ sends the
+  Mate a new `state` when the registration changes, and the Mate's server restarts zcp when its
+  `chief` changes, so a Chief that loses its registration or its person's access leaves org mode and
+  a newly registered one enters it. Rotation does not wait for background work; work running at
+  rotation is lost. Its reads go to HQ like zcp's other calls (key in the header), and HQ answers each
+  only while the registration is live, its person is an active member with Basic user or higher on the
+  Chief's project, and the project is still tagged `chief`.
+- HQ answers from its organisation view, cut by **kind of data** and by **person**: the allowlist is
+  the organisation overview — projects, services and their state, members with their roles — and its
+  items are cut to what the Chief's person can reach. Never environment variables, token lists or
+  anything else the organisation's key could read (it reads non-sensitive variables in clear, other
+  Mates' keys among them). A read joins the allowlist only by the owner's decision written here.
+- Only the Chief's own person opens it or sees it in navigation, Owners and Admins included. Nobody
+  else takes over a Chief whose person left or lost access, and no Owner or Admin removes another
+  person's Chief: it ends when its person leaves the organisation or loses the project, or when the
+  project is deleted.
+- An ordinary Mate asks its owner's Chief; only the owner decides that ask while the Chief is theirs.
 - Every change stays the person's: the Chief proposes, and the person's client acts with the
   person's own Zerops token after their click (§2.11).
 
@@ -2061,7 +2069,7 @@ What replaces what:
   key in the link's first frame and in zcp's header; the contract (§2.8) bumps with that change on
   both sides.
 - The Mate credential as the dev service's `GIT_TOKEN` → the Mate's Git credential.
-- `ZCP_ORG_TOKEN` and the Chief proxy → the Chief mark and the allowlisted overview.
+- `ZCP_ORG_TOKEN` and the Chief proxy → the person's Chief registration and the allowlisted overview, cut to its person's reach.
 - The relay's 30 s / 5 min trust window and the Mate's own Zerops read → the access list only, and
   the 15 min link-down cap.
 - The container-served `/mate/` client and sign-in → the hosted client only: the release stops
@@ -2105,7 +2113,7 @@ The cutover, in this order (HQ keeps no old route, HQ `spec/protocol.md` *Compat
 | TC-8 | Sign-out closes every connection carrying that HQ session id and no other. Test to be written (Mate server). |
 | TC-9 | Past the 15 min cap (TC-13) the Mate closes every person connection. Test to be written (Mate server, injected clock). |
 | TC-10 | The dev service's git presents only the Mate's Git credential, which pushes only the project's change branches; the project key is never written into the dev service. Test to be written (zcp wiring, HQ git). |
-| TC-11 | The Chief's reads answer only the allowlisted overview, only while the mark names the caller's project. Test to be written (HQ). |
+| TC-11 | The Chief's reads answer only the allowlisted overview, cut to its person's reach, only while that person is an active member with access to the Chief's project. Test to be written (HQ). |
 | TC-12 | An HQ session keeps its id across renewals, and sign-out closes a Mate connection opened before the last renewal. Test to be written (HQ sign-in, Mate server). |
 | TC-13 | The Mate's 15 min cap counts from the organisation view its latest access list was computed from, not from the link. Test to be written (Mate server, injected clock). |
 | TC-14 | A full access frame resets the Mate's baseline whatever its version; only deltas are compared by version. Test to be written (Mate server). |
