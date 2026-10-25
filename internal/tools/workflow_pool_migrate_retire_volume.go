@@ -433,7 +433,8 @@ func (r *poolRetireRun) devsGone(ctx context.Context) *mcp.CallToolResult {
 // "still mounted" refusal keeps CodeVolume and the record, saying some
 // service still mounts the volume. Right before the delete it re-reads the
 // checkout in the volume's own container: one that moved since the bundle is
-// deleted only once this call carries force, after a new bundle of it.
+// deleted only once this call carries force, after a new bundle of it and a
+// reading after that bundle that agrees with it.
 func (r *poolRetireRun) deleteVolume(ctx context.Context) *mcp.CallToolResult {
 	v := r.rec.CodeVolume
 	state, err := poolRetireDevState(ctx, r.d.client, v.ServiceID)
@@ -458,6 +459,18 @@ func (r *poolRetireRun) deleteVolume(ctx context.Context) *mcp.CallToolResult {
 		}
 		if result := r.rebundleVolume(ctx); result != nil {
 			return result
+		}
+		// The new bundle's fingerprint was read before it streamed: what
+		// reached the checkout while it streamed and was verified is in no
+		// bundle, so the checkout is read again right before the delete.
+		again, err := ops.ReadPoolMigrateFingerprint(ctx, r.d.ssh, v.Hostname, ops.CodeVolumeDataRoot, r.workDir())
+		if err != nil {
+			return r.callAgain(withSSHStderr("the checkout on the code volume "+v.Hostname+" could not be read again after its new bundle", err) +
+				"; nothing on it is deleted that zcp cannot check against that bundle")
+		}
+		if moved := poolRetireVolumeMoved(v, again); len(moved) > 0 {
+			return r.volumeHeld(poolRetireAbortFingerprint, fmt.Sprintf("The checkout on the code volume %s moved again while its new bundle was taken — %s — so that bundle does not hold it either and nothing on the volume is deleted. Once nothing writes to it, re-send the retire with force=true: another verified bundle is taken from the volume before its delete.",
+				v.Hostname, strings.Join(moved, "; ")))
 		}
 	}
 	proc, err := ops.DeleteByID(ctx, r.d.client, v.ServiceID)

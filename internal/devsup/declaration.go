@@ -232,7 +232,8 @@ func ParseDeclaration(b []byte) (Declaration, error) {
 			return Declaration{}, fmt.Errorf("%s: %q is in both siblingEnv and siblingPreviewEnv: a variable gets one value, a container hostname or a preview URL", DeclarationPath, name)
 		}
 	}
-	names, ports, preview := map[string]bool{}, map[int]string{}, ""
+	names, ports := map[string]bool{}, map[int]string{}
+	var previews []Server
 	for i, s := range d.Servers {
 		s, err := normalizeServer(s)
 		if err != nil {
@@ -249,10 +250,15 @@ func ParseDeclaration(b []byte) (Declaration, error) {
 			ports[s.Port] = s.Name
 		}
 		if s.Preview {
-			if preview != "" {
-				return Declaration{}, fmt.Errorf("%s: %q and %q are both marked preview", DeclarationPath, preview, s.Name)
+			// One preview per supervisor: two clash when one supervisor
+			// runs both (ForService) — the same service, or either naming
+			// none, which every supervisor runs.
+			for _, other := range previews {
+				if other.Service == "" || s.Service == "" || other.Service == s.Service {
+					return Declaration{}, fmt.Errorf("%s: %q and %q are both marked preview", DeclarationPath, other.Name, s.Name)
+				}
 			}
-			preview = s.Name
+			previews = append(previews, s)
 		}
 		d.Servers[i] = s
 	}

@@ -62,6 +62,12 @@ type LeaseSnapshot struct {
 	// holds no record of it (an unknown holder): the key a client rebinds by
 	// when the bound lease of a branch ends and another stays held.
 	AcquiredAt string `json:"acquiredAt,omitempty"`
+	// Repo is the repository the lease's group is keyed by beside Branch
+	// (docs/spec-workflows.md §8 DP-17) — canonical and credential-free
+	// (topology.RepoIdentity) — so a client binds and rebinds a conversation
+	// by repository and branch, never by branch alone (docs/spec-mate.md §6.3);
+	// absent for a lease zcp holds no record of, or an older record naming none.
+	Repo string `json:"repo,omitempty"`
 	// DevServers is what the lease's supervisor reported, only on a call that
 	// read it (zerops_dev_server on the alias) — keyed by alias the way a dev
 	// service's devServers[] is keyed by its hostname (WithParts).

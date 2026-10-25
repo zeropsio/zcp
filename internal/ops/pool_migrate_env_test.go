@@ -866,6 +866,36 @@ func TestPoolMigrateEnvRead_RealShell_ValuesExact(t *testing.T) {
 	}
 }
 
+// TestPoolMigrateEnvRead_RealShell_NoKeyShadowedByTheScript: the read sets no
+// shell variable of its own, so no env name — whatever it is — reads the
+// script's value instead of the container's. A loop variable named k read the
+// key's own name as the value of an env variable named k, and the pool got the
+// literal "k" as that secret.
+func TestPoolMigrateEnvRead_RealShell_NoKeyShadowedByTheScript(t *testing.T) {
+	t.Parallel()
+	env := map[string]string{"k": "the value of k", "key": "the value of key", "i": "the value of i", "IFS_LIKE": "x y"}
+	keys := []string{"k", "key", "i", "IFS_LIKE"}
+	script := poolEnvReadCommand(keys)
+	cmd := exec.CommandContext(t.Context(), "sh", "-c", script)
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
+	for k, v := range env {
+		cmd.Env = append(cmd.Env, k+"="+v)
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("the read command failed: %v", err)
+	}
+	values, perr := parsePoolEnvRead(out, keys)
+	if perr != "" {
+		t.Fatalf("parse: %s", perr)
+	}
+	for _, key := range keys {
+		if values[key] != env[key] {
+			t.Errorf("%s read %q, want the container's value %q", key, values[key], env[key])
+		}
+	}
+}
+
 func mapsKeys(m map[string]string) func(func(string) bool) {
 	return func(yield func(string) bool) {
 		for k := range m {

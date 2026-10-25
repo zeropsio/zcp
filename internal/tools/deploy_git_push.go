@@ -323,10 +323,11 @@ func committedCodeCheckCmd(workingDir string) string {
 // (capped so the warning stays readable). committedCodeCheckCmd proves a
 // commit EXISTS; this proves whether the tree is CLEAN. git-push transmits
 // the committed HEAD only, so any dirty change is silently left behind unless
-// surfaced — this feeds dirtyTreeWarning.
+// surfaced — this feeds dirtyTreeWarning. Optional locks off: a plain status
+// refreshes and rewrites the checkout's index (DM-7).
 func gitStatusPorcelainCmd(workingDir string) string {
 	qwd := ops.ShellQuote(workingDir)
-	return fmt.Sprintf(`git -C %s status --porcelain 2>/dev/null | head -20`, qwd)
+	return fmt.Sprintf(`GIT_OPTIONAL_LOCKS=0 git -C %s status --porcelain 2>/dev/null | head -20`, qwd)
 }
 
 // dirtyTreeWarning builds the "uncommitted changes were NOT pushed" warning

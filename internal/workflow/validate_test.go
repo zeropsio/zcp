@@ -1164,6 +1164,57 @@ func TestValidateBootstrapTargets_SandboxAsRuntime_Refused(t *testing.T) {
 	}
 }
 
+// Spec: spec-workflows.md §8 PS-2. An adopt plan names services that exist,
+// and the plan's own type for them proves nothing: a pool or a Box the project
+// runs, named as an existing dev half, stage or further dev service of a code
+// volume with a runtime type written in the plan, is refused by its LIVE type —
+// never recorded as a half of a pair.
+func TestValidateBootstrapTargets_ExistingPoolOrBoxByLiveType_Refused(t *testing.T) {
+	t.Parallel()
+	live := []platform.ServiceStack{
+		{Name: "appdev", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		{Name: "appstage", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		{Name: "apppool", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1"}},
+		{Name: "box", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "zbox@1"}},
+		{Name: "vol", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "local-storage@1"}},
+	}
+	tests := []struct {
+		name   string
+		target RuntimeTarget
+		want   []string
+	}{
+		{"a pool as the existing stage", RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "apppool", IsExisting: true},
+			[]string{`"apppool"`, "swarm@1", "Swarm pool"}},
+		{"a Box as the existing dev half", RuntimeTarget{DevHostname: "box", Type: "nodejs@22", BootstrapMode: "dev", IsExisting: true},
+			[]string{`"box"`, "zbox@1", "Zerops Box"}},
+		{"a pool as one of several existing stages", RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", IsExisting: true,
+			Stages: []topology.StageRef{{Hostname: "appstage", SetupName: "prod"}, {Hostname: "apppool", SetupName: "pool"}}},
+			[]string{`"apppool"`, "Swarm pool"}},
+		{"a pool as a code volume's further dev service", RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "dev", IsExisting: true,
+			CodeVolume: &topology.CodeVolume{Hostname: "vol", MountPath: "/var/www/ws", DevServices: []topology.DevServiceRef{{Hostname: "apppool", SetupName: "pool"}}}},
+			[]string{`"apppool"`, "Swarm pool"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := ValidateBootstrapTargets([]BootstrapTarget{{Runtime: tt.target}}, nil, live)
+			if err == nil {
+				t.Fatal("an existing pool or Box adopted as a half of a pair must be refused by its live type")
+			}
+			for _, want := range append(tt.want, "infrastructure") {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q missing %q", err.Error(), want)
+				}
+			}
+		})
+	}
+	// A pair whose halves are runtimes passes as before.
+	ok := RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "appstage", IsExisting: true}
+	if _, err := ValidateBootstrapTargets([]BootstrapTarget{{Runtime: ok}}, nil, live); err != nil {
+		t.Fatalf("an existing runtime pair: %v", err)
+	}
+}
+
 // Spec: spec-workflows.md §8 PS-5. A Zerops Box passes the type check whenever
 // the schema lists it ACTIVE — as infrastructure the app uses (a dependency),
 // since the runtime-target slot refuses it. The "embedded seed" case runs the

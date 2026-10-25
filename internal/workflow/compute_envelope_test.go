@@ -1294,6 +1294,40 @@ func TestComputeEnvelope_OrchestratorUnreachable_LeasesUnverified(t *testing.T) 
 	}
 }
 
+// TestComputeEnvelope_LeaseRecords_CarryTheRepository: a lease's snapshot names
+// the repository its group is keyed by — a group is a repository and a branch
+// (spec-workflows.md §8 DP-17) — the record's identity made credential-free,
+// after acquiredAt; the reader's snapshot and the record standing in for an
+// orchestrator that did not answer alike (docs/spec-mate.md §2.8a.3, §6.3).
+func TestComputeEnvelope_LeaseRecords_CarryTheRepository(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeLeaseRecordFile(t, dir, "devpool-3", `{"poolHostname":"devpool","poolServiceId":"pool-id","containerId":"c3","containerNumber":3,`+
+		`"containerHostname":"node-id-3.runtime.devpool.zerops","lease":"SECRET-LEASE-VALUE","branch":"main",`+
+		`"repo":"https://git.example.com/acme/app?token=s3cr3t","acquiredAt":"2026-10-23T10:00:00Z"}`)
+	reader := WithLeaseReader(func(context.Context) ([]LeaseSnapshot, error) {
+		return nil, errors.New("orchestrator unreachable")
+	})
+	mock := platform.NewMock().WithProject(&platform.Project{ID: "p1", Name: "demo"})
+	env, err := ComputeEnvelope(context.Background(), mock, dir, "p1", runtime.Info{}, fixedTime, reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(env.LeaseList())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `[{"alias":"devpool-3","pool":"devpool","branch":"main","containerHostname":"node-id-3.runtime.devpool.zerops",` +
+		`"state":"held","unverified":true,"acquiredAt":"2026-10-23T10:00:00Z","repo":"https://git.example.com/acme/app"}]`
+	if string(raw) != want {
+		t.Errorf("leases =\n%s\nwant\n%s", raw, want)
+	}
+	if strings.Contains(string(raw), "s3cr3t") || strings.Contains(string(raw), "SECRET-LEASE-VALUE") {
+		t.Errorf("a credential reached the envelope: %s", raw)
+	}
+}
+
 // TestComputeEnvelope_PoolDevHalf_CarriesStages pins the envelope of a pair
 // keyed by its dev pool: the pool's snapshot keys the pair — it carries the
 // pair's stages (stageHostname today, stages[] from the field order's step 3)

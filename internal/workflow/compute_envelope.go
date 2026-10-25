@@ -238,6 +238,7 @@ type leaseRecordFields struct {
 	ContainerNumber   int64  `json:"containerNumber"`
 	ContainerHostname string `json:"containerHostname"`
 	Branch            string `json:"branch"`
+	Repo              string `json:"repo"`
 	AcquiredAt        string `json:"acquiredAt"`
 }
 
@@ -273,7 +274,7 @@ func readLeaseRecordSnapshots(stateDir string) []LeaseSnapshot {
 		out = append(out, LeaseSnapshot{
 			Alias: alias, Pool: r.PoolHostname, Branch: r.Branch,
 			ContainerHostname: r.ContainerHostname, State: leaseStateRecorded, Unverified: true,
-			AcquiredAt: r.AcquiredAt,
+			AcquiredAt: r.AcquiredAt, Repo: topology.RepoIdentity(r.Repo),
 		})
 	}
 	return out

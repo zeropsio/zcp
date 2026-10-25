@@ -16,6 +16,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -428,5 +429,82 @@ func TestPoolMigrateEnv_SecretNeverInAnyToolOutput(t *testing.T) {
 				t.Errorf("a secret value appears in %s", where)
 			}
 		}
+	}
+}
+
+// TestPoolMigrateEnv_PoolAnotherPairHolds_RefusedBeforeAnyWrite: a pool the
+// part's name lands on that is another pair's — a pair keyed by it (another dev
+// moved onto it, or a part provisioned as a pool), or the pool another dev's
+// migration already gave its env (two dev services, `app` and `appdev`, both
+// name `apppool`) — is refused as pool-hostname-taken before anything is
+// written: no env key, no secret read on the dev, no default repository, on
+// the read side and on the env step alike (PM-4, PM-9).
+func TestPoolMigrateEnv_PoolAnotherPairHolds_RefusedBeforeAnyWrite(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		owner string // the pair the refusal names
+		seed  func(t *testing.T, stateDir string)
+	}{
+		{
+			name:  "a pair is keyed by the pool",
+			owner: "apppool",
+			seed: func(t *testing.T, stateDir string) {
+				t.Helper()
+				if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+					Hostname: "apppool", Mode: topology.PlanModeStandard, Stages: []topology.StageRef{{Hostname: "otherstage", SetupName: "prod"}},
+					DevPool: &workflow.DevPoolRef{ServiceID: "svc-pool", MigratedFrom: &workflow.MigratedDev{Hostname: "app"}}, BootstrappedAt: "2026-10-01T00:00:00Z",
+				}); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name:  "another dev's migration gave the pool its env",
+			owner: "app",
+			seed: func(t *testing.T, stateDir string) {
+				t.Helper()
+				path := filepath.Join(stateDir, "migrate", "pool-env", "apppool.json")
+				if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(`{"poolServiceId":"svc-pool","dev":"app","fingerprints":{"STRIPE_SECRET":"0123"}}`), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			for _, action := range []string{"", "pool-env"} {
+				f := poolEnvFixture()
+				f.input.Action = action
+				f.build(t)
+				tt.seed(t, f.stateDir)
+				var out map[string]any
+				var mock *platform.Mock
+				if action == "" {
+					out, mock = f.run(t)
+				} else {
+					out, mock = f.runEnv(t)
+				}
+				if out["status"] != "not-a-candidate" || !slices.Contains(poolMigrateReasons(out), "pool-hostname-taken") {
+					t.Fatalf("action %q = %v, want pool-hostname-taken", action, out)
+				}
+				if msg := poolMigrateRefusalMessage(out, "pool-hostname-taken"); !strings.Contains(msg, "apppool") || !strings.Contains(msg, tt.owner) || !strings.Contains(msg, `pool="`) {
+					t.Errorf("message %q names neither the pool, the pair holding it (%s) nor how to name another pool", msg, tt.owner)
+				}
+				if n := mock.CallCount("CreateServiceEnvVar") + mock.CallCount("DeleteUserData"); n != 0 {
+					t.Fatalf("action %q wrote the other pair's pool's env (%d calls)", action, n)
+				}
+				if strings.Contains(strings.Join(f.ssh.recorded(), "\n"), poolMigrateEnvReadMarker) {
+					t.Fatalf("action %q read the dev's secrets for another pair's pool", action)
+				}
+				if _, err := os.Stat(filepath.Join(f.stateDir, "leases", "pools", "apppool.json")); !errors.Is(err, fs.ErrNotExist) {
+					t.Fatalf("action %q seeded the pool's default repository (%v)", action, err)
+				}
+			}
+		})
 	}
 }

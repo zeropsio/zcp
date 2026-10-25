@@ -454,7 +454,9 @@ func readLaunchPushProof(ctx context.Context, sshDeployer ops.SSHDeployer, rt ru
 // no inline auth duplicate (the 2026-05-28 audit consolidation).
 // The session env is live per fresh SSH session, no restart coupling.
 func readLaunchPushProofContainer(ctx context.Context, ssh ops.SSHDeployer, pushHostname string, remoteURL string, trackedRef string) (LaunchPushProofResult, error) {
-	statusCmd := fmt.Sprintf(`cd %s 2>/dev/null && git status --porcelain 2>/dev/null || true`, exportRepoRoot)
+	// Optional locks off: a plain status refreshes and rewrites the
+	// checkout's index (DM-7).
+	statusCmd := fmt.Sprintf(`cd %s 2>/dev/null && GIT_OPTIONAL_LOCKS=0 git status --porcelain 2>/dev/null || true`, exportRepoRoot)
 	statusOut, err := ssh.ExecSSH(ctx, pushHostname, statusCmd)
 	if err != nil {
 		return LaunchPushProofResult{}, fmt.Errorf("git status on %s: %w", pushHostname, err)

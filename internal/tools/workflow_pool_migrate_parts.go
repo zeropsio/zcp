@@ -8,6 +8,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -223,6 +224,55 @@ func poolMigratePoolRefusal(pool string, byName map[string]platform.ServiceStack
 		}
 	}
 	return nil
+}
+
+// poolMigrateOwnerRefusals refuses each part's pool that is another pair's: a
+// pair other than dev's is keyed by it or names it (a dev moved onto it
+// before, or a part provisioned as a pool), or zcp gave it another dev
+// service's env in that dev's own migration (PM-4's record). Its env step
+// would write dev's env — its secrets, a GIT_TOKEN, the pool's default
+// repository — over a pool serving another app, and the re-key would refuse
+// only at the retire. Two dev services can land on one pool by default
+// (`app` and `appdev` both name `apppool`). Read before any write; reads only
+// zcp's own records.
+func poolMigrateOwnerRefusals(stateDir, dev string, parts []poolMigratePart, byName map[string]platform.ServiceStack) ([]poolMigrateRefusal, error) {
+	var refusals []poolMigrateRefusal
+	for _, part := range parts {
+		if part.pool == "" {
+			continue
+		}
+		held := ""
+		pair, err := workflow.FindServiceMeta(stateDir, part.pool)
+		if err != nil {
+			return nil, fmt.Errorf("read the pair naming %s: %w", part.pool, err)
+		}
+		switch {
+		case pair != nil && pair.Hostname != dev:
+			held = fmt.Sprintf("the pair keyed by %q holds it as its dev pool", pair.Hostname)
+			if pair.Hostname != part.pool {
+				held = fmt.Sprintf("the pair keyed by %q names it", pair.Hostname)
+			}
+		default:
+			if svc, ok := byName[part.pool]; ok {
+				if owner := ops.PoolMigrateEnvOwner(stateDir, part.pool, svc.ID); owner != "" && owner != dev {
+					held = fmt.Sprintf("zcp gave it %s's env in that dev service's own migration onto it", owner)
+				}
+			}
+		}
+		if held == "" {
+			continue
+		}
+		named, recovery := part.pool, `Pass pool="<free hostname>" to name the part's pool otherwise, and the same pool on every later call; nothing was written to `+part.pool+"."
+		if part.stage != "" && len(parts) > 1 {
+			named = fmt.Sprintf("%s, the pool of the part of %s,", part.pool, part.stage)
+			recovery = "A part's pool is named after its stage, so the part does not move while that pool is another pair's; nothing was written to it."
+		}
+		refusals = append(refusals, poolMigrateRefusal{
+			Reason:  poolMigrateRefusePoolTaken,
+			Message: fmt.Sprintf("%s is another pair's pool: %s. Its env step would write %s's env over it. %s", named, held, dev, recovery),
+		})
+	}
+	return refusals, nil
 }
 
 // poolMigratePartPool is the pool of the part whose stage is stage: the

@@ -166,6 +166,17 @@ func groupEnvironmentSetup(r GroupRuntime, setup string) (environmentSetup, warn
 		r.DevHostname, setup)
 }
 
+// GroupEnvironmentSetup is the setup a group environment builds for a part of
+// r whose stage builds setup — the setup Mate's preview variant extends, else
+// setup itself (groupEnvironmentSetup, without its warning). A reader matching
+// a tier's services to the Mate's parts names a part by it, so the AI Agent
+// tier's stage building the variant and a group environment's runtime
+// building the setup it extends read as one part.
+func GroupEnvironmentSetup(r GroupRuntime, setup string) string {
+	environmentSetup, _ := groupEnvironmentSetup(r, setup)
+	return environmentSetup
+}
+
 // zeropsYAMLSetupEntries indexes a zerops.yaml's setups by name, as written —
 // extends unresolved. Empty for a body that does not parse.
 func zeropsYAMLSetupEntries(body string) map[string]map[string]any {

@@ -327,10 +327,12 @@ func savePoolRetireRecord(stateDir string, rec *poolRetireRecord) error {
 
 // keepRetiredApart moves a retired record of a dev whose hostname another
 // service holds now out of the way of that service's retire: the record goes
-// to <dev>.<the id it retired>.json and its bundle — the only copy of the old
-// dev's work, at the path the new retire bundles to — to the same name's
-// .bundle, the restore steps naming it where it lies now. No call reads a
-// kept record again; it is there to restore from.
+// to <dev>.<the id it retired>.json and its bundles — the only copies of the
+// old dev's work, at the paths the new retire bundles to — to the same name's
+// .bundle and, for a variant-B retire that rebundled its code volume, its
+// .volume.bundle, the newer and only copy of the late writes; the restore
+// steps name each where it lies now. No call reads a kept record again; it is
+// there to restore from.
 func keepRetiredApart(stateDir string, rec *poolRetireRecord) error {
 	id := strings.Map(func(r rune) rune {
 		if r == '-' || r == '_' || (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
@@ -340,21 +342,35 @@ func keepRetiredApart(stateDir string, rec *poolRetireRecord) error {
 	}, rec.DevServiceID)
 	base := filepath.Join(stateDir, "migrate", rec.Dev+"."+cmp.Or(id, "unknown"))
 	kept := *rec
-	moved := rec.Bundle != nil && rec.Bundle.Path == poolRetireBundlePath(stateDir, rec.Dev)
-	if moved {
-		b := *rec.Bundle
-		b.Path = base + ".bundle"
-		kept.Bundle = &b
-		kept.Restore = make([]string, len(rec.Restore))
-		for i, step := range rec.Restore {
-			kept.Restore[i] = strings.ReplaceAll(step, rec.Bundle.Path, b.Path)
+	type move struct{ from, to string }
+	var moves []move
+	// keep re-points b and its restore steps when b lies at shared, the
+	// path a new retire of the hostname writes to.
+	keep := func(b *ops.PoolMigrateBundle, restore []string, shared, to string) (*ops.PoolMigrateBundle, []string) {
+		if b == nil || b.Path != shared {
+			return b, restore
 		}
+		moved := *b
+		moved.Path = to
+		steps := make([]string, len(restore))
+		for i, step := range restore {
+			steps[i] = strings.ReplaceAll(step, shared, to)
+		}
+		moves = append(moves, move{shared, to})
+		return &moved, steps
+	}
+	kept.Bundle, kept.Restore = keep(rec.Bundle, rec.Restore, poolRetireBundlePath(stateDir, rec.Dev), base+".bundle")
+	if v := rec.CodeVolume; v != nil {
+		volume := *v
+		volume.Bundle, volume.Restore = keep(v.Bundle, v.Restore,
+			filepath.Join(stateDir, "migrate", rec.Dev+poolRetireVolumeBundleSuffix), base+poolRetireVolumeBundleSuffix)
+		kept.CodeVolume = &volume
 	}
 	if err := writePoolRetireRecord(base+".json", &kept); err != nil {
 		return fmt.Errorf("keep the retired record of %s (%s) apart: %w", rec.Dev, rec.DevServiceID, err)
 	}
-	if moved {
-		if err := os.Rename(rec.Bundle.Path, kept.Bundle.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
+	for _, m := range moves {
+		if err := os.Rename(m.from, m.to); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("keep the bundle of %s (%s) apart: %w", rec.Dev, rec.DevServiceID, err)
 		}
 	}
@@ -1020,7 +1036,8 @@ func poolRetireRefused(resp poolMigrateResponse, refusals ...poolMigrateRefusal)
 // poolRetireBlocking names the census's unsaved work that holds the retire
 // unless forced: every item but the commits only a reflog reaches, which the
 // bundle carries as refs, and Mate's own refs and ignored files, which never
-// count.
+// count. A submodule holds it too: work inside one is invisible to the census
+// and the bundle never carries it (poolRetireSubmodules).
 func poolRetireBlocking(c *ops.PoolMigrateCensus) []string {
 	if c == nil {
 		return nil
@@ -1045,6 +1062,10 @@ func poolRetireBlocking(c *ops.PoolMigrateCensus) []string {
 		if t.DetachedCommits > 0 {
 			out = append(out, fmt.Sprintf("%d commits only the detached HEAD of %s holds", t.DetachedCommits, t.Path))
 		}
+		if t.Submodules != nil && t.Submodules.Count > 0 {
+			out = append(out, fmt.Sprintf("%s %d (%s): %s — push each one's commits, branches and stashes to its own remote",
+				poolRetireSubmodules, t.Submodules.Count, strings.Join(t.Submodules.Paths, ", "), poolRetireSubmodulesWhy(t.Path)))
+		}
 	}
 	for _, b := range c.Branches {
 		out = append(out, fmt.Sprintf("branch %s: %d commits on no remote branch", b.Name, b.Unpushed))
@@ -1053,6 +1074,14 @@ func poolRetireBlocking(c *ops.PoolMigrateCensus) []string {
 		out = append(out, fmt.Sprintf("%s: %s", s.Ref, s.Message))
 	}
 	return out
+}
+
+// poolRetireSubmodules opens the census item naming a tree's submodules.
+const poolRetireSubmodules = "submodules"
+
+// poolRetireSubmodulesWhy says what a tree's submodules lose with the dev.
+func poolRetireSubmodulesWhy(tree string) string {
+	return "in " + tree + ", each a repository of its own whose commits, branches, stashes and files the bundle does not carry"
 }
 
 // poolRetireKeptInBundle names the unsaved work whose only copy, once the dev
@@ -1064,7 +1093,7 @@ func poolRetireKeptInBundle(c *ops.PoolMigrateCensus) []string {
 	}
 	var out []string
 	for _, item := range poolRetireBlocking(c) {
-		if !strings.Contains(item, "a .env file") && !strings.HasPrefix(item, "an unfinished ") {
+		if !strings.Contains(item, "a .env file") && !strings.HasPrefix(item, "an unfinished ") && !strings.HasPrefix(item, poolRetireSubmodules) {
 			out = append(out, item)
 		}
 	}
@@ -1110,6 +1139,9 @@ func poolRetireNotKept(dev, root string, c *ops.PoolMigrateCensus, b *ops.PoolMi
 			}
 			if t.Ignored != nil && t.Ignored.Count > 0 {
 				out = append(out, fmt.Sprintf("ignored files in %s (%s): a checkout reproduces them", t.Path, strings.Join(t.Ignored.Paths, ", ")))
+			}
+			if t.Submodules != nil && t.Submodules.Count > 0 {
+				out = append(out, fmt.Sprintf("%s %d (%s): %s", poolRetireSubmodules, t.Submodules.Count, strings.Join(t.Submodules.Paths, ", "), poolRetireSubmodulesWhy(t.Path)))
 			}
 		}
 	}
@@ -1458,12 +1490,28 @@ func (r *poolRetireRun) saveFailed(err error) *mcp.CallToolResult {
 	return convertError(fmt.Errorf("pool-migrate retire of %s at %s: %w", r.rec.Dev, r.rec.Phase, err), WithRecoveryStatus())
 }
 
+// rekeyBegun reports a re-key that has begun: a pair keyed by one of the
+// record's pools moved from the dev, or no pair keyed by the dev any more. A
+// record at rewritten whose re-key never began — the phase is saved before
+// its work — is still before the split, and its resume reads the guards. A
+// pair file zcp cannot read counts as begun: the resume finishes the re-key.
+func (rec *poolRetireRecord) rekeyBegun(stateDir string) bool {
+	for _, pool := range rec.pools() {
+		m, err := workflow.ReadServiceMeta(stateDir, pool)
+		if err != nil || (m.DevIsPool() && m.DevPool.MigratedFrom != nil && m.DevPool.MigratedFrom.Hostname == rec.Dev) {
+			return true
+		}
+	}
+	return !poolRetireKeyedByDev(stateDir, rec.Dev)
+}
+
 // poolRetireResume continues a retire in flight from its record, against the
 // dev's state by id (docs/spec-workflows.md §13 PM-7): DELETING keeps the
 // record; gone finishes — the pair re-keyed whatever the phase; live resumes
 // from the phase on the acknowledged call, the guards re-run before the pair
-// is re-keyed, the dev re-fenced, and the bundle taken again from bundled or
-// wherever the record holds no verified bundle (resumeRebundles).
+// is re-keyed (at rewritten too, while its re-key has not begun), the dev
+// re-fenced, and the bundle taken again from bundled or wherever the record
+// holds no verified bundle (resumeRebundles).
 func poolRetireResume(ctx context.Context, d poolRetireDeps, input WorkflowInput, rec *poolRetireRecord) *mcp.CallToolResult {
 	corpus, _ := workflow.LoadAtomCorpus()
 	run := &poolRetireRun{d: d, rec: rec, resp: poolRetireBase(corpus, rec), force: input.Force.Bool() || rec.Forced, forceNow: input.Force.Bool()}
@@ -1486,8 +1534,11 @@ func poolRetireResume(ctx context.Context, d poolRetireDeps, input WorkflowInput
 
 	var g *poolRetireGuards
 	var expected DiagnosedDestruction
-	switch rec.Phase {
-	case poolRetireStarted, poolRetireFenced, poolRetireBundled:
+	switch {
+	case rec.Phase == poolRetireStarted, rec.Phase == poolRetireFenced, rec.Phase == poolRetireBundled,
+		rec.Phase == poolRetireRewritten && !rec.rekeyBegun(d.stateDir):
+		// Still before the split: a record cut between saving rewritten and
+		// the re-key reads every guard again too (PM-12).
 		in := input
 		in.Service, in.Pool = rec.Dev, rec.Pool
 		var result *mcp.CallToolResult

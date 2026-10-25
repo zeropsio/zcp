@@ -174,6 +174,9 @@ type boxToolResult struct {
 }
 
 func TestE2E_Import_Box_FinishesSetup(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping E2E live-platform test in short mode: it imports a Box and pulls its base")
+	}
 	h := newBoxHarness(t)
 	s := newSession(t, h.srv)
 	host := "tmpbox" + randomSuffix()[:4]

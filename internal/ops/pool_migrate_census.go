@@ -24,10 +24,11 @@ type PoolMigrateCensus struct {
 	// Clean is true when the census names no unsaved work: no staged,
 	// modified, conflicted or untracked file, no merge, rebase or similar in
 	// progress, no .env file, no commit a detached HEAD alone holds, no
-	// local branch commit on no remote branch, no stash entry and no commit
-	// only a reflog reaches. Refs under refs/t3/ and ignored files never make
-	// it unclean: Mate's own refs, and files a checkout reproduces from its
-	// repository.
+	// local branch commit on no remote branch, no stash entry, no commit
+	// only a reflog reaches and no submodule — a repository of its own,
+	// whose work the census cannot count and the bundle does not carry.
+	// Refs under refs/t3/ and ignored files never make it unclean: Mate's own
+	// refs, and files a checkout reproduces from its repository.
 	Clean bool `json:"clean"`
 	// Trees is the main checkout first, then every linked worktree.
 	Trees []PoolMigrateTree `json:"trees"`
@@ -75,6 +76,12 @@ type PoolMigrateTree struct {
 	// Ignored summarizes what git ignores, a wholly ignored directory named
 	// once.
 	Ignored *PoolMigratePaths `json:"ignored,omitempty"`
+	// Submodules are the tree's submodules (gitlinks in its index): each a
+	// repository of its own, its objects never in this repository's, so
+	// work inside one — a commit, a stash, an edit — leaves this tree's
+	// status clean and rides no bundle. A submodule's status entry is named
+	// here, never as a staged or modified path.
+	Submodules *PoolMigratePaths `json:"submodules,omitempty"`
 }
 
 // PoolMigratePaths is a list of paths: how many, and the first few.
@@ -125,7 +132,9 @@ const poolMigrateEnvFilePattern = `(^|/)\.env(\..*)?$`
 // at all — no stash create, no update-ref, no fetch. Each fact is a line
 // tagged by its kind; a step that fails prints a zcp-census-error line, and
 // the last line is zcp-census-end, so a census cut short never reads as
-// clean.
+// clean. `git worktree list --porcelain` prints a path verbatim, a newline in
+// it included, so a worktree path holding one — which the lines would cut,
+// reading the worktree as missing — is no census: its -z listing finds it.
 //
 //	W <line>                    git worktree list --porcelain
 //	B <ref>\t<remote>\t<ref>    a local branch and the remote branch it tracks
@@ -140,6 +149,7 @@ const poolMigrateEnvFilePattern = `(^|/)\.env(\..*)?$`
 //	TX <operation>              merging, rebasing, cherry-picking, reverting, bisecting
 //	TE <path>                   a .env file git does not carry
 //	TI <path>                   an ignored path
+//	TG <path>                   a submodule: a gitlink in the tree's index
 const poolMigrateCensusScript = `export GIT_OPTIONAL_LOCKS=0 LC_ALL=C
 set -f
 if [ ! -e .git ]; then echo "$(pwd) holds no .git" >&2; exit 3; fi
@@ -147,6 +157,7 @@ zl() { while IFS= read -r l; do printf '%s %s\n' "$1" "$l"; done; }
 zrun() { t=$1; shift; o=$("$@") || { echo "zcp-census-error $t"; return 1; }; if [ -n "$o" ]; then printf '%s\n' "$o" | zl "$t"; fi; return 0; }
 echo 'zcp-census 1'
 wts=$(git worktree list --porcelain) || { echo 'zcp-census-error worktree list'; exit 4; }
+if git worktree list --porcelain -z 2>/dev/null | tr '\n\0' '\001\n' | grep -q "^worktree .*$(printf '\001')"; then echo 'zcp-census-error a worktree path holding a newline (move that worktree to a path without one)'; exit 4; fi
 printf '%s\n' "$wts" | zl W
 zrun B git for-each-ref --format='%(refname)%09%(upstream:remotename)%09%(upstream:remoteref)' refs/heads/ || exit 4
 heads=$(git for-each-ref --format='%(refname)' refs/heads/) || { echo 'zcp-census-error branches'; exit 4; }
@@ -176,6 +187,8 @@ printf '%s\n' "$wts" | sed -n 's/^worktree //p' | while IFS= read -r p; do
     if [ -f "$g/CHERRY_PICK_HEAD" ]; then echo 'TX cherry-picking'; fi
     if [ -f "$g/REVERT_HEAD" ]; then echo 'TX reverting'; fi
     if [ -f "$g/BISECT_LOG" ]; then echo 'TX bisecting'; fi
+    gl=$(git ls-files -s) || exit 4
+    printf '%s\n' "$gl" | grep '^160000 ' | cut -f2 | zl TG
     ig=$(git ls-files --others --ignored --exclude-standard --directory) || exit 4
     un=$(git ls-files --others --exclude-standard) || exit 4
     if [ -n "$ig" ]; then printf '%s\n' "$ig" | zl TI; fi
@@ -221,6 +234,7 @@ type poolMigrateCensusParse struct {
 	conflict  map[*PoolMigrateTree][]string
 	untracked map[*PoolMigrateTree][]string
 	ignored   map[*PoolMigrateTree][]string
+	gitlinks  map[*PoolMigrateTree][]string
 	census    PoolMigrateCensus
 	failed    []string
 	noise     []string
@@ -237,6 +251,7 @@ func parsePoolMigrateCensus(out string) (*PoolMigrateCensus, error) {
 		conflict:  map[*PoolMigrateTree][]string{},
 		untracked: map[*PoolMigrateTree][]string{},
 		ignored:   map[*PoolMigrateTree][]string{},
+		gitlinks:  map[*PoolMigrateTree][]string{},
 	}
 	var header, end bool
 	var worktree []string
@@ -263,7 +278,7 @@ func parsePoolMigrateCensus(out string) (*PoolMigrateCensus, error) {
 			p.repoLine(tag, rest)
 		case "T":
 			p.current = p.tree(rest)
-		case "TM", "TS", "TX", "TE", "TI":
+		case "TM", "TS", "TX", "TE", "TI", "TG":
 			p.treeLine(tag, rest)
 		default:
 			if strings.TrimSpace(line) != "" {
@@ -398,6 +413,8 @@ func (p *poolMigrateCensusParse) treeLine(tag, rest string) {
 		t.EnvFiles = append(t.EnvFiles, rest)
 	case "TI":
 		p.ignored[t] = append(p.ignored[t], rest)
+	case "TG":
+		p.gitlinks[t] = append(p.gitlinks[t], rest)
 	case "TS":
 		p.statusLine(t, rest)
 	}
@@ -419,6 +436,10 @@ func (p *poolMigrateCensusParse) statusLine(t *PoolMigrateTree, line string) {
 			return
 		}
 		path, _, _ := strings.Cut(f[n-1], "\t")
+		if strings.HasPrefix(f[1], "S") {
+			// A submodule: Submodules names it, whatever it holds.
+			return
+		}
 		if f[0][0] != '.' {
 			p.staged[t] = append(p.staged[t], path)
 		}
@@ -457,8 +478,9 @@ func (p *poolMigrateCensusParse) finish() *PoolMigrateCensus {
 		t.Conflicted = poolMigratePathList(p.conflict[t])
 		t.Untracked = poolMigratePathList(untracked)
 		t.Ignored = poolMigratePathList(p.ignored[t])
+		t.Submodules = poolMigratePathList(p.gitlinks[t])
 		if t.Staged != nil || t.Modified != nil || t.Conflicted != nil || t.Untracked != nil ||
-			len(t.InProgress) > 0 || len(t.EnvFiles) > 0 || t.DetachedCommits > 0 {
+			len(t.InProgress) > 0 || len(t.EnvFiles) > 0 || t.DetachedCommits > 0 || t.Submodules != nil {
 			clean = false
 		}
 		c.Trees = append(c.Trees, *t)

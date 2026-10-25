@@ -47,7 +47,10 @@ const poolMigrateRefNS = "refs/zcp-migrate/"
 // (a plain one rewrites the index file), and the untracked files go through
 // an index of the scratch directory's own. With zfp's argument set it also
 // records, per tree, the WIP commit and untracked tree the bundle keeps, and
-// the untracked repositories of its own it does not ($Z/nested).
+// the untracked repositories of its own it does not ($Z/nested). A worktree
+// path holding a newline, which the line-by-line read would cut and take for
+// a missing directory, fails it: such a tree is neither fingerprinted nor
+// bundled as if it were gone.
 const poolMigrateBundleFunctions = `zfptree() {
   h=$(git rev-parse --verify -q HEAD) || h=unborn
   printf 'H %s\n' "$h"
@@ -94,6 +97,7 @@ zfp() {
   o=$(git rev-list --no-walk --reflog) || { echo 'zcp-bundle-error reflogs'; return 1; }
   if [ -n "$o" ]; then printf '%s\n' "$o" | sort -u | sed 's/^/L /'; fi
   git worktree list --porcelain > "$Z/worktrees" || { echo 'zcp-bundle-error worktree list'; return 1; }
+  if git worktree list --porcelain -z 2>/dev/null | tr '\n\0' '\001\n' | grep -q "^worktree .*$(printf '\001')"; then echo 'zcp-bundle-error a worktree path holding a newline (move that worktree to a path without one)'; return 1; fi
   i=0; p=; ph=
   while IFS= read -r l; do
     case $l in

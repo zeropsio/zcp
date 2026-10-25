@@ -410,6 +410,36 @@ func TestBoxClient_SecretNeverInErrorText(t *testing.T) {
 	})
 }
 
+// TestBoxClient_AnswerCutShort_IsTheNetworks: a 2xx whose body the connection
+// cut short is the network failing, not the API refusing: a POST /base whose
+// answer was lost this way is sent once more with the same Idempotency-Key
+// (PS-13), so the error is transient and still never carries the bearer.
+func TestBoxClient_AnswerCutShort_IsTheNetworks(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", "200")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"op-1","status":"PEN`))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		panic(http.ErrAbortHandler)
+	}))
+	defer srv.Close()
+	var mints int
+	var mu sync.Mutex
+	c := NewBoxClient(staticMint(srv.URL, &mints, &mu), srv.Client())
+	_, err := c.PullBase(context.Background(), BoxPullBaseRequest{ImageRef: "x", Name: "default"}, "k-1")
+	if err == nil {
+		t.Fatal("want an error for an answer cut short")
+	}
+	if !IsTransient(err) {
+		t.Errorf("err = %v, want a transient (network) error so the pull is sent again with its key", err)
+	}
+	assertNoSecret(t, err, boxTestToken)
+}
+
 func TestBoxClient_RemintsOnceOn401(t *testing.T) {
 	t.Parallel()
 
