@@ -3677,8 +3677,10 @@ with each one's origin address, `repos`, and whether that application has a prod
 target, released or not, `production` — both of which an older HQ omits; zcp reads no Git
 environment's pushes (`gitPushes`, which HQ still serves to released zcp); the closing note of a session that hands over a change names Put it live only while
 `production` is not true); a repository of
-its application, made or joined (`POST /api/mate/repos`); its change in a repository, one open at a
-time (`POST /api/mate/changes`, `PATCH …/:repo/:n`, `POST …/attachments`); a tier of the recipe
+its application, made or joined (`POST /api/mate/repos`); its changes in a repository, one open per
+branch it names beside its one change opened naming none — an HQ that keeps them so says
+`openPerBranch: true` in the Mate's state and lists every open change there — or, from an older HQ,
+one open at a time (`POST /api/mate/changes`, `PATCH …/:repo/:n`, `POST …/attachments`); a tier of the recipe
 (`GET /api/mate/recipe/:tier`); the organization's AI key (`POST /api/mate/ai-key`, §5.8); a token
 for a GitHub repository at that call (`GET /api/mate/git-credential?host=github.com&path=…`, §5.10);
 git over HTTPS at `/git/<appId>/<repo>.git` as the user `mate`, which today takes a Mate's push only
@@ -3999,19 +4001,38 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   `zerops_workflow action="open-change" branch=<branch> title=<…>` — `POST /api/mate/changes`
   `{repo, title, branch}` binds the change to the branch; HQ refuses with `{code, reason}` —
   `409 conflict/branch_taken`, `409 conflict/protected_ref` (`main`, a full ref, `mate/`),
-  `400 invalid/invalid_ref` — and zcp reads the reason; it answers the Mate's open change in the
-  repository, `created: false`, rather than open a second, saying how to take its branch and bring
-  the work onto it (work cut from `main` is no fast-forward of it); the pair records the number and
-  the branch HQ names (`ServiceMeta.HQ {change, branch}`), which status names on the dev half
-  (`change=`, `changeBranch=`). An HQ from before changes were bound to a named branch ignores
-  `branch` and opens the change on `mate/<mateId>/<n>`, naming none: zcp names and records that
-  branch and says to push the work there. While the change is open, develop's start says the work
-  goes on its branch rather than on one cut from `main`, and how to take it
-  (`TestOpenChange_AnOpenChangeTakesTheWorkOntoItsBranch`,
-  `TestOpenChange_AnHQBeforeNamedBranchesNamesTheBranchItBound`).
-  Released zcp recorded the Mate's local branch `mate/<mateId>` under the same key; status and
-  every pass read such a record as its change's `mate/<mateId>/<n>`, and the take step renames that
-  local branch, which git cannot keep beside the change's
+  `400 invalid/invalid_ref`, and, past five open changes of the Mate in the repository,
+  `409 conflict/too_many_open` — and zcp reads the reason (too many: it names the open ones from the
+  Mate's state and asks the person to merge or close one). A change is a branch: an open change is
+  (application, repository, branch), never a pair's. zcp keeps each change it knows of in its change
+  ledger, one file per change (`<stateDir>/hq/changes/<appId>/<repo>/<number>.json`, 0600, a write
+  lock per change; `workflow.HQChange`), so the zcp of every conversation and every subagent of one
+  writes different files, and nothing is a session's "current" change. A call names its change: by
+  `branch`, or by `service=` a lease alias — its record's repository on this Mate's HQ
+  (`hq.RepoOfURL`) and its branch, never `main` — or a pair, which names the repository; with
+  neither, the one repository of the Mate's wired pairs and HQ leases, pairs that share one counting
+  once (`resolveChangeTarget`, `TestResolveChange_LeaseAliasNamesRepoAndBranch`,
+  `TestResolveChange_PairsSharingARepositoryAreOne`). HQ answers the change already open on the
+  branch named, `created: false` — it stays, and its work goes on by a push and a describe — and a
+  second branch opens a change of its own (`TestOpenChange_SecondBranchOpensItsOwnChange`,
+  `TestOpenChange_SameBranchAnswered`, `TestOpenChange_FromLeaseAlias`,
+  `TestOpenChange_TooManyOpen_NamesThem`,
+  `TestOpenChange_PairsSharingARepositoryOpenAChangePerBranch`). An older HQ — no `openPerBranch` —
+  answers its one open change whatever branch is named: zcp keeps that change on its own branch,
+  records nothing for the branch asked for, and says the work goes onto the open one, how to take its
+  branch and bring the work onto it (work cut from `main` is no fast-forward of it)
+  (`TestOpenChange_OldHQAnswersTheOpenOne_RecordsNothingForTheAskedBranch`,
+  `TestOpenChange_AnOpenChangeTakesTheWorkOntoItsBranch`). An HQ from before changes were bound to
+  a named branch ignores `branch` and opens the change on `mate/<mateId>/<n>`, naming none: zcp
+  names and keeps that branch and says to push the work there
+  (`TestOpenChange_AnHQBeforeNamedBranchesNamesTheBranchItBound`). On such an older HQ, while the
+  change is open, develop's start says the work goes on its branch rather than on one cut from
+  `main`, and how to take it. The pairs' records an earlier zcp wrote (`ServiceMeta.HQ {change,
+  branch, changeDescription}`) move into the ledger at every read of it, one change however many
+  pairs share its repository, and are cleared (`TestHQChangeLedger_MigrationFromPairsDedupsAcrossPairs`);
+  released zcp recorded the Mate's local branch `mate/<mateId>` under the same key, which moves in
+  as its change's `mate/<mateId>/<n>`, and the take step renames that local branch, which git
+  cannot keep beside the change's
   (`TestUpgrade_AnOpenChangeTheReleasedZcpRecordedKeepsStatusAndPushWorking`). In a
   repository whose code is kept on GitHub (`origin.mode` `github`, read from `GET /api/mate/self`
   at the call and recorded, the pair's record when HQ cannot be read) the checkout's origin is
@@ -4025,14 +4046,26 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   state, `GET /api/mate/self`, by every `describe-change` and reconcile pass — no merge passes
   through this process, so nothing waits to be told. A merged change's note tells the agent to bring
   `main` up to date and cut the next work's branch from it; it carries no CI line (§10.8). The
-  record's number is cleared once the change is no longer open.
+  ledger forgets a change once it is no longer open. A change the state no longer lists is read by
+  its window: an HQ that keeps an open change per branch lists every open one, so one missing settled
+  past the window and is said as no longer open, never as closed without merging; an older HQ lists
+  only the Mate's newest ten in the repository, so one missing while ten newer are listed may be an
+  open one that fell out, and stays kept, unknown — only one missing from a window that is not full,
+  or newer than its oldest, reads as closed. The pass's change turn runs after its pairs', per
+  repository, once a pair's turn read the state (or at develop's start), and holds each change with
+  no wait, leaving one a describe holds to the next pass. A change of another application than the
+  one HQ holds the Mate in stays there, said once.
 - **A change handed to the Mate.** A person hands an open change whose Mate is gone to another
   Mate of the application; HQ keeps its branch — one its Mate named, or `mate/<old>/<n>` — and
-  `GET /api/mate/self` lists it with `branch` and `handed: true`. The next pass records it as the
-  pair's change with that branch (`hqTakeHanded`, once the change on record is known to be no
-  longer open) and says once how to take the branch — fetched when its Mate pushed to it, cut from
-  `main` when nothing is there — and to push to it, never force. `open-change` reads the Mate's
-  state first and answers the handed change, opening none. The group recipe's writer moves a
+  `GET /api/mate/self` lists it with `branch` and `handed: true`. The next pass keeps it in the
+  ledger with that branch (`hqTakeHanded`, after it learned what became of the changes it kept) and
+  says once how to take the branch — fetched when its Mate pushed to it, cut from `main` when
+  nothing is there — and to push to it, never force. `open-change` reads the Mate's state first and
+  answers a handed change on the branch named, opening none; another branch opens its own change,
+  the answer naming the handed one, which stays open on its branch
+  (`TestHandedChange_AnotherBranchOpensItsOwnChange`). An older HQ hands a change only to a Mate
+  holding no open change in the repository, so there `open-change` answers the handed change
+  whatever branch is named. The group recipe's writer moves a
   handed proposal on its stored branch (`hq.Client.BranchOf`). zcp
   `TestHandedChange_IsThePairsAndTheWorkGoesOnItsBranch`,
   `TestGroupRecipe_AHandedProposalMovesOnItsOwnBranch`.
@@ -4092,7 +4125,7 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
 `TestBaseBranchRefusalRemedy_TheNextAttemptWires`, `TestHQGit_*`, `TestHQRetry_TriesOnlyWhileHQCannotServe`,
 `TestHQNotServingWords`, `TestUpsertServiceMeta_LegacyPendingDelivery_IsDropped`,
 `TestClient_Bounded_EndsATryHQDoesNotAnswer`, `TestAPassSkipsAPairHeldElsewhere`, `TestLockPair`,
-`TestDescribeChange_WaitsWhileItsPairIsHeld`, `TestClient_*`, `TestGitCredential_*`,
+`TestDescribeChange_WaitsWhileItsChangeIsHeld`, `TestDescribeChange_ByBranch`, `TestDescribeChange_SeveralOpenNoBranch_Refused`, `TestClient_*`, `TestGitCredential_*`,
 `TestPersistedCredentialHelper_*`, `TestReconcileHQRepositories_RenewsThePoolsCredentialAfterTheMateEnrollsAgain`,
 `TestHQPass_PoolDevHalf_RenewsOnPoolNoSSH`, `TestHQPass_PoolDevHalf_TakesOverThePoolsCredentialRecord` — against a fake HQ that serves real git with HQ's ref rules.
 
@@ -4254,12 +4287,17 @@ still the whole prompt (`TestHandleDevelopBriefing_MateStandUp_LeavesTheStageOut
 **A change's description (2026-09-29; in HQ since 2026-10-02).** A change opens with a title of
 what it holds and nothing more, while the person reviews it by what it says
 (§5.4: the review shows what the change does in the Mate's words, right after the verdict). So the
-Mate writes it: `zerops_workflow action="describe-change" service=… description=…` — markdown, at
-most 20000 characters and no NUL, which no text in HQ keeps — sets the body of the pair's open change
-(`PATCH /api/mate/changes/:repo/:n {body}`), the one on record or the open one the Mate's state names,
-and replaces what was there; a `title=…` given with it retitles the change in the same edit. The
-words are kept on the pair first (`ServiceMeta.HQ.ChangeDescription`), so none are lost while HQ does
-not answer: they wait for the change they were written for. Words never reach a change they were not
+Mate writes it: `zerops_workflow action="describe-change" branch=… description=…` — markdown, at
+most 20000 characters and no NUL, which no text in HQ keeps — sets the body of the open change on that
+branch (`PATCH /api/mate/changes/:repo/:n {body}`); `service=` a lease alias names its branch, and
+with neither the repository's only open change is the one — several open is a refusal listing each
+one's `branch=`, number and title, never the newest (`TestDescribeChange_ByBranch`,
+`TestDescribeChange_SeveralOpenNoBranch_Refused`, `TestResolveChange_SeveralOpen_RefusesListingEach`,
+`TestResolveChange_NeverTheNewest`) — and replaces what was there; a `title=…` given with it retitles
+the change in the same edit. The words are kept with the change in the ledger first, so none are
+lost while HQ does not answer: they wait for the change they were written for. A describe holds its
+change (`workflow.HoldHQChange`), never its pair, so a pass never forgets the change while a describe
+writes onto it (`TestDescribeChange_WaitsWhileItsChangeIsHeld`). Words never reach a change they were not
 written for: a change on record that merged or closed before they reached it is named to the Mate
 and nothing is kept, and words kept for a change that is gone are dropped rather than inherited by
 the next one. Describing never opens a change, and with none open there is nothing to describe yet.
@@ -4273,7 +4311,7 @@ reached HQ (a connection dropped after the words were sent, a balancer's 502 or 
 not have landed, since HQ has no read of a change's words to check. With no change on record, the
 read of the Mate's own state that names the open one is tried the same way, and HQ staying away is
 said as not knowing, never as "no change is open". `hq_describe_retry.go`; `TestDescribeChange_WaitsOutARollingDeploy`, `TestDescribeTransient`;
-`hq_change_description.go`; `TestDescribeChange`, `TestDescribeChange_WaitsWhileItsPairIsHeld`,
+`hq_change_description.go`; `TestDescribeChange`, `TestDescribeChange_WaitsWhileItsChangeIsHeld`, `TestDescribeChange_ByBranch`, `TestDescribeChange_SeveralOpenNoBranch_Refused`,
 `TestDescribeChange_Refusals`, `TestWorkflowTool_DescribeChangeReachesItsHandler`.
 
 - **A change asks for review only when it is ready (2026-10-05, D7 and F8 of run 11).** A change
@@ -4292,7 +4330,7 @@ said as not knowing, never as "no change is open". `hq_describe_retry.go`; `Test
   characters, with "…"; zcp gives a change no title of its own. A describe holds the pair's
   checkout, so two describes from two chats never interleave. The client asks for review only while
   the Mate rests, too: not while a turn runs or helpers it started still work in any of its chats; a
-  watch loop alone is not work. `TestDescribeChange`, `TestDescribeChange_WaitsWhileItsPairIsHeld`;
+  watch loop alone is not work. `TestDescribeChange`, `TestDescribeChange_WaitsWhileItsChangeIsHeld`, `TestDescribeChange_ByBranch`, `TestDescribeChange_SeveralOpenNoBranch_Refused`;
   HQ: `changes.test.ts` "a change is ready for review only at the head the Mate last described it
   at"; client: `mateNextStep.test.ts`, `groupFlow.test.ts`, `SidebarZeropsTree.test.tsx`,
   `ZeropsNextStepBanner.test.tsx`.
@@ -4522,13 +4560,14 @@ merge/release targets, not an arbitrary ref supplied by the client.
 | MB-31 | In a Mate, enrolled yet or not, launch-production refuses before it reads a scope or writes anything, and its next step names only a change the Mate's fresh state says is still open; a merged one points at the projects page, and none, or one closed without merging, says the work goes to `main` first by a branch of the agent's own; with no readable enrollment it says the answer is HQ's. A container that is not a Mate keeps its route, an enrollment file on its disk notwithstanding. zcp `TestHandleLaunchProduction_AMateRefusesBeforeAnyStep` (the handler, Mate and not, enrolled and not: no SSH read, admin client, staged token or state file before the refusal), `TestLaunchProduction_AMateKeepingItsCodeInHQRefusesAndSaysWhatIsTrue`, `TestLaunchProduction_AMateWithoutItsEnrollmentSaysSo` (the next step). |
 | MB-32 | A project's flow and its one next step are one derivation the projects page, the left menu and a Mate's conversation all draw (D29): worst first, a failed deploy the next step — production's before a stage's — a failed stage never hiding a release, and a failed production keeping the release that might clear it; production "After the first merge" with nothing to press while `main` is empty; a preview only the stage half beside its own dev half; a group stage drawn only where one exists; the conversation's step from the flow — its own mergeable change, as _Review_ at the composer's top, and nothing of the project's. The page lays it out one way: a _Next steps_ item carries its row's own verb (_Review_, _Review release_, _+ Add production_), a _Review_ opening the review and nothing merging or releasing from the page, and a step with no verb to press is not listed; a cell holds at most two lines, a row one verb at the end of the cell it acts on (and _Review release_ beside a failed production); an empty step is a muted word, never a dashed place; _Add stage_ and _Add production_ are the project menu's, never a footer link; a Mate opens from its chip, its tile or its card. The left menu draws production as one chip on the project's heading, a stage only where there is no production, and dots no heading — a folded one shows its busy Mates' faces. `groupFlow.test.ts` — "takes the worst step first: $case", "reads production as $case", "offers Add production only where $case → $addable", "still ranks a failed production above the release", "names production's failure before a stage's, and keeps the release a failed stage does not block", `pairPreviewRoute` "is $case"; `mateNextStep.test.ts` — "$case" (its cases include "its own change, waiting for the person's review", "another Mate's change", "its own change that does not merge"); `OverviewView.test.tsx` — "carries the step's verb %s on each strip item, the row's own verb", "leaves a step with no verb to press out of the strip", "never holds more than two lines in a cell: %s", "puts the verb in the cell it belongs to", "still offers the release beside a broken production, not just the build (D28)", "draws a group stage under main only where one exists — never an empty slot", "reads production as coming after the first merge, with nothing to press", "opens any Mate a row names into its conversation, by a real button in reading order", "opens a tile's Mate from the whole tile, with no Open button beside it"; `ProjectsView.test.tsx` — "names the next step in its header, without the verb", "keeps Add stage and Add production in the group menu: no footer links", "draws each Mate as a row that carries its Preview on its first line"; `flowSteps.test.tsx` — "says its word in the muted hand, never dashed: %s", "holds its verbs at the cell's end, in order"; `projectsView.logic.test.ts` — "says %s awaits somebody: %s"; `SidebarZeropsTree.test.tsx` — "never dots a project for the production it does not have"; `SidebarProductionChip.logic.test.ts` — "$state" (its cases include "no production, only stage"), "draws no chip where there is neither a production nor a stage"; `SidebarProjects.logic.test.ts` — "headingFaces — who a folded project's heading shows (M15)"; `ZeropsReviewDoors.test.tsx` — "every door opens the review and never acts itself (R1)". |
 | MB-33 | A Mate proposes only the recipe tiers `main` of the application's recipe repository in HQ lacks (D30): a tier directory `main` has any file in is left whole, the group's first recipe lands whole, a top-level file `main` has is never proposed. The proposal is the Mate's own change in `group`, titled exactly "Mate: the group's import files" with no description, its branch `main`'s tree with the missing files written over it, so it only adds; it moves forward only — a changed composition on its head, with `main` as a second parent once `main` moved — and one `main` has overtaken is brought to `main`'s tree and adds nothing. A group whose `main` has every tier gets no change opened, and the agent's `group-recipe` answers that `main` already carries every tier. Every `buildFromGit` is the pair's repository in HQ. zcp `TestMissing_ATierTheRepositoryHas_IsLeftWhole`, `TestGroupRecipe_ProposedAsTheMatesChange`, `TestGroupRecipe_ProposesOnlyWhatMainLacks`, `TestGroupRecipe_FollowsTheProjectOnTheSameChange`, `TestGroupRecipe_MainMovedUnderAnOpenProposal`, `TestGroupRecipe_AProposalMainOvertookAddsNothing`, `TestGroupRecipe_OpensNothingMainAlreadyHas`, `TestHandleGroupRecipe_Table`. |
-| MB-34 | A Mate's description of its change is its change's body in HQ: set on the pair's open change — on record or named by the Mate's state, never opened by describing — kept on the pair while HQ does not answer, with an ask to describe again, and never put on a change it was not written for (one that merged or closed first is named to the Mate and nothing is kept; words kept for a change that is gone are dropped). The pictures it names are the Mate's own kept screenshots, attached to the change once each and published as `<img alt width height src>` at HQ's address; a picture not kept for that change is refused before anything is written, and one HQ will never take writes nothing and drops the words (HQ refusing for now keeps them). zcp `TestDescribeChange`, `TestDescribeChange_WaitsWhileItsPairIsHeld`, `TestDescribeChange_Refusals`, `TestWorkflowTool_DescribeChangeReachesItsHandler`, `TestDescribeChange_Pictures`, `TestKeepBrowserPicture`. |
+| MB-34 | A Mate's description of its change is its change's body in HQ: set on the open change of the branch named — by branch or a lease alias, or the repository's only open one; several open with none named is refused, listing each — on record or named by the Mate's state, never opened by describing — kept with the change in the ledger while HQ does not answer, with an ask to describe again, and never put on a change it was not written for (one that merged or closed first is named to the Mate and nothing is kept; words kept for a change that is gone are dropped). The pictures it names are the Mate's own kept screenshots, attached to the change once each and published as `<img alt width height src>` at HQ's address; a picture not kept for that change is refused before anything is written, and one HQ will never take writes nothing and drops the words (HQ refusing for now keeps them). zcp `TestDescribeChange`, `TestDescribeChange_WaitsWhileItsChangeIsHeld`, `TestDescribeChange_ByBranch`, `TestDescribeChange_SeveralOpenNoBranch_Refused`, `TestDescribeChange_Refusals`, `TestWorkflowTool_DescribeChangeReachesItsHandler`, `TestDescribeChange_Pictures`, `TestKeepBrowserPicture`. |
 | MB-35 | A new Mate stands up from its application's AI Agent tier, read from HQ, in one call (D32): every pair built from the application's repositories in HQ is read by zcp's naming, not its setups' names, adopted as the adopt route records it with the tier's setups, its checkout put on `main` of the repository the tier names (never one HQ would have to make), and deployed every dev half at once, the first call answering once they stand with the stages queued, and on the second call each stage from its dev half once what its build reads stands (with no reads, every stage above it by priority); a stage never called for stays `READY_TO_DEPLOY` — with nothing committed, pushed or proposed; the runtimes the browser is still importing are waited for, bounded; a refusal before anything is touched names the adopt route, a pair that fails stops alone with the model's next step and holds only the halves whose builds read it, which say what they waited for, and a second call skips what is done. Registered in a Mate only, and a Mate's AGENTS.md sends "Stand up development of the project." to it first. zcp `TestStandup_StandsUpEveryPairFromTheRecipe`, `TestStandupAfter_EveryDevHalfStartsAtOnce`, `TestStandupReads_FromTheRecipe`, `TestStandupReads_EveryRouteTheWriterCounts`, `TestStandup_ReturnsOnceDevelopmentIsUp`, `TestStandup_ASecondCallContinuesAndSkipsWhatIsDone`, `TestStandup_TheModelIsTheBackup`, `TestStandup_WaitsForTheRuntimesTheBrowserIsImporting`, `TestParseMateTier`, `TestParseMateTier_PairsOnlyRepositoriesOfThisApplication`, `TestParseRecipeImportShape_RolesFollowTheHostnameConvention`, `TestAdoptPair_RecordsWhatTheAdoptRouteRecords`, `TestServer_StandupToolGating`, `TestBuildAgentsMD_Container_StandUpRoutesToTheTool`; integration `TestStandup_OverMCP_AMateInNoApplicationIsRefusedAndNothingIsTouched`. |
 | MB-36 | A kept Mate session is presented only after the descriptor names the expected project and its environment and the Mate confirms it with every scope the client asks for; one the Mate ended or one short of a scope is forgotten and a throwaway opens a new one; no word keeps it and mints; it never waits on the mint pace; the account's close, a refused stored login and a displaced session each end it at its Mate (D33). `keptSessions.test.ts` (client runtime and web), `identityExchange.test.ts`, `exchangeDriver.test.ts`, `signIn.guards.test.tsx`. |
 | MB-37 | A group recipe writes each search engine at no less than 2 GB `minRam` and 0.5 GB `minFreeRamGB` on every tier and never lowers a value; an unread scale writes no block; `profileOverrides` and the free-memory buffer are carried; a scaling proposal is the Mate's change in the recipe repository in HQ, written over `main`, rewriting only that host's block in every tier naming it; it refuses a block it cannot splice safely, moves forward on the same change for the same host, brings a stale one to `main`'s tree when nothing differs, and is refused while the Mate's additive proposal is open there, which in turn leaves an open scaling proposal alone; the steer speaks only after a change that finished (D34). `group_floors_test.go`, `host_scaling_test.go`, `group_profile_overrides_test.go`, `scale_test.go`; zcp `TestGroupRecipeScaling_SteersAndProposesOneHostsBlock`, `TestGroupRecipeScaling_ProposesFromMainsHeadEveryTierFresh`, `TestGroupRecipeScaling_OneOpenChangeInTheRecipeRepository`, `TestScratch_File`. |
 | MB-38 | A Mate reads from its first turn, even on an empty project, that its code and changes live in its application's HQ, bootstrap comes first and ZCP wires the pair's repository once the service stands, Core deploys the application's environments, and the person is never asked for a GitHub or other repository, URL or token. The block is Mate-only; a plain container or local install reads none of it. This keeps upstream's repository-first guidance while replacing its Gitea workflow with HQ's jobs (§10.8). zcp `TestBuildAgentsMD_Container_GitHostSaysWhereTheCodeLives`. |
 | MB-39 | A person may merge an open HQ change while the agent works; a pass tells the agent what became of it — merged, bring `main` up to date and cut the next branch from it; closed, nothing of it is on `main` — and never changes the checkout; a closing session hands over only an open change; production guidance reads merged history from HQ, and a failed read stays unknown with a manual ask again (§10.10). zcp `TestReconcileHQRepositories_TellsTheMateWhatBecameOfItsChange`, `TestHQPass_LearnsAMergeWithoutChangingTheCheckout`, `TestSessionAnnotations_HandoffOnlyWithAnOpenChange`, `TestProductionKnowsMergedWorkThePairHoldsNoRecordOf`, `TestProductionGuidance_HQUnavailableIsUnknown`. |
 | MB-40 | Mate's preview pane frames a Mate's dev and stage, never the application's production: a Mate's AGENTS.md has dev and stage drop `X-Frame-Options` and widen the app's own `frame-ancestors` by Mate's origins through Mate's preview variant of the stage's setup, never that setup; the group recipe's AI Agent tier keeps the variant and every group environment builds the setup it extends; a setting naming Mate's address alone is no framing. `TestBuildAgentsMD_Container_PreviewPaneFramesDevAndStage`, `TestBuildGroupRecipe_PreviewVariant_GroupEnvironmentsBuildTheSetupItExtends`, `TestBuildGroupRecipe_PreviewVariant_PartsAreNamedByTheSetupTheyBuild`, `TestBuildGroupRecipe_PreviewVariant_ASettingNamingMateIsNoFraming`. |
+| MB-41 | A Mate holds an open change per branch: open-change names its change by branch, or by a lease alias or pair (pairs sharing a repository are one); a second branch opens its own change, the same branch is answered, a handed change is answered only for its branch, and past five open the refusal names them. zcp keeps each change in its ledger, one file per change, never on a pair, moving the pairs' older records in once. Against an HQ that keeps one open change per repository (no `openPerBranch`) the answered change is kept on its own branch and nothing is recorded for the branch asked for (§10.10). zcp `TestHQChangeLedger_OneFilePerChange`, `TestHQChangeLedger_ConcurrentWritersKeepEachOthersFields`, `TestHQChangeLedger_MigrationFromPairsDedupsAcrossPairs`, `TestResolveChange_LeaseAliasNamesRepoAndBranch`, `TestResolveChange_PairsSharingARepositoryAreOne`, `TestResolveChange_NeverTheNewest`, `TestOpenChange_SecondBranchOpensItsOwnChange`, `TestOpenChange_SameBranchAnswered`, `TestOpenChange_FromLeaseAlias`, `TestOpenChange_OldHQAnswersTheOpenOne_RecordsNothingForTheAskedBranch`, `TestOpenChange_TooManyOpen_NamesThem`, `TestOpenChange_PairsSharingARepositoryOpenAChangePerBranch`, `TestHandedChange_AnotherBranchOpensItsOwnChange`, `TestClient_Self_Changes_DecodeStandingAndOpenPerBranch`. |
 | MB-28 | A pull request belongs to the Mate whose branch it is (zcp's `mate/{login}`) or whose bot opened it, a person's own is listed after the Mates and never dropped, a group repo's is a recipe change whoever opened it, and a roll-back is offered only to an earlier approved release, its _Roll back to this_ opening the roll back's review. `projectFlow.test.ts` — "whose pull request it is", "puts each Mate's under it, newest first, and the rest after the Mates", "is a recipe change on the group repo, whoever opened it"; `release.test.ts` — "a release's row"; `ZeropsReviewDoors.test.tsx` — "Roll back to this opens the roll back's review, from the row pressed"; `SidebarZeropsTree.test.tsx` "the project's flow under it"; `ZeropsGitPanel.test.tsx` "is this Mate's repositories and nothing of the project's". Since 2026-10-02 a change in HQ is the Mate's that opened it (only Mates open changes), and a change in the application's recipe repository is a recipe change (`RECIPE_REPO`), the proposal known by zcp's exact title. |
 | MB-29 | A deploy token reaches a job only when the job is proved, runs the default branch's workflow from the repository itself, holds the commit protected state wants on that environment, and its runner has run nothing but such jobs since it was made; a superseded or already-live commit gets no token and no failure; the job pushes the commit's tree (`--workspace-state clean`), never the working directory. gitea-mate `internal/server/deploy_test.go`, `internal/pipeline/grant_test.go`, `internal/pipeline/runner_test.go`, `actions/deploy` script test; zcp `workflow_build_integration_test.go`. Superseded 2026-10-02: HQ keeps an environment's deploy token and deploys with it itself; no job holds one (§10.8). |
 | MB-17 | A Gitea and its broker answer every browser origin, since every call carries a bearer and no cookie: the import sends no origin list and `POST /person/token` answers `*`. `giteaRecipe.test.ts` — "sends no origin list: a Gitea answers every origin, since every call carries a bearer"; gitea-mate `TestGiteaProjectImportCarriesNoOriginList`, `TestPersonTokenAnswersEveryOrigin`. Retiring with the Gitea (2026-10-02). |
