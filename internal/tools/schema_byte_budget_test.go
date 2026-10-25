@@ -204,7 +204,10 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// Raised 1057 -> 1085: action=park / action=unpark (DP-28) — stop a
 		// held lease's container keeping its files, start it again — names
 		// both in action and gives lease their role; no new field.
-		"zerops_lease": 1085,
+		// Raised 1085 -> 1175: from, the branch an acquire cuts a new branch
+		// from instead of main (DP-6) — a new input of acquire, its
+		// description one short line.
+		"zerops_lease": 1175,
 		// New tool: setup / status of a Zerops Box (docs/spec-workflows.md §8
 		// PS-11..PS-14). Two fields: the action and the Box's hostname.
 		"zerops_box": 420,
