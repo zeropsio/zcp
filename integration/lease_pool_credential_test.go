@@ -1,6 +1,7 @@
 // Tests for: integration — zerops_lease in a Mate puts the Mate credential on
-// the pool's GIT_TOKEN for a repository on its HQ, through the full MCP server
-// (docs/spec-workflows.md §8 DP-16).
+// the pool's ZCP_HQ_GIT_TOKEN for a repository on its HQ — never its
+// GIT_TOKEN, the user's — through the full MCP server (docs/spec-workflows.md
+// §8 DP-16).
 
 package integration_test
 
@@ -16,6 +17,7 @@ import (
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/knowledge"
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/server"
@@ -23,10 +25,10 @@ import (
 
 // TestLease_Integration_HQRepoInAMate_PutsTheMateCredentialOnThePool: in a
 // Mate enrolled with its HQ, the first acquire of a repository on HQ writes
-// the Mate credential to the pool's GIT_TOKEN as a sensitive secret before it
-// checks out; the next one finds zcp's fingerprint matching and writes
-// nothing. No result and no file under the working directory carries the
-// credential.
+// the Mate credential to the pool's ZCP_HQ_GIT_TOKEN as a sensitive secret
+// before it checks out, leaving the user's GIT_TOKEN as it was; the next one
+// finds zcp's fingerprint matching and writes nothing. No result and no file
+// under the working directory carries the credential.
 func TestLease_Integration_HQRepoInAMate_PutsTheMateCredentialOnThePool(t *testing.T) {
 	// Non-parallel: t.Chdir (the state dir), t.Setenv (HOME holds the
 	// enrollment) and a swap of http.DefaultTransport (the orchestrator).
@@ -41,7 +43,10 @@ func TestLease_Integration_HQRepoInAMate_PutsTheMateCredentialOnThePool(t *testi
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-pool", Name: "devpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
 		}).
-		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{ID: "env-t", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}})
+		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{
+			{ID: "env-t", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true},
+			{ID: "env-g", Key: ops.GitTokenEnvKey, Content: "the-users-own-token", Sensitive: true},
+		})
 	store, err := knowledge.GetEmbeddedStore()
 	if err != nil {
 		t.Fatalf("knowledge store: %v", err)
@@ -75,20 +80,21 @@ func TestLease_Integration_HQRepoInAMate_PutsTheMateCredentialOnThePool(t *testi
 	}
 
 	if n := mock.CallCount("CreateServiceEnvVar"); n != 1 {
-		t.Errorf("GIT_TOKEN writes = %d, want one: the second acquire finds zcp's fingerprint matching", n)
+		t.Errorf("HQ credential writes = %d, want one: the second acquire finds zcp's fingerprint matching", n)
 	}
 	envs, err := mock.GetServiceEnv(ctx, "svc-pool")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var token *platform.ServiceEnvVar
-	for i := range envs {
-		if envs[i].Key == "GIT_TOKEN" {
-			token = &envs[i]
-		}
+	held := map[string]platform.ServiceEnvVar{}
+	for _, e := range envs {
+		held[e.Key] = e
 	}
-	if token == nil || token.Content != leaseIntHQCredential || !token.Sensitive {
-		t.Errorf("the pool's GIT_TOKEN = %+v, want the Mate credential as a sensitive secret", token)
+	if token, ok := held[ops.PoolHQCredentialEnvKey]; !ok || token.Content != leaseIntHQCredential || !token.Sensitive {
+		t.Errorf("the pool's %s = %+v, want the Mate credential as a sensitive secret", ops.PoolHQCredentialEnvKey, token)
+	}
+	if token := held[ops.GitTokenEnvKey]; token.Content != "the-users-own-token" {
+		t.Errorf("the pool's GIT_TOKEN = %+v, want the user's own token, never written over", token)
 	}
 	if at, _ := ssh.first("fetch -q --prune origin"); at < 0 {
 		t.Error("the checkout did not run")

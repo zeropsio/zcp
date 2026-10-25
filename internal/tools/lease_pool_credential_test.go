@@ -1,6 +1,7 @@
 // Tests for: tools/lease.go + tools/hq_wiring.go — inside a Mate, a lease of a
-// repository on its HQ puts the Mate credential on the pool's GIT_TOKEN, and
-// the repository pass renews it after the Mate enrolls again
+// repository on its HQ puts the Mate credential on the pool's
+// ZCP_HQ_GIT_TOKEN — never its GIT_TOKEN, which stays the user's — and the
+// repository pass renews it after the Mate enrolls again
 // (docs/spec-workflows.md §8 DP-16).
 package tools
 
@@ -41,27 +42,41 @@ func leaseToolServerIn(t *testing.T, rt runtime.Info, ssh ops.SSHDeployer) (srv 
 	return srv, stateDir, mock
 }
 
-// serviceGitToken is the GIT_TOKEN serviceID holds on mock.
-func serviceGitToken(t *testing.T, mock *platform.Mock, serviceID string) (platform.ServiceEnvVar, bool) {
+// serviceEnvVar is the variable key serviceID holds on mock.
+func serviceEnvVar(t *testing.T, mock *platform.Mock, serviceID, key string) (platform.ServiceEnvVar, bool) {
 	t.Helper()
 	envs, err := mock.GetServiceEnv(context.Background(), serviceID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, e := range envs {
-		if e.Key == ops.GitTokenEnvKey {
+		if e.Key == key {
 			return e, true
 		}
 	}
 	return platform.ServiceEnvVar{}, false
 }
 
+// serviceGitToken is the GIT_TOKEN serviceID holds on mock.
+func serviceGitToken(t *testing.T, mock *platform.Mock, serviceID string) (platform.ServiceEnvVar, bool) {
+	t.Helper()
+	return serviceEnvVar(t, mock, serviceID, ops.GitTokenEnvKey)
+}
+
+// poolHQCredential is the HQ credential pool service serviceID holds on mock
+// (ops.PoolHQCredentialEnvKey).
+func poolHQCredential(t *testing.T, mock *platform.Mock, serviceID string) (platform.ServiceEnvVar, bool) {
+	t.Helper()
+	return serviceEnvVar(t, mock, serviceID, ops.PoolHQCredentialEnvKey)
+}
+
 // TestLeaseTool_HQRepoInAMate_PutsTheMateCredentialOnThePool: zerops_lease
 // in a Mate gives the pool the Mate credential its enrollment holds before it
-// checks out a repository on HQ — as a sensitive GIT_TOKEN, the way a wired
-// dev service holds it. A container that is not a Mate leaves the pool's
-// GIT_TOKEN the user's. Neither the result nor any state file carries the
-// credential, and a write that fails says so without it.
+// checks out a repository on HQ — as the sensitive ZCP_HQ_GIT_TOKEN only its
+// leases of HQ repositories read. A container that is not a Mate writes
+// nothing, and no acquire writes the pool's GIT_TOKEN, the user's. Neither the
+// result nor any state file carries the credential, and a write that fails
+// says so without it.
 func TestLeaseTool_HQRepoInAMate_PutsTheMateCredentialOnThePool(t *testing.T) {
 	// Non-parallel: t.Setenv points HOME at the test's enrollment.
 	tests := []struct {
@@ -89,12 +104,15 @@ func TestLeaseTool_HQRepoInAMate_PutsTheMateCredentialOnThePool(t *testing.T) {
 			if res.IsError != tt.wantError {
 				t.Fatalf("IsError = %v, want %v: %s", res.IsError, tt.wantError, text)
 			}
-			token, held := serviceGitToken(t, mock, "svc-pool")
+			token, held := poolHQCredential(t, mock, "svc-pool")
 			switch {
 			case tt.wantWrite && (!held || token.Content != leaseHQCredential || !token.Sensitive):
-				t.Errorf("the pool's GIT_TOKEN = %+v (held %v), want the Mate credential as a sensitive secret", token, held)
+				t.Errorf("the pool's %s = %+v (held %v), want the Mate credential as a sensitive secret", ops.PoolHQCredentialEnvKey, token, held)
 			case !tt.wantWrite && held:
-				t.Errorf("zcp wrote the pool's GIT_TOKEN: %+v", token)
+				t.Errorf("zcp wrote the pool's %s: %+v", ops.PoolHQCredentialEnvKey, token)
+			}
+			if token, held := serviceGitToken(t, mock, "svc-pool"); held {
+				t.Errorf("zcp wrote the pool's GIT_TOKEN, the user's: %+v", token)
 			}
 			if tt.wantError && (!strings.Contains(text, "GIT_TOKEN") || ssh.sawCommand("fetch -q --prune origin")) {
 				t.Errorf("a failed write either is not named or a checkout ran anyway: %s", text)
@@ -161,12 +179,15 @@ func TestReconcileHQRepositories_RenewsThePoolsCredentialAfterTheMateEnrollsAgai
 
 			lab.wire()
 
-			token, held := serviceGitToken(t, lab.mock, "svc-pool")
+			token, held := poolHQCredential(t, lab.mock, "svc-pool")
 			switch {
 			case tt.wantRenew && (!held || token.Content != renewed || !token.Sensitive):
-				t.Errorf("the pool's GIT_TOKEN = %+v (held %v), want the renewed credential as a sensitive secret", token, held)
+				t.Errorf("the pool's %s = %+v (held %v), want the renewed credential as a sensitive secret", ops.PoolHQCredentialEnvKey, token, held)
 			case !tt.wantRenew && held:
-				t.Errorf("a pass outside a Mate wrote the pool's GIT_TOKEN: %+v", token)
+				t.Errorf("a pass outside a Mate wrote the pool's %s: %+v", ops.PoolHQCredentialEnvKey, token)
+			}
+			if token, held := serviceGitToken(t, lab.mock, "svc-pool"); held {
+				t.Errorf("the pass wrote the pool's GIT_TOKEN, the user's: %+v", token)
 			}
 			assertNoSecretOnDisk(t, lab.stateDir, renewed)
 		})

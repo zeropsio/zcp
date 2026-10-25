@@ -84,6 +84,7 @@ var platformInternalKeys = map[string]bool{
 	"ZCP_API_KEY":           true,
 	GitTokenEnvKey:          true,
 	LaunchTokenEnvKey:       true,
+	PoolHQCredentialEnvKey:  true,
 	"envIsolation":          true,
 	"sshIsolation":          true,
 	"apiCdnUrl":             true,

@@ -237,14 +237,18 @@ const leaseCredentialHelperShell = `!f() { test "$1" = get || return 0; test -n 
 
 // leaseHQCredentialHelperShell is leaseCredentialHelperShell for a repository
 // on the Mate's HQ, whose git takes only the user `mate` (as
-// hqCredentialHelperShell answers it). Unlike that helper it never falls back
-// to `zcp hq git-credential`: zcp is not installed in a pool container, so it
-// answers from GIT_TOKEN or not at all.
-const leaseHQCredentialHelperShell = `!f() { test "$1" = get || return 0; test -n "$GIT_TOKEN" || return 0; echo username=mate; echo "password=$GIT_TOKEN"; }; f`
+// hqCredentialHelperShell answers it) with this Mate's HQ credential — which
+// the pool holds under a variable of its own (PoolHQCredentialEnvKey), never
+// as GIT_TOKEN, so no helper a repository outside HQ uses ever reads it. Unlike
+// hqCredentialHelperShell it never falls back to `zcp hq git-credential`: zcp
+// is not installed in a pool container, so it answers from that variable or
+// not at all.
+const leaseHQCredentialHelperShell = `!f() { test "$1" = get || return 0; test -n "$` + PoolHQCredentialEnvKey + `" || return 0; echo username=mate; echo "password=$` + PoolHQCredentialEnvKey + `"; }; f`
 
 // leaseCredentialHelperFor is the helper a lease of repo authenticates with:
-// HQ's user for a repository on the Mate's HQ (hqURL, "" without one), the
-// lease's oauth2 helper otherwise.
+// HQ's user and the pool's HQ credential for a repository on the Mate's HQ
+// (hqURL, "" without one), the lease's oauth2 helper and the pool's GIT_TOKEN
+// otherwise.
 func leaseCredentialHelperFor(repo, hqURL string) string {
 	if IsHQRemote(repo, hqURL) {
 		return leaseHQCredentialHelperShell
@@ -346,14 +350,14 @@ func classifyCheckoutFailure(err error, onHQ bool) (code, suggestion string) {
 	switch {
 	case containsAny(out, "could not read username", "could not read password", "terminal prompts disabled"):
 		if onHQ {
-			return platform.ErrPrerequisiteMissing, hqLeaseCredentialSuggestion("the container's session had no GIT_TOKEN: the pool's secret is not set (or is empty), or had not reached the session yet")
+			return platform.ErrPrerequisiteMissing, hqLeaseCredentialSuggestion("the container's session had no " + PoolHQCredentialEnvKey + ": the pool's secret is not set (or is empty), or had not reached the session yet")
 		}
 		return platform.ErrGitTokenMissing,
 			"git asked for a credential and the container's session had none: the pool's GIT_TOKEN secret is not set (or is empty). Private repositories need it"
 	case containsAny(out, "authentication failed", "invalid username or password", "invalid credentials",
 		"permission denied", "error: 401", "error: 403", "password authentication was removed"):
 		if onHQ {
-			return platform.ErrPrerequisiteMissing, hqLeaseCredentialSuggestion("HQ refused the pool's GIT_TOKEN for that user: it is not this Mate's current HQ credential")
+			return platform.ErrPrerequisiteMissing, hqLeaseCredentialSuggestion("HQ refused the pool's " + PoolHQCredentialEnvKey + " for that user: it is not this Mate's current HQ credential")
 		}
 		return platform.ErrGitTokenInvalid,
 			"The remote refused the pool's GIT_TOKEN (bad, expired or without access to this repository)"
@@ -375,14 +379,14 @@ func classifyCheckoutFailure(err error, onHQ bool) (code, suggestion string) {
 }
 
 // hqLeaseCredentialSuggestion is what a lease of a repository on the Mate's HQ
-// lacks when HQ's git would not take the pool's GIT_TOKEN (why). Inside a Mate
+// lacks when HQ's git would not take the pool's HQ credential (why). Inside a Mate
 // an acquire writes the Mate credential there (DP-16) and forgets it once HQ
 // refuses it, so the next acquire is the step: what is left is a Mate that is
 // enrolling again, or a container that is not a Mate. It is no user's token to
 // ask for.
 func hqLeaseCredentialSuggestion(why string) string {
 	return "The repository is on this Mate's HQ, whose git takes only the user `mate` with this Mate's HQ credential, and " + why +
-		". zcp writes that credential to the pool's GIT_TOKEN at an acquire of an HQ repository inside a Mate, and writes it afresh at the next one after a refusal. Acquire again. " +
+		". zcp writes that credential to the pool's " + PoolHQCredentialEnvKey + " at an acquire of an HQ repository inside a Mate, and writes it afresh at the next one after a refusal. Acquire again. " +
 		"If HQ refuses it again, the Mate is enrolling with HQ anew (its own service, zcp service mate, keeps enrolling it) and an acquire after that writes the new one; outside a Mate zcp writes nothing there. " +
 		"It is no user's token, so never ask for one or make one up. Meanwhile lease the pool for a repository outside HQ, or work on this one in the dev service of the pair wired to it"
 }

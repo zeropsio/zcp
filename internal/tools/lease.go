@@ -103,8 +103,9 @@ func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir 
 	deps := leaseDeps(client, projectID, stateDir, swarm, mounter, ssh)
 	if rt.MateEnabled {
 		// Inside a Mate an acquire of an HQ repository puts the Mate
-		// credential on the pool's GIT_TOKEN, as git-push-setup puts it on a
-		// wired dev service (DP-16); outside one the secret stays the user's.
+		// credential on the pool (ops.PoolHQCredentialEnvKey), as
+		// git-push-setup puts it on a wired dev service (DP-16); outside one
+		// zcp writes nothing, and the pool's GIT_TOKEN is the user's always.
 		deps.PoolCredential = ops.PoolHQCredential{Read: hqCredential}
 	}
 	// envelope is the result's lifecycle envelope; read are the views this

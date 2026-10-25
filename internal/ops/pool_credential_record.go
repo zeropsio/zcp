@@ -1,6 +1,7 @@
 package ops
 
-// A pool's record of the Mate credential zcp wrote to its GIT_TOKEN
+// A pool's record of the Mate credential zcp wrote to its HQ credential
+// variable (PoolHQCredentialEnvKey)
 // (lease_pool_credential.go, docs/spec-workflows.md §8 DP-16) is handed over
 // once the pool keys a pair: the pair's HQ record then keeps the fingerprint,
 // the repository pass renews the pool from it, and the per-pool record goes,
@@ -8,7 +9,7 @@ package ops
 // hand-over needs; ops reads no ServiceMeta, so the pass (tools) makes it.
 
 // PoolCredentialRecord is zcp's record of the Mate credential an acquire put
-// on pool's GIT_TOKEN: the pool service it wrote and the fingerprint of what
+// on pool (PoolHQCredentialEnvKey): the pool service it wrote and the fingerprint of what
 // it wrote — never the credential. found is false when there is none zcp can
 // read.
 func PoolCredentialRecord(stateDir, pool string) (poolServiceID, fingerprint string, found bool) {

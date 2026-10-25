@@ -55,10 +55,11 @@ func hasAPICode(err error, code string) bool {
 // would leak it. Masked regardless of the owning service type. Keys-only
 // listing (includeValues=false) is unaffected.
 var credentialValueKeys = map[string]bool{
-	GitTokenEnvKey:    true,
-	"ZCP_API_KEY":     true,
-	LaunchTokenEnvKey: true,
-	GiteaTokenEnvKey:  true,
+	GitTokenEnvKey:         true,
+	"ZCP_API_KEY":          true,
+	LaunchTokenEnvKey:      true,
+	GiteaTokenEnvKey:       true,
+	PoolHQCredentialEnvKey: true,
 }
 
 // managedCredentialFieldKeys are env-var KEYS whose VALUE is a generated
@@ -169,6 +170,20 @@ func RedactEnvValue(key, value, serviceType string, sensitive bool) (string, boo
 // read-back command from it. Every tell/check that names the key must
 // reference this constant so they cannot drift apart.
 const GitTokenEnvKey = "GIT_TOKEN"
+
+// PoolHQCredentialEnvKey is the single owner of the env-var name a pool
+// service holds this Mate's HQ credential under (docs/spec-workflows.md §8
+// DP-16): inside a Mate an acquire of a repository on HQ writes it
+// (EnvSetService, sensitive=true), the repository pass renews it, and only
+// the helper a lease of an HQ repository authenticates with reads it
+// ($ZCP_HQ_GIT_TOKEN, leaseHQCredentialHelperShell) — inline at that
+// repository's fetch and persisted under HQ's scope alone. It is a variable
+// of its own, never the pool's GIT_TOKEN: every container of a pool reads
+// the pool's whole service env, and a lease of a repository outside HQ
+// answers its host's 401 with GIT_TOKEN — the user's, which zcp never writes.
+// The ZCP_ prefix keeps it out of Mate's vault (isVaultHidden) and is no
+// ZEROPS_ prefix, which the platform forbids for custom envs.
+const PoolHQCredentialEnvKey = "ZCP_HQ_GIT_TOKEN"
 
 // GiteaTokenEnvKey is the single owner of the retired Gitea bot-token env-var
 // name. Nothing writes or reads it as a credential any more — a Mate reaches

@@ -5,7 +5,7 @@
 // detached in the container — a clone of the repository the pool's last lease
 // checked out, only into a container still free, only for a pool zcp leased a
 // repository from, and for a repository on the Mate's HQ only once the pool's
-// GIT_TOKEN holds this Mate's HQ credential; status reports what it did
+// ZCP_HQ_GIT_TOKEN holds this Mate's HQ credential; status reports what it did
 // (docs/spec-workflows.md §8 DP-32).
 package ops
 
@@ -324,7 +324,7 @@ func TestLeaseWarmClone_SSHFailingAsTheAliasFileIsRewritten_TriedAgain(t *testin
 
 // TestLeaseWarmClone_HQRepository_OnlyWithTheMateCredentialOnThePool: a
 // repository on the Mate's HQ is fetched with this Mate's HQ credential on the
-// pool's GIT_TOKEN, which an acquire writes (DP-16): the clone starts only when
+// pool's ZCP_HQ_GIT_TOKEN, which an acquire writes (DP-16): the clone starts only when
 // zcp's record says the pool holds the credential the enrollment holds now —
 // never outside a Mate, never before an acquire wrote it, never after the Mate
 // enrolled again — and never writes it itself.
@@ -372,7 +372,7 @@ func TestLeaseWarmClone_HQRepository_OnlyWithTheMateCredentialOnThePool(t *testi
 				t.Errorf("an HQ repository's clone must authenticate as mate: %s", launches[0].command)
 			}
 			if writes := mock.CallCount("CreateServiceEnvVar"); writes != 0 {
-				t.Errorf("GIT_TOKEN writes = %d, want none: only an acquire writes the credential", writes)
+				t.Errorf("HQ credential writes = %d, want none: only an acquire writes the credential", writes)
 			}
 			clone := warmCloneOf(t, wf)
 			if !tt.wantClone && (clone == nil || clone.Outcome != LeaseWarmCloneSkipped || !strings.Contains(clone.Note, "HQ")) {
@@ -441,15 +441,20 @@ func TestClassifyCheckoutFailure_WarmCloneThatWouldNotStop(t *testing.T) {
 
 // TestLeaseWarmCloneCommand_CredentialNeverInIt: the clone authenticates as a
 // checkout does — the inline helper answering from the session's GIT_TOKEN,
-// as HQ's user `mate` for a repository on the Mate's HQ — and persists no
-// helper, identity or credential: the checkout that takes it does.
+// or as HQ's user `mate` from the pool's HQ credential for a repository on the
+// Mate's HQ — and persists no helper, identity or credential: the checkout
+// that takes it does.
 func TestLeaseWarmCloneCommand_CredentialNeverInIt(t *testing.T) {
 	t.Parallel()
 	plain := leaseWarmCloneCommand(leaseWorkDir, testRepo, leaseHQURL)
 	onHQ := leaseWarmCloneCommand(leaseWorkDir, leaseHQRepo, leaseHQURL)
 	for name, c := range map[string]string{"plain": plain, "hq": onHQ} {
-		if !strings.Contains(c, "fetch -q --prune origin") || !strings.Contains(c, "$GIT_TOKEN") {
-			t.Errorf("%s: the clone must fetch through the session-env helper: %s", name, c)
+		reads := "$" + GitTokenEnvKey
+		if name == "hq" {
+			reads = "$" + PoolHQCredentialEnvKey
+		}
+		if !strings.Contains(c, "fetch -q --prune origin") || !strings.Contains(c, reads) {
+			t.Errorf("%s: the clone must fetch through the session-env helper reading %s: %s", name, reads, c)
 		}
 		for _, never := range []string{"git config", poolMateCredential, testPoolToken, "credential.https"} {
 			if strings.Contains(c, never) {

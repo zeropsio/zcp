@@ -124,7 +124,7 @@ func LeaseAcquireGroupChange(ctx context.Context, d LeaseDeps, pools []string, r
 		fresh = append(fresh, m)
 	}
 	// A repository on the Mate's HQ is fetched with the Mate credential, which
-	// zcp puts on each pool's GIT_TOKEN before any container is taken (DP-16).
+	// zcp puts on each pool before any container is taken (DP-16).
 	for _, m := range fresh {
 		if m.cred, err = ensurePoolHQCredential(ctx, d, m.rp.svc, repoURL); err != nil {
 			return LeaseChange{}, err

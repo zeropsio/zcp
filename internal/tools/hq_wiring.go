@@ -104,9 +104,9 @@ func hqAddress() string {
 }
 
 // hqCredential is the Mate credential the HQ enrollment holds, read now; false
-// when there is none to read. It goes where git-push-setup puts it — a pool's
-// GIT_TOKEN for a lease of an HQ repository (ops.PoolHQCredential) — and never
-// into a result, a log or a file zcp writes.
+// when there is none to read. It goes where zcp puts it for git — a pool's HQ
+// credential for a lease of an HQ repository (ops.PoolHQCredential) — and
+// never into a result, a log or a file zcp writes.
 func hqCredential() (string, bool) {
 	kept, found, err := hq.LoadEnrollment(hq.EnrollmentPath())
 	if err != nil || !found || kept.Credential == "" {
@@ -200,7 +200,8 @@ func reconcileHQRepositories(
 
 // renewHQPoolCredentials gives every pool zcp put the Mate credential on the
 // one the enrollment holds now (ops.RenewPoolHQCredentials), inside a Mate
-// only — outside one zcp never writes a pool's GIT_TOKEN. Like a dev service's
+// only — outside one zcp never writes a pool's HQ credential
+// (ops.PoolHQCredentialEnvKey). Like a dev service's
 // renewal it needs no backoff: a pool whose record matches costs no call, and
 // one that could not be written is tried again on the next pass. One line per
 // pool that could not be.
@@ -210,7 +211,7 @@ func renewHQPoolCredentials(ctx context.Context, client platform.Client, rt runt
 	}
 	var lines []string
 	for _, failure := range ops.RenewPoolHQCredentials(ctx, client, stateDir, hqc.Credential()) {
-		lines = append(lines, fmt.Sprintf("%s: the Mate enrolled with HQ again, and git in the pool's leases cannot reach HQ until its GIT_TOKEN holds the new credential, which could not be written (%v) — retrying on the next pass, and the next acquire of an HQ repository there writes it too.", failure.Pool, failure.Err))
+		lines = append(lines, fmt.Sprintf("%s: the Mate enrolled with HQ again, and git in the pool's leases cannot reach HQ until its %s holds the new credential, which could not be written (%v) — retrying on the next pass, and the next acquire of an HQ repository there writes it too.", failure.Pool, ops.PoolHQCredentialEnvKey, failure.Err))
 	}
 	return lines
 }
@@ -318,7 +319,7 @@ func passHQPair(
 // redeployed zcp does — and HQ revoked the one it holds. A pair wired before
 // its record named the credential is renewed once, and so is a pair just
 // keyed by its dev pool (the re-key clears the dev service's fingerprint).
-// Outside a Mate zcp never writes a pool's GIT_TOKEN (docs/spec-workflows.md
+// Outside a Mate zcp never writes a pool's HQ credential (docs/spec-workflows.md
 // §8 DP-16), so a pool keying a pair is never stale there.
 func hqPairCredentialStale(m *workflow.ServiceMeta, hqc hq.Client, rt runtime.Info) bool {
 	if m.DevIsPool() && !rt.MateEnabled {
@@ -328,22 +329,35 @@ func hqPairCredentialStale(m *workflow.ServiceMeta, hqc hq.Client, rt runtime.In
 		m.HQ.CredentialFingerprint != hqc.CredentialFingerprint()
 }
 
+// hqPairCredentialKey is the variable a wired pair's credential holder keeps
+// the Mate credential under: a dev service's GIT_TOKEN, which its sessions'
+// git reads — or, for a pair keyed by its dev pool, the pool's own HQ
+// credential (ops.PoolHQCredentialEnvKey), which only a lease of an HQ
+// repository reads: the pool's GIT_TOKEN stays the user's, for its leases of
+// repositories outside HQ (docs/spec-workflows.md §8 DP-16).
+func hqPairCredentialKey(m *workflow.ServiceMeta) string {
+	if m.DevIsPool() {
+		return ops.PoolHQCredentialEnvKey
+	}
+	return ops.GitTokenEnvKey
+}
+
 // renewHQPairCredential gives a wired pair's dev half the Mate credential as
-// it is now, as the service secret its sessions' git reads, and records which
-// one it holds. Only the secret: the checkout's branch, origin and helper
-// stay as the agent left them. For a pair keyed by its dev pool the secret is
-// the pool's, which every lease's fresh session reads — written by the id the
-// pair records, over no ssh. "" once renewed, else the line saying it was
-// not. A pair gone from disk meanwhile (a pool migration re-keyed it) keeps
-// no stub of it.
+// it is now, as the service secret its git reads (hqPairCredentialKey), and
+// records which one it holds. Only the secret: the checkout's branch, origin
+// and helper stay as the agent left them. For a pair keyed by its dev pool the
+// secret is the pool's HQ credential, which every lease of an HQ repository
+// reads from its next fresh session — written by the id the pair records, over
+// no ssh. "" once renewed, else the line saying it was not. A pair gone from
+// disk meanwhile (a pool migration re-keyed it) keeps no stub of it.
 func renewHQPairCredential(ctx context.Context, client platform.Client, projectID, stateDir string, hqc hq.Client, m *workflow.ServiceMeta) string {
 	serviceID, err := hqPairCredentialHolder(ctx, client, projectID, m)
 	if err == nil {
-		_, err = ops.EnvSetService(ctx, client, serviceID, ops.GitTokenEnvKey, hqc.Credential(), true)
+		_, err = ops.EnvSetService(ctx, client, serviceID, hqPairCredentialKey(m), hqc.Credential(), true)
 	}
 	if err != nil {
 		if m.DevIsPool() {
-			return fmt.Sprintf("the Mate enrolled with HQ again, and git in the leases of the dev pool %s cannot reach HQ until the pool's GIT_TOKEN holds the new credential, which could not be written (%v) — retrying on the next pass; a lease's next fresh session reads it once written.", m.Hostname, err)
+			return fmt.Sprintf("the Mate enrolled with HQ again, and git in the leases of the dev pool %s cannot reach HQ until the pool's %s holds the new credential, which could not be written (%v) — retrying on the next pass; a lease's next fresh session reads it once written.", m.Hostname, ops.PoolHQCredentialEnvKey, err)
 		}
 		return fmt.Sprintf("the Mate enrolled with HQ again, and git in %s's sessions cannot reach HQ until it holds the new credential, which could not be written (%v) — retrying on the next pass; your own shell's git is unaffected.", m.Hostname, err)
 	}
@@ -359,11 +373,12 @@ func renewHQPairCredential(ctx context.Context, client platform.Client, projectI
 	return ""
 }
 
-// hqPairCredentialHolder is the service whose GIT_TOKEN holds a wired pair's
-// Mate credential: its dev service, by hostname — or, for a pair keyed by its
-// dev pool, the pool, by the id the pair records (devPool.serviceId): a pool
-// re-created under the hostname is another service, holding nothing zcp
-// wrote. A pair that records no id finds its pool by hostname.
+// hqPairCredentialHolder is the service that holds a wired pair's Mate
+// credential (hqPairCredentialKey): its dev service, by hostname — or, for a
+// pair keyed by its dev pool, the pool, by the id the pair records
+// (devPool.serviceId): a pool re-created under the hostname is another
+// service, holding nothing zcp wrote. A pair that records no id finds its
+// pool by hostname.
 func hqPairCredentialHolder(ctx context.Context, client platform.Client, projectID string, m *workflow.ServiceMeta) (string, error) {
 	if m.DevIsPool() && m.DevPool.ServiceID != "" {
 		return m.DevPool.ServiceID, nil

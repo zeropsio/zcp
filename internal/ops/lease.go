@@ -64,9 +64,9 @@ type LeaseDeps struct {
 	// each use ("" — or nil — for none): a repository on it is checked out as
 	// HQ's git user (DP-12).
 	HQAddress func() string
-	// PoolCredential puts the Mate credential on the pool's GIT_TOKEN before a
-	// lease of a repository on HQ takes a container (DP-16); the zero value —
-	// outside a Mate — never writes.
+	// PoolCredential puts the Mate credential on the pool
+	// (PoolHQCredentialEnvKey) before a lease of a repository on HQ takes a
+	// container (DP-16); the zero value — outside a Mate — never writes.
 	PoolCredential PoolHQCredential
 	// ReadTimeout bounds one orchestrator read (a container listing); zero
 	// means leaseReadTimeout. The HTTP client allows minutes, for a start or

@@ -1,7 +1,7 @@
 // Tests for: ops/lease_pool_credential.go — inside a Mate, a lease of a
-// repository on its HQ puts the Mate credential on the pool's GIT_TOKEN, and a
-// re-enrollment renews it on every pool zcp put it on
-// (docs/spec-workflows.md §8 DP-16).
+// repository on its HQ puts the Mate credential on the pool's
+// ZCP_HQ_GIT_TOKEN, never its GIT_TOKEN (the user's), and a re-enrollment
+// renews it on every pool zcp put it on (docs/spec-workflows.md §8 DP-16).
 package ops
 
 import (
@@ -78,19 +78,32 @@ func readPoolCredentialRecord(t *testing.T, stateDir, pool string) (map[string]s
 	return rec, info.Mode().Perm(), true
 }
 
-// poolGitToken is the GIT_TOKEN svc holds on the mock platform.
-func poolGitToken(t *testing.T, client platform.Client, serviceID string) (platform.ServiceEnvVar, bool) {
+// poolEnvVar is the variable key the service holds on the mock platform.
+func poolEnvVar(t *testing.T, client platform.Client, serviceID, key string) (platform.ServiceEnvVar, bool) {
 	t.Helper()
 	envs, err := client.GetServiceEnv(context.Background(), serviceID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, e := range envs {
-		if e.Key == GitTokenEnvKey {
+		if e.Key == key {
 			return e, true
 		}
 	}
 	return platform.ServiceEnvVar{}, false
+}
+
+// poolGitToken is the GIT_TOKEN the service holds on the mock platform.
+func poolGitToken(t *testing.T, client platform.Client, serviceID string) (platform.ServiceEnvVar, bool) {
+	t.Helper()
+	return poolEnvVar(t, client, serviceID, GitTokenEnvKey)
+}
+
+// poolHQCredential is the HQ credential the pool service holds on the mock
+// platform (PoolHQCredentialEnvKey).
+func poolHQCredential(t *testing.T, client platform.Client, serviceID string) (platform.ServiceEnvVar, bool) {
+	t.Helper()
+	return poolEnvVar(t, client, serviceID, PoolHQCredentialEnvKey)
 }
 
 // assertNoFileHolds fails when any file under dir carries secret.
@@ -116,7 +129,8 @@ func sessionFingerprint(value string) []byte {
 
 // TestLeaseAcquire_HQRepoInAMate_PutsTheMateCredentialOnThePool: before it
 // takes a container for a repository on its HQ, a Mate makes the pool's
-// GIT_TOKEN the Mate credential its enrollment holds now — written as a
+// ZCP_HQ_GIT_TOKEN the Mate credential its enrollment holds now — never its
+// GIT_TOKEN, the user's — written as a
 // sensitive secret when zcp's fingerprint for the pool is absent, names
 // another credential (the Mate enrolled again) or another pool (re-created
 // under the same hostname), and left alone when it matches: the Mate's key
@@ -156,13 +170,16 @@ func TestLeaseAcquire_HQRepoInAMate_PutsTheMateCredentialOnThePool(t *testing.T)
 
 			writes := mock.CallCount("CreateServiceEnvVar")
 			if tt.wantWrite != (writes == 1) || writes > 1 {
-				t.Fatalf("GIT_TOKEN writes = %d, want a write: %v", writes, tt.wantWrite)
+				t.Fatalf("HQ credential writes = %d, want a write: %v", writes, tt.wantWrite)
 			}
 			if tt.wantWrite {
-				token, ok := poolGitToken(t, mock, "svc-pool")
+				token, ok := poolHQCredential(t, mock, "svc-pool")
 				if !ok || token.Content != poolMateCredential || !token.Sensitive {
-					t.Errorf("the pool's GIT_TOKEN = %+v (found %v), want the Mate credential as a sensitive secret", token, ok)
+					t.Errorf("the pool's %s = %+v (found %v), want the Mate credential as a sensitive secret", PoolHQCredentialEnvKey, token, ok)
 				}
+			}
+			if token, ok := poolGitToken(t, mock, "svc-pool"); ok {
+				t.Errorf("the acquire wrote the pool's GIT_TOKEN, the user's: %+v", token)
 			}
 			rec, mode, ok := readPoolCredentialRecord(t, fx.stateDir, testPoolHost)
 			if !ok || rec["poolServiceId"] != "svc-pool" || rec["fingerprint"] != current {
@@ -228,7 +245,7 @@ func TestLeaseAcquire_PoolTokenStaysTheUsers(t *testing.T) {
 // TestLeaseAcquire_HQRepo_WaitsUntilASessionSeesTheWrittenCredential: a
 // service env write reaches a fresh ssh session within seconds, not at once,
 // and a clean acquire is quicker than that. So an acquire that wrote the
-// pool's GIT_TOKEN reads its fingerprint in a fresh session of the leased
+// pool's HQ credential reads its fingerprint in a fresh session of the leased
 // container — the hash, never the value — until it is the credential's, and
 // only then checks out. An acquire that wrote nothing reads nothing.
 func TestLeaseAcquire_HQRepo_WaitsUntilASessionSeesTheWrittenCredential(t *testing.T) {
@@ -375,8 +392,8 @@ func TestLeaseAcquire_HQRepo_RefusedCheckout_WritesAfreshNextTime(t *testing.T) 
 	if _, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, leaseHQRepo, "feat"); err != nil {
 		t.Fatalf("the next acquire: %v", err)
 	}
-	if token, ok := poolGitToken(t, mock, "svc-pool"); mock.CallCount("CreateServiceEnvVar") != 1 || !ok || token.Content != poolMateCredential {
-		t.Errorf("the next acquire did not write the credential afresh: %d write(s), GIT_TOKEN %+v", mock.CallCount("CreateServiceEnvVar"), token)
+	if token, ok := poolHQCredential(t, mock, "svc-pool"); mock.CallCount("CreateServiceEnvVar") != 1 || !ok || token.Content != poolMateCredential {
+		t.Errorf("the next acquire did not write the credential afresh: %d write(s), %s %+v", mock.CallCount("CreateServiceEnvVar"), PoolHQCredentialEnvKey, token)
 	}
 }
 
@@ -418,8 +435,8 @@ func TestRenewPoolHQCredentials_PoolGoneBy400_RecordDropped(t *testing.T) {
 
 // TestRenewPoolHQCredentials_RewritesEveryPoolWhoseFingerprintDiffers: after
 // the Mate enrolls again, HQ revokes the credential every pool zcp gave it,
-// and a lease already held there keeps working only once its pool's GIT_TOKEN
-// is the new one (a fresh session reads it live). The renewal writes exactly
+// and a lease already held there keeps working only once its pool's HQ
+// credential is the new one (a fresh session reads it live). The renewal writes exactly
 // the pools whose record names another credential, drops the record of a pool
 // that is gone, and reports a pool it could not write — never the credential.
 func TestRenewPoolHQCredentials_RewritesEveryPoolWhoseFingerprintDiffers(t *testing.T) {
@@ -454,7 +471,7 @@ func TestRenewPoolHQCredentials_RewritesEveryPoolWhoseFingerprintDiffers(t *test
 			failures := RenewPoolHQCredentials(context.Background(), mock, stateDir, poolMateCredential)
 
 			if got := mock.CallCount("CreateServiceEnvVar"); got != tt.wantWrites {
-				t.Errorf("GIT_TOKEN writes = %d, want %d", got, tt.wantWrites)
+				t.Errorf("HQ credential writes = %d, want %d", got, tt.wantWrites)
 			}
 			failed := make([]string, 0, len(failures))
 			for _, f := range failures {
@@ -467,8 +484,8 @@ func TestRenewPoolHQCredentials_RewritesEveryPoolWhoseFingerprintDiffers(t *test
 				t.Errorf("failures = %v, want %v", failed, tt.wantFailures)
 			}
 			if !tt.failWrites {
-				if token, ok := poolGitToken(t, mock, "svc-pool"); !ok || token.Content != poolMateCredential || !token.Sensitive {
-					t.Errorf("devpool's GIT_TOKEN = %+v, want the renewed credential, sensitive", token)
+				if token, ok := poolHQCredential(t, mock, "svc-pool"); !ok || token.Content != poolMateCredential || !token.Sensitive {
+					t.Errorf("devpool's %s = %+v, want the renewed credential, sensitive", PoolHQCredentialEnvKey, token)
 				}
 			}
 			if rec, _, _ := readPoolCredentialRecord(t, stateDir, "devpool"); rec["fingerprint"] != tt.wantDevpool {
