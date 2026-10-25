@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -1387,8 +1388,11 @@ func (r *poolRetireRun) delete(ctx context.Context) *mcp.CallToolResult {
 	if moved := r.rec.Bundle.Fingerprint.Moved(now); len(moved) > 0 {
 		return r.abort(ctx, poolRetireAbortFingerprint, fmt.Sprintf("%s's repository moved after its bundle was taken — %s. Something still writes to it (the Mate app's shell or crew, an agent over SSH); call the retire again once it is done: a new bundle is taken.", r.rec.Dev, strings.Join(moved, "; ")))
 	}
-	proc, err := ops.DeleteByID(ctx, r.d.client, r.rec.DevServiceID)
-	if err != nil {
+	proc, saveFailed, err := r.sendDelete(ctx, r.rec.DevServiceID)
+	switch {
+	case saveFailed != nil:
+		return saveFailed
+	case err != nil:
 		if st, _ := poolRetireDevState(ctx, r.d.client, r.rec.DevServiceID); st == poolRetireDevGone {
 			return r.finish(ctx)
 		}
@@ -1405,6 +1409,69 @@ func (r *poolRetireRun) delete(ctx context.Context) *mcp.CallToolResult {
 		return r.callAgain(fmt.Sprintf("the delete of %s runs: it reads DELETING by its id", r.rec.Dev))
 	}
 	return r.callAgain(fmt.Sprintf("the delete of %s did not take: it still reads live by its id", r.rec.Dev))
+}
+
+// sendDelete deletes a dev service by its recorded id, the send saved in the
+// record before it goes out and its process id once it answers: a later call
+// that reads the service live then knows a delete of it may still be queued
+// (deletePending). A save that fails answers saveFailed instead.
+func (r *poolRetireRun) sendDelete(ctx context.Context, serviceID string) (proc *platform.Process, saveFailed *mcp.CallToolResult, err error) {
+	if r.rec.DeletesSent == nil {
+		r.rec.DeletesSent = map[string]string{}
+	}
+	r.rec.DeletesSent[serviceID] = ""
+	if err := savePoolRetireRecord(r.d.stateDir, r.rec); err != nil {
+		return nil, r.saveFailed(err), nil
+	}
+	proc, err = ops.DeleteByID(ctx, r.d.client, serviceID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if proc != nil && proc.ID != "" {
+		r.rec.DeletesSent[serviceID] = proc.ID
+		if err := savePoolRetireRecord(r.d.stateDir, r.rec); err != nil {
+			return proc, r.saveFailed(err), nil
+		}
+	}
+	return proc, nil, nil
+}
+
+// deletePending says why a delete the retire sent earlier may still run,
+// "" when none can: its process, read by the id the record holds, still
+// live (PENDING, RUNNING); or — its id never recorded, or unreadable — any
+// live process on that service by the project's direct process list. A
+// delete still queued reads the service live, and a resume that aborted then
+// would re-key the pair onto a dev the delete removes after all (PM-7).
+func (r *poolRetireRun) deletePending(ctx context.Context) string {
+	hosts := map[string]string{}
+	for _, s := range r.rec.devs() {
+		hosts[s.ServiceID] = s.Hostname
+	}
+	unknown := map[string]string{}
+	for _, id := range slices.Sorted(maps.Keys(r.rec.DeletesSent)) {
+		host := cmp.Or(hosts[id], id)
+		if pid := r.rec.DeletesSent[id]; pid != "" {
+			if p, err := r.d.client.GetProcess(ctx, pid); err == nil {
+				if ops.IsProcessLive(p.Status) {
+					return fmt.Sprintf("the delete of %s sent earlier (process %s) is still %s", host, pid, p.Status)
+				}
+				continue
+			}
+		}
+		unknown[id] = host
+	}
+	if len(unknown) == 0 {
+		return ""
+	}
+	live, err := ops.ProjectActivity(ctx, r.d.client, r.d.projectID, unknown)
+	if err != nil {
+		return fmt.Sprintf("whether the delete sent earlier still runs could not be read: %v", err)
+	}
+	for _, host := range slices.Sorted(maps.Keys(live)) {
+		op := live[host][0]
+		return fmt.Sprintf("%s has a live process after the delete sent earlier (%s %s, process %s)", host, op.Action, op.Status, op.ProcessID)
+	}
+	return ""
 }
 
 // finish ends a retire whose dev is gone by id: the pair keyed by the pool
@@ -1441,6 +1508,13 @@ func (r *poolRetireRun) finish(ctx context.Context) *mcp.CallToolResult {
 // the pair keyed by the dev again — the inverse applied to what the record
 // of the pair holds now — the mount put back, the record aborted.
 func (r *poolRetireRun) abort(ctx context.Context, reason, message string) *mcp.CallToolResult {
+	if len(r.rec.DeletesSent) > 0 {
+		// Nothing is reverted, and nothing said deleted or not, while a
+		// delete this retire sent may still run.
+		if why := r.deletePending(ctx); why != "" {
+			return r.callAgain(fmt.Sprintf("The retire would stop (%s), but %s", message, why))
+		}
+	}
 	if r.rec.Phase == poolRetireRewritten || r.rec.Phase == poolRetireDeleting {
 		// A pair keyed by the dev already — a re-key that never took — has
 		// nothing to revert, whatever else names the pool's hostname.
@@ -1534,6 +1608,11 @@ func poolRetireResume(ctx context.Context, d poolRetireDeps, input WorkflowInput
 	}
 	if state == poolRetireDevGone {
 		return run.held(ctx, func() *mcp.CallToolResult { return run.finish(ctx) })
+	}
+	// A delete sent earlier may be queued behind another process while the
+	// dev reads live: nothing re-fences, re-reads or aborts until it ran.
+	if why := run.deletePending(ctx); why != "" {
+		return run.callAgain(why)
 	}
 
 	var g *poolRetireGuards
