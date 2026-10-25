@@ -243,7 +243,7 @@ func TestCheckProvision_NilPlan_ReturnsNil(t *testing.T) {
 
 func TestCheckProvision_APIError_ReturnsError(t *testing.T) {
 	t.Parallel()
-	mock := platform.NewMock().WithError("ListServices", fmt.Errorf("API down"))
+	mock := platform.NewMock().WithError("ListServicesDirect", fmt.Errorf("API down"))
 	plan := &workflow.ServicePlan{
 		Targets: []workflow.BootstrapTarget{{
 			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "appstage"},

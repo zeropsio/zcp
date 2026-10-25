@@ -17,6 +17,14 @@ func ListProjectServices(ctx context.Context, client platform.Client, projectID 
 	return client.ListServices(ctx, projectID)
 }
 
+// ListProjectServicesDirect is ListProjectServices read lag-free: the
+// project's service stacks by direct GET, never the Elasticsearch search that
+// trails writes — for a caller judging state right after an import or a
+// mutation, as ops.Discover does.
+func ListProjectServicesDirect(ctx context.Context, client platform.Client, projectID string) ([]platform.ServiceStack, error) {
+	return client.ListServicesDirect(ctx, projectID)
+}
+
 // LookupService combines ListProjectServices + FindService into one
 // call. Returns the canonical ErrServiceNotFound + "Available: ..."
 // suggestion when the hostname is absent in the project.
