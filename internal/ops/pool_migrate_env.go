@@ -895,15 +895,18 @@ const (
 // poolEnvReadCommand reads keys in the session's environment. Each key is a
 // single-quoted word handed to printenv, so no value is expanded, split or
 // globbed by the shell; printenv's stderr is discarded and the script always
-// exits 0, so a value never lands in an error.
+// exits 0, so a value never lands in an error. The keys ride the positional
+// parameters, never a shell variable: assigning a variable that shares an env
+// key's name (a loop over `k`) changes that exported value, and the key
+// would read the script's value instead of the container's.
 func poolEnvReadCommand(keys []string) string {
 	var b strings.Builder
-	b.WriteString(`printf '%s\000' ` + shellQuote(poolEnvReadBegin) + "; for k in")
+	b.WriteString(`printf '%s\000' ` + shellQuote(poolEnvReadBegin) + "; set --")
 	for _, key := range keys {
 		b.WriteString(" " + shellQuote(key))
 	}
-	b.WriteString(`; do printf '%s\000' "$k"; if printenv "$k" 2>/dev/null; then printf '\000` + poolEnvReadOK +
-		`\000'; else printf '\000` + poolEnvReadUnset + `\000'; fi; done; printf '%s\000' ` + shellQuote(poolEnvReadEnd) + "; exit 0")
+	b.WriteString(`; while [ $# -gt 0 ]; do printf '%s\000' "$1"; if printenv "$1" 2>/dev/null; then printf '\000` + poolEnvReadOK +
+		`\000'; else printf '\000` + poolEnvReadUnset + `\000'; fi; shift; done; printf '%s\000' ` + shellQuote(poolEnvReadEnd) + "; exit 0")
 	return b.String()
 }
 
