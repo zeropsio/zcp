@@ -111,7 +111,7 @@ func TestGitAuthProbeCommands_TokenFromStdinOnly(t *testing.T) {
 			t.Errorf("%s carries the token:\n%s", name, cmd)
 		}
 		_ = os.Remove(filepath.Join(dir, "got"))
-		run := exec.CommandContext(context.Background(), "sh", "-c", cmd) //nolint:gosec // running the command under test
+		run := exec.CommandContext(context.Background(), "sh", "-c", cmd)
 		run.Env = []string{"PATH=" + stub + string(os.PathListSeparator) + os.Getenv("PATH")}
 		run.Stdin = strings.NewReader(string(GitTokenInput(token)))
 		if out, err := run.CombinedOutput(); err != nil {

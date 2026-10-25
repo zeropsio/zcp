@@ -136,7 +136,7 @@ func secretForms(secret string) []string {
 	var plain bytes.Buffer
 	enc := json.NewEncoder(&plain)
 	enc.SetEscapeHTML(false)
-	if enc.Encode(secret) == nil {
+	if err := enc.Encode(secret); err == nil {
 		if raw := bytes.TrimSpace(plain.Bytes()); len(raw) >= 2 {
 			forms = append(forms, string(raw[1:len(raw)-1]))
 		}
