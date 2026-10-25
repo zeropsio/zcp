@@ -55,8 +55,9 @@ func TestScaleTool_PoolRaisePastThePreviewPorts_RefusedWithTheStep(t *testing.T)
 	if refusal.Code != platform.ErrPrerequisiteMissing {
 		t.Errorf("code = %q, want %s", refusal.Code, platform.ErrPrerequisiteMissing)
 	}
+	wire := refusal.Error + " " + refusal.Suggestion
 	for _, want := range []string{"3004", "502", "ask the person", "run.ports", "httpSupport: true", `targetService="devpool"`} {
-		if !strings.Contains(text, want) {
+		if !strings.Contains(wire, want) {
 			t.Errorf("refusal lacks %q:\n%s", want, text)
 		}
 	}
