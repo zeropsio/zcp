@@ -488,7 +488,13 @@ func readPoolMigrateDev(ctx context.Context, d poolMigrateDeps, input WorkflowIn
 	}
 
 	resp.Census = census
-	resp.WorkBranch = poolMigrateWorkBranchOf(meta, census, rt, hqChanges(stateDir))
+	// The Mate's changes, read where they lie: the read side writes nothing,
+	// so a pair record an older zcp kept is folded in, never moved (PM-1).
+	var changes []workflow.HQChange
+	if rt.MateEnabled && meta.HQ != nil {
+		changes, _ = workflow.PeekHQChanges(stateDir)
+	}
+	resp.WorkBranch = poolMigrateWorkBranchOf(meta, census, rt, changes)
 	if move := atomBody(corpus, poolMigrateMoveAtomID); move != "" {
 		resp.Guidance += "\n\n" + move
 	}
