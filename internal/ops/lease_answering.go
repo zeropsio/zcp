@@ -54,7 +54,7 @@ func leaseNotAnsweringAdvice(alias, why string) string {
 	if why == leaseProcessLimitWhy {
 		return fmt.Sprintf("Tell the person now that %s stopped answering, rather than wait on it or retry in a loop: it does not recover by itself while what fills it runs. Restarting its pool restarts every container of it, the other leases' dev servers too", alias)
 	}
-	return fmt.Sprintf("Tell the person that %s stopped answering rather than wait on it; zerops_lease action=status shows whether its alias and container are in place", alias)
+	return fmt.Sprintf("Check that the pool's sshIsolation admits this service and that zerops_lease action=status shows %s's alias and container in place; one that stays unreachable is told to the person, never waited on", alias)
 }
 
 // leaseNotAnsweringError is the refusal of a call that ran nothing in alias's
