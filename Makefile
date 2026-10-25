@@ -149,6 +149,12 @@ _release:
 # `ZCP_HOST=<hostname> make e2e-zcp` to point at a different service.
 ZCP_HOST ?= zcp
 ZCP_SSH  := ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -o ServerAliveCountMax=60
+# The harness serves in local mode (runtime.Info{}), and a local bootstrap's
+# repo check reads the process's working directory as the user's checkout
+# (GLC-1). `go test` runs inside the zcp checkout, a git work tree; the
+# remote binary runs from a scratch repo of its own, never the service's
+# /var/www, which also keeps the harness's .zcp/state out of that workspace.
+E2E_RUN_DIR := d=\$$(mktemp -d) && cd \$$d && git init -q && git -c user.name=zcp-e2e -c user.email=e2e@zcp.invalid commit -q --allow-empty -m e2e &&
 
 e2e-build: ## Cross-compile E2E test binary for the remote target (linux/amd64)
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -c -tags e2e -o builds/e2e-test ./e2e/
@@ -160,15 +166,15 @@ e2e-deploy: e2e-build ## Deploy E2E test binary to $(ZCP_HOST)
 	@echo "==> E2E binary deployed"
 
 e2e-zcp: e2e-deploy ## Run ALL E2E tests on $(ZCP_HOST) (includes deploy + subdomain)
-	$(ZCP_SSH) $(ZCP_HOST) "/var/www/e2e-test -test.v -test.timeout 3600s"
+	$(ZCP_SSH) $(ZCP_HOST) "$(E2E_RUN_DIR) /var/www/e2e-test -test.v -test.timeout 3600s"
 
 e2e-zcp-fast: e2e-deploy ## Run fast E2E tests on $(ZCP_HOST) (read-only subset)
-	$(ZCP_SSH) $(ZCP_HOST) "/var/www/e2e-test \
+	$(ZCP_SSH) $(ZCP_HOST) "$(E2E_RUN_DIR) /var/www/e2e-test \
 		-test.run 'TestE2E_Events|TestE2E_Discover|TestE2E_Export_|TestE2E_Knowledge|TestE2E_APIErrorMeta_ValidateZeropsYaml|TestE2E_APIErrorMeta_TransportFailure_NotReclassified|TestE2E_PruneServiceMetas' \
 		-test.v -test.timeout 120s"
 
 e2e-zcp-deploy: e2e-deploy ## Run deploy E2E tests on $(ZCP_HOST) (~10 min)
-	$(ZCP_SSH) $(ZCP_HOST) "/var/www/e2e-test \
+	$(ZCP_SSH) $(ZCP_HOST) "$(E2E_RUN_DIR) /var/www/e2e-test \
 		-test.run 'TestE2E_Deploy|TestE2E_FailureClassification|TestE2E_DeployPrepare' \
 		-test.v -test.timeout 900s"
 
