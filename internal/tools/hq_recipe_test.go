@@ -391,7 +391,7 @@ func TestHandleGroupRecipe_Table(t *testing.T) {
 				hqtest.Link(l.t, "", "", "")
 			},
 			wantErr:  true,
-			wantText: []string{"was not proposed", "not enrolled"},
+			wantText: []string{"was not proposed", "not linked"},
 		},
 		{
 			name: "no pair has its repository yet",

@@ -180,7 +180,7 @@ func TestDescribeChange_Refusals(t *testing.T) {
 		wantText    []string
 	}{
 		{name: "a Mate not enrolled with an HQ", notEnrolled: true, pairs: []string{"appdev"}, description: describedWords,
-			wantText: []string{"PREREQUISITE_MISSING", "not enrolled"}},
+			wantText: []string{"PREREQUISITE_MISSING", "not linked"}},
 		{name: "no words", pairs: []string{"appdev"}, description: " \n\t ", wantText: []string{"INVALID_PARAMETER", "description"}},
 		{name: "a NUL no description keeps", pairs: []string{"appdev"}, description: "words\x00more", wantText: []string{"INVALID_PARAMETER", "NUL"}},
 		{name: "a title longer than HQ keeps", pairs: []string{"appdev"}, title: strings.Repeat("ä", changeTitleRunes+1), description: describedWords,
