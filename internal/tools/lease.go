@@ -377,11 +377,29 @@ func leaseStatusNext(views []ops.LeaseView) string {
 		}
 	}
 	parked := strings.TrimSpace(leaseParkedNext(views))
+	silent := leaseNotAnsweringNext(views)
 	if len(idle) == 0 {
-		return parked
+		return joinNext(silent, parked)
 	}
-	return joinNext(fmt.Sprintf("Idle — nothing has happened in it for a day or more: %s. Each one's idle.next names the release that frees it, or what a release would lose and how to keep it. "+
+	return joinNext(silent, fmt.Sprintf("Idle — nothing has happened in it for a day or more: %s. Each one's idle.next names the release that frees it, or what a release would lose and how to keep it. "+
 		"Nothing releases a lease by itself: ask the person before releasing one this conversation did not take.", strings.Join(idle, ", ")), parked)
+}
+
+// leaseNotAnsweringNext names the leases whose container did not answer the
+// status read, each with why: a lease that stops answering is reported to the
+// person, never waited on (DP-21); "" when every lease read answered.
+func leaseNotAnsweringNext(views []ops.LeaseView) string {
+	var silent []string
+	for _, v := range views {
+		if v.NotAnswering != "" {
+			silent = append(silent, fmt.Sprintf("%s (%s)", v.Alias, v.NotAnswering))
+		}
+	}
+	if len(silent) == 0 {
+		return ""
+	}
+	return "Leases not answering: " + strings.Join(silent, "; ") + ". Nothing zcp or you run there works meanwhile: tell the person now rather than wait on it or retry in a loop. " +
+		"A container at its process limit does not recover by itself while what fills it runs, and restarting its pool restarts every container of it, the other leases' dev servers too."
 }
 
 // leaseReleaseBranchNext is what a release of a branch tells the agent when

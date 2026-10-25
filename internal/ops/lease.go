@@ -212,6 +212,10 @@ type LeaseView struct {
 	// Activity is what a status call read of the lease's checkout, or why it
 	// could not (DP-21); nil when it was not read (another action, or no ssh).
 	Activity *topology.LeaseActivity `json:"activity,omitempty"`
+	// NotAnswering is why the lease's container did not answer a status
+	// call's read over ssh — its process limit, or ssh not reaching it
+	// (leaseNotAnswering); "" when it answered or was not read (DP-21).
+	NotAnswering string `json:"notAnswering,omitempty"`
 	// Unsaved is what releasing the lease would lose, read with the release
 	// guard's own reads (DP-4, DP-21); nil when it was not read.
 	Unsaved *topology.LeaseUnsaved `json:"unsaved,omitempty"`

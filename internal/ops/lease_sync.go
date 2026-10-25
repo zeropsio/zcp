@@ -225,11 +225,8 @@ func LeaseSync(ctx context.Context, d LeaseDeps, alias string) (LeaseSyncView, e
 func checkSyncSource(ctx context.Context, ssh SSHDeployer, alias string) error {
 	w, err := readUnsavedWork(ctx, ssh, alias)
 	if err != nil {
-		if exitStatus(err) == leaseSSHUnreachableExit {
-			code, suggestion := classifyCheckoutFailure(err, false)
-			pe := platform.NewPlatformError(code, fmt.Sprintf("Lease %s did not answer ssh, so nothing was pushed", alias), suggestion)
-			pe.Cause = err
-			return pe
+		if why, ok := leaseNotAnswering(err); ok {
+			return leaseNotAnsweringError(alias, why, "nothing was pushed and no other lease was touched", err)
 		}
 		pe := platform.NewPlatformError(platform.ErrPrerequisiteMissing,
 			fmt.Sprintf("Lease %s could not be checked for uncommitted files, so nothing was pushed", alias),
@@ -505,6 +502,11 @@ func parkedMember(m *LeaseSyncMember, source string) {
 // classification (a missing or refused credential has its own code) and what
 // git said.
 func memberFailure(m *LeaseSyncMember, err error, onHQ bool) {
+	if why, ok := leaseNotAnswering(err); ok && why == leaseProcessLimitWhy {
+		m.Outcome = LeaseSyncUnreachable
+		m.Note = fmt.Sprintf("%s is not answering — %s — so it was not fast-forwarded (%s). %s", m.Alias, why, sshFailureText(err), leaseNotAnsweringAdvice(m.Alias, why))
+		return
+	}
 	if exitStatus(err) == leaseSSHUnreachableExit {
 		m.Outcome = LeaseSyncUnreachable
 		m.Note = fmt.Sprintf("zcp could not reach %s over ssh, so it was not fast-forwarded (%s); zerops_lease action=status shows whether its alias and container are in place", m.Alias, sshFailureText(err))

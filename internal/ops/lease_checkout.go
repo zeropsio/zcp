@@ -395,6 +395,10 @@ func classifyCheckoutFailure(err error, onHQ bool) (code, suggestion string) {
 		return platform.ErrSSHDeployFailed,
 			"A clone zcp started in the container while it was warm would not stop or could not be removed, so nothing was checked out on top of it. The container went back with a reset, which takes the clone away: acquire again"
 	}
+	if why, ok := leaseNotAnswering(err); ok && why == leaseProcessLimitWhy {
+		return platform.ErrSSHDeployFailed,
+			"The container is not answering: " + why + ". Tell the person rather than wait on it or retry in a loop: it does not recover by itself while what fills it runs"
+	}
 	if exitStatus(err) == leaseSSHUnreachableExit {
 		return platform.ErrSSHDeployFailed,
 			"The container did not answer ssh. Check that the pool's sshIsolation admits this service and that zerops_lease action=status shows the alias installed"
@@ -647,6 +651,13 @@ func inspectLeaseRelease(ctx context.Context, d LeaseDeps, rec leaseRecord) (lea
 	}
 	w, err := readUnsavedWork(ctx, d.SSH, rec.alias())
 	if err != nil {
+		if why, ok := leaseNotAnswering(err); ok && why == leaseProcessLimitWhy {
+			// Still this lease's container, at its process limit: what it
+			// holds cannot be read, so only force releases it.
+			pe := leaseNotAnsweringError(rec.alias(), why, "zcp could not check it for unsaved work and did not release it", err)
+			pe.Suggestion += fmt.Sprintf(". Releasing it unchecked (zerops_lease action=release lease=%s force=true) discards whatever it holds unpushed: only after the person agreed", rec.alias())
+			return leaseGuardResult{}, unsavedWork{}, pe
+		}
 		if exitStatus(err) == leaseSSHUnreachableExit {
 			guard, err := unreachableGuard(ctx, d, rec, err)
 			return guard, unsavedWork{}, err

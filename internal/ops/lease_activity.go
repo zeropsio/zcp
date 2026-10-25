@@ -103,7 +103,7 @@ func readLeaseActivities(ctx context.Context, d LeaseDeps, records []leaseRecord
 		}
 		reads.Go(func() {
 			r := readLeaseFacts(ctx, d, rec)
-			v.Activity, v.Unsaved, v.overlay = r.activity, r.unsaved, r.overlay
+			v.Activity, v.Unsaved, v.overlay, v.NotAnswering = r.activity, r.unsaved, r.overlay, r.notAnswering
 		})
 	}
 	reads.Wait()
@@ -139,6 +139,9 @@ type leaseFacts struct {
 	activity *topology.LeaseActivity
 	unsaved  *topology.LeaseUnsaved
 	overlay  *leaseOverlay
+	// notAnswering is why the container did not answer the read
+	// (leaseNotAnswering), "" when it did.
+	notAnswering string
 }
 
 // readLeaseFacts is readLeaseActivity with whether the container has no
@@ -189,7 +192,8 @@ func readLeaseFacts(ctx context.Context, d LeaseDeps, rec leaseRecord) leaseFact
 		unsaved = unsavedWork{files: parseUnsavedFiles(r.status), unpushed: n}.view()
 	}
 	act.Note = joinNotes(notes...)
-	return leaseFacts{activity: act, unsaved: unsaved, overlay: overlay}
+	why, _ := leaseNotAnswering(err)
+	return leaseFacts{activity: act, unsaved: unsaved, overlay: overlay, notAnswering: why}
 }
 
 // checkoutRead is the read's answer split at its markers.
