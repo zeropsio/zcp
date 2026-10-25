@@ -62,6 +62,9 @@ type hqPairState struct {
 	Attempts      int    `json:"attempts"`
 	LastAttemptAt string `json:"lastAttemptAt"`
 	LastOutcome   string `json:"lastOutcome,omitempty"`
+	ProjectInput  string `json:"projectInput,omitempty"`
+	BranchRefusal string `json:"branchRefusal,omitempty"`
+	CheckoutState string `json:"checkoutState,omitempty"`
 }
 
 // hqCallTimeout bounds each call zcp makes to HQ's API; a 503's wait comes on
@@ -181,7 +184,7 @@ func reconcileHQRepositories(
 		return nil
 	}
 	if !rt.MateEnabled {
-		return reconcileProjectRepositories(ctx, httpClient, sshDeployer, rt, stateDir)
+		return reconcileProjectRepositories(ctx, httpClient, sshDeployer, rt, stateDir, pace)
 	}
 	hqc, linked := openHQ(httpClient, rt)
 	if !linked {
@@ -426,15 +429,20 @@ func rewireHQPair(
 // that wired the pair starts the backoff afresh: the failures that grew it
 // are over.
 func recordHQAttempt(stateDir, hostname string, prior hqPairState, at time.Time, outcome string, wired bool) {
+	writeHQPairState(stateDir, hostname, nextHQAttempt(prior, at, outcome, wired))
+}
+
+// nextHQAttempt is the shared pacing record for both repository modes.
+func nextHQAttempt(prior hqPairState, at time.Time, outcome string, wired bool) hqPairState {
 	attempts := prior.Attempts + 1
 	if wired {
 		attempts = 1
 	}
-	writeHQPairState(stateDir, hostname, hqPairState{
+	return hqPairState{
 		Attempts:      attempts,
 		LastAttemptAt: at.Format(time.RFC3339),
 		LastOutcome:   outcome,
-	})
+	}
 }
 
 // hqRepoNameOf is the repository a pair is wired to: the one its record

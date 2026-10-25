@@ -3270,6 +3270,14 @@ not create a Mate change, recipe or release. HQ owns ref permissions, including 
 difference between isolated and shared applications; zcp neither invents a branch policy
 nor retries a refused publication.
 
+Plain passes share Mate wiring's pair lock and 30-second-to-10-minute backoff.
+A refused key stops further HQ calls for that pass, including further key rechecks.
+A seeded-main refusal names its state and remedy; the remedy uses `zcp hq git fetch`
+for authenticated reads. Subsequent passes inspect a digest of the checkout's HEAD,
+branch refs, origin and Git status and do not repeat enrollment or setup until that
+input or the HQ identity changes. Mate wiring currently retains only its timed
+backoff for these refusals.
+
 On the mounted checkout, `zcp hq git <git-arguments>` runs native Git with the live
 project key in an origin-scoped `http.extraHeader` environment entry. Setup supplies
 that header to its remote Git process through SSH stdin. Neither path writes the header
