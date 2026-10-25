@@ -359,3 +359,24 @@ func TestHandedChange_AnotherBranchOpensItsOwnChange(t *testing.T) {
 		t.Errorf("the ledger keeps %+v, want handed #%d on fix-login", kept, number)
 	}
 }
+
+// TestDescribeChange_ALandedChangeNamesTheOneStillOpen: a describe naming no
+// branch, while a change the ledger keeps merged meanwhile, writes nothing —
+// the words may have been for the merged one — and names the branch of the
+// change still open, the call that describes it.
+func TestDescribeChange_ALandedChangeNamesTheOneStillOpen(t *testing.T) {
+	lab := twoOpenChanges(t)
+	lab.hq.mergeChange("appdev", 1)
+
+	text, isError := lab.describe("", describedWords)
+
+	if isError || !strings.Contains(text, "#1 is merged") || !strings.Contains(text, "not written") {
+		t.Fatalf("want #1's merge said and nothing written: %s", text)
+	}
+	if !strings.Contains(text, `branch=\"add-signup\"`) {
+		t.Errorf("the answer does not name the open change's branch: %s", text)
+	}
+	if body := lab.hq.change(2).Body; body != "" {
+		t.Errorf("words went onto #2 with no branch named: %q", body)
+	}
+}
