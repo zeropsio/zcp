@@ -89,6 +89,9 @@ type LeaseDeps struct {
 	// answers (an unpark, a release of a parked lease), for at most
 	// StartedSSHWait; zero means leaseSSHReadyEvery and leaseStartedSSHWait.
 	SSHReadyEvery, StartedSSHWait time.Duration
+	// GroupLockWait bounds a release's wait for its branch's lock
+	// (lockReleaseGroup); zero means leaseReleaseGroupWait.
+	GroupLockWait time.Duration
 }
 
 // now reads zcp's clock.
@@ -789,6 +792,13 @@ type leaseRecord struct {
 	// the container number; 0 when the session had none, or in an older
 	// record.
 	StableNumber int `json:"stableNumber,omitempty"`
+	// CheckoutPending: the acquire that wrote the record had not yet put the
+	// branch in the container — written with the record, cleared once the
+	// checkout finished. A record still marked (zcp died mid-checkout, or a
+	// failed checkout's hand-back was refused) is never answered reused
+	// (heldLease): its /var/www may be empty, half fetched or a warm clone
+	// at origin/main. An older record never marks it.
+	CheckoutPending bool `json:"checkoutPending,omitempty"`
 	// Parked: zcp stopped the lease's container with its lease and keeps it
 	// (DP-28), since ParkedAt (RFC 3339, UTC). Dev servers, deploy, verify,
 	// sync and zcp init read only records, so the record says it.
@@ -1026,7 +1036,7 @@ func LeaseReleaseChange(ctx context.Context, d LeaseDeps, alias string, force bo
 	// The rewire, the release and the drop of the record run under the
 	// group's lock (lockLeaseGroup): a release of a sibling, or an acquire's
 	// rewire, computes its overlay before or after this one, never across it.
-	unlockGroup, err := lockRecordGroup(ctx, d.StateDir, rec)
+	unlockGroup, err := lockReleaseGroup(ctx, d, rec, leaseReleaseCall(alias, force))
 	if err != nil {
 		return LeaseChange{}, reparkAfterRefusal(ctx, d, rec, wake, err)
 	}
@@ -1036,6 +1046,17 @@ func LeaseReleaseChange(ctx context.Context, d LeaseDeps, alias string, force bo
 	if d.SSH != nil && !leaseRecordReplaced(d.StateDir, rec) {
 		siblings = siblingRecords(d.StateDir, rec)
 		rewired = rewireLeases(ctx, d, siblings, map[string]bool{alias: true}, "without "+alias)
+	}
+	if !force && guard.lost == "" {
+		// The guard read the container before the wait for the lock and the
+		// rewire, either of which can outlast work landing there (a
+		// conversation sharing the lease): it reads it again right before
+		// the reset (DP-4).
+		again, err := guardLeaseRelease(ctx, d, rec)
+		if err != nil {
+			return LeaseChange{}, reparkAfterRefusal(ctx, d, rec, wake, handBackOverlay(ctx, d, rec, siblings, rewired, err))
+		}
+		guard.lost, guard.note = again.lost, joinNotes(guard.note, again.note)
 	}
 	view, err := releaseGuarded(ctx, d, rec, guard)
 	if err != nil {
@@ -1177,8 +1198,13 @@ func releaseOnOrchestrator(ctx context.Context, d LeaseDeps, rp *resolvedPool, r
 		if errors.As(err, &se) && (se.Reason == platform.SwarmReasonUnknownLease || se.Reason == platform.SwarmReasonContainerNotFound) {
 			return dropLeaseRecord(d.StateDir, rec, LeaseStateLost, "the orchestrator no longer held this container for this lease, so there was nothing to release; the record is dropped")
 		}
-		if isHeldByOther(err) {
-			return dropLeaseRecord(d.StateDir, rec, LeaseStateLost, lostDropNote(heldByOtherWhy))
+		// Final only once a renew agrees, as for a stop, a start and a delete:
+		// the record holds the only copy of the lease.
+		switch v, held := heldByOtherAsked(ctx, d, rp, rec, err); {
+		case held && v.own.lost():
+			return dropLeaseRecord(d.StateDir, rec, LeaseStateLost, lostDropNote(v.why))
+		case held && v.own == leaseUnverified:
+			return LeaseView{}, heldByOtherUnverifiedRefusal(alias, "released", v)
 		}
 		// An orchestrator that could not be reached may be one of a pool
 		// deleted since the search was read.

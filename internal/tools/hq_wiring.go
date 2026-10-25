@@ -359,6 +359,19 @@ func hqPairCredentialKey(m *workflow.ServiceMeta) string {
 // disk meanwhile (a pool migration re-keyed it) keeps no stub of it.
 func renewHQPairCredential(ctx context.Context, client platform.Client, projectID, stateDir string, hqc hq.Client, m *workflow.ServiceMeta) string {
 	serviceID, err := hqPairCredentialHolder(ctx, client, projectID, m)
+	if err == nil && m.DevIsPool() {
+		// Under the pool's credential lock, which an acquire on the pool
+		// writes under too: one that wrote the credential since the pass read
+		// the records left its record, taken over here, never written again.
+		var unlock func()
+		if unlock, err = ops.LockPoolCredential(ctx, stateDir, m.Hostname); err == nil {
+			defer unlock()
+			takeOverPoolCredential(stateDir, hqc, m)
+			if m.HQ.CredentialFingerprint == hqc.CredentialFingerprint() {
+				return ""
+			}
+		}
+	}
 	if err == nil {
 		_, err = ops.EnvSetService(ctx, client, serviceID, hqPairCredentialKey(m), hqc.Credential(), true)
 	}

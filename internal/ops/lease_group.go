@@ -392,6 +392,29 @@ func lockLeaseGroup(ctx context.Context, stateDir, repo, branch string) (func(),
 	return unlock, nil
 }
 
+// leaseReleaseGroupWait bounds a release's wait for its branch's lock: a
+// sibling's release holds it across its rewire and its own reset, and the
+// release that waited reads its container again once it holds it, so a
+// longer wait buys nothing but a call that hangs.
+const leaseReleaseGroupWait = 2 * time.Minute
+
+// lockReleaseGroup is lockRecordGroup for a release, waiting at most
+// d.GroupLockWait (leaseReleaseGroupWait): a lock still held then refuses the
+// release, nothing released, naming again — the call that releases it once
+// the other call answered.
+func lockReleaseGroup(ctx context.Context, d LeaseDeps, rec leaseRecord, again string) (func(), error) {
+	wait := cmp.Or(d.GroupLockWait, leaseReleaseGroupWait)
+	lctx, cancel := context.WithTimeout(ctx, wait)
+	defer cancel()
+	unlock, err := lockRecordGroup(lctx, d.StateDir, rec)
+	if err != nil && ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
+		return nil, platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+			fmt.Sprintf("Nothing was released: another zcp call held the leases of branch %s for over %s — a release of another of its leases, across its reset, or an acquire's rewire", recordBranch(rec), wait),
+			"Release again once that call has answered: "+again)
+	}
+	return unlock, err
+}
+
 // lockRecordGroup is lockLeaseGroup of rec's group.
 func lockRecordGroup(ctx context.Context, stateDir string, rec leaseRecord) (func(), error) {
 	return lockLeaseGroup(ctx, stateDir, recordRepo(stateDir, rec), recordBranch(rec))
@@ -413,10 +436,12 @@ func lockLeaseTargetGroup(ctx context.Context, stateDir string, lease LeaseTarge
 // and only a release drops a lost one (DP-2).
 func heldLease(ctx context.Context, d LeaseDeps, pool, branch string, group []leaseRecord) (LeaseView, bool, error) {
 	own := map[string]bool{}
+	pending := map[string]bool{}
 	var records []leaseRecord
 	for _, r := range group {
 		if r.PoolHostname == pool {
 			own[r.alias()] = true
+			pending[r.alias()] = r.CheckoutPending
 			records = append(records, r)
 		}
 	}
@@ -427,7 +452,7 @@ func heldLease(ctx context.Context, d LeaseDeps, pool, branch string, group []le
 	if err != nil {
 		return LeaseView{}, false, err
 	}
-	var held, unverified, lost *LeaseView
+	var held, unverified, unfinished, lost *LeaseView
 	for _, v := range views {
 		if !own[v.Alias] {
 			continue
@@ -438,6 +463,10 @@ func heldLease(ctx context.Context, d LeaseDeps, pool, branch string, group []le
 			case v.Unverified:
 				if unverified == nil {
 					unverified = &v
+				}
+			case pending[v.Alias]:
+				if unfinished == nil {
+					unfinished = &v
 				}
 			case held == nil || v.AcquiredAt < held.AcquiredAt:
 				held = &v
@@ -457,6 +486,12 @@ func heldLease(ctx context.Context, d LeaseDeps, pool, branch string, group []le
 		return LeaseView{}, false, platform.NewPlatformError(platform.ErrPrerequisiteMissing,
 			fmt.Sprintf("zcp's lease of branch %s on pool '%s', %s, cannot be verified as still zcp's (%s), and zcp keeps one lease per repository, branch and pool", branch, pool, unverified.Alias, unverified.Note),
 			fmt.Sprintf("Acquire again once the pool's orchestrator answers: zerops_lease action=status pool=%s asks it again — a lease that is still zcp's is reused, one that is not is reported lost", pool))
+	case unfinished != nil:
+		// Reserved and recorded, but its checkout never finished: its
+		// /var/www is not on the branch, so it is never handed out reused.
+		return LeaseView{}, false, platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+			fmt.Sprintf("zcp's lease of branch %s on pool '%s', %s, is still reserved, but its checkout never finished (zcp stopped mid-checkout, or the container could not be handed back after a failed one), so its /var/www is not on the branch; zcp keeps one lease per repository, branch and pool", branch, pool, unfinished.Alias),
+			fmt.Sprintf("Release it, then acquire again: zerops_lease action=release lease=%s — it holds nothing of the branch, so force=true is right only when its guard names nothing but what the unfinished checkout left", unfinished.Alias))
 	case lost != nil:
 		return LeaseView{}, false, platform.NewPlatformError(platform.ErrPrerequisiteMissing,
 			fmt.Sprintf("zcp's lease of branch %s on pool '%s', %s, is lost (%s), and zcp keeps one lease per repository, branch and pool", branch, pool, lost.Alias, lost.Note),
@@ -512,13 +547,26 @@ func reserveMember(ctx context.Context, d LeaseDeps, m *groupMember, repoURL, br
 		PoolHostname: m.pool, PoolServiceID: rp.svc.ID,
 		ContainerID: got.Container.ID, ContainerNumber: got.Container.Number, ContainerHostname: got.Container.Hostname,
 		Lease: got.Lease.Secret(), Branch: branch, Repo: topology.CanonicalRepoURL(repoURL), AcquiredAt: time.Now().UTC().Format(time.RFC3339),
+		// The checkout runs over ssh after the record is written.
+		CheckoutPending: d.SSH != nil,
 	}
-	if err := writeLeaseRecord(d.StateDir, rec); err != nil {
+	// The alias file is root-read ssh config whose render refuses the whole
+	// set over one record outside the shapes: such a container is never
+	// recorded, so it never costs every other lease its stanza.
+	switch {
+	case !isLeaseAliasShape(rec.alias()):
+		err = errors.New("the container's number makes no <pool>-<number> alias")
+	case platform.ValidateContainerHostname(rec.ContainerHostname) != nil:
+		err = errors.New("its container hostname is not node-id-<n>.runtime.<pool>.zerops")
+	default:
+		err = writeLeaseRecord(d.StateDir, rec)
+	}
+	if err != nil {
 		// Without a record the lease is unusable and, with no expiry, the
 		// container would stay reserved for good: hand it straight back (it is
 		// clean, so no reset).
 		if _, relErr := rp.api.Release(context.WithoutCancel(ctx), rec.ContainerID, rec.Lease, false); relErr != nil {
-			m.err = fmt.Errorf("record lease %s: %w (and handing the container back failed: %s stays reserved on %s)", rec.alias(), err, rec.ContainerHostname, m.pool)
+			m.err = fmt.Errorf("record lease %s: %w (and handing the container back failed: container %s stays reserved on %s)", rec.alias(), err, rec.ContainerID, m.pool)
 			return
 		}
 		m.err = fmt.Errorf("record lease %s: %w (the container was handed back)", rec.alias(), err)
@@ -574,18 +622,19 @@ func checkoutMembers(ctx context.Context, d LeaseDeps, fresh []*groupMember, rep
 			m.view.Note = joinNotes(m.view.Note, discardedWarmNote)
 		}
 		m.view.Note = joinNotes(m.view.Note, fromNotAppliedNote(branch, from, groupBase, got.base))
-		if got.base != "" || got.stableNumber != 0 {
+		if got.base != "" || got.stableNumber != 0 || m.rec.CheckoutPending {
 			// Recorded before the keys are let go and before any rewire, so
 			// every overlay computed from here on finds the new lease's
-			// preview port.
+			// preview port, and the next acquire of the key finds the
+			// checkout finished.
 			if v := renewOwnership(ctx, d, m.rp, m.rec); v.own.lost() {
 				m.err, m.reserved = memberEnded(ctx, d, m.rec, v.why, "during its checkout, which may have reached the container's next holder"), false
 				return ""
 			}
-			m.rec.Base, m.rec.StableNumber = got.base, got.stableNumber
+			m.rec.Base, m.rec.StableNumber, m.rec.CheckoutPending = got.base, got.stableNumber, false
 			switch kept, err := rewriteLeaseRecord(d.StateDir, m.rec); {
 			case err != nil:
-				m.view.Note = joinNotes(m.view.Note, fmt.Sprintf("the commit the branch was cut from and the container's stable number could not be recorded (a lease of this branch acquired later is cut from origin/main, and no sibling gets this lease's preview URL): %v", err))
+				m.view.Note = joinNotes(m.view.Note, fmt.Sprintf("the finished checkout, the commit the branch was cut from and the container's stable number could not be recorded (a lease of this branch acquired later is cut from origin/main, no sibling gets this lease's preview URL, and the next acquire of this branch on the pool is refused until this lease is released): %v", err))
 			case kept != "":
 				// Still the member's by the renew: handed back with the
 				// group, released only once a renew agrees again.
@@ -865,12 +914,29 @@ func LeaseReleaseGroupChange(ctx context.Context, d LeaseDeps, repo, branch stri
 	// The releases and the rewire of what stays held run under the group's
 	// lock (lockLeaseGroup): no overlay naming a lease that goes is sent after
 	// it went.
-	unlock, err := lockRecordGroup(ctx, d.StateDir, group[0])
+	again := LeaseReleaseBranchCall(branch, repo, force)
+	unlock, err := lockReleaseGroup(ctx, d, group[0], again)
 	if err != nil {
 		return LeaseChange{}, dropEndedOnCall(ctx, d, members, reparkMembers(ctx, d, members, err))
 	}
 	defer unlock()
-	again := LeaseReleaseBranchCall(branch, repo, force)
+	if !force {
+		// The guards read the containers before the wait for the lock, which
+		// can outlast work landing in one (a conversation sharing a lease):
+		// every lease still to be released is read again before any is
+		// released, and work in one refuses the branch (DP-4).
+		runMembers(members, func(m *releaseMember) {
+			if m.lost != "" || m.guard.lost != "" {
+				return
+			}
+			var again leaseGuardResult
+			again, m.work, m.err = inspectLeaseRelease(ctx, d, m.rec)
+			m.guard.lost, m.guard.note = again.lost, joinNotes(m.guard.note, again.note)
+		})
+		if err := branchReleaseRefusal(d, members, repo, branch); err != nil {
+			return LeaseChange{}, dropEndedOnCall(ctx, d, members, reparkMembers(ctx, d, members, err))
+		}
+	}
 	runMembers(members, func(m *releaseMember) {
 		var view LeaseView
 		var err error
@@ -1126,6 +1192,16 @@ func LeaseReleaseBranchCall(branch, repo string, force bool) string {
 	if repo = strings.TrimSpace(repo); repo != "" {
 		call += " repo=" + repo
 	}
+	if force {
+		call += " force=true"
+	}
+	return call
+}
+
+// leaseReleaseCall is the zerops_lease call that releases the lease at alias,
+// forced or not.
+func leaseReleaseCall(alias string, force bool) string {
+	call := "zerops_lease action=release lease=" + alias
 	if force {
 		call += " force=true"
 	}

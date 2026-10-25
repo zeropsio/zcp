@@ -1,5 +1,7 @@
 package ops
 
+import "context"
+
 // A pool's record of the Mate credential zcp wrote to its HQ credential
 // variable (PoolHQCredentialEnvKey)
 // (lease_pool_credential.go, docs/spec-workflows.md §8 DP-16) is handed over
@@ -22,4 +24,13 @@ func PoolCredentialRecord(stateDir, pool string) (poolServiceID, fingerprint str
 // afresh and records it again, for the next pass to take over.
 func ForgetPoolCredentialRecord(stateDir, pool string) error {
 	return forgetPoolCredential(stateDir, pool)
+}
+
+// LockPoolCredential takes pool's credential lock, the one every acquire on
+// the pool decides and writes the credential under (lockPoolCredential): the
+// pass renewing a pool keying a pair holds it from its re-read of the per-pool
+// record through its write. The caller MUST call the returned release
+// function.
+func LockPoolCredential(ctx context.Context, stateDir, pool string) (func(), error) {
+	return lockPoolCredential(ctx, stateDir, pool)
 }

@@ -77,10 +77,6 @@ const leaseLockDeleting = "deleting"
 // orchestrator did not answer about.
 const unverifiedLead = "zcp cannot verify that this container is still this lease's"
 
-// heldByOtherWhy is why a record is dropped once the orchestrator refused a
-// call with its lease held-by-other.
-const heldByOtherWhy = "another holder reserves this container now: the orchestrator refused this lease's call on it (held-by-other), so the lease ended outside zcp and the pool handed the container on"
-
 // Why a lost lease is lost, as the orchestrator answered.
 const (
 	freeWhy  = "the orchestrator no longer reserves this container (the lease ended or was released elsewhere)"
