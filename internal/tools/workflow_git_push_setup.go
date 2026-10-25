@@ -1103,10 +1103,11 @@ func gitPushIdentityPreservedNote(identity ops.GitIdentity, hostname, workDir st
 }
 
 // gitPushPorcelainSummary best-effort reads `git status --porcelain` on
-// the push source after a reconstruction, truncated for the response.
+// the push source after a reconstruction, truncated for the response, with
+// optional locks off so it never rewrites the checkout's index (DM-7).
 // Empty string = clean tree (or unreadable — the gate re-checks later).
 func gitPushPorcelainSummary(ctx context.Context, sshDeployer ops.SSHDeployer, pushHost, workDir string) string {
-	out, err := sshDeployer.ExecSSH(ctx, pushHost, "cd "+ops.ShellQuote(workDir)+" && git status --porcelain 2>/dev/null | head -20")
+	out, err := sshDeployer.ExecSSH(ctx, pushHost, "cd "+ops.ShellQuote(workDir)+" && GIT_OPTIONAL_LOCKS=0 git status --porcelain 2>/dev/null | head -20")
 	if err != nil {
 		return ""
 	}
