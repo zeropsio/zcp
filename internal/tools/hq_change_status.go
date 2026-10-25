@@ -16,8 +16,9 @@ import (
 
 // What status, zerops_lease status and the release handoff say of a Mate's
 // changes: zcp's own ledger and lease records — a change's standing as the
-// last pass told it — and, for status, each change's standing as the Mate's
-// state names it now, read once (statusHQChanges).
+// last pass told it — and, for status and lease status, each change's
+// standing as the Mate's state names it now, read once (statusHQChanges,
+// leaseGroupChanges), with a change merged on a leased branch named so.
 
 // changeOldAfter is how long a change no lease holds may go untouched in HQ
 // before status labels it old. A label only: nothing closes or releases on
@@ -66,8 +67,9 @@ func hqLeaseBranches(stateDir, address string) []hqLeaseBranch {
 	return out
 }
 
-// hqChangesReadBound bounds status's one read of the Mate's state for the
-// changes it names: status answers promptly whether HQ does or not.
+// hqChangesReadBound bounds status's and lease status's one read of the
+// Mate's state for the changes they name: each answers promptly whether HQ
+// does or not.
 const hqChangesReadBound = 5 * time.Second
 
 // hqStateNow is the Mate's own state in HQ, read once and bounded; nil when
@@ -155,6 +157,10 @@ func hqChangesStatus(stateDir, address string, now time.Time, state *hq.MateStat
 				continue
 			}
 			branches = append(branches, l.branch)
+			if number := mergedOn(state, k.appID, k.repo, l.branch); number > 0 {
+				repo.Changes = append(repo.Changes, workflow.HQChangeLine{Number: number, Branch: l.branch, Leases: held(k, l.branch), Merged: true})
+				continue
+			}
 			repo.Branches = append(repo.Branches, workflow.HQBranchLine{Branch: l.branch, Leases: held(k, l.branch)})
 		}
 		out = append(out, repo)
@@ -189,6 +195,27 @@ func changeLineNow(c workflow.HQChange, state *hq.MateState) (workflow.HQChangeL
 	return line, nil
 }
 
+// mergedOn is the number of the change merged on branch of appID's repo, as
+// state (nil: unread) names it — the newest of the Mate's changes on that
+// branch, when merged; 0 for none, or a newer one not merged. A lease on that
+// branch holds merged work: that is said, never "no change yet", which
+// invites a new change on it.
+func mergedOn(state *hq.MateState, appID, repo, branch string) int {
+	if state == nil || state.AppID == nil || *state.AppID != appID {
+		return 0
+	}
+	newest := -1
+	for i, c := range state.Changes {
+		if c.Repo == repo && c.Branch == branch && (newest < 0 || c.Number > state.Changes[newest].Number) {
+			newest = i
+		}
+	}
+	if newest < 0 || state.Changes[newest].State != hq.ChangeMerged {
+		return 0
+	}
+	return state.Changes[newest].Number
+}
+
 // changeAge is how long ago HQ last changed a change as last told, 0 when
 // unknown.
 func changeAge(t *workflow.HQChangeTold, now time.Time) time.Duration {
@@ -204,40 +231,78 @@ func changeAge(t *workflow.HQChangeTold, now time.Time) time.Duration {
 
 // leaseGroupChanges is what zerops_lease status says of each lease group's
 // change among views: per repository and branch, once however many leases
-// the group has, the change the ledger keeps on it with its standing as told,
-// or that the branch has none yet; "" when no lease of an HQ repository is
-// among them.
-func leaseGroupChanges(stateDir, address string, views []ops.LeaseView) string {
+// the group has, the change the ledger keeps on it with its standing, a change
+// merged on it — release its leases, or start new work from main — or that
+// the branch has none yet; "" when no lease of an HQ repository is among
+// them. read (nil: none) reads the Mate's state once, only when there is a
+// group to name; its standing now is said then, the ledger's as last read
+// when it answers nil.
+func leaseGroupChanges(stateDir, address string, views []ops.LeaseView, read func() *hq.MateState) string {
 	leases := hqLeaseBranches(stateDir, address)
-	changes := hqChanges(stateDir)
-	var groups, seen []string
+	var groups []hqLeaseBranch
 	for _, v := range views {
 		i := slices.IndexFunc(leases, func(l hqLeaseBranch) bool { return l.alias == v.Alias })
 		if i < 0 || leases[i].branch == hqBase {
 			continue
 		}
 		l := leases[i]
-		group := l.repo + "@" + l.branch
-		if slices.Contains(seen, group) {
-			continue
+		if !slices.ContainsFunc(groups, func(g hqLeaseBranch) bool { return g.appID == l.appID && g.repo == l.repo && g.branch == l.branch }) {
+			groups = append(groups, l)
 		}
-		seen = append(seen, group)
-		words := "no change yet"
-		for _, c := range changesIn(changes, l.appID, l.repo) {
-			if c.Branch != l.branch {
-				continue
-			}
-			words = fmt.Sprintf("#%d", c.Number)
-			if labels := changeLabels(c.Told); len(labels) > 0 {
-				words += " (" + strings.Join(labels, " · ") + ")"
-			}
-		}
-		groups = append(groups, "group "+group+": "+words)
 	}
 	if len(groups) == 0 {
 		return ""
 	}
-	return "Each branch's change in HQ, as last read: " + strings.Join(groups, "; ") + "."
+	var state *hq.MateState
+	if read != nil {
+		state = read()
+	}
+	changes := hqChanges(stateDir)
+	named := make([]string, 0, len(groups))
+	for _, g := range groups {
+		named = append(named, "group "+g.repo+"@"+g.branch+": "+groupChangeWords(changes, leases, state, g))
+	}
+	prefix := "Each branch's change in HQ: "
+	if state == nil {
+		prefix = "Each branch's change in HQ, as last read: "
+	}
+	return prefix + strings.Join(named, "; ") + "."
+}
+
+// groupChangeWords is what lease status says of the change on group g's
+// branch: the ledger's, with its standing as state (nil: unread) names it or
+// as told; one merged there, by the ledger or by state; or none yet. leases
+// are every HQ lease zcp holds.
+func groupChangeWords(changes []workflow.HQChange, leases []hqLeaseBranch, state *hq.MateState, g hqLeaseBranch) string {
+	words, merged := "no change yet", mergedOn(state, g.appID, g.repo, g.branch)
+	for _, c := range changesIn(changes, g.appID, g.repo) {
+		if c.Branch != g.branch {
+			continue
+		}
+		line, _ := changeLineNow(c, state)
+		if line.Merged {
+			merged = c.Number
+			continue
+		}
+		merged, words = 0, fmt.Sprintf("#%d", c.Number)
+		if len(line.Labels) > 0 {
+			words += " (" + strings.Join(line.Labels, " · ") + ")"
+		}
+	}
+	if merged == 0 {
+		return words
+	}
+	held := 0
+	for _, l := range leases {
+		if l.appID == g.appID && l.repo == g.repo && l.branch == g.branch {
+			held++
+		}
+	}
+	which := "this lease"
+	if held > 1 {
+		which = "these leases"
+	}
+	return fmt.Sprintf("change #%d merged — release %s (`%s`), or start new work from %s", merged, which, ops.LeaseReleaseBranchCall(g.branch, "", false), hqBase)
 }
 
 // releaseOpenChangesWords is what the release handoff says of the open
