@@ -89,8 +89,16 @@ var serviceClaims = []serviceClaim{
 		expectedEnvKeys: []string{"apiUrl", "accessKeyId", "secretAccessKey", "bucketName"},
 	},
 	{
+		typePattern:    "local-storage",
+		normalizedName: "Local Storage",
+		// Mount-based — no ports or env vars.
+	},
+	{
+		// The key stays shared-storage (every seaweedfs/shared-storage
+		// spelling folds to it); its card is SeaweedFS, the only shape the
+		// platform still provisions.
 		typePattern:    "shared-storage",
-		normalizedName: "Shared Storage",
+		normalizedName: "SeaweedFS",
 		// No version, mount-based — no ports or env vars.
 	},
 	{
@@ -137,7 +145,7 @@ var knownBaseTypes = map[string]bool{
 	// Services (from serviceNormalizer)
 	"postgresql": true, "mariadb": true, "valkey": true, "keydb": true,
 	"elasticsearch": true, "object-storage": true, "objectstorage": true,
-	"shared-storage": true, "kafka": true, "nats": true, "meilisearch": true,
+	"local-storage": true, "shared-storage": true, "kafka": true, "nats": true, "meilisearch": true,
 	"clickhouse": true, "qdrant": true, "typesense": true, "rabbitmq": true,
 	// Runtimes (from runtimeNormalizer)
 	"php": true, "php-nginx": true, "php-apache": true, "nodejs": true,
