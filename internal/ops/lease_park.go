@@ -249,6 +249,7 @@ func LeasePark(ctx context.Context, d LeaseDeps, alias string) (LeaseView, error
 	if siblings := siblingRecords(d.StateDir, rec); len(siblings) > 0 {
 		notes = append(notes, fmt.Sprintf("the branch's other leases (%s) stay wired to its container, which keeps its hostname while it is parked; their dev servers reach nothing on it until it is unparked", strings.Join(aliasesOf(siblings), ", ")))
 	}
+	notes = append(notes, parkedUnroutedNote(ctx, d, rp, rec))
 	v.Note = joinNotes(notes...)
 	return v, nil
 }
