@@ -1198,8 +1198,13 @@ func releaseOnOrchestrator(ctx context.Context, d LeaseDeps, rp *resolvedPool, r
 		if errors.As(err, &se) && (se.Reason == platform.SwarmReasonUnknownLease || se.Reason == platform.SwarmReasonContainerNotFound) {
 			return dropLeaseRecord(d.StateDir, rec, LeaseStateLost, "the orchestrator no longer held this container for this lease, so there was nothing to release; the record is dropped")
 		}
-		if isHeldByOther(err) {
-			return dropLeaseRecord(d.StateDir, rec, LeaseStateLost, lostDropNote(heldByOtherWhy))
+		// Final only once a renew agrees, as for a stop, a start and a delete:
+		// the record holds the only copy of the lease.
+		switch v, held := heldByOtherAsked(ctx, d, rp, rec, err); {
+		case held && v.own.lost():
+			return dropLeaseRecord(d.StateDir, rec, LeaseStateLost, lostDropNote(v.why))
+		case held && v.own == leaseUnverified:
+			return LeaseView{}, heldByOtherUnverifiedRefusal(alias, "released", v)
 		}
 		// An orchestrator that could not be reached may be one of a pool
 		// deleted since the search was read.
