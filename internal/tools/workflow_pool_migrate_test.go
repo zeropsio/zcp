@@ -822,6 +822,44 @@ func TestPoolMigrate_ReadSideWritesNothing(t *testing.T) {
 	}
 }
 
+// TestPoolMigrate_ReadSide_InAMate_OldPairChangeRecord_ReadNotMoved: a pair
+// meta an older zcp wrote carries its change on the pair (HQ.Change,
+// HQ.Branch). Every other reader of the Mate's changes moves such a record
+// into the ledger first; the read side writes nothing (PM-1), so it reads the
+// record where it lies — the work's branch is still that change's — and
+// neither the ledger nor the meta moves.
+func TestPoolMigrate_ReadSide_InAMate_OldPairChangeRecord_ReadNotMoved(t *testing.T) {
+	t.Parallel()
+	f := newPoolMigrateFixture()
+	f.rt.MateEnabled = true
+	f.meta.GitPushState = ""
+	f.meta.RemoteURL = ""
+	f.meta.HQ = &workflow.HQRepoRef{AppID: "app-1", Repo: "appdev", Change: 7, Branch: "fix-login"}
+	f.ssh.output = poolMigrateCensusFor("feat", "origin", "feat", "")
+	stateDir := t.TempDir()
+	if err := workflow.WriteServiceMeta(stateDir, f.meta); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotTree(t, stateDir)
+	mock := platform.NewMock().WithServicesDirect(f.services).WithServices(f.services)
+	result, _, err := handlePoolMigrate(context.Background(), "proj-1", mock, f.ssh, f.input, stateDir, f.rt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after := snapshotTree(t, stateDir); !reflect.DeepEqual(before, after) {
+		t.Fatalf("the read side changed the state dir:\nbefore %v\nafter  %v", before, after)
+	}
+	var out struct {
+		WorkBranch *poolMigrateWorkBranch `json:"workBranch"`
+	}
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.WorkBranch == nil || out.WorkBranch.Branch != "fix-login" || out.WorkBranch.Source != poolMigrateWorkFromChange {
+		t.Fatalf("workBranch = %+v, want fix-login, the pair record's change", out.WorkBranch)
+	}
+}
+
 // TestPoolMigrate_RepeatCall_SameStep pins the recovery contract: the flow
 // keeps no state, so a call repeated after compaction lands on the same step
 // with the same stanza.
