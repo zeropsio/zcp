@@ -223,6 +223,35 @@ func TestDevelopStart_ListsTheOpenChangesOnAnHQThatKeepsOnePerBranch(t *testing.
 	}
 }
 
+// TestDevelopStart_ListsEveryOpenChangeOfTheMate_RecordedOrNot: develop's
+// start lists every open change the Mate's state names in the repository —
+// one opened outside this zcp, which its ledger never recorded, too — since
+// every one of them counts toward the open changes HQ keeps a Mate there.
+func TestDevelopStart_ListsEveryOpenChangeOfTheMate_RecordedOrNot(t *testing.T) {
+	lab := twoOpenChanges(t)
+	lab.mock.WithServices([]platform.ServiceStack{
+		{ID: "svc-appdev", Name: "appdev", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		{ID: "svc-appstage", Name: "appstage", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+	})
+	hqc, ok := openHQ(lab.hq.srv.Client())
+	if !ok {
+		t.Fatal("the lab's Mate is not enrolled")
+	}
+	// A released zcp opens its change naming no branch: HQ's default one.
+	opened, err := hqc.OpenChange(t.Context(), "appdev", "Opened by a released zcp", "")
+	if err != nil || !opened.Created {
+		t.Fatalf("open the default change: %+v (%v)", opened, err)
+	}
+
+	text := lab.developStart()
+
+	for _, want := range []string{`#1 on "fix-login"`, `#2 on "add-signup"`, `#3 on "mate/` + labMate + `/3"`} {
+		if !strings.Contains(text, want) {
+			t.Errorf("develop's start lacks %q:\n%s", want, text)
+		}
+	}
+}
+
 // TestStatus_OneBlockPerRepository: status names a repository's changes in one
 // block — each by number and branch, its standing as last told, and the
 // leases on its branch — and the branches leases hold with no change yet;
