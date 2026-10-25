@@ -90,7 +90,7 @@ func TestRelease_PoolDevHalf_RefusedBeforeRead(t *testing.T) {
 			stateDir := poolDeliveryPair(t)
 			ssh := &hostLogSSH{}
 
-			result, _, _ := handleRelease(context.Background(), ssh,
+			result, _, _ := handleRelease(context.Background(), ssh, nil,
 				WorkflowInput{Service: service, ReleaseVersion: "v1.0.1"}, stateDir, runtime.Info{InContainer: true})
 
 			text := extractText(result)

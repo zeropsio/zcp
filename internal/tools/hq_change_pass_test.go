@@ -475,7 +475,7 @@ func TestHandleRelease_NamesTheOpenChangesItLeavesOut(t *testing.T) {
 		}
 	}
 
-	result, _, _ := handleRelease(context.Background(), nil, WorkflowInput{}, stateDir, runtime.Info{MateEnabled: true})
+	result, _, _ := handleRelease(context.Background(), nil, nil, WorkflowInput{}, stateDir, runtime.Info{MateEnabled: true})
 
 	text := resultText(t, result)
 	for _, want := range []string{"release-person-required", "appsdev #2 and #6", "not in"} {
