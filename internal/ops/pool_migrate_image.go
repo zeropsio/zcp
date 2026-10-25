@@ -455,15 +455,19 @@ func poolMigratePreviewPortsMessage(entry *ZeropsYmlEntry, setup string, base, m
 		setup, strings.Join(gaps, " and "), maxContainers, base+1, base+maxContainers)
 }
 
-// poolMigrateServiceMessage says how the commit's declaration fails a
-// repository of several parts, "" when it does not or the repository is one
-// part (parts nil). A pool container's supervisor runs the entries naming its
-// pool and those naming none (devsup.Declaration.ForService): the part's
-// servers must name pool, an entry naming no service would run in every
-// part's leases, and one naming a service no part's pool is would run in
-// none. A declaration missing or not parsing is the preview-port-base check's.
+// poolMigrateServiceMessage says how the commit's declaration fails the part
+// whose pool is pool, "" when it does not. A pool container's supervisor runs
+// the entries naming its pool and those naming none
+// (devsup.Declaration.ForService). For a repository of several parts (parts
+// set) the part's servers must name pool, an entry naming no service would run
+// in every part's leases, and one naming a service no part's pool is would run
+// in none. A single part (parts nil) runs every entry naming its pool or none,
+// so only an entry naming another service fails it — the dev service's own
+// hostname, which a variant-B dev writes on every entry, among them: no lease
+// runs it. A declaration missing or not parsing is the preview-port-base
+// check's.
 func poolMigrateServiceMessage(read poolMigrateCommitRead, pool string, parts []string, short string) string {
-	if len(parts) == 0 || !read.hasDeclaration {
+	if !read.hasDeclaration {
 		return ""
 	}
 	decl, err := devsup.ParseDeclaration([]byte(read.declaration))
@@ -478,9 +482,16 @@ func poolMigrateServiceMessage(read poolMigrateCommitRead, pool string, parts []
 			own = true
 		case s.Service == "":
 			unnamed = append(unnamed, s.Name)
-		case !slices.Contains(parts, s.Service):
+		case len(parts) == 0 || !slices.Contains(parts, s.Service):
 			stray = append(stray, fmt.Sprintf("%s (service %s)", s.Name, s.Service))
 		}
+	}
+	if len(parts) == 0 {
+		if len(stray) == 0 {
+			return ""
+		}
+		return fmt.Sprintf("In %s at %s, %s name a service that is not the pool %s, so no lease of it runs them: give each `\"service\": \"%s\"`, or no service.",
+			devsup.DeclarationPath, short, strings.Join(stray, ", "), pool, pool)
 	}
 	var gaps []string
 	if !own {

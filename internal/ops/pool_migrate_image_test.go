@@ -352,8 +352,9 @@ func TestPoolMigrateImage_SetupChecks_PreviewPortsFollowMaxContainers(t *testing
 // pool of their own, a pool container's supervisor runs the entries naming
 // its pool and those naming none, so the commit's declaration must give the
 // part's dev servers its pool as `service` and leave no entry to every part's
-// leases or to a service no part's pool is. A single part is not checked: its
-// pool runs every entry that names no service.
+// leases or to a service no part's pool is. A single part's pool runs every
+// entry naming it or no service, so only an entry naming another service —
+// the dev service a variant-B dev writes on each entry — fails it.
 func TestPoolMigrateImage_SetupChecks_SeveralParts_DeclarationNamesEachPartsPool(t *testing.T) {
 	t.Parallel()
 	parts := []string{"apppool", "apipool"}
