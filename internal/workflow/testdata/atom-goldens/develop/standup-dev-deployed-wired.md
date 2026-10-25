@@ -1,6 +1,6 @@
 ---
 id: develop/standup-dev-deployed-wired
-atomIds: [develop-intro, develop-git-push-start-from-remote, develop-stage-out-of-scope, develop-change-drives-deploy, develop-self-deploy-reproducibility, develop-dynamic-runtime-start-container, develop-knowledge-pointers, develop-user-code-box, develop-auto-close-semantics, develop-verify-matrix, develop-strategy-awareness]
+atomIds: [develop-intro, develop-git-push-start-from-remote, develop-stage-out-of-scope, develop-change-drives-deploy, develop-self-deploy-reproducibility, develop-dynamic-runtime-start-container, develop-knowledge-pointers, develop-auto-close-semantics, develop-verify-matrix, develop-strategy-awareness]
 description: "A Mate's stand-up after its dev half deployed, in a Mate wired to its HQ (push configured, close-mode auto) with the stage half still out of scope and never deployed — no delivery, no promotion, no first-deploy branch held open by the stage."
 ---
 === develop-intro ===
@@ -141,23 +141,17 @@ the call and kills the process.
 === develop-knowledge-pointers ===
 ### Knowledge on demand — pull extra context
 
-When the embedded guidance isn't enough, these are the canonical lookups:
-
-- **`zerops.yaml` schema / fields** — `zerops_knowledge query="zerops.yaml schema"`
-- **Runtime docs** (build tools, start commands, conventions) —
-  `zerops_knowledge query="<runtime>"` (e.g. `nodejs`, `go`, `php-nginx`, `bun`);
-  match the service's base stack.
-- **Env var keys** (no values, safe) — `zerops_discover includeEnvs=true`
-  (`includeEnvValues=true` only to troubleshoot).
-- **Deeper platform topics** (infra changes, scaling, status codes,
-  managed-service categories) — `zerops_knowledge query="<topic>"`.
-
----
-
-=== develop-user-code-box ===
-### A feature that runs code the app's users send
-
-A feature that runs code the app does not write itself — users' snippets or submissions, notebook cells, an agent's tool calls, plugins — runs that code in a Zerops Box sandbox beside the app, never in the app's runtime container, where namespaces or a subprocess still share its kernel, files and project network. A project without a Box gets one through `zerops_import` (`type: ubuntu/zbox@1`; a Box exists only in a project in region prg1), and the app calls its workspace API with the key wired by reference: `zerops_knowledge uri="zerops://themes/pools-and-box"`, section "Running code the app's users send".
+- **`zerops.yaml` schema** — `zerops_knowledge query="zerops.yaml schema"`
+- **Runtime docs** (build tools, start commands) — `zerops_knowledge
+  query="<base stack>"`.
+- **Env var keys** — `zerops_discover includeEnvs=true` (`includeEnvValues=true`
+  only to troubleshoot).
+- **Other platform topics** (scaling, status codes, managed services) —
+  `zerops_knowledge query="<topic>"`.
+- **Code the app's users send** (snippets, an agent's tool calls, plugins) runs
+  in a Zerops Box sandbox, never the app's container:
+  `zerops_knowledge uri="zerops://themes/pools-and-box"`, section "Running code
+  the app's users send".
 
 ---
 
