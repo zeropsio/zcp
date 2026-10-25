@@ -135,6 +135,8 @@ const poolMigrateEnvFilePattern = `(^|/)\.env(\..*)?$`
 // clean. `git worktree list --porcelain` prints a path verbatim, a newline in
 // it included, so a worktree path holding one — which the lines would cut,
 // reading the worktree as missing — is no census: its -z listing finds it.
+// git older than 2.36 has no -z listing, so there a repository with linked
+// worktrees is no census either: none of their paths can be read whole.
 //
 //	W <line>                    git worktree list --porcelain
 //	B <ref>\t<remote>\t<ref>    a local branch and the remote branch it tracks
@@ -157,7 +159,11 @@ zl() { while IFS= read -r l; do printf '%s %s\n' "$1" "$l"; done; }
 zrun() { t=$1; shift; o=$("$@") || { echo "zcp-census-error $t"; return 1; }; if [ -n "$o" ]; then printf '%s\n' "$o" | zl "$t"; fi; return 0; }
 echo 'zcp-census 1'
 wts=$(git worktree list --porcelain) || { echo 'zcp-census-error worktree list'; exit 4; }
-if git worktree list --porcelain -z 2>/dev/null | tr '\n\0' '\001\n' | grep -q "^worktree .*$(printf '\001')"; then echo 'zcp-census-error a worktree path holding a newline (move that worktree to a path without one)'; exit 4; fi
+if git worktree list --porcelain -z >/dev/null 2>&1; then
+  if git worktree list --porcelain -z | tr '\n\0' '\001\n' | grep -q "^worktree .*$(printf '\001')"; then echo 'zcp-census-error a worktree path holding a newline (move that worktree to a path without one)'; exit 4; fi
+elif [ "$(printf '%s\n' "$wts" | grep -c '^worktree ')" -gt 1 ]; then
+  echo 'zcp-census-error linked worktrees, whose paths this git (older than 2.36, no -z worktree listing) cannot read whole (update it, or remove the linked worktrees)'; exit 4
+fi
 printf '%s\n' "$wts" | zl W
 zrun B git for-each-ref --format='%(refname)%09%(upstream:remotename)%09%(upstream:remoteref)' refs/heads/ || exit 4
 heads=$(git for-each-ref --format='%(refname)' refs/heads/) || { echo 'zcp-census-error branches'; exit 4; }
