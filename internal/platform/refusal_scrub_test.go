@@ -108,7 +108,7 @@ func TestCreateServiceEnvVar_RefusalEchoingTheEncodedBody_SurfacesWithoutIt(t *t
 				t.Fatalf("err = %v, want a *PlatformError", err)
 			}
 			text := err.Error() + fmt.Sprintf("%+v", pe.APIMeta) + pe.Message
-			for _, fragment := range []string{"tok", "slash-0001", `<en`} {
+			for _, fragment := range []string{"tok<en", "tok\\u003cen", "quote", "slash-0001"} {
 				if strings.Contains(text, fragment) {
 					t.Errorf("the error carries %q of the submitted value: %s", fragment, text)
 				}

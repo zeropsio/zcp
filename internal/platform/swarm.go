@@ -365,6 +365,9 @@ func (c *SwarmClient) do(ctx context.Context, method, path string, body []byte, 
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		se := parseSwarmError(resp.StatusCode, raw)
+		// Every field Error() prints is scrubbed, the code and the reason
+		// too: an orchestrator may echo what it was sent anywhere.
+		se.Code, se.Reason = c.scrub(se.Code, lease), c.scrub(se.Reason, lease)
 		se.Message = c.scrub(se.Message, lease)
 		se.Cause = c.scrub(se.Cause, lease)
 		for i := range se.Details {

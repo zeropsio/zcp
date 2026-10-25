@@ -1,10 +1,12 @@
 package platform
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 
 	"github.com/zeropsio/zerops-go/apiError"
 	"github.com/zeropsio/zerops-go/dto/input/body"
@@ -107,30 +109,65 @@ func (z *ZeropsClient) CreateServiceEnvVar(ctx context.Context, serviceID, key, 
 // A value sent as a secret is one no caller may see again: zcp's own writes
 // (the Mate's HQ credential, a dev's secrets copied to a pool) send values no
 // agent ever saw, and the refusal's words reach errors, logs and tool results.
+// A server echoing the JSON body it was sent carries the value as JSON
+// encoded it, so every form secretForms names is removed (review R4-11); a
+// truncated or partial echo is not recognized.
 func scrubAPIError(e *apiError.Error, secret string) {
-	if secret == "" {
+	forms := secretForms(secret)
+	if len(forms) == 0 {
 		return
 	}
-	e.ErrorCode = redactToken(e.ErrorCode, secret)
-	e.Message = redactToken(e.Message, secret)
-	e.Meta = scrubDecodedJSON(e.Meta, secret)
+	e.ErrorCode = redactForms(e.ErrorCode, forms)
+	e.Message = redactForms(e.Message, forms)
+	e.Meta = scrubDecodedJSON(e.Meta, forms)
 }
 
-// scrubDecodedJSON is v — a decoded JSON value — with secret removed from
-// every string in it.
-func scrubDecodedJSON(v any, secret string) any {
+// secretForms are the forms secret takes in an echo: as JSON encodes it —
+// Go's HTML-safe escaping (`<` as \u003c, the body zcp sends) and plain
+// escaping — then as it is, longest first, each once; none for "".
+func secretForms(secret string) []string {
+	if secret == "" {
+		return nil
+	}
+	forms := []string{secret}
+	if raw, err := json.Marshal(secret); err == nil {
+		forms = append(forms, string(raw[1:len(raw)-1]))
+	}
+	var plain bytes.Buffer
+	enc := json.NewEncoder(&plain)
+	enc.SetEscapeHTML(false)
+	if enc.Encode(secret) == nil {
+		if raw := bytes.TrimSpace(plain.Bytes()); len(raw) >= 2 {
+			forms = append(forms, string(raw[1:len(raw)-1]))
+		}
+	}
+	slices.SortStableFunc(forms, func(a, b string) int { return len(b) - len(a) })
+	return slices.Compact(forms)
+}
+
+// redactForms is text with every one of forms removed (redactToken).
+func redactForms(text string, forms []string) string {
+	for _, form := range forms {
+		text = redactToken(text, form)
+	}
+	return text
+}
+
+// scrubDecodedJSON is v — a decoded JSON value — with every one of forms
+// removed from every string in it.
+func scrubDecodedJSON(v any, forms []string) any {
 	switch t := v.(type) {
 	case string:
-		return redactToken(t, secret)
+		return redactForms(t, forms)
 	case []any:
 		for i := range t {
-			t[i] = scrubDecodedJSON(t[i], secret)
+			t[i] = scrubDecodedJSON(t[i], forms)
 		}
 		return t
 	case map[string]any:
 		out := make(map[string]any, len(t))
 		for k, x := range t {
-			out[redactToken(k, secret)] = scrubDecodedJSON(x, secret)
+			out[redactForms(k, forms)] = scrubDecodedJSON(x, forms)
 		}
 		return out
 	}
