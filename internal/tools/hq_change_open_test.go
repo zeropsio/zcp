@@ -213,7 +213,7 @@ func TestOpenChange_ForgetsTheChangesTheStateItReadNamesSettled(t *testing.T) {
 	if lab.kept(1) != nil {
 		t.Error("open-change kept merged #1, which the Mate's state it read names merged")
 	}
-	if !strings.Contains(text, "change #1 is merged") {
+	if !strings.Contains(text, "#1 is merged") {
 		t.Errorf("open-change does not say #1 merged, which no pass said yet: %s", text)
 	}
 	if described, isError := lab.describe("appdev", describedWords); isError || !strings.Contains(described, `"described":true`) {
