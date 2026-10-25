@@ -65,6 +65,9 @@ func TestHandedChange_IsThePairsAndTheWorkGoesOnItsBranch(t *testing.T) {
 			if again := lab.developStart(); strings.Contains(again, "handed") {
 				t.Errorf("the hand-over is said again on the next start:\n%s", again)
 			}
+			if status := lab.status(); !strings.Contains(status, "HQ appdev: #1 "+tc.want) {
+				t.Errorf("status does not name change #1 on %q:\n%s", tc.want, status)
+			}
 
 			answer, answered, isError := lab.openChangeFrom("other-work", "Other work")
 			if isError || answer.Created || answer.PullRequest != number || answer.Branch != tc.want || !strings.Contains(answer.Message, tc.want) {

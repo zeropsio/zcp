@@ -56,47 +56,47 @@ func TestRenderStatus_ADevHalfSaysHowItsRepositorysCodeIsKept(t *testing.T) {
 	}
 }
 
-// TestRenderStatus_ADevHalfNamesThePairsChangeAndItsBranch: status names, on
-// a wired pair's dev half, the change the pair records and the branch it is
-// bound to — where the work goes, a handed change's included — and nothing of
-// a change while the pair records none. A stage half says nothing of it.
-func TestRenderStatus_ADevHalfNamesThePairsChangeAndItsBranch(t *testing.T) {
+// TestRenderStatus_NoPairNamesAChange: a change is its repository's, so no
+// pair's line names one — not the dev half's of a pair whose record an older
+// zcp wrote with a change, nor its stage's.
+func TestRenderStatus_NoPairNamesAChange(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct {
-		name   string
-		change int
-		branch string
-		want   []string
-		never  []string
-	}{
-		{name: "a handed change on its gone Mate's branch", change: 7, branch: "mate/p-gone/7", want: []string{"change=7", "changeBranch=mate/p-gone/7"}},
-		{name: "a change on a branch of the agent's own", change: 2, branch: "fix-login", want: []string{"change=2", "changeBranch=fix-login"}},
-		{name: "a change recorded before branches were", change: 2, want: []string{"change=2"}, never: []string{"changeBranch="}},
-		{name: "no change", never: []string{"change="}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			meta := &ServiceMeta{
-				Hostname: "appdev", Mode: topology.PlanModeStandard, Stages: []topology.StageRef{{Hostname: "appstage"}},
-				BootstrappedAt: "2026-10-22", GitPushState: topology.GitPushConfigured,
-				HQ: &HQRepoRef{AppID: "app-1", Repo: "app", Change: tc.change, Branch: tc.branch},
-			}
-			runtime := platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}
-			dev := renderServiceLine(buildOneSnapshot(platform.ServiceStack{Name: "appdev", Status: "ACTIVE", ServiceStackTypeInfo: runtime}, meta, nil))
-			stage := renderServiceLine(buildOneSnapshot(platform.ServiceStack{Name: "appstage", Status: "ACTIVE", ServiceStackTypeInfo: runtime}, meta, nil))
-			for _, want := range tc.want {
-				if !strings.Contains(dev, want) {
-					t.Errorf("the dev half's line lacks %q: %s", want, dev)
-				}
-			}
-			for _, never := range tc.never {
-				if strings.Contains(dev, never) {
-					t.Errorf("the dev half's line says %q: %s", never, dev)
-				}
-			}
-			if strings.Contains(stage, "change") {
-				t.Errorf("the stage half's line names the pair's change: %s", stage)
-			}
-		})
+	meta := &ServiceMeta{
+		Hostname: "appdev", Mode: topology.PlanModeStandard, Stages: []topology.StageRef{{Hostname: "appstage"}},
+		BootstrappedAt: "2026-10-22", GitPushState: topology.GitPushConfigured,
+		HQ: &HQRepoRef{AppID: "app-1", Repo: "app", Change: 7, Branch: "fix-login"},
+	}
+	runtime := platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}
+	for _, host := range []string{"appdev", "appstage"} {
+		line := renderServiceLine(buildOneSnapshot(platform.ServiceStack{Name: host, Status: "ACTIVE", ServiceStackTypeInfo: runtime}, meta, nil))
+		if strings.Contains(line, "change") {
+			t.Errorf("%s's line names a change: %s", host, line)
+		}
+	}
+}
+
+// TestRenderStatus_ChangesBlockPerRepository: status names each repository's
+// changes in one line — by number and branch, with their standing and the
+// leases on their branch — and the branches leases hold with no change yet.
+func TestRenderStatus_ChangesBlockPerRepository(t *testing.T) {
+	t.Parallel()
+	env := StateEnvelope{Phase: PhaseIdle, HQChanges: []HQRepoChanges{{
+		Repo: "appsdev",
+		Changes: []HQChangeLine{
+			{Number: 2, Branch: "pool-previews", Labels: []string{"ready", "behind main"}, Leases: []string{"hqpool-3", "boxpool-5"}},
+			{Number: 6, Branch: "badge", Labels: []string{"draft"}, Leases: []string{"hqpool-4"}},
+			{Number: 7, Branch: "mate/p-mate/7"},
+		},
+		Branches: []HQBranchLine{{Branch: "build-stamp", Leases: []string{"webpool-2"}}},
+	}}}
+
+	out := RenderStatus(Response{Envelope: env})
+
+	want := "Changes:\n  - HQ appsdev: #2 pool-previews (ready · behind main) — leases hqpool-3, boxpool-5; #6 badge (draft) — leases hqpool-4; #7 mate/p-mate/7; branch build-stamp — leases webpool-2: no change yet\n"
+	if !strings.Contains(out, want) {
+		t.Errorf("status lacks\n%s\ngot\n%s", want, out)
+	}
+	if out := RenderStatus(Response{Envelope: StateEnvelope{Phase: PhaseIdle}}); strings.Contains(out, "Changes:") {
+		t.Errorf("status with no change names a Changes section:\n%s", out)
 	}
 }

@@ -59,8 +59,11 @@ func TestUpgrade_AnOpenChangeTheReleasedZcpRecordedKeepsStatusAndPushWorking(t *
 	const branch = "mate/" + labMate + "/1"
 	before := lab.remoteHead(branch)
 
-	lab.status()
+	status := lab.status()
 
+	if !strings.Contains(status, "HQ appdev: #1 "+branch) {
+		t.Errorf("status does not name change #1 on %q:\n%s", branch, status)
+	}
 	if kept := lab.kept(1); kept == nil || kept.Branch != branch {
 		t.Errorf("the ledger keeps %+v, want change #1 on %q", kept, branch)
 	}

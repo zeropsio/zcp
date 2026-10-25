@@ -666,7 +666,36 @@ func (f *fakeHQ) mergeChange(repo string, number int) string {
 	f.git(f.t.Context(), dir, "update-ref", "refs/heads/main", squash)
 	change.State, change.Head, change.MergedSha, change.LandedHead = hq.ChangeMerged, head, &squash, head
 	f.writeRefs()
+	if f.perBranch {
+		f.rejudge(repo)
+	}
 	return squash
+}
+
+// rejudge is HQ judging repo's open changes again once its main moved: each
+// one with a head is behind when main is no longer its merge base, and
+// merges cleanly or conflicts as git's merge-tree says. f.mu is held.
+func (f *fakeHQ) rejudge(repo string) {
+	dir := f.repoDir(f.appID, repo)
+	main := f.git(f.t.Context(), dir, "rev-parse", "main")
+	for i := range f.changes {
+		c := &f.changes[i]
+		if c.AppID != f.appID || c.Repo != repo || c.State != hq.ChangeOpen {
+			continue
+		}
+		head := f.branchHead(f.t.Context(), c)
+		if head == nil {
+			continue
+		}
+		base := f.git(f.t.Context(), dir, "merge-base", "main", *head)
+		c.Behind = base != main
+		c.Mergeability = hq.MergeClean
+		//nolint:gosec // G204: a test's own git
+		if err := exec.CommandContext(f.t.Context(), "git", "-C", dir, "merge-tree", "--write-tree", "main", *head).Run(); err != nil {
+			c.Mergeability = hq.MergeConflict
+		}
+		c.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	}
 }
 
 // seed makes repo in the Mate's application, the way HQ makes one asked for.

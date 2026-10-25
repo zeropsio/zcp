@@ -1336,8 +1336,8 @@ func TestComputeEnvelope_PoolDevHalf_CarriesStages(t *testing.T) {
 		!reflect.DeepEqual(pool.Stages, []topology.StageRef{{Hostname: "appstage", SetupName: "prod"}}) {
 		t.Errorf("pool snapshot stages = %q/%q %+v, want appstage/prod", pool.StageHostname, pool.StageSetupName, pool.Stages)
 	}
-	if pool.HQRepo != "appdev" || pool.HQChange != 7 || pool.HQBranch != "feat-x" {
-		t.Errorf("pool snapshot HQ = %q #%d %q, want the pair's HQ record", pool.HQRepo, pool.HQChange, pool.HQBranch)
+	if pool.HQRepo != "appdev" {
+		t.Errorf("pool snapshot HQ = %q, want the pair's HQ record", pool.HQRepo)
 	}
 	if pool.SetupName != "pool" || pool.GitPushState != topology.GitPushConfigured {
 		t.Errorf("pool snapshot setup=%q gitPush=%q, want the pool setup and the pair's git-push state", pool.SetupName, pool.GitPushState)

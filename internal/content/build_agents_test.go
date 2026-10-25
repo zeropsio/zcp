@@ -675,6 +675,36 @@ func TestBuildAgentsMD_Container_GitHostIsHQ(t *testing.T) {
 	}
 }
 
+// A Mate's git-host paragraph says one branch per piece of work and one change
+// per branch: new work on a new branch from an up-to-date main, a change
+// carried on on its own branch, a change built on another's unmerged work
+// cut from that branch and saying so, and a branch kept current by merging
+// origin/main — never a rebase, never a force. It no longer sends new work
+// onto an open change's branch, nor names a change on the pair.
+func TestBuildAgentsMD_Container_GitHostOneChangePerBranch(t *testing.T) {
+	t.Parallel()
+	out, err := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true}, false)
+	if err != nil {
+		t.Fatalf("BuildAgentsMD: %v", err)
+	}
+	for _, want := range []string{
+		"one change per branch",
+		"a new branch from an up-to-date `main`",
+		"builds on #",
+		"git merge origin/main",
+		"never rebase",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("git-host paragraph missing %q", want)
+		}
+	}
+	for _, retired := range []string{"carry the work on that change's branch instead", "changeBranch=", "`change=`"} {
+		if strings.Contains(out, retired) {
+			t.Errorf("git-host paragraph still says %q", retired)
+		}
+	}
+}
+
 // A local install is not in a group and has no git host of its own, and
 // must not be told it does.
 func TestBuildAgentsMD_Local_HasNoMateContext(t *testing.T) {
