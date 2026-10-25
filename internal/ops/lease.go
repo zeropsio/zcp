@@ -949,6 +949,14 @@ func LeaseReleaseChange(ctx context.Context, d LeaseDeps, alias string, force bo
 		guard.note = joinNotes(restoreNote, wake.note(), guard.note)
 		guard.woken = wake.started
 	}
+	// The rewire, the release and the drop of the record run under the
+	// group's lock (lockLeaseGroup): a release of a sibling, or an acquire's
+	// rewire, computes its overlay before or after this one, never across it.
+	unlockGroup, err := lockRecordGroup(ctx, d.StateDir, rec)
+	if err != nil {
+		return LeaseChange{}, reparkAfterRefusal(ctx, d, rec, wake, err)
+	}
+	defer unlockGroup()
 	var siblings []leaseRecord
 	var rewired []LeaseRewire
 	if d.SSH != nil && !leaseRecordReplaced(d.StateDir, rec) {
@@ -969,6 +977,11 @@ func LeaseReleaseChange(ctx context.Context, d LeaseDeps, alias string, force bo
 // the container and the orchestrator releases and deletes nothing: a free
 // container is reset by a release whatever lease it carries.
 func releaseLost(ctx context.Context, d LeaseDeps, rec leaseRecord, why string) (LeaseChange, error) {
+	unlock, err := lockRecordGroup(ctx, d.StateDir, rec)
+	if err != nil {
+		return LeaseChange{}, err
+	}
+	defer unlock()
 	var rewired []LeaseRewire
 	// An alias another zcp took again — maybe for a lease of this branch —
 	// still names a lease: the siblings are not handed an overlay without it.

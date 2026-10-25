@@ -187,11 +187,15 @@ func LeaseAcquireGroupChange(ctx context.Context, d LeaseDeps, pools []string, r
 }
 
 // rewireJoined hands every lease of the branch's group but the ones this
-// acquire took (fresh) the overlay with them in; nil when it took none or the
-// group has no other lease.
+// acquire took (fresh) the overlay with them in, under the group's lock
+// (lockLeaseGroup); nil when it took none or the group has no other lease.
 func rewireJoined(ctx context.Context, d LeaseDeps, repoURL, branch string, fresh []*groupMember) []LeaseRewire {
 	if len(fresh) == 0 {
 		return nil
+	}
+	unlock, lockErr := lockLeaseGroup(ctx, d.StateDir, topology.CanonicalRepoURL(repoURL), branch)
+	if lockErr == nil {
+		defer unlock()
 	}
 	group, err := leaseGroupRecords(d.StateDir, repoURL, branch)
 	if err != nil {
@@ -207,7 +211,15 @@ func rewireJoined(ctx context.Context, d LeaseDeps, repoURL, branch string, fres
 	if len(others) == 0 {
 		return nil
 	}
-	return rewireLeases(ctx, d, others, nil, "with "+strings.Join(names, ", "))
+	why := "with " + strings.Join(names, ", ")
+	if lockErr != nil {
+		out := make([]LeaseRewire, 0, len(others))
+		for _, r := range others {
+			out = append(out, LeaseRewire{Alias: r.alias(), Note: fmt.Sprintf("zcp sent %s no overlay %s (%v); %s sends it again", r.alias(), why, lockErr, resendCall(r.alias(), nil))})
+		}
+		return out
+	}
+	return rewireLeases(ctx, d, others, nil, why)
 }
 
 // resolveGroupPools finds every pool (one service listing), refusing an empty
@@ -328,6 +340,43 @@ func lockLeaseKeys(ctx context.Context, stateDir, repo, branch string, pools []s
 		releases = append(releases, rel)
 	}
 	return release, nil
+}
+
+// leaseGroupLockPath is the lock file of one group (DP-17) — the canonical
+// repository, case folded as SameRepoURL compares, and the branch — hashed,
+// so a repository URL never names a path.
+func leaseGroupLockPath(stateDir, repo, branch string) string {
+	sum := sha256.Sum256([]byte(strings.ToLower(topology.CanonicalRepoURL(repo)) + "\x00" + branch))
+	return filepath.Join(stateDir, leaseLocksDir, "group-"+hex.EncodeToString(sum[:16])+".lock")
+}
+
+// lockLeaseGroup holds the lock of the group of repo and branch (a flock,
+// waited for until ctx ends, across this process's calls and every zcp
+// process sharing the state directory). A change of the group's membership
+// and every rewire of its leases hold it: a release from the rewire of the
+// lease's siblings through the drop of its record, an acquire's rewire from
+// reading zcp's records through the sends. So a rewire computed while a lease
+// is still recorded is never sent after a release dropped it, and two
+// releases of one group never each leave a sibling wired to the other's
+// container (DP-26). A repository zcp knows neither way ("") is a group of
+// one: nothing is held. The caller MUST call the returned release function.
+func lockLeaseGroup(ctx context.Context, stateDir, repo, branch string) (func(), error) {
+	if stateDir == "" || repo == "" {
+		return func() {}, nil
+	}
+	if err := os.MkdirAll(filepath.Join(stateDir, leaseLocksDir), 0o700); err != nil {
+		return nil, fmt.Errorf("create lease lock directory: %w", err)
+	}
+	unlock, err := lockLeaseKey(ctx, leaseGroupLockPath(stateDir, repo, branch))
+	if err != nil {
+		return nil, fmt.Errorf("lock the leases of branch %s: %w", branch, err)
+	}
+	return unlock, nil
+}
+
+// lockRecordGroup is lockLeaseGroup of rec's group.
+func lockRecordGroup(ctx context.Context, stateDir string, rec leaseRecord) (func(), error) {
+	return lockLeaseGroup(ctx, stateDir, recordRepo(stateDir, rec), recordBranch(rec))
 }
 
 // heldLease is the lease zcp already holds of branch on pool — one of the
@@ -746,6 +795,14 @@ func LeaseReleaseGroupChange(ctx context.Context, d LeaseDeps, repo, branch stri
 			return LeaseChange{}, dropEndedOnCall(ctx, d, members, reparkMembers(ctx, d, members, err))
 		}
 	}
+	// The releases and the rewire of what stays held run under the group's
+	// lock (lockLeaseGroup): no overlay naming a lease that goes is sent after
+	// it went.
+	unlock, err := lockRecordGroup(ctx, d.StateDir, group[0])
+	if err != nil {
+		return LeaseChange{}, dropEndedOnCall(ctx, d, members, reparkMembers(ctx, d, members, err))
+	}
+	defer unlock()
 	again := LeaseReleaseBranchCall(branch, repo, force)
 	runMembers(members, func(m *releaseMember) {
 		var view LeaseView
