@@ -137,6 +137,10 @@ type poolRetireRecord struct {
 	NotKept      []string               `json:"notKept,omitempty"`
 	AbortReason  string                 `json:"abortReason,omitempty"`
 	RetiredAt    string                 `json:"retiredAt,omitempty"`
+	// DeletesSent are the dev services whose delete the retire sent, by
+	// service id, each with its delete's process id — "" while the send's
+	// answer is not recorded: a resume never aborts while one may still run.
+	DeletesSent map[string]string `json:"deletesSent,omitempty"`
 }
 
 // poolRetirePart is one part of a dev serving several in the retire's record:
