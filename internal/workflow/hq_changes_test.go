@@ -71,6 +71,37 @@ func TestHQChangeLedger_OneFilePerChange(t *testing.T) {
 	}
 }
 
+// TestHQChangeLedger_UndecodableFileIsMovedAsideOnTheNextWrite: a change file
+// that does not decode (a write cut short) is never listed, so no pass sees
+// or forgets it; the next write of that change moves it aside as
+// <number>.json.corrupt and writes the change afresh, never failing on it
+// for good.
+func TestHQChangeLedger_UndecodableFileIsMovedAsideOnTheNextWrite(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	dir := filepath.Join(stateDir, "hq", "changes", "app-1", "appsdev")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "7.json"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RecordHQChange(stateDir, HQChange{AppID: "app-1", Repo: "appsdev", Number: 7, Branch: "badge", Source: HQChangeFromOpen}); err != nil {
+		t.Fatalf("recording change #7 over an undecodable file: %v", err)
+	}
+
+	if c, found, err := ReadHQChange(stateDir, "app-1", "appsdev", 7); err != nil || !found || c.Branch != "badge" {
+		t.Errorf("change #7 = %+v, %v, %v; want it kept on badge", c, found, err)
+	}
+	if listed, _ := ListHQChanges(stateDir); len(listed) != 1 || listed[0].Number != 7 {
+		t.Errorf("ledger = %+v, want change #7 alone", listed)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "7.json.corrupt")); err != nil {
+		t.Errorf("the undecodable file was not kept aside: %v", err)
+	}
+}
+
 // TestHQChangeLedger_RefusesANameThatIsNoPathPart: an application or
 // repository name that would reach outside the ledger is refused, never
 // written.
