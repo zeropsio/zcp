@@ -52,7 +52,8 @@ its containers away from the app.
    review again once described again.
 5. `zerops_lease action=release lease="<alias>"` hands the leased container
    back: reset, as the pool's warm container, or removed when the pool
-   already has one or it runs an outdated version. It refuses while it holds
+   already has one, it runs an outdated version, or the pool is full (its
+   next acquire creates a container). It refuses while it holds
    commits on no remote branch or uncommitted files, naming them;
    `force=true` discards them. Files git ignores and stashes go either way.
 
