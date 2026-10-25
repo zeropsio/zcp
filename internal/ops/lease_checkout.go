@@ -653,6 +653,7 @@ func inspectLeaseRelease(ctx context.Context, d LeaseDeps, rec leaseRecord) (lea
 			fmt.Sprintf("Release it from a zcp in the project, which reaches the container over ssh, or release with force=true to discard whatever it holds: zerops_lease action=release lease=%s force=true", rec.alias()))
 	}
 	w, err := readUnsavedWork(ctx, d.SSH, rec.alias())
+	noteLeaseAnswer(d.StateDir, rec, err, d.now())
 	if err != nil {
 		if why, ok := leaseNotAnswering(err); ok && why == leaseProcessLimitWhy {
 			// Still this lease's container, at its process limit: what it

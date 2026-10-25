@@ -88,6 +88,13 @@ type LeaseSnapshot struct {
 	// reader sets.
 	Activity *topology.LeaseActivity `json:"activity,omitempty"`
 	Unsaved  *topology.LeaseUnsaved  `json:"unsaved,omitempty"`
+	// NotAnswering is why the last zcp call that ran a command in the lease's
+	// container found it not answering — its process limit, or ssh not
+	// reaching it — as zcp's lease record keeps it until a later call reaches
+	// the container again; absent when that call reached it, or none ran.
+	// ComputeEnvelope takes it from the record on every envelope, never from
+	// an ssh read of its own (docs/spec-mate.md §2.8a.3).
+	NotAnswering string `json:"notAnswering,omitempty"`
 }
 
 // LeaseList is the leases the envelope carries, nil when none were read or

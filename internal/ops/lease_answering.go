@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
 )
@@ -44,6 +45,53 @@ func leaseNotAnswering(err error) (string, bool) {
 		return leaseUnreachableWhy, true
 	}
 	return "", false
+}
+
+// leaseAnswered reports whether a command zcp ran in a lease's container over
+// ssh reached it: it succeeded, or exited with a status of its own — not ssh's
+// 255, not the process limit's refusal. A call cut short (its context ended,
+// the process killed) says neither.
+func leaseAnswered(err error) bool {
+	if err == nil {
+		return true
+	}
+	if _, silent := leaseNotAnswering(err); silent {
+		return false
+	}
+	return exitStatus(err) >= 0
+}
+
+// noteLeaseAnswer records in rec's record what a call that ran a command in
+// the lease's container over ssh found (err): not answering, and why, since
+// now — kept as it is while a later call finds it so for the same reason — or,
+// once a call reached it again (leaseAnswered), nothing. A call that says
+// neither changes nothing. The record is read and written under its alias's
+// record lock, only while it is still rec's lease's (leaseRecordReplaced), and
+// only its own two fields change. The record is a hint for the envelope
+// (docs/spec-mate.md §2.8a.3), never the call's outcome: one zcp cannot lock,
+// read or write is left as it is.
+func noteLeaseAnswer(stateDir string, rec leaseRecord, err error, now time.Time) {
+	why, silent := leaseNotAnswering(err)
+	if !silent && !leaseAnswered(err) {
+		return
+	}
+	unlock, lerr := lockLeaseRecord(stateDir, rec.alias())
+	if lerr != nil {
+		return
+	}
+	defer unlock()
+	if leaseRecordReplaced(stateDir, rec) {
+		return
+	}
+	cur, lerr := loadLeaseRecord(stateDir, rec.alias())
+	if lerr != nil || cur.NotAnswering == why {
+		return
+	}
+	cur.NotAnswering, cur.NotAnsweringSince = why, ""
+	if silent {
+		cur.NotAnsweringSince = now.UTC().Format(time.RFC3339)
+	}
+	_ = writeLeaseRecordLocked(stateDir, cur)
 }
 
 // leaseNotAnsweringAdvice is what to do about a lease that stopped answering

@@ -185,7 +185,7 @@ const leaseStateRecorded = leaseStateHeld
 // state is reported, marked unverified; an envelope never fails over it.
 // Only the non-secret fields of a record are ever decoded (DP-3). Each lease
 // carries the activity and unsaved work of reads (WithLeaseActivity) and no
-// other.
+// other, and why it is not answering from its record alone.
 func readLeases(ctx context.Context, reader LeaseReader, reads map[string]LeaseRead, stateDir string, services []platform.ServiceStack) *[]LeaseSnapshot {
 	if reader == nil {
 		return nil
@@ -199,6 +199,14 @@ func readLeases(ctx context.Context, reader LeaseReader, reads map[string]LeaseR
 	leases, err := reader(ctx)
 	if err != nil {
 		leases = records
+	} else {
+		// The records as the reader left them: a lease it found not answering
+		// is recorded so by now, and a record it dropped carries nothing.
+		records = readLeaseRecordSnapshots(stateDir)
+	}
+	notAnswering := make(map[string]string, len(records))
+	for _, r := range records {
+		notAnswering[r.Alias] = r.NotAnswering
 	}
 	// Read: a reader that answered (or records that stood in) with nothing is
 	// the empty array on the wire, never an absent key.
@@ -206,6 +214,7 @@ func readLeases(ctx context.Context, reader LeaseReader, reads map[string]LeaseR
 	for i := range leases {
 		read := reads[leases[i].Alias]
 		leases[i].Activity, leases[i].Unsaved = read.Activity, read.Unsaved
+		leases[i].NotAnswering = notAnswering[leases[i].Alias]
 	}
 	slices.SortStableFunc(leases, func(a, b LeaseSnapshot) int {
 		if c := cmp.Compare(a.Pool, b.Pool); c != 0 {
@@ -240,6 +249,7 @@ type leaseRecordFields struct {
 	Branch            string `json:"branch"`
 	Repo              string `json:"repo"`
 	AcquiredAt        string `json:"acquiredAt"`
+	NotAnswering      string `json:"notAnswering"`
 }
 
 // readLeaseRecordSnapshots reads zcp's lease records as unverified "held"
@@ -274,7 +284,7 @@ func readLeaseRecordSnapshots(stateDir string) []LeaseSnapshot {
 		out = append(out, LeaseSnapshot{
 			Alias: alias, Pool: r.PoolHostname, Branch: r.Branch,
 			ContainerHostname: r.ContainerHostname, State: leaseStateRecorded, Unverified: true,
-			AcquiredAt: r.AcquiredAt, Repo: topology.RepoIdentity(r.Repo),
+			AcquiredAt: r.AcquiredAt, Repo: topology.RepoIdentity(r.Repo), NotAnswering: r.NotAnswering,
 		})
 	}
 	return out

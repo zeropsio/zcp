@@ -154,6 +154,7 @@ func readLeaseFacts(ctx context.Context, d LeaseDeps, rec leaseRecord) leaseFact
 	readCtx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 	out, err := d.SSH.ExecSSH(readCtx, rec.alias(), leaseActivityCommand())
+	noteLeaseAnswer(d.StateDir, rec, err, d.now())
 	act := &topology.LeaseActivity{AcquiredAt: rec.AcquiredAt, ReadAt: d.now().UTC().Format(time.RFC3339)}
 	answer := string(out)
 	var sshErr *platform.SSHExecError
