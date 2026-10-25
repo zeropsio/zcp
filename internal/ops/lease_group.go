@@ -466,12 +466,27 @@ func reserveMember(ctx context.Context, d LeaseDeps, m *groupMember, repoURL, br
 // checkout found on origin/main; then the others at once, from the commit the
 // first was cut from, so every member starts from one main commit. A member
 // cut new keeps that commit in its record. A failed checkout hands its own
-// container back (abandonLease) and is the member's error.
+// container back (abandonLease) and is the member's error. A member waits for
+// the others' reservations and the first checkout, minutes on a pool still
+// preparing a container, so the orchestrator is asked right before each
+// checkout and before its record is written again whether the container is
+// still the member's (DP-2): one that is not is never checked out or written
+// over — its record is dropped while it is still its own, the container never
+// handed back — and one the orchestrator does not answer about is not checked
+// out; either is the member's error.
 func checkoutMembers(ctx context.Context, d LeaseDeps, fresh []*groupMember, repoURL, branch, base string) {
 	if len(fresh) == 0 {
 		return
 	}
 	checkout := func(m *groupMember, from string) string {
+		switch v := renewOwnership(ctx, d, m.rp, m.rec); {
+		case v.own.lost():
+			m.err, m.reserved = memberEnded(ctx, d, m.rec, v.why, "before its checkout, so nothing was checked out in it"), false
+			return ""
+		case v.own == leaseUnverified:
+			m.err = unverifiedLeaseRefusal(m.rec.alias(), "checked out", v)
+			return ""
+		}
 		got, err := m.cred.checkout(ctx, d, m.rec, repoURL, branch, from)
 		if err != nil {
 			m.err = abandonLease(ctx, d, m.rec, err)
@@ -485,9 +500,21 @@ func checkoutMembers(ctx context.Context, d LeaseDeps, fresh []*groupMember, rep
 			// Recorded before the keys are let go and before any rewire, so
 			// every overlay computed from here on finds the new lease's
 			// preview port.
+			if v := renewOwnership(ctx, d, m.rp, m.rec); v.own.lost() {
+				m.err, m.reserved = memberEnded(ctx, d, m.rec, v.why, "during its checkout, which may have reached the container's next holder"), false
+				return ""
+			}
 			m.rec.Base, m.rec.StableNumber = got.base, got.stableNumber
-			if err := writeLeaseRecord(d.StateDir, m.rec); err != nil {
+			switch kept, err := rewriteLeaseRecord(d.StateDir, m.rec); {
+			case err != nil:
 				m.view.Note = joinNotes(m.view.Note, fmt.Sprintf("the commit the branch was cut from and the container's stable number could not be recorded (a lease of this branch acquired later is cut from origin/main, and no sibling gets this lease's preview URL): %v", err))
+			case kept != "":
+				// Still the member's by the renew: handed back with the
+				// group, released only once a renew agrees again.
+				m.err = platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+					fmt.Sprintf("Lease %s was checked out, but zcp did not write its record again: %s", m.rec.alias(), kept),
+					"zerops_lease action=status shows which lease the alias names now")
+				return ""
 			}
 		}
 		return got.base
@@ -499,6 +526,24 @@ func checkoutMembers(ctx context.Context, d LeaseDeps, fresh []*groupMember, rep
 		return
 	}
 	runMembers(fresh[1:], func(m *groupMember) { checkout(m, base) })
+}
+
+// memberEnded is the error of a group acquire's member whose lease ended
+// outside zcp (why) — when says when, and what it means — once its record is
+// dropped while it is still its own, with its mount and alias stanza
+// (dropLostLease). The container is free or another holder's, so it is never
+// handed back.
+func memberEnded(ctx context.Context, d LeaseDeps, rec leaseRecord, why, when string) error {
+	msg := fmt.Sprintf("Lease %s ended outside zcp %s (%s)", rec.alias(), when, why)
+	switch v, err := dropLostLease(context.WithoutCancel(ctx), d, rec, why); {
+	case err != nil:
+		msg += fmt.Sprintf("; its record could not be dropped: %v", err)
+	case v.recordKept != "":
+		msg += "; " + v.recordKept
+	default:
+		msg += "; its record is dropped"
+	}
+	return platform.NewPlatformError(platform.ErrPrerequisiteMissing, msg, leaseGoneNext)
 }
 
 // groupRefusal is the refusal of a group acquire a member failed: the first
