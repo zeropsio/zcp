@@ -46,14 +46,23 @@ type LeaseRead struct {
 type EnvelopeOption func(*envelopeConfig)
 
 type envelopeConfig struct {
-	leases     LeaseReader
-	leaseReads map[string]LeaseRead
+	leases       LeaseReader
+	leaseReads   map[string]LeaseRead
+	leasesAlways bool
 }
 
 // WithLeaseReader injects the reader that fills StateEnvelope.Leases. Without
 // it the envelope carries no leases.
 func WithLeaseReader(r LeaseReader) EnvelopeOption {
 	return func(c *envelopeConfig) { c.leases = r }
+}
+
+// WithLeasesAlwaysRead asks the reader whatever the project holds — the
+// zerops_lease call's own envelope, whose leases are what the call is about:
+// a release of the last lease of a pool no pair is keyed by carries the
+// emptied list, never an absent key a client would keep its stale list for.
+func WithLeasesAlwaysRead() EnvelopeOption {
+	return func(c *envelopeConfig) { c.leasesAlways = true }
 }
 
 // WithLeaseActivity lays what this call read of its leases' checkouts onto
@@ -152,7 +161,7 @@ func ComputeEnvelope(
 		projectSummary.Name = project.Name
 	}
 
-	leases := readLeases(ctx, cfg.leases, cfg.leaseReads, stateDir, services)
+	leases := readLeases(ctx, cfg, stateDir, metas)
 
 	return StateEnvelope{
 		Phase:        phase,
@@ -178,22 +187,24 @@ const leaseStateHeld = "held"
 // only written by a successful acquire, so "held" is the last known state.
 const leaseStateRecorded = leaseStateHeld
 
-// readLeases fills StateEnvelope.Leases (nil: not read). The reader is asked only when the
-// project could hold a lease — it lists a pool, or zcp has a lease record —
-// so a project without either costs nothing. When the reader cannot answer
+// readLeases fills StateEnvelope.Leases (nil: not read). The reader is asked
+// only when zcp could hold a lease the envelope is for — zcp has a lease
+// record, or a pair is keyed by its dev pool (metas) — or the call asks always
+// (WithLeasesAlwaysRead). A project without either costs nothing, a pool an
+// app calls as its own infrastructure included: its reserved containers are
+// zerops_lease action=status's to list. When the reader cannot answer
 // (the orchestrator answers only inside the project), the records' last known
 // state is reported, marked unverified; an envelope never fails over it.
 // Only the non-secret fields of a record are ever decoded (DP-3). Each lease
 // carries the activity and unsaved work of reads (WithLeaseActivity) and no
 // other, and why it is not answering from its record alone.
-func readLeases(ctx context.Context, reader LeaseReader, reads map[string]LeaseRead, stateDir string, services []platform.ServiceStack) *[]LeaseSnapshot {
+func readLeases(ctx context.Context, cfg envelopeConfig, stateDir string, metas []*ServiceMeta) *[]LeaseSnapshot {
+	reader, reads := cfg.leases, cfg.leaseReads
 	if reader == nil {
 		return nil
 	}
 	records := readLeaseRecordSnapshots(stateDir)
-	if len(records) == 0 && !slices.ContainsFunc(services, func(s platform.ServiceStack) bool {
-		return topology.IsPoolType(s.ServiceStackTypeInfo.ServiceStackTypeVersionName)
-	}) {
+	if len(records) == 0 && !cfg.leasesAlways && !slices.ContainsFunc(metas, (*ServiceMeta).DevIsPool) {
 		return nil
 	}
 	leases, err := reader(ctx)

@@ -1209,7 +1209,9 @@ func TestComputeEnvelope_WithLeaseActivity_LaysTheCallsReadsByAlias(t *testing.T
 		}, nil
 	})
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{poolService("devpool")}).WithProject(&platform.Project{ID: "p1", Name: "demo"})
-	env, err := ComputeEnvelope(context.Background(), mock, t.TempDir(), "p1", runtime.Info{}, fixedTime, reader,
+	// The zerops_lease call's own envelope reads always: no record and no
+	// pair keyed by the pool is no reason to leave its leases unread.
+	env, err := ComputeEnvelope(context.Background(), mock, t.TempDir(), "p1", runtime.Info{}, fixedTime, reader, WithLeasesAlwaysRead(),
 		WithLeaseActivity(map[string]LeaseRead{
 			"devpool-3": {Activity: read, Unsaved: unsaved},
 			"devpool-9": {Activity: gone},

@@ -172,7 +172,7 @@ func registerLease(srv *mcp.Server, deps ops.LeaseDeps, rt runtime.Info, hqHTTP 
 	// call read checkouts for, whose activity and unsaved work ride leases[]
 	// (the envelope's own lease reader never reads a checkout).
 	envelope := func(ctx context.Context, read ...ops.LeaseView) *workflow.StateEnvelope {
-		var extra []workflow.EnvelopeOption
+		extra := []workflow.EnvelopeOption{workflow.WithLeasesAlwaysRead()}
 		if swarm != nil {
 			extra = append(extra, workflow.WithLeaseReader(leaseReaderWith(client, projectID, stateDir, swarm, deps.Host, leaseStatusTimeout)))
 		}

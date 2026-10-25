@@ -1183,9 +1183,12 @@ record (§6.3), never a field here:
 - **Absent means "not read"; `[]` means "read, none held".** The key is emitted whenever zcp read
   the leases for this envelope — `zerops_workflow action="status"`, the develop briefing
   (`action="start" workflow="develop"`), every JSON carrier (§1.4, through `tools.freshEnvelope`) and
-  `zerops_lease`, all from `tools.leaseEnvelopeOptions` — and left out when it did not (no reader, or a project that
-  lists no pool and has no lease record). Never `null`. A client keeps the last list it read until a
-  newer envelope carries the key (`TestEnvelopeJSON_LeasesNotRead_NoKey`,
+  `zerops_lease`, all from `tools.leaseEnvelopeOptions` — and left out when it did not (no reader, or
+  a project where zcp holds no lease record and keys no pair by a dev pool: a pool an app calls as its
+  own infrastructure costs no orchestrator call, and its reserved containers are `zerops_lease
+  action=status`'s to list). `zerops_lease`'s own envelope reads always, so a release of the last
+  lease carries the emptied list. Never `null`. A client keeps the last list it read until a
+  newer envelope carries the key (`TestComputeEnvelope_LeasesFromReader`, `TestEnvelopeJSON_LeasesNotRead_NoKey`,
   `TestEnvelopeJSON_LeasesReadNone_EmptyArray`, `TestDevelopBriefing_PoolPairStage_LeaseNoOrchestratorVouchesFor_NeverTheSource`).
 - **Additive: no version gate.** Mate decodes the envelope forward-compatibly, so the key needs no
   `SupportedContract` bump and no `MinimumMateVersion` raise; a Mate that does not know it ignores it.
