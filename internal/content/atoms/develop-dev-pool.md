@@ -32,9 +32,10 @@ its containers away from the app.
    `main`. `repo` is remembered per pool — pass it on the first acquire only.
    The clone uses the pool's own `GIT_TOKEN` service secret — for a
    repository on this Mate's HQ, the HQ credential zcp puts on the pool
-   itself as `ZCP_HQ_GIT_TOKEN`; you never type a credential. Each lease it took carries `devServers`: each server's
-   `status` — `running`, or `starting` while it still compiles — and the
-   preview server's `url`. Check a `starting` one with
+   itself as `ZCP_HQ_GIT_TOKEN`; you never type a credential. Each lease it
+   took carries `devServers`: each server's `status` — `running`, or
+   `starting` while it still compiles — and the preview server's `url`.
+   Check a `starting` one with
    `zerops_dev_server action=status hostname="<alias>" name="<server>"`.
 2. Work in `/var/www/<alias>`. Run the part's dev servers with
    `zerops_dev_server action=start hostname="<alias>" ...`.
