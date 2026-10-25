@@ -353,6 +353,7 @@ zerops:
 
 - While parked, nothing answers on it: status lists it `parked` with `parkedAt`; `zerops_dev_server`, `zerops_deploy` and `zerops_verify` refuse it, naming the unpark; a sync from it is refused, and a sync from another lease of the branch skips it (`parked`). It keeps its hostname, so the branch's other leases stay wired to it and reach nothing there until it runs again.
 - `zerops_lease action=unpark lease="<alias>"` starts the container, waits for SSH, mounts `/var/www/<alias>` and starts the supervisor when none runs, with the branch's sibling values as they now stand; the declared servers start again.
+- The platform routes the pool's subdomain to a container started again only once the pool's containers change, so the unpark replaces the pool's warm container (or creates it when the pool has none) and its preview answers again within seconds. In a full pool whose other containers are all held, its preview answers 502 until an acquire that creates a container or a release that removes one; the unpark's note says so.
 - A release of a parked lease starts it first so its unsaved work can be read, and stops it again when the release is refused. `force=true` releases it as it stands, stopped.
 - Nothing parks a lease by itself: an idle lease with unsaved work is only offered the park.
 
