@@ -227,8 +227,9 @@ func TestThemes_Services_DevPool_MultiPart_FactsPresent(t *testing.T) {
 // and releasing etiquette (spec-workflows.md §8 DP-21, DP-25, DP-27, DP-15;
 // docs/spec-mate.md §0 rule 4): the import keeps minContainers at 0 because
 // the platform's containers for the minimum cannot be reset; each pool keeps
-// one warm container, kept or removed at release and topped up through the
-// orchestrator's create, which status reports; status reads activity and
+// one warm container, kept or removed at release (removed from a full pool
+// serving previews, DP-28) and topped up through the orchestrator's create,
+// which status reports; status reads activity and
 // unsaved work and marks a lease idle after 24 h without acting on it; and
 // the agent asks the person before releasing a lease this conversation did
 // not take, knowing what no release guard counts.
@@ -256,9 +257,11 @@ func TestThemes_Services_DevPool_WarmAndIdle_FactsPresent(t *testing.T) {
 	for _, fact := range []string{
 		// Import: the minimum stays 0; the warm container replaces it.
 		"minContainers: 0", "cannot be reset", "warm container",
-		// Warm: one per pool, kept or removed at release, topped up by the
-		// orchestrator's create, reported by status.
+		// Warm: one per pool, kept or removed at release — removed from a
+		// full pool serving previews, whose next acquire is a cold start —
+		// topped up by the orchestrator's create, reported by status.
 		"one warm container", "kept as the pool's warm container", "removed", "outdated",
+		"holds its maximum", "would answer 502", "cold start", "no warm container while it is full",
 		"POST /container", "never through `minContainers`", "`warm`", "`target`", "`ready`", "`preparing`", "`last`",
 		"containers-preparing",
 		// Warm clone: the warm container already holds the repository at main,
