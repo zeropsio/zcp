@@ -359,3 +359,32 @@ func TestManageTool_Box_RestartStop_WarnSandboxesLoseMemory(t *testing.T) {
 		})
 	}
 }
+
+// TestManageTool_DescriptionKeepsTheReloadRules: the description says what
+// reload is for and what it keeps — a runtime its boot env, PHP-FPM its boot
+// config — beside a Zerops Box's opposite rule, for every user.
+func TestManageTool_DescriptionKeepsTheReloadRules(t *testing.T) {
+	t.Parallel()
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterManage(srv, platform.NewMock(), "proj-1")
+	st, ct := mcp.NewInMemoryTransports()
+	if _, err := srv.Connect(t.Context(), st, nil); err != nil {
+		t.Fatal(err)
+	}
+	session, err := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0.1"}, nil).Connect(t.Context(), ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { session.Close() })
+	listed, err := session.ListTools(t.Context(), &mcp.ListToolsParams{})
+	if err != nil || len(listed.Tools) != 1 {
+		t.Fatalf("list tools: %v (%d)", err, len(listed.Tools))
+	}
+	tool := listed.Tools[0]
+	for _, want := range []string{"restart, NOT reload", "PHP-FPM keeps its boot config", "reload (~4s) is for graceful config/code reloads",
+		"A Zerops Box is the opposite"} {
+		if !strings.Contains(tool.Description, want) {
+			t.Errorf("zerops_manage's description lacks %q: %s", want, tool.Description)
+		}
+	}
+}
