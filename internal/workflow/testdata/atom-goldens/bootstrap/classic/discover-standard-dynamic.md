@@ -72,7 +72,7 @@ When the app runs code it does not write itself — a playground's snippets, a g
 
 - The Box (`ubuntu/zbox@1`) is infrastructure the app uses, never a runtime target: in a classic plan, a dependency of the runtime with `"resolution": "CREATE"`; on either route, its own `zerops_import` beside the runtime.
 - A Box can be created only in a project in region prg1; in any other region the plan and the import are refused.
-- What the app calls — the key wired by reference, then create, exec and terminate a sandbox: `zerops_knowledge uri="zerops://themes/services"`, section "Running code the app's users send".
+- What the app calls — the key wired by reference, then create, exec and terminate a sandbox: `zerops_knowledge uri="zerops://themes/pools-and-box"`, section "Running code the app's users send".
 
 ---
 

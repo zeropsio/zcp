@@ -113,25 +113,18 @@ func TestCatalogView_RuntimeBases_ExcludePools(t *testing.T) {
 	}
 }
 
-// TestThemes_Services_PoolSection_FactsPresent pins that services.md carries a
-// "Pools and Box" section for an app that needs one, naming the verified
+// TestThemes_PoolsAndBox_PoolSection_FactsPresent pins that the pools-and-box
+// theme carries what an app that needs a pool or a Box reads, naming the verified
 // platform facts (spec-workflows.md §8 PS, Dev pools platform facts). The
 // literals are the facts as live-verified, not recomputed from the file.
-func TestThemes_Services_PoolSection_FactsPresent(t *testing.T) {
+func TestThemes_PoolsAndBox_PoolSection_FactsPresent(t *testing.T) {
 	t.Parallel()
 
 	store, err := GetEmbeddedStore()
 	if err != nil {
 		t.Fatalf("GetEmbeddedStore: %v", err)
 	}
-	doc, err := store.Get("zerops://themes/services")
-	if err != nil {
-		t.Fatalf("Get services: %v", err)
-	}
-	section, ok := doc.H2Sections()["Pools and Box"]
-	if !ok {
-		t.Fatal("services.md missing H2 section 'Pools and Box'")
-	}
+	section := poolsAndBoxTheme(t, store).Content
 	for _, fact := range []string{
 		"swarm@1", "ubuntu/zbox@1",
 		"minContainers", "maxContainers", "verticalAutoscaling",
@@ -165,13 +158,13 @@ func TestThemes_Services_PoolSection_FactsPresent(t *testing.T) {
 		"only in a project in region prg1", "not enough hardware capacity",
 	} {
 		if !strings.Contains(section, fact) {
-			t.Errorf("'Pools and Box' section missing fact %q", fact)
+			t.Errorf("the pools-and-box theme is missing fact %q", fact)
 		}
 	}
 }
 
-// TestThemes_Services_DevPool_MultiPart_FactsPresent pins that the services
-// theme's "A part's dev pool" subsection carries the loop for one branch
+// TestThemes_PoolsAndBox_DevPool_MultiPart_FactsPresent pins that the pools-and-box
+// theme's "A part's dev pool" section carries the loop for one branch
 // across several parts (spec-workflows.md §8 DP-17, DP-22…DP-24, DP-26,
 // DP-30, DP-31): the acquire of every part's pool in one call, with each
 // lease's dev servers as the acquire left them and the status call for one
@@ -182,27 +175,15 @@ func TestThemes_Services_PoolSection_FactsPresent(t *testing.T) {
 // outcomes and only runtime entries named to restart, since a declared server
 // reloads by itself, the branch's release and the rewire with the
 // stale-wiring mark.
-func TestThemes_Services_DevPool_MultiPart_FactsPresent(t *testing.T) {
+func TestThemes_PoolsAndBox_DevPool_MultiPart_FactsPresent(t *testing.T) {
 	t.Parallel()
 
 	store, err := GetEmbeddedStore()
 	if err != nil {
 		t.Fatalf("GetEmbeddedStore: %v", err)
 	}
-	doc, err := store.Get("zerops://themes/services")
-	if err != nil {
-		t.Fatalf("Get services: %v", err)
-	}
-	section, ok := doc.H2Sections()["Pools and Box"]
-	if !ok {
-		t.Fatal("services.md missing H2 section 'Pools and Box'")
-	}
-	const heading = "### A part's dev pool"
-	_, sub, found := strings.Cut(section, heading)
-	if !found {
-		t.Fatalf("'Pools and Box' section missing %q", heading)
-	}
-	sub, _, _ = strings.Cut(sub, "\n### ")
+	const heading = "A part's dev pool"
+	sub := poolsAndBoxSection(t, store, heading)
 	for _, fact := range []string{
 		"action=acquire pools=[", "reused: true",
 		"`devServers`", "`starting` while it still compiles", "the preview server's `url`",
@@ -217,13 +198,13 @@ func TestThemes_Services_DevPool_MultiPart_FactsPresent(t *testing.T) {
 		"rewired", `wiring: "stale"`,
 	} {
 		if !strings.Contains(sub, fact) {
-			t.Errorf("%q subsection missing fact %q", heading, fact)
+			t.Errorf("%q section missing fact %q", heading, fact)
 		}
 	}
 }
 
-// TestThemes_Services_DevPool_WarmAndIdle_FactsPresent pins that the services
-// theme's "A part's dev pool" subsection carries the warm container, idleness
+// TestThemes_PoolsAndBox_DevPool_WarmAndIdle_FactsPresent pins that the pools-and-box
+// theme's "A part's dev pool" section carries the warm container, idleness
 // and releasing etiquette (spec-workflows.md §8 DP-21, DP-25, DP-27, DP-15;
 // docs/spec-mate.md §0 rule 4): the import keeps minContainers at 0 because
 // the platform's containers for the minimum cannot be reset; each pool keeps
@@ -233,27 +214,15 @@ func TestThemes_Services_DevPool_MultiPart_FactsPresent(t *testing.T) {
 // unsaved work and marks a lease idle after 24 h without acting on it; and
 // the agent asks the person before releasing a lease this conversation did
 // not take, knowing what no release guard counts.
-func TestThemes_Services_DevPool_WarmAndIdle_FactsPresent(t *testing.T) {
+func TestThemes_PoolsAndBox_DevPool_WarmAndIdle_FactsPresent(t *testing.T) {
 	t.Parallel()
 
 	store, err := GetEmbeddedStore()
 	if err != nil {
 		t.Fatalf("GetEmbeddedStore: %v", err)
 	}
-	doc, err := store.Get("zerops://themes/services")
-	if err != nil {
-		t.Fatalf("Get services: %v", err)
-	}
-	section, ok := doc.H2Sections()["Pools and Box"]
-	if !ok {
-		t.Fatal("services.md missing H2 section 'Pools and Box'")
-	}
-	const heading = "### A part's dev pool"
-	_, sub, found := strings.Cut(section, heading)
-	if !found {
-		t.Fatalf("'Pools and Box' section missing %q", heading)
-	}
-	sub, _, _ = strings.Cut(sub, "\n### ")
+	const heading = "A part's dev pool"
+	sub := poolsAndBoxSection(t, store, heading)
 	for _, fact := range []string{
 		// Import: the minimum stays 0; the warm container replaces it.
 		"minContainers: 0", "cannot be reset", "warm container",
@@ -276,37 +245,25 @@ func TestThemes_Services_DevPool_WarmAndIdle_FactsPresent(t *testing.T) {
 		"Files git ignores", "stashes",
 	} {
 		if !strings.Contains(sub, fact) {
-			t.Errorf("%q subsection missing fact %q", heading, fact)
+			t.Errorf("%q section missing fact %q", heading, fact)
 		}
 	}
 }
 
-// TestThemes_Services_DevPool_Park_FactsPresent pins that the services theme's
-// "A part's dev pool" subsection carries park and unpark (spec-workflows.md §8
+// TestThemes_PoolsAndBox_DevPool_Park_FactsPresent pins that the services theme's
+// "A part's dev pool" section carries park and unpark (spec-workflows.md §8
 // DP-28): what a park keeps and ends, that nothing answers on a parked lease
 // and which tools refuse it, what an unpark brings back, how a release treats
 // a parked lease, and that idleness offers the park and never parks.
-func TestThemes_Services_DevPool_Park_FactsPresent(t *testing.T) {
+func TestThemes_PoolsAndBox_DevPool_Park_FactsPresent(t *testing.T) {
 	t.Parallel()
 
 	store, err := GetEmbeddedStore()
 	if err != nil {
 		t.Fatalf("GetEmbeddedStore: %v", err)
 	}
-	doc, err := store.Get("zerops://themes/services")
-	if err != nil {
-		t.Fatalf("Get services: %v", err)
-	}
-	section, ok := doc.H2Sections()["Pools and Box"]
-	if !ok {
-		t.Fatal("services.md missing H2 section 'Pools and Box'")
-	}
-	const heading = "### A part's dev pool"
-	_, sub, found := strings.Cut(section, heading)
-	if !found {
-		t.Fatalf("'Pools and Box' section missing %q", heading)
-	}
-	sub, _, _ = strings.Cut(sub, "\n### ")
+	const heading = "A part's dev pool"
+	sub := poolsAndBoxSection(t, store, heading)
 	for _, fact := range []string{
 		// Park: what it keeps and ends, and that the slot stays taken.
 		`zerops_lease action=park lease="<alias>"`, "`/var/www` and `$HOME`", "an Ubuntu base empties `/tmp`", "every process ends", "maximum",
@@ -321,13 +278,13 @@ func TestThemes_Services_DevPool_Park_FactsPresent(t *testing.T) {
 		"or park it", "Nothing parks a lease by itself",
 	} {
 		if !strings.Contains(sub, fact) {
-			t.Errorf("%q subsection missing fact %q", heading, fact)
+			t.Errorf("%q section missing fact %q", heading, fact)
 		}
 	}
 }
 
-// TestThemes_Services_DevPool_WorkspaceDependencies_FactsPresent pins that the
-// services theme's "A part's dev pool" subsection carries how a pool image
+// TestThemes_PoolsAndBox_DevPool_WorkspaceDependencies_FactsPresent pins that the
+// pools-and-box theme's "A part's dev pool" section carries how a pool image
 // bakes a package-manager workspace's dependencies (docs/spec-workflows.md §8
 // DP-14; zerops-docs: the prepare runtime container holds only what
 // build.addToRunPrepare copies, and its cache is keyed on those files): every
@@ -336,27 +293,15 @@ func TestThemes_Services_DevPool_Park_FactsPresent(t *testing.T) {
 // workspace installed so the installed tree matches the lockfile, since a
 // filtered one is read as stale and a later run or exec in a lease starts a
 // full install; and a part's checks reaching past its own package closure.
-func TestThemes_Services_DevPool_WorkspaceDependencies_FactsPresent(t *testing.T) {
+func TestThemes_PoolsAndBox_DevPool_WorkspaceDependencies_FactsPresent(t *testing.T) {
 	t.Parallel()
 
 	store, err := GetEmbeddedStore()
 	if err != nil {
 		t.Fatalf("GetEmbeddedStore: %v", err)
 	}
-	doc, err := store.Get("zerops://themes/services")
-	if err != nil {
-		t.Fatalf("Get services: %v", err)
-	}
-	section, ok := doc.H2Sections()["Pools and Box"]
-	if !ok {
-		t.Fatal("services.md missing H2 section 'Pools and Box'")
-	}
-	const heading = "### A part's dev pool"
-	_, sub, found := strings.Cut(section, heading)
-	if !found {
-		t.Fatalf("'Pools and Box' section missing %q", heading)
-	}
-	sub, _, _ = strings.Cut(sub, "\n### ")
+	const heading = "A part's dev pool"
+	sub := poolsAndBoxSection(t, store, heading)
 	sub = strings.Join(strings.Fields(sub), " ")
 	for _, fact := range []string{
 		// The prepare container holds only what addToRunPrepare copies.
@@ -373,39 +318,27 @@ func TestThemes_Services_DevPool_WorkspaceDependencies_FactsPresent(t *testing.T
 		"a part's checks", "beyond its own package closure",
 	} {
 		if !strings.Contains(sub, fact) {
-			t.Errorf("%q subsection missing fact %q", heading, fact)
+			t.Errorf("%q section missing fact %q", heading, fact)
 		}
 	}
 }
 
-// TestThemes_Services_DevPool_Memory_FactsPresent pins that the services
-// theme's "A part's dev pool" subsection says a lease's dev servers and every
+// TestThemes_PoolsAndBox_DevPool_Memory_FactsPresent pins that the pools-and-box
+// theme's "A part's dev pool" section says a lease's dev servers and every
 // check run in it share one container's RAM (measured live 2026-10-24: a dev
 // server of 1.3–3.0 GB RSS plus a parallel typecheck overflowed a 4 GB pool
 // container and the typecheck was killed with no message): size minRam for
 // the dev server plus the heaviest check, run heavy checks one at a time and
 // single-threaded, and read an ssh exit 255 with no output as the kill.
-func TestThemes_Services_DevPool_Memory_FactsPresent(t *testing.T) {
+func TestThemes_PoolsAndBox_DevPool_Memory_FactsPresent(t *testing.T) {
 	t.Parallel()
 
 	store, err := GetEmbeddedStore()
 	if err != nil {
 		t.Fatalf("GetEmbeddedStore: %v", err)
 	}
-	doc, err := store.Get("zerops://themes/services")
-	if err != nil {
-		t.Fatalf("Get services: %v", err)
-	}
-	section, ok := doc.H2Sections()["Pools and Box"]
-	if !ok {
-		t.Fatal("services.md missing H2 section 'Pools and Box'")
-	}
-	const heading = "### A part's dev pool"
-	_, sub, found := strings.Cut(section, heading)
-	if !found {
-		t.Fatalf("'Pools and Box' section missing %q", heading)
-	}
-	sub, _, _ = strings.Cut(sub, "\n### ")
+	const heading = "A part's dev pool"
+	sub := poolsAndBoxSection(t, store, heading)
 	sub = strings.Join(strings.Fields(sub), " ")
 	for _, fact := range []string{
 		"share the container's RAM",
@@ -414,12 +347,12 @@ func TestThemes_Services_DevPool_Memory_FactsPresent(t *testing.T) {
 		"exit 255", "no output", "killed for memory",
 	} {
 		if !strings.Contains(sub, fact) {
-			t.Errorf("%q subsection missing fact %q", heading, fact)
+			t.Errorf("%q section missing fact %q", heading, fact)
 		}
 	}
 }
 
-// TestThemes_Services_BoxFromTheApp_FactsPresent pins what an app needs to run
+// TestThemes_PoolsAndBox_BoxFromTheApp_FactsPresent pins what an app needs to run
 // code its users send in a Box (spec-workflows.md §8 PS-15), as verified
 // against the workspace's OpenAPI document and live on 2026-10-24 (an app in
 // the project calling http://<box>:8080 with the key wired by reference):
@@ -427,27 +360,15 @@ func TestThemes_Services_DevPool_Memory_FactsPresent(t *testing.T) {
 // needs, the create, exec and terminate request and answer shapes, one
 // sandbox per run and its measured cost, a full workspace, and which limits
 // apply where.
-func TestThemes_Services_BoxFromTheApp_FactsPresent(t *testing.T) {
+func TestThemes_PoolsAndBox_BoxFromTheApp_FactsPresent(t *testing.T) {
 	t.Parallel()
 
 	store, err := GetEmbeddedStore()
 	if err != nil {
 		t.Fatalf("GetEmbeddedStore: %v", err)
 	}
-	doc, err := store.Get("zerops://themes/services")
-	if err != nil {
-		t.Fatalf("Get services: %v", err)
-	}
-	section, ok := doc.H2Sections()["Pools and Box"]
-	if !ok {
-		t.Fatal("services.md missing H2 section 'Pools and Box'")
-	}
-	const heading = "### Running code the app's users send"
-	_, sub, found := strings.Cut(section, heading)
-	if !found {
-		t.Fatalf("'Pools and Box' section missing %q", heading)
-	}
-	sub, _, _ = strings.Cut(sub, "\n### ")
+	const heading = "Running code the app's users send"
+	sub := poolsAndBoxSection(t, store, heading)
 	for _, fact := range []string{
 		// Where the code runs, and why not in the app's container.
 		"never inside the app's own container", "share the container's kernel", "its own microVM",
@@ -472,7 +393,52 @@ func TestThemes_Services_BoxFromTheApp_FactsPresent(t *testing.T) {
 		"idempotencyKeyConflict", "6.18.53",
 	} {
 		if !strings.Contains(sub, fact) {
-			t.Errorf("%q subsection missing fact %q", heading, fact)
+			t.Errorf("%q section missing fact %q", heading, fact)
+		}
+	}
+}
+
+// poolsAndBoxTheme is the pools-and-box theme: pools and the Box are their
+// own theme, so a services fetch — which every managed-service question makes
+// — never carries their mechanics, nor a Box pointer the services card.
+func poolsAndBoxTheme(t *testing.T, store *Store) *Document {
+	t.Helper()
+	doc, err := store.Get("zerops://themes/pools-and-box")
+	if err != nil {
+		t.Fatalf("Get pools-and-box: %v", err)
+	}
+	return doc
+}
+
+// poolsAndBoxSection is the pools-and-box theme's H2 section heading.
+func poolsAndBoxSection(t *testing.T, store *Store, heading string) string {
+	t.Helper()
+	section, ok := poolsAndBoxTheme(t, store).H2Sections()[heading]
+	if !ok {
+		t.Fatalf("the pools-and-box theme has no section %q", heading)
+	}
+	return section
+}
+
+// TestThemes_PoolsAndBox_OwnTheme: pools and the Box are a theme of their own,
+// one section per subject; the services theme — the managed services' cards —
+// carries none of them.
+func TestThemes_PoolsAndBox_OwnTheme(t *testing.T) {
+	t.Parallel()
+	store, err := GetEmbeddedStore()
+	if err != nil {
+		t.Fatalf("GetEmbeddedStore: %v", err)
+	}
+	for _, heading := range []string{"Swarm pool", "A part's dev pool", "Zerops Box", "Running code the app's users send", "Untrusted code"} {
+		poolsAndBoxSection(t, store, heading)
+	}
+	services, err := store.Get("zerops://themes/services")
+	if err != nil {
+		t.Fatalf("Get services: %v", err)
+	}
+	for _, gone := range []string{"## Pools and Box", "### Swarm pool", "### A part's dev pool", "### Zerops Box", "### Running code the app's users send", "### Untrusted code"} {
+		if strings.Contains(services.Content, gone) {
+			t.Errorf("the services theme still carries %q", gone)
 		}
 	}
 }

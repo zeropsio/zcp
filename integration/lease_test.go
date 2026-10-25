@@ -111,7 +111,7 @@ func TestLease_Integration_AcquireStatusRelease(t *testing.T) {
 			{ID: "svc-1", Name: "app", Status: "RUNNING", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
 		}).
 		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{ID: "env-t", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}})
-	session, cleanup := setupTestServer(t, mock, defaultLogFetcher())
+	session, cleanup := setupLeaseTestServer(t, mock, defaultLogFetcher(), nil)
 	defer cleanup()
 
 	type leaseResult struct {
@@ -244,7 +244,7 @@ func TestLease_Integration_RolloutSkipsTheLease(t *testing.T) {
 			{ID: "svc-pool", Name: "devpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
 		}).
 		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{ID: "env-t", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}})
-	session, cleanup := setupTestServer(t, mock, defaultLogFetcher())
+	session, cleanup := setupLeaseTestServer(t, mock, defaultLogFetcher(), nil)
 	defer cleanup()
 
 	if res := callAndGetResult(t, session, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": "https://github.com/acme/app", "branch": "feature-x"}); res.IsError {
@@ -371,7 +371,7 @@ func TestLease_Integration_DeployToStage_SaysStageTracksMain(t *testing.T) {
 			{ID: "av-stage", ProjectID: "proj-1", ServiceStackID: "svc-stage", Source: "CLI", Status: "ACTIVE", Sequence: 1, Build: &platform.BuildInfo{}},
 		})
 	ssh := &stageLeaseSSH{}
-	session, cleanup := setupTestServerWithDeploy(t, mock, defaultLogFetcher(), ssh)
+	session, cleanup := setupLeaseTestServer(t, mock, defaultLogFetcher(), ssh)
 	defer cleanup()
 
 	res := callAndGetResult(t, session, "zerops_deploy", map[string]any{"sourceService": "webpool-3", "targetService": "appstage"})
@@ -525,7 +525,7 @@ func TestLease_Integration_GroupAcquire_OneLeasePerPoolInPoolsOrder(t *testing.T
 		}).
 		WithServiceEnv("svc-hqpool", []platform.ServiceEnvVar{{ID: "env-h", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}}).
 		WithServiceEnv("svc-webpool", []platform.ServiceEnvVar{{ID: "env-w", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}})
-	session, cleanup := setupTestServer(t, mock, defaultLogFetcher())
+	session, cleanup := setupLeaseTestServer(t, mock, defaultLogFetcher(), nil)
 	defer cleanup()
 
 	type leaseResult struct {
@@ -686,7 +686,7 @@ func TestLease_Integration_StatusReportsActivityAndUnsaved(t *testing.T) {
 			{ID: "svc-pool", Name: "devpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
 		}).
 		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{ID: "env-t", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}})
-	session, cleanup := setupTestServerWithDeploy(t, mock, defaultLogFetcher(), ssh)
+	session, cleanup := setupLeaseTestServer(t, mock, defaultLogFetcher(), ssh)
 	defer cleanup()
 
 	type statusResult struct {
@@ -806,7 +806,7 @@ func TestLease_Integration_ReleaseBranch_OneDirtyLeaseRefusesThenForceReleasesEv
 		WithServiceEnv("svc-hqpool", []platform.ServiceEnvVar{{ID: "env-h", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}}).
 		WithServiceEnv("svc-webpool", []platform.ServiceEnvVar{{ID: "env-w", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}})
 	ssh := &branchGuardSSH{dirty: map[string]bool{"webpool-7": true}}
-	session, cleanup := setupTestServerWithDeploy(t, mock, defaultLogFetcher(), ssh)
+	session, cleanup := setupLeaseTestServer(t, mock, defaultLogFetcher(), ssh)
 	defer cleanup()
 
 	res := callAndGetResult(t, session, "zerops_lease", map[string]any{"action": "acquire", "pools": []string{"hqpool", "webpool"}, "repo": "https://github.com/acme/app", "branch": "feat-x"})
@@ -956,7 +956,7 @@ func TestLease_Integration_IdleStatusAndFullPoolByActivity(t *testing.T) {
 	mock := defaultMock().
 		WithServices([]platform.ServiceStack{intPool("svc-pool", "devpool", "ACTIVE", 4)}).
 		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{ID: "env-t", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}})
-	session, cleanup := setupTestServerWithDeploy(t, mock, defaultLogFetcher(), ssh)
+	session, cleanup := setupLeaseTestServer(t, mock, defaultLogFetcher(), ssh)
 	defer cleanup()
 
 	res := callAndGetResult(t, session, "zerops_lease", map[string]any{"action": "status"})

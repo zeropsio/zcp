@@ -58,7 +58,7 @@ the way the repo's docs install them.
    enough — **one dev pool per part**: each part's dev environment is a Swarm
    pool of its own, and each branch leases one container of it. The pool's
    import stanza, its setup and a declaration several parts share:
-   `zerops_knowledge uri="zerops://themes/services"`, section "A part's dev pool".
+   `zerops_knowledge uri="zerops://themes/pools-and-box"`, section "A part's dev pool".
    zcp no longer sets up a shared code volume — one Local Storage volume several
    dev services mount for the repository. A project that already keeps its
    repository on one keeps working, and

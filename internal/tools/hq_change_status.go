@@ -16,10 +16,11 @@ import (
 
 // What status, zerops_lease status and release, and the release handoff say
 // of a Mate's changes: zcp's own ledger and lease records — a change's
-// standing as the last pass told it — and, for status, lease status and a
-// lease release, each change's standing as the Mate's state names it now,
-// read once (statusHQChanges, leaseGroupChanges, leaseReleaseChanges), with a
-// change merged on a leased branch named so.
+// standing as the last pass told it — and, for status, lease status, a lease
+// release and the release handoff, each change's standing as the Mate's state
+// names it now, read once (statusHQChanges, leaseGroupChanges,
+// leaseReleaseChanges, releaseOpenChangesWords), with a change merged on a
+// leased branch named so.
 
 // changeOldAfter is how long a change no lease holds may go untouched in HQ
 // before status labels it old. A label only: nothing closes or releases on
@@ -94,12 +95,16 @@ func hqStateNow(ctx context.Context, httpClient ops.HTTPDoer) *hq.MateState {
 // never open, while the pair backoff holds the pass off. The state is read
 // once, inside a Mate, only when the section has a change or a leased branch
 // to name — an idle Mate costs HQ nothing — and nothing is written: the pass
-// still says a merge or a standing once, with what to do. asLastRead: HQ did
-// not answer, and the section is the ledger's, as last told.
+// still says a merge or a standing once, with what to do. asLastRead: the
+// state was not read — outside a Mate, or HQ did not answer — and the section
+// is the ledger's, as last told.
 func statusHQChanges(ctx context.Context, httpClient ops.HTTPDoer, rt runtime.Info, stateDir, address string, now time.Time) (changes []workflow.HQRepoChanges, asLastRead bool) {
 	kept := hqChangesStatus(stateDir, address, now, nil)
-	if len(kept) == 0 || !rt.MateEnabled {
+	if len(kept) == 0 {
 		return kept, false
+	}
+	if !rt.MateEnabled {
+		return kept, true
 	}
 	state := hqStateNow(ctx, httpClient)
 	if state == nil {
@@ -372,11 +377,29 @@ func leaseReleaseChanges(stateDir, address string, released []ops.LeaseView, rea
 
 // releaseOpenChangesWords is what the release handoff says of the open
 // changes the ledger keeps, per repository: a release takes main as it is,
-// so none of them is in it; "" for none.
-func releaseOpenChangesWords(stateDir string) string {
+// so none of them is in it; "" for none. Inside a Mate, with a change to
+// name, the Mate's state is read once, bounded, and a change it names merged,
+// closed or no longer listed is left out — a merge since the last pass is
+// never named as left out. The read writes nothing: the pass still says the
+// merge once, with what to do. Unread — outside a Mate, or HQ not answering —
+// the ledger's are named as last read.
+func releaseOpenChangesWords(ctx context.Context, httpClient ops.HTTPDoer, rt runtime.Info, stateDir string) string {
+	kept := hqChanges(stateDir)
+	if len(kept) == 0 {
+		return ""
+	}
+	var state *hq.MateState
+	if rt.MateEnabled {
+		state = hqStateNow(ctx, httpClient)
+	}
 	byRepo := map[string][]int{}
 	var repos []string
-	for _, c := range hqChanges(stateDir) {
+	for _, c := range kept {
+		if state != nil && state.AppID != nil && *state.AppID == c.AppID {
+			if outcome, _ := outcomeOf(*state, c); outcome != changeStillOpen && outcome != changeUnknown {
+				continue
+			}
+		}
 		if _, ok := byRepo[c.Repo]; !ok {
 			repos = append(repos, c.Repo)
 		}
@@ -392,6 +415,10 @@ func releaseOpenChangesWords(stateDir string) string {
 		slices.Sort(numbers)
 		named = append(named, repo+" "+changeNumbersWords(numbers))
 	}
-	return "A release takes main as it is, so the open changes " + strings.Join(named, ", and ") +
+	asLastRead := ""
+	if state == nil {
+		asLastRead = " (as last read)"
+	}
+	return "A release takes main as it is, so the open changes " + strings.Join(named, ", and ") + asLastRead +
 		" are not in it: the person merges them first, or releases main without them."
 }

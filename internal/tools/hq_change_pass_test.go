@@ -10,6 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops"
@@ -461,6 +464,26 @@ func TestLeaseRelease_ResultNamesTheReleasedBranchsChange(t *testing.T) {
 	}
 }
 
+// TestStatusHQChanges_OutsideAMate_AsLastRead: outside a Mate (an enrollment
+// left in $HOME, pairs keeping their HQ records) status reads nothing of HQ,
+// so the ledger's Changes section is labelled as last read, never as now.
+func TestStatusHQChanges_OutsideAMate_AsLastRead(t *testing.T) {
+	t.Parallel()
+	stateDir := kara(t)
+	if err := workflow.RecordHQChange(stateDir, workflow.HQChange{AppID: labApp, Repo: "appsdev", Number: 2, Branch: "pool-previews"}); err != nil {
+		t.Fatal(err)
+	}
+
+	changes, asLastRead := statusHQChanges(context.Background(), nil, runtime.Info{InContainer: true}, stateDir, targetHQ, time.Now())
+
+	if len(changes) == 0 || !asLastRead {
+		t.Errorf("outside a Mate status names %+v with asLastRead=%v, want the ledger's, as last read", changes, asLastRead)
+	}
+	if changes, asLastRead := statusHQChanges(context.Background(), nil, runtime.Info{InContainer: true}, t.TempDir(), targetHQ, time.Now()); len(changes) != 0 || asLastRead {
+		t.Errorf("with nothing to name status says %+v, asLastRead=%v", changes, asLastRead)
+	}
+}
+
 // TestHandleRelease_NamesTheOpenChangesItLeavesOut: a release takes main only,
 // so the person's handoff names the open changes the ledger keeps, per
 // repository, as not in it.
@@ -473,12 +496,91 @@ func TestHandleRelease_NamesTheOpenChangesItLeavesOut(t *testing.T) {
 		}
 	}
 
-	result, _, _ := handleRelease(context.Background(), nil, WorkflowInput{}, stateDir, runtime.Info{MateEnabled: true})
+	result, _, _ := handleRelease(context.Background(), nil, nil, WorkflowInput{}, stateDir, runtime.Info{MateEnabled: true})
 
 	text := resultText(t, result)
 	for _, want := range []string{"release-person-required", "appsdev #2 and #6", "not in"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the handoff lacks %q: %s", want, text)
 		}
+	}
+}
+
+// release is zerops_workflow action="release" in the lab.
+func (l *hqLab) release() string {
+	l.t.Helper()
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, l.mock, l.hq.srv.Client(), labMate, nil,
+		workflow.NewEngine(l.stateDir, workflow.EnvContainer, nil), nil, l.stateDir, "", nil, l.ssh, l.rt, "")
+	return getTextContent(l.t, callTool(l.t, srv, "zerops_workflow", map[string]any{"action": "release"}))
+}
+
+// TestHandleRelease_LeavesOutTheChangesHQSaysSettled: the person merges a
+// change and asks for a release before any pass forgot it. The handoff reads
+// the Mate's state once and names only the changes still open — never the
+// merged one as left out — and writes nothing, so the pass still says the
+// merge once. HQ not answering, it names the ledger's, as last read.
+func TestHandleRelease_LeavesOutTheChangesHQSaysSettled(t *testing.T) {
+	lab := twoOpenChanges(t)
+	lab.hq.mergeChange("appdev", 1)
+	reads := lab.hq.callCount("GET /api/mate/self")
+
+	text := lab.release()
+
+	if !strings.Contains(text, "release-person-required") || !strings.Contains(text, "appdev #2 are not in it") {
+		t.Errorf("the handoff does not name open #2 as left out: %s", text)
+	}
+	if strings.Contains(text, "#1") {
+		t.Errorf("the handoff names merged #1 as an open change left out: %s", text)
+	}
+	if n := lab.hq.callCount("GET /api/mate/self") - reads; n != 1 {
+		t.Errorf("the handoff read the Mate's state %d times, want once", n)
+	}
+	if lab.kept(1) == nil {
+		t.Error("the handoff forgot change #1: saying the merge, once, is the pass's")
+	}
+
+	lab.hq.setDown(true)
+	text = lab.release()
+
+	if !strings.Contains(text, "as last read") || !strings.Contains(text, "#1 and #2") {
+		t.Errorf("with HQ down the handoff does not name the ledger's changes as last read: %s", text)
+	}
+}
+
+// TestHQPass_ChangesTakeTheirTurnWithNoWiredPair: a Mate whose work is only in
+// leases wires no pair (a dev-pool-only project). Its pass still takes the
+// changes' turn while the ledger or an HQ lease names a repository: a change
+// merged since is learned, said and forgotten, and a change a person handed
+// the Mate in a leased repository is taken — never held for a pair's turn
+// that never comes.
+func TestHQPass_ChangesTakeTheirTurnWithNoWiredPair(t *testing.T) {
+	lab := newHQLab(t)
+	lab.hq.keepOpenPerBranch()
+	lab.wire()
+	lab.pushFromMain("fix-login", map[string]string{"login.js": "the fix\n"})
+	if answer, text, isError := lab.openChangeFrom("fix-login", "Fix the login"); isError || !answer.Created {
+		t.Fatalf("open: %s", text)
+	}
+	lab.leaseOf("hqpool", 4, "fix-login")
+	if err := os.Remove(filepath.Join(lab.stateDir, "services", "appdev.json")); err != nil {
+		t.Fatal(err)
+	}
+	lab.hq.mergeChange("appdev", 1)
+
+	report := strings.Join(lab.wire(), "\n")
+
+	if !strings.Contains(report, "change #1 is merged") || !strings.Contains(report, "hqpool-4") {
+		t.Errorf("with no wired pair the pass does not say #1 merged, naming its lease:\n%s", report)
+	}
+	if lab.kept(1) != nil {
+		t.Error("with no wired pair the pass kept merged #1")
+	}
+
+	number := lab.hq.handOver("appdev", "Add the signup", "add-signup", map[string]string{"signup.js": "half a signup\n"})
+	report = strings.Join(lab.wire(), "\n")
+
+	if !strings.Contains(report, "handed") || lab.kept(number) == nil {
+		t.Errorf("with an empty ledger and a lease of appdev the pass did not take handed #%d:\n%s", number, report)
 	}
 }

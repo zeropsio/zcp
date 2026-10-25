@@ -22,6 +22,9 @@ type changeOpenResult struct {
 	PullRequestURL string `json:"pullRequestUrl"`
 	Created        bool   `json:"created"`
 	Message        string `json:"message"`
+	// Landed says what became of the ledger's other changes in the
+	// repository that the Mate's state names settled since the last pass.
+	Landed string `json:"landed,omitempty"`
 }
 
 // handleOpenChange is zerops_workflow action="open-change": the agent opens
@@ -80,10 +83,20 @@ func handleOpenChange(
 	// HQ keeps an open change per branch, and names the changes handed to
 	// the Mate there: one on this branch is its change, and HQ is not asked
 	// to open another. A state that cannot be read leaves all of it to HQ's
-	// answer.
+	// answer. It also says what became of the changes the ledger keeps in
+	// the repository as it is read (keptBefore — one recorded after the read
+	// is not judged by it): an answer forgets each settled one and says it
+	// once (learnSettled), so a describe naming no branch never meets a
+	// change merged since the last pass.
+	keptBefore := changesIn(hqChanges(stateDir), target.AppID, target.Repo)
 	callCtx, cancel := context.WithTimeout(ctx, hqCallTimeout)
 	state, stateErr := hqc.Once().Self(callCtx)
 	cancel()
+	learnSettled := func() {
+		if stateErr == nil {
+			result.Landed = learnRepoLandings(ctx, stateDir, hqc.Address(), target.AppID, keptBefore, state)
+		}
+	}
 	origin := ""
 	var handed []hq.MateChange
 	if stateErr == nil {
@@ -111,6 +124,7 @@ func handleOpenChange(
 				result.Message += " Nothing else was opened: a Mate has one open change per repository."
 			}
 			result.Message += ` Write what it does and how you checked it with zerops_workflow action="describe-change"; the person reviews it by that.`
+			learnSettled()
 			return jsonResult(result), nil, nil
 		}
 	} else if target.Pair != nil && target.Pair.HQ.Origin != nil {
@@ -138,6 +152,7 @@ func handleOpenChange(
 			fmt.Sprintf("Nothing was opened: HQ did not open a change in %q (%v).", target.Repo, err),
 			`Call zerops_workflow action="open-change" again; the branch you pushed stays as it is.`), WithRecoveryStatus()), nil, nil
 	}
+	learnSettled()
 	number := opened.Change.Number
 	result.PullRequest, result.Created = number, opened.Created
 	result.PullRequestURL = hqc.ChangeURL(target.AppID, target.Repo, number)
@@ -174,6 +189,30 @@ func handleOpenChange(
 	result.Message = fmt.Sprintf("Change #%d is open in %q for the branch %q%s: push the work there (`git push origin %s`) — never force-push — and write what it does and how you checked it with zerops_workflow action=\"describe-change\"; the person reviews it by that.",
 		number, target.Repo, result.Branch, bound, push) + handedNote
 	return jsonResult(result), nil, nil
+}
+
+// learnRepoLandings learns, by state, what became of kept — the ledger's
+// changes of appID's repository — each held with no wait, forgetting each no
+// longer open and saying it once (learnChangeLanding); "" when every one is
+// open, or state is of another application. A change another step holds (a
+// describe) is left to it.
+func learnRepoLandings(ctx context.Context, stateDir, address, appID string, kept []workflow.HQChange, state hq.MateState) string {
+	if state.AppID == nil || *state.AppID != appID {
+		return ""
+	}
+	var learned []string
+	for _, c := range kept {
+		release, err := workflow.HoldHQChange(ctx, stateDir, c.AppID, c.Repo, c.Number, 0)
+		if err != nil {
+			continue
+		}
+		line := learnChangeLanding(stateDir, address, c, state)
+		release()
+		if line != "" {
+			learned = append(learned, sentenceOf(line))
+		}
+	}
+	return strings.Join(learned, " ")
 }
 
 // titleIfCreated is the title a change opened with, "" for one HQ answered

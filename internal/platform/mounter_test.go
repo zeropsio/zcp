@@ -275,21 +275,23 @@ func TestUnmount_UnitRemoveFails_NoFusermountThatTheUnitWouldUndo(t *testing.T) 
 	}
 }
 
-// TestHasUnit_FailedInstanceWithoutUnitFile: zsc unit remove deletes the unit
-// file, but a failed instance stays listed until reset-failed (live:
-// zerops@sshfs-<alias>.service left failed) — HasUnit sees it, so the orphan
-// cleanup runs.
-func TestHasUnit_FailedInstanceWithoutUnitFile(t *testing.T) {
+// TestHasUnit_AFailedInstanceIsNoUnit: an older zcp's zsc unit remove left
+// every unmounted service's instance listed failed (no reset-failed). Status
+// and unmount ask HasUnit of every unmounted service: a failed instance with
+// no unit file is no unit there — never "pending", never UNIT_CLEANED, and
+// one systemctl call per service, as before. Only a cleanup, after its
+// removal, asks whether a failed instance is left (unitLeft).
+func TestHasUnit_AFailedInstanceIsNoUnit(t *testing.T) {
 	t.Parallel()
 	var got []recordedCommand
 	m := &SystemMounter{run: failingCommands(&got, []string{"systemctl", "cat"})}
 	has, err := m.HasUnit(context.Background(), "apppool-3")
-	if err != nil || !has {
-		t.Fatalf("HasUnit = %v, %v; want a failed instance found", has, err)
+	if err != nil || has {
+		t.Fatalf("HasUnit = %v, %v; want no unit for a failed instance without its unit file", has, err)
 	}
-	want := recordedCommand{"systemctl", "is-failed", "--quiet", "zerops@sshfs-apppool-3.service"}
-	if len(got) != 2 || !slices.Equal(got[1], want) {
-		t.Errorf("commands = %q, want cat then %q", got, want)
+	want := recordedCommand{"systemctl", "cat", "zerops@sshfs-apppool-3.service"}
+	if len(got) != 1 || !slices.Equal(got[0], want) {
+		t.Errorf("commands = %q, want only %q", got, want)
 	}
 }
 

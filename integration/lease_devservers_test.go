@@ -84,7 +84,7 @@ func previewGroupServer(t *testing.T, decl func(server, port string) string) (ca
 		rewireLeaseSSH: rewireLeaseSSH{containers: map[string]*devservertest.Container{"hqpool-3": hq, "webpool-7": web}},
 		slots:          map[string]int{"hqpool-3": 1, "webpool-7": 2},
 	}
-	session, cleanup := setupTestServerWithDeploy(t, mock, defaultLogFetcher(), ssh)
+	session, cleanup := setupLeaseTestServer(t, mock, defaultLogFetcher(), ssh)
 	t.Cleanup(cleanup)
 	return func(args map[string]any) string {
 		t.Helper()

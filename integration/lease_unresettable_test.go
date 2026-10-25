@@ -76,7 +76,7 @@ func TestLease_Integration_UnresettableContainerIsDeletedNotReleasedUnreset(t *t
 	t.Cleanup(func() { http.DefaultTransport = orig })
 
 	c := devservertest.NewSupervised("")
-	session, cleanup := setupTestServerWithDeploy(t, supervisorPoolMock(), defaultLogFetcher(), c)
+	session, cleanup := setupLeaseTestServer(t, supervisorPoolMock(), defaultLogFetcher(), c)
 	defer cleanup()
 
 	call := func(args map[string]any) supervisorLeaseResult {

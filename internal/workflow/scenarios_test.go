@@ -1928,10 +1928,11 @@ func perServiceActions(plan Plan) []NextAction {
 // renders (docs/spec-workflows.md §8 PS-15): at the discover step of both
 // routes that plan new services — classic and recipe — where the agent
 // decides what to create, never at an adopt discover (it plans nothing new)
-// or past discover; and in develop once a runtime is deployed, for a feature
-// added to an app that already exists. The first-deploy branch follows the
-// bootstrap that just showed the rule, and its guidance sits at the MCP
-// output cap (TestCorpusCoverage_OutputUnderMCPCap), so it carries none.
+// or past discover; and in develop as one line of develop-knowledge-pointers,
+// for a feature added to an app — never an atom of its own: develop guidance
+// sits over the composer's budget, and an atom of its own (~700 B) demoted
+// other atoms to one-line heads in a scope mixing deployed and never-deployed
+// pairs.
 func TestScenario_UserSuppliedCode_PlanningPointsAtABox(t *testing.T) {
 	t.Parallel()
 
@@ -1963,7 +1964,7 @@ func TestScenario_UserSuppliedCode_PlanningPointsAtABox(t *testing.T) {
 	classic := render(boot(BootstrapRouteClassic, StepDiscover))
 	requireAtomIDsContain(t, "classic discover plans a Box for users' code", classic, "bootstrap-user-code-box")
 	body, _ := has(classic, atom)
-	for _, want := range []string{"Zerops Box", "ubuntu/zbox@1", "prg1", `zerops_knowledge uri="zerops://themes/services"`} {
+	for _, want := range []string{"Zerops Box", "ubuntu/zbox@1", "prg1", `zerops_knowledge uri="zerops://themes/pools-and-box"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("%s body missing %q:\n%s", atom, want, body)
 		}
@@ -1982,19 +1983,36 @@ func TestScenario_UserSuppliedCode_PlanningPointsAtABox(t *testing.T) {
 		}
 	}
 
-	const developAtom = "develop-user-code-box"
-	deployed := render(StateEnvelope{Phase: PhaseDevelopActive, Environment: EnvContainer,
-		Services: []ServiceSnapshot{fixSnapDeployedDevAuto("webdev")}})
-	requireAtomIDsContain(t, "a deployed app adding a feature that runs users' code", deployed, "develop-user-code-box")
-	feature, _ := has(deployed, developAtom)
-	for _, want := range []string{"Zerops Box", "ubuntu/zbox@1", "prg1", `zerops_knowledge uri="zerops://themes/services"`} {
-		if !strings.Contains(feature, want) {
-			t.Errorf("%s body missing %q:\n%s", developAtom, want, feature)
+	for _, a := range corpus {
+		if a.ID == "develop-user-code-box" {
+			t.Errorf("%s is an atom of its own; the develop rule is one line of develop-knowledge-pointers", a.ID)
 		}
 	}
-	firstDeploy := render(StateEnvelope{Phase: PhaseDevelopActive, Environment: EnvContainer,
-		Services: fixSnapBootstrappedNeverDeployedPair("appdev", "appstage", "nodejs@22", topology.RuntimeDynamic)})
-	if _, ok := has(firstDeploy, developAtom); ok {
-		t.Errorf("%s fired in the first-deploy branch", developAtom)
+	const developAtom = "develop-knowledge-pointers"
+	for _, tc := range []struct {
+		label string
+		env   StateEnvelope
+	}{
+		{"a deployed app adding a feature that runs users' code", StateEnvelope{Phase: PhaseDevelopActive, Environment: EnvContainer,
+			Services: []ServiceSnapshot{fixSnapDeployedDevAuto("webdev")}}},
+		{"a first deploy", StateEnvelope{Phase: PhaseDevelopActive, Environment: EnvContainer,
+			Services: fixSnapBootstrappedNeverDeployedPair("appdev", "appstage", "nodejs@22", topology.RuntimeDynamic)}},
+	} {
+		pointers, ok := has(render(tc.env), developAtom)
+		if !ok {
+			t.Errorf("%s: %s did not fire", tc.label, developAtom)
+			continue
+		}
+		var bullet string
+		for b := range strings.SplitSeq(pointers, "\n- ") {
+			if strings.Contains(b, "Zerops Box") {
+				bullet = strings.Join(strings.Fields(b), " ")
+			}
+		}
+		for _, want := range []string{"Zerops Box", `zerops_knowledge uri="zerops://themes/pools-and-box"`, "Running code the app's users send"} {
+			if !strings.Contains(bullet, want) {
+				t.Errorf("%s: %s carries no Box pointer bullet with %q:\n%s", tc.label, developAtom, want, pointers)
+			}
+		}
 	}
 }

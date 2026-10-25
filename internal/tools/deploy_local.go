@@ -142,9 +142,10 @@ func RegisterDeployLocal(
 		// for the exemption rationale.
 		// deploy_local always runs in local env — pass a zero-value
 		// runtime.Info to surface the adopt-local recovery hint.
-		// A pool target is never adopted, so it is not asked to be (DP-7).
-		services := deployListing(ctx, client, projectID)
-		if blocked := requireAdoption(stateDir, runtime.Info{}, recipeProbe, withoutPoolHosts(services, input.TargetService)...); blocked != nil {
+		// A pool target is never adopted, so it is not asked to be (DP-7);
+		// the project is listed only to tell one, once the gate refuses.
+		listServices, listedServices := lazyDeployListing(ctx, client, projectID)
+		if blocked := requireDeployAdoption(stateDir, runtime.Info{}, recipeProbe, listServices, input.TargetService); blocked != nil {
 			return blocked, nil, nil
 		}
 
@@ -205,7 +206,7 @@ func RegisterDeployLocal(
 			Strategy:    deployStrategyZCLILabel,
 		}
 
-		result, err := ops.DeployLocalFromListing(ctx, client, projectID, *authInfo, services,
+		result, err := ops.DeployLocalFromListing(ctx, client, projectID, *authInfo, listedServices(),
 			input.TargetService, input.Setup, input.WorkingDir, input.SHA)
 		if err != nil {
 			attempt.Error = err.Error()

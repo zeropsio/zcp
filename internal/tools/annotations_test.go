@@ -64,7 +64,8 @@ func (*nopSSH) ExecSSHBackground(_ context.Context, _, _ string, _ time.Duration
 func TestAnnotations_AllToolsHaveTitleAndAnnotations(t *testing.T) {
 	t.Parallel()
 
-	toolMap := listAllTools(t, runtime.Info{})
+	// A container's surface: zerops_lease is offered there only.
+	toolMap := listAllTools(t, runtime.Info{InContainer: true})
 
 	tests := []struct {
 		name        string
@@ -237,7 +238,7 @@ func TestAnnotations_DescriptionWordCount(t *testing.T) {
 func TestAnnotations_DescriptionKeywords(t *testing.T) {
 	t.Parallel()
 
-	toolMap := listAllTools(t, runtime.Info{})
+	toolMap := listAllTools(t, runtime.Info{InContainer: true})
 
 	tests := []struct {
 		name     string

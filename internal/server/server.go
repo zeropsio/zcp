@@ -427,17 +427,19 @@ func (s *Server) registerTools() {
 	tools.RegisterMount(s.server, s.client, projectID, s.mounter, s.rtInfo, stateDir, wfEngine, recipeProbe,
 		tools.WithPoolOrchestratorsForMount(ops.NewSwarmFactory(&http.Client{Timeout: ops.LeaseCallTimeout})))
 	// A dev pool's container is leased through its orchestrator, which answers
-	// only inside the project (docs/spec-workflows.md §8 DP-3/DP-5). A start or
-	// a reset-release restarts the container, so the client outwaits the 15 s
-	// readiness client above.
+	// only inside the project (docs/spec-workflows.md §8 DP-3/DP-5): the tool
+	// is offered in a container only. A start or a reset-release restarts the
+	// container, so the client outwaits the 15 s readiness client above.
 	// Inside a Mate a status also reads the Mate's state in HQ once, for each
 	// lease group's change (docs/spec-mate.md §10.10).
-	leaseOpts := []tools.LeaseOption{tools.WithLeaseBackground(s.background.Go)}
-	if s.rtInfo.MateEnabled {
-		leaseOpts = append(leaseOpts, tools.WithLeaseHQ(httpClient))
+	if s.rtInfo.InContainer {
+		leaseOpts := []tools.LeaseOption{tools.WithLeaseBackground(s.background.Go)}
+		if s.rtInfo.MateEnabled {
+			leaseOpts = append(leaseOpts, tools.WithLeaseHQ(httpClient))
+		}
+		tools.RegisterLease(s.server, s.client, projectID, stateDir, ops.NewSwarmFactory(&http.Client{Timeout: ops.LeaseCallTimeout}), s.mounter, s.sshDeployer, s.rtInfo,
+			leaseOpts...)
 	}
-	tools.RegisterLease(s.server, s.client, projectID, stateDir, ops.NewSwarmFactory(&http.Client{Timeout: ops.LeaseCallTimeout}), s.mounter, s.sshDeployer, s.rtInfo,
-		leaseOpts...)
 
 	// Container-only: zerops_browser wraps agent-browser with a guaranteed
 	// open→work→close lifecycle. agent-browser is pre-installed in the ZCP

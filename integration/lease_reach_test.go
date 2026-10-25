@@ -190,7 +190,7 @@ func TestLease_Integration_LeaseNotOurs_ToolsNeverReachIt(t *testing.T) {
 					{ID: "svc-1", Name: "app", Status: "RUNNING", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
 				}).
 				WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{ID: "env-t", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}})
-			session, cleanup := setupTestServerWithDeploy(t, mock, defaultLogFetcher(), ssh)
+			session, cleanup := setupLeaseTestServer(t, mock, defaultLogFetcher(), ssh)
 			defer cleanup()
 
 			if res := callAndGetResult(t, session, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": "https://github.com/acme/app", "branch": "feature-x"}); res.IsError {

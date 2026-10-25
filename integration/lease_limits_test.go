@@ -152,7 +152,7 @@ func TestLease_Integration_FullAndStoppedPools(t *testing.T) {
 	mock := defaultMock().
 		WithServices([]platform.ServiceStack{intPool("svc-pool", "devpool", "ACTIVE", 10), intPool("svc-stop", "stoppool", "STOPPED", 4)}).
 		WithServiceEnv("svc-pool", token).WithServiceEnv("svc-stop", token)
-	session, cleanup := setupTestServer(t, mock, defaultLogFetcher())
+	session, cleanup := setupLeaseTestServer(t, mock, defaultLogFetcher(), nil)
 	defer cleanup()
 
 	res := callAndGetResult(t, session, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": "https://github.com/acme/app", "branch": "feat-c"})
@@ -224,7 +224,7 @@ func TestScale_Integration_PoolLoweringOverALease_AsksFirst(t *testing.T) {
 	mock := defaultMock().
 		WithServices([]platform.ServiceStack{intPool("svc-pool", "devpool", "ACTIVE", 5)}).
 		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{ID: "env-t", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}})
-	session, cleanup := setupTestServer(t, mock, defaultLogFetcher())
+	session, cleanup := setupLeaseTestServer(t, mock, defaultLogFetcher(), nil)
 	defer cleanup()
 
 	res := callAndGetResult(t, session, "zerops_scale", map[string]any{"serviceHostname": "devpool", "maxContainers": 4})

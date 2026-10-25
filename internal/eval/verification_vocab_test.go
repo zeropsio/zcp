@@ -275,9 +275,10 @@ func (vocabNopSSH) ExecSSHBackground(context.Context, string, string, time.Durat
 var _ ops.Mounter = vocabNopMounter{}
 var _ ops.SSHDeployer = vocabNopSSH{}
 
-// deriveRegisteredToolNames builds a real in-memory MCP server (default
-// runtime.Info, not authoring/container-gated) and lists its tools — the
-// actual registry an agent sees, never a hand-maintained copy.
+// deriveRegisteredToolNames builds a real in-memory MCP server (a container's
+// runtime.Info, where an eval runs and zerops_lease is offered; not
+// authoring-gated) and lists its tools — the actual registry an agent sees,
+// never a hand-maintained copy.
 func deriveRegisteredToolNames(t *testing.T) map[string]bool {
 	t.Helper()
 	mock := platform.NewMock().WithProject(&platform.Project{ID: "p1", Name: "test"}).WithServices(nil)
@@ -287,7 +288,7 @@ func deriveRegisteredToolNames(t *testing.T) map[string]bool {
 		t.Fatalf("knowledge store: %v", err)
 	}
 	logFetcher := platform.NewMockLogFetcher()
-	srv := server.New(context.Background(), mock, authInfo, store, logFetcher, vocabNopSSH{}, vocabNopMounter{}, runtime.Info{}, nil)
+	srv := server.New(context.Background(), mock, authInfo, store, logFetcher, vocabNopSSH{}, vocabNopMounter{}, runtime.Info{InContainer: true}, nil)
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()

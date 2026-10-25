@@ -249,7 +249,7 @@ func TestPlaybookMonorepo_ContentPins_PartRules(t *testing.T) {
 		{"propose parts once", "Propose the parts to the person once"},
 		{"variant A is the default", "**one dev service holds the whole repo** (default)"},
 		{"parts that cannot share a container each get a dev pool", "**one dev pool per part**"},
-		{"a part's dev pool is set up from the services theme", `zerops_knowledge uri="zerops://themes/services"`},
+		{"a part's dev pool is set up from the pools-and-box theme", `zerops_knowledge uri="zerops://themes/pools-and-box"`},
 		{"no shared code volume is set up any more", "zcp no longer sets up a shared code volume"},
 		{"an existing shared code volume moves onto pools", `zerops_workflow workflow="pool-migrate" service="<dev>"`},
 		{"more people means more Mates", "More people on the repo means more Mates, never more dev services"},

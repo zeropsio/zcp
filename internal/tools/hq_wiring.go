@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -228,19 +229,15 @@ func reconcileHQPairs(
 	hqc hq.Client,
 	pace hqPassPace,
 ) []string {
-	metas, err := workflow.ListServiceMetas(stateDir)
-	if err != nil || len(metas) == 0 {
-		return nil
-	}
+	// A meta list that cannot be read takes no pair's turn; the changes are
+	// the ledger's and the leases', and still take theirs.
+	metas, _ := workflow.ListServiceMetas(stateDir)
 	address := hqc.Address()
 	pending := make([]*workflow.ServiceMeta, 0, len(metas))
 	for _, m := range metas {
 		if hqPairGetsRepository(m, address, rt) || hqPairWired(m) {
 			pending = append(pending, m)
 		}
-	}
-	if len(pending) == 0 {
-		return nil
 	}
 	sort.Slice(pending, func(i, j int) bool { return pending[i].Hostname < pending[j].Hostname })
 
@@ -269,13 +266,22 @@ func reconcileHQPairs(
 		}
 	}
 	// The changes are the repositories', not a pair's: their turn comes once
-	// a pair's turn read the Mate's state, or at develop's start.
-	if selfRead() || pace == hqPassNow {
+	// a pair's turn read the Mate's state, at develop's start, or — with no
+	// pair to take a turn (work only in leases) — at every pass, while a
+	// wired pair, the ledger or an HQ lease names a repository.
+	if selfRead() || ((pace == hqPassNow || len(pending) == 0) && hqChangesHaveRepo(stateDir, address, pending)) {
 		if state, err := self(); err == nil {
 			report = append(report, hqChangesPass(ctx, stateDir, hqc, state, pace == hqPassNow)...)
 		}
 	}
 	return report
+}
+
+// hqChangesHaveRepo reports whether a changes' turn has a repository to turn
+// to: a wired pair among pending, a change the ledger keeps, or a lease zcp
+// holds of a repository on this Mate's HQ (address).
+func hqChangesHaveRepo(stateDir, address string, pending []*workflow.ServiceMeta) bool {
+	return slices.ContainsFunc(pending, hqPairWired) || len(hqChanges(stateDir)) > 0 || len(hqLeaseBranches(stateDir, address)) > 0
 }
 
 // hqPassPace is whether a pass keeps each pair's backoff.

@@ -6,12 +6,14 @@
 package tools
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // Listings each call made before the pool and Box checks (measured on
@@ -108,6 +110,44 @@ func TestManageTool_StopRestart_ListsTheServicesOnce(t *testing.T) {
 			}
 			if n := mock.CallCount("ListServices"); n != wantManageListings {
 				t.Errorf("ListServices calls = %d, want %d: the Box check reads the service the %s resolved", n, wantManageListings, action)
+			}
+		})
+	}
+}
+
+// TestDeployTool_RedirectedDeploy_ListsNothing: a deploy asks the adoption
+// gate first, from zcp's records; it lists the project's services only for
+// what needs a service's type — the gate's pool exemption once the gate
+// refuses, a source zcp has not adopted, the push itself. So a deploy the
+// delivery redirect refuses, in a project with no pool, lists nothing, as
+// before pools existed.
+func TestDeployTool_RedirectedDeploy_ListsNothing(t *testing.T) {
+	t.Parallel()
+	for _, local := range []bool{false, true} {
+		name := "container"
+		if local {
+			name = "local"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			stateDir := t.TempDir()
+			seedL1Meta(t, stateDir, "appdev", topology.PlanModeStandard, "appstage", topology.BuildIntegrationWebhook)
+			mock := listingCountMock()
+			authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			if local {
+				RegisterDeployLocal(srv, mock, okHTTP, "proj-1", authInfo, nil, stateDir, testDeployEngine(t), nil)
+			} else {
+				RegisterDeploySSH(srv, mock, okHTTP, "proj-1", &stubSSH{output: []byte("ok")}, authInfo, nil, runtime.Info{InContainer: true}, stateDir, testDeployEngine(t), nil, DevsupSource{})
+			}
+
+			text := getTextContent(t, callTool(t, srv, "zerops_deploy", map[string]any{"targetService": "appdev"}))
+
+			if !strings.Contains(text, "push-delivery-required") {
+				t.Fatalf("want the delivery redirect: %s", text)
+			}
+			if n := mock.CallCount("ListServices"); n != 0 {
+				t.Errorf("ListServices calls = %d, want none before the redirect refused", n)
 			}
 		})
 	}

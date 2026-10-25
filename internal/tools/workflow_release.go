@@ -45,12 +45,13 @@ const releaseFirstVersion = "v1.0.0"
 func handleRelease(
 	ctx context.Context,
 	sshDeployer ops.SSHDeployer,
+	httpClient ops.HTTPDoer,
 	input WorkflowInput,
 	stateDir string,
 	rt runtime.Info,
 ) (*mcp.CallToolResult, any, error) {
 	if rt.MateEnabled {
-		return hqReleaseHandoff(stateDir), nil, nil
+		return hqReleaseHandoff(ctx, httpClient, rt, stateDir), nil, nil
 	}
 	if input.Service == "" {
 		return convertError(platform.NewPlatformError(
@@ -61,7 +62,7 @@ func handleRelease(
 	meta, err := workflow.FindServiceMeta(stateDir, input.Service)
 	// A recorded HQ repository stays HQ's outside a Mate too.
 	if hqPairWired(meta) {
-		return hqReleaseHandoff(stateDir), nil, nil
+		return hqReleaseHandoff(ctx, httpClient, rt, stateDir), nil, nil
 	}
 	//nolint:nilerr // meta read failures surface as the structured adopt-required tool result, not a Go error (MCP contract)
 	if err != nil || meta == nil || !meta.IsComplete() {
@@ -170,15 +171,15 @@ func handleRelease(
 // hqReleaseHandoff ends the agent's release request visibly. A Mate cannot
 // push release tags; Core makes the application's release for the person.
 // A release takes main only, so it names the open changes the ledger keeps
-// as not in it.
-func hqReleaseHandoff(stateDir string) *mcp.CallToolResult {
+// as not in it (releaseOpenChangesWords).
+func hqReleaseHandoff(ctx context.Context, httpClient ops.HTTPDoer, rt runtime.Info, stateDir string) *mcp.CallToolResult {
 	answer := map[string]string{
 		"status":   "release-person-required",
 		"message":  "A release is a person's action in Mate. HQ Core creates the application's release; this tool cannot push release tags to HQ.",
 		"pipeline": "HQ Core delivers each approved release to the application's production. Production setup and release readiness are read in Mate; this tool has not checked them.",
 		"nextStep": "Tell the person: they release in Mate, from this conversation. While the application has no production, Put it live (beside the change to review, or on the project) merges what waits, makes production and releases to it in one press. With a production, Release in the conversation's header shows what goes out, and they press Release with the version shown. If something blocks it, Mate names what needs doing first. Nothing has been released by this tool. Once it is live, Mate tells you production's address: from then on that is the app, and yours is only their preview.",
 	}
-	if open := releaseOpenChangesWords(stateDir); open != "" {
+	if open := releaseOpenChangesWords(ctx, httpClient, rt, stateDir); open != "" {
 		answer["openChanges"] = open
 	}
 	return jsonResult(answer)

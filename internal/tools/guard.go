@@ -219,6 +219,48 @@ func deployListing(ctx context.Context, client platform.Client, projectID string
 	return services
 }
 
+// lazyDeployListing is a single deploy's deployListing, read at most once and
+// only when first asked (list): a deploy asks it only for what needs a
+// service's type, so a call the gate or the delivery redirect answers from
+// zcp's records lists nothing. listed is what was read, nil when nothing
+// asked — the push then lists the services itself.
+func lazyDeployListing(ctx context.Context, client platform.Client, projectID string) (list, listed func() []platform.ServiceStack) {
+	var (
+		services []platform.ServiceStack
+		read     bool
+	)
+	list = func() []platform.ServiceStack {
+		if !read {
+			services, read = deployListing(ctx, client, projectID), true
+		}
+		return services
+	}
+	return list, func() []platform.ServiceStack { return services }
+}
+
+// requireDeployAdoption is a deploy's adoption gate, asked first from zcp's
+// records alone; only once it refuses is the project listed (list), to exempt
+// a pool among hostnames — a pool is never adopted (PS-5): a pool target is
+// deployed to (DP-7), a pool source is refused after the gate (PS-3).
+func requireDeployAdoption(stateDir string, rt runtime.Info, recipeProbe RecipeSessionProbe, list func() []platform.ServiceStack, hostnames ...string) *mcp.CallToolResult {
+	if requireAdoption(stateDir, rt, recipeProbe, hostnames...) == nil {
+		return nil
+	}
+	return requireAdoption(stateDir, rt, recipeProbe, withoutPoolHosts(list(), hostnames...)...)
+}
+
+// adoptedNonPool reports whether hostname is a service zcp adopted that is no
+// pool: a pool is never adopted (PS-5), so only the dev half of a pair keyed by
+// its dev pool is one among them. A deploy's pool-source check needs no
+// listing for such a source.
+func adoptedNonPool(stateDir, hostname string) bool {
+	meta, err := workflow.FindServiceMeta(stateDir, hostname)
+	if err != nil || meta == nil {
+		return false
+	}
+	return !meta.DevIsPool() || meta.Hostname != hostname
+}
+
 // withoutPoolHosts drops the hostnames that are Swarm pools in services (a
 // deployListing): a pool is never adopted (PS-5), so the adoption gate has
 // nothing to ask of a deploy that targets one (DP-7). A hostname the listing

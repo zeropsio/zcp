@@ -220,10 +220,8 @@ func (m *SystemMounter) ForceUnmount(ctx context.Context, hostname, path string)
 	if ValidateMountName(hostname) == nil {
 		removeErr := m.exec(ctx, unmountTimeout, "sudo", "-E", "zsc", "unit", "remove", "sshfs-"+hostname)
 		m.resetFailed(ctx, hostname)
-		if removeErr != nil {
-			if left, _ := m.HasUnit(ctx, hostname); left {
-				return fmt.Errorf("zsc unit remove: %w", removeErr)
-			}
+		if removeErr != nil && m.unitLeft(ctx, hostname) {
+			return fmt.Errorf("zsc unit remove: %w", removeErr)
 		}
 	}
 	if still, err := m.isMounted(path); err == nil && !still {
@@ -263,17 +261,25 @@ func (m *SystemMounter) ListMountDirs(_ context.Context, basePath string) ([]str
 }
 
 // HasUnit checks if a systemd unit exists for the given hostname.
-// Uses "systemctl cat" which does not require sudo.
+// Uses "systemctl cat" which does not require sudo. A failed instance with
+// no unit file is no unit: an older zcp's zsc unit remove left one on every
+// unmount, and status and unmount ask this of every unmounted service.
 func (m *SystemMounter) HasUnit(ctx context.Context, hostname string) (bool, error) {
 	if err := ValidateMountName(hostname); err != nil {
 		return false, err
 	}
-	if m.exec(ctx, mountCheckTimeout, "systemctl", "cat", mountUnit(hostname)) == nil {
-		return true, nil
+	return m.exec(ctx, mountCheckTimeout, "systemctl", "cat", mountUnit(hostname)) == nil, nil
+}
+
+// unitLeft reports whether a removal left the unit: its file, or — zsc unit
+// remove deletes the file, but a failed instance stays listed until
+// reset-failed — its failed instance. Only a cleanup asks it, after its
+// removal and reset.
+func (m *SystemMounter) unitLeft(ctx context.Context, hostname string) bool {
+	if has, _ := m.HasUnit(ctx, hostname); has {
+		return true
 	}
-	// zsc unit remove deletes the unit file, but a failed instance stays
-	// listed until reset-failed.
-	return m.exec(ctx, mountCheckTimeout, "systemctl", "is-failed", "--quiet", mountUnit(hostname)) == nil, nil
+	return m.exec(ctx, mountCheckTimeout, "systemctl", "is-failed", "--quiet", mountUnit(hostname)) == nil
 }
 
 // CleanupUnit removes the zsc systemd unit without touching the FUSE mount.
@@ -287,7 +293,7 @@ func (m *SystemMounter) CleanupUnit(ctx context.Context, hostname string) error 
 	if removeErr == nil {
 		return nil
 	}
-	if left, _ := m.HasUnit(ctx, hostname); left {
+	if m.unitLeft(ctx, hostname) {
 		return removeErr
 	}
 	return nil

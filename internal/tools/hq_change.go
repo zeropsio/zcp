@@ -391,7 +391,7 @@ func hqChangesPass(ctx context.Context, stateDir string, hqc hq.Client, state hq
 			lines = append(lines, fmt.Sprintf("change #%d in %q stays in the application it was opened in: HQ holds this Mate in another now", c.Number, c.Repo))
 		}
 	}
-	for _, repo := range hqChangeRepos(stateDir, app, changes) {
+	for _, repo := range hqChangeRepos(stateDir, hqc.Address(), app, changes) {
 		var said []string
 		for _, c := range changesIn(changes, app, repo) {
 			if line := passChange(ctx, stateDir, hqc.Address(), c, state); line != "" {
@@ -487,19 +487,30 @@ func openChangesWords(kept []workflow.HQChange) string {
 }
 
 // hqChangeRepos is every repository of app a pass turns to for its changes:
-// each one the ledger keeps a change in, and each a wired pair has — a change
-// may be handed there — by name.
-func hqChangeRepos(stateDir, app string, changes []workflow.HQChange) []string {
+// each one the ledger keeps a change in, and each a wired pair has or a lease
+// zcp holds of on this Mate's HQ (address) — a change may be handed there —
+// by name.
+func hqChangeRepos(stateDir, address, app string, changes []workflow.HQChange) []string {
 	var repos []string
+	add := func(repo string) {
+		if !slices.Contains(repos, repo) {
+			repos = append(repos, repo)
+		}
+	}
 	for _, c := range changes {
-		if c.AppID == app && !slices.Contains(repos, c.Repo) {
-			repos = append(repos, c.Repo)
+		if c.AppID == app {
+			add(c.Repo)
 		}
 	}
 	metas, _ := workflow.ListServiceMetas(stateDir)
 	for _, m := range metas {
-		if hqPairWired(m) && m.HQ.AppID == app && !slices.Contains(repos, m.HQ.Repo) {
-			repos = append(repos, m.HQ.Repo)
+		if hqPairWired(m) && m.HQ.AppID == app {
+			add(m.HQ.Repo)
+		}
+	}
+	for _, l := range hqLeaseBranches(stateDir, address) {
+		if l.appID == app {
+			add(l.repo)
 		}
 	}
 	slices.Sort(repos)

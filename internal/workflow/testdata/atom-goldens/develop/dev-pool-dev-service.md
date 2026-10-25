@@ -1,6 +1,6 @@
 ---
 id: develop/dev-pool-dev-service
-atomIds: [develop-intro, develop-strategy-review, develop-change-drives-deploy, develop-dev-server-triage, develop-self-deploy-reproducibility, develop-checklist-dev-mode, develop-dev-pool, develop-dynamic-runtime-start-container, develop-knowledge-pointers, develop-user-code-box, develop-auto-close-semantics, develop-dev-server-reason-codes, develop-verify-matrix, develop-mode-expansion]
+atomIds: [develop-intro, develop-strategy-review, develop-change-drives-deploy, develop-dev-server-triage, develop-self-deploy-reproducibility, develop-checklist-dev-mode, develop-dev-pool, develop-dynamic-runtime-start-container, develop-knowledge-pointers, develop-auto-close-semantics, develop-dev-server-reason-codes, develop-verify-matrix, develop-mode-expansion]
 description: "A deployed dev-mode service whose project also holds a Swarm pool the part's dev servers run in by lease. The dev-pool guidance fires only because a pool is present."
 ---
 === develop-intro ===
@@ -378,11 +378,11 @@ leases are keyed by branch, so they never meet.
   pool's own; in a project with `envIsolation: none` it also reads every
   other service's values as `<host>_KEY`, the zcp service's `ZCP_API_KEY`
   included. Run there only code you would trust with them —
-  `zerops_knowledge uri="zerops://themes/services"`, section "Untrusted code".
+  `zerops_knowledge uri="zerops://themes/pools-and-box"`, section "Untrusted code".
 
 The pool's import stanza, setup shape — a workspace monorepo's dependencies
 included — and a declaration several parts share:
-`zerops_knowledge uri="zerops://themes/services"`, section "A part's dev pool".
+`zerops_knowledge uri="zerops://themes/pools-and-box"`, section "A part's dev pool".
 
 ---
 
@@ -414,23 +414,17 @@ the call and kills the process.
 === develop-knowledge-pointers ===
 ### Knowledge on demand — pull extra context
 
-When the embedded guidance isn't enough, these are the canonical lookups:
-
-- **`zerops.yaml` schema / fields** — `zerops_knowledge query="zerops.yaml schema"`
-- **Runtime docs** (build tools, start commands, conventions) —
-  `zerops_knowledge query="<runtime>"` (e.g. `nodejs`, `go`, `php-nginx`, `bun`);
-  match the service's base stack.
-- **Env var keys** (no values, safe) — `zerops_discover includeEnvs=true`
-  (`includeEnvValues=true` only to troubleshoot).
-- **Deeper platform topics** (infra changes, scaling, status codes,
-  managed-service categories) — `zerops_knowledge query="<topic>"`.
-
----
-
-=== develop-user-code-box ===
-### A feature that runs code the app's users send
-
-A feature that runs code the app does not write itself — users' snippets or submissions, notebook cells, an agent's tool calls, plugins — runs that code in a Zerops Box sandbox beside the app, never in the app's runtime container, where namespaces or a subprocess still share its kernel, files and project network. A project without a Box gets one through `zerops_import` (`type: ubuntu/zbox@1`; a Box exists only in a project in region prg1), and the app calls its workspace API with the key wired by reference: `zerops_knowledge uri="zerops://themes/services"`, section "Running code the app's users send".
+- **`zerops.yaml` schema** — `zerops_knowledge query="zerops.yaml schema"`
+- **Runtime docs** (build tools, start commands) — `zerops_knowledge
+  query="<base stack>"`.
+- **Env var keys** — `zerops_discover includeEnvs=true` (`includeEnvValues=true`
+  only to troubleshoot).
+- **Other platform topics** (scaling, status codes, managed services) —
+  `zerops_knowledge query="<topic>"`.
+- **Code the app's users send** (snippets, an agent's tool calls, plugins) runs
+  in a Zerops Box sandbox, never the app's container:
+  `zerops_knowledge uri="zerops://themes/pools-and-box"`, section "Running code
+  the app's users send".
 
 ---
 

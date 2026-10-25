@@ -31,7 +31,7 @@ The dev servers of a dev service run under `zcp-devsup`, the supervisor its dev 
 | `servers[].autostart` | optional, default `true`; `false` keeps a declared server stopped until you start it |
 | `servers[].preview` | optional `true`; marks the server `previewPortBase` forwards to when more than one server listens (with one listening server, that one). It needs a `port`; at most one entry carries it |
 
-The top-level keys below are read in a dev pool's lease only — a dev service ignores them (`zerops_knowledge uri="zerops://themes/services"`, section "A part's dev pool"):
+The top-level keys below are read in a dev pool's lease only — a dev service ignores them (`zerops_knowledge uri="zerops://themes/pools-and-box"`, section "A part's dev pool"):
 
 | Key | Meaning |
 |---|---|

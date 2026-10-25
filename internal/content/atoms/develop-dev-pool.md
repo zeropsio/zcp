@@ -234,8 +234,8 @@ leases are keyed by branch, so they never meet.
   pool's own; in a project with `envIsolation: none` it also reads every
   other service's values as `<host>_KEY`, the zcp service's `ZCP_API_KEY`
   included. Run there only code you would trust with them —
-  `zerops_knowledge uri="zerops://themes/services"`, section "Untrusted code".
+  `zerops_knowledge uri="zerops://themes/pools-and-box"`, section "Untrusted code".
 
 The pool's import stanza, setup shape — a workspace monorepo's dependencies
 included — and a declaration several parts share:
-`zerops_knowledge uri="zerops://themes/services"`, section "A part's dev pool".
+`zerops_knowledge uri="zerops://themes/pools-and-box"`, section "A part's dev pool".

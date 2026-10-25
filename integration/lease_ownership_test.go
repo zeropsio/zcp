@@ -119,7 +119,7 @@ func ownershipIntServer(t *testing.T, orch *ownershipIntOrch) func(args map[stri
 			{ID: "svc-pool", Name: "devpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
 		}).
 		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{ID: "env-t", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}})
-	session, cleanup := setupTestServer(t, mock, defaultLogFetcher())
+	session, cleanup := setupLeaseTestServer(t, mock, defaultLogFetcher(), nil)
 	t.Cleanup(cleanup)
 	return func(args map[string]any) []ownershipIntView {
 		t.Helper()

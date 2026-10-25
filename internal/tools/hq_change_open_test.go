@@ -190,6 +190,37 @@ func TestOpenChange_AnOpenChangeTakesTheWorkOntoItsBranch(t *testing.T) {
 	lab.git("merge-base", "--is-ancestor", before, "HEAD")
 }
 
+// TestOpenChange_ForgetsTheChangesTheStateItReadNamesSettled: on an HQ that
+// keeps one open change per repository, change #1 merges and the agent opens
+// #2 before any pass learned it. open-change forgets #1 by the Mate's state it
+// read anyway, and says the merge once, so a describe naming no branch then
+// puts its words on #2 at the first call.
+func TestOpenChange_ForgetsTheChangesTheStateItReadNamesSettled(t *testing.T) {
+	lab := newHQLab(t)
+	lab.wire()
+	lab.pushFromMain("fix-login", map[string]string{"login.js": "the fix\n"})
+	if first, text, isError := lab.openChangeFrom("fix-login", "Fix the login"); isError || !first.Created {
+		t.Fatalf("the first open: %s", text)
+	}
+	lab.hq.mergeChange("appdev", 1)
+	lab.pushFromMain("add-signup", map[string]string{"signup.js": "the signup\n"})
+
+	answer, text, isError := lab.openChangeFrom("add-signup", "Add the signup")
+
+	if isError || !answer.Created || answer.PullRequest != 2 {
+		t.Fatalf("want change #2 opened: %s", text)
+	}
+	if lab.kept(1) != nil {
+		t.Error("open-change kept merged #1, which the Mate's state it read names merged")
+	}
+	if !strings.Contains(text, "#1 is merged") {
+		t.Errorf("open-change does not say #1 merged, which no pass said yet: %s", text)
+	}
+	if described, isError := lab.describe("appdev", describedWords); isError || !strings.Contains(described, `"described":true`) {
+		t.Errorf("a describe naming no branch did not put its words on #2: %s", described)
+	}
+}
+
 // An HQ from before changes were bound to a branch they name ignores the
 // branch asked for and binds the change to the Mate's own: the answer names
 // that branch and says the work goes there, never the one asked for.
