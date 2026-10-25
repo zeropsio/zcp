@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -346,5 +347,49 @@ func TestLeaseTool_Acquire_NewWarmContainerGetsTheRepository(t *testing.T) {
 	ssh.mu.Unlock()
 	if len(launches) != 1 || !strings.HasPrefix(launches[0], "node-id-2.runtime.devpool.zerops ") || !strings.Contains(launches[0], leaseTestRepo) {
 		t.Errorf("launches = %q, want one to node-id-2 cloning the acquired repository", launches)
+	}
+}
+
+// TestLeaseTool_Release_BackgroundWarmClone_EndsBeforeTheStateDirGoes: a
+// forced release keeps its container as the pool's warm one and starts the
+// clone of the pool's repository into it in the background (DP-32), work that
+// outlives the call and writes the state directory's warm/ when it ends.
+// registerLeaseTool waits for it before the test's state directory is
+// removed, so that write never races the removal ("directory not empty"). The
+// launch here answers only once the test's body has ended.
+func TestLeaseTool_Release_BackgroundWarmClone_EndsBeforeTheStateDirGoes(t *testing.T) {
+	t.Parallel()
+	var started, answered atomic.Bool
+	// Registered before the server's cleanups, so it runs after them: after
+	// the wait, the state directory's removal and the orchestrator's close.
+	t.Cleanup(func() {
+		switch {
+		case !started.Load():
+			t.Error("the forced release started no warm clone, so this test no longer covers background work")
+		case !answered.Load():
+			t.Error("the release's background warm clone was still running when the test's state directory was removed")
+		}
+	})
+	bodyEnded := make(chan struct{})
+	ssh := &leaseStubSSH{fn: func(command string) ([]byte, error) {
+		if strings.Contains(command, "@@zcp-warm started") {
+			started.Store(true)
+			<-bodyEnded
+			time.Sleep(100 * time.Millisecond)
+			answered.Store(true)
+		}
+		return nil, nil
+	}}
+	srv, _ := leaseToolServerSSH(t, &fakeOrchestrator{}, ssh)
+	// Registered after the server's cleanups, so it runs first.
+	t.Cleanup(func() { close(bodyEnded) })
+
+	if res := callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo}); res.IsError {
+		t.Fatalf("acquire: %s", getTextContent(t, res))
+	}
+	res := callTool(t, srv, "zerops_lease", map[string]any{"action": "release", "lease": "devpool-3", "force": true})
+	text := getTextContent(t, res)
+	if res.IsError || !strings.Contains(text, "kept as the pool's warm container") {
+		t.Fatalf("release = (error %v) %s, want the container kept as the pool's warm one", res.IsError, text)
 	}
 }
