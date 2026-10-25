@@ -789,6 +789,13 @@ type leaseRecord struct {
 	// the container number; 0 when the session had none, or in an older
 	// record.
 	StableNumber int `json:"stableNumber,omitempty"`
+	// CheckoutPending: the acquire that wrote the record had not yet put the
+	// branch in the container — written with the record, cleared once the
+	// checkout finished. A record still marked (zcp died mid-checkout, or a
+	// failed checkout's hand-back was refused) is never answered reused
+	// (heldLease): its /var/www may be empty, half fetched or a warm clone
+	// at origin/main. An older record never marks it.
+	CheckoutPending bool `json:"checkoutPending,omitempty"`
 	// Parked: zcp stopped the lease's container with its lease and keeps it
 	// (DP-28), since ParkedAt (RFC 3339, UTC). Dev servers, deploy, verify,
 	// sync and zcp init read only records, so the record says it.
