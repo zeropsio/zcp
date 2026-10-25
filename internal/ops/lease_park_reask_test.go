@@ -76,7 +76,7 @@ func TestLeaseUnpark_LeaseEndsDuringTheSSHWait_NeitherMountedNorSupervised(t *te
 type raceStopSwarm struct{ powerSwarm }
 
 func (s raceStopSwarm) Stop(ctx context.Context, id, lease string) (platform.SwarmContainer, error) {
-	s.fakeSwarm.foreign[id] = true
+	s.foreign[id] = true
 	return s.powerSwarm.Stop(ctx, id, lease)
 }
 
