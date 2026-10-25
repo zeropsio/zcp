@@ -74,15 +74,16 @@ func TestLeaseAcquire_FullPool_SaysHowFullAndWhatFreesOne(t *testing.T) {
 			name: "below the per-pool ceiling: release one of yours or raise the maximum",
 			max:  4, containers: reservedRange(4), yours: []int64{1, 2}, cause: causeAtMaximum,
 			wantMessage: []string{"Pool 'devpool' is full", "4 of at most 4", "yours: devpool-1, devpool-2", "2 held by other holders", "does not queue"},
-			wantSuggest: []string{"zerops_lease action=release lease=devpool-1", `zerops_scale serviceHostname="devpool" maxContainers=`, "at most 10", "capped"},
-			banned:      []string{"may succeed in a moment", "will not help"},
+			wantSuggest: []string{"zerops_lease action=release lease=devpool-1", `zerops_scale serviceHostname="devpool" maxContainers=`, "at most 10"},
+			// zerops_scale refuses a maximum above 10: nothing is capped.
+			banned: []string{"may succeed in a moment", "will not help", "capped"},
 		},
 		{
 			name: "at the per-pool ceiling: raising the maximum will not help",
 			max:  10, containers: reservedRange(10), yours: []int64{7}, cause: causeAtMaximum,
 			wantMessage: []string{"is full", "10 of at most 10", "yours: devpool-7", "9 held by other holders"},
 			wantSuggest: []string{"zerops_lease action=release lease=devpool-7", "Raising maxContainers will not help", "the most a pool holds"},
-			banned:      []string{"may succeed in a moment", "zerops_scale"},
+			banned:      []string{"may succeed in a moment", "zerops_scale", "capped"},
 		},
 		{
 			name: "none of the leases is yours",
@@ -103,7 +104,7 @@ func TestLeaseAcquire_FullPool_SaysHowFullAndWhatFreesOne(t *testing.T) {
 			containers: reservedRange(4), yours: []int64{3}, cause: causeAtMaximum, limitsErr: errors.New("limits: i/o timeout"),
 			wantMessage: []string{"is full", "4 containers are leased", "yours: devpool-3"},
 			wantSuggest: []string{"zerops_lease action=release lease=devpool-3", "if it is below 10"},
-			banned:      []string{"may succeed in a moment"},
+			banned:      []string{"may succeed in a moment", "capped"},
 		},
 	}
 	for _, tt := range tests {

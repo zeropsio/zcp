@@ -350,7 +350,8 @@ func RegisterDeploySSH(
 		// see requireAdoption for the exemption rationale. A pool target
 		// or source is never adopted, so it is not asked to be: a pool
 		// target is deployed to (DP-7), a pool source is refused below (PS-3).
-		gated := withoutPoolHosts(ctx, client, projectID, input.TargetService, input.SourceService)
+		services := deployListing(ctx, client, projectID)
+		gated := withoutPoolHosts(services, input.TargetService, input.SourceService)
 		if blocked := requireAdoption(stateDir, rtInfo, recipeProbe, gated...); blocked != nil {
 			return blocked, nil, nil
 		}
@@ -379,7 +380,7 @@ func RegisterDeploySSH(
 		// Before any read of the source's files: a pool source (named, or a
 		// self-deploy of a pool) is refused, never pushed from (PS-3).
 		if src := cmp.Or(input.SourceService, input.TargetService); !isLease(stateDir, src) {
-			if svc, err := ops.LookupService(ctx, client, projectID, src); err == nil {
+			if svc, err := ops.FindService(services, src); err == nil {
 				if refusal := ops.RefusePoolSource(svc, input.TargetService); refusal != nil {
 					return convertError(refusal, WithRecoveryStatus()), nil, nil
 				}
@@ -448,7 +449,7 @@ func RegisterDeploySSH(
 			return handleGitPush(ctx, client, httpClient, projectID, sshDeployer, logFetcher, buildProgressCallback(ctx, req), input, stateDir, rtInfo)
 		}
 
-		return runDeploySSHZCLIPush(ctx, req, client, httpClient, sshDeployer, authInfo, logFetcher, rtInfo, projectID, stateDir, configFile, devsup, input)
+		return runDeploySSHZCLIPush(ctx, req, client, httpClient, sshDeployer, authInfo, logFetcher, rtInfo, projectID, stateDir, configFile, devsup, services, input)
 	})
 }
 
@@ -470,6 +471,7 @@ func runDeploySSHZCLIPush(
 	rtInfo runtime.Info,
 	projectID, stateDir, configFile string,
 	devsup DevsupSource,
+	services []platform.ServiceStack,
 	input DeploySSHInput,
 ) (*mcp.CallToolResult, any, error) {
 	// Record attempt up front so a crash still leaves a trace.
@@ -490,7 +492,7 @@ func runDeploySSHZCLIPush(
 	}
 
 	// Default: zcli push to Zerops.
-	result, err := ops.DeploySSHWithLeases(ctx, client, projectID, sshDeployer, *authInfo, stateDir,
+	result, err := ops.DeploySSHFromListing(ctx, client, projectID, sshDeployer, *authInfo, stateDir, services,
 		input.SourceService, input.TargetService, input.Setup, input.WorkingDir, input.SHA)
 	if err != nil {
 		attempt.Error = err.Error()

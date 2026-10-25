@@ -51,7 +51,9 @@ type MountInfo struct {
 	Message   string `json:"message,omitempty"`
 }
 
-// MountService mounts a service's /var/www via SSHFS. Idempotent.
+// MountService mounts a service's /var/www via SSHFS. Idempotent. The name
+// is looked up as a service whatever its shape: one no service has is refused
+// before sshfs runs. A lease's container is mounted through MountLease.
 func MountService(
 	ctx context.Context,
 	client platform.Client,
@@ -69,18 +71,31 @@ func MountService(
 	if err := platform.ValidateMountName(hostname); err != nil {
 		return nil, err
 	}
-
-	// A lease alias is not a service: there is nothing to look up.
-	if !isLeaseAlias(hostname) {
-		services, err := client.ListServices(ctx, projectID)
-		if err != nil {
-			return nil, fmt.Errorf("list services: %w", err)
-		}
-		if _, err := FindUserVisibleService(services, hostname); err != nil {
-			return nil, err
-		}
+	services, err := client.ListServices(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("list services: %w", err)
 	}
+	if _, err := FindUserVisibleService(services, hostname); err != nil {
+		return nil, err
+	}
+	return mountDir(ctx, mounter, hostname)
+}
 
+// MountLease mounts a lease's container at /var/www/<alias> via SSHFS.
+// Idempotent. A lease is not a service, so nothing is looked up: the caller
+// holds zcp's record of the lease, whose orchestrator vouched for the
+// container (docs/spec-workflows.md §8 DP-2) — a name's shape alone never
+// makes it a lease.
+func MountLease(ctx context.Context, mounter Mounter, alias string) (*MountResult, error) {
+	if err := platform.ValidateLeaseAlias(alias); err != nil {
+		return nil, err
+	}
+	return mountDir(ctx, mounter, alias)
+}
+
+// mountDir mounts hostname — a service or a lease alias, already resolved —
+// at /var/www/<hostname>, clearing a stale mount or an orphan unit first.
+func mountDir(ctx context.Context, mounter Mounter, hostname string) (*MountResult, error) {
 	mountPath := filepath.Join(mountBase, hostname)
 
 	state, err := mounter.CheckMount(ctx, mountPath)

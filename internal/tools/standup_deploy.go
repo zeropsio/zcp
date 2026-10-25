@@ -492,7 +492,7 @@ func (d standupDeps) deployHalves(ctx context.Context, halves []standupHalf, pro
 			progress.st().step(host, mate.StepVerify, mate.StepDone, "", "")
 			continue
 		}
-		if blocked := d.batch.gate(ctx, []ops.DeployBatchTarget{h.target}); blocked != nil {
+		if blocked := d.batch.gate(deployListing(ctx, d.batch.client, d.batch.projectID), []ops.DeployBatchTarget{h.target}); blocked != nil {
 			h.record(&standupDeploy{Status: standupDeployFailed, Reason: "refused before the build: " + refusalText(blocked)})
 			progress.st().step(host, mate.StepBuild, mate.StepFailed, "", "refused before the build: "+refusalText(blocked))
 			continue
@@ -519,7 +519,7 @@ func (d standupDeps) deployHalves(ctx context.Context, halves []standupHalf, pro
 			progress.st().step(name, mate.StepBuild, mate.StepRunning, "", "")
 		}
 		stopTracking := d.trackDeploys(ctx, names, live, progress.st())
-		result := d.batch.deploy(ctx, progress.callback(), batch)
+		result := d.batch.deploy(ctx, progress.callback(), batch, nil)
 		stopTracking()
 		for _, entry := range result.Entries {
 			h := byTarget[entry.Target.TargetService]

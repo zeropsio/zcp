@@ -58,22 +58,27 @@ func Start(ctx context.Context, client platform.Client, projectID, hostname stri
 	return client.StartService(ctx, svc.ID)
 }
 
-// Stop stops a running service.
-func Stop(ctx context.Context, client platform.Client, projectID, hostname string) (*platform.Process, error) {
+// Stop stops a running service. It answers the service it resolved too, so
+// a caller reads its type (a Box's notice, BoxLifecycleNotice) without a
+// listing of its own.
+func Stop(ctx context.Context, client platform.Client, projectID, hostname string) (*platform.Process, *platform.ServiceStack, error) {
 	svc, err := resolveUserVisibleService(ctx, client, projectID, hostname)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return client.StopService(ctx, svc.ID)
+	proc, err := client.StopService(ctx, svc.ID)
+	return proc, svc, err
 }
 
-// Restart restarts a running service.
-func Restart(ctx context.Context, client platform.Client, projectID, hostname string) (*platform.Process, error) {
+// Restart restarts a running service, answering the service it resolved as
+// Stop does.
+func Restart(ctx context.Context, client platform.Client, projectID, hostname string) (*platform.Process, *platform.ServiceStack, error) {
 	svc, err := resolveUserVisibleService(ctx, client, projectID, hostname)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return client.RestartService(ctx, svc.ID)
+	proc, err := client.RestartService(ctx, svc.ID)
+	return proc, svc, err
 }
 
 // Reload reloads a running service (graceful config/code reload). Faster than
@@ -504,8 +509,10 @@ func BoxLifecycleNotice(hostname, serviceType, action string) string {
 
 // poolContainerCountNotice is what a pool's container counts mean: they are
 // the ceiling of what its orchestrator holds and leases out, not a replica
-// count, and lowering the maximum deletes containers (live, 2026-10-23).
-const poolContainerCountNotice = "A pool's maxContainers caps how many containers its orchestrator holds and hands out — at most 10 per pool (a higher value is capped). " +
+// count, and lowering the maximum deletes containers (live, 2026-10-23). A
+// maximum above 10 never reaches the platform (which would cap it at 10):
+// validateContainerCounts refuses it first.
+const poolContainerCountNotice = "A pool's maxContainers caps how many containers its orchestrator holds and hands out — at most 10 per pool; zerops_scale refuses a higher value. " +
 	"Lowering it below the containers the pool holds deletes the highest-numbered ones within about 30 s, leased ones included, with their /var/www."
 
 // poolMinContainersNotice is what a pool's minContainers above 0 costs: the

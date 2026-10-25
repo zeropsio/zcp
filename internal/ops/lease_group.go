@@ -349,7 +349,7 @@ func heldLease(ctx context.Context, d LeaseDeps, pool, branch string, group []le
 	if len(records) == 0 {
 		return LeaseView{}, false, nil
 	}
-	views, err := listPoolLeases(ctx, d, pool, records, true)
+	views, err := listPoolLeases(ctx, d, listingResolver(d), pool, records, true)
 	if err != nil {
 		return LeaseView{}, false, err
 	}

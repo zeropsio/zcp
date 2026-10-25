@@ -5,6 +5,7 @@ package devsup
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -324,5 +325,158 @@ func TestSupervisor_PreviewActivity_KeptAcrossServerRestartsNeverInStateFile(t *
 	w = mustServer(t, s.State(), "web")
 	if w.PreviewOpenConns == nil || *w.PreviewOpenConns != 0 || w.PreviewLastConnAt == nil || !w.PreviewLastConnAt.Equal(last) {
 		t.Fatalf("web after its restart: open %v, last %v; want 0 and %s kept", w.PreviewOpenConns, w.PreviewLastConnAt, last)
+	}
+}
+
+// stalledTarget is a port on 127.0.0.1 whose listener never accepts and whose
+// accept queue is full: a dial to it is neither taken nor refused, it waits —
+// a preview forward's dial to it pends until its own timeout.
+func stalledTarget(t *testing.T) int {
+	t.Helper()
+	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = syscall.Close(fd) })
+	if err := syscall.Bind(fd, &syscall.SockaddrInet4{Addr: [4]byte{127, 0, 0, 1}}); err != nil {
+		t.Fatal(err)
+	}
+	// Backlog 1: darwin reads 0 as the system maximum.
+	if err := syscall.Listen(fd, 1); err != nil {
+		t.Fatal(err)
+	}
+	sa, err := syscall.Getsockname(fd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in4, ok := sa.(*syscall.SockaddrInet4)
+	if !ok {
+		t.Fatalf("socket address %v is not IPv4", sa)
+	}
+	addr := "127.0.0.1:" + strconv.Itoa(in4.Port)
+	for range 16 {
+		d := net.Dialer{Timeout: 300 * time.Millisecond}
+		c, err := d.DialContext(context.Background(), "tcp", addr)
+		if err != nil {
+			var ne net.Error
+			if errors.As(err, &ne) && ne.Timeout() {
+				return in4.Port // the queue is full: a dial now waits
+			}
+			t.Fatalf("dial %s: %v, want it taken into the queue or left waiting", addr, err)
+		}
+		t.Cleanup(func() { _ = c.Close() })
+	}
+	t.Fatalf("the accept queue of %s never filled", addr)
+	return 0
+}
+
+// TestSyncPreview_ClosingAForward_NeverHoldsTheNextSync: a forward that ends
+// is closed without holding the lock that orders preview syncs while it
+// waits — its copies, and a dial to the server that has not finished, may
+// take up to the dial timeout — so another sync (an awaitListen's, or a
+// reconcile's under op) goes on at once, and the port is free by the time
+// the closing sync returns.
+func TestSyncPreview_ClosingAForward_NeverHoldsTheNextSync(t *testing.T) {
+	t.Parallel()
+	target, listen := stalledTarget(t), freePort(t)
+	seen := &previewSeen{}
+	f, err := openForward(listen, target, seen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := net.Dialer{Timeout: time.Second}
+	c, err := d.DialContext(context.Background(), "tcp", "127.0.0.1:"+strconv.Itoa(listen))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	// The forward took the client and dials the server, which never answers.
+	eventually(t, "the forward to take the client", func() bool { return previewOpen(seen) == 1 })
+
+	// web has no live group: its forward is stale.
+	s := &Supervisor{cfg: Config{Log: io.Discard}, servers: map[string]*server{"web": {name: "web", fwd: f, preview: seen}}}
+	first := make(chan struct{})
+	go func() {
+		s.syncPreview()
+		close(first)
+	}()
+	eventually(t, "the first sync to take the stale forward off web", func() bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.servers["web"].fwd == nil
+	})
+
+	start := time.Now()
+	s.syncPreview()
+	if waited := time.Since(start); waited > 500*time.Millisecond {
+		t.Errorf("the second sync waited %s on the first one's close of a forward", waited)
+	}
+	select {
+	case <-first:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the first sync never returned")
+	}
+	released(t, listen)
+}
+
+// TestForward_ClientHalfCloses_GetsTheWholeReply: a client that sends its
+// request and then shuts its write side (shutdown SHUT_WR — a request whose
+// end is the end of the stream) still reads the server's whole reply through
+// the preview forward: the end of one direction is passed on as a half-close,
+// never a close of both.
+func TestForward_ClientHalfCloses_GetsTheWholeReply(t *testing.T) {
+	t.Parallel()
+	// The server reads the request to its end, then answers and closes.
+	var lc net.ListenConfig
+	ln, err := lc.Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				req, _ := io.ReadAll(c)
+				time.Sleep(50 * time.Millisecond)
+				_, _ = c.Write(append([]byte("reply to "), req...))
+			}()
+		}
+	}()
+	addr, ok := ln.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("listener address %v is not TCP", ln.Addr())
+	}
+	listen := freePort(t)
+	f, err := openForward(listen, addr.Port, &previewSeen{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(f.close)
+
+	d := net.Dialer{Timeout: time.Second}
+	c, err := d.DialContext(context.Background(), "tcp", "127.0.0.1:"+strconv.Itoa(listen))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+	if _, err := c.Write([]byte("ping")); err != nil {
+		t.Fatal(err)
+	}
+	tc, ok := c.(*net.TCPConn)
+	if !ok {
+		t.Fatalf("connection %T is not TCP", c)
+	}
+	if err := tc.CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(c)
+	if err != nil || string(got) != "reply to ping" {
+		t.Fatalf("read %q (%v) after the half-close, want the whole reply %q", got, err, "reply to ping")
 	}
 }

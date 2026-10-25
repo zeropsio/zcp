@@ -165,10 +165,15 @@ func TestDeploySSH_StageTracksMain(t *testing.T) {
 			wantFetch: true,
 		},
 		{
+			// The commit is on main; only the uncommitted changes are not.
 			name: "uncommitted changes on main are no commit on main", number: 63, target: "appstage",
 			repo:      stageRepo{head: stageTestHead, branch: "main", dirty: true, main: stageTestMain, onMain: true},
 			wantFetch: true,
-			wantNote:  []string{"Stage tracks main", "main a1b2c3d plus uncommitted changes", "not on origin/main"},
+			wantNote: []string{
+				"Stage tracks main", "main a1b2c3d plus uncommitted changes", "a1b2c3d is on origin/main (at 9f8e7d6)",
+				"the uncommitted changes are not", `sha="origin/main"`,
+			},
+			banNote: []string{"which is not on origin/main"},
 		},
 		{
 			name: "an explicit sha not on main deploys and says so", number: 64, target: "appstage", sha: "a1b2c3d",

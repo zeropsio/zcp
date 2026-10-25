@@ -77,7 +77,8 @@ func RegisterDeployBatch(
 			authInfo: authInfo, logFetcher: logFetcher, rtInfo: rtInfo, stateDir: stateDir, recipeProbe: recipeProbe, devsup: devsup,
 			vouch: vouch,
 		}
-		if blocked := d.gate(ctx, input.Targets); blocked != nil {
+		services := deployListing(ctx, client, projectID)
+		if blocked := d.gate(services, input.Targets); blocked != nil {
 			return blocked, nil, nil
 		}
 
@@ -94,7 +95,7 @@ func RegisterDeployBatch(
 			input.Targets[i] = resolved
 		}
 
-		result := d.deploy(ctx, buildProgressCallback(ctx, req), input.Targets)
+		result := d.deploy(ctx, buildProgressCallback(ctx, req), input.Targets, services)
 		return jsonResult(deployBatchResponse{
 			DeployBatchResult: result,
 			WorkSessionState:  sessionAnnotations(ctx, httpClient, stateDir),
@@ -124,8 +125,9 @@ type batchDeployer struct {
 }
 
 // gate applies the adoption gate and the push-delivery redirect to every
-// target; the first refusal is the answer for the whole batch.
-func (d batchDeployer) gate(ctx context.Context, targets []ops.DeployBatchTarget) *mcp.CallToolResult {
+// target; the first refusal is the answer for the whole batch. services is
+// the call's one listing (deployListing), which tells a pool target.
+func (d batchDeployer) gate(services []platform.ServiceStack, targets []ops.DeployBatchTarget) *mcp.CallToolResult {
 	// Gate: each target (and its source, when set) must be adopted by
 	// ZCP. Recipe-authoring sessions whose Plan owns the host bypass
 	// adoption — see requireAdoption for the exemption rationale. A pool
@@ -136,7 +138,7 @@ func (d batchDeployer) gate(ctx context.Context, targets []ops.DeployBatchTarget
 	// bootstrap recovery hint.
 	containerRT := runtime.Info{InContainer: true}
 	for _, t := range targets {
-		gated := append(withoutPoolHosts(ctx, d.client, d.projectID, t.TargetService), t.SourceService)
+		gated := append(withoutPoolHosts(services, t.TargetService), t.SourceService)
 		if blocked := requireAdoption(d.stateDir, containerRT, d.recipeProbe, gated...); blocked != nil {
 			return blocked
 		}
@@ -227,8 +229,9 @@ func (d batchDeployer) preflight(ctx context.Context, t ops.DeployBatchTarget) (
 // access. An entry whose target is a pool takes none of the last two and says
 // it reaches only containers the pool creates later (pollTriggeredDeploy,
 // docs/spec-workflows.md §8 DP-7); one whose source is a lease alias pushes
-// from that container (ops.DeployBatchSSH, DP-1).
-func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallback, targets []ops.DeployBatchTarget) *ops.DeployBatchResult {
+// from that container (ops.DeployBatchSSH, DP-1). services is the call's one
+// listing the entries resolve from; nil: each entry lists them.
+func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallback, targets []ops.DeployBatchTarget, services []platform.ServiceStack) *ops.DeployBatchResult {
 	ctx = deployFollowUpContext(ctx)
 	configFiles := make(map[string]string, len(targets))
 	for _, t := range targets {
@@ -260,7 +263,7 @@ func (d batchDeployer) deploy(ctx context.Context, onProgress ops.ProgressCallba
 	}
 
 	result := ops.DeployBatchSSH(
-		ctx, d.client, d.projectID, d.sshDeployer, authVal, d.stateDir,
+		ctx, d.client, d.projectID, d.sshDeployer, authVal, d.stateDir, services,
 		targets, d.logFetcher, onProgress, pollFn,
 	)
 

@@ -402,13 +402,13 @@ func (w *LeaseWarm) decideRelease(ctx context.Context, d LeaseDeps, rp *resolved
 		if err != nil {
 			return LeaseView{}, false, err
 		}
-		kept := releasedReset(view) && mine.Current
+		kept := releasedReset(view) && keepableWarm(mine)
 		if kept {
 			view.keptWarm = true
 			view.Note = joinNotes(view.Note, keptWarmNote)
 		}
 		return view, kept, nil
-	case mine.Current && read.ready < w.Target:
+	case keepableWarm(mine) && read.ready < w.Target:
 		view, err := reset()
 		if err != nil {
 			return LeaseView{}, false, err
@@ -420,7 +420,7 @@ func (w *LeaseWarm) decideRelease(ctx context.Context, d LeaseDeps, rp *resolved
 		view.Note = joinNotes(view.Note, keptWarmNote)
 		return view, true, nil
 	}
-	why = removeWhy(mine.Current, w.Target)
+	why = removeWhy(mine, w.Target)
 	err := rp.api.Delete(ctx, rec.ContainerID, rec.Lease)
 	if err == nil {
 		view, dropErr := dropLeaseRecord(d.StateDir, rec, LeaseStateReleased, "the container was removed with this lease rather than reset: "+why)
@@ -447,17 +447,27 @@ func (w *LeaseWarm) decideRelease(ctx context.Context, d LeaseDeps, rp *resolved
 	if se != nil && se.Message != "" {
 		refusal = se.Message
 	}
-	kept := mine.Current
+	kept := keepableWarm(mine)
 	view.keptWarm = kept
 	view.Note = joinNotes(view.Note, fmt.Sprintf("%s, but the orchestrator refused to remove it (%s), so it was released with a reset instead and stays in the pool", why, refusal))
 	return view, kept, nil
 }
 
+// keepableWarm reports a released container the pool can keep as its warm
+// one: it runs the current version and it runs — a warm container is an
+// ACTIVE one an acquire takes at once (warmCandidate), and a reset leaves a
+// stopped container (a parked lease released by force, DP-28) stopped.
+func keepableWarm(c *platform.SwarmContainer) bool {
+	return c.Current && c.Status == platform.SwarmContainerActive
+}
+
 // removeWhy is why a released container is removed rather than kept.
-func removeWhy(current bool, target int) string {
+func removeWhy(c *platform.SwarmContainer, target int) string {
 	switch {
-	case !current:
+	case !c.Current:
 		return "it ran an outdated version of the pool's app (the pool's new containers run the current one)"
+	case c.Status != platform.SwarmContainerActive:
+		return "it is stopped, and a reset leaves a stopped container stopped, so it is no warm container an acquire takes at once"
 	case target == 0:
 		return "the pool keeps no warm container"
 	case target == 1:
@@ -608,12 +618,8 @@ func acquireThroughPreparing(ctx context.Context, d LeaseDeps, rp *resolvedPool)
 // warm policy (nil without it): its target, its warm containers counted by id,
 // what a create zcp started is making now, and what zcp last did. It only
 // reads.
-func (d LeaseDeps) leaseStatusWarm(ctx context.Context, pools []string) []LeasePoolWarm {
+func (d LeaseDeps) leaseStatusWarm(ctx context.Context, services []platform.ServiceStack, pools []string) []LeasePoolWarm {
 	if d.Warm == nil || len(pools) == 0 {
-		return nil
-	}
-	services, err := ListProjectServices(ctx, d.Client, d.ProjectID)
-	if err != nil {
 		return nil
 	}
 	out := make([]LeasePoolWarm, 0, len(pools))

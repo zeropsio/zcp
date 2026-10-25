@@ -84,7 +84,8 @@ func RegisterMount(srv *mcp.Server, client platform.Client, projectID string, mo
 			// for about 42 s and fail, so the refusal naming the unpark comes
 			// before any gate. A record that cannot be read leaves the mount
 			// as it was before leases existed.
-			switch lease, isLease, err := checkedLeaseOf(ctx, stateDir, vouch, input.ServiceHostname, "mounted"); {
+			lease, isLease, err := checkedLeaseOf(ctx, stateDir, vouch, input.ServiceHostname, "mounted")
+			switch {
 			case err != nil:
 				return convertError(err, WithRecoveryStatus()), nil, nil
 			case isLease && lease.Parked:
@@ -93,7 +94,14 @@ func RegisterMount(srv *mcp.Server, client platform.Client, projectID string, mo
 			if blocked := requireWorkflowContext(engine, stateDir, recipeProbe); blocked != nil {
 				return blocked, nil, nil
 			}
-			result, err := ops.MountService(ctx, client, projectID, mounter, input.ServiceHostname)
+			// A lease is decided by zcp's record of it, never by the name's
+			// shape: any other name is looked up as a service.
+			var result *ops.MountResult
+			if isLease {
+				result, err = ops.MountLease(ctx, mounter, input.ServiceHostname)
+			} else {
+				result, err = ops.MountService(ctx, client, projectID, mounter, input.ServiceHostname)
+			}
 			if err != nil {
 				return convertError(err, WithRecoveryStatus()), nil, nil
 			}

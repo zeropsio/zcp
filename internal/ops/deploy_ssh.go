@@ -161,6 +161,28 @@ func DeploySSHWithLeases(
 	workingDir string,
 	sha string,
 ) (*DeployResult, error) {
+	return DeploySSHFromListing(ctx, client, projectID, sshDeployer, authInfo, stateDir, nil,
+		sourceService, targetService, setup, workingDir, sha)
+}
+
+// DeploySSHFromListing is DeploySSHWithLeases resolving its source and target
+// from services — the project's services as one listing the caller already
+// read for its own checks — rather than a listing of its own (each is an
+// ES-backed search, docs/spec-workflows.md §3.5). nil services: it lists them.
+func DeploySSHFromListing(
+	ctx context.Context,
+	client platform.Client,
+	projectID string,
+	sshDeployer SSHDeployer,
+	authInfo auth.Info,
+	stateDir string,
+	services []platform.ServiceStack,
+	sourceService string,
+	targetService string,
+	setup string,
+	workingDir string,
+	sha string,
+) (*DeployResult, error) {
 	if sshDeployer == nil {
 		return nil, platform.NewPlatformError(
 			platform.ErrNotImplemented,
@@ -192,7 +214,7 @@ func DeploySSHWithLeases(
 		leaseSource = &lease
 	}
 
-	return deploySSH(ctx, client, projectID, sshDeployer, authInfo,
+	return deploySSH(ctx, client, projectID, sshDeployer, authInfo, services,
 		sourceService, targetService, setup, workingDir, includeGit, sha, leaseSource)
 }
 
@@ -216,6 +238,7 @@ func deploySSH(
 	projectID string,
 	sshDeployer SSHDeployer,
 	authInfo auth.Info,
+	services []platform.ServiceStack,
 	sourceService string,
 	targetService string,
 	setup string,
@@ -224,9 +247,12 @@ func deploySSH(
 	sha string,
 	lease *LeaseTargetInfo,
 ) (*DeployResult, error) {
-	services, err := client.ListServices(ctx, projectID)
-	if err != nil {
-		return nil, fmt.Errorf("list services: %w", err)
+	if services == nil {
+		listed, err := client.ListServices(ctx, projectID)
+		if err != nil {
+			return nil, fmt.Errorf("list services: %w", err)
+		}
+		services = listed
 	}
 
 	sourceName, target, err := resolveDeployHosts(services, sourceService, targetService, lease)

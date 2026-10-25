@@ -208,16 +208,16 @@ func (h LeaseHost) attach(ctx context.Context, d LeaseDeps, rec leaseRecord) str
 			return fmt.Sprintf("the lease is held but its ssh alias could not be installed: %v", err)
 		}
 	}
-	return h.mountLease(ctx, d, rec)
+	return h.mountLease(ctx, rec)
 }
 
 // mountLease mounts the lease, whose alias is installed. It returns a note
 // when the mount failed, "" when it worked or the host mounts nothing.
-func (h LeaseHost) mountLease(ctx context.Context, d LeaseDeps, rec leaseRecord) string {
+func (h LeaseHost) mountLease(ctx context.Context, rec leaseRecord) string {
 	if h.Mounter == nil {
 		return ""
 	}
-	if _, err := MountService(ctx, d.Client, d.ProjectID, h.Mounter, rec.alias()); err != nil {
+	if _, err := MountLease(ctx, h.Mounter, rec.alias()); err != nil {
 		return fmt.Sprintf("the lease is held but %s could not be mounted: %v", filepath.Join(mountBase, rec.alias()), err)
 	}
 	return ""

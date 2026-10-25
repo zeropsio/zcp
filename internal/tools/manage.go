@@ -55,20 +55,20 @@ func RegisterManage(srv *mcp.Server, client platform.Client, projectID string) {
 			finalProc, timedOut := pollManageProcess(ctx, client, proc, onProgress)
 			return jsonResult(manageResponse{Process: finalProc, TimedOut: timedOut, NextActions: nextActionManageStart}), nil, nil
 		case "stop":
-			proc, err := ops.Stop(ctx, client, projectID, input.ServiceHostname)
+			proc, svc, err := ops.Stop(ctx, client, projectID, input.ServiceHostname)
 			if err != nil {
 				return convertError(err), nil, nil
 			}
 			finalProc, timedOut := pollManageProcess(ctx, client, proc, onProgress)
-			next := withBoxLifecycleNotice(ctx, client, projectID, input.ServiceHostname, ops.BoxActionStop, nextActionManageStop)
+			next := withBoxLifecycleNotice(svc, ops.BoxActionStop, nextActionManageStop)
 			return jsonResult(manageResponse{Process: finalProc, TimedOut: timedOut, NextActions: next}), nil, nil
 		case "restart":
-			proc, err := ops.Restart(ctx, client, projectID, input.ServiceHostname)
+			proc, svc, err := ops.Restart(ctx, client, projectID, input.ServiceHostname)
 			if err != nil {
 				return convertError(err), nil, nil
 			}
 			finalProc, timedOut := pollManageProcess(ctx, client, proc, onProgress)
-			next := withBoxLifecycleNotice(ctx, client, projectID, input.ServiceHostname, ops.BoxActionRestart, nextActionManageRestart)
+			next := withBoxLifecycleNotice(svc, ops.BoxActionRestart, nextActionManageRestart)
 			return jsonResult(manageResponse{Process: finalProc, TimedOut: timedOut, NextActions: next}), nil, nil
 		case "reload":
 			proc, err := ops.Reload(ctx, client, projectID, input.ServiceHostname)
@@ -110,11 +110,10 @@ func RegisterManage(srv *mcp.Server, client platform.Client, projectID string) {
 }
 
 // withBoxLifecycleNotice puts in front of next what a restart or stop did to
-// a Zerops Box's running sandboxes (ops.BoxLifecycleNotice); next alone for
-// any other service, or when the service cannot be read again.
-func withBoxLifecycleNotice(ctx context.Context, client platform.Client, projectID, hostname, action, next string) string {
-	svc, err := ops.LookupService(ctx, client, projectID, hostname)
-	if err != nil || svc == nil {
+// a Zerops Box's running sandboxes (ops.BoxLifecycleNotice), read from svc —
+// the service the stop or restart resolved; next alone for any other service.
+func withBoxLifecycleNotice(svc *platform.ServiceStack, action, next string) string {
+	if svc == nil {
 		return next
 	}
 	notice := ops.BoxLifecycleNotice(svc.Name, svc.ServiceStackTypeInfo.ServiceStackTypeVersionName, action)

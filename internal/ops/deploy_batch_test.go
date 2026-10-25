@@ -31,6 +31,7 @@ func TestDeployBatchSSH_SameSourceBuildsOverlap_GitSectionExclusive(t *testing.T
 		ssh,
 		testAuthInfo(),
 		"",
+		nil,
 		[]DeployBatchTarget{
 			{SourceService: source, TargetService: "batch-f4-stage", Setup: "prod"},
 			{SourceService: source, TargetService: "batch-f4-worker", Setup: "worker"},
@@ -64,6 +65,7 @@ func TestDeployBatchSSH_DistinctSourcesOverlap(t *testing.T) {
 		ssh,
 		testAuthInfo(),
 		"",
+		nil,
 		[]DeployBatchTarget{
 			{SourceService: sourceA, TargetService: "batch-f4-stage-a", Setup: "prod"},
 			{SourceService: sourceB, TargetService: "batch-f4-stage-b", Setup: "prod"},
@@ -98,6 +100,7 @@ func TestDeployBatchSSH_LeaseSource_PushesFromAlias(t *testing.T) {
 		ssh,
 		testAuthInfo(),
 		stateDir,
+		nil,
 		[]DeployBatchTarget{
 			{SourceService: alias, TargetService: "appstage", Setup: "app"},
 			{SourceService: alias, TargetService: "webpool"},

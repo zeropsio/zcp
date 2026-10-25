@@ -772,12 +772,19 @@ func (s *poolEnvStep) write(ctx context.Context, client platform.Client) map[str
 	return held
 }
 
-// keepRecord saves the fingerprints and asks of this run. A read that did not
-// answer leaves the record as it was: it says nothing about the secrets this
-// run could not see.
+// keepRecord saves the fingerprints and asks of this run. A dev read that did
+// not answer says nothing about the secrets this run could not see: the
+// record keeps what it knew of them and its asks, and still takes what this
+// run did see — a GIT_TOKEN read on another service and copied — so a copy
+// is never later taken for the pool's own.
 func (s *poolEnvStep) keepRecord() {
 	if s.readErr != nil {
-		return
+		for key, fp := range s.sides.record.Fingerprints {
+			if _, seen := s.rec.Fingerprints[key]; !seen {
+				s.rec.Fingerprints[key] = fp
+			}
+		}
+		s.rec.Requested = slices.Clone(s.sides.record.Requested)
 	}
 	for _, r := range s.out.Requests {
 		s.rec.Requested = append(s.rec.Requested, r.Key)

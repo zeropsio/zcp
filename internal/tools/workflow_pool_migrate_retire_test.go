@@ -1321,3 +1321,62 @@ func TestPoolMigrateRetire_StartedElsewhereMeanwhile_NoSecondStart(t *testing.T)
 		t.Fatalf("a second retire started: %q", r.events.all())
 	}
 }
+
+// TestPoolMigrateRetire_NameRetaken_RetiresTheNewService: a dev hostname
+// retired once and then taken by a new service (another id) retires the new
+// one. The old record answers nothing for it — not before the pair lock and
+// not under it — so the new service is bundled and deleted by its own id, and
+// the old dev's bundle, the only copy of its work, is kept apart with its
+// record rather than overwritten by the new bundle (PM-7).
+func TestPoolMigrateRetire_NameRetaken_RetiresTheNewService(t *testing.T) {
+	t.Parallel()
+	r := newRetireRig(t, nil)
+	oldBundle := filepath.Join(r.f.stateDir, "migrate", "appdev.bundle")
+	if err := os.MkdirAll(filepath.Dir(oldBundle), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const oldBytes = "the old dev's bundle"
+	if err := os.WriteFile(oldBundle, []byte(oldBytes), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := savePoolRetireRecord(r.f.stateDir, &poolRetireRecord{
+		Dev: "appdev", DevServiceID: "svc-dev-old", Pool: "apppool", PoolServiceID: "svc-pool", PoolSetup: "apppool",
+		Stages: []string{"appstage"}, Phase: poolRetireRetired, StartedAt: "2026-10-20T10:00:00Z",
+		Bundle: &ops.PoolMigrateBundle{Path: oldBundle, Bytes: int64(len(oldBytes))},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	out, isErr := r.retire(t, retireInput(true, false))
+	if isErr || out["step"] != "retired" {
+		t.Fatalf("retire = %v, want the retired step", out)
+	}
+	if got := r.client.deletes(); !slices.Equal(got, []string{"svc-dev"}) {
+		t.Fatalf("deletes = %q, want the new appdev (svc-dev) deleted by its own id: the old record answered for it", got)
+	}
+	rec := retireRecordOf(t, r.f.stateDir)
+	if rec.DevServiceID != "svc-dev" || rec.Phase != poolRetireRetired || rec.Bundle == nil {
+		t.Fatalf("record = %+v, want the new service's retire, retired with its bundle", rec)
+	}
+	paths, _ := filepath.Glob(filepath.Join(r.f.stateDir, "migrate", "*.json"))
+	var kept *poolRetireRecord
+	for _, p := range paths {
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var other poolRetireRecord
+		if json.Unmarshal(raw, &other) == nil && other.DevServiceID == "svc-dev-old" {
+			kept = &other
+		}
+	}
+	if kept == nil || kept.Bundle == nil {
+		t.Fatalf("the old dev's retire record is gone (records %q)", paths)
+	}
+	if kept.Bundle.Path == rec.Bundle.Path {
+		t.Fatalf("the old record names the new bundle %s", kept.Bundle.Path)
+	}
+	if got, err := os.ReadFile(kept.Bundle.Path); err != nil || string(got) != oldBytes {
+		t.Fatalf("the old dev's bundle at %s = %q (%v), want it kept as it was", kept.Bundle.Path, got, err)
+	}
+}
