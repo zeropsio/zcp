@@ -1705,6 +1705,45 @@ func TestBrowserBatch_CDPTimeoutInStepsTriggersRecovery(t *testing.T) {
 	}
 }
 
+// TestBrowserBatch_EvalNeverSettledOnALivePage_KeepsTheBrowser pins that an
+// eval whose promise never settled on a page that still answered is no
+// wedge: the result carries no "Chrome wedged" message, the browser is handed
+// back warm, the canned tail is read, and the step says script-timeout.
+func TestBrowserBatch_EvalNeverSettledOnALivePage_KeepsTheBrowser(t *testing.T) {
+	commands := [][]string{{"eval", settleScript}, {"get", "title"}}
+	batch, _ := buildCanonicalBatch("https://example.com", commands, "", false)
+	var seen [][]string
+	stdout, _, _, err := runBrowserSteps(context.Background(), batch, probedSteps(t, answer{stdout: `{"success":true,"data":{"result":1},"error":null}`}, &seen))
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	fake := &fakeBrowserRunner{runStdout: stdout}
+	defer OverrideBrowserRunnerForTest(fake)()
+
+	result, err := BrowserBatch(context.Background(), BrowserBatchInput{URL: "https://example.com", Commands: commands})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(result.Message, "Chrome wedged") {
+		t.Errorf("a script's own hang is no wedge; message %q", result.Message)
+	}
+	if result.BrowserRecycled || fake.recycles() != 0 {
+		t.Errorf("the browser must be handed back warm, recycled=%v recycles=%d", result.BrowserRecycled, fake.recycles())
+	}
+	if len(result.ErrorsOutput) == 0 {
+		t.Error("the canned tail must be read: errorsOutput is empty")
+	}
+	var kind string
+	for _, step := range result.Steps {
+		if isCommand(step.Command, "eval") {
+			kind = step.ErrorKind
+		}
+	}
+	if kind != "script-timeout" {
+		t.Errorf("the eval must say script-timeout, got %q", kind)
+	}
+}
+
 // TestBrowserBatch_TargetClosedAlsoTriggersRecovery: the wedge
 // detection fires on "Target closed" too, not only CDP timeout —
 // every known-wedge signature in cdpWedgeSignals is load-bearing.
