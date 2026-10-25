@@ -267,7 +267,7 @@ func liveInfrastructureError(rt RuntimeTarget, liveTypes map[string]string) stri
 	halves := append(append([]string{rt.DevHostname}, rt.StageHostnames()...), rt.CodeVolume.DevServiceHostnames()...)
 	for _, host := range halves {
 		typ := liveTypes[host]
-		kind := ""
+		var kind string
 		switch {
 		case topology.IsPoolType(typ):
 			kind = "a Swarm pool"

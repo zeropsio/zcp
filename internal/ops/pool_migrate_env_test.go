@@ -875,7 +875,8 @@ func TestPoolMigrateEnvRead_RealShell_NoKeyShadowedByTheScript(t *testing.T) {
 	t.Parallel()
 	env := map[string]string{"k": "the value of k", "key": "the value of key", "i": "the value of i", "IFS_LIKE": "x y"}
 	keys := []string{"k", "key", "i", "IFS_LIKE"}
-	cmd := exec.CommandContext(t.Context(), "sh", "-c", poolEnvReadCommand(keys))
+	script := poolEnvReadCommand(keys)
+	cmd := exec.CommandContext(t.Context(), "sh", "-c", script)
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
 	for k, v := range env {
 		cmd.Env = append(cmd.Env, k+"="+v)
