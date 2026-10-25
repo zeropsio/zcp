@@ -132,18 +132,18 @@ func TestClient_Self_Changes_DecodeBranchAndHandOver(t *testing.T) {
 	}
 }
 
-// The organisation's Chief mark rides on the Mate's state as the project it
-// names, which a Mate compares with its own; no mark is null.
-func TestClient_IsChief_IsTheMarkNamingThisMatesProject(t *testing.T) {
+// The Chief a Mate answers to rides on its state as the project it names,
+// which a Mate compares with its own; no Chief is null.
+func TestClient_IsChief_IsTheChiefNamingThisMatesProject(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name  string
 		chief string
 		want  bool
 	}{
-		{name: "the mark names this project", chief: `{"projectId":"p-mate"}`, want: true},
-		{name: "the mark names another project", chief: `{"projectId":"p-other"}`},
-		{name: "no mark", chief: `null`},
+		{name: "the Chief names this project", chief: `{"projectId":"p-mate"}`, want: true},
+		{name: "the Chief names another project", chief: `{"projectId":"p-other"}`},
+		{name: "no Chief", chief: `null`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

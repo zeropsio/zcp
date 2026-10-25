@@ -931,7 +931,7 @@ func TestBuildAgentsMD_Chief(t *testing.T) {
 				t.Fatalf("BuildAgentsMD: %v", err)
 			}
 			for _, want := range []string{
-				"You are the **Chief**", "whole organization", "HQ",
+				"You are the **Chief**", "for the projects this person can reach", "every project they reach", "you talk only to the person whose Chief you are", "HQ",
 				"`zerops_org_overview`", "`zerops_org_services`", "`members`",
 				"`zerops_org_propose_service`", "`zerops_org_propose_env`", "`zerops_org_propose_message`",
 				"`zerops_org_propose_domain`", "DNS records",
