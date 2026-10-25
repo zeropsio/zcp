@@ -966,7 +966,11 @@ lost on a redeploy (P1 T7, P2 S4) — which is exactly the start-up rule below.
   in this supervisor's life (absent until one does) and how many connections the forward holds open
   now (`0` included). They are counted at the forward without delaying or changing a byte: the
   clients, never the forward's own dial to the server. A restart of the server cuts its connections
-  and opens a new forward, and the time stays. They live in the supervisor's memory: `state.json`
+  and opens a new forward, and the time stays. Only its shut ends a forward: an `Accept` that fails
+  while it is open (every file descriptor in use, a connection aborted before it was taken) waits
+  5 ms, doubling up to 1 s, and takes the next — a forward that ended there held its port bound,
+  serving nothing, while the count read as observed (`TestForward_AnAcceptErrorNeverEndsTheForward`).
+  They live in the supervisor's memory: `state.json`
   never holds them, and a new supervisor starts without them. `ctl version` lists `activity` for
   them (`TestForward_RecordsLastConnectionAndOpenCount`,
   `TestSupervisor_PreviewActivity_KeptAcrossServerRestartsNeverInStateFile`,
