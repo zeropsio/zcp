@@ -251,18 +251,22 @@ func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error)
 
 	parts := make(map[string][]groupPart, len(runtimes))
 	unresolved := map[string]string{}
+	var frameWarnings []string
 	for _, r := range runtimes {
 		setups, why := groupPartSetups(r)
 		if why != "" {
 			unresolved[r.DevHostname] = why
 			continue
 		}
-		parts[r.DevHostname] = groupPartsOf(r, setups)
+		var partWarnings []string
+		parts[r.DevHostname], partWarnings = groupPartsOf(r, setups)
+		frameWarnings = append(frameWarnings, partWarnings...)
 	}
 	nameWarnings := nameGroupParts(runtimes, parts, inputs.Held, managed)
 	utilities, mateOnly, utilityWarnings := groupUtilities(inputs.Utilities, runtimes, parts)
 
 	warnings := append([]string(nil), utilityWarnings...)
+	warnings = append(warnings, frameWarnings...)
 	warnings = append(warnings, groupStoragePolicyWarnings(managed)...)
 	warnings = append(warnings, groupSetupWarnings(runtimes, parts)...)
 	warnings = append(warnings, nameWarnings...)
@@ -320,12 +324,14 @@ func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error)
 }
 
 // groupPart is one part of a pair: the stage that runs it in the Mate's
-// project ("" for a pair with none), the setup it builds, the variables its
-// runtime carries, and the hostname a group environment runs it under — ""
-// while it has none it can use (nameGroupParts).
+// project ("" for a pair with none), the setup it builds there, the setup a
+// group environment builds (groupEnvironmentSetup: the stage's own, or the
+// setup Mate's preview variant extends), the variables its runtime carries,
+// and the hostname a group environment runs it under — "" while it has none
+// it can use (nameGroupParts).
 type groupPart struct {
-	stage, setup, hostname string
-	envs                   []ProjectEnvVar
+	stage, setup, environmentSetup, hostname string
+	envs                                     []ProjectEnvVar
 }
 
 // groupPartSetups names the setup of each of a runtime's parts, in Stages
@@ -353,16 +359,25 @@ func groupPartSetups(r GroupRuntime) ([]string, string) {
 
 // groupPartsOf is a resolved runtime's parts: one per stage with its own
 // variables, or the dev half's one part, with its variables, for a pair
-// with no stage.
-func groupPartsOf(r GroupRuntime, setups []string) []groupPart {
+// with no stage — and the warnings for a part a group environment builds
+// framed for Mate's preview pane.
+func groupPartsOf(r GroupRuntime, setups []string) ([]groupPart, []string) {
+	var warnings []string
+	part := func(stage, setup string, envs []ProjectEnvVar) groupPart {
+		environmentSetup, warning := groupEnvironmentSetup(r, setup)
+		if warning != "" {
+			warnings = append(warnings, warning)
+		}
+		return groupPart{stage: stage, setup: setup, environmentSetup: environmentSetup, envs: envs}
+	}
 	if len(r.Stages) == 0 {
-		return []groupPart{{setup: setups[0], envs: r.ServiceEnvs}}
+		return []groupPart{part("", setups[0], r.ServiceEnvs)}, warnings
 	}
 	parts := make([]groupPart, 0, len(r.Stages))
 	for i, stage := range r.Stages {
-		parts = append(parts, groupPart{stage: stage.Hostname, setup: setups[i], envs: stage.ServiceEnvs})
+		parts = append(parts, part(stage.Hostname, setups[i], stage.ServiceEnvs))
 	}
-	return parts
+	return parts, warnings
 }
 
 // nameGroupParts gives each part the hostname a group environment runs it
@@ -395,12 +410,12 @@ func nameGroupParts(runtimes []GroupRuntime, parts map[string][]groupPart, held 
 		list := parts[r.DevHostname]
 		for i := range list {
 			part := &list[i]
-			if host, ok := heldBy[partKey{repo, part.setup}]; ok && !private {
+			if host, ok := heldBy[partKey{repo, part.environmentSetup}]; ok && !private {
 				part.hostname = host
 				taken[host] = true
 				continue
 			}
-			part.hostname = part.setup
+			part.hostname = part.environmentSetup
 			if i == 0 {
 				part.hostname = GroupPromotedHostname(r.DevHostname)
 			}
@@ -415,12 +430,12 @@ func nameGroupParts(runtimes []GroupRuntime, parts map[string][]groupPart, held 
 		case platform.ValidateHostname(name) != nil:
 			warnings = append(warnings, fmt.Sprintf(
 				"part %q of %q is left out of the group environments: its name is no hostname (lowercase letters and digits, starting with a letter) — rename its setup, or add it to the tiers by hand",
-				part.setup, freshOwner[part]))
+				part.environmentSetup, freshOwner[part]))
 			part.hostname = ""
 		case taken[name]:
 			warnings = append(warnings, fmt.Sprintf(
 				"part %q of %q is left out of the group environments: another of their services is already named %q — add it to the tiers by hand under a name of its own",
-				part.setup, freshOwner[part], name))
+				part.environmentSetup, freshOwner[part], name))
 			part.hostname = ""
 		default:
 			taken[name] = true
@@ -556,7 +571,7 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (string, []str
 			// stage's.
 			for _, part := range plan.parts[r.DevHostname] {
 				if part.hostname != "" {
-					halves = append(halves, half{part.hostname, part.setup, part.envs})
+					halves = append(halves, half{part.hostname, part.environmentSetup, part.envs})
 				}
 			}
 		}
