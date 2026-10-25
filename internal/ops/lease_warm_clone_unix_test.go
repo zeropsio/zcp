@@ -478,3 +478,124 @@ func TestLeaseWarmClone_ImageWithoutTheTools_StartsNothing(t *testing.T) {
 		t.Error("a clone was started without flock")
 	}
 }
+
+// gitInput runs git in dir with stdin and returns its trimmed output.
+func gitInput(t *testing.T, dir, stdin string, args ...string) string {
+	t.Helper()
+	cmd := exec.CommandContext(context.Background(), "git", args...)
+	cmd.Dir = dir
+	cmd.Stdin = strings.NewReader(stdin)
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com",
+		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v in %s: %v\n%s", args, dir, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// climbingOrigin is a bare repository whose main holds app.txt and a tree
+// entry named `..` holding victim — `../victim` to git ls-tree -r. git's own
+// commands never write such a tree, but a hostile server can serve one: a
+// fetch checks no object by default (review R4-3, reproduced on git 2.50.1).
+func climbingOrigin(t *testing.T) string {
+	t.Helper()
+	origin := filepath.Join(t.TempDir(), "origin.git")
+	gitIn(t, filepath.Dir(origin), "init", "-q", "--bare", "-b", "main", origin)
+	blob := gitInput(t, origin, "v", "hash-object", "-w", "--stdin")
+	app := gitInput(t, origin, "a", "hash-object", "-w", "--stdin")
+	inner := gitInput(t, origin, "100644 blob "+blob+"\tvictim\n", "mktree")
+	tree := gitInput(t, origin, "040000 tree "+inner+"\t..\n100644 blob "+app+"\tapp.txt\n", "mktree")
+	commit := gitInput(t, origin, "", "commit-tree", tree, "-m", "climb")
+	gitIn(t, origin, "update-ref", "refs/heads/main", commit)
+	return origin
+}
+
+// TestLeaseWarmClone_DiscardNeverDeletesOutsideTheWorkTree: a checkout that
+// removes a warm clone removes only files inside /var/www (review R4-3). A
+// tree whose entries climb out with `..` — the clone fetched it, its checkout
+// refused it, so no `done` — and a directory the image left as a symlink out
+// of /var/www both name files outside it; neither is deleted, and the
+// checkout still runs.
+func TestLeaseWarmClone_DiscardNeverDeletesOutsideTheWorkTree(t *testing.T) {
+	t.Parallel()
+	for _, shell := range posixShells() {
+		t.Run(shell, func(t *testing.T) {
+			t.Parallel()
+			discardStaysInside(t, shell)
+		})
+	}
+}
+
+func discardStaysInside(t *testing.T, shell string) {
+	t.Helper()
+	t.Run("a tree entry climbing out with ..", func(t *testing.T) {
+		t.Parallel()
+		evil := climbingOrigin(t)
+		mine, mineSHA := warmOrigin(t, appFiles)
+		b := newWarmCloneBox(t, shell)
+		victim := filepath.Join(filepath.Dir(b.dir), "victim")
+		if err := os.WriteFile(victim, []byte("outside /var/www"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		b.launch(t, evil, nil)
+		waitFor(t, "the warm clone to record its commit", func() bool { return strings.Contains(b.state(), "commit ") })
+
+		out := b.checkout(t, mine, "main")
+
+		if _, err := os.Stat(victim); err != nil {
+			t.Errorf("the discard deleted %s, outside the work tree: %v", victim, err)
+		}
+		if !strings.Contains(out, leaseWarmCheckoutMarker+leaseWarmDiscarded) {
+			t.Errorf("checkout answered %q, want it to say it removed the clone", out)
+		}
+		if got := b.git(t, "rev-parse", "HEAD"); got != mineSHA {
+			t.Errorf("HEAD = %s, want %s", got, mineSHA)
+		}
+	})
+	t.Run("a directory the image left as a symlink out of the work tree", func(t *testing.T) {
+		t.Parallel()
+		other, _ := warmOrigin(t, map[string]string{"link/secret.txt": "s", "a.txt": "a"})
+		mine, mineSHA := warmOrigin(t, appFiles)
+		b := newWarmCloneBox(t, shell)
+		outside := filepath.Join(filepath.Dir(b.dir), "outside")
+		if err := os.MkdirAll(outside, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		secret := filepath.Join(outside, "secret.txt")
+		if err := os.WriteFile(secret, []byte("outside /var/www"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		// A clone of other stopped before its checkout wrote anything: its
+		// .git holds the commit, and the image's symlink is still there.
+		b.git(t, "init", "-q")
+		b.git(t, "fetch", "-q", other, "main")
+		c := b.git(t, "rev-parse", "FETCH_HEAD")
+		if err := os.WriteFile(filepath.Join(b.dir, ".git", leaseWarmStateFile),
+			[]byte("repo "+leaseWarmRepoKey(other)+"\npid 999999\ncommit "+c+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, filepath.Join(b.dir, "link")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(b.dir, "a.txt"), []byte("a"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		out := b.checkout(t, mine, "main")
+
+		if _, err := os.Stat(secret); err != nil {
+			t.Errorf("the discard deleted %s through the symlink link: %v", secret, err)
+		}
+		if b.exists("a.txt") {
+			t.Error("a file of the discarded clone inside the work tree survived")
+		}
+		if !strings.Contains(out, leaseWarmCheckoutMarker+leaseWarmDiscarded) {
+			t.Errorf("checkout answered %q, want it to say it removed the clone", out)
+		}
+		if got := b.git(t, "rev-parse", "HEAD"); got != mineSHA {
+			t.Errorf("HEAD = %s, want %s", got, mineSHA)
+		}
+	})
+}
