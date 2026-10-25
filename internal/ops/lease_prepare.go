@@ -54,11 +54,13 @@ type LeasePrepare struct {
 // answers on the lease now — one zcp found or started — whose dev servers the
 // acquire then reads; nothing in it fails the acquire.
 func afterLeaseCheckout(ctx context.Context, d LeaseDeps, alias string, v *LeaseView) bool {
+	secrets := leaseSecrets(d, v.Pool)
 	read, note := readLeaseCheckout(ctx, d.SSH, alias, "so no prepare command ran")
 	if read.declaration != nil && strings.TrimSpace(read.declaration.Prepare) != "" {
-		v.Prepare, note = runLeasePrepare(ctx, d.SSH, alias, read.declaration.Prepare)
+		v.Prepare, note = runLeasePrepare(ctx, d.SSH, alias, read.declaration.Prepare, secrets)
 	}
 	r, err := ensureLeaseSupervisor(ctx, d.SSH, alias)
+	r.log = scrubSecrets(r.log, secrets)
 	supervised := err == nil && (r.outcome == leaseSupervisorRunning || r.outcome == leaseSupervisorStarted)
 	var wireNote, refused string
 	if supervised {
@@ -78,8 +80,39 @@ func afterLeaseCheckout(ctx context.Context, d LeaseDeps, alias string, v *Lease
 	} else {
 		_, _, wireNote = checkoutOverlay(d.StateDir, alias, read, d.previewURLs(ctx))
 	}
-	v.Note = joinNotes(v.Note, note, wireNote, leaseSupervisorNote(alias, r, err), refused)
+	v.Note = joinNotes(v.Note, note, wireNote, scrubSecrets(leaseSupervisorNote(alias, r, err), secrets), refused)
 	return supervised
+}
+
+// leaseSecrets are the secrets zcp holds that every process of a pool
+// container reads in the pool's service env, and so a repository's prepare
+// or a supervisor that prints its env prints: this Mate's HQ credential
+// (PoolHQCredentialEnvKey) and the pool's orchestrator bearer as zcp's live
+// env names it (liveBearer). The person's GIT_TOKEN zcp never holds, so it
+// cannot take it out (review R4-6).
+func leaseSecrets(d LeaseDeps, pool string) []string {
+	var secrets []string
+	if d.PoolCredential.Read != nil {
+		if credential, ok := d.PoolCredential.Read(); ok && credential != "" {
+			secrets = append(secrets, credential)
+		}
+	}
+	if pool != "" {
+		if bearer, _ := liveBearer(d, pool); bearer != "" {
+			secrets = append(secrets, bearer)
+		}
+	}
+	return secrets
+}
+
+// scrubSecrets is text with every one of secrets replaced by [redacted].
+func scrubSecrets(text string, secrets []string) string {
+	for _, secret := range secrets {
+		if secret != "" {
+			text = strings.ReplaceAll(text, secret, "[redacted]")
+		}
+	}
+	return text
 }
 
 // acquiredDevServers reads the dev servers of the lease behind rec once, as
@@ -158,8 +191,10 @@ func readLeaseCheckout(ctx context.Context, ssh SSHDeployer, alias, unread strin
 	return read, ""
 }
 
-// runLeasePrepare runs prepare in the lease's work dir and reports it.
-func runLeasePrepare(ctx context.Context, ssh SSHDeployer, alias, prepare string) (*LeasePrepare, string) {
+// runLeasePrepare runs prepare in the lease's work dir and reports it, a
+// failed one's output with secrets taken out before its tail is bounded, so
+// no fragment of one survives the cut.
+func runLeasePrepare(ctx context.Context, ssh SSHDeployer, alias, prepare string, secrets []string) (*LeasePrepare, string) {
 	runCtx, cancel := context.WithTimeout(ctx, leasePrepareTimeout)
 	defer cancel()
 	begun := time.Now()
@@ -169,9 +204,9 @@ func runLeasePrepare(ctx context.Context, ssh SSHDeployer, alias, prepare string
 		return p, ""
 	}
 	p.ExitCode = exitStatus(err)
-	p.Output = boundedTail(lastLines(string(out), leasePrepareOutputLines))
+	p.Output = boundedTail(lastLines(scrubSecrets(string(out), secrets), leasePrepareOutputLines))
 	if p.Output == "" {
-		p.Output = boundedText(sshFailureText(err))
+		p.Output = boundedText(scrubSecrets(sshFailureText(err), secrets))
 	}
 	rerun := shellQuote("cd " + leaseWorkDir + " && " + prepare)
 	return p, fmt.Sprintf("the repository's prepare command failed (exit %d) — the branch is checked out and the lease is held, but its dev servers may miss what the command installs; run it again over SSH: ssh %s %s",

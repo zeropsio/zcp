@@ -261,6 +261,9 @@ func TestLeaseAcquire_BadRepoOrBranch_RefusedBeforeLeasing(t *testing.T) {
 		{"scp form", "git@github.com:acme/app.git", "main"},
 		{"url with a space", "https://github.com/acme/app x", "main"},
 		{"plain http would send GIT_TOKEN in clear", "http://github.com/acme/app", "main"},
+		{"a query carries a credential", "https://gitlab.example.com/acme/app.git?private_token=ghp_secret", "main"},
+		{"an empty query", "https://github.com/acme/app?", "main"},
+		{"a fragment carries a credential", "https://github.com/acme/app#ghp_secret", "main"},
 		{"option-shaped branch", testRepo, "--orphan"},
 		{"branch with a space", testRepo, "a b"},
 		{"branch with a quote", testRepo, "a'b"},
@@ -456,7 +459,7 @@ func TestLeaseCheckout_CredentialNeverInCommand(t *testing.T) {
 		t.Errorf("command ran on %q, want the alias devpool-3", cmds[0].hostname)
 	}
 	for _, want := range []string{
-		"-c credential.helper= -c credential.helper=" + shellQuote(leaseCredentialHelperShell), "GIT_TERMINAL_PROMPT=0",
+		"-c credential.helper= -c credential.helper=" + shellQuote(leaseCredentialHelperShell("github.com")), "GIT_TERMINAL_PROMPT=0",
 		shellQuote("feature/x-1.2"), shellQuote(testRepo), "cd '/var/www'", "git clean -fd",
 	} {
 		if !strings.Contains(cmd, want) {
@@ -470,7 +473,7 @@ func TestLeaseCheckout_CredentialNeverInCommand(t *testing.T) {
 	}
 	// The only credential references are the helpers reading the session env.
 	inHelpers := strings.Count(cmd, gitCredentialHelperArgs())*strings.Count(gitCredentialHelperArgs(), "GIT_TOKEN") +
-		strings.Count(cmd, shellQuote(leaseCredentialHelperShell))*strings.Count(leaseCredentialHelperShell, "GIT_TOKEN")
+		strings.Count(cmd, shellQuote(leaseCredentialHelperShell("github.com")))*strings.Count(leaseCredentialHelperShell("github.com"), "GIT_TOKEN")
 	if n := strings.Count(cmd, "GIT_TOKEN"); n != inHelpers {
 		t.Errorf("GIT_TOKEN appears %d times, want only inside credential helpers:\n%s", n, cmd)
 	}
@@ -818,7 +821,7 @@ func TestLeaseReleaseGroup_NoSSH_RefusedUnlessForced(t *testing.T) {
 // from the session's GIT_TOKEN without a credential ever being stored.
 func TestLeaseCheckoutCommand_PersistsHostScopedHelper(t *testing.T) {
 	t.Parallel()
-	want := "git config --replace-all " + shellQuote("credential.https://github.com.helper") + " " + shellQuote(leaseCredentialHelperShell)
+	want := "git config --replace-all " + shellQuote("credential.https://github.com.helper") + " " + shellQuote(leaseCredentialHelperShell("github.com"))
 	if cmd := leaseCheckoutCommand("/var/www", "https://github.com/acme/app", "main", "", ""); !strings.Contains(cmd, want) {
 		t.Errorf("command lacks the persisted helper %q:\n%s", want, cmd)
 	}
@@ -841,7 +844,7 @@ func TestLeaseCredentialHelper_OriginOnItsOwnPort_AnswersThere(t *testing.T) {
 		t.Errorf("a push to %s gets %q, want the session's GIT_TOKEN", repo, password)
 	}
 	dir, home := t.TempDir(), t.TempDir()
-	if out, err := gitShell(t, dir, home, nil, "", "git init -q && "+leaseCredentialHelperConfig(repo, leaseHQURL)); err != nil {
+	if out, err := gitShell(t, dir, home, nil, "", "git init -q && "+leaseCredentialHelperConfig(repo, leaseHQURL, leaseHelperScope(repo))); err != nil {
 		t.Fatalf("persist the helper: %v\n%s", err, out)
 	}
 	if _, password, answered := answeredCredential(t, dir, home, session, "https://git.example.invalid/acme/app.git"); answered {
@@ -849,31 +852,43 @@ func TestLeaseCredentialHelper_OriginOnItsOwnPort_AnswersThere(t *testing.T) {
 	}
 }
 
-// The persisted helper answers only a get, and only from a session that holds
-// GIT_TOKEN: git run where there is none (the zcp side of the mount) goes on to
-// its next helper instead of sending an empty password.
+// The persisted helper answers only a get, only from a session that holds
+// GIT_TOKEN, and only for the host it is bound to — in any letter case, and
+// with an explicit :443 — as git names it on its request's host= line: git
+// run where there is none (the zcp side of the mount), or asking for another
+// host, goes on to its next helper instead of sending an empty password or
+// the person's token (review R4-2).
 func TestLeaseCredentialHelper_AnswersFromSessionEnvOnly(t *testing.T) {
 	t.Parallel()
-	body := strings.TrimPrefix(leaseCredentialHelperShell, "!")
-	run := func(token, action string) string {
+	body := strings.TrimPrefix(leaseCredentialHelperShell("github.com"), "!")
+	run := func(token, action, host string) string {
 		t.Helper()
-		// git runs a "!" helper as: sh -c '<helper> "$@"' <helper> <action>
+		// git runs a "!" helper as: sh -c '<helper> "$@"' <helper> <action>,
+		// its request on stdin.
 		cmd := exec.CommandContext(context.Background(), "sh", "-c", body+` "$@"`, body, action) //nolint:gosec // running the helper is the test
 		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "GIT_TOKEN=" + token}
+		cmd.Stdin = strings.NewReader("protocol=https\nhost=" + host + "\npath=acme/app.git\n")
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("helper %s (token %t): %v\n%s", action, token != "", err, out)
 		}
 		return string(out)
 	}
-	if got := run("tok-1", "get"); got != "username=oauth2\npassword=tok-1\n" {
-		t.Errorf("get with GIT_TOKEN = %q, want the oauth2 credential", got)
+	for _, host := range []string{"github.com", "GitHub.com", "github.com:443"} {
+		if got := run("tok-1", "get", host); got != "username=oauth2\npassword=tok-1\n" {
+			t.Errorf("get for %s with GIT_TOKEN = %q, want the oauth2 credential", host, got)
+		}
 	}
-	if got := run("", "get"); got != "" {
+	if got := run("", "get", "github.com"); got != "" {
 		t.Errorf("get without GIT_TOKEN = %q, want nothing", got)
 	}
+	for _, host := range []string{"git.attacker.example.invalid", "github.com.attacker.example.invalid", "github.com:8443", "xgithub.com", ""} {
+		if got := run("tok-1", "get", host); got != "" {
+			t.Errorf("get for %q = %q, want nothing: the token is github.com's", host, got)
+		}
+	}
 	for _, action := range []string{"store", "erase"} {
-		if got := run("tok-1", action); got != "" {
+		if got := run("tok-1", action, "github.com"); got != "" {
 			t.Errorf("%s = %q, want nothing", action, got)
 		}
 	}
@@ -969,7 +984,7 @@ func TestLeaseRelease_RestoresAliasesBeforeTheGuard(t *testing.T) {
 func TestLeaseCheckoutCommand_FetchHelperAnswersNothingWithoutToken(t *testing.T) {
 	t.Parallel()
 	cmd := leaseCheckoutCommand("/var/www", "https://github.com/acme/app", "main", "", "")
-	if want := "-c credential.helper= -c credential.helper=" + shellQuote(leaseCredentialHelperShell) + " fetch"; !strings.Contains(cmd, want) {
+	if want := "-c credential.helper= -c credential.helper=" + shellQuote(leaseCredentialHelperShell("github.com")) + " fetch"; !strings.Contains(cmd, want) {
 		t.Errorf("fetch does not use the token-guarded helper %q:\n%s", want, cmd)
 	}
 	if strings.Contains(cmd, gitCredentialHelperArgs()) {

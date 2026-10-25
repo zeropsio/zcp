@@ -509,12 +509,18 @@ func redactToken(text, token string) string {
 	return strings.ReplaceAll(text, token, "[redacted]")
 }
 
-// scrubBoxError removes the token from what a refusal echoed back.
+// scrubBoxError removes the token from what a refusal echoed back, its
+// metadata's keys included.
 func scrubBoxError(be *BoxError, token string) {
 	be.Code, be.Message = redactToken(be.Code, token), redactToken(be.Message, token)
-	for k, v := range be.Metadata {
-		be.Metadata[k] = redactToken(v, token)
+	if be.Metadata == nil {
+		return
 	}
+	scrubbed := make(map[string]string, len(be.Metadata))
+	for k, v := range be.Metadata {
+		scrubbed[redactToken(k, token)] = redactToken(v, token)
+	}
+	be.Metadata = scrubbed
 }
 
 // boxCutShortError maps an answer whose body the connection cut short to a

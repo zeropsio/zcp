@@ -23,7 +23,7 @@ type containerSSHStub struct {
 	// dispatch, when set, fully owns the response per command — for tests
 	// that need to distinguish commands a substring map cannot (e.g. the
 	// inline-token probe vs the session probe, which differ only by the
-	// GIT_TOKEN='…' prefix).
+	// candidate token read from stdin).
 	dispatch func(cmd string) ([]byte, error)
 }
 
@@ -337,12 +337,12 @@ func TestGitPushSetupContainer_SessionAuthFails_NoStamp(t *testing.T) {
 	gitPushSessionAuthAttempts, gitPushSessionAuthDelay = 2, 0
 	t.Cleanup(func() { gitPushSessionAuthAttempts, gitPushSessionAuthDelay = prevAttempts, prevDelay })
 
-	// Inline probe (carries the candidate token via GIT_TOKEN='…' prefix)
+	// Inline probe (reads the candidate token from stdin into zcp_git_token)
 	// passes; the post-write SESSION probe (same ls-remote WITHOUT the
 	// token prefix) fails — the secret did not reach fresh sessions.
 	ssh := &containerSSHStub{
 		dispatch: func(cmd string) ([]byte, error) {
-			if strings.Contains(cmd, "ls-remote") && !strings.Contains(cmd, "GIT_TOKEN='") {
+			if strings.Contains(cmd, "ls-remote") && !strings.Contains(cmd, "zcp_git_token") {
 				return nil, errors.New("exit status 128: authentication failed")
 			}
 			return []byte("ok"), nil
@@ -395,7 +395,7 @@ func TestGitPushSetupContainer_SameRemoteNewToken_Rotates(t *testing.T) {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
 
-	ssh := &containerSSHStub{}
+	ssh := &stdinRecordingSSH{}
 	client := platform.NewMock().
 		WithServices([]platform.ServiceStack{{ID: "svc-appdev", Name: "appdev"}})
 
@@ -434,13 +434,13 @@ func TestGitPushSetupContainer_SameRemoteNewToken_Rotates(t *testing.T) {
 	if strings.Contains(ssh.commands[1], "push --dry-run") || strings.Contains(ssh.commands[1], "GIT_TOKEN=") {
 		t.Errorf("second SSH call should be the local self-heal, not the probe; got: %s", ssh.commands[1])
 	}
-	if !strings.Contains(ssh.commands[2], "GIT_TOKEN='ghp_rotated_token'") {
-		t.Errorf("third SSH call should probe the NEW token inline; got: %s", ssh.commands[2])
+	if !strings.Contains(ssh.commands[2], "push --dry-run") || ssh.inputs[2] != "ghp_rotated_token\n" {
+		t.Errorf("third SSH call should probe the NEW token, over stdin; got: %s (stdin %q)", ssh.commands[2], ssh.inputs[2])
 	}
 	if !strings.Contains(ssh.commands[3], "credential.https://github.com.helper") {
 		t.Errorf("fourth SSH call should assert the url-scoped helper; got: %s", ssh.commands[3])
 	}
-	if strings.Contains(ssh.commands[4], "GIT_TOKEN='") {
+	if strings.Contains(ssh.commands[4], "zcp_git_token") || ssh.inputs[4] != "" {
 		t.Errorf("fifth SSH call must verify the SESSION env (no inline token); got: %s", ssh.commands[4])
 	}
 	// Token must never echo.

@@ -106,7 +106,7 @@ func withSSHStderr(prefix string, err error) string {
 // manual recovery. Returns nil otherwise (not shallow, auto-unshallowed, or a
 // non-fatal probe transport error — origin sync + push surface those).
 func shallowCloneGuard(ctx context.Context, sshDeployer ops.SSHDeployer, pushHost, workDir, gitToken string) *mcp.CallToolResult {
-	shallowOut, shallowErr := sshDeployer.ExecSSH(ctx, pushHost, ops.BuildGitShallowFixCommand(workDir, gitToken))
+	shallowOut, shallowErr := sshDeployer.ExecSSHStdin(ctx, pushHost, ops.BuildGitShallowFixCommand(workDir), ops.GitTokenInput(gitToken))
 	if shallowErr != nil {
 		return nil
 	}
@@ -623,8 +623,8 @@ func confirmGitPushSetupContainer(
 	//    secret is written, so an existing working GIT_TOKEN is never
 	//    clobbered by an unproven replacement (the destruction guard is the
 	//    probe-first structure itself, now that the proof matches the claim).
-	probeCmd := ops.BuildGitWritePushProbeCommand(workDir, input.RemoteURL, hqURL, input.GitToken)
-	if _, probeErr := sshDeployer.ExecSSH(ctx, pushHost, probeCmd); probeErr != nil {
+	probeCmd := ops.BuildGitWritePushProbeCommand(workDir, input.RemoteURL, hqURL)
+	if _, probeErr := sshDeployer.ExecSSHStdin(ctx, pushHost, probeCmd, ops.GitTokenInput(input.GitToken)); probeErr != nil {
 		// Surface the git stderr the SSHExecError carries (Authentication
 		// failed vs Repository not found vs network) + classify it, so the
 		// agent fixes the ONE right input instead of guessing across three

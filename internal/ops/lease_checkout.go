@@ -73,15 +73,18 @@ func validateLeaseBranch(branch string) error {
 // userinfo are taken: the credential reaches git through the session-env
 // helper, never through the URL (DP-6), plain http would send it in clear, and
 // a value that is not a URL could be read by git as an option or a transport.
+// A query or a fragment (`?private_token=…`) is refused as userinfo is: the
+// URL is kept verbatim in .git/config, zcp's records, the ssh command line and
+// a failed checkout's message (review R4-9).
 func validateLeaseRepo(raw string) (string, error) {
 	bad := platform.NewPlatformError(platform.ErrInvalidParameter,
 		"repo is not a clone URL a lease takes",
-		"Pass an https://host/owner/repo URL with no credentials in it; the pool's GIT_TOKEN authenticates the clone")
+		"Pass an https://host/owner/repo URL with no credentials, query or fragment in it; the pool's GIT_TOKEN authenticates the clone")
 	raw = strings.TrimSpace(raw)
 	if !strings.HasPrefix(raw, "https://") {
 		return "", bad
 	}
-	if strings.ContainsFunc(raw, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
+	if strings.ContainsFunc(raw, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) || strings.ContainsAny(raw, "?#") {
 		return "", bad
 	}
 	u, err := url.Parse(raw)
@@ -201,8 +204,10 @@ func resolveLeaseRepo(stateDir, pool, repo string) (cloneURL string, becomesDefa
 // (leaseCredentialHelperConfig), so the agent's own push authenticates the
 // same way. hqURL is the Mate's HQ, "" on a container not enrolled with one: a
 // repository on it is fetched as HQ's git user (leaseCredentialHelperFor).
+// It is the checkout of the pool's own default repository: the pool's
+// GIT_TOKEN answers its host (leaseTokenScope).
 func leaseCheckoutCommand(workDir, repo, branch, base, hqURL string) string {
-	return leaseCheckoutCommandFrom(workDir, repo, branch, base, "", hqURL)
+	return leaseCheckoutCommandFrom(workDir, repo, branch, base, "", hqURL, leaseHelperScope(repo))
 }
 
 // leaseCheckoutCommandFrom is leaseCheckoutCommand with from, the branch a
@@ -211,8 +216,9 @@ func leaseCheckoutCommand(workDir, repo, branch, base, hqURL string) string {
 // (exit leaseFromMissingExit), whatever the branch: nothing is cut from
 // another commit instead. A branch origin has is tracked as it is there, and
 // a base commit wins over from: from never rewrites a branch (DP-6). from is
-// shell-quoted; the caller has validated it.
-func leaseCheckoutCommandFrom(workDir, repo, branch, base, from, hqURL string) string {
+// shell-quoted; the caller has validated it. tokenScope is the one host the
+// pool's GIT_TOKEN answers for (leaseTokenScope).
+func leaseCheckoutCommandFrom(workDir, repo, branch, base, from, hqURL, tokenScope string) string {
 	q := shellQuote
 	cutFrom := "origin/" + leaseDefaultBranch
 	if from != "" {
@@ -232,7 +238,7 @@ func leaseCheckoutCommandFrom(workDir, repo, branch, base, from, hqURL string) s
 		settleWarm,
 		"{ [ -d .git ] || git init -q; }",
 		"{ git remote add origin " + q(repo) + " 2>/dev/null || git remote set-url origin " + q(repo) + "; }",
-		"GIT_TERMINAL_PROMPT=0 git -c credential.helper= -c credential.helper=" + q(leaseCredentialHelperFor(repo, hqURL)) + " fetch -q --prune origin",
+		"GIT_TERMINAL_PROMPT=0 git " + leaseInlineHelperArgs(leaseCredentialHelperFor(repo, hqURL, tokenScope)) + " fetch -q --prune origin",
 	}
 	if from != "" {
 		steps = append(steps, "{ git rev-parse --verify -q "+q("refs/remotes/origin/"+from)+" >/dev/null || { echo "+
@@ -246,7 +252,7 @@ func leaseCheckoutCommandFrom(workDir, repo, branch, base, from, hqURL string) s
 		// first commit needs one (set-if-absent, never over the image's).
 		gitIdentityEnsureFragment(),
 	)
-	if persist := leaseCredentialHelperConfig(repo, hqURL); persist != "" {
+	if persist := leaseCredentialHelperConfig(repo, hqURL, tokenScope); persist != "" {
 		steps = append(steps, persist)
 	}
 	// The container's stable number, which its preview port follows; only
@@ -255,49 +261,216 @@ func leaseCheckoutCommandFrom(workDir, repo, branch, base, from, hqURL string) s
 	return strings.Join(steps, " && ")
 }
 
-// leaseCredentialHelperShell is the helper a lease's repository keeps for its
-// origin's host: it answers a get from the invoking session's $GIT_TOKEN (the
-// pool's secret reaches every ssh session in its containers), so the agent's
-// own push over the alias needs no credential typed or stored; the config holds
-// only this script. Without GIT_TOKEN — git run through the mount on the zcp
-// side — it answers nothing, never an empty password, so git goes on to its
-// next helper. The reset at release takes it away with /var/www.
-const leaseCredentialHelperShell = `!f() { test "$1" = get || return 0; test -n "$GIT_TOKEN" || return 0; echo username=oauth2; echo "password=$GIT_TOKEN"; }; f`
+// leaseCredentialHelperShell is the helper a lease authenticates with outside
+// the Mate's HQ — inline at the checkout's fetch and a warm clone's, and kept
+// in the repository for its origin's host: it answers a get with the invoking
+// session's $GIT_TOKEN (the pool's secret reaches every ssh session in its
+// containers), so the agent's own push over the alias needs no credential
+// typed or stored; the config holds only this script. The pool's GIT_TOKEN is
+// the person's token for one git host, so the helper reads the host= git asks
+// for and answers only scope — that host, with its port when not 443
+// (leaseTokenScope) — and nothing for any other host, nor without GIT_TOKEN
+// (git run through the mount on the zcp side), never an empty password, so git
+// goes on to its next helper (review R4-2). "" when scope is no host it can
+// match: no helper at all. The reset at release takes it away with /var/www.
+func leaseCredentialHelperShell(scope string) string {
+	return leaseScopedHelper(scope, "oauth2", GitTokenEnvKey)
+}
 
 // leaseHQCredentialHelperShell is leaseCredentialHelperShell for a repository
 // on the Mate's HQ, whose git takes only the user `mate` (as
 // hqCredentialHelperShell answers it) with this Mate's HQ credential — which
 // the pool holds under a variable of its own (PoolHQCredentialEnvKey), never
-// as GIT_TOKEN, so no helper a repository outside HQ uses ever reads it. Unlike
-// hqCredentialHelperShell it never falls back to `zcp hq git-credential`: zcp
-// is not installed in a pool container, so it answers from that variable or
-// not at all.
-const leaseHQCredentialHelperShell = `!f() { test "$1" = get || return 0; test -n "$` + PoolHQCredentialEnvKey + `" || return 0; echo username=mate; echo "password=$` + PoolHQCredentialEnvKey + `"; }; f`
+// as GIT_TOKEN, so no helper a repository outside HQ uses ever reads it — and
+// only for scope, HQ's host and port. Unlike hqCredentialHelperShell it never
+// falls back to `zcp hq git-credential`: zcp is not installed in a pool
+// container, so it answers from that variable or not at all.
+func leaseHQCredentialHelperShell(scope string) string {
+	return leaseScopedHelper(scope, "mate", PoolHQCredentialEnvKey)
+}
+
+// leaseScopedHelper is a get-only helper answering user and the session's
+// $envKey for scope alone: it reads git's request to its end and matches its
+// host= — the host, with its port when the URL names one — against scope,
+// letter case aside (hostCasePattern); "" when scope is no host it can match.
+func leaseScopedHelper(scope, user, envKey string) string {
+	pattern, ok := hostCasePattern(scope)
+	if !ok {
+		return ""
+	}
+	return `!f() { test "$1" = get || return 0; test -n "$` + envKey + `" || return 0; h=; ` +
+		`while IFS= read -r l; do case $l in host=*) h=${l#host=};; esac; done; ` +
+		`case $h in ` + pattern + `) ;; *) return 0;; esac; ` +
+		`echo username=` + user + `; echo "password=$` + envKey + `"; }; f`
+}
+
+// hostCasePattern is a shell case pattern matching scope — a host, lowercase
+// or not, with an optional :port — in any letter case, as git passes the host
+// the URL names: each letter as a bracket pair of its two cases, digits, dots,
+// hyphens and the port's colon as they are; a scope without a port also
+// matches its explicit :443. false for an empty scope or one holding anything
+// else, which no pattern is built from.
+func hostCasePattern(scope string) (string, bool) {
+	if scope == "" {
+		return "", false
+	}
+	var b strings.Builder
+	for _, r := range strings.ToLower(scope) {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteString("[" + string(r) + strings.ToUpper(string(r)) + "]")
+		case r >= '0' && r <= '9', r == '.', r == '-', r == ':':
+			b.WriteRune(r)
+		default:
+			return "", false
+		}
+	}
+	pattern := b.String()
+	if !strings.Contains(scope, ":") {
+		pattern += "|" + pattern + ":" + defaultHTTPSPort
+	}
+	return pattern, true
+}
+
+// leaseInlineHelperArgs are the `-c` arguments that hand one git call helper
+// alone: the reset drops every helper configured before it; without a helper
+// git asks none.
+func leaseInlineHelperArgs(helper string) string {
+	if helper == "" {
+		return "-c credential.helper="
+	}
+	return "-c credential.helper= -c credential.helper=" + shellQuote(helper)
+}
+
+// leaseHelperScope is the scope a lease's helper answers for remoteURL: its
+// host, lowercase, with its port when it names one other than 443
+// (scopeWithPort); "" for a remote that is not https or whose host can be no
+// scope (gitCredentialScopeHost).
+func leaseHelperScope(remoteURL string) string {
+	if !strings.HasPrefix(strings.ToLower(remoteURL), httpsScheme+"://") {
+		return ""
+	}
+	host, ok := gitCredentialScopeHost(remoteURL)
+	if !ok {
+		return ""
+	}
+	return strings.ToLower(scopeWithPort(remoteURL, host))
+}
 
 // leaseCredentialHelperFor is the helper a lease of repo authenticates with:
 // HQ's user and the pool's HQ credential for a repository on the Mate's HQ
-// (hqURL, "" without one), the lease's oauth2 helper and the pool's GIT_TOKEN
-// otherwise.
-func leaseCredentialHelperFor(repo, hqURL string) string {
+// (hqURL, "" without one), answering HQ's host alone; the lease's oauth2
+// helper and the pool's GIT_TOKEN, answering tokenScope alone, otherwise.
+func leaseCredentialHelperFor(repo, hqURL, tokenScope string) string {
 	if IsHQRemote(repo, hqURL) {
-		return leaseHQCredentialHelperShell
+		return leaseHQCredentialHelperShell(leaseHelperScope(repo))
 	}
-	return leaseCredentialHelperShell
+	return leaseCredentialHelperShell(tokenScope)
 }
 
 // leaseCredentialHelperConfig is the git command that persists the lease's
 // helper for an https repo, scoped by the rule a dev service's checkout is
 // (persistedHelperScope: HQ's scope, its port included, for a repository on
-// the Mate's HQ); "" for any other repo, or a host that can be no scope.
-func leaseCredentialHelperConfig(repo, hqURL string) string {
+// the Mate's HQ); "" for any other repo, a host that can be no scope, or a
+// repository outside HQ on another host than tokenScope, which its helper
+// would never answer.
+func leaseCredentialHelperConfig(repo, hqURL, tokenScope string) string {
 	if !strings.HasPrefix(repo, httpsScheme+"://") {
 		return ""
 	}
-	scope, helper, ok := persistedHelperScope(repo, hqURL, leaseCredentialHelperShell, leaseHQCredentialHelperShell)
+	scope, _, ok := persistedHelperScope(repo, hqURL, "", "")
 	if !ok {
 		return ""
 	}
+	if !IsHQRemote(repo, hqURL) && !strings.EqualFold(scope, tokenScope) {
+		return ""
+	}
+	helper := leaseCredentialHelperFor(repo, hqURL, tokenScope)
+	if helper == "" {
+		return ""
+	}
 	return "git config --replace-all " + shellQuote("credential.https://"+scope+".helper") + " " + shellQuote(helper)
+}
+
+// The pool's GIT_TOKEN is the person's token for one git host, and the
+// repository an acquire names may be on any (a URL from a README, an issue or
+// a page): so it answers one scope (leaseTokenScope), and an acquire naming
+// a repository on another host fetches without it (review R4-2).
+
+// poolTokenScopePath is zcp's record of the scope a pool's GIT_TOKEN answers
+// when its default repository names none outside the Mate's HQ
+// (.zcp/state/leases/pools/<pool>.token-scope.json, mode 0600).
+func poolTokenScopePath(stateDir, pool string) string {
+	return filepath.Join(leaseDir(stateDir), "pools", pool+".token-scope.json")
+}
+
+// poolTokenScope is that record: a host, with its port when not 443, never a
+// credential.
+type poolTokenScope struct {
+	Scope string `json:"scope"`
+}
+
+// readPoolTokenScope is the scope zcp recorded for the pool's GIT_TOKEN, ""
+// when it recorded none (or the record names nothing a helper matches).
+func readPoolTokenScope(stateDir, pool string) string {
+	if stateDir == "" || !leasePoolNameRe.MatchString(pool) {
+		return ""
+	}
+	raw, err := os.ReadFile(poolTokenScopePath(stateDir, pool))
+	if err != nil {
+		return ""
+	}
+	var rec poolTokenScope
+	if json.Unmarshal(raw, &rec) != nil {
+		return ""
+	}
+	if _, ok := hostCasePattern(rec.Scope); !ok {
+		return ""
+	}
+	return rec.Scope
+}
+
+// storePoolTokenScope records scope as the one the pool's GIT_TOKEN answers,
+// atomically with mode 0600.
+func storePoolTokenScope(stateDir, pool, scope string) error {
+	if stateDir == "" || !leasePoolNameRe.MatchString(pool) {
+		return errors.New("no state directory or an unusable pool name")
+	}
+	path := poolTokenScopePath(stateDir, pool)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("create %s: %w", filepath.Dir(path), err)
+	}
+	data, err := json.Marshal(poolTokenScope{Scope: scope})
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+	if err := atomicWriteFile(path, data); err != nil {
+		return fmt.Errorf("token scope of %s: %w", pool, err)
+	}
+	return nil
+}
+
+// leaseTokenScope is the one scope the pool's GIT_TOKEN answers, and whether
+// repo binds it: the host of the pool's default repository when that is
+// outside the Mate's HQ — pool-migrate seeds it with the migrating dev's
+// origin, whose GIT_TOKEN it copies, else the first acquire recorded its own
+// (DP-5); else the scope zcp recorded when it bound the token; else — no
+// default outside HQ and nothing bound yet, as in a Mate whose pools default
+// to HQ repositories — repo's own host, which binds it once its checkout
+// worked (bind true). "" when none applies (repo "" or on HQ): no GIT_TOKEN
+// helper at all.
+func leaseTokenScope(stateDir, pool, hqURL, repo string) (scope string, bind bool) {
+	if def := readPoolDefaultRepo(stateDir, pool); def != "" && !IsHQRemote(def, hqURL) {
+		return leaseHelperScope(def), false
+	}
+	if recorded := readPoolTokenScope(stateDir, pool); recorded != "" {
+		return recorded, false
+	}
+	if repo == "" || IsHQRemote(repo, hqURL) {
+		return "", false
+	}
+	scope = leaseHelperScope(repo)
+	return scope, scope != ""
 }
 
 // hqAddress is the address of the HQ this Mate enrolled with, read now; ""
@@ -327,12 +500,19 @@ type leaseCheckedOut struct {
 // credential contract reaches the agent.
 func checkoutLease(ctx context.Context, d LeaseDeps, rec leaseRecord, repo, branch, base, from string) (leaseCheckedOut, error) {
 	hqURL := d.hqAddress()
-	out, err := d.SSH.ExecSSH(ctx, rec.alias(), leaseCheckoutCommandFrom(leaseWorkDir, repo, branch, base, from, hqURL))
+	tokenScope, bind := leaseTokenScope(d.StateDir, rec.PoolHostname, hqURL, repo)
+	out, err := d.SSH.ExecSSH(ctx, rec.alias(), leaseCheckoutCommandFrom(leaseWorkDir, repo, branch, base, from, hqURL, tokenScope))
 	if err == nil {
+		if bind {
+			_ = storePoolTokenScope(d.StateDir, rec.PoolHostname, tokenScope)
+		}
 		cut, _ := checkoutBase(string(out))
 		return leaseCheckedOut{base: cut, stableNumber: checkoutSlot(string(out)), warm: checkoutWarm(string(out))}, nil
 	}
 	code, suggestion := classifyCheckoutFailure(err, IsHQRemote(repo, hqURL))
+	if repoScope := leaseHelperScope(repo); code == platform.ErrGitTokenMissing && repoScope != "" && !strings.EqualFold(repoScope, tokenScope) {
+		code, suggestion = platform.ErrPrerequisiteMissing, foreignHostSuggestion(repoScope, tokenScope)
+	}
 	pe := platform.NewPlatformError(code,
 		fmt.Sprintf("Lease %s could not put %s on branch %s of %s", rec.alias(), leaseWorkDir, branch, repo), suggestion)
 	pe.Cause = err
@@ -413,6 +593,21 @@ func classifyCheckoutFailure(err error, onHQ bool) (code, suggestion string) {
 	}
 	return platform.ErrSSHDeployFailed,
 		"Check the repo URL and that the container can reach the git host"
+}
+
+// foreignHostSuggestion is what a checkout says when git asked for a
+// credential for repoScope, a host the pool's GIT_TOKEN is not for: the token
+// answers tokenScope alone ("" for none), so git asked without it. It is no
+// missing token, and the person's token is never sent to a host an acquire
+// names.
+func foreignHostSuggestion(repoScope, tokenScope string) string {
+	bound := "the pool's GIT_TOKEN answers no host outside HQ yet"
+	if tokenScope != "" {
+		bound = "the pool's GIT_TOKEN is the person's token for " + tokenScope + " (the host of the pool's default repository, or of its first lease outside HQ) and answers no other host"
+	}
+	return "The repository on " + repoScope + " asked for a credential, and " + bound +
+		", so git asked without it. Check that the repo URL is the one the person meant; a private repository on " + repoScope +
+		" is leased from a pool whose default repository is there. Never ask for the token's value or make one up"
 }
 
 // hqLeaseCredentialSuggestion is what a lease of a repository on the Mate's HQ
