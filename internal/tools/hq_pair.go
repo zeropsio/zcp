@@ -10,6 +10,7 @@ import (
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -61,14 +62,14 @@ func hqPairPlanError(plan []workflow.BootstrapTarget, mate bool) *platform.Platf
 // the person adds with Put it live in Mate. mate is
 // runtime.Info.MateEnabled. nil outside a Mate, so the classic route is
 // untouched.
-func hqLaunchProductionRefusal(ctx context.Context, httpClient ops.HTTPDoer, stateDir string, mate bool) *mcp.CallToolResult {
+func hqLaunchProductionRefusal(ctx context.Context, httpClient ops.HTTPDoer, rt runtime.Info, stateDir string, mate bool) *mcp.CallToolResult {
 	if !mate {
 		return nil
 	}
 	return launchFailedResponse(nil, topology.BlockerCategoryOther, "wired_mate_production_is_the_groups",
 		"This Mate keeps its code in HQ, where an application's production can be a Zerops project or a Git repository branch the person adds "+
 			"with Put it live in Mate — launch-production creates its own production project outside the "+
-			"application and has no case for that. "+hqLaunchProductionNextStep(ctx, httpClient, stateDir))
+			"application and has no case for that. "+hqLaunchProductionNextStep(ctx, httpClient, rt, stateDir))
 }
 
 // hqLaunchProductionNextStep says what is true of THIS Mate's own pairs rather
@@ -87,12 +88,12 @@ func hqLaunchProductionRefusal(ctx context.Context, httpClient ops.HTTPDoer, sta
 //
 // A Mate that cannot reach HQ at all — no key or HQ origin in its container —
 // knows none of the three, and says so.
-func hqLaunchProductionNextStep(ctx context.Context, httpClient ops.HTTPDoer, stateDir string) string {
+func hqLaunchProductionNextStep(ctx context.Context, httpClient ops.HTTPDoer, rt runtime.Info, stateDir string) string {
 	var open []string
 	merged := false
 	if metas, err := workflow.ListServiceMetas(stateDir); err == nil {
 		self := func() (hq.MateState, error) { return hq.MateState{}, hq.ErrNoIdentity }
-		if hqc, linked := openHQ(httpClient); linked {
+		if hqc, linked := openHQ(httpClient, rt); linked {
 			self = lazySelf(ctx, hqc)
 		}
 		for _, m := range metas {
@@ -153,8 +154,8 @@ func hqPairPushes(state topology.GitPushState) bool {
 
 // hqRemoteOfThisMate reports whether a remote is a repository on this Mate's
 // HQ, where nothing builds from a Mate's change.
-func hqRemoteOfThisMate(remoteURL string) bool {
-	return ops.IsHQRemote(remoteURL, hqAddress())
+func hqRemoteOfThisMate(remoteURL string, rt runtime.Info) bool {
+	return ops.IsHQRemote(remoteURL, hqAddress(rt))
 }
 
 // hqHandoffNote is what the person needs from the Mate's closing message in a
@@ -176,8 +177,8 @@ func hqHandoffNote(hasProduction bool) string {
 // hqHasProduction is whether HQ says the Mate's application has a
 // production; false where it says none, cannot be read, or is older than
 // the answer.
-func hqHasProduction(ctx context.Context, httpClient ops.HTTPDoer) bool {
-	hqc, linked := openHQ(httpClient)
+func hqHasProduction(ctx context.Context, httpClient ops.HTTPDoer, rt runtime.Info) bool {
+	hqc, linked := openHQ(httpClient, rt)
 	if !linked {
 		return false
 	}

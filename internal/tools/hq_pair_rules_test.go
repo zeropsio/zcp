@@ -117,7 +117,8 @@ func TestBootstrapPlan_AMatePlansOnlyPairsWhateverItsLink(t *testing.T) {
 // — read fresh, so a change merged since the last pass is never named as
 // open.
 func TestLaunchProduction_AMateKeepingItsCodeInHQRefusesAndSaysWhatIsTrue(t *testing.T) {
-	if refusal := hqLaunchProductionRefusal(context.Background(), nil, t.TempDir(), false); refusal != nil {
+	t.Parallel()
+	if refusal := hqLaunchProductionRefusal(context.Background(), nil, runtime.Info{}, t.TempDir(), false); refusal != nil {
 		t.Fatalf("a container that is not a Mate keeps zcp's own launch-production, got %q", resultText(t, refusal))
 	}
 	tests := []struct {
@@ -145,6 +146,7 @@ func TestLaunchProduction_AMateKeepingItsCodeInHQRefusesAndSaysWhatIsTrue(t *tes
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			lab := newHQLab(t)
 			lab.wire()
 			if tt.settle != nil {
@@ -152,7 +154,7 @@ func TestLaunchProduction_AMateKeepingItsCodeInHQRefusesAndSaysWhatIsTrue(t *tes
 				lab.openChange()
 				tt.settle(lab)
 			}
-			text := resultText(t, hqLaunchProductionRefusal(context.Background(), lab.hq.srv.Client(), lab.stateDir, true))
+			text := resultText(t, hqLaunchProductionRefusal(context.Background(), lab.hq.srv.Client(), lab.rt, lab.stateDir, true))
 			for _, want := range tt.want {
 				if !strings.Contains(text, want) {
 					t.Errorf("the refusal misses %q: %s", want, text)
@@ -213,7 +215,7 @@ func TestSessionAnnotations_HandoffOnlyWithAnOpenChange(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = workflow.DeleteWorkSession(dir, os.Getpid()) })
 
-			got := sessionAnnotations(t.Context(), nil, dir)
+			got := sessionAnnotations(t.Context(), nil, runtime.Info{}, dir)
 			if got == nil || got.Status != "auto-closed" {
 				t.Fatalf("annotations = %+v, want auto-closed", got)
 			}
@@ -226,8 +228,8 @@ func TestSessionAnnotations_HandoffOnlyWithAnOpenChange(t *testing.T) {
 
 // HQ owns the merged history: a merged change the pair holds no record of
 // still reads as work on main.
-// Non-parallel: the lab redirects HOME and writes the enrollment there.
 func TestProductionKnowsMergedWorkThePairHoldsNoRecordOf(t *testing.T) {
+	t.Parallel()
 	lab := newHQLab(t)
 	lab.wire()
 	lab.write(map[string]string{"index.js": "the app\n"})
@@ -236,19 +238,19 @@ func TestProductionKnowsMergedWorkThePairHoldsNoRecordOf(t *testing.T) {
 	if number := lab.meta().HQ.Change; number != 0 {
 		t.Fatalf("the pair records change #%d; want no record", number)
 	}
-	text := hqLaunchProductionNextStep(t.Context(), lab.hq.srv.Client(), lab.stateDir)
+	text := hqLaunchProductionNextStep(t.Context(), lab.hq.srv.Client(), lab.rt, lab.stateDir)
 	if !strings.Contains(text, "Put it live") || strings.Contains(text, "branch of your own") || strings.Contains(text, "merge ") {
 		t.Fatalf("the guidance forgot the work HQ has merged: %s", text)
 	}
 }
 
 // An unavailable authority is unknown, never evidence that no work landed.
-// Non-parallel: the lab redirects HOME and writes the enrollment there.
 func TestProductionGuidance_HQUnavailableIsUnknown(t *testing.T) {
+	t.Parallel()
 	lab := newHQLab(t)
 	lab.wire()
 	lab.hq.setDown(true)
-	text := hqLaunchProductionNextStep(t.Context(), lab.hq.srv.Client(), lab.stateDir)
+	text := hqLaunchProductionNextStep(t.Context(), lab.hq.srv.Client(), lab.rt, lab.stateDir)
 	if !strings.Contains(text, "could not read") || !strings.Contains(text, "Ask again") || strings.Contains(text, "none of this Mate's work") {
 		t.Fatalf("HQ's failure must be visible, with a manual next step: %s", text)
 	}
@@ -305,7 +307,7 @@ func TestSessionAnnotations_HandoffNamesPutItLiveOnlyWithoutProduction(t *testin
 			}
 			t.Cleanup(func() { _ = workflow.DeleteWorkSession(dir, os.Getpid()) })
 
-			got := sessionAnnotations(t.Context(), fake.Client(), dir)
+			got := sessionAnnotations(t.Context(), fake.Client(), runtime.Info{}, dir)
 			if got == nil || !strings.Contains(got.Note, "press Review") {
 				t.Fatalf("want the handoff in the closing note, got %+v", got)
 			}

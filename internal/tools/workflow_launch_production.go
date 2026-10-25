@@ -162,7 +162,7 @@ func handleLaunchProduction(
 	// A Mate's production belongs to its application, never to this workflow
 	// (hq_pair.go). Refuses unconditionally, ahead of scope/state/mutation
 	// — nothing below has a case for an application's production either.
-	if refusal := hqLaunchProductionRefusal(ctx, httpClient, stateDir, rt.MateEnabled); refusal != nil {
+	if refusal := hqLaunchProductionRefusal(ctx, httpClient, rt, stateDir, rt.MateEnabled); refusal != nil {
 		return refusal, nil, nil
 	}
 

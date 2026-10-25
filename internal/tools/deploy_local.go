@@ -115,7 +115,7 @@ func RegisterDeployLocal(
 				}
 				return jsonResult(deployLocalResponse{
 					DeployResult:     result,
-					WorkSessionState: sessionAnnotations(ctx, httpClient, stateDir),
+					WorkSessionState: sessionAnnotations(ctx, httpClient, runtime.Info{}, stateDir),
 					Envelope:         freshEnvelope(ctx, stateDir, client, projectID, runtime.Info{}),
 				}), nil, nil
 			}
@@ -125,7 +125,7 @@ func RegisterDeployLocal(
 			}
 			return jsonResult(deployLocalResponse{
 				DeployResult:     result,
-				WorkSessionState: sessionAnnotations(ctx, httpClient, stateDir),
+				WorkSessionState: sessionAnnotations(ctx, httpClient, runtime.Info{}, stateDir),
 				Envelope:         freshEnvelope(ctx, stateDir, client, projectID, runtime.Info{}),
 			}), nil, nil
 		}
@@ -254,7 +254,7 @@ func RegisterDeployLocal(
 		// environment derives from a zero-value runtime.Info.
 		return jsonResult(deployLocalResponse{
 			DeployResult:     result,
-			WorkSessionState: sessionAnnotations(ctx, httpClient, stateDir),
+			WorkSessionState: sessionAnnotations(ctx, httpClient, runtime.Info{}, stateDir),
 			Envelope:         freshEnvelope(ctx, stateDir, client, projectID, runtime.Info{}),
 		}), nil, nil
 	})
@@ -321,8 +321,8 @@ type WorkSessionState struct {
 //
 // httpClient reaches HQ only for the closing note of a session that hands
 // over a change; nil where the caller holds none.
-func sessionAnnotations(ctx context.Context, httpClient ops.HTTPDoer, stateDir string) *WorkSessionState {
-	return sessionStateOf(stateDir, func() bool { return hqHasProduction(ctx, httpClient) })
+func sessionAnnotations(ctx context.Context, httpClient ops.HTTPDoer, rt runtime.Info, stateDir string) *WorkSessionState {
+	return sessionStateOf(stateDir, func() bool { return hqHasProduction(ctx, httpClient, rt) })
 }
 
 // sessionStateOf is sessionAnnotations with how it learns whether the

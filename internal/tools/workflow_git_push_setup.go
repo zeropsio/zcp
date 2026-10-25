@@ -316,7 +316,7 @@ func handleGitPushSetup(
 	}
 
 	if rt.InContainer {
-		return confirmGitPushSetupContainer(ctx, client, httpClient, sshDeployer, projectID, stateDir, hqAddress(), input, meta)
+		return confirmGitPushSetupContainer(ctx, client, httpClient, sshDeployer, projectID, stateDir, hqAddress(rt), input, meta)
 	}
 	return confirmGitPushSetupLocal(ctx, stateDir, input, meta)
 }

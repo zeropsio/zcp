@@ -11,8 +11,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zeropsio/zcp/internal/hq/hqtest"
-
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/zeropsio/zcp/internal/hq"
@@ -146,6 +144,7 @@ func added(main, branch map[string]string) []string {
 // lacks; every tier builds each pair from its repository in HQ, and the
 // credential is nowhere on disk.
 func TestGroupRecipe_ProposedAsTheMatesChange(t *testing.T) {
+	t.Parallel()
 	lab := newRecipeLab(t)
 	lab.hq.seed(hq.RecipeRepo)
 	mainBefore := lab.hq.recipeHead("main")
@@ -189,6 +188,7 @@ func TestGroupRecipe_ProposedAsTheMatesChange(t *testing.T) {
 // hand-written or landed earlier, and is never proposed over; a group whose
 // main has every tier gets nothing — no change opened.
 func TestGroupRecipe_ProposesOnlyWhatMainLacks(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name         string
 		main         map[string]string
@@ -203,6 +203,7 @@ func TestGroupRecipe_ProposesOnlyWhatMainLacks(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			lab := newRecipeLab(t)
 			lab.hq.landOnMain(hq.RecipeRepo, tt.main)
 
@@ -230,6 +231,7 @@ func TestGroupRecipe_ProposesOnlyWhatMainLacks(t *testing.T) {
 // the project until it lands — an identical recipe pushes nothing, and a
 // changed one moves the same change's branch forward, still only adding.
 func TestGroupRecipe_FollowsTheProjectOnTheSameChange(t *testing.T) {
+	t.Parallel()
 	lab := newRecipeLab(t)
 	if first := lab.proposeRecipe(lab.mock); !first.Created {
 		t.Fatalf("first pass: %+v", first)
@@ -267,6 +269,7 @@ func TestGroupRecipe_FollowsTheProjectOnTheSameChange(t *testing.T) {
 // branch moves forward with main as a parent — and stops proposing the tier
 // main now has, so it still only adds.
 func TestGroupRecipe_MainMovedUnderAnOpenProposal(t *testing.T) {
+	t.Parallel()
 	lab := newRecipeLab(t)
 	if first := lab.proposeRecipe(lab.mock); !first.Created {
 		t.Fatalf("first pass: %+v", first)
@@ -294,6 +297,7 @@ func TestGroupRecipe_MainMovedUnderAnOpenProposal(t *testing.T) {
 // tier while this Mate's proposal is open — another Mate's landed first. The
 // change is brought to main's tree, so it adds nothing and Core closes it.
 func TestGroupRecipe_AProposalMainOvertookAddsNothing(t *testing.T) {
+	t.Parallel()
 	lab := newRecipeLab(t)
 	if first := lab.proposeRecipe(lab.mock); !first.Created {
 		t.Fatalf("first pass: %+v", first)
@@ -322,6 +326,7 @@ func TestGroupRecipe_AProposalMainOvertookAddsNothing(t *testing.T) {
 // tier, and the next pass opens nothing; a proposal a person closed unmerged
 // leaves main without them, so the next pass proposes them again.
 func TestGroupRecipe_OpensNothingMainAlreadyHas(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		settle     func(*fakeHQ)
@@ -332,6 +337,7 @@ func TestGroupRecipe_OpensNothingMainAlreadyHas(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			lab := newRecipeLab(t)
 			if first := lab.proposeRecipe(lab.mock); !first.Created {
 				t.Fatalf("first pass: %+v", first)
@@ -354,6 +360,7 @@ func TestGroupRecipe_OpensNothingMainAlreadyHas(t *testing.T) {
 // pass, including the one that changed nothing — being asked is itself a
 // reason to say where the recipe is, or that main already has it.
 func TestHandleGroupRecipe_Table(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		setup    func(*hqLab)
@@ -388,7 +395,7 @@ func TestHandleGroupRecipe_Table(t *testing.T) {
 		{
 			name: "not enrolled with HQ",
 			setup: func(l *hqLab) {
-				hqtest.Link(l.t, "", "", "")
+				l.rt.HQ.Origin, l.rt.HQ.ProjectID, l.rt.HQ.Key = "", "", ""
 			},
 			wantErr:  true,
 			wantText: []string{"was not proposed", "not linked"},
@@ -409,6 +416,7 @@ func TestHandleGroupRecipe_Table(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			lab := newRecipeLab(t)
 			if tt.setup != nil {
 				tt.setup(lab)
@@ -492,6 +500,7 @@ func TestRecipeSlug(t *testing.T) {
 // name their projects after the application HQ holds the Mate in, by its
 // name's slug — by its id while HQ names it nothing.
 func TestGroupRecipe_NamedAfterTheApplication(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		appName string
@@ -502,6 +511,7 @@ func TestGroupRecipe_NamedAfterTheApplication(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			lab := newRecipeLab(t)
 			lab.hq.appName = tt.appName
 

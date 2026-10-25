@@ -6,6 +6,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -74,8 +75,8 @@ func upgradeReleasedBranch(stateDir string, hqc hq.Client, m *workflow.ServiceMe
 // upgradeReleasedBranches upgrades every wired pair's record an older zcp
 // wrote (upgradeReleasedBranch): status renders the records after it. A Mate
 // not linked has no record of a change.
-func upgradeReleasedBranches(httpClient ops.HTTPDoer, stateDir string) {
-	hqc, linked := openHQ(httpClient)
+func upgradeReleasedBranches(httpClient ops.HTTPDoer, rt runtime.Info, stateDir string) {
+	hqc, linked := openHQ(httpClient, rt)
 	if !linked {
 		return
 	}

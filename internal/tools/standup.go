@@ -126,7 +126,7 @@ func RegisterStandup(
 		},
 		mounter:     mounter,
 		liveEnvPath: mate.LiveEnvStorePath,
-		identity:    func() hq.Identity { return hqIdentityIn(rtInfo.OrgID) },
+		identity:    func() hq.Identity { return hqIdentity(rtInfo) },
 		hqWait:      standupHQWait,
 		hqPoll:      standupHQPoll,
 		runtimeWait: standupRuntimeWait,

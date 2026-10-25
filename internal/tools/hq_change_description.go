@@ -18,6 +18,7 @@ import (
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -85,10 +86,11 @@ func (e *picturesGoneError) Error() string {
 func handleDescribeChange(
 	ctx context.Context,
 	httpClient ops.HTTPDoer,
+	rt runtime.Info,
 	stateDir string,
 	input WorkflowInput,
 ) (*mcp.CallToolResult, any, error) {
-	hqc, linked := openHQ(httpClient)
+	hqc, linked := openHQ(httpClient, rt)
 	if !linked {
 		return convertError(platform.NewPlatformError(
 			platform.ErrPrerequisiteMissing,

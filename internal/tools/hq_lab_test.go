@@ -122,6 +122,15 @@ func newFakeHQ(t *testing.T) *fakeHQ {
 	return f
 }
 
+// link is a container of the lab's Mate linked to this HQ: its identity, and
+// a file of its own for the Git credential the Mate's server keeps, which
+// nothing has written yet.
+func (f *fakeHQ) link(t *testing.T) *runtime.HQLink {
+	t.Helper()
+	return &runtime.HQLink{Origin: f.srv.URL, ProjectID: labMate, Key: labKey,
+		GitCredentialPath: filepath.Join(t.TempDir(), ".zcp", "hq", "git-credential")}
+}
+
 func (f *fakeHQ) serve(w http.ResponseWriter, r *http.Request, backend http.Handler) {
 	f.mu.Lock()
 	f.calls = append(f.calls, r.Method+" "+r.URL.Path)
@@ -551,7 +560,7 @@ func (l *hqLab) relink(credential string) {
 	l.hq.mu.Lock()
 	l.hq.credential = credential
 	l.hq.mu.Unlock()
-	hqtest.GitCredential(l.t, credential)
+	hqtest.GitCredential(l.t, l.rt.HQ.GitCredentialPath, credential)
 }
 
 // merge squashes the Mate's change #1 in appdev onto `main`, the way HQ's
@@ -756,24 +765,10 @@ type hqLab struct {
 func newHQLab(t *testing.T) *hqLab {
 	t.Helper()
 	fake := newFakeHQ(t)
-	t.Setenv("HOME", t.TempDir())
-	// zcp's own git against HQ trusts the fake's certificate.
-	t.Setenv("GIT_SSL_CAINFO", fake.caFile)
-	hqtest.Link(t, fake.srv.URL, labMate, labKey)
-	hqtest.GitCredential(t, labCredential)
+	link := fake.link(t)
+	hqtest.GitCredential(t, link.GitCredentialPath, labCredential)
 	lab := &hqLab{t: t, hq: fake, stateDir: t.TempDir(), pair: t.TempDir(),
-		rt: runtime.Info{InContainer: true, ProjectID: labMate, OrgID: labOrg}}
-	prevAttempts, prevDelay := gitPushSessionAuthAttempts, gitPushSessionAuthDelay
-	prevDescribeRetry := describeRetry
-	gitPushSessionAuthAttempts, gitPushSessionAuthDelay = 2, 0
-	describeRetry = hqRetry{waits: prevDescribeRetry.waits, pause: func(_ context.Context, d time.Duration) error {
-		lab.describeWaits = append(lab.describeWaits, d)
-		return nil
-	}}
-	t.Cleanup(func() {
-		gitPushSessionAuthAttempts, gitPushSessionAuthDelay = prevAttempts, prevDelay
-		describeRetry = prevDescribeRetry
-	})
+		rt: runtime.Info{InContainer: true, ProjectID: labMate, OrgID: labOrg, HQ: link}}
 	lab.git("init", "-q", "-b", "main")
 	tree := lab.git("mktree")
 	lab.git("update-ref", "HEAD", lab.git("-c", "user.name=zcp", "-c", "user.email=zcp@example.invalid", "commit-tree", tree, "-m", "zcp init"))
@@ -831,7 +826,7 @@ func (l *hqLab) openChange() hq.Change {
 	if l.git("status", "--porcelain") != "" {
 		l.commit(title)
 	}
-	hqc, ok := openHQ(l.hq.srv.Client())
+	hqc, ok := openHQ(l.hq.srv.Client(), l.rt)
 	if !ok {
 		l.t.Fatal("the lab's Mate is not enrolled")
 	}

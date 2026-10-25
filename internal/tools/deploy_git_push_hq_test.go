@@ -34,8 +34,10 @@ func (l *hqLab) commit(message string) {
 // runs nothing, opens nothing, and says the way: a branch, never main, never
 // a force.
 func TestGitPushToHQ_RefusedForPlainGitOnABranch(t *testing.T) {
+	t.Parallel()
 	for _, branch := range []string{"", "main", "feature"} {
 		t.Run("branch="+branch, func(t *testing.T) {
+			t.Parallel()
 			lab := newHQLab(t)
 			lab.wire()
 			lab.write(map[string]string{"index.js": "the app\n"})
@@ -67,6 +69,7 @@ func TestGitPushToHQ_RefusedForPlainGitOnABranch(t *testing.T) {
 // deploy to any other remote — GitHub, say — would hand it to a host it is not
 // for. It runs nothing there and says the plain-git way.
 func TestGitPushFromAPairWiredToHQ_RefusedWhateverTheRemote(t *testing.T) {
+	t.Parallel()
 	lab := newHQLab(t)
 	lab.wire()
 	lab.write(map[string]string{"index.js": "the app\n"})

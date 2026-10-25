@@ -129,7 +129,7 @@ func attachHQCheckoutOrigin(ctx context.Context, services []workflow.ServiceSnap
 	if !rt.InContainer || ssh == nil {
 		return
 	}
-	address := hqAddress()
+	address := hqAddress(rt)
 	ctx, cancel := context.WithTimeout(ctx, hqCheckoutOriginBound)
 	defer cancel()
 	var wg sync.WaitGroup
@@ -202,7 +202,7 @@ const hqStatusOriginBound = 5 * time.Second
 // wired pair with no record of it is kept — a pair wired before zcp recorded
 // it — and records it, so status names it. HQ not answering leaves the
 // record absent, which status names unknown.
-func recordMissingHQOrigins(ctx context.Context, httpClient ops.HTTPDoer, stateDir string) {
+func recordMissingHQOrigins(ctx context.Context, httpClient ops.HTTPDoer, rt runtime.Info, stateDir string) {
 	metas, err := workflow.ListServiceMetas(stateDir)
 	if err != nil {
 		return
@@ -216,7 +216,7 @@ func recordMissingHQOrigins(ctx context.Context, httpClient ops.HTTPDoer, stateD
 	if len(missing) == 0 {
 		return
 	}
-	hqc, linked := openHQ(httpClient)
+	hqc, linked := openHQ(httpClient, rt)
 	if !linked {
 		return
 	}

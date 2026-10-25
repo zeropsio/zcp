@@ -22,6 +22,7 @@ import (
 // When the minute is spent, the Mate is told plainly that the description
 // did not land and the change is still a draft.
 func TestDescribeChange_WaitsOutARollingDeploy(t *testing.T) {
+	t.Parallel()
 	isPatch := func(r *http.Request) bool { return r.Method == http.MethodPatch }
 	isAttach := func(r *http.Request) bool { return strings.HasSuffix(r.URL.Path, "/attachments") }
 	tests := []struct {
@@ -75,6 +76,7 @@ func TestDescribeChange_WaitsOutARollingDeploy(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			lab := openedLab(t)
 			words := describedWords
 			if tt.picture {
@@ -144,6 +146,7 @@ func TestDescribeTransient(t *testing.T) {
 // roll is tried again as the description is, never answered with "no change
 // is open".
 func TestDescribeChange_ReadsItsChangeThroughTheRoll(t *testing.T) {
+	t.Parallel()
 	isSelf := func(r *http.Request) bool { return r.URL.Path == "/api/mate/self" }
 	tests := []struct {
 		name          string
@@ -163,6 +166,7 @@ func TestDescribeChange_ReadsItsChangeThroughTheRoll(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			lab := openedLab(t)
 			clearChange(lab.stateDir, lab.meta(), 1)
 			tt.hq(lab)

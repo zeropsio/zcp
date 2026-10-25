@@ -320,7 +320,7 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 	return jsonResult(localGitPushResponse{
 		GitPushResult:    result,
 		Warnings:         warnings,
-		WorkSessionState: sessionAnnotations(ctx, nil, stateDir),
+		WorkSessionState: sessionAnnotations(ctx, nil, runtime.Info{}, stateDir),
 		Envelope:         freshEnvelope(ctx, stateDir, client, projectID, runtime.Info{}),
 	}), nil, nil
 }

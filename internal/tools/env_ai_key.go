@@ -70,7 +70,7 @@ func setOrgAIKey(ctx context.Context, client platform.Client, projectID, selfHos
 	nothingSet := func(code, message, suggestion string) *mcp.CallToolResult {
 		return convertError(platform.NewPlatformError(code, message+"; nothing was set.", suggestion))
 	}
-	hqc, err := hq.Open(aiKey.http, hqIdentity())
+	hqc, err := hq.Open(aiKey.http, liveHQIdentity())
 	switch {
 	case err != nil:
 		return nothingSet(platform.ErrPrerequisiteMissing,

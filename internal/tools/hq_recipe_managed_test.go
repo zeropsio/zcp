@@ -43,6 +43,7 @@ func tierEntryType(body, host string) string {
 // alone, ahead of the runtimes, every other line — a person's edits
 // included — as main has it.
 func TestGroupRecipeService_ManagedAdded_ProposedIntoEveryTierLackingIt(t *testing.T) {
+	t.Parallel()
 	lab, main := newPartsLab(t)
 	client := recipeReconcileClient(cacheService)
 
@@ -105,6 +106,7 @@ func TestGroupRecipeService_ManagedAdded_ProposedIntoEveryTierLackingIt(t *testi
 // wrote the cache into one tier by hand gets it proposed into the others
 // alone.
 func TestGroupRecipeService_ManagedAlreadyInATier_LeavesThatTier(t *testing.T) {
+	t.Parallel()
 	lab, _ := newPartsLab(t)
 	mateTier := hq.RecipeTierPaths[hq.RecipeTierMate]
 	withCache, err := bundle.AddTierServiceInRank(lab.hq.recipeFiles("main")[mateTier],
@@ -129,6 +131,7 @@ func TestGroupRecipeService_ManagedAlreadyInATier_LeavesThatTier(t *testing.T) {
 // tier, one change at a time, and the small production tier gets the
 // database highly available.
 func TestGroupRecipeService_DatabaseAndCache_EachProposedInTurn(t *testing.T) {
+	t.Parallel()
 	lab, _ := newPartsLab(t)
 	runtimeOnly := map[string]string{}
 	for _, tier := range []string{hq.RecipeTierMate, hq.RecipeTierStage, hq.RecipeTierProduction} {
@@ -176,6 +179,7 @@ var searchService = platform.ServiceStack{ID: "svc-search", Name: "search", Stat
 // reminder: the reconcile stops naming the call until a later recipe change
 // of the Mate's merges, and then asks again.
 func TestGroupRecipeService_ManagedDeclined_ReminderStopsUntilALaterMerge(t *testing.T) {
+	t.Parallel()
 	lab, _ := newPartsLab(t)
 	client := recipeReconcileClient(cacheService)
 	if answer, text := lab.proposeService(client, "cache"); answer == nil || answer.Change != 2 {
@@ -204,6 +208,7 @@ func TestGroupRecipeService_ManagedDeclined_ReminderStopsUntilALaterMerge(t *tes
 // A managed service no tier on main can take by zcp's edit is said once
 // per pass as one to add by hand, with no call to make.
 func TestGroupRecipeService_ManagedNoTierCanTakeIt_SaysToAddByHand(t *testing.T) {
+	t.Parallel()
 	lab, _ := newPartsLab(t)
 	flow := map[string]string{}
 	for _, tier := range []string{hq.RecipeTierMate, hq.RecipeTierStage, hq.RecipeTierProduction} {
@@ -225,6 +230,7 @@ func TestGroupRecipeService_ManagedNoTierCanTakeIt_SaysToAddByHand(t *testing.T)
 // by the same call: its open change is brought to main's tree and adds
 // nothing.
 func TestGroupRecipeService_ManagedDeleted_WithdrawsItsOpenChange(t *testing.T) {
+	t.Parallel()
 	lab, _ := newPartsLab(t)
 	if answer, text := lab.proposeService(recipeReconcileClient(cacheService), "cache"); answer == nil || answer.Change != 2 {
 		t.Fatalf("service=cache = %s", text)

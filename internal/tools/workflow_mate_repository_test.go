@@ -76,8 +76,8 @@ func TestMateRepositoryActions_RefuseAndPointAtHQ(t *testing.T) {
 // TestMateRepositoryActions_ZcpStillWiresThePair: the refusal is of the
 // public actions only. zcp's own pass hands a Mate's pair its repository in
 // HQ and HQ's credential, the confirmation those actions share included.
-// Non-parallel: the lab redirects HOME and writes the enrollment there.
 func TestMateRepositoryActions_ZcpStillWiresThePair(t *testing.T) {
+	t.Parallel()
 	lab := newHQLab(t)
 	lab.rt.MateEnabled = true
 	lab.wire()

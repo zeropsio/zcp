@@ -203,9 +203,9 @@ func gitPushBuildIntegrationConfigured(stateDir, targetService string) bool {
 // fallback. Nothing ever builds from a wired pair's change in HQ (SPEC
 // §3.2a), so that destination is never trackable regardless of
 // BuildIntegration.
-func gitPushDestinationTrackable(stateDir, targetService, inputRemote string) bool {
+func gitPushDestinationTrackable(stateDir, targetService, inputRemote string, rt runtime.Info) bool {
 	effectiveRemote := resolveEffectiveRemote(stateDir, targetService, inputRemote)
-	return !hqRemoteOfThisMate(effectiveRemote) && gitPushBuildIntegrationConfigured(stateDir, targetService)
+	return !hqRemoteOfThisMate(effectiveRemote, rt) && gitPushBuildIntegrationConfigured(stateDir, targetService)
 }
 
 // trackedRefOrDefault is the single owner of the GF-7 "main" fallback
@@ -384,7 +384,7 @@ func handleGitPush(
 	recordAttempt := func(err string, class topology.FailureClass) {
 		attempt.Error = err
 		attempt.FailureClass = class
-		if !gitPushDestinationTrackable(stateDir, input.TargetService, input.RemoteURL) {
+		if !gitPushDestinationTrackable(stateDir, input.TargetService, input.RemoteURL, rt) {
 			return
 		}
 		_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
@@ -421,7 +421,7 @@ func handleGitPush(
 
 	// A pair wired to HQ holds the Mate's HQ credential as GIT_TOKEN: a push
 	// to any remote would hand it over, so none runs, whatever the remote.
-	if meta, _ := workflow.FindServiceMeta(stateDir, hostname); hqPairWired(meta) || hqRemoteOfThisMate(effectiveRemote) {
+	if meta, _ := workflow.FindServiceMeta(stateDir, hostname); hqPairWired(meta) || hqRemoteOfThisMate(effectiveRemote, rt) {
 		refusal := hqGitPushRefusal(hostname)
 		recordAttempt(refusal.Message, topology.FailureClassConfig)
 		return convertError(refusal, WithRecoveryStatus()), nil, nil
@@ -681,7 +681,7 @@ func handleGitPush(
 	return jsonResult(deployGitPushResponse{
 		GitPushResult:    result,
 		Warnings:         warnings,
-		WorkSessionState: sessionAnnotations(ctx, httpClient, stateDir),
+		WorkSessionState: sessionAnnotations(ctx, httpClient, rt, stateDir),
 		Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rt),
 	}), nil, nil
 }

@@ -59,7 +59,7 @@ func RegisterOrigin(srv *mcp.Server, httpClient hq.Doer, projectID, orgID, state
 		if err != nil {
 			return convertError(err), nil, nil
 		}
-		client, err := hq.Open(httpClient, hqIdentity())
+		client, err := hq.Open(httpClient, liveHQIdentity())
 		if err != nil {
 			return observeFailure(fmt.Sprintf("HQ could not be addressed, so nothing was asked: %v", err)), nil, nil
 		}

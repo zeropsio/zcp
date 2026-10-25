@@ -341,6 +341,7 @@ func TestComposeGroupRecipeInputs_WaitsOnlyForWhatALaterPassBrings(t *testing.T)
 // proposed, the outcome's warnings say which pair, and its line says the
 // recipe is proposed on a later pass.
 func TestGroupRecipe_WaitsForAnUnwiredPair(t *testing.T) {
+	t.Parallel()
 	lab := newHQLab(t)
 	lab.mock = medusaLikeProject(
 		publicBuildRuntime("svc-workerdev", "workerdev", "nodejs@22", "https://github.com/zerops-recipe-apps/medusa-worker"),
@@ -394,6 +395,7 @@ func warningsHave(warnings []string, substr string) bool {
 // and no tier carries a credential, the Mate's HQ credential on the dev
 // half's GIT_TOKEN least of all.
 func TestGroupRecipe_ProposesTheLiveProject(t *testing.T) {
+	t.Parallel()
 	lab := newHQLab(t)
 	lab.mock = medusaLikeProject()
 	lab.ssh.mock = lab.mock

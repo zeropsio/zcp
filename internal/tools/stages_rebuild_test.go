@@ -51,7 +51,7 @@ func rebuildMate(t *testing.T, zeropsYml string) (stateDir, mountRoot string, ht
 	tier = strings.ReplaceAll(rebuildMateTier, "HQ", srv.URL)
 	t.Setenv("HOME", t.TempDir())
 	hqtest.Link(t, srv.URL, "p1", standupKey)
-	hqtest.GitCredential(t, standupCredential)
+	hqtest.GitCredential(t, hq.GitCredentialPath(), standupCredential)
 	stateDir = t.TempDir()
 	if err := os.MkdirAll(filepath.Join(stateDir, "services"), 0o755); err != nil {
 		t.Fatal(err)

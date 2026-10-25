@@ -441,7 +441,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	// less — runs without an active session because external deployers may
 	// have happened before any develop session existed.
 	if input.Action == "record-deploy" {
-		return handleRecordDeploy(ctx, client, httpClient, projectID, stateDir, input)
+		return handleRecordDeploy(ctx, client, httpClient, rt, projectID, stateDir, input)
 	}
 	// mac-pair is stateless: every call re-reads the Mate's `mac status`
 	// (workflow_mac_pair.go), so it needs no engine.
@@ -510,8 +510,8 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		}
 		return handleBootstrapSkip(ctx, engine, client, projectID, rt, schemaCache, input)
 	case "status":
-		upgradeReleasedBranches(httpClient, engine.StateDir())
-		recordMissingHQOrigins(ctx, httpClient, engine.StateDir())
+		upgradeReleasedBranches(httpClient, rt, engine.StateDir())
+		recordMissingHQOrigins(ctx, httpClient, rt, engine.StateDir())
 		// SPINE-1 fix: resolve precedence from DISK via the single
 		// ResolveLifecycle resolver (not the in-memory detectActiveWorkflow),
 		// so the dispatcher and the envelope agree. Focus rule (§5.3/§6.2):
@@ -591,11 +591,11 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return handleGroupRecipe(ctx, client, httpClient, rt, stateDir)
 	case "open-change":
 		// The agent's own branch, opened as its change (hq_change_open.go).
-		return handleOpenChange(ctx, httpClient, stateDir, input)
+		return handleOpenChange(ctx, httpClient, rt, stateDir, input)
 	case "describe-change":
 		// The Mate's words about its change, which the person reviews it by:
 		// its change's description in HQ (hq_change_description.go).
-		return handleDescribeChange(ctx, httpClient, stateDir, input)
+		return handleDescribeChange(ctx, httpClient, rt, stateDir, input)
 	default:
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,

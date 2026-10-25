@@ -68,45 +68,44 @@ type hqPairState struct {
 // top (hq.Client).
 const hqCallTimeout = 30 * time.Second
 
-// hqIdentity is this container's identity toward HQ — its origin, project
-// and key — as the live env store holds it now, so a regenerated key is the
-// one presented. It names no organisation: that comes with the runtime
-// context (runtime.Info.OrgID), for the clients that build repository
-// addresses (openHQIn).
-func hqIdentity() hq.Identity {
+// liveHQIdentity is this container's identity toward HQ — its origin,
+// project and key — as the live env store holds it now, so a regenerated key
+// is the one presented. It names no organisation.
+func liveHQIdentity() hq.Identity {
 	return hq.IdentityFrom(mate.LiveLookup(mate.LiveEnvStorePath))
 }
 
-// hqIdentityIn is hqIdentity naming orgID.
-func hqIdentityIn(orgID string) hq.Identity {
-	id := hqIdentity()
-	id.OrgID = orgID
+// hqIdentity is the identity the container rt describes presents to HQ: the
+// live one (liveHQIdentity), or the one a test's container is linked to
+// (runtime.Info.HQ), naming rt's organisation (runtime.Info.OrgID) for the
+// clients that build repository addresses.
+func hqIdentity(rt runtime.Info) hq.Identity {
+	id := liveHQIdentity()
+	if rt.HQ != nil {
+		id = hq.Identity{Origin: rt.HQ.Origin, Key: rt.HQ.Key, ProjectID: rt.HQ.ProjectID, GitCredentialPath: rt.HQ.GitCredentialPath}
+	}
+	id.OrgID = rt.OrgID
 	return id
 }
 
 // openHQ is a client of this Mate's HQ under its project key, over
-// httpClient, for what builds no repository address — reads of the Mate's
-// state, changes by number; a client that does (hq.Client.RepoURL) comes from
-// openHQIn. False when the container has no key, project or HQ origin to
-// present.
-func openHQ(httpClient ops.HTTPDoer) (hq.Client, bool) {
-	return openHQIn(httpClient, "")
-}
-
-// openHQIn is openHQ whose repository addresses name orgID
-// (runtime.Info.OrgID); with none they report hq.ErrNoOrganisation.
-func openHQIn(httpClient ops.HTTPDoer, orgID string) (hq.Client, bool) {
+// httpClient, as the container rt presents itself (hqIdentity); its
+// repository addresses name rt's organisation, and with none they report
+// hq.ErrNoOrganisation. False when the container has no key, project or HQ
+// origin to present.
+func openHQ(httpClient ops.HTTPDoer, rt runtime.Info) (hq.Client, bool) {
 	if httpClient == nil {
 		return hq.Client{}, false
 	}
-	client, err := hq.Open(httpClient, hqIdentityIn(orgID))
+	client, err := hq.Open(httpClient, hqIdentity(rt))
 	return client, err == nil
 }
 
-// hqAddress is the address of this Mate's HQ, "" when the container names
-// none: what makes a remote recognisable as this Mate's HQ (ops.IsHQRemote).
-func hqAddress() string {
-	return hqIdentity().Origin
+// hqAddress is the address of the HQ the container rt names, "" when it
+// names none: what makes a remote recognisable as this Mate's HQ
+// (ops.IsHQRemote).
+func hqAddress(rt runtime.Info) string {
+	return hqIdentity(rt).Origin
 }
 
 // hqRepositoryActions are the public zerops_workflow actions that choose a
@@ -178,7 +177,7 @@ func reconcileHQRepositories(
 	if !rt.InContainer || sshDeployer == nil {
 		return nil
 	}
-	hqc, linked := openHQIn(httpClient, rt.OrgID)
+	hqc, linked := openHQ(httpClient, rt)
 	if !linked {
 		return nil
 	}

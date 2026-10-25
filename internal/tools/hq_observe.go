@@ -58,7 +58,7 @@ func RegisterObserve(srv *mcp.Server, httpClient hq.Doer, projectID string) {
 		if in.Limit < 1 || in.Limit > 100 {
 			return failure("Log limit must be 1 to 100"), nil, nil
 		}
-		client, err := hq.Open(httpClient, hqIdentity())
+		client, err := hq.Open(httpClient, liveHQIdentity())
 		if err != nil {
 			return failure(fmt.Sprintf("HQ could not be addressed: %v", err)), nil, nil
 		}

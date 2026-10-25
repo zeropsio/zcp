@@ -50,6 +50,22 @@ type Info struct {
 	// (auth.Info.ClientID) and Detect never does. "" where none is known; the
 	// addresses built from it then report hq.ErrNoOrganisation.
 	OrgID string
+
+	// HQ, when set, is this container's identity toward HQ in place of the
+	// one read from its live env store at each use: a test's container,
+	// linked to a fake HQ of its own, so such tests run side by side. Detect
+	// never sets it, and `zcp serve` reads the launch environment (spec-mate
+	// §3.3).
+	HQ *HQLink
+}
+
+// HQLink is the identity a test's container presents to HQ (Info.HQ): HQ's
+// origin, the project and its key, and the file the Mate's server keeps its
+// Git credential in. A pointer on Info, so a test relinking its container
+// mid-way reaches every copy of the Info it handed out.
+type HQLink struct {
+	Origin, ProjectID, Key string
+	GitCredentialPath      string
 }
 
 // Detect reads Zerops container env vars and returns runtime info.

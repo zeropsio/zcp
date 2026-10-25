@@ -28,6 +28,7 @@ import (
 // sensitive service env on the push source, never a file zcp writes — and
 // puts the checkout on `main`, descending from HQ's main.
 func TestReconcileHQRepositories_GivesThePairItsRepositoryOnMain(t *testing.T) {
+	t.Parallel()
 	lab := newHQLab(t)
 
 	report := lab.wire()
@@ -78,6 +79,7 @@ func elapseHQBackoff(t *testing.T, stateDir string) {
 // repository its record names, which a stand-up took from the group recipe,
 // never to one named after its hostname.
 func TestReconcileHQRepositories_RewiresAPairToTheRepositoryItsRecordNames(t *testing.T) {
+	t.Parallel()
 	lab := newHQLab(t)
 	if err := workflow.UpdateServiceMeta(lab.stateDir, "appdev", func(m *workflow.ServiceMeta) error {
 		m.GitPushState = topology.GitPushBroken
@@ -131,14 +133,17 @@ func TestHQAttemptDue(t *testing.T) {
 // there is no Mate, and a pair the user pointed at a remote of their own is
 // theirs — HQ is asked nothing, since it makes the repository it is asked for.
 func TestReconcileHQRepositories_AsksNothingItNeedNot(t *testing.T) {
+	t.Parallel()
 	t.Run("local mode", func(t *testing.T) {
+		t.Parallel()
 		lab := newHQLab(t)
-		lab.rt = runtime.Info{}
+		lab.rt = runtime.Info{HQ: lab.rt.HQ}
 		if report := lab.wire(); report != nil || len(lab.hq.calls) != 0 {
 			t.Errorf("local mode must do nothing, got report=%v calls=%v", report, lab.hq.calls)
 		}
 	})
 	t.Run("a remote of the user's own", func(t *testing.T) {
+		t.Parallel()
 		lab := newHQLab(t)
 		if err := workflow.UpdateServiceMeta(lab.stateDir, "appdev", func(m *workflow.ServiceMeta) error {
 			m.GitPushState, m.RemoteURL = topology.GitPushConfigured, "https://github.com/acme/app.git"
@@ -155,6 +160,7 @@ func TestReconcileHQRepositories_AsksNothingItNeedNot(t *testing.T) {
 // TestReconcileHQRepositories_BacksOff: a refusal is said once, and a pass
 // inside the backoff window asks HQ nothing.
 func TestReconcileHQRepositories_BacksOff(t *testing.T) {
+	t.Parallel()
 	lab := newHQLab(t)
 	lab.hq.moveMate("")
 
@@ -172,6 +178,7 @@ func TestReconcileHQRepositories_BacksOff(t *testing.T) {
 // by name — a history of its own against a main that holds code — names the
 // one thing to do, and the next attempt after it wires the pair.
 func TestReconcileHQRepositories_ARefusalNamesItsRemedy(t *testing.T) {
+	t.Parallel()
 	lab := newHQLab(t)
 	lab.hq.mu.Lock()
 	lab.hq.ensureRepo(t.Context(), labApp, "appdev")
@@ -194,6 +201,7 @@ func TestReconcileHQRepositories_ARefusalNamesItsRemedy(t *testing.T) {
 // leaves the pair tracking main — what a release compares against — while a
 // push goes to its change.
 func TestReconcileHQRepositories_AWiredPairsTrackedRefStaysMain(t *testing.T) {
+	t.Parallel()
 	lab := newHQLab(t)
 	lab.wire()
 	if got := lab.meta().TrackedRef; got != "main" {
@@ -206,6 +214,7 @@ func TestReconcileHQRepositories_AWiredPairsTrackedRefStaysMain(t *testing.T) {
 // the Mate's own state what became of the change on record, says so once,
 // and forgets the number: a later change is another one.
 func TestReconcileHQRepositories_TellsTheMateWhatBecameOfItsChange(t *testing.T) {
+	t.Parallel()
 	for _, tt := range []struct {
 		name   string
 		settle func(*fakeHQ)
@@ -217,6 +226,7 @@ func TestReconcileHQRepositories_TellsTheMateWhatBecameOfItsChange(t *testing.T)
 		{name: "closed without merging", settle: func(f *fakeHQ) { f.close(1) }, want: []string{"change #1 was closed without merging"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			lab := newHQLab(t)
 			lab.wire()
 			lab.write(map[string]string{"index.js": "the app\n"})
@@ -290,6 +300,7 @@ func TestHandleRelease_AWiredPairHandsOff(t *testing.T) {
 // all; the metas become complete at the bootstrap's terminal step, which is
 // where the pair gets its repository in HQ.
 func TestBootstrapClose_WiresTheRepository(t *testing.T) {
+	t.Parallel()
 	lab := newHQLab(t)
 	stateDir := t.TempDir()
 	lab.stateDir = stateDir
@@ -332,6 +343,7 @@ func TestBootstrapClose_WiresTheRepository(t *testing.T) {
 // A pass learns a merge without changing even a clean checkout: taking main
 // in is the agent's git.
 func TestHQPass_LearnsAMergeWithoutChangingTheCheckout(t *testing.T) {
+	t.Parallel()
 	for _, tt := range []struct {
 		name  string
 		upset func(*hqLab)
@@ -341,6 +353,7 @@ func TestHQPass_LearnsAMergeWithoutChangingTheCheckout(t *testing.T) {
 		{name: "another branch checked out", upset: func(l *hqLab) { l.git("checkout", "-q", "-b", "elsewhere") }},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			lab := newHQLab(t)
 			lab.wire()
 			lab.write(map[string]string{"index.js": "the app\n"})
@@ -365,6 +378,7 @@ func TestHQPass_LearnsAMergeWithoutChangingTheCheckout(t *testing.T) {
 // never asks HQ for it on a pair's behalf — not for a dev half named so, nor
 // for a recipe naming it — and says the one thing to do.
 func TestWireHQPair_TheRecipeRepositoryIsNoServicesRepository(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		hostname   string
@@ -376,6 +390,7 @@ func TestWireHQPair_TheRecipeRepositoryIsNoServicesRepository(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			lab := newHQLab(t)
 			if err := workflow.WriteServiceMeta(lab.stateDir, &workflow.ServiceMeta{
 				Hostname: tt.hostname, Mode: topology.PlanModeStandard, Stages: []topology.StageRef{{Hostname: tt.hostname + "stage"}},
@@ -384,7 +399,7 @@ func TestWireHQPair_TheRecipeRepositoryIsNoServicesRepository(t *testing.T) {
 				t.Fatal(err)
 			}
 			m, _ := workflow.FindServiceMeta(lab.stateDir, tt.hostname)
-			hqc, _ := openHQ(lab.hq.srv.Client())
+			hqc, _ := openHQ(lab.hq.srv.Client(), lab.rt)
 
 			outcome := rewireHQPair(t.Context(), lab.mock, lab.hq.srv.Client(), lab.ssh, lab.rt, lab.stateDir, hqc, m, tt.repoName)
 
@@ -407,6 +422,7 @@ func TestWireHQPair_TheRecipeRepositoryIsNoServicesRepository(t *testing.T) {
 // backoff or not, so git in its sessions keeps reaching HQ — and leaves the
 // checkout's branch and origin as the agent left them.
 func TestReconcileHQRepositories_RenewsTheDevServicesCredentialAfterHQSendsANewOne(t *testing.T) {
+	t.Parallel()
 	const renewed = "the-renewed-credential"
 	lab := newHQLab(t)
 	lab.wire()
@@ -438,6 +454,7 @@ func TestReconcileHQRepositories_RenewsTheDevServicesCredentialAfterHQSendsANewO
 // dev service's git presents the Mate's Git credential and nothing else; the
 // project key never appears in anything written to either half of the pair.
 func TestReconcileHQRepositories_TheDevServiceHoldsOnlyTheGitCredential(t *testing.T) {
+	t.Parallel()
 	lab := newHQLab(t)
 
 	lab.wire()
@@ -459,10 +476,11 @@ func TestReconcileHQRepositories_TheDevServiceHoldsOnlyTheGitCredential(t *testi
 // credential is whatever the file the server keeps holds at the pass, not
 // something zcp remembers or derives from the key.
 func TestReconcileHQRepositories_TheDevServiceTokenIsTheFilesContent(t *testing.T) {
+	t.Parallel()
 	const fromFile = "what-the-file-holds"
 	lab := newHQLab(t)
 	lab.wire()
-	hqtest.GitCredential(t, fromFile)
+	hqtest.GitCredential(t, lab.rt.HQ.GitCredentialPath, fromFile)
 
 	lab.wire()
 
@@ -475,8 +493,9 @@ func TestReconcileHQRepositories_TheDevServiceTokenIsTheFilesContent(t *testing.
 // file, no credential to hand a dev service — the pass says the Mate is not
 // linked and writes no token.
 func TestReconcileHQRepositories_AMateWithoutAGitCredentialFileIsNotLinked(t *testing.T) {
+	t.Parallel()
 	lab := newHQLab(t)
-	if err := os.Remove(hq.GitCredentialPath()); err != nil {
+	if err := os.Remove(lab.rt.HQ.GitCredentialPath); err != nil {
 		t.Fatal(err)
 	}
 
@@ -493,6 +512,7 @@ func TestReconcileHQRepositories_AMateWithoutAGitCredentialFileIsNotLinked(t *te
 // TestDevelopStart_RenewsTheDevServicesCredential: work starts at develop,
 // so its start runs the repository pass that renews a revoked credential.
 func TestDevelopStart_RenewsTheDevServicesCredential(t *testing.T) {
+	t.Parallel()
 	const renewed = "the-renewed-credential"
 	lab := newHQLab(t)
 	lab.wire()
@@ -535,6 +555,7 @@ func (l *hqLab) developStart() string {
 // it. Develop's start puts that `main` on HQ's — within the backoff of the
 // pass before it too — and the agent's branch and its commit stay as they are.
 func TestDevelopStart_AMainThatIsOnlyZcpsSeedTakesHQsMain(t *testing.T) {
+	t.Parallel()
 	lab := newHQLab(t)
 	lab.wire()
 	lab.hq.landOnMain("appdev", map[string]string{"app.js": "landed\n"})
@@ -566,6 +587,7 @@ func TestDevelopStart_AMainThatIsOnlyZcpsSeedTakesHQsMain(t *testing.T) {
 // merge, and nothing of the agent's is discarded — and develop's start names
 // the one step that keeps them and puts main on HQ's.
 func TestDevelopStart_AMainWithCommitsOfItsOwnIsLeftWithItsStepNamed(t *testing.T) {
+	t.Parallel()
 	lab := newHQLab(t)
 	lab.wire()
 	lab.write(map[string]string{"own.txt": "committed on main\n"})
@@ -592,6 +614,7 @@ func TestDevelopStart_AMainWithCommitsOfItsOwnIsLeftWithItsStepNamed(t *testing.
 // and the person merges it in Mate. A repository HQ alone keeps is worked on
 // as before.
 func TestDevelopStart_SaysHowEachRepositorysCodeIsKept(t *testing.T) {
+	t.Parallel()
 	const github = "https://github.com/acme/app"
 	for _, tc := range []struct {
 		name   string
@@ -623,6 +646,7 @@ func TestDevelopStart_SaysHowEachRepositorysCodeIsKept(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			lab := newHQLab(t)
 			lab.wire()
 			lab.mock.WithServices([]platform.ServiceStack{
@@ -658,6 +682,7 @@ func TestDevelopStart_SaysHowEachRepositorysCodeIsKept(t *testing.T) {
 // is HQ's repository — and it follows the person's pick when it changes.
 // There is never a second remote, and HQ is still reached at its own address.
 func TestRepositoryPass_TheCheckoutsOriginIsWhereItsCodeIsKept(t *testing.T) {
+	t.Parallel()
 	const github = "https://github.com/acme/app"
 	lab := newHQLab(t)
 	lab.wire()
@@ -700,6 +725,7 @@ func TestRepositoryPass_TheCheckoutsOriginIsWhereItsCodeIsKept(t *testing.T) {
 // keeps it — a pair wired before zcp moved origin — status says the move is
 // pending and where develop's start points it; once moved, it says none.
 func TestStatus_SaysWhatTheCheckoutsOriginIsNow(t *testing.T) {
+	t.Parallel()
 	const github = "https://github.com/acme/app"
 	for _, tc := range []struct {
 		name    string
@@ -726,6 +752,7 @@ func TestStatus_SaysWhatTheCheckoutsOriginIsNow(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			lab := newHQLab(t)
 			lab.wire()
 			hqOrigin := lab.git("remote", "get-url", "origin")
@@ -765,6 +792,7 @@ func TestStatus_SaysWhatTheCheckoutsOriginIsNow(t *testing.T) {
 // before zcp recorded it — is asked of HQ once, bounded, and recorded. When
 // HQ does not answer, status says the way is unknown.
 func TestStatus_AWiredPairNotReadYetAsksHQHowItsCodeIsKept(t *testing.T) {
+	t.Parallel()
 	const github = "https://github.com/acme/app"
 	for _, tc := range []struct {
 		name string
@@ -775,6 +803,7 @@ func TestStatus_AWiredPairNotReadYetAsksHQHowItsCodeIsKept(t *testing.T) {
 		{name: "HQ does not answer", down: true, want: "origin.mode=unknown"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			lab := newHQLab(t)
 			lab.wire()
 			lab.mock.WithServices([]platform.ServiceStack{
@@ -811,6 +840,7 @@ func TestStatus_AWiredPairNotReadYetAsksHQHowItsCodeIsKept(t *testing.T) {
 // — the very origin the pass points the checkout back at. The pass leaves
 // origin alone, never a second remote naming GitHub.
 func TestRepositoryPass_ARewiredPairKeptOnGitHubHasNoSecondRemote(t *testing.T) {
+	t.Parallel()
 	const github = "https://github.com/acme/app"
 	lab := newHQLab(t)
 	lab.wire()
@@ -844,6 +874,7 @@ func TestRepositoryPass_ARewiredPairKeptOnGitHubHasNoSecondRemote(t *testing.T) 
 // unknown and records that this HQ cannot say, rather than asking it on
 // every call; develop's start asks again.
 func TestStatus_AnHQOlderThanRepositoriesIsAskedOnce(t *testing.T) {
+	t.Parallel()
 	lab := newHQLab(t)
 	lab.wire()
 	lab.mock.WithServices([]platform.ServiceStack{
@@ -878,6 +909,7 @@ func TestStatus_AnHQOlderThanRepositoriesIsAskedOnce(t *testing.T) {
 // person set with a token in it — the habit `gh` and personal tokens teach —
 // is named in status without the token.
 func TestStatus_NamesNoCredentialOfTheCheckoutsOrigin(t *testing.T) {
+	t.Parallel()
 	const secret = "ghp_theSecretToken"
 	lab := newHQLab(t)
 	lab.wire()
@@ -937,6 +969,7 @@ func (s *deadlineSSH) ExecSSHStdin(ctx context.Context, hostname, command string
 // its repository rather than after it, so a dev service that does not answer
 // costs status no more than it did before.
 func TestStatus_TheCheckoutsOriginIsReadBoundedBesideTheRepository(t *testing.T) {
+	t.Parallel()
 	lab := newHQLab(t)
 	lab.wire()
 	lab.mock.WithServices([]platform.ServiceStack{

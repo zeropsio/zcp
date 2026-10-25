@@ -33,7 +33,7 @@ func rebuildMateStages(ctx context.Context, httpClient ops.HTTPDoer, rt runtime.
 		}
 		if !tierRead {
 			tierRead = true
-			tier = readMateTier(ctx, httpClient)
+			tier = readMateTier(ctx, httpClient, rt)
 		}
 		if tier == "" {
 			return
@@ -57,8 +57,8 @@ func rebuildMateStages(ctx context.Context, httpClient ops.HTTPDoer, rt runtime.
 
 // readMateTier is the app's Mate tier on main of its recipe repository, ""
 // when this Mate is not linked, HQ does not answer or main lacks it.
-func readMateTier(ctx context.Context, httpClient ops.HTTPDoer) string {
-	hqc, linked := openHQ(httpClient)
+func readMateTier(ctx context.Context, httpClient ops.HTTPDoer, rt runtime.Info) string {
+	hqc, linked := openHQ(httpClient, rt)
 	if !linked {
 		return ""
 	}

@@ -265,7 +265,7 @@ func composeGroupRecipe(
 	if !rt.InContainer || client == nil || httpClient == nil {
 		return groupRecipeComposition{}, recipeOutcome{Blocked: "the group recipe is a Mate's act — there is no Mate environment here"}, false
 	}
-	hqc, linked := openHQIn(httpClient, rt.OrgID)
+	hqc, linked := openHQ(httpClient, rt)
 	if !linked {
 		return groupRecipeComposition{}, recipeOutcome{Blocked: "this Mate is not linked to its HQ yet, so there is no recipe repository to propose to"}, false
 	}

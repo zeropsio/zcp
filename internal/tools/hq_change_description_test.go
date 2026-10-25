@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/hq/hqtest"
+	"github.com/zeropsio/zcp/internal/runtime"
 
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -27,7 +28,7 @@ func (l *hqLab) describe(service, words string) (text string, isError bool) {
 // describeTitled is describe-change with a title for the change.
 func (l *hqLab) describeTitled(service, title, words string) (text string, isError bool) {
 	l.t.Helper()
-	res, typed, err := handleDescribeChange(context.Background(), l.hq.srv.Client(), l.stateDir, WorkflowInput{Service: service, Title: title, Description: words})
+	res, typed, err := handleDescribeChange(withDescribeWaits(context.Background(), l), l.hq.srv.Client(), l.rt, l.stateDir, WorkflowInput{Service: service, Title: title, Description: words})
 	if err != nil {
 		l.t.Fatalf("handleDescribeChange: %v", err)
 	}
@@ -49,6 +50,7 @@ func openedLab(t *testing.T) *hqLab {
 }
 
 func TestDescribeChange(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		// lab builds the state the words meet.
@@ -133,6 +135,7 @@ func TestDescribeChange(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			lab := tt.lab(t)
 			text, isError := lab.describeTitled(tt.service, tt.title, "\n"+describedWords+"\n\n")
 			if isError {
@@ -169,6 +172,7 @@ func TestDescribeChange(t *testing.T) {
 // TestDescribeChange_Refusals: every refusal is said before HQ is asked
 // anything, and keeps nothing.
 func TestDescribeChange_Refusals(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		notEnrolled bool
@@ -204,13 +208,13 @@ func TestDescribeChange_Refusals(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			fake := newFakeHQ(t)
-			t.Setenv("HOME", t.TempDir())
+			link := fake.link(t)
 			if tt.notEnrolled {
-				hqtest.Link(t, "", "", "")
+				link = &runtime.HQLink{GitCredentialPath: link.GitCredentialPath}
 			} else {
-				hqtest.Link(t, fake.srv.URL, labMate, labKey)
-				hqtest.GitCredential(t, labCredential)
+				hqtest.GitCredential(t, link.GitCredentialPath, labCredential)
 			}
 			stateDir := t.TempDir()
 			for _, dev := range tt.pairs {
@@ -231,7 +235,7 @@ func TestDescribeChange_Refusals(t *testing.T) {
 				}
 			}
 
-			res, _, err := handleDescribeChange(context.Background(), fake.srv.Client(), stateDir,
+			res, _, err := handleDescribeChange(context.Background(), fake.srv.Client(), runtime.Info{HQ: link}, stateDir,
 				WorkflowInput{Service: tt.service, Title: tt.title, Description: tt.description})
 			if err != nil {
 				t.Fatalf("handleDescribeChange: %v", err)
@@ -262,6 +266,7 @@ func TestDescribeChange_Refusals(t *testing.T) {
 // runs of them in one — and how long one is kept, so the Mate picks a kept
 // one or retakes the screenshot instead of guessing.
 func TestDescribeChange_MissingPictureNamesWhatIsKept(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		takes    int
@@ -275,6 +280,7 @@ func TestDescribeChange_MissingPictureNamesWhatIsKept(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			lab := openedLab(t)
 			for i := range tt.takes {
 				keptScreenshot(t, lab.stateDir, fmt.Appendf(nil, "\x89PNG-%d", i), 800, 600)
@@ -339,7 +345,9 @@ func keptScreenshot(t *testing.T, stateDir string, png []byte, width, height int
 // say its shape at the width the review shows it, at HQ's address. A picture
 // HQ will not keep publishes nothing: never a body with a broken picture.
 func TestDescribeChange_Pictures(t *testing.T) {
+	t.Parallel()
 	t.Run("attached once, published as an img with its size", func(t *testing.T) {
+		t.Parallel()
 		lab := openedLab(t)
 		id := keptScreenshot(t, lab.stateDir, []byte("\x89PNG\r\n\x1a\n-a-screenshot"), 1280, 720)
 		words := "## How I checked it\n\n![The count reads \"3 open\" & more](" + id + ")\n"
@@ -359,6 +367,7 @@ func TestDescribeChange_Pictures(t *testing.T) {
 	})
 
 	t.Run("a picture HQ will not keep publishes nothing and drops the words", func(t *testing.T) {
+		t.Parallel()
 		lab := openedLab(t)
 		id := keptScreenshot(t, lab.stateDir, []byte("not a png at all"), 800, 600)
 		words := "![The count](" + id + ")"
