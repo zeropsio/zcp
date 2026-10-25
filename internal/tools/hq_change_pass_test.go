@@ -526,3 +526,40 @@ func TestHandleRelease_LeavesOutTheChangesHQSaysSettled(t *testing.T) {
 		t.Errorf("with HQ down the handoff does not name the ledger's changes as last read: %s", text)
 	}
 }
+
+// TestHQPass_ChangesTakeTheirTurnWithNoWiredPair: a Mate whose work is only in
+// leases wires no pair (a dev-pool-only project). Its pass still takes the
+// changes' turn while the ledger or an HQ lease names a repository: a change
+// merged since is learned, said and forgotten, and a change a person handed
+// the Mate in a leased repository is taken — never held for a pair's turn
+// that never comes.
+func TestHQPass_ChangesTakeTheirTurnWithNoWiredPair(t *testing.T) {
+	lab := newHQLab(t)
+	lab.hq.keepOpenPerBranch()
+	lab.wire()
+	lab.pushFromMain("fix-login", map[string]string{"login.js": "the fix\n"})
+	if answer, text, isError := lab.openChangeFrom("fix-login", "Fix the login"); isError || !answer.Created {
+		t.Fatalf("open: %s", text)
+	}
+	lab.leaseOf("hqpool", 4, "fix-login")
+	if err := os.Remove(filepath.Join(lab.stateDir, "services", "appdev.json")); err != nil {
+		t.Fatal(err)
+	}
+	lab.hq.mergeChange("appdev", 1)
+
+	report := strings.Join(lab.wire(), "\n")
+
+	if !strings.Contains(report, "change #1 is merged") || !strings.Contains(report, "hqpool-4") {
+		t.Errorf("with no wired pair the pass does not say #1 merged, naming its lease:\n%s", report)
+	}
+	if lab.kept(1) != nil {
+		t.Error("with no wired pair the pass kept merged #1")
+	}
+
+	number := lab.hq.handOver("appdev", "Add the signup", "add-signup", map[string]string{"signup.js": "half a signup\n"})
+	report = strings.Join(lab.wire(), "\n")
+
+	if !strings.Contains(report, "handed") || lab.kept(number) == nil {
+		t.Errorf("with an empty ledger and a lease of appdev the pass did not take handed #%d:\n%s", number, report)
+	}
+}
