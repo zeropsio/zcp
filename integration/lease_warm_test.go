@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -326,5 +327,82 @@ func TestLease_Integration_WarmContainerGetsTheRepository(t *testing.T) {
 	launches := ssh.seen()
 	if len(launches) != 1 || !strings.HasPrefix(launches[0], "node-id-2.runtime.devpool.zerops ") || !strings.Contains(launches[0], repo) {
 		t.Errorf("launches = %q, want one to node-id-2 cloning %s as given", launches, repo)
+	}
+}
+
+// slowWarmCloneSSH is a leased container over ssh: a warm clone's launch is
+// held until the test's body has ended and answered a moment later; the
+// release guard's reads find nothing, and every other command answers ok.
+type slowWarmCloneSSH struct {
+	bodyEnded         chan struct{}
+	started, answered atomic.Bool
+}
+
+func (s *slowWarmCloneSSH) ExecSSH(_ context.Context, _, command string) ([]byte, error) {
+	switch {
+	case strings.Contains(command, "@@zcp-warm started"):
+		s.started.Store(true)
+		<-s.bodyEnded
+		time.Sleep(100 * time.Millisecond)
+		s.answered.Store(true)
+		return []byte("@@zcp-warm started\n"), nil
+	case strings.Contains(command, "status --porcelain"):
+		return nil, nil
+	case strings.Contains(command, "rev-list --count"):
+		return []byte("0\n"), nil
+	}
+	return []byte("ok"), nil
+}
+
+// ExecSSHStdin answers one command as ExecSSH does; the input is not read.
+func (s *slowWarmCloneSSH) ExecSSHStdin(ctx context.Context, host, command string, _ []byte) ([]byte, error) {
+	return s.ExecSSH(ctx, host, command)
+}
+
+func (s *slowWarmCloneSSH) ExecSSHBackground(ctx context.Context, host, command string, _ time.Duration) ([]byte, error) {
+	return s.ExecSSH(ctx, host, command)
+}
+
+// TestLease_Integration_Release_BackgroundWarmClone_EndsBeforeTheTestTearsDown:
+// a forced release keeps its container as the pool's warm one and starts the
+// clone of the pool's repository into it in the background (DP-32), work that
+// outlives the call: it reads the orchestrator through http.DefaultTransport,
+// which the test swaps back, and writes the state directory, which the test
+// removes. The server setup's cleanup waits for it before either. The launch
+// here answers only once the test's body has ended.
+func TestLease_Integration_Release_BackgroundWarmClone_EndsBeforeTheTestTearsDown(t *testing.T) {
+	// Non-parallel: t.Chdir and a swap of http.DefaultTransport, as above.
+	ssh := &slowWarmCloneSSH{bodyEnded: make(chan struct{})}
+	// Registered first, so it runs last: after the server's cleanup, the
+	// transport's restore and the state directory's removal.
+	t.Cleanup(func() {
+		switch {
+		case !ssh.started.Load():
+			t.Error("the forced release started no warm clone, so this test no longer covers background work")
+		case !ssh.answered.Load():
+			t.Error("the release's background warm clone was still running when the test tore down its transport and state directory")
+		}
+	})
+	t.Chdir(t.TempDir())
+
+	target, _, _ := groupPoolOrchestratorReleasing(t, "devpool", "3")
+	orig := http.DefaultTransport
+	http.DefaultTransport = orchestratorRoute{host: "orch.devpool.zerops", target: target, next: orig}
+	t.Cleanup(func() { http.DefaultTransport = orig })
+
+	mock := defaultMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-devpool", Name: "devpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
+		}).
+		WithServiceEnv("svc-devpool", []platform.ServiceEnvVar{{ID: "env-t", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}})
+	session, cleanup := setupTestServerWithDeploy(t, mock, defaultLogFetcher(), ssh)
+	defer cleanup()
+	// Deferred after cleanup, so it runs first: the body has ended.
+	defer close(ssh.bodyEnded)
+
+	warmIntCall(t, session, map[string]any{"action": "acquire", "pool": "devpool", "repo": "https://github.com/acme/app", "branch": "feat-a"})
+	got := warmIntCall(t, session, map[string]any{"action": "release", "lease": "devpool-3", "force": true})
+	if len(got.Leases) != 1 || !strings.Contains(got.Leases[0].Note, "kept as the pool's warm container") {
+		t.Fatalf("release = %+v, want devpool-3 kept as the pool's warm container", got.Leases)
 	}
 }
