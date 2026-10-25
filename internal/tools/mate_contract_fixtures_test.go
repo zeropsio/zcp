@@ -598,8 +598,8 @@ func TestMateContractFixtures_LeaseStatus_RenderedByTheHandler(t *testing.T) {
 	hs := httptest.NewServer(&fakeOrchestrator{reserved: true})
 	t.Cleanup(hs.Close)
 	stateDir := t.TempDir()
-	writeLeaseRecordFile(t, stateDir, "devpool", "svc-pool", "c-abc", 3, "feat-a")
-	writeLeaseRecordFile(t, stateDir, "stoppool", "svc-stop", "c-2", 2, "feat-b")
+	writeContractLeaseRecord(t, stateDir, "devpool", "svc-pool", "c-abc", 3, "feat-a", "https://github.com/example/weather.git")
+	writeContractLeaseRecord(t, stateDir, "stoppool", "svc-stop", "c-2", 2, "feat-b", "https://github.com/example/weather-admin")
 	token := []platform.ServiceEnvVar{{Key: "API_TOKEN", Content: leaseTestToken, Sensitive: true}}
 	mock := platform.NewMock().
 		WithProject(&platform.Project{ID: "proj-weather", Name: "weather"}).
@@ -682,6 +682,19 @@ func TestMateContractFixtures_LeaseStatus_RenderedByTheHandler(t *testing.T) {
 	if len(leases) != 2 || leases[0].Alias != "devpool-3" || leases[1].Alias != "stoppool-2" {
 		t.Fatalf("leases = %+v, want devpool-3 and stoppool-2", leases)
 	}
+	// Each lease names its group's repository — canonical, credential-free —
+	// beside its branch: a client binds and rebinds by both (§6.3).
+	var repos struct {
+		Leases []struct {
+			Repo string `json:"repo"`
+		} `json:"leases"`
+	}
+	if err := json.Unmarshal(raw, &repos); err != nil {
+		t.Fatal(err)
+	}
+	if len(repos.Leases) != 2 || repos.Leases[0].Repo != "https://github.com/example/weather" || repos.Leases[1].Repo != "https://github.com/example/weather-admin" {
+		t.Errorf("leases' repos = %+v, want each record's repository in canonical form", repos.Leases)
+	}
 	read, unread := leases[0], leases[1]
 	if read.Activity == nil || read.Activity.LastChangeAt != "2026-10-23T19:12:40Z" || read.Activity.AcquiredAt != read.AcquiredAt || read.Activity.Note != "" {
 		t.Errorf("devpool-3 activity = %+v, want lastChangeAt 2026-10-23T19:12:40Z, its acquiredAt and no note", read.Activity)
@@ -692,5 +705,26 @@ func TestMateContractFixtures_LeaseStatus_RenderedByTheHandler(t *testing.T) {
 	if !unread.Unverified || unread.Unsaved != nil || unread.Activity == nil ||
 		unread.Activity.LastChangeAt != "" || unread.Activity.ReadAt != "" || unread.Activity.Note == "" {
 		t.Errorf("stoppool-2 = %+v activity %+v, want unverified, no unsaved, activity with only why it was not read", unread, unread.Activity)
+	}
+}
+
+// writeContractLeaseRecord is writeLeaseRecordFile for a lease of repo: the
+// record keeps the repository's identity as an acquire writes it.
+func writeContractLeaseRecord(t *testing.T, stateDir, pool, poolServiceID, containerID string, number int, branch, repo string) {
+	t.Helper()
+	dir := filepath.Join(stateDir, "leases")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(map[string]any{
+		"poolHostname": pool, "poolServiceId": poolServiceID, "containerId": containerID,
+		"containerNumber": number, "containerHostname": fmt.Sprintf("node-id-%d.runtime.%s.zerops", number, pool),
+		"lease": leaseTestLease, "branch": branch, "repo": topology.CanonicalRepoURL(repo), "acquiredAt": "2026-10-23T18:00:00Z",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("%s-%d.json", pool, number)), raw, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }

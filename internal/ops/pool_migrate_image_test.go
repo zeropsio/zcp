@@ -394,6 +394,19 @@ func TestPoolMigrateImage_SetupChecks_SeveralParts_DeclarationNamesEachPartsPool
 			parts: nil,
 			decl:  decl(`{"name": "web", "port": 3000, "command": "npm run dev"}`),
 		},
+		{
+			name:  "a single part runs every entry naming its pool",
+			parts: nil,
+			decl:  decl(`{"name": "web", "port": 3000, "command": "npm run dev", "service": "apppool"}`),
+		},
+		{
+			// A variant-B dev writes service=<its hostname> on every entry
+			// it declares; the pool's supervisor would run none of them.
+			name:   "a single part whose entries name the dev service",
+			parts:  nil,
+			decl:   decl(`{"name": "web", "port": 3000, "command": "npm run dev", "service": "appdev"}, {"name": "worker", "command": "npm run worker", "service": "workerdev"}`),
+			wantIn: []string{"web (service appdev)", "worker (service workerdev)", `"service": "apppool"`, "no lease"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

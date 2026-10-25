@@ -689,3 +689,34 @@ func TestParsePoolMigrateBundle_CutShortOrFailed_Error(t *testing.T) {
 		})
 	}
 }
+
+// TestPoolMigrateBundle_WorktreePathWithNewline_Refused: a worktree whose path
+// holds a newline cannot be read line by line from `git worktree list`; the
+// bundle refuses it rather than keeping that tree as one whose directory is
+// gone — its edits would then be in no bundle (PM-3) — and the fingerprint
+// refuses it alike, so a delete is never checked against a reading that
+// skipped it (PM-5).
+func TestPoolMigrateBundle_WorktreePathWithNewline_Refused(t *testing.T) {
+	t.Parallel()
+	base := censusBase(t)
+	root := censusCleanRepo(t, base)
+	odd := filepath.Join(base, "odd\nname")
+	censusGit(t, root, "worktree", "add", "-q", "-b", "odd", odd, "main")
+	censusWrite(t, filepath.Join(odd, "app.txt"), "edited in the odd worktree\n")
+
+	if b, _, err := buildBundle(t, &bundleLocalSSH{}, root); err == nil || !strings.Contains(err.Error(), "newline") {
+		t.Fatalf("bundle = %+v, %v; want a refusal naming the worktree path holding a newline", b, err)
+	}
+	fp, err := ReadPoolMigrateFingerprint(context.Background(), &bundleLocalSSH{}, "appdev", root, filepath.Join(t.TempDir(), "zcp-pool-migrate"))
+	said := ""
+	if err != nil {
+		said = err.Error()
+		var sshErr *platform.SSHExecError
+		if errors.As(err, &sshErr) {
+			said += " " + sshErr.Output
+		}
+	}
+	if err == nil || !strings.Contains(said, "newline") {
+		t.Fatalf("fingerprint = %+v, %q; want a refusal naming the worktree path holding a newline", fp, said)
+	}
+}

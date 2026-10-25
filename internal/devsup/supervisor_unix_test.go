@@ -976,6 +976,46 @@ func TestSupervisor_AServerThatChangesItsWatchedFilesOnEveryStartIsNotRestartedB
 	}
 }
 
+// A change is the server's own start output by when it was made, never by
+// when its burst settled: the settle (watchSettle of quiet) ends after the
+// last change, so a write made just inside the start window is decided after
+// the window closed. Decided by the time the restart ran, a server that writes
+// its watched files 9.7 s into each start never reached watchLoopLimit and was
+// restarted every 10 s, forever.
+func TestSupervisor_AChangeMadeInTheStartWindowCountsThoughItsBurstSettlesAfterIt(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.window = 2 * time.Second
+	r.write("apps/api/main.py", "v1")
+	r.declare(Server{Name: "api", Command: "exec sleep 300", Watch: &Watch{Paths: []string{"apps/api"}}})
+	s := r.supervisor()
+	s.Boot()
+	eventually(t, "api to run", func() bool {
+		sv := mustServer(t, s.State(), "api")
+		return sv.Status == StatusRunning && sv.Pid != 0
+	})
+	before := mustServer(t, s.State(), "api").Restarts
+
+	// Each of its last watchLoopLimit starts saw a change of its own; this
+	// start began a window and a settle ago, and its change came just
+	// inside the window — its burst settled after it.
+	started := time.Now().Add(-r.window - watchSettle)
+	s.mu.Lock()
+	sv := s.servers["api"]
+	sv.startBegun, sv.startedAt = started.Add(-time.Millisecond), &started
+	sv.selfChanged, sv.windowChanged = watchLoopLimit, false
+	s.mu.Unlock()
+	s.watchFired("api", "apps/api/pkg/PKG-INFO", started.Add(r.window-watchSettle/2))
+
+	got := mustServer(t, s.State(), "api")
+	if got.Restarts != before {
+		t.Fatalf("api restarted (%d → %d): a change made inside its start window was taken for one after it", before, got.Restarts)
+	}
+	if want := "restarts stopped: apps/api/pkg/PKG-INFO changed during each of its last 10 starts; add the path to watch.ignore"; got.LastRestartReason != want {
+		t.Fatalf("reason = %q, want %q", got.LastRestartReason, want)
+	}
+}
+
 // limitRig is a rig whose service's task limit (300) is reached each time a
 // server appends a line to .limit in the repo root: the kernel's pids.events
 // "max" count, which grows each time a fork is refused at pids.max.

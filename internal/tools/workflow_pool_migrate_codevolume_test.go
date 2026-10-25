@@ -725,6 +725,46 @@ func TestPoolMigrateRetire_VariantB_VolumeMovedWhileTheDevServicesWent_NeedsForc
 	v.assertVolumeCleared(t)
 }
 
+// TestPoolMigrateRetire_VariantB_WrittenWhileTheVolumeRebundles_NothingDeleted:
+// the forced call's new bundle of the volume records the fingerprint read
+// before it streamed, so a write that lands while the bundle streams and is
+// verified is in no bundle. The checkout is read again after the new bundle,
+// right before the volume's delete: a checkout that moved meanwhile holds the
+// delete, as it does before the first (PM-5, PM-13).
+func TestPoolMigrateRetire_VariantB_WrittenWhileTheVolumeRebundles_NothingDeleted(t *testing.T) {
+	t.Parallel()
+	v := newCodeVolumeRig(t, variantBConfig)
+	v.client.onDelete = func(id string) {
+		if id == "svc-api" {
+			if err := os.WriteFile(filepath.Join(v.r.ssh.repo, "app.txt"), []byte("v1\nwritten while the dev services went\n"), 0o644); err != nil {
+				t.Error(err)
+			}
+		}
+	}
+	if out, _ := v.retire(t, variantBRetireInput(true, false)); out["step"] != "retiring" {
+		t.Fatalf("retire = %v, want retiring, held by the moved checkout", out)
+	}
+
+	v.r.ssh.afterStream = func() {
+		if err := os.WriteFile(filepath.Join(v.r.ssh.repo, "app.txt"), []byte("v1\nwritten while the volume's bundle streamed\n"), 0o644); err != nil {
+			t.Error(err)
+		}
+	}
+	out, isErr := v.retire(t, variantBRetireInput(true, true))
+	if got := v.client.deletes(); slices.Contains(got, "svc-vol") {
+		t.Fatalf("deletes = %q: the volume was deleted with a write its new bundle does not hold", got)
+	}
+	if isErr || out["step"] != "retiring" || !slices.Equal(poolMigrateReasons(out), []string{"fingerprint-changed"}) {
+		t.Fatalf("forced = %v, want retiring, held by the checkout that moved while it was bundled", out)
+	}
+	if i := v.r.events.index("stream on vol"); i < 0 {
+		t.Fatalf("events = %q, want the volume rebundled", v.r.events.all())
+	}
+	if rec := retireRecordOf(t, v.r.f.stateDir); rec.Phase != poolRetireDeletingVolume {
+		t.Fatalf("record phase = %s, want deleting-volume", rec.Phase)
+	}
+}
+
 // TestDeleteTool_RetireRecord_VariantB_DevServiceAndVolumeRefused: while a
 // variant-B retire is in flight, zerops_delete refuses its further dev
 // services and its code volume as it refuses the dev, pointing at the retire.

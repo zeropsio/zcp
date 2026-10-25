@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"os/exec"
@@ -711,6 +712,51 @@ func TestPoolMigrateRetire_UnsavedWork_NeedsForceAfterTheBundle(t *testing.T) {
 	}
 }
 
+// TestPoolMigrateRetire_Submodule_NotKept_NeedsForce: a submodule is a
+// repository of its own the bundle does not carry, and work inside it — a
+// stash, a commit on a branch of its own — leaves the superproject clean. So a
+// census naming one holds the retire as unsaved work: the refusal and the
+// diagnosis name the submodule with what to do (push its work to its own
+// remote), and only the person's agreement (force) goes past it, the record
+// naming the submodule as not kept — never as kept in the bundle (PM-3, PM-6).
+func TestPoolMigrateRetire_Submodule_NotKept_NeedsForce(t *testing.T) {
+	t.Parallel()
+	r := newRetireRig(t, func(f *poolMigrateFixture) {
+		f.ssh.output = poolMigrateCensusFor("main", "origin", "main", "", "TG vendor/lib", "TS 1 .M SC.. 160000 160000 160000 aaaa bbbb vendor/lib")
+	})
+
+	out, isErr := r.retire(t, retireInput(false, false))
+	if !isErr || out["code"] != platform.ErrDiagnosisRequired {
+		t.Fatalf("diagnose = %v", out)
+	}
+	wd, _ := out["wouldDestroy"].(map[string]any)
+	loss, _ := wd["wouldDestroy"].(map[string]any)
+	if unsaved := strings.Join(retireStrings(loss["unsavedWork"]), "\n"); !strings.Contains(unsaved, "vendor/lib") {
+		t.Errorf("unsavedWork = %q, want the submodule named", unsaved)
+	}
+
+	out, _ = r.retire(t, retireInput(true, false))
+	if out["status"] != "retire-refused" || !slices.Equal(poolMigrateReasons(out), []string{"unsaved-work"}) {
+		t.Fatalf("ack without force = %v, want refused for the submodule", out)
+	}
+	if msg := poolMigrateRefusalMessage(out, "unsaved-work"); !strings.Contains(msg, "vendor/lib") || !strings.Contains(msg, "its own remote") {
+		t.Errorf("message = %q, want the submodule named with pushing to its own remote", msg)
+	}
+	r.assertNothingRetired(t)
+
+	out, isErr = r.retire(t, retireInput(true, true))
+	if isErr || out["step"] != "retired" {
+		t.Fatalf("forced = %v", out)
+	}
+	block := retireBlock(t, out)
+	if kept := strings.Join(retireStrings(block["keptInBundle"]), "\n"); strings.Contains(kept, "vendor/lib") {
+		t.Errorf("keptInBundle = %q names the submodule, which the bundle does not carry", kept)
+	}
+	if notKept := strings.Join(retireStrings(block["notKept"]), "\n"); !strings.Contains(notKept, "vendor/lib") {
+		t.Errorf("notKept = %q, want the submodule named", notKept)
+	}
+}
+
 func TestPoolMigrateRetire_ReflogOnlyCommits_NeverHoldTheRetire(t *testing.T) {
 	t.Parallel()
 	r := newRetireRig(t, func(f *poolMigrateFixture) {
@@ -963,6 +1009,39 @@ func TestPoolMigrateRetire_ResumeTable(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestPoolMigrateRetire_CutBeforeTheRekey_ResumeReadsTheGuards: each phase is
+// saved before its work, so a retire cut between saving rewritten and the
+// re-key leaves a record at rewritten over a pair still keyed by the dev.
+// Nothing about the pair moved yet, so the resume is still before the split:
+// it reads every guard again — the lease of the pool held and verified among
+// them (PM-12) — exactly as a resume from bundled does, and a guard that fails
+// now aborts the retire, deleting nothing (PM-7).
+func TestPoolMigrateRetire_CutBeforeTheRekey_ResumeReadsTheGuards(t *testing.T) {
+	t.Parallel()
+	r := newRetireRig(t, nil)
+	r.seedRetireRecord(t, poolRetireBundled)
+	rec := retireRecordOf(t, r.f.stateDir)
+	rec.Phase = poolRetireRewritten
+	if err := savePoolRetireRecord(r.f.stateDir, rec); err != nil {
+		t.Fatal(err)
+	}
+	// The lease ended since: zcp holds no lease of the pool any more.
+	if err := os.Remove(filepath.Join(r.f.stateDir, "leases", retireLeaseAlias+".json")); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _ := r.retire(t, retireInput(true, false))
+	if got := r.client.deletes(); len(got) > 0 {
+		t.Fatalf("deletes = %q, want none: the resume never read that the pool's lease ended", got)
+	}
+	if out["status"] != "aborted" || !slices.Contains(poolMigrateReasons(out), "no-lease") {
+		t.Fatalf("resume = %v, want aborted for the lease that is no longer held", out)
+	}
+	if meta, _ := workflow.FindServiceMeta(r.f.stateDir, "appstage"); meta == nil || meta.Hostname != "appdev" || meta.DevIsPool() {
+		t.Fatalf("the stage's pair = %+v, want it still keyed by appdev", meta)
 	}
 }
 
@@ -1378,5 +1457,61 @@ func TestPoolMigrateRetire_NameRetaken_RetiresTheNewService(t *testing.T) {
 	}
 	if got, err := os.ReadFile(kept.Bundle.Path); err != nil || string(got) != oldBytes {
 		t.Fatalf("the old dev's bundle at %s = %q (%v), want it kept as it was", kept.Bundle.Path, got, err)
+	}
+}
+
+// TestPoolMigrateRetire_NameRetaken_KeepsTheVolumeBundleApart: a variant-B
+// retire forced past a code volume whose checkout moved holds two bundles —
+// <dev>.bundle and <dev>.volume.bundle, the newer and only copy of the late
+// writes. Kept apart for a new service under the old hostname, both move to
+// the old id's names and both records' restore steps name them there: a
+// later variant-B retire of the new service writes neither over (PM-7).
+func TestPoolMigrateRetire_NameRetaken_KeepsTheVolumeBundleApart(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	dir := filepath.Join(stateDir, "migrate")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	devBundle, volBundle := poolRetireBundlePath(stateDir, "appdev"), filepath.Join(dir, "appdev"+poolRetireVolumeBundleSuffix)
+	for path, body := range map[string]string{devBundle: "the old dev's bundle", volBundle: "the old volume's late writes"} {
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rec := &poolRetireRecord{
+		Dev: "appdev", DevServiceID: "svc-dev-old", Phase: poolRetireRetired, StartedAt: "2026-10-20T10:00:00Z",
+		Bundle:  &ops.PoolMigrateBundle{Path: devBundle, Bytes: 20},
+		Restore: []string{"git clone " + devBundle + " restored"},
+		CodeVolume: &poolRetireVolume{Hostname: "vol", ServiceID: "svc-vol-old", MountPath: "/var/www/ws",
+			Bundle:  &ops.PoolMigrateBundle{Path: volBundle, Bytes: 28},
+			Restore: []string{"git clone " + volBundle + " restored"}},
+	}
+	if err := keepRetiredApart(stateDir, rec); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(volBundle); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the old volume bundle still lies at %s, where a new retire writes its own (%v)", volBundle, err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "appdev.svc-dev-old.json"))
+	if err != nil {
+		t.Fatalf("the kept record: %v", err)
+	}
+	var kept poolRetireRecord
+	if err := json.Unmarshal(raw, &kept); err != nil {
+		t.Fatal(err)
+	}
+	if kept.CodeVolume == nil || kept.CodeVolume.Bundle == nil {
+		t.Fatalf("kept record = %s, want its code volume's bundle", raw)
+	}
+	want := filepath.Join(dir, "appdev.svc-dev-old"+poolRetireVolumeBundleSuffix)
+	if kept.CodeVolume.Bundle.Path != want {
+		t.Errorf("kept volume bundle path = %s, want %s", kept.CodeVolume.Bundle.Path, want)
+	}
+	if got, err := os.ReadFile(want); err != nil || string(got) != "the old volume's late writes" {
+		t.Errorf("the old volume bundle at %s = %q (%v), want it moved there as it was", want, got, err)
+	}
+	if steps := strings.Join(kept.CodeVolume.Restore, "\n"); !strings.Contains(steps, want) || strings.Contains(steps, volBundle+" ") {
+		t.Errorf("kept volume restore = %q, want it naming %s", steps, want)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -637,5 +638,73 @@ func TestParsePoolMigrateCensus_IncompleteOrFailed_Error(t *testing.T) {
 				t.Fatalf("err = %v, want one naming %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// TestPoolMigrateCensus_Submodule_NamedNeverClean: a submodule is a repository
+// of its own — its objects in .git/modules, never in the superproject's — so
+// neither the bundle nor any other census item sees work inside it: a stash
+// and a commit on a branch of its own, with the submodule's checkout back at
+// the commit the superproject records, leave the superproject's status clean.
+// The census names every submodule of every tree, and a repository holding one
+// is never clean (PM-2): its work cannot be counted, and the bundle does not
+// carry it (PM-3).
+func TestPoolMigrateCensus_Submodule_NamedNeverClean(t *testing.T) {
+	t.Parallel()
+	base := censusBase(t)
+	root := censusCleanRepo(t, base)
+	lib := filepath.Join(base, "libsrc")
+	censusGit(t, base, "init", "-q", "-b", "main", lib)
+	censusWrite(t, filepath.Join(lib, "lib.go"), "package lib\n")
+	censusGit(t, lib, "add", "-A")
+	censusGit(t, lib, "commit", "-q", "-m", "lib-1")
+	censusGit(t, root, "-c", "protocol.file.allow=always", "submodule", "add", "-q", lib, "vendor/lib")
+	censusGit(t, root, "commit", "-q", "-m", "add lib")
+	censusGit(t, root, "push", "-q", "origin", "main")
+
+	sub := filepath.Join(root, "vendor", "lib")
+	censusWrite(t, filepath.Join(sub, "lib.go"), "package lib\n// stashed\n")
+	censusGit(t, sub, "stash", "push", "-q", "-m", "inside the submodule")
+	censusGit(t, sub, "switch", "-q", "-c", "wip")
+	censusWrite(t, filepath.Join(sub, "wip.go"), "package lib\n")
+	censusGit(t, sub, "add", "wip.go")
+	censusGit(t, sub, "commit", "-q", "-m", "wip on no remote")
+	censusGit(t, sub, "switch", "-q", "--detach", "HEAD~1")
+	if out, err := censusGitRun(root, "status", "--porcelain"); err != nil || strings.TrimSpace(out) != "" {
+		t.Fatalf("the superproject must read clean for this case (%v):\n%s", err, out)
+	}
+
+	c, _ := readCensus(t, root)
+	if c.Clean {
+		t.Fatalf("a repository whose submodule holds a stash and a commit on no remote read clean: %+v", c)
+	}
+	raw, err := json.Marshal(c.Trees[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"submodules":{"count":1,"paths":["vendor/lib"]}`) {
+		t.Errorf("the main tree = %s, want submodules naming vendor/lib", raw)
+	}
+}
+
+// TestPoolMigrateCensus_WorktreePathWithNewline_NoCensus: `git worktree list
+// --porcelain` prints a worktree path verbatim, a newline in it included, so a
+// line-by-line read would cut the path and take the worktree for one whose
+// directory is gone — its edits neither holding the retire nor bundled. Such
+// a path is no census: the read fails naming it, never a clean census (PM-2).
+func TestPoolMigrateCensus_WorktreePathWithNewline_NoCensus(t *testing.T) {
+	t.Parallel()
+	base := censusBase(t)
+	root := censusCleanRepo(t, base)
+	odd := filepath.Join(base, "odd\nname")
+	censusGit(t, root, "worktree", "add", "-q", "-b", "odd", odd, "main")
+	censusWrite(t, filepath.Join(odd, "app.txt"), "edited in the odd worktree\n")
+
+	census, err := ReadPoolMigrateCensus(context.Background(), &censusLocalSSH{}, "appdev", root)
+	if err == nil {
+		t.Fatalf("a worktree whose path holds a newline read as a census: %+v", census)
+	}
+	if !strings.Contains(err.Error(), "newline") {
+		t.Errorf("err = %v, want it to name the worktree path holding a newline", err)
 	}
 }

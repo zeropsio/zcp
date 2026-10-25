@@ -29,6 +29,7 @@
       "state": "held",
       "unverified": false,
       "acquiredAt": "2026-10-23T18:00:00Z",
+      "repo": "https://github.com/example/weather",
       "activity": {
         "lastChangeAt": "2026-10-23T19:12:40Z",
         "acquiredAt": "2026-10-23T18:00:00Z",
@@ -48,6 +49,7 @@
       "state": "held",
       "unverified": true,
       "acquiredAt": "2026-10-23T18:00:00Z",
+      "repo": "https://github.com/example/weather-admin",
       "activity": {
         "acquiredAt": "2026-10-23T18:00:00Z",
         "note": "not read: the pool's orchestrator did not confirm this lease, so its container may no longer be this lease's"

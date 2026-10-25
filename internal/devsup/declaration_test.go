@@ -271,6 +271,28 @@ func TestDeclaration_PreviewPortBase_ParsesAndOldFilesUnchanged(t *testing.T) {
 			in:      `{"version":1,"servers":[{"name":"a","port":1,"command":"x","preview":true},{"name":"b","port":2,"command":"y","preview":true}]}`,
 			wantErr: `"a" and "b" are both marked preview`,
 		},
+		{
+			// Each pool's supervisor runs only its own entries (ForService):
+			// one preview each, never two in one supervisor.
+			name: "two pools each marking the preview of its own servers",
+			in: `{"version":1,"previewPortBase":9000,"servers":[` +
+				`{"name":"web","port":3000,"command":"x","service":"webpool","preview":true},{"name":"storybook","port":6006,"command":"y","service":"webpool"},` +
+				`{"name":"api","port":8080,"command":"z","service":"apipool","preview":true},{"name":"docs","port":8081,"command":"w","service":"apipool"}]}`,
+			wantBase:    9000,
+			wantPreview: []string{"web", "api"},
+		},
+		{
+			name:    "two previews of one pool",
+			in:      `{"version":1,"servers":[{"name":"a","port":1,"command":"x","service":"webpool","preview":true},{"name":"b","port":2,"command":"y","service":"webpool","preview":true}]}`,
+			wantErr: `"a" and "b" are both marked preview`,
+		},
+		{
+			// An entry naming no service runs in every supervisor, beside
+			// each pool's own.
+			name:    "a preview naming no service beside one naming a pool",
+			in:      `{"version":1,"servers":[{"name":"a","port":1,"command":"x","preview":true},{"name":"b","port":2,"command":"y","service":"webpool","preview":true}]}`,
+			wantErr: `"a" and "b" are both marked preview`,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

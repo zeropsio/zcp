@@ -12,6 +12,7 @@ import (
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops/bundle"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/recipe"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -165,6 +166,116 @@ func TestGroupRecipeService_AddThenRemovePart_OnlyThatService(t *testing.T) {
 	if removed := lab.hq.recipeFiles(recipeBranch(3)); !equalFiles(removed, main) {
 		t.Errorf("removing the part does not bring the tiers back to what main held before it: %v", diffPaths(main, removed))
 	}
+}
+
+// recipePreviewYAML is the lab app's zerops.yaml once its stages deploy Mate's
+// preview variants: each variant extends the setup production builds and
+// changes only the framing (docs/spec-mate.md, the preview pane).
+const recipePreviewYAML = `zerops:
+  - setup: api
+    run:
+      base: nodejs@22
+      start: zcp-devsup run
+  - setup: prod
+    run:
+      base: nodejs@22
+      start: node server.js
+  - setup: preview
+    extends: prod
+    run:
+      routing:
+        headers:
+          - for: "/"
+            values:
+              Content-Security-Policy: "frame-ancestors 'self' https://mate.zerops.io https://*.zerops.app"
+  - setup: worker
+    run:
+      base: nodejs@22
+      start: node worker.js
+  - setup: workerpreview
+    extends: worker
+    run:
+      routing:
+        headers:
+          - for: "/"
+            values:
+              Content-Security-Policy: "frame-ancestors 'self' https://mate.zerops.io https://*.zerops.app"
+`
+
+// composeLabWithYAML composes the lab's recipe as composeGroupRecipe does, the
+// pair's zerops.yaml read as yaml — the lab mounts no checkout.
+func composeLabWithYAML(t *testing.T, lab *hqLab, client platform.Client, yaml string) groupRecipeComposition {
+	t.Helper()
+	comp, outcome, ok := composeGroupRecipe(t.Context(), client, lab.hq.srv.Client(), lab.rt, lab.stateDir)
+	if !ok {
+		t.Fatalf("compose: %+v", outcome)
+	}
+	t.Cleanup(comp.close)
+	comp.inputs.Runtimes[0].ZeropsYAMLBody = yaml
+	layout, _, err := bundle.BuildGroupRecipe(comp.inputs)
+	if err != nil {
+		t.Fatalf("compose with the zerops.yaml: %v", err)
+	}
+	if comp.files, err = recipe.Build(layout); err != nil {
+		t.Fatal(err)
+	}
+	return comp
+}
+
+// A stage that deploys Mate's preview variant is the same part as the setup
+// the variant extends: the AI Agent tier carries the stage building the
+// variant, the group environments the part building the setup it extends
+// (bundle.groupEnvironmentSetup). So a stage that starts deploying a variant
+// changes no part — the reconcile proposes nothing over main — and a part the
+// Mate gains with a variant is ONE proposal, adding the stage to the AI Agent
+// tier and the extended setup's runtime to Stage and Small Production.
+func TestGroupRecipeService_PreviewVariant_IsThePartOfTheSetupItExtends(t *testing.T) {
+	t.Run("a stage that starts deploying the variant changes no part", func(t *testing.T) {
+		lab, _ := newPartsLab(t)
+		if err := workflow.UpdateServiceMeta(lab.stateDir, "appdev", func(m *workflow.ServiceMeta) error {
+			m.SetStageSetup("appstage", "preview")
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		comp := composeLabWithYAML(t, lab, lab.mock, recipePreviewYAML)
+		steer, err := recipePartSteer(t.Context(), comp)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if steer != "" {
+			t.Errorf("steer = %q, want nothing: the stage builds the variant of the part main carries", steer)
+		}
+	})
+	t.Run("a part gained with a variant is one proposal over every tier", func(t *testing.T) {
+		lab, _ := newPartsLab(t)
+		if err := workflow.UpdateServiceMeta(lab.stateDir, "appdev", func(m *workflow.ServiceMeta) error {
+			m.Stages = append(m.Stages, topology.StageRef{Hostname: "workerstage", SetupName: "workerpreview"})
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		comp := composeLabWithYAML(t, lab, recipeReconcileClient(workerStage), recipePreviewYAML)
+		part, found, err := recipePartOf(t.Context(), comp, "workerstage")
+		if err != nil || !found {
+			t.Fatalf("part of workerstage = %+v, %v, %v", part, found, err)
+		}
+		tiers, err := planRecipeService(t.Context(), comp, part)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := []string{"0 — AI Agent: adds workerstage", "3 — Stage: adds worker", "4 — Small Production: adds worker"}
+		if got := serviceTierEdits(tiers); strings.Join(got, "; ") != strings.Join(want, "; ") {
+			t.Errorf("service=workerstage edits = %q, want %q", got, want)
+		}
+		steer, err := recipePartSteer(t.Context(), comp)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(steer, `service="workerstage"`) || strings.Contains(steer, `service="worker"`) {
+			t.Errorf("steer = %q, want the one call service=\"workerstage\", never a second one for the extended setup's runtime", steer)
+		}
+	})
 }
 
 func equalFiles(a, b map[string]string) bool { return len(diffPaths(a, b)) == 0 }
