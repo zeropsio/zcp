@@ -123,3 +123,65 @@ func TestDevServerTool_Lease_ProcessLimit_SaysNotAnswering(t *testing.T) {
 		}
 	}
 }
+
+// TestLeaseTool_NotAnswering_RidesEveryEnvelopeUntilACallReachesIt: a lease a
+// call found not answering — here a sync, at the container's process limit —
+// is notAnswering, with why, in the envelope's leases[] of every later call,
+// one that runs nothing in the lease too (a rollout): the envelope carries
+// what zcp recorded, never an ssh read of its own. The first call that reaches
+// the container again (status, once the processes filling it ended) clears it
+// (docs/spec-mate.md §2.8a.3).
+func TestLeaseTool_NotAnswering_RidesEveryEnvelopeUntilACallReachesIt(t *testing.T) {
+	t.Parallel()
+	var wedge atomic.Bool
+	ssh := wedgingSSH(t, &wedge)
+	srv, _ := leaseToolServerSSH(t, &fakeOrchestrator{}, ssh)
+	envelopeNotAnswering := func(args map[string]any) string {
+		t.Helper()
+		text := getTextContent(t, callTool(t, srv, "zerops_lease", args))
+		var got struct {
+			Envelope struct {
+				Leases []struct {
+					Alias        string `json:"alias"`
+					NotAnswering string `json:"notAnswering"`
+				} `json:"leases"`
+			} `json:"envelope"`
+		}
+		if err := json.Unmarshal([]byte(text), &got); err != nil {
+			t.Fatalf("%v: result is not JSON: %v\n%s", args, err, text)
+		}
+		if len(got.Envelope.Leases) != 1 || got.Envelope.Leases[0].Alias != "devpool-3" {
+			t.Fatalf("%v: envelope leases = %+v, want devpool-3\n%s", args, got.Envelope.Leases, text)
+		}
+		return got.Envelope.Leases[0].NotAnswering
+	}
+	rollout := map[string]any{"action": "rollout", "pool": "devpool"}
+
+	if why := envelopeNotAnswering(map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo, "branch": "build-stamp"}); why != "" {
+		t.Fatalf("acquire's envelope says devpool-3 is not answering: %q", why)
+	}
+	wedge.Store(true)
+	if res := callTool(t, srv, "zerops_lease", map[string]any{"action": "sync", "lease": "devpool-3"}); !res.IsError {
+		t.Fatalf("a sync from a lease that does not answer succeeded: %s", getTextContent(t, res))
+	}
+
+	ssh.mu.Lock()
+	sent := len(ssh.calls)
+	ssh.mu.Unlock()
+	if why := envelopeNotAnswering(rollout); !strings.Contains(why, "process limit") {
+		t.Errorf("after the sync found it at its process limit, a rollout's envelope says devpool-3 notAnswering %q, want its process limit", why)
+	}
+	ssh.mu.Lock()
+	if extra := ssh.calls[sent:]; len(extra) > 0 {
+		t.Errorf("the rollout's envelope ran ssh in the lease: %q", extra)
+	}
+	ssh.mu.Unlock()
+
+	wedge.Store(false)
+	if why := envelopeNotAnswering(map[string]any{"action": "status"}); why != "" {
+		t.Errorf("status reached devpool-3, but its envelope still says notAnswering %q", why)
+	}
+	if why := envelopeNotAnswering(rollout); why != "" {
+		t.Errorf("status reached devpool-3, but a later rollout's envelope still says notAnswering %q", why)
+	}
+}
