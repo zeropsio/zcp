@@ -256,6 +256,31 @@ func infrastructureKindError(rt RuntimeTarget) string {
 	return ""
 }
 
+// liveInfrastructureError refuses a pool or Box the project runs as any half
+// of a pair — the dev half, a stage, a code volume's further dev service — by
+// its LIVE type: an adopt plan names services that exist, and the type the
+// plan writes for one proves nothing about it, so infrastructureKindError,
+// which reads the plan's types, never sees a pool written down as
+// nodejs@22. A pool keys a pair only through the pool migration's re-key
+// (spec-workflows.md §8 PS-2, §13 PM-10). "" when no half is one.
+func liveInfrastructureError(rt RuntimeTarget, liveTypes map[string]string) string {
+	halves := append(append([]string{rt.DevHostname}, rt.StageHostnames()...), rt.CodeVolume.DevServiceHostnames()...)
+	for _, host := range halves {
+		typ := liveTypes[host]
+		kind := ""
+		switch {
+		case topology.IsPoolType(typ):
+			kind = "a Swarm pool"
+		case topology.IsSandboxType(typ):
+			kind = "a Zerops Box"
+		default:
+			continue
+		}
+		return fmt.Sprintf("target %q: %q is %s (%s) in this project, not an app runtime — it is infrastructure an app uses, never adopted as a half of a pair; leave it out of the plan (a pool keys a pair only through zerops_workflow workflow=\"pool-migrate\")", rt.DevHostname, host, kind, typ)
+	}
+	return ""
+}
+
 // publicAccessPlanError validates a target's publicAccess field (§8 O3
 // PA-6): "" (→auto), auto, subdomain, none. "domain" is derive-only — adopt
 // sets it from observed custom domains; an agent-authored plan can never
@@ -434,10 +459,14 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, schemas *schema.Schemas
 		liveManaged = schemas.ManagedBaseNames()
 	}
 
-	// Build set of live service hostnames for CREATE/EXISTS validation.
+	// Build set of live service hostnames for CREATE/EXISTS validation, and
+	// each one's live type: a plan's type for a service that exists proves
+	// nothing about it.
 	liveServiceNames := make(map[string]bool, len(liveServices))
+	liveTypes := make(map[string]string, len(liveServices))
 	for _, svc := range liveServices {
 		liveServiceNames[svc.Name] = true
+		liveTypes[svc.Name] = svc.ServiceStackTypeInfo.ServiceStackTypeVersionName
 	}
 
 	// Collect all CREATE + EXISTS hostnames across targets for SHARED
@@ -524,6 +553,10 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, schemas *schema.Schemas
 		if liveServices != nil {
 			if collisionErr := runtimeCollisionError(rt, liveServiceNames); collisionErr != "" {
 				errs = append(errs, collisionErr)
+				continue
+			}
+			if err := liveInfrastructureError(rt, liveTypes); err != "" {
+				errs = append(errs, err)
 				continue
 			}
 		}
