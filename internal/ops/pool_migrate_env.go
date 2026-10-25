@@ -401,10 +401,12 @@ func ReadPoolMigrateEnv(ctx context.Context, client platform.Client, in PoolMigr
 		switch {
 		case ok && poolEnvSecret(have):
 			out.Present = append(out.Present, row.Key)
+		case requested[row.Key]:
+			// Asked of the person by the step, which could not read it on
+			// the dev: absent from the pool, or held there plain.
+			out.Requests = append(out.Requests, poolEnvRequest(row.Key, in))
 		case ok:
 			out.ToWrite = append(out.ToWrite, PoolMigrateEnvKey{Key: row.Key, Sensitive: true, Change: PoolEnvChangeUpdate})
-		case requested[row.Key]:
-			out.Requests = append(out.Requests, poolEnvRequest(row.Key, in))
 		default:
 			out.ToWrite = append(out.ToWrite, PoolMigrateEnvKey{Key: row.Key, Sensitive: true, Change: PoolEnvChangeAdd})
 			held[row.Key] = true
@@ -535,9 +537,11 @@ const (
 	poolSecretWrite poolSecretDecision = iota + 1
 	// poolSecretEqual: the pool holds the dev's, by fingerprint.
 	poolSecretEqual
-	// poolSecretPresent: unreadable on the dev; the pool's own is left.
+	// poolSecretPresent: unreadable on the dev; the pool's own secret is
+	// left.
 	poolSecretPresent
-	// poolSecretAsk: unreadable on the dev and absent on the pool.
+	// poolSecretAsk: unreadable on the dev, and absent on the pool or held
+	// there plain.
 	poolSecretAsk
 	// poolSecretNotRead: the read itself did not answer.
 	poolSecretNotRead
@@ -677,12 +681,15 @@ func (s *poolEnvStep) decideSecret(key string) (*poolEnvWrite, poolSecretDecisio
 			s.rec.Fingerprints[key] = fp
 		}
 		return nil, poolSecretNotRead
-	case !read && onPool:
+	case !read && onPool && poolEnvSecret(have):
 		if fp, kept := s.sides.record.Fingerprints[key]; kept {
 			s.rec.Fingerprints[key] = fp
 		}
 		return nil, poolSecretPresent
 	case !read:
+		// Absent from the pool, or held there plain — which the read side
+		// sends to this step to make a secret — the value is the person's to
+		// give: asked and recorded, so both sides read the ask.
 		return nil, poolSecretAsk
 	}
 	fp := poolEnvFingerprint(s.in.Pool.ID, key, value)
