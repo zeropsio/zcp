@@ -7,7 +7,7 @@ environments: [container]
 multiService: aggregate
 title: "A part's dev pool — lease a container, work, push, release"
 references-atoms: [develop-dynamic-runtime-start-container]
-references-fields: [ops.DeployResult.Warnings, ops.LeaseView.Reused, ops.LeaseView.DevServers, ops.LeaseSyncMember.UnwatchedServers, ops.LeaseView.Idle, ops.LeaseIdle.Next, tools.leaseToolResult.Warm]
+references-fields: [ops.DeployResult.Warnings, ops.LeaseView.Reused, ops.LeaseView.DevServers, ops.LeaseSyncMember.UnwatchedServers, ops.LeaseView.Idle, ops.LeaseIdle.Next, tools.leaseToolResult.Warm, ops.LeaseView.NotAnswering]
 ---
 
 ### A part's dev pool
@@ -149,6 +149,10 @@ stays unleased.
   most likely killed for memory: run heavy checks one at a time and
   single-threaded where a check allows it, or size the pool's `minRam` for
   the dev server plus the heaviest check.
+- A lease that stops answering is reported to the person at once, never
+  waited on or polled in a loop: `zerops_lease action=status` marks it
+  `notAnswering` with why — at its process limit nothing new starts in it
+  until what fills it ends.
 - A container answers SSH only when the pool's `sshIsolation` is set as a
   service env variable admitting the zcp service. The top-level import field
   did not reach pool containers.
