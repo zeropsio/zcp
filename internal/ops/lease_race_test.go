@@ -287,7 +287,7 @@ func TestScale_PoolLowering_ContainerBeingParkedIsLeased(t *testing.T) {
 	if asked == nil {
 		t.Fatal("the guard was not asked")
 	}
-	var leased []string
+	leased := make([]string, 0, len(asked.LeasedDeletes()))
 	for _, c := range asked.LeasedDeletes() {
 		a := c.Alias
 		if c.Yours {
@@ -539,7 +539,7 @@ func TestLeaseStatus_ListingFails_KnownLossesAreLost(t *testing.T) {
 				mock := fx.deps.Client.(*platform.Mock)
 				svc, _ := mock.GetService(context.Background(), "svc-pool")
 				deleting := *svc
-				deleting.Status = "DELETING"
+				deleting.Status = platform.ServiceStatusDeleting
 				mock.WithServices([]platform.ServiceStack{deleting})
 			}},
 		{name: "the pool is gone, the search lagging", recordOf: "svc-pool", want: "no longer exists",

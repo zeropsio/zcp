@@ -826,9 +826,7 @@ func lockLeaseRecord(stateDir, alias string) (func(), error) {
 	if err := os.MkdirAll(filepath.Join(stateDir, leaseLocksDir), 0o700); err != nil {
 		return nil, fmt.Errorf("create lease lock directory: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), leaseRecordLockWait)
-	defer cancel()
-	unlock, err := lockLeaseKey(ctx, leaseRecordLockPath(stateDir, alias))
+	unlock, err := lockLeaseFileWithin(leaseRecordLockPath(stateDir, alias), leaseRecordLockWait)
 	if err != nil {
 		return nil, fmt.Errorf("lock the record of %s: %w", alias, err)
 	}
