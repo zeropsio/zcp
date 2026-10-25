@@ -208,12 +208,13 @@ func LeasePark(ctx context.Context, d LeaseDeps, alias string) (LeaseView, error
 	case c.Status == platform.SwarmContainerStopped:
 		notes = append(notes, "its container was stopped already (outside zcp), so zcp stopped nothing and recorded it parked")
 	default:
-		remounted := func(out error) error {
+		// remounted puts the mount back after a park that stopped nothing.
+		remounted := func(out error) (LeaseView, error) {
 			remount := "its mount is back"
 			if note := d.Host.mountLease(ctx, rec); note != "" {
 				remount = note
 			}
-			return withNote(out, "the lease stays held and running; "+remount)
+			return LeaseView{}, withNote(out, "the lease stays held and running; "+remount)
 		}
 		// Asked again right before the stop (DP-2): the unmount took a
 		// while, and a lease that ended meanwhile is never stopped.
@@ -221,7 +222,7 @@ func LeasePark(ctx context.Context, d LeaseDeps, alias string) (LeaseView, error
 		case fresh.own.lost():
 			return leaseLostOnCall(ctx, d, rec, "park", fresh.why)
 		case fresh.own == leaseUnverified:
-			return LeaseView{}, remounted(unverifiedLeaseRefusal(alias, "parked", fresh))
+			return remounted(unverifiedLeaseRefusal(alias, "parked", fresh))
 		}
 		if _, err := rp.api.Stop(ctx, rec.ContainerID, rec.Lease); err != nil {
 			switch v, held := heldByOtherAsked(ctx, d, rp, rec, err); {
@@ -231,7 +232,14 @@ func LeasePark(ctx context.Context, d LeaseDeps, alias string) (LeaseView, error
 				// Maybe another holder's: never mounted again.
 				return LeaseView{}, heldByOtherUnverifiedRefusal(alias, "parked", v)
 			}
-			return LeaseView{}, remounted(leaseOrchestratorError(ctx, d, rp, "park "+alias, err))
+			// Any other refusal — unknown-lease after a release raced the
+			// renew — says nothing of whose the container is: asked again
+			// before the mount comes back (DP-2), a lease that ended is
+			// dropped as lost, never mounted again.
+			if fresh := renewOwnership(ctx, d, rp, rec); fresh.own.lost() {
+				return leaseLostOnCall(ctx, d, rec, "park", fresh.why)
+			}
+			return remounted(leaseOrchestratorError(ctx, d, rp, "park "+alias, err))
 		}
 	}
 	if !rec.Parked {
@@ -305,6 +313,22 @@ func LeaseUnpark(ctx context.Context, d LeaseDeps, alias string) (LeaseView, err
 			v.State = LeaseStateUnmounted
 			notes = append(notes, fmt.Sprintf("its container runs again but did not answer ssh within %s (%v), so zcp neither mounted it nor made sure its supervisor runs; %s does both once it answers",
 				d.startedSSHWait(), err, LeaseUnparkCall(alias)))
+			if restarted {
+				notes = append(notes, rerouteUnparked(ctx, d, rp, rec))
+			}
+			v.Note = joinNotes(notes...)
+			return v, nil
+		}
+		// Asked again right before the mount and the supervisor (DP-2): the
+		// ssh wait can outlast the lease, and another holder's container is
+		// never mounted or supervised.
+		switch fresh := renewOwnership(ctx, d, rp, rec); {
+		case fresh.own.lost():
+			return leaseLostOnCall(ctx, d, rec, "unpark", fresh.why)
+		case fresh.own == leaseUnverified:
+			v.State = LeaseStateUnmounted
+			notes = append(notes, fmt.Sprintf("its container runs again, but the orchestrator did not answer whether it is still this lease's (%s), so zcp neither mounted it nor made sure its supervisor runs; %s does both once it answers",
+				fresh.why, LeaseUnparkCall(alias)))
 			if restarted {
 				notes = append(notes, rerouteUnparked(ctx, d, rp, rec))
 			}
