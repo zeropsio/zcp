@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"maps"
+	"slices"
 	"strings"
 	"testing"
 
@@ -938,5 +939,50 @@ func TestMountService_AliasShapedName_LookedUpLikeAnyName(t *testing.T) {
 	}
 	if n := mock.CallCount("ListServices"); n != 1 {
 		t.Errorf("ListServices calls = %d, want the one lookup", n)
+	}
+}
+
+// probeWatch is the mock mounter, noting every path it write-probes.
+type probeWatch struct {
+	*mockMounter
+	probed []string
+}
+
+func (p *probeWatch) IsWritable(ctx context.Context, path string) (bool, error) {
+	p.probed = append(p.probed, path)
+	return p.mockMounter.IsWritable(ctx, path)
+}
+
+// TestMountStatus_LeaseMount_NeverWriteProbed: a lease's mount reaches
+// whoever holds its container now — sshfs reconnects to the same hostname
+// after the lease ended outside zcp — and a status asks no orchestrator, so it
+// never writes a probe file through a lease's mount, named or found among the
+// mounts; a service's mount is still probed.
+func TestMountStatus_LeaseMount_NeverWriteProbed(t *testing.T) {
+	t.Parallel()
+	for _, hostname := range []string{"apppool-3", ""} {
+		mock := platform.NewMock().WithServices(testServices())
+		mounter := &probeWatch{mockMounter: newMockMounter()}
+		mounter.mountDirs = []string{"app", "apppool-3"}
+		mounter.states["/var/www/apppool-3"] = platform.MountStateActive
+		mounter.states["/var/www/app"] = platform.MountStateActive
+
+		result, err := MountStatus(context.Background(), mock, "proj-1", mounter, hostname)
+		if err != nil {
+			t.Fatalf("MountStatus(%q): %v", hostname, err)
+		}
+		for _, p := range mounter.probed {
+			if p == "/var/www/apppool-3" {
+				t.Errorf("MountStatus(%q) write-probed the lease mount %s", hostname, p)
+			}
+		}
+		for _, m := range result.Mounts {
+			if m.Hostname == "apppool-3" && (!m.Mounted || !m.Lease) {
+				t.Errorf("MountStatus(%q): lease mount = %+v, want mounted, a lease", hostname, m)
+			}
+		}
+		if hostname == "" && !slices.Contains(mounter.probed, "/var/www/app") {
+			t.Errorf("MountStatus: probed %v, want the service mount /var/www/app still probed", mounter.probed)
+		}
 	}
 }
