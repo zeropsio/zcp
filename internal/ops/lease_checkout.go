@@ -73,15 +73,18 @@ func validateLeaseBranch(branch string) error {
 // userinfo are taken: the credential reaches git through the session-env
 // helper, never through the URL (DP-6), plain http would send it in clear, and
 // a value that is not a URL could be read by git as an option or a transport.
+// A query or a fragment (`?private_token=…`) is refused as userinfo is: the
+// URL is kept verbatim in .git/config, zcp's records, the ssh command line and
+// a failed checkout's message (review R4-9).
 func validateLeaseRepo(raw string) (string, error) {
 	bad := platform.NewPlatformError(platform.ErrInvalidParameter,
 		"repo is not a clone URL a lease takes",
-		"Pass an https://host/owner/repo URL with no credentials in it; the pool's GIT_TOKEN authenticates the clone")
+		"Pass an https://host/owner/repo URL with no credentials, query or fragment in it; the pool's GIT_TOKEN authenticates the clone")
 	raw = strings.TrimSpace(raw)
 	if !strings.HasPrefix(raw, "https://") {
 		return "", bad
 	}
-	if strings.ContainsFunc(raw, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
+	if strings.ContainsFunc(raw, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) || strings.ContainsAny(raw, "?#") {
 		return "", bad
 	}
 	u, err := url.Parse(raw)
