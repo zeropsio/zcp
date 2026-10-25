@@ -95,12 +95,16 @@ func hqStateNow(ctx context.Context, httpClient ops.HTTPDoer) *hq.MateState {
 // never open, while the pair backoff holds the pass off. The state is read
 // once, inside a Mate, only when the section has a change or a leased branch
 // to name — an idle Mate costs HQ nothing — and nothing is written: the pass
-// still says a merge or a standing once, with what to do. asLastRead: HQ did
-// not answer, and the section is the ledger's, as last told.
+// still says a merge or a standing once, with what to do. asLastRead: the
+// state was not read — outside a Mate, or HQ did not answer — and the section
+// is the ledger's, as last told.
 func statusHQChanges(ctx context.Context, httpClient ops.HTTPDoer, rt runtime.Info, stateDir, address string, now time.Time) (changes []workflow.HQRepoChanges, asLastRead bool) {
 	kept := hqChangesStatus(stateDir, address, now, nil)
-	if len(kept) == 0 || !rt.MateEnabled {
+	if len(kept) == 0 {
 		return kept, false
+	}
+	if !rt.MateEnabled {
+		return kept, true
 	}
 	state := hqStateNow(ctx, httpClient)
 	if state == nil {

@@ -4119,8 +4119,10 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   the pass off: a merged change names the leases still on its branch, to release, and that new work
   starts from `main`; a closed or no longer listed one is said so. The read writes nothing (neither
   the ledger nor what was told), so the pass still says a merge or a standing once, with what to do.
-  HQ not answering, the section is the ledger's standing as told, labelled as last read
+  HQ not answering — or outside a Mate, where status reads nothing of HQ — the section is the
+  ledger's standing as told, labelled as last read
   (`TestStatus_OneBlockPerRepository`, `TestStatus_ChangesReadFresh_AsLastReadWhileHQIsDown`,
+  `TestStatusHQChanges_OutsideAMate_AsLastRead`,
   `TestRenderStatus_ChangesBlockPerRepository`). `zerops_lease action=status` names each group's
   change (repository@branch, once however many leases it has) from zcp's ledger and lease records,
   its standing read the same way — once, inside a Mate, only when a lease group of an HQ repository
