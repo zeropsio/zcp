@@ -77,7 +77,7 @@ func (r *syncRemote) ExecSSH(_ context.Context, host, command string) ([]byte, e
 	switch {
 	case strings.Contains(command, "status --porcelain"):
 		return []byte(r.dirty[host]), nil
-	case strings.Contains(command, "rev-list --count HEAD --not --remotes=origin"):
+	case strings.Contains(command, "rev-list --count --branches"):
 		return []byte("1\n"), nil
 	case strings.Contains(command, "push --porcelain"):
 		if r.push == nil {

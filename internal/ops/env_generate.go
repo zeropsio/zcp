@@ -67,6 +67,11 @@ type EnvDotenvResult struct {
 	Refused             bool     `json:"refused,omitempty"`
 }
 
+// previousDotenvValueMask is what a generate-dotenv diff shows for the value a
+// key had in the existing .env: that literal has no provenance zcp can read,
+// so it may be a secret whatever the key's new source is.
+const previousDotenvValueMask = "<not shown: the existing .env value>"
+
 // platformInternalKeys is the denylist of project-level keys that ship
 // inside a Zerops project for platform-internal use and have no value
 // for a local .env (deploy tokens, CDN URLs, runtime-only placeholders).
@@ -84,6 +89,7 @@ var platformInternalKeys = map[string]bool{
 	"ZCP_API_KEY":           true,
 	GitTokenEnvKey:          true,
 	LaunchTokenEnvKey:       true,
+	PoolHQCredentialEnvKey:  true,
 	"envIsolation":          true,
 	"sshIsolation":          true,
 	"apiCdnUrl":             true,
@@ -404,15 +410,22 @@ func EnvGenerateDotenv(
 	// platformInternalKeys already denylists the ZCP-owned keys out of the
 	// plan, so that class is defense-in-depth keeping every echo site on one
 	// owner.
+	// The before side is the existing .env's literal, which carries no word of
+	// where it came from (no manifest, docs/spec-env-handling.md §6.1): a
+	// secret a sensitive source rendered there earlier — a ref the key no
+	// longer uses — reads like any other value. So it is never echoed; the
+	// after side is masked by the plan's own classification.
 	sensitiveKeys := make(map[string]bool, len(plan.Keys))
 	for _, k := range plan.Keys {
 		sensitiveKeys[k.Key] = k.Sensitive
 	}
 	for i := range diff.Modified {
-		if masked, redacted := RedactEnvValue(diff.Modified[i].Key, diff.Modified[i].To, "", sensitiveKeys[diff.Modified[i].Key]); redacted {
-			diff.Modified[i].From = masked
-			diff.Modified[i].To = masked
+		m := &diff.Modified[i]
+		if masked, redacted := RedactEnvValue(m.Key, m.To, "", sensitiveKeys[m.Key]); redacted {
+			m.From, m.To = masked, masked
+			continue
 		}
+		m.From = previousDotenvValueMask
 	}
 
 	result := &EnvDotenvResult{

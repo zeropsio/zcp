@@ -394,6 +394,14 @@ func TestLeaseRelease_ResetPassedAndRecordRemoved(t *testing.T) {
 		t.Run("force="+strconv.FormatBool(force), func(t *testing.T) {
 			t.Parallel()
 			fx := newLeaseFixture(t)
+			// The guard reads a clean checkout, so the unforced release goes
+			// ahead too.
+			fx.deps.SSH = &leaseSSH{fn: func(_, command string) ([]byte, error) {
+				if strings.Contains(command, "rev-list --count") {
+					return []byte("0\n"), nil
+				}
+				return nil, nil
+			}}
 			fx.swarm.acquired = acquiredAs(3)
 			if _, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, "feature"); err != nil {
 				t.Fatalf("acquire: %v", err)

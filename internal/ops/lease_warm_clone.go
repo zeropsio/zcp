@@ -41,9 +41,11 @@ import (
 //
 // zcp writes into a free container only right after reading it by id as free,
 // only for a pool it leased a repository from, and — for a repository on the
-// Mate's HQ — only once the pool's GIT_TOKEN holds this Mate's current HQ
-// credential by zcp's own record (DP-16): the clone authenticates exactly as a
-// checkout does and writes no credential, helper or identity.
+// Mate's HQ — only once the pool's HQ credential (PoolHQCredentialEnvKey) is
+// this Mate's current one by zcp's own record (DP-16): the clone authenticates
+// exactly as a checkout does — a repository outside HQ from the pool's
+// GIT_TOKEN, one on HQ from the HQ credential, which no other repository's
+// helper reads — and writes no credential, helper or identity.
 
 // leaseWarmStateFile is the clone's state, inside the clone's .git so it lives
 // and goes with the clone.
@@ -140,7 +142,8 @@ func leaseWarmRepoKey(repo string) string {
 // The clone runs in its own session (setsid), so a checkout can stop its whole
 // process group; its output goes to $HOME/.zcp/warm/clone.log. It fetches
 // through the inline helper a checkout uses (leaseCredentialHelperFor), so the
-// credential comes from the session's GIT_TOKEN and is never composed in, and
+// credential comes from the session's env — GIT_TOKEN, or the pool's HQ
+// credential for a repository on HQ — and is never composed in, and
 // it persists nothing: the checkout that takes the clone sets the helper and
 // the identity. repo and workDir are shell-quoted.
 func leaseWarmCloneCommand(workDir, repo, hqURL string) string {
@@ -310,19 +313,19 @@ func readWarmClone(stateDir, pool string) *LeaseWarmClone {
 	return &c
 }
 
-// warmCloneCredentialGap says why the pool's GIT_TOKEN cannot fetch repo for a
-// clone zcp would start now, "" when it can: a repository outside the Mate's
-// HQ takes the pool's own GIT_TOKEN (the user's, DP-6); one on HQ takes only
-// this Mate's HQ credential, which only an acquire writes there (DP-16), so a
-// clone waits for zcp's record to say the pool holds the credential the
-// enrollment holds now.
+// warmCloneCredentialGap says why the pool cannot fetch repo for a clone zcp
+// would start now, "" when it can: a repository outside the Mate's HQ takes
+// the pool's own GIT_TOKEN (the user's, DP-6); one on HQ takes only this
+// Mate's HQ credential, which only an acquire writes there (DP-16, under
+// PoolHQCredentialEnvKey), so a clone waits for zcp's record to say the pool
+// holds the credential the enrollment holds now.
 func warmCloneCredentialGap(d LeaseDeps, pool *platform.ServiceStack, repo string) string {
 	if !IsHQRemote(repo, d.hqAddress()) {
 		return ""
 	}
 	const onHQ = "the repository is on this Mate's HQ, whose git takes only this Mate's HQ credential, and "
 	if d.PoolCredential.Read == nil {
-		return onHQ + "zcp runs outside a Mate, so the pool's GIT_TOKEN holds no HQ credential it wrote"
+		return onHQ + "zcp runs outside a Mate, so the pool holds no HQ credential it wrote"
 	}
 	credential, ok := d.PoolCredential.Read()
 	if !ok || credential == "" {
@@ -330,7 +333,7 @@ func warmCloneCredentialGap(d LeaseDeps, pool *platform.ServiceStack, repo strin
 	}
 	rec, found := readPoolCredential(d.StateDir, pool.Name)
 	if !found || rec.PoolServiceID != pool.ID || rec.Fingerprint != hq.CredentialFingerprint(credential) {
-		return onHQ + "zcp's record does not say the pool's GIT_TOKEN holds the one the enrollment holds now (an acquire of an HQ repository writes it)"
+		return onHQ + "zcp's record does not say the pool holds the one the enrollment holds now (an acquire of an HQ repository writes it)"
 	}
 	return ""
 }
@@ -350,7 +353,7 @@ func (w *LeaseWarm) cloneLater(ctx context.Context, d LeaseDeps, rp *resolvedPoo
 // cloneInto starts, in each container of ids still free, the clone of the
 // repository the pool's last lease checked out, and records what it did. It
 // does nothing for a pool zcp never leased a repository from, and records a
-// skip when the pool's GIT_TOKEN cannot fetch it (warmCloneCredentialGap).
+// skip when the pool's credential cannot fetch it (warmCloneCredentialGap).
 func (w *LeaseWarm) cloneInto(ctx context.Context, d LeaseDeps, rp *resolvedPool, ids []string) {
 	if d.SSH == nil || len(ids) == 0 {
 		return

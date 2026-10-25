@@ -237,14 +237,18 @@ const leaseCredentialHelperShell = `!f() { test "$1" = get || return 0; test -n 
 
 // leaseHQCredentialHelperShell is leaseCredentialHelperShell for a repository
 // on the Mate's HQ, whose git takes only the user `mate` (as
-// hqCredentialHelperShell answers it). Unlike that helper it never falls back
-// to `zcp hq git-credential`: zcp is not installed in a pool container, so it
-// answers from GIT_TOKEN or not at all.
-const leaseHQCredentialHelperShell = `!f() { test "$1" = get || return 0; test -n "$GIT_TOKEN" || return 0; echo username=mate; echo "password=$GIT_TOKEN"; }; f`
+// hqCredentialHelperShell answers it) with this Mate's HQ credential — which
+// the pool holds under a variable of its own (PoolHQCredentialEnvKey), never
+// as GIT_TOKEN, so no helper a repository outside HQ uses ever reads it. Unlike
+// hqCredentialHelperShell it never falls back to `zcp hq git-credential`: zcp
+// is not installed in a pool container, so it answers from that variable or
+// not at all.
+const leaseHQCredentialHelperShell = `!f() { test "$1" = get || return 0; test -n "$` + PoolHQCredentialEnvKey + `" || return 0; echo username=mate; echo "password=$` + PoolHQCredentialEnvKey + `"; }; f`
 
 // leaseCredentialHelperFor is the helper a lease of repo authenticates with:
-// HQ's user for a repository on the Mate's HQ (hqURL, "" without one), the
-// lease's oauth2 helper otherwise.
+// HQ's user and the pool's HQ credential for a repository on the Mate's HQ
+// (hqURL, "" without one), the lease's oauth2 helper and the pool's GIT_TOKEN
+// otherwise.
 func leaseCredentialHelperFor(repo, hqURL string) string {
 	if IsHQRemote(repo, hqURL) {
 		return leaseHQCredentialHelperShell
@@ -346,14 +350,14 @@ func classifyCheckoutFailure(err error, onHQ bool) (code, suggestion string) {
 	switch {
 	case containsAny(out, "could not read username", "could not read password", "terminal prompts disabled"):
 		if onHQ {
-			return platform.ErrPrerequisiteMissing, hqLeaseCredentialSuggestion("the container's session had no GIT_TOKEN: the pool's secret is not set (or is empty), or had not reached the session yet")
+			return platform.ErrPrerequisiteMissing, hqLeaseCredentialSuggestion("the container's session had no " + PoolHQCredentialEnvKey + ": the pool's secret is not set (or is empty), or had not reached the session yet")
 		}
 		return platform.ErrGitTokenMissing,
 			"git asked for a credential and the container's session had none: the pool's GIT_TOKEN secret is not set (or is empty). Private repositories need it"
 	case containsAny(out, "authentication failed", "invalid username or password", "invalid credentials",
 		"permission denied", "error: 401", "error: 403", "password authentication was removed"):
 		if onHQ {
-			return platform.ErrPrerequisiteMissing, hqLeaseCredentialSuggestion("HQ refused the pool's GIT_TOKEN for that user: it is not this Mate's current HQ credential")
+			return platform.ErrPrerequisiteMissing, hqLeaseCredentialSuggestion("HQ refused the pool's " + PoolHQCredentialEnvKey + " for that user: it is not this Mate's current HQ credential")
 		}
 		return platform.ErrGitTokenInvalid,
 			"The remote refused the pool's GIT_TOKEN (bad, expired or without access to this repository)"
@@ -375,14 +379,14 @@ func classifyCheckoutFailure(err error, onHQ bool) (code, suggestion string) {
 }
 
 // hqLeaseCredentialSuggestion is what a lease of a repository on the Mate's HQ
-// lacks when HQ's git would not take the pool's GIT_TOKEN (why). Inside a Mate
+// lacks when HQ's git would not take the pool's HQ credential (why). Inside a Mate
 // an acquire writes the Mate credential there (DP-16) and forgets it once HQ
 // refuses it, so the next acquire is the step: what is left is a Mate that is
 // enrolling again, or a container that is not a Mate. It is no user's token to
 // ask for.
 func hqLeaseCredentialSuggestion(why string) string {
 	return "The repository is on this Mate's HQ, whose git takes only the user `mate` with this Mate's HQ credential, and " + why +
-		". zcp writes that credential to the pool's GIT_TOKEN at an acquire of an HQ repository inside a Mate, and writes it afresh at the next one after a refusal. Acquire again. " +
+		". zcp writes that credential to the pool's " + PoolHQCredentialEnvKey + " at an acquire of an HQ repository inside a Mate, and writes it afresh at the next one after a refusal. Acquire again. " +
 		"If HQ refuses it again, the Mate is enrolling with HQ anew (its own service, zcp service mate, keeps enrolling it) and an acquire after that writes the new one; outside a Mate zcp writes nothing there. " +
 		"It is no user's token, so never ask for one or make one up. Meanwhile lease the pool for a repository outside HQ, or work on this one in the dev service of the pair wired to it"
 }
@@ -462,7 +466,7 @@ func handBackOutcome(alias string, view LeaseView, err error) (what, next string
 // unsavedWork is what a release would lose from a container.
 type unsavedWork struct {
 	files    []string // git status --porcelain lines
-	unpushed int      // commits on no remote branch
+	unpushed int      // commits on no remote branch, from any local branch or HEAD
 }
 
 func (w unsavedWork) any() bool { return len(w.files) > 0 || w.unpushed > 0 }
@@ -510,11 +514,17 @@ func leaseUnsavedFilesCommand() string {
 }
 
 // leaseUnpushedCommand is the guard's second read: how many commits are on no
-// remote branch, 0 in a checkout with no commit yet (parseUnpushedCount).
+// remote branch (parseUnpushedCount). A reset takes every commit in /var/www,
+// so it counts what every local branch and HEAD reach — work left on a branch
+// HEAD is not on, or on a detached HEAD, included — and none that origin's
+// branches reach. HEAD is named only when it resolves: an unborn one (no
+// commit yet, or an orphan branch) is no revision, while the branches still
+// count — 0 in a checkout with no commit at all.
 func leaseUnpushedCommand() string {
 	wd := shellQuote(leaseWorkDir)
 	return "if " + leaseGitRead + wd + " rev-parse -q --verify HEAD >/dev/null 2>&1; then " +
-		leaseGitRead + wd + " rev-list --count HEAD --not --remotes=origin; else echo 0; fi"
+		leaseGitRead + wd + " rev-list --count --branches HEAD --not --remotes=origin; else " +
+		leaseGitRead + wd + " rev-list --count --branches --not --remotes=origin; fi"
 }
 
 // parseUnsavedFiles reads leaseUnsavedFilesCommand's answer: one file per
@@ -594,10 +604,13 @@ func guardLeaseRelease(ctx context.Context, d LeaseDeps, rec leaseRecord) (lease
 // an error when zcp cannot tell. A container ssh cannot reach has no work zcp
 // can save, so it passes unchecked when the orchestrator no longer holds it
 // (unreachableGuard); any other failure to read it refuses (zcp cannot tell
-// what would be lost).
+// what would be lost) — and so does a zcp with no ssh to it at all (local
+// mode): only force releases what nobody checked.
 func inspectLeaseRelease(ctx context.Context, d LeaseDeps, rec leaseRecord) (leaseGuardResult, unsavedWork, error) {
 	if d.SSH == nil {
-		return leaseGuardResult{note: "the container was not checked for unsaved work (this zcp has no ssh to it)"}, unsavedWork{}, nil
+		return leaseGuardResult{}, unsavedWork{}, platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+			fmt.Sprintf("Lease %s could not be checked for unsaved work — this zcp has no ssh to the container — so it was not released", rec.alias()),
+			fmt.Sprintf("Release it from a zcp in the project, which reaches the container over ssh, or release with force=true to discard whatever it holds: zerops_lease action=release lease=%s force=true", rec.alias()))
 	}
 	w, err := readUnsavedWork(ctx, d.SSH, rec.alias())
 	if err != nil {

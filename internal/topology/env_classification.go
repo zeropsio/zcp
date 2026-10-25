@@ -31,6 +31,11 @@ var classifyInfrastructureKeys = map[string]bool{
 	// the tie is pinned by TestLaunchTokenEnvKey_ClassifiedInfrastructure
 	// in internal/tools (which imports both packages).
 	"ZCP_LAUNCH_TOKEN": true,
+	// The Mate's HQ credential a pool holds for its leases of HQ
+	// repositories. The literal must match ops.PoolHQCredentialEnvKey
+	// (pinned by TestPoolHQCredentialVariable_IsACredentialEverywhere in
+	// internal/ops).
+	"ZCP_HQ_GIT_TOKEN": true,
 }
 
 // IsClassifyInfrastructure reports whether the env key is in the

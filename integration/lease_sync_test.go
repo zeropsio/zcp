@@ -42,7 +42,7 @@ func (s *syncLeaseSSH) ExecSSH(_ context.Context, hostname, command string) ([]b
 			return []byte("?? notes.txt\n"), nil
 		}
 		return nil, nil
-	case strings.Contains(command, "rev-list --count HEAD --not --remotes=origin"):
+	case strings.Contains(command, "rev-list --count --branches"):
 		return []byte("1\n"), nil
 	case strings.Contains(command, "push --porcelain"):
 		s.pushes = append(s.pushes, hostname)

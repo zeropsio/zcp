@@ -192,8 +192,10 @@ func TestLeaseTool_Release_WarmPool_KeepsThenRemoves(t *testing.T) {
 			t.Fatalf("acquire %s: %s", branch, text)
 		}
 	}
-	first := callTool(t, srv, "zerops_lease", map[string]any{"action": "release", "lease": "devpool-1"})
-	second := callTool(t, srv, "zerops_lease", map[string]any{"action": "release", "lease": "devpool-2"})
+	// No ssh reaches the containers to check them, so the releases take
+	// force (DP-4); the warm decision is the same either way.
+	first := callTool(t, srv, "zerops_lease", map[string]any{"action": "release", "lease": "devpool-1", "force": true})
+	second := callTool(t, srv, "zerops_lease", map[string]any{"action": "release", "lease": "devpool-2", "force": true})
 	firstText, secondText := getTextContent(t, first), getTextContent(t, second)
 	if first.IsError || second.IsError {
 		t.Fatalf("release failed:\n%s\n%s", firstText, secondText)

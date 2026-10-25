@@ -4077,11 +4077,13 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   fingerprint of the copy the dev service holds (`HQRepoRef.credentialFingerprint`), and the
   repository pass — bootstrap, adopt and every develop start — rewrites only that secret when the
   fingerprint differs from the enrollment's, as after a re-enrollment, outside its backoff and
-  leaving the checkout's branch and origin alone. A dev pool gets it the same way (`spec-workflows.md` §8 DP-16): inside a
-  Mate an acquire of a repository on HQ writes it to the pool's `GIT_TOKEN` when zcp's fingerprint for that pool — kept in
+  leaving the checkout's branch and origin alone. A dev pool gets it the same way (`spec-workflows.md` §8 DP-16), under a variable of its own: inside a
+  Mate an acquire of a repository on HQ writes it to the pool's `ZCP_HQ_GIT_TOKEN` — never the pool's `GIT_TOKEN`, which
+  every container of the pool reads and a lease of a repository outside HQ answers its host with, so it stays the
+  user's — when zcp's fingerprint for that pool — kept in
   `.zcp/state/leases/credentials/<pool>.json`, a pool having no record of its own — is absent or differs, and the same pass
   renews every pool holding one. A pool that keys a pair after a pool migration (`spec-workflows.md` §13 PM-10) is renewed
-  with its pair, by the pool service id the pair records and over no ssh: the pair's record takes the per-pool
+  with its pair, into the same `ZCP_HQ_GIT_TOKEN`, by the pool service id the pair records and over no ssh: the pair's record takes the per-pool
   fingerprint over and the per-pool record goes, so the pool is never renewed twice. The helper persisted in `.git/config` for HQ's host answers the dev service from
   `GIT_TOKEN` and the Mate's own shell from `zcp hq git-credential`, which reads the enrollment at
   each request and answers for the enrolled HQ only — and, for github.com, with HQ's per-call token

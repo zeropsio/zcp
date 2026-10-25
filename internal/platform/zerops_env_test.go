@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -203,5 +204,41 @@ func TestUserDataWrite_MalformedResponses_ArePlatformErrorsWithoutBody(t *testin
 				t.Errorf("PlatformError.Cause leaked the raw response body: %v", pe.Cause)
 			}
 		})
+	}
+}
+
+// TestCreateServiceEnvVar_RefusalEchoingTheValue_SurfacesWithoutIt: a
+// well-formed refusal of a secret's write may echo the value it was sent — in
+// its message, its code or its field-level meta. The error carries the
+// refusal's words and codes without the value: zcp's own writes (the Mate
+// credential, a dev's secrets) put values there no caller ever saw.
+func TestCreateServiceEnvVar_RefusalEchoingTheValue_SurfacesWithoutIt(t *testing.T) {
+	t.Parallel()
+	const secret = "the-" + "submitted-secret-value"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"code":"userDataInvalidContent","message":"Content '` + secret + `' is not valid.",` +
+			`"meta":[{"code":"invalidContent","error":"content ` + secret + ` rejected","metadata":{"content":["` + secret + `"]}}]}}`))
+	}))
+	t.Cleanup(srv.Close)
+	z, err := NewZeropsClient("fake-token", srv.URL)
+	if err != nil {
+		t.Fatalf("NewZeropsClient: %v", err)
+	}
+
+	_, err = z.CreateServiceEnvVar(context.Background(), "svc-1", "GIT_TOKEN", secret, true)
+	var pe *PlatformError
+	if !errors.As(err, &pe) {
+		t.Fatalf("err = %v, want a *PlatformError", err)
+	}
+	meta := fmt.Sprintf("%+v", pe.APIMeta)
+	for what, text := range map[string]string{"err.Error()": err.Error(), "APIMeta": meta, "Subcode": pe.Subcode, "Suggestion": pe.Suggestion, "Message": pe.Message} {
+		if strings.Contains(text, secret) {
+			t.Errorf("%s carries the submitted value: %s", what, text)
+		}
+	}
+	if pe.APICode != "userDataInvalidContent" || !strings.Contains(pe.Message, "is not valid") {
+		t.Errorf("APICode %q / Message %q: want the refusal's own code and words", pe.APICode, pe.Message)
 	}
 }

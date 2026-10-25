@@ -640,10 +640,10 @@ func TestLeaseRelease_Unpushed_Refused(t *testing.T) {
 	var sawStatus, sawRevList bool
 	for _, c := range ssh.commands() {
 		sawStatus = sawStatus || strings.Contains(c, "git -C '/var/www' status --porcelain")
-		sawRevList = sawRevList || strings.Contains(c, "git -C '/var/www' rev-list --count HEAD --not --remotes=origin")
+		sawRevList = sawRevList || strings.Contains(c, "git -C '/var/www' rev-list --count --branches HEAD --not --remotes=origin")
 	}
 	if !sawStatus || !sawRevList {
-		t.Errorf("guard commands = %v, want git status --porcelain and rev-list --count HEAD --not --remotes=origin on /var/www", ssh.commands())
+		t.Errorf("guard commands = %v, want git status --porcelain and rev-list --count --branches HEAD --not --remotes=origin on /var/www", ssh.commands())
 	}
 	if ssh.calls[0].hostname != "devpool-3" {
 		t.Errorf("guard ran on %q, want the alias", ssh.calls[0].hostname)
@@ -746,19 +746,70 @@ func TestLeaseRelease_GuardCannotRead_Refused(t *testing.T) {
 	_ = assertRefusedAndKept(t, hf, err)
 }
 
-func TestLeaseRelease_NoSSH_ReleasesWithNote(t *testing.T) {
+// TestLeaseRelease_NoSSH_RefusedUnlessForced: a release refuses while the
+// container holds work a reset would lose (DP-4), and a zcp with no ssh to the
+// container (local mode) cannot tell whether it does. So an unforced release
+// is refused — nothing released, the record kept — naming force=true, and a
+// forced one releases with a reset.
+func TestLeaseRelease_NoSSH_RefusedUnlessForced(t *testing.T) {
 	t.Parallel()
-	fx := newLeaseFixture(t)
-	fx.swarm.acquired = acquiredAs(3)
-	if _, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, "feature"); err != nil {
-		t.Fatal(err)
+	for _, force := range []bool{false, true} {
+		t.Run(fmt.Sprintf("force=%v", force), func(t *testing.T) {
+			t.Parallel()
+			fx := newLeaseFixture(t)
+			fx.swarm.acquired = acquiredAs(3)
+			if _, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, "feature"); err != nil {
+				t.Fatal(err)
+			}
+			view, err := LeaseRelease(context.Background(), fx.deps, "devpool-3", force)
+			_, statErr := os.Stat(filepath.Join(fx.stateDir, "leases", "devpool-3.json"))
+			if force {
+				if err != nil || view.State != LeaseStateReleased || len(fx.swarm.releases) != 1 || !fx.swarm.releases[0].reset {
+					t.Errorf("forced release = %+v, %v (releases %+v), want released with a reset", view, err, fx.swarm.releases)
+				}
+				return
+			}
+			var pe *platform.PlatformError
+			if !errors.As(err, &pe) || pe.Code != platform.ErrPrerequisiteMissing {
+				t.Fatalf("err = %v, want a %s refusal", err, platform.ErrPrerequisiteMissing)
+			}
+			if !strings.Contains(pe.Message, "no ssh") || !strings.Contains(pe.Suggestion, "force=true") {
+				t.Errorf("refusal %q / %q should say zcp has no ssh to check it and name force=true", pe.Message, pe.Suggestion)
+			}
+			if len(fx.swarm.releases) != 0 {
+				t.Errorf("an unchecked release reached the orchestrator: %+v", fx.swarm.releases)
+			}
+			if statErr != nil {
+				t.Errorf("record gone after a refused release: %v", statErr)
+			}
+		})
 	}
-	view, err := LeaseRelease(context.Background(), fx.deps, "devpool-3", false)
-	if err != nil {
-		t.Fatal(err)
+}
+
+// TestLeaseReleaseGroup_NoSSH_RefusedUnlessForced: a branch's release reads
+// every lease before it releases any (DP-23); without ssh none can be read, so
+// an unforced one releases none and keeps every record.
+func TestLeaseReleaseGroup_NoSSH_RefusedUnlessForced(t *testing.T) {
+	t.Parallel()
+	gf := newGroupFixture(t)
+	gf.heldGroup(t)
+	gf.deps.SSH = nil
+
+	_, err := LeaseReleaseGroup(context.Background(), gf.deps, "", "feat", false)
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) || pe.Code != platform.ErrPrerequisiteMissing {
+		t.Fatalf("err = %v, want a %s refusal", err, platform.ErrPrerequisiteMissing)
 	}
-	if view.State != LeaseStateReleased || !strings.Contains(view.Note, "not checked") {
-		t.Errorf("view = %+v, want released with a note that the container was not checked for unsaved work", view)
+	if !strings.Contains(pe.Message, "no ssh") {
+		t.Errorf("message %q should say zcp has no ssh to check the leases", pe.Message)
+	}
+	for name, o := range map[string]*poolOrch{"hqpool": gf.hq, "webpool": gf.web} {
+		if rel := o.releaseLog(); len(rel) != 0 {
+			t.Errorf("%s releases = %+v: an unchecked branch releases nothing", name, rel)
+		}
+	}
+	if recs := gf.records(t); len(recs) != 2 {
+		t.Errorf("records = %v, want both kept", recs)
 	}
 }
 
@@ -773,6 +824,28 @@ func TestLeaseCheckoutCommand_PersistsHostScopedHelper(t *testing.T) {
 	}
 	if cmd := leaseCheckoutCommand("/var/www", "/srv/origin.git", "main", "", ""); strings.Contains(cmd, "git config --replace-all 'credential.") {
 		t.Errorf("a non-https origin got a persisted helper:\n%s", cmd)
+	}
+}
+
+// TestLeaseCredentialHelper_OriginOnItsOwnPort_AnswersThere: git matches a
+// helper's scope by port exactly (live, git 2.50), so the helper a lease's
+// repository keeps for an origin on a port of its own is stored under that
+// port: the agent's push there gets the session's GIT_TOKEN, and the host's
+// default port gets nothing from it.
+func TestLeaseCredentialHelper_OriginOnItsOwnPort_AnswersThere(t *testing.T) {
+	t.Parallel()
+	requireGit(t)
+	const repo = "https://git.example.invalid:8443/acme/app.git"
+	session := map[string]string{"GIT_TOKEN": "the-users-token"}
+	if _, password, _ := persistedAnswer(t, repo, session); password != "the-users-token" {
+		t.Errorf("a push to %s gets %q, want the session's GIT_TOKEN", repo, password)
+	}
+	dir, home := t.TempDir(), t.TempDir()
+	if out, err := gitShell(t, dir, home, nil, "", "git init -q && "+leaseCredentialHelperConfig(repo, leaseHQURL)); err != nil {
+		t.Fatalf("persist the helper: %v\n%s", err, out)
+	}
+	if _, password, answered := answeredCredential(t, dir, home, session, "https://git.example.invalid/acme/app.git"); answered {
+		t.Errorf("the host's default port gets %q from a helper kept for port 8443", password)
 	}
 }
 

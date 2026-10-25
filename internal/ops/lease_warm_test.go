@@ -341,9 +341,12 @@ func (wf *warmFixture) hold(t *testing.T, number int64, current bool) {
 	}
 }
 
+// release releases alias with force: the fixture has no ssh to check a
+// container for unsaved work, and a release nobody checked takes force
+// (DP-4); the warm decision these tests read is the same either way.
 func (wf *warmFixture) release(t *testing.T, alias string) LeaseView {
 	t.Helper()
-	view, err := LeaseRelease(context.Background(), wf.deps, alias, false)
+	view, err := LeaseRelease(context.Background(), wf.deps, alias, true)
 	if err != nil {
 		t.Fatalf("release %s: %v", alias, err)
 	}

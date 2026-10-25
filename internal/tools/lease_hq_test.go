@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
@@ -54,8 +55,8 @@ func TestLeaseTool_HQRepo_ChecksOutAsMate(t *testing.T) {
 	}
 }
 
-// TestLeaseTool_HQCheckoutFailure_SaysWhatIsMissing: a pool whose GIT_TOKEN is
-// not the Mate credential cannot reach HQ; the refusal names the missing
+// TestLeaseTool_HQCheckoutFailure_SaysWhatIsMissing: a pool whose
+// ZCP_HQ_GIT_TOKEN is not the Mate credential cannot reach HQ; the refusal names the missing
 // credential as a prerequisite and never appends the contract that asks the
 // user for a token of their own.
 func TestLeaseTool_HQCheckoutFailure_SaysWhatIsMissing(t *testing.T) {
@@ -74,7 +75,7 @@ func TestLeaseTool_HQCheckoutFailure_SaysWhatIsMissing(t *testing.T) {
 	if !res.IsError {
 		t.Fatalf("want an error result, got: %s", text)
 	}
-	for _, want := range []string{platform.ErrPrerequisiteMissing, "`mate`", "HQ credential", "pool's GIT_TOKEN", "terminal prompts disabled"} {
+	for _, want := range []string{platform.ErrPrerequisiteMissing, "`mate`", "HQ credential", "pool's " + ops.PoolHQCredentialEnvKey, "terminal prompts disabled"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("result %s lacks %q", text, want)
 		}

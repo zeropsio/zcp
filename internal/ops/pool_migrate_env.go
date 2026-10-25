@@ -42,8 +42,9 @@ type PoolMigrateEnvInput struct {
 	// Stages are the pair's stages, whose key sets the result compares with
 	// the pool's.
 	Stages []platform.ServiceStack
-	// InMate: zcp runs inside a Mate, where the pool's GIT_TOKEN is the Mate
-	// credential an acquire puts there, never the dev's.
+	// InMate: zcp runs inside a Mate, where an acquire puts the Mate
+	// credential on the pool itself (PoolHQCredentialEnvKey) and the dev's
+	// GIT_TOKEN is never copied.
 	InMate bool
 	// CopyGitToken: the person said yes to the pool getting the pair's
 	// GIT_TOKEN (gitTokenSource's). Outside a Mate only.
@@ -461,7 +462,7 @@ func gitTokenState(state string, in PoolMigrateEnvInput) PoolMigrateGitToken {
 	var msg string
 	switch state {
 	case PoolGitTokenMateCredential:
-		msg = fmt.Sprintf("In a Mate the pool's GIT_TOKEN is this Mate's own HQ credential, which zcp puts on %s when a lease of an HQ repository takes a container; %s's is never copied.", pool, dev)
+		msg = fmt.Sprintf("In a Mate zcp puts this Mate's own HQ credential on %s itself, as %s, when a lease of an HQ repository takes a container; %s's GIT_TOKEN is never copied. The pool's GIT_TOKEN stays the person's: a lease of a private repository outside HQ needs one there, which the person sets in the Zerops dashboard, sensitive — never ask for its value in the chat.", pool, PoolHQCredentialEnvKey, dev)
 	case PoolGitTokenDevHasNone:
 		msg = fmt.Sprintf("%s holds no GIT_TOKEN, so none is copied. A lease of a private repository needs one on %s: the person sets it there in the Zerops dashboard, sensitive — never ask for its value in the chat.", dev, pool)
 	case PoolGitTokenAsk:

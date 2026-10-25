@@ -136,11 +136,12 @@ func poolRecordPath(stateDir string) string {
 
 // TestHQPass_PoolDevHalf_RenewsOnPoolNoSSH: once a wired pair is keyed by its
 // dev pool, the repository pass gives the pool — by the id the pair records —
-// the Mate credential the enrollment holds, and records its fingerprint on
-// the pair; it reaches neither the pool nor the retired dev service over ssh
-// (no origin to point, no `main` to sync: a pool has no checkout of its own),
-// and writes no meta keyed by the retired dev. Outside a Mate zcp never
-// writes a pool's GIT_TOKEN.
+// the Mate credential the enrollment holds, as its ZCP_HQ_GIT_TOKEN, and
+// records its fingerprint on the pair; it reaches neither the pool nor the
+// retired dev service over ssh (no origin to point, no `main` to sync: a pool
+// has no checkout of its own), and writes no meta keyed by the retired dev.
+// Outside a Mate zcp never writes a pool's HQ credential, and nowhere its
+// GIT_TOKEN.
 func TestHQPass_PoolDevHalf_RenewsOnPoolNoSSH(t *testing.T) {
 	// Non-parallel: newHQLab sets HOME and package tuning knobs.
 	const renewed = "the-credential-after-the-move"
@@ -162,12 +163,15 @@ func TestHQPass_PoolDevHalf_RenewsOnPoolNoSSH(t *testing.T) {
 
 			report := lab.poolPass(ssh)
 
-			token, held := serviceGitToken(t, lab.mock, testPoolID)
+			token, held := poolHQCredential(t, lab.mock, testPoolID)
 			switch {
 			case tt.wantRenew && (!held || token.Content != renewed || !token.Sensitive):
-				t.Errorf("the pool's GIT_TOKEN = %+v (held %v), want the renewed credential as a sensitive secret", token, held)
+				t.Errorf("the pool's %s = %+v (held %v), want the renewed credential as a sensitive secret", ops.PoolHQCredentialEnvKey, token, held)
 			case !tt.wantRenew && held:
-				t.Errorf("a pass outside a Mate wrote the pool's GIT_TOKEN: %+v", token)
+				t.Errorf("a pass outside a Mate wrote the pool's %s: %+v", ops.PoolHQCredentialEnvKey, token)
+			}
+			if token, held := serviceGitToken(t, lab.mock, testPoolID); held {
+				t.Errorf("the pass wrote the pool's GIT_TOKEN, the user's: %+v", token)
 			}
 			if tt.wantRenew {
 				if got, want := lab.poolMeta().HQ.CredentialFingerprint, hq.CredentialFingerprint(renewed); got != want {
@@ -182,6 +186,41 @@ func TestHQPass_PoolDevHalf_RenewsOnPoolNoSSH(t *testing.T) {
 			assertNoDevStub(t, lab.stateDir)
 			assertNoSecretOnDisk(t, lab.stateDir, renewed)
 		})
+	}
+}
+
+// TestHQPass_PoolDevHalf_RenewalLeavesThePoolsGitTokenTheUsers: a pool's
+// GIT_TOKEN is the user's — what a lease of a repository outside HQ there
+// authenticates with — and zcp never writes over it. Renewing a pool-keyed
+// pair's Mate credential gives the pool the new credential as a secret of its
+// own and leaves the user's GIT_TOKEN as it was.
+func TestHQPass_PoolDevHalf_RenewalLeavesThePoolsGitTokenTheUsers(t *testing.T) {
+	// Non-parallel: newHQLab sets HOME and package tuning knobs.
+	const (
+		renewed    = "the-credential-after-the-move"
+		usersToken = "the-users-own-github-token"
+	)
+	lab := newHQLab(t)
+	lab.wire()
+	ssh := lab.keyPairOnPool()
+	lab.rt.MateEnabled = true
+	lab.mock.WithServiceEnv(testPoolID, []platform.ServiceEnvVar{{ID: "e-git", Key: ops.GitTokenEnvKey, Content: usersToken, Sensitive: true}})
+	lab.reenroll(renewed)
+
+	lab.poolPass(ssh)
+
+	if token, held := serviceGitToken(t, lab.mock, testPoolID); !held || token.Content != usersToken {
+		t.Errorf("the pool's GIT_TOKEN = %+v (held %v), want the user's own token, never written over", token, held)
+	}
+	envs, err := lab.mock.GetServiceEnv(t.Context(), testPoolID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(envs, func(e platform.ServiceEnvVar) bool { return e.Content == renewed && e.Sensitive }) {
+		t.Errorf("the pool holds no secret with the renewed credential: %+v", envs)
+	}
+	if got, want := lab.poolMeta().HQ.CredentialFingerprint, hq.CredentialFingerprint(renewed); got != want {
+		t.Errorf("the pair records fingerprint %q, want the renewed credential's %q", got, want)
 	}
 }
 
@@ -217,7 +256,7 @@ func TestHQPass_PoolDevHalf_TakesOverThePoolsCredentialRecord(t *testing.T) {
 			lab.poolPass(ssh)
 
 			if n := lab.mock.CallCount("CreateServiceEnvVar") - before; n != tt.wantWrites {
-				t.Errorf("GIT_TOKEN writes = %d, want %d", n, tt.wantWrites)
+				t.Errorf("HQ credential writes = %d, want %d", n, tt.wantWrites)
 			}
 			if got, want := lab.poolMeta().HQ.CredentialFingerprint, hq.CredentialFingerprint(labCredential); got != want {
 				t.Errorf("the pair records fingerprint %q, want the enrollment's %q", got, want)

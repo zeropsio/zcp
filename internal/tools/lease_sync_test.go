@@ -42,7 +42,7 @@ func (s *syncToolSSH) ExecSSH(_ context.Context, host, command string) ([]byte, 
 	switch {
 	case strings.Contains(command, "status --porcelain"):
 		return []byte(s.dirty[host]), nil
-	case strings.Contains(command, "rev-list --count HEAD --not --remotes=origin"):
+	case strings.Contains(command, "rev-list --count --branches"):
 		return []byte("1\n"), nil
 	case strings.Contains(command, "push --porcelain"):
 		s.pushes = append(s.pushes, host)

@@ -315,6 +315,8 @@ func TestPersistedCredentialHelper_ByShellAndHost(t *testing.T) {
 		{"an HQ on its own port answers the dev service", portHQ + "/git/a1/appdev.git", portHQ, devSession, "", helperGitToken, "mate"},
 		{"the HQ's host on another port never gets the Mate credential", portHQ + "/git/a1/appdev.git", helperHQURL, mateShell, "", "", "oauth2"},
 		{"the HQ's port stated as the default is the default", helperHQURL + ":443/git/a1/appdev.git", helperHQURL, mateShell, helperHQRepo, helperCredential, "mate"},
+		{"a host on its own port answers the dev service there", "https://code.example.invalid:8443/acme/appdev.git", helperHQURL, devSession, "", helperGitToken, "oauth2"},
+		{"a host on its own port answers nothing on the default one", "https://code.example.invalid:8443/acme/appdev.git", helperHQURL, devSession, "https://code.example.invalid/acme/appdev.git", "", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -6,6 +6,7 @@ package ops
 import (
 	"context"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -38,7 +39,8 @@ func TestLeaseCheckoutCommand_HQRepo_AuthenticatesAsMate(t *testing.T) {
 		{"a repository on an HQ on its own port", "https://hq.example.invalid:3000/git/a1/web", "https://hq.example.invalid:3000", leaseHQCredentialHelperShell, "hq.example.invalid:3000"},
 		{"a repository outside HQ", "https://github.com/acme/app", leaseHQURL, leaseCredentialHelperShell, "github.com"},
 		{"a container enrolled with no HQ", leaseHQRepo, "", leaseCredentialHelperShell, "hq.example.invalid"},
-		{"HQ's host on another port", "https://hq.example.invalid:3000/git/a1/web", leaseHQURL, leaseCredentialHelperShell, "hq.example.invalid"},
+		{"HQ's host on another port", "https://hq.example.invalid:3000/git/a1/web", leaseHQURL, leaseCredentialHelperShell, "hq.example.invalid:3000"},
+		{"a repository outside HQ on its own port", "https://git.example.invalid:8443/acme/app", leaseHQURL, leaseCredentialHelperShell, "git.example.invalid:8443"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -63,24 +65,27 @@ func TestLeaseCheckoutCommand_HQRepo_AuthenticatesAsMate(t *testing.T) {
 
 // TestLeaseHQCredentialHelper_AnswersAsMateFromSessionEnvOnly: the helper a
 // lease of an HQ repository keeps answers the pool's session from its
-// GIT_TOKEN as `mate`, and without one answers nothing — it never falls back to
-// `zcp hq git-credential` the way a dev service's HQ helper does, since zcp is
-// not installed in a pool container. It is the lease helper with HQ's user,
-// not a helper of another shape.
+// ZCP_HQ_GIT_TOKEN as `mate` — never from GIT_TOKEN, the user's — and without
+// it answers nothing: it never falls back to `zcp hq git-credential` the way a
+// dev service's HQ helper does, since zcp is not installed in a pool
+// container. It is the lease helper with HQ's user and the pool's HQ
+// credential, not a helper of another shape.
 func TestLeaseHQCredentialHelper_AnswersAsMateFromSessionEnvOnly(t *testing.T) {
 	t.Parallel()
 	requireGit(t)
-	if want := strings.Replace(leaseCredentialHelperShell, "username=oauth2", "username=mate", 1); leaseHQCredentialHelperShell != want {
-		t.Errorf("the HQ lease helper is\n%s\nwant the lease helper with HQ's user\n%s", leaseHQCredentialHelperShell, want)
+	want := strings.Replace(leaseCredentialHelperShell, "username=oauth2", "username=mate", 1)
+	if want = strings.ReplaceAll(want, "$"+GitTokenEnvKey, "$"+PoolHQCredentialEnvKey); leaseHQCredentialHelperShell != want {
+		t.Errorf("the HQ lease helper is\n%s\nwant the lease helper with HQ's user and the pool's HQ credential\n%s", leaseHQCredentialHelperShell, want)
 	}
 	tests := []struct {
 		name     string
-		token    string
+		env      map[string]string
 		wantUser string
 		want     string
 	}{
-		{"the pool's session answers its GIT_TOKEN as mate", "the-pool-secret", "mate", "the-pool-secret"},
-		{"without GIT_TOKEN it answers nothing and asks no zcp", "", "", ""},
+		{"the pool's session answers its HQ credential as mate", map[string]string{PoolHQCredentialEnvKey: "the-pool-secret", GitTokenEnvKey: "the-users-token"}, "mate", "the-pool-secret"},
+		{"the user's GIT_TOKEN alone is never answered to HQ", map[string]string{GitTokenEnvKey: "the-users-token"}, "", ""},
+		{"without either it answers nothing and asks no zcp", nil, "", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -88,9 +93,7 @@ func TestLeaseHQCredentialHelper_AnswersAsMateFromSessionEnvOnly(t *testing.T) {
 			// A zcp that would answer — and leaves a mark when asked.
 			marker := filepath.Join(t.TempDir(), "zcp-was-asked")
 			env := map[string]string{"PATH": fakeZcpPath(t, "touch "+shellQuote(marker)+"; printf 'username=mate\\npassword=from-zcp\\n'")}
-			if tt.token != "" {
-				env["GIT_TOKEN"] = tt.token
-			}
+			maps.Copy(env, tt.env)
 			repo, home := t.TempDir(), t.TempDir()
 			script := "git init -q && " + leaseCredentialHelperConfig(leaseHQRepo, leaseHQURL)
 			if out, err := gitShell(t, repo, home, nil, "", script); err != nil {
@@ -142,7 +145,7 @@ func TestLeaseAcquire_HQRepo_ChecksOutAsMate(t *testing.T) {
 }
 
 // TestLeaseCheckout_HQCredentialFailure_NamesTheMateCredential: a lease of an
-// HQ repository whose pool GIT_TOKEN is unset or another token — outside a
+// HQ repository whose pool ZCP_HQ_GIT_TOKEN is unset or another token — outside a
 // Mate, or a secret changed or revoked since zcp wrote it (DP-16) — fails at
 // checkout. The container goes back and the refusal says what is missing as a
 // prerequisite — not as GIT_TOKEN_*, whose contract asks the user for a token:
@@ -155,8 +158,8 @@ func TestLeaseCheckout_HQCredentialFailure_NamesTheMateCredential(t *testing.T) 
 		output string
 		want   string
 	}{
-		{"no GIT_TOKEN in the pool", "fatal: could not read Username for 'https://hq.example.invalid': terminal prompts disabled", "is not set"},
-		{"HQ refuses the pool's GIT_TOKEN", "remote: Unauthorized\nfatal: Authentication failed for 'https://hq.example.invalid/git/a1/web/'", "refused"},
+		{"no HQ credential in the pool", "fatal: could not read Username for 'https://hq.example.invalid': terminal prompts disabled", "is not set"},
+		{"HQ refuses the pool's HQ credential", "remote: Unauthorized\nfatal: Authentication failed for 'https://hq.example.invalid/git/a1/web/'", "refused"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -176,7 +179,7 @@ func TestLeaseCheckout_HQCredentialFailure_NamesTheMateCredential(t *testing.T) 
 			if pe.Code != platform.ErrPrerequisiteMissing {
 				t.Errorf("code = %s, want %s (the Mate credential is no user's token)", pe.Code, platform.ErrPrerequisiteMissing)
 			}
-			for _, want := range []string{"`mate`", "HQ credential", "GIT_TOKEN", "pool", tt.want, "never ask", "inside a Mate", "Acquire again"} {
+			for _, want := range []string{"`mate`", "HQ credential", PoolHQCredentialEnvKey, "pool", tt.want, "never ask", "inside a Mate", "Acquire again"} {
 				if !strings.Contains(pe.Suggestion, want) {
 					t.Errorf("suggestion %q lacks %q", pe.Suggestion, want)
 				}

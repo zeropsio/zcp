@@ -120,7 +120,7 @@ named, never aligned: tell the person, and change a key only when they ask.
 
 | state | what to do |
 |---|---|
-| `mate-credential` | nothing: in a Mate the pool's `GIT_TOKEN` is the Mate's own HQ credential, put there when a lease of an HQ repository takes a container |
+| `mate-credential` | nothing: in a Mate zcp puts the Mate's own HQ credential on the pool itself, as `ZCP_HQ_GIT_TOKEN`, when a lease of an HQ repository takes a container; the pool's `GIT_TOKEN` stays the person's, for a private repository outside HQ |
 | `ask` | ask the person whether the pool may get the `GIT_TOKEN` the message names — the pair's, on the dev service it pushes from, also for a part that runs on a dev service of its own — every container a lease of the pool takes reads it. On yes, call the step again with `copyGitToken=true`. On no, the person sets the pool's own in the Zerops dashboard |
 | `on-pool` | the pool holds one already, left as it is |
 | `copied`, `unchanged` | the pool holds the pair's |

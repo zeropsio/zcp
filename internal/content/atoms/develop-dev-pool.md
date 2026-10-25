@@ -30,16 +30,18 @@ its containers away from the app.
    `<pool>-<number>` (SSH), mounts the leased container at `/var/www/<alias>` and
    checks the branch out there; a branch that does not exist yet is cut from
    `main`. `repo` is remembered per pool — pass it on the first acquire only.
-   The clone uses the pool's own `GIT_TOKEN` service secret; you never type
-   a credential. Each lease it took carries `devServers`: each server's
-   `status` — `running`, or `starting` while it still compiles — and the
-   preview server's `url`. Check a `starting` one with
+   The clone uses the pool's own `GIT_TOKEN` service secret — for a
+   repository on this Mate's HQ, the HQ credential zcp puts on the pool
+   itself as `ZCP_HQ_GIT_TOKEN`; you never type a credential. Each lease it
+   took carries `devServers`: each server's `status` — `running`, or
+   `starting` while it still compiles — and the preview server's `url`.
+   Check a `starting` one with
    `zerops_dev_server action=status hostname="<alias>" name="<server>"`.
 2. Work in `/var/www/<alias>`. Run the part's dev servers with
    `zerops_dev_server action=start hostname="<alias>" ...`.
 3. Commit and push from the leased container yourself, over SSH to the alias:
    `git push -u origin <branch>` (the first push of a new branch sets its
-   upstream). The pool's `GIT_TOKEN` authenticates it. A release never commits
+   upstream). The same pool secret authenticates it. A release never commits
    for you.
 4. `zerops_lease action=release lease="<alias>"` hands the leased container
    back: reset, as the pool's warm container, or removed when the pool

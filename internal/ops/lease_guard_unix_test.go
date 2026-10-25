@@ -114,3 +114,81 @@ func TestLeaseReleaseGuard_ReadsTheCheckoutWithoutRewritingItsIndex(t *testing.T
 		}
 	}
 }
+
+// TestLeaseReleaseGuard_CommitsOnAnyLocalBranch_Refused: a reset takes every
+// commit in /var/www with it, not only HEAD's. The guard counts the commits
+// on no remote branch across every local branch and a detached HEAD, so work
+// committed on one branch and left there while HEAD sits on a clean branch
+// origin has — or on a detached HEAD, or beside an unborn one — refuses the
+// release; a checkout with no commit at all, or all of it pushed, passes.
+func TestLeaseReleaseGuard_CommitsOnAnyLocalBranch_Refused(t *testing.T) {
+	t.Parallel()
+	commit := func(t *testing.T, work, name string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(work, name), []byte(name), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		gitIn(t, work, "add", "-A")
+		gitIn(t, work, "commit", "-q", "-m", name)
+	}
+	tests := []struct {
+		name       string
+		arrange    func(t *testing.T, work string)
+		wantCommit string // "" = the guard passes
+	}{
+		{"everything pushed", func(*testing.T, string) {}, ""},
+		{"a commit left on another branch, HEAD back on a clean pushed one", func(t *testing.T, work string) {
+			t.Helper()
+			gitIn(t, work, "checkout", "-q", "-b", "topic")
+			commit(t, work, "topic.txt")
+			gitIn(t, work, "checkout", "-q", "feat")
+		}, "1 commit"},
+		{"a commit on a detached HEAD", func(t *testing.T, work string) {
+			t.Helper()
+			gitIn(t, work, "checkout", "-q", "--detach")
+			commit(t, work, "detached.txt")
+		}, "1 commit"},
+		{"an unborn HEAD beside a branch holding a commit", func(t *testing.T, work string) {
+			t.Helper()
+			gitIn(t, work, "checkout", "-q", "-b", "topic")
+			commit(t, work, "topic.txt")
+			gitIn(t, work, "checkout", "-q", "--orphan", "fresh")
+			gitIn(t, work, "rm", "-rfq", ".")
+		}, "1 commit"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			origin, _, _ := originWithBranches(t)
+			work := t.TempDir()
+			runCheckout(t, work, origin, "feat")
+			tt.arrange(t, work)
+
+			fx := newLeaseFixture(t)
+			fx.deps.SSH = &localCheckoutSSH{dir: work}
+			rec := leaseRecord{PoolHostname: testPoolHost, PoolServiceID: "svc-pool", ContainerID: "c-abc", ContainerNumber: 3, ContainerHostname: nodeHostname(3)}
+			_, err := guardLeaseRelease(context.Background(), fx.deps, rec)
+			switch {
+			case tt.wantCommit == "" && err != nil:
+				t.Errorf("guard refused: %v", err)
+			case tt.wantCommit != "" && (err == nil || !strings.Contains(err.Error(), tt.wantCommit+"(s) on no remote branch")):
+				t.Errorf("guard = %v, want a refusal naming %s(s) on no remote branch", err, tt.wantCommit)
+			}
+		})
+	}
+}
+
+// TestLeaseReleaseGuard_NoCommitYet_Passes: a checkout with no commit yet —
+// HEAD unborn, no branch — holds no commit a reset could take.
+func TestLeaseReleaseGuard_NoCommitYet_Passes(t *testing.T) {
+	t.Parallel()
+	requireGit(t)
+	work := t.TempDir()
+	gitIn(t, work, "init", "-q")
+	fx := newLeaseFixture(t)
+	fx.deps.SSH = &localCheckoutSSH{dir: work}
+	rec := leaseRecord{PoolHostname: testPoolHost, PoolServiceID: "svc-pool", ContainerID: "c-abc", ContainerNumber: 3, ContainerHostname: nodeHostname(3)}
+	if _, err := guardLeaseRelease(context.Background(), fx.deps, rec); err != nil {
+		t.Errorf("guard refused a checkout with no commit: %v", err)
+	}
+}
