@@ -1107,6 +1107,41 @@ func TestSupervisor_AServerWritingItsWatchedFilesWithoutPauseStopsBeingRestarted
 	}
 }
 
+// Shutdown stops every server, but a watched burst or a ctl call already
+// waiting for the supervisor's turn ran once Shutdown let go and started a
+// server after it: a process group the supervisor's exit leaves behind (a
+// lease supervisor zcp starts under setsid has no unit to clean it up). After
+// Shutdown nothing starts.
+func TestSupervisor_NothingStartsAfterShutdown(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	api := freePort(t)
+	srv := r.listener("api", api)
+	srv.Watch = &Watch{Paths: []string{"apps/api"}}
+	r.write("apps/api/main.go", "v1")
+	r.declare(srv)
+	s := r.supervisor()
+	s.Boot()
+	eventually(t, "api to listen", func() bool { return listening(api) })
+	s.Shutdown()
+	released(t, api)
+
+	_ = s.Start("api")
+	_ = s.Restart("api")
+	s.watchFired("api", "apps/api/main.go", time.Now(), []string{"apps/api/main.go"})
+	s.mu.Lock()
+	g, watch := s.servers["api"].g, s.servers["api"].watch
+	s.mu.Unlock()
+	if g != nil {
+		_ = stopGroup(g.pgid, time.Second)
+		t.Fatalf("a server started after Shutdown (pgid %d)", g.pgid)
+	}
+	if watch != nil {
+		watch.close()
+		t.Fatal("a watch was set up after Shutdown")
+	}
+}
+
 // limitRig is a rig whose service's task limit (300) is reached each time a
 // server appends a line to .limit in the repo root: the kernel's pids.events
 // "max" count, which grows each time a fork is refused at pids.max.
