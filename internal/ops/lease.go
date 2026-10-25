@@ -173,7 +173,11 @@ type LeaseView struct {
 	Pool              string `json:"pool"`
 	ContainerHostname string `json:"containerHostname"`
 	Branch            string `json:"branch,omitempty"`
-	State             string `json:"state"`
+	// Repo is the repository the lease's group is keyed by beside Branch
+	// (DP-17), credential-free (topology.RepoIdentity); "" for a lease zcp
+	// holds no record of, or an older record that names none.
+	Repo  string `json:"repo,omitempty"`
+	State string `json:"state"`
 	// Unverified marks a state read from zcp's own record because the pool's
 	// orchestrator could not be asked (LeaseStatus of every pool).
 	Unverified bool `json:"unverified,omitempty"`
@@ -733,7 +737,7 @@ func (r leaseRecord) alias() string { return leaseAlias(r.PoolHostname, r.Contai
 func (r leaseRecord) view(state string) LeaseView {
 	return LeaseView{
 		Alias: r.alias(), Pool: r.PoolHostname, ContainerHostname: r.ContainerHostname,
-		Branch: r.Branch, State: state, AcquiredAt: r.AcquiredAt,
+		Branch: r.Branch, Repo: topology.RepoIdentity(r.Repo), State: state, AcquiredAt: r.AcquiredAt,
 	}
 }
 
