@@ -206,7 +206,8 @@ container.
 **Preview.** With `previewPortBase` in `.zcp/dev-servers.json`, a lease
 answers on `previewPortBase + ZEROPS_StableNumber`, and the dev-server
 result's `previewUrl` is the pool's subdomain on that port. With several
-servers that listen, mark the one the preview reaches with `"preview": true`.
+servers that listen, mark the one the preview reaches with `"preview": true`
+— one per pool.
 
 **Stage.** The part's stage tracks `main`: review a branch on its lease's
 preview URL, not on the stage. Once the branch is merged, put main on the
