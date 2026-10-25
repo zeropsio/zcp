@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 )
@@ -366,6 +367,9 @@ func (c *SwarmClient) do(ctx context.Context, method, path string, body []byte, 
 		se := parseSwarmError(resp.StatusCode, raw)
 		se.Message = c.scrub(se.Message, lease)
 		se.Cause = c.scrub(se.Cause, lease)
+		for i := range se.Details {
+			se.Details[i] = c.scrub(se.Details[i], lease)
+		}
 		return se
 	}
 	if out == nil || len(bytes.TrimSpace(raw)) == 0 {
@@ -392,6 +396,12 @@ type SwarmError struct {
 	// (metadata.message), verbatim — e.g. why no container could be created
 	// for an all-reserved acquire. Empty when the orchestrator passed none.
 	Cause string
+	// Details is the rest of what meta[] says — each item's code and error
+	// and every metadata key — that the message, the reason, retryable and
+	// Cause do not already say, scrubbed of the client's secrets. A refusal
+	// whose message is the platform's placeholder ("See metadata") says why
+	// only here.
+	Details []string
 }
 
 // SwarmReasonAllReserved is the SwarmError.Reason of an acquire refused
@@ -469,25 +479,107 @@ func (e *SwarmError) Error() string {
 		}
 		b.WriteString(")")
 	}
-	if e.Message != "" {
-		b.WriteString(": " + e.Message)
-	}
-	if e.Code == "" && e.Message == "" {
+	if said := e.Said(); said != "" {
+		b.WriteString(": " + said)
+	} else if e.Code == "" {
 		fmt.Fprintf(&b, ": status %d", e.Status)
 	}
 	return b.String()
 }
 
-// swarmErrorEnvelope is the orchestrator's error body.
+// Said is everything the refusal says in words: its message — left out when
+// it is the platform's placeholder, which points at the metadata — the
+// platform's cause when it differs from the message, and the rest of what
+// the metadata says (Details), as one text.
+func (e *SwarmError) Said() string {
+	var parts []string
+	if msg := strings.TrimSpace(e.Message); msg != "" && !isMetadataPlaceholder(msg) {
+		parts = append(parts, msg)
+	}
+	if e.Cause != "" && e.Cause != e.Message {
+		parts = append(parts, "platform: "+e.Cause)
+	}
+	parts = append(parts, e.Details...)
+	return strings.Join(parts, "; ")
+}
+
+// swarmMetadataPlaceholder is the message the platform answers when what it
+// has to say is in meta[] only.
+const swarmMetadataPlaceholder = "see metadata"
+
+func isMetadataPlaceholder(msg string) bool {
+	return strings.EqualFold(strings.TrimSpace(msg), swarmMetadataPlaceholder)
+}
+
+// swarmErrorEnvelope is the orchestrator's error body. Meta is kept raw: a
+// metadata value that is not a list of strings must not make the whole
+// envelope unreadable (swarmMeta reads it).
 type swarmErrorEnvelope struct {
 	Error struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
-		Meta    []struct {
-			Metadata map[string][]string `json:"metadata"`
-		} `json:"meta"`
+		Code    string          `json:"code"`
+		Message string          `json:"message"`
+		Meta    json.RawMessage `json:"meta"`
 	} `json:"error"`
 }
+
+// swarmMetaItem is one element of the envelope's meta[], each metadata value
+// as the strings it holds (swarmMetaStrings).
+type swarmMetaItem struct {
+	code, err string
+	metadata  map[string][]string
+	keys      []string // metadata's keys, sorted
+}
+
+// swarmMeta reads meta[]; anything that is not a list of objects reads as
+// none, and an item that is not an object is skipped.
+func swarmMeta(raw json.RawMessage) []swarmMetaItem {
+	var items []map[string]any
+	if len(raw) == 0 || json.Unmarshal(raw, &items) != nil {
+		return nil
+	}
+	out := make([]swarmMetaItem, 0, len(items))
+	for _, m := range items {
+		if m == nil {
+			continue
+		}
+		item := swarmMetaItem{metadata: map[string][]string{}}
+		item.code, _ = m["code"].(string)
+		item.err, _ = m["error"].(string)
+		if md, ok := m["metadata"].(map[string]any); ok {
+			for k, v := range md {
+				if vals := swarmMetaStrings(v); len(vals) > 0 {
+					item.metadata[k] = vals
+					item.keys = append(item.keys, k)
+				}
+			}
+			slices.Sort(item.keys)
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+// swarmMetaStrings is a metadata value as strings: a list's elements, or the
+// value itself; an object or null holds none.
+func swarmMetaStrings(v any) []string {
+	switch t := v.(type) {
+	case []any:
+		var out []string
+		for _, x := range t {
+			out = append(out, swarmMetaStrings(x)...)
+		}
+		return out
+	case string:
+		return []string{t}
+	case float64, bool:
+		return []string{fmt.Sprint(t)}
+	}
+	return nil
+}
+
+// swarmMetaKnown are the metadata keys a SwarmError reads into fields of its
+// own (Reason, Retryable, Cause), never repeated in Details.
+var swarmMetaKnown = map[string]bool{"reason": true, "retryable": true, "message": true}
 
 // parseSwarmError turns a non-2xx answer into a *SwarmError. A body that is
 // not the envelope still yields one, carrying only the status.
@@ -498,17 +590,19 @@ func parseSwarmError(status int, raw []byte) *SwarmError {
 		return se
 	}
 	se.Code, se.Message = env.Error.Code, env.Error.Message
-	for _, m := range env.Error.Meta {
-		if r := m.Metadata["reason"]; len(r) > 0 && se.Reason == "" {
+	meta := swarmMeta(env.Error.Meta)
+	for _, m := range meta {
+		if r := m.metadata["reason"]; len(r) > 0 && se.Reason == "" {
 			se.Reason = r[0]
 		}
-		if r := m.Metadata["retryable"]; len(r) > 0 && r[0] == "true" {
+		if r := m.metadata["retryable"]; len(r) > 0 && r[0] == "true" {
 			se.Retryable = true
 		}
-		if c := m.Metadata["message"]; len(c) > 0 && se.Cause == "" {
+		if c := m.metadata["message"]; len(c) > 0 && se.Cause == "" {
 			se.Cause = c[0]
 		}
 	}
+	se.Details = swarmDetails(se, meta)
 	if se.Reason == "" && status == http.StatusBadRequest && se.Code == swarmCodeContainerAction && strings.EqualFold(strings.TrimSpace(se.Message), swarmMessageContainerNotFound) {
 		// A container deleted a moment ago: until a listing catches up, the
 		// orchestrator passes the platform's bare refusal through as a 400,
@@ -518,6 +612,37 @@ func parseSwarmError(status int, raw []byte) *SwarmError {
 		se.Reason = SwarmReasonContainerNotFound
 	}
 	return se
+}
+
+// swarmDetails is what meta[] says that se's own fields do not: an item's
+// error unless it repeats the message or the cause (with the item's code
+// when it is not the envelope's), and every metadata key but the ones se
+// reads into fields, each once.
+func swarmDetails(se *SwarmError, meta []swarmMetaItem) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(d string) {
+		if d = strings.TrimSpace(d); d != "" && !seen[d] {
+			seen[d] = true
+			out = append(out, d)
+		}
+	}
+	for _, m := range meta {
+		switch {
+		case m.err != "" && m.err != se.Message && m.err != se.Cause && m.code != "" && m.code != se.Code:
+			add(m.code + ": " + m.err)
+		case m.err != "" && m.err != se.Message && m.err != se.Cause:
+			add(m.err)
+		case m.code != "" && m.code != se.Code:
+			add(m.code)
+		}
+		for _, k := range m.keys {
+			if !swarmMetaKnown[k] {
+				add(k + ": " + strings.Join(m.metadata[k], ", "))
+			}
+		}
+	}
+	return out
 }
 
 // swarmCodeContainerAction is the orchestrator's error code of a refused

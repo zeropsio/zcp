@@ -677,9 +677,9 @@ func leaseOrchestratorError(ctx context.Context, d LeaseDeps, rp *resolvedPool, 
 	}
 	var se *platform.SwarmError
 	if errors.As(err, &se) {
-		msg := fmt.Sprintf("Pool '%s' orchestrator refused (%s): %s", pool, op, se.Message)
-		if se.Cause != "" && se.Cause != se.Message {
-			msg += " (platform: " + se.Cause + ")"
+		msg := fmt.Sprintf("Pool '%s' orchestrator refused (%s)", pool, op)
+		if said := se.Said(); said != "" {
+			msg += ": " + said
 		}
 		out := platform.NewPlatformError(platform.ErrAPIError, msg, swarmSuggestion(se))
 		out.APICode = se.Reason
