@@ -184,8 +184,9 @@ func leaseWarmCloneCommand(workDir, repo, hqURL string) string {
 // the checkout — waiting for a running clone of repo up to leaseWarmCloneWait,
 // stopping (its whole process group) one of another repository or one that
 // outlasts the wait; settle takes a finished clone of repo (answering used) or
-// removes any other — every file of the commit it checked out, then its .git
-// (answering discarded). A checkout that finds no clone changes nothing here.
+// removes any other — every file of the commit it checked out that lies
+// inside the work dir (leaseWarmInsideNames), then its .git (answering
+// discarded). A checkout that finds no clone changes nothing here.
 // Where flock is missing no clone was ever started (leaseWarmCloneCommand).
 func leaseWarmCheckoutSteps(repo string) (lock, settle string) {
 	q := shellQuote
@@ -202,10 +203,33 @@ func leaseWarmCheckoutSteps(repo string) (lock, settle string) {
 		"elif grep -qx " + mine + " " + state + " && grep -qx done " + state + "; then " +
 		"rm -f " + state + " && echo " + q(leaseWarmCheckoutMarker+leaseWarmUsed) + "; " +
 		"else c=$(sed -n 's/^commit //p' " + state + "); " +
-		"if [ -n \"$c\" ]; then git ls-tree -r -z --name-only \"$c\" > " + state + ".files || { echo " + q(leaseWarmUnreadable) + " >&2; exit 4; }; " +
-		"xargs -0 rm -f -- < " + state + ".files 2>/dev/null; fi; " +
+		"if [ -n \"$c\" ]; then git -c core.quotePath=false ls-tree -r --name-only \"$c\" > " + state + ".files || { echo " + q(leaseWarmUnreadable) + " >&2; exit 4; }; " +
+		leaseWarmInsideNames(state+".files") + " | xargs -0 rm -f -- 2>/dev/null; fi; " +
 		"rm -rf .git || exit 4; echo " + q(leaseWarmCheckoutMarker+leaseWarmDiscarded) + "; fi; }"
 	return lock, settle
+}
+
+// leaseWarmInsideNames prints, NUL-terminated, the names in list — git
+// ls-tree's, one per line, relative to the work dir the shell is in — that
+// name a file inside it, so the discard deletes nothing else (review R4-3):
+// a tree a hostile server serves can name `../x`, and a directory the image
+// left as a symlink leads out of /var/www. A name with a `..`, `.` or empty
+// component, or an absolute one, is skipped, and so is a name git quoted (one
+// with a quote, a backslash or a control character in it: git clean or the
+// reset takes such a file away instead); one whose directory, or any
+// directory above it inside the work dir, is a symlink is skipped too. Each
+// directory is checked once (ls-tree lists a directory's files together), in
+// builtins only, so a tree of tens of thousands of files is read in about a
+// second.
+func leaseWarmInsideNames(list string) string {
+	return "{ last=/; ok=; while IFS= read -r f; do " +
+		"case /$f/ in */../*|*/./*|*//*) continue;; esac; " +
+		`case $f in '"'*) continue;; esac; ` +
+		"case $f in */*) d=${f%/*};; *) d=;; esac; " +
+		"if [ \"$d\" != \"$last\" ]; then last=$d; ok=1; p=$d; " +
+		"while [ -n \"$p\" ]; do if [ -L \"$p\" ]; then ok=; break; fi; case $p in */*) p=${p%/*};; *) p=;; esac; done; fi; " +
+		"if [ -n \"$ok\" ]; then printf '%s\\0' \"$f\"; fi; " +
+		"done < " + list + "; }"
 }
 
 // checkoutWarm is what a checkout's answer says it did with a clone: used,
