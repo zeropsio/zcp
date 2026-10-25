@@ -51,6 +51,25 @@ type PoolHQCredential struct {
 	// SessionWait is the pause between two reads of a fresh session's
 	// fingerprint after a write; zero means poolCredentialSessionWait.
 	SessionWait time.Duration
+	// Kept answers the record of the credential a pool holds that a pair
+	// keyed by the pool keeps — the pool service and the fingerprint — once
+	// the repository pass took the per-pool record over (PoolCredentialRecord);
+	// false when no such pair keeps one. nil: none is consulted.
+	Kept func(pool string) (poolServiceID, fingerprint string, ok bool)
+}
+
+// holds reports whether zcp's records say pool (by service id) holds the
+// credential fingerprint names: its per-pool record, or the record of a pair
+// keyed by the pool, which takes the per-pool one over (DP-16).
+func (p PoolHQCredential) holds(stateDir string, pool *platform.ServiceStack, fingerprint string) bool {
+	if rec, found := readPoolCredential(stateDir, pool.Name); found && rec.PoolServiceID == pool.ID && rec.Fingerprint == fingerprint {
+		return true
+	}
+	if p.Kept == nil {
+		return false
+	}
+	serviceID, kept, ok := p.Kept(pool.Name)
+	return ok && serviceID == pool.ID && kept == fingerprint
 }
 
 // poolCredentialSessionReads/Wait bound how long an acquire that wrote the
@@ -157,8 +176,9 @@ type poolCredentialState struct {
 
 // ensurePoolHQCredential makes the pool's PoolHQCredentialEnvKey the Mate
 // credential the enrollment holds now, before a lease of repo takes a container: written when
-// zcp's record for the pool is absent, names another pool service or another
-// credential (the Mate enrolled again), and left alone when it matches. A
+// zcp's records for the pool — its own, or the one a pair keyed by the pool
+// took over (PoolHQCredential.Kept) — are absent, name another pool service or
+// another credential (the Mate enrolled again), and left alone when one matches. A
 // repository outside the Mate's HQ, or zcp outside a Mate, changes nothing,
 // and no acquire ever writes the pool's GIT_TOKEN.
 // Without a credential to read, or with a write that fails, the acquire is
@@ -174,7 +194,11 @@ func ensurePoolHQCredential(ctx context.Context, d LeaseDeps, pool *platform.Ser
 			"A lease of a repository on HQ fetches with it, so no container was taken. This Mate's own service (zcp service mate) keeps enrolling it; acquire again once it is enrolled. It is no user's token, so never ask for one or make one up")
 	}
 	state := poolCredentialState{pool: pool.Name, fingerprint: hq.CredentialFingerprint(credential)}
-	if rec, found := readPoolCredential(d.StateDir, pool.Name); found && rec.PoolServiceID == pool.ID && rec.Fingerprint == state.fingerprint {
+	// Never written again while the pool holds it: a write deletes the
+	// variable and creates it anew, and in between every fresh session of
+	// every container of the pool — the pool's other leases mid-push
+	// included — reads none.
+	if d.PoolCredential.holds(d.StateDir, pool, state.fingerprint) {
 		return state, nil
 	}
 	if err := writePoolHQCredential(ctx, d.Client, d.StateDir, pool.Name, pool.ID, credential); err != nil {
