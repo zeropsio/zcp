@@ -403,6 +403,36 @@ func maskSensitive(rows map[string]platform.ServiceEnvVar) []platform.ServiceEnv
 	return out
 }
 
+// TestPoolMigrateEnv_UnreadableSecretHeldPlainOnPool_BothSidesAgree: a dev
+// secret zcp cannot read in the dev's container while the pool holds the key
+// plain. The read side, which reads no secret, sends the flow to the env step
+// to make it a secret; the step, unable to read the value, asks the person
+// for it and records the ask — never "present", which left the read side
+// pointing at the env step forever. From then on both sides read the ask and
+// the step is done (PM-4).
+func TestPoolMigrateEnv_UnreadableSecretHeldPlainOnPool_BothSidesAgree(t *testing.T) {
+	t.Parallel()
+	f := newEnvFixture(t)
+	delete(f.container, "STRIPE_SECRET")
+	f.pool = append(f.pool, envRow("p-stripe", "STRIPE_SECRET", "a-plain-value", false))
+
+	before := f.read(t)
+	if before.Done || !slices.ContainsFunc(before.ToWrite, func(k PoolMigrateEnvKey) bool { return k.Key == "STRIPE_SECRET" }) {
+		t.Fatalf("read side before the step = toWrite %+v done %v, want STRIPE_SECRET to make a secret", before.ToWrite, before.Done)
+	}
+	out := f.apply(t)
+	if !out.Done || len(out.Requests) != 1 || out.Requests[0].Key != "STRIPE_SECRET" || slices.Contains(out.Present, "STRIPE_SECRET") {
+		t.Fatalf("step = requests %+v present %v done %v, want STRIPE_SECRET asked of the person", out.Requests, out.Present, out.Done)
+	}
+	if row := f.poolRows(t)["STRIPE_SECRET"]; row.Content != "a-plain-value" {
+		t.Fatalf("the pool's STRIPE_SECRET = %+v, want it left as it was", row)
+	}
+	after := f.read(t)
+	if !after.Done || len(after.ToWrite) != 0 || len(after.Requests) != 1 || after.Requests[0].Key != "STRIPE_SECRET" {
+		t.Fatalf("read side after the step = toWrite %+v requests %+v done %v, want the ask and the step done", after.ToWrite, after.Requests, after.Done)
+	}
+}
+
 func TestPoolMigrateEnv_MaskedBecomesRequest(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct {
