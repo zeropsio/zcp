@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -18,6 +19,10 @@ import (
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
+
+// KeepAlive tests run in synctest bubbles so the server timers and client
+// callbacks share virtual time: host scheduling cannot consume the response
+// gap or skip heartbeats while a tool waits.
 
 // beatLog records the progress notifications a client receives.
 type beatLog struct {
@@ -95,43 +100,47 @@ func connectSilentTool(t *testing.T, silent, interval, gap time.Duration) (*mcp.
 // for progress hears from zcp at least once per interval while it runs.
 func TestKeepAlive_SilentToolCall_SendsProgressEachInterval(t *testing.T) {
 	t.Parallel()
-	const interval = 20 * time.Millisecond
-	session, log := connectSilentTool(t, 7*interval, interval, 0)
+	synctest.Test(t, func(t *testing.T) {
+		const interval = 20 * time.Millisecond
+		session, log := connectSilentTool(t, 7*interval, interval, 0)
 
-	params := &mcp.CallToolParams{Name: "silent", Arguments: map[string]any{}}
-	params.SetProgressToken("deploy-1")
-	result, err := session.CallTool(t.Context(), params)
-	if err != nil {
-		t.Fatalf("CallTool: %v", err)
-	}
-	if result.IsError {
-		t.Fatalf("CallTool returned an error result: %+v", result.Content)
-	}
-
-	times, tokens := log.snapshot()
-	if len(times) < 3 {
-		t.Fatalf("got %d progress notifications over a %s silent call, want at least 3", len(times), 7*interval)
-	}
-	for i, tok := range tokens {
-		if tok != "deploy-1" {
-			t.Errorf("notification %d carried token %v, want deploy-1", i, tok)
+		params := &mcp.CallToolParams{Name: "silent", Arguments: map[string]any{}}
+		params.SetProgressToken("deploy-1")
+		result, err := session.CallTool(t.Context(), params)
+		if err != nil {
+			t.Fatalf("CallTool: %v", err)
 		}
-	}
+		if result.IsError {
+			t.Fatalf("CallTool returned an error result: %+v", result.Content)
+		}
+
+		times, tokens := log.snapshot()
+		if len(times) < 3 {
+			t.Fatalf("got %d progress notifications over a %s silent call, want at least 3", len(times), 7*interval)
+		}
+		for i, tok := range tokens {
+			if tok != "deploy-1" {
+				t.Errorf("notification %d carried token %v, want deploy-1", i, tok)
+			}
+		}
+	})
 }
 
 // A client that sent no progress token cannot route a notification; zcp sends
 // none (the SDK would reject an unknown token).
 func TestKeepAlive_NoProgressToken_SendsNothing(t *testing.T) {
 	t.Parallel()
-	const interval = 20 * time.Millisecond
-	session, log := connectSilentTool(t, 5*interval, interval, 0)
+	synctest.Test(t, func(t *testing.T) {
+		const interval = 20 * time.Millisecond
+		session, log := connectSilentTool(t, 5*interval, interval, 0)
 
-	if _, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: "silent", Arguments: map[string]any{}}); err != nil {
-		t.Fatalf("CallTool: %v", err)
-	}
-	if times, _ := log.snapshot(); len(times) != 0 {
-		t.Fatalf("got %d progress notifications without a progress token, want 0", len(times))
-	}
+		if _, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: "silent", Arguments: map[string]any{}}); err != nil {
+			t.Fatalf("CallTool: %v", err)
+		}
+		if times, _ := log.snapshot(); len(times) != 0 {
+			t.Fatalf("got %d progress notifications without a progress token, want 0", len(times))
+		}
+	})
 }
 
 // A progress notification and its call's response in one stdin chunk tear
@@ -139,27 +148,29 @@ func TestKeepAlive_NoProgressToken_SendsNothing(t *testing.T) {
 // trails the last keep-alive by at least the gap.
 func TestKeepAlive_ResponseAfterBeat_WaitsTheGap(t *testing.T) {
 	t.Parallel()
-	const (
-		interval = 40 * time.Millisecond
-		gap      = 60 * time.Millisecond
-	)
-	// The tool ends a few ms after the second beat.
-	session, log := connectSilentTool(t, 2*interval+5*time.Millisecond, interval, gap)
+	synctest.Test(t, func(t *testing.T) {
+		const (
+			interval = 40 * time.Millisecond
+			gap      = 60 * time.Millisecond
+		)
+		// The tool ends a few ms after the second beat.
+		session, log := connectSilentTool(t, 2*interval+5*time.Millisecond, interval, gap)
 
-	params := &mcp.CallToolParams{Name: "silent", Arguments: map[string]any{}}
-	params.SetProgressToken("deploy-2")
-	if _, err := session.CallTool(t.Context(), params); err != nil {
-		t.Fatalf("CallTool: %v", err)
-	}
-	answered := time.Now()
+		params := &mcp.CallToolParams{Name: "silent", Arguments: map[string]any{}}
+		params.SetProgressToken("deploy-2")
+		if _, err := session.CallTool(t.Context(), params); err != nil {
+			t.Fatalf("CallTool: %v", err)
+		}
+		answered := time.Now()
 
-	times, _ := log.snapshot()
-	if len(times) == 0 {
-		t.Fatal("no keep-alive was sent; the test's timing assumption broke")
-	}
-	if trail := answered.Sub(times[len(times)-1]); trail < gap-10*time.Millisecond {
-		t.Fatalf("response came %s after the last keep-alive, want at least %s", trail, gap)
-	}
+		times, _ := log.snapshot()
+		if len(times) == 0 {
+			t.Fatal("no keep-alive was sent; the test's timing assumption broke")
+		}
+		if trail := answered.Sub(times[len(times)-1]); trail < gap {
+			t.Fatalf("response came %s after the last keep-alive, want at least %s", trail, gap)
+		}
+	})
 }
 
 // postBuildContainer is a dev container whose supervisor answers slowly once a
@@ -197,33 +208,35 @@ func (c *postBuildContainer) ExecSSHStdin(ctx context.Context, hostname, command
 // interval through that wait too.
 func TestKeepAlive_DevServerStartAfterTheBuild_SendsProgressEachInterval(t *testing.T) {
 	t.Parallel()
-	const interval = 20 * time.Millisecond
-	ctx := t.Context()
-	c := &postBuildContainer{slow: 7 * interval, Container: unsupervisedDev()}
-	session, log := serveDevServer(t, c, interval, 0)
+	synctest.Test(t, func(t *testing.T) {
+		const interval = 20 * time.Millisecond
+		ctx := t.Context()
+		c := &postBuildContainer{slow: 7 * interval, Container: unsupervisedDev()}
+		session, log := serveDevServer(t, c, interval, 0)
 
-	params := &mcp.CallToolParams{Name: "zerops_dev_server", Arguments: map[string]any{"action": "start", "hostname": "appdev", "command": "node server.mjs", "port": 3000}}
-	params.SetProgressToken("start-1")
-	result, err := session.CallTool(ctx, params)
-	if err != nil || result.IsError {
-		t.Fatalf("CallTool: %v %+v", err, result)
-	}
-	if c.Deploys != 1 {
-		t.Fatalf("deploys = %d, want the one redeploy of the move", c.Deploys)
-	}
-	c.mu.Lock()
-	began := c.started
-	c.mu.Unlock()
-	times, _ := log.snapshot()
-	during := 0
-	for _, at := range times {
-		if at.After(began) && at.Before(began.Add(c.slow)) {
-			during++
+		params := &mcp.CallToolParams{Name: "zerops_dev_server", Arguments: map[string]any{"action": "start", "hostname": "appdev", "command": "node server.mjs", "port": 3000}}
+		params.SetProgressToken("start-1")
+		result, err := session.CallTool(ctx, params)
+		if err != nil || result.IsError {
+			t.Fatalf("CallTool: %v %+v", err, result)
 		}
-	}
-	if began.IsZero() || during < 3 {
-		t.Errorf("%d progress notifications during the %s wait after the build, want at least 3", during, c.slow)
-	}
+		if c.Deploys != 1 {
+			t.Fatalf("deploys = %d, want the one redeploy of the move", c.Deploys)
+		}
+		c.mu.Lock()
+		began := c.started
+		c.mu.Unlock()
+		times, _ := log.snapshot()
+		during := 0
+		for _, at := range times {
+			if at.After(began) && at.Before(began.Add(c.slow)) {
+				during++
+			}
+		}
+		if began.IsZero() || during < 3 {
+			t.Errorf("%d progress notifications during the %s wait after the build, want at least 3", during, c.slow)
+		}
+	})
 }
 
 // unsupervisedDev is appdev before its move onto the supervisor: its dev
@@ -313,21 +326,23 @@ func TestKeepAlive_DevServerMoveFailingAtOnce_AnswersAfterTheGap(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			c := &failingDev{Container: unsupervisedDev(), failPush: tc.failPush}
-			session, log := serveDevServer(t, c, time.Hour, gap)
-			params := &mcp.CallToolParams{Name: "zerops_dev_server", Arguments: map[string]any{"action": "start", "hostname": "appdev", "command": "node server.mjs", "port": 3000}}
-			params.SetProgressToken("start-fail")
-			if _, err := session.CallTool(t.Context(), params); err != nil {
-				t.Fatalf("CallTool: %v", err)
-			}
-			answered := time.Now()
-			times, _ := log.snapshot()
-			if len(times) == 0 {
-				t.Fatal("the move sent no progress notification; the test's premise broke")
-			}
-			if trail := answered.Sub(times[len(times)-1]); trail < gap-10*time.Millisecond {
-				t.Errorf("the answer came %s after the move's last notification, want at least %s", trail, gap)
-			}
+			synctest.Test(t, func(t *testing.T) {
+				c := &failingDev{Container: unsupervisedDev(), failPush: tc.failPush}
+				session, log := serveDevServer(t, c, time.Hour, gap)
+				params := &mcp.CallToolParams{Name: "zerops_dev_server", Arguments: map[string]any{"action": "start", "hostname": "appdev", "command": "node server.mjs", "port": 3000}}
+				params.SetProgressToken("start-fail")
+				if _, err := session.CallTool(t.Context(), params); err != nil {
+					t.Fatalf("CallTool: %v", err)
+				}
+				answered := time.Now()
+				times, _ := log.snapshot()
+				if len(times) == 0 {
+					t.Fatal("the move sent no progress notification; the test's premise broke")
+				}
+				if trail := answered.Sub(times[len(times)-1]); trail < gap {
+					t.Errorf("the answer came %s after the move's last notification, want at least %s", trail, gap)
+				}
+			})
 		})
 	}
 }
@@ -337,48 +352,52 @@ func TestKeepAlive_DevServerMoveFailingAtOnce_AnswersAfterTheGap(t *testing.T) {
 // token, so the values the client reads rise across all of them.
 func TestKeepAlive_ProgressRisesAcrossEverySource(t *testing.T) {
 	t.Parallel()
-	const interval = 20 * time.Millisecond
-	srv := mcp.NewServer(&mcp.Implementation{Name: "zcp", Version: "test"}, nil)
-	serveKeepAlive(srv, interval, 0)
-	mcp.AddTool(srv, &mcp.Tool{Name: "polls"}, func(ctx context.Context, req *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
-		token := req.Params.GetProgressToken()
-		for _, pct := range []float64{50, 60} {
-			_ = req.Session.NotifyProgress(ctx, &mcp.ProgressNotificationParams{ProgressToken: token, Message: "Build: BUILDING", Progress: pct, Total: 100})
-			time.Sleep(4 * interval)
-		}
-		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "done"}}}, nil, nil
-	})
-	session, log := connect(t, srv)
+	synctest.Test(t, func(t *testing.T) {
+		const interval = 20 * time.Millisecond
+		srv := mcp.NewServer(&mcp.Implementation{Name: "zcp", Version: "test"}, nil)
+		serveKeepAlive(srv, interval, 0)
+		mcp.AddTool(srv, &mcp.Tool{Name: "polls"}, func(ctx context.Context, req *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+			token := req.Params.GetProgressToken()
+			for _, pct := range []float64{50, 60} {
+				_ = req.Session.NotifyProgress(ctx, &mcp.ProgressNotificationParams{ProgressToken: token, Message: "Build: BUILDING", Progress: pct, Total: 100})
+				time.Sleep(4 * interval)
+			}
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "done"}}}, nil, nil
+		})
+		session, log := connect(t, srv)
 
-	params := &mcp.CallToolParams{Name: "polls", Arguments: map[string]any{}}
-	params.SetProgressToken("deploy-3")
-	if _, err := session.CallTool(t.Context(), params); err != nil {
-		t.Fatalf("CallTool: %v", err)
-	}
-	values := log.progressValues()
-	if len(values) < 4 {
-		t.Fatalf("got %d progress notifications, want the tool's two and keep-alives between them", len(values))
-	}
-	for i := 1; i < len(values); i++ {
-		if values[i] <= values[i-1] {
-			t.Fatalf("progress values %v fall at notification %d", values, i)
+		params := &mcp.CallToolParams{Name: "polls", Arguments: map[string]any{}}
+		params.SetProgressToken("deploy-3")
+		if _, err := session.CallTool(t.Context(), params); err != nil {
+			t.Fatalf("CallTool: %v", err)
 		}
-	}
+		values := log.progressValues()
+		if len(values) < 4 {
+			t.Fatalf("got %d progress notifications, want the tool's two and keep-alives between them", len(values))
+		}
+		for i := 1; i < len(values); i++ {
+			if values[i] <= values[i-1] {
+				t.Fatalf("progress values %v fall at notification %d", values, i)
+			}
+		}
+	})
 }
 
 // A progress token outside the spec (an object) still gets its keep-alive and
 // never takes zcp down.
 func TestKeepAlive_ObjectProgressToken_KeepsServing(t *testing.T) {
 	t.Parallel()
-	const interval = 20 * time.Millisecond
-	session, log := connectSilentTool(t, 5*interval, interval, 0)
+	synctest.Test(t, func(t *testing.T) {
+		const interval = 20 * time.Millisecond
+		session, log := connectSilentTool(t, 5*interval, interval, 0)
 
-	params := &mcp.CallToolParams{Name: "silent", Arguments: map[string]any{}}
-	params.Meta = mcp.Meta{"progressToken": map[string]any{"id": "deploy-1"}}
-	if _, err := session.CallTool(t.Context(), params); err != nil {
-		t.Fatalf("CallTool: %v", err)
-	}
-	if times, _ := log.snapshot(); len(times) == 0 {
-		t.Fatal("got no progress notifications for an object progress token, want the keep-alive")
-	}
+		params := &mcp.CallToolParams{Name: "silent", Arguments: map[string]any{}}
+		params.Meta = mcp.Meta{"progressToken": map[string]any{"id": "deploy-1"}}
+		if _, err := session.CallTool(t.Context(), params); err != nil {
+			t.Fatalf("CallTool: %v", err)
+		}
+		if times, _ := log.snapshot(); len(times) == 0 {
+			t.Fatal("got no progress notifications for an object progress token, want the keep-alive")
+		}
+	})
 }
