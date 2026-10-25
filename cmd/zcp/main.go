@@ -51,6 +51,9 @@ func main() {
 // session_end), preserving the original code's behavior where an
 // unrecognized first argument still starts the MCP server.
 func run(args []string) int {
+	if isHQGit(args) {
+		return runHQGit(args[2:])
+	}
 	if isHQGitCredential(args) {
 		return runHQGitCredential(args[2:], os.Stdin, os.Stdout, os.Stderr, hq.IdentityFrom(mate.LiveLookup(mate.LiveEnvStorePath)), &http.Client{})
 	}

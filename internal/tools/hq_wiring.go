@@ -140,6 +140,9 @@ func reconcileMateRepositories(
 	rt runtime.Info,
 	stateDir string,
 ) []string {
+	if !rt.MateEnabled {
+		return reconcileHQRepositories(ctx, client, httpClient, sshDeployer, rt, stateDir, hqPassBackedOff)
+	}
 	rebuildMateStages(ctx, httpClient, rt, stateDir, recipePairMountRoot)
 	lines := reconcileHQRepositories(ctx, client, httpClient, sshDeployer, rt, stateDir, hqPassBackedOff)
 	if line := reconcileGroupRecipe(ctx, client, httpClient, rt, stateDir); line != "" {
@@ -176,6 +179,9 @@ func reconcileHQRepositories(
 	// Local mode holds no Mate and no container to push from.
 	if !rt.InContainer || sshDeployer == nil {
 		return nil
+	}
+	if !rt.MateEnabled {
+		return reconcileProjectRepositories(ctx, httpClient, sshDeployer, rt, stateDir)
 	}
 	hqc, linked := openHQ(httpClient, rt)
 	if !linked {

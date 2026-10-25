@@ -730,6 +730,10 @@ environment instead, never a probed flag (§2.2).
 
 The monorepo facts C-8…C-12 continue this table in §2.8a.
 
+A project without a Mate uses the plain-project door (§6.7); it does not read the C-7
+credential file or change this Mate contract. Once the project has a Mate, zcp uses the
+existing Mate routes and credential flow at the same repository addresses.
+
 The Mate's hello carries `{type: "hello", key, serviceId, origin}`. `origin` is its public
 origin: HTTPS, a host ending in a Zerops-managed subdomain suffix, no path. HQ validates it,
 keeps it with the link and returns it in the ticket answer; an invalid origin closes the link as
@@ -1794,7 +1798,8 @@ sequenceDiagram
   missing header is `project_key_required`.
 - git from the `zcp` container (zcp's scratch repository for a recipe proposal) presents the key the
   same way, as a header scoped to HQ's host, never stored in a git config or a URL.
-- git from the dev service presents the Mate's Git credential (§3.3), never the project key.
+- git from a Mate's dev service presents the Mate's Git credential (§3.3), never the project key.
+  A project without a Mate uses the temporary project-key exception in §6.7.
 - `zcli push` of a self-deploy on the dev service runs over SSH with the key only in that command's
   environment, never `zcli login` (§10.10). The key is sent over SSH's standard input
   (`IFS= read -r ZEROPS_TOKEN && export ZEROPS_TOKEN && exec zcli push …`), so it is on no command
@@ -3241,6 +3246,50 @@ that declares one; inside a Mate's container `zerops_import` refuses a document 
 
 `GITEA_TOKEN`, a variable older containers may still carry, stays masked on every value dump and out
 of every recipe tier; zcp reads no Gitea variable.
+
+### 6.7 Projects without a Mate: HQ plain Git
+
+Decision (Karel): the project key passes through HQ as a temporary exception until the Zerops business API arrives; zcp never stores or logs it beyond the existing ZCP_API_KEY handling.
+
+Decision: zcp of a project without a Mate sends the header `Authorization: Project <ZCP_API_KEY>` on every project route and Git HTTP request (git http.extraHeader), enrolls via GET /api/project/self and POST /api/project/repos, names the repo after the dev service hostname, and leaves an existing external origin unchanged. A project that has a Mate keeps the existing Mate mode.
+
+Decision: on 401 key_refused zcp calls POST /api/project/key-recheck once and reports the refusal plainly; no retry loop.
+
+The repository pass selects this mode when `runtime.Info.MateEnabled` is false and the
+container has HQ's launch origin, project ID and key. Before enrollment it reads the
+checkout's actual origin as well as its recorded remote; an external origin is left alone
+without creating an HQ repository. `GET /api/project/self?projectId=...` returns
+`{orgId,projectId,appId}`; `POST /api/project/repos` carries `{name,projectId}` and returns
+`{appId,name}`. The project ID is an assertion, never a selector for another identity.
+The remote is `<HQ-origin>/git/<encoded-orgId>/<encoded-appId>/<encoded-name>.git`,
+with each segment encoded as `encodeURIComponent`.
+
+The existing seeded-main join establishes shared history without losing checkout files.
+The remote is recorded without a Mate `ServiceMeta.HQ` record: plain Git storage does
+not create a Mate change, recipe or release. HQ owns ref permissions, including the
+difference between isolated and shared applications; zcp neither invents a branch policy
+nor retries a refused publication.
+
+On the mounted checkout, `zcp hq git <git-arguments>` runs native Git with the live
+project key in an origin-scoped `http.extraHeader` environment entry. Setup supplies
+that header to its remote Git process through SSH stdin. Neither path writes the header
+into `.git/config`, copies the key into `GIT_TOKEN`, or creates a credential file.
+Inherited Git tracing is removed before the key reaches a Git subprocess. External
+remotes receive no HQ header. The wrapper redacts the exact key from stdout and
+stderr, including configuration listings. The key and origin are read again on each invocation.
+
+HTTP refusals preserve HQ's status, code and reason: missing/refused keys (`401`),
+wide/non-sensitive keys, non-plain placement or Zerops refusal (`403`), project removal
+(`404`), invalid repository names (`400`), and unavailable/unanswered HQ or Zerops
+(`503`). A key recheck is one request with no recursive recheck; even a successful
+recheck does not replay the original operation. Project HTTP calls do not follow
+redirects or retry `503` responses. Native Git cannot expose HQ's JSON refusal;
+after an authentication failure naming this exact HQ origin, `zcp hq git` reads
+project self once to obtain that verdict and apply the same recheck rule. It
+preserves Git's exit code and never repeats the Git command.
+
+Witnesses: `TestProjectClient_*`, `TestReconcileHQRepositories_PlainProject_*`,
+`TestRunGit_*`, and `TestGitEnv_DoesNotExposeAuthorizationThroughInheritedTracing`.
 
 ## 7. The fork
 
