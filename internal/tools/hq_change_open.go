@@ -239,7 +239,7 @@ func tooManyOpen(target changeTarget, branch string, state hq.MateState, stateEr
 	}
 	return platform.NewPlatformError(platform.ErrPrerequisiteMissing,
 		fmt.Sprintf("Nothing was opened for %q: this Mate already holds, in %q, %s.", branch, target.Repo, held),
-		"Ask the person to merge or close one of them in its review; then open this one again — the branch you pushed stays as it is.")
+		`Ask the person to merge or close one of them in its review, or close one this Mate abandoned (zerops_workflow action="close-change" branch="<its branch>"); then open this one again — the branch you pushed stays as it is.`)
 }
 
 // changeBranchOf is the branch a change is opened from, as its short name:

@@ -6,6 +6,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -69,8 +70,12 @@ func TestCloseChange_OwnByBranch(t *testing.T) {
 	if isError || answer.Closed || !strings.Contains(answer.Message, "No change of this Mate is open") {
 		t.Errorf("closing another Mate's change = %s, want nothing closed", text)
 	}
-	if n := lab.hq.callCount("POST /api/mate/changes/appdev/100/close") + lab.hq.callCount("POST /api/mate/changes/appdev/101/close"); n != 0 {
-		t.Errorf("HQ was asked to close another Mate's change %d time(s)", n)
+	closes := 0
+	for _, n := range []int{1, 2} {
+		closes += lab.hq.callCount(fmt.Sprintf("POST /api/mate/changes/appdev/%d/close", n))
+	}
+	if all := closeCalls(lab.hq); all != closes {
+		t.Errorf("HQ was asked to close %d change(s) besides this Mate's #1 and #2", all-closes)
 	}
 }
 
@@ -139,4 +144,17 @@ func TestCloseChange_NamesItsBranch(t *testing.T) {
 	if c := lab.hq.change(1); c.State != hq.ChangeOpen {
 		t.Errorf("change #1 = %+v, want open", c)
 	}
+}
+
+// closeCalls is how many closes of any change HQ was asked for.
+func closeCalls(f *fakeHQ) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, c := range f.calls {
+		if strings.HasPrefix(c, "POST /api/mate/changes/") && strings.HasSuffix(c, "/close") {
+			n++
+		}
+	}
+	return n
 }

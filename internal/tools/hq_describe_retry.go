@@ -179,16 +179,23 @@ var hqChangeHoldWait = 2 * time.Minute
 // or — the change held past the wait — the refusal that says nothing was
 // written. The pair's checkout is not the change's: no pair is held.
 func holdChangeToDescribe(ctx context.Context, stateDir string, target changeTarget, number int) (func(), *mcp.CallToolResult) {
+	return holdChange(ctx, stateDir, target, number, fmt.Sprintf("Nothing was written onto change #%d in %q", number, target.Repo), "describe-change")
+}
+
+// holdChange holds change number of target's repository for one step, waiting
+// up to hqChangeHoldWait; nothing is the words that open the refusal of a
+// change held past the wait, action the zerops_workflow action to call again.
+func holdChange(ctx context.Context, stateDir string, target changeTarget, number int, nothing, action string) (func(), *mcp.CallToolResult) {
 	release, err := workflow.HoldHQChange(ctx, stateDir, target.AppID, target.Repo, number, hqChangeHoldWait)
 	if err != nil {
 		why := fmt.Sprintf("it could not be held (%v)", err)
 		if errors.Is(err, workflow.ErrHQChangeBusy) {
-			why = fmt.Sprintf("another step held it for %s (another describe of it, or a pass learning what became of it)", hqChangeHoldWait)
+			why = fmt.Sprintf("another step held it for %s (a describe or close of it, or a pass learning what became of it)", hqChangeHoldWait)
 		}
 		return nil, convertError(platform.NewPlatformError(
 			platform.ErrPrerequisiteMissing,
-			fmt.Sprintf("Nothing was written onto change #%d in %q: %s.", number, target.Repo, why),
-			`Call zerops_workflow action="describe-change" again once that is done.`,
+			fmt.Sprintf("%s: %s.", nothing, why),
+			fmt.Sprintf(`Call zerops_workflow action=%q again once that is done.`, action),
 		), WithRecoveryStatus())
 	}
 	return release, nil
