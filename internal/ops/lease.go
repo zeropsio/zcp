@@ -445,7 +445,7 @@ func LeaseStatus(ctx context.Context, d LeaseDeps, pool string) (LeaseStatusView
 		got, err := listPoolLeases(ctx, d, resolverFrom(d, services), name, byPool[name], false)
 		if err != nil {
 			note := errorNote(err)
-			status.Leases = append(status.Leases, unverifiedViews(byPool[name], note)...)
+			status.Leases = append(status.Leases, unreadPoolViews(services, name, byPool[name], note)...)
 			status.Unread = append(status.Unread, LeasePoolUnread{Pool: name, Note: note})
 			continue
 		}
@@ -457,6 +457,26 @@ func LeaseStatus(ctx context.Context, d LeaseDeps, pool string) (LeaseStatusView
 	markStaleWiring(d.StateDir, records, status.Leases)
 	status.Warm = d.leaseStatusWarm(ctx, services, read)
 	return status, nil
+}
+
+// unreadPoolViews are the records of a pool a status of every pool could not
+// read (note says why): unverified, but for a record taken on the pool before
+// it was re-created — the listed pool has another service id — which is lost,
+// since the new pool holds nothing of it (DP-2, DP-20).
+func unreadPoolViews(services []platform.ServiceStack, pool string, records []leaseRecord, note string) []LeaseView {
+	svc, err := FindService(services, pool)
+	if err != nil {
+		return unverifiedViews(records, note)
+	}
+	var current, recreated []leaseRecord
+	for _, r := range records {
+		if r.PoolServiceID != svc.ID {
+			recreated = append(recreated, r)
+			continue
+		}
+		current = append(current, r)
+	}
+	return append(unverifiedViews(current, note), lostViews(recreated, recreatedWhy)...)
 }
 
 // listPoolLeases reconciles one pool's records against its orchestrator,
@@ -487,6 +507,9 @@ func listPoolLeases(ctx context.Context, d LeaseDeps, resolve poolResolver, pool
 	}
 	containers, err := d.containers(ctx, rp)
 	if err != nil {
+		if views, known := unlistedLosses(ctx, d, rp, records, err); known {
+			return views, nil
+		}
 		return nil, leaseOrchestratorError(ctx, d, rp, "list containers", err)
 	}
 	byID := make(map[string]platform.SwarmContainer, len(containers))
@@ -569,6 +592,39 @@ func listPoolLeases(ctx context.Context, d LeaseDeps, resolve poolResolver, pool
 	}
 	slices.SortFunc(views, func(a, b LeaseView) int { return cmp.Compare(leaseNumber(a.Alias), leaseNumber(b.Alias)) })
 	return views, nil
+}
+
+// unlistedLosses are the views of records — of the pool rp, whose orchestrator
+// did not list its containers (listErr) — that zcp knows are lost without it
+// (DP-2, DP-20): every record of a pool being deleted by its search row or,
+// once the orchestrator could not be reached, gone or being deleted by its
+// read by id (the search lags), and a record taken on a pool since
+// re-created. known is false — the listing's failure stands — while a record
+// remains that only the orchestrator can decide.
+func unlistedLosses(ctx context.Context, d LeaseDeps, rp *resolvedPool, records []leaseRecord, listErr error) (views []LeaseView, known bool) {
+	if len(records) == 0 {
+		return nil, false
+	}
+	gone := ""
+	var se *platform.SwarmError
+	if state := poolDeletionState(rp.svc.Status); state != "" {
+		gone = fmt.Sprintf("the pool service %s (status %s)", state, rp.svc.Status)
+	} else if !errors.As(listErr, &se) {
+		gone = leasePoolGoneWhy(ctx, d, leaseRecord{PoolServiceID: rp.svc.ID})
+	}
+	views = make([]LeaseView, 0, len(records))
+	for _, r := range records {
+		switch {
+		case r.PoolServiceID != rp.svc.ID:
+			views = append(views, lostView(r, recreatedWhy))
+		case gone != "":
+			views = append(views, lostView(r, gone))
+		default:
+			return nil, false
+		}
+	}
+	slices.SortFunc(views, func(a, b LeaseView) int { return cmp.Compare(leaseNumber(a.Alias), leaseNumber(b.Alias)) })
+	return views, true
 }
 
 // leaseLockReserved is the orchestrator's lockState of a held container.
@@ -744,8 +800,73 @@ func isLeaseAliasShape(alias string) bool { return platform.ValidateLeaseAlias(a
 
 func leaseDir(stateDir string) string { return filepath.Join(stateDir, "leases") }
 
-// writeLeaseRecord writes the record atomically with mode 0600.
+// leaseRecordLockWait bounds the wait for an alias's record lock: whoever holds
+// it only reads, writes or removes one small file under it.
+const leaseRecordLockWait = 10 * time.Second
+
+// leaseRecordLockPath is the lock of the record at alias, beside the per-key
+// acquire locks (a record is replaced by rename and cannot carry it).
+func leaseRecordLockPath(stateDir, alias string) string {
+	return filepath.Join(stateDir, leaseLocksDir, "record-"+alias+".lock")
+}
+
+// lockLeaseRecord takes the record lock of alias (a flock, across this
+// process's calls and every zcp process sharing the state directory). Every
+// write of the record holds it, and so does every read of it that decides a
+// removal or a rewrite, so another process's write never lands between zcp's
+// read and its removal (DP-2). Nothing but the record's own file is read or
+// written under it. The caller MUST call the returned release function.
+func lockLeaseRecord(stateDir, alias string) (func(), error) {
+	if stateDir == "" {
+		return nil, errors.New("no state directory")
+	}
+	if !isLeaseAliasShape(alias) {
+		return nil, fmt.Errorf("alias %q is not <pool>-<number>", alias)
+	}
+	if err := os.MkdirAll(filepath.Join(stateDir, leaseLocksDir), 0o700); err != nil {
+		return nil, fmt.Errorf("create lease lock directory: %w", err)
+	}
+	unlock, err := lockLeaseFileWithin(leaseRecordLockPath(stateDir, alias), leaseRecordLockWait)
+	if err != nil {
+		return nil, fmt.Errorf("lock the record of %s: %w", alias, err)
+	}
+	return unlock, nil
+}
+
+// writeLeaseRecord writes the record atomically with mode 0600, under its
+// alias's record lock.
 func writeLeaseRecord(stateDir string, rec leaseRecord) error {
+	unlock, err := lockLeaseRecord(stateDir, rec.alias())
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return writeLeaseRecordLocked(stateDir, rec)
+}
+
+// rewriteLeaseRecord writes rec over its own record — only while the record
+// at its alias still names rec's lease and container (DP-2), checked and
+// written under the alias's record lock. kept says why it was not written:
+// the alias names another lease by now, or its record is gone (a release
+// elsewhere dropped it) or unreadable.
+func rewriteLeaseRecord(stateDir string, rec leaseRecord) (kept string, err error) {
+	unlock, err := lockLeaseRecord(stateDir, rec.alias())
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
+	if kept := keptRecordNote(stateDir, rec); kept != "" {
+		return kept, nil
+	}
+	if _, err := os.Stat(filepath.Join(leaseDir(stateDir), rec.alias()+".json")); errors.Is(err, os.ErrNotExist) {
+		return rec.alias() + "'s record is gone — a release elsewhere dropped it — so zcp did not write it again", nil
+	}
+	return "", writeLeaseRecordLocked(stateDir, rec)
+}
+
+// writeLeaseRecordLocked is writeLeaseRecord once the caller holds the
+// alias's record lock.
+func writeLeaseRecordLocked(stateDir string, rec leaseRecord) error {
 	if stateDir == "" {
 		return errors.New("no state directory")
 	}
@@ -882,6 +1003,14 @@ func LeaseReleaseChange(ctx context.Context, d LeaseDeps, alias string, force bo
 		guard.note = joinNotes(restoreNote, wake.note(), guard.note)
 		guard.woken = wake.started
 	}
+	// The rewire, the release and the drop of the record run under the
+	// group's lock (lockLeaseGroup): a release of a sibling, or an acquire's
+	// rewire, computes its overlay before or after this one, never across it.
+	unlockGroup, err := lockRecordGroup(ctx, d.StateDir, rec)
+	if err != nil {
+		return LeaseChange{}, reparkAfterRefusal(ctx, d, rec, wake, err)
+	}
+	defer unlockGroup()
 	var siblings []leaseRecord
 	var rewired []LeaseRewire
 	if d.SSH != nil && !leaseRecordReplaced(d.StateDir, rec) {
@@ -902,6 +1031,11 @@ func LeaseReleaseChange(ctx context.Context, d LeaseDeps, alias string, force bo
 // the container and the orchestrator releases and deletes nothing: a free
 // container is reset by a release whatever lease it carries.
 func releaseLost(ctx context.Context, d LeaseDeps, rec leaseRecord, why string) (LeaseChange, error) {
+	unlock, err := lockRecordGroup(ctx, d.StateDir, rec)
+	if err != nil {
+		return LeaseChange{}, err
+	}
+	defer unlock()
 	var rewired []LeaseRewire
 	// An alias another zcp took again — maybe for a lease of this branch —
 	// still names a lease: the siblings are not handed an overlay without it.
@@ -1045,9 +1179,15 @@ func releaseOnOrchestrator(ctx context.Context, d LeaseDeps, rp *resolvedPool, r
 // container stays in the pool as its warm one, DP-27): that record, its ssh
 // stanza and its mount are another lease's, so they are left alone and the
 // view says so (recordKept). So is a record zcp cannot read: it cannot tell
-// it is the lease's own.
+// it is the lease's own. The check and the removal hold the alias's record
+// lock, so no write of another process lands between them.
 func dropLeaseRecord(stateDir string, rec leaseRecord, state, note string) (LeaseView, error) {
 	v := rec.view(state)
+	unlock, err := lockLeaseRecord(stateDir, rec.alias())
+	if err != nil {
+		return LeaseView{}, fmt.Errorf("drop lease record %s: %w", rec.alias(), err)
+	}
+	defer unlock()
 	if kept := keptRecordNote(stateDir, rec); kept != "" {
 		v.Note, v.recordKept = joinNotes(strings.TrimSuffix(note, recordDroppedTail), kept), kept
 		return v, nil

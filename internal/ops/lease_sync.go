@@ -13,6 +13,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/devsup"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // A branch that spans several app parts holds one lease per part's pool
@@ -201,7 +202,7 @@ func LeaseSync(ctx context.Context, d LeaseDeps, alias string) (LeaseSyncView, e
 		}
 	}
 	runMembers(members, func(m *LeaseSyncMember) {
-		if !memberStillHeld(ctx, d, m, alias) {
+		if !memberStillHeld(ctx, d, m, alias, recordRepo(d.StateDir, rec), branch) {
 			return
 		}
 		if parked[m.Alias] {
@@ -459,14 +460,22 @@ func hasMark(a leaseSyncAnswer, key string) bool {
 	return ok
 }
 
-// memberStillHeld asks the orchestrator whose a member's container is
-// (readLeaseOwnership) and reports whether it is its lease's; one that is not
-// — lost, or one the orchestrator did not answer about — is recorded so,
-// nothing sent to it.
-func memberStillHeld(ctx context.Context, d LeaseDeps, m *LeaseSyncMember, source string) bool {
+// memberStillHeld reports whether a member is still a lease of the sync's
+// group — the record at its alias of repo's branch, read again — and its
+// container its lease's (readLeaseOwnership); one that is not is recorded so,
+// nothing sent to it. The group was read before the push: a member released
+// since whose container was taken again under the same alias, for another
+// repository or branch, is lost, whatever the orchestrator answers the lease
+// its alias names now.
+func memberStillHeld(ctx context.Context, d LeaseDeps, m *LeaseSyncMember, source, repo, branch string) bool {
 	rec, err := loadLeaseRecord(d.StateDir, m.Alias)
 	if err != nil {
 		m.Outcome, m.Note = LeaseSyncFailed, fmt.Sprintf("%s's record could not be read (%s), so zcp did not fast-forward it", m.Alias, errorNote(err))
+		return false
+	}
+	if of := recordRepo(d.StateDir, rec); recordBranch(rec) != branch || !topology.SameRepoURL(of, repo) {
+		m.Outcome = LeaseSyncLost
+		m.Note = fmt.Sprintf("%s now names a lease of branch %s of %s: the lease of this branch ended after the sync read the branch's leases and the container was taken again under its alias, so zcp did not fast-forward it", m.Alias, recordBranch(rec), cmp.Or(of, "a repository zcp has no record of"))
 		return false
 	}
 	switch v := readLeaseOwnership(ctx, d, rec); {

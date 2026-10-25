@@ -304,7 +304,7 @@ func MountStatus(
 		if err != nil {
 			return nil, err
 		}
-		info := checkMountInfo(ctx, mounter, svc.Name, false)
+		info := checkMountInfo(ctx, mounter, svc.Name, false, true)
 		return &MountStatusResult{Mounts: []MountInfo{info}}, nil
 	}
 
@@ -312,7 +312,7 @@ func MountStatus(
 	mounts := make([]MountInfo, 0, len(services))
 	for _, svc := range services {
 		serviceNames[svc.Name] = true
-		mounts = append(mounts, checkMountInfo(ctx, mounter, svc.Name, false))
+		mounts = append(mounts, checkMountInfo(ctx, mounter, svc.Name, false, true))
 	}
 
 	// Detect orphan mount directories from deleted services.
@@ -328,7 +328,7 @@ func MountStatus(
 			continue
 		}
 		if !serviceNames[dir] {
-			info := checkMountInfo(ctx, mounter, dir, true)
+			info := checkMountInfo(ctx, mounter, dir, true, true)
 			if info.Mounted || info.Stale || info.Pending {
 				mounts = append(mounts, info)
 			}
@@ -344,8 +344,11 @@ func isLeaseAlias(name string) bool { return platform.ValidateLeaseAlias(name) =
 
 // leaseMountInfo is the mount state of a lease's directory. It is never an
 // orphan; the lease's own state (held, lost, unmounted) is zerops_lease's.
+// It writes no probe file through the mount: sshfs reconnects to the
+// container's hostname, which a lease that ended outside zcp hands to the
+// pool's next holder, and a status asks no orchestrator whose it is (DP-2).
 func leaseMountInfo(ctx context.Context, mounter Mounter, alias string) MountInfo {
-	info := checkMountInfo(ctx, mounter, alias, false)
+	info := checkMountInfo(ctx, mounter, alias, false, false)
 	info.Lease = true
 	lease := "Lease mount; zerops_lease action=status reports the lease's state."
 	if info.Message != "" {
@@ -355,7 +358,9 @@ func leaseMountInfo(ctx context.Context, mounter Mounter, alias string) MountInf
 	return info
 }
 
-func checkMountInfo(ctx context.Context, mounter Mounter, hostname string, orphan bool) MountInfo {
+// checkMountInfo is the mount state of /var/www/<hostname>; probe writes a
+// probe file through an active mount to tell it writable.
+func checkMountInfo(ctx context.Context, mounter Mounter, hostname string, orphan, probe bool) MountInfo {
 	mountPath := filepath.Join(mountBase, hostname)
 	info := MountInfo{
 		Hostname:  hostname,
@@ -369,7 +374,9 @@ func checkMountInfo(ctx context.Context, mounter Mounter, hostname string, orpha
 	switch state {
 	case platform.MountStateActive:
 		info.Mounted = true
-		info.Writable, _ = mounter.IsWritable(ctx, mountPath)
+		if probe {
+			info.Writable, _ = mounter.IsWritable(ctx, mountPath)
+		}
 	case platform.MountStateStale:
 		info.Stale = true
 		if orphan {

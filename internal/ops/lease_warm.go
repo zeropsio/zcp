@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -258,13 +259,17 @@ func (d LeaseDeps) containerByID(ctx context.Context, rp *resolvedPool, id strin
 // readPoolWarm lists the pool and reads its warm candidates by id (lists omit
 // snapshots), counting up to need warm containers (0: all of them) — mineID,
 // the container being released, aside and read by id for its own snapshots.
-// A candidate whose read fails is not counted.
+// A candidate whose read fails may be warm: while the count is short of need
+// (or of all of them) the pool's warm containers are unknown, an error —
+// never a guessed count a top-up would create containers beyond the target
+// on (DP-27).
 func (d LeaseDeps) readPoolWarm(ctx context.Context, rp *resolvedPool, mineID string, need int) (poolWarmRead, error) {
 	list, err := d.containers(ctx, rp)
 	if err != nil {
 		return poolWarmRead{}, err
 	}
 	read := poolWarmRead{total: len(list)}
+	var unread []string
 	for _, c := range list {
 		if mineID != "" && c.ID == mineID {
 			read.mine = &c
@@ -273,10 +278,17 @@ func (d LeaseDeps) readPoolWarm(ctx context.Context, rp *resolvedPool, mineID st
 		if !warmCandidate(c) || (need > 0 && read.ready >= need) {
 			continue
 		}
-		if got, err := d.containerByID(ctx, rp, c.ID); err == nil && isWarm(got) {
+		got, err := d.containerByID(ctx, rp, c.ID)
+		switch {
+		case err != nil:
+			unread = append(unread, fmt.Sprintf("%s (%s)", leaseAlias(rp.svc.Name, c.Number), errorNote(err)))
+		case isWarm(got):
 			read.ready++
 			read.warm = append(read.warm, c.ID)
 		}
+	}
+	if len(unread) > 0 && (need == 0 || read.ready < need) {
+		return poolWarmRead{}, fmt.Errorf("a warm candidate could not be read by id: %s", strings.Join(unread, "; "))
 	}
 	if read.mine != nil {
 		if got, err := d.containerByID(ctx, rp, mineID); err == nil {

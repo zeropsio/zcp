@@ -66,6 +66,13 @@ func poolNotRunningError(pool, op, status string, cause error) error {
 	return out
 }
 
+// leasedContainer: a listed container is under a reservation — reserved, or
+// being stopped or started by its holder (a park or an unpark, DP-28), which
+// keeps the reservation and the container's /var/www.
+func leasedContainer(c platform.SwarmContainer) bool {
+	return c.LockState == leaseLockReserved || powerTransition(c)
+}
+
 // poolUsage is a pool's containers as the orchestrator lists them, matched
 // against zcp's own lease records.
 type poolUsage struct {
@@ -114,7 +121,7 @@ func readPoolUsage(ctx context.Context, d LeaseDeps, rp *resolvedPool) poolUsage
 		// yours; one it does not answer about is named, never read (DP-2).
 		owned := reservedOwnership(ctx, d, rp, own, containers)
 		for _, c := range containers {
-			if c.LockState != leaseLockReserved {
+			if !leasedContainer(c) {
 				continue
 			}
 			u.leased++
@@ -447,7 +454,7 @@ func planPoolShrink(ctx context.Context, d LeaseDeps, svc, current *platform.Ser
 	// answer about it (DP-2): another holder's is theirs.
 	owned := reservedOwnership(ctx, d, rp, own, containers)
 	for i, c := range sorted {
-		leased := c.LockState == leaseLockReserved
+		leased := leasedContainer(c)
 		if leased && s.LowestSafe == 0 {
 			s.LowestSafe = len(sorted) - i
 		}
