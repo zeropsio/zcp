@@ -1,0 +1,136 @@
+package ops
+
+import (
+	"cmp"
+	"context"
+	"errors"
+	"fmt"
+	"slices"
+	"time"
+
+	"github.com/zeropsio/zcp/internal/platform"
+)
+
+// A pool container the orchestrator stops leaves the pool's public routes,
+// and the platform's balancer does not put it back when the orchestrator
+// starts it again: it rebuilds the pool's routes only when the pool's
+// containers change — a create (the route answered ~1 s after it began) or a
+// removal (~7 s) — while re-enabling or toggling the subdomain changes
+// nothing (live-verified 2026-10-25, docs/spec-workflows.md §8 DP-28). An
+// unparked lease's dev server answered over the project network while its
+// preview answered 502 for good. So once an unpark's container runs again,
+// zcp changes the pool's containers under the warm policy's lock (DP-27): it
+// replaces the pool's warm container — removed (free, so without a lease or
+// force), and a new one created once it has left the pool — or, when the
+// pool has none, creates it within maxContainers. A pool with no HTTP port
+// has no public route; a full pool whose other containers are all held
+// leaves nothing zcp may change, and the unpark says the preview is not
+// routed until the pool's containers change.
+
+// leaseRerouteGoneEvery and leaseRerouteGoneWait pace the wait for a removed
+// warm container to leave the pool before its replacement is created: the
+// orchestrator counts a container being removed toward maxContainers, and a
+// removal took ~9 s (live, 2026-10-25).
+const (
+	leaseRerouteGoneEvery = time.Second
+	leaseRerouteGoneWait  = 2 * time.Minute
+)
+
+// leaseRouteWhy is why an unpark changes the pool's containers.
+const leaseRouteWhy = "the platform routes the pool's subdomain to a container started again only once the pool's containers change"
+
+// rerouteUnparked changes the pool's containers so the platform routes the
+// pool's subdomain to the lease's container again, which the orchestrator
+// just started (or which started outside zcp after zcp parked it), and says
+// what it did: "" for a pool that serves no HTTP port.
+func rerouteUnparked(ctx context.Context, d LeaseDeps, rp *resolvedPool, rec leaseRecord) string {
+	if !poolServesHTTP(ctx, d, rp) {
+		return ""
+	}
+	w := d.Warm
+	if w == nil {
+		return unroutedNote("zcp keeps no warm container for this pool")
+	}
+	unlock, err := lockPoolWarm(ctx, d.StateDir, rp.svc.Name, cmp.Or(w.LockWait, leaseWarmLockWait))
+	if err != nil {
+		if errors.Is(err, errWarmLockBusy) {
+			return unroutedNote("another zcp call was deciding the pool's warm container")
+		}
+		return unroutedNote(fmt.Sprintf("the pool's warm container could not be decided (%v)", err))
+	}
+	handed := false
+	defer func() {
+		if !handed {
+			unlock()
+		}
+	}()
+	read, err := d.readPoolWarm(ctx, rp, rec.ContainerID, 1)
+	if err != nil {
+		return unroutedNote("the pool's containers could not be read (" + err.Error() + ")")
+	}
+	if len(read.warm) > 0 {
+		id := read.warm[0]
+		if rp.api.Delete(ctx, id, "") == nil {
+			unlock()
+			handed = true
+			w.spawn(func() { w.replaceRemoved(context.WithoutCancel(ctx), d, rp, id) })
+			return "zcp replaced the pool's warm container, so its preview is routed again (" + leaseRouteWhy + "); a new warm container is being prepared"
+		}
+		// A refused removal changed nothing: an acquire may have taken the
+		// container meanwhile, so a create is tried as for a pool with none.
+		read.ready, read.warm = 0, nil
+	}
+	if _, handed = w.topUp(ctx, d, rp, read, unlock); handed {
+		return "zcp is creating the pool's warm container, so its preview is routed again (" + leaseRouteWhy + ")"
+	}
+	why := "nothing was created"
+	if o := readWarmOutcome(d.StateDir, rp.svc.Name); o != nil && o.Note != "" {
+		why = o.Note
+	}
+	return unroutedNote(why)
+}
+
+// unroutedNote says an unparked lease's preview is not routed yet, and why
+// zcp changed none of the pool's containers.
+func unroutedNote(why string) string {
+	return "its preview may answer 502 until the pool's containers change: " + leaseRouteWhy + ", and zcp changed none (" + why +
+		"); an acquire that creates a container or a release that removes one routes it again"
+}
+
+// poolServesHTTP reports whether the pool declares an HTTP port, read by id
+// (the listing the pool was resolved from stands in when the read fails).
+func poolServesHTTP(ctx context.Context, d LeaseDeps, rp *resolvedPool) bool {
+	svc := rp.svc
+	if d.Client != nil {
+		if fresh, err := d.Client.GetService(ctx, rp.svc.ID); err == nil && fresh != nil {
+			svc = fresh
+		}
+	}
+	return slices.ContainsFunc(svc.Ports, func(p platform.Port) bool { return p.HTTPSupport || isHTTPScheme(p) })
+}
+
+// replaceRemoved creates the pool's warm container again once the one an
+// unpark removed (id) has left the pool's listing, under the warm lock; one
+// still listed after leaseRerouteGoneWait is recorded, and the pool's next
+// acquire or release tops it up.
+func (w *LeaseWarm) replaceRemoved(ctx context.Context, d LeaseDeps, rp *resolvedPool, id string) {
+	wctx, cancel := context.WithTimeout(ctx, leaseRerouteGoneWait)
+	defer cancel()
+	for {
+		list, err := d.containers(wctx, rp)
+		if err == nil && !slices.ContainsFunc(list, func(c platform.SwarmContainer) bool { return c.ID == id }) {
+			break
+		}
+		select {
+		case <-wctx.Done():
+			w.record(d, rp.svc.Name, LeaseWarmFailed, 0, fmt.Sprintf("the warm container zcp removed to route an unparked lease again was still in the pool after %s, so no replacement was created; the pool's next acquire or release creates it", leaseRerouteGoneWait))
+			return
+		case <-time.After(leaseRerouteGoneEvery):
+		}
+	}
+	unlock, err := lockPoolWarm(ctx, d.StateDir, rp.svc.Name, LeaseCallTimeout)
+	if err != nil {
+		return
+	}
+	w.topUpRead(ctx, d, rp, unlock)
+}
