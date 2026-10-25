@@ -32,6 +32,8 @@ import (
 type censusLocalSSH struct {
 	mu    sync.Mutex
 	calls []string
+	// binDir, when set, comes first on PATH: a git shim.
+	binDir string
 }
 
 func (s *censusLocalSSH) ExecSSH(ctx context.Context, hostname, command string) ([]byte, error) {
@@ -40,6 +42,9 @@ func (s *censusLocalSSH) ExecSSH(ctx context.Context, hostname, command string) 
 	s.mu.Unlock()
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)
 	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+	if s.binDir != "" {
+		cmd.Env = append(cmd.Env, "PATH="+s.binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return out, &platform.SSHExecError{Hostname: hostname, Output: string(out), Err: err}
@@ -684,6 +689,63 @@ func TestPoolMigrateCensus_Submodule_NamedNeverClean(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), `"submodules":{"count":1,"paths":["vendor/lib"]}`) {
 		t.Errorf("the main tree = %s, want submodules naming vendor/lib", raw)
+	}
+}
+
+// TestPoolMigrateCensus_OldGitWithoutWorktreeListZ_LinkedWorktreesNoCensus:
+// git older than 2.36 (Ubuntu 22.04 ships 2.34) has no `worktree list -z`, so
+// a worktree path holding a newline cannot be told from one cut in two; the
+// refusal above failed open there and the census read clean while that
+// worktree held work. Without -z, a repository with linked worktrees is no
+// census, naming git's version; one without them — only the main checkout,
+// whose path is the root — still reads (PM-2).
+func TestPoolMigrateCensus_OldGitWithoutWorktreeListZ_LinkedWorktreesNoCensus(t *testing.T) {
+	t.Parallel()
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git is not installed")
+	}
+	shim := t.TempDir()
+	script := "#!/bin/sh\nif [ \"$1\" = worktree ]; then for a in \"$@\"; do if [ \"$a\" = -z ]; then echo \"error: unknown switch \\`z'\" >&2; exit 129; fi; done; fi\nexec " + realGit + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(shim, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name     string
+		worktree string // a linked worktree's directory name, "" for none
+	}{
+		{name: "a newline path", worktree: "odd\nname"},
+		{name: "a plain path", worktree: "plain"},
+		{name: "no linked worktree"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			base := censusBase(t)
+			root := censusCleanRepo(t, base)
+			if tc.worktree != "" {
+				wt := filepath.Join(base, tc.worktree)
+				censusGit(t, root, "worktree", "add", "-q", "-b", "wt", wt, "main")
+				censusWrite(t, filepath.Join(wt, "app.txt"), "edited in the linked worktree\n")
+			}
+			census, err := ReadPoolMigrateCensus(context.Background(), &censusLocalSSH{binDir: shim}, "appdev", root)
+			if tc.worktree == "" {
+				if err != nil || !census.Clean {
+					t.Fatalf("census = %+v, %v; want a clean census: no linked worktree, nothing to cut", census, err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("a linked worktree on git without worktree list -z read as a census: clean=%v %+v", census.Clean, census.Trees)
+			}
+			said := err.Error()
+			var sshErr *platform.SSHExecError
+			if errors.As(err, &sshErr) {
+				said += " " + sshErr.Output
+			}
+			if !strings.Contains(said, "2.36") {
+				t.Errorf("err = %q, want it to name the git version that lists worktree paths whole", said)
+			}
+		})
 	}
 }
 
