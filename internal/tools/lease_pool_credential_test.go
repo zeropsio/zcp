@@ -20,6 +20,7 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -190,6 +191,62 @@ func TestReconcileHQRepositories_RenewsThePoolsCredentialAfterTheMateEnrollsAgai
 				t.Errorf("the pass wrote the pool's GIT_TOKEN, the user's: %+v", token)
 			}
 			assertNoSecretOnDisk(t, lab.stateDir, renewed)
+		})
+	}
+}
+
+// TestLeaseTool_HQRepo_PoolKeyingAPair_NoWriteOfTheCredentialItHolds: once a
+// pool keys a pair, the repository pass takes the acquire's per-pool record
+// over — the pair keeps the fingerprint of the credential the pool holds —
+// and removes it. An acquire then finds no per-pool record, yet the pool
+// already holds the credential the enrollment holds now, so it writes
+// nothing: a write is a delete and a create of the variable, and while the
+// two run every fresh session of every container of the pool reads none, so
+// git in the pool's other leases fails "could not read Username" (live,
+// 2026-10-25: a sync from one lease failed 2 s after another conversation's
+// acquire rewrote the credential its pool already held). A pair recording
+// another credential, or another pool service, still gets the write.
+func TestLeaseTool_HQRepo_PoolKeyingAPair_NoWriteOfTheCredentialItHolds(t *testing.T) {
+	// Non-parallel: t.Setenv points HOME at the test's enrollment.
+	tests := []struct {
+		name          string
+		pairServiceID string
+		pairHolds     string
+		wantWrites    int
+	}{
+		{name: "the pair records the credential held now", pairServiceID: "svc-pool", pairHolds: leaseHQCredential, wantWrites: 0},
+		{name: "the pair records a revoked credential", pairServiceID: "svc-pool", pairHolds: "a-revoked-credential", wantWrites: 1},
+		{name: "the pair records another pool service", pairServiceID: "svc-an-older-pool", pairHolds: leaseHQCredential, wantWrites: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			enrollWithLeaseHQ(t)
+			srv, stateDir, mock := leaseToolServerIn(t, runtime.Info{InContainer: true, ProjectID: "proj-1", MateEnabled: true}, &leaseStubSSH{})
+			// The pool holds the credential an earlier acquire wrote; the
+			// Mate's key reads it back REDACTED.
+			mock.WithServiceEnv("svc-pool", []platform.ServiceEnvVar{
+				{ID: "e-api", Key: "API_TOKEN", Content: leaseTestToken, Sensitive: true},
+				{ID: "e-hq", Key: ops.PoolHQCredentialEnvKey, Content: "REDACTED", Sensitive: true},
+			})
+			if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+				Hostname: "devpool", Mode: topology.PlanModeStandard, Stages: []topology.StageRef{{Hostname: "devstage"}},
+				BootstrapSession: "test", BootstrappedAt: "2026-10-25",
+				DevPool: &workflow.DevPoolRef{ServiceID: tt.pairServiceID},
+				HQ:      &workflow.HQRepoRef{AppID: "a1", Repo: "web", CredentialFingerprint: hq.CredentialFingerprint(tt.pairHolds)},
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			res := callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseHQRepo, "branch": "feat"})
+			if text := getTextContent(t, res); res.IsError {
+				t.Fatalf("acquire failed: %s", text)
+			}
+			if n := mock.CallCount("CreateServiceEnvVar"); n != tt.wantWrites {
+				t.Errorf("credential writes = %d, want %d", n, tt.wantWrites)
+			}
+			if tt.wantWrites == 0 && mock.CallCount("DeleteUserData") != 0 {
+				t.Errorf("the acquire deleted a variable of the pool (%d), leaving its sessions without the credential", mock.CallCount("DeleteUserData"))
+			}
 		})
 	}
 }
