@@ -826,3 +826,87 @@ func TestSwarmClient_Renew_ReadsTheLiveAnswers(t *testing.T) {
 		})
 	}
 }
+
+// TestSwarmClient_ErrorEnvelope_SaysWhatItsMetadataSays: a refusal whose
+// message is the platform's placeholder "See metadata" carries its words only
+// in meta[] — each item's code and error and every metadata key — so the
+// error says what they say, scrubbed of the bearer and the lease, and never
+// the bare placeholder (live, Kara's run 2026-10-25: a release of a container
+// that could start no process answered "See metadata" and the agent learned
+// nothing). A metadata value that is not a list of strings still leaves the
+// envelope readable.
+func TestSwarmClient_ErrorEnvelope_SaysWhatItsMetadataSays(t *testing.T) {
+	t.Parallel()
+
+	const lease = "feedfacefeedfacefeedfacefeedface"
+	const token = "orch-api-token-0001"
+	tests := []struct {
+		name        string
+		body        string
+		wantCode    string
+		wantReason  string
+		wantSays    []string
+		wantNotSays []string
+	}{
+		{
+			name: "See metadata: the item's code, error and metadata are what it says",
+			body: `{"error":{"code":"containerAction","message":"See metadata","meta":[{"code":"commandExec",` +
+				`"error":"fork/exec /opt/zerops/bin/zsc: resource temporarily unavailable",` +
+				`"metadata":{"containerId":["c-5"],"echo":["bearer ` + token + ` lease ` + lease + `"]}}]}}`,
+			wantCode: "containerAction",
+			wantSays: []string{"commandExec", "fork/exec /opt/zerops/bin/zsc: resource temporarily unavailable", "containerId: c-5", "[redacted]"},
+			wantNotSays: []string{"See metadata", token, lease},
+		},
+		{
+			name: "metadata values that are no list of strings",
+			body: `{"error":{"code":"containerAction","message":"See metadata","meta":[{"code":"containerAction",` +
+				`"error":"the container is in state ACTION_FAILED","metadata":{"reason":"container-failed","containerId":"c-5","attempts":3}}]}}`,
+			wantCode:    "containerAction",
+			wantReason:  "container-failed",
+			wantSays:    []string{"the container is in state ACTION_FAILED", "containerId: c-5", "attempts: 3"},
+			wantNotSays: []string{"See metadata"},
+		},
+		{
+			name: "a message of its own keeps it, and the metadata it does not repeat follows",
+			body: `{"error":{"code":"containerAction","message":"release failed","meta":[{"code":"containerAction",` +
+				`"error":"release failed","metadata":{"reason":["reset-failed"],"retryable":["false"],"step":["restore snapshot"]}}]}}`,
+			wantCode:   "containerAction",
+			wantReason: "reset-failed",
+			wantSays:   []string{"release failed", "step: restore snapshot"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer srv.Close()
+
+			c := NewSwarmClient(srv.URL, token, srv.Client())
+			_, err := c.Release(context.Background(), "c-5", lease, true)
+			var se *SwarmError
+			if !errors.As(err, &se) {
+				t.Fatalf("err = %v (%T), want a *SwarmError", err, err)
+			}
+			if se.Code != tt.wantCode {
+				t.Errorf("Code = %q, want %q", se.Code, tt.wantCode)
+			}
+			if se.Reason != tt.wantReason {
+				t.Errorf("Reason = %q, want %q", se.Reason, tt.wantReason)
+			}
+			text := err.Error()
+			for _, want := range tt.wantSays {
+				if !strings.Contains(text, want) {
+					t.Errorf("error %q does not say %q", text, want)
+				}
+			}
+			for _, not := range tt.wantNotSays {
+				if strings.Contains(text, not) {
+					t.Errorf("error %q says %q", text, not)
+				}
+			}
+		})
+	}
+}
