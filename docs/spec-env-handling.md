@@ -282,7 +282,14 @@ Returns an `EnvDotenvResult` (no write performed; `preview: true`):
 ```
 
 The `diff` is an `EnvDiff` with exactly `added` / `modified` /
-`unowned` — there is NO `removed` field. A key the user removed from
+`unowned` — there is NO `removed` field. A `modified` entry's `from`
+never echoes the existing `.env` value: that literal carries no word of
+where it came from, so a secret an earlier render put there (a ref the
+key no longer uses, a sensitive var) reads like any other value — it
+shows as `<not shown: the existing .env value>`, or as the credential /
+sensitive mask when `to` is masked too; `to` is masked by the plan's own
+classification (`TestGenerateDotenv_PreviewDiff_OldSecretNeverEchoed`,
+`TestGenerateDotenv_PreviewDiff_SensitiveMasked`). A key the user removed from
 all sources but that lingers in the existing `.env` surfaces under
 `unowned` (it is no longer produced by any source), not a dedicated
 removed list.

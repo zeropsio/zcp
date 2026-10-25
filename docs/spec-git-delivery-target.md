@@ -114,7 +114,10 @@ write discipline unchanged.
   surface (sed-extract for error messages), never the auth path.
 - Host-scoped (`credential.https://<host>`) — parity with today's `.netrc machine` line; the host
   derivation stays owned by `ops.parseGitHost` (the launch-gate inline duplicate folds into it —
-  the consolidation the 2026-05-28 audit already ordered).
+  the consolidation the 2026-05-28 audit already ordered). A remote on a port other than 443 keeps
+  it in the scope (`credential.https://<host>:<port>`, `ops.scopeWithPort`): git matches a scope's
+  port exactly (live, git 2.50.1), so a portless scope is never asked for that remote and would
+  answer the host's default port instead (`TestPersistedCredentialHelper_ByShellAndHost`).
 - First-time probe (token not yet written): one-shot inline `-c credential.helper=…` with the
   candidate token via env-assignment prefix — environ-only, no argv leak, no file. Probe-first
   invariant unchanged: no state mutation until the probe passes.
