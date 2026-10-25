@@ -1062,6 +1062,51 @@ func TestSupervisor_AChangeMadeInTheStartWindowCountsThoughItsBurstSettlesAfterI
 	}
 }
 
+// A server that writes into its watched path without a pause keeps each
+// burst open until watchSettleMax. With the default window the guard trips on
+// the bursts inside each start's window, but the next burst ends past the
+// window, and a change past the window always restarted: the server was
+// restarted every window, forever. Once the guard tripped, a burst made past
+// the window of only paths the server's own output changed inside its windows
+// is still that output and restarts nothing; a path it never wrote restarts it.
+func TestSupervisor_AServerWritingItsWatchedFilesWithoutPauseStopsBeingRestartedOnceTheGuardTrips(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	r.window = 2 * time.Second
+	r.write("apps/api/main.py", "v1")
+	r.declare(Server{Name: "api", Command: "exec sleep 300", Watch: &Watch{Paths: []string{"apps/api"}}})
+	s := r.supervisor()
+	s.Boot()
+	eventually(t, "api to run", func() bool {
+		sv := mustServer(t, s.State(), "api")
+		return sv.Status == StatusRunning && sv.Pid != 0
+	})
+	before := mustServer(t, s.State(), "api").Restarts
+
+	// Each of its last watchLoopLimit starts saw its own output; this start
+	// began more than a window ago.
+	started := time.Now().Add(-r.window - time.Second)
+	s.mu.Lock()
+	sv := s.servers["api"]
+	sv.startBegun, sv.startedAt = started.Add(-time.Millisecond), &started
+	sv.selfChanged, sv.windowChanged = watchLoopLimit, false
+	s.mu.Unlock()
+	s.watchFired("api", "apps/api/out.log", started.Add(r.window/2)) // its output inside the window: declined
+	s.watchFired("api", "apps/api/out.log", time.Now())              // the same output, its burst ending past the window
+	got := mustServer(t, s.State(), "api")
+	if got.Restarts != before {
+		t.Fatalf("api restarted (%d → %d) on its own output past the window after the guard tripped", before, got.Restarts)
+	}
+	if !strings.HasPrefix(got.LastRestartReason, "restarts stopped: ") {
+		t.Fatalf("reason = %q, want the restarts named stopped", got.LastRestartReason)
+	}
+
+	s.watchFired("api", "apps/api/main.py", time.Now()) // a path its output never changed
+	if got := mustServer(t, s.State(), "api"); got.Restarts != before+1 || got.LastRestartReason != "apps/api/main.py changed" {
+		t.Fatalf("api = %d restart(s), reason %q; want one more, for the edit", got.Restarts, got.LastRestartReason)
+	}
+}
+
 // limitRig is a rig whose service's task limit (300) is reached each time a
 // server appends a line to .limit in the repo root: the kernel's pids.events
 // "max" count, which grows each time a fork is refused at pids.max.
