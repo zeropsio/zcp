@@ -407,6 +407,60 @@ func TestLeaseStatus_MergedBranchSaysSo_NotNoChangeYet(t *testing.T) {
 	}
 }
 
+// TestLeaseRelease_ResultNamesTheReleasedBranchsChange: a lease release's
+// result names the change on each released lease's branch, read the way lease
+// status reads it — once, through the reader it is handed — so a change merged
+// since the last pass reads merged, never still open (rehearsal 2026-10-25, O4:
+// the agent told the person a merged change was open), naming the branch's
+// leases still held with the branch release; an open change reads open with
+// its standing. HQ not answering, it is the ledger's, as last read.
+func TestLeaseRelease_ResultNamesTheReleasedBranchsChange(t *testing.T) {
+	lab := twoOpenChanges(t)
+	released := lab.leaseOf("webpool", 4, "fix-login")
+	kept := lab.leaseOf("apipool", 4, "fix-login")
+	other := lab.leaseOf("webpool", 5, "add-signup")
+	lab.hq.mergeChange("appdev", 1)
+	hqc, ok := openHQ(lab.hq.srv.Client())
+	if !ok {
+		t.Fatal("the lab's Mate is not enrolled")
+	}
+	repo := topology.RepoIdentity(hqc.RepoURL(labApp, "appdev"))
+	// The release dropped the records of the leases it released.
+	for _, alias := range []string{released, other} {
+		if err := os.Remove(filepath.Join(lab.stateDir, "leases", alias+".json")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	views := []ops.LeaseView{
+		{Alias: released, Repo: repo, Branch: "fix-login", State: ops.LeaseStateReleased},
+		{Alias: other, Repo: repo, Branch: "add-signup", State: ops.LeaseStateReleased},
+	}
+	reads := 0
+
+	got := leaseReleaseChanges(lab.stateDir, lab.hq.srv.URL, views, func() *hq.MateState {
+		reads++
+		return hqStateNow(t.Context(), lab.hq.srv.Client())
+	})
+
+	for _, want := range []string{"group appdev@fix-login: change #1 merged", kept, ops.LeaseReleaseBranchCall("fix-login", "", false),
+		"or start new work from main", "group appdev@add-signup: #2"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the release result lacks %q: %s", want, got)
+		}
+	}
+	if strings.Contains(got, released) || strings.Contains(got, "as last read") || strings.Contains(got, "no change yet") {
+		t.Errorf("the release result names the released lease as held, or reads HQ as unanswered: %s", got)
+	}
+	if reads != 1 {
+		t.Errorf("the Mate's state was read %d times, want once", reads)
+	}
+
+	unanswered := leaseReleaseChanges(lab.stateDir, lab.hq.srv.URL, views[1:], func() *hq.MateState { return nil })
+	if !strings.Contains(unanswered, "as last read") || !strings.Contains(unanswered, "group appdev@add-signup: #2") {
+		t.Errorf("with HQ not answering the release result is not the ledger's, as last read: %s", unanswered)
+	}
+}
+
 // TestHandleRelease_NamesTheOpenChangesItLeavesOut: a release takes main only,
 // so the person's handoff names the open changes the ledger keeps, per
 // repository, as not in it.

@@ -119,6 +119,15 @@ push_mate() {
   echo "### mate server (fork) → $REMOTE_HOST:$MATE_PREFIX"
   [ -d "$MATE_REPO/apps/server" ] || { echo "fork not found at $MATE_REPO (set MATE_REPO)"; exit 1; }
 
+  # vp is the fork's toolchain CLI; a shell without it on PATH uses the
+  # fork's own copy from its dependencies.
+  local vp
+  vp="$(command -v vp 2>/dev/null || true)"
+  if [ -z "$vp" ]; then
+    vp="$MATE_REPO/node_modules/.bin/vp"
+    [ -x "$vp" ] || { echo "vp not found: not on PATH, nor at $vp (install the fork's dependencies once, or put vp on PATH)"; exit 1; }
+  fi
+
   local sha version tarball
   sha="$(git -C "$MATE_REPO" rev-parse --short HEAD)"
   # A unique prerelease version per build: npm reinstalls only when the version
@@ -130,7 +139,7 @@ push_mate() {
     # Upstream moves daily and brings new dependencies; a rebase without a
     # reinstall fails the web build on an unresolved import. Fast when current.
     echo "==> Syncing dependencies (vp install --frozen-lockfile)..."
-    vp install --frozen-lockfile
+    "$vp" install --frozen-lockfile
     prebuild="$(node_pty_prebuild)"
     if [ "${MATE_SKIP_WEB:-0}" != "1" ]; then
       echo "==> Building web client (base path: ${MATE_BASE_PATH-/mate})..."
@@ -140,7 +149,7 @@ push_mate() {
       # source. W4-F6-DOOR removed the need: a requires-auth gate advertising zerops-identity is a
       # Zerops door, so /mate/ renders the Zerops sign-in, and the honest hosted-static answer (false)
       # is what lets the container register its own primary environment.
-      VITE_BASE_PATH="${MATE_BASE_PATH-/mate}" vp run --filter @t3tools/web build
+      VITE_BASE_PATH="${MATE_BASE_PATH-/mate}" "$vp" run --filter @t3tools/web build
     fi
     echo "==> Building server bundle + client copy..."
     node apps/server/scripts/cli.ts build

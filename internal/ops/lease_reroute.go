@@ -25,7 +25,8 @@ import (
 // pool has none, creates it within maxContainers. A pool with no HTTP port
 // has no public route; a full pool whose other containers are all held
 // leaves nothing zcp may change, and the unpark says the preview is not
-// routed until the pool's containers change.
+// routed until the pool's containers change — which the park of a lease in
+// such a pool says up front (parkedUnroutedNote), parking it all the same.
 //
 // A reset stops and starts its container too, so the one a release keeps as
 // the pool's warm container is off the routes until the next acquire's
@@ -104,6 +105,34 @@ func rerouteUnparked(ctx context.Context, d LeaseDeps, rp *resolvedPool, rec lea
 func unroutedNote(why string) string {
 	return "its preview may answer 502 until the pool's containers change: " + leaseRouteWhy + ", and zcp changed none (" + why +
 		"); an acquire that creates a container or a release that removes one routes it again"
+}
+
+// parkedUnroutedNote is what a park says up front of a pool its unpark
+// cannot route the lease's preview in again (rerouteUnparked): one serving an
+// HTTP port that holds its maximum (poolFullOfRoutes) with no free warm
+// container an unpark could replace. The park is never refused for it; the
+// note suggests a release instead — in a full pool it removes the container,
+// and the branch's next acquire creates a routed one — or a raise of the
+// pool's maximum, the person's call. "" for any other pool, and for one whose
+// containers or limits cannot be read.
+func parkedUnroutedNote(ctx context.Context, d LeaseDeps, rp *resolvedPool, rec leaseRecord) string {
+	read, err := d.readPoolWarm(ctx, rp, rec.ContainerID, 1)
+	if err != nil || read.ready > 0 {
+		return ""
+	}
+	limit, full := poolFullOfRoutes(ctx, d, rp, read)
+	if !full {
+		return ""
+	}
+	alias := rec.alias()
+	note := fmt.Sprintf("once unparked, its preview answers 502 until the pool's containers change (an acquire that creates a container or a release that removes one): "+
+		"the platform routes a container started again only then, and the pool holds its maximum of %d containers with none free, so the unpark can neither replace a warm container nor create one; "+
+		"if its preview must answer when it runs again, release it instead once its work is pushed (zerops_lease action=release lease=%s) — in a full pool the release removes its container, and the branch's next acquire creates one whose preview is routed",
+		limit, alias)
+	if limit < poolContainerCeiling {
+		note += fmt.Sprintf(" — or raise the pool's maxContainers (zerops_scale serviceHostname=%q maxContainers=<up to %d>), which gives the unpark room to create one%s", rp.svc.Name, poolContainerCeiling, poolRaiseNote)
+	}
+	return note
 }
 
 // poolFullOfRoutes reports the pool's maximum, and whether a release must
