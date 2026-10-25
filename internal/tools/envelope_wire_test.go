@@ -38,7 +38,7 @@ func TestHandleLifecycleStatus_TextCarriesEnvelope(t *testing.T) {
 		})
 
 	result, structured, err := handleLifecycleStatus(
-		context.Background(), eng, mock, "proj-1", runtime.Info{InContainer: true}, nil,
+		context.Background(), eng, mock, "proj-1", runtime.Info{InContainer: true}, nil, nil,
 	)
 	if err != nil {
 		t.Fatalf("handleLifecycleStatus: %v", err)
@@ -86,7 +86,7 @@ func TestRenderDevelopBriefing_TextCarriesEnvelope(t *testing.T) {
 		})
 
 	result, structured, err := renderDevelopBriefing(
-		context.Background(), eng, mock, "proj-2", runtime.Info{InContainer: true}, nil,
+		context.Background(), eng, mock, "proj-2", runtime.Info{InContainer: true}, nil, nil,
 	)
 	if err != nil {
 		t.Fatalf("renderDevelopBriefing: %v", err)
@@ -222,7 +222,7 @@ func TestEnvelope_AttemptHistory_OnlyStatusCarriesItWhole(t *testing.T) {
 
 	t.Run("action=status carries the whole history", func(t *testing.T) {
 		t.Parallel()
-		result, _, err := handleLifecycleStatus(context.Background(), eng, mock, "proj-3", rt, nil)
+		result, _, err := handleLifecycleStatus(context.Background(), eng, mock, "proj-3", rt, nil, nil)
 		if err != nil {
 			t.Fatalf("handleLifecycleStatus: %v", err)
 		}

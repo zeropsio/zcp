@@ -304,14 +304,9 @@ func standingLabel(t workflow.HQChangeTold) string {
 	return ""
 }
 
-// hqChangeStanding is what the agent is told of c's standing as the Mate's
-// state names it now (s) — a draft with a push to describe, behind main, no
-// longer merging cleanly — said only when it differs from what the agent was
-// last told (c.Told); "" for nothing worth words, and for an HQ that judges
-// nothing. leases are the leases on c's branch. It answers the standing to
-// keep as told. Never a rebase, never a force: a branch takes main by a
-// merge, checked on its own preview before it is pushed.
-func hqChangeStanding(c workflow.HQChange, s hq.MateChange, leases []string) (string, workflow.HQChangeTold) {
+// standingOf is an open change's standing as the Mate's state names it now
+// (s), in the ledger's terms (workflow.HQChangeTold).
+func standingOf(s hq.MateChange) workflow.HQChangeTold {
 	now := workflow.HQChangeTold{State: s.State, Ready: s.Ready, Mergeability: s.Mergeability, UpdatedAt: s.UpdatedAt}
 	if s.Behind != nil {
 		now.Behind = *s.Behind
@@ -320,6 +315,18 @@ func hqChangeStanding(c workflow.HQChange, s hq.MateChange, leases []string) (st
 	if s.Head == nil {
 		now.Ready = nil
 	}
+	return now
+}
+
+// hqChangeStanding is what the agent is told of c's standing as the Mate's
+// state names it now (s) — a draft with a push to describe, behind main, no
+// longer merging cleanly — said only when it differs from what the agent was
+// last told (c.Told); "" for nothing worth words, and for an HQ that judges
+// nothing. leases are the leases on c's branch. It answers the standing to
+// keep as told. Never a rebase, never a force: a branch takes main by a
+// merge, checked on its own preview before it is pushed.
+func hqChangeStanding(c workflow.HQChange, s hq.MateChange, leases []string) (string, workflow.HQChangeTold) {
+	now := standingOf(s)
 	told := workflow.HQChangeTold{}
 	if c.Told != nil {
 		told = *c.Told

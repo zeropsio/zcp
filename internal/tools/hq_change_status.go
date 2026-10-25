@@ -2,6 +2,7 @@ package tools
 
 import (
 	"cmp"
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -9,12 +10,14 @@ import (
 
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // What status, zerops_lease status and the release handoff say of a Mate's
-// changes: zcp's own ledger and lease records, with no call to HQ — a change's
-// standing as the last pass told it.
+// changes: zcp's own ledger and lease records — a change's standing as the
+// last pass told it — and, for status, each change's standing as the Mate's
+// state names it now, read once (statusHQChanges).
 
 // changeOldAfter is how long a change no lease holds may go untouched in HQ
 // before status labels it old. A label only: nothing closes or releases on
@@ -63,11 +66,50 @@ func hqLeaseBranches(stateDir, address string) []hqLeaseBranch {
 	return out
 }
 
+// hqChangesReadBound bounds status's one read of the Mate's state for the
+// changes it names: status answers promptly whether HQ does or not.
+const hqChangesReadBound = 5 * time.Second
+
+// hqStateNow is the Mate's own state in HQ, read once and bounded; nil when
+// this zcp holds no enrollment or HQ did not answer.
+func hqStateNow(ctx context.Context, httpClient ops.HTTPDoer) *hq.MateState {
+	hqc, enrolled := openHQ(httpClient)
+	if !enrolled {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, hqChangesReadBound)
+	defer cancel()
+	state, err := hqc.Once().Self(ctx)
+	if err != nil {
+		return nil
+	}
+	return &state
+}
+
+// statusHQChanges is status's Changes section with each change's standing as
+// the Mate's state names it now: a merge since the last pass reads merged,
+// never open, while the pair backoff holds the pass off. The state is read
+// once, inside a Mate, only when the section has a change or a leased branch
+// to name — an idle Mate costs HQ nothing — and nothing is written: the pass
+// still says a merge or a standing once, with what to do. asLastRead: HQ did
+// not answer, and the section is the ledger's, as last told.
+func statusHQChanges(ctx context.Context, httpClient ops.HTTPDoer, rt runtime.Info, stateDir, address string, now time.Time) (changes []workflow.HQRepoChanges, asLastRead bool) {
+	kept := hqChangesStatus(stateDir, address, now, nil)
+	if len(kept) == 0 || !rt.MateEnabled {
+		return kept, false
+	}
+	state := hqStateNow(ctx, httpClient)
+	if state == nil {
+		return kept, true
+	}
+	return hqChangesStatus(stateDir, address, now, state), false
+}
+
 // hqChangesStatus is status's Changes section: per repository, each change
-// the ledger keeps — its standing as told, the leases on its branch, and an
-// old one's age — and each branch leases hold with no change yet, `main`
-// aside.
-func hqChangesStatus(stateDir, address string, now time.Time) []workflow.HQRepoChanges {
+// the ledger keeps — its standing as told, or as state (nil: unread) names it
+// now, the leases on its branch, and an old one's age — and each branch
+// leases hold with no change yet, `main` aside.
+func hqChangesStatus(stateDir, address string, now time.Time, state *hq.MateState) []workflow.HQRepoChanges {
 	changes := hqChanges(stateDir)
 	leases := hqLeaseBranches(stateDir, address)
 	type repoKey struct{ appID, repo string }
@@ -100,8 +142,9 @@ func hqChangesStatus(stateDir, address string, now time.Time) []workflow.HQRepoC
 		repo := workflow.HQRepoChanges{Repo: k.repo}
 		var branches []string
 		for _, c := range changesIn(changes, k.appID, k.repo) {
-			line := workflow.HQChangeLine{Number: c.Number, Branch: c.Branch, Labels: changeLabels(c.Told), Leases: held(k, c.Branch)}
-			if age := changeAge(c.Told, now); len(line.Leases) == 0 && age >= changeOldAfter {
+			line, told := changeLineNow(c, state)
+			line.Leases = held(k, c.Branch)
+			if age := changeAge(told, now); told != nil && len(line.Leases) == 0 && age >= changeOldAfter {
 				line.Labels = append(line.Labels, fmt.Sprintf("no lease holds it, untouched in HQ for %d days", int(age/(24*time.Hour))))
 			}
 			repo.Changes = append(repo.Changes, line)
@@ -117,6 +160,33 @@ func hqChangesStatus(stateDir, address string, now time.Time) []workflow.HQRepoC
 		out = append(out, repo)
 	}
 	return out
+}
+
+// changeLineNow is c's status line by what state (nil: unread) names it now —
+// still open, its standing now; merged; closed or no longer listed, said so —
+// or, unread, unknown or of another application, its standing as told. told
+// is its standing as an open change, nil once it is not one.
+func changeLineNow(c workflow.HQChange, state *hq.MateState) (workflow.HQChangeLine, *workflow.HQChangeTold) {
+	line := workflow.HQChangeLine{Number: c.Number, Branch: c.Branch, Labels: changeLabels(c.Told)}
+	if state == nil || state.AppID == nil || *state.AppID != c.AppID {
+		return line, c.Told
+	}
+	outcome, s := outcomeOf(*state, c)
+	switch outcome {
+	case changeStillOpen:
+		now := standingOf(*s)
+		line.Labels = changeLabels(&now)
+		return line, &now
+	case changeMerged:
+		line.Labels, line.Merged = nil, true
+	case changeClosed:
+		line.Labels = []string{"closed without merging"}
+	case changeUnlisted:
+		line.Labels = []string{"no longer open"}
+	case changeUnknown:
+		return line, c.Told
+	}
+	return line, nil
 }
 
 // changeAge is how long ago HQ last changed a change as last told, 0 when
