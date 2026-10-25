@@ -2,6 +2,7 @@
 package tools
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -965,13 +966,45 @@ func leaseResultOf(t *testing.T, text string) leaseToolResult {
 	return got
 }
 
-// acquireFeatX leases webpool-7 and hqpool-3 on feat-x in one call.
+// acquireFeatX leases webpool-7 and hqpool-3 on feat-x in one call. The two
+// are reserved at once, each acquiredAt stamped to the second when its own
+// reservation answered: which of them was acquired earlier is the clock's, so
+// a test reads their order with earliestAcquiredFirst, never as fixed.
 func acquireFeatX(t *testing.T, srv *mcp.Server) {
 	t.Helper()
 	res := callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pools": []string{"webpool", "hqpool"}, "repo": leaseTestRepo, "branch": "feat-x"})
 	if res.IsError {
 		t.Fatalf("group acquire failed: %s", getTextContent(t, res))
 	}
+}
+
+// earliestAcquiredFirst reports whether views list the earliest acquired
+// first, the alias breaking a tie (DP-23), each with its acquiredAt.
+func earliestAcquiredFirst(views []ops.LeaseView) bool {
+	return !slices.ContainsFunc(views, func(v ops.LeaseView) bool { return v.AcquiredAt == "" }) &&
+		slices.IsSortedFunc(views, func(a, b ops.LeaseView) int {
+			return cmp.Or(cmp.Compare(a.AcquiredAt, b.AcquiredAt), cmp.Compare(a.Alias, b.Alias))
+		})
+}
+
+// leaseAliases is the aliases of views, sorted.
+func leaseAliases(views []ops.LeaseView) []string {
+	aliases := make([]string, 0, len(views))
+	for _, v := range views {
+		aliases = append(aliases, v.Alias)
+	}
+	slices.Sort(aliases)
+	return aliases
+}
+
+// leaseViewOf is the view of alias among views; the zero view when none is.
+func leaseViewOf(views []ops.LeaseView, alias string) ops.LeaseView {
+	for _, v := range views {
+		if v.Alias == alias {
+			return v
+		}
+	}
+	return ops.LeaseView{}
 }
 
 // TestLeaseTool_ReleaseBranch_ReleasesEveryLeaseOfTheBranch: release with
@@ -997,8 +1030,8 @@ func TestLeaseTool_ReleaseBranch_ReleasesEveryLeaseOfTheBranch(t *testing.T) {
 		}
 	}
 	got := leaseResultOf(t, text)
-	if got.Action != "release" || len(got.Leases) != 2 || got.Leases[0].Alias != "hqpool-3" || got.Leases[1].Alias != "webpool-7" {
-		t.Fatalf("leases = %+v, want hqpool-3 then webpool-7 (earliest acquired first)", got.Leases)
+	if got.Action != "release" || !slices.Equal(leaseAliases(got.Leases), []string{"hqpool-3", "webpool-7"}) || !earliestAcquiredFirst(got.Leases) {
+		t.Fatalf("leases = %+v, want hqpool-3 and webpool-7, earliest acquired first", got.Leases)
 	}
 	for _, v := range got.Leases {
 		if v.State != ops.LeaseStateReleased || v.Error != "" {
@@ -1086,13 +1119,13 @@ func TestLeaseTool_ReleaseBranch_OrchestratorFailsOne_PerMemberResult(t *testing
 		t.Fatalf("a failure of one lease is that lease's result, not the call's: %s", text)
 	}
 	got := leaseResultOf(t, text)
-	if len(got.Leases) != 2 || got.Leases[0].Alias != "hqpool-3" || got.Leases[1].Alias != "webpool-7" {
-		t.Fatalf("leases = %+v, want hqpool-3 then webpool-7", got.Leases)
+	if !slices.Equal(leaseAliases(got.Leases), []string{"hqpool-3", "webpool-7"}) || !earliestAcquiredFirst(got.Leases) {
+		t.Fatalf("leases = %+v, want hqpool-3 and webpool-7, earliest acquired first", got.Leases)
 	}
-	if hq := got.Leases[0]; hq.State != ops.LeaseStateReleased || hq.Error != "" {
+	if hq := leaseViewOf(got.Leases, "hqpool-3"); hq.State != ops.LeaseStateReleased || hq.Error != "" {
 		t.Errorf("hqpool-3 = %+v, want released", hq)
 	}
-	if web := got.Leases[1]; web.State != ops.LeaseStateHeld || !strings.Contains(web.Error, "work in progress") {
+	if web := leaseViewOf(got.Leases, "webpool-7"); web.State != ops.LeaseStateHeld || !strings.Contains(web.Error, "work in progress") {
 		t.Errorf("webpool-7 = %+v, want held with the orchestrator's refusal as its error", web)
 	}
 	if !strings.Contains(text, `"error":`) {

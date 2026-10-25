@@ -6,6 +6,7 @@
 package ops
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -1045,6 +1046,39 @@ func (gf *groupFixture) heldGroup(t *testing.T) {
 	gf.ssh.reset()
 }
 
+// earliestAcquiredFirst reports whether views list the earliest acquired
+// first, the alias breaking a tie (DP-23), each with its acquiredAt. The
+// leases of one group acquire (heldGroup) are reserved at once, each stamped
+// to the second when its own reservation answered, so which of them was
+// acquired earlier is the clock's: a test reads their order with this, never
+// as fixed.
+func earliestAcquiredFirst(views []LeaseView) bool {
+	return !slices.ContainsFunc(views, func(v LeaseView) bool { return v.AcquiredAt == "" }) &&
+		slices.IsSortedFunc(views, func(a, b LeaseView) int {
+			return cmp.Or(cmp.Compare(a.AcquiredAt, b.AcquiredAt), cmp.Compare(a.Alias, b.Alias))
+		})
+}
+
+// viewAliases is the aliases of views, sorted.
+func viewAliases(views []LeaseView) []string {
+	aliases := make([]string, 0, len(views))
+	for _, v := range views {
+		aliases = append(aliases, v.Alias)
+	}
+	slices.Sort(aliases)
+	return aliases
+}
+
+// viewOf is the view of alias among views; the zero view when none is.
+func viewOf(views []LeaseView, alias string) LeaseView {
+	for _, v := range views {
+		if v.Alias == alias {
+			return v
+		}
+	}
+	return LeaseView{}
+}
+
 // answerGuard makes each container answer the release guard's two reads:
 // files are its `git status --porcelain` lines and unpushed its commits on no
 // remote branch, by alias; an alias named in neither is clean.
@@ -1240,8 +1274,8 @@ func TestLeaseReleaseGroup_ReadsEveryMemberBeforeReleasingAny(t *testing.T) {
 	if len(got) != 4 || firstRelease < 0 || lastRead > firstRelease {
 		t.Errorf("events = %v, want both reads before the first release", got)
 	}
-	if len(views) != 2 || views[0].Alias != "hqpool-3" || views[1].Alias != "webpool-7" {
-		t.Fatalf("views = %+v, want hqpool-3 then webpool-7", views)
+	if !slices.Equal(viewAliases(views), []string{"hqpool-3", "webpool-7"}) || !earliestAcquiredFirst(views) {
+		t.Fatalf("views = %+v, want hqpool-3 and webpool-7, earliest acquired first", views)
 	}
 	for _, v := range views {
 		if v.State != LeaseStateReleased || v.Branch != "feat" || v.AcquiredAt != recs[v.Alias].AcquiredAt || v.Error != "" {
@@ -1305,13 +1339,13 @@ func TestLeaseReleaseGroup_OrchestratorFailsOne_PerMemberResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("an orchestrator failure on one lease is that lease's result, not the call's: %v", err)
 	}
-	if len(views) != 2 || views[0].Alias != "hqpool-3" || views[1].Alias != "webpool-7" {
-		t.Fatalf("views = %+v, want hqpool-3 then webpool-7", views)
+	if !slices.Equal(viewAliases(views), []string{"hqpool-3", "webpool-7"}) || !earliestAcquiredFirst(views) {
+		t.Fatalf("views = %+v, want hqpool-3 and webpool-7, earliest acquired first", views)
 	}
-	if hq := views[0]; hq.State != LeaseStateReleased || hq.Error != "" {
+	if hq := viewOf(views, "hqpool-3"); hq.State != LeaseStateReleased || hq.Error != "" {
 		t.Errorf("hqpool-3 = %+v, want released", hq)
 	}
-	web := views[1]
+	web := viewOf(views, "webpool-7")
 	if web.State != LeaseStateHeld || !strings.Contains(web.Error, "work in progress") {
 		t.Errorf("webpool-7 = %+v, want held with the orchestrator's refusal as its error", web)
 	}
@@ -1383,13 +1417,13 @@ func TestLeaseReleaseGroup_EachMemberTakesTheOneLeasesPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LeaseReleaseGroup: %v", err)
 	}
-	if len(views) != 2 {
-		t.Fatalf("views = %+v, want both leases", views)
+	if !slices.Equal(viewAliases(views), []string{"hqpool-3", "webpool-7"}) || !earliestAcquiredFirst(views) {
+		t.Fatalf("views = %+v, want both leases, earliest acquired first", views)
 	}
-	if v := views[0]; v.Alias != "hqpool-3" || v.State != LeaseStateLost || !strings.Contains(v.Note, "being deleted") {
+	if v := viewOf(views, "hqpool-3"); v.State != LeaseStateLost || !strings.Contains(v.Note, "being deleted") {
 		t.Errorf("hqpool-3 = %+v, want lost: its pool is being deleted", v)
 	}
-	if v := views[1]; v.Alias != "webpool-7" || v.State != LeaseStateReleased || !strings.Contains(v.Note, "could not be reset") {
+	if v := viewOf(views, "webpool-7"); v.State != LeaseStateReleased || !strings.Contains(v.Note, "could not be reset") {
 		t.Errorf("webpool-7 = %+v, want released by deleting the container it could not reset", v)
 	}
 	if del := gf.web.deleteLog(); len(del) != 1 || del[0] != "c-webpool-7" {
