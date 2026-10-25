@@ -45,18 +45,18 @@ func browserInputSchema() *jsonschema.Schema {
 func RegisterBrowser(srv *mcp.Server, stateDir string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "zerops_browser",
-		Description: "Drive Chrome via agent-browser in ONE bounded batch (ZCP-container only): [open url] + " +
+		Description: "Drive Chrome via agent-browser in ONE bounded batch, lifecycle included (ZCP-container only): [open url] + " +
 			"your commands + [screenshot if requested] + [errors] + [console] + [network requests]. " +
 			"The call already waits for the page's first paint; after a click, scroll, reload or navigation, wait for what should appear — " +
 			"[\"wait\",\"<sel>\"] or [\"wait\",\"--text\",\"<text>\"] — never for a fixed time. " +
 			"Only wait polls (up to 25 s, or [\"wait\",\"<sel>\",\"--timeout\",\"<ms>\"]); click, fill, check, find, get and is look once " +
 			"and fail at once on an element that is not there yet. " +
 			"Recipe close step: one call per subdomain (appstage, then appdev). " +
-			"One warm Chrome serves every call: calls take turns (waiting within timeoutSeconds) " +
-			"and each call's tabs close when it ends. A call that times out, is cancelled " +
+			"One warm Chrome serves every call: calls take turns (waiting within timeoutSeconds); " +
+			"each call's tabs close when it ends. A call that times out, is cancelled " +
 			"or wedges Chrome returns its finished steps and recycles the browser. " +
 			"isolation: \"tab\" (default) keeps cookies, login, storage, HTTP cache and service workers from earlier calls — " +
-			"right for re-checking your change after a deploy. " +
+			"right for re-checking a change after a deploy. " +
 			"\"fresh-context\" starts with none of them — only for the first check after a deploy that changed sign-in, storage, " +
 			"a service worker or long-cached assets, or for a signed-out view; it stops Chrome as the call ends, so the next call starts a cold one. " +
 			"Every other call stays on \"tab\". \"new-browser\" also restarts Chrome first, for a page that misbehaves only in the warm browser. " +
@@ -82,7 +82,7 @@ func RegisterBrowser(srv *mcp.Server, stateDir string) {
 			"An @eN ref exists only after a snapshot earlier in the SAME call and dies with the call's tab: never reuse one from an earlier call " +
 			"or guess one; prefer find role|label|text or CSS. " +
 			"open, close, tab and window never run; each returns a failed invalid-command step. " +
-			"Pass screenshot=true to capture the viewport after your commands run, fullPage=true for the whole page as one image " +
+			"screenshot=true captures the viewport after your commands run, fullPage=true for the whole page as one image " +
 			"(cut to its top 8000 px; screenshot.capturedHeight gives its full height) — returned as " +
 			"an image block beside the text result and kept as a picture the result names " +
 			"(screenshot.picture, e.g. \"shot-3\") for screenshot.keptFor: write ![what it shows](shot-3) in a " +
