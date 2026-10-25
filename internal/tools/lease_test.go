@@ -1039,7 +1039,8 @@ func TestLeaseTool_ReleaseBranch_ReleasesEveryLeaseOfTheBranch(t *testing.T) {
 		}
 	}
 	ssh.mu.Lock()
-	reads := slices.Sorted(slices.Values(ssh.reads))
+	// Compacted: each lease is read again under the branch's lock (DP-4).
+	reads := slices.Compact(slices.Sorted(slices.Values(ssh.reads)))
 	ssh.mu.Unlock()
 	if strings.Join(reads, ",") != "hqpool-3,webpool-7" {
 		t.Errorf("guard read %v, want every lease of the branch", reads)

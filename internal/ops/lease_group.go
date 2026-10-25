@@ -392,6 +392,29 @@ func lockLeaseGroup(ctx context.Context, stateDir, repo, branch string) (func(),
 	return unlock, nil
 }
 
+// leaseReleaseGroupWait bounds a release's wait for its branch's lock: a
+// sibling's release holds it across its rewire and its own reset, and the
+// release that waited reads its container again once it holds it, so a
+// longer wait buys nothing but a call that hangs.
+const leaseReleaseGroupWait = 2 * time.Minute
+
+// lockReleaseGroup is lockRecordGroup for a release, waiting at most
+// d.GroupLockWait (leaseReleaseGroupWait): a lock still held then refuses the
+// release, nothing released, naming again — the call that releases it once
+// the other call answered.
+func lockReleaseGroup(ctx context.Context, d LeaseDeps, rec leaseRecord, again string) (func(), error) {
+	wait := cmp.Or(d.GroupLockWait, leaseReleaseGroupWait)
+	lctx, cancel := context.WithTimeout(ctx, wait)
+	defer cancel()
+	unlock, err := lockRecordGroup(lctx, d.StateDir, rec)
+	if err != nil && ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
+		return nil, platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+			fmt.Sprintf("Nothing was released: another zcp call held the leases of branch %s for over %s — a release of another of its leases, across its reset, or an acquire's rewire", recordBranch(rec), wait),
+			"Release again once that call has answered: "+again)
+	}
+	return unlock, err
+}
+
 // lockRecordGroup is lockLeaseGroup of rec's group.
 func lockRecordGroup(ctx context.Context, stateDir string, rec leaseRecord) (func(), error) {
 	return lockLeaseGroup(ctx, stateDir, recordRepo(stateDir, rec), recordBranch(rec))
@@ -880,12 +903,29 @@ func LeaseReleaseGroupChange(ctx context.Context, d LeaseDeps, repo, branch stri
 	// The releases and the rewire of what stays held run under the group's
 	// lock (lockLeaseGroup): no overlay naming a lease that goes is sent after
 	// it went.
-	unlock, err := lockRecordGroup(ctx, d.StateDir, group[0])
+	again := LeaseReleaseBranchCall(branch, repo, force)
+	unlock, err := lockReleaseGroup(ctx, d, group[0], again)
 	if err != nil {
 		return LeaseChange{}, dropEndedOnCall(ctx, d, members, reparkMembers(ctx, d, members, err))
 	}
 	defer unlock()
-	again := LeaseReleaseBranchCall(branch, repo, force)
+	if !force {
+		// The guards read the containers before the wait for the lock, which
+		// can outlast work landing in one (a conversation sharing a lease):
+		// every lease still to be released is read again before any is
+		// released, and work in one refuses the branch (DP-4).
+		runMembers(members, func(m *releaseMember) {
+			if m.lost != "" || m.guard.lost != "" {
+				return
+			}
+			var again leaseGuardResult
+			again, m.work, m.err = inspectLeaseRelease(ctx, d, m.rec)
+			m.guard.lost, m.guard.note = again.lost, joinNotes(m.guard.note, again.note)
+		})
+		if err := branchReleaseRefusal(d, members, repo, branch); err != nil {
+			return LeaseChange{}, dropEndedOnCall(ctx, d, members, reparkMembers(ctx, d, members, err))
+		}
+	}
 	runMembers(members, func(m *releaseMember) {
 		var view LeaseView
 		var err error
@@ -1141,6 +1181,16 @@ func LeaseReleaseBranchCall(branch, repo string, force bool) string {
 	if repo = strings.TrimSpace(repo); repo != "" {
 		call += " repo=" + repo
 	}
+	if force {
+		call += " force=true"
+	}
+	return call
+}
+
+// leaseReleaseCall is the zerops_lease call that releases the lease at alias,
+// forced or not.
+func leaseReleaseCall(alias string, force bool) string {
+	call := "zerops_lease action=release lease=" + alias
 	if force {
 		call += " force=true"
 	}

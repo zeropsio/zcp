@@ -1271,8 +1271,10 @@ func TestLeaseReleaseGroup_ReadsEveryMemberBeforeReleasingAny(t *testing.T) {
 			firstRelease = i
 		}
 	}
-	if len(got) != 4 || firstRelease < 0 || lastRead > firstRelease {
-		t.Errorf("events = %v, want both reads before the first release", got)
+	// Each lease is read twice — by the guard, and again under the branch's
+	// lock right before anything is released (DP-4) — then both released.
+	if len(got) != 6 || firstRelease < 0 || lastRead > firstRelease {
+		t.Errorf("events = %v, want both leases' reads before the first release", got)
 	}
 	if !slices.Equal(viewAliases(views), []string{"hqpool-3", "webpool-7"}) || !earliestAcquiredFirst(views) {
 		t.Fatalf("views = %+v, want hqpool-3 and webpool-7, earliest acquired first", views)
@@ -1384,7 +1386,7 @@ func TestLeaseReleaseGroup_Again_FinishesTheGroup(t *testing.T) {
 	if len(views) != 1 || views[0].Alias != "webpool-7" || views[0].State != LeaseStateReleased {
 		t.Errorf("views = %+v, want webpool-7 alone, released", views)
 	}
-	if got := gf.guardReadHosts(); strings.Join(got, ",") != "webpool-7" {
+	if got := slices.Compact(gf.guardReadHosts()); strings.Join(got, ",") != "webpool-7" {
 		t.Errorf("guard read %v, want only what is left of the branch", got)
 	}
 	if rel := gf.hq.releaseLog(); len(rel) != 1 {
