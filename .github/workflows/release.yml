@@ -6,55 +6,17 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
-  test:
-    name: test
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: "go.mod"
-
-      - name: Pull knowledge (recipes + guides)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          go run ./cmd/zcp sync pull
-
-      - name: Test
-        run: go test -race ./... -count=1
-
-  lint:
-    name: lint
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: "go.mod"
-
-      - name: Pull knowledge (recipes + guides)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          go run ./cmd/zcp sync pull
-
-      - uses: golangci/golangci-lint-action@v9
-        with:
-          version: v2.8.0
-          # Skip the action's online `config verify` step: it fetches the
-          # golangci JSON schema from golangci-lint.run, which times out on
-          # runner network blips and fails the whole job (nothing to do with
-          # our code). Linting itself needs no network.
-          verify: false
+  validation:
+    uses: ./.github/workflows/ci.yml
+    with:
+      reuse-ci: true
 
   build:
     name: build ${{ matrix.name }}
-    needs: [test, lint]
+    needs: validation
     runs-on: ubuntu-22.04
     env:
       CGO_ENABLED: '0'
@@ -98,11 +60,10 @@ jobs:
         with:
           go-version-file: "go.mod"
 
-      - name: Pull knowledge (recipes + guides)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          go run ./cmd/zcp sync pull
+      - uses: ./.github/actions/restore-knowledge
+        with:
+          artifact: ${{ needs.validation.outputs.corpus-artifact }}
+          digest: ${{ needs.validation.outputs.corpus-digest }}
 
       # NOTE: Module path must match MODULE in Makefile (github.com/zeropsio/zcp)
       - name: Build
@@ -151,6 +112,7 @@ jobs:
       - uses: actions/download-artifact@v7
         with:
           path: ./builds
+          pattern: zcp-*
           merge-multiple: true
 
       - name: Create GitHub release

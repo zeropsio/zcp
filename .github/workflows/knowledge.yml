@@ -1,0 +1,112 @@
+name: Prepare knowledge
+
+on:
+  workflow_call:
+    inputs:
+      reuse-ci:
+        type: boolean
+        default: false
+    outputs:
+      artifact:
+        value: ${{ jobs.prepare.outputs.artifact }}
+      digest:
+        value: ${{ jobs.prepare.outputs.digest }}
+      reused:
+        value: ${{ jobs.prepare.outputs.reused }}
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-22.04
+    outputs:
+      artifact: ${{ steps.publish.outputs.artifact }}
+      digest: ${{ steps.publish.outputs.digest }}
+      reused: ${{ steps.verify.outcome == 'success' }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Resolve source commit
+        id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Find full exact-SHA CI proof
+        if: inputs.reuse-ci
+        id: proof
+        uses: actions/github-script@v7
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        with:
+          script: |
+            const { selectCorpus } = require('./.github/scripts/select-corpus.cjs');
+            try {
+              const proof = await selectCorpus(github, context.repo, process.env.SOURCE_SHA);
+              if (proof) {
+                core.setOutput('run-id', proof.runID);
+                core.setOutput('artifact', proof.artifactName);
+                core.setOutput('digest', proof.digest);
+              }
+            } catch {
+              core.warning('CI proof unavailable; preparing fresh corpus for full validation.');
+            }
+
+      - name: Download proven corpus
+        if: steps.proof.outputs.artifact != ''
+        id: download
+        continue-on-error: true
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ steps.proof.outputs.artifact }}
+          run-id: ${{ steps.proof.outputs.run-id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/knowledge
+
+      - name: Verify proven corpus
+        if: steps.download.outcome == 'success'
+        id: verify
+        continue-on-error: true
+        env:
+          CORPUS_DIGEST: ${{ steps.proof.outputs.digest }}
+        working-directory: ${{ runner.temp }}/knowledge
+        run: printf '%s  corpus.tar\n' "$CORPUS_DIGEST" | sha256sum --check --strict
+
+      - uses: actions/setup-go@v6
+        if: steps.verify.outcome != 'success'
+        with:
+          go-version-file: go.mod
+
+      - name: Pull and freeze knowledge once
+        if: steps.verify.outcome != 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          go run ./cmd/zcp sync pull
+          # Sync may overwrite tracked overrides; the source revision owns them.
+          git restore --source=HEAD --worktree -- internal/knowledge
+          mkdir -p "$RUNNER_TEMP/knowledge"
+          tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner \
+            -cf "$RUNNER_TEMP/knowledge/corpus.tar" -C internal/knowledge \
+            themes bases recipes guides decisions playbooks
+
+      - name: Publish corpus identity
+        id: publish
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          REUSED: ${{ steps.verify.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          digest=$(sha256sum "$RUNNER_TEMP/knowledge/corpus.tar" | cut -d ' ' -f 1)
+          artifact="knowledge-v1-${SOURCE_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${digest}"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "artifact=$artifact" >> "$GITHUB_OUTPUT"
+          printf 'Corpus: %s\nSHA-256: %s\nReused full CI: %s\n' \
+            "$artifact" "$digest" "$REUSED" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: ${{ steps.publish.outputs.artifact }}
+          path: ${{ runner.temp }}/knowledge/corpus.tar
+          if-no-files-found: error
+          retention-days: 30

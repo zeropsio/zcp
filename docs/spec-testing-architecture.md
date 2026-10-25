@@ -179,6 +179,26 @@ rot: a stale string literal compiles fine. The defenses against semantic rot:
 `vet-tags` catches COMPILE rot; the drift guards + single-owner derivation catch
 SEMANTIC rot. Both are required — neither subsumes the other.
 
+
+### 5.1 CI corpus identity and release reuse
+
+CI runs on pushes to exactly `main` and `wt/keys`, on pull requests, and on
+manual dispatch. Ordinary worktree pushes do not start CI. Preparation hydrates
+knowledge once, restores tracked overrides, and publishes the six embedded
+knowledge trees as one immutable archive identified by source commit, run,
+attempt, and SHA-256. Test and lint restore that archive only after checking its
+digest; replacing the trees prevents checkout-only files from changing the input.
+
+A release can reuse a retained archive only from successful CI on the exact
+checked-out source commit in this repository, triggered by a push or manual
+dispatch on `main` or `wt/keys`, with both test and lint successful in that run
+attempt. It verifies the digest before reusing acceptance and before each build.
+Missing proof, expired/unavailable artifacts, and digest mismatches cause fresh
+preparation and the full CI validation path: platform builds, race tests,
+required JS/DOM checks, tagged vet, and lint. Release binaries use that same
+validated archive. The daily/manual live Schema Drift workflow remains separate.
+Offline proof selection and restoration witnesses live in `.github/scripts/*.test.cjs`.
+
 ---
 
 ## 6. The behavioral corpus — runner, scenarios, retrospective
