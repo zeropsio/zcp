@@ -335,23 +335,25 @@ func waitStartedLease(ctx context.Context, d LeaseDeps, alias string) error {
 // started only when none answers (a container never reset ran its run.start
 // at the start; a reset one did not) — and hands it the branch's sibling
 // overlay, computed from the checkout's declaration and zcp's records as an
-// acquire's checkout computes it: the group may have changed while the lease
-// was parked. A declaration zcp cannot read sends no overlay, so the
-// supervisor keeps the one it kept in its state. It answers a note, "" when
-// all went well; nothing in it fails the unpark.
+// acquire's checkout computes it, under the group's lock
+// (sendCheckoutOverlay): the group may have changed while the lease was
+// parked. A declaration zcp cannot read sends no overlay, so the supervisor
+// keeps the one it kept in its state. It answers a note, "" when all went
+// well; nothing in it fails the unpark.
 func superviseUnparked(ctx context.Context, d LeaseDeps, alias string) string {
-	ssh := d.SSH
-	read, note := readLeaseCheckout(ctx, ssh, alias, "so zcp sent its supervisor no sibling overlay (it keeps the one it had)")
-	var env LeaseSiblingEnv
-	var envArgs []string
-	wireNote := ""
-	if note == "" {
-		env, envArgs, wireNote = checkoutOverlay(d.StateDir, alias, read, d.previewURLs(ctx))
-	}
-	r, err := ensureSupervisorIn(ctx, ssh, alias, leaseWorkDir, leaseSupervisorWait, false, envArgs)
-	refused := ""
-	if err == nil && r.envErr != nil {
-		refused = overlayRefusedNote(alias, env, r.envErr)
+	read, note := readLeaseCheckout(ctx, d.SSH, alias, "so zcp sent its supervisor no sibling overlay (it keeps the one it had)")
+	r, err := ensureLeaseSupervisor(ctx, d.SSH, alias)
+	var wireNote, refused string
+	switch {
+	case note != "":
+	case err == nil && (r.outcome == leaseSupervisorRunning || r.outcome == leaseSupervisorStarted):
+		env, _, wn, envErr := sendCheckoutOverlay(ctx, d, alias, read)
+		wireNote = wn
+		if envErr != nil {
+			refused = overlayRefusedNote(alias, env, envErr)
+		}
+	default:
+		_, _, wireNote = checkoutOverlay(d.StateDir, alias, read, d.previewURLs(ctx))
 	}
 	return joinNotes(note, wireNote, leaseSupervisorNote(alias, r, err), refused)
 }

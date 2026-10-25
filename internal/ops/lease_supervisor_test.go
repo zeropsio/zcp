@@ -26,6 +26,8 @@ func supervisorAnswer(answer string, err error) func(host, command string) ([]by
 			return []byte(answer), err
 		case strings.Contains(command, "@@zcp-devsup declaration"):
 			return []byte("@@zcp-devsup declaration 1\n"), nil
+		case strings.Contains(command, ctlCall):
+			return []byte(ctlTook), nil
 		}
 		return nil, nil
 	}
@@ -40,7 +42,7 @@ func TestLeaseAcquire_EnsuresTheSupervisorAfterTheCheckout(t *testing.T) {
 		wantNote []string // empty: no note
 	}{
 		{name: "a reused container: none runs, zcp starts it", answer: "@@zcp-devsup check 2\n@@zcp-devsup started 0\n"},
-		{name: "a fresh container: run.start's supervisor answers and is reloaded", answer: "@@zcp-devsup check 0\n@@zcp-devsup reloaded 0\n"},
+		{name: "a fresh container: run.start's supervisor answers and is reloaded", answer: "@@zcp-devsup check 0\n"},
 		{
 			name: "no zcp-devsup in the pool's image: not a dev pool", answer: "@@zcp-devsup check 127\n",
 			wantNote: []string{"zcp-devsup", "not a dev pool", "no dev servers"},

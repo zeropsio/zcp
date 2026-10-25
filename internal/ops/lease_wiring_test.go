@@ -92,6 +92,8 @@ func wiringAcquireHandler(version, decl, ensure string) func(host, command strin
 			return []byte(out + decl + "\n@@zcp-devsup declaration 0\n"), nil
 		case strings.Contains(command, "zcp-devsup run"):
 			return []byte(ensure), nil
+		case strings.Contains(command, ctlCall):
+			return []byte(ctlTook), nil
 		}
 		return nil, nil
 	}
@@ -114,44 +116,74 @@ func supervisorStep(t *testing.T, s *leaseSSH, host string) string {
 // groupSiblingDeclaration has each part reach the other's lease of the branch.
 const groupSiblingDeclaration = `{"version":1,"siblingEnv":{"HQ_HOST":"hqpool","WEB_HOST":"webpool"},"servers":[]}`
 
+// TestLeaseAcquire_SiblingEnv_SentWithTheSupervisorStep: an acquire's
+// supervisor step hands each lease its group's overlay as a call of its own
+// after the supervisor is ensured — before the reload of one that answered
+// (run.start's, booted on an empty /var/www), right after the start of one
+// zcp started — so the declared servers run under it (DP-22). The ensure
+// itself carries no overlay: the overlay is computed and sent under the
+// group's lock, which the ensure, whose start may wait, never holds (DP-26).
+// A refusal is a note, never a failed acquire.
 func TestLeaseAcquire_SiblingEnv_SentWithTheSupervisorStep(t *testing.T) {
 	t.Parallel()
 	const overlay = "zcp-devsup ctl 'env' '--set' 'HQ_HOST=node-id-3.runtime.hqpool.zerops' '--set' 'WEB_HOST=node-id-7.runtime.webpool.zerops' --json"
 	tests := []struct {
-		name     string
-		decl     string
-		ensure   string
-		wantEnv  string
-		wantNote []string
+		name      string
+		decl      string
+		ensure    string
+		envAnswer string
+		wantEnv   string
+		// wantOrder are the supervisor step's calls, in order.
+		wantOrder []string
+		wantNote  []string
 	}{
 		{
-			name: "every member gets the group's overlay", decl: groupSiblingDeclaration,
-			ensure: "@@zcp-devsup check 0\n@@zcp-devsup env 0\n@@zcp-devsup reloaded 0\n", wantEnv: overlay,
+			name: "every member gets the group's overlay, then the reload", decl: groupSiblingDeclaration,
+			ensure: "@@zcp-devsup check 0\n", envAnswer: ctlTook, wantEnv: overlay,
+			wantOrder: []string{"zcp-devsup run", overlay, "zcp-devsup ctl 'reload'"},
 		},
 		{
-			name: "no siblingEnv: the empty overlay replaces a previous holder's", decl: `{"version":1,"servers":[]}`,
-			ensure: "@@zcp-devsup check 2\n@@zcp-devsup started 0\n@@zcp-devsup env 0\n", wantEnv: "zcp-devsup ctl 'env' '--clear' --json",
+			name: "no siblingEnv: the empty overlay replaces a previous holder's, after the start", decl: `{"version":1,"servers":[]}`,
+			ensure: "@@zcp-devsup check 2\n@@zcp-devsup started 0\n", envAnswer: ctlTook, wantEnv: "zcp-devsup ctl 'env' '--clear' --json",
+			wantOrder: []string{"zcp-devsup run", "zcp-devsup ctl 'env' '--clear' --json"},
 		},
 		{
-			name: "a refused overlay is a note, never a failed acquire", decl: groupSiblingDeclaration,
-			ensure:  "@@zcp-devsup check 0\n{\"code\":1,\"error\":\"env: the state directory is read-only\"}\n@@zcp-devsup env 1\n@@zcp-devsup reloaded 0\n",
-			wantEnv: overlay, wantNote: []string{"the state directory is read-only", "HQ_HOST", "zerops_dev_server"},
+			name: "a refused overlay is a note, never a failed acquire, and the reload still goes", decl: groupSiblingDeclaration,
+			ensure: "@@zcp-devsup check 0\n", envAnswer: "{\"code\":1,\"error\":\"env: the state directory is read-only\"}\n@@zcp-devsup ctl 1\n",
+			wantEnv: overlay, wantOrder: []string{"zcp-devsup run", overlay, "zcp-devsup ctl 'reload'"},
+			wantNote: []string{"the state directory is read-only", "HQ_HOST", "zerops_dev_server"},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			gf := newGroupFixture(t)
-			gf.ssh.setHandler(wiringAcquireHandler(wiringVersion, tt.decl, tt.ensure))
+			acquire := wiringAcquireHandler(wiringVersion, tt.decl, tt.ensure)
+			gf.ssh.setHandler(func(host, command string) ([]byte, error) {
+				if strings.Contains(command, "zcp-devsup ctl 'env'") {
+					return []byte(tt.envAnswer), nil
+				}
+				return acquire(host, command)
+			})
 
 			views, err := LeaseAcquireGroup(context.Background(), gf.deps, []string{groupHQPool, groupWebPool}, testRepo, "feat")
 			if err != nil {
 				t.Fatalf("acquire: %v", err)
 			}
 			for _, v := range views {
-				step := supervisorStep(t, gf.ssh, v.Alias)
-				if !strings.Contains(step, tt.wantEnv) {
-					t.Errorf("%s's supervisor step does not send %q:\n%s", v.Alias, tt.wantEnv, step)
+				if step := supervisorStep(t, gf.ssh, v.Alias); strings.Contains(step, "ctl 'env'") {
+					t.Errorf("%s's ensure carries the overlay; it is a call of its own:\n%s", v.Alias, step)
+				}
+				var order []string
+				for _, c := range sentTo(gf.ssh, v.Alias) {
+					for _, want := range tt.wantOrder {
+						if strings.Contains(c, want) {
+							order = append(order, want)
+						}
+					}
+				}
+				if !slices.Equal(order, tt.wantOrder) {
+					t.Errorf("%s's supervisor step = %q, want %q", v.Alias, order, tt.wantOrder)
 				}
 				if len(tt.wantNote) == 0 && v.Note != "" {
 					t.Errorf("%s note = %q, want none", v.Alias, v.Note)
@@ -164,6 +196,19 @@ func TestLeaseAcquire_SiblingEnv_SentWithTheSupervisorStep(t *testing.T) {
 			}
 		})
 	}
+}
+
+// sentTo are the commands sent to host, in order.
+func sentTo(s *leaseSSH, host string) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []string
+	for _, c := range s.calls {
+		if c.hostname == host {
+			out = append(out, c.command)
+		}
+	}
+	return out
 }
 
 func TestLeaseAcquire_SiblingEnv_SupervisorWithoutEnvCapability_NotedNotSent(t *testing.T) {
@@ -181,15 +226,17 @@ func TestLeaseAcquire_SiblingEnv_SupervisorWithoutEnvCapability_NotedNotSent(t *
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			gf := newGroupFixture(t)
-			gf.ssh.setHandler(wiringAcquireHandler(`{"version":"v9.200.0","formats":[1]}`, tt.decl, "@@zcp-devsup check 0\n@@zcp-devsup reloaded 0\n"))
+			gf.ssh.setHandler(wiringAcquireHandler(`{"version":"v9.200.0","formats":[1]}`, tt.decl, "@@zcp-devsup check 0\n"))
 
 			views, err := LeaseAcquireGroup(context.Background(), gf.deps, []string{groupHQPool, groupWebPool}, testRepo, "feat")
 			if err != nil {
 				t.Fatalf("acquire: %v", err)
 			}
 			for _, v := range views {
-				if step := supervisorStep(t, gf.ssh, v.Alias); strings.Contains(step, "ctl 'env'") {
-					t.Errorf("%s: ctl env sent to a supervisor that does not list it:\n%s", v.Alias, step)
+				for _, c := range sentTo(gf.ssh, v.Alias) {
+					if strings.Contains(c, "ctl 'env'") {
+						t.Errorf("%s: ctl env sent to a supervisor that does not list it:\n%s", v.Alias, c)
+					}
 				}
 				if len(tt.wantNote) == 0 && v.Note != "" {
 					t.Errorf("%s note = %q, want none", v.Alias, v.Note)
