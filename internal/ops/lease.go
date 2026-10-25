@@ -235,10 +235,15 @@ type LeaseView struct {
 	// be reset (DP-15).
 	containerDeleted bool
 	// containerRemoved: a release removed the container with its lease, the
-	// pool having its warm containers or the container being outdated; keptWarm:
+	// pool having its warm containers or being full, or the container being
+	// outdated; keptWarm:
 	// a release reset it and it stays in the pool as a warm one (DP-27).
 	containerRemoved bool
 	keptWarm         bool
+	// fullPoolMax is the pool's maximum when a release removed the container
+	// rather than keep it warm because the pool held that maximum and serves
+	// previews (DP-27, DP-28); 0 otherwise.
+	fullPoolMax int
 	// recordKept says why zcp left the record at the lease's alias in place
 	// when it would have dropped it — another lease's by then, or unreadable
 	// (dropLeaseRecord); "" when it was dropped.
@@ -963,8 +968,8 @@ func LeaseRelease(ctx context.Context, d LeaseDeps, alias string, force bool) (L
 // remote branch or uncommitted/untracked files (DP-4); the refusal leaves the
 // mount, the record and the lease as they were. Every release resets the
 // container (processes end) — or, under the warm policy, removes it with its
-// lease when the pool already has its warm container or it runs an outdated
-// version (DP-27) — and asks the orchestrator again right before it is sent.
+// lease when the pool already has its warm container, it runs an outdated
+// version, or the pool is full and serves previews (DP-27) — and asks the orchestrator again right before it is sent.
 // A container ssh cannot reach is asked about again: no longer the lease's,
 // it is dropped as lost, unchecked; still the lease's, the release is refused.
 // If the orchestrator fails the reservation is kept and so is the record. A lease the orchestrator no longer

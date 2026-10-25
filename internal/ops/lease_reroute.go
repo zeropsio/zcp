@@ -26,6 +26,15 @@ import (
 // has no public route; a full pool whose other containers are all held
 // leaves nothing zcp may change, and the unpark says the preview is not
 // routed until the pool's containers change.
+//
+// A reset stops and starts its container too, so the one a release keeps as
+// the pool's warm container is off the routes until the next acquire's
+// top-up creates a container — which a pool holding its maximum cannot do:
+// the acquire that took a reset-kept container in a full pool answered 502
+// (live-verified 2026-10-25). So in a full pool serving previews a release
+// removes its container rather than keep it warm (poolFullOfRoutes, DP-27),
+// and the pool's next acquire creates one, whose create re-renders the
+// routes: a cold start, and no warm container while the pool is full.
 
 // leaseRerouteGoneEvery and leaseRerouteGoneWait pace the wait for a removed
 // warm container to leave the pool before its replacement is created: the
@@ -95,6 +104,43 @@ func rerouteUnparked(ctx context.Context, d LeaseDeps, rp *resolvedPool, rec lea
 func unroutedNote(why string) string {
 	return "its preview may answer 502 until the pool's containers change: " + leaseRouteWhy + ", and zcp changed none (" + why +
 		"); an acquire that creates a container or a release that removes one routes it again"
+}
+
+// poolFullOfRoutes reports the pool's maximum, and whether a release must
+// remove the container it would keep as the pool's warm one: the pool holds
+// its maximum — every listed container counted as the top-up counts them,
+// the released one, a stuck one and one being removed included
+// (stuckContainer) — so no container can be created after this release, and
+// it serves an HTTP port, whose route the container's reset would lose.
+// Limits that cannot be read keep the container, as before; so does a pool
+// with no HTTP port, which has no route to lose.
+func poolFullOfRoutes(ctx context.Context, d LeaseDeps, rp *resolvedPool, read poolWarmRead) (int, bool) {
+	limits, err := d.poolLimits(ctx, rp)
+	if err != nil || limits.MaximumContainerCount <= 0 {
+		return 0, false
+	}
+	total := read.total
+	if read.mine == nil {
+		total++ // the listing lacked the released container, which is in the pool all the same
+	}
+	if total < limits.MaximumContainerCount || !poolServesHTTP(ctx, d, rp) {
+		return 0, false
+	}
+	return limits.MaximumContainerCount, true
+}
+
+// fullPoolRemoveWhy is why a release removed, in a full pool of maximum limit
+// serving previews, a container it would otherwise keep warm.
+func fullPoolRemoveWhy(limit int) string {
+	return fmt.Sprintf("the pool holds its maximum of %d containers, so none can be created after this release, and %s — kept as the warm one, the container would leave the pool's routes in its reset and the next lease on it would get a preview answering 502; "+
+		"the pool's next acquire creates a container instead (a cold start), whose preview is routed, and the pool has no warm container until it has room for one", limit, leaseRouteWhy)
+}
+
+// fullPoolWarmNote is what status says of a pool a release left without a
+// warm container because the pool was full.
+func fullPoolWarmNote(limit int) string {
+	return fmt.Sprintf("no warm container while the pool is full: a release removed its container rather than keep it warm, since the pool held its maximum of %d containers and a container kept warm would leave the pool's routes in its reset (%s); "+
+		"the pool's next acquire creates a container (a cold start), and an acquire or release that finds room tops the pool up", limit, leaseRouteWhy)
 }
 
 // poolServesHTTP reports whether the pool declares an HTTP port, read by id

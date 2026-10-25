@@ -487,6 +487,9 @@ func handBackOutcome(alias string, view LeaseView, err error) (what, next string
 	case view.containerDeleted:
 		return "the container could not be reset (the platform created it for the pool's minContainers, so it has no primary snapshot), so it was deleted and the lease dropped",
 			leaseGoneNext + ". " + unresettableAdvice
+	case view.containerRemoved && view.fullPoolMax > 0:
+		return fmt.Sprintf("the container was removed with the lease (the pool is full at its maximum of %d containers, so a container kept warm would lose its preview route; the pool's next acquire creates one) and the lease dropped", view.fullPoolMax),
+			leaseGoneNext
 	case view.containerRemoved:
 		return "the container was removed with the lease (the pool already had its warm container, or the container ran an outdated version) and the lease dropped",
 			leaseGoneNext
