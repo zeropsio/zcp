@@ -204,6 +204,9 @@ func leasePoolFullError(ctx context.Context, d LeaseDeps, rp *resolvedPool, se *
 		default:
 			raise = fmt.Sprintf("raise the pool's maxContainers (zerops_scale serviceHostname=%q) if it is below %d, the most a pool holds", pool, poolContainerCeiling)
 		}
+		if u.max < poolContainerCeiling {
+			raise += poolRaiseNote
+		}
 		switch {
 		case len(u.yours) > 0 && u.max < poolContainerCeiling:
 			advice = append(advice, release+", or "+raise)
