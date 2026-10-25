@@ -86,7 +86,7 @@ func TestRenderDevelopBriefing_TextCarriesEnvelope(t *testing.T) {
 		})
 
 	result, structured, err := renderDevelopBriefing(
-		context.Background(), eng, mock, "proj-2", runtime.Info{InContainer: true}, nil, nil,
+		context.Background(), eng, mock, "proj-2", runtime.Info{InContainer: true}, nil,
 	)
 	if err != nil {
 		t.Fatalf("renderDevelopBriefing: %v", err)
