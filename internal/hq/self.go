@@ -26,8 +26,17 @@ type MateState struct {
 	// AppName is that application's name, nil while HQ names it nothing.
 	AppName *string `json:"appName"`
 	// Changes are, in each of that application's repositories, the Mate's
-	// latest changes, newest first: its open one, if any, is the newest.
+	// changes, newest first: from an HQ that keeps an open change per branch
+	// (OpenPerBranch), every open one and the latest MateChangesPerRepo
+	// settled ones; from an older HQ, the latest MateChangesPerRepo in any
+	// state — an open one older than those is not listed.
 	Changes []MateChange `json:"changes"`
+	// OpenPerBranch says HQ keeps a Mate an open change per branch it names,
+	// beside its one change opened naming none, and lists every open change
+	// in Changes. false from an HQ that keeps one open change per repository.
+	// A capability, read before any call; an answer is still read by its
+	// shape, since an HQ can roll back.
+	OpenPerBranch bool `json:"openPerBranch,omitempty"`
 	// Repos are the application's repositories in HQ, by name. nil from an HQ
 	// older than repositories in the Mate's state.
 	Repos []MateRepo `json:"repos"`
@@ -77,7 +86,33 @@ type MateChange struct {
 	// Handed is a change a person handed this Mate from a Mate that is gone:
 	// the Mate's own now, on the branch it was on.
 	Handed bool `json:"handed,omitempty"`
+	// Ready is whether the change is described at its head — asks for the
+	// person's review — rather than a draft; nil from an HQ older than it.
+	Ready *bool `json:"ready,omitempty"`
+	// Mergeability is how the change merges into `main` as HQ last judged it
+	// (clean, conflict, empty, already_merged, unrelated, unknown); "" from
+	// an HQ older than it.
+	Mergeability string `json:"mergeability,omitempty"`
+	// Behind is whether `main` moved past the change's merge base, judged
+	// with Mergeability; nil from an HQ older than it.
+	Behind *bool `json:"behind,omitempty"`
+	// UpdatedAt is when HQ last changed its record of the change, RFC 3339;
+	// "" from an HQ older than it.
+	UpdatedAt string `json:"updatedAt,omitempty"`
 }
+
+// MateChangesPerRepo is how many of a Mate's changes in a repository its own
+// state carries: from an older HQ the latest in any state, from one that
+// keeps an open change per branch the latest settled beside every open one
+// (hqChanges.ts MATE_CHANGES_PER_REPO).
+const MateChangesPerRepo = 10
+
+// The ways HQ judges a change merges into `main` (hqChanges.ts
+// MergeabilityKind) that zcp tells the agent about.
+const (
+	MergeClean    = "clean"
+	MergeConflict = "conflict"
+)
 
 // Self reads this Mate's state from its HQ.
 func (c Client) Self(ctx context.Context) (MateState, error) {

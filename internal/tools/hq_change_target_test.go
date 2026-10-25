@@ -116,6 +116,7 @@ func TestResolveChange_LeaseAliasNamesRepoAndBranch(t *testing.T) {
 			want: []string{platform.ErrServiceNotFound, "nosuch-9"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			_, err := resolveChangeTarget(stateDir, targetHQ, tt.ask)
 			pe := refusalOf(t, err)
 			for _, want := range tt.want {

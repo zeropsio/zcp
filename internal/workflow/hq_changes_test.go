@@ -42,7 +42,7 @@ func TestHQChangeLedger_OneFilePerChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var got []string
+	got := make([]string, 0, len(listed))
 	for _, c := range listed {
 		got = append(got, fmt.Sprintf("%s/%s#%d@%s", c.AppID, c.Repo, c.Number, c.Branch))
 		if c.RecordedAt == "" {
@@ -53,14 +53,14 @@ func TestHQChangeLedger_OneFilePerChange(t *testing.T) {
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Errorf("ledger = %v, want %v", got, want)
 	}
-	if c, err := ReadHQChange(stateDir, "app-1", "appsdev", 6); err != nil || c == nil || c.Title != "Badge" || c.Source != HQChangeFromOpen {
+	if c, found, err := ReadHQChange(stateDir, "app-1", "appsdev", 6); err != nil || !found || c.Title != "Badge" || c.Source != HQChangeFromOpen {
 		t.Errorf("change #6 = %+v (%v)", c, err)
 	}
 
 	if err := ForgetHQChange(stateDir, "app-1", "appsdev", 6); err != nil {
 		t.Fatal(err)
 	}
-	if c, err := ReadHQChange(stateDir, "app-1", "appsdev", 6); err != nil || c != nil {
+	if c, found, err := ReadHQChange(stateDir, "app-1", "appsdev", 6); err != nil || found {
 		t.Errorf("a forgotten change reads %+v (%v)", c, err)
 	}
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
@@ -129,8 +129,8 @@ func TestHQChangeLedger_ConcurrentWritersKeepEachOthersFields(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	c, err := ReadHQChange(stateDir, "app-1", "appsdev", 6)
-	if err != nil || c == nil {
+	c, found, err := ReadHQChange(stateDir, "app-1", "appsdev", 6)
+	if err != nil || !found {
 		t.Fatalf("change #6: %v", err)
 	}
 	if c.Description == nil || c.Told == nil || c.Branch != "badge" {
@@ -219,7 +219,7 @@ func TestHQChangeLedger_MigrationFromPairsDedupsAcrossPairs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var got []string
+	got := make([]string, 0, len(listed))
 	for _, c := range listed {
 		words := ""
 		if c.Description != nil {
@@ -266,8 +266,8 @@ func TestHQChangeLedger_MigrationKeepsTheLedgersWords(t *testing.T) {
 	if err := MovePairChangesToLedger(stateDir, func(_ int, branch string) string { return branch }); err != nil {
 		t.Fatal(err)
 	}
-	c, err := ReadHQChange(stateDir, "app-1", "appsdev", 2)
-	if err != nil || c == nil {
+	c, found, err := ReadHQChange(stateDir, "app-1", "appsdev", 2)
+	if err != nil || !found {
 		t.Fatalf("change #2: %v", err)
 	}
 	if c.Branch != "pool-previews" || c.Description == nil || c.Description.Text != "newer words" || c.Source != HQChangeFromOpen {

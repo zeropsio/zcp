@@ -36,7 +36,7 @@ func TestLeaseBranches_EveryRecordWithItsRepositoryAndBranch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var lines []string
+	lines := make([]string, 0, len(got))
 	for _, l := range got {
 		lines = append(lines, l.Alias+" "+l.Repo+" "+l.Branch)
 	}
