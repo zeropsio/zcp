@@ -197,7 +197,7 @@ func registerLeaseTool(t *testing.T, srv *mcp.Server, client platform.Client, pr
 	var background sync.WaitGroup
 	deps.Warm.Go = background.Go
 	t.Cleanup(background.Wait)
-	registerLease(srv, deps, rt)
+	registerLease(srv, deps, rt, nil)
 }
 
 func TestLeaseTool_ResultNeverCarriesLease(t *testing.T) {

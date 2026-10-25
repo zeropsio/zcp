@@ -9,6 +9,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/devsup"
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -118,32 +119,47 @@ type leaseRolloutToolResult struct {
 // computed after the operation so it lists the new lease set (spec-mate §1.3);
 // rt is the runtime that envelope is computed for.
 func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir string, swarm ops.SwarmFactory, mounter ops.Mounter, ssh ops.SSHDeployer, rt runtime.Info, opts ...LeaseOption) {
-	deps := leaseDeps(client, projectID, stateDir, swarm, mounter, ssh)
+	setup := leaseSetup{deps: leaseDeps(client, projectID, stateDir, swarm, mounter, ssh)}
 	for _, opt := range opts {
-		opt(&deps)
+		opt(&setup)
 	}
-	registerLease(srv, deps, rt)
+	registerLease(srv, setup.deps, rt, setup.hq)
+}
+
+// leaseSetup is what LeaseOptions configure: the lease operations' deps, and
+// the HTTP client a status reads this Mate's HQ with (nil: never).
+type leaseSetup struct {
+	deps ops.LeaseDeps
+	hq   ops.HTTPDoer
 }
 
 // LeaseOption configures RegisterLease.
-type LeaseOption func(*ops.LeaseDeps)
+type LeaseOption func(*leaseSetup)
 
 // WithLeaseBackground runs the warm policy's background work — the creates
 // and clones a call starts and returns without waiting for (DP-27, DP-32) —
 // through spawn, which must run it on a goroutine of its own, so its owner
 // can wait for it (server.Server.WaitBackground).
 func WithLeaseBackground(spawn func(func())) LeaseOption {
-	return func(d *ops.LeaseDeps) {
-		if d.Warm != nil {
-			d.Warm.Go = spawn
+	return func(s *leaseSetup) {
+		if s.deps.Warm != nil {
+			s.deps.Warm.Go = spawn
 		}
 	}
 }
 
-// registerLease is RegisterLease over deps leaseDeps wired. The warm policy's
+// WithLeaseHQ lets a status read the Mate's own state in HQ through
+// httpClient, once, for each lease group's change (leaseGroupChanges): inside
+// a Mate only. Without it a status names them from the ledger, as last read.
+func WithLeaseHQ(httpClient ops.HTTPDoer) LeaseOption {
+	return func(s *leaseSetup) { s.hq = httpClient }
+}
+
+// registerLease is RegisterLease over deps leaseDeps wired, and hqHTTP the
+// client a status reads this Mate's HQ with (nil: never). The warm policy's
 // creates and clones run in the background and outlive the call that started
 // them (DP-27, DP-32); tests set deps.Warm.Go to wait for them.
-func registerLease(srv *mcp.Server, deps ops.LeaseDeps, rt runtime.Info) {
+func registerLease(srv *mcp.Server, deps ops.LeaseDeps, rt runtime.Info, hqHTTP ops.HTTPDoer) {
 	client, projectID, stateDir, swarm := deps.Client, deps.ProjectID, deps.StateDir, deps.Swarm
 	if rt.MateEnabled {
 		// Inside a Mate an acquire of an HQ repository puts the Mate
@@ -219,7 +235,7 @@ func registerLease(srv *mcp.Server, deps ops.LeaseDeps, rt runtime.Info) {
 				views = []ops.LeaseView{}
 			}
 			return jsonResult(leaseToolResult{
-				Action: input.Action, Leases: views, UnreadPools: status.Unread, Warm: status.Warm, NextActions: joinNext(leaseStatusNext(views), leaseGroupChanges(stateDir, hqAddress(), views)), Envelope: envelope(ctx, views...),
+				Action: input.Action, Leases: views, UnreadPools: status.Unread, Warm: status.Warm, NextActions: joinNext(leaseStatusNext(views), leaseGroupChanges(stateDir, hqAddress(), views, leaseHQState(ctx, hqHTTP, rt))), Envelope: envelope(ctx, views...),
 			}), nil, nil
 		case leaseActionRelease:
 			force := false
@@ -502,4 +518,14 @@ func withLeaseSSHStderr(err error) error {
 	out := *pe
 	out.Message = withSSHStderr(pe.Message, sshErr)
 	return &out
+}
+
+// leaseHQState is lease status's reader of the Mate's own state in HQ, for
+// leaseGroupChanges: inside a Mate, through hqHTTP; nil — never read — with
+// no client or outside a Mate.
+func leaseHQState(ctx context.Context, hqHTTP ops.HTTPDoer, rt runtime.Info) func() *hq.MateState {
+	if hqHTTP == nil || !rt.MateEnabled {
+		return nil
+	}
+	return func() *hq.MateState { return hqStateNow(ctx, hqHTTP) }
 }

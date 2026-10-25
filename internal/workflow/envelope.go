@@ -45,8 +45,12 @@ type StateEnvelope struct {
 
 	// HQChanges are a Mate's changes in HQ, per repository, as status names
 	// them (RenderStatus's Changes section): zcp's own ledger and lease
-	// records, attached by status, off the envelope wire.
+	// records with each change's standing as the Mate's state names it now,
+	// attached by status, off the envelope wire.
 	HQChanges []HQRepoChanges `json:"-"`
+	// HQChangesAsLastRead is HQChanges being the ledger's standing as last
+	// told, HQ not answering status's read of the Mate's state.
+	HQChangesAsLastRead bool `json:"-"`
 }
 
 // LeaseSnapshot is one pool-container lease as the envelope sees it: what the

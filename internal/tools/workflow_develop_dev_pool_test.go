@@ -200,7 +200,7 @@ func TestHandleLifecycleStatus_DevPools_NameTheLease(t *testing.T) {
 			eng := workflow.NewEngine(t.TempDir(), workflow.EnvContainer, nil)
 			mock := platform.NewMock().WithProject(&platform.Project{ID: "proj-1", Name: "demo"}).WithServices(tt.services)
 
-			result, _, err := handleLifecycleStatus(context.Background(), eng, mock, "proj-1", runtime.Info{InContainer: true}, nil)
+			result, _, err := handleLifecycleStatus(context.Background(), eng, mock, "proj-1", runtime.Info{InContainer: true}, nil, nil)
 			if err != nil {
 				t.Fatalf("handleLifecycleStatus: %v", err)
 			}
