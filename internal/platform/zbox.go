@@ -303,13 +303,27 @@ func (c *BoxClient) Ping(ctx context.Context) (BoxPing, error) {
 	return out, nil
 }
 
-// Workspace reads the workspace (GET /api/rest/workspace).
+// Workspace reads the workspace (GET /api/rest/workspace). An answer that
+// names no `domains` list — an empty body, null, an object without the key —
+// is an error, never "no domains": PutDomains replaces the whole list, so a
+// caller adding a domain to it would wipe every domain registered. A list
+// answered empty or null is the list.
 func (c *BoxClient) Workspace(ctx context.Context) (BoxWorkspace, error) {
-	var out BoxWorkspace
+	var out struct {
+		Domains json.RawMessage `json:"domains"`
+		Version string          `json:"version"`
+	}
 	if err := c.call(ctx, http.MethodGet, "/workspace", nil, nil, "", &out); err != nil {
 		return BoxWorkspace{}, fmt.Errorf("box workspace: %w", err)
 	}
-	return out, nil
+	if out.Domains == nil {
+		return BoxWorkspace{}, errors.New("box workspace: the answer names no domains list")
+	}
+	ws := BoxWorkspace{Version: out.Version}
+	if err := json.Unmarshal(out.Domains, &ws.Domains); err != nil {
+		return BoxWorkspace{}, fmt.Errorf("box workspace: decode domains: %w", err)
+	}
+	return ws, nil
 }
 
 // Bases lists the workspace's bases (GET /api/rest/base-list).
@@ -470,7 +484,15 @@ func (c *BoxClient) do(ctx context.Context, access BoxAccess, method, path strin
 		scrubBoxError(be, access.Token.Secret())
 		return be
 	}
-	if out == nil || len(bytes.TrimSpace(answer)) == 0 {
+	if out == nil {
+		return nil
+	}
+	if len(bytes.TrimSpace(answer)) == 0 {
+		if method == http.MethodGet {
+			// A read answered with nothing says nothing: never the zero
+			// value of what it reads (no domains, no base).
+			return fmt.Errorf("an empty answer to GET %s", path)
+		}
 		return nil
 	}
 	if err := json.Unmarshal(answer, out); err != nil {
