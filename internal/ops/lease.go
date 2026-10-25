@@ -744,8 +744,55 @@ func isLeaseAliasShape(alias string) bool { return platform.ValidateLeaseAlias(a
 
 func leaseDir(stateDir string) string { return filepath.Join(stateDir, "leases") }
 
-// writeLeaseRecord writes the record atomically with mode 0600.
+// leaseRecordLockWait bounds the wait for an alias's record lock: whoever holds
+// it only reads, writes or removes one small file under it.
+const leaseRecordLockWait = 10 * time.Second
+
+// leaseRecordLockPath is the lock of the record at alias, beside the per-key
+// acquire locks (a record is replaced by rename and cannot carry it).
+func leaseRecordLockPath(stateDir, alias string) string {
+	return filepath.Join(stateDir, leaseLocksDir, "record-"+alias+".lock")
+}
+
+// lockLeaseRecord takes the record lock of alias (a flock, across this
+// process's calls and every zcp process sharing the state directory). Every
+// write of the record holds it, and so does every read of it that decides a
+// removal or a rewrite, so another process's write never lands between zcp's
+// read and its removal (DP-2). Nothing but the record's own file is read or
+// written under it. The caller MUST call the returned release function.
+func lockLeaseRecord(stateDir, alias string) (func(), error) {
+	if stateDir == "" {
+		return nil, errors.New("no state directory")
+	}
+	if !isLeaseAliasShape(alias) {
+		return nil, fmt.Errorf("alias %q is not <pool>-<number>", alias)
+	}
+	if err := os.MkdirAll(filepath.Join(stateDir, leaseLocksDir), 0o700); err != nil {
+		return nil, fmt.Errorf("create lease lock directory: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), leaseRecordLockWait)
+	defer cancel()
+	unlock, err := lockLeaseKey(ctx, leaseRecordLockPath(stateDir, alias))
+	if err != nil {
+		return nil, fmt.Errorf("lock the record of %s: %w", alias, err)
+	}
+	return unlock, nil
+}
+
+// writeLeaseRecord writes the record atomically with mode 0600, under its
+// alias's record lock.
 func writeLeaseRecord(stateDir string, rec leaseRecord) error {
+	unlock, err := lockLeaseRecord(stateDir, rec.alias())
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return writeLeaseRecordLocked(stateDir, rec)
+}
+
+// writeLeaseRecordLocked is writeLeaseRecord once the caller holds the
+// alias's record lock.
+func writeLeaseRecordLocked(stateDir string, rec leaseRecord) error {
 	if stateDir == "" {
 		return errors.New("no state directory")
 	}
@@ -1045,9 +1092,15 @@ func releaseOnOrchestrator(ctx context.Context, d LeaseDeps, rp *resolvedPool, r
 // container stays in the pool as its warm one, DP-27): that record, its ssh
 // stanza and its mount are another lease's, so they are left alone and the
 // view says so (recordKept). So is a record zcp cannot read: it cannot tell
-// it is the lease's own.
+// it is the lease's own. The check and the removal hold the alias's record
+// lock, so no write of another process lands between them.
 func dropLeaseRecord(stateDir string, rec leaseRecord, state, note string) (LeaseView, error) {
 	v := rec.view(state)
+	unlock, err := lockLeaseRecord(stateDir, rec.alias())
+	if err != nil {
+		return LeaseView{}, fmt.Errorf("drop lease record %s: %w", rec.alias(), err)
+	}
+	defer unlock()
 	if kept := keptRecordNote(stateDir, rec); kept != "" {
 		v.Note, v.recordKept = joinNotes(strings.TrimSuffix(note, recordDroppedTail), kept), kept
 		return v, nil
