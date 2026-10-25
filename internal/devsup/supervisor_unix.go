@@ -829,7 +829,8 @@ func (s *Supervisor) watchFired(name, rel string, last time.Time, paths []string
 	// Decided by when the change was made, never by when its burst settled:
 	// the settle ends watchSettle after the last change, past the window for
 	// a write made just inside it.
-	if sv.startedAt != nil && last.Sub(*sv.startedAt) < s.cfg.StartWindow {
+	switch {
+	case sv.startedAt != nil && last.Sub(*sv.startedAt) < s.cfg.StartWindow:
 		if !sv.windowChanged {
 			sv.windowChanged = true
 			sv.selfChanged++
@@ -842,9 +843,9 @@ func (s *Supervisor) watchFired(name, rel string, last time.Time, paths []string
 			s.persist()
 			return
 		}
-	} else if !sv.windowChanged {
+	case !sv.windowChanged:
 		sv.selfChanged, sv.selfPaths, sv.selfOverflow = 0, nil, false
-	} else if sv.selfChanged > watchLoopLimit && sv.ownOutput(paths) {
+	case sv.selfChanged > watchLoopLimit && sv.ownOutput(paths):
 		s.mu.Unlock()
 		s.logf("no restart of %s: %s changed after its start window, among the paths only its own output changes; add them to watch.ignore", name, rel)
 		return

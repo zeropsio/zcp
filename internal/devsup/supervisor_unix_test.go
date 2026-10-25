@@ -574,6 +574,7 @@ func TestSupervisor_AReloadOrAStartOfAnotherServerKeepsAWatchedChangeStillSettli
 	}{
 		{"reload", func(_ *testing.T, s *Supervisor) { s.Reload() }},
 		{"start of another server", func(t *testing.T, s *Supervisor) {
+			t.Helper()
 			if err := s.Start("web"); err != nil {
 				t.Fatal(err)
 			}
