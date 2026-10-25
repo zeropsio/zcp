@@ -265,6 +265,49 @@ func TestForward_RecordsLastConnectionAndOpenCount(t *testing.T) {
 	}
 }
 
+// acceptFailsOnce is a listener whose first Accept fails as the kernel does
+// with every file descriptor in use.
+type acceptFailsOnce struct {
+	net.Listener
+	failed bool
+}
+
+func (l *acceptFailsOnce) Accept() (net.Conn, error) {
+	if !l.failed {
+		l.failed = true
+		return nil, &net.OpError{Op: "accept", Net: "tcp", Err: os.NewSyscallError("accept", syscall.EMFILE)}
+	}
+	return l.Listener.Accept() //nolint:wrapcheck // the listener's own error, as net returns it
+}
+
+// TestForward_AnAcceptErrorNeverEndsTheForward: an Accept that fails while the
+// forward is open — out of file descriptors, a connection aborted before it
+// was taken — ended the forward for good while its port stayed bound: the
+// preview completed handshakes nothing served, and status read an observed 0
+// open connections. The forward waits a moment and takes the next one; only
+// its shut ends it.
+func TestForward_AnAcceptErrorNeverEndsTheForward(t *testing.T) {
+	t.Parallel()
+	target, listen := echoTarget(t), freePort(t)
+	var lc net.ListenConfig
+	ln, err := lc.Listen(context.Background(), "tcp", ":"+strconv.Itoa(listen))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	f := &forward{listenPort: listen, targetPort: target, ln: &acceptFailsOnce{Listener: ln}, seen: &previewSeen{}, cancel: cancel, conns: map[net.Conn]struct{}{}}
+	f.wg.Go(func() { f.accept(ctx) })
+	t.Cleanup(f.close)
+
+	if !echoOver(listen, "after an accept error") {
+		t.Fatal("the forward served nothing after one accept error: it ended while its port stayed bound")
+	}
+	f.close()
+	if echoOver(listen, "after the shut") {
+		t.Fatal("a shut forward still serves")
+	}
+}
+
 // TestSupervisor_PreviewActivity_KeptAcrossServerRestartsNeverInStateFile:
 // the preview server's state reports when its forward last took a connection
 // and how many it holds open; a server without a preview port reports
