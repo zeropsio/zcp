@@ -330,8 +330,9 @@ func savePoolRetireRecord(stateDir string, rec *poolRetireRecord) error {
 	return writePoolRetireRecord(poolRetireRecordPath(stateDir, rec.Dev), rec)
 }
 
-// keepRetiredApart moves a retired record of a dev whose hostname another
-// service holds now out of the way of that service's retire: the record goes
+// keepRetiredApart moves a retired — or aborted — record of a dev whose
+// hostname another service holds now out of the way of that service's
+// retire: the record goes
 // to <dev>.<the id it retired>.json and its bundles — the only copies of the
 // old dev's work, at the paths the new retire bundles to — to the same name's
 // .bundle and, for a variant-B retire that rebundled its code volume, its
@@ -549,16 +550,17 @@ func poolRetireFresh(ctx context.Context, d poolRetireDeps, input WorkflowInput)
 	defer release()
 	// Another call may have started — or finished — this retire while this
 	// one waited for the pair: its record answers, never a second start. A
-	// retired record of another id is a dev that held the hostname before
-	// (PM-7): it answers nothing for this one, and it and its bundle are
-	// kept apart, never written over.
+	// retired or aborted record of another id is a dev that held the
+	// hostname before (PM-7): it answers nothing for this one, and it and its
+	// bundle — the abort says the bundle is kept — are kept apart, never
+	// written over.
 	other, err := readPoolRetireRecord(d.stateDir, g.call.dev.Name)
 	if err != nil {
 		return convertError(fmt.Errorf("pool-migrate retire: %w", err), WithRecoveryStatus())
 	}
 	switch {
-	case other == nil, other.Phase == poolRetireAborted:
-	case other.Phase == poolRetireRetired && other.DevServiceID != g.devID:
+	case other == nil, other.Phase == poolRetireAborted && other.DevServiceID == g.devID:
+	case (other.Phase == poolRetireRetired || other.Phase == poolRetireAborted) && other.DevServiceID != g.devID:
 		if err := keepRetiredApart(d.stateDir, other); err != nil {
 			return convertError(fmt.Errorf("pool-migrate retire: %w", err), WithRecoveryStatus())
 		}
