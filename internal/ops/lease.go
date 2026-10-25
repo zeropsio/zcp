@@ -790,6 +790,26 @@ func writeLeaseRecord(stateDir string, rec leaseRecord) error {
 	return writeLeaseRecordLocked(stateDir, rec)
 }
 
+// rewriteLeaseRecord writes rec over its own record — only while the record
+// at its alias still names rec's lease and container (DP-2), checked and
+// written under the alias's record lock. kept says why it was not written:
+// the alias names another lease by now, or its record is gone (a release
+// elsewhere dropped it) or unreadable.
+func rewriteLeaseRecord(stateDir string, rec leaseRecord) (kept string, err error) {
+	unlock, err := lockLeaseRecord(stateDir, rec.alias())
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
+	if kept := keptRecordNote(stateDir, rec); kept != "" {
+		return kept, nil
+	}
+	if _, err := os.Stat(filepath.Join(leaseDir(stateDir), rec.alias()+".json")); errors.Is(err, os.ErrNotExist) {
+		return rec.alias() + "'s record is gone — a release elsewhere dropped it — so zcp did not write it again", nil
+	}
+	return "", writeLeaseRecordLocked(stateDir, rec)
+}
+
 // writeLeaseRecordLocked is writeLeaseRecord once the caller holds the
 // alias's record lock.
 func writeLeaseRecordLocked(stateDir string, rec leaseRecord) error {
