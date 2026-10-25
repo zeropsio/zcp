@@ -49,8 +49,8 @@ Checks: platform/ops type/interface → unit/tool/integration/e2e; handler → t
 ## Commands
 
 - `make setup` — dev tools and git hooks.
-- `make lint-fast` — native fast linters; `make lint-local` — full golangci lint.
-- `go test ./... -short` — fast tests; `go test ./... -race` — race detector.
+- `make check-changed` — affected short tests and native lint from the staged diff (also pre-commit); `scripts/check-changed.sh --base <ref>` checks a review range; `--plan` prints selection and unresolved ownership.
+- Complete acceptance runs in CI; `make test-short`, `make test-race`, `make lint-fast` and `make lint-local` remain manual all-package diagnostics. Pre-push does not repeat lint.
 - Knowledge sync (gitignored markdown, pull before build): `zcp sync pull recipes [<slug>]` / `pull guides`; `zcp sync push recipes <slug> [--dry-run]` / `push guides` → GitHub PR; `zcp sync cache-clear [<slug>]`; `zcp sync recipe {create-repo,push-app,publish,export}`. Loop: pull → edit → push → merge → cache-clear → pull. Config: `.sync.yaml`, `.env STRAPI_API_TOKEN`.
 
 ## How to work

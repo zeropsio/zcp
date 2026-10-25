@@ -277,6 +277,29 @@ makes the richer set universal too.
 
 ---
 
+### Local changed checks
+
+`scripts/check-changed.sh` owns local selection. Pre-commit and `make check-changed`
+use the staged diff, including deletions and both sides of renames. `--base <ref>`
+compares that ref with the working tree; `--files` accepts explicit relative paths;
+`--plan` emits the selection without running checks.
+
+Decision: local checks run affected `-short` tests and native affected-package lint;
+complete acceptance belongs to CI, and pre-push must not repeat full lint.
+
+Decision: selection follows Go imports, including test imports, to transitive
+consumers; embedded resources and package-local fixtures belong to their package.
+Explicit filesystem-reader edges cover cross-package inputs and repository text
+guards. A test that reads another package's source is selected without treating
+that source edit as a change to the reader's compiled exports.
+
+Decision: module, build and global configuration changes widen selection to all
+packages; unresolved ownership is printed and also selects all packages, never an
+empty successful check. An incomplete Go graph widens selection as well.
+
+Selector contracts live in `scripts/test_check_changed.py`; complete all-package
+test and lint Makefile targets remain available for manual diagnostics.
+
 ## 8. Invariants (pin with tests)
 
 - **I1** Every behavior has exactly one verification home, chosen by the tier

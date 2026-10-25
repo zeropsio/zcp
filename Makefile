@@ -1,4 +1,4 @@
-.PHONY: help setup test test-short test-race lint lint-fast lint-local vet build build-nocorpuscheck install all clean release release-patch schema-sync catalog-sync e2e-build e2e-deploy e2e-zcp e2e-zcp-fast e2e-zcp-deploy flow-eval-local dc-live dc-live-full dc-live-remote
+.PHONY: help setup check-changed test test-short test-race lint lint-fast lint-local vet build build-nocorpuscheck install all clean release release-patch schema-sync catalog-sync e2e-build e2e-deploy e2e-zcp e2e-zcp-fast e2e-zcp-deploy flow-eval-local dc-live dc-live-full dc-live-remote
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
@@ -30,20 +30,23 @@ setup: ## Bootstrap development environment (install all tools)
 	@jq --version
 	@echo "==> Setup complete."
 
-test: ## Run all tests
+check-changed: ## Run affected short tests and native lint (staged diff)
+	./scripts/check-changed.sh
+
+test: ## Manually run all tests (complete acceptance runs in CI)
 	go test ./... -count=1
 
-test-short: ## Run tests (short mode, ~3s)
+test-short: ## Manually run all packages in short mode
 	go test ./... -count=1 -short
 
-test-race: ## Run tests with race detection
+test-race: ## Manually run all packages with race detection
 	go test -race ./... -count=1
 
-lint: ## Run linter for all target platforms
+lint: ## Manually lint all packages for all target platforms
 	GOOS=darwin GOARCH=arm64 $(LINT) run ./...
 	GOOS=linux GOARCH=amd64 $(LINT) run ./...
 
-lint-fast: ## Fast lint (native platform, fast linters only, ~3s)
+lint-fast: ## Manually lint all packages with native fast linters
 	$(LINT) run ./... --fast-only
 
 sync: build-nocorpuscheck ## Pull all knowledge from external sources
@@ -60,7 +63,7 @@ schema-sync: build ## Refresh embedded schemas + version catalog from the public
 
 catalog-sync: schema-sync ## Alias for schema-sync (kept for backward compatibility)
 
-lint-local: ## Full lint (native only, offline)
+lint-local: ## Manually lint all packages (native only, offline)
 	$(LINT) run ./...
 
 vet: ## Run go vet
