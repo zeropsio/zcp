@@ -309,8 +309,9 @@ func TestThemes_Services_DevPool_Park_FactsPresent(t *testing.T) {
 		`zerops_lease action=park lease="<alias>"`, "`/var/www` and `$HOME`", "an Ubuntu base empties `/tmp`", "every process ends", "maximum",
 		// Parked: nothing answers on it, what refuses it, the wiring.
 		"`parked`", "`parkedAt`", "refuse it", "skips it",
-		// Unpark: what comes back.
+		// Unpark: what comes back, and the preview routed again.
 		`zerops_lease action=unpark lease="<alias>"`, "waits for SSH", "starts the supervisor when none runs",
+		"only once the pool's containers change", "replaces the pool's warm container", "answers 502 until",
 		// Release: started first, stopped again when refused, forced as it stands.
 		"starts it first", "stops it again", "as it stands, stopped",
 		// Idleness offers it and never parks.
