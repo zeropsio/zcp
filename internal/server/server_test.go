@@ -26,16 +26,17 @@ import (
 )
 
 // defaultExpectedTools is the end-user tool surface — what every agent
-// sees without the ZCP_AUTHORING gate. zerops_deploy is always
-// registered: SSH mode when sshDeployer is non-nil, local mode (zcli
-// push) when sshDeployer is nil.
+// sees without the ZCP_AUTHORING gate, in local mode. zerops_deploy is
+// always registered: SSH mode when sshDeployer is non-nil, local mode (zcli
+// push) when sshDeployer is nil. zerops_lease is container-only
+// (TestServer_LeaseToolGating).
 var defaultExpectedTools = []string{
 	"zerops_workflow", "zerops_discover", "zerops_knowledge",
 	"zerops_record_fact", "zerops_workspace_manifest",
 	"zerops_logs", "zerops_events", "zerops_process", "zerops_verify",
 	"zerops_deploy", "zerops_export",
 	"zerops_manage", "zerops_scale", "zerops_env", "zerops_import", "zerops_delete", "zerops_subdomain",
-	"zerops_mount", "zerops_preprocess", "zerops_lease", "zerops_box",
+	"zerops_mount", "zerops_preprocess", "zerops_box",
 }
 
 // authoringExpectedTools is the maintainer surface added on top when
@@ -248,6 +249,29 @@ func TestServer_BrowserToolGating(t *testing.T) {
 			}
 			if found != tt.wantTool {
 				t.Errorf("zerops_browser registered = %v, want %v", found, tt.wantTool)
+			}
+		})
+	}
+}
+
+// TestServer_LeaseToolGating: a dev pool's orchestrator answers only inside
+// the project (docs/spec-workflows.md §8 DP-3), so zerops_lease is offered in
+// a container only; a local zcp keeps the tool list it had without it.
+//
+// Non-parallel: t.Chdir rebases cwd for server.New's stateDir derivation.
+func TestServer_LeaseToolGating(t *testing.T) {
+	t.Chdir(t.TempDir())
+	for _, tt := range []struct {
+		name string
+		rt   runtime.Info
+		want bool
+	}{
+		{name: "in a container", rt: runtime.Info{InContainer: true, ServiceID: "s1"}, want: true},
+		{name: "local", rt: runtime.Info{}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := listServerTools(t, tt.rt)["zerops_lease"]; got != tt.want {
+				t.Errorf("zerops_lease registered = %v, want %v", got, tt.want)
 			}
 		})
 	}
