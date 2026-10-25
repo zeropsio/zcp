@@ -1613,6 +1613,50 @@ func TestPoolMigrateRetire_NameRetaken_RetiresTheNewService(t *testing.T) {
 	}
 }
 
+// TestPoolMigrateRetire_AbortedRecordOfAnotherID_KeptApart: an aborted
+// retire keeps its bundle — the abort says so — and the dev it bundled may
+// go later, outside zcp, its hostname then taken by a new service. A retire
+// of that service keeps the aborted record of the old id and its bundle
+// apart, as it keeps a retired one, never writing over what may be the only
+// copy of the old dev's work (PM-7).
+func TestPoolMigrateRetire_AbortedRecordOfAnotherID_KeptApart(t *testing.T) {
+	t.Parallel()
+	r := newRetireRig(t, nil)
+	oldBundle := poolRetireBundlePath(r.f.stateDir, "appdev")
+	if err := os.MkdirAll(filepath.Dir(oldBundle), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const oldBytes = "the aborted retire's bundle of the old dev"
+	if err := os.WriteFile(oldBundle, []byte(oldBytes), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := savePoolRetireRecord(r.f.stateDir, &poolRetireRecord{
+		Dev: "appdev", DevServiceID: "svc-dev-old", Pool: "apppool", PoolServiceID: "svc-pool", PoolSetup: "apppool",
+		Stages: []string{"appstage"}, Phase: poolRetireAborted, StartedAt: "2026-10-20T10:00:00Z", AbortReason: "fingerprint-changed: moved",
+		Bundle: &ops.PoolMigrateBundle{Path: oldBundle, Bytes: int64(len(oldBytes))},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if out, isErr := r.retire(t, retireInput(true, false)); isErr || out["step"] != "retired" {
+		t.Fatalf("retire = %v, want the new service retired", out)
+	}
+	raw, err := os.ReadFile(filepath.Join(r.f.stateDir, "migrate", "appdev.svc-dev-old.json"))
+	if err != nil {
+		t.Fatalf("the aborted record of the old id was not kept apart: %v", err)
+	}
+	var kept poolRetireRecord
+	if err := json.Unmarshal(raw, &kept); err != nil {
+		t.Fatal(err)
+	}
+	if kept.Phase != poolRetireAborted || kept.Bundle == nil || kept.Bundle.Path == oldBundle {
+		t.Fatalf("kept record = %s, want the aborted record, its bundle moved off %s", raw, oldBundle)
+	}
+	if got, err := os.ReadFile(kept.Bundle.Path); err != nil || string(got) != oldBytes {
+		t.Fatalf("the old dev's bundle at %s = %q (%v), want it kept as it was", kept.Bundle.Path, got, err)
+	}
+}
+
 // TestPoolMigrateRetire_NameRetaken_KeepsTheVolumeBundleApart: a variant-B
 // retire forced past a code volume whose checkout moved holds two bundles —
 // <dev>.bundle and <dev>.volume.bundle, the newer and only copy of the late
