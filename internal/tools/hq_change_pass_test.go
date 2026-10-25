@@ -1,0 +1,326 @@
+// Tests for: what a pass, status, develop's start and the handoffs say of a
+// Mate's several open changes (tools/hq_change.go hqChangesPass,
+// hqChangeStanding, hq_change_status.go, hq_pair.go, workflow_release.go),
+// run against a fake HQ that serves real git (hq_lab_test.go).
+package tools
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
+	"github.com/zeropsio/zcp/internal/workflow"
+)
+
+// wirePoolPair records a pair keyed by the dev pool pool, its stage stage,
+// wired to the lab's repository — a part of the same monorepo.
+func (l *hqLab) wirePoolPair(pool, stage string) {
+	l.t.Helper()
+	if err := workflow.UpsertServiceMeta(l.stateDir, pool, func(m *workflow.ServiceMeta, _ bool) error {
+		m.Hostname, m.Mode, m.Stages = pool, topology.PlanModeStandard, []topology.StageRef{{Hostname: stage}}
+		m.BootstrapSession, m.BootstrappedAt, m.GitPushState = "test", "2026-10-02", topology.GitPushConfigured
+		m.DevPool = &workflow.DevPoolRef{ServiceID: "svc-" + pool}
+		m.HQ = &workflow.HQRepoRef{AppID: labApp, Repo: "appdev", CredentialFingerprint: hq.CredentialFingerprint(labCredential)}
+		return nil
+	}); err != nil {
+		l.t.Fatal(err)
+	}
+}
+
+// passReport runs a pass past the pair's backoff and answers its lines.
+func (l *hqLab) passReport() string {
+	l.t.Helper()
+	elapseHQBackoff(l.t, l.stateDir)
+	return strings.Join(l.wire(), "\n")
+}
+
+// describedChanges is twoOpenChanges with both changes described, ready for
+// review.
+func describedChanges(t *testing.T) *hqLab {
+	t.Helper()
+	lab := twoOpenChanges(t)
+	for _, branch := range []string{"fix-login", "add-signup"} {
+		if text, isError := lab.describeOn(branch); isError || !strings.Contains(text, `"described":true`) {
+			t.Fatalf("describe %s: %s", branch, text)
+		}
+	}
+	return lab
+}
+
+// TestHQPass_MergedChangeNamesItsLeasesAndStages: a merged change's note names
+// its branch, the leases zcp holds on that branch — with the release that
+// frees them, which only the agent runs — and the stages of the repository's
+// pairs, which track main; it releases nothing.
+func TestHQPass_MergedChangeNamesItsLeasesAndStages(t *testing.T) {
+	lab := newHQLab(t)
+	lab.hq.keepOpenPerBranch()
+	lab.wire()
+	lab.wirePoolPair("hqpool", "hqstage")
+	lab.pushFromMain("fix-login", map[string]string{"login.js": "the fix\n"})
+	if answer, text, isError := lab.openChangeFrom("fix-login", "Fix the login"); isError || !answer.Created {
+		t.Fatalf("open: %s", text)
+	}
+	lab.leaseOf("hqpool", 4, "fix-login")
+	lab.leaseOf("boxpool", 6, "fix-login")
+	lab.leaseOf("hqpool", 5, "other-work")
+	lab.hq.mergeChange("appdev", 1)
+
+	report := lab.passReport()
+
+	for _, want := range []string{"change #1 is merged", `"fix-login"`, "boxpool-6", "hqpool-4",
+		ops.LeaseReleaseBranchCall("fix-login", "", false), "appstage", "hqstage", `sha="origin/main"`} {
+		if !strings.Contains(report, want) {
+			t.Errorf("the merged note lacks %q:\n%s", want, report)
+		}
+	}
+	if strings.Contains(report, "hqpool-5") {
+		t.Errorf("the merged note names a lease of another branch:\n%s", report)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(lab.stateDir, "leases")); len(entries) != 3 {
+		t.Errorf("the pass released a lease: %d records left, want 3", len(entries))
+	}
+}
+
+// TestHQPass_OtherChangeBehindAfterMerge_ToldOnce: once one change merges, HQ
+// judges the others again; a pass says once that another is behind main and
+// still merges cleanly, and how to check it with main — merge origin/main in,
+// check, push, describe again — and the next pass says nothing more of it.
+func TestHQPass_OtherChangeBehindAfterMerge_ToldOnce(t *testing.T) {
+	lab := describedChanges(t)
+	if report := lab.passReport(); strings.Contains(report, "#2") {
+		t.Fatalf("a ready change in step with main is worth no words:\n%s", report)
+	}
+	lab.hq.mergeChange("appdev", 1)
+
+	report := lab.passReport()
+
+	for _, want := range []string{"change #1 is merged", `change #2 on "add-signup" is behind main and still merges cleanly`,
+		"git fetch origin && git merge origin/main", `action="describe-change" branch="add-signup"`} {
+		if !strings.Contains(report, want) {
+			t.Errorf("the pass lacks %q:\n%s", want, report)
+		}
+	}
+	if again := lab.passReport(); strings.Contains(again, "#2") {
+		t.Errorf("the next pass says #2's standing again:\n%s", again)
+	}
+}
+
+// TestHQPass_ConflictToldWithMergeNotRebase: a change that no longer merges
+// cleanly once another merged is told so, with a merge of origin/main and its
+// conflicts resolved — never a rebase, never a force.
+func TestHQPass_ConflictToldWithMergeNotRebase(t *testing.T) {
+	lab := newHQLab(t)
+	lab.hq.keepOpenPerBranch()
+	lab.wire()
+	lab.pushFromMain("fix-login", map[string]string{"app.js": "one way\n"})
+	lab.pushFromMain("rework", map[string]string{"app.js": "another way\n"})
+	for _, branch := range []string{"fix-login", "rework"} {
+		if answer, text, isError := lab.openChangeFrom(branch, "Work on "+branch); isError || !answer.Created {
+			t.Fatalf("open %s: %s", branch, text)
+		}
+		if text, isError := lab.describeOn(branch); isError {
+			t.Fatalf("describe %s: %s", branch, text)
+		}
+	}
+	lab.passReport()
+	lab.hq.mergeChange("appdev", 1)
+
+	report := lab.passReport()
+
+	for _, want := range []string{`change #2 on "rework" no longer merges cleanly with main`, "git merge origin/main", "resolve", "never rebase", "never force"} {
+		if !strings.Contains(report, want) {
+			t.Errorf("the conflict note lacks %q:\n%s", want, report)
+		}
+	}
+	if strings.Contains(report, "git rebase") || strings.Contains(report, "--force") {
+		t.Errorf("the conflict note asks for a rebase or a force:\n%s", report)
+	}
+}
+
+// TestHQChangeStanding_SaysOnlyWhatChanged: a change's standing is said only
+// when it is worth words — a draft with something pushed, behind main, a
+// conflict — and only when it differs from what the agent was last told;
+// an HQ that judges nothing says nothing.
+func TestHQChangeStanding_SaysOnlyWhatChanged(t *testing.T) {
+	t.Parallel()
+	yes, no := true, false
+	head := "1111111111111111111111111111111111111111"
+	at := func(ready *bool, mergeability string, behind *bool, pushed bool) hq.MateChange {
+		c := hq.MateChange{Repo: "appsdev", Number: 6, State: hq.ChangeOpen, Branch: "badge", Ready: ready, Mergeability: mergeability, Behind: behind}
+		if pushed {
+			c.Head = &head
+		}
+		return c
+	}
+	told := func(ready *bool, mergeability string, behind bool) *workflow.HQChangeTold {
+		return &workflow.HQChangeTold{State: hq.ChangeOpen, Ready: ready, Mergeability: mergeability, Behind: behind}
+	}
+	tests := []struct {
+		name   string
+		now    hq.MateChange
+		told   *workflow.HQChangeTold
+		leases []string
+		want   []string // "" none: nothing said
+	}{
+		{name: "ready, clean, in step", now: at(&yes, "clean", &no, true)},
+		{name: "a draft with a push", now: at(&no, "clean", &no, true), want: []string{"change #6 on \"badge\" is a draft", `action="describe-change" branch="badge"`}},
+		{name: "a draft told already", now: at(&no, "clean", &no, true), told: told(&no, "clean", false)},
+		{name: "nothing pushed yet", now: at(&no, "unknown", &no, false)},
+		{name: "behind and clean, with a lease", now: at(&yes, "clean", &yes, true), told: told(&yes, "clean", false), leases: []string{"hqpool-4"},
+			want: []string{"behind main and still merges cleanly", "git merge origin/main", "zerops_lease action=sync lease=hqpool-4"}},
+		{name: "behind told already", now: at(&yes, "clean", &yes, true), told: told(&yes, "clean", true)},
+		{name: "a conflict after behind", now: at(&yes, "conflict", &yes, true), told: told(&yes, "clean", true),
+			want: []string{"no longer merges cleanly", "never rebase"}},
+		{name: "an HQ that judges nothing", now: at(nil, "", nil, true)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			c := workflow.HQChange{AppID: labApp, Repo: "appsdev", Number: 6, Branch: "badge", Told: tt.told}
+			words, now := hqChangeStanding(c, tt.now, tt.leases)
+			if len(tt.want) == 0 && words != "" {
+				t.Errorf("said %q, want nothing", words)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(words, want) {
+					t.Errorf("words %q lack %q", words, want)
+				}
+			}
+			if now.State != hq.ChangeOpen || now.Mergeability != tt.now.Mergeability {
+				t.Errorf("told = %+v, want the standing read", now)
+			}
+		})
+	}
+}
+
+// TestDevelopStart_ListsTheOpenChangesOnAnHQThatKeepsOnePerBranch: on an HQ
+// that keeps an open change per branch, develop's start lists the
+// repository's open changes by number and branch, and says new work goes on
+// a branch of its own — never that work goes on an open change's branch.
+func TestDevelopStart_ListsTheOpenChangesOnAnHQThatKeepsOnePerBranch(t *testing.T) {
+	lab := twoOpenChanges(t)
+	lab.mock.WithServices([]platform.ServiceStack{
+		{ID: "svc-appdev", Name: "appdev", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		{ID: "svc-appstage", Name: "appstage", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+	})
+
+	text := lab.developStart()
+
+	for _, want := range []string{`#1 on "fix-login"`, `#2 on "add-signup"`, "new work goes on a branch of its own", "cut from an up-to-date"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("develop's start lacks %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "rather than on a branch cut from") {
+		t.Errorf("develop's start sends new work onto an open change's branch:\n%s", text)
+	}
+}
+
+// TestStatus_OneBlockPerRepository: status names a repository's changes in one
+// block — each by number and branch, its standing as last told, and the
+// leases on its branch — and the branches leases hold with no change yet;
+// pairs no longer each name a change.
+func TestStatus_OneBlockPerRepository(t *testing.T) {
+	lab := twoOpenChanges(t)
+	lab.leaseOf("hqpool", 4, "fix-login")
+	lab.leaseOf("boxpool", 6, "fix-login")
+	lab.leaseOf("boxpool", 7, "build-stamp")
+	if text, isError := lab.describeOn("add-signup"); isError {
+		t.Fatalf("describe: %s", text)
+	}
+	lab.passReport()
+
+	status := lab.status()
+
+	want := "HQ appdev: #1 fix-login (draft) — leases boxpool-6, hqpool-4; #2 add-signup (ready); branch build-stamp — leases boxpool-7: no change yet"
+	if !strings.Contains(status, want) {
+		t.Errorf("status lacks the repository's block\n  %s\n%s", want, status)
+	}
+	for _, never := range []string{"change=", "changeBranch="} {
+		if strings.Contains(status, never) {
+			t.Errorf("a pair still names %q:\n%s", never, status)
+		}
+	}
+}
+
+// TestLaunchProduction_ListsEveryOpenChangeOnce: four pairs on one repository
+// with two open changes: the launch refusal names the repository's changes
+// once each, never once per pair.
+func TestLaunchProduction_ListsEveryOpenChangeOnce(t *testing.T) {
+	lab := twoOpenChanges(t)
+	for _, pool := range []string{"hqpool", "webpool", "boxpool"} {
+		if err := workflow.UpsertServiceMeta(lab.stateDir, pool, func(m *workflow.ServiceMeta, _ bool) error {
+			m.Hostname, m.Mode, m.Stages = pool, topology.PlanModeStandard, []topology.StageRef{{Hostname: pool + "stage"}}
+			m.BootstrapSession, m.BootstrappedAt, m.GitPushState = "test", "2026-10-02", topology.GitPushConfigured
+			m.HQ = &workflow.HQRepoRef{AppID: labApp, Repo: "appdev"}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	text := resultText(t, hqLaunchProductionRefusal(context.Background(), lab.hq.srv.Client(), lab.stateDir, true))
+
+	if !strings.Contains(text, "appdev #1 and #2") {
+		t.Errorf("the refusal does not name appdev #1 and #2: %s", text)
+	}
+	// The refusal carries its words twice (guidance and blocker): each copy
+	// names #1 once.
+	if n, copies := strings.Count(text, "#1"), strings.Count(text, "Tell the person to merge"); n != copies {
+		t.Errorf("the refusal names #1 %d times in %d copies of its words: %s", n, copies, text)
+	}
+}
+
+// TestLeaseGroupChanges_NamesEachGroupsChange: zerops_lease status names each
+// group's change from the ledger, with no call to HQ — its number and its
+// standing as last told — and a group whose branch has none yet.
+func TestLeaseGroupChanges_NamesEachGroupsChange(t *testing.T) {
+	t.Parallel()
+	stateDir := kara(t)
+	no := false
+	if err := workflow.RecordHQChange(stateDir, workflow.HQChange{AppID: labApp, Repo: "appsdev", Number: 6, Branch: "mate-test-badge",
+		Told: &workflow.HQChangeTold{State: hq.ChangeOpen, Ready: &no}}); err != nil {
+		t.Fatal(err)
+	}
+	views := []ops.LeaseView{{Alias: "hqpool-4", Branch: "mate-test-badge"}, {Alias: "boxpool-6", Branch: "mate-test-badge"}, {Alias: "hqpool-3", Branch: "pool-previews"}}
+
+	got := leaseGroupChanges(stateDir, targetHQ, views)
+
+	for _, want := range []string{"group appsdev@mate-test-badge: #6 (draft)", "group appsdev@pool-previews: no change yet"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("lease status lacks %q: %s", want, got)
+		}
+	}
+	if strings.Count(got, "mate-test-badge") != 1 {
+		t.Errorf("a group is named once per lease, not once: %s", got)
+	}
+}
+
+// TestHandleRelease_NamesTheOpenChangesItLeavesOut: a release takes main only,
+// so the person's handoff names the open changes the ledger keeps, per
+// repository, as not in it.
+func TestHandleRelease_NamesTheOpenChangesItLeavesOut(t *testing.T) {
+	t.Parallel()
+	stateDir := kara(t)
+	for _, n := range []int{2, 6} {
+		if err := workflow.RecordHQChange(stateDir, workflow.HQChange{AppID: labApp, Repo: "appsdev", Number: n, Branch: "b"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	result, _, _ := handleRelease(context.Background(), nil, WorkflowInput{}, stateDir, runtime.Info{MateEnabled: true})
+
+	text := resultText(t, result)
+	for _, want := range []string{"release-person-required", "appsdev #2 and #6", "not in"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the handoff lacks %q: %s", want, text)
+		}
+	}
+}

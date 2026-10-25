@@ -200,18 +200,31 @@ func RecordPictureUpload(stateDir, id, target, url string) error {
 // longer than bounds.keepFor before now, and, newest to oldest, every one past
 // bounds.maxBytes of files on disk; never the newest, nor one a kept
 // description names. A forgotten picture loses its file, and its entry too
-// unless it is on a pair's current change and younger than
+// unless it is on one of the Mate's current changes — one the change ledger
+// keeps, or a pair's record an older zcp wrote — and younger than
 // PictureAddressKeepFor (its address is all that is left then); an entry
 // whose file is already gone is forgotten the same way. Nothing is pruned
-// while the pairs' directory cannot be read: which pictures a kept
-// description names is unknown then.
+// while the pairs' directory or the ledger cannot be read: which pictures a
+// kept description names is unknown then.
 func prunePictures(stateDir string, index *pictureIndex, now time.Time, bounds pictureBounds) {
 	metas, err := readablePairs(stateDir)
 	if err != nil {
 		return
 	}
+	changes, err := ListHQChanges(stateDir)
+	if err != nil {
+		return
+	}
 	named := map[string]bool{}
 	current := map[string]bool{}
+	for _, c := range changes {
+		current[PictureTarget(c.AppID, c.Repo, c.Number)] = true
+		if c.Description != nil {
+			for _, id := range PictureRefs(c.Description.Text) {
+				named[id] = true
+			}
+		}
+	}
 	for _, m := range metas {
 		if m.HQ == nil {
 			continue

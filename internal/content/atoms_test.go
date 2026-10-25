@@ -241,3 +241,49 @@ func TestDevelopGitPushStartFromRemoteAtom_WiredPairSyncsInTheMatesOwnShell(t *t
 		}
 	}
 }
+
+// A dev pool's loop opens the branch's change from a lease once the branch is
+// pushed — repository and branch from the lease — and describes it by the
+// same, naming the lease's preview to try it on; parallel work gives each
+// subagent a branch of its own, its own group and its own change.
+func TestDevelopDevPoolAtom_OpensTheBranchsChangeFromALease(t *testing.T) {
+	t.Parallel()
+	atoms, err := ReadAllAtoms()
+	if err != nil {
+		t.Fatalf("ReadAllAtoms: %v", err)
+	}
+	var body string
+	for _, a := range atoms {
+		if a.Name == "develop-dev-pool.md" {
+			body = a.Content
+		}
+	}
+	for _, want := range []string{
+		`zerops_workflow action="open-change" service="<alias>"`,
+		`action="describe-change" service="<alias>"`,
+		"one group, one branch, one change",
+		"**Parallel work.**",
+		"a branch of its own",
+		"git merge origin/main",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("develop-dev-pool.md lacks %q", want)
+		}
+	}
+}
+
+// A wired pair's start-from-remote guidance no longer reads a change off the
+// pair: a change is its repository's branch's, and new work starts on a
+// branch of its own.
+func TestDevelopGitPushStartFromRemoteAtom_NamesNoChangeOnThePair(t *testing.T) {
+	t.Parallel()
+	atoms, err := ReadAllAtoms()
+	if err != nil {
+		t.Fatalf("ReadAllAtoms: %v", err)
+	}
+	for _, a := range atoms {
+		if a.Name == "develop-git-push-start-from-remote.md" && (strings.Contains(a.Content, "change=<n>") || strings.Contains(a.Content, "changeBranch")) {
+			t.Errorf("develop-git-push-start-from-remote.md still reads a change off the pair:\n%s", a.Content)
+		}
+	}
+}

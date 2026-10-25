@@ -837,9 +837,8 @@ func TestRenderServiceLine_PoolDevHalf_NamesItsPair(t *testing.T) {
 		Stages:   []topology.StageRef{{Hostname: "webstage"}, {Hostname: "apistage"}},
 		HQRepo:   "appdev",
 		HQOrigin: &HQOrigin{Mode: HQOriginNone},
-		HQChange: 7, HQBranch: "feat-x",
 	}
-	want := "apppool (swarm@1) — pool — dev half of a pair, stage=webstage,apistage, hqRepo=appdev, origin.mode=none, change=7, changeBranch=feat-x"
+	want := "apppool (swarm@1) — pool — dev half of a pair, stage=webstage,apistage, hqRepo=appdev, origin.mode=none"
 	if got := renderServiceLine(svc); got != want {
 		t.Errorf("line = %q\nwant   %q", got, want)
 	}

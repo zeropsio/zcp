@@ -56,7 +56,7 @@ type WorkflowInput struct {
 	Workflow string `json:"workflow,omitempty" jsonschema:"Workflow name: bootstrap, develop, export, launch-production, or pool-migrate."`
 
 	// Multi-action fields.
-	Action      string                     `json:"action,omitempty"      jsonschema:"Orchestration action: start (workflow=bootstrap is two-phase: first call without route returns kind=\"route-menu\" with ranked options, second call with route=<chosen> commits the session and returns kind=\"session-active\"; agents key off the kind field instead of guessing from field presence), complete, skip, status, close, reset, iterate, resume, list, route, close-mode (set per-pair CloseDeployMode auto/manual), git-push-setup (not in a Mate: verify + configure git-push — pass service + remoteUrl + gitToken in container mode; auth probed BEFORE any state is written), build-integration (not in a Mate: wire ZCP CI — pass service + integration), group-recipe (Mate only: propose the recipe tiers HQ lacks, returning the change), open-change (Mate only: open the change of your pushed branch in HQ — pass branch and title), describe-change (Mate only: set the description of a pair's change in HQ — pass description, and service if several pairs), mac-pair (Mate only: the next step to pair the user's Mac), adopt-local, set-default-setup (write the target service's PrimarySetupName/StageSetupName — resolves requiresSetupInput blockers; pass targetService + setup), record-deploy (stamp FirstDeployedAt for an externally-deployed service — zcli/CI/CD bridge; pass targetService), release (in a Mate: hand off to the person; otherwise: tag + push user-confirmed releaseVersion from a clean, pushed source; pass service and omit releaseVersion for guidance), pool-env (pool-migrate's env step: zcp copies the dev's env to its pool), retire (pool-migrate's last step: deletes the old dev service, diagnosed first)."`
+	Action      string                     `json:"action,omitempty"      jsonschema:"Orchestration action: start (workflow=bootstrap is two-phase: first call without route returns kind=\"route-menu\" with ranked options, second call with route=<chosen> commits the session and returns kind=\"session-active\"; agents key off the kind field instead of guessing from field presence), complete, skip, status, close, reset, iterate, resume, list, route, close-mode (set per-pair CloseDeployMode auto/manual), git-push-setup (not in a Mate: verify + configure git-push — pass service + remoteUrl + gitToken in container mode; auth probed BEFORE any state is written), build-integration (not in a Mate: wire ZCP CI — pass service + integration), group-recipe (Mate only: propose the recipe tiers HQ lacks, returning the change), open-change (Mate only: open your pushed branch's change in HQ — pass title; branch or service), describe-change (Mate only: describe an open change in HQ — pass description; branch or service if several), close-change (Mate only: close your own abandoned change — pass branch or service), mac-pair (Mate only: the next step to pair the user's Mac), adopt-local, set-default-setup (write the target service's PrimarySetupName/StageSetupName — resolves requiresSetupInput blockers; pass targetService + setup), record-deploy (stamp FirstDeployedAt for an externally-deployed service — zcli/CI/CD bridge; pass targetService), release (in a Mate: hand off to the person; otherwise: tag + push user-confirmed releaseVersion from a clean, pushed source; pass service and omit releaseVersion for guidance), pool-env (pool-migrate's env step: zcp copies the dev's env to its pool), retire (pool-migrate's last step: deletes the old dev service, diagnosed first)."`
 	Intent      string                     `json:"intent,omitempty"      jsonschema:"User intent description for start action (what you want to accomplish)."`
 	Attestation string                     `json:"attestation,omitempty" jsonschema:"Description of what was verified or accomplished (required for complete actions)."`
 	Step        string                     `json:"step,omitempty"        jsonschema:"Bootstrap step name for complete/skip actions (discover, provision, close)."`
@@ -66,7 +66,7 @@ type WorkflowInput struct {
 	CloseModes  map[string]string          `json:"closeMode,omitempty"   jsonschema:"Per-service close-deploy-mode map for action=close-mode (e.g. {\"appdev\":\"auto\"}). Valid values per service: auto (zcli push direct on develop close), manual (ZCP yields close orchestration). Delivery via git push is a separate dimension — run action=git-push-setup (works under either close-mode)."`
 	Integration string                     `json:"integration,omitempty" jsonschema:"ZCP-managed CI integration value for action=build-integration: 'webhook' (Zerops dashboard OAuth — Zerops pulls + builds on git push), 'actions' (GitHub Actions workflow runs zcli push from CI), or 'none' (no ZCP-managed integration; user may have independent CI/CD that ZCP doesn't track)."`
 	RemoteURL   string                     `json:"remoteUrl,omitempty"   jsonschema:"Remote git repository URL for action=git-push-setup confirm step. Passed after the walkthrough atom completes; HTTPS only in container env (https://github.com/owner/repo). Omit on first call to receive env-aware setup atom."`
-	Service     string                     `json:"service,omitempty"     jsonschema:"Single-target runtime service hostname for action=git-push-setup, action=build-integration, action=open-change, action=describe-change, action=group-recipe (propose that service or part in the tiers) and workflow=pool-migrate (the dev service to move). Pair-keyed lookup honors stage hostnames (one ServiceMeta per dev/stage pair, indexed by either hostname)."`
+	Service     string                     `json:"service,omitempty"     jsonschema:"Single-target runtime service hostname for action=git-push-setup, action=build-integration, action=open-change, action=describe-change (or a lease alias), action=group-recipe (propose that service or part in the tiers) and workflow=pool-migrate (the dev service to move). Pair-keyed lookup honors stage hostnames (one ServiceMeta per dev/stage pair, indexed by either hostname)."`
 	Pool        string                     `json:"pool,omitempty"        jsonschema:"Only for workflow=pool-migrate: the part's pool hostname when not <stem>pool; pass it on every call."`
 	BuildTarget string                     `json:"buildTarget,omitempty" jsonschema:"Optional for action=build-integration: pair hostname CI should build to, overriding the standard-pair default (stage receives builds). Set to the dev/push-source hostname to wire CI directly on it."`
 	GitToken    string                     `json:"gitToken,omitempty"    jsonschema:"Fine-grained PAT for action=git-push-setup confirm step (container env only). Required when remoteUrl is set in container mode. Handler probes the token against the remote BEFORE writing the service-scope secret or restarting — failed probe leaves project state untouched. Never echoed back in any response or state file."`
@@ -74,7 +74,7 @@ type WorkflowInput struct {
 	Scaling     string                     `json:"scaling,omitempty"     jsonschema:"For action=group-recipe: propose this service hostname's scale into the group recipe's tiers."`
 	Description string                     `json:"description,omitempty" jsonschema:"Markdown for action=describe-change: what the change does and why, how you checked it, and ![what it shows](shot-N) for a zerops_browser screenshot — the person reviews it by this. Describing asks for their review; a push that moves the change makes it a draft until described again."`
 	Title       string                     `json:"title,omitempty"       jsonschema:"For action=open-change and describe-change: what this repository's change does, one line of a few words (max 120) — its own title, not the whole task."`
-	Branch      string                     `json:"branch,omitempty"      jsonschema:"For action=open-change: your own branch the change takes to main, as you pushed it."`
+	Branch      string                     `json:"branch,omitempty"      jsonschema:"For action=open-change, describe-change and close-change: the change's branch, as pushed."`
 	Force       FlexBool                   `json:"force,omitempty"       jsonschema:"Discard-and-replace flag for action=start workflow=develop. Required when the active session's services include a CloseDeployMode ∈ {manual, unset} and the new intent differs — auto-close cannot fire on those services, so the prior session needs an explicit close (or a force-discard via this flag) before a fresh session takes over (deploy-decomp P6 §3.4 Scenario D). action=retire: leave the unsaved work wouldDestroy names, once the person agreed by name."`
 
 	// CopyGitToken is the person's yes to the pool getting the dev service's
@@ -596,7 +596,8 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		}
 		return handleBootstrapSkip(ctx, engine, client, projectID, rt, schemaCache, input)
 	case "status":
-		upgradeReleasedBranches(httpClient, engine.StateDir())
+		// The pairs' records an older zcp wrote move into the change ledger.
+		_, _ = workflow.HQChanges(engine.StateDir())
 		recordMissingHQOrigins(ctx, httpClient, engine.StateDir())
 		// SPINE-1 fix: resolve precedence from DISK via the single
 		// ResolveLifecycle resolver (not the in-memory detectActiveWorkflow),
@@ -682,11 +683,15 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		// The Mate's words about its change, which the person reviews it by:
 		// its change's description in HQ (hq_change_description.go).
 		return handleDescribeChange(ctx, httpClient, stateDir, input)
+	case "close-change":
+		// The Mate's own abandoned change, closed by its branch
+		// (hq_change_close.go).
+		return handleCloseChange(ctx, httpClient, stateDir, input)
 	default:
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Unknown action %q", input.Action),
-			"Valid actions: start, complete, close, skip, status, reset, iterate, resume, list, route, close-mode, git-push-setup, build-integration, group-recipe, open-change, describe-change, mac-pair, prod-ops, confirm-production, adopt-local, set-default-setup, record-deploy, release, pool-env, retire"), WithRecoveryStatus()), nil, nil
+			"Valid actions: start, complete, close, skip, status, reset, iterate, resume, list, route, close-mode, git-push-setup, build-integration, group-recipe, open-change, describe-change, close-change, mac-pair, prod-ops, confirm-production, adopt-local, set-default-setup, record-deploy, release, pool-env, retire"), WithRecoveryStatus()), nil, nil
 	}
 }
 
@@ -1152,6 +1157,7 @@ func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client 
 	reads.Go(func() { attachHQCheckoutOrigin(ctx, envelope.Services, sshDeployer, rt, engine.StateDir()) })
 	reads.Wait()
 	attachPartsSignal(ctx, envelope.Services, sshDeployer, rt, engine)
+	envelope.HQChanges = hqChangesStatus(engine.StateDir(), hqAddress(), time.Now())
 	attachRollbackInfo(ctx, envelope.Services, client, projectID)
 	corpus, err := workflow.LoadAtomCorpus()
 	if err != nil {

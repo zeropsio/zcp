@@ -245,7 +245,7 @@ func reconcileHQPairs(
 	sort.Slice(pending, func(i, j int) bool { return pending[i].Hostname < pending[j].Hostname })
 
 	now := time.Now().UTC()
-	self := lazySelf(ctx, hqc)
+	self, selfRead := trackedSelf(ctx, hqc)
 	var report []string
 	for _, m := range pending {
 		state := readHQPairState(stateDir, m.Hostname)
@@ -266,6 +266,13 @@ func reconcileHQPairs(
 		recordHQAttempt(stateDir, m.Hostname, state, now, outcome, wired)
 		if outcome != "" {
 			report = append(report, m.Hostname+": "+outcome)
+		}
+	}
+	// The changes are the repositories', not a pair's: their turn comes once
+	// a pair's turn read the Mate's state, or at develop's start.
+	if selfRead() || pace == hqPassNow {
+		if state, err := self(); err == nil {
+			report = append(report, hqChangesPass(ctx, stateDir, hqc, state, pace == hqPassNow)...)
 		}
 	}
 	return report
@@ -458,11 +465,11 @@ func lazySelf(ctx context.Context, hqc hq.Client) func() (hq.MateState, error) {
 }
 
 // keepHQPairCurrent is one wired pair's turn of a pass: wired again in the
-// application HQ holds the Mate in now, if that moved, what became of its
-// change on record, a change handed to the Mate there (hqTakeHanded) or the
-// one still open (hqOpenChangeWork), how its code is kept (recordHQOrigin)
-// and so where its checkout's origin points (hqPairOrigin), and its `main`
-// against HQ's (hqPairMain). wired is whether the pass wired it again.
+// application HQ holds the Mate in now, if that moved, how its code is kept
+// (recordHQOrigin) and so where its checkout's origin points (hqPairOrigin),
+// and its `main` against HQ's (hqPairMain). Its repository's changes are the
+// pass's turn after the pairs' (hqChangesPass). wired is whether the pass
+// wired it again.
 func keepHQPairCurrent(
 	ctx context.Context,
 	client platform.Client,
@@ -487,16 +494,8 @@ func keepHQPairCurrent(
 		return attempt.line, attempt.wired
 	}
 	recordHQOrigin(stateDir, m, state)
-	upgradeReleasedBranch(stateDir, hqc, m)
 	lines := []string{}
-	// What became of the change on record is learned before a handed one
-	// takes its place; a change still open says where the work goes.
-	landed := hqLearnLanding(stateDir, m, state)
-	work := hqTakeHanded(stateDir, hqc, m, state)
-	if work == "" {
-		work = hqOpenChangeWork(hqc, m)
-	}
-	for _, line := range []string{hqPairOrigin(ctx, sshDeployer, hqc, m), landed, work, hqPairMain(ctx, sshDeployer, hqc, m)} {
+	for _, line := range []string{hqPairOrigin(ctx, sshDeployer, hqc, m), hqPairMain(ctx, sshDeployer, hqc, m)} {
 		if line != "" {
 			lines = append(lines, line)
 		}

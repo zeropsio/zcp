@@ -133,7 +133,11 @@ func TestInputSchemaByteBudget(t *testing.T) {
 		// `codeVolume` any more — zcp sets up no new code volume
 		// (docs/spec-mate.md §2.8a.4a), and a plan still carrying one is
 		// refused by the schema, naming the field.
-		"zerops_workflow":    20320,
+		// Raised +99 (20320→20419) for action="close-change", a Mate closing
+		// its own abandoned change by branch (docs/spec-mate.md §10.10): the
+		// action list names it and `branch` names it among its users; no new
+		// field — what HQ lets a Mate close lives in the handler's answers.
+		"zerops_workflow":    20419,
 		"zerops_record_fact": 3299,
 		"zerops_dev_server":  3220,
 		// Raised +28 (2945→2973) for the OS-axis migration: the runtime/services

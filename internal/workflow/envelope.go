@@ -42,6 +42,11 @@ type StateEnvelope struct {
 	WorkSession *WorkSessionSummary      `json:"workSession,omitempty"`
 	Bootstrap   *BootstrapSessionSummary `json:"bootstrap,omitempty"`
 	Generated   time.Time                `json:"generated"`
+
+	// HQChanges are a Mate's changes in HQ, per repository, as status names
+	// them (RenderStatus's Changes section): zcp's own ledger and lease
+	// records, attached by status, off the envelope wire.
+	HQChanges []HQRepoChanges `json:"-"`
 }
 
 // LeaseSnapshot is one pool-container lease as the envelope sees it: what the
@@ -221,10 +226,6 @@ type ServiceSnapshot struct {
 	// wiring points it when that differs — the move develop's start makes.
 	HQCheckoutOrigin string `json:"-"`
 	HQOriginPending  string `json:"-"`
-	// HQChange and HQBranch name, there, the change the pair records and the
-	// branch it is bound to (HQRepoRef.Change, .Branch); off the wire too.
-	HQChange int    `json:"-"`
-	HQBranch string `json:"-"`
 
 	// Setup-name projection from ServiceMeta (canonical store on disk).
 	// SetupName mirrors meta.SetupNameFor(Hostname) for this half;

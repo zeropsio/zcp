@@ -201,8 +201,8 @@ func TestReconcileHQRepositories_AWiredPairsTrackedRefStaysMain(t *testing.T) {
 
 // TestReconcileHQRepositories_TellsTheMateWhatBecameOfItsChange: nothing
 // pushes a merge at the Mate — a person merges in the app — so a pass asks
-// the Mate's own state what became of the change on record, says so once,
-// and forgets the number: a later change is another one.
+// the Mate's own state what became of each change the ledger keeps, says so
+// once, and forgets it: a later change is another one.
 func TestReconcileHQRepositories_TellsTheMateWhatBecameOfItsChange(t *testing.T) {
 	for _, tt := range []struct {
 		name   string
@@ -218,7 +218,7 @@ func TestReconcileHQRepositories_TellsTheMateWhatBecameOfItsChange(t *testing.T)
 			lab := newHQLab(t)
 			lab.wire()
 			lab.write(map[string]string{"index.js": "the app\n"})
-			recordChange(lab.stateDir, lab.meta(), lab.openChange().Number, "")
+			lab.openRecorded()
 			elapseHQBackoff(t, lab.stateDir)
 			if report := lab.wire(); len(report) != 0 {
 				t.Fatalf("an open change says nothing, got %q", report)
@@ -234,27 +234,10 @@ func TestReconcileHQRepositories_TellsTheMateWhatBecameOfItsChange(t *testing.T)
 					t.Errorf("report = %q, want %q", report[0], want)
 				}
 			}
-			if meta := lab.meta(); meta.HQ.Change != 0 {
-				t.Errorf("the pair's record = %+v", meta.HQ)
+			if kept := lab.ledger(); len(kept) != 0 {
+				t.Errorf("the ledger keeps %+v, want the settled change forgotten", kept)
 			}
 		})
-	}
-}
-
-// TestClearChange_SkipsAStaleNumber: a pass that read change #3's outcome
-// never writes over a pair a concurrent describe already moved on to #4.
-func TestClearChange_SkipsAStaleNumber(t *testing.T) {
-	t.Parallel()
-	stateDir := t.TempDir()
-	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
-		Hostname: "appdev", BootstrapSession: "test", BootstrappedAt: "2026-10-02",
-		HQ: &workflow.HQRepoRef{AppID: labApp, Repo: "appdev", Change: 4},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	clearChange(stateDir, &workflow.ServiceMeta{Hostname: "appdev", HQ: &workflow.HQRepoRef{AppID: labApp, Repo: "appdev", Change: 3}}, 3)
-	if fresh, _ := workflow.FindServiceMeta(stateDir, "appdev"); fresh.HQ.Change != 4 {
-		t.Errorf("a stale read wrote over the newer change: %+v", fresh.HQ)
 	}
 }
 
@@ -342,7 +325,7 @@ func TestHQPass_LearnsAMergeWithoutChangingTheCheckout(t *testing.T) {
 			lab := newHQLab(t)
 			lab.wire()
 			lab.write(map[string]string{"index.js": "the app\n"})
-			recordChange(lab.stateDir, lab.meta(), lab.openChange().Number, "")
+			lab.openRecorded()
 			squash := lab.hq.merge()
 			tt.upset(lab)
 			head := lab.git("rev-parse", "HEAD")

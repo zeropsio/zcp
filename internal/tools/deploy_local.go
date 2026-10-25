@@ -392,14 +392,23 @@ func sessionStateOf(stateDir string, hasProduction func() bool) *WorkSessionStat
 }
 
 // sessionHandsOverAChange reports whether ws deployed a pair's stage half
-// and that pair still records an open change for the closing note to hand over.
+// and the change ledger still keeps an open change in that pair's repository
+// for the closing note to hand over.
 func sessionHandsOverAChange(stateDir string, ws *workflow.WorkSession) bool {
+	var changes []workflow.HQChange
+	read := false
 	for _, host := range ws.Services {
 		if !workflow.HasSuccessfulDeployFor(ws, host) {
 			continue
 		}
 		meta, err := workflow.FindServiceMeta(stateDir, host)
-		if err == nil && meta != nil && isStageOf(meta, host) && hqPairWired(meta) && meta.HQ.Change != 0 {
+		if err != nil || meta == nil || !isStageOf(meta, host) || !hqPairWired(meta) {
+			continue
+		}
+		if !read {
+			changes, read = hqChanges(stateDir), true
+		}
+		if len(changesIn(changes, meta.HQ.AppID, meta.HQ.Repo)) > 0 {
 			return true
 		}
 	}

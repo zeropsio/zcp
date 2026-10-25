@@ -59,11 +59,11 @@ func describeClient(hqc hq.Client) hq.Client {
 // again, so a try again changes nothing a landed one did. away says, when
 // HQ was still away after the tries, whether any of them may have landed —
 // HQ has no read of a change's words to ask.
-func putDescriptionRetried(ctx context.Context, hqc hq.Client, stateDir string, m *workflow.ServiceMeta, number int, text, title string) (tries int, away describeAway, err error) {
+func putDescriptionRetried(ctx context.Context, hqc hq.Client, stateDir string, ref changeRef, text, title string) (tries int, away describeAway, err error) {
 	client := describeClient(hqc)
 	unconfirmed := false
 	tries = describeRetry.run(ctx, func() hqAnswer {
-		err = putChangeDescription(ctx, client, stateDir, m, number, text, title)
+		err = putChangeDescription(ctx, client, stateDir, ref, text, title)
 		if !describeTransient(err) {
 			return hqAnswered
 		}
@@ -80,11 +80,11 @@ func putDescriptionRetried(ctx context.Context, hqc hq.Client, stateDir string, 
 }
 
 // describeSelf is the Mate's own state as a describe reads it: once while
-// the pair records its change, and with nothing recorded — the state is then
-// the only word on which change is open — tried as describeRetry paces it
-// while HQ is away.
-func describeSelf(ctx context.Context, hqc hq.Client, m *workflow.ServiceMeta) (hq.MateState, error) {
-	if m.HQ.Change != 0 {
+// the ledger names its change (recorded), and with nothing recorded — the
+// state is then the only word on which change is open — tried as
+// describeRetry paces it while HQ is away.
+func describeSelf(ctx context.Context, hqc hq.Client, recorded bool) (hq.MateState, error) {
+	if recorded {
 		return hqc.Self(ctx)
 	}
 	var (
@@ -159,31 +159,44 @@ func describeNotLanded(address string, number, tries int, away describeAway, err
 
 // describeStateUnknown is describe-change's answer when no change is on
 // record and the Mate's own state, the only word on which one is open,
-// could not be read: nothing was written, and nothing is kept.
-func describeStateUnknown(address, hostname string, err error) string {
-	return fmt.Sprintf("Nothing was written: whether a change is open from %s is unknown — HQ at %s did not tell (the last answer: %s). "+
+// could not be read: nothing was written, and nothing is kept. where names
+// the branch or repository looked at.
+func describeStateUnknown(address, where string, err error) string {
+	return fmt.Sprintf("Nothing was written: whether a change is open %s is unknown — HQ at %s did not tell (the last answer: %s). "+
 		`Call describe-change again once HQ answers; if it still does not, tell the person HQ is not answering.`,
-		hostname, address, hqNotServingWords(err))
+		where, address, hqNotServingWords(err))
 }
 
-// holdPairToDescribe holds the pair's checkout for a describe as a stand-up
-// or a pass holds it (holdPairCheckout), so a describe never interleaves with
-// a pass learning what became of the pair's change: a pass clearing the
-// change while a describe writes onto it would leave the words on a change
-// the pair no longer holds, or lose them. It answers the
-// pair's record as the holder left it, or — the pair held past the wait —
-// the refusal that says nothing was written.
-func holdPairToDescribe(ctx context.Context, stateDir string, meta *workflow.ServiceMeta) (*workflow.ServiceMeta, func(), *mcp.CallToolResult) {
-	release, err := holdPairCheckout(ctx, stateDir, meta.Hostname)
+// hqChangeHoldWait bounds how long a describe waits for its change while
+// another step holds it; a var so tests shorten it.
+var hqChangeHoldWait = 2 * time.Minute
+
+// holdChangeToDescribe holds the change a describe writes onto
+// (workflow.HoldHQChange), so a describe never interleaves with a pass
+// learning what became of it, nor with another describe of it: a pass
+// forgetting the change while a describe writes onto it would leave the words
+// on a change zcp no longer keeps, or lose them. It answers how to let go,
+// or — the change held past the wait — the refusal that says nothing was
+// written. The pair's checkout is not the change's: no pair is held.
+func holdChangeToDescribe(ctx context.Context, stateDir string, target changeTarget, number int) (func(), *mcp.CallToolResult) {
+	return holdChange(ctx, stateDir, target, number, fmt.Sprintf("Nothing was written onto change #%d in %q", number, target.Repo), "describe-change")
+}
+
+// holdChange holds change number of target's repository for one step, waiting
+// up to hqChangeHoldWait; nothing is the words that open the refusal of a
+// change held past the wait, action the zerops_workflow action to call again.
+func holdChange(ctx context.Context, stateDir string, target changeTarget, number int, nothing, action string) (func(), *mcp.CallToolResult) {
+	release, err := workflow.HoldHQChange(ctx, stateDir, target.AppID, target.Repo, number, hqChangeHoldWait)
 	if err != nil {
-		return nil, nil, convertError(platform.NewPlatformError(
+		why := fmt.Sprintf("it could not be held (%v)", err)
+		if errors.Is(err, workflow.ErrHQChangeBusy) {
+			why = fmt.Sprintf("another step held it for %s (a describe or close of it, or a pass learning what became of it)", hqChangeHoldWait)
+		}
+		return nil, convertError(platform.NewPlatformError(
 			platform.ErrPrerequisiteMissing,
-			fmt.Sprintf("Nothing was written onto %s's change: %s.", meta.Hostname, pairHeldReason(meta.Hostname, err)),
-			fmt.Sprintf(`Call zerops_workflow action="describe-change" service=%q again once that is done.`, meta.Hostname),
+			fmt.Sprintf("%s: %s.", nothing, why),
+			fmt.Sprintf(`Call zerops_workflow action=%q again once that is done.`, action),
 		), WithRecoveryStatus())
 	}
-	if fresh, _ := workflow.FindServiceMeta(stateDir, meta.Hostname); hqPairWired(fresh) {
-		meta = fresh
-	}
-	return meta, release, nil
+	return release, nil
 }

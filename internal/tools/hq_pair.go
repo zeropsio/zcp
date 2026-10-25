@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -71,19 +72,20 @@ func hqLaunchProductionRefusal(ctx context.Context, httpClient ops.HTTPDoer, sta
 			"application and has no case for that. "+hqLaunchProductionNextStep(ctx, httpClient, stateDir))
 }
 
-// hqLaunchProductionNextStep says what is true of THIS Mate's own pairs rather
-// than a lecture. A pair's recorded change number is only cleared when a pass
-// reads HQ, and that pass is backoff-gated — so a change the person already
-// merged can still be sitting here as "open" the moment this runs. The
-// Mate's own state is read fresh first, so "merge #N first" is never said
-// about work that already landed. Three states, never collapsed into
-// "nothing open means merged":
-//   - a change still open after the fresh read → name it, tell the person to
-//     merge it;
-//   - a merge in HQ, recorded on the pair or not → the code is on main;
-//     point to Put it live;
-//   - no change at all, or one closed without merging → nothing of this
-//     pair's work has reached main; it has to be pushed and merged first.
+// hqLaunchProductionNextStep says what is true of THIS Mate's own
+// repositories rather than a lecture. A change the ledger keeps is only
+// forgotten when a pass reads HQ, and that pass is backoff-gated — so a
+// change the person already merged can still be sitting here as "open" the
+// moment this runs. The Mate's own state is read fresh first, so "merge #N
+// first" is never said about work that already landed. Three states, never
+// collapsed into "nothing open means merged":
+//   - changes still open after the fresh read → name each once, per
+//     repository however many pairs share it, and tell the person to merge
+//     them;
+//   - a merge in HQ, recorded or not → the code is on main; point to Put it
+//     live;
+//   - no change at all, or one closed without merging → nothing of the
+//     Mate's work has reached main; it has to be pushed and merged first.
 //
 // A Mate that cannot reach HQ at all — no enrollment yet, or one it cannot
 // read — knows none of the three, and says so.
@@ -92,44 +94,76 @@ func hqLaunchProductionNextStep(ctx context.Context, httpClient ops.HTTPDoer, st
 		return fmt.Sprintf("Whether this Mate's work reached main is HQ's to say, and %s. Ask again once it is enrolled; production is added with Put it live and released with Release, both offered in this conversation and on the project's card in Mate.", problem)
 	}
 	var open []string
+	opened := 0
 	merged := false
 	if metas, err := workflow.ListServiceMetas(stateDir); err == nil {
 		self := func() (hq.MateState, error) { return hq.MateState{}, hq.ErrNotEnrolled }
+		address := ""
 		if hqc, enrolled := openHQ(httpClient); enrolled {
-			self = lazySelf(ctx, hqc)
+			self, address = lazySelf(ctx, hqc), hqc.Address()
 		}
+		var repos []changeRef
 		for _, m := range metas {
-			if !hqPairWired(m) {
-				continue
+			if hqPairWired(m) && !slices.Contains(repos, changeRef{AppID: m.HQ.AppID, Repo: m.HQ.Repo}) {
+				repos = append(repos, changeRef{AppID: m.HQ.AppID, Repo: m.HQ.Repo})
 			}
+		}
+		slices.SortFunc(repos, func(a, b changeRef) int { return strings.Compare(a.Repo, b.Repo) })
+		for _, repo := range repos {
 			state, err := self()
 			if err != nil {
 				return fmt.Sprintf("This Mate could not read its changes from HQ (%v), so whether its work reached main is unknown. Ask again once HQ can be reached; production is added with Put it live and released with Release, both offered in this conversation and on the project's card in Mate.", err)
 			}
-			if state.AppID == nil || *state.AppID != m.HQ.AppID {
+			if state.AppID == nil || *state.AppID != repo.AppID {
 				continue
 			}
-			hqLearnLanding(stateDir, m, state)
+			for _, c := range changesIn(hqChanges(stateDir), repo.AppID, repo.Repo) {
+				learnChangeLanding(stateDir, address, c, state)
+			}
 			// HQ keeps the merged history: read it there, rather than keeping
 			// a second last-merge record.
+			var numbers []int
 			for _, change := range state.Changes {
-				if change.Repo == m.HQ.Repo && change.State == hq.ChangeMerged {
+				switch {
+				case change.Repo != repo.Repo:
+				case change.State == hq.ChangeMerged:
 					merged = true
+				case change.State == hq.ChangeOpen:
+					numbers = append(numbers, change.Number)
 				}
 			}
-			if change := openChangeIn(state, m.HQ.Repo); change != nil {
-				open = append(open, fmt.Sprintf("%s's change #%d on %q", m.Hostname, change.Number, m.HQ.Repo))
+			if len(numbers) > 0 {
+				slices.Sort(numbers)
+				open = append(open, repo.Repo+" "+changeNumbersWords(numbers))
+				opened += len(numbers)
 			}
 		}
 	}
 	if len(open) > 0 {
-		return "Tell the person to merge " + strings.Join(open, " and ") +
-			" first — once it lands, production is added with Put it live and released with Release, both offered in this conversation and on the project's card in Mate."
+		lands := "it lands"
+		if opened > 1 {
+			lands = "they land"
+		}
+		return "Tell the person to merge " + strings.Join(open, ", and ") +
+			" first — an open change is never in a release, which takes main as it is; once " + lands + ", production is added with Put it live and released with Release, both offered in this conversation and on the project's card in Mate."
 	}
 	if merged {
 		return "Tell the person: production is added with Put it live and released with Release, both offered in this conversation and on the project's card in Mate."
 	}
 	return "Tell the person: none of this Mate's work has reached its repository's main yet — it goes there by a branch of your own, pushed and merged first, then production is added with Put it live and released with Release, both offered in this conversation and on the project's card in Mate."
+}
+
+// changeNumbersWords names change numbers as one list: "#2", "#2 and #6",
+// "#2, #6 and #7".
+func changeNumbersWords(numbers []int) string {
+	named := make([]string, 0, len(numbers))
+	for _, n := range numbers {
+		named = append(named, fmt.Sprintf("#%d", n))
+	}
+	if len(named) == 1 {
+		return named[0]
+	}
+	return strings.Join(named[:len(named)-1], ", ") + " and " + named[len(named)-1]
 }
 
 // stageNameFor suggests the stage half's hostname: appdev → appstage,

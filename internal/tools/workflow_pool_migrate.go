@@ -488,7 +488,7 @@ func readPoolMigrateDev(ctx context.Context, d poolMigrateDeps, input WorkflowIn
 	}
 
 	resp.Census = census
-	resp.WorkBranch = poolMigrateWorkBranchOf(meta, census, rt)
+	resp.WorkBranch = poolMigrateWorkBranchOf(meta, census, rt, hqChanges(stateDir))
 	if move := atomBody(corpus, poolMigrateMoveAtomID); move != "" {
 		resp.Guidance += "\n\n" + move
 	}
@@ -911,12 +911,15 @@ func poolMigrateCrewHandles(census *ops.PoolMigrateCensus, root string) []string
 
 // poolMigrateWorkBranchOf names the work's branch — what a lease of the pool
 // checks out from the origin (docs/spec-workflows.md §13 PM-2): in a Mate the
-// open change's branch, else the dev checkout's own branch when HQ takes a
-// push to it; outside a Mate the dev checkout's branch's upstream on origin.
-// Where none is named yet, Missing says what names one.
-func poolMigrateWorkBranchOf(meta *workflow.ServiceMeta, census *ops.PoolMigrateCensus, rt runtime.Info) *poolMigrateWorkBranch {
-	if rt.MateEnabled && meta.HQ != nil && meta.HQ.Change != 0 && meta.HQ.Branch != "" {
-		return &poolMigrateWorkBranch{Branch: meta.HQ.Branch, Source: poolMigrateWorkFromChange}
+// one open change the ledger (changes) keeps in the dev's repository, else
+// the dev checkout's own branch when HQ takes a push to it; outside a Mate
+// the dev checkout's branch's upstream on origin. Where none is named yet,
+// Missing says what names one.
+func poolMigrateWorkBranchOf(meta *workflow.ServiceMeta, census *ops.PoolMigrateCensus, rt runtime.Info, changes []workflow.HQChange) *poolMigrateWorkBranch {
+	if rt.MateEnabled && meta.HQ != nil {
+		if open := changesIn(changes, meta.HQ.AppID, meta.HQ.Repo); len(open) == 1 && open[0].Branch != "" {
+			return &poolMigrateWorkBranch{Branch: open[0].Branch, Source: poolMigrateWorkFromChange}
+		}
 	}
 	var main ops.PoolMigrateTree
 	if len(census.Trees) > 0 {

@@ -5,7 +5,7 @@ phases: [develop-active]
 runtimes: [pool]
 environments: [container]
 multiService: aggregate
-title: "A part's dev pool — lease a container, work, push, release"
+title: "A part's dev pool — lease a container, work, push, open its change, release"
 references-atoms: [develop-dynamic-runtime-start-container]
 references-fields: [ops.DeployResult.Warnings, ops.LeaseView.Reused, ops.LeaseView.DevServers, ops.LeaseSyncMember.UnwatchedServers, ops.LeaseView.Idle, ops.LeaseIdle.Next, tools.leaseToolResult.Warm]
 ---
@@ -43,7 +43,13 @@ its containers away from the app.
    `git push -u origin <branch>` (the first push of a new branch sets its
    upstream). The same pool secret authenticates it. A release never commits
    for you.
-4. `zerops_lease action=release lease="<alias>"` hands the leased container
+4. Open the branch's change in HQ: `zerops_workflow action="open-change" service="<alias>" title="<what it does>"`
+   — the repository and the branch come from the lease. Describe it with
+   `zerops_workflow action="describe-change" service="<alias>" description="…"`,
+   naming the branch's lease preview URLs as where to try it. One branch, one
+   change: pushing to the branch again moves the change, and it asks for
+   review again once described again.
+5. `zerops_lease action=release lease="<alias>"` hands the leased container
    back: reset, as the pool's warm container, or removed when the pool
    already has one or it runs an outdated version. It refuses while it holds
    commits on no remote branch or uncommitted files, naming them;
@@ -117,8 +123,28 @@ stays unleased.
    changes in the way is left as it was, named. Restart only what
    `unwatchedServers` lists (runtime entries); declared servers reload by
    themselves.
-4. `zerops_lease action=release branch="<branch>"` releases every lease of
+4. The branch across its parts is one group, one branch, one change: open
+   it from any lease of the group (`service="<alias>"`), and describe it the
+   same way.
+5. `zerops_lease action=release branch="<branch>"` releases every lease of
    the branch, or none: unsaved work in one refuses them all.
+
+**Parallel work.** Several pieces of work at once — subagents, or several
+conversations — each go on a branch of its own with leases of its own; the
+leases are keyed by branch, so they never meet.
+
+- Name each subagent's branch in its brief: unique, short, saying what the
+  work is, never `main` and never under `mate/`.
+- Each one acquires its own group on its branch, pushes there, opens its own
+  change with `service="<its alias>"` and describes it the same way.
+- Report each branch's change and its lease preview URLs to the person.
+- Once one change merges, the others are behind `main`. Bring one up to date
+  only when the person asks or it no longer merges cleanly: in a lease of
+  it, `git fetch origin && git merge origin/main`, check the preview, push,
+  sync the group's other leases and describe it again — never rebase, never
+  force-push.
+- A change that needs another's unmerged work may be cut from that branch;
+  its description says it builds on that change.
 
 **Pitfalls**
 

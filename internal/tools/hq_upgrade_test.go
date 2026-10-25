@@ -1,7 +1,7 @@
 // Tests for: a pair that takes this zcp mid-change from the released one —
 // which recorded the Mate's local branch mate/<id> where this zcp records
 // the change's branch, HQ binding the change to mate/<id>/<n>
-// (tools/hq_change.go upgradeReleasedBranch, hqOpenChangeWork), run against a
+// (workflow.ReleasedBranchOf, tools/hq_change.go hqOpenChangeWork), run against a
 // fake HQ that serves real git (hq_lab_test.go).
 package tools
 
@@ -42,11 +42,12 @@ var (
 
 // TestUpgrade_AnOpenChangeTheReleasedZcpRecordedKeepsStatusAndPushWorking: a
 // plain HQ-only Mate holding an open change the released zcp recorded takes
-// this zcp. Status names the change's branch, never the Mate's local one HQ
-// refuses; develop's start says the work goes on there rather than on a
-// branch cut from main, with commands that work on that checkout, and the
-// work pushed as it says reaches the change by fast-forward. open-change
-// from a branch cut from main answers the change with the same way onto it.
+// this zcp. Status moves it into the ledger on the change's branch, never the
+// Mate's local one HQ refuses; develop's start says the work goes on there
+// rather than on a branch cut from main — an HQ that keeps one open change
+// per repository — with commands that work on that checkout, and the work
+// pushed as it says reaches the change by fast-forward. open-change from a
+// branch cut from main answers the change with the same way onto it.
 func TestUpgrade_AnOpenChangeTheReleasedZcpRecordedKeepsStatusAndPushWorking(t *testing.T) {
 	lab := newHQLab(t)
 	lab.wire()
@@ -60,11 +61,14 @@ func TestUpgrade_AnOpenChangeTheReleasedZcpRecordedKeepsStatusAndPushWorking(t *
 
 	status := lab.status()
 
-	if !strings.Contains(status, "change=1") || !strings.Contains(status, "changeBranch="+branch) {
+	if !strings.Contains(status, "HQ appdev: #1 "+branch) {
 		t.Errorf("status does not name change #1 on %q:\n%s", branch, status)
 	}
-	if got := lab.meta().HQ.Branch; got != branch {
-		t.Errorf("the pair records the change on %q, want %q", got, branch)
+	if kept := lab.kept(1); kept == nil || kept.Branch != branch {
+		t.Errorf("the ledger keeps %+v, want change #1 on %q", kept, branch)
+	}
+	if meta := lab.meta(); meta.HQ.Change != 0 || meta.HQ.Branch != "" {
+		t.Errorf("the pair still records a change: %+v", meta.HQ)
 	}
 
 	text := lab.developStart()
