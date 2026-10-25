@@ -240,3 +240,54 @@ func jsonString(t *testing.T, s string) string {
 	}
 	return string(b)
 }
+
+// TestLeaseAcquire_FailedPrepareAndSupervisor_NameNoSecretZcpHolds: every
+// process in a pool container reads the pool's service env, so a repository's
+// prepare or a supervisor that dumps its env prints this Mate's HQ credential
+// and the pool's orchestrator bearer. What a failed one printed reaches the
+// acquire's result, and so the model and the Mate client: zcp takes the
+// secrets it holds out of it — before it bounds the tail, so no fragment of
+// one survives the cut (review R4-6).
+func TestLeaseAcquire_FailedPrepareAndSupervisor_NameNoSecretZcpHolds(t *testing.T) {
+	t.Parallel()
+	const fragment = "ential-0001" // poolMateCredential's end
+	// The 600-byte tail starts inside the credential's line, mid-credential.
+	prepOut := "ZCP_HQ_GIT_TOKEN=" + poolMateCredential + "\nAPI_TOKEN=" + testPoolToken + "\n" + strings.Repeat("y", 560) + "\n"
+	supervisor := "@@zcp-devsup check 2\n" + "@@zcp-devsup started 2\n" +
+		"panic: env dump ZCP_HQ_GIT_TOKEN=" + poolMateCredential + " API_TOKEN=" + testPoolToken + "\n@@zcp-devsup log 0\n"
+	fx := newLeaseFixture(t)
+	inAMate(fx)
+	fx.deps.Env = func(key string) (string, bool) {
+		if key == testPoolHost+"_"+leaseTokenKey {
+			return testPoolToken, true
+		}
+		return "", false
+	}
+	fx.swarm.acquired = acquiredAs(3)
+	ssh := &leaseSSH{}
+	ssh.setHandler(acquireContainer(`{"version":1,"prepare":"env; exit 3","servers":[]}`, prepOut, sshFailure(prepOut, exitError(t, 3)), supervisor))
+	fx.deps.SSH = ssh
+
+	view, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, "feature")
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	if view.Prepare == nil || view.Prepare.OK {
+		t.Fatalf("prepare = %+v, want a failure", view.Prepare)
+	}
+	if !strings.Contains(view.Note, "zcp started the dev-server supervisor") {
+		t.Fatalf("note %q: want the failed supervisor's start named", view.Note)
+	}
+	raw, err := json.Marshal(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{poolMateCredential, testPoolToken, fragment} {
+		if strings.Contains(string(raw), secret) {
+			t.Errorf("the acquire's result carries %q:\n%s", secret, raw)
+		}
+	}
+	if !strings.Contains(view.Prepare.Output, "yyyy") {
+		t.Errorf("prepare output %q: want the rest of the tail kept", view.Prepare.Output)
+	}
+}
