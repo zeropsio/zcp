@@ -266,8 +266,12 @@ func mergedStages(stateDir string, c workflow.HQChange) string {
 		return ""
 	}
 	slices.Sort(stages)
-	return fmt.Sprintf("; the stages %s track %q: put %q on each — a dev pool's from a lease of its part (`zerops_deploy sourceService=\"<alias>\" targetService=\"<stage>\" sha=\"origin/main\"`)",
-		strings.Join(stages, ", "), hqBase, hqBase)
+	which, on := "the stages "+strings.Join(stages, ", ")+" track", "each"
+	if len(stages) == 1 {
+		which, on = "the stage "+stages[0]+" tracks", "it"
+	}
+	return fmt.Sprintf("; %s %q: put %q on %s — a dev pool's stage from a lease of its part (`zerops_deploy sourceService=\"<alias>\" targetService=\"<stage>\" sha=\"origin/main\"`)",
+		which, hqBase, hqBase, on)
 }
 
 // leasesOnBranch is the aliases of the leases zcp holds on branch of appID's

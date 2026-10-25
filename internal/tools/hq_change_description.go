@@ -135,7 +135,8 @@ func handleDescribeChange(
 			return jsonResult(changeDescriptionResult{
 				Service: service,
 				Message: learned + " The description was not written: the change it was for is no longer open, " +
-					"and the next change is another one. If these words are about work no change holds yet, describe the change that holds it once it is open.",
+					"and the next change is another one. If these words are about work no change holds yet, describe the change that holds it once it is open." +
+					stillOpenWords(target, state),
 			}), nil, nil
 		}
 		kept = changesIn(hqChanges(stateDir), target.AppID, target.Repo)
@@ -258,6 +259,24 @@ func learnDescribedLandings(stateDir, address string, target changeTarget, kept 
 		}
 	}
 	return strings.Join(learned, " ")
+}
+
+// stillOpenWords names, for a describe that named no branch, the changes
+// still open in the repository and the call that describes each; "" when a
+// branch was named or none is open.
+func stillOpenWords(target changeTarget, state hq.MateState) string {
+	if target.Branch != "" {
+		return ""
+	}
+	open := target.openCandidates(&state, nil)
+	if len(open) == 0 {
+		return ""
+	}
+	named := make([]string, 0, len(open))
+	for _, c := range open {
+		named = append(named, fmt.Sprintf("#%d with zerops_workflow action=\"describe-change\" branch=%q", c.Number, c.Branch))
+	}
+	return " If they are for a change still open, name its branch: " + strings.Join(named, ", or ") + "."
 }
 
 // describedChangeGone is what a describe says when the change it is about to
