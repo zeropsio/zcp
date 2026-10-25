@@ -862,8 +862,13 @@ func TestLease_Integration_ReleaseBranch_OneDirtyLeaseRefusesThenForceReleasesEv
 	if err := json.Unmarshal([]byte(text), &got); err != nil {
 		t.Fatalf("result is not JSON: %v\n%s", err, text)
 	}
-	if len(got.Leases) != 2 || got.Leases[0].Alias != "hqpool-3" || got.Leases[1].Alias != "webpool-7" ||
-		got.Leases[0].State != "released" || got.Leases[1].State != "released" {
+	// The two were reserved at once, each acquiredAt stamped to the second
+	// when its own reservation answered: which comes first is the clock's.
+	states := map[string]string{}
+	for _, l := range got.Leases {
+		states[l.Alias] = l.State
+	}
+	if len(got.Leases) != 2 || states["hqpool-3"] != "released" || states["webpool-7"] != "released" {
 		t.Errorf("forced release = %+v, want hqpool-3 and webpool-7 released", got.Leases)
 	}
 	if hq, web := hqReleases(), webReleases(); len(hq) != 1 || hq[0] != "true" || len(web) != 1 || web[0] != "true" {

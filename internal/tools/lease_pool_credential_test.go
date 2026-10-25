@@ -39,7 +39,7 @@ func leaseToolServerIn(t *testing.T, rt runtime.Info, ssh ops.SSHDeployer) (srv 
 		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{Key: "API_TOKEN", Content: leaseTestToken, Sensitive: true}})
 	factory := func(_, token string) ops.SwarmAPI { return platform.NewSwarmClient(hs.URL, token, hs.Client()) }
 	srv = mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterLease(srv, mock, "proj-1", stateDir, factory, nil, ssh, rt)
+	registerLeaseTool(t, srv, mock, "proj-1", stateDir, factory, nil, ssh, rt)
 	return srv, stateDir, mock
 }
 

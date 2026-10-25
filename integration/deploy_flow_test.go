@@ -141,6 +141,9 @@ func setupTestServerWithDeploy(t *testing.T, mock *platform.Mock, logFetcher pla
 	cleanup := func() {
 		session.Close()
 		ss.Close()
+		// What a call left running (a lease's warm clone) reads the
+		// transport and writes the state directory a test tears down next.
+		srv.WaitBackground()
 	}
 	return session, cleanup
 }

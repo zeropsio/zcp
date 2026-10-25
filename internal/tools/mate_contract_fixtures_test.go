@@ -619,7 +619,7 @@ func TestMateContractFixtures_LeaseStatus_RenderedByTheHandler(t *testing.T) {
 		return nil, nil
 	}}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterLease(srv, mock, "proj-weather", stateDir, factory, nil, ssh, runtime.Info{InContainer: true, ServiceName: "zcp"})
+	registerLeaseTool(t, srv, mock, "proj-weather", stateDir, factory, nil, ssh, runtime.Info{InContainer: true, ServiceName: "zcp"})
 
 	before := time.Now().UTC()
 	res := callTool(t, srv, "zerops_lease", map[string]any{"action": "status"})

@@ -121,7 +121,7 @@ func groupLeaseServerSSH(t *testing.T, ssh ops.SSHDeployer) (*mcp.Server, map[st
 	}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	stateDir := t.TempDir()
-	RegisterLease(srv, mock, "proj-1", stateDir, factory, nil, ssh, runtime.Info{})
+	registerLeaseTool(t, srv, mock, "proj-1", stateDir, factory, nil, ssh, runtime.Info{})
 	return srv, orchs, stateDir
 }
 
