@@ -206,8 +206,10 @@ func TestLease_Integration_WarmPool_KeepsOneRemovesTheOther(t *testing.T) {
 
 	warmIntCall(t, session, map[string]any{"action": "acquire", "pool": "devpool", "repo": "https://github.com/acme/app", "branch": "feat-a"})
 	warmIntCall(t, session, map[string]any{"action": "acquire", "pool": "devpool", "repo": "https://github.com/acme/app", "branch": "feat-b"})
-	first := warmIntCall(t, session, map[string]any{"action": "release", "lease": "devpool-1"})
-	second := warmIntCall(t, session, map[string]any{"action": "release", "lease": "devpool-2"})
+	// No ssh reaches the containers to check them, so the releases take
+	// force (DP-4); the warm decision is the same either way.
+	first := warmIntCall(t, session, map[string]any{"action": "release", "lease": "devpool-1", "force": true})
+	second := warmIntCall(t, session, map[string]any{"action": "release", "lease": "devpool-2", "force": true})
 	if len(first.Leases) != 1 || first.Leases[0].State != "released" || !strings.Contains(first.Leases[0].Note, "kept as the pool's warm container") {
 		t.Errorf("first release = %+v, want released and kept as the pool's warm container", first.Leases)
 	}

@@ -162,7 +162,9 @@ func TestLease_Integration_AcquireStatusRelease(t *testing.T) {
 		t.Fatalf("status = %+v, want the one held devpool-3", got.Leases)
 	}
 
-	got = call(map[string]any{"action": "release", "lease": "devpool-3"})
+	// No ssh reaches the container to check it, so the release takes force
+	// (DP-4).
+	got = call(map[string]any{"action": "release", "lease": "devpool-3", "force": true})
 	if len(got.Leases) != 1 || got.Leases[0].State != "released" {
 		t.Fatalf("release = %+v, want devpool-3 released", got.Leases)
 	}

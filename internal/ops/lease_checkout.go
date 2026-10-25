@@ -604,10 +604,13 @@ func guardLeaseRelease(ctx context.Context, d LeaseDeps, rec leaseRecord) (lease
 // an error when zcp cannot tell. A container ssh cannot reach has no work zcp
 // can save, so it passes unchecked when the orchestrator no longer holds it
 // (unreachableGuard); any other failure to read it refuses (zcp cannot tell
-// what would be lost).
+// what would be lost) — and so does a zcp with no ssh to it at all (local
+// mode): only force releases what nobody checked.
 func inspectLeaseRelease(ctx context.Context, d LeaseDeps, rec leaseRecord) (leaseGuardResult, unsavedWork, error) {
 	if d.SSH == nil {
-		return leaseGuardResult{note: "the container was not checked for unsaved work (this zcp has no ssh to it)"}, unsavedWork{}, nil
+		return leaseGuardResult{}, unsavedWork{}, platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+			fmt.Sprintf("Lease %s could not be checked for unsaved work — this zcp has no ssh to the container — so it was not released", rec.alias()),
+			fmt.Sprintf("Release it from a zcp in the project, which reaches the container over ssh, or release with force=true to discard whatever it holds: zerops_lease action=release lease=%s force=true", rec.alias()))
 	}
 	w, err := readUnsavedWork(ctx, d.SSH, rec.alias())
 	if err != nil {

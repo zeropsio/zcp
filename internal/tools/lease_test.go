@@ -186,7 +186,9 @@ func TestLeaseTool_ResultNeverCarriesLease(t *testing.T) {
 
 	acquire := callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo, "branch": "feature-x"})
 	status := callTool(t, srv, "zerops_lease", map[string]any{"action": "status"})
-	release := callTool(t, srv, "zerops_lease", map[string]any{"action": "release", "lease": "devpool-3"})
+	// No ssh reaches the container to check it, so the release takes force
+	// (DP-4).
+	release := callTool(t, srv, "zerops_lease", map[string]any{"action": "release", "lease": "devpool-3", "force": true})
 
 	// The release only succeeds with the real lease in the header (the fake
 	// refuses otherwise), so the lease reached the orchestrator; the record
@@ -228,7 +230,9 @@ func TestLeaseTool_RefusalNeverCarriesLease(t *testing.T) {
 	srv, _ := leaseToolServer(t, &fakeOrchestrator{echoLease: true})
 	callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo})
 
-	res := callTool(t, srv, "zerops_lease", map[string]any{"action": "release", "lease": "devpool-3"})
+	// Forced: no ssh reaches the container to check it (DP-4), and the
+	// refusal under test is the orchestrator's.
+	res := callTool(t, srv, "zerops_lease", map[string]any{"action": "release", "lease": "devpool-3", "force": true})
 	text := getTextContent(t, res)
 	if !res.IsError {
 		t.Fatalf("want a refusal (container busy), got: %s", text)
@@ -518,7 +522,7 @@ func TestLeaseTool_ResultCarriesEnvelope(t *testing.T) {
 	}{
 		{"acquire", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo, "branch": "feature-x"}, []string{"devpool-3"}},
 		{"status", map[string]any{"action": "status"}, []string{"devpool-3"}},
-		{"release", map[string]any{"action": "release", "lease": "devpool-3"}, nil},
+		{"release", map[string]any{"action": "release", "lease": "devpool-3", "force": true}, nil}, // no ssh to check it (DP-4)
 	}
 	for _, st := range steps {
 		res := callTool(t, srv, "zerops_lease", st.args)
