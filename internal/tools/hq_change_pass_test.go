@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -480,5 +482,47 @@ func TestHandleRelease_NamesTheOpenChangesItLeavesOut(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Errorf("the handoff lacks %q: %s", want, text)
 		}
+	}
+}
+
+// release is zerops_workflow action="release" in the lab.
+func (l *hqLab) release() string {
+	l.t.Helper()
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, l.mock, l.hq.srv.Client(), labMate, nil,
+		workflow.NewEngine(l.stateDir, workflow.EnvContainer, nil), nil, l.stateDir, "", nil, l.ssh, l.rt, "")
+	return getTextContent(l.t, callTool(l.t, srv, "zerops_workflow", map[string]any{"action": "release"}))
+}
+
+// TestHandleRelease_LeavesOutTheChangesHQSaysSettled: the person merges a
+// change and asks for a release before any pass forgot it. The handoff reads
+// the Mate's state once and names only the changes still open — never the
+// merged one as left out — and writes nothing, so the pass still says the
+// merge once. HQ not answering, it names the ledger's, as last read.
+func TestHandleRelease_LeavesOutTheChangesHQSaysSettled(t *testing.T) {
+	lab := twoOpenChanges(t)
+	lab.hq.mergeChange("appdev", 1)
+	reads := lab.hq.callCount("GET /api/mate/self")
+
+	text := lab.release()
+
+	if !strings.Contains(text, "release-person-required") || !strings.Contains(text, "appdev #2 are not in it") {
+		t.Errorf("the handoff does not name open #2 as left out: %s", text)
+	}
+	if strings.Contains(text, "#1") {
+		t.Errorf("the handoff names merged #1 as an open change left out: %s", text)
+	}
+	if n := lab.hq.callCount("GET /api/mate/self") - reads; n != 1 {
+		t.Errorf("the handoff read the Mate's state %d times, want once", n)
+	}
+	if lab.kept(1) == nil {
+		t.Error("the handoff forgot change #1: saying the merge, once, is the pass's")
+	}
+
+	lab.hq.setDown(true)
+	text = lab.release()
+
+	if !strings.Contains(text, "as last read") || !strings.Contains(text, "#1 and #2") {
+		t.Errorf("with HQ down the handoff does not name the ledger's changes as last read: %s", text)
 	}
 }
