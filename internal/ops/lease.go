@@ -487,6 +487,9 @@ func listPoolLeases(ctx context.Context, d LeaseDeps, resolve poolResolver, pool
 	}
 	containers, err := d.containers(ctx, rp)
 	if err != nil {
+		if views, known := unlistedLosses(ctx, d, rp, records, err); known {
+			return views, nil
+		}
 		return nil, leaseOrchestratorError(ctx, d, rp, "list containers", err)
 	}
 	byID := make(map[string]platform.SwarmContainer, len(containers))
@@ -569,6 +572,39 @@ func listPoolLeases(ctx context.Context, d LeaseDeps, resolve poolResolver, pool
 	}
 	slices.SortFunc(views, func(a, b LeaseView) int { return cmp.Compare(leaseNumber(a.Alias), leaseNumber(b.Alias)) })
 	return views, nil
+}
+
+// unlistedLosses are the views of records — of the pool rp, whose orchestrator
+// did not list its containers (listErr) — that zcp knows are lost without it
+// (DP-2, DP-20): every record of a pool being deleted by its search row or,
+// once the orchestrator could not be reached, gone or being deleted by its
+// read by id (the search lags), and a record taken on a pool since
+// re-created. known is false — the listing's failure stands — while a record
+// remains that only the orchestrator can decide.
+func unlistedLosses(ctx context.Context, d LeaseDeps, rp *resolvedPool, records []leaseRecord, listErr error) (views []LeaseView, known bool) {
+	if len(records) == 0 {
+		return nil, false
+	}
+	gone := ""
+	var se *platform.SwarmError
+	if state := poolDeletionState(rp.svc.Status); state != "" {
+		gone = fmt.Sprintf("the pool service %s (status %s)", state, rp.svc.Status)
+	} else if !errors.As(listErr, &se) {
+		gone = leasePoolGoneWhy(ctx, d, leaseRecord{PoolServiceID: rp.svc.ID})
+	}
+	views = make([]LeaseView, 0, len(records))
+	for _, r := range records {
+		switch {
+		case r.PoolServiceID != rp.svc.ID:
+			views = append(views, lostView(r, recreatedWhy))
+		case gone != "":
+			views = append(views, lostView(r, gone))
+		default:
+			return nil, false
+		}
+	}
+	slices.SortFunc(views, func(a, b LeaseView) int { return cmp.Compare(leaseNumber(a.Alias), leaseNumber(b.Alias)) })
+	return views, true
 }
 
 // leaseLockReserved is the orchestrator's lockState of a held container.
