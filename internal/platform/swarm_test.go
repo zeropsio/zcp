@@ -853,8 +853,8 @@ func TestSwarmClient_ErrorEnvelope_SaysWhatItsMetadataSays(t *testing.T) {
 			body: `{"error":{"code":"containerAction","message":"See metadata","meta":[{"code":"commandExec",` +
 				`"error":"fork/exec /opt/zerops/bin/zsc: resource temporarily unavailable",` +
 				`"metadata":{"containerId":["c-5"],"echo":["bearer ` + token + ` lease ` + lease + `"]}}]}}`,
-			wantCode: "containerAction",
-			wantSays: []string{"commandExec", "fork/exec /opt/zerops/bin/zsc: resource temporarily unavailable", "containerId: c-5", "[redacted]"},
+			wantCode:    "containerAction",
+			wantSays:    []string{"commandExec", "fork/exec /opt/zerops/bin/zsc: resource temporarily unavailable", "containerId: c-5", "[redacted]"},
 			wantNotSays: []string{"See metadata", token, lease},
 		},
 		{
