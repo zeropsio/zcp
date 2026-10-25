@@ -470,3 +470,32 @@ func TestCredentialFingerprint_IsTheClientsFingerprint(t *testing.T) {
 		t.Errorf("fingerprint %q: want 16 hex characters that tell credentials apart", got)
 	}
 }
+
+// closedSample is HQ's answer to POST /api/mate/changes/appdev/3/close: the
+// change, closed without merging, its branch kept.
+const closedSample = `{"appId":"0b6e7c1e-8f7a-4a52-9d1c-2f1f5d0a3c11","repo":"appdev","number":3,` +
+	`"mateProjectId":"p-mate","title":"Add a todo list","branch":"add-list","body":"",` +
+	`"state":"closed","head":"4b825dc642cb6eb9a060e54bf8d69288fbee4904","mergedSha":null,"landedHead":null,` +
+	`"openedAt":"2026-10-02T09:12:44.512Z","mergedAt":null,"closedAt":"2026-10-25T09:00:00.000Z","updatedAt":"2026-10-25T09:00:00.000Z",` +
+	`"mergeability":"clean","behind":false}`
+
+// TestClient_CloseChange_PostsTheCloseOfTheMatesOwnChange: a Mate closes its
+// own open change by POST /api/mate/changes/:repo/:n/close, as the Mate, and
+// reads the change closed.
+func TestClient_CloseChange_PostsTheCloseOfTheMatesOwnChange(t *testing.T) {
+	t.Parallel()
+	client, calls := answering(t, closedSample)
+
+	change, err := client.CloseChange(context.Background(), "appdev", 3)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if change.State != ChangeClosed || change.Number != 3 || change.Branch != "add-list" {
+		t.Errorf("change = %+v, want #3 on add-list closed", change)
+	}
+	wantCall := hqCall{http.MethodPost, "/api/mate/changes/appdev/3/close", "Mate good", "application/json", `{}`}
+	if len(*calls) != 1 || (*calls)[0] != wantCall {
+		t.Errorf("calls = %+v, want [%+v]", *calls, wantCall)
+	}
+}

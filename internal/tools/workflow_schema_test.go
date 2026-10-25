@@ -263,6 +263,31 @@ func TestWorkflowTool_DescribeChangeReachesItsHandler(t *testing.T) {
 	}
 }
 
+// TestWorkflowTool_CloseChangeReachesItsHandler: action="close-change" is
+// dispatched to its handler — which, with no HQ here, refuses on its own
+// terms rather than failing as an unknown action.
+func TestWorkflowTool_CloseChangeReachesItsHandler(t *testing.T) {
+	t.Parallel()
+
+	_, session := schemaTestSession(t)
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "zerops_workflow",
+		Arguments: map[string]any{"action": "close-change", "branch": "fix-login"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	text := ""
+	for _, content := range result.Content {
+		if tc, ok := content.(*mcp.TextContent); ok {
+			text += tc.Text
+		}
+	}
+	if !result.IsError || strings.Contains(text, "Unknown action") || !strings.Contains(text, "close") {
+		t.Errorf("want the handler's own refusal, got isError=%v:\n%s", result.IsError, text)
+	}
+}
+
 // TestWorkflowTool_MacPairReachesItsHandler: action="mac-pair" is dispatched
 // to its handler — which, outside a Mate, refuses on its own terms rather than
 // failing as an unknown action.

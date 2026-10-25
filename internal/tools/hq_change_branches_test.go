@@ -208,7 +208,7 @@ func TestOpenChange_TooManyOpen_NamesThem(t *testing.T) {
 			t.Errorf("the refusal does not name %s: %s", want, text)
 		}
 	}
-	for _, want := range []string{"Nothing was opened", "merge or close"} {
+	for _, want := range []string{"Nothing was opened", "merge or close", `action=\"close-change\"`} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the refusal lacks %q: %s", want, text)
 		}

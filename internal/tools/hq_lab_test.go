@@ -92,6 +92,9 @@ type fakeHQ struct {
 	// described is the head each change was described at, by repo#number: a
 	// change is ready while its branch is still there.
 	described map[string]string
+	// closes: HQ lets a Mate close its own open change
+	// (POST /api/mate/changes/:repo/:n/close); off, the route is not there.
+	closes bool
 }
 
 // labOpenCap is how many open changes a Mate holds in a repository on an HQ
@@ -294,11 +297,21 @@ func (f *fakeHQ) api(w http.ResponseWriter, r *http.Request) {
 	case len(parts) >= 5 && parts[2] == "changes":
 		number, _ := strconv.Atoi(parts[4])
 		change := f.find(f.appID, parts[3], number, "")
+		closing := r.Method == http.MethodPost && len(parts) == 6 && parts[5] == "close"
 		switch {
+		case closing && !f.closes:
+			refuse(http.StatusNotFound, "not_found", "not_found")
 		case change == nil:
 			refuse(http.StatusNotFound, "change_not_found", "change_not_found")
+		case closing && change.MateProjectID != labMate:
+			refuse(http.StatusForbidden, "forbidden", "not_own_change")
 		case change.State != hq.ChangeOpen:
 			refuse(http.StatusConflict, "conflict", "change_not_open")
+		case closing:
+			now := time.Now().UTC().Format(time.RFC3339)
+			change.State, change.ClosedAt, change.UpdatedAt = hq.ChangeClosed, &now, now
+			f.writeRefs()
+			writeHQJSON(w, http.StatusOK, *change)
 		case r.Method == http.MethodPatch && len(parts) == 5:
 			var edit hq.ChangeEdit
 			_ = json.NewDecoder(r.Body).Decode(&edit)
@@ -463,6 +476,13 @@ func (f *fakeHQ) openCount(repo string) int {
 		}
 	}
 	return n
+}
+
+// letMateClose makes HQ one that lets a Mate close its own open change.
+func (f *fakeHQ) letMateClose() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.closes = true
 }
 
 // keepOpenPerBranch makes HQ one that keeps an open change per branch.
