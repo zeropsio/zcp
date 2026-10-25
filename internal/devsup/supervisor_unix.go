@@ -760,13 +760,16 @@ var sigNames = map[syscall.Signal]string{
 }
 
 // syncWatches keeps one watcher per server that has a watch and is meant to
-// run; a change restarts it (a crashed one too: the change is the fix).
+// run; a change restarts it (a crashed one too: the change is the fix). A
+// watcher whose watch reads the same — every reconcile parses the
+// declaration anew — is kept, with any burst still settling in it: a
+// replaced one would drop that burst, and the server would keep the old code.
 func (s *Supervisor) syncWatches() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for name, sv := range s.servers {
 		need := sv.desired == DesiredRunning && sv.spec.Watch != nil
-		if sv.watch != nil && (!need || sv.watch.w != sv.spec.Watch) {
+		if sv.watch != nil && (!need || !sameWatch(sv.watch.w, sv.spec.Watch)) {
 			sv.watch.close()
 			sv.watch = nil
 		}
@@ -779,6 +782,14 @@ func (s *Supervisor) syncWatches() {
 			sv.watch = w
 		}
 	}
+}
+
+// sameWatch reports two watches covering and ignoring the same paths.
+func sameWatch(a, b *Watch) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return slices.Equal(a.Paths, b.Paths) && slices.Equal(a.Ignore, b.Ignore)
 }
 
 // watchFired restarts a server on a burst of watched changes that opened with
