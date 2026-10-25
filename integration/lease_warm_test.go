@@ -202,7 +202,7 @@ func TestLease_Integration_WarmPool_KeepsOneRemovesTheOther(t *testing.T) {
 			{ID: "svc-pool", Name: "devpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
 		}).
 		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{ID: "env-t", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}})
-	session, cleanup := setupTestServer(t, mock, defaultLogFetcher())
+	session, cleanup := setupLeaseTestServer(t, mock, defaultLogFetcher(), nil)
 	defer cleanup()
 
 	warmIntCall(t, session, map[string]any{"action": "acquire", "pool": "devpool", "repo": "https://github.com/acme/app", "branch": "feat-a"})
@@ -294,7 +294,7 @@ func TestLease_Integration_WarmContainerGetsTheRepository(t *testing.T) {
 		}).
 		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{ID: "env-t", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}})
 	ssh := &warmCloneIntSSH{}
-	session, cleanup := setupTestServerWithDeploy(t, mock, defaultLogFetcher(), ssh)
+	session, cleanup := setupLeaseTestServer(t, mock, defaultLogFetcher(), ssh)
 	defer cleanup()
 
 	const repo = "https://github.com/acme/app.git"
@@ -395,7 +395,7 @@ func TestLease_Integration_Release_BackgroundWarmClone_EndsBeforeTheTestTearsDow
 			{ID: "svc-devpool", Name: "devpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"}},
 		}).
 		WithServiceEnv("svc-devpool", []platform.ServiceEnvVar{{ID: "env-t", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}})
-	session, cleanup := setupTestServerWithDeploy(t, mock, defaultLogFetcher(), ssh)
+	session, cleanup := setupLeaseTestServer(t, mock, defaultLogFetcher(), ssh)
 	defer cleanup()
 	// Deferred after cleanup, so it runs first: the body has ended.
 	defer close(ssh.bodyEnded)

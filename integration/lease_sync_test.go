@@ -86,7 +86,7 @@ func TestLease_Integration_Sync_PushesThenFastForwardsTheBranchsOtherLeases(t *t
 		WithServiceEnv("svc-hqpool", []platform.ServiceEnvVar{{ID: "env-h", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}}).
 		WithServiceEnv("svc-webpool", []platform.ServiceEnvVar{{ID: "env-w", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}})
 	ssh := &syncLeaseSSH{dirty: map[string]bool{"hqpool-3": true}}
-	session, cleanup := setupTestServerWithDeploy(t, mock, defaultLogFetcher(), ssh)
+	session, cleanup := setupLeaseTestServer(t, mock, defaultLogFetcher(), ssh)
 	defer cleanup()
 
 	res := callAndGetResult(t, session, "zerops_lease", map[string]any{"action": "acquire", "pools": []string{"hqpool", "webpool"}, "repo": "https://github.com/acme/app", "branch": "feat-x"})

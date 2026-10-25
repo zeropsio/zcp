@@ -102,7 +102,7 @@ func TestLease_Integration_ParkStatusUnparkRelease(t *testing.T) {
 	http.DefaultTransport = orchestratorRoute{host: "orch.devpool.zerops", target: target, next: orig}
 	t.Cleanup(func() { http.DefaultTransport = orig })
 
-	session, cleanup := setupTestServerWithDeploy(t, supervisorPoolMock(), defaultLogFetcher(), parkIntSSH{c})
+	session, cleanup := setupLeaseTestServer(t, supervisorPoolMock(), defaultLogFetcher(), parkIntSSH{c})
 	defer cleanup()
 
 	type leaseView struct {

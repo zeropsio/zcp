@@ -62,7 +62,7 @@ func TestLease_Integration_DevServerStart_SendsTheSiblingOverlay(t *testing.T) {
 		WithService(&pool).
 		WithServiceEnv("svc-web", []platform.ServiceEnvVar{{ID: "env-t", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}})
 	c := devservertest.NewSupervised(`{"version":1,"siblingEnv":{"HQ_HOST":"hqpool","API_HOST":"apipool"},"servers":[{"name":"web","port":3000,"command":"pnpm dev"}]}`)
-	session, cleanup := setupTestServerWithDeploy(t, mock, defaultLogFetcher(), c)
+	session, cleanup := setupLeaseTestServer(t, mock, defaultLogFetcher(), c)
 	defer cleanup()
 
 	res := callAndGetResult(t, session, "zerops_dev_server", map[string]any{"action": "start", "hostname": "webpool-3", "name": "web"})
@@ -163,7 +163,7 @@ func TestLease_Integration_Rewire_ReleaseFirstRewiresStatusNamesStale(t *testing
 	}
 	web := devservertest.NewSupervised(decl("web", "3000"))
 	ssh := &rewireLeaseSSH{containers: map[string]*devservertest.Container{"hqpool-3": devservertest.NewSupervised(decl("api", "8080")), "webpool-7": web}}
-	session, cleanup := setupTestServerWithDeploy(t, mock, defaultLogFetcher(), ssh)
+	session, cleanup := setupLeaseTestServer(t, mock, defaultLogFetcher(), ssh)
 	defer cleanup()
 
 	type result struct {

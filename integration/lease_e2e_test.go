@@ -48,7 +48,7 @@ func TestLease_Integration_RepoAsGiven_ClonedVerbatim(t *testing.T) {
 	t.Chdir(t.TempDir())
 	routeLeaseOrchestrator(t)
 	ssh := &stageLeaseSSH{}
-	session, cleanup := setupTestServerWithDeploy(t, leaseE2EPoolMock(), defaultLogFetcher(), ssh)
+	session, cleanup := setupLeaseTestServer(t, leaseE2EPoolMock(), defaultLogFetcher(), ssh)
 	defer cleanup()
 
 	const given = "https://git.example.com/team/repo.git"
@@ -142,7 +142,7 @@ func TestLease_Integration_DevServerStart_ProbesTheLeasesOwnPreview(t *testing.T
 		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{ID: "env-t", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}})
 	c := devservertest.NewSupervised(`{"version":1,"previewPortBase":9000,"servers":[{"name":"web","port":3000,"command":"pnpm dev"}]}`)
 	c.Servers["web"].PreviewPort = 9003
-	session, cleanup := setupTestServerWithDeploy(t, mock, defaultLogFetcher(), c)
+	session, cleanup := setupLeaseTestServer(t, mock, defaultLogFetcher(), c)
 	defer cleanup()
 
 	res := callAndGetResult(t, session, "zerops_dev_server", map[string]any{"action": "start", "hostname": "devpool-3"})
@@ -219,7 +219,7 @@ func TestLease_Integration_UnmountedLease_EnvelopeSaysWhatStatusSays(t *testing.
 	}
 	authInfo := &auth.Info{ProjectID: "proj-1", Token: "test-token", APIHost: "localhost", Region: "prg1", ClientID: "client-1", ProjectName: "test-project"}
 	// nopMounter finds nothing mounted: /var/www/devpool-3 is gone.
-	srv := server.New(context.Background(), leaseE2EPoolMock(), authInfo, store, defaultLogFetcher(), nil, &nopMounter{}, runtime.Info{}, nil)
+	srv := server.New(context.Background(), leaseE2EPoolMock(), authInfo, store, defaultLogFetcher(), nil, &nopMounter{}, runtime.Info{InContainer: true}, nil)
 	st, ct := mcp.NewInMemoryTransports()
 	ss, err := srv.MCPServer().Connect(context.Background(), st, nil)
 	if err != nil {

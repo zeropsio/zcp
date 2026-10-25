@@ -96,7 +96,7 @@ func TestLease_Integration_ReusedContainerGetsItsSupervisor(t *testing.T) {
 	// Its branch declares the incremental install its lockfile needs.
 	c := &devservertest.Container{Installed: true, SupervisorVersion: "v9.300.0", Formats: []int{1},
 		Declaration: `{"version":1,"prepare":"npm install --prefer-offline","servers":[{"name":"web","port":3000,"command":"pnpm dev"}]}`}
-	session, cleanup := setupTestServerWithDeploy(t, supervisorPoolMock(), defaultLogFetcher(), c)
+	session, cleanup := setupLeaseTestServer(t, supervisorPoolMock(), defaultLogFetcher(), c)
 	defer cleanup()
 
 	res := callAndGetResult(t, session, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": "https://github.com/acme/app", "branch": "feature-x"})
@@ -164,7 +164,7 @@ func TestLease_Integration_PoolWithoutZcpDevsup_SaysNotADevPool(t *testing.T) {
 	supervisorPoolOrchestrator(t)
 	// A pool used as a sandbox for running code: its image has no zcp-devsup.
 	c := &devservertest.Container{}
-	session, cleanup := setupTestServerWithDeploy(t, supervisorPoolMock(), defaultLogFetcher(), c)
+	session, cleanup := setupLeaseTestServer(t, supervisorPoolMock(), defaultLogFetcher(), c)
 	defer cleanup()
 
 	res := callAndGetResult(t, session, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": "https://github.com/acme/app"})
