@@ -970,7 +970,7 @@ lost on a redeploy (P1 T7, P2 S4) — which is exactly the start-up rule below.
   while it is open (every file descriptor in use, a connection aborted before it was taken) waits
   5 ms, doubling up to 1 s, and takes the next — a forward that ended there held its port bound,
   serving nothing, while the count read as observed (`TestForward_AnAcceptErrorNeverEndsTheForward`).
-  They live in the supervisor's memory: `state.json`
+  The two fields live in the supervisor's memory: `state.json`
   never holds them, and a new supervisor starts without them. `ctl version` lists `activity` for
   them (`TestForward_RecordsLastConnectionAndOpenCount`,
   `TestSupervisor_PreviewActivity_KeptAcrossServerRestartsNeverInStateFile`,
