@@ -615,21 +615,41 @@ func takeMemberDeclaration(ctx context.Context, d LeaseDeps, alias, pool string)
 	before := ds.State
 	var did []string
 	lease := rec.targetInfo()
-	env, err := leaseSiblingEnv(d.StateDir, lease, siblingWiringOf(&ds.Declared), d.previewURLs(ctx))
-	switch {
-	case err != nil:
-		did = append(did, fmt.Sprintf("sent no sibling overlay (%v)", err))
-	case maps.Equal(ds.State.Env, env.Set):
-	case !ds.Supervisor.Supports(devsup.CapabilityEnv):
-		did = append(did, "sent no sibling overlay: "+olderSupervisorText(lease, ds.Supervisor, env)+". "+olderSupervisorRecovery(lease))
-	default:
-		if _, err := applyLeaseOverlay(ctx, d.SSH, alias, ds, env); err != nil {
-			did = append(did, fmt.Sprintf("the supervisor refused the sibling overlay (%s)", sshFailureText(err)))
-		} else if len(env.Set) == 0 {
-			did = append(did, "cleared the sibling overlay")
-		} else {
-			did = append(did, "sent the sibling overlay ("+env.names()+")")
+	// The overlay is computed from zcp's records and sent under the group's
+	// lock, so no release of a sibling drops it in between (DP-26); the wait
+	// for the restarts it sets off runs after the lock is let go.
+	env, w, sent, err := func() (LeaseSiblingEnv, leaseWiring, bool, error) {
+		unlock, err := lockRecordGroup(ctx, d.StateDir, rec)
+		if err != nil {
+			did = append(did, fmt.Sprintf("sent no sibling overlay (%v)", err))
+			return LeaseSiblingEnv{}, leaseWiring{}, false, nil
 		}
+		defer unlock()
+		env, err := leaseSiblingEnv(d.StateDir, lease, siblingWiringOf(&ds.Declared), d.previewURLs(ctx))
+		switch {
+		case err != nil:
+			did = append(did, fmt.Sprintf("sent no sibling overlay (%v)", err))
+			return env, leaseWiring{}, false, nil
+		case maps.Equal(ds.State.Env, env.Set):
+			return env, leaseWiring{}, false, nil
+		case !ds.Supervisor.Supports(devsup.CapabilityEnv):
+			did = append(did, "sent no sibling overlay: "+olderSupervisorText(lease, ds.Supervisor, env)+". "+olderSupervisorRecovery(lease))
+			return env, leaseWiring{}, false, nil
+		}
+		_, w, err := sendLeaseOverlay(ctx, d.SSH, alias, ds, env)
+		return env, w, true, err
+	}()
+	if sent && err == nil && w.changed {
+		_, err = awaitLeaseOverlay(ctx, d.SSH, alias, ds, before, w)
+	}
+	switch {
+	case !sent:
+	case err != nil:
+		did = append(did, fmt.Sprintf("the supervisor refused the sibling overlay (%s)", sshFailureText(err)))
+	case len(env.Set) == 0:
+		did = append(did, "cleared the sibling overlay")
+	default:
+		did = append(did, "sent the sibling overlay ("+env.names()+")")
 	}
 	st, err := supervisorCtl(ctx, d.SSH, alias, "reload")
 	if err != nil {
