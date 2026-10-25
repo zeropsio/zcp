@@ -327,10 +327,12 @@ func savePoolRetireRecord(stateDir string, rec *poolRetireRecord) error {
 
 // keepRetiredApart moves a retired record of a dev whose hostname another
 // service holds now out of the way of that service's retire: the record goes
-// to <dev>.<the id it retired>.json and its bundle — the only copy of the old
-// dev's work, at the path the new retire bundles to — to the same name's
-// .bundle, the restore steps naming it where it lies now. No call reads a
-// kept record again; it is there to restore from.
+// to <dev>.<the id it retired>.json and its bundles — the only copies of the
+// old dev's work, at the paths the new retire bundles to — to the same name's
+// .bundle and, for a variant-B retire that rebundled its code volume, its
+// .volume.bundle, the newer and only copy of the late writes; the restore
+// steps name each where it lies now. No call reads a kept record again; it is
+// there to restore from.
 func keepRetiredApart(stateDir string, rec *poolRetireRecord) error {
 	id := strings.Map(func(r rune) rune {
 		if r == '-' || r == '_' || (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
@@ -340,21 +342,35 @@ func keepRetiredApart(stateDir string, rec *poolRetireRecord) error {
 	}, rec.DevServiceID)
 	base := filepath.Join(stateDir, "migrate", rec.Dev+"."+cmp.Or(id, "unknown"))
 	kept := *rec
-	moved := rec.Bundle != nil && rec.Bundle.Path == poolRetireBundlePath(stateDir, rec.Dev)
-	if moved {
-		b := *rec.Bundle
-		b.Path = base + ".bundle"
-		kept.Bundle = &b
-		kept.Restore = make([]string, len(rec.Restore))
-		for i, step := range rec.Restore {
-			kept.Restore[i] = strings.ReplaceAll(step, rec.Bundle.Path, b.Path)
+	type move struct{ from, to string }
+	var moves []move
+	// keep re-points b and its restore steps when b lies at shared, the
+	// path a new retire of the hostname writes to.
+	keep := func(b *ops.PoolMigrateBundle, restore []string, shared, to string) (*ops.PoolMigrateBundle, []string) {
+		if b == nil || b.Path != shared {
+			return b, restore
 		}
+		moved := *b
+		moved.Path = to
+		steps := make([]string, len(restore))
+		for i, step := range restore {
+			steps[i] = strings.ReplaceAll(step, shared, to)
+		}
+		moves = append(moves, move{shared, to})
+		return &moved, steps
+	}
+	kept.Bundle, kept.Restore = keep(rec.Bundle, rec.Restore, poolRetireBundlePath(stateDir, rec.Dev), base+".bundle")
+	if v := rec.CodeVolume; v != nil {
+		volume := *v
+		volume.Bundle, volume.Restore = keep(v.Bundle, v.Restore,
+			filepath.Join(stateDir, "migrate", rec.Dev+poolRetireVolumeBundleSuffix), base+poolRetireVolumeBundleSuffix)
+		kept.CodeVolume = &volume
 	}
 	if err := writePoolRetireRecord(base+".json", &kept); err != nil {
 		return fmt.Errorf("keep the retired record of %s (%s) apart: %w", rec.Dev, rec.DevServiceID, err)
 	}
-	if moved {
-		if err := os.Rename(rec.Bundle.Path, kept.Bundle.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
+	for _, m := range moves {
+		if err := os.Rename(m.from, m.to); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("keep the bundle of %s (%s) apart: %w", rec.Dev, rec.DevServiceID, err)
 		}
 	}
