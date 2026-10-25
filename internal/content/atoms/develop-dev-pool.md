@@ -148,6 +148,14 @@ stays unleased.
   most likely killed for memory: run heavy checks one at a time and
   single-threaded where a check allows it, or size the pool's `minRam` for
   the dev server plus the heaviest check.
+- A lease's container holds at most 2000 tasks (processes and threads),
+  and everything you run in it over SSH — a build included — shares 300 of
+  them with every other SSH session there. A build that starts a worker per
+  core or many child processes can use them up: SSH to the lease then fails
+  with `fork/exec /bin/bash: resource temporarily unavailable` while memory
+  is fine, and the lease may then neither release nor restart cleanly. Cap
+  the build's parallelism, or run the full build as a deploy to the stage,
+  which builds in a container of its own.
 - A container answers SSH only when the pool's `sshIsolation` is set as a
   service env variable admitting the zcp service. The top-level import field
   did not reach pool containers.

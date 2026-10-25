@@ -1389,7 +1389,14 @@ the zcp container's live env (`/etc/zerops-zembed/env.json`, rewritten as servic
 share its container's RAM: a command the memory limit kills ends its ssh call with exit 255 and no output while
 the dev server runs on (live 2026-10-24: a dev server of 1.3–3.0 GB RSS plus a parallel typecheck in a 4 GB pool
 container, killed twice, passing single-threaded), so the pool's `minRam` is sized for the dev server plus the
-heaviest check (services theme, `TestThemes_Services_DevPool_Memory_FactsPresent`).
+heaviest check (services theme, `TestThemes_Services_DevPool_Memory_FactsPresent`). A pool container also bounds its
+tasks (processes and threads; live 2026-10-25): its cgroup `pids.max` is 2000, and every systemd unit in it is capped at
+300 — systemd's default `TasksMax`, 15 % of 2000 — so the SSH sessions and everything they start share the 300 of
+`zerops-zembed.service`. A build that forks a worker per core or many children exhausts it: `ssh` to the lease fails with
+`fork/exec /bin/bash: resource temporarily unavailable` while memory is fine (Kara's run: a full production build in a
+lease, after which the container neither released nor restarted cleanly). An Alpine stage container reads 2000 with no
+per-unit cap. The dev-pool atom names the limit and the remedy — cap the build's parallelism, or build through a deploy
+to the stage (golden `develop/dev-pool-dev-service`).
 
 | ID | Invariant |
 |----|-----------|

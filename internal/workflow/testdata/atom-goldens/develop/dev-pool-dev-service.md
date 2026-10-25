@@ -297,9 +297,9 @@ stays unleased.
   them with every other SSH session there. A build that starts a worker per
   core or many child processes can use them up: SSH to the lease then fails
   with `fork/exec /bin/bash: resource temporarily unavailable` while memory
-  is fine, and the container may not release or restart cleanly. Cap the
-  build's parallelism, or run the full build as a deploy to the stage, which
-  builds in a container of its own.
+  is fine, and the lease may then neither release nor restart cleanly. Cap
+  the build's parallelism, or run the full build as a deploy to the stage,
+  which builds in a container of its own.
 - A container answers SSH only when the pool's `sshIsolation` is set as a
   service env variable admitting the zcp service. The top-level import field
   did not reach pool containers.
