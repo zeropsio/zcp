@@ -446,8 +446,8 @@ func TestClassifyCheckoutFailure_WarmCloneThatWouldNotStop(t *testing.T) {
 // that takes it does.
 func TestLeaseWarmCloneCommand_CredentialNeverInIt(t *testing.T) {
 	t.Parallel()
-	plain := leaseWarmCloneCommand(leaseWorkDir, testRepo, leaseHQURL)
-	onHQ := leaseWarmCloneCommand(leaseWorkDir, leaseHQRepo, leaseHQURL)
+	plain := leaseWarmCloneCommand(leaseWorkDir, testRepo, leaseHQURL, leaseHelperScope(testRepo))
+	onHQ := leaseWarmCloneCommand(leaseWorkDir, leaseHQRepo, leaseHQURL, "")
 	for name, c := range map[string]string{"plain": plain, "hq": onHQ} {
 		reads := "$" + GitTokenEnvKey
 		if name == "hq" {

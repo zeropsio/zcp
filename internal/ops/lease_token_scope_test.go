@@ -8,9 +8,12 @@ package ops
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/platform"
 )
 
 const (
@@ -173,6 +176,38 @@ func TestLeaseAcquire_HQCredentialAnswersOnlyHQ(t *testing.T) {
 	} {
 		if _, password, answered := ask(); answered && strings.Contains(password, poolMateCredential) {
 			t.Errorf("%s answers %s with the Mate credential", what, foreignRepo)
+		}
+	}
+}
+
+// TestLeaseCheckout_ForeignHostAsksForACredential_NamesTheTokensHost: a
+// private repository on a host the pool's GIT_TOKEN is not for fails at its
+// fetch with git's "terminal prompts disabled". It is no missing token — the
+// pool holds one, for another host — so the failure is PREREQUISITE_MISSING
+// naming the host the token answers, never GIT_TOKEN_MISSING, whose contract
+// asks the person for a token.
+func TestLeaseCheckout_ForeignHostAsksForACredential_NamesTheTokensHost(t *testing.T) {
+	t.Parallel()
+	fx := newLeaseFixture(t)
+	fx.swarm.acquired = acquiredAs(3)
+	if err := storePoolDefaultRepo(fx.stateDir, testPoolHost, testRepo); err != nil {
+		t.Fatal(err)
+	}
+	fx.deps.SSH = &leaseSSH{fn: func(_, command string) ([]byte, error) {
+		if !strings.Contains(command, "fetch -q --prune origin") {
+			return nil, nil
+		}
+		out := "fatal: could not read Username for 'https://git.attacker.example.invalid': terminal prompts disabled"
+		return []byte(out), sshFailure(out, exitError(t, 128))
+	}}
+	_, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, foreignRepo, "feat")
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) || pe.Code != platform.ErrPrerequisiteMissing {
+		t.Fatalf("err = %v, want PREREQUISITE_MISSING", err)
+	}
+	for _, want := range []string{"git.attacker.example.invalid", "github.com", "Never ask"} {
+		if !strings.Contains(pe.Suggestion, want) {
+			t.Errorf("suggestion lacks %q: %s", want, pe.Suggestion)
 		}
 	}
 }

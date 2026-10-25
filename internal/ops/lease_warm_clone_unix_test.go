@@ -112,7 +112,7 @@ func (b *warmCloneBox) runPath(t *testing.T, command string, path []string, env 
 // launch starts the warm clone of repo and returns its answer.
 func (b *warmCloneBox) launch(t *testing.T, repo string, pathFirst []string, env ...string) string {
 	t.Helper()
-	out, err := b.run(t, leaseWarmCloneCommand(b.dir, repo, ""), pathFirst, env...)
+	out, err := b.run(t, leaseWarmCloneCommand(b.dir, repo, "", ""), pathFirst, env...)
 	if err != nil {
 		t.Fatalf("the warm clone's launch failed: %v\n%s", err, out)
 	}
@@ -465,7 +465,7 @@ func TestLeaseWarmClone_ImageWithoutTheTools_StartsNothing(t *testing.T) {
 	origin, _ := warmOrigin(t, appFiles)
 	b := newWarmCloneBox(t, "sh")
 
-	out, err := b.runPath(t, leaseWarmCloneCommand(b.dir, origin, ""), append([]string{b.stubs}, pathWithout("flock")...))
+	out, err := b.runPath(t, leaseWarmCloneCommand(b.dir, origin, "", ""), append([]string{b.stubs}, pathWithout("flock")...))
 	if err != nil {
 		t.Fatalf("launch: %v\n%s", err, out)
 	}

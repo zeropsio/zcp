@@ -35,12 +35,12 @@ func TestLeaseCheckoutCommand_HQRepo_AuthenticatesAsMate(t *testing.T) {
 		wantHelper string
 		wantScope  string
 	}{
-		{"a repository on HQ", leaseHQRepo, leaseHQURL, leaseHQCredentialHelperShell, "hq.example.invalid"},
-		{"a repository on an HQ on its own port", "https://hq.example.invalid:3000/git/a1/web", "https://hq.example.invalid:3000", leaseHQCredentialHelperShell, "hq.example.invalid:3000"},
-		{"a repository outside HQ", "https://github.com/acme/app", leaseHQURL, leaseCredentialHelperShell, "github.com"},
-		{"a container enrolled with no HQ", leaseHQRepo, "", leaseCredentialHelperShell, "hq.example.invalid"},
-		{"HQ's host on another port", "https://hq.example.invalid:3000/git/a1/web", leaseHQURL, leaseCredentialHelperShell, "hq.example.invalid:3000"},
-		{"a repository outside HQ on its own port", "https://git.example.invalid:8443/acme/app", leaseHQURL, leaseCredentialHelperShell, "git.example.invalid:8443"},
+		{"a repository on HQ", leaseHQRepo, leaseHQURL, leaseHQCredentialHelperShell("hq.example.invalid"), "hq.example.invalid"},
+		{"a repository on an HQ on its own port", "https://hq.example.invalid:3000/git/a1/web", "https://hq.example.invalid:3000", leaseHQCredentialHelperShell("hq.example.invalid:3000"), "hq.example.invalid:3000"},
+		{"a repository outside HQ", "https://github.com/acme/app", leaseHQURL, leaseCredentialHelperShell("github.com"), "github.com"},
+		{"a container enrolled with no HQ", leaseHQRepo, "", leaseCredentialHelperShell("hq.example.invalid"), "hq.example.invalid"},
+		{"HQ's host on another port", "https://hq.example.invalid:3000/git/a1/web", leaseHQURL, leaseCredentialHelperShell("hq.example.invalid:3000"), "hq.example.invalid:3000"},
+		{"a repository outside HQ on its own port", "https://git.example.invalid:8443/acme/app", leaseHQURL, leaseCredentialHelperShell("git.example.invalid:8443"), "git.example.invalid:8443"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -53,7 +53,7 @@ func TestLeaseCheckoutCommand_HQRepo_AuthenticatesAsMate(t *testing.T) {
 					t.Errorf("command lacks %q:\n%s", want, cmd)
 				}
 			}
-			if tt.wantHelper == leaseHQCredentialHelperShell && strings.Contains(cmd, "username=oauth2") {
+			if strings.Contains(tt.wantHelper, "username=mate") && strings.Contains(cmd, "username=oauth2") {
 				t.Errorf("a repository on HQ is still asked for as oauth2:\n%s", cmd)
 			}
 			if strings.Contains(cmd, "zcp hq git-credential") {
@@ -73,9 +73,9 @@ func TestLeaseCheckoutCommand_HQRepo_AuthenticatesAsMate(t *testing.T) {
 func TestLeaseHQCredentialHelper_AnswersAsMateFromSessionEnvOnly(t *testing.T) {
 	t.Parallel()
 	requireGit(t)
-	want := strings.Replace(leaseCredentialHelperShell, "username=oauth2", "username=mate", 1)
-	if want = strings.ReplaceAll(want, "$"+GitTokenEnvKey, "$"+PoolHQCredentialEnvKey); leaseHQCredentialHelperShell != want {
-		t.Errorf("the HQ lease helper is\n%s\nwant the lease helper with HQ's user and the pool's HQ credential\n%s", leaseHQCredentialHelperShell, want)
+	want := strings.Replace(leaseCredentialHelperShell("hq.example.invalid"), "username=oauth2", "username=mate", 1)
+	if want = strings.ReplaceAll(want, "$"+GitTokenEnvKey, "$"+PoolHQCredentialEnvKey); leaseHQCredentialHelperShell("hq.example.invalid") != want {
+		t.Errorf("the HQ lease helper is\n%s\nwant the lease helper with HQ's user and the pool's HQ credential\n%s", leaseHQCredentialHelperShell("hq.example.invalid"), want)
 	}
 	tests := []struct {
 		name     string
@@ -95,7 +95,7 @@ func TestLeaseHQCredentialHelper_AnswersAsMateFromSessionEnvOnly(t *testing.T) {
 			env := map[string]string{"PATH": fakeZcpPath(t, "touch "+shellQuote(marker)+"; printf 'username=mate\\npassword=from-zcp\\n'")}
 			maps.Copy(env, tt.env)
 			repo, home := t.TempDir(), t.TempDir()
-			script := "git init -q && " + leaseCredentialHelperConfig(leaseHQRepo, leaseHQURL)
+			script := "git init -q && " + leaseCredentialHelperConfig(leaseHQRepo, leaseHQURL, "")
 			if out, err := gitShell(t, repo, home, nil, "", script); err != nil {
 				t.Fatalf("persist the helper: %v\n%s", err, out)
 			}
@@ -132,7 +132,7 @@ func TestLeaseAcquire_HQRepo_ChecksOutAsMate(t *testing.T) {
 	if len(cmds) != 1 {
 		t.Fatalf("checkouts = %v, want the one checkout", cmds)
 	}
-	if !strings.Contains(cmds[0].command, shellQuote(leaseHQCredentialHelperShell)) || strings.Contains(cmds[0].command, "username=oauth2") {
+	if !strings.Contains(cmds[0].command, shellQuote(leaseHQCredentialHelperShell("hq.example.invalid"))) || strings.Contains(cmds[0].command, "username=oauth2") {
 		t.Errorf("the checkout of a repository on HQ does not authenticate as mate:\n%s", cmds[0].command)
 	}
 	info, ok, err := LeaseTarget(fx.stateDir, "devpool-3")

@@ -44,8 +44,9 @@ import (
 // Mate's HQ — only once the pool's HQ credential (PoolHQCredentialEnvKey) is
 // this Mate's current one by zcp's own record (DP-16): the clone authenticates
 // exactly as a checkout does — a repository outside HQ from the pool's
-// GIT_TOKEN, one on HQ from the HQ credential, which no other repository's
-// helper reads — and writes no credential, helper or identity.
+// GIT_TOKEN, answered only to the host it is bound to (leaseTokenScope), one
+// on HQ from the HQ credential, which no other repository's helper reads —
+// and writes no credential, helper or identity.
 
 // leaseWarmStateFile is the clone's state, inside the clone's .git so it lives
 // and goes with the clone.
@@ -142,11 +143,12 @@ func leaseWarmRepoKey(repo string) string {
 // The clone runs in its own session (setsid), so a checkout can stop its whole
 // process group; its output goes to $HOME/.zcp/warm/clone.log. It fetches
 // through the inline helper a checkout uses (leaseCredentialHelperFor), so the
-// credential comes from the session's env — GIT_TOKEN, or the pool's HQ
-// credential for a repository on HQ — and is never composed in, and
-// it persists nothing: the checkout that takes the clone sets the helper and
-// the identity. repo and workDir are shell-quoted.
-func leaseWarmCloneCommand(workDir, repo, hqURL string) string {
+// credential comes from the session's env — GIT_TOKEN, answering tokenScope
+// alone, or the pool's HQ credential for a repository on HQ, answering HQ
+// alone — and is never composed in, and it persists nothing: the checkout
+// that takes the clone sets the helper and the identity. repo and workDir are
+// shell-quoted.
+func leaseWarmCloneCommand(workDir, repo, hqURL, tokenScope string) string {
 	q := shellQuote
 	wd := q(workDir)
 	state := ".git/" + leaseWarmStateFile
@@ -159,7 +161,7 @@ func leaseWarmCloneCommand(workDir, repo, hqURL string) string {
 		"git init -q || exit 1",
 		`printf 'repo %s\npid %s\n' ` + q(leaseWarmRepoKey(repo)) + ` "$$" > ` + state + " || exit 1",
 		"git remote add origin " + q(repo) + " && " +
-			"git -c credential.helper= -c credential.helper=" + q(leaseCredentialHelperFor(repo, hqURL)) + " fetch -q --prune origin && " +
+			"git " + leaseInlineHelperArgs(leaseCredentialHelperFor(repo, hqURL, tokenScope)) + " fetch -q --prune origin && " +
 			"c=$(git rev-parse -q --verify " + q("refs/remotes/origin/"+leaseDefaultBranch+"^{commit}") + ") && " +
 			`printf 'commit %s\n' "$c" >> ` + state + " && " +
 			`git checkout -q -f --detach "$c" && ` +
@@ -414,7 +416,10 @@ func (w *LeaseWarm) launchClone(ctx context.Context, d LeaseDeps, rp *resolvedPo
 		out.Outcome, out.Note = LeaseWarmCloneSkipped, "the container's hostname is not a pool container's, so nothing was written into it"
 		return out
 	}
-	answer, err := w.runLaunch(ctx, d, c.Hostname, leaseWarmCloneCommand(leaseWorkDir, repo, d.hqAddress()))
+	// The pool's GIT_TOKEN answers the scope its default repository or an
+	// earlier lease bound it to; a clone never binds it (repo "").
+	tokenScope, _ := leaseTokenScope(d.StateDir, rp.svc.Name, d.hqAddress(), "")
+	answer, err := w.runLaunch(ctx, d, c.Hostname, leaseWarmCloneCommand(leaseWorkDir, repo, d.hqAddress(), tokenScope))
 	if err != nil {
 		out.Outcome, out.Note = LeaseWarmCloneFailed, "the clone could not be started over ssh: "+sshFailureText(err)
 		return out
