@@ -115,6 +115,10 @@ func (c Client) Address() string { return strings.TrimRight(c.id.Origin, "/") }
 // ProjectID is the Mate's own project: HQ's id of the Mate.
 func (c Client) ProjectID() string { return c.id.ProjectID }
 
+// OrgID is the Zerops organisation the Mate's repository addresses name; ""
+// where the container has none (RepoURL then reports ErrNoOrganisation).
+func (c Client) OrgID() string { return c.id.OrgID }
+
 // RepoURL is where git reaches the repository repo of the application appID.
 func (c Client) RepoURL(appID, repo string) (string, error) {
 	return RepoURLAt(c.Address(), c.id.OrgID, appID, repo)

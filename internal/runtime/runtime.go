@@ -43,6 +43,13 @@ type Info struct {
 	// surface and renders the Chief's AGENTS.md section. Spec:
 	// docs/spec-mate.md §2.11.
 	Chief bool
+
+	// OrgID is the Zerops organisation (clientId) that owns this project:
+	// the first segment of every repository address in HQ. The container's
+	// environment does not carry it, so `zcp serve` sets it from the API key
+	// (auth.Info.ClientID) and Detect never does. "" where none is known; the
+	// addresses built from it then report hq.ErrNoOrganisation.
+	OrgID string
 }
 
 // Detect reads Zerops container env vars and returns runtime info.

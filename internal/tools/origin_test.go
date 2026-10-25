@@ -29,7 +29,6 @@ func originHQ(t *testing.T, repos string) (srv *mcp.Server, others func() []stri
 // it also returns the fake HQ's address.
 func originHQIn(t *testing.T, stateDir, repos string) (srv *mcp.Server, others func() []string, address string) {
 	t.Helper()
-	useHQOrg(t, labOrg)
 	body := `{"projectId":"P_MATE","name":"Ada","face":"f","standupRequestedBy":null,"appId":"a1","changes":[]`
 	if repos != "" {
 		body += `,"repos":` + repos
@@ -50,7 +49,7 @@ func originHQIn(t *testing.T, stateDir, repos string) (srv *mcp.Server, others f
 	t.Cleanup(fake.Close)
 	hqtest.Link(t, fake.URL, "P_MATE", "good")
 	srv = mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
-	RegisterOrigin(srv, fake.Client(), "P_MATE", stateDir)
+	RegisterOrigin(srv, fake.Client(), "P_MATE", labOrg, stateDir)
 	return srv, func() []string {
 		mu.Lock()
 		defer mu.Unlock()

@@ -146,8 +146,11 @@ type ServiceSnapshot struct {
 	// HQCheckoutOrigin is that half's checkout's origin as status read it
 	// (HQOriginNone for none; "" unread), and HQOriginPending where the
 	// wiring points it when that differs — the move develop's start makes.
+	// HQOriginBlocked says why the wiring cannot name that target (no
+	// organisation to address HQ's repository by).
 	HQCheckoutOrigin string `json:"-"`
 	HQOriginPending  string `json:"-"`
+	HQOriginBlocked  string `json:"-"`
 	// HQChange and HQBranch name, there, the change the pair records and the
 	// branch it is bound to (HQRepoRef.Change, .Branch); off the wire too.
 	HQChange int    `json:"-"`

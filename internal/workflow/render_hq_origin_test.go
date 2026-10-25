@@ -100,3 +100,20 @@ func TestRenderStatus_ADevHalfNamesThePairsChangeAndItsBranch(t *testing.T) {
 		})
 	}
 }
+
+// TestRenderStatus_ACheckoutWhoseTargetCannotBeNamedSaysWhy: a dev half whose
+// checkout origin could not be matched to HQ's repository, for want of the
+// organisation its address names, says that rather than nothing.
+func TestRenderStatus_ACheckoutWhoseTargetCannotBeNamedSaysWhy(t *testing.T) {
+	t.Parallel()
+	meta := &ServiceMeta{
+		Hostname: "appdev", Mode: topology.PlanModeStandard, Stages: []topology.StageRef{{Hostname: "appstage"}},
+		BootstrappedAt: "2026-10-22", GitPushState: topology.GitPushConfigured,
+		HQ: &HQRepoRef{AppID: "app-1", Repo: "app"},
+	}
+	svc := buildOneSnapshot(platform.ServiceStack{Name: "appdev", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}}, meta, nil)
+	svc.HQCheckoutOrigin, svc.HQOriginBlocked = HQOriginNone, "no organisation"
+	if line := renderServiceLine(svc); !strings.Contains(line, "cannot point it at HQ: no organisation") {
+		t.Errorf("the dev half's line does not say why: %s", line)
+	}
+}

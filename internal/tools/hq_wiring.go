@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -71,39 +70,36 @@ const hqCallTimeout = 30 * time.Second
 
 // hqIdentity is this container's identity toward HQ — its origin, project
 // and key — as the live env store holds it now, so a regenerated key is the
-// one presented.
+// one presented. It names no organisation: that comes with the runtime
+// context (runtime.Info.OrgID), for the clients that build repository
+// addresses (openHQIn).
 func hqIdentity() hq.Identity {
-	id := hq.IdentityFrom(mate.LiveLookup(mate.LiveEnvStorePath))
-	id.OrgID = hqOrganisation()
+	return hq.IdentityFrom(mate.LiveLookup(mate.LiveEnvStorePath))
+}
+
+// hqIdentityIn is hqIdentity naming orgID.
+func hqIdentityIn(orgID string) hq.Identity {
+	id := hqIdentity()
+	id.OrgID = orgID
 	return id
 }
 
-// hqOrg is the Zerops organisation (clientId) that owns this Mate's project,
-// resolved once at start from the API key (auth.Info.ClientID): the
-// container's environment does not carry it, and HQ's repository addresses
-// name it.
-var hqOrg atomic.Pointer[string]
-
-// UseHQOrganisation records the organisation the server resolved, for the
-// repository addresses HQ serves.
-func UseHQOrganisation(orgID string) { hqOrg.Store(&orgID) }
-
-// hqOrganisation is the organisation UseHQOrganisation recorded, "" before.
-func hqOrganisation() string {
-	if org := hqOrg.Load(); org != nil {
-		return *org
-	}
-	return ""
-}
-
 // openHQ is a client of this Mate's HQ under its project key, over
-// httpClient; false when the container has no key, project or HQ origin to
+// httpClient, for what builds no repository address — reads of the Mate's
+// state, changes by number; a client that does (hq.Client.RepoURL) comes from
+// openHQIn. False when the container has no key, project or HQ origin to
 // present.
 func openHQ(httpClient ops.HTTPDoer) (hq.Client, bool) {
+	return openHQIn(httpClient, "")
+}
+
+// openHQIn is openHQ whose repository addresses name orgID
+// (runtime.Info.OrgID); with none they report hq.ErrNoOrganisation.
+func openHQIn(httpClient ops.HTTPDoer, orgID string) (hq.Client, bool) {
 	if httpClient == nil {
 		return hq.Client{}, false
 	}
-	client, err := hq.Open(httpClient, hqIdentity())
+	client, err := hq.Open(httpClient, hqIdentityIn(orgID))
 	return client, err == nil
 }
 
@@ -182,7 +178,7 @@ func reconcileHQRepositories(
 	if !rt.InContainer || sshDeployer == nil {
 		return nil
 	}
-	hqc, linked := openHQ(httpClient)
+	hqc, linked := openHQIn(httpClient, rt.OrgID)
 	if !linked {
 		return nil
 	}
@@ -378,12 +374,13 @@ func keepHQPairCurrent(
 // (ops.BuildMainSyncCommand): a `main` that is only zcp's empty seed is put on
 // HQ's; one with commits HQ's lacks is left, with the step that keeps them.
 // "" when there is nothing to say — a check that could not run among it: the
-// next pass runs it again.
+// next pass runs it again. A container with no organisation cannot build
+// HQ's address, and says so.
 func hqPairMain(ctx context.Context, sshDeployer ops.SSHDeployer, hqc hq.Client, m *workflow.ServiceMeta) string {
 	dir := hqPairWorkingDir(m)
 	remote, err := hqc.RepoURL(m.HQ.AppID, m.HQ.Repo)
 	if err != nil {
-		return ""
+		return fmt.Sprintf("its %q could not be checked against HQ's: %v", hqBase, err)
 	}
 	out, err := sshDeployer.ExecSSH(ctx, m.Hostname, ops.BuildMainSyncCommand(dir, remote))
 	if err != nil {

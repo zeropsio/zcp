@@ -759,11 +759,10 @@ func newHQLab(t *testing.T) *hqLab {
 	t.Setenv("HOME", t.TempDir())
 	// zcp's own git against HQ trusts the fake's certificate.
 	t.Setenv("GIT_SSL_CAINFO", fake.caFile)
-	useHQOrg(t, labOrg)
 	hqtest.Link(t, fake.srv.URL, labMate, labKey)
 	hqtest.GitCredential(t, labCredential)
 	lab := &hqLab{t: t, hq: fake, stateDir: t.TempDir(), pair: t.TempDir(),
-		rt: runtime.Info{InContainer: true, ProjectID: labMate}}
+		rt: runtime.Info{InContainer: true, ProjectID: labMate, OrgID: labOrg}}
 	prevAttempts, prevDelay := gitPushSessionAuthAttempts, gitPushSessionAuthDelay
 	prevDescribeRetry := describeRetry
 	gitPushSessionAuthAttempts, gitPushSessionAuthDelay = 2, 0
@@ -901,12 +900,4 @@ func (f *fakeHQ) landOnMain(repo string, files map[string]string) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		f.t.Fatalf("land on main: %v\n%s", err, out)
 	}
-}
-
-// useHQOrg is the organisation this test's server resolved
-// (UseHQOrganisation). Every test names the same one and none is restored:
-// the setting is process-wide and tests run in parallel.
-func useHQOrg(t *testing.T, orgID string) {
-	t.Helper()
-	UseHQOrganisation(orgID)
 }

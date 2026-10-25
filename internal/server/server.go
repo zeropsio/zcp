@@ -101,7 +101,7 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 	}
 
 	refreshAgentContext(stateDir, rtInfo, logger)
-	tools.UseHQOrganisation(authInfo.ClientID)
+	rtInfo.OrgID = authInfo.ClientID
 
 	rc := RuntimeContext{
 		AdoptionNote: adoptionNote,
@@ -367,7 +367,7 @@ func (s *Server) registerTools() {
 		// A Mate's agent asks where the code of the repository it came from
 		// is kept (docs/spec-mate.md §5.10); a Mate's client
 		// draws the card, so it is Mate-gated like every mate-shaped effect.
-		tools.RegisterOrigin(s.server, httpClient, projectID, stateDir)
+		tools.RegisterOrigin(s.server, httpClient, projectID, s.rtInfo.OrgID, stateDir)
 		// A Mate asks its person's Chief for what lies outside its project
 		// (docs/spec-mate.md §2.11); the card it proposes is drawn by a
 		// Mate's client, so the tool is Mate-gated like every mate-shaped

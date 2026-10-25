@@ -45,7 +45,7 @@ type originAnswer struct {
 // checkout's origin becomes, or in Mate, HQ's git staying the origin and the
 // repository only followed. Like zerops_env action="request" it writes
 // nothing; Mate draws the card and the person picks in HQ.
-func RegisterOrigin(srv *mcp.Server, httpClient hq.Doer, projectID, stateDir string) {
+func RegisterOrigin(srv *mcp.Server, httpClient hq.Doer, projectID, orgID, stateDir string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_origin",
 		Description: "Ask the person where a repository's code is kept: on GitHub, mounted in HQ as the checkout's origin, or in Mate, only following it; one outside GitHub is only followed. Writes nothing: Mate shows a card for repo, the dev hostname the pair will wire. A message of its own tells you their pick. Never ask for a token.",
@@ -72,7 +72,7 @@ func RegisterOrigin(srv *mcp.Server, httpClient hq.Doer, projectID, stateDir str
 		if err != nil {
 			return observeFailure(fmt.Sprintf("HQ could not be read, so whether %s already has an origin is unknown and nothing was asked: %v. Ask again later.", req.Repo, err)), nil, nil
 		}
-		return jsonResult(originAnswerOf(req, state, client.Address(), hqOrganisation(), stateDir)), nil, nil
+		return jsonResult(originAnswerOf(req, state, client.Address(), orgID, stateDir)), nil, nil
 	})
 }
 

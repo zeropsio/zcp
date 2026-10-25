@@ -63,9 +63,12 @@ func hqOriginIn(state hq.MateState, ref *workflow.HQRepoRef) (workflow.HQOrigin,
 // in HQ or followed, its repository in HQ. A record that does not say leaves
 // origin as it is. Never a second remote: what zcp needs of HQ it reaches at
 // HQ's own address (ops.BuildMainSyncCommand). The line says a move, "" for
-// none.
+// none; a repository's address that cannot be built is said, not skipped.
 func hqPairOrigin(ctx context.Context, sshDeployer ops.SSHDeployer, hqc hq.Client, m *workflow.ServiceMeta) string {
-	url := hqPairOriginTarget(hqc.Address(), hqOrganisation(), m)
+	url, err := hqPairOriginTarget(hqc.Address(), hqc.OrgID(), m)
+	if err != nil {
+		return fmt.Sprintf("its checkout's origin could not be pointed at its repository in HQ: %v", err)
+	}
 	if url == "" {
 		return ""
 	}
@@ -94,25 +97,22 @@ func hqPairOrigin(ctx context.Context, sshDeployer ops.SSHDeployer, hqc hq.Clien
 // hqPairOriginTarget is where the wiring points a wired pair's checkout's
 // origin (hqPairOrigin) by its record of how the code is kept: on GitHub, the
 // GitHub repository; in HQ or followed, its repository at the HQ at address.
-// "" when the record does not say, or HQ's address is unknown.
-func hqPairOriginTarget(address, orgID string, m *workflow.ServiceMeta) string {
+// "" when the record does not say, or HQ's address is unknown;
+// hq.ErrNoOrganisation where HQ's repository is the target and orgID is empty.
+func hqPairOriginTarget(address, orgID string, m *workflow.ServiceMeta) (string, error) {
 	if m.HQ.Origin == nil {
-		return ""
+		return "", nil
 	}
 	switch m.HQ.Origin.Mode {
 	case hq.OriginOnGitHub:
-		return m.HQ.Origin.URL
+		return m.HQ.Origin.URL, nil
 	case hq.OriginFollowed, workflow.HQOriginNone:
 		if address == "" {
-			return ""
+			return "", nil
 		}
-		target, err := hq.RepoURLAt(address, orgID, m.HQ.AppID, m.HQ.Repo)
-		if err != nil {
-			return ""
-		}
-		return target
+		return hq.RepoURLAt(address, orgID, m.HQ.AppID, m.HQ.Repo)
 	}
-	return ""
+	return "", nil
 }
 
 // hqCheckoutOriginBound bounds status's read of the checkouts' origins: a
@@ -129,7 +129,7 @@ func attachHQCheckoutOrigin(ctx context.Context, services []workflow.ServiceSnap
 	if !rt.InContainer || ssh == nil {
 		return
 	}
-	address, orgID := hqAddress(), hqOrganisation()
+	address := hqAddress()
 	ctx, cancel := context.WithTimeout(ctx, hqCheckoutOriginBound)
 	defer cancel()
 	var wg sync.WaitGroup
@@ -157,7 +157,11 @@ func attachHQCheckoutOrigin(ctx context.Context, services []workflow.ServiceSnap
 			}
 			// Each goroutine writes only its own index.
 			services[i].HQCheckoutOrigin = now
-			if target := hqPairOriginTarget(address, orgID, m); target != "" && target != now {
+			target, err := hqPairOriginTarget(address, rt.OrgID, m)
+			switch {
+			case err != nil:
+				services[i].HQOriginBlocked = err.Error()
+			case target != "" && target != now:
 				services[i].HQOriginPending = target
 			}
 		}(i, m)
