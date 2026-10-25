@@ -109,8 +109,8 @@ func TestDescribeChange_PicturePrunedWhileDescribing(t *testing.T) {
 	if strings.Contains(text, "goes onto #") {
 		t.Errorf("the refusal promises the words go on later:\n%s", text)
 	}
-	if words := lab.meta().HQ.ChangeDescription; words != nil {
-		t.Errorf("the words are kept: %+v", words)
+	if kept := lab.kept(1); kept == nil || kept.Description != nil {
+		t.Errorf("the words are kept: %+v", kept)
 	}
 	if len(lab.hq.attachments) != 0 || lab.hq.change(1).Body != "" {
 		t.Errorf("attached %d pictures, body %q: want nothing written", len(lab.hq.attachments), lab.hq.change(1).Body)
@@ -199,7 +199,7 @@ func TestDescribeChange_AttachRefusedForNow(t *testing.T) {
 			if !strings.Contains(text, `"kept":true`) || !strings.Contains(text, "put it on #1") {
 				t.Errorf("want the words kept for the next describe, got:\n%s", text)
 			}
-			if kept := lab.meta().HQ.ChangeDescription; kept == nil || kept.Text != words {
+			if kept := lab.kept(1); kept == nil || kept.Description == nil || kept.Description.Text != words {
 				t.Errorf("kept = %+v, want the words kept", kept)
 			}
 		})

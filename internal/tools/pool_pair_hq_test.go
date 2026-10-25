@@ -307,16 +307,13 @@ func TestHQUpsertCallbacks_MissingMeta_SkipWrite(t *testing.T) {
 	read := func() *workflow.ServiceMeta {
 		return &workflow.ServiceMeta{
 			Hostname: "appdev", Mode: topology.PlanModeStandard, GitPushState: topology.GitPushConfigured,
-			HQ: &workflow.HQRepoRef{AppID: labApp, Repo: "appdev", Change: 3, Branch: hqReleasedBranch(hqc), CredentialFingerprint: "fp-old"},
+			HQ: &workflow.HQRepoRef{AppID: labApp, Repo: "appdev", CredentialFingerprint: "fp-old"},
 		}
 	}
 	tests := []struct {
 		name  string
 		write func(stateDir string)
 	}{
-		{name: "recordChange", write: func(stateDir string) { recordChange(stateDir, read(), 4, "feat") }},
-		{name: "upgradeReleasedBranch", write: func(stateDir string) { upgradeReleasedBranch(stateDir, hqc, read()) }},
-		{name: "clearChange", write: func(stateDir string) { clearChange(stateDir, read(), 3) }},
 		{name: "recordHQOrigin", write: func(stateDir string) {
 			recordHQOrigin(stateDir, read(), hq.MateState{AppID: &app, Repos: []hq.MateRepo{{Name: "appdev"}}})
 		}},

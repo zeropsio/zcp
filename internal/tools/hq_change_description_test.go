@@ -36,14 +36,27 @@ func (l *hqLab) describeTitled(service, title, words string) (text string, isErr
 	return resultText(l.t, res), res.IsError
 }
 
-// openedLab is a lab whose pair's work is up as change #1, open, and on the
-// pair's record as a describe that found it leaves it.
+// describeOn is describe-change naming the change by its branch.
+func (l *hqLab) describeOn(branch, words string) (text string, isError bool) {
+	l.t.Helper()
+	res, typed, err := handleDescribeChange(context.Background(), l.hq.srv.Client(), l.stateDir, WorkflowInput{Branch: branch, Description: words})
+	if err != nil {
+		l.t.Fatalf("handleDescribeChange: %v", err)
+	}
+	if typed != nil {
+		l.t.Error("a handler's typed output must stay nil — machine state rides in the text")
+	}
+	return resultText(l.t, res), res.IsError
+}
+
+// openedLab is a lab whose pair's work is up as change #1, open, and in the
+// ledger as a describe that found it leaves it.
 func openedLab(t *testing.T) *hqLab {
 	t.Helper()
 	lab := newHQLab(t)
 	lab.wire()
 	lab.write(map[string]string{"index.js": "the app\n"})
-	recordChange(lab.stateDir, lab.meta(), lab.openChange().Number, "")
+	lab.openRecorded()
 	return lab
 }
 
@@ -59,7 +72,7 @@ func TestDescribeChange(t *testing.T) {
 		wantTitle string
 		wantKept  *workflow.ChangeDescription
 		wantText  []string
-		// wantChange is the change the pair records after.
+		// wantChange is the change the ledger keeps after, 0 for none.
 		wantChange int
 	}{
 		{
@@ -93,7 +106,7 @@ func TestDescribeChange(t *testing.T) {
 			lab: func(t *testing.T) *hqLab {
 				t.Helper()
 				lab := openedLab(t)
-				clearChange(lab.stateDir, lab.meta(), 1)
+				lab.forget(1)
 				return lab
 			},
 			wantBody: describedWords, wantChange: 1, wantText: []string{`"described":true`, `"pullRequest":1`},
@@ -151,12 +164,19 @@ func TestDescribeChange(t *testing.T) {
 			if strings.Contains(text, `"kept":true`) != (tt.wantKept != nil) {
 				t.Errorf("the answer says kept=%v, want %v:\n%s", tt.wantKept == nil, tt.wantKept != nil, text)
 			}
-			meta := lab.meta()
-			if got := meta.HQ.ChangeDescription; (got == nil) != (tt.wantKept == nil) || got != nil && *got != *tt.wantKept {
+			ledger := lab.ledger()
+			var got *workflow.ChangeDescription
+			if len(ledger) == 1 {
+				got = ledger[0].Description
+			}
+			if (got == nil) != (tt.wantKept == nil) || got != nil && *got != *tt.wantKept {
 				t.Errorf("kept = %+v, want %+v", got, tt.wantKept)
 			}
-			if meta.HQ.Change != tt.wantChange {
-				t.Errorf("the pair records change #%d, want #%d", meta.HQ.Change, tt.wantChange)
+			switch {
+			case tt.wantChange == 0 && len(ledger) != 0:
+				t.Errorf("the ledger keeps %+v, want no change", ledger)
+			case tt.wantChange != 0 && (len(ledger) != 1 || ledger[0].Number != tt.wantChange):
+				t.Errorf("the ledger keeps %+v, want change #%d", ledger, tt.wantChange)
 			}
 			if lab.hq.change(2) != nil {
 				t.Errorf("describing a change opened one; it must never open one")
@@ -249,6 +269,15 @@ func TestDescribeChange_Refusals(t *testing.T) {
 			for _, dev := range tt.pairs {
 				if m, _ := workflow.FindServiceMeta(stateDir, dev); m.HQ.ChangeDescription != nil {
 					t.Errorf("%s keeps %+v after a refusal", dev, m.HQ.ChangeDescription)
+				}
+			}
+			kept, err := workflow.ListHQChanges(stateDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, c := range kept {
+				if c.Description != nil {
+					t.Errorf("change #%d of %s keeps %+v after a refusal", c.Number, c.Repo, c.Description)
 				}
 			}
 		})
@@ -372,8 +401,8 @@ func TestDescribeChange_Pictures(t *testing.T) {
 		if body := lab.hq.change(1).Body; body != "" {
 			t.Errorf("a body went onto the change with its picture refused: %q", body)
 		}
-		if kept := lab.meta().HQ.ChangeDescription; kept != nil {
-			t.Errorf("kept = %+v, want the words dropped: they could never go on", kept)
+		if kept := lab.kept(1); kept == nil || kept.Description != nil {
+			t.Errorf("kept = %+v, want change #1 with the words dropped: they could never go on", kept)
 		}
 	})
 }

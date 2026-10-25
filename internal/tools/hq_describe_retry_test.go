@@ -164,7 +164,7 @@ func TestDescribeChange_ReadsItsChangeThroughTheRoll(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			lab := openedLab(t)
-			clearChange(lab.stateDir, lab.meta(), 1)
+			lab.forget(1)
 			tt.hq(lab)
 			text, isError := lab.describe("appdev", describedWords)
 			if isError {
