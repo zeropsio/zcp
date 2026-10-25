@@ -45,28 +45,27 @@ func browserInputSchema() *jsonschema.Schema {
 func RegisterBrowser(srv *mcp.Server, stateDir string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "zerops_browser",
-		Description: "Drive Chrome via agent-browser in ONE bounded batch (ZCP-container only). " +
-			"The tool manages lifecycle: it runs [open url] + " +
+		Description: "Drive Chrome via agent-browser in ONE bounded batch (ZCP-container only): [open url] + " +
 			"your commands + [screenshot if requested] + [errors] + [console] + [network requests]. " +
 			"The call already waits for the page's first paint; after a click, scroll, reload or navigation, wait for what should appear — " +
 			"[\"wait\",\"<sel>\"] or [\"wait\",\"--text\",\"<text>\"] — never for a fixed time. " +
 			"Only wait polls (up to 25 s, or [\"wait\",\"<sel>\",\"--timeout\",\"<ms>\"]); click, fill, check, find, get and is look once " +
 			"and fail at once on an element that is not there yet. " +
 			"Recipe close step: one call per subdomain (appstage, then appdev). " +
-			"One warm Chrome serves every call: calls take turns (waiting for the browser " +
-			"within timeoutSeconds) and each call's tabs close when it ends. A call that times out, is cancelled " +
-			"or wedges Chrome returns its finished steps and recycles the browser (browserRecycled). " +
+			"One warm Chrome serves every call: calls take turns (waiting within timeoutSeconds) " +
+			"and each call's tabs close when it ends. A call that times out, is cancelled " +
+			"or wedges Chrome returns its finished steps and recycles the browser. " +
 			"isolation: \"tab\" (default) keeps cookies, login, storage, HTTP cache and service workers from earlier calls — " +
 			"right for re-checking your change after a deploy. " +
 			"\"fresh-context\" starts with none of them — only for the first check after a deploy that changed sign-in, storage, " +
 			"a service worker or long-cached assets, or for a signed-out view; it stops Chrome as the call ends, so the next call starts a cold one. " +
 			"Every other call stays on \"tab\". \"new-browser\" also restarts Chrome first, for a page that misbehaves only in the warm browser. " +
-			"freshBrowser: true means a Chrome started for the call ran it (always after new-browser); " +
+			"freshBrowser: true means Chrome was started for the call (always after new-browser); " +
 			"browserRecycled: true means the call ended unclean and the browser was stopped (not set by a fresh-context call's clean stop). " +
 			"Each step's errorKind: selector-not-found, not-editable, timeout, wedge, invalid-command " +
 			"(an unknown command, subcommand or find action: fix the command, not the page), " +
 			"stale-ref (an @eN ref, see below), " +
-			"script-timeout (your eval's promise never settled — e.g. waiting on every animation, which a looping one never finishes; the page is alive) " +
+			"script-timeout (your eval's promise never settled, e.g. awaiting a looping animation's finished; the page is alive) " +
 			"or other failures. " +
 			"commands[] vocabulary (<sel> is a CSS selector): " +
 			"[\"find\",\"role\",\"button\",\"click\",\"--name\",\"Submit\"], [\"find\",\"label\",\"<text>\",\"check\"], " +
@@ -89,9 +88,8 @@ func RegisterBrowser(srv *mcp.Server, stateDir string) {
 			"(screenshot.picture, e.g. \"shot-3\") for screenshot.keptFor: write ![what it shows](shot-3) in a " +
 			"zerops_workflow action=\"describe-change\" description to show it to the person. " +
 			"Returns: steps[], errorsOutput, consoleOutput, " +
-			"networkOutput (4xx/5xx from [network requests], always on; " +
-			"a request with no status — failed or still in flight — is not listed), " +
-			"durationMs, freshBrowser, browserRecycled, message; outputs past 20k chars are cut and fullResult names a file with all of it. " +
+			"networkOutput (4xx/5xx; a request with no status — failed or in flight — is not listed), " +
+			"durationMs, freshBrowser, browserRecycled, message; outputs past 20k chars are cut; fullResult names a file with all of it. " +
 			"To say how a call ran, report the result's durationMs, freshBrowser and browserRecycled; a script that summarises results keeps them.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Drive browser via agent-browser",

@@ -379,7 +379,7 @@ func TestBrowserTool_DescriptionTeachesTheCall(t *testing.T) {
 		"An @eN ref exists only after a snapshot earlier in the SAME call and dies with the call's tab",
 		"invalid-command",
 		"stale-ref",
-		"script-timeout (your eval's promise never settled — e.g. waiting on every animation, which a looping one never finishes; the page is alive)",
+		"script-timeout (your eval's promise never settled, e.g. awaiting a looping animation's finished; the page is alive)",
 		`--name matches a substring ("Sign in" hits "Sign in with passkey"); --exact matches the whole name.`,
 		`["eval","<js>"] (value as JSON text; only for what get/is/find cannot read, e.g. localStorage).`,
 		"open, close, tab and window never run; each returns a failed invalid-command step.",
