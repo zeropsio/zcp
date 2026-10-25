@@ -1,4 +1,4 @@
-// Tests for: cmd/zcp/main.go chiefAccess — `zcp serve` reads the Chief mark
+// Tests for: cmd/zcp/main.go chiefAccess — `zcp serve` reads the Chief it answers to
 // from HQ at start (docs/spec-mate.md §3.11).
 package main
 
@@ -13,7 +13,7 @@ import (
 	"github.com/zeropsio/zcp/internal/hq"
 )
 
-func TestChiefAccess_TheMarkDecidesWhetherThisProjectServesOrgMode(t *testing.T) {
+func TestChiefAccess_TheChiefHQNamesDecidesWhetherThisProjectServesOrgMode(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name       string
@@ -22,9 +22,9 @@ func TestChiefAccess_TheMarkDecidesWhetherThisProjectServesOrgMode(t *testing.T)
 		wantChief  bool
 		wantStderr string
 	}{
-		{name: "a mark naming this project is the Chief", status: 200, body: `{"projectId":"p-me","chief":{"projectId":"p-me"}}`, wantChief: true},
-		{name: "a mark naming another project is no Chief", status: 200, body: `{"projectId":"p-me","chief":{"projectId":"p-other"}}`},
-		{name: "no mark is no Chief", status: 200, body: `{"projectId":"p-me","chief":null}`},
+		{name: "a Chief naming this project is the Chief", status: 200, body: `{"projectId":"p-me","chief":{"projectId":"p-me"}}`, wantChief: true},
+		{name: "a Chief naming another project is no Chief", status: 200, body: `{"projectId":"p-me","chief":{"projectId":"p-other"}}`},
+		{name: "no Chief named is no Chief", status: 200, body: `{"projectId":"p-me","chief":null}`},
 		{name: "an HQ that refuses is no Chief, and says so", status: 500, body: `{}`, wantStderr: "serving the single-project surface"},
 	}
 	for _, tt := range tests {

@@ -17,7 +17,7 @@ import (
 // §2.11, §3.11): the Chief reads HQ's overview with its project key and never
 // writes. HQ answers from its organization view, cut by kind of data to
 // projects, services and their state, and members with their roles, and only
-// while the Chief mark names the caller's project. Two things hold the reader
+// while the Chief the caller answers to is its own project. Two things hold the reader
 // to reads in code rather than in prose:
 //
 //   - the method set is reads only, pinned name by name by
@@ -58,7 +58,7 @@ type OrgAccess struct {
 }
 
 // OpenOrgReader builds the read-only client of HQ's overview. It makes no
-// call: the first read finds out whether the mark still names this project.
+// call: the first read finds out whether this project is still a Chief.
 func OpenOrgReader(access OrgAccess) (*OrgReader, error) {
 	base, err := parseOrigin(access.Origin)
 	if err != nil {

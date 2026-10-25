@@ -332,13 +332,13 @@ func runServe() int {
 }
 
 func runServer(mcpStdout io.Writer, tel telemetry.Emitter) (*server.Server, error) {
-	// Org mode (docs/spec-mate.md §2.11, §3.11): HQ's Chief mark names the
+	// Org mode (docs/spec-mate.md §2.11, §3.11): the Chief HQ says this Mate answers to names the
 	// project this serve belongs to. The identity is read through the
 	// container's live env store, so an agent whose MCP launcher strips the
 	// environment still reaches HQ.
 	getenv := mate.LiveLookup(mate.LiveEnvStorePath)
 	if rt := runtime.DetectFrom(getenv); rt.MateEnabled {
-		if access, ok := chiefAccess(context.Background(), &http.Client{Timeout: chiefMarkTimeout}, hq.IdentityFrom(getenv), os.Stderr); ok {
+		if access, ok := chiefAccess(context.Background(), &http.Client{Timeout: chiefReadTimeout}, hq.IdentityFrom(getenv), os.Stderr); ok {
 			rt.Chief = true
 			return runOrgServer(mcpStdout, tel, access, rt)
 		}
@@ -418,12 +418,12 @@ func runServer(mcpStdout io.Writer, tel telemetry.Emitter) (*server.Server, erro
 	return srv, err
 }
 
-// chiefMarkTimeout bounds the one read of the Chief mark at start, so an HQ
+// chiefReadTimeout bounds the one read of the Chief at start, so an HQ
 // that does not answer delays the single-project surface by seconds, not
 // minutes.
-const chiefMarkTimeout = 5 * time.Second
+const chiefReadTimeout = 5 * time.Second
 
-// chiefAccess reads the Chief mark from HQ (GET /api/mate/self) and, when it
+// chiefAccess reads from HQ the Chief this Mate answers to (GET /api/mate/self) and, when it
 // names this identity's project, returns what the org reader opens with. A
 // Mate whose HQ cannot be reached or asked serves the single-project surface
 // and says so on stderr; a container with no identity to present is no Chief
@@ -433,7 +433,7 @@ func chiefAccess(ctx context.Context, httpClient hq.Doer, id hq.Identity, stderr
 	if err != nil {
 		return platform.OrgAccess{}, false
 	}
-	chief, err := client.Once().Bounded(chiefMarkTimeout, chiefMarkTimeout).IsChief(ctx)
+	chief, err := client.Once().Bounded(chiefReadTimeout, chiefReadTimeout).IsChief(ctx)
 	if err != nil {
 		fmt.Fprintf(stderr, "zcp: HQ did not say whether this project is the Chief (%v); serving the single-project surface\n", err)
 		return platform.OrgAccess{}, false

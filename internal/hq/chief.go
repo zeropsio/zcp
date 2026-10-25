@@ -6,8 +6,8 @@ import (
 	"net/http"
 )
 
-// ProposeChief binds an offer to this Mate's project and the organisation's
-// current Chief mark at HQ.
+// ProposeChief binds an offer to this Mate's project and its owner's
+// Chief at HQ.
 // HQ returns only an offer id: no message is sent.
 func (c Client) ProposeChief(ctx context.Context) (string, error) {
 	var answer struct {
