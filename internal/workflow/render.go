@@ -3,7 +3,6 @@ package workflow
 import (
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/topology"
@@ -19,8 +18,8 @@ type Response struct {
 }
 
 // RenderStatus produces the markdown status block from a Response. Section
-// order is stable: Phase → Services → Leases → Progress → Blockers → Guidance →
-// Next. Each section is skipped when it has no content, keeping the
+// order is stable: Phase → Services → Leases → Changes → Progress → Blockers →
+// Guidance → Next. Each section is skipped when it has no content, keeping the
 // output compact. Blockers is a one-line call-to-action surfaced above
 // the (large) Guidance section so the auto-close gate is visible
 // without scrolling past atoms.
@@ -31,6 +30,7 @@ func RenderStatus(resp Response) string {
 	renderPhase(&b, resp.Envelope)
 	renderServices(&b, resp.Envelope)
 	renderLeases(&b, resp.Envelope)
+	renderHQChanges(&b, resp.Envelope)
 	renderProgressAndBlockers(&b, resp.Envelope)
 	renderProdSourceControlSignpost(&b, resp.Envelope)
 	renderGuidance(&b, resp.Guidance)
@@ -540,12 +540,6 @@ func hqFields(svc ServiceSnapshot) []string {
 			checkout += " (pending: develop's start points it at " + topology.RedactRepoURLCredentials(svc.HQOriginPending) + ")"
 		}
 		fields = append(fields, checkout)
-	}
-	if svc.HQChange != 0 {
-		fields = append(fields, "change="+strconv.Itoa(svc.HQChange))
-	}
-	if svc.HQChange != 0 && svc.HQBranch != "" {
-		fields = append(fields, "changeBranch="+svc.HQBranch)
 	}
 	return fields
 }

@@ -170,7 +170,7 @@ func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir 
 				views = []ops.LeaseView{}
 			}
 			return jsonResult(leaseToolResult{
-				Action: input.Action, Leases: views, UnreadPools: status.Unread, Warm: status.Warm, NextActions: leaseStatusNext(views), Envelope: envelope(ctx, views...),
+				Action: input.Action, Leases: views, UnreadPools: status.Unread, Warm: status.Warm, NextActions: joinNext(leaseStatusNext(views), leaseGroupChanges(stateDir, hqAddress(), views)), Envelope: envelope(ctx, views...),
 			}), nil, nil
 		case leaseActionRelease:
 			force := false

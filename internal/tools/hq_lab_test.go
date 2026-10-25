@@ -690,7 +690,6 @@ func (f *fakeHQ) rejudge(repo string) {
 		base := f.git(f.t.Context(), dir, "merge-base", "main", *head)
 		c.Behind = base != main
 		c.Mergeability = hq.MergeClean
-		//nolint:gosec // G204: a test's own git
 		if err := exec.CommandContext(f.t.Context(), "git", "-C", dir, "merge-tree", "--write-tree", "main", *head).Run(); err != nil {
 			c.Mergeability = hq.MergeConflict
 		}

@@ -677,7 +677,7 @@ func TestBuildAgentsMD_Container_GitHostIsHQ(t *testing.T) {
 
 // A Mate's git-host paragraph says one branch per piece of work and one change
 // per branch: new work on a new branch from an up-to-date main, a change
-// carried on on its own branch, a change built on another's unmerged work
+// that stays on its own branch, a change built on another's unmerged work
 // cut from that branch and saying so, and a branch kept current by merging
 // origin/main — never a rebase, never a force. It no longer sends new work
 // onto an open change's branch, nor names a change on the pair.

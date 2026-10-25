@@ -1153,6 +1153,7 @@ func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client 
 	reads.Go(func() { attachHQCheckoutOrigin(ctx, envelope.Services, sshDeployer, rt, engine.StateDir()) })
 	reads.Wait()
 	attachPartsSignal(ctx, envelope.Services, sshDeployer, rt, engine)
+	envelope.HQChanges = hqChangesStatus(engine.StateDir(), hqAddress(), time.Now())
 	attachRollbackInfo(ctx, envelope.Services, client, projectID)
 	corpus, err := workflow.LoadAtomCorpus()
 	if err != nil {

@@ -131,7 +131,7 @@ func handleDescribeChange(
 	var fresh *hq.MateState
 	if stateErr == nil {
 		fresh = &state
-		if learned := learnDescribedLandings(stateDir, target, kept, state); learned != "" {
+		if learned := learnDescribedLandings(stateDir, hqc.Address(), target, kept, state); learned != "" {
 			return jsonResult(changeDescriptionResult{
 				Service: service,
 				Message: learned + " The description was not written: the change it was for is no longer open, " +
@@ -247,13 +247,13 @@ func describedWhere(target changeTarget) string {
 // the repository's — and says it of those no longer open (learnChangeLanding);
 // "" when every one is open. Words are never put on another change then:
 // with no branch named, which one they were for is the Mate's to say.
-func learnDescribedLandings(stateDir string, target changeTarget, kept []workflow.HQChange, state hq.MateState) string {
+func learnDescribedLandings(stateDir, address string, target changeTarget, kept []workflow.HQChange, state hq.MateState) string {
 	var learned []string
 	for _, c := range kept {
 		if target.Branch != "" && c.Branch != target.Branch {
 			continue
 		}
-		if line := learnChangeLanding(stateDir, c, state); line != "" {
+		if line := learnChangeLanding(stateDir, address, c, state); line != "" {
 			learned = append(learned, sentenceOf(line))
 		}
 	}
@@ -339,17 +339,6 @@ func describeTitleRefusal(title string) *platform.PlatformError {
 		return platform.NewPlatformError(platform.ErrInvalidParameter,
 			fmt.Sprintf("The title is %d characters long; a change's title holds at most %d.", utf8.RuneCountInString(title), changeTitleRunes),
 			"Say what this repository's change does in a few words; the rest belongs in the description.")
-	}
-	return nil
-}
-
-// openChangeIn is the Mate's open change in repo as its own state names it,
-// nil for none.
-func openChangeIn(state hq.MateState, repo string) *hq.MateChange {
-	for i := range state.Changes {
-		if c := &state.Changes[i]; c.Repo == repo && c.State == hq.ChangeOpen {
-			return c
-		}
 	}
 	return nil
 }

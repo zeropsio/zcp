@@ -176,7 +176,7 @@ func TestOpenChange_OldHQAnswersTheOpenOne_RecordsNothingForTheAskedBranch(t *te
 	if got := branchesOf(lab.ledger()); got != "#1@fix-login" {
 		t.Errorf("ledger = %s, want only #1@fix-login", got)
 	}
-	words, isError := lab.describeOn("add-signup", describedWords)
+	words, isError := lab.describeOn("add-signup")
 	if isError || !strings.Contains(words, `"described":false`) || !strings.Contains(words, "add-signup") {
 		t.Errorf("describing the branch asked for: %s", words)
 	}
@@ -269,7 +269,7 @@ func TestOpenChange_PairsSharingARepositoryOpenAChangePerBranch(t *testing.T) {
 func TestDescribeChange_ByBranch(t *testing.T) {
 	lab := twoOpenChanges(t)
 
-	text, isError := lab.describeOn("add-signup", describedWords)
+	text, isError := lab.describeOn("add-signup")
 
 	if isError || !strings.Contains(text, `"described":true`) || !strings.Contains(text, `"pullRequest":2`) {
 		t.Fatalf("want change #2 described: %s", text)

@@ -25,7 +25,7 @@ import (
 // recipe repository, which a person reviews and merges, the recipe's floors
 // applied (bundle.ApplyResourceFloor). Nothing is proposed on its own: a
 // Mate's experiment with its own scale is not the group's until someone says
-// so. HQ keeps one open change per Mate per repository, so a scaling
+// so. This Mate keeps one recipe proposal open at a time, so a scaling
 // proposal and the additive one never write over each other: whichever finds
 // the other open leaves it as it is and says so.
 
@@ -194,7 +194,7 @@ func handleGroupRecipeScaling(
 	result := map[string]any{"groupRepo": hq.RecipeRepo}
 	if written.other != nil && len(changed) > 0 {
 		return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
-			fmt.Sprintf("The scaling proposal was not made: this Mate's change #%d in the recipe repository %q (%q) is open, and HQ keeps one open change per Mate per repository.",
+			fmt.Sprintf("The scaling proposal was not made: this Mate's change #%d in the recipe repository %q (%q) is open, and this Mate keeps one recipe proposal open at a time.",
 				written.other.number, hq.RecipeRepo, written.other.title),
 			fmt.Sprintf("Retry once change #%d is merged or closed (%s).", written.other.number,
 				comp.hqc.ChangeURL(comp.appID, hq.RecipeRepo, written.other.number))), WithRecoveryStatus()), nil, nil

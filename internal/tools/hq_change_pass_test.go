@@ -47,7 +47,7 @@ func describedChanges(t *testing.T) *hqLab {
 	t.Helper()
 	lab := twoOpenChanges(t)
 	for _, branch := range []string{"fix-login", "add-signup"} {
-		if text, isError := lab.describeOn(branch, describedWords); isError || !strings.Contains(text, `"described":true`) {
+		if text, isError := lab.describeOn(branch); isError || !strings.Contains(text, `"described":true`) {
 			t.Fatalf("describe %s: %s", branch, text)
 		}
 	}
@@ -125,7 +125,7 @@ func TestHQPass_ConflictToldWithMergeNotRebase(t *testing.T) {
 		if answer, text, isError := lab.openChangeFrom(branch, "Work on "+branch); isError || !answer.Created {
 			t.Fatalf("open %s: %s", branch, text)
 		}
-		if text, isError := lab.describeOn(branch, describedWords); isError {
+		if text, isError := lab.describeOn(branch); isError {
 			t.Fatalf("describe %s: %s", branch, text)
 		}
 	}
@@ -232,7 +232,7 @@ func TestStatus_OneBlockPerRepository(t *testing.T) {
 	lab.leaseOf("hqpool", 4, "fix-login")
 	lab.leaseOf("boxpool", 6, "fix-login")
 	lab.leaseOf("boxpool", 7, "build-stamp")
-	if text, isError := lab.describeOn("add-signup", describedWords); isError {
+	if text, isError := lab.describeOn("add-signup"); isError {
 		t.Fatalf("describe: %s", text)
 	}
 	lab.passReport()
@@ -271,8 +271,10 @@ func TestLaunchProduction_ListsEveryOpenChangeOnce(t *testing.T) {
 	if !strings.Contains(text, "appdev #1 and #2") {
 		t.Errorf("the refusal does not name appdev #1 and #2: %s", text)
 	}
-	if n := strings.Count(text, "#1"); n != 1 {
-		t.Errorf("the refusal names #1 %d times: %s", n, text)
+	// The refusal carries its words twice (guidance and blocker): each copy
+	// names #1 once.
+	if n, copies := strings.Count(text, "#1"), strings.Count(text, "Tell the person to merge"); n != copies {
+		t.Errorf("the refusal names #1 %d times in %d copies of its words: %s", n, copies, text)
 	}
 }
 

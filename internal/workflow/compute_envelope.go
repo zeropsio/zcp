@@ -464,7 +464,6 @@ func buildOneSnapshot(svc platform.ServiceStack, meta *ServiceMeta, ws *WorkSess
 		snap.DevIsPool = meta.DevIsPool() && svc.Name == meta.Hostname
 		if meta.HQ != nil && svc.Name == meta.Hostname {
 			snap.HQRepo, snap.HQOrigin = meta.HQ.Repo, meta.HQ.Origin
-			snap.HQChange, snap.HQBranch = meta.HQ.Change, meta.HQ.Branch
 		}
 		if meta.HasStage() && svc.Name == meta.Hostname {
 			first := meta.FirstStage()

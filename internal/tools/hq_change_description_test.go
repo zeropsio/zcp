@@ -36,10 +36,11 @@ func (l *hqLab) describeTitled(service, title, words string) (text string, isErr
 	return resultText(l.t, res), res.IsError
 }
 
-// describeOn is describe-change naming the change by its branch.
-func (l *hqLab) describeOn(branch, words string) (text string, isError bool) {
+// describeOn is describe-change naming the change by its branch, with
+// describedWords.
+func (l *hqLab) describeOn(branch string) (text string, isError bool) {
 	l.t.Helper()
-	res, typed, err := handleDescribeChange(context.Background(), l.hq.srv.Client(), l.stateDir, WorkflowInput{Branch: branch, Description: words})
+	res, typed, err := handleDescribeChange(context.Background(), l.hq.srv.Client(), l.stateDir, WorkflowInput{Branch: branch, Description: describedWords})
 	if err != nil {
 		l.t.Fatalf("handleDescribeChange: %v", err)
 	}

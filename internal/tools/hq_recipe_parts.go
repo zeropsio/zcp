@@ -282,7 +282,7 @@ func handleGroupRecipeService(
 	result := map[string]any{"groupRepo": hq.RecipeRepo}
 	if written.other != nil && len(edits) > 0 {
 		return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
-			fmt.Sprintf("The service proposal was not made: this Mate's change #%d in the recipe repository %q (%q) is open, and HQ keeps one open change per Mate per repository.",
+			fmt.Sprintf("The service proposal was not made: this Mate's change #%d in the recipe repository %q (%q) is open, and this Mate keeps one recipe proposal open at a time.",
 				written.other.number, hq.RecipeRepo, written.other.title),
 			fmt.Sprintf("Retry once change #%d is merged or closed (%s).", written.other.number,
 				comp.hqc.ChangeURL(comp.appID, hq.RecipeRepo, written.other.number))), WithRecoveryStatus()), nil, nil
