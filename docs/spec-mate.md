@@ -2510,7 +2510,9 @@ What a stop runs is the platform's pushed deployment; the deploy half's version 
 only while that answer is on its way, so a production whose `appVersionName` names a merge waiting
 for its first release reads "Nothing live yet" (measured: `fsadfdasfsa`, `055a7e8`, nothing live).
 A Mate's preview is the public route of its pair's stage half (`pairPreviewRoute`: `appstage` beside
-`appdev`, `todoappstage` beside `todoapp`), never a service that only ends in `stage`. The next step
+`appdev`, `todoappstage` beside `todoapp`), never a service that only ends in `stage`. Its page lets
+Mate's preview pane frame it while the application's production keeps the app's framing (§10.10,
+MB-40). The next step
 is one, worst first: a Mate waiting on an answer, a Mate stopped on an error, a failed deploy —
 production's, then a stage's (2026-09-25) — a pull request the person can merge, one that cannot
 land, a release, _Add production_, a first task for a Mate nobody has spoken to. A failed stage
@@ -3928,6 +3930,25 @@ would keep (`TestGroupPriorities_*`, `TestBuildGroupRecipe_PriorityFollowsBuildR
 `TestBuildGroupRecipe_MedusaGolden`, `TestComposeGroupRecipeInputs_ReadsTheLiveProject`,
 `TestComposeGroupRecipeInputs_WaitsOnlyForWhatALaterPassBrings`).
 
+**Mate's preview pane frames a Mate's dev and stage; production keeps the app's framing
+(2026-10-25).** The pane (§5.4) draws a service's page in a frame on Mate's origins —
+`https://mate.zerops.io`, which the desktop shell loads too, and the container's own `/mate/` on
+its `*.zerops.app` subdomain — so a page that sends `X-Frame-Options` (no value of it names another
+origin) or a `frame-ancestors` leaving them out reads "refused to connect" there (zeropsio/apps' hq
+and box stages, static services, measured 2026-10-25). The stage builds the setup production builds,
+so an allowance in that setup would reach production. A Mate's AGENTS.md (`agents_preview.md`,
+behind the gate, §2.0) says: dev and stage send no `X-Frame-Options` and widen the app's own
+`frame-ancestors` by Mate's origins; the dev setup may carry it where the stage builds another; the
+stage deploys **Mate's preview variant** of its setup — a setup that `extends` it and changes only
+the framing (a static service's `run.routing.headers`, else a `run.envVariables` value the app's
+header code reads) — and the setup it extends stays as the app wrote it. A setup lets the pane frame
+the app when its own `run` holds a `frame-ancestors` naming `https://mate.zerops.io`, or a bare
+source list naming Mate's origin set (that origin beside `https://*.zerops.app`); a setting naming
+Mate's address alone is the app's own (`bundle.WithoutMateFraming`). The AI Agent tier keeps the
+variant on the stage half; every group environment builds the setup it extends, named after it
+(`groupEnvironmentSetup`). A framed stage setup that extends no other is built framed, and the pass
+says so (MB-40).
+
 **A Mate's git (2026-10-21, design B; was Delivery to HQ, 2026-10-02).** A Mate's code reaches its
 repository by plain git, as on a laptop: the agent brings `main` up to date, cuts a branch of its
 own, commits and pushes it, and `main` moves only by a merge — a person's in HQ, or GitHub's for a
@@ -4504,6 +4525,7 @@ merge/release targets, not an arbitrary ref supplied by the client.
 | MB-37 | A group recipe writes each search engine at no less than 2 GB `minRam` and 0.5 GB `minFreeRamGB` on every tier and never lowers a value; an unread scale writes no block; `profileOverrides` and the free-memory buffer are carried; a scaling proposal is the Mate's change in the recipe repository in HQ, written over `main`, rewriting only that host's block in every tier naming it; it refuses a block it cannot splice safely, moves forward on the same change for the same host, brings a stale one to `main`'s tree when nothing differs, and is refused while the Mate's additive proposal is open there, which in turn leaves an open scaling proposal alone; the steer speaks only after a change that finished (D34). `group_floors_test.go`, `host_scaling_test.go`, `group_profile_overrides_test.go`, `scale_test.go`; zcp `TestGroupRecipeScaling_SteersAndProposesOneHostsBlock`, `TestGroupRecipeScaling_ProposesFromMainsHeadEveryTierFresh`, `TestGroupRecipeScaling_OneOpenChangeInTheRecipeRepository`, `TestScratch_File`. |
 | MB-38 | A Mate reads from its first turn, even on an empty project, that its code and changes live in its application's HQ, bootstrap comes first and ZCP wires the pair's repository once the service stands, Core deploys the application's environments, and the person is never asked for a GitHub or other repository, URL or token. The block is Mate-only; a plain container or local install reads none of it. This keeps upstream's repository-first guidance while replacing its Gitea workflow with HQ's jobs (§10.8). zcp `TestBuildAgentsMD_Container_GitHostSaysWhereTheCodeLives`. |
 | MB-39 | A person may merge an open HQ change while the agent works; a pass tells the agent what became of it — merged, bring `main` up to date and cut the next branch from it; closed, nothing of it is on `main` — and never changes the checkout; a closing session hands over only an open change; production guidance reads merged history from HQ, and a failed read stays unknown with a manual ask again (§10.10). zcp `TestReconcileHQRepositories_TellsTheMateWhatBecameOfItsChange`, `TestHQPass_LearnsAMergeWithoutChangingTheCheckout`, `TestSessionAnnotations_HandoffOnlyWithAnOpenChange`, `TestProductionKnowsMergedWorkThePairHoldsNoRecordOf`, `TestProductionGuidance_HQUnavailableIsUnknown`. |
+| MB-40 | Mate's preview pane frames a Mate's dev and stage, never the application's production: a Mate's AGENTS.md has dev and stage drop `X-Frame-Options` and widen the app's own `frame-ancestors` by Mate's origins through Mate's preview variant of the stage's setup, never that setup; the group recipe's AI Agent tier keeps the variant and every group environment builds the setup it extends; a setting naming Mate's address alone is no framing. `TestBuildAgentsMD_Container_PreviewPaneFramesDevAndStage`, `TestBuildGroupRecipe_PreviewVariant_GroupEnvironmentsBuildTheSetupItExtends`, `TestBuildGroupRecipe_PreviewVariant_PartsAreNamedByTheSetupTheyBuild`, `TestBuildGroupRecipe_PreviewVariant_ASettingNamingMateIsNoFraming`. |
 | MB-28 | A pull request belongs to the Mate whose branch it is (zcp's `mate/{login}`) or whose bot opened it, a person's own is listed after the Mates and never dropped, a group repo's is a recipe change whoever opened it, and a roll-back is offered only to an earlier approved release, its _Roll back to this_ opening the roll back's review. `projectFlow.test.ts` — "whose pull request it is", "puts each Mate's under it, newest first, and the rest after the Mates", "is a recipe change on the group repo, whoever opened it"; `release.test.ts` — "a release's row"; `ZeropsReviewDoors.test.tsx` — "Roll back to this opens the roll back's review, from the row pressed"; `SidebarZeropsTree.test.tsx` "the project's flow under it"; `ZeropsGitPanel.test.tsx` "is this Mate's repositories and nothing of the project's". Since 2026-10-02 a change in HQ is the Mate's that opened it (only Mates open changes), and a change in the application's recipe repository is a recipe change (`RECIPE_REPO`), the proposal known by zcp's exact title. |
 | MB-29 | A deploy token reaches a job only when the job is proved, runs the default branch's workflow from the repository itself, holds the commit protected state wants on that environment, and its runner has run nothing but such jobs since it was made; a superseded or already-live commit gets no token and no failure; the job pushes the commit's tree (`--workspace-state clean`), never the working directory. gitea-mate `internal/server/deploy_test.go`, `internal/pipeline/grant_test.go`, `internal/pipeline/runner_test.go`, `actions/deploy` script test; zcp `workflow_build_integration_test.go`. Superseded 2026-10-02: HQ keeps an environment's deploy token and deploys with it itself; no job holds one (§10.8). |
 | MB-17 | A Gitea and its broker answer every browser origin, since every call carries a bearer and no cookie: the import sends no origin list and `POST /person/token` answers `*`. `giteaRecipe.test.ts` — "sends no origin list: a Gitea answers every origin, since every call carries a bearer"; gitea-mate `TestGiteaProjectImportCarriesNoOriginList`, `TestPersonTokenAnswersEveryOrigin`. Retiring with the Gitea (2026-10-02). |
