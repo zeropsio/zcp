@@ -750,6 +750,82 @@ func TestPoolMigrateEnv_WriteFailure_NamedByCodeOnly(t *testing.T) {
 	assertNoSecret(t, out, f, envSecretValue)
 }
 
+// envCreateFailsOnce is the platform refusing the first create of one key.
+type envCreateFailsOnce struct {
+	*platform.Mock
+	key    string
+	err    error
+	failed bool
+}
+
+func (c *envCreateFailsOnce) CreateServiceEnvVar(ctx context.Context, serviceID, key, content string, sensitive bool) (*platform.Process, error) {
+	if key == c.key && !c.failed {
+		c.failed = true
+		return nil, c.err
+	}
+	return c.Mock.CreateServiceEnvVar(ctx, serviceID, key, content, sensitive)
+}
+
+// TestPoolMigrateEnv_GitTokenReplaceFails_NamesWhyAndThePoolsOwn: a replace
+// of the pool's own GIT_TOKEN removes its row first; when the create then
+// fails the step says why in a warning — the GIT_TOKEN's message points
+// there — and what became of the pool's own: put back when its value reads
+// plain, else named as removed, so the person knows leases of a private
+// repository have none on the pool (PM-4).
+func TestPoolMigrateEnv_GitTokenReplaceFails_NamesWhyAndThePoolsOwn(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		poolOwn  platform.ServiceEnvVar
+		restored bool
+	}{
+		{name: "masked, removed", poolOwn: envMasked("p-git", GitTokenEnvKey)},
+		{name: "plain, put back", poolOwn: envRow("p-git", GitTokenEnvKey, "the-pools-own-token", false), restored: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newEnvFixture(t)
+			f.dev = append(f.dev, envMasked("d-git", GitTokenEnvKey))
+			f.pool = append(f.pool, tc.poolOwn)
+			f.container[GitTokenEnvKey] = envGitToken
+			f.in.CopyGitToken = true
+			f.build()
+			refused := platform.NewPlatformError(platform.ErrAPIError, "refused "+envGitToken, "")
+			refused.APICode = "someCode"
+			client := &envCreateFailsOnce{Mock: f.mock, key: GitTokenEnvKey, err: refused}
+			out, err := ApplyPoolMigrateEnv(context.Background(), client, f.ssh, f.in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if out.GitToken.State != PoolGitTokenFailed {
+				t.Fatalf("gitToken = %+v, want failed", out.GitToken)
+			}
+			warnings := strings.Join(out.Warnings, " ")
+			if !strings.Contains(warnings, GitTokenEnvKey) || !strings.Contains(warnings, "someCode") {
+				t.Fatalf("warnings = %q, want the GIT_TOKEN's failure named by the platform's code", out.Warnings)
+			}
+			row, held := f.poolRows(t)[GitTokenEnvKey]
+			switch {
+			case tc.restored:
+				if !held || row.Content != "the-pools-own-token" || row.Sensitive {
+					t.Fatalf("the pool's GIT_TOKEN = %+v (held %v), want its own put back as it was", row, held)
+				}
+				if !strings.Contains(warnings, "put back") {
+					t.Errorf("warnings = %q, want the pool's own named as put back", out.Warnings)
+				}
+			default:
+				if held {
+					t.Fatalf("the pool holds a GIT_TOKEN %+v; the mock refused the create", row)
+				}
+				if !strings.Contains(warnings, "removed") || !strings.Contains(warnings, "private") {
+					t.Errorf("warnings = %q, want the pool's own named as removed, leases of a private repository without one", out.Warnings)
+				}
+			}
+			assertNoSecret(t, out, f, envGitToken)
+		})
+	}
+}
+
 func TestPoolMigrateEnv_PoolZeropsYamlKey_NeverWritten(t *testing.T) {
 	t.Parallel()
 	f := newEnvFixture(t)
