@@ -119,6 +119,9 @@ func ReadHQChange(stateDir, appID, repo string, number int) (c HQChange, found b
 	return readHQChangeFile(path)
 }
 
+// errHQChangeUndecodable marks a change file that reads but does not decode.
+var errHQChangeUndecodable = errors.New("undecodable")
+
 func readHQChangeFile(path string) (HQChange, bool, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -129,7 +132,7 @@ func readHQChangeFile(path string) (HQChange, bool, error) {
 	}
 	var c HQChange
 	if err := json.Unmarshal(data, &c); err != nil {
-		return HQChange{}, false, fmt.Errorf("decode hq change %s: %w", path, err)
+		return HQChange{}, false, fmt.Errorf("decode hq change %s: %w: %w", path, errHQChangeUndecodable, err)
 	}
 	return c, true, nil
 }
@@ -162,7 +165,10 @@ func RecordHQChange(stateDir string, c HQChange) error {
 // existed false for one the ledger did not keep — and writes it, all while
 // holding the change's write lock, so writers of one change never lose each
 // other's fields. fn returning ErrSkipWrite writes nothing; any other error
-// is returned. Writers of different changes never wait on each other.
+// is returned. Writers of different changes never wait on each other. A file
+// that does not decode (a write cut short) is no change the ledger keeps —
+// none lists it — so it is moved aside as <number>.json.corrupt, said on
+// stderr, and the change read as not kept: it never fails a write for good.
 func UpsertHQChange(stateDir, appID, repo string, number int, fn func(c *HQChange, existed bool) error) error {
 	path, err := hqChangePath(stateDir, appID, repo, number)
 	if err != nil {
@@ -177,6 +183,13 @@ func UpsertHQChange(stateDir, appID, repo string, number int, fn func(c *HQChang
 	}
 	defer release()
 	kept, existed, err := readHQChangeFile(path)
+	if errors.Is(err, errHQChangeUndecodable) {
+		if moveErr := os.Rename(path, path+".corrupt"); moveErr != nil {
+			return fmt.Errorf("%w (moving it aside: %w)", err, moveErr)
+		}
+		fmt.Fprintf(os.Stderr, "zcp: %v — moved aside as %s.corrupt\n", err, filepath.Base(path))
+		kept, existed, err = HQChange{}, false, nil
+	}
 	if err != nil {
 		return err
 	}

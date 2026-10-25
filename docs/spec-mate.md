@@ -4022,7 +4022,10 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   (application, repository, branch), never a pair's. zcp keeps each change it knows of in its change
   ledger, one file per change (`<stateDir>/hq/changes/<appId>/<repo>/<number>.json`, 0600, a write
   lock per change; `workflow.HQChange`), so the zcp of every conversation and every subagent of one
-  writes different files, and nothing is a session's "current" change. A call names its change: by
+  writes different files, and nothing is a session's "current" change. A change file that does not
+  decode (a write cut short) is listed by no reader; the next write of that change moves it aside as
+  `<number>.json.corrupt` and writes the change afresh, so it never fails a write for good
+  (`TestHQChangeLedger_UndecodableFileIsMovedAsideOnTheNextWrite`). A call names its change: by
   `branch`, or by `service=` a lease alias — its record's repository on this Mate's HQ
   (`hq.RepoOfURL`) and its branch, never `main` — or a pair, which names the repository; with
   neither, the one repository of the Mate's wired pairs and HQ leases, pairs that share one counting
