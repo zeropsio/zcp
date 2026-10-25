@@ -44,7 +44,8 @@ func (r *siblingReleaseRace) ExecSSH(ctx context.Context, host, command string) 
 			r.fired = true
 			r.mu.Unlock()
 			go func() {
-				_, err := LeaseReleaseChange(context.Background(), r.rf.deps, ownHQAlias, true)
+				// The release outlives the command that set it off.
+				_, err := LeaseReleaseChange(context.WithoutCancel(ctx), r.rf.deps, ownHQAlias, true)
 				r.done <- err
 			}()
 			select {
