@@ -453,6 +453,13 @@ func readPoolMigrateDev(ctx context.Context, d poolMigrateDeps, input WorkflowIn
 	}
 	parts, selected, partRefusals := poolMigrateParts(meta, service, poolInput, byName)
 	refusals = append(refusals, partRefusals...)
+	if len(partRefusals) == 0 {
+		owned, err := poolMigrateOwnerRefusals(stateDir, dev, parts, byName)
+		if err != nil {
+			return nil, nil, convertError(fmt.Errorf("pool-migrate: %w", err), WithRecoveryStatus())
+		}
+		refusals = append(refusals, owned...)
+	}
 	switch {
 	case len(parts) == 1:
 		resp.Pool = parts[0].pool
@@ -608,6 +615,7 @@ func (c *poolMigrateCall) envInput(d poolMigrateDeps, input WorkflowInput) ops.P
 		CopyGitToken: input.CopyGitToken.Bool(),
 		Origin:       poolMigrateDevOrigin(c.meta, d),
 		StateDir:     d.stateDir,
+		Owner:        c.meta.Hostname,
 	}
 }
 

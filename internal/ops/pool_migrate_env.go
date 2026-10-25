@@ -57,6 +57,10 @@ type PoolMigrateEnvInput struct {
 	// "" when zcp cannot name it.
 	Origin   string
 	StateDir string
+	// Owner is the dev hostname keying the pair whose migration this env step
+	// runs; the pool's record names it, so another dev's migration never
+	// takes the pool as its own (PoolMigrateEnvOwner).
+	Owner string
 }
 
 // gitTokenElsewhere reports a pair whose GIT_TOKEN sits on another service
@@ -564,7 +568,7 @@ func ApplyPoolMigrateEnv(ctx context.Context, client platform.Client, ssh SSHDep
 		in:    in,
 		sides: sides,
 		out:   &PoolMigrateEnv{NeverCopied: plan.never, Warnings: plan.warns},
-		rec:   poolEnvRecord{PoolServiceID: in.Pool.ID, Fingerprints: map[string]string{}},
+		rec:   poolEnvRecord{PoolServiceID: in.Pool.ID, Dev: in.Owner, Fingerprints: map[string]string{}},
 	}
 	step.planPlain(plan.plain)
 	step.readSecrets(ctx, ssh, plan)
@@ -990,9 +994,24 @@ func parsePoolEnvRead(out []byte, keys []string) (map[string]string, string) {
 // The step compares a secret the API shows masked by it; the read side counts
 // an asked key as the person's.
 type poolEnvRecord struct {
-	PoolServiceID string            `json:"poolServiceId"`
-	Fingerprints  map[string]string `json:"fingerprints,omitempty"`
-	Requested     []string          `json:"requested,omitempty"`
+	PoolServiceID string `json:"poolServiceId"`
+	// Dev is the dev hostname keying the pair whose migration gave the pool
+	// its env: the pool is that migration's (PoolMigrateEnvOwner). "" in an
+	// older record.
+	Dev          string            `json:"dev,omitempty"`
+	Fingerprints map[string]string `json:"fingerprints,omitempty"`
+	Requested    []string          `json:"requested,omitempty"`
+}
+
+// PoolMigrateEnvOwner is the dev hostname whose migration gave the pool
+// service poolServiceID its env, by zcp's record of it; "" when zcp gave this
+// pool service none, or the record predates naming it.
+func PoolMigrateEnvOwner(stateDir, pool, poolServiceID string) string {
+	rec, found := readPoolEnvRecord(stateDir, pool)
+	if !found || rec.PoolServiceID != poolServiceID {
+		return ""
+	}
+	return rec.Dev
 }
 
 func (r poolEnvRecord) requested() map[string]bool {
@@ -1029,7 +1048,7 @@ func savePoolEnvRecord(stateDir, pool string, rec poolEnvRecord) error {
 		return errors.New("no state directory or an unusable pool name")
 	}
 	path := poolEnvRecordPath(stateDir, pool)
-	if len(rec.Fingerprints) == 0 && len(rec.Requested) == 0 {
+	if len(rec.Fingerprints) == 0 && len(rec.Requested) == 0 && rec.Dev == "" {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("remove %s: %w", path, err)
 		}

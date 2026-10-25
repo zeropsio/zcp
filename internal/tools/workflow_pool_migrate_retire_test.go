@@ -1295,31 +1295,55 @@ func TestDeleteTool_RetireRecord_PointsAtRetire(t *testing.T) {
 	}
 }
 
-// TestPoolMigrateRetire_RekeyRefused_AbortsCleanly: a pool hostname another
-// pair is keyed by stops the re-key, changing nothing; the retire aborts with
-// the dev's pair as it was and deletes nothing.
+// TestPoolMigrateRetire_RekeyRefused_AbortsCleanly: a pool another pair is
+// keyed by is refused before the retire starts (pool-hostname-taken, nothing
+// written). One that becomes another pair's while the guards read stops the
+// re-key, changing nothing: the retire aborts with the dev's pair as it was
+// and deletes nothing.
 func TestPoolMigrateRetire_RekeyRefused_AbortsCleanly(t *testing.T) {
 	t.Parallel()
-	r := newRetireRig(t, nil)
-	if err := workflow.WriteServiceMeta(r.f.stateDir, &workflow.ServiceMeta{
-		Hostname: "apppool", Mode: topology.PlanModeDev, BootstrappedAt: "2026-10-01T00:00:00Z",
-		DevPool: &workflow.DevPoolRef{ServiceID: "svc-pool", MigratedFrom: &workflow.MigratedDev{Hostname: "otherdev"}},
-	}); err != nil {
-		t.Fatal(err)
+	otherPair := func(t *testing.T, stateDir string) {
+		t.Helper()
+		if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+			Hostname: "apppool", Mode: topology.PlanModeDev, BootstrappedAt: "2026-10-01T00:00:00Z",
+			DevPool: &workflow.DevPoolRef{ServiceID: "svc-pool", MigratedFrom: &workflow.MigratedDev{Hostname: "otherdev"}},
+		}); err != nil {
+			t.Fatal(err)
+		}
 	}
-	out, isErr := r.retire(t, retireInput(true, false))
-	if isErr || out["status"] != "aborted" || !slices.Equal(poolMigrateReasons(out), []string{"rekey-failed"}) {
-		t.Fatalf("retire = %v, want aborted at the re-key", out)
-	}
-	if len(r.client.deletes()) > 0 {
-		t.Fatal("deleted after a refused re-key")
-	}
-	if rec := retireRecordOf(t, r.f.stateDir); rec.Phase != poolRetireAborted {
-		t.Fatalf("record = %+v, want aborted, never left in flight", rec)
-	}
-	if meta, _ := workflow.FindServiceMeta(r.f.stateDir, "appstage"); meta == nil || meta.Hostname != "appdev" || meta.DevIsPool() {
-		t.Fatalf("the dev's pair = %+v, want it as it was", meta)
-	}
+
+	t.Run("another pair's before the retire", func(t *testing.T) {
+		t.Parallel()
+		r := newRetireRig(t, nil)
+		otherPair(t, r.f.stateDir)
+		out, _ := r.retire(t, retireInput(true, false))
+		if out["status"] != "not-a-candidate" || !slices.Equal(poolMigrateReasons(out), []string{"pool-hostname-taken"}) {
+			t.Fatalf("retire = %v, want refused before it starts: the pool is another pair's", out)
+		}
+		r.assertNothingRetired(t)
+	})
+
+	t.Run("another pair's while the guards read", func(t *testing.T) {
+		t.Parallel()
+		r := newRetireRig(t, nil)
+		r.ssh.onLeaseProbe = func() {
+			otherPair(t, r.f.stateDir)
+			r.ssh.onLeaseProbe = nil
+		}
+		out, isErr := r.retire(t, retireInput(true, false))
+		if isErr || out["status"] != "aborted" || !slices.Equal(poolMigrateReasons(out), []string{"rekey-failed"}) {
+			t.Fatalf("retire = %v, want aborted at the re-key", out)
+		}
+		if len(r.client.deletes()) > 0 {
+			t.Fatal("deleted after a refused re-key")
+		}
+		if rec := retireRecordOf(t, r.f.stateDir); rec.Phase != poolRetireAborted {
+			t.Fatalf("record = %+v, want aborted, never left in flight", rec)
+		}
+		if meta, _ := workflow.FindServiceMeta(r.f.stateDir, "appstage"); meta == nil || meta.Hostname != "appdev" || meta.DevIsPool() {
+			t.Fatalf("the dev's pair = %+v, want it as it was", meta)
+		}
+	})
 }
 
 // TestPoolMigrateRetire_Dispatch_ReachesTheRetire pins that zerops_workflow
