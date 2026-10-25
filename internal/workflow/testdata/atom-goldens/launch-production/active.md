@@ -461,5 +461,7 @@ dev/stage setup (same build/run shape, production-adjusted). Two paths, in prefe
 
 Include `run.healthCheck` — strongly recommended for production: a container receives traffic only once its readiness check passes, so without one a half-started container can serve requests.
 
+**Production keeps the app's strict framing.** A setup written in a Mate may let Mate's preview pane frame the app: a `frame-ancestors` naming `https://mate.zerops.io`, no `X-Frame-Options`. The proposed block leaves Mate's sources out (`'none'` where nothing else is left). A stage that builds Mate's preview variant of a setup — one that `extends` it and changes only the framing — runs a setup production never builds: re-call with `prodSetupNameOverride="<the setup it extends>"`.
+
 After commit + push, re-call the launch workflow (same start call, same accumulated inputs); the
 workflow re-probes and advances once the block resolves.
