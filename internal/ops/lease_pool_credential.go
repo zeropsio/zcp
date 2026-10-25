@@ -223,9 +223,9 @@ func ensurePoolHQCredential(ctx context.Context, d LeaseDeps, pool *platform.Ser
 // HQ credential (a PREREQUISITE_MISSING checkout) means it is not what zcp's
 // record says — the secret changed or HQ revoked it since — so the record
 // goes, and the next acquire writes the credential afresh.
-func (s poolCredentialState) checkout(ctx context.Context, d LeaseDeps, rec leaseRecord, repo, branch, base string) (leaseCheckedOut, error) {
+func (s poolCredentialState) checkout(ctx context.Context, d LeaseDeps, rec leaseRecord, repo, branch, base, from string) (leaseCheckedOut, error) {
 	s.awaitSession(ctx, d, rec)
-	got, err := checkoutLease(ctx, d, rec, repo, branch, base)
+	got, err := checkoutLease(ctx, d, rec, repo, branch, base, from)
 	var pe *platform.PlatformError
 	if s.pool != "" && errors.As(err, &pe) && pe.Code == platform.ErrPrerequisiteMissing {
 		_ = forgetPoolCredential(d.StateDir, s.pool)

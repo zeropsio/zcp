@@ -84,12 +84,27 @@ func LeaseAcquireGroup(ctx context.Context, d LeaseDeps, pools []string, repo, b
 // step, which sends them theirs (DP-26). An acquire that took no lease changes
 // no membership and rewires nothing.
 func LeaseAcquireGroupChange(ctx context.Context, d LeaseDeps, pools []string, repo, branch string) (LeaseChange, error) {
+	return LeaseAcquireGroupChangeFrom(ctx, d, pools, repo, branch, "")
+}
+
+// LeaseAcquireGroupChangeFrom is LeaseAcquireGroupChange with from, the branch
+// a branch new to origin is cut from instead of main ("" for main): every new
+// member of the group from the one commit the first was cut from (DP-17). A
+// from origin does not have is refused and the containers go back; a branch
+// origin has, one the group cut before (its recorded base) and one a lease
+// already holds are never rewritten — each lease says from was not applied
+// (DP-6). from names a branch a lease takes, never the branch itself, and
+// never comes with main, which no acquire cuts.
+func LeaseAcquireGroupChangeFrom(ctx context.Context, d LeaseDeps, pools []string, repo, branch, from string) (LeaseChange, error) {
 	members, err := resolveGroupPools(ctx, d, pools)
 	if err != nil {
 		return LeaseChange{}, err
 	}
 	branch = cmp.Or(branch, leaseDefaultBranch)
 	if err := validateLeaseBranch(branch); err != nil {
+		return LeaseChange{}, err
+	}
+	if err := validateLeaseFrom(branch, from); err != nil {
 		return LeaseChange{}, err
 	}
 	repoURL, becomesDefault, err := resolveGroupRepo(d.StateDir, pools, repo)
@@ -133,7 +148,7 @@ func LeaseAcquireGroupChange(ctx context.Context, d LeaseDeps, pools []string, r
 	failed := func() bool { return slices.ContainsFunc(fresh, func(m *groupMember) bool { return m.err != nil }) }
 	runMembers(fresh, func(m *groupMember) { reserveMember(ctx, d, m, repoURL, branch) })
 	if !failed() && d.SSH != nil {
-		checkoutMembers(ctx, d, fresh, repoURL, branch, recordedBase(group))
+		checkoutMembers(ctx, d, fresh, repoURL, branch, recordedBase(group), from)
 	}
 	if failed() {
 		return LeaseChange{}, groupRefusal(ctx, d, members)
@@ -173,6 +188,9 @@ func LeaseAcquireGroupChange(ctx context.Context, d LeaseDeps, pools []string, r
 	views := make([]LeaseView, 0, len(members))
 	for _, m := range members {
 		if m.held != nil {
+			if from != "" {
+				m.held.Note = joinNotes(m.held.Note, fmt.Sprintf("this lease already held branch %s, so from=%s changed nothing in it", branch, from))
+			}
 			views = append(views, *m.held)
 			continue
 		}
@@ -519,8 +537,10 @@ func reserveMember(ctx context.Context, d LeaseDeps, m *groupMember, repoURL, br
 
 // checkoutMembers checks every new member out on the branch: the first alone,
 // cut — when the branch is new to origin — from base, else from what its own
-// checkout found on origin/main; then the others at once, from the commit the
-// first was cut from, so every member starts from one main commit. A member
+// checkout found on origin/main, or on origin/<from> when from names a branch;
+// then the others at once, from the commit the first was cut from, so every
+// member starts from one commit. A member from did not cut says so
+// (fromNotAppliedNote). A member
 // cut new keeps that commit in its record. A failed checkout hands its own
 // container back (abandonLease) and is the member's error. A member waits for
 // the others' reservations and the first checkout, minutes on a pool still
@@ -530,11 +550,12 @@ func reserveMember(ctx context.Context, d LeaseDeps, m *groupMember, repoURL, br
 // over — its record is dropped while it is still its own, the container never
 // handed back — and one the orchestrator does not answer about is not checked
 // out; either is the member's error.
-func checkoutMembers(ctx context.Context, d LeaseDeps, fresh []*groupMember, repoURL, branch, base string) {
+func checkoutMembers(ctx context.Context, d LeaseDeps, fresh []*groupMember, repoURL, branch, base, from string) {
 	if len(fresh) == 0 {
 		return
 	}
-	checkout := func(m *groupMember, from string) string {
+	groupBase := base
+	checkout := func(m *groupMember, cutFrom string) string {
 		switch v := renewOwnership(ctx, d, m.rp, m.rec); {
 		case v.own.lost():
 			m.err, m.reserved = memberEnded(ctx, d, m.rec, v.why, "before its checkout, so nothing was checked out in it"), false
@@ -543,7 +564,7 @@ func checkoutMembers(ctx context.Context, d LeaseDeps, fresh []*groupMember, rep
 			m.err = unverifiedLeaseRefusal(m.rec.alias(), "checked out", v)
 			return ""
 		}
-		got, err := m.cred.checkout(ctx, d, m.rec, repoURL, branch, from)
+		got, err := m.cred.checkout(ctx, d, m.rec, repoURL, branch, cutFrom, from)
 		if err != nil {
 			m.err = abandonLease(ctx, d, m.rec, err)
 			m.reserved = false
@@ -552,6 +573,7 @@ func checkoutMembers(ctx context.Context, d LeaseDeps, fresh []*groupMember, rep
 		if got.warm == leaseWarmDiscarded {
 			m.view.Note = joinNotes(m.view.Note, discardedWarmNote)
 		}
+		m.view.Note = joinNotes(m.view.Note, fromNotAppliedNote(branch, from, groupBase, got.base))
 		if got.base != "" || got.stableNumber != 0 {
 			// Recorded before the keys are let go and before any rewire, so
 			// every overlay computed from here on finds the new lease's
@@ -582,6 +604,44 @@ func checkoutMembers(ctx context.Context, d LeaseDeps, fresh []*groupMember, rep
 		return
 	}
 	runMembers(fresh[1:], func(m *groupMember) { checkout(m, base) })
+}
+
+// validateLeaseFrom refuses a from that is not a branch a lease takes, that
+// is the branch itself, or that comes with main, which no acquire cuts; ""
+// (cut from main) passes.
+func validateLeaseFrom(branch, from string) error {
+	switch {
+	case from == "":
+		return nil
+	case validateLeaseBranch(from) != nil:
+		return platform.NewPlatformError(platform.ErrInvalidParameter,
+			"from is not a branch name a lease takes",
+			"Name the branch a new branch is cut from: letters, digits and . _ / - only, starting with a letter or digit (e.g. from=pool-previews)")
+	case branch == leaseDefaultBranch:
+		return platform.NewPlatformError(platform.ErrInvalidParameter,
+			fmt.Sprintf("from cuts a new branch, and the acquire names %s, which no acquire cuts", leaseDefaultBranch),
+			fmt.Sprintf("Pass the new branch as branch (zerops_lease action=acquire branch=<new branch> from=%s), or leave from out to lease %s", from, leaseDefaultBranch))
+	case from == branch:
+		return platform.NewPlatformError(platform.ErrInvalidParameter,
+			"from names the branch itself, and a branch is never cut from itself",
+			"Leave from out to check the branch out as origin has it, or name the branch a new one is cut from")
+	}
+	return nil
+}
+
+// fromNotAppliedNote says why a lease checked out with from was not cut from
+// it — the branch is on origin (tracked: cut is "") or the group cut it
+// before (groupBase) — and "" when it was, or when there was no from.
+func fromNotAppliedNote(branch, from, groupBase, cut string) string {
+	switch {
+	case from == "":
+		return ""
+	case groupBase != "":
+		return fmt.Sprintf("branch %s was cut before for this branch's other leases (from commit %s), so this lease starts from that commit too; from=%s was not applied", branch, groupBase, from)
+	case cut == "":
+		return fmt.Sprintf("branch %s is already on origin, so it was checked out as it is there; from=%s cuts only a branch origin does not have yet", branch, from)
+	}
+	return ""
 }
 
 // memberEnded is the error of a group acquire's member whose lease ended

@@ -30,11 +30,13 @@ type LeaseInput struct {
 	Action string `json:"action"`
 	Pool   string `json:"pool,omitempty"`
 	// Pools is a group acquire: one lease per pool on the branch (DP-17).
-	Pools  []string  `json:"pools,omitempty"`
-	Branch string    `json:"branch,omitempty"`
-	Repo   string    `json:"repo,omitempty"`
-	Lease  string    `json:"lease,omitempty"`
-	Force  *FlexBool `json:"force,omitempty"`
+	Pools  []string `json:"pools,omitempty"`
+	Branch string   `json:"branch,omitempty"`
+	// From is the branch an acquire cuts a branch new to origin from (DP-6).
+	From  string    `json:"from,omitempty"`
+	Repo  string    `json:"repo,omitempty"`
+	Lease string    `json:"lease,omitempty"`
+	Force *FlexBool `json:"force,omitempty"`
 }
 
 // leaseInputSchema is explicit because force is a FlexBool (an agent that
@@ -44,7 +46,8 @@ func leaseInputSchema() *jsonschema.Schema {
 		"action": {Type: "string", Description: "acquire, status, release, rollout, sync, park or unpark."},
 		"pool":   {Type: "string", Description: "Pool service hostname. acquire (or pools), rollout: required. status: optional (default every pool)."},
 		"pools":  {Type: "array", Items: &jsonschema.Schema{Type: "string"}, Description: "acquire: one lease per pool on the branch, all or none."},
-		"branch": {Type: "string", Description: "acquire: branch to check out (default main); a new one is cut from main. release: every lease of it, all or none."},
+		"branch": {Type: "string", Description: "acquire: branch to check out (default main); a new one is cut from main, or from `from`. release: every lease of it, all or none."},
+		"from":   {Type: "string", Description: "acquire: the branch on origin a new branch is cut from (default main); a branch origin already has is checked out as it is."},
 		"repo":   {Type: "string", Description: "acquire: https clone URL; the first one on a pool becomes its default. release: the branch's, if several."},
 		"lease":  {Type: "string", Description: "release, sync, park, unpark: the lease alias <pool>-<number> from acquire or status (not a secret)."},
 		"force":  flexBoolSchema("release: discard unpushed commits and uncommitted files (default false: refused while any exist)."),
@@ -151,6 +154,10 @@ func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir 
 			return convertError(platform.NewPlatformError(platform.ErrPrerequisiteMissing,
 				"No state directory: leases are recorded under .zcp/state/leases", "Run zcp from the project's working directory")), nil, nil
 		}
+		if input.From != "" && input.Action != leaseActionAcquire {
+			return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
+				"from is an acquire's: the branch a new branch is cut from", "Pass from only with action=acquire")), nil, nil
+		}
 		if input.Pools != nil && input.Action != leaseActionAcquire {
 			return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
 				"pools is for acquire only", "Address one lease by its alias as lease, or one pool as pool")), nil, nil
@@ -168,7 +175,7 @@ func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir 
 				return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
 					"acquire needs pool", "Pass the pool service's hostname as pool, or several as pools")), nil, nil
 			}
-			change, err := ops.LeaseAcquireGroupChange(ctx, deps, pools, input.Repo, input.Branch)
+			change, err := ops.LeaseAcquireGroupChangeFrom(ctx, deps, pools, input.Repo, input.Branch, input.From)
 			if err != nil {
 				return convertError(withLeaseSSHStderr(err)), nil, nil
 			}
