@@ -21,6 +21,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 const (
@@ -643,5 +644,26 @@ func TestLeaseAcquire_HQRepo_TheUsersGitTokenStays(t *testing.T) {
 	}
 	if user, password, _ := persistedAnswer(t, leaseHQRepo, session); user != "mate" || password != poolMateCredential {
 		t.Errorf("the HQ lease pushes with %q / %q, want mate with the Mate credential", user, password)
+	}
+}
+
+// TestPoolHQCredentialVariable_IsACredentialEverywhere: the variable a pool
+// holds this Mate's HQ credential under is masked at every echo site, kept
+// out of a generated .env, out of export and launch bundles and out of
+// Mate's vault, like GIT_TOKEN.
+func TestPoolHQCredentialVariable_IsACredentialEverywhere(t *testing.T) {
+	t.Parallel()
+	const key = "ZCP_HQ_GIT_TOKEN"
+	if _, masked := RedactEnvValue(key, poolMateCredential, "swarm@1", false); !masked {
+		t.Errorf("RedactEnvValue(%s) echoes the value", key)
+	}
+	if !platformInternalKeys[key] {
+		t.Errorf("%s is not kept out of a generated .env", key)
+	}
+	if !topology.IsClassifyInfrastructure(key) {
+		t.Errorf("%s is not classified infrastructure: an export or launch bundle would copy it", key)
+	}
+	if !isVaultHidden(key) {
+		t.Errorf("%s is listed in Mate's vault", key)
 	}
 }
