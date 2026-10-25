@@ -287,6 +287,14 @@ compares that ref with the working tree; `--files` accepts explicit relative pat
 Decision: local checks run affected `-short` tests and native affected-package lint;
 complete acceptance belongs to CI, and pre-push must not repeat full lint.
 
+Decision: when a selected package exits before running tests with the exact
+`knowledge.UnsyncedCorpusMessage` guard, local changed checks report that package
+as `not run locally: knowledge corpus not synced — run make sync; CI runs it`.
+Only that package's guard failure is non-failing; named-test failures, build
+errors, other package failures and lint failures still fail the check. The runner
+uses Go's JSON test events to attribute the guard output. It does not sync during
+the hook: `make sync` builds the CLI and fetches the corpus over the network.
+
 Decision: selection follows Go imports, including test imports, to transitive
 consumers; embedded resources and package-local fixtures belong to their package.
 Explicit filesystem-reader edges cover cross-package inputs and repository text

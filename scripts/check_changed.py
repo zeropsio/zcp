@@ -10,6 +10,7 @@ import argparse
 import json
 import os
 from pathlib import Path, PurePosixPath
+import re
 import shutil
 import subprocess
 import sys
@@ -41,6 +42,13 @@ TEST_READERS = (
 GLOBAL_FILES = {"go.mod", "go.sum", "go.work", "go.work.sum", "Makefile", "Dockerfile"}
 SELECTOR_FILES = {"scripts/check-changed.sh", "scripts/check_changed.py",
                   "scripts/test_check_changed.py"}
+
+# Exact TestMain diagnostic from knowledge.UnsyncedCorpusMessage. Match the
+# guard's verdict, not a second filesystem count or a test's incidental text.
+UNSYNCED_CORPUS_MESSAGE = (
+    "knowledge corpus not synced — run `zcp sync pull` before testing "
+    "(a fresh clone/worktree embeds only the mailpit recipe; CI pulls the corpus first).")
+CORPUS_GUARDED_PACKAGES = ("./internal/knowledge", "./internal/authoring/recipe")
 
 
 def output(*args):
@@ -143,6 +151,54 @@ def select(root, files, packages):
             "unresolved": sorted(unresolved), "wide": sorted(wide)}
 
 
+def run_tests(selected, check_env):
+    # JSON attributes interleaved output to its package and distinguishes a
+    # TestMain guard from a named test that happens to print the same message.
+    command = ["go", "test", "-short", "-json", *selected]
+    states = {}
+    unattributed_output = False
+    with subprocess.Popen(command, env=check_env, stdout=subprocess.PIPE,
+                          stderr=subprocess.STDOUT, text=True) as process:
+        for line in process.stdout:
+            try:
+                event = json.loads(line)
+            except ValueError:
+                event = None
+            if not isinstance(event, dict) or not event.get("Package"):
+                print(line, end="", flush=True)
+                unattributed_output = True
+                continue
+            package = event["Package"]
+            state = states.setdefault(package, {"output": [], "tested": False, "result": None})
+            state["tested"] |= "Test" in event
+            if event.get("Action") == "output":
+                text = event.get("Output", "")
+                state["output"].append(text)
+                print(text, end="", flush=True)
+            if "Test" not in event and event.get("Action") in ("pass", "fail", "skip"):
+                state["result"] = event["Action"]
+        returncode = process.wait()
+
+    skipped = []
+    other_failure = unattributed_output
+    for package, state in states.items():
+        if state["result"] in ("pass", "skip"):
+            continue
+        guarded = any(path in selected and package.endswith("/" + path[2:])
+                      for path in CORPUS_GUARDED_PACKAGES)
+        exact_guard = re.fullmatch(
+            re.escape(UNSYNCED_CORPUS_MESSAGE + "\nFAIL\t" + package + "\t") + r"[0-9.]+s\n",
+            "".join(state["output"]))
+        if guarded and state["result"] == "fail" and not state["tested"] and exact_guard:
+            skipped.append(package)
+            print(f"{package}: not run locally: knowledge corpus not synced — "
+                  "run make sync; CI runs it", flush=True)
+        else:
+            other_failure = True
+    if returncode and not (returncode == 1 and skipped and not other_failure):
+        raise subprocess.CalledProcessError(returncode, command)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--plan", action="store_true", help="print the JSON plan without running checks")
@@ -183,7 +239,7 @@ def main():
         lint = shutil.which("golangci-lint")
     if not lint:
         raise RuntimeError("golangci-lint not found; run make setup")
-    subprocess.run(["go", "test", "-short", *selected], env=check_env, check=True)
+    run_tests(selected, check_env)
     subprocess.run([lint, "run", *selected, "--timeout=120s"], env=check_env, check=True)
 
 

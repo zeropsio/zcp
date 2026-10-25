@@ -182,7 +182,7 @@ class CheckChangedTests(unittest.TestCase):
                                 cwd=self.root, env=env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(calls.read_text().splitlines(), [
-            "go test -short ./internal/content ./internal/unrelated",
+            "go test -short -json ./internal/content ./internal/unrelated",
             "lint run ./internal/content ./internal/unrelated --timeout=120s"])
         calls.unlink()
         result = subprocess.run(["bash", str(ENTRY.parent.parent / ".githooks/pre-commit")],
@@ -190,13 +190,92 @@ class CheckChangedTests(unittest.TestCase):
                                 capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(calls.read_text().splitlines(), [
-            "go test -short ./internal/content ./internal/unrelated"])
+            "go test -short -json ./internal/content ./internal/unrelated"])
 
     def test_prepush_does_not_repeat_checks(self):
         result = subprocess.run(["bash", str(ENTRY.parent.parent / ".githooks/pre-push")],
                                 cwd=self.root, env=self.env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "")
+
+    def test_corpus_guard_reports_only_unsynced_packages_without_hiding_failures(self):
+        message = ("knowledge corpus not synced — run `zcp sync pull` before testing "
+                   "(a fresh clone/worktree embeds only the mailpit recipe; CI pulls the corpus first).")
+        guarded = MODULE + "/internal/authoring/recipe"
+        other = MODULE + "/internal/content"
+
+        def event(package, action, output=None, test=None):
+            value = {"Package": package, "Action": action}
+            if output is not None:
+                value["Output"] = output
+            if test is not None:
+                value["Test"] = test
+            return value
+
+        def missing(package=guarded):
+            return [event(package, "start"), event(package, "output", message + "\n"),
+                    event(package, "output", "FAIL\t" + package + "\t0.001s\n"),
+                    event(package, "fail")]
+
+        cases = [
+            ("corpus present", [event(guarded, "start"), event(guarded, "pass")], 0, True, []),
+            ("corpus missing", missing(), 1, True, [guarded]),
+            ("knowledge corpus missing", missing(MODULE + "/internal/knowledge"), 1, True,
+             [MODULE + "/internal/knowledge"]),
+            ("other failure", [event(guarded, "output", "assertion failed\n", "TestRecipe"),
+                               event(guarded, "fail", test="TestRecipe"),
+                               event(guarded, "fail")], 1, False, []),
+            ("missing and other failure", missing() + [event(other, "fail")], 1, False, [guarded]),
+            ("guard text in failed test", [event(guarded, "run", test="TestRecipe")]
+             + missing(), 1, False, []),
+            ("guard text from other package", missing(other), 1, False, []),
+            ("guard and build error", missing() + [event(other, "output", "build failed\n")],
+             1, False, [guarded]),
+            ("guard and extra error", [event(guarded, "output", "unexpected error\n")]
+             + missing(), 1, False, []),
+            ("guard and raw error", missing() + ["go: unexpected tool error"], 1, False, [guarded]),
+            ("guard and tool failure", missing(), 2, False, [guarded]),
+        ]
+        lint = self.bin / "golangci-lint"
+        lint.write_text('#!/bin/sh\necho "lint $*" >> "$CALLS"\nexit "${LINT_EXIT:-0}"\n')
+        lint.chmod(0o755)
+        (self.bin / "go").write_text(
+            '#!/bin/sh\nif [ "$1" = list ]; then cat "$GRAPH"; else '
+            'echo "go $*" >> "$CALLS"; cat "$EVENTS"; exit "$TEST_EXIT"; fi\n')
+        with self.graph.open("a") as graph:
+            for package in (guarded, MODULE + "/internal/knowledge"):
+                name = package.removeprefix(MODULE + "/")
+                graph.write("\n" + json.dumps({"ImportPath": package, "Dir": str(self.root / name)}))
+        calls = self.root / "calls"
+        events_file = self.root / "events"
+        for title, events, test_exit, success, skipped in cases:
+            with self.subTest(title=title):
+                calls.unlink(missing_ok=True)
+                events_file.write_text("\n".join(
+                    json.dumps(value) if isinstance(value, dict) else value for value in events) + "\n")
+                result = subprocess.run(
+                    ["bash", str(ENTRY), "--files", "internal/content/atoms/example.md",
+                     "internal/knowledge/documents.go"], cwd=self.root,
+                    env=dict(self.env, CALLS=str(calls), EVENTS=str(events_file), TEST_EXIT=str(test_exit)),
+                    capture_output=True, text=True)
+                self.assertEqual(result.returncode == 0, success, result.stdout + result.stderr)
+                self.assertEqual(calls.read_text().splitlines()[0],
+                                 "go test -short -json ./internal/authoring/recipe "
+                                 "./internal/content ./internal/knowledge")
+                for package in (guarded, MODULE + "/internal/knowledge", other):
+                    notice = (package + ": not run locally: knowledge corpus not synced — "
+                              "run make sync; CI runs it")
+                    self.assertEqual(notice in result.stdout, package in skipped, result.stdout)
+                self.assertEqual(any(line.startswith("lint ") for line in calls.read_text().splitlines()),
+                                 success, result.stdout + result.stderr)
+
+        # Even the accepted environment failure must not bypass native lint.
+        events_file.write_text("\n".join(json.dumps(value) for value in missing()) + "\n")
+        result = subprocess.run(
+            ["bash", str(ENTRY), "--files", "internal/content/atoms/example.md"], cwd=self.root,
+            env=dict(self.env, CALLS=str(calls), EVENTS=str(events_file), TEST_EXIT="1", LINT_EXIT="9"),
+            capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 if __name__ == "__main__":
