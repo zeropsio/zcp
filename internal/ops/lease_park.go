@@ -33,7 +33,9 @@ import (
 // runs (DP-13): a container never reset runs its run.start again on every
 // start, a reset one does not, so the supervisor is started only when none
 // answers, and either way it gets the branch's sibling overlay as an
-// acquire's checkout sends it (DP-22). A release of a parked lease starts it
+// acquire's checkout sends it (DP-22); then it changes the pool's containers
+// so the platform routes the lease's preview to it again (rerouteUnparked).
+// A release of a parked lease starts it
 // first so the release guard can read it (DP-4), and stops it again when the
 // release is then refused; a forced release resets it as it stands, stopped.
 
@@ -267,6 +269,9 @@ func LeaseUnpark(ctx context.Context, d LeaseDeps, alias string) (LeaseView, err
 		return LeaseView{}, err
 	}
 	rp, c := verdict.rp, verdict.container
+	// A container zcp starts — or one started outside zcp after zcp parked
+	// it — has lost its public route (rerouteUnparked).
+	restarted := rec.Parked || c.Status != platform.SwarmContainerActive
 	var notes []string
 	if c.Status == platform.SwarmContainerActive {
 		if !rec.Parked {
@@ -297,8 +302,12 @@ func LeaseUnpark(ctx context.Context, d LeaseDeps, alias string) (LeaseView, err
 	if d.SSH != nil {
 		if err := waitStartedLease(ctx, d, alias); err != nil {
 			v.State = LeaseStateUnmounted
-			v.Note = joinNotes(append(notes, fmt.Sprintf("its container runs again but did not answer ssh within %s (%v), so zcp neither mounted it nor made sure its supervisor runs; %s does both once it answers",
-				d.startedSSHWait(), err, LeaseUnparkCall(alias)))...)
+			notes = append(notes, fmt.Sprintf("its container runs again but did not answer ssh within %s (%v), so zcp neither mounted it nor made sure its supervisor runs; %s does both once it answers",
+				d.startedSSHWait(), err, LeaseUnparkCall(alias)))
+			if restarted {
+				notes = append(notes, rerouteUnparked(ctx, d, rp, rec))
+			}
+			v.Note = joinNotes(notes...)
 			return v, nil
 		}
 	}
@@ -308,6 +317,9 @@ func LeaseUnpark(ctx context.Context, d LeaseDeps, alias string) (LeaseView, err
 	}
 	if d.SSH != nil {
 		notes = append(notes, superviseUnparked(ctx, d, alias))
+	}
+	if restarted {
+		notes = append(notes, rerouteUnparked(ctx, d, rp, rec))
 	}
 	v.Note = joinNotes(notes...)
 	return v, nil

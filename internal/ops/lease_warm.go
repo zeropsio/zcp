@@ -28,7 +28,8 @@ import (
 // the top-up take one flock per pool and read the pool inside it; deciders
 // outside it (another container's zcp, another consumer) can overshoot the
 // target by one, which a later release removes. zcp deletes only the container
-// it is releasing, with that lease — never a batch, never force, never by
+// it is releasing, with that lease, and the free warm container an unpark
+// replaces (lease_reroute.go, DP-28) — never a batch, never force, never by
 // lowering maxContainers (docs/spec-workflows.md §8 DP-27). Each warm
 // container gets the pool's repository cloned into it (lease_warm_clone.go,
 // DP-32).
