@@ -48,6 +48,14 @@ var leaseCommitRe = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
 // new branch from with.
 const leaseBaseMarker = "@@zcp-lease base "
 
+// leaseFromMissingMarker opens the line a checkout fails with when the branch
+// it was to cut a new branch from is not on origin; leaseFromMissingExit is
+// its exit status.
+const (
+	leaseFromMissingMarker = "the base branch is not on origin: "
+	leaseFromMissingExit   = 5
+)
+
 func validateLeaseBranch(branch string) error {
 	if !leaseBranchRe.MatchString(branch) || strings.Contains(branch, "..") || strings.Contains(branch, "//") ||
 		strings.HasSuffix(branch, "/") || strings.HasSuffix(branch, ".") || strings.HasSuffix(branch, ".lock") {
@@ -194,8 +202,23 @@ func resolveLeaseRepo(stateDir, pool, repo string) (cloneURL string, becomesDefa
 // same way. hqURL is the Mate's HQ, "" on a container not enrolled with one: a
 // repository on it is fetched as HQ's git user (leaseCredentialHelperFor).
 func leaseCheckoutCommand(workDir, repo, branch, base, hqURL string) string {
+	return leaseCheckoutCommandFrom(workDir, repo, branch, base, "", hqURL)
+}
+
+// leaseCheckoutCommandFrom is leaseCheckoutCommand with from, the branch a
+// branch new to origin is cut from instead of main when base is no commit id
+// ("" for main). A from origin does not have fails the command naming it
+// (exit leaseFromMissingExit), whatever the branch: nothing is cut from
+// another commit instead. A branch origin has is tracked as it is there, and
+// a base commit wins over from: from never rewrites a branch (DP-6). from is
+// shell-quoted; the caller has validated it.
+func leaseCheckoutCommandFrom(workDir, repo, branch, base, from, hqURL string) string {
 	q := shellQuote
-	cut := "git checkout -q -f -B " + q(branch) + " --no-track origin/" + leaseDefaultBranch +
+	cutFrom := "origin/" + leaseDefaultBranch
+	if from != "" {
+		cutFrom = q("origin/" + from)
+	}
+	cut := "git checkout -q -f -B " + q(branch) + " --no-track " + cutFrom +
 		" && printf '" + leaseBaseMarker + "%s\\n' \"$(git rev-parse HEAD)\""
 	if leaseCommitRe.MatchString(base) {
 		cut = "{ git rev-parse -q --verify " + q(base+"^{commit}") + " >/dev/null || { echo " +
@@ -210,13 +233,19 @@ func leaseCheckoutCommand(workDir, repo, branch, base, hqURL string) string {
 		"{ [ -d .git ] || git init -q; }",
 		"{ git remote add origin " + q(repo) + " 2>/dev/null || git remote set-url origin " + q(repo) + "; }",
 		"GIT_TERMINAL_PROMPT=0 git -c credential.helper= -c credential.helper=" + q(leaseCredentialHelperFor(repo, hqURL)) + " fetch -q --prune origin",
-		"if git rev-parse --verify -q " + q("refs/remotes/origin/"+branch) + " >/dev/null; then " +
-			"git checkout -q -f -B " + q(branch) + " --track " + q("origin/"+branch) + "; else " + cut + "; fi",
+	}
+	if from != "" {
+		steps = append(steps, "{ git rev-parse --verify -q "+q("refs/remotes/origin/"+from)+" >/dev/null || { echo "+
+			q(leaseFromMissingMarker+from)+" >&2; exit "+strconv.Itoa(leaseFromMissingExit)+"; }; }")
+	}
+	steps = append(steps,
+		"if git rev-parse --verify -q "+q("refs/remotes/origin/"+branch)+" >/dev/null; then "+
+			"git checkout -q -f -B "+q(branch)+" --track "+q("origin/"+branch)+"; else "+cut+"; fi",
 		"git clean -fd -q",
 		// A fresh pool container carries no git identity; the agent's
 		// first commit needs one (set-if-absent, never over the image's).
 		gitIdentityEnsureFragment(),
-	}
+	)
 	if persist := leaseCredentialHelperConfig(repo, hqURL); persist != "" {
 		steps = append(steps, persist)
 	}
@@ -296,9 +325,9 @@ type leaseCheckedOut struct {
 // new branch from and the container's stable number. A failure carries the
 // ssh error (git's stderr rides in it) and classifies auth failures so the
 // credential contract reaches the agent.
-func checkoutLease(ctx context.Context, d LeaseDeps, rec leaseRecord, repo, branch, base string) (leaseCheckedOut, error) {
+func checkoutLease(ctx context.Context, d LeaseDeps, rec leaseRecord, repo, branch, base, from string) (leaseCheckedOut, error) {
 	hqURL := d.hqAddress()
-	out, err := d.SSH.ExecSSH(ctx, rec.alias(), leaseCheckoutCommand(leaseWorkDir, repo, branch, base, hqURL))
+	out, err := d.SSH.ExecSSH(ctx, rec.alias(), leaseCheckoutCommandFrom(leaseWorkDir, repo, branch, base, from, hqURL))
 	if err == nil {
 		cut, _ := checkoutBase(string(out))
 		return leaseCheckedOut{base: cut, stableNumber: checkoutSlot(string(out)), warm: checkoutWarm(string(out))}, nil
@@ -366,9 +395,17 @@ func classifyCheckoutFailure(err error, onHQ bool) (code, suggestion string) {
 		return platform.ErrSSHDeployFailed,
 			"A clone zcp started in the container while it was warm would not stop or could not be removed, so nothing was checked out on top of it. The container went back with a reset, which takes the clone away: acquire again"
 	}
+	if why, ok := leaseNotAnswering(err); ok && why == leaseProcessLimitWhy {
+		return platform.ErrSSHDeployFailed,
+			"The container is not answering: " + why + ". Tell the person rather than wait on it or retry in a loop: it does not recover by itself while what fills it runs"
+	}
 	if exitStatus(err) == leaseSSHUnreachableExit {
 		return platform.ErrSSHDeployFailed,
 			"The container did not answer ssh. Check that the pool's sshIsolation admits this service and that zerops_lease action=status shows the alias installed"
+	}
+	if strings.Contains(out, leaseFromMissingMarker) {
+		return platform.ErrInvalidParameter,
+			"The branch named as from is not on origin, so nothing was cut from it and the container went back. Pass a branch origin has (git ls-remote --heads origin over ssh in any lease lists them), or leave from out to cut the branch from main"
 	}
 	if strings.Contains(out, "base commit") && strings.Contains(out, "is not on origin") {
 		return platform.ErrSSHDeployFailed,
@@ -614,6 +651,13 @@ func inspectLeaseRelease(ctx context.Context, d LeaseDeps, rec leaseRecord) (lea
 	}
 	w, err := readUnsavedWork(ctx, d.SSH, rec.alias())
 	if err != nil {
+		if why, ok := leaseNotAnswering(err); ok && why == leaseProcessLimitWhy {
+			// Still this lease's container, at its process limit: what it
+			// holds cannot be read, so only force releases it.
+			pe := leaseNotAnsweringError(rec.alias(), why, "zcp could not check it for unsaved work and did not release it", err)
+			pe.Suggestion += fmt.Sprintf(". Releasing it unchecked (zerops_lease action=release lease=%s force=true) discards whatever it holds unpushed: only after the person agreed", rec.alias())
+			return leaseGuardResult{}, unsavedWork{}, pe
+		}
 		if exitStatus(err) == leaseSSHUnreachableExit {
 			guard, err := unreachableGuard(ctx, d, rec, err)
 			return guard, unsavedWork{}, err

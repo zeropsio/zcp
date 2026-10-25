@@ -30,11 +30,13 @@ type LeaseInput struct {
 	Action string `json:"action"`
 	Pool   string `json:"pool,omitempty"`
 	// Pools is a group acquire: one lease per pool on the branch (DP-17).
-	Pools  []string  `json:"pools,omitempty"`
-	Branch string    `json:"branch,omitempty"`
-	Repo   string    `json:"repo,omitempty"`
-	Lease  string    `json:"lease,omitempty"`
-	Force  *FlexBool `json:"force,omitempty"`
+	Pools  []string `json:"pools,omitempty"`
+	Branch string   `json:"branch,omitempty"`
+	// From is the branch an acquire cuts a branch new to origin from (DP-6).
+	From  string    `json:"from,omitempty"`
+	Repo  string    `json:"repo,omitempty"`
+	Lease string    `json:"lease,omitempty"`
+	Force *FlexBool `json:"force,omitempty"`
 }
 
 // leaseInputSchema is explicit because force is a FlexBool (an agent that
@@ -45,6 +47,7 @@ func leaseInputSchema() *jsonschema.Schema {
 		"pool":   {Type: "string", Description: "Pool service hostname. acquire (or pools), rollout: required. status: optional (default every pool)."},
 		"pools":  {Type: "array", Items: &jsonschema.Schema{Type: "string"}, Description: "acquire: one lease per pool on the branch, all or none."},
 		"branch": {Type: "string", Description: "acquire: branch to check out (default main); a new one is cut from main. release: every lease of it, all or none."},
+		"from":   {Type: "string", Description: "acquire: cut a new branch from this one instead."},
 		"repo":   {Type: "string", Description: "acquire: https clone URL; the first one on a pool becomes its default. release: the branch's, if several."},
 		"lease":  {Type: "string", Description: "release, sync, park, unpark: the lease alias <pool>-<number> from acquire or status (not a secret)."},
 		"force":  flexBoolSchema("release: discard unpushed commits and uncommitted files (default false: refused while any exist)."),
@@ -63,6 +66,21 @@ func leaseDeps(client platform.Client, projectID, stateDir string, swarm ops.Swa
 		deps.Host = ops.NewLeaseHost(mounter)
 	}
 	return deps
+}
+
+// pairKeptPoolCredential answers, for a pool, the record of the HQ credential
+// it holds that a pair keyed by the pool keeps — the pool service the pair
+// records and its credential fingerprint — once the repository pass took the
+// acquire's per-pool record over (takeOverPoolCredential, DP-16); false when
+// no pair keyed by the pool keeps one.
+func pairKeptPoolCredential(stateDir string) func(pool string) (string, string, bool) {
+	return func(pool string) (string, string, bool) {
+		m, err := workflow.ReadServiceMeta(stateDir, pool)
+		if err != nil || !m.DevIsPool() || m.DevPool.ServiceID == "" || m.HQ == nil || m.HQ.CredentialFingerprint == "" {
+			return "", "", false
+		}
+		return m.DevPool.ServiceID, m.HQ.CredentialFingerprint, true
+	}
 }
 
 // leaseToolResult is what zerops_lease returns. It never carries the lease
@@ -106,7 +124,7 @@ func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir 
 		// credential on the pool (ops.PoolHQCredentialEnvKey), as
 		// git-push-setup puts it on a wired dev service (DP-16); outside one
 		// zcp writes nothing, and the pool's GIT_TOKEN is the user's always.
-		deps.PoolCredential = ops.PoolHQCredential{Read: hqCredential}
+		deps.PoolCredential = ops.PoolHQCredential{Read: hqCredential, Kept: pairKeptPoolCredential(stateDir)}
 	}
 	// envelope is the result's lifecycle envelope; read are the views this
 	// call read checkouts for, whose activity and unsaved work ride leases[]
@@ -136,6 +154,10 @@ func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir 
 			return convertError(platform.NewPlatformError(platform.ErrPrerequisiteMissing,
 				"No state directory: leases are recorded under .zcp/state/leases", "Run zcp from the project's working directory")), nil, nil
 		}
+		if input.From != "" && input.Action != leaseActionAcquire {
+			return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
+				"from is an acquire's: the branch a new branch is cut from", "Pass from only with action=acquire")), nil, nil
+		}
 		if input.Pools != nil && input.Action != leaseActionAcquire {
 			return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
 				"pools is for acquire only", "Address one lease by its alias as lease, or one pool as pool")), nil, nil
@@ -153,7 +175,7 @@ func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir 
 				return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
 					"acquire needs pool", "Pass the pool service's hostname as pool, or several as pools")), nil, nil
 			}
-			change, err := ops.LeaseAcquireGroupChange(ctx, deps, pools, input.Repo, input.Branch)
+			change, err := ops.LeaseAcquireGroupChangeFrom(ctx, deps, pools, input.Repo, input.Branch, input.From)
 			if err != nil {
 				return convertError(withLeaseSSHStderr(err)), nil, nil
 			}
@@ -355,11 +377,29 @@ func leaseStatusNext(views []ops.LeaseView) string {
 		}
 	}
 	parked := strings.TrimSpace(leaseParkedNext(views))
+	silent := leaseNotAnsweringNext(views)
 	if len(idle) == 0 {
-		return parked
+		return joinNext(silent, parked)
 	}
-	return joinNext(fmt.Sprintf("Idle — nothing has happened in it for a day or more: %s. Each one's idle.next names the release that frees it, or what a release would lose and how to keep it. "+
+	return joinNext(silent, fmt.Sprintf("Idle — nothing has happened in it for a day or more: %s. Each one's idle.next names the release that frees it, or what a release would lose and how to keep it. "+
 		"Nothing releases a lease by itself: ask the person before releasing one this conversation did not take.", strings.Join(idle, ", ")), parked)
+}
+
+// leaseNotAnsweringNext names the leases whose container did not answer the
+// status read, each with why: a lease that stops answering is reported to the
+// person, never waited on (DP-21); "" when every lease read answered.
+func leaseNotAnsweringNext(views []ops.LeaseView) string {
+	var silent []string
+	for _, v := range views {
+		if v.NotAnswering != "" {
+			silent = append(silent, fmt.Sprintf("%s (%s)", v.Alias, v.NotAnswering))
+		}
+	}
+	if len(silent) == 0 {
+		return ""
+	}
+	return "Leases not answering: " + strings.Join(silent, "; ") + ". Nothing zcp or you run there works meanwhile: tell the person now rather than wait on it or retry in a loop. " +
+		"A container at its process limit does not recover by itself while what fills it runs, and restarting its pool restarts every container of it, the other leases' dev servers too."
 }
 
 // leaseReleaseBranchNext is what a release of a branch tells the agent when

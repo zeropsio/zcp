@@ -7,7 +7,7 @@ environments: [container]
 multiService: aggregate
 title: "A part's dev pool — lease a container, work, push, open its change, release"
 references-atoms: [develop-dynamic-runtime-start-container]
-references-fields: [ops.DeployResult.Warnings, ops.LeaseView.Reused, ops.LeaseView.DevServers, ops.LeaseSyncMember.UnwatchedServers, ops.LeaseView.Idle, ops.LeaseIdle.Next, tools.leaseToolResult.Warm]
+references-fields: [ops.DeployResult.Warnings, ops.LeaseView.Reused, ops.LeaseView.DevServers, ops.LeaseSyncMember.UnwatchedServers, ops.LeaseView.Idle, ops.LeaseIdle.Next, tools.leaseToolResult.Warm, ops.LeaseView.NotAnswering]
 ---
 
 ### A part's dev pool
@@ -29,7 +29,8 @@ its containers away from the app.
    leases a clean container with no expiry. It writes the alias
    `<pool>-<number>` (SSH), mounts the leased container at `/var/www/<alias>` and
    checks the branch out there; a branch that does not exist yet is cut from
-   `main`. `repo` is remembered per pool — pass it on the first acquire only.
+   `main`, or from the branch `from="<branch>"` names. `repo` is remembered
+   per pool — pass it on the first acquire only.
    The clone uses the pool's own `GIT_TOKEN` service secret — for a
    repository on this Mate's HQ, the HQ credential zcp puts on the pool
    itself as `ZCP_HQ_GIT_TOKEN`; you never type a credential. Each lease it
@@ -182,6 +183,10 @@ leases are keyed by branch, so they never meet.
   is fine, and the lease may then neither release nor restart cleanly. Cap
   the build's parallelism, or run the full build as a deploy to the stage,
   which builds in a container of its own.
+- A lease that stops answering is reported to the person at once, never
+  waited on or polled in a loop: `zerops_lease action=status` marks it
+  `notAnswering` with why — at its process limit nothing new starts in it
+  until what fills it ends.
 - A container answers SSH only when the pool's `sshIsolation` is set as a
   service env variable admitting the zcp service. The top-level import field
   did not reach pool containers.

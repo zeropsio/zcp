@@ -305,6 +305,11 @@ func ExecuteDevServer(
 		return leaseNoSupervisorResult(action, *p.lease, noSup.Installed, why), nil
 	case errors.As(err, &noSup):
 		return noSupervisorResult(action, p.Hostname), nil
+	case err != nil && p.lease != nil:
+		if why, ok := leaseNotAnswering(err); ok {
+			return nil, leaseNotAnsweringError(p.Hostname, why, "no dev server of it was read or changed", err)
+		}
+		return nil, err
 	case err != nil:
 		return nil, err
 	}

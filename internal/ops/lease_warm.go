@@ -456,8 +456,8 @@ func (w *LeaseWarm) decideRelease(ctx context.Context, d LeaseDeps, rp *resolved
 		return view, false, nil
 	}
 	refusal := err.Error()
-	if se != nil && se.Message != "" {
-		refusal = se.Message
+	if se != nil && se.Said() != "" {
+		refusal = se.Said()
 	}
 	kept := keepableWarm(mine)
 	view.keptWarm = kept
@@ -581,9 +581,9 @@ func (w *LeaseWarm) recordCreate(d LeaseDeps, pool string, created []platform.Sw
 	case err == nil:
 		w.record(d, pool, LeaseWarmCreated, len(created), "an acquire may take it at once; zcp never treats it as its own")
 	case errors.As(err, &se) && se.Reason == platform.SwarmReasonPoolCapacityExceeded:
-		w.record(d, pool, LeaseWarmFull, 0, "the orchestrator refused the create: "+se.Message)
-	case errors.As(err, &se) && se.Message != "":
-		w.record(d, pool, LeaseWarmFailed, 0, "the orchestrator refused the create: "+se.Message)
+		w.record(d, pool, LeaseWarmFull, 0, "the orchestrator refused the create: "+se.Said())
+	case errors.As(err, &se) && se.Said() != "":
+		w.record(d, pool, LeaseWarmFailed, 0, "the orchestrator refused the create: "+se.Said())
 	default:
 		w.record(d, pool, LeaseWarmFailed, 0, "the create failed: "+err.Error())
 	}
