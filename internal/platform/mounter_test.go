@@ -312,3 +312,44 @@ func TestCleanupUnit_RemoveFailsButNothingIsLeft_Succeeds(t *testing.T) {
 		t.Errorf("commands = %q, want the reset-failed after the remove", got)
 	}
 }
+
+// TestForceUnmount_UnitRemoveFails_FailsWhileTheUnitStays: a stale mount is
+// cleared by removing its unit first; a unit that stays restarts sshfs after
+// the lazy unmount, so ForceUnmount fails naming the removal — never success
+// with sshfs coming back (a park would then stop the container under a mount
+// that hangs whatever reads it, DP-28). A removal that fails because no unit
+// is left (an orphan stale mount) still clears the mount.
+func TestForceUnmount_UnitRemoveFails_FailsWhileTheUnitStays(t *testing.T) {
+	t.Parallel()
+	remove := []string{"sudo", "-E", "zsc", "unit", "remove"}
+	for _, tt := range []struct {
+		name    string
+		fail    [][]string
+		wantErr bool
+	}{
+		{name: "the unit stays", fail: [][]string{remove}, wantErr: true},
+		{name: "no unit is left", fail: [][]string{remove, {"systemctl", "cat"}, {"systemctl", "is-failed"}}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var got []recordedCommand
+			m := &SystemMounter{run: failingCommands(&got, tt.fail...)}
+			m.mounted = func(string) (bool, error) { return true, nil }
+
+			err := m.ForceUnmount(context.Background(), "apppool-3", "/var/www/apppool-3")
+			lazy := slices.ContainsFunc(got, func(c recordedCommand) bool { return c[0] == "fusermount" })
+			if tt.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "zsc unit remove") {
+					t.Errorf("err = %v, want the unit removal's failure", err)
+				}
+				if lazy {
+					t.Errorf("ran fusermount although the unit stays: %q", got)
+				}
+				return
+			}
+			if err != nil || !lazy {
+				t.Errorf("err = %v, fusermount run = %v: want the orphan stale mount cleared", err, lazy)
+			}
+		})
+	}
+}

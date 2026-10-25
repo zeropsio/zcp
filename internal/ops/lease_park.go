@@ -145,6 +145,22 @@ func leaseLostOnCall(ctx context.Context, d LeaseDeps, rec leaseRecord, verb, wh
 	return v, nil
 }
 
+// recordTakenOnCall is a park or an unpark (verb) whose stop or start went
+// (done says what it did) but whose record zcp did not write, since the
+// record at the alias is no longer the lease's own (kept says why): another
+// zcp process took the container again under the alias meanwhile, or dropped
+// the record. The orchestrator is asked again: a lease that ended is dropped
+// as lost, leaving that record alone (leaseLostOnCall); otherwise the call is
+// refused, the record as it is.
+func recordTakenOnCall(ctx context.Context, d LeaseDeps, rp *resolvedPool, rec leaseRecord, verb, done, kept string) (LeaseView, error) {
+	if fresh := renewOwnership(ctx, d, rp, rec); fresh.own.lost() {
+		return leaseLostOnCall(ctx, d, rec, verb, fresh.why)
+	}
+	return LeaseView{}, platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+		fmt.Sprintf("Lease %s: %s, but zcp did not record it %sed: %s", rec.alias(), done, verb, kept),
+		"zerops_lease action=status shows which lease the alias names now")
+}
+
 // lostLeaseRefusal refuses a park or an unpark (verb) of a lease zcp no longer
 // holds, saying why.
 func lostLeaseRefusal(alias, verb, why string) error {
@@ -218,8 +234,11 @@ func LeasePark(ctx context.Context, d LeaseDeps, alias string) (LeaseView, error
 	}
 	if !rec.Parked {
 		rec.Parked, rec.ParkedAt = true, d.now().UTC().Format(time.RFC3339)
-		if err := writeLeaseRecord(d.StateDir, rec); err != nil {
+		switch kept, err := rewriteLeaseRecord(d.StateDir, rec); {
+		case err != nil:
 			return LeaseView{}, fmt.Errorf("park %s: its container is stopped and still reserved, but its record could not be written (status reports it parked from the orchestrator): %w", alias, err)
+		case kept != "":
+			return recordTakenOnCall(ctx, d, rp, rec, "park", "its container is stopped", kept)
 		}
 	}
 	v := rec.view(LeaseStateParked)
@@ -264,8 +283,11 @@ func LeaseUnpark(ctx context.Context, d LeaseDeps, alias string) (LeaseView, err
 	}
 	if rec.Parked {
 		rec.Parked, rec.ParkedAt = false, ""
-		if err := writeLeaseRecord(d.StateDir, rec); err != nil {
+		switch kept, err := rewriteLeaseRecord(d.StateDir, rec); {
+		case err != nil:
 			return LeaseView{}, fmt.Errorf("unpark %s: its container runs again, but its record could not be written, so zcp still treats it as parked: %w", alias, err)
+		case kept != "":
+			return recordTakenOnCall(ctx, d, rp, rec, "unpark", "its container runs again", kept)
 		}
 	}
 	v := rec.view(LeaseStateHeld)
@@ -468,12 +490,12 @@ func repark(ctx context.Context, d LeaseDeps, rec leaseRecord) (text string, par
 	}
 	text = fmt.Sprintf("zcp could not stop its container again (%s), so it runs now: %s parks it again", errorNote(err), LeaseParkCall(alias))
 	rec.Parked, rec.ParkedAt = false, ""
-	if kept := keptRecordNote(d.StateDir, rec); kept != "" {
-		// Not this lease's record to write over.
-		return text + "; " + kept, false
-	}
-	if werr := writeLeaseRecord(d.StateDir, rec); werr != nil {
+	switch kept, werr := rewriteLeaseRecord(d.StateDir, rec); {
+	case werr != nil:
 		text += fmt.Sprintf(" (its record still says parked: %v)", werr)
+	case kept != "":
+		// Not this lease's record to write over.
+		text += "; " + kept
 	}
 	return text, false
 }

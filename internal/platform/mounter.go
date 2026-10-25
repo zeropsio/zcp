@@ -211,14 +211,20 @@ func (m *SystemMounter) Unmount(ctx context.Context, hostname, path string) erro
 	return nil
 }
 
-// ForceUnmount performs a lazy unmount and best-effort zsc unit cleanup.
-// Used for stale mounts where the transport endpoint is disconnected.
+// ForceUnmount removes the zsc unit, then performs a lazy unmount. Used for
+// stale mounts where the transport endpoint is disconnected. A removal that
+// fails is ignored only once no unit is left (an orphan mount may have none):
+// a unit that stays restarts sshfs after the lazy unmount, so it fails the
+// unmount before any fusermount, as Unmount does.
 func (m *SystemMounter) ForceUnmount(ctx context.Context, hostname, path string) error {
-	// Best-effort: remove zsc unit if it exists (ignore errors — unit may not exist for orphan mounts).
 	if ValidateMountName(hostname) == nil {
-		unitName := "sshfs-" + hostname
-		_ = m.exec(ctx, unmountTimeout, "sudo", "-E", "zsc", "unit", "remove", unitName)
+		removeErr := m.exec(ctx, unmountTimeout, "sudo", "-E", "zsc", "unit", "remove", "sshfs-"+hostname)
 		m.resetFailed(ctx, hostname)
+		if removeErr != nil {
+			if left, _ := m.HasUnit(ctx, hostname); left {
+				return fmt.Errorf("zsc unit remove: %w", removeErr)
+			}
+		}
 	}
 	if still, err := m.isMounted(path); err == nil && !still {
 		return nil
