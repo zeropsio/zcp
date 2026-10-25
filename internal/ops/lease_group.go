@@ -550,12 +550,23 @@ func reserveMember(ctx context.Context, d LeaseDeps, m *groupMember, repoURL, br
 		// The checkout runs over ssh after the record is written.
 		CheckoutPending: d.SSH != nil,
 	}
-	if err := writeLeaseRecord(d.StateDir, rec); err != nil {
+	// The alias file is root-read ssh config whose render refuses the whole
+	// set over one record outside the shapes: such a container is never
+	// recorded, so it never costs every other lease its stanza.
+	switch {
+	case !isLeaseAliasShape(rec.alias()):
+		err = errors.New("the container's number makes no <pool>-<number> alias")
+	case platform.ValidateContainerHostname(rec.ContainerHostname) != nil:
+		err = errors.New("its container hostname is not node-id-<n>.runtime.<pool>.zerops")
+	default:
+		err = writeLeaseRecord(d.StateDir, rec)
+	}
+	if err != nil {
 		// Without a record the lease is unusable and, with no expiry, the
 		// container would stay reserved for good: hand it straight back (it is
 		// clean, so no reset).
 		if _, relErr := rp.api.Release(context.WithoutCancel(ctx), rec.ContainerID, rec.Lease, false); relErr != nil {
-			m.err = fmt.Errorf("record lease %s: %w (and handing the container back failed: %s stays reserved on %s)", rec.alias(), err, rec.ContainerHostname, m.pool)
+			m.err = fmt.Errorf("record lease %s: %w (and handing the container back failed: container %s stays reserved on %s)", rec.alias(), err, rec.ContainerID, m.pool)
 			return
 		}
 		m.err = fmt.Errorf("record lease %s: %w (the container was handed back)", rec.alias(), err)
