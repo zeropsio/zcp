@@ -1020,7 +1020,8 @@ func poolRetireRefused(resp poolMigrateResponse, refusals ...poolMigrateRefusal)
 // poolRetireBlocking names the census's unsaved work that holds the retire
 // unless forced: every item but the commits only a reflog reaches, which the
 // bundle carries as refs, and Mate's own refs and ignored files, which never
-// count.
+// count. A submodule holds it too: work inside one is invisible to the census
+// and the bundle never carries it (poolRetireSubmodules).
 func poolRetireBlocking(c *ops.PoolMigrateCensus) []string {
 	if c == nil {
 		return nil
@@ -1045,6 +1046,10 @@ func poolRetireBlocking(c *ops.PoolMigrateCensus) []string {
 		if t.DetachedCommits > 0 {
 			out = append(out, fmt.Sprintf("%d commits only the detached HEAD of %s holds", t.DetachedCommits, t.Path))
 		}
+		if t.Submodules != nil && t.Submodules.Count > 0 {
+			out = append(out, fmt.Sprintf("%s %d (%s): %s — push each one's commits, branches and stashes to its own remote",
+				poolRetireSubmodules, t.Submodules.Count, strings.Join(t.Submodules.Paths, ", "), poolRetireSubmodulesWhy(t.Path)))
+		}
 	}
 	for _, b := range c.Branches {
 		out = append(out, fmt.Sprintf("branch %s: %d commits on no remote branch", b.Name, b.Unpushed))
@@ -1053,6 +1058,14 @@ func poolRetireBlocking(c *ops.PoolMigrateCensus) []string {
 		out = append(out, fmt.Sprintf("%s: %s", s.Ref, s.Message))
 	}
 	return out
+}
+
+// poolRetireSubmodules opens the census item naming a tree's submodules.
+const poolRetireSubmodules = "submodules"
+
+// poolRetireSubmodulesWhy says what a tree's submodules lose with the dev.
+func poolRetireSubmodulesWhy(tree string) string {
+	return "in " + tree + ", each a repository of its own whose commits, branches, stashes and files the bundle does not carry"
 }
 
 // poolRetireKeptInBundle names the unsaved work whose only copy, once the dev
@@ -1064,7 +1077,7 @@ func poolRetireKeptInBundle(c *ops.PoolMigrateCensus) []string {
 	}
 	var out []string
 	for _, item := range poolRetireBlocking(c) {
-		if !strings.Contains(item, "a .env file") && !strings.HasPrefix(item, "an unfinished ") {
+		if !strings.Contains(item, "a .env file") && !strings.HasPrefix(item, "an unfinished ") && !strings.HasPrefix(item, poolRetireSubmodules) {
 			out = append(out, item)
 		}
 	}
@@ -1110,6 +1123,9 @@ func poolRetireNotKept(dev, root string, c *ops.PoolMigrateCensus, b *ops.PoolMi
 			}
 			if t.Ignored != nil && t.Ignored.Count > 0 {
 				out = append(out, fmt.Sprintf("ignored files in %s (%s): a checkout reproduces them", t.Path, strings.Join(t.Ignored.Paths, ", ")))
+			}
+			if t.Submodules != nil && t.Submodules.Count > 0 {
+				out = append(out, fmt.Sprintf("%s %d (%s): %s", poolRetireSubmodules, t.Submodules.Count, strings.Join(t.Submodules.Paths, ", "), poolRetireSubmodulesWhy(t.Path)))
 			}
 		}
 	}
