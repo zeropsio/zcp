@@ -350,9 +350,11 @@ func RegisterDeploySSH(
 		// see requireAdoption for the exemption rationale. A pool target
 		// or source is never adopted, so it is not asked to be: a pool
 		// target is deployed to (DP-7), a pool source is refused below (PS-3).
-		services := deployListing(ctx, client, projectID)
-		gated := withoutPoolHosts(services, input.TargetService, input.SourceService)
-		if blocked := requireAdoption(stateDir, rtInfo, recipeProbe, gated...); blocked != nil {
+		// The project is listed only for what needs a service's type: the
+		// gate's pool exemption once it refuses, a source zcp has not
+		// adopted, and the push.
+		listServices, listedServices := lazyDeployListing(ctx, client, projectID)
+		if blocked := requireDeployAdoption(stateDir, rtInfo, recipeProbe, listServices, input.TargetService, input.SourceService); blocked != nil {
 			return blocked, nil, nil
 		}
 		// A lease's container is asked about once, before anything reads it
@@ -379,8 +381,8 @@ func RegisterDeploySSH(
 		}
 		// Before any read of the source's files: a pool source (named, or a
 		// self-deploy of a pool) is refused, never pushed from (PS-3).
-		if src := cmp.Or(input.SourceService, input.TargetService); !isLease(stateDir, src) {
-			if svc, err := ops.FindService(services, src); err == nil {
+		if src := cmp.Or(input.SourceService, input.TargetService); !isLease(stateDir, src) && !adoptedNonPool(stateDir, src) {
+			if svc, err := ops.FindService(listServices(), src); err == nil {
 				if refusal := ops.RefusePoolSource(svc, input.TargetService); refusal != nil {
 					return convertError(refusal, WithRecoveryStatus()), nil, nil
 				}
@@ -449,7 +451,7 @@ func RegisterDeploySSH(
 			return handleGitPush(ctx, client, httpClient, projectID, sshDeployer, logFetcher, buildProgressCallback(ctx, req), input, stateDir, rtInfo)
 		}
 
-		return runDeploySSHZCLIPush(ctx, req, client, httpClient, sshDeployer, authInfo, logFetcher, rtInfo, projectID, stateDir, configFile, devsup, services, input)
+		return runDeploySSHZCLIPush(ctx, req, client, httpClient, sshDeployer, authInfo, logFetcher, rtInfo, projectID, stateDir, configFile, devsup, listedServices(), input)
 	})
 }
 
