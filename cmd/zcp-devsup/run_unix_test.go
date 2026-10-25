@@ -418,9 +418,9 @@ func TestCtl_Env_ReplacesTheOverlay(t *testing.T) {
 // stored and the restarts follow.
 func TestCtl_Env_AnswersBeforeTheRestarts(t *testing.T) {
 	t.Parallel()
-	// web ignores SIGTERM, so its restart cannot finish before its grace ends.
-	// The grace is the window env's answer must arrive in: a loaded CI runner
-	// took over 3 s to answer, so it is wide, and still inside waitFor's 15 s.
+	// web ignores SIGTERM, so its restart cannot finish before its grace ends:
+	// an answer inside the grace came before the restart, whatever the state
+	// it carries shows of the restart the supervisor has already begun.
 	const grace = 8 * time.Second
 	state := runningSupervisor(t, `{"version":1,"servers":[{"name":"web","command":"trap '' TERM; echo \"HQ_HOST=${HQ_HOST-unset}\"; exec sleep 300"}]}`, grace)
 	var pid int
@@ -430,13 +430,15 @@ func TestCtl_Env_AnswersBeforeTheRestarts(t *testing.T) {
 		return st.Servers["web"].Status == devsup.StatusRunning && pid > 0
 	})
 
+	asked := time.Now()
 	code, st, out := ctlState(t, state, "env", "--set", "HQ_HOST=node-id-7.runtime.hqpool.zerops")
+	took := time.Since(asked)
 
 	if code != 0 || st.Env["HQ_HOST"] != "node-id-7.runtime.hqpool.zerops" {
 		t.Fatalf("env: exit %d out %s", code, out)
 	}
-	if sv := st.Servers["web"]; sv.Pid != pid || sv.Restarts != 0 {
-		t.Fatalf("env answered after web's restart: %+v", sv)
+	if sv := st.Servers["web"]; took >= grace || sv.Restarts != 0 {
+		t.Fatalf("env answered after web's restart (took %s): %+v", took, sv)
 	}
 	waitFor(t, "web to restart under the overlay", func() bool {
 		_, st, _ := ctlState(t, state, "status", "web")
