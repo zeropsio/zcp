@@ -193,3 +193,63 @@ func TestLeaseUnpark_RunningUnparkedLease_ChangesNoContainer(t *testing.T) {
 		t.Errorf("orchestrator = %v, want nothing started, removed or created", got)
 	}
 }
+
+// TestLeasePark_PublicPool_FullNoneFree_SaysItsPreviewWillNotAnswer: a park
+// in a pool that serves previews, holds its maximum and has no free warm
+// container still parks — nothing refused — but says up front what the unpark
+// then cannot do: change the pool's containers, so its preview answers 502
+// until a create or a removal; it suggests releasing the lease instead, or
+// raising the pool's maximum after asking the person. A pool with room, one
+// with a warm container an unpark can replace, and one serving no HTTP port
+// say nothing of it.
+func TestLeasePark_PublicPool_FullNoneFree_SaysItsPreviewWillNotAnswer(t *testing.T) {
+	t.Parallel()
+	tcpOnly := []platform.Port{{Port: 5432, Protocol: "tcp", Scheme: "tcp"}}
+	tests := []struct {
+		name      string
+		max       int
+		otherLock string // the pool's other container: "" free and warm, or held
+		ports     []platform.Port
+		warns     bool
+	}{
+		{name: "full, the other container held", max: 2, otherLock: leaseLockReserved, ports: previewPorts, warns: true},
+		{name: "room for a container", max: 3, otherLock: leaseLockReserved, ports: previewPorts},
+		{name: "full, a warm container to replace", max: 2, otherLock: "", ports: previewPorts},
+		{name: "full, no HTTP port", max: 2, otherLock: leaseLockReserved, ports: tcpOnly},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			pf, orch := newRerouteFixture(t, tt.max, tt.ports)
+			rec := pf.record(t)
+			rec.Parked, rec.ParkedAt = false, ""
+			if err := writeLeaseRecord(pf.stateDir, rec); err != nil {
+				t.Fatal(err)
+			}
+			orch.find("c-3").c.Status = platform.SwarmContainerActive
+			pf.mounter.states["/var/www/devpool-3"] = platform.MountStateActive
+			orch.add(4, tt.otherLock, true, false, 1)
+
+			v, err := LeasePark(context.Background(), pf.deps, "devpool-3")
+			if err != nil {
+				t.Fatalf("LeasePark: %v", err)
+			}
+			if v.State != LeaseStateParked || !pf.record(t).Parked {
+				t.Fatalf("view = %+v, want the lease parked: a full pool never refuses the park", v)
+			}
+			if _, status, _ := orch.state("c-3"); status != platform.SwarmContainerStopped {
+				t.Errorf("c-3 is %s, want stopped", status)
+			}
+			if got := orch.log(); len(got) != 0 {
+				t.Errorf("orchestrator = %v, want nothing removed or created by a park", got)
+			}
+			wants := []string{"502", "maximum of 2 containers", "until the pool's containers change",
+				"zerops_lease action=release lease=devpool-3", "maxContainers", "ask the person first"}
+			for _, want := range wants {
+				if got := strings.Contains(v.Note, want); got != tt.warns {
+					t.Errorf("note mentions %q = %v, want %v: %s", want, got, tt.warns, v.Note)
+				}
+			}
+		})
+	}
+}
