@@ -75,7 +75,8 @@ func BuildAgentsMD(rt runtime.Info, guided bool) (string, error) {
 		// its agent publishes (zerops_publish_page, docs/spec-mate.md §5.9),
 		// and only a Mate ships the `mac` command for the person's paired Mac
 		// (docs/spec-mate.md §2.10) and has zerops_env's ai-key action
-		// (§5.8).
+		// (§5.8). Only a Mate's preview pane frames its dev and stage
+		// (§10.10).
 		for _, block := range []struct {
 			include bool
 			name    string
@@ -83,6 +84,7 @@ func BuildAgentsMD(rt runtime.Info, guided bool) (string, error) {
 			{rt.MateEnabled, "agents_standup.md"},
 			{!rt.MateEnabled, "agents_group.md"},
 			{rt.MateEnabled, "agents_application.md"},
+			{rt.MateEnabled, "agents_preview.md"},
 			{rt.MateEnabled, "agents_git_host.md"},
 			{rt.MateEnabled, "agents_pages.md"},
 			{rt.MateEnabled, "agents_live_facts.md"},

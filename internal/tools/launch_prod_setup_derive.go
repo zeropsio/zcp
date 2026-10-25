@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/zeropsio/zcp/internal/ops/bundle"
 )
 
 const (
@@ -26,7 +28,9 @@ const (
 //     shouldn't happen because the caller already checked hasSetupNamed),
 //     return ErrNoSourceSetup.
 //  3. Marshal a new block with `setup: prod` + the source's build/run
-//     blocks verbatim.
+//     blocks verbatim, except that Mate's frame sources leave the run
+//     block (bundle.WithoutMateFraming): production keeps the app's own
+//     framing.
 //  4. Append a guidance comment about adding healthCheck (production
 //     readiness rubric requires it).
 //
@@ -54,7 +58,9 @@ func deriveProdSetupBlock(sourceYAMLBody string) (string, error) {
 		prod[platformBuildToken] = build
 	}
 	if run, ok := template["run"]; ok {
-		prod["run"] = run
+		// A dev or stage setup written in a Mate may let Mate's preview
+		// pane frame the app; production keeps the app's own framing.
+		prod["run"], _ = bundle.WithoutMateFraming(run)
 	}
 
 	out, err := yaml.Marshal([]any{prod})
