@@ -909,6 +909,49 @@ func TestBuildAgentsMD_Container_AnAIFeatureRunsOnTheOrganizationsKey(t *testing
 	}
 }
 
+// TestBuildAgentsMD_Container_PreviewPaneFramesDevAndStage pins that a Mate's
+// agent lets Mate's preview pane frame the dev and stage services and keeps
+// production strict. The pane draws a service's page in a frame on Mate's
+// origins; on 2026-10-25 zeropsio/apps' hq and box stages, static services,
+// sent `x-frame-options: DENY` and a strict CSP, and the pane read "refused to
+// connect". The stage builds the setup production builds (in a Mate the
+// application's stage and production build the stage's setup), so the
+// allowance goes into a variant of it the stage deploys, never into that
+// setup itself.
+func TestBuildAgentsMD_Container_PreviewPaneFramesDevAndStage(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		rt   runtime.Info
+		want bool
+	}{
+		{name: "a Mate", rt: runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true}, want: true},
+		{name: "not a Mate", rt: runtime.Info{InContainer: true, ServiceName: "zcp"}},
+		{name: "local with the Mate flag", rt: runtime.Info{MateEnabled: true}},
+		{name: "the Chief", rt: runtime.Info{Chief: true, InContainer: true, ServiceName: "zcp", MateEnabled: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			out, err := BuildAgentsMD(tc.rt, false)
+			if err != nil {
+				t.Fatalf("BuildAgentsMD: %v", err)
+			}
+			for _, want := range []string{
+				"preview pane", "`https://mate.zerops.io`", "`*.zerops.app`", "refused to connect",
+				"`X-Frame-Options`", "cannot name another origin", "`frame-ancestors`",
+				"`'self' https://mate.zerops.io https://*.zerops.app`", "only narrows",
+				"The dev setup may carry it", "builds the setup production builds", "`extends`",
+				"`run.routing.headers`", "replaced whole", "`run.envVariables`",
+				`setup="<the variant>"`, "the setup the variant extends", "`curl -sI",
+			} {
+				if strings.Contains(out, want) != tc.want {
+					t.Errorf("AGENTS.md says %q = %v, want %v", want, !tc.want, tc.want)
+				}
+			}
+		})
+	}
+}
+
 // TestBuildAgentsMD_Chief pins org mode's managed section: the
 // Chief's guidance in place of the single-project develop and bootstrap
 // doctrine, which acts on its own empty project and only confuses it.
