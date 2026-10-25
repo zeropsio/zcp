@@ -95,7 +95,46 @@ func (z *ZeropsClient) CreateServiceEnvVar(ctx context.Context, serviceID, key, 
 			"Retry; if it persists the platform API changed — report it"), err)
 	}
 	apiErrResp.Error.HttpStatusCode = status
+	if sensitive {
+		scrubAPIError(&apiErrResp.Error, content)
+	}
 	return nil, fmt.Errorf("create service env var %q: %w", key, mapSDKError(apiErrResp.Error, "service"))
+}
+
+// scrubAPIError removes secret from what a well-formed refusal echoed back —
+// its code, its message and every string of its meta, map keys included — as
+// the Swarm and Box clients scrub theirs (SwarmClient.scrub, scrubBoxError).
+// A value sent as a secret is one no caller may see again: zcp's own writes
+// (the Mate's HQ credential, a dev's secrets copied to a pool) send values no
+// agent ever saw, and the refusal's words reach errors, logs and tool results.
+func scrubAPIError(e *apiError.Error, secret string) {
+	if secret == "" {
+		return
+	}
+	e.ErrorCode = redactToken(e.ErrorCode, secret)
+	e.Message = redactToken(e.Message, secret)
+	e.Meta = scrubDecodedJSON(e.Meta, secret)
+}
+
+// scrubDecodedJSON is v — a decoded JSON value — with secret removed from
+// every string in it.
+func scrubDecodedJSON(v any, secret string) any {
+	switch t := v.(type) {
+	case string:
+		return redactToken(t, secret)
+	case []any:
+		for i := range t {
+			t[i] = scrubDecodedJSON(t[i], secret)
+		}
+		return t
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, x := range t {
+			out[redactToken(k, secret)] = scrubDecodedJSON(x, secret)
+		}
+		return out
+	}
+	return v
 }
 
 func (z *ZeropsClient) DeleteUserData(ctx context.Context, userDataID string) (*Process, error) {
