@@ -372,7 +372,8 @@ func changeBranchWords(c workflow.HQChange) string {
 // one still open when it differs from what was told (hqChangeStanding), then
 // each change handed to the Mate (hqTakeHanded) — and, at develop's start
 // (atStart), the open changes and where new work goes: on an HQ that keeps an
-// open change per branch every one listed, new work on a branch of its own;
+// open change per branch every one its state names there listed, recorded in
+// the ledger or not (openChangesOf), new work on a branch of its own;
 // on one that keeps one per repository the open one, where the work goes
 // (hqOpenChangeWork). A change another step holds (a describe) is left to the
 // next pass. Changes of another application than the one HQ holds the Mate
@@ -403,7 +404,7 @@ func hqChangesPass(ctx context.Context, stateDir string, hqc hq.Client, state hq
 		switch {
 		case !atStart || len(handed) > 0:
 		case state.OpenPerBranch:
-			if open := openChangesWords(kept); open != "" {
+			if open := openChangesWords(openChangesOf(hqc, state, app, repo)); open != "" {
 				said = append(said, open)
 			}
 		case len(kept) == 1:
@@ -446,6 +447,23 @@ func passChange(ctx context.Context, stateDir, address string, c workflow.HQChan
 		})
 	}
 	return words
+}
+
+// openChangesOf is every open change state names in appID's repo, by number,
+// with its standing now — one this zcp never recorded too (opened by another
+// zcp, or naming no branch), since each counts toward the open changes HQ
+// keeps a Mate there. state is of appID's application.
+func openChangesOf(hqc hq.Client, state hq.MateState, appID, repo string) []workflow.HQChange {
+	var open []workflow.HQChange
+	for _, s := range state.Changes {
+		if s.Repo != repo || s.State != hq.ChangeOpen {
+			continue
+		}
+		now := standingOf(s)
+		open = append(open, workflow.HQChange{AppID: appID, Repo: repo, Number: s.Number, Branch: hqc.BranchOf(s.Number, s.Branch), Told: &now})
+	}
+	slices.SortFunc(open, func(a, b workflow.HQChange) int { return a.Number - b.Number })
+	return open
 }
 
 // openChangesWords lists a repository's open changes, by number and branch,
