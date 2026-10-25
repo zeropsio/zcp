@@ -230,7 +230,8 @@ func TestInputSchemaByteBudget(t *testing.T) {
 	// browser is container+binary-gated; covered by TestAnnotations_BrowserTool.
 	exempt := map[string]bool{"zerops_browser": true}
 
-	toolMap := listAllTools(t, runtime.Info{})
+	// A container's surface: zerops_lease is offered there only.
+	toolMap := listAllTools(t, runtime.Info{InContainer: true})
 
 	// Every advertised tool must carry a ceiling (catches new bloat from day
 	// one) and stay under it.
