@@ -1334,6 +1334,20 @@ func (r *poolRetireRun) bundle(ctx context.Context) *mcp.CallToolResult {
 	if blocking := poolRetireBlocking(census); len(blocking) > 0 && !r.force {
 		return r.abort(ctx, poolRetireRefuseUnsaved, poolRetireUnsavedRefusal(dev, blocking).Message)
 	}
+	var volumeReading *ops.PoolMigrateFingerprint
+	if v := r.rec.CodeVolume; v != nil {
+		// The volume's own reading of its checkout, taken before the bundle
+		// streams: once every dev service is gone the volume's container is
+		// the only reader left, and its delete is checked against this. A
+		// write while the bundle streams is in no bundle, so it must not be
+		// in this reading either — read after, it would be.
+		fp, err := ops.ReadPoolMigrateFingerprint(ctx, r.d.ssh, v.Hostname, ops.CodeVolumeDataRoot, r.workDir())
+		if err != nil {
+			return r.abort(ctx, poolRetireAbortUnreadable, withSSHStderr("the checkout on the code volume "+v.Hostname+" could not be read in the volume's own container at "+ops.CodeVolumeDataRoot, err)+
+				". The volume is deleted last, once no dev service is left to read it through, so the retire goes no further without that reading.")
+		}
+		volumeReading = &fp
+	}
 	b, err := ops.BuildPoolMigrateBundle(ctx, r.d.ssh, ops.PoolMigrateBundleInput{
 		Dev: dev, Root: root, WorkDir: r.workDir(), Path: poolRetireBundlePath(r.d.stateDir, dev),
 	})
@@ -1341,15 +1355,7 @@ func (r *poolRetireRun) bundle(ctx context.Context) *mcp.CallToolResult {
 		return r.abort(ctx, poolRetireAbortBundle, withSSHStderr("the bundle of "+dev+"'s repository could not be written and verified", err)+". The retire deletes nothing without one.")
 	}
 	if v := r.rec.CodeVolume; v != nil {
-		// The volume's own reading of its checkout, taken with the bundle:
-		// once every dev service is gone the volume's container is the only
-		// reader left, and its delete is checked against this.
-		fp, err := ops.ReadPoolMigrateFingerprint(ctx, r.d.ssh, v.Hostname, ops.CodeVolumeDataRoot, r.workDir())
-		if err != nil {
-			return r.abort(ctx, poolRetireAbortUnreadable, withSSHStderr("the checkout on the code volume "+v.Hostname+" could not be read in the volume's own container at "+ops.CodeVolumeDataRoot, err)+
-				". The volume is deleted last, once no dev service is left to read it through, so the retire goes no further without that reading.")
-		}
-		v.Fingerprint = &fp
+		v.Fingerprint = volumeReading
 	}
 	r.rec.Bundle = b
 	r.rec.Restore = ops.PoolMigrateRestoreSteps(b, r.rec.Origin)

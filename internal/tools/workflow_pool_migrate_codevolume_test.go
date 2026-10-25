@@ -413,8 +413,8 @@ func (v *codeVolumeRig) assertVolumeCleared(t *testing.T) {
 // TestPoolMigrateRetire_VariantB_DeletesEveryDevServiceThenTheVolumeLast pins
 // the variant-B retire: the diagnosis names every dev service and the code
 // volume, each by the id it is deleted by; acknowledged, it bundles the
-// volume's checkout through the dev's mount, takes the volume's own reading
-// of it at /data, checks the fingerprint, deletes appdev then apidev — each
+// volume's checkout through the dev's mount — the volume's own reading of it
+// at /data taken before the bundle streams — checks the fingerprint, deletes appdev then apidev — each
 // read gone by id — re-reads the checkout in the volume's container, deletes
 // the volume last and clears CodeVolume once it reads gone.
 func TestPoolMigrateRetire_VariantB_DeletesEveryDevServiceThenTheVolumeLast(t *testing.T) {
@@ -453,7 +453,7 @@ func TestPoolMigrateRetire_VariantB_DeletesEveryDevServiceThenTheVolumeLast(t *t
 		t.Fatalf("deletes = %q, want appdev, apidev, then the volume", got)
 	}
 	events := v.r.events.all()
-	order := []string{"unmount appdev", "unmount apidev", "bundle on appdev", "fingerprint on vol", "fingerprint on appdev", "delete svc-dev", "delete svc-api", "fingerprint on vol", "delete svc-vol"}
+	order := []string{"unmount appdev", "unmount apidev", "fingerprint on vol", "bundle on appdev", "fingerprint on appdev", "delete svc-dev", "delete svc-api", "fingerprint on vol", "delete svc-vol"}
 	at := 0
 	for _, want := range order {
 		i := slices.Index(events[at:], want)
