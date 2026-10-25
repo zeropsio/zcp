@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -460,6 +461,26 @@ func TestLeaseRelease_ResultNamesTheReleasedBranchsChange(t *testing.T) {
 	unanswered := leaseReleaseChanges(lab.stateDir, lab.hq.srv.URL, views[1:], func() *hq.MateState { return nil })
 	if !strings.Contains(unanswered, "as last read") || !strings.Contains(unanswered, "group appdev@add-signup: #2") {
 		t.Errorf("with HQ not answering the release result is not the ledger's, as last read: %s", unanswered)
+	}
+}
+
+// TestStatusHQChanges_OutsideAMate_AsLastRead: outside a Mate (an enrollment
+// left in $HOME, pairs keeping their HQ records) status reads nothing of HQ,
+// so the ledger's Changes section is labelled as last read, never as now.
+func TestStatusHQChanges_OutsideAMate_AsLastRead(t *testing.T) {
+	t.Parallel()
+	stateDir := kara(t)
+	if err := workflow.RecordHQChange(stateDir, workflow.HQChange{AppID: labApp, Repo: "appsdev", Number: 2, Branch: "pool-previews"}); err != nil {
+		t.Fatal(err)
+	}
+
+	changes, asLastRead := statusHQChanges(context.Background(), nil, runtime.Info{InContainer: true}, stateDir, targetHQ, time.Now())
+
+	if len(changes) == 0 || !asLastRead {
+		t.Errorf("outside a Mate status names %+v with asLastRead=%v, want the ledger's, as last read", changes, asLastRead)
+	}
+	if changes, asLastRead := statusHQChanges(context.Background(), nil, runtime.Info{InContainer: true}, t.TempDir(), targetHQ, time.Now()); len(changes) != 0 || asLastRead {
+		t.Errorf("with nothing to name status says %+v, asLastRead=%v", changes, asLastRead)
 	}
 }
 
