@@ -564,7 +564,7 @@ func swarmMeta(raw json.RawMessage) []swarmMetaItem {
 func swarmMetaStrings(v any) []string {
 	switch t := v.(type) {
 	case []any:
-		var out []string
+		out := make([]string, 0, len(t))
 		for _, x := range t {
 			out = append(out, swarmMetaStrings(x)...)
 		}

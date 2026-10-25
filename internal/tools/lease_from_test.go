@@ -48,7 +48,7 @@ func (s *localGitSSH) ExecSSH(ctx context.Context, alias, command string) ([]byt
 	}
 	command = strings.ReplaceAll(command, "'/var/www'", "'"+s.dir(alias)+"'")
 	command = strings.ReplaceAll(command, "'"+leaseTestRepo+"'", "'"+s.origin+"'")
-	cmd := exec.CommandContext(ctx, "sh", "-c", command) //nolint:gosec // running the composed checkout is the test
+	cmd := exec.CommandContext(ctx, "sh", "-c", command)
 	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -108,15 +108,25 @@ func originWithABase(t *testing.T) (origin, mainSHA, basedSHA, featSHA string) {
 	return origin, mainSHA, basedSHA, featSHA
 }
 
+// originOnly is originWithABase's origin alone.
+func originOnly(t *testing.T) string {
+	t.Helper()
+	origin, _, _, _ := originWithABase(t) //nolint:dogsled // only the origin is wanted
+	return origin
+}
+
 // leaseResult is the leases an acquire answered.
-func leaseResult(t *testing.T, text string) []struct {
-	Alias, Branch, Note string
-} {
+// leaseNoted is one lease of a result, as far as a note test reads it.
+type leaseNoted struct {
+	Alias  string `json:"alias"`
+	Branch string `json:"branch"`
+	Note   string `json:"note"`
+}
+
+func leaseResult(t *testing.T, text string) []leaseNoted {
 	t.Helper()
 	var got struct {
-		Leases []struct {
-			Alias, Branch, Note string
-		} `json:"leases"`
+		Leases []leaseNoted `json:"leases"`
 	}
 	if err := json.Unmarshal([]byte(text), &got); err != nil {
 		t.Fatalf("result is not JSON: %v\n%s", err, text)
@@ -167,7 +177,7 @@ func TestLeaseTool_Acquire_From_CutsTheNewBranchFromTheBase(t *testing.T) {
 // from another commit instead.
 func TestLeaseTool_Acquire_From_BaseNotOnOrigin_Refused(t *testing.T) {
 	t.Parallel()
-	origin, _, _, _ := originWithABase(t)
+	origin := originOnly(t)
 	ssh := &localGitSSH{t: t, origin: origin}
 	orch := &fakeOrchestrator{}
 	srv, stateDir := leaseToolServerSSH(t, orch, ssh)
