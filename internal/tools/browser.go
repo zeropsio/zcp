@@ -65,7 +65,9 @@ func RegisterBrowser(srv *mcp.Server, stateDir string) {
 			"browserRecycled: true means the call ended unclean and the browser was stopped (not set by a fresh-context call's clean stop). " +
 			"Each step's errorKind: selector-not-found, not-editable, timeout, wedge, invalid-command " +
 			"(an unknown command, subcommand or find action: fix the command, not the page), " +
-			"stale-ref (an @eN ref, see below) or other failures. " +
+			"stale-ref (an @eN ref, see below), " +
+			"script-timeout (your eval's promise never settled — e.g. waiting on every animation, which a looping one never finishes; the page is alive) " +
+			"or other failures. " +
 			"commands[] vocabulary (<sel> is a CSS selector): " +
 			"[\"find\",\"role\",\"button\",\"click\",\"--name\",\"Submit\"], [\"find\",\"label\",\"<text>\",\"check\"], " +
 			"[\"find\",\"label\",\"<text>\",\"fill\",\"<value>\"], [\"find\",\"text\",\"<text>\",\"click\"], " +

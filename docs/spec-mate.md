@@ -686,6 +686,9 @@ Each step answers agent-browser's own `error` text verbatim with an `errorKind` 
 `wedge` (a CDP wedge signal, which also recycles the service), `invalid-command` (a command,
 subcommand or `find` action agent-browser does not know — the call was wrong, not the page),
 `stale-ref` (an `@eN` ref no snapshot in the call's tab made; refs die with the tab),
+`script-timeout` (an `eval` that ran into the CDP timeout while the page still answered a
+trivial evaluate probed under a 5 s bound: the script's promise never settled, the page is
+alive — the walk goes on and the service is kept; a probe that fails leaves the step `wedge`),
 `selector-not-found`, `not-editable`, `timeout` or `other`. Only `wait` polls (agent-browser's
 25 s default); `click`, `fill`, `check`, `find`, `get` and `is` look once.
 
