@@ -401,10 +401,12 @@ func ReadPoolMigrateEnv(ctx context.Context, client platform.Client, in PoolMigr
 		switch {
 		case ok && poolEnvSecret(have):
 			out.Present = append(out.Present, row.Key)
+		case requested[row.Key]:
+			// Asked of the person by the step, which could not read it on
+			// the dev: absent from the pool, or held there plain.
+			out.Requests = append(out.Requests, poolEnvRequest(row.Key, in))
 		case ok:
 			out.ToWrite = append(out.ToWrite, PoolMigrateEnvKey{Key: row.Key, Sensitive: true, Change: PoolEnvChangeUpdate})
-		case requested[row.Key]:
-			out.Requests = append(out.Requests, poolEnvRequest(row.Key, in))
 		default:
 			out.ToWrite = append(out.ToWrite, PoolMigrateEnvKey{Key: row.Key, Sensitive: true, Change: PoolEnvChangeAdd})
 			held[row.Key] = true
@@ -535,9 +537,11 @@ const (
 	poolSecretWrite poolSecretDecision = iota + 1
 	// poolSecretEqual: the pool holds the dev's, by fingerprint.
 	poolSecretEqual
-	// poolSecretPresent: unreadable on the dev; the pool's own is left.
+	// poolSecretPresent: unreadable on the dev; the pool's own secret is
+	// left.
 	poolSecretPresent
-	// poolSecretAsk: unreadable on the dev and absent on the pool.
+	// poolSecretAsk: unreadable on the dev, and absent on the pool or held
+	// there plain.
 	poolSecretAsk
 	// poolSecretNotRead: the read itself did not answer.
 	poolSecretNotRead
@@ -677,12 +681,15 @@ func (s *poolEnvStep) decideSecret(key string) (*poolEnvWrite, poolSecretDecisio
 			s.rec.Fingerprints[key] = fp
 		}
 		return nil, poolSecretNotRead
-	case !read && onPool:
+	case !read && onPool && poolEnvSecret(have):
 		if fp, kept := s.sides.record.Fingerprints[key]; kept {
 			s.rec.Fingerprints[key] = fp
 		}
 		return nil, poolSecretPresent
 	case !read:
+		// Absent from the pool, or held there plain — which the read side
+		// sends to this step to make a secret — the value is the person's to
+		// give: asked and recorded, so both sides read the ask.
 		return nil, poolSecretAsk
 	}
 	fp := poolEnvFingerprint(s.in.Pool.ID, key, value)
@@ -748,15 +755,20 @@ func (s *poolEnvStep) write(ctx context.Context, client platform.Client) map[str
 	held := poolUserKeys(s.sides.poolUser)
 	var procIDs []string
 	for _, w := range s.writes {
-		procs, reason := writePoolEnv(ctx, client, s.in.Pool.ID, w)
+		procs, removed, reason := writePoolEnv(ctx, client, s.in.Pool.ID, w)
 		procIDs = append(procIDs, procs...)
 		switch {
 		case reason != "":
-			if w.existing != nil {
+			if removed {
 				delete(held, w.key)
 			}
 			if w.key == GitTokenEnvKey {
 				s.out.GitToken = gitTokenState(PoolGitTokenFailed, s.in)
+				warn := fmt.Sprintf("%s was not copied to %s: %s.", GitTokenEnvKey, s.in.Pool.Name, reason)
+				if removed {
+					warn += fmt.Sprintf(" %s holds no %s now: a lease of a private repository has none there until the step copies it again or the person sets the pool's own in the Zerops dashboard, sensitive.", s.in.Pool.Name, GitTokenEnvKey)
+				}
+				s.out.Warnings = append(s.out.Warnings, warn)
 				continue
 			}
 			s.out.Failed = append(s.out.Failed, PoolMigrateEnvSkip{Key: w.key, Reason: reason})
@@ -809,14 +821,17 @@ func poolRow(pool map[string]platform.ServiceEnvVar, key string) *platform.Servi
 // writePoolEnv writes one key on the pool: the row it replaces is removed
 // first (an update without the sensitive flag would turn a secret plain, so a
 // replace is a fresh create), then the hand-rolled userData writer creates it
-// with its flag. It answers the processes it started and, on failure, a reason
-// built from the platform's error codes only — never its message, which could
-// echo what was sent.
-func writePoolEnv(ctx context.Context, client platform.Client, poolID string, w poolEnvWrite) (procs []string, reason string) {
+// with its flag. A create that fails after the removal puts the previous row
+// back, value and flag, when the API showed its value; a masked one cannot be
+// put back. It answers the processes it started, whether the pool lost its
+// previous value of the key, and, on failure, a reason built from the
+// platform's error codes only — never its message, which could echo what was
+// sent.
+func writePoolEnv(ctx context.Context, client platform.Client, poolID string, w poolEnvWrite) (procs []string, removed bool, reason string) {
 	if w.existing != nil {
 		proc, err := client.DeleteUserData(ctx, w.existing.ID)
 		if err != nil {
-			return nil, "the pool's previous value could not be removed (" + poolEnvErrorCode(err) + ")"
+			return nil, false, "the pool's previous value could not be removed (" + poolEnvErrorCode(err) + ")"
 		}
 		if proc != nil && proc.ID != "" {
 			procs = append(procs, proc.ID)
@@ -824,15 +839,26 @@ func writePoolEnv(ctx context.Context, client platform.Client, poolID string, w 
 	}
 	proc, err := client.CreateServiceEnvVar(ctx, poolID, w.key, w.value, w.sensitive)
 	if err != nil {
-		if w.existing != nil {
-			return procs, "the pool's previous value was removed, then the write did not take (" + poolEnvErrorCode(err) + "); call the step again"
+		failed := "the write did not take (" + poolEnvErrorCode(err) + ")"
+		if w.existing == nil {
+			return procs, false, failed + "; call the step again"
 		}
-		return procs, "the write did not take (" + poolEnvErrorCode(err) + "); call the step again"
+		if w.existing.Masked {
+			return procs, true, "the pool's previous value was removed, then " + failed + ", and the previous value could not be put back: the API masks it; call the step again"
+		}
+		back, err := client.CreateServiceEnvVar(ctx, poolID, w.key, w.existing.Content, w.existing.Sensitive)
+		if err != nil {
+			return procs, true, "the pool's previous value was removed, then " + failed + ", and putting the previous value back did not take either (" + poolEnvErrorCode(err) + "); call the step again"
+		}
+		if back != nil && back.ID != "" {
+			procs = append(procs, back.ID)
+		}
+		return procs, false, "the pool's previous value was removed, then " + failed + "; the previous value is put back; call the step again"
 	}
 	if proc != nil && proc.ID != "" {
 		procs = append(procs, proc.ID)
 	}
-	return procs, ""
+	return procs, false, ""
 }
 
 // poolEnvErrorCode names a failed write by the platform's codes.

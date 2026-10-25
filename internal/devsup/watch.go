@@ -4,8 +4,10 @@ package devsup
 
 import (
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 )
@@ -22,19 +24,27 @@ const watchSettle = 500 * time.Millisecond
 // restarts once that long has passed.
 const watchSettleMax = 5 * time.Second
 
+// burstPathsMax bounds the paths a burst keeps: past it the burst names no
+// set, and nothing is decided by which paths it holds.
+const burstPathsMax = 64
+
 // debouncer turns changed repo paths into one onChange call per burst,
 // dropping paths the watch does not cover or ignores. onChange gets the path
-// that opened the burst and when the burst's last change came.
+// that opened the burst, when the burst's last change came, and every path it
+// changed — nil when they were more than burstPathsMax.
 type debouncer struct {
 	w        *Watch
-	onChange func(rel string, last time.Time)
+	onChange func(rel string, last time.Time, paths []string)
 	mu       sync.Mutex
 	// open: a burst is waiting for its quiet; first and firstAt are its
-	// first change, last its latest; gen numbers the timer that ends it, so
-	// a timer replaced by a later change does nothing.
+	// first change, last its latest, paths every path it changed (overflow:
+	// more than burstPathsMax); gen numbers the timer that ends it, so a
+	// timer replaced by a later change does nothing.
 	open          bool
 	first         string
 	firstAt, last time.Time
+	paths         map[string]bool
+	overflow      bool
 	timer         *time.Timer
 	gen           int
 	closed        bool
@@ -52,8 +62,16 @@ func (d *debouncer) changed(rel string) {
 	}
 	if !d.open {
 		d.open, d.first, d.firstAt = true, rel, now
+		d.paths, d.overflow = map[string]bool{}, false
 	}
 	d.last = now
+	if !d.overflow && !d.paths[rel] {
+		if len(d.paths) == burstPathsMax {
+			d.overflow, d.paths = true, nil
+		} else {
+			d.paths[rel] = true
+		}
+	}
 	wait := min(watchSettle, watchSettleMax-now.Sub(d.firstAt))
 	if d.timer != nil {
 		d.timer.Stop()
@@ -72,9 +90,13 @@ func (d *debouncer) settled(gen int) {
 		return
 	}
 	first, last := d.first, d.last
-	d.open, d.timer = false, nil
+	var paths []string
+	if !d.overflow {
+		paths = slices.Sorted(maps.Keys(d.paths))
+	}
+	d.open, d.timer, d.paths = false, nil, nil
 	d.mu.Unlock()
-	d.onChange(first, last)
+	d.onChange(first, last, paths)
 }
 
 func (d *debouncer) close() {

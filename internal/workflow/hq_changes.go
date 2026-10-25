@@ -448,3 +448,46 @@ func HQChanges(stateDir string) ([]HQChange, error) {
 	}
 	return changes, moveErr
 }
+
+// PeekHQChanges is HQChanges for a reader that writes nothing (the pool
+// migration's read side, docs/spec-workflows.md §13 PM-1): every change the
+// ledger keeps, with each pair's change on record that has not moved yet
+// folded in as MovePairChangesToLedger would move it — its branch by
+// ReleasedBranchOf, its words — in memory only; neither the ledger nor any
+// meta is written.
+func PeekHQChanges(stateDir string) ([]HQChange, error) {
+	changes, err := ListHQChanges(stateDir)
+	if err != nil {
+		return nil, err
+	}
+	metas, err := ListServiceMetas(stateDir)
+	if err != nil {
+		return changes, fmt.Errorf("peek pair changes: %w", err)
+	}
+	for _, m := range metas {
+		ref := m.HQ
+		if ref == nil || ref.Change == 0 {
+			continue
+		}
+		i := slices.IndexFunc(changes, func(c HQChange) bool {
+			return c.AppID == ref.AppID && c.Repo == ref.Repo && c.Number == ref.Change
+		})
+		if i < 0 {
+			changes = append(changes, HQChange{AppID: ref.AppID, Repo: ref.Repo, Number: ref.Change, Source: HQChangeFromPair})
+			i = len(changes) - 1
+		}
+		c := &changes[i]
+		if c.Branch == "" {
+			c.Branch = ReleasedBranchOf(ref.Change, ref.Branch)
+		}
+		if words := ref.ChangeDescription; c.Description == nil && words != nil && (words.Change == 0 || words.Change == ref.Change) {
+			kept := *words
+			kept.Change = ref.Change
+			c.Description = &kept
+		}
+	}
+	slices.SortFunc(changes, func(a, b HQChange) int {
+		return cmp.Or(cmp.Compare(a.AppID, b.AppID), cmp.Compare(a.Repo, b.Repo), cmp.Compare(a.Number, b.Number))
+	})
+	return changes, nil
+}

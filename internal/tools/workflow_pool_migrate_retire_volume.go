@@ -380,7 +380,10 @@ func (r *poolRetireRun) deleteDevs(ctx context.Context) *mcp.CallToolResult {
 		}
 	}
 	for _, s := range live {
-		proc, err := ops.DeleteByID(ctx, r.d.client, s.ServiceID)
+		proc, saveFailed, err := r.sendDelete(ctx, s.ServiceID)
+		if saveFailed != nil {
+			return saveFailed
+		}
 		if err != nil {
 			if st, _ := poolRetireDevState(ctx, r.d.client, s.ServiceID); st == poolRetireDevGone {
 				continue

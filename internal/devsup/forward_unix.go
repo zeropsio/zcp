@@ -4,6 +4,7 @@ package devsup
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"strconv"
@@ -14,6 +15,13 @@ import (
 // forwardDialTimeout bounds the dial from the preview port to the server: the
 // server is on loopback, so a dial that has not finished has no listener.
 const forwardDialTimeout = 2 * time.Second
+
+// forwardAcceptWaitFirst and forwardAcceptWaitCap bound the wait after an
+// Accept error before the forward takes the next connection.
+const (
+	forwardAcceptWaitFirst = 5 * time.Millisecond
+	forwardAcceptWaitCap   = time.Second
+)
 
 // forwardHalfCloseWait bounds how long a connection one side has ended (a
 // half-close, passed on to the other side) waits for the other side to end
@@ -90,13 +98,28 @@ func openForward(listenPort, targetPort int, seen *previewSeen) (*forward, error
 }
 
 // accept serves each connection the preview port takes; ctx ends when the
-// forward is shut.
+// forward is shut, and only that ends it. Any other Accept error — every file
+// descriptor in use, a connection aborted before it was taken — waits a
+// moment, doubling up to forwardAcceptWaitCap, and takes the next: a
+// forward that ended there would hold its port bound, serving nothing, while
+// the server kept it and status read its connections as observed.
 func (f *forward) accept(ctx context.Context) {
+	var backoff time.Duration
 	for {
 		c, err := f.ln.Accept()
 		if err != nil {
-			return
+			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
+				return
+			}
+			backoff = min(max(2*backoff, forwardAcceptWaitFirst), forwardAcceptWaitCap)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(backoff):
+			}
+			continue
 		}
+		backoff = 0
 		if !f.track(c, true) {
 			_ = c.Close()
 			return

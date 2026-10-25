@@ -146,6 +146,10 @@ type retireClient struct {
 	devState    string
 	afterDelete string
 	deleted     []string
+	// onDelete runs once a delete is sent; procStatus answers a process's
+	// status by id over the mock's own.
+	onDelete   func()
+	procStatus map[string]string
 }
 
 const (
@@ -182,8 +186,31 @@ func (c *retireClient) DeleteService(ctx context.Context, id string) (*platform.
 	if id == "svc-dev" {
 		c.devState = c.afterDelete
 	}
+	onDelete := c.onDelete
 	c.mu.Unlock()
+	if onDelete != nil {
+		onDelete()
+	}
 	return c.Mock.DeleteService(ctx, id)
+}
+
+func (c *retireClient) GetProcess(ctx context.Context, id string) (*platform.Process, error) {
+	c.mu.Lock()
+	status, set := c.procStatus[id]
+	c.mu.Unlock()
+	if set {
+		return &platform.Process{ID: id, ActionName: "delete", Status: status}, nil
+	}
+	return c.Mock.GetProcess(ctx, id)
+}
+
+func (c *retireClient) setProcStatus(id, status string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.procStatus == nil {
+		c.procStatus = map[string]string{}
+	}
+	c.procStatus[id] = status
 }
 
 func (c *retireClient) deletes() []string {
@@ -441,7 +468,13 @@ func retireInput(ack bool, force bool) WorkflowInput {
 // wire — and whether it was an error.
 func (r *retireRig) retire(t *testing.T, input WorkflowInput) (map[string]any, bool) {
 	t.Helper()
-	result, typed, err := poolMigrateRetireRun(context.Background(), r.deps(), input)
+	return r.retireCtx(context.Background(), t, input)
+}
+
+// retireCtx is retire under ctx: a call whose context ends mid-poll.
+func (r *retireRig) retireCtx(ctx context.Context, t *testing.T, input WorkflowInput) (map[string]any, bool) {
+	t.Helper()
+	result, typed, err := poolMigrateRetireRun(ctx, r.deps(), input)
 	if err != nil {
 		t.Fatalf("retire: %v", err)
 	}
@@ -913,6 +946,102 @@ func TestPoolMigrateRetire_DeleteNotTaken_CallAgain(t *testing.T) {
 	if got := r.client.deletes(); !slices.Equal(got, []string{"svc-dev", "svc-dev"}) {
 		t.Errorf("deletes = %q, want the recorded id deleted again", got)
 	}
+}
+
+// TestPoolMigrateRetire_ResumeWhileTheDeleteIsQueued_NeverAborts: a call that
+// sent the dev's delete and gave up before it ran — its context ended
+// mid-poll, the delete queued behind another process — leaves the record at
+// deleting, the delete's process id in it. A resume while that process is
+// still PENDING says call again: it never re-fences, re-reads the fingerprint
+// or aborts, so a write meanwhile never re-keys the pair onto a dev the queued
+// delete then removes, nor says "Nothing was deleted" (PM-7). Once the
+// delete ran, the next call finishes; a delete whose process FAILED took
+// nothing, and the resume goes on as before — a moved repository aborts.
+func TestPoolMigrateRetire_ResumeWhileTheDeleteIsQueued_NeverAborts(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		// unrecorded drops the process id from the record, as a cut
+		// between the send and the save leaves it: the project's live
+		// processes answer instead.
+		unrecorded bool
+	}{{name: "recorded"}, {name: "unrecorded", unrecorded: true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newRetireRig(t, nil)
+			const procID = "proc-delete-svc-dev"
+			r.client.setProcStatus(procID, platform.ProcessStatusPending)
+			r.client.afterDelete = devLive
+			ctx, cancel := context.WithCancel(context.Background())
+			r.client.onDelete = cancel
+			out, _ := r.retireCtx(ctx, t, retireInput(true, false))
+			cancel()
+			r.client.onDelete = nil
+			if out["step"] != "retiring" {
+				t.Fatalf("first call = %v, want retiring while the delete is queued", out)
+			}
+			rec := retireRecordOf(t, r.f.stateDir)
+			if rec.Phase != poolRetireDeleting {
+				t.Fatalf("record phase = %s, want deleting", rec.Phase)
+			}
+			if tc.unrecorded {
+				rec.DeletesSent = map[string]string{"svc-dev": ""}
+				if err := savePoolRetireRecord(r.f.stateDir, rec); err != nil {
+					t.Fatal(err)
+				}
+				r.f.mock.WithProjectProcesses([]platform.Process{{ID: procID, ActionName: "delete", Status: platform.ProcessStatusPending,
+					ServiceStacks: []platform.ServiceStackRef{{ID: "svc-dev"}}}})
+			} else if rec.DeletesSent["svc-dev"] != procID {
+				t.Fatalf("record deletesSent = %v, want the delete's process id", rec.DeletesSent)
+			}
+			// A write lands while the delete is queued.
+			if err := os.WriteFile(filepath.Join(r.ssh.repo, "app.txt"), []byte("v1\nwritten while the delete is queued\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			r.events.log = nil
+			out, _ = r.retire(t, retireInput(true, false))
+			if out["status"] == poolMigrateStatusAborted || out["step"] != "retiring" {
+				t.Fatalf("resume while the delete is queued = %v, want retiring, never aborted", out)
+			}
+			if why, _ := out["nextUnavailable"].(string); !strings.Contains(why, procID) && !tc.unrecorded {
+				t.Errorf("nextUnavailable = %q, want the queued delete's process named", why)
+			}
+			if rec := retireRecordOf(t, r.f.stateDir); rec.Phase != poolRetireDeleting {
+				t.Fatalf("record phase = %s, want it kept at deleting", rec.Phase)
+			}
+			if meta, _ := workflow.FindServiceMeta(r.f.stateDir, "appstage"); meta == nil || meta.Hostname != "apppool" {
+				t.Fatalf("the pair = %+v, want it still keyed by the pool", meta)
+			}
+			if r.events.index("mount appdev") >= 0 || r.events.index("ssh fingerprint") >= 0 || len(r.client.deletes()) != 1 {
+				t.Fatalf("the resume acted while the delete was queued: %q, deletes %q", r.events.all(), r.client.deletes())
+			}
+			// The queued delete runs: the next call finishes.
+			r.client.setProcStatus(procID, platform.ProcessStatusFinished)
+			r.f.mock.WithProjectProcesses(nil)
+			r.client.mu.Lock()
+			r.client.devState = devGone
+			r.client.mu.Unlock()
+			if out, _ := r.retire(t, retireInput(true, false)); out["step"] != "retired" {
+				t.Fatalf("after the delete ran = %v, want retired", out)
+			}
+		})
+	}
+	t.Run("failed", func(t *testing.T) {
+		t.Parallel()
+		r := newRetireRig(t, nil)
+		r.client.setProcStatus("proc-delete-svc-dev", platform.ProcessStatusFailed)
+		r.client.afterDelete = devLive
+		if out, _ := r.retire(t, retireInput(true, false)); out["step"] != "retiring" {
+			t.Fatalf("first call = %v, want retiring", out)
+		}
+		if err := os.WriteFile(filepath.Join(r.ssh.repo, "app.txt"), []byte("v1\nwritten after the delete failed\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out, _ := r.retire(t, retireInput(true, false))
+		if out["status"] != poolMigrateStatusAborted {
+			t.Fatalf("resume after a failed delete with the repository moved = %v, want aborted", out)
+		}
+	})
 }
 
 // seedRetireRecord writes the record a retire left in phase, with the bundle
@@ -1478,6 +1607,50 @@ func TestPoolMigrateRetire_NameRetaken_RetiresTheNewService(t *testing.T) {
 	}
 	if kept.Bundle.Path == rec.Bundle.Path {
 		t.Fatalf("the old record names the new bundle %s", kept.Bundle.Path)
+	}
+	if got, err := os.ReadFile(kept.Bundle.Path); err != nil || string(got) != oldBytes {
+		t.Fatalf("the old dev's bundle at %s = %q (%v), want it kept as it was", kept.Bundle.Path, got, err)
+	}
+}
+
+// TestPoolMigrateRetire_AbortedRecordOfAnotherID_KeptApart: an aborted
+// retire keeps its bundle — the abort says so — and the dev it bundled may
+// go later, outside zcp, its hostname then taken by a new service. A retire
+// of that service keeps the aborted record of the old id and its bundle
+// apart, as it keeps a retired one, never writing over what may be the only
+// copy of the old dev's work (PM-7).
+func TestPoolMigrateRetire_AbortedRecordOfAnotherID_KeptApart(t *testing.T) {
+	t.Parallel()
+	r := newRetireRig(t, nil)
+	oldBundle := poolRetireBundlePath(r.f.stateDir, "appdev")
+	if err := os.MkdirAll(filepath.Dir(oldBundle), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const oldBytes = "the aborted retire's bundle of the old dev"
+	if err := os.WriteFile(oldBundle, []byte(oldBytes), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := savePoolRetireRecord(r.f.stateDir, &poolRetireRecord{
+		Dev: "appdev", DevServiceID: "svc-dev-old", Pool: "apppool", PoolServiceID: "svc-pool", PoolSetup: "apppool",
+		Stages: []string{"appstage"}, Phase: poolRetireAborted, StartedAt: "2026-10-20T10:00:00Z", AbortReason: "fingerprint-changed: moved",
+		Bundle: &ops.PoolMigrateBundle{Path: oldBundle, Bytes: int64(len(oldBytes))},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if out, isErr := r.retire(t, retireInput(true, false)); isErr || out["step"] != "retired" {
+		t.Fatalf("retire = %v, want the new service retired", out)
+	}
+	raw, err := os.ReadFile(filepath.Join(r.f.stateDir, "migrate", "appdev.svc-dev-old.json"))
+	if err != nil {
+		t.Fatalf("the aborted record of the old id was not kept apart: %v", err)
+	}
+	var kept poolRetireRecord
+	if err := json.Unmarshal(raw, &kept); err != nil {
+		t.Fatal(err)
+	}
+	if kept.Phase != poolRetireAborted || kept.Bundle == nil || kept.Bundle.Path == oldBundle {
+		t.Fatalf("kept record = %s, want the aborted record, its bundle moved off %s", raw, oldBundle)
 	}
 	if got, err := os.ReadFile(kept.Bundle.Path); err != nil || string(got) != oldBytes {
 		t.Fatalf("the old dev's bundle at %s = %q (%v), want it kept as it was", kept.Bundle.Path, got, err)

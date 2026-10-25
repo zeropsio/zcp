@@ -26,7 +26,7 @@ type watcher struct {
 	stop chan struct{}
 }
 
-func newWatcher(root string, w *Watch, onChange func(rel string, last time.Time)) (*watcher, error) {
+func newWatcher(root string, w *Watch, onChange func(rel string, last time.Time, paths []string)) (*watcher, error) {
 	wt := &watcher{root: root, w: w, d: &debouncer{w: w, onChange: onChange}, stop: make(chan struct{})}
 	prev := wt.snapshot()
 	go func() {
