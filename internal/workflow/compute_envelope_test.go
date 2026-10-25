@@ -1128,25 +1128,42 @@ func TestComputeEnvelope_LeasesFromReader(t *testing.T) {
 	lost := LeaseSnapshot{Alias: "devpool-12", Pool: "devpool", Branch: "feat-y", ContainerHostname: "node-id-12.runtime.devpool.zerops", State: "lost"}
 	other := LeaseSnapshot{Alias: "apool-1", Pool: "apool", ContainerHostname: "node-id-1.runtime.apool.zerops", State: "unknown-holder"}
 
+	// poolPair is a pair keyed by the dev pool devpool.
+	poolPair := &ServiceMeta{Hostname: "devpool", Mode: topology.PlanModeStandard, Stages: []topology.StageRef{{Hostname: "appstage"}},
+		BootstrapSession: "s", BootstrappedAt: "2026-10-02", DevPool: &DevPoolRef{ServiceID: "pool-id"}}
+
 	tests := []struct {
 		name       string
 		services   []platform.ServiceStack
+		metas      []*ServiceMeta
 		reader     LeaseReader
 		wantCalled bool
 		want       []LeaseSnapshot
 		wantRead   bool
 	}{
-		{"reader snapshots reach the envelope, sorted by pool then container number", []platform.ServiceStack{poolService("devpool")},
+		{"reader snapshots reach the envelope, sorted by pool then container number", []platform.ServiceStack{poolService("devpool")}, []*ServiceMeta{poolPair},
 			func(context.Context) ([]LeaseSnapshot, error) { return []LeaseSnapshot{lost, other, held}, nil },
 			true, []LeaseSnapshot{other, held, lost}, true},
-		{"project without a pool or a record never asks the reader", nil,
+		{"project without a pool or a record never asks the reader", nil, nil,
 			func(context.Context) ([]LeaseSnapshot, error) { return []LeaseSnapshot{held}, nil },
 			false, nil, false},
-		{"no reader injected leaves the leases empty", []platform.ServiceStack{poolService("devpool")}, nil, false, nil, false},
+		// An app's own pool (one it calls with ${<pool>_API_TOKEN}) keys no
+		// pair and zcp holds no lease of it: no envelope asks its
+		// orchestrator, nor lists its containers as unknown-holder.
+		{"a pool no pair is keyed by, with no record, never asks the reader", []platform.ServiceStack{poolService("apool")}, nil,
+			func(context.Context) ([]LeaseSnapshot, error) { return []LeaseSnapshot{other}, nil },
+			false, nil, false},
+		{"no reader injected leaves the leases empty", []platform.ServiceStack{poolService("devpool")}, []*ServiceMeta{poolPair}, nil, false, nil, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
+			stateDir := t.TempDir()
+			for _, m := range tt.metas {
+				if err := WriteServiceMeta(stateDir, m); err != nil {
+					t.Fatal(err)
+				}
+			}
 			called := false
 			var opts []EnvelopeOption
 			if tt.reader != nil {
@@ -1157,7 +1174,7 @@ func TestComputeEnvelope_LeasesFromReader(t *testing.T) {
 				}))
 			}
 			mock := platform.NewMock().WithServices(tt.services).WithProject(&platform.Project{ID: "p1", Name: "demo"})
-			env, err := ComputeEnvelope(context.Background(), mock, t.TempDir(), "p1", runtime.Info{}, fixedTime, opts...)
+			env, err := ComputeEnvelope(context.Background(), mock, stateDir, "p1", runtime.Info{}, fixedTime, opts...)
 			if err != nil {
 				t.Fatalf("ComputeEnvelope: %v", err)
 			}
