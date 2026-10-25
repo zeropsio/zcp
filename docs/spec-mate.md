@@ -3294,7 +3294,12 @@ recheck does not replay the original operation. Project HTTP calls do not follow
 redirects or retry `503` responses. Native Git cannot expose HQ's JSON refusal;
 after an authentication failure naming this exact HQ origin, `zcp hq git` reads
 project self once to obtain that verdict and apply the same recheck rule. It
-preserves Git's exit code and never repeats the Git command.
+preserves Git's exit code and never repeats the Git command. That verdict read and
+its recheck share a 15-second deadline. The wrapper refuses in Mate mode, which
+uses the Mate's own Git credential, and forwards cancellation as SIGTERM with a
+five-second cleanup window. Output retains only a suffix that could begin the
+key; ordinary lines pass through immediately, while an ambiguous partial key
+waits for more output or exit.
 
 Witnesses: `TestProjectClient_*`, `TestReconcileHQRepositories_PlainProject_*`,
 `TestRunGit_*`, and `TestGitEnv_DoesNotExposeAuthorizationThroughInheritedTracing`.

@@ -1,7 +1,9 @@
 package hq
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestRunGit_ConfigOutputDoesNotExposeTheProjectKey(t *testing.T) {
@@ -233,5 +236,147 @@ func TestRunGit_PreservesTheCallersWorkingDirectory(t *testing.T) {
 	got, err := os.Getwd()
 	if err != nil || got != want {
 		t.Fatalf("caller directory changed: %q, %v; want %q", got, err, want)
+	}
+}
+
+func TestGitSecretWriter_StreamsCompleteLinesBeforeExit(t *testing.T) {
+	t.Parallel()
+	var out bytes.Buffer
+	w := &gitSecretWriter{dst: &out, secret: []byte("test-key")}
+	for _, line := range []string{"ready\n", "test-key\n", "next response\n"} {
+		if _, err := io.WriteString(w, line); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, want := out.String(), "ready\n<redacted>\nnext response\n"; got != want {
+		t.Fatalf("live output = %q, want %q before flush", got, want)
+	}
+}
+
+type gitReadyWriter struct {
+	bytes.Buffer
+	ready chan struct{}
+	once  sync.Once
+}
+
+func (w *gitReadyWriter) Write(p []byte) (int, error) {
+	n, err := w.Buffer.Write(p)
+	if bytes.Contains(w.Bytes(), []byte("ready\n")) {
+		w.once.Do(func() { close(w.ready) })
+	}
+	return n, err
+}
+
+func TestRunGit_CancellationLetsGitCleanUp(t *testing.T) {
+	// non-parallel: PATH selects the test's Git process.
+	dir := t.TempDir()
+	script := "#!/bin/sh\ntrap 'echo cleaned; exit 0' TERM\necho ready\necho padding\nread input\n"
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	input, keepOpen, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer input.Close()
+	defer keepOpen.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	out := &gitReadyWriter{ready: make(chan struct{})}
+	done := make(chan int, 1)
+	go func() {
+		done <- RunGit(ctx, Identity{Origin: "https://hq.example", ProjectID: "p", Key: "key"}, nil, input, out, io.Discard)
+	}()
+	select {
+	case <-out.ready:
+		cancel()
+	case <-t.Context().Done():
+		cancel()
+		t.Fatal("Git did not announce readiness")
+	}
+	<-done
+	if !strings.Contains(out.String(), "cleaned\n") {
+		t.Fatalf("Git was killed before cleanup: %q", out.String())
+	}
+}
+
+type gitProbeTransport struct {
+	deadline  time.Time
+	bounded   bool
+	remaining time.Duration
+}
+
+func (p *gitProbeTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	p.deadline, p.bounded = r.Context().Deadline()
+	p.remaining = time.Until(p.deadline)
+	return &http.Response{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader(`{"code":"unavailable"}`)), Header: make(http.Header)}, nil
+}
+
+func TestRunGit_AuthenticationVerdictHasABoundedDeadline(t *testing.T) {
+	// non-parallel: observes the default HTTP transport used by the CLI.
+	previous := http.DefaultTransport
+	probe := &gitProbeTransport{}
+	http.DefaultTransport = probe
+	t.Cleanup(func() { http.DefaultTransport = previous })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusUnauthorized) }))
+	t.Cleanup(srv.Close)
+	code := RunGit(t.Context(), Identity{Origin: srv.URL, ProjectID: "p", Key: "key"}, []string{"ls-remote", srv.URL + "/git/org/app/web.git"}, nil, io.Discard, io.Discard)
+	if code != 128 || !probe.bounded || probe.remaining <= 0 || probe.remaining > 15*time.Second {
+		t.Fatalf("verdict probe: exit=%d, bounded=%v, deadline=%v", code, probe.bounded, probe.deadline)
+	}
+}
+
+func TestRunGit_BatchReaderReceivesAResponseBeforeSendingAnotherRequest(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if out, err := exec.CommandContext(t.Context(), "git", "init", "-q", dir).CombinedOutput(); err != nil {
+		t.Fatalf("init: %v %s", err, out)
+	}
+	hash := exec.CommandContext(t.Context(), "git", "-C", dir, "hash-object", "-w", "--stdin")
+	hash.Stdin = strings.NewReader("hello\n")
+	object, err := hash.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, requests, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer input.Close()
+	defer requests.Close()
+	responses, output, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer responses.Close()
+	defer output.Close()
+	done := make(chan int, 1)
+	go func() {
+		done <- RunGit(t.Context(), Identity{Origin: "https://hq.example", ProjectID: "p", Key: "test-key"}, []string{"-C", dir, "cat-file", "--batch"}, input, output, io.Discard)
+	}()
+	if _, err := requests.Write(object); err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(responses)
+	header, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := strings.TrimSpace(string(object)) + " blob 6\n"; header != want {
+		t.Fatalf("batch header=%q, want %q", header, want)
+	}
+	body := make([]byte, 7)
+	if _, err := io.ReadFull(reader, body); err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "hello\n\n" {
+		t.Fatalf("batch body=%q", body)
+	}
+	if err := requests.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if code := <-done; code != 0 {
+		t.Fatalf("batch exit=%d", code)
 	}
 }

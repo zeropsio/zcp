@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"os/exec"
 	"strings"
+	"syscall"
+	"time"
 )
 
 // RunGit runs the caller's Git command in its current directory, passing
@@ -28,7 +30,11 @@ func RunGit(ctx context.Context, id Identity, args []string, stdin io.Reader, st
 	}
 	gitArgs := append([]string{"-c", "http.followRedirects=false", "-c", "core.askPass="}, args...)
 	cmd := exec.CommandContext(ctx, "git", gitArgs...)
+	// ZCP_API_KEY is already in the container environment of every process; this is the accepted project boundary.
 	cmd.Env = append(project.GitEnv(), "LC_ALL=C", "GIT_ASKPASS=", "SSH_ASKPASS=")
+	// Let Git remove its lock files on wrapper cancellation before forcing exit.
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = 5 * time.Second
 	var failure bytes.Buffer
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, safeOut, io.MultiWriter(safeErr, &failure)
 	if err := cmd.Run(); err != nil {
@@ -37,7 +43,9 @@ func RunGit(ctx context.Context, id Identity, args []string, stdin io.Reader, st
 		// verdict on the same key; its client owns the one recheck when HQ
 		// confirms key_refused. Git itself is never repeated.
 		if remote := gitAuthenticationFailureURL(failure.String()); sameGitOrigin(remote, id.Origin) {
-			if _, probeErr := project.Self(ctx); probeErr != nil {
+			probeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			defer cancel()
+			if _, probeErr := project.Self(probeCtx); probeErr != nil {
 				var refused *RefusedError
 				if errors.As(probeErr, &refused) {
 					_, _ = fmt.Fprintf(safeErr, "zcp hq git: %v\n", probeErr)
@@ -54,9 +62,9 @@ func RunGit(ctx context.Context, id Identity, args []string, stdin io.Reader, st
 	return 0
 }
 
-// gitSecretWriter keeps at most a key-length suffix between writes so even
-// a key split across chunks cannot escape through Git's output. This covers
-// commands such as git config --list that print the transient extraHeader.
+// gitSecretWriter holds only a suffix that could begin the key, so ordinary
+// lines stream immediately and a key split across chunks cannot escape.
+// An ambiguous partial-key suffix waits for the next write or process exit.
 type gitSecretWriter struct {
 	dst     io.Writer
 	secret  []byte
@@ -74,6 +82,9 @@ func (w *gitSecretWriter) Write(p []byte) (int, error) {
 		index := bytes.Index(data, w.secret)
 		if index < 0 {
 			keep := min(len(w.secret)-1, len(data))
+			for keep > 0 && !bytes.Equal(data[len(data)-keep:], w.secret[:keep]) {
+				keep--
+			}
 			if _, err := w.dst.Write(data[:len(data)-keep]); err != nil {
 				return 0, err
 			}
