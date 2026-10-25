@@ -68,14 +68,6 @@ run:
 A reference nothing provides reaches the app as the literal `${NAME}`
 and fails the deploy preflight — store the value first.
 
-A reference to a value that appears later — another service's
-`zeropsSubdomain` before that service is deployed with its subdomain on
-— reaches every process started before it as the literal `${…}`. A
-shell opened afterwards already reads the value, so its `env` proves
-nothing: the running app keeps the literal, and so does a dev server a
-still-running supervisor restarts. Restart the service
-(`zerops_manage action="restart"`) or redeploy it.
-
 ### Name the line what the app reads, the value something else
 
 `APP_KEY: ${APP_KEY}` (same name both sides) reaches the app as the

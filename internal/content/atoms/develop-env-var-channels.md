@@ -23,6 +23,14 @@ list means nothing restarted — add the `NAME: ${KEY}` line to each
 service that needs it, then deploy. A new line goes live with the
 deploy; a changed value with the readers' restart.
 
+**A value that appears later is live only in processes started after
+it.** A reference to it — another service's `zeropsSubdomain` before
+that service is deployed with its subdomain on — stays the literal
+`${…}` in every process already running, and in a dev server a
+still-running supervisor restarts. A shell opened afterwards already
+reads the value, so its `env` proves nothing. Restart the service
+(`zerops_manage action="restart"`) or redeploy it.
+
 **Suppress restart**: pass `skipRestart=true`; response reports
 `restartSkipped: true`, `nextActions` names the readers to restart, and
 the value is **not live** until then. Partial failures land in
