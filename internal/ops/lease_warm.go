@@ -21,9 +21,12 @@ import (
 // whose containers have no primary snapshot and cannot be reset (DP-15) — and
 // from releases: a release keeps its container, reset, while the pool has
 // fewer warm containers besides it than its target and the container runs the
-// pool's current version; otherwise it removes the container with its own
-// lease, so free containers never pile up and an outdated version leaves the
-// pool. After an acquire or a release zcp tops the pool up through the
+// pool's current version — and, in a pool serving previews, while a container
+// can still be created after it, since its reset takes it off the pool's
+// routes until a create re-renders them (lease_reroute.go, DP-28); otherwise
+// it removes the container with its own lease, so free containers never pile
+// up, an outdated version leaves the pool, and a full pool's next acquire
+// creates a routed container. After an acquire or a release zcp tops the pool up through the
 // orchestrator's create, in the background. The keep-or-remove decision and
 // the top-up take one flock per pool and read the pool inside it; deciders
 // outside it (another container's zcp, another consumer) can overshoot the
@@ -309,8 +312,10 @@ func releasedReset(v LeaseView) bool {
 // (or force) and the pool holds the lease's record: under the pool's warm lock
 // it reads the pool, keeps the container with the reset release (reset) when
 // the pool has fewer warm containers besides it than the target and it is
-// current, and otherwise deletes it with its own lease; then it tops the pool
-// up from the same read. A container without a primary snapshot goes the DP-15
+// current — unless the pool is full and serves previews (poolFullOfRoutes) —
+// and otherwise deletes it with its own lease; then it tops the pool up from
+// the same read, or, after a full pool's removal, records that the pool has
+// no warm container while it is full. A container without a primary snapshot goes the DP-15
 // way first. A delete refused for any reason but a lease the orchestrator no
 // longer knows falls back to the reset release; a lock it cannot take in time,
 // or a pool it cannot read, keeps the container with the reset release.
@@ -347,9 +352,16 @@ func (w *LeaseWarm) keepOrRemove(ctx context.Context, d LeaseDeps, rp *resolvedP
 		read.ready++
 		clone = []string{rec.ContainerID}
 	}
-	var note string
-	note, handed = w.topUp(ctx, d, rp, read, unlock)
-	view.Note = joinNotes(view.Note, note)
+	if view.fullPoolMax > 0 {
+		// Removed from a full pool: the container being removed still counts
+		// toward the maximum, so a top-up would create nothing; status says
+		// why the pool has no warm container.
+		w.record(d, rp.svc.Name, LeaseWarmFull, 0, fullPoolWarmNote(view.fullPoolMax))
+	} else {
+		var note string
+		note, handed = w.topUp(ctx, d, rp, read, unlock)
+		view.Note = joinNotes(view.Note, note)
+	}
 	w.cloneLater(ctx, d, rp, clone)
 	return view, nil
 }
@@ -387,7 +399,9 @@ func keptWithReset(reset func() (LeaseView, error), why string) (LeaseView, erro
 // the orchestrator does not answer about is left alone, the record kept. A
 // delete refused held-by-other drops the record too once a renew agrees the
 // lease ended (heldByOtherAsked); otherwise it falls back to the reset
-// release like any refused delete.
+// release like any refused delete. A container the pool would keep warm is
+// removed instead from a full pool serving previews (poolFullOfRoutes): its
+// view carries the pool's maximum (fullPoolMax).
 func (w *LeaseWarm) decideRelease(ctx context.Context, d LeaseDeps, rp *resolvedPool, rec leaseRecord, read poolWarmRead, reset func() (LeaseView, error)) (LeaseView, bool, error) {
 	own, why := leaseGone, recreatedWhy
 	mine := read.mine
@@ -407,6 +421,7 @@ func (w *LeaseWarm) decideRelease(ctx context.Context, d LeaseDeps, rp *resolved
 		view, err := dropLeaseRecord(d.StateDir, rec, LeaseStateLost, lostDropNote(why))
 		return view, false, err
 	}
+	fullMax := 0 // the pool's maximum, when it is full and the container would lose its route
 	switch {
 	case read.mineCounted && mine.Snapshots == 0:
 		// No primary snapshot: the reset is refused and the container deleted
@@ -422,22 +437,29 @@ func (w *LeaseWarm) decideRelease(ctx context.Context, d LeaseDeps, rp *resolved
 		}
 		return view, kept, nil
 	case keepableWarm(mine) && read.ready < w.Target:
-		view, err := reset()
-		if err != nil {
-			return LeaseView{}, false, err
+		limit, full := poolFullOfRoutes(ctx, d, rp, read)
+		if !full {
+			view, err := reset()
+			if err != nil {
+				return LeaseView{}, false, err
+			}
+			if !releasedReset(view) {
+				return view, false, nil
+			}
+			view.keptWarm = true
+			view.Note = joinNotes(view.Note, keptWarmNote)
+			return view, true, nil
 		}
-		if !releasedReset(view) {
-			return view, false, nil
-		}
-		view.keptWarm = true
-		view.Note = joinNotes(view.Note, keptWarmNote)
-		return view, true, nil
+		// Kept warm, its reset would take it off the pool's routes, and
+		// nothing could be created to put it back (DP-28).
+		why, fullMax = fullPoolRemoveWhy(limit), limit
+	default:
+		why = removeWhy(mine, w.Target)
 	}
-	why = removeWhy(mine, w.Target)
 	err := rp.api.Delete(ctx, rec.ContainerID, rec.Lease)
 	if err == nil {
 		view, dropErr := dropLeaseRecord(d.StateDir, rec, LeaseStateReleased, "the container was removed with this lease rather than reset: "+why)
-		view.containerRemoved = true
+		view.containerRemoved, view.fullPoolMax = true, fullMax
 		return view, false, dropErr
 	}
 	var se *platform.SwarmError
