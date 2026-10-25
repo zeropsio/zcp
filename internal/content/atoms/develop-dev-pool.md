@@ -29,7 +29,8 @@ its containers away from the app.
    leases a clean container with no expiry. It writes the alias
    `<pool>-<number>` (SSH), mounts the leased container at `/var/www/<alias>` and
    checks the branch out there; a branch that does not exist yet is cut from
-   `main`. `repo` is remembered per pool — pass it on the first acquire only.
+   `main`, or from the branch `from="<branch>"` names. `repo` is remembered
+   per pool — pass it on the first acquire only.
    The clone uses the pool's own `GIT_TOKEN` service secret — for a
    repository on this Mate's HQ, the HQ credential zcp puts on the pool
    itself as `ZCP_HQ_GIT_TOKEN`; you never type a credential. Each lease it
