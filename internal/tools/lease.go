@@ -100,7 +100,14 @@ type leaseRolloutToolResult struct {
 // computed after the operation so it lists the new lease set (spec-mate §1.3);
 // rt is the runtime that envelope is computed for.
 func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir string, swarm ops.SwarmFactory, mounter ops.Mounter, ssh ops.SSHDeployer, rt runtime.Info) {
-	deps := leaseDeps(client, projectID, stateDir, swarm, mounter, ssh)
+	registerLease(srv, leaseDeps(client, projectID, stateDir, swarm, mounter, ssh), rt)
+}
+
+// registerLease is RegisterLease over deps leaseDeps wired. The warm policy's
+// creates and clones run in the background and outlive the call that started
+// them (DP-27, DP-32); tests set deps.Warm.Go to wait for them.
+func registerLease(srv *mcp.Server, deps ops.LeaseDeps, rt runtime.Info) {
+	client, projectID, stateDir, swarm := deps.Client, deps.ProjectID, deps.StateDir, deps.Swarm
 	if rt.MateEnabled {
 		// Inside a Mate an acquire of an HQ repository puts the Mate
 		// credential on the pool (ops.PoolHQCredentialEnvKey), as
