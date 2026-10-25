@@ -146,9 +146,13 @@ type server struct {
 	restartReason string
 	outOfMemory   bool
 	// windowChanged: a watched change came within this start's window;
-	// selfChanged counts the starts in a row that saw one.
+	// selfChanged counts the starts in a row that saw one; selfPaths are the
+	// paths those changes held — the server's own output — nil once a burst
+	// named too many to keep.
 	windowChanged bool
 	selfChanged   int
+	selfPaths     map[string]bool
+	selfOverflow  bool
 	// startBegun is when the latest start began, before its process: a
 	// watched change made before it is on disk when that process starts.
 	startBegun time.Time
@@ -774,7 +778,7 @@ func (s *Supervisor) syncWatches() {
 			sv.watch = nil
 		}
 		if need && sv.watch == nil {
-			w, err := newWatcher(s.cfg.Root, sv.spec.Watch, func(rel string, last time.Time) { s.watchFired(name, rel, last) })
+			w, err := newWatcher(s.cfg.Root, sv.spec.Watch, func(rel string, last time.Time, paths []string) { s.watchFired(name, rel, last, paths) })
 			if err != nil {
 				s.logf("watch %s: %v", name, err)
 				continue
@@ -793,16 +797,19 @@ func sameWatch(a, b *Watch) bool {
 }
 
 // watchFired restarts a server on a burst of watched changes that opened with
-// rel and whose last change came at last. A burst that came before the
-// server's latest start began restarts nothing: that start already runs it —
-// a burst that came while a restart waited out the old server's stop grace
-// (up to 10 s for one that does not end on SIGTERM) would restart the new one
-// again. A change made within the start window — by the burst's last change,
-// not by when the burst settled — after watchLoopLimit starts in a row each
-// saw one, is the server's own output and restarts nothing; a change made
-// outside it always restarts, and clears the count when the start before it
-// saw no change.
-func (s *Supervisor) watchFired(name, rel string, last time.Time) {
+// rel, whose last change came at last and which changed paths (nil: too many
+// to name). A burst that came before the server's latest start began restarts
+// nothing: that start already runs it — a burst that came while a restart
+// waited out the old server's stop grace (up to 10 s for one that does not
+// end on SIGTERM) would restart the new one again. A change made within the
+// start window — by the burst's last change, not by when the burst settled —
+// after watchLoopLimit starts in a row each saw one, is the server's own
+// output and restarts nothing; a change made outside it restarts, and clears
+// the count when the start before it saw no change — except, once the guard
+// tripped, a burst of only paths the server's own output changed within its
+// windows: a server writing them without a pause keeps each burst open until
+// watchSettleMax, so every other burst ends past the window.
+func (s *Supervisor) watchFired(name, rel string, last time.Time, paths []string) {
 	s.op.Lock()
 	defer s.op.Unlock()
 	s.mu.Lock()
@@ -825,6 +832,7 @@ func (s *Supervisor) watchFired(name, rel string, last time.Time) {
 			sv.windowChanged = true
 			sv.selfChanged++
 		}
+		sv.noteSelfPaths(paths)
 		if sv.selfChanged > watchLoopLimit {
 			sv.restartReason = fmt.Sprintf("restarts stopped: %s changed during each of its last %d starts; add the path to watch.ignore", rel, watchLoopLimit)
 			s.mu.Unlock()
@@ -833,7 +841,11 @@ func (s *Supervisor) watchFired(name, rel string, last time.Time) {
 			return
 		}
 	} else if !sv.windowChanged {
-		sv.selfChanged = 0
+		sv.selfChanged, sv.selfPaths, sv.selfOverflow = 0, nil, false
+	} else if sv.selfChanged > watchLoopLimit && sv.ownOutput(paths) {
+		s.mu.Unlock()
+		s.logf("no restart of %s: %s changed after its start window, among the paths only its own output changes; add them to watch.ignore", name, rel)
+		return
 	}
 	sv.starting = true
 	s.mu.Unlock()
@@ -841,6 +853,39 @@ func (s *Supervisor) watchFired(name, rel string, last time.Time) {
 	s.stopAll([]string{name})
 	s.start(name, rel+" changed")
 	s.persist()
+}
+
+// noteSelfPaths keeps the paths of a burst inside the start window: the
+// server's own output.
+func (sv *server) noteSelfPaths(paths []string) {
+	if sv.selfOverflow {
+		return
+	}
+	if paths == nil || len(sv.selfPaths)+len(paths) > burstPathsMax {
+		sv.selfPaths, sv.selfOverflow = nil, true
+		return
+	}
+	if sv.selfPaths == nil {
+		sv.selfPaths = map[string]bool{}
+	}
+	for _, p := range paths {
+		sv.selfPaths[p] = true
+	}
+}
+
+// ownOutput reports a burst whose every path the server's own output changed
+// inside its windows; a burst that names no set, or the server's output too
+// many paths to keep, is not.
+func (sv *server) ownOutput(paths []string) bool {
+	if sv.selfOverflow || len(paths) == 0 {
+		return false
+	}
+	for _, p := range paths {
+		if !sv.selfPaths[p] {
+			return false
+		}
+	}
+	return true
 }
 
 // ErrUnknownServer marks a control call naming a server the supervisor does

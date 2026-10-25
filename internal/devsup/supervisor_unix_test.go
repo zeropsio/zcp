@@ -1051,7 +1051,7 @@ func TestSupervisor_AChangeMadeInTheStartWindowCountsThoughItsBurstSettlesAfterI
 	sv.startBegun, sv.startedAt = started.Add(-time.Millisecond), &started
 	sv.selfChanged, sv.windowChanged = watchLoopLimit, false
 	s.mu.Unlock()
-	s.watchFired("api", "apps/api/pkg/PKG-INFO", started.Add(r.window-watchSettle/2))
+	s.watchFired("api", "apps/api/pkg/PKG-INFO", started.Add(r.window-watchSettle/2), []string{"apps/api/pkg/PKG-INFO"})
 
 	got := mustServer(t, s.State(), "api")
 	if got.Restarts != before {
@@ -1091,8 +1091,8 @@ func TestSupervisor_AServerWritingItsWatchedFilesWithoutPauseStopsBeingRestarted
 	sv.startBegun, sv.startedAt = started.Add(-time.Millisecond), &started
 	sv.selfChanged, sv.windowChanged = watchLoopLimit, false
 	s.mu.Unlock()
-	s.watchFired("api", "apps/api/out.log", started.Add(r.window/2)) // its output inside the window: declined
-	s.watchFired("api", "apps/api/out.log", time.Now())              // the same output, its burst ending past the window
+	s.watchFired("api", "apps/api/out.log", started.Add(r.window/2), []string{"apps/api/out.log"}) // its output inside the window: declined
+	s.watchFired("api", "apps/api/out.log", time.Now(), []string{"apps/api/out.log"})              // the same output, its burst ending past the window
 	got := mustServer(t, s.State(), "api")
 	if got.Restarts != before {
 		t.Fatalf("api restarted (%d → %d) on its own output past the window after the guard tripped", before, got.Restarts)
@@ -1101,7 +1101,7 @@ func TestSupervisor_AServerWritingItsWatchedFilesWithoutPauseStopsBeingRestarted
 		t.Fatalf("reason = %q, want the restarts named stopped", got.LastRestartReason)
 	}
 
-	s.watchFired("api", "apps/api/main.py", time.Now()) // a path its output never changed
+	s.watchFired("api", "apps/api/main.py", time.Now(), []string{"apps/api/main.py"}) // a path its output never changed
 	if got := mustServer(t, s.State(), "api"); got.Restarts != before+1 || got.LastRestartReason != "apps/api/main.py changed" {
 		t.Fatalf("api = %d restart(s), reason %q; want one more, for the edit", got.Restarts, got.LastRestartReason)
 	}
