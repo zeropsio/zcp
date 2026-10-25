@@ -176,8 +176,27 @@ func leaseToolServerSSH(t *testing.T, orch http.Handler, ssh ops.SSHDeployer) (s
 		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{Key: "API_TOKEN", Content: leaseTestToken, Sensitive: true}})
 	factory := func(_, token string) ops.SwarmAPI { return platform.NewSwarmClient(hs.URL, token, hs.Client()) }
 	srv = mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterLease(srv, mock, "proj-1", stateDir, factory, nil, ssh, runtime.Info{})
+	registerLeaseTool(t, srv, mock, "proj-1", stateDir, factory, nil, ssh, runtime.Info{})
 	return srv, stateDir
+}
+
+// registerLeaseTool registers zerops_lease as RegisterLease does, its warm
+// policy's background work — a create, a clone into the warm container
+// (DP-27, DP-32) — on goroutines the test waits for before stateDir is
+// removed. That work writes stateDir/warm after the call that started it has
+// returned, and a write landing while t.TempDir's cleanup removes stateDir
+// fails the test ("directory not empty"). stateDir is a t.TempDir taken before
+// this call: cleanups run last-registered first, so the wait runs before the
+// removal. The product bounds each piece of that work by its own deadline.
+// Every test registers zerops_lease through here
+// (TestNoRegisterLeaseInTests).
+func registerLeaseTool(t *testing.T, srv *mcp.Server, client platform.Client, projectID, stateDir string, swarm ops.SwarmFactory, mounter ops.Mounter, ssh ops.SSHDeployer, rt runtime.Info) {
+	t.Helper()
+	deps := leaseDeps(client, projectID, stateDir, swarm, mounter, ssh)
+	var background sync.WaitGroup
+	deps.Warm.Go = background.Go
+	t.Cleanup(background.Wait)
+	registerLease(srv, deps, rt)
 }
 
 func TestLeaseTool_ResultNeverCarriesLease(t *testing.T) {
@@ -263,7 +282,7 @@ func TestLeaseTool_OrchestratorUnreachable_Explains(t *testing.T) {
 		}).
 		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{Key: "API_TOKEN", Content: leaseTestToken, Sensitive: true}})
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterLease(srv, mock, "proj-1", stateDir, ops.NewSwarmFactory(&http.Client{Transport: dnsFailTransport{}}), nil, nil, runtime.Info{})
+	registerLeaseTool(t, srv, mock, "proj-1", stateDir, ops.NewSwarmFactory(&http.Client{Transport: dnsFailTransport{}}), nil, nil, runtime.Info{})
 
 	for _, args := range []map[string]any{
 		{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo},
@@ -855,7 +874,7 @@ func TestLeaseTool_UnmountedLease_EnvelopeSaysWhatStatusSays(t *testing.T) {
 	factory := func(_, token string) ops.SwarmAPI { return platform.NewSwarmClient(hs.URL, token, hs.Client()) }
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	// The stub mounter finds nothing mounted at /var/www/devpool-3.
-	RegisterLease(srv, mock, "proj-1", stateDir, factory, newStubMounter(), nil, runtime.Info{})
+	registerLeaseTool(t, srv, mock, "proj-1", stateDir, factory, newStubMounter(), nil, runtime.Info{})
 
 	res := callTool(t, srv, "zerops_lease", map[string]any{"action": "status"})
 	text := getTextContent(t, res)

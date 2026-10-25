@@ -10,8 +10,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -391,5 +395,34 @@ func TestLeaseTool_Release_BackgroundWarmClone_EndsBeforeTheStateDirGoes(t *test
 	text := getTextContent(t, res)
 	if res.IsError || !strings.Contains(text, "kept as the pool's warm container") {
 		t.Fatalf("release = (error %v) %s, want the container kept as the pool's warm one", res.IsError, text)
+	}
+}
+
+// TestNoRegisterLeaseInTests: no test of this package registers zerops_lease
+// with RegisterLease itself. One that did would leave the warm policy's
+// background work running into the removal of its state directory, a failure
+// that shows only under load; registerLeaseTool waits for that work.
+func TestNoRegisterLeaseInTests(t *testing.T) {
+	t.Parallel()
+	paths, err := filepath.Glob("*_test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fset := token.NewFileSet()
+	for _, path := range paths {
+		file, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatalf("parse %s: %v", path, err)
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "RegisterLease" {
+				t.Errorf("%s: a test registers zerops_lease with RegisterLease; use registerLeaseTool, which waits for the warm policy's background work", fset.Position(call.Pos()))
+			}
+			return true
+		})
 	}
 }

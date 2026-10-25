@@ -79,7 +79,7 @@ func TestLeaseTool_Status_OneStoppedPool_OthersStillListed(t *testing.T) {
 		return platform.NewSwarmClient(baseURL, tok, &http.Client{Transport: dnsFailTransport{}})
 	}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterLease(srv, mock, "proj-1", stateDir, factory, nil, nil, runtime.Info{})
+	registerLeaseTool(t, srv, mock, "proj-1", stateDir, factory, nil, nil, runtime.Info{})
 
 	res := callTool(t, srv, "zerops_lease", map[string]any{"action": "status"})
 	text := getTextContent(t, res)
@@ -215,7 +215,7 @@ func TestLeaseTool_StoppedPool_SaysStartIt(t *testing.T) {
 		WithServices([]platform.ServiceStack{swarmPoolService("svc-pool", "devpool", "STOPPED")}).
 		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{Key: "API_TOKEN", Content: leaseTestToken, Sensitive: true}})
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterLease(srv, mock, "proj-1", t.TempDir(), ops.NewSwarmFactory(&http.Client{Transport: dnsFailTransport{}}), nil, nil, runtime.Info{})
+	registerLeaseTool(t, srv, mock, "proj-1", t.TempDir(), ops.NewSwarmFactory(&http.Client{Transport: dnsFailTransport{}}), nil, nil, runtime.Info{})
 
 	for _, args := range []map[string]any{
 		{"action": "acquire", "pool": "devpool", "repo": leaseTestRepo},
