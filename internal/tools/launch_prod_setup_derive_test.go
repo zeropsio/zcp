@@ -61,7 +61,7 @@ const sourceWithOnlyProd = `zerops:
 // dev encodes iteration patterns that don't survive the prod build.
 func TestDeriveProdSetupBlock_PreferStage(t *testing.T) {
 	t.Parallel()
-	got, err := deriveProdSetupBlock(sourceWithDevAndStage)
+	got, _, err := deriveProdSetupBlock(sourceWithDevAndStage)
 	if err != nil {
 		t.Fatalf("derive: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestDeriveProdSetupBlock_PreferStage(t *testing.T) {
 // source — dev/stage absent — falls back to first non-prod block.
 func TestDeriveProdSetupBlock_FallbackToFirstNonProd(t *testing.T) {
 	t.Parallel()
-	got, err := deriveProdSetupBlock(sourceWithSimpleOnly)
+	got, _, err := deriveProdSetupBlock(sourceWithSimpleOnly)
 	if err != nil {
 		t.Fatalf("derive: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestDeriveProdSetupBlock_FallbackToFirstNonProd(t *testing.T) {
 // derivation copies build + run blocks unchanged.
 func TestDeriveProdSetupBlock_DevOnlyCopiesVerbatim(t *testing.T) {
 	t.Parallel()
-	got, err := deriveProdSetupBlock(sourceWithDevOnly)
+	got, _, err := deriveProdSetupBlock(sourceWithDevOnly)
 	if err != nil {
 		t.Fatalf("derive: %v", err)
 	}
@@ -222,9 +222,14 @@ func TestDeriveProdSetupBlock_DropsMatesFramingAllowance(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := deriveProdSetupBlock(tc.source)
+			got, framed, err := deriveProdSetupBlock(tc.source)
 			if err != nil {
 				t.Fatalf("derive: %v", err)
+			}
+			// framed: Mate's sources were taken out, so the guidance says
+			// production keeps the app's strict framing.
+			if want := len(tc.absent) > 0; framed != want {
+				t.Errorf("framed = %v, want %v", framed, want)
 			}
 			var setups []any
 			if err := yaml.Unmarshal([]byte(got), &setups); err != nil {
@@ -272,7 +277,7 @@ func yamlStringValues(v any) []string {
 // hasSetupNamed(prod) first so this shouldn't fire in practice).
 func TestDeriveProdSetupBlock_OnlyProdReturnsError(t *testing.T) {
 	t.Parallel()
-	_, err := deriveProdSetupBlock(sourceWithOnlyProd)
+	_, _, err := deriveProdSetupBlock(sourceWithOnlyProd)
 	if err == nil {
 		t.Fatal("expected error when only setup:prod is available as template")
 	}
@@ -282,7 +287,7 @@ func TestDeriveProdSetupBlock_OnlyProdReturnsError(t *testing.T) {
 // failure handling.
 func TestDeriveProdSetupBlock_MalformedYAMLReturnsError(t *testing.T) {
 	t.Parallel()
-	_, err := deriveProdSetupBlock("zerops:\n  - setup: [unclosed")
+	_, _, err := deriveProdSetupBlock("zerops:\n  - setup: [unclosed")
 	if err == nil {
 		t.Fatal("expected error for malformed yaml")
 	}
@@ -292,11 +297,11 @@ func TestDeriveProdSetupBlock_MalformedYAMLReturnsError(t *testing.T) {
 // response guidance carries the derived block + readiness checklist.
 func TestProdSetupGuidanceWithBlock_EmbedsBlockAndChecklist(t *testing.T) {
 	t.Parallel()
-	proposed, err := deriveProdSetupBlock(sourceWithDevOnly)
+	proposed, _, err := deriveProdSetupBlock(sourceWithDevOnly)
 	if err != nil {
 		t.Fatalf("derive: %v", err)
 	}
-	guidance := prodSetupGuidanceWithBlock("prod", []string{"dev"}, proposed)
+	guidance := prodSetupGuidanceWithBlock("prod", []string{"dev"}, proposed, false)
 	for _, want := range []string{
 		"setup: prod",
 		"Found setups: dev",
@@ -317,11 +322,11 @@ func TestProdSetupGuidanceWithBlock_EmbedsBlockAndChecklist(t *testing.T) {
 // when the agent passes ProdSetupNameOverride.
 func TestProdSetupGuidanceWithBlock_HonoursOverrideName(t *testing.T) {
 	t.Parallel()
-	proposed, err := deriveProdSetupBlock(sourceWithDevOnly)
+	proposed, _, err := deriveProdSetupBlock(sourceWithDevOnly)
 	if err != nil {
 		t.Fatalf("derive: %v", err)
 	}
-	guidance := prodSetupGuidanceWithBlock("appprod", []string{"dev", "stage"}, proposed)
+	guidance := prodSetupGuidanceWithBlock("appprod", []string{"dev", "stage"}, proposed, false)
 	if !strings.Contains(guidance, "setup: appprod") {
 		t.Errorf("guidance missing override name `setup: appprod`:\n%s", guidance)
 	}

@@ -1402,14 +1402,14 @@ func readAndValidateSourceState(
 		// existing dev/stage setup. Agent applies + tweaks instead of
 		// guessing from a generic template. Falls back to the generic
 		// message if derivation fails (malformed yaml, no template).
-		proposed, derr := deriveProdSetupBlock(source.ZeropsYAMLBody)
+		proposed, framed, derr := deriveProdSetupBlock(source.ZeropsYAMLBody)
 		if derr != nil {
 			return nil, false, launchSourceControlBlockerResponse(corpus,
 				prodSetupMissingGenericMessage(wantSetup, availableNames),
 			)
 		}
 		return nil, false, launchSourceControlBlockerResponse(corpus,
-			prodSetupGuidanceWithBlock(wantSetup, availableNames, proposed),
+			prodSetupGuidanceWithBlock(wantSetup, availableNames, proposed, framed),
 		)
 	}
 	if source.RepoURL == "" {
