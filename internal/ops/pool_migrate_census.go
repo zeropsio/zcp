@@ -132,7 +132,9 @@ const poolMigrateEnvFilePattern = `(^|/)\.env(\..*)?$`
 // at all — no stash create, no update-ref, no fetch. Each fact is a line
 // tagged by its kind; a step that fails prints a zcp-census-error line, and
 // the last line is zcp-census-end, so a census cut short never reads as
-// clean.
+// clean. `git worktree list --porcelain` prints a path verbatim, a newline in
+// it included, so a worktree path holding one — which the lines would cut,
+// reading the worktree as missing — is no census: its -z listing finds it.
 //
 //	W <line>                    git worktree list --porcelain
 //	B <ref>\t<remote>\t<ref>    a local branch and the remote branch it tracks
@@ -155,6 +157,7 @@ zl() { while IFS= read -r l; do printf '%s %s\n' "$1" "$l"; done; }
 zrun() { t=$1; shift; o=$("$@") || { echo "zcp-census-error $t"; return 1; }; if [ -n "$o" ]; then printf '%s\n' "$o" | zl "$t"; fi; return 0; }
 echo 'zcp-census 1'
 wts=$(git worktree list --porcelain) || { echo 'zcp-census-error worktree list'; exit 4; }
+if git worktree list --porcelain -z 2>/dev/null | tr '\n\0' '\001\n' | grep -q "^worktree .*$(printf '\001')"; then echo 'zcp-census-error a worktree path holding a newline (move that worktree to a path without one)'; exit 4; fi
 printf '%s\n' "$wts" | zl W
 zrun B git for-each-ref --format='%(refname)%09%(upstream:remotename)%09%(upstream:remoteref)' refs/heads/ || exit 4
 heads=$(git for-each-ref --format='%(refname)' refs/heads/) || { echo 'zcp-census-error branches'; exit 4; }

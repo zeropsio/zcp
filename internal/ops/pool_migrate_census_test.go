@@ -704,7 +704,14 @@ func TestPoolMigrateCensus_WorktreePathWithNewline_NoCensus(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a worktree whose path holds a newline read as a census: %+v", census)
 	}
-	if !strings.Contains(err.Error(), "newline") {
-		t.Errorf("err = %v, want it to name the worktree path holding a newline", err)
+	// The script stops like any step that fails: the reason rides the SSH
+	// error's output, which the flow's refusal quotes (withSSHStderr).
+	said := err.Error()
+	var sshErr *platform.SSHExecError
+	if errors.As(err, &sshErr) {
+		said += " " + sshErr.Output
+	}
+	if !strings.Contains(said, "newline") {
+		t.Errorf("err = %q, want it to name the worktree path holding a newline", said)
 	}
 }
