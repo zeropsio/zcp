@@ -20,7 +20,9 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("fs");
 const path = require("path");
-const { loadWelcome, loadWebviewDom, TEMPLATES_DIR, TEST_REGISTRY, TEST_AGENT_IDS, makeFakeTimers } = require("./harness.js");
+const { loadWelcome, loadWebviewDom, TEMPLATES_DIR, TEST_REGISTRY, TEST_AGENT_IDS, makeFakeTimers, freezeWallClock } = require("./harness.js");
+
+freezeWallClock();
 
 const AWAITING_MODE_TIMEOUT_MS = 10_000;
 const BRIDGE_CHANNEL = "@zerops/zcp-agent-auth-bridge";
