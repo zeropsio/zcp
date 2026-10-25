@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -231,11 +232,8 @@ func TestCreateServiceEnvVar_RefusalEchoingTheValue_SurfacesWithoutIt(t *testing
 	if !errors.As(err, &pe) {
 		t.Fatalf("err = %v, want a *PlatformError", err)
 	}
-	raw, mErr := json.Marshal(pe)
-	if mErr != nil {
-		t.Fatal(mErr)
-	}
-	for what, text := range map[string]string{"err.Error()": err.Error(), "the error's fields": string(raw), "Suggestion": pe.Suggestion, "Message": pe.Message} {
+	meta := fmt.Sprintf("%+v", pe.APIMeta)
+	for what, text := range map[string]string{"err.Error()": err.Error(), "APIMeta": meta, "Subcode": pe.Subcode, "Suggestion": pe.Suggestion, "Message": pe.Message} {
 		if strings.Contains(text, secret) {
 			t.Errorf("%s carries the submitted value: %s", what, text)
 		}

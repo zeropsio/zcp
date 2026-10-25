@@ -138,15 +138,18 @@ func TestLeaseReleaseGuard_CommitsOnAnyLocalBranch_Refused(t *testing.T) {
 	}{
 		{"everything pushed", func(*testing.T, string) {}, ""},
 		{"a commit left on another branch, HEAD back on a clean pushed one", func(t *testing.T, work string) {
+			t.Helper()
 			gitIn(t, work, "checkout", "-q", "-b", "topic")
 			commit(t, work, "topic.txt")
 			gitIn(t, work, "checkout", "-q", "feat")
 		}, "1 commit"},
 		{"a commit on a detached HEAD", func(t *testing.T, work string) {
+			t.Helper()
 			gitIn(t, work, "checkout", "-q", "--detach")
 			commit(t, work, "detached.txt")
 		}, "1 commit"},
 		{"an unborn HEAD beside a branch holding a commit", func(t *testing.T, work string) {
+			t.Helper()
 			gitIn(t, work, "checkout", "-q", "-b", "topic")
 			commit(t, work, "topic.txt")
 			gitIn(t, work, "checkout", "-q", "--orphan", "fresh")
