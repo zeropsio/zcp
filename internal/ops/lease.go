@@ -445,7 +445,7 @@ func LeaseStatus(ctx context.Context, d LeaseDeps, pool string) (LeaseStatusView
 		got, err := listPoolLeases(ctx, d, resolverFrom(d, services), name, byPool[name], false)
 		if err != nil {
 			note := errorNote(err)
-			status.Leases = append(status.Leases, unverifiedViews(byPool[name], note)...)
+			status.Leases = append(status.Leases, unreadPoolViews(services, name, byPool[name], note)...)
 			status.Unread = append(status.Unread, LeasePoolUnread{Pool: name, Note: note})
 			continue
 		}
@@ -457,6 +457,26 @@ func LeaseStatus(ctx context.Context, d LeaseDeps, pool string) (LeaseStatusView
 	markStaleWiring(d.StateDir, records, status.Leases)
 	status.Warm = d.leaseStatusWarm(ctx, services, read)
 	return status, nil
+}
+
+// unreadPoolViews are the records of a pool a status of every pool could not
+// read (note says why): unverified, but for a record taken on the pool before
+// it was re-created — the listed pool has another service id — which is lost,
+// since the new pool holds nothing of it (DP-2, DP-20).
+func unreadPoolViews(services []platform.ServiceStack, pool string, records []leaseRecord, note string) []LeaseView {
+	svc, err := FindService(services, pool)
+	if err != nil {
+		return unverifiedViews(records, note)
+	}
+	var current, recreated []leaseRecord
+	for _, r := range records {
+		if r.PoolServiceID != svc.ID {
+			recreated = append(recreated, r)
+			continue
+		}
+		current = append(current, r)
+	}
+	return append(unverifiedViews(current, note), lostViews(recreated, recreatedWhy)...)
 }
 
 // listPoolLeases reconciles one pool's records against its orchestrator,
