@@ -147,6 +147,99 @@ func TestRunBrowserSteps_WedgedStepEndsTheWalk(t *testing.T) {
 	}
 }
 
+// settleScript is an eval whose promise never settles on a page with a
+// looping animation: its finished never resolves.
+const settleScript = "Promise.all(document.getAnimations().map(a => a.finished)).then(() => 'settled')"
+
+// evalTimedOut is agent-browser's answer to an evaluate past its CDP timeout.
+const evalTimedOut = `{"success":false,"data":null,"error":"CDP command timed out: Runtime.evaluate"}`
+
+// probedSteps answers the caller's settleScript with the CDP timeout, any
+// other eval (the liveness probe) with probe, and every other step with
+// success; it records the commands it saw and fails the test when the probe
+// runs without a short bound of its own.
+func probedSteps(t *testing.T, probe answer, seen *[][]string) browserStepExec {
+	t.Helper()
+	return func(ctx context.Context, args []string) (string, string, error) {
+		*seen = append(*seen, args)
+		switch {
+		case args[0] == "eval" && len(args) > 1 && args[1] == settleScript:
+			return evalTimedOut, "", nil
+		case args[0] == "eval":
+			if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > 10*time.Second {
+				t.Errorf("the liveness probe must run under a short bound of its own, deadline %v %v", deadline, ok)
+			}
+			return probe.stdout, probe.stderr, probe.err
+		}
+		return `{"success":true,"data":{"ok":true},"error":null}`, "", nil
+	}
+}
+
+// TestRunBrowserSteps_EvalNeverSettledOnALivePage_WalkGoesOn pins that an
+// eval which ran into agent-browser's CDP timeout while the page still
+// answers a trivial evaluate is the script's own hang, not the page's: the
+// step says script-timeout, the probe is no step of the walk, and the
+// remaining commands and the canned tail run.
+func TestRunBrowserSteps_EvalNeverSettledOnALivePage_WalkGoesOn(t *testing.T) {
+	var seen [][]string
+	run := probedSteps(t, answer{stdout: `{"success":true,"data":{"result":1},"error":null}`}, &seen)
+	steps := [][]string{{"open", "u"}, {"eval", settleScript}, {"get", "title"}, {"errors"}, {"console"}}
+	stdout, _, _, err := runBrowserSteps(context.Background(), steps, run)
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	var got []BrowserStepResult
+	if jerr := json.Unmarshal([]byte(stdout), &got); jerr != nil {
+		t.Fatalf("steps: %v", jerr)
+	}
+	if len(got) != len(steps) {
+		t.Fatalf("every step must answer in its place and the probe in none, got %s", stdout)
+	}
+	if got[1].ErrorKind != "script-timeout" {
+		t.Errorf("the eval that never settled must say script-timeout, got %q", got[1].ErrorKind)
+	}
+	if got[1].Error == nil || *got[1].Error != "CDP command timed out: Runtime.evaluate" {
+		t.Errorf("the step keeps agent-browser's own words, got %v", got[1].Error)
+	}
+	if len(seen) != len(steps)+1 || !isCommand(seen[2], "eval") || seen[2][len(seen[2])-1] == settleScript {
+		t.Errorf("one probe must run right after the timed-out eval, then the rest of the walk; sent %v", seen)
+	}
+}
+
+// TestRunBrowserSteps_EvalTimeoutOnAHungPage_EndsTheWalk pins that when the
+// probe after a timed-out eval gets no answer either, the page (or Chrome)
+// hung: the walk ends there as a wedge, as it does today.
+func TestRunBrowserSteps_EvalTimeoutOnAHungPage_EndsTheWalk(t *testing.T) {
+	tests := []struct {
+		name  string
+		probe answer
+	}{
+		{"the probe runs into the CDP timeout too", answer{stdout: evalTimedOut}},
+		{"the probe gets no answer", answer{err: context.DeadlineExceeded}},
+		{"the probe answers a failure", answer{stdout: `{"success":false,"data":null,"error":"Execution context was destroyed"}`}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var seen [][]string
+			run := probedSteps(t, tt.probe, &seen)
+			stdout, _, _, err := runBrowserSteps(context.Background(), [][]string{{"open", "u"}, {"eval", settleScript}, {"get", "title"}, {"errors"}}, run)
+			if err != nil {
+				t.Fatalf("a wedge is an answer, not a walk error: %v", err)
+			}
+			var got []BrowserStepResult
+			if jerr := json.Unmarshal([]byte(stdout), &got); jerr != nil || len(got) != 2 {
+				t.Fatalf("want open and the timed-out eval, got %s (%v)", stdout, jerr)
+			}
+			if got[1].ErrorKind == "script-timeout" {
+				t.Error("an eval on a page that does not answer is no script-timeout")
+			}
+			if len(seen) != 3 {
+				t.Errorf("the walk must probe once, then stop; sent %v", seen)
+			}
+		})
+	}
+}
+
 // TestRunBrowserSteps_OversizedAnswerIsCut pins that one step's answer past
 // the output cap becomes a failed step and flags the walk truncated, while
 // the steps after it still run.

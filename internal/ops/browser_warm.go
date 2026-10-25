@@ -210,8 +210,11 @@ type browserStepExec func(ctx context.Context, args []string) (stdout, stderr st
 // runBrowserSteps walks steps one at a time and answers with the JSON
 // []BrowserStepResult of the steps that got an answer. A step that answered
 // success:false is kept in its place and the walk goes on, unless it names a
-// CDP wedge, which ends the walk there; a step with no answer, or the end of
-// ctx, ends the walk with an error, keeping the steps before it.
+// CDP wedge, which ends the walk there — save an eval that ran into the CDP
+// timeout on a page that still answers (evalOnLivePage), which is the
+// script's own hang: it says ErrorKindScriptTimeout and the walk goes on. A
+// step with no answer, or the end of ctx, ends the walk with an error,
+// keeping the steps before it.
 func runBrowserSteps(ctx context.Context, steps [][]string, run browserStepExec) (string, string, bool, error) {
 	results := make([]BrowserStepResult, 0, len(steps))
 	stderr := &capBuffer{cap: browserOutputCap}
@@ -250,7 +253,10 @@ func runBrowserSteps(ctx context.Context, steps [][]string, run browserStepExec)
 		// A wedged page would make every later step wait out the same CDP
 		// timeout; the browser is recycled for it anyway.
 		if _, wedged := scanStepsForCDPWedge(results[len(results)-1:]); wedged {
-			break
+			if !evalOnLivePage(ctx, results[len(results)-1], run) {
+				break
+			}
+			results[len(results)-1].ErrorKind = ErrorKindScriptTimeout
 		}
 	}
 	out, err := json.Marshal(results)
@@ -265,6 +271,36 @@ func runBrowserSteps(ctx context.Context, steps [][]string, run browserStepExec)
 // after the browser's own start — not whether the call's Chrome is fresh;
 // BrowserBatchResult.FreshBrowser says that. Data that is not an object, or
 // has no lifecycle, is kept as it came.
+// browserLivenessProbe is the trivial evaluate asked of a page after an eval
+// ran into the CDP timeout: a page whose main thread and CDP connection
+// still work answers it at once.
+var browserLivenessProbe = []string{browserCmdEval, "1"}
+
+// browserLivenessTimeout bounds that probe: well under agent-browser's 30 s
+// CDP timeout, so a hung page costs the call only a few seconds more.
+const browserLivenessTimeout = 5 * time.Second
+
+// evalOnLivePage reports whether step is an eval that ran into the CDP
+// timeout while the page still answers a trivial evaluate under
+// browserLivenessTimeout — the script's promise never settled (a wait on a
+// looping animation's finished), the page is alive. Any other wedge, or a
+// probe that times out, gets no answer or answers a failure, is not.
+func evalOnLivePage(ctx context.Context, step BrowserStepResult, run browserStepExec) bool {
+	if !isCommand(step.Command, browserCmdEval) || step.Error == nil || !strings.Contains(*step.Error, cdpCommandTimedOut) {
+		return false
+	}
+	pctx, cancel := context.WithTimeout(ctx, browserLivenessTimeout)
+	defer cancel()
+	out, _, err := run(pctx, browserLivenessProbe)
+	if err != nil {
+		return false
+	}
+	var answer struct {
+		Success bool `json:"success"`
+	}
+	return json.Unmarshal([]byte(strings.TrimSpace(out)), &answer) == nil && answer.Success
+}
+
 func withoutLifecycle(data json.RawMessage) json.RawMessage {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(data, &fields); err != nil {
