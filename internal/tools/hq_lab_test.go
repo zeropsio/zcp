@@ -92,6 +92,11 @@ type fakeHQ struct {
 func newFakeHQ(t *testing.T) *fakeHQ {
 	t.Helper()
 	requireGitForLab(t)
+	return newFakeHQReady(t)
+}
+
+func newFakeHQReady(t *testing.T) *fakeHQ {
+	t.Helper()
 	f := &fakeHQ{
 		t: t, root: t.TempDir(), appID: labApp, credential: labCredential,
 		repos: map[string]bool{}, attachments: map[string][]byte{}, origins: map[string]hq.RepoOrigin{},
@@ -764,11 +769,15 @@ type hqLab struct {
 
 func newHQLab(t *testing.T) *hqLab {
 	t.Helper()
-	fake := newFakeHQ(t)
+	return newHQLabWithHQ(t, newFakeHQ(t))
+}
+
+func newHQLabWithHQ(t *testing.T, fake *fakeHQ) *hqLab {
+	t.Helper()
 	link := fake.link(t)
 	hqtest.GitCredential(t, link.GitCredentialPath, labCredential)
 	lab := &hqLab{t: t, hq: fake, stateDir: t.TempDir(), pair: t.TempDir(),
-		rt: runtime.Info{InContainer: true, ProjectID: labMate, OrgID: labOrg, HQ: link}}
+		rt: runtime.Info{InContainer: true, MateEnabled: true, ProjectID: labMate, OrgID: labOrg, HQ: link}}
 	lab.git("init", "-q", "-b", "main")
 	tree := lab.git("mktree")
 	lab.git("update-ref", "HEAD", lab.git("-c", "user.name=zcp", "-c", "user.email=zcp@example.invalid", "commit-tree", tree, "-m", "zcp init"))

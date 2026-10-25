@@ -35,11 +35,20 @@ type CommitSpec struct {
 	Name, Email string
 }
 
-// gitEnv is the environment of git against this HQ: the credential as the
-// Basic Authorization of GitUser, for HQ's address alone, and no prompt.
+// gitEnv is the environment of git against this HQ: project authorization
+// for HQ's address alone, no prompt, and no inherited tracing that could
+// print the authorization header or its environment value.
 func (c Client) gitEnv() []string {
 	header := "Authorization: " + c.authorization()
-	return append(os.Environ(),
+	env := make([]string, 0, len(os.Environ())+4)
+	for _, entry := range os.Environ() {
+		name, _, _ := strings.Cut(entry, "=")
+		if strings.HasPrefix(name, "GIT_TRACE") || name == "GIT_CURL_VERBOSE" {
+			continue
+		}
+		env = append(env, entry)
+	}
+	return append(env,
 		"GIT_CONFIG_COUNT=1",
 		"GIT_CONFIG_KEY_0=http."+c.Address()+"/.extraHeader",
 		"GIT_CONFIG_VALUE_0="+header,
