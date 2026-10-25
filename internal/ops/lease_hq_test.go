@@ -39,7 +39,8 @@ func TestLeaseCheckoutCommand_HQRepo_AuthenticatesAsMate(t *testing.T) {
 		{"a repository on an HQ on its own port", "https://hq.example.invalid:3000/git/a1/web", "https://hq.example.invalid:3000", leaseHQCredentialHelperShell, "hq.example.invalid:3000"},
 		{"a repository outside HQ", "https://github.com/acme/app", leaseHQURL, leaseCredentialHelperShell, "github.com"},
 		{"a container enrolled with no HQ", leaseHQRepo, "", leaseCredentialHelperShell, "hq.example.invalid"},
-		{"HQ's host on another port", "https://hq.example.invalid:3000/git/a1/web", leaseHQURL, leaseCredentialHelperShell, "hq.example.invalid"},
+		{"HQ's host on another port", "https://hq.example.invalid:3000/git/a1/web", leaseHQURL, leaseCredentialHelperShell, "hq.example.invalid:3000"},
+		{"a repository outside HQ on its own port", "https://git.example.invalid:8443/acme/app", leaseHQURL, leaseCredentialHelperShell, "git.example.invalid:8443"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
