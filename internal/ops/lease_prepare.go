@@ -44,26 +44,39 @@ type LeasePrepare struct {
 }
 
 // afterLeaseCheckout runs what follows a successful checkout: the
-// repository's prepare command, then the supervisor's start or reload, which
-// sends the servers' sibling overlay first when the supervisor takes it
-// (lease_wiring.go). It fills v's prepare report, the overlay the supervisor
-// took and the notes, and answers whether a supervisor answers on the lease
-// now — one zcp found or started — whose dev servers the acquire then reads;
-// nothing in it fails the acquire.
+// repository's prepare command, then the supervisor's start when none
+// answers, the servers' sibling overlay when the supervisor takes it
+// (sendCheckoutOverlay, under the group's lock), and — for a supervisor that
+// answered before the checkout, run.start's in a container the platform just
+// created, which booted on an empty /var/www — a reload after that overlay,
+// so the declared servers start under it. It fills v's prepare report, the
+// overlay the supervisor took and the notes, and answers whether a supervisor
+// answers on the lease now — one zcp found or started — whose dev servers the
+// acquire then reads; nothing in it fails the acquire.
 func afterLeaseCheckout(ctx context.Context, d LeaseDeps, alias string, v *LeaseView) bool {
 	read, note := readLeaseCheckout(ctx, d.SSH, alias, "so no prepare command ran")
 	if read.declaration != nil && strings.TrimSpace(read.declaration.Prepare) != "" {
 		v.Prepare, note = runLeasePrepare(ctx, d.SSH, alias, read.declaration.Prepare)
 	}
-	env, envArgs, wireNote := checkoutOverlay(d.StateDir, alias, read, d.previewURLs(ctx))
-	r, err := ensureLeaseSupervisorAfterCheckout(ctx, d.SSH, alias, envArgs)
+	r, err := ensureLeaseSupervisor(ctx, d.SSH, alias)
 	supervised := err == nil && (r.outcome == leaseSupervisorRunning || r.outcome == leaseSupervisorStarted)
-	refused := ""
-	switch {
-	case err == nil && r.envErr != nil:
-		refused = overlayRefusedNote(alias, env, r.envErr)
-	case supervised && envArgs != nil && len(env.pools) > 0:
-		v.SiblingEnv = &env
+	var wireNote, refused string
+	if supervised {
+		env, sent, wn, envErr := sendCheckoutOverlay(ctx, d, alias, read)
+		wireNote = wn
+		switch {
+		case envErr != nil:
+			refused = overlayRefusedNote(alias, env, envErr)
+		case sent && len(env.pools) > 0:
+			v.SiblingEnv = &env
+		}
+		if r.outcome == leaseSupervisorRunning {
+			if _, rerr := supervisorCtl(ctx, d.SSH, alias, "reload"); rerr != nil {
+				r.reloadErr = rerr
+			}
+		}
+	} else {
+		_, _, wireNote = checkoutOverlay(d.StateDir, alias, read, d.previewURLs(ctx))
 	}
 	v.Note = joinNotes(v.Note, note, wireNote, leaseSupervisorNote(alias, r, err), refused)
 	return supervised

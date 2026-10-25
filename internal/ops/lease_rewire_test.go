@@ -215,8 +215,8 @@ func TestLeaseAcquire_JoiningGroupRewiresMembers(t *testing.T) {
 			if got := rf.web.Overlay(); !maps.Equal(got, want) {
 				t.Errorf("webpool-7's overlay = %v, want %v from its own supervisor step", got, want)
 			}
-			if n := len(rf.ssh.sent("webpool-7", "@@zcp-devsup ctl")); n != 0 {
-				t.Errorf("webpool-7 was sent %d ctl call(s) outside its supervisor step: %v", n, rf.ssh.sent("webpool-7", "@@zcp-devsup ctl"))
+			if n := len(rf.ssh.sent("webpool-7", "ctl 'env'")); n != 1 {
+				t.Errorf("webpool-7 was sent %d overlay(s), want only its own supervisor step's (never a rewire): %v", n, rf.ssh.sent("webpool-7", "ctl 'env'"))
 			}
 		})
 	}

@@ -427,6 +427,32 @@ func checkoutOverlay(stateDir, alias string, read leaseCheckoutRead, previewURL 
 	return env, nil, ""
 }
 
+// sendCheckoutOverlay hands the supervisor of the lease behind alias, which
+// answers, its sibling overlay as an acquire's checkout or an unpark computes
+// it (checkoutOverlay): computed from zcp's records and sent under the group's
+// lock (lockLeaseGroup), so no release of a sibling drops it in between
+// (DP-26). The lock is held for the records' read and the one `ctl env`
+// exchange (devsupCtlTimeout), never for the supervisor's start. It answers
+// the overlay, whether it was sent, checkoutOverlay's note and the
+// supervisor's refusal.
+func sendCheckoutOverlay(ctx context.Context, d LeaseDeps, alias string, read leaseCheckoutRead) (env LeaseSiblingEnv, sent bool, note string, refused error) {
+	if rec, err := loadLeaseRecord(d.StateDir, alias); err == nil {
+		unlock, err := lockRecordGroup(ctx, d.StateDir, rec)
+		if err != nil {
+			return LeaseSiblingEnv{}, false, fmt.Sprintf("zcp set no sibling overlay for the dev servers: %v", err), nil
+		}
+		defer unlock()
+	}
+	env, args, note := checkoutOverlay(d.StateDir, alias, read, d.previewURLs(ctx))
+	if args == nil {
+		return env, false, note, nil
+	}
+	if _, err := supervisorCtl(ctx, d.SSH, alias, args...); err != nil {
+		return env, false, note, err
+	}
+	return env, true, note, nil
+}
+
 // overlayRefusedNote is what an acquire says when the supervisor refused the
 // overlay its step sent.
 func overlayRefusedNote(alias string, env LeaseSiblingEnv, err error) string {

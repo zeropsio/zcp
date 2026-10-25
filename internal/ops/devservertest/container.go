@@ -37,9 +37,8 @@ type Container struct {
 	// output is StartOutput.
 	FailStart   bool
 	StartOutput string
-	// SupervisorStarts counts the supervisors zcp started in the container;
-	// SupervisorReloads the reloads of a running one zcp asked for with them.
-	SupervisorStarts, SupervisorReloads int
+	// SupervisorStarts counts the supervisors zcp started in the container.
+	SupervisorStarts int
 	// Prepared are the repository's prepare commands zcp ran, in order; with
 	// PrepareFails each fails (exit 1) with PrepareOutput.
 	Prepared      []string
@@ -139,7 +138,7 @@ func (c *Container) ExecSSH(_ context.Context, hostname string, command string) 
 	}
 	switch {
 	case strings.Contains(command, "@@zcp-devsup check"):
-		return []byte(c.ensure(strings.Contains(command, "zcp-devsup ctl reload"), envLine(command))), nil
+		return []byte(c.ensure()), nil
 	case strings.Contains(command, "@@zcp-devsup declaration") && !strings.Contains(command, "@@zcp-devsup version"):
 		if c.Declaration == "" {
 			return []byte("@@zcp-devsup declaration 1\n"), nil
@@ -283,29 +282,17 @@ func (c *Container) redeploy() {
 }
 
 // ensure answers zcp's start of a lease's supervisor: nothing is started
-// without the binary or while a supervisor holds the control socket — one
-// that answers is reloaded when zcp asks — otherwise one starts and boots the
-// declaration, unless FailStart. env, when set, is the `ctl env` the command
-// sends: to one that answers (before its reload, when zcp asks for one), after
-// the start of one it started.
-func (c *Container) ensure(reload bool, env string) string {
+// without the binary or while a supervisor holds the control socket, or
+// answers — otherwise one starts and boots the declaration, unless FailStart.
+// The overlay and a reload are calls of their own (ctl).
+func (c *Container) ensure() string {
 	switch {
 	case !c.Installed:
 		return "@@zcp-devsup check 127\n"
 	case c.Unresponsive:
 		return "@@zcp-devsup check 5\n"
-	case c.Running && reload:
-		c.SupervisorReloads++
-		out := "@@zcp-devsup check 0\n" + c.ensureEnv(env)
-		answer := strings.TrimSpace(c.ctl("zcp-devsup ctl 'reload' --json"))
-		i := strings.LastIndex(answer, "@@zcp-devsup ctl ")
-		code := strings.TrimSpace(answer[i+len("@@zcp-devsup ctl "):])
-		if code == "0" {
-			return out + "@@zcp-devsup reloaded 0\n"
-		}
-		return out + strings.TrimSpace(answer[:i]) + "\n@@zcp-devsup reloaded " + code + "\n"
 	case c.Running:
-		return "@@zcp-devsup check 0\n" + c.ensureEnv(env)
+		return "@@zcp-devsup check 0\n"
 	}
 	c.SupervisorStarts++
 	if c.FailStart {
@@ -316,33 +303,7 @@ func (c *Container) ensure(reload bool, env string) string {
 		c.SupervisorVersion, c.Formats, c.Capabilities = "v9.300.0", []int{1}, slices.Clone(devsup.Capabilities)
 	}
 	c.boot()
-	return "@@zcp-devsup check 2\n@@zcp-devsup started 0\n" + c.ensureEnv(env)
-}
-
-// ensureEnv runs the ensure command's `ctl env` line, "" when it has none: its
-// answer's section, the refusal above it.
-func (c *Container) ensureEnv(env string) string {
-	if env == "" {
-		return ""
-	}
-	answer := strings.TrimSpace(c.ctl(env))
-	i := strings.LastIndex(answer, "@@zcp-devsup ctl ")
-	code := strings.TrimSpace(answer[i+len("@@zcp-devsup ctl "):])
-	if code == "0" {
-		return "@@zcp-devsup env 0\n"
-	}
-	return strings.TrimSpace(answer[:i]) + "\n@@zcp-devsup env " + code + "\n"
-}
-
-// envLine is the `zcp-devsup ctl 'env' …` part of an ensure command, "" when
-// it sends none.
-func envLine(command string) string {
-	i := strings.Index(command, "zcp-devsup ctl 'env'")
-	if i < 0 {
-		return ""
-	}
-	line, _, _ := strings.Cut(command[i:], "\n")
-	return line
+	return "@@zcp-devsup check 2\n@@zcp-devsup started 0\n"
 }
 
 // boot gives every declared server its first desired state (autostart),

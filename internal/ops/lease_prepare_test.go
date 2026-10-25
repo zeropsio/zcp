@@ -33,10 +33,19 @@ func acquireContainer(decl, prepOut string, prepErr error, supervisor string) fu
 			return []byte(prepOut), prepErr
 		case strings.Contains(command, "zcp-devsup run"):
 			return []byte(supervisor), nil
+		case strings.Contains(command, ctlCall):
+			return []byte(ctlTook), nil
 		}
 		return nil, nil
 	}
 }
+
+// ctlCall marks a supervisor call (`zcp-devsup ctl '<verb>' …`: an overlay,
+// a reload); ctlTook is a supervisor's answer taking it.
+const (
+	ctlCall = "zcp-devsup ctl '"
+	ctlTook = "{}\n@@zcp-devsup ctl 0\n"
+)
 
 // commandIndex is the index of the first command containing sub, -1 when none.
 func commandIndex(cmds []string, sub string) int {
@@ -142,7 +151,7 @@ func TestLeasePrepare_FailureIsNeverACheckoutFailure(t *testing.T) {
 	fx := newLeaseFixture(t)
 	fx.swarm.acquired = acquiredAs(3)
 	ssh := &leaseSSH{}
-	ssh.setHandler(acquireContainer(`{"version":1,"prepare":"npm ci","servers":[]}`, out, sshFailure(out, exitError(t, 128)), "@@zcp-devsup check 0\n@@zcp-devsup reloaded 0\n"))
+	ssh.setHandler(acquireContainer(`{"version":1,"prepare":"npm ci","servers":[]}`, out, sshFailure(out, exitError(t, 128)), "@@zcp-devsup check 0\n"))
 	fx.deps.SSH = ssh
 
 	view, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, "feature")
@@ -167,13 +176,13 @@ func TestLeaseAcquire_ReloadsASupervisorThatAlreadyRuns(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name     string
-		answer   string
+		reload   string // the supervisor's answer to the reload
 		wantNote []string
 	}{
-		{name: "the reload takes the checked-out declaration", answer: "@@zcp-devsup check 0\n@@zcp-devsup reloaded 0\n"},
+		{name: "the reload takes the checked-out declaration", reload: ctlTook},
 		{
 			name:     "the reload is refused",
-			answer:   "@@zcp-devsup check 0\n{\"code\":4,\"error\":\"web: cwd escapes the repo root\"}\n@@zcp-devsup reloaded 4\n",
+			reload:   "{\"code\":4,\"error\":\"web: cwd escapes the repo root\"}\n@@zcp-devsup ctl 4\n",
 			wantNote: []string{"cwd escapes the repo root", devsup.DeclarationPath},
 		},
 	}
@@ -183,7 +192,13 @@ func TestLeaseAcquire_ReloadsASupervisorThatAlreadyRuns(t *testing.T) {
 			fx := newLeaseFixture(t)
 			fx.swarm.acquired = acquiredAs(3)
 			ssh := &leaseSSH{}
-			ssh.setHandler(acquireContainer("", "", nil, tt.answer))
+			acquire := acquireContainer("", "", nil, "@@zcp-devsup check 0\n")
+			ssh.setHandler(func(host, command string) ([]byte, error) {
+				if strings.Contains(command, "zcp-devsup ctl 'reload'") {
+					return []byte(tt.reload), nil
+				}
+				return acquire(host, command)
+			})
 			fx.deps.SSH = ssh
 
 			view, err := LeaseAcquire(context.Background(), fx.deps, testPoolHost, testRepo, "feature")
@@ -191,9 +206,9 @@ func TestLeaseAcquire_ReloadsASupervisorThatAlreadyRuns(t *testing.T) {
 				t.Fatal(err)
 			}
 			cmds := ssh.commands()
-			i := commandIndex(cmds, "zcp-devsup run")
-			if i < 0 || !strings.Contains(cmds[i], "zcp-devsup ctl reload") {
-				t.Errorf("the supervisor step does not reload a supervisor that already runs: %v", cmds)
+			ensure, reload := commandIndex(cmds, "zcp-devsup run"), commandIndex(cmds, "zcp-devsup ctl 'reload'")
+			if ensure < 0 || reload < ensure {
+				t.Errorf("the supervisor step does not reload a supervisor that already runs, after ensuring it: %v", cmds)
 			}
 			if len(tt.wantNote) == 0 && view.Note != "" {
 				t.Errorf("note = %q, want none", view.Note)

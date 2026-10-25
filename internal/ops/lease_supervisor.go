@@ -57,9 +57,8 @@ type leaseSupervisorResult struct {
 	// log is the tail of a failed supervisor's own output.
 	log string
 	// reloadErr is a running supervisor's refusal of the reload an acquire
-	// asked for (an invalid declaration, say); envErr its refusal of the
-	// overlay the step sent.
-	reloadErr, envErr error
+	// asked for after its overlay (an invalid declaration, say).
+	reloadErr error
 }
 
 // leaseSupervisorLog is where a supervisor zcp starts writes its own output,
@@ -69,16 +68,13 @@ const leaseSupervisorLog = "~/.zcp/devsup/supervisor.log"
 
 // leaseSupervisorCommand starts `zcp-devsup run` in workDir unless a
 // supervisor already holds the control socket, and waits up to waitSeconds
-// for the one it started to answer; with reload, a supervisor that answers is
-// reloaded instead, so it takes the declaration a checkout just put there.
-// env, when set, is a `ctl env` argv (lease_wiring.go) sent to a supervisor
-// that answers before its reload, and to the one it started once that answers
-// — that one booted the declared servers already and restarts them under it.
-// It answers in devsup sections: "check" carries `ctl status`'s exit code
-// before anything is started (127 without the binary); "env" the overlay's
-// code (its JSON refusal above it); "reloaded" the reload's code (likewise);
-// "started" the code after the start; "log" the tail of the started
-// supervisor's output when it does not answer.
+// for the one it started to answer. It answers in devsup sections: "check"
+// carries `ctl status`'s exit code before anything is started (127 without
+// the binary); "started" the code after the start; "log" the tail of the
+// started supervisor's output when it does not answer. The servers' sibling
+// overlay and an acquire's reload are separate exchanges after it
+// (afterLeaseCheckout): the overlay is computed and sent under the group's
+// lock, which this command, whose start may wait seconds, never holds.
 //
 // Only `ctl status` exit 2 (no supervisor: the socket is absent or refused)
 // starts one: 0 answers, and 5 holds the socket unanswering, so a second would
@@ -87,75 +83,42 @@ const leaseSupervisorLog = "~/.zcp/devsup/supervisor.log"
 // one. The supervisor runs in its own session (setsid; nohup where there is
 // none), stdin from /dev/null, its output appended to leaseSupervisorLog and
 // the lock's descriptor closed, so it holds nothing of the ssh session and
-// outlives it. workDir and every env argument are shell-quoted; nothing else
-// is composed in.
-func leaseSupervisorCommand(workDir string, waitSeconds int, reload bool, env []string) string {
+// outlives it. workDir is shell-quoted; nothing else is composed in.
+func leaseSupervisorCommand(workDir string, waitSeconds int) string {
 	status := `zcp-devsup ctl status --json >/dev/null 2>&1`
 	run := `zcp-devsup run </dev/null >>"$d/supervisor.log" 2>&1 9>&-`
-	lines := []string{
+	return strings.Join([]string{
 		`if ! command -v zcp-devsup >/dev/null 2>&1; then echo '@@zcp-devsup check 127'; exit 0; fi`,
 		`d="$HOME/.zcp/devsup"`,
 		`mkdir -p "$d" || exit 1`,
-	}
-	sendEnv := ""
-	if len(env) > 0 {
-		quoted := make([]string, 0, len(env))
-		for _, a := range env {
-			quoted = append(quoted, shellQuote(a))
-		}
-		lines = append(lines, `send_env() { e=$(zcp-devsup ctl `+strings.Join(quoted, " ")+` --json 2>/dev/null); ec=$?; if [ "$ec" -ne 0 ]; then printf '%s\n' "$e"; fi; echo "@@zcp-devsup env $ec"; }`)
-		sendEnv = "send_env; "
-	}
-	lines = append(lines,
 		`if command -v flock >/dev/null 2>&1; then exec 9>>"$d/ensure.lock"; flock -w 60 9 || :; fi`,
-		status+`; c=$?`,
+		status + `; c=$?`,
 		`echo "@@zcp-devsup check $c"`,
-	)
-	switch {
-	case reload:
-		lines = append(lines, `if [ "$c" -eq 0 ]; then `+sendEnv+`r=$(zcp-devsup ctl reload --json 2>/dev/null); rc=$?; if [ "$rc" -ne 0 ]; then printf '%s\n' "$r"; fi; echo "@@zcp-devsup reloaded $rc"; fi`)
-	case sendEnv != "":
-		lines = append(lines, `if [ "$c" -eq 0 ]; then send_env; fi`)
-	}
-	lines = append(lines,
 		`if [ "$c" -ne 2 ]; then exit 0; fi`,
-		`cd `+shellQuote(workDir)+` || exit 1`,
-		`if command -v setsid >/dev/null 2>&1; then setsid `+run+` & else nohup `+run+` & fi`,
-		`end=$(( $(date +%s) + `+strconv.Itoa(waitSeconds)+` ))`,
-		`while :; do `+status+`; c=$?; if [ "$c" -ne 2 ] || [ "$(date +%s)" -ge "$end" ]; then break; fi; sleep 0.2 2>/dev/null || sleep 1; done`,
+		`cd ` + shellQuote(workDir) + ` || exit 1`,
+		`if command -v setsid >/dev/null 2>&1; then setsid ` + run + ` & else nohup ` + run + ` & fi`,
+		`end=$(( $(date +%s) + ` + strconv.Itoa(waitSeconds) + ` ))`,
+		`while :; do ` + status + `; c=$?; if [ "$c" -ne 2 ] || [ "$(date +%s)" -ge "$end" ]; then break; fi; sleep 0.2 2>/dev/null || sleep 1; done`,
 		`echo "@@zcp-devsup started $c"`,
-	)
-	if sendEnv != "" {
-		lines = append(lines, `if [ "$c" -eq 0 ]; then send_env; fi`)
-	}
-	return strings.Join(append(lines,
 		`if [ "$c" -ne 0 ]; then tail -n 20 "$d/supervisor.log" 2>/dev/null; echo '@@zcp-devsup log 0'; fi`,
-	), "\n")
+	}, "\n")
 }
 
 // ensureLeaseSupervisor makes sure zcp-devsup runs in the leased container
 // behind alias, leaving one that answers alone: a dev-server call never
 // reloads (with the declaration missing from a checkout a reload would stop
-// every server).
+// every server); an acquire reloads one that answered by its own call, after
+// the overlay (afterLeaseCheckout).
 func ensureLeaseSupervisor(ctx context.Context, ssh SSHDeployer, alias string) (leaseSupervisorResult, error) {
-	return ensureSupervisorIn(ctx, ssh, alias, leaseWorkDir, leaseSupervisorWait, false, nil)
+	return ensureSupervisorIn(ctx, ssh, alias, leaseWorkDir, leaseSupervisorWait)
 }
 
-// ensureLeaseSupervisorAfterCheckout is ensureLeaseSupervisor for an acquire:
-// a supervisor that answers — run.start's in a container the platform just
-// created, which booted on an empty /var/www — is reloaded, so the declared
-// servers start as they do in a reused container; env (nil: none) is the
-// servers' sibling overlay, sent before that reload or right after a start.
-func ensureLeaseSupervisorAfterCheckout(ctx context.Context, ssh SSHDeployer, alias string, env []string) (leaseSupervisorResult, error) {
-	return ensureSupervisorIn(ctx, ssh, alias, leaseWorkDir, leaseSupervisorWait, true, env)
-}
-
-// ensureSupervisorIn is ensureLeaseSupervisor with the work dir, the wait,
-// the reload and the overlay given.
-func ensureSupervisorIn(ctx context.Context, ssh SSHDeployer, alias, workDir string, waitSeconds int, reload bool, env []string) (leaseSupervisorResult, error) {
+// ensureSupervisorIn is ensureLeaseSupervisor with the work dir and the wait
+// given.
+func ensureSupervisorIn(ctx context.Context, ssh SSHDeployer, alias, workDir string, waitSeconds int) (leaseSupervisorResult, error) {
 	callCtx, cancel := context.WithTimeout(ctx, leaseSupervisorTimeout)
 	defer cancel()
-	out, err := ssh.ExecSSH(callCtx, alias, leaseSupervisorCommand(workDir, waitSeconds, reload, env))
+	out, err := ssh.ExecSSH(callCtx, alias, leaseSupervisorCommand(workDir, waitSeconds))
 	if err != nil {
 		return leaseSupervisorResult{}, fmt.Errorf("start zcp-devsup on %s: %w", alias, err)
 	}
@@ -167,20 +130,16 @@ func ensureSupervisorIn(ctx context.Context, ssh SSHDeployer, alias, workDir str
 	if !ok {
 		return leaseSupervisorResult{}, fmt.Errorf("start zcp-devsup on %s: unreadable answer %q", alias, strings.TrimSpace(string(out)))
 	}
-	r, err := ensureOutcome(alias, out, check, sections, reload)
-	if a, sent := sections["env"]; err == nil && sent && a.code != devsupCodeOK {
-		r.envErr = ctlFailure(a)
-	}
-	return r, err
+	return ensureOutcome(alias, out, check, sections)
 }
 
 // ensureOutcome reads what an ensure found or did from its answer's sections.
-func ensureOutcome(alias string, out []byte, check devsupAnswer, sections map[string]devsupAnswer, reload bool) (leaseSupervisorResult, error) {
+func ensureOutcome(alias string, out []byte, check devsupAnswer, sections map[string]devsupAnswer) (leaseSupervisorResult, error) {
 	switch check.code {
 	case devsupCodeAbsent:
 		return leaseSupervisorResult{outcome: leaseSupervisorAbsent}, nil
 	case devsupCodeOK:
-		return runningSupervisor(alias, sections, reload)
+		return leaseSupervisorResult{outcome: leaseSupervisorRunning}, nil
 	case devsupCodeUnresponsive:
 		return leaseSupervisorResult{outcome: leaseSupervisorUnresponsive}, nil
 	case devsupCodeNoSupervisor:
@@ -198,23 +157,6 @@ func ensureOutcome(alias string, out []byte, check devsupAnswer, sections map[st
 		return leaseSupervisorResult{outcome: leaseSupervisorUnresponsive}, nil
 	}
 	return leaseSupervisorResult{outcome: leaseSupervisorFailed, log: sections["log"].body}, nil
-}
-
-// runningSupervisor reads the answer about a supervisor that answered: with
-// reload, the reload's own answer.
-func runningSupervisor(alias string, sections map[string]devsupAnswer, reload bool) (leaseSupervisorResult, error) {
-	r := leaseSupervisorResult{outcome: leaseSupervisorRunning}
-	if !reload {
-		return r, nil
-	}
-	reloaded, ok := sections["reloaded"]
-	if !ok {
-		return leaseSupervisorResult{}, fmt.Errorf("reload zcp-devsup on %s: no answer", alias)
-	}
-	if reloaded.code != devsupCodeOK {
-		r.reloadErr = ctlFailure(reloaded)
-	}
-	return r, nil
 }
 
 // leaseSupervisorNote is what an acquire says about the lease's supervisor:
