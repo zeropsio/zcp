@@ -560,6 +560,52 @@ func TestSupervisor_ABurstOfWatchedChangesRestartsTheServerOnce(t *testing.T) {
 	}
 }
 
+// A sync's fast-forward that changes the declaration reloads the supervisor a
+// few hundred ms after it changed the files a watch covers — inside the
+// settle of their burst. A reload, or a start of another server, that
+// replaced every watcher dropped that burst, and an unchanged watched server
+// kept serving the old code. A watcher whose watch is unchanged is kept, its
+// burst with it, so the change still restarts the server once.
+func TestSupervisor_AReloadOrAStartOfAnotherServerKeepsAWatchedChangeStillSettling(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		act  func(t *testing.T, s *Supervisor)
+	}{
+		{"reload", func(_ *testing.T, s *Supervisor) { s.Reload() }},
+		{"start of another server", func(t *testing.T, s *Supervisor) {
+			if err := s.Start("web"); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newRig(t)
+			api, web := freePort(t), freePort(t)
+			r.write("apps/api/main.go", "v1")
+			srv := r.listener("api", api)
+			srv.Watch = &Watch{Paths: []string{"apps/api"}}
+			other := r.listener("web", web)
+			off := false
+			other.Autostart = &off
+			r.declare(srv, other)
+			s := r.supervisor()
+			s.Boot()
+			eventually(t, "api to listen", func() bool { return listening(api) })
+
+			r.write("apps/api/main.go", "v2 (fast-forward)")
+			time.Sleep(200 * time.Millisecond) // the watch saw it; its burst is settling
+			tc.act(t, s)
+			eventually(t, "the watched change to restart api", func() bool { return mustServer(t, s.State(), "api").Restarts >= 1 })
+			time.Sleep(2 * time.Second) // a restart that should not happen has no event to wait on
+			if sv := mustServer(t, s.State(), "api"); sv.Restarts != 1 || sv.LastRestartReason != "apps/api/main.go changed" {
+				t.Fatalf("api = %d restart(s), reason %q; want one, for the change", sv.Restarts, sv.LastRestartReason)
+			}
+		})
+	}
+}
+
 // The 8–10 s between a write and the restart was the old server's stop grace:
 // one that does not end on SIGTERM is killed only after it. Every change that
 // came while that restart stopped the server is already on disk when the new
