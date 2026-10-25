@@ -186,6 +186,24 @@ func TestDeriveProdSetupBlock_DropsMatesFramingAllowance(t *testing.T) {
 			absent: []string{"mate.zerops.io", "*.zerops.app"},
 		},
 		{
+			// An app that talks to Mate names its address in a setting; only
+			// Mate's origin set — its hosted origin beside its zerops.app
+			// wildcard — is a frame source list outside frame-ancestors.
+			name: "a setting naming Mate's address is no frame source",
+			source: `zerops:
+  - setup: stage
+    build:
+      base: nodejs@22
+    run:
+      base: nodejs@22
+      start: npm start
+      envVariables:
+        MATE_APP_URL: https://mate.zerops.io
+        MATE_ORIGINS: https://mate.zerops.io https://app.zerops.io
+`,
+			want: []string{"https://mate.zerops.io", "https://mate.zerops.io https://app.zerops.io"},
+		},
+		{
 			name: "the app's own frame sources without Mate's stay",
 			source: `zerops:
   - setup: stage

@@ -193,3 +193,28 @@ func TestBuildGroupRecipe_PreviewVariant_PartsAreNamedByTheSetupTheyBuild(t *tes
 		}
 	}
 }
+
+// An app that talks to Mate names its address in a setting: that is no
+// framing, so its stage's setup — even one that extends another — is what
+// the group environments build, and nothing is said.
+func TestBuildGroupRecipe_PreviewVariant_ASettingNamingMateIsNoFraming(t *testing.T) {
+	t.Parallel()
+	in := groupInputsFixture()
+	in.Runtimes[0].SetupName = "dev"
+	in.Runtimes[0].Stages[0].SetupName = "prod"
+	in.Runtimes[0].ZeropsYAMLBody = "zerops:\n" + previewFrameDev +
+		strings.ReplaceAll(previewFramePlainExtends, "NODE_ENV: production", "MATE_APP_URL: https://mate.zerops.io")
+	layout, warnings, err := BuildGroupRecipe(in)
+	if err != nil {
+		t.Fatalf("BuildGroupRecipe: %v", err)
+	}
+	if warningsContain(warnings, "Mate's preview pane") {
+		t.Errorf("warnings %v read a setting as framing", warnings)
+	}
+	files := groupFiles(t, layout)
+	for _, dir := range []string{"3 — Stage", "4 — Small Production"} {
+		if got, _ := serviceEntries(t, tierDoc(t, files, dir))["api"]["zeropsSetup"].(string); got != "prod" {
+			t.Errorf("%s api zeropsSetup = %q, want the stage's prod", dir, got)
+		}
+	}
+}
