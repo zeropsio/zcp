@@ -419,7 +419,9 @@ func TestCtl_Env_ReplacesTheOverlay(t *testing.T) {
 func TestCtl_Env_AnswersBeforeTheRestarts(t *testing.T) {
 	t.Parallel()
 	// web ignores SIGTERM, so its restart cannot finish before its grace ends.
-	const grace = 3 * time.Second
+	// The grace is the window env's answer must arrive in: a loaded CI runner
+	// took over 3 s to answer, so it is wide, and still inside waitFor's 15 s.
+	const grace = 8 * time.Second
 	state := runningSupervisor(t, `{"version":1,"servers":[{"name":"web","command":"trap '' TERM; echo \"HQ_HOST=${HQ_HOST-unset}\"; exec sleep 300"}]}`, grace)
 	var pid int
 	waitFor(t, "web to run", func() bool {
