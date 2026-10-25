@@ -26,7 +26,7 @@ type ManageInput struct {
 func RegisterManage(srv *mcp.Server, client platform.Client, projectID string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_manage",
-		Description: "Manage service lifecycle: start, stop, restart, reload, connect-storage, disconnect-storage. After an env change restart a runtime, NOT reload (reload keeps its boot env). A Zerops Box is the opposite: reload keeps its sandboxes running and applies an API key change; restart and stop kill running sandboxes. connect-storage/disconnect-storage: DEPRECATED seaweedfs mount at /mnt/{storageHostname}; prefer local-storage run.volume.",
+		Description: "Manage service lifecycle: start, stop, restart, reload. After an env change restart, NOT reload — a runtime keeps its boot env; PHP-FPM keeps its boot config. reload (~4s) is for graceful config/code reloads. A Zerops Box is the opposite: reload applies an API key change, keeping sandboxes running; restart/stop kill them. connect-storage/disconnect-storage: DEPRECATED seaweedfs mount at /mnt/{storageHostname}; prefer local-storage run.volume.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Manage service lifecycle",
 			IdempotentHint:  true,
