@@ -1987,7 +1987,7 @@ func TestScenario_UserSuppliedCode_PlanningPointsAtABox(t *testing.T) {
 		Services: []ServiceSnapshot{fixSnapDeployedDevAuto("webdev")}})
 	requireAtomIDsContain(t, "a deployed app adding a feature that runs users' code", deployed, "develop-user-code-box")
 	feature, _ := has(deployed, developAtom)
-	for _, want := range []string{"Zerops Box", "ubuntu/zbox@1", "prg1", `zerops_knowledge uri="zerops://themes/services"`} {
+	for _, want := range []string{"Zerops Box", "ubuntu/zbox@1", "prg1", `zerops_knowledge uri="zerops://themes/pools-and-box"`} {
 		if !strings.Contains(feature, want) {
 			t.Errorf("%s body missing %q:\n%s", developAtom, want, feature)
 		}
