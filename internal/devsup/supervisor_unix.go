@@ -786,8 +786,9 @@ func (s *Supervisor) syncWatches() {
 // server's latest start began restarts nothing: that start already runs it —
 // a burst that came while a restart waited out the old server's stop grace
 // (up to 10 s for one that does not end on SIGTERM) would restart the new one
-// again. A change within the start window, after watchLoopLimit starts in a
-// row each saw one, is the server's own output and restarts nothing; a change
+// again. A change made within the start window — by the burst's last change,
+// not by when the burst settled — after watchLoopLimit starts in a row each
+// saw one, is the server's own output and restarts nothing; a change made
 // outside it always restarts, and clears the count when the start before it
 // saw no change.
 func (s *Supervisor) watchFired(name, rel string, last time.Time) {
@@ -805,7 +806,10 @@ func (s *Supervisor) watchFired(name, rel string, last time.Time) {
 		s.logf("no restart of %s: %s changed before its start #%d began, which runs it", name, rel, starts)
 		return
 	}
-	if sv.startedAt != nil && time.Since(*sv.startedAt) < s.cfg.StartWindow {
+	// Decided by when the change was made, never by when its burst settled:
+	// the settle ends watchSettle after the last change, past the window for
+	// a write made just inside it.
+	if sv.startedAt != nil && last.Sub(*sv.startedAt) < s.cfg.StartWindow {
 		if !sv.windowChanged {
 			sv.windowChanged = true
 			sv.selfChanged++
