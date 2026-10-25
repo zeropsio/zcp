@@ -130,3 +130,41 @@ func TestClient_Self_Changes_DecodeBranchAndHandOver(t *testing.T) {
 		}
 	}
 }
+
+// A change in the Mate's state from an HQ that keeps an open change per branch
+// carries its standing — ready (described at its head), its mergeability and
+// whether main moved past it, as last judged, and when it last changed — and
+// the state says HQ keeps an open change per branch (openPerBranch). An older
+// HQ names none of them: no standing, and one open change per repository.
+func TestClient_Self_Changes_DecodeStandingAndOpenPerBranch(t *testing.T) {
+	t.Parallel()
+	const perBranch = `{"projectId":"p-mate","name":"Ada","face":"face-1","standupRequestedBy":null,"appId":"a1","openPerBranch":true,"changes":[` +
+		`{"repo":"appsdev","number":6,"title":"Badge","state":"open","head":null,"mergedSha":null,"landedHead":null,"branch":"badge",` +
+		`"ready":false,"mergeability":"clean","behind":true,"updatedAt":"2026-10-25T10:00:00Z"}]}`
+	client, _ := answering(t, perBranch)
+	state, err := client.Self(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.OpenPerBranch {
+		t.Error("openPerBranch = false, want true")
+	}
+	c := state.Changes[0]
+	if c.Ready == nil || *c.Ready || c.Mergeability != "clean" || c.Behind == nil || !*c.Behind || c.UpdatedAt != "2026-10-25T10:00:00Z" {
+		t.Errorf("standing = ready %v, mergeability %q, behind %v, updatedAt %q; want not ready, clean, behind, 2026-10-25T10:00:00Z",
+			c.Ready, c.Mergeability, c.Behind, c.UpdatedAt)
+	}
+
+	older, _ := answering(t, selfSample)
+	if state, err = older.Self(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if state.OpenPerBranch {
+		t.Error("an older HQ's state reads openPerBranch")
+	}
+	for _, c := range state.Changes {
+		if c.Ready != nil || c.Mergeability != "" || c.Behind != nil || c.UpdatedAt != "" {
+			t.Errorf("change #%d from an older HQ carries a standing: %+v", c.Number, c)
+		}
+	}
+}
