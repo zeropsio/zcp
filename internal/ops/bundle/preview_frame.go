@@ -32,9 +32,12 @@ var cspSourceToken = regexp.MustCompile(`^('[a-z-]+'|[a-z][a-z0-9+.-]*:|([a-z][a
 // WithoutMateFraming returns v — a string, or a mapping or list parsed from
 // YAML — with Mate's frame sources taken out of every value that lets Mate's
 // preview pane frame the app, and whether any did. A value lets it when a
-// `frame-ancestors` directive in it, or the whole value as a bare source list,
-// names Mate's hosted origin. Its own sources stay and Mate's go — `'none'`
-// when nothing stays. v is never changed in place.
+// `frame-ancestors` directive in it names Mate's hosted origin, or when the
+// whole value is a bare source list naming Mate's origin set — the hosted
+// origin beside the zerops.app wildcard, since a setting that only names
+// Mate's address (an app that talks to Mate) frames nothing. Its own sources
+// stay and Mate's go — `'none'` when nothing stays. v is never changed in
+// place.
 func WithoutMateFraming(v any) (any, bool) {
 	switch v := v.(type) {
 	case string:
@@ -64,7 +67,7 @@ func WithoutMateFraming(v any) (any, bool) {
 
 // withoutMateFrameSources is WithoutMateFraming for one value: every
 // `frame-ancestors` directive naming Mate's hosted origin, else the whole
-// value when it is a bare source list naming it.
+// value when it is a bare source list naming Mate's origin set.
 func withoutMateFrameSources(value string) (string, bool) {
 	if !strings.Contains(strings.ToLower(value), mateHostedOrigin) {
 		return value, false
@@ -91,10 +94,16 @@ func withoutMateFrameSources(value string) (string, bool) {
 		return b.String(), true
 	}
 	fields := strings.Fields(value)
+	containerOrigins := false
 	for _, field := range fields {
-		if !cspSourceToken.MatchString(strings.ToLower(field)) {
+		source := strings.ToLower(field)
+		if !cspSourceToken.MatchString(source) {
 			return value, false
 		}
+		containerOrigins = containerOrigins || strings.TrimSuffix(source, "/") == mateContainerOrigins
+	}
+	if !containerOrigins {
+		return value, false
 	}
 	kept, named := withoutMateSources(fields)
 	if !named {
