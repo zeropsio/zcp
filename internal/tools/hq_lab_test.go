@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"encoding/pem"
@@ -829,6 +830,11 @@ type labSSH struct {
 }
 
 func (s *labSSH) ExecSSH(ctx context.Context, hostname, command string) ([]byte, error) {
+	return s.run(ctx, hostname, command, nil)
+}
+
+// run runs command in hostname's checkout, stdin on its input.
+func (s *labSSH) run(ctx context.Context, hostname, command string, stdin []byte) ([]byte, error) {
 	s.mu.Lock()
 	s.commands = append(s.commands, command)
 	s.mu.Unlock()
@@ -849,6 +855,9 @@ func (s *labSSH) ExecSSH(ctx context.Context, hostname, command string) ([]byte,
 		"PATH=" + os.Getenv("PATH"), "HOME=" + s.home, "GIT_CONFIG_NOSYSTEM=1", "GIT_SSL_CAINFO=" + s.caFile,
 		"GIT_TOKEN=" + token,
 	}
+	if stdin != nil {
+		cmd.Stdin = bytes.NewReader(stdin)
+	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return out, &platform.SSHExecError{Hostname: hostname, Output: string(out), Err: err}
@@ -856,8 +865,8 @@ func (s *labSSH) ExecSSH(ctx context.Context, hostname, command string) ([]byte,
 	return out, nil
 }
 
-func (s *labSSH) ExecSSHStdin(ctx context.Context, hostname, command string, _ []byte) ([]byte, error) {
-	return s.ExecSSH(ctx, hostname, command)
+func (s *labSSH) ExecSSHStdin(ctx context.Context, hostname, command string, stdin []byte) ([]byte, error) {
+	return s.run(ctx, hostname, command, stdin)
 }
 
 func (s *labSSH) ExecSSHBackground(ctx context.Context, hostname, command string, _ time.Duration) ([]byte, error) {

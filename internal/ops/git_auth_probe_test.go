@@ -1,6 +1,10 @@
 package ops
 
 import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -11,7 +15,8 @@ import (
 // capability, not mere read reachability (which passes for any token on a public
 // repo):
 //   - cd into the working dir (push --dry-run needs the local HEAD)
-//   - CANDIDATE token via env-assignment prefix (probe-first)
+//   - CANDIDATE token read from stdin, given to git alone as GIT_TOKEN
+//     (probe-first; never on the command line)
 //   - the SAME inline credential helper + reset the push uses
 //   - GIT_TERMINAL_PROMPT=0 (no hang on credential prompt)
 //   - push --dry-run to the throwaway probe branch (write-class, non-mutating)
@@ -19,13 +24,14 @@ import (
 //   - NO disk writes: the ephemeral-.netrc pattern stays retired
 func TestBuildGitWritePushProbeCommand_Shape(t *testing.T) {
 	t.Parallel()
-	cmd := BuildGitWritePushProbeCommand("/var/www", "https://github.com/example/app.git", "", "ghp_secret")
+	cmd := BuildGitWritePushProbeCommand("/var/www", "https://github.com/example/app.git", "")
 
 	requirements := []struct {
 		name, substr string
 	}{
 		{"cd working dir", "cd '/var/www'"},
-		{"candidate token env-prefix", "GIT_TOKEN='ghp_secret' "},
+		{"candidate token read from stdin", "IFS= read -r zcp_git_token"},
+		{"candidate token env-prefix from the variable", `GIT_TOKEN="$zcp_git_token" `},
 		{"inline credential helper", "-c credential.helper='!f()"},
 		{"helper reset precedes inline", "-c credential.helper= -c credential.helper="},
 		{"helper reads env", `password=$GIT_TOKEN`},
@@ -62,7 +68,7 @@ func TestBuildGitWritePushProbeCommand_UserByRemote(t *testing.T) {
 		{hq + "/git/a1/appdev.git", "", "username=oauth2"},
 		{"https://hq.example:8443/git/a1/appdev.git", hq, "username=oauth2"},
 	} {
-		cmd := BuildGitWritePushProbeCommand("/var/www", tt.remote, tt.hqURL, "secret")
+		cmd := BuildGitWritePushProbeCommand("/var/www", tt.remote, tt.hqURL)
 		if !strings.Contains(cmd, tt.user) {
 			t.Errorf("probe of %s (HQ %q) must present %s:\n%s", tt.remote, tt.hqURL, tt.user, cmd)
 		}
@@ -72,21 +78,57 @@ func TestBuildGitWritePushProbeCommand_UserByRemote(t *testing.T) {
 	}
 }
 
-// TestBuildGitWritePushProbeCommand_TokenShellQuoted ensures shell-metacharacters
-// in the token can't break out of the command (POSIX single-quote escaping).
-func TestBuildGitWritePushProbeCommand_TokenShellQuoted(t *testing.T) {
+// TestGitAuthProbeCommands_TokenFromStdinOnly: the write probe and the
+// shallow-clone fix never carry the candidate token — a command line is
+// visible to every process on both containers — and read it from the
+// session's stdin (GitTokenInput), so git gets it byte for byte, shell
+// metacharacters and all, with nothing evaluated.
+func TestGitAuthProbeCommands_TokenFromStdinOnly(t *testing.T) {
 	t.Parallel()
-	maliciousToken := `tok' && rm -rf / && echo 'oops`
-	cmd := BuildGitWritePushProbeCommand("/var/www", "https://github.com/example/app.git", "", maliciousToken)
-
-	// The quoted token must appear (both branches carry it) and the raw
-	// metacharacter sequence must never appear unquoted.
-	if !strings.Contains(cmd, "GIT_TOKEN="+shellQuote(maliciousToken)+" ") {
-		t.Errorf("probe command should carry the quoted env-assignment of the token:\n%s", cmd)
+	const token = `tok' && touch pwned && echo 'oops $(touch pwned2) "q" \x`
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "work", ".git"), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	quoted := shellQuote(maliciousToken)
-	if !strings.HasPrefix(quoted, "'") || !strings.HasSuffix(quoted, "'") {
-		t.Errorf("shellQuote should wrap content in single quotes; got %q", quoted)
+	if err := os.WriteFile(filepath.Join(dir, "work", ".git", "shallow"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// git as the commands call it: rev-parse finds HEAD, remote get-url names
+	// an origin, and the calls that authenticate print the GIT_TOKEN they got.
+	stub := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(stub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitStub := "#!/bin/sh\ncase \" $* \" in *' push '*|*' fetch '*) printf 'GOT[%s]\\n' \"$GIT_TOKEN\" >> ../got;; esac\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(stub, "git"), []byte(gitStub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, cmd := range map[string]string{
+		"write probe":       BuildGitWritePushProbeCommand(filepath.Join(dir, "work"), "https://github.com/example/app.git", ""),
+		"shallow-clone fix": BuildGitShallowFixCommand(filepath.Join(dir, "work")),
+	} {
+		if strings.Contains(cmd, "tok'") || strings.Contains(cmd, "pwned") {
+			t.Errorf("%s carries the token:\n%s", name, cmd)
+		}
+		_ = os.Remove(filepath.Join(dir, "got"))
+		run := exec.CommandContext(context.Background(), "sh", "-c", cmd) //nolint:gosec // running the command under test
+		run.Env = []string{"PATH=" + stub + string(os.PathListSeparator) + os.Getenv("PATH")}
+		run.Stdin = strings.NewReader(string(GitTokenInput(token)))
+		if out, err := run.CombinedOutput(); err != nil {
+			t.Fatalf("%s: %v\n%s", name, err, out)
+		}
+		got, err := os.ReadFile(filepath.Join(dir, "got"))
+		if err != nil {
+			t.Fatalf("%s: git was never asked to authenticate: %v", name, err)
+		}
+		if want := "GOT[" + token + "]\n"; string(got) != want {
+			t.Errorf("%s: git got GIT_TOKEN %q, want the token as given %q", name, got, want)
+		}
+		for _, mark := range []string{"pwned", "pwned2"} {
+			if _, err := os.Stat(filepath.Join(dir, "work", mark)); err == nil {
+				t.Errorf("%s evaluated the token (%s exists)", name, mark)
+			}
+		}
 	}
 }
 
@@ -165,7 +207,7 @@ func TestBuildGitOriginSyncCommand_SetsIdentityIfAbsent(t *testing.T) {
 // rewritten (the unshallow source is the original origin).
 func TestBuildGitShallowFixCommand_Shape(t *testing.T) {
 	t.Parallel()
-	cmd := BuildGitShallowFixCommand("/var/www", "ghp_secret")
+	cmd := BuildGitShallowFixCommand("/var/www")
 
 	for _, want := range []string{
 		"cd '/var/www'",
@@ -180,8 +222,8 @@ func TestBuildGitShallowFixCommand_Shape(t *testing.T) {
 			t.Errorf("shallow-fix command missing %q: %s", want, cmd)
 		}
 	}
-	// Token must be shell-quoted, never bare.
-	if strings.Contains(cmd, "GIT_TOKEN=ghp_secret ") {
-		t.Errorf("token must be shell-quoted, not bare: %s", cmd)
+	// The token comes over stdin, never in the command.
+	if !strings.Contains(cmd, "IFS= read -r zcp_git_token") || !strings.Contains(cmd, `GIT_TOKEN="$zcp_git_token" `) {
+		t.Errorf("the token must be read from stdin and given to git alone: %s", cmd)
 	}
 }

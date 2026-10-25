@@ -42,16 +42,35 @@ const gitWriteAuthProbeBranch = "zcp-write-auth-probe"
 // must not stamp the stronger claim.
 //
 // HTTPS-only enforcement + caller responsibility unchanged from the read probe.
-func BuildGitWritePushProbeCommand(workingDir, remoteURL, hqURL, token string) string {
-	qtok, qhelper, qurl := shellQuote(token), gitCredentialHelperArgsFor(remoteURL, hqURL), shellQuote(remoteURL)
+//
+// The candidate token is never composed in: the command reads it from the
+// session's stdin (GitTokenInput, written by ExecSSHStdin) into a shell
+// variable of its own, and git alone gets it as GIT_TOKEN — a command line is
+// visible to every process on both containers for the call's length.
+func BuildGitWritePushProbeCommand(workingDir, remoteURL, hqURL string) string {
+	qhelper, qurl := gitCredentialHelperArgsFor(remoteURL, hqURL), shellQuote(remoteURL)
 	return fmt.Sprintf(
-		`cd %s && if git rev-parse --verify -q HEAD >/dev/null 2>&1; then `+
-			`GIT_TOKEN=%s GIT_TERMINAL_PROMPT=0 git %s push --dry-run %s HEAD:refs/heads/%s; `+
-			`else GIT_TOKEN=%s GIT_TERMINAL_PROMPT=0 git %s ls-remote %s HEAD; fi`,
-		shellQuote(workingDir),
-		qtok, qhelper, qurl, gitWriteAuthProbeBranch,
-		qtok, qhelper, qurl,
+		`%s && cd %s && if git rev-parse --verify -q HEAD >/dev/null 2>&1; then `+
+			`GIT_TOKEN="$%s" GIT_TERMINAL_PROMPT=0 git %s push --dry-run %s HEAD:refs/heads/%s; `+
+			`else GIT_TOKEN="$%s" GIT_TERMINAL_PROMPT=0 git %s ls-remote %s HEAD; fi`,
+		gitTokenRead, shellQuote(workingDir),
+		gitTokenName, qhelper, qurl, gitWriteAuthProbeBranch,
+		gitTokenName, qhelper, qurl,
 	)
+}
+
+// gitTokenRead reads the candidate token, the first line of the call's stdin
+// (GitTokenInput), into gitTokenName; no command line ever carries it.
+const gitTokenRead = "IFS= read -r " + gitTokenName
+
+// gitTokenName is the remote shell's own, unexported name for the candidate
+// token: only the git calls that need it get it, as GIT_TOKEN.
+const gitTokenName = "zcp_git_token"
+
+// GitTokenInput is the stdin a call of BuildGitWritePushProbeCommand or
+// BuildGitShallowFixCommand writes (ExecSSHStdin): the token on a line.
+func GitTokenInput(token string) []byte {
+	return []byte(token + "\n")
 }
 
 // BuildGitOriginSyncCommand builds an SSH command body that idempotently
@@ -116,14 +135,15 @@ func BuildGitOriginSyncCommand(workingDir, remoteURL, hqURL string) string {
 //	                             <orig> = the original origin URL (still intact)
 //
 // On ZCP_UNSHALLOW_FAIL the caller must return a blocker BEFORE the origin
-// sync, so the original remote stays available for manual recovery.
-func BuildGitShallowFixCommand(workingDir, token string) string {
+// sync, so the original remote stays available for manual recovery. The
+// token comes over stdin (GitTokenInput), never in the command.
+func BuildGitShallowFixCommand(workingDir string) string {
 	qwd := shellQuote(workingDir)
 	return fmt.Sprintf(
-		`cd %s && if [ -f .git/shallow ]; then orig=$(git remote get-url origin 2>/dev/null || true); `+
-			`if GIT_TOKEN=%s GIT_TERMINAL_PROMPT=0 git %s fetch --unshallow origin >/dev/null 2>&1; then echo ZCP_UNSHALLOW_OK; `+
+		`%s && cd %s && if [ -f .git/shallow ]; then orig=$(git remote get-url origin 2>/dev/null || true); `+
+			`if GIT_TOKEN="$%s" GIT_TERMINAL_PROMPT=0 git %s fetch --unshallow origin >/dev/null 2>&1; then echo ZCP_UNSHALLOW_OK; `+
 			`else echo "ZCP_UNSHALLOW_FAIL $orig"; fi; else echo ZCP_NOT_SHALLOW; fi`,
-		qwd, shellQuote(token), gitCredentialHelperArgs(),
+		gitTokenRead, qwd, gitTokenName, gitCredentialHelperArgs(),
 	)
 }
 
