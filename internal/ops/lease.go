@@ -582,7 +582,7 @@ func listPoolLeases(ctx context.Context, d LeaseDeps, resolve poolResolver, pool
 		views = append(views, v)
 	}
 	for _, c := range containers {
-		if c.LockState != leaseLockReserved || recorded[c.ID] {
+		if !leasedContainer(c) || recorded[c.ID] {
 			continue
 		}
 		views = append(views, LeaseView{
