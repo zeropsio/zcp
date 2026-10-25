@@ -41,6 +41,45 @@ func TestCheckProvision_AllServicesExist_Pass(t *testing.T) {
 	}
 }
 
+// TestCheckProvision_SearchLagsTheDirectRead_Pass: right after an import the
+// service search (Elasticsearch) can still read a service CREATING that a
+// direct read already sees ACTIVE — the state the agent just waited for
+// through zerops_discover. The check reads the project's services lag-free,
+// so it agrees with discover instead of failing the step.
+func TestCheckProvision_SearchLagsTheDirectRead_Pass(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "s1", Name: "appdev", Status: serviceStatusRunning},
+		{ID: "s2", Name: "appstage", Status: serviceStatusNew},
+		{ID: "s3", Name: "db", Status: "CREATING"},
+	}).WithServicesDirect([]platform.ServiceStack{
+		{ID: "s1", Name: "appdev", Status: serviceStatusRunning},
+		{ID: "s2", Name: "appstage", Status: serviceStatusNew},
+		{ID: "s3", Name: "db", Status: serviceStatusActive},
+	}).WithServiceEnv("s3", []platform.ServiceEnvVar{{Key: "connectionString", Content: "pg://..."}})
+
+	plan := &workflow.ServicePlan{
+		Targets: []workflow.BootstrapTarget{{
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "appstage"},
+			Dependencies: []workflow.Dependency{
+				{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"},
+			},
+		}},
+	}
+
+	checker := checkProvision(mock, nil, "proj-1", nil)
+	result, err := checker(context.Background(), plan, nil)
+	if err != nil {
+		t.Fatalf("checker error: %v", err)
+	}
+	if !result.Passed {
+		t.Errorf("expected pass on the direct read's ACTIVE, got fail: %s", result.Summary)
+		for _, c := range result.Checks {
+			t.Logf("  %s: %s %s", c.Name, c.Status, c.Detail)
+		}
+	}
+}
+
 func TestCheckProvision_ActiveStatus_Pass(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
