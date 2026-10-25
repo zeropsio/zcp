@@ -635,8 +635,14 @@ hard-gates on it, and `zerops_process action="wait"` blocks until the work drain
   `SearchProcesses`, `SearchAppVersions`) trail the DB after an import (seconds,
   load-dependent), so an agent arriving mid-import would otherwise see an "empty
   project". The direct reads reflect creation-time state immediately
-  (live-verified: service + its in-flight process visible at ~creation). The ES
-  searches stay for the history/timeline (`ops.Events`) and resolve/poll callers.
+  (live-verified: service + its in-flight process visible at ~creation). The
+  bootstrap provision check reads the same direct list
+  (`ops.ListProjectServicesDirect`): the agent waits for the import through
+  discover, and a check reading the search could still find a service CREATING
+  that discover already read ACTIVE, failing the step on a service that is up
+  (`TestCheckProvision_SearchLagsTheDirectRead_Pass`; hit live in the e2e tier).
+  The ES searches stay for the history/timeline (`ops.Events`) and resolve/poll
+  callers.
 - **"Busy" = a live process referencing the service** — status `PENDING`,
   `RUNNING`, `ROLLBACKING`, or `CANCELING` (`ops.IsProcessLive`, the SDK's
   non-terminal set). The process is the SOLE busy-truth; it always carries a
