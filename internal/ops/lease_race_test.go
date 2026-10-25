@@ -572,3 +572,34 @@ func TestLeaseStatus_ListingFails_KnownLossesAreLost(t *testing.T) {
 		}
 	}
 }
+
+// TestLeaseStatus_ListingFails_RecreatedLeaseLostBesideUnread: a status of
+// every pool whose orchestrator does not list its containers reports each
+// lease only it can decide unverified, with why — and a lease taken on the
+// pool before it was re-created lost all the same, since the new pool holds
+// nothing of it (DP-2, DP-20).
+func TestLeaseStatus_ListingFails_RecreatedLeaseLostBesideUnread(t *testing.T) {
+	t.Parallel()
+	fx := newLeaseFixture(t)
+	fx.swarm.listErr = noRouteToHost()
+	recordLease(t, fx.stateDir, testPoolHost, "svc-old", 3, "feat")
+	recordLease(t, fx.stateDir, testPoolHost, "svc-pool", 4, "feat")
+
+	status, err := LeaseStatus(context.Background(), fx.deps, "")
+	if err != nil {
+		t.Fatalf("LeaseStatus: %v", err)
+	}
+	byAlias := map[string]LeaseView{}
+	for _, v := range status.Leases {
+		byAlias[v.Alias] = v
+	}
+	if v := byAlias["devpool-3"]; v.State != LeaseStateLost || v.Unverified || !strings.Contains(v.Note, "re-created") {
+		t.Errorf("devpool-3 = %+v, want lost: the pool was re-created since it was taken", v)
+	}
+	if v := byAlias["devpool-4"]; !v.Unverified {
+		t.Errorf("devpool-4 = %+v, want unverified: only the orchestrator decides it", v)
+	}
+	if len(status.Unread) != 1 || status.Unread[0].Pool != testPoolHost {
+		t.Errorf("unread = %+v, want the pool named", status.Unread)
+	}
+}
