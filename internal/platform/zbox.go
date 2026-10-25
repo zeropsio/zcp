@@ -460,7 +460,10 @@ func (c *BoxClient) do(ctx context.Context, access BoxAccess, method, path strin
 	defer resp.Body.Close()
 	answer, err := io.ReadAll(io.LimitReader(resp.Body, boxMaxBody))
 	if err != nil {
-		return fmt.Errorf("read response: %w", err)
+		// An answer the connection cut short is the network failing, never
+		// the API refusing: a POST /base whose answer was lost so is sent
+		// again with its Idempotency-Key (IsTransient).
+		return boxCutShortError(ctx, access, err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		be := parseBoxError(resp.StatusCode, answer)
@@ -490,6 +493,17 @@ func scrubBoxError(be *BoxError, token string) {
 	for k, v := range be.Metadata {
 		be.Metadata[k] = redactToken(v, token)
 	}
+}
+
+// boxCutShortError maps an answer whose body the connection cut short to a
+// NETWORK_ERROR naming the API's base URL and the cause only.
+func boxCutShortError(ctx context.Context, access BoxAccess, err error) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return fmt.Errorf("read response: %w", ctxErr)
+	}
+	pe := NewPlatformError(ErrNetworkError, redactToken(fmt.Sprintf("the Box API at %s cut its answer short: %v", access.URLAPI, err), access.Token.Secret()), "")
+	pe.Cause = err
+	return pe
 }
 
 // boxTransportError maps a failure to reach the Box API (DNS, refused,
