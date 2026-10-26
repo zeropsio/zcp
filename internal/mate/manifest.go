@@ -169,7 +169,7 @@ func DesiredRelease(ctx context.Context, client *http.Client, opts ManifestOptio
 		}
 	}
 
-	m, err := fetchManifest(ctx, client)
+	m, err := fetchManifest(ctx, client, ManifestURL())
 	if err != nil {
 		// A refresh that could not reach the manifest keeps what the last one
 		// read, while that is fresh: a boot asks for a refresh so a release
@@ -191,15 +191,29 @@ func DesiredRelease(ctx context.Context, client *http.Client, opts ManifestOptio
 	return m, nil
 }
 
-// fetchManifest reads the manifest from ManifestURL(), unvalidated.
-func fetchManifest(ctx context.Context, client *http.Client) (Manifest, error) {
+// CheckPublishedRelease gates a zcp release on the Mate already published to
+// the canonical stable channel. Release authorization never uses a local cache
+// or the installation URL override: neither proves what new containers fetch.
+func CheckPublishedRelease(ctx context.Context, client *http.Client) (Manifest, error) {
+	m, err := fetchManifest(ctx, client, defaultManifestURL)
+	if err != nil {
+		return Manifest{}, fmt.Errorf("check published Mate: %w", err)
+	}
+	if err := validateManifest(m); err != nil {
+		return Manifest{}, fmt.Errorf("check published Mate: %w", err)
+	}
+	return m, nil
+}
+
+// fetchManifest reads the manifest from url, unvalidated.
+func fetchManifest(ctx context.Context, client *http.Client, url string) (Manifest, error) {
 	if client == nil {
 		client = http.DefaultClient
 	}
 	fetchCtx, cancel := context.WithTimeout(ctx, manifestFetchTimeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(fetchCtx, http.MethodGet, ManifestURL(), nil)
+	req, err := http.NewRequestWithContext(fetchCtx, http.MethodGet, url, nil)
 	if err != nil {
 		return Manifest{}, fmt.Errorf("build mate manifest request: %w", err)
 	}

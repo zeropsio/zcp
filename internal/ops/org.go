@@ -28,19 +28,17 @@ type OrgProjectKind string
 const (
 	OrgKindChief      OrgProjectKind = "chief"
 	OrgKindMate       OrgProjectKind = "mate"
-	OrgKindHQ         OrgProjectKind = "hq"
 	OrgKindProduction OrgProjectKind = "production"
 	OrgKindStage      OrgProjectKind = "stage"
 	OrgKindOther      OrgProjectKind = "other"
 )
 
 // orgKindOrder is the order the overview lists its groups in.
-var orgKindOrder = []OrgProjectKind{OrgKindMate, OrgKindHQ, OrgKindProduction, OrgKindStage, OrgKindOther, OrgKindChief}
+var orgKindOrder = []OrgProjectKind{OrgKindMate, OrgKindProduction, OrgKindStage, OrgKindOther, OrgKindChief}
 
 const (
 	tagMate         = "mate"
 	tagChief        = "chief"
-	hqHostname      = "hq"
 	appNameSplitter = " - "
 )
 
@@ -54,8 +52,8 @@ type OrgProjectClass struct {
 }
 
 // ClassifyOrgProject reads a project's kind from what Zerops holds: the
-// chief tag; a Mate is tagged mate and runs a zcp@ service; HQ runs a
-// service named hq; an application's production and stage are named
+// chief tag; a Mate is tagged mate and runs a zcp@ service;
+// an application's production and stage are named
 // "<application> - production" / "<application> - stage". Everything else —
 // tools, experiments, a Mate not yet born — is other.
 func ClassifyOrgProject(p platform.Project, services []platform.ServiceStack) OrgProjectClass {
@@ -67,8 +65,6 @@ func ClassifyOrgProject(p platform.Project, services []platform.ServiceStack) Or
 		return strings.HasPrefix(s.ServiceStackTypeInfo.ServiceStackTypeVersionName, zcpTypePrefix)
 	}):
 		return OrgProjectClass{Kind: OrgKindMate, App: app, MateName: own}
-	case slices.ContainsFunc(services, func(s platform.ServiceStack) bool { return s.Name == hqHostname }):
-		return OrgProjectClass{Kind: OrgKindHQ}
 	}
 	switch strings.ToLower(own) {
 	case "production", "prod":

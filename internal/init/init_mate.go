@@ -12,8 +12,8 @@ import (
 	"github.com/zeropsio/zcp/internal/runtime"
 )
 
-// mateEnsureInstalled converges the installed mate bundle toward the release zcp
-// pins — or leaves it alone, when the desired version is already live or a
+// mateEnsureInstalled converges the installed mate bundle toward the stable
+// release manifest — or leaves it alone, when the desired version is already live or a
 // dev build is being kept. Package-level so tests can stub the one step that
 // may reach the network; production is mate.EnsureInstalled (bounded timeouts
 // throughout).
@@ -113,7 +113,7 @@ func disableMate() error {
 //
 // The bundle itself is mateEnsureInstalled's job in full — same version already
 // live (the common warm-restart case) costs no network, and a hand-pushed dev
-// build is kept rather than silently replaced by the pinned release. See
+// build at or above MinimumMateVersion is kept unless forced. See
 // mate.EnsureInstalled for the pass in detail.
 //
 // When the bundle cannot be had, no unit is registered either — a unit whose
@@ -168,11 +168,9 @@ func enableMate(rt runtime.Info) error {
 
 	// A unit that was ALREADY running is serving whatever was on disk when it
 	// started — and it starts at boot on its own, from `WantedBy=multi-user
-	// .target`, without waiting for this command. Measured on z3-eval: the
-	// unit entered `active` at 16:45:12, two seconds BEFORE install.sh had even
-	// replaced the zcp binary, and `zcp init` ran later still. So a bundle this
-	// step just changed, or an env contract it just rewrote, reaches the
-	// running server only if something restarts it here — otherwise a moved pin
+	// .target`, without waiting for this command. A bundle this step just
+	// changed, or an env contract it just rewrote, reaches the running server
+	// only if something restarts it here — otherwise a new bundle
 	// lands on disk and serves from the NEXT restart, which is not what
 	// "a restart is also an upgrade" promises.
 	//

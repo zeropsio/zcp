@@ -82,7 +82,7 @@ func (s *Scratch) Close() { _ = os.RemoveAll(s.dir) }
 var errNoSuchRef = errors.New("no such branch")
 
 // Fetch takes HQ's branch into the scratch under the same name and answers
-// its head; found is false when HQ has no such branch.
+// its head; found is false when HQ has no such branch, its head then unborn.
 func (s *Scratch) Fetch(ctx context.Context, branch string) (head string, found bool, err error) {
 	ref := "refs/heads/" + branch
 	if _, err := s.git(ctx, nil, "fetch", "-q", "--no-tags", s.url, "+"+ref+":"+ref); err != nil {
@@ -95,8 +95,24 @@ func (s *Scratch) Fetch(ctx context.Context, branch string) (head string, found 
 	return head, err == nil, err
 }
 
+// unborn is the rev of a branch HQ has no commit on yet: Fetch's head for a
+// branch it did not find. Every read of it reads the empty tree.
+const unborn = ""
+
+// treeish is rev as git reads it: the empty tree for unborn.
+func (s *Scratch) treeish(ctx context.Context, rev string) (string, error) {
+	if rev != unborn {
+		return rev, nil
+	}
+	return s.git(ctx, strings.NewReader(""), "hash-object", "-w", "-t", "tree", "--stdin")
+}
+
 // Paths are the files rev holds, relative to its root.
 func (s *Scratch) Paths(ctx context.Context, rev string) ([]string, error) {
+	rev, err := s.treeish(ctx, rev)
+	if err != nil {
+		return nil, err
+	}
 	out, err := s.git(ctx, nil, "ls-tree", "-r", "--name-only", "-z", rev)
 	if err != nil {
 		return nil, err
@@ -113,6 +129,9 @@ func (s *Scratch) Paths(ctx context.Context, rev string) ([]string, error) {
 // File is path as rev holds it, byte for byte; found is false when rev holds
 // no such file.
 func (s *Scratch) File(ctx context.Context, rev, path string) (body string, found bool, err error) {
+	if rev, err = s.treeish(ctx, rev); err != nil {
+		return "", false, err
+	}
 	entry, err := s.git(ctx, nil, "ls-tree", "-z", rev, "--", path)
 	if err != nil || entry == "" {
 		return "", false, err
@@ -123,11 +142,19 @@ func (s *Scratch) File(ctx context.Context, rev, path string) (body string, foun
 
 // Tree is rev's tree.
 func (s *Scratch) Tree(ctx context.Context, rev string) (string, error) {
+	rev, err := s.treeish(ctx, rev)
+	if err != nil {
+		return "", err
+	}
 	return s.git(ctx, nil, "rev-parse", "--verify", rev+"^{tree}")
 }
 
 // TreeWith is base's tree with files, path to body, written over it.
 func (s *Scratch) TreeWith(ctx context.Context, base string, files map[string]string) (string, error) {
+	base, err := s.treeish(ctx, base)
+	if err != nil {
+		return "", err
+	}
 	index := filepath.Join(s.dir, "scratch-index")
 	defer os.Remove(index)
 	withIndex := append(append([]string(nil), s.env...), "GIT_INDEX_FILE="+index)

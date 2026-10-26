@@ -161,6 +161,17 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 			}
 		}()
 	}
+	// A Mate's start is a recipe pass too: a recipe no earlier pass could
+	// propose, or one a zcp before root-commit proposals refused onto a
+	// recipe repository without main, goes out without waiting for the next
+	// bootstrap or adopt. Off the startup path; its line goes to the log.
+	if rtInfo.InContainer && rtInfo.MateEnabled {
+		go func() {
+			if line := tools.GroupRecipeAtStart(ctx, client, &http.Client{Timeout: 15 * time.Second}, rtInfo, stateDir); line != "" {
+				fmt.Fprintf(os.Stderr, "zcp: the group's recipe: %s\n", line)
+			}
+		}()
+	}
 	return s
 }
 

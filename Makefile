@@ -138,6 +138,7 @@ _release:
 	fi; \
 	printf "Running tests...\n"; \
 	go test ./... -count=1 -short || { echo "ERROR: tests failed, aborting release."; exit 1; }; \
+	go run ./cmd/mate-release-check || { echo "ERROR: compatible Mate release is not published, aborting release."; exit 1; }; \
 	echo "Tagging $$NEXT ($$COMMITS commits since $${LATEST:-no previous tag})..."; \
 	git tag -a "$$NEXT" -m "Release $$NEXT"; \
 	echo "Pushing..."; \

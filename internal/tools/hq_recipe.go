@@ -96,7 +96,8 @@ type recipeOutcome struct {
 // it can meet is fatal: an HQ that does not answer, a push another process
 // moved the branch past, leaves a working project and a line saying so, and
 // the next pass tries again. A Mate that never gets its proposal through
-// loses nothing but the proposal.
+// loses nothing but the proposal. zcp's start in a Mate is one more pass
+// (GroupRecipeAtStart).
 //
 // Idempotent on CONTENT: the recipe is composed from live state on every
 // pass, and a branch that already holds the tree it would push is left as
@@ -110,6 +111,21 @@ func reconcileGroupRecipe(
 	stateDir string,
 ) string {
 	return groupRecipeOutcome(ctx, client, httpClient, rt, stateDir).Line
+}
+
+// GroupRecipeAtStart is the recipe pass zcp's start in a Mate runs
+// (server.New), off the startup path: a recipe no earlier pass got through
+// goes out without waiting for the next bootstrap or adopt. A start comes
+// with every agent session and nobody asked for it, so a proposal a person
+// closed unmerged is not opened again here; bootstrap, adopt and the
+// agent's ask still propose it.
+func GroupRecipeAtStart(ctx context.Context, client platform.Client, httpClient ops.HTTPDoer, rt runtime.Info, stateDir string) string {
+	if hqc, linked := openHQ(httpClient, rt); linked {
+		if state, err := hqc.Self(ctx); err == nil && recipeDeclined(state, hq.RecipeProposalTitle) {
+			return ""
+		}
+	}
+	return reconcileGroupRecipe(ctx, client, httpClient, rt, stateDir)
 }
 
 // groupRecipeOutcome is the reconcile itself. Split from the reporter so the
@@ -213,20 +229,19 @@ type groupRecipeComposition struct {
 func (c groupRecipeComposition) close() { c.scratch.Close() }
 
 // openRecipeMain fetches main of the recipe repository into a scratch: its
-// head and the paths it holds. An error reads as a line's cause.
+// head and the paths it holds. A recipe repository HQ made with an
+// application has no main until its first recipe lands: its head is then ""
+// and it holds nothing, so the first recipe is proposed whole on a root
+// commit. An error reads as a line's cause.
 func openRecipeMain(ctx context.Context, hqc hq.Client, appID string) (*hq.Scratch, string, []string, error) {
 	scratch, err := hqc.OpenScratch(ctx, appID, hq.RecipeRepo)
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("could not prepare the recipe's scratch repository (%w)", err)
 	}
-	main, found, err := scratch.Fetch(ctx, hqBase)
-	switch {
-	case err != nil:
+	main, _, err := scratch.Fetch(ctx, hqBase)
+	if err != nil {
 		scratch.Close()
 		return nil, "", nil, fmt.Errorf("could not read %q of the recipe repository %q (%w)", hqBase, hq.RecipeRepo, err)
-	case !found:
-		scratch.Close()
-		return nil, "", nil, fmt.Errorf("the recipe repository %q has no %q yet, so there is nothing to propose the recipe to", hq.RecipeRepo, hqBase)
 	}
 	paths, err := scratch.Paths(ctx, main)
 	if err != nil {
@@ -411,11 +426,11 @@ func writeRecipeChange(ctx context.Context, comp groupRecipeComposition, open *h
 			return recipeWrite{}, fmt.Errorf("could not read change #%d of the recipe repository %q (%w)", write.number, hq.RecipeRepo, err)
 		}
 	}
-	parents, err := recipeParents(ctx, scratch, head, main, tree)
+	parents, push, err := recipeParents(ctx, scratch, head, main, tree)
 	if err != nil {
 		return recipeWrite{}, fmt.Errorf("could not read change #%d of the recipe repository %q (%w)", write.number, hq.RecipeRepo, err)
 	}
-	if parents == nil {
+	if !push {
 		return write, nil
 	}
 	commit, err := scratch.Commit(ctx, hq.CommitSpec{Tree: tree, Parents: parents, Message: message,
@@ -459,27 +474,33 @@ func ownRecipeChange(ctx context.Context, hqc hq.Client, open *hq.MateChange, ti
 
 // recipeParents are the parents of the commit that brings the change's
 // branch, at head ("" when it has none yet), to tree: main alone for a
-// branch not pushed yet; head, and main too once main is no ancestor of it.
-// Nil when head already holds tree on top of main — nothing to push.
-func recipeParents(ctx context.Context, scratch *hq.Scratch, head, main, tree string) ([]string, error) {
-	if head == "" {
-		return []string{main}, nil
+// branch not pushed yet, none while main has no commit ("") either; head,
+// and main too once main is no ancestor of it. push is false when head
+// already holds tree on top of main — nothing to push.
+func recipeParents(ctx context.Context, scratch *hq.Scratch, head, main, tree string) (parents []string, push bool, err error) {
+	switch {
+	case head == "" && main == "":
+		return nil, true, nil
+	case head == "":
+		return []string{main}, true, nil
 	}
-	onMain, err := scratch.IsAncestor(ctx, main, head)
-	if err != nil {
-		return nil, err
+	onMain := main == ""
+	if !onMain {
+		if onMain, err = scratch.IsAncestor(ctx, main, head); err != nil {
+			return nil, false, err
+		}
 	}
 	held, err := scratch.Tree(ctx, head)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	switch {
 	case onMain && held == tree:
-		return nil, nil
+		return nil, false, nil
 	case onMain:
-		return []string{head}, nil
+		return []string{head}, true, nil
 	}
-	return []string{head, main}, nil
+	return []string{head, main}, true, nil
 }
 
 // recipeName names the recipe, and the stage and production projects its

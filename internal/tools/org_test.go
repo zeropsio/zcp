@@ -48,6 +48,75 @@ func orgServer() *mcp.Server {
 	return srv
 }
 
+type orgWithHQNamedService struct{ orgFake }
+
+func (orgWithHQNamedService) ListProjects(ctx context.Context) ([]platform.Project, error) {
+	projects, err := (orgFake{}).ListProjects(ctx)
+	return append(projects, platform.Project{ID: "pBackup", Name: "HQ backup", Status: "STOPPED"}), err
+}
+
+func (orgWithHQNamedService) ListServices(ctx context.Context, projectID string) ([]platform.ServiceStack, error) {
+	services, err := (orgFake{}).ListServices(ctx, projectID)
+	if projectID == "" || projectID == "pBackup" {
+		services = append(services, platform.ServiceStack{ID: "sBackup", ProjectID: "pBackup", Name: "hq", Status: "STOPPED"})
+	}
+	return services, err
+}
+
+func TestOrgTools_HQNamedService_IsAnOrdinaryProject(t *testing.T) {
+	t.Parallel()
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterOrg(srv, orgWithHQNamedService{}, func() string { return "id-1" })
+	res := callTool(t, srv, "zerops_org_overview", map[string]any{})
+	if res.IsError {
+		t.Fatalf("overview errored: %s", extractText(res))
+	}
+	var overview ops.OrgOverviewResult
+	if err := json.Unmarshal([]byte(extractText(res)), &overview); err != nil {
+		t.Fatal(err)
+	}
+	for _, group := range overview.Groups {
+		for _, project := range group.Projects {
+			if project.ID == "pBackup" {
+				if group.Kind != ops.OrgKindOther {
+					t.Fatalf("project with a service named hq has kind %q, want other", group.Kind)
+				}
+				return
+			}
+		}
+	}
+	t.Fatal("overview omitted the ordinary project with a service named hq")
+}
+
+func TestOrgTools_HQNamedService_AccessUsesOrdinaryProjectRules(t *testing.T) {
+	t.Parallel()
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterOrg(srv, orgWithHQNamedService{}, func() string { return "id-1" })
+	res := callTool(t, srv, "zerops_org_propose_access", map[string]any{
+		"project": "pBackup",
+		"people":  []map[string]any{{"person": "Dana", "level": "read"}},
+		"reason":  "review the backup",
+	})
+	if res.IsError {
+		t.Fatalf("ordinary project access proposal errored: %s", extractText(res))
+	}
+	var doc struct {
+		Proposal struct {
+			Kind      string                 `json:"kind"`
+			ProjectID string                 `json:"projectId"`
+			Params    ops.OrgAccessSetParams `json:"params"`
+		} `json:"proposal"`
+	}
+	if err := json.Unmarshal([]byte(extractText(res)), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Proposal.Kind != "access.set" || doc.Proposal.ProjectID != "pBackup" ||
+		len(doc.Proposal.Params.Projects) != 1 || doc.Proposal.Params.Projects[0].ID != "pBackup" ||
+		len(doc.Proposal.Params.People) != 1 || doc.Proposal.Params.People[0] != (ops.OrgAccessPerson{Person: "Dana", Level: "read"}) {
+		t.Fatalf("ordinary project access proposal = %+v", doc.Proposal)
+	}
+}
+
 // TestOrgTools_EachAnswersWithItsDocument calls every org tool once and
 // reads the JSON document it answers with.
 func TestOrgTools_EachAnswersWithItsDocument(t *testing.T) {

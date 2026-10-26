@@ -113,3 +113,20 @@ func TestMateUpdate_ManualUnknownCapabilityCannotReplaceRunningMate(t *testing.T
 		})
 	}
 }
+
+// non-parallel: the command reads process environment and writes os.Stderr.
+func TestMateUpdate_WorkerStarted_ReportsPendingDecision(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	containerEnv(t)
+	bin := t.TempDir()
+	writeFakeBin(t, filepath.Join(bin, "sudo"), "#!/bin/sh\nexit 0\n")
+	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+	_, stderr := captureOutput(t, func() {
+		if code := runMateUpdate([]string{"--automatic"}); code != 0 {
+			t.Fatalf("exit = %d, want 0", code)
+		}
+	})
+	if want := "mate: update worker started; outcome pending (zcp mate status)\n"; stderr != want {
+		t.Errorf("update output = %q, want %q", stderr, want)
+	}
+}
