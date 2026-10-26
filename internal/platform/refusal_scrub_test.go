@@ -24,22 +24,22 @@ import (
 func TestSwarmClient_CodeAndReasonEchoingSecrets_Scrubbed(t *testing.T) {
 	t.Parallel()
 	const lease = "feedfacefeedfacefeedfacefeedface"
-	const token = "orch-api-token-0001"
+	const orchToken = "orch-api-token-0001"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusConflict)
-		_, _ = w.Write([]byte(`{"error":{"code":"bad-` + token + `","message":"refused","meta":[` +
+		_, _ = w.Write([]byte(`{"error":{"code":"bad-` + orchToken + `","message":"refused","meta":[` +
 			`{"code":"x","error":"x","metadata":{"reason":["lease-` + lease + `"],"retryable":["false"]}}]}}`))
 	}))
 	defer srv.Close()
 
-	c := NewSwarmClient(srv.URL, token, srv.Client())
+	c := NewSwarmClient(srv.URL, orchToken, srv.Client())
 	_, err := c.Release(context.Background(), "c-5", lease, true)
 	var se *SwarmError
 	if !errors.As(err, &se) {
 		t.Fatalf("err = %v (%T), want a *SwarmError", err, err)
 	}
 	for what, text := range map[string]string{"Error()": err.Error(), "Code": se.Code, "Reason": se.Reason} {
-		for _, secret := range []string{token, lease} {
+		for _, secret := range []string{orchToken, lease} {
 			if strings.Contains(text, secret) {
 				t.Errorf("%s carries a secret: %s", what, text)
 			}
