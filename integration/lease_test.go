@@ -411,6 +411,7 @@ func TestLease_Integration_DeployToStage_SaysStageTracksMain(t *testing.T) {
 		}
 	}
 	for _, want := range []string{"ships feat-x a1b2c3d", "not on origin/main (at 9f8e7d6)", "preview URL",
+		`zerops_verify serviceHostname="appstage"`,
 		`zerops_deploy sourceService="webpool-3" targetService="appstage" sha="origin/main"`} {
 		if !strings.Contains(note, want) {
 			t.Errorf("stage note %q lacks %q (warnings %q)", note, want, got.Warnings)

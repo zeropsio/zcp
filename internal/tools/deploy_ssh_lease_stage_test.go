@@ -78,6 +78,7 @@ func TestDeployTool_LeaseToStage_StageTracksMain(t *testing.T) {
 	wantNote := []string{
 		"Stage tracks main", "ships feat-x a1b2c3d", "not on origin/main (at 9f8e7d6)",
 		`zerops_dev_server action=status hostname="webpool-3"`, "previewUrl",
+		"stage check", `zerops_verify serviceHostname="appstage"`,
 		`zerops_deploy sourceService="webpool-3" targetService="appstage" sha="origin/main"`,
 	}
 	tests := []struct {
@@ -156,7 +157,7 @@ func TestDeployTool_LeaseGitPushRefusal_SteersStageToMain(t *testing.T) {
 	if !result.IsError {
 		t.Fatalf("a git-push from a lease ran: %s", text)
 	}
-	for _, want := range []string{"git push", "preview URL", "stage tracks main", `sha=\"origin/main\"`} {
+	for _, want := range []string{"git push", "preview URL", "stage tracks main", "stage check", `sha=\"origin/main\"`} {
 		if !strings.Contains(text, want) {
 			t.Errorf("refusal %s lacks %q", text, want)
 		}
