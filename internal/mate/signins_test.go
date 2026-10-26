@@ -13,7 +13,7 @@ import (
 )
 
 // TestSeedSignIns pins the one-time seed from HQ, preserving a store already
-// present and ending an unavailable seed visibly without launch-time retries.
+// present and ending a refused seed visibly without launch-time retries.
 func TestSeedSignIns(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 10, 2, 18, 0, 0, 0, time.UTC)
@@ -68,8 +68,8 @@ func TestSeedSignIns(t *testing.T) {
 			wantMark:          true,
 		},
 		{
-			name:     "HQ unavailable: nothing, and no automatic launch retry",
-			readErr:  errors.New("HQ down"),
+			name:     "HQ refuses: nothing, and no automatic launch retry",
+			readErr:  errors.New("HQ refused"),
 			wantErr:  true,
 			wantMark: true,
 		},
@@ -226,6 +226,65 @@ func TestSeedSignInsForEnrollment_EmptyAnswerReadsAgainOnTheNextStart(t *testing
 			}
 			if _, err := os.Stat(store); (err == nil) != tt.wantStore {
 				t.Errorf("store written = %v, want %v", err == nil, tt.wantStore)
+			}
+		})
+	}
+}
+
+// TestSeedSignIns_ATransientFailureIsTriedAgainUntilHQTakesIt: a seed counts as
+// done only when HQ answered it; an unanswered read stays owed, a refusal does not.
+func TestSeedSignIns_ATransientFailureIsTriedAgainUntilHQTakesIt(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
+	down := &mate.TransientError{Err: errors.New("HQ answered 503")}
+	signers := map[string]string{"codex": "u-bo"}
+	type answer struct {
+		signers map[string]string
+		err     error
+	}
+	tests := []struct {
+		name        string
+		answers     []answer
+		wantCalls   int
+		wantState   string
+		wantWrote   bool
+		wantRetried bool
+	}{
+		{"503 then 200: the second read seeds", []answer{{err: down}, {signers: signers}}, 2, "seeded", true, true},
+		{"503 twice then 200: owed until HQ takes it", []answer{{err: down}, {err: down}, {signers: signers}}, 3, "seeded", true, true},
+		{"a 4xx refusal is final for that input", []answer{{err: errors.New("hq refused: 404 mate_not_found")}, {signers: signers}}, 1, "failed", false, false},
+		{"200: seeded at once", []answer{{signers: signers}, {signers: signers}}, 1, "seeded", true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			store, mark := filepath.Join(dir, ".mate", "signed-in.json"), filepath.Join(dir, "seed")
+			calls := 0
+			read := func() (map[string]string, error) {
+				a := tt.answers[min(calls, len(tt.answers)-1)]
+				calls++
+				return a.signers, a.err
+			}
+			wrote, retried := false, false
+			for range tt.answers {
+				w, err := mate.SeedSignInsForEnrollment(store, mark, "in", read, now)
+				wrote = wrote || w
+				var transient *mate.TransientError
+				if !errors.As(err, &transient) {
+					break
+				}
+				retried = true
+				if kept, readErr := mate.ReadSignInsSeedStatus(mark); readErr != nil || kept.State != "retry" || kept.Error == "" {
+					t.Fatalf("owed seed marker = %+v, %v; want retry with its reason", kept, readErr)
+				}
+			}
+			kept, err := mate.ReadSignInsSeedStatus(mark)
+			if err != nil || kept.State != tt.wantState {
+				t.Errorf("marker = %+v, %v; want %s", kept, err, tt.wantState)
+			}
+			if calls != tt.wantCalls || wrote != tt.wantWrote || retried != tt.wantRetried {
+				t.Errorf("HQ reads = %d, wrote = %v, owed = %v; want %d, %v, %v", calls, wrote, retried, tt.wantCalls, tt.wantWrote, tt.wantRetried)
 			}
 		})
 	}

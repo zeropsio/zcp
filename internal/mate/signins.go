@@ -58,6 +58,13 @@ type SignInsSeedStatus struct {
 	Error string    `json:"error,omitempty"`
 }
 
+// TransientError is a read of the signers that HQ did not answer (not serving,
+// no connection, timeout): the seed is still owed, not spent.
+type TransientError struct{ Err error }
+
+func (e *TransientError) Error() string { return e.Err.Error() }
+func (e *TransientError) Unwrap() error { return e.Err }
+
 // thisStart identifies this process's start, so an "empty" seed is read again
 // by the next start and never twice by the same one.
 var thisStart = strconv.Itoa(os.Getpid()) + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
@@ -119,6 +126,7 @@ func SeedSignInsForEnrollment(storePath, markPath, input string, readSigners fun
 			if kept.Input == input {
 				return false, errors.New(kept.Error)
 			}
+		case "retry":
 		case "empty":
 			if kept.Start == thisStart {
 				return false, nil
@@ -131,7 +139,12 @@ func SeedSignInsForEnrollment(storePath, markPath, input string, readSigners fun
 	}
 	signers, err := readSigners()
 	if err != nil {
-		return false, finish("failed", fmt.Errorf("read the Mate's signers from HQ: %w", err))
+		reason := fmt.Errorf("read the Mate's signers from HQ: %w", err)
+		var transient *TransientError
+		if errors.As(err, &transient) {
+			return false, &TransientError{Err: finish("retry", reason)}
+		}
+		return false, finish("failed", reason)
 	}
 	signIns := make(map[string]SignIn)
 	for key, user := range signers {
