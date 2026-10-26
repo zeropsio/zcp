@@ -155,6 +155,12 @@ func TestE2E_Subdomain(t *testing.T) {
 	}
 	t.Logf("  Service status: %s", svcStatus)
 
+	// --- Step 4b: Start the dev server — a dev-mode dynamic runtime serves
+	// nothing after its deploy until one runs (PA-1, docs/spec-workflows.md
+	// §8 O3), so without it the subdomain below answers 502. ---
+	logStep(t, step, "zerops_dev_server action=start on %s", appHostname)
+	startDevServerForSubdomain(t, s, appHostname, "node server.js", 3000)
+
 	// --- Step 5: Enable subdomain and get URL from response ---
 	step++
 	logStep(t, step, "zerops_subdomain action=enable (explicit activation + get URL)")

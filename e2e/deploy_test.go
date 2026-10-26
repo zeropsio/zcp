@@ -144,26 +144,26 @@ func TestE2E_Deploy_SelfDeploy(t *testing.T) {
 	if !strings.Contains(deployResult.TargetServiceType, "nodejs") {
 		t.Errorf("targetServiceType = %q, want to contain 'nodejs'", deployResult.TargetServiceType)
 	}
-	// Auto-enable subdomain invariant: zerops_deploy auto-enables subdomain on
-	// first deploy for eligible modes (spec-workflows.md §4.8). Recovery
-	// (explicit zerops_subdomain enable) is exercised by subdomain_test.go.
-	if !deployResult.SubdomainAccessEnabled {
-		t.Errorf("deploy did not auto-enable subdomain (subdomainAccessEnabled=false)")
+	// PA-1 (docs/spec-workflows.md §8 O3): a dev-mode dynamic runtime has no
+	// listener once its deploy ends, so the deploy leaves its subdomain off;
+	// the dev server's start turns it on, once the supervisor reports the
+	// server running. Recovery (explicit zerops_subdomain enable) is
+	// exercised by subdomain_test.go.
+	if deployResult.SubdomainAccessEnabled {
+		t.Errorf("deploy enabled the subdomain of a dev-mode dynamic runtime before any dev server ran")
 	}
-	if deployResult.SubdomainURL == "" {
-		t.Errorf("deploy response missing subdomainUrl despite SubdomainAccessEnabled=true")
-	}
-	t.Logf("  Deploy: status=%s mode=%s source=%s target=%s subdomain=%s",
-		deployResult.Status, deployResult.Mode, deployResult.SourceService, deployResult.TargetService, deployResult.SubdomainURL)
+	t.Logf("  Deploy: status=%s mode=%s source=%s target=%s",
+		deployResult.Status, deployResult.Mode, deployResult.SourceService, deployResult.TargetService)
 
-	// --- Step 7: Wait for RUNNING + HTTP health check ---
+	// --- Step 7: Start the dev server, then RUNNING + HTTP health check ---
 	step++
-	logStep(t, step, "verify RUNNING + HTTP 200 via auto-enabled subdomain")
+	logStep(t, step, "zerops_dev_server action=start on %s, then HTTP 200 on the subdomain it enabled", appHostname)
 	waitForServiceStatus(s, appHostname, "RUNNING", "ACTIVE")
-	if code, ok := pollHTTPHealth(deployResult.SubdomainURL+"/health", 5*time.Second, 90*time.Second); !ok {
-		t.Fatalf("%s: HTTP health check failed (last=%d) on auto-enabled subdomain %s", appHostname, code, deployResult.SubdomainURL)
+	subdomainURL := startDevServerForSubdomain(t, s, appHostname, "node server.js", 3000)
+	if code, ok := pollHTTPHealth(subdomainURL+"/health", 5*time.Second, 90*time.Second); !ok {
+		t.Fatalf("%s: HTTP health check failed (last=%d) on %s", appHostname, code, subdomainURL)
 	}
-	t.Logf("  %s: HTTP 200 OK on %s", appHostname, deployResult.SubdomainURL)
+	t.Logf("  %s: HTTP 200 OK on %s", appHostname, subdomainURL)
 
 	// --- Step 8: Delete ---
 	step++

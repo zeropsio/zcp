@@ -4,7 +4,8 @@
 // Requires: Unix, real build toolchain (go build), AND a credentialed run. The async
 // update goroutine (`go update.Once`) starts only AFTER the auth gate passes
 // (cmd/zcp/main.go), so without ZCP_API_KEY the subprocess returns before the
-// goroutine runs, the binary is never replaced, and the checksum assert fails.
+// goroutine runs and the binary is never replaced — TestE2E_AsyncUpdate skips
+// then, like every other credentialed test in this suite.
 // Hence e2e-tagged (NOT the default build): CI's non-short `go test -race ./...`
 // must not compile+run it without creds. (Only the pure hostname-matcher guard in
 // safety_test.go runs untagged.)
@@ -35,6 +36,12 @@ func TestE2E_AsyncUpdate(t *testing.T) {
 
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("go not in PATH")
+	}
+
+	// The update goroutine starts only after the auth gate passes, so a run
+	// without a token can never see the binary replaced.
+	if os.Getenv("ZCP_API_KEY") == "" {
+		t.Skip("ZCP_API_KEY not set — skipping E2E test")
 	}
 
 	srcDir := findProjectRoot(t)

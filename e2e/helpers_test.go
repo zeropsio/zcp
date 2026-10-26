@@ -458,6 +458,52 @@ func deployAndVerifyHTTP(t *testing.T, s *e2eSession, hostname string) {
 	t.Logf("  %s: HTTP %d OK", hostname, code)
 }
 
+// startDevServerForSubdomain starts command on port on a dev-mode dynamic
+// runtime through zerops_dev_server and returns the subdomain URL its start
+// enabled — PA-1's second hook (docs/spec-workflows.md §8 O3): such a runtime
+// has no listener after a deploy, so only a running dev server turns its
+// subdomain on.
+func startDevServerForSubdomain(t *testing.T, s *e2eSession, hostname, command string, port int) string {
+	t.Helper()
+	text := s.mustCallSuccess("zerops_dev_server", map[string]any{
+		"action": "start", "hostname": hostname, "command": command, "port": port, "healthPath": "/health",
+	})
+	var dev struct {
+		Running      *bool  `json:"running"`
+		SubdomainURL string `json:"subdomainUrl"`
+	}
+	if err := json.Unmarshal([]byte(text), &dev); err != nil {
+		t.Fatalf("parse zerops_dev_server start on %s: %v (full: %s)", hostname, err, text)
+	}
+	if dev.Running == nil || !*dev.Running {
+		t.Fatalf("dev server on %s is not running after start (full: %s)", hostname, text)
+	}
+	if dev.SubdomainURL == "" {
+		t.Fatalf("dev server start on %s enabled no subdomain (full: %s)", hostname, text)
+	}
+	return dev.SubdomainURL
+}
+
+// sshExecStdin is sshExec with stdin fed to the remote command and its own
+// timeout — how a test hands a remote command a secret (the Zerops key, read
+// with `IFS= read -r`) without it riding any command line, the way
+// ops.DeploySSH hands zcli its key.
+func sshExecStdin(t *testing.T, hostname, command, stdin string, timeout time.Duration) (string, error) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "ssh",
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-o", "LogLevel=ERROR",
+		"-o", "ConnectTimeout=10",
+		hostname, command,
+	)
+	cmd.Stdin = strings.NewReader(stdin)
+	out, err := cmd.CombinedOutput()
+	return strings.TrimSpace(string(out)), err
+}
+
 // sshExec runs a command on a remote Zerops service via SSH.
 // Requires active VPN connection (zcli vpn up).
 func sshExec(t *testing.T, hostname, command string) (string, error) {

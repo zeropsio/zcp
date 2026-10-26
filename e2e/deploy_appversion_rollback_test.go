@@ -71,7 +71,13 @@ func TestE2E_DeployAppVersionRollback(t *testing.T) {
 	if out, sshErr := sshExec(t, hostname, "cd /var/www && echo '<!-- e2e-rollback-marker-B -->' >> index.html"); sshErr != nil {
 		t.Fatalf("write marker B: %s (%v)", out, sshErr)
 	}
-	if out, sshErr := sshExec(t, hostname, "cd /var/www && zcli push --workingDir /var/www 2>&1"); sshErr != nil {
+	// zcli in the target has no credential of its own: it gets the key the
+	// way ops.DeploySSH hands it over — on stdin, into ZEROPS_TOKEN for zcli
+	// alone — never on a command line, never `zcli login`; and the service
+	// by id, since without a terminal zcli cannot ask which one. zcli push
+	// returns only when the build ends, so this call outlives sshExec's 30 s.
+	pushCmd := `cd /var/www && IFS= read -r k && ZEROPS_TOKEN="$k" zcli push --service-id ` + serviceID + ` --workingDir /var/www 2>&1`
+	if out, sshErr := sshExecStdin(t, hostname, pushCmd, h.authInfo.Token+"\n", 10*time.Minute); sshErr != nil {
 		t.Fatalf("zcli push (second build): %s (%v)", out, sshErr)
 	}
 	if err := waitForServiceActive(ctx, h.client, h.projectID, hostname, 5*time.Minute); err != nil {
