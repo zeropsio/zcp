@@ -104,6 +104,13 @@ elements, pinned by tests:
   needs — every rule duplicated from the machinery is a chance to contradict it.
   Structurally: no `action="start"`, `zerops_import`, or `zerops_deploy` directive may
   appear in the playbook before its Branches section.
+- **A POPULATED project starts nothing before the yes** — a recipe branch reads state
+  first (§2), and in a POPULATED project no bootstrap starts, not the route menu nor the
+  route commit, until the person says a plain yes; the found-services line and
+  **Continue this project** come with the ask. Only in a FRESH project are the route
+  menu and the route commit plain bookkeeping before the import's yes. Eval E2
+  (`onboard-populated`) failed on main for this gap: the playbook sent the branch
+  straight to the recipe route (`TestPlaybookOnboarding_ContentPins_CoreContract`).
 - The playbook never re-styles next-step suggestions that the typed Plan already owns
   (`planIdle` primary/alternatives); it funnels into them.
 

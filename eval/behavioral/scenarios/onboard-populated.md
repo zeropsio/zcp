@@ -24,9 +24,9 @@ description: |
       ask — neither read happens before the branch choice.
    4. Withheld consent — the persona declines when the agent shows what the
       recipe plan would create. The agent MUST NOT call `zerops_import` and
-      MUST NOT call `zerops_deploy` — nothing gets provisioned. (The
-      read-only route menu / route commit that returns the plan is
-      bookkeeping, not provisioning.) **Continue this project** was offered,
+      MUST NOT call `zerops_deploy` — nothing gets provisioned. In a
+      populated project no bootstrap starts before the yes either — not the
+      route menu, not the route commit. **Continue this project** was offered,
       not chosen; the populated project never gets the scaffold mixed in
       without a deliberate yes.
 seed: deployed
