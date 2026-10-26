@@ -8,6 +8,7 @@ package init_test
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -769,6 +770,16 @@ func TestRun_Mate_InstallsUnderTheSharedLock(t *testing.T) {
 	}
 }
 
+// aboveMinimum is a release n patch levels above the minimum this zcp drives.
+func aboveMinimum(t *testing.T, n int) string {
+	t.Helper()
+	var major, minor, patch int
+	if _, err := fmt.Sscanf(mate.MinimumMateVersion, "%d.%d.%d", &major, &minor, &patch); err != nil {
+		t.Fatal(err)
+	}
+	return fmt.Sprintf("%d.%d.%d", major, minor, patch+n)
+}
+
 // layVersion lays down one installed Mate release the way InstallRelease leaves it: a package
 // manifest naming the version and an executable that advertises --base-path.
 func layVersion(t *testing.T, home, version string) {
@@ -803,7 +814,7 @@ func pointLink(t *testing.T, link, version string) {
 // at boot or the update worker moved it (rehearsal R-A2), and that target is never a release that
 // has not started healthy under this zcp, nor one below the minimum this zcp drives.
 func TestRun_Mate_UpdateRoutes_LastGoodAdvancesOnlyOnceTheRunningVersionIsHealthy(t *testing.T) {
-	const old = "0.15.241"
+	old, fresh := aboveMinimum(t, 1), aboveMinimum(t, 2)
 	for _, tc := range []struct {
 		name         string
 		boot         bool
@@ -811,10 +822,10 @@ func TestRun_Mate_UpdateRoutes_LastGoodAdvancesOnlyOnceTheRunningVersionIsHealth
 		healthy      bool
 		wantLastGood string
 	}{
-		{"boot update that started healthy", true, "0.15.902", true, "0.15.902"},
-		{"worker update that started healthy", false, "0.15.902", true, "0.15.902"},
-		{"boot update that never became ready", true, "0.15.902", false, old},
-		{"boot update below the minimum this zcp drives", true, "0.15.100", true, old},
+		{"boot update that started healthy", true, fresh, true, fresh},
+		{"worker update that started healthy", false, fresh, true, fresh},
+		{"boot update that never became ready", true, fresh, false, old},
+		{"boot update below the minimum this zcp drives", true, "0.0.1", true, old},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rig := newMateRig(t)
