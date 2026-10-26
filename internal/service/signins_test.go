@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/mate"
@@ -37,13 +38,14 @@ func TestSeedSignIns_ReadsHQAndLeavesAnAbsentAnswerVisible(t *testing.T) {
 		status                          int
 		keyed                           bool
 		wantCalls                       int
+		owed                            bool
 	}{
-		{"HQ signer", `{"projectId":"p-mate","signers":{"codex":"u-bo"}}`, "", "", 200, true, 1},
-		{"existing store", `{"projectId":"p-mate","signers":{"codex":"u-bo"}}`, `{"codex":{"by":"u-own","at":1}}`, "", 200, true, 0},
-		{"no key", "", "", "ZCP_API_KEY", 200, false, 0},
-		{"HQ unavailable", `{"code":"not_active"}`, "", "unavailable", 503, true, 1},
-		{"HQ record absent", `{"code":"mate_not_found"}`, "", "mate_not_found", 404, true, 1},
-		{"other project", `{"projectId":"p-other","signers":{"codex":"u-bo"}}`, "", "project", 200, true, 1},
+		{"HQ signer", `{"projectId":"p-mate","signers":{"codex":"u-bo"}}`, "", "", 200, true, 1, false},
+		{"existing store", `{"projectId":"p-mate","signers":{"codex":"u-bo"}}`, `{"codex":{"by":"u-own","at":1}}`, "", 200, true, 0, false},
+		{"no key", "", "", "ZCP_API_KEY", 200, false, 0, false},
+		{"HQ unavailable", `{"code":"not_active"}`, "", "unavailable", 503, true, 2, true},
+		{"HQ record absent", `{"code":"mate_not_found"}`, "", "mate_not_found", 404, true, 1, false},
+		{"other project", `{"projectId":"p-other","signers":{"codex":"u-bo"}}`, "", "project", 200, true, 1, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -97,7 +99,12 @@ func TestSeedSignIns_ReadsHQAndLeavesAnAbsentAnswerVisible(t *testing.T) {
 				if !os.IsNotExist(readErr) {
 					t.Errorf("absent HQ answer wrote store: %s, %v", raw, readErr)
 				}
-				if !strings.Contains(string(output), tt.wantReason) || (tt.keyed && (!strings.Contains(string(output), "remove") || !strings.Contains(string(output), mate.SignInsSeededPath()))) {
+				switch {
+				case tt.owed:
+					if !strings.Contains(string(output), tt.wantReason) || !strings.Contains(string(output), "tried again") {
+						t.Errorf("an unanswered seed needs its reason and its retry: %s", output)
+					}
+				case !strings.Contains(string(output), tt.wantReason) || (tt.keyed && (!strings.Contains(string(output), "remove") || !strings.Contains(string(output), mate.SignInsSeededPath()))):
 					t.Errorf("failure needs its reason and manual again: %s", output)
 				}
 			default:
@@ -122,8 +129,8 @@ func TestSeedSignIns_ChangedKeyRetriesOnlyTheFailedInput(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls++
 				if r.Header.Get("Authorization") == "Project first" {
-					w.WriteHeader(http.StatusServiceUnavailable)
-					_, _ = w.Write([]byte(`{"code":"not_active"}`))
+					w.WriteHeader(http.StatusNotFound)
+					_, _ = w.Write([]byte(`{"code":"mate_not_found"}`))
 					return
 				}
 				_, _ = w.Write([]byte(`{"projectId":"p-mate","signers":{"codex":"u-bo"}}`))
@@ -209,7 +216,7 @@ func TestMateLaunchSetup_UnenrolledDoesNotSeed(t *testing.T) {
 	t.Setenv("ZCP_API_KEY", "")
 	t.Setenv("projectId", "")
 	old := mateSeedSignIns
-	mateSeedSignIns = seedSignIns
+	mateSeedSignIns = launchSeedSignIns
 	t.Cleanup(func() { mateSeedSignIns = old })
 	mateLaunchSetup()
 	if _, err := os.Stat(mate.SignInsSeededPath()); !os.IsNotExist(err) {
@@ -240,5 +247,59 @@ func TestSeedSignIns_EmptyAnswerReadsHQOncePerStart(t *testing.T) {
 	kept, err := mate.ReadSignInsSeedStatus(mate.SignInsSeededPath())
 	if err != nil || kept.State != "empty" || kept.Start == "" {
 		t.Errorf("marker = %+v, %v; want empty stamped with this start", kept, err)
+	}
+}
+
+// TestSeedSignIns_ASignInSeedHQCouldNotTakeIsTriedAgainUntilHQTakesIt drives the
+// retry loop against a fake HQ with an injected wait: a 503 leaves the seed
+// owed and the delays bounded; a 404 or a 200 ends it.
+func TestSeedSignIns_ASignInSeedHQCouldNotTakeIsTriedAgainUntilHQTakesIt(t *testing.T) {
+	// non-parallel: HOME and stderr are process-wide.
+	tests := []struct {
+		name       string
+		statuses   []int
+		wantCalls  int
+		wantWaits  int
+		wantStored bool
+		wantState  string
+	}{
+		{"503 then 200", []int{503, 200}, 2, 1, true, "seeded"},
+		{"503 forever stops after the bounded delays", []int{503}, 1 + len(seedRetryDelays), len(seedRetryDelays), false, "retry"},
+		{"404 is not retried", []int{404, 200}, 1, 0, false, "failed"},
+		{"200 needs no retry", []int{200}, 1, 0, true, "seeded"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			calls := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				status := tt.statuses[min(calls, len(tt.statuses)-1)]
+				calls++
+				w.WriteHeader(status)
+				switch status {
+				case 503:
+					_, _ = w.Write([]byte(`{"code":"not_active"}`))
+				case 404:
+					_, _ = w.Write([]byte(`{"code":"mate_not_found"}`))
+				default:
+					_, _ = w.Write([]byte(`{"projectId":"p-mate","signers":{"codex":"u-bo"}}`))
+				}
+			}))
+			defer srv.Close()
+			lookup := identityEnv(srv.URL, "test-key")
+			waits := 0
+			if seedSignIns(context.Background(), lookup) {
+				retrySignInSeed(context.Background(), lookup, func(context.Context, time.Duration) bool { waits++; return true })
+			}
+			if calls != tt.wantCalls || waits != tt.wantWaits {
+				t.Errorf("HQ calls = %d, waits = %d; want %d, %d", calls, waits, tt.wantCalls, tt.wantWaits)
+			}
+			if _, err := os.Stat(mate.SignInsPath()); (err == nil) != tt.wantStored {
+				t.Errorf("store written = %v, want %v", err == nil, tt.wantStored)
+			}
+			if kept, err := mate.ReadSignInsSeedStatus(mate.SignInsSeededPath()); err != nil || kept.State != tt.wantState {
+				t.Errorf("marker = %+v, %v; want %s", kept, err, tt.wantState)
+			}
+		})
 	}
 }

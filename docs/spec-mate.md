@@ -3679,9 +3679,12 @@ the server did not start.
 The read has a bounded request context, and its failure always continues to the server's start and
 its own link to HQ. HQ's answer must name the container's project id. An existing document is
 preserved without asking HQ, including one written while HQ was answering. A completed seed is
-never repeated, even after its store disappears. An absent HQ answer leaves the store untouched,
-logs the reason, and records `failed` with an opaque fingerprint of HQ's origin and the project key
-in `~/.zcp/state/mate-sign-ins-seeded`; `zcp mate status --json` reports that outcome. The same
+never repeated, even after its store disappears. A seed counts as done only when HQ answered it. A
+read HQ did not answer (503, no connection, timeout) leaves the store untouched, logs the reason and
+records `retry`; the supervisor tries again after 5 s, 15 s, 45 s, 2 min and twice 5 min, and every
+later start reads again while the marker says `retry`. A refusal (4xx), or a store that will not
+write, records `failed` with an opaque fingerprint of HQ's origin and the project key in
+`~/.zcp/state/mate-sign-ins-seeded`; `zcp mate status --json` reports either outcome. The same
 failed input is not retried on a launch; a changed HQ origin or project key permits one new attempt.
 To ask again explicitly, remove the marker and start the Mate service again. A seed completed after
 the server has started is read on its next manual restart, since the server reads its store only at
