@@ -55,7 +55,7 @@ func run(args []string) int {
 		return runHQGit(args[2:])
 	}
 	if isHQGitCredential(args) {
-		return runHQGitCredential(args[2:], os.Stdin, os.Stdout, os.Stderr, hq.IdentityFrom(mate.LiveLookup(mate.LiveEnvStorePath)), &http.Client{})
+		return runHQGitCredential(args[2:], os.Stdin, os.Stdout, os.Stderr, mate.HQIdentity(mate.LiveLookup(mate.LiveEnvStorePath)), &http.Client{})
 	}
 	if len(args) > 0 {
 		if dispatch, ok := cliDispatch()[args[0]]; ok {
@@ -341,7 +341,7 @@ func runServer(mcpStdout io.Writer, tel telemetry.Emitter) (*server.Server, erro
 	// environment still reaches HQ.
 	getenv := mate.LiveLookup(mate.LiveEnvStorePath)
 	if rt := runtime.DetectFrom(getenv); rt.MateEnabled {
-		if access, ok := chiefAccess(context.Background(), &http.Client{Timeout: chiefReadTimeout}, hq.IdentityFrom(getenv), os.Stderr); ok {
+		if access, ok := chiefAccess(context.Background(), &http.Client{Timeout: chiefReadTimeout}, mate.HQIdentity(getenv), os.Stderr); ok {
 			rt.Chief = true
 			return runOrgServer(mcpStdout, tel, access, rt)
 		}

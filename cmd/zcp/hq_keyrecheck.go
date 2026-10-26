@@ -38,6 +38,6 @@ func watchKeyRefusal(client *platform.ZeropsClient, identity func() hq.Identity,
 // the live env store, HQ's answer to the log.
 func watchLiveKeyRefusal(client *platform.ZeropsClient) {
 	watchKeyRefusal(client, func() hq.Identity {
-		return hq.IdentityFrom(mate.LiveLookup(mate.LiveEnvStorePath))
+		return mate.HQIdentity(mate.LiveLookup(mate.LiveEnvStorePath))
 	}, func(line string) { log.Print(line) })
 }

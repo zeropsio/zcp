@@ -165,6 +165,35 @@ func TestSeedSignIns_ChangedKeyRetriesOnlyTheFailedInput(t *testing.T) {
 	}
 }
 
+// TestSeedSignIns_MovedByTheDefaultOriginSeedsFromZcp: the unit's zcp starts
+// the server and so never inherits the origin it publishes; with none in its
+// environment, it reads the HQ the installed Mate declares (spec-mate §3.5).
+func TestSeedSignIns_MovedByTheDefaultOriginSeedsFromZcp(t *testing.T) {
+	// non-parallel: HOME is process-wide.
+	t.Setenv("HOME", t.TempDir())
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		_, _ = w.Write([]byte(`{"projectId":"p-mate","signers":{"codex":"u-bo"}}`))
+	}))
+	defer srv.Close()
+	pkg := filepath.Join(mate.CurrentLink(), "node_modules", mate.PackageName, "package.json")
+	if err := os.MkdirAll(filepath.Dir(pkg), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pkg, []byte(`{"version":"0.15.901","mate":{"hqOrigin":"`+srv.URL+`/"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	seedSignIns(context.Background(), identityEnv("", "test-key"))
+	if calls != 1 {
+		t.Fatalf("HQ calls = %d, want 1", calls)
+	}
+	raw, err := os.ReadFile(mate.SignInsPath())
+	if err != nil || !strings.Contains(string(raw), "u-bo") {
+		t.Fatalf("store = %s, %v", raw, err)
+	}
+}
+
 func TestSeedSignIns_NoKeyLeavesTheAttemptUnspent(t *testing.T) {
 	// non-parallel: HOME is process-wide.
 	t.Setenv("HOME", t.TempDir())

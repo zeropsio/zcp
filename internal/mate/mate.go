@@ -417,21 +417,53 @@ func IsDevVersion(v string) bool { return strings.Contains(v, "-") }
 func InstalledVersion() (string, error) { return installedVersionIn(CurrentLink()) }
 
 func installedVersionIn(dir string) (string, error) {
-	path := filepath.Join(dir, "node_modules", PackageName, "package.json")
-	data, err := os.ReadFile(path)
+	pkg, path, err := installedPackageIn(dir)
 	if err != nil {
-		return "", fmt.Errorf("read %s: %w", path, err)
-	}
-	var pkg struct {
-		Version string `json:"version"`
-	}
-	if err := json.Unmarshal(data, &pkg); err != nil {
-		return "", fmt.Errorf("parse %s: %w", path, err)
+		return "", err
 	}
 	if pkg.Version == "" {
 		return "", fmt.Errorf("%s: version field is empty", path)
 	}
 	return pkg.Version, nil
+}
+
+// installedPackage is what zcp reads from the installed package's own
+// package.json.
+type installedPackage struct {
+	Version string `json:"version"`
+	// Mate.HQOrigin is the HQ the server links to unless T3CODE_ZEROPS_HQ_ORIGIN
+	// names another; bundles before the declaration carry none.
+	Mate struct {
+		HQOrigin string `json:"hqOrigin"`
+	} `json:"mate"`
+}
+
+func installedPackageIn(dir string) (installedPackage, string, error) {
+	path := filepath.Join(dir, "node_modules", PackageName, "package.json")
+	var pkg installedPackage
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return pkg, path, fmt.Errorf("read %s: %w", path, err)
+	}
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		return pkg, path, fmt.Errorf("parse %s: %w", path, err)
+	}
+	return pkg, path, nil
+}
+
+// HQIdentity is the identity hq.IdentityFrom reads from getenv, with HQ's
+// origin the installed Mate declares when getenv names none (spec-mate §3.5):
+// zcp holds no default of its own, and a process the Mate's server did not
+// start — the unit's supervisor, a plain shell — never inherits the origin the
+// server publishes to its children.
+func HQIdentity(getenv func(string) string) hq.Identity {
+	id := hq.IdentityFrom(getenv)
+	if id.Origin == "" {
+		if pkg, _, err := installedPackageIn(CurrentLink()); err == nil {
+			id.Origin = strings.TrimRight(strings.TrimSpace(pkg.Mate.HQOrigin), "/")
+		}
+	}
+	return id
 }
 
 // Action names what EnsureInstalled did, so the one caller that logs it

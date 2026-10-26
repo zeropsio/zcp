@@ -26,5 +26,5 @@ func runHQGit(args []string) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return hq.RunGit(ctx, hq.IdentityFrom(lookup), args, os.Stdin, os.Stdout, os.Stderr)
+	return hq.RunGit(ctx, mate.HQIdentity(lookup), args, os.Stdin, os.Stdout, os.Stderr)
 }

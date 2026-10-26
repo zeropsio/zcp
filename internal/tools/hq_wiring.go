@@ -75,7 +75,7 @@ const hqCallTimeout = 30 * time.Second
 // project and key — as the live env store holds it now, so a regenerated key
 // is the one presented. It names no organisation.
 func liveHQIdentity() hq.Identity {
-	return hq.IdentityFrom(mate.LiveLookup(mate.LiveEnvStorePath))
+	return mate.HQIdentity(mate.LiveLookup(mate.LiveEnvStorePath))
 }
 
 // hqIdentity is the identity the container rt describes presents to HQ: the

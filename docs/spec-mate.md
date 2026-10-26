@@ -1761,9 +1761,11 @@ sequenceDiagram
   overridden in development by `T3CODE_ZEROPS_HQ_ORIGIN`; nothing discovers HQ. The server re-reads
   `ZCP_API_KEY` from the live env store before every connect, so a regenerated key is presented on
   the next one.
-- zcp has no HQ default of its own: it reads `T3CODE_ZEROPS_HQ_ORIGIN` and nothing else. The
-  server holds the single production default and puts the resolved origin into the environment of
-  every process it starts.
+- zcp has no HQ default of its own: it reads `T3CODE_ZEROPS_HQ_ORIGIN`, else the default the
+  installed Mate declares (`mate.hqOrigin` in its package.json, written from the server's constant
+  at release; `mate.HQIdentity`). The server holds the single production default and puts the
+  resolved origin into the environment of every process it starts; zcp's unit supervisor starts the
+  server and a plain shell is none of its children, so both read the declaration.
 - The key travels in the link's first frame after the TLS upgrade and in zcp's header (§3.6), never
   in a URL. HQ's logger strips the header, and its first-frame handler runs outside any request
   logger.
@@ -3668,6 +3670,8 @@ the record, and a rewrite under a running server changes nothing. A Mate migrate
 signer facts have been ported to HQ and which has no document, gets it written from HQ's
 `GET /api/mate/self` signer map (the project key in the header, §3.6) by `zcp service mate` before
 its server first starts — once, each sign-in dated by the seed (`mate.SeedSignInsForEnrollment`).
+That supervisor is the server's parent, so it reaches HQ at the origin §3.5 resolves for a process
+the server did not start.
 The read has a bounded request context, and its failure always continues to the server's start and
 its own link to HQ. HQ's answer must name the container's project id. An existing document is
 preserved without asking HQ, including one written while HQ was answering. A completed seed is

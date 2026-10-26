@@ -260,7 +260,7 @@ func SetMateSeedSignIns(fn func(context.Context, func(string) string)) { mateSee
 // the marker and restarting the unit is the operator's manual "again". HQ
 // naming no signers is read once more by the unit's next start.
 func seedSignIns(ctx context.Context, lookup func(string) string) {
-	client, err := hq.Open(&http.Client{Timeout: hqCallTimeout}, hq.IdentityFrom(lookup))
+	client, err := hq.Open(&http.Client{Timeout: hqCallTimeout}, mate.HQIdentity(lookup))
 	if err != nil {
 		logHQ("sign-ins wait for the key: " + err.Error())
 		return

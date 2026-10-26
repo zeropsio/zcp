@@ -39,7 +39,7 @@ var newHQService = defaultHQService
 
 func defaultHQService(context.Context) (hqService, error) {
 	injectMCPEnvIfUnset(".")
-	id := hq.IdentityFrom(mate.LiveLookup(mate.LiveEnvStorePath))
+	id := mate.HQIdentity(mate.LiveLookup(mate.LiveEnvStorePath))
 	return openHQ(&http.Client{Timeout: hqCallTimeout}, id)
 }
 
