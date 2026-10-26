@@ -58,7 +58,7 @@ type recipeOutcome struct {
 	Blocked string
 }
 
-// ReconcileGroupRecipe proposes to the application's recipe repository the
+// reconcileGroupRecipe proposes to the application's recipe repository the
 // tiers its main does not carry yet, composed from this Mate's project, as
 // the Mate's own change there (SPEC §3.2c).
 //
@@ -97,14 +97,13 @@ type recipeOutcome struct {
 // moved the branch past, leaves a working project and a line saying so, and
 // the next pass tries again. A Mate that never gets its proposal through
 // loses nothing but the proposal. zcp's start in a Mate is one more pass
-// (server.New), so a recipe an earlier zcp could not propose goes out
-// without waiting for the next bootstrap or adopt.
+// (GroupRecipeAtStart).
 //
 // Idempotent on CONTENT: the recipe is composed from live state on every
 // pass, and a branch that already holds the tree it would push is left as
 // it is. Nothing about the proposal is stored: each pass composes it anew
 // and finds the change in the Mate's state.
-func ReconcileGroupRecipe(
+func reconcileGroupRecipe(
 	ctx context.Context,
 	client platform.Client,
 	httpClient ops.HTTPDoer,
@@ -112,6 +111,21 @@ func ReconcileGroupRecipe(
 	stateDir string,
 ) string {
 	return groupRecipeOutcome(ctx, client, httpClient, rt, stateDir).Line
+}
+
+// GroupRecipeAtStart is the recipe pass zcp's start in a Mate runs
+// (server.New), off the startup path: a recipe no earlier pass got through
+// goes out without waiting for the next bootstrap or adopt. A start comes
+// with every agent session and nobody asked for it, so a proposal a person
+// closed unmerged is not opened again here; bootstrap, adopt and the
+// agent's ask still propose it.
+func GroupRecipeAtStart(ctx context.Context, client platform.Client, httpClient ops.HTTPDoer, rt runtime.Info, stateDir string) string {
+	if hqc, linked := openHQ(httpClient, rt); linked {
+		if state, err := hqc.Self(ctx); err == nil && recipeDeclined(state, hq.RecipeProposalTitle) {
+			return ""
+		}
+	}
+	return reconcileGroupRecipe(ctx, client, httpClient, rt, stateDir)
 }
 
 // groupRecipeOutcome is the reconcile itself. Split from the reporter so the

@@ -170,8 +170,8 @@ type BrowserScreenshotResult struct {
 //
 // Field names mirror agent-browser's Playwright-style request/response
 // model (route/har/requests support implies that lineage — see
-// `network --help`: route/unroute/requests/har). Measured on z3-eval
-// (agent-browser 0.35.1, live `--status 400-599` output): entries here
+// `network --help`: route/unroute/requests/har). In agent-browser 0.35.1
+// live `--status 400-599` output, entries here
 // carry no "failure" field — a request that failed at the network layer
 // (DNS, connection refused, aborted) or is still in flight has no
 // "status" key either, and nothing in the JSON distinguishes the two
@@ -348,7 +348,7 @@ const (
 	browserSubcmdRequests = "requests"
 	// browserFlagStatus + browserStatusRange4xx5xx bound the auto-
 	// appended network-requests tail step to failures at the source.
-	// Measured on z3-eval (agent-browser 0.35.1): each request entry in
+	// In agent-browser 0.35.1, each request entry in
 	// `network requests --json` is ~1 KB (headers/responseHeaders/
 	// postData included), so an unfiltered log on a real page blows the
 	// batch's 1 MiB stdout cap (docs.zerops.io 41 reqs/40 KB is fine,
@@ -363,7 +363,7 @@ const (
 	// browserCmdScreenshot is the agent-browser screenshot command.
 	// agent-browser 0.35.1 `screenshot --help`: "Usage: agent-browser
 	// screenshot [selector] [path]". Inside `batch` the annotate flag is
-	// NOT honoured: measured 2026-09-04 on z3-eval, [screenshot --annotate
+	// NOT honoured in agent-browser 0.35.1: [screenshot --annotate
 	// <path>] fails with "Element not found: --annotate" (the flag is read
 	// as the selector) and [screenshot <path> --annotate] reports success
 	// but writes no file; the plain [screenshot <path>] step writes the

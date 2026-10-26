@@ -30,7 +30,7 @@ import (
 // The agent works there with plain git — a branch of its own, pushed, landed
 // on `main` by a person's merge. HQ makes the repository on the Mate's asking
 // (ensure repo), and every Mate of the application reaches all of its
-// repositories over git at `/git/<appId>/<repo>.git`.
+// repositories over git at `/git/<orgId>/<appId>/<repo>.git`.
 
 // hqStateDir holds one small record per pair: what the last pass did and
 // when. It exists for ONE reason — the backoff. Every other fact the pass
@@ -148,7 +148,7 @@ func reconcileMateRepositories(
 	}
 	rebuildMateStages(ctx, httpClient, rt, stateDir, recipePairMountRoot)
 	lines := reconcileHQRepositories(ctx, client, httpClient, sshDeployer, rt, stateDir, hqPassBackedOff)
-	if line := ReconcileGroupRecipe(ctx, client, httpClient, rt, stateDir); line != "" {
+	if line := reconcileGroupRecipe(ctx, client, httpClient, rt, stateDir); line != "" {
 		lines = append(lines, "the group's recipe: "+line)
 	}
 	return lines

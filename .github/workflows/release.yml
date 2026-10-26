@@ -109,11 +109,20 @@ jobs:
     needs: build
     runs-on: ubuntu-22.04
     steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: "go.mod"
+
       - uses: actions/download-artifact@v7
         with:
           path: ./builds
           pattern: zcp-*
           merge-multiple: true
+
+      - name: Require a compatible published Mate
+        run: go run ./cmd/mate-release-check
 
       - name: Create GitHub release
         env:
