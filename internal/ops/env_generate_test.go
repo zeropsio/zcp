@@ -525,6 +525,72 @@ func TestEnvGenerateDotenv_ResolvesRefs(t *testing.T) {
 	}
 }
 
+// TestEnvGenerateDotenv_MaskedSource_RefusalNamesItAndTheWayOut: a token the
+// platform withholds sensitive values from — a project-scoped or read-only one
+// (spec-zerops-env-lifecycle.md §7) — reads a managed database's password as
+// the placeholder. The refusal names the withheld variable, reached directly or
+// through a template like connectionString, and the way out, instead of a bare
+// "could not resolve" that sends the agent looking for a typo.
+func TestEnvGenerateDotenv_MaskedSource_RefusalNamesItAndTheWayOut(t *testing.T) {
+	t.Parallel()
+	dbEnv := []platform.ServiceEnvVar{
+		{ID: "e1", Key: "hostname", Content: "db"},
+		{ID: "e2", Key: "user", Content: "db"},
+		{ID: "e3", Key: "password", Content: platform.MaskedEnvValue, Sensitive: true},
+		{ID: "e4", Key: "connectionString", Content: "postgresql://${user}:${password}@${hostname}:5432/db"},
+	}
+	tests := []struct {
+		name string
+		env  string
+		key  string
+	}{
+		{"through a template", "DATABASE_URL: ${db_connectionString}", "DATABASE_URL"},
+		{"directly", "DB_PASS: ${db_password}", "DB_PASS"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tmpDir := t.TempDir()
+			yml := "zerops:\n  - setup: app\n    run:\n      envVariables:\n        " + tt.env + "\n"
+			if err := os.WriteFile(filepath.Join(tmpDir, "zerops.yaml"), []byte(yml), 0o644); err != nil {
+				t.Fatalf("write zerops.yaml: %v", err)
+			}
+			mock := platform.NewMock().
+				WithProject(&platform.Project{ID: "proj-1", Name: "test", Status: statusActive}).
+				WithServices([]platform.ServiceStack{
+					{ID: "svc-app", Name: "app", ProjectID: "proj-1", Status: "RUNNING",
+						ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+					{ID: "svc-db", Name: "db", ProjectID: "proj-1", Status: "RUNNING",
+						ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"}},
+				}).
+				WithServiceEnv("svc-db", dbEnv)
+
+			_, err := EnvGenerateDotenv(context.Background(), mock, "proj-1", "app", tmpDir, EnvGenerateDotenvOptions{})
+			var pe *platform.PlatformError
+			if !errors.As(err, &pe) {
+				t.Fatalf("want a PlatformError, got %v", err)
+			}
+			if pe.Code != platform.ErrPermissionDenied {
+				t.Errorf("code = %s, want %s", pe.Code, platform.ErrPermissionDenied)
+			}
+			for _, want := range []string{tt.key, "db_password"} {
+				if !strings.Contains(pe.Message, want) {
+					t.Errorf("message %q does not name %q", pe.Message, want)
+				}
+			}
+			if !strings.Contains(pe.Suggestion, "personal access token") {
+				t.Errorf("suggestion %q does not give the way out (a token that can read sensitive values)", pe.Suggestion)
+			}
+			if strings.Contains(pe.Message+pe.Suggestion, platform.MaskedEnvValue) {
+				t.Errorf("refusal echoes the platform's placeholder: %q / %q", pe.Message, pe.Suggestion)
+			}
+			if _, statErr := os.Stat(filepath.Join(tmpDir, ".env")); statErr == nil {
+				t.Error(".env written despite the refusal")
+			}
+		})
+	}
+}
+
 // TestEnvGenerateDotenv_RuntimeSiblingYamlBaked pins A2: a ref to a runtime
 // sibling's yaml-baked run.envVariables var resolves via the app-version
 // userDataList (the slim /env omits it). Pre-fix this hard-errored
