@@ -314,3 +314,25 @@ func BuildGitTagPushCommand(workingDir, version string) string {
 		shellQuote(workingDir), qv, shellQuote("release "+version), gitCredentialHelperArgs(), qv,
 	)
 }
+
+// HQMovedMarker is what BuildGitHQMoveCommand says when it moved origin.
+const HQMovedMarker = "ZCP_HQ_MOVED"
+
+// BuildGitHQMoveCommand moves the checkout at workingDir, wired at an HQ the
+// Mate no longer links to (retired: the repository's address there), to the
+// repository's address on the Mate's HQ now (current, at hqURL): origin is
+// pointed there while it still names the retired repository — an origin
+// anywhere else is not moved — git keeps HQ's persisted helper for the
+// current host, and the retired host's helper goes. Prints HQMovedMarker
+// when it moved origin.
+func BuildGitHQMoveCommand(workingDir, retired, current, hqURL string) string {
+	forget := ":"
+	if u, err := url.Parse(retired); err == nil && gitHostnameRe.MatchString(u.Hostname()) {
+		forget = fmt.Sprintf("{ git config --unset-all %s 2>/dev/null || true; }", shellQuote("credential.https://"+u.Host+".helper"))
+	}
+	return fmt.Sprintf(
+		`cd %s && %s && %s && if [ "$(git remote get-url origin 2>/dev/null)" = %s ]; then git remote set-url origin %s && echo %s; fi`,
+		shellQuote(workingDir), forget, gitCredentialHelperWriteFragment(current, hqURL),
+		shellQuote(retired), shellQuote(current), HQMovedMarker,
+	)
+}

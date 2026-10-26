@@ -295,7 +295,11 @@ func reconcileHQPairs(
 	var report []string
 	for _, m := range pending {
 		state := readHQPairState(stateDir, m.Hostname)
-		if pace == hqPassBackedOff && !hqAttemptDue(state, now) && !hqPairCredentialStale(m, hqc, rt) {
+		// A new credential is one write for a configured pair, done outside
+		// the backoff; a marked pair is wired again, which asks HQ, so it
+		// keeps the backoff.
+		renew := m.GitPushState == topology.GitPushConfigured && hqPairCredentialStale(m, hqc, rt)
+		if pace == hqPassBackedOff && !hqAttemptDue(state, now) && !renew {
 			continue
 		}
 		// A pair another process runs git on is left to it, and no attempt
@@ -380,15 +384,16 @@ func passHQPair(
 // Git credential than the one in the Mate's file: HQ replaced it over the
 // link. A pair wired before its record named the credential is renewed once,
 // and so is a pair just keyed by its dev pool (the re-key clears the dev
-// service's fingerprint). A Mate with no credential in its file has nothing
-// to renew with. Outside a Mate zcp never writes a pool's HQ credential
-// (docs/spec-workflows.md §8 DP-16), so a pool keying a pair is never stale
-// there.
+// service's fingerprint). A pair a refused push marked is renewed too: a
+// revoked credential is what such a refusal most often was. A Mate with no
+// credential in its file has nothing to renew with. Outside a Mate zcp never
+// writes a pool's HQ credential (docs/spec-workflows.md §8 DP-16), so a pool
+// keying a pair is never stale there.
 func hqPairCredentialStale(m *workflow.ServiceMeta, hqc hq.Client, rt runtime.Info) bool {
 	if m.DevIsPool() && !rt.MateEnabled {
 		return false
 	}
-	if !hqPairWired(m) || m.GitPushState != topology.GitPushConfigured {
+	if !hqPairWiredThrough(m) {
 		return false
 	}
 	_, fingerprint, err := hqc.GitCredential()
@@ -552,7 +557,8 @@ func lazySelf(ctx context.Context, hqc hq.Client) func() (hq.MateState, error) {
 	}
 }
 
-// keepHQPairCurrent is one wired pair's turn of a pass: wired again in the
+// keepHQPairCurrent is one wired pair's turn of a pass: moved off an HQ the
+// Mate no longer links to (moveFromRetiredHQ), wired again in the
 // application HQ holds the Mate in now, if that moved, how its code is kept
 // (recordHQOrigin) and so where its checkout's origin points (hqPairOrigin),
 // and its `main` against HQ's (hqPairMain). Its repository's changes are the
@@ -569,10 +575,11 @@ func keepHQPairCurrent(
 	self func() (hq.MateState, error),
 	m *workflow.ServiceMeta,
 ) (string, bool) {
+	moved, _ := moveFromRetiredHQ(ctx, sshDeployer, stateDir, hqc, m)
 	state, err := self()
 	if err != nil {
 		// Saying nothing beats saying anything a failed read cannot know.
-		return "", false
+		return moved, false
 	}
 	if state.AppID == nil {
 		return "HQ holds this Mate in no application now, so its repository takes nothing from it — it will once the Mate is in one; nothing else is blocked.", false
@@ -583,7 +590,7 @@ func keepHQPairCurrent(
 	}
 	recordHQOrigin(stateDir, m, state)
 	lines := []string{}
-	for _, line := range []string{hqPairOrigin(ctx, sshDeployer, hqc, m), hqPairMain(ctx, sshDeployer, hqc, m)} {
+	for _, line := range []string{moved, hqPairOrigin(ctx, sshDeployer, hqc, m), hqPairMain(ctx, sshDeployer, hqc, m)} {
 		if line != "" {
 			lines = append(lines, line)
 		}
@@ -796,6 +803,13 @@ func wireHQPair(
 	remote, err := hqc.RepoURL(repo.AppID, repo.Name)
 	if err != nil {
 		return hqWiringOutcome{line: fmt.Sprintf("repository %q is ready in HQ but git cannot be pointed at it: %v — retrying on the next pass.", repo.Name, err)}
+	}
+	// A wired pair's remote on an HQ the Mate no longer links to is zcp's
+	// own wiring: it moves to the current HQ first.
+	if hqPairWired(m) {
+		if line, moved := moveFromRetiredHQ(ctx, sshDeployer, stateDir, hqc, m); !moved {
+			return hqWiringOutcome{line: line}
+		}
 	}
 	// A remote on this Mate's HQ is ours to point again — a wiring that
 	// stopped half-way, or the application the Mate left; any other one the

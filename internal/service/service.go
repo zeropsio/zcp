@@ -20,6 +20,7 @@ import (
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/matesetup"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/tools"
 )
 
 // ErrMateDisabled is returned by Start("mate") when ZCP_MATE_ENABLED is off. Named
@@ -225,23 +226,40 @@ var mateSetupBoot = matesetup.Boot
 
 // mateLaunchSetup writes the status file the server reads (ZCP_STATUS_FILE,
 // mate.LaunchEnvLines), seeds the server's absent sign-ins from HQ with the
-// project key, and starts the boot import when the container carries a
-// runtimes plan. The plan, the Mate's key and its project come from the live
+// project key, starts keeping the wired dev services' git on the Mate's HQ
+// (tools.KeepMateDevGit), and starts the boot import when the container
+// carries a runtimes plan. The plan, the Mate's key and its project come from the live
 // env store, as the guard's flag does: a unit's own environment carries none
 // of them. All run in this process, for as long as the server does; a restart
 // cut short finds what it left by looking.
 func mateLaunchSetup() {
-	lookup := mate.LiveLookup(mateStorePath)
+	// The goroutines below read the store path taken here, never the var:
+	// it is the launch's, and they outlive it.
+	store := mateStorePath
+	lookup := mate.LiveLookup(store)
 	path := mate.DefaultStatusFilePath()
 	planSet := strings.TrimSpace(lookup(matesetup.EnvRuntimes)) != ""
 	if err := matesetup.MarkLaunch(path, planSet, time.Now()); err != nil {
 		fmt.Fprintf(os.Stderr, "[zcp] service mate: %v\n", err)
 	}
-	env := func() func(string) string { return mate.LiveLookup(mateStorePath) }
+	env := func() func(string) string { return mate.LiveLookup(store) }
 	mateSeedSignIns(context.Background(), lookup)
+	go keepMateDevGit(env)
 	if planSet {
 		go mateSetupBoot(context.Background(), path, env)
 	}
+}
+
+// keepMateDevGit runs tools.KeepMateDevGit for as long as this process
+// does. A panic in it stops only the keeping, said on stderr: this process
+// supervises the Mate's server, which must outlive it.
+func keepMateDevGit(env func() func(string) string) {
+	defer func() {
+		if r := recover(); r != nil {
+			logHQ(fmt.Sprintf("keeping the dev services' git stopped: %v", r))
+		}
+	}()
+	tools.KeepMateDevGit(context.Background(), env, logHQ)
 }
 
 // hqCallTimeout bounds each call to HQ.
