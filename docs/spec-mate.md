@@ -464,6 +464,10 @@ requested. The new launch receives the additive `ZCP_MATE_UPDATE_STATE_FILE` pat
 admission fenced. Within 15 seconds of the restart request, readiness must prove protocol 1,
 the exact version, a different nonempty boot id, engine/database readiness, and C-4. POST
 `/api/mate/update/commit` opens admission; only a proved candidate becomes `last-good`.
+`zcp init` at boot is the other route: after it settles an installed release it waits for the same
+readiness proof (without holding the install lock) and only then moves `last-good`; a Mate not ready
+in time keeps its previous `last-good` and the next boot asks again. Both routes advance it through
+`mate.CommitLastGood`, which never points it at a dev build or a release below `MinimumMateVersion`.
 
 A compatible candidate failing readiness returns `current` to the explicit `last-good`,
 remembers the failed version before restarting, proves that version ready, and commits it.

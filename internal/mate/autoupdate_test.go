@@ -14,18 +14,18 @@ func TestAutomaticUpdate_CandidateDecision_Result(t *testing.T) {
 		name, installed, failed, candidate string
 		compatible, allowed                bool
 	}{
-		{"new compatible", "0.14.0", "", "0.14.2", true, true},
-		{"confirmation required", "0.14.0", "", "0.14.2", false, false},
-		{"failed release", "0.14.0", "0.14.2", "0.14.2", true, false},
-		{"below failed release", "0.14.0", "0.14.3", "0.14.2", true, false},
-		{"newer than failed", "0.14.0", "0.14.1", "0.14.2", true, true},
-		{"downgrade", "0.14.2", "", "0.14.0", true, false},
-		{"same", "0.14.2", "", "0.14.2", true, false},
-		{"dev preserved", "0.14.0-dev.abc", "", "0.14.2", true, false},
+		{"new compatible", "0.15.200", "", "0.15.202", true, true},
+		{"confirmation required", "0.15.200", "", "0.15.202", false, false},
+		{"failed release", "0.15.200", "0.15.202", "0.15.202", true, false},
+		{"below failed release", "0.15.200", "0.15.203", "0.15.202", true, false},
+		{"newer than failed", "0.15.200", "0.15.201", "0.15.202", true, true},
+		{"downgrade", "0.15.202", "", "0.15.200", true, false},
+		{"same", "0.15.202", "", "0.15.202", true, false},
+		{"dev preserved", "0.15.200-dev.abc", "", "0.15.202", true, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := mate.AutomaticUpdateAllowed(tc.installed, tc.failed, mate.Manifest{Version: tc.candidate, RollbackCompatible: tc.compatible, CompatibleFrom: "0.14.0"})
+			got := mate.AutomaticUpdateAllowed(tc.installed, tc.failed, mate.Manifest{Version: tc.candidate, RollbackCompatible: tc.compatible, CompatibleFrom: "0.15.200"})
 			if got != tc.allowed {
 				t.Fatalf("allowed=%v, want %v", got, tc.allowed)
 			}
@@ -37,13 +37,13 @@ func TestSwitchUpdate_Readiness_Result(t *testing.T) {
 	for _, healthy := range []bool{true, false} {
 		t.Run(map[bool]string{true: "ready", false: "rollback"}[healthy], func(t *testing.T) {
 			t.Setenv("HOME", t.TempDir())
-			seedInstalledVersion(t, "0.14.0")
-			writeFakePackage(t, mate.VersionDir("0.14.2"), "0.14.2")
+			seedInstalledVersion(t, "0.15.200")
+			writeFakePackage(t, mate.VersionDir("0.15.202"), "0.15.202")
 			var restarts []string
-			err := mate.SwitchUpdate("0.14.2", "old-boot", mate.SwitchHooks{
+			err := mate.SwitchUpdate("0.15.202", "old-boot", mate.SwitchHooks{
 				Restart: func() error { v, _ := mate.InstalledVersion(); restarts = append(restarts, v); return nil },
 				Ready: func(version, boot string) error {
-					if healthy || version == "0.14.0" {
+					if healthy || version == "0.15.200" {
 						return nil
 					}
 					return errors.New("candidate failed")
@@ -53,9 +53,9 @@ func TestSwitchUpdate_Readiness_Result(t *testing.T) {
 			if err != nil {
 				t.Fatalf("switch: %v", err)
 			}
-			want := "0.14.2"
+			want := "0.15.202"
 			if !healthy {
-				want = "0.14.0"
+				want = "0.15.200"
 			}
 			got, _ := mate.InstalledVersion()
 			if got != want {
@@ -65,7 +65,7 @@ func TestSwitchUpdate_Readiness_Result(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
-			if !healthy && state.FailedVersion != "0.14.2" {
+			if !healthy && state.FailedVersion != "0.15.202" {
 				t.Fatalf("failed=%q", state.FailedVersion)
 			}
 			if len(restarts) != map[bool]int{true: 1, false: 2}[healthy] {
@@ -82,12 +82,12 @@ func TestPrepareUpdateBoot_InterruptedSwitch_Result(t *testing.T) {
 	for _, phase := range []string{"switching", "staging", "draining", "updated"} {
 		t.Run(phase, func(t *testing.T) {
 			t.Setenv("HOME", t.TempDir())
-			seedInstalledVersion(t, "0.14.2")
-			writeFakePackage(t, mate.VersionDir("0.14.0"), "0.14.0")
-			if err := os.Symlink("versions/0.14.0", mate.LastGoodLink()); err != nil {
+			seedInstalledVersion(t, "0.15.202")
+			writeFakePackage(t, mate.VersionDir("0.15.200"), "0.15.200")
+			if err := os.Symlink("versions/0.15.200", mate.LastGoodLink()); err != nil {
 				t.Fatal(err)
 			}
-			if err := mate.WriteUpdateState(mate.UpdateState{Phase: phase, Candidate: "0.14.2", Previous: "0.14.0", RunningVersion: "0.14.0"}); err != nil {
+			if err := mate.WriteUpdateState(mate.UpdateState{Phase: phase, Candidate: "0.15.202", Previous: "0.15.200", RunningVersion: "0.15.200"}); err != nil {
 				t.Fatal(err)
 			}
 			skip, err := mate.PrepareUpdateBoot()
@@ -95,15 +95,15 @@ func TestPrepareUpdateBoot_InterruptedSwitch_Result(t *testing.T) {
 				t.Fatal(err)
 			}
 			got, _ := mate.InstalledVersion()
-			want := "0.14.2"
+			want := "0.15.202"
 			if phase == "switching" {
-				want = "0.14.0"
+				want = "0.15.200"
 			}
 			if got != want || skip != (phase == "switching") {
 				t.Fatalf("current=%s skip=%v, want %s %v", got, skip, want, phase == "switching")
 			}
 			state, _ := mate.ReadUpdateState()
-			if phase == "switching" && state.FailedVersion != "0.14.2" {
+			if phase == "switching" && state.FailedVersion != "0.15.202" {
 				t.Fatalf("failed candidate not retained: %+v", state)
 			}
 		})
@@ -112,10 +112,10 @@ func TestPrepareUpdateBoot_InterruptedSwitch_Result(t *testing.T) {
 
 func TestSwitchUpdate_IncompatibleConfirmedFailure_NoRollback(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	seedInstalledVersion(t, "0.14.0")
-	writeFakePackage(t, mate.VersionDir("0.14.2"), "0.14.2")
+	seedInstalledVersion(t, "0.15.200")
+	writeFakePackage(t, mate.VersionDir("0.15.202"), "0.15.202")
 	restarts := 0
-	err := mate.SwitchUpdate("0.14.2", "old", mate.SwitchHooks{
+	err := mate.SwitchUpdate("0.15.202", "old", mate.SwitchHooks{
 		PreventRollback: true, Restart: func() error { restarts++; return nil },
 		Ready:  func(string, string) error { return errors.New("incompatible candidate failed") },
 		Commit: func() error { return nil }, Cancel: func() error { return nil },
@@ -124,7 +124,7 @@ func TestSwitchUpdate_IncompatibleConfirmedFailure_NoRollback(t *testing.T) {
 		t.Fatal("expected attended recovery error")
 	}
 	current, _ := mate.InstalledVersion()
-	if current != "0.14.2" || restarts != 1 {
+	if current != "0.15.202" || restarts != 1 {
 		t.Fatalf("current=%s restarts=%d", current, restarts)
 	}
 	skip, e := mate.PrepareUpdateBoot()
@@ -132,7 +132,7 @@ func TestSwitchUpdate_IncompatibleConfirmedFailure_NoRollback(t *testing.T) {
 		t.Fatalf("boot attempted automatic rollback: skip=%v err=%v", skip, e)
 	}
 	current, _ = mate.InstalledVersion()
-	if current != "0.14.2" {
+	if current != "0.15.202" {
 		t.Fatalf("boot rolled back incompatible release: %s", current)
 	}
 }
@@ -141,9 +141,9 @@ func TestAutomaticUpdate_CompatibilityFloor_Result(t *testing.T) {
 	for _, tc := range []struct {
 		floor   string
 		allowed bool
-	}{{"", false}, {"garbled", false}, {"0.14.1", false}, {"0.14.0", true}, {"0.13.0", true}} {
+	}{{"", false}, {"garbled", false}, {"0.15.201", false}, {"0.15.200", true}, {"0.13.0", true}} {
 		t.Run(tc.floor, func(t *testing.T) {
-			got := mate.AutomaticUpdateAllowed("0.14.0", "", mate.Manifest{Version: "0.14.2", RollbackCompatible: true, CompatibleFrom: tc.floor})
+			got := mate.AutomaticUpdateAllowed("0.15.200", "", mate.Manifest{Version: "0.15.202", RollbackCompatible: true, CompatibleFrom: tc.floor})
 			if got != tc.allowed {
 				t.Fatalf("allowed=%v, want=%v", got, tc.allowed)
 			}
@@ -158,23 +158,23 @@ func TestRecoverStoppedUpdate_CrashPhase_Result(t *testing.T) {
 		want                   string
 		restarts               int
 	}{
-		{"draining", false, false, "0.14.2", 0},
-		{"switching", false, false, "0.14.0", 1},
-		{"switching", true, false, "0.14.2", 0},
-		{"switching", false, true, "0.14.2", 0},
+		{"draining", false, false, "0.15.202", 0},
+		{"switching", false, false, "0.15.200", 1},
+		{"switching", true, false, "0.15.202", 0},
+		{"switching", false, true, "0.15.202", 0},
 	} {
 		t.Run(tc.phase+tc.want, func(t *testing.T) {
 			t.Setenv("HOME", t.TempDir())
-			seedInstalledVersion(t, "0.14.2")
-			writeFakePackage(t, mate.VersionDir("0.14.0"), "0.14.0")
-			good := "0.14.0"
+			seedInstalledVersion(t, "0.15.202")
+			writeFakePackage(t, mate.VersionDir("0.15.200"), "0.15.200")
+			good := "0.15.200"
 			if tc.verified {
-				good = "0.14.2"
+				good = "0.15.202"
 			}
 			if err := os.Symlink("versions/"+good, mate.LastGoodLink()); err != nil {
 				t.Fatal(err)
 			}
-			if err := mate.WriteUpdateState(mate.UpdateState{Phase: tc.phase, Previous: "0.14.0", Candidate: "0.14.2", PreventRollback: tc.incompatible}); err != nil {
+			if err := mate.WriteUpdateState(mate.UpdateState{Phase: tc.phase, Previous: "0.15.200", Candidate: "0.15.202", PreventRollback: tc.incompatible}); err != nil {
 				t.Fatal(err)
 			}
 			restarts := 0
@@ -196,7 +196,7 @@ func TestRecoverStoppedUpdate_CrashPhase_Result(t *testing.T) {
 				t.Fatal(err)
 			}
 			got, _ = mate.InstalledVersion()
-			if tc.incompatible && got != "0.14.2" {
+			if tc.incompatible && got != "0.15.202" {
 				t.Fatalf("incompatible boot rollback=%s", got)
 			}
 		})
@@ -205,7 +205,7 @@ func TestRecoverStoppedUpdate_CrashPhase_Result(t *testing.T) {
 
 func TestStageRelease_LastGoodCandidate_PreservesVerifiedInstall(t *testing.T) {
 	rig := newEnsureRig(t)
-	seedInstalledVersion(t, "0.14.3")
+	seedInstalledVersion(t, "0.15.203")
 	writeFakePackage(t, mate.VersionDir(desiredVersion), desiredVersion)
 	if err := os.Symlink("versions/"+desiredVersion, mate.LastGoodLink()); err != nil {
 		t.Fatal(err)
@@ -223,8 +223,8 @@ func TestEnsureInstalled_FailedVersionThreshold_Result(t *testing.T) {
 	for _, force := range []bool{false, true} {
 		t.Run(map[bool]string{false: "unattended skips lower release", true: "attended override"}[force], func(t *testing.T) {
 			rig := newEnsureRig(t)
-			seedInstalledVersion(t, "0.14.0")
-			if err := mate.WriteUpdateState(mate.UpdateState{Phase: "postponed", FailedVersion: "0.14.3"}); err != nil {
+			seedInstalledVersion(t, "0.15.200")
+			if err := mate.WriteUpdateState(mate.UpdateState{Phase: "postponed", FailedVersion: "0.15.203"}); err != nil {
 				t.Fatal(err)
 			}
 			result, err := mate.EnsureInstalled(mate.EnsureOptions{Force: force})
@@ -311,8 +311,8 @@ func TestCurrentUpdateState_DescribesOnlyTheRunningVersion(t *testing.T) {
 
 func TestEnsureInstalled_SuccessfulInstall_ReplacesTheAutomaticRecord(t *testing.T) {
 	newEnsureRig(t)
-	seedInstalledVersion(t, "0.14.0")
-	if err := mate.WriteUpdateState(mate.UpdateState{Phase: "postponed", Candidate: "0.14.1", RunningVersion: "0.13.9", FailedVersion: "0.13.5"}); err != nil {
+	seedInstalledVersion(t, "0.15.200")
+	if err := mate.WriteUpdateState(mate.UpdateState{Phase: "postponed", Candidate: "0.15.201", RunningVersion: "0.13.9", FailedVersion: "0.13.5"}); err != nil {
 		t.Fatal(err)
 	}
 	result, err := mate.EnsureInstalled(mate.EnsureOptions{})
@@ -331,20 +331,20 @@ func TestEnsureInstalled_SuccessfulInstall_ReplacesTheAutomaticRecord(t *testing
 
 func TestSwitchUpdate_VerifiedCandidate_DropsAnOlderFailedVersion(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	seedInstalledVersion(t, "0.14.0")
-	writeFakePackage(t, mate.VersionDir("0.14.2"), "0.14.2")
-	if err := mate.WriteUpdateState(mate.UpdateState{Phase: "postponed", RunningVersion: "0.14.0", FailedVersion: "0.14.1"}); err != nil {
+	seedInstalledVersion(t, "0.15.200")
+	writeFakePackage(t, mate.VersionDir("0.15.202"), "0.15.202")
+	if err := mate.WriteUpdateState(mate.UpdateState{Phase: "postponed", RunningVersion: "0.15.200", FailedVersion: "0.15.201"}); err != nil {
 		t.Fatal(err)
 	}
 	ok := func() error { return nil }
-	if err := mate.SwitchUpdate("0.14.2", "old", mate.SwitchHooks{Restart: ok, Ready: func(string, string) error { return nil }, Commit: ok, Cancel: ok}); err != nil {
+	if err := mate.SwitchUpdate("0.15.202", "old", mate.SwitchHooks{Restart: ok, Ready: func(string, string) error { return nil }, Commit: ok, Cancel: ok}); err != nil {
 		t.Fatal(err)
 	}
 	state, err := mate.ReadUpdateState()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state.Phase != "updated" || state.RunningVersion != "0.14.2" || state.FailedVersion != "" {
+	if state.Phase != "updated" || state.RunningVersion != "0.15.202" || state.FailedVersion != "" {
 		t.Fatalf("record after verified switch=%+v", state)
 	}
 }

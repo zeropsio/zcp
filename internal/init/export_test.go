@@ -48,6 +48,9 @@ func SetMateEnsureInstalled(fn func(mate.EnsureOptions) (mate.Result, error)) {
 }
 func ResetMateEnsureInstalled() { mateEnsureInstalled = mate.EnsureInstalled }
 
+func SetMateWaitReady(fn func(version, oldBoot string, deadline time.Time) error) { mateWaitReady = fn }
+func ResetMateWaitReady()                                                         { mateWaitReady = mate.WaitReady }
+
 func SetMateLockWait(d time.Duration) { mateLockWait = d }
 func ResetMateLockWait()              { mateLockWait = defaultMateLockWait }
 
