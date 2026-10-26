@@ -27,6 +27,7 @@ package e2e_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -121,8 +122,15 @@ func TestE2E_EnvGenerateDotenv_RecursiveConnectionString(t *testing.T) {
 		t.Fatalf("write zerops.yaml: %v", err)
 	}
 
-	// Call generate-dotenv via direct ops API.
+	// Call generate-dotenv via direct ops API. A token the platform withholds
+	// sensitive values from reads db's password masked: then the honest
+	// outcome is the refusal naming it, not a .env.
+	masked := dbPasswordMasked(ctx, t, h, dbHost)
 	result, err := ops.EnvGenerateDotenv(ctx, h.client, h.projectID, appHost, workdir, ops.EnvGenerateDotenvOptions{})
+	if masked {
+		assertMaskedPasswordRefusal(t, err, dbHost, "DATABASE_URL")
+		return
+	}
 	if err != nil {
 		t.Fatalf("EnvGenerateDotenv: %v", err)
 	}
@@ -134,17 +142,17 @@ func TestE2E_EnvGenerateDotenv_RecursiveConnectionString(t *testing.T) {
 		t.Fatalf("read .env: %v", err)
 	}
 	envContent := string(envBytes)
-	t.Logf("  Generated .env content:\n%s", envContent)
+	t.Logf("  Generated .env keys: %v", dotenvKeys(envContent))
 
 	// Assertion 1: the cross-service connectionString must be fully resolved —
 	// no leftover ${...} placeholders (sibling refs from db's template) in
 	// the DATABASE_URL line.
 	dbURLLine := extractEnvLine(envContent, "DATABASE_URL")
 	if dbURLLine == "" {
-		t.Fatalf("DATABASE_URL line missing from .env:\n%s", envContent)
+		t.Fatalf("DATABASE_URL line missing from .env (keys: %v)", dotenvKeys(envContent))
 	}
 	if strings.Contains(dbURLLine, "${") {
-		t.Errorf("DATABASE_URL contains unresolved ${...} placeholder — recursive expansion failed:\n  %s", dbURLLine)
+		t.Errorf("DATABASE_URL contains unresolved ${...} placeholder — recursive expansion failed:\n  %s", redactDSNPassword(dbURLLine))
 	}
 
 	// Assertion 2: shape — DATABASE_URL should look like a Postgres URL with
@@ -152,7 +160,7 @@ func TestE2E_EnvGenerateDotenv_RecursiveConnectionString(t *testing.T) {
 	// (Zerops generates them), just the structural pattern.
 	postgresURLRe := regexp.MustCompile(`^DATABASE_URL=postgresql://[^:@$]+:[^@$]+@[^:@$]+:\d+(/[^/$]+)?$`)
 	if !postgresURLRe.MatchString(dbURLLine) {
-		t.Errorf("DATABASE_URL not in resolved postgresql shape: %q", dbURLLine)
+		t.Errorf("DATABASE_URL not in resolved postgresql shape: %q", redactDSNPassword(dbURLLine))
 	}
 
 	// Assertion 3: flat lookups resolve correctly.
@@ -238,7 +246,12 @@ func TestE2E_EnvGenerateDotenv_FlatVsRecursiveTogether(t *testing.T) {
 		t.Fatalf("write zerops.yaml: %v", err)
 	}
 
+	masked := dbPasswordMasked(ctx, t, h, dbHost)
 	result, err := ops.EnvGenerateDotenv(ctx, h.client, h.projectID, appHost, workdir, ops.EnvGenerateDotenvOptions{})
+	if masked {
+		assertMaskedPasswordRefusal(t, err, dbHost, "DATABASE_URL_FROM_CS", "DATABASE_URL_FROM_FIELDS")
+		return
+	}
 	if err != nil {
 		t.Fatalf("EnvGenerateDotenv: %v", err)
 	}
@@ -248,7 +261,7 @@ func TestE2E_EnvGenerateDotenv_FlatVsRecursiveTogether(t *testing.T) {
 		t.Fatalf("read .env: %v", err)
 	}
 	envContent := string(envBytes)
-	t.Logf("  Generated .env content:\n%s", envContent)
+	t.Logf("  Generated .env keys: %v", dotenvKeys(envContent))
 
 	csLine := extractEnvLine(envContent, "DATABASE_URL_FROM_CS")
 	fieldsLine := extractEnvLine(envContent, "DATABASE_URL_FROM_FIELDS")
@@ -262,14 +275,14 @@ func TestE2E_EnvGenerateDotenv_FlatVsRecursiveTogether(t *testing.T) {
 			continue
 		}
 		if strings.Contains(l.line, "${") {
-			t.Errorf("%s has unresolved ${...}: %q", l.name, l.line)
+			t.Errorf("%s has unresolved ${...}: %q", l.name, redactDSNPassword(l.line))
 		}
 		if !strings.HasPrefix(l.line, l.name+"=postgresql://") {
-			t.Errorf("%s not in postgresql:// shape: %q", l.name, l.line)
+			t.Errorf("%s not in postgresql:// shape: %q", l.name, redactDSNPassword(l.line))
 		}
 	}
-	t.Logf("  CS form:     %s", csLine)
-	t.Logf("  Fields form: %s", fieldsLine)
+	t.Logf("  CS form:     %s", redactDSNPassword(csLine))
+	t.Logf("  Fields form: %s", redactDSNPassword(fieldsLine))
 }
 
 // TestE2E_EnvGenerateDotenv_ProjectOnly validates the result-based empty
@@ -393,3 +406,79 @@ func waitForServiceActive(ctx context.Context, client platform.Client, projectID
 	}
 	return fmt.Errorf("%s did not reach RUNNING/ACTIVE within %s", hostname, timeout)
 }
+
+// dbPasswordMasked reports whether the harness token reads dbHost's password
+// masked: the platform withholds sensitive values from a project-scoped or
+// read-only token (spec-zerops-env-lifecycle.md §7). It fails the test when db
+// has no password row at all — that would be a different defect.
+func dbPasswordMasked(ctx context.Context, t *testing.T, h *e2eHarness, dbHost string) bool {
+	t.Helper()
+	services, err := h.client.ListServicesDirect(ctx, h.projectID)
+	if err != nil {
+		t.Fatalf("list services: %v", err)
+	}
+	for _, svc := range services {
+		if svc.Name != dbHost {
+			continue
+		}
+		envs, err := ops.FetchServiceEnv(ctx, h.client, svc.ID)
+		if err != nil {
+			t.Fatalf("read %s env: %v", dbHost, err)
+		}
+		for _, e := range envs {
+			if e.Key == "password" {
+				t.Logf("  this token reads %s's password %s", dbHost, map[bool]string{true: "MASKED", false: "plain"}[e.Masked])
+				return e.Masked
+			}
+		}
+		t.Fatalf("%s has no password row", dbHost)
+	}
+	t.Fatalf("%s not in the project", dbHost)
+	return false
+}
+
+// assertMaskedPasswordRefusal asserts generate-dotenv refused because the
+// platform withheld dbHost's password from the token: PERMISSION_DENIED,
+// naming every key it could not build, the withheld variable, and the way
+// out — never a bare "could not resolve", never the platform's placeholder.
+func assertMaskedPasswordRefusal(t *testing.T, err error, dbHost string, keys ...string) {
+	t.Helper()
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) {
+		t.Fatalf("token reads %s's password masked: want generate-dotenv's PlatformError refusal, got %v", dbHost, err)
+	}
+	if pe.Code != platform.ErrPermissionDenied {
+		t.Errorf("refusal code = %s, want %s (message %q)", pe.Code, platform.ErrPermissionDenied, pe.Message)
+	}
+	for _, want := range append(keys, strings.ReplaceAll(dbHost, "-", "_")+"_password") {
+		if !strings.Contains(pe.Message, want) {
+			t.Errorf("refusal %q does not name %q", pe.Message, want)
+		}
+	}
+	if !strings.Contains(pe.Suggestion, "personal access token") {
+		t.Errorf("refusal suggestion %q gives no way out", pe.Suggestion)
+	}
+	if strings.Contains(pe.Message+pe.Suggestion, platform.MaskedEnvValue) {
+		t.Errorf("refusal echoes the platform's placeholder")
+	}
+	t.Logf("  refused as it should: %s", pe.Message)
+}
+
+// dotenvKeys lists a .env's keys, never its values.
+func dotenvKeys(content string) []string {
+	var keys []string
+	for _, line := range strings.Split(content, "\n") {
+		if k, _, ok := strings.Cut(line, "="); ok && !strings.HasPrefix(strings.TrimSpace(line), "#") {
+			keys = append(keys, k)
+		}
+	}
+	return keys
+}
+
+// redactDSNPassword hides the password of a scheme://user:password@host
+// value so a failing assertion never prints it.
+func redactDSNPassword(line string) string {
+	return dsnPasswordRe.ReplaceAllString(line, "${1}***@")
+}
+
+var dsnPasswordRe = regexp.MustCompile(`(://[^:@/]*:)[^@]*@`)
