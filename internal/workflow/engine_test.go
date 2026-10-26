@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/knowledge"
+	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -692,6 +693,70 @@ func TestEngine_BootstrapComplete_AdoptionFastPath(t *testing.T) {
 		if !strings.Contains(string(data), "appdev") {
 			t.Error("CLAUDE.md reflog should mention appdev")
 		}
+	}
+}
+
+// Spec: spec-workflows.md §8 PS-2. The path A13's agent should have taken: an
+// app adopted earlier in dev mode is re-bootstrapped into simple mode in a
+// project that also runs a Swarm pool, with the pool left out of the plan. On
+// the adopt route (live listing) and the classic route (none) the plan is
+// taken, the all-existing plan closes at provision, the app's meta records
+// simple mode, and the pool gets no meta and no line in the reflog.
+func TestEngine_ModeSwitch_AdoptedAppBesidePool_PoolLeftOut_Rebootstraps(t *testing.T) {
+	t.Parallel()
+	live := []platform.ServiceStack{
+		{Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		{Name: "sandbox", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1"}},
+	}
+	tests := []struct {
+		name  string
+		route BootstrapRoute
+		live  []platform.ServiceStack
+	}{
+		{"adopt route, live listing", BootstrapRouteAdopt, live},
+		{"classic route, no listing", BootstrapRouteClassic, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			dir := filepath.Join(root, ".zcp", "state")
+			if err := WriteServiceMeta(dir, &ServiceMeta{Hostname: "app", Mode: topology.PlanModeDev, BootstrappedAt: "2026-10-25"}); err != nil {
+				t.Fatalf("WriteServiceMeta: %v", err)
+			}
+			eng := NewEngine(dir, EnvContainer, nil)
+			if _, err := eng.BootstrapStartWithRoute("proj-1", "switch app to simple mode", tt.route, ""); err != nil {
+				t.Fatalf("BootstrapStartWithRoute: %v", err)
+			}
+			plan := []BootstrapTarget{{Runtime: RuntimeTarget{DevHostname: "app", Type: "nodejs@22", BootstrapMode: topology.PlanModeSimple, IsExisting: true}}}
+			if _, err := eng.BootstrapCompletePlan(plan, nil, tt.live); err != nil {
+				t.Fatalf("the mode switch with the pool left out must be taken: %v", err)
+			}
+			resp, err := eng.BootstrapComplete(context.Background(), "provision", "app exists and runs", nil)
+			if err != nil {
+				t.Fatalf("BootstrapComplete(provision): %v", err)
+			}
+			if resp.Current != nil {
+				t.Fatalf("an all-existing plan closes at provision; current step %q", resp.Current.Name)
+			}
+			meta, err := ReadServiceMeta(dir, "app")
+			if err != nil || meta == nil {
+				t.Fatalf("ReadServiceMeta(app) = %v, %v", meta, err)
+			}
+			if meta.Mode != topology.PlanModeSimple || !meta.IsComplete() {
+				t.Errorf("app meta: mode %q complete %v, want simple and complete", meta.Mode, meta.IsComplete())
+			}
+			if pool, err := ReadServiceMeta(dir, "sandbox"); err != nil || pool != nil {
+				t.Errorf("the pool must get no meta: %+v, %v", pool, err)
+			}
+			reflog, err := os.ReadFile(filepath.Join(root, "AGENTS.md"))
+			if err != nil {
+				t.Fatalf("read reflog: %v", err)
+			}
+			if !strings.Contains(string(reflog), "app (nodejs@22, simple)") || strings.Contains(string(reflog), "sandbox") {
+				t.Errorf("reflog must record app in simple mode and never the pool:\n%s", reflog)
+			}
+		})
 	}
 }
 

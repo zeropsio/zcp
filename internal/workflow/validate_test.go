@@ -1215,6 +1215,102 @@ func TestValidateBootstrapTargets_ExistingPoolOrBoxByLiveType_Refused(t *testing
 	}
 }
 
+// Spec: spec-workflows.md §8 PS-2, PS-5. A Swarm pool is never a dependency
+// of a runtime, whatever the route: adopt and a mode-switch re-bootstrap
+// (both pass the live listing), or classic (no listing, so the plan's own
+// type is all there is). A13 on the eval farm: an agent re-bootstrapping an
+// adopted app into simple mode listed the project's pool `sandbox` (swarm@1)
+// as an EXISTS dependency, and the plan was taken. The refusal names the
+// service and the way forward — leave the pool out of the plan — and holds
+// whether or not the catalog lists the type. A pool written down as another
+// type is refused by its live type, as PS-2 does for a half of a pair.
+func TestValidateBootstrapTargets_PoolAsDependency_Refused(t *testing.T) {
+	t.Parallel()
+	live := []platform.ServiceStack{
+		{Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		{Name: "worker", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		{Name: "sandbox", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1"}},
+	}
+	existingApp := RuntimeTarget{DevHostname: "app", Type: "nodejs@22", BootstrapMode: "simple", IsExisting: true}
+	newApp := RuntimeTarget{DevHostname: "app", Type: "nodejs@22", BootstrapMode: "simple"}
+	tests := []struct {
+		name    string
+		targets []BootstrapTarget
+		schemas *schema.Schemas
+		live    []platform.ServiceStack
+	}{
+		{"the project's pool as an EXISTS dependency of a mode switch (A13)",
+			[]BootstrapTarget{{Runtime: existingApp, Dependencies: []Dependency{{Hostname: "sandbox", Type: "swarm@1", Resolution: "EXISTS"}}}}, nil, live},
+		{"the same plan on the classic route, which reads no live listing",
+			[]BootstrapTarget{{Runtime: existingApp, Dependencies: []Dependency{{Hostname: "sandbox", Type: "swarm@1", Resolution: "EXISTS"}}}}, nil, nil},
+		{"a pool created beside a new runtime",
+			[]BootstrapTarget{{Runtime: newApp, Dependencies: []Dependency{{Hostname: "sandbox", Type: "swarm@1", Resolution: "CREATE"}}}}, testSchemas, nil},
+		{"a swarm-vm pool with no catalog",
+			[]BootstrapTarget{{Runtime: newApp, Dependencies: []Dependency{{Hostname: "sandbox", Type: "swarm-vm@1", Resolution: "create"}}}}, nil, nil},
+		{"the project's pool written down as a managed type",
+			[]BootstrapTarget{{Runtime: existingApp, Dependencies: []Dependency{{Hostname: "sandbox", Type: "valkey@7.2", Resolution: "EXISTS"}}}}, nil, live},
+		{"the project's pool shared by a second runtime",
+			[]BootstrapTarget{
+				{Runtime: existingApp, Dependencies: []Dependency{{Hostname: "sandbox", Type: "swarm@1", Resolution: "EXISTS"}}},
+				{Runtime: RuntimeTarget{DevHostname: "worker", Type: "nodejs@22", BootstrapMode: "simple", IsExisting: true},
+					Dependencies: []Dependency{{Hostname: "sandbox", Type: "swarm@1", Resolution: "SHARED"}}},
+			}, nil, live},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := ValidateBootstrapTargets(tt.targets, tt.schemas, tt.live)
+			if err == nil {
+				t.Fatal("a Swarm pool named as a dependency of a runtime must be refused")
+			}
+			for _, want := range []string{`dependency "sandbox"`, "Swarm pool", "never a dependency of a runtime", "leave it out of the plan", "stays as it is", "zerops_lease"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q missing %q", err.Error(), want)
+				}
+			}
+			if strings.Contains(err.Error(), "not found in available service types") {
+				t.Errorf("the pool refusal must come before the catalog check: %q", err.Error())
+			}
+		})
+	}
+}
+
+// Spec: spec-workflows.md §8 PS-2, PS-5, PS-15. What A13's agent should have
+// sent — the mode switch of an adopted app with the project's pool left out of
+// the plan — is taken on every route, and the pool's presence in the project
+// refuses nothing by itself. A Zerops Box stays what PS-15 makes it: a
+// dependency of the runtime, created beside it or already running.
+func TestValidateBootstrapTargets_PoolLeftOutOrBoxDependency_Accepted(t *testing.T) {
+	t.Parallel()
+	live := []platform.ServiceStack{
+		{Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		{Name: "sandbox", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1"}},
+		{Name: "box", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/zbox@1"}},
+	}
+	existingApp := RuntimeTarget{DevHostname: "app", Type: "nodejs@22", BootstrapMode: "simple", IsExisting: true}
+	tests := []struct {
+		name    string
+		targets []BootstrapTarget
+		live    []platform.ServiceStack
+	}{
+		{"mode switch with the pool left out, live listing", []BootstrapTarget{{Runtime: existingApp}}, live},
+		{"mode switch with the pool left out, classic route", []BootstrapTarget{{Runtime: existingApp}}, nil},
+		{"a Box created beside a new runtime",
+			[]BootstrapTarget{{Runtime: RuntimeTarget{DevHostname: "api", Type: "nodejs@22", BootstrapMode: "simple"},
+				Dependencies: []Dependency{{Hostname: "sandbox2", Type: "ubuntu/zbox@1", Resolution: "CREATE"}}}}, live},
+		{"the project's Box as an EXISTS dependency",
+			[]BootstrapTarget{{Runtime: existingApp, Dependencies: []Dependency{{Hostname: "box", Type: "ubuntu/zbox@1", Resolution: "EXISTS"}}}}, live},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := ValidateBootstrapTargets(tt.targets, nil, tt.live); err != nil {
+				t.Fatalf("plan must be taken: %v", err)
+			}
+		})
+	}
+}
+
 // Spec: spec-workflows.md §8 PS-5. A Zerops Box passes the type check whenever
 // the schema lists it ACTIVE — as infrastructure the app uses (a dependency),
 // since the runtime-target slot refuses it. The "embedded seed" case runs the
