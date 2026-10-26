@@ -3,6 +3,7 @@ package ops
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/zeropsio/zcp/internal/platform"
 )
@@ -41,12 +42,14 @@ func LookupService(ctx context.Context, client platform.Client, projectID, hostn
 // upper layers don't reach into platform.Client directly. It is also the one
 // place that decides a row is masked: a value the platform answers with
 // platform.MaskedEnvValue is marked Masked and its Content blanked, so no
-// consumer can use the placeholder as the secret.
+// consumer can use the placeholder as the secret. It marks a copy, never the
+// rows the client returned, which a client may share between callers.
 func FetchServiceEnv(ctx context.Context, client platform.Client, serviceID string) ([]platform.ServiceEnvVar, error) {
-	envs, err := client.GetServiceEnv(ctx, serviceID)
+	answered, err := client.GetServiceEnv(ctx, serviceID)
 	if err != nil {
 		return nil, err
 	}
+	envs := slices.Clone(answered)
 	for i := range envs {
 		if envs[i].Content == platform.MaskedEnvValue {
 			envs[i].Masked, envs[i].Content = true, ""
