@@ -42,11 +42,15 @@ func TestPlaybookOnboarding_ContentPins_CoreContract(t *testing.T) {
 		{name: "fresh classification", needle: `adoptionState: "zcp-self"`},
 		{name: "complete fresh predicate", needle: "no live `activity`, no warnings"},
 		{name: "status services warning", needle: "never classify from the status Services line"},
+		{name: "discover is called even when status lists services", needle: "ALWAYS call `zerops_discover`, even when status already lists services"},
 		{name: "continue project option", needle: "**Continue this project**"},
 		{name: "mapping slug: nodejs", needle: "nodejs-hello-world"},
 		{name: "mapping slug: laravel", needle: "laravel-minimal"},
 		{name: "mapping slug: bun", needle: "bun-hello-world"},
 		{name: "standard-flow handoff owns the steps", needle: "run the standard flow and follow its guidance"},
+		{name: "recipe branches read state before starting", needle: "Before either recipe branch starts anything, read state as in §2"},
+		{name: "populated project starts nothing before the yes", needle: "In a POPULATED project, start no bootstrap — not the route menu, not the route commit — until the person says a plain yes"},
+		{name: "route commit is bookkeeping only where the project is fresh", needle: "the route menu and the route commit only return the plan and open bookkeeping, they create no services.", wantAbsent: true},
 		{name: "one plain yes before import", needle: "get one plain yes"},
 		{name: "consent shows the returned recipe plan", needle: "before running `zerops_import`, tell the person what the returned recipe"},
 		{name: "stage URL exactly as reported", needle: "STAGE service's URL exactly as the workflow response"},
@@ -94,6 +98,23 @@ func TestPlaybookOnboarding_ContentPins_CoreContract(t *testing.T) {
 		discoverIndex := strings.Index(body, "zerops_discover")
 		if statusIndex < 0 || discoverIndex < 0 || statusIndex >= discoverIndex {
 			t.Errorf("state resolution order invalid: status index = %d, discover index = %d", statusIndex, discoverIndex)
+		}
+	})
+
+	// Eval E2 (onboard-populated): an agent that picked a recipe branch went
+	// straight to the recipe route in a populated project, never reading state
+	// or asking. Inside Branches the state read comes before the route.
+	t.Run("branches read state before the recipe route", func(t *testing.T) {
+		t.Parallel()
+
+		_, branches, found := strings.Cut(body, "## 3. Branches")
+		if !found {
+			t.Fatal("playbook missing ## 3. Branches heading")
+		}
+		readIndex := strings.Index(branches, "read state as in §2")
+		routeIndex := strings.Index(branches, `route="recipe"`)
+		if readIndex < 0 || routeIndex < 0 || readIndex >= routeIndex {
+			t.Errorf("Branches must read state before the recipe route: read index = %d, route index = %d", readIndex, routeIndex)
 		}
 	})
 
