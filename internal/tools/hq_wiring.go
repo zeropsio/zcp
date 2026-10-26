@@ -211,7 +211,11 @@ func reconcileHQRepositories(
 	var report []string
 	for _, m := range pending {
 		state := readHQPairState(stateDir, m.Hostname)
-		if pace == hqPassBackedOff && !hqAttemptDue(state, now) && !hqPairCredentialStale(m, hqc) {
+		// A new credential is one write for a configured pair, done outside
+		// the backoff; a marked pair is wired again, which asks HQ, so it
+		// keeps the backoff.
+		renew := m.GitPushState == topology.GitPushConfigured && hqPairCredentialStale(m, hqc)
+		if pace == hqPassBackedOff && !hqAttemptDue(state, now) && !renew {
 			continue
 		}
 		// A pair another process runs git on is left to it, and no attempt

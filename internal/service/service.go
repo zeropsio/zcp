@@ -241,10 +241,22 @@ func mateLaunchSetup() {
 	}
 	env := func() func(string) string { return mate.LiveLookup(mateStorePath) }
 	mateSeedSignIns(context.Background(), lookup)
-	go tools.KeepMateDevGit(context.Background(), env, logHQ)
+	go keepMateDevGit(env)
 	if planSet {
 		go mateSetupBoot(context.Background(), path, env)
 	}
+}
+
+// keepMateDevGit runs tools.KeepMateDevGit for as long as this process
+// does. A panic in it stops only the keeping, said on stderr: this process
+// supervises the Mate's server, which must outlive it.
+func keepMateDevGit(env func() func(string) string) {
+	defer func() {
+		if r := recover(); r != nil {
+			logHQ(fmt.Sprintf("keeping the dev services' git stopped: %v", r))
+		}
+	}()
+	tools.KeepMateDevGit(context.Background(), env, logHQ)
 }
 
 // hqCallTimeout bounds each call to HQ.

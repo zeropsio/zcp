@@ -4,14 +4,18 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -242,5 +246,172 @@ func TestMateService_AStartThatDidNotSettleIsTakenAgainOnlyOnceItsWaitIsOver(t *
 	}
 	if lab.meta().HQ.Origin == nil {
 		t.Error("the start taken again once the wait was over did not record how the code is kept")
+	}
+}
+
+// TestRepositoryPass_APairARefusedPushMarkedKeepsItsBackoffAfterANewCredential:
+// a new credential takes a configured pair outside the pass's backoff, since
+// renewing it is one write. A pair a refused push marked is wired again
+// instead — asking HQ for its repository — so it keeps the backoff: passes
+// that agent tool calls drive in a burst ask HQ once.
+func TestRepositoryPass_APairARefusedPushMarkedKeepsItsBackoffAfterANewCredential(t *testing.T) {
+	t.Parallel()
+	lab := newHQLab(t)
+	lab.wire()
+	degradeGitPushStateToBroken(lab.stateDir, "appdev")
+	lab.relink("sent-on-the-next-link")
+	lab.hq.answerWith(http.StatusBadGateway, "bad_gateway", 100, func(r *http.Request) bool { return r.URL.Path == "/api/mate/repos" })
+	elapseHQBackoff(t, lab.stateDir)
+
+	lab.wire()
+	first := lab.hq.callCount("POST /api/mate/repos")
+	lab.wire()
+
+	if got := lab.hq.callCount("POST /api/mate/repos"); got != first {
+		t.Errorf("a pass inside the backoff asked HQ for the repository again: %d calls, want %d", got, first)
+	}
+}
+
+// TestDevService_ARemoteThatIsNotItsHQRepositoryIsNeverMoved: only an
+// address of the pair's own repository on an HQ — `/git/[<org>/]<app>/<repo>.git`
+// — is a retired wiring. A record naming any other remote, a GitHub
+// repository an adopt found, is the person's, and its origin stays.
+func TestDevService_ARemoteThatIsNotItsHQRepositoryIsNeverMoved(t *testing.T) {
+	t.Parallel()
+	for _, remote := range []string{
+		"https://github.com/acme/app.git",
+		retiredHQ + "/git/another-app/appdev.git",
+		retiredHQ + "/git/" + labApp + "/another-repo.git",
+	} {
+		t.Run(remote, func(t *testing.T) {
+			t.Parallel()
+			lab := newHQLab(t)
+			lab.wire()
+			lab.git("remote", "set-url", "origin", remote)
+			if err := workflow.UpdateServiceMeta(lab.stateDir, "appdev", func(m *workflow.ServiceMeta) error {
+				m.RemoteURL = remote
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			degradeGitPushStateToBroken(lab.stateDir, "appdev")
+
+			lab.mateStart()
+			lab.developStart()
+
+			if got := lab.git("remote", "get-url", "origin"); got != remote {
+				t.Errorf("origin = %q, want %q kept", got, remote)
+			}
+			if got := lab.meta().RemoteURL; got != remote {
+				t.Errorf("the record's remote = %q, want %q kept", got, remote)
+			}
+		})
+	}
+}
+
+// listCounter is a platform client that counts its service listings: each
+// renewal of a dev service's credential starts with one.
+type listCounter struct {
+	platform.Client
+	mu    sync.Mutex
+	lists int
+}
+
+func (c *listCounter) ListServices(ctx context.Context, projectID string) ([]platform.ServiceStack, error) {
+	c.mu.Lock()
+	c.lists++
+	c.mu.Unlock()
+	return c.Client.ListServices(ctx, projectID)
+}
+
+func (c *listCounter) count() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.lists
+}
+
+// TestMateService_ARenewalThatKeepsFailingIsTriedAgainOnlyOnceItsWaitIsOver:
+// a dev service that cannot take the new credential — deleted, say — is
+// not asked of the platform at every look, but again once the wait after
+// the last try is over.
+func TestMateService_ARenewalThatKeepsFailingIsTriedAgainOnlyOnceItsWaitIsOver(t *testing.T) {
+	t.Parallel()
+	lab := newHQLab(t)
+	lab.wire()
+	lab.mock.WithServices([]platform.ServiceStack{{ID: "svc-appstage", Name: "appstage"}})
+	lab.relink("sent-on-the-next-link")
+	client := &listCounter{Client: lab.mock}
+	started := time.Date(2026, 10, 26, 20, 0, 0, 0, time.UTC)
+	ticks := make(chan time.Time, 3)
+	ticks <- started.Add(devGitLookEvery)
+	ticks <- started.Add(2 * devGitLookEvery)
+	ticks <- started.Add(hqWaitBackoff + 2*devGitLookEvery)
+	close(ticks)
+	var lists []int
+	deps := func(ctx context.Context) (devGitDeps, bool) {
+		lists = append(lists, client.count())
+		d, ok := lab.devGitDeps(ctx)
+		d.client = client
+		return d, ok
+	}
+
+	keepMateDevGit(t.Context(), deps, started, ticks, func(string) {})
+	lists = append(lists, client.count())
+
+	if within := lists[3] - lists[2]; within != 0 {
+		t.Errorf("a look within the wait asked the platform %d time(s)", within)
+	}
+	if after := lists[4] - lists[3]; after == 0 {
+		t.Error("the look after the wait did not try the renewal again")
+	}
+}
+
+// unansweringSSH stands in for a dev service that never answers: it records
+// how long each command was given and fails it.
+type unansweringSSH struct {
+	ops.SSHDeployer
+	mu     sync.Mutex
+	within []time.Duration
+}
+
+func (d *unansweringSSH) ExecSSH(ctx context.Context, _, _ string) ([]byte, error) {
+	deadline, ok := ctx.Deadline()
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !ok {
+		d.within = append(d.within, -1)
+	} else {
+		d.within = append(d.within, time.Until(deadline))
+	}
+	return nil, errors.New("the dev service does not answer")
+}
+
+// TestMateService_EveryCommandOnADevServiceIsBounded: a dev service that
+// does not answer holds the Mate's service — and the pair's lock — for
+// devGitSSHWithin at most, never for an SSH session's own long bound, so the
+// credential keeps following for every other pair.
+func TestMateService_EveryCommandOnADevServiceIsBounded(t *testing.T) {
+	t.Parallel()
+	lab := newHQLab(t)
+	lab.wire()
+	lab.retireHQ()
+	ssh := &unansweringSSH{}
+	ticks := make(chan time.Time)
+	close(ticks)
+	deps := func(ctx context.Context) (devGitDeps, bool) {
+		d, ok := lab.devGitDeps(ctx)
+		d.ssh = ssh
+		return d, ok
+	}
+
+	keepMateDevGit(t.Context(), deps, time.Time{}, ticks, func(string) {})
+
+	if len(ssh.within) == 0 {
+		t.Fatal("the start ran no command on the dev service")
+	}
+	for _, within := range ssh.within {
+		if within < 0 || within > devGitSSHWithin {
+			t.Errorf("a command was given %v, want at most %v", within, devGitSSHWithin)
+		}
 	}
 }

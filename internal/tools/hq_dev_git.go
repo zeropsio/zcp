@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -38,6 +39,11 @@ type devGitDeps struct {
 	rt         runtime.Info
 	stateDir   string
 }
+
+// devGitSSHWithin bounds each command the Mate's service runs on a dev
+// service: one that does not answer must not hold the service, or the pair's
+// lock, for an SSH session's own bound of minutes.
+const devGitSSHWithin = 15 * time.Second
 
 // devGitLookEvery is how often the Mate's service looks whether HQ sent a
 // new credential: a read of one small file and the pairs' records.
@@ -113,15 +119,19 @@ func keepMateDevGit(ctx context.Context, deps func(context.Context) (devGitDeps,
 		settled bool
 		retry   hqPairState
 		said    map[string]bool
+		// renewals are the pairs whose last renewal failed, with its record:
+		// each is tried again on hqAttemptDue's backoff.
+		renewals = map[string]hqPairState{}
 	)
 	look := func(at time.Time) {
 		d, ok := deps(ctx)
 		if !ok {
 			return
 		}
+		d.ssh = boundedSSH{SSHDeployer: d.ssh}
 		var lines []string
 		if settled || !hqAttemptDue(retry, at) {
-			lines = followMateCredential(ctx, d.client, d.httpClient, d.ssh, d.rt, d.stateDir)
+			lines = followMateCredential(ctx, d.client, d.httpClient, d.ssh, d.rt, d.stateDir, at, renewals)
 		} else {
 			lines, settled = startDevGit(ctx, d.client, d.httpClient, d.ssh, d.rt, d.stateDir)
 			retry = nextHQAttempt(retry, at, "", false)
@@ -207,6 +217,11 @@ func startPairDevGit(
 	line, moved := moveFromRetiredHQ(ctx, sshDeployer, stateDir, hqc, m)
 	say(line)
 	settled = settled && moved
+	// Where origin points is the pass's to keep for a pair set up to push; a
+	// pair a refused push marked is wired again by the pass instead.
+	if m.GitPushState != topology.GitPushConfigured {
+		return strings.Join(said, "; "), settled
+	}
 	if state, err := self(); err == nil {
 		recordHQOrigin(stateDir, m, state)
 		line := hqPairOrigin(ctx, sshDeployer, hqc, m)
@@ -220,7 +235,10 @@ func startPairDevGit(
 
 // followMateCredential gives each wired pair's dev service the Mate's Git
 // credential once HQ sent a new one (hqPairCredentialStale): a read of the
-// file and the records, and nothing else, while none is new.
+// file and the records, and nothing else, while none is new. A pair whose
+// renewal failed is in renewals and tried again only once hqAttemptDue says
+// so, counted at at, so a dev service that cannot take it is not asked of
+// the platform at every look.
 func followMateCredential(
 	ctx context.Context,
 	client platform.Client,
@@ -228,6 +246,8 @@ func followMateCredential(
 	sshDeployer ops.SSHDeployer,
 	rt runtime.Info,
 	stateDir string,
+	at time.Time,
+	renewals map[string]hqPairState,
 ) []string {
 	hqc, pairs, ok := wiredDevGitPairs(httpClient, sshDeployer, rt, stateDir)
 	if !ok {
@@ -235,15 +255,21 @@ func followMateCredential(
 	}
 	var lines []string
 	for _, hostname := range pairs {
+		if failed, ok := renewals[hostname]; ok && !hqAttemptDue(failed, at) {
+			continue
+		}
 		line, _ := withPairLocked(ctx, stateDir, hostname, func(m *workflow.ServiceMeta) (string, bool) {
 			if !hqPairCredentialStale(m, hqc) {
 				return "", true
 			}
 			return renewHQPairCredential(ctx, client, rt.ProjectID, stateDir, hqc, m), true
 		})
-		if line != "" {
-			lines = append(lines, hostname+": "+line)
+		if line == "" {
+			delete(renewals, hostname)
+			continue
 		}
+		renewals[hostname] = nextHQAttempt(renewals[hostname], at, line, false)
+		lines = append(lines, hostname+": "+line)
 	}
 	return lines
 }
@@ -296,7 +322,7 @@ func withPairLocked(ctx context.Context, stateDir, hostname string, turn func(*w
 // nothing to move.
 func moveFromRetiredHQ(ctx context.Context, sshDeployer ops.SSHDeployer, stateDir string, hqc hq.Client, m *workflow.ServiceMeta) (string, bool) {
 	retired := m.RemoteURL
-	if retired == "" || ops.IsHQRemote(retired, hqc.Address()) {
+	if !isRetiredHQRepository(retired, hqc.Address(), m.HQ) {
 		return "", true
 	}
 	current, err := hqc.RepoURL(m.HQ.AppID, m.HQ.Repo)
@@ -321,4 +347,35 @@ func moveFromRetiredHQ(ctx context.Context, sshDeployer ops.SSHDeployer, stateDi
 		return "", true
 	}
 	return fmt.Sprintf("it was wired at %s, an HQ this Mate no longer links to, so its checkout's origin is its repository on the current HQ now (%s)", topology.RedactRepoURLCredentials(retired), current), true
+}
+
+// isRetiredHQRepository reports whether remote is the repository ref names
+// on an HQ other than the one at address: https, a path of
+// `/git/[<org>/]<app>/<repo>.git` naming ref's application and repository,
+// on another host. Only such an address is a wiring zcp made before the Mate
+// moved; any other remote — a GitHub repository an adopt recorded — is the
+// person's.
+func isRetiredHQRepository(remote, address string, ref *workflow.HQRepoRef) bool {
+	if remote == "" || ref == nil || ops.IsHQRemote(remote, address) {
+		return false
+	}
+	u, err := url.Parse(remote)
+	if err != nil || !strings.EqualFold(u.Scheme, "https") {
+		return false
+	}
+	segments := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
+	if n := len(segments); n < 3 || n > 4 || segments[0] != "git" {
+		return false
+	}
+	tail := segments[len(segments)-2:]
+	return tail[0] == ref.AppID && tail[1] == ref.Repo+".git"
+}
+
+// boundedSSH runs each command within devGitSSHWithin.
+type boundedSSH struct{ ops.SSHDeployer }
+
+func (b boundedSSH) ExecSSH(ctx context.Context, hostname, command string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, devGitSSHWithin)
+	defer cancel()
+	return b.SSHDeployer.ExecSSH(ctx, hostname, command)
 }

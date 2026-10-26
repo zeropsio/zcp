@@ -4123,13 +4123,15 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   the file every 10 s and rewrites only that secret when the fingerprint differs from the file's, as
   after HQ issued a new one on a link, leaving the checkout's branch and origin alone; the repository
   pass — bootstrap, adopt and every develop start — does the same outside its backoff.
-- **A Mate moved to another HQ.** A wired pair whose record names its repository on another host
-  than the HQ the Mate links to now was wired before the move. At the Mate's service start, and at
+- **A Mate moved to another HQ.** A wired pair whose record names its own repository
+  (`/git/[<org>/]<app>/<repo>.git` of its HQ record) on another host than the HQ the Mate links to now
+  was wired before the move; any other remote is the person's and is never moved. At the Mate's service start, and at
   every repository pass, its checkout's `origin` is pointed at the repository's address on the
   current HQ while it still names the retired one (an origin anywhere else is not moved), git's
   helper for the retired host goes and HQ's is written for the current one, and the record follows.
   A start that could not finish — the dev service stopped, HQ not answering — is taken again on the
-  pass's backoff. The project key
+  pass's backoff, and so is a credential renewal that failed; each command on a dev service is bounded
+  to 15 s. A pair a refused push marked keeps the pass's backoff: the pass wires it again. The project key
   is never written into the dev service: it runs the application's code and its dependencies. The
   helper persisted in `.git/config` for HQ's host answers the dev service from `GIT_TOKEN` and the
   Mate's own shell from `zcp hq git-credential`, which reads the file at each request and answers
