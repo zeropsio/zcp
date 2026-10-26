@@ -1,6 +1,11 @@
 package ops
 
-import "context"
+import (
+	"context"
+	"os"
+	"slices"
+	"strings"
+)
 
 // A pool's record of the Mate credential zcp wrote to its HQ credential
 // variable (PoolHQCredentialEnvKey)
@@ -33,4 +38,30 @@ func ForgetPoolCredentialRecord(stateDir, pool string) error {
 // function.
 func LockPoolCredential(ctx context.Context, stateDir, pool string) (func(), error) {
 	return lockPoolCredential(ctx, stateDir, pool)
+}
+
+// PoolCredentialRecordPools names, sorted, every pool zcp holds a per-pool
+// record of the Mate's Git credential for — the pools the per-pool renewal
+// (RenewPoolHQCredentials) would renew; none when there are no records or the
+// directory cannot be read.
+func PoolCredentialRecordPools(stateDir string) []string {
+	if stateDir == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(poolCredentialDir(stateDir))
+	if err != nil {
+		return nil
+	}
+	var pools []string
+	for _, e := range entries {
+		pool, isRecord := strings.CutSuffix(e.Name(), ".json")
+		if e.IsDir() || !isRecord {
+			continue
+		}
+		if _, found := readPoolCredential(stateDir, pool); found {
+			pools = append(pools, pool)
+		}
+	}
+	slices.Sort(pools)
+	return pools
 }

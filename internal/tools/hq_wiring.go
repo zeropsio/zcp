@@ -231,15 +231,39 @@ func renewHQPoolCredentials(ctx context.Context, client platform.Client, rt runt
 	}
 	var lines []string
 	// No credential in the Mate's file is nothing to renew with: the pools
-	// keep what they hold until HQ sends one.
+	// keep what they hold until HQ sends one, and the pass says which.
 	credential, _, err := hqc.GitCredential()
 	if err != nil {
-		return nil
+		return poolCredentialsNotRenewed(stateDir, err)
 	}
 	for _, failure := range ops.RenewPoolHQCredentials(ctx, client, stateDir, credential) {
 		lines = append(lines, fmt.Sprintf("%s: HQ sent the Mate a new Git credential, and git in the pool's leases cannot reach HQ until its %s holds it, which could not be written (%v) — retrying on the next pass, and the next acquire of an HQ repository there writes it too.", failure.Pool, ops.PoolHQCredentialEnvKey, failure.Err))
 	}
 	return lines
+}
+
+// poolCredentialsNotRenewed is the pass's one line when the Mate's server
+// holds no Git credential to renew the pools with (why): every pool whose
+// ZCP_HQ_GIT_TOKEN a renewal would write — one an acquire recorded
+// (ops.PoolCredentialRecordPools), and one keying a wired pair, which its
+// pair's renewal skips as well (hqPairCredentialStale) — keeps what it holds,
+// and an acquire of an HQ repository there is refused until one arrives. None
+// when zcp put the credential on no pool.
+func poolCredentialsNotRenewed(stateDir string, why error) []string {
+	pools := ops.PoolCredentialRecordPools(stateDir)
+	if metas, err := workflow.ListServiceMetas(stateDir); err == nil {
+		for _, m := range metas {
+			if m.DevIsPool() && hqPairWired(m) && m.GitPushState == topology.GitPushConfigured && !slices.Contains(pools, m.Hostname) {
+				pools = append(pools, m.Hostname)
+			}
+		}
+	}
+	if len(pools) == 0 {
+		return nil
+	}
+	slices.Sort(pools)
+	return []string{fmt.Sprintf("%s: %s was not renewed, because %v — the leases there keep the credential they hold, which HQ may have revoked; retrying on the next pass, and an acquire of an HQ repository there is refused until the Mate's server holds one.",
+		strings.Join(pools, ", "), ops.PoolHQCredentialEnvKey, why)}
 }
 
 // reconcileHQPairs is the pairs' half of the repository pass
@@ -463,7 +487,8 @@ func hqPairCredentialHolder(ctx context.Context, client platform.Client, project
 // pair's — the pair names none yet (the re-key clears the dev service's) or
 // the record names the credential the Mate's file holds now. A record of
 // another pool service is left to the per-pool renewal, which drops it once
-// that service is gone.
+// that service is gone; one the pass cannot weigh — no credential in the
+// Mate's file, and the pair names another — is kept until it can.
 func takeOverPoolCredential(stateDir string, hqc hq.Client, m *workflow.ServiceMeta) {
 	if !m.DevIsPool() || m.DevPool.ServiceID == "" || m.HQ == nil {
 		return
@@ -473,8 +498,14 @@ func takeOverPoolCredential(stateDir string, hqc hq.Client, m *workflow.ServiceM
 		return
 	}
 	// No credential in the Mate's file names none to match: the record is
-	// adopted only where the pair names none yet.
-	_, current, _ := hqc.GitCredential()
+	// adopted only where the pair names none yet. One naming another
+	// credential than the pair's cannot be weighed against none, so it stays,
+	// for a pass that can read the credential: dropped, the pass would know
+	// only the pair's word for what the pool holds.
+	_, current, err := hqc.GitCredential()
+	if err != nil && m.HQ.CredentialFingerprint != "" && fingerprint != m.HQ.CredentialFingerprint {
+		return
+	}
 	if adoptPoolFingerprint(m.HQ.CredentialFingerprint, fingerprint, current) {
 		adopted := false
 		err := workflow.UpdateServiceMeta(stateDir, m.Hostname, func(meta *workflow.ServiceMeta) error {
