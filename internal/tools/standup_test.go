@@ -693,6 +693,37 @@ func TestStandup_StandsUpEveryPairFromTheRecipe(t *testing.T) {
 	}
 }
 
+// TestStandup_ATierOfOrganisationAddressesStandsUpEveryPair: the tier on the
+// recipe repository's main names each runtime's repository by the address
+// HQ serves it at, `<HQ>/git/<orgId>/<appId>/<repo>` (docs/spec-mate.md
+// §2.8a.4) — the address zcp's own group recipe writes (hq.RepoURLAt). Every
+// pair is read from it and adopted, wired to its repository; none is skipped
+// as another host's build.
+func TestStandup_ATierOfOrganisationAddressesStandsUpEveryPair(t *testing.T) {
+	t.Parallel()
+	f := newStandupFixture(t)
+	f.hq.tier = strings.ReplaceAll(standupTierTemplate, "HQ/git/", f.srv.URL+"/git/"+labOrg+"/")
+
+	result, body := f.run(t)
+
+	if result.IsError || body.StandUp != standupDevelopment {
+		t.Fatalf("first call: %s", getTextContent(t, result))
+	}
+	for _, pair := range [][2]string{{"medusadev", "medusastage"}, {"nextstoredev", "nextstorestage"}} {
+		meta, _ := workflow.ReadServiceMeta(f.stateDir, pair[0])
+		if meta == nil || !meta.IsAdopted() || meta.FirstStage().Hostname != pair[1] {
+			t.Errorf("%s was not adopted as the pair of %s: %+v", pair[0], pair[1], meta)
+			continue
+		}
+		if meta.HQ == nil || meta.HQ.Repo != pair[0] {
+			t.Errorf("%s not wired to its repository: hq=%+v", pair[0], meta.HQ)
+		}
+	}
+	if s := body.service(t, "medusadev"); s.Role != standupRoleDev {
+		t.Errorf("medusadev = %+v, want the dev half of its pair", s)
+	}
+}
+
 // TestStandup_ASecondCallContinuesAndSkipsWhatIsDone: nothing is adopted,
 // wired or deployed twice.
 func TestStandup_ASecondCallContinuesAndSkipsWhatIsDone(t *testing.T) {

@@ -522,6 +522,58 @@ func TestParseMateTier_PairsOnlyRepositoriesOfThisApplication(t *testing.T) {
 	}
 }
 
+// TestParseMateTier_ReadsHQsAddressWithTheOrganisation: HQ serves a
+// repository at `/git/<orgId>/<appId>/<repo>` (docs/spec-mate.md §2.8a.4),
+// the address zcp's group recipe writes, and a tier written before HQ named
+// the organisation still carries `/git/<appId>/<repo>`: both name this
+// application's repository. Another application's is foreign either way, and
+// a deeper path is no repository of HQ's.
+func TestParseMateTier_ReadsHQsAddressWithTheOrganisation(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		source string
+		want   MateTierSkipReason // "" for a pair
+	}{
+		{"the organisation's address", tierHQ + "/git/org-1/app-1/web.git", ""},
+		{"the organisation's address, canonical", tierHQ + "/git/org-1/app-1/web", ""},
+		{"an address from before the organisation", tierHQ + "/git/app-1/web", ""},
+		{"another application of the organisation", tierHQ + "/git/org-1/app-2/web", MateTierSkipForeign},
+		{"a deeper path", tierHQ + "/git/org-1/app-1/web/more", MateTierSkipPlatformBuild},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			// The api pair stands in every case, so a tier whose web pair is
+			// skipped still parses.
+			body := "services:\n" +
+				"  - hostname: webdev\n    type: nodejs@22\n    buildFromGit: " + tt.source + "\n" +
+				"  - hostname: webstage\n    type: nodejs@22\n    buildFromGit: " + tt.source + "\n" +
+				"  - hostname: apidev\n    type: nodejs@22\n    buildFromGit: " + tierHQ + "/git/org-1/app-1/api\n" +
+				"  - hostname: apistage\n    type: nodejs@22\n    buildFromGit: " + tierHQ + "/git/org-1/app-1/api\n"
+			tier, err := ParseMateTier(body, tierHQ, tierApp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			paired := false
+			for _, p := range tier.Pairs {
+				if p.Dev.Hostname == "webdev" {
+					paired = p.RepoName == "web"
+				}
+			}
+			var reason MateTierSkipReason
+			for _, s := range tier.Skipped {
+				if s.Hostname == "webdev" {
+					reason = s.Reason
+				}
+			}
+			if paired != (tt.want == "") || reason != tt.want {
+				t.Errorf("webdev paired=%v (pairs %+v) skipped as %q, want %q", paired, tier.Pairs, reason, tt.want)
+			}
+		})
+	}
+}
+
 // A tier zcp writes carries its values in vaults — the project's and each
 // half's own, plain or `{value, sensitive}` — and those are what a build
 // reads, like the deprecated blocks before them.
