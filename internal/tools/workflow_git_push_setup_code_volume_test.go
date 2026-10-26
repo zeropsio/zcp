@@ -15,6 +15,7 @@ import (
 // commits and the delivery pushes from — never into /var/www, where the
 // volume is only a nested folder.
 func TestGitPushSetup_ACodeVolumePairWiredAfterTheFillSetsUpTheVolumesRepository(t *testing.T) {
+	t.Parallel()
 	lab := newHQLab(t)
 	volume := lab.fillCodeVolume()
 

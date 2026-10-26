@@ -66,6 +66,9 @@ import (
 //   - internal/eval/instruction_variants.go   when explicitly testing legacy-API rejection
 //   - go.sum                                  binary noise
 //   - **/testdata/**                          frozen test fixtures
+//   - **/node_modules/**, **/assets/vendor/** third-party code vendored into the tree
+//     (14 MB of welcomejs/node_modules alone; the scan's cost under -race
+//     scales with bytes, and third-party text cannot carry our vocabulary)
 //
 // Adding a new retired token: extend `retiredIdentifiers` below + run
 // `go test ./internal/content -run TestNoRetiredVocab` to surface every
@@ -145,7 +148,7 @@ func TestNoRetiredVocabAcrossRepo(t *testing.T) {
 			}
 			// 3. Hard-coded retired identifiers anywhere in the line.
 			for _, ri := range retiredIdentifiers {
-				if ri.pattern.MatchString(line) {
+				if ri.matches(line) {
 					violations = append(violations, violation{
 						File: rel, Line: lineNo,
 						Pattern: ri.label,
@@ -176,60 +179,94 @@ func TestNoRetiredVocabAcrossRepo(t *testing.T) {
 
 // retiredIdentifier is one hard-coded forbidden token + a label
 // describing what the canonical replacement is, so the failure message
-// points at the fix rather than just the symptom.
+// points at the fix rather than just the symptom. needle is a literal
+// every match of pattern contains: the scan runs ~25 MB of lines and
+// these \b-anchored patterns have no literal prefix, so the regexp (several
+// times slower still under -race) only runs on lines that hold the needle.
+// TestRetiredIdentifiersFlagTheirOwnSample keeps needle and pattern in step.
 type retiredIdentifier struct {
+	needle  string
 	pattern *regexp.Regexp
 	label   string
+	sample  string
+}
+
+func (r retiredIdentifier) matches(line string) bool {
+	return strings.Contains(line, r.needle) && r.pattern.MatchString(line)
 }
 
 var retiredIdentifiers = []retiredIdentifier{
 	{
+		needle:  "DeployStrategy",
 		pattern: regexp.MustCompile(`\bDeployStrategy\b`),
 		label:   "DeployStrategy (retired Go type — replaced by CloseDeployMode + GitPushState + BuildIntegration)",
+		sample:  `DeployStrategy`,
 	},
 	{
+		needle:  "StrategyConfirmed",
 		pattern: regexp.MustCompile(`\bStrategyConfirmed\b`),
 		label:   "StrategyConfirmed (retired field — replaced by CloseDeployModeConfirmed)",
+		sample:  `StrategyConfirmed`,
 	},
 	{
+		needle:  "PushGitTrigger",
 		pattern: regexp.MustCompile(`\bPushGitTrigger\b`),
 		label:   "PushGitTrigger (retired Go type — replaced by BuildIntegration)",
+		sample:  `PushGitTrigger`,
 	},
 	{
+		needle:  "igrateOldMeta",
 		pattern: regexp.MustCompile(`\b[Mm]igrateOldMeta\b`),
 		label:   "migrateOldMeta (retired migration helper — deleted in deploy-strategy decomposition)",
+		sample:  `migrateOldMeta`,
 	},
 	{
+		needle:  "deployStrategy",
 		pattern: regexp.MustCompile(`"deployStrategy"\s*:`),
 		label:   `JSON key "deployStrategy" (retired ServiceMeta field — replaced by "closeDeployMode")`,
+		sample:  `"deployStrategy": "push-dev"`,
 	},
 	{
+		needle:  "strategyConfirmed",
 		pattern: regexp.MustCompile(`"strategyConfirmed"\s*:`),
 		label:   `JSON key "strategyConfirmed" (retired ServiceMeta field — replaced by "closeDeployModeConfirmed")`,
+		sample:  `"strategyConfirmed": true`,
 	},
 	{
+		needle:  "develop-push-git-deploy",
 		pattern: regexp.MustCompile(`\bdevelop-push-git-deploy\b`),
 		label:   "develop-push-git-deploy atom (retired — superseded by develop-git-push-delivery)",
+		sample:  `develop-push-git-deploy`,
 	},
 	{
+		needle:  "develop-close-mode-git-push",
 		pattern: regexp.MustCompile(`\bdevelop-close-mode-git-push(-needs-setup)?\b`),
 		label:   "develop-close-mode-git-push(-needs-setup) atoms (retired with the delivery-ladder fold — replaced by develop-git-push-delivery / develop-git-push-broken, keyed on gitPushStates alone)",
+		sample:  `develop-close-mode-git-push-needs-setup`,
 	},
 	{
+		needle:  "develop-manual-deploy",
 		pattern: regexp.MustCompile(`\bdevelop-manual-deploy\b`),
 		label:   "develop-manual-deploy atom (retired — replaced by develop-close-mode-manual)",
+		sample:  `develop-manual-deploy`,
 	},
 	{
+		needle:  "develop-push-dev-",
 		pattern: regexp.MustCompile(`\bdevelop-push-dev-(deploy|workflow)`),
 		label:   "develop-push-dev-* atom (retired — replaced by develop-close-mode-auto-*)",
+		sample:  `develop-push-dev-deploy`,
 	},
 	{
+		needle:  "develop-close-push-dev-",
 		pattern: regexp.MustCompile(`\bdevelop-close-push-dev-`),
 		label:   "develop-close-push-dev-* atom (retired — renamed to develop-close-mode-auto-*)",
+		sample:  `develop-close-push-dev-x`,
 	},
 	{
+		needle:  "strategies",
 		pattern: regexp.MustCompile(`strategies\s*=\s*\{`),
 		label:   `strategies={…} action argument (retired — split into close-mode + git-push-setup + build-integration)`,
+		sample:  `strategies={a:1}`,
 	},
 }
 
@@ -283,7 +320,9 @@ func skipForDriftScan(rel string) bool {
 		"internal/eval/instruction_variants.go":
 		return true
 	}
-	return strings.Contains(rel, "/testdata/")
+	return strings.Contains(rel, "/testdata/") ||
+		strings.Contains(rel, "/node_modules/") ||
+		strings.Contains(rel, "/assets/vendor/")
 }
 
 // looksLikeText returns true when the buffer is plausibly a text file
@@ -363,4 +402,20 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(b[i:])
+}
+
+// TestRetiredIdentifiersFlagTheirOwnSample pins the detector, not the repo:
+// each retired identifier's sample line must be flagged, so a needle that
+// drifted from its pattern (or a pattern that stopped matching) turns the
+// repo-wide scan from a gate into a no-op visibly.
+func TestRetiredIdentifiersFlagTheirOwnSample(t *testing.T) {
+	t.Parallel()
+	for _, ri := range retiredIdentifiers {
+		t.Run(ri.needle, func(t *testing.T) {
+			t.Parallel()
+			if !ri.matches(ri.sample) {
+				t.Errorf("sample %q not flagged by %s", ri.sample, ri.label)
+			}
+		})
+	}
 }

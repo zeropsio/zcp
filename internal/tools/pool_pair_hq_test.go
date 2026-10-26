@@ -159,7 +159,7 @@ func TestHQPass_PoolDevHalf_RenewsOnPoolNoSSH(t *testing.T) {
 			lab.wire()
 			ssh := lab.keyPairOnPool()
 			lab.rt.MateEnabled = tt.mate
-			lab.reenroll(renewed)
+			lab.relink(renewed)
 
 			report := lab.poolPass(ssh)
 
@@ -174,7 +174,7 @@ func TestHQPass_PoolDevHalf_RenewsOnPoolNoSSH(t *testing.T) {
 				t.Errorf("the pass wrote the pool's GIT_TOKEN, the user's: %+v", token)
 			}
 			if tt.wantRenew {
-				if got, want := lab.poolMeta().HQ.CredentialFingerprint, hq.CredentialFingerprint(renewed); got != want {
+				if got, want := lab.poolMeta().HQ.CredentialFingerprint, hq.GitCredentialFingerprint(renewed); got != want {
 					t.Errorf("the pair records fingerprint %q, want the renewed credential's %q", got, want)
 				}
 			}
@@ -205,7 +205,7 @@ func TestHQPass_PoolDevHalf_RenewalLeavesThePoolsGitTokenTheUsers(t *testing.T) 
 	ssh := lab.keyPairOnPool()
 	lab.rt.MateEnabled = true
 	lab.mock.WithServiceEnv(testPoolID, []platform.ServiceEnvVar{{ID: "e-git", Key: ops.GitTokenEnvKey, Content: usersToken, Sensitive: true}})
-	lab.reenroll(renewed)
+	lab.relink(renewed)
 
 	lab.poolPass(ssh)
 
@@ -219,7 +219,7 @@ func TestHQPass_PoolDevHalf_RenewalLeavesThePoolsGitTokenTheUsers(t *testing.T) 
 	if !slices.ContainsFunc(envs, func(e platform.ServiceEnvVar) bool { return e.Content == renewed && e.Sensitive }) {
 		t.Errorf("the pool holds no secret with the renewed credential: %+v", envs)
 	}
-	if got, want := lab.poolMeta().HQ.CredentialFingerprint, hq.CredentialFingerprint(renewed); got != want {
+	if got, want := lab.poolMeta().HQ.CredentialFingerprint, hq.GitCredentialFingerprint(renewed); got != want {
 		t.Errorf("the pair records fingerprint %q, want the renewed credential's %q", got, want)
 	}
 }
@@ -240,9 +240,9 @@ func TestHQPass_PoolDevHalf_TakesOverThePoolsCredentialRecord(t *testing.T) {
 		wantWrites         int
 		wantRecordGone     bool
 	}{
-		{name: "the record names the pool and the credential held now", recordID: testPoolID, recordFP: hq.CredentialFingerprint(labCredential), wantWrites: 0, wantRecordGone: true},
-		{name: "the record names the pool and a revoked credential", recordID: testPoolID, recordFP: hq.CredentialFingerprint("a-revoked-credential"), wantWrites: 1, wantRecordGone: true},
-		{name: "the record names another pool service", recordID: "svc-an-older-pool", recordFP: hq.CredentialFingerprint(labCredential), wantWrites: 1},
+		{name: "the record names the pool and the credential held now", recordID: testPoolID, recordFP: hq.GitCredentialFingerprint(labCredential), wantWrites: 0, wantRecordGone: true},
+		{name: "the record names the pool and a revoked credential", recordID: testPoolID, recordFP: hq.GitCredentialFingerprint("a-revoked-credential"), wantWrites: 1, wantRecordGone: true},
+		{name: "the record names another pool service", recordID: "svc-an-older-pool", recordFP: hq.GitCredentialFingerprint(labCredential), wantWrites: 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -258,7 +258,7 @@ func TestHQPass_PoolDevHalf_TakesOverThePoolsCredentialRecord(t *testing.T) {
 			if n := lab.mock.CallCount("CreateServiceEnvVar") - before; n != tt.wantWrites {
 				t.Errorf("HQ credential writes = %d, want %d", n, tt.wantWrites)
 			}
-			if got, want := lab.poolMeta().HQ.CredentialFingerprint, hq.CredentialFingerprint(labCredential); got != want {
+			if got, want := lab.poolMeta().HQ.CredentialFingerprint, hq.GitCredentialFingerprint(labCredential); got != want {
 				t.Errorf("the pair records fingerprint %q, want the enrollment's %q", got, want)
 			}
 			_, err := os.Stat(poolRecordPath(lab.stateDir))
@@ -338,7 +338,7 @@ func TestHQPass_PoolDevHalf_NeverWiredOverSSH(t *testing.T) {
 func TestHQUpsertCallbacks_MissingMeta_SkipWrite(t *testing.T) {
 	// Non-parallel: newHQLab sets HOME and package tuning knobs.
 	lab := newHQLab(t)
-	hqc, ok := openHQ(lab.hq.srv.Client())
+	hqc, ok := openHQ(lab.hq.srv.Client(), lab.rt)
 	if !ok {
 		t.Fatal("the lab's Mate is not enrolled")
 	}
@@ -464,7 +464,7 @@ func TestGitPushSetup_PoolDevHalf_Refused(t *testing.T) {
 		m := keyOnPool(t, stateDir)
 		mock := platform.NewMock().WithServices(poolPairServices())
 		ssh := &hostLogSSH{}
-		input := WorkflowInput{Service: testPool, RemoteURL: testHQAddress + "/git/" + labApp + "/app.git", GitToken: "the-mate-credential"}
+		input := WorkflowInput{Service: testPool, RemoteURL: testHQAddress + "/git/" + testHQOrg + "/" + labApp + "/app.git", GitToken: "the-mate-credential"}
 
 		res, _, _ := confirmGitPushSetupContainer(t.Context(), mock, nil, ssh, "p1", stateDir, testHQAddress, input, m)
 
@@ -561,7 +561,7 @@ func TestGroupRecipeInputs_PoolDevHalf_CarriesThePartAsItsDevService(t *testing.
 		t.Fatal(err)
 	}
 
-	inputs, warnings, err := composeGroupRecipeInputs(t.Context(), poolPairProject(), "p1", "acme", mountRoot, testHQAddress, labApp, metas, metas)
+	inputs, warnings, err := composeGroupRecipeInputs(t.Context(), poolPairProject(), "p1", "acme", mountRoot, testHQAddress, testHQOrg, labApp, metas, metas)
 	if err != nil {
 		t.Fatalf("composeGroupRecipeInputs: %v (warnings %v)", err, warnings)
 	}
@@ -648,7 +648,7 @@ func TestGroupRecipeInputs_PoolDevHalf_NothingToCarryIsSaid(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			inputs, warnings, _ := composeGroupRecipeInputs(t.Context(), tt.mock(), "p1", "acme", t.TempDir(), testHQAddress, labApp, metas, metas)
+			inputs, warnings, _ := composeGroupRecipeInputs(t.Context(), tt.mock(), "p1", "acme", t.TempDir(), testHQAddress, testHQOrg, labApp, metas, metas)
 
 			for _, r := range inputs.Runtimes {
 				if r.DevHostname == testPool || strings.HasPrefix(r.ServiceType, "swarm") {
@@ -674,7 +674,7 @@ func TestGroupRecipeInputs_SplitPoolPairs_CarryOneDevServiceWithEveryPart(t *tes
 		Hostname: "appdev", Mode: topology.PlanModeStandard,
 		Stages:           []topology.StageRef{{Hostname: "webstage", SetupName: "web"}, {Hostname: "apistage", SetupName: "api"}},
 		BootstrapSession: "test", BootstrappedAt: "2026-09-16",
-		GitPushState: topology.GitPushConfigured, RemoteURL: testHQAddress + "/git/" + labApp + "/appdev.git",
+		GitPushState: topology.GitPushConfigured, RemoteURL: testHQAddress + "/git/" + testHQOrg + "/" + labApp + "/appdev.git",
 		PrimarySetupName: "dev",
 		HQ:               &workflow.HQRepoRef{AppID: labApp, Repo: "appdev"},
 	}); err != nil {
@@ -701,7 +701,7 @@ func TestGroupRecipeInputs_SplitPoolPairs_CarryOneDevServiceWithEveryPart(t *tes
 		WithProject(&platform.Project{ID: "p1", Name: "acme-mate-1", Status: "ACTIVE", Mode: "SERIOUS"}).
 		WithServicesDirect(services).WithServices(services)
 
-	inputs, warnings, err := composeGroupRecipeInputs(t.Context(), mock, "p1", "acme", t.TempDir(), testHQAddress, labApp, metas, metas)
+	inputs, warnings, err := composeGroupRecipeInputs(t.Context(), mock, "p1", "acme", t.TempDir(), testHQAddress, testHQOrg, labApp, metas, metas)
 	if err != nil {
 		t.Fatalf("composeGroupRecipeInputs: %v (warnings %v)", err, warnings)
 	}

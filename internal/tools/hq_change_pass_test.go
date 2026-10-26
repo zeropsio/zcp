@@ -30,7 +30,7 @@ func (l *hqLab) wirePoolPair(pool, stage string) {
 		m.Hostname, m.Mode, m.Stages = pool, topology.PlanModeStandard, []topology.StageRef{{Hostname: stage}}
 		m.BootstrapSession, m.BootstrappedAt, m.GitPushState = "test", "2026-10-02", topology.GitPushConfigured
 		m.DevPool = &workflow.DevPoolRef{ServiceID: "svc-" + pool}
-		m.HQ = &workflow.HQRepoRef{AppID: labApp, Repo: "appdev", CredentialFingerprint: hq.CredentialFingerprint(labCredential)}
+		m.HQ = &workflow.HQRepoRef{AppID: labApp, Repo: "appdev", CredentialFingerprint: hq.GitCredentialFingerprint(labCredential)}
 		return nil
 	}); err != nil {
 		l.t.Fatal(err)
@@ -236,9 +236,9 @@ func TestDevelopStart_ListsEveryOpenChangeOfTheMate_RecordedOrNot(t *testing.T) 
 		{ID: "svc-appdev", Name: "appdev", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
 		{ID: "svc-appstage", Name: "appstage", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
 	})
-	hqc, ok := openHQ(lab.hq.srv.Client())
+	hqc, ok := openHQ(lab.hq.srv.Client(), lab.rt)
 	if !ok {
-		t.Fatal("the lab's Mate is not enrolled")
+		t.Fatal("the lab's Mate is not linked")
 	}
 	// A released zcp opens its change naming no branch: HQ's default one.
 	opened, err := hqc.OpenChange(t.Context(), "appdev", "Opened by a released zcp", "")
@@ -340,7 +340,7 @@ func TestLaunchProduction_ListsEveryOpenChangeOnce(t *testing.T) {
 		}
 	}
 
-	text := resultText(t, hqLaunchProductionRefusal(context.Background(), lab.hq.srv.Client(), lab.stateDir, true))
+	text := resultText(t, hqLaunchProductionRefusal(context.Background(), lab.hq.srv.Client(), lab.rt, lab.stateDir, true))
 
 	if !strings.Contains(text, "appdev #1 and #2") {
 		t.Errorf("the refusal does not name appdev #1 and #2: %s", text)
@@ -394,7 +394,7 @@ func TestLeaseStatus_MergedBranchSaysSo_NotNoChangeYet(t *testing.T) {
 	lab.hq.mergeChange("appdev", 2)
 	views := []ops.LeaseView{{Alias: told, Branch: "fix-login"}, {Alias: unseen, Branch: "add-signup"}}
 
-	got := leaseGroupChanges(lab.stateDir, lab.hq.srv.URL, views, func() *hq.MateState { return hqStateNow(t.Context(), lab.hq.srv.Client()) })
+	got := leaseGroupChanges(lab.stateDir, lab.hq.srv.URL, views, func() *hq.MateState { return hqStateNow(t.Context(), lab.hq.srv.Client(), lab.rt) })
 
 	for _, want := range []string{"group appdev@fix-login: change #1 merged — release this lease", "group appdev@add-signup: change #2 merged — release this lease", "or start new work from main"} {
 		if !strings.Contains(got, want) {
@@ -423,11 +423,15 @@ func TestLeaseRelease_ResultNamesTheReleasedBranchsChange(t *testing.T) {
 	kept := lab.leaseOf("apipool", 4, "fix-login")
 	other := lab.leaseOf("webpool", 5, "add-signup")
 	lab.hq.mergeChange("appdev", 1)
-	hqc, ok := openHQ(lab.hq.srv.Client())
+	hqc, ok := openHQ(lab.hq.srv.Client(), lab.rt)
 	if !ok {
-		t.Fatal("the lab's Mate is not enrolled")
+		t.Fatal("the lab's Mate is not linked")
 	}
-	repo := topology.RepoIdentity(hqc.RepoURL(labApp, "appdev"))
+	remote, err := hqc.RepoURL(labApp, "appdev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := topology.RepoIdentity(remote)
 	// The release dropped the records of the leases it released.
 	for _, alias := range []string{released, other} {
 		if err := os.Remove(filepath.Join(lab.stateDir, "leases", alias+".json")); err != nil {
@@ -442,7 +446,7 @@ func TestLeaseRelease_ResultNamesTheReleasedBranchsChange(t *testing.T) {
 
 	got := leaseReleaseChanges(lab.stateDir, lab.hq.srv.URL, views, func() *hq.MateState {
 		reads++
-		return hqStateNow(t.Context(), lab.hq.srv.Client())
+		return hqStateNow(t.Context(), lab.hq.srv.Client(), lab.rt)
 	})
 
 	for _, want := range []string{"group appdev@fix-login: change #1 merged", kept, ops.LeaseReleaseBranchCall("fix-login", "", false),

@@ -10,7 +10,10 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/mate"
 )
 
 // TestMergeMateEnv_OrderAndPrecedence locks the precedence contract: the
@@ -65,6 +68,45 @@ func TestMergeMateEnv_OrderAndPrecedence(t *testing.T) {
 	if len(got) != wantCount {
 		t.Errorf("merged env length = %d, want %d (got %q)", len(got), wantCount, got)
 	}
+}
+
+// TestMergeMateEnv_StoreNamesTheSubdomain_ServerGetsItsPublicOrigin pins zcp's
+// half of the HQ link: the server presents the platform's zeropsSubdomain as
+// its public origin (spec-mate §2.8), and nothing but this merge carries it
+// into mate's environment — the unit's own carries none.
+func TestMergeMateEnv_StoreNamesTheSubdomain_ServerGetsItsPublicOrigin(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a Mate whose container zcp launched links to HQ without any variable set by hand", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		storePath := filepath.Join(dir, "env.json")
+		storeBody := `{"ZCP_API_KEY":"key-1","zeropsSubdomain":"https://zcp-3199-8080.prg1.zerops.app","zeropsSubdomainString":"https://zcp-3199-${port}.prg1.zerops.app"}`
+		if err := os.WriteFile(storePath, []byte(storeBody), 0o644); err != nil {
+			t.Fatalf("write store: %v", err)
+		}
+		// What zcp writes by hand: the env file `zcp init` renders, the launch
+		// lines and the unit's ExecStart. None may name the public origin.
+		handWritten := append(mate.EnvLines("p-1", "api.app-prg1.zerops.io", "https://allowed.example"), mate.LaunchEnvLines()...)
+		envPath := filepath.Join(dir, "mate.env")
+		if err := os.WriteFile(envPath, []byte(strings.Join(handWritten, "\n")+"\n"), 0o600); err != nil {
+			t.Fatalf("write env file: %v", err)
+		}
+		for _, line := range handWritten {
+			if key, _, _ := strings.Cut(line, "="); strings.Contains(strings.ToLower(key), "subdomain") || strings.Contains(strings.ToLower(key), "public") {
+				t.Errorf("zcp writes %q by hand; the public origin must come from the live env store alone", line)
+			}
+		}
+		if strings.Contains(mate.UnitCommand, "=") || strings.Contains(strings.ToLower(mate.UnitCommand), "subdomain") {
+			t.Errorf("the unit's command %q must carry no environment", mate.UnitCommand)
+		}
+
+		got := mergeMateEnv(storePath, envPath)
+
+		if want := "zeropsSubdomain=https://zcp-3199-8080.prg1.zerops.app"; !slices.Contains(got, want) {
+			t.Errorf("mate's launch environment must carry %q from the store, got %q", want, got)
+		}
+	})
 }
 
 // TestMergeMateEnv_StoreOnly covers a store with no corresponding env file

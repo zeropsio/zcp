@@ -27,6 +27,7 @@ func prunePictureFile(t *testing.T, stateDir, id string) {
 // on that change the address it was attached at is enough. Another change
 // needs the file, and the refusal says the picture is gone.
 func TestDescribeChange_PicturePrunedAfterItWentOn(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		// attachedTo is the change the picture went onto before its file was
@@ -41,6 +42,7 @@ func TestDescribeChange_PicturePrunedAfterItWentOn(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			lab := openedLab(t)
 			id := keptScreenshot(t, lab.stateDir, []byte("\x89PNG\r\n\x1a\n-a-before"), 1280, 720)
 			words := "## Before\n\n![The old home page](" + id + ")\n"
@@ -83,6 +85,7 @@ func TestDescribeChange_PicturePrunedAfterItWentOn(t *testing.T) {
 // are not kept — kept, they would protect their other pictures and fail on
 // every later describe.
 func TestDescribeChange_PicturePrunedWhileDescribing(t *testing.T) {
+	t.Parallel()
 	lab := openedLab(t)
 	kept := keptScreenshot(t, lab.stateDir, []byte("\x89PNG\r\n\x1a\n-kept"), 800, 600)
 	gone := keptScreenshot(t, lab.stateDir, []byte("\x89PNG\r\n\x1a\n-pruned"), 800, 600)
@@ -122,6 +125,7 @@ func TestDescribeChange_PicturePrunedWhileDescribing(t *testing.T) {
 // one this change can show — the quick check refuses it, and the list of
 // kept pictures leaves it out.
 func TestDescribeChange_RefusalListsWhatThisChangeCanShow(t *testing.T) {
+	t.Parallel()
 	lab := openedLab(t)
 	for range 3 {
 		keptScreenshot(t, lab.stateDir, []byte("\x89PNG\r\n\x1a\n-a-page"), 800, 600)
@@ -150,6 +154,7 @@ func TestDescribeChange_RefusalListsWhatThisChangeCanShow(t *testing.T) {
 // not a picture gone. The describe says what failed instead of "no longer
 // kept".
 func TestDescribeChange_PictureStoreUnreadable(t *testing.T) {
+	t.Parallel()
 	spoil := func(t *testing.T, stateDir string) {
 		t.Helper()
 		if err := os.WriteFile(filepath.Join(stateDir, "pictures", "index.json"), []byte("{not json"), 0o600); err != nil {
@@ -157,6 +162,7 @@ func TestDescribeChange_PictureStoreUnreadable(t *testing.T) {
 		}
 	}
 	t.Run("the describe says what failed", func(t *testing.T) {
+		t.Parallel()
 		lab := openedLab(t)
 		id := keptScreenshot(t, lab.stateDir, []byte("\x89PNG\r\n\x1a\n-a-page"), 800, 600)
 		spoil(t, lab.stateDir)
@@ -172,6 +178,7 @@ func TestDescribeChange_PictureStoreUnreadable(t *testing.T) {
 // the next describe, as when HQ does not answer — or, for a 502 a rolling
 // deploy answers, the describe tries again and they land.
 func TestDescribeChange_AttachRefusedForNow(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		status    int
@@ -182,6 +189,7 @@ func TestDescribeChange_AttachRefusedForNow(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			lab := openedLab(t)
 			id := keptScreenshot(t, lab.stateDir, []byte("\x89PNG\r\n\x1a\n-a-page"), 800, 600)
 			lab.hq.mu.Lock()

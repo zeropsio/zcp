@@ -3,6 +3,7 @@ package hq
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"testing"
 )
@@ -39,7 +40,7 @@ func TestClient_Self_CarriesTheMatesApplicationAndItsChanges(t *testing.T) {
 	if !reflect.DeepEqual(state, want) {
 		t.Errorf("state = %+v\nwant %+v", state, want)
 	}
-	wantCall := hqCall{Method: http.MethodGet, Path: "/api/mate/self", Authorization: "Mate good"}
+	wantCall := hqCall{Method: http.MethodGet, Path: "/api/mate/self", Authorization: "Project good"}
 	if len(*calls) != 1 || (*calls)[0] != wantCall {
 		t.Errorf("calls = %+v, want [%+v]", *calls, wantCall)
 	}
@@ -166,5 +167,49 @@ func TestClient_Self_Changes_DecodeStandingAndOpenPerBranch(t *testing.T) {
 		if c.Ready != nil || c.Mergeability != "" || c.Behind != nil || c.UpdatedAt != "" {
 			t.Errorf("change #%d from an older HQ carries a standing: %+v", c.Number, c)
 		}
+	}
+}
+
+// The Chief a Mate answers to rides on its state as the project it names,
+// which a Mate compares with its own; no Chief is null.
+func TestClient_IsChief_IsTheChiefNamingThisMatesProject(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		chief string
+		want  bool
+	}{
+		{name: "the Chief names this project", chief: `{"projectId":"p-mate"}`, want: true},
+		{name: "the Chief names another project", chief: `{"projectId":"p-other"}`},
+		{name: "no Chief", chief: `null`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			client, calls := answering(t, `{"projectId":"p-mate","name":"Ada","face":"f","changes":[],"chief":`+tt.chief+`}`)
+			got, err := client.IsChief(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Errorf("IsChief = %v, want %v", got, tt.want)
+			}
+			if len(*calls) != 1 || (*calls)[0].Path != "/api/mate/self" {
+				t.Errorf("calls = %+v, want one GET /api/mate/self", *calls)
+			}
+		})
+	}
+}
+
+// An HQ that does not answer is not a verdict: org mode must not guess.
+func TestClient_IsChief_AnUnansweredHQIsAnError(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(srv.Close)
+	client := keyedClient(t, srv)
+	if _, err := client.Once().IsChief(context.Background()); !IsUnavailable(err) {
+		t.Errorf("err = %v, want HQ unavailable", err)
 	}
 }

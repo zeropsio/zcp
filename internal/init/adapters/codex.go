@@ -147,7 +147,7 @@ func (Codex) ContainerInit(env Env) error {
 //     API host and every call authenticates against the wrong region.
 //   - PATH / HOME — required so zcp serve can locate child binaries
 //     (ssh, zcli, git) and resolve config paths.
-//   - ZCP_MATE_ENABLED / ZCP_AUTHORING / ZCP_CHIEF — the gates runtime.Detect()
+//   - ZCP_MATE_ENABLED / ZCP_AUTHORING — the gates runtime.Detect()
 //     reads. Stripped, a gate reads as off: under Codex a Mate's
 //     zcp serve ran without ZCP_MATE_ENABLED, so a scale never said
 //     its group recipe still wrote the old one (E2E F15, 2026-10-03).
@@ -174,12 +174,6 @@ func codexMCPServerEntry() map[string]any {
 			// The gates runtime.Detect reads.
 			"ZCP_MATE_ENABLED",
 			"ZCP_AUTHORING",
-			"ZCP_CHIEF",
-			// Org mode's credentials (docs/spec-mate.md §2.11). In a
-			// container zcp serve also reads them from the live env store.
-			"ZCP_ORG_TOKEN",
-			"ZCP_ORG_ID",
-			"ZCP_ORG_API",
 			// Process basics for subprocess execution.
 			"PATH",
 			"HOME",

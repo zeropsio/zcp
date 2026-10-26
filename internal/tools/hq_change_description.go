@@ -18,6 +18,7 @@ import (
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -88,14 +89,15 @@ func (e *picturesGoneError) Error() string {
 func handleDescribeChange(
 	ctx context.Context,
 	httpClient ops.HTTPDoer,
+	rt runtime.Info,
 	stateDir string,
 	input WorkflowInput,
 ) (*mcp.CallToolResult, any, error) {
-	hqc, enrolled := openHQ(httpClient)
-	if !enrolled {
+	hqc, linked := openHQ(httpClient, rt)
+	if !linked {
 		return convertError(platform.NewPlatformError(
 			platform.ErrPrerequisiteMissing,
-			"describe-change writes a change's description in this Mate's HQ, and this Mate is not enrolled with one yet.",
+			"describe-change writes a change's description in this Mate's HQ, and this Mate is not linked to one yet.",
 			"Without a change there is nothing to describe: say what the change does in your answer instead.",
 		), WithRecoveryStatus()), nil, nil
 	}

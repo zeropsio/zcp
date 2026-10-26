@@ -1,7 +1,6 @@
 package ops
 
 import (
-	"context"
 	"fmt"
 	"regexp"
 	"slices"
@@ -81,23 +80,6 @@ func proposedDomains(raw []string) ([]string, error) {
 		return nil, invalid("domain.add needs a domain", "Pass the person's domain, and its www. name if they want both")
 	}
 	return domains, nil
-}
-
-// domainsAreNew refuses a domain the project answers at already.
-func domainsAreNew(ctx context.Context, src OrgSource, p *orgProject, domains []string) error {
-	routings, err := src.ListPublicHTTPRoutings(ctx, p.ID)
-	if err != nil {
-		return fmt.Errorf("read %s's domains: %w", p.Name, err)
-	}
-	for _, r := range routings {
-		for _, held := range r.Domains {
-			if slices.Contains(domains, strings.ToLower(held.Name)) {
-				return invalid(fmt.Sprintf("%s is already one of %s's domains", held.Name, p.Name),
-					"zerops_org_services shows where each domain points")
-			}
-		}
-	}
-	return nil
 }
 
 // domainList names domains in a sentence: "a", "a and b", "a, b and c".

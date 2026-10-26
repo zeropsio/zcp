@@ -14,6 +14,7 @@ import (
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -179,7 +180,7 @@ func TestDeployLocalTool_SameToolName(t *testing.T) {
 func TestSessionAnnotations_NoSession_StatusNone(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	got := sessionAnnotations(t.Context(), nil, dir)
+	got := sessionAnnotations(t.Context(), nil, runtime.Info{}, dir)
 	if got == nil {
 		t.Fatal("expected non-nil WorkSessionState")
 	}
@@ -208,7 +209,7 @@ func TestSessionAnnotations_ActiveSession_StatusOpen(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = workflow.DeleteWorkSession(dir, os.Getpid()) })
 
-	got := sessionAnnotations(t.Context(), nil, dir)
+	got := sessionAnnotations(t.Context(), nil, runtime.Info{}, dir)
 	if got == nil {
 		t.Fatal("expected non-nil WorkSessionState")
 	}
@@ -238,7 +239,7 @@ func TestSessionAnnotations_ClosedSession_StatusAutoClosed(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = workflow.DeleteWorkSession(dir, os.Getpid()) })
 
-	got := sessionAnnotations(t.Context(), nil, dir)
+	got := sessionAnnotations(t.Context(), nil, runtime.Info{}, dir)
 	if got == nil {
 		t.Fatal("expected non-nil WorkSessionState")
 	}
@@ -291,7 +292,7 @@ func TestSessionAnnotations_OpenScopeGreenUnsetCloseMode_SurfacesReason(t *testi
 	}
 	t.Cleanup(func() { _ = workflow.DeleteWorkSession(dir, os.Getpid()) })
 
-	got := sessionAnnotations(t.Context(), nil, dir)
+	got := sessionAnnotations(t.Context(), nil, runtime.Info{}, dir)
 	if got == nil {
 		t.Fatal("expected non-nil WorkSessionState")
 	}

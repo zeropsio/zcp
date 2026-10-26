@@ -214,9 +214,9 @@ func gitPushBuildIntegrationConfigured(stateDir, targetService string) bool {
 // fallback. Nothing ever builds from a wired pair's change in HQ (SPEC
 // §3.2a), so that destination is never trackable regardless of
 // BuildIntegration.
-func gitPushDestinationTrackable(stateDir, targetService, inputRemote string) bool {
+func gitPushDestinationTrackable(stateDir, targetService, inputRemote string, rt runtime.Info) bool {
 	effectiveRemote := resolveEffectiveRemote(stateDir, targetService, inputRemote)
-	return !hqRemoteOfThisMate(effectiveRemote) && gitPushBuildIntegrationConfigured(stateDir, targetService)
+	return !hqRemoteOfThisMate(effectiveRemote, rt) && gitPushBuildIntegrationConfigured(stateDir, targetService)
 }
 
 // trackedRefOrDefault is the single owner of the GF-7 "main" fallback
@@ -263,10 +263,10 @@ func hqGitPushRefusal(hostname string) *platform.PlatformError {
 // checked on a stage by a deploy that puts main back (DP-8). For a lease of a repository on this Mate's
 // HQ the push it names keeps HQ's rule — a branch of the agent's own, never
 // `main`, never forced (DP-12).
-func leaseGitPushRefusal(lease ops.LeaseTargetInfo) *platform.PlatformError {
+func leaseGitPushRefusal(lease ops.LeaseTargetInfo, rt runtime.Info) *platform.PlatformError {
 	alias := lease.Alias
 	push := fmt.Sprintf("Commit and `git push -u origin <branch>` over ssh to %s yourself", alias)
-	if hqRemoteOfThisMate(lease.Repo) {
+	if hqRemoteOfThisMate(lease.Repo, rt) {
 		push = fmt.Sprintf("Commit on a branch of your own and `git push -u origin <branch>` over ssh to %s yourself — never push %q and never force-push: HQ refuses both, and a branch another Mate's open change holds; %q moves only when a person merges", alias, hqBase, hqBase)
 	}
 	return platform.NewPlatformError(platform.ErrInvalidUsage,
@@ -412,7 +412,7 @@ func handleGitPush(
 	recordAttempt := func(err string, class topology.FailureClass) {
 		attempt.Error = err
 		attempt.FailureClass = class
-		if !gitPushDestinationTrackable(stateDir, input.TargetService, input.RemoteURL) {
+		if !gitPushDestinationTrackable(stateDir, input.TargetService, input.RemoteURL, rt) {
 			return
 		}
 		_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
@@ -449,7 +449,7 @@ func handleGitPush(
 
 	// A pair wired to HQ holds the Mate's HQ credential as GIT_TOKEN: a push
 	// to any remote would hand it over, so none runs, whatever the remote.
-	if meta, _ := workflow.FindServiceMeta(stateDir, hostname); hqPairWired(meta) || hqRemoteOfThisMate(effectiveRemote) {
+	if meta, _ := workflow.FindServiceMeta(stateDir, hostname); hqPairWired(meta) || hqRemoteOfThisMate(effectiveRemote, rt) {
 		refusal := hqGitPushRefusal(hostname)
 		recordAttempt(refusal.Message, topology.FailureClassConfig)
 		return convertError(refusal, WithRecoveryStatus()), nil, nil
@@ -709,7 +709,7 @@ func handleGitPush(
 	return jsonResult(deployGitPushResponse{
 		GitPushResult:    result,
 		Warnings:         warnings,
-		WorkSessionState: sessionAnnotations(ctx, httpClient, stateDir),
+		WorkSessionState: sessionAnnotations(ctx, httpClient, rt, stateDir),
 		Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rt),
 	}), nil, nil
 }

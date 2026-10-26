@@ -254,7 +254,7 @@ func handlePoolMigrate(
 	stateDir string,
 	rt runtime.Info,
 ) (*mcp.CallToolResult, any, error) {
-	return poolMigrateRun(ctx, poolMigrateDeps{projectID: projectID, client: client, ssh: sshDeployer, stateDir: stateDir, rt: rt, hqAddress: hqAddress}, input)
+	return poolMigrateRun(ctx, poolMigrateDeps{projectID: projectID, client: client, ssh: sshDeployer, stateDir: stateDir, rt: rt, hqAddress: func() string { return hqAddress(rt) }}, input)
 }
 
 func poolMigrateRun(ctx context.Context, d poolMigrateDeps, input WorkflowInput) (*mcp.CallToolResult, any, error) {
@@ -286,7 +286,7 @@ func handlePoolMigrateEnv(
 	stateDir string,
 	rt runtime.Info,
 ) (*mcp.CallToolResult, any, error) {
-	return poolMigrateEnvRun(ctx, poolMigrateDeps{projectID: projectID, client: client, ssh: sshDeployer, stateDir: stateDir, rt: rt, hqAddress: hqAddress}, input)
+	return poolMigrateEnvRun(ctx, poolMigrateDeps{projectID: projectID, client: client, ssh: sshDeployer, stateDir: stateDir, rt: rt, hqAddress: func() string { return hqAddress(rt) }}, input)
 }
 
 func poolMigrateEnvRun(ctx context.Context, d poolMigrateDeps, input WorkflowInput) (*mcp.CallToolResult, any, error) {
@@ -627,7 +627,9 @@ func (c *poolMigrateCall) envInput(d poolMigrateDeps, input WorkflowInput) ops.P
 
 // poolMigrateDevOrigin is the repository the dev service's work moves
 // through, the one a lease of the pool clones: in a Mate the pair's HQ
-// repository, elsewhere its git-push remote. "" when zcp cannot name it.
+// repository, elsewhere its git-push remote. "" when zcp cannot name it — in
+// a Mate also when the container has no organisation to address HQ's
+// repository by (hq.ErrNoOrganisation).
 func poolMigrateDevOrigin(meta *workflow.ServiceMeta, d poolMigrateDeps) string {
 	if !d.rt.MateEnabled {
 		return meta.RemoteURL
@@ -639,7 +641,11 @@ func poolMigrateDevOrigin(meta *workflow.ServiceMeta, d poolMigrateDeps) string 
 	if address == "" {
 		return ""
 	}
-	return hq.RepoURLAt(address, meta.HQ.AppID, meta.HQ.Repo)
+	origin, err := hq.RepoURLAt(address, d.rt.OrgID, meta.HQ.AppID, meta.HQ.Repo)
+	if err != nil {
+		return ""
+	}
+	return origin
 }
 
 // poolMigrateSettledAnswer answers a settled pool: the env step while the

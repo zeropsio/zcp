@@ -20,7 +20,9 @@ const assert = require("node:assert/strict");
 const { mock } = require("node:test");
 const fs = require("node:fs");
 const path = require("node:path");
-const { loadExtension } = require("./harness.js");
+const { loadExtension, freezeWallClock } = require("./harness.js");
+
+freezeWallClock();
 
 const ZEMBED_ENV_PATH = path.join("/etc/zerops-zembed", "env.json");
 const BRIDGE_CHANNEL = "@zerops/zcp-agent-auth-bridge";

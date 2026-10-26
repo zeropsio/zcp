@@ -16,7 +16,7 @@ import (
 // closeChange is zerops_workflow action="close-change" in the lab.
 func (l *hqLab) closeChange(service, branch string) (changeCloseResult, string, bool) {
 	l.t.Helper()
-	res, typed, err := handleCloseChange(context.Background(), l.hq.srv.Client(), l.stateDir, WorkflowInput{Service: service, Branch: branch})
+	res, typed, err := handleCloseChange(context.Background(), l.hq.srv.Client(), l.rt, l.stateDir, WorkflowInput{Service: service, Branch: branch})
 	if err != nil {
 		l.t.Fatalf("handleCloseChange: %v", err)
 	}

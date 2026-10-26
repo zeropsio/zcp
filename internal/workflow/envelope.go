@@ -235,8 +235,11 @@ type ServiceSnapshot struct {
 	// HQCheckoutOrigin is that half's checkout's origin as status read it
 	// (HQOriginNone for none; "" unread), and HQOriginPending where the
 	// wiring points it when that differs — the move develop's start makes.
+	// HQOriginBlocked says why the wiring cannot name that target (no
+	// organisation to address HQ's repository by).
 	HQCheckoutOrigin string `json:"-"`
 	HQOriginPending  string `json:"-"`
+	HQOriginBlocked  string `json:"-"`
 
 	// Setup-name projection from ServiceMeta (canonical store on disk).
 	// SetupName mirrors meta.SetupNameFor(Hostname) for this half;

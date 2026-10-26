@@ -12,6 +12,7 @@ import (
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -37,14 +38,15 @@ type changeCloseResult struct {
 func handleCloseChange(
 	ctx context.Context,
 	httpClient ops.HTTPDoer,
+	rt runtime.Info,
 	stateDir string,
 	input WorkflowInput,
 ) (*mcp.CallToolResult, any, error) {
-	hqc, enrolled := openHQ(httpClient)
-	if !enrolled {
+	hqc, linked := openHQ(httpClient, rt)
+	if !linked {
 		return convertError(platform.NewPlatformError(
 			platform.ErrPrerequisiteMissing,
-			"close-change closes a change in this Mate's HQ, and this Mate is not enrolled with one yet.",
+			"close-change closes a change in this Mate's HQ, and this Mate is not linked to one yet.",
 			"Without HQ there is no change to close.",
 		), WithRecoveryStatus()), nil, nil
 	}

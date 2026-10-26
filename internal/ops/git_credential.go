@@ -30,8 +30,8 @@ const gitCredentialHelperShell = `!f() { test "$1" = get && { echo username=oaut
 // secret git-push-setup writes the credential to; the Mate's shell, which
 // runs git on the same repository through the mount, carries no GIT_TOKEN —
 // it asks `zcp hq git-credential`, which answers HQ's host from the
-// enrollment as it is now (a re-enrollment rotates the credential), handing it
-// git's request on stdin; this helper is stored under HQ's scope only, so it
+// Mate's Git credential file as it is now (HQ replaces the credential over the
+// link), handing it git's request on stdin; this helper is stored under HQ's scope only, so it
 // never asks for another host. With neither it answers
 // nothing at all, never an empty password, so git goes on to its next helper.
 const hqCredentialHelperShell = `!f() { test "$1" = get || return 0; if test -n "$GIT_TOKEN"; then echo username=mate; echo "password=$GIT_TOKEN"; else zcp hq git-credential get; fi; }; f`
@@ -56,8 +56,8 @@ func hqCredentialHelperArgs() string {
 }
 
 // gitCredentialHelperArgsFor is the per-invocation helper for remoteURL: HQ's
-// when the remote is on the Mate's HQ (hqURL, "" on a container not enrolled
-// with one), the session-env helper otherwise.
+// when the remote is on the Mate's HQ (hqURL, "" on a container that
+// names none), the session-env helper otherwise.
 func gitCredentialHelperArgsFor(remoteURL, hqURL string) string {
 	if IsHQRemote(remoteURL, hqURL) {
 		return hqCredentialHelperArgs()
@@ -166,7 +166,7 @@ func SelfBuildTarget(pushSource, buildTarget string) bool {
 // replacement containers exactly like the deploy identity does.
 //
 // The helper's text depends on the host: a remote on the Mate's HQ (hqURL,
-// "" on a container not enrolled with one) gets the helper that also answers
+// "" on a container that names none) gets the helper that also answers
 // the Mate's shell (hqCredentialHelperShell); every other host answers
 // GIT_TOKEN only. Every scope carries the remote's port when it is not 443
 // (scopeWithPort). A remote whose host cannot be a scope (an IPv6
@@ -230,7 +230,7 @@ func scopeWithPort(remoteURL, host string) string {
 
 // IsHQRemote reports whether remoteURL is a repository on the Mate's HQ:
 // https, on HQ's own host and port. hqURL is HQ's address, "" when this
-// container is not enrolled with one.
+// container names none.
 func IsHQRemote(remoteURL, hqURL string) bool {
 	if hqURL == "" {
 		return false

@@ -15,7 +15,6 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
-	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -24,20 +23,16 @@ import (
 )
 
 // TestLease_Integration_HQRepoInAMate_PutsTheMateCredentialOnThePool: in a
-// Mate enrolled with its HQ, the first acquire of a repository on HQ writes
-// the Mate credential to the pool's ZCP_HQ_GIT_TOKEN as a sensitive secret
+// Mate linked to its HQ, the first acquire of a repository on HQ writes
+// the Mate's Git credential to the pool's ZCP_HQ_GIT_TOKEN as a sensitive secret
 // before it checks out, leaving the user's GIT_TOKEN as it was; the next one
 // finds zcp's fingerprint matching and writes nothing. No result and no file
 // under the working directory carries the credential.
 func TestLease_Integration_HQRepoInAMate_PutsTheMateCredentialOnThePool(t *testing.T) {
-	// Non-parallel: t.Chdir (the state dir), t.Setenv (HOME holds the
-	// enrollment) and a swap of http.DefaultTransport (the orchestrator).
+	// Non-parallel: t.Chdir (the state dir) and a swap of
+	// http.DefaultTransport (the orchestrator).
 	dir := t.TempDir()
 	t.Chdir(dir)
-	t.Setenv("HOME", t.TempDir())
-	if err := hq.SaveEnrollment(hq.EnrollmentPath(), hq.Enrollment{HQ: leaseIntHQ, ProjectID: "proj-1", Credential: leaseIntHQCredential}); err != nil {
-		t.Fatal(err)
-	}
 	routeLeaseOrchestrator(t)
 	mock := defaultMock().
 		WithServices([]platform.ServiceStack{
@@ -55,7 +50,7 @@ func TestLease_Integration_HQRepoInAMate_PutsTheMateCredentialOnThePool(t *testi
 	srv := server.New(context.Background(), mock,
 		&auth.Info{ProjectID: "proj-1", Token: "test-token", APIHost: "localhost", Region: "prg1"},
 		store, platform.NewMockLogFetcher(), ssh, nil,
-		runtime.Info{InContainer: true, ServiceID: "s-zcp", ServiceName: "zcp", ProjectID: "proj-1", MateEnabled: true}, nil)
+		runtime.Info{InContainer: true, ServiceID: "s-zcp", ServiceName: "zcp", ProjectID: "proj-1", MateEnabled: true, HQ: leaseIntHQLink(t)}, nil)
 	defer srv.WaitBackground()
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()

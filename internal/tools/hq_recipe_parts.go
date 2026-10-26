@@ -263,7 +263,7 @@ func handleGroupRecipeService(
 		}
 		return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
 			"The service proposal was not made: "+reason,
-			"Retry once this Mate is enrolled with its HQ and a pair has its repository there."), WithRecoveryStatus()), nil, nil
+			"Retry once this Mate is linked to its HQ and a pair has its repository there."), WithRecoveryStatus()), nil, nil
 	}
 	defer comp.close()
 	// A managed service the Mate's project runs is proposed for any app

@@ -74,11 +74,13 @@ func hqLeaseBranches(stateDir, address string) []hqLeaseBranch {
 // does or not.
 const hqChangesReadBound = 5 * time.Second
 
-// hqStateNow is the Mate's own state in HQ, read once and bounded; nil when
-// this zcp holds no enrollment or HQ did not answer.
-func hqStateNow(ctx context.Context, httpClient ops.HTTPDoer) *hq.MateState {
-	hqc, enrolled := openHQ(httpClient)
-	if !enrolled {
+// hqStateNow is the Mate's own state in HQ, read once and bounded, from the
+// HQ the container rt presents itself to (hqIdentity: its environment's
+// origin, else the one the installed Mate declares); nil when the container
+// cannot address an HQ or HQ did not answer.
+func hqStateNow(ctx context.Context, httpClient ops.HTTPDoer, rt runtime.Info) *hq.MateState {
+	hqc, linked := openHQ(httpClient, rt)
+	if !linked {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, hqChangesReadBound)
@@ -106,7 +108,7 @@ func statusHQChanges(ctx context.Context, httpClient ops.HTTPDoer, rt runtime.In
 	if !rt.MateEnabled {
 		return kept, true
 	}
-	state := hqStateNow(ctx, httpClient)
+	state := hqStateNow(ctx, httpClient, rt)
 	if state == nil {
 		return kept, true
 	}
@@ -390,7 +392,7 @@ func releaseOpenChangesWords(ctx context.Context, httpClient ops.HTTPDoer, rt ru
 	}
 	var state *hq.MateState
 	if rt.MateEnabled {
-		state = hqStateNow(ctx, httpClient)
+		state = hqStateNow(ctx, httpClient, rt)
 	}
 	byRepo := map[string][]int{}
 	var repos []string

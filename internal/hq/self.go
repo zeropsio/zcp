@@ -2,13 +2,9 @@ package hq
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 )
-
-// ErrNotEnrolled is a Mate holding no enrollment yet: nothing to ask HQ with.
-var ErrNotEnrolled = errors.New("not enrolled with HQ yet")
 
 // MateState is the Mate as HQ holds it (GET /api/mate/self): its record, its
 // birth, written by the client that set it up, and the application HQ holds
@@ -43,6 +39,16 @@ type MateState struct {
 	// Production is whether that application has a production, of any
 	// target, released or not. nil from an HQ older than it.
 	Production *bool `json:"production"`
+	// Chief is the Chief this Mate answers to: itself if it is a registered
+	// Chief, otherwise its owner's usable Chief; nil while it has none.
+	Chief *Chief `json:"chief"`
+}
+
+// Chief is the project of the Chief a Mate answers to, one person's Chief
+// registered in HQ; a Mate compares it with its own project
+// (docs/spec-mate.md §3.11).
+type Chief struct {
+	ProjectID string `json:"projectId"`
 }
 
 // MateRepo is one of the application's repositories in HQ, with the origin
@@ -121,4 +127,14 @@ func (c Client) Self(ctx context.Context) (MateState, error) {
 		return MateState{}, fmt.Errorf("mate state: %w", err)
 	}
 	return state, nil
+}
+
+// IsChief reports whether the Chief this Mate answers to is its own project,
+// that is, the Mate is a Chief: it then serves org mode (docs/spec-mate.md §2.11).
+func (c Client) IsChief(ctx context.Context) (bool, error) {
+	state, err := c.Self(ctx)
+	if err != nil {
+		return false, err
+	}
+	return state.Chief != nil && state.Chief.ProjectID == c.id.ProjectID, nil
 }

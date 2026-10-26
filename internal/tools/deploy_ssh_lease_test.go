@@ -77,6 +77,8 @@ type leaseDeployRig struct {
 	stateDir string
 	alias    string
 	mock     *platform.Mock
+	// rt is the container the deploy runs in.
+	rt runtime.Info
 }
 
 // writeLeaseFile records the lease webpool-3 the way zcp's own record
@@ -131,14 +133,14 @@ func newLeaseDeployRig(t *testing.T) leaseDeployRig {
 			{ID: "av-stage", ProjectID: "proj-1", ServiceStackID: "svc-stage", Status: statusActive, Sequence: 1},
 			{ID: "av-pool", ProjectID: "proj-1", ServiceStackID: "svc-pool", Status: statusActive, Sequence: 1},
 		})
-	return leaseDeployRig{stateDir: stateDir, alias: alias, mock: mock}
+	return leaseDeployRig{stateDir: stateDir, alias: alias, mock: mock, rt: runtime.Info{InContainer: true, ServiceName: "zcp"}}
 }
 
 func (r leaseDeployRig) deploy(t *testing.T, ssh ops.SSHDeployer, args map[string]any) (*mcp.CallToolResult, string) {
 	t.Helper()
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploySSH(srv, r.mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{InContainer: true, ServiceName: "zcp"}, r.stateDir, testDeployEngine(t), nil, DevsupSource{}, withVouchHeld())
+	RegisterDeploySSH(srv, r.mock, okHTTP, "proj-1", ssh, authInfo, nil, r.rt, r.stateDir, testDeployEngine(t), nil, DevsupSource{}, withVouchHeld())
 	result := callTool(t, srv, "zerops_deploy", args)
 	return result, getTextContent(t, result)
 }

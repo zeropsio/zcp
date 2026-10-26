@@ -55,7 +55,7 @@ func writeFakeBin(t *testing.T, path, body string) {
 
 // manifestVersion is the release every test in this file resolves toward —
 // arbitrary, standing in for whatever the real release manifest would name.
-const manifestVersion = "0.15.154"
+const manifestVersion = "0.16.1"
 
 // manifestAndTarballServer serves a valid stable.json at /stable.json for
 // manifestVersion, plus the tarball body it names, both real loopback HTTPS
@@ -246,7 +246,7 @@ func TestRunMateStatus_JSON_ReportsUpdateAvailable(t *testing.T) {
 		t.Fatalf("unmarshal status JSON %q: %v", stdout, err)
 	}
 	if got.Installed != "0.14.0" || got.Latest != manifestVersion || !got.UpdateAvailable {
-		t.Errorf("status = %+v, want installed=0.14.0 latest=0.15.154 updateAvailable=true", got)
+		t.Errorf("status = %+v, want installed=0.14.0 latest=0.16.1 updateAvailable=true", got)
 	}
 	if got.Contract != mate.SupportedContract {
 		t.Errorf("status.Contract = %d, want %d", got.Contract, mate.SupportedContract)
@@ -265,8 +265,8 @@ func TestRunMateStatus_Refresh_BypassesManifestCache(t *testing.T) {
 		args       []string
 		wantLatest string
 	}{
-		{"no refresh: reports the warm cache", []string{"status", "--json"}, "0.15.153"},
-		{"--refresh: bypasses the cache", []string{"status", "--json", "--refresh"}, "0.15.154"},
+		{"no refresh: reports the warm cache", []string{"status", "--json"}, "0.16.0"},
+		{"--refresh: bypasses the cache", []string{"status", "--json", "--refresh"}, "0.16.1"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -274,15 +274,15 @@ func TestRunMateStatus_Refresh_BypassesManifestCache(t *testing.T) {
 			t.Setenv("HOME", home)
 			seedInstalledBundle(t, home, "0.14.0")
 
-			// Warm the manifest cache at 0.15.153.
-			manifestServerForVersion(t, "0.15.153")
+			// Warm the manifest cache at 0.16.0.
+			manifestServerForVersion(t, "0.16.0")
 			if got := runMateCmd([]string{"status", "--json"}); got != 0 {
 				t.Fatalf("warm cache: runMateCmd(status --json) = %d, want 0", got)
 			}
 
 			// Point the manifest URL at a server answering a newer version —
-			// only --refresh should reach it; a warm cache answers 0.15.153.
-			manifestServerForVersion(t, "0.15.154")
+			// only --refresh should reach it; a warm cache answers 0.16.0.
+			manifestServerForVersion(t, "0.16.1")
 
 			stdout := captureStdout(t, func() {
 				if got := runMateCmd(tt.args); got != 0 {
@@ -441,7 +441,7 @@ func TestRunMateUpdate_InstallsAndRestartsWhenUnitPresent(t *testing.T) {
 		t.Fatalf("unmarshal update JSON %q: %v", stdout, err)
 	}
 	if got.Action != string(mate.ActionInstalled) || got.To != manifestVersion || !got.Restarted {
-		t.Errorf("update result = %+v, want action=installed to=0.15.154 restarted=true", got)
+		t.Errorf("update result = %+v, want action=installed to=0.16.1 restarted=true", got)
 	}
 }
 

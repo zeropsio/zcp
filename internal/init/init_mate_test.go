@@ -8,6 +8,7 @@ package init_test
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -846,6 +847,116 @@ func TestRun_Mate_UnitFileChangedOnDisk_ReloadsSystemd(t *testing.T) {
 			}
 			if reload >= 0 && restart >= 0 && reload > restart {
 				t.Errorf("daemon-reload must precede the restart: %v", rig.commands)
+			}
+		})
+	}
+}
+
+// aboveMinimum is a release n patch levels above the minimum this zcp drives.
+func aboveMinimum(t *testing.T, n int) string {
+	t.Helper()
+	var major, minor, patch int
+	if _, err := fmt.Sscanf(mate.MinimumMateVersion, "%d.%d.%d", &major, &minor, &patch); err != nil {
+		t.Fatal(err)
+	}
+	return fmt.Sprintf("%d.%d.%d", major, minor, patch+n)
+}
+
+// layVersion lays down one installed Mate release the way InstallRelease leaves it: a package
+// manifest naming the version and an executable that advertises --base-path.
+func layVersion(t *testing.T, home, version string) {
+	t.Helper()
+	dir := filepath.Join(home, ".zcp", "mate", "versions", version, "node_modules")
+	pkg := filepath.Join(dir, mate.PackageName)
+	if err := os.MkdirAll(pkg, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkg, "package.json"), []byte(`{"name":"`+mate.PackageName+`","version":"`+version+`"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(dir, ".bin", mate.BinName)
+	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho '  --base-path  Public path prefix'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func pointLink(t *testing.T, link, version string) {
+	t.Helper()
+	_ = os.Remove(link)
+	if err := os.Symlink(filepath.Join("versions", version), link); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestRun_Mate_UpdateRoutes_LastGoodAdvancesOnlyOnceTheRunningVersionIsHealthy: a Mate moved from
+// a contract-1 release to a contract-2 one ends with the same rollback target whether `zcp init`
+// at boot or the update worker moved it (rehearsal R-A2), and that target is never a release that
+// has not started healthy under this zcp, nor one below the minimum this zcp drives.
+func TestRun_Mate_UpdateRoutes_LastGoodAdvancesOnlyOnceTheRunningVersionIsHealthy(t *testing.T) {
+	old, fresh := aboveMinimum(t, 1), aboveMinimum(t, 2)
+	for _, tc := range []struct {
+		name         string
+		boot         bool
+		newVersion   string
+		healthy      bool
+		wantLastGood string
+	}{
+		{"boot update that started healthy", true, fresh, true, fresh},
+		{"worker update that started healthy", false, fresh, true, fresh},
+		{"boot update that never became ready", true, fresh, false, old},
+		{"boot update below the minimum this zcp drives", true, "0.0.1", true, old},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rig := newMateRig(t)
+			layVersion(t, rig.home, old)
+			layVersion(t, rig.home, tc.newVersion)
+			current := filepath.Join(rig.home, ".zcp", "mate", "current")
+			lastGood := filepath.Join(rig.home, ".zcp", "mate", "last-good")
+			pointLink(t, current, old)
+			pointLink(t, lastGood, old)
+			if err := os.WriteFile(rig.unitPath, []byte("[Unit]\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			zcpinit.SetMateWaitReady(func(version, _ string, _ time.Time) error {
+				if !tc.healthy {
+					return errors.New("not ready")
+				}
+				if version != tc.newVersion {
+					t.Errorf("readiness asked about %s, want %s", version, tc.newVersion)
+				}
+				return nil
+			})
+			t.Cleanup(zcpinit.ResetMateWaitReady)
+
+			if tc.boot {
+				zcpinit.SetMateEnsureInstalled(func(mate.EnsureOptions) (mate.Result, error) {
+					pointLink(t, current, tc.newVersion)
+					return mate.Result{Action: mate.ActionUpdated, From: old, To: tc.newVersion}, nil
+				})
+				if err := zcpinit.Run(rig.baseDir, containerInfo()); err != nil {
+					t.Fatalf("Run(): %v", err)
+				}
+			} else {
+				err := mate.SwitchUpdate(tc.newVersion, "old-boot", mate.SwitchHooks{
+					Restart: func() error { return nil },
+					Ready:   func(string, string) error { return nil },
+					Commit:  func() error { return nil },
+					Cancel:  func() error { return nil },
+				})
+				if err != nil {
+					t.Fatalf("SwitchUpdate: %v", err)
+				}
+			}
+
+			got, err := os.Readlink(lastGood)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := filepath.Join("versions", tc.wantLastGood); got != want {
+				t.Errorf("last-good -> %s, want %s", got, want)
 			}
 		})
 	}

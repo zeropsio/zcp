@@ -266,9 +266,9 @@ func composeGroupRecipe(
 	if !rt.InContainer || !rt.MateEnabled || client == nil || httpClient == nil {
 		return groupRecipeComposition{}, recipeOutcome{Blocked: "the group recipe is a Mate's act — there is no Mate environment here"}, false
 	}
-	hqc, enrolled := openHQ(httpClient)
-	if !enrolled {
-		return groupRecipeComposition{}, recipeOutcome{Blocked: "this Mate is not enrolled with its HQ yet, so there is no recipe repository to propose to"}, false
+	hqc, linked := openHQ(httpClient, rt)
+	if !linked {
+		return groupRecipeComposition{}, recipeOutcome{Blocked: "this Mate is not linked to its HQ yet, so there is no recipe repository to propose to"}, false
 	}
 	metas, err := workflow.ListServiceMetas(stateDir)
 	if err != nil || len(metas) == 0 {
@@ -301,7 +301,7 @@ func composeGroupRecipe(
 	}
 	var outcome recipeOutcome
 	inputs, readWarnings, err := composeGroupRecipeInputs(ctx, client, rt.ProjectID, recipeName(state.AppName, repo.AppID),
-		recipePairMountRoot, hqc.Address(), repo.AppID, metas, wired)
+		recipePairMountRoot, hqc.Address(), hqc.OrgID(), repo.AppID, metas, wired)
 	outcome.Warnings = append(outcome.Warnings, readWarnings...)
 	if err != nil {
 		outcome.Line = fmt.Sprintf("the group recipe is not proposed yet (%v) — retrying on the next pass.", err)

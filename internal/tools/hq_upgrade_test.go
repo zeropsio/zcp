@@ -49,6 +49,7 @@ var (
 // pushed as it says reaches the change by fast-forward. open-change from a
 // branch cut from main answers the change with the same way onto it.
 func TestUpgrade_AnOpenChangeTheReleasedZcpRecordedKeepsStatusAndPushWorking(t *testing.T) {
+	t.Parallel()
 	lab := newHQLab(t)
 	lab.wire()
 	lab.mock.WithServices([]platform.ServiceStack{

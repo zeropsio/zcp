@@ -8,19 +8,33 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
-	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/hq/hqtest"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 )
 
 const (
 	leaseIntHQ           = "https://hq.example.invalid"
-	leaseIntHQRepo       = leaseIntHQ + "/git/a1/web"
+	leaseIntHQRepo       = leaseIntHQ + "/git/org-1/a1/web"
 	leaseIntHQCredential = "the-mate-credential-0001"
 )
+
+// leaseIntHQLink links the test's container to the HQ at leaseIntHQ, the way
+// a Mate's container presents itself to its HQ: its identity, and a file
+// outside the working directory for the Git credential the Mate's server
+// keeps, holding leaseIntHQCredential.
+func leaseIntHQLink(t *testing.T) *runtime.HQLink {
+	t.Helper()
+	link := &runtime.HQLink{Origin: leaseIntHQ, ProjectID: "proj-1", Key: "the-project-key",
+		GitCredentialPath: filepath.Join(t.TempDir(), ".zcp", "hq", "git-credential")}
+	hqtest.GitCredential(t, link.GitCredentialPath, leaseIntHQCredential)
+	return link
+}
 
 // routeLeaseOrchestrator answers devpool's orchestrator with one container
 // that an acquire reserves.
@@ -70,18 +84,14 @@ func routeLeaseOrchestrator(t *testing.T) {
 }
 
 // TestLease_Integration_HQRepo_ChecksOutAsMateAndPushesByHQsRule: in a Mate
-// enrolled with its HQ, a lease of a repository on it is checked out as HQ's
+// linked to its HQ, a lease of a repository on it is checked out as HQ's
 // git user `mate` — the fetch and the helper the repository keeps under HQ's
 // scope — and a git-push deploy from that lease is refused with HQ's branch
 // rule. Neither result carries the Mate credential.
 func TestLease_Integration_HQRepo_ChecksOutAsMateAndPushesByHQsRule(t *testing.T) {
-	// Non-parallel: t.Chdir (the state dir), t.Setenv (HOME holds the
-	// enrollment) and a swap of http.DefaultTransport (the orchestrator).
+	// Non-parallel: t.Chdir (the state dir) and a swap of
+	// http.DefaultTransport (the orchestrator).
 	t.Chdir(t.TempDir())
-	t.Setenv("HOME", t.TempDir())
-	if err := hq.SaveEnrollment(hq.EnrollmentPath(), hq.Enrollment{HQ: leaseIntHQ, ProjectID: "proj-1", Credential: leaseIntHQCredential}); err != nil {
-		t.Fatal(err)
-	}
 	routeLeaseOrchestrator(t)
 
 	mock := defaultMock().
@@ -91,7 +101,7 @@ func TestLease_Integration_HQRepo_ChecksOutAsMateAndPushesByHQsRule(t *testing.T
 		}).
 		WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{ID: "env-t", Key: "API_TOKEN", Content: leaseIntToken, Sensitive: true}})
 	ssh := &stageLeaseSSH{}
-	session, cleanup := setupLeaseTestServer(t, mock, defaultLogFetcher(), ssh)
+	session, cleanup := setupTestServerIn(t, mock, defaultLogFetcher(), ssh, runtime.Info{InContainer: true, HQ: leaseIntHQLink(t)})
 	defer cleanup()
 
 	res := callAndGetResult(t, session, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseIntHQRepo + ".git", "branch": "feat"})

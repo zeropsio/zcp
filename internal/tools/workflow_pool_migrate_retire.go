@@ -473,7 +473,7 @@ func handlePoolMigrateRetire(
 	rt runtime.Info,
 ) (*mcp.CallToolResult, any, error) {
 	return poolMigrateRetireRun(ctx, poolRetireDeps{
-		poolMigrateDeps: poolMigrateDeps{projectID: projectID, client: client, ssh: sshDeployer, stateDir: stateDir, rt: rt, hqAddress: hqAddress},
+		poolMigrateDeps: poolMigrateDeps{projectID: projectID, client: client, ssh: sshDeployer, stateDir: stateDir, rt: rt, hqAddress: func() string { return hqAddress(rt) }},
 		mounter:         mounter,
 		swarm:           swarm,
 	}, input)

@@ -330,7 +330,7 @@ func TestLeaseWarmClone_SSHFailingAsTheAliasFileIsRewritten_TriedAgain(t *testin
 // enrolled again — and never writes it itself.
 func TestLeaseWarmClone_HQRepository_OnlyWithTheMateCredentialOnThePool(t *testing.T) {
 	t.Parallel()
-	current := hq.CredentialFingerprint(poolMateCredential)
+	current := hq.GitCredentialFingerprint(poolMateCredential)
 	tests := []struct {
 		name      string
 		inAMate   bool
@@ -340,7 +340,7 @@ func TestLeaseWarmClone_HQRepository_OnlyWithTheMateCredentialOnThePool(t *testi
 	}{
 		{"outside a Mate", false, "svc-pool", current, false},
 		{"no credential written yet", true, "", "", false},
-		{"the Mate enrolled again", true, "svc-pool", hq.CredentialFingerprint(poolOldCredential), false},
+		{"the Mate enrolled again", true, "svc-pool", hq.GitCredentialFingerprint(poolOldCredential), false},
 		{"the pool was re-created", true, "svc-gone", current, false},
 		{"the pool holds the credential", true, "svc-pool", current, true},
 	}

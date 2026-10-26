@@ -113,6 +113,7 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 	}
 
 	refreshAgentContext(stateDir, rtInfo, logger)
+	rtInfo.OrgID = authInfo.ClientID
 
 	rc := RuntimeContext{
 		AdoptionNote: adoptionNote,
@@ -202,23 +203,16 @@ func refreshAgentContext(stateDir string, rtInfo runtime.Info, logger *slog.Logg
 	}
 }
 
-// OrgReader is what org mode reads through: the organization, plus the
-// platform's service-type catalogue the knowledge tool's schema overlay
-// reads. platform.OrgReader is the production one.
-type OrgReader interface {
-	ops.OrgSource
-	ListActiveServiceTypeVersions(ctx context.Context) ([]string, error)
-}
-
 // NewOrg creates the MCP server for org mode (docs/spec-mate.md §2.11): the
 // Chief, a person's Mate for the whole organization. It registers the
-// zerops_org_* look and propose tools over org, platform knowledge, and in a
+// zerops_org_* look and propose tools over org (HQ's overview, platform.OrgReader
+// in production), platform knowledge, and in a
 // Mate's container the page tool. The single-project surface — workflows,
 // deploys, discover, logs, env, manage, scale, import, delete, mount,
 // subdomain, dev server, stand-up, and the browser that looks at a service
 // of this project — acts on the Chief's own empty project and is not
 // registered; no write-capable client exists in org mode.
-func NewOrg(_ context.Context, org OrgReader, apiHost string, store knowledge.Provider, logFetcher platform.LogFetcher, rtInfo runtime.Info, tel telemetry.Emitter) *Server {
+func NewOrg(_ context.Context, org ops.OrgSource, store knowledge.Provider, rtInfo runtime.Info, tel telemetry.Emitter) *Server {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel()}))
 	stateDir := stateDirFromCwd()
 	refreshAgentContext(stateDir, rtInfo, logger)
@@ -228,20 +222,19 @@ func NewOrg(_ context.Context, org OrgReader, apiHost string, store knowledge.Pr
 		&mcp.ServerOptions{Logger: logger},
 	)
 	s := &Server{
-		server:     srv,
-		authInfo:   &auth.Info{APIHost: apiHost},
-		store:      store,
-		logFetcher: logFetcher,
-		rtInfo:     rtInfo,
-		logger:     logger,
-		telemetry:  tel,
+		server:    srv,
+		authInfo:  &auth.Info{},
+		store:     store,
+		rtInfo:    rtInfo,
+		logger:    logger,
+		telemetry: tel,
 	}
 	receive, send := keepAlive(keepAliveInterval, keepAliveGap)
 	srv.AddReceivingMiddleware(s.observe(), receive)
 	srv.AddSendingMiddleware(send)
 
-	tools.RegisterOrg(srv, org, logFetcher, uuid.NewString)
-	schemaCache := schema.NewCache(schema.DefaultCacheTTL, apiHost, org.ListActiveServiceTypeVersions)
+	tools.RegisterOrg(srv, org, uuid.NewString)
+	schemaCache := schema.NewCache(schema.DefaultCacheTTL, "", nil)
 	tools.RegisterKnowledge(srv, store, nil, schemaCache, ops.NewKnowledgeTracker(), nil)
 	if rtInfo.InContainer && rtInfo.MateEnabled && stateDir != "" {
 		tools.RegisterPublishPage(srv, stateDir, filepath.Dir(filepath.Dir(stateDir)), false)
@@ -391,7 +384,7 @@ func (s *Server) registerTools() {
 		// A Mate's agent asks where the code of the repository it came from
 		// is kept (docs/spec-mate.md §5.10); a Mate's client
 		// draws the card, so it is Mate-gated like every mate-shaped effect.
-		tools.RegisterOrigin(s.server, httpClient, projectID, stateDir)
+		tools.RegisterOrigin(s.server, httpClient, projectID, s.rtInfo.OrgID, stateDir)
 		// A Mate asks its person's Chief for what lies outside its project
 		// (docs/spec-mate.md §2.11); the card it proposes is drawn by a
 		// Mate's client, so the tool is Mate-gated like every mate-shaped
@@ -407,7 +400,7 @@ func (s *Server) registerTools() {
 		tools.WithPoolOrchestratorsForScale(stateDir, ops.NewSwarmFactory(&http.Client{Timeout: ops.LeaseCallTimeout})))
 	// A Mate puts its organization's AI key in the Shared vault for an app
 	// (zerops_env action=ai-key, docs/spec-mate.md §5.8): Mate-gated like every
-	// Mate effect (§2.0), its key asked of HQ with the enrollment.
+	// Mate effect (§2.0), its key asked of HQ under the project key.
 	var envOpts []tools.EnvOption
 	if s.rtInfo.InContainer && s.rtInfo.MateEnabled {
 		envOpts = append(envOpts, tools.WithOrgAIKey(httpClient))

@@ -138,7 +138,7 @@ func sessionFingerprint(value string) []byte {
 // record keeps the fingerprint, never the credential.
 func TestLeaseAcquire_HQRepoInAMate_PutsTheMateCredentialOnThePool(t *testing.T) {
 	t.Parallel()
-	current := hq.CredentialFingerprint(poolMateCredential)
+	current := hq.GitCredentialFingerprint(poolMateCredential)
 	tests := []struct {
 		name      string
 		recordFor string // the pool service id the record names, "" for no record
@@ -147,7 +147,7 @@ func TestLeaseAcquire_HQRepoInAMate_PutsTheMateCredentialOnThePool(t *testing.T)
 	}{
 		{"no fingerprint yet", "", "", true},
 		{"the fingerprint matches", "svc-pool", current, false},
-		{"the Mate enrolled again", "svc-pool", hq.CredentialFingerprint(poolOldCredential), true},
+		{"the Mate enrolled again", "svc-pool", hq.GitCredentialFingerprint(poolOldCredential), true},
 		{"the pool was re-created", "svc-gone", current, true},
 	}
 	for _, tt := range tests {
@@ -264,7 +264,7 @@ func TestLeaseAcquire_HQRepo_WaitsUntilASessionSeesTheWrittenCredential(t *testi
 			fx := newLeaseFixture(t)
 			inAMate(fx)
 			if tt.recorded {
-				writePoolCredentialRecord(t, fx.stateDir, testPoolHost, "svc-pool", hq.CredentialFingerprint(poolMateCredential))
+				writePoolCredentialRecord(t, fx.stateDir, testPoolHost, "svc-pool", hq.GitCredentialFingerprint(poolMateCredential))
 			}
 			probes := 0
 			ssh := &leaseSSH{fn: func(_, command string) ([]byte, error) {
@@ -365,7 +365,7 @@ func TestLeaseAcquire_HQRepo_RefusedCheckout_WritesAfreshNextTime(t *testing.T) 
 	t.Parallel()
 	fx := newLeaseFixture(t)
 	inAMate(fx)
-	writePoolCredentialRecord(t, fx.stateDir, testPoolHost, "svc-pool", hq.CredentialFingerprint(poolMateCredential))
+	writePoolCredentialRecord(t, fx.stateDir, testPoolHost, "svc-pool", hq.GitCredentialFingerprint(poolMateCredential))
 	ssh := &leaseSSH{fn: func(_, command string) ([]byte, error) {
 		if strings.Contains(command, "fetch -q --prune origin") {
 			return nil, sshFailure("remote: Unauthorized\nfatal: Authentication failed for 'https://hq.example.invalid/git/a1/web/'", exitError(t, 128))
@@ -420,7 +420,7 @@ func (c goneByIDClient) GetService(ctx context.Context, id string) (*platform.Se
 func TestRenewPoolHQCredentials_PoolGoneBy400_RecordDropped(t *testing.T) {
 	t.Parallel()
 	stateDir := t.TempDir()
-	writePoolCredentialRecord(t, stateDir, "gonepool", "svc-gone", hq.CredentialFingerprint(poolOldCredential))
+	writePoolCredentialRecord(t, stateDir, "gonepool", "svc-gone", hq.GitCredentialFingerprint(poolOldCredential))
 	client := goneByIDClient{Mock: platform.NewMock(), gone: "svc-gone"}
 
 	failures := RenewPoolHQCredentials(context.Background(), client, stateDir, poolMateCredential)
@@ -445,7 +445,7 @@ func TestRenewPoolHQCredentials_RewritesEveryPoolWhoseFingerprintDiffers(t *test
 		{ID: "svc-pool", Name: "devpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1"}},
 		{ID: "svc-web", Name: "webpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1"}},
 	}
-	old, current := hq.CredentialFingerprint(poolOldCredential), hq.CredentialFingerprint(poolMateCredential)
+	old, current := hq.GitCredentialFingerprint(poolOldCredential), hq.GitCredentialFingerprint(poolMateCredential)
 	tests := []struct {
 		name         string
 		failWrites   bool

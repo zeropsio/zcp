@@ -16,13 +16,14 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
-// A Mate's HQ takes git only from the user `mate` with the Mate credential, and
+// A Mate's HQ takes git only from the user `mate` with the Mate's Git
+// credential (the one HQ sends the Mate's server, hq.ReadGitCredential), and
 // a lease of a repository on it fetches and pushes with the pool's
 // ZCP_HQ_GIT_TOKEN (PoolHQCredentialEnvKey, DP-12). So inside a Mate zcp puts
 // the credential there itself before it takes a container, as git-push-setup
 // puts it on a wired pair's dev service (docs/spec-mate.md §10.10, *The
-// credential*), and the repository pass renews it after the Mate enrolls again
-// (RenewPoolHQCredentials) — docs/spec-workflows.md §8 DP-16. It is never the
+// credential*), and the repository pass renews it after HQ sends the Mate's
+// server a new Git credential (RenewPoolHQCredentials) — docs/spec-workflows.md §8 DP-16. It is never the
 // pool's GIT_TOKEN: every container of a pool reads the pool's whole service
 // env, and a lease of a repository outside HQ answers its host with GIT_TOKEN,
 // which stays the user's — zcp never writes it (DP-6). A credential under a
@@ -31,7 +32,7 @@ import (
 //
 // The Mate's API key writes a sensitive secret but reads it back REDACTED, so
 // zcp cannot compare by reading: it keeps its own record of what it wrote, a
-// fingerprint per pool (hq.CredentialFingerprint, the one a pair's record
+// fingerprint per pool (hq.GitCredentialFingerprint, the one a pair's record
 // keeps) in .zcp/state/leases/credentials/<pool>.json, mode 0600 — never the
 // credential. A pool has no ServiceMeta of its own (DP-2); a pool that keys a
 // pair (docs/spec-workflows.md §13 PM-10) is renewed with that pair: the HQ
@@ -45,7 +46,7 @@ import (
 // (PoolHQCredentialEnvKey). The zero value — zcp outside a Mate — never
 // writes.
 type PoolHQCredential struct {
-	// Read answers the Mate credential this Mate's HQ enrollment holds, read
+	// Read answers the Git credential the Mate's server keeps from HQ, read
 	// at each acquire; false when it holds none zcp can read.
 	Read func() (string, bool)
 	// SessionWait is the pause between two reads of a fresh session's
@@ -192,7 +193,7 @@ func writePoolHQCredential(ctx context.Context, client platform.Client, stateDir
 	if _, err := EnvSetService(ctx, client, serviceID, PoolHQCredentialEnvKey, credential, true); err != nil {
 		return fmt.Errorf("write %s on pool %s: %w", PoolHQCredentialEnvKey, pool, err)
 	}
-	_ = storePoolCredential(stateDir, pool, poolCredentialRecord{PoolServiceID: serviceID, Fingerprint: hq.CredentialFingerprint(credential)})
+	_ = storePoolCredential(stateDir, pool, poolCredentialRecord{PoolServiceID: serviceID, Fingerprint: hq.GitCredentialFingerprint(credential)})
 	return nil
 }
 
@@ -210,10 +211,10 @@ type poolCredentialState struct {
 }
 
 // ensurePoolHQCredential makes the pool's PoolHQCredentialEnvKey the Mate
-// credential the enrollment holds now, before a lease of repo takes a container: written when
+// Git credential the Mate's server keeps from HQ now, before a lease of repo takes a container: written when
 // zcp's records for the pool — its own, or the one a pair keyed by the pool
 // took over (PoolHQCredential.Kept) — are absent, name another pool service or
-// another credential (the Mate enrolled again), and left alone when one matches. A
+// another credential (HQ sent a new one), and left alone when one matches. A
 // repository outside the Mate's HQ, or zcp outside a Mate, changes nothing,
 // and no acquire ever writes the pool's GIT_TOKEN.
 // Without a credential to read, or with a write that fails, the acquire is
@@ -225,10 +226,10 @@ func ensurePoolHQCredential(ctx context.Context, d LeaseDeps, pool *platform.Ser
 	credential, ok := d.PoolCredential.Read()
 	if !ok || credential == "" {
 		return poolCredentialState{}, platform.NewPlatformError(platform.ErrPrerequisiteMissing,
-			fmt.Sprintf("Pool '%s' cannot be given this Mate's HQ credential as its %s: the Mate's HQ enrollment holds none zcp can read", pool.Name, PoolHQCredentialEnvKey),
-			"A lease of a repository on HQ fetches with it, so no container was taken. This Mate's own service (zcp service mate) keeps enrolling it; acquire again once it is enrolled. It is no user's token, so never ask for one or make one up")
+			fmt.Sprintf("Pool '%s' cannot be given this Mate's HQ credential as its %s: the Mate's server holds no Git credential from HQ — it is not linked to HQ yet (its /mate/setup.json says why)", pool.Name, PoolHQCredentialEnvKey),
+			"A lease of a repository on HQ fetches with it, so no container was taken. HQ sends the Mate's server its Git credential once the Mate is linked; acquire again then. It is no user's token, so never ask for one or make one up")
 	}
-	state := poolCredentialState{pool: pool.Name, fingerprint: hq.CredentialFingerprint(credential)}
+	state := poolCredentialState{pool: pool.Name, fingerprint: hq.GitCredentialFingerprint(credential)}
 	// Never written again while the pool holds it: a write deletes the
 	// variable and creates it anew, and in between every fresh session of
 	// every container of the pool — the pool's other leases mid-push
@@ -349,8 +350,8 @@ type PoolCredentialFailure struct {
 }
 
 // RenewPoolHQCredentials gives every pool zcp put the Mate credential on the
-// credential as the enrollment holds it now: a pool whose record names another
-// one — the Mate enrolled again, and HQ revoked the old — is written, so a
+// credential as the Mate's server keeps it now: a pool whose record names
+// another one — HQ sent a new one, and revoked the old — is written, so a
 // lease held there reaches HQ again from its next fresh session; a pool that
 // is gone loses its record (one re-created under its name is written at its
 // first acquire). Returns the pools it could not write, by name; their records
@@ -363,7 +364,7 @@ func RenewPoolHQCredentials(ctx context.Context, client platform.Client, stateDi
 	if err != nil {
 		return nil
 	}
-	fingerprint := hq.CredentialFingerprint(credential)
+	fingerprint := hq.GitCredentialFingerprint(credential)
 	var failures []PoolCredentialFailure
 	for _, e := range entries {
 		pool, isRecord := strings.CutSuffix(e.Name(), ".json")

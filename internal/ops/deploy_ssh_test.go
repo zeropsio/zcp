@@ -408,6 +408,11 @@ func TestDeploy_SSHMode_WithRegion(t *testing.T) {
 	if containsSubstring(cmd, "--zeropsRegion") {
 		t.Errorf("SSH command should NOT contain '--zeropsRegion', got: %s", cmd)
 	}
+	for i, call := range ssh.calls {
+		if containsSubstring(call.command, authInfo.Token) {
+			t.Errorf("SSH call %d carries the key on its command line: %s", i, call.command)
+		}
+	}
 }
 
 func TestDeploy_SSHMode_Exit255WithBuildSuccess(t *testing.T) {

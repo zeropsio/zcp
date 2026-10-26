@@ -539,6 +539,9 @@ func hqFields(svc ServiceSnapshot) []string {
 		if svc.HQOriginPending != "" {
 			checkout += " (pending: develop's start points it at " + topology.RedactRepoURLCredentials(svc.HQOriginPending) + ")"
 		}
+		if svc.HQOriginBlocked != "" {
+			checkout += " (develop's start cannot point it at HQ: " + svc.HQOriginBlocked + ")"
+		}
 		fields = append(fields, checkout)
 	}
 	return fields

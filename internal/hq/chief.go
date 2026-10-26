@@ -6,24 +6,8 @@ import (
 	"net/http"
 )
 
-// MateChief is HQ's canonical person and Chief for this enrolled Mate.
-type MateChief struct {
-	OwnerUserID string `json:"ownerUserId"`
-	ProjectID   string `json:"projectId"`
-}
-
-// Chief reads whose Chief this Mate may ask; nil means its person has none.
-func (c Client) Chief(ctx context.Context) (*MateChief, error) {
-	var answer struct {
-		Chief *MateChief `json:"chief"`
-	}
-	if err := c.call.json(ctx, http.MethodGet, "/api/mate/chief", c.authorization(), nil, &answer); err != nil {
-		return nil, fmt.Errorf("mate Chief: %w", err)
-	}
-	return answer.Chief, nil
-}
-
-// ProposeChief binds an offer to this Mate's current person and Chief at HQ.
+// ProposeChief binds an offer to this Mate's project and its owner's
+// Chief at HQ.
 // HQ returns only an offer id: no message is sent.
 func (c Client) ProposeChief(ctx context.Context) (string, error) {
 	var answer struct {

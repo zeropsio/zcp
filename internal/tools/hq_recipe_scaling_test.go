@@ -86,6 +86,9 @@ type hqScalingAnswer struct {
 // nothing else; once the recipe says what the Mate runs, the change is
 // brought to main's tree and adds nothing.
 func TestGroupRecipeScaling_SteersAndProposesOneHostsBlock(t *testing.T) {
+	// non-parallel: its subtests read the one lab the test goes on to change,
+	// so they run in order, and tparallel wants a parallel test's subtests
+	// parallel too.
 	lab := newScalingLab(t)
 	main := lab.hq.recipeFiles("main")
 
@@ -175,6 +178,7 @@ func TestGroupRecipeScaling_SteersAndProposesOneHostsBlock(t *testing.T) {
 // not is main's again — and a tier whose block the splice cannot rewrite is
 // left as main has it, the answer saying why.
 func TestGroupRecipeScaling_ProposesFromMainsHeadEveryTierFresh(t *testing.T) {
+	t.Parallel()
 	lab := newScalingLab(t)
 	// The group sized search by hand on Stage, and wrote a note on its Small
 	// Production block.
@@ -231,10 +235,12 @@ func TestGroupRecipeScaling_ProposesFromMainsHeadEveryTierFresh(t *testing.T) {
 // additive one never write over each other — the one that finds the other
 // open leaves it as it is and says which.
 func TestGroupRecipeScaling_OneOpenChangeInTheRecipeRepository(t *testing.T) {
+	t.Parallel()
 	// The open change's title comes with the Mate's state; an HQ from before
 	// titles answers it only when asked to open one.
 	for _, untitled := range []bool{false, true} {
 		t.Run(fmt.Sprintf("the additive reconcile leaves a scaling proposal alone (HQ without titles: %v)", untitled), func(t *testing.T) {
+			t.Parallel()
 			lab := newScalingLab(t)
 			if answer, text := lab.proposeScaling(scalingRecipeClient(4, 1), "search"); answer == nil || answer.Change != 2 {
 				t.Fatalf("scaling proposal = %s", text)
@@ -257,6 +263,7 @@ func TestGroupRecipeScaling_OneOpenChangeInTheRecipeRepository(t *testing.T) {
 		})
 	}
 	t.Run("a scaling proposal waits for the open additive one", func(t *testing.T) {
+		t.Parallel()
 		// main carries only the Stage tier, which names search, so the
 		// additive proposal of the other tiers is open.
 		const stage = "3 — Stage/import.yaml"

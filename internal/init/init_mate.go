@@ -19,6 +19,13 @@ import (
 // throughout).
 var mateEnsureInstalled = mate.EnsureInstalled
 
+// mateWaitReady proves the installed release started healthy; package-level so tests
+// need no loopback Mate.
+var mateWaitReady = mate.WaitReady
+
+// mateReadyWait bounds how long a boot waits for the release it started to serve.
+const mateReadyWait = 30 * time.Second
+
 // defaultMateLockWait bounds init's wait on the install lock the unit's own
 // start may hold (mate.LockInstall): longer than an install's own bounds, so
 // a live install is waited out and a hung one is not.
@@ -179,7 +186,31 @@ func enableMate(rt runtime.Info) error {
 			fmt.Fprintf(os.Stderr, "    ! restart zerops@%s failed (the change serves from the next restart): %v\n", mate.UnitName, err)
 		}
 	}
+
+	// The unit's own start takes the install lock, so the readiness wait runs without it.
+	release()
+	commitBootLastGood()
 	return nil
+}
+
+// commitBootLastGood moves last-good to the installed release once that release is
+// serving healthy, the proof the update worker also requires. A Mate that is not ready
+// in time keeps its previous last-good, and the next boot asks again.
+func commitBootLastGood() {
+	installed, err := mate.InstalledVersion()
+	if err != nil {
+		return
+	}
+	if good, err := mate.LastGoodVersion(); err == nil && good == installed {
+		return
+	}
+	if err := mateWaitReady(installed, "", time.Now().Add(mateReadyWait)); err != nil {
+		fmt.Fprintf(os.Stderr, "    ! mate %s not ready yet, last-good stays where it was: %v\n", installed, err)
+		return
+	}
+	if err := mate.CommitLastGood(installed); err != nil {
+		fmt.Fprintf(os.Stderr, "    ! record last-good %s: %v\n", installed, err)
+	}
 }
 
 // bundleChanged reports whether EnsureInstalled actually replaced the bytes
@@ -222,7 +253,7 @@ func logMateEnsureResult(result mate.Result) {
 // server no other way.
 //
 // ZCP_MATE_ALLOWED_ORIGINS goes through mate.ValidateAllowedOrigins first: a
-// malformed value (a bare host, a path, a wildcard — see spec-mate.md §3.4)
+// malformed value (a bare host, a path, a wildcard — see spec-mate.md §3.13)
 // can never match a real Origin header, so writing it would silently
 // configure an allowlist entry that does nothing. Best-effort like the rest
 // of this step: one diagnostic line names the bad entry and the key is left

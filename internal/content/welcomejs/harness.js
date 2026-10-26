@@ -204,6 +204,19 @@ function makeFakeClock(start) {
   };
 }
 
+// freezeWallClock pins Date.now() for this test file's process (node --test
+// runs one process per file). The welcome host stamps and checks inbound
+// command createdAt against a 30 s TTL (§4.1); a test that stamps with the
+// real clock and is delivered after a machine stall longer than the TTL
+// (lint or a race build on the same cores) is rejected as stale. With one
+// frozen instant the stamp and the host's default now() are the same value,
+// so no stall can age a command. Suites that test freshness itself inject
+// their own clock (makeFakeClock) and are unaffected.
+function freezeWallClock(at) {
+  const frozen = typeof at === "number" ? at : 1_700_000_000_000;
+  Date.now = () => frozen;
+}
+
 // loadWebviewDom executes the REAL shipped welcome.html — nonce substituted,
 // its inline <script> run for real via jsdom (`runScripts: "dangerously"`) —
 // so a suite that needs the webview's own rendering/interaction logic (the
@@ -278,5 +291,5 @@ function loadWebviewDom(opts) {
 
 module.exports = {
   loadExtension, loadWelcome, loadWebviewDom, TEMPLATES_DIR, TEST_REGISTRY, TEST_AGENT_IDS,
-  makeFakeTimers, makeFakeClock, installFakeAgentBins, tempDir,
+  makeFakeTimers, makeFakeClock, freezeWallClock, installFakeAgentBins, tempDir,
 };

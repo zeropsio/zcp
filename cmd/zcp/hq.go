@@ -11,76 +11,58 @@ import (
 	"os"
 	"os/signal"
 	"slices"
-	"strings"
 	"syscall"
 	"time"
 
-	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/hq"
-	"github.com/zeropsio/zcp/internal/platform"
-	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/mate"
 )
 
-// hqTimeout bounds one `zcp hq` run end to end: a member-list read, HQ's
-// challenge and credential calls, and the wait for the challenge env to show
-// in the project search before it is deleted.
-const hqTimeout = 60 * time.Second
+// hqTimeout bounds one `zcp hq status` run end to end.
+const hqTimeout = 30 * time.Second
 
 // hqCallTimeout bounds each call to HQ.
 const hqCallTimeout = 15 * time.Second
 
-const hqUsage = "usage: zcp hq <status|enroll> [--json]"
+const hqUsage = "usage: zcp hq status [--json]"
 
-// The `zcp hq` verbs, as constants: goconst counts the package's other
-// "status" verbs (capture, telemetry, mate) with these.
-const (
-	hqVerbStatus = "status"
-	hqVerbEnroll = "enroll"
-)
+const hqVerbStatus = "status"
 
-// hqService is what `zcp hq` asks of internal/hq.
+// hqService is what `zcp hq status` asks of internal/hq.
 type hqService interface {
-	Status(ctx context.Context) hq.Status
-	Enroll(ctx context.Context) (hq.Result, error)
+	Self(ctx context.Context) (hq.MateState, error)
 }
 
-// newHQService builds the enroller from this container's own Zerops key.
-// Package-level so tests can stub it.
+// newHQService opens HQ under this container's project key, as the live env
+// store holds it now. Package-level so tests can stub it.
 var newHQService = defaultHQService
 
-func defaultHQService(ctx context.Context) (hqService, error) {
+func defaultHQService(context.Context) (hqService, error) {
 	injectMCPEnvIfUnset(".")
-	creds, err := auth.ResolveCredentials()
-	if err != nil {
-		return nil, fmt.Errorf("auth: %w", err)
-	}
-	client, err := platform.NewZeropsClient(creds.Token, creds.APIHost)
-	if err != nil {
-		return nil, fmt.Errorf("client: %w", err)
-	}
-	info, err := auth.Resolve(ctx, client)
-	if err != nil {
-		return nil, fmt.Errorf("auth: %w", err)
-	}
-	if info.ProjectID == "" {
-		return nil, errors.New("no project: zcp hq runs with a Mate project's key")
-	}
-	return hq.Enroller{
-		Zerops:    client,
-		HTTP:      &http.Client{Timeout: hqCallTimeout},
-		OrgID:     info.ClientID,
-		ProjectID: info.ProjectID,
-		// The container's own zcp service: HQ holds one per project as its Mate.
-		ServiceID: runtime.Detect().ServiceID,
-		Path:      hq.EnrollmentPath(),
-	}, nil
+	id := mate.HQIdentity(mate.LiveLookup(mate.LiveEnvStorePath))
+	return openHQ(&http.Client{Timeout: hqCallTimeout}, id)
 }
 
-// runHQCmd implements `zcp hq status [--json]` (exit 0 always; a failed read
-// is its error field) and `zcp hq enroll [--json]` (exit 1 unless enrolled).
-// Neither ever prints the credential.
+func openHQ(httpClient hq.Doer, id hq.Identity) (hqService, error) {
+	client, err := hq.Open(httpClient, id)
+	if err != nil {
+		return nil, err
+	}
+	return client.Once(), nil
+}
+
+// hqStatus is `zcp hq status --json`'s answer: whether HQ answers for this
+// container's key. Never the key.
+type hqStatus struct {
+	HQ     string `json:"hq,omitempty"`
+	Linked bool   `json:"linked"`
+	Error  string `json:"error,omitempty"`
+}
+
+// runHQCmd implements `zcp hq status [--json]`: exit 0 always, a failed read
+// is its error field.
 func runHQCmd(args []string) int {
-	if len(args) == 0 || (args[0] != hqVerbStatus && args[0] != hqVerbEnroll) {
+	if len(args) == 0 || args[0] != hqVerbStatus {
 		log.Print(hqUsage)
 		return 1
 	}
@@ -90,31 +72,17 @@ func runHQCmd(args []string) int {
 	ctx, cancel := context.WithTimeout(ctx, hqTimeout)
 	defer cancel()
 
+	var status hqStatus
 	svc, err := newHQService(ctx)
-	if args[0] == hqVerbStatus {
-		status := hq.Status{HQ: hq.Official{Verdict: hq.VerdictUnknown}}
-		if err != nil {
-			status.Error = err.Error()
-		} else {
-			status = svc.Status(ctx)
-		}
-		printHQ(status, asJSON, hqStatusLine(status))
-		return 0
-	}
-
-	result := hqEnrollResult{}
 	if err == nil {
-		var enrolled hq.Result
-		enrolled, err = svc.Enroll(ctx)
-		result.HQ, result.Changed = enrolled.HQ, enrolled.Changed
+		_, err = svc.Self(ctx)
 	}
 	if err != nil {
-		result.Error = err.Error()
+		status.Error = err.Error()
+	} else {
+		status.Linked = true
 	}
-	printHQ(result, asJSON, hqEnrollLine(result))
-	if err != nil {
-		return 1
-	}
+	printHQ(status, asJSON, hqStatusLine(status))
 	return 0
 }
 
@@ -128,20 +96,20 @@ func isHQGitCredential(args []string) bool {
 }
 
 // runHQGitCredential answers git's credential protocol: `get` prints what
-// hq.AnswerGit answers for the request on stdin — the Mate credential under
-// HQ's git user for the HQ the enrollment at path holds, the token HQ mints
+// hq.AnswerGit answers for the request on stdin — the Git credential the
+// file at path holds under HQ's git user for the HQ the identity names, the token HQ mints
 // at this call for a repository on GitHub — and declines with nothing on
 // stdout and exit 1 otherwise, saying why on stderr when there is a reason a
-// person can act on; `store` and `erase` keep nothing — the enrollment and HQ
-// are the store.
-func runHQGitCredential(args []string, stdin io.Reader, stdout, stderr io.Writer, path string, httpClient hq.Doer) int {
+// person can act on; `store` and `erase` keep nothing — the link and HQ are the
+// store.
+func runHQGitCredential(args []string, stdin io.Reader, stdout, stderr io.Writer, id hq.Identity, httpClient hq.Doer) int {
 	if len(args) == 0 {
 		return 1
 	}
 	if args[0] != "get" {
 		return 0
 	}
-	answer, err := hq.AnswerGit(context.Background(), stdin, path, httpClient)
+	answer, err := hq.AnswerGit(context.Background(), stdin, id, httpClient)
 	if err != nil {
 		var declined *hq.DeclinedError
 		if errors.As(err, &declined) && declined.Reason != "" {
@@ -151,13 +119,6 @@ func runHQGitCredential(args []string, stdin io.Reader, stdout, stderr io.Writer
 	}
 	_, _ = fmt.Fprintf(stdout, "username=%s\npassword=%s\n", answer.Username, answer.Password)
 	return 0
-}
-
-// hqEnrollResult is `zcp hq enroll --json`'s answer.
-type hqEnrollResult struct {
-	HQ      string `json:"hq,omitempty"`
-	Changed bool   `json:"changed"`
-	Error   string `json:"error,omitempty"`
 }
 
 func printHQ(v any, asJSON bool, line string) {
@@ -173,38 +134,9 @@ func printHQ(v any, asJSON bool, line string) {
 	fmt.Fprintln(os.Stdout, string(data))
 }
 
-func hqStatusLine(s hq.Status) string {
-	switch {
-	case s.Error != "":
-		return fmt.Sprintf("hq: %s, unknown: %s", hqName(s.HQ), s.Error)
-	case s.HQ.Verdict != hq.VerdictOfficial:
-		return "hq: " + hqName(s.HQ)
-	case s.Enrolled:
-		return fmt.Sprintf("hq: %s, enrolled", s.HQ.Address)
-	default:
-		return fmt.Sprintf("hq: %s, not enrolled", s.HQ.Address)
+func hqStatusLine(s hqStatus) string {
+	if s.Error != "" {
+		return "hq: not linked: " + s.Error
 	}
-}
-
-func hqName(o hq.Official) string {
-	switch o.Verdict {
-	case hq.VerdictOfficial:
-		return o.Address
-	case hq.VerdictUnclear:
-		return "unclear (" + strings.Join(o.ProjectIDs, ", ") + ")"
-	case hq.VerdictNone, hq.VerdictUnknown:
-		return string(o.Verdict)
-	}
-	return string(o.Verdict)
-}
-
-func hqEnrollLine(r hqEnrollResult) string {
-	switch {
-	case r.Error != "":
-		return "hq: not enrolled: " + r.Error
-	case r.Changed:
-		return "hq: enrolled with " + r.HQ
-	default:
-		return "hq: already enrolled with " + r.HQ
-	}
+	return "hq: linked"
 }

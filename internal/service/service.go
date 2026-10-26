@@ -19,7 +19,6 @@ import (
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/matesetup"
-	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 )
 
@@ -225,12 +224,12 @@ func mateLaunchSetupThenInstall() {
 var mateSetupBoot = matesetup.Boot
 
 // mateLaunchSetup writes the status file the server reads (ZCP_STATUS_FILE,
-// mate.LaunchEnvLines), enrolls before seeding the server's absent sign-ins,
-// and starts keeping the Mate enrolled with its HQ, and starts the boot import
-// when the container carries a runtimes plan. The plan, the Mate's key and its
-// project come from the live env store, as the guard's flag does: a unit's
-// own environment carries none of them. All run in this process, for as long
-// as the server does; a restart cut short finds what it left by looking.
+// mate.LaunchEnvLines), seeds the server's absent sign-ins from HQ with the
+// project key, and starts the boot import when the container carries a
+// runtimes plan. The plan, the Mate's key and its project come from the live
+// env store, as the guard's flag does: a unit's own environment carries none
+// of them. All run in this process, for as long as the server does; a restart
+// cut short finds what it left by looking.
 func mateLaunchSetup() {
 	lookup := mate.LiveLookup(mateStorePath)
 	path := mate.DefaultStatusFilePath()
@@ -239,188 +238,87 @@ func mateLaunchSetup() {
 		fmt.Fprintf(os.Stderr, "[zcp] service mate: %v\n", err)
 	}
 	env := func() func(string) string { return mate.LiveLookup(mateStorePath) }
-	ctx, cancel := context.WithTimeout(context.Background(), hqCallTimeout)
-	err := mateHQPrepare(ctx, lookup)
-	cancel()
-	if err == nil {
-		mateSeedSignIns(context.Background(), lookup)
-	} else {
-		logHQ("launch enrollment: " + err.Error() + "; starting the Mate without a sign-in seed")
-	}
-	go mateHQKeep(context.Background(), env)
+	mateSeedSignIns(context.Background(), lookup)
 	if planSet {
 		go mateSetupBoot(context.Background(), path, env)
 	}
 }
 
-// mateHQKeep keeps the Mate enrolled with its org's official HQ (hq.Keep);
-// package-level so tests stand in for it.
-var mateHQKeep = keepEnrolled
-
-// mateHQPrepare makes one bounded enrollment attempt before the seed. The
-// server always starts afterwards; the existing keep loop owns later enrollment.
-var mateHQPrepare = prepareEnrollment
-
-// SetMateHQPrepare stands in for launch enrollment; for tests.
-func SetMateHQPrepare(fn func(context.Context, func(string) string) error) { mateHQPrepare = fn }
-
-func prepareEnrollment(ctx context.Context, lookup func(string) string) error {
-	client, err := apiClientOf(ctx, lookup)
-	if err != nil {
-		return err
-	}
-	e := mateEnroller(lookup, client)
-	_, err = e.Recheck(ctx)
-	if err == nil {
-		return nil
-	}
-	var refused *hq.RefusedError
-	if !errors.Is(err, hq.ErrNotEnrolled) && !errors.Is(err, hq.ErrOtherProject) &&
-		(!errors.As(err, &refused) || refused.Code != "mate_credential_required") {
-		return err
-	}
-	if e.OrgID, err = client.OrgID(ctx); err != nil {
-		return fmt.Errorf("the project's organization: %w", err)
-	}
-	_, err = e.Enroll(ctx)
-	if err != nil {
-		return fmt.Errorf("enroll the Mate before seeding: %w", err)
-	}
-	return nil
-}
-
-// SetMateHQKeep stands in for the HQ enrollment; for tests.
-func SetMateHQKeep(fn func(context.Context, func() func(string) string)) { mateHQKeep = fn }
-
 // hqCallTimeout bounds each call to HQ.
 const hqCallTimeout = 15 * time.Second
 
-// keepEnrolled is hq.Keep over the container's environment: each attempt
-// builds the client from the live env store as it is then, so a rotated key
-// is the one it uses. An enrollment, and the anchor read while the kept HQ
-// does not answer, ask the container's project which org owns it, to read that
-// org's member list for the official HQ; a recheck asks the kept
-// enrollment's HQ alone (R6). Each attempt that says something about
-// this Mate leaves its outcome beside the enrollment.
-func keepEnrolled(ctx context.Context, env func() func(string) string) {
-	seedInput := ""
-	enroller := func(ctx context.Context, withOrg bool) (hq.Enroller, error) {
-		lookup := env()
-		client, err := apiClientOf(ctx, lookup)
-		if err != nil {
-			return hq.Enroller{}, err
-		}
-		e := mateEnroller(lookup, client)
-		if withOrg {
-			if e.OrgID, err = client.OrgID(ctx); err != nil {
-				return hq.Enroller{}, fmt.Errorf("the project's organization: %w", err)
-			}
-		}
-		return e, nil
-	}
-	hq.Keep(ctx, func(ctx context.Context) (hq.Result, error) {
-		e, err := enroller(ctx, true)
-		if err != nil {
-			return hq.Result{}, err
-		}
-		return e.Enroll(ctx)
-	}, func(ctx context.Context) (hq.Result, error) {
-		e, err := enroller(ctx, false)
-		if err != nil {
-			return hq.Result{}, err
-		}
-		return e.Recheck(ctx)
-	}, func(ctx context.Context) (bool, error) {
-		e, err := enroller(ctx, true)
-		if err != nil {
-			return false, err
-		}
-		return e.Moved(ctx)
-	}, hq.KeepOptions{
-		Log: logHQ,
-		// The Mate server says from it why its setup waits (spec-mate §2.8).
-		Record: func(err error) {
-			o, recorded := hq.OutcomeOf(err, time.Now().UTC())
-			if !recorded {
-				return
-			}
-			if err := hq.SaveOutcome(hq.OutcomePath(), o); err != nil {
-				logHQ(err.Error())
-			}
-			if err == nil {
-				client, openErr := hq.Open(&http.Client{Timeout: hqCallTimeout}, hq.EnrollmentPath())
-				if openErr != nil {
-					logHQ("sign-in seed enrollment: " + openErr.Error())
-					return
-				}
-				if input := client.SignersInput(); input != seedInput {
-					seedInput = input
-					mateSeedSignIns(ctx, env())
-				}
-			}
-		},
-	})
-}
-
-// mateEnroller is the enroller of the Mate in this container, over its live
-// environment: its project, and its own zcp service, which HQ holds as the
-// project's one Mate. Its org is an enrollment's to read (keepEnrolled).
-func mateEnroller(lookup func(string) string, client hq.Zerops) hq.Enroller {
-	return hq.Enroller{
-		Zerops:    client,
-		HTTP:      &http.Client{Timeout: hqCallTimeout},
-		ProjectID: lookup("projectId"),
-		ServiceID: lookup("serviceId"),
-		Path:      hq.EnrollmentPath(),
-	}
-}
-
-// mateSeedSignIns seeds the server's sign-ins before it starts
-// (seedSignIns); package-level so tests stand in for it.
-var mateSeedSignIns = seedSignIns
+// mateSeedSignIns seeds the server's sign-ins at launch (launchSeedSignIns);
+// package-level so tests stand in for it.
+var mateSeedSignIns = launchSeedSignIns
 
 // SetMateSeedSignIns stands in for the sign-in seed; for tests.
 func SetMateSeedSignIns(fn func(context.Context, func(string) string)) { mateSeedSignIns = fn }
 
-// seedSignIns reads the signers with one snapshot of the enrolled credential.
-// Failure is retained for that input, reported by mate status, and never fatal
-// to launch or the link. A changed enrollment permits a new attempt; removing
-// the marker and restarting the unit is the operator's manual "again". HQ
-// naming no signers is read once more by the unit's next start.
-func seedSignIns(ctx context.Context, lookup func(string) string) {
-	client, err := hq.Open(&http.Client{Timeout: hqCallTimeout}, hq.EnrollmentPath())
+// seedRetryDelays are the waits between the retries of a seed HQ did not
+// answer, while this process runs; after the last, the next start tries again.
+var seedRetryDelays = []time.Duration{5 * time.Second, 15 * time.Second, 45 * time.Second, 2 * time.Minute, 5 * time.Minute, 5 * time.Minute}
+
+// launchSeedSignIns seeds once before the server starts; a seed HQ did not
+// answer is retried in the background (retrySignInSeed).
+func launchSeedSignIns(ctx context.Context, lookup func(string) string) {
+	if seedSignIns(ctx, lookup) {
+		go retrySignInSeed(ctx, lookup, sleepContext)
+	}
+}
+
+// retrySignInSeed tries an owed seed again after each delay, until HQ takes or
+// refuses it or the delays run out. A seed written after the server started is
+// read on its next restart, since the server reads its store only at startup.
+func retrySignInSeed(ctx context.Context, lookup func(string) string, wait func(context.Context, time.Duration) bool) {
+	for _, delay := range seedRetryDelays {
+		if !wait(ctx, delay) || !seedSignIns(ctx, lookup) {
+			return
+		}
+	}
+}
+
+// sleepContext waits d, reporting false when ctx ends first.
+func sleepContext(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+// seedSignIns reads the signers with the Mate's identity as the env holds it
+// now, and reports whether the seed is still owed because HQ did not answer.
+// A refusal is retained for that input, reported by mate status, and never
+// fatal to launch or the link; a changed identity permits a new attempt, and
+// removing the marker and restarting the unit is the operator's manual
+// "again". HQ naming no signers is read once more by the unit's next start.
+func seedSignIns(ctx context.Context, lookup func(string) string) (owed bool) {
+	client, err := hq.Open(&http.Client{Timeout: hqCallTimeout}, mate.HQIdentity(lookup))
 	if err != nil {
-		logHQ("sign-ins waiting for enrollment: " + err.Error())
-		return
+		logHQ("sign-ins wait for the key: " + err.Error())
+		return false
 	}
 	_, err = mate.SeedSignInsForEnrollment(mate.SignInsPath(), mate.SignInsSeededPath(), client.SignersInput(), func() (map[string]string, error) {
 		ctx, cancel := context.WithTimeout(ctx, hqCallTimeout)
 		defer cancel()
-		return client.Signers(ctx, lookup("projectId"))
+		signers, err := client.Signers(ctx, lookup("projectId"))
+		if hq.IsUnavailable(err) {
+			return nil, &mate.TransientError{Err: err}
+		}
+		return signers, err
 	}, time.Now())
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[zcp] service mate: sign-ins: %v; failed input retained in %s (reported by `zcp mate status --json`); a changed enrollment permits one new attempt; to try again manually, remove the marker and start the Mate service again\n", err, mate.SignInsSeededPath())
+	var transient *mate.TransientError
+	switch {
+	case errors.As(err, &transient):
+		fmt.Fprintf(os.Stderr, "[zcp] service mate: sign-ins: %v; HQ did not answer, the seed is tried again (reported by `zcp mate status --json`)\n", err)
+		return true
+	case err != nil:
+		fmt.Fprintf(os.Stderr, "[zcp] service mate: sign-ins: %v; failed input retained in %s (reported by `zcp mate status --json`); a changed identity permits one new attempt; to try again manually, remove the marker and start the Mate service again\n", err, mate.SignInsSeededPath())
 	}
-}
-
-// apiClientOf is a client of the Zerops API over the Mate's key as the live
-// env store holds it now, so a rotated key is the one it uses — bound to
-// the org that owns the container's project, as `zcp hq` binds through
-// auth.Resolve.
-func apiClientOf(ctx context.Context, lookup func(string) string) (*platform.ZeropsClient, error) {
-	key := lookup("ZCP_API_KEY")
-	if key == "" {
-		return nil, errors.New("ZCP_API_KEY is not in this container's environment")
-	}
-	projectID := lookup("projectId")
-	if projectID == "" {
-		return nil, errors.New("projectId is not in this container's environment")
-	}
-	client, err := platform.NewProjectClient(ctx, key, mate.ResolveAPIHost(lookup("ZCP_API_HOST")), projectID)
-	if err != nil {
-		return nil, fmt.Errorf("build the API client: %w", err)
-	}
-	return client, nil
+	return false
 }
 
 func logHQ(line string) { fmt.Fprintf(os.Stderr, "[zcp] hq: %s\n", line) }
@@ -513,16 +411,6 @@ func Start(name string) error {
 		if err := cfg.guard(); err != nil {
 			return err
 		}
-	}
-
-	// A Chief is a Mate for the whole organization: it edits no code here, so it runs no
-	// code-server. The unit stays up, idle, so the platform does not restart it in a loop.
-	if name == "vscode" && chiefContainer(mateStorePath) {
-		fmt.Fprintln(os.Stderr, "[zcp] service vscode: a Chief runs no code-server; idle until stopped")
-		stop := make(chan os.Signal, 1)
-		signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-		<-stop
-		return nil
 	}
 
 	if cfg.prepare != nil {
@@ -628,19 +516,4 @@ func sortedNames(all map[string]execConfig) []string {
 	}
 	sort.Strings(names)
 	return names
-}
-
-// chiefContainer reports whether this container is a Chief's: its live env store sets
-// ZCP_CHIEF on. A missing or unreadable store is no Chief.
-func chiefContainer(storePath string) bool {
-	store, err := mate.LoadLiveEnv(storePath)
-	if err != nil {
-		return false
-	}
-	for _, line := range store {
-		if key, value, ok := strings.Cut(line, "="); ok && key == "ZCP_CHIEF" {
-			return runtime.EnvEnabled(value)
-		}
-	}
-	return false
 }

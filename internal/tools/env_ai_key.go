@@ -19,27 +19,21 @@ import (
 type EnvOption func(*envOptions)
 
 type envOptions struct {
-	// aiKey reaches the HQ this Mate enrolled with; nil outside a Mate,
+	// aiKey reaches this Mate's HQ; nil outside a Mate,
 	// where zerops_env has no ai-key action.
 	aiKey *orgAIKey
 }
 
 type orgAIKey struct {
-	http           hq.Doer
-	enrollmentPath string
+	http hq.Doer
 }
 
 // WithOrgAIKey gives zerops_env its ai-key action: the organization's AI key,
-// asked of the HQ this Mate enrolled with (hq.EnrollmentPath), put in the
-// project's Shared vault (docs/spec-mate.md §5.8). Mate-gated by the server
-// like every Mate effect.
+// asked of this Mate's HQ under its project key, put in the project's Shared
+// vault (docs/spec-mate.md §5.8). Mate-gated by the server like every Mate
+// effect.
 func WithOrgAIKey(httpClient hq.Doer) EnvOption {
-	return withOrgAIKeyAt(httpClient, hq.EnrollmentPath())
-}
-
-// withOrgAIKeyAt is WithOrgAIKey with the enrollment kept at enrollmentPath.
-func withOrgAIKeyAt(httpClient hq.Doer, enrollmentPath string) EnvOption {
-	return func(o *envOptions) { o.aiKey = &orgAIKey{http: httpClient, enrollmentPath: enrollmentPath} }
+	return func(o *envOptions) { o.aiKey = &orgAIKey{http: httpClient} }
 }
 
 // aiKeyVariableName is the variable HQ names for a provider's key, from which
@@ -76,18 +70,14 @@ func setOrgAIKey(ctx context.Context, client platform.Client, projectID, selfHos
 	nothingSet := func(code, message, suggestion string) *mcp.CallToolResult {
 		return convertError(platform.NewPlatformError(code, message+"; nothing was set.", suggestion))
 	}
-	hqc, err := hq.Open(aiKey.http, aiKey.enrollmentPath)
+	hqc, err := hq.Open(aiKey.http, liveHQIdentity())
 	switch {
-	case errors.Is(err, hq.ErrNotEnrolled):
-		return nothingSet(platform.ErrPrerequisiteMissing,
-			"This Mate holds no HQ enrollment yet, so it cannot ask for the organization's AI key",
-			"Its own service keeps enrolling it; try again in a minute.")
 	case err != nil:
 		return nothingSet(platform.ErrPrerequisiteMissing,
-			fmt.Sprintf("This Mate's HQ enrollment cannot be read (%v)", err), "")
+			fmt.Sprintf("This Mate cannot address its HQ (%v), so it cannot ask for the organization's AI key", err), "")
 	case hqc.ProjectID() != projectID:
 		return nothingSet(platform.ErrPrerequisiteMissing,
-			"This Mate's HQ enrollment belongs to another project", "")
+			"This Mate's key belongs to another project", "")
 	}
 
 	key, err := hqc.Once().Bounded(aiKeyConnectWithin, aiKeyAnswerWithin).AIKey(ctx)

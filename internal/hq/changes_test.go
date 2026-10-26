@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strconv"
@@ -23,7 +24,7 @@ type hqCall struct {
 }
 
 // answering is a fake HQ that answers every request with body, recording
-// what it was asked; the client it returns holds the credential "good".
+// what it was asked; the client it returns presents the key "good".
 func answering(t *testing.T, body string) (Client, *[]hqCall) {
 	t.Helper()
 	var calls []hqCall
@@ -34,18 +35,14 @@ func answering(t *testing.T, body string) (Client, *[]hqCall) {
 		_, _ = io.WriteString(w, body)
 	}))
 	t.Cleanup(srv.Close)
-	return enrolledClient(t, srv), &calls
+	return keyedClient(t, srv), &calls
 }
 
-// enrolledClient is a client of srv, enrolled as the Mate "p-mate" with the
-// credential "good".
-func enrolledClient(t *testing.T, srv *httptest.Server) Client {
+// keyedClient is a client of srv for the Mate "p-mate" of the organisation
+// "org-1" presenting the key "good".
+func keyedClient(t *testing.T, srv *httptest.Server) Client {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "enrollment.json")
-	if err := SaveEnrollment(path, Enrollment{HQ: srv.URL, HQProjectID: "hq1", ProjectID: "p-mate", Credential: "good"}); err != nil {
-		t.Fatal(err)
-	}
-	client, err := Open(srv.Client(), path)
+	client, err := Open(srv.Client(), Identity{Origin: srv.URL, Key: "good", ProjectID: "p-mate", OrgID: "org-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +60,7 @@ func TestClient_EnsureRepo_AsksHQForTheRepositoryInTheMatesApplication(t *testin
 	if repo != (Repo{AppID: "0b6e7c1e-8f7a-4a52-9d1c-2f1f5d0a3c11", Name: "appdev"}) {
 		t.Errorf("repo = %+v", repo)
 	}
-	want := hqCall{http.MethodPost, "/api/mate/repos", "Mate good", "application/json", `{"name":"appdev"}`}
+	want := hqCall{http.MethodPost, "/api/mate/repos", "Project good", "application/json", `{"name":"appdev"}`}
 	if len(*calls) != 1 || (*calls)[0] != want {
 		t.Errorf("calls = %+v, want [%+v]", *calls, want)
 	}
@@ -92,7 +89,7 @@ func TestClient_OpenChange_DecodesTheChangeHQOpenedOrHeld(t *testing.T) {
 	if !reflect.DeepEqual(opened, want) {
 		t.Errorf("opened = %+v\nwant %+v", opened, want)
 	}
-	wantCall := hqCall{http.MethodPost, "/api/mate/changes", "Mate good", "application/json", `{"repo":"appdev","title":"Add a todo list"}`}
+	wantCall := hqCall{http.MethodPost, "/api/mate/changes", "Project good", "application/json", `{"repo":"appdev","title":"Add a todo list"}`}
 	if len(*calls) != 1 || (*calls)[0] != wantCall {
 		t.Errorf("calls = %+v, want [%+v]", *calls, wantCall)
 	}
@@ -129,7 +126,7 @@ func TestClient_EditChange_SendsOnlyWhatChanges(t *testing.T) {
 			if change.Number != 3 || change.Head == nil || *change.Head != "4b825dc642cb6eb9a060e54bf8d69288fbee4904" || change.Mergeability != "clean" {
 				t.Errorf("change = %+v", change)
 			}
-			want := hqCall{http.MethodPatch, "/api/mate/changes/appdev/3", "Mate good", "application/json", tt.wantBody}
+			want := hqCall{http.MethodPatch, "/api/mate/changes/appdev/3", "Project good", "application/json", tt.wantBody}
 			if len(*calls) != 1 || (*calls)[0] != want {
 				t.Errorf("calls = %+v, want [%+v]", *calls, want)
 			}
@@ -154,7 +151,7 @@ func TestClient_Attach_SendsThePictureItselfAsAPNG(t *testing.T) {
 	if got != want {
 		t.Errorf("attachment = %+v, want %+v", got, want)
 	}
-	wantCall := hqCall{http.MethodPost, "/api/mate/changes/appdev/3/attachments", "Mate good", "image/png", png}
+	wantCall := hqCall{http.MethodPost, "/api/mate/changes/appdev/3/attachments", "Project good", "image/png", png}
 	if len(*calls) != 1 || (*calls)[0] != wantCall {
 		t.Errorf("calls = %+v, want [%+v]", *calls, wantCall)
 	}
@@ -214,7 +211,7 @@ func TestClient_Unavailable_IsTryAgain(t *testing.T) {
 				_, _ = io.WriteString(w, body)
 			}))
 			t.Cleanup(srv.Close)
-			client := enrolledClient(t, srv)
+			client := keyedClient(t, srv)
 			var pauses []time.Duration
 			client.call.pause = func(_ context.Context, d time.Duration) error {
 				pauses = append(pauses, d)
@@ -267,7 +264,7 @@ func TestClient_Once_LeavesTheWaitToTheCaller(t *testing.T) {
 				_, _ = io.WriteString(w, tt.body)
 			}))
 			t.Cleanup(srv.Close)
-			client := enrolledClient(t, srv).Once()
+			client := keyedClient(t, srv).Once()
 			client.call.pause = func(context.Context, time.Duration) error {
 				t.Error("a client that tries once waits for nothing")
 				return nil
@@ -320,11 +317,7 @@ func TestClient_Bounded_EndsATryHQDoesNotAnswer(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			address, doer := tt.hq(t)
-			path := filepath.Join(t.TempDir(), "enrollment.json")
-			if err := SaveEnrollment(path, Enrollment{HQ: address, ProjectID: "p-mate", Credential: "good"}); err != nil {
-				t.Fatal(err)
-			}
-			client, err := Open(doer, path)
+			client, err := Open(doer, Identity{Origin: address, Key: "good", ProjectID: "p-mate"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -363,7 +356,7 @@ func neverAccepting(t *testing.T) (string, Doer) {
 func TestClient_Unreachable_IsUnavailableAtOnce(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.NotFoundHandler())
-	client := enrolledClient(t, srv)
+	client := keyedClient(t, srv)
 	srv.Close()
 	client.call.pause = func(context.Context, time.Duration) error {
 		t.Error("an HQ that does not answer is not waited for")
@@ -379,21 +372,16 @@ func TestClient_Unreachable_IsUnavailableAtOnce(t *testing.T) {
 
 // TestClient_Addresses: what zcp hands git and a person is HQ's own address
 // followed by the contract's paths (hqChanges.ts changeUrl, attachmentPath),
-// whether or not the enrollment kept a trailing slash.
+// whether or not the configured origin carries a trailing slash.
 func TestClient_Addresses(t *testing.T) {
 	t.Parallel()
 	for _, address := range []string{"https://hq.example", "https://hq.example/"} {
-		path := filepath.Join(t.TempDir(), "enrollment.json")
-		if err := SaveEnrollment(path, Enrollment{HQ: address, ProjectID: "p-mate", Credential: "good"}); err != nil {
-			t.Fatal(err)
-		}
-		client, err := Open(http.DefaultClient, path)
+		client, err := Open(http.DefaultClient, Identity{Origin: address, Key: "good", ProjectID: "p-mate"})
 		if err != nil {
 			t.Fatal(err)
 		}
 		for got, want := range map[string]string{
 			client.Address():                    "https://hq.example",
-			client.RepoURL("a1", "appdev"):      "https://hq.example/git/a1/appdev.git",
 			client.ChangeURL("a1", "appdev", 3): "https://hq.example/changes/a1/appdev/3",
 			client.ChangeBranch(3):              "mate/p-mate/3",
 			client.AttachmentURL("/api/apps/a1/changes/appdev/3/attachments/x"): "https://hq.example/api/apps/a1/changes/appdev/3/attachments/x",
@@ -405,16 +393,44 @@ func TestClient_Addresses(t *testing.T) {
 	}
 }
 
+// TestRepoURL_NamesTheOrganisation: a Mate's repository address is
+// /git/<orgId>/<appId>/<repo>.git (HQ's named difference 3), whether or not
+// the configured origin carries a trailing slash; with no organisation there
+// is no address, never one without it.
+func TestRepoURL_NamesTheOrganisation(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, address, org, want string
+		wantErr                  bool
+	}{
+		{name: "plain origin", address: "https://hq.example", org: "org-1", want: "https://hq.example/git/org-1/a1/appdev.git"},
+		{name: "trailing slash", address: "https://hq.example/", org: "org-1", want: "https://hq.example/git/org-1/a1/appdev.git"},
+		{name: "no organisation", address: "https://hq.example", org: "", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			client, err := Open(http.DefaultClient, Identity{Origin: tt.address, Key: "good", ProjectID: "p-mate", OrgID: tt.org})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := client.RepoURL("a1", "appdev")
+			if (err != nil) != tt.wantErr || got != tt.want {
+				t.Errorf("RepoURL = %q, %v; want %q, error %v", got, err, tt.want, tt.wantErr)
+			}
+			if got, err := RepoURLAt(tt.address, tt.org, "a1", "appdev"); (err != nil) != tt.wantErr || got != tt.want {
+				t.Errorf("RepoURLAt = %q, %v; want %q, error %v", got, err, tt.want, tt.wantErr)
+			}
+		})
+	}
+}
+
 // A change's branch is the one HQ names for it — short, or a full ref — and,
 // from an HQ that names none, the one HQ gives a change opened without a
 // branch: the Mate's own default.
 func TestClient_BranchOf_IsTheStoredBranchElseTheDefault(t *testing.T) {
 	t.Parallel()
-	path := filepath.Join(t.TempDir(), "enrollment.json")
-	if err := SaveEnrollment(path, Enrollment{HQ: "https://hq.example", ProjectID: "p-mate", Credential: "good"}); err != nil {
-		t.Fatal(err)
-	}
-	client, err := Open(http.DefaultClient, path)
+	client, err := Open(http.DefaultClient, Identity{Origin: "https://hq.example", Key: "good", ProjectID: "p-mate"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -448,25 +464,29 @@ func TestClient_OpenChange_NamesTheAgentsBranch(t *testing.T) {
 	}
 }
 
-// TestCredentialFingerprint_IsTheClientsFingerprint: a record that names the
-// Mate credential a service or a pool was given keeps one fingerprint, so the
-// one zcp computes from a credential it read from the enrollment is the
+// TestGitCredentialFingerprint_IsTheClientsFingerprint: a record that names
+// the Git credential a service or a pool was given keeps one fingerprint, so
+// the one zcp computes from a credential it read from the Mate's file is the
 // client's — 16 hex characters, never the credential.
-func TestCredentialFingerprint_IsTheClientsFingerprint(t *testing.T) {
+func TestGitCredentialFingerprint_IsTheClientsFingerprint(t *testing.T) {
 	t.Parallel()
-	path := filepath.Join(t.TempDir(), "enrollment.json")
-	if err := SaveEnrollment(path, Enrollment{HQ: "https://hq.example.invalid", ProjectID: "p-mate", Credential: "the-credential"}); err != nil {
+	path := filepath.Join(t.TempDir(), "git-credential")
+	if err := os.WriteFile(path, []byte("the-credential\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	client, err := Open(nil, path)
+	client, err := Open(nil, Identity{Origin: "https://hq.example.invalid", Key: "good", ProjectID: "p-mate", GitCredentialPath: path})
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := CredentialFingerprint("the-credential")
-	if got != client.CredentialFingerprint() {
-		t.Errorf("CredentialFingerprint = %q, want the client's %q", got, client.CredentialFingerprint())
+	_, held, err := client.GitCredential()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(got) != 16 || strings.Contains(got, "the-credential") || got == CredentialFingerprint("another") {
+	got := GitCredentialFingerprint("the-credential")
+	if got != held {
+		t.Errorf("GitCredentialFingerprint = %q, want the client's %q", got, held)
+	}
+	if len(got) != 16 || strings.Contains(got, "the-credential") || got == GitCredentialFingerprint("another") {
 		t.Errorf("fingerprint %q: want 16 hex characters that tell credentials apart", got)
 	}
 }
@@ -494,7 +514,7 @@ func TestClient_CloseChange_PostsTheCloseOfTheMatesOwnChange(t *testing.T) {
 	if change.State != ChangeClosed || change.Number != 3 || change.Branch != "add-list" {
 		t.Errorf("change = %+v, want #3 on add-list closed", change)
 	}
-	wantCall := hqCall{http.MethodPost, "/api/mate/changes/appdev/3/close", "Mate good", "application/json", `{}`}
+	wantCall := hqCall{http.MethodPost, "/api/mate/changes/appdev/3/close", "Project good", "application/json", `{}`}
 	if len(*calls) != 1 || (*calls)[0] != wantCall {
 		t.Errorf("calls = %+v, want [%+v]", *calls, wantCall)
 	}

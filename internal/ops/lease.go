@@ -60,7 +60,7 @@ type LeaseDeps struct {
 	// Env reads one key of the container's current env; nil means the live
 	// env (liveContainerEnv).
 	Env func(key string) (string, bool)
-	// HQAddress is the address of the HQ this Mate enrolled with, read at
+	// HQAddress is the address of the HQ this container presents itself to, read at
 	// each use ("" — or nil — for none): a repository on it is checked out as
 	// HQ's git user (DP-12).
 	HQAddress func() string

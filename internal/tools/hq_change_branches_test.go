@@ -20,7 +20,7 @@ import (
 // maybe a branch.
 func (l *hqLab) openFrom(service, branch, title string) (changeOpenResult, string, bool) {
 	l.t.Helper()
-	res, typed, err := handleOpenChange(context.Background(), l.hq.srv.Client(), l.stateDir, WorkflowInput{Service: service, Branch: branch, Title: title})
+	res, typed, err := handleOpenChange(context.Background(), l.hq.srv.Client(), l.rt, l.stateDir, WorkflowInput{Service: service, Branch: branch, Title: title})
 	if err != nil {
 		l.t.Fatalf("handleOpenChange: %v", err)
 	}
@@ -49,11 +49,15 @@ func (l *hqLab) pushFromMain(branch string, files map[string]string) {
 // repository in HQ on branch, as an acquire leaves it.
 func (l *hqLab) leaseOf(pool string, number int, branch string) string {
 	l.t.Helper()
-	hqc, ok := openHQ(l.hq.srv.Client())
+	hqc, ok := openHQ(l.hq.srv.Client(), l.rt)
 	if !ok {
-		l.t.Fatal("the lab's Mate is not enrolled")
+		l.t.Fatal("the lab's Mate is not linked")
 	}
-	writeHQLeaseRecord(l.t, l.stateDir, pool, number, hqc.RepoURL(labApp, "appdev"), branch)
+	repo, err := hqc.RepoURL(labApp, "appdev")
+	if err != nil {
+		l.t.Fatal(err)
+	}
+	writeHQLeaseRecord(l.t, l.stateDir, pool, number, repo, branch)
 	return fmt.Sprintf("%s-%d", pool, number)
 }
 

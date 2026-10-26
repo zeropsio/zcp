@@ -8,36 +8,38 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/hq/hqtest"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 )
 
 const (
 	leaseHQAddress    = "https://hq.example.invalid"
-	leaseHQRepo       = leaseHQAddress + "/git/a1/web"
+	leaseHQRepo       = leaseHQAddress + "/git/org-1/a1/web"
 	leaseHQCredential = "the-mate-credential-0001"
 )
 
-// enrollWithLeaseHQ gives this test a home whose enrollment names
-// leaseHQAddress, the way a Mate enrolled with its HQ holds one.
-func enrollWithLeaseHQ(t *testing.T) {
+// leaseHQLink links a test's container to the HQ at leaseHQAddress, the way
+// a Mate's container presents itself to its HQ: its identity, and a file of
+// its own for the Git credential the Mate's server keeps, holding
+// leaseHQCredential.
+func leaseHQLink(t *testing.T) *runtime.HQLink {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
-	if err := hq.SaveEnrollment(hq.EnrollmentPath(), hq.Enrollment{HQ: leaseHQAddress + "/", ProjectID: "proj-1", Credential: leaseHQCredential}); err != nil {
-		t.Fatal(err)
-	}
+	link := &runtime.HQLink{Origin: leaseHQAddress, ProjectID: "proj-1", Key: "the-project-key",
+		GitCredentialPath: filepath.Join(t.TempDir(), ".zcp", "hq", "git-credential")}
+	hqtest.GitCredential(t, link.GitCredentialPath, leaseHQCredential)
+	return link
 }
 
-// TestLeaseTool_HQRepo_ChecksOutAsMate: zerops_lease reads the HQ this Mate
-// enrolled with at the acquire, so the checkout of a repository on it
-// authenticates as HQ's git user `mate`; the result never carries the Mate
-// credential.
+// TestLeaseTool_HQRepo_ChecksOutAsMate: zerops_lease reads the HQ this
+// container presents itself to at the acquire, so the checkout of a
+// repository on it authenticates as HQ's git user `mate`; the result never
+// carries the Mate credential.
 func TestLeaseTool_HQRepo_ChecksOutAsMate(t *testing.T) {
-	// Non-parallel: t.Setenv points HOME at the test's enrollment.
-	enrollWithLeaseHQ(t)
+	t.Parallel()
 	ssh := &leaseStubSSH{}
-	srv, _ := leaseToolServerSSH(t, &fakeOrchestrator{}, ssh)
+	srv, _, _ := leaseToolServerIn(t, runtime.Info{HQ: leaseHQLink(t)}, ssh)
 
 	res := callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseHQRepo + ".git", "branch": "feat"})
 	text := getTextContent(t, res)
@@ -60,15 +62,14 @@ func TestLeaseTool_HQRepo_ChecksOutAsMate(t *testing.T) {
 // credential as a prerequisite and never appends the contract that asks the
 // user for a token of their own.
 func TestLeaseTool_HQCheckoutFailure_SaysWhatIsMissing(t *testing.T) {
-	// Non-parallel: t.Setenv points HOME at the test's enrollment.
-	enrollWithLeaseHQ(t)
+	t.Parallel()
 	ssh := &leaseStubSSH{fn: func(string) ([]byte, error) {
 		return nil, &platform.SSHExecError{
 			Hostname: "devpool-3", Output: "fatal: could not read Username for 'https://hq.example.invalid': terminal prompts disabled",
 			Err: os.ErrPermission,
 		}
 	}}
-	srv, stateDir := leaseToolServerSSH(t, &fakeOrchestrator{}, ssh)
+	srv, stateDir, _ := leaseToolServerIn(t, runtime.Info{HQ: leaseHQLink(t)}, ssh)
 
 	res := callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "devpool", "repo": leaseHQRepo, "branch": "feat"})
 	text := getTextContent(t, res)
@@ -95,9 +96,9 @@ func TestLeaseTool_HQCheckoutFailure_SaysWhatIsMissing(t *testing.T) {
 // names HQ's branch rule — a branch of the agent's own, never `main`, never
 // forced.
 func TestDeployTool_LeaseGitPushRefusal_HQRepo_NamesHQsBranchRule(t *testing.T) {
-	// Non-parallel: t.Setenv points HOME at the test's enrollment.
-	enrollWithLeaseHQ(t)
+	t.Parallel()
 	rig := newLeaseDeployRig(t)
+	rig.rt.HQ = leaseHQLink(t)
 	record := `{"poolHostname":"webpool","poolServiceId":"svc-pool","containerId":"c-3","containerNumber":3,` +
 		`"containerHostname":"node-id-3.runtime.webpool.zerops","lease":"secret-lease-value","branch":"feat-x",` +
 		`"repo":"` + leaseHQRepo + `","acquiredAt":"2026-10-23T12:00:00Z"}`

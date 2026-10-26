@@ -3,12 +3,34 @@
 package hq
 
 import (
-	"encoding/base64"
+	"os"
 	"os/exec"
 	"slices"
 	"strings"
 	"testing"
 )
+
+func TestGitEnv_DoesNotExposeAuthorizationThroughInheritedTracing(t *testing.T) {
+	// non-parallel: t.Setenv changes the process environment.
+	for _, name := range []string{"GIT_TRACE", "GIT_TRACE_PACKET", "GIT_TRACE_CURL", "GIT_TRACE_CURL_NO_DATA", "GIT_TRACE2_EVENT", "GIT_TRACE2_ENV_VARS", "GIT_CURL_VERBOSE"} {
+		t.Setenv(name, "trace-enabled")
+	}
+	t.Setenv("HQ_GIT_TEST_KEEP", "ordinary environment")
+	c := Client{id: Identity{Origin: "https://hq.example", ProjectID: "project-1", Key: "trace-test-key"}}
+	env := c.gitEnv()
+	for _, entry := range env {
+		name, _, _ := strings.Cut(entry, "=")
+		if strings.HasPrefix(name, "GIT_TRACE") || name == "GIT_CURL_VERBOSE" {
+			t.Errorf("Git inherits credential tracing through %s", name)
+		}
+	}
+	if !slices.Contains(env, "HQ_GIT_TEST_KEEP="+os.Getenv("HQ_GIT_TEST_KEEP")) {
+		t.Error("Git lost ordinary inherited environment")
+	}
+	if !slices.Contains(env, "GIT_CONFIG_VALUE_0=Authorization: Project trace-test-key") {
+		t.Error("Git lost scoped project authorization")
+	}
+}
 
 // TestGitEnv_CarriesTheCredentialScopedToHQ: the credential reaches git as an
 // Authorization header for HQ's address alone, through the environment —
@@ -26,12 +48,12 @@ func TestGitEnv_CarriesTheCredentialScopedToHQ(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			c := Client{enrollment: Enrollment{HQ: tt.address, Credential: "the-credential"}}
+			c := Client{id: Identity{Origin: tt.address, Key: "the-key", OrgID: "org-1"}}
 			env := c.gitEnv()
 			want := []string{
 				"GIT_CONFIG_COUNT=1",
 				"GIT_CONFIG_KEY_0=" + tt.wantKey,
-				"GIT_CONFIG_VALUE_0=Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte(GitUser+":the-credential")),
+				"GIT_CONFIG_VALUE_0=Authorization: Project the-key",
 				"GIT_TERMINAL_PROMPT=0",
 			}
 			for _, w := range want {
@@ -39,8 +61,8 @@ func TestGitEnv_CarriesTheCredentialScopedToHQ(t *testing.T) {
 					t.Errorf("env lacks %q", w)
 				}
 			}
-			if url := c.RepoURL("app-1", "group"); strings.Contains(url, "the-credential") {
-				t.Errorf("the repository's URL %q carries the credential", url)
+			if url, err := c.RepoURL("app-1", "group"); err != nil || strings.Contains(url, "the-key") {
+				t.Errorf("the repository's URL %q (%v) is missing or carries the key", url, err)
 			}
 		})
 	}
@@ -54,7 +76,7 @@ func TestScratch_File(t *testing.T) {
 		t.Skip("git is not installed")
 	}
 	ctx := t.Context()
-	c := Client{enrollment: Enrollment{HQ: "https://hq.example.com", Credential: "the-credential"}}
+	c := Client{id: Identity{Origin: "https://hq.example.com", Key: "the-key", OrgID: "org-1"}}
 	scratch, err := c.OpenScratch(ctx, "app-1", RecipeRepo)
 	if err != nil {
 		t.Fatal(err)

@@ -18,7 +18,12 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { EventEmitter } = require("node:events");
+const { mock } = require("node:test");
 const { loadWelcome, TEST_REGISTRY, TEST_AGENT_IDS, tempDir } = require("./harness.js");
+
+// Mirror welcome.js's STATE_PUSH_DEBOUNCE_MS / PACK_STATUS_DEBOUNCE_MS.
+const STATE_PUSH_DEBOUNCE_MS = 400;
+const PACK_STATUS_DEBOUNCE_MS = 300;
 
 function baseDeps(extra) {
   return Object.assign(
@@ -63,56 +68,6 @@ function makeCountingFs({ existsSync } = {}) {
   };
 }
 
-function waitFor(predicate, { timeoutMs = 3000, intervalMs = 50 } = {}) {
-  return new Promise((resolve) => {
-    const deadline = Date.now() + timeoutMs;
-    const tick = () => {
-      const val = predicate();
-      if (val) { resolve(val); return; }
-      if (Date.now() >= deadline) { resolve(undefined); return; }
-      setTimeout(tick, intervalMs);
-    };
-    tick();
-  });
-}
-
-// armedFs is the real fs with one seam: it counts the events the panel's own
-// watchers on dir deliver, so a test can tell when FSEvents has armed them.
-// Every other call — and every watch — is the real one.
-function armedFs(dir) {
-  let events = 0;
-  const fsImpl = Object.create(fs);
-  fsImpl.watch = (target, ...rest) => {
-    const listener = rest.pop();
-    return fs.watch(target, ...rest, (...args) => {
-      if (target === dir) events++;
-      return listener(...args);
-    });
-  };
-  return { fsImpl, armed: () => events > 0 };
-}
-
-// ARM_MS and DETECT_MS bound the two waits. Measured under a loaded run
-// (several suites at once): a fresh watch armed after ~2.7 s or not within
-// 10 s at all, and the push after the real write took about as long again —
-// the old 3 s windows missed by a hair. Both waits return the moment their
-// condition holds, so a passing run pays nothing for the headroom.
-const ARM_MS = 10000;
-const DETECT_MS = 15000;
-
-// whenArmed touches a probe file in dir until one of the panel's watchers on
-// dir has delivered an event: proof the watch is armed before the test
-// creates what it must detect. A probe changes nothing the panel reads — the
-// fallback ignores any event while its target is still missing.
-async function whenArmed(dir, armed) {
-  const probe = path.join(dir, ".zcp-welcomejs-probe");
-  return waitFor(() => {
-    if (armed()) return true;
-    fs.writeFileSync(probe, String(Date.now()));
-    return false;
-  }, { timeoutMs: ARM_MS });
-}
-
 test("missing ~/.claude and ~/.codex at open falls back to watching HOME, without crashing", () => {
   const { fsImpl, watches } = makeCountingFs({ existsSync: () => false });
   const homeDir = "/tmp/zcp-welcomejs-missing-home";
@@ -123,39 +78,66 @@ test("missing ~/.claude and ~/.codex at open falls back to watching HOME, withou
   assert.ok(homeWatches.length >= 2, "both the claude-code and codex probes should fall back to watching HOME");
 });
 
-// This exercises a REAL fs.watch registration against a REAL tmp HOME, which
-// makes it hostage to a genuine macOS FSEvents gap: a freshly registered
-// watch is armed asynchronously, and while many welcomejs files open panels
-// in parallel processes the arming routinely lands after a dir created
-// straight after open — so the creation was never seen, on every retry.
-// The test therefore waits until the panel's own watcher on HOME has
-// delivered an event (whenArmed) before it creates the dir; a watch that
-// never arms is a fresh attempt, not a detection failure. What it proves is
-// unchanged: the real watcher detects a dir created after open and pushes
-// local-only.
-test("a credential dir created after open is detected and pushes local-only", async () => {
-  const ATTEMPTS = 5;
-  let found;
-  for (let attempt = 1; attempt <= ATTEMPTS && !found; attempt++) {
+// makeEventFs keeps the real disk (existsSync, so what a test creates in its
+// tmp dir is what the panel sees) but takes event delivery into the test's
+// hands: watch() records the callback, and fire(target) is the fs event. The
+// OS notification service is not ours to test and its delivery under load is
+// not deterministic; what is ours is that an event makes the panel re-read the
+// disk and push.
+function makeEventFs() {
+  const watches = []; // { target, cb }
+  return {
+    fsImpl: {
+      existsSync: (p) => fs.existsSync(p),
+      watch: (target, cb) => {
+        watches.push({ target, cb });
+        return { close() {} };
+      },
+    },
+    fire: (target) => {
+      const w = watches.find((x) => x.target === target);
+      assert.ok(w, `expected a watch() on ${target}, got [${watches.map((x) => x.target)}]`);
+      w.cb();
+    },
+  };
+}
+
+function lastState(panel) {
+  const msgs = panel.postedMessages.filter((m) => m.type === "state");
+  return msgs[msgs.length - 1];
+}
+
+// withMockedTimers drives the panel's push debounce by the test's own tick
+// instead of the wall clock.
+function withMockedTimers(fn) {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    return fn(mock.timers);
+  } finally {
+    mock.timers.reset();
+  }
+}
+
+test("a credential dir created after open is detected and pushes local-only", () => {
+  withMockedTimers((timers) => {
     const tmpHome = tempDir("zcp-welcomejs-home-");
-    const { fsImpl, armed } = armedFs(tmpHome);
+    const { fsImpl, fire } = makeEventFs();
     const { panel } = openWelcome({ fs: fsImpl, homeDir: tmpHome, workspaceRoot: null });
 
     panel.webview.__fireMessage({ type: "ready" });
     assert.equal(panel.postedMessages.filter((m) => m.type === "state").length, 1);
-    if (!(await whenArmed(tmpHome, armed))) { panel.dispose(); continue; }
 
     fs.mkdirSync(path.join(tmpHome, ".claude"));
     fs.writeFileSync(path.join(tmpHome, ".claude", ".credentials.json"), "{}");
+    fire(tmpHome);
+    timers.tick(STATE_PUSH_DEBOUNCE_MS);
 
-    found = await waitFor(() => {
-      const msgs = panel.postedMessages.filter((m) => m.type === "state");
-      const last = msgs[msgs.length - 1];
-      return last && last.payload.agents.some((a) => a.id === "claude-code" && a.state === "local-only");
-    }, { timeoutMs: DETECT_MS });
+    assert.ok(
+      lastState(panel).payload.agents.some((a) => a.id === "claude-code" && a.state === "local-only"),
+      "expected a state push showing claude-code as local-only after the cred file appeared"
+    );
     panel.dispose();
-  }
-  assert.ok(found, `expected a state push showing claude-code as local-only after the cred file appeared (${ATTEMPTS} attempts)`);
+  });
 });
 
 test("disposing the panel closes every watcher it opened", () => {
@@ -360,98 +342,79 @@ test("a stale workspace-root callback (queued before the skill-packs watcher att
 // after the LAST event, not once per event. A single `zcp skills pack-add`
 // run can touch several files under .zcp/state/skill-packs, each its own fs
 // event — a burst of those must collapse into one spawn.
-test("a burst of pack-manifest watcher events collapses into exactly one debounced pack-status spawn", async () => {
-  const workspaceRoot = "/tmp/zcp-welcomejs-pack-debounce-ws";
-  const skillPacksDir = path.join(workspaceRoot, ".zcp", "state", "skill-packs");
-  let watchCb;
-  const fsImpl = {
-    existsSync: (p) => p === skillPacksDir,
-    watch: (_target, cb) => { watchCb = cb; return { close() {} }; },
-  };
-  const spawnCalls = [];
-  const spawn = (cmd, args, opts) => {
-    spawnCalls.push({ cmd, args, opts });
-    const child = new EventEmitter();
-    child.stdout = new EventEmitter();
-    setImmediate(() => {
-      child.stdout.emit("data", JSON.stringify({ version: 1, packs: [] }));
-      child.emit("close", 0);
-    });
-    return child;
-  };
+test("a burst of pack-manifest watcher events collapses into exactly one debounced pack-status spawn", () => {
+  withMockedTimers((timers) => {
+    const workspaceRoot = "/tmp/zcp-welcomejs-pack-debounce-ws";
+    const skillPacksDir = path.join(workspaceRoot, ".zcp", "state", "skill-packs");
+    let watchCb;
+    const fsImpl = {
+      existsSync: (p) => p === skillPacksDir,
+      watch: (_target, cb) => { watchCb = cb; return { close() {} }; },
+    };
+    const spawnCalls = [];
+    const spawn = (cmd, args, opts) => {
+      spawnCalls.push({ cmd, args, opts });
+      return new EventEmitter();
+    };
 
-  openWelcome({ fs: fsImpl, homeDir: "/nonexistent/zcp-welcomejs-home", workspaceRoot, spawn });
-  assert.ok(watchCb, "expected the skill-packs watcher to attach directly (the dir already exists)");
+    openWelcome({ fs: fsImpl, homeDir: "/nonexistent/zcp-welcomejs-home", workspaceRoot, spawn });
+    assert.ok(watchCb, "expected the skill-packs watcher to attach directly (the dir already exists)");
 
-  // Three rapid events, well within the 300ms debounce window.
-  watchCb();
-  watchCb();
-  watchCb();
+    watchCb();
+    watchCb();
+    watchCb();
 
-  assert.equal(spawnCalls.length, 0, "must not spawn before the debounce window elapses");
+    timers.tick(PACK_STATUS_DEBOUNCE_MS - 1);
+    assert.equal(spawnCalls.length, 0, "must not spawn before the debounce window elapses");
 
-  const found = await waitFor(() => spawnCalls.length > 0, { timeoutMs: 1500 });
-  assert.ok(found, "expected the debounced pack-status spawn to fire");
-  assert.equal(spawnCalls.length, 1, "a burst of events must collapse into exactly one spawn, not one per event");
-  assert.deepStrictEqual(spawnCalls[0], { cmd: "zcp", args: ["skills", "pack-status", "--json"], opts: { cwd: workspaceRoot, shell: false } });
+    timers.tick(1);
+    assert.equal(spawnCalls.length, 1, "a burst of events must collapse into exactly one spawn, not one per event");
+    assert.deepStrictEqual(spawnCalls[0], { cmd: "zcp", args: ["skills", "pack-status", "--json"], opts: { cwd: workspaceRoot, shell: false } });
+  });
 });
 
-// Real-fs integration proof (mirrors "a credential dir created after open is
-// detected and pushes local-only" above, including waiting for the watcher
-// to arm before the write, for the same macOS FSEvents gap under heavy
-// concurrent watch registration): a pack manifest written entirely OUTSIDE
-// this panel (an external `zcp skills pack-add` run in a terminal) must
-// still surface as a state delta, without the user ever having to
-// reveal/refocus the panel. UNLIKE before packs moved behind the CLI's own
-// pack-status contract (docs/spec-welcome-mode.md §4), collectPacksState no
-// longer reads the manifest file itself — only a `zcp skills pack-status
-// --json` run does — so the fake spawn here reads the manifest's real
-// on-disk presence to stand in for what the real CLI would report, keeping
-// the REAL part of this proof scoped to what it always was: does the real
-// fs.watch mechanism notice the external write and trigger a refresh.
-test("a pack manifest created after open is detected and pushes an installed state delta", async () => {
-  const ATTEMPTS = 5;
-  let found;
-  for (let attempt = 1; attempt <= ATTEMPTS && !found; attempt++) {
+// A pack manifest written entirely OUTSIDE this panel (an external `zcp
+// skills pack-add` run in a terminal) must still surface as a state delta,
+// without the user ever having to reveal/refocus the panel. collectPacksState
+// no longer reads the manifest file itself (docs/spec-welcome-mode.md §4) —
+// only a `zcp skills pack-status --json` run does — so the fake CLI here
+// reads the manifest's real on-disk presence to stand in for what the real
+// CLI would report. Each spawned run is held until the test settles it, so
+// the order of runs is the test's, not the scheduler's.
+test("a pack manifest created after open is detected and pushes an installed state delta", () => {
+  withMockedTimers((timers) => {
     const tmpWs = tempDir("zcp-welcomejs-pack-ws-");
-    const manifestPath = path.join(tmpWs, ".zcp", "state", "skill-packs", "superpowers.json");
+    const skillPacksDir = path.join(tmpWs, ".zcp", "state", "skill-packs");
+    const manifestPath = path.join(skillPacksDir, "superpowers.json");
+    const runs = [];
     const spawn = () => {
       const child = new EventEmitter();
       child.stdout = new EventEmitter();
-      setImmediate(() => {
-        const installed = fs.existsSync(manifestPath);
-        child.stdout.emit("data", JSON.stringify({ version: 1, packs: [{ id: "superpowers", state: installed ? "installed" : "absent", managed: true }] }));
-        child.emit("close", 0);
-      });
+      runs.push(child);
       return child;
     };
-    const { fsImpl, armed } = armedFs(tmpWs);
+    const settle = (child) => {
+      const installed = fs.existsSync(manifestPath);
+      child.stdout.emit("data", JSON.stringify({ version: 1, packs: [{ id: "superpowers", state: installed ? "installed" : "absent", managed: true }] }));
+      child.emit("close", 0);
+    };
+    const packState = (panel) => lastState(panel).payload.packs.find((p) => p.id === "superpowers").state;
+    const { fsImpl, fire } = makeEventFs();
     const { panel } = openWelcome({ fs: fsImpl, homeDir: "/nonexistent/zcp-welcomejs-home", workspaceRoot: tmpWs, spawn });
 
-    panel.webview.__fireMessage({ type: "ready" }); // triggers the FIRST pack-status run (spec §4) — manifest doesn't exist yet
-    // Wait for that first run to actually settle showing "absent" BEFORE
-    // creating the manifest — otherwise a coincidental late resolution of
-    // this first run (after the file already exists) could report
-    // "installed" on its own, without the watcher's own refresh ever having
-    // fired, defeating the point of this test.
-    const settledAbsent = await waitFor(() => {
-      const msgs = panel.postedMessages.filter((m) => m.type === "state");
-      const last = msgs[msgs.length - 1];
-      return last && last.payload.packs.some((p) => p.id === "superpowers" && p.state === "absent");
-    });
-    if (!settledAbsent) { panel.dispose(); continue; }
-    if (!(await whenArmed(tmpWs, armed))) { panel.dispose(); continue; }
+    panel.webview.__fireMessage({ type: "ready" }); // the FIRST pack-status run (spec §4): manifest absent
+    assert.equal(runs.length, 1);
+    settle(runs[0]);
+    assert.equal(packState(panel), "absent");
 
-    const skillPacksDir = path.join(tmpWs, ".zcp", "state", "skill-packs");
     fs.mkdirSync(skillPacksDir, { recursive: true });
     fs.writeFileSync(manifestPath, "{}");
+    fire(tmpWs);
+    timers.tick(PACK_STATUS_DEBOUNCE_MS);
+    assert.equal(runs.length, 2, "the watcher event must trigger a second pack-status run");
+    settle(runs[1]);
 
-    found = await waitFor(() => {
-      const msgs = panel.postedMessages.filter((m) => m.type === "state");
-      const last = msgs[msgs.length - 1];
-      return last && last.payload.packs.some((p) => p.id === "superpowers" && p.state === "installed");
-    }, { timeoutMs: DETECT_MS });
+    assert.equal(packState(panel), "installed");
     panel.dispose();
-  }
-  assert.ok(found, `expected a state push showing superpowers as installed after the manifest appeared (${ATTEMPTS} attempts)`);
+  });
 });

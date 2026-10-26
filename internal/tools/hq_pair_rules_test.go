@@ -7,12 +7,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/hq/hqtest"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -51,52 +50,44 @@ func TestAMateKeepingItsCodeInHQPlansOnlyStandardPairs(t *testing.T) {
 	}
 }
 
-// enrollAs leaves this test's HQ enrollment missing, unreadable, or kept.
-// Callers redirect HOME first.
-func enrollAs(t *testing.T, state string) {
+// linkAs leaves this test's container without a key for HQ ("missing") or
+// holding one ("kept"). Callers redirect HOME first, and the test is not
+// parallel: the identity is the process environment.
+func linkAs(t *testing.T, state string) {
 	t.Helper()
 	switch state {
 	case "missing":
-	case "unreadable":
-		if err := os.MkdirAll(filepath.Dir(hq.EnrollmentPath()), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(hq.EnrollmentPath(), []byte("{not json"), 0o600); err != nil {
-			t.Fatal(err)
-		}
+		hqtest.Link(t, "", "", "")
 	case "kept":
-		if err := hq.SaveEnrollment(hq.EnrollmentPath(), hq.Enrollment{HQ: "https://hq.example", ProjectID: "p1", Credential: "c"}); err != nil {
-			t.Fatal(err)
-		}
+		hqtest.Link(t, "https://hq.example", "p1", "c")
 	default:
-		t.Fatalf("unknown enrollment state %q", state)
+		t.Fatalf("unknown link state %q", state)
 	}
 }
 
-// TestBootstrapPlan_AMatePlansOnlyPairsWhateverItsEnrollment: being a Mate,
-// not holding an enrollment, is what makes every runtime a pair. A Mate whose
-// enrollment is still missing or cannot be read plans the same pairs it will
-// deliver through once it has one; a container that is not a Mate keeps zcp's
-// own plans, an enrollment file on its disk notwithstanding.
+// TestBootstrapPlan_AMatePlansOnlyPairsWhateverItsLink: being a Mate, not
+// holding a key for HQ, is what makes every runtime a pair. A Mate with no
+// key yet plans the same pairs it will deliver through once it has one; a
+// container that is not a Mate keeps zcp's own plans, a key in its
+// environment notwithstanding.
 //
-// Not parallel: the enrollment is read from the process's HOME (t.Setenv).
-func TestBootstrapPlan_AMatePlansOnlyPairsWhateverItsEnrollment(t *testing.T) {
+// Not parallel: the identity is the process environment (t.Setenv).
+func TestBootstrapPlan_AMatePlansOnlyPairsWhateverItsLink(t *testing.T) {
 	tests := []struct {
 		name       string
 		mate       bool
-		enrollment string
+		link       string
 		wantRefuse bool
 	}{
-		{name: "a Mate not enrolled yet", mate: true, enrollment: "missing", wantRefuse: true},
-		{name: "a Mate whose enrollment cannot be read", mate: true, enrollment: "unreadable", wantRefuse: true},
-		{name: "an enrolled Mate", mate: true, enrollment: "kept", wantRefuse: true},
-		{name: "not a Mate, an enrollment on disk", enrollment: "kept"},
-		{name: "not a Mate", enrollment: "missing"},
+		{name: "a Mate without a key yet", mate: true, link: "missing", wantRefuse: true},
+		{name: "a keyed Mate", mate: true, link: "kept", wantRefuse: true},
+		{name: "not a Mate, a key in its environment", link: "kept"},
+		{name: "not a Mate", link: "missing"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("HOME", t.TempDir())
-			enrollAs(t, tt.enrollment)
+			linkAs(t, tt.link)
 			dir := t.TempDir()
 			engine := workflow.NewEngine(dir, workflow.EnvContainer, nil)
 			if _, err := engine.BootstrapStartWithRoute("proj-1", "a todo app", workflow.BootstrapRouteClassic, ""); err != nil {
@@ -118,37 +109,6 @@ func TestBootstrapPlan_AMatePlansOnlyPairsWhateverItsEnrollment(t *testing.T) {
 	}
 }
 
-// TestLaunchProduction_AMateWithoutItsEnrollmentSaysSo: whether this Mate's
-// work reached main is HQ's to say. With no enrollment to ask it with — none
-// yet, or one that cannot be read — the refusal says that, never that
-// nothing was delivered.
-//
-// Not parallel: the enrollment is read from the process's HOME (t.Setenv).
-func TestLaunchProduction_AMateWithoutItsEnrollmentSaysSo(t *testing.T) {
-	tests := []struct {
-		enrollment string
-		want       []string
-	}{
-		{enrollment: "missing", want: []string{"no HQ enrollment yet", "Ask again"}},
-		{enrollment: "unreadable", want: []string{"HQ enrollment cannot be read", "Ask again"}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.enrollment, func(t *testing.T) {
-			t.Setenv("HOME", t.TempDir())
-			enrollAs(t, tt.enrollment)
-			text := resultText(t, hqLaunchProductionRefusal(context.Background(), nil, t.TempDir(), true))
-			for _, want := range append(tt.want, "wired_mate_production_is_the_groups") {
-				if !strings.Contains(text, want) {
-					t.Errorf("the refusal misses %q: %s", want, text)
-				}
-			}
-			if strings.Contains(text, "none of this Mate's work") {
-				t.Errorf("a missing enrollment is not evidence that nothing was delivered: %s", text)
-			}
-		})
-	}
-}
-
 // TestLaunchProduction_AMateKeepingItsCodeInHQRefusesAndSaysWhatIsTrue: an
 // application's production is a project the person adds from the projects
 // page, so a Mate keeping its code in HQ refuses launch-production outright,
@@ -157,7 +117,8 @@ func TestLaunchProduction_AMateWithoutItsEnrollmentSaysSo(t *testing.T) {
 // — read fresh, so a change merged since the last pass is never named as
 // open.
 func TestLaunchProduction_AMateKeepingItsCodeInHQRefusesAndSaysWhatIsTrue(t *testing.T) {
-	if refusal := hqLaunchProductionRefusal(context.Background(), nil, t.TempDir(), false); refusal != nil {
+	t.Parallel()
+	if refusal := hqLaunchProductionRefusal(context.Background(), nil, runtime.Info{}, t.TempDir(), false); refusal != nil {
 		t.Fatalf("a container that is not a Mate keeps zcp's own launch-production, got %q", resultText(t, refusal))
 	}
 	tests := []struct {
@@ -179,6 +140,7 @@ func TestLaunchProduction_AMateKeepingItsCodeInHQRefusesAndSaysWhatIsTrue(t *tes
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			lab := newHQLab(t)
 			lab.wire()
 			if tt.settle != nil {
@@ -186,7 +148,7 @@ func TestLaunchProduction_AMateKeepingItsCodeInHQRefusesAndSaysWhatIsTrue(t *tes
 				lab.openChange()
 				tt.settle(lab)
 			}
-			text := resultText(t, hqLaunchProductionRefusal(context.Background(), lab.hq.srv.Client(), lab.stateDir, true))
+			text := resultText(t, hqLaunchProductionRefusal(context.Background(), lab.hq.srv.Client(), lab.rt, lab.stateDir, true))
 			for _, want := range tt.want {
 				if !strings.Contains(text, want) {
 					t.Errorf("the refusal misses %q: %s", want, text)
@@ -253,7 +215,7 @@ func TestSessionAnnotations_HandoffOnlyWithAnOpenChange(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = workflow.DeleteWorkSession(dir, os.Getpid()) })
 
-			got := sessionAnnotations(t.Context(), nil, dir)
+			got := sessionAnnotations(t.Context(), nil, runtime.Info{}, dir)
 			if got == nil || got.Status != "auto-closed" {
 				t.Fatalf("annotations = %+v, want auto-closed", got)
 			}
@@ -266,8 +228,8 @@ func TestSessionAnnotations_HandoffOnlyWithAnOpenChange(t *testing.T) {
 
 // HQ owns the merged history: a merged change the pair holds no record of
 // still reads as work on main.
-// Non-parallel: the lab redirects HOME and writes the enrollment there.
 func TestProductionKnowsMergedWorkThePairHoldsNoRecordOf(t *testing.T) {
+	t.Parallel()
 	lab := newHQLab(t)
 	lab.wire()
 	lab.write(map[string]string{"index.js": "the app\n"})
@@ -276,19 +238,19 @@ func TestProductionKnowsMergedWorkThePairHoldsNoRecordOf(t *testing.T) {
 	if kept := lab.ledger(); len(kept) != 0 {
 		t.Fatalf("the ledger keeps %+v; want no record", kept)
 	}
-	text := hqLaunchProductionNextStep(t.Context(), lab.hq.srv.Client(), lab.stateDir)
+	text := hqLaunchProductionNextStep(t.Context(), lab.hq.srv.Client(), lab.rt, lab.stateDir)
 	if !strings.Contains(text, "Put it live") || strings.Contains(text, "branch of your own") || strings.Contains(text, "merge ") {
 		t.Fatalf("the guidance forgot the work HQ has merged: %s", text)
 	}
 }
 
 // An unavailable authority is unknown, never evidence that no work landed.
-// Non-parallel: the lab redirects HOME and writes the enrollment there.
 func TestProductionGuidance_HQUnavailableIsUnknown(t *testing.T) {
+	t.Parallel()
 	lab := newHQLab(t)
 	lab.wire()
 	lab.hq.setDown(true)
-	text := hqLaunchProductionNextStep(t.Context(), lab.hq.srv.Client(), lab.stateDir)
+	text := hqLaunchProductionNextStep(t.Context(), lab.hq.srv.Client(), lab.rt, lab.stateDir)
 	if !strings.Contains(text, "could not read") || !strings.Contains(text, "Ask again") || strings.Contains(text, "none of this Mate's work") {
 		t.Fatalf("HQ's failure must be visible, with a manual next step: %s", text)
 	}
@@ -299,7 +261,7 @@ func TestProductionGuidance_HQUnavailableIsUnknown(t *testing.T) {
 // it right after production was added. An HQ that cannot say keeps the
 // conditional words.
 //
-// Not parallel: HOME is redirected to hold the enrollment (t.Setenv).
+// Not parallel: HOME and the identity are redirected (t.Setenv).
 func TestSessionAnnotations_HandoffNamesPutItLiveOnlyWithoutProduction(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -314,16 +276,14 @@ func TestSessionAnnotations_HandoffNamesPutItLiveOnlyWithoutProduction(t *testin
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("HOME", t.TempDir())
 			fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodGet || r.URL.Path != "/api/mate/self" || r.Header.Get("Authorization") != "Mate good" {
+				if r.Method != http.MethodGet || r.URL.Path != "/api/mate/self" || r.Header.Get("Authorization") != "Project good" {
 					w.WriteHeader(http.StatusNotFound)
 					return
 				}
 				_, _ = w.Write([]byte(`{"projectId":"P_MATE","name":"Ada","face":"f","standupRequestedBy":null,"appId":"` + labApp + `","changes":[]` + tt.production + `}`))
 			}))
 			t.Cleanup(fake.Close)
-			if err := hq.SaveEnrollment(hq.EnrollmentPath(), hq.Enrollment{HQ: fake.URL, ProjectID: "P_MATE", Credential: "good"}); err != nil {
-				t.Fatal(err)
-			}
+			hqtest.Link(t, fake.URL, "P_MATE", "good")
 			dir := t.TempDir()
 			now := time.Now().UTC().Format(time.RFC3339)
 			if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
@@ -347,7 +307,7 @@ func TestSessionAnnotations_HandoffNamesPutItLiveOnlyWithoutProduction(t *testin
 			}
 			t.Cleanup(func() { _ = workflow.DeleteWorkSession(dir, os.Getpid()) })
 
-			got := sessionAnnotations(t.Context(), fake.Client(), dir)
+			got := sessionAnnotations(t.Context(), fake.Client(), runtime.Info{}, dir)
 			if got == nil || !strings.Contains(got.Note, "press Review") {
 				t.Fatalf("want the handoff in the closing note, got %+v", got)
 			}

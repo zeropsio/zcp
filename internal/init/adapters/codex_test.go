@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/BurntSushi/toml"
-	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/init/adapters"
 	"github.com/zeropsio/zcp/internal/runtime"
 )
@@ -285,35 +284,6 @@ func TestCodex_MCPEntry_ToolTimeoutOutlastsZcpsLongestCall(t *testing.T) {
 	}
 	if got <= longestCallSec {
 		t.Errorf("tool_timeout_sec = %d, want more than zcp's longest call (%d s)", got, longestCallSec)
-	}
-}
-
-// TestCodex_MCPEntry_PassesEveryOrgModeVariable pins that Codex hands zcp
-// serve every ZCP_ORG_* variable org mode's credentials read, so a Codex
-// outside a container reaches org mode too (docs/spec-mate.md §2.11).
-func TestCodex_MCPEntry_PassesEveryOrgModeVariable(t *testing.T) {
-	t.Parallel()
-	home := t.TempDir()
-	env := newCodexEnv(t, home)
-	if err := adapters.NewCodex().ContainerInit(env); err != nil {
-		t.Fatal(err)
-	}
-	zerops := loadCodexTOML(t, home)["mcp_servers"].(map[string]any)["zerops"].(map[string]any)
-	passed := map[string]bool{}
-	for _, v := range zerops["env_vars"].([]any) {
-		passed[v.(string)] = true
-	}
-	var read []string
-	if _, err := auth.ResolveOrgCredentials(func(key string) string {
-		read = append(read, key)
-		return "x"
-	}); err != nil {
-		t.Fatal(err)
-	}
-	for _, key := range read {
-		if strings.HasPrefix(key, "ZCP_ORG_") && !passed[key] {
-			t.Errorf("env_vars must name %q, which org mode reads (env_vars %v)", key, zerops["env_vars"])
-		}
 	}
 }
 

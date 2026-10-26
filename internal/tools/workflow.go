@@ -512,7 +512,7 @@ func handleEngineFreeAction(ctx context.Context, projectID string, client platfo
 	// less — runs without an active session because external deployers may
 	// have happened before any develop session existed.
 	if input.Action == "record-deploy" {
-		return handleRecordDeploy(ctx, client, httpClient, projectID, stateDir, input)
+		return handleRecordDeploy(ctx, client, httpClient, rt, projectID, stateDir, input)
 	}
 	// mac-pair is stateless: every call re-reads the Mate's `mac status`
 	// (workflow_mac_pair.go), so it needs no engine.
@@ -598,7 +598,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	case "status":
 		// The pairs' records an older zcp wrote move into the change ledger.
 		_, _ = workflow.HQChanges(engine.StateDir())
-		recordMissingHQOrigins(ctx, httpClient, engine.StateDir())
+		recordMissingHQOrigins(ctx, httpClient, rt, engine.StateDir())
 		// SPINE-1 fix: resolve precedence from DISK via the single
 		// ResolveLifecycle resolver (not the in-memory detectActiveWorkflow),
 		// so the dispatcher and the envelope agree. Focus rule (§5.3/§6.2):
@@ -678,15 +678,15 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return handleGroupRecipe(ctx, client, httpClient, rt, stateDir)
 	case "open-change":
 		// The agent's own branch, opened as its change (hq_change_open.go).
-		return handleOpenChange(ctx, httpClient, stateDir, input)
+		return handleOpenChange(ctx, httpClient, rt, stateDir, input)
 	case "describe-change":
 		// The Mate's words about its change, which the person reviews it by:
 		// its change's description in HQ (hq_change_description.go).
-		return handleDescribeChange(ctx, httpClient, stateDir, input)
+		return handleDescribeChange(ctx, httpClient, rt, stateDir, input)
 	case "close-change":
 		// The Mate's own abandoned change, closed by its branch
 		// (hq_change_close.go).
-		return handleCloseChange(ctx, httpClient, stateDir, input)
+		return handleCloseChange(ctx, httpClient, rt, stateDir, input)
 	default:
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -1157,7 +1157,7 @@ func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client 
 	reads.Go(func() { attachHQCheckoutOrigin(ctx, envelope.Services, sshDeployer, rt, engine.StateDir()) })
 	reads.Wait()
 	attachPartsSignal(ctx, envelope.Services, sshDeployer, rt, engine)
-	envelope.HQChanges, envelope.HQChangesAsLastRead = statusHQChanges(ctx, httpClient, rt, engine.StateDir(), hqAddress(), time.Now())
+	envelope.HQChanges, envelope.HQChangesAsLastRead = statusHQChanges(ctx, httpClient, rt, engine.StateDir(), hqAddress(rt), time.Now())
 	attachRollbackInfo(ctx, envelope.Services, client, projectID)
 	corpus, err := workflow.LoadAtomCorpus()
 	if err != nil {

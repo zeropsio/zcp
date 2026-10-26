@@ -21,12 +21,12 @@ func TestRenewHQPairCredential_PoolWrittenByAnAcquireMeanwhile_NoSecondWrite(t *
 	lab.wire()
 	lab.keyPairOnPool()
 	lab.rt.MateEnabled = true
-	hqc, ok := openHQ(lab.hq.srv.Client())
+	hqc, ok := openHQ(lab.hq.srv.Client(), lab.rt)
 	if !ok {
 		t.Fatal("the lab's Mate is not enrolled")
 	}
 	m := lab.poolMeta()
-	current := hq.CredentialFingerprint(labCredential)
+	current := hq.GitCredentialFingerprint(labCredential)
 	if m.HQ.CredentialFingerprint == current {
 		t.Fatalf("precondition: the pair already records the current fingerprint")
 	}

@@ -6,13 +6,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/hq/hqtest"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -24,7 +24,8 @@ func originHQ(t *testing.T, repos string) (srv *mcp.Server, others func() []stri
 	return srv, others
 }
 
-// originHQIn is originHQ for a project whose service metas live in stateDir;
+// originHQIn is originHQ (not for a parallel test: the identity is the process
+// environment) for a project whose service metas live in stateDir;
 // it also returns the fake HQ's address.
 func originHQIn(t *testing.T, stateDir, repos string) (srv *mcp.Server, others func() []string, address string) {
 	t.Helper()
@@ -36,7 +37,7 @@ func originHQIn(t *testing.T, stateDir, repos string) (srv *mcp.Server, others f
 	var mu sync.Mutex
 	var unexpected []string
 	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/api/mate/self" && r.Header.Get("Authorization") == "Mate good" {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/mate/self" && r.Header.Get("Authorization") == "Project good" {
 			_, _ = w.Write([]byte(body))
 			return
 		}
@@ -46,12 +47,9 @@ func originHQIn(t *testing.T, stateDir, repos string) (srv *mcp.Server, others f
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	t.Cleanup(fake.Close)
-	path := filepath.Join(t.TempDir(), "enrollment.json")
-	if err := hq.SaveEnrollment(path, hq.Enrollment{HQ: fake.URL, ProjectID: "P_MATE", Credential: "good"}); err != nil {
-		t.Fatal(err)
-	}
+	hqtest.Link(t, fake.URL, "P_MATE", "good")
 	srv = mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
-	registerOrigin(srv, fake.Client(), path, "P_MATE", stateDir)
+	RegisterOrigin(srv, fake.Client(), "P_MATE", labOrg, stateDir)
 	return srv, func() []string {
 		mu.Lock()
 		defer mu.Unlock()
@@ -62,7 +60,6 @@ func originHQIn(t *testing.T, stateDir, repos string) (srv *mcp.Server, others f
 // A request for an origin writes nothing and names the repository the pair
 // will wire.
 func TestOriginRequest_WritesNothing_NamesTheRepositoryThePairWillWire(t *testing.T) {
-	t.Parallel()
 	srv, others := originHQ(t, `[]`)
 
 	result := callTool(t, srv, "zerops_origin", map[string]any{
@@ -112,7 +109,6 @@ func TestOriginRequest_WritesNothing_NamesTheRepositoryThePairWillWire(t *testin
 
 // An origin request refuses a URL with credentials.
 func TestOriginRequest_URLWithCredentials_Refused(t *testing.T) {
-	t.Parallel()
 	for _, url := range []string{
 		"https://ghp_secret123@github.com/zeropsio/mate",
 		"https://x-access-token:ghp_secret123@github.com/zeropsio/mate.git",
@@ -142,7 +138,6 @@ func TestOriginRequest_URLWithCredentials_Refused(t *testing.T) {
 // A refused origin request never echoes the URL: not a token in its query or
 // fragment, nor a credential in an address that does not parse.
 func TestOriginRequest_RefusalNeverEchoesTheURL(t *testing.T) {
-	t.Parallel()
 	for _, url := range []string{
 		"https://gitlab.com/acme/app?private_token=glpat-SECRET",
 		"https://github.com/acme/app#SECRET",
@@ -173,7 +168,6 @@ func TestOriginRequest_RefusalNeverEchoesTheURL(t *testing.T) {
 // An origin request refuses an address past the repository, such as a page
 // inside it, and says to give the repository's own address.
 func TestOriginRequest_AddressPastTheRepository_RefusedAskingForTheRepositoryAddress(t *testing.T) {
-	t.Parallel()
 	for _, url := range []string{
 		"https://github.com/acme/app/tree/develop",
 		"https://github.com/acme/app/pull/7",
@@ -200,7 +194,6 @@ func TestOriginRequest_AddressPastTheRepository_RefusedAskingForTheRepositoryAdd
 
 // An origin request for an origin already connected answers connected.
 func TestOriginRequest_OriginAlreadyConnected_AnswersConnected(t *testing.T) {
-	t.Parallel()
 	srv, _ := originHQ(t,
 		`[{"name":"appdev","origin":{"url":"https://github.com/zeropsio/mate"}},{"name":"web","origin":{"url":"https://github.com/zeropsio/web"}}]`)
 
@@ -246,7 +239,6 @@ func originAnswerTo(t *testing.T, srv *mcp.Server, url string) (originAnswer, st
 
 // An origin already connected to the repository answers connected.
 func TestOriginRequest_OriginConnectedToTheRepository_AnswersConnected(t *testing.T) {
-	t.Parallel()
 	srv, others := originHQ(t, `[{"name":"appdev","origin":{"url":"https://github.com/Acme/App"}},{"name":"web"}]`)
 
 	answer, text := originAnswerTo(t, srv, "https://github.com/acme/app.git/")
@@ -281,7 +273,6 @@ func TestOriginRequest_OriginConnectedToTheRepository_AnswersConnected(t *testin
 
 // The same origin connected under another repository names that repository.
 func TestOriginRequest_OriginConnectedUnderAnotherRepository_NamesThatRepository(t *testing.T) {
-	t.Parallel()
 	stateDir := t.TempDir()
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{Hostname: "web", BootstrapSession: "test", BootstrappedAt: "2026-10-17"}); err != nil {
 		t.Fatal(err)
@@ -311,7 +302,6 @@ func TestOriginRequest_OriginConnectedUnderAnotherRepository_NamesThatRepository
 
 // An older HQ without repos asks: nothing says which origin is connected.
 func TestOriginRequest_OlderHQWithoutRepos_Asks(t *testing.T) {
-	t.Parallel()
 	older, _ := originHQ(t, "")
 
 	answer, text := originAnswerTo(t, older, "https://github.com/acme/app")
@@ -325,7 +315,6 @@ func TestOriginRequest_OlderHQWithoutRepos_Asks(t *testing.T) {
 // project — a sibling Mate's — names no host for it: its code is fetched from
 // HQ into the asked repository.
 func TestOriginRequest_OriginConnectedUnderAnotherProjectsRepository_FetchesItFromHQ(t *testing.T) {
-	t.Parallel()
 	srv, _, address := originHQIn(t, t.TempDir(),
 		`[{"name":"appdev"},{"name":"web","origin":{"url":"https://github.com/acme/app"}}]`)
 
@@ -337,7 +326,7 @@ func TestOriginRequest_OriginConnectedUnderAnotherProjectsRepository_FetchesItFr
 	if strings.Contains(answer.NextActions, "ssh web") {
 		t.Errorf("nextActions names web, no service of this project, as a host: %s", answer.NextActions)
 	}
-	want := originTake("/var/www/appdev", "git fetch "+address+"/git/a1/web.git main")
+	want := originTake("/var/www/appdev", "git fetch "+address+"/git/"+labOrg+"/a1/web.git main")
 	if !strings.Contains(answer.NextActions, want) {
 		t.Errorf("nextActions lacks the fetch from HQ %s: %s", want, answer.NextActions)
 	}
@@ -347,7 +336,6 @@ func TestOriginRequest_OriginConnectedUnderAnotherProjectsRepository_FetchesItFr
 // person keeps on GitHub is fetched from GitHub, where that code is, through
 // zcp's GitHub helper.
 func TestOriginRequest_OriginKeptOnGitHubUnderAnotherProjectsRepository_FetchesItFromGitHub(t *testing.T) {
-	t.Parallel()
 	srv, _, address := originHQIn(t, t.TempDir(),
 		`[{"name":"appdev"},{"name":"web","origin":{"url":"https://github.com/acme/app","mode":"github"}}]`)
 
@@ -368,7 +356,6 @@ func TestOriginRequest_OriginKeptOnGitHubUnderAnotherProjectsRepository_FetchesI
 // A connected origin's checkout is set up the way HQ says the person keeps
 // its code, and only that way.
 func TestOriginRequest_OriginConnectedToTheRepository_SetsUpTheWayHQSaysItIsKept(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		mode        string
 		want, never string
@@ -378,7 +365,6 @@ func TestOriginRequest_OriginConnectedToTheRepository_SetsUpTheWayHQSaysItIsKept
 	}
 	for _, tt := range tests {
 		t.Run(tt.mode, func(t *testing.T) {
-			t.Parallel()
 			srv, _ := originHQ(t, `[{"name":"appdev","origin":{"url":"https://github.com/acme/app","mode":"`+tt.mode+`"}}]`)
 
 			answer, text := originAnswerTo(t, srv, "https://github.com/acme/app")
@@ -403,7 +389,6 @@ func TestOriginRequest_OriginConnectedToTheRepository_SetsUpTheWayHQSaysItIsKept
 // A code-volume pair's checkout is the volume below the dev service's mount,
 // never the runtime's own /var/www: the origin's commands run there.
 func TestOriginRequest_CodeVolumePair_RunsInTheVolumeCheckout(t *testing.T) {
-	t.Parallel()
 	stateDir := t.TempDir()
 	writeVariantBPair(t, stateDir)
 	srv, _, _ := originHQIn(t, stateDir, `[]`)
@@ -431,7 +416,6 @@ func TestOriginRequest_CodeVolumePair_RunsInTheVolumeCheckout(t *testing.T) {
 // tokens for GitHub alone, so the ask offers no push back and no GitHub
 // helper.
 func TestOriginRequest_RepositoryOutsideGitHub_IsOnlyFollowed(t *testing.T) {
-	t.Parallel()
 	srv, _ := originHQ(t, `[]`)
 
 	answer, text := originAnswerTo(t, srv, "https://gitlab.com/acme/app")

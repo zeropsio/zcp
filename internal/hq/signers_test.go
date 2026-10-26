@@ -19,7 +19,7 @@ func TestClient_Signers_UsesOnlyTheEnrolledProjectAndOneAttempt(t *testing.T) {
 	}{
 		{"HQ signers", "p-mate", `{"projectId":"p-mate","signers":{"codex":"u-bo","claude-code":"u-ada"}}`, 200, map[string]string{"codex": "u-bo", "claude-code": "u-ada"}, "", 1},
 		{"HQ omits an empty map", "p-mate", `{"projectId":"p-mate"}`, 200, nil, "", 1},
-		{"other container project", "p-other", `{}`, 200, nil, "enrollment", 0},
+		{"other container project", "p-other", `{}`, 200, nil, "identity", 0},
 		{"other answer project", "p-mate", `{"projectId":"p-other","signers":{"codex":"u-bo"}}`, 200, nil, "project", 1},
 		{"no answer", "p-mate", ``, 204, nil, "project", 1},
 		{"HQ unavailable", "p-mate", `{"code":"not_active"}`, 503, nil, "unavailable", 1},
@@ -31,7 +31,6 @@ func TestClient_Signers_UsesOnlyTheEnrolledProjectAndOneAttempt(t *testing.T) {
 			t.Parallel()
 			client, calls := answering(t, tt.answer)
 			client.call.http = statusDoer{Doer: client.call.http, status: tt.status}
-			client.enrollment.ProjectID = "p-mate"
 			got, err := client.Signers(context.Background(), tt.project)
 			if tt.wantErr == "" {
 				if err != nil {
@@ -47,7 +46,7 @@ func TestClient_Signers_UsesOnlyTheEnrolledProjectAndOneAttempt(t *testing.T) {
 				t.Fatalf("requests = %d, want %d", len(*calls), tt.calls)
 			}
 			for _, call := range *calls {
-				if call.Method != http.MethodGet || call.Path != "/api/mate/self" || call.Authorization != "Mate good" {
+				if call.Method != http.MethodGet || call.Path != "/api/mate/self" || call.Authorization != "Project good" {
 					t.Errorf("request = %+v", call)
 				}
 			}
@@ -62,26 +61,24 @@ type statusDoer struct {
 
 func TestClient_SignersInput_ChangesOnlyWithItsAuthority(t *testing.T) {
 	t.Parallel()
-	base := Enrollment{HQ: "https://hq.test", ProjectID: "p-mate", Credential: "private-credential"}
-	client := Client{enrollment: base}
-	want := client.SignersInput()
-	if len(want) != 64 || strings.Contains(want, base.Credential) {
+	base := Identity{Origin: "https://hq.test", ProjectID: "p-mate", Key: "private-key"}
+	want := Client{id: base}.SignersInput()
+	if len(want) != 64 || strings.Contains(want, base.Key) {
 		t.Fatalf("input must be an opaque SHA-256 fingerprint")
 	}
 	for _, tt := range []struct {
-		name       string
-		enrollment Enrollment
-		changed    bool
+		name    string
+		id      Identity
+		changed bool
 	}{
 		{"same", base, false},
-		{"key named", Enrollment{HQ: base.HQ, ProjectID: base.ProjectID, Credential: base.Credential, KeyTokenID: "key-id"}, false},
-		{"credential", Enrollment{HQ: base.HQ, ProjectID: base.ProjectID, Credential: "rotated"}, true},
-		{"HQ", Enrollment{HQ: "https://new.test", ProjectID: base.ProjectID, Credential: base.Credential}, true},
-		{"project", Enrollment{HQ: base.HQ, ProjectID: "other", Credential: base.Credential}, true},
+		{"key", Identity{Origin: base.Origin, ProjectID: base.ProjectID, Key: "regenerated"}, true},
+		{"HQ", Identity{Origin: "https://new.test", ProjectID: base.ProjectID, Key: base.Key}, true},
+		{"project", Identity{Origin: base.Origin, ProjectID: "other", Key: base.Key}, true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if got := (Client{enrollment: tt.enrollment}).SignersInput(); (got != want) != tt.changed {
+			if got := (Client{id: tt.id}).SignersInput(); (got != want) != tt.changed {
 				t.Errorf("input changed = %v, want %v", got != want, tt.changed)
 			}
 		})

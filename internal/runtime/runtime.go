@@ -35,14 +35,37 @@ type Info struct {
 	// Spec: docs/spec-mate.md §2.
 	MateEnabled bool
 
-	// Chief is the ZCP_CHIEF gate: zcp runs in org mode — the
-	// person's Mate for the whole organization, acting through the org's
-	// read-only token (ZCP_ORG_TOKEN) instead of this project's. Org mode
-	// registers the org tool set in place of the single-project surface and
-	// renders the Chief's AGENTS.md section; one read here keeps the
-	// tool registration (internal/server) and the agent context
-	// (internal/content) from drifting. Spec: docs/spec-mate.md §2.11.
+	// Chief is org mode: this project is the Chief's — the person's Mate for
+	// the whole organization, which reads HQ's overview instead of acting on
+	// this project. HQ's mark decides it (GET /api/mate/self names this
+	// project), so Detect never sets it: `zcp serve` sets it after reading
+	// the mark. It selects the org tool set in place of the single-project
+	// surface and renders the Chief's AGENTS.md section. Spec:
+	// docs/spec-mate.md §2.11.
 	Chief bool
+
+	// OrgID is the Zerops organisation (clientId) that owns this project:
+	// the first segment of every repository address in HQ. The container's
+	// environment does not carry it, so `zcp serve` sets it from the API key
+	// (auth.Info.ClientID) and Detect never does. "" where none is known; the
+	// addresses built from it then report hq.ErrNoOrganisation.
+	OrgID string
+
+	// HQ, when set, is this container's identity toward HQ in place of the
+	// one read from its live env store at each use: a test's container,
+	// linked to a fake HQ of its own, so such tests run side by side. Detect
+	// never sets it, and `zcp serve` reads the launch environment (spec-mate
+	// §3.3).
+	HQ *HQLink
+}
+
+// HQLink is the identity a test's container presents to HQ (Info.HQ): HQ's
+// origin, the project and its key, and the file the Mate's server keeps its
+// Git credential in. A pointer on Info, so a test relinking its container
+// mid-way reaches every copy of the Info it handed out.
+type HQLink struct {
+	Origin, ProjectID, Key string
+	GitCredentialPath      string
 }
 
 // Detect reads Zerops container env vars and returns runtime info.
@@ -58,10 +81,9 @@ func Detect() Info { return DetectFrom(os.Getenv) }
 func DetectFrom(getenv func(string) string) Info {
 	authoring := getenv("ZCP_AUTHORING") == "1"
 	mateEnabled := EnvEnabled(getenv("ZCP_MATE_ENABLED"))
-	chief := EnvEnabled(getenv("ZCP_CHIEF"))
 	serviceID := getenv("serviceId")
 	if serviceID == "" {
-		return Info{Authoring: authoring, MateEnabled: mateEnabled, Chief: chief}
+		return Info{Authoring: authoring, MateEnabled: mateEnabled}
 	}
 	return Info{
 		InContainer: true,
@@ -70,7 +92,6 @@ func DetectFrom(getenv func(string) string) Info {
 		ProjectID:   getenv("projectId"),
 		Authoring:   authoring,
 		MateEnabled: mateEnabled,
-		Chief:       chief,
 	}
 }
 

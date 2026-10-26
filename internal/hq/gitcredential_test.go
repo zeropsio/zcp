@@ -15,17 +15,18 @@ import (
 )
 
 // git asks the helper with the remote's protocol and host; only the HQ this
-// Mate enrolled with gets its credential, under the user HQ's git reads.
-func TestGitCredential_AnswersOnlyTheEnrolledHQ(t *testing.T) {
+// Mate's key names gets the Git credential its link carries, under the user
+// HQ's git reads — never the key.
+func TestGitCredential_AnswersOnlyTheLinkedHQ(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		hq       string
-		enrolled bool
-		request  string
-		want     string
-		wantOK   bool
+		name    string
+		hq      string
+		linked  bool
+		request string
+		want    string
+		wantOK  bool
 	}{
 		{"the enrolled HQ", "https://hq.example", true, "protocol=https\nhost=hq.example\npath=git/app/appdev.git\n\n", "secret", true},
 		{"https's own port named", "https://hq.example", true, "protocol=https\nhost=hq.example:443\n\n", "secret", true},
@@ -36,18 +37,14 @@ func TestGitCredential_AnswersOnlyTheEnrolledHQ(t *testing.T) {
 		{"the HQ's host over plain http", "https://hq.example", true, "protocol=http\nhost=hq.example\n\n", "", false},
 		{"another host", "https://hq.example", true, "protocol=https\nhost=gitlab.com\npath=team/app.git\n\n", "", false},
 		{"no host at all", "https://hq.example", true, "protocol=https\n\n", "", false},
-		{"not enrolled", "https://hq.example", false, "protocol=https\nhost=hq.example\n\n", "", false},
+		{"no Git credential linked", "https://hq.example", false, "protocol=https\nhost=hq.example\n\n", "", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			path := filepath.Join(t.TempDir(), "enrollment.json")
-			if tt.enrolled {
-				if err := SaveEnrollment(path, Enrollment{HQ: tt.hq, HQProjectID: "hq1", ProjectID: "p1", Credential: "secret"}); err != nil {
-					t.Fatal(err)
-				}
-			}
-			got, err := AnswerGit(context.Background(), strings.NewReader(tt.request), path, http.DefaultClient)
+			path := linkedCredential(t, tt.linked)
+			id := Identity{Origin: tt.hq, ProjectID: "p1", Key: "the-key", GitCredentialPath: path}
+			got, err := AnswerGit(context.Background(), strings.NewReader(tt.request), id, http.DefaultClient)
 			if got.Password != tt.want || (err == nil) != tt.wantOK {
 				t.Errorf("AnswerGit = %q, %v; want %q, ok %v", got.Password, err, tt.want, tt.wantOK)
 			}
@@ -98,7 +95,7 @@ func TestAnswerGit_AGitHubRepositoryGetsTheTokenHQMintsForIt(t *testing.T) {
 			var asked atomic.Bool
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				asked.Store(true)
-				if r.Method != http.MethodGet || r.URL.Path != "/api/mate/git-credential" || r.Header.Get("Authorization") != "Mate secret" {
+				if r.Method != http.MethodGet || r.URL.Path != "/api/mate/git-credential" || r.Header.Get("Authorization") != "Project secret" {
 					t.Errorf("asked %s %s as %q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
 				}
 				if got := r.URL.Query().Get("host"); got != "github.com" {
@@ -112,12 +109,9 @@ func TestAnswerGit_AGitHubRepositoryGetsTheTokenHQMintsForIt(t *testing.T) {
 				_, _ = w.Write([]byte(tt.body))
 			}))
 			t.Cleanup(srv.Close)
-			path := filepath.Join(t.TempDir(), "enrollment.json")
-			if err := SaveEnrollment(path, Enrollment{HQ: srv.URL, HQProjectID: "hq1", ProjectID: "p1", Credential: "secret"}); err != nil {
-				t.Fatal(err)
-			}
+			id := Identity{Origin: srv.URL, ProjectID: "p1", Key: "secret", GitCredentialPath: linkedCredential(t, true)}
 
-			got, err := AnswerGit(context.Background(), strings.NewReader(tt.request), path, srv.Client())
+			got, err := AnswerGit(context.Background(), strings.NewReader(tt.request), id, srv.Client())
 			if asked.Load() != tt.wantAsked {
 				t.Errorf("HQ asked = %v, want %v", asked.Load(), tt.wantAsked)
 			}
@@ -138,7 +132,7 @@ func TestAnswerGit_AGitHubRepositoryGetsTheTokenHQMintsForIt(t *testing.T) {
 				t.Errorf("reason = %q, want it to say %q", declined.Reason, tt.wantReason)
 			}
 			if strings.Contains(declined.Reason, "secret") {
-				t.Errorf("reason %q carries the Mate credential", declined.Reason)
+				t.Errorf("reason %q carries the key", declined.Reason)
 			}
 		})
 	}
@@ -156,14 +150,11 @@ func TestAnswerGit_AnHQThatNeverAnswersIsGivenUp(t *testing.T) {
 		}
 	}))
 	t.Cleanup(func() { close(release); srv.Close() })
-	path := filepath.Join(t.TempDir(), "enrollment.json")
-	if err := SaveEnrollment(path, Enrollment{HQ: srv.URL, HQProjectID: "hq1", ProjectID: "p1", Credential: "secret"}); err != nil {
-		t.Fatal(err)
-	}
+	id := Identity{Origin: srv.URL, ProjectID: "p1", Key: "secret", GitCredentialPath: linkedCredential(t, true)}
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
-	_, err := AnswerGit(ctx, strings.NewReader("protocol=https\nhost=github.com\npath=acme/shop.git\n\n"), path, srv.Client())
+	_, err := AnswerGit(ctx, strings.NewReader("protocol=https\nhost=github.com\npath=acme/shop.git\n\n"), id, srv.Client())
 	var declined *DeclinedError
 	if !errors.As(err, &declined) || !strings.Contains(declined.Reason, "try again") {
 		t.Fatalf("err = %v, want a decline saying to try again", err)
@@ -222,4 +213,17 @@ func TestGitHubHelperConfig_OnlyZcpAnswersGitHub(t *testing.T) {
 	if !strings.Contains(got, "password=minted") || strings.Contains(got, "persons-token") {
 		t.Errorf("git credential fill = %q, want only the minted token", got)
 	}
+}
+
+// linkedCredential is the path of the Git credential file the Mate's server
+// would write: holding "secret" when linked, absent otherwise.
+func linkedCredential(t *testing.T, linked bool) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "git-credential")
+	if linked {
+		if err := os.WriteFile(path, []byte("secret\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return path
 }

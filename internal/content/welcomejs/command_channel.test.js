@@ -14,7 +14,9 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("fs");
 const path = require("path");
-const { loadWelcome, TEMPLATES_DIR, TEST_REGISTRY, TEST_AGENT_IDS, makeFakeClock } = require("./harness.js");
+const { loadWelcome, TEMPLATES_DIR, TEST_REGISTRY, TEST_AGENT_IDS, makeFakeClock, freezeWallClock } = require("./harness.js");
+
+freezeWallClock();
 
 const BRIDGE_CHANNEL = "@zerops/zcp-agent-auth-bridge";
 const ALLOWLISTED_ORIGIN = "https://app.zerops.io";
@@ -64,7 +66,7 @@ function fireReady(panel, embedded) {
   panel.webview.__fireMessage({ type: "ready", embedded });
 }
 
-// createdAt defaults to Date.now() (a real, always-fresh timestamp) so every
+// createdAt defaults to Date.now() (frozen by freezeWallClock, so always fresh) so every
 // existing call site builds a valid envelope with no changes; freshness tests
 // below pass an explicit stale/future-skewed value instead.
 function fireLaunch(panel, eventId, agentId, origin, createdAt) {

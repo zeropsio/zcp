@@ -101,49 +101,6 @@ func Resolve(ctx context.Context, client platform.Client) (*Info, error) {
 	}, nil
 }
 
-// OrgCredentials is what org mode reads the organization with
-// (docs/spec-mate.md §2.11).
-type OrgCredentials struct {
-	Token   string
-	APIHost string
-	// OrgAPI is ZCP_ORG_API: the base URL org mode reads from instead of
-	// the region's API — HQ's Chief proxy, which mirrors the public API
-	// root. Empty reads the region's API.
-	OrgAPI string
-	// OrgID is ZCP_ORG_ID: the organization to read, or empty for the one
-	// the token reaches (platform.OpenOrgReader resolves it). Required with
-	// OrgAPI.
-	OrgID string
-}
-
-// ResolveOrgCredentials reads org mode's credentials from getenv — in a
-// container the live env store, so an agent whose MCP launcher strips the
-// environment still reaches them. The token is ZCP_ORG_TOKEN, a secret
-// service variable meant to be the org's read-only token, or the Chief
-// credential HQ issued when ZCP_ORG_API points at HQ; the project's own
-// ZCP_API_KEY is never borrowed for it. The API host follows the container
-// (ZCP_API_HOST, else derived from zeropsSubdomain).
-func ResolveOrgCredentials(getenv func(string) string) (*OrgCredentials, error) {
-	token := strings.TrimSpace(getenv("ZCP_ORG_TOKEN"))
-	if token == "" {
-		return nil, platform.NewPlatformError(
-			platform.ErrAuthRequired,
-			"Org mode (ZCP_CHIEF) needs ZCP_ORG_TOKEN",
-			"Set ZCP_ORG_TOKEN on the zcp service to the organization's read-only token",
-		)
-	}
-	apiHost, _ := containerAPIDefaultsFrom(getenv)
-	if v := strings.TrimSpace(getenv("ZCP_API_HOST")); v != "" {
-		apiHost = v
-	}
-	return &OrgCredentials{
-		Token:   token,
-		APIHost: apiHost,
-		OrgAPI:  strings.TrimSpace(getenv("ZCP_ORG_API")),
-		OrgID:   strings.TrimSpace(getenv("ZCP_ORG_ID")),
-	}, nil
-}
-
 // Credentials holds raw connection info needed to create a platform client.
 type Credentials struct {
 	Token   string

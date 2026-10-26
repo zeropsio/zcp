@@ -239,7 +239,7 @@ func TestPoolMigrateEnv_GitToken_AskedThenCopiedOnYes(t *testing.T) {
 func TestPoolMigrateEnv_InAMate_GitTokenNeverCopied_DefaultRepoIsHQ(t *testing.T) {
 	t.Parallel()
 	f := poolEnvFixture()
-	f.rt.MateEnabled = true
+	f.rt.MateEnabled, f.rt.OrgID = true, "org-1"
 	f.meta.GitPushState, f.meta.RemoteURL = "", ""
 	f.meta.HQ = &workflow.HQRepoRef{AppID: "app-1", Repo: "appdev"}
 	f.hqAddress = func() string { return "https://hq.example" }
@@ -259,8 +259,27 @@ func TestPoolMigrateEnv_InAMate_GitTokenNeverCopied_DefaultRepoIsHQ(t *testing.T
 			t.Fatalf("in a Mate the dev's GIT_TOKEN was read: %s", cmd)
 		}
 	}
-	if repo, _ := env["defaultRepo"].(map[string]any); repo["repo"] != "https://hq.example/git/app-1/appdev.git" || repo["state"] != ops.PoolDefaultRepoSeeded {
+	if repo, _ := env["defaultRepo"].(map[string]any); repo["repo"] != "https://hq.example/git/org-1/app-1/appdev.git" || repo["state"] != ops.PoolDefaultRepoSeeded {
 		t.Errorf("defaultRepo = %v, want the pair's HQ repository", repo)
+	}
+}
+
+// TestPoolMigrateEnv_InAMate_NoOrganisation_DefaultRepoUnavailable: HQ's
+// repository address names the Zerops organisation (hq.RepoURLAt), so a Mate
+// whose container has none cannot name the pair's HQ repository: the pool's
+// default repository is unavailable, never an address HQ would answer 404.
+func TestPoolMigrateEnv_InAMate_NoOrganisation_DefaultRepoUnavailable(t *testing.T) {
+	t.Parallel()
+	f := poolEnvFixture()
+	f.rt.MateEnabled, f.rt.OrgID = true, ""
+	f.meta.GitPushState, f.meta.RemoteURL = "", ""
+	f.meta.HQ = &workflow.HQRepoRef{AppID: "app-1", Repo: "appdev"}
+	f.hqAddress = func() string { return "https://hq.example" }
+	out, _ := f.runEnv(t)
+
+	repo, _ := poolEnvBlock(t, out)["defaultRepo"].(map[string]any)
+	if repo["state"] != ops.PoolDefaultRepoUnavailable || repo["repo"] != nil {
+		t.Errorf("defaultRepo = %v, want unavailable and no repository named", repo)
 	}
 }
 

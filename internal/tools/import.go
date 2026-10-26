@@ -192,7 +192,7 @@ func refuseOpenMate(ctx context.Context, client platform.Client, projectID strin
 
 // refuseSecondMate refuses an import into a Mate's project that declares a
 // zcp service: the project holds one, this container, and a second would be
-// a second Mate HQ refuses to enroll (spec-mate §6.6). A document that does
+// a second Mate HQ refuses to link (spec-mate §6.6). A document that does
 // not read is left to the import's own error.
 func refuseSecondMate(rt runtime.Info, input ImportInput) *mcp.CallToolResult {
 	if !rt.MateEnabled {

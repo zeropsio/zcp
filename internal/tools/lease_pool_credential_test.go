@@ -72,14 +72,14 @@ func poolHQCredential(t *testing.T, mock *platform.Mock, serviceID string) (plat
 }
 
 // TestLeaseTool_HQRepoInAMate_PutsTheMateCredentialOnThePool: zerops_lease
-// in a Mate gives the pool the Mate credential its enrollment holds before it
+// in a Mate gives the pool the Git credential the Mate's server keeps before it
 // checks out a repository on HQ — as the sensitive ZCP_HQ_GIT_TOKEN only its
 // leases of HQ repositories read. A container that is not a Mate writes
 // nothing, and no acquire writes the pool's GIT_TOKEN, the user's. Neither the
 // result nor any state file carries the credential, and a write that fails
 // says so without it.
 func TestLeaseTool_HQRepoInAMate_PutsTheMateCredentialOnThePool(t *testing.T) {
-	// Non-parallel: t.Setenv points HOME at the test's enrollment.
+	t.Parallel()
 	tests := []struct {
 		name      string
 		mate      bool
@@ -93,9 +93,9 @@ func TestLeaseTool_HQRepoInAMate_PutsTheMateCredentialOnThePool(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			enrollWithLeaseHQ(t)
+			t.Parallel()
 			ssh := &leaseStubSSH{}
-			srv, stateDir, mock := leaseToolServerIn(t, runtime.Info{InContainer: true, ProjectID: "proj-1", MateEnabled: tt.mate}, ssh)
+			srv, stateDir, mock := leaseToolServerIn(t, runtime.Info{InContainer: true, ProjectID: "proj-1", MateEnabled: tt.mate, HQ: leaseHQLink(t)}, ssh)
 			if tt.failWrite {
 				mock.WithError("CreateServiceEnvVar", platform.NewPlatformError(platform.ErrAPIError, "userData create refused", ""))
 			}
@@ -175,8 +175,8 @@ func TestReconcileHQRepositories_RenewsThePoolsCredentialAfterTheMateEnrollsAgai
 					t.Fatal(err)
 				}
 			}
-			writePoolCredentialFingerprint(t, lab.stateDir, "devpool", "svc-pool", hq.CredentialFingerprint(labCredential))
-			lab.reenroll(renewed)
+			writePoolCredentialFingerprint(t, lab.stateDir, "devpool", "svc-pool", hq.GitCredentialFingerprint(labCredential))
+			lab.relink(renewed)
 
 			lab.wire()
 
@@ -199,7 +199,7 @@ func TestReconcileHQRepositories_RenewsThePoolsCredentialAfterTheMateEnrollsAgai
 // pool keys a pair, the repository pass takes the acquire's per-pool record
 // over — the pair keeps the fingerprint of the credential the pool holds —
 // and removes it. An acquire then finds no per-pool record, yet the pool
-// already holds the credential the enrollment holds now, so it writes
+// already holds the credential the Mate's server keeps now, so it writes
 // nothing: a write is a delete and a create of the variable, and while the
 // two run every fresh session of every container of the pool reads none, so
 // git in the pool's other leases fails "could not read Username" (live,
@@ -207,7 +207,7 @@ func TestReconcileHQRepositories_RenewsThePoolsCredentialAfterTheMateEnrollsAgai
 // acquire rewrote the credential its pool already held). A pair recording
 // another credential, or another pool service, still gets the write.
 func TestLeaseTool_HQRepo_PoolKeyingAPair_NoWriteOfTheCredentialItHolds(t *testing.T) {
-	// Non-parallel: t.Setenv points HOME at the test's enrollment.
+	t.Parallel()
 	tests := []struct {
 		name          string
 		pairServiceID string
@@ -220,8 +220,8 @@ func TestLeaseTool_HQRepo_PoolKeyingAPair_NoWriteOfTheCredentialItHolds(t *testi
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			enrollWithLeaseHQ(t)
-			srv, stateDir, mock := leaseToolServerIn(t, runtime.Info{InContainer: true, ProjectID: "proj-1", MateEnabled: true}, &leaseStubSSH{})
+			t.Parallel()
+			srv, stateDir, mock := leaseToolServerIn(t, runtime.Info{InContainer: true, ProjectID: "proj-1", MateEnabled: true, HQ: leaseHQLink(t)}, &leaseStubSSH{})
 			// The pool holds the credential an earlier acquire wrote; the
 			// Mate's key reads it back REDACTED.
 			mock.WithServiceEnv("svc-pool", []platform.ServiceEnvVar{
@@ -232,7 +232,7 @@ func TestLeaseTool_HQRepo_PoolKeyingAPair_NoWriteOfTheCredentialItHolds(t *testi
 				Hostname: "devpool", Mode: topology.PlanModeStandard, Stages: []topology.StageRef{{Hostname: "devstage"}},
 				BootstrapSession: "test", BootstrappedAt: "2026-10-25",
 				DevPool: &workflow.DevPoolRef{ServiceID: tt.pairServiceID},
-				HQ:      &workflow.HQRepoRef{AppID: "a1", Repo: "web", CredentialFingerprint: hq.CredentialFingerprint(tt.pairHolds)},
+				HQ:      &workflow.HQRepoRef{AppID: "a1", Repo: "web", CredentialFingerprint: hq.GitCredentialFingerprint(tt.pairHolds)},
 			}); err != nil {
 				t.Fatal(err)
 			}

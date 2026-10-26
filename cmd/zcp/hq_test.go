@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -15,14 +16,10 @@ import (
 )
 
 type stubHQ struct {
-	status hq.Status
-	result hq.Result
-	err    error
+	err error
 }
 
-func (s stubHQ) Status(context.Context) hq.Status { return s.status }
-
-func (s stubHQ) Enroll(context.Context) (hq.Result, error) { return s.result, s.err }
+func (s stubHQ) Self(context.Context) (hq.MateState, error) { return hq.MateState{}, s.err }
 
 // withHQ points runHQCmd at svc for the test; not parallel — it swaps a
 // package seam.
@@ -42,23 +39,17 @@ func TestRunHQCmd_UnknownSubcommand_Fails(t *testing.T) {
 }
 
 func TestRunHQCmd_Status_JSONExitsZero(t *testing.T) {
-	official := hq.Official{Verdict: hq.VerdictOfficial, ProjectID: "hq1", Address: "https://hq.example"}
 	tests := []struct {
 		name string
 		svc  hqService
 		err  error
 		want map[string]any
 	}{
-		{"enrolled", stubHQ{status: hq.Status{HQ: official, Enrolled: true}}, nil, map[string]any{
-			"hq":       map[string]any{"verdict": "official", "projectId": "hq1", "address": "https://hq.example"},
-			"enrolled": true,
+		{"linked", stubHQ{}, nil, map[string]any{"linked": true}},
+		{"HQ refuses the key", stubHQ{err: errors.New("hq refused: 401 key_not_recognized")}, nil, map[string]any{
+			"linked": false, "error": "hq refused: 401 key_not_recognized",
 		}},
-		{"no HQ", stubHQ{status: hq.Status{HQ: hq.Official{Verdict: hq.VerdictNone}}}, nil, map[string]any{
-			"hq": map[string]any{"verdict": "none"}, "enrolled": false,
-		}},
-		{"no credentials", nil, errors.New("auth: no token"), map[string]any{
-			"hq": map[string]any{"verdict": "unknown"}, "enrolled": false, "error": "auth: no token",
-		}},
+		{"no key", nil, errors.New("hq: no identity"), map[string]any{"linked": false, "error": "hq: no identity"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -81,43 +72,6 @@ func TestRunHQCmd_Status_JSONExitsZero(t *testing.T) {
 	}
 }
 
-func TestRunHQCmd_Enroll_ExitCodeAndReason(t *testing.T) {
-	tests := []struct {
-		name     string
-		svc      hqService
-		wantCode int
-		want     map[string]any
-	}{
-		{"enrolled", stubHQ{result: hq.Result{HQ: "https://hq.example", Changed: true}}, 0,
-			map[string]any{"hq": "https://hq.example", "changed": true}},
-		{"already enrolled", stubHQ{result: hq.Result{HQ: "https://hq.example"}}, 0,
-			map[string]any{"hq": "https://hq.example", "changed": false}},
-		{"no official HQ", stubHQ{err: &hq.NoHQError{Official: hq.Official{Verdict: hq.VerdictUnclear}}}, 1,
-			map[string]any{"changed": false, "error": "no official HQ (unclear)"}},
-		{"refused", stubHQ{err: &hq.RefusedError{Status: 403, Code: "project_not_in_org"}}, 1,
-			map[string]any{"changed": false, "error": "hq refused: 403 project_not_in_org"}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			withHQ(t, tt.svc, nil)
-			var code int
-			stdout := captureStdout(t, func() { code = runHQCmd([]string{"enroll", "--json"}) })
-			if code != tt.wantCode {
-				t.Fatalf("exit = %d, want %d", code, tt.wantCode)
-			}
-			var got map[string]any
-			if err := json.Unmarshal([]byte(stdout), &got); err != nil {
-				t.Fatalf("stdout %q: %v", stdout, err)
-			}
-			wantRaw, _ := json.Marshal(tt.want)
-			gotRaw, _ := json.Marshal(got)
-			if string(gotRaw) != string(wantRaw) {
-				t.Errorf("enroll = %s, want %s", gotRaw, wantRaw)
-			}
-		})
-	}
-}
-
 func TestCLIDispatch_HQ_IsAVerb(t *testing.T) {
 	t.Parallel()
 	if _, ok := cliDispatch()["hq"]; !ok {
@@ -127,7 +81,7 @@ func TestCLIDispatch_HQ_IsAVerb(t *testing.T) {
 
 // TestRunHQGitCredential: `zcp hq git-credential` is the credential helper
 // git runs on every fetch and push from the Mate's shell — it prints the Mate
-// credential under HQ's git user for the enrolled HQ, and for a repository on
+// credential under HQ's git user for the linked HQ, and for a repository on
 // GitHub the token HQ mints for it at that call, and nothing else on stdout.
 // Declining exits non-zero with nothing printed, so a helper chain goes on to
 // its next answer and never sends an empty password; why it declined goes to
@@ -145,10 +99,11 @@ func TestRunHQGitCredential(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	hqHost := strings.TrimPrefix(srv.URL, "http://")
-	path := filepath.Join(t.TempDir(), "enrollment.json")
-	if err := hq.SaveEnrollment(path, hq.Enrollment{HQ: srv.URL, ProjectID: "p1", Credential: "secret"}); err != nil {
+	path := filepath.Join(t.TempDir(), "git-credential")
+	if err := os.WriteFile(path, []byte("secret"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	id := hq.Identity{Origin: srv.URL, ProjectID: "p1", Key: "the-key", GitCredentialPath: path}
 	tests := []struct {
 		name       string
 		args       []string
@@ -170,7 +125,7 @@ func TestRunHQGitCredential(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			var out, errOut strings.Builder
-			if code := runHQGitCredential(tt.args, strings.NewReader(tt.stdin), &out, &errOut, path, srv.Client()); code != tt.wantCode {
+			if code := runHQGitCredential(tt.args, strings.NewReader(tt.stdin), &out, &errOut, id, srv.Client()); code != tt.wantCode {
 				t.Fatalf("exit %d, want %d (stderr %q)", code, tt.wantCode, errOut.String())
 			}
 			if out.String() != tt.want {

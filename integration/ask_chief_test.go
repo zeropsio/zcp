@@ -12,9 +12,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zeropsio/zcp/internal/hq/hqtest"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
-	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -28,8 +29,8 @@ func TestAskChief_OverMCP_ProposesFromThisProjectAndSendsNothing(t *testing.T) {
 	chiefHQ := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/api/mate/chief":
-			_, _ = w.Write([]byte(`{"chief":{"ownerUserId":"owner","projectId":"chief"}}`))
+		case "/api/mate/self":
+			_, _ = w.Write([]byte(`{"projectId":"proj-1","name":"Rossy","face":"f","changes":[],"chief":{"projectId":"chief"}}`))
 		case "/api/mate/chief/proposals":
 			if !chiefAvailable {
 				w.WriteHeader(http.StatusForbidden)
@@ -43,9 +44,7 @@ func TestAskChief_OverMCP_ProposesFromThisProjectAndSendsNothing(t *testing.T) {
 		}
 	}))
 	t.Cleanup(chiefHQ.Close)
-	if err := hq.SaveEnrollment(hq.EnrollmentPath(), hq.Enrollment{HQ: chiefHQ.URL, ProjectID: "proj-1", Credential: "fixture"}); err != nil {
-		t.Fatal(err)
-	}
+	hqtest.Link(t, chiefHQ.URL, "proj-1", "fixture")
 
 	// Non-parallel: t.Chdir rebases the state dir server.New derives.
 	t.Chdir(t.TempDir())

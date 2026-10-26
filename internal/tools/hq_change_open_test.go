@@ -16,7 +16,7 @@ import (
 // openChangeFrom is zerops_workflow action="open-change" in the lab.
 func (l *hqLab) openChangeFrom(branch, title string) (changeOpenResult, string, bool) {
 	l.t.Helper()
-	res, typed, err := handleOpenChange(context.Background(), l.hq.srv.Client(), l.stateDir, WorkflowInput{Service: "appdev", Branch: branch, Title: title})
+	res, typed, err := handleOpenChange(context.Background(), l.hq.srv.Client(), l.rt, l.stateDir, WorkflowInput{Service: "appdev", Branch: branch, Title: title})
 	if err != nil {
 		l.t.Fatalf("handleOpenChange: %v", err)
 	}
@@ -50,6 +50,7 @@ func (l *hqLab) pushBranch(branch string, files map[string]string) {
 // the change to that branch, the pair records it, and the change can be
 // described for the person's review.
 func TestOpenChange_OpensTheChangeOnTheAgentsOwnBranch(t *testing.T) {
+	t.Parallel()
 	lab := newHQLab(t)
 	lab.wire()
 	lab.pushBranch("fix-login", map[string]string{"login.js": "the fix\n"})
@@ -65,7 +66,7 @@ func TestOpenChange_OpensTheChangeOnTheAgentsOwnBranch(t *testing.T) {
 	if kept := lab.kept(1); kept == nil || kept.Branch != "fix-login" {
 		t.Errorf("the ledger keeps %+v, want change #1 on fix-login", kept)
 	}
-	hqc, _ := openHQ(lab.hq.srv.Client())
+	hqc, _ := openHQ(lab.hq.srv.Client(), lab.rt)
 	state, err := hqc.Self(t.Context())
 	if err != nil || len(state.Changes) != 1 || state.Changes[0].Head == nil || *state.Changes[0].Head != lab.git("rev-parse", "HEAD") {
 		t.Fatalf("HQ's change does not hold the pushed branch: %+v (%v)", state.Changes, err)
@@ -79,6 +80,7 @@ func TestOpenChange_OpensTheChangeOnTheAgentsOwnBranch(t *testing.T) {
 // open change holds, opens nothing and says what to do instead; so does a
 // call that names no branch.
 func TestOpenChange_RefusesABranchThatIsNotTheAgentsOwn(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name, branch string
 		// refusal, when set, is the {code, reason} HQ answers the open with.
@@ -97,6 +99,7 @@ func TestOpenChange_RefusesABranchThatIsNotTheAgentsOwn(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			lab := newHQLab(t)
 			lab.wire()
 			lab.hq.openForAnotherMate("appdev", "shared")
@@ -122,6 +125,7 @@ func TestOpenChange_RefusesABranchThatIsNotTheAgentsOwn(t *testing.T) {
 // the open one, which stays on its own branch, and says so; nothing is kept
 // for the branch asked for.
 func TestOpenChange_TheOpenChangeStays(t *testing.T) {
+	t.Parallel()
 	lab := newHQLab(t)
 	lab.wire()
 	if first, text, isError := lab.openChangeFrom("fix-login", "Fix the login"); isError || !first.Created {
@@ -158,6 +162,7 @@ func TestOpenChange_TheOpenChangeStays(t *testing.T) {
 // and the work taken and pushed as it says reaches the change by
 // fast-forward — never a push HQ refuses.
 func TestOpenChange_AnOpenChangeTakesTheWorkOntoItsBranch(t *testing.T) {
+	t.Parallel()
 	lab := newHQLab(t)
 	lab.wire()
 	lab.pushBranch("fix-login", map[string]string{"login.js": "the fix\n"})
@@ -225,6 +230,7 @@ func TestOpenChange_ForgetsTheChangesTheStateItReadNamesSettled(t *testing.T) {
 // branch asked for and binds the change to the Mate's own: the answer names
 // that branch and says the work goes there, never the one asked for.
 func TestOpenChange_AnHQBeforeNamedBranchesNamesTheBranchItBound(t *testing.T) {
+	t.Parallel()
 	lab := newHQLab(t)
 	lab.wire()
 	lab.hq.mu.Lock()
@@ -258,6 +264,7 @@ func TestOpenChange_AnHQBeforeNamedBranchesNamesTheBranchItBound(t *testing.T) {
 // person merges it in Mate, and records the way the code is kept. Where HQ
 // keeps the code, the answer is as it always was.
 func TestOpenChange_InARepositoryKeptOnGitHubThePullRequestIsHQs(t *testing.T) {
+	t.Parallel()
 	const github = "https://github.com/acme/app"
 	for _, tc := range []struct {
 		name    string
@@ -281,6 +288,7 @@ func TestOpenChange_InARepositoryKeptOnGitHubThePullRequestIsHQs(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			lab := newHQLab(t)
 			lab.wire()
 			if tc.origin != nil {

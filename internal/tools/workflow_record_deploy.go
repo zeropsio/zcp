@@ -9,6 +9,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -75,6 +76,7 @@ func handleRecordDeploy(
 	ctx context.Context,
 	client platform.Client,
 	httpClient ops.HTTPDoer,
+	rt runtime.Info,
 	projectID, stateDir string,
 	input WorkflowInput,
 ) (*mcp.CallToolResult, any, error) {
@@ -189,7 +191,7 @@ func handleRecordDeploy(
 		resp.Warnings = append(resp.Warnings, dr.Warnings...)
 	}
 
-	resp.WorkSessionState = sessionAnnotations(ctx, httpClient, stateDir)
+	resp.WorkSessionState = sessionAnnotations(ctx, httpClient, rt, stateDir)
 
 	// Typed output stays nil: Claude Code REPLACES the model-facing text
 	// with structuredContent when the SDK marshals one (docs/spec-mate.md).

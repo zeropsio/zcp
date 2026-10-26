@@ -14,9 +14,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/hq/hqtest"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
-	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -861,8 +862,11 @@ func TestServer_AskChiefToolGating(t *testing.T) {
 		rt      runtime.Info
 		want    bool
 		noChief bool
+		// markIsOwn: the mark names this very project.
+		markIsOwn bool
 	}{
-		{name: "a Mate whose person has no Chief never offers to ask one", rt: runtime.Info{InContainer: true, ServiceID: "s1", MateEnabled: true}, noChief: true},
+		{name: "a Mate whose organisation marks no Chief never offers to ask one", rt: runtime.Info{InContainer: true, ServiceID: "s1", MateEnabled: true}, noChief: true},
+		{name: "a project the mark names is the Chief and never asks itself", rt: runtime.Info{InContainer: true, ServiceID: "s1", MateEnabled: true}, markIsOwn: true},
 		{name: "a Mate's container", rt: runtime.Info{InContainer: true, ServiceID: "s1", MateEnabled: true}, want: true},
 		{name: "a container without the flag", rt: runtime.Info{InContainer: true, ServiceID: "s1"}},
 		{name: "local, flag set", rt: runtime.Info{MateEnabled: true}},
@@ -874,11 +878,15 @@ func TestServer_AskChiefToolGating(t *testing.T) {
 			chiefHQ := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				switch r.URL.Path {
-				case "/api/mate/chief":
+				case "/api/mate/self":
 					if tt.noChief {
-						_, _ = w.Write([]byte(`{"chief":null}`))
+						_, _ = w.Write([]byte(`{"projectId":"p1","name":"Ada","face":"f","changes":[],"chief":null}`))
 					} else {
-						_, _ = w.Write([]byte(`{"chief":{"ownerUserId":"owner","projectId":"chief"}}`))
+						mark := "chief"
+						if tt.markIsOwn {
+							mark = "p1"
+						}
+						_, _ = w.Write([]byte(`{"projectId":"p1","name":"Ada","face":"f","changes":[],"chief":{"projectId":"` + mark + `"}}`))
 					}
 				case "/api/mate/chief/proposals":
 					w.WriteHeader(http.StatusOK)
@@ -888,9 +896,7 @@ func TestServer_AskChiefToolGating(t *testing.T) {
 				}
 			}))
 			t.Cleanup(chiefHQ.Close)
-			if err := hq.SaveEnrollment(hq.EnrollmentPath(), hq.Enrollment{HQ: chiefHQ.URL, ProjectID: "p1", Credential: "fixture"}); err != nil {
-				t.Fatal(err)
-			}
+			hqtest.Link(t, chiefHQ.URL, "p1", "fixture")
 			mock := platform.NewMock().WithProject(&platform.Project{ID: "p1", Name: "test"}).WithServices(nil)
 			store, err := knowledge.GetEmbeddedStore()
 			if err != nil {

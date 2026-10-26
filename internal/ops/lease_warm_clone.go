@@ -344,7 +344,7 @@ func readWarmClone(stateDir, pool string) *LeaseWarmClone {
 // the pool's own GIT_TOKEN (the user's, DP-6); one on HQ takes only this
 // Mate's HQ credential, which only an acquire writes there (DP-16, under
 // PoolHQCredentialEnvKey), so a clone waits for zcp's record to say the pool
-// holds the credential the enrollment holds now.
+// holds the Git credential the Mate's server keeps from HQ now.
 func warmCloneCredentialGap(d LeaseDeps, pool *platform.ServiceStack, repo string) string {
 	if !IsHQRemote(repo, d.hqAddress()) {
 		return ""
@@ -355,11 +355,11 @@ func warmCloneCredentialGap(d LeaseDeps, pool *platform.ServiceStack, repo strin
 	}
 	credential, ok := d.PoolCredential.Read()
 	if !ok || credential == "" {
-		return onHQ + "the Mate's HQ enrollment holds none zcp can read"
+		return onHQ + "the Mate's server holds no Git credential from HQ: it is not linked to HQ yet (its /mate/setup.json says why)"
 	}
 	rec, found := readPoolCredential(d.StateDir, pool.Name)
-	if !found || rec.PoolServiceID != pool.ID || rec.Fingerprint != hq.CredentialFingerprint(credential) {
-		return onHQ + "zcp's record does not say the pool holds the one the enrollment holds now (an acquire of an HQ repository writes it)"
+	if !found || rec.PoolServiceID != pool.ID || rec.Fingerprint != hq.GitCredentialFingerprint(credential) {
+		return onHQ + "zcp's record does not say the pool holds the one the Mate's server keeps from HQ now (an acquire of an HQ repository writes it)"
 	}
 	return ""
 }

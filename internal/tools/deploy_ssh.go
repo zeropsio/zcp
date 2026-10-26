@@ -323,7 +323,7 @@ func RegisterDeploySSH(
 				}
 				return jsonResult(deploySSHResponse{
 					DeployResult:     result,
-					WorkSessionState: sessionAnnotations(ctx, httpClient, stateDir),
+					WorkSessionState: sessionAnnotations(ctx, httpClient, rtInfo, stateDir),
 					Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rtInfo),
 				}), nil, nil
 			}
@@ -333,7 +333,7 @@ func RegisterDeploySSH(
 			}
 			return jsonResult(deploySSHResponse{
 				DeployResult:     result,
-				WorkSessionState: sessionAnnotations(ctx, httpClient, stateDir),
+				WorkSessionState: sessionAnnotations(ctx, httpClient, rtInfo, stateDir),
 				Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rtInfo),
 			}), nil, nil
 		}
@@ -372,7 +372,7 @@ func RegisterDeploySSH(
 		// runs main again (DP-8).
 		if input.Strategy == deployStrategyGitPush {
 			if lease, ok := leaseOf(stateDir, cmp.Or(input.SourceService, input.TargetService)); ok {
-				return convertError(leaseGitPushRefusal(lease), WithRecoveryStatus()), nil, nil
+				return convertError(leaseGitPushRefusal(lease, rtInfo), WithRecoveryStatus()), nil, nil
 			}
 		}
 		// Before any read of the source's files: a parked lease answers
@@ -590,7 +590,7 @@ func runDeploySSHZCLIPush(
 	// signal inline. Wrap to match.
 	return jsonResult(deploySSHResponse{
 		DeployResult:     result,
-		WorkSessionState: sessionAnnotations(ctx, httpClient, stateDir),
+		WorkSessionState: sessionAnnotations(ctx, httpClient, rtInfo, stateDir),
 		Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rtInfo),
 	}), nil, nil
 }

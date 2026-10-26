@@ -2,8 +2,7 @@ package hq
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -29,25 +28,21 @@ type Doer interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
-// Client speaks HQ's Mate API as the Mate the enrollment it was opened with
-// holds: `Authorization: Mate <credential>`, always within the application
+// Client speaks HQ's Mate API as the project whose key it was opened with:
+// `Authorization: Project <key>` on every call, always within the application
 // HQ holds the Mate in.
 type Client struct {
-	call       hqClient
-	enrollment Enrollment
+	call hqClient
+	id   Identity
 }
 
-// Open is a client of the HQ the enrollment at path names, with its
-// credential; ErrNotEnrolled when there is no enrollment yet.
-func Open(httpClient Doer, path string) (Client, error) {
-	kept, found, err := LoadEnrollment(path)
-	if err != nil {
+// Open is a client of the HQ id names, presenting id's key; ErrNoIdentity
+// when id lacks the key, the project or HQ's origin.
+func Open(httpClient Doer, id Identity) (Client, error) {
+	if err := id.check(); err != nil {
 		return Client{}, err
 	}
-	if !found {
-		return Client{}, ErrNotEnrolled
-	}
-	return Client{call: hqClient{http: httpClient, address: kept.HQ}, enrollment: kept}, nil
+	return Client{call: hqClient{http: httpClient, address: id.Origin}, id: id}, nil
 }
 
 // Once is this client sending each call once: a 503 is UnavailableError at
@@ -69,7 +64,7 @@ func (c Client) Bounded(connect, answer time.Duration) Client {
 }
 
 // Repo is a repository HQ keeps for an application, served at
-// `/git/<appId>/<name>.git`.
+// `/git/<orgId>/<appId>/<name>.git`.
 type Repo struct {
 	AppID string `json:"appId"`
 	Name  string `json:"name"`
@@ -87,11 +82,15 @@ func (c Client) EnsureRepo(ctx context.Context, name string) (Repo, error) {
 // appID, without making it: git's own first ask of a clone, as the Mate —
 // found, or not found. Any other answer is an error, never "absent".
 func (c Client) RepoExists(ctx context.Context, appID, repo string) (bool, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.RepoURL(appID, repo)+"/info/refs?service=git-upload-pack", nil)
+	repoURL, err := c.RepoURL(appID, repo)
+	if err != nil {
+		return false, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, repoURL+"/info/refs?service=git-upload-pack", nil)
 	if err != nil {
 		return false, fmt.Errorf("hq git %s: %w", repo, err)
 	}
-	req.SetBasicAuth(GitUser, c.Credential())
+	req.Header.Set("Authorization", c.authorization())
 	resp, err := c.call.http.Do(req)
 	if err != nil {
 		return false, &UnavailableError{Err: fmt.Errorf("hq git %s: %w", repo, err)}
@@ -109,40 +108,38 @@ func (c Client) RepoExists(ctx context.Context, appID, repo string) (bool, error
 	return false, fmt.Errorf("hq git %s: HQ answered %d", repo, resp.StatusCode)
 }
 
-func (c Client) authorization() string { return "Mate " + c.enrollment.Credential }
+// authorization is the key as every call and zcp's own git presents it. The
+// header is the only place it travels: never a URL, a log line or a file.
+func (c Client) authorization() string { return "Project " + c.id.Key }
 
 // Address is the HQ's own address, without a trailing slash.
-func (c Client) Address() string { return strings.TrimRight(c.enrollment.HQ, "/") }
+func (c Client) Address() string { return strings.TrimRight(c.id.Origin, "/") }
 
 // ProjectID is the Mate's own project: HQ's id of the Mate.
-func (c Client) ProjectID() string { return c.enrollment.ProjectID }
+func (c Client) ProjectID() string { return c.id.ProjectID }
 
-// Credential is the Mate credential, the password git presents to HQ as
-// GitUser. Never printed.
-func (c Client) Credential() string { return c.enrollment.Credential }
-
-// CredentialFingerprint names the Mate credential without carrying it: what a
-// record keeps to know which credential a service was given, never the
-// secret itself.
-func (c Client) CredentialFingerprint() string {
-	return CredentialFingerprint(c.enrollment.Credential)
-}
-
-// CredentialFingerprint names credential without carrying it: the first 8
-// bytes of its SHA-256, hex — what a pair's record and a pool's record keep
-// to know which Mate credential its service was given.
-func CredentialFingerprint(credential string) string {
-	sum := sha256.Sum256([]byte(credential))
-	return hex.EncodeToString(sum[:8])
-}
+// OrgID is the Zerops organisation the Mate's repository addresses name; ""
+// where the container has none (RepoURL then reports ErrNoOrganisation).
+func (c Client) OrgID() string { return c.id.OrgID }
 
 // RepoURL is where git reaches the repository repo of the application appID.
-func (c Client) RepoURL(appID, repo string) string { return RepoURLAt(c.Address(), appID, repo) }
+func (c Client) RepoURL(appID, repo string) (string, error) {
+	return RepoURLAt(c.Address(), c.id.OrgID, appID, repo)
+}
+
+// ErrNoOrganisation is an address HQ would answer 404: it names the
+// organisation, and the caller has none.
+var ErrNoOrganisation = errors.New("hq repository address needs the Zerops organisation, and this container has none")
 
 // RepoURLAt is where git reaches the repository repo of the application
-// appID at the HQ whose address is address.
-func RepoURLAt(address, appID, repo string) string {
-	return strings.TrimRight(address, "/") + "/git/" + url.PathEscape(appID) + "/" + url.PathEscape(repo) + ".git"
+// appID of the organisation orgID at the HQ whose address is address:
+// `/git/<orgId>/<appId>/<repo>.git` (HQ's named difference 3). ErrNoOrganisation
+// when orgID is empty — never an address without it.
+func RepoURLAt(address, orgID, appID, repo string) (string, error) {
+	if orgID == "" {
+		return "", ErrNoOrganisation
+	}
+	return strings.TrimRight(address, "/") + "/git/" + url.PathEscape(orgID) + "/" + url.PathEscape(appID) + "/" + url.PathEscape(repo) + ".git", nil
 }
 
 // ChangeURL is a change's own address at HQ, which HQ leads into the client:
@@ -154,7 +151,7 @@ func (c Client) ChangeURL(appID, repo string, number int) string {
 // ChangeBranch is the branch HQ binds the Mate's change number to when it is
 // opened naming none.
 func (c Client) ChangeBranch(number int) string {
-	return "mate/" + c.enrollment.ProjectID + "/" + strconv.Itoa(number)
+	return "mate/" + c.id.ProjectID + "/" + strconv.Itoa(number)
 }
 
 // BranchOf is the branch of the Mate's change number by its short name: the

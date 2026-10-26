@@ -113,6 +113,26 @@ func settleInstalled(version string) error {
 	return WriteUpdateState(UpdateState{Phase: updateUpdated, RunningVersion: version, FailedVersion: failed})
 }
 
+// LastGoodVersion is the version last-good names.
+func LastGoodVersion() (string, error) {
+	dir, err := linkedVersionDir(LastGoodLink())
+	if err != nil {
+		return "", err
+	}
+	return installedVersionIn(dir)
+}
+
+// CommitLastGood is the one place last-good advances, for every route that moves Mate
+// (the update worker and `zcp init` at boot): the caller has proved version started
+// healthy under this zcp. A dev build, or a release below MinimumMateVersion (a contract
+// this zcp no longer drives), is never a rollback target and leaves last-good unchanged.
+func CommitLastGood(version string) error {
+	if IsDevVersion(version) || VersionOlder(version, MinimumMateVersion) {
+		return nil
+	}
+	return replaceLink(LastGoodLink(), VersionDir(version))
+}
+
 func AutomaticUpdateAllowed(installed, failed string, candidate Manifest) bool {
 	return RollbackAllowed(installed, candidate) && !IsDevVersion(installed) && VersionOlder(installed, candidate.Version) && (failed == "" || VersionOlder(failed, candidate.Version))
 }
@@ -173,7 +193,7 @@ func SwitchUpdate(candidate, oldBoot string, h SwitchHooks) error {
 	}
 	if err := h.Restart(); err == nil {
 		if err := h.Ready(candidate, oldBoot); err == nil {
-			if err := replaceLink(LastGoodLink(), VersionDir(candidate)); err != nil {
+			if err := CommitLastGood(candidate); err != nil {
 				return err
 			}
 			s.Phase = updateUpdated

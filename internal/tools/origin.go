@@ -45,11 +45,7 @@ type originAnswer struct {
 // checkout's origin becomes, or in Mate, HQ's git staying the origin and the
 // repository only followed. Like zerops_env action="request" it writes
 // nothing; Mate draws the card and the person picks in HQ.
-func RegisterOrigin(srv *mcp.Server, httpClient hq.Doer, projectID, stateDir string) {
-	registerOrigin(srv, httpClient, hq.EnrollmentPath(), projectID, stateDir)
-}
-
-func registerOrigin(srv *mcp.Server, httpClient hq.Doer, path, projectID, stateDir string) {
+func RegisterOrigin(srv *mcp.Server, httpClient hq.Doer, projectID, orgID, stateDir string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_origin",
 		Description: "Ask the person where a repository's code is kept: on GitHub, mounted in HQ as the checkout's origin, or in Mate, only following it; one outside GitHub is only followed. Writes nothing: Mate shows a card for repo, the dev hostname the pair will wire. A message of its own tells you their pick. Never ask for a token.",
@@ -63,12 +59,12 @@ func registerOrigin(srv *mcp.Server, httpClient hq.Doer, path, projectID, stateD
 		if err != nil {
 			return convertError(err), nil, nil
 		}
-		client, err := hq.Open(httpClient, path)
+		client, err := hq.Open(httpClient, liveHQIdentity())
 		if err != nil {
-			return observeFailure(fmt.Sprintf("HQ enrollment could not be opened, so nothing was asked: %v", err)), nil, nil
+			return observeFailure(fmt.Sprintf("HQ could not be addressed, so nothing was asked: %v", err)), nil, nil
 		}
 		if client.ProjectID() != projectID {
-			return observeFailure("HQ enrollment belongs to another project, so nothing was asked."), nil, nil
+			return observeFailure("This Mate's key belongs to another project, so nothing was asked."), nil, nil
 		}
 		ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 		defer cancel()
@@ -76,7 +72,7 @@ func registerOrigin(srv *mcp.Server, httpClient hq.Doer, path, projectID, stateD
 		if err != nil {
 			return observeFailure(fmt.Sprintf("HQ could not be read, so whether %s already has an origin is unknown and nothing was asked: %v. Ask again later.", req.Repo, err)), nil, nil
 		}
-		return jsonResult(originAnswerOf(req, state, client.Address(), stateDir)), nil, nil
+		return jsonResult(originAnswerOf(req, state, client.Address(), orgID, stateDir)), nil, nil
 	})
 }
 
@@ -85,7 +81,7 @@ func registerOrigin(srv *mcp.Server, httpClient hq.Doer, path, projectID, stateD
 // repository, or of another one of the application; else asked, also by an
 // HQ older than repositories in that state. hqAddress and stateDir say where
 // the code comes in (originFromHolder, originCheckout).
-func originAnswerOf(req ops.OriginRequest, state hq.MateState, hqAddress, stateDir string) originAnswer {
+func originAnswerOf(req ops.OriginRequest, state hq.MateState, hqAddress, orgID, stateDir string) originAnswer {
 	dir := originCheckout(stateDir, req.Repo)
 	if holder, origin := originHolder(req, state); holder != "" {
 		connected := &originConnected{Origin: req, Repo: holder}
@@ -96,7 +92,7 @@ func originAnswerOf(req ops.OriginRequest, state hq.MateState, hqAddress, stateD
 		}
 		return originAnswer{Connected: connected,
 			NextActions: fmt.Sprintf("Nothing was asked: %s is already the origin of %s in HQ, not of %s. Its code comes from that repository, %s, never from the asked address, and never ask for a token: %s.",
-				req.URL, holder, req.Repo, holder, originFromHolder(req.Repo, holder, origin, state, hqAddress, stateDir))}
+				req.URL, holder, req.Repo, holder, originFromHolder(req.Repo, holder, origin, state, hqAddress, orgID, stateDir))}
 	}
 	if !ops.IsGitHubRepository(req.URL) {
 		return originAnswer{
@@ -217,7 +213,7 @@ func originTake(dir, fetch string) string {
 // sibling Mate's project and name no host here, fetched into the asked
 // repository's — from GitHub when the person keeps holder's code there, else
 // from HQ.
-func originFromHolder(repo, holder string, origin hq.RepoOrigin, state hq.MateState, hqAddress, stateDir string) string {
+func originFromHolder(repo, holder string, origin hq.RepoOrigin, state hq.MateState, hqAddress, orgID, stateDir string) string {
 	if meta, err := workflow.FindServiceMeta(stateDir, holder); err == nil && meta != nil {
 		return originFromHQ(originCheckout(stateDir, holder))
 	}
@@ -229,5 +225,9 @@ func originFromHolder(repo, holder string, origin hq.RepoOrigin, state hq.MateSt
 	if state.AppID != nil {
 		appID = *state.AppID
 	}
-	return originTake(dir, "git fetch "+hq.RepoURLAt(hqAddress, appID, holder)+" main")
+	holderURL, err := hq.RepoURLAt(hqAddress, orgID, appID, holder)
+	if err != nil {
+		return "(HQ's address for it cannot be built: " + err.Error() + ")"
+	}
+	return originTake(dir, "git fetch "+holderURL+" main")
 }

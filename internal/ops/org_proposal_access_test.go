@@ -14,7 +14,7 @@ import (
 )
 
 // accessOrg is testOrg with the application Contoso whole: production, a
-// stage and its Mate Alba, and the Chief acting for an organization owner.
+// stage and its Mate Alba.
 func accessOrg() *fakeOrg {
 	org := testOrg()
 	org.projects = append(org.projects,
@@ -22,7 +22,6 @@ func accessOrg() *fakeOrg {
 		platform.Project{ID: "pAlba", Name: "Contoso - Alba", Status: "ACTIVE", Tags: []string{"mate"}},
 	)
 	org.services = append(org.services, svc("sAlba", "pAlba", "zcp", "zcp@1", "USER", "ACTIVE"))
-	org.person = &platform.OrgPerson{Name: "Ola Owner", Role: "OWNER"}
 	return org
 }
 
@@ -53,12 +52,8 @@ func TestProposeOrgAction_AccessSet_Shape(t *testing.T) {
 			want: `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"access.set","summary":"Access to Contoso - stage: Dana hidden, Greta back to their organization role","reason":"asked","projectId":"pCStage","projectName":"Contoso - stage","params":{"projects":[{"id":"pCStage","name":"Contoso - stage"}],"people":[{"person":"Dana","level":"none"},{"person":"Greta","level":"remove"}]}},"note":"Nothing has run. The person approves or declines it on the card."}`,
 		},
 		{
-			name: "a person whose role this HQ does not say is not refused: Zerops decides on Approve",
-			org: func() *fakeOrg {
-				org := accessOrg()
-				org.person = nil
-				return org
-			},
+			name: "a person is not checked against the organization: Zerops decides on Approve",
+			org:  accessOrg,
 			in:   access("Northwind Shop - Rossy", OrgAccessPerson{Person: "Dana", Level: "read"}),
 			want: `{"proposal":{"id":"11111111-2222-3333-4444-555555555555","kind":"access.set","summary":"Access to Northwind Shop - Rossy: Dana read only","reason":"asked","projectId":"pRossy","projectName":"Northwind Shop - Rossy","params":{"projects":[{"id":"pRossy","name":"Northwind Shop - Rossy"}],"people":[{"person":"Dana","level":"read"}]}},"note":"Nothing has run. The person approves or declines it on the card."}`,
 		},
@@ -88,13 +83,12 @@ func TestProposeOrgAction_AccessSet_Shape(t *testing.T) {
 
 // TestProposeOrgAction_AccessSet_RefusesWhatCannotBeGiven: access is proposed
 // only on the organization's projects, at a level Mate gives, to each person
-// once, and only for a person whose role may change who has access.
+// once.
 func TestProposeOrgAction_AccessSet_RefusesWhatCannotBeGiven(t *testing.T) {
 	t.Parallel()
 	dana := OrgAccessPerson{Person: "Dana", Level: "full"}
 	tests := []struct {
 		name    string
-		role    string
 		in      OrgActionInput
 		wantErr string
 	}{
@@ -105,16 +99,12 @@ func TestProposeOrgAction_AccessSet_RefusesWhatCannotBeGiven(t *testing.T) {
 		{name: "a blank person", in: access("Contoso", OrgAccessPerson{Person: " ", Level: "full"}), wantErr: "person"},
 		{name: "a level Mate does not give", in: access("Contoso", OrgAccessPerson{Person: "Dana", Level: "owner"}), wantErr: "owner"},
 		{name: "the same person twice", in: access("Contoso", dana, OrgAccessPerson{Person: "dana", Level: "read"}), wantErr: "twice"},
-		{name: "a person whose role may not change access", role: "BASIC_USER", in: access("Contoso", dana), wantErr: "owner or admin"},
 		{name: "no reason", in: OrgActionInput{Kind: ProposalAccessSet, Project: "Contoso", People: []OrgAccessPerson{dana}}, wantErr: "reason"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			org := accessOrg()
-			if tt.role != "" {
-				org.person = &platform.OrgPerson{Name: "Dev Eloper", Role: tt.role}
-			}
 			_, err := ProposeOrgAction(context.Background(), org, fixedID, tt.in)
 			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 				t.Fatalf("err = %v, want it to mention %q", err, tt.wantErr)

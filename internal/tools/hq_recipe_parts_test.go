@@ -81,6 +81,7 @@ type hqServiceAnswer struct {
 // carries its one part, so the reconcile says nothing and a targeted call
 // has nothing to propose.
 func TestGroupRecipeService_OnePart_ProposesNoTierEdit(t *testing.T) {
+	t.Parallel()
 	lab, main := newPartsLab(t)
 
 	if outcome := lab.proposeRecipe(lab.mock); outcome.Line != "" || outcome.Change != 0 {
@@ -99,6 +100,7 @@ func TestGroupRecipeService_OnePart_ProposesNoTierEdit(t *testing.T) {
 // existing tiers and leaves every other line, hand edits included,
 // unchanged.
 func TestGroupRecipeService_AddThenRemovePart_OnlyThatService(t *testing.T) {
+	t.Parallel()
 	lab, main := newPartsLab(t)
 	client := addWorker(t, lab)
 

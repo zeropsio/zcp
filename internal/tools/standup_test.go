@@ -98,9 +98,12 @@ func standupZeropsYAML(pair string) string {
 `, pair, buildEnv)
 }
 
-// standupCredential is the Mate credential the stand-up reads HQ with and
-// its pairs deliver to HQ with.
-const standupCredential = "standup-mate-credential"
+// standupKey is the project key every call to HQ presents; standupCredential
+// is the Git credential HQ gave the Mate, which only git presents.
+const (
+	standupKey        = "standup-project-key"
+	standupCredential = "standup-mate-credential"
+)
 
 // standupHQ is the Mate's HQ: its application, the recipe on its recipe
 // repository's main, and the repositories there.
@@ -133,8 +136,11 @@ func (g *standupHQ) start(t *testing.T) *httptest.Server {
 			_ = json.NewEncoder(w).Encode(body)
 		}
 		path := r.URL.Path
-		if repo, ok := strings.CutPrefix(path, "/git/"+g.appID+"/"); ok && g.appID != "" {
-			if user, password, _ := r.BasicAuth(); user != hq.GitUser || password != standupCredential {
+		if repo, ok := strings.CutPrefix(path, "/git/"+labOrg+"/"+g.appID+"/"); ok && g.appID != "" {
+			// zcp's own reads present the key; the dev service's git, only the
+			// Mate's Git credential.
+			if user, password, basic := r.BasicAuth(); r.Header.Get("Authorization") != "Project "+standupKey &&
+				(!basic || user != hq.GitUser || password != standupCredential) {
 				w.WriteHeader(http.StatusUnauthorized)
 				return
 			}
@@ -146,7 +152,7 @@ func (g *standupHQ) start(t *testing.T) *httptest.Server {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		if r.Header.Get("Authorization") != "Mate "+standupCredential {
+		if r.Header.Get("Authorization") != "Project "+standupKey {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
@@ -408,16 +414,16 @@ func (h standupHTTP) Do(req *http.Request) (*http.Response, error) {
 // first deploy), the Mate enrolled with its HQ.
 type standupFixture struct {
 	root, stateDir string
-	// enrollmentPath is the Mate's enrollment with the fake's HQ.
-	enrollmentPath string
-	hq             *standupHQ
-	srv            *httptest.Server
-	mock           *platform.Mock
-	ssh            *standupSSH
-	mounter        *standupMounter
-	env            map[string]string
-	events         []platform.AppVersionEvent
-	services       []platform.ServiceStack
+	// identity is the Mate's link to the fake's HQ.
+	identity hq.Identity
+	hq       *standupHQ
+	srv      *httptest.Server
+	mock     *platform.Mock
+	ssh      *standupSSH
+	mounter  *standupMounter
+	env      map[string]string
+	events   []platform.AppVersionEvent
+	services []platform.ServiceStack
 	// importing, when set, answers the service list as the browser's
 	// runtime import is creating it.
 	importing *importingClient
@@ -476,10 +482,11 @@ func newStandupFixture(t *testing.T) *standupFixture {
 	f.status = newStandupStatus(f.statusPath)
 	f.mounter = &standupMounter{}
 	f.env = map[string]string{}
-	f.enrollmentPath = filepath.Join(f.root, "enrollment.json")
-	if err := hq.SaveEnrollment(f.enrollmentPath, hq.Enrollment{HQ: f.srv.URL, HQProjectID: "hq1", ProjectID: "p1", Credential: standupCredential}); err != nil {
+	credentialPath := filepath.Join(f.root, "git-credential")
+	if err := os.WriteFile(credentialPath, []byte(standupCredential), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	f.identity = hq.Identity{Origin: f.srv.URL, OrgID: labOrg, ProjectID: "p1", Key: standupKey, GitCredentialPath: credentialPath}
 	// The branch cut puts main's files in each dev half; the mount shows them.
 	for _, pair := range []string{"medusa", "nextstore"} {
 		dir := filepath.Join(f.root, pair+"dev")
@@ -541,18 +548,18 @@ func (f *standupFixture) run(t *testing.T) (*mcp.CallToolResult, standupResponse
 			stateDir:    f.stateDir,
 			devsup:      f.devsup,
 		},
-		mounter:        f.mounter,
-		liveEnvPath:    writeLiveEnvFile(t, f.env),
-		enrollWait:     50 * time.Millisecond,
-		enrollPoll:     10 * time.Millisecond,
-		runtimeWait:    200 * time.Millisecond,
-		runtimePoll:    5 * time.Millisecond,
-		statusPath:     f.statusPath,
-		status:         f.status,
-		enrollmentPath: f.enrollmentPath,
-		bootWait:       2 * time.Second,
-		bootPoll:       5 * time.Millisecond,
-		trackPoll:      5 * time.Millisecond,
+		mounter:     f.mounter,
+		liveEnvPath: writeLiveEnvFile(t, f.env),
+		identity:    func() hq.Identity { return f.identity },
+		hqWait:      50 * time.Millisecond,
+		hqPoll:      10 * time.Millisecond,
+		runtimeWait: 200 * time.Millisecond,
+		runtimePoll: 5 * time.Millisecond,
+		statusPath:  f.statusPath,
+		status:      f.status,
+		bootWait:    2 * time.Second,
+		bootPoll:    5 * time.Millisecond,
+		trackPoll:   5 * time.Millisecond,
 	})
 	result := callTool(t, srv, "zerops_standup", map[string]any{})
 	var body standupResponse
@@ -678,7 +685,7 @@ func TestStandup_StandsUpEveryPairFromTheRecipe(t *testing.T) {
 		t.Errorf("the tier was read %d times over two calls, want once a call", f.hq.tierReads)
 	}
 	assertNoSecretOnDisk(t, f.stateDir, standupCredential)
-	assertNoSecretOnDisk(t, f.stateDir, standupCredential)
+	assertNoSecretOnDisk(t, f.stateDir, standupKey)
 
 	agents, _ := os.ReadFile(filepath.Join(f.root, "AGENTS.md"))
 	if !strings.Contains(string(agents), "medusadev") || !strings.Contains(string(agents), "ZEROPS:REFLOG") {
@@ -821,8 +828,8 @@ func TestStandup_TheModelIsTheBackup(t *testing.T) {
 	}{
 		{
 			name:    "the Mate is never enrolled",
-			setup:   func(f *standupFixture) { f.enrollmentPath = filepath.Join(f.root, "no-enrollment.json") },
-			wantErr: []string{"PREREQUISITE_MISSING", "not enrolled with its HQ", "route=\\\"adopt\\\""},
+			setup:   func(f *standupFixture) { f.identity.Key = "" },
+			wantErr: []string{"PREREQUISITE_MISSING", "does not answer for this Mate's key", "route=\\\"adopt\\\""},
 		},
 		{
 			name:    "HQ holds the Mate in no application",
@@ -1367,10 +1374,10 @@ func TestStandup_WritesItsProgressForTheRunCard(t *testing.T) {
 		},
 		{
 			name:      "a refusal fails the call with its reason",
-			setup:     func(f *standupFixture) { f.enrollmentPath = filepath.Join(f.root, "no-enrollment.json") },
+			setup:     func(f *standupFixture) { f.identity.Key = "" },
 			calls:     1,
 			wantState: mate.StandupFailed, wantPhase: mate.PhaseDevelopment, wantEnded: true,
-			wantError: "not enrolled with its HQ",
+			wantError: "does not answer for this Mate's key",
 		},
 	}
 	for _, tt := range tests {

@@ -35,6 +35,7 @@ var takeCommand = regexp.MustCompile("`(git fetch [^`]*)`")
 // and pushes there, and on an HQ that keeps one open change per repository
 // open-change answers the handed change without asking HQ to open another.
 func TestHandedChange_IsThePairsAndTheWorkGoesOnItsBranch(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		branch string // "" is the gone Mate's default, mate/p-gone/<n>
@@ -46,6 +47,7 @@ func TestHandedChange_IsThePairsAndTheWorkGoesOnItsBranch(t *testing.T) {
 		{name: "on a branch nothing was pushed to yet", branch: "fix-signup", want: "fix-signup"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			lab := newHQLab(t)
 			lab.wire()
 			lab.mock.WithServices([]platform.ServiceStack{
@@ -108,6 +110,7 @@ func TestHandedChange_IsThePairsAndTheWorkGoesOnItsBranch(t *testing.T) {
 // zcp moves it on the branch HQ keeps it on — never one of this Mate's own,
 // which HQ binds to no change.
 func TestGroupRecipe_AHandedProposalMovesOnItsOwnBranch(t *testing.T) {
+	t.Parallel()
 	lab := newRecipeLab(t)
 	number := lab.hq.handOver(hq.RecipeRepo, hq.RecipeProposalTitle, "", map[string]string{"NOTES.md": "the gone Mate's start\n"})
 	handedHead := lab.hq.recipeHead("mate/p-gone/1")

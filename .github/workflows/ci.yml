@@ -2,13 +2,35 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'wt/keys']
   pull_request:
     branches: ['*']
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      reuse-ci:
+        type: boolean
+        default: false
+    outputs:
+      corpus-artifact:
+        value: ${{ jobs.knowledge.outputs.artifact }}
+      corpus-digest:
+        value: ${{ jobs.knowledge.outputs.digest }}
+
+permissions:
+  contents: read
+  actions: read
 
 jobs:
+  knowledge:
+    uses: ./.github/workflows/knowledge.yml
+    with:
+      reuse-ci: ${{ inputs.reuse-ci || false }}
+
   test:
     name: test
+    needs: knowledge
+    if: needs.knowledge.outputs.reused != 'true'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
@@ -17,11 +39,10 @@ jobs:
         with:
           go-version-file: "go.mod"
 
-      - name: Pull knowledge (recipes + guides)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          go run ./cmd/zcp sync pull
+      - uses: ./.github/actions/restore-knowledge
+        with:
+          artifact: ${{ needs.knowledge.outputs.artifact }}
+          digest: ${{ needs.knowledge.outputs.digest }}
 
       - name: Build (all platforms)
         env:
@@ -37,6 +58,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+
+      - name: Corpus proof tests
+        run: node --test .github/scripts/*.test.cjs
 
       - name: Data Console webui deps (npm ci)
         run: npm ci --prefix internal/dataconsole/console/webui
@@ -66,6 +90,8 @@ jobs:
 
   lint:
     name: lint
+    needs: knowledge
+    if: needs.knowledge.outputs.reused != 'true'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
@@ -74,11 +100,10 @@ jobs:
         with:
           go-version-file: "go.mod"
 
-      - name: Pull knowledge (recipes + guides)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          go run ./cmd/zcp sync pull
+      - uses: ./.github/actions/restore-knowledge
+        with:
+          artifact: ${{ needs.knowledge.outputs.artifact }}
+          digest: ${{ needs.knowledge.outputs.digest }}
 
       - uses: golangci/golangci-lint-action@v9
         with:

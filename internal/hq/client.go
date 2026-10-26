@@ -105,46 +105,6 @@ const (
 	unavailableWaitMax = 10 * time.Second
 )
 
-func (c hqClient) challenge(ctx context.Context, projectID string) (string, error) {
-	var out struct {
-		Nonce string `json:"nonce"`
-	}
-	err := c.json(ctx, http.MethodPost, "/api/mate/challenge", "", map[string]string{"projectId": projectID}, &out)
-	return out.Nonce, err
-}
-
-// credential presents the nonce, naming the id of the container's key and
-// its own service where it has them; an HQ that does not know a field
-// ignores it.
-func (c hqClient) credential(ctx context.Context, projectID, nonce, keyTokenID, serviceID string) (string, error) {
-	var out struct {
-		Credential string `json:"credential"`
-	}
-	in := map[string]string{"projectId": projectID, "nonce": nonce}
-	if keyTokenID != "" {
-		in["keyTokenId"] = keyTokenID
-	}
-	if serviceID != "" {
-		in["serviceId"] = serviceID
-	}
-	err := c.json(ctx, http.MethodPost, "/api/mate/credential", "", in, &out)
-	return out.Credential, err
-}
-
-func (c hqClient) whoami(ctx context.Context, credential string) (string, error) {
-	var out struct {
-		ProjectID string `json:"projectId"`
-	}
-	err := c.json(ctx, http.MethodGet, "/api/mate/whoami", "Mate "+credential, nil, &out)
-	return out.ProjectID, err
-}
-
-// keepKey names the id of the container's key under credential.
-func (c hqClient) keepKey(ctx context.Context, credential, keyTokenID string) error {
-	return c.json(ctx, http.MethodPut, "/api/mate/key", "Mate "+credential,
-		map[string]string{"keyTokenId": keyTokenID}, nil)
-}
-
 func (c hqClient) json(ctx context.Context, method, path, authorization string, in, out any) error {
 	var body []byte
 	contentType := ""

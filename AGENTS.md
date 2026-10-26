@@ -32,7 +32,7 @@ Read the home before changes:
 - `docs/spec-oss-port-flow.md` — foreign OSS porting gate.
 - `docs/spec-dataconsole.md` — data surfaces/write authority/families/fidelity/install.
 - `docs/spec-dataconsole-testing.md` — proof coverage/matrix/live lanes/versions.
-- `docs/spec-mate.md` — envelopes/install/identity/client/lifecycle/SSH git/fork; org mode, the Chief (§2.11); fork rules → `../z3/docs/internals/zerops/`.
+- `docs/spec-mate.md` — envelopes/install/client/lifecycle/SSH git/fork; trust and credentials (§3); org mode, the Chief (§2.11); fork rules → `../z3/docs/internals/zerops/`.
 - `docs/spec-telemetry.md` — ingest/trusted IP.
 - `schema.URLs` — ZCP_API_HOST-derived live schemas (`schema.CanonicalAPIHost` for dev); `internal/platform/errors.go` — error catalog.
 
@@ -49,8 +49,8 @@ Checks: platform/ops type/interface → unit/tool/integration/e2e; handler → t
 ## Commands
 
 - `make setup` — dev tools and git hooks.
-- `make lint-fast` — native fast linters; `make lint-local` — full golangci lint.
-- `go test ./... -short` — fast tests; `go test ./... -race` — race detector.
+- `make check-changed` — affected short tests and native lint from the staged diff (also pre-commit); `scripts/check-changed.sh --base <ref>` checks a review range; `--plan` prints selection and unresolved ownership.
+- Complete acceptance runs in CI; `make test-short`, `make test-race`, `make lint-fast` and `make lint-local` remain manual all-package diagnostics. Pre-push does not repeat lint.
 - Knowledge sync (gitignored markdown, pull before build): `zcp sync pull recipes [<slug>]` / `pull guides`; `zcp sync push recipes <slug> [--dry-run]` / `push guides` → GitHub PR; `zcp sync cache-clear [<slug>]`; `zcp sync recipe {create-repo,push-app,publish,export}`. Loop: pull → edit → push → merge → cache-clear → pull. Config: `.sync.yaml`, `.env STRAPI_API_TOKEN`.
 
 ## How to work

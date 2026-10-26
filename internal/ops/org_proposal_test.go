@@ -122,7 +122,7 @@ func TestProposeOrgAction_ValidatesAgainstTheOrg(t *testing.T) {
 }
 
 // domainOrg is testOrg with medusa serving the web on 9000 beside a metrics
-// port, and production already answering at shop.example.com.
+// port.
 func domainOrg() *fakeOrg {
 	org := testOrg()
 	org.services[5].Ports = []platform.Port{
@@ -130,10 +130,6 @@ func domainOrg() *fakeOrg {
 		{Port: 9100, Protocol: "tcp", Scheme: "tcp"},
 		{Port: 8080, Protocol: "tcp", HTTPSupport: true},
 	}
-	org.routings = map[string][]platform.PublicHTTPRouting{"pProd": {{
-		Domains:   []platform.PublicHTTPDomain{{Name: "shop.example.com"}},
-		Locations: []platform.PublicHTTPLocation{{Path: "/", Port: 9000, ServiceID: "sMedusa"}},
-	}}}
 	return org
 }
 
@@ -187,7 +183,7 @@ func TestProposeOrgAction_DomainAdd_Shape(t *testing.T) {
 
 // TestProposeOrgAction_DomainAdd_RefusesWhatCannotGoLive: a domain is
 // proposed only for the organization's project, onto one of its services'
-// web ports, as a domain name the project does not answer at yet.
+// web ports.
 func TestProposeOrgAction_DomainAdd_RefusesWhatCannotGoLive(t *testing.T) {
 	t.Parallel()
 	domain := func(project, service string, port int, domains ...string) OrgActionInput {
@@ -214,7 +210,6 @@ func TestProposeOrgAction_DomainAdd_RefusesWhatCannotGoLive(t *testing.T) {
 		{name: "a wildcard inside the name", in: domain("pProd", "medusa", 9000, "shop.*.contoso.com"), wantErr: "shop.*.contoso.com"},
 		{name: "a wildcard over a top-level domain", in: domain("pProd", "medusa", 9000, "*.com"), wantErr: "*.com"},
 		{name: "the same domain twice", in: domain("pProd", "medusa", 9000, "contoso.com", "Contoso.com"), wantErr: "twice"},
-		{name: "a domain the project already answers at", in: domain("pProd", "medusa", 9000, "shop.example.com"), wantErr: "already"},
 		{name: "no reason", in: OrgActionInput{Kind: ProposalDomainAdd, Project: "pProd", Service: "medusa", Port: 9000, Domains: []string{"contoso.com"}}, wantErr: "reason"},
 	}
 	for _, tt := range tests {

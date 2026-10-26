@@ -179,6 +179,26 @@ rot: a stale string literal compiles fine. The defenses against semantic rot:
 `vet-tags` catches COMPILE rot; the drift guards + single-owner derivation catch
 SEMANTIC rot. Both are required — neither subsumes the other.
 
+
+### 5.1 CI corpus identity and release reuse
+
+CI runs on pushes to exactly `main` and `wt/keys`, on pull requests, and on
+manual dispatch. Ordinary worktree pushes do not start CI. Preparation hydrates
+knowledge once, restores tracked overrides, and publishes the six embedded
+knowledge trees as one immutable archive identified by source commit, run,
+attempt, and SHA-256. Test and lint restore that archive only after checking its
+digest; replacing the trees prevents checkout-only files from changing the input.
+
+A release can reuse a retained archive only from successful CI on the exact
+checked-out source commit in this repository, triggered by a push or manual
+dispatch on `main` or `wt/keys`, with both test and lint successful in that run
+attempt. It verifies the digest before reusing acceptance and before each build.
+Missing proof, expired/unavailable artifacts, and digest mismatches cause fresh
+preparation and the full CI validation path: platform builds, race tests,
+required JS/DOM checks, tagged vet, and lint. Release binaries use that same
+validated archive. The daily/manual live Schema Drift workflow remains separate.
+Offline proof selection and restoration witnesses live in `.github/scripts/*.test.cjs`.
+
 ---
 
 ## 6. The behavioral corpus — runner, scenarios, retrospective
@@ -256,6 +276,37 @@ touched; the lint enforces only the universal set above until the curation pass
 makes the richer set universal too.
 
 ---
+
+### Local changed checks
+
+`scripts/check-changed.sh` owns local selection. Pre-commit and `make check-changed`
+use the staged diff, including deletions and both sides of renames. `--base <ref>`
+compares that ref with the working tree; `--files` accepts explicit relative paths;
+`--plan` emits the selection without running checks.
+
+Decision: local checks run affected `-short` tests and native affected-package lint;
+complete acceptance belongs to CI, and pre-push must not repeat full lint.
+
+Decision: when a selected package exits before running tests with the exact
+`knowledge.UnsyncedCorpusMessage` guard, local changed checks report that package
+as `not run locally: knowledge corpus not synced — run make sync; CI runs it`.
+Only that package's guard failure is non-failing; named-test failures, build
+errors, other package failures and lint failures still fail the check. The runner
+uses Go's JSON test events to attribute the guard output. It does not sync during
+the hook: `make sync` builds the CLI and fetches the corpus over the network.
+
+Decision: selection follows Go imports, including test imports, to transitive
+consumers; embedded resources and package-local fixtures belong to their package.
+Explicit filesystem-reader edges cover cross-package inputs and repository text
+guards. A test that reads another package's source is selected without treating
+that source edit as a change to the reader's compiled exports.
+
+Decision: module, build and global configuration changes widen selection to all
+packages; unresolved ownership is printed and also selects all packages, never an
+empty successful check. An incomplete Go graph widens selection as well.
+
+Selector contracts live in `scripts/test_check_changed.py`; complete all-package
+test and lint Makefile targets remain available for manual diagnostics.
 
 ## 8. Invariants (pin with tests)
 

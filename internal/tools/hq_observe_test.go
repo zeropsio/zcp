@@ -5,20 +5,19 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/hq/hqtest"
 )
 
-func TestObserve_HQEnrollment_ReadsAndFailures(t *testing.T) {
-	t.Parallel()
+func TestObserve_UnderTheKey_ReadsAndFailures(t *testing.T) {
+	// non-parallel: the Mate's identity is the process environment.
 	ctx := context.Background()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
-	registerObserve(srv, nil, filepath.Join(t.TempDir(), "missing.json"), "P_MATE")
+	RegisterObserve(srv, nil, "P_MATE")
 	st, ct := mcp.NewInMemoryTransports()
 	ss, err := srv.Connect(ctx, st, nil)
 	if err != nil {
@@ -48,7 +47,7 @@ func TestObserve_HQEnrollment_ReadsAndFailures(t *testing.T) {
 		want, wantEnd string
 	}{
 		{"environments", "environments", "", "", "/api/mate/environments", `{"appId":"a1","environments":[{"projectId":"P_STAGE","name":"stage","tier":"stage"}]}`, 200, "", ""},
-		{"status", "status", "P_STAGE", "", "/api/mate/environments/P_STAGE", `{"environment":{"projectId":"P_STAGE","name":"stage","tier":"stage"},"services":[{"id":"S1","name":"web","status":"ACTIVE","activeVersion":{"id":"V1","name":"v1"}}]}`, 200, "", ""},
+		{"status", "status", "P_STAGE", "", "/api/mate/environments/P_STAGE", `{"environment":{"projectId":"P_STAGE","name":"stage","tier":"stage"},"services":[{"id":"S1","name":"web","status":"ACTIVE","activeVersion":{"id":"V1","activatedAt":null}}]}`, 200, "", ""},
 		{"logs", "logs", "P_STAGE", "S1", "/api/mate/environments/P_STAGE/services/S1/logs?limit=2", `{"projectId":"P_STAGE","serviceId":"S1","entries":[{"timestamp":"now","severity":"info","message":"serving"}]}`, 200, "", ""},
 		{"forbidden", "status", "P_STAGE", "", "/api/mate/environments/P_STAGE", `{"code":"observation_refused","reason":"forbidden"}`, 403,
 			"HQ refused the observation: 403 observation_refused (forbidden); the same call gets the same answer.", ""},
@@ -62,11 +61,10 @@ func TestObserve_HQEnrollment_ReadsAndFailures(t *testing.T) {
 			"HQ is not serving right now (hq /api/mate/environments/P_STAGE: ", "); try again later — nothing to fix on your side."},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
 			var reads atomic.Int32
 			fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				reads.Add(1)
-				if r.Method != http.MethodGet || r.URL.String() != tt.path || r.Header.Get("Authorization") != "Mate good" {
+				if r.Method != http.MethodGet || r.URL.String() != tt.path || r.Header.Get("Authorization") != "Project good" {
 					t.Errorf("unexpected request %s %s", r.Method, r.URL)
 				}
 				if tt.status == 0 {
@@ -84,12 +82,9 @@ func TestObserve_HQEnrollment_ReadsAndFailures(t *testing.T) {
 				}
 			}))
 			defer fake.Close()
-			path := filepath.Join(t.TempDir(), "enrollment.json")
-			if err := hq.SaveEnrollment(path, hq.Enrollment{HQ: fake.URL, ProjectID: "P_MATE", Credential: "good"}); err != nil {
-				t.Fatal(err)
-			}
+			hqtest.Link(t, fake.URL, "P_MATE", "good")
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
-			registerObserve(srv, fake.Client(), path, "P_MATE")
+			RegisterObserve(srv, fake.Client(), "P_MATE")
 			result := callTool(t, srv, "zerops_observe", map[string]any{"action": tt.action, "projectId": tt.project, "serviceId": tt.service, "limit": 2})
 			if reads.Load() != 1 {
 				t.Fatalf("reads = %d, want one attempt", reads.Load())
@@ -99,7 +94,7 @@ func TestObserve_HQEnrollment_ReadsAndFailures(t *testing.T) {
 			}
 			text := result.Content[0].(*mcp.TextContent).Text
 			if strings.Contains(text, "good") {
-				t.Fatal("credential leaked")
+				t.Fatal("key leaked")
 			}
 			switch {
 			case tt.status == 200:
@@ -119,15 +114,16 @@ func TestObserve_HQEnrollment_ReadsAndFailures(t *testing.T) {
 	}
 }
 
-func TestObserve_InvalidInputOrEnrollment_NoRequest(t *testing.T) {
-	t.Parallel()
+func TestObserve_InvalidInputOrNoKey_NoRequest(t *testing.T) {
+	// non-parallel: the Mate's identity is the process environment.
+	hqtest.Link(t, "", "", "")
 	for _, args := range []map[string]any{
 		{"action": "status"}, {"action": "logs", "projectId": "P"}, {"action": "delete", "projectId": "P"},
 		{"action": "logs", "projectId": "P", "serviceId": "S", "limit": 101}, {"action": "status", "projectId": "../P"},
 		{"action": "environments"},
 	} {
 		srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
-		registerObserve(srv, nil, filepath.Join(t.TempDir(), "missing.json"), "P_MATE")
+		RegisterObserve(srv, nil, "P_MATE")
 		result := callTool(t, srv, "zerops_observe", args)
 		if !result.IsError {
 			t.Errorf("input %v should fail visibly", args)
@@ -140,11 +136,41 @@ func TestObserve_InputError_AsksToFixAndCallAgain(t *testing.T) {
 	t.Run("a mistyped action asks the agent to fix it and call zerops_observe again", func(t *testing.T) {
 		t.Parallel()
 		srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
-		registerObserve(srv, nil, filepath.Join(t.TempDir(), "missing.json"), "P_MATE")
+		RegisterObserve(srv, nil, "P_MATE")
 		result := callTool(t, srv, "zerops_observe", map[string]any{"action": "delete", "projectId": "P"})
 		want := "Unknown observation action; fix it and call zerops_observe again."
 		if text := result.Content[0].(*mcp.TextContent).Text; !result.IsError || text != want {
 			t.Fatalf("failure = %q (error %v), want %q", text, result.IsError, want)
 		}
 	})
+}
+
+// HQ answers a running version as Zerops reads it, `{id, activatedAt}` with
+// no name; the agent receives exactly that, the timestamp kept or null.
+func TestObserve_StatusActiveVersion_PassesIDAndActivationThrough(t *testing.T) {
+	// non-parallel: the Mate's identity is the process environment.
+	for _, tt := range []struct {
+		name, version string
+	}{
+		{"an activated version keeps its activation time", `{"id":"V1","activatedAt":"2026-10-16T08:43:10.000Z"}`},
+		{"a version not yet activated keeps a null activation time", `{"id":"V1","activatedAt":null}`},
+		{"a service without a running version stays null", `null`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			body := `{"environment":{"projectId":"P_STAGE","name":"stage","tier":"stage"},"services":[{"id":"S1","name":"web","status":"ACTIVE","activeVersion":` + tt.version + `}]}`
+			fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if _, err := w.Write([]byte(body)); err != nil {
+					t.Error(err)
+				}
+			}))
+			defer fake.Close()
+			hqtest.Link(t, fake.URL, "P_MATE", "good")
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+			RegisterObserve(srv, fake.Client(), "P_MATE")
+			result := callTool(t, srv, "zerops_observe", map[string]any{"action": "status", "projectId": "P_STAGE"})
+			if text := result.Content[0].(*mcp.TextContent).Text; result.IsError || text != body {
+				t.Fatalf("status = %q (error %v), want %q", text, result.IsError, body)
+			}
+		})
+	}
 }

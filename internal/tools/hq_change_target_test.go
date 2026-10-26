@@ -73,7 +73,7 @@ func kara(t *testing.T) string {
 	for _, dev := range []string{"appsdev", "hqpool", "webpool", "boxpool"} {
 		writeWiredPair(t, stateDir, dev, "appsdev")
 	}
-	repo := targetHQ + "/git/" + labApp + "/appsdev.git"
+	repo := targetHQ + "/git/" + labOrg + "/" + labApp + "/appsdev.git"
 	writeHQLeaseRecord(t, stateDir, "hqpool", 4, repo, "mate-test-badge")
 	writeHQLeaseRecord(t, stateDir, "boxpool", 6, repo, "mate-test-badge")
 	writeHQLeaseRecord(t, stateDir, "hqpool", 3, repo, "pool-previews")
@@ -88,7 +88,7 @@ func TestResolveChange_LeaseAliasNamesRepoAndBranch(t *testing.T) {
 	t.Parallel()
 	stateDir := kara(t)
 	writeHQLeaseRecord(t, stateDir, "docpool", 2, "https://github.com/acme/docs", "fix-docs")
-	writeHQLeaseRecord(t, stateDir, "webpool", 5, targetHQ+"/git/"+labApp+"/appsdev", "main")
+	writeHQLeaseRecord(t, stateDir, "webpool", 5, targetHQ+"/git/"+labOrg+"/"+labApp+"/appsdev", "main")
 
 	target, err := resolveChangeTarget(stateDir, targetHQ, changeAsk{Service: "hqpool-4", Verb: changeVerbOpen})
 	if err != nil {

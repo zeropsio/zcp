@@ -10,7 +10,9 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { loadExtension, installFakeAgentBins } = require("./harness.js");
+const { loadExtension, installFakeAgentBins, freezeWallClock } = require("./harness.js");
+
+freezeWallClock();
 
 const BRIDGE_CHANNEL = "@zerops/zcp-agent-auth-bridge";
 const ALLOWLISTED_ORIGIN = "https://app.zerops.io";

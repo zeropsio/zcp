@@ -94,7 +94,7 @@ func TestRenewPoolHQCredentials_RacingAnAcquire_WritesOnce(t *testing.T) {
 	inAMate(fx)
 	client := newEnvBarrierClient(fx.deps.Client.(*platform.Mock), 2)
 	fx.deps.Client = client
-	writePoolCredentialRecord(t, fx.stateDir, testPoolHost, "svc-pool", hq.CredentialFingerprint(poolOldCredential))
+	writePoolCredentialRecord(t, fx.stateDir, testPoolHost, "svc-pool", hq.GitCredentialFingerprint(poolOldCredential))
 	pool := &platform.ServiceStack{ID: "svc-pool", Name: testPoolHost}
 
 	var wg sync.WaitGroup

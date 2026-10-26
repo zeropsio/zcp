@@ -1,0 +1,29 @@
+name: Restore verified knowledge
+description: Restore the exact embedded corpus accepted by CI
+inputs:
+  artifact:
+    description: Immutable corpus artifact name
+    required: true
+  digest:
+    description: Expected SHA-256 of corpus.tar
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/download-artifact@v7
+      with:
+        name: ${{ inputs.artifact }}
+        path: ${{ runner.temp }}/knowledge
+    - name: Verify and restore corpus
+      shell: bash
+      env:
+        CORPUS_DIGEST: ${{ inputs.digest }}
+        CORPUS_DIR: ${{ runner.temp }}/knowledge
+      run: |
+        set -euo pipefail
+        cd "$CORPUS_DIR"
+        printf '%s  corpus.tar\n' "$CORPUS_DIGEST" | sha256sum --check --strict
+        cd "$GITHUB_WORKSPACE"
+        # Replace, do not overlay: no checkout-only file may change the input.
+        rm -rf internal/knowledge/{themes,bases,recipes,guides,decisions,playbooks}
+        tar -xf "$CORPUS_DIR/corpus.tar" -C internal/knowledge

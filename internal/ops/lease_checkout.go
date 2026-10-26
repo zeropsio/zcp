@@ -202,7 +202,7 @@ func resolveLeaseRepo(stateDir, pool, repo string) (cloneURL string, becomesDefa
 // finished one of repo, so the fetch and the checkout move only what changed,
 // and removes any other. For an https origin the repository keeps the same helper
 // (leaseCredentialHelperConfig), so the agent's own push authenticates the
-// same way. hqURL is the Mate's HQ, "" on a container not enrolled with one: a
+// same way. hqURL is the Mate's HQ, "" on a container not linked to one: a
 // repository on it is fetched as HQ's git user (leaseCredentialHelperFor).
 // It is the checkout of the pool's own default repository: the pool's
 // GIT_TOKEN answers its host (leaseTokenScope).
@@ -473,7 +473,7 @@ func leaseTokenScope(stateDir, pool, hqURL, repo string) (scope string, bind boo
 	return scope, scope != ""
 }
 
-// hqAddress is the address of the HQ this Mate enrolled with, read now; ""
+// hqAddress is the address of the HQ this container presents itself to, read now; ""
 // when there is none.
 func (d LeaseDeps) hqAddress() string {
 	if d.HQAddress == nil {
@@ -613,13 +613,13 @@ func foreignHostSuggestion(repoScope, tokenScope string) string {
 // hqLeaseCredentialSuggestion is what a lease of a repository on the Mate's HQ
 // lacks when HQ's git would not take the pool's HQ credential (why). Inside a Mate
 // an acquire writes the Mate credential there (DP-16) and forgets it once HQ
-// refuses it, so the next acquire is the step: what is left is a Mate that is
-// enrolling again, or a container that is not a Mate. It is no user's token to
+// refuses it, so the next acquire is the step: what is left is a Mate HQ has
+// not sent a new credential yet, or a container that is not a Mate. It is no user's token to
 // ask for.
 func hqLeaseCredentialSuggestion(why string) string {
 	return "The repository is on this Mate's HQ, whose git takes only the user `mate` with this Mate's HQ credential, and " + why +
 		". zcp writes that credential to the pool's " + PoolHQCredentialEnvKey + " at an acquire of an HQ repository inside a Mate, and writes it afresh at the next one after a refusal. Acquire again. " +
-		"If HQ refuses it again, the Mate is enrolling with HQ anew (its own service, zcp service mate, keeps enrolling it) and an acquire after that writes the new one; outside a Mate zcp writes nothing there. " +
+		"If HQ refuses it again, HQ revoked the Mate's Git credential and sends its server a new one over the link; an acquire after that writes the new one; outside a Mate zcp writes nothing there. " +
 		"It is no user's token, so never ask for one or make one up. Meanwhile lease the pool for a repository outside HQ, or work on this one in the dev service of the pair wired to it"
 }
 

@@ -57,11 +57,11 @@ func leaseInputSchema() *jsonschema.Schema {
 
 // leaseDeps wires the lease operations: with a mounter (container mode) a
 // lease gets its ssh alias and mount (ops.NewLeaseHost); without one the host
-// side does nothing. The HQ a repository is recognised on is read from the
-// enrollment at each acquire, as git-push-setup reads it for a dev service.
-// Each pool keeps ops.LeaseWarmTarget warm containers (DP-27).
+// side does nothing. The HQ a repository is recognised on is the container's
+// (registerLease sets it from the runtime). Each pool keeps
+// ops.LeaseWarmTarget warm containers (DP-27).
 func leaseDeps(client platform.Client, projectID, stateDir string, swarm ops.SwarmFactory, mounter ops.Mounter, ssh ops.SSHDeployer) ops.LeaseDeps {
-	deps := ops.LeaseDeps{Client: client, ProjectID: projectID, StateDir: stateDir, Swarm: swarm, SSH: ssh, HQAddress: hqAddress,
+	deps := ops.LeaseDeps{Client: client, ProjectID: projectID, StateDir: stateDir, Swarm: swarm, SSH: ssh,
 		Warm: &ops.LeaseWarm{Target: ops.LeaseWarmTarget}}
 	if mounter != nil {
 		deps.Host = ops.NewLeaseHost(mounter)
@@ -161,12 +161,16 @@ func WithLeaseHQ(httpClient ops.HTTPDoer) LeaseOption {
 // them (DP-27, DP-32); tests set deps.Warm.Go to wait for them.
 func registerLease(srv *mcp.Server, deps ops.LeaseDeps, rt runtime.Info, hqHTTP ops.HTTPDoer) {
 	client, projectID, stateDir, swarm := deps.Client, deps.ProjectID, deps.StateDir, deps.Swarm
+	// The HQ a repository is recognised on is the one the container rt
+	// presents itself to, read at each acquire, as git-push-setup reads it
+	// for a dev service.
+	deps.HQAddress = func() string { return hqAddress(rt) }
 	if rt.MateEnabled {
 		// Inside a Mate an acquire of an HQ repository puts the Mate
 		// credential on the pool (ops.PoolHQCredentialEnvKey), as
 		// git-push-setup puts it on a wired dev service (DP-16); outside one
 		// zcp writes nothing, and the pool's GIT_TOKEN is the user's always.
-		deps.PoolCredential = ops.PoolHQCredential{Read: hqCredential, Kept: pairKeptPoolCredential(stateDir)}
+		deps.PoolCredential = ops.PoolHQCredential{Read: hqCredential(rt), Kept: pairKeptPoolCredential(stateDir)}
 	}
 	// envelope is the result's lifecycle envelope; read are the views this
 	// call read checkouts for, whose activity and unsaved work ride leases[]
@@ -235,13 +239,13 @@ func registerLease(srv *mcp.Server, deps ops.LeaseDeps, rt runtime.Info, hqHTTP 
 				views = []ops.LeaseView{}
 			}
 			return jsonResult(leaseToolResult{
-				Action: input.Action, Leases: views, UnreadPools: status.Unread, Warm: status.Warm, NextActions: joinNext(leaseStatusNext(views), leaseGroupChanges(stateDir, hqAddress(), views, leaseHQState(ctx, hqHTTP, rt))), Envelope: envelope(ctx, views...),
+				Action: input.Action, Leases: views, UnreadPools: status.Unread, Warm: status.Warm, NextActions: joinNext(leaseStatusNext(views), leaseGroupChanges(stateDir, hqAddress(rt), views, leaseHQState(ctx, hqHTTP, rt))), Envelope: envelope(ctx, views...),
 			}), nil, nil
 		case leaseActionRelease:
 			// The change on each released branch, as lease status names it
 			// (leaseGroupChanges): the Mate's state read once, inside a Mate.
 			releasedChanges := func(released []ops.LeaseView) string {
-				return leaseReleaseChanges(stateDir, hqAddress(), released, leaseHQState(ctx, hqHTTP, rt))
+				return leaseReleaseChanges(stateDir, hqAddress(rt), released, leaseHQState(ctx, hqHTTP, rt))
 			}
 			force := false
 			if f := input.Force.Ptr(); f != nil {
@@ -532,5 +536,5 @@ func leaseHQState(ctx context.Context, hqHTTP ops.HTTPDoer, rt runtime.Info) fun
 	if hqHTTP == nil || !rt.MateEnabled {
 		return nil
 	}
-	return func() *hq.MateState { return hqStateNow(ctx, hqHTTP) }
+	return func() *hq.MateState { return hqStateNow(ctx, hqHTTP, rt) }
 }

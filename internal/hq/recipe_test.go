@@ -35,7 +35,7 @@ func TestClient_RecipeTier_ReadsTheTierFromHQ(t *testing.T) {
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("tier = %+v, want %+v", got, tt.want)
 			}
-			if len(*calls) != 1 || (*calls)[0].Method != http.MethodGet || (*calls)[0].Path != "/api/mate/recipe/mate" || (*calls)[0].Authorization != "Mate good" {
+			if len(*calls) != 1 || (*calls)[0].Method != http.MethodGet || (*calls)[0].Path != "/api/mate/recipe/mate" || (*calls)[0].Authorization != "Project good" {
 				t.Errorf("calls = %+v, want one GET /api/mate/recipe/mate as the Mate", *calls)
 			}
 		})
@@ -43,7 +43,7 @@ func TestClient_RecipeTier_ReadsTheTierFromHQ(t *testing.T) {
 }
 
 // TestClient_RepoExists_AsksGitWithoutMakingIt: whether a repository is in
-// the application is git's own first ask of a clone, as the Mate — found, or
+// the application is git's own first ask of a clone, under the key — found, or
 // not found; any other answer is an error, never "absent".
 func TestClient_RepoExists_AsksGitWithoutMakingIt(t *testing.T) {
 	t.Parallel()
@@ -63,18 +63,42 @@ func TestClient_RepoExists_AsksGitWithoutMakingIt(t *testing.T) {
 			t.Parallel()
 			var asked string
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				user, password, _ := r.BasicAuth()
-				asked = r.Method + " " + r.URL.RequestURI() + " " + user + ":" + password
+				asked = r.Method + " " + r.URL.RequestURI() + " " + r.Header.Get("Authorization")
 				w.WriteHeader(tt.status)
 			}))
 			t.Cleanup(srv.Close)
-			got, err := enrolledClient(t, srv).RepoExists(context.Background(), "app-1", "web")
+			got, err := keyedClient(t, srv).RepoExists(context.Background(), "app-1", "web")
 			if got != tt.want || (err != nil) != tt.wantErr {
 				t.Errorf("RepoExists = %v, %v; want %v, error %v", got, err, tt.want, tt.wantErr)
 			}
-			if want := "GET /git/app-1/web.git/info/refs?service=git-upload-pack " + GitUser + ":good"; asked != want {
+			if want := "GET /git/org-1/app-1/web.git/info/refs?service=git-upload-pack Project good"; asked != want {
 				t.Errorf("asked %q, want %q", asked, want)
 			}
 		})
+	}
+}
+
+// TestRepoExists_AsksTheOrganisationNamedAddress: the ask goes to
+// /git/<orgId>/<appId>/<repo>.git; a Mate with no organisation asks nothing.
+func TestRepoExists_AsksTheOrganisationNamedAddress(t *testing.T) {
+	t.Parallel()
+	var asked []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked = append(asked, r.URL.Path)
+	}))
+	t.Cleanup(srv.Close)
+
+	if _, err := keyedClient(t, srv).RepoExists(context.Background(), "app-1", "web"); err != nil {
+		t.Fatal(err)
+	}
+	orgless, err := Open(srv.Client(), Identity{Origin: srv.URL, Key: "good", ProjectID: "p-mate"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := orgless.RepoExists(context.Background(), "app-1", "web"); err == nil {
+		t.Error("RepoExists with no organisation answered without an error")
+	}
+	if want := []string{"/git/org-1/app-1/web.git/info/refs"}; !reflect.DeepEqual(asked, want) {
+		t.Errorf("asked %v, want %v", asked, want)
 	}
 }

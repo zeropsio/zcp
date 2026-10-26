@@ -24,18 +24,14 @@ type ObserveInput struct {
 // RegisterObserve is Mate-gated by the server. Observation needs no SSH:
 // HQ reads Zerops with each environment's deploy key and exposes only facts.
 func RegisterObserve(srv *mcp.Server, httpClient hq.Doer, projectID string) {
-	registerObserve(srv, httpClient, hq.EnrollmentPath(), projectID)
-}
+	const (
+		observeEnvironments = "environments"
+		observeStatus       = "status"
+		observeLogs         = "logs"
+	)
 
-const (
-	observeEnvironments = "environments"
-	observeStatus       = "status"
-	observeLogs         = "logs"
-)
+	var observationID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
-var observationID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
-
-func registerObserve(srv *mcp.Server, httpClient hq.Doer, path, projectID string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_observe",
 		Description: "Observe this project's stage and production through HQ. environments lists project IDs; status reads service IDs, status and active versions; logs reads up to 100 service entries. Read only: no sibling Zerops grants or secrets. Failures say: fix input, retry later, or accept HQ's refusal.",
@@ -62,12 +58,12 @@ func registerObserve(srv *mcp.Server, httpClient hq.Doer, path, projectID string
 		if in.Limit < 1 || in.Limit > 100 {
 			return failure("Log limit must be 1 to 100"), nil, nil
 		}
-		client, err := hq.Open(httpClient, path)
+		client, err := hq.Open(httpClient, liveHQIdentity())
 		if err != nil {
-			return failure(fmt.Sprintf("HQ enrollment could not be opened: %v", err)), nil, nil
+			return failure(fmt.Sprintf("HQ could not be addressed: %v", err)), nil, nil
 		}
 		if client.ProjectID() != projectID {
-			return failure("HQ enrollment belongs to another project"), nil, nil
+			return failure("This Mate's key belongs to another project"), nil, nil
 		}
 		ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 		defer cancel()

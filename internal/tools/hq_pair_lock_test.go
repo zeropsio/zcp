@@ -23,6 +23,7 @@ func (l *hqLab) holdPair() func() {
 // holds leaves it — no git, nothing said, no attempt recorded, so its
 // backoff does not grow — and takes it on the pass after.
 func TestAPassSkipsAPairHeldElsewhere(t *testing.T) {
+	t.Parallel()
 	lab := newHQLab(t)
 	release := lab.holdPair()
 	ran := len(lab.ssh.commands)

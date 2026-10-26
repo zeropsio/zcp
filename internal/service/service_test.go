@@ -306,7 +306,7 @@ func TestStart_Mate_MergesEnvFile(t *testing.T) {
 	want := []string{"T3CODE_ZEROPS_PROJECT_ID=nTV3oMB2SS634ImDJnQckg", "T3CODE_ZEROPS_API_HOST=api.app-prg1.zerops.io", "T3CODE_BASE_PATH=/mate",
 		"ZCP_MATE_UPDATE_STATE_FILE=" + mate.UpdateStatePath(),
 		"ZCP_STATUS_FILE=" + filepath.Join(home, ".zcp", "state", "mate-status.json"),
-		"T3CODE_ZEROPS_HQ_ENROLLMENT=" + filepath.Join(home, ".zcp", "hq", "enrollment.json")}
+		"T3CODE_ZEROPS_HQ_GIT_CREDENTIAL=" + filepath.Join(home, ".zcp", "hq", "git-credential")}
 	if !slices.Equal(gotEnv, want) {
 		t.Errorf("merged env:\n got %q\nwant %q", gotEnv, want)
 	}
@@ -365,29 +365,9 @@ func TestStart_Mate_LaunchStartsTheSetup(t *testing.T) {
 				<-serverUp
 			})
 			t.Cleanup(service.ResetMateSetupBoot)
-			// Every launch keeps the Mate enrolled with its HQ, beside the
-			// server, over the live env store as it is at each attempt.
-			kept := make(chan string, 1)
-			service.SetMateHQKeep(func(_ context.Context, env func() func(string) string) {
-				kept <- env()("PATH")
-			})
-			t.Cleanup(func() { service.SetMateHQKeep(keepNothing) })
-			// Enrollment finishes before the seed, over the same live store.
-			enrolled := false
-			service.SetMateHQPrepare(func(_ context.Context, lookup func(string) string) error {
-				if lookup("PATH") != tt.store["PATH"] {
-					t.Error("launch enrollment did not read the live store")
-				}
-				enrolled = true
-				return nil
-			})
-			t.Cleanup(func() { service.SetMateHQPrepare(prepareNothing) })
 			// The seed is ready before the server reads its signer store once.
 			seeded := ""
 			service.SetMateSeedSignIns(func(_ context.Context, lookup func(string) string) {
-				if !enrolled {
-					t.Error("seed ran before enrollment finished")
-				}
 				seeded = lookup("PATH")
 			})
 			t.Cleanup(func() { service.SetMateSeedSignIns(seedNothing) })
@@ -440,38 +420,10 @@ func TestStart_Mate_LaunchStartsTheSetup(t *testing.T) {
 					t.Error("boot import never started")
 				}
 			}
-			select {
-			case got := <-kept:
-				if got != tt.store["PATH"] {
-					t.Errorf("HQ enrollment read the env %q, want the live store's", got)
-				}
-			case <-time.After(2 * time.Second):
-				t.Error("the launch never started keeping the Mate enrolled with HQ")
-			}
-			if !slices.Contains(gotEnv, "T3CODE_ZEROPS_HQ_ENROLLMENT="+filepath.Join(home, ".zcp", "hq", "enrollment.json")) {
-				t.Errorf("launch env %q must name the HQ enrollment the server links with", gotEnv)
+			if !slices.Contains(gotEnv, "T3CODE_ZEROPS_HQ_GIT_CREDENTIAL="+filepath.Join(home, ".zcp", "hq", "git-credential")) {
+				t.Errorf("launch env %q must name the Git credential file the server writes", gotEnv)
 			}
 		})
-	}
-}
-
-func TestStart_Mate_EnrollmentFailureStillStartsTheServer(t *testing.T) {
-	// non-parallel: HOME and the launch seams are process-wide.
-	t.Setenv("ZCP_MATE_ENABLED", "1")
-	installFakeMateBundle(t)
-	service.SetMateHQPrepare(func(context.Context, func(string) string) error { return errors.New("HQ unavailable") })
-	t.Cleanup(func() { service.SetMateHQPrepare(prepareNothing) })
-	seeded := false
-	service.SetMateSeedSignIns(func(context.Context, func(string) string) { seeded = true })
-	t.Cleanup(func() { service.SetMateSeedSignIns(seedNothing) })
-	started := false
-	service.SetRunFunc(func(string, []string, []string) error { started = true; return nil })
-	t.Cleanup(service.ResetRunFunc)
-	if err := service.Start("mate"); err != nil {
-		t.Fatal(err)
-	}
-	if !started || seeded {
-		t.Fatalf("started = %v, seeded without enrollment = %v", started, seeded)
 	}
 }
 
