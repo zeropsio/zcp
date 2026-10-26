@@ -233,7 +233,13 @@ func TestRunGit_PreservesTheCallersWorkingDirectory(t *testing.T) {
 	if code != 0 || strings.TrimSpace(stdout.String()) != want {
 		t.Fatalf("git exit = %d, directory = %q, want %q; stderr = %q", code, stdout.String(), want, stderr.String())
 	}
+	// os.Getwd answers $PWD, which t.Chdir sets to dir as given; on macOS the
+	// temp directory is behind a symlink (/var → /private/var), so compare
+	// the directory itself, resolved.
 	got, err := os.Getwd()
+	if err == nil {
+		got, err = filepath.EvalSymlinks(got)
+	}
 	if err != nil || got != want {
 		t.Fatalf("caller directory changed: %q, %v; want %q", got, err, want)
 	}
