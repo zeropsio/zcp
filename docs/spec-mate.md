@@ -4512,6 +4512,7 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   every repository pass, its checkout's `origin` is pointed at the repository's address on the
   current HQ while it still names the retired one (an origin anywhere else is not moved), git's
   helper for the retired host goes and HQ's is written for the current one, and the record follows.
+  A pair keyed by its dev pool has no checkout to point: only its record follows.
   A start that could not finish — the dev service stopped, HQ not answering — is taken again on the
   pass's backoff, and so is a credential renewal that failed; each command on a dev service is bounded
   to 15 s. A pair a refused push marked keeps the pass's backoff: the pass wires it again. The project key

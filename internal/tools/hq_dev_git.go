@@ -319,7 +319,9 @@ func withPairLocked(ctx context.Context, stateDir, hostname string, turn func(*w
 // to the repository's address on the current one: the checkout's origin
 // while it still names the retired repository, git's helper, and the record.
 // moved is false when the move could not be made; "" and true when there is
-// nothing to move.
+// nothing to move. A pair keyed by its dev pool has no checkout of its own —
+// the pool's hostname reaches a random container of it, possibly someone's
+// lease (docs/spec-workflows.md §8 PS-3) — so only its record follows.
 func moveFromRetiredHQ(ctx context.Context, sshDeployer ops.SSHDeployer, stateDir string, hqc hq.Client, m *workflow.ServiceMeta) (string, bool) {
 	retired := m.RemoteURL
 	if !isRetiredHQRepository(retired, hqc.Address(), m.HQ) {
@@ -329,7 +331,10 @@ func moveFromRetiredHQ(ctx context.Context, sshDeployer ops.SSHDeployer, stateDi
 	if err != nil {
 		return fmt.Sprintf("it is wired at %s, an HQ this Mate no longer links to, and its repository on %s cannot be named: %v", topology.RedactRepoURLCredentials(retired), hqc.Address(), err), false
 	}
-	out, err := sshDeployer.ExecSSH(ctx, m.Hostname, ops.BuildGitHQMoveCommand(hqPairWorkingDir(m), retired, current, hqc.Address()))
+	var out []byte
+	if !m.DevIsPool() {
+		out, err = sshDeployer.ExecSSH(ctx, m.Hostname, ops.BuildGitHQMoveCommand(hqPairWorkingDir(m), retired, current, hqc.Address()))
+	}
 	if err != nil {
 		return fmt.Sprintf("it is wired at %s, an HQ this Mate no longer links to, and its checkout could not be moved to %s (%v) — retrying", topology.RedactRepoURLCredentials(retired), current, err), false
 	}
