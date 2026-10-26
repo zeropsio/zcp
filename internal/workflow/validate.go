@@ -281,6 +281,28 @@ func liveInfrastructureError(rt RuntimeTarget, liveTypes map[string]string) stri
 	return ""
 }
 
+// poolDependencyError refuses a Swarm pool named as a dependency of a runtime
+// (spec-workflows.md §8 PS-2, PS-5): a pool — a part's dev pool, or one the
+// app runs code in — is no managed service a runtime is wired to, and the
+// plan neither creates nor records one. Its LIVE type decides first, so a
+// pool the project runs is refused whatever type the plan writes for it; the
+// classic route reads no listing, so there the plan's own type is what is
+// read. Runs before the catalog check, so the refusal holds whether or not
+// the catalog lists the type. A Zerops Box is not refused: it is a dependency
+// of the runtime (PS-15). "" when the dependency is no pool.
+func poolDependencyError(devHostname string, dep Dependency, liveTypes map[string]string) string {
+	var what string
+	switch live := liveTypes[dep.Hostname]; {
+	case topology.IsPoolType(live):
+		what = fmt.Sprintf("%q is a Swarm pool (%s) in this project", dep.Hostname, live)
+	case topology.IsPoolType(dep.Type):
+		what = fmt.Sprintf("type %q is a Swarm pool", dep.Type)
+	default:
+		return ""
+	}
+	return fmt.Sprintf("target %q dependency %q: %s — a pool is never a dependency of a runtime, whether it is a part's dev pool or one the app runs code in; leave it out of the plan. A pool the project runs stays as it is: an app calls its orchestrator with the pool's API_TOKEN by reference (${%s_API_TOKEN}), and a dev pool's containers are leased with zerops_lease. A new pool takes its own zerops_import (zerops_knowledge uri=\"zerops://themes/pools-and-box\")", devHostname, dep.Hostname, what, dep.Hostname)
+}
+
 // publicAccessPlanError validates a target's publicAccess field (§8 O3
 // PA-6): "" (→auto), auto, subdomain, none. "domain" is derive-only — adopt
 // sets it from observed custom domains; an agent-authored plan can never
@@ -567,7 +589,7 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, schemas *schema.Schemas
 		// helper mutates target.Dependencies' backing array in place
 		// (Resolution/Mode normalization), which IS targets[i].Dependencies'
 		// backing array — both are the same slice header from this range.
-		depErrs, depDefaulted := validateTargetDependencies(rt.DevHostname, target.Dependencies, schemas, liveServices, liveServiceNames, sharedAnchors, liveManaged)
+		depErrs, depDefaulted := validateTargetDependencies(rt.DevHostname, target.Dependencies, schemas, liveServices, liveTypes, sharedAnchors, liveManaged)
 		errs = append(errs, depErrs...)
 		defaulted = append(defaulted, depDefaulted...)
 	}
@@ -589,7 +611,7 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, schemas *schema.Schemas
 // resolution switch + mode-normalization + managed-mode-resolution block
 // alone carried more branches than the rest of that loop combined, pushing
 // it over the maintainability-index lint threshold.
-func validateTargetDependencies(devHostname string, deps []Dependency, schemas *schema.Schemas, liveServices []platform.ServiceStack, liveServiceNames, sharedAnchors, liveManaged map[string]bool) (errs []string, defaulted []string) {
+func validateTargetDependencies(devHostname string, deps []Dependency, schemas *schema.Schemas, liveServices []platform.ServiceStack, liveTypes map[string]string, sharedAnchors, liveManaged map[string]bool) (errs []string, defaulted []string) {
 	depSeen := make(map[string]bool, len(deps))
 	for j, dep := range deps {
 		if err := ValidatePlanHostname(dep.Hostname); err != nil {
@@ -606,6 +628,10 @@ func validateTargetDependencies(devHostname string, deps []Dependency, schemas *
 			errs = append(errs, fmt.Sprintf("target %q dependency %q has empty type", devHostname, dep.Hostname))
 			continue
 		}
+		if err := poolDependencyError(devHostname, dep, liveTypes); err != "" {
+			errs = append(errs, err)
+			continue
+		}
 		if schemas != nil && !schemas.HasServiceType(dep.Type) {
 			errs = append(errs, fmt.Sprintf("target %q dependency %q type %q not found in available service types", devHostname, dep.Hostname, dep.Type))
 			continue
@@ -618,12 +644,12 @@ func validateTargetDependencies(devHostname string, deps []Dependency, schemas *
 		// Resolution validation.
 		switch dep.Resolution {
 		case ResolutionCreate:
-			if liveServices != nil && liveServiceNames[dep.Hostname] {
+			if _, live := liveTypes[dep.Hostname]; liveServices != nil && live {
 				errs = append(errs, fmt.Sprintf("target %q dependency %q: CREATE but service already exists", devHostname, dep.Hostname))
 				continue
 			}
 		case ResolutionExists:
-			if liveServices != nil && !liveServiceNames[dep.Hostname] {
+			if _, live := liveTypes[dep.Hostname]; liveServices != nil && !live {
 				errs = append(errs, fmt.Sprintf("target %q dependency %q: EXISTS but service not found in project", devHostname, dep.Hostname))
 				continue
 			}
