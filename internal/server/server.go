@@ -155,7 +155,7 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 	// bootstrap or adopt. Off the startup path; its line goes to the log.
 	if rtInfo.InContainer && rtInfo.MateEnabled {
 		go func() {
-			if line := tools.ReconcileGroupRecipe(ctx, client, &http.Client{Timeout: 15 * time.Second}, rtInfo, stateDir); line != "" {
+			if line := tools.GroupRecipeAtStart(ctx, client, &http.Client{Timeout: 15 * time.Second}, rtInfo, stateDir); line != "" {
 				fmt.Fprintf(os.Stderr, "zcp: the group's recipe: %s\n", line)
 			}
 		}()

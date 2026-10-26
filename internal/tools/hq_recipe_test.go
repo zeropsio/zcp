@@ -246,6 +246,53 @@ func TestGroupRecipe_ProposedOntoAnUnbornMain(t *testing.T) {
 	}
 }
 
+// TestGroupRecipeAtStart_ReopensNothingAPersonDeclined: zcp's start in a
+// Mate is a recipe pass nobody asked for, and it runs at every agent session.
+// It proposes a recipe no pass got through — the first onto a recipe
+// repository without main — and leaves alone what Core landed; a proposal a
+// person closed unmerged is not opened again on every start (bootstrap,
+// adopt and the agent's ask still do).
+func TestGroupRecipeAtStart_ReopensNothingAPersonDeclined(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		settle   func(*fakeHQ)
+		wantOpen int // the change the start pass leaves open, 0 for none
+	}{
+		{name: "never proposed onto a recipe repository without main", wantOpen: 1},
+		{name: "a person closed it unmerged", settle: func(f *fakeHQ) { f.closeChange(hq.RecipeRepo, 1) }},
+		{name: "Core landed it", settle: func(f *fakeHQ) { f.mergeChange(hq.RecipeRepo, 1) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			lab := newRecipeLab(t)
+			lab.hq.unborn(hq.RecipeRepo)
+			if tt.settle != nil {
+				if first := lab.proposeRecipe(lab.mock); !first.Created {
+					t.Fatalf("first pass: %+v", first)
+				}
+				tt.settle(lab.hq)
+			}
+
+			line := GroupRecipeAtStart(t.Context(), lab.mock, lab.hq.srv.Client(), lab.rt, lab.stateDir)
+
+			open := 0
+			for number := 1; number <= 2; number++ {
+				if c := lab.hq.changeIn(hq.RecipeRepo, number); c != nil && c.State == hq.ChangeOpen {
+					open = number
+				}
+			}
+			if open != tt.wantOpen {
+				t.Errorf("the start pass left change #%d open, want #%d (line %q)", open, tt.wantOpen, line)
+			}
+			if tt.wantOpen == 0 && line != "" {
+				t.Errorf("a start pass that changed nothing said %q", line)
+			}
+		})
+	}
+}
+
 // TestGroupRecipe_ProposesOnlyWhatMainLacks: a tier on main is the group's,
 // hand-written or landed earlier, and is never proposed over; a group whose
 // main has every tier gets nothing — no change opened.

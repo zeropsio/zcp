@@ -16,7 +16,7 @@ import (
 )
 
 // A tier on main of the recipe repository is the group's, and the additive
-// reconcile never proposes over it (ReconcileGroupRecipe). A service's scale
+// reconcile never proposes over it (reconcileGroupRecipe). A service's scale
 // is what a Mate learns by running the app — a Meilisearch that ran out of
 // memory reindexing at the recipe's 1 GB — so a scale change has its own,
 // narrow way back to the group: the scale tool says when the recipe on main
