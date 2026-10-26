@@ -148,7 +148,7 @@ func reconcileMateRepositories(
 	}
 	rebuildMateStages(ctx, httpClient, rt, stateDir, recipePairMountRoot)
 	lines := reconcileHQRepositories(ctx, client, httpClient, sshDeployer, rt, stateDir, hqPassBackedOff)
-	if line := reconcileGroupRecipe(ctx, client, httpClient, rt, stateDir); line != "" {
+	if line := ReconcileGroupRecipe(ctx, client, httpClient, rt, stateDir); line != "" {
 		lines = append(lines, "the group's recipe: "+line)
 	}
 	return lines

@@ -586,13 +586,30 @@ func (f *fakeHQ) mergeChange(repo string, number int) string {
 		f.t.Fatalf("no open change #%d with a head in %s", number, repo)
 	}
 	dir := f.repoDir(f.appID, repo)
-	tree := f.git(f.t.Context(), dir, "merge-tree", "--write-tree", "main", *head)
-	squash := f.git(f.t.Context(), dir, "-c", "user.name=HQ", "-c", "user.email=hq@hq.invalid",
-		"commit-tree", tree, "-p", "main", "-m", fmt.Sprintf("%s (#%d)", change.Title, number))
+	// A repository with no main yet takes the change's tree as its first.
+	tree, parents := *head+"^{tree}", []string{}
+	if f.hasMain(dir) {
+		tree, parents = f.git(f.t.Context(), dir, "merge-tree", "--write-tree", "main", *head), []string{"-p", "main"}
+	}
+	squash := f.git(f.t.Context(), dir, append(append([]string{"-c", "user.name=HQ", "-c", "user.email=hq@hq.invalid",
+		"commit-tree", tree}, parents...), "-m", fmt.Sprintf("%s (#%d)", change.Title, number))...)
 	f.git(f.t.Context(), dir, "update-ref", "refs/heads/main", squash)
 	change.State, change.Head, change.MergedSha, change.LandedHead = hq.ChangeMerged, head, &squash, head
 	f.writeRefs()
 	return squash
+}
+
+// unborn makes repo in the Mate's application with no main: the recipe
+// repository an application HQ made holds until its first recipe lands.
+func (f *fakeHQ) unborn(repo string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.initRepo(f.t.Context(), f.appID, repo)
+}
+
+// hasMain reports whether the repository at dir has a main.
+func (f *fakeHQ) hasMain(dir string) bool {
+	return exec.CommandContext(f.t.Context(), "git", "-C", dir, "rev-parse", "-q", "--verify", "refs/heads/main").Run() == nil
 }
 
 // seed makes repo in the Mate's application, the way HQ makes one asked for.

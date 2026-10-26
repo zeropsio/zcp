@@ -184,6 +184,68 @@ func TestGroupRecipe_ProposedAsTheMatesChange(t *testing.T) {
 	assertNoSecretOnDisk(t, lab.stateDir, labCredential)
 }
 
+// TestGroupRecipe_ProposedOntoAnUnbornMain: an application HQ made holds its
+// recipe repository with no main until a recipe lands. Its first recipe is
+// proposed whole as a root commit on the Mate's change, which Core lands as
+// the first main; before it lands a pass pushes only what the project
+// changed, on top of that commit, and once it landed a pass opens nothing.
+func TestGroupRecipe_ProposedOntoAnUnbornMain(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		settle     func(*fakeHQ)
+		next       platform.Client
+		wantPushed bool
+	}{
+		{name: "the next pass before it lands", next: recipeReconcileClient()},
+		{
+			name:       "the project gained a service before it landed",
+			next:       recipeReconcileClient(platform.ServiceStack{ID: "svc-cache", Name: "cache", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "valkey@7.2", ServiceStackTypeCategoryName: "USER"}}),
+			wantPushed: true,
+		},
+		{name: "the next pass once Core landed it", settle: func(f *fakeHQ) { f.mergeChange(hq.RecipeRepo, 1) }, next: recipeReconcileClient()},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			lab := newRecipeLab(t)
+			lab.hq.unborn(hq.RecipeRepo)
+			dir := lab.hq.repoDir(labApp, hq.RecipeRepo)
+
+			first := lab.proposeRecipe(lab.mock)
+
+			if !first.Created || !first.Committed || first.Change != 1 {
+				t.Fatalf("first pass: %+v", first)
+			}
+			if parents := lab.hq.git(t.Context(), dir, "rev-list", "--parents", "-n", "1", recipeBranch(1)); strings.Contains(parents, " ") {
+				t.Errorf("the first recipe's commit has parents (%s), want a root commit", parents)
+			}
+			if lab.hq.hasMain(dir) {
+				t.Error("zcp made the recipe repository's main")
+			}
+			if branch := lab.hq.recipeFiles(recipeBranch(1)); len(branch) != 1+2*len(hq.RecipeTierPaths) {
+				t.Errorf("the first recipe holds %v, want every tier with its README and the root README", slices.Sorted(maps.Keys(branch)))
+			}
+			firstHead := lab.hq.recipeHead(recipeBranch(1))
+			if tt.settle != nil {
+				tt.settle(lab.hq)
+			}
+
+			next := lab.proposeRecipe(tt.next)
+
+			if next.Committed != tt.wantPushed || next.Created || lab.hq.changeIn(hq.RecipeRepo, 2) != nil {
+				t.Fatalf("next pass: %+v, want pushed %v and no change opened", next, tt.wantPushed)
+			}
+			if tt.wantPushed && lab.hq.git(t.Context(), dir, "rev-parse", recipeBranch(1)+"^") != firstHead {
+				t.Error("the change's branch did not move forward from its first recipe")
+			}
+			if !tt.wantPushed && next.Line != "" {
+				t.Errorf("a pass that changed nothing said %q", next.Line)
+			}
+		})
+	}
+}
+
 // TestGroupRecipe_ProposesOnlyWhatMainLacks: a tier on main is the group's,
 // hand-written or landed earlier, and is never proposed over; a group whose
 // main has every tier gets nothing — no change opened.

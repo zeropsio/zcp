@@ -16,7 +16,7 @@ import (
 )
 
 // A tier on main is the group's, and the additive reconcile never proposes
-// over it (reconcileGroupRecipe). A change to the app's set of parts — a
+// over it (ReconcileGroupRecipe). A change to the app's set of parts — a
 // stage a pair gained or lost (spec-mate §2.8a.4) — still has to reach it, or
 // production never runs the new part and keeps running a removed one. So it
 // has a narrow way back, the scaling proposal's (hq_recipe_scaling.go): the

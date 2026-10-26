@@ -14,7 +14,7 @@ import (
 // storage its app's zerops.yaml now reads the variables of — is part of the
 // app, and a tier on main that lacks it makes environments whose app does
 // not start. The additive reconcile never proposes over a tier on main
-// (reconcileGroupRecipe), and a person cannot write main of the recipe
+// (ReconcileGroupRecipe), and a person cannot write main of the recipe
 // repository, so it takes the part proposal's way (hq_recipe_parts.go) for
 // any app, one part or several: the reconcile names the call, and
 // `group-recipe service=<host>` proposes that ONE service added to each tier
