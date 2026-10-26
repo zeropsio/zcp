@@ -16,6 +16,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/mate"
+	"github.com/zeropsio/zcp/internal/runtime"
 )
 
 // hqTimeout bounds one `zcp hq status` run end to end.
@@ -29,26 +30,29 @@ const hqUsage = "usage: zcp hq status [--json]"
 const hqVerbStatus = "status"
 
 // hqService is what `zcp hq status` asks of internal/hq.
-type hqService interface {
-	Self(ctx context.Context) (hq.MateState, error)
-}
+type hqService func(context.Context) error
 
 // newHQService opens HQ under this container's project key, as the live env
 // store holds it now. Package-level so tests can stub it.
 var newHQService = defaultHQService
 
-func defaultHQService(context.Context) (hqService, error) {
+func defaultHQService(context.Context) (hqService, string, error) {
 	injectMCPEnvIfUnset(".")
-	id := mate.HQIdentity(mate.LiveLookup(mate.LiveEnvStorePath))
-	return openHQ(&http.Client{Timeout: hqCallTimeout}, id)
-}
-
-func openHQ(httpClient hq.Doer, id hq.Identity) (hqService, error) {
+	lookup := mate.LiveLookup(mate.LiveEnvStorePath)
+	id := mate.HQIdentity(lookup)
+	httpClient := &http.Client{Timeout: hqCallTimeout}
+	if !runtime.DetectFrom(lookup).MateEnabled {
+		client, err := hq.OpenProject(httpClient, id)
+		if err != nil {
+			return nil, id.Origin, fmt.Errorf("open HQ status: %w", err)
+		}
+		return func(ctx context.Context) error { _, err := client.Self(ctx); return err }, id.Origin, nil
+	}
 	client, err := hq.Open(httpClient, id)
 	if err != nil {
-		return nil, err
+		return nil, id.Origin, fmt.Errorf("open HQ status: %w", err)
 	}
-	return client.Once(), nil
+	return func(ctx context.Context) error { _, err := client.Once().Self(ctx); return err }, id.Origin, nil
 }
 
 // hqStatus is `zcp hq status --json`'s answer: whether HQ answers for this
@@ -73,9 +77,10 @@ func runHQCmd(args []string) int {
 	defer cancel()
 
 	var status hqStatus
-	svc, err := newHQService(ctx)
+	svc, origin, err := newHQService(ctx)
+	status.HQ = origin
 	if err == nil {
-		_, err = svc.Self(ctx)
+		err = svc(ctx)
 	}
 	if err != nil {
 		status.Error = err.Error()

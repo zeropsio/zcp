@@ -112,8 +112,8 @@ var mateStorePath = mate.LiveEnvStorePath
 // mate` IS the unit's ExecStart, and a systemd unit inherits almost nothing —
 // HOME and PATH — so the service env carrying ZCP_MATE_ENABLED is simply not
 // here. That is the same reason mateExtraEnv exists at all. Reading only
-// os.Environ made the guard refuse every start on a container where mate was
-// enabled, crash-looping the unit; found live on z3-eval, restart counter 13.
+// os.Environ alone can refuse every start on a container where mate is
+// enabled, crash-looping the unit.
 //
 // So the flag is resolved from the live env store — the same source a login
 // shell is populated from, and the same one this supervisor already merges
@@ -342,9 +342,9 @@ const defaultMateLockWait = 4 * time.Minute
 var mateLockWait = defaultMateLockWait
 
 // mateInstallBeforeStart recovers an interrupted switch or preserves the
-// installed release before launch. An ordinary supervisor restart cannot
-// bypass drain, organization hold, or incompatible-release confirmation.
-// A missing bundle still uses the existing release resolver for first install.
+// installed release at or above MinimumMateVersion before launch. Supported
+// installed releases keep drain, organization hold and incompatible-release
+// confirmation. A missing or below-floor bundle refreshes the release manifest.
 func mateInstallBeforeStart() {
 	release, err := mate.LockInstall(mateLockWait)
 	if err != nil {
