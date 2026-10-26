@@ -253,7 +253,7 @@ mate rides inside the `zcp` container rather than the platform's `zcp@1` recipe:
 supervised by `zcp init` (a `run.init` command), reached through the container's existing nginx on
 port 8080. A plain restart re-runs the recipe's `install.sh`, picks up the latest zcp release, and
 turns mate on for a project whose container predates it — no platform-side change. Everything zcp
-knows about mate lives in `internal/mate`, kept to stdlib plus `runtime`/`schema`.
+knows about mate lives in `internal/mate`, kept to stdlib plus `runtime`, `schema` and `hq`.
 
 ### 2.0 The gate — nothing mate-shaped happens unasked
 
@@ -317,11 +317,10 @@ SHA256, Contract}` — read from the release manifest (§2.1c), never compiled i
 
 One pass, in order:
 
-1. **Compare.** Installed == desired ⇒ done, **no network request made at all**. This is what keeps
-   a warm restart off the network, and it is what the old "the binary exists" rule was reaching for
-   without being able to say so.
+1. **Compare.** Resolve the release manifest (§2.1c). Installed == desired ⇒ done, with no
+   tarball download or npm call.
 2. **Keep a dev build.** An installed *semver prerelease* (`0.1.0-dev.<sha>`, what
-   `eval/scripts/mate-dev-push.sh` tags) is never replaced by the pinned release unless `Force`,
+   `eval/scripts/mate-dev-push.sh` tags) is never replaced by the manifest's release unless `Force`,
    unless the release it was cut from is below `MinimumMateVersion`: a build below the floor is
    replaced like any release, and a supervisor restart (`KeepInstalled`) refreshes the manifest for
    it instead of keeping it. The protection is now a stated rule rather than an accident of which
@@ -340,7 +339,8 @@ One pass, in order:
 5. **Activate atomically** — build the symlink under a temporary name and `os.Rename` it onto
    `current`, so an interrupted activation leaves either the old link or the new one, never a
    half-written one.
-6. **Prune** to the two newest version directories; the live one is never removed.
+6. **Prune** to the live and last-good version directories; if these name only one version,
+   keep the newest other directory too. Neither live nor last-good is removed.
 
 **Any failure in 3–5 returns before the rename**, removing the half-built version directory, so
 `current` still names the version that was working — the guarantee the whole layout exists for.
@@ -348,15 +348,16 @@ One pass, in order:
 7. **Restart the unit** when it already existed and step 3 replaced the bundle (or the env contract
    changed, §2.3). The unit does not wait for this command — it starts at boot from
    `WantedBy=multi-user.target`, so it is already serving what was on disk then; without this a
-   moved pin would land on disk and serve only from the *next* restart, which is not what
+   new bundle would land on disk and serve only from the *next* restart, which is not what
    "a restart is also an upgrade" (§2.6) promises. A unit created by this same run is left alone —
    `zsc unit create` starts it.
 
-**An ordinary unit restart preserves the installed release.** `zcp service start mate`
-recovers an interrupted switch first, then launches the installed current version without reading
-the release manifest. A process crash or supervisor restart cannot bypass the organization's hold,
-the real idle drain, or confirmation for an incompatible release. A missing bundle still goes
-through `DesiredRelease` and the shared install lock for first installation.
+**An ordinary unit restart preserves an installed release at or above `MinimumMateVersion`.**
+`zcp service start mate` recovers an interrupted switch first. A supported installed version
+launches without reading the release manifest, preserving the organization's hold, idle drain
+and incompatible-release confirmation. A missing bundle or one below the floor refreshes
+`DesiredRelease` under the shared install lock. If the manifest is unavailable, an installed
+version keeps serving with a warning; a missing bundle cannot be installed.
 
 The explicitly attended full-container `zcp init` operation retains its existing release
 convergence, including the one full restart that brings an older Mate onto this updater. It must
@@ -393,9 +394,9 @@ tracks zcp itself (`install.sh` → `releases/latest`), and refuses only what it
 `stable.json`:
 
 ```json
-{ "version": "0.8.1", "asset": "zerops-mate-0.8.1.tgz",
-  "url": "https://github.com/zeropsio/mate/releases/download/v0.8.1/zerops-mate-0.8.1.tgz",
-  "sha256": "<64 hex>", "size": 21690443, "contract": 1, "rollbackCompatible": true, "compatibleFrom": "0.8.0", "publishedAt": "2026-09-09T07:23:00Z" }
+{ "version": "0.16.0", "asset": "zerops-mate-0.16.0.tgz",
+  "url": "https://github.com/zeropsio/mate/releases/download/v0.16.0/zerops-mate-0.16.0.tgz",
+  "sha256": "<64 hex>", "size": 21690443, "contract": 2, "rollbackCompatible": false, "publishedAt": "2026-10-26T18:08:45Z" }
 ```
 
 `DesiredRelease()` reads `https://github.com/zeropsio/mate/releases/latest/download/stable.json`
@@ -411,8 +412,8 @@ installed it degrades like any other install failure (MD-1).
 
 | Check | Rule |
 |---|---|
-| `contract` | must equal `mate.SupportedContract` (today `1` = C-1…C-12 in §2.8 and §2.8a). A manifest declaring a contract zcp does not know is refused with a message naming both numbers — the one case where an old zcp deliberately stays on the mate it has. |
-| `version` | must be ≥ `mate.MinimumMateVersion`, the oldest release zcp still drives (moves only when a contract fact changes; 0.14.0, the first release that judges a stand-up by its zcp process instead of a heartbeat, and keeps a link to HQ, §10.10; the trust model's cutover raises it, §3.17). A manifest below it is refused, and so is a cached one on read: the cache holds what an earlier zcp checked against its own floor. |
+| `contract` | must equal `mate.SupportedContract` (today `2` = C-1…C-12 in §2.8 and §2.8a). A manifest declaring a contract zcp does not know is refused with a message naming both numbers — the one case where an old zcp deliberately stays on the mate it has. |
+| `version` | must be ≥ `mate.MinimumMateVersion`, the oldest release zcp still drives (moves only when a contract fact changes; 0.16.0, the first contract-2 release, which links to HQ with the project key and declares HQ's origin in its package, §3.5). A manifest below it is refused, and so is a cached one on read: the cache holds what an earlier zcp checked against its own floor. |
 | `sha256` | the downloaded tarball must match it — damage detection, nothing more. |
 
 **There is no trust chain, by decision (2026-09-09).** The container installs zcp from a GitHub
@@ -425,12 +426,16 @@ the workflow can sign with that key.
 
 **What moved out of zcp.** `PinnedVersion`, `PinnedSHA256`, `ReleaseAssetName`, `ReleaseURL`,
 `scripts/mate-pin.sh` and the `serve --help` golden are gone. The flag contract (C-2) is now tested
-where it changes: the fork's CI asserts that `mate serve --help` advertises every flag of contract 1
+where it changes: the fork's CI asserts that `mate serve --help` advertises every flag of contract 2
 (the list in §2.8), and a flag added on either side goes through a contract bump, not a pin move.
 
-**Release order is fork first for a new capability.** Publish the Mate artifact and
-manifest before releasing zcp support. An older zcp ignores additive manifest metadata;
-no new `serve` flag is passed. Auto-update protocol 1 is probed before it is used.
+**Release order is Mate first.** Publish the stable Mate artifact and `stable.json` before
+releasing a zcp that raises `MinimumMateVersion` or changes `SupportedContract`. Both the local
+release target and the release workflow fetch the published stable manifest and refuse to
+publish unless its version reaches the floor and its contract equals `SupportedContract`.
+The release check uses the canonical stable channel, never a container's manifest override
+or cache. An older zcp ignores additive manifest metadata; no new `serve` flag is passed.
+Auto-update protocol 1 is probed before it is used.
 
 ### 2.1d Automatic updates — protocol 1
 
@@ -494,7 +499,7 @@ loopback readiness advertises protocol 1 before leaving future updates unattende
 at every start cost 58 s cold, measured, see the mate ledger; the argv always runs the local bundle):
 
 ```
-~/.zcp/mate/node_modules/.bin/mate serve --mode web --host 127.0.0.1 --port 3773 \
+~/.zcp/mate/current/node_modules/.bin/mate serve --mode web --host 127.0.0.1 --port 3773 \
   --base-dir ~/.t3 --no-browser --auto-bootstrap-project-from-cwd /var/www
 ```
 
@@ -530,11 +535,12 @@ Only non-secret identifiers are written; a token never enters `~/.zcp/mate.env` 
 rewritten every boot so a unit's frozen ExecStart never has to change. A missing/unreadable env
 file is reported and mate starts anyway — diagnosable, unlike a unit that refuses to launch.
 
-Every launch adds three more on top (`mate.LaunchEnvLines`), whatever init wrote:
+Every launch adds four more on top (`mate.LaunchEnvLines`), whatever init wrote:
 
 | Key | Value |
 |---|---|
 | `T3CODE_BASE_PATH` | `mate.BasePath` (§2.7) |
+| `ZCP_MATE_UPDATE_STATE_FILE` | the automatic-update coordinator state (`mate.UpdateStatePath`) |
 | `ZCP_STATUS_FILE` | the status file a new Mate's setup is read from (`mate.DefaultStatusFilePath`) |
 | `T3CODE_ZEROPS_HQ_GIT_CREDENTIAL` | the file the server keeps the Mate's Git credential in (mode 0600), written when HQ sends one down the link and read by zcp to set the dev service's `GIT_TOKEN` (§3.3, §10.10). It names a path, never the credential |
 
@@ -631,7 +637,7 @@ the bundle is not a regression under the versioned layout — it loses the whole
 The unit `zsc unit create` writes is `Restart=always`, `RestartSec=3`, under systemd's default
 `StartLimitBurst=5` / `StartLimitIntervalSec=10`. One restart every 3 s is ~3.3 per 10 s, **below**
 the burst threshold — so a unit whose `ExecStart` fails immediately **never trips the start limit
-and never gives up**. Measured on `z3-eval` with the bundle path broken: the restart counter climbs
+and never gives up**. With the bundle path broken: the restart counter climbs
 linearly (4–5 per 15 s) and the unit stays `activating` indefinitely; it never reaches `failed`.
 
 That is survivable only because the blast radius is one route. Measured in the same state:
@@ -719,7 +725,7 @@ direct-to-3773 access do not work; `/mate/` is the only supported origin.
 
 zcp and mate ship from two repositories on two schedules, and the coupling between them is the handful
 of facts below — none of which either side can change alone. The facts are numbered as **contract
-1**: a release declares the contract it satisfies in `stable.json` (§2.1c), zcp carries
+2**: a release declares the contract it satisfies in `stable.json` (§2.1c), zcp carries
 `SupportedContract`, and a release declaring a number zcp does not know is refused rather than
 installed. Changing any fact below is a contract bump on both sides; so is a flag zcp starts passing that a
 release at or above `MinimumMateVersion` would reject — a setting older releases may lack rides the
@@ -729,7 +735,7 @@ environment instead, never a probed flag (§2.2).
 |---|---|---|
 | C-1 | The artifact is `zerops-mate-<version>.tgz`, a GitHub release asset on `zeropsio/mate`, whose npm `bin` entry is `mate` at `node_modules/.bin/mate` (`mate.BinName`), and whose release publishes `stable.json` beside it (§2.1c) | fork's `cli.ts pack` + release workflow |
 | C-2 | `serve` accepts `--mode web --host --port --base-path --base-dir --no-browser --auto-bootstrap-project-from-cwd` with the working directory as a trailing **positional**. **An unknown flag is fatal**, so zcp passes only flags every release it drives accepts; it sets the prefix through `T3CODE_BASE_PATH`, not `--base-path` (§2.2) | fork's `cli/config.ts` |
-| C-3 | `T3CODE_ZEROPS_{PROJECT_ID,API_HOST,ALLOWED_ORIGINS}` keep their meaning, and a non-empty `PROJECT_ID` remains the sole Zerops-environment signal (§2.3, §3.1). `T3CODE_ZEROPS_HQ_GIT_CREDENTIAL` names the Mate's Git credential file and nothing else; the server links to HQ with the project key it reads from the env store (§3.5) | fork's `ZeropsEnvironment` |
+| C-3 | `T3CODE_ZEROPS_{PROJECT_ID,API_HOST,ALLOWED_ORIGINS}` keep their meaning, and a non-empty `PROJECT_ID` remains the sole Zerops-environment signal (§2.3, §3.1). `T3CODE_ZEROPS_HQ_GIT_CREDENTIAL` names the Mate's Git credential file and nothing else; the server links to HQ with the project key it reads from the env store (§3.5). The installed package declares the shared HQ origin as `mate.hqOrigin` in `package.json`; zcp reads it when `T3CODE_ZEROPS_HQ_ORIGIN` is unset | fork's `ZeropsEnvironment` |
 | C-4 | Liveness is `GET {basePath}/.well-known/t3/environment` → `200 application/json` carrying `basePath` (§2.5) | fork's environment descriptor |
 | C-5 | The server binds loopback only and never claims a declared platform port (§2.4) | zcp's `ServeArgv`, fork's `--host` |
 | C-6 | **`/mate` is the server's public prefix, and the hosted client addresses it.** zcp sets it through `T3CODE_BASE_PATH` from `mate.BasePath` (§2.2) and nginx serves only the server's API and WebSocket there (§2.4). The released artifact carries no web client and `pack` requires none; moving the prefix is a coordinated two-repo change (zcp, the hosted client) | zcp's `mate.BasePath` + the hosted client |
@@ -751,10 +757,9 @@ Without a public origin the Mate does not link and reports `not-linked` / `no_pu
 The fork's release workflow triggers only on stable `v<major>.<minor>.<patch>` tags, so GitHub's
 "latest release" *is* the stable channel — nightlies never produce one.
 
-**The web client is not zcp's.** zcp does not build it, configure it, serve it or update it; the
-centralized client reaches the server over `{BasePath}/`. That the release tarball still carries a
-client is incidental — zcp simply does not use it. A server-only artifact is not merely absent but
-actively refused today (C-1's `pack` assertion), so it would be a fork-side change if ever wanted.
+**The web client is not zcp's.** zcp does not build it, configure it, serve it or update it.
+The hosted client at `https://mate.zerops.io` reaches the server over `{BasePath}/`; the
+Mate release artifact contains the server and no web client (C-6).
 
 ### Invariants
 
@@ -772,9 +777,9 @@ actively refused today (C-1's `pack` assertion), so it would be a fork-side chan
 | MD-10 | The desired release comes from `stable.json` and nowhere else: a manifest whose `contract` is not `SupportedContract` or whose `version` is below `MinimumMateVersion` is refused before any download; the tarball must match the manifest's `sha256` before npm runs; there is no registry-package fallback. An unreachable manifest keeps an installed mate serving — one below the floor named so in the warning — and degrades only a first install. Download, integrity, and npm failures register the same degraded init outcome and no unit. `TestDesiredRelease_*`, `TestEnsureInstalled_UnreachableManifest_NamesAnInstalledVersionBelowTheMinimum`, `TestInstallRelease_ChecksumMismatch_RefusesInstall`, `TestInstallRelease_DownloadFailure_RefusesInstall`, `TestRun_Mate_InstallFailures_Degrade`, `TestRun_Mate_ManifestUnreachable_KeepsInstalled`. |
 | MD-11 | **With `ZCP_MATE_ENABLED` unset, a container behaves exactly as one predating mate**: the rendered nginx.conf carries no `/mate`, no `3773`, no `healthz` and no marker path while keeping every non-mate structure; nothing is downloaded or installed; no unit is registered; no readiness marker is written; and `zcp init` prints no extra step line. `TestRunNginx_MateDisabled_RendersNoMateSurface`, `TestRun_MateDisabled_NoUnitFile_NoOp`, `TestDetect_MateDisabled_ByDefault`. |
 | MD-12 | Disabling is a real reverse direction, not an absence of the forward one: a leftover unit is stopped and removed and `~/.zcp/mate.env` deleted, while `mate.Prefix()` is left on disk so re-enabling costs no network. `zcp service start mate` refuses under the off flag, so a unit surviving a failed removal cannot resurrect the server — reading the flag from the **live env store**, never from its own environment, because a systemd unit inherits neither (live-verified: a guard reading `os.Environ` crash-looped the unit on an enabled container). An unreadable store fails OPEN, since the unit exists only because an enabling `zcp init` created it. `TestRun_MateDisabled_UnitFilePresent_StopsAndRemoves`, `TestStart_Mate_GuardReadsLiveEnvStore_NotOnlyProcessEnv`, `TestStart_Mate_GuardRefusesWhenStoreSaysDisabled`, `TestStart_Mate_GuardFailsOpenOnUnreadableStore`, `TestStart_OtherServices_UnaffectedByMateGuard`. |
-| MD-13 | An update is staged into its own version directory, smoke-tested, and only then activated by an atomic symlink rename; **any failure leaves `current` naming the version that was working**. Equal versions reach no network at all, and an installed semver prerelease (a hand-pushed dev build) is never replaced without `Force`. `TestEnsureInstalled_SameVersion_NoNetwork_ResultNone`, `TestEnsureInstalled_DifferentVersion_InstallsAndRepointsCurrent`, `TestEnsureInstalled_NpmFailure_LeavesCurrentUnchanged`, `TestEnsureInstalled_SmokeFailure_LeavesCurrentUnchanged`, `TestEnsureInstalled_DevVersionInstalled_KeptWithoutForce`, `TestEnsureInstalled_DevVersionInstalled_ReplacedWithForce`, `TestEnsureInstalled_Pruning_KeepsTwoAndTheLiveVersion`. |
-| MD-15 | The unit starts at boot on its own (`WantedBy=multi-user.target`), independently of `zcp init` — measured on `z3-eval`: `active` at 16:45:12, the zcp binary replaced by `install.sh` at 16:45:14, `zcp init` later still. So it serves whatever was on disk at boot, and `zcp init` restarts an ALREADY-EXISTING unit whenever it replaced the bundle or rewrote the env contract; a unit it created in the same run is left alone, since `zsc unit create` starts it. Ordinary supervisor starts recover an interrupted switch and preserve the installed release; they cannot bypass hold or confirmation. First installation and attended container init use the shared install lock. `TestRun_Mate_UpdatedBundle_RestartsExistingUnit`, `TestRun_Mate_ChangedEnvContract_RestartsExistingUnit`, `TestRun_Mate_UnchangedBundle_DoesNotRestart`, `TestRun_Mate_FirstBoot_DoesNotRestartFreshUnit`, `TestRun_Mate_InstallsUnderTheSharedLock`, `TestStart_Mate_InstallsBeforeItStarts`, `TestRunMateUpdate_InstallsAndRestartsWhenUnitPresent`, `TestLockInstall`. |
-| MD-16 | Every flag in `ServeArgv` belongs to contract 1's flag list (C-2), asserted on the zcp side against a literal list and on the fork side by CI against `mate serve --help`; the env contract's key set is exactly `T3CODE_ZEROPS_{PROJECT_ID,API_HOST,ALLOWED_ORIGINS}`; a malformed `ZCP_MATE_ALLOWED_ORIGINS` is never written and never fails init. `TestServeArgv_FlagsAreContract1`, `TestEnvContract_KeysAreTheSpecList`, `TestValidateAllowedOrigins`, `TestRun_Mate_InvalidAllowedOrigins_NotWritten_InitContinues`; fork: `serve-contract.test.ts`. |
+| MD-13 | An update is staged into its own version directory, smoke-tested, and only then activated by an atomic symlink rename; **any failure leaves `current` naming the version that was working**. Equal versions need no tarball download or npm call, and an installed semver prerelease (a hand-pushed dev build) at or above `MinimumMateVersion` is never replaced without `Force`. `TestEnsureInstalled_SameVersion_NoNetwork_ResultNone`, `TestEnsureInstalled_DifferentVersion_InstallsAndRepointsCurrent`, `TestEnsureInstalled_NpmFailure_LeavesCurrentUnchanged`, `TestEnsureInstalled_SmokeFailure_LeavesCurrentUnchanged`, `TestEnsureInstalled_DevVersionInstalled_KeptWithoutForce`, `TestEnsureInstalled_DevVersionInstalled_ReplacedWithForce`, `TestEnsureInstalled_Pruning_KeepsTwoAndTheLiveVersion`. |
+| MD-15 | The unit starts at boot on its own (`WantedBy=multi-user.target`), independently of `zcp init`. So it serves whatever was on disk at boot, and `zcp init` restarts an ALREADY-EXISTING unit whenever it replaced the bundle or rewrote the env contract; a unit it created in the same run is left alone, since `zsc unit create` starts it. Ordinary supervisor starts recover an interrupted switch and preserve an installed release at or above `MinimumMateVersion`; a missing or below-floor bundle refreshes the release manifest. First installation and attended container init use the shared install lock. `TestRun_Mate_UpdatedBundle_RestartsExistingUnit`, `TestRun_Mate_ChangedEnvContract_RestartsExistingUnit`, `TestRun_Mate_UnchangedBundle_DoesNotRestart`, `TestRun_Mate_FirstBoot_DoesNotRestartFreshUnit`, `TestRun_Mate_InstallsUnderTheSharedLock`, `TestStart_Mate_InstallsBeforeItStarts`, `TestRunMateUpdate_InstallsAndRestartsWhenUnitPresent`, `TestLockInstall`. |
+| MD-16 | Every flag in `ServeArgv` belongs to contract 2's flag list (C-2), asserted on the zcp side against a literal list and on the fork side by CI against `mate serve --help`; the env contract's key set is exactly `T3CODE_ZEROPS_{PROJECT_ID,API_HOST,ALLOWED_ORIGINS}`; a malformed `ZCP_MATE_ALLOWED_ORIGINS` is never written and never fails init. `TestServeArgv_FlagsAreContract1`, `TestEnvContract_KeysAreTheSpecList`, `TestValidateAllowedOrigins`, `TestRun_Mate_InvalidAllowedOrigins_NotWritten_InitContinues`; fork: `serve-contract.test.ts`. |
 | MD-17 | `zcp mate status --json` and `zcp mate update` share `DesiredRelease()` with `zcp init`; `status` never installs, `update` restarts the unit only after a successful activation, and both answer JSON a caller can act on without parsing prose; `status --refresh` bypasses the manifest cache (§2.9 step 5). `TestMateStatus_*`, `TestMateUpdate_*`, `TestRunMateStatus_Refresh_*`. |
 
 ### 2.8a Monorepo: dev servers, stages, the receipt (C-8…C-12)
@@ -793,7 +798,7 @@ count and no receipt anywhere.
 | C-11 | A tier names a part by `zeropsSetup` beside its hostname (§2.8a.5) | zcp composer, HQ `tierRuntimes` |
 | C-12 | An HQ change of an app with more than one part carries a `receipt` (§2.8a.6); zcp writes none since 2026-10-21 | HQ change record |
 
-All five are additive to contract 1: an older release ignores an unknown key, so none bumps
+All five are additive to contract 2: an older release ignores an unknown key, so none bumps
 `SupportedContract`. New envelope keys follow the field order in §2.8a.3.
 
 #### 2.8a.1 The declaration — `.zcp/dev-servers.json`
@@ -1174,10 +1179,6 @@ Stages []StageRef `json:"stages,omitempty"`
   when `stages` is present it wins and the old keys are not read. On write zcp writes `stages` and
   mirrors `Stages[0]` into `stageHostname`/`stageSetupName`, so a zcp a container restart pulls back
   still sees today's pair.
-- An older zcp drops `stages`. The release a container restart pulls back (v9.209.0 today) decodes
-  ServiceMeta into its fixed struct (`parseMeta`, `json.Unmarshal`) and every update writes that
-  whole struct back (`WriteServiceMeta`, `json.MarshalIndent`), so its first write keeps the
-  `stageHostname`/`stageSetupName` mirror and loses `stages` and every other key it does not know.
 - Rebuild: when zcp loads a ServiceMeta without `stages` and the repo's root `zerops.yml` declares
   more than one part, it rebuilds `Stages[]` from the repo — the parts in `zerops.yml` are the truth
   (MODEL §1). A part is a setup other than the dev setup (`PrimarySetupName`), other than a setup
@@ -1410,7 +1411,7 @@ else about "is there a newer Mate" is answered by zcp and merely displayed:
    a server not restarted yet, still updating. A server that names no boot is no answer on the
    version it left. `bootId` is a value of the server process, new at every start and never
    persisted, optional on the wire — older servers send none — and not part of the zcp↔mate
-   contract (C-1…C-6): zcp neither writes nor reads it. Running threads stop; the client says so before
+   contract (C-1…C-12): zcp neither writes nor reads it. Running threads stop; the client says so before
    the click. There is no container restart in this path.
 5. **One check: Check for updates.** The status behind the line is cache-served twice over —
    zcp keeps the manifest an hour, the server re-reads status hourly — so a release just published
@@ -1504,15 +1505,16 @@ state, members with their roles — and nothing else: never a variable, a log, a
 could make. `platform.OrgReads()` is exactly that set. Every change is the person's: their client
 makes it with their own Zerops token after their click.
 
-**Tool surface.** Look: `zerops_org_overview` (every project, grouped as `mate`, `hq`, `production`,
+**Tool surface.** Look: `zerops_org_overview` (every project, grouped as `mate`, `production`,
 `stage`, `other`, `chief`, and the members with their roles), `zerops_org_services` (each project's
 services and their state). Act: `zerops_org_propose_service` (`restart` |
 `start` | `stop`), `zerops_org_propose_env`, `zerops_org_propose_message`,
 `zerops_org_propose_domain`, `zerops_org_propose_access`. Also `zerops_knowledge`, and in a Mate's
 container `zerops_publish_page` (§5.9). The single-project surface acts on the empty own project and
 is not registered. A project's kind: the Chief registration; a Mate is tagged `mate` and runs a `zcp@*`
-service, its name the part of the project name after the last `" - "`; HQ runs a service named
-`hq`; production and stage are named `"<application> - production"` / `"- stage"`. Org results
+service, its name the part of the project name after the last `" - "`; production and stage are
+named `"<application> - production"` / `"- stage"`. HQ is the configured shared origin (§3.5),
+not a project kind; a service named `hq` does not classify its project as HQ. Org results
 carry no envelope (§1.4): they describe the organization, not this project's lifecycle.
 
 **The proposal contract.** An act tool runs nothing. Its result is one JSON document; the client
@@ -1608,10 +1610,9 @@ names `zerops_propose_ask_chief` for what neither its project nor `zerops_observ
 
 ## 3. Trust and credentials
 
-**This section is the target design (the owner, 2026-10-24). Today's code differs;** §3.17 lists
-what exists today and what replaces it. Every other section that names a credential, a sign-in or a
-Mate's reach to HQ follows this one and points here. Its invariants name the test that will hold
-them; a row whose test is not written yet says so.
+This section defines the trust and credential model. Every other section that names a
+credential, a sign-in or a Mate's reach to HQ follows this one and points here. Its invariants
+name the tests that hold them; a row whose test is not written yet says so.
 
 The model in one paragraph: HQ is the only party that talks to Zerops about who may do what, with
 the organisation's read-only key. A Mate proves itself to HQ with the Zerops key its project already
@@ -2025,7 +2026,7 @@ sequenceDiagram
 
 - The Mate's own door: the per-Mate `mate-door` throwaway, `ZeropsThrowawayIdentity`, the Mate's
   member read and `ZeropsMembershipWatch`, the 24 h Mate session, its HMAC signing key, kept Mate
-  sessions in the browser, the per-Mate origin allowlist, and the container's `/mate/` client
+  sessions in the browser, and the container's `/mate/` client
   bundle and sign-in page.
 - HQ's throwaway door for people; the anchor token.
 - zcp's enrolment: the challenge nonce in the project's environment, `POST /api/mate/challenge` and
@@ -2072,41 +2073,23 @@ To verify live before building on them:
 - Whether anything but the hosted web origin connects to a Mate's WebSocket once the container
   bundle goes (desktop, mobile, code-server).
 
-### 3.17 Migration from today
+### 3.17 Contract-2 delivery
 
-What replaces what:
+Mate 0.16.0 declares contract 2 and the shared HQ origin in its installed package. zcp's
+`SupportedContract` is 2 and `MinimumMateVersion` is 0.16.0. The server links with its
+project key and writes HQ's Git credential to the file zcp reads (§3.3); zcp presents the
+project key in its HQ request headers (§3.6). The hosted client is `https://mate.zerops.io`.
 
-- Throwaway door per Mate, 24 h HMAC session, kept sessions, `ZeropsMembershipWatch` → tickets over
-  the link, the connection as the session, the pushed access list.
-- HQ's throwaway door (`POST /api/door` with a throwaway) → sign-in with the access token.
-- zcp enrolment (nonce in env, Mate credential, `enrollment.json`, `outcome.json`, keep loop) → the
-  key in the link's first frame and in zcp's header; the contract (§2.8) bumps with that change on
-  both sides.
-- The Mate credential as the dev service's `GIT_TOKEN` → the Mate's Git credential.
-- `ZCP_ORG_TOKEN` and the Chief proxy → the person's Chief registration and the allowlisted overview, cut to its person's reach.
-- The relay's 30 s / 5 min trust window and the Mate's own Zerops read → the access list only, and
-  the 15 min link-down cap.
-- The container-served `/mate/` client and sign-in → the hosted client only: the release stops
-  building a client into the artifact, `pack` stops requiring `dist/client/index.html` (C-6), and
-  `/mate/` serves the server's API and WebSocket only (§2.4, §2.7).
-- `zcli push`'s key on the remote command line → the key over SSH standard input.
-- Project-level `ZCP_API_KEY` variables → sensitive service variables, or deleted.
+A project key is a sensitive service variable (§3.2); HQ refuses an unsuitable key with the
+specific reason from §3.5. Every organization uses the same HQ at `https://mate-hq.zerops.io`.
+The Mate package supplies that production origin; a development override uses
+`T3CODE_ZEROPS_HQ_ORIGIN`. zcp holds no independent HQ default.
 
-The cutover, in this order (HQ keeps no old route, HQ `spec/protocol.md` *Compatibility*):
-
-1. **Before it:** the operator moves the legacy project-level keys (12 today) into sensitive
-   service variables; HQ refuses any left `key_not_sensitive`.
-2. **HQ**, with the hosted client's new sign-in and ticket flow in the same deploy. Everyone signs
-   in again once; every Mate reads "not connected" until step 4 reaches its container.
-3. **The mate release** with the link, tickets, the Git credential file and no client bundle,
-   declaring the next contract (§2.8); published as the latest. A zcp that knows only the old
-   contract refuses it and keeps the mate it has, so nothing moves yet.
-4. **The zcp release** with the same contract, `MinimumMateVersion` raised to step 3's version
-   (§2.1c), the key header and the credential-file git wiring, the enrolment gone. A container
-   picks it up at its next update or restart, installs step 3's mate and links.
-5. **The client floor** (`MINIMUM_MATE_SERVER_VERSION`) rises to step 3's version only after that
-   release is the latest (§2.9, *The sign-in floor*); a Mate below it is offered the restart that
-   installs it.
+Publish the stable Mate release before any zcp release raises the floor to it or requires its
+contract (§2.1c). The hosted client's sign-in floor also follows the published stable Mate
+release (§2.9). An installed Mate below the floor reaches the new release through an attended
+update or an idle container restart; automatic updates still require the manifest's rollback
+compatibility declaration (§2.1d).
 
 ### Invariants
 
@@ -2214,7 +2197,7 @@ plan's (`planEnvironmentCreation`, `createEnvironment.ts:250-287`), in order:
   `project:` block; then `import-managed` — a Mate's managed services alone — or `import-recipe` — a
   stage's or a production's tier, whole. A Mate's project is created with the `mate` tag, a stage's
   or a production's with none: where it stands is HQ's to say (`createEnvironment.ts:347-355`).
-- `register` — the registration in the organization's HQ (MB-24), for a Mate before its container:
+- `register` — the registration in HQ (MB-24), for a Mate before its container:
   a Mate's record attached to its application with its face, or a record in no application (`POST
   /api/mates`), with who asks for its stand-up in the same write — an attach that closes the Mate's
   birth intent takes the ask the intent was recorded with (`POST /api/births`, `standUp`), any other
@@ -3040,9 +3023,8 @@ themselves; no token crosses the conversation.
   unrelated histories are never joined. The existing-repository guidance asks first when the
   person gives an address.
 
-Not additive on the mate side: a mate before 0.15.153 shows the call as any zcp call and never
-tells the agent how it ended, so `MinimumMateVersion` is 0.15.153 and zcp drives no older mate; it
-rises again with the mate that draws the pick. An older zcp has no tool.
+The Mate draws the origin request and tells the agent how it ended. This behavior is included
+in `MinimumMateVersion` 0.16.0, the contract-2 floor (§2.1c); zcp drives no older Mate.
 zcp `TestOriginRequest_WritesNothing_NamesTheRepositoryThePairWillWire`,
 `TestOriginRequest_URLWithCredentials_Refused`, `TestOriginRequest_RefusalNeverEchoesTheURL`,
 `TestOriginRequest_AddressPastTheRepository_RefusedAskingForTheRepositoryAddress`, `TestOriginRequest_OriginAlreadyConnected_AnswersConnected`,
@@ -3571,9 +3553,9 @@ Open (in the S5 plan): shared client logic into `client-runtime` (S5-2), the mob
 picker (S5-3), the relay deployment + client link trigger (S5-4b UI), server-side T3 Connect reach
 deletion (S5-5).
 
-## 10. The auth backbone — Zerops roles as the one source, HQ per org
+## 10. The auth backbone — Zerops roles as the one source, one HQ for every org
 
-**Since 2026-10-02 the org's HQ carries what an org's Gitea and its broker carried** (§10.1). Zerops
+**One shared HQ serves every organization** (§10.1). Zerops
 roles stay the one source (§10.3), a Mate's signer stays as it is (§10.5), and every credential
 between a person, a Mate, HQ and Zerops is §3's. What HQ already holds: the structure
 (applications and the projects attached to them), the repositories, a Mate's changes, their review,
@@ -3588,8 +3570,8 @@ nothing here renames what those decide.
 
 ### 10.1 The shape
 
-**Since 2026-10-02:** HQ — Core, its Postgres and the bare repositories — serves the organizations
-that use Mate; its address is configuration, and nothing discovers it (§3.5). An app is an
+HQ — Core, its Postgres and the bare repositories — serves every organization
+that uses Mate from `https://mate-hq.zerops.io`; its address is configuration, and nothing discovers it (§3.5). An app is an
 **application** in HQ's structure, and a project is attached to it as a Mate, a stage or a
 production. A Mate links to HQ with its project key and a person signs in with their Zerops access
 token (§3). An application's
@@ -3622,8 +3604,8 @@ that only the broker deploys to.
 | D15 | **The broker holds the only deploy key** and deploys only what protected state allows; workflows orchestrate by calling it. No deploy secret in Gitea or a repository. **Changed by D27:** the broker still decides and still holds every key, but it no longer deploys — a job does, with the environment's key in its memory for one `zcli push`. Superseded 2026-10-02: the broker is retired; HQ deploys an application's stages itself, from its own archive of a commit, with the deploy token it keeps (§10.8); production moves to HQ next. |
 | D16 | Any number of stages per group, each fed by a branch or a mix of branches merged into `env/{name}` by the broker; the default follows `main`; production's source is `release`. Superseded 2026-10-02: the broker's `env/{name}` merges are retired; an environment is HQ's record, a stage following `main` (§10.8). |
 | D17 | **No brief.** _New project_ asks for the name and nothing else; a new conversation starts with an empty composer, with no opening message composed or sent for the person. |
-| D18 | Gitea is made **with the org's first _New project_**, in the same run as the first Mate; nothing happens at sign-up and there is no pool. Superseded 2026-10-02: the org's HQ takes the Gitea project's place, set up by an admin or owner (§10.1). |
-| D19 | The account's Gitea is the only forge Mate drives. Superseded 2026-10-02: the org's HQ is where a Mate delivers (§10.10); a remote of the user's own stays theirs. |
+| D18 | Gitea is made **with the org's first _New project_**, in the same run as the first Mate; nothing happens at sign-up and there is no pool. An admin or owner starts the organization on the shared HQ; no organization creates its own HQ (§10.1). |
+| D19 | The account's Gitea is the only forge Mate drives. HQ is the shared forge a Mate uses (§10.10); a remote of the user's own stays theirs. |
 | D23 | **The group repo takes merges from anyone with write, and a Mate's recipe proposal lands by itself** (2026-09-17, the owner, on a first recipe that sat as PR #1 waiting for a releaser: "they all should be able to merge on the import yaml repo"). `main` on the group repo keeps no merge whitelist — the `write` and `release` teams merge — and the broker merges a pull request a registered Mate's bot opened against it on the next pass, nudged by the hook that announces it. What sets the releasers apart is the `v*` tag protection; a person's pull request stays theirs to merge. **Narrowed by D30:** the broker lands a Mate's proposal by itself only when it only adds files, and a Mate proposes only the tiers `main` lacks. **Narrowed by D31:** every registered Mate writes the group repo too, so a person's pull request, like a Mate's change to a file `main` carries, is merged by a person with write or by a Mate its person asks. Superseded 2026-10-02: in HQ a person merges a change, and Core lands a Mate's recipe change by itself when it only adds files and closes one that adds nothing (§10.10). |
 | D24 | **A group's Mates share its service repositories** (2026-09-17, the owner asking for a run that ends with two Mates, a stage and a production, all wired). The AI Agent tier's `buildFromGit` names the same repository for every Mate the recipe creates, and the broker's `POST /mate/repository` answered `409 taken` to every bot but the one that made it, so no second Mate could push. A registered Mate of the group asking for a service repository that exists is made a collaborator with write — its own branch, its own pull requests, `main` behind them; the group repository stays refused by name, made yet or not. An owner's _Add Mate_ registers the Mate at birth, as _New project_ does. **Narrowed by D31:** the refusal stands but no longer keeps a Mate off the group repository — every registered Mate writes it as a collaborator the rights loop makes, and `POST /mate/repository` only refuses to make or join it as a service repository. Holds in HQ: every Mate of an application reaches all of its repositories, each pushing only its own change's branch (§10.10). |
 | D26 | **The Git tab is the Mate's; the project's flow is the left menu's and the projects screen's; Gitea's overview is the footer's** (2026-09-17, the owner: "this seems like git for the whole project, shouldn't it be git for this Mate and have project git somewhere else … the left menu … a list of open PRs of each Mate between mates and the stage/prod", and earlier "at the bar down I imagine a 'gitea' button, where I'll see overview of all repos I have access to and their open PR; in the menu I imagine each group as a timeline: mates, their open PRs, stage, production"). One provider reads every project's flow for the account; a Mate's tab shows its own branch and pull request and nothing of the project's. Since 2026-10-02 the Git tab reads the Mate's change from HQ, and the footer's Gitea overview is the account menu's Git page (`/git`), every application's repositories and open changes as HQ holds them (§10.11). |
@@ -3657,7 +3639,7 @@ inputs it owns — `can` lives in `apps/hq`, and no client package imports it, `
 `asOrgRole` or `zeropsRoleAnswer` (a lint rule with no exception list); `Decision`, `REASONS` and
 `Reason` stay shared as the wire contract. HQ answers what a person may do in its stream (§10.8,
 _Offers_), and the client draws that. It keeps two predicates over Zerops' own facts, for the
-moments before HQ can answer: `mayBearHq` (org role `ADMIN` or above — who may make the org's HQ)
+moments before HQ can answer: `mayBearHq` (org role `ADMIN` or above — who may start the organization on the shared HQ)
 and `mayCreateProjects` (Zerops' own flag), both in `zeropsRoles.ts`. A Zerops service operation —
 start, stop, restart, remove — gets no client verdict: it is offered where HQ says `observe_mate`,
 and Zerops' refusal is shown in its own words. The Mate server reads no role: HQ's access list says
@@ -3676,7 +3658,7 @@ beside the logins' homes (`zeropsSignIns.ts`). The document is read once, at sta
 the record, and a rewrite under a running server changes nothing. A Mate migrated from main, whose
 signer facts have been ported to HQ and which has no document, gets it written from HQ's
 `GET /api/mate/self` signer map (the project key in the header, §3.6) by `zcp service mate` before
-its server first starts — once, each sign-in dated by the seed (`mate.SeedSignInsForEnrollment`).
+its server first starts — once, each sign-in dated by the seed (`mate.SeedSignInsForIdentity`).
 That supervisor is the server's parent, so it reaches HQ at the origin §3.5 resolves for a process
 the server did not start.
 The read has a bounded request context, and its failure always continues to the server's start and
@@ -3750,8 +3732,9 @@ key from zcp's own env store, captured at first boot (ledger 2026-09-16).
 
 ### 10.8 HQ
 
-**The project** (§10.1): Core, its Postgres and a volume for the bare repositories, at the
-project's own domain. Only the leading Core answers; a standby, or a Zerops HQ cannot read, answers
+**The shared project** (§10.1), `mate-hq-prod` (`BUBslDB4Qs22uBme88B4Lw`), hosts Core,
+its Postgres and a volume for the bare repositories at `https://mate-hq.zerops.io` for every
+organization. Only the leading Core answers; a standby, or a Zerops HQ cannot read, answers
 `503` with `Retry-After`, which every caller takes for "try again". Core's API is JSON over HTTP;
 its contracts are the fork's `@t3tools/shared` (`hqChanges`, `hqRecipe`, `mateLink`), and who may do
 what is `zeropsPermissions.ts`'s `can` over the role function (§10.3).

@@ -307,6 +307,10 @@ func printMateUpdateResult(result mateUpdateResult, asJSON bool) {
 		log.Printf("mate update: %s", result.Error)
 		return
 	}
+	if result.Started {
+		fmt.Fprintln(os.Stderr, "mate: update worker started; outcome pending (zcp mate status)")
+		return
+	}
 	switch mate.Action(result.Action) {
 	case mate.ActionNone:
 		fmt.Fprintf(os.Stderr, "mate: already at %s, nothing to do\n", result.To)

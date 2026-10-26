@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,20 +14,62 @@ import (
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/mate"
 )
+
+// non-parallel: the command reads process environment and writes os.Stdout.
+func TestRunHQCmd_Status_NamesAddressedOriginAndUsesProjectMode(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		t.Run(fmt.Sprint(enabled), func(t *testing.T) {
+			var path string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				path = r.URL.Path
+				_, _ = io.WriteString(w, `{}`)
+			}))
+			defer server.Close()
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("ZCP_MATE_ENABLED", fmt.Sprint(enabled))
+			t.Setenv("projectId", "project")
+			t.Setenv("ZCP_API_KEY", "test-key")
+			t.Setenv(hq.EnvOrigin, "")
+			packagePath := filepath.Join(mate.CurrentLink(), "node_modules", mate.PackageName, "package.json")
+			if err := os.MkdirAll(filepath.Dir(packagePath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(packagePath, fmt.Appendf(nil, `{"mate":{"hqOrigin":%q}}`, server.URL), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			stdout := captureStdout(t, func() { runHQCmd([]string{"status", "--json"}) })
+			var status hqStatus
+			if err := json.Unmarshal([]byte(stdout), &status); err != nil {
+				t.Fatal(err)
+			}
+			if status.HQ != server.URL || !status.Linked {
+				t.Errorf("status = %+v, want linked HQ %s", status, server.URL)
+			}
+			wantPath := "/api/project/self"
+			if enabled {
+				wantPath = "/api/mate/self"
+			}
+			if path != wantPath {
+				t.Errorf("probe path = %q, want %q", path, wantPath)
+			}
+		})
+	}
+}
 
 type stubHQ struct {
 	err error
 }
 
-func (s stubHQ) Self(context.Context) (hq.MateState, error) { return hq.MateState{}, s.err }
+func (s stubHQ) check(context.Context) error { return s.err }
 
 // withHQ points runHQCmd at svc for the test; not parallel — it swaps a
 // package seam.
 func withHQ(t *testing.T, svc hqService, err error) {
 	t.Helper()
 	orig := newHQService
-	newHQService = func(context.Context) (hqService, error) { return svc, err }
+	newHQService = func(context.Context) (hqService, string, error) { return svc, "", err }
 	t.Cleanup(func() { newHQService = orig })
 }
 
@@ -45,8 +88,8 @@ func TestRunHQCmd_Status_JSONExitsZero(t *testing.T) {
 		err  error
 		want map[string]any
 	}{
-		{"linked", stubHQ{}, nil, map[string]any{"linked": true}},
-		{"HQ refuses the key", stubHQ{err: errors.New("hq refused: 401 key_not_recognized")}, nil, map[string]any{
+		{"linked", stubHQ{}.check, nil, map[string]any{"linked": true}},
+		{"HQ refuses the key", stubHQ{err: errors.New("hq refused: 401 key_not_recognized")}.check, nil, map[string]any{
 			"linked": false, "error": "hq refused: 401 key_not_recognized",
 		}},
 		{"no key", nil, errors.New("hq: no identity"), map[string]any{"linked": false, "error": "hq: no identity"}},

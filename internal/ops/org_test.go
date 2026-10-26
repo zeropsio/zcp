@@ -85,7 +85,7 @@ func TestClassifyOrgProject(t *testing.T) {
 		{project: "pRossy", wantKind: OrgKindMate, wantApp: "Northwind Shop", wantMate: "Rossy"},
 		// Tagged mate but no zcp service: not a Mate org mode can talk to.
 		{project: "pBorn", wantKind: OrgKindOther},
-		{project: "pHQ", wantKind: OrgKindHQ},
+		{project: "pHQ", wantKind: OrgKindOther},
 		{project: "pProd", wantKind: OrgKindProduction, wantApp: "Contoso"},
 		{project: "pStage", wantKind: OrgKindStage, wantApp: "ZIT"},
 		{project: "pTool", wantKind: OrgKindOther},
@@ -124,7 +124,7 @@ func TestOrgOverview_GroupsEveryProjectByKind(t *testing.T) {
 	for _, g := range got.Groups {
 		count[g.Kind] = len(g.Projects)
 	}
-	want := map[OrgProjectKind]int{OrgKindChief: 1, OrgKindMate: 1, OrgKindHQ: 1, OrgKindProduction: 1, OrgKindStage: 1, OrgKindOther: 2}
+	want := map[OrgProjectKind]int{OrgKindChief: 1, OrgKindMate: 1, OrgKindProduction: 1, OrgKindStage: 1, OrgKindOther: 3}
 	for k, n := range want {
 		if count[k] != n {
 			t.Errorf("group %s has %d projects, want %d", k, count[k], n)

@@ -90,15 +90,12 @@ func proposeAccess(snap *orgSnapshot, in OrgActionInput) (*accessProposal, error
 // accessPlaces are the projects ref reaches: the project it names, or every
 // production, stage and Mate of the application it names — the way Mate's
 // People change an application's access everywhere at once. Never the Chief's
-// own project, nor HQ's: it holds the organization's keys.
+// own project.
 func (snap *orgSnapshot) accessPlaces(ref string) ([]*orgProject, string, error) {
 	p, err := snap.resolve(ref)
 	if err == nil {
 		if p.Class.Kind == OrgKindChief {
 			return nil, "", invalid(fmt.Sprintf("%s is the Chief's own project: yours alone", p.Name), "Name an application or one of its projects")
-		}
-		if p.Class.Kind == OrgKindHQ {
-			return nil, "", invalid(fmt.Sprintf("%s is HQ's own project: it holds the organization's keys, so access to it stays with owners and admins", p.Name), "Name an application or one of its projects")
 		}
 		return []*orgProject{p}, p.Name, nil
 	}
