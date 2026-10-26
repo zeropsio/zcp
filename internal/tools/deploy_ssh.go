@@ -368,7 +368,8 @@ func RegisterDeploySSH(
 		// A lease pushes its own branch itself; git-push pushes the target's
 		// tracked branch (main by default), so from a lease it would put the
 		// feature branch on the stage's delivery branch (DP-6). A branch is
-		// reviewed on its lease's preview URL; a stage tracks main (DP-8).
+		// tried on its lease's preview URL and checked on a stage that then
+		// runs main again (DP-8).
 		if input.Strategy == deployStrategyGitPush {
 			if lease, ok := leaseOf(stateDir, cmp.Or(input.SourceService, input.TargetService)); ok {
 				return convertError(leaseGitPushRefusal(lease), WithRecoveryStatus()), nil, nil

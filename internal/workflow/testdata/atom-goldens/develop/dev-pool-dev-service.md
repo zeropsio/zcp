@@ -189,9 +189,11 @@ its containers away from the app.
    upstream). The same pool secret authenticates it. A release never commits
    for you.
 4. Open the branch's change in HQ: `zerops_workflow action="open-change" service="<alias>" title="<what it does>"`
-   — the repository and the branch come from the lease. Describe it with
+   — the repository and the branch come from the lease. Run its stage check
+   (below), then describe it with
    `zerops_workflow action="describe-change" service="<alias>" description="…"`,
-   naming the branch's lease preview URLs as where to try it. One branch, one
+   naming the branch's lease preview URLs as where to try it and saying it
+   built and verified on the stage. One branch, one
    change: pushing to the branch again moves the change, and it asks for
    review again once described again.
 5. `zerops_lease action=release lease="<alias>"` hands the leased container
@@ -219,14 +221,21 @@ result's `previewUrl` is the pool's subdomain on that port. With several
 servers that listen, mark the one the preview reaches with `"preview": true`
 — one per pool.
 
-**Stage.** The part's stage tracks `main`: review a branch on its lease's
-preview URL, not on the stage. Once the branch is merged, put main on the
-stage from a lease of the part:
+**Stage.** The part's stage tracks `main`, and a branch is tried on its
+lease's preview URL. The preview runs the dev servers, never the production
+build, so check the branch on the stage before its change is described.
+
+**Stage check.** Deploy the pushed branch from its lease,
+`zerops_deploy sourceService="<alias>" targetService="<stage>"`, verify it with
+`zerops_verify serviceHostname="<stage>"`, then put main back at once:
 `zerops_deploy sourceService="<alias>" targetService="<stage>" sha="origin/main"`
 — the deploy fetches `main` first, so this ships main as the remote has it now.
+A build that fails leaves the stage on what it ran; fix the branch, push, and
+check again. Say in the change's description that it built and verified on
+the stage. Run one branch's check at a time per stage: a check from another
+lease replaces it. Once a branch is merged, put main on the stage the same way.
 A deploy of a commit that is not on `origin/main`, or of uncommitted changes,
-still runs; its `warnings` say the stage no longer tracks main and name the
-call that puts main back. Verify a container with
+names in its `warnings` the verify and the call that puts main back. Verify a container with
 `zerops_verify serviceHostname="<alias>"` — it reports SSH reachability, the
 supervisor and the dev servers.
 

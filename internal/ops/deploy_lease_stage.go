@@ -11,8 +11,9 @@ import (
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
-// A stage tracks main (docs/spec-workflows.md §8 DP-8): a branch is reviewed
-// on its lease's preview URL, and a stage runs main. A deploy from a lease to
+// A stage tracks main (docs/spec-workflows.md §8 DP-8): a branch is tried on
+// its lease's preview URL, checked on the stage before its change is
+// described, and the stage runs main again right after. A deploy from a lease to
 // a stage is never refused for the commit it ships — a corrective deploy is
 // never gated, and merging a branch is not the agent's call — so zcp steers
 // instead: it fetches main before it resolves what ships, so sha="origin/main"
@@ -191,9 +192,9 @@ func (m *leaseStageMain) note(shipped string, dirty bool) string {
 		fmt.Fprintf(&b, " origin/%s could not be fetched (%s), so this compares against the copy %s fetched last.",
 			leaseDefaultBranch, m.fetchErr, m.alias)
 	}
-	fmt.Fprintf(&b, " Review a branch on its lease's preview URL instead (zerops_dev_server action=status hostname=%q names it as previewUrl).", m.alias)
-	fmt.Fprintf(&b, " Once the branch is merged, put main back on %s: zerops_deploy sourceService=%q targetService=%q sha=\"origin/%s\".",
-		m.stage, m.alias, m.stage, leaseDefaultBranch)
+	fmt.Fprintf(&b, " As the branch's stage check, verify it with zerops_verify serviceHostname=%q, then put main back on %s at once: zerops_deploy sourceService=%q targetService=%q sha=\"origin/%s\".",
+		m.stage, m.stage, m.alias, m.stage, leaseDefaultBranch)
+	fmt.Fprintf(&b, " Try the branch itself on its lease's preview URL (zerops_dev_server action=status hostname=%q names it as previewUrl).", m.alias)
 	return b.String()
 }
 
