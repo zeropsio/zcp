@@ -839,7 +839,7 @@ func TestSwarmClient_ErrorEnvelope_SaysWhatItsMetadataSays(t *testing.T) {
 	t.Parallel()
 
 	const lease = "feedfacefeedfacefeedfacefeedface"
-	const token = "orch-api-token-0001"
+	const orchToken = "orch-api-token-0001"
 	tests := []struct {
 		name        string
 		body        string
@@ -852,10 +852,10 @@ func TestSwarmClient_ErrorEnvelope_SaysWhatItsMetadataSays(t *testing.T) {
 			name: "See metadata: the item's code, error and metadata are what it says",
 			body: `{"error":{"code":"containerAction","message":"See metadata","meta":[{"code":"commandExec",` +
 				`"error":"fork/exec /opt/zerops/bin/zsc: resource temporarily unavailable",` +
-				`"metadata":{"containerId":["c-5"],"echo":["bearer ` + token + ` lease ` + lease + `"]}}]}}`,
+				`"metadata":{"containerId":["c-5"],"echo":["bearer ` + orchToken + ` lease ` + lease + `"]}}]}}`,
 			wantCode:    "containerAction",
 			wantSays:    []string{"commandExec", "fork/exec /opt/zerops/bin/zsc: resource temporarily unavailable", "containerId: c-5", "[redacted]"},
-			wantNotSays: []string{"See metadata", token, lease},
+			wantNotSays: []string{"See metadata", orchToken, lease},
 		},
 		{
 			name: "metadata values that are no list of strings",
@@ -884,7 +884,7 @@ func TestSwarmClient_ErrorEnvelope_SaysWhatItsMetadataSays(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			c := NewSwarmClient(srv.URL, token, srv.Client())
+			c := NewSwarmClient(srv.URL, orchToken, srv.Client())
 			_, err := c.Release(context.Background(), "c-5", lease, true)
 			var se *SwarmError
 			if !errors.As(err, &se) {
