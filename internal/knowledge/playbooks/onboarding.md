@@ -41,8 +41,9 @@ When a branch needs project state, or the person asks what's already here:
 1. `zerops_workflow action="status"` first — an active bootstrap/develop/launch session
    or a current intent/scope means MID-WORK: name the work in progress ("There's work
    in progress: <intent> on <scope>.") and offer to continue it before anything else.
-2. Otherwise `zerops_discover` — classify from THIS call only (it is the authoritative
-   direct read; never classify from the status Services line):
+2. Otherwise ALWAYS call `zerops_discover`, even when status already lists services —
+   classify from THIS call only (it is the authoritative direct read; never classify from
+   the status Services line):
    - FRESH: every non-system service row has `adoptionState: "zcp-self"` (or the list is
      empty), no live `activity`, no warnings.
    - POPULATED: anything else — `adoptable`, `adopted`, `managed-dep`, `resumable`, or

@@ -63,7 +63,10 @@ userPersona: |
   **Continue this project** instead — reply with exactly this sentence:
   "Actually, hold on, don't set anything up yet — I want to think about it
   first." Do not give consent, do not choose **Continue this project**, and
-  do not authorize any changes in this scenario.
+  do not authorize any changes in this scenario. If the agent asks again or
+  offers anything else — adopting, tracking, continuing, a smaller step —
+  decline every time: "No, leave everything as it is for now." Never say
+  yes, go ahead, or agree to any option, however it is phrased.
 notableFriction:
   - id: populated-state-read-is-branch-gated
     description: |
