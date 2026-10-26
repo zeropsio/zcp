@@ -2,13 +2,13 @@
 # Copyright (c) 2026 Zerops s.r.o. All rights reserved. MIT license.
 #
 # Canonical install command:
-#   curl -sSfL https://raw.githubusercontent.com/zeropsio/zcp/main/install.sh | sh
+#   curl -sSfL https://github.com/zeropsio/zcp/releases/latest/download/install.sh | sh
 #
 # Install specific version:
-#   curl -sSfL https://raw.githubusercontent.com/zeropsio/zcp/main/install.sh | sh -s v0.1.0
+#   curl -sSfL https://github.com/zeropsio/zcp/releases/latest/download/install.sh | sh -s v0.1.0
 #
 # Zerops initCommands (HOME=/, needs sudo for /usr/local/bin):
-#   curl -sSfL https://raw.githubusercontent.com/zeropsio/zcp/main/install.sh | sudo sh
+#   curl -sSfL https://github.com/zeropsio/zcp/releases/latest/download/install.sh | sudo sh
 
 set -e
 

@@ -269,7 +269,7 @@ var serviceImportYAMLTemplate = template.Must(template.New("serviceImportYAML").
           run:
             base: zcp@1
             initCommands:
-              - curl -sSfL https://zerops.io/zcp/install.sh | sudo sh
+              - curl -sSfL https://github.com/zeropsio/zcp/releases/latest/download/install.sh | sudo sh
               - zcp init
               - sudo -E zcp init nginx
               - |
