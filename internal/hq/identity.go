@@ -73,7 +73,7 @@ func (id Identity) check() error {
 	case id.ProjectID == "":
 		return fmt.Errorf("%w: %s is not in its environment", ErrNoIdentity, EnvProjectID)
 	case id.Origin == "":
-		return fmt.Errorf("%w: %s names no HQ", ErrNoIdentity, EnvOrigin)
+		return fmt.Errorf("%w: no HQ: %s is unset and the installed Mate declares none", ErrNoIdentity, EnvOrigin)
 	}
 	return nil
 }
