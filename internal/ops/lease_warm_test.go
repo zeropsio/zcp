@@ -48,7 +48,10 @@ type warmOrch struct {
 	// acquireErrs answer the next acquires, in order, before any works.
 	acquireErrs []error
 	createErr   error
-	deleteErr   error
+	// deleteErrs answer the next deletes, in order, before deleteErr or the
+	// pool does.
+	deleteErrs []error
+	deleteErr  error
 	// onCreate runs inside a create, before it answers (a racing acquire).
 	onCreate func(o *warmOrch, created []*warmBox)
 
@@ -194,6 +197,11 @@ func (o *warmOrch) Delete(_ context.Context, id, lease string) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.deletes = append(o.deletes, fakeRelease{id: id, lease: lease})
+	if len(o.deleteErrs) > 0 {
+		err := o.deleteErrs[0]
+		o.deleteErrs = o.deleteErrs[1:]
+		return err
+	}
 	if o.deleteErr != nil {
 		return o.deleteErr
 	}
@@ -294,7 +302,7 @@ func newWarmFixture(t *testing.T, orch *warmOrch) *warmFixture {
 	fx := newLeaseFixture(t)
 	wf := &warmFixture{deps: fx.deps, orch: orch, stateDir: fx.stateDir}
 	wf.deps.Swarm = func(string, string) SwarmAPI { return orch }
-	wf.deps.Warm = &LeaseWarm{Target: 1, Go: func(fn func()) {
+	wf.deps.Warm = &LeaseWarm{Target: 1, RemovalRetry: time.Millisecond, Go: func(fn func()) {
 		wf.mu.Lock()
 		if wf.collect {
 			wf.spawned = append(wf.spawned, fn)
@@ -443,39 +451,111 @@ func TestLeaseRelease_Outdated_Deletes(t *testing.T) {
 	}
 }
 
-// TestLeaseRelease_DeleteRefused_FallsBackToReset: the orchestrator refuses a
-// removal with no reason when another removal runs or the pool is at its
-// minimum (live I-P1: metadata null, only the message differs); any such
-// refusal falls back to the reset release, and the result names it.
+// TestLeaseRelease_DeleteRefused_FallsBackToReset: a removal the orchestrator
+// refuses for any reason but another removal still running — the pool at its
+// minimum (live I-P1: metadata null, only the message tells it) — is not tried
+// again: it falls back to the reset release at once, and the result names it.
 func TestLeaseRelease_DeleteRefused_FallsBackToReset(t *testing.T) {
 	t.Parallel()
-	for _, msg := range []string{
-		"another container removal for this service is still in progress - retry in a moment",
-		"the service is already at its minimum container count",
-	} {
-		t.Run(msg, func(t *testing.T) {
-			t.Parallel()
-			orch := newWarmOrch(4)
-			wf := newWarmFixture(t, orch)
-			wf.hold(t, 3, true)
-			orch.add(6, "", true, false, 1)
-			orch.deleteErr = &platform.SwarmError{Status: http.StatusBadRequest, Code: "containerAction", Message: msg}
+	const msg = "the service is already at its minimum container count"
+	orch := newWarmOrch(4)
+	wf := newWarmFixture(t, orch)
+	wf.hold(t, 3, true)
+	orch.add(6, "", true, false, 1)
+	orch.deleteErr = &platform.SwarmError{Status: http.StatusBadRequest, Code: "containerAction", Message: msg}
 
-			view := wf.release(t, "devpool-3")
+	view := wf.release(t, "devpool-3")
 
-			releases, deletes, _ := orch.log()
-			if len(deletes) != 1 || deletes[0] != (fakeRelease{id: "c-3", lease: warmLeaseOf("c-3")}) {
-				t.Errorf("deletes = %+v, want the one refused delete of c-3 with its lease", deletes)
-			}
-			if len(releases) != 1 || releases[0] != (fakeRelease{id: "c-3", lease: warmLeaseOf("c-3"), reset: true}) {
-				t.Errorf("releases = %+v, want c-3 released with a reset after the refusal", releases)
-			}
-			if view.State != LeaseStateReleased || !strings.Contains(view.Note, "refused to remove") || !strings.Contains(view.Note, msg) {
-				t.Errorf("view = %+v, want released, naming the refused removal and why", view)
-			}
-			wf.recordGone(t, "devpool-3")
-		})
+	releases, deletes, _ := orch.log()
+	if len(deletes) != 1 || deletes[0] != (fakeRelease{id: "c-3", lease: warmLeaseOf("c-3")}) {
+		t.Errorf("deletes = %+v, want the one refused delete of c-3 with its lease, never tried again", deletes)
 	}
+	if len(releases) != 1 || releases[0] != (fakeRelease{id: "c-3", lease: warmLeaseOf("c-3"), reset: true}) {
+		t.Errorf("releases = %+v, want c-3 released with a reset after the refusal", releases)
+	}
+	if view.State != LeaseStateReleased || !strings.Contains(view.Note, "refused to remove") || !strings.Contains(view.Note, msg) {
+		t.Errorf("view = %+v, want released, naming the refused removal and why", view)
+	}
+	if strings.Contains(view.Note, "waited") {
+		t.Errorf("note %q says zcp waited for a refusal that is not another removal", view.Note)
+	}
+	wf.recordGone(t, "devpool-3")
+}
+
+// removalInProgress is the platform's refusal of a delete while another
+// removal of the pool's containers is still running, as the orchestrator
+// passes it on (live 2026-10-26): 400 containerAction, no reason, not
+// marked retryable.
+func removalInProgress() *platform.SwarmError {
+	return &platform.SwarmError{Status: http.StatusBadRequest, Code: "containerAction",
+		Message: "another container removal for this service is still in progress - retry in a moment"}
+}
+
+// TestLeaseRelease_RemovalInProgress_WaitsThenRemoves: a release whose removal
+// the platform refuses because another removal of the pool's containers is
+// still running — it says "retry in a moment" — waits and tries the removal
+// again rather than fall back to the reset, which in a full pool serving
+// previews leaves the next lease a preview answering 502 (live 2026-10-26,
+// twice); the removal then goes through and the result says it was removed
+// after waiting, and why.
+func TestLeaseRelease_RemovalInProgress_WaitsThenRemoves(t *testing.T) {
+	t.Parallel()
+	orch := newWarmOrch(4)
+	wf := newWarmFixture(t, orch)
+	wf.hold(t, 3, true)
+	orch.add(6, "", true, false, 1) // the pool's warm container: c-3 is removed
+	orch.deleteErrs = []error{removalInProgress()}
+
+	view := wf.release(t, "devpool-3")
+
+	releases, deletes, _ := orch.log()
+	own := fakeRelease{id: "c-3", lease: warmLeaseOf("c-3")}
+	if len(deletes) != 2 || deletes[0] != own || deletes[1] != own {
+		t.Errorf("deletes = %+v, want c-3's refused removal tried again with its own lease, once", deletes)
+	}
+	if len(releases) != 0 {
+		t.Errorf("releases = %+v, want none: the container was removed, never reset", releases)
+	}
+	if _, status, _ := orch.state("c-3"); status != warmStatusDeleting {
+		t.Errorf("c-3 is %q, want it being removed", status)
+	}
+	for _, want := range []string{"removed", "warm container", "waited", "another"} {
+		if !strings.Contains(view.Note, want) {
+			t.Errorf("note %q lacks %q", view.Note, want)
+		}
+	}
+	if view.State != LeaseStateReleased || strings.Contains(view.Note, "reset instead") {
+		t.Errorf("view = %+v, want released and removed, never the reset fallback", view)
+	}
+	wf.recordGone(t, "devpool-3")
+}
+
+// TestLeaseRelease_RemovalInProgressPersists_FallsBackToResetSayingSo: a
+// removal still refused once zcp stopped waiting falls back to the reset
+// release, and the result says the refusal outlasted the wait.
+func TestLeaseRelease_RemovalInProgressPersists_FallsBackToResetSayingSo(t *testing.T) {
+	t.Parallel()
+	orch := newWarmOrch(4)
+	wf := newWarmFixture(t, orch)
+	wf.hold(t, 3, true)
+	orch.add(6, "", true, false, 1)
+	orch.deleteErr = removalInProgress()
+
+	view := wf.release(t, "devpool-3")
+
+	releases, deletes, _ := orch.log()
+	if len(deletes) < 2 {
+		t.Errorf("deletes = %+v, want the refused removal tried again before the fallback", deletes)
+	}
+	if len(releases) != 1 || releases[0] != (fakeRelease{id: "c-3", lease: warmLeaseOf("c-3"), reset: true}) {
+		t.Errorf("releases = %+v, want c-3 released with a reset once the wait ran out", releases)
+	}
+	for _, want := range []string{"refused to remove", removalInProgress().Message, "waited", "reset instead"} {
+		if !strings.Contains(view.Note, want) {
+			t.Errorf("note %q lacks %q", view.Note, want)
+		}
+	}
+	wf.recordGone(t, "devpool-3")
 }
 
 // TestLeaseWarm_DeletesOnlyTheReleasedContainer: whatever the pool holds —

@@ -251,10 +251,20 @@ func mergedLeases(stateDir, address string, c workflow.HQChange) string {
 // mergedStages names the stages of the repository's pairs, which track main
 // and so take it once a change merged; "" for none.
 func mergedStages(stateDir string, c workflow.HQChange) string {
+	if words := stagesTrackMain(stateDir, c.AppID, c.Repo); words != "" {
+		return "; " + words
+	}
+	return ""
+}
+
+// stagesTrackMain says that the stages of appID's repo's wired pairs track
+// main, with the call that puts main on one — a dev pool's stage deploys from
+// a lease of its part, so the source stays the agent's to name; "" for none.
+func stagesTrackMain(stateDir, appID, repo string) string {
 	metas, _ := workflow.ListServiceMetas(stateDir)
 	var stages []string
 	for _, m := range metas {
-		if hqPairWired(m) && m.HQ.AppID == c.AppID && m.HQ.Repo == c.Repo {
+		if hqPairWired(m) && m.HQ.AppID == appID && m.HQ.Repo == repo {
 			for _, stage := range m.StageHostnames() {
 				if !slices.Contains(stages, stage) {
 					stages = append(stages, stage)
@@ -266,12 +276,12 @@ func mergedStages(stateDir string, c workflow.HQChange) string {
 		return ""
 	}
 	slices.Sort(stages)
-	which, on := "the stages "+strings.Join(stages, ", ")+" track", "each"
+	which, on, target := "the stages "+strings.Join(stages, ", ")+" track", "each", "<stage>"
 	if len(stages) == 1 {
-		which, on = "the stage "+stages[0]+" tracks", "it"
+		which, on, target = "the stage "+stages[0]+" tracks", "it", stages[0]
 	}
-	return fmt.Sprintf("; %s %q: put %q on %s — a dev pool's stage from a lease of its part (`zerops_deploy sourceService=\"<alias>\" targetService=\"<stage>\" sha=\"origin/main\"`)",
-		which, hqBase, hqBase, on)
+	return fmt.Sprintf("%s %q: put %q on %s — a dev pool's stage from a lease of its part (`zerops_deploy sourceService=\"<alias>\" targetService=%q sha=\"origin/main\"`)",
+		which, hqBase, hqBase, on, target)
 }
 
 // leasesOnBranch is the aliases of the leases zcp holds on branch of appID's

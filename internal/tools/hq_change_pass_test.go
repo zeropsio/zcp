@@ -468,6 +468,64 @@ func TestLeaseRelease_ResultNamesTheReleasedBranchsChange(t *testing.T) {
 	}
 }
 
+// TestLeaseRelease_MergedChangeNamesTheStageCall: a stage tracks main, so the
+// release of a branch whose change is merged names the call that puts main on
+// the repository's stage — the merged note may have reached the agent before
+// the last merge only (global HQ 2026-10-26, D7: the stage stayed one merge
+// behind main after the agent released the last branch's leases). A branch
+// whose change is still open, or a repository whose pairs have no stage,
+// names no stage call.
+func TestLeaseRelease_MergedChangeNamesTheStageCall(t *testing.T) {
+	lab := twoOpenChanges(t)
+	merged := lab.leaseOf("webpool", 4, "fix-login")
+	open := lab.leaseOf("webpool", 5, "add-signup")
+	lab.hq.mergeChange("appdev", 1)
+	hqc, ok := openHQ(lab.hq.srv.Client(), lab.rt)
+	if !ok {
+		t.Fatal("the lab's Mate is not linked")
+	}
+	remote, err := hqc.RepoURL(labApp, "appdev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := topology.RepoIdentity(remote)
+	for _, alias := range []string{merged, open} {
+		if err := os.Remove(filepath.Join(lab.stateDir, "leases", alias+".json")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	views := []ops.LeaseView{
+		{Alias: merged, Repo: repo, Branch: "fix-login", State: ops.LeaseStateReleased},
+		{Alias: open, Repo: repo, Branch: "add-signup", State: ops.LeaseStateReleased},
+	}
+	read := func() *hq.MateState { return hqStateNow(t.Context(), lab.hq.srv.Client(), lab.rt) }
+
+	got := leaseReleaseChanges(lab.stateDir, lab.hq.srv.URL, views, read)
+
+	mergedLine, openLine, found := strings.Cut(got, "group appdev@add-signup")
+	if !found {
+		t.Fatalf("the release result names no line for add-signup: %s", got)
+	}
+	for _, want := range []string{"group appdev@fix-login: change #1 merged", "appstage", `zerops_deploy sourceService=`, `targetService="appstage" sha="origin/main"`} {
+		if !strings.Contains(mergedLine, want) {
+			t.Errorf("the merged branch's line lacks %q: %s", want, mergedLine)
+		}
+	}
+	if strings.Contains(openLine, "zerops_deploy") || strings.Contains(openLine, "appstage") {
+		t.Errorf("the open change's line names a stage call: %s", openLine)
+	}
+
+	if err := workflow.UpsertServiceMeta(lab.stateDir, "appdev", func(m *workflow.ServiceMeta, _ bool) error {
+		m.Stages = nil
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if noStage := leaseReleaseChanges(lab.stateDir, lab.hq.srv.URL, views[:1], read); !strings.Contains(noStage, "change #1 merged") || strings.Contains(noStage, "zerops_deploy") {
+		t.Errorf("with no stage the release result still names a stage call, or not the merge: %s", noStage)
+	}
+}
+
 // TestStatusHQChanges_OutsideAMate_AsLastRead: outside a Mate (an enrollment
 // left in $HOME, pairs keeping their HQ records) status reads nothing of HQ,
 // so the ledger's Changes section is labelled as last read, never as now.
