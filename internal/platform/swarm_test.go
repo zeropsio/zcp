@@ -224,6 +224,71 @@ func TestSwarmClient_ErrorEnvelope_KeepsThePlatformCause(t *testing.T) {
 	}
 }
 
+// TestSwarmError_RemovalInProgress: a delete the platform refuses because
+// another removal of the pool's containers is still running — no reason, not
+// marked retryable, "retry in a moment" (live 2026-10-23 and 2026-10-26) — is
+// told apart from every other refusal of a delete, by its words or by the
+// platform's code when meta[] passes it on; an orchestrator reason of its own
+// is never it.
+func TestSwarmError_RemovalInProgress(t *testing.T) {
+	t.Parallel()
+
+	const inProgress = "another container removal for this service is still in progress - retry in a moment"
+	tests := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{
+			name: "live: the platform's words, metadata null",
+			body: `{"error":{"code":"containerAction","message":"` + inProgress + `","meta":[{"error":"` + inProgress + `","code":"containerAction","metadata":null}]}}`,
+			want: true,
+		},
+		{
+			name: "the platform's code passed on in meta",
+			body: `{"error":{"code":"containerAction","message":"` + inProgress + `","meta":[{"error":"` + inProgress + `","code":"serviceStackActionInProgress"}]}}`,
+			want: true,
+		},
+		{
+			name: "the pool at its minimum",
+			body: `{"error":{"code":"containerAction","message":"the service is already at its minimum container count","meta":null}}`,
+			want: false,
+		},
+		{
+			name: "another holder's container",
+			body: `{"error":{"code":"containerAction","message":"container is reserved by another consumer - pass its lease, or ?force=true to take it over","meta":[` +
+				`{"error":"x","code":"containerAction","metadata":{"reason":["held-by-other"],"retryable":["true"]}}]}}`,
+			want: false,
+		},
+		{
+			name: "an orchestrator reason that also says in progress",
+			body: `{"error":{"code":"containerAction","message":"a removal is still in progress","meta":[` +
+				`{"error":"x","code":"containerAction","metadata":{"reason":["containers-preparing"],"retryable":["true"]}}]}}`,
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer srv.Close()
+
+			c := NewSwarmClient(srv.URL, "orch-api-token-0001", srv.Client())
+			err := c.Delete(context.Background(), "c-abc", "feedfacefeedfacefeedfacefeedface")
+			var se *SwarmError
+			if !errors.As(err, &se) {
+				t.Fatalf("err = %v (%T), want a *SwarmError", err, err)
+			}
+			if got := se.RemovalInProgress(); got != tt.want {
+				t.Errorf("RemovalInProgress() = %v, want %v (%+v)", got, tt.want, se)
+			}
+		})
+	}
+}
+
 func TestSwarmClient_LeaseNeverInErrorText(t *testing.T) {
 	t.Parallel()
 
