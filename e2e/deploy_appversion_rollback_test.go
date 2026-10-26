@@ -23,6 +23,7 @@ package e2e_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -35,6 +36,35 @@ import (
 )
 
 const rollbackRecipeRepo = "https://github.com/zeropsio/recipe-nodejs-hello-world"
+
+// rollbackRecipeSetup is the recipe's zerops.yml setup; B's own tree reuses
+// it, so the push targets the same setup A was built from.
+const rollbackRecipeSetup = "helloworld"
+
+// rollbackMarkerB is what appVersion B serves, and A never does.
+const rollbackMarkerB = "e2e-rollback-marker-B"
+
+// rollbackMarkerBZeropsYml builds B on the recipe's setup and its HTTP port
+// (3000), so the subdomain A answered on routes to B once it is active.
+const rollbackMarkerBZeropsYml = `zerops:
+  - setup: helloworld
+    build:
+      base: nodejs@22
+      deployFiles: ./
+    run:
+      base: nodejs@22
+      ports:
+        - port: 3000
+          httpSupport: true
+      start: node server.js
+`
+
+// rollbackMarkerBServerJS answers every request with marker B.
+const rollbackMarkerBServerJS = `require('http').createServer((req, res) => {
+  res.writeHead(200, {'Content-Type': 'text/plain'});
+  res.end('` + rollbackMarkerB + `');
+}).listen(3000);
+`
 
 func TestE2E_DeployAppVersionRollback(t *testing.T) {
 	requireSSH(t, "zcp")
@@ -60,36 +90,60 @@ func TestE2E_DeployAppVersionRollback(t *testing.T) {
 	appVersionA := svc.ActiveAppVersion.ID
 	t.Logf("appVersion A = %s", appVersionA)
 
+	// The ports an activation declares can trail its ACTIVE status by a
+	// moment: read the service until its HTTP port is there.
+	for end := time.Now().Add(time.Minute); time.Now().Before(end); time.Sleep(3 * time.Second) {
+		if _, ok := ops.PreferredHTTPPort(svc.Ports); ok {
+			break
+		}
+		if svc, err = h.client.GetService(ctx, serviceID); err != nil {
+			t.Fatalf("GetService: %v", err)
+		}
+	}
 	subdomainURL := resolveSubdomainURL(t, ctx, h, svc)
 	markerBodyA := mustHTTPBody(t, subdomainURL, 90*time.Second)
 
-	// --- Step 2: second build with an observable marker — self-deploy
-	// (zcli push from inside the container), which flips A to BACKUP and
-	// activates a new appVersion B. ---
-	logStep(t, 2, "second build on %s with an observable marker (self-deploy)", hostname)
-	t0 := time.Now()
-	if out, sshErr := sshExec(t, hostname, "cd /var/www && echo '<!-- e2e-rollback-marker-B -->' >> index.html"); sshErr != nil {
-		t.Fatalf("write marker B: %s (%v)", out, sshErr)
+	// --- Step 2: a second, real build with an observable marker, which
+	// flips A to BACKUP and activates a new appVersion B. A buildFromGit
+	// runtime's /var/www holds only what its build deployed — no zerops.yml
+	// — so B gets a source tree of its own in a scratch directory on the
+	// target: the recipe's setup on A's port, serving marker B. ---
+	logStep(t, 2, "second build on %s from its own source tree, serving marker B", hostname)
+	srcDir := "/tmp/e2e-rollback-b"
+	writeAppViaSSH(t, hostname, srcDir, rollbackMarkerBZeropsYml, rollbackMarkerBServerJS)
+	// zcli push packs a git work tree (a plain folder needs a version-specific
+	// flag), so the tree is committed first, as ops.DeploySSH ensures a HEAD.
+	if out, sshErr := sshExec(t, hostname, "cd "+srcDir+" && git init -q && git add -A && git -c user.name=zcp-e2e -c user.email=e2e@zcp.invalid commit -q -m marker-b"); sshErr != nil {
+		t.Fatalf("commit B's source tree: %s (%v)", out, sshErr)
 	}
 	// zcli in the target has no credential of its own: it gets the key the
 	// way ops.DeploySSH hands it over — on stdin, into ZEROPS_TOKEN for zcli
 	// alone — never on a command line, never `zcli login`; and the service
 	// by id, since without a terminal zcli cannot ask which one. zcli push
 	// returns only when the build ends, so this call outlives sshExec's 30 s.
-	pushCmd := `cd /var/www && IFS= read -r k && ZEROPS_TOKEN="$k" zcli push --service-id ` + serviceID + ` --workingDir /var/www 2>&1`
+	pushCmd := `cd ` + srcDir + ` && IFS= read -r k && ZEROPS_TOKEN="$k" zcli push --service-id ` + serviceID + ` --setup ` + rollbackRecipeSetup + ` 2>&1`
+	// zcli often ends non-zero once the build is handed over — its log stream
+	// closes as the deploy starts. Like ops.DeploySSH (isSSHBuildTriggered),
+	// a push whose output says its artefacts are ready has started the build;
+	// anything else failed.
 	if out, sshErr := sshExecStdin(t, hostname, pushCmd, h.authInfo.Token+"\n", 10*time.Minute); sshErr != nil {
-		t.Fatalf("zcli push (second build): %s (%v)", out, sshErr)
+		if !strings.Contains(out, "BUILD ARTEFACTS READY TO DEPLOY") && !strings.Contains(out, "Deploying service") {
+			t.Fatalf("zcli push (second build): %s (%v)", out, sshErr)
+		}
+		t.Logf("zcli push ended %v after handing the build over", sshErr)
 	}
-	if err := waitForServiceActive(ctx, h.client, h.projectID, hostname, 5*time.Minute); err != nil {
-		t.Fatalf("second build never activated: %v", err)
-	}
-
-	svc, err = h.client.GetService(ctx, serviceID)
-	if err != nil {
-		t.Fatalf("GetService: %v", err)
-	}
-	if svc.ActiveAppVersion == nil || svc.ActiveAppVersion.ID == "" || svc.ActiveAppVersion.ID == appVersionA {
-		t.Fatalf("no new ACTIVE appVersion after the second build (still %+v)", svc.ActiveAppVersion)
+	// The service is ACTIVE on A throughout, so wait for the active
+	// appVersion itself to change.
+	for end := time.Now().Add(5 * time.Minute); ; time.Sleep(5 * time.Second) {
+		if svc, err = h.client.GetService(ctx, serviceID); err != nil {
+			t.Fatalf("GetService: %v", err)
+		}
+		if svc.ActiveAppVersion != nil && svc.ActiveAppVersion.ID != "" && svc.ActiveAppVersion.ID != appVersionA {
+			break
+		}
+		if time.Now().After(end) {
+			t.Fatalf("no new ACTIVE appVersion after the second build (still %+v)", svc.ActiveAppVersion)
+		}
 	}
 	appVersionB := svc.ActiveAppVersion.ID
 	t.Logf("appVersion B = %s", appVersionB)
@@ -97,9 +151,13 @@ func TestE2E_DeployAppVersionRollback(t *testing.T) {
 	if status := appVersionStatus(t, ctx, h.client, serviceID, appVersionA); status != platform.BuildStatusBackup {
 		t.Fatalf("appVersion A status after second build = %s, want %s", status, platform.BuildStatusBackup)
 	}
+	// B is real: its subdomain serves marker B, not A's body.
+	waitForBodyContaining(t, subdomainURL, rollbackMarkerB, 2*time.Minute)
 
 	// --- Step 3: roll back to A. ---
 	logStep(t, 3, "ReactivateAppVersion(%s) — roll %s back to appVersion A", appVersionA, hostname)
+	// T0 is the rollback's start: B's own build is older and must not count.
+	t0 := time.Now()
 	result, err := ops.ReactivateAppVersion(ctx, h.client, h.projectID, hostname, appVersionA)
 	if err != nil {
 		t.Fatalf("ReactivateAppVersion(A): %v", err)
@@ -140,16 +198,21 @@ func TestE2E_DeployAppVersionRollback(t *testing.T) {
 	if bodyAfterRollback != markerBodyA {
 		t.Errorf("body after rollback (%d bytes) != marker A body (%d bytes) — the re-activated artifact isn't what's being served", len(bodyAfterRollback), len(markerBodyA))
 	}
-	if strings.Contains(bodyAfterRollback, "e2e-rollback-marker-B") {
+	if strings.Contains(bodyAfterRollback, rollbackMarkerB) {
 		t.Error("body after rollback still carries marker B")
 	}
 
 	// --- Step 4: RedeployAppVersion against the now-ACTIVE id 400s. ---
 	logStep(t, 4, "RedeployAppVersion(%s) — now ACTIVE, expect appVersionInvalidStatus", appVersionA)
-	if _, err := h.client.RedeployAppVersion(ctx, appVersionA, "", ""); err == nil {
+	// The API names the refusal by its code; the message is the platform's
+	// own prose ("App version status is ACTIVE, action not allowed").
+	_, err = h.client.RedeployAppVersion(ctx, appVersionA, "", "")
+	var pe *platform.PlatformError
+	switch {
+	case err == nil:
 		t.Error("RedeployAppVersion against the now-ACTIVE id: expected an error, got nil")
-	} else if !strings.Contains(err.Error(), "appVersionInvalidStatus") {
-		t.Errorf("err = %v, want it to name appVersionInvalidStatus", err)
+	case !errors.As(err, &pe) || pe.APICode != "appVersionInvalidStatus":
+		t.Errorf("err = %v (apiCode %q), want apiCode appVersionInvalidStatus", err, apiCodeOf(pe))
 	}
 
 	// --- Teardown ---
@@ -238,4 +301,28 @@ func processTargets(p platform.Process, serviceID string) bool {
 		}
 	}
 	return false
+}
+
+// waitForBodyContaining polls url until a 200 body contains want — a fresh
+// appVersion's container can take a moment to take the route over.
+func waitForBodyContaining(t *testing.T, url, want string, deadline time.Duration) {
+	t.Helper()
+	end := time.Now().Add(deadline)
+	last := ""
+	for time.Now().Before(end) {
+		last = mustHTTPBody(t, url, 30*time.Second)
+		if strings.Contains(last, want) {
+			return
+		}
+		time.Sleep(3 * time.Second)
+	}
+	t.Fatalf("%s never served %q within %s (last body %d bytes)", url, want, deadline, len(last))
+}
+
+// apiCodeOf is pe's raw API code, "" when there is no PlatformError.
+func apiCodeOf(pe *platform.PlatformError) string {
+	if pe == nil {
+		return ""
+	}
+	return pe.APICode
 }

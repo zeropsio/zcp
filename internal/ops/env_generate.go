@@ -2,9 +2,11 @@ package ops
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -143,6 +145,20 @@ type refExpander struct {
 	// platform holds with sensitive:true — the expanded value then carries
 	// a sensitive value. The caller resets it before each top-level value.
 	resolvedSensitive bool
+	// masked collects, as `<host>_<var>` (the ref's own spelling), every
+	// source variable the platform withheld from the reading token — what
+	// a refusal names (spec-zerops-env-lifecycle.md §7).
+	masked map[string]bool
+}
+
+// maskedSources lists the withheld source variables, sorted.
+func (r *refExpander) maskedSources() []string {
+	out := make([]string, 0, len(r.masked))
+	for k := range r.masked {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // expandRefs walks `value` and substitutes resolvable `${...}` refs.
@@ -252,7 +268,12 @@ func (r *refExpander) expandRefs(ctx context.Context, value, sourceService strin
 		row, found := findEnvRow(r.cache[svcHost], varName)
 		if found && row.Masked {
 			// The platform withheld the value from this token: leave the ref
-			// literal and count it unresolved rather than write the placeholder.
+			// literal and count it unresolved rather than write the placeholder,
+			// and remember which variable it was for the refusal.
+			if r.masked == nil {
+				r.masked = make(map[string]bool)
+			}
+			r.masked[strings.ReplaceAll(svcHost, "-", "_")+"_"+varName] = true
 			sb.WriteString(m.Raw)
 			last = m.End
 			unresolved++
@@ -374,14 +395,20 @@ func EnvGenerateDotenv(
 	if err != nil {
 		// Translate the BuildEnvPlan ref-resolve error into the legacy
 		// PlatformError shape the existing tests / MCP clients expect.
-		msg := err.Error()
-		if strings.Contains(msg, "unresolved ${} refs in:") {
-			parts := strings.SplitN(msg, "unresolved ${} refs in: ", 2)
-			if len(parts) == 2 {
-				return nil, platform.NewPlatformError(platform.ErrInvalidParameter,
-					fmt.Sprintf("could not resolve env vars: %s", parts[1]),
-					"Check that referenced services are running and have the expected env var keys")
+		var unresolved *UnresolvedRefsError
+		if errors.As(err, &unresolved) {
+			keys := strings.Join(unresolved.Keys, ", ")
+			if len(unresolved.Masked) > 0 {
+				// Not a typo: the platform answers a sensitive value with its
+				// placeholder to a project-scoped or read-only token
+				// (spec-zerops-env-lifecycle.md §7), so no expansion can reach it.
+				return nil, platform.NewPlatformError(platform.ErrPermissionDenied,
+					fmt.Sprintf("could not resolve env vars: %s — the platform withholds %s from the token zcp runs with", keys, strings.Join(unresolved.Masked, ", ")),
+					"A project-scoped or read-only Zerops token reads sensitive values masked; run zcp with a token that can read them, such as an organization member's personal access token (the one zcli login uses)")
 			}
+			return nil, platform.NewPlatformError(platform.ErrInvalidParameter,
+				fmt.Sprintf("could not resolve env vars: %s", keys),
+				"Check that referenced services are running and have the expected env var keys")
 		}
 		return nil, err
 	}

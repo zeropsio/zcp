@@ -65,9 +65,21 @@ func newLocalHarness(t *testing.T) *e2eHarness {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	authInfo, err := auth.Resolve(ctx, client)
-	if err != nil {
-		t.Fatalf("auth resolve: %v", err)
+	// ZCP_E2E_PROJECT_ID pins the project, as newBoxHarness does: a personal
+	// token reaches several, and auth.Resolve accepts only one.
+	var authInfo *auth.Info
+	if pinned := os.Getenv("ZCP_E2E_PROJECT_ID"); pinned != "" {
+		project, err := client.GetProject(ctx, pinned)
+		if err != nil {
+			t.Fatalf("read the pinned project: %v", err)
+		}
+		client.BindOrg(project.ClientID)
+		authInfo = &auth.Info{Token: token, APIHost: apiHost, ClientID: project.ClientID, ProjectID: project.ID, ProjectName: project.Name}
+	} else {
+		authInfo, err = auth.Resolve(ctx, client)
+		if err != nil {
+			t.Fatalf("auth resolve: %v", err)
+		}
 	}
 	authInfo.Region = region
 

@@ -300,6 +300,20 @@ func BuildEnvPlan(
 	return buildEnvPlanWith(ctx, client, projectID, setup, cwd, nil, nil)
 }
 
+// UnresolvedRefsError is the plan's refusal when run.envVariables refs stay
+// unresolved. Keys are the env names whose value could not be built; Masked
+// names, as `<host>_<var>`, the source variables among the causes that the
+// platform withheld from the reading token (spec-zerops-env-lifecycle.md §7)
+// — a token-scope cause, not a typo.
+type UnresolvedRefsError struct {
+	Keys   []string
+	Masked []string
+}
+
+func (e *UnresolvedRefsError) Error() string {
+	return "build env plan: unresolved ${} refs in: " + strings.Join(e.Keys, ", ")
+}
+
 // buildEnvPlanWith is the internal builder that accepts a pre-listed
 // services slice and an optional brownfield-overrides map. Callers
 // that need to use the same services list for follow-on work (e.g.
@@ -480,10 +494,7 @@ func buildEnvPlanWith(
 			}
 		}
 		if len(unresolved) > 0 {
-			return nil, fmt.Errorf(
-				"build env plan: unresolved ${} refs in: %s",
-				strings.Join(unresolved, ", "),
-			)
+			return nil, &UnresolvedRefsError{Keys: unresolved, Masked: expander.maskedSources()}
 		}
 	}
 
