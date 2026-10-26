@@ -5,8 +5,13 @@
 package tools
 
 import (
+	"context"
 	"testing"
+	"time"
 
+	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -51,6 +56,75 @@ func TestDevGit_PoolKeyingAPairWiredAtARetiredHQ_MovesOnlyTheRecord(t *testing.T
 			if got := lab.poolMeta().RemoteURL; got != current {
 				t.Errorf("the pool-keyed pair's record names %q, want its repository on the current HQ %q", got, current)
 			}
+		})
+	}
+}
+
+// TestMateService_ACredentialHQSendsReachesEveryPool (D9, live 2026-10-27):
+// HQ sends the Mate a new Git credential on every link it opens and revokes
+// the one before, so a lease of an HQ repository pushes with a revoked
+// ZCP_HQ_GIT_TOKEN until its pool holds the new one. The Mate's service, at
+// its next look after the credential lands — with no agent pass — writes it
+// to every pool zcp put the credential on: one an acquire recorded and one
+// keying a pair. A look with nothing new writes nothing.
+func TestMateService_ACredentialHQSendsReachesEveryPool(t *testing.T) {
+	t.Parallel()
+	const rotated = "sent-on-the-next-link"
+	for _, tc := range []struct {
+		name     string
+		pool     string
+		prepare  func(*hqLab)
+		recorded bool
+	}{
+		{name: "a pool an acquire recorded", pool: "svc-pool", recorded: true, prepare: func(l *hqLab) {
+			l.mock.WithServices([]platform.ServiceStack{
+				{ID: "svc-appdev", Name: "appdev"}, {ID: "svc-appstage", Name: "appstage"},
+				{ID: "svc-pool", Name: "devpool", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1"}},
+			})
+			writePoolCredentialFingerprint(l.t, l.stateDir, "devpool", "svc-pool", hq.GitCredentialFingerprint(labCredential))
+		}},
+		{name: "a pool keying a pair", pool: testPoolID, prepare: func(l *hqLab) {
+			l.wire()
+			l.keyPairOnPool()
+			if err := workflow.UpdateServiceMeta(l.stateDir, testPool, func(m *workflow.ServiceMeta) error {
+				m.HQ.CredentialFingerprint = hq.GitCredentialFingerprint(labCredential)
+				return nil
+			}); err != nil {
+				l.t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			lab := newHQLab(t)
+			tc.prepare(lab)
+			ticks := make(chan time.Time, 2)
+			ticks <- time.Time{}
+			ticks <- time.Time{}
+			close(ticks)
+			looks, writesAfterRenewal := 0, -1
+			deps := func(ctx context.Context) (devGitDeps, bool) {
+				switch looks++; looks {
+				case 2:
+					lab.relink(rotated)
+				case 3:
+					writesAfterRenewal = lab.mock.CallCount("CreateServiceEnvVar")
+				}
+				return lab.devGitDeps(ctx)
+			}
+
+			keepMateDevGit(t.Context(), deps, time.Time{}, ticks, func(string) {})
+
+			if token, held := poolHQCredential(t, lab.mock, tc.pool); !held || token.Content != rotated || !token.Sensitive {
+				t.Errorf("the pool's %s = %+v (held %v), want the credential HQ sent, as a sensitive secret", ops.PoolHQCredentialEnvKey, token, held)
+			}
+			if n := lab.mock.CallCount("CreateServiceEnvVar"); n != writesAfterRenewal {
+				t.Errorf("a look with no new credential wrote %d variable(s)", n-writesAfterRenewal)
+			}
+			if _, fingerprint, found := ops.PoolCredentialRecord(lab.stateDir, "devpool"); tc.recorded && (!found || fingerprint != hq.GitCredentialFingerprint(rotated)) {
+				t.Errorf("the pool's record names %q (found %v), want the credential HQ sent", fingerprint, found)
+			}
+			assertNoSecretOnDisk(t, lab.stateDir, rotated)
 		})
 	}
 }
