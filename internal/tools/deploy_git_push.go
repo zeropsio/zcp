@@ -259,8 +259,8 @@ func hqGitPushRefusal(hostname string) *platform.PlatformError {
 }
 
 // leaseGitPushRefusal refuses a git-push from a lease: the lease pushes its own
-// branch itself (DP-6), and its branch is reviewed on the lease's preview URL
-// while a stage tracks main (DP-8). For a lease of a repository on this Mate's
+// branch itself (DP-6), its branch is tried on the lease's preview URL and
+// checked on a stage by a deploy that puts main back (DP-8). For a lease of a repository on this Mate's
 // HQ the push it names keeps HQ's rule — a branch of the agent's own, never
 // `main`, never forced (DP-12).
 func leaseGitPushRefusal(lease ops.LeaseTargetInfo) *platform.PlatformError {
@@ -271,7 +271,7 @@ func leaseGitPushRefusal(lease ops.LeaseTargetInfo) *platform.PlatformError {
 	}
 	return platform.NewPlatformError(platform.ErrInvalidUsage,
 		fmt.Sprintf("git-push from the lease %s did not run: a lease pushes its own branch, and this strategy pushes the target's tracked branch", alias),
-		fmt.Sprintf("%s, and review the branch on the lease's preview URL (zerops_dev_server action=status hostname=%q names it as previewUrl). A stage tracks main: once the branch is merged, put main on it with zerops_deploy sourceService=%q targetService=<stage> sha=\"origin/main\"", push, alias, alias))
+		fmt.Sprintf("%s, and try the branch on the lease's preview URL (zerops_dev_server action=status hostname=%q names it as previewUrl). A stage tracks main: for the branch's stage check, deploy it with zerops_deploy sourceService=%q targetService=<stage>, verify it with zerops_verify serviceHostname=<stage>, then put main back with zerops_deploy sourceService=%q targetService=<stage> sha=\"origin/main\"", push, alias, alias, alias))
 }
 
 // gitPushEnvRefPreflight validates the run.envVariables refs of the named
