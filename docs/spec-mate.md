@@ -321,8 +321,11 @@ One pass, in order:
    a warm restart off the network, and it is what the old "the binary exists" rule was reaching for
    without being able to say so.
 2. **Keep a dev build.** An installed *semver prerelease* (`0.1.0-dev.<sha>`, what
-   `eval/scripts/mate-dev-push.sh` tags) is never replaced by the pinned release unless `Force`. The
-   protection is now a stated rule rather than an accident of which files happen to exist.
+   `eval/scripts/mate-dev-push.sh` tags) is never replaced by the pinned release unless `Force`,
+   unless the release it was cut from is below `MinimumMateVersion`: a build below the floor is
+   replaced like any release, and a supervisor restart (`KeepInstalled`) refreshes the manifest for
+   it instead of keeping it. The protection is now a stated rule rather than an accident of which
+   files happen to exist.
 3. **Stage** into a fresh `versions/<desired>`: one `GET` to the manifest's `url`, streamed to a
    temporary file while its SHA-256 is computed and compared with the manifest's `sha256`. A
    mismatch reports both digests and **never invokes npm** — this is an integrity check against a

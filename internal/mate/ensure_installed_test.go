@@ -310,7 +310,7 @@ func TestEnsureInstalled_UnreachableManifest_NamesAnInstalledVersionBelowTheMini
 
 func TestEnsureInstalled_DevVersionInstalled_KeptWithoutForce(t *testing.T) {
 	rig := newEnsureRig(t)
-	const devVersion = "0.1.0-dev.a1b2c3"
+	devVersion := mate.MinimumMateVersion + "-dev.a1b2c3"
 	seedInstalledVersion(t, devVersion)
 
 	result, err := mate.EnsureInstalled(mate.EnsureOptions{})
@@ -329,7 +329,7 @@ func TestEnsureInstalled_DevVersionInstalled_KeptWithoutForce(t *testing.T) {
 
 func TestEnsureInstalled_DevVersionInstalled_ReplacedWithForce(t *testing.T) {
 	newEnsureRig(t)
-	const devVersion = "0.1.0-dev.a1b2c3"
+	devVersion := mate.MinimumMateVersion + "-dev.a1b2c3"
 	seedInstalledVersion(t, devVersion)
 
 	result, err := mate.EnsureInstalled(mate.EnsureOptions{Force: true})
@@ -496,10 +496,10 @@ func TestEnsureInstalled_SupervisorRestartPreservesTheInstalledRelease(t *testin
 		name, installed, want string
 		keep                  bool
 	}{
-		{"supervisor keeps older release without confirming a candidate", "0.14.0", "0.14.0", true},
-		{"supervisor keeps newer release", "0.14.3", "0.14.3", true},
+		{"supervisor keeps a release at the floor without confirming a candidate", mate.MinimumMateVersion, mate.MinimumMateVersion, true},
+		{"supervisor keeps newer release", "0.16.9", "0.16.9", true},
 		{"supervisor first installation resolves the release", "", desiredVersion, true},
-		{"attended init retains the explicit upgrade path", "0.14.0", desiredVersion, false},
+		{"attended init retains the explicit upgrade path", mate.MinimumMateVersion, desiredVersion, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rig := newEnsureRig(t)
@@ -523,5 +523,48 @@ func TestEnsureInstalled_SupervisorRestartPreservesTheInstalledRelease(t *testin
 				}
 			}
 		})
+	}
+}
+
+// A mate below MinimumMateVersion is never started when the manifest offers a
+// release at or above it: the supervisor path refreshes and installs it, and a
+// dev build is replaced only when its release core is below the floor.
+func TestEnsureInstalled_BelowTheFloorIsReplacedFromAFreshManifest(t *testing.T) {
+	for _, tc := range []struct {
+		name, installed string
+		keep, force     bool
+		want            string
+	}{
+		{"supervisor restart replaces a release below the floor", "0.15.153", true, false, desiredVersion},
+		{"attended init replaces a release below the floor", "0.15.153", false, false, desiredVersion},
+		{"a dev build below the floor is replaced", "0.15.153-dev.a1b2c3", false, false, desiredVersion},
+		{"supervisor restart replaces a dev build below the floor", "0.15.153-dev.a1b2c3", true, false, desiredVersion},
+		{"a dev build at the floor stays", mate.MinimumMateVersion + "-dev.a1b2c3", false, false, mate.MinimumMateVersion + "-dev.a1b2c3"},
+		{"a dev build above the floor stays on a supervisor restart", "0.16.9-dev.a1b2c3", true, false, "0.16.9-dev.a1b2c3"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rig := newEnsureRig(t)
+			seedInstalledVersion(t, tc.installed)
+			if _, err := mate.EnsureInstalled(mate.EnsureOptions{KeepInstalled: tc.keep, Force: tc.force, Refresh: true}); err != nil {
+				t.Fatal(err)
+			}
+			got, err := mate.InstalledVersion()
+			if err != nil || got != tc.want {
+				t.Fatalf("running version=%q error=%v, want %q", got, err, tc.want)
+			}
+			if tc.want == tc.installed && rig.downloadCalls != 0 {
+				t.Fatalf("a kept build reached the download: %d", rig.downloadCalls)
+			}
+		})
+	}
+}
+
+func TestEnsureInstalled_BelowTheFloorWithAnUnreachableManifestKeepsTheInstalledBuild(t *testing.T) {
+	rig := newEnsureRig(t)
+	rig.manifestErr = errors.New("fetch mate release manifest: HTTP 504")
+	seedInstalledVersion(t, "0.15.153")
+	got, err := mate.EnsureInstalled(mate.EnsureOptions{KeepInstalled: true, Refresh: true})
+	if err != nil || got.Action != mate.ActionNone || got.To != "0.15.153" {
+		t.Fatalf("result=%+v err=%v, want the installed build kept", got, err)
 	}
 }

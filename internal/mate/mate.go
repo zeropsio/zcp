@@ -409,6 +409,15 @@ func InstallRelease(ctx context.Context, client *http.Client, releaseURL, expect
 // EnsureInstalled never silently replaces one with a pinned release.
 func IsDevVersion(v string) bool { return strings.Contains(v, "-") }
 
+// belowFloor reports whether v, a release or a dev build, is older than
+// MinimumMateVersion. A dev build is judged by the release it was cut from
+// (its version without the prerelease suffix), so one cut at or above the floor
+// stays and one cut below it is no longer a build this zcp drives.
+func belowFloor(v string) bool {
+	core, _, _ := strings.Cut(v, "-")
+	return VersionOlder(core, MinimumMateVersion)
+}
+
 // InstalledVersion reads the version CurrentLink() resolves to, from npm's
 // own package.json record for the installed package — never a side file zcp
 // would have to keep honest itself. A missing link, a missing package.json,
@@ -503,11 +512,13 @@ type Result struct {
 // EnsureOptions steers installation and attended update choices.
 type EnsureOptions struct {
 	// KeepInstalled makes ordinary supervisor restarts preserve the current
-	// release after crash recovery. A first installation still resolves the release.
+	// release after crash recovery. A first installation, or an installed
+	// build below MinimumMateVersion, still resolves the release.
 	KeepInstalled bool
 
 	// Force, when true, lets a dev build be replaced. Default false: a
-	// hand-pushed dev build (eval/scripts/mate-dev-push.sh) is never silently
+	// hand-pushed dev build (eval/scripts/mate-dev-push.sh) at or above
+	// MinimumMateVersion is never silently
 	// clobbered by a routine container boot or an unqualified `zcp mate
 	// update` — only an explicit --force does that.
 	Force bool
@@ -540,8 +551,9 @@ func defaultResolveDesiredRelease(opts EnsureOptions) (Manifest, error) {
 //  2. Read the installed and desired versions. Equal ⇒ ActionNone, having
 //     made no npm/download call at all — this is what keeps a warm restart
 //     off the network beyond the (cached) manifest check.
-//  3. The installed version is a dev build and opts.Force is false ⇒
-//     ActionNone, keeping the dev build.
+//  3. The installed version is a dev build at or above MinimumMateVersion and
+//     opts.Force is false ⇒ ActionNone, keeping the dev build. A build below
+//     the floor is replaced like any release.
 //  4. Stage the desired release into its own VersionDir() (clearing any
 //     partial leftover there first).
 //  5. Smoke-test the staged binary.
@@ -563,7 +575,7 @@ func EnsureInstalled(opts EnsureOptions) (Result, error) {
 	}
 
 	if opts.KeepInstalled {
-		if installed, err := InstalledVersion(); err == nil {
+		if installed, err := InstalledVersion(); err == nil && !belowFloor(installed) {
 			return Result{Action: ActionNone, From: installed, To: installed}, nil
 		}
 	}
@@ -594,7 +606,7 @@ func EnsureInstalled(opts EnsureOptions) (Result, error) {
 	if instErr == nil && installed == desired.Version {
 		return Result{Action: ActionNone, From: installed, To: installed}, nil
 	}
-	if instErr == nil && IsDevVersion(installed) && !opts.Force {
+	if instErr == nil && IsDevVersion(installed) && !opts.Force && !belowFloor(installed) {
 		return Result{Action: ActionNone, From: installed, To: installed}, nil
 	}
 
