@@ -42,6 +42,7 @@ func TestPlaybookOnboarding_ContentPins_CoreContract(t *testing.T) {
 		{name: "fresh classification", needle: `adoptionState: "zcp-self"`},
 		{name: "complete fresh predicate", needle: "no live `activity`, no warnings"},
 		{name: "status services warning", needle: "never classify from the status Services line"},
+		{name: "discover is called even when status lists services", needle: "ALWAYS call `zerops_discover`, even when status already lists services"},
 		{name: "continue project option", needle: "**Continue this project**"},
 		{name: "mapping slug: nodejs", needle: "nodejs-hello-world"},
 		{name: "mapping slug: laravel", needle: "laravel-minimal"},
