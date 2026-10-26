@@ -278,9 +278,11 @@ func passHQPair(
 // hqPairCredentialStale reports whether a wired pair's dev service holds
 // another Git credential than the one in the Mate's file: HQ replaced it over
 // the link. A pair wired before its record named the credential is renewed
-// once. A Mate with no credential in its file has nothing to renew with.
+// once. A pair a refused push marked is renewed too: a revoked credential is
+// what such a refusal most often was. A Mate with no credential in its file
+// has nothing to renew with.
 func hqPairCredentialStale(m *workflow.ServiceMeta, hqc hq.Client) bool {
-	if !hqPairWired(m) || m.GitPushState != topology.GitPushConfigured {
+	if !hqPairWiredThrough(m) {
 		return false
 	}
 	_, fingerprint, err := hqc.GitCredential()
@@ -559,6 +561,13 @@ func wireHQPair(
 	remote, err := hqc.RepoURL(repo.AppID, repo.Name)
 	if err != nil {
 		return hqWiringOutcome{line: fmt.Sprintf("repository %q is ready in HQ but git cannot be pointed at it: %v — retrying on the next pass.", repo.Name, err)}
+	}
+	// A wired pair's remote on an HQ the Mate no longer links to is zcp's
+	// own wiring: it moves to the current HQ first.
+	if hqPairWired(m) {
+		if line, moved := moveFromRetiredHQ(ctx, sshDeployer, stateDir, hqc, m); !moved {
+			return hqWiringOutcome{line: line}
+		}
 	}
 	// A remote on this Mate's HQ is ours to point again — a wiring that
 	// stopped half-way, or the application the Mate left; any other one the

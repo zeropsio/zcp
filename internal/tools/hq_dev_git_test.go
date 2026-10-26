@@ -71,12 +71,18 @@ func (l *hqLab) mateStart() []string {
 // plain git in its sessions reaches HQ.
 func TestDevService_WiredAtARetiredHQIsMovedToTheCurrentOne(t *testing.T) {
 	t.Parallel()
+	mateStart := func(l *hqLab) { l.mateStart() }
+	developStart := func(l *hqLab) { l.developStart() }
 	for _, tc := range []struct {
 		name  string
 		start func(*hqLab)
+		// refused: a push with the revoked credential marked the pair.
+		refused bool
 	}{
-		{name: "the Mate's start", start: func(l *hqLab) { l.mateStart() }},
-		{name: "develop's start", start: func(l *hqLab) { l.developStart() }},
+		{name: "the Mate's start", start: mateStart},
+		{name: "develop's start", start: developStart},
+		{name: "the Mate's start, a pair a refused push marked", start: mateStart, refused: true},
+		{name: "develop's start, a pair a refused push marked", start: developStart, refused: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -86,6 +92,9 @@ func TestDevService_WiredAtARetiredHQIsMovedToTheCurrentOne(t *testing.T) {
 			want := lab.git("remote", "get-url", "origin")
 			lab.retireHQ()
 			lab.relink(rotated)
+			if tc.refused {
+				degradeGitPushStateToBroken(lab.stateDir, "appdev")
+			}
 
 			tc.start(lab)
 
