@@ -20,6 +20,7 @@ import (
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/matesetup"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/tools"
 )
 
 // ErrMateDisabled is returned by Start("mate") when ZCP_MATE_ENABLED is off. Named
@@ -225,8 +226,9 @@ var mateSetupBoot = matesetup.Boot
 
 // mateLaunchSetup writes the status file the server reads (ZCP_STATUS_FILE,
 // mate.LaunchEnvLines), seeds the server's absent sign-ins from HQ with the
-// project key, and starts the boot import when the container carries a
-// runtimes plan. The plan, the Mate's key and its project come from the live
+// project key, starts keeping the wired dev services' git on the Mate's HQ
+// (tools.KeepMateDevGit), and starts the boot import when the container
+// carries a runtimes plan. The plan, the Mate's key and its project come from the live
 // env store, as the guard's flag does: a unit's own environment carries none
 // of them. All run in this process, for as long as the server does; a restart
 // cut short finds what it left by looking.
@@ -239,6 +241,7 @@ func mateLaunchSetup() {
 	}
 	env := func() func(string) string { return mate.LiveLookup(mateStorePath) }
 	mateSeedSignIns(context.Background(), lookup)
+	go tools.KeepMateDevGit(context.Background(), env, logHQ)
 	if planSet {
 		go mateSetupBoot(context.Background(), path, env)
 	}

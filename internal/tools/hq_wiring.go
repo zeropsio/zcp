@@ -331,7 +331,8 @@ func lazySelf(ctx context.Context, hqc hq.Client) func() (hq.MateState, error) {
 	}
 }
 
-// keepHQPairCurrent is one wired pair's turn of a pass: wired again in the
+// keepHQPairCurrent is one wired pair's turn of a pass: moved off an HQ the
+// Mate no longer links to (moveFromRetiredHQ), wired again in the
 // application HQ holds the Mate in now, if that moved, what became of its
 // change on record, a change handed to the Mate there (hqTakeHanded) or the
 // one still open (hqOpenChangeWork), how its code is kept (recordHQOrigin)
@@ -348,10 +349,11 @@ func keepHQPairCurrent(
 	self func() (hq.MateState, error),
 	m *workflow.ServiceMeta,
 ) (string, bool) {
+	moved, _ := moveFromRetiredHQ(ctx, sshDeployer, stateDir, hqc, m)
 	state, err := self()
 	if err != nil {
 		// Saying nothing beats saying anything a failed read cannot know.
-		return "", false
+		return moved, false
 	}
 	if state.AppID == nil {
 		return "HQ holds this Mate in no application now, so its repository takes nothing from it — it will once the Mate is in one; nothing else is blocked.", false
@@ -370,7 +372,7 @@ func keepHQPairCurrent(
 	if work == "" {
 		work = hqOpenChangeWork(hqc, m)
 	}
-	for _, line := range []string{hqPairOrigin(ctx, sshDeployer, hqc, m), landed, work, hqPairMain(ctx, sshDeployer, hqc, m)} {
+	for _, line := range []string{moved, hqPairOrigin(ctx, sshDeployer, hqc, m), landed, work, hqPairMain(ctx, sshDeployer, hqc, m)} {
 		if line != "" {
 			lines = append(lines, line)
 		}

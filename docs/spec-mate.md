@@ -733,7 +733,7 @@ environment instead, never a probed flag (§2.2).
 | C-4 | Liveness is `GET {basePath}/.well-known/t3/environment` → `200 application/json` carrying `basePath` (§2.5) | fork's environment descriptor |
 | C-5 | The server binds loopback only and never claims a declared platform port (§2.4) | zcp's `ServeArgv`, fork's `--host` |
 | C-6 | **`/mate` is the server's public prefix, and the hosted client addresses it.** zcp sets it through `T3CODE_BASE_PATH` from `mate.BasePath` (§2.2) and nginx serves only the server's API and WebSocket there (§2.4). The released artifact carries no web client and `pack` requires none; moving the prefix is a coordinated two-repo change (zcp, the hosted client) | zcp's `mate.BasePath` + the hosted client |
-| C-7 | The Mate's Git credential file (C-3) holds one credential, written by the server in a single rename whenever HQ sends a new one and removed when HQ revokes it; zcp reads it at each repository pass and never writes it. Why a new Mate's stand-up waits is the server's own word from its link (`/setup.json`: `not_linked` with the link's reason, §3.12) | fork's `ZeropsHqLink`, zcp's repository pass |
+| C-7 | The Mate's Git credential file (C-3) holds one credential, written by the server in a single rename whenever HQ sends a new one and removed when HQ revokes it; zcp reads it at each repository pass and at each look of the Mate's service, and never writes it. Why a new Mate's stand-up waits is the server's own word from its link (`/setup.json`: `not_linked` with the link's reason, §3.12) | fork's `ZeropsHqLink`, zcp's repository pass and `KeepMateDevGit` |
 
 The monorepo facts C-8…C-12 continue this table in §2.8a.
 
@@ -4136,9 +4136,17 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   service secret, written by the wiring's `git-push-setup`, which the per-command credential helper
   presents as the user `mate`. The file the server keeps it in (C-3) is the credential's one home:
   the pair's record keeps only a fingerprint of the copy the dev service holds
-  (`HQRepoRef.credentialFingerprint`), and the repository pass — bootstrap, adopt and every develop
-  start — rewrites only that secret when the fingerprint differs from the file's, as after HQ issued
-  a new one, outside its backoff and leaving the checkout's branch and origin alone. The project key
+  (`HQRepoRef.credentialFingerprint`). The Mate's own service (`zcp service start mate`) looks at
+  the file every 10 s and rewrites only that secret when the fingerprint differs from the file's, as
+  after HQ issued a new one on a link, leaving the checkout's branch and origin alone; the repository
+  pass — bootstrap, adopt and every develop start — does the same outside its backoff.
+- **A Mate moved to another HQ.** A wired pair whose record names its repository on another host
+  than the HQ the Mate links to now was wired before the move. At the Mate's service start, and at
+  every repository pass, its checkout's `origin` is pointed at the repository's address on the
+  current HQ while it still names the retired one (an origin anywhere else is not moved), git's
+  helper for the retired host goes and HQ's is written for the current one, and the record follows.
+  A start that could not finish — the dev service stopped, HQ not answering — is taken again on the
+  pass's backoff. The project key
   is never written into the dev service: it runs the application's code and its dependencies. The
   helper persisted in `.git/config` for HQ's host answers the dev service from `GIT_TOKEN` and the
   Mate's own shell from `zcp hq git-credential`, which reads the file at each request and answers
@@ -4148,7 +4156,7 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   change's link and the next step while the pair has one; a stand-up's closes without it.
 
 `hq_pair.go`, `hq_change.go`, `hq_change_description.go`, `hq_describe_retry.go`, `hq_retry.go`,
-`hq_wiring.go`, `hq_pair_lock.go`, `deploy_git_push.go`, `workflow/pair_lock.go`,
+`hq_wiring.go`, `hq_dev_git.go`, `service/service.go`, `hq_pair_lock.go`, `deploy_git_push.go`, `workflow/pair_lock.go`,
 `ops/hq_base_branch.go`, `internal/hq/changes.go`, `internal/hq/gitcredential.go`;
 `TestReconcileHQRepositories_*`, `TestHQPass_LearnsAMergeWithoutChangingTheCheckout`,
 `TestAWiredPairDeploysDirectlyAndIsNeverSentToPush`, `TestGitPushToHQ_RefusedForPlainGitOnABranch`,
