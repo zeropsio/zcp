@@ -126,7 +126,8 @@ type MateTier struct {
 // ParseMateTier reads an application's AI Agent tier. address is the Mate's
 // HQ and appID the application HQ holds it in: a runtime is a pair's half
 // only when it builds from a repository of that application there,
-// `<address>/git/<appID>/<repo>`.
+// `<address>/git/<orgID>/<appID>/<repo>` (or, in a tier written before HQ
+// named the organisation, `<address>/git/<appID>/<repo>`; hqRepoOf).
 //
 // Pairs are formed per repository by zcp's naming convention, never by a
 // setup's name — a group names its setups after the pair (`medusadev`,
@@ -395,8 +396,12 @@ func vaultAndLegacyEnvs(vault importVault, legacy ...map[string]any) map[string]
 }
 
 // hqRepoOf is the application and repository a repository URL names on the
-// HQ at address — `<address>/git/<appID>/<repo>`, https, on HQ's own host and
-// port — and whether it names one there at all.
+// HQ at address — https, on HQ's own host and port — and whether it names one
+// there at all. HQ serves a repository at `<address>/git/<orgID>/<appID>/<repo>`
+// (hq.RepoURLAt, what zcp's group recipe writes); a tier written before HQ
+// named the organisation carries `<address>/git/<appID>/<repo>`, and still
+// names the same repository: the application, never the organisation, is
+// what places it in HQ.
 func hqRepoOf(repoURL, address string) (appID, repo string, ok bool) {
 	u, err := url.Parse(topology.CanonicalRepoURL(repoURL))
 	if err != nil || !strings.EqualFold(u.Scheme, "https") {
@@ -407,9 +412,18 @@ func hqRepoOf(repoURL, address string) (appID, repo string, ok bool) {
 		return "", "", false
 	}
 	rest, under := strings.CutPrefix(u.Path, hq.Path+"/git/")
-	segments := strings.Split(rest, "/")
-	if !under || len(segments) != 2 || segments[0] == "" || segments[1] == "" {
+	if !under {
 		return "", "", false
 	}
-	return segments[0], segments[1], true
+	segments := strings.Split(rest, "/")
+	if slices.Contains(segments, "") {
+		return "", "", false
+	}
+	switch len(segments) {
+	case 3:
+		return segments[1], segments[2], true
+	case 2:
+		return segments[0], segments[1], true
+	}
+	return "", "", false
 }
