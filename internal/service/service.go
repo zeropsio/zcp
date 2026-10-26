@@ -233,13 +233,16 @@ var mateSetupBoot = matesetup.Boot
 // of them. All run in this process, for as long as the server does; a restart
 // cut short finds what it left by looking.
 func mateLaunchSetup() {
-	lookup := mate.LiveLookup(mateStorePath)
+	// The goroutines below read the store path taken here, never the var:
+	// it is the launch's, and they outlive it.
+	store := mateStorePath
+	lookup := mate.LiveLookup(store)
 	path := mate.DefaultStatusFilePath()
 	planSet := strings.TrimSpace(lookup(matesetup.EnvRuntimes)) != ""
 	if err := matesetup.MarkLaunch(path, planSet, time.Now()); err != nil {
 		fmt.Fprintf(os.Stderr, "[zcp] service mate: %v\n", err)
 	}
-	env := func() func(string) string { return mate.LiveLookup(mateStorePath) }
+	env := func() func(string) string { return mate.LiveLookup(store) }
 	mateSeedSignIns(context.Background(), lookup)
 	go keepMateDevGit(env)
 	if planSet {
