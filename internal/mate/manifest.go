@@ -32,7 +32,9 @@ const (
 	// step 2, PartsMateVersion). 0.15.153 is the first release that draws
 	// zerops_origin's ask and tells the agent how it ended: an older one
 	// shows a plain call, and the agent waits on a card it never draws.
-	MinimumMateVersion = "0.15.153"
+	// 0.16.0 is the first contract-2 release: it links with the project key
+	// and its package declares the HQ origin.
+	MinimumMateVersion = "0.16.0"
 
 	// PartsMateVersion is the first mate release that accepts the envelope's
 	// stages[] and devServers[] (docs/spec-mate.md §2.8a.3, field-order
