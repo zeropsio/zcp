@@ -471,6 +471,34 @@ func (e *SwarmError) AtServiceMaximum() bool {
 	return strings.Contains(strings.ToLower(e.Cause), swarmCauseServiceMaximum)
 }
 
+// swarmCodeActionInProgress is the platform's code, when the orchestrator
+// passes it on in meta[], of a call refused because another action on the
+// pool service is still running; swarmRemovalInProgress the words of the one
+// a delete meets: "another container removal for this service is still in
+// progress - retry in a moment" (live 2026-10-23 and 2026-10-26, a release
+// right after another of the same pool), 400 containerAction with no reason
+// and not marked retryable, though it clears once that removal ends.
+const (
+	swarmCodeActionInProgress = "serviceStackActionInProgress"
+	swarmRemovalInProgress    = "removal for this service is still in progress"
+)
+
+// RemovalInProgress reports a refusal the platform gave because another
+// removal of the pool's containers is still running — by its words, or by the
+// platform's code where meta[] carries it (Details). A refusal with an
+// orchestrator reason of its own is another refusal.
+func (e *SwarmError) RemovalInProgress() bool {
+	if e.Reason != "" {
+		return false
+	}
+	for _, d := range e.Details {
+		if d == swarmCodeActionInProgress || strings.HasPrefix(d, swarmCodeActionInProgress+":") {
+			return true
+		}
+	}
+	return strings.Contains(strings.ToLower(e.Message), swarmRemovalInProgress)
+}
+
 // Error implements error. It carries no request URL and no lease.
 func (e *SwarmError) Error() string {
 	var b strings.Builder

@@ -42,9 +42,24 @@ import (
 const LeaseWarmTarget = 1
 
 // leaseWarmLockWait is how long a release waits for its pool's warm lock — a
-// concurrent release's reset takes 7–13 s, a create about 16 s on a container
-// pool — before it keeps its container with a plain reset.
-const leaseWarmLockWait = 20 * time.Second
+// concurrent release's reset takes 7–13 s, its removal waits out another
+// removal for up to leaseRemovalTries × leaseRemovalRetry before that reset,
+// a create takes about 16 s on a container pool — before it keeps its
+// container with a plain reset.
+const leaseWarmLockWait = 45 * time.Second
+
+// A removal the platform refuses because another removal of the pool's
+// containers is still running ("retry in a moment", RemovalInProgress) clears
+// once that one ends, ~7–9 s after it began (lease_reroute.go): a release
+// tries it again every leaseRemovalRetry, at most leaseRemovalTries more
+// times (~30 s), before it falls back to the reset release — which in a full
+// pool serving previews leaves the next lease on the container a preview
+// answering 502 (DP-28; live 2026-10-26, a release right after another of the
+// same pool, twice).
+const (
+	leaseRemovalRetry = 3 * time.Second
+	leaseRemovalTries = 10
+)
 
 // An acquire refused containers-preparing reserved nothing: it is retried
 // every leasePreparingRetry, for up to leasePreparingWait on a container
@@ -91,6 +106,10 @@ type LeaseWarm struct {
 	// LaunchRetry is the pause before a warm clone's launch is tried again
 	// after ssh itself failed; zero means leaseWarmLaunchRetry.
 	LaunchRetry time.Duration
+	// RemovalRetry is the pause before a removal the platform refused while
+	// another removal of the pool's containers was still running is tried
+	// again; zero means leaseRemovalRetry.
+	RemovalRetry time.Duration
 }
 
 func (w *LeaseWarm) spawn(fn func()) {
@@ -317,7 +336,9 @@ func releasedReset(v LeaseView) bool {
 // the same read, or, after a full pool's removal, records that the pool has
 // no warm container while it is full. A container without a primary snapshot goes the DP-15
 // way first. A delete refused for any reason but a lease the orchestrator no
-// longer knows falls back to the reset release; a lock it cannot take in time,
+// longer knows falls back to the reset release — one refused while another
+// removal of the pool's containers runs only once its retries ran out
+// (removeWithLease); a lock it cannot take in time,
 // or a pool it cannot read, keeps the container with the reset release.
 func (w *LeaseWarm) keepOrRemove(ctx context.Context, d LeaseDeps, rp *resolvedPool, rec leaseRecord, reset func() (LeaseView, error)) (LeaseView, error) {
 	unlock, err := lockPoolWarm(ctx, d.StateDir, rp.svc.Name, cmp.Or(w.LockWait, leaseWarmLockWait))
@@ -456,9 +477,14 @@ func (w *LeaseWarm) decideRelease(ctx context.Context, d LeaseDeps, rp *resolved
 	default:
 		why = removeWhy(mine, w.Target)
 	}
-	err := rp.api.Delete(ctx, rec.ContainerID, rec.Lease)
+	waited, tries, err := w.removeWithLease(ctx, rp, rec)
 	if err == nil {
-		view, dropErr := dropLeaseRecord(d.StateDir, rec, LeaseStateReleased, "the container was removed with this lease rather than reset: "+why)
+		note := "the container was removed with this lease rather than reset: " + why
+		if tries > 0 {
+			note += fmt.Sprintf("; the orchestrator first refused the removal while it was still removing another of the pool's containers, so zcp waited %s (%s) and removed it then",
+				waited, moreTries(tries))
+		}
+		view, dropErr := dropLeaseRecord(d.StateDir, rec, LeaseStateReleased, note)
 		view.containerRemoved, view.fullPoolMax = true, fullMax
 		return view, false, dropErr
 	}
@@ -482,10 +508,48 @@ func (w *LeaseWarm) decideRelease(ctx context.Context, d LeaseDeps, rp *resolved
 	if se != nil && se.Said() != "" {
 		refusal = se.Said()
 	}
+	refused := fmt.Sprintf("%s, but the orchestrator refused to remove it (%s)", why, refusal)
+	if tries > 0 {
+		refused += fmt.Sprintf(" and still refused after zcp waited %s (%s) for the pool's other removal to finish", waited, moreTries(tries))
+	}
 	kept := keepableWarm(mine)
 	view.keptWarm = kept
-	view.Note = joinNotes(view.Note, fmt.Sprintf("%s, but the orchestrator refused to remove it (%s), so it was released with a reset instead and stays in the pool", why, refusal))
+	view.Note = joinNotes(view.Note, refused+", so it was released with a reset instead and stays in the pool")
 	return view, kept, nil
+}
+
+// removeWithLease deletes the released container with its own lease. A
+// removal the platform refuses because another removal of the pool's
+// containers is still running (RemovalInProgress) is tried again every
+// RemovalRetry, at most leaseRemovalTries more times, while ctx lasts: tries
+// is how many more times it was tried and waited the pauses before them, both
+// 0 when the first answer was another. err is the last answer.
+func (w *LeaseWarm) removeWithLease(ctx context.Context, rp *resolvedPool, rec leaseRecord) (waited time.Duration, tries int, err error) {
+	every := cmp.Or(w.RemovalRetry, leaseRemovalRetry)
+	for {
+		err = rp.api.Delete(ctx, rec.ContainerID, rec.Lease)
+		var se *platform.SwarmError
+		if err == nil || !errors.As(err, &se) || !se.RemovalInProgress() || tries >= leaseRemovalTries {
+			return waited, tries, err
+		}
+		timer := time.NewTimer(every)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return waited, tries, err
+		case <-timer.C:
+		}
+		waited += every
+		tries++
+	}
+}
+
+// moreTries words how many more times a removal was tried.
+func moreTries(n int) string {
+	if n == 1 {
+		return "1 more try"
+	}
+	return fmt.Sprintf("%d more tries", n)
 }
 
 // keepableWarm reports a released container the pool can keep as its warm
