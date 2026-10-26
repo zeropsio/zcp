@@ -4502,8 +4502,9 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   Mate an acquire of a repository on HQ writes it to the pool's `ZCP_HQ_GIT_TOKEN` — never the pool's `GIT_TOKEN`, which
   every container of the pool reads and a lease of a repository outside HQ answers its host with, so it stays the
   user's — when zcp's fingerprint for that pool — kept in
-  `.zcp/state/leases/credentials/<pool>.json`, a pool having no record of its own — is absent or differs, and the same pass
-  renews every pool holding one. A pool that keys a pair after a pool migration (`spec-workflows.md` §13 PM-10) is renewed
+  `.zcp/state/leases/credentials/<pool>.json`, a pool having no record of its own — is absent or differs; the Mate's
+  service's look and the repository pass renew every pool holding one, so a held lease pushes with the credential HQ
+  sent from its next fresh session. A pool that keys a pair after a pool migration (`spec-workflows.md` §13 PM-10) is renewed
   with its pair, into the same `ZCP_HQ_GIT_TOKEN`, by the pool service id the pair records and over no ssh: the pair's record takes the per-pool
   fingerprint over and the per-pool record goes, so the pool is never renewed twice.
 - **A Mate moved to another HQ.** A wired pair whose record names its own repository

@@ -381,6 +381,20 @@ func RenewPoolHQCredentials(ctx context.Context, client platform.Client, stateDi
 	return failures
 }
 
+// RenewPoolHQCredential is RenewPoolHQCredentials for the one pool, for a
+// caller that paces each pool's retries itself: nil when its record already
+// names credential, or there is none.
+func RenewPoolHQCredential(ctx context.Context, client platform.Client, stateDir, pool, credential string) error {
+	if stateDir == "" || credential == "" {
+		return nil
+	}
+	fingerprint := hq.GitCredentialFingerprint(credential)
+	if rec, found := readPoolCredential(stateDir, pool); !found || rec.Fingerprint == fingerprint {
+		return nil
+	}
+	return renewPoolHQCredential(ctx, client, stateDir, pool, credential, fingerprint)
+}
+
 // renewPoolHQCredential is RenewPoolHQCredentials for one pool, under the
 // pool's credential lock: the record is read again there, so an acquire that
 // wrote the credential meanwhile is never written over.
