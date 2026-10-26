@@ -73,7 +73,7 @@ ones; bootstrap never modifies or replaces existing services.
 ---
 
 === idle-launch-entry ===
-The project has bootstrapped services with at least one successful deploy — a legitimate candidate for promotion to a SEPARATE production Zerops project. When the user's intent is "go live", "deploy to prod", "launch production", "promote to prod", or the Czech equivalents ("nasaď to na prod", "udělej produkční projekt"), what applies depends on whether this Mate keeps its code in HQ (enrolled with it, its pairs given repositories there).
+The project has bootstrapped services with at least one successful deploy — a legitimate candidate for promotion to a SEPARATE production Zerops project. When the user's intent is "go live", "deploy to prod", "launch production", "promote to prod", or the Czech equivalents ("nasaď to na prod", "udělej produkční projekt"), what applies depends on whether this project keeps its code in HQ: a Mate does — HQ knows it by its project's key, and its pairs get their repositories there.
 
 Not keeping its code in HQ — use the launch-production workflow rather than running `zcli project create` or hand-writing an import.yaml:
 
