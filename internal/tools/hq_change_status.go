@@ -333,7 +333,10 @@ func groupAliases(leases []hqLeaseBranch, g hqLeaseBranch) []string {
 // and branch, read through read (nil: none) once, only when a lease of an HQ
 // repository off main is among them — the ledger's as last read when it
 // answers nil. A merged change names the branch's leases still held, with the
-// branch release; "" when no released lease is of an HQ repository.
+// branch release, and the repository's stages, which track main, with the
+// call that puts main on one — the merged note may have reached the agent
+// before the last merge only; "" when no released lease is of an HQ
+// repository.
 func leaseReleaseChanges(stateDir, address string, released []ops.LeaseView, read func() *hq.MateState) string {
 	var groups []hqLeaseBranch
 	for _, v := range released {
@@ -363,6 +366,9 @@ func leaseReleaseChanges(stateDir, address string, released []ops.LeaseView, rea
 			if held := groupAliases(leases, g); len(held) > 0 {
 				words += fmt.Sprintf(" — the branch's leases still held (%s) hold merged work: release them (`%s`), or start new work from %s",
 					strings.Join(held, ", "), ops.LeaseReleaseBranchCall(g.branch, "", false), hqBase)
+			}
+			if stages := stagesTrackMain(stateDir, g.appID, g.repo); stages != "" {
+				words += " — " + stages
 			}
 		}
 		named = append(named, "group "+g.repo+"@"+g.branch+": "+words)
