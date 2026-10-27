@@ -663,6 +663,10 @@ func TestBuildAgentsMD_Container_GitHostIsHQ(t *testing.T) {
 		"which ZCP points there, never a second remote",
 		"HQ opens its pull request on GitHub",
 		"merges it in Mate",
+		// A monorepo is one repository: never a dev service per part, each
+		// of which would be a pair asking HQ for a repository of its own.
+		"a repository of several parts stays one repository",
+		"never a dev service per part",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("git-host paragraph missing %q", want)

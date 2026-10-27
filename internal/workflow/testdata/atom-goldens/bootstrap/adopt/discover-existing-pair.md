@@ -83,5 +83,9 @@ runtime of the plan:
    `zerops_dev_server action=start hostname="<dev>" name=<part>`. A worker without a port is
    still a named server. Every part on the dev service runs as one.
 
+A dev service serving several parts is a step on the way, never the end:
+each part then moves onto a dev pool of its own, as the monorepo playbook
+says.
+
 Read `zerops_knowledge uri="zerops://playbooks/monorepo"` first. Plan a new
 runtime only for a different repo.
