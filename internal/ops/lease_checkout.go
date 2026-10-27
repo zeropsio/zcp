@@ -10,11 +10,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // leaseWorkDir is where a leased container keeps its code.
@@ -104,6 +106,34 @@ type poolDefault struct {
 
 func poolDefaultPath(stateDir, pool string) string {
 	return filepath.Join(leaseDir(stateDir), "pools", pool+".json")
+}
+
+// MovePoolDefaultRepos re-points every pool default repository that names
+// from (topology.SameRepoURL) at to, and names the pools it moved, sorted: a
+// repository zcp wired moved — the Mate left an HQ, or HQ holds it in another
+// application now — and an acquire naming no repository must clone it where
+// it is (D8, live 2026-10-27). A default naming anything else stays; a
+// record that cannot be rewritten stays as it was.
+func MovePoolDefaultRepos(stateDir, from, to string) []string {
+	if stateDir == "" || from == "" || to == "" || topology.SameRepoURL(from, to) {
+		return nil
+	}
+	entries, err := os.ReadDir(filepath.Join(leaseDir(stateDir), "pools"))
+	if err != nil {
+		return nil
+	}
+	var moved []string
+	for _, e := range entries {
+		pool, isRecord := strings.CutSuffix(e.Name(), ".json")
+		if e.IsDir() || !isRecord || !topology.SameRepoURL(readPoolDefaultRepo(stateDir, pool), from) {
+			continue
+		}
+		if storePoolDefaultRepo(stateDir, pool, to) == nil {
+			moved = append(moved, pool)
+		}
+	}
+	sort.Strings(moved)
+	return moved
 }
 
 // readPoolDefaultRepo is the pool's default repository, "" when none is

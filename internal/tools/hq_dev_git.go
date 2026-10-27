@@ -387,6 +387,8 @@ func moveFromRetiredHQ(ctx context.Context, sshDeployer ops.SSHDeployer, stateDi
 		return fmt.Sprintf("its checkout is on %s now, but recording it failed (%v) — retrying", current, err), false
 	}
 	m.RemoteURL = current
+	// A pool whose default repository is the pair's follows it.
+	ops.MovePoolDefaultRepos(stateDir, retired, current)
 	if !strings.Contains(string(out), ops.HQMovedMarker) {
 		return "", true
 	}

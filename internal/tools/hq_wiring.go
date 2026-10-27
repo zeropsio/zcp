@@ -828,6 +828,9 @@ func wireHQPair(
 		}
 	}
 
+	// The repository the pair pushed to before — on this Mate's HQ, in the
+	// application it was wired in — which a pool's default may name.
+	previous := m.RemoteURL
 	// git-push-setup owns the credential, the probe, the origin sync and the
 	// meta stamp. Calling it rather than reproducing it is what keeps the
 	// credential out of every file ZCP writes: it goes to a sensitive service
@@ -873,6 +876,11 @@ func wireHQPair(
 		return hqWiringOutcome{line: fmt.Sprintf("repository %q is wired but recording it failed (%v) — the next pass re-reads it.", repo.Name, err)}
 	}
 	m.HQ = recorded
+	// A pool whose default repository is the one the pair left follows it to
+	// the application HQ holds the Mate in now.
+	if previous != "" && !sameGitRepository(previous, remote) {
+		ops.MovePoolDefaultRepos(stateDir, previous, remote)
+	}
 	// git-push-setup pointed origin at HQ; where the person keeps the code on
 	// GitHub, the wiring points it there last.
 	if state, err := self(); err == nil {
