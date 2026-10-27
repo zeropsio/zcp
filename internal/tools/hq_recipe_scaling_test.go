@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/ops/bundle"
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
@@ -135,14 +136,21 @@ func TestGroupRecipeScaling_SteersAndProposesOneHostsBlock(t *testing.T) {
 			continue
 		}
 		changed = append(changed, path)
-		// Every line outside search's entry is main's.
+		// Every line outside search's entry is main's — but zcp's mark,
+		// which follows zcp's edit of a tier it wrote, so the tier stays
+		// zcp's own.
 		outside := func(body string) []string {
 			lines := strings.Split(body, "\n")
 			start, end := hostEntryLines(lines, "search")
-			return append(slices.Clone(lines[:start]), lines[end:]...)
+			return slices.DeleteFunc(append(slices.Clone(lines[:start]), lines[end:]...), func(line string) bool {
+				return strings.HasPrefix(line, "# zcp-recipe: ")
+			})
 		}
 		if !slices.Equal(outside(body), outside(main[path])) {
 			t.Errorf("%s: the proposal changes lines outside search's entry", path)
+		}
+		if mate, intact, _ := bundle.TierStamp(body); mate != labMate || !intact {
+			t.Errorf("%s: zcp's mark = %q intact %v after its own edit, want this Mate's, intact", path, mate, intact)
 		}
 		if !strings.Contains(body, "      minRam: 4") || !strings.Contains(body, "      minFreeRamGB: 1") {
 			t.Errorf("%s: search's block does not carry the new scale:\n%s", path, body)

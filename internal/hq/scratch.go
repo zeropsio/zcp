@@ -122,6 +122,36 @@ func (s *Scratch) FetchTip(ctx context.Context, branch string) (head string, fou
 	return head, err == nil, err
 }
 
+// Commit is one commit of a scratch's history as a reader of who wrote a
+// file needs it: its author's address and its subject.
+type Commit struct {
+	AuthorEmail string
+	Subject     string
+}
+
+// SquashAuthorEmail is the author address of Core's squash of a change of
+// the Mate mateProjectID onto main (HQ changes.ts: every landing is a squash
+// authored by the change's Mate): what tells, on main, which Mate's change
+// wrote a commit.
+func SquashAuthorEmail(mateProjectID string) string {
+	return mateProjectID + "@mate.hq.invalid"
+}
+
+// History is every commit of rev's history that changed path, newest first;
+// none for a path no commit touched.
+func (s *Scratch) History(ctx context.Context, rev, path string) ([]Commit, error) {
+	out, err := s.gitRaw(ctx, s.env, nil, "log", "--format=%ae%x00%s%x00", rev, "--", path)
+	if err != nil {
+		return nil, err
+	}
+	fields := strings.Split(strings.TrimSpace(out), "\x00")
+	var commits []Commit
+	for i := 0; i+1 < len(fields); i += 2 {
+		commits = append(commits, Commit{AuthorEmail: strings.TrimSpace(fields[i]), Subject: strings.TrimSpace(fields[i+1])})
+	}
+	return commits, nil
+}
+
 // unborn is the rev of a branch HQ has no commit on yet: Fetch's head for a
 // branch it did not find. Every read of it reads the empty tree.
 const unborn = ""

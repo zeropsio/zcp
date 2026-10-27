@@ -154,12 +154,15 @@ func TierStamp(body string) (mateID string, intact, stamped bool) {
 	return mateID, !tierStampLine.MatchString(rest) && sha256Hex(rest) == digest, true
 }
 
-// TierShape is what a tier creates, one line per service — hostname, type,
-// the setup and repository it builds, sorted — so two tiers differ in shape
-// exactly when a service is added, removed, renamed or retyped, or builds
-// another part: a pool migration, a part added or removed, a type changed.
-// A scale, a variable or a comment is no shape. nil for a body that does not
-// parse.
+// TierShape is what a tier creates, one line per service, sorted: a runtime
+// built from a repository by its part — the repository, the setup and its
+// type — and every other service by its hostname and type. Two tiers differ
+// in shape exactly when a service is added or removed, a part is retyped or
+// builds another setup, or a pool takes a dev service's place: a pool
+// migration, a part added or removed, a type changed. A scale, a variable, a
+// comment — and a part's hostname, which a person may have chosen and an
+// environment made from the tier runs under — are no shape. nil for a body
+// that does not parse.
 func TierShape(body string) []string {
 	var doc struct {
 		Services []struct {
@@ -174,13 +177,13 @@ func TierShape(body string) []string {
 	}
 	shape := make([]string, 0, len(doc.Services))
 	for _, svc := range doc.Services {
-		repo, _ := publicRepoURL(svc.BuildFromGit)
-		if strings.TrimSpace(svc.BuildFromGit) == "" {
-			repo = ""
+		typ, setup := strings.TrimSpace(svc.Type), strings.TrimSpace(svc.ZeropsSetup)
+		repo, private := publicRepoURL(svc.BuildFromGit)
+		if strings.TrimSpace(svc.BuildFromGit) != "" && !private && setup != "" {
+			shape = append(shape, "part "+repo+" "+setup+" "+typ)
+			continue
 		}
-		shape = append(shape, strings.Join([]string{
-			strings.TrimSpace(svc.Hostname), strings.TrimSpace(svc.Type), strings.TrimSpace(svc.ZeropsSetup), repo,
-		}, " "))
+		shape = append(shape, "service "+strings.TrimSpace(svc.Hostname)+" "+typ)
 	}
 	sort.Strings(shape)
 	return shape

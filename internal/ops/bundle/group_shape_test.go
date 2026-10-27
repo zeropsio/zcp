@@ -410,9 +410,10 @@ func TestTierStamp_NamesTheMateAndHoldsOnlyWhileUntouched(t *testing.T) {
 }
 
 // TestTierShape_ReadsWhatTheTierCreates: a tier's shape is the set of
-// services it creates — hostname, type, the setup and repository it builds —
-// so a scale, a variable or a comment changes no shape, and a pool
-// migration, a part added or removed or a type changed does.
+// services it creates — a part by its repository, setup and type, any other
+// service by its hostname and type — so a scale, a variable, a comment or a
+// part's hostname changes no shape, and a pool migration, a part added or
+// removed or a type changed does.
 func TestTierShape_ReadsWhatTheTierCreates(t *testing.T) {
 	t.Parallel()
 	layout, _, err := BuildGroupRecipe(poolMonorepoInputs())
@@ -421,8 +422,12 @@ func TestTierShape_ReadsWhatTheTierCreates(t *testing.T) {
 	}
 	body := tierDocBody(t, layout, "Stage")
 	same := strings.Replace(strings.Replace(body, "minRam: 0.25", "minRam: 0.5", 1), "The Stage tier.", "Our stage.", 1)
+	same = strings.Replace(same, "hostname: web\n", "hostname: storefront\n", 1)
+	if same == body || !strings.Contains(same, "hostname: storefront") {
+		t.Fatalf("the edits did not apply:\n%s", same)
+	}
 	if !slicesEqual(TierShape(body), TierShape(same)) {
-		t.Errorf("a scale or a comment changed the shape: %v vs %v", TierShape(body), TierShape(same))
+		t.Errorf("a scale, a comment or a part's hostname changed the shape: %v vs %v", TierShape(body), TierShape(same))
 	}
 	retyped := strings.Replace(body, "type: alpine/nodejs@24", "type: ubuntu/nodejs@24", 1)
 	if slicesEqual(TierShape(body), TierShape(retyped)) {

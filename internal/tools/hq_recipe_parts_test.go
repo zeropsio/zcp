@@ -22,7 +22,8 @@ var workerStage = platform.ServiceStack{ID: "svc-workerstage", Name: "workerstag
 
 // newPartsLab is the recipe lab whose one-part app's recipe landed on main,
 // and which the group then edited by hand: Stage's runtime renamed to shop
-// with a comment of its own, and a project variable added.
+// with a comment of its own, and a comment in every tier's project — so
+// every tier is the group's, which zcp reaches only by a targeted proposal.
 func newPartsLab(t *testing.T) (*hqLab, map[string]string) {
 	t.Helper()
 	lab := newRecipeLab(t)
@@ -38,7 +39,12 @@ func newPartsLab(t *testing.T) (*hqLab, map[string]string) {
 	if edited == stage || !strings.Contains(edited, "hostname: shop") {
 		t.Fatalf("the Stage tier does not read as the composer writes it:\n%s", stage)
 	}
-	lab.hq.landOnMain(hq.RecipeRepo, map[string]string{stagePath: edited})
+	edits := map[string]string{stagePath: edited}
+	for _, tier := range []string{hq.RecipeTierMate, hq.RecipeTierProduction} {
+		path := hq.RecipeTierPaths[tier]
+		edits[path] = strings.Replace(lab.hq.recipeFiles("main")[path], "project:\n  name: ", "project:\n  # edited by the group\n  name: ", 1)
+	}
+	lab.hq.landOnMain(hq.RecipeRepo, edits)
 	return lab, lab.hq.recipeFiles("main")
 }
 
