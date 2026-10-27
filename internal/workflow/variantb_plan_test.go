@@ -117,17 +117,17 @@ func TestBootstrapCompletePlan_PlanCarryingCodeVolume_RefusedNamingPools(t *test
 					t.Errorf("err = %v, want it to say %q", err, want)
 				}
 			}
+			// Every part ends on a dev pool of its own: one dev service
+			// holding the whole repository is no longer the plan it names.
+			if strings.Contains(err.Error(), "one dev service holds the whole repository") {
+				t.Errorf("err = %v, still names one dev service for the whole repository", err)
+			}
 			state, err := eng.GetState()
 			if err != nil {
 				t.Fatalf("GetState: %v", err)
 			}
 			if state.Bootstrap.Plan != nil {
 				t.Errorf("a refused plan was stored: %+v", state.Bootstrap.Plan)
-			}
-			// Every part ends on a dev pool of its own: one dev service
-			// holding the whole repository is no longer the plan it names.
-			if strings.Contains(err.Error(), "one dev service holds the whole repository") {
-				t.Errorf("err = %v, still names one dev service for the whole repository", err)
 			}
 		})
 	}
