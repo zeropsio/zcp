@@ -4224,13 +4224,16 @@ moves forward: a changed composition is a commit on its head, with `main` as a s
 it proposed landed from another Mate's — is brought to `main`'s tree, adds nothing, and Core closes
 it. Nothing about the proposal is stored: each pass composes it anew and finds the change in the
 Mate's state (`GET /api/mate/self`), so passes run one at a time on the Mate, across every zcp it
-runs (an exclusive lock, `<stateDir>/hq/group-recipe.lock`, waited for within the call and at most
-two minutes; a pass that does not get it changes nothing and says another pass is running): two at
+runs (an exclusive lock, `<stateDir>/hq/group-recipe.lock`, taken once a pass knows it has something
+to do — a Mate linked to its HQ with a pair whose repository is there — and waited for within the call
+and at most two minutes; a pass that does not get it changes nothing and says another pass is
+running; the start pass is the server's background work, which `Server.Stop` ends and waits for): two at
 once both read `main` and the Mate's state from before either change existed, and on 2026-10-27 the
 second proposed onto Mate Web's empty `main` after Core had landed the first, a root commit on a
 change of its own that HQ judged `unrelated` and could never land
 (`TestGroupRecipePass_TwoAtOnceOntoUnbornMain_OpensOneChange`,
-`TestGroupRecipePass_AnotherPassRunning_ChangesNothing`); a push from outside a pass — a proposal pushed
+`TestGroupRecipePass_AnotherPassRunning_ChangesNothing`, `TestGroupRecipePass_NothingToDo_WritesNothing`,
+`TestServerStop_StartPassRunning_WaitsForIt`); a push from outside a pass — a proposal pushed
 again for Core to judge, a targeted proposal — that races it on the branch ends in a refused push and the next pass's work. It runs once at each zcp start in a Mate (which opens no proposal again that a person closed unmerged — a closed duplicate an earlier merge of the Mate's superseded, composed against a `main` from before that merge landed or holding nothing `main` lacks, is no decline: `TestGroupRecipeAtStart_RacedDuplicateClosed_IsNoDecline`), on every bootstrap close, adopt pass and develop start, right after the repository
 reconcile, and when the agent asks (`zerops_workflow action="group-recipe"`), which answers with the change or that
 `main` already carries every tier; Core lands a proposal that only adds by itself, and a person
