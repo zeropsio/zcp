@@ -641,7 +641,9 @@ func keepHQPairCurrent(
 
 // hqPairMain checks a wired pair's local `main` against HQ's
 // (ops.BuildMainSyncCommand): a `main` that is only zcp's empty seed is put on
-// HQ's; one with commits HQ's lacks is left, with the step that keeps them.
+// HQ's; a history of its own on HQ's unwritten root is left, with the way it
+// goes in as it is; one with commits HQ's lacks is left, with the step that
+// keeps them.
 // "" when there is nothing to say — a check that could not run among it: the
 // next pass runs it again. A container with no organisation cannot build
 // HQ's address, and says so.
@@ -669,6 +671,8 @@ func hqPairMain(ctx context.Context, sshDeployer ops.SSHDeployer, hqc hq.Client,
 		return fmt.Sprintf("its %q held only zcp's empty seed and nothing of yours, so it is HQ's %q now (%.12s) and takes HQ's work by fast-forward", hqBase, hqBase, detail)
 	case ops.MainSeedInTheWay:
 		return fmt.Sprintf("its %q holds only zcp's empty seed, and files the working copy holds uncommitted stand where HQ's %q puts its own: in your own shell on the mounted checkout, commit them on a branch of your own (`git checkout -b <branch> && git add -A && git commit`); the next develop start then puts %q on HQ's", hqBase, hqBase, hqBase)
+	case ops.MainFirstHistory:
+		return fmt.Sprintf("its %q is this repository's first history and HQ's %q holds only its initial commit: in your own shell on the mounted checkout, push it as it is on a branch of your own (`git checkout -b <branch> main && git push origin <branch>`) and open its change with `zerops_workflow action=\"open-change\" branch=\"<branch>\" title=\"<what it brings in>\"` — merged, HQ makes it %q; never merge or rebase it onto that initial commit", hqBase, hqBase, hqBase)
 	case ops.MainOwnCommits:
 		return fmt.Sprintf("its %q holds %s commit(s) HQ's %q does not, and %q moves only by a merge: in your own shell on the mounted checkout, keep them on a branch (`git branch <name> main`), put %q on HQ's (`git checkout main && git fetch origin && git reset --keep origin/main`), and carry what they need onto a branch cut from it with `git cherry-pick`", hqBase, detail, hqBase, hqBase, hqBase)
 	}

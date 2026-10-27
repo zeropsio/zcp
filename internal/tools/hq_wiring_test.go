@@ -624,9 +624,18 @@ func TestDevelopStart_AFirstHistoryOnHQsUnwrittenRootIsPushedAsItIs(t *testing.T
 			t.Errorf("develop's start does not say %q:\n%s", want, text)
 		}
 	}
+	// The pass's own line for the pair (the git-push start guidance beside it
+	// names a reset for a main that merely fell behind).
+	line := text
+	if i := strings.Index(line, "first history"); i >= 0 {
+		line = line[i:]
+		if j := strings.Index(line, "initial commit;"); j >= 0 {
+			line = line[:j]
+		}
+	}
 	for _, never := range []string{"git cherry-pick", "git reset --keep origin/main"} {
-		if strings.Contains(text, never) {
-			t.Errorf("develop's start carries the first history onto HQ's root (%q):\n%s", never, text)
+		if strings.Contains(line, never) {
+			t.Errorf("develop's start carries the first history onto HQ's root (%q):\n%s", never, line)
 		}
 	}
 }
