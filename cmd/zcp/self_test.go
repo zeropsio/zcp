@@ -135,7 +135,7 @@ func TestRunSelfCmd_Restart_RefusesOutsideAContainer(t *testing.T) {
 		{"outside a container", without("serviceId", "projectId", "hostname"), nil, nil, "not running in a Zerops container", false},
 		{"no project key", without("ZCP_API_KEY"), nil, nil, "ZCP_API_KEY", false},
 		{"client cannot be built", selfLiveEnv(), errors.New("bad API host"), nil, "bad API host", false},
-		{"platform refuses the restart", selfLiveEnv(), nil, errors.New("service is busy\nretry later"), "the platform refused the restart: service is busy retry later", true},
+		{"platform answer unknown", selfLiveEnv(), nil, errors.New("service is busy\nretry later"), "could not confirm the restart: service is busy retry later", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -160,18 +160,89 @@ func TestRunSelfCmd_Restart_RefusesOutsideAContainer(t *testing.T) {
 			if strings.Count(out.String(), "\n") != 1 {
 				t.Errorf("stdout = %q, want one JSON line", out.String())
 			}
-			var answer map[string]string
+			var answer map[string]any
 			if err := json.Unmarshal(out.Bytes(), &answer); err != nil {
 				t.Fatalf("stdout %q is not one JSON answer: %v", out.String(), err)
 			}
-			if len(answer) != 1 || !strings.Contains(answer["error"], tt.wantErr) || strings.Contains(answer["error"], "\n") {
-				t.Errorf("answer = %v, want only an error, one line naming %q", answer, tt.wantErr)
+			msg, _ := answer["error"].(string)
+			if _, hasID := answer["processId"]; hasID || !strings.Contains(msg, tt.wantErr) || strings.Contains(msg, "\n") {
+				t.Errorf("answer = %v, want an error, one line naming %q, and no process", answer, tt.wantErr)
 			}
 			if asked := len(client.asked()) > 0; asked != tt.wantAsked {
 				t.Errorf("platform asked to restart = %v, want %v", asked, tt.wantAsked)
 			}
 			if !tt.wantAsked && tt.clientErr == nil && built {
 				t.Error("a refused restart built the platform client")
+			}
+		})
+	}
+}
+
+// TestRunSelfCmd_Restart_RefusedOnlyWhenDefinite: an error answer carries
+// `"refused": true` only when the restart certainly did not happen — nothing
+// to restart, no key, no client, or the platform's own 4xx — so the Mate can
+// reopen at once. A timeout, a dropped connection, a 5xx or any error zcp
+// cannot classify leaves it out and says the restart is unconfirmed: the
+// platform may have taken it.
+func TestRunSelfCmd_Restart_RefusedOnlyWhenDefinite(t *testing.T) {
+	t.Parallel()
+	noService := selfLiveEnv()
+	delete(noService, "serviceId")
+	noKey := selfLiveEnv()
+	delete(noKey, "ZCP_API_KEY")
+	apiRejected := platform.NewPlatformError(platform.ErrAPIError, "invalid state", "")
+	apiRejected.APICode = "serviceStackInvalidState"
+	tests := []struct {
+		name        string
+		env         map[string]string
+		clientErr   error
+		restartErr  error
+		wantRefused bool
+		wantMsg     string
+	}{
+		{"not in a container", noService, nil, nil, true, "not running in a Zerops container"},
+		{"no project key", noKey, nil, nil, true, "ZCP_API_KEY"},
+		{"no client", selfLiveEnv(), errors.New("bad API host"), nil, true, "bad API host"},
+		{"permission denied (403)", selfLiveEnv(), nil, platform.NewPlatformError(platform.ErrPermissionDenied, "forbidden", ""), true, "the platform refused the restart"},
+		{"token expired (401)", selfLiveEnv(), nil, platform.NewPlatformError(platform.ErrAuthTokenExpired, "expired", ""), true, "the platform refused the restart"},
+		{"service not found (404)", selfLiveEnv(), nil, platform.NewPlatformError(platform.ErrServiceNotFound, "gone", ""), true, "the platform refused the restart"},
+		{"rate limited (429)", selfLiveEnv(), nil, platform.NewPlatformError(platform.ErrAPIRateLimited, "slow down", ""), true, "the platform refused the restart"},
+		{"API rejected the request (4xx with a code)", selfLiveEnv(), nil, apiRejected, true, "the platform refused the restart"},
+		{"timeout", selfLiveEnv(), nil, platform.NewPlatformError(platform.ErrAPITimeout, "API request timed out", ""), false, "could not confirm the restart"},
+		{"network", selfLiveEnv(), nil, platform.NewPlatformError(platform.ErrNetworkError, "connection reset", ""), false, "could not confirm the restart"},
+		{"unclassified", selfLiveEnv(), nil, errors.New("boom"), false, "could not confirm the restart"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mock := platform.NewMock()
+			if tt.restartErr != nil {
+				mock.WithError("RestartService", tt.restartErr)
+			}
+			client := &recordingRestarter{mock: mock}
+			newClient := func(string, string) (serviceRestarter, error) {
+				if tt.clientErr != nil {
+					return nil, tt.clientErr
+				}
+				return client, nil
+			}
+			var out bytes.Buffer
+			if code := runSelfCmd([]string{"restart", "--json"}, &out, lookupIn(tt.env), newClient); code != 1 {
+				t.Errorf("exit %d, want 1", code)
+			}
+			var answer map[string]any
+			if err := json.Unmarshal(out.Bytes(), &answer); err != nil {
+				t.Fatalf("stdout %q is not one JSON answer: %v", out.String(), err)
+			}
+			refused, has := answer["refused"]
+			switch {
+			case tt.wantRefused && refused != true:
+				t.Errorf("answer = %v, want \"refused\": true", answer)
+			case !tt.wantRefused && has:
+				t.Errorf("answer = %v, want no \"refused\" key: the restart may have happened", answer)
+			}
+			if msg, _ := answer["error"].(string); !strings.Contains(msg, tt.wantMsg) {
+				t.Errorf("error = %q, want it to say %q", msg, tt.wantMsg)
 			}
 		})
 	}
