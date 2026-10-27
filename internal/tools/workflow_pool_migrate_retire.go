@@ -1515,7 +1515,13 @@ func (r *poolRetireRun) finish(ctx context.Context) *mcp.CallToolResult {
 	if err := r.enter(poolRetireRetired); err != nil {
 		return r.saveFailed(err)
 	}
-	return r.d.respond(poolRetireRecordAnswer(r.resp, r.rec))
+	resp := poolRetireRecordAnswer(r.resp, r.rec)
+	// In a Mate the work goes on in the pool's leases, and reaches main only
+	// through a change: name a lease branch no change proposes yet.
+	if note := unproposedNote(unproposedLeaseBranches(r.d.stateDir, r.d.rt, r.rec.pools())); note != "" {
+		resp.NextUnavailable += " " + note
+	}
+	return r.d.respond(resp)
 }
 
 // abort ends a retire whose dev still reads live, before any delete took:

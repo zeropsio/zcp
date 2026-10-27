@@ -1299,6 +1299,12 @@ func handleWorkSessionClose(ctx context.Context, engine *workflow.Engine, client
 	// against the actual envelope.
 	// Carry a fresh envelope: closing is a lifecycle transition the mate
 	// client's strip must see without waiting for the next status call.
-	return withFreshEnvelope(ctx, textResult("Work session closed."),
+	// In a Mate, a lease branch no change proposes yet is work no person
+	// was asked to review: name it with the call that proposes it.
+	closed := "Work session closed."
+	if note := unproposedNote(unproposedLeaseBranches(stateDir, rt, nil)); note != "" {
+		closed += " " + note
+	}
+	return withFreshEnvelope(ctx, textResult(closed),
 		stateDir, client, projectID, rt), nil, nil
 }
