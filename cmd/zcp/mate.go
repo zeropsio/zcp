@@ -12,6 +12,8 @@ import (
 
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/server"
+	"github.com/zeropsio/zcp/internal/update"
 )
 
 // restartTimeout bounds the unit restart. `systemctl restart` blocks until
@@ -79,7 +81,8 @@ const mateVerbStatus = "status"
 // mateStatusResult is `zcp mate status --json`'s answer (spec-mate.md
 // §2.1a, MD-17): what zcp knows about the installed and latest mate release,
 // from the same resolver DesiredRelease() and the manifest cache — never a
-// fresh install.
+// fresh install — and about this zcp against its latest release, with
+// whether a container restart would change either (§2.9).
 type mateStatusResult struct {
 	Installed       string                  `json:"installed"`
 	Latest          string                  `json:"latest"`
@@ -89,12 +92,14 @@ type mateStatusResult struct {
 	Error           string                  `json:"error,omitempty"`
 	SignIns         *mate.SignInsSeedStatus `json:"signIns,omitempty"`
 	Updater         *mateUpdaterStatus      `json:"updater,omitempty"`
+	// ZCP is absent when the latest zcp release is unknown, and for a dev
+	// build (startZCPReleaseLookup).
+	ZCP           *zcpReleaseStatus `json:"zcp,omitempty"`
+	RestartNeeded bool              `json:"restartNeeded"`
+	Why           string            `json:"why,omitempty"`
 }
 
-// runMateStatus answers what zcp knows about the installed and latest mate
-// release. It never installs anything, and it always exits 0 — even when
-// the manifest is unreachable, in which case Error names why and
-// UpdateAvailable is false.
+// mateUpdaterStatus is the status's "updater" key (§2.1d).
 type mateUpdaterStatus struct {
 	Protocol           int    `json:"protocol"`
 	RollbackCompatible bool   `json:"rollbackCompatible"`
@@ -103,7 +108,16 @@ type mateUpdaterStatus struct {
 	FailedVersion      string `json:"failedVersion,omitempty"`
 }
 
-func runMateStatus(args []string) int {
+// runMateStatus answers what zcp knows about the installed and latest mate
+// release. It never installs anything, and it always exits 0 — even when
+// the manifest is unreachable, in which case Error names why and
+// UpdateAvailable is false.
+func runMateStatus(args []string) int { return runMateStatusFor(args, server.Version) }
+
+// runMateStatusFor is runMateStatus for a zcp of version zcpVersion.
+// --refresh bypasses both release caches; --local reads only the caches and
+// never asks the running Mate.
+func runMateStatusFor(args []string, zcpVersion string) int {
 	flags, code, done := commandFlags("usage: zcp mate status [--json] [--refresh] [--local]", args, "--json", "--refresh", "--local")
 	if done {
 		return code
@@ -126,6 +140,7 @@ func runMateStatus(args []string) int {
 
 	ctx, cancel := context.WithTimeout(context.Background(), statusManifestTimeout)
 	defer cancel()
+	zcpRelease := startZCPReleaseLookup(ctx, zcpVersion, update.LatestOptions{Refresh: refresh, CacheOnly: local})
 	var desired mate.Manifest
 	var err error
 	if local {
@@ -158,6 +173,9 @@ func runMateStatus(args []string) int {
 		}
 	}
 
+	result.ZCP = zcpRelease()
+	result.RestartNeeded, result.Why = restartVerdict(result.ZCP, result.Installed, result.Latest, !local && mateWithoutUpdater(result.UpdateAvailable))
+
 	printMateStatus(result, asJSON)
 	return 0
 }
@@ -184,6 +202,12 @@ func printMateStatus(result mateStatusResult, asJSON bool) {
 		fmt.Fprintf(os.Stdout, "mate: installed %s, %s available\n", installed, result.Latest)
 	default:
 		fmt.Fprintf(os.Stdout, "mate: installed %s, latest %s\n", installed, result.Latest)
+	}
+	switch {
+	case result.ZCP != nil && result.ZCP.Behind:
+		fmt.Fprintf(os.Stdout, "zcp: installed %s, %s available; a restart installs it\n", result.ZCP.Installed, result.ZCP.Latest)
+	case result.RestartNeeded:
+		fmt.Fprintf(os.Stdout, "restart needed: %s\n", result.Why)
 	}
 	if result.SignIns != nil {
 		fmt.Fprintf(os.Stdout, "sign-in seed: %s", result.SignIns.State)
