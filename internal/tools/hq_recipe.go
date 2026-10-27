@@ -258,11 +258,15 @@ type groupRecipeComposition struct {
 	// mateID is this Mate's project, which zcp's mark on a tier names;
 	// owned the tier files on main zcp wrote from it and nobody changed
 	// since (recipeOwnedTiers).
-	mateID   string
-	owned    map[string]bool
-	inputs   bundle.GroupRecipeInputs
-	files    []recipe.File
-	warnings []string
+	mateID string
+	owned  map[string]bool
+	// retiredDevs are the dev services a pool took over (a pool-keyed
+	// pair's migratedFrom): a tier the group keeps may still name one as its
+	// dev half, which no targeted proposal removes.
+	retiredDevs map[string]bool
+	inputs      bundle.GroupRecipeInputs
+	files       []recipe.File
+	warnings    []string
 }
 
 func (c groupRecipeComposition) close() { c.scratch.Close() }
@@ -372,7 +376,12 @@ func composeGroupRecipe(
 		outcome.Line = err.Error() + " — retrying on the next pass."
 		return groupRecipeComposition{}, outcome, false
 	}
-	comp := groupRecipeComposition{hqc: hqc, appID: repo.AppID, state: state, scratch: scratch, main: main, paths: paths, mateID: rt.ProjectID}
+	comp := groupRecipeComposition{hqc: hqc, appID: repo.AppID, state: state, scratch: scratch, main: main, paths: paths, mateID: rt.ProjectID, retiredDevs: map[string]bool{}}
+	for _, m := range wired {
+		if m.DevIsPool() && m.DevPool.MigratedFrom != nil {
+			comp.retiredDevs[m.DevPool.MigratedFrom.Hostname] = true
+		}
+	}
 	if comp.owned, err = recipeOwnedTiers(ctx, scratch, main, comp.mateID); err != nil {
 		comp.close()
 		outcome.Line = err.Error() + " — retrying on the next pass."
