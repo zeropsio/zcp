@@ -82,10 +82,7 @@ func composeGroupRecipeInputs(
 	warnings := leftOut
 	mainYAML := map[string]string{}
 	for _, m := range wired {
-		dev, ok, why := groupRecipeDevHalf(m, live)
-		if why != "" {
-			warnings = append(warnings, why)
-		}
+		dev, ok := groupRecipeDevHalf(m, live)
 		if !ok {
 			// The meta outlived its dev half (deleted outside ZCP). It has
 			// nothing to contribute and must not stall the others.
@@ -225,9 +222,8 @@ type groupDevHalf struct {
 // the pool itself, which a Mate made from the recipe gets again (owner's
 // decision, 2026-10-27: every part its own dev pool and stage). A pool's
 // setup is its image's, the pair's PrimarySetupName, else named after the
-// pool. ok is false when the dev half no longer runs (the meta outlived it);
-// why is then "".
-func groupRecipeDevHalf(m *workflow.ServiceMeta, live map[string]ops.ServiceInfo) (dev groupDevHalf, ok bool, why string) {
+// pool. ok is false when the dev half no longer runs (the meta outlived it).
+func groupRecipeDevHalf(m *workflow.ServiceMeta, live map[string]ops.ServiceInfo) (dev groupDevHalf, ok bool) {
 	svc, found := live[m.Hostname]
 	if m.DevIsPool() {
 		return groupDevHalf{
@@ -235,14 +231,14 @@ func groupRecipeDevHalf(m *workflow.ServiceMeta, live map[string]ops.ServiceInfo
 			setup:    firstNonEmptySetup(m.PrimarySetupName, m.Hostname),
 			svc:      svc,
 			pool:     true,
-		}, found, ""
+		}, found
 	}
 	return groupDevHalf{
 		hostname: m.Hostname,
 		setup:    firstNonEmptySetup(m.PrimarySetupName, m.FirstStage().SetupName, m.Hostname),
 		svc:      svc,
 		mounted:  true,
-	}, found, ""
+	}, found
 }
 
 // notCarriedPoolKind is the human name of a pool or Box the recipe does not

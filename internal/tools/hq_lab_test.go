@@ -1054,12 +1054,12 @@ func (f *fakeHQ) landOnMain(repo string, files map[string]string) {
 	f.landAs(repo, "other", "other@example.invalid", "Another Mate's work", files)
 }
 
-// landAsSquash puts files on repo's main as Core's squash of a change titled
-// title, number number, that mate's — the commit a landed change leaves on
-// main.
-func (f *fakeHQ) landAsSquash(repo, mate, title string, number int, files map[string]string) {
+// landRecipeAsSquash puts files on the recipe repository's main as Core's
+// squash of a change titled title, number number, that mate's — the commit a
+// landed change leaves on main.
+func (f *fakeHQ) landRecipeAsSquash(mate, title string, number int, files map[string]string) {
 	f.t.Helper()
-	f.landAs(repo, "Mate", hq.SquashAuthorEmail(mate), fmt.Sprintf("%s (#%d)", title, number), files)
+	f.landAs(hq.RecipeRepo, "Mate", hq.SquashAuthorEmail(mate), fmt.Sprintf("%s (#%d)", title, number), files)
 }
 
 // landAs puts files on repo's main as one commit by name <email> with

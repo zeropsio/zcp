@@ -89,7 +89,7 @@ func (l *hqLab) moveLabPairOntoPool() {
 func TestGroupRecipe_ItsOwnTiersFromBeforeAPoolMigration_ProposedAnew(t *testing.T) {
 	t.Parallel()
 	lab := newRecipeLab(t)
-	lab.hq.landAsSquash(hq.RecipeRepo, labMate, hq.RecipeProposalTitle, 1, recipeBeforePools(t, lab, ""))
+	lab.hq.landRecipeAsSquash(labMate, hq.RecipeProposalTitle, 1, recipeBeforePools(t, lab, ""))
 	main := lab.hq.recipeFiles("main")
 	lab.moveLabPairOntoPool()
 
@@ -162,26 +162,26 @@ func TestGroupRecipe_ATierAPersonOrAnotherMateWrote_IsNeverProposedOver(t *testi
 		{
 			name: "a person's change landed over zcp's",
 			land: func(lab *hqLab) {
-				lab.hq.landAsSquash(hq.RecipeRepo, labMate, hq.RecipeProposalTitle, 1, recipeBeforePools(t, lab, ""))
-				lab.hq.landAsSquash(hq.RecipeRepo, labMate, "Give the dev more memory", 2, edited(recipeBeforePools(t, lab, "")))
+				lab.hq.landRecipeAsSquash(labMate, hq.RecipeProposalTitle, 1, recipeBeforePools(t, lab, ""))
+				lab.hq.landRecipeAsSquash(labMate, "Give the dev more memory", 2, edited(recipeBeforePools(t, lab, "")))
 			},
 		},
 		{
 			name: "another Mate's zcp wrote it",
 			land: func(lab *hqLab) {
-				lab.hq.landAsSquash(hq.RecipeRepo, "p-other", hq.RecipeProposalTitle, 1, recipeBeforePools(t, lab, ""))
+				lab.hq.landRecipeAsSquash("p-other", hq.RecipeProposalTitle, 1, recipeBeforePools(t, lab, ""))
 			},
 		},
 		{
 			name: "its mark is another Mate's",
 			land: func(lab *hqLab) {
-				lab.hq.landAsSquash(hq.RecipeRepo, labMate, hq.RecipeProposalTitle, 1, recipeBeforePools(t, lab, "p-other"))
+				lab.hq.landRecipeAsSquash(labMate, hq.RecipeProposalTitle, 1, recipeBeforePools(t, lab, "p-other"))
 			},
 		},
 		{
 			name: "its file no longer matches its mark",
 			land: func(lab *hqLab) {
-				lab.hq.landAsSquash(hq.RecipeRepo, labMate, hq.RecipeProposalTitle, 1, edited(recipeBeforePools(t, lab, labMate)))
+				lab.hq.landRecipeAsSquash(labMate, hq.RecipeProposalTitle, 1, edited(recipeBeforePools(t, lab, labMate)))
 			},
 		},
 	}
