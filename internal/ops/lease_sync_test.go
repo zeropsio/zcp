@@ -59,9 +59,9 @@ type syncRemote struct {
 	// members, when set for a host, answer its fast-forwards in turn before
 	// member does.
 	members map[string][]syncAnswer
-	devsup map[string]string
-	delay  time.Duration
-	calls  []sshCall
+	devsup  map[string]string
+	delay   time.Duration
+	calls   []sshCall
 }
 
 // syncAnswer is what a scripted remote command answers: its output and, for a

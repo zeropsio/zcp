@@ -153,4 +153,3 @@ func TestLeaseRelease_ComparesWithOriginBeforeCountingCommitsUnpushed(t *testing
 		}
 	})
 }
-

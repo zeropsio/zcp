@@ -937,12 +937,11 @@ func compareWithOrigin(ctx context.Context, d LeaseDeps, rec leaseRecord, w unsa
 	}
 	switch {
 	case err == nil:
-		out, err := d.SSH.ExecSSH(ctx, alias, leaseUnpushedCommand())
-		if err != nil {
-			return w, nil
-		}
-		if n, err := parseUnpushedCount(string(out)); err == nil {
-			w.unpushed = n
+		// A recount that cannot be read leaves the count as it was read.
+		if out, countErr := d.SSH.ExecSSH(ctx, alias, leaseUnpushedCommand()); countErr == nil {
+			if n, parseErr := parseUnpushedCount(string(out)); parseErr == nil {
+				w.unpushed = n
+			}
 		}
 		return w, nil
 	case !gitCredentialRefused(err):
