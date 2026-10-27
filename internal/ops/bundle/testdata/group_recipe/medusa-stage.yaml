@@ -119,20 +119,3 @@ services:
     vault:
       # Set by hand in medusa-juno; set it again here.
       OPENAI_API_KEY: {value: <@generateRandomString(<32>)>, sensitive: true}
-
-  - hostname: mailpit
-    type: alpine@3.21
-    priority: 1
-    buildFromGit: https://github.com/zerops-recipe-apps/mailpit-app
-    enableSubdomainAccess: true
-    minContainers: 1
-    maxContainers: 1
-    verticalAutoscaling:
-      cpuMode: SHARED
-      minCpu: 1
-      maxCpu: 2
-      minRam: 0.25
-      maxRam: 1
-    vault:
-      # Set by hand in medusa-juno; set it again here.
-      MP_UI_AUTH: {value: 'admin:<@generateRandomString(<16>)>', sensitive: true}

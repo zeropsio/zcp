@@ -46,18 +46,28 @@ import (
 // as a generator every environment the tier creates expands for itself.
 
 // GroupRuntime is one runtime of the group's app as the Mate's project holds
-// it: a pair built from one service repository — one dev service and its
-// stages, each stage a part of the app (spec-mate §2.8a.4).
+// it: a pair built from one service repository — one dev half and its
+// stages, each stage a part of the app (spec-mate §2.8a.4). A monorepo whose
+// every part has its own dev pool is one pair per part, all on one
+// repository: each pool keys the pair of its part's stage.
 type GroupRuntime struct {
 	// DevHostname is the pair's dev half — the hostname the AI Agent tier
-	// keeps and the one a group environment's first part is named after.
+	// keeps: a dev service, or the part's dev pool.
 	DevHostname string
+	// DevPool marks a dev half that is a dev pool (swarm@1): the AI Agent
+	// tier writes it as zcp imports a part's pool — no build and no setup
+	// (its image is deployed from a lease, never by an import), no container
+	// until a lease asks, its own scale and service variables — and nothing
+	// of it is typed, scaled or named after it: its parts take their stages'.
+	DevPool bool
 	// Stages are the pair's stages in ServiceMeta.Stages order, none for a
 	// mode that has no stage. They exist under their own hostnames only on
 	// the AI Agent tier: the group's own stage is a different project
 	// entirely (D12/D16), where each is one runtime of its part.
 	Stages []GroupStage
-	// ServiceType is the platform type tag, e.g. "nodejs@22".
+	// ServiceType is the dev half's platform type tag, e.g. "nodejs@22" —
+	// "swarm@1" for a dev pool. A part is typed by its own stage
+	// (groupPartFacts), never by this unless it is the dev half's own.
 	ServiceType string
 	// RepoURL is the pair's repository in HQ, the address its buildFromGit
 	// names (hq.RepoURLAt).
@@ -84,6 +94,16 @@ type GroupRuntime struct {
 // environment runs as one runtime building the stage's setup.
 type GroupStage struct {
 	Hostname string
+	// ServiceType is the stage's own platform type as the live project runs
+	// it, "" when the stage was not read (it does not run). Set, the stage's
+	// Scaling and SubdomainEnabled are its own too; unset, the part is typed
+	// by its setup's run.base and a dev service's scale and access stand in
+	// (groupPartFacts).
+	ServiceType string
+	// Scaling is the stage's live autoscaling shape, nil when unread.
+	Scaling *Scaling
+	// SubdomainEnabled mirrors the stage's public access.
+	SubdomainEnabled bool
 	// SetupName is the setup the stage builds, as zcp recorded it. Empty on a
 	// pair's only stage is resolved from ZeropsYAMLBody (groupStageSetup) —
 	// never taken from the dev half's on a guess; empty on one of several
@@ -117,6 +137,11 @@ type GroupRecipeInputs struct {
 	// MateProjectName is the name of the Mate's OWN project — the AI Agent
 	// tier re-creates it, so it carries its name rather than the group's.
 	MateProjectName string
+	// MateProjectID is the Mate's own project id: every tier carries it in
+	// zcp's mark (StampTier), which tells a tier zcp composed from this Mate
+	// and nobody changed since from one a person or another Mate wrote. ""
+	// writes no mark.
+	MateProjectID   string
 	Runtimes        []GroupRuntime
 	ManagedServices []ManagedServiceEntry
 	// ProjectEnvs is the project's user-set variables, the platform's own and
@@ -189,7 +214,7 @@ type groupTierPolicy struct {
 var groupTiers = []groupTierPolicy{
 	{
 		index: 0, title: "AI Agent", slug: "ai-agent",
-		summary: "The project a Zerops Mate works in: every runtime as a dev/stage pair, with the managed services they share.",
+		summary: "The project a Zerops Mate works in: every part as its dev pool or dev service and its stage, with the services they share.",
 		pairs:   true, minContainers: 0,
 	},
 	{
@@ -299,6 +324,9 @@ func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error)
 		if err != nil {
 			return recipe.Layout{}, nil, fmt.Errorf("group recipe %q: tier %q: %w", inputs.Name, policy.title, err)
 		}
+		if mate := strings.TrimSpace(inputs.MateProjectID); mate != "" {
+			body = StampTier(body, mate)
+		}
 		warnings = append(warnings, tierWarnings...)
 		layout.Tiers = append(layout.Tiers, recipe.Tier{
 			Index:      policy.index,
@@ -327,11 +355,85 @@ func BuildGroupRecipe(inputs GroupRecipeInputs) (recipe.Layout, []string, error)
 // project ("" for a pair with none), the setup it builds there, the setup a
 // group environment builds (groupEnvironmentSetup: the stage's own, or the
 // setup Mate's preview variant extends), the variables its runtime carries,
-// and the hostname a group environment runs it under — "" while it has none
-// it can use (nameGroupParts).
+// what its runtime is (facts: its type, scale and access, from its own
+// stage), and the hostname a group environment runs it under — "" while it
+// has none it can use (nameGroupParts), or no type (facts.serviceType "").
 type groupPart struct {
 	stage, setup, environmentSetup, hostname string
 	envs                                     []ProjectEnvVar
+	facts                                    entryFacts
+}
+
+// entryFacts is what one runtime entry of a tier is: its platform type, its
+// live scale and its public access — each read from the service the entry
+// stands for.
+type entryFacts struct {
+	serviceType string
+	scaling     *Scaling
+	subdomain   bool
+}
+
+// devHalfFacts are a dev service's own facts.
+func devHalfFacts(r GroupRuntime) entryFacts {
+	return entryFacts{serviceType: r.ServiceType, scaling: r.Scaling, subdomain: r.SubdomainEnabled}
+}
+
+// groupPartFacts is what a part's runtime is, from its own part: a stage the
+// live project runs gives its own type, scale and access; a stage not read is
+// typed by its setup's run.base, a dev service's scale and access standing
+// in (a pool's are a pool's, never a part's). A pair with no stage runs its
+// part on its dev service. why is non-empty when nothing types the part
+// without a guess — a pool's stage that does not run and whose setup names no
+// run.base — and the part is left out of every tier then; warning says a
+// part typed after its dev service as the last resort.
+func groupPartFacts(r GroupRuntime, stage *GroupStage, setup string) (facts entryFacts, warning, why string) {
+	if stage != nil && strings.TrimSpace(stage.ServiceType) != "" {
+		return entryFacts{serviceType: stage.ServiceType, scaling: stage.Scaling, subdomain: stage.SubdomainEnabled}, "", ""
+	}
+	if stage == nil && !r.DevPool {
+		return devHalfFacts(r), "", ""
+	}
+	if !r.DevPool {
+		facts.scaling, facts.subdomain = r.Scaling, r.SubdomainEnabled
+	}
+	if base := setupRunBase(r.ZeropsYAMLBody, setup); base != "" {
+		facts.serviceType = base
+		return facts, "", ""
+	}
+	part := r.DevHostname
+	if stage != nil {
+		part = stage.Hostname
+	}
+	if !r.DevPool {
+		facts.serviceType = r.ServiceType
+		return facts, fmt.Sprintf("part %q of %q is typed %s, as its dev service: its stage does not run and its setup %q names no run.base", part, r.DevHostname, r.ServiceType, setup), ""
+	}
+	return entryFacts{}, "", fmt.Sprintf("part %q of %q is left out of every tier: its stage does not run and its setup %q names no run.base, so nothing types it — deploy the stage, or give the setup a run.base", part, r.DevHostname, setup)
+}
+
+// setupRunBase is the run.base a zerops.yaml's setup names — its own, else
+// that of the one setup it extends — "" when neither names one or the body
+// does not parse.
+func setupRunBase(body, setup string) string {
+	entries := zeropsYAMLSetupEntries(body)
+	for seen := map[string]bool{}; setup != "" && !seen[setup]; {
+		seen[setup] = true
+		entry, ok := entries[setup]
+		if !ok {
+			return ""
+		}
+		if run, ok := entry["run"].(map[string]any); ok {
+			if base, ok := run["base"].(string); ok && strings.TrimSpace(base) != "" {
+				return strings.TrimSpace(base)
+			}
+		}
+		bases := yamlExtendsNames(entry["extends"])
+		if len(bases) != 1 {
+			return ""
+		}
+		setup = bases[0]
+	}
+	return ""
 }
 
 // groupPartSetups names the setup of each of a runtime's parts, in Stages
@@ -358,24 +460,35 @@ func groupPartSetups(r GroupRuntime) ([]string, string) {
 }
 
 // groupPartsOf is a resolved runtime's parts: one per stage with its own
-// variables, or the dev half's one part, with its variables, for a pair
-// with no stage — and the warnings for a part a group environment builds
-// framed for Mate's preview pane.
+// variables and facts, or the dev half's one part, with its variables, for
+// a pair with no stage — and the warnings for a part a group environment
+// builds framed for Mate's preview pane, typed after its dev service, or
+// left out for want of a type.
 func groupPartsOf(r GroupRuntime, setups []string) ([]groupPart, []string) {
 	var warnings []string
-	part := func(stage, setup string, envs []ProjectEnvVar) groupPart {
+	part := func(stage *GroupStage, setup string, envs []ProjectEnvVar) groupPart {
 		environmentSetup, warning := groupEnvironmentSetup(r, setup)
 		if warning != "" {
 			warnings = append(warnings, warning)
 		}
-		return groupPart{stage: stage, setup: setup, environmentSetup: environmentSetup, envs: envs}
+		facts, typedWarning, why := groupPartFacts(r, stage, environmentSetup)
+		for _, w := range []string{typedWarning, why} {
+			if w != "" {
+				warnings = append(warnings, w)
+			}
+		}
+		p := groupPart{setup: setup, environmentSetup: environmentSetup, envs: envs, facts: facts}
+		if stage != nil {
+			p.stage = stage.Hostname
+		}
+		return p
 	}
 	if len(r.Stages) == 0 {
-		return []groupPart{part("", setups[0], r.ServiceEnvs)}, warnings
+		return []groupPart{part(nil, setups[0], r.ServiceEnvs)}, warnings
 	}
 	parts := make([]groupPart, 0, len(r.Stages))
-	for i, stage := range r.Stages {
-		parts = append(parts, part(stage.Hostname, setups[i], stage.ServiceEnvs))
+	for i := range r.Stages {
+		parts = append(parts, part(&r.Stages[i], setups[i], r.Stages[i].ServiceEnvs))
 	}
 	return parts, warnings
 }
@@ -383,12 +496,13 @@ func groupPartsOf(r GroupRuntime, setups []string) ([]groupPart, []string) {
 // nameGroupParts gives each part the hostname a group environment runs it
 // under. A part a group tier on main holds keeps the tier's name — the first
 // tier's in Held, when people renamed it in one — read back and never derived
-// again; a part no tier holds yet is named once, by the
-// rule a tier then keeps: the pair's stem (GroupPromotedHostname) for its
-// first part, the part's own name — its setup — for every other. A new name
-// that is no hostname, or that another service of the group environments
-// already has, is not changed on a guess: the part is left out of them and
-// said.
+// again; a part no tier holds yet is named once, by the rule a tier then
+// keeps: the part's own name, its stage's stem (GroupPromotedHostname:
+// `apistage` → `api`), or the dev half's stem for a pair with no stage —
+// every part alike, never the repository's name for one of them. A part
+// nothing types (groupPartFacts) gets no name. A new name that is no
+// hostname, or that another service of the group environments already has,
+// is not changed on a guess: the part is left out of them and said.
 func nameGroupParts(runtimes []GroupRuntime, parts map[string][]groupPart, held []HeldRuntime, managed []ManagedServiceEntry) []string {
 	type partKey struct{ repo, setup string }
 	heldBy := map[partKey]string{}
@@ -410,15 +524,15 @@ func nameGroupParts(runtimes []GroupRuntime, parts map[string][]groupPart, held 
 		list := parts[r.DevHostname]
 		for i := range list {
 			part := &list[i]
+			if part.facts.serviceType == "" {
+				continue
+			}
 			if host, ok := heldBy[partKey{repo, part.environmentSetup}]; ok && !private {
 				part.hostname = host
 				taken[host] = true
 				continue
 			}
-			part.hostname = part.environmentSetup
-			if i == 0 {
-				part.hostname = GroupPromotedHostname(r.DevHostname)
-			}
+			part.hostname = GroupPromotedHostname(firstNonBlank(part.stage, r.DevHostname))
 			fresh = append(fresh, part)
 			freshOwner[part] = r.DevHostname
 		}
@@ -556,13 +670,19 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (string, []str
 		type half struct {
 			hostname, setup string
 			envs            []ProjectEnvVar
+			facts           entryFacts
 		}
 		var halves []half
 		if policy.pairs {
-			halves = append(halves, half{r.DevHostname, r.SetupName, r.ServiceEnvs})
+			if r.DevPool {
+				entry, comment := groupPoolEntry(r, priorities[r.DevHostname], source)
+				ranked = append(ranked, rankedItem{priorities[r.DevHostname], yamlItem{comment: comment, fields: orderedFields(entry, serviceKeyOrder)}})
+			} else {
+				halves = append(halves, half{r.DevHostname, r.SetupName, r.ServiceEnvs, devHalfFacts(r)})
+			}
 			for _, part := range plan.parts[r.DevHostname] {
-				if part.stage != "" {
-					halves = append(halves, half{part.stage, part.setup, part.envs})
+				if part.stage != "" && part.facts.serviceType != "" {
+					halves = append(halves, half{part.stage, part.setup, part.envs, part.facts})
 				}
 			}
 		} else {
@@ -571,12 +691,12 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (string, []str
 			// stage's.
 			for _, part := range plan.parts[r.DevHostname] {
 				if part.hostname != "" {
-					halves = append(halves, half{part.hostname, part.environmentSetup, part.envs})
+					halves = append(halves, half{part.hostname, part.environmentSetup, part.envs, part.facts})
 				}
 			}
 		}
 		for _, half := range halves {
-			entry, entryWarnings := groupRuntimeEntry(r, half.hostname, half.setup, policy)
+			entry, entryWarnings := groupRuntimeEntry(r, half.facts, half.hostname, half.setup, policy)
 			if vault := groupVaultFields(half.envs, source, promote); len(vault) > 0 {
 				entry["vault"] = vault
 			}
@@ -637,8 +757,8 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (string, []str
 }
 
 // groupTierHeader is what a tier says about itself above its project: what
-// the tier is, that zcp wrote it and from which Mate, and that it is the
-// group's to change — zcp adds only a whole tier the group repo's main lacks
+// the tier is, that zcp wrote it and from which Mate, what its mark means
+// (StampTier), and that it is the group's to change — zcp adds only a whole tier the group repo's main lacks
 // (D30), and into one main carries proposes nothing but a service's scale
 // (D34), a managed service the Mate's project gained, for every app, and, for
 // an app of several parts, a part's service added or removed (spec-mate
@@ -646,15 +766,42 @@ func composeGroupTierYAML(plan groupPlan, policy groupTierPolicy) (string, []str
 // written over.
 func groupTierHeader(inputs GroupRecipeInputs, policy groupTierPolicy) []string {
 	proposes := "only a service's scale (group-recipe scaling=<hostname>) or a managed service added to the Mate's project (group-recipe service=<hostname>)"
-	if slices.ContainsFunc(inputs.Runtimes, func(r GroupRuntime) bool { return len(r.Stages) > 1 }) {
+	if groupHasSeveralParts(inputs.Runtimes) {
 		proposes = "only a service's scale (group-recipe scaling=<hostname>), a managed service added to the Mate's project or a part's service added or removed (group-recipe service=<hostname>)"
 	}
-	return []string{
+	marked := strings.TrimSpace(inputs.MateProjectID) != ""
+	anew := ""
+	if marked {
+		anew = " — and this whole file anew while it stays exactly as zcp wrote it (the mark below)"
+	}
+	header := []string{
 		"The " + policy.title + " tier. " + policy.summary,
-		fmt.Sprintf("zcp wrote this file from the Mate %q. It is the group's now: a person may edit it. zcp adds only a whole tier the group repo lacks; into a tier it already carries, zcp proposes %s, as a change a person reviews.",
-			firstNonBlank(inputs.MateProjectName, inputs.Name), proposes),
+		fmt.Sprintf("zcp wrote this file from the Mate %q. It is the group's now: a person may edit it. zcp adds only a whole tier the group repo lacks; into a tier it already carries, zcp proposes %s, as a change a person reviews%s.",
+			firstNonBlank(inputs.MateProjectName, inputs.Name), proposes, anew),
 		"Priority is the order services are created in, each wave deployed before the next starts: the managed services first, then every runtime before the runtimes whose build reads it.",
 	}
+	if marked {
+		header = append(header, "The line below is zcp's mark: the Mate's project this file was composed from and a digest of the file. While the file stays exactly as zcp wrote it, zcp proposes it anew, as a change a person reviews, when that Mate's project changes shape — a part added or removed, a dev pool, a runtime's type; an edit of any line makes the file the group's alone.")
+	}
+	return header
+}
+
+// groupHasSeveralParts reports an app of several parts: a repository whose
+// pairs run more than one stage between them — one dev service with a stage
+// per part, or a pool-keyed pair per part on one repository.
+func groupHasSeveralParts(runtimes []GroupRuntime) bool {
+	parts := map[string]int{}
+	for _, r := range runtimes {
+		repo, _ := publicRepoURL(r.RepoURL)
+		if repo == "" {
+			repo = r.DevHostname
+		}
+		parts[repo] += max(len(r.Stages), 1)
+		if parts[repo] > 1 {
+			return true
+		}
+	}
+	return false
 }
 
 // groupApps is what the priorities rank: every runtime pair, by any name it
@@ -689,8 +836,9 @@ func groupApps(runtimes []GroupRuntime, parts map[string][]groupPart, utilities 
 }
 
 // groupUtilities is the utilities every tier writes, sorted, and those a
-// group environment cannot carry because its runtime takes their hostname.
-// A utility the reader did not describe whole is left out and said.
+// group environment does not carry: one whose hostname its runtime takes,
+// and a Mate's own dev tooling (devOnlyUtility). A utility the reader did not
+// describe whole is left out and said.
 func groupUtilities(in []GroupUtility, runtimes []GroupRuntime, parts map[string][]groupPart) ([]GroupUtility, map[string]bool, []string) {
 	promoted := make(map[string]string, len(runtimes))
 	for _, r := range runtimes {
@@ -713,6 +861,11 @@ func groupUtilities(in []GroupUtility, runtimes []GroupRuntime, parts map[string
 			warnings = append(warnings, fmt.Sprintf(
 				"utility %q stays on the AI Agent tier only: the group environments name the runtime of %q %q too",
 				u.Hostname, pair, u.Hostname))
+		} else if devOnlyUtility(u) {
+			mateOnly[u.Hostname] = true
+			warnings = append(warnings, fmt.Sprintf(
+				"utility %q stays on the AI Agent tier only: it is a Mate's own dev tooling (a mail catcher, a database admin UI), which a stage or a production does not run — a value there naming it points nowhere until a person sets it",
+				u.Hostname))
 		}
 		utilities = append(utilities, u)
 	}
@@ -865,9 +1018,12 @@ func scalingNumber(v any) float64 {
 	return 0
 }
 
-// groupRuntimeEntry composes one runtime's services[] entry under a policy.
+// groupRuntimeEntry composes one runtime's services[] entry under a policy:
+// what it is — its type, scale and access — from facts, the service it
+// stands for; what builds it from the pair.
 func groupRuntimeEntry(
 	r GroupRuntime,
+	facts entryFacts,
 	hostname, setupName string,
 	policy groupTierPolicy,
 ) (map[string]any, []string) {
@@ -876,7 +1032,7 @@ func groupRuntimeEntry(
 	// one is ignored — replica count is the minContainers axis below.
 	entry := map[string]any{
 		"hostname": hostname,
-		"type":     r.ServiceType,
+		"type":     facts.serviceType,
 	}
 	// A pair's URL comes from a git-push setup that refuses a user, and is
 	// guarded the way a utility's is all the same: a user is a credential,
@@ -886,13 +1042,13 @@ func groupRuntimeEntry(
 		entry["buildFromGit"] = repo
 		entry["zeropsSetup"] = setupName
 	}
-	if r.SubdomainEnabled {
+	if facts.subdomain {
 		entry["enableSubdomainAccess"] = true
 	}
 
 	// Reflect the live scaling first (identity), then apply the tier's named
 	// transforms — never a silent override.
-	if w := projectScaling(entry, r.Scaling); w != "" && policy.index == 0 {
+	if w := projectScaling(entry, facts.scaling); w != "" && policy.index == 0 {
 		// Only the identity tier loses information when the shape is
 		// unreadable; the transformed tiers write their own floor anyway.
 		warnings = append(warnings, fmt.Sprintf("%s: %s", hostname, w))
@@ -964,12 +1120,12 @@ func groupTierProjectName(inputs GroupRecipeInputs, policy groupTierPolicy) stri
 	return inputs.Name + " " + policy.projectSuffix
 }
 
-// GroupPromotedHostname strips the pair's mode suffix: `apidev`/`apistage` →
-// `api`. A shared environment has one runtime per app, not a pair — and it is
+// GroupPromotedHostname strips the pair's mode suffix: `apidev`/`apistage`/
+// `apipool` → `api`. A shared environment has one runtime per app, not a pair — and it is
 // the name a stage's or production's runtime has (measured 2026-09-17: a
 // deploy naming `appdev` asked a stage whose runtime is `app`).
 func GroupPromotedHostname(hostname string) string {
-	for _, suffix := range []string{"-dev", "-stage", "stage", "dev"} {
+	for _, suffix := range []string{"-dev", "-stage", "-pool", "stage", "dev", "pool"} {
 		if trimmed, ok := strings.CutSuffix(hostname, suffix); ok && trimmed != "" {
 			return trimmed
 		}

@@ -116,7 +116,7 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 			// The adopt route is the other pass that reaches a just-written
 			// set of metas, so it is the other place A1 and A2 catch up from.
 			appendRepositoryReport(resp, reconcileMateRepositories(
-				ctx, client, httpClient, sshDeployer, rt, stateDir))
+				ctx, client, httpClient, sshDeployer, rt, stateDir, hqPassBackedOff))
 			if needsStacks(resp) {
 				populateStacks(ctx, resp, schemaCache)
 			}
@@ -216,7 +216,7 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 	// outside a Mate, backs off per pair, and never blocks bootstrap.
 	if resp != nil && resp.Current == nil {
 		appendRepositoryReport(resp, reconcileMateRepositories(
-			ctx, client, httpClient, sshDeployer, rt, stateDir))
+			ctx, client, httpClient, sshDeployer, rt, stateDir, hqPassBackedOff))
 	}
 
 	populateRuntimeURLs(ctx, client, projectID, engine, resp)

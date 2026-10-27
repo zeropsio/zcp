@@ -409,14 +409,16 @@ func patchFlexBoolProperty(s *jsonschema.Schema, key string) {
 // handleDevelopStart starts develop. Work starts here, so the Mate's pairs
 // are made current first: a pair an older zcp left without stages gets them
 // back before develop takes its scope (spec-mate §2.8a.4), and a dev service
-// whose credential HQ revoked gets the current one. The group recipe stays
-// with bootstrap and adopt, which change what it composes.
+// whose credential HQ revoked gets the current one. The group recipe is
+// tried again here too — a recipe that could not be proposed at bootstrap
+// (its code not in yet) is a step the Mate's setup is not done without, and
+// a project that changed shape since (a pool migration) has tiers of zcp's
+// own to propose anew (spec-mate §10.10).
 func handleDevelopStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, httpClient ops.HTTPDoer, schemaCache *schema.Cache, input WorkflowInput, stateDir string, rt runtime.Info, sshDeployer ops.SSHDeployer) (*mcp.CallToolResult, any, error) {
-	rebuildMateStages(ctx, httpClient, rt, stateDir, recipePairMountRoot)
-	lines := reconcileHQRepositories(ctx, client, httpClient, sshDeployer, rt, stateDir, hqPassNow)
-	lines = append(lines, hqKeptOnGitHub(stateDir)...)
+	report := reconcileMateRepositories(ctx, client, httpClient, sshDeployer, rt, stateDir, hqPassNow)
+	report.lines = append(report.lines, hqKeptOnGitHub(stateDir)...)
 	result, _, err := handleStart(ctx, projectID, engine, client, schemaCache, input, rt, sshDeployer)
-	return withRepositoryReport(result, lines), nil, err
+	return withRepositoryReport(result, report), nil, err
 }
 
 // RegisterWorkflow registers the zerops_workflow tool.
@@ -1178,6 +1180,9 @@ func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client 
 	reads.Wait()
 	attachPartsSignal(ctx, envelope.Services, sshDeployer, rt, engine)
 	envelope.HQChanges, envelope.HQChangesAsLastRead = statusHQChanges(ctx, httpClient, rt, engine.StateDir(), hqAddress(rt), time.Now())
+	if rt.MateEnabled {
+		envelope.Required = readRecipeRequired(engine.StateDir())
+	}
 	attachRollbackInfo(ctx, envelope.Services, client, projectID)
 	corpus, err := workflow.LoadAtomCorpus()
 	if err != nil {
