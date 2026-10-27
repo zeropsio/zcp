@@ -1767,3 +1767,47 @@ func TestBrowserBatch_TargetClosedAlsoTriggersRecovery(t *testing.T) {
 		t.Error("'Target closed' in step errors must recycle the browser")
 	}
 }
+
+// TestBrowserBatch_SlowPageAndServerError_SaySoAndKeepTheBrowser pins what a
+// call says of a slow page and of a page that answered 5xx: neither is a
+// wedge, the browser is handed back warm, and the message names the time to
+// first byte or the status and what to do.
+func TestBrowserBatch_SlowPageAndServerError_SaySoAndKeepTheBrowser(t *testing.T) {
+	slow := `[{"command":["open","https://webdev.zerops.app/"],"success":false,"error":"the command reached the daemon but no response came back; slow page: a plain request to it got its first byte after 30.2s (HTTP 200)","errorKind":"slow-page"},` +
+		`{"command":["errors"],"success":true,"result":{"errors":[]}},` +
+		`{"command":["console"],"success":true,"result":{"logs":[]}},` +
+		`{"command":["network","requests","--status","400-599"],"success":true,"result":{"requests":[]}}]`
+	serverError := `[{"command":["open","https://webdev.zerops.app/"],"success":true,"result":{}},` +
+		`{"command":["wait","--text","Pricing"],"success":false,"error":"not run: the page answered HTTP 502","errorKind":"server-error"},` +
+		`{"command":["errors"],"success":true,"result":{"errors":[]}},` +
+		`{"command":["console"],"success":true,"result":{"logs":[]}},` +
+		`{"command":["network","requests","--status","400-599"],"success":true,"result":{"requests":[{"url":"https://webdev.zerops.app/","status":502}]}}]`
+	tests := []struct {
+		name, stdout string
+		want         []string
+	}{
+		{name: "slow page", stdout: slow, want: []string{"slow", "30.2s", "timeoutSeconds"}},
+		{name: "server error", stdout: serverError, want: []string{"HTTP 502", "did not run", "logs"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := &fakeBrowserRunner{runStdout: tt.stdout}
+			defer OverrideBrowserRunnerForTest(fake)()
+			result, err := BrowserBatch(context.Background(), BrowserBatchInput{URL: "https://webdev.zerops.app/"})
+			if err != nil {
+				t.Fatalf("BrowserBatch: %v", err)
+			}
+			if result.BrowserRecycled || fake.recycles() != 0 {
+				t.Errorf("the browser was recycled for a %s", tt.name)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(result.Message, want) {
+					t.Errorf("message %q does not say %q", result.Message, want)
+				}
+			}
+			if strings.Contains(result.Message, "wedged") {
+				t.Errorf("message %q calls a %s a wedge", result.Message, tt.name)
+			}
+		})
+	}
+}
