@@ -6,6 +6,9 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -126,5 +129,57 @@ func TestMateService_ACredentialHQSendsReachesEveryPool(t *testing.T) {
 			}
 			assertNoSecretOnDisk(t, lab.stateDir, rotated)
 		})
+	}
+}
+
+// TestHQPass_PoolKeyingAPair_ARefusedRecordIsRenewedOnce: HQ refused the
+// credential a lease of a pool keying a pair presented, and the lease's call
+// could not write it afresh, so zcp marked the pool's record refused (D9).
+// The pair's record still names the Mate's current credential, so the pair's
+// own renewal skips the pool; the pass's takeover leaves the marked record to
+// the pools' renewal, which writes the pool once, and the next pass writes
+// nothing.
+func TestHQPass_PoolKeyingAPair_ARefusedRecordIsRenewedOnce(t *testing.T) {
+	t.Parallel()
+	lab := newHQLab(t)
+	lab.wire()
+	ssh := lab.keyPairOnPool()
+	current := hq.GitCredentialFingerprint(labCredential)
+	if err := workflow.UpdateServiceMeta(lab.stateDir, testPool, func(m *workflow.ServiceMeta) error {
+		m.HQ.CredentialFingerprint = current
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	writeRefusedPoolCredential(t, lab.stateDir, testPool, testPoolID, current)
+	before := lab.mock.CallCount("CreateServiceEnvVar")
+
+	lab.poolPass(ssh)
+	first := lab.mock.CallCount("CreateServiceEnvVar") - before
+	lab.poolPass(ssh)
+
+	if token, held := poolHQCredential(t, lab.mock, testPoolID); !held || token.Content != labCredential {
+		t.Errorf("the pool's %s = %+v (held %v), want the Mate's credential written afresh", ops.PoolHQCredentialEnvKey, token, held)
+	}
+	if second := lab.mock.CallCount("CreateServiceEnvVar") - before; first != 1 || second != first {
+		t.Errorf("writes = %d after the first pass, %d after the second; want one, then none", first, second)
+	}
+}
+
+// writeRefusedPoolCredential records, as a lease's refused git leaves it,
+// that pool (serviceID) was given the credential fingerprint names and HQ
+// refused what it holds.
+func writeRefusedPoolCredential(t *testing.T, stateDir, pool, serviceID, fingerprint string) {
+	t.Helper()
+	path := filepath.Join(stateDir, "leases", "credentials", pool+".json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(map[string]any{"poolServiceId": serviceID, "fingerprint": fingerprint, "refused": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -50,10 +50,15 @@ func nodeHostnameOf(pool string, number int64) string {
 // its own fast-forwards from syncFrom to syncTo; one without a dev-server
 // answer has no zcp-devsup.
 type syncRemote struct {
-	mu     sync.Mutex
-	dirty  map[string]string
-	push   *syncAnswer
+	mu    sync.Mutex
+	dirty map[string]string
+	push  *syncAnswer
+	// pushes, when set, answer the source's pushes in turn before push does.
+	pushes []syncAnswer
 	member map[string]syncAnswer
+	// members, when set for a host, answer its fast-forwards in turn before
+	// member does.
+	members map[string][]syncAnswer
 	devsup map[string]string
 	delay  time.Duration
 	calls  []sshCall
@@ -80,11 +85,27 @@ func (r *syncRemote) ExecSSH(_ context.Context, host, command string) ([]byte, e
 	case strings.Contains(command, "rev-list --count --branches"):
 		return []byte("1\n"), nil
 	case strings.Contains(command, "push --porcelain"):
+		r.mu.Lock()
+		if len(r.pushes) > 0 {
+			a := r.pushes[0]
+			r.pushes = r.pushes[1:]
+			r.mu.Unlock()
+			return []byte(a.out), a.err
+		}
+		r.mu.Unlock()
 		if r.push == nil {
 			return []byte(syncPushed(syncBranch, syncTo)), nil
 		}
 		return []byte(r.push.out), r.push.err
 	case strings.Contains(command, "merge --ff-only"):
+		r.mu.Lock()
+		if seq := r.members[host]; len(seq) > 0 {
+			a := seq[0]
+			r.members[host] = seq[1:]
+			r.mu.Unlock()
+			return []byte(a.out), a.err
+		}
+		r.mu.Unlock()
 		if a, ok := r.member[host]; ok {
 			return []byte(a.out), a.err
 		}
@@ -146,7 +167,7 @@ func syncMemberFastForwarded(from, to string) string {
 func newSyncFixture(t *testing.T, branch string, extra ...leaseRecord) (*groupFixture, *syncRemote) {
 	t.Helper()
 	gf := newGroupFixture(t)
-	remote := &syncRemote{dirty: map[string]string{}, member: map[string]syncAnswer{}, devsup: map[string]string{}}
+	remote := &syncRemote{dirty: map[string]string{}, member: map[string]syncAnswer{}, members: map[string][]syncAnswer{}, devsup: map[string]string{}}
 	gf.deps.SSH = remote
 	recs := append([]leaseRecord{
 		syncRecord(groupHQPool, "svc-hq", 3, branch, "2026-10-24T10:00:00Z"),
