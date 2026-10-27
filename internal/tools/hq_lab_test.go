@@ -103,6 +103,10 @@ type fakeHQ struct {
 	// closes: HQ lets a Mate close its own open change
 	// (POST /api/mate/changes/:repo/:n/close); off, the route is not there.
 	closes bool
+	// before runs as each request arrives, after once it is served; neither
+	// with f.mu held, so a test orders requests of passes running at once
+	// and acts as HQ between them (around).
+	before, after func(*http.Request)
 }
 
 // labOpenCap is how many open changes a Mate holds in a repository on an HQ
@@ -157,6 +161,15 @@ func (f *fakeHQ) link(t *testing.T) *runtime.HQLink {
 }
 
 func (f *fakeHQ) serve(w http.ResponseWriter, r *http.Request, backend http.Handler) {
+	f.mu.Lock()
+	before, after := f.before, f.after
+	f.mu.Unlock()
+	if before != nil {
+		before(r)
+	}
+	if after != nil {
+		defer after(r)
+	}
 	f.mu.Lock()
 	f.calls = append(f.calls, r.Method+" "+r.URL.Path)
 	if f.down {
@@ -821,6 +834,14 @@ func (f *fakeHQ) refuseWith(status int, code, reason string, n int, on func(*htt
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.failing, f.failStatus, f.failCode, f.failReason, f.failOn = n, status, code, reason, on
+}
+
+// around runs before as each request arrives and after once it is served,
+// either nil for none.
+func (f *fakeHQ) around(before, after func(*http.Request)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.before, f.after = before, after
 }
 
 // setDown makes HQ stop answering, or answer again.
