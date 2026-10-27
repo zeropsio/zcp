@@ -695,10 +695,16 @@ func poolMigrateSettledAnswer(ctx context.Context, d poolMigrateDeps, call *pool
 		return poolMigrateImageAnswer(ctx, d, call, resp)
 	}
 	args := map[string]string{"workflow": workflowPoolMigrate, "action": actionPoolEnv, "service": call.dev.Name, "pool": call.pool.Name}
+	why := "zcp gives the pool the dev service's own env itself, secrets included, writing only what differs; no value passes through you."
+	if len(call.partPools) > 0 {
+		// One call without a part gives every part's settled pool its env.
+		delete(args, "pool")
+		why = "zcp gives every part's pool the dev service's own env itself in this one call, secrets included, writing only what differs; no value passes through you."
+	}
 	return poolMigrateAt(resp, poolMigrateStepEnv, &poolMigrateNext{
 		Tool: "zerops_workflow",
 		Args: args,
-		Why:  "zcp gives the pool the dev service's own env itself, secrets included, writing only what differs; no value passes through you.",
+		Why:  why,
 	}, "")
 }
 
