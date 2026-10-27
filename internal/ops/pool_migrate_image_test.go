@@ -236,6 +236,43 @@ func TestPoolMigrateImage_SetupChecks_EachGapNamed(t *testing.T) {
 	}
 }
 
+// TestPoolMigrateImage_InstallMissing_DevSetupWithoutOne_PrintsTheLine: a pool
+// setup without the zcp-devsup install line, in a repository whose dev setup
+// carries none either, is told the whole line to add — never pointed at a
+// line it cannot see. Odin spent five minutes and a redeploy finding it in the
+// zcp binary (2026-10-27).
+func TestPoolMigrateImage_InstallMissing_DevSetupWithoutOne_PrintsTheLine(t *testing.T) {
+	t.Parallel()
+	quoted := "        - \"" + strings.ReplaceAll(imageDevsupLine, `"`, `\"`) + "\"\n"
+	config := strings.ReplaceAll(imageReadyYAML(), quoted, "")
+	if strings.Contains(config, DevsupAsset) {
+		t.Fatalf("the fixture still installs zcp-devsup:\n%s", config)
+	}
+	got := checkPoolMigrateImage(imageInput(imagePool(3, nil)), imageRead("zerops.yaml", config, imageDeclaration, "2026-10-24T10:00:00Z"))
+	msg := imageMessage(got.Missing, PoolMigrateImageInstall)
+	if want := DevsupPrepareCommand("https://github.com/zeropsio/zcp/releases/latest/download/" + DevsupAsset); !strings.Contains(msg, want) {
+		t.Errorf("install message = %q, want the whole line to add: %s", msg, want)
+	}
+}
+
+// TestPoolsAndBoxTheme_DevPoolSetup_CarriesTheInstallLine: the dev-pool
+// setup the theme shows installs zcp-devsup with the line zcp itself writes,
+// never a placeholder an agent has to fill from elsewhere.
+func TestPoolsAndBoxTheme_DevPoolSetup_CarriesTheInstallLine(t *testing.T) {
+	t.Parallel()
+	body, err := os.ReadFile(filepath.Join("..", "knowledge", "themes", "pools-and-box.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	theme := string(body)
+	if strings.Contains(theme, "<install zcp-devsup>") {
+		t.Error("the theme's pool setup still says <install zcp-devsup>")
+	}
+	if want := DevsupPrepareCommand("https://github.com/zeropsio/zcp/releases/latest/download/" + DevsupAsset); !strings.Contains(theme, want) {
+		t.Errorf("the theme's pool setup does not carry the install line %s", want)
+	}
+}
+
 // TestPoolMigrateImage_SetupChecks_DependencyRule_FindingsNeverHoldTheDeploy
 // pins the dependency rule as findings: the image bakes the dependencies into
 // /var/www in run.prepareCommands from the files build.addToRunPrepare lists —

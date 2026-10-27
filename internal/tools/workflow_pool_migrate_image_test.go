@@ -122,6 +122,35 @@ func poolImageDeployedAt(f poolMigrateFixture) string {
 	return ""
 }
 
+// TestPoolMigrate_Image_InstallMissing_NamesTheLineZcpInstalls: with no
+// install line in the pool setup or the dev setup, the image step names the
+// line with the zcp-devsup this zcp installs — ZCP_DEVSUP_URL or the newest
+// release's — as a dev setup moved onto the supervisor gets it.
+func TestPoolMigrate_Image_InstallMissing_NamesTheLineZcpInstalls(t *testing.T) {
+	t.Parallel()
+	config := strings.ReplaceAll(poolMigrateReadyYAML(), "        - "+poolMigrateDevsupLine+"\n", "")
+	if strings.Contains(config, ops.DevsupAsset) {
+		t.Fatalf("the fixture still installs zcp-devsup:\n%s", config)
+	}
+	const url = "https://example.test/releases/download/v9.9.9/" + ops.DevsupAsset
+	f := poolImageFixture(t, func(f *poolMigrateFixture) {
+		f.ssh.image = poolMigrateImageReadFor(config, poolMigrateReadyDeclaration)
+		f.devsup = DevsupSource{Override: url}
+	})
+	out, _ := f.run(t)
+	image := poolImageBlock(t, out)
+	missing, _ := image["missing"].([]any)
+	var msg string
+	for _, m := range missing {
+		if c, _ := m.(map[string]any); c["check"] == ops.PoolMigrateImageInstall {
+			msg, _ = c["message"].(string)
+		}
+	}
+	if want := ops.DevsupPrepareCommand(url); !strings.Contains(msg, want) {
+		t.Errorf("install message = %q, want the line zcp installs: %s", msg, want)
+	}
+}
+
 func poolImageBlock(t *testing.T, out map[string]any) map[string]any {
 	t.Helper()
 	image, ok := out["image"].(map[string]any)
