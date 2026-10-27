@@ -3343,6 +3343,10 @@ themselves; no token crosses the conversation.
     merge commit (mate-hq, a change of unrelated history onto an unwritten `main`). It is never
     merged or rebased onto `main`'s initial commit. The checkout's `main`, holding only that
     commit, then moves onto it (`git checkout -B main origin/main`).
+  - **A pair wired holding it.** A checkout that already holds an existing history when zcp wires
+    it keeps that history as its `main` exactly as it is — the wiring joins nothing onto HQ's
+    unwritten root (§10.10, `ops.BuildBaseBranchCommand`) — and the agent pushes it on a branch
+    and opens its change, as for code from anywhere else.
   - **Either way** the Mate's own setup — the dev setups in `zerops.yaml`, `.zcp/dev-servers.json`
     — goes in afterwards as an ordinary change on a branch cut from that `main`; on a repository
     kept on GitHub that change is a pull request, merged by squash. HQ's initial commit is never
@@ -3654,7 +3658,10 @@ without creating an HQ repository. `GET /api/project/self?projectId=...` returns
 The remote is `<HQ-origin>/git/<encoded-orgId>/<encoded-appId>/<encoded-name>.git`,
 with each segment encoded as `encodeURIComponent`.
 
-The existing seeded-main join establishes shared history without losing checkout files.
+The plain door keeps the seeded-main join, which establishes shared history without losing
+checkout files: a plain project pushes `main` itself, with no change for HQ to land, so its `main`
+must descend from HQ's seed. A Mate's wiring never joins (§10.10); `ops.BuildProjectRepositoryCommand`
+alone asks for the join, `TestBuildProjectRepositoryCommand_JoinsTheSeed`.
 The remote is recorded without a Mate `ServiceMeta.HQ` record: plain Git storage does
 not create a Mate change, recipe or release. HQ owns ref permissions, including the
 difference between isolated and shared applications; zcp neither invents a branch policy
@@ -4290,7 +4297,8 @@ comments, the pictures — is HQ's, as the person (§5.4, §10.11).
 
 As soon as a dev pair exists, zcp gives it a repository in the application HQ holds the Mate in and
 puts the pair's checkout on a `main` that descends from that repository's `main` (a fresh history
-cannot merge into the seeded one); a pair's work reaches `main` by plain git on a branch of the
+cannot merge into a `main` holding code), or, while that `main` is HQ's unwritten root, on its own
+history as it is; a pair's work reaches `main` by plain git on a branch of the
 agent's own, landed by a merge (*A Mate's git*, below). It proposes the application's recipe — the whole app as the three tiers, composed by
 one policy table (`bundle`), every runtime keeping its `buildFromGit` and `zeropsSetup` pair, its
 `buildFromGit` the pair's repository in HQ (`https://<HQ>/git/<orgId>/<appId>/<repo>.git`; the stand-up
@@ -4580,8 +4588,12 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   `main` born with one commit of the empty tree — and wires the pair: `git-push-setup` to
   `https://<HQ>/git/<orgId>/<appId>/<repo>.git` with the Mate's Git credential, the checkout put on a `main` that
   descends from HQ's (`ops.BuildBaseBranchCommand`: a pair fresh from `zcp init` takes `main`'s
-  tree, a pair with history of its own is joined onto HQ's empty seed — an existing repository's
-  history is never brought in that way, but as `main` itself (§5.10) — anything else is refused
+  tree; a pair with history of its own against HQ's unwritten root — `main` one parentless commit
+  of the empty tree, as HQ makes it — keeps that history as its `main` exactly as it is, no commit
+  made and the root never joined in, and the change the agent pushes from it lands as `main`
+  (mate-hq: a change of unrelated history merged onto the unwritten root becomes `main`, with no
+  merge commit; the owner, 2026-10-27: clean history, squash only, no merge commits; zcp joined
+  the root in before, "Join the repository's base"); anything else is refused
   with its remedy — two unrelated histories of code are never joined, the pair's own is kept on a
   branch named after its commit, `ops.KeepOwnHistory`, so the remedy runs again as it is), the pair's record `ServiceMeta.HQ {appId, repo}`, and `origin` where the code is kept (§5.10). There is no Mate
   branch. A remote that is not this HQ's is the user's own and left alone. One repository per pair
@@ -4797,12 +4809,18 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   HQ's address over ssh (`ops.BuildMainSyncCommand`): moved by ref while the checkout is elsewhere,
   checked out while it is on `main`, refused by git with nothing moved when an uncommitted file is in
   the way, the next step named. A `main` with commits HQ's lacks is never moved; when no other ref
-  holds them, the pass names the step that keeps them on a branch and puts `main` on HQ's. A `main`
-  HQ's has or descends from is left to the agent's fast-forward. Develop's start runs the pass for every pair outside the
+  holds them, the pass names the step that keeps them on a branch and puts `main` on HQ's — except
+  a history of its own against HQ's unwritten root (`ops.MainFirstHistory`), the repository's first
+  history, whose step is to push it as it is on a branch of the agent's own and open its change,
+  which HQ makes `main`, never to carry it onto that root; AGENTS.md's git host paragraph and the
+  git-push start guidance keep such a `main` as it is too, rather than resetting it onto the root.
+  A `main` HQ's has or descends from is left to the agent's fast-forward. Develop's start runs the pass for every pair outside the
   backoff (`hqPassNow`); bootstrap and adopt keep it. zcp
   `TestMainSync_ASeedOnlyMainTakesHQsMainAndNothingOfTheAgentsMoves`,
   `TestDevelopStart_AMainThatIsOnlyZcpsSeedTakesHQsMain`,
-  `TestDevelopStart_AMainWithCommitsOfItsOwnIsLeftWithItsStepNamed`.
+  `TestDevelopStart_AMainWithCommitsOfItsOwnIsLeftWithItsStepNamed`,
+  `TestMainSync_AFirstHistoryOnHQsUnwrittenRootIsPushedAsItIs`,
+  `TestDevelopStart_AFirstHistoryOnHQsUnwrittenRootIsPushedAsItIs`.
 - **HQ not answering, fast (D35).** A describe's and the git helper's HQ call connects within 5 s,
   TLS included, and is answered within 30 s (`hq.Client.Bounded`; `Once` sends it once, so the
   client's own 20 s wait on a 503 never stacks under the caller's tries). git has no connect setting — curl would wait 300 s — so
@@ -5288,7 +5306,7 @@ merge/release targets, not an arbitrary ref supplied by the client.
 | MB-23 | A stage and a production run no agent unless the person says so; only a dev environment is a Mate by default. `createEnvironment.test.ts` "gives $role an agent". |
 | MB-24 | A new birth carries its own group writes — the registry, the broker's grant, the deploy token, the declaration — as its `tags` and `registry` steps (§4.4), so an organization switch, leaving the page or a reload after create-accepted never strands them. A stage or a production half-made by a birth on another device or by an older build is finished by an account worker acting only on complete known inputs (the fork's slice 4.7; until then the projects page finishes it on its next read). Either way the declaration write declares nothing twice and reuses a branch or request an earlier attempt left. `zeropsBirths.host.test.tsx` "org switch after create-accepted still finishes tags and registry"; `groupEnvironments.test.ts` "halfMadeGroupEnvironments"; `addGroupEnvironment.test.ts` "declares nothing twice…", "reuses the branch it left…", "reuses the request it left…". Superseded 2026-10-02: the group writes are the press's `register` step (§4.4), run before the press returns — a Mate's record attached to its application in HQ, then its birth; a stage or a production attached as its tier, then its deploy key — each safe to ask again: an attach HQ holds already stands, and a key is minted only where HQ holds none that works; a press that stopped resumes there with _Try again_, and a half-made Mate's _Finish setup_ runs it in any browser. A stage or a production whose attach or key a reload lost is finished by the projects page on its next read, not by an account worker (§10.11). `hqMateBirth.test.ts` "keeps a record HQ holds already"; `addGroupEnvironment.test.ts` "attaches the project as its tier, then hands HQ the key minted for that one project", "mints nothing for an environment whose key HQ holds and finds working"; `runEnvironmentCreation.test.ts` "resumes at the step that stopped, on the project the first press made"; `groupEnvironments.test.ts` "names a stage placed but held as no environment"; `useZeropsGroupEnvironmentReconcile.test.ts` "tries a failed repair again only after its backoff". |
 | MB-25 | A second registered Mate asking for a service repository of its group joins it with write, and `POST /mate/repository` refuses the group repository whether it exists or not — it makes and joins service repositories, and a registered Mate's write on the group repository is the rights loop's (D31), which the refusal says without sending the Mate to a fork; an owner's _Add Mate_ registers the Mate with the two writes the card's _Register in {group}_ makes, as its birth's first steps. gitea-mate `TestASecondMateJoinsAServiceRepositoryOfItsGroup`, `TestRepositoryRefusals`; `brokerGrant.test.ts` "registerMateInGroup". Superseded 2026-10-02: in HQ a Mate's `POST /api/mate/repos` makes or joins the application's repository of that name, and zcp never asks for `group` on a pair's behalf (§10.10). |
-| MB-26 | A Mate's code reaches HQ by plain git on a branch of the agent's own, never a push of `main` and never a force; a stage deploy of a wired pair deploys and delivers nothing — no commit, change or push — a `strategy="git-push"` deploy from a pair wired to HQ, to any remote, refuses before git runs, and a wired pair's direct deploys are never redirected to a push; a pair's checkout is put on a `main` that descends from HQ's, and two unrelated histories of code are never joined (the pair's own is kept on a branch); a group's stage and production build the stage half's setup — the one a deploy of the stage half recorded, else the one setup the pair's zerops.yaml declares beside the dev one, else its only setup — and a tier that would build a stage setup nothing names is withheld until one does, never given the dev setup (a joining Mate records no stage setup, and production built the dev loop's `zsc noop`, 2026-09-26); zcp writes no workflow file — Core deploys the application's environments from the repository's commits (§10.8). zcp `TestAWiredPairDeploysDirectlyAndIsNeverSentToPush`, `TestGitPushToHQ_RefusedForPlainGitOnABranch`, `TestGitPushFromAPairWiredToHQ_RefusedWhateverTheRemote`, `TestBuildBaseBranchCommand_DescendsFromMain`, `TestBaseBranchRefusalRemedy_TheNextAttemptWires`, `TestBuildGroupRecipe_GroupEnvironmentsBuildTheStageHalfsSetup`, `TestBuildGroupRecipe_StageSetup_ResolvedOrWithheld`, `TestComposeGroupRecipeInputs_JoinerWithoutStageSetup_BuildsTheYAMLsOtherSetup`. |
+| MB-26 | A Mate's code reaches HQ by plain git on a branch of the agent's own, never a push of `main` and never a force; a stage deploy of a wired pair deploys and delivers nothing — no commit, change or push — a `strategy="git-push"` deploy from a pair wired to HQ, to any remote, refuses before git runs, and a wired pair's direct deploys are never redirected to a push; a pair's checkout is put on a `main` that descends from HQ's — or, against HQ's unwritten root, holds its own history as it is, that root never joined in — and two unrelated histories of code are never joined (the pair's own is kept on a branch); a group's stage and production build the stage half's setup — the one a deploy of the stage half recorded, else the one setup the pair's zerops.yaml declares beside the dev one, else its only setup — and a tier that would build a stage setup nothing names is withheld until one does, never given the dev setup (a joining Mate records no stage setup, and production built the dev loop's `zsc noop`, 2026-09-26); zcp writes no workflow file — Core deploys the application's environments from the repository's commits (§10.8). zcp `TestAWiredPairDeploysDirectlyAndIsNeverSentToPush`, `TestGitPushToHQ_RefusedForPlainGitOnABranch`, `TestGitPushFromAPairWiredToHQ_RefusedWhateverTheRemote`, `TestBuildBaseBranchCommand_DescendsFromMain`, `TestBaseBranchRefusalRemedy_TheNextAttemptWires`, `TestBuildGroupRecipe_GroupEnvironmentsBuildTheStageHalfsSetup`, `TestBuildGroupRecipe_StageSetup_ResolvedOrWithheld`, `TestComposeGroupRecipeInputs_JoinerWithoutStageSetup_BuildsTheYAMLsOtherSetup`. |
 | MB-27 | A second Mate joins its group's service repository and works from `main` (live, 2026-09-17); a recipe pull request is opened only for a branch ahead of `main`, and one Gitea calls empty is closed by the broker, never retried; a job's deploy takes a tier's name for the group's only environment of that tier; _Add Mate_ begins the Mate's birth as soon as the project exists, a failed later step included. zcp `TestGroupRecipe_OpensNothingMainAlreadyHas` (in HQ: a landed proposal leaves nothing to open); gitea-mate `TestAnEmptyRecipePullRequestIsClosedNotRetried`, `TestDeployTakesATiersNameForItsOnlyEnvironment`; `brokerGrant.test.ts` "registerMateInGroup"; ledger _The whole chain through the UI, from a wiped org_. |
 | MB-30 | A release lists what each production repository's `main` holds, stage or no stage, and shows the commits it would carry; the offer carries the entries the tag will list, and no refusal names a stage at all (D28). A Mate's open change is offered in its own conversation, as _Review_ at the composer's top, and merging from its review is HQ's, as the person, onto the head the review showed, a squash onto `main` (§10.8); the agent brings `main` up to date by a fast-forward and cuts its next branch from it (MB-26) — a pass never changes the checkout. `release.test.ts` — "a release lists what is merged", "carries the entries the tag would list, so the verb tags what the offer showed"; `groupDeploys.test.ts` — "what a release has to read"; `mateNextStep.test.ts` — "$case" (its cases include "its own change, waiting for the person's review", "the newest where it has two, so the strip is stable"); `ZeropsNextStepBanner.test.tsx` — "opens the change's review from the button that was pressed"; HQ client `client.test.ts` — "merges a change as the person, with the head they were shown", "says why HQ did not merge in words of its own"; HQ `merge.test.ts` — "a change merged into main, or closed". |
 | MB-31 | In a Mate, HQ answering or not, launch-production refuses before it reads a scope or writes anything, and its next step names only a change the Mate's fresh state says is still open; a merged one points at the projects page, and none, or one closed without merging, says the work goes to `main` first by a branch of the agent's own; with HQ not answering or refusing the key it says the answer is HQ's. A container that is not a Mate keeps its route. zcp `TestHandleLaunchProduction_AMateRefusesBeforeAnyStep` (the handler, Mate and not, linked and not: no SSH read, admin client, staged token or state file before the refusal), `TestLaunchProduction_AMateKeepingItsCodeInHQRefusesAndSaysWhatIsTrue` (the next step). |
