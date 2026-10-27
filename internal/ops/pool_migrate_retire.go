@@ -77,9 +77,10 @@ func PoolMigrateEnvReferencesTo(ctx context.Context, client platform.Client, pro
 	return refs, unread, nil
 }
 
-// PoolMigrateDevDomains names the domains a public HTTP routing sends to the
-// dev service, by its id: moving a domain is the person's dashboard work, and
-// the retire refuses while one routes to the dev.
+// PoolMigrateDevDomains names the custom domains a public HTTP routing sends
+// to the dev service, by its id: moving a domain is the person's dashboard
+// work, and the retire refuses while one routes to the dev. The dev's own
+// zerops.app subdomains (IsPlatformSubdomain) are none: they die with it.
 func PoolMigrateDevDomains(ctx context.Context, client platform.Client, projectID, devID string) ([]string, error) {
 	routings, err := client.ListPublicHTTPRoutings(ctx, projectID)
 	if err != nil {
@@ -91,7 +92,7 @@ func PoolMigrateDevDomains(ctx context.Context, client platform.Client, projectI
 			continue
 		}
 		for _, d := range r.Domains {
-			if !slices.Contains(domains, d.Name) {
+			if !IsPlatformSubdomain(d.Name) && !slices.Contains(domains, d.Name) {
 				domains = append(domains, d.Name)
 			}
 		}

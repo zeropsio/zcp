@@ -18,7 +18,6 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
-	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -818,15 +817,15 @@ func (g *poolRetireGuards) readReferences(ctx context.Context, d poolRetireDeps)
 	}
 }
 
-// readDomains refuses while a domain routes to a dev service the retire
-// deletes — the dev, or a variant-B pair's further dev service.
+// readDomains refuses while a custom domain routes to a dev service the
+// retire deletes — the dev, or a variant-B pair's further dev service — read
+// live from the project's routing list (§8 O3), never from the meta's
+// recorded intent: an intent "domain" with no custom domain routed is stale
+// (a reconcile reads it back to auto), and the dev's own zerops.app
+// subdomains die with it, as the diagnosis names.
 func (g *poolRetireGuards) readDomains(ctx context.Context, d poolRetireDeps) {
 	devs := append([]poolRetireService{{Hostname: g.call.dev.Name, ServiceID: g.call.dev.ID}}, g.devServices...)
 	for _, dev := range devs {
-		if g.call.meta.PublicAccessFor(dev.Hostname).Intent == topology.PublicAccessDomain {
-			g.refuse(poolRetireRefuseDomain, fmt.Sprintf("%s's public access is a custom domain: moving a domain to the stage or the pool is the person's dashboard work, before the retire.", dev.Hostname))
-			continue
-		}
 		domains, err := ops.PoolMigrateDevDomains(ctx, d.client, d.projectID, dev.ServiceID)
 		switch {
 		case err != nil:

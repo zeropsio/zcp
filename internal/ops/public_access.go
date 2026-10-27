@@ -3,6 +3,7 @@ package ops
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -170,6 +171,9 @@ func buildPublicAccessObservation(
 				continue
 			}
 			for _, d := range r.Domains {
+				if IsPlatformSubdomain(d.Name) {
+					continue
+				}
 				routes = append(routes, PublicDomainRoute{
 					Name:           d.Name,
 					Port:           loc.Port,
@@ -199,6 +203,21 @@ func buildPublicAccessObservation(
 		URL:     url,
 		Domains: routes,
 	}
+}
+
+// platformSubdomainSuffix is the domain every Zerops subdomain lives under:
+// `<host>-<sub>.<region>.zerops.app` and each port's
+// `<host>-<sub>-<port>.<region>.zerops.app`.
+const platformSubdomainSuffix = ".zerops.app"
+
+// IsPlatformSubdomain reports a domain the platform names for a service — its
+// subdomain or a port's — which the project's routing list carries beside the
+// custom domains. Nobody but Zerops holds a name under zerops.app, so such a
+// name is never a custom domain (§8 O3): it comes and goes with the service's
+// subdomain access and dies with the service.
+func IsPlatformSubdomain(domain string) bool {
+	name := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(domain), "."))
+	return strings.HasSuffix(name, platformSubdomainSuffix)
 }
 
 // hasLiveSubdomainEnable reports whether a live process is currently enabling
