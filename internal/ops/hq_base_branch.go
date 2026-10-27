@@ -42,14 +42,20 @@ func hqGit(args string) string {
 		seconds, hqGitStallSeconds, args)
 }
 
-// BuildBaseBranchCommand puts the pair's working copy on `main`, SHARING its
-// history with the repository's `main` in HQ, so every branch the agent cuts
-// from it can land there.
+// BuildBaseBranchCommand puts a Mate pair's working copy on `main`, SHARING
+// its history with the repository's `main` in HQ, so every branch the agent
+// cuts from it can land there — or, while HQ's `main` is its unwritten root,
+// keeping the pair's own history as `main` exactly as it is, which HQ makes
+// `main` once its change merges.
 //
-// HQ makes a repository with one commit of an empty tree on `main`, while zcp
-// git-initialises the pair with a history of its own. A change whose history
-// shares nothing with `main` is unrelated to it, and HQ cannot merge it. So
-// `main` is fetched first and the two histories are joined.
+// HQ makes a repository with one commit of an empty tree on `main` — its
+// unwritten root — while zcp git-initialises the pair with a history of its
+// own. A change whose history shares nothing with a `main` holding code is
+// unrelated to it, and HQ cannot merge it; one onto the unwritten root HQ
+// makes `main` itself, no merge commit and no join. So `main` is fetched
+// first and nothing is ever joined: a commit of both histories would leave
+// `main` holding HQ's root beside a history its origin never had (the owner,
+// 2026-10-27: clean history, squash only, no merge commits).
 //
 // The pair's code is never rewritten to do it. A rebase onto the base refused
 // a dirty working copy and linearised a recipe's hand-resolved merges into
@@ -61,14 +67,12 @@ func hqGit(args string) string {
 //     only `main` is named, and the agent takes the base in with git;
 //   - HEAD is only the `zcp init` marker (a parentless empty tree) → `main`
 //     is put on the base, so whatever the base carries is in the working
-//     copy. Refused by name if a change is staged (the
-//     checkout would carry it onto the base); if the checkout would overwrite
-//     an untracked file, a seed base is joined as below instead, any other
-//     base refused by name;
-//   - the base is provably HQ's seed — one parentless commit of the empty
-//     tree → a commit with the pair's own tree and both histories as parents
-//     (`commit-tree`, plumbing: no index, working copy or hook is touched), so
-//     the pair's tree stays byte-identical;
+//     copy. Refused by name if a change is staged (the checkout would carry
+//     it onto the base), or if the checkout would overwrite an untracked file;
+//   - the base is provably HQ's unwritten root — one parentless commit of the
+//     empty tree — and HEAD a history of its own → only `main` is named, at
+//     HEAD, its commits, tree and working copy as they are: the agent pushes
+//     it on a branch as it is, and its change lands as `main`;
 //   - anything else — real code on both sides, unrelated → refused by name
 //     (ZCP_BASE_NOT_SEED): two unrelated histories are never joined.
 //
@@ -77,21 +81,34 @@ func hqGit(args string) string {
 // Every refusal changes nothing; BaseBranchRefusal reads which one it was and
 // BaseBranchRefusalRemedy what to do about it.
 //
-// Idempotent: a `main` that already shares history with the base is left
-// exactly where it is, so a later pass cannot rewrite the shas under an open
-// change.
+// Idempotent: a `main` that already shares history with the base, or is a
+// history of its own on the unwritten root, is left exactly where it is, so a
+// later pass cannot rewrite the shas under an open change.
 //
 // Auth rides HQ's session credential helper, like every other remote-reading
 // command here: the Mate credential reaches git over an anonymous pipe, never
 // argv and never a file.
 func BuildBaseBranchCommand(workingDir string) string {
+	return baseBranchCommand(workingDir, false)
+}
+
+// baseBranchCommand is BuildBaseBranchCommand; joinRoot keeps the
+// plain-project door's join of HQ's unwritten root into a history of its own
+// (BuildProjectRepositoryCommand): a plain project pushes `main` itself, with
+// no change for HQ to land, so its `main` must descend from HQ's. A Mate's
+// wiring never joins.
+func baseBranchCommand(workingDir string, joinRoot bool) string {
 	refuse := func(state string) string {
 		return fmt.Sprintf(`{ echo "%s%s"; exit 5; }`, baseBranchRefusalMarker, state)
 	}
-	joinIdentity := fmt.Sprintf("-c user.email=%s -c user.name=%s",
-		shellQuote(DeployGitIdentity.Email), shellQuote(DeployGitIdentity.Name))
-	join := `c=$(git ` + joinIdentity + ` commit-tree "HEAD^{tree}" -p HEAD -p FETCH_HEAD -m "Join the repository's base") && ` +
-		`git update-ref "$ref" "$c" "$old" && git symbolic-ref HEAD "$ref"; `
+	name := `[ "$cur" = "$ref" ] || git checkout -q -b "$b"; `
+	onRoot := name
+	if joinRoot {
+		joinIdentity := fmt.Sprintf("-c user.email=%s -c user.name=%s",
+			shellQuote(DeployGitIdentity.Email), shellQuote(DeployGitIdentity.Name))
+		onRoot = `c=$(git ` + joinIdentity + ` commit-tree "HEAD^{tree}" -p HEAD -p FETCH_HEAD -m "Join the repository's base") && ` +
+			`git update-ref "$ref" "$c" "$old" && git symbolic-ref HEAD "$ref"; `
+	}
 	// A repository HQ holds with no `main` yet (made by connect, follow or
 	// createRepo, not seeded) answers the fetch "couldn't find remote ref":
 	// there is no base to descend from, so the pair's HEAD becomes `main` and
@@ -107,17 +124,15 @@ func BuildBaseBranchCommand(workingDir string) string {
 		"{ b=" + shellQuote(baseBranch) + `; ref="refs/heads/$b"; cur=$(git symbolic-ref -q HEAD || true); ` +
 			`old=$(git rev-parse -q --verify "$ref" || true); ` +
 			`if [ "$cur" != "$ref" ] && [ -n "$old" ]; then ` + refuse("ZCP_BRANCH_ELSEWHERE") + `; fi; ` +
-			`isseed=; if [ -z "$nomain" ] && [ "$(git rev-list --count FETCH_HEAD)" = 1 ] && [ "$(git rev-parse "FETCH_HEAD^{tree}")" = "$(git hash-object -t tree /dev/null)" ]; then isseed=1; fi; ` +
-			`if [ -n "$nomain" ] || git merge-base FETCH_HEAD HEAD >/dev/null 2>&1; then ` +
-			`[ "$cur" = "$ref" ] || git checkout -q -b "$b"; ` +
+			`isroot=; if [ -z "$nomain" ] && [ "$(git rev-list --count FETCH_HEAD)" = 1 ] && [ "$(git rev-parse "FETCH_HEAD^{tree}")" = "$(git hash-object -t tree /dev/null)" ]; then isroot=1; fi; ` +
+			`if [ -n "$nomain" ] || git merge-base FETCH_HEAD HEAD >/dev/null 2>&1; then ` + name +
 			`elif [ "$(git rev-parse "HEAD^{tree}")" = "$(git hash-object -t tree /dev/null)" ] && ! git rev-parse -q --verify "HEAD^" >/dev/null; then ` +
 			`if ! git diff --cached --quiet; then ` + refuse("ZCP_STAGED_CHANGES") + `; fi; ` +
 			`collide=$(git ls-tree -r --name-only FETCH_HEAD | while IFS= read -r f; do if [ -e "$f" ] || [ -L "$f" ]; then printf '%s ' "$f"; fi; done); ` +
 			`if [ -z "$collide" ]; then ` +
 			`git checkout -q --detach FETCH_HEAD && git update-ref "$ref" "$(git rev-parse FETCH_HEAD)" "$old" && git symbolic-ref HEAD "$ref"; ` +
-			`elif [ -n "$isseed" ]; then ` + join +
 			`else echo "` + baseBranchRefusalMarker + `ZCP_UNTRACKED_COLLISION $collide"; exit 5; fi; ` +
-			`elif [ -n "$isseed" ]; then ` + join +
+			`elif [ -n "$isroot" ]; then ` + onRoot +
 			`else ` + refuse("ZCP_BASE_NOT_SEED") + `; fi; }`,
 	}, " && ")
 }

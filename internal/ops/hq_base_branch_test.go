@@ -1,8 +1,9 @@
 // Tests for: ops/hq_base_branch.go — a pair's checkout must descend from the
 // repository's `main`. Run against a temp BARE repository standing in for HQ:
 // HQ makes `main` with one commit of the empty tree, zcp git-initialises the
-// pair with a history of its own, and a branch that shares no history with
-// `main` cannot be merged onto it.
+// pair with a history of its own, and a branch that shares no history with a
+// `main` holding code cannot be merged onto it; onto that unwritten root, HQ
+// makes it `main`.
 package ops
 
 import (
@@ -507,6 +508,8 @@ func TestBaseBranchRefusalRemedy_TheNextAttemptWires(t *testing.T) {
 			name: "main exists and HEAD is elsewhere",
 			seed: func(t *testing.T, dir string) {
 				t.Helper()
+				runGit(t, dir, "fetch", "-q", "origin", "main")
+				runGit(t, dir, "checkout", "-q", "-b", "main", "FETCH_HEAD")
 				writeLabFile(t, filepath.Join(dir, "index.js"), "the app\n")
 				commitAll(t, dir, "init")
 				runGit(t, dir, "checkout", "-q", "-b", "feature")
@@ -701,7 +704,7 @@ func TestBuildBaseBranchCommand_Shape(t *testing.T) {
 	// the pair's history or its working copy), never `-B`, a force or a
 	// reset: moving or resetting an existing branch would discard work the
 	// Mate has already pushed.
-	for _, absent := range []string{"commit-tree", "Join the repository's base", "allow-unrelated-histories", "rebase", "git merge ", "checkout -B", "--force", "reset"} {
+	for _, absent := range []string{`commit-tree "HEAD^{tree}"`, "-p FETCH_HEAD", "Join the repository's base", "allow-unrelated-histories", "rebase", "git merge ", "checkout -B", "--force", "reset"} {
 		if strings.Contains(cmd, absent) {
 			t.Errorf("command must not carry %q:\n%s", absent, cmd)
 		}
