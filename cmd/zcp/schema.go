@@ -24,24 +24,27 @@ const subcmdSync = "sync"
 //	        exits 0 = no drift, 2 = drift. Default mode preserves local
 //	        SKIP-on-inconclusive behavior; --strict exits 1 on fetch errors.
 func runSchema(args []string) int {
+	const usage = "Usage: zcp schema {sync|check [--strict]}"
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: zcp schema {sync|check}")
+		fmt.Fprintln(os.Stderr, usage)
 		return 1
+	}
+	if isHelpArg(args[0]) {
+		fmt.Fprintln(os.Stdout, usage)
+		return 0
 	}
 	switch args[0] {
 	case subcmdSync:
+		if _, code, done := commandFlags("Usage: zcp schema sync", args[1:]); done {
+			return code
+		}
 		return runSchemaSync()
 	case "check":
-		strict := false
-		switch {
-		case len(args) == 1:
-		case len(args) == 2 && args[1] == "--strict":
-			strict = true
-		default:
-			fmt.Fprintln(os.Stderr, "Usage: zcp schema check [--strict]")
-			return 1
+		flags, code, done := commandFlags("Usage: zcp schema check [--strict]", args[1:], "--strict")
+		if done {
+			return code
 		}
-		return runSchemaCheck(strict)
+		return runSchemaCheck(flags["--strict"])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown schema subcommand: %s\n", args[0])
 		return 1

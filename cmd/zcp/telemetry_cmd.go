@@ -8,6 +8,8 @@ import (
 	"github.com/zeropsio/zcp/internal/telemetry"
 )
 
+const telemetryUsage = "Usage: zcp telemetry {status|enable|disable|id|disclosure}"
+
 // runTelemetryCmd implements `zcp telemetry status|enable|disable|id|disclosure` (spec
 // §3.5). cfg is the SAME Config runCLI already resolved for this process
 // (spec §3.1 "resolved ONCE ... never re-read env") — status reads it
@@ -17,8 +19,15 @@ import (
 // same as every other CLI subcommand.
 func runTelemetryCmd(args []string, cfg telemetry.Config) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: zcp telemetry {status|enable|disable|id|disclosure}")
+		fmt.Fprintln(os.Stderr, telemetryUsage)
 		return 1
+	}
+	if isHelpArg(args[0]) {
+		fmt.Fprintln(os.Stdout, telemetryUsage)
+		return 0
+	}
+	if _, code, done := commandFlags(telemetryUsage, args[1:]); done {
+		return code
 	}
 
 	// disclosure is stateless — it reads no install file, so it must not
@@ -77,7 +86,7 @@ func runTelemetryCmd(args []string, cfg telemetry.Config) int {
 
 	default:
 		fmt.Fprintf(os.Stderr, "unknown telemetry subcommand: %s\n", args[0])
-		fmt.Fprintln(os.Stderr, "Usage: zcp telemetry {status|enable|disable|id|disclosure}")
+		fmt.Fprintln(os.Stderr, telemetryUsage)
 		return 1
 	}
 }

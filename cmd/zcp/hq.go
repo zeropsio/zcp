@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"slices"
 	"syscall"
 	"time"
 
@@ -66,11 +65,19 @@ type hqStatus struct {
 // runHQCmd implements `zcp hq status [--json]`: exit 0 always, a failed read
 // is its error field.
 func runHQCmd(args []string) int {
+	if len(args) > 0 && isHelpArg(args[0]) {
+		fmt.Fprintln(os.Stdout, hqUsage)
+		return 0
+	}
 	if len(args) == 0 || args[0] != hqVerbStatus {
 		log.Print(hqUsage)
 		return 1
 	}
-	asJSON := slices.Contains(args[1:], "--json")
+	flags, code, done := commandFlags(hqUsage, args[1:], "--json")
+	if done {
+		return code
+	}
+	asJSON := flags["--json"]
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	ctx, cancel := context.WithTimeout(ctx, hqTimeout)

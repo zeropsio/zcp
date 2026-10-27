@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"slices"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/mate"
@@ -48,12 +47,17 @@ func defaultMateRestartUnit(unit string) error {
 	return cmd.Run()
 }
 
-// runMateCmd implements `zcp mate status [--json] [--refresh]` and
-// `zcp mate update [--force] [--json]`. args is everything after "mate".
+// runMateCmd implements `zcp mate status [--json] [--refresh] [--local]` and
+// `zcp mate update [--json] [--force] [--automatic]`. args is everything after "mate".
 func runMateCmd(args []string) int {
+	const usage = "usage: zcp mate <status|update> [--json] [--force] [--refresh]"
 	if len(args) == 0 {
-		log.Print("usage: zcp mate <status|update> [--json] [--force] [--refresh]")
+		log.Print(usage)
 		return 1
+	}
+	if isHelpArg(args[0]) {
+		fmt.Fprintln(os.Stdout, usage)
+		return 0
 	}
 	switch args[0] {
 	case mateVerbStatus:
@@ -61,7 +65,7 @@ func runMateCmd(args []string) int {
 	case "update":
 		return runMateUpdate(args[1:])
 	default:
-		log.Print("usage: zcp mate <status|update> [--json] [--force] [--refresh]")
+		log.Print(usage)
 		return 1
 	}
 }
@@ -100,8 +104,11 @@ type mateUpdaterStatus struct {
 }
 
 func runMateStatus(args []string) int {
-	asJSON := slices.Contains(args, "--json")
-	refresh := slices.Contains(args, "--refresh")
+	flags, code, done := commandFlags("usage: zcp mate status [--json] [--refresh] [--local]", args, "--json", "--refresh", "--local")
+	if done {
+		return code
+	}
+	asJSON, refresh, local := flags["--json"], flags["--refresh"], flags["--local"]
 
 	result := mateStatusResult{
 		Contract:  mate.SupportedContract,
@@ -121,13 +128,13 @@ func runMateStatus(args []string) int {
 	defer cancel()
 	var desired mate.Manifest
 	var err error
-	if slices.Contains(args, "--local") {
+	if local {
 		desired, _ = mate.CachedRelease()
 	} else {
 		desired, err = mate.DesiredRelease(ctx, http.DefaultClient, mate.ManifestOptions{Refresh: refresh})
 	}
 	state, stateErr := mate.ReadOptionalUpdateState()
-	if slices.Contains(args, "--local") && runtime.DetectFrom(mate.LiveLookup(mate.LiveEnvStorePath)).MateEnabled {
+	if local && runtime.DetectFrom(mate.LiveLookup(mate.LiveEnvStorePath)).MateEnabled {
 		state, _ = mate.ObserveUpdateState()
 	}
 	state = mate.CurrentUpdateState(state, result.Installed, desired.Version)
@@ -204,11 +211,15 @@ type mateUpdateResult struct {
 // container restart. Container-only: it refuses on a local machine and when
 // ZCP_MATE_ENABLED is off, since there is nothing to update either way.
 func runMateUpdate(args []string) int {
-	if slices.Contains(args, "--worker") {
+	// --worker and --recover are the independent worker's own (launchMateUpdateWorker).
+	flags, code, done := commandFlags("usage: zcp mate update [--json] [--force] [--automatic]", args, "--json", "--force", "--automatic", "--worker", "--recover")
+	if done {
+		return code
+	}
+	if flags["--worker"] {
 		return runMateUpdateWorker(args)
 	}
-	force := slices.Contains(args, "--force")
-	asJSON := slices.Contains(args, "--json")
+	force, asJSON := flags["--force"], flags["--json"]
 
 	rt := runtime.Detect()
 	if !rt.InContainer {
@@ -218,7 +229,7 @@ func runMateUpdate(args []string) int {
 		return failMateUpdate(asJSON, "ZCP_MATE_ENABLED is off — mate is not managed on this container")
 	}
 
-	supported := slices.Contains(args, "--automatic")
+	supported := flags["--automatic"]
 	if !supported {
 		var probeErr error
 		supported, probeErr = mateUpdateProbe()

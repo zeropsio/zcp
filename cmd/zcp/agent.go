@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"slices"
 	"syscall"
 
 	"github.com/zeropsio/zcp/internal/auth"
@@ -72,8 +73,13 @@ func buildAgentPlatformClient() (platform.Client, error) {
 
 // runAgent handles `zcp agent <subcommand>`.
 func runAgent(args []string) {
+	const usage = "Usage: zcp agent mark-oauth <agent-id>"
+	if slices.ContainsFunc(args, isHelpArg) {
+		fmt.Fprintln(os.Stdout, usage)
+		return
+	}
 	if len(args) == 0 || args[0] != "mark-oauth" {
-		fmt.Fprintln(os.Stderr, "Usage: zcp agent mark-oauth <agent-id>")
+		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)
 	}
 	if err := runAgentMarkOAuth(args[1:], defaultAgentMarkOAuthDeps()); err != nil {

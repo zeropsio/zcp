@@ -10,13 +10,21 @@ import (
 var defaultSnapshotPath = filepath.Join("internal", "knowledge", "testdata", "schema_versions.json")
 
 func runCatalog(args []string) int {
+	const usage = "Usage: zcp catalog sync"
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: zcp catalog sync")
+		fmt.Fprintln(os.Stderr, usage)
 		return 1
+	}
+	if isHelpArg(args[0]) {
+		fmt.Fprintln(os.Stdout, usage)
+		return 0
 	}
 
 	switch args[0] {
 	case subcmdSync:
+		if _, code, done := commandFlags(usage, args[1:]); done {
+			return code
+		}
 		// `zcp catalog sync` is a thin alias for `zcp schema sync`. A standalone
 		// catalog fetch (the old behavior) was a SECOND independent live fetch
 		// that wrote only schema_versions.json — exactly the path that let the

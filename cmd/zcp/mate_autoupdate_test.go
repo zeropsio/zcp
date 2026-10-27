@@ -130,3 +130,68 @@ func TestMateUpdate_WorkerStarted_ReportsPendingDecision(t *testing.T) {
 		t.Errorf("update output = %q, want %q", stderr, want)
 	}
 }
+
+// A help request or a mistyped flag is answered before any action: neither the
+// independent worker nor the attended install path runs, so the running Mate is
+// never drained, replaced or restarted by `zcp mate update --help`.
+func TestMateUpdate_HelpOrUnknownFlag_ChangesNothing(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		args     []string
+		status   int
+		body     string
+		wantCode int
+		wantHelp bool
+	}{
+		{"--help with an updater-capable Mate", []string{"update", "--help"}, 200, `{"protocol":1}`, 0, true},
+		{"-h with an updater-capable Mate", []string{"update", "-h"}, 200, `{"protocol":1}`, 0, true},
+		{"unknown flag with an updater-capable Mate", []string{"update", "--bogus"}, 200, `{"protocol":1}`, 2, false},
+		{"--help on the attended legacy path", []string{"update", "--help"}, 404, "not found", 0, true},
+		{"unknown flag on the attended legacy path", []string{"update", "--bogus"}, 404, "not found", 2, false},
+		{"unknown flag after a known one", []string{"update", "--json", "--bogus"}, 200, `{"protocol":1}`, 2, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			containerEnv(t)
+			seedInstalledBundle(t, home, "0.14.0")
+			manifestAndTarballServer(t)
+			writeFakeInstallTools(t)
+			bin := t.TempDir()
+			launched := filepath.Join(t.TempDir(), "sudo-ran")
+			writeFakeBin(t, filepath.Join(bin, "sudo"), "#!/bin/sh\necho \"$@\" > '"+launched+"'\n")
+			t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+			old := http.DefaultTransport
+			http.DefaultTransport = capabilityTransport{tc.status, tc.body, nil, old}
+			t.Cleanup(func() { http.DefaultTransport = old })
+			restarted := false
+			origRunner := mateRestartUnit
+			mateRestartUnit = func(string) error { restarted = true; return nil }
+			t.Cleanup(func() { mateRestartUnit = origRunner })
+
+			stdout, _ := captureOutput(t, func() {
+				if code := runMateCmd(tc.args); code != tc.wantCode {
+					t.Errorf("exit = %d, want %d", code, tc.wantCode)
+				}
+			})
+			if _, err := os.Stat(launched); err == nil {
+				t.Error("no update worker unit may be launched")
+			}
+			if version, err := mate.InstalledVersion(); err != nil || version != "0.14.0" {
+				t.Errorf("installed = %q, %v; want 0.14.0 untouched", version, err)
+			}
+			if _, err := os.Stat(filepath.Join(home, ".zcp", "mate", "versions", manifestVersion)); err == nil {
+				t.Errorf("version %s was staged", manifestVersion)
+			}
+			if _, err := os.Stat(mate.UpdateStatePath()); err == nil {
+				t.Error("an update state was recorded")
+			}
+			if restarted {
+				t.Error("the Mate unit may not be restarted")
+			}
+			if gotHelp := strings.Contains(stdout, "usage: zcp mate update"); gotHelp != tc.wantHelp {
+				t.Errorf("stdout = %q, usage printed = %v, want %v", stdout, gotHelp, tc.wantHelp)
+			}
+		})
+	}
+}

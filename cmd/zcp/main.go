@@ -76,7 +76,7 @@ func cliDispatch() map[string]func(rest []string, cfg telemetry.Config) int {
 		"init":    func(rest []string, _ telemetry.Config) int { return runInitCmd(rest) },
 		"service": func(rest []string, _ telemetry.Config) int { return runServiceCmd(rest) },
 		"version": func(_ []string, _ telemetry.Config) int { printVersion(); return 0 },
-		"update":  func(_ []string, _ telemetry.Config) int { return runUpdate() },
+		"update":  func(rest []string, _ telemetry.Config) int { return runUpdate(rest) },
 		"mate":    func(rest []string, _ telemetry.Config) int { return runMateCmd(rest) },
 		"hq":      func(rest []string, _ telemetry.Config) int { return runHQCmd(rest) },
 		"lease":   func(rest []string, _ telemetry.Config) int { return runLeaseCmd(rest, os.Stdout, resolveLiveLeaseDeps) },
@@ -125,16 +125,21 @@ func runCLI(args []string, dispatch func([]string, telemetry.Config) int) int {
 // identical stderr messages + exit codes, log.Fatalf converted to
 // log.Printf + return 1).
 func runInitCmd(args []string) int {
-	rt := runtime.Detect()
 	if len(args) > 0 {
 		switch args[0] {
 		case "nginx":
+			if _, code, done := commandFlags("usage: zcp init nginx", args[1:]); done {
+				return code
+			}
 			if err := zcpinit.RunNginx(); err != nil {
 				log.Printf("init nginx: %v", err)
 				return 1
 			}
 			return 0
 		case "sshfs":
+			if _, code, done := commandFlags("usage: zcp init sshfs", args[1:]); done {
+				return code
+			}
 			if err := zcpinit.RunSSHFS(initOptions()...); err != nil {
 				log.Printf("init sshfs: %v", err)
 				return 1
@@ -142,13 +147,18 @@ func runInitCmd(args []string) int {
 			return 0
 		}
 	}
+	flags, code, done := commandFlags("usage: zcp init [nginx|sshfs] [--guided] [--vscode]", args, "--guided", "--vscode")
+	if done {
+		return code
+	}
+	rt := runtime.Detect()
 	// Ahead of the steps, so an init that fails still retires them.
 	retireDevServerKeeperAtBoot(context.Background(), rt, platform.NewSystemUnits(), os.Stderr)
 	// `--guided` is a user-only flag: record the local per-project
 	// preference (.zcp marker) before setup reads it. Present → guided
 	// mode ON; absent → plain `zcp init` turns it OFF (clean tree).
-	// Authoring never gets guided. Scanned order-agnostically.
-	guided := slices.Contains(args, "--guided") && !rt.Authoring
+	// Authoring never gets guided.
+	guided := flags["--guided"] && !rt.Authoring
 	if err := content.SetGuided(".", guided); err != nil {
 		log.Printf("init: record guided preference: %v", err)
 		return 1
@@ -158,9 +168,9 @@ func runInitCmd(args []string) int {
 		return 1
 	}
 	// `--vscode` installs the Zerops Studio (Managed Data) extension after
-	// the standard init (main's init behavior). Scanned order-agnostically,
-	// like `--guided`. InstallVSCodeStudio dispatches on rt.
-	if slices.Contains(args, "--vscode") {
+	// the standard init (main's init behavior). InstallVSCodeStudio
+	// dispatches on rt.
+	if flags["--vscode"] {
 		if err := zcpinit.InstallVSCodeStudio(rt); err != nil {
 			log.Printf("init --vscode: %v", err)
 			return 1
@@ -172,8 +182,13 @@ func runInitCmd(args []string) int {
 // runServiceCmd implements `zcp service start <nginx|vscode>`. args is
 // everything after "service".
 func runServiceCmd(args []string) int {
-	if len(args) < 2 || args[0] != "start" {
-		log.Print("usage: zcp service start <nginx|vscode>")
+	const usage = "usage: zcp service start <nginx|vscode>"
+	if slices.ContainsFunc(args, isHelpArg) {
+		fmt.Fprintln(os.Stdout, usage)
+		return 0
+	}
+	if len(args) != 2 || args[0] != "start" {
+		log.Print(usage)
 		return 1
 	}
 	if err := service.Start(args[1]); err != nil {
@@ -187,7 +202,10 @@ func printVersion() {
 	fmt.Fprintf(os.Stdout, "zcp %s (%s, %s)\n", server.Version, server.Commit, server.Built)
 }
 
-func runUpdate() int {
+func runUpdate(args []string) int {
+	if _, code, done := commandFlags("usage: zcp update", args); done {
+		return code
+	}
 	ctx := context.Background()
 
 	fmt.Fprintln(os.Stderr, "Checking for updates...")
