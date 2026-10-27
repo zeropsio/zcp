@@ -971,15 +971,60 @@ func TestBuildAgentsMD_Container_PreviewPaneFramesDevAndStage(t *testing.T) {
 				t.Fatalf("BuildAgentsMD: %v", err)
 			}
 			for _, want := range []string{
-				"preview pane", "`https://mate.zerops.io`", "`*.zerops.app`", "refused to connect",
+				"preview pane", "`https://mate.zerops.io`", "refused to connect",
 				"`X-Frame-Options`", "cannot name another origin", "`frame-ancestors`",
-				"`'self' https://mate.zerops.io https://*.zerops.app`", "only narrows",
+				"`'self' https://mate.zerops.io`", "only narrows",
 				"The dev setup may carry it", "builds the setup production builds", "`extends`",
 				"`run.routing.headers`", "replaced whole", "`run.envVariables`",
 				`setup="<the variant>"`, "the setup the variant extends", "`curl -sI",
 			} {
 				if strings.Contains(out, want) != tc.want {
 					t.Errorf("AGENTS.md says %q = %v, want %v", want, !tc.want, tc.want)
+				}
+			}
+		})
+	}
+}
+
+// TestBuildAgentsMD_Container_PreviewPaneNamesMatesExactOrigins pins that a
+// Mate widens a page's framing by Mate's own origins only — the hosted client
+// and this container's own subdomain — never a zerops.app wildcard, which lets
+// every app on the shared domain frame the page (clickjacking). On 2026-10-27
+// an agent widened Zerops' own account apps, whose zerops.yml said they are
+// never framed, by `https://*.zerops.app` and told the person they were framed
+// by Mate's pane only. A page that forbids framing on purpose is the person's
+// to open up, never the agent's.
+func TestBuildAgentsMD_Container_PreviewPaneNamesMatesExactOrigins(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		origin  string
+		sources string
+	}{
+		{name: "the container's own subdomain", origin: "https://zcp-1df2-8080.prg1.zerops.app", sources: "https://mate.zerops.io https://zcp-1df2-8080.prg1.zerops.app"},
+		{name: "no subdomain of its own", sources: "https://mate.zerops.io"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			rt := runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true, SubdomainOrigin: tc.origin}
+			out, err := BuildAgentsMD(rt, false)
+			if err != nil {
+				t.Fatalf("BuildAgentsMD: %v", err)
+			}
+			for _, want := range []string{
+				"`'self' " + tc.sources + "`",
+				`frame-ancestors 'self' ` + tc.sources + `\" always`,
+				"never a wildcard", "`X-Frame-Options: DENY`", "`frame-ancestors 'none'`", "tell the person",
+			} {
+				if !strings.Contains(out, want) {
+					t.Errorf("AGENTS.md does not say %q", want)
+				}
+			}
+			for _, absent := range []string{
+				"https://mate.zerops.io https://*.zerops.app", "{{.",
+			} {
+				if strings.Contains(out, absent) {
+					t.Errorf("AGENTS.md still says %q", absent)
 				}
 			}
 		})
