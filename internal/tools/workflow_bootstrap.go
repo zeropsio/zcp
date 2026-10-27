@@ -149,6 +149,11 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 			if pe := hqPairPlanError(input.Plan, rt.MateEnabled); pe != nil {
 				return convertError(pe, WithRecoveryStatus()), nil, nil
 			}
+			// A Mate's monorepo is one pair with a stage per part, never a
+			// pair per part (hq_one_repository.go).
+			if pe := monorepoPlanError(input.Plan, rt.MateEnabled, input.SeparateRepositories.Bool()); pe != nil {
+				return convertError(pe, WithRecoveryStatus()), nil, nil
+			}
 			if pe := explicitPlanPreflight(ctx, client, projectID, input.Plan, sshDeployer, rt); pe != nil {
 				return convertError(pe, WithRecoveryStatus()), nil, nil
 			}

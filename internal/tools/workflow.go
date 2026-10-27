@@ -77,6 +77,12 @@ type WorkflowInput struct {
 	Branch      string                     `json:"branch,omitempty"      jsonschema:"For action=open-change, describe-change and close-change: the change's branch, as pushed."`
 	Force       FlexBool                   `json:"force,omitempty"       jsonschema:"Discard-and-replace flag for action=start workflow=develop. Required when the active session's services include a CloseDeployMode ∈ {manual, unset} and the new intent differs — auto-close cannot fire on those services, so the prior session needs an explicit close (or a force-discard via this flag) before a fresh session takes over (deploy-decomp P6 §3.4 Scenario D). action=retire: leave the unsaved work wouldDestroy names, once the person agreed by name."`
 
+	// SeparateRepositories says a Mate's classic plan of several dev/stage
+	// pairs is several repositories, each pair its own (docs/spec-mate.md
+	// §10.10): without it such a plan is refused for one pair with a stage
+	// per part (monorepoPlanError).
+	SeparateRepositories FlexBool `json:"separateRepositories,omitempty" jsonschema:"For action=complete step=discover in a Mate: true when each dev/stage pair of a classic plan is a repository of its own, not a part of one repository. Without it a Mate's plan of several pairs is refused: a monorepo is ONE dev service with a stage per part (runtime.stages), then workflow=pool-migrate gives each part a dev pool of its own."`
+
 	// CopyGitToken is the person's yes to the pool getting the dev service's
 	// GIT_TOKEN, on the env step outside a Mate (docs/spec-workflows.md §13
 	// PM-4). zcp reads and writes the value itself; it never crosses the call.
@@ -330,6 +336,7 @@ func workflowInputSchema() *jsonschema.Schema {
 	patchFlexBoolProperty(s, "skipPipelineSetup")
 	patchFlexBoolProperty(s, "confirmLaunch")
 	patchFlexBoolProperty(s, "copyGitToken")
+	patchFlexBoolProperty(s, "separateRepositories")
 	patchEnumProperty(s, "publicAccess", "auto", "subdomain", "none")
 	// The plan runtime's codeVolume is derive-only: zcp sets up no new code
 	// volume (docs/spec-mate.md §2.8a.4a), so it is not published, and a plan
