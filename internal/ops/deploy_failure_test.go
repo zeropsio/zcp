@@ -999,6 +999,40 @@ func TestClassifyDeployFailure_ArchiveWriteTooLong_SourceChangedNotNetwork(t *te
 // the build's tag on its own stack), whatever the runtime: the baseline points
 // there, names no PHP/Alpine package for a Node or Python service, and leaves
 // no unfilled placeholder.
+// TestAVMHittingTheThreadLimitIsNamedWithTheCapOnItsThreads: an Erlang VM —
+// Elixir's — starts a scheduler thread per core it sees, and in a prepare or
+// build container that runs it into the task limit ("Failed to create dirty
+// cpu scheduler thread … error = 11", EAGAIN). Noola's elixir pool image failed
+// PREPARING_RUNTIME_FAILED on it (2026-10-27) with only the phase baseline to
+// go on; the classification names the limit and how to cap the VM's threads.
+func TestAVMHittingTheThreadLimitIsNamedWithTheCapOnItsThreads(t *testing.T) {
+	t.Parallel()
+	logs := []string{
+		"** (Mix) Could not compile dependency :telemetry",
+		"erts_thr_create(): Failed to create dirty cpu scheduler thread 3, error = 11",
+	}
+	for _, phase := range []DeployFailurePhase{PhasePrepare, PhaseBuild} {
+		t.Run(string(phase), func(t *testing.T) {
+			t.Parallel()
+			got := ClassifyDeployFailure(FailureInput{Phase: phase, BuildLogs: logs})
+			if got == nil || !slices.ContainsFunc(got.Signals, func(s string) bool { return strings.HasSuffix(s, ":thread-limit") }) {
+				t.Fatalf("classification = %+v, want the thread-limit signal", got)
+			}
+			for _, want := range []string{"thread", "ELIXIR_ERL_OPTIONS", "+S 4:4"} {
+				if !strings.Contains(got.LikelyCause+" "+got.SuggestedAction, want) {
+					t.Errorf("classification %+v does not name %q", got, want)
+				}
+			}
+		})
+	}
+	// The generic prepare advice names the limit too, for a log the signal
+	// does not read.
+	baseline := ClassifyDeployFailure(FailureInput{Phase: PhasePrepare, BuildLogs: []string{"some prepare chatter"}})
+	if baseline == nil || !strings.Contains(baseline.SuggestedAction, "error = 11") {
+		t.Errorf("prepare baseline %+v does not name the thread limit among its causes", baseline)
+	}
+}
+
 func TestAFailedPrepareReadsItsOutputAtTheEndOfTheBuildLogForEveryRuntime(t *testing.T) {
 	t.Parallel()
 

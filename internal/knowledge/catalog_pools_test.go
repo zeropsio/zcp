@@ -352,6 +352,28 @@ func TestThemes_PoolsAndBox_DevPool_Memory_FactsPresent(t *testing.T) {
 	}
 }
 
+// TestThemes_PoolsAndBox_DevPool_ThreadLimit_FactsPresent pins the image
+// build's thread limit: a VM that starts a thread per core it sees — the
+// Erlang VM under Elixir — fails the pool's prepare with "error = 11"
+// (Noola's elixir pool, 2026-10-27), and the setup caps its threads.
+func TestThemes_PoolsAndBox_DevPool_ThreadLimit_FactsPresent(t *testing.T) {
+	t.Parallel()
+
+	store, err := GetEmbeddedStore()
+	if err != nil {
+		t.Fatalf("GetEmbeddedStore: %v", err)
+	}
+	const heading = "A part's dev pool"
+	sub := strings.Join(strings.Fields(poolsAndBoxSection(t, store, heading)), " ")
+	for _, fact := range []string{
+		"error = 11", "Failed to create", "ELIXIR_ERL_OPTIONS", "+S 4:4",
+	} {
+		if !strings.Contains(sub, fact) {
+			t.Errorf("%q section missing fact %q", heading, fact)
+		}
+	}
+}
+
 // TestThemes_PoolsAndBox_BoxFromTheApp_FactsPresent pins what an app needs to run
 // code its users send in a Box (spec-workflows.md §8 PS-15), as verified
 // against the workspace's OpenAPI document and live on 2026-10-24 (an app in
