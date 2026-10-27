@@ -40,6 +40,61 @@ type poolMigratePartState struct {
 	Setup string `json:"setup,omitempty"`
 	Pool  string `json:"pool"`
 	Step  string `json:"step,omitempty"`
+	// Env is what the env step did on the part's pool, on the answer of a
+	// pool-env call that copied every part's env.
+	Env *poolMigratePartEnv `json:"env,omitempty"`
+}
+
+// poolMigratePartEnv is what the env step did on one part's pool: whether its
+// env is the dev's now, the keys it wrote and those that did not take, and
+// where the GIT_TOKEN stands.
+type poolMigratePartEnv struct {
+	Done     bool                     `json:"done"`
+	Written  []ops.PoolMigrateEnvKey  `json:"written,omitempty"`
+	Failed   []ops.PoolMigrateEnvSkip `json:"failed,omitempty"`
+	GitToken string                   `json:"gitToken,omitempty"`
+}
+
+// poolMigrateEnvEveryPart is the env step of a dev serving several parts
+// called without a part: every part whose pool is settled gets the dev's env
+// (ops.ApplyPoolMigrateEnv) in this one call, a part whose pool is not stays
+// at its step, and the answer is the read side's for the first part not yet
+// ready to retire, every part listed with what the step did on its pool and
+// every pool's env requests.
+func poolMigrateEnvEveryPart(ctx context.Context, d poolMigrateDeps, dr *poolMigrateDevRead, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+	answers := make([]poolMigrateResponse, len(dr.parts))
+	envs := make([]*ops.PoolMigrateEnv, len(dr.parts))
+	for i := range dr.parts {
+		call, final, failed := dr.partRead(ctx, d, i)
+		switch {
+		case failed != nil:
+			return failed, nil, nil
+		case final != nil:
+			answers[i] = *final
+			continue
+		}
+		env, err := ops.ApplyPoolMigrateEnv(ctx, d.client, d.ssh, call.envInput(d, input))
+		if err != nil {
+			return convertError(fmt.Errorf("pool-migrate: copy the env to %s: %w", call.pool.Name, err), WithRecoveryStatus()), nil, nil
+		}
+		envs[i] = env
+		answers[i] = poolMigrateSettledAnswer(ctx, d, call, env)
+	}
+	resp := dr.partsAnswer(answers, max(dr.current(answers), 0))
+	resp.EnvRequests = nil
+	wrote := false
+	for i, a := range answers {
+		resp.EnvRequests = append(resp.EnvRequests, a.EnvRequests...)
+		if env := envs[i]; env != nil {
+			wrote = true
+			resp.Parts[i].Env = &poolMigratePartEnv{Done: env.Done, Written: env.Written, Failed: env.Failed, GitToken: env.GitToken.State}
+		}
+	}
+	if !wrote {
+		resp.Warnings = append(resp.Warnings, "Nothing was written: a part's pool gets its env once it exists and its own processes have finished.")
+	}
+	resp.Action = actionPoolEnv
+	return d.respond(resp), nil, nil
 }
 
 // poolMigrateDevRead is what a call read of the dev service before any part:

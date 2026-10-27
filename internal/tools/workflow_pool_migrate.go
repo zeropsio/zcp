@@ -171,6 +171,9 @@ type poolMigrateResponse struct {
 	Warnings []string             `json:"warnings,omitempty"`
 	Guidance string               `json:"guidance"`
 	Inputs   poolMigrateInputs    `json:"inputs"`
+	// guidance is Guidance by atom, for the call's rendering of it
+	// (poolMigrateGuidanceSent.render).
+	guidance []poolMigrateGuidancePart
 }
 
 type poolMigrateStepState struct {
@@ -218,6 +221,11 @@ type poolMigrateDeps struct {
 	// devsup finds the zcp-devsup this zcp installs: the line the image step
 	// names for a pool setup that installs none.
 	devsup DevsupSource
+	// guidance remembers the guidance each flow was sent, so an answer
+	// carries each atom once; nil sends every answer's in full.
+	guidance *poolMigrateGuidanceSent
+	// fullGuidance sends this call's guidance in full (action="status").
+	fullGuidance bool
 }
 
 // poolMigrateCall is what a call read before it acts on a settled pool.
@@ -266,13 +274,13 @@ func poolMigrateRun(ctx context.Context, d poolMigrateDeps, input WorkflowInput)
 	case failed != nil:
 		return failed, nil, nil
 	case final != nil:
-		return jsonResult(*final), nil, nil
+		return d.respond(*final), nil, nil
 	}
 	resp, failed := dr.answer(ctx, d)
 	if failed != nil {
 		return failed, nil, nil
 	}
-	return jsonResult(resp), nil, nil
+	return d.respond(resp), nil, nil
 }
 
 // handlePoolMigrateEnv is the env step, zerops_workflow workflow="pool-migrate"
@@ -293,14 +301,17 @@ func handlePoolMigrateEnv(
 }
 
 // poolMigrateHandler is the handler of a pool-migrate call the tool answers
-// with its configured deps — the env step, and the read side with or without
-// action="start" — nil for any other call.
+// with its configured deps — the env step, the read side with or without
+// action="start", and action="status" (the read side with the flow's whole
+// guidance) — nil for any other call.
 func poolMigrateHandler(input WorkflowInput) func(context.Context, poolMigrateDeps, WorkflowInput) (*mcp.CallToolResult, any, error) {
 	switch {
 	case input.Action == actionPoolEnv:
 		return poolMigrateEnvRun
 	case input.Workflow == workflowPoolMigrate && (input.Action == "" || input.Action == actionStart):
 		return poolMigrateRun
+	case input.Workflow == workflowPoolMigrate && input.Action == actionStatus:
+		return poolMigrateStatusRun
 	}
 	return nil
 }
@@ -319,19 +330,19 @@ func poolMigrateEnvRun(ctx context.Context, d poolMigrateDeps, input WorkflowInp
 		return failed, nil, nil
 	case final != nil:
 		final.Action = actionPoolEnv
-		return jsonResult(*final), nil, nil
+		return d.respond(*final), nil, nil
 	}
-	// A dev serving several parts reads every part first: the answer lists
-	// them, and a call naming none copies the env of the part the read side
-	// walks.
+	// A dev serving several parts, called without a part, gives every part's
+	// settled pool its env in this one call.
 	part := dr.selected
+	if dr.multiPart() && part < 0 {
+		return poolMigrateEnvEveryPart(ctx, d, dr, input)
+	}
+	// A part named of several reads every part first: the answer lists them.
 	var answers []poolMigrateResponse
 	if dr.multiPart() {
 		if answers, failed = dr.partAnswers(ctx, d); failed != nil {
 			return failed, nil, nil
-		}
-		if part < 0 {
-			part = max(dr.current(answers), 0)
 		}
 	}
 	answered := func(resp poolMigrateResponse) (*mcp.CallToolResult, any, error) {
@@ -340,7 +351,7 @@ func poolMigrateEnvRun(ctx context.Context, d poolMigrateDeps, input WorkflowInp
 			resp = dr.partsAnswer(answers, part)
 		}
 		resp.Action = actionPoolEnv
-		return jsonResult(resp), nil, nil
+		return d.respond(resp), nil, nil
 	}
 	call, final, failed := dr.partRead(ctx, d, part)
 	switch {
@@ -405,9 +416,9 @@ func readPoolMigrateDev(ctx context.Context, d poolMigrateDeps, input WorkflowIn
 		Workflow: workflowPoolMigrate,
 		Phase:    workflow.PhasePoolMigrateActive,
 		Service:  service,
-		Guidance: atomBody(corpus, poolMigrateAtomID),
 		Inputs:   poolMigrateInputs{Service: service, Pool: poolInput},
 	}
+	resp.addGuidance(corpus, poolMigrateAtomID)
 	refused := func(refusals ...poolMigrateRefusal) (*poolMigrateDevRead, *poolMigrateResponse, *mcp.CallToolResult) {
 		r := poolMigrateRefused(resp, refusals...)
 		return nil, &r, nil
@@ -511,9 +522,7 @@ func readPoolMigrateDev(ctx context.Context, d poolMigrateDeps, input WorkflowIn
 		changes, _ = workflow.PeekHQChanges(stateDir)
 	}
 	resp.WorkBranch = poolMigrateWorkBranchOf(meta, census, rt, changes)
-	if move := atomBody(corpus, poolMigrateMoveAtomID); move != "" {
-		resp.Guidance += "\n\n" + move
-	}
+	resp.addGuidance(corpus, poolMigrateMoveAtomID)
 	return &poolMigrateDevRead{
 		input: input, resp: resp, corpus: corpus, meta: meta, dev: devSvc,
 		byName: byName, services: live, parts: parts, selected: selected,
@@ -681,9 +690,7 @@ func poolMigrateSettledAnswer(ctx context.Context, d poolMigrateDeps, call *pool
 			Why: fmt.Sprintf("zcp could not read %s on %s, so the person gives the pool its value.", req.Key, call.partDev.Name),
 		})
 	}
-	if envAtom := atomBody(call.corpus, poolMigrateEnvAtomID); envAtom != "" {
-		resp.Guidance += "\n\n" + envAtom
-	}
+	resp.addGuidance(call.corpus, poolMigrateEnvAtomID)
 	if env.Done {
 		return poolMigrateImageAnswer(ctx, d, call, resp)
 	}
@@ -731,9 +738,7 @@ func poolMigrateImageAnswer(ctx context.Context, d poolMigrateDeps, call *poolMi
 				". Call again: the image step names a deploy only once it has checked the commit.")
 	}
 	resp.Image = image
-	if imageAtom := atomBody(call.corpus, poolMigrateImageAtomID); imageAtom != "" {
-		resp.Guidance += "\n\n" + imageAtom
-	}
+	resp.addGuidance(call.corpus, poolMigrateImageAtomID)
 	short := poolMigrateShortCommit(image.Commit)
 	switch {
 	case image.Done:
@@ -769,9 +774,7 @@ func poolMigrateImageAnswer(ctx context.Context, d poolMigrateDeps, call *poolMi
 // such a lease by its own records. The retire itself asks the pool's
 // orchestrator and verifies the lease; this reads neither, and writes nothing.
 func poolMigrateAfterImage(d poolMigrateDeps, call *poolMigrateCall, resp poolMigrateResponse) poolMigrateResponse {
-	if retire := atomBody(call.corpus, poolRetireAtomID); retire != "" {
-		resp.Guidance += "\n\n" + retire
-	}
+	resp.addGuidance(call.corpus, poolRetireAtomID)
 	dev, pool := call.dev.Name, call.pool.Name
 	wb := resp.WorkBranch
 	if wb == nil || wb.Branch == "" {

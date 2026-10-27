@@ -470,9 +470,10 @@ func handlePoolMigrateRetire(
 	input WorkflowInput,
 	stateDir string,
 	rt runtime.Info,
+	guidance *poolMigrateGuidanceSent,
 ) (*mcp.CallToolResult, any, error) {
 	return poolMigrateRetireRun(ctx, poolRetireDeps{
-		poolMigrateDeps: poolMigrateDeps{projectID: projectID, client: client, ssh: sshDeployer, stateDir: stateDir, rt: rt, hqAddress: func() string { return hqAddress(rt) }},
+		poolMigrateDeps: poolMigrateDeps{projectID: projectID, client: client, ssh: sshDeployer, stateDir: stateDir, rt: rt, hqAddress: func() string { return hqAddress(rt) }, guidance: guidance},
 		mounter:         mounter,
 		swarm:           swarm,
 	}, input)
@@ -505,7 +506,7 @@ func poolMigrateRetireRun(ctx context.Context, d poolRetireDeps, input WorkflowI
 		corpus, _ := workflow.LoadAtomCorpus()
 		resp := poolRetireRecordAnswer(poolRetireBase(corpus, rec), rec)
 		resp.Action = actionRetire
-		return jsonResult(resp), nil, nil
+		return d.respond(resp), nil, nil
 	}
 	return poolRetireFresh(ctx, d, input), nil, nil
 }
@@ -532,7 +533,7 @@ func poolRetireFresh(ctx context.Context, d poolRetireDeps, input WorkflowInput)
 		return result
 	}
 	if len(g.refusals) > 0 {
-		return jsonResult(poolRetireRefused(g.resp, g.refusals...))
+		return d.respond(poolRetireRefused(g.resp, g.refusals...))
 	}
 	expected := g.destruction(input)
 	if err := ValidateDestructiveAck(input.ConfirmDestructive, expected); err != nil {
@@ -540,11 +541,11 @@ func poolRetireFresh(ctx context.Context, d poolRetireDeps, input WorkflowInput)
 	}
 	force := input.Force.Bool()
 	if len(g.unsaved) > 0 && !force {
-		return jsonResult(poolRetireRefused(g.resp, poolRetireUnsavedRefusal(g.call.dev.Name, g.unsaved)))
+		return d.respond(poolRetireRefused(g.resp, poolRetireUnsavedRefusal(g.call.dev.Name, g.unsaved)))
 	}
 	release, err := lockPoolRetirePair(ctx, d.stateDir, g.call.dev.Name, g.pools()...)
 	if err != nil {
-		return jsonResult(poolRetireRefused(g.resp, poolMigrateRefusal{Reason: poolRetireRefusePairBusy, Message: "The retire did not start: " + pairHeldReason(g.call.dev.Name, err) + ". Call again."}))
+		return d.respond(poolRetireRefused(g.resp, poolMigrateRefusal{Reason: poolRetireRefusePairBusy, Message: "The retire did not start: " + pairHeldReason(g.call.dev.Name, err) + ". Call again."}))
 	}
 	defer release()
 	// Another call may have started — or finished — this retire while this
@@ -566,7 +567,7 @@ func poolRetireFresh(ctx context.Context, d poolRetireDeps, input WorkflowInput)
 	default:
 		resp := poolRetireRecordAnswer(g.resp, other)
 		resp.Action = actionRetire
-		return jsonResult(resp)
+		return d.respond(resp)
 	}
 	rec := &poolRetireRecord{
 		Dev:          g.call.dev.Name,
@@ -660,7 +661,7 @@ func poolRetireRead(ctx context.Context, d poolRetireDeps, input WorkflowInput) 
 		return nil, failed
 	case final != nil:
 		final.Action = actionRetire
-		return nil, jsonResult(*final)
+		return nil, d.respond(*final)
 	}
 	answers := make([]poolMigrateResponse, len(dr.parts))
 	calls := make([]*poolMigrateCall, len(dr.parts))
@@ -687,9 +688,9 @@ func poolRetireRead(ctx context.Context, d poolRetireDeps, input WorkflowInput) 
 	resp.Warnings = nil
 	switch {
 	case len(notReady) > 0 && !dr.multiPart():
-		return nil, jsonResult(poolRetireNotReady(resp))
+		return nil, d.respond(poolRetireNotReady(resp))
 	case len(notReady) > 0:
-		return nil, jsonResult(poolRetirePartsNotReady(resp, dr, answers, notReady))
+		return nil, d.respond(poolRetirePartsNotReady(resp, dr, answers, notReady))
 	}
 	g := &poolRetireGuards{call: calls[0], resp: resp}
 	for i, call := range calls {
@@ -1296,7 +1297,7 @@ func (r *poolRetireRun) advance(ctx context.Context) *mcp.CallToolResult {
 		case poolRetireDeletingVolume:
 			return r.deleteVolume(ctx)
 		default:
-			return jsonResult(poolRetireRecordAnswer(r.resp, r.rec))
+			return r.d.respond(poolRetireRecordAnswer(r.resp, r.rec))
 		}
 	}
 }
@@ -1514,7 +1515,7 @@ func (r *poolRetireRun) finish(ctx context.Context) *mcp.CallToolResult {
 	if err := r.enter(poolRetireRetired); err != nil {
 		return r.saveFailed(err)
 	}
-	return jsonResult(poolRetireRecordAnswer(r.resp, r.rec))
+	return r.d.respond(poolRetireRecordAnswer(r.resp, r.rec))
 }
 
 // abort ends a retire whose dev still reads live, before any delete took:
@@ -1557,7 +1558,7 @@ func (r *poolRetireRun) abort(ctx context.Context, reason, message string) *mcp.
 	resp.Next = nil
 	resp.Refusals = []poolMigrateRefusal{{Reason: reason, Message: message + fmt.Sprintf(" Nothing was deleted: the pair is keyed by %s again and its mount put back.", r.rec.Dev)}}
 	resp.Retire = r.rec.view()
-	return jsonResult(resp)
+	return r.d.respond(resp)
 }
 
 // poolRetireKeyedByDev reports a pair keyed by dev, its dev half the dev.
@@ -1574,7 +1575,7 @@ func (r *poolRetireRun) callAgain(why string) *mcp.CallToolResult {
 			why, r.rec.Phase, workflowPoolMigrate, actionRetire, r.rec.Dev, r.rec.Dev))
 	resp.Action = actionRetire
 	resp.Retire = r.rec.view()
-	return jsonResult(resp)
+	return r.d.respond(resp)
 }
 
 func (r *poolRetireRun) saveFailed(err error) *mcp.CallToolResult {
@@ -1685,7 +1686,7 @@ func (r *poolRetireRun) held(ctx context.Context, act func() *mcp.CallToolResult
 	case now.Phase != r.rec.Phase || now.UpdatedAt != r.rec.UpdatedAt:
 		resp := poolRetireRecordAnswer(r.resp, now)
 		resp.Action = actionRetire
-		return jsonResult(resp)
+		return r.d.respond(resp)
 	}
 	return act()
 }
@@ -1730,20 +1731,18 @@ func poolRetireResumeArgs(rec *poolRetireRecord) map[string]string {
 
 // poolRetireBase is the answer frame of a retire named by its record.
 func poolRetireBase(corpus []workflow.KnowledgeAtom, rec *poolRetireRecord) poolMigrateResponse {
-	guidance := atomBody(corpus, poolMigrateAtomID)
-	if retire := atomBody(corpus, poolRetireAtomID); retire != "" {
-		guidance += "\n\n" + retire
-	}
-	return poolMigrateResponse{
+	resp := poolMigrateResponse{
 		Workflow: workflowPoolMigrate,
 		Phase:    workflow.PhasePoolMigrateActive,
 		Service:  rec.Dev,
 		Stages:   rec.Stages,
 		Pool:     rec.Pool,
 		Parts:    rec.partStates(""),
-		Guidance: guidance,
 		Inputs:   poolMigrateInputs{Service: rec.Dev, Pool: rec.Pool},
 	}
+	resp.addGuidance(corpus, poolMigrateAtomID)
+	resp.addGuidance(corpus, poolRetireAtomID)
+	return resp
 }
 
 // poolRetireRecordAnswer answers from the record: retiring while it is in

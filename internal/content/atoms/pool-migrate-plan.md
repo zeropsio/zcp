@@ -16,6 +16,11 @@ with the part's current `step` and the exact `next` call. The call itself
 changes nothing: make the `next` call, then call the flow again. After a
 context compaction the same call lands on the same step.
 
+An answer carries a step's guidance the first time the flow reaches the step;
+a later answer names what it sent before in one line instead. After a context
+compaction, `zerops_workflow workflow="pool-migrate" action="status"
+service="<dev>"` answers the step with the whole guidance again.
+
 The steps, in order (`steps` marks each `done`, `current` or `pending`):
 
 1. **provision** — import the part's pool.
@@ -48,6 +53,8 @@ each answer walks one part (`part`, its stage): the one you name with
 `service="<its stage>"` or `pool="<its pool>"`, else the first part not yet
 ready to retire. Every part walks the steps below on its own pool; the
 retire waits for all of them and deletes the dev service once.
+`action="pool-env"` without `pool` gives every part's pool the dev service's
+env in one call; `parts[].env` says what it did on each.
 
 **Env and after.** Once the pool exists and its import has finished, the
 step is `env` until the pool holds the dev service's env, then `image` until

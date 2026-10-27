@@ -586,7 +586,7 @@ func (r *poolRetireRun) volumeHeld(reason, message string) *mcp.CallToolResult {
 	resp.Action = actionRetire
 	resp.Refusals = []poolMigrateRefusal{{Reason: reason, Message: message}}
 	resp.Retire = r.rec.view()
-	return jsonResult(resp)
+	return r.d.respond(resp)
 }
 
 // volumeMountedMessage says the platform refused the volume's delete because
