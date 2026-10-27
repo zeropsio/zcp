@@ -345,6 +345,7 @@ func (f *fakeHQ) api(w http.ResponseWriter, r *http.Request) {
 		case closing:
 			now := time.Now().UTC().Format(time.RFC3339)
 			change.State, change.ClosedAt, change.UpdatedAt = hq.ChangeClosed, &now, now
+			change.Head = f.branchHead(r.Context(), change)
 			f.writeRefs()
 			writeHQJSON(w, http.StatusOK, *change)
 		case r.Method == http.MethodPatch && len(parts) == 5:
@@ -780,11 +781,13 @@ func (f *fakeHQ) seed(repo string) {
 // close closes the Mate's change number in appdev without merging it.
 func (f *fakeHQ) close(number int) { f.closeChange("appdev", number) }
 
-// closeChange closes the Mate's change number in repo without merging it.
+// closeChange closes the Mate's change number in repo without merging it;
+// HQ keeps the head it was closed at.
 func (f *fakeHQ) closeChange(repo string, number int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.find(f.appID, repo, number, hq.ChangeOpen).State = hq.ChangeClosed
+	change := f.find(f.appID, repo, number, hq.ChangeOpen)
+	change.State, change.Head = hq.ChangeClosed, f.branchHead(f.t.Context(), change)
 	f.writeRefs()
 }
 
