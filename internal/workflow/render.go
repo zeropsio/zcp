@@ -372,8 +372,16 @@ func renderServices(b *strings.Builder, env StateEnvelope) {
 		names[i] = svc.Hostname
 	}
 	fmt.Fprintf(b, "Services: %s\n", strings.Join(names, ", "))
+	rule := ""
 	for _, svc := range env.Services {
 		fmt.Fprintf(b, "  - %s\n", renderServiceLine(svc))
+		if rule == "" {
+			rule = basePrefixRule(svc)
+		}
+	}
+	// The rule each "base prefix" on a line refers to, said once.
+	if rule != "" {
+		fmt.Fprintf(b, "  %s\n", rule)
 	}
 }
 
@@ -426,10 +434,8 @@ func renderServiceLine(svc ServiceSnapshot) string {
 			// below is omitted for ACTIVE.
 			parts = append(parts, fmt.Sprintf("not bootstrapped, deployed=%t", svc.Deployed))
 		}
-		if svc.RuntimeClass == topology.RuntimeDynamic || svc.RuntimeClass == topology.RuntimeImplicitWeb {
-			if hint := renderBasePrefixHint(svc); hint != "" {
-				parts = append(parts, hint)
-			}
+		if prefix := basePrefixOf(svc); prefix != "" {
+			parts = append(parts, "base prefix "+prefix+"/")
 		}
 	}
 	if svc.Status != "" && svc.Status != StatusActive {
@@ -438,13 +444,14 @@ func renderServiceLine(svc ServiceSnapshot) string {
 	return strings.Join(parts, " — ")
 }
 
-// renderBasePrefixHint returns the zerops.yaml base-prefix rule for a
-// runtime service whose live type carries a known OS prefix ("" when it
-// doesn't — a bare/legacy TypeVersion has no prefix to derive the rule
-// from). Stated on the envelope service line itself, derived from the live
-// type: the rule reaches every develop path regardless of deploy state,
-// unlike a first-deploy-only atom gated on never-deployed, which an adopted
-// service already running deployed code never sees.
+// basePrefixOf returns the OS prefix a zerops.yaml base added to svc takes
+// ("" when none applies): the prefix of a dynamic or implicit-webserver
+// runtime's live type. Stated on the envelope service line itself, derived
+// from the live type: the rule reaches every develop path regardless of deploy
+// state, unlike a first-deploy-only atom gated on never-deployed, which an
+// adopted service already running deployed code never sees. The rule's
+// sentence is said once under the services (basePrefixRule), never on every
+// line.
 //
 // The rule is for a base the agent adds. zcp needs no particular OS (its
 // zcp-devsup binary is static), and a base a zerops.yaml already declares
@@ -456,16 +463,28 @@ func renderServiceLine(svc ServiceSnapshot) string {
 //
 // Excluded on purpose: static runtimes (`run.base` is the bare special
 // token `static`, not an OS-prefixed base — the build base OS is the
-// builder's choice) and managed services (never carry an OS prefix).
-func renderBasePrefixHint(svc ServiceSnapshot) string {
-	prefix := topology.OSPrefix(svc.TypeVersion)
-	if prefix == "" || svc.DeclaresBase {
+// builder's choice), managed services (never carry an OS prefix) and a
+// bare/legacy TypeVersion (no prefix to derive the rule from).
+func basePrefixOf(svc ServiceSnapshot) string {
+	if svc.RuntimeClass != topology.RuntimeDynamic && svc.RuntimeClass != topology.RuntimeImplicitWeb {
 		return ""
 	}
-	bare := topology.CanonicalBareForm(svc.TypeVersion)
+	if svc.DeclaresBase {
+		return ""
+	}
+	return topology.OSPrefix(svc.TypeVersion)
+}
+
+// basePrefixRule is the sentence each line's "base prefix <os>/" refers to,
+// with svc's type as its example; "" when no base prefix applies to svc.
+func basePrefixRule(svc ServiceSnapshot) string {
+	prefix := basePrefixOf(svc)
+	if prefix == "" {
+		return ""
+	}
 	return fmt.Sprintf(
-		"base prefix %s/ — a zerops.yaml base you add takes it on BOTH build.base and run.base (legacy %s + os: %s ≡ %s); run.base sets the service OS on every deploy, so bases that already deploy stay as they are",
-		prefix, bare, prefix, svc.TypeVersion,
+		"base prefix: a zerops.yaml base you add takes the service's prefix on BOTH build.base and run.base (legacy %s + os: %s ≡ %s); run.base sets the service OS on every deploy, so bases that already deploy stay as they are",
+		topology.CanonicalBareForm(svc.TypeVersion), prefix, svc.TypeVersion,
 	)
 }
 

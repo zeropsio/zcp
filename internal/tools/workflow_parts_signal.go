@@ -13,9 +13,10 @@ import (
 )
 
 // attachPartsSignal reads each dev half's repo (ops.ReadPartsSignal) for the
-// multi-part signal the `parts:` atom axis sees, and for whether its
-// zerops.yaml already declares bases — carried to each stage of the pair,
-// which deploys setups of the same file — and records on engine the config
+// multi-part signal the `parts:` atom axis sees, for whether it carries its
+// zerops.yaml (the `zeropsYaml:` axis) and for whether that file already
+// declares bases — both carried to each stage of the pair, which deploys
+// setups of the same file — and records on engine the config
 // file name each repo keeps, so guidance names the file the repo has
 // (namingRepoConfigFile). Container only; a read that fails leaves the
 // service single and undeclared, as an unread one is, and records nothing.
@@ -45,23 +46,24 @@ func attachPartsSignal(ctx context.Context, services []workflow.ServiceSnapshot,
 			// Each goroutine writes only its own index.
 			services[i].MultiPart = sig.MultiPart()
 			services[i].DeclaresBase = sig.DeclaresBase
+			services[i].HasZeropsYAML = sig.ConfigFile != ""
 			engine.RecordRepoConfigFile(svc.Hostname, sig.ConfigFile)
 		}(i, svc)
 	}
 	wg.Wait()
-	declared := map[string]bool{}
+	// Each stage deploys from its dev half's repo: it carries what that repo
+	// declares.
+	declared, configured := map[string]bool{}, map[string]bool{}
 	for _, svc := range services {
-		if !svc.DeclaresBase {
-			continue
-		}
 		for _, stage := range svc.PairStageHostnames() {
-			declared[stage] = true
+			declared[stage] = declared[stage] || svc.DeclaresBase
+			configured[stage] = configured[stage] || svc.HasZeropsYAML
 		}
 	}
 	for i := range services {
-		if declared[services[i].Hostname] {
-			services[i].DeclaresBase = true
-		}
+		h := services[i].Hostname
+		services[i].DeclaresBase = services[i].DeclaresBase || declared[h]
+		services[i].HasZeropsYAML = services[i].HasZeropsYAML || configured[h]
 	}
 }
 

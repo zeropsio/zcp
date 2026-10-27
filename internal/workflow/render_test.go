@@ -227,8 +227,10 @@ func TestRenderStatus_IdleRenders(t *testing.T) {
 func TestRenderServiceLine_BasePrefixHint(t *testing.T) {
 	t.Parallel()
 
-	const ubuntuHint = "base prefix ubuntu/ — a zerops.yaml base you add takes it on BOTH build.base and run.base (legacy nodejs@22 + os: ubuntu ≡ ubuntu/nodejs@22); run.base sets the service OS on every deploy, so bases that already deploy stay as they are"
-	const alpineHint = "base prefix alpine/ — a zerops.yaml base you add takes it on BOTH build.base and run.base (legacy php-nginx@8.4 + os: alpine ≡ alpine/php-nginx@8.4); run.base sets the service OS on every deploy, so bases that already deploy stay as they are"
+	// The line names the prefix; the rule's sentence is said once under the
+	// services (TestRenderServices_BasePrefixRuleSaidOnce).
+	const ubuntuHint = "base prefix ubuntu/"
+	const alpineHint = "base prefix alpine/"
 
 	tests := []struct {
 		name    string

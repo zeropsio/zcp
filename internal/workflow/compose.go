@@ -14,6 +14,19 @@ import (
 // gracefully rather than truncated by the transport.
 const ComposeBodyBudget = 24 * 1024
 
+// GuidanceBudget is the bytes the synthesized guidance of a status render of
+// env may take: ComposeBodyBudget less the per-service and lease lines
+// RenderStatus writes above the guidance, so a project of many services
+// leaves its guidance less room and the render as a whole keeps within the
+// budget (2026-10-27: a nineteen-service project's develop start ran to
+// 55 KB). Never below zero.
+func GuidanceBudget(env StateEnvelope) int {
+	var lines strings.Builder
+	renderServices(&lines, env)
+	renderLeases(&lines, env)
+	return max(ComposeBodyBudget-lines.Len(), 0)
+}
+
 // ComposeUnderBudget keeps the rendered matched set within budget bytes by
 // demoting the lowest-relevance atoms to a one-line head — the structural owner
 // of "the payload never exceeds the cap by demotion, not by adding an axis"

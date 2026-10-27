@@ -174,6 +174,12 @@ type AxisVector struct {
 	// repo holds (see PartsShape). Service-scoped: read per service from
 	// ServiceSnapshot.MultiPart. Empty = no gate.
 	Parts []PartsShape
+	// ZeropsYAML scopes the atom by whether the repository an app runtime
+	// deploys from already carries its zerops.yaml (see ZeropsYAMLState).
+	// Service-scoped: read per service from ServiceSnapshot.HasZeropsYAML;
+	// a service that is no app runtime (managed, pool, Box) never satisfies
+	// it. Empty = no gate.
+	ZeropsYAML []ZeropsYAMLState
 	// MultiService toggles single-render aggregation for atoms whose body
 	// needs per-service iteration only inside discrete `{services-list:
 	// TEMPLATE}` directives, not for the whole body. Default ""
@@ -197,6 +203,17 @@ const (
 	PartsSingle PartsShape = "single"
 	// PartsMulti — the repo holds more than one (ServiceSnapshot.MultiPart).
 	PartsMulti PartsShape = "multi"
+)
+
+// ZeropsYAMLState is whether the repository an app runtime deploys from
+// carries its zerops.yaml — the value the `zeropsYaml:` axis matches.
+type ZeropsYAMLState string
+
+const (
+	// ZeropsYAMLAbsent — the repo has no zerops.yaml, or zcp has not read it.
+	ZeropsYAMLAbsent ZeropsYAMLState = "absent"
+	// ZeropsYAMLPresent — the repo carries one (ServiceSnapshot.HasZeropsYAML).
+	ZeropsYAMLPresent ZeropsYAMLState = "present"
 )
 
 // StageScope is where a service's paired stage half stands in the develop
@@ -265,6 +282,7 @@ var validAtomFrontmatterKeys = map[string]struct{}{
 	"managedTypes":         {},
 	"stageScope":           {},
 	"parts":                {},
+	"zeropsYaml":           {},
 	"multiService":         {},
 	"reference":            {},
 	"references-fields":    {},
@@ -299,6 +317,7 @@ var listAxisKeys = map[string]struct{}{
 	"managedTypes":         {},
 	"stageScope":           {},
 	"parts":                {},
+	"zeropsYaml":           {},
 	"references-fields":    {},
 	"references-atoms":     {},
 	"pointer-atoms":        {},
@@ -416,6 +435,10 @@ var validAtomEnumValues = map[string]map[string]struct{}{
 		"single": {},
 		"multi":  {},
 	},
+	"zeropsYaml": {
+		"absent":  {},
+		"present": {},
+	},
 }
 
 // validScalarEnumValues maps scalar (non-list) frontmatter keys to their
@@ -455,7 +478,7 @@ var validScalarEnumValues = map[string]map[string]struct{}{
 func validateAtomFrontmatter(fields map[string]string) error {
 	for key := range fields {
 		if _, ok := validAtomFrontmatterKeys[key]; !ok {
-			return fmt.Errorf("unknown atom frontmatter key %q (valid keys: id, title, priority, phases, modes, environments, closeDeployModes, gitPushStates, buildIntegrations, runtimes, runtimeBases, routes, steps, idleScenarios, deployStates, envelopeDeployStates, serviceStatus, deployHistory, exportStatus, managedTypes, stageScope, parts, multiService, reference, references-fields, references-atoms, pointer-atoms, pinned-by-scenario, coverageExempt)", key)
+			return fmt.Errorf("unknown atom frontmatter key %q (valid keys: id, title, priority, phases, modes, environments, closeDeployModes, gitPushStates, buildIntegrations, runtimes, runtimeBases, routes, steps, idleScenarios, deployStates, envelopeDeployStates, serviceStatus, deployHistory, exportStatus, managedTypes, stageScope, parts, zeropsYaml, multiService, reference, references-fields, references-atoms, pointer-atoms, pinned-by-scenario, coverageExempt)", key)
 		}
 	}
 	for key, raw := range fields {
@@ -601,6 +624,7 @@ func ParseAtom(content string) (KnowledgeAtom, error) {
 			ManagedTypes:         parseYAMLList(fields["managedTypes"]),
 			StageScopes:          parseStageScopes(fields["stageScope"]),
 			Parts:                parsePartsShapes(fields["parts"]),
+			ZeropsYAML:           parseZeropsYAMLStates(fields["zeropsYaml"]),
 			MultiService:         MultiServiceMode(strings.TrimSpace(fields["multiService"])),
 		},
 		ReferencesFields:  parseYAMLList(fields["references-fields"]),
@@ -817,6 +841,20 @@ func parsePartsShapes(raw string) []PartsShape {
 	out := make([]PartsShape, 0, len(values))
 	for _, v := range values {
 		out = append(out, PartsShape(v))
+	}
+	return out
+}
+
+// parseZeropsYAMLStates reads the optional `zeropsYaml:` frontmatter field, a
+// closed enum validated up front by validateAtomFrontmatter.
+func parseZeropsYAMLStates(raw string) []ZeropsYAMLState {
+	values := parseYAMLList(raw)
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]ZeropsYAMLState, 0, len(values))
+	for _, v := range values {
+		out = append(out, ZeropsYAMLState(v))
 	}
 	return out
 }

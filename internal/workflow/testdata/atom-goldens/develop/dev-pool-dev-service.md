@@ -1,7 +1,7 @@
 ---
 id: develop/dev-pool-dev-service
 atomIds: [develop-intro, develop-strategy-review, develop-change-drives-deploy, develop-dev-server-triage, develop-self-deploy-reproducibility, develop-checklist-dev-mode, develop-dev-pool, develop-dynamic-runtime-start-container, develop-knowledge-pointers, develop-auto-close-semantics, develop-dev-server-reason-codes, develop-verify-matrix, develop-mode-expansion]
-description: "A deployed dev-mode service whose project also holds a Swarm pool the part's dev servers run in by lease. The dev-pool guidance fires only because a pool is present."
+description: "A deployed dev-mode service whose project also holds a Swarm pool the part's dev servers run in by lease, and this zcp holds a lease of it. The dev-pool guidance fires only because the work reaches that pool through its lease."
 ---
 === develop-intro ===
 ### Development & Deploy

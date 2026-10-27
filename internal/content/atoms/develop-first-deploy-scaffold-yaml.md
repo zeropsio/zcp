@@ -3,6 +3,7 @@ id: develop-first-deploy-scaffold-yaml
 priority: 2
 phases: [develop-active]
 envelopeDeployStates: [never-deployed]
+zeropsYaml: [absent]
 title: "Scaffold or refine zerops.yaml"
 references-fields: [ops.DiscoverResult.Services, workflow.ServiceSnapshot.Mode, workflow.ServiceSnapshot.StageHostname]
 references-atoms: [develop-first-deploy-env-vars]

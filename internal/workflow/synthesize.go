@@ -87,7 +87,7 @@ func Synthesize(envelope StateEnvelope, corpus []KnowledgeAtom) ([]MatchedRender
 		}
 		var idxs []int
 		for i, svc := range envelope.Services {
-			if scope != nil && !scope[svc.Hostname] && !poolNamedByAtom(svc, atom.Axes) {
+			if scope != nil && !scope[svc.Hostname] && !(poolNamedByAtom(svc, atom.Axes) && poolReachedBySession(svc, envelope, scope)) {
 				continue
 			}
 			if svc.DevIsPool && !poolNamedByAtom(svc, atom.Axes) {
@@ -96,7 +96,7 @@ func Synthesize(envelope StateEnvelope, corpus []KnowledgeAtom) ([]MatchedRender
 				// only an atom about pools binds to it.
 				continue
 			}
-			if serviceSatisfiesAxes(svc, atom.Axes, stageScopeOf(svc, envelope.WorkSession)) {
+			if serviceSatisfiesAxes(svc, atom.Axes, stageScopeOf(svc, envelope.WorkSession), atomDeployState(svc, envelope.Services)) {
 				idxs = append(idxs, i)
 			}
 		}
@@ -470,24 +470,40 @@ func envelopeHasManagedType(services []ServiceSnapshot, want []string) bool {
 // serviceSatisfiesAxes's handling of DeployStates.
 func envelopeDeployStateMatches(services []ServiceSnapshot, ws *WorkSessionSummary, want []DeployState) bool {
 	for _, svc := range services {
-		if !svc.Bootstrapped {
-			continue
-		}
 		// A service the session left out of scope is not part of this work:
 		// a never-deployed stage the session leaves as it is must not hold
 		// the session in the first-deploy branch once its dev half deployed.
 		if ws != nil && ws.Roles[svc.Hostname] == RoleOutOfScope {
 			continue
 		}
-		state := DeployStateNeverDeployed
-		if svc.Deployed {
-			state = DeployStateDeployed
-		}
-		if slices.Contains(want, state) {
+		if state := atomDeployState(svc, services); state != "" && slices.Contains(want, state) {
 			return true
 		}
 	}
 	return false
+}
+
+// atomDeployState is the deploy state the deploy-state axes read for svc:
+// never-deployed or deployed, and none ("") for a service not bootstrapped —
+// deploy state means something only once bootstrap stamped it —, for a
+// managed service, which never runs the app's code, and for a
+// never-deployed stage whose pair's dev half already runs the repository's
+// code: a deployed dev service, or a dev pool, whose leases run it. That
+// stage's deploy is a cross-deploy of code that exists, so no first-deploy
+// guidance (scaffold, write, first-deploy the app) is about it; the guidance
+// about promoting a running dev half reads the dev half, not the stage.
+func atomDeployState(svc ServiceSnapshot, services []ServiceSnapshot) DeployState {
+	switch {
+	case !svc.Bootstrapped, svc.RuntimeClass == topology.RuntimeManaged:
+		return ""
+	case svc.Deployed:
+		return DeployStateDeployed
+	case svc.Mode == topology.ModeStage:
+		if dev, ok := pairDevHalf(svc.Hostname, services); ok && (dev.DevIsPool || dev.Deployed) {
+			return ""
+		}
+	}
+	return DeployStateNeverDeployed
 }
 
 // workSessionScopeSet returns the set of in-scope hostnames from the
@@ -534,6 +550,20 @@ func poolNamedByAtom(svc ServiceSnapshot, axes AxisVector) bool {
 	return svc.RuntimeClass == topology.RuntimePool && slices.Contains(axes.Runtimes, topology.RuntimePool)
 }
 
+// poolReachedBySession reports whether a session's work reaches the pool svc
+// though its scope does not name it: the pool keys a pair whose stage the
+// session names (a scope never names such a pool — develop refuses it — and
+// its stage deploys from a lease of it), or this zcp holds a lease of it. A
+// pool elsewhere in the project is no part of the work, so an atom about
+// pools does not render for it (2026-10-27: the dev-pool loop, ~15 KB, in a
+// session that never leased).
+func poolReachedBySession(svc ServiceSnapshot, env StateEnvelope, scope map[string]bool) bool {
+	if svc.DevIsPool && slices.ContainsFunc(svc.PairStageHostnames(), func(stage string) bool { return scope[stage] }) {
+		return true
+	}
+	return slices.ContainsFunc(env.LeaseList(), func(l LeaseSnapshot) bool { return l.Pool == svc.Hostname })
+}
+
 // hasServiceScopedAxes reports whether the atom declares any axis whose
 // match is per-service (modes / closeDeployModes / gitPushStates /
 // buildIntegrations / runtimes / deployStates / serviceStatus).
@@ -550,7 +580,16 @@ func hasServiceScopedAxes(axes AxisVector) bool {
 		len(axes.ServiceStatuses) > 0 ||
 		len(axes.DeployHistories) > 0 ||
 		len(axes.StageScopes) > 0 ||
-		len(axes.Parts) > 0
+		len(axes.Parts) > 0 ||
+		len(axes.ZeropsYAML) > 0
+}
+
+// zeropsYAMLOf is the `zeropsYaml:` axis value of svc.
+func zeropsYAMLOf(svc ServiceSnapshot) ZeropsYAMLState {
+	if svc.HasZeropsYAML {
+		return ZeropsYAMLPresent
+	}
+	return ZeropsYAMLAbsent
 }
 
 // partsOf is the `parts:` axis value of svc.
@@ -578,13 +617,17 @@ func stageScopeOf(svc ServiceSnapshot, ws *WorkSessionSummary) StageScope {
 
 // serviceSatisfiesAxes returns true when this single service satisfies
 // every service-scoped axis declared on the atom. Empty axis = wildcard.
-// stageScope is the service's stageScopeOf in the envelope being
-// synthesized.
+// stageScope is the service's stageScopeOf and deployState its
+// atomDeployState in the envelope being synthesized ("" satisfies no
+// deploy-state axis).
 // Mirrors the pre-C2 anyServiceMatchesAll loop body but exposes the
 // per-service decision so Synthesize can bind placeholder substitution
 // to the matched service.
-func serviceSatisfiesAxes(svc ServiceSnapshot, axes AxisVector, stageScope StageScope) bool {
+func serviceSatisfiesAxes(svc ServiceSnapshot, axes AxisVector, stageScope StageScope, deployState DeployState) bool {
 	if len(axes.Modes) > 0 && !slices.Contains(axes.Modes, svc.Mode) {
+		return false
+	}
+	if len(axes.ZeropsYAML) > 0 && (!svc.RuntimeClass.IsAppRuntime() || !slices.Contains(axes.ZeropsYAML, zeropsYAMLOf(svc))) {
 		return false
 	}
 	if len(axes.StageScopes) > 0 && !slices.Contains(axes.StageScopes, stageScope) {
@@ -608,17 +651,8 @@ func serviceSatisfiesAxes(svc ServiceSnapshot, axes AxisVector, stageScope Stage
 	if len(axes.RuntimeBases) > 0 && !matchesRuntimeBase(svc.TypeVersion, axes.RuntimeBases) {
 		return false
 	}
-	if len(axes.DeployStates) > 0 {
-		if !svc.Bootstrapped {
-			return false
-		}
-		state := DeployStateNeverDeployed
-		if svc.Deployed {
-			state = DeployStateDeployed
-		}
-		if !slices.Contains(axes.DeployStates, state) {
-			return false
-		}
+	if len(axes.DeployStates) > 0 && (deployState == "" || !slices.Contains(axes.DeployStates, deployState)) {
+		return false
 	}
 	if len(axes.ServiceStatuses) > 0 && !slices.Contains(axes.ServiceStatuses, svc.Status) {
 		return false

@@ -320,7 +320,7 @@ func developGoldenScenarios() []goldenScenario {
 		},
 		{
 			id:          "develop/dev-pool-dev-service",
-			description: "A deployed dev-mode service whose project also holds a Swarm pool the part's dev servers run in by lease. The dev-pool guidance fires only because a pool is present.",
+			description: "A deployed dev-mode service whose project also holds a Swarm pool the part's dev servers run in by lease, and this zcp holds a lease of it. The dev-pool guidance fires only because the work reaches that pool through its lease.",
 			envelope: StateEnvelope{
 				Phase:       PhaseDevelopActive,
 				Environment: EnvContainer,
@@ -328,6 +328,7 @@ func developGoldenScenarios() []goldenScenario {
 					{Hostname: "partdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeDev, Bootstrapped: true, Deployed: true},
 					fixSnapPool("devpool", "swarm@1"),
 				},
+				Leases:      &[]LeaseSnapshot{{Alias: "devpool-1", Pool: "devpool", Branch: "feat", State: "held"}},
 				WorkSession: fixSession("partdev"),
 			},
 		},

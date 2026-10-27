@@ -195,7 +195,7 @@ func TestScenario_RepoWithItsZeropsYaml_GetsNoGreenfieldAtoms(t *testing.T) {
 			requireAtomIDsContain(t, "first deploy", out, "develop-first-deploy-intro", "develop-first-deploy-existing-repo")
 			for _, id := range greenfieldAtoms {
 				if atomFired(out, id) == hasYAML {
-					t.Errorf("%s fired = %v for a repo whose zerops.yaml present = %v", id, !hasYAML, hasYAML)
+					t.Errorf("%s fired = %v for a repo whose zerops.yaml present = %v", id, hasYAML, hasYAML)
 				}
 			}
 		})
@@ -272,7 +272,7 @@ func TestRenderServices_BasePrefixRuleSaidOnce(t *testing.T) {
 	var b strings.Builder
 	renderServices(&b, env)
 	out := b.String()
-	if n := strings.Count(out, "takes it on BOTH build.base and run.base"); n != 1 {
+	if n := strings.Count(out, "on BOTH build.base and run.base"); n != 1 {
 		t.Errorf("the base-prefix rule is said %d times, want once:\n%s", n, out)
 	}
 	for _, line := range strings.Split(out, "\n") {

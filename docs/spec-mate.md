@@ -227,7 +227,13 @@ state costs ~1.2 KB (no fence, no markdown) — a deploy response measured 119 B
 The synthesized guidance a prose result carries is held under `workflow.ComposeBodyBudget`
 (24 KB), which sits below the 28 KB soft cap and the **32 KB MCP tool-response cap** precisely
 to leave room for the scaffold `RenderStatus` adds — so the envelope fits inside existing
-headroom and needs no budget of its own. `TestAppendEnvelope_BlockSizeBudget` pins it, with eight
+headroom and needs no budget of its own. The per-service and lease lines rendered above the
+guidance count against that budget (`workflow.GuidanceBudget`), on `action="status"` and develop's
+start alike, and the base-prefix rule those lines refer to is said once beneath them: on
+2026-10-27 develop's start, which applied no budget, answered 38–55 KB in three Mate sessions, one
+read back from a file past the client's display limit; a six-part pool project's start now renders
+18 KB where it rendered 52 KB (`TestDevelopBriefing_MultiPartPoolProject_UnderTheCap`,
+`TestHandleDevelopBriefing_ManyPairs_StaysUnderTheMCPCap`). `TestAppendEnvelope_BlockSizeBudget` pins it, with eight
 leases (§2.8a.3) on top of the four-service fixture (~3.1 KB fenced). JSON
 results are far smaller than the prose ones and are nowhere near the cap.
 

@@ -420,6 +420,9 @@ func renderDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 			fmt.Sprintf("Synthesize guidance: %v", err),
 			""), WithRecoveryStatus()), nil, nil
 	}
+	// Budget backstop (R1), as action="status" applies it: the guidance and
+	// the per-service lines above it keep within the composer's budget.
+	matches = workflow.ComposeUnderBudget(matches, corpus, workflow.GuidanceBudget(envelope))
 	plan := workflow.BuildPlan(envelope)
 	return briefingResult(workflow.Response{
 		Envelope: envelope,
