@@ -246,17 +246,21 @@ func TestScenario_DevPoolAtom_OnlyWithAPoolOrLeaseInScope(t *testing.T) {
 }
 
 // TestGuidanceBudget_CountsTheServiceLines pins that the budget the composer
-// keeps the guidance under is ComposeBodyBudget less the per-service and lease
-// lines the status renders above it: a project of many services leaves its
-// guidance less room, and the status as a whole stays within the budget.
+// keeps the guidance under is ComposeBodyBudget less what the project's
+// services cost the rest of the answer: the per-service and lease lines the
+// status renders above the guidance, and the envelope block's bytes beyond a
+// small project's. A project of many services leaves its guidance less room,
+// and the answer as a whole stays within the cap.
 func TestGuidanceBudget_CountsTheServiceLines(t *testing.T) {
 	t.Parallel()
 	env := multiPartPoolProject()
 	var lines strings.Builder
 	renderServices(&lines, env)
 	renderLeases(&lines, env)
-	if got, want := GuidanceBudget(env), ComposeBodyBudget-lines.Len(); got != want {
-		t.Errorf("GuidanceBudget = %d, want ComposeBodyBudget less the %d bytes of service and lease lines = %d", got, lines.Len(), want)
+	envelope := len(AppendEnvelope("", env))
+	if got, want := GuidanceBudget(env), ComposeBodyBudget-lines.Len()-(envelope-envelopeBlockBaseline); got != want {
+		t.Errorf("GuidanceBudget = %d, want ComposeBodyBudget less %d bytes of service and lease lines and %d of envelope beyond the baseline = %d",
+			got, lines.Len(), envelope-envelopeBlockBaseline, want)
 	}
 	if small := GuidanceBudget(StateEnvelope{Phase: PhaseIdle}); small >= ComposeBodyBudget {
 		t.Errorf("GuidanceBudget of an empty project = %d, want the services line counted under %d", small, ComposeBodyBudget)
@@ -286,8 +290,9 @@ func TestRenderServices_BasePrefixRuleSaidOnce(t *testing.T) {
 }
 
 // TestDevelopBriefing_MultiPartPoolProject_UnderTheCap pins the develop start
-// of the multi-part pool project within the 32 KB MCP tool-response cap,
-// envelope block included, and logs its size.
+// of the multi-part pool project within the 32 KB MCP tool-response cap — the
+// JSON-RPC frame the client reads, envelope block included — with the dev-pool
+// loop, the guidance its stages need, whole; and logs its size.
 func TestDevelopBriefing_MultiPartPoolProject_UnderTheCap(t *testing.T) {
 	t.Parallel()
 	corpus, err := LoadAtomCorpus()
@@ -302,8 +307,14 @@ func TestDevelopBriefing_MultiPartPoolProject_UnderTheCap(t *testing.T) {
 	matches = ComposeUnderBudget(matches, corpus, GuidanceBudget(env))
 	plan := BuildPlan(env)
 	text := AppendEnvelope(RenderStatus(Response{Envelope: env, Guidance: BodiesOf(matches), Plan: &plan}), env)
-	t.Logf("develop start of a six-part pool project: %d B (atoms: %v)", len(text), atomIDsOf(matches))
-	if len(text) >= 32*1024 {
-		t.Errorf("develop start is %d B, over the 32 KB MCP cap", len(text))
+	wire := mcpWireFrameSize(text)
+	t.Logf("develop start of a six-part pool project: %d B, %d B on the wire (atoms: %v)", len(text), wire, atomIDsOf(matches))
+	if wire >= 32*1024 {
+		t.Errorf("develop start is %d B on the wire, over the 32 KB MCP cap", wire)
+	}
+	for _, m := range matches {
+		if m.AtomID == "develop-dev-pool" && !strings.Contains(m.Body, "**Stage check.**") {
+			t.Errorf("the dev-pool loop was cut to a head:\n%s", m.Body)
+		}
 	}
 }
