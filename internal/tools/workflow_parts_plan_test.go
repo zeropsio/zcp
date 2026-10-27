@@ -292,3 +292,99 @@ func submitPlanOverRepo(t *testing.T, route workflow.BootstrapRoute, dev, repo s
 	}
 	return extractText(result), engine
 }
+
+// TestBootstrapPlan_InAMate_DevServicesHoldingOneRepository_PlannedAsOnePair:
+// in a Mate every pair gets a repository of its own in HQ, so a plan pairing
+// two existing dev services whose checkouts are one repository — they share
+// a root commit that carries code — would split it. It is refused before
+// anything is recorded, on the classic and the adopt route, with the plan
+// made from it: the first dev service with every stage of the two, the other
+// left out, then pool-migrate. Two repositories, a checkout that cannot be
+// read and a plan outside a Mate stay as they are.
+func TestBootstrapPlan_InAMate_DevServicesHoldingOneRepository_PlannedAsOnePair(t *testing.T) {
+	t.Parallel()
+	requireGitForLab(t)
+	monorepo := map[string]string{"zerops.yml": "zerops:\n  - setup: dev\n  - setup: box\n  - setup: hq\n"}
+	pair := func(dev, stage, setup string) workflow.BootstrapTarget {
+		return workflow.BootstrapTarget{Runtime: workflow.RuntimeTarget{
+			DevHostname: dev, Type: "ubuntu/nodejs@22", IsExisting: true, BootstrapMode: topology.PlanModeStandard,
+			Stages: []topology.StageRef{{Hostname: stage, SetupName: setup}},
+		}}
+	}
+	plan := []workflow.BootstrapTarget{pair("boxdev", "boxstage", "box"), pair("hqdev", "hqstage", "hq")}
+	mate := runtime.Info{InContainer: true, MateEnabled: true}
+
+	tests := []struct {
+		name        string
+		route       workflow.BootstrapRoute
+		box, hq     map[string]string
+		unreadable  string
+		rt          runtime.Info
+		wantRefused bool
+	}{
+		{name: "classic, one repository on both dev services", route: workflow.BootstrapRouteClassic, box: monorepo, hq: monorepo, rt: mate, wantRefused: true},
+		{name: "adopt, one repository on both dev services", route: workflow.BootstrapRouteAdopt, box: monorepo, hq: monorepo, rt: mate, wantRefused: true},
+		{name: "classic, two repositories", route: workflow.BootstrapRouteClassic, box: monorepo, hq: map[string]string{"zerops.yml": "zerops:\n  - setup: dev\n  - setup: hq\n"}, rt: mate},
+		{name: "classic, one checkout cannot be read", route: workflow.BootstrapRouteClassic, box: monorepo, hq: monorepo, unreadable: "hqdev", rt: mate},
+		{name: "classic, outside a Mate", route: workflow.BootstrapRouteClassic, box: monorepo, hq: monorepo, rt: runtime.Info{InContainer: true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			checkouts := map[string]string{"boxdev": t.TempDir(), "hqdev": t.TempDir()}
+			labHistory(t, checkouts["boxdev"], tt.box)
+			labHistory(t, checkouts["hqdev"], tt.hq)
+			services := []platform.ServiceStack{}
+			for _, host := range []string{"boxdev", "boxstage", "hqdev", "hqstage"} {
+				services = append(services, platform.ServiceStack{
+					ID: "svc-" + host, Name: host, Status: "ACTIVE",
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/nodejs@22"},
+				})
+			}
+			mock := platform.NewMock().WithServices(services)
+			ssh := &rootsUnreadableSSH{labSSH: &labSSH{t: t, mock: mock, dirs: checkouts, home: t.TempDir()}, host: tt.unreadable}
+			dir := t.TempDir()
+			engine := workflow.NewEngine(dir, workflow.EnvContainer, nil)
+			if _, err := engine.BootstrapStartWithRoute("proj-1", "develop box and hq", tt.route, ""); err != nil {
+				t.Fatalf("BootstrapStartWithRoute: %v", err)
+			}
+
+			result, _, err := handleBootstrapComplete(context.Background(), engine, mock, nil, nil,
+				WorkflowInput{Step: workflow.StepDiscover, Plan: plan}, nil, "proj-1", dir, nil, ssh, tt.rt)
+			if err != nil {
+				t.Fatalf("handleBootstrapComplete: %v", err)
+			}
+			text := extractText(result)
+
+			refused := strings.Contains(text, "a monorepo is one repository")
+			if refused != tt.wantRefused {
+				t.Fatalf("refused as one repository = %v, want %v:\n%s", refused, tt.wantRefused, text)
+			}
+			if !tt.wantRefused {
+				return
+			}
+			for _, want := range []string{`\"boxdev\"`, `\"hqdev\"`, "pool-migrate", "a dev pool of its own"} {
+				if !strings.Contains(text, want) {
+					t.Errorf("the refusal misses %s:\n%s", want, text)
+				}
+			}
+			_, proposed, _ := strings.Cut(text, "plan=")
+			if want := `\"devHostname\":\"boxdev\"`; !strings.Contains(proposed, want) {
+				t.Errorf("the plan made from it misses %s:\n%s", want, text)
+			}
+			if strings.Contains(proposed, `\"devHostname\":\"hqdev\"`) {
+				t.Errorf("the plan made from it keeps hqdev as a dev service:\n%s", text)
+			}
+			if want := `[{\"hostname\":\"boxstage\",\"setupName\":\"box\"},{\"hostname\":\"hqstage\",\"setupName\":\"hq\"}]`; !strings.Contains(proposed, want) {
+				t.Errorf("the plan made from it does not give boxdev every stage %s:\n%s", want, text)
+			}
+			state, err := engine.GetState()
+			if err != nil {
+				t.Fatalf("GetState: %v", err)
+			}
+			if state.Bootstrap.Plan != nil {
+				t.Errorf("a refused plan is recorded: %+v", state.Bootstrap.Plan)
+			}
+		})
+	}
+}
