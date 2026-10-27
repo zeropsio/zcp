@@ -581,6 +581,31 @@ func TestDevServer_Logs_ReturnsTail(t *testing.T) {
 	}
 }
 
+// TestDevServer_Logs_PlainTextAndAShortDefaultTail pins that a log tail comes
+// back without terminal colour codes and that the logs action reads 20 lines
+// unless asked for more: on 2026-10-27 80 lines of a Vite dev server's log
+// came back as 20 KB, most of it escape sequences.
+func TestDevServer_Logs_PlainTextAndAShortDefaultTail(t *testing.T) {
+	t.Parallel()
+	c := devservertest.NewSupervised(oneServer)
+	c.Logs = map[string][]string{"apidev": {
+		"\x1b[2m10:22:57 AM\x1b[22m \x1b[36m\x1b[1m[vite]\x1b[22m\x1b[39m \x1b[90m\x1b[2m(client)\x1b[22m\x1b[39m \x1b[32mhmr update \x1b[39m\x1b[2m/src/App.tsx\x1b[22m",
+		"\x1b]8;;https://vite.dev\x07docs\x1b]8;;\x07 ready",
+	}}
+	result := runDevServer(t, c, DevServerParams{Action: "logs", Hostname: "apidev"})
+	if strings.Contains(result.LogTail, "\x1b") {
+		t.Errorf("logTail keeps escape sequences: %q", result.LogTail)
+	}
+	for _, want := range []string{"10:22:57 AM [vite] (client) hmr update /src/App.tsx", "docs ready"} {
+		if !strings.Contains(result.LogTail, want) {
+			t.Errorf("logTail = %q, want it to read %q", result.LogTail, want)
+		}
+	}
+	if sentWith(c, "zcp-devsup ctl logs 'apidev' --lines 20 ") != 1 {
+		t.Errorf("want one supervisor log read of 20 lines by default, sent %q", c.Sent())
+	}
+}
+
 // TestDevServer_Restart_IsStopThenStart: a restart is the supervisor's own
 // stop-then-start of the server's group.
 func TestDevServer_Restart_IsStopThenStart(t *testing.T) {
