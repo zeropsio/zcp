@@ -185,10 +185,14 @@ func refuseBoxOutsideItsRegion(ctx context.Context, client platform.Client, proj
 }
 
 // explicitPlanPreflight runs the reads an explicit bootstrap plan passes
-// before the engine validates it: the repository's parts
+// before the engine validates it: in a Mate, that no two of its dev services
+// hold one repository (oneRepositoryPlanError), then the repository's parts
 // (repoPartsPlanError), then the region of every Box it would create
 // (boxRegionPlanError). The first refusal wins.
 func explicitPlanPreflight(ctx context.Context, client platform.Client, projectID string, plan []workflow.BootstrapTarget, ssh ops.SSHDeployer, rt runtime.Info) *platform.PlatformError {
+	if pe := oneRepositoryPlanError(ctx, plan, ssh, rt); pe != nil {
+		return pe
+	}
 	if pe := repoPartsPlanError(ctx, client, projectID, plan, ssh, rt); pe != nil {
 		return pe
 	}

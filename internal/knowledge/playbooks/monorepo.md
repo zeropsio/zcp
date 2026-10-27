@@ -1,5 +1,5 @@
 ---
-description: Procedural playbook for repos with more than one deployable part (pnpm/turbo workspaces, polyglot repos, docker-compose, SPA + API) — detect parts, choose one dev service or one dev pool per part, write one setup per part.
+description: Procedural playbook for repos with more than one deployable part (pnpm/turbo workspaces, polyglot repos, docker-compose, SPA + API) — detect parts, give every part its own dev pool and its own stage on one repository, write one setup per part.
 ---
 
 # Monorepo — several parts in one repo
@@ -31,15 +31,34 @@ setup stays minimal — base, system packages in `run.prepareCommands`, ports �
 and installs no dependencies: they are installed in the running dev service
 the way the repo's docs install them.
 
-## 2. One dev service or one dev pool per part
+## 2. Every part gets its own dev pool and its own stage
 
-1. All runtimes can run in one container (a second runtime comes from
-   `sudo zsc install <runtime>` on Ubuntu, `sudo apk add <package>` on Alpine) and the
-   dev servers plus the install peak fit its RAM → **one dev service holds the whole
-   repo** (default). Each part's dev server runs under its own name in that service.
-   A part you add gets its dev server in the same step as its setup. Worked example —
-   `appdev` runs the `web` part and the repo gains a `worker` part (no port): after
-   adding the `worker` setup to `zerops.yaml`, start the worker on the dev service:
+Every part gets a dev environment and a stage of its own, all on one repository:
+the part's dev environment is a Swarm dev pool — each branch leases one container
+of it — and its stage builds the part's setup. Nothing shares a container. One dev
+service serving several parts is never where the repo ends up, and neither is a dev
+service per part: each holds a full checkout, and in a Mate each pair asks HQ for a
+repository of its own, which splits one repo into several — zcp refuses that split.
+
+1. **In a Mate**, go through one dev service: plan one dev service holding the
+   repository with a stage per part (§3a) — one pair, so HQ holds the repo as one
+   repository — then, before building on it, run
+   `zerops_workflow workflow="pool-migrate" service="<dev>"`. It moves each part onto
+   a dev pool of its own, keyed to that one repository, and retires the dev service
+   once every part has moved. Its steps name what each part's pool needs in the
+   repository — a setup named after the pool, the dev-server declaration — and the
+   commit it deploys.
+2. **Outside a Mate**, give each part its own dev pool beside its stage. The pool's
+   import stanza, its setup and a declaration several parts share:
+   `zerops_knowledge uri="zerops://themes/pools-and-box"`, section "A part's dev pool".
+3. A dev service that still serves several parts — set up before this rule, or not
+   migrated yet — keeps working until pool-migrate moves it. All its runtimes share
+   its container (a second runtime comes from `sudo zsc install <runtime>` on
+   Ubuntu, `sudo apk add <package>` on Alpine), and each part's dev server runs under
+   its own name in it. A part you add gets its dev server in the same step as its
+   setup. Worked example — `appdev` runs the `web` part and the repo gains a `worker`
+   part (no port): after adding the `worker` setup to `zerops.yaml`, start the worker
+   on the dev service:
 
    ```
    zerops_dev_server action=start hostname="appdev" name="worker" command="bun worker.ts" noHttpProbe=true
@@ -53,18 +72,15 @@ the way the repo's docs install them.
 
    Commit the declaration with the setup.
    `zerops_dev_server action=status hostname="appdev"` then lists both servers. Deploying the part's stage
-   (`workerstage`) never runs it on `appdev`.
-2. Otherwise — runtimes that cannot share a container, or one container is not
-   enough — **one dev pool per part**: each part's dev environment is a Swarm
-   pool of its own, and each branch leases one container of it. The pool's
-   import stanza, its setup and a declaration several parts share:
-   `zerops_knowledge uri="zerops://themes/pools-and-box"`, section "A part's dev pool".
+   (`workerstage`) never runs it on `appdev`. Then
+   `zerops_workflow workflow="pool-migrate" service="appdev"` moves both parts onto dev
+   pools of their own.
    zcp no longer sets up a shared code volume — one Local Storage volume several
    dev services mount for the repository. A project that already keeps its
    repository on one keeps working, and
    `zerops_workflow workflow="pool-migrate" service="<dev>"` moves it onto one
    dev pool per part.
-3. More people on the repo means more Mates, never more dev services.
+4. More people on the repo means more Mates, never more dev services.
 
 ## 3. Write the setups
 
@@ -88,8 +104,8 @@ the way the repo's docs install them.
 A plan for a repo with several parts names every stage with its setup: put
 `"stages": [{"hostname": "webstage", "setupName": "web"}, {"hostname": "apistage", "setupName": "api"}]`
 inside `runtime` instead of `stageHostname`, and use one spelling, never both. The dev
-service and all its stages are then one pair; a stage left out of `stages` becomes a
-standalone `simple` service.
+service and all its stages are then one pair on one repository — the pair pool-migrate
+starts from (§2); a stage left out of `stages` becomes a standalone `simple` service.
 
 When a part is added to a repo that already has setups, nothing is renamed.
 An existing setup and its stage keep their names; only the new part gets a new

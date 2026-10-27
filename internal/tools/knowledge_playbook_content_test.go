@@ -268,9 +268,18 @@ func TestPlaybookMonorepo_ContentPins_PartRules(t *testing.T) {
 		{"parts are the zerops.yaml setups", "Parts are the setups in the repo's `zerops.yaml`"},
 		{"workspace markers", "`pnpm-workspace.yaml`, `workspaces` in `package.json`, `nx.json`, `turbo.json`"},
 		{"propose parts once", "Propose the parts to the person once"},
-		{"variant A is the default", "**one dev service holds the whole repo** (default)"},
-		{"parts that cannot share a container each get a dev pool", "**one dev pool per part**"},
+		{"every part gets its own dev pool and its own stage", "## 2. Every part gets its own dev pool and its own stage"},
+		{"every part's dev pool and stage share one repository", "Every part gets a dev environment and a stage of its own, all on one repository"},
+		{"nothing shares a container", "Nothing shares a container"},
+		{"one dev serving several parts is never the end state, nor a dev per part", "One dev service serving several parts is never where the repo ends up, and neither is a dev service per part"},
+		{"a dev service per part splits the repository in a Mate, which zcp refuses", "in a Mate each pair asks HQ for a repository of its own, which splits one repo into several — zcp refuses that split"},
+		{"in a Mate the route is one dev with a stage per part", "plan one dev service holding the repository with a stage per part (§3a) — one pair, so HQ holds the repo as one repository"},
+		{"then pool-migrate before building on it", "before building on it, run `zerops_workflow workflow=\"pool-migrate\" service=\"<dev>\"`"},
+		{"pool-migrate keys every part's pool to the one repository and retires the dev", "keyed to that one repository, and retires the dev service once every part has moved"},
+		{"outside a Mate each part gets its dev pool beside its stage", "**Outside a Mate**, give each part its own dev pool beside its stage"},
 		{"a part's dev pool is set up from the pools-and-box theme", `zerops_knowledge uri="zerops://themes/pools-and-box"`},
+		{"a dev still serving several parts keeps working until pool-migrate moves it", "A dev service that still serves several parts — set up before this rule, or not migrated yet — keeps working until pool-migrate moves it"},
+		{"the worked example ends with pool-migrate", `zerops_workflow workflow="pool-migrate" service="appdev"` + "` moves both parts onto dev pools of their own"},
 		{"no shared code volume is set up any more", "zcp no longer sets up a shared code volume"},
 		{"an existing shared code volume moves onto pools", `zerops_workflow workflow="pool-migrate" service="<dev>"`},
 		{"more people means more Mates", "More people on the repo means more Mates, never more dev services"},
@@ -308,6 +317,13 @@ func TestPlaybookMonorepo_ContentPins_PartRules(t *testing.T) {
 	for _, gone := range []string{`"codeVolume"`, "one dev service per part on one shared Local Storage volume", `workingDir="/var/www"`} {
 		if strings.Contains(body, gone) {
 			t.Errorf("monorepo playbook still sets up a shared code volume: %q", gone)
+		}
+	}
+	// One dev service serving several parts is no longer the default, and a
+	// dev pool is no longer only for runtimes that cannot share a container.
+	for _, gone := range []string{"holds the whole repo** (default)", "Otherwise — runtimes that cannot share a container"} {
+		if strings.Contains(body, gone) {
+			t.Errorf("monorepo playbook still makes one dev service the default: %q", gone)
 		}
 	}
 }

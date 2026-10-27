@@ -15,5 +15,5 @@ The repo of these dev services holds more than one deployable part:
 
 Before you add a part, a setup, a dev server or a stage for one, read
 `zerops_knowledge uri="zerops://playbooks/monorepo"`: how to tell the parts
-apart, one dev service or one per part, one setup and one named dev server
-per part.
+apart, a dev pool and a stage of its own for every part on one repository,
+one setup and one named dev server per part.

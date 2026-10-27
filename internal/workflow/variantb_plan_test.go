@@ -112,10 +112,15 @@ func TestBootstrapCompletePlan_PlanCarryingCodeVolume_RefusedNamingPools(t *test
 			if err == nil {
 				t.Fatal("a plan carrying codeVolume was accepted")
 			}
-			for _, want := range []string{"codeVolume", "dev pool", `workflow="pool-migrate"`} {
+			for _, want := range []string{"codeVolume", "dev pool", `workflow="pool-migrate"`, "with a stage per part", "a dev pool of its own"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("err = %v, want it to say %q", err, want)
 				}
+			}
+			// Every part ends on a dev pool of its own: one dev service
+			// holding the whole repository is no longer the plan it names.
+			if strings.Contains(err.Error(), "one dev service holds the whole repository") {
+				t.Errorf("err = %v, still names one dev service for the whole repository", err)
 			}
 			state, err := eng.GetState()
 			if err != nil {

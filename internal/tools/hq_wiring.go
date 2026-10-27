@@ -366,6 +366,11 @@ func passHQPair(
 	m, _ := workflow.FindServiceMeta(stateDir, hostname)
 	switch {
 	case hqPairGetsRepository(m, address, rt):
+		// A monorepo is one repository: a dev checkout holding a wired
+		// pair's repository asks HQ for no second one (hq_one_repository.go).
+		if line := hqOneRepositoryRefusal(ctx, sshDeployer, rt, stateDir, m); line != "" {
+			return line, false
+		}
 		attempt := wireHQPair(ctx, client, httpClient, sshDeployer, rt, stateDir, hqc, self, m, hqRepoNameOf(m))
 		return attempt.line, attempt.wired
 	case hqPairWired(m):
