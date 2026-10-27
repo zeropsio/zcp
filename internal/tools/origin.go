@@ -16,10 +16,10 @@ import (
 // OriginInput is zerops_origin's input. It has no token field: the person
 // gives the origin's token to HQ themselves.
 type OriginInput struct {
-	Action string `json:"action"         jsonschema:"request"`
-	URL    string `json:"url,omitempty"  jsonschema:"The repository's https address as the person gave it, without a token"`
-	Repo   string `json:"repo,omitempty" jsonschema:"The repository in HQ the pair will wire: the dev service's hostname"`
-	Why    string `json:"why,omitempty"  jsonschema:"One line: why finished work would go back there"`
+	Action string `json:"action"         jsonschema:"request, or withdraw: take back an ask no longer needed (re-planned, repository retired, asked by mistake)"`
+	URL    string `json:"url,omitempty"  jsonschema:"The repository's https address as the person gave it (withdraw: as it was asked), without a token"`
+	Repo   string `json:"repo,omitempty" jsonschema:"The repository in HQ the pair will wire: the dev service's hostname. withdraw: the repository the ask named; omit to withdraw every ask naming the address"`
+	Why    string `json:"why,omitempty"  jsonschema:"request: one line, why finished work would go back there"`
 }
 
 type originRequested struct {
@@ -33,9 +33,17 @@ type originConnected struct {
 	Repo string `json:"repo"`
 }
 
+// originWithdrawn is an ask the agent took back (action="withdraw"): Mate
+// closes the card of every ask naming Origin.URL — of Origin.Repo alone when
+// it names one.
+type originWithdrawn struct {
+	Origin ops.OriginWithdrawal `json:"origin"`
+}
+
 type originAnswer struct {
 	Requested   *originRequested `json:"requested,omitempty"`
 	Connected   *originConnected `json:"connected,omitempty"`
+	Withdrawn   *originWithdrawn `json:"withdrawn,omitempty"`
 	NextActions string           `json:"nextActions"`
 }
 
@@ -48,12 +56,15 @@ type originAnswer struct {
 func RegisterOrigin(srv *mcp.Server, httpClient hq.Doer, projectID, orgID, stateDir string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_origin",
-		Description: "Ask the person where a repository's code is kept: on GitHub, mounted in HQ as the checkout's origin, or in Mate, only following it; one outside GitHub is only followed. Writes nothing: Mate shows a card for repo, the dev hostname the pair will wire. A message of its own tells you their pick. Never ask for a token.",
+		Description: "Ask the person where a repository's code is kept: on GitHub, mounted in HQ as its origin, or in Mate, only following it. Writes nothing: Mate shows a card for repo, the pair's dev hostname; a message tells you their pick. Never ask for a token. action=withdraw url (repo) closes an ask no longer needed — not in chat.",
 		Annotations: &mcp.ToolAnnotations{Title: "Ask where a repository's code is kept", ReadOnlyHint: true, IdempotentHint: true, DestructiveHint: boolPtr(false), OpenWorldHint: boolPtr(false)},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in OriginInput) (*mcp.CallToolResult, any, error) {
+		if in.Action == originActionWithdraw {
+			return originWithdraw(in), nil, nil
+		}
 		if in.Action != "request" {
 			return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
-				fmt.Sprintf("Invalid action %q", in.Action), "Use action=\"request\".")), nil, nil
+				fmt.Sprintf("Invalid action %q", in.Action), "Use action=\"request\", or action=\"withdraw\" to take back an ask no longer needed.")), nil, nil
 		}
 		req, err := ops.NewOriginRequest(in.URL, in.Repo, in.Why)
 		if err != nil {
@@ -73,6 +84,31 @@ func RegisterOrigin(srv *mcp.Server, httpClient hq.Doer, projectID, orgID, state
 			return observeFailure(fmt.Sprintf("HQ could not be read, so whether %s already has an origin is unknown and nothing was asked: %v. Ask again later.", req.Repo, err)), nil, nil
 		}
 		return jsonResult(originAnswerOf(req, state, client.Address(), orgID, stateDir)), nil, nil
+	})
+}
+
+// originActionWithdraw takes back an ask the agent no longer needs.
+const originActionWithdraw = "withdraw"
+
+// originWithdraw answers action="withdraw": the agent no longer needs the
+// person's pick of where a repository's code is kept — it re-planned, the
+// repository was retired, or it asked by mistake. It writes nothing and asks
+// HQ nothing: Mate closes the card of every ask naming the address — the one
+// of repo alone when repo is named — from the answer, so the agent never
+// tells the person in chat that a card is outdated (docs/spec-mate.md §5.10).
+func originWithdraw(in OriginInput) *mcp.CallToolResult {
+	w, err := ops.NewOriginWithdrawal(in.URL, in.Repo)
+	if err != nil {
+		return convertError(err)
+	}
+	which := "every ask naming " + w.URL + " is withdrawn"
+	if w.Repo != "" {
+		which = fmt.Sprintf("the ask of where %s's code is kept, at %s, is withdrawn", w.Repo, w.URL)
+	}
+	return jsonResult(originAnswer{
+		Withdrawn: &originWithdrawn{Origin: w},
+		NextActions: "Nothing was written: " + which + " — Mate closes its card, so there is nothing more to say about it in chat. " +
+			"If the person already picked, a message of its own still tells you; ask again with action=\"request\" only if you need their pick after all.",
 	})
 }
 
