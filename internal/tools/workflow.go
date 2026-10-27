@@ -81,7 +81,7 @@ type WorkflowInput struct {
 	// pairs is several repositories, each pair its own (docs/spec-mate.md
 	// §10.10): without it such a plan is refused for one pair with a stage
 	// per part (monorepoPlanError).
-	SeparateRepositories FlexBool `json:"separateRepositories,omitempty" jsonschema:"For action=complete step=discover in a Mate: true when each dev/stage pair of a classic plan is a repository of its own, not a part of one repository. Without it a Mate's plan of several pairs is refused: a monorepo is ONE dev service with a stage per part (runtime.stages), then workflow=pool-migrate gives each part a dev pool of its own."`
+	SeparateRepositories FlexBool `json:"separateRepositories,omitempty" jsonschema:"Mate, step=discover: true when each dev/stage pair of a classic plan is its own repository. Without it several pairs are refused: a monorepo is one dev service with a stage per part, then pool-migrate."`
 
 	// CopyGitToken is the person's yes to the pool getting the dev service's
 	// GIT_TOKEN, on the env step outside a Mate (docs/spec-workflows.md §13
