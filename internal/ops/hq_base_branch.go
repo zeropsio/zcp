@@ -72,7 +72,8 @@ func hqGit(args string) string {
 //   - anything else — real code on both sides, unrelated → refused by name
 //     (ZCP_BASE_NOT_SEED): two unrelated histories are never joined.
 //
-// `main` existing while HEAD is elsewhere is refused by name too.
+// `main` existing while HEAD is elsewhere is refused by name too. A repository
+// with no `main` in HQ at all has no base: the pair's HEAD becomes its `main`.
 // Every refusal changes nothing; BaseBranchRefusal reads which one it was and
 // BaseBranchRefusalRemedy what to do about it.
 //
@@ -91,16 +92,23 @@ func BuildBaseBranchCommand(workingDir string) string {
 		shellQuote(DeployGitIdentity.Email), shellQuote(DeployGitIdentity.Name))
 	join := `c=$(git ` + joinIdentity + ` commit-tree "HEAD^{tree}" -p HEAD -p FETCH_HEAD -m "Join the repository's base") && ` +
 		`git update-ref "$ref" "$c" "$old" && git symbolic-ref HEAD "$ref"; `
+	// A repository HQ holds with no `main` yet (made by connect, follow or
+	// createRepo, not seeded) answers the fetch "couldn't find remote ref":
+	// there is no base to descend from, so the pair's HEAD becomes `main` and
+	// the first push creates it in HQ. Any other failure of the fetch ends the
+	// command with git's own status, as it always did.
+	fetchBase := `{ if fetched=$(` + hqGit(fmt.Sprintf("%s fetch --no-tags origin %s", hqCredentialHelperArgs(), shellQuote(baseBranch))) + ` 2>&1); then nomain=; ` +
+		`else rc=$?; case "$fetched" in *"couldn't find remote ref"*) nomain=1;; *) printf '%s\n' "$fetched"; exit "$rc";; esac; fi; }`
 	return strings.Join([]string{
 		"cd " + shellQuote(workingDir),
 		gitIdentityEnsureFragment(),
-		hqGit(fmt.Sprintf("%s fetch --no-tags origin %s", hqCredentialHelperArgs(), shellQuote(baseBranch))),
+		fetchBase,
 		gitHeadEnsureFragment(),
 		"{ b=" + shellQuote(baseBranch) + `; ref="refs/heads/$b"; cur=$(git symbolic-ref -q HEAD || true); ` +
 			`old=$(git rev-parse -q --verify "$ref" || true); ` +
 			`if [ "$cur" != "$ref" ] && [ -n "$old" ]; then ` + refuse("ZCP_BRANCH_ELSEWHERE") + `; fi; ` +
-			`isseed=; if [ "$(git rev-list --count FETCH_HEAD)" = 1 ] && [ "$(git rev-parse "FETCH_HEAD^{tree}")" = "$(git hash-object -t tree /dev/null)" ]; then isseed=1; fi; ` +
-			`if git merge-base FETCH_HEAD HEAD >/dev/null 2>&1; then ` +
+			`isseed=; if [ -z "$nomain" ] && [ "$(git rev-list --count FETCH_HEAD)" = 1 ] && [ "$(git rev-parse "FETCH_HEAD^{tree}")" = "$(git hash-object -t tree /dev/null)" ]; then isseed=1; fi; ` +
+			`if [ -n "$nomain" ] || git merge-base FETCH_HEAD HEAD >/dev/null 2>&1; then ` +
 			`[ "$cur" = "$ref" ] || git checkout -q -b "$b"; ` +
 			`elif [ "$(git rev-parse "HEAD^{tree}")" = "$(git hash-object -t tree /dev/null)" ] && ! git rev-parse -q --verify "HEAD^" >/dev/null; then ` +
 			`if ! git diff --cached --quiet; then ` + refuse("ZCP_STAGED_CHANGES") + `; fi; ` +

@@ -667,3 +667,98 @@ func TestBuildBaseBranchCommand_Shape(t *testing.T) {
 		}
 	}
 }
+
+// unseededLab is baseLab for a repository HQ holds with no `main` yet (made by
+// connect, follow or createRepo, not seeded): a bare remote with nothing in it.
+func unseededLab(t *testing.T, seedPair func(t *testing.T, dir string)) (pairDir string) {
+	t.Helper()
+	root := t.TempDir()
+	runGit(t, root, "init", "--bare", "-q", "-b", "main", "remote.git")
+	pairDir = filepath.Join(root, "pair")
+	runGit(t, root, "init", "-q", "-b", "main", "pair")
+	runGit(t, pairDir, "config", "user.email", "mate@example.invalid")
+	runGit(t, pairDir, "config", "user.name", "mate")
+	runGit(t, pairDir, "remote", "add", "origin", filepath.Join(root, "remote.git"))
+	if seedPair != nil {
+		seedPair(t, pairDir)
+	}
+	return pairDir
+}
+
+// TestBuildBaseBranchCommand_UnseededRepository pins the decision for a pair
+// whose HQ repository has no `main`: the pair is wired with its current HEAD
+// as the local `main` and its tree untouched (the first push creates `main`
+// in HQ, which merges a first change into a repository with none), where a
+// fetch of the missing ref used to fail every pass forever. A fetch that
+// fails for any other reason still fails the command, nothing moved.
+func TestBuildBaseBranchCommand_UnseededRepository(t *testing.T) {
+	if testing.Short() {
+		t.Skip("exercises a real git repository")
+	}
+	withCode := func(t *testing.T, dir string) {
+		t.Helper()
+		writeLabFile(t, filepath.Join(dir, "index.js"), "the app\n")
+		commitAll(t, dir, "the first page")
+	}
+	tests := []struct {
+		name string
+		seed func(t *testing.T, dir string)
+	}{
+		{name: "pair with its own history on main keeps it", seed: withCode},
+		{name: "pair on another branch gets main at its HEAD", seed: func(t *testing.T, dir string) {
+			t.Helper()
+			runGit(t, dir, "checkout", "-q", "-b", "work")
+			withCode(t, dir)
+		}},
+		{name: "pair with only the init marker gets main at the marker", seed: zcpInitMarker},
+		{name: "pair with uncommitted work keeps it", seed: func(t *testing.T, dir string) {
+			t.Helper()
+			zcpInitMarker(t, dir)
+			writeLabFile(t, filepath.Join(dir, "wip.js"), "unsaved\n")
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pair := unseededLab(t, tt.seed)
+			before := snapshotPair(t, pair)
+
+			//nolint:gosec // test-only, the command under test against a t.TempDir repository
+			out, err := exec.CommandContext(t.Context(), "sh", "-c", BuildBaseBranchCommand(pair)).CombinedOutput()
+			if err != nil {
+				t.Fatalf("command failed: %v\noutput:\n%s", err, out)
+			}
+			if got := runGit(t, pair, "symbolic-ref", "HEAD"); got != "refs/heads/main" {
+				t.Errorf("HEAD is %s, want refs/heads/main", got)
+			}
+			if got := runGit(t, pair, "rev-parse", "main"); got != before.head {
+				t.Errorf("main is %s, want the pair's HEAD %s", got, before.head)
+			}
+			if got := runGit(t, pair, "status", "--porcelain"); got != before.status {
+				t.Errorf("the working copy changed:\nbefore:\n%s\nafter:\n%s", before.status, got)
+			}
+			runShell(t, BuildBaseBranchCommand(pair))
+			if got := runGit(t, pair, "rev-parse", "main"); got != before.head {
+				t.Errorf("a second pass moved main to %s, want %s", got, before.head)
+			}
+		})
+	}
+
+	t.Run("a fetch failing for another reason fails the command and moves nothing", func(t *testing.T) {
+		pair := unseededLab(t, withCode)
+		runGit(t, pair, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "gone.git"))
+		runGit(t, pair, "checkout", "-q", "-b", "work")
+		before := snapshotPair(t, pair)
+
+		//nolint:gosec // test-only, the command under test against a t.TempDir repository
+		out, err := exec.CommandContext(t.Context(), "sh", "-c", BuildBaseBranchCommand(pair)).CombinedOutput()
+		if err == nil {
+			t.Fatalf("an unreachable remote must fail the command:\n%s", out)
+		}
+		if got := runGit(t, pair, "symbolic-ref", "HEAD"); got != "refs/heads/work" {
+			t.Errorf("HEAD moved to %s", got)
+		}
+		if got := gitOr(t, pair, "rev-parse", "--verify", "-q", "refs/heads/main"); got != before.head {
+			t.Errorf("main moved: %s, want %s", got, before.head)
+		}
+	})
+}
