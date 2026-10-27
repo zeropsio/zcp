@@ -120,7 +120,7 @@ func releaseLeaseBranchAnswer(ctx context.Context, deps ops.LeaseDeps, repo, bra
 		return LeaseReleaseAnswer{Refused: inUse}, LeaseReleaseExitRefused
 	}
 	change, err := ReleaseLeaseBranch(ctx, deps, repo, branch)
-	var unsaved *ops.LeaseUnsavedRefusal
+	var unsaved *ops.LeaseUnsavedError
 	switch {
 	case errors.As(err, &unsaved):
 		refused := make([]LeaseRefusedEntry, 0, len(unsaved.Leases))

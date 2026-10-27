@@ -63,7 +63,7 @@ func leaseDepsIn(deps ops.LeaseDeps, rt runtime.Info) ops.LeaseDeps {
 // ReleaseLeaseBranch is the tool's release of a branch, unforced: every lease
 // zcp holds of branch of repo (repo empty: the one repository zcp leases the
 // branch for), all or none, refused while any holds work a release would lose
-// (ops.LeaseUnsavedRefusal) — the one code path the tool, the HQ pass and
+// (ops.LeaseUnsavedError) — the one code path the tool, the HQ pass and
 // `zcp lease release` share.
 func ReleaseLeaseBranch(ctx context.Context, deps ops.LeaseDeps, repo, branch string) (ops.LeaseChange, error) {
 	return releaseLeaseBranch(ctx, deps, repo, branch, false)
@@ -75,7 +75,7 @@ func ReleaseLeaseBranch(ctx context.Context, deps ops.LeaseDeps, repo, branch st
 // work kept as it is so its typed reader still finds it.
 func releaseLeaseBranch(ctx context.Context, deps ops.LeaseDeps, repo, branch string, force bool) (ops.LeaseChange, error) {
 	change, err := ops.LeaseReleaseGroupChange(ctx, deps, repo, branch, force)
-	var unsaved *ops.LeaseUnsavedRefusal
+	var unsaved *ops.LeaseUnsavedError
 	if err != nil && !errors.As(err, &unsaved) {
 		err = withLeaseSSHStderr(err)
 	}
@@ -242,7 +242,7 @@ func completionWords(change hq.MateChange, group leaseGroupOnHQ, released ops.Le
 		aliases = append(aliases, l.Alias)
 	}
 	held := strings.Join(aliases, ", ")
-	var refusal *ops.LeaseUnsavedRefusal
+	var refusal *ops.LeaseUnsavedError
 	switch {
 	case errors.As(err, &refusal):
 		return fmt.Sprintf("%s, but its leases %s were not released: %s — commit it on a branch of your own and push it from the lease, and the next pass releases them; nothing unsaved is discarded unasked",
@@ -267,7 +267,7 @@ func completionWords(change hq.MateChange, group leaseGroupOnHQ, released ops.Le
 
 // unsavedWorkWords names what each lease a refused release read holds: its
 // files (the first ones, all counted) and its commits on no remote branch.
-func unsavedWorkWords(refusal *ops.LeaseUnsavedRefusal) string {
+func unsavedWorkWords(refusal *ops.LeaseUnsavedError) string {
 	parts := make([]string, 0, len(refusal.Leases)+1)
 	for _, l := range refusal.Leases {
 		var holds []string

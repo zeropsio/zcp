@@ -31,10 +31,9 @@ import (
 // completionHQ is the HQ address the completion tests' lease records name.
 const completionHQ = "https://hq.example"
 
-// completionRepoURL is repo of app-1 on completionHQ, as a lease records it.
-func completionRepoURL(repo string) string {
-	return completionHQ + "/git/org-1/app-1/" + repo
-}
+// completionRepo is the repository appdev of app-1 on completionHQ, as a
+// lease records it.
+const completionRepo = completionHQ + "/git/org-1/app-1/appdev"
 
 // releaseCall is one branch release a fake releaser was asked for.
 type releaseCall struct{ repo, branch string }
@@ -95,7 +94,7 @@ func leaseRecordsLeft(t *testing.T, stateDir string) []string {
 // unsavedRefusalOf is the refusal a branch release answers when hqpool-4
 // holds work a release would lose.
 func unsavedRefusalOf() error {
-	return &ops.LeaseUnsavedRefusal{
+	return &ops.LeaseUnsavedError{
 		Cause: platform.NewPlatformError(platform.ErrPrerequisiteMissing, "Branch fix-login's leases hold work that releasing would lose, so none of them was released", "commit and push it"),
 		Leases: []ops.LeaseUnsavedWork{{
 			Alias: "hqpool-4", Files: []string{"?? notes.txt"}, FileCount: 1,
@@ -126,9 +125,9 @@ func TestReleaseCompletedLeases_ByTheBranchsChange(t *testing.T) {
 		wantLine   []string
 	}{
 		{name: "merged", changes: []hq.MateChange{merged},
-			want: []releaseCall{{completionRepoURL("appdev"), "fix-login"}}, wantLine: []string{`repository "appdev"`, "change #4", `"fix-login"`, "merged", "hqpool-4", "boxpool-6", "released"}},
+			want: []releaseCall{{completionRepo, "fix-login"}}, wantLine: []string{`repository "appdev"`, "change #4", `"fix-login"`, "merged", "hqpool-4", "boxpool-6", "released"}},
 		{name: "closed", changes: []hq.MateChange{closed},
-			want: []releaseCall{{completionRepoURL("appdev"), "fix-login"}}, wantLine: []string{"change #4", "closed", "hqpool-4", "boxpool-6", "released"}},
+			want: []releaseCall{{completionRepo, "fix-login"}}, wantLine: []string{"change #4", "closed", "hqpool-4", "boxpool-6", "released"}},
 		{name: "open", changes: []hq.MateChange{open}},
 		{name: "another open change uses the branch", changes: []hq.MateChange{open, merged}},
 		{name: "no change on the branch", changes: []hq.MateChange{{Repo: "appdev", Number: 2, State: hq.ChangeMerged, Branch: "unleased-work"}}},
@@ -138,9 +137,9 @@ func TestReleaseCompletedLeases_ByTheBranchsChange(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			stateDir := t.TempDir()
-			writeHQLeaseRecord(t, stateDir, "hqpool", 4, completionRepoURL("appdev"), "fix-login")
-			writeHQLeaseRecord(t, stateDir, "boxpool", 6, completionRepoURL("appdev"), "fix-login")
-			writeHQLeaseRecord(t, stateDir, "hqpool", 5, completionRepoURL("appdev"), "other-work")
+			writeHQLeaseRecord(t, stateDir, "hqpool", 4, completionRepo, "fix-login")
+			writeHQLeaseRecord(t, stateDir, "boxpool", 6, completionRepo, "fix-login")
+			writeHQLeaseRecord(t, stateDir, "hqpool", 5, completionRepo, "other-work")
 			writeHQLeaseRecord(t, stateDir, "webpool", 7, "https://hq.example/git/org-1/app-2/appdev", "fix-login")
 			writeHQLeaseRecord(t, stateDir, "gitpool", 8, "https://github.com/acme/appdev", "fix-login")
 			if tt.acquiredAt != "" {
@@ -183,8 +182,8 @@ func TestReleaseCompletedLeases_ByTheBranchsChange(t *testing.T) {
 func TestReleaseCompletedLeases_Unsaved_KeptAndSaidOncePerPass(t *testing.T) {
 	t.Parallel()
 	stateDir := t.TempDir()
-	writeHQLeaseRecord(t, stateDir, "hqpool", 4, completionRepoURL("appdev"), "fix-login")
-	writeHQLeaseRecord(t, stateDir, "boxpool", 6, completionRepoURL("appdev"), "fix-login")
+	writeHQLeaseRecord(t, stateDir, "hqpool", 4, completionRepo, "fix-login")
+	writeHQLeaseRecord(t, stateDir, "boxpool", 6, completionRepo, "fix-login")
 	fake := &fakeBranchRelease{t: t, stateDir: stateDir, refuse: unsavedRefusalOf()}
 	app := "app-1"
 	state := hq.MateState{AppID: &app, OpenPerBranch: true, Changes: []hq.MateChange{
@@ -219,7 +218,7 @@ func TestReleaseCompletedLeases_Unsaved_KeptAndSaidOncePerPass(t *testing.T) {
 func TestReleaseCompletedLeases_OtherFailure_SaidAndKept(t *testing.T) {
 	t.Parallel()
 	stateDir := t.TempDir()
-	writeHQLeaseRecord(t, stateDir, "hqpool", 4, completionRepoURL("appdev"), "fix-login")
+	writeHQLeaseRecord(t, stateDir, "hqpool", 4, completionRepo, "fix-login")
 	fake := &fakeBranchRelease{t: t, stateDir: stateDir, refuse: errors.New("the pool's orchestrator did not answer")}
 	app := "app-1"
 	state := hq.MateState{AppID: &app, Changes: []hq.MateChange{{Repo: "appdev", Number: 4, State: hq.ChangeClosed, Branch: "fix-login"}}}
@@ -275,7 +274,7 @@ func TestReleaseCompletedLeases_TheToolsOwnBranchRelease(t *testing.T) {
 			t.Parallel()
 			ssh := &guardSSH{files: tc.files}
 			srv, orchs, deps := completionLeaseServer(t, ssh)
-			res := callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pools": []string{"webpool", "hqpool"}, "repo": completionRepoURL("appdev"), "branch": "feat-x"})
+			res := callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pools": []string{"webpool", "hqpool"}, "repo": completionRepo, "branch": "feat-x"})
 			if res.IsError {
 				t.Fatalf("group acquire failed: %s", getTextContent(t, res))
 			}

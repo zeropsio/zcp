@@ -34,12 +34,12 @@ func (gf *groupFixture) answerGuardWithCommits(files map[string]string, commits 
 }
 
 // TestLeaseReleaseGroup_UnsavedRefusal_NamesEachLeasesFilesAndCommits: a
-// branch release refused for unsaved work answers a LeaseUnsavedRefusal —
+// branch release refused for unsaved work answers a LeaseUnsavedError —
 // still the PREREQUISITE_MISSING refusal it always was — listing each lease
 // that holds work, by alias, with its files and its commits on no remote
 // branch (each "<sha> <subject>", read only for the refusal), and no lease
 // that holds none. A refusal that is not about unsaved work — a lease that
-// cannot be read — is no LeaseUnsavedRefusal.
+// cannot be read — is no LeaseUnsavedError.
 func TestLeaseReleaseGroup_UnsavedRefusal_NamesEachLeasesFilesAndCommits(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -90,7 +90,7 @@ func TestLeaseReleaseGroup_UnsavedRefusal_NamesEachLeasesFilesAndCommits(t *test
 			if !errors.As(err, &pe) || pe.Code != platform.ErrPrerequisiteMissing {
 				t.Fatalf("err = %v; want the PREREQUISITE_MISSING refusal", err)
 			}
-			var refusal *LeaseUnsavedRefusal
+			var refusal *LeaseUnsavedError
 			got := errors.As(err, &refusal)
 			if tt.want == nil {
 				if got {
@@ -99,7 +99,7 @@ func TestLeaseReleaseGroup_UnsavedRefusal_NamesEachLeasesFilesAndCommits(t *test
 				return
 			}
 			if !got {
-				t.Fatalf("err = %v (%T); want a LeaseUnsavedRefusal", err, err)
+				t.Fatalf("err = %v (%T); want a LeaseUnsavedError", err, err)
 			}
 			if !slices.EqualFunc(refusal.Leases, tt.want, func(a, b LeaseUnsavedWork) bool {
 				return a.Alias == b.Alias && slices.Equal(a.Files, b.Files) && a.FileCount == b.FileCount &&
@@ -129,9 +129,9 @@ func TestLeaseReleaseGroup_OneMemberUnsaved_TypedAsItsOwnRelease(t *testing.T) {
 	gf.answerGuardWithCommits(map[string]string{"hqpool-3": "?? notes.txt\n"}, map[string][]string{"hqpool-3": {"abc1234 wip"}})
 
 	_, err := LeaseReleaseGroupChange(context.Background(), gf.deps, "", "feat", false)
-	var refusal *LeaseUnsavedRefusal
+	var refusal *LeaseUnsavedError
 	if !errors.As(err, &refusal) {
-		t.Fatalf("err = %v (%T); want a LeaseUnsavedRefusal", err, err)
+		t.Fatalf("err = %v (%T); want a LeaseUnsavedError", err, err)
 	}
 	want := LeaseUnsavedWork{Alias: "hqpool-3", Files: []string{"?? notes.txt"}, FileCount: 1, Commits: []string{"abc1234 wip"}, CommitCount: 1}
 	if len(refusal.Leases) != 1 || refusal.Leases[0].Alias != want.Alias || !slices.Equal(refusal.Leases[0].Files, want.Files) ||

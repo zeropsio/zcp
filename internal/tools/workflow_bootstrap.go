@@ -116,8 +116,7 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 			// The adopt route is the other pass that reaches a just-written
 			// set of metas, so it is the other place A1 and A2 catch up from.
 			appendRepositoryReport(resp, reconcileMateRepositories(
-				ctx, client, httpClient, sshDeployer, rt, stateDir,
-				withLeaseCompletion(leaseBranchReleaseFor(client, projectID, stateDir, mounter, sshDeployer, rt))))
+				ctx, client, httpClient, sshDeployer, mounter, rt, projectID, stateDir))
 			if needsStacks(resp) {
 				populateStacks(ctx, resp, schemaCache)
 			}
@@ -145,13 +144,7 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 			return bootstrapResult(ctx, resp, engine, client, projectID, rt), nil, nil
 		}
 		if input.Plan != nil {
-			// A Mate plans pairs only (hq_pair.go).
-			if pe := hqPairPlanError(input.Plan, rt.MateEnabled); pe != nil {
-				return convertError(pe, WithRecoveryStatus()), nil, nil
-			}
-			// A Mate's monorepo is one pair with a stage per part, never a
-			// pair per part (hq_one_repository.go).
-			if pe := monorepoPlanError(input.Plan, rt.MateEnabled, input.SeparateRepositories.Bool()); pe != nil {
+			if pe := mateClassicPlanError(input, rt); pe != nil {
 				return convertError(pe, WithRecoveryStatus()), nil, nil
 			}
 			if pe := explicitPlanPreflight(ctx, client, projectID, input.Plan, sshDeployer, rt); pe != nil {
@@ -222,8 +215,7 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 	// outside a Mate, backs off per pair, and never blocks bootstrap.
 	if resp != nil && resp.Current == nil {
 		appendRepositoryReport(resp, reconcileMateRepositories(
-			ctx, client, httpClient, sshDeployer, rt, stateDir,
-			withLeaseCompletion(leaseBranchReleaseFor(client, projectID, stateDir, mounter, sshDeployer, rt))))
+			ctx, client, httpClient, sshDeployer, mounter, rt, projectID, stateDir))
 	}
 
 	populateRuntimeURLs(ctx, client, projectID, engine, resp)
@@ -584,4 +576,15 @@ func populateStacks(ctx context.Context, resp *workflow.BootstrapResponse, schem
 	if list := knowledge.FormatStackList(schemaCache.Get(ctx)); list != "" {
 		resp.AvailableStacks = list
 	}
+}
+
+// mateClassicPlanError is what a Mate refuses of a classic plan before
+// anything is recorded: a runtime with no stage half (hqPairPlanError), and a
+// repository split into a pair per part unless the plan says its pairs are
+// separate repositories (monorepoPlanError). nil outside a Mate.
+func mateClassicPlanError(input WorkflowInput, rt runtime.Info) *platform.PlatformError {
+	if pe := hqPairPlanError(input.Plan, rt.MateEnabled); pe != nil {
+		return pe
+	}
+	return monorepoPlanError(input.Plan, rt.MateEnabled, input.SeparateRepositories.Bool())
 }

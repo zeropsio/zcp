@@ -9,6 +9,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -34,27 +35,34 @@ func TestBootstrapPlan_InAMate_SeveralPairs_RefusedForOnePairWithAStagePerPart(t
 			Runtime: workflow.RuntimeTarget{DevHostname: dev, ExplicitStage: stage, Type: typ, BootstrapMode: topology.PlanModeStandard},
 		}
 	}
-	web := pair("webdev", "webstage", "nodejs@22")
-	web.Dependencies = []workflow.Dependency{{Hostname: "db", Type: "postgresql@17", Resolution: workflow.ResolutionCreate}}
-	api := pair("apidev", "apistage", "nodejs@22")
-	api.Dependencies = []workflow.Dependency{{Hostname: "db", Type: "postgresql@17", Resolution: workflow.ResolutionShared}, {Hostname: "cache", Type: "valkey@7.2", Resolution: workflow.ResolutionCreate}}
-	onePair := workflow.BootstrapTarget{Runtime: workflow.RuntimeTarget{
-		DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: topology.PlanModeStandard,
-		Stages: []topology.StageRef{{Hostname: "webstage", SetupName: "web"}, {Hostname: "apistage", SetupName: "api"}},
-	}}
+	// Each plan is built anew per case: validation writes into a plan's
+	// dependencies, and the cases run in parallel.
+	twoPairs := func() []workflow.BootstrapTarget {
+		web := pair("webdev", "webstage", "nodejs@22")
+		web.Dependencies = []workflow.Dependency{{Hostname: "db", Type: "postgresql@17", Resolution: workflow.ResolutionCreate}}
+		api := pair("apidev", "apistage", "nodejs@22")
+		api.Dependencies = []workflow.Dependency{{Hostname: "db", Type: "postgresql@17", Resolution: workflow.ResolutionShared}, {Hostname: "cache", Type: "valkey@7.2", Resolution: workflow.ResolutionCreate}}
+		return []workflow.BootstrapTarget{web, api}
+	}
+	onePair := func() []workflow.BootstrapTarget {
+		return []workflow.BootstrapTarget{{Runtime: workflow.RuntimeTarget{
+			DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: topology.PlanModeStandard,
+			Stages: []topology.StageRef{{Hostname: "webstage", SetupName: "web"}, {Hostname: "apistage", SetupName: "api"}},
+		}}}
+	}
 	mate := runtime.Info{InContainer: true, MateEnabled: true}
 
 	tests := []struct {
 		name        string
-		plan        []workflow.BootstrapTarget
+		plan        func() []workflow.BootstrapTarget
 		separate    bool
 		rt          runtime.Info
 		wantRefused bool
 	}{
-		{name: "two pairs in a Mate", plan: []workflow.BootstrapTarget{web, api}, rt: mate, wantRefused: true},
-		{name: "two pairs in a Mate, separate repositories", plan: []workflow.BootstrapTarget{web, api}, separate: true, rt: mate},
-		{name: "one pair with a stage per part in a Mate", plan: []workflow.BootstrapTarget{onePair}, rt: mate},
-		{name: "two pairs outside a Mate", plan: []workflow.BootstrapTarget{web, api}, rt: runtime.Info{InContainer: true}},
+		{name: "two pairs in a Mate", plan: twoPairs, rt: mate, wantRefused: true},
+		{name: "two pairs in a Mate, separate repositories", plan: twoPairs, separate: true, rt: mate},
+		{name: "one pair with a stage per part in a Mate", plan: onePair, rt: mate},
+		{name: "two pairs outside a Mate", plan: twoPairs, rt: runtime.Info{InContainer: true}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -64,7 +72,7 @@ func TestBootstrapPlan_InAMate_SeveralPairs_RefusedForOnePairWithAStagePerPart(t
 			if _, err := engine.BootstrapStartWithRoute("proj-1", "build web and api", workflow.BootstrapRouteClassic, ""); err != nil {
 				t.Fatalf("BootstrapStartWithRoute: %v", err)
 			}
-			input := WorkflowInput{Step: workflow.StepDiscover, Plan: tt.plan}
+			input := WorkflowInput{Step: workflow.StepDiscover, Plan: tt.plan()}
 			if tt.separate {
 				input.SeparateRepositories = FlexBool(true)
 			}
@@ -122,7 +130,7 @@ func TestBootstrapPlan_InAMate_SeveralPairs_RefusedForOnePairWithAStagePerPart(t
 				t.Fatalf("the plan made from it = %+v, want one pair keyed by webdev, its stages in stages", fixed)
 			}
 			wantStages := []topology.StageRef{{Hostname: "webstage", SetupName: "web"}, {Hostname: "apistage", SetupName: "api"}}
-			if got := fixed[0].Runtime.Stages; len(got) != 2 || got[0] != wantStages[0] || got[1] != wantStages[1] {
+			if got := fixed[0].Runtime.Stages; !slices.Equal(got, wantStages) {
 				t.Errorf("stages = %+v, want %+v", got, wantStages)
 			}
 			deps := map[string]string{}

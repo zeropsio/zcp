@@ -15,7 +15,7 @@ import (
 // DP-23) says so in prose for the agent. A caller that is no agent — the
 // Mate's server through `zcp lease release`, the HQ pass releasing a merged or
 // closed change's leases (DP-34, DP-35) — names each lease's work from the
-// same reads instead, through LeaseUnsavedRefusal: the refusal is still the
+// same reads instead, through LeaseUnsavedError: the refusal is still the
 // PREREQUISITE_MISSING one, unchanged, and carries the work beside it.
 
 // LeaseUnsavedWork is one lease's unsaved work as the refused release read
@@ -32,24 +32,24 @@ type LeaseUnsavedWork struct {
 	CommitCount int
 }
 
-// LeaseUnsavedRefusal is a branch release refused because a lease holds work
+// LeaseUnsavedError is a branch release refused because a lease holds work
 // a release would lose. Cause is the refusal itself — the
 // PREREQUISITE_MISSING one — and Error and Unwrap are its own, so every
 // reader of that refusal reads it as before. Leases are the leases holding
 // work, by alias; Unread are the leases of the branch the release could not
 // check (the refusal's message says why).
-type LeaseUnsavedRefusal struct {
+type LeaseUnsavedError struct {
 	Cause  error
 	Leases []LeaseUnsavedWork
 	Unread []string
 }
 
-func (e *LeaseUnsavedRefusal) Error() string { return e.Cause.Error() }
+func (e *LeaseUnsavedError) Error() string { return e.Cause.Error() }
 
-func (e *LeaseUnsavedRefusal) Unwrap() error { return e.Cause }
+func (e *LeaseUnsavedError) Unwrap() error { return e.Cause }
 
 // unsavedRefusal is cause — a branch release's refusal — as a
-// LeaseUnsavedRefusal when a lease of the branch holds unsaved work, each
+// LeaseUnsavedError when a lease of the branch holds unsaved work, each
 // such lease's commits listed for it (one read-only ssh call per lease that
 // holds any); cause itself when none does, or when cause is no refusal.
 func unsavedRefusal(ctx context.Context, d LeaseDeps, members []*releaseMember, cause error) error {
@@ -73,7 +73,7 @@ func unsavedRefusal(ctx context.Context, d LeaseDeps, members []*releaseMember, 
 	}
 	slices.SortFunc(leases, func(a, b LeaseUnsavedWork) int { return cmp.Compare(a.Alias, b.Alias) })
 	slices.Sort(unread)
-	return &LeaseUnsavedRefusal{Cause: cause, Leases: leases, Unread: unread}
+	return &LeaseUnsavedError{Cause: cause, Leases: leases, Unread: unread}
 }
 
 // unsavedWorkOf is w, the guard's read of alias's checkout, as a

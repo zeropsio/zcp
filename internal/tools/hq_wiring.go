@@ -152,21 +152,25 @@ func hqRepositoryActionRefusal(action string) *mcp.CallToolResult {
 // that works: a pair gets its repository in HQ, and only then can the group
 // recipe name what builds it. Every bootstrap and adopt pass calls this; both
 // halves are silent when there is nothing to do. Pairs an older zcp left
-// without stages get them back first, so the recipe names every stage.
+// without stages get them back first, so the recipe names every stage. Inside
+// a Mate the pass releases a finished change's leases (DP-34) over the
+// lease operations of projectID, a lease's mount through mounter.
 func reconcileMateRepositories(
 	ctx context.Context,
 	client platform.Client,
 	httpClient ops.HTTPDoer,
 	sshDeployer ops.SSHDeployer,
+	mounter ops.Mounter,
 	rt runtime.Info,
+	projectID string,
 	stateDir string,
-	opts ...hqPassOption,
 ) []string {
 	if !rt.MateEnabled {
-		return reconcileHQRepositories(ctx, client, httpClient, sshDeployer, rt, stateDir, hqPassBackedOff, opts...)
+		return reconcileHQRepositories(ctx, client, httpClient, sshDeployer, rt, stateDir, hqPassBackedOff)
 	}
 	rebuildMateStages(ctx, httpClient, rt, stateDir, recipePairMountRoot)
-	lines := reconcileHQRepositories(ctx, client, httpClient, sshDeployer, rt, stateDir, hqPassBackedOff, append(opts, withRecipeFollowing())...)
+	lines := reconcileHQRepositories(ctx, client, httpClient, sshDeployer, rt, stateDir, hqPassBackedOff,
+		withLeaseCompletion(leaseBranchReleaseFor(client, projectID, stateDir, mounter, sshDeployer, rt)), withRecipeFollowing())
 	if line := reconcileGroupRecipe(ctx, client, httpClient, rt, stateDir); line != "" {
 		lines = append(lines, "the group's recipe: "+line)
 	}

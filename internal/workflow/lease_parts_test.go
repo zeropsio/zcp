@@ -103,10 +103,13 @@ func TestComputeEnvelope_LeaseCarriesLastKnownDevServers(t *testing.T) {
 		`"devServers":[{"name":"web","port":3000,"url":"https://devpool-abc1-9003.prg1.zerops.app","status":"running","readAt":"2026-10-27T11:00:00Z"}],`+
 		`"devServersReadAt":"2026-10-27T11:00:00Z"}`)
 	held := LeaseSnapshot{Alias: "devpool-3", Pool: "devpool", Branch: "feat-x", ContainerHostname: "node-id-3.runtime.devpool.zerops", State: "held"}
-	for name, reader := range map[string]func(context.Context) ([]LeaseSnapshot, error){
-		"the reader answered":         func(context.Context) ([]LeaseSnapshot, error) { return []LeaseSnapshot{held}, nil },
-		"the records stood in for it": func(context.Context) ([]LeaseSnapshot, error) { return nil, context.DeadlineExceeded },
-	} {
+	for name, answers := range map[string]bool{"the reader answered": true, "the records stood in for it": false} {
+		reader := func(context.Context) ([]LeaseSnapshot, error) {
+			if !answers {
+				return nil, context.DeadlineExceeded
+			}
+			return []LeaseSnapshot{held}, nil
+		}
 		env, err := ComputeEnvelope(context.Background(), nil, dir, "", runtime.Info{InContainer: true, ServiceName: "zcp"}, fixedTime, WithLeaseReader(reader))
 		if err != nil {
 			t.Fatalf("%s: ComputeEnvelope: %v", name, err)

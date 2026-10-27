@@ -80,6 +80,7 @@ func TestLeaseReleaseAnswer_Contract(t *testing.T) {
 		{
 			name: "another live session reused one", branch: "feat-x",
 			sessions: func(t *testing.T, stateDir string) {
+				t.Helper()
 				writeLeaseSession(t, stateDir, "hqpool-3", acquiredAtOf(t, stateDir, "hqpool-3"), 4242, true)
 			},
 			wantCode: LeaseReleaseExitRefused,
@@ -89,7 +90,8 @@ func TestLeaseReleaseAnswer_Contract(t *testing.T) {
 		{
 			name: "the session that reused it has ended", branch: "feat-x",
 			sessions: func(t *testing.T, stateDir string) {
-				writeLeaseSession(t, stateDir, "hqpool-3", acquiredAtOf(t, stateDir, "hqpool-3"), 4343, true)
+				t.Helper()
+				writeLeaseSession(t, stateDir, "webpool-7", acquiredAtOf(t, stateDir, "webpool-7"), 4343, true)
 			},
 			wantCode: LeaseReleaseExitReleased,
 			wantJSON: `{"released":[{"lease":"hqpool-3","outcome":"kept-warm"},{"lease":"webpool-7","outcome":"kept-warm"}]}`,
@@ -97,6 +99,7 @@ func TestLeaseReleaseAnswer_Contract(t *testing.T) {
 		{
 			name: "a session of an earlier lease under the alias", branch: "feat-x",
 			sessions: func(t *testing.T, stateDir string) {
+				t.Helper()
 				writeLeaseSession(t, stateDir, "hqpool-3", "2026-01-01T00:00:00Z", 4242, true)
 			},
 			wantCode: LeaseReleaseExitReleased,
@@ -105,6 +108,7 @@ func TestLeaseReleaseAnswer_Contract(t *testing.T) {
 		{
 			name: "the acquirer's own session", branch: "feat-x",
 			sessions: func(t *testing.T, stateDir string) {
+				t.Helper()
 				writeLeaseSession(t, stateDir, "hqpool-3", acquiredAtOf(t, stateDir, "hqpool-3"), 4242, false)
 			},
 			wantCode: LeaseReleaseExitReleased,
@@ -166,7 +170,10 @@ func TestLeaseReleaseAnswer_SecondCallReleasesNothing(t *testing.T) {
 		t.Fatalf("first release exit %d", code)
 	}
 	answer, code := releaseLeaseBranchAnswer(t.Context(), deps, leaseTestRepo, "feat-x", never)
-	raw, _ := json.Marshal(answer)
+	raw, err := json.Marshal(answer)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if code != LeaseReleaseExitReleased || string(raw) != `{"released":[]}` {
 		t.Errorf("second release: exit %d, %s; want 0 and nothing listed", code, raw)
 	}

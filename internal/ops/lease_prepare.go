@@ -140,8 +140,8 @@ func acquiredDevServers(ctx context.Context, d LeaseDeps, rec leaseRecord) []top
 }
 
 // NoteLeaseDevServers records, in the record of the lease at alias, its dev
-// servers as a call that read its supervisor at at found them (states, none
-// when it runs none): every later envelope carries them as the lease's
+// servers as a call that read its supervisor found them (states, none when it
+// runs none) and when it read them (at): every later envelope carries them as the lease's
 // last-known ones, with when (docs/spec-mate.md §2.8a.3). Best-effort: a
 // lease zcp holds no record of, or a record that cannot be read or written,
 // keeps what it had.

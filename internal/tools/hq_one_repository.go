@@ -24,6 +24,10 @@ import (
 // remove one. The pass therefore compares a pair's checkout with the
 // checkouts of the pairs already wired before it asks HQ for a new one.
 
+// planStagesFallback is what a plan refusal names in place of the plan made
+// from it when that plan cannot be marshalled.
+const planStagesFallback = "runtime.stages listing {hostname, setupName} for every part"
+
 // hqRootsReadTimeout bounds each root-commit read the one-repository check
 // makes over SSH: a dev service that does not answer costs a pass no more
 // than this, and is no evidence.
@@ -171,7 +175,7 @@ func oneRepositoryPlanError(ctx context.Context, plan []workflow.BootstrapTarget
 	if len(reasons) == 0 {
 		return nil
 	}
-	planText := "runtime.stages listing {hostname, setupName} for every part"
+	planText := planStagesFallback
 	if planJSON, err := json.Marshal(fixed); err == nil {
 		planText = "plan=" + string(planJSON)
 	}
@@ -248,7 +252,7 @@ func monorepoPlanError(plan []workflow.BootstrapTarget, mate, separate bool) *pl
 			fixed = append(fixed, target)
 		}
 	}
-	planText := "runtime.stages listing {hostname, setupName} for every part"
+	planText := planStagesFallback
 	if planJSON, err := json.Marshal(fixed); err == nil {
 		planText = "plan=" + string(planJSON)
 	}

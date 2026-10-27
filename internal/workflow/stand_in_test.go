@@ -51,10 +51,8 @@ func TestComputeEnvelope_PoolMigrateStandIn(t *testing.T) {
 			if err := WriteServiceMeta(dir, tt.meta); err != nil {
 				t.Fatal(err)
 			}
-			services := []platform.ServiceStack{
-				runtimeService(tt.meta.Hostname),
-				runtimeService("apidev"),
-			}
+			services := make([]platform.ServiceStack, 0, 2+len(tt.meta.Stages))
+			services = append(services, runtimeService(tt.meta.Hostname), runtimeService("apidev"))
 			for _, s := range tt.meta.Stages {
 				services = append(services, runtimeService(s.Hostname))
 			}
@@ -106,7 +104,11 @@ func TestServiceSnapshot_StandInRidesBesideTheParts(t *testing.T) {
 		t.Errorf("standIn does not ride after stages and devServers: %s", text)
 	}
 	snap.StandIn = nil
-	if raw, _ := json.Marshal(snap); strings.Contains(string(raw), "standIn") {
+	raw, err = json.Marshal(snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "standIn") {
 		t.Errorf("a snapshot that is no stand-in carries the key: %s", raw)
 	}
 }
