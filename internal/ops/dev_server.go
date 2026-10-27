@@ -210,10 +210,12 @@ const (
 	// maxDevServerWait is an upper bound that keeps pathological boot
 	// loops from eating the whole bash-timeout window.
 	maxDevServerWait = 45
-	// defaultLogTailLines is how many trailing log lines to include in
-	// every result. Small enough to fit in an MCP response, large
-	// enough to diagnose a failed startup.
+	// defaultLogTailLines is how many trailing log lines a result of a
+	// failed start or status carries: enough to diagnose a failed startup.
 	defaultLogTailLines = 40
+	// logsActionTailLines is how many the logs action reads when it is not
+	// asked for a number: a dev server's recent output, not its history.
+	logsActionTailLines = 20
 	// startedLogTailLines is the tail of a server that started: enough to
 	// show it came up, nothing to diagnose.
 	startedLogTailLines = 8
@@ -1176,7 +1178,7 @@ func logsDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds *
 	}
 	lines := p.LogLines
 	if lines <= 0 {
-		lines = defaultLogTailLines
+		lines = logsActionTailLines
 	}
 	lines = min(lines, 500)
 	result := newResult(devServerActionLogs, p.Hostname, name)

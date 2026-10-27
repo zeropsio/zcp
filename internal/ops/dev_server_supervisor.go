@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -489,8 +490,9 @@ func supervisorCtl(ctx context.Context, ssh SSHDeployer, hostname string, args .
 	return st, nil
 }
 
-// supervisorLogTail is `ctl logs <name> --lines N`; "" when the server has no log yet.
-// A start reads it through currentRun.
+// supervisorLogTail is `ctl logs <name> --lines N` as plain text — terminal
+// escape sequences (colours, links) taken out (withoutTerminalEscapes); ""
+// when the server has no log yet. A start reads it through currentRun.
 func supervisorLogTail(ctx context.Context, ssh SSHDeployer, hostname, name string, lines int) string {
 	cmd := fmt.Sprintf(`zcp-devsup ctl logs %s --lines %d --json 2>/dev/null`, shellQuote(name), lines)
 	tailCtx, cancel := context.WithTimeout(ctx, logTailTimeout)
@@ -505,7 +507,19 @@ func supervisorLogTail(ctx context.Context, ssh SSHDeployer, hostname, name stri
 	if json.Unmarshal(out, &tail) != nil || len(tail.Lines) == 0 {
 		return ""
 	}
-	return strings.Join(tail.Lines, "\n") + "\n"
+	return withoutTerminalEscapes(strings.Join(tail.Lines, "\n")) + "\n"
+}
+
+// terminalEscape matches the escape sequences a dev server writes for a
+// terminal: CSI sequences (colours, cursor moves), OSC sequences (hyperlinks,
+// titles) ended by BEL or ST, and lone two-byte escapes.
+var terminalEscape = regexp.MustCompile(`\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])`)
+
+// withoutTerminalEscapes is s with its terminal escape sequences taken out: a
+// log tail is read as text, and a Vite dev server's colours made 80 lines
+// 20 KB (2026-10-27).
+func withoutTerminalEscapes(s string) string {
+	return terminalEscape.ReplaceAllString(s, "")
 }
 
 // startMarker opens each run of a server in its log ("--- zcp-devsup: start
