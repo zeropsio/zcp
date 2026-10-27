@@ -103,6 +103,15 @@ type hqPassConfig struct {
 	// release releases a finished change's leases (DP-34); nil releases
 	// none.
 	release leaseBranchRelease
+	// recipeFollows: the recipe reconcile runs right after the pass
+	// (reconcileMateRepositories), so the pass leaves a conflicting
+	// import-files change to it (recipeChangeTurn).
+	recipeFollows bool
+}
+
+// withRecipeFollowing says the recipe reconcile runs right after the pass.
+func withRecipeFollowing() hqPassOption {
+	return func(c *hqPassConfig) { c.recipeFollows = true }
 }
 
 // withLeaseCompletion lets a Mate's pass release the leases of every branch
