@@ -13,11 +13,35 @@ import (
 // (docs/spec-mate.md §10.10): the hosted client, and the container's own
 // `/mate/` on its zerops.app subdomain. A Mate lets the pane frame its dev and
 // stage by widening the app's `frame-ancestors` with them — an app's own
-// sources plus Mate's — and production keeps the app's own sources.
+// sources plus Mate's, the container named by its exact origin — and
+// production keeps the app's own sources. Setups written before the exact
+// origin name the container by the zerops.app wildcard; both read as Mate's.
 const (
-	mateHostedOrigin     = "https://mate.zerops.io"
-	mateContainerOrigins = "https://*.zerops.app"
+	mateHostedOrigin         = "https://mate.zerops.io"
+	mateContainerWildcard    = "https://*.zerops.app"
+	zeropsSubdomainSuffix    = ".zerops.app"
+	zeropsDevSubdomainSuffix = ".zerops.dev"
 )
+
+// isMateContainerSource reports whether a lowercased frame source names a
+// Mate container: the zerops.app wildcard, or an https origin on a Zerops
+// subdomain (zerops.app, zerops.dev on devel). It is read only beside Mate's
+// hosted origin, where a Zerops subdomain is a Mate's: a Mate's project is
+// never the production its setups are carried into.
+func isMateContainerSource(source string) bool {
+	source = strings.TrimSuffix(source, "/")
+	if source == mateContainerWildcard {
+		return true
+	}
+	host, ok := strings.CutPrefix(source, "https://")
+	if !ok || host == "" || strings.ContainsAny(host, "/*") {
+		return false
+	}
+	if i := strings.LastIndexByte(host, ':'); i >= 0 {
+		host = host[:i]
+	}
+	return strings.HasSuffix(host, zeropsSubdomainSuffix) || strings.HasSuffix(host, zeropsDevSubdomainSuffix)
+}
 
 // frameAncestorsDirective is a CSP `frame-ancestors` directive and its sources,
 // which end at the next directive or at the quote a static header's value is
@@ -34,10 +58,10 @@ var cspSourceToken = regexp.MustCompile(`^('[a-z-]+'|[a-z][a-z0-9+.-]*:|([a-z][a
 // preview pane frame the app, and whether any did. A value lets it when a
 // `frame-ancestors` directive in it names Mate's hosted origin, or when the
 // whole value is a bare source list naming Mate's origin set — the hosted
-// origin beside the zerops.app wildcard, since a setting that only names
-// Mate's address (an app that talks to Mate) frames nothing. Its own sources
-// stay and Mate's go — `'none'` when nothing stays. v is never changed in
-// place.
+// origin beside a Mate container's origin (isMateContainerSource), since a
+// setting that only names Mate's address (an app that talks to Mate) frames
+// nothing. Its own sources stay and Mate's go — `'none'` when nothing stays.
+// v is never changed in place.
 func WithoutMateFraming(v any) (any, bool) {
 	switch v := v.(type) {
 	case string:
@@ -100,7 +124,7 @@ func withoutMateFrameSources(value string) (string, bool) {
 		if !cspSourceToken.MatchString(source) {
 			return value, false
 		}
-		containerOrigins = containerOrigins || strings.TrimSuffix(source, "/") == mateContainerOrigins
+		containerOrigins = containerOrigins || isMateContainerSource(source)
 	}
 	if !containerOrigins {
 		return value, false
@@ -113,17 +137,19 @@ func withoutMateFrameSources(value string) (string, bool) {
 }
 
 // withoutMateSources takes Mate's origins out of a source list that names its
-// hosted origin; a list that does not is the app's own and stays whole, even
-// with a zerops.app wildcard in it.
+// hosted origin — that origin and every Mate container's beside it; a list
+// that does not is the app's own and stays whole, even with a zerops.app
+// source in it.
 func withoutMateSources(sources []string) ([]string, bool) {
 	named := false
 	kept := make([]string, 0, len(sources))
 	for _, source := range sources {
-		switch strings.ToLower(strings.TrimSuffix(source, "/")) {
-		case mateHostedOrigin:
+		lower := strings.ToLower(source)
+		switch {
+		case strings.TrimSuffix(lower, "/") == mateHostedOrigin:
 			named = true
 			continue
-		case mateContainerOrigins:
+		case isMateContainerSource(lower):
 			continue
 		}
 		kept = append(kept, source)

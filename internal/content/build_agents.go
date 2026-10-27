@@ -98,6 +98,9 @@ func BuildAgentsMD(rt runtime.Info, guided bool) (string, error) {
 			if err != nil {
 				return "", fmt.Errorf("read %s: %w", block.name, err)
 			}
+			if block.name == "agents_preview.md" {
+				tmpl = renderPreviewFrameOrigins(tmpl, rt)
+			}
 			preamble += "\n\n" + strings.TrimSpace(tmpl)
 		}
 	} else {
@@ -143,6 +146,28 @@ func BuildAgentsMD(rt runtime.Info, guided bool) (string, error) {
 	}
 
 	return body, nil
+}
+
+// mateHostedOrigin is the origin of Mate's hosted client, which the desktop
+// shell loads too.
+const mateHostedOrigin = "https://mate.zerops.io"
+
+// renderPreviewFrameOrigins fills agents_preview.md with the exact origins
+// Mate's preview pane frames a page from: the hosted client, and this
+// container's own subdomain where its /mate/ is served (rt.SubdomainOrigin).
+// Never a zerops.app wildcard — every app on the shared domain matches one
+// and could frame the page (docs/spec-mate.md §10.10).
+func renderPreviewFrameOrigins(tmpl string, rt runtime.Info) string {
+	origins := mateHostedOrigin
+	prose := "`" + mateHostedOrigin + "`, the hosted client the desktop shell loads too; this container has no subdomain of its own to serve `/mate/` from"
+	if rt.SubdomainOrigin != "" {
+		origins += " " + rt.SubdomainOrigin
+		prose = "`" + mateHostedOrigin + "`, the hosted client the desktop shell loads too, and `" + rt.SubdomainOrigin + "`, this container's own address, where its `/mate/` is served"
+	}
+	return strings.NewReplacer(
+		"{{.MateFrameOriginsProse}}", prose,
+		"{{.MateFrameOrigins}}", origins,
+	).Replace(tmpl)
 }
 
 // buildChiefMD is org mode's managed section (docs/spec-mate.md §2.11):
