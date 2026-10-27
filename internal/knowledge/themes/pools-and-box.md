@@ -64,7 +64,7 @@ zerops:
           httpSupport: true
         # ... one entry per preview port, up to previewPortBase + maxContainers
       prepareCommands:
-        - <install zcp-devsup>
+        - sudo sh -c 'u=https://github.com/zeropsio/zcp/releases/latest/download/zcp-devsup-linux-amd64; f=/usr/local/bin/zcp-devsup; if command -v curl >/dev/null; then curl -fsSL "$u" -o "$f"; else wget -qO "$f" "$u"; fi && chmod 0755 "$f"'
         - <copy them into /var/www, keeping their paths, and install the dependencies there>
       start: zcp-devsup run
 ```

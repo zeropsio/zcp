@@ -128,6 +128,10 @@ type PoolMigrateImageInput struct {
 	// and nil for a single part. With them the declaration is checked to name
 	// each part's pool as its servers' service.
 	PartPools []string
+	// InstallURL is the zcp-devsup download this zcp installs (DevsupURL),
+	// asked only when neither the pool setup nor the dev setup carries the
+	// install line; nil or "" names DevsupLatestURL.
+	InstallURL func() string
 }
 
 // poolMigrateCommitRead is what the read found at the commit.
@@ -470,8 +474,9 @@ func poolMigrateDevsupLine(prepareCommands []string) string {
 	return ""
 }
 
-// poolMigrateInstallMessage says how the pool setup installs zcp-devsup: with
-// the line the dev setup installs it with, when it carries one.
+// poolMigrateInstallMessage says how the pool setup installs zcp-devsup, the
+// whole line to add: the one the dev setup installs it with, when it carries
+// one, else the line with the zcp-devsup this zcp installs.
 func poolMigrateInstallMessage(setup string, doc *ZeropsYmlDoc, in PoolMigrateImageInput) string {
 	msg := fmt.Sprintf("Setup %q's run.prepareCommands install no zcp-devsup, and a pool's image carries the supervisor: ", setup)
 	for _, name := range []string{in.DevSetup, in.Dev, devSetupName} {
@@ -480,10 +485,17 @@ func poolMigrateInstallMessage(setup string, doc *ZeropsYmlDoc, in PoolMigrateIm
 			continue
 		}
 		if line := poolMigrateDevsupLine(yamlStrings(e.Run.PrepareCommands)); line != "" {
-			return msg + fmt.Sprintf("add the line the dev setup %q installs it with — %s", name, line)
+			return msg + fmt.Sprintf("add the line the dev setup %q installs it with as the first item of run.prepareCommands — %s", name, line)
 		}
 	}
-	return msg + fmt.Sprintf("add the zcp-devsup install line a dev setup gets when its first dev server starts under the supervisor (zerops_dev_server action=start hostname=%q puts it in the dev setup).", in.Dev)
+	url := ""
+	if in.InstallURL != nil {
+		url = in.InstallURL()
+	}
+	if url == "" {
+		url = DevsupLatestURL
+	}
+	return msg + "add this line as the first item of run.prepareCommands — " + DevsupPrepareCommand(url)
 }
 
 // poolMigratePreviewBase reads previewPortBase from the commit's declaration,

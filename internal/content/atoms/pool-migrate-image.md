@@ -25,10 +25,36 @@ carries `image`: the checks of the setup in the checkout's latest commit
 | `config-file` | a `zerops.yaml` (or `zerops.yml`) that parses |
 | `pool-setup` | a setup named after the pool |
 | `start` | `run.start: zcp-devsup run`: a pool container runs its dev servers under the supervisor |
-| `install` | a `run.prepareCommands` line installing `zcp-devsup` — take the one the dev setup carries |
+| `install` | a `run.prepareCommands` line installing `zcp-devsup` — its message names the whole line to add |
 | `preview-port-base` | `previewPortBase` in `.zcp/dev-servers.json`: a lease answers its preview on `previewPortBase` + its container's number |
 | `preview-ports` | every port from `previewPortBase + 1` to `previewPortBase + maxContainers` in `run.ports`, each with `httpSupport: true` |
 | `service` | with several parts, each dev server in `.zcp/dev-servers.json` names its part's pool as `"service"`: a pool's container runs the servers naming its pool and those naming none |
+
+A complete pool setup for a Node part whose pool holds three containers, with
+`"previewPortBase": 4000` in `.zcp/dev-servers.json`:
+
+```yaml
+zerops:
+  - setup: apppool
+    build:
+      base: ubuntu/nodejs@22
+      addToRunPrepare:
+        - package.json
+        - package-lock.json
+    run:
+      base: ubuntu/nodejs@22
+      ports:
+        - port: 4001
+          httpSupport: true
+        - port: 4002
+          httpSupport: true
+        - port: 4003
+          httpSupport: true
+      prepareCommands:
+        - sudo sh -c 'u=https://github.com/zeropsio/zcp/releases/latest/download/zcp-devsup-linux-amd64; f=/usr/local/bin/zcp-devsup; if command -v curl >/dev/null; then curl -fsSL "$u" -o "$f"; else wget -qO "$f" "$u"; fi && chmod 0755 "$f"'
+        - cp package.json package-lock.json /var/www/ && cd /var/www && npm ci
+      start: zcp-devsup run
+```
 
 Once the declaration names the pools, the dev service's own supervisor runs
 none of those servers after its next reload or restart: run them on the

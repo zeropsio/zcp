@@ -449,6 +449,14 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, httpClient ops.HT
 		if input.Action == "retire" {
 			return handlePoolMigrateRetire(ctx, projectID, client, sshDeployer, mounter, cfg.swarm, input, stateDir, rt)
 		}
+		// pool-migrate's other calls — the read side and the env step — run
+		// with what the tool was configured with (poolMigrateHandler).
+		if handler := poolMigrateHandler(input); handler != nil {
+			return handler(ctx, poolMigrateDeps{
+				projectID: projectID, client: client, ssh: sshDeployer, stateDir: stateDir, rt: rt,
+				hqAddress: func() string { return hqAddress(rt) }, devsup: cfg.devsup,
+			}, input)
+		}
 		// New multi-action handler.
 		if input.Action != "" {
 			return handleWorkflowAction(ctx, projectID, engine, client, httpClient, schemaCache, logFetcher, input, stateDir, selfHostname, mounter, sshDeployer, rt, apiHost)
@@ -494,7 +502,14 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, httpClient ops.HT
 type WorkflowOption func(*workflowToolConfig)
 
 type workflowToolConfig struct {
-	swarm ops.SwarmFactory
+	swarm  ops.SwarmFactory
+	devsup DevsupSource
+}
+
+// WithDevsupForWorkflow names the zcp-devsup this zcp installs, for the line
+// pool-migrate's image step names when a pool setup installs none.
+func WithDevsupForWorkflow(devsup DevsupSource) WorkflowOption {
+	return func(c *workflowToolConfig) { c.devsup = devsup }
 }
 
 // WithPoolOrchestratorsForWorkflow lets pool-migrate's retire ask a pool's

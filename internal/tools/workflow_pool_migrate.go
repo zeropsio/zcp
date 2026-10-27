@@ -215,6 +215,9 @@ type poolMigrateDeps struct {
 	// hqAddress is the address of this Mate's HQ, "" without one: where the
 	// dev service's origin is in a Mate.
 	hqAddress func() string
+	// devsup finds the zcp-devsup this zcp installs: the line the image step
+	// names for a pool setup that installs none.
+	devsup DevsupSource
 }
 
 // poolMigrateCall is what a call read before it acts on a settled pool.
@@ -287,6 +290,19 @@ func handlePoolMigrateEnv(
 	rt runtime.Info,
 ) (*mcp.CallToolResult, any, error) {
 	return poolMigrateEnvRun(ctx, poolMigrateDeps{projectID: projectID, client: client, ssh: sshDeployer, stateDir: stateDir, rt: rt, hqAddress: func() string { return hqAddress(rt) }}, input)
+}
+
+// poolMigrateHandler is the handler of a pool-migrate call the tool answers
+// with its configured deps — the env step, and the read side with or without
+// action="start" — nil for any other call.
+func poolMigrateHandler(input WorkflowInput) func(context.Context, poolMigrateDeps, WorkflowInput) (*mcp.CallToolResult, any, error) {
+	switch {
+	case input.Action == actionPoolEnv:
+		return poolMigrateEnvRun
+	case input.Workflow == workflowPoolMigrate && (input.Action == "" || input.Action == actionStart):
+		return poolMigrateRun
+	}
+	return nil
 }
 
 func poolMigrateEnvRun(ctx context.Context, d poolMigrateDeps, input WorkflowInput) (*mcp.CallToolResult, any, error) {
@@ -699,6 +715,13 @@ func poolMigrateImageAnswer(ctx context.Context, d poolMigrateDeps, call *poolMi
 		DevSetup:              call.meta.PrimarySetupName,
 		FallbackMaxContainers: poolMigrateMaxContainers,
 		PartPools:             call.partPools,
+		InstallURL: func() string {
+			url, err := d.devsup.URL(ctx)
+			if err != nil {
+				return ""
+			}
+			return url
+		},
 	})
 	if err != nil {
 		// The census just read the dev, so this is no refusal: the step

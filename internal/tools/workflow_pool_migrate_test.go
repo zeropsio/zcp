@@ -205,6 +205,8 @@ type poolMigrateFixture struct {
 	rt        runtime.Info
 	input     WorkflowInput
 	hqAddress func() string
+	// devsup is the zcp-devsup source the image step names a line from.
+	devsup DevsupSource
 	// stateDir and mock persist across the fixture's calls once built.
 	stateDir string
 	mock     *platform.Mock
@@ -266,7 +268,7 @@ func (f *poolMigrateFixture) build(t *testing.T) {
 }
 
 func (f *poolMigrateFixture) deps() poolMigrateDeps {
-	return poolMigrateDeps{projectID: "proj-1", client: f.mock, ssh: f.ssh, stateDir: f.stateDir, rt: f.rt, hqAddress: f.hqAddress}
+	return poolMigrateDeps{projectID: "proj-1", client: f.mock, ssh: f.ssh, stateDir: f.stateDir, rt: f.rt, hqAddress: f.hqAddress, devsup: f.devsup}
 }
 
 // run is the read side's call; runEnv is action="pool-env".
