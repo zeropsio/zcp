@@ -5,6 +5,8 @@ package tools
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -15,6 +17,10 @@ import (
 	"time"
 
 	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // waitAtMost waits for done, or for d to pass.
@@ -133,5 +139,48 @@ func TestGroupRecipePass_AnotherPassRunning_ChangesNothing(t *testing.T) {
 	}
 	if next := groupRecipeOutcome(t.Context(), lab.mock, lab.hq.srv.Client(), lab.rt, lab.stateDir); !next.Created || next.Change != 1 {
 		t.Errorf("the pass after the other is done = %+v, want it to propose change #1", next)
+	}
+}
+
+// TestGroupRecipePass_NothingToDo_WritesNothing: a pass that stops before it
+// would ask HQ anything — the Mate not linked yet, nothing bootstrapped, no
+// pair with its repository in HQ — takes no turn and writes nothing to the
+// state directory: every zcp start in a Mate runs one.
+func TestGroupRecipePass_NothingToDo_WritesNothing(t *testing.T) {
+	t.Parallel()
+	linked := &runtime.HQLink{Origin: "https://hq.invalid", ProjectID: labMate, Key: labKey}
+	tests := []struct {
+		name  string
+		link  *runtime.HQLink
+		metas []*workflow.ServiceMeta
+	}{
+		{name: "not linked to its HQ yet", link: &runtime.HQLink{}},
+		{name: "nothing bootstrapped yet", link: linked},
+		{
+			name: "no pair has its repository in HQ", link: linked,
+			metas: []*workflow.ServiceMeta{{Hostname: "appdev", Mode: topology.PlanModeStandard, Stages: []topology.StageRef{{Hostname: "appstage"}},
+				BootstrapSession: "test", BootstrappedAt: "2026-10-02"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			stateDir := t.TempDir()
+			for _, m := range tt.metas {
+				if err := workflow.WriteServiceMeta(stateDir, m); err != nil {
+					t.Fatal(err)
+				}
+			}
+			rt := runtime.Info{InContainer: true, MateEnabled: true, ProjectID: labMate, OrgID: labOrg, HQ: tt.link}
+
+			outcome := groupRecipeOutcome(t.Context(), platform.NewMock(), http.DefaultClient, rt, stateDir)
+
+			if outcome.Blocked == "" {
+				t.Fatalf("outcome = %+v, want the pass blocked", outcome)
+			}
+			if _, err := os.Stat(filepath.Join(stateDir, hqStateDir)); !errors.Is(err, fs.ErrNotExist) {
+				t.Errorf("a pass with nothing to do wrote %s (%v)", filepath.Join(stateDir, hqStateDir), err)
+			}
+		})
 	}
 }
