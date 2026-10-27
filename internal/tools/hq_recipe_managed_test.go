@@ -38,10 +38,11 @@ func tierEntryType(body, host string) string {
 
 // A managed service added to a one-part app's Mate project is proposed into
 // every tier that lacks it, shaped by each tier's policy, as one recipe
-// change of the Mate's: the reconcile names the call and says the environments
-// already made need the service themselves; the proposal adds that service
-// alone, ahead of the runtimes, every other line — a person's edits
-// included — as main has it.
+// change of the Mate's: the reconcile names the call and says merging it
+// imports the service into every stage or production environment made from
+// those tiers, which is why it waits for a person; the proposal adds that
+// service alone, ahead of the runtimes, every other line — a person's edits
+// included — as main has it, and says the same of its merge.
 func TestGroupRecipeService_ManagedAdded_ProposedIntoEveryTierLackingIt(t *testing.T) {
 	t.Parallel()
 	lab, main := newPartsLab(t)
@@ -51,8 +52,9 @@ func TestGroupRecipeService_ManagedAdded_ProposedIntoEveryTierLackingIt(t *testi
 	if outcome.Change != 0 || !strings.Contains(outcome.Line, `action="group-recipe" service="cache"`) {
 		t.Fatalf("reconcile after adding a cache = %+v, want the steer to service=cache", outcome)
 	}
-	if !strings.Contains(outcome.Line, "environments already made need it added themselves") {
-		t.Errorf("the steer does not say the stage and production already made need the cache themselves: %s", outcome.Line)
+	if !strings.Contains(outcome.Line, "Merging the change imports it into every stage or production environment made from those tiers, so it waits for a person to merge it unless none is made from them") ||
+		strings.Contains(outcome.Line, "added themselves") || strings.Contains(outcome.Line, "by a person or the Chief") {
+		t.Errorf("the steer does not say merging the change imports the cache into the stage and production environments made from those tiers: %s", outcome.Line)
 	}
 	if strings.Contains(outcome.Line, `service="db"`) {
 		t.Errorf("the steer names the database every tier already lists: %s", outcome.Line)
@@ -67,6 +69,10 @@ func TestGroupRecipeService_ManagedAdded_ProposedIntoEveryTierLackingIt(t *testi
 	}
 	if change := lab.hq.changeIn(hq.RecipeRepo, 2); change == nil || change.Title != "Mate: cache in the group recipe" {
 		t.Fatalf("change #2 = %+v", change)
+	}
+	if !strings.Contains(answer.Message, "Merging it imports cache into every stage or production environment made from the tiers it changes.") ||
+		strings.Contains(answer.Message, "added themselves") || strings.Contains(answer.Message, "by a person or the Chief") {
+		t.Errorf("the proposal does not say merging it imports the cache into the stage and production environments made from its tiers: %s", answer.Message)
 	}
 	proposed := lab.hq.recipeFiles(recipeBranch(2))
 	wantType := map[string]string{

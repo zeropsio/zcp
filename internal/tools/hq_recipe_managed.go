@@ -24,8 +24,9 @@ import (
 // of every runtime — every other line as main has it, as the Mate's recipe
 // change. It only ever adds: a managed service a tier carries and
 // the Mate's project does not may be one people want there, so nothing
-// removes it. The change shapes environments made from the recipe later; a
-// stage or production already made needs the service added itself.
+// removes it. Merging the change imports the service into every stage or
+// production environment made from a tier it changes, so such a change waits
+// for a person to merge it (recipeLanding).
 
 // recipeManagedService reports whether host is a managed service this
 // Mate's project runs.
@@ -159,8 +160,9 @@ func recipeCarriedByMain(ctx context.Context, scratch *hq.Scratch, main, rev str
 // recipeManagedSteer is what the reconcile says when tiers on main lack a
 // managed service this Mate's project runs: for each, the call that
 // proposes it — or, for the tiers zcp's edit cannot write, that it is added
-// to them by hand — and that the environments already made need it added
-// themselves. A service whose proposal is the Mate's open change already,
+// to them by hand — and that merging the change imports it into every stage
+// or production environment made from those tiers, so it waits for a person
+// unless none is. A service whose proposal is the Mate's open change already,
 // or one a person declined (recipeDeclined), is not said again. "" when
 // every tier on main lists every managed service.
 func recipeManagedSteer(ctx context.Context, comp groupRecipeComposition) (string, error) {
@@ -202,9 +204,9 @@ func recipeManagedSteer(ctx context.Context, comp groupRecipeComposition) (strin
 		}
 		line += "zcp's edit cannot write into some of them as they are written, so add these to those tiers by hand: " + strings.Join(byHand, "; ")
 	}
-	them := "it"
+	merging := "Merging the change imports it"
 	if len(calls)+len(byHand) > 1 {
-		them = "them"
+		merging = "Merging each change imports its service"
 	}
-	return line + fmt.Sprintf(". The recipe only shapes environments made from it later: the stage and production environments already made need %s added themselves, by a person or the Chief", them), nil
+	return line + ". " + merging + " into every stage or production environment made from those tiers, so it waits for a person to merge it unless none is made from them", nil
 }

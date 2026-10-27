@@ -333,7 +333,7 @@ func handleGroupRecipeService(
 	message := fmt.Sprintf("Proposed %s to the recipe repository %q as change #%d (%s): %s — every other line of each tier as main has it. %s.%s",
 		what, hq.RecipeRepo, written.number, result["changeUrl"], strings.Join(edits, "; "), recipeLanding, refusedServiceTiers(tiers))
 	if recipeManagedService(comp, host) {
-		message += fmt.Sprintf(" It shapes only the environments made from the recipe later: the stage and production environments already made need %s added themselves, by a person or the Chief.", host)
+		message += fmt.Sprintf(" Merging it imports %s into every stage or production environment made from the tiers it changes.", host)
 	}
 	result["message"] = message
 	return jsonResult(result), nil, nil
