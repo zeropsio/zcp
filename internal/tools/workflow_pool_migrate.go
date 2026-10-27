@@ -542,7 +542,7 @@ func (dr *poolMigrateDevRead) partRead(ctx context.Context, d poolMigrateDeps, i
 		}
 	}
 	if !poolLive {
-		stanza, warnings, err := renderPoolStanza(ctx, d.client, partDev, pool, d.rt.ServiceName)
+		stanza, warnings, err := renderPoolStanza(ctx, d.client, partDev, pool, d.rt.ServiceName, poolMigratePublicAccess(dr.meta, partDev))
 		if err != nil {
 			return nil, nil, convertError(fmt.Errorf("pool-migrate: render the pool stanza: %w", err), WithRecoveryStatus())
 		}
@@ -986,11 +986,14 @@ type poolStanzaDoc struct {
 }
 
 type poolStanzaService struct {
-	Hostname            string              `yaml:"hostname"`
-	Type                string              `yaml:"type"`
-	MinContainers       int                 `yaml:"minContainers"`
-	MaxContainers       int                 `yaml:"maxContainers"`
-	VerticalAutoscaling *poolStanzaVertical `yaml:"verticalAutoscaling,omitempty"`
+	Hostname      string `yaml:"hostname"`
+	Type          string `yaml:"type"`
+	MinContainers int    `yaml:"minContainers"`
+	MaxContainers int    `yaml:"maxContainers"`
+	// EnableSubdomainAccess switches the pool's subdomain on: each lease's
+	// preview is the pool's subdomain on the lease's preview port.
+	EnableSubdomainAccess bool                `yaml:"enableSubdomainAccess,omitempty"`
+	VerticalAutoscaling   *poolStanzaVertical `yaml:"verticalAutoscaling,omitempty"`
 	// Vault holds the pool's own service env. A service-level envVariables
 	// block is deprecated in the import schema, and sshIsolation reaches the
 	// pool's containers only as a service env variable.
@@ -1009,16 +1012,19 @@ type poolStanzaVertical struct {
 
 // renderPoolStanza renders the import the provision step names: the pool
 // hostname, swarm@1, no containers until a lease asks for one, at most
-// poolMigrateMaxContainers, the dev service's own vertical scale (read by id,
-// a direct read), and the sshIsolation that admits this zcp service. It never
-// carries a credential: GIT_TOKEN reaches the pool in the env step.
-func renderPoolStanza(ctx context.Context, client platform.Client, dev platform.ServiceStack, pool, zcpHostname string) (string, []string, error) {
+// poolMigrateMaxContainers, the subdomain on when publicAccess says the dev's
+// public access carries over (poolMigratePublicAccess), the dev service's own
+// vertical scale (read by id, a direct read), and the sshIsolation that admits
+// this zcp service. It never carries a credential: GIT_TOKEN reaches the pool
+// in the env step.
+func renderPoolStanza(ctx context.Context, client platform.Client, dev platform.ServiceStack, pool, zcpHostname string, publicAccess bool) (string, []string, error) {
 	svc := poolStanzaService{
-		Hostname:      pool,
-		Type:          poolMigratePoolType,
-		MinContainers: poolMigrateMinContainers,
-		MaxContainers: poolMigrateMaxContainers,
-		Vault:         map[string]string{"sshIsolation": "vpn service@" + zcpHostname},
+		Hostname:              pool,
+		Type:                  poolMigratePoolType,
+		MinContainers:         poolMigrateMinContainers,
+		MaxContainers:         poolMigrateMaxContainers,
+		EnableSubdomainAccess: publicAccess,
+		Vault:                 map[string]string{"sshIsolation": "vpn service@" + zcpHostname},
 	}
 	var warnings []string
 	scaling, err := ops.FetchServiceScaling(ctx, client, dev.ID)
@@ -1046,6 +1052,20 @@ func renderPoolStanza(ctx context.Context, client platform.Client, dev platform.
 		return "", nil, fmt.Errorf("encode: %w", err)
 	}
 	return buf.String(), warnings, nil
+}
+
+// poolMigratePublicAccess reports whether the part's pool switches its
+// subdomain on at import: its leases' previews are the part's public
+// addresses from then on, so the pool takes the dev service's public-access
+// intent, reconciled with the dev's observed subdomain (docs/spec-workflows.md
+// §8 O3) — on unless the person switched the dev's public access off.
+func poolMigratePublicAccess(meta *workflow.ServiceMeta, dev platform.ServiceStack) bool {
+	observed := topology.PublicAccessObserved{Subdomain: topology.SubdomainOff}
+	if dev.SubdomainAccess {
+		observed.Subdomain = topology.SubdomainOn
+	}
+	rec, _ := topology.ReconcilePublicAccess(meta.PublicAccessFor(dev.Name), observed)
+	return rec.Intent != topology.PublicAccessNone
 }
 
 // poolMigrateAt answers a candidate's current step.

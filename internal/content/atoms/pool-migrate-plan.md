@@ -34,6 +34,8 @@ included.
 one). The stanza names the pool `<stem>pool` — the dev hostname without its
 `dev` suffix — unless you pass `pool="<hostname>"`; pass the same `pool` on
 every later call. It holds `swarm@1`, `minContainers: 0`, `maxContainers: 3`,
+`enableSubdomainAccess: true` — each lease's preview is the pool's subdomain on
+its preview port — unless the dev service's public access was switched off,
 the dev service's own `verticalAutoscaling`, and `sshIsolation` in the pool's
 `vault` admitting this zcp service: a pool container answers SSH only with it.
 It holds no `GIT_TOKEN` — a credential is never written into an import. While

@@ -33,6 +33,7 @@ services:
     type: swarm@1
     minContainers: 0
     maxContainers: <1-10>
+    enableSubdomainAccess: true
     verticalAutoscaling:
       minRam: <GB>
     envVariables:
@@ -42,6 +43,7 @@ services:
 ```
 
 - `minContainers: 0`: a container the platform creates for the minimum has no primary snapshot and cannot be reset, so releasing its lease deletes it, and it never counts as the pool's warm container. The pool keeps a warm container through the orchestrator instead (**Warm container** below).
+- `enableSubdomainAccess: true`: each lease's preview is the pool's subdomain on the lease's preview port, and it answers 502 until the pool's subdomain access is on.
 - `minRam`: a lease's dev servers and every check you run in it (a typecheck, tests, a build) share the container's RAM, so size `minRam` for the dev server plus the heaviest check run beside it, and run heavy checks one at a time and single-threaded where the tool offers it (TypeScript 7's `tsc --singleThreaded`, a test runner's single-worker mode). A check killed for memory ends its SSH call with exit 255 and no output, while the dev server can run on.
 - `sshIsolation` goes in `envVariables`: a pool container answers SSH only when it is set as a service env variable admitting the zcp service. The top-level import field did not reach pool containers.
 - `GIT_TOKEN` is a secret the user owns: name it in `envSecrets`, never write a value. Acquire clones with the pool's own `GIT_TOKEN`.
