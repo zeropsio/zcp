@@ -36,6 +36,8 @@ type bundleLocalSSH struct {
 	calls   []string
 	streams int
 	stream  func(io.Writer) io.Writer
+	// env is added to every command's environment (a PATH with a shim).
+	env []string
 }
 
 func (s *bundleLocalSSH) record(call string) {
@@ -47,7 +49,7 @@ func (s *bundleLocalSSH) record(call string) {
 func (s *bundleLocalSSH) ExecSSH(ctx context.Context, hostname, command string) ([]byte, error) {
 	s.record("exec " + hostname + ": " + command)
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+	cmd.Env = append(append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null"), s.env...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return out, &platform.SSHExecError{Hostname: hostname, Output: string(out), Err: err}
@@ -75,7 +77,7 @@ func (s *bundleLocalSSH) StreamSSH(ctx context.Context, hostname, command string
 	}
 	var stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+	cmd.Env = append(append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null"), s.env...)
 	cmd.Stdout = stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -631,6 +633,109 @@ func TestPoolMigrateBundle_ConflictedTree_Refused(t *testing.T) {
 	}
 }
 
+// bundleConflictedRepo is a repository stopped in a merge with a conflict:
+// git refuses a WIP commit of its index.
+func bundleConflictedRepo(t *testing.T) string {
+	t.Helper()
+	base := censusBase(t)
+	root := censusCleanRepo(t, base)
+	censusGit(t, root, "switch", "-q", "-c", "other")
+	censusWrite(t, filepath.Join(root, "app.txt"), "other\n")
+	censusGit(t, root, "commit", "-q", "-am", "other")
+	censusGit(t, root, "switch", "-q", "main")
+	censusWrite(t, filepath.Join(root, "app.txt"), "mine\n")
+	censusGit(t, root, "commit", "-q", "-am", "mine")
+	if out, err := censusGitRun(root, "merge", "other"); err == nil {
+		t.Fatalf("the merge was meant to stop on a conflict:\n%s", out)
+	}
+	return root
+}
+
+// TestPoolMigrateBundle_FailingTreeStep_NamesTheStepAndGitsStderr: a tree the
+// bundle or the fingerprint cannot read is reported with the step that failed
+// and what git said on stderr — never a bare "tree /var/www" that sends the
+// agent digging through the zcp binary for the script (Zerops Apps,
+// 2026-10-27).
+func TestPoolMigrateBundle_FailingTreeStep_NamesTheStepAndGitsStderr(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		repo       func(t *testing.T) string
+		step, said string
+	}{
+		{name: "a WIP commit git refuses", repo: bundleConflictedRepo, step: "git stash create", said: "Cannot save the current index state"},
+		{name: "an untracked file git cannot read", repo: func(t *testing.T) string {
+			t.Helper()
+			if os.Geteuid() == 0 {
+				t.Skip("root reads a file of mode 000")
+			}
+			base := censusBase(t)
+			root := censusCleanRepo(t, base)
+			locked := filepath.Join(root, "locked.txt")
+			censusWrite(t, locked, "nobody reads me\n")
+			if err := os.Chmod(locked, 0); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(locked, 0o644) })
+			return root
+		}, step: "git update-index", said: "Permission denied"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			root := tt.repo(t)
+			_, _, err := buildBundle(t, &bundleLocalSSH{}, root)
+			if err == nil {
+				t.Fatal("the bundle took a tree it cannot read")
+			}
+			for _, want := range []string{root, tt.step, tt.said} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("bundle error = %v, want it to name %q", err, want)
+				}
+			}
+			_, err = ReadPoolMigrateFingerprint(context.Background(), &bundleLocalSSH{}, "appdev", root, filepath.Join(t.TempDir(), "zcp-pool-migrate"))
+			if err == nil {
+				t.Fatal("the fingerprint read a tree it cannot read")
+			}
+			for _, want := range []string{tt.step, tt.said} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("fingerprint error = %v, want it to name %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+// TestPoolMigrateBundle_TreeStepFailingOnce_TriedAgain_Bundles: a tree step
+// that fails once — a file a running process removed between git listing it
+// and indexing it — is tried once more inside the same call, so a passing
+// second try bundles; the retire never aborts on it.
+func TestPoolMigrateBundle_TreeStepFailingOnce_TriedAgain_Bundles(t *testing.T) {
+	t.Parallel()
+	_, root, _ := bundleFixture(t)
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git is not installed")
+	}
+	shim := t.TempDir()
+	mark := filepath.Join(t.TempDir(), "failed-once")
+	script := "#!/bin/sh\nfor a in \"$@\"; do\n  if [ \"$a\" = update-index ] && [ ! -e \"$ZCP_TEST_MARK\" ]; then : > \"$ZCP_TEST_MARK\"; echo 'fatal: Unable to process path gone.tmp' >&2; exit 128; fi\ndone\nexec \"$ZCP_TEST_GIT\" \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(shim, "git"), []byte(script), 0o755); err != nil { //nolint:gosec // an executable shim of the test's own
+		t.Fatal(err)
+	}
+	ssh := &bundleLocalSSH{env: []string{"PATH=" + shim + string(os.PathListSeparator) + os.Getenv("PATH"), "ZCP_TEST_MARK=" + mark, "ZCP_TEST_GIT=" + realGit}}
+	b, _, err := buildBundle(t, ssh, root)
+	if err != nil {
+		t.Fatalf("a tree step failing once aborted the bundle: %v", err)
+	}
+	if _, statErr := os.Stat(mark); statErr != nil {
+		t.Fatalf("the shim never failed a step (%v): the test proves nothing", statErr)
+	}
+	if b.Refs == 0 || len(b.Trees) == 0 {
+		t.Fatalf("bundle = %+v, want its refs and trees", b)
+	}
+}
+
 func TestPoolMigrateBundle_StreamCutShort_VerifyFails_NothingKept(t *testing.T) {
 	t.Parallel()
 	_, root, _ := bundleFixture(t)
@@ -677,6 +782,7 @@ func TestParsePoolMigrateBundle_CutShortOrFailed_Error(t *testing.T) {
 		{"no header", "bash: git: command not found\n", "no bundle"},
 		{"no end", "zcp-bundle 1\nW worktree /var/www\n", "incomplete"},
 		{"a step failed", "zcp-bundle 1\nzcp-bundle-error tree /var/www\nfatal: needs merge\n", "tree /var/www"},
+		{"a tree step failed with its cause", "zcp-bundle 1\nzcp-bundle-error tree /var/www\nzcp-bundle-cause git update-index of the untracked files: error: open(\"x\"): Permission denied\n", "git update-index of the untracked files: error: open(\"x\"): Permission denied"},
 		{"moved while bundling", "zcp-bundle 1\nW worktree /var/www\nF R 1111 refs/heads/main\nG R 2222 refs/heads/main\nzcp-bundle-error moved\n", "a ref moved"},
 	}
 	for _, tt := range tests {
