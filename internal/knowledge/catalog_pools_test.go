@@ -352,6 +352,24 @@ func TestThemes_PoolsAndBox_DevPool_Memory_FactsPresent(t *testing.T) {
 	}
 }
 
+// TestThemes_PoolsAndBox_DevPool_ImportEnablesTheSubdomain pins the dev pool's
+// import switching its subdomain on: a lease's preview is the pool's port
+// subdomain, dark (502) until the pool's subdomain access is on.
+func TestThemes_PoolsAndBox_DevPool_ImportEnablesTheSubdomain(t *testing.T) {
+	t.Parallel()
+
+	store, err := GetEmbeddedStore()
+	if err != nil {
+		t.Fatalf("GetEmbeddedStore: %v", err)
+	}
+	const heading = "A part's dev pool"
+	sub := poolsAndBoxSection(t, store, heading)
+	stanza, _, _ := strings.Cut(sub, "**zerops.yml setup**")
+	if !strings.Contains(stanza, "enableSubdomainAccess: true") {
+		t.Errorf("the dev pool's import does not switch the subdomain on:\n%s", stanza)
+	}
+}
+
 // TestThemes_PoolsAndBox_DevPool_ThreadLimit_FactsPresent pins the image
 // build's thread limit: a VM that starts a thread per core it sees — the
 // Erlang VM under Elixir — fails the pool's prepare with "error = 11"

@@ -477,6 +477,53 @@ func TestPoolMigrate_StepFromLiveState_NoPool_Provision(t *testing.T) {
 	}
 }
 
+// TestPoolMigrate_Provision_StanzaCarriesTheDevsPublicAccess: the pool takes
+// the dev service's public-access intent — its leases' previews are the
+// part's public addresses from then on — so the stanza switches the pool's
+// subdomain on unless the person switched the dev's off. All three sessions
+// of 2026-10-27 imported a pool without it and found every preview dark (502)
+// until the agent enabled each pool's subdomain by hand.
+func TestPoolMigrate_Provision_StanzaCarriesTheDevsPublicAccess(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		mutate func(*poolMigrateFixture)
+		want   bool
+	}{
+		{name: "no intent recorded (auto)", want: true},
+		{name: "the dev's subdomain is on", mutate: func(f *poolMigrateFixture) {
+			f.services[0].SubdomainAccess = true
+			f.meta.SetPublicAccess("appdev", topology.PublicAccessRecord{Intent: topology.PublicAccessSubdomain})
+		}, want: true},
+		{name: "the person switched the dev's public access off", mutate: func(f *poolMigrateFixture) {
+			f.meta.SetPublicAccess("appdev", topology.PublicAccessRecord{Intent: topology.PublicAccessNone})
+		}},
+		{name: "zcp enabled the dev's subdomain once and the person switched it off since", mutate: func(f *poolMigrateFixture) {
+			f.meta.SetPublicAccess("appdev", topology.PublicAccessRecord{Intent: topology.PublicAccessAuto, SubdomainEnabledByZcpAt: "2026-10-24T09:00:00Z"})
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f := newPoolMigrateFixture()
+			if tt.mutate != nil {
+				tt.mutate(&f)
+			}
+			out, _ := f.run(t)
+			if out["step"] != "provision" {
+				t.Fatalf("step = %v, want provision", out["step"])
+			}
+			content := poolMigrateNextContent(t, out)
+			if got := strings.Contains(content, "enableSubdomainAccess: true"); got != tt.want {
+				t.Errorf("stanza enables the subdomain = %v, want %v:\n%s", got, tt.want, content)
+			}
+			if errs := schema.ValidateImportYAML(content); len(errs) > 0 {
+				t.Fatalf("stanza fails the import schema: %v\n%s", errs, content)
+			}
+		})
+	}
+}
+
 func TestPoolMigrate_StepFromLiveState_PoolPresent_Env(t *testing.T) {
 	t.Parallel()
 	f := newPoolMigrateFixture()
