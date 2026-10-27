@@ -1353,7 +1353,8 @@ func (r *poolRetireRun) bundle(ctx context.Context) *mcp.CallToolResult {
 		Dev: dev, Root: root, WorkDir: r.workDir(), Path: poolRetireBundlePath(r.d.stateDir, dev),
 	})
 	if err != nil {
-		return r.abort(ctx, poolRetireAbortBundle, withSSHStderr("the bundle of "+dev+"'s repository could not be written and verified", err)+". The retire deletes nothing without one.")
+		return r.abort(ctx, poolRetireAbortBundle, withSSHStderr("the bundle of "+dev+"'s repository could not be written and verified", err)+
+			". The retire deletes nothing without one, so the same call is safe to repeat: send it again once what failed is fixed — a step that failed for a moment (a file a running process removed while git read it) needs nothing fixed.")
 	}
 	if v := r.rec.CodeVolume; v != nil {
 		v.Fingerprint = volumeReading
