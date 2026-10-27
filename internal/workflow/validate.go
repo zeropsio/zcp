@@ -775,14 +775,15 @@ func plannedRuntimeHostnames(rt RuntimeTarget) []string {
 }
 
 // plannedCodeVolumeError refuses an agent's plan whose runtime carries a
-// code volume: zcp sets up no new one (docs/spec-mate.md §2.8a.4a). A part
-// whose runtime cannot share the dev service gets a dev pool of its own; a
+// code volume: zcp sets up no new one (docs/spec-mate.md §2.8a.4a). Every
+// part ends on a dev pool of its own: the pair is planned as one dev service
+// with a stage per part, and pool-migrate moves each part onto its pool; a
 // variant-B pair zcp already records keeps working, and pool-migrate moves
 // it onto one dev pool per part. nil when no target carries one.
 func plannedCodeVolumeError(targets []BootstrapTarget) error {
 	for _, t := range targets {
 		if t.Runtime.CodeVolume != nil {
-			return fmt.Errorf("target %q: codeVolume is not accepted — zcp no longer sets up a shared code volume. Plan the pair without it: one dev service holds the whole repository, and a part whose runtime cannot share it gets a dev pool of its own (zerops_knowledge uri=\"zerops://themes/pools-and-box\", section \"A part's dev pool\"). A pair already keeping its repository on a code volume keeps working, and zerops_workflow workflow=\"pool-migrate\" service=\"<dev>\" moves it onto one dev pool per part", t.Runtime.DevHostname)
+			return fmt.Errorf("target %q: codeVolume is not accepted — zcp no longer sets up a shared code volume. Plan the pair without it: one dev service holding the repository with a stage per part, then zerops_workflow workflow=\"pool-migrate\" service=\"<dev>\" gives each part a dev pool of its own (zerops_knowledge uri=\"zerops://playbooks/monorepo\"). A pair already keeping its repository on a code volume keeps working, and zerops_workflow workflow=\"pool-migrate\" service=\"<dev>\" moves it onto one dev pool per part", t.Runtime.DevHostname)
 		}
 	}
 	return nil
