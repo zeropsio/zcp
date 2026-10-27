@@ -468,3 +468,158 @@ func TestBrowserCleanupSteps_CloseEveryTabButTheBase(t *testing.T) {
 		t.Error("an unreadable tab list must fail the cleanup, so the browser is recycled")
 	}
 }
+
+// noResponse is agent-browser's answer to a step the daemon took and never
+// answered within the client's own wait — on 2026-10-27 the open of a Vite dev
+// server whose first request took 30 s.
+const noResponse = `{"success":false,"data":null,"error":"Failed to read: Resource temporarily unavailable (os error 11) (the command reached the daemon but no response came back; it may or may not have run, so it was not retried)"}`
+
+// pageProbeAnswer scripts the plain request a walk sends the page's server
+// when its open got no answer.
+func pageProbeAnswer(t *testing.T, status int, firstByte time.Duration, err error) *[]string {
+	t.Helper()
+	var asked []string
+	t.Cleanup(OverrideBrowserPageProbeForTest(func(_ context.Context, url string) (int, time.Duration, error) {
+		asked = append(asked, url)
+		return status, firstByte, err
+	}))
+	return &asked
+}
+
+// TestRunBrowserSteps_OpenWithNoAnswer_ServerAnswers_IsASlowPage pins that an
+// open the daemon never answered is no Chrome wedge when a plain request to
+// the page gets an answer: the step says slow-page with the time to first
+// byte, and the walk goes on within the call's own timeout, so the caller's
+// waits give the page its time. On 2026-10-27 two such opens recycled Chrome
+// although the server was only slow.
+func TestRunBrowserSteps_OpenWithNoAnswer_ServerAnswers_IsASlowPage(t *testing.T) {
+	asked := pageProbeAnswer(t, 200, 30200*time.Millisecond, nil)
+	var seen [][]string
+	run := scriptedSteps(map[string]answer{"open": {stdout: noResponse}}, &seen)
+	steps := [][]string{{"open", "https://webdev-1df2-5173.prg1.zerops.app/"}, browserPaintWait, {"wait", "--text", "Sign in"}, {"errors"}}
+	stdout, _, _, err := runBrowserSteps(context.Background(), steps, run)
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	var got []BrowserStepResult
+	if jerr := json.Unmarshal([]byte(stdout), &got); jerr != nil || len(got) != len(steps) {
+		t.Fatalf("every step must answer, the walk going on after the slow open; got %s (%v)", stdout, jerr)
+	}
+	if got[0].ErrorKind != ErrorKindSlowPage || got[0].Error == nil ||
+		!strings.Contains(*got[0].Error, "first byte after 30.2s") || !strings.Contains(*got[0].Error, "HTTP 200") {
+		t.Errorf("open = %+v, want slow-page naming its time to first byte", got[0])
+	}
+	if len(*asked) != 1 || (*asked)[0] != steps[0][1] {
+		t.Errorf("asked %v, want one plain request to the opened page", *asked)
+	}
+	if _, wedged := scanStepsForCDPWedge(got); wedged {
+		t.Error("a slow page reads as a CDP wedge, which recycles the browser")
+	}
+}
+
+// TestRunBrowserSteps_OpenWithNoAnswer_NoServer_StaysAWedge pins the other
+// side: when the page's server does not answer either, the open stays a wedge
+// and the walk ends there, as before.
+func TestRunBrowserSteps_OpenWithNoAnswer_NoServer_StaysAWedge(t *testing.T) {
+	pageProbeAnswer(t, 0, 0, errors.New("dial tcp: connection refused"))
+	var seen [][]string
+	run := scriptedSteps(map[string]answer{"open": {stdout: noResponse}}, &seen)
+	stdout, _, _, err := runBrowserSteps(context.Background(), [][]string{{"open", "https://x.zerops.app/"}, browserPaintWait, {"errors"}}, run)
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	var got []BrowserStepResult
+	if jerr := json.Unmarshal([]byte(stdout), &got); jerr != nil || len(got) != 1 {
+		t.Fatalf("want the walk ended at the open, got %s (%v)", stdout, jerr)
+	}
+	if got[0].ErrorKind == ErrorKindSlowPage {
+		t.Errorf("open = %+v, want no slow-page without a server answer", got[0])
+	}
+}
+
+// TestRunBrowserSteps_ServerErrorPage_SkipsTheCallersCommands pins that a page
+// whose server answered 5xx ends the caller's commands early: each comes back
+// as a server-error step that did not run, while the screenshot and the canned
+// tail still run, so the agent sees the error page and its network line. On
+// 2026-10-27 a wait for text on a 502 page waited out its whole 60 s.
+func TestRunBrowserSteps_ServerErrorPage_SkipsTheCallersCommands(t *testing.T) {
+	tail := [][]string{{"screenshot", "/tmp/shot.png"}, {"errors"}, {"console"}, {"network", "requests", "--status", "400-599"}}
+	tests := []struct {
+		name  string
+		open  answer
+		probe int // the plain request's status, when the open got no answer
+	}{
+		{name: "the document answered 502", open: answer{stdout: `{"success":true,"data":{"url":"u","title":"502"},"error":null}`}},
+		{name: "the open got no answer and the server answers 503", open: answer{stdout: noResponse}, probe: 503},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pageProbeAnswer(t, tt.probe, 2*time.Second, nil)
+			var seen [][]string
+			run := func(_ context.Context, args []string) (string, string, error) {
+				seen = append(seen, args)
+				switch {
+				case args[0] == "open":
+					return tt.open.stdout, "", nil
+				case args[0] == "eval" && slices.Equal(args, browserDocumentStatusProbe):
+					return `{"success":true,"data":{"origin":"u","result":502},"error":null}`, "", nil
+				}
+				return `{"success":true,"data":{"ok":true},"error":null}`, "", nil
+			}
+			steps := append([][]string{{"open", "https://webdev-1df2-2222.prg1.zerops.app/"}, browserPaintWait,
+				{"wait", "--text", "Pricing", "--timeout", "60000"}, {"click", "#buy"}}, tail...)
+			stdout, _, _, err := runBrowserSteps(context.Background(), steps, run)
+			if err != nil {
+				t.Fatalf("walk: %v", err)
+			}
+			var got []BrowserStepResult
+			if jerr := json.Unmarshal([]byte(stdout), &got); jerr != nil || len(got) != len(steps) {
+				t.Fatalf("every step must come back in its place, got %s (%v)", stdout, jerr)
+			}
+			for _, i := range []int{2, 3} {
+				if got[i].Success || got[i].ErrorKind != ErrorKindServerError || got[i].Error == nil || !strings.Contains(*got[i].Error, "HTTP 50") {
+					t.Errorf("step %v = %+v, want a server-error step that did not run", steps[i], got[i])
+				}
+				if slices.ContainsFunc(seen, func(s []string) bool { return slices.Equal(s, steps[i]) }) {
+					t.Errorf("step %v ran on a server-error page", steps[i])
+				}
+			}
+			for _, cmd := range tail {
+				if !slices.ContainsFunc(seen, func(s []string) bool { return slices.Equal(s, cmd) }) {
+					t.Errorf("the tail step %v did not run", cmd)
+				}
+			}
+		})
+	}
+}
+
+// TestRunBrowserSteps_HealthyPage_RunsEveryCommand pins that the document's
+// status read after the first paint is no step of the walk and changes
+// nothing on a page that answered 200.
+func TestRunBrowserSteps_HealthyPage_RunsEveryCommand(t *testing.T) {
+	var seen [][]string
+	run := func(_ context.Context, args []string) (string, string, error) {
+		seen = append(seen, args)
+		if args[0] == "eval" && slices.Equal(args, browserDocumentStatusProbe) {
+			return `{"success":true,"data":{"origin":"u","result":200},"error":null}`, "", nil
+		}
+		return `{"success":true,"data":{"ok":true},"error":null}`, "", nil
+	}
+	steps := [][]string{{"open", "u"}, browserPaintWait, {"wait", "--text", "Pricing"}, {"errors"}}
+	stdout, _, _, err := runBrowserSteps(context.Background(), steps, run)
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	var got []BrowserStepResult
+	if jerr := json.Unmarshal([]byte(stdout), &got); jerr != nil || len(got) != len(steps) {
+		t.Fatalf("want every step, got %s (%v)", stdout, jerr)
+	}
+	for _, s := range got {
+		if !s.Success {
+			t.Errorf("step %v failed on a healthy page: %+v", s.Command, s)
+		}
+	}
+	if len(seen) != len(steps)+1 {
+		t.Errorf("want each step plus one status read, sent %v", seen)
+	}
+}

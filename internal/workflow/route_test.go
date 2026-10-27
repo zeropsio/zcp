@@ -384,6 +384,54 @@ func TestBuildBootstrapRouteOptions_BestFitImportYAMLOnly(t *testing.T) {
 	}
 }
 
+// TestBuildBootstrapRouteOptions_OverProvisioningRecipeCarriesNoImportYAML
+// pins that a recipe option the menu marks as over-provisioning — services
+// beyond what the intent names — never inlines its import YAML, even as the
+// best fit: on 2026-10-27 an existing-repo bootstrap's menu inlined a NestJS +
+// PostgreSQL recipe's 6.9 KB YAML for a Vite client. An exact fit keeps its
+// preview.
+func TestBuildBootstrapRouteOptions_OverProvisioningRecipeCarriesNoImportYAML(t *testing.T) {
+	t.Parallel()
+	withDB := "services:\n  - hostname: api\n    type: nodejs@22\n  - hostname: db\n    type: postgresql@17\n"
+	plain := "services:\n  - hostname: app\n    type: nodejs@22\n"
+	tests := []struct {
+		name     string
+		matches  []RecipeMatch
+		wantYAML string // the slug whose option carries the YAML, "" for none
+	}{
+		{
+			name:    "the best fit over-provisions",
+			matches: []RecipeMatch{{Slug: "nestjs-postgres", Confidence: 0.95, ImportYAML: withDB}},
+		},
+		{
+			name:     "an exact fit keeps its preview",
+			matches:  []RecipeMatch{{Slug: "vite-hello", Confidence: 0.9, ImportYAML: plain}},
+			wantYAML: "vite-hello",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			opts, err := BuildBootstrapRouteOptions(context.Background(), "a vite client app", nil, nil, &fakeRecipeCorpus{matches: tt.matches}, runtime.Info{})
+			if err != nil {
+				t.Fatalf("BuildBootstrapRouteOptions: %v", err)
+			}
+			got := ""
+			for _, o := range opts {
+				if o.Route == BootstrapRouteRecipe && o.ImportYAML != "" {
+					got = o.RecipeSlug
+				}
+				if o.Route == BootstrapRouteRecipe && o.Fit == RecipeFitOverProvisions && o.ImportYAML != "" {
+					t.Errorf("%s over-provisions and still inlines its import YAML", o.RecipeSlug)
+				}
+			}
+			if got != tt.wantYAML {
+				t.Errorf("the import YAML preview is on %q, want %q", got, tt.wantYAML)
+			}
+		})
+	}
+}
+
 func TestRecipeCollisions_MalformedYAML_ReturnsNil(t *testing.T) {
 	t.Parallel()
 	existing := []platform.ServiceStack{userSvc("db", "postgresql@16")}

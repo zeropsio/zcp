@@ -3,6 +3,7 @@
 package runtime
 
 import (
+	"net/url"
 	"os"
 	"strings"
 )
@@ -13,6 +14,13 @@ type Info struct {
 	ServiceName string // hostname from container env (empty when not in container)
 	ServiceID   string // Zerops service ID (only in container)
 	ProjectID   string // Zerops project ID (only in container)
+
+	// SubdomainOrigin is the origin of this container's own zerops.app
+	// subdomain — scheme and host of the Zerops-injected zeropsSubdomain
+	// (https://zcp-1df2-8080.prg1.zerops.app) — where Mate's container
+	// client is served under /mate/. "" outside a container, or when the
+	// service has no subdomain URL.
+	SubdomainOrigin string
 
 	// Authoring is the single source of truth for the ZCP_AUTHORING gate:
 	// when true, the maintainer-only authoring domain (recipe v3 engine +
@@ -86,13 +94,24 @@ func DetectFrom(getenv func(string) string) Info {
 		return Info{Authoring: authoring, MateEnabled: mateEnabled}
 	}
 	return Info{
-		InContainer: true,
-		ServiceName: getenv("hostname"),
-		ServiceID:   serviceID,
-		ProjectID:   getenv("projectId"),
-		Authoring:   authoring,
-		MateEnabled: mateEnabled,
+		InContainer:     true,
+		ServiceName:     getenv("hostname"),
+		ServiceID:       serviceID,
+		ProjectID:       getenv("projectId"),
+		SubdomainOrigin: urlOrigin(getenv("zeropsSubdomain")),
+		Authoring:       authoring,
+		MateEnabled:     mateEnabled,
 	}
+}
+
+// urlOrigin is raw's scheme://host[:port] when raw is an http(s) URL with a
+// host, else "".
+func urlOrigin(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
 }
 
 // HomeDir returns the container service user's home directory: $HOME, or

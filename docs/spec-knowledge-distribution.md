@@ -171,6 +171,8 @@ The closed value set is `{unset, auto, manual}` (`validAtomEnumValues["closeDepl
 
 **Empty = any runtime.** Service-scoped axis — see §3.10 for conjunction semantics.
 
+A develop session never names a pool in its scope, so an atom naming `pool` binds to a pool the session's work reaches though its scope does not list it — a pool keying a pair whose stage the scope names, or one this zcp holds a lease of (`synthesize.go::poolReachedBySession`) — and to no other: a pool elsewhere in the project is no part of the work (2026-10-27: `develop-dev-pool`, ~15 KB, rendered in sessions that never leased; `TestScenario_DevPoolAtom_OnlyWithAPoolOrLeaseInScope`). Where it does render, the dev-pool loop is the work's own guidance, so it sits at priority 1 and the budget composer cuts the edit-loop atoms around it to heads first (`TestDevelopBriefing_MultiPartPoolProject_UnderTheCap`).
+
 ### 3.6 `routes` (bootstrap-only, optional)
 
 | Value | Meaning |
@@ -197,7 +199,7 @@ Like `routes`, declaring `steps` implicitly scopes an atom to
 | `never-deployed` | ServiceMeta is complete (bootstrap finished) and no code deploy is on record. The first-deploy branch atoms gate on this state. |
 | `deployed` | A code deploy is on record (`workflow.DeriveDeployed`): `FirstDeployedAt` stamped, a successful deploy in the work session, or — for an adopted or recipe-`buildFromGit` runtime — the platform shows it ACTIVE with deployed code. ACTIVE alone is not deployed: a runtime imported `startWithoutCode` is ACTIVE holding a placeholder app version (source `NONE`, no build), so adopting it leaves it `never-deployed` (`platform.ServiceStack.HasDeployedCode`). The edit-loop branch atoms gate on this state. |
 
-**Empty = any state.** Non-bootstrapped services are skipped for this axis entirely — they have no tracked deploy state, and gating first-deploy atoms on them would surface scaffold guidance for pure-adoption services bootstrap never touched.
+**Empty = any state.** Non-bootstrapped services are skipped for this axis entirely — they have no tracked deploy state, and gating first-deploy atoms on them would surface scaffold guidance for pure-adoption services bootstrap never touched. So are managed services, which never run the app's code, and a never-deployed stage whose pair's dev half already runs it — a deployed dev service, or a dev pool, whose leases run the repository: that stage's deploy is a cross-deploy of code that exists, and the promotion guidance reads the dev half (`synthesize.go::atomDeployState`, shared with `envelopeDeployStates` §3.13). On 2026-10-27 such stages held three Mate sessions' develop starts in the first-deploy branch (`TestScenario_StageOfARunningDevHalf_GetsNoFirstDeployGuidance`).
 
 ### 3.9 `serviceStatus` (service-scoped, optional)
 
@@ -209,7 +211,7 @@ Example: `develop-ready-to-deploy` atom describes recovery for services stuck in
 
 ### 3.10 Service-scoped axis conjunction
 
-The ten service-scoped axes (`modes`, `closeDeployModes`, `gitPushStates`, `buildIntegrations`, `runtimes`, `runtimeBases`, `deployStates`, `serviceStatus`, `stageScope`, `parts`) evaluate **together per service** (`synthesize.go::serviceSatisfiesAxes`): an atom fires only when a single service in the envelope satisfies EVERY declared service-scoped axis. Axis independence (ANY service satisfies X while a DIFFERENT service satisfies Y) would fire atoms whose `{hostname}` substitution references a service the atom isn't semantically about — e.g. an atom scoped `runtimes=[dynamic], deployStates=[never-deployed]` must NOT surface when service A is a deployed dynamic runtime and service B is a never-deployed managed dep, since no single service is both dynamic AND never-deployed.
+The eleven service-scoped axes (`modes`, `closeDeployModes`, `gitPushStates`, `buildIntegrations`, `runtimes`, `runtimeBases`, `deployStates`, `serviceStatus`, `stageScope`, `parts`, `zeropsYaml`) evaluate **together per service** (`synthesize.go::serviceSatisfiesAxes`): an atom fires only when a single service in the envelope satisfies EVERY declared service-scoped axis. Axis independence (ANY service satisfies X while a DIFFERENT service satisfies Y) would fire atoms whose `{hostname}` substitution references a service the atom isn't semantically about — e.g. an atom scoped `runtimes=[dynamic], deployStates=[never-deployed]` must NOT surface when service A is a deployed dynamic runtime and service B is a never-deployed managed dep, since no single service is both dynamic AND never-deployed.
 
 Envelope-wide axes (`phases`, `environments`, `routes`, `steps`, `idleScenarios`, `exportStatus`, `envelopeDeployStates`, `managedTypes`) match the envelope directly — conjunction only applies to the service-scoped group.
 
@@ -266,7 +268,18 @@ How many deployable parts a dev half's repo holds, read per service from `Servic
 
 **Empty = no gate.** `develop-monorepo-parts` declares `[multi]` and points to `zerops_knowledge uri="zerops://playbooks/monorepo"`; no other atom reads the axis, so every single-part golden is unchanged (`TestScenario_S15_MultiPartRepoPointsToTheMonorepoPlaybook`).
 
-### 3.17 `multiService` (scalar attribute, optional)
+### 3.17 `zeropsYaml` (service-scoped, optional)
+
+Whether the repository an app runtime deploys from already carries its `zerops.yaml` (or `zerops.yml`), read per service from `ServiceSnapshot.HasZeropsYAML` (`synthesize.go::zeropsYAMLOf`): zcp reads it with the parts signal (§3.16, `ops.PartsSignal.ConfigFile`) on the dev half and carries it to every stage of the pair. Off the wire. A service that is no app runtime (managed, pool, Box) never satisfies the axis. Closed enum:
+
+| Value | Meaning |
+|---|---|
+| `absent` | The repo has none, or zcp did not read it (local mode, a failed read). |
+| `present` | The repo carries one. |
+
+**Empty = no gate.** The greenfield atoms — `develop-first-deploy-scaffold-yaml`, `develop-first-deploy-write-app`, `develop-nodejs-greenfield-buildhint` — declare `[absent]`: a first deploy of a repository that has its zerops.yaml runs it as its developers do (`develop-first-deploy-existing-repo`) and scaffolds nothing (`TestScenario_RepoWithItsZeropsYaml_GetsNoGreenfieldAtoms`).
+
+### 3.18 `multiService` (scalar attribute, optional)
 
 Scalar (not a list axis), closed enum `{"" , aggregate}`. The default empty value (`MultiServicePerService`) renders the atom once per matching service with `{hostname}` substituted from that service. `aggregate` (`MultiServiceAggregate`) renders the atom **once**, regardless of how many services match — for atoms whose body addresses the scope as a whole rather than a single service. Validated via `validScalarEnumValues` in `internal/workflow/atom.go`.
 
@@ -316,7 +329,8 @@ this boundary; `internal/tools/next_actions.go` owns the next-tool pointer.
 | `managedTypes` | no | Envelope-scoped (§3.14). Managed-dep-type gate; platform strings, not a closed enum. |
 | `stageScope` | no | Service-scoped (§3.15). `in-scope` / `out-of-scope` / `none` — where the pair's stage half stands in the develop session. |
 | `parts` | no | Service-scoped (§3.16). `single` / `multi` — how many deployable parts the dev half's repo holds. |
-| `multiService` | no | Scalar attribute (§3.17). `aggregate` renders the atom once for the whole scope. |
+| `zeropsYaml` | no | Service-scoped (§3.17). `absent` / `present` — whether the repo an app runtime deploys from carries its zerops.yaml. |
+| `multiService` | no | Scalar attribute (§3.18). `aggregate` renders the atom once for the whole scope. |
 | `references-fields` | no | List of Go struct fields in `pkg.Type.Field` form (e.g. `ops.DeployResult.Status`) cited by the atom body. Validated: parser enforces the shape regex, `TestAtomReferenceFieldIntegrity` (in `internal/workflow/`) resolves each entry against `internal/{ops,tools,platform,workflow}/*.go` via AST scan. Part of the authoring contract (§11). |
 | `references-atoms` | no | List of atom IDs the body has a CONTENT dependency on — its body relies on the target's body being present in the SAME rendered payload. A content dependency MUST target an INLINE atom. Validated by `TestAtomReferencesAtomsIntegrity` (exists) + `TestAtomCrossRefContract` (target is inline). Part of the authoring contract (§11). See §4.6. |
 | `reference` | no | Delivery attribute, strict-validated `{true,false}`. `false` (default) = **inline**: `Synthesize` composes the body into the response. `true` = **pointer**: the body is deferred — `Synthesize` emits a one-line stub carrying the canonical pull URI, and the agent fetches it on demand. A `reference: true` atom MUST be envelope-substitution-free (`{hostname}`/`{stage-hostname}`/`{project-name}`) because the pull fetch returns the raw body with no live envelope. See §4.6. |

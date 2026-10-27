@@ -1733,9 +1733,11 @@ func TestScenario_S16_ExistingRepoRunsItsOwnDevFlow(t *testing.T) {
 }
 
 // TestScenario_DevPool_FiresOnlyWhenTheProjectHoldsAPool pins that the dev-pool
-// guidance reaches a develop session whose project holds a Swarm pool and no
-// other: a project without one never carries it, and a Zerops Box (a sandbox
-// host, not a pool) does not summon it.
+// guidance reaches a develop session whose work reaches a Swarm pool — here
+// through a lease this zcp holds of it — and no other: a project without one
+// never carries it, a pool nothing leases does not summon it, and neither
+// does a Zerops Box (a sandbox host, not a pool). The full reach rule is
+// TestScenario_DevPoolAtom_OnlyWithAPoolOrLeaseInScope.
 func TestScenario_DevPool_FiresOnlyWhenTheProjectHoldsAPool(t *testing.T) {
 	t.Parallel()
 
@@ -1750,14 +1752,16 @@ func TestScenario_DevPool_FiresOnlyWhenTheProjectHoldsAPool(t *testing.T) {
 			WorkSession: fixSession("partdev")}
 	}
 
-	withPool, err := Synthesize(env(fixSnapPool("devpool", "swarm@1")), corpus)
+	leased := env(fixSnapPool("devpool", "swarm@1"))
+	leased.Leases = &[]LeaseSnapshot{{Alias: "devpool-1", Pool: "devpool", Branch: "feat", State: "held"}}
+	withPool, err := Synthesize(leased, corpus)
 	if err != nil {
 		t.Fatalf("Synthesize: %v", err)
 	}
-	requireAtomIDsContain(t, "project holds a pool", withPool, "develop-dev-pool")
+	requireAtomIDsContain(t, "a leased pool", withPool, "develop-dev-pool")
 
 	box := ServiceSnapshot{Hostname: "box", TypeVersion: "ubuntu/zbox@1", RuntimeClass: topology.RuntimeSandbox, Status: "ACTIVE"}
-	for label, e := range map[string]StateEnvelope{"no pool": env(), "a Box only": env(box)} {
+	for label, e := range map[string]StateEnvelope{"no pool": env(), "a Box only": env(box), "a pool nothing leases": env(fixSnapPool("devpool", "swarm@1"))} {
 		got, err := Synthesize(e, corpus)
 		if err != nil {
 			t.Fatalf("Synthesize(%s): %v", label, err)

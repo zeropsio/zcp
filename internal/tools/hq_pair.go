@@ -49,10 +49,36 @@ func hqPairPlanError(plan []workflow.BootstrapTarget, mate bool) *platform.Platf
 		return platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Plan validation failed: target %q: this Mate keeps its code in HQ, where code lands on main through changes, so every runtime is a dev/stage pair — bootstrapMode %q with no stage half has no stage to check its work on or promote to production", rt.DevHostname, rt.EffectiveMode()),
-			fmt.Sprintf("Re-submit the plan with runtime.bootstrapMode=\"standard\" and an explicit stageHostname for %q (for example devHostname %q, stageHostname %q).", rt.DevHostname, rt.DevHostname, stageNameFor(rt.DevHostname)),
+			fmt.Sprintf("Re-submit the plan with runtime.bootstrapMode=\"standard\" and an explicit stageHostname for %q (for example devHostname %q, stageHostname %q). %s", rt.DevHostname, rt.DevHostname, stageNameFor(rt.DevHostname), hqPairNoStage),
 		)
 	}
 	return nil
+}
+
+// hqPairNoStage is what "no stage" means in a Mate, said wherever the pair
+// rule is: the stage is created and left empty, never a question to the
+// person.
+const hqPairNoStage = "A person who wants no stage, or a dev service only, still gets the pair: create the stage and leave it empty — imported without code it stays READY_TO_DEPLOY with no containers until something deploys to it — and say so; there is nothing to ask the person."
+
+// hqPairDiscoverNote is the pair rule a Mate's classic discover step states
+// before any plan is submitted (hqPairPlanError refuses the plans it rules
+// out). All three Mate sessions on 2026-10-27 learned it only from a refused
+// plan, then asked the person.
+const hqPairDiscoverNote = "**This Mate keeps its code in HQ, so every runtime is a dev/stage pair.** " +
+	"Plan each runtime with `bootstrapMode=\"standard\"` and an explicit `stageHostname` (appdev → appstage); " +
+	"a plan with a dev or simple runtime is refused. " + hqPairNoStage
+
+// appendHQPairDiscoverNote adds hqPairDiscoverNote to the discover step's
+// guide of a Mate's classic route — a session records no route for classic —
+// and nothing outside a Mate, on another route or past discover.
+func appendHQPairDiscoverNote(resp *workflow.BootstrapResponse, engine *workflow.Engine, mate bool) {
+	if !mate || resp == nil || resp.Current == nil || resp.Current.Name != workflow.StepDiscover {
+		return
+	}
+	if route := bootstrapSessionRoute(engine); route != "" && route != workflow.BootstrapRouteClassic {
+		return
+	}
+	resp.Current.DetailedGuide = strings.TrimSpace(resp.Current.DetailedGuide + "\n\n" + hqPairDiscoverNote)
 }
 
 // hqLaunchProductionRefusal refuses the whole launch-production workflow in a

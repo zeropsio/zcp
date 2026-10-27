@@ -227,7 +227,15 @@ state costs ~1.2 KB (no fence, no markdown) — a deploy response measured 119 B
 The synthesized guidance a prose result carries is held under `workflow.ComposeBodyBudget`
 (24 KB), which sits below the 28 KB soft cap and the **32 KB MCP tool-response cap** precisely
 to leave room for the scaffold `RenderStatus` adds — so the envelope fits inside existing
-headroom and needs no budget of its own. `TestAppendEnvelope_BlockSizeBudget` pins it, with eight
+headroom and needs no budget of its own — for a small project. What a project's services cost the
+rest of the answer counts against that budget (`workflow.GuidanceBudget`), on `action="status"` and
+develop's start alike: the per-service and lease lines rendered above the guidance, and the envelope
+block's bytes beyond a small project's 2 KB; the base-prefix rule those lines refer to is said once
+beneath them. On 2026-10-27 develop's start, which applied no budget, answered 38–55 KB in three
+Mate sessions, one read back from a file past the client's display limit; a six-part pool project's
+start now renders 28.7 KB (a 30.7 KB frame) with its dev-pool loop whole, where it rendered 51.6 KB
+(`TestDevelopBriefing_MultiPartPoolProject_UnderTheCap`,
+`TestHandleDevelopBriefing_ManyPairs_StaysUnderTheMCPCap`). `TestAppendEnvelope_BlockSizeBudget` pins it, with eight
 leases (§2.8a.3) on top of the four-service fixture (~3.1 KB fenced). JSON
 results are far smaller than the prose ones and are nowhere near the cap.
 
@@ -705,7 +713,21 @@ subcommand or `find` action agent-browser does not know — the call was wrong, 
 `script-timeout` (an `eval` that ran into the CDP timeout while the page still answered a
 trivial evaluate probed under a 5 s bound: the script's promise never settled, the page is
 alive — the walk goes on and the service is kept; a probe that fails leaves the step `wedge`),
-`selector-not-found`, `not-editable`, `timeout` or `other`. Only `wait` polls (agent-browser's
+`slow-page` (an `open` agent-browser's client gave up on — "no response came back" — while one
+plain request to the page, bounded at 30 s, got an answer: the step names its time to first byte
+and status, the page is slow and not Chrome, the walk goes on within `timeoutSeconds` so the
+caller's waits give the page its time, a later unanswered step on that page is `slow-page` too,
+and the service is kept; a request that gets no answer leaves the open `wedge`), `server-error`
+(the page answered 5xx — the document's status read once after the first-paint wait, never a
+step, or that plain request's — so each caller command after it comes back as a `server-error`
+step that did not run while the screenshot and the canned tail run, and the service is kept),
+`selector-not-found`, `not-editable`, `timeout` or `other`. A slow page and a server error each
+put a message on the result: the time to first byte and that the walk went on within
+`timeoutSeconds`, or the status and where to read the server's logs. Measured 2026-10-27: a
+Vite dev server's first request took 30 s and its open recycled Chrome as wedged twice, and a
+wait for text on a 502 page waited out its 60 s (`TestRunBrowserSteps_OpenWithNoAnswer_ServerAnswers_IsASlowPage`,
+`TestRunBrowserSteps_ServerErrorPage_SkipsTheCallersCommands`,
+`TestBrowserBatch_SlowPageAndServerError_SaySoAndKeepTheBrowser`). Only `wait` polls (agent-browser's
 25 s default); `click`, `fill`, `check`, `find`, `get` and `is` look once.
 
 `isolation` is one parameter: `tab` (default) is a tab in the warm default context,
@@ -4379,32 +4401,35 @@ would keep (`TestGroupPriorities_*`, `TestBuildGroupRecipe_PriorityFollowsBuildR
 `TestComposeGroupRecipeInputs_WaitsOnlyForWhatALaterPassBrings`).
 
 **Mate's preview pane frames a Mate's dev and stage; production keeps the app's framing
-(2026-10-25).** The pane (§5.4) draws a service's page in a frame on Mate's origins —
-`https://mate.zerops.io`, which the desktop shell loads too, and the container's own `/mate/` on
-its `*.zerops.app` subdomain — so a page that sends `X-Frame-Options` (no value of it names another
+(2026-10-25; exact origins 2026-10-27).** The pane (§5.4) draws a service's page in a frame on
+Mate's origins — `https://mate.zerops.io`, which the desktop shell loads too, and the container's
+own `/mate/` on its subdomain, the zcp service's `zeropsSubdomain` (`runtime.Info.SubdomainOrigin`,
+`*.zerops.dev` on devel) — so a page that sends `X-Frame-Options` (no value of it names another
 origin) or a `frame-ancestors` leaving them out reads "refused to connect" there (zeropsio/apps' hq
 and box stages, static services, measured 2026-10-25). The stage builds the setup production builds,
 so an allowance in that setup would reach production. A Mate's AGENTS.md (`agents_preview.md`,
 behind the gate, §2.0) says: dev and stage send no `X-Frame-Options` and widen the app's own
-`frame-ancestors` by Mate's origins; the dev setup may carry it where the stage builds another; the
-stage deploys **Mate's preview variant** of its setup — a setup that `extends` it and changes only
-the framing (a static service's `run.routing.headers`, else a `run.envVariables` value the app's
-header code reads) — and the setup it extends stays as the app wrote it. A setup lets the pane frame
-the app when its own `run` holds a `frame-ancestors` naming `https://mate.zerops.io`, or a bare
-source list naming Mate's origin set (that origin beside `https://*.zerops.app`); a setting naming
-Mate's address alone is the app's own (`bundle.WithoutMateFraming`). The AI Agent tier keeps the
-variant on the stage half; every group environment builds the setup it extends, named after it
+`frame-ancestors` by exactly Mate's origins, rendered from the container — the hosted origin and the
+container's own subdomain origin, the hosted one alone where the service has no subdomain — and
+never by a wildcard such as `https://*.zerops.app`, which every app on the shared domain matches;
+a page that forbids framing on purpose (`X-Frame-Options: DENY`, `frame-ancestors 'none'`, or code
+or a comment saying it is never framed) stays as it is and the agent tells the person the pane cannot
+show it, opening it up only when they ask; the dev setup may carry the allowance where the stage
+builds another; the stage deploys **Mate's preview variant** of its setup — a setup that `extends`
+it and changes only the framing (a static service's `run.routing.headers`, else a
+`run.envVariables` value the app's header code reads) — and the setup it extends stays as the app
+wrote it. Why exact: on 2026-10-27 an agent widened zeropsio/apps' account apps — whose zerops.yml
+says an account app is never framed — by `https://*.zerops.app`, so any Zerops tenant's page could
+frame Zerops' own sign-in, and told the person they were framed by Mate's pane only. A setup lets the
+pane frame the app when its own `run` holds a `frame-ancestors` naming `https://mate.zerops.io`, or
+a bare source list naming Mate's origin set (that origin beside a Mate container's: the container's
+exact `https://` origin on a Zerops subdomain, or the `https://*.zerops.app` wildcard setups written
+before 2026-10-27 name); a setting naming Mate's address alone is the app's own
+(`bundle.WithoutMateFraming`). Beside Mate's hosted origin every Zerops subdomain origin leaves
+production's framing: a Mate's project is never production's. The AI Agent tier keeps the variant
+on the stage half; every group environment builds the setup it extends, named after it
 (`groupEnvironmentSetup`). A framed stage setup that extends no other is built framed, and the pass
-says so (MB-40). **Named limit (review R4-7):** the container's origin is named as the
-`https://*.zerops.app` wildcard, so any Zerops tenant's page can frame a Mate's dev and stage.
-`*.zerops.app` is a public-suffix-list private suffix, so another tenant's page is cross-site and
-SameSite=Lax or Strict cookies are not sent; an app with SameSite=None cookies, or with
-unauthenticated state-changing UI, can be clickjacked. It is not narrowed to the container's own
-origin: the wildcard beside `https://mate.zerops.io` is what `bundle.WithoutMateFraming` and the
-group recipe's variant recognition read as Mate's origin set, from the zerops.yaml alone — an
-exact origin there would stay in production's framing until both learned it — and the origin the
-pane loads `/mate/` from (the zcp service's `zeropsSubdomain`, `*.zerops.dev` on devel) is not
-verified live.
+says so (MB-40).
 
 **A Mate's git (2026-10-21, design B; was Delivery to HQ, 2026-10-02).** A Mate's code reaches its
 repository by plain git, as on a laptop: the agent brings `main` up to date, cuts a branch of its
@@ -4413,7 +4438,13 @@ repository kept there (§5.10). zcp never commits, opens a change or pushes for 
 deploy deploys and delivers nothing, and no deploy response carries a `pullRequest`. Only a
 dev/stage pair can be a Mate's: the dev half is the checkout, the stage half the verified basis a
 production is promoted from. So zcp's classic route refuses a plan that gives a Mate a runtime with
-no stage half (`bootstrapMode` simple or dev), naming the standard pair to re-submit.
+no stage half (`bootstrapMode` simple or dev), naming the standard pair to re-submit — and says the
+rule before any plan: a Mate's classic discover step states that every runtime is a dev/stage pair,
+and both it and the refusal say that "no stage" (or "a dev service only") means creating the stage
+and leaving it empty — imported without code it stays READY_TO_DEPLOY with no containers — with
+nothing to ask the person (`hq_pair.go`, `TestBootstrapDiscover_AMateSaysEveryRuntimeIsAPair`,
+`TestAMateKeepingItsCodeInHQPlansOnlyStandardPairs`). On 2026-10-27 all three Mate sessions learned
+the rule from a refused plan and asked the person, 2–4 minutes each.
 
 **A Mate is HQ's by what it is, not by whether HQ answers (2026-10-05).** Being a Mate
 (`runtime.Info.MateEnabled`) is what makes HQ the authority; the project key is only how zcp reaches
@@ -5159,7 +5190,7 @@ merge/release targets, not an arbitrary ref supplied by the client.
 | MB-37 | A group recipe writes each search engine at no less than 2 GB `minRam` and 0.5 GB `minFreeRamGB` on every tier and never lowers a value; an unread scale writes no block; `profileOverrides` and the free-memory buffer are carried; a scaling proposal is the Mate's change in the recipe repository in HQ, written over `main`, rewriting only that host's block in every tier naming it; it refuses a block it cannot splice safely, moves forward on the same change for the same host, brings a stale one to `main`'s tree when nothing differs, and is refused while the Mate's additive proposal is open there, which in turn leaves an open scaling proposal alone; the steer speaks only after a change that finished (D34). `group_floors_test.go`, `host_scaling_test.go`, `group_profile_overrides_test.go`, `scale_test.go`; zcp `TestGroupRecipeScaling_SteersAndProposesOneHostsBlock`, `TestGroupRecipeScaling_ProposesFromMainsHeadEveryTierFresh`, `TestGroupRecipeScaling_OneOpenChangeInTheRecipeRepository`, `TestScratch_File`. |
 | MB-38 | A Mate reads from its first turn, even on an empty project, that its code and changes live in its application's HQ, bootstrap comes first and ZCP wires the pair's repository once the service stands, Core deploys the application's environments, and the person is never asked for a GitHub or other repository, URL or token. The block is Mate-only; a plain container or local install reads none of it. This keeps upstream's repository-first guidance while replacing its Gitea workflow with HQ's jobs (§10.8). zcp `TestBuildAgentsMD_Container_GitHostSaysWhereTheCodeLives`. |
 | MB-39 | A person may merge an open HQ change while the agent works; a pass tells the agent what became of it — merged, bring `main` up to date and cut the next branch from it; closed, nothing of it is on `main` — and never changes the checkout; a closing session hands over only an open change; production guidance reads merged history from HQ, and a failed read stays unknown with a manual ask again (§10.10). zcp `TestReconcileHQRepositories_TellsTheMateWhatBecameOfItsChange`, `TestHQPass_LearnsAMergeWithoutChangingTheCheckout`, `TestSessionAnnotations_HandoffOnlyWithAnOpenChange`, `TestProductionKnowsMergedWorkThePairHoldsNoRecordOf`, `TestProductionGuidance_HQUnavailableIsUnknown`, `TestHQPass_MergedChangeNamesItsLeasesAndStages`. |
-| MB-40 | Mate's preview pane frames a Mate's dev and stage, never the application's production: a Mate's AGENTS.md has dev and stage drop `X-Frame-Options` and widen the app's own `frame-ancestors` by Mate's origins through Mate's preview variant of the stage's setup, never that setup; the group recipe's AI Agent tier keeps the variant and every group environment builds the setup it extends; a setting naming Mate's address alone is no framing. Named limit: the container origin is the `*.zerops.app` wildcard (§10.10, review R4-7). `TestBuildAgentsMD_Container_PreviewPaneFramesDevAndStage`, `TestBuildGroupRecipe_PreviewVariant_GroupEnvironmentsBuildTheSetupItExtends`, `TestBuildGroupRecipe_PreviewVariant_PartsAreNamedByTheSetupTheyBuild`, `TestBuildGroupRecipe_PreviewVariant_ASettingNamingMateIsNoFraming`. |
+| MB-40 | Mate's preview pane frames a Mate's dev and stage, never the application's production: a Mate's AGENTS.md has dev and stage drop `X-Frame-Options` and widen the app's own `frame-ancestors` by Mate's origins through Mate's preview variant of the stage's setup, never that setup; the group recipe's AI Agent tier keeps the variant and every group environment builds the setup it extends; a setting naming Mate's address alone is no framing. The allowance names Mate's exact origins — the hosted client and the container's own subdomain — never a zerops.app wildcard, and a page that forbids framing on purpose is the person's to open up (§10.10). `TestBuildAgentsMD_Container_PreviewPaneFramesDevAndStage`, `TestBuildAgentsMD_Container_PreviewPaneNamesMatesExactOrigins`, `TestDetectFrom_SubdomainOrigin`, `TestWithoutMateFraming_ExactContainerOrigin`, `TestBuildGroupRecipe_PreviewVariant_GroupEnvironmentsBuildTheSetupItExtends`, `TestBuildGroupRecipe_PreviewVariant_PartsAreNamedByTheSetupTheyBuild`, `TestBuildGroupRecipe_PreviewVariant_ASettingNamingMateIsNoFraming`. |
 | MB-41 | A Mate holds an open change per branch: open-change names its change by branch, or by a lease alias or pair (pairs sharing a repository are one); a second branch opens its own change, the same branch is answered, a handed change is answered only for its branch, and past five open the refusal names them. zcp keeps each change in its ledger, one file per change, never on a pair, moving the pairs' older records in once. Against an HQ that keeps one open change per repository (no `openPerBranch`) the answered change is kept on its own branch and nothing is recorded for the branch asked for; open-change forgets, and says once, a kept change the state it read names settled (§10.10). zcp `TestHQChangeLedger_OneFilePerChange`, `TestHQChangeLedger_ConcurrentWritersKeepEachOthersFields`, `TestHQChangeLedger_MigrationFromPairsDedupsAcrossPairs`, `TestResolveChange_LeaseAliasNamesRepoAndBranch`, `TestResolveChange_PairsSharingARepositoryAreOne`, `TestResolveChange_NeverTheNewest`, `TestOpenChange_SecondBranchOpensItsOwnChange`, `TestOpenChange_SameBranchAnswered`, `TestOpenChange_FromLeaseAlias`, `TestOpenChange_OldHQAnswersTheOpenOne_RecordsNothingForTheAskedBranch`, `TestOpenChange_TooManyOpen_NamesThem`, `TestOpenChange_PairsSharingARepositoryOpenAChangePerBranch`, `TestOpenChange_ForgetsTheChangesTheStateItReadNamesSettled`, `TestHandedChange_AnotherBranchOpensItsOwnChange`, `TestClient_Self_Changes_DecodeStandingAndOpenPerBranch`, `TestLearnChangeLanding_ReadsAMissingChangeByTheStatesWindow`. |
 | MB-42 | What zcp says of a Mate's several open changes: a merged one's note names the leases on its branch, for the agent to release, and the stages that track `main`; another's standing — behind `main`, conflicting, a draft — is said once, when it differs from what was told, with a merge of `origin/main`, never a rebase; develop's start lists every open change the Mate's state names in the repository, recorded or not, and sends new work to a branch of its own; status shows one Changes line per repository, each change's standing read fresh from the Mate's state (a merged one naming its leases to release; as last read while HQ does not answer), and no pair names a change; lease status names each group's change, and a lease on a merged change's branch says it merged — release it, or start new work from main — never "no change yet"; a lease release's result names each released branch's change the same way, a merged one with the call that puts `main` on the repository's stages; the launch refusal and release handoff name each open change once, the handoff leaving out one the Mate's state, read once, names settled. AGENTS.md: one branch per piece of work, one change per branch; the dev-pool atom opens and describes a branch's change from a lease and covers parallel work (§10.10). zcp `TestHQPass_MergedChangeNamesItsLeasesAndStages`, `TestHQPass_OtherChangeBehindAfterMerge_ToldOnce`, `TestHQPass_ConflictToldWithMergeNotRebase`, `TestHQChangeStanding_SaysOnlyWhatChanged`, `TestDevelopStart_ListsTheOpenChangesOnAnHQThatKeepsOnePerBranch`, `TestDevelopStart_ListsEveryOpenChangeOfTheMate_RecordedOrNot`, `TestStatus_OneBlockPerRepository`, `TestStatus_ChangesReadFresh_AsLastReadWhileHQIsDown`, `TestRenderStatus_ChangesBlockPerRepository`, `TestLeaseGroupChanges_NamesEachGroupsChange`, `TestLeaseStatus_MergedBranchSaysSo_NotNoChangeYet`, `TestLeaseRelease_ResultNamesTheReleasedBranchsChange`, `TestLeaseRelease_MergedChangeNamesTheStageCall`, `TestLaunchProduction_ListsEveryOpenChangeOnce`, `TestHandleRelease_NamesTheOpenChangesItLeavesOut`, `TestHandleRelease_LeavesOutTheChangesHQSaysSettled`, `TestBuildAgentsMD_Container_GitHostOneChangePerBranch`, `TestDevelopDevPoolAtom_OpensTheBranchsChangeFromALease`. |
 | MB-43 | A Mate closes its own open change by branch, or a lease of it, never inferred: closed without merging in HQ, its branch and leases kept, forgotten by zcp; another Mate's is never asked for; an HQ without `openPerBranch`, or without the close route, is not asked or refuses, and the answer says a person closes it in its review (§10.10). zcp `TestCloseChange_OwnByBranch`, `TestCloseChange_OldHQ_SaysPersonCloses`, `TestCloseChange_NamesItsBranch`, `TestClient_CloseChange_PostsTheCloseOfTheMatesOwnChange`, `TestWorkflowTool_CloseChangeReachesItsHandler`. |

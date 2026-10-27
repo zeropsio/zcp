@@ -21,9 +21,10 @@ type DeployBatchTarget struct {
 	Setup         string `json:"setup,omitempty"`
 	WorkingDir    string `json:"workingDir,omitempty"`
 	// SHA, when set, deploys that commit of the source's repository exactly
-	// (DeploySSH's deploy-from-commit) instead of its working tree. Not an
-	// input of zerops_deploy_batch: set by callers inside zcp.
-	SHA string `json:"-"`
+	// (DeploySSH's deploy-from-commit, docs/spec-workflows.md §4.9) instead
+	// of its working tree — zerops_deploy's sha, per target: refused on a
+	// self-deploy, resolved with `git rev-parse` in the source.
+	SHA string `json:"sha,omitempty" jsonschema:"Deploy this commit of the source instead of its working tree, as zerops_deploy's sha; origin/main from a lease puts main on its stage."`
 	// ConfigFile is the config file pre-flight read from the source's repo
 	// (zerops.yaml or zerops.yml); the target's failure classification
 	// names it. Not an input either.

@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"encoding/json"
 	"slices"
 
 	"github.com/zeropsio/zcp/internal/topology"
@@ -85,7 +86,7 @@ func planDevelopActive(env StateEnvelope) Plan {
 		for _, host := range plannedHosts(env) {
 			if needsDeploy(env.WorkSession, host) {
 				last := lastAttempt(env.WorkSession.Deploys[host])
-				return Plan{Primary: deployActionFor(host, last, env), PerService: perService}
+				return Plan{Primary: deployActionFor(host, last, env), Secondary: putMainOnPoolStagesAction(env), PerService: perService}
 			}
 		}
 		for _, host := range plannedHosts(env) {
@@ -331,6 +332,61 @@ func deployActionFor(host string, last AttemptInfo, env StateEnvelope) NextActio
 		Tool:      intent.DeployTool,
 		Args:      intent.DeployArgs,
 		Rationale: rationale,
+	}
+}
+
+// stageMainRef is the commit a stage tracks, as a deploy from a lease names
+// it: the lease's deploy fetches main first, so it ships main as the remote
+// has it now (docs/spec-workflows.md §8 DP-8).
+const stageMainRef = "origin/main"
+
+// putMainOnPoolStagesAction is the call that puts main on the session's
+// stages still to deploy whose pairs' dev halves are pools, each from a held
+// lease of its own part's pool: zerops_deploy with sha="origin/main" for one,
+// one zerops_deploy_batch with a sha on every target for several. A stage
+// tracks main, and a deploy from a lease without sha ships the lease's branch
+// — on 2026-10-27 a batch without it put five leases' branch on their stages.
+// nil when no such stage has a held lease.
+func putMainOnPoolStagesAction(env StateEnvelope) *NextAction {
+	type batchTarget struct {
+		SourceService string `json:"sourceService"`
+		TargetService string `json:"targetService"`
+		Setup         string `json:"setup"`
+		SHA           string `json:"sha"`
+	}
+	var targets []batchTarget
+	for _, host := range plannedHosts(env) {
+		if !needsDeploy(env.WorkSession, host) {
+			continue
+		}
+		intent := ResolveWithLeases(snapshotByHostname(env.Services, host), env.Services, env.LeaseList())
+		if intent.SourcePool == "" || intent.PushSource == "" || intent.Delivery == DeployDeliveryManual {
+			continue
+		}
+		targets = append(targets, batchTarget{intent.PushSource, intent.BuildTarget, intent.BuildSetup, stageMainRef})
+	}
+	const rationale = "A stage tracks main: sha=\"origin/main\" ships main as the remote has it now — once a change merges, or right after a branch's stage check. A deploy from a lease without sha ships the lease's branch."
+	switch len(targets) {
+	case 0:
+		return nil
+	case 1:
+		t := targets[0]
+		return &NextAction{
+			Label:     "Put main on " + t.TargetService,
+			Tool:      deployToolName,
+			Args:      map[string]string{"sourceService": t.SourceService, "targetService": t.TargetService, "setup": t.Setup, "sha": t.SHA},
+			Rationale: rationale,
+		}
+	}
+	encoded, err := json.Marshal(targets)
+	if err != nil {
+		return nil
+	}
+	return &NextAction{
+		Label:     "Put main on the stages",
+		Tool:      "zerops_deploy_batch",
+		Args:      map[string]string{"targets": string(encoded)},
+		Rationale: rationale + " One batch deploys them all in parallel.",
 	}
 }
 

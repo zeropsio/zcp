@@ -41,12 +41,49 @@ func TestAMateKeepingItsCodeInHQPlansOnlyStandardPairs(t *testing.T) {
 		if !strings.Contains(pe.Suggestion, `bootstrapMode="standard"`) || !strings.Contains(pe.Suggestion, "stageHostname") {
 			t.Fatalf("%s: the fix is the standard pair with a stage hostname, got %q", name, pe.Suggestion)
 		}
+		// "No stage" is answered by the plan, not by a question to the
+		// person: the stage is created and left empty.
+		for _, want := range []string{"no stage", "leave it empty", "READY_TO_DEPLOY", "no containers"} {
+			if !strings.Contains(pe.Suggestion, want) {
+				t.Fatalf("%s: the suggestion does not say %q: %q", name, want, pe.Suggestion)
+			}
+		}
 	}
 	if got := stageNameFor("appdev"); got != "appstage" {
 		t.Fatalf("appdev's stage is appstage, got %q", got)
 	}
 	if got := stageNameFor("todoapp"); got != "todoappstage" {
 		t.Fatalf("todoapp's stage is todoappstage, got %q", got)
+	}
+}
+
+// TestBootstrapDiscover_AMateSaysEveryRuntimeIsAPair pins that a Mate's
+// classic discover step says the pair rule before any plan is submitted: every
+// runtime is a dev/stage pair, and "no stage" is a stage created and left
+// empty. All three Mate sessions on 2026-10-27 learned the rule from a refused
+// plan and then asked the person, 2-4 minutes each. A container that is not a
+// Mate hears nothing of it.
+//
+// Not parallel: the identity is the process environment (t.Setenv).
+func TestBootstrapDiscover_AMateSaysEveryRuntimeIsAPair(t *testing.T) {
+	for _, mate := range []bool{true, false} {
+		t.Run(map[bool]string{true: "a Mate", false: "not a Mate"}[mate], func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			linkAs(t, "missing")
+			dir := t.TempDir()
+			engine := workflow.NewEngine(dir, workflow.EnvContainer, nil)
+			resp, err := engine.BootstrapStartWithRoute("proj-1", "a todo app", workflow.BootstrapRouteClassic, "")
+			if err != nil {
+				t.Fatalf("BootstrapStartWithRoute(classic): %v", err)
+			}
+			rt := runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: mate}
+			text := extractText(bootstrapResult(context.Background(), resp, engine, platform.NewMock(), "proj-1", rt))
+			for _, want := range []string{"every runtime is a dev/stage pair", "leave it empty", "READY_TO_DEPLOY", "nothing to ask"} {
+				if strings.Contains(text, want) != mate {
+					t.Errorf("discover says %q = %v, want %v", want, !mate, mate)
+				}
+			}
+		})
 	}
 }
 

@@ -1,6 +1,6 @@
 ---
 id: develop-dev-pool
-priority: 3
+priority: 1
 phases: [develop-active]
 runtimes: [pool]
 environments: [container]
@@ -40,10 +40,14 @@ its containers away from the app.
    `zerops_dev_server action=status hostname="<alias>" name="<server>"`.
 2. Work in `/var/www/<alias>`. Run the part's dev servers with
    `zerops_dev_server action=start hostname="<alias>" ...`.
-3. Commit and push from the leased container yourself, over SSH to the alias:
-   `git push -u origin <branch>` (the first push of a new branch sets its
-   upstream). The same pool secret authenticates it. A release never commits
-   for you.
+3. Commit and push from the leased container yourself: run every git
+   command inside the lease, over SSH to the alias —
+   `ssh <alias> "cd /var/www && git add -A && git commit -m '<what>' && git push -u origin <branch>"`
+   (the first push of a new branch sets its upstream). The same pool secret
+   authenticates it there. Never run git on the mount `/var/www/<alias>`
+   <!-- axis-k-keep: signal-#1 — mount-vs-lease-SSH guardrail: git on the mount has no credential -->
+   from this container: no credential reaches the mount, so a fetch or push
+   there fails asking for one. A release never commits for you.
 4. Open the branch's change in HQ: `zerops_workflow action="open-change" service="<alias>" title="<what it does>"`
    — the repository and the branch come from the lease. Run its stage check
    (below), then describe it with
@@ -89,7 +93,10 @@ build, so check the branch on the stage before its change is described.
 A build that fails leaves the stage on what it ran; fix the branch, push, and
 check again. Say in the change's description that it built and verified on
 the stage. Run one branch's check at a time per stage: a check from another
-lease replaces it. Once a branch is merged, put main on the stage the same way.
+lease replaces it. Once a change merges, put main on every stage it touched in
+one call, each target from a lease of its own part:
+`zerops_deploy_batch targets=[{"sourceService":"<alias>","targetService":"<stage>","sha":"origin/main"}, …]`
+— a target without `sha` ships its lease's branch, not main.
 A deploy of a commit that is not on `origin/main`, or of uncommitted changes,
 names in its `warnings` the verify and the call that puts main back. Verify a container with
 `zerops_verify serviceHostname="<alias>"` — it reports SSH reachability, the
@@ -150,8 +157,8 @@ leases are keyed by branch, so they never meet.
   change with `service="<its alias>"` and describes it the same way.
 - Report each branch's change and its lease preview URLs to the person.
 - Once one change merges, the others are behind `main`. Bring one up to date
-  only when the person asks or it no longer merges cleanly: in a lease of
-  it, `git fetch origin && git merge origin/main`, check the preview, push,
+  only when the person asks or it no longer merges cleanly: over SSH in a
+  lease of it, `git fetch origin && git merge origin/main`, check the preview, push,
   sync the group's other leases and describe it again — never rebase, never
   force-push.
 - A change that needs another's unmerged work may be cut from that branch;

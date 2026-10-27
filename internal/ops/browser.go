@@ -15,6 +15,7 @@ import (
 	"image/png"
 	"os"
 	"os/exec"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -42,7 +43,9 @@ type BrowserBatchInput struct {
 	Commands [][]string `json:"commands,omitempty"`
 
 	// TimeoutSeconds bounds the whole call, the wait for the browser
-	// included. Default 120, max 300.
+	// included, and a slow page's load: an open agent-browser gave up on
+	// while the page's server answers goes on within it (slow-page). Default
+	// 120, max 300.
 	TimeoutSeconds int `json:"timeoutSeconds,omitempty"`
 
 	// Isolation is how much of earlier calls' history the page sees:
@@ -92,7 +95,16 @@ const (
 	// page — e.g. a wait on every animation's finished, which a looping one
 	// never gives. It is stamped by the walk, never read off the error text.
 	ErrorKindScriptTimeout = "script-timeout"
-	ErrorKindOther         = "other"
+	// ErrorKindSlowPage is a step the daemon did not answer while a plain
+	// request to the page got an answer (an open of a page whose server is
+	// slow): the page, not Chrome. Stamped by the walk; the walk goes on
+	// within the call's timeout and the browser is kept.
+	ErrorKindSlowPage = "slow-page"
+	// ErrorKindServerError is a page whose server answered 5xx: the open
+	// that found it, and each caller command after it, which did not run.
+	// Stamped by the walk; the browser is kept.
+	ErrorKindServerError = "server-error"
+	ErrorKindOther       = "other"
 )
 
 // classifyStepError maps one step's raw agent-browser error text to an
@@ -514,7 +526,7 @@ var cdpWedgeSignals = []string{
 	cdpCommandTimedOut,
 	"Target closed",
 	"Protocol error",
-	"no response came back",
+	browserNoAnswer,
 }
 
 // cdpCommandTimedOut is agent-browser's answer to a CDP command past its
@@ -633,6 +645,9 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 	if !done && runErr == nil {
 		populateBrowserBatchOutputs(result, wantScreenshot, screenshotPath)
 	}
+	if result.Message == "" {
+		result.Message = pageVerdict(result.Steps, timeout)
+	}
 	omitScreenshotTempPath(result, screenshotPath)
 	evalValuesAsText(result.Steps)
 	// The refused commands come first: they were turned away before the walk.
@@ -665,6 +680,35 @@ func omitScreenshotTempPath(result *BrowserBatchResult, path string) {
 		}
 	}
 	result.Message = strings.ReplaceAll(result.Message, path, said)
+}
+
+// browserHTTPStatus finds the status a server-error step names.
+var browserHTTPStatus = regexp.MustCompile(`HTTP (\d{3})`)
+
+// pageVerdict says what a walk found of the page itself when it was no wedge:
+// a slow page (its time to first byte, and that the walk went on within
+// timeout) or a page whose server answered 5xx (what did not run, and where
+// to look). "" otherwise.
+func pageVerdict(steps []BrowserStepResult, timeout time.Duration) string {
+	for _, s := range steps {
+		if s.Error == nil {
+			continue
+		}
+		switch s.ErrorKind {
+		case ErrorKindServerError:
+			status := "5xx"
+			if m := browserHTTPStatus.FindStringSubmatch(*s.Error); m != nil {
+				status = m[1]
+			}
+			return fmt.Sprintf("The page answered HTTP %s, a server error: the commands after it did not run; its screenshot, errors, console and network requests did. "+
+				"Read the server's logs (zerops_logs, or zerops_dev_server action=logs hostname=\"<service>\" for a dev server), fix it, then call again.", status)
+		case ErrorKindSlowPage:
+			_, note, _ := strings.Cut(*s.Error, browserSlowPageMarker)
+			return fmt.Sprintf("The page was slow, not Chrome: %s. The walk went on within timeoutSeconds (%d s); raise it for a page this slow, or call again once the server has warmed up.",
+				strings.TrimSpace(note), int(timeout.Seconds()))
+		}
+	}
+	return ""
 }
 
 // classifyRunResult inspects one walk's raw outcome and mutates result
@@ -838,11 +882,12 @@ func cutScreenshot(shot *BrowserScreenshotResult) error {
 // scanStepsForCDPWedge returns the first matching signal substring and
 // true if any step's error field contains one of the CDP-wedge markers
 // in cdpWedgeSignals. The "" sentinel in the return means "no match". An
-// eval the walk found hung on a live page (ErrorKindScriptTimeout) is no
-// wedge.
+// eval the walk found hung on a live page (ErrorKindScriptTimeout), a slow
+// page (ErrorKindSlowPage) and a server-error page (ErrorKindServerError)
+// are no wedge.
 func scanStepsForCDPWedge(steps []BrowserStepResult) (string, bool) {
 	for _, s := range steps {
-		if s.Error == nil || s.ErrorKind == ErrorKindScriptTimeout {
+		if s.Error == nil || s.ErrorKind == ErrorKindScriptTimeout || s.ErrorKind == ErrorKindSlowPage || s.ErrorKind == ErrorKindServerError {
 			continue
 		}
 		msg := *s.Error

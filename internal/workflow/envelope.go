@@ -297,6 +297,13 @@ type ServiceSnapshot struct {
 	// false when not read.
 	DeclaresBase bool `json:"-"`
 
+	// HasZeropsYAML is true when the repository this service deploys from
+	// already carries its zerops.yaml (ops.PartsSignal.ConfigFile, read on the
+	// dev half and carried to each stage of its pair). Read by the
+	// `zeropsYaml:` atom axis: a first deploy of such a repo scaffolds no
+	// zerops.yaml and writes no app. Off the wire; false when not read.
+	HasZeropsYAML bool `json:"-"`
+
 	// Repo is the live repo state for this service (docs/spec-workflows.md
 	// §8 GLC-7, G1/G2) — nil for managed/unknown-class services (they never
 	// carry a working tree) and for any runtime service ApplyRepoStatus

@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptrace"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -220,10 +223,23 @@ func runBrowserSteps(ctx context.Context, steps [][]string, run browserStepExec)
 	stderr := &capBuffer{cap: browserOutputCap}
 	truncated := false
 	var walkErr error
+	var page browserPage
+walk:
 	for _, step := range steps {
 		if err := ctx.Err(); err != nil {
 			walkErr = err
 			break
+		}
+		// A page whose server answered 5xx runs none of the caller's
+		// commands: each would wait or fail on the error page. The
+		// screenshot and the canned tail still run, to show it.
+		if page.serverStatus >= 500 && !isReportingCommand(step) {
+			msg := page.notRun()
+			results = append(results, BrowserStepResult{Command: step, Error: &msg, ErrorKind: ErrorKindServerError})
+			continue
+		}
+		if isCommand(step, browserCmdOpen) && len(step) > 1 {
+			page.url = step[1]
 		}
 		out, serr, runErr := run(ctx, step)
 		_, _ = stderr.Write([]byte(serr))
@@ -250,13 +266,24 @@ func runBrowserSteps(ctx context.Context, steps [][]string, run browserStepExec)
 			answer.Data = nil
 		}
 		results = append(results, BrowserStepResult{Command: step, Success: answer.Success, Result: withoutLifecycle(answer.Data), Error: answer.Error})
+		last := &results[len(results)-1]
 		// A wedged page would make every later step wait out the same CDP
-		// timeout; the browser is recycled for it anyway.
+		// timeout; the browser is recycled for it anyway. An eval whose
+		// script hung on a live page, or a step the daemon did not answer
+		// while the page's server does, is no wedge: the walk goes on.
 		if _, wedged := scanStepsForCDPWedge(results[len(results)-1:]); wedged {
-			if !evalOnLivePage(ctx, results[len(results)-1], run) {
-				break
+			switch {
+			case evalOnLivePage(ctx, *last, run):
+				last.ErrorKind = ErrorKindScriptTimeout
+			case page.answeredSlowly(ctx, last):
+			default:
+				break walk
 			}
-			results[len(results)-1].ErrorKind = ErrorKindScriptTimeout
+		}
+		// The document's own status, read once the page painted (or gave up
+		// painting): a 5xx page ends the caller's commands here.
+		if slices.Equal(step, browserPaintWait) && page.serverStatus == 0 {
+			page.serverStatus = documentStatus(ctx, run)
 		}
 	}
 	out, err := json.Marshal(results)
@@ -264,6 +291,145 @@ func runBrowserSteps(ctx context.Context, steps [][]string, run browserStepExec)
 		return "", stderr.String(), truncated, fmt.Errorf("marshal steps: %w", err)
 	}
 	return string(out), stderr.String(), truncated || stderr.truncated, walkErr
+}
+
+// browserNoAnswer is agent-browser's word for a step the daemon took and did
+// not answer within its client's own wait (at least 30 s): the step may still
+// be running — an open of a page whose server is slow.
+const browserNoAnswer = "no response came back"
+
+// browserPageProbeTimeout bounds the plain request a walk sends a page whose
+// open got no answer.
+const browserPageProbeTimeout = 30 * time.Second
+
+// browserDocumentStatusProbe reads the HTTP status of the page's own document
+// from the navigation timing entry (0 when the browser has none). It is no
+// step of the walk.
+var browserDocumentStatusProbe = []string{browserCmdEval, "(performance.getEntriesByType('navigation')[0]||{}).responseStatus||0"}
+
+// browserPage is what a walk learned of the page it opened: its URL, whether
+// its open went unanswered while its server answered (slow), and the HTTP
+// status its server answered (0 while unknown).
+type browserPage struct {
+	url          string
+	slow         bool
+	serverStatus int
+}
+
+// answeredSlowly stamps a step the daemon did not answer, and reports whether
+// the walk goes on. The page's open is checked with one plain request to its
+// URL: a server that answers makes the open slow-page, naming its time to
+// first byte — the page is slow, not Chrome, and the walk goes on within the
+// call's own timeout, so the caller's waits give it its time — or
+// server-error when it answered 5xx. A later step the daemon does not answer
+// on a slow page is slow-page too. Anything else stays a wedge.
+func (p *browserPage) answeredSlowly(ctx context.Context, step *BrowserStepResult) bool {
+	if step.Error == nil || !strings.Contains(*step.Error, browserNoAnswer) {
+		return false
+	}
+	if !isCommand(step.Command, browserCmdOpen) {
+		if !p.slow {
+			return false
+		}
+		step.ErrorKind = ErrorKindSlowPage
+		*step.Error += "; slow page: it is still loading"
+		return true
+	}
+	pctx, cancel := context.WithTimeout(ctx, browserPageProbeTimeout)
+	defer cancel()
+	status, firstByte, err := browserPageProbe(pctx, p.url)
+	if err != nil || status <= 0 {
+		return false
+	}
+	note := fmt.Sprintf("a plain request to it got its first byte after %s (HTTP %d)", firstByte.Round(100*time.Millisecond), status)
+	if status >= 500 {
+		p.serverStatus = status
+		step.ErrorKind = ErrorKindServerError
+		*step.Error += "; server error: " + note
+		return true
+	}
+	p.slow = true
+	step.ErrorKind = ErrorKindSlowPage
+	*step.Error += "; " + browserSlowPageMarker + note
+	return true
+}
+
+// browserSlowPageMarker heads the note a slow-page open's error carries.
+const browserSlowPageMarker = "slow page: "
+
+// notRun is the error of a caller's command a server-error page did not run.
+func (p *browserPage) notRun() string {
+	return fmt.Sprintf("not run: the page answered HTTP %d, a server error", p.serverStatus)
+}
+
+// isReportingCommand reports whether a step only reports on the page — the
+// screenshot and the canned tail — and so runs on a server-error page too.
+func isReportingCommand(cmd []string) bool {
+	return isCommand(cmd, browserCmdScreenshot) || isCommand(cmd, browserCmdErrors) ||
+		isCommand(cmd, browserCmdConsole) || isCommand(cmd, browserCmdNetwork)
+}
+
+// documentStatus is the page document's HTTP status as the browser got it
+// (browserDocumentStatusProbe, bounded by browserLivenessTimeout); 0 when it
+// cannot tell.
+func documentStatus(ctx context.Context, run browserStepExec) int {
+	pctx, cancel := context.WithTimeout(ctx, browserLivenessTimeout)
+	defer cancel()
+	out, _, err := run(pctx, browserDocumentStatusProbe)
+	if err != nil {
+		return 0
+	}
+	var answer struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Result json.Number `json:"result"`
+		} `json:"data"`
+	}
+	if json.Unmarshal([]byte(strings.TrimSpace(out)), &answer) != nil || !answer.Success {
+		return 0
+	}
+	status, err := answer.Data.Result.Int64()
+	if err != nil {
+		return 0
+	}
+	return int(status)
+}
+
+// browserPageProbe sends a page's server one plain request and answers its
+// status and time to first byte. Tests override it
+// (OverrideBrowserPageProbeForTest).
+var browserPageProbe = httpPageProbe
+
+// OverrideBrowserPageProbeForTest replaces the plain request a walk sends a
+// page whose open got no answer. Returns restore.
+func OverrideBrowserPageProbeForTest(fn func(ctx context.Context, url string) (int, time.Duration, error)) func() {
+	old := browserPageProbe
+	browserPageProbe = fn
+	return func() { browserPageProbe = old }
+}
+
+// httpPageProbe GETs an http(s) url and answers the status and the time to
+// the response's first byte; the body is never read.
+func httpPageProbe(ctx context.Context, url string) (int, time.Duration, error) {
+	if !strings.HasPrefix(url, "https://") && !strings.HasPrefix(url, "http://") {
+		return 0, 0, fmt.Errorf("probe page: %q is no http(s) URL", url)
+	}
+	start := time.Now()
+	var firstByte time.Duration
+	trace := &httptrace.ClientTrace{GotFirstResponseByte: func() { firstByte = time.Since(start) }}
+	req, err := http.NewRequestWithContext(httptrace.WithClientTrace(ctx, trace), http.MethodGet, url, nil)
+	if err != nil {
+		return 0, 0, fmt.Errorf("probe page: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, 0, fmt.Errorf("probe page: %w", err)
+	}
+	_ = resp.Body.Close()
+	if firstByte == 0 {
+		firstByte = time.Since(start)
+	}
+	return resp.StatusCode, firstByte, nil
 }
 
 // withoutLifecycle drops the lifecycle agent-browser adds to every answer. It

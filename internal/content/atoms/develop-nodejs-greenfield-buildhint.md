@@ -5,6 +5,7 @@ phases: [develop-active]
 runtimeBases: [nodejs]
 deployStates: [never-deployed]
 multiService: aggregate
+zeropsYaml: [absent]
 title: "Node.js greenfield — use npm install, not npm ci"
 references-fields: [workflow.ServiceSnapshot.TypeVersion]
 ---

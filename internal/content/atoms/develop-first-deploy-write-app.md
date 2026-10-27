@@ -5,6 +5,7 @@ phases: [develop-active]
 runtimes: [dynamic, implicit-webserver]
 environments: [container]
 envelopeDeployStates: [never-deployed]
+zeropsYaml: [absent]
 title: "Write the application code"
 references-fields: []
 ---

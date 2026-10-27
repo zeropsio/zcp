@@ -186,6 +186,40 @@ func TestDeriveProdSetupBlock_DropsMatesFramingAllowance(t *testing.T) {
 			absent: []string{"mate.zerops.io", "*.zerops.app"},
 		},
 		{
+			// Mate names its exact origins now — its hosted client and the
+			// container's own subdomain — and production keeps neither.
+			name: "Mate's exact origins leave a static header",
+			source: `zerops:
+  - setup: stage
+    build:
+      base: nodejs@22
+    run:
+      base: static
+      routing:
+        headers:
+          - for: "/*"
+            values:
+              Content-Security-Policy: '"frame-ancestors ''self'' https://mate.zerops.io https://zcp-1df2-8080.prg1.zerops.app" always'
+`,
+			want:   []string{`"frame-ancestors 'self'" always`},
+			absent: []string{"mate.zerops.io", "zcp-1df2-8080"},
+		},
+		{
+			name: "Mate's exact origins leave a variable the app reads",
+			source: `zerops:
+  - setup: dev
+    build:
+      base: nodejs@22
+    run:
+      base: nodejs@22
+      start: zsc noop --silent
+      envVariables:
+        FRAME_ANCESTORS: "'self' https://mate.zerops.io https://zcp-1df2-8080.prg1.zerops.app"
+`,
+			want:   []string{"'self'"},
+			absent: []string{"mate.zerops.io", "zcp-1df2-8080"},
+		},
+		{
 			// An app that talks to Mate names its address in a setting; only
 			// Mate's origin set — its hosted origin beside its zerops.app
 			// wildcard — is a frame source list outside frame-ancestors.

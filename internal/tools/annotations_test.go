@@ -213,7 +213,7 @@ func TestAnnotations_DescriptionWordCount(t *testing.T) {
 	untrimmedTools := map[string]string{
 		"zerops_workflow":           "~210 words — orchestration tool spans five workflows + three deploy-axis actions + multi-language trigger phrases for natural-language routing of launch-production (Czech + English); trim path is to move per-workflow blurbs + trigger-phrase tables into an atom-corpus discoverability surface so the description holds just the tool's contract",
 		"zerops_dev_server":         "173 words — explains the historical hand-rolled pattern this tool replaces + the reason-code taxonomy; substantial rewrite needed to keep load-bearing parts under 60",
-		"zerops_deploy_batch":       "68 words — borderline; one-pass copy edit",
+		"zerops_deploy_batch":       "94 words — the parallelism contract, failure semantics and when to batch; trim by moving the STDIO-penalty history to the spec",
 		"zerops_record_fact":        "81 words — explains workflow integration semantics; trim by moving workflow context to atom corpus",
 		"zerops_preprocess":         "88 words — explains motivation + invariants; trim by referencing spec instead of restating",
 		"zerops_workspace_manifest": "66 words — borderline; one-pass copy edit",
@@ -782,5 +782,35 @@ func TestAnnotations_DeployBatchSaysTheStagesOfOneDevServiceBuildInParallel(t *t
 	}
 	if strings.Contains(tool.Description, "3-deploy cluster") {
 		t.Errorf("description = %q, still speaks of 3-deploy clusters", tool.Description)
+	}
+}
+
+// TestAnnotations_DeployBatchTargetsNameACommit pins that a batch target takes
+// a sha as zerops_deploy does — so one call can put main on every stage — and
+// that zerops_deploy points several deploys at the batch instead of telling
+// the agent to serialize them.
+func TestAnnotations_DeployBatchTargetsNameACommit(t *testing.T) {
+	t.Chdir(t.TempDir())
+	tools := listAllTools(t, runtime.Info{InContainer: true})
+	batch := tools["zerops_deploy_batch"]
+	if batch == nil {
+		t.Fatal("zerops_deploy_batch should be registered in a container")
+	}
+	schema, err := json.Marshal(batch.InputSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(schema), `"sha"`) || !strings.Contains(string(schema), "origin/main") {
+		t.Errorf("batch targets take no sha: %s", schema)
+	}
+	deploy := tools["zerops_deploy"]
+	if deploy == nil {
+		t.Fatal("zerops_deploy should be registered in a container")
+	}
+	if strings.Contains(deploy.Description, "serialize deploys") {
+		t.Errorf("zerops_deploy still tells the agent to serialize deploys: %q", deploy.Description)
+	}
+	if !strings.Contains(deploy.Description, "zerops_deploy_batch") {
+		t.Errorf("zerops_deploy does not point several deploys at zerops_deploy_batch: %q", deploy.Description)
 	}
 }

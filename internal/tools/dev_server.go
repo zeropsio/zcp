@@ -72,7 +72,7 @@ func devServerInputSchema() *jsonschema.Schema {
 		},
 		"logLines": {
 			Type:        "integer",
-			Description: "Number of log lines to tail for the logs action. Default 40, max 500.",
+			Description: "Number of log lines to tail for the logs action, as plain text (colour codes taken out). Default 20, max 500.",
 		},
 		"workDir": {
 			Type:        "string",

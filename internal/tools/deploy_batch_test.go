@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -280,4 +281,64 @@ func TestDeployBatch_Deployed_NoTagOperations(t *testing.T) {
 		}
 	}
 	assertNoDeployTagOperations(t, ssh.calls)
+}
+
+// TestDeployBatch_TargetSHA_DeploysThatCommit pins a batch target's sha: the
+// entry deploys that commit of its source exactly, as zerops_deploy's sha
+// does, while an entry without one ships the working tree. On 2026-10-27 a
+// five-stage batch meant to put main on the stages shipped each lease's
+// branch instead, because a batch could not name a commit, and every stage
+// was then redeployed alone with sha="origin/main".
+func TestDeployBatch_TargetSHA_DeploysThatCommit(t *testing.T) {
+	t.Parallel()
+
+	const mainSHA = "0a1b2c3d4e5f60718293"
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-api-src", Name: "apidev"},
+			{ID: "svc-app-src", Name: "appdev"},
+			{ID: "svc-api-tgt", Name: "apistage"},
+			{ID: "svc-app-tgt", Name: "appstage"},
+		}).
+		WithAppVersionEvents([]platform.AppVersionEvent{
+			{ID: "av-api", ServiceStackID: "svc-api-tgt", Status: statusActive, Sequence: 1},
+			{ID: "av-app", ServiceStackID: "svc-app-tgt", Status: statusActive, Sequence: 1},
+		})
+	ssh := &stubSSHSHA{sha: mainSHA, tmp: "/tmp/zcp-extract-7", headSHA: "f00dbeef1234567"}
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeployBatch(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{InContainer: true}, "", testDeployEngine(t), nil, DevsupSource{})
+
+	result := callTool(t, srv, "zerops_deploy_batch", map[string]any{
+		"targets": []map[string]any{
+			{"sourceService": "apidev", "targetService": "apistage", "setup": "prod", "sha": "origin/main"},
+			{"sourceService": "appdev", "targetService": "appstage", "setup": "prod"},
+		},
+	})
+	if result.IsError {
+		t.Fatalf("tool returned error: %s", getTextContent(t, result))
+	}
+	var batch ops.DeployBatchResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &batch); err != nil {
+		t.Fatalf("parse batch result: %v", err)
+	}
+	if batch.Succeeded != 2 {
+		t.Fatalf("expected two successful deploys, got %+v", batch)
+	}
+	want := map[string]string{"apistage": mainSHA, "appstage": ssh.headSHA}
+	for _, entry := range batch.Entries {
+		if entry.Result == nil || entry.Result.SHA != want[entry.Target.TargetService] {
+			t.Errorf("%s shipped %+v, want commit %s", entry.Target.TargetService, entry.Result, want[entry.Target.TargetService])
+		}
+	}
+	resolved := false
+	for _, call := range ssh.calls {
+		if strings.Contains(call, "rev-parse --verify") && strings.Contains(call, "origin/main^{commit}") {
+			resolved = true
+		}
+	}
+	if !resolved {
+		t.Errorf("the target's sha was never resolved in its source; calls: %v", ssh.calls)
+	}
 }

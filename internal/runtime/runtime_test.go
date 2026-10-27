@@ -191,3 +191,45 @@ func TestDetectFrom_ReadsOnlyTheGivenEnvironment(t *testing.T) {
 		})
 	}
 }
+
+// TestDetectFrom_SubdomainOrigin pins the origin of the container's own
+// zerops.app subdomain: scheme and host of the Zerops-injected
+// zeropsSubdomain, the origin Mate's container client is served from. It is
+// read only in a container, and a value that is no http(s) URL names none.
+func TestDetectFrom_SubdomainOrigin(t *testing.T) {
+	tests := []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{
+			name: "a service URL",
+			env:  map[string]string{"serviceId": "svc1", "zeropsSubdomain": "https://zcp-1df2-8080.prg1.zerops.app"},
+			want: "https://zcp-1df2-8080.prg1.zerops.app",
+		},
+		{
+			name: "a trailing path and spaces are no part of the origin",
+			env:  map[string]string{"serviceId": "svc1", "zeropsSubdomain": " https://zcp-1df2-8080.app-tatami.zerops.dev/mate/ "},
+			want: "https://zcp-1df2-8080.app-tatami.zerops.dev",
+		},
+		{
+			name: "no subdomain",
+			env:  map[string]string{"serviceId": "svc1"},
+		},
+		{
+			name: "not a URL",
+			env:  map[string]string{"serviceId": "svc1", "zeropsSubdomain": "zcp-1df2-8080.prg1.zerops.app"},
+		},
+		{
+			name: "outside a container",
+			env:  map[string]string{"zeropsSubdomain": "https://zcp-1df2-8080.prg1.zerops.app"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := DetectFrom(func(key string) string { return tt.env[key] }).SubdomainOrigin; got != tt.want {
+				t.Errorf("SubdomainOrigin = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

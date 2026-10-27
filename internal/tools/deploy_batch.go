@@ -25,7 +25,7 @@ import (
 // fix) still use zerops_deploy directly — batch is only worth the overhead at
 // two-plus targets.
 type DeployBatchInput struct {
-	Targets []ops.DeployBatchTarget `json:"targets" jsonschema:"required,Array of deploy targets. Each target is one sourceService+targetService+setup combination. Minimum 1; recommend 2-3 for parallelism gains. Values beyond 5 may hit build-queue limits and fall back to serial scheduling on the platform side."`
+	Targets []ops.DeployBatchTarget `json:"targets" jsonschema:"Deploy targets, one per sourceService+targetService+setup, each with an optional sha. Minimum 1; beyond 5 the platform may queue builds serially."`
 }
 
 // RegisterDeployBatch registers the zerops_deploy_batch MCP tool for SSH
@@ -53,7 +53,7 @@ func RegisterDeployBatch(
 	vouch := deployConfigOf(opts).leaseVouch(client, projectID, stateDir)
 	desc := "Deploy multiple services in parallel — single MCP call kicks off N builds server-side. " +
 		"Closes the MCP STDIO serialization penalty (calling zerops_deploy multiple times in parallel returns 'Not connected'). " +
-		"Use whenever two or more deploys go together: every stage of a pair in one call (stages fed from one dev service build in parallel), several dev services, a close redeploy. " +
+		"Use whenever two or more deploys go together: every stage of a pair in one call (stages fed from one dev service build in parallel), several dev services, a close redeploy, main onto stages (sha per target). " +
 		"Per-target failures do NOT cancel siblings — each target runs to completion independently. " +
 		"Response aggregates per-target results so you can apply targeted fixes without rolling back the cluster."
 

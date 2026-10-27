@@ -204,6 +204,8 @@ func bootstrapResult(
 	projectID string,
 	rt runtime.Info,
 ) *mcp.CallToolResult {
+	// A Mate's classic discover says the pair rule up front (hq_pair.go).
+	appendHQPairDiscoverNote(resp, engine, rt.MateEnabled)
 	return jsonResult(bootstrapResponse{
 		BootstrapResponse: resp,
 		Envelope:          freshEnvelope(ctx, engine.StateDir(), client, projectID, rt),

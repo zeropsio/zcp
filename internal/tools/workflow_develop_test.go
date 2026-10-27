@@ -1096,3 +1096,48 @@ func TestHandleDevelopBriefing_MateStandUp_LeavesTheStageOut(t *testing.T) {
 		})
 	}
 }
+
+// TestHandleDevelopBriefing_ManyPairs_StaysUnderTheMCPCap pins that develop's
+// start keeps its guidance under the composer's budget, its per-service lines
+// counted, as action="status" does: on 2026-10-27 starts of 38–55 KB went
+// past the client's display limit, one read back from a file. Nine
+// never-deployed Node.js pairs render under the 32 KB tool-response cap.
+func TestHandleDevelopBriefing_ManyPairs_StaysUnderTheMCPCap(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	engine := workflow.NewEngine(dir, workflow.EnvContainer, nil)
+	parts := []string{"api", "web", "admin", "worker", "docs", "geo", "edge", "mail", "search"}
+	services := make([]platform.ServiceStack, 0, 2*len(parts))
+	scope := make([]string, 0, len(parts))
+	for _, part := range parts {
+		dev, stage := part+"dev", part+"stage"
+		if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+			Hostname: dev, Mode: topology.PlanModeStandard, Stages: []topology.StageRef{{Hostname: stage}},
+			BootstrapSession: "sess1", BootstrappedAt: "2026-10-27",
+		}); err != nil {
+			t.Fatalf("WriteServiceMeta: %v", err)
+		}
+		for _, h := range []string{dev, stage} {
+			services = append(services, platform.ServiceStack{ID: "svc-" + h, Name: h,
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "ubuntu/nodejs@24"}})
+		}
+		scope = append(scope, dev)
+	}
+	result, _, err := handleDevelopBriefing(context.Background(), engine, platform.NewMock().WithServices(services), "proj1",
+		WorkflowInput{Intent: "first deploy of every part", Scope: scope}, runtime.Info{InContainer: true}, nil)
+	if err != nil {
+		t.Fatalf("handleDevelopBriefing: %v", err)
+	}
+	t.Cleanup(func() { _ = workflow.DeleteWorkSession(dir, os.Getpid()) })
+	text := extractText(result)
+	if result.IsError {
+		t.Fatalf("unexpected tool error: %s", text)
+	}
+	if len(text) >= 32*1024 {
+		t.Errorf("develop start is %d B, over the 32 KB MCP cap", len(text))
+	}
+	if !strings.Contains(text, "You're in the develop first-deploy branch") {
+		t.Errorf("the first-deploy framing atom must stay whole:\n%s", text[:min(len(text), 2000)])
+	}
+}

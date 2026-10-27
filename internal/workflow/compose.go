@@ -14,6 +14,27 @@ import (
 // gracefully rather than truncated by the transport.
 const ComposeBodyBudget = 24 * 1024
 
+// envelopeBlockBaseline is the envelope block a small project's answer
+// carries — four services and a work session, ~1.7 KB (docs/spec-mate.md
+// §1.5) — which the headroom between ComposeBodyBudget and the 32 KB cap
+// already holds. The block's bytes beyond it grow with the project's services.
+const envelopeBlockBaseline = 2 * 1024
+
+// GuidanceBudget is the bytes the synthesized guidance of a status render of
+// env may take: ComposeBodyBudget less what the project's services cost the
+// rest of the answer — the per-service and lease lines RenderStatus writes
+// above the guidance, and the envelope block's per-service entries beyond a
+// small project's (envelopeBlockBaseline). A project of many services leaves
+// its guidance less room and the answer keeps within the cap (2026-10-27: a
+// nineteen-service project's develop start ran to 55 KB). Never below zero.
+func GuidanceBudget(env StateEnvelope) int {
+	var lines strings.Builder
+	renderServices(&lines, env)
+	renderLeases(&lines, env)
+	perService := lines.Len() + max(len(AppendEnvelope("", env))-envelopeBlockBaseline, 0)
+	return max(ComposeBodyBudget-perService, 0)
+}
+
 // ComposeUnderBudget keeps the rendered matched set within budget bytes by
 // demoting the lowest-relevance atoms to a one-line head — the structural owner
 // of "the payload never exceeds the cap by demotion, not by adding an axis"
