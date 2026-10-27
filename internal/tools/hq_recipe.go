@@ -137,11 +137,31 @@ func reconcileGroupRecipe(
 // agent's ask still propose it.
 func GroupRecipeAtStart(ctx context.Context, client platform.Client, httpClient ops.HTTPDoer, rt runtime.Info, stateDir string) string {
 	if hqc, linked := openHQ(httpClient, rt); linked {
-		if state, err := hqc.Self(ctx); err == nil && recipeDeclined(state, hq.RecipeProposalTitle) {
+		if state, err := hqc.Self(ctx); err == nil && recipeDeclinedAtStart(ctx, hqc, state) {
 			return ""
 		}
 	}
 	return reconcileGroupRecipe(ctx, client, httpClient, rt, stateDir)
+}
+
+// recipeDeclinedAtStart is recipeDeclined before the start's pass composes
+// anything: main of the recipe repository is fetched only for a closed
+// proposal a merge came before, the one case git has to tell. A main that
+// cannot be read leaves the close a decline.
+func recipeDeclinedAtStart(ctx context.Context, hqc hq.Client, state hq.MateState) bool {
+	closed := recipeClosedProposal(state, hq.RecipeProposalTitle)
+	switch {
+	case closed == nil:
+		return false
+	case state.AppID == nil || len(recipeEarlierMerges(state, *closed)) == 0:
+		return true
+	}
+	scratch, main, _, err := openRecipeMain(ctx, hqc, *state.AppID)
+	if err != nil {
+		return true
+	}
+	defer scratch.Close()
+	return recipeDeclined(ctx, hqc, scratch, main, state, hq.RecipeProposalTitle)
 }
 
 // groupRecipeOutcome is the reconcile itself. Split from the reporter so the
@@ -182,7 +202,7 @@ func groupRecipeOutcome(
 			// propose anew follows once main has every tier — unless a
 			// person closed such a proposal unmerged and no recipe change
 			// of this Mate's merged since.
-			if len(missing) == 0 && !recipeDeclined(comp.state, hq.RecipeProposalTitle) {
+			if len(missing) == 0 && !recipeDeclined(ctx, comp.hqc, comp.scratch, comp.main, comp.state, hq.RecipeProposalTitle) {
 				var err error
 				if replaced, err = recipeReplacements(ctx, comp); err != nil {
 					return nil, err

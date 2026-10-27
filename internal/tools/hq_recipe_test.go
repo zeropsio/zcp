@@ -7,6 +7,9 @@ package tools
 import (
 	"fmt"
 	"maps"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -310,6 +313,27 @@ func (f *fakeHQ) racedRecipeDuplicate(number int, tree string) {
 	f.writeRefs()
 }
 
+// recipeTreeWith is base's tree in the recipe repository with body written
+// over path.
+func (f *fakeHQ) recipeTreeWith(base, path, body string) string {
+	f.t.Helper()
+	index := filepath.Join(f.t.TempDir(), "index")
+	git := func(stdin string, args ...string) string {
+		cmd := exec.CommandContext(f.t.Context(), "git", append([]string{"-C", f.repoDir(labApp, hq.RecipeRepo)}, args...)...) //nolint:gosec // G204: a test's own git
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_INDEX_FILE="+index)
+		cmd.Stdin = strings.NewReader(stdin)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			f.t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git("", "read-tree", base)
+	blob := git(body, "hash-object", "-w", "--stdin")
+	git("", "update-index", "--add", "--cacheinfo", "100644,"+blob+","+path)
+	return git("", "write-tree")
+}
+
 // TestGroupRecipeAtStart_RacedDuplicateClosed_IsNoDecline: a recipe change
 // two passes at once left beside the first — composed against a main from
 // before the first landed — is a duplicate the first's merge superseded.
@@ -327,9 +351,11 @@ func TestGroupRecipeAtStart_RacedDuplicateClosed_IsNoDecline(t *testing.T) {
 		wantOpen int // the change the start pass leaves open, 0 for none
 	}{
 		{
+			// Composed a moment apart, the duplicate need not hold what
+			// landed: its README differs.
 			name: "a person closed the raced duplicate",
 			settle: func(lab *hqLab, tree string) {
-				lab.hq.racedRecipeDuplicate(2, tree)
+				lab.hq.racedRecipeDuplicate(2, lab.hq.recipeTreeWith(tree, "README.md", "# composed a moment apart\n"))
 				lab.hq.closeChange(hq.RecipeRepo, 2)
 			},
 			wantOpen: 3,

@@ -62,25 +62,98 @@ func planRecipeManaged(ctx context.Context, comp groupRecipeComposition, host st
 
 // recipeDeclined reports whether a person declined the proposal titled
 // title: the Mate's latest change of that title in the recipe repository
-// was closed without merging, and none of the Mate's changes there merged
-// after it. A later merge — a tier added, another service carried — changes
-// main, and what the proposal would be is worth asking about again.
-func recipeDeclined(state hq.MateState, title string) bool {
-	declined := 0
-	for _, c := range state.Changes {
-		if c.Repo == hq.RecipeRepo && c.Title != nil && *c.Title == title && c.Number > declined {
-			if c.State != hq.ChangeClosed {
-				return false
-			}
-			declined = c.Number
-		}
-	}
-	if declined == 0 {
+// was closed without merging, none of the Mate's changes there merged after
+// it (recipeClosedProposal), and no merge before it superseded it
+// (recipeSuperseded). A later merge — a tier added, another service carried
+// — changes main, and what the proposal would be is worth asking about
+// again. scratch holds main of the recipe repository at main; the closed
+// change's branch is read into it only when a merge came before it.
+func recipeDeclined(ctx context.Context, hqc hq.Client, scratch *hq.Scratch, main string, state hq.MateState, title string) bool {
+	closed := recipeClosedProposal(state, title)
+	if closed == nil {
 		return false
 	}
-	return !slices.ContainsFunc(state.Changes, func(c hq.MateChange) bool {
-		return c.Repo == hq.RecipeRepo && c.State == hq.ChangeMerged && c.Number > declined
-	})
+	earlier := recipeEarlierMerges(state, *closed)
+	return len(earlier) == 0 || !recipeSuperseded(ctx, hqc, scratch, main, *closed, earlier)
+}
+
+// recipeClosedProposal is the Mate's latest change titled title in the
+// recipe repository when it was closed without merging and none of the
+// Mate's changes there merged after it; nil otherwise.
+func recipeClosedProposal(state hq.MateState, title string) *hq.MateChange {
+	var latest *hq.MateChange
+	for i := range state.Changes {
+		if c := &state.Changes[i]; c.Repo == hq.RecipeRepo && c.Title != nil && *c.Title == title && (latest == nil || c.Number > latest.Number) {
+			latest = c
+		}
+	}
+	if latest == nil || latest.State != hq.ChangeClosed || slices.ContainsFunc(state.Changes, func(c hq.MateChange) bool {
+		return c.Repo == hq.RecipeRepo && c.State == hq.ChangeMerged && c.Number > latest.Number
+	}) {
+		return nil
+	}
+	return latest
+}
+
+// recipeEarlierMerges are the Mate's changes in the recipe repository that
+// were opened before closed — HQ numbers a repository's changes as they open
+// — and merged, each naming the commit its landing left on main.
+func recipeEarlierMerges(state hq.MateState, closed hq.MateChange) []hq.MateChange {
+	var merged []hq.MateChange
+	for _, c := range state.Changes {
+		if c.Repo == hq.RecipeRepo && c.State == hq.ChangeMerged && c.Number < closed.Number && c.MergedSha != nil {
+			merged = append(merged, c)
+		}
+	}
+	return merged
+}
+
+// recipeSuperseded reports whether a merge in earlier superseded closed, a
+// duplicate of it rather than a proposal a person turned down: closed was
+// composed against a main from before that merge landed — the commit the
+// landing left on main is not in closed's history, as with the second of two
+// passes at once — or closed holds nothing main lacks, as once a pass
+// brought such a duplicate to main's tree and Core closed it empty. The
+// Mate's state names no time a settled change opened, merged or closed, so
+// git tells. Whatever git cannot tell — a branch HQ no longer has, an HQ
+// that does not answer — leaves the close a decline.
+func recipeSuperseded(ctx context.Context, hqc hq.Client, scratch *hq.Scratch, main string, closed hq.MateChange, earlier []hq.MateChange) bool {
+	if closed.Head == nil || scratch == nil {
+		return false
+	}
+	if _, found, err := scratch.Fetch(ctx, hqc.BranchOf(closed.Number, closed.Branch)); err != nil || !found {
+		return false
+	}
+	head := *closed.Head
+	for _, merged := range earlier {
+		if landed, err := scratch.IsAncestor(ctx, *merged.MergedSha, head); err == nil && !landed {
+			return true
+		}
+	}
+	return recipeCarriedByMain(ctx, scratch, main, head)
+}
+
+// recipeCarriedByMain reports whether main holds every file rev holds, as
+// rev holds it; false when git cannot tell.
+func recipeCarriedByMain(ctx context.Context, scratch *hq.Scratch, main, rev string) bool {
+	paths, err := scratch.Paths(ctx, rev)
+	if err != nil {
+		return false
+	}
+	files := make(map[string]string, len(paths))
+	for _, path := range paths {
+		body, found, err := scratch.File(ctx, rev, path)
+		if err != nil || !found {
+			return false
+		}
+		files[path] = body
+	}
+	with, err := scratch.TreeWith(ctx, main, files)
+	if err != nil {
+		return false
+	}
+	mainTree, err := scratch.Tree(ctx, main)
+	return err == nil && with == mainTree
 }
 
 // recipeManagedSteer is what the reconcile says when tiers on main lack a
@@ -109,7 +182,7 @@ func recipeManagedSteer(ctx context.Context, comp groupRecipeComposition) (strin
 		}
 		title := recipeServiceTitle(m.Hostname)
 		edits := serviceTierEdits(tiers)
-		if len(edits) == 0 || open != nil && open.Title != nil && *open.Title == title || recipeDeclined(comp.state, title) {
+		if len(edits) == 0 || open != nil && open.Title != nil && *open.Title == title || recipeDeclined(ctx, comp.hqc, comp.scratch, comp.main, comp.state, title) {
 			continue
 		}
 		calls = append(calls, fmt.Sprintf("zerops_workflow action=\"group-recipe\" service=%q (%s)", m.Hostname, strings.Join(edits, "; ")))
