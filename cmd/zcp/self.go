@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -24,7 +25,8 @@ import (
 // restart stops this container, this process with it. It reads no stdin and
 // writes its one answer to stdout: under --json `{"processId":"…"}` with exit
 // 0, else `{"error":"…"}` with exit 1 — one line the Mate shows a person as
-// the reason.
+// the reason — plus `"refused":true` when the restart certainly did not
+// happen (definiteRefusal), so the Mate need not wait out its grace.
 
 const selfUsage = "usage: zcp self restart [--json]"
 
@@ -37,11 +39,13 @@ type serviceRestarter interface {
 }
 
 // selfRestartAnswer is `zcp self restart`'s answer: the process of the
-// restart the platform accepted, or, when Error is set, why there is none.
-// Exactly one of the two is written (printSelfRestart).
+// restart the platform accepted, or, when Error is set, why there is none —
+// Refused when it certainly did not happen. Exactly one of ProcessID and
+// Error is written (printSelfRestart).
 type selfRestartAnswer struct {
 	ProcessID string
 	Error     string
+	Refused   bool
 }
 
 // runSelfCmd implements `zcp self restart`. args is everything after "self".
@@ -51,8 +55,8 @@ type selfRestartAnswer struct {
 // host, as `zcp lease release` does (resolveLiveLeaseDeps).
 func runSelfCmd(args []string, stdout io.Writer, lookup func(string) string, newClient func(token, apiHost string) (serviceRestarter, error)) int {
 	asJSON := slices.Contains(args, "--json")
-	fail := func(msg string) int {
-		printSelfRestart(stdout, selfRestartAnswer{Error: strings.Join(strings.Fields(msg), " ")}, "", asJSON)
+	fail := func(msg string, refused bool) int {
+		printSelfRestart(stdout, selfRestartAnswer{Error: strings.Join(strings.Fields(msg), " "), Refused: refused}, "", asJSON)
 		return 1
 	}
 	if len(args) == 0 || args[0] != "restart" {
@@ -60,7 +64,7 @@ func runSelfCmd(args []string, stdout io.Writer, lookup func(string) string, new
 			_, _ = fmt.Fprintln(stdout, selfUsage)
 			return 0
 		}
-		return fail(selfUsage)
+		return fail(selfUsage, true)
 	}
 	if _, code, done := commandFlags(selfUsage, args[1:], "--json"); done {
 		return code
@@ -68,21 +72,24 @@ func runSelfCmd(args []string, stdout io.Writer, lookup func(string) string, new
 
 	rt := runtime.DetectFrom(lookup)
 	if !rt.InContainer || rt.ServiceID == "" {
-		return fail("not running in a Zerops container, so there is no service to restart")
+		return fail("not running in a Zerops container, so there is no service to restart", true)
 	}
 	key := lookup(hq.EnvKey)
 	if key == "" {
-		return fail(fmt.Sprintf("this container has no %s, which the platform needs to restart it", hq.EnvKey))
+		return fail(fmt.Sprintf("this container has no %s, which the platform needs to restart it", hq.EnvKey), true)
 	}
 	client, err := newClient(key, mate.ResolveAPIHost(lookup("ZCP_API_HOST")))
 	if err != nil {
-		return fail(fmt.Sprintf("could not reach the platform: %v", err))
+		return fail(fmt.Sprintf("could not reach the platform: %v", err), true)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), selfRestartTimeout)
 	defer cancel()
 	proc, err := client.RestartService(ctx, rt.ServiceID)
 	if err != nil {
-		return fail(fmt.Sprintf("the platform refused the restart: %v", err))
+		if definiteRefusal(err) {
+			return fail(fmt.Sprintf("the platform refused the restart: %v", err), true)
+		}
+		return fail(fmt.Sprintf("could not confirm the restart: %v", err), false)
 	}
 	var answer selfRestartAnswer
 	if proc != nil {
@@ -90,6 +97,25 @@ func runSelfCmd(args []string, stdout io.Writer, lookup func(string) string, new
 	}
 	printSelfRestart(stdout, answer, rt.ServiceID, asJSON)
 	return 0
+}
+
+// definiteRefusal reports whether the platform's error proves it did not
+// take the restart: its own 4xx answer — the key (401, 403), the service
+// (404), the rate limit (429), or a rejection carrying the API's error code.
+// A timeout, a dropped connection, the platform's 5xx (platform.IsTransient)
+// and an error zcp cannot classify are not: the restart may have happened.
+func definiteRefusal(err error) bool {
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) {
+		return false
+	}
+	switch pe.Code {
+	case platform.ErrAuthTokenExpired, platform.ErrPermissionDenied, platform.ErrServiceNotFound, platform.ErrAPIRateLimited:
+		return true
+	case platform.ErrAPIError:
+		return pe.APICode != "" && !platform.IsTransient(err)
+	}
+	return false
 }
 
 // newSelfRestartClient builds the platform client the way `zcp lease
@@ -111,8 +137,9 @@ func printSelfRestart(stdout io.Writer, answer selfRestartAnswer, serviceID stri
 		var err error
 		if answer.Error != "" {
 			data, err = json.Marshal(struct {
-				Error string `json:"error"`
-			}{answer.Error})
+				Error   string `json:"error"`
+				Refused bool   `json:"refused,omitempty"`
+			}{answer.Error, answer.Refused})
 		} else {
 			data, err = json.Marshal(struct {
 				ProcessID string `json:"processId"`
