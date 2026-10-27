@@ -1049,8 +1049,9 @@ func TestVerify_Pool_OrchestratorCheck_InContainer(t *testing.T) {
 	}
 }
 
-// verifyBoxHTTP gives zerops_verify d for its Box orchestrator checks.
-func verifyBoxHTTP(d ops.HTTPDoer) VerifyOption { return func(c *verifyConfig) { c.boxHTTP = d } }
+// verifyBoxHTTP gives zerops_verify d for its Box orchestrator checks and a
+// lease's preview checks.
+func verifyBoxHTTP(d ops.HTTPDoer) VerifyOption { return func(c *verifyConfig) { c.probeHTTP = d } }
 
 // boxPingAnswer answers every request with the Box's ping and records the
 // requests.

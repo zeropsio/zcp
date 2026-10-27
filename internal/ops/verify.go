@@ -659,6 +659,28 @@ const VerifyTypeLease = "lease"
 // servers are read only from a container that answered. No supervisor is no
 // failure — a lease need not run one.
 func VerifyLease(ctx context.Context, ssh SSHDeployer, lease LeaseTargetInfo, unreachable string) *VerifyResult {
+	return VerifyLeaseWithPreview(ctx, ssh, lease, unreachable, LeasePreviewProbe{})
+}
+
+// LeasePreviewProbe is what verify of a lease asks its preview with from
+// outside: the platform client and project the pool's subdomain is read in,
+// and the HTTP client the preview URL is asked through. The zero value asks
+// nothing.
+type LeasePreviewProbe struct {
+	Client    platform.Client
+	ProjectID string
+	HTTP      HTTPDoer
+}
+
+// checkNameLeasePreview is the check of a lease's preview asked from outside:
+// its pool's subdomain on the preview server's preview port.
+const checkNameLeasePreview = "preview_public"
+
+// VerifyLeaseWithPreview is VerifyLease that also asks, from outside, the
+// preview URL of each dev server that has one — the pool's subdomain on the
+// server's preview port — so a lease whose dev server answers inside while its
+// preview answers 502 outside is degraded, never healthy.
+func VerifyLeaseWithPreview(ctx context.Context, ssh SSHDeployer, lease LeaseTargetInfo, unreachable string, preview LeasePreviewProbe) *VerifyResult {
 	result := &VerifyResult{Hostname: lease.Alias, Type: VerifyTypeLease}
 	identity := fmt.Sprintf("pool %s, container %s", lease.Pool, lease.ContainerHostname)
 	if lease.Branch != "" {
@@ -671,7 +693,7 @@ func VerifyLease(ctx context.Context, ssh SSHDeployer, lease LeaseTargetInfo, un
 		return result
 	}
 	result.Checks = append(result.Checks, CheckResult{Name: "ssh_reachable", Status: CheckPass})
-	result.Checks = append(result.Checks, leaseDevServerChecks(ctx, ssh, lease.Alias, lease.Pool)...)
+	result.Checks = append(result.Checks, leaseDevServerChecks(ctx, ssh, lease.Alias, lease.Pool, preview)...)
 	result.Status = StatusHealthy
 	for _, c := range result.Checks {
 		if c.Status == CheckFail {
@@ -682,9 +704,10 @@ func VerifyLease(ctx context.Context, ssh SSHDeployer, lease LeaseTargetInfo, un
 }
 
 // leaseDevServerChecks reads the lease's supervisor (`zcp-devsup ctl status
-// --json` over SSH) into one check per dev server it holds: the declared
-// entries naming pool, or none.
-func leaseDevServerChecks(ctx context.Context, ssh SSHDeployer, alias, pool string) []CheckResult {
+// --json` over SSH) into one check per dev server it holds — the declared
+// entries naming pool, or none — and, with preview set, a check of each
+// running server's preview URL asked from outside.
+func leaseDevServerChecks(ctx context.Context, ssh SSHDeployer, alias, pool string, preview LeasePreviewProbe) []CheckResult {
 	ds, err := ReadDevServers(ctx, ssh, alias, "")
 	if ds != nil {
 		ds.Service = pool
@@ -717,6 +740,31 @@ func leaseDevServerChecks(ctx context.Context, ssh SSHDeployer, alias, pool stri
 			// starting one is not yet a verdict.
 		}
 		checks = append(checks, check)
+		if c, ok := leasePreviewCheck(ctx, preview, pool, s, ds.State.Servers[s.Name]); ok {
+			checks = append(checks, c)
+		}
 	}
 	return checks
+}
+
+// leasePreviewCheck asks the preview URL of server s from outside — the
+// pool's subdomain on its preview port, at its health path — patiently, as a
+// dev server's first compile is given; ok is false when there is nothing to
+// ask: no probe, no preview port, a server not running or starting, or no
+// preview URL (the pool's subdomain off).
+func leasePreviewCheck(ctx context.Context, preview LeasePreviewProbe, pool string, s devsup.Server, st devsup.ServerState) (CheckResult, bool) {
+	if preview.Client == nil || preview.HTTP == nil || st.PreviewPort <= 0 {
+		return CheckResult{}, false
+	}
+	if st.Status != devsup.StatusRunning && st.Status != devsup.StatusStarting {
+		return CheckResult{}, false
+	}
+	url := LeasePreviewURL(ctx, preview.Client, preview.ProjectID, pool, st.PreviewPort)
+	if url == "" {
+		return CheckResult{}, false
+	}
+	probeURL := url + probePath(s.HealthPath)
+	check := newHTTPProbe(preview.HTTP, true).probe(ctx, probeURL, checkNameLeasePreview)
+	check.URL, check.Server, check.Port = probeURL, s.Name, st.PreviewPort
+	return check, true
 }
