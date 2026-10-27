@@ -98,6 +98,14 @@ func groupLeaseServer(t *testing.T) (*mcp.Server, map[string]*poolOrchestrator) 
 // and the state directory the leases are recorded under.
 func groupLeaseServerSSH(t *testing.T, ssh ops.SSHDeployer) (*mcp.Server, map[string]*poolOrchestrator, string) {
 	t.Helper()
+	srv, orchs, stateDir, _ := groupLeaseServerWith(t, ssh, nil)
+	return srv, orchs, stateDir
+}
+
+// groupLeaseServerWith is groupLeaseServerSSH with the platform mock shaped by
+// mutate before the tool is registered, answered for its calls.
+func groupLeaseServerWith(t *testing.T, ssh ops.SSHDeployer, mutate func(*platform.Mock)) (*mcp.Server, map[string]*poolOrchestrator, string, *platform.Mock) {
+	t.Helper()
 	orchs := map[string]*poolOrchestrator{
 		"hqpool":  {pool: "hqpool", token: "hq-orch-token-0001", number: 3},
 		"webpool": {pool: "webpool", token: "web-orch-token-0001", number: 7},
@@ -116,13 +124,16 @@ func groupLeaseServerSSH(t *testing.T, ssh ops.SSHDeployer) (*mcp.Server, map[st
 		}).
 		WithServiceEnv("svc-hqpool", []platform.ServiceEnvVar{{Key: "API_TOKEN", Content: orchs["hqpool"].token, Sensitive: true}}).
 		WithServiceEnv("svc-webpool", []platform.ServiceEnvVar{{Key: "API_TOKEN", Content: orchs["webpool"].token, Sensitive: true}})
+	if mutate != nil {
+		mutate(mock)
+	}
 	factory := func(baseURL, token string) ops.SwarmAPI {
 		return platform.NewSwarmClient(urls[baseURL], token, http.DefaultClient)
 	}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	stateDir := t.TempDir()
 	registerLeaseTool(t, srv, mock, "proj-1", stateDir, factory, nil, ssh, runtime.Info{})
-	return srv, orchs, stateDir
+	return srv, orchs, stateDir, mock
 }
 
 // TestLeaseTool_GroupAcquire_MembersInPoolsOrder: acquire with pools leases

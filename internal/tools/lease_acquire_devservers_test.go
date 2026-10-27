@@ -9,6 +9,9 @@ import (
 	"maps"
 	"strings"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/ops/devservertest"
+	"github.com/zeropsio/zcp/internal/platform"
 )
 
 // TestLeaseTool_Acquire_CarriesEachLeasesDevServers: a group acquire's result
@@ -69,5 +72,53 @@ func TestLeaseTool_Acquire_CarriesEachLeasesDevServers(t *testing.T) {
 	}
 	if strings.Contains(got.NextActions, `hostname="hqpool-3" name="api"`) {
 		t.Errorf("nextActions %q names api, which runs", got.NextActions)
+	}
+}
+
+// TestLeaseTool_Acquire_SwitchesThePoolsPublicAccessOn: an acquire that starts
+// a lease's dev servers itself runs the public-access step zerops_dev_server's
+// start runs — once per pool, the eligibility and the enable-once stamp as
+// ever — so the lease's preview answers from outside and devServers carries
+// its URL, though the pool reports its preview port without httpSupport while
+// its subdomain is off. In all three sessions of 2026-10-27 every preview
+// answered 502 after an acquire until the agent enabled each pool by hand.
+func TestLeaseTool_Acquire_SwitchesThePoolsPublicAccessOn(t *testing.T) {
+	t.Parallel()
+	web := devservertest.NewSupervised(`{"version":1,"previewPortBase":9000,"servers":[{"name":"web","port":3000,"command":"run web"}]}`)
+	web.StableNumber = 1
+	ssh := &rewireToolSSH{containers: map[string]*devservertest.Container{"webpool-7": web}}
+	srv, _, _, mock := groupLeaseServerWith(t, ssh, func(m *platform.Mock) {
+		pool := platform.ServiceStack{
+			ID: "svc-webpool", Name: "webpool", ProjectID: "proj-1", Status: "ACTIVE",
+			Ports:                []platform.Port{{Port: 9001, Protocol: "tcp"}, {Port: 9002, Protocol: "tcp"}, {Port: 9003, Protocol: "tcp"}},
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1", ServiceStackTypeCategoryName: "USER"},
+		}
+		m.WithProject(&platform.Project{ID: "proj-1", Name: "proj", Status: statusActive, SubdomainHost: "abc1.prg1.zerops.app"}).
+			WithService(&pool).
+			WithProcess(&platform.Process{ID: "proc-subdomain-enable-svc-webpool", Status: statusFinished})
+	})
+
+	res := callTool(t, srv, "zerops_lease", map[string]any{"action": "acquire", "pool": "webpool", "repo": leaseTestRepo, "branch": "feat-x"})
+	text := getTextContent(t, res)
+	if res.IsError {
+		t.Fatalf("acquire: %s", text)
+	}
+	if n := mock.CallCounts["EnableSubdomainAccess"]; n != 1 {
+		t.Fatalf("EnableSubdomainAccess calls = %d, want 1 — the pool's, once: %s", n, text)
+	}
+	var got struct {
+		Leases []struct {
+			Alias      string `json:"alias"`
+			DevServers []struct {
+				Name string `json:"name"`
+				URL  string `json:"url"`
+			} `json:"devServers"`
+		} `json:"leases"`
+	}
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatalf("result is not JSON: %v\n%s", err, text)
+	}
+	if len(got.Leases) != 1 || len(got.Leases[0].DevServers) != 1 || got.Leases[0].DevServers[0].URL != "https://webpool-abc1-9001.prg1.zerops.app" {
+		t.Fatalf("leases = %+v, want webpool-7's web at its preview URL", got.Leases)
 	}
 }
