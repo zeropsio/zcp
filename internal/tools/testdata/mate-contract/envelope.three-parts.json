@@ -69,7 +69,10 @@
             "at": "2026-10-14T21:03:10Z"
           }
         }
-      ]
+      ],
+      "standIn": {
+        "for": "pool-migrate"
+      }
     },
     {
       "hostname": "webstage",

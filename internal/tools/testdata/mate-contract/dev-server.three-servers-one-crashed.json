@@ -7,6 +7,9 @@
   "message": "Dev server worker on appdev crashed (exit 1); the supervisor leaves it down. Read logTail, fix the cause, then start it again.",
   "reason": "crashed",
   "name": "worker",
+  "standIn": {
+    "for": "pool-migrate"
+  },
   "envelope": {
     "phase": "develop-active",
     "environment": "container",
@@ -68,7 +71,10 @@
               "at": "2026-10-14T21:03:10Z"
             }
           }
-        ]
+        ],
+        "standIn": {
+          "for": "pool-migrate"
+        }
       },
       {
         "hostname": "webstage",

@@ -10,6 +10,9 @@
   "message": "Dev server api on appdev is running; its health probe got HTTP 404 on :8080/.",
   "reason": "http_404",
   "name": "api",
+  "standIn": {
+    "for": "pool-migrate"
+  },
   "envelope": {
     "phase": "idle",
     "environment": "container",
@@ -75,7 +78,10 @@
               "at": "2026-10-14T21:04:00Z"
             }
           }
-        ]
+        ],
+        "standIn": {
+          "for": "pool-migrate"
+        }
       },
       {
         "hostname": "webstage",

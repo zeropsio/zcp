@@ -77,7 +77,10 @@ type contractEnvelope struct {
 
 type contractDevServerResult struct {
 	ops.DevServerResult
-	Name     string            `json:"name,omitempty"`
+	Name string `json:"name,omitempty"`
+	// StandIn marks a dev service pool-migrate holds as its repository's
+	// stand-in (docs/spec-workflows.md §13 PM-14).
+	StandIn  *topology.StandIn `json:"standIn,omitempty"`
 	Envelope *contractEnvelope `json:"envelope,omitempty"`
 }
 
@@ -260,6 +263,14 @@ func TestMateContractFixtures_ThreeParts_CarriesEveryPreviewAndServer(t *testing
 	want := []row{{"web", "running", 3000}, {"api", "running", 8080}, {"worker", "crashed", 0}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("dev servers = %+v, want %+v", got, want)
+	}
+	if dev.StandIn == nil || dev.StandIn.For != topology.StandInPoolMigrate {
+		t.Errorf("a dev serving three parts in a Mate is pool-migrate's stand-in, got standIn %+v", dev.StandIn)
+	}
+	for _, s := range env.Services[1:] {
+		if s.StandIn != nil {
+			t.Errorf("%s: a stage is never a stand-in, got %+v", s.Hostname, s.StandIn)
+		}
 	}
 	worker := dev.DevServers[2]
 	if worker.LastExit == nil || worker.LastExit.Code == nil || *worker.LastExit.Code != 1 || worker.URL != "" {
@@ -457,7 +468,7 @@ func TestMateContractFixtures_DevServerResults_RenderedByTheHandler(t *testing.T
 			}
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 			RegisterDevServer(srv, DevServerDeps{Client: mock, ProjectID: "proj-weather", SSH: c, StateDir: dir,
-				RtInfo: runtime.Info{InContainer: true, ServiceName: "zcp"}, CarriesParts: true})
+				RtInfo: runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true}, CarriesParts: true})
 
 			before := time.Now().UTC()
 			result := callTool(t, srv, "zerops_dev_server", tt.args)
@@ -478,6 +489,9 @@ func TestMateContractFixtures_DevServerResults_RenderedByTheHandler(t *testing.T
 			if !reflect.DeepEqual(got.DevServerResult, want.DevServerResult) || got.Name != want.Name {
 				t.Errorf("result fields\n got %+v name=%q\nwant %+v name=%q", got.DevServerResult, got.Name, want.DevServerResult, want.Name)
 			}
+			if !reflect.DeepEqual(got.StandIn, want.StandIn) {
+				t.Errorf("standIn = %+v, want %+v", got.StandIn, want.StandIn)
+			}
 			dev := contractService(t, got.Envelope, "appdev")
 			if dev.StageHostname != "" || dev.StageSetupName != "" {
 				t.Errorf("the dev half still carries today's stage keys: %+v", dev.ServiceSnapshot)
@@ -485,6 +499,9 @@ func TestMateContractFixtures_DevServerResults_RenderedByTheHandler(t *testing.T
 			wantDev := contractService(t, want.Envelope, "appdev")
 			if !reflect.DeepEqual(dev.Stages, wantDev.Stages) {
 				t.Errorf("stages = %+v, want %+v", dev.Stages, wantDev.Stages)
+			}
+			if !reflect.DeepEqual(dev.StandIn, wantDev.StandIn) || !reflect.DeepEqual(dev.StandIn, want.StandIn) {
+				t.Errorf("the envelope's standIn %+v differs from the fixture's %+v or the result's own %+v", dev.StandIn, wantDev.StandIn, want.StandIn)
 			}
 			for i := range dev.DevServers {
 				d := &dev.DevServers[i]
