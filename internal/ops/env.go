@@ -109,6 +109,13 @@ const boxCredentialPrefix = "ZBOX_"
 // topology.IsSandboxType, so a runtime's own API_TOKEN stays the agent's
 // value.
 func isPoolOrBoxCredential(key, serviceType string) bool {
+	return IsPoolOrBoxCredential(key, serviceType)
+}
+
+// IsPoolOrBoxCredential is isPoolOrBoxCredential for readers outside ops: a
+// key holding a Swarm pool's or a Zerops Box's own credential, which nothing
+// zcp writes elsewhere — a recipe tier above all — may carry.
+func IsPoolOrBoxCredential(key, serviceType string) bool {
 	switch {
 	case topology.IsPoolType(serviceType):
 		return poolCredentialKeys[key]

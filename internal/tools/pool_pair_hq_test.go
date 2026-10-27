@@ -736,7 +736,7 @@ func TestGroupRecipeInputs_SplitPoolPairs_EveryPartItsPoolAndStage(t *testing.T)
 			parts = append(parts, s.Hostname+":"+s.SetupName+":"+s.ServiceType)
 		}
 		got = append(got, r.DevHostname+"("+r.SetupName+") "+strings.Join(parts, ","))
-		if !r.DevPool || !strings.HasSuffix(r.RepoURL, "/appdev") {
+		if !r.DevPool || !strings.HasSuffix(r.RepoURL, "/appdev.git") {
 			t.Errorf("runtime %q = pool %v repo %q, want a pool on the one repository", r.DevHostname, r.DevPool, r.RepoURL)
 		}
 	}

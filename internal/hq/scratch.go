@@ -95,6 +95,33 @@ func (s *Scratch) Fetch(ctx context.Context, branch string) (head string, found 
 	return head, err == nil, err
 }
 
+// RemoteHead is the commit HQ's branch is at, asked without fetching
+// anything; found is false when HQ has no such branch.
+func (s *Scratch) RemoteHead(ctx context.Context, branch string) (head string, found bool, err error) {
+	out, err := s.git(ctx, nil, "ls-remote", s.url, "refs/heads/"+branch)
+	if err != nil {
+		return "", false, err
+	}
+	head, _, _ = strings.Cut(out, "\t")
+	return head, head != "", nil
+}
+
+// FetchTip takes only the tip commit of HQ's branch into the scratch under
+// the same name — its tree, none of its history — and answers its head;
+// found is false when HQ has no such branch. Fetch's twin for a read of a
+// file at the tip of a repository whose history is large.
+func (s *Scratch) FetchTip(ctx context.Context, branch string) (head string, found bool, err error) {
+	ref := "refs/heads/" + branch
+	if _, err := s.git(ctx, nil, "fetch", "-q", "--no-tags", "--depth=1", s.url, "+"+ref+":"+ref); err != nil {
+		if errors.Is(err, errNoSuchRef) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	head, err = s.git(ctx, nil, "rev-parse", "--verify", ref+"^{commit}")
+	return head, err == nil, err
+}
+
 // unborn is the rev of a branch HQ has no commit on yet: Fetch's head for a
 // branch it did not find. Every read of it reads the empty tree.
 const unborn = ""
