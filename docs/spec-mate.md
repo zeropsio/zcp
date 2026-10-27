@@ -3255,7 +3255,15 @@ themselves; no token crosses the conversation.
   repository as `upstream` with its push URL `no_push`. A `connected` answer gives the way HQ's
   `repos[].origin.mode` says the code is kept (`github` or `follow`); from an HQ older than
   `mode`, it gives both and has the agent ask the person in one sentence. No answer has the agent
-  point `origin` itself. A `requested` answer also names how the agent takes the ask back.
+  point `origin` itself. A `requested` answer also names how the agent takes the ask back. A
+  `requested` answer for a GitHub address says that, connected, HQ takes the repository's `main`
+  from GitHub, so the agent never clones it in and merges it, nor merges HQ's initial commit into
+  its history, and that its own setup goes in after it as an ordinary change — on GitHub a pull
+  request, merged by squash; declined, code still to come in goes in as a branch of its own
+  (*An existing repository brought in*, below). A repository followed outside GitHub, whose `main`
+  HQ does not take, comes in that way too while `main` holds only HQ's initial commit
+  (`git checkout -b <branch> upstream/main`), and `git merge upstream/main` takes its new work in
+  only after that. The tool's description says the ask comes before a repository's code does.
 - **Withdraw.** `zerops_origin action=withdraw` takes `url` (required: the address as it was asked,
   checked and canonicalised as a request's) and `repo` (optional: the HQ repository the ask named,
   a hostname). The agent withdraws an ask it no longer needs — it re-planned, the repository was
@@ -3318,7 +3326,38 @@ themselves; no token crosses the conversation.
   the seed, as the wiring cut it, moves onto `main` (`git reset --keep`); a checkout with work of
   its own merges `main` in, and git refuses by name a `main` it shares no history with: two
   unrelated histories are never joined. The existing-repository guidance asks first when the
-  person gives an address.
+  person gives an address, naming the call (`zerops_origin action="request" url=… repo=… why=…`).
+- **An existing repository brought in** (the owner, 2026-10-27: clean history, squash only, no
+  merge commits). HQ seeds every repository it gives a Mate with one initial commit of the empty
+  tree on `main`; Zerops Apps, Mate Web and Noola were brought in by merging their history onto it
+  ("Merge HQ's first commit of main into …", then "Bring in … with its history"), so `main` held
+  commits GitHub never had, which a later GitHub link reads as diverged. An existing history
+  becomes `main` as it is:
+  - **Code on GitHub** is connected first — `zerops_origin action="request"` naming its GitHub
+    address — and HQ, following GitHub, takes the repository's `main` from it in place of an
+    unwritten root (mate-hq `githubMirror.ts`), so `main` starts as GitHub's `main`; the agent
+    takes it into the checkout as the answer says and never clones it in and merges it.
+  - **Code from anywhere else** — a bundle, another host, a GitHub repository HQ cannot connect
+    (no GitHub App) — is fetched onto a branch of its own, pushed exactly as it is, and its change
+    opened from that branch; merged onto the unwritten root, HQ makes that history `main` with no
+    merge commit (mate-hq, a change of unrelated history onto an unwritten `main`). It is never
+    merged or rebased onto `main`'s initial commit. The checkout's `main`, holding only that
+    commit, then moves onto it (`git checkout -B main origin/main`).
+  - **Either way** the Mate's own setup — the dev setups in `zerops.yaml`, `.zcp/dev-servers.json`
+    — goes in afterwards as an ordinary change on a branch cut from that `main`; on a repository
+    kept on GitHub that change is a pull request, merged by squash. HQ's initial commit is never
+    merged into imported history.
+  Where the agent reads it: AGENTS.md's git host paragraph (a Mate's, always in context) and
+  `zerops_origin`'s answers and description; the existing-repository develop guidance
+  (`develop-first-deploy-existing-repo`, step 1) names the ask in its call form and nothing more,
+  since it renders outside a Mate too and the first-deploy guidance sits at the response size cap.
+  The atom lint names `zerops_origin` only in its call form — its action first, one the tool takes
+  (`content.AcceptedOriginActions`) — and refuses `--allow-unrelated-histories` in any atom. zcp
+  `TestBuildAgentsMD_Container_GitHostBringsAnExistingRepositoryInAsMain`,
+  `TestDevelopExistingRepo_RunsTheReposOwnDevFlow`,
+  `TestOriginRequest_WritesNothing_NamesTheRepositoryThePairWillWire`,
+  `TestOriginRequest_RepositoryOutsideGitHub_IsOnlyFollowed`, `TestAnnotations_OriginTool`,
+  `TestAtomAuthoringLint_FiresOnKnownViolations`, `TestAtomLintAcceptedOriginActionsMatchTheTool`.
 
 The Mate draws the origin request and tells the agent how it ended. This behavior is included
 in `MinimumMateVersion` 0.16.0, the contract-2 floor (§2.1c); zcp drives no older Mate.
@@ -4541,7 +4580,8 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   `main` born with one commit of the empty tree — and wires the pair: `git-push-setup` to
   `https://<HQ>/git/<orgId>/<appId>/<repo>.git` with the Mate's Git credential, the checkout put on a `main` that
   descends from HQ's (`ops.BuildBaseBranchCommand`: a pair fresh from `zcp init` takes `main`'s
-  tree, a pair with history of its own is joined onto HQ's empty seed, anything else is refused
+  tree, a pair with history of its own is joined onto HQ's empty seed — an existing repository's
+  history is never brought in that way, but as `main` itself (§5.10) — anything else is refused
   with its remedy — two unrelated histories of code are never joined, the pair's own is kept on a
   branch named after its commit, `ops.KeepOwnHistory`, so the remedy runs again as it is), the pair's record `ServiceMeta.HQ {appId, repo}`, and `origin` where the code is kept (§5.10). There is no Mate
   branch. A remote that is not this HQ's is the user's own and left alone. One repository per pair
