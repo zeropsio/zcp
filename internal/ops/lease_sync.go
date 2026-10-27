@@ -485,6 +485,9 @@ func fastForwardMember(ctx context.Context, d LeaseDeps, rec leaseRecord, m *Lea
 		}
 		m.UnwatchedServers, unwatched = unwatchedServers(ctx, d.SSH, m.Alias, fresh)
 		m.Note = joinNotes(declared, unwatched)
+		// The member's dev servers reload on the new code: what they are now
+		// is its last-known for every envelope (NoteLeaseDevServers).
+		acquiredDevServers(ctx, d, rec)
 	default:
 		m.Outcome = LeaseSyncFailed
 		m.Note = fmt.Sprintf("%s answered nothing zcp could read (%q), so it may not have been fast-forwarded; zerops_lease action=status shows its checkout", m.Alias, boundedText(string(out)))

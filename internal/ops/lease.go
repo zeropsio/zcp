@@ -811,6 +811,14 @@ type leaseRecord struct {
 	// from here, never from an ssh read of its own (docs/spec-mate.md §2.8a.3).
 	NotAnswering      string `json:"notAnswering,omitempty"`
 	NotAnsweringSince string `json:"notAnsweringSince,omitempty"`
+	// DevServers are the lease's dev servers as the last zcp call that read
+	// its supervisor found them — an acquire, a rewire's restarts, a sync's
+	// take, zerops_dev_server — read at DevServersReadAt (RFC 3339, UTC)
+	// (NoteLeaseDevServers). Every envelope's leases[] carries them as the
+	// lease's last-known ones (docs/spec-mate.md §2.8a.3); they go with the
+	// record.
+	DevServers       []topology.DevServerState `json:"devServers,omitempty"`
+	DevServersReadAt string                    `json:"devServersReadAt,omitempty"`
 }
 
 func (r leaseRecord) alias() string { return leaseAlias(r.PoolHostname, r.ContainerNumber) }

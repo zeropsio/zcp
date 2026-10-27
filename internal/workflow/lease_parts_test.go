@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -103,10 +104,10 @@ func TestComputeEnvelope_LeaseCarriesLastKnownDevServers(t *testing.T) {
 		`"devServersReadAt":"2026-10-27T11:00:00Z"}`)
 	held := LeaseSnapshot{Alias: "devpool-3", Pool: "devpool", Branch: "feat-x", ContainerHostname: "node-id-3.runtime.devpool.zerops", State: "held"}
 	for name, reader := range map[string]func(context.Context) ([]LeaseSnapshot, error){
-		"the reader answered":       func(context.Context) ([]LeaseSnapshot, error) { return []LeaseSnapshot{held}, nil },
+		"the reader answered":         func(context.Context) ([]LeaseSnapshot, error) { return []LeaseSnapshot{held}, nil },
 		"the records stood in for it": func(context.Context) ([]LeaseSnapshot, error) { return nil, context.DeadlineExceeded },
 	} {
-		env, err := ComputeEnvelope(context.Background(), nil, dir, "", runtimeInContainer(), fixedTime, WithLeaseReader(reader))
+		env, err := ComputeEnvelope(context.Background(), nil, dir, "", runtime.Info{InContainer: true, ServiceName: "zcp"}, fixedTime, WithLeaseReader(reader))
 		if err != nil {
 			t.Fatalf("%s: ComputeEnvelope: %v", name, err)
 		}

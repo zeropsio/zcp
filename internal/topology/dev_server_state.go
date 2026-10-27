@@ -35,4 +35,8 @@ type DevServerExit struct {
 type StageWire struct {
 	Hostname string `json:"hostname"`
 	Setup    string `json:"setup,omitempty"`
+	// Part is the part the stage builds: a pool-keyed pair's from its
+	// leases' dev servers, else the stage's setup, else the stage hostname
+	// without its `stage` suffix (docs/spec-mate.md §2.8a.3).
+	Part string `json:"part,omitempty"`
 }

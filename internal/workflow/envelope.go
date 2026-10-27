@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"strings"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/topology"
@@ -77,10 +78,20 @@ type LeaseSnapshot struct {
 	// by repository and branch, never by branch alone (docs/spec-mate.md §6.3);
 	// absent for a lease zcp holds no record of, or an older record naming none.
 	Repo string `json:"repo,omitempty"`
-	// DevServers is what the lease's supervisor reported, only on a call that
-	// read it (zerops_dev_server on the alias) — keyed by alias the way a dev
-	// service's devServers[] is keyed by its hostname (WithParts).
-	DevServers []topology.DevServerState `json:"devServers,omitempty"`
+	// Part is the part the lease's pool serves — its dev server's name, else
+	// the pool-keyed pair's stage setup — and Stage the stage hostname that
+	// pair pairs with; both absent where zcp knows neither (WithParts,
+	// docs/spec-mate.md §2.8a.3).
+	Part  string `json:"part,omitempty"`
+	Stage string `json:"stage,omitempty"`
+	// DevServers is what the lease's supervisor last reported — fresh on a
+	// call that read it (zerops_dev_server on the alias, an acquire), keyed
+	// by alias the way a dev service's devServers[] is keyed by its hostname
+	// (WithParts), otherwise the last-known read from zcp's lease record —
+	// and DevServersReadAt when that read was (RFC 3339, UTC); both absent
+	// while no zcp call has read it.
+	DevServers       []topology.DevServerState `json:"devServers,omitempty"`
+	DevServersReadAt string                    `json:"devServersReadAt,omitempty"`
 	// Activity and Unsaved are what a zerops_lease call read of the lease's
 	// checkout (docs/spec-workflows.md §8 DP-21), only on that call
 	// (WithLeaseActivity) — absent means not read in this call, never "no
@@ -325,6 +336,18 @@ func (s ServiceSnapshot) PairStageHostnames() []string {
 // supervisor (keyed by dev hostname). The receiver is left as it was; a
 // second application keeps the stages the first one projected.
 func (e StateEnvelope) WithParts(devServers map[string][]topology.DevServerState) StateEnvelope {
+	var leases []LeaseSnapshot
+	if e.Leases != nil {
+		leases = make([]LeaseSnapshot, len(*e.Leases))
+		copy(leases, *e.Leases)
+		for i := range leases {
+			// A fresh read replaces the last-known one; a lease this call
+			// did not read keeps it.
+			if states, read := devServers[leases[i].Alias]; read {
+				leases[i].DevServers, leases[i].DevServersReadAt = states, devServersReadAt(states)
+			}
+		}
+	}
 	services := make([]ServiceSnapshot, len(e.Services))
 	copy(services, e.Services)
 	for i := range services {
@@ -336,7 +359,11 @@ func (e StateEnvelope) WithParts(devServers map[string][]topology.DevServerState
 		if len(stages) > 0 {
 			s.WireStages = make([]topology.StageWire, 0, len(stages))
 			for _, st := range stages {
-				s.WireStages = append(s.WireStages, topology.StageWire{Hostname: st.Hostname, Setup: st.SetupName})
+				part := stagePart(st, nil)
+				if s.DevIsPool {
+					part = stagePart(st, poolDevServers(leases, s.Hostname))
+				}
+				s.WireStages = append(s.WireStages, topology.StageWire{Hostname: st.Hostname, Setup: st.SetupName, Part: part})
 			}
 		}
 		s.StageHostname, s.StageSetupName = "", ""
@@ -344,14 +371,80 @@ func (e StateEnvelope) WithParts(devServers map[string][]topology.DevServerState
 	}
 	e.Services = services
 	if e.Leases != nil {
-		leases := make([]LeaseSnapshot, len(*e.Leases))
-		copy(leases, *e.Leases)
 		for i := range leases {
-			leases[i].DevServers = devServers[leases[i].Alias]
+			leases[i].Part, leases[i].Stage = leasePart(leases[i], services)
 		}
 		e.Leases = &leases
 	}
 	return e
+}
+
+// devServersReadAt is when states were read (RFC 3339, UTC): the newest read
+// time among them, "" for none.
+func devServersReadAt(states []topology.DevServerState) string {
+	var at time.Time
+	for _, s := range states {
+		if s.ReadAt.After(at) {
+			at = s.ReadAt
+		}
+	}
+	if at.IsZero() {
+		return ""
+	}
+	return at.UTC().Format(time.RFC3339)
+}
+
+// leasePart is the part lease's pool serves and the stage its pool-keyed pair
+// pairs with: the part is the lease's dev server's name (the one named after
+// the stage's setup when it runs several), else the pair's stage setup;
+// absent where zcp knows neither.
+func leasePart(lease LeaseSnapshot, services []ServiceSnapshot) (part, stage string) {
+	var ref topology.StageRef
+	for _, s := range services {
+		if s.DevIsPool && s.Hostname == lease.Pool && len(s.Stages) > 0 {
+			ref = s.Stages[0]
+		}
+	}
+	return serverPart(lease.DevServers, ref.SetupName, ref.SetupName), ref.Hostname
+}
+
+// stagePart is the part stage builds: the name of the dev server servers run
+// for it (a pool-keyed pair's leases'), else its setup, else its hostname
+// without the `stage` suffix.
+func stagePart(stage topology.StageRef, servers []topology.DevServerState) string {
+	fallback := stage.SetupName
+	if fallback == "" {
+		fallback = strings.TrimSuffix(stage.Hostname, "stage")
+		if fallback == "" {
+			fallback = stage.Hostname
+		}
+	}
+	return serverPart(servers, stage.SetupName, fallback)
+}
+
+// serverPart is the part servers run: the one server's name, or among
+// several the one named setup, else the first; fallback with none.
+func serverPart(servers []topology.DevServerState, setup, fallback string) string {
+	if len(servers) == 0 {
+		return fallback
+	}
+	for _, s := range servers {
+		if setup != "" && s.Name == setup {
+			return s.Name
+		}
+	}
+	return servers[0].Name
+}
+
+// poolDevServers is the dev servers zcp last knew a lease of pool to run —
+// the first such lease's, by alias order — none when it knows none.
+func poolDevServers(leases []LeaseSnapshot, pool string) []topology.DevServerState {
+	for _, l := range leases {
+		if l.Pool == pool && len(l.DevServers) > 0 {
+			return l.DevServers
+		}
+	}
+	return nil
 }
 
 // RollbackInfo is the per-service rollback-candidate id summary (docs/
