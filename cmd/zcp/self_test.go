@@ -65,7 +65,8 @@ func (r *recordingRestarter) asked() []string {
 // TestRunSelfCmd_Restart_RestartsTheContainersOwnService: the command builds
 // the platform client from the live env store's key and API host, restarts
 // the service the container is (serviceId), and answers with the platform's
-// process as soon as the platform accepted it.
+// process — `{"processId":"…"}` and nothing else — as soon as the platform
+// accepted it.
 func TestRunSelfCmd_Restart_RestartsTheContainersOwnService(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -73,9 +74,9 @@ func TestRunSelfCmd_Restart_RestartsTheContainersOwnService(t *testing.T) {
 		args []string
 		want func(t *testing.T, out string)
 	}{
-		{"json answers the restart and its process", []string{"restart", "--json"}, func(t *testing.T, out string) {
+		{"json answers the process alone", []string{"restart", "--json"}, func(t *testing.T, out string) {
 			t.Helper()
-			if want := `{"restarting":true,"processId":"proc-restart-svc-zcp-1"}` + "\n"; out != want {
+			if want := `{"processId":"proc-restart-svc-zcp-1"}` + "\n"; out != want {
 				t.Errorf("stdout = %q, want %q", out, want)
 			}
 		}},
@@ -112,8 +113,8 @@ func TestRunSelfCmd_Restart_RestartsTheContainersOwnService(t *testing.T) {
 
 // TestRunSelfCmd_Restart_RefusesOutsideAContainer: a restart with no
 // container to restart, no key to ask with, or a platform that would not
-// take it exits 1 with the reason as JSON — and never restarts anything it
-// could not name.
+// take it exits 1 with `{"error":"…"}` — one line the Mate shows a person as
+// the reason — and never restarts anything it could not name.
 func TestRunSelfCmd_Restart_RefusesOutsideAContainer(t *testing.T) {
 	t.Parallel()
 	without := func(keys ...string) map[string]string {
@@ -131,10 +132,10 @@ func TestRunSelfCmd_Restart_RefusesOutsideAContainer(t *testing.T) {
 		wantErr    string
 		wantAsked  bool
 	}{
-		{"outside a container", without("serviceId", "projectId", "hostname"), nil, nil, "inside a Zerops container", false},
+		{"outside a container", without("serviceId", "projectId", "hostname"), nil, nil, "not running in a Zerops container", false},
 		{"no project key", without("ZCP_API_KEY"), nil, nil, "ZCP_API_KEY", false},
 		{"client cannot be built", selfLiveEnv(), errors.New("bad API host"), nil, "bad API host", false},
-		{"platform refuses the restart", selfLiveEnv(), nil, errors.New("service is busy"), "service is busy", true},
+		{"platform refuses the restart", selfLiveEnv(), nil, errors.New("service is busy\nretry later"), "the platform refused the restart: service is busy retry later", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -156,16 +157,15 @@ func TestRunSelfCmd_Restart_RefusesOutsideAContainer(t *testing.T) {
 			if code := runSelfCmd([]string{"restart", "--json"}, &out, lookupIn(tt.env), newClient); code != 1 {
 				t.Errorf("exit %d, want 1", code)
 			}
-			var answer map[string]any
+			if strings.Count(out.String(), "\n") != 1 {
+				t.Errorf("stdout = %q, want one JSON line", out.String())
+			}
+			var answer map[string]string
 			if err := json.Unmarshal(out.Bytes(), &answer); err != nil {
 				t.Fatalf("stdout %q is not one JSON answer: %v", out.String(), err)
 			}
-			msg, _ := answer["error"].(string)
-			if answer["restarting"] != false || !strings.Contains(msg, tt.wantErr) {
-				t.Errorf("answer = %v, want restarting:false and an error naming %q", answer, tt.wantErr)
-			}
-			if _, ok := answer["processId"]; ok {
-				t.Errorf("answer = %v names a process for a restart that did not happen", answer)
+			if len(answer) != 1 || !strings.Contains(answer["error"], tt.wantErr) || strings.Contains(answer["error"], "\n") {
+				t.Errorf("answer = %v, want only an error, one line naming %q", answer, tt.wantErr)
 			}
 			if asked := len(client.asked()) > 0; asked != tt.wantAsked {
 				t.Errorf("platform asked to restart = %v, want %v", asked, tt.wantAsked)

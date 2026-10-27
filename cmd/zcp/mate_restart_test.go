@@ -110,10 +110,11 @@ func checkRestart(t *testing.T, got mateStatusJSON, wantRestart bool, wantWhy st
 	}
 }
 
-// TestRunMateStatus_ZCPRelease_BehindFromTheCachedLatest: status reports this
-// zcp against the release install.sh installs, read through the same hourly
-// cache the Mate manifest has — refreshed by --refresh, the only source for
-// --local, and absent when unknown. A dev build is compared with nothing.
+// TestRunMateStatus_ZCPRelease_BehindFromTheCachedLatest: status always
+// reports this zcp, against the release install.sh installs read through the
+// same hourly cache the Mate manifest has — refreshed by --refresh, the only
+// source for --local. An unknown release reads latest "" and behind false,
+// and a dev build is compared with nothing.
 func TestRunMateStatus_ZCPRelease_BehindFromTheCachedLatest(t *testing.T) {
 	type zcpWant struct {
 		installed, latest string
@@ -125,25 +126,25 @@ func TestRunMateStatus_ZCPRelease_BehindFromTheCachedLatest(t *testing.T) {
 		cached      string   // the release an earlier status cached ("" = none)
 		source      string   // what the release source answers now ("" = it fails)
 		args        []string // after "status"
-		wantZCP     *zcpWant
+		wantZCP     zcpWant
 		wantRestart bool
 		wantWhy     string
 		wantCalls   int32 // asks of the release source by this status
 	}{
 		{"cached latest above installed", "v9.220.0", "v9.226.0", "", []string{"--json"},
-			&zcpWant{"v9.220.0", "v9.226.0", true}, true, "zcp v9.226.0 is out; a restart installs it", 0},
+			zcpWant{"v9.220.0", "v9.226.0", true}, true, "zcp v9.226.0 is out; a restart installs it", 0},
 		{"cached latest equal to installed", "v9.226.0", "v9.226.0", "", []string{"--json"},
-			&zcpWant{"v9.226.0", "v9.226.0", false}, false, "", 0},
+			zcpWant{"v9.226.0", "v9.226.0", false}, false, "", 0},
 		{"latest unknown", "v9.220.0", "", "", []string{"--json"},
-			nil, false, "", 1},
+			zcpWant{"v9.220.0", "", false}, false, "", 1},
 		{"refresh asks the release source", "v9.220.0", "v9.226.0", "v9.227.0", []string{"--json", "--refresh"},
-			&zcpWant{"v9.220.0", "v9.227.0", true}, true, "zcp v9.227.0 is out; a restart installs it", 1},
+			zcpWant{"v9.220.0", "v9.227.0", true}, true, "zcp v9.227.0 is out; a restart installs it", 1},
 		{"local reads only the cache", "v9.220.0", "v9.226.0", "v9.227.0", []string{"--json", "--local"},
-			&zcpWant{"v9.220.0", "v9.226.0", true}, true, "zcp v9.226.0 is out; a restart installs it", 0},
+			zcpWant{"v9.220.0", "v9.226.0", true}, true, "zcp v9.226.0 is out; a restart installs it", 0},
 		{"local with nothing cached is unknown", "v9.220.0", "", "v9.227.0", []string{"--json", "--local"},
-			nil, false, "", 0},
+			zcpWant{"v9.220.0", "", false}, false, "", 0},
 		{"dev build is compared with nothing", "dev", "v9.226.0", "v9.227.0", []string{"--json"},
-			nil, false, "", 0},
+			zcpWant{"dev", "", false}, false, "", 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -163,16 +164,16 @@ func TestRunMateStatus_ZCPRelease_BehindFromTheCachedLatest(t *testing.T) {
 			})
 			got := decodeStatus(t, stdout)
 			switch {
-			case tt.wantZCP == nil && got.ZCP != nil:
-				t.Errorf("zcp = %+v, want the key absent", *got.ZCP)
-			case tt.wantZCP != nil && got.ZCP == nil:
-				t.Errorf("zcp absent, want %+v", *tt.wantZCP)
-			case tt.wantZCP != nil && (got.ZCP.Installed != tt.wantZCP.installed || got.ZCP.Latest != tt.wantZCP.latest || got.ZCP.Behind != tt.wantZCP.behind):
-				t.Errorf("zcp = %+v, want %+v", *got.ZCP, *tt.wantZCP)
+			case got.ZCP == nil:
+				t.Errorf("zcp absent, want %+v: the key is always present", tt.wantZCP)
+			case got.ZCP.Installed != tt.wantZCP.installed || got.ZCP.Latest != tt.wantZCP.latest || got.ZCP.Behind != tt.wantZCP.behind:
+				t.Errorf("zcp = %+v, want %+v", *got.ZCP, tt.wantZCP)
 			}
-			if tt.wantZCP != nil {
-				if _, ok := got.raw["zcp"]; ok && !strings.Contains(string(got.raw["zcp"]), `"behind":`) {
-					t.Errorf(`zcp = %s, want "behind" always present`, got.raw["zcp"])
+			var zcpKeys map[string]json.RawMessage
+			_ = json.Unmarshal(got.raw["zcp"], &zcpKeys)
+			for _, key := range []string{"installed", "latest", "behind"} {
+				if _, ok := zcpKeys[key]; !ok {
+					t.Errorf("zcp = %s has no %q key; installed, latest and behind are always present", got.raw["zcp"], key)
 				}
 			}
 			checkRestart(t, got, tt.wantRestart, tt.wantWhy)
