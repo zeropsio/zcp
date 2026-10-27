@@ -828,10 +828,70 @@ func guardLeaseRelease(ctx context.Context, d LeaseDeps, rec leaseRecord) (lease
 	if err != nil {
 		return leaseGuardResult{}, err
 	}
+	onHQ := IsHQRemote(rec.Repo, d.hqAddress())
+	if w.unpushed > 0 {
+		if w, err = compareWithOrigin(ctx, d, rec, w, onHQ); err != nil {
+			return leaseGuardResult{}, err
+		}
+	}
 	if w.any() {
-		return leaseGuardResult{}, unsavedWorkRefusal(rec.alias(), w, IsHQRemote(rec.Repo, d.hqAddress()))
+		return leaseGuardResult{}, unsavedWorkRefusal(rec.alias(), w, onHQ)
 	}
 	return guard, nil
+}
+
+// leaseGuardFetchCommand brings the checkout's remote-tracking refs up to
+// origin's branches — nothing else in the checkout moves — authenticating
+// through the helper the lease's checkout persisted (DP-6).
+func leaseGuardFetchCommand() string {
+	return "GIT_TERMINAL_PROMPT=0 git -C " + shellQuote(leaseWorkDir) + " fetch -q --prune origin"
+}
+
+// compareWithOrigin counts the commits on no remote branch (w.unpushed) again
+// once the checkout has fetched origin's branches: a commit pushed from
+// elsewhere — the pair's dev service, the Mate's own shell — is on origin
+// while the lease's remote-tracking refs still predate it, and counted
+// against those it reads as work a release would lose (D9, live 2026-10-27).
+// HQ refusing the fetch for the pool's credential renews it in the call and
+// fetches once more (renewLeasePoolCredential); a fetch refused for its
+// credential after that, or on a host outside HQ, is a refusal saying the
+// guard could not compare and why — never a count it could not check. Any
+// other failure to fetch leaves the count as it was read.
+func compareWithOrigin(ctx context.Context, d LeaseDeps, rec leaseRecord, w unsavedWork, onHQ bool) (unsavedWork, error) {
+	alias := rec.alias()
+	_, err := d.SSH.ExecSSH(ctx, alias, leaseGuardFetchCommand())
+	var r leaseCredentialRenewal
+	if err != nil && onHQ && gitCredentialRefused(err) {
+		r = renewLeasePoolCredential(ctx, d, rec)
+		if r.renewed {
+			_, err = d.SSH.ExecSSH(ctx, alias, leaseGuardFetchCommand())
+		}
+	}
+	switch {
+	case err == nil:
+		out, err := d.SSH.ExecSSH(ctx, alias, leaseUnpushedCommand())
+		if err != nil {
+			return w, nil
+		}
+		if n, err := parseUnpushedCount(string(out)); err == nil {
+			w.unpushed = n
+		}
+		return w, nil
+	case !gitCredentialRefused(err):
+		return w, nil
+	}
+	release := "zerops_lease action=release lease=" + alias
+	force := fmt.Sprintf("Once you know origin has them, release with force=true: zerops_lease action=release lease=%s force=true", alias)
+	suggestion := "The repository's host did not take the pool's GIT_TOKEN when zcp fetched origin to compare (" + sshFailureText(err) +
+		"), so zcp could not tell whether origin has them; the person's token is never asked for here. Push them from the container if they are not on origin. " + force
+	if onHQ {
+		suggestion = heldLeaseHQCredentialSuggestion(hqRefusalWhy(err), r, release) + ". " + force
+	}
+	pe := platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+		fmt.Sprintf("Lease %s could not compare its %d commit(s) with origin's branches, so zcp cannot tell whether they are on origin, and nothing was released", alias, w.unpushed),
+		suggestion)
+	pe.Cause = err
+	return w, pe
 }
 
 // inspectLeaseRelease reads what releasing the lease would lose, changing
