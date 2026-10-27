@@ -49,9 +49,9 @@ func (f *fakeHQ) judge(number int, mergeability, verdict string) {
 // Core judged), it is pushed once more, its tree the same, to be judged
 // again — once: a second pass that still reads head_moved pushes nothing and
 // names the change for a person. Refused for anything else
-// (recipe_changes_files, files_past_bound, a git failure) it is a person's:
-// never pushed again, named in the pass's report. Clean and unrefused, the
-// change is left as it is.
+// (recipe_changes_environments, files_past_bound, a git failure) it is a
+// person's: never pushed again, named in the pass's report. Clean and
+// unrefused, the change is left as it is.
 func TestHQPass_RecipeChangeJudged(t *testing.T) {
 	requireGitForLab(t)
 	t.Parallel()
@@ -69,8 +69,8 @@ func TestHQPass_RecipeChangeJudged(t *testing.T) {
 		{name: "clean", mergeability: hq.MergeClean},
 		{name: "head_moved", mergeability: hq.MergeClean, verdict: "head_moved", wantPushes: 1,
 			wantLine: []string{"change #1", "head_moved", "pushed"}, wantAgain: []string{"change #1", "head_moved", "person"}},
-		{name: "recipe_changes_files", mergeability: hq.MergeClean, verdict: "recipe_changes_files",
-			wantLine: []string{"change #1", "recipe_changes_files", "person"}, wantAgain: []string{"recipe_changes_files"}},
+		{name: "recipe_changes_environments", mergeability: hq.MergeClean, verdict: "recipe_changes_environments",
+			wantLine: []string{"change #1", "recipe_changes_environments", "person"}, wantAgain: []string{"recipe_changes_environments"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

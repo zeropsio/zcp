@@ -398,6 +398,9 @@ func TestDeleteTool_StageOfSeveral_LeavesThePairAndNamesTheRecipeCall(t *testing
 			if strings.Contains(text, steer) != tt.wantSteer {
 				t.Errorf("answer %s: carries the recipe call %v, want %v", text, !tt.wantSteer, tt.wantSteer)
 			}
+			if tt.wantSteer && (!strings.Contains(text, "as the Mate's recipe change") || strings.Contains(text, "the person reviews")) {
+				t.Errorf("answer %s: the recipe call does not name the Mate's recipe change", text)
+			}
 		})
 	}
 }

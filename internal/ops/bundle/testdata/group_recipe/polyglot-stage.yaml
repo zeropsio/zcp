@@ -5,9 +5,9 @@
 # person may edit it. zcp adds only a whole tier the group repo lacks; into a
 # tier it already carries, zcp proposes only a service's scale (group-recipe
 # scaling=<hostname>), a managed service added to the Mate's project or a part's
-# service added or removed (group-recipe service=<hostname>), as a change a
-# person reviews — and this whole file anew while it stays exactly as zcp
-# wrote it (the mark below).
+# service added or removed (group-recipe service=<hostname>), as the Mate's
+# change — and this whole file anew while it stays exactly as zcp wrote it
+# (the mark below).
 #
 # Priority is the order services are created in, each wave deployed before the
 # next starts: the managed services first, then every runtime before the
@@ -15,10 +15,10 @@
 #
 # The line below is zcp's mark: the Mate's project this file was composed from
 # and a digest of the file. While the file stays exactly as zcp wrote it, zcp
-# proposes it anew, as a change a person reviews, when that Mate's project
-# changes shape — a part added or removed, a dev pool, a runtime's type; an
-# edit of any line makes the file the group's alone.
-# zcp-recipe: p-odin sha256=c7ddf620396e876dcfd8614fee03947a336ab71de11afc47486d427bbd626bfe
+# proposes it anew when that Mate's project changes shape — a part added or
+# removed, a dev pool, a runtime's type; an edit of any line makes the file the
+# group's alone.
+# zcp-recipe: p-odin sha256=deee9a57b8c8a391f2b44bd5e001170e0ab07ceef0f2f5fa733c7deaa907aac7
 
 project:
   name: noola stage

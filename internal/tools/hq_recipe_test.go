@@ -613,10 +613,10 @@ func TestHandleGroupRecipe_Table(t *testing.T) {
 			wantText: []string{
 				`"onMain":true`, "already carries every tier",
 				`call zerops_workflow action=\"group-recipe\" with scaling set to the service's hostname`,
-				"as a change the person reviews",
+				"as the Mate's recipe change",
 				`with service set to the hostname`,
 			},
-			notText: []string{"never proposes over"},
+			notText: []string{"never proposes over", "the person reviews"},
 		},
 		{
 			name: "not enrolled with HQ",

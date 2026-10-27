@@ -115,10 +115,16 @@ func TestGroupRecipeService_AddThenRemovePart_OnlyThatService(t *testing.T) {
 	if outcome.Change != 0 || !strings.Contains(outcome.Line, `action="group-recipe" service="workerstage"`) {
 		t.Fatalf("reconcile after adding a part = %+v, want the steer to service=workerstage", outcome)
 	}
+	if !strings.Contains(outcome.Line, "to propose each as the Mate's recipe change") || strings.Contains(outcome.Line, "the person reviews") {
+		t.Errorf("reconcile after adding a part = %q, want the steer to name the Mate's recipe change", outcome.Line)
+	}
 
 	answer, text := lab.proposeService(client, "workerstage")
 	if answer == nil || answer.Change != 2 || answer.Branch != recipeBranch(2) {
 		t.Fatalf("service=workerstage = %s", text)
+	}
+	if !strings.Contains(text, "HQ lands the change on main by itself") || strings.Contains(text, "reviews and merges") {
+		t.Errorf("service=workerstage = %s, want it to say HQ lands the change by itself unless it changes an environment", text)
 	}
 	if change := lab.hq.changeIn(hq.RecipeRepo, 2); change == nil || change.Title != "Mate: workerstage in the group recipe" {
 		t.Fatalf("change #2 = %+v", change)
@@ -155,7 +161,7 @@ func TestGroupRecipeService_AddThenRemovePart_OnlyThatService(t *testing.T) {
 		t.Errorf("the hostname the tier holds was recomputed:\n%s", stage)
 	}
 
-	// The person merges it; the Mate deletes the worker's stage and the
+	// It lands; the Mate deletes the worker's stage and the
 	// tiers lose exactly that service again.
 	lab.hq.mergeChange(hq.RecipeRepo, 2)
 	if err := workflow.UpdateServiceMeta(lab.stateDir, "appdev", func(m *workflow.ServiceMeta) error {
